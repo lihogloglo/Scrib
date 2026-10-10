@@ -1,0 +1,22 @@
+[package]
+name = "sf_vfs"
+description = "Layered virtual filesystem for superfargoth mods and content packs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Exposes the VFS as a Bevy `AssetSource`.
+bevy = ["dep:bevy_asset", "dep:futures-lite"]
+
+[dependencies]
+bevy_asset = { workspace = true, optional = true }
+futures-lite = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

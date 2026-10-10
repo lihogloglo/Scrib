@@ -1,0 +1,59 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TODO/superfargoth"
+
+[workspace.dependencies]
+bevy_asset = { version = "0.20", default-features = false }
+futures-lite = "2"
+indexmap = "2"
+semver = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+smallvec = "1"
+tempfile = "3"
+thiserror = "2"
+toml = "0.9"
+
+sf_vfs = { path = "crates/sf_vfs" }
+sf_records = { path = "crates/sf_records" }
+sf_mods = { path = "crates/sf_mods" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+# Bevy system parameters (`Res<T>`, `Query<..>`) idiomatically elide lifetimes.
+elided_lifetimes_in_paths = "allow"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+# Bevy system parameters (`Res<T>`, `Query<..>`) are taken by value by design.
+needless_pass_by_value = "allow"
+# Trait impls (e.g. Bevy's AssetReader) read best as `async fn` even when synchronous.
+unused_async_trait_impl = "allow"
+
+# Same profiles as bevyrrowind (see docs/ARCHITECTURE.md "Build performance").
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.debugging]
+inherits = "dev"
+debug = true
