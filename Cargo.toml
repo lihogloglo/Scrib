@@ -1,0 +1,88 @@
+﻿[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/TODO/bevyrrowind"
+
+[workspace.dependencies]
+# Framework (MIT/Apache). Path dependencies while both repos evolve together.
+sf_mods = { path = "../superfargoth/crates/sf_mods" }
+sf_records = { path = "../superfargoth/crates/sf_records" }
+sf_vfs = { path = "../superfargoth/crates/sf_vfs" }
+
+# TES3 formats (MIT/Apache). Unstable API: pinned to a commit.
+tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0", default-features = false }
+
+# No features here: each crate asks for exactly what it uses, the app picks
+# the full set. Unused Bevy features are crates we never compile.
+bevy = { version = "0.20", default-features = false }
+clap = { version = "4", features = ["derive"] }
+encoding_rs = "0.8"
+semver = "1"
+tempfile = "3"
+thiserror = "2"
+winreg = "0.55"
+
+mw_nif = { path = "crates/mw_nif" }
+mw_install = { path = "crates/mw_install" }
+mw_records = { path = "crates/mw_records" }
+mw_world = { path = "crates/mw_world" }
+mw_vfs = { path = "crates/mw_vfs" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+# Bevy system parameters (`Res<T>`, `Query<..>`) idiomatically elide lifetimes.
+elided_lifetimes_in_paths = "allow"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+# Bevy system parameters (`Res<T>`, `Query<..>`) are taken by value by design.
+needless_pass_by_value = "allow"
+
+# Build profiles. See superfargoth/docs/ARCHITECTURE.md "Build performance".
+#
+# dev: our crates barely optimized (fast to rebuild), dependencies fully
+# optimized (built once, and Bevy is unusably slow at opt-level 0). Line
+# tables only: readable backtraces, much less to generate and link. Use
+# `--profile debugging` when you need a debugger.
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# Proc macros (Bevy derives, serde) and build scripts run on every build of
+# their users; optimized, they expand faster.
+[profile.dev.build-override]
+opt-level = 3
+
+# Full debug info for stepping through our code in a debugger.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+# Release with symbols, for Tracy / perf profiling.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
+# Shipping builds: slow to compile, fastest to run.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = true
+

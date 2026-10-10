@@ -1,0 +1,27 @@
+﻿[package]
+name = "bevyrrowind"
+description = "Morrowind on superfargoth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Fast iteration: Bevy as a shared library, so relinking after a change
+# skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
+# `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
+dev = ["bevy/dynamic_linking", "bevy/dev"]
+
+[dependencies]
+bevy = { workspace = true, features = ["3d", "ui", "audio", "free_camera", "dds", "tga", "bmp"] }
+clap.workspace = true
+mw_assets = { path = "../../crates/mw_assets" }
+mw_install.workspace = true
+mw_nif.workspace = true
+mw_records.workspace = true
+mw_vfs.workspace = true
+mw_world.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+
+[lints]
+workspace = true

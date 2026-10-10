@@ -1,0 +1,17 @@
+[package]
+name = "mw_records"
+description = "Loads Morrowind ESM/ESP content into the superfargoth record database"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+semver.workspace = true
+sf_mods.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+﻿[package]
+name = "mw_assets"
+description = "Morrowind NIF/DDS assets as Bevy assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["bevy_pbr", "bevy_world_serialization", "dds", "tga", "bmp"] }
+sf_vfs = { workspace = true, features = ["bevy"] }
+mw_nif.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
