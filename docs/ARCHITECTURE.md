@@ -272,6 +272,10 @@ and writes the same profile files the CLI uses.
   reading back from the GPU. Bodies sample a few points per hull.
 - **Later:** rivers with flowmaps; lakes at arbitrary heights (Morrowind has
   only one water plane, the framework won't).
+- **Specified 2026-10-13** in [specs/water.md](specs/water.md) (M6): bevy-aqua
+  evaluated and ported rather than adopted; SSPR instead of SSR for water
+  reflections (the exterior camera has no deferred prepass); rivers as baked
+  flow; pontoon buoyancy (§10 2026-10-13 m6-spec).
 
 ### 7.3 Rigid-body physics
 
@@ -1607,3 +1611,29 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
 - 2026-10-13 (nightsky): drawn sky bodies separate from lighting. `sf_sky::Moon` (N moons, each with its own phase cycle, optional discrete phase steps/textures, `MoonPath::Synodic` (physical) or `Circuit` (fantasy: own period, tilt, declination)), `StarField` (procedural, per-star illuminance spread over a pixel) and `SunDiskLook` (artistic disk size + glare; the light keeps the physical 0.53°). One moonlight sums all moons toward the brightest at the ground. Drawn by `sf_sky_bevy`'s night pass: fullscreen at the far plane, depth-tested to sky pixels, additive after `render_sky` and before the cloud composite (same `SkyOrderScaffold` discovery; `SkyPlugin` must be added before cloud plugins), so air and clouds dim and hide them. Bevy's `SunDisk` stays for the sun only (moons' are zero-intensity). Also: cloud lighting picks the key light by its light at the camera and applies the planet's shadow (Bevy's transmittance LUT clamps below-horizon rays to the horizon, which lit high clouds red at night).
 
 - 2026-10-13 (m5-l1; scripting.md "Spike results (L1)"): `sf_script` core built; spike confirms M5 decision 1 (Luau via mlua 0.12.2, state per mod). Decided by measurement: mlua `send` stays on (an `sf_script` feature, calls within noise of `NonSend`); world access for API functions goes through an app-data guard, not `Lua::scope` (scope costs ~0.5 µs per scoped function per slot); `luau-jit` off (API-bound handlers gain nothing, start 2.4x slower). Corrected budgets: empty context <= 512 KiB (a bare mlua Luau state is 378 KiB), script state save/restore <= 40 ms/MiB each way (mlua per-value cost). Watchdog: one deadline per host entry into a context, clock sampled every 64th safepoint, latched once fired (a `pcall` loop could otherwise outlive it); its real cost is mlua's interrupt trampoline (~25 ns per safepoint). Host-side bulk conversion lifts the per-state memory limit temporarily (mlua protects every allocation while a limit is set: 2.6x slower). Script state uses our own `StateValue` walker (canonical key order, error paths) rather than mlua serde.
+
+- **2026-10-13 (m6-spec; specs/water.md, bevyrrowind water-adapter.md, ROADMAP "## M6"): water design.**
+  (1) **Own `sf_water` (Bevy-free) + `sf_water_bevy`, porting bevy-aqua's wave, foam and optics code** (MIT OR Apache-2.0,
+  notices kept), not bevy-aqua as a dependency or fork: 0.1.3 targets Bevy 0.19 (no 0.20 branch, last commit 2026-09-23,
+  one maintainer), samples world XZ in `f32` (no floating origin), takes one global bed image and one sea level, answers
+  queries by GPU readback, and reflects through planar mirror cameras; most of its integration surface would be
+  rewritten. Revisit if it ships on 0.20 with origin-relative coordinates and a CPU query. (2) **Ocean = Tessendorf FFT
+  cascades with power-of-two tile sizes** (JONSWAP/TMA, Horvath 2015) on a geometry clipmap, sampled at `rel + phase`
+  from integer origin cells (exact across shifts); weather transitions blend `h0` (the FFT is linear). (3) **The CPU
+  water query (§10 2026-10-11 decision 4) is a CPU twin of the long cascade(s)** (`rustfft`, same `h0`, 60 Hz),
+  plus bodies in a BVH and baked flow maps; short cascades are visual only (HDRP "evaluate ripples" off). (4) **Water
+  draws in its own pass after the sky/cloud/fog composite from a colour + depth snapshot** (UE Single Layer Water), not
+  Bevy transmission (colour only, unordered vs `render_sky`, no motion vectors); it depth-writes and redraws into the
+  motion-vector texture for DLSS. (5) **Reflections: SSPR + a camera-centred dynamic reflection probe + environment map**; no planar cameras; Bevy SSR
+  only if the deferred-prepass question resolves; RT reflections from the water pass later (Solari BLASes are
+  opaque-only, so water stays raster on the RT path). (6) **Water bodies (ocean, lake, river, pool) are records**;
+  `Worldspace::sea_level` stays the shorthand for an ocean/pool; a water-level clipmap (UE's water info texture) feeds
+  the surface hook, precipitation, froxels and grass. (7) **Rivers: authored, or baked as flow** (`water.hydro`
+  priority-flood + D8, `water.flow` geodesic direction + discharge routing); generating new river bodies is a content
+  policy (`Generate`), off for Bevyrrowind (`FlowOnly`). (8) **Buoyancy = pontoon spheres from a `water.pontoons` bake
+  over `body.cook`** (UE/Crest), per-triangle hull clipping (Kerner) as a per-body option; `sf_physics` only gains
+  `add_force_at` and a `Floating` wake rule. (9) Budget: water ≈ 1.35 ms High at 1440p on top of weather's ≈ 3.3 ms.
+  Owner decisions pending (ROADMAP "M6" list 1-7: approach, reflections, moored boats, rivers, budget, swamp look,
+  skipping N3). HD grass gets its own spec (G0) before it is built.
+
+- 2026-10-13 (orchestrator, owner asleep): M6 spec decisions 1-7 (bevyrrowind ROADMAP "## M6", water.md) adopted provisionally with the spec's recommendations (own sf_water porting bevy-aqua code; SS planar + cubemap reflections; moored small boats bob; no new rivers; water budget ~1.35 ms High; murky Bitter Coast; froxel fog without the Bevy god-ray prototype). Pending owner confirmation.

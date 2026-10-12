@@ -33,7 +33,7 @@ What that means for the framework:
 7. **Distant shadows**: the terrain and the far field are shadowed to the horizon, and no object
    suddenly gets its shadow as the camera approaches.
 
-Non-goals: water bodies, waves and buoyancy (WISHLIST §4; the water spec, M6); character wetness
+Non-goals: water bodies, waves and buoyancy (WISHLIST §4; [water.md](water.md), M6); character wetness
 (designed here, built with characters); persistent snow deformation (terrain.md stack layer 3, M6
 deformation work); voxel hero clouds (Nubis³; open question 3); audio playback (we only emit cues).
 
