@@ -1183,3 +1183,37 @@ fn masked_layers_keep_contacts_of_joints_they_leave_alone() {
     }
     assert!(differ > 5, "walk and run contacts differ somewhere");
 }
+
+/// Followers of a looping clip whose loop sits inside it (an intro before,
+/// an outro after, with foot markers in both) land inside the loop: placed
+/// past the loop's end, a lane played out to the clip's end and parked
+/// there once it led (walkers5: torch-bearers' walk lanes frozen at 1.333 s).
+#[test]
+fn synced_followers_stay_inside_their_loop() {
+    let s = biped();
+    let with = |loop_range: (f32, f32), markers: &[(f32, &str)]| {
+        let mut c = cycle(&s, "c", 1.333, 1.5, 0.5, 0.5);
+        c.loop_range = Some(loop_range);
+        c.markers = markers.iter().map(|&(t, n)| marker(t, n)).collect();
+        c
+    };
+    // WalkForward-like leader and WalkRight-like follower (Morrowind's data).
+    let leader = with((0.2, 1.2), &[(0.0, "down.l"), (0.283, "down.r"), (0.808, "down.l"), (1.208, "down.r")]);
+    let follower = with((0.133, 1.067), &[(0.0, "down.r"), (0.133, "down.l"), (0.617, "down.r"), (1.1, "down.l"), (1.267, "down.r")]);
+    let mut current = 0.5;
+    for k in 0..400 {
+        let lt = 0.2 + (k as f32 * 0.0137).rem_euclid(1.0);
+        let t = sync::sync_time(&follower, true, current, &leader, true, lt);
+        assert!((0.0..1.067).contains(&t), "leader {lt}: follower at {t}, past its loop end 1.067");
+        // As a leader, the follower keeps moving.
+        let adv = follower.advance(t, 1.0 / 60.0, true, false, None);
+        assert!(adv.time != t && !adv.finished, "leader {lt}: parked at {t}");
+        current = t;
+    }
+    // Only the loop's markers count, and pairs wrap at the loop's end:
+    // the leader at 1.0 is 0.192 s into its l 0.808 → (wrap) r 0.283 gap
+    // of 0.475 s; the follower sits as far into its l 0.133 → r 0.617.
+    let t = sync::sync_time(&follower, true, 0.3, &leader, true, 1.0);
+    let expected = 0.133 + 0.192 / 0.475 * (0.617 - 0.133);
+    assert!((t - expected).abs() < 1e-3, "follower at {t}, expected {expected}");
+}

@@ -219,6 +219,11 @@ change the sketch above:
   way to the space's highest-weighted sample, and the space plays at the
   weighted length of its samples (UE). Zero-weight branches aren't
   ticked, so their clocks hold until sync realigns them.
+  A looping clip whose loop range sits inside it (an intro before, an
+  outro after) syncs over its loop only: marker pairs wrap at the loop's
+  end, markers outside the loop are skipped, and a follower always lands
+  inside its loop. (Placed past the loop's end, a lane played out to the
+  clip's end once it led and froze there: walkers5, 2026-10-13.)
 - **Inertialization is a post-process on the graph output**, as Bollo and
   UE place it: a transition requests it and the shortest pending duration
   wins. Two corrections to the talk's per-bone scalar quintic (both needed
