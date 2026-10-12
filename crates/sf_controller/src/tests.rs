@@ -81,7 +81,12 @@ impl World {
 
     /// A ramp rising along +X from (x0, 0) at `angle`, 8 m long, z in [-3, 3].
     fn add_ramp(&mut self, x0: f32, angle: f32) {
-        let (half_len, half_thick) = (4.0, 0.5);
+        self.add_ramp_len(x0, angle, 8.0);
+    }
+
+    /// A ramp rising along +X from (x0, 0) at `angle`, `len` m long, z in [-3, 3].
+    fn add_ramp_len(&mut self, x0: f32, angle: f32, len: f32) {
+        let (half_len, half_thick) = (len / 2.0, 0.5);
         let r = Quat::from_rotation_z(angle);
         let mid_top = Vec3::new(x0 + half_len * angle.cos(), half_len * angle.sin(), 0.0);
         let center = mid_top - r * Vec3::new(0.0, half_thick, 0.0);
@@ -334,6 +339,29 @@ fn slopes_steeper_than_the_limit_block() {
     walk(&world, &mut loco, toward(Vec3::new(1.0, 0.0, 1.0)), &params, 120, |_| {});
     let at = xyz(loco.position);
     assert!(at.x < 1.05 && at.z > 1.0, "{at}");
+}
+
+/// A short unwalkable bit (a steep bevel up onto a ledge) whose top is
+/// within `step_up` is stepped over like a ledge (UE `StepUp`; `OpenMW`'s
+/// stepper skips tiny unwalkable slopes); a taller one still blocks.
+#[test]
+fn short_steep_bevels_onto_ledges_are_stepped_over() {
+    let params = MoverParams::default();
+    let angle = 60f32.to_radians();
+    for (h, crosses) in [(0.1f32, true), (0.4, true), (0.6, false)] {
+        let mut world = World::new();
+        world.add_ramp_len(1.0, angle, h / angle.sin());
+        let top = 1.0 + h / angle.tan();
+        world.add_box(Vec3::new(top, h - 1.0, -3.0), Vec3::new(top + 6.0, h, 3.0));
+        let mut loco = Locomotion::new(p(0.0, 0.0, 0.0), FRAC_PI_2);
+        walk(&world, &mut loco, toward(Vec3::new(1.5, 0.0, 0.0)), &params, 180, |_| {});
+        let at = xyz(loco.position);
+        if crosses {
+            assert!(at.x > 3.0 && (at.y - h).abs() < 0.02, "{h} m bevel: at {at}");
+        } else {
+            assert!(at.x < 1.05, "{h} m bevel: climbed to {at}");
+        }
+    }
 }
 
 /// Orient to movement around obstacles (owner check WK-4): a walker whose

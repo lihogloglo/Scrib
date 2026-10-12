@@ -613,6 +613,30 @@ Bevy has no BVH or FBX loader (bevy_gltf only), so rule 8 goes to crates:
 
 Contacts come from foot height and speed thresholds on the source clip
 (with adapter overrides). Sync markers come from contact onsets.
+As in motion-matching data pipelines, a foot is planted while it is low
+(height over its lowest point in the clip, `ContactRules::height`, in leg
+lengths) *and* still over the ground (`speed`, leg lengths per second),
+with hysteresis: it plants under the thresholds and lifts only above
+`release` times them (2×), so a rolling heel or a slow lift doesn't
+flicker. Speed over the ground is the foot's velocity in clip space plus
+the ground velocity: zero for travelling clips (the root carries the
+ground), and for in-place clips the velocity the planted feet slide back
+at (component median of the low feet, refined by the mean of those moving
+with it; it also becomes the clip's `average_velocity`). Keyframed sources skate, so each foot is measured against the per-frame
+stance reference (the slowest low foot). A stance ends at heel-off: the
+foot's last rise faster than `lift` (leg lengths per second) before it
+leaves, trimmed within the stance's second half, so the runtime lock
+releases the heel as the authored foot peels off (a heel held into
+heel-off overreaches uphill: 25° ramps slid 2.6 cm/s). Before cook v4
+in-place clips used height alone and Morrowind's sidesteps planted on
+0–6 of 81 frames (walkers3).
+
+Curves have a joint (UE's curve "linked bones",
+`CompiledGraph::curve_joints`): a leg's contact curve belongs to its
+effector. A masked override layer or masked slot blends a linked curve by
+its joint's mask weight, so an upper-body or arm overlay never replaces
+the legs' contacts (it used to: the torch arm and the crossbow/spell
+stance idles froze the walk's contacts at their idle's values).
 
 **Implementation (`sf_anim::steps`).** The three `sf_anim` steps share one
 `AnimBake`: importers by extension (`AnimImporter`; glTF, BVH, FBX by feature), the

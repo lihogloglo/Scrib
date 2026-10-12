@@ -534,6 +534,8 @@ pub struct CompiledGraph {
     pub slot_clips: Vec<(String, u16)>,
     #[serde(skip)]
     mask_weights: OnceLock<Vec<JointWeights>>,
+    #[serde(skip)]
+    curve_joints: OnceLock<Vec<Option<u16>>>,
 }
 
 const MAGIC: &[u8; 4] = b"SFAG";
@@ -570,6 +572,7 @@ impl CompiledGraph {
             slot_groups: Vec::new(),
             slot_clips: Vec::new(),
             mask_weights: OnceLock::new(),
+            curve_joints: OnceLock::new(),
         }
     }
 
@@ -645,6 +648,23 @@ impl CompiledGraph {
                     w
                 })
                 .collect()
+        })
+    }
+
+    /// Per graph curve, the joint it belongs to (UE's curve "linked
+    /// bones"): a leg's contact curve belongs to its effector. A masked
+    /// override layer or slot blends a linked curve by its joint's mask
+    /// weight, so an upper-body overlay keeps the legs' contacts; unlinked
+    /// curves take the layer's weight.
+    pub fn curve_joints(&self) -> &[Option<u16>] {
+        self.curve_joints.get_or_init(|| {
+            let mut v = vec![None; self.curves.len()];
+            for leg in &self.legs {
+                if let Some(slot) = leg.contact.and_then(|c| v.get_mut(usize::from(c))) {
+                    *slot = Some(leg.effector());
+                }
+            }
+            v
         })
     }
 

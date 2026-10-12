@@ -534,6 +534,15 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
         let mut blocked = false;
         if loco.grounded.is_some()
             && let Some(h) = hit.filter(|h| climbs(h, d))
+            && let Some(ahead) = step_over(params, p, &h, feet, d, probe)
+        {
+            // A short unwalkable bit (a kerb's bevel, a rock's lip) with
+            // walkable ground ahead within `step_up`: stepped over like a
+            // ledge (UE's StepUp; OpenMW's stepper skips tiny unwalkable
+            // slopes). The feet ride its height, the ground ahead's normal.
+            hit = Some(GroundHit { normal: ahead.normal, ..h });
+        } else if loco.grounded.is_some()
+            && let Some(h) = hit.filter(|h| climbs(h, d))
         {
             // Too steep to climb: keep only the motion along the slope's contour.
             let n = horizontal(h.normal).normalize_or_zero();
@@ -642,6 +651,24 @@ fn finish_free(it: &mut MoveInput<'_>, p: &Pending, free: Free, cast: Cast, prob
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);
     loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, &params.springs);
     loco.moved = p.frame.delta_to(&loco.frame());
+}
+
+/// Walkable ground one capsule radius past `feet` along the motion `d`,
+/// found by the step's own ground cast (so within `step_up` above the start
+/// and `step_down` below), when the unwalkable hit `h` is no higher than
+/// `step_up` either: the steep bit is short and can be stepped over.
+fn step_over(params: &MoverParams, p: &Pending, h: &GroundHit, feet: WorldPos, d: Vec3, probe: &dyn GroundProbe) -> Option<GroundHit> {
+    let dir = d.normalize_or_zero();
+    if dir == Vec3::ZERO || rise(params, h) > params.step_up {
+        return None;
+    }
+    let query = p.probe?;
+    let origin = feet.offset(dir * params.radius + Vec3::Y * (params.step_up + params.ground_radius));
+    // The ground ahead stands at least as high as the steep bit (a bevel or
+    // lip up onto a ledge): ground below it is under the slope, not past it.
+    probe
+        .probe_one(ProbeQuery { origin, ..query })
+        .filter(|a| a.walkable(params.min_normal_y()) && rise(params, a) >= rise(params, h) - 0.02)
 }
 
 /// How far above the probed feet position the hit ground is.

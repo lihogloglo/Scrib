@@ -1333,3 +1333,60 @@ mod gltf {
         assert!(again.product(&ProductKey::new(steps::SKELETON_COOK, "chars/a.fbx")).is_err());
     }
 }
+
+/// A keyframed sidestep that skates (walkers3): the stance foot drifts at
+/// 0.5 m/s while the body travels 1.4 m/s, with a 2 cm wobble. Measured
+/// against the ground alone it never plants (the old cook: 0 of the
+/// cycle); measured against the slowest low foot each foot plants for its
+/// half of the cycle, once per cycle.
+#[test]
+fn skating_keyframed_steps_still_plant_each_foot() {
+    let joints = [j("root", None, [0.0; 3]), j("foot_l", Some(0), [0.1, 0.0, 0.0]), j("foot_r", Some(0), [-0.1, 0.0, 0.0])];
+    let s = Skeleton::with_rules(&joints, &SkeletonRules::default()).unwrap().0;
+    let (travel, drift) = (1.4f32, 0.5f32);
+    // World z and height of a foot at cycle phase `u` (0..1): stance then swing.
+    let foot = move |u: f32| {
+        let u = u.rem_euclid(1.0);
+        if u < 0.5 {
+            (drift * u, 0.02 * (std::f32::consts::PI * u / 0.5).sin())
+        } else {
+            let k = (u - 0.5) / 0.5;
+            (drift * 0.5 + (travel - drift * 0.5) * k, 0.12 * (std::f32::consts::PI * k).sin())
+        }
+    };
+    let samples = 61;
+    let times: Vec<f32> = (0..samples).map(|i| i as f32 / (samples - 1) as f32).collect();
+    let track = |phase: f32, x: f32| {
+        let values = times
+            .iter()
+            .map(|&t| {
+                let (z, y) = foot(t + phase);
+                // The cycle start of the shifted foot is `phase` cycles behind.
+                let z = z + travel * ((t + phase).floor()) - travel * t;
+                Vec3::new(x, y, z)
+            })
+            .collect();
+        Curve::linear(times.clone(), values)
+    };
+    let src = SourceClip {
+        name: "sidestep".into(),
+        duration: 1.0,
+        tracks: vec![
+            SourceTrack { joint: "root".into(), translation: Some(Curve::linear(vec![0.0, 1.0], vec![Vec3::ZERO, Vec3::Z * travel])), ..SourceTrack::default() },
+            SourceTrack { joint: "foot_l".into(), translation: Some(track(0.0, 0.1)), ..SourceTrack::default() },
+            SourceTrack { joint: "foot_r".into(), translation: Some(track(0.5, -0.1)), ..SourceTrack::default() },
+        ],
+        ..SourceClip::default()
+    };
+    // The feet hang 0.1 m off the root: thresholds for a 0.9 m leg in those units.
+    let contacts = ContactRules { height: 0.06 * 9.0, speed: 0.35 * 9.0, ..ContactRules::default() };
+    let clip = cook(&s, &src, &ClipRules { looping: Looping::Whole, contacts, ..ClipRules::default() });
+    for name in ["contact.foot_l", "contact.foot_r"] {
+        let v = &clip.curves[clip.find_curve(name).unwrap_or_else(|| panic!("{name}"))].values;
+        let planted = v.iter().filter(|&&x| x > 0.5).count() as f32 / v.len() as f32;
+        assert!((0.35..0.6).contains(&planted), "{name}: planted {planted:.2} of the cycle: {v:?}");
+    }
+    for side in ["down.foot_l", "down.foot_r"] {
+        assert_eq!(clip.markers.iter().filter(|m| m.name == side).count(), 1, "{side}: {:?}", clip.markers);
+    }
+}

@@ -298,7 +298,8 @@ impl Step for AnimCookStep {
     }
     fn version(&self) -> u32 {
         // 3: rate search skips rates whose resampling error can't pass, guessed bit search (animcook).
-        3
+        // 4: contacts from height and speed over the ground with hysteresis, stance ends at heel-off (walkers3/4).
+        4
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;

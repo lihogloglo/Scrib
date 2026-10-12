@@ -1146,3 +1146,40 @@ fn a0_update_timing() {
 
 mod optional;
 mod slot;
+
+/// A masked override layer blends a leg's contact curve by the mask weight
+/// of the leg's foot (curve "linked bones"): an upper-body overlay keeps
+/// the base's contacts, a layer over the legs takes its own.
+#[test]
+fn masked_layers_keep_contacts_of_joints_they_leave_alone() {
+    let graph = |mask: &str| {
+        format!(
+            r#"(
+    masks: {{
+        "upper": (rules: [(joint: Joint("chest"), weight: 1.0)]),
+        "legs": (rules: [(joint: Joint("hips"), weight: 1.0)]),
+    }},
+    nodes: {{"w": Clip(clip: "walk"), "r": Clip(clip: "run")}},
+    layers: [(node: "w"), (node: "r", mask: "{mask}")],
+    legs: [(name: "l", hip: Joint("thigh_l"), knee: Joint("shin_l"), foot: Joint("foot_l"), contact: "contact.foot_l")],
+)"#
+        )
+    };
+    let base = Rig::new(r#"(nodes: {"w": Clip(clip: "walk")}, layers: [(node: "w")])"#);
+    let (upper, legs) = (Rig::new(&graph("upper")), Rig::new(&graph("legs")));
+    let run = Rig::new(r#"(nodes: {"r": Clip(clip: "run")}, layers: [(node: "r")])"#);
+    let mut sims: Vec<(&Rig, GraphInstance, GraphOutput)> =
+        [&base, &upper, &legs, &run].into_iter().map(|r| (r, GraphInstance::new(&r.binding()), GraphOutput::new(&r.graph))).collect();
+    let mut differ = 0;
+    for _ in 0..60 {
+        let mut c = Vec::new();
+        for (rig, inst, out) in &mut sims {
+            step(rig, inst, out, 1.0 / 60.0);
+            c.push(out.curves[rig.graph.curve("contact.foot_l").unwrap()]);
+        }
+        assert!((c[1] - c[0]).abs() < 1e-6, "upper-body layer changed the walk's contact: {c:?}");
+        assert!((c[2] - c[3]).abs() < 1e-6, "a layer over the legs brings its own contact: {c:?}");
+        differ += usize::from((c[0] - c[3]).abs() > 0.5);
+    }
+    assert!(differ > 5, "walk and run contacts differ somewhere");
+}

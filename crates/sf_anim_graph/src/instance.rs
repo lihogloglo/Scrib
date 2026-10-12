@@ -20,7 +20,7 @@ use std::sync::Arc;
 use glam::{Affine3A, Quat, Vec2, Vec3};
 use sf_anim::spring::critical_spring;
 use sf_anim::{
-    BlendLayer, Clip, EventEdge, FiredEvent, JointMask, LocalPose, ModelPose, RootDelta, RootMotionMode, Skeleton, apply_additive, blend_in_place,
+    BlendLayer, Clip, EventEdge, FiredEvent, JointMask, JointWeights, LocalPose, ModelPose, RootDelta, RootMotionMode, Skeleton, apply_additive, blend_in_place,
     blend_layers, local_to_model,
 };
 
@@ -1410,6 +1410,24 @@ fn lerp_curves(a: &mut [f32], b: &[f32], t: f32) {
     }
 }
 
+/// [`lerp_curves`] through a joint mask: a curve linked to a joint
+/// ([`CompiledGraph::curve_joints`]) blends by `t` times that joint's mask
+/// weight, so a masked layer never overrides curves of joints it leaves
+/// alone (an upper-body idle over a walk keeps the walk's foot contacts).
+fn lerp_curves_masked(a: &mut [f32], b: &[f32], t: f32, mask: Option<&JointWeights>, joints: &[Option<u16>]) {
+    let Some(mask) = mask else {
+        lerp_curves(a, b, t);
+        return;
+    };
+    for (i, (x, &y)) in a.iter_mut().zip(b).enumerate() {
+        let w = joints.get(i).copied().flatten().map_or(t, |j| t * mask.get(usize::from(j)));
+        if y.is_nan() || w <= EPS {
+            continue;
+        }
+        *x = if x.is_nan() { y } else { *x + (y - *x) * w };
+    }
+}
+
 /// Combines frames `d+1 .. d+1+weights.len()` into frame `d` with weights.
 fn combine(ecx: &EvalCx<'_>, s: &mut Scratch, d: usize, weights: &[f32], additive: bool) {
     let (lo, hi) = s.frames.split_at_mut(d + 1);
@@ -1551,7 +1569,7 @@ fn eval(ecx: &EvalCx<'_>, s: &mut Scratch, node: u32, d: usize) {
                             blend_in_place(&mut x.pose, &y.pose, lw, mw);
                         }
                         let rw = mw.map_or(1.0, |m| m.get(usize::from(g.root_joint)));
-                        lerp_curves(&mut x.curves, &y.curves, lw);
+                        lerp_curves_masked(&mut x.curves, &y.curves, lw, mw, g.curve_joints());
                         x.root = lerp_root(x.root, y.root, lw * rw);
                         x.drive += (y.drive - x.drive) * lw * rw;
                     }
@@ -1624,7 +1642,7 @@ fn eval(ecx: &EvalCx<'_>, s: &mut Scratch, node: u32, d: usize) {
                 if ecx.posed {
                     blend_in_place(&mut x.pose, &y.pose, 1.0, Some(mw));
                 }
-                lerp_curves(&mut x.curves, &y.curves, 1.0);
+                lerp_curves_masked(&mut x.curves, &y.curves, 1.0, Some(mw), g.curve_joints());
                 x.root = lerp_root(x.root, y.root, rw);
                 x.drive += (y.drive - x.drive) * rw;
             }

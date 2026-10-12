@@ -114,17 +114,26 @@ pub struct ContactRules {
     /// given to [`cook_clip_for`], else every joint tagged `foot`, `claw`,
     /// `hoof` or `contact` ([`tag::CONTACTS`]).
     pub feet: Vec<String>,
-    /// Height above the joint's lowest point in the clip, in leg lengths.
+    /// Height above the joint's lowest point in the clip below which a
+    /// foot may plant, in leg lengths.
     pub height: f32,
-    /// Ground speed below which a low foot is planted, leg lengths per
-    /// second. In-place clips (no ground travel) use height alone.
+    /// Speed over the ground below which a low foot plants, leg lengths
+    /// per second. In-place clips measure it against their estimated
+    /// ground velocity (the planted feet's slide).
     pub speed: f32,
+    /// Hysteresis: a planted foot stays planted until it rises above
+    /// `height × release` or moves faster than `speed × release`.
+    pub release: f32,
+    /// Heel-off, leg lengths per second: a stance ends where its foot's
+    /// last rise faster than this begins (in the stance's second half).
+    pub lift: f32,
 }
 
 impl Default for ContactRules {
-    /// 6% and 35% of the leg: about 5 cm and 0.3 m/s on a 0.9 m human leg.
+    /// 6% and 35% of the leg to plant, twice that to lift: about 5 cm and
+    /// 0.3 m/s (11 cm, 0.63 m/s) on a 0.9 m human leg; heel-off from 5 cm/s up.
     fn default() -> Self {
-        Self { enabled: true, feet: Vec::new(), height: 0.06, speed: 0.35 }
+        Self { enabled: true, feet: Vec::new(), height: 0.06, speed: 0.35, release: 2.0, lift: 0.06 }
     }
 }
 
@@ -1097,8 +1106,17 @@ fn root_meta(clip: &mut Clip) {
 }
 
 /// Contact curves (`contact.<joint>`) and touch-down markers
-/// (`down.<joint>`) from the source motion. Also estimates the ground speed
-/// of in-place clips from their planted feet.
+/// (`down.<joint>`) from the source motion, the way motion-matching
+/// pipelines label contacts: a foot is planted while it is low (height
+/// over its lowest point in the clip) and still relative to the ground
+/// (its velocity in the clip's space plus the ground velocity), with
+/// hysteresis (a Schmitt trigger: stricter thresholds to plant than to
+/// stay planted) so a rolling heel or a slow lift doesn't flicker.
+///
+/// Travelling clips carry the ground in their root motion (ground velocity
+/// zero). In-place clips slide their planted feet back at the ground
+/// speed: it is estimated from the low feet (component median, then the
+/// mean of those that move with it) and written to the clip's meta.
 fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[Trs], clip: &mut Clip, rules: &ContactRules) {
     let joints = skeleton.len();
     let n = clip.frame_count as usize;
@@ -1126,30 +1144,71 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
     };
     let in_place = travel < 0.1 * clip.duration.max(f32::EPSILON);
     let dt = if clip.rate > 0.0 { 1.0 / clip.rate } else { 1.0 };
+    // Per foot: height over its floor and horizontal velocity, per frame.
+    let loop_frames = clip.loop_range.map(|(a, b)| {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let at = |t: f32| ((t / dt).round() as usize).min(n - 1);
+        (at(a), at(b))
+    });
+    let cycle = loop_frames.filter(|(a, b)| a < b).map_or(0..n, |(a, b)| a..b + 1);
+    let heights: Vec<Vec<f32>> = positions
+        .iter()
+        .map(|p| {
+            // The floor of the frames that repeat: a looping group's intro and
+            // outro may stand lower than its cycle ever does.
+            let floor = p[cycle.clone()].iter().map(|v| v.y).fold(f32::INFINITY, f32::min);
+            p.iter().map(|v| v.y - floor).collect()
+        })
+        .collect();
+    // Per foot and frame: horizontal velocity, and vertical (a planted foot
+    // rising is lifting: heel-off).
+    let (velocities, rises): (Vec<Vec<Vec3>>, Vec<Vec<f32>>) = positions.iter().map(|p| foot_velocities(p, dt)).unzip();
+    let release = rules.release.max(1.0);
+    let ground = if in_place { ground_velocity(&heights, &velocities, &leg_lengths, rules, release) } else { Vec3::ZERO };
+    // Per frame, the stance reference: the slowest low foot over the ground.
+    // Keyframed sources skate (a planted foot drifts at a fraction of the
+    // travel speed); measuring every foot against the one that moves least
+    // keeps that foot planted and the swinging one lifted, while clean
+    // motion (a still reference) is measured against the ground itself.
+    let reference: Vec<Vec3> = (0..n)
+        .map(|f| {
+            (0..feet.len())
+                .filter(|&i| heights[i][f] < rules.height * release * leg_lengths[i])
+                .map(|i| velocities[i][f] + ground)
+                .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+                .unwrap_or(Vec3::ZERO)
+        })
+        .collect();
     let mut planted_velocity = Vec3::ZERO;
     let mut planted_count = 0u32;
     for (i, &foot) in feet.iter().enumerate() {
-        let p = &positions[i];
-        let floor = p.iter().map(|v| v.y).fold(f32::INFINITY, f32::min);
-        let velocity = |f: usize| {
-            let (a, b) = (f.saturating_sub(1), (f + 1).min(n - 1));
-            #[allow(clippy::cast_precision_loss)]
-            let span = (b - a) as f32 * dt;
-            let d = p[b] - p[a];
-            Vec3::new(d.x, 0.0, d.z) / span
-        };
-        let (height, speed) = (rules.height * leg_lengths[i], rules.speed * leg_lengths[i]);
-        let values: Vec<f32> = (0..n)
-            .map(|f| {
-                let low = p[f].y - floor < height;
-                let planted = low && (in_place || velocity(f).length() < speed);
-                if planted && in_place {
-                    planted_velocity += velocity(f);
-                    planted_count += 1;
-                }
-                if planted { 1.0 } else { 0.0 }
-            })
-            .collect();
+        let (h, v, rise) = (&heights[i], &velocities[i], &rises[i]);
+        let (height, speed, lift) = (rules.height * leg_lengths[i], rules.speed * leg_lengths[i], rules.lift * leg_lengths[i]);
+        let world_speed = |f: usize| (v[f] + ground - reference[f]).length();
+        let enter = |f: usize| h[f] < height && world_speed(f) < speed;
+        let stay = |f: usize| h[f] < height * release && world_speed(f) < speed * release;
+        let mut planted = vec![false; n];
+        let mut state = enter(0);
+        for (f, p) in planted.iter_mut().enumerate() {
+            state = if state { stay(f) } else { enter(f) };
+            *p = state;
+        }
+        // A loop's first frames follow its last: run the trigger round once more.
+        if let Some((a, b)) = loop_frames.filter(|(a, b)| a < b) {
+            let mut state = planted[b];
+            for (f, p) in planted.iter_mut().enumerate().take(b + 1).skip(a) {
+                state = if state { stay(f) } else { enter(f) };
+                *p = state;
+            }
+        }
+        trim_heel_off(&mut planted, rise, lift);
+        if in_place {
+            for f in (0..n).filter(|&f| planted[f]) {
+                planted_velocity += v[f];
+                planted_count += 1;
+            }
+        }
+        let values: Vec<f32> = planted.iter().map(|&p| if p { 1.0 } else { 0.0 }).collect();
         let name = skeleton.name(foot);
         let looping = clip.loop_range.is_some();
         for f in 0..n {
@@ -1169,4 +1228,75 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
         clip.meta.average_velocity = v;
         clip.meta.cycle_distance = v.length() * clip.loop_range.map_or(clip.duration, |(a, b)| b - a);
     }
+}
+
+/// One foot's per-frame velocity by central differences: horizontal, and
+/// vertical.
+fn foot_velocities(p: &[Vec3], dt: f32) -> (Vec<Vec3>, Vec<f32>) {
+    let n = p.len();
+    (0..n)
+        .map(|f| {
+            let (a, b) = (f.saturating_sub(1), (f + 1).min(n - 1));
+            #[allow(clippy::cast_precision_loss)]
+            let d = (p[b] - p[a]) / ((b - a).max(1) as f32 * dt);
+            (Vec3::new(d.x, 0.0, d.z), d.y)
+        })
+        .unzip()
+}
+
+/// Heel-off: a stance ends where the foot's last rise before lifting
+/// begins (offline labelling sees the whole stance), so the lock doesn't
+/// hold the heel down while the authored foot peels off (a heel held into
+/// heel-off overreaches uphill). Rise jitter mid-stance doesn't split the
+/// stance: only the rise faster than `lift` that runs into the lift is
+/// trimmed, and only in the stance's second half, where heel-off falls.
+fn trim_heel_off(planted: &mut [bool], rise: &[f32], lift: f32) {
+    for f in 1..planted.len() {
+        if planted[f - 1] && !planted[f] {
+            let start = (0..f).rev().find(|&g| !planted[g]).map_or(0, |g| g + 1);
+            let keep = start + (f - start).div_ceil(2);
+            let mut g = f - 1;
+            while g >= keep && g > 0 && rise[g] >= lift {
+                planted[g] = false;
+                g -= 1;
+            }
+        }
+    }
+}
+
+/// The ground velocity of an in-place clip, in its space: its planted feet
+/// slide back at it. The component median of the low feet's velocities
+/// (robust to the swing frames among them), then the mean of the low feet
+/// moving with it.
+fn ground_velocity(heights: &[Vec<f32>], velocities: &[Vec<Vec3>], leg_lengths: &[f32], rules: &ContactRules, release: f32) -> Vec3 {
+    let low = |i: usize, f: usize| heights[i][f] < rules.height * release * leg_lengths[i];
+    let mut xs = Vec::new();
+    let mut zs = Vec::new();
+    for (i, v) in velocities.iter().enumerate() {
+        for (f, v) in v.iter().enumerate() {
+            if low(i, f) {
+                xs.push(v.x);
+                zs.push(v.z);
+            }
+        }
+    }
+    if xs.is_empty() {
+        return Vec3::ZERO;
+    }
+    let median = |s: &mut Vec<f32>| {
+        s.sort_by(f32::total_cmp);
+        s[s.len() / 2]
+    };
+    let guess = Vec3::new(-median(&mut xs), 0.0, -median(&mut zs));
+    let (mut sum, mut count) = (Vec3::ZERO, 0u32);
+    for (i, v) in velocities.iter().enumerate() {
+        for (f, v) in v.iter().enumerate() {
+            if low(i, f) && (*v + guess).length() < rules.speed * release * leg_lengths[i] {
+                sum += *v;
+                count += 1;
+            }
+        }
+    }
+    #[allow(clippy::cast_precision_loss)]
+    if count == 0 { guess } else { -sum / count as f32 }
 }
