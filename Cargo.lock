@@ -6324,6 +6324,7 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "sf_controller",
+ "sf_controller_bevy",
  "sf_coords",
  "sf_diag_bevy",
  "sf_physics",
@@ -6336,9 +6337,14 @@ dependencies = [
 name = "sf_records"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "indexmap",
+ "postcard",
+ "ron",
+ "serde",
  "smallvec",
  "thiserror 2.0.21",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
