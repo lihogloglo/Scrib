@@ -24,7 +24,12 @@ pub const SHAPE_OCTAVES: [i64; 3] = [4, 8, 16];
 pub const DETAIL_OCTAVES: [i64; 3] = [4, 8, 16];
 const COVER_OCTAVES: [i64; 4] = [4, 8, 16, 32];
 const TYPE_OCTAVES: [i64; 3] = [2, 4, 8];
-const STORM_PERIOD: i64 = 6;
+// Storm cells (cumulonimbus) are a few km wide: 3 cells per weather tile.
+const STORM_PERIOD: i64 = 3;
+const CIRRUS_OCTAVES: [i64; 3] = [4, 8, 16];
+const CIRRUS_WARP_OCTAVES: [i64; 2] = [2, 4];
+/// Cirrus streaks run along X: the field is squeezed this many times across them.
+const CIRRUS_STRETCH: f32 = 6.0;
 
 /// The three textures, as raw texel bytes.
 #[derive(Clone, Debug)]
@@ -241,11 +246,14 @@ pub fn detail_volume(seed: u64) -> Vec<u8> {
 }
 
 /// The weather-noise map: R coverage field (contrast-stretched so a
-/// coverage threshold opens real holes), G type field, B storm cells.
+/// coverage threshold opens real holes), G type field, B storm cells,
+/// A cirrus streaks.
 pub fn weather_noise(seed: u64) -> Vec<u8> {
     let cover: Vec<Lattice> = seeds(seed, 0x27D4_EB2F, &COVER_OCTAVES).map(|(p, s)| Lattice::new(p, s)).collect();
     let kind: Vec<Lattice> = seeds(seed ^ 0xABCD, 0x1656_67B1, &TYPE_OCTAVES).map(|(p, s)| Lattice::new(p, s)).collect();
     let storm = Cells::new(STORM_PERIOD, seed ^ 0x5707);
+    let streak: Vec<Lattice> = seeds(seed ^ 0xC1C1, 0x2545_F491, &CIRRUS_OCTAVES).map(|(p, s)| Lattice::new(p, s)).collect();
+    let warp: Vec<Lattice> = seeds(seed ^ 0x3A3A, 0x9E37_79B9, &CIRRUS_WARP_OCTAVES).map(|(p, s)| Lattice::new(p, s)).collect();
     let n = WEATHER_SIZE as usize;
     let mut out = vec![0u8; n * n * 4];
     out.par_chunks_mut(n * 4).enumerate().for_each(|(iy, row)| {
@@ -256,11 +264,16 @@ pub fn weather_noise(seed: u64) -> Vec<u8> {
             let c = remap(fbm(&cover, q), 0.3, 0.72, 0.0, 1.0);
             let k = fbm(&kind, q);
             let s = 1.0 - storm.distance(q);
+            // Cirrus fibres along X, bent by a periodic warp (the squeeze is a
+            // whole number, so the field still tiles).
+            let bend = fbm(&warp, Vec3::new(p.x, p.y, 0.5)) - 0.5;
+            let fibre = Vec3::new(p.x, (p.y + bend * 0.3) * CIRRUS_STRETCH, 0.25);
+            let ci = remap(fbm(&streak, fibre), 0.35, 0.72, 0.0, 1.0);
             let i = ix * 4;
             row[i] = unorm(c);
             row[i + 1] = unorm(k);
             row[i + 2] = unorm(s * s);
-            row[i + 3] = 255;
+            row[i + 3] = unorm(ci);
         }
     });
     out

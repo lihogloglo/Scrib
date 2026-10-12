@@ -54,6 +54,13 @@ struct Clouds {
     shadow_y: vec3<f32>,
     light_dir: vec3<f32>,
     prev_clip_from_world: mat4x4<f32>,
+    weather2_off: vec2<f32>,
+    cirrus_off: vec2<f32>,
+    cirrus_tile: f32,
+    cirrus: f32,
+    cirrus_height: f32,
+    cirrus_depth: f32,
+    rise: f32,
 };
 
 const PI: f32 = 3.14159265;
@@ -192,4 +199,17 @@ fn sub_pixel(frame: u32) -> vec2<u32> {
 fn ign(p: vec2<f32>, frame: u32) -> f32 {
     let q = p + 5.588238 * f32(frame % 64u);
     return fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))));
+}
+
+// `sf_atmos::evolve_field`: the cloud field from the weather map's two
+// drifting octaves, contrast-restored.
+fn evolve_field(a: f32, b: f32) -> f32 {
+    return saturate((mix(a, b, 0.35) - 0.5) * 1.35 + 0.5);
+}
+
+// `sf_atmos::cirrus_at`: high-layer density from its streak field and cover.
+fn cirrus_at(field: f32, cover: f32) -> f32 {
+    let c = saturate(cover);
+    let t = 1.1 - 1.2 * c;
+    return ramp(t - 0.25, t + 0.25, field) * min(c * 4.0, 1.0);
 }

@@ -27,7 +27,7 @@ pub mod settings;
 #[cfg(test)]
 mod tests;
 
-pub use density::{combine_density, erode_density, height_gradient, weather_at, WeatherSample};
+pub use density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at, WeatherSample};
 pub use noise::{NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 pub use scroll::CloudScroll;
 pub use settings::{CloudLook, CloudPreset, CloudQuality, CloudSettings, CloudWeather};

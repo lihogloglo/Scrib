@@ -12,7 +12,7 @@
 //!      cloud distance, wind and floating-origin shifts; neighborhood clamp);
 //!   3. a depth-aware upsample composited over the sky and the opaque scene,
 //!      after Bevy's `render_sky` and before transparents.
-//! - Cloud shadows: a 512² map along the sun direction, given to the light
+//! - Cloud shadows: a 1024² map along the sun direction, given to the light
 //!   with [`CloudShadowLight`] as a tiled `DirectionalLightTexture` that
 //!   follows the camera (every PBR material receives it).
 //! - Floating origin: the app reports the absolute position of the
@@ -32,7 +32,7 @@ use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{embedded_asset, Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
 use bevy_ecs::prelude::*;
-use bevy_image::Image;
+use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy_light::{DirectionalLight, DirectionalLightTexture};
 use bevy_math::{DVec3, Vec2, Vec3};
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -177,6 +177,15 @@ fn create_shadow_image(mut images: ResMut<Assets<Image>>, mut cloud_images: ResM
     let mut image = Image::new_target_texture(size, size, TextureFormat::R8Unorm, None);
     image.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
     image.data = Some(vec![255; (size * size) as usize]);
+    // Bevy samples light textures with the first decal image's sampler:
+    // bilinear (soft but crisp edges at 16 m texels) and repeating (tiled).
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..ImageSamplerDescriptor::default()
+    });
     cloud_images.shadow = images.add(image);
 }
 
@@ -222,7 +231,7 @@ fn drive(
 ) {
     let s = clouds.settings;
     let dt = time.delta_secs_f64();
-    scroll.0.advance(s.weather.wind, dt);
+    scroll.0.advance(s.weather.wind, s.look.evolve, dt, s.look.shape_tile);
     let camera = cameras.iter().find(|(_, c)| c.is_active).map(|(t, _)| t.translation());
     let active = clouds.enabled && camera.is_some() && images.noise.is_some();
 

@@ -148,6 +148,13 @@ struct CloudUniform {
     shadow_y: Vec3,
     light_dir: Vec3,
     prev_clip_from_world: Mat4,
+    weather2_off: Vec2,
+    cirrus_off: Vec2,
+    cirrus_tile: f32,
+    cirrus: f32,
+    cirrus_height: f32,
+    cirrus_depth: f32,
+    rise: f32,
 }
 
 // -- pipelines -----------------------------------------------------------------
@@ -482,6 +489,13 @@ fn prepare_views(
             shadow_y: shadow.map_or(Vec3::Y, |b| b.y),
             light_dir: shadow.map_or(Vec3::Y, |b| b.light_dir),
             prev_clip_from_world: h.prev_clip_from_world,
+            weather2_off: frame.offsets.weather2,
+            cirrus_off: frame.offsets.cirrus,
+            cirrus_tile: s.look.cirrus_tile,
+            cirrus: s.weather.cirrus,
+            cirrus_height: s.weather.cirrus_height,
+            cirrus_depth: s.look.cirrus_depth,
+            rise: frame.offsets.rise,
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;

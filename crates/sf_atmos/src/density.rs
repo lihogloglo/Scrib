@@ -72,3 +72,22 @@ pub fn weather_at(noise: [f32; 4], w: &CloudWeather) -> WeatherSample {
     let wetness = (w.wetness + storm * 0.5).clamp(0.0, 1.0);
     WeatherSample { coverage, kind, wetness }
 }
+
+/// Weight of the weather map's second (evolution) octave in the cloud field.
+pub const EVOLVE_MIX: f32 = 0.35;
+
+/// The cloud field from the weather map's two drifting octaves (R of each):
+/// a blend, contrast-restored so the coverage threshold keeps its meaning
+/// (two independent fields blended 0.65/0.35 have ~0.74 of the spread).
+pub fn evolve_field(a: f32, b: f32) -> f32 {
+    let m = a + (b - a) * EVOLVE_MIX;
+    ((m - 0.5) * 1.35 + 0.5).clamp(0.0, 1.0)
+}
+
+/// High (cirrus) layer density, 0..1, from its streak field and the
+/// weather's `cirrus` cover: a soft threshold that thins to nothing at 0.
+pub fn cirrus_at(field: f32, cover: f32) -> f32 {
+    let cover = cover.clamp(0.0, 1.0);
+    let t = 1.1 - 1.2 * cover;
+    ramp(t - 0.25, t + 0.25, field) * (cover * 4.0).min(1.0)
+}

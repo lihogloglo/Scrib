@@ -2,7 +2,7 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::density::{combine_density, erode_density, height_gradient, weather_at};
+use crate::density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at};
 use crate::noise::{weather_noise, worley_fbm, Cells, Lattice, DETAIL_OCTAVES, DETAIL_SIZE, SHAPE_OCTAVES, SHAPE_SIZE, WEATHER_SIZE};
 use crate::scroll::{CloudScroll, SCROLL_PERIOD};
 use crate::settings::{CloudLook, CloudPreset, CloudWeather};
@@ -62,7 +62,7 @@ fn each_texture_wraps_in_its_own_tile() {
     let wind = Vec2::new(370.0, -110.0);
     let mut travelled = [0.0f64; 2];
     for i in 0..400 {
-        s.advance(wind, 1.0);
+        s.advance(wind, 0.0, 1.0, look.shape_tile);
         travelled[0] += 370.0;
         travelled[1] -= 110.0;
         let o = s.offsets([0.0, 0.0], &look);
@@ -79,7 +79,7 @@ fn each_texture_wraps_in_its_own_tile() {
 #[test]
 fn origin_shift_keeps_noise_still() {
     let look = CloudLook::default();
-    let s = CloudScroll { travel: [1234.5, 77.25] };
+    let s = CloudScroll { travel: [1234.5, 77.25], ..CloudScroll::default() };
     let rel = 913.0f64;
     for cells in [1i64, 7, 64, 1000, -333] {
         let shift = cells as f64 * 256.0;
@@ -147,7 +147,7 @@ fn density_profile_and_threshold() {
 #[test]
 fn presets_parse_and_blend() {
     assert_eq!(CloudPreset::parse("Overcast"), Some(CloudPreset::Overcast));
-    assert_eq!(CloudPreset::parse("cumulus"), Some(CloudPreset::Fair));
+    assert_eq!(CloudPreset::parse("cumulus"), Some(CloudPreset::Cumulus));
     assert_eq!(CloudPreset::parse("fog"), None);
     let a = CloudWeather::preset(CloudPreset::Clear);
     let b = CloudWeather::preset(CloudPreset::Storm);
@@ -157,4 +157,74 @@ fn presets_parse_and_blend() {
     assert!(m.coverage > a.coverage && m.coverage < b.coverage);
     assert!(a.mean_cover() < b.mean_cover());
     assert!((a.scaled_heights(0.5).base - a.base * 0.5).abs() < 1e-3);
+}
+
+/// The evolution blend keeps the field's range and order, and a second
+/// octave that differs changes the result (the field re-forms).
+#[test]
+fn evolution_blend_keeps_range() {
+    for a in [0.0f32, 0.2, 0.5, 0.8, 1.0] {
+        assert!((evolve_field(a, a) - a).abs() < 0.2 + 1e-6, "same field drifts: {a}");
+        let mut last = -1.0;
+        for b in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+            let f = evolve_field(a, b);
+            assert!((0.0..=1.0).contains(&f) && f >= last);
+            last = f;
+        }
+    }
+    assert!((evolve_field(0.6, 0.0) - evolve_field(0.6, 1.0)).abs() > 0.3);
+}
+
+/// The two weather octaves and the high layer drift apart (evolution and
+/// parallax), and the billows rise; nothing moves without wind.
+#[test]
+fn layers_drift_apart() {
+    let look = CloudLook::default();
+    let mut s = CloudScroll::default();
+    s.advance(Vec2::ZERO, look.evolve, 100.0, look.shape_tile);
+    assert_eq!(s, CloudScroll::default());
+    for _ in 0..60 {
+        s.advance(Vec2::new(10.0, 0.0), look.evolve, 1.0, look.shape_tile);
+    }
+    assert!((s.travel[0] - 600.0).abs() < 1e-6);
+    assert!((s.travel[0] - s.evolve[0]).abs() > 100.0, "no evolution drift");
+    assert!((s.cirrus[0] - 600.0 * f64::from(crate::scroll::CIRRUS_WIND)).abs() < 1e-6);
+    assert!(s.rise > 0.0);
+}
+
+/// Cirrus: none at zero cover, more with cover, and the noise channel has
+/// streaks (contrast) to threshold.
+#[test]
+fn cirrus_layer() {
+    for f in [0.0f32, 0.5, 1.0] {
+        assert!(cirrus_at(f, 0.0) < 1e-6);
+    }
+    assert!(cirrus_at(0.6, 0.8) > cirrus_at(0.6, 0.2));
+    let map = weather_noise(7);
+    let (lo, hi) = map.chunks(4).fold((255u8, 0u8), |(lo, hi), t| (lo.min(t[3]), hi.max(t[3])));
+    assert!(hi - lo > 150, "cirrus channel flat: {lo}..{hi}");
+}
+
+/// The genera are distinct layers: low cumulus/stratocumulus, mid alto-,
+/// a deep storm, and cirrus only up high. Scaled looks keep tiles that
+/// divide the phase period.
+#[test]
+fn genera_and_scaling() {
+    let w = |p| CloudWeather::preset(p);
+    assert!(w(CloudPreset::Altocumulus).base > 2.0 * w(CloudPreset::Fair).base);
+    assert!(w(CloudPreset::Storm).thickness > 2.5 * w(CloudPreset::Cumulus).thickness);
+    assert!(w(CloudPreset::Cirrus).coverage < 1e-6 && w(CloudPreset::Cirrus).cirrus > 0.5);
+    assert!(w(CloudPreset::Overcast).mean_cover() > 0.9 && w(CloudPreset::Clear).mean_cover() < 0.05);
+    assert_eq!(CloudPreset::ALL.len(), 9);
+    for (name, p) in CloudPreset::ALL {
+        assert_eq!(CloudPreset::parse(name), Some(p));
+        assert_eq!(p.name(), name);
+    }
+    let look = CloudLook::default().scaled(0.5);
+    assert!((look.weather_tile - 4_096.0).abs() < 1e-3 && (look.shape_tile - 1_024.0).abs() < 1e-3);
+    for t in [look.weather_tile, look.shape_tile, look.detail_tile, look.cirrus_tile, CloudLook::default().scaled(0.3).weather_tile] {
+        assert!((SCROLL_PERIOD / f64::from(t)).fract().abs() < 1e-9, "tile {t}");
+    }
+    let h = w(CloudPreset::Fair).scaled_heights(0.5);
+    assert!((h.cirrus_height - 4_000.0).abs() < 1e-3);
 }

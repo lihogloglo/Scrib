@@ -18,8 +18,8 @@ import bevy_pbr::atmosphere::{
     },
     bruneton_functions::sample_transmittance_lut_segment,
 };
-import super::cloud_common::{PI, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign};
-import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density};
+import super::cloud_common::{PI, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
+import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density, cirrus_hit};
 
 @if(MULTISAMPLED)
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
@@ -78,7 +78,8 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     var out: TraceOutput;
     out.color = vec4(0.0, 0.0, 0.0, 1.0);
     out.dist = min(scene_t, clouds.far);
-    if end <= start {
+    let has_low = end > start;
+    if !has_low && clouds.cirrus <= 0.0 {
         return out;
     }
 
@@ -106,8 +107,8 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let ground_light = light_color * sample_transmittance_lut(clouds.inner_radius + 1.0, mu_l_ground) * max(mu_l_ground, 0.0);
     let bounce = clouds.ground_albedo * ground_light / PI * clouds.ground_bounce;
 
-    let span = end - start;
-    let n = u32(clamp(span / (clouds.thickness / 24.0), f32(clouds.min_steps), f32(clouds.max_steps)));
+    let span = max(end - start, 0.0);
+    let n = select(0u, u32(clamp(span / (clouds.thickness / 24.0), f32(clouds.min_steps), f32(clouds.max_steps))), has_low);
     let ds = span / f32(n);
     var t = start + ds * ign(half_px, clouds.frame);
 
@@ -149,26 +150,67 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         t += ds;
     }
 
+    // The march stops at T < 0.01. Snap that remainder to zero (Nubis): the
+    // HDR sun disk is ~10^5 times the sky, so 1 % of it behind "opaque"
+    // cloud would still burn through and bloom.
+    transmittance = saturate((transmittance - 0.01) / 0.99);
     let opacity = 1.0 - transmittance;
-    var dist = end;
+    var dist = select(min(scene_t, clouds.far), end, has_low);
     if weight_sum > 1e-4 {
         dist = dist_sum / weight_sum;
     }
 
-    // Aerial perspective between the camera and the cloud.
     let mu_v = dot(up, rd);
-    let air_t = sample_transmittance_lut_segment(r_cam, mu_v, dist);
-    let lut_max = settings.aerial_view_lut_max_distance;
-    var inscatter = sample_aerial_view_lut(uv, min(dist, lut_max));
-    if dist > lut_max {
-        // Past the LUT: the sky's in-scattering in proportion to the
-        // extinction reached (uniform in-scatter per unit extinction).
-        let sky = sample_sky_view_lut(r_cam, direction_world_to_atmosphere(rd));
-        let t_inf = sample_transmittance_lut(r_cam, mu_v);
-        let f = saturate((vec3(1.0) - air_t) / max(vec3(1.0) - t_inf, vec3(1e-4)));
-        inscatter = max(inscatter, sky * f);
+    let low_air = aerial(uv, r_cam, mu_v, rd, dist);
+    var color = luminance * low_air.transmittance + low_air.inscatter * opacity;
+
+    // High layer (cirrus), behind the low one: seen through what it lets
+    // pass. A thin ice sheet: single scattering with a strong forward lobe
+    // plus sky fill, alpha from the slant optical depth. Fades past the
+    // reach (no mips: far texels would shimmer) and never under the horizon.
+    let ci = cirrus_hit(ro, rd);
+    let below_horizon = ray_sphere(ro_c, rd, clouds.inner_radius).x > 0.0;
+    if ci.y > 0.0 && ci.x < scene_t && !below_horizon && transmittance > 0.0 {
+        let pc = ro + rd * ci.x - clouds.planet_center;
+        let r = length(pc);
+        let n_up = pc / r;
+        let slant = ci.y * clouds.cirrus_depth / max(abs(dot(n_up, rd)), 0.15);
+        let fade = 1.0 - ramp(clouds.far * 0.6, clouds.far * 1.6, ci.x);
+        let alpha = (1.0 - exp(-slant)) * fade;
+        let sun_t = sample_transmittance_lut(r, dot(n_up, l));
+        let ice_phase = mix(henyey_greenstein(0.2, cos_t), henyey_greenstein(0.8, cos_t), 0.5);
+        let lum = light_color * sun_t * ice_phase + sky_up * clouds.ambient;
+        let air = aerial(uv, r_cam, mu_v, rd, ci.x);
+        color += transmittance * alpha * (lum * air.transmittance + air.inscatter);
+        if opacity < 0.05 {
+            // Where cirrus is all there is, reproject by its distance.
+            dist = ci.x;
+        }
+        transmittance *= 1.0 - alpha;
     }
-    out.color = vec4((luminance * air_t + inscatter * opacity) * view.exposure, transmittance);
+    out.color = vec4(color * view.exposure, transmittance);
     out.dist = dist;
     return out;
+}
+
+struct Aerial {
+    transmittance: vec3<f32>,
+    inscatter: vec3<f32>,
+};
+
+// Aerial perspective between the camera and a cloud at `dist`: the
+// aerial-view LUT up to its range, beyond it the sky's in-scattering in
+// proportion to the extinction reached (uniform in-scatter per unit extinction).
+fn aerial(uv: vec2<f32>, r_cam: f32, mu_v: f32, rd: vec3<f32>, dist: f32) -> Aerial {
+    var a: Aerial;
+    a.transmittance = sample_transmittance_lut_segment(r_cam, mu_v, dist);
+    let lut_max = settings.aerial_view_lut_max_distance;
+    a.inscatter = sample_aerial_view_lut(uv, min(dist, lut_max));
+    if dist > lut_max {
+        let sky = sample_sky_view_lut(r_cam, direction_world_to_atmosphere(rd));
+        let t_inf = sample_transmittance_lut(r_cam, mu_v);
+        let f = saturate((vec3(1.0) - a.transmittance) / max(vec3(1.0) - t_inf, vec3(1e-4)));
+        a.inscatter = max(a.inscatter, sky * f);
+    }
+    return a;
 }

@@ -15,8 +15,10 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_image.workspace = true
 bevy_light.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
-# `pbr_light_textures`: cloud shadows through `DirectionalLightTexture`.
-bevy_pbr = { workspace = true, features = ["pbr_light_textures"] }
+# `pbr_light_textures`: cloud shadows through `DirectionalLightTexture`. Bevy only defines
+# LIGHT_TEXTURES when clustered decals are usable too (bevy_pbr mesh.rs), so both are needed:
+# without `pbr_clustered_decals` the light texture is silently ignored (S1, 2026-10-13).
+bevy_pbr = { workspace = true, features = ["pbr_light_textures", "pbr_clustered_decals"] }
 bevy_render.workspace = true
 bevy_shader.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
@@ -26,3 +28,11 @@ sf_atmos = { path = "../sf_atmos" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+sf_sky_bevy = { path = "../sf_sky_bevy" }
+
+# Synthetic test scene: each cloud genus, the shadow edge, the sun behind cloud.
+[[example]]
+name = "clouds"

@@ -2,7 +2,7 @@
 
 use glam::Vec2;
 
-/// The weather-driven part of a cloud layer. Every field blends linearly
+/// The weather-driven part of the cloud layers. Every field blends linearly
 /// ([`CloudWeather::lerp`]), so weather transitions are smooth: only scalars
 /// change, never the noise.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,34 +21,60 @@ pub struct CloudWeather {
     pub storm: f32,
     /// How hard the detail noise erodes edges, 0..1.
     pub erosion: f32,
-    /// Layer base, meters above sea level.
+    /// Volumetric layer base, meters above sea level.
     pub base: f32,
-    /// Layer thickness, meters.
+    /// Volumetric layer thickness, meters.
     pub thickness: f32,
-    /// Wind at cloud altitude, meters per second (world X, Z).
+    /// Wind at cloud altitude, meters per second (world X, Z). The high
+    /// layer moves at [`crate::scroll::CIRRUS_WIND`] times this.
     pub wind: Vec2,
+    /// High (cirrus) layer cover, 0..1: a thin 2-D layer, one fetch.
+    pub cirrus: f32,
+    /// High layer altitude, meters above sea level.
+    pub cirrus_height: f32,
 }
 
-/// Named presets. The weather state machine (`sf_weather`, later) blends
-/// between records instead; these are its seeds and the app's `--clouds`.
+/// Named presets, one per cloud genus (WMO cloud atlas), at real-world
+/// altitudes and sizes. The weather state machine (`sf_weather`, later)
+/// blends between records instead; these are its seeds and the app's
+/// `--clouds`. The volumetric layer holds one low or mid genus at a time; the
+/// high layer (cirrus) is a separate 2-D layer that any preset can add.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CloudPreset {
+    /// Blue sky: a few cumulus humilis and a trace of cirrus.
     Clear,
+    /// Fair-weather cumulus (humilis/mediocris): small flat-based heaps.
     Fair,
+    /// Cumulus congestus: fewer, taller towers with cauliflower tops.
+    Cumulus,
+    /// Stratocumulus: a low lumpy deck with gaps.
+    Stratocumulus,
+    /// Altocumulus: a mid-level field of small cloudlets ("mackerel sky").
+    Altocumulus,
+    /// Altostratus: a thin, even mid-level sheet; the sun shows as through ground glass.
+    Altostratus,
+    /// Cirrus: high fibrous streaks only, no low cloud.
+    Cirrus,
+    /// Overcast: a thick, closed stratus/nimbostratus deck.
     Overcast,
+    /// Cumulonimbus storm cells under a high anvil veil.
     Storm,
 }
 
 impl CloudPreset {
-    pub const ALL: [(&'static str, CloudPreset); 5] = [
+    pub const ALL: [(&'static str, CloudPreset); 9] = [
         ("clear", CloudPreset::Clear),
         ("fair", CloudPreset::Fair),
-        ("cumulus", CloudPreset::Fair),
+        ("cumulus", CloudPreset::Cumulus),
+        ("stratocumulus", CloudPreset::Stratocumulus),
+        ("altocumulus", CloudPreset::Altocumulus),
+        ("altostratus", CloudPreset::Altostratus),
+        ("cirrus", CloudPreset::Cirrus),
         ("overcast", CloudPreset::Overcast),
         ("storm", CloudPreset::Storm),
     ];
 
-    /// Parses a preset name (`clear`, `fair`/`cumulus`, `overcast`, `storm`).
+    /// Parses a preset name (see [`CloudPreset::ALL`]), ignoring case.
     pub fn parse(name: &str) -> Option<Self> {
         let name = name.trim().to_ascii_lowercase();
         Self::ALL.iter().find(|(n, _)| *n == name).map(|(_, p)| *p)
@@ -60,63 +86,98 @@ impl CloudPreset {
 }
 
 impl CloudWeather {
-    /// A preset at real-world altitudes. Games with a compressed world
-    /// rescale the heights ([`CloudWeather::scaled_heights`]).
+    /// A preset at real-world altitudes with typical winds there. Games with
+    /// a compressed world rescale the heights ([`CloudWeather::scaled_heights`])
+    /// and the tiles ([`CloudLook::scaled`]) by the same factor.
     pub fn preset(preset: CloudPreset) -> Self {
-        let wind = Vec2::new(9.0, 3.0);
+        // Typical speeds at the layer (m/s): boundary layer ~8, mid levels ~15.
+        let low = Vec2::new(7.6, 2.5);
+        let mid = Vec2::new(14.0, 5.0);
+        let base = Self {
+            coverage: 0.0,
+            cloud_type: 0.8,
+            density: 1.0,
+            wetness: 0.0,
+            storm: 0.0,
+            erosion: 0.45,
+            base: 1_200.0,
+            thickness: 1_000.0,
+            wind: low,
+            cirrus: 0.0,
+            cirrus_height: 8_000.0,
+        };
         match preset {
-            CloudPreset::Clear => Self {
-                coverage: 0.12,
-                cloud_type: 0.7,
-                density: 0.8,
-                wetness: 0.0,
-                storm: 0.0,
-                erosion: 0.45,
-                base: 1_600.0,
+            CloudPreset::Clear => Self { coverage: 0.08, cloud_type: 0.75, thickness: 700.0, cirrus: 0.18, ..base },
+            CloudPreset::Fair => Self { coverage: 0.36, cirrus: 0.1, ..base },
+            CloudPreset::Cumulus => {
+                Self { coverage: 0.4, cloud_type: 1.0, density: 1.15, wetness: 0.1, erosion: 0.5, thickness: 2_600.0, ..base }
+            }
+            CloudPreset::Stratocumulus => Self {
+                coverage: 0.74,
+                cloud_type: 0.35,
+                density: 0.9,
+                wetness: 0.15,
+                erosion: 0.55,
+                base: 900.0,
+                thickness: 650.0,
+                ..base
+            },
+            CloudPreset::Altocumulus => Self {
+                coverage: 0.62,
+                cloud_type: 0.3,
+                density: 0.55,
+                erosion: 0.65,
+                base: 3_600.0,
+                thickness: 450.0,
+                wind: mid,
+                cirrus: 0.2,
+                ..base
+            },
+            CloudPreset::Altostratus => Self {
+                coverage: 0.97,
+                cloud_type: 0.05,
+                density: 0.3,
+                erosion: 0.2,
+                base: 3_000.0,
                 thickness: 900.0,
-                wind,
+                wind: mid,
+                cirrus: 0.3,
+                ..base
             },
-            CloudPreset::Fair => Self {
-                coverage: 0.45,
-                cloud_type: 0.85,
-                density: 1.0,
-                wetness: 0.05,
-                storm: 0.0,
-                erosion: 0.4,
-                base: 1_500.0,
-                thickness: 1_400.0,
-                wind,
-            },
+            CloudPreset::Cirrus => Self { coverage: 0.0, cirrus: 0.75, wind: mid, ..base },
             CloudPreset::Overcast => Self {
-                coverage: 0.92,
-                cloud_type: 0.2,
-                density: 1.2,
-                wetness: 0.35,
-                storm: 0.0,
+                coverage: 0.97,
+                cloud_type: 0.1,
+                density: 1.3,
+                wetness: 0.45,
                 erosion: 0.25,
-                base: 1_100.0,
-                thickness: 900.0,
-                wind: wind * 1.5,
+                base: 700.0,
+                thickness: 1_500.0,
+                wind: low * 1.4,
+                ..base
             },
             CloudPreset::Storm => Self {
-                coverage: 0.85,
+                coverage: 0.45,
                 cloud_type: 1.0,
                 density: 1.6,
                 wetness: 0.8,
-                storm: 0.9,
-                erosion: 0.3,
+                storm: 1.0,
+                erosion: 0.35,
                 base: 900.0,
-                thickness: 3_200.0,
-                wind: wind * 2.5,
+                thickness: 8_000.0,
+                wind: low * 1.8,
+                cirrus: 0.35,
+                ..base
             },
         }
     }
 
-    /// The same weather with base and thickness scaled (a compressed world).
+    /// The same weather with every altitude scaled (a compressed world).
     #[must_use]
     pub fn scaled_heights(mut self, scale: f32) -> Self {
         self.base *= scale;
         self.thickness *= scale;
+        self.cirrus_height *= scale;
         self
     }
 
@@ -135,6 +196,8 @@ impl CloudWeather {
             base: l(self.base, other.base),
             thickness: l(self.thickness, other.thickness),
             wind: self.wind.lerp(other.wind, t),
+            cirrus: l(self.cirrus, other.cirrus),
+            cirrus_height: l(self.cirrus_height, other.cirrus_height),
         }
     }
 
@@ -170,12 +233,23 @@ pub struct CloudLook {
     pub ms_falloff: f32,
     /// Tile sizes in meters. Each must divide 16 384 m (the floating
     /// origin's phase period), so origin moves never shift the noise.
+    /// The weather tile sets where clouds are (cloud and cell size), the
+    /// shape tile their billows, the detail tile the eroded edges.
     pub weather_tile: f32,
     pub shape_tile: f32,
     pub detail_tile: f32,
+    /// The high layer's tile (its streaks run ~1/8 of it).
+    pub cirrus_tile: f32,
+    /// Optical depth of the high layer at full cover (thin ice cloud: < 1).
+    pub cirrus_depth: f32,
+    /// Shape evolution, as a fraction of the wind: the cloud field's second
+    /// octave drifts at this relative speed (clouds form and dissolve) and
+    /// the billows rise through the shape noise (0 = frozen shapes).
+    pub evolve: f32,
     /// Ray length cap, meters. The deck fades over the last quarter.
     pub far: f32,
-    /// How dark full cloud makes the ground (cloud shadow map), 0..1.
+    /// How dark full cloud makes the sun's direct light on the ground
+    /// (cloud shadow map), 0..1. Only direct light: sky fill stays.
     pub shadow_strength: f32,
 }
 
@@ -188,12 +262,31 @@ impl Default for CloudLook {
             powder: 0.7,
             phase_g: 0.6,
             ms_falloff: 0.5,
-            weather_tile: 16_384.0,
-            shape_tile: 4_096.0,
+            // Real cumulus are 0.5-2 km across in fields a few km wide: the
+            // weather noise's coarsest octave is a quarter tile (2 km).
+            weather_tile: 8_192.0,
+            shape_tile: 2_048.0,
             detail_tile: 256.0,
+            cirrus_tile: 16_384.0,
+            cirrus_depth: 0.6,
+            evolve: 0.35,
             far: 50_000.0,
-            shadow_strength: 0.75,
+            shadow_strength: 0.9,
         }
+    }
+}
+
+impl CloudLook {
+    /// The same look with every tile scaled by `scale` (a compressed world),
+    /// rounded to a power of two so tiles still divide 16 384 m.
+    #[must_use]
+    pub fn scaled(mut self, scale: f32) -> Self {
+        let fit = |t: f32| 2f32.powf((t * scale).clamp(16.0, 16_384.0).log2().round());
+        self.weather_tile = fit(self.weather_tile);
+        self.shape_tile = fit(self.shape_tile);
+        self.detail_tile = fit(self.detail_tile);
+        self.cirrus_tile = fit(self.cirrus_tile);
+        self
     }
 }
 
@@ -229,7 +322,7 @@ impl CloudQuality {
         light_steps: 5,
         ms_octaves: 3,
         checkerboard: true,
-        shadow_size: 512,
+        shadow_size: 1024,
         shadow_steps: 8,
     };
     pub const ULTRA: Self = Self { max_steps: 96, light_steps: 6, checkerboard: false, ..Self::HIGH };
