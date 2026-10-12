@@ -27,12 +27,15 @@ use bevy_transform::components::Transform;
 use sf_coords::WorldPos;
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::unit;
-use sf_controller::{GroundHit, GroundProbe, ProbeQuery};
+use sf_controller::{GroundHit, GroundProbe, Nearest, ProbeQuery, TerrainProbe};
 use sf_physics::{BodyDesc, BodyId, Layer, PhysicsEvent, PhysicsParams, PhysicsWorld, PhysicsWorlds};
+use sf_terrain_bevy::TerrainHeightsMap;
+use sf_terrain_bevy::sf_terrain::TerrainHeights;
 use sf_world::WorldspaceId;
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{ActiveWorldspace, StreamingAnchor, StreamingSystems, from_grid, transform_to_grid};
 
+pub mod carry;
 #[cfg(feature = "controller")]
 pub mod character;
 #[cfg(feature = "debug")]
@@ -45,6 +48,7 @@ mod tests;
 pub use character::{CharacterPhysics, CharacterStats, ImpactOnCharacter};
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
+pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder};
 pub use sf_physics;
 pub use stream::{
     BodyLoader, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
@@ -100,6 +104,10 @@ impl Default for PhysicsSettings {
 pub struct Physics {
     pub worlds: PhysicsWorlds<WorldspaceId>,
     pub params: PhysicsParams,
+    /// The active worldspace's terrain heights (from `TerrainHeightsMap`):
+    /// the controller's ground reads them analytically instead of casting
+    /// against the heightfield chunks (see `impl GroundProbe for Physics`).
+    pub terrain: Option<TerrainHeights>,
 }
 
 /// Layers the characters' ground and wall casts see (physics.md
@@ -109,11 +117,22 @@ pub const GROUND_LAYERS: Layer = Layer::STATIC.union(Layer::TERRAIN).union(Layer
 
 /// The controller's ground on physics ([`GROUND_LAYERS`] of the active
 /// world): the host's `SfControllerPlugin::<Physics>` probes it.
+///
+/// With the active worldspace's heights known, terrain is read through
+/// `TerrainProbe` (the exact heights the renderer uses, no marching) and
+/// composed with the bodies' `STATIC | PROP` by `Nearest`; the heightfield
+/// chunks stay for bodies. A sphere or capsule cast against a heightfield
+/// costs about 13 µs, as much as all of a walker's other casts together
+/// (P5 follow-up, `sf_physics` `probe_bench`).
 impl GroundProbe for Physics {
     fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
-        match self.worlds.active_world() {
-            Some(w) => w.probe(GROUND_LAYERS).probe(queries, out),
-            None => out.fill(None),
+        match (self.worlds.active_world(), &self.terrain) {
+            (Some(w), Some(t)) => {
+                let terrain = TerrainProbe(t);
+                Nearest(&[&terrain, &w.probe(GROUND_LAYERS - Layer::TERRAIN)]).probe(queries, out);
+            }
+            (Some(w), None) => w.probe(GROUND_LAYERS).probe(queries, out),
+            (None, _) => out.fill(None),
         }
     }
 }
@@ -181,6 +200,14 @@ pub enum PhysicsSystems {
     Stream,
     /// `FixedUpdate`: the step.
     Step,
+    /// `Update`, between `Stream` and `WriteBack`: holders' views, carry input,
+    /// held items' holder-space poses. Order the holder's view (camera)
+    /// before it.
+    Carry,
+    /// `RunFixedMainLoop`, before the fixed steps: holders' views (the steps
+    /// move the hands toward them). Order camera controllers that run there
+    /// before it.
+    Views,
     /// `Update`, after `Stream`: interpolated poses to transforms.
     WriteBack,
 }
@@ -194,7 +221,7 @@ pub struct PhysicsPlugin {
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Physics { worlds: PhysicsWorlds::default(), params: self.params.clone() })
+        app.insert_resource(Physics { worlds: PhysicsWorlds::default(), params: self.params.clone(), terrain: None })
             .insert_resource(self.settings.clone())
             .insert_resource(Time::<Fixed>::from_hz(self.settings.hz))
             .init_resource::<PhysicsFocus>()
@@ -217,6 +244,7 @@ impl Plugin for PhysicsPlugin {
                         .after(PhysicsSystems::Stream),
                 ),
             );
+        carry::add(app);
         #[cfg(feature = "debug")]
         debug::add(app);
         #[cfg(feature = "controller")]
@@ -230,16 +258,21 @@ fn begin_frame(mut stats: ResMut<PhysicsStats>, mut events: ResMut<PhysicsEvents
     (s.steps, s.dropped_steps, s.step_ms, s.max_step_ms, s.rebases, s.inserts, s.insert_ms, s.removals) = (0, 0, 0.0, 0.0, 0, 0, 0.0, 0);
 }
 
-/// The active worldspace and the focus.
+/// The active worldspace, its terrain heights and the focus.
 #[allow(clippy::needless_pass_by_value)]
 fn sync_active(
     active: Res<ActiveWorldspace>,
     anchors: Query<(&CellCoord, &Transform), With<StreamingAnchor>>,
+    heights: Option<Res<TerrainHeightsMap>>,
     mut physics: ResMut<Physics>,
     mut focus: ResMut<PhysicsFocus>,
 ) {
-    if physics.worlds.active() != active.0.as_ref() {
+    let switched = physics.worlds.active() != active.0.as_ref();
+    if switched {
         physics.worlds.set_active(active.0.clone());
+    }
+    if switched || heights.as_ref().is_some_and(Res::is_changed) {
+        physics.terrain = heights.as_ref().zip(active.0.as_ref()).and_then(|(h, ws)| h.0.get(ws).cloned());
     }
     if let Some((cell, t)) = anchors.iter().next() {
         focus.0 = Some(from_grid(cell, t));
@@ -298,14 +331,20 @@ fn track_bodies(
 
 /// Interpolated poses of awake bodies → grid transforms.
 #[allow(clippy::needless_pass_by_value)]
-fn write_back(physics: Res<Physics>, time: Res<Time<Fixed>>, mut bodies: Query<(&PhysicsBody, &mut CellCoord, &mut Transform)>) {
+fn write_back(
+    physics: Res<Physics>,
+    time: Res<Time<Fixed>>,
+    held: Res<HeldPoses>,
+    mut bodies: Query<(&PhysicsBody, &mut CellCoord, &mut Transform)>,
+) {
     let alpha = time.overstep_fraction();
     for (b, mut cell, mut t) in &mut bodies {
         let Some(w) = physics.worlds.get(&b.worldspace) else { continue };
         if w.is_sleeping(b.id) != Some(false) {
             continue;
         }
-        let Some(pose) = w.pose_at(b.id, alpha) else { continue };
+        let carried = held.0.get(&b.id).filter(|_| physics.worlds.active() == Some(&b.worldspace));
+        let Some(pose) = carried.copied().or_else(|| w.pose_at(b.id, alpha)) else { continue };
         let (c, nt) = transform_to_grid(&pose);
         if *cell != c {
             *cell = c;

@@ -621,6 +621,7 @@ pub(crate) fn follow_items(
     physics: Res<Physics>,
     streaming: Res<PhysicsStreaming>,
     time: Res<Time<Fixed>>,
+    held: Res<crate::HeldPoses>,
     mut pivots: Query<(&ItemPivot, &mut Transform)>,
 ) {
     if streaming.items.is_empty() {
@@ -633,7 +634,8 @@ pub(crate) fn follow_items(
         if !streaming.items.contains_key(&key) {
             continue;
         }
-        let Some(pose) = w.pose_at(*id, alpha) else { continue };
+        let carried = held.0.get(id).filter(|_| physics.worlds.active() == Some(&pivot.worldspace));
+        let Some(pose) = carried.copied().or_else(|| w.pose_at(*id, alpha)) else { continue };
         let translation = pivot.origin.delta_f32(pose.pos);
         if t.translation != translation || t.rotation != pose.rotation {
             t.translation = translation;

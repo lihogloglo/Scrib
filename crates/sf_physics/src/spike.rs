@@ -223,3 +223,121 @@ pub(crate) fn run() {
         );
     }
 }
+
+/// P5 follow-up: the walkers' probe mix (per mover: a horizontal capsule
+/// sweep, a downward sphere cast, two feet rays) over the same R0 statics as
+/// a `StaticWorld` + analytic terrain (the physics-off path) and through
+/// `PhysicsProbe` with and without the terrain heightfields.
+/// `cargo test -p sf_physics --release -- --ignored --nocapture probe_bench`.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn probe_bench() {
+    use sf_controller::{GroundProbe, HeightSurface, Nearest, ProbeQuery, StaticShape, StaticWorld, TerrainProbe};
+
+    struct Analytic(WorldPos);
+    impl HeightSurface for Analytic {
+        fn height(&self, p: WorldPos) -> Option<f32> {
+            let d = self.0.delta_f32(p);
+            Some(terrain_height(d.x, d.z))
+        }
+        fn normal(&self, p: WorldPos) -> Option<Vec3> {
+            let d = self.0.delta_f32(p);
+            let e = 0.25;
+            let dx = terrain_height(d.x + e, d.z) - terrain_height(d.x - e, d.z);
+            let dz = terrain_height(d.x, d.z + e) - terrain_height(d.x, d.z - e);
+            Some(Vec3::new(-dx, 2.0 * e, -dz).normalize())
+        }
+        fn raycast(&self, origin: WorldPos, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
+            let mut t = 0.0;
+            while t <= max {
+                let p = origin.offset(dir * t);
+                if p.to_f64().y < f64::from(self.height(p)?) {
+                    return Some((t, self.normal(p)?));
+                }
+                t += 0.25;
+            }
+            None
+        }
+    }
+
+    let anchor = WorldPos::new(IVec3::new(-3, 0, 12), Vec3::ZERO);
+    let mut rng = Rng(0x5eed);
+    let shapes: Vec<_> = (0..120)
+        .map(|_| {
+            let h = Vec3::new(rng.range(0.3, 6.0), rng.range(0.3, 5.0), rng.range(0.3, 6.0));
+            let k = 2 + (rng.next() * 9.0) as usize;
+            (std::sync::Arc::new(StaticShape::new(&box_mesh(h, k)).unwrap()), h)
+        })
+        .collect();
+    let mesh_shapes: Vec<_> = shapes.iter().map(|(s, _)| MeshShape::from_static(s)).collect();
+    let mut world = PhysicsWorld::new(anchor, PhysicsParams::default());
+    let mut statics = StaticWorld::new(anchor);
+    let n = 129;
+    for cz in 0..8 {
+        for cx in 0..8 {
+            let min = Vec3::new(-256.0 + 64.0 * cx as f32, 0.0, -256.0 + 64.0 * cz as f32);
+            let heights: Vec<f32> =
+                (0..n * n).map(|i| terrain_height(min.x + (i % n) as f32 * 0.5, min.z + (i / n) as f32 * 0.5)).collect();
+            let hs = HeightShape::new(n, 0.5, &heights).unwrap();
+            world.insert(&BodyDesc::fixed(at(anchor.offset(min + Vec3::new(32.0, 0.0, 32.0))), ShapeRef::Heightfield(hs), Layer::TERRAIN));
+        }
+    }
+    for _ in 0..2400 {
+        let i = (rng.next() * shapes.len() as f32) as usize % shapes.len();
+        let h = shapes[i].1;
+        let r = 190.0 * rng.next().sqrt();
+        let a = rng.range(0.0, std::f32::consts::TAU);
+        let (x, z) = (r * a.cos(), r * a.sin());
+        let pos = anchor.offset(Vec3::new(x, terrain_height(x, z) + h.y - 0.2, z));
+        let pose = WorldTransform { pos, rotation: Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU)), scale: Vec3::ONE };
+        world.insert(&BodyDesc::fixed(pose, ShapeRef::Mesh(mesh_shapes[i].clone()), Layer::STATIC));
+        statics.insert(&shapes[i].0, pose);
+    }
+    statics.rebuild();
+    world.step();
+
+    // 150 movers on open ground and near statics.
+    let mut queries = Vec::new();
+    for _ in 0..150 {
+        let r = 190.0 * rng.next().sqrt();
+        let a = rng.range(0.0, std::f32::consts::TAU);
+        let (x, z) = (r * a.cos(), r * a.sin());
+        let feet = anchor.offset(Vec3::new(x, terrain_height(x, z), z));
+        let dir = Vec3::new(a.cos(), 0.0, a.sin());
+        queries.push(ProbeQuery::capsule(feet.offset(Vec3::Y * 0.95), dir, 0.06, 0.3, 0.6));
+        queries.push(ProbeQuery::sphere(feet.offset(Vec3::Y * 0.65), Vec3::NEG_Y, 0.9, 0.25));
+        queries.push(ProbeQuery::down(feet.offset(Vec3::new(0.1, 0.5, 0.0)), 1.0));
+        queries.push(ProbeQuery::down(feet.offset(Vec3::new(-0.1, 0.5, 0.0)), 1.0));
+    }
+    let mut out = vec![None; queries.len()];
+    let terrain = TerrainProbe(Analytic(anchor));
+    let time = |name: &str, p: &dyn GroundProbe, out: &mut Vec<_>| {
+        let mut ms = Vec::new();
+        for _ in 0..40 {
+            let t = Instant::now();
+            p.probe(&queries, out);
+            ms.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        let s = stats(ms);
+        let hits = out.iter().filter(|h| h.is_some()).count();
+        println!("{name:<44} mean {:.3} ms  p95 {:.3}  max {:.3}  ({hits} hits / {})", s.mean, s.p95, s.max, out.len());
+    };
+    // Per kind: which query shape costs what.
+    for (kind, k) in [("capsule sweeps", 0), ("sphere down", 1), ("rays down", 2)] {
+        let sub: Vec<_> = queries.iter().enumerate().filter(|(i, _)| i % 4 == k || (k == 2 && i % 4 == 3)).map(|(_, q)| *q).collect();
+        let mut o = vec![None; sub.len()];
+        for (name, p) in [
+            ("statics", &statics as &dyn GroundProbe),
+            ("physics STATIC", &world.probe(Layer::STATIC)),
+            ("physics TERRAIN", &world.probe(Layer::TERRAIN)),
+        ] {
+            let t = Instant::now();
+            for _ in 0..40 {
+                p.probe(&sub, &mut o);
+            }
+            println!("  {kind:<16} {name:<16} {:.2} us/query", t.elapsed().as_secs_f64() * 1e6 / (40 * sub.len()) as f64);
+        }
+    }
+    time("old: Nearest(terrain, StaticWorld)", &Nearest(&[&terrain, &statics]), &mut out);
+    time("P5: physics STATIC|TERRAIN|PROP", &world.probe(Layer::STATIC | Layer::TERRAIN | Layer::PROP), &mut out);
+    time("new: Nearest(terrain, physics STATIC|PROP)", &Nearest(&[&terrain, &world.probe(Layer::STATIC | Layer::PROP)]), &mut out);
+}

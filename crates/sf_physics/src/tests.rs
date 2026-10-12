@@ -530,3 +530,10 @@ fn refresh_before_first_step_keeps_new_bodies() {
     }
     assert!(w.pose(item).unwrap().pos.local.x > 1.05, "a refreshed sleeper still wakes and moves");
 }
+
+/// Walker probe cost: `StaticWorld` vs `PhysicsProbe` (release only).
+#[test]
+#[ignore = "benchmark"]
+fn probe_bench() {
+    crate::spike::probe_bench();
+}

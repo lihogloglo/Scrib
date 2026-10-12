@@ -10,7 +10,8 @@ use glam::{IVec3, Quat, Vec3};
 use rapier3d::dynamics::{LockedAxes, RigidBody, RigidBodyActivation, RigidBodyBuilder, RigidBodyHandle, RigidBodySet, RigidBodyType, SoftBodySet, SoftBodyTearEvent};
 use rapier3d::geometry::{ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent, ContactPair};
 use rapier3d::math::Pose;
-use rapier3d::pipeline::{ActiveEvents, EventHandler, PhysicsWorld as Engine};
+use rapier3d::pipeline::{ActiveEvents, ActiveHooks, EventHandler, PairFilterContext, PhysicsHooks, PhysicsWorld as Engine};
+use rapier3d::geometry::SolverFlags;
 use sf_coords::{GRID_CELL, WorldPos, WorldTransform};
 
 use crate::body::{BodyDesc, BodyId, BodyKind, PhysicsEvent, PhysicsParams};
@@ -112,6 +113,8 @@ pub struct PhysicsWorld {
     floor: Option<f64>,
     /// Bodies inserted asleep whose first contacts haven't been detected yet.
     settling: Vec<BodyId>,
+    /// Collider pairs that never touch (a held item and its holder).
+    excluded: Vec<(ColliderHandle, ColliderHandle)>,
 }
 
 impl PhysicsWorld {
@@ -135,6 +138,7 @@ impl PhysicsWorld {
             settling: Vec::new(),
             dynamic_inserted: false,
             floor: None,
+            excluded: Vec::new(),
         }
     }
 
@@ -288,6 +292,10 @@ impl PhysicsWorld {
         let Some(live) = self.live_mut(id).map(|l| l.handle) else {
             return false;
         };
+        if !self.excluded.is_empty() {
+            let gone = self.colliders_of(id);
+            self.excluded.retain(|(x, y)| !gone.contains(x) && !gone.contains(y));
+        }
         self.engine.remove_body(live);
         let slot = &mut self.slots[id.index as usize];
         slot.live = None;
@@ -496,7 +504,7 @@ impl PhysicsWorld {
     pub fn step(&mut self) {
         self.engine.integration_parameters.dt = self.params.dt;
         let collector = Collector::default();
-        self.engine.step_with_events(&(), &collector);
+        self.engine.step_with_events(&PairFilter(&self.excluded), &collector);
         self.dynamic_inserted = false;
         self.resist_rolling();
         self.queries_dirty = false;
@@ -723,6 +731,102 @@ impl<K: Clone + Eq + Hash> PhysicsWorlds<K> {
     pub fn step(&mut self) {
         if let Some(w) = self.active_world_mut() {
             w.step();
+        }
+    }
+}
+
+/// Drops contacts between excluded collider pairs (rapier calls it for
+/// colliders flagged `FILTER_CONTACT_PAIRS`): the `PhysX` filter shader, Jolt's
+/// group filter.
+struct PairFilter<'a>(&'a [(ColliderHandle, ColliderHandle)]);
+
+impl PhysicsHooks for PairFilter<'_> {
+    fn filter_contact_pair(&self, c: &PairFilterContext) -> Option<SolverFlags> {
+        let (a, b) = (c.collider1, c.collider2);
+        if self.0.iter().any(|&(x, y)| (x, y) == (a, b) || (x, y) == (b, a)) {
+            None
+        } else {
+            Some(SolverFlags::COMPUTE_RIGID_IMPULSES)
+        }
+    }
+}
+
+/// Grab support (task P6, `carry`).
+impl PhysicsWorld {
+    pub fn kind(&self, id: BodyId) -> Option<BodyKind> {
+        self.live(id).map(|l| l.kind)
+    }
+
+    pub(crate) fn handle(&self, id: BodyId) -> Option<RigidBodyHandle> {
+        self.live(id).map(|l| l.handle)
+    }
+
+    fn colliders_of(&self, id: BodyId) -> Vec<ColliderHandle> {
+        self.live(id).and_then(|l| self.engine.bodies.get(l.handle)).map(|rb| rb.colliders().to_vec()).unwrap_or_default()
+    }
+
+    /// The center of mass in the body's frame and the radius of a sphere
+    /// around it that holds every collider.
+    pub fn mass_center(&self, id: BodyId) -> Option<(Vec3, f32)> {
+        let rb = self.engine.bodies.get(self.live(id)?.handle)?;
+        let com = rb.local_center_of_mass();
+        let inv = rb.position().inverse();
+        let mut radius: f32 = 0.0;
+        for &c in rb.colliders() {
+            let col = self.engine.colliders.get(c)?;
+            let local = inv * *col.position();
+            let s = col.shape().compute_local_bounding_sphere();
+            radius = radius.max((local * s.center()).distance(com) + s.radius());
+        }
+        Some((com, radius))
+    }
+
+    /// Moves a body to another layer (contacts and queries).
+    pub fn set_layer(&mut self, id: BodyId, layer: Layer) -> bool {
+        let colliders = self.colliders_of(id);
+        let Some(l) = self.live_mut(id) else { return false };
+        l.layer = layer;
+        for c in colliders {
+            if let Some(col) = self.engine.colliders.get_mut(c) {
+                col.set_collision_groups(layer.groups());
+            }
+        }
+        self.queries_dirty = true;
+        true
+    }
+
+    /// While grabbed: extra solver iterations and CCD (0 restores the defaults).
+    pub(crate) fn set_grabbed(&mut self, id: BodyId, extra_iterations: usize) {
+        let Some(h) = self.handle(id) else { return };
+        if let Some(rb) = self.engine.bodies.get_mut(h) {
+            rb.set_additional_solver_iterations(extra_iterations);
+            rb.enable_ccd(true);
+        }
+    }
+
+    /// No contacts between two bodies' colliders until [`Self::include_pair`].
+    pub fn exclude_pair(&mut self, a: BodyId, b: BodyId) {
+        let (ca, cb) = (self.colliders_of(a), self.colliders_of(b));
+        for &x in &ca {
+            for &y in &cb {
+                self.excluded.push((x, y));
+            }
+        }
+        for c in ca.into_iter().chain(cb) {
+            if let Some(col) = self.engine.colliders.get_mut(c) {
+                col.set_active_hooks(col.active_hooks() | ActiveHooks::FILTER_CONTACT_PAIRS);
+            }
+        }
+    }
+
+    pub fn include_pair(&mut self, a: BodyId, b: BodyId) {
+        let (ca, cb) = (self.colliders_of(a), self.colliders_of(b));
+        self.excluded.retain(|&(x, y)| !((ca.contains(&x) && cb.contains(&y)) || (ca.contains(&y) && cb.contains(&x))));
+        for c in ca.into_iter().chain(cb) {
+            let still = self.excluded.iter().any(|&(x, y)| x == c || y == c);
+            if !still && let Some(col) = self.engine.colliders.get_mut(c) {
+                col.set_active_hooks(col.active_hooks() - ActiveHooks::FILTER_CONTACT_PAIRS);
+            }
         }
     }
 }

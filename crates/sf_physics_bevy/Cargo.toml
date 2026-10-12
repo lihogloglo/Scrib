@@ -27,7 +27,8 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_tasks = { workspace = true, features = ["futures-lite"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
-sf_controller.workspace = true
+# `TerrainProbe` over the active worldspace's heights (the walkers' ground).
+sf_controller = { workspace = true, features = ["terrain"] }
 sf_controller_bevy = { workspace = true, optional = true }
 sf_coords.workspace = true
 # Counters (`physics/...`) when the app runs `SfDiagPlugin`.

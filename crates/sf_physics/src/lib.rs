@@ -17,6 +17,7 @@
 //! Spec: `docs/specs/physics.md`.
 
 mod body;
+mod carry;
 mod character;
 pub mod cook;
 mod debug;
@@ -27,6 +28,7 @@ mod shape;
 mod world;
 
 pub use body::{BodyDesc, BodyId, BodyKind, ITEM_DAMPING, PhysicsEvent, PhysicsParams};
+pub use carry::{CarryEnd, CarryParams, Carrier, GrabMode, GrabResult, HolderLimits};
 pub use character::{CharacterShape, PushParams, Pushed};
 pub use joint::{Drive, JointDesc, JointId, JointKind, JointSolver};
 pub use layer::Layer;
@@ -46,3 +48,5 @@ mod spike;
 mod cook_tests;
 #[cfg(test)]
 mod character_tests;
+#[cfg(test)]
+mod carry_tests;

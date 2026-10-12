@@ -331,6 +331,14 @@ renderer uses), composed through `Nearest` as today. Context probes, activation 
 crosshair and M9 hit tests all use it. `StaticWorld` stays as the physics-off path (`--off physics`)
 and the equality oracle in tests.
 
+**Revised (P6 session, 2026-10-13): terrain stays analytic for the movers.** A sphere or capsule cast against a
+heightfield chunk costs ~13 µs (`sf_physics` `probe_bench`: 150 movers × 4 casts, `StaticWorld` + `TerrainProbe` 2.14
+ms, physics over `STATIC | TERRAIN | PROP` 6.36 ms, `Nearest(TerrainProbe, physics STATIC | PROP)` 2.58 ms). So
+`impl GroundProbe for Physics` composes `TerrainProbe` over the active worldspace's `TerrainHeights` (`Physics::terrain`)
+with the bodies' `STATIC | PROP`; the chunks stay for bodies. wk-balmora mover stage median, physics vs `--off
+physics` (shared machine): 424 vs 272 µs (was 584 vs 319). The rest of the gap is rapier's query BVH (every body,
+filtered per leaf) and the one-sided internal-edge static meshes: a statics-only BVH view is the next step if needed.
+
 ### Controller
 
 `KinematicMover` stays (locomotion.md); `bevy_tnua` is not adopted. Reasons: the mover is already
@@ -406,6 +414,33 @@ Changes in M4:
   at 60 Hz, so the item is rendered **in holder space**: `render = view_now · (view_at_step⁻¹ · item_at_step)`
   interpolated, which removes the step-rate beat between the two clocks. Test below.
 - Pick-into-inventory, ownership and crime are gameplay (M5/M10) on top of the same target query.
+- **As built (P6, 2026-10-13).** `sf_physics::carry`: `Carrier` (one holder's grab state), `HolderLimits`
+  (`mode_for(mass)`), `CarryParams` (reach 2.5 m, hold distance 0.6 m + the item's bounding radius, settle 0.15 s,
+  break 1 m / 0.3 s, throw cap 15 m/s, torque arm 0.3 m, 4 extra iterations), `GrabResult`, `CarryEnd`. The hand is a
+  kinematic body with no collision layer; the joint is a rapier generic joint with every axis free and
+  acceleration-based motors (ω = 5.8 / settle time, ζ = 1): carry on all six axes (linear cap `carry_force` per axis,
+  angular `carry_force · torque_arm`), drag on the three linear axes at the grab point. The pick ray sees
+  `pick_layers | STATIC | TERRAIN` and accepts the first hit only if it is a grabbable dynamic or `Held` body (a
+  `Held` item is released by the grab). The carried body moves to `HELD` (restored on release), and its holder's
+  capsule is excluded **per pair** (`PhysicsWorld::exclude_pair`, a rapier contact-pair filter hook: PhysX's filter
+  shader, Jolt's group filter), not by layer, so it still hits other characters. Deviations from the bullets above:
+  - **Drag force cap**: `max(carry_force, drag_friction · g · drag_mass)` with `drag_friction` 0.6, not `carry_force`:
+    with the adapter's numbers (S 50: 240 N, drag mass 120 kg) the grip cannot even slide a 40 kg crate pulled at its
+    top (measured: it doesn't move), so "light enough to move" would not move. The drag hand keeps the grab point's
+    horizontal distance and its height below the eye from the moment of the grab, turning with the view's yaw (not a
+    fixed waist height: a crate grabbed by its top edge is not lifted by it).
+  - **No carry vibration** takes two parts: each step's hand target is the view **at the step's time** (interpolated
+    or extrapolated from the last two recorded views, at most 0.1 s ahead), so two steps in one 30 fps frame don't move
+    the hand in one jump; and the carried item renders at `hand(view_now) · lerp(rel_prev, rel_curr, alpha)` with
+    `rel` the item relative to the hand target after each step. A dragged object renders at its own interpolated
+    pose (its weight is on the floor). Test: view-space spread 0.008 / 0.010 / 0.044 mm at 30 / 60 / 144 fps.
+  - Throw speed is `|hand velocity + view · throw_impulse / mass|` capped at 15 m/s.
+  `sf_physics_bevy::carry`: `Holder` component (its entity's `CellCoord + Transform` is the eye, −Z forward),
+  `CarryInput` / `CarryFeedback` messages, `HeldPoses` (read by the write-back and item pivots), views recorded in
+  `RunFixedMainLoop` (`PhysicsSystems::Views`, after camera controllers that run there) and hands driven around the
+  step in `FixedUpdate`; changing worldspace drops. The adapter maps Strength (`mw_physics::holder_limits`); the host
+  fills `Holder::carrier.limits` (the `PhysicsContent::holder_strength` hook becomes this host call until characters
+  carry). Not yet: limp-ragdoll limbs (P7), the holder's mover slowdown (the host reads `Holder::speed_scale`).
 
 ### Ragdolls and the animation blend
 
