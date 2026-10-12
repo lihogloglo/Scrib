@@ -106,7 +106,7 @@ impl PathWalkScaffold {
         let Some(goal) = self.abandoned.filter(|_| matches!(self.state, State::Idling { .. })) else {
             return false;
         };
-        let Some(nodes) = self.planner.replan_around(graph, from, to, pos, goal) else {
+        let Some(nodes) = self.planner.replan_around(graph, (from, to), pos, goal) else {
             return false;
         };
         self.state = Self::walking(nodes, pos, self.walk_speed);

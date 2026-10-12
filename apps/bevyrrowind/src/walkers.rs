@@ -462,6 +462,13 @@ fn drive(
         let out = walker.scaffold.update(graph, pos, dt, hours);
         if walker.scaffold.stuck_count() > stuck {
             let kind = give_ups.record(entity, mover, edge, &ground);
+            if let Some((from, to)) = edge {
+                match graph.filter(|g| g.node_at(to).is_some()) {
+                    None => give_ups.off_grid += 1,
+                    Some(g) if g.node_at(from).is_none() => give_ups.first_leg += 1,
+                    Some(_) => {}
+                }
+            }
             // The mover found the edge unwalkable: route around it, not idle.
             if kind != "other"
                 && let Some((from, to)) = edge
@@ -649,11 +656,13 @@ fn report(
             usize::from(m.loco.grounded.is_some() || !matches!(m.loco.mode, MoverMode::Ground));
     }
     info!(
-        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} grounded, {stuck} walks given up: {} steep, {} wall, {} other; {} rerouted around a blocked edge), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
+        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} grounded, {stuck} walks given up: {} steep, {} wall, {} other; {} on a first leg, {} off the pathgrid; {} rerouted around a blocked edge), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
         stats.movers,
         give_ups.steep,
         give_ups.wall,
         give_ups.other,
+        give_ups.first_leg,
+        give_ups.off_grid,
         give_ups.rerouted,
         ground.placed(),
         ground.terrain.is_some() && ground.exterior_active,
@@ -921,6 +930,11 @@ struct GiveUps {
     other: u64,
     /// Steep or walled give-ups resumed at once around the blocked edge.
     rerouted: u64,
+    /// Give-ups on a pathgrid walk's first leg (from where the walker stood
+    /// to its first node), any kind.
+    first_leg: u64,
+    /// Give-ups on walks to a point off the pathgrid (cells without one).
+    off_grid: u64,
     trace: bool,
 }
 

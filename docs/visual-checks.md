@@ -825,7 +825,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
 - Look for: `AI_W` wanderers walk street pathgrid edges at walking pace, stop and idle, sometimes
   fidget (Idle2-9); the walk cycle's stride matches the ground speed (SpeedMatch, no skating);
   turns are smooth; non-wanderers stay at their posts; nobody sinks, floats or walks through walls.
-- Status: awaiting owner (walkers4, 2026-10-13), after confirmed 2026-10-12. Changed since: contact cook v4 (stances by height + speed over ground, end at heel-off; strafes now plant 37-43 % of the cycle, were ~4 %), mover steps over short steep bevels (<= step_up onto walkable ground), steep/wall give-ups reroute around the blocked pathgrid edge. Look for: sidesteps and backward walks plant both feet (no skating); feet release smoothly at heel-off (no heel dragged, no pop); walkers cross kerb bevels and rock lips instead of turning back; no one stands at spawn retrying the same edge (known: 2 actors still do, see walkers4 handoff).
+- Status: awaiting owner (walkers5, 2026-10-13), after confirmed 2026-10-12. Changed since: contact cook v4 (stances by height + speed over ground, end at heel-off; strafes now plant 37-43 % of the cycle, were ~4 %), mover steps over short steep bevels (<= step_up onto walkable ground), steep/wall give-ups reroute around the blocked pathgrid edge. Look for: sidesteps and backward walks plant both feet (no skating); feet release smoothly at heel-off (no heel dragged, no pop); walkers cross kerb bevels and rock lips instead of turning back; no one stands at spawn retrying the same edge. walkers5: walkers with no pathgrid node in reach (straight walks to random points, 103 of 106 give-ups at night) now avoid a heading they gave up on (±45°, while within 1 m of the spot) instead of re-rolling into the same slope; a blocked first leg to a pathgrid node starts at the next-nearest node. Night Balmora ~150 s: 106 give-ups (before: 123-167 over three runs), stride-stuck 0 (was 76). Look for: wanderers boxed in by steep ground try another direction or stand, not walk into the same bank again and again.
   log: 472-478 movers in the near rings, 65-75 wanderers, 30-45 moving, all but 5 grounded).
   animfix (2026-10-12) changed what to expect: the walk cycle now follows the *measured* speed
   (distance actually travelled), playback 0.5-1.5x plus stride warping; a walker blocked by
@@ -1134,7 +1134,7 @@ Compare with OpenMW (same NPCs, same hour).
 - Look for: walking guards/commoners carry torches whose light moves with
   them along walls and the street; no more than 12 torches lit at once
   (the nearest); no weapons shown; bows are absent (skinned models: known gap).
-- Status: awaiting owner (walkers4, 2026-10-13) for the walk cycle; torch pose and brightness confirmed 2026-10-13. Open: torches cast no shadows. Walk: masked overlays no longer overwrite leg contacts (walkers3), but an in-game trace (BEVYRROWIND_STRIDE_TRACE=1, 150 s) still shows 2 torch-bearers (a Hlaalu guard outside, Llandras Belaal) whose walk lane is frozen at t=1.333 s while moving 2.1 m/s: NOT fixed yet (next walkers session). Look for: torch-bearing guards walk with a moving leg cycle like everyone else; nobody glides in a frozen stride.
+- Status: awaiting owner (walkers5, 2026-10-13) for the walk cycle; torch pose and brightness confirmed 2026-10-13. Torch shadows: LT-3 (lighting job, awaiting owner). Walk: fixed (walkers5). The frozen strides were not torch-specific: the walk blend space syncs its four directional lanes by foot markers, Morrowind's walk clips loop inside an intro and outro that carry markers too, and a lane synced to an outro marker (past its loop end) played out to the clip end (1.333 s) and parked there once it became the leading lane after a turn. Followers now sync over their loop only (`sf_anim_graph` sync.rs; tests `synced_followers_stay_inside_their_loop`, `mw_graphs` `turning_walkers_keep_every_walk_lane_cycling`). In game (release, 21:30, `BEVYRROWIND_STRIDE_TRACE=1`, ~150 s): stride-stuck 76 -> 0 (two runs). Look for: torch-bearing guards (and everyone) keep a moving leg cycle after turning corners; nobody glides in a frozen stride.
   Fixed: the `Torch` group now loops on the left arm (`mw_graphs` `torch_layer`, `left_arm` mask) while a torch
   shows; the carried light is dimmed to read "fully lit" at a third of its radius (the original's clamp edge).
   Look for: walkers hold the torch up in a bent left arm (not straight ahead) while legs walk; the pool under
@@ -1235,7 +1235,7 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
 - Look for (emission follows the creature's animation clock, `emit:` clip curves):
   - While they idle: the flame atronach's body burns (also at the end of
     `Idle3`); Dagoth Ur, the dremora and the ghost show no particles.
-  - First `F` (`Idle2`): fire sprays from Dagoth Ur's right hand for about
+  - First `F` (`Idle2`): lavender-blue particles spray from Dagoth Ur's right hand for about
     1.7 s of the 3.7 s idle, then stops; nothing on the others.
   - `X` (`Death1`): the dremora's dust bursts over his whole body for about
     1.7 s of the 2.7 s fall; the ghost's sprays burst for about 0.7 s; Dagoth
@@ -1245,9 +1245,52 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
   - Not reachable here: the flame atronach's hand flames (`Weapon`) belong to
     `Attack1`-`3` and Dagoth Ur's hand bursts to `SpellCast` (no attack or
     cast key yet: check in game when combat lands).
-- Status: owner 2026-10-13: Dagoth Ur's F effect is bluish particles, not fire, and emits no light. Check against the original (OpenMW side-by-side): colour, and whether the model carries an attached light.
-  (idle only; the keys need a person).
+- Status: awaiting owner (walkers5, 2026-10-13). Owner 2026-10-13: Dagoth Ur's F effect is bluish particles,
+  not fire, and emits no light. Checked against the data (`r/dagothr.nif`, `r/xdagothr.nif`): ours matches.
+  The 8 systems have no colour modifier (white, additive) and take their colour from their textures:
+  right hand `tx_dagoth_missalpha` x2 (lavender-blue, mean RGB 0.60/0.52/0.75) and `tx_dagoth_targetalpha`
+  (orange, 0.77/0.47/0.34), left hand `missalpha` and `tx_dagoth_touchalpha` (cyan, 0.46/0.81/0.82),
+  pelvis `tx_dagoth_slefalpha` (violet) and `tx_dagoth_bodyalpha` x2 (red). The `Idle2` spray is the big
+  right-hand `missalpha` system (64 particles), so bluish is right; "fire" above was a guess. The NIF has
+  no `NiPointLight` or `AttachLight` node, and creatures carry no light record: there is no light to
+  spawn. Look for: the `Idle2` spray reads lavender-blue like OpenMW's; a warm glow, if the original shows
+  one, would come from spell-cast VFX (`SpellCast` + effect visuals), not this model.
 - Source: particles3.
+
+## Lighting: night exposure floor, point-light shadows (superfargoth `sky-lighting.md` "Exposure range", "Local-light shadows"; `.sessions/lighting.md`)
+
+Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night; `night2.png`: floor 3.5 + night ambient 1;
+`cave_in1*.png`; `torch_stage.png`).
+
+### LT-1: Night exposure floor (`scene lt-night-floor`)
+- Kind: game location. Run: `cargo dev scene lt-night-floor` (21:30, clear, sun -13.5 deg).
+- Look for: the plaster around the door lantern (left) is bright but textured, not a white patch; lit pools under
+  the lamps; facades, stairs and the far houses between the pools dark but visible (night ambient), not pure black;
+  the night does not look grey or washed out. A/B: `--exposure-floor=-10 --night-ambient 0.03` (the old night).
+- Measured (1280x720, mean sRGB luma / pixels > 235 / pixels < 6): old night EV100 1.62: 72.1 / 1.63 % / 28.7 %;
+  floor 3.5 + ambient 0.4: 38.6 / 0.26 % / 34.9 %; floor 3.5 + ambient 1.0 (default): 38.4 / 0.26 % / 26.9 %.
+  With `--portals` (viewer auto exposure, curve clamped to the floor): 40.1 / 0.22 % / 37.7 % (ambient 0.4).
+- Tune: `--exposure-floor <EV100>` (higher = darker night, dimmer lamps), `--night-ambient <nits>`.
+- Status: awaiting owner.
+
+### LT-2: Dark interior keeps its lights (`scene lt-cave`)
+- Kind: game location. Run: `cargo dev scene lt-cave` (Addamasartus, mine tunnel).
+- Look for: rock texture readable in the torch pools, the far tunnel dark but not black; the wooden beam and post
+  shadow the rock (point-light shadows). A/B `--portals`: auto exposure meters this cave at the same level with or
+  without the floor (luma 50.8 vs 50.4): the floor never darkens it.
+- Status: awaiting owner.
+
+### LT-3: Point-light shadows, torch-bearers (`scene lt-torch-shadows`; stage: `character "imperial guard" --night`)
+- Kind: game location + game models.
+- Look for: railings, crates and pillars near lamps throw shadows on the street and walls; a torch-bearer within
+  ~15 m throws a shadow on the ground (and on a wall beside them) that moves with the torch; walkers passing ~20 m
+  lose their shadow by fading, not popping; lantern cages do not stripe the walls (0.25 m shadow near plane). On the
+  stage (`.\bevyrrowind character "imperial guard" --night`): a long shadow of the guard on the floor away from the torch.
+- A/B: `--point-shadows 0` / `2` / `4`; default by `--quality` (Low 0, Medium 0, High 1, Ultra 4). Cost (1440p, RTX 4060 laptop,
+  median frame, N = 0/1/2/4/8): 9.4 / 10.2 / 13.3 / 13.8 / 13.6 ms; render-thread CPU for the casters in each
+  light's range is most of it (GPU +0.35 to +1.6 ms). With the High default only the nearest light (a torch
+  within 2x the nearest lamp's distance) shadows; `--point-shadows 4` shows the lamps' railings and crates too.
+- Status: awaiting owner.
 
 ## Physics (superfargoth `physics.md`, bevyrrowind `physics-adapter.md`; `.sessions/physics-p2.md`)
 
@@ -1265,3 +1308,14 @@ PH-1 to PH-5 are specified in `docs/specs/physics-adapter.md` and land with task
     the right set (each worldspace is its own physics world).
 - Status: awaiting owner. Sanity screenshots 2026-10-13 (physics-p2): both line up.
 - Source: physics-p2.
+
+### PH-7: Item body shapes (`body.cook`)
+- Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse with `--physics-debug`;
+  `G` toggles). Placed items (MISC, WEAP, ARMO, CLOT, BOOK, ...) draw orange: their `body.cook` shape (a box, capsule,
+  cylinder or sphere when one fits within 15 % of the hull, else one hull of at most 32 vertices, or up to 8 hulls for
+  concave closed models). Statics stay cyan. Items are `Fixed` until P4.
+- Look for: every item on the counter and shelves has an orange shape hugging it (bottles as cylinders/capsules, books
+  and plates as flat boxes, weapons as thin boxes or capsules along the blade); no shape offset, rotated or scaled
+  away from its item; no item without a shape; nothing grossly bigger than its item.
+- Status: awaiting owner.
+- Source: physics-p3.

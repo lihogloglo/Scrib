@@ -385,7 +385,11 @@ handling (GPL reference, fine here).
   seconds per variant from the caller, default 5 s, the wiring fills clip lengths); distance 0 → stand
   (`variant 0`, 2–5 s); else up to 4 random goals among the nodes within `distance` of home, A* from the
   node nearest the actor, dropping the first node when the actor is already past it; no grid or no node in
-  range → one straight leg to a random point in the disc (`via_grid: false`). `walk_speed(speed attr)` =
+  range → one straight leg to a random point in the disc (`via_grid: false`; a scaffold: the original keeps
+  those actors in place). Give-ups (`replan_around`, walkers3/5): a blocked pathgrid edge is remembered both
+  ways and A* routes around it; a blocked *first* leg (actor → its nearest node) skips that node as a start
+  while the actor stands within 1 m of where it failed (`blocked_starts`), starting at the next-nearest; an
+  off-grid leg's heading is avoided (±45°) from about there when rolling the next point. `walk_speed(speed attr)` =
   `fMinWalkSpeed + speed% · (fMaxWalkSpeed − fMinWalkSpeed)` (100/200 units/s; encumbrance not yet).
 - **`scaffold`**: **`PathWalkScaffold`** (named scaffold, CLAUDE.md rule 4). States Choosing → Walking
   (`sf_controller::PathFollower`, `PathMode::Once`) / Idling. `update(graph, pos, dt, game_hours)` →

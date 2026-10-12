@@ -420,3 +420,81 @@ fn blocked_edges_are_routed_around() {
     assert_eq!(s.replan_count(), 1);
     assert_eq!(s.planner.blocked, vec![(a, b), (b, a)]);
 }
+
+/// A first leg given up (from where the actor stood to its nearest node,
+/// into ground it can't climb; walkers5: all of Balmora's give-ups) starts
+/// the walk at the next-nearest node instead, and later plans from about
+/// there skip that node as a start too.
+#[test]
+fn first_leg_give_ups_start_at_the_next_nearest_node() {
+    // A square 0-1-2-3, both ways round; the actor stands just off node 0.
+    let g = grid(
+        &[[0, 0, 0], [500, 0, 0], [500, 500, 0], [0, 500, 0]],
+        &[(0, 1), (1, 0), (1, 2), (2, 1), (2, 3), (3, 2), (3, 0), (0, 3)],
+    );
+    let graph = interior(&g);
+    let a = graph.position(0);
+    // Behind node 0 from both its neighbours, so no plan skips node 0 as
+    // already passed.
+    let away = -(a.delta_f32(graph.position(1)).normalize() + a.delta_f32(graph.position(3)).normalize()).normalize();
+    let pos = a.offset(away * 0.8);
+    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), pos), 1.5, 5);
+    let mut resumed = false;
+    for _ in 0..2000 {
+        let edge = s.follower().map(|f| (f.target(), f.nodes.clone()));
+        s.update(Some(&graph), pos, 0.1, 0.0);
+        if let Some((0, nodes)) = edge.filter(|_| s.follower().is_none() && s.stuck_count() > 0)
+            && nodes[0].pos == a
+        {
+            assert!(s.replan_around(Some(&graph), pos, a, pos), "a walk from the next-nearest node exists");
+            let f = s.follower().expect("walking again");
+            assert_ne!(f.nodes[0].pos, a, "heads for the blocked start again");
+            resumed = true;
+            break;
+        }
+    }
+    assert!(resumed, "never gave up on the first leg to node 0");
+    assert_eq!(s.planner.blocked_starts, vec![(pos, a)]);
+    assert!(s.planner.blocked.is_empty(), "a first leg is no pathgrid edge");
+    // Later plans from about here start elsewhere; from afar, node 0 is fine again.
+    let mut rng = fastrand::Rng::with_seed(9);
+    for _ in 0..50 {
+        if let WanderStep::Walk { nodes, .. } = s.planner.next(Some(&graph), pos, &mut rng) {
+            assert_ne!(nodes[0].pos, a);
+        }
+    }
+    let far = a.offset(away * 3.0);
+    let starts_at_a = (0..50).any(|_| matches!(s.planner.next(Some(&graph), far, &mut rng), WanderStep::Walk { nodes, .. } if nodes[0].pos == a));
+    assert!(starts_at_a);
+}
+
+/// Off the pathgrid (no node in reach: a straight walk to a random point),
+/// a give-up idles as before, and the next rolls from about there avoid the
+/// blocked heading (walkers5: Balmora's repeated give-ups at spawn were
+/// these, re-rolled into the same slope).
+#[test]
+fn off_grid_give_ups_avoid_the_blocked_heading() {
+    let home = WorldPos::ORIGIN;
+    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), home), 1.5, 11);
+    let mut blocked: Vec<Vec3> = Vec::new();
+    let mut walks = 0;
+    for _ in 0..6000 {
+        let edge = s.follower().map(|f| f.nodes[0].pos);
+        let given_up = s.stuck_count();
+        s.update(None, home, 0.1, 0.0);
+        if let (None, Some(f)) = (edge, s.follower()) {
+            // A new walk: away from every heading given up here (that it remembers).
+            let heading = home.delta_f32(f.nodes[0].pos).with_y(0.0).normalize();
+            for b in blocked.iter().rev().take(wander::BLOCKED_EDGES) {
+                assert!(b.dot(heading) <= std::f32::consts::FRAC_1_SQRT_2, "heads within 45° of a blocked heading");
+            }
+            walks += 1;
+        }
+        if let Some(to) = edge.filter(|_| s.stuck_count() > given_up) {
+            assert!(!s.replan_around(None, home, to, home), "off the grid there is no route to resume");
+            blocked.push(home.delta_f32(to).with_y(0.0).normalize());
+        }
+    }
+    assert!(blocked.len() >= 3 && walks >= blocked.len(), "{} give-ups, {walks} walks", blocked.len());
+    assert_eq!(s.planner.blocked_starts.len(), blocked.len().min(wander::BLOCKED_EDGES));
+}

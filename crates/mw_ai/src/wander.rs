@@ -7,7 +7,7 @@
 //! nearest to it. `game_hour` (time-of-day gating in the original editor's
 //! data) is kept but inert, as in `OpenMW`.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
 use glam::Vec3;
 use mw_world::convert::meters;
@@ -29,6 +29,9 @@ pub const DEFAULT_IDLE_SECONDS: f32 = 5.0;
 const GOAL_TRIES: usize = 4;
 /// Blocked pathgrid edges one actor remembers (the oldest is forgotten).
 pub const BLOCKED_EDGES: usize = 8;
+/// How far (m) an actor may stand from where it failed to reach a start
+/// node for that node to stay skipped as a start.
+pub const START_RADIUS: f32 = 1.0;
 
 /// A float game setting, or `fallback` when missing or not a number.
 #[allow(clippy::cast_precision_loss)]
@@ -138,6 +141,11 @@ pub struct WanderPlanner {
     /// too steep or walled: plans route around them (newest last, at most
     /// [`BLOCKED_EDGES`]).
     pub blocked: Vec<(WorldPos, WorldPos)>,
+    /// First legs given up (where the actor stood, the node or off-grid
+    /// point it headed for): from about there, pathgrid walks start at the
+    /// next-nearest node and off-grid walks avoid that heading (at most
+    /// [`BLOCKED_EDGES`], newest last).
+    pub blocked_starts: Vec<(WorldPos, WorldPos)>,
 }
 
 impl WanderPlanner {
@@ -148,6 +156,7 @@ impl WanderPlanner {
             idle_mult: IDLE_CHANCE_MULTIPLIER,
             idle_seconds: [DEFAULT_IDLE_SECONDS; 8],
             blocked: Vec::new(),
+            blocked_starts: Vec::new(),
         }
     }
 
@@ -176,21 +185,22 @@ impl WanderPlanner {
         }
         let graph = graph.filter(|g| !g.is_empty());
         let Some(graph) = graph else {
-            return self.direct(rng);
+            return self.direct(pos, rng);
         };
         let allowed = graph.within(self.home, self.wander.distance);
-        let Some(start) = graph.nearest(pos) else {
-            return self.direct(rng);
-        };
         if allowed.is_empty() {
-            return self.direct(rng);
+            return self.direct(pos, rng);
         }
+        let skip = self.skipped_starts(graph, pos);
+        let Some(start) = graph.nearest_excluding(pos, &skip) else {
+            return Self::stand(rng);
+        };
         for _ in 0..GOAL_TRIES {
             let goal = allowed[rng.usize(0..allowed.len())];
             if goal == start && allowed.len() > 1 {
                 continue;
             }
-            let Some(nodes) = self.route(graph, pos, start, goal) else {
+            let Some(nodes) = self.route(graph, pos, start, goal, &skip) else {
                 continue;
             };
             return WanderStep::Walk { nodes, via_grid: true };
@@ -203,13 +213,23 @@ impl WanderPlanner {
         self.blocked.iter().filter_map(|&(a, b)| Some((graph.node_at(a)?, graph.node_at(b)?))).collect()
     }
 
+    /// Nodes this actor failed to reach from about `pos` (first legs).
+    fn skipped_starts(&self, graph: &PathGraph, pos: WorldPos) -> Vec<usize> {
+        self.blocked_starts
+            .iter()
+            .filter(|(at, _)| at.delta_f32(pos).length() < START_RADIUS)
+            .filter_map(|&(_, n)| graph.node_at(n))
+            .collect()
+    }
+
     /// The walk from `pos` along the pathgrid from node `start` to `goal`,
-    /// around the blocked edges.
-    fn route(&self, graph: &PathGraph, pos: WorldPos, start: usize, goal: usize) -> Option<Vec<PathNode>> {
+    /// around the blocked edges. `skip`: nodes not to head for straight
+    /// from `pos` (first legs given up from about here).
+    fn route(&self, graph: &PathGraph, pos: WorldPos, start: usize, goal: usize, skip: &[usize]) -> Option<Vec<PathNode>> {
         let path = graph.path_avoiding(start, goal, &self.blocked_in(graph))?;
         let mut points: Vec<WorldPos> = path.iter().map(|&n| graph.position(n)).collect();
         // Already between the first two nodes: don't walk back to the first.
-        if points.len() >= 2 && pos.delta_f32(points[1]).length() < points[0].delta_f32(points[1]).length() {
+        if points.len() >= 2 && !skip.contains(&path[1]) && pos.delta_f32(points[1]).length() < points[0].delta_f32(points[1]).length() {
             points.remove(0);
         }
         Some(points.into_iter().map(PathNode::at).collect())
@@ -218,31 +238,73 @@ impl WanderPlanner {
     /// Remembers the pathgrid edge `from` → `to` (and its reverse) as
     /// unwalkable for this actor and plans a walk from `pos` to the node at
     /// `goal` around every edge it remembers, if one exists. `from` must be
-    /// a node: the first leg (from where the actor stood) is no edge.
-    pub fn replan_around(&mut self, graph: Option<&PathGraph>, from: WorldPos, to: WorldPos, pos: WorldPos, goal: WorldPos) -> Option<Vec<PathNode>> {
-        let graph = graph.filter(|g| g.node_at(from).is_some() && g.node_at(to).is_some())?;
+    /// a node; otherwise this was the first leg (from where the actor
+    /// stood to its nearest node, walkers5): that node is skipped as a
+    /// start from about here and the walk starts at the next-nearest one.
+    /// Off the pathgrid (a straight walk to a point, [`Self::direct`]), the
+    /// heading is remembered and avoided by the next rolls from about here.
+    pub fn replan_around(
+        &mut self,
+        graph: Option<&PathGraph>,
+        (from, to): (WorldPos, WorldPos),
+        pos: WorldPos,
+        goal: WorldPos,
+    ) -> Option<Vec<PathNode>> {
+        let Some(graph) = graph.filter(|g| g.node_at(to).is_some()) else {
+            // Off the grid there is no route to try: the actor idles first
+            // (the original keeps it in place), then rolls away from here.
+            remember(&mut self.blocked_starts, (pos, to));
+            return None;
+        };
+        if graph.node_at(from).is_none() {
+            remember(&mut self.blocked_starts, (pos, to));
+            let skip = self.skipped_starts(graph, pos);
+            let (start, goal) = (graph.nearest_excluding(pos, &skip)?, graph.node_at(goal)?);
+            return self.route(graph, pos, start, goal, &skip).filter(|nodes| !nodes.is_empty());
+        }
         for edge in [(from, to), (to, from)] {
-            if !self.blocked.contains(&edge) {
-                if self.blocked.len() >= BLOCKED_EDGES {
-                    self.blocked.remove(0);
-                }
-                self.blocked.push(edge);
-            }
+            remember(&mut self.blocked, edge);
         }
         let (start, goal) = (graph.nearest(pos)?, graph.node_at(goal)?);
         // Starting at the blocked edge's far end would lead back over it.
         let start = if start == graph.node_at(to)? { graph.node_at(from)? } else { start };
-        self.route(graph, pos, start, goal).filter(|nodes| !nodes.is_empty())
+        self.route(graph, pos, start, goal, &[]).filter(|nodes| !nodes.is_empty())
     }
 
-    /// A random point in the wander disc around home (uniform by area).
-    fn direct(&self, rng: &mut fastrand::Rng) -> WanderStep {
-        let r = self.wander.distance * rng.f32().sqrt();
-        let a = TAU * rng.f32();
-        let point = self.home.offset(Vec3::new(r * a.cos(), 0.0, r * a.sin()));
-        WanderStep::Walk {
-            nodes: vec![PathNode::at(point)],
-            via_grid: false,
+    /// A random point in the wander disc around home (uniform by area), a
+    /// scaffold for actors with no pathgrid node in reach (the original
+    /// keeps those in place). Headings given up from about `pos` (within
+    /// 45°) are re-rolled; standing when every try is blocked.
+    fn direct(&self, pos: WorldPos, rng: &mut fastrand::Rng) -> WanderStep {
+        let blocked: Vec<Vec3> = self
+            .blocked_starts
+            .iter()
+            .filter(|(at, _)| at.delta_f32(pos).length() < START_RADIUS)
+            .map(|(at, to)| at.delta_f32(*to).with_y(0.0).normalize_or_zero())
+            .collect();
+        for _ in 0..2 * GOAL_TRIES {
+            let r = self.wander.distance * rng.f32().sqrt();
+            let a = TAU * rng.f32();
+            let point = self.home.offset(Vec3::new(r * a.cos(), 0.0, r * a.sin()));
+            let heading = pos.delta_f32(point).with_y(0.0).normalize_or_zero();
+            if blocked.iter().any(|b| b.dot(heading) > FRAC_1_SQRT_2) {
+                continue;
+            }
+            return WanderStep::Walk {
+                nodes: vec![PathNode::at(point)],
+                via_grid: false,
+            };
         }
+        Self::stand(rng)
+    }
+}
+
+/// Adds `item` to a memory of at most [`BLOCKED_EDGES`] (the oldest goes).
+fn remember(list: &mut Vec<(WorldPos, WorldPos)>, item: (WorldPos, WorldPos)) {
+    if !list.contains(&item) {
+        if list.len() >= BLOCKED_EDGES {
+            list.remove(0);
+        }
+        list.push(item);
     }
 }

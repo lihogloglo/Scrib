@@ -160,6 +160,16 @@ impl PathGraph {
             .count()
     }
 
+    /// The node closest to `pos` other than those in `skip`.
+    pub fn nearest_excluding(&self, pos: WorldPos, skip: &[usize]) -> Option<usize> {
+        self.positions()
+            .map(|p| pos.delta_f32(p).length_squared())
+            .enumerate()
+            .filter(|(i, _)| !skip.contains(i))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
     /// The node closest to `pos` (3D, as `OpenMW` picks the start node).
     pub fn nearest(&self, pos: WorldPos) -> Option<usize> {
         self.positions()

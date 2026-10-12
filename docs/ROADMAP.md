@@ -66,13 +66,19 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      Owner, clouds-flight: no jump/smear (CL-6 confirmed), but clouds are far too big (one cloud covers most of the
      island: weather/shape tile scales), static, same patterns; under a cloud edge at noon there is no shadow edge on
      the ground at all (cookie missing or far too diffuse).
-   - Lighting job. Night exposure: **owner chose A (2026-10-13)**: clamp auto-exposure's range (a night floor, e.g.
+   - Lighting job [~] (lighting 2026-10-13: built, LT-1..3 awaiting owner): night exposure floor EV100 3.5
+     (`LightCalibration::exposure_floor_ev100`, `--exposure-floor`; `sf_sky::ExposureRange` clamps the schedule and the
+     auto-exposure curve) + night ambient 1 nit (`--night-ambient`); budgeted point-light shadows
+     (`sf_sky_bevy::PointShadowBudget`, `BudgetedShadow`, distance + time fade by light splitting; `--point-shadows`,
+     Low/Medium 0, High 1, Ultra 4: +0.8 ms for 1, +3.9 ms for 2 at 1440p, render-thread CPU per caster in range).
+     Open: local-light shadow caster culling (size/distance per shadow view) would make 2-4 affordable.
+     Was: Night exposure: **owner chose A (2026-10-13)**: clamp auto-exposure's range (a night floor, e.g.
      EV ~3–4 tuned by eye) so night stays dark and placed/carried lights stay physical (no exposure-scaled lights);
      fixes walls blowing out near lamps at night (torchfix open item). Also: torches and other carried lights cast no
      shadows (owner 2026-10-13); budgeted point-light shadows for the nearest few lights is the usual approach.
-   - Owner notes 2026-10-13, actors (queue after walkers3): some Balmora guards at night have a wonky walk cycle, other
-     NPCs don't (torch layer + weapon stance + heavy armour?); Dagoth Ur's hand effect is bluish particles with no
-     light (compare with the original). Owner on uphill strides: people take shorter steps going up than down, but
+   - Owner notes 2026-10-13, actors: ~~some Balmora guards at night have a wonky walk cycle~~ (walkers5: walk lanes
+     synced past their loop end froze after turns; fixed, HI-4 awaiting owner); ~~Dagoth Ur's hand effect is bluish
+     particles with no light~~ (walkers5: matches the NIF data, no light in the model; PA-3 awaiting owner). Owner on uphill strides: people take shorter steps going up than down, but
      don't add edge cases to a locomotion system we may overhaul; note it for the locomotion refactor (slope-aware
      stride from speed + slope, not a special case).
    - Later (owner: not now, but important): object-terrain blending (R-b, M2 item) reads as "bottom of meshes darker",
@@ -625,11 +631,24 @@ ragdolls; robes move." Tasks in dependency order:
   compared because the P1 drives don't settle (0.5 m/s residual: per-axis targets on ball joints; P8 owns swing-twist
   targets). Not yet met: activation insertion 12.7 µs/body and a 43 ms first step when all of R0 goes in at once: P2
   must budget insertion (≈35 bodies per 0.5 ms frame) and measure incremental broad-phase cost.
-- [ ] P2 `sf_physics_bevy` + app wiring: `PhysicsPlugin` (60 Hz `FixedUpdate`, ≤ 3 steps/frame), write-back as
+- [~] P2 `sf_physics_bevy` + app wiring: `PhysicsPlugin` (60 Hz `FixedUpdate`, ≤ 3 steps/frame), write-back as
   `CellCoord + Transform` from `WorldPos`, activation hooks insert statics (replacing the walkers' `StaticWorld`
   build; `--off physics` keeps it) and terrain heightfield chunks (64 m, 0.5 m) in R0, debug gizmos.
   Verify: headless test (spawn, step, rebase, despawn); `cargo dev view` Balmora with physics debug draw shows statics +
   terrain; walkers unchanged (feet stats, 150-walker probe budget 0.2 ms); fly-through stutter counters not worse.
+  **Built 2026-10-13 (physics-p2), uncommitted:** `superfargoth/crates/sf_physics_bevy` (`PhysicsPlugin`: 60 Hz
+  `FixedUpdate`, ≤ 3 steps/frame, `follow` the streaming anchor by whole cells, interpolated write-back of awake
+  `PhysicsBody` entities, despawn removes; `PhysicsHook`/`hook_physics` on the placement spawners; shapes and scaled
+  copies built on the task pool; inserts under the 0.5 ms budget with a query refresh every 32 bodies and the refresh
+  cost reserved; terrain chunks 64 m / 0.5 m over the active worldspace's R0 cells from `TerrainHeightsMap`, built
+  on the task pool; `physics/...` counters; `PhysicsDebug` wireframes), `StaticShape::trimesh()` (one `Arc<TriMesh>`
+  shared with physics), app `physics.rs` (`--physics-debug`, `G`, `--off physics`, 10 s peak log). Headless test
+  passes; clippy pedantic clean. Balmora + Census Office debug screenshots line up (PH-6, scenes
+  `ph-balmora-colliders`/`ph-census-colliders`, awaiting owner). Flight bench (60 m/s, shared machine, other agents
+  building): ~1,400–2,150 bodies + 60–72 chunks resident; idle step peak 0.11–0.13 ms (gate 0.3); the step after a
+  rebase 0.9–1.45 ms (gate 2); insert peaks 0.66–0.79 ms/frame before the refresh reserve was added (re-measure).
+  **Open:** A/B stutters vs `--off physics` (the flight bench fails its gates either way on this machine: compare
+  counts), re-measure insert peaks, and move walkers.rs `MwGround` to `PhysicsProbe` once walkers3 is done.
 - [ ] P3 `body.cook` + `items.check` (framework bake steps) and `MwBodyRules` (`mw_bake`): authored `RootCollisionNode`
   else primitive / hull / V-HACD; per-page support and overlap check.
   Verify: `cargo test -p sf_physics --features bake`; `body_report` example on the install (models, shape kinds, hulls,
@@ -851,3 +870,6 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-12 (seams): CH-1b seams diagnosed (`mw_actors` example `seam_report`): legacy pieces are closed shells or overlapping rims, not shared vertex loops, so the 2 mm weld fixed only shin/wrist; added `sf_character::blend_seam_normals` (proximity normal blending within 4 cm, both sides meet at one normal; heads for shading only, in bind space) in `smooth_outfit` (Smooth mode). Left: per-piece texture colour steps and zigzag rims are art; options (seam colour levelling, rim shrink-wrap) in smooth-bodies.md "Seam shading"; SB-6 awaiting owner.
 - 2026-10-13 (walkers3, partial): frozen walker contacts traced to masked overlays (torch arm, crossbow/spell stance idles) overriding every curve incl. leg contacts; fixed with curve-joint links (`CompiledGraph::curve_joints`, masked curve blend) + regression tests. Contact cook rewritten (height over the loop cycle + speed vs ground and stance reference, hysteresis, anim.cook v4): strafes 4 -> ~50 % planted; one uphill-25° slide regression open, not re-baked. Give-up diagnostics (steep/wall/other); fix plan in .sessions/walkers3.md.
 - 2026-10-13 (walkers4, partial): contact cook v4 ends stances at heel-off (`ContactRules::lift`, trimmed in the stance's 2nd half; release 2.0, drift clamp dropped): slope_walk passes 15-30° + stairs (slide <= 0.005 m/s), census walk 33 / strafe 43 / run 23 / run-strafe 35 / sneak 52 % planted, 80 low clips (57 without heel-off, 243 before v4); bake 49 s. Mover steps over short steep bevels onto walkable ground within step_up (UE StepUp); scaffold remembers steep/wall-blocked PGRD edges and reroutes (`PathGraph::path_avoiding`, `PathWalkScaffold::replan_around`). In game (night Balmora 150 s): 145 give-ups (119 steep, 24 wall, 2 other), 0 rerouted: give-ups are first legs from spawn into >0.45 m steep ground (no grid edge to block); 2 torch-bearers still freeze their walk lane at t=1.333 s (stride-stuck 76). Open: those two, first-leg give-ups, Dagoth Ur hand effect (not started). Not committed.
+- 2026-10-13 (physics-p2): M4 P2 built: `sf_physics_bevy` (fixed step, rebase, write-back, R0 statics + terrain heightfields under a 0.5 ms insert budget, counters, collider gizmos), `StaticShape::trimesh()`, app `physics.rs` (`--physics-debug`/`G`, `--off physics`); headless test + Balmora/Census debug shots line up (PH-6 awaiting owner); flight: idle step ≤ 0.13 ms, rebase step ≤ 1.45 ms; A/B stutters and walkers on `PhysicsProbe` open.
+- 2026-10-13 (lighting): night exposure floor (owner option A): `sf_sky::ExposureRange` (UE Min/Max EV100) clamps the scheduled EV100 and is baked into the viewer auto-exposure curve; Bevyrrowind floor EV100 3.5 + night ambient 1 nit (`LightCalibration`, `--exposure-floor`/`--night-ambient`): `hi-balmora-night` EV100 1.62 -> 3.5, blown pixels 1.63 % -> 0.26 %, mean luma 72 -> 38; the cave (Addamasartus) unaffected (EV 7 scheduled, auto meters above the floor). Budgeted point-light shadows `sf_sky_bevy::PointShadowBudget` (N nearest by distance/priority, hysteresis, 15-25 m + 0.3 s fade via a shadowed/unshadowed light split, torches 2x, 0.25 m near plane, light props `NotShadowCaster`): 1440p median 9.4 / 10.2 / 13.3 / 13.8 ms for N = 0/1/2/4 (render-thread bound) -> High 1, Ultra 4, Low/Medium 0 (`--point-shadows`). LT-1..3 awaiting owner; shots/lighting.
+- 2026-10-13 (walkers5): frozen walk strides (owner "wonky guards at night"): not torch-specific; the walk blend space marker-synced a lane to an outro marker past its loop end, and once that lane led (after a turn) it played to the clip end (1.333 s) and parked. `sf_anim_graph` sync now syncs looping clips over their loop only (pairs wrap at the loop end, a follower always lands inside); tests `synced_followers_stay_inside_their_loop`, `mw_graphs` `turning_walkers_keep_every_walk_lane_cycling`. Night Balmora 150 s: stride-stuck 76 -> 0 (3 runs). Give-ups were not pathgrid first legs but straight off-grid walks (no node in reach): `WanderPlanner` remembers given-up headings/first-leg nodes per spot (`blocked_starts`, 1 m) and re-rolls away (±45°) or starts at the next-nearest node; give-ups 106 (before 123-167). Dagoth Ur: matches the NIF (texture-coloured additive particles, lavender-blue spray, no light node; nothing to wire). HI-4, WK-1, PA-3 awaiting owner. Not committed.
