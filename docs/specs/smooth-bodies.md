@@ -3,7 +3,7 @@
 Status: research done, Bevy-free prototype built and measured (smoothbody, 2026-10-12), per-seam
 vanilla guard and survey on corrected input (smoothbody3, "Survey rerun and guard"),
 made robust and surveyed over every playable race × sex and eight outfits (smoothbody2,
-2026-10-12, "Survey"), live in `sf_character_bevy` with an A/B (smoothlive, "Live"). Bake pre-warm not yet.
+2026-10-12, "Survey"), live in `sf_character_bevy` with an A/B (smoothlive, "Live"). Seam shading (seams, "Seam shading"). Bake pre-warm not yet.
 Crate: `sf_character`, module `smooth` behind feature `smooth` (parry3d). Adapter
 example: `bevyrrowind/crates/mw_actors/examples/smooth_body.rs`.
 
@@ -313,6 +313,56 @@ Wired into `sf_character_bevy`; on by default, A/B in the app.
 - First run (lineup of 7, `shots/smoothlive/`): 66 of 112 parts rewritten, 0-40 welded vertices per
   outfit, guard reverted 2 seams (robe outfit); `armor_{smooth,vanilla}.png` close-ups.
 
+## Seam shading (seams, 2026-10-12)
+
+Owner check CH-1b failed: seams visible on every character with B on and off. Diagnosis
+(`bevyrrowind/crates/mw_actors/examples/seam_report.rs`, naked Fargoth, 20 parts; close-ups in
+`shots/seams/`):
+
+- **The seams are not vertex loops.** Only forearm ↔ wrist and knee ↔ ankle share rim vertices
+  (10 and 7). The upper arm, the hands and the forearm's elbow end are **closed shells** (0 open
+  edges) pushed into the next piece; neck, chest, groin, thigh and foot rims lie over or under the
+  next piece with no vertex within 3 mm. The visible seam is where two surfaces cross, so the
+  2 mm weld (the only normal fix so far) touched two seam types out of nine.
+- **Shading:** across the seams the two sides' normals differ 9-17° where rims meet (shin, wrist:
+  a bright line, gone in smooth mode since the weld averages them) and 30-95° at overlaps
+  (elbow rim highlight, knee, neck, chin).
+- **Colour (not fixable without art or a colour step):** every piece has its own texture
+  (`ua`, `la`, `ul`, `ll`, `n`, `c`, hand `h*`, foot `uf/lf`, head `h02`), so colour continuity is
+  whatever the painter matched: the knee bulb (`ll`) is lighter than the thigh (`ul`), the neck
+  (`n`) darker than chest and head, the hands lighter than the wrist. No vertex colours, identical
+  materials (white, same flags), so no per-material lighting differences.
+- **Silhouette:** zigzag rims (thigh over the knee bulb, forearm top at the elbow) and the bulb
+  itself are authored geometry; they show in bind pose in both modes.
+
+**Fix (shading): proximity normal blending** (`blend_seam_normals`, run by `smooth_outfit` after
+the guard, Smooth mode only so B still shows the authored look). Every vertex within `link`
+(4 cm) of a skeleton-adjacent part's surface whose normal faces the same way moves toward the
+average of its own normal and that surface's interpolated normal: fully at the surface, not at all
+at 4 cm (smoothstep). Both sides do it, so they meet at one normal where they cross. This is the
+normal transfer modular-character tools apply at joins (Blender Data Transfer "custom normals" with
+a falloff, Maya Transfer Attributes) and the mesh-to-terrain normal blending of current engines;
+Bevy and the crate ecosystem have nothing for it (Bevy only computes flat/smooth normals per mesh),
+and it reuses `smooth`'s BVH. Heads (morph targets) join for shading only: their weights and
+positions stay, and the new normals go back into their own bind space. Fargoth: 137 normals on 18
+of 20 parts; rim-to-neighbour angle at the knee 32 → 10°, neck → chest 48 → 20°, groin 33 → 12°,
+shin and wrist 13 → 0°. Cost: one closest-point query per vertex per part (parry BVH), well under
+the step's 13 ms. Test `seam_normals_agree_across_seams`.
+
+**Left (owner decision; art or a new step):**
+1. **Colour seams** dominate what is left. Options, cheapest first: (a) **seam colour levelling**
+   (Lempitsky & Ivanov 2007, the local colour adjustment of Waechter et al. 2014 "Let There Be
+   Color!"): sample both textures along each seam once per part pair, solve a smooth per-vertex
+   multiplicative tint (harmonic, like the weight band) that makes both sides match at the seam
+   and fades to 1 inside, store it in the vertex colour attribute (the cook already carries it;
+   `ambient_diffuse` multiplies). No art change, no runtime cost; needs CPU texture decode at
+   assembly or a bake per part pair. (b) Skin-tone matching per race (one tint per texture from
+   its mean colour near the seams): cruder. (c) Replacer bodies (Better Bodies, Robert's Bodies:
+   skinned, one texture set), already supported as data.
+2. **Silhouette:** shrink-wrap rims that lie over a neighbour within ~1 cm onto its surface (the
+   Shrinkwrap-on-border-loop technique) would flatten the zigzag lips; it moves geometry, so it has
+   to run before the guard and be measured by the survey. The knee bulb is the shape the art has.
+
 ## Where it runs (decision)
 
 The owner's decision was a bake step. The equipment combinations a player can wear are
@@ -379,6 +429,7 @@ transfer_weights(&body, &mut targets, &TransferSettings) -> TransferReport
 find_seams(&parts, parents, &SmoothSettings) -> Vec<SeamLink>         // metric seams
 seam_openings(&parts, &seams, &skinning) -> Vec<f32>                  // per link, one pose
 guard_seams(&original, &mut smoothed, &seams, &probe_poses, tolerance, radius) -> GuardReport
+blend_seam_normals(&mut parts, parents, &SmoothSettings) -> usize       // seam shading, normals only
 penetration(rest_pts, pts, rest_surface, posed_surface, max_dist) -> Vec<f32>
 bind_palette(names, rest_model) -> Vec<CookedJoint>; skinning_matrices(rest, posed)
 ```

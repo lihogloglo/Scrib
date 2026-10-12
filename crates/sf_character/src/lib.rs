@@ -40,8 +40,8 @@ pub use rig::{Chain, JointName, RetargetOptions, RigMap, RigMapError};
 pub use slots::{SlotDef, SlotId, SlotRegistry, slot};
 #[cfg(feature = "smooth")]
 pub use smooth::{
-    GuardReport, SeamLink, SkinSurface, SmoothReport, SmoothSettings, TransferReport, TransferSettings, bind_palette, find_seams, guard_seams, penetration,
-    seam_openings, skinning_matrices, smooth_body, transfer_weights,
+    GuardReport, SeamLink, SkinSurface, SmoothReport, SmoothSettings, TransferReport, TransferSettings, bind_palette, blend_seam_normals, find_seams,
+    guard_seams, penetration, seam_openings, skinning_matrices, smooth_body, transfer_weights,
 };
 #[cfg(feature = "smooth")]
 pub use smooth_outfit::{OutfitSmoothReport, OutfitSmoothing, SmoothRig, smooth_outfit};

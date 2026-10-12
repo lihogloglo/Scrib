@@ -540,6 +540,72 @@ pub fn seam_openings(parts: &[SkinSurface], seams: &[SeamLink], skinning: &[Affi
     probes.iter().map(|p| p.opening(parts, skinning)).collect()
 }
 
+/// Seam shading (spec "Seam shading"): near a seam, each part's normals
+/// blend toward the normal of the part it meets, so lighting runs on across
+/// the seam instead of stepping at it. Legacy pieces rarely share boundary
+/// vertices: most are closed shells pushed into each other, or a rim lying
+/// over (or tucked under) the next piece, so the visible seam is where two
+/// surfaces cross, not a vertex loop, and welding coincident vertices alone
+/// misses it. This is proximity normal blending, the normal transfer
+/// modular-character and mesh-blending tools apply near a join (Blender's
+/// Data Transfer "custom normals" with a distance falloff, terrain/mesh
+/// normal blending in Frostbite-era engines).
+///
+/// Every vertex within `settings.link` of another part's surface, where
+/// that part's dominant joint is skeleton-adjacent (at most
+/// `settings.max_hops`, as for [`smooth_body`]'s seams) and its normal there
+/// faces the same way, moves toward the average of its own normal and that
+/// surface's interpolated normal: fully at the surface, not at all at
+/// `settings.link` (smoothstep falloff). Both sides of a seam do this, so
+/// they meet at one normal where they cross. Only the nearest qualifying
+/// part counts. Shading only: positions and weights are untouched, and the
+/// result depends only on the input (all targets are computed first).
+/// Returns the vertices changed.
+pub fn blend_seam_normals(parts: &mut [SkinSurface], parents: &[Option<usize>], settings: &SmoothSettings) -> usize {
+    let radius = settings.link;
+    if radius <= 0.0 {
+        return 0;
+    }
+    let meshes: Vec<Option<SurfaceMesh>> = parts.iter().map(|s| SurfaceMesh::from_raw(&s.positions, &s.triangles)).collect();
+    let mut targets: Vec<(usize, usize, Vec3)> = Vec::new();
+    for (a, part) in parts.iter().enumerate() {
+        for (v, (&p, &own)) in part.positions.iter().zip(&part.normals).enumerate() {
+            let ja = dominant_joint(&part.skin[v]);
+            let mut best: Option<(f32, Vec3)> = None;
+            for (b, mesh) in meshes.iter().enumerate() {
+                let Some(mesh) = mesh.as_ref().filter(|_| b != a) else { continue };
+                let Some((tri, q)) = mesh.closest(p, radius) else { continue };
+                let d = q.distance(p);
+                if best.is_some_and(|(x, _)| x <= d) {
+                    continue;
+                }
+                let corners = mesh.triangles[tri];
+                let bary = mesh.barycentric(tri, q).map(|x| x.max(0.0));
+                let k = corners[(0..3).max_by(|&x, &y| bary[x].total_cmp(&bary[y])).unwrap_or(0)] as usize;
+                if hops(parents, ja, dominant_joint(&parts[b].skin[k])) > settings.max_hops {
+                    continue;
+                }
+                let theirs = corners.iter().zip(bary).map(|(&c, x)| parts[b].normals[c as usize] * x).sum::<Vec3>().normalize_or_zero();
+                if theirs == Vec3::ZERO || own.dot(theirs) <= 0.0 {
+                    continue;
+                }
+                best = Some((d, theirs));
+            }
+            let Some((d, theirs)) = best else { continue };
+            let t = (d / radius).clamp(0.0, 1.0);
+            let w = 1.0 - t * t * (3.0 - 2.0 * t);
+            let n = own.lerp((own + theirs).normalize_or_zero(), w).normalize_or_zero();
+            if n != Vec3::ZERO && n != own {
+                targets.push((a, v, n));
+            }
+        }
+    }
+    for &(a, v, n) in &targets {
+        parts[a].normals[v] = n;
+    }
+    targets.len()
+}
+
 /// What [`guard_seams`] did.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GuardReport {
@@ -1258,7 +1324,8 @@ mod tests {
     use sf_model::SkinVertex;
 
     use super::{
-        SkinSurface, SmoothSettings, TransferSettings, find_seams, guard_seams, penetration, seam_openings, skinning_matrices, smooth_body, transfer_weights,
+        SkinSurface, SmoothSettings, TransferSettings, blend_seam_normals, find_seams, guard_seams, penetration, seam_openings, skinning_matrices, smooth_body,
+        transfer_weights,
     };
 
     /// An open tube along +Y from `y0` to `y1`, rigid on `joint`.
@@ -1335,6 +1402,45 @@ mod tests {
             *w = SkinVertex { joints: [0, 1, 0, 0], weights: [1.0 - t, t, 0.0, 0.0] };
         }
         s
+    }
+
+    /// Seam shading: rims that meet (gap seam) end with one normal; a rim
+    /// lying 5 mm over the other piece turns most of the way toward it;
+    /// vertices farther than `link` from the other piece keep their normal.
+    #[test]
+    fn seam_normals_agree_across_seams() {
+        let parents = [None, Some(0)];
+        let tilt = |mut s: SkinSurface, y: f32| {
+            for n in &mut s.normals {
+                *n = (*n + Vec3::Y * y).normalize();
+            }
+            s
+        };
+        let angle = |a: Vec3, b: Vec3| a.dot(b).clamp(-1.0, 1.0).acos().to_degrees();
+        let settings = SmoothSettings::default();
+        // Gap seam: two rims at y = 1, normals tilted 22° apart each way.
+        let mut parts = vec![tilt(tube(0.0, 1.0, 0.1, 0), 0.4), tilt(tube(1.0, 2.0, 0.1, 1), -0.4)];
+        let before = parts.clone();
+        assert!(blend_seam_normals(&mut parts, &parents, &settings) >= 16);
+        for k in 0..8 {
+            let (lower, upper) = (parts[0].normals[32 + k], parts[1].normals[k]);
+            assert!(angle(lower, upper) < 1.0, "rim {k}: {lower} vs {upper}");
+            assert!(angle(before[0].normals[32 + k], before[1].normals[k]) > 40.0);
+        }
+        for (b, a) in before.iter().zip(&parts) {
+            assert_eq!((&b.positions, &b.skin, &b.triangles), (&a.positions, &a.skin, &a.triangles));
+            // Only rim vertices (first and last ring) change.
+            assert_eq!(b.normals[8..32], a.normals[8..32]);
+        }
+        // Shell: the upper piece's rim lies 5 mm over the lower piece.
+        let mut parts = vec![tilt(tube(0.0, 1.0, 0.1, 0), 0.4), tilt(tube(0.9, 2.0, 0.105, 1), -0.4)];
+        let before = parts.clone();
+        blend_seam_normals(&mut parts, &parents, &settings);
+        let under = |k: usize| parts[0].normals[24 + k];
+        for k in 0..8 {
+            let (was, now) = (angle(before[1].normals[k], under(k)), angle(parts[1].normals[k], under(k)));
+            assert!(now < 0.6 * was, "rim {k}: {was}° -> {now}°");
+        }
     }
 
     /// Overlapping pieces: the child's rim sits 6 cm deep inside a wider

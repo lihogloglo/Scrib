@@ -6,16 +6,22 @@
 //! [`assemble`](crate::assemble): rest-space positions and normals, skin
 //! weights on a rest-space palette ([`bind_palette`]).
 //!
-//! Left out (kept as authored): parts with morph targets (heads keep their
-//! own mesh and bind-space deltas), parts the caller excludes (hair: it
-//! stays on its joint), parts with a joint the skeleton lacks. A set with
-//! fewer than two smoothable parts, or no probe poses, is left unchanged.
+//! Then seam shading ([`blend_seam_normals`]) over every visible part:
+//! rims take the normal of the surface they meet, so lighting doesn't step
+//! at the seams.
+//!
+//! Left out (kept as authored): parts the caller excludes (hair: it stays
+//! on its joint), parts with a joint the skeleton lacks. Parts with morph
+//! targets (heads keep their own mesh and bind-space deltas) keep their
+//! weights and positions; only their seam normals change, written back in
+//! their own bind space. A set with fewer than two parts, or no probe poses,
+//! is left unchanged.
 
-use glam::Affine3A;
+use glam::{Affine3A, Mat3, Mat4};
 use sf_model::{FormatError, MAX_INFLUENCES, SkinVertex};
 
 use crate::assemble::{AssemblyPart, DecodedPart};
-use crate::smooth::{GuardReport, SkinSurface, SmoothSettings, bind_palette, guard_seams, skinning_matrices, smooth_body};
+use crate::smooth::{GuardReport, SkinSurface, SmoothSettings, bind_palette, blend_seam_normals, guard_seams, skinning_matrices, smooth_body};
 
 /// The skeleton the outfit is smoothed on, with the probe poses the guard
 /// checks seams in. Built once per skeleton.
@@ -49,11 +55,13 @@ pub struct OutfitSmoothing {
     /// A seam may open this much (model units) more than the original in a
     /// probe pose before the guard reverts it (survey: 0.5 mm).
     pub guard_tolerance: f32,
+    /// Seam shading ([`blend_seam_normals`]).
+    pub seam_normals: bool,
 }
 
 impl Default for OutfitSmoothing {
     fn default() -> Self {
-        Self { smooth: SmoothSettings::default(), guard_tolerance: 0.0005 }
+        Self { smooth: SmoothSettings::default(), guard_tolerance: 0.0005, seam_normals: true }
     }
 }
 
@@ -68,6 +76,8 @@ pub struct OutfitSmoothReport {
     pub welded: usize,
     pub band: usize,
     pub guard: GuardReport,
+    /// Rim vertices whose normal seam shading changed.
+    pub normals: usize,
 }
 
 /// Smooths the outfit `parts` at `lod` (module docs). `exclude[i]` keeps
@@ -86,10 +96,10 @@ pub fn smooth_outfit(
     if rig.probes.is_empty() {
         return Ok((out, report));
     }
-    // (part index, decoded submeshes, rest surface)
-    let mut set: Vec<(usize, DecodedPart, SkinSurface)> = Vec::new();
+    // (part index, decoded submeshes, rest surface, shading only)
+    let mut set: Vec<(usize, DecodedPart, SkinSurface, bool)> = Vec::new();
     for (i, part) in parts.iter().enumerate() {
-        if exclude.get(i).copied().unwrap_or(false) || !part.cooked.morph_targets.is_empty() {
+        if exclude.get(i).copied().unwrap_or(false) {
             continue;
         }
         let Ok(surface) = SkinSurface::from_cooked(part.cooked, lod, part.body_part, |n| rig.joint(n), &rig.rest_model) else { continue };
@@ -98,28 +108,72 @@ pub fn smooth_outfit(
         }
         let decoded = DecodedPart::decode(part.cooked, lod, part.body_part)?;
         debug_assert_eq!(decoded.submeshes.iter().map(|s| s.vertices.len()).sum::<usize>(), surface.positions.len());
-        set.push((i, decoded, surface));
+        set.push((i, decoded, surface, !part.cooked.morph_targets.is_empty()));
     }
     if set.len() < 2 {
         return Ok((out, report));
     }
-    let original: Vec<SkinSurface> = set.iter().map(|(_, _, s)| s.clone()).collect();
+    // Weights and welds: parts without morph targets.
+    let smoothable: Vec<usize> = (0..set.len()).filter(|&k| !set[k].3).collect();
+    let original: Vec<SkinSurface> = smoothable.iter().map(|&k| set[k].2.clone()).collect();
     let mut smoothed = original.clone();
-    let run = smooth_body(&mut smoothed, &rig.parents, &settings.smooth);
-    report.guard = guard_seams(&original, &mut smoothed, &run.seams, &rig.probes, settings.guard_tolerance, settings.smooth.band);
-    report.parts = set.len();
-    report.seams = run.seams.len();
-    report.welded = run.welded;
-    report.band = run.band;
-    for ((index, mut decoded, before), after) in set.into_iter().zip(smoothed) {
+    if smoothed.len() >= 2 {
+        let run = smooth_body(&mut smoothed, &rig.parents, &settings.smooth);
+        report.guard = guard_seams(&original, &mut smoothed, &run.seams, &rig.probes, settings.guard_tolerance, settings.smooth.band);
+        report.seams = run.seams.len();
+        report.welded = run.welded;
+        report.band = run.band;
+    }
+    report.parts = smoothable.len();
+    let mut after: Vec<SkinSurface> = set.iter().map(|(_, _, s, _)| s.clone()).collect();
+    for (&k, s) in smoothable.iter().zip(smoothed) {
+        after[k] = s;
+    }
+    // Shading: every part, heads included.
+    if settings.seam_normals {
+        report.normals = blend_seam_normals(&mut after, &rig.parents, &settings.smooth);
+    }
+    for ((index, mut decoded, before, shading_only), after) in set.into_iter().zip(after) {
         if before == after {
             continue;
         }
-        rewrite(&mut decoded, &after, rig);
+        if shading_only {
+            rewrite_normals(&mut decoded, &before, &after, rig);
+        } else {
+            rewrite(&mut decoded, &after, rig);
+        }
         out[index] = Some(decoded);
         report.rewritten += 1;
     }
     Ok((out, report))
+}
+
+/// Writes changed rest-space normals back into a part that keeps its own
+/// palette and bind space (morph-bearing parts): each changed normal goes
+/// through the inverse of the vertex's blended bind-to-rest transform.
+fn rewrite_normals(decoded: &mut DecodedPart, before: &SkinSurface, after: &SkinSurface, rig: &SmoothRig) {
+    let to_rest: Vec<Option<Mat3>> = decoded
+        .joints
+        .iter()
+        .map(|j| {
+            rig.joint(&j.name).map(|r| Mat3::from_mat4(Mat4::from(rig.rest_model[usize::from(r)]) * Mat4::from_cols_array(&j.inverse_bind)))
+        })
+        .collect();
+    let mut k = 0;
+    for sub in &mut decoded.submeshes {
+        for (v, s) in sub.vertices.iter_mut().zip(&sub.skin) {
+            if before.normals[k] != after.normals[k] {
+                let m: Mat3 = (0..MAX_INFLUENCES)
+                    .filter(|&i| s.weights[i] > 0.0)
+                    .filter_map(|i| to_rest.get(usize::from(s.joints[i])).copied().flatten().map(|m| m * s.weights[i]))
+                    .fold(Mat3::ZERO, |a, b| a + b);
+                if m.determinant().abs() > f32::EPSILON {
+                    v.normal = (m.inverse() * after.normals[k]).normalize_or_zero().to_array();
+                }
+            }
+            k += 1;
+        }
+    }
 }
 
 /// Writes a smoothed rest-space surface back into its decoded submeshes,
