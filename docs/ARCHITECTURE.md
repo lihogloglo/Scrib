@@ -457,14 +457,17 @@ Every milestone ends with something visibly running and a benchmark entry.
 | M4 | Physics: rigid-body items, controller, carry/throw, ragdolls (powered), cloth (capes, robes) | Knock a table's contents over; a dead guard ragdolls; robes move |
 | M5 | Mods + Lua: runtime, curated API, mod pipeline end to end, MWScript → Luau; game UI slice (`ui.md`): HUD, virtualized inventory, settings + mod settings, message box, both themes and presets, `.bsn` layouts | A Lua mod and a texture mod both work, hot reload works; a theme mod, a CSS patch and a Lua inventory column work together, gamepad-only |
 | M6 | Water + weather + surfaces: ocean (evaluate `bevy-aqua`), water bodies at any height, baked rivers to the sea; weather (`weather.md`): state machine with blended presets as records, Nubis clouds + cloud shadows, froxel/height/ground fog with god rays, one wind field (grass, trees via baked vertex data, impostors, cloth, particles), precipitation with occlusion, surface state (wetness, puddles, snow, ash), character wetness, HD grass, far terrain shadows (shadow-height map) | The Bitter Coast in a rainstorm: puddles, wet wading, a boat that floats; an ash storm at Red Mountain; sunrise god rays in Balmora; Bitter Coast morning fog; all within the weather.md budgets |
-| M7 | Far-field performance: HLOD clusters, impostors, occlusion culling, terrain erosion bake, PBR generation, texture streaming | Vvardenfell skyline from Red Mountain within frame targets |
-| M8 | Seamless interiors: portal rendering, crossing between worldspaces, environment-volume blending | Walk into the Census Office without a load or fade |
-| M9 | Combat (Dark Souls 3–inspired): animation windows, stamina/poise, swept hitboxes, lock-on, rolls, parry/riposte, data-driven movesets | Duel a mudcrab and a Dark Brotherhood assassin, and it feels good |
-| M10+ | Dialogue, journal, stats and rules, magic, AI, saves, persistent deformation | Main quest playable (long tail) |
+| M7 | RPG core (moved up from M10+, owner 2026-10-13): Dialogue, journal, stats and rules, magic, AI, saves, persistent deformation | Main quest playable (long tail) |
+| M8 | Far-field performance: HLOD clusters, impostors, occlusion culling, terrain erosion bake, PBR generation, texture streaming | Vvardenfell skyline from Red Mountain within frame targets |
+| M9 | Seamless interiors: portal rendering, crossing between worldspaces, environment-volume blending | Walk into the Census Office without a load or fade |
+| M10 | Combat (Dark Souls 3–inspired): animation windows, stamina/poise, swept hitboxes, lock-on, rolls, parry/riposte, data-driven movesets | Duel a mudcrab and a Dark Brotherhood assassin, and it feels good |
 
 Wishlist details and the early decisions they force:
-[WISHLIST.md](WISHLIST.md). M6–M9 can overlap with each other once M2–M4
+[WISHLIST.md](WISHLIST.md). M6–M10 can overlap with each other once M2–M4
 exist; order follows what's most fun to see next, gated by §0 targets.
+Renumbered 2026-10-13 (owner): RPG core moved from M10+ to M7; far-field performance, seamless
+interiors and combat moved to M8, M9, M10. Specs and logs written before that date use the old numbers
+(old M7 = M8, old M8 = M9, old M9 = M10, old M10+ = M7). Priority now: M4, M5, M6.
 
 ## 10. Decisions log
 
@@ -1537,3 +1540,7 @@ exist; order follows what's most fun to see next, gated by §0 targets.
   and P7 starts from impulse joints. Rapier wakes the partners of every new contact and every moved collider, so
   `sf_physics` settles sleeping bodies (one locked step, re-slept by the engine) on insert and on rebase.
 - 2026-10-12 (seams): seam shading (proximity normal blending, `blend_seam_normals`) is part of `SmoothBodies::Smooth`, not applied in Vanilla, so B keeps showing the authored look; colour seams between differently textured pieces wait for an owner decision (smooth-bodies.md "Seam shading").
+
+- 2026-10-13 (owner): night exposure: auto-exposure gets a clamped range (a night EV floor) instead of exposure-scaled local lights; local lights stay in physical units calibrated once (LightCalibration). Option B (lights scaled by exposure) rejected as non-physical. Implementation: lighting job in ROADMAP "Next up" 6b.
+
+- 2026-10-13 (owner): milestones renumbered: RPG core (dialogue, journal, stats/rules, magic, AI, saves) moves from M10+ to M7; far-field perf -> M8, seamless interiors -> M9, combat -> M10. Priority order: M4 physics, M5 mods+Lua+UI, M6 water+weather (§9).

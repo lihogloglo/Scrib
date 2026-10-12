@@ -315,6 +315,9 @@ Wired into `sf_character_bevy`; on by default, A/B in the app.
 
 ## Seam shading (seams, 2026-10-12)
 
+**Owner decision (2026-10-13):** seam shading fix confirmed (SB-6); colour seams stay as authored (no
+colour levelling); replacer bodies remain the route for different skin art.
+
 Owner check CH-1b failed: seams visible on every character with B on and off. Diagnosis
 (`bevyrrowind/crates/mw_actors/examples/seam_report.rs`, naked Fargoth, 20 parts; close-ups in
 `shots/seams/`):
