@@ -1,0 +1,34 @@
+[package]
+name = "sf_world"
+description = "World streaming core for superfargoth: worldspaces, door links, placements, world index, scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# The world index as sf_bake steps (`world.region/layout/page/dir`) and the
+# runtime reader over bake products. Pulls sf_bake and sf_model (for
+# `model.info`); the runtime core doesn't need them.
+bake = ["dep:sf_bake", "dep:sf_model"]
+
+[dependencies]
+bitflags = { workspace = true, features = ["serde"] }
+blake3.workspace = true
+glam = { workspace = true, features = ["serde"] }
+postcard.workspace = true
+serde.workspace = true
+sf_bake = { workspace = true, optional = true }
+sf_coords.workspace = true
+# No glTF importer: only `ModelInfo` / `ModelInfoStep` are used.
+sf_model = { path = "../sf_model", optional = true, default-features = false }
+sf_records.workspace = true
+sf_vfs.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

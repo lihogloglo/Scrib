@@ -1,0 +1,16 @@
+[package]
+name = "sf_sky"
+description = "Bevy-free sky core for superfargoth: time of day, sun and moon positions, light and exposure curves"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

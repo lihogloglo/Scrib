@@ -1,0 +1,67 @@
+# superfargoth
+
+Game-agnostic open-world ARPG framework on Bevy. **MIT OR Apache-2.0.**
+Its first content pack is Bevyrrowind (`../bevyrrowind`, GPL), which drives
+the roadmap: see `../bevyrrowind/docs/ROADMAP.md`.
+
+## Start of every session
+
+1. Read `docs/ARCHITECTURE.md` (vision, crate plan, build rules §8b, decisions §10)
+   and `docs/WISHLIST.md` (feature targets, performance numbers, early decisions).
+2. Read `../bevyrrowind/docs/ROADMAP.md` for what's next.
+3. For the system you touch, read its spec in `docs/specs/`. No spec yet
+   for a major system? Write it first.
+
+## End of every session
+
+Update the roadmap (in the bevyrrowind repo) and ARCHITECTURE.md §10 for
+lasting decisions.
+
+## Parallel sessions
+
+Several sessions may work in this folder at once. Follow the protocol in
+`../bevyrrowind/CLAUDE.md` ("Parallel sessions"): register in
+`../.sessions/`, one build at a time, explicit-path commits only when asked,
+never revert others' changes.
+
+## Hard rules
+
+1. **No game-specific code.** Nothing here names Morrowind (or any game's)
+   formats, IDs, units, or conventions. Litmus test: could another game
+   plug in with only a new adapter?
+2. **No GPL-derived code.** Never copy or translate from OpenMW, MWSE,
+   `nif.xml`, or other GPL sources. Specs come from public docs, papers,
+   and observation.
+3. **Clean room for other games** (WISHLIST.md "Reference policy"). In an
+   analysis session (REA, game data inspection), write behavior specs only,
+   with no code, pseudocode, decompiled names, or raw tables, and commit
+   nothing else. In an implementation session, never open decompiled output
+   or analysis notes, only `docs/specs/`. Don't mix the two in one session.
+4. **Everything is a mod**: VFS, records, and mod manifests are the only content paths.
+5. **Industry standard, never kludge**; named scaffolds only.
+6. **Compile time is a constraint** (§8b): Bevy-free cores, thin Bevy plugins.
+7. **Research first, and challenge our docs.** Before designing or building
+   a system, research how the industry does it today: papers, GDC/SIGGRAPH
+   talks, engine docs, and the current crate ecosystem (versions, Bevy
+   compatibility, maintenance). Our specs and ARCHITECTURE.md are not
+   gospel. If research shows a better way, update the spec and log the
+   change in ARCHITECTURE.md §10 instead of following a stale doc.
+   Prior projects (Godotwind on Godot, ECSwind) are anecdotes, not designs:
+   Godot's node tree, GDScript and renderer quirks don't transfer to Bevy,
+   so never copy their tiers or constants; calibrate from our own Bevy
+   measurements.
+8. **Reuse before building, in this order: Bevy, then crates, then our
+   own.** First use what Bevy itself provides (check its docs, examples and
+   source for the version we're on). Then maintained, license-compatible
+   crates and tools (MIT, Apache-2.0, BSD, zlib here; MPL-2.0 only for
+   unmodified dependencies, owner decision 2026-10-11; never GPL). Write our
+   own only when neither fits (wrong license, abandoned, stuck on an old
+   Bevy with no fork path, or below our performance or quality bar), and
+   say in the spec why each earlier step didn't.
+
+## Commands
+
+```sh
+cargo test --workspace --all-features
+cargo clippy --workspace --all-features --all-targets
+```

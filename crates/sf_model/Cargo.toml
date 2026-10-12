@@ -1,0 +1,27 @@
+[package]
+name = "sf_model"
+description = "Engine-neutral model data, the .sfmesh container, and mesh cooking (LODs) for superfargoth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["gltf"]
+# The framework's glTF / GLB importer.
+gltf = ["dep:gltf"]
+
+[dependencies]
+glam.workspace = true
+# "extras": morph target names live in `mesh.extras.targetNames` (bevy_gltf reads them the same way).
+gltf = { workspace = true, optional = true, features = ["extras"] }
+meshopt.workspace = true
+postcard.workspace = true
+serde.workspace = true
+sf_bake.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

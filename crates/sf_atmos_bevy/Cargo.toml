@@ -1,0 +1,28 @@
+[package]
+name = "sf_atmos_bevy"
+description = "Bevy render plugin for sf_atmos: quarter-resolution temporal volumetric clouds and the cloud shadow map (weather.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
+bevy_light.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# `pbr_light_textures`: cloud shadows through `DirectionalLightTexture`.
+bevy_pbr = { workspace = true, features = ["pbr_light_textures"] }
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+sf_atmos = { path = "../sf_atmos" }
+
+[lints]
+workspace = true

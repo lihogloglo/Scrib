@@ -1,0 +1,46 @@
+[package]
+name = "sf_sky_bevy"
+description = "Bevy plugin for sf_sky: atmosphere, sun and moon lights, exposure, raster/Solari render path, point-light proxies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Ray-traced lighting path (Bevy Solari). Without it the render path is always raster.
+solari = ["dep:bevy_solari", "dep:bevy_core_pipeline"]
+# DLSS (NVIDIA RTX): Super Resolution on the raster path (`UpscalingSetting`) and,
+# with `solari`, Ray Reconstruction denoising the ray-traced path.
+# Builds need the DLSS SDK (see `docs/specs/sky-lighting.md`, "Denoising").
+dlss = ["dep:bevy_anti_alias", "dep:bevy_core_pipeline", "bevy_anti_alias/dlss", "bevy_solari?/dlss"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+bevy_anti_alias = { workspace = true, optional = true }
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_core_pipeline = { workspace = true, optional = true }
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_light.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+bevy_solari = { workspace = true, optional = true }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+sf_sky.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }
+
+[[example]]
+name = "sky"
+required-features = ["solari"]
+
+[lints]
+workspace = true

@@ -1,0 +1,33 @@
+# Framework specs
+
+Specs for `sf_*` systems. Same template and rules as `../../../bevyrrowind/docs/specs/README.md`,
+plus: no game-specific content, no GPL-derived material.
+
+**Every spec has an "Industry comparison" section** (rule since 2026-10-12,
+after the owner caught a missing basic technique; see
+[industry-audit.md](industry-audit.md)). It lists what major engines (UE,
+Unity, Bethesda Creation, RAGE, Decima, Frostbite, OpenMW, as relevant) do
+for that system, with citations, and says for each technique whether we
+match, differ (and why), or lack it (gap + priority). A spec without it is
+not "agreed". Existing specs get theirs through roadmap job J9;
+industry-audit.md is the cross-system starting point.
+
+Index:
+
+| Spec | Status | Crates | Milestone |
+|---|---|---|---|
+| [world-coordinates.md](world-coordinates.md) | agreed (2026-10-11) | `sf_coords`, `sf_world_bevy` | M2 |
+| [streaming.md](streaming.md): worldspaces, door links, rings, budgets | agreed (2026-10-11) | `sf_world`, `sf_world_bevy` | M2 |
+| [portals.md](portals.md): seamless door portals (render-to-texture views, crossing) | spike done (2026-10-12) | `sf_world_bevy` (M8: `sf_portal_bevy`) | M8 |
+| [terrain.md](terrain.md): height stack, CDLOD + clipmaps, splatting, upsampling | agreed (2026-10-11) | `sf_terrain`, `sf_terrain_bevy` | M2 |
+| [bake.md](bake.md): `sf_bake`, content-hash cache, mesh LODs | agreed (2026-10-11) | `sf_bake`, `sf_model`, `sf_model_bevy` | M2 |
+| [far-field.md](far-field.md): HLOD hierarchy over the streaming grid, octahedral impostors, distant lights, crossfade | draft (2026-10-11) | `sf_lod`, `sf_lod_bevy` | M2 (moved from M7) |
+| [diag.md](diag.md): counters, frame stats, gates, baselines, fly-throughs | implemented (2026-10-11) | `sf_diag`, `sf_diag_bevy` | M1 |
+| [sky-lighting.md](sky-lighting.md): atmosphere, sun/moon from clock and latitude, exposure, raster/Solari switch, point-light proxies, weather/wind hooks | implemented (2026-10-11) | `sf_sky`, `sf_sky_bevy` | M2 |
+| [animation.md](animation.md): cooked clips, pose runtime, layered graph, blend spaces, root motion, events, IK, LOD/budget | draft (2026-10-11) | `sf_anim`, `sf_anim_graph`, `sf_anim_bevy` | M3 |
+| [character.md](character.md): assembly + merging, equipment slots, standard humanoid rig, bake-time retargeting, first/third person | draft (2026-10-11) | `sf_character`, `sf_character_bevy`, `sf_model` | M3 |
+| [ui.md](ui.md): game UI stack (CommonUI-style layers, MVVM), two themes × two layout presets, CSS styling via bevy_flair layered by load order, slots, Luau UI API, gamepad-complete input, scaling, a11y | draft, design complete (2026-10-11) | `sf_ui`, `sf_ui_bevy`, `sf_ui_css`, `sf_ui_screens`, `sf_ui_lua`, `sf_devui` | M5 |
+| [locomotion.md](locomotion.md): intent, trajectory springs, ground probes, kinematic mover | draft (2026-10-11) | `sf_controller`, `sf_controller_bevy` | M3 |
+| [rig-profile.md](rig-profile.md): limb-chain rig profile for any skeleton (girdles, N limbs, spine, neck/head, tails, wings), auto-detection, creature support | draft (2026-10-11) | `sf_anim`, `sf_anim_graph`, `sf_controller`, `sf_character` | M3 |
+| [weather.md](weather.md): weather state machine + presets as records, Nubis clouds + cloud shadows, froxel/height/ground fog + god rays, wind field, precipitation with occlusion, surface state (wetness, puddles, snow, ash), distant shadows (CSM + shadow-height map); near-term shadow-pop and Ghostfence-pop fixes | draft (2026-10-11) | `sf_wind`, `sf_weather`, `sf_atmos`, `sf_surface` + `_bevy` plugins, `sf_precip_bevy` | M6 (near-term fixes: M2) |
+| [industry-audit.md](industry-audit.md): gap audit of streaming, rendering and LOD vs shipped engines; Bevy 0.20 per-entity costs; size-based draw distance; jobs J1–J9 | audit (2026-10-12) | `sf_model`, `sf_world`, `sf_world_bevy`, `sf_lod_bevy` | M2 |

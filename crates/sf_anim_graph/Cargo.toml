@@ -1,0 +1,33 @@
+[package]
+name = "sf_anim_graph"
+description = "Bevy-free animation graph for superfargoth: graph assets, animgraph.compile, evaluator, state machines, blend spaces, sync groups, inertialization, procedural op stack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Authoring and baking: RON graph assets, `compile` (mask resolution,
+# blend-space triangulation) and the `animgraph.compile` bake step. The
+# runtime (evaluator) needs none of it.
+bake = ["dep:ron", "dep:spade"]
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+postcard.workspace = true
+ron = { workspace = true, optional = true }
+serde.workspace = true
+# Cooked clips, skeletons, pose ops and IK; no glTF importer.
+sf_anim.workspace = true
+sf_bake.workspace = true
+spade = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+# Synthetic creature skeletons and gaits.
+sf_anim = { workspace = true, features = ["fixtures"] }
+rayon.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,1387 @@
+{
+  "format": 1,
+  "scenario": "terrain_flythrough",
+  "meta": {},
+  "duration_s": 109.62266879999986,
+  "frames": {
+    "stats": {
+      "count": 19145,
+      "mean": 5.725916364586038,
+      "min": 3.6458,
+      "median": 5.6409,
+      "p95": 7.04176,
+      "p99": 7.719424,
+      "max": 12.497100000000001
+    },
+    "fps_median": 177.27667570777712,
+    "fps_p1": 129.5433441666114,
+    "spike_factor": 1.5,
+    "spikes": 17
+  },
+  "counters": {
+    "render/atmosphere_environment/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0029000000000000002,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.003364497893445761,
+        "min": 0.0015,
+        "median": 0.0031,
+        "p95": 0.0051,
+        "p99": 0.0062,
+        "max": 0.1027
+      }
+    },
+    "render/atmosphere_environment/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.01536,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.01613169985600759,
+        "min": 0.008192,
+        "median": 0.01024,
+        "p95": 0.016384,
+        "p99": 0.323072,
+        "max": 1.1008
+      }
+    },
+    "render/atmosphere_luts/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 182528.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 182528.0,
+        "min": 182528.0,
+        "median": 182528.0,
+        "p95": 182528.0,
+        "p99": 182528.0,
+        "max": 182528.0
+      }
+    },
+    "render/atmosphere_luts/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0033,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0043010666097808925,
+        "min": 0.0019,
+        "median": 0.0040999999999999995,
+        "p95": 0.005699999999999999,
+        "p99": 0.007,
+        "max": 0.3046
+      }
+    },
+    "render/atmosphere_luts/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.36352,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.5571548448616173,
+        "min": 0.35328,
+        "median": 0.468992,
+        "p95": 1.058816,
+        "p99": 1.360896,
+        "max": 1.87392
+      }
+    },
+    "render/auxiliary_views/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0035,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0036477734520822644,
+        "min": 0.002,
+        "median": 0.0036,
+        "p95": 0.0045000000000000005,
+        "p99": 0.0053,
+        "max": 0.33740000000000003
+      }
+    },
+    "render/auxiliary_views/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.004096,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0023536545250917047,
+        "min": 0.0,
+        "median": 0.002048,
+        "p95": 0.003072,
+        "p99": 0.004096,
+        "max": 0.888832
+      }
+    },
+    "render/bin_unpacking/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 768.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 696.3954989067249,
+        "min": 512.0,
+        "median": 640.0,
+        "p95": 1088.0,
+        "p99": 1344.0,
+        "max": 1536.0
+      }
+    },
+    "render/bin_unpacking/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0034000000000000002,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.004250103994453224,
+        "min": 0.0021,
+        "median": 0.0038,
+        "p95": 0.0065,
+        "p99": 0.007700000000000001,
+        "max": 0.0713
+      }
+    },
+    "render/bin_unpacking/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.011264,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.01296800895952527,
+        "min": 0.009216,
+        "median": 0.011264,
+        "p95": 0.011264,
+        "p99": 0.01536,
+        "max": 1.296384
+      }
+    },
+    "render/clustering/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0253,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.02528818196362794,
+        "min": 0.0167,
+        "median": 0.0245,
+        "p95": 0.0301,
+        "p99": 0.039700000000000006,
+        "max": 0.307
+      }
+    },
+    "render/clustering/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.077824,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.07560779990400278,
+        "min": 0.057344,
+        "median": 0.063488,
+        "p95": 0.077824,
+        "p99": 0.648192,
+        "max": 1.449984
+      }
+    },
+    "render/early prepass/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 133632.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 143279.80459708816,
+        "min": 114176.0,
+        "median": 137728.0,
+        "p95": 191488.0,
+        "p99": 224256.0,
+        "max": 255488.0
+      }
+    },
+    "render/early prepass/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 95066.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 105867.4564023252,
+        "min": 85102.0,
+        "median": 100690.0,
+        "p95": 138520.5,
+        "p99": 163884.0,
+        "max": 195898.0
+      }
+    },
+    "render/early prepass/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0209,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.020304165111193664,
+        "min": 0.0062,
+        "median": 0.0201,
+        "p95": 0.0253,
+        "p99": 0.0329,
+        "max": 0.3431
+      }
+    },
+    "render/early prepass/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.165888,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.2757635658898173,
+        "min": 0.132096,
+        "median": 0.193536,
+        "p95": 0.772096,
+        "p99": 0.851456,
+        "max": 1.589248
+      }
+    },
+    "render/early prepass/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 0.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "render/early prepass/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 146560.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 157210.1084742147,
+        "min": 125376.0,
+        "median": 150976.0,
+        "p95": 210176.0,
+        "p99": 246048.0,
+        "max": 280192.0
+      }
+    },
+    "render/early_mesh_preprocessing/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 768.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 696.3954989067249,
+        "min": 512.0,
+        "median": 640.0,
+        "p95": 1088.0,
+        "p99": 1344.0,
+        "max": 1536.0
+      }
+    },
+    "render/early_mesh_preprocessing/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0043,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0051268838995255795,
+        "min": 0.0029000000000000002,
+        "median": 0.0049,
+        "p95": 0.0067,
+        "p99": 0.0087,
+        "max": 0.2691
+      }
+    },
+    "render/early_mesh_preprocessing/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.02048,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.02422987915311215,
+        "min": 0.018432,
+        "median": 0.02048,
+        "p95": 0.023552,
+        "p99": 0.0256,
+        "max": 1.28512
+      }
+    },
+    "render/lightprobe_copy/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 98304.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 98304.0,
+        "min": 98304.0,
+        "median": 98304.0,
+        "p95": 98304.0,
+        "p99": 98304.0,
+        "max": 98304.0
+      }
+    },
+    "render/lightprobe_copy/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0042,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.004114937869979952,
+        "min": 0.0025,
+        "median": 0.004,
+        "p95": 0.005,
+        "p99": 0.0062,
+        "max": 0.1738
+      }
+    },
+    "render/lightprobe_copy/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.014336,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.019695794357630143,
+        "min": 0.011264,
+        "median": 0.016384,
+        "p95": 0.02048,
+        "p99": 0.028672,
+        "max": 0.908288
+      }
+    },
+    "render/lightprobe_downsampling_first_pass/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 6144.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 6144.0,
+        "min": 6144.0,
+        "median": 6144.0,
+        "p95": 6144.0,
+        "p99": 6144.0,
+        "max": 6144.0
+      }
+    },
+    "render/lightprobe_downsampling_first_pass/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0012,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0010970294917604115,
+        "min": 0.0006,
+        "median": 0.001,
+        "p95": 0.0015999999999999999,
+        "p99": 0.002,
+        "max": 0.08310000000000001
+      }
+    },
+    "render/lightprobe_downsampling_first_pass/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.012288,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.01641114137912352,
+        "min": 0.011264,
+        "median": 0.013312,
+        "p95": 0.01536,
+        "p99": 0.021504,
+        "max": 1.284096
+      }
+    },
+    "render/lightprobe_downsampling_second_pass/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1536.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 1536.0,
+        "min": 1536.0,
+        "median": 1536.0,
+        "p95": 1536.0,
+        "p99": 1536.0,
+        "max": 1536.0
+      }
+    },
+    "render/lightprobe_downsampling_second_pass/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0009,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0010671164204575146,
+        "min": 0.00039999999999999996,
+        "median": 0.0009,
+        "p95": 0.0017000000000000001,
+        "p99": 0.0021,
+        "max": 0.0709
+      }
+    },
+    "render/lightprobe_downsampling_second_pass/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.011264,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.013726001599917263,
+        "min": 0.009216,
+        "median": 0.01024,
+        "p95": 0.011264,
+        "p99": 0.016384,
+        "max": 1.278976
+      }
+    },
+    "render/lightprobe_irradiance_map/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 6144.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 6144.0,
+        "min": 6144.0,
+        "median": 6144.0,
+        "p95": 6144.0,
+        "p99": 6144.0,
+        "max": 6144.0
+      }
+    },
+    "render/lightprobe_irradiance_map/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0007,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0009534798144096943,
+        "min": 0.00039999999999999996,
+        "median": 0.0009,
+        "p95": 0.0013,
+        "p99": 0.0015,
+        "max": 0.1482
+      }
+    },
+    "render/lightprobe_irradiance_map/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.421888,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.5623426710041525,
+        "min": 0.403456,
+        "median": 0.41984,
+        "p95": 0.999424,
+        "p99": 1.284096,
+        "max": 1.995776
+      }
+    },
+    "render/lightprobe_radiance_map/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 132096.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 132096.0,
+        "min": 132096.0,
+        "median": 132096.0,
+        "p95": 132096.0,
+        "p99": 132096.0,
+        "max": 132096.0
+      }
+    },
+    "render/lightprobe_radiance_map/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0022,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0035401365260517652,
+        "min": 0.0015999999999999999,
+        "median": 0.0035,
+        "p95": 0.0048,
+        "p99": 0.005699999999999999,
+        "max": 0.1521
+      }
+    },
+    "render/lightprobe_radiance_map/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.216064,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.29002065383179193,
+        "min": 0.208896,
+        "median": 0.224256,
+        "p95": 0.792576,
+        "p99": 0.8637440000000001,
+        "max": 1.615872
+      }
+    },
+    "render/main_opaque_pass_3d/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 133632.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 143279.80459708816,
+        "min": 114176.0,
+        "median": 137728.0,
+        "p95": 191488.0,
+        "p99": 224256.0,
+        "max": 255488.0
+      }
+    },
+    "render/main_opaque_pass_3d/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 95066.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 105867.4564023252,
+        "min": 85102.0,
+        "median": 100690.0,
+        "p95": 138520.5,
+        "p99": 163884.0,
+        "max": 195898.0
+      }
+    },
+    "render/main_opaque_pass_3d/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0118,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.011579302437203585,
+        "min": 0.0059,
+        "median": 0.011300000000000001,
+        "p95": 0.014199999999999999,
+        "p99": 0.02055,
+        "max": 0.3454
+      }
+    },
+    "render/main_opaque_pass_3d/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 2.548736,
+      "per_frame": {
+        "count": 18751,
+        "mean": 1.623369300837296,
+        "min": 0.018432,
+        "median": 1.630208,
+        "p95": 2.721792,
+        "p99": 3.3536,
+        "max": 4.002816
+      }
+    },
+    "render/main_opaque_pass_3d/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 2952658.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 2004123.03381153,
+        "min": 0.0,
+        "median": 2063498.0,
+        "p95": 2960670.0,
+        "p99": 3305974.0,
+        "max": 4032116.0
+      }
+    },
+    "render/main_opaque_pass_3d/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 146560.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 157225.4042984374,
+        "min": 125376.0,
+        "median": 150976.0,
+        "p95": 210176.0,
+        "p99": 246186.0,
+        "max": 280906.0
+      }
+    },
+    "render/per_view_shadow_pass/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0092,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.009196725507972849,
+        "min": 0.0031999999999999997,
+        "median": 0.009099999999999999,
+        "p95": 0.0123,
+        "p99": 0.015450000000000002,
+        "max": 0.2564
+      }
+    },
+    "render/per_view_shadow_pass/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.036864,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.036967705189057246,
+        "min": 0.021504,
+        "median": 0.023552,
+        "p95": 0.039936,
+        "p99": 0.5995520000000001,
+        "max": 1.119232
+      }
+    },
+    "render/render_sky/clipper_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "render/render_sky/clipper_primitives_out": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 1.0,
+        "min": 1.0,
+        "median": 1.0,
+        "p95": 1.0,
+        "p99": 1.0,
+        "max": 1.0
+      }
+    },
+    "render/render_sky/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0015999999999999999,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.0019764439229907203,
+        "min": 0.0009,
+        "median": 0.0017000000000000001,
+        "p95": 0.0033,
+        "p99": 0.0038,
+        "max": 0.18689999999999998
+      }
+    },
+    "render/render_sky/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.289792,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.3326510773825378,
+        "min": 0.216064,
+        "median": 0.251904,
+        "p95": 0.856064,
+        "p99": 0.9497599999999999,
+        "max": 1.636352
+      }
+    },
+    "render/render_sky/fragment_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3686400.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 3686400.0,
+        "min": 3686400.0,
+        "median": 3686400.0,
+        "p95": 3686400.0,
+        "p99": 3686400.0,
+        "max": 3686400.0
+      }
+    },
+    "render/render_sky/vertex_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 3.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 3.0,
+        "min": 3.0,
+        "median": 3.0,
+        "p95": 3.0,
+        "p99": 3.0,
+        "max": 3.0
+      }
+    },
+    "render/sparse buffer updates/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0028,
+      "per_frame": {
+        "count": 7229,
+        "mean": 0.0023129478489417334,
+        "min": 0.0009,
+        "median": 0.0023,
+        "p95": 0.0031,
+        "p99": 0.0036,
+        "max": 0.1186
+      }
+    },
+    "render/sparse buffer updates/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.00512,
+      "per_frame": {
+        "count": 7229,
+        "mean": 0.0067237803292293195,
+        "min": 0.004096,
+        "median": 0.006144,
+        "p95": 0.007168,
+        "p99": 0.008192,
+        "max": 0.59392
+      }
+    },
+    "render/tonemapping/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.003,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.00448428350488009,
+        "min": 0.002,
+        "median": 0.0044,
+        "p95": 0.006,
+        "p99": 0.0072,
+        "max": 0.2221
+      }
+    },
+    "render/tonemapping/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.103424,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.11946673948054777,
+        "min": 0.079872,
+        "median": 0.094208,
+        "p95": 0.415744,
+        "p99": 0.699392,
+        "max": 1.415168
+      }
+    },
+    "render/uniform_allocation/compute_shader_invocations": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 1280.0,
+      "per_frame": {
+        "count": 18751,
+        "mean": 1326.8966988427285,
+        "min": 1280.0,
+        "median": 1280.0,
+        "p95": 1536.0,
+        "p99": 1536.0,
+        "max": 1536.0
+      }
+    },
+    "render/uniform_allocation/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0058000000000000005,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.005678950455975415,
+        "min": 0.003,
+        "median": 0.0054,
+        "p95": 0.0072,
+        "p99": 0.0112,
+        "max": 0.15339999999999998
+      }
+    },
+    "render/uniform_allocation/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.01536,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.021167490587163166,
+        "min": 0.013312,
+        "median": 0.01536,
+        "p95": 0.017408,
+        "p99": 0.024576,
+        "max": 1.302528
+      }
+    },
+    "render/upscaling/elapsed_cpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.0026,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.004234211508719656,
+        "min": 0.0019,
+        "median": 0.0042,
+        "p95": 0.0058000000000000005,
+        "p99": 0.007,
+        "max": 0.1227
+      }
+    },
+    "render/upscaling/elapsed_gpu": {
+      "unit": "ms",
+      "kind": "gauge",
+      "last": 0.049152,
+      "per_frame": {
+        "count": 18751,
+        "mean": 0.05715581249000006,
+        "min": 0.034816,
+        "median": 0.044032,
+        "p95": 0.068608,
+        "p99": 0.6384639999999999,
+        "max": 1.35168
+      }
+    },
+    "started_load_count": {
+      "unit": "",
+      "kind": "gauge",
+      "last": 109.0,
+      "per_frame": {
+        "count": 19145,
+        "mean": 109.0,
+        "min": 109.0,
+        "median": 109.0,
+        "p95": 109.0,
+        "p99": 109.0,
+        "max": 109.0
+      }
+    },
+    "terrain/patches/count": {
+      "unit": "count",
+      "kind": "gauge",
+      "last": 332.0,
+      "per_frame": {
+        "count": 19145,
+        "mean": 327.4399059806738,
+        "min": 282.0,
+        "median": 314.0,
+        "p95": 428.0,
+        "p99": 479.0,
+        "max": 503.0
+      }
+    },
+    "terrain/select/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 4829.894199222326,
+      "last": 0.22789999842643738,
+      "per_frame": {
+        "count": 19145,
+        "mean": 0.25227966566844223,
+        "min": 0.15240000188350677,
+        "median": 0.24079999327659607,
+        "p95": 0.3411000072956085,
+        "p99": 0.4287560093402864,
+        "max": 0.862500011920929
+      }
+    },
+    "terrain/update/ms": {
+      "unit": "ms",
+      "kind": "sum",
+      "total": 6658.505095392466,
+      "last": 0.27160000801086426,
+      "per_frame": {
+        "count": 19145,
+        "mean": 0.3477934236297971,
+        "min": 0.19500000774860382,
+        "median": 0.2987000048160553,
+        "p95": 0.5008599877357481,
+        "p99": 1.5426479768753063,
+        "max": 6.130199909210205
+      }
+    },
+    "terrain/upload/bytes": {
+      "unit": "bytes",
+      "kind": "sum",
+      "total": 206178304.0,
+      "last": 0.0,
+      "per_frame": {
+        "count": 19145,
+        "mean": 10769.302898929225,
+        "min": 0.0,
+        "median": 0.0,
+        "p95": 49152.0,
+        "p99": 344064.0,
+        "max": 1290240.0
+      }
+    }
+  },
+  "spikes": [
+    {
+      "frame": 17801,
+      "t_s": 102.56257150000008,
+      "frame_ms": 12.497100000000001,
+      "culprits": [
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.468992
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.416768
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.33390000462532043
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.27630001306533813
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.232448
+        }
+      ]
+    },
+    {
+      "frame": 4057,
+      "t_s": 22.452680200000003,
+      "frame_ms": 12.0286,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.388544
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.5130000114440918
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.418816
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.36864
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.243712
+        }
+      ]
+    },
+    {
+      "frame": 1143,
+      "t_s": 6.191045500000001,
+      "frame_ms": 11.438600000000001,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.39264
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 1.12128
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.417792
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.27730000019073486
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.239616
+        }
+      ]
+    },
+    {
+      "frame": 471,
+      "t_s": 2.5589575000000004,
+      "frame_ms": 9.8534,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.083392
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.492544
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.417792
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.37299999594688416
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.24880000948905945
+        }
+      ]
+    },
+    {
+      "frame": 6702,
+      "t_s": 37.44873269999993,
+      "frame_ms": 9.8325,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.075648
+        },
+        {
+          "counter": "render/early prepass/elapsed_gpu",
+          "value": 0.562176
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.468992
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.418816
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.2858999967575073
+        }
+      ]
+    },
+    {
+      "frame": 9441,
+      "t_s": 52.454468499999685,
+      "frame_ms": 9.507,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.666048
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 1.065984
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.418816
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.3163999915122986
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.2524000108242035
+        }
+      ]
+    },
+    {
+      "frame": 12025,
+      "t_s": 67.44306519999999,
+      "frame_ms": 9.1367,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.717248
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.963584
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.417792
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.31530001759529114
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.260096
+        }
+      ]
+    },
+    {
+      "frame": 16811,
+      "t_s": 97.25774850000025,
+      "frame_ms": 9.1187,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.995776
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.677888
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.418816
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.3817000091075897
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.3255999982357025
+        }
+      ]
+    },
+    {
+      "frame": 1807,
+      "t_s": 9.785724400000007,
+      "frame_ms": 9.11,
+      "culprits": [
+        {
+          "counter": "terrain/update/ms",
+          "value": 5.053299903869629
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.196032
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.832512
+        },
+        {
+          "counter": "render/lightprobe_radiance_map/elapsed_gpu",
+          "value": 0.784384
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.733184
+        }
+      ]
+    },
+    {
+      "frame": 14546,
+      "t_s": 82.2990555000004,
+      "frame_ms": 8.7804,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.105344
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 1.284096
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.591872
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.362496
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.3084999918937683
+        }
+      ]
+    },
+    {
+      "frame": 2823,
+      "t_s": 15.467870800000005,
+      "frame_ms": 8.6825,
+      "culprits": [
+        {
+          "counter": "terrain/update/ms",
+          "value": 6.130199909210205
+        },
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.579008
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 1.065984
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.416768
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.241664
+        }
+      ]
+    },
+    {
+      "frame": 16831,
+      "t_s": 97.40334230000026,
+      "frame_ms": 8.672300000000002,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.35008
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.92672
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.416768
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.2971999943256378
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.265216
+        }
+      ]
+    },
+    {
+      "frame": 16932,
+      "t_s": 98.14208280000025,
+      "frame_ms": 8.52,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 1.958912
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.420864
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.360448
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.325300008058548
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.27570000290870667
+        }
+      ]
+    },
+    {
+      "frame": 16857,
+      "t_s": 97.59233330000026,
+      "frame_ms": 8.4803,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.999296
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.985088
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.6085000038146973
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.539900004863739
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.357376
+        }
+      ]
+    },
+    {
+      "frame": 16979,
+      "t_s": 98.4920864000002,
+      "frame_ms": 8.474300000000001,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 3.01568
+        },
+        {
+          "counter": "render/early prepass/elapsed_gpu",
+          "value": 0.671744
+        },
+        {
+          "counter": "render/render_sky/elapsed_gpu",
+          "value": 0.461824
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.41984
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.41019999980926514
+        }
+      ]
+    },
+    {
+      "frame": 16691,
+      "t_s": 96.3860997000002,
+      "frame_ms": 8.4665,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.304
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.937984
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.417792
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 0.3504999876022339
+        },
+        {
+          "counter": "terrain/select/ms",
+          "value": 0.2921000123023987
+        }
+      ]
+    },
+    {
+      "frame": 16682,
+      "t_s": 96.32156650000019,
+      "frame_ms": 8.4627,
+      "culprits": [
+        {
+          "counter": "render/main_opaque_pass_3d/elapsed_gpu",
+          "value": 2.550784
+        },
+        {
+          "counter": "terrain/update/ms",
+          "value": 1.2639999389648438
+        },
+        {
+          "counter": "render/early prepass/elapsed_gpu",
+          "value": 0.582656
+        },
+        {
+          "counter": "render/lightprobe_irradiance_map/elapsed_gpu",
+          "value": 0.417792
+        },
+        {
+          "counter": "render/atmosphere_luts/elapsed_gpu",
+          "value": 0.377856
+        }
+      ]
+    }
+  ],
+  "gates": [],
+  "regressions": [],
+  "improvements": [],
+  "passed": true
+}

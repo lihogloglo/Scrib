@@ -1,0 +1,58 @@
+[package]
+name = "sf_lod_bevy"
+description = "Bevy plugin for the superfargoth far field: HLOD node loading, impostor and light-sprite materials, residency fallback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). The far-field logic (node tree,
+# lead bands, residency rule, formats) is Bevy-free in sf_lod.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# Loaders for .sfnode / .sffar / .sfimp, embedded shaders.
+bevy_asset.workspace = true
+# Aabb, NoAutoAabb, RenderLayers, Visibility, VisibilityRange, Camera.
+bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+# Impostor atlas texture arrays.
+bevy_image.workspace = true
+# NotShadowCaster.
+bevy_light.workspace = true
+# AlphaMode.
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# Mesh, Mesh3d, custom vertex attributes.
+bevy_mesh.workspace = true
+# Material, StandardMaterial, MaterialPlugin, PBR shader library.
+bevy_pbr.workspace = true
+bevy_platform = { workspace = true, features = ["std"] }
+bevy_reflect = { workspace = true, features = ["std"] }
+# AsBindGroup, ShaderType, pipeline specialization.
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+big_space.workspace = true
+glam.workspace = true
+log.workspace = true
+sf_coords.workspace = true
+sf_diag_bevy.workspace = true
+sf_lod.workspace = true
+sf_model = { path = "../sf_model", default-features = false }
+sf_model_bevy.workspace = true
+sf_world.workspace = true
+sf_world_bevy = { path = "../sf_world_bevy", default-features = false }
+thiserror.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+postcard.workspace = true
+sf_bake.workspace = true
+sf_lod = { workspace = true, features = ["bake"] }
+sf_world = { workspace = true, features = ["bake"] }
+sf_world_bevy = { path = "../sf_world_bevy" }
+sf_vfs.workspace = true
+
+
+[lints]
+workspace = true

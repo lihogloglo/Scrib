@@ -1,0 +1,33 @@
+[package]
+name = "sf_model_bevy"
+description = "Bevy glue for sf_model: the .sfmesh asset loader, skinned-model spawning and the baked:// asset source"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy_app.workspace = true
+bevy_asset.workspace = true
+# DynamicSkinnedMeshBounds, Visibility (skinned spawning).
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_math = { workspace = true, features = ["std"] }
+# "morph": Mesh::set_morph_targets, MeshMorphWeights (skinned models).
+bevy_mesh = { workspace = true, features = ["morph"] }
+bevy_reflect.workspace = true
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+futures-lite.workspace = true
+serde.workspace = true
+sf_bake.workspace = true
+sf_model.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+tempfile.workspace = true
+
+[[example]]
+name = "skinned"
+
+[lints]
+workspace = true

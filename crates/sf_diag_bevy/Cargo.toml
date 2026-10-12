@@ -1,0 +1,41 @@
+[package]
+name = "sf_diag_bevy"
+description = "Bevy plugin for sf_diag: frame sampling, scenarios, fly-through cameras, counters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Asset-event churn counters (`AssetChurnPlugin<A>`).
+assets = ["dep:bevy_asset"]
+# Render-pipeline churn counters (`PipelineChurnPlugin`): the render world.
+render = ["dep:bevy_render"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). No rendering crate by default: GPU
+# timings arrive through `DiagnosticsStore` when the app adds `RenderDiagnosticsPlugin`.
+[dependencies]
+# App, Plugin, First schedule, AppExit.
+bevy_app = { workspace = true, features = ["std"] }
+# AssetEvent (feature `assets`).
+bevy_asset = { workspace = true, optional = true }
+# Resource, Component, systems, MessageWriter.
+bevy_ecs = { workspace = true, features = ["std"] }
+# DiagnosticsStore: sampled into counters every frame.
+bevy_diagnostic = { workspace = true, features = ["std"] }
+# Instant of diagnostic measurements; HashMap.
+bevy_platform = { workspace = true, features = ["std"] }
+# PipelineCache in the render world (feature `render`).
+bevy_render = { workspace = true, optional = true }
+# Time<Real>: the frame-time source; TimeSystems for ordering.
+bevy_time = { workspace = true, features = ["std"] }
+# Transform of the fly-through camera.
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+sf_diag.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

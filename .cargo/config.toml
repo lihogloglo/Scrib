@@ -1,4 +1,4 @@
-﻿# Build settings shared by everyone working in this repo.
+# Build settings shared by everyone working in this repo.
 # See superfargoth/docs/ARCHITECTURE.md "Build performance".
 
 # rust-lld ships with the MSVC toolchain and links several times faster
@@ -7,3 +7,11 @@
 linker = "rust-lld.exe"
 rustdocflags = ["-Clinker=rust-lld.exe"]
 
+
+# DLSS builds (`sf_sky_bevy` feature `dlss`): NVIDIA's SDK subset, Vulkan
+# headers and libclang live outside the repo in ../sdk (`bash ../sdk/fetch.sh`;
+# the SDK may not be redistributed). Real environment variables win.
+[env]
+DLSS_SDK = { value = "../sdk/dlss", relative = true }
+VULKAN_SDK = { value = "../sdk/vulkan", relative = true }
+LIBCLANG_PATH = { value = "../sdk/libclang", relative = true }

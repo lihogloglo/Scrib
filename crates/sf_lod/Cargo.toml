@@ -1,0 +1,33 @@
+[package]
+name = "sf_lod"
+description = "Far field core for superfargoth: HLOD node tree, cluster proxies, octahedral impostors, light batches, bake steps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# The lod.* bake steps over sf_bake products (world index, cooked meshes).
+bake = ["dep:sf_bake", "sf_world/bake"]
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+meshopt.workspace = true
+postcard.workspace = true
+serde.workspace = true
+sf_bake = { workspace = true, optional = true }
+sf_coords.workspace = true
+# Cooked mesh types only; no glTF importer.
+sf_model = { path = "../sf_model", default-features = false }
+sf_vfs.workspace = true
+sf_world.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rayon.workspace = true
+sf_bake.workspace = true
+sf_records.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

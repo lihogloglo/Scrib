@@ -10,19 +10,91 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/TODO/superfargoth"
 
 [workspace.dependencies]
+# Bevy sub-crates: libraries take only what they use (ARCHITECTURE §8b rule 6).
+bevy_app = { version = "0.20", default-features = false }
 bevy_asset = { version = "0.20", default-features = false }
+bevy_diagnostic = { version = "0.20", default-features = false }
+bevy_ecs = { version = "0.20", default-features = false }
+bevy_mesh = { version = "0.20", default-features = false }
+bevy_platform = { version = "0.20", default-features = false }
+bevy_reflect = { version = "0.20", default-features = false }
+bevy_time = { version = "0.20", default-features = false }
+bevy_transform = { version = "0.20", default-features = false }
+# Rendering sub-crates (sf_sky_bevy). `bevy_solari` is optional there (`solari` feature).
+# `bevy_anti_alias` is optional there too (`dlss` feature: DLSS Ray Reconstruction).
+bevy_anti_alias = { version = "0.20", default-features = false }
+bevy_camera = { version = "0.20", default-features = false }
+bevy_color = { version = "0.20", default-features = false }
+bevy_core_pipeline = { version = "0.20", default-features = false }
+bevy_light = { version = "0.20", default-features = false }
+bevy_math = { version = "0.20", default-features = false }
+bevy_pbr = { version = "0.20", default-features = false }
+bevy_render = { version = "0.20", default-features = false }
+bevy_solari = { version = "0.20", default-features = false }
+# Streaming glue (sf_world_bevy). `bevy_gizmos` is optional there (`debug` feature).
+bevy_gizmos = { version = "0.20", default-features = false }
+bevy_image = { version = "0.20", default-features = false }
+bevy_material = { version = "0.20", default-features = false }
+bevy_shader = { version = "0.20", default-features = false }
+bevy_shape = { version = "0.20", default-features = false }
+bevy_tasks = { version = "0.20", default-features = false }
+# Full engine: examples and tools only (dev-dependency), never a library dependency.
+bevy = { version = "0.20", default-features = false }
+# Floating-origin grids (world-coordinates.md). RC for Bevy 0.20: pinned until 0.14.0 ships.
+big_space = { version = "=0.14.0-rc.0", default-features = false, features = ["std", "i32"] }
+bitflags = "2"
+# blake3 and glam match what Bevy 0.20 uses (bevy_asset, bevy_math): one copy in the tree.
+blake3 = "1.8"
 futures-lite = "2"
+# Same version bevy_gltf 0.20 uses. No "import" feature: we never decode images here.
+gltf = { version = "1.4", default-features = false, features = ["utils", "names", "KHR_materials_unlit"] }
+glam = "0.33"
 indexmap = "2"
+log = "0.4"
+lz4_flex = "0.14"
+# Same version Bevy 0.20 uses for meshlets (one copy in the tree). Builds meshoptimizer (C++) with cc.
+meshopt = "0.6.2"
+# Collision queries (sf_controller's static query world): the library under avian and rapier.
+# Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
+parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+rayon = "1.12"
+# Same version Bevy 0.20 uses (bevy_asset, bevy_reflect): one copy in the tree. Graph assets (sf_anim_graph).
+ron = "0.12"
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 smallvec = "1"
+# Delaunay triangulation of blend-space samples at bake (sf_anim_graph `bake` feature).
+spade = "2.15"
 tempfile = "3"
 thiserror = "2"
 toml = "0.9"
+# FBX import at bake time (sf_anim `fbx` feature): bindings to the single-file ufbx C library, built with `cc`.
+ufbx = "0.11.5"
 
+sf_bake = { path = "crates/sf_bake" }
+sf_coords = { path = "crates/sf_coords" }
+sf_diag = { path = "crates/sf_diag" }
+sf_diag_bevy = { path = "crates/sf_diag_bevy" }
+sf_model = { path = "crates/sf_model" }
+sf_model_bevy = { path = "crates/sf_model_bevy" }
 sf_vfs = { path = "crates/sf_vfs" }
 sf_records = { path = "crates/sf_records" }
+sf_sky = { path = "crates/sf_sky" }
 sf_mods = { path = "crates/sf_mods" }
+sf_world = { path = "crates/sf_world" }
+sf_terrain = { path = "crates/sf_terrain" }
+sf_terrain_bevy = { path = "crates/sf_terrain_bevy" }
+sf_lod = { path = "crates/sf_lod" }
+sf_lod_bevy = { path = "crates/sf_lod_bevy" }
+sf_anim = { path = "crates/sf_anim", default-features = false }
+sf_anim_graph = { path = "crates/sf_anim_graph" }
+sf_controller = { path = "crates/sf_controller" }
+sf_character = { path = "crates/sf_character" }
+sf_anim_bevy = { path = "crates/sf_anim_bevy" }
+sf_character_bevy = { path = "crates/sf_character_bevy" }
+sf_controller_bevy = { path = "crates/sf_controller_bevy" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

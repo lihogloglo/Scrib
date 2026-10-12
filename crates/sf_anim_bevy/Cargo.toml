@@ -1,0 +1,44 @@
+[package]
+name = "sf_anim_bevy"
+description = "Bevy glue for sf_anim / sf_anim_graph: rig spawning, the Probe → Evaluate → Apply schedule, bone write-back, events as messages and observers, animation LOD tiers and budget, gizmos, counters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Skeleton gizmos (`AnimGizmos`). Needs the app to add Bevy's gizmo plugin.
+debug = ["dep:bevy_gizmos", "dep:bevy_color"]
+
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# Projected height for the LOD tiers (camera, projection, viewport).
+bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"], optional = true }
+# multi_threaded: Evaluate and Apply are `par_iter`s (serial without it).
+bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }
+bevy_gizmos = { workspace = true, optional = true }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+glam.workspace = true
+sf_anim.workspace = true
+sf_anim_graph.workspace = true
+# Counters (`anim/...`) when the app runs `SfDiagPlugin`.
+sf_diag_bevy.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+sf_anim = { workspace = true, features = ["gltf", "fixtures"] }
+sf_anim_graph = { workspace = true, features = ["bake"] }
+sf_bake.workspace = true
+sf_model.workspace = true
+sf_model_bevy.workspace = true
+tempfile.workspace = true
+
+[[example]]
+name = "blendspace"
+required-features = ["debug"]
+
+[lints]
+workspace = true

@@ -1,0 +1,53 @@
+[package]
+name = "sf_character_bevy"
+description = "Bevy glue for sf_character: characters spawned from recipes on an sf_anim_bevy rig, per-material merged outfits with a shared outfit cache, no-pop outfit swaps, actor placement spawning"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# `CharacterSpawner`: a `PlacementSpawner` for actor placements (sf_world_bevy streaming).
+world = ["dep:sf_world", "dep:sf_world_bevy"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). Recipe resolution, assembly and the
+# per-material merge are Bevy-free (sf_character::assemble); this crate maps
+# the result to meshes and entities.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# Assets<Mesh>, AssetServer (materials' textures), inverse bindposes.
+bevy_asset.workspace = true
+# Visibility, RenderLayers, DynamicSkinnedMeshBounds.
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_math = { workspace = true, features = ["std"] }
+# "morph": Mesh::set_morph_targets, MeshMorphWeights (heads).
+bevy_mesh = { workspace = true, features = ["morph"] }
+# StandardMaterial, MeshMaterial3d.
+bevy_pbr.workspace = true
+# AsyncComputeTaskPool: resolve + load + assemble off the main thread.
+bevy_tasks = { workspace = true, features = ["futures-lite"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+futures-lite.workspace = true
+log.workspace = true
+sf_anim.workspace = true
+sf_anim_bevy.workspace = true
+# "smooth": smooth bodies at assembly (`smooth_outfit`; parry3d, already in the tree).
+sf_character = { workspace = true, features = ["smooth"] }
+sf_model = { path = "../sf_model", default-features = false }
+sf_model_bevy.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+sf_world = { workspace = true, optional = true }
+thiserror.workspace = true
+sf_world_bevy = { path = "../sf_world_bevy", optional = true }
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d"] }
+glam.workspace = true
+sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim_graph = { workspace = true, features = ["bake"] }
+sf_bake.workspace = true
+
+[lints]
+workspace = true

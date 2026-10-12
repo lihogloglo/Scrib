@@ -1,0 +1,34 @@
+[package]
+name = "sf_controller_bevy"
+description = "Bevy glue for sf_controller: the mover stage (ORCA avoidance between intents and the kinematic mover, batched ground probes), transform write-back, the animation feed (velocity, moved, locomotion parameters, per-leg ground samples), counters and trajectory gizmos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Trajectory and capsule gizmos (`ControllerGizmos`). Needs the app to add Bevy's gizmo plugin.
+debug = ["dep:bevy_gizmos", "dep:bevy_color"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): the locomotion logic is Bevy-free (sf_controller).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_color = { workspace = true, features = ["std"], optional = true }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_gizmos = { workspace = true, optional = true }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+# Animator: the feed fills its drive and parameters in `AnimSystems::Probe`.
+sf_anim_bevy.workspace = true
+sf_anim_graph.workspace = true
+sf_controller.workspace = true
+sf_coords.workspace = true
+# Counters (`controller/...`) when the app runs `SfDiagPlugin`.
+sf_diag_bevy.workspace = true
+
+[dev-dependencies]
+bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }
+
+[lints]
+workspace = true
