@@ -1415,3 +1415,25 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   at 10:00 (foggy and blight from the first pass: blight then had dust 6 at 1 km scale height) and
   `redmtn_{clear,foggy,ashstorm,blight}_sunset.png` at 19:00): looks as described, with the band above.
 - Source: m6-f1.
+
+### FG-2: Height fog, ground-fog banks, far fog (`scene fg-bittercoast-morning`, `fg-bittercoast-ridge`, `fg-balmora-foggy-noon`, `fg-redmtn-ashstorm`, `fg-night-fog`)
+- Kind: game location. M6 F2 (weather.md "Fog as built"). A/B everywhere: `--off fog` (F2 off, F1 haze stays),
+  `--fog 0.5` / `--fog 2` (density), `--off clouds` (fog alone).
+- Look for: Bitter Coast 6:30 foggy, low (`fg-bittercoast-morning`): white swamp morning, near trees crisp, ground
+  and water milky within ~100 m; from 160 m up (`fg-bittercoast-ridge`): banks lying on the swamp and the water
+  with darker gaps where the water shows, continuing toward the horizon; hills rising out of it. Balmora foggy noon:
+  milky valley floor, the mountain a pale outline, fog colour meeting the horizon without a band. Ash storm (10:00):
+  thick grey-brown, visibility a few hundred meters. Night (23:00 foggy): dim, never brighter than the sky, lights
+  and moons dimmed by it; readable through the exposure floor.
+- Also check: no halos or blocky edges where trees, roofs or far-field proxies meet fog (the banks are traced at
+  reduced resolution, the fog amount is per pixel); no swimming while the camera moves; DLSS (`--dlss quality`) no
+  smear on bank edges; the sea-horizon seam from FG-1 gone (sky-view LUT 32 samples) or hidden by the fog.
+- Owner picks: bank density/height (0.03 /m, 12 m; `--fog`), how much banks stay by day in foggy weather (a third),
+  the ash storm's visibility (450 m at sea level) and whether clear mornings in swamps want banks (waits for
+  climates, WE2/WE3).
+- Known: transparents (particles, glass) are not fogged until F3; the sea scaffold is now opaque (the composite
+  fogs by depth), so shallow seabed no longer shows through.
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (m6-f2, `shots/f2/`): `bc_morning3.png`, `bc_ridge4.png`
+  (one clear gap shows; most of the view is in banks plus haze 90), `fg-balmora-foggy-noon.png`,
+  `fg-redmtn-ashstorm.png`, `fg-night-fog.png`.
+- Source: m6-f2.
