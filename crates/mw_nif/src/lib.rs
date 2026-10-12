@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use tes3::nif::glam::{Affine3A, Vec2, Vec3, Vec4};
 use tes3::nif::{
     NiAVObject, NiAlphaController, NiBSAnimationNode, NiBSParticleNode, NiBillboardNode, NiGeometry, NiGeometryData,
-    NiKey, NiKeyframeController, NiLink, NiMaterialColorController, NiNode, NiObjectNET, NiParticleSystemController,
+    NiBSPArrayController, NiKey, NiKeyframeController, NiLink, NiMaterialColorController, NiNode, NiObjectNET, NiParticleSystemController,
     NiParticles, NiParticlesData, NiProperty, NiStream, NiStringExtraData, NiSwitchNode, NiTimeController,
     NiTextKeyExtraData, NiTriShapeData, NiTriStripsData, NiType, NiUVController, NiVisController, RootCollisionNode,
 };
@@ -207,11 +207,57 @@ pub fn convert(mut stream: NiStream) -> Result<Model, ModelError> {
         let node_of = |key: NiKey| node_index.get(&key).copied();
         model.meshes[mesh].skin = skin::resolve(&stream, raw, base.as_deref(), node, &world, node_of).map(Box::new);
     }
-    for system in &mut model.particles {
-        system.emitter_transform = world[system.node].inverse() * world[system.emitter];
-    }
+    resolve_emitters(&mut model, &world);
     loop_idle_animation(&mut model);
     Ok(model)
+}
+
+/// Rest emitter transforms relative to each particle node, the nodes of
+/// array emitters ([`particles::EmitFrom::Nodes`]: the emitter and every
+/// node below it), and whether the model's keyframes move any of them
+/// relative to the particle node.
+fn resolve_emitters(model: &mut Model, world: &[Affine3A]) {
+    let ancestors = |mut i: usize| {
+        let mut out = vec![i];
+        while let Some(p) = model.nodes[i].parent {
+            out.push(p);
+            i = p;
+        }
+        out
+    };
+    let keyframed: Vec<usize> =
+        model.controllers.iter().filter_map(|c| if let Target::Transform { node, .. } = c.target { Some(node) } else { None }).collect();
+    let mut resolved = Vec::with_capacity(model.particles.len());
+    for system in &model.particles {
+        let to_node = world[system.node].inverse();
+        let emitter_transform = to_node * world[system.emitter];
+        let targets: Vec<particles::EmitTarget> = if matches!(system.emit_from, particles::EmitFrom::Nodes { .. }) {
+            (0..model.nodes.len())
+                .filter(|&i| matches!(model.nodes[i].kind, NodeKind::Node | NodeKind::Billboard | NodeKind::Switch { .. }))
+                .filter(|&i| ancestors(i).contains(&system.emitter))
+                .map(|i| {
+                    let parent = model.nodes[i].parent;
+                    let transform = to_node * world[i];
+                    let parent_origin = parent.map_or(transform.translation, |p| (to_node * world[p]).translation);
+                    particles::EmitTarget { node: i, parent, transform, parent_origin: parent_origin.into() }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Moving relative to the particle node: a keyframed node on the way
+        // from the emitter (or a target, or its parent) up to an ancestor of
+        // the particle node.
+        let fixed = ancestors(system.node);
+        let moves = |i: usize| ancestors(i).iter().take_while(|a| !fixed.contains(a)).any(|a| keyframed.contains(a));
+        let animated = moves(system.emitter) || targets.iter().any(|t| moves(t.node) || t.parent.is_some_and(moves));
+        resolved.push((emitter_transform, targets, animated));
+    }
+    for (system, (emitter_transform, targets, animated)) in model.particles.iter_mut().zip(resolved) {
+        system.emitter_transform = emitter_transform;
+        system.targets = targets;
+        system.animated_emitter = animated;
+    }
 }
 
 /// Objects (banners, Dwemer machinery) animate by looping the `Idle`
@@ -256,6 +302,10 @@ const ANIM_FLAG_AUTO_PLAY: u16 = 0x20;
 const ANIM_FLAG_NOT_RANDOM: u16 = 0x40;
 /// `NiBSParticleNode` flag: particles move with the node (else world space).
 const PARTICLE_FLAG_LOCAL_SPACE: u16 = 0x80;
+/// `NiBSPArrayController` flag: new particles start between a node and its
+/// parent (on the bone), as `OpenMW` reads it (black box). Set on all 42
+/// vanilla array controllers (`mw_bake/tests/particles_real_install.rs`).
+const BSP_ARRAY_FLAG_AT_NODE: u16 = 0x8;
 
 impl Inherited {
     fn with(mut self, stream: &NiStream, properties: &[NiLink<NiProperty>]) -> Self {
@@ -506,13 +556,21 @@ impl Builder<'_> {
             .get_as::<_, NiParticlesData>(geometry.geometry_data)
             .map_or(0, |data| usize::from(data.num_particles).max(data.base.vertices.len()));
         let mut found = false;
-        for controller in geometry.base.base.controllers(stream) {
-            let Ok(controller) = <&NiParticleSystemController>::try_from(controller) else { continue };
+        for object in geometry.base.base.controllers(stream) {
+            let Ok(controller) = <&NiParticleSystemController>::try_from(object) else { continue };
             let mut system = ParticleSystem::from_controller(stream, controller, max_particles.max(1));
+            if <&NiBSPArrayController>::try_from(object).is_ok() {
+                // Emits from every node under the emitter (`resolve_emitters`).
+                // Flag 0x10 (at the emitter geometry's vertices) is set on no
+                // vanilla file: those emit from the nodes too.
+                let along_bones = controller.base.flags & BSP_ARRAY_FLAG_AT_NODE != 0;
+                system.emit_from = particles::EmitFrom::Nodes { along_bones };
+            }
             system.node = node;
             system.emitter = node;
             system.material = self.material(inherited, None);
             system.auto_play = inherited.auto_play.unwrap_or(true);
+            system.random_start = inherited.random_start;
             system.local_space = inherited.local_space;
             if system.timing.stop <= system.timing.start {
                 system.timing.stop = system.timing.start + system.max_lifetime().max(1.0);

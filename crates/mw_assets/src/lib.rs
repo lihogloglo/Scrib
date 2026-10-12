@@ -38,7 +38,7 @@ pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
 pub use ground_blend::ground_blend_band;
 pub use lights::{AttachLight, LightCalibration};
-pub use particles::{ActorEmitter, LiveEmitter, ParticleEmitter, ParticleRange};
+pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleRange};
 
 /// Extensions that may replace a texture reference, in preference order.
 /// `dds` first is the original engine's behavior; `ktx2`/`png` let modern
@@ -185,6 +185,8 @@ fn build_world(model: &Model, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> 
         world.entity_mut(root).insert(ModelAnimation(animation.clone()));
     }
 
+    // Nodes that keyframed emitters follow live (`particles::static_live`).
+    let live_nodes = particles::live_nodes(model);
     let mut entities: Vec<Entity> = Vec::with_capacity(model.nodes.len());
     for node in &model.nodes {
         let parent = node.parent.map_or(root, |p| entities[p]);
@@ -212,6 +214,9 @@ fn build_world(model: &Model, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> 
             }
             if !node_particles[index].is_empty() {
                 entity.insert(ParticleEmitter { animation: animation.clone(), systems: std::mem::take(&mut node_particles[index]) });
+            }
+            if live_nodes.binary_search(&index).is_ok() {
+                entity.insert(NifNode(u32::try_from(index).unwrap_or(u32::MAX)));
             }
         }
         if let Some(mesh_index) = node.mesh {

@@ -49,3 +49,4 @@ Index:
 - [animation-sources.md](animation-sources.md): bring-your-own animation libraries (license table, manual download list, import and retarget flow, slot manifest with Morrowind fallback), creature templates (draft, M3).
 - [ui-adapter.md](ui-adapter.md): classic theme (menu art, fonts → TrueType), book markup → rich text, topic links, MWScript MessageBox, OpenMW-Lua UI compatibility (draft, M5).
 - [weather-adapter.md](weather-adapter.md): REGN → climates, `Morrowind.ini` `[Weather*]` → presets, ash/blight storms (radial from Red Mountain), blizzards, MWScript weather, sounds, interior fog (draft, M6).
+- [physics-adapter.md](physics-adapter.md): item classes and weight → mass, `RootCollisionNode` item shapes, script hooks, ragdoll policy per creature, death/knockdown/get-up clips, robe and skirt cloth, test scenes PH-1..PH-5 (draft, M4).

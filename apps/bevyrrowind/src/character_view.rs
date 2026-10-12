@@ -6,7 +6,8 @@
 //! and class (empty: any), `f` female only.
 //!
 //! Keys: O swaps every NPC's outfit (own equipment ↔ naked: the swap must
-//! not pop), F fires the `fidget` trigger, G skeleton gizmos, B smooth ↔
+//! not pop), F fires the `fidget` trigger (cycling `Idle2`-`Idle4`), X toggles
+//! `dead` (`Death1`), G skeleton gizmos, B smooth ↔
 //! vanilla bodies (`--bodies`; rebuilds through the same no-pop swap),
 //! 1 walk in place (`--walk`), 2 run, R draws/sheathes weapons (`--drawn`;
 //! the graph's weapon stance follows), N night (`--night`: the stage goes
@@ -204,6 +205,8 @@ fn keys(
     mut animators: Query<&mut Animator>,
     mut gizmos: ResMut<AnimGizmos>,
     mut darkness: ResMut<crate::held::HeldDarkness>,
+    mut fidget: Local<u8>,
+    mut dead: Local<bool>,
 ) {
     if input.just_pressed(KeyCode::KeyR) {
         for (_, _, mut readiness) in &mut chars {
@@ -228,8 +231,19 @@ fn keys(
         }
     }
     if input.just_pressed(KeyCode::KeyF) {
+        // The idle variants a fidget plays, in turn (`Idle2`-`Idle4`).
+        *fidget = if (2..4).contains(&*fidget) { *fidget + 1 } else { 2 };
+        info!("fidget (F): Idle{}", *fidget);
         for mut a in &mut animators {
+            a.set_float("idle_variant", f32::from(*fidget));
             a.fire("fidget");
+        }
+    }
+    if input.just_pressed(KeyCode::KeyX) {
+        *dead = !*dead;
+        info!("dead (X): {}", *dead);
+        for mut a in &mut animators {
+            a.set_bool("dead", *dead);
         }
     }
     if input.just_pressed(KeyCode::KeyG) {

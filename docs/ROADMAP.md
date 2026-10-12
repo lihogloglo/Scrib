@@ -103,8 +103,9 @@ Wanted, but after the M2/M3 foundations. Not scheduled; pick up when the roadmap
   Verify: `cargo dev view "Seyda Neen, Census and Excise Office" --screenshot shot.png --camera "1.0,4.2,5.0,1.0,3.6,-6.0"`, then look at it.
 - [x] Fast-build setup (lld, dynamic linking, profiles). 2–4 s rebuilds.
 - [x] NIF sweep: `cargo dev nif-sweep` converts all 7,319 vanilla NIFs, 0 failures; ranks
-  unsupported types by files affected. Left: geometry morphs (273, heads, M3), path
-  controllers (5, spell effects), embedded textures (2), planar collider (1).
+  unsupported types by files affected. Left (sweep 2026-10-12, particles2): path controllers
+  (5, spell effects), embedded textures (2), planar collider (1); geometry morphs and
+  `NiBSPArrayController` now converted.
 - [x] NIF controllers (spec `docs/specs/nif-runtime.md`): keyframe, visibility, UV, alpha,
   material color; Hermite/TCB/Euler curves in `mw_nif::anim`, auto-play rules from
   animation-node flags. Verify: two `--settle` shots of `"Nchuleftingth, Test of Pattern"`
@@ -125,8 +126,11 @@ Wanted, but after the M2/M3 foundations. Not scheduled; pick up when the roadmap
   `view --bench benchmarks/census_office.json [--bench-update-baseline]`. Baseline (RTX 4060 Laptop,
   720p): median 3.46 ms (289 fps), p99 5.16 ms, worst 13.95 ms; CPU-bound (GPU ~1 ms). Re-record
   on an idle machine (other builds were running).
-- [ ] Particles: `NiBSPArrayController` vertex emission, world-space particles, animated emitters
-  (see spec open questions).
+- [x] Particles: `NiBSPArrayController` array emitters (vanilla: random node of the emitter
+  subtree, on its bone; no file emits at vertices), world-space particles, live (animated) emitters
+  for actors and placed models, emission windows on the controller clock (nif-runtime.md "Array
+  emitters, live emitters, emission clocks"); actor windows on the animation timeline (`emit:` clip
+  curves, particles3). Checks PA-1, PA-2, PA-3 awaiting owner.
 
 ## M2: Exteriors at scale
 
@@ -391,15 +395,29 @@ Framework (superfargoth):
   controllers of creature models play on the animation timeline as clip curves (`mw_anim::effects`, NIF
   importer v5, KF v4), written after the pose by `actor_fx.rs` (joint scale 0, per-character material copy);
   billboard nodes are rig joints that face the camera (heart_akulakhan: 6 parts, 0 root-bound). Census: BODY
-  parts carry none; 13 CREA models visibility, 6 material. Left: initially hidden geometry (dremora/ghost
-  death dust: the bake drops culled nodes), creature particles (16 models), owner pass AF-1..AF-6.
+  parts carry none; 13 CREA models visibility, 6 material. particles3: creature particle emission rides the
+  animation timeline (`emit:<particle node>` clip curves, NIF anim importer v7, KF v6, `ActorEmitter` gate;
+  `ACTOR_EMISSION_SCAFFOLD` removed): Dagoth Ur's hands in `Idle2`/`SpellCast`, atronach hands in attacks,
+  dremora dust in deaths, atronach body flames always. Left: initially hidden geometry (dremora/ghost death
+  dust meshes: the bake drops culled nodes), death/attack triggers in a test scene (the lineup only idles and
+  fidgets), owner pass AF-1..AF-6, PA-1, PA-3.
 - [ ] `sf_diag` "crowd street" scenario and gates: animation ≤ 1.0 ms wall, A0 ≤ 25 µs, skinning ≤ 0.5 ms,
   foot slide ≤ 2 cm/s, penetration ≤ 2 cm p95, `anim.cook` ≤ 5 s.
   Verify: the bench passes; baseline recorded.
+  Scoped 2026-10-12 (animcheck), not built: no crowd scenario exists yet (`perf/cli.rs` `SCENARIOS` and
+  `benchmarks/` have only streaming scenarios). Ready: `anim/evaluate/ms`, `anim/apply/ms`, `anim/a0..a3/count`,
+  `controller/*/ms` counters and the `MaxCounter` gate. Needed: (1) `benchmarks/crowd_street.json` (standing camera on
+  a Balmora street, walkers on, 15 s) + a `crowd_street` suite entry; (2) a crowd-size control: vanilla Balmora gives
+  ~70 active movers, not 150 with 40 at A0 (an extra-NPC spawner or a count knob in `walkers.rs`); (3) foot slide
+  and penetration metrics (new: planted-foot world drift per contact and foot-vs-probe height, as `anim/feet/*`
+  counters; today `FootStats` only counts guard events); (4) skinning cost: Bevy skins in each pass's vertex
+  shader, so measure an A/B (actors on vs `--off actors`, GPU pass times) rather than a pass; (5) A0 ≤ 25 µs from
+  `anim/evaluate_cpu/ms` ÷ `anim/evaluated/count` or a release micro-bench; (6) `anim.cook` ≤ 5 s is the animcook
+  timing run (owed). About one agent session for (1)-(3) + (5), then a quiet-machine run.
 
 Adapter (bevyrrowind):
 
-- [~] `mw_nif` actor import: skins (`NiSkinInstance`/`NiSkinData` → `sf_model` skin), geometry morphs
+- [x] `mw_nif` actor import: skins (`NiSkinInstance`/`NiSkinData` → `sf_model` skin), geometry morphs
   (`NiGeomMorpherController`), KF import (per-bone keyframe controllers, root text keys) → source clips
   split per group. Verify: `nif-sweep` has no skin/morph entries left; `bevyrrowind anim <kf>` lists groups.
   KF part done 2026-10-12 (`mw_anim`, actors-adapter.md "KF import as built"): `KfAnimImporter`, one clip
@@ -410,7 +428,8 @@ Adapter (bevyrrowind):
   + weight curves), NIF importer v2 → `Cooked::Skinned` for body parts, heads, creatures. `nif-sweep` verified
   2026-10-12 (health): 7,319 NIFs, 0 failed; `NiSkinData`/`NiSkinInstance` (556 files, 3,069 objects) and
   `NiGeomMorpherController`/`NiMorphData` (273 files, 324 objects) all "ok", no `NiSkinPartition`; no skin/morph
-  entry left partial or unsupported. Left: `sf_model_bevy` loader mapping, `anim` subcommand.
+  entry left partial or unsupported. Loader mapping done (skinloader); `bevyrrowind anim meshes/xbase_anim.kf` lists
+  135 groups (animcheck 2026-10-12): nothing left.
 - [~] Rig maps: Bip01 → humanoid for `base_anim`, `base_anim_female`, `base_animkna`, `base_anim.1st`;
   root-motion joint; retarget pose; lower body / torso / left arm / right arm masks.
   Verify: viewer overlays the humanoid map; Quaternius walk retargeted onto Bip01 next to the source.
@@ -473,7 +492,7 @@ Adapter (bevyrrowind):
   (skinned, `NC` marker, `RootCollisionNode`, `MRK` → none/authored), rest pose for animated models, else
   LOD1. Real install: 3,168 authored, 2,497 LOD1, 150 rest pose, 794 none; 759k tris; +8.5 s cold bake.
   Verify: `cargo run --release -p mw_bake --example collision_report`; `tests/collision_real_install.rs`.
-  Left: request `collision::collision_keys` in `bevyrrowind bake` (app busy), footstep surfaces.
+  `bevyrrowind bake` requests `collision::collision_keys` (checked by animcheck 2026-10-12). Left: footstep surfaces.
 
 Next-gen animation (anim-plan 2026-10-11; specs: `animation.md` "Next-gen roadmap" + audit table, `rig-profile.md`,
 `locomotion.md` "Context probes, traversal and creature modes", `docs/specs/animation-sources.md`). Start after
@@ -547,7 +566,77 @@ context probes are not milestone gates. File:line refs are the audit's.
   and a Balmora "crowd street" benchmark entry within the gates. Creatures too (owner, 2026-10-12): a guar and a cliff
   racer animate, foot-place and move under the same gates as the Balmora NPCs.
 
-## M4–M10
+## M4: Physics
+
+Specs (draft 2026-10-12; the five decisions owner-confirmed 2026-10-12): `../superfargoth/docs/specs/physics.md` (framework), `docs/specs/physics-adapter.md`
+(Morrowind), plus `animation.md` "Next-gen roadmap" layer 4 and `locomotion.md`. **Backend: `rapier3d` 0.36.1 directly,
+behind the Bevy-free `sf_physics`** (ARCHITECTURE §10, 2026-10-12): on Bevy 0.20 now, same `parry3d` 0.31.1 as the M3
+probes, per-axis joint motors and multibodies for powered ragdolls, our own exact floating-origin rebase; avian 0.8 is
+the fallback if P1 misses its gates. Done when (ARCHITECTURE §9): "Knock a table's contents over; a dead guard
+ragdolls; robes move." Tasks in dependency order:
+
+- [ ] P1 `sf_physics` core + spike (Bevy-free, rapier3d): `PhysicsWorld` per worldspace, anchor + whole-cell rebase,
+  layers, `BodyDesc`/`BodyId`, fixed-step interpolation state, events, `PhysicsProbe` (`GroundProbe`), statics from
+  `StaticShape`/`collision.cook` sharing one `Arc` per model. Spike inside it: a 50-item pile and a 15-body ragdoll
+  chain (impulse joints vs multibody), measured.
+  Verify: `cargo test -p sf_physics` (rebase: stack + ragdoll with and without a mid-run rebase within 0.1 mm, no wakes;
+  `PhysicsProbe` = `StaticProbe` on fixtures); bench: idle R0-sized static set ≤ 0.3 ms per step, pile + 2 ragdolls
+  ≤ 2 ms, rebase ≤ 2 ms. Misses → re-decide backend (avian 0.8) before P2.
+- [ ] P2 `sf_physics_bevy` + app wiring: `PhysicsPlugin` (60 Hz `FixedUpdate`, ≤ 3 steps/frame), write-back as
+  `CellCoord + Transform` from `WorldPos`, activation hooks insert statics (replacing the walkers' `StaticWorld`
+  build; `--off physics` keeps it) and terrain heightfield chunks (64 m, 0.5 m) in R0, debug gizmos.
+  Verify: headless test (spawn, step, rebase, despawn); `cargo dev view` Balmora with physics debug draw shows statics +
+  terrain; walkers unchanged (feet stats, 150-walker probe budget 0.2 ms); fly-through stutter counters not worse.
+- [ ] P3 `body.cook` + `items.check` (framework bake steps) and `MwBodyRules` (`mw_bake`): authored `RootCollisionNode`
+  else primitive / hull / V-HACD; per-page support and overlap check.
+  Verify: `cargo test -p sf_physics --features bake`; `body_report` example on the install (models, shape kinds, hulls,
+  overlaps > 1 cm, unsupported items per cell, bake time; full bake stays inside the 2 min gate).
+- [ ] P4 Dynamic items (`sf_physics_bevy` + `mw_physics`): `Dynamic` placements as sleeping bodies on R0 activation,
+  `HOLD_UNTIL_GRABBED`, weight → mass, debris/prop layers, CCD, coverage freeze, fell-out recovery, persistence through
+  `PlacementOverlay::move_to` + `physics` state blob on deactivation.
+  Verify: Arrille's Tradehouse: 0 wakes in 10 s with nobody near; a thrown item topples the counter clutter, all rest
+  within 3 s; PH-5 (leave, unload, return: items where they rested); dense-town R0 idle step ≤ 0.3 ms. Visual PH-1.
+- [ ] P5 Controller on physics (`sf_controller(_bevy)`): kinematic capsule bodies, sweeps against `STATIC | PROP`,
+  capped push impulses on props and debris, `ImpactOnCharacter`, sliding on unwalkable slopes (locomotion.md open
+  question 3); the mover stays in `Update`.
+  Verify: `cargo test -p sf_controller` (push caps, debris never blocks, slope slide); walkers through a cluttered
+  floor scatter debris without stalling; a crate blocks then yields to sustained pushing; 150-walker budget holds.
+- [ ] P6 Carry, drag and throw: pick ray, kinematic hand + 6-DOF motor joint with force cap, break distance,
+  drag mode (ball joint at the grab point, holder slowed) for objects over the carry mass and for limp ragdolls by the
+  grabbed limb (dead bodies), `HolderLimits` (carry force, carry mass, drag mass, throw impulse) from the adapter,
+  rotate, drop, throw; holder-space interpolation; dev `--fps-cap`; Morrowind holder limits from Strength
+  (physics-adapter.md table; owner request 2026-10-12).
+  Verify: view-space jitter of a held item < 1 mm at 30/60/144 fps while walking and turning (automated); throw speed
+  within 1 % of the cap; carry/drag/too-heavy switch at the Strength thresholds; a 75 kg ragdoll dragged by a wrist with
+  no joint stretch > 1 cm (needs P7; until then drag is verified on heavy items). Visual PH-4 (carry + corpse drag).
+- [ ] P7 `ragdoll.cook` + limp ragdolls (`sf_ragdoll`, `mw_physics::RagdollRules`): bodies/joints/limits/masses from
+  `RigProfile` + skin extents, override files, creature policy table, death handoff with velocity carry-over, sleep +
+  persisted pose, placed corpses settle once.
+  Verify: cook report for the 3 humanoid skeletons + all CREA skeletons (bodies, joints, failures); no joint stretch
+  > 1 cm in a fall down stairs; dead guard on the Balmora stairs (PH-2 first half).
+- [ ] P8 Powered ragdolls + blend (`sf_ragdoll`, `sf_anim_graph` `PoseInput`, `mw_graphs` states): implicit motors from
+  the animated pose, per-region `StrengthProfile`, world pelvis drive, hit impulse + recovery, balance → stumble /
+  knockdown, get-up (face up/down, `Knockout@tail`, `ROLL_TO_BACK` scaffold) with inertialization, budget of 8.
+  Verify: tracking ≤ 5 cm RMS / ≤ 5° at full strength while walking; get-up angular velocity continuous at shrinking
+  dt; ≤ 0.05 ms per powered character; PH-2 second half (knockdown on stairs, gets up with feet placed).
+- [ ] P9 `HitReact` + `SpringBones` ops (animation.md layer 4; `SpringBones` is the base the cloth op extends).
+  Verify: `cargo test -p sf_anim_graph` (spring decay, no drift at any frame rate); a guar's tail and an NPC hit below
+  A0 react kinematically.
+- [ ] P10 Cloth (`cloth.cook` in `sf_character`, `ClothLattice` op in `sf_anim`, `mw_physics::ClothRules`): robe and
+  skirt lattices, outfit joints in the merged palette, XPBD in character space with inertia scaling, tethers, max
+  distance, leg/pelvis/tail capsules; census of robe/skirt parts.
+  Verify: unit tests (hem stretch ≤ 5 %, no particle inside a capsule at run speed, teleport stable); ≤ 0.03 ms per robe;
+  visual PH-3 (`character --walk` in a robe, Balmora Temple priests).
+- [ ] P11 Traversal actions and interaction points (already slotted for M4 by animation.md layer 3): vault/mantle/ledge
+  from `ContextProbes` with warping, `sf_interaction` points (benches, doors, levers). Not physics; may run in parallel
+  with P3–P10. Verify: per animation.md "Layer 3".
+
+- Verify (milestone): PH-1 (table knock-over), PH-2 (dead guard ragdoll + knockdown/get-up), PH-3 (robes) signed off
+  by the owner; a benchmark entry for Balmora with physics on (idle step, a collapse, 2 ragdolls) within the gates.
+  After M4: pose-search node (`posesearch.cook`) once a bring-your-own locomotion library is baked; mesh cloth for
+  capes/banners and buoyancy (M6).
+
+## M5–M10
 
 Not broken down yet. Scope per milestone: ARCHITECTURE.md §9; designs:
 `../superfargoth/docs/WISHLIST.md`. Break a milestone down here (with a
@@ -555,10 +644,6 @@ spec per major system) before starting it.
 
 Specs written ahead: M5 game UI (`../superfargoth/docs/specs/ui.md`, `docs/specs/ui-adapter.md`);
 the slice to break down is ui.md's "Milestone and first vertical slice".
-M4 animation (`animation.md` "Next-gen roadmap" layer 4, `locomotion.md`): `ragdoll.cook` from rig profiles, powered
-ragdoll (stable-PD drives, per-region strength, hit reactions, stumble/balance, knockdown + get-up via `PoseInput`),
-`HitReact` + `SpringBones` ops, traversal actions (vault/mantle/ledge) with warping, `sf_interaction` interaction points;
-after M4, a pose-search node (`posesearch.cook`) once a bring-your-own locomotion library is baked.
 M6 weather (`../superfargoth/docs/specs/weather.md`, `docs/specs/weather-adapter.md`), stub order: `sf_wind` (+ grass/tree
 wind, `wind.paint`) → `sf_weather` + `mw_weather` (presets, climates, forecast) → `sf_atmos_bevy` clouds + cloud shadows →
 froxel/height/ground fog → `sf_surface` (wetness, puddles, snow, ash; `WorldMaterial`) → `sf_precip_bevy` → shadow-height
@@ -581,6 +666,10 @@ default** (`--portals` / `BEVYRROWIND_PORTALS=1`), parked until M8 (open items i
 ## Session log
 
 Newest first. One or two lines each: what changed, what was verified.
+
+- 2026-10-12 (physics-spec, spec only): M4 physics designed: `superfargoth/docs/specs/physics.md`, `docs/specs/physics-adapter.md`, "M4: Physics" (P1–P11), ARCHITECTURE §10. Backend `rapier3d` 0.36.1 direct behind Bevy-free `sf_physics` (bevy_rapier syncs on `Changed<GlobalTransform>`, wrong under big_space; avian main still Bevy 0.19, PR #1070 ports it but no spherical motors); kinematic mover kept; bone-lattice XPBD cloth for robes. No builds.
+
+- 2026-10-12 (cloudjump): clouds jumped at floating-origin shifts: `sync_origin` now runs before `sf_atmos_bevy::CloudSystems::Drive` (was unordered) and the sky's atmosphere placement moved to PostUpdate `SkySystems::Origin` (sea level applied a frame late on vertical shifts). Clippy clean; visual CL-6 awaiting owner.
 
 - 2026-10-12 (helditems): held items as data: `sf_character::{HeldItem, Mount, Hand, Readiness, HeldLight}`, `mw_actors::held` (best weapon by skill/damage + ammo, best shield, torch when dark, `Weapon Bone`/`Shield Bone`, no visible sheaths, LEVI scaffold), `Stance::of_weapon`. 12 + 6 unit, real-install counts (stances, guards, torches); clippy clean. Heavy side open.
 - 2026-10-12 actorfx: morph playback (clip curves + face player) in sf_character_bevy, KF companion morph curves (forager 9/9 bound), NPC blink/talk (faces.rs, Y key), LEVC wander; tests: sf_character_bevy 4, mw_anim morph real-install 2, app faces; clippy clean.
@@ -700,3 +789,6 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-12 (terrainblend2): object-terrain blending (R-b) built: terrain bindings renumbered to 100+, surface shading moved to `surface.wesl` (`terrain_surface`, shared), `GroundBlendMaterial` = StandardMaterial + `GroundBlendExt` (`ground_blend.wesl`: height above `height_bicubic`, height-broken edge, triplanar on steep object faces instead of the RVT's top-down streaks), `GroundBlendPlugin<M>` swaps marked parts in the terrain's worldspace; `sf_world_bevy::GroundBlendModels` + `GroundBlend` marker; adapter rule `mw_assets::ground_blend_band` (rocks 0.6, buildings 0.4, flora 0.3 m). `--off terrainblend`, F11. Raster only, proxies excluded. Scenes tb-balmora/tb-bittercoast/tb-ascadian, TB-1..3 awaiting owner.
 - 2026-10-12 (heldrender): held items rendered: `sf_character_bevy::held` (props on Weapon/Shield Bone joints, readiness mounts, light slots, visibility chains), app `held.rs` (torches when dark by the sky clock, LIGH light + flicker, 12-light budget, stance feed), `mesh.rest` for held models; `character --drawn --night` + R/N keys, scene hi-balmora-night, HI-1..4. Tests + clippy clean; 3 screenshots.
 - 2026-10-12 (actorparticles): particles on actors and held items (`actor_particles.rs`: NIF `#Animation` + per-node anchors at the nearest skeleton joint or prop root, `ActorEmitter`, `ParticleRange` 60 m, vis-curve gating; `mw_nif` local-space flag 0x80 + `Simulation::carry` world-space particles), skinned held props on their own skeleton (bows; `CharacterContent::node_transforms`, `HeldSkinAssets`), carried-light near field (`HeldLightTuning` 0.7 m / 0.7). Tests + clippy clean; AP-1..3 awaiting owner.
+- 2026-10-12 (animcheck): M3 health check on the combined tree. Tests pass for the 9 superfargoth animation/character crates (`--all-features`) and mw_anim, mw_graphs, mw_actors, mw_ai, mw_nif, mw_bake and the app (real install). Fixed: `sf_anim_bevy` / `sf_controller_bevy` `debug` gizmo systems panicked headless (now `run_if(resource_exists::<GizmoConfigStore>)`), one clippy lint in the mw_ai test. Clippy clean (except particles2's in-progress `particles_real_install.rs`). Smoke runs (`shots/animcheck/`): lineup 7/7 dressed and posed, Imperial guard's tower shield sideways across the thighs (HI-2); wk-balmora/wk-stairs walk (0 pelvis clamps, 0 non-finite; "walks given up" ~1/s); guar graph idles. Crowd street scoped in M3, not built. `mw_nif` actor import marked done.
+- 2026-10-12 (particles2): NIF particles finished for M1: `NiBSPArrayController` array emitters (census `mw_bake/tests/particles_real_install.rs`: 42 controllers, all flag 0x8, none at vertices; random node of the emitter subtree, on its bone, as OpenMW), live emitter nodes for actors (`LiveAnchor` per system) and keyframed placed models (`NifNode`), emission windows on the model's controller clock (`emits_at`); actor windows wait for `emit:` clip curves (scaffold `ACTOR_EMISSION_SCAFFOLD`). nif-sweep: unsupported left = path controllers 5, embedded textures 2, planar collider 1. PA-1, PA-2 awaiting owner.
+- 2026-10-12 (particles3): actor particle emission windows on the animation clock: `mw_anim::effects` `emit:<particle node>` step curves (`emission_keys` per controller cycle, `emission_names` numbers same-named `PArray` nodes; whole-range windows emit throughout), NIF anim importer v7 / KF v6, re-bake (anim.cook 3,987 rebuilt, 87 s wall at BelowNormal with the owner's game open: not a timing); `actor_particles.rs` maps systems to curves and writes `mw_assets::ActorEmitter::emitting`, `ACTOR_EMISSION_SCAFFOLD` removed. Census test `actor_emission_on_clip_timelines`: every creature system emits in some clip. Visual checks PA-1 updated, PA-3 new (awaiting owner).

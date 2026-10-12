@@ -256,7 +256,14 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .add_systems(Startup, (setup, setup_spawners).chain())
         .add_systems(Update, (follow_pose, follow_player).chain().before(StreamingSystems::Drive))
         .add_systems(Update, (light_layers, status))
-        .add_systems(PostUpdate, sync_origin.after(TransformSystems::Propagate).before(TerrainSystems::Update));
+        .add_systems(
+            PostUpdate,
+            sync_origin
+                .after(TransformSystems::Propagate)
+                .before(TerrainSystems::Update)
+                .before(sf_sky_bevy::SkySystems::Origin)
+                .before(sf_atmos_bevy::CloudSystems::Drive),
+        );
 
     crate::doors::add(&mut app, options.world, options.use_door);
     if let Some(links) = options.portals {
@@ -525,8 +532,9 @@ fn setup(
 
 /// The floating origin's cell drives the terrain's render origin and the
 /// atmosphere's sea level; the sea scaffold follows the camera. Runs after
-/// `big_space`'s propagation, before the terrain update, so all three move
-/// in the same frame as the origin. The origin is that of the worldspace
+/// `big_space`'s propagation, before the terrain update, the sky's atmosphere
+/// placement and the clouds' drive, so all of them move in the same frame as
+/// the origin (a frame late, the clouds jumped by a cell at every shift). The origin is that of the worldspace
 /// the terrain camera stands in (the exterior's, also when a portal camera
 /// looks out of an interior: `--portals`), else the active worldspace's.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]

@@ -15,7 +15,10 @@
 //! Creature emitters switched by visibility controllers (`vis:<node>` clip
 //! curves, `mw_anim::effects`) on nodes between the joint and the particle
 //! node are gated here; a curve on a joint hides the emitter with its joint
-//! (`actor_fx`, scale zero).
+//! (`actor_fx`, scale zero). Each creature system emits while its emission
+//! curve (`emit:<particle node>`) says its window is open at the current
+//! animation time ([`ActorEmitter`]): Dagoth Ur's hands in his casts, the
+//! dremora's dust in his deaths, the flame atronach's body always.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,7 +27,7 @@ use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use mw_anim::effects::Effect;
-use mw_assets::{ActorEmitter, LiveEmitter, NifAnimation, ParticleEmitter, ParticleRange};
+use mw_assets::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifAnimation, ParticleEmitter, ParticleRange};
 use sf_anim_bevy::{AnimSystems, Animator, SkeletonBinding};
 use sf_character_bevy::{CharacterBody, CharacterSystems, HeldProps};
 use sf_vfs::{Vfs, VfsPath};
@@ -48,17 +51,34 @@ pub struct ParticleAnchor {
     pub visible: bool,
     /// Indices into the model's particle systems.
     pub systems: Vec<u32>,
-    /// The emitter node (the first system's, when it isn't the particle
-    /// node) anchored the same way, when that is a different joint: it then
-    /// emits from where the pose puts it (a flame atronach's hands), not
-    /// from its rest place.
-    pub emitter: Option<(String, Affine3A)>,
+    /// Per system whose emitter or array nodes hang from other joints: where
+    /// they are, so they emit from where the pose puts them (a flame
+    /// atronach's hands, its whole body), not from their rest place.
+    pub live: Vec<LiveAnchor>,
+}
+
+/// A node as `(joint, offset in the joint's space)`, if it hangs from one.
+pub type JointAt = Option<(String, Affine3A)>;
+
+/// A system's moving emitter nodes, as `(joint, offset in the joint's space)`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveAnchor {
+    pub system: u32,
+    /// The emitter node, when it hangs from another joint than the particle node.
+    pub emitter: JointAt,
+    /// Per `ParticleSystem::targets` entry: the node and its parent.
+    pub targets: Vec<(JointAt, JointAt)>,
 }
 
 /// The node's nearest joint at or above it (`is_joint`), the node's rest
 /// transform in that joint's space and the names below the joint (top
 /// first). The root counts only if it is a joint.
-fn anchor_of(model: &mw_nif::Model, node: usize, is_joint: &impl Fn(&str) -> bool, inclusive: bool) -> (Option<String>, Affine3A, Vec<String>) {
+fn anchor_of(
+    model: &mw_nif::Model,
+    node: usize,
+    is_joint: &impl Fn(&str) -> bool,
+    inclusive: bool,
+) -> (Option<String>, Affine3A, Vec<String>) {
     let local = |i: usize| {
         let t = &model.nodes[i].transform;
         Affine3A::from_scale_rotation_translation(Vec3::splat(t.scale), Quat::from_array(t.rotation), Vec3::from_array(t.translation))
@@ -102,11 +122,22 @@ pub fn particle_anchors(model: &mw_nif::Model, is_joint: impl Fn(&str) -> bool) 
         .into_iter()
         .map(|(node, systems)| {
             let (joint, transform, path) = anchor_of(model, node, &is_joint, false);
-            let emitter_node = systems.first().map_or(node, |&s| model.particles[s as usize].emitter);
-            let emitter = (emitter_node != node)
-                .then(|| anchor_of(model, emitter_node, &is_joint, true))
-                .and_then(|(j, offset, _)| j.filter(|j| Some(j) != joint.as_ref()).map(|j| (j, offset)));
-            ParticleAnchor { joint, transform, path, visible: model.nodes[node].visible, systems, emitter }
+            let jointed = |i: usize| {
+                let (j, offset, _) = anchor_of(model, i, &is_joint, true);
+                j.map(|j| (j, offset))
+            };
+            let live = systems
+                .iter()
+                .map(|&s| {
+                    let system = &model.particles[s as usize];
+                    let emitter =
+                        (system.emitter != node).then(|| jointed(system.emitter)).flatten().filter(|(j, _)| Some(j) != joint.as_ref());
+                    let targets = system.targets.iter().map(|t| (jointed(t.node), t.parent.and_then(jointed))).collect();
+                    LiveAnchor { system: s, emitter, targets }
+                })
+                .filter(|l| l.emitter.is_some() || !l.targets.is_empty())
+                .collect();
+            ParticleAnchor { joint, transform, path, visible: model.nodes[node].visible, systems, live }
         })
         .collect()
 }
@@ -141,6 +172,24 @@ struct BodyParticles {
     body: Option<Entity>,
     /// `(emitter, visibility curve indices)`: hidden while any is below 0.5.
     gates: Vec<(Entity, Vec<u16>)>,
+    /// `(emitter, [(system, emission curve index)])`: a system emits while
+    /// its curve is at least 0.5.
+    emission: Vec<(Entity, Vec<(u32, u16)>)>,
+}
+
+/// Per system of `anchor`, the index of its emission curve among `curves`
+/// (the animation graph's), if the clips carry one; `names` from
+/// [`mw_anim::effects::emission_names`] of the same model.
+fn emission_curves(anchor: &ParticleAnchor, names: &[String], curves: &[String]) -> Vec<(u32, u16)> {
+    anchor
+        .systems
+        .iter()
+        .filter_map(|&s| {
+            let name = names.get(s as usize)?;
+            let curve = curves.iter().position(|c| c.eq_ignore_ascii_case(name))?;
+            Some((s, u16::try_from(curve).ok()?))
+        })
+        .collect()
 }
 
 pub fn add(app: &mut App, vfs: Arc<Vfs>) {
@@ -158,7 +207,7 @@ fn emitter(animation: Handle<NifAnimation>, anchor: &ParticleAnchor) -> impl Bun
     (
         Name::new(format!("particles {}", anchor.path.last().map_or("", String::as_str))),
         ParticleEmitter { animation, systems: anchor.systems.clone() },
-        ActorEmitter,
+        ActorEmitter::default(),
         ParticleRange(ACTOR_PARTICLE_RANGE_M),
         Transform::from_matrix(Mat4::from(anchor.transform)),
         if anchor.visible { Visibility::Inherited } else { Visibility::Hidden },
@@ -177,7 +226,9 @@ fn prop_particles(
         for prop in props.props.iter().filter(|p| !done.contains(p.entity)) {
             commands.entity(prop.entity).insert(PropParticles);
             let path = prop.item.model.as_str();
-            let Some(nif) = models.nif(path) else { continue };
+            let Some(nif) = models.nif(path) else {
+                continue;
+            };
             for anchor in particle_anchors(&nif, |_| false).iter().filter(|a| a.visible) {
                 commands.spawn((emitter(animation(&server, path), anchor), ChildOf(prop.entity)));
             }
@@ -198,8 +249,10 @@ fn body_particles(
         if done.as_ref().is_some_and(|d| d.body == Some(body.body)) {
             continue;
         }
-        let Ok((animator, binding)) = bodies.get(body.body) else { continue };
-        let mut out = BodyParticles { body: Some(body.body), gates: Vec::new() };
+        let Ok((animator, binding)) = bodies.get(body.body) else {
+            continue;
+        };
+        let mut out = BodyParticles { body: Some(body.body), ..BodyParticles::default() };
         if let Some(nif) = models.nif(&body.skeleton) {
             let skeleton = &animator.asset.skeleton;
             let vis: Vec<(u16, &str)> = animator
@@ -213,25 +266,53 @@ fn body_particles(
                     _ => None,
                 })
                 .collect();
+            let names = mw_anim::effects::emission_names(&nif);
             for anchor in particle_anchors(&nif, |name| binding.find(skeleton, name).is_some()) {
-                let Some(joint) = anchor.joint.as_deref().and_then(|j| binding.find(skeleton, j)) else { continue };
+                let Some(joint) = anchor.joint.as_deref().and_then(|j| binding.find(skeleton, j)) else {
+                    continue;
+                };
                 let gates: Vec<u16> =
                     vis.iter().filter(|(_, node)| anchor.path.iter().any(|p| p.eq_ignore_ascii_case(node))).map(|(i, _)| *i).collect();
                 if !anchor.visible && gates.is_empty() {
                     continue; // hidden in the file, nothing shows it
                 }
-                debug!("  {}: joint {:?}, path {:?}, at {:?}, systems {:?}", body.skeleton, anchor.joint, anchor.path, anchor.transform.translation, anchor.systems);
-                debug!("    emitter {:?}", anchor.emitter.as_ref().map(|(j, o)| (j, o.translation)));
+                debug!(
+                    "  {}: joint {:?}, path {:?}, at {:?}, systems {:?}",
+                    body.skeleton, anchor.joint, anchor.path, anchor.transform.translation, anchor.systems
+                );
                 visible_chain(&mut commands, &joints, joint, body.body);
-                let entity = commands.spawn((emitter(animation(&server, &body.skeleton), &anchor), ChildOf(joint))).id();
-                if let Some((name, offset)) = &anchor.emitter
-                    && let Some(node) = binding.find(skeleton, name)
-                {
-                    commands.entity(entity).insert(LiveEmitter { node, offset: *offset });
+                let emission = emission_curves(&anchor, &names, &animator.asset.graph.curves);
+                // Gated from the start: not emitting until the first pose says so.
+                let gate = ActorEmitter { emitting: emission.iter().map(|&(s, _)| (s, false)).collect() };
+                let entity = commands.spawn((emitter(animation(&server, &body.skeleton), &anchor), ChildOf(joint))).insert(gate).id();
+                let live = |at: &JointAt| {
+                    let (name, offset) = at.as_ref()?;
+                    binding.find(skeleton, name).map(|node| LiveNode { node, offset: *offset })
+                };
+                let systems: Vec<LiveSystem> = anchor
+                    .live
+                    .iter()
+                    .map(|l| LiveSystem {
+                        system: l.system,
+                        emitter: live(&l.emitter),
+                        targets: l.targets.iter().map(|(node, parent)| (live(node), live(parent))).collect(),
+                    })
+                    .collect();
+                debug!(
+                    "    live systems {:?}",
+                    systems.iter().map(|s| (s.system, s.emitter.is_some(), s.targets.len())).collect::<Vec<_>>()
+                );
+                if !systems.is_empty() {
+                    commands.entity(entity).insert(LiveEmitter { systems });
                 }
                 out.gates.push((entity, gates));
+                out.emission.push((entity, emission));
             }
-            debug!("actor particles {root}: {} emitters", out.gates.len());
+            debug!(
+                "actor particles {root}: {} emitters, {} systems on emission curves",
+                out.gates.len(),
+                out.emission.iter().map(|e| e.1.len()).sum::<usize>()
+            );
         }
         match done {
             Some(mut d) => *d = out,
@@ -247,7 +328,9 @@ fn body_particles(
 fn visible_chain(commands: &mut Commands, joints: &Query<(Option<&ChildOf>, Has<Visibility>)>, joint: Entity, body: Entity) {
     let mut at = joint;
     while at != body {
-        let Ok((parent, has)) = joints.get(at) else { return };
+        let Ok((parent, has)) = joints.get(at) else {
+            return;
+        };
         if !has {
             commands.entity(at).insert(Visibility::Inherited);
         }
@@ -256,18 +339,28 @@ fn visible_chain(commands: &mut Commands, joints: &Query<(Option<&ChildOf>, Has<
     }
 }
 
-/// Shows each gated creature emitter while its visibility curves say so.
-fn gate_particles(roots: Query<&BodyParticles>, animators: Query<&Animator>, mut emitters: Query<&mut Visibility, With<ActorEmitter>>) {
+/// Shows each gated creature emitter while its visibility curves say so, and
+/// lets each system emit while its emission curve does.
+fn gate_particles(roots: Query<&BodyParticles>, animators: Query<&Animator>, mut emitters: Query<(&mut Visibility, &mut ActorEmitter)>) {
     for particles in &roots {
-        let Some(Ok(animator)) = particles.body.map(|b| animators.get(b)) else { continue };
+        let Some(Ok(animator)) = particles.body.map(|b| animators.get(b)) else {
+            continue;
+        };
         if !animator.posed() {
             continue;
         }
         let curves = &animator.output.curves;
         for (entity, gates) in particles.gates.iter().filter(|(_, g)| !g.is_empty()) {
             let shown = gates.iter().all(|&i| curves.get(usize::from(i)).is_none_or(|v| *v >= 0.5));
-            if let Ok(mut visibility) = emitters.get_mut(*entity) {
+            if let Ok((mut visibility, _)) = emitters.get_mut(*entity) {
                 visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+            }
+        }
+        for (entity, systems) in particles.emission.iter().filter(|(_, s)| !s.is_empty()) {
+            let Ok((_, mut gate)) = emitters.get_mut(*entity) else { continue };
+            let emitting = systems.iter().map(|&(s, i)| (s, curves.get(usize::from(i)).is_some_and(|v| *v >= 0.5)));
+            if !gate.emitting.iter().copied().eq(emitting.clone()) {
+                gate.emitting = emitting.collect();
             }
         }
     }
@@ -315,6 +408,67 @@ mod tests {
     }
 
     #[test]
+    fn array_emitter_nodes_anchor_at_their_joints() {
+        use mw_nif::particles::{EmitFrom, EmitTarget, ParticleSystem};
+        let target = |node, parent| EmitTarget {
+            node,
+            parent: Some(parent),
+            transform: mw_nif::glam::Affine3A::IDENTITY,
+            parent_origin: mw_nif::glam::Vec3::ZERO,
+        };
+        let system = ParticleSystem {
+            node: 4,
+            emitter: 1,
+            emit_from: EmitFrom::Nodes { along_bones: true },
+            targets: vec![target(1, 0), target(2, 1), target(3, 2)],
+            ..Default::default()
+        };
+        let model = mw_nif::Model {
+            nodes: vec![
+                node("Bip01", None, 0.0, NodeKind::Node),
+                node("Bip01 Pelvis", Some(0), 1.0, NodeKind::Node),
+                node("Bip01 Spine", Some(1), 0.5, NodeKind::Node),
+                node("Helper", Some(2), 0.25, NodeKind::Node),
+                node("Fire", Some(0), 0.0, NodeKind::Particles),
+            ],
+            particles: vec![system],
+            ..Default::default()
+        };
+        let joints = ["Bip01", "Bip01 Pelvis", "Bip01 Spine"];
+        let anchors = particle_anchors(&model, |n| joints.contains(&n));
+        let live = &anchors[0].live;
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].emitter.as_ref().map(|(j, _)| j.as_str()), Some("Bip01 Pelvis"), "emitter on another joint");
+        let names: Vec<_> =
+            live[0].targets.iter().map(|(n, p)| (n.as_ref().map(|j| j.0.as_str()), p.as_ref().map(|j| j.0.as_str()))).collect();
+        assert_eq!(
+            names,
+            [
+                (Some("Bip01 Pelvis"), Some("Bip01")),
+                (Some("Bip01 Spine"), Some("Bip01 Pelvis")),
+                (Some("Bip01 Spine"), Some("Bip01 Spine"))
+            ]
+        );
+        let helper = live[0].targets[2].0.as_ref().unwrap().1;
+        assert!((helper.translation - Vec3A::new(0.0, 0.25, 0.0)).length() < 1e-6, "a non-joint node rides its joint at its offset");
+    }
+
+    #[test]
+    fn systems_map_to_their_emission_curves() {
+        let anchor = ParticleAnchor {
+            joint: None,
+            transform: Affine3A::IDENTITY,
+            path: Vec::new(),
+            visible: true,
+            systems: vec![0, 2],
+            live: Vec::new(),
+        };
+        let names = ["emit:PArray", "emit:Body", "emit:PArray#1"].map(String::from);
+        let curves = ["Tri Head#1", "emit:parray#1", "vis:Body", "emit:PArray"].map(String::from);
+        assert_eq!(emission_curves(&anchor, &names, &curves), [(0, 3), (2, 1)]);
+    }
+
+    #[test]
     fn emitter_follows_its_joint() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin));
@@ -325,7 +479,7 @@ mod tests {
             path: vec!["Flame".into()],
             visible: true,
             systems: vec![0],
-            emitter: None,
+            live: Vec::new(),
         };
         let emitter = app.world_mut().spawn((emitter(Handle::default(), &anchor), ChildOf(joint))).id();
         app.update();

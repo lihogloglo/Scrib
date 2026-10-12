@@ -51,13 +51,13 @@ pub fn support(type_name: &str) -> Support {
         | "NiParticles" | "NiParticlesData" | "NiRotatingParticles" | "NiRotatingParticlesData"
         | "NiAutoNormalParticles" | "NiAutoNormalParticlesData" | "NiParticleSystemController" | "NiGravity"
         | "NiParticleGrowFade" | "NiParticleColorModifier" | "NiColorData" | "NiParticleRotation"
+        | "NiBSPArrayController"
         // Skins and geometry morphs (`skin`).
         | "NiSkinInstance" | "NiSkinData" | "NiGeomMorpherController" | "NiMorphData" => Converted,
 
         "NiLODNode" => Partial("active level only, no distance switching"),
         "NiTextKeyExtraData" => Partial("only the Idle group, looped on objects"),
         "NiSkinPartition" => Ignored("GPU split of NiSkinData's weights; the cook builds its own"),
-        "NiBSPArrayController" => Partial("emits from the emitter box, not at vertices"),
 
         "AvoidNode" => Ignored("AI pathing hint"),
         "NiSpecularProperty" => Ignored("PBR specular replaces it"),

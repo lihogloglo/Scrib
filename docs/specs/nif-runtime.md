@@ -41,7 +41,9 @@ convert; remaining unsupported types are listed with example files.
   becomes Bevy emissive with the base texture as emissive texture, scaled
   to "fully lit" at the scene exposure (`mw_assets::emissive_nits`). This is
   what makes flames glow: they are lit by their own light plus emissive.
-- **Particles: CPU simulation, per-instance dynamic mesh.** Box emitter,
+- **Particles: CPU simulation, per-instance dynamic mesh.** Box emitter
+  (array emitters: random node of the emitter subtree, on its bone),
+  emission window on the controller clock,
   declination/planar shoot angles, birth rate (or pool size / lifetime),
   planar and spherical gravity (×1.6, observed), grow/fade (size), color
   keys over normalized age, in-plane rotation; prewarmed to steady state.
@@ -311,13 +313,76 @@ files) use the static path's CPU simulation; only the anchoring is new.
 - **Gating.** `vis:<node>` clip curves on nodes between the joint and the
   particle node show/hide the emitter (`Visibility`); a curve on a joint
   hides it with the joint (scale zero). Particle nodes hidden in the file
-  without a curve are skipped.
+  without a curve are skipped. Emission: each creature system emits while
+  its `emit:<particle node>` clip curve is at least 0.5 (`ActorEmitter`, see
+  "Emission clocks" below); a held prop's systems run on their own
+  controller clock, as on a placed model.
 - **Budget.** Off view and beyond the range, emitters pause (streaming.md
   "Spikes": every simulated emitter re-uploads its mesh each frame).
-- **Not yet:** `NiBSPArrayController` emitters (the creature files) emit
-  from the box, not the emitter geometry's vertices; animated emitter nodes
-  still use the rest emitter transform; emission windows run on a free
-  clock (not the animation time); first-person props.
+- **Not yet:** first-person props.
+
+## Array emitters, live emitters, emission clocks (as built 2026-10-12, particles2)
+
+Census: `cargo test -p mw_bake --test particles_real_install -- --nocapture`
+(all 7,319 vanilla NIFs): 678 particle controllers, 42 of them
+`NiBSPArrayController` (21 creature models and their `x` variants: atronachs,
+Dagoth Ur, dremora, ascended sleepers, bonewalker, dwarven specter), every one
+with flag 0x8 and none with 0x10; every controller has an emission window,
+257 of them shorter than their controller range; 209 emitters sit under a
+keyframed node (mostly spell effects in `e/`).
+
+- **Array emitters.** A `NiBSPArrayController` is a particle controller whose
+  emitter is a subtree, not a box. Format facts (NifTools; OpenMW as a black
+  box, `nifosg` loader and particle emitter): flag 0x10 emits at the vertices of the
+  emitter's first geometry; otherwise each particle picks a random `NiNode` of
+  the emitter's subtree (the emitter included) and the box is placed in that
+  node's space; with 0x8 the particle starts at a random point between that
+  node's parent and the node (on the bone). So vanilla array emitters burn all
+  over a skeleton (`Bip01 Pelvis` and its 50 nodes on the flame atronach),
+  never at vertices: the "emit from vertices" item was a misreading. We
+  implement nodes and bones (`EmitFrom::Nodes`, `ParticleSystem::targets`
+  with rest transforms relative to the particle node); 0x10 falls back to the
+  nodes (no vanilla file; add it when a mod needs it).
+- **Live emitters.** A host passes the live emitter transform and live
+  targets to `Simulation::step` (`mw_assets::LiveEmitter`: per system, the
+  entities and offsets of the emitter, each target and its parent). Actors:
+  `actor_particles.rs` anchors the emitter and every target at its nearest
+  skeleton joint (`LiveAnchor`). Placed models: `mw_nif` marks systems whose
+  emitter or targets hang below a keyframed node that isn't above the particle
+  node (`ParticleSystem::animated_emitter`); the loader tags those nodes
+  `NifNode(index)` and `start_particles` follows their entities.
+- **Emission clocks.** `ParticleSystem::emits_at(t)`: the controller time
+  `key_time(t)` inside `[emit_start, emit_stop)` (OpenMW: start inclusive,
+  stop exclusive). Placed models run it on the model's controller clock: the
+  phase is the one `assign_phases` gives the model's keyframed nodes (random
+  per instance root unless flag 0x40), so a window lines up with the motion;
+  prewarm runs up to the current clock. Actors (particles3, 2026-10-12): the
+  window keys the creature's animation timeline (OpenMW assigns the
+  whole-body animation time to the model's controllers, as for visibility
+  curves). `mw_anim::effects` turns each particle controller into an
+  `emit:<particle node>` step curve on the file timeline (1 while
+  `emits_at(t)`, edges found per cycle period, so a short looping
+  controller repeats; `emission_keys`), cut into every group's clip next to
+  `vis:` (importer versions: NIF anim 7, KF anim 6). Exporters name every
+  array node `PArray`, so further systems on a same-named node get `#1`,
+  `#2`... (`emission_names`: Dagoth Ur has eight). `actor_particles.rs` maps
+  each system to its curve and writes `ActorEmitter::emitting` after the
+  pose; `simulate_particles` uses it, and systems without a curve (held
+  props) fall back to their own clock. The graph blends the curves like any
+  float curve, so a crossfade switches emission at 0.5. One deliberate
+  deviation: a window covering its controller range within 5 %
+  (`emits_throughout`) is a constant 1. The flame atronach's body flames
+  stop 1 s before the end of its 28.7 s timeline, which falls in `Idle3`:
+  read literally, its body would go dark for a second on every `Idle3`
+  loop; we take that as an export artifact. Census
+  (`particles_real_install`, test `actor_emission_on_clip_timelines`): every
+  creature system emits in at least one clip. Examples: fire atronach body
+  in all clips, its hands (`Weapon`) in `Attack1`-`3`; Dagoth Ur's hands
+  in `Idle2` and `SpellCast`, his body in his deaths; dremora dust in
+  `Death1`-`5` (1.67 of 2.67 s); ghost sprays in its deaths; centurion steam
+  in walk, idle and death moments. Industry: Niagara spawn driven by anim
+  notify states, Unity animation events; ours is the same idea as data
+  (a curve per emitter), as the original stores it.
 
 ## Industry comparison
 
@@ -339,8 +404,18 @@ shader settings docs: not re-read this session (unverified detail).
 ## Open questions
 
 - ~~Particles in world space~~: done (actorparticles, "Particles on actors").
-- `NiBSPArrayController` (16 creature files) should emit from vertices.
-- Animated emitter nodes use the rest-pose emitter transform.
+- ~~`NiBSPArrayController` should emit from vertices~~: vanilla array
+  emitters emit from the nodes under the emitter (0x10 unused); done
+  (particles2, "Array emitters").
+- ~~Animated emitter nodes use the rest-pose emitter transform~~: done (live
+  emitters, actors and placed models).
+- ~~Actor emission windows on the animation timeline~~: done (particles3,
+  `emit:` clip curves, "Emission clocks"; `ACTOR_EMISSION_SCAFFOLD` removed).
+- Is the 1 s gap at the end of the flame atronach's body window really an
+  export artifact? We emit throughout (`emits_throughout`); an OpenMW
+  side-by-side of its `Idle3` would settle it.
+- Spell-effect NIFs (`e/`, 209 emitters under keyframed nodes) are not on
+  any actor timeline: they wait for gameplay (magic effects, M5+).
 - Flicker/pulse rates are tuned by eye, not measured from the original.
 - TCB quaternion squad as an owner A/B (see "TCB quaternions: slerp,
   measured" above): only if a side-by-side of creature idles shows the

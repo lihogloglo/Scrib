@@ -610,7 +610,7 @@ idles.
   shins, nothing under the floor; the naked Fargoth's neck, groin and knees
   sit as before. Rigid parts now keep their model's root transform under
   their bone (the pants ankle part hangs 37 cm up the shin through it).
-- Status: awaiting owner (agent screenshots 2026-10-12: shots/feetfix/before.png
+- Status: FAILED (owner 2026-10-12): body-part seams still visible with B on and off, on every character.
   shows the gap, after.png full lineup, after_close.png closed legs).
 
 ### CH-2: Outfit swap without a pop
@@ -733,7 +733,7 @@ rocks) follow the same rig and graph as skinned bodies.
   (morph curves are not played yet). Mixed creatures' heads (wolves, bears,
   goblins, daedroth) were bound to the root before and now ride their neck:
   check one in the world (CH-3 style) when you meet it.
-- Status: awaiting owner (agent screenshot 2026-10-12: all six posed and
+- Status: owner 2026-10-12: looks right, but some creatures walk in place while others actually move (root motion inconsistent).
   whole; log: 0 missing parts, 0 missing joints).
 - Source: nodecreatures.
 
@@ -757,7 +757,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
 - Look for: `AI_W` wanderers walk street pathgrid edges at walking pace, stop and idle, sometimes
   fidget (Idle2-9); the walk cycle's stride matches the ground speed (SpeedMatch, no skating);
   turns are smooth; non-wanderers stay at their posts; nobody sinks, floats or walks through walls.
-- Status: awaiting owner (agent screenshot 2026-10-12: walkers mid-stride on the bridge street;
+- Status: confirmed by owner (2026-10-12): no foot sliding, no stretched legs; animation quality can improve later.
   log: 472-478 movers in the near rings, 65-75 wanderers, 30-45 moving, all but 5 grounded).
   animfix (2026-10-12) changed what to expect: the walk cycle now follows the *measured* speed
   (distance actually travelled), playback 0.5-1.5x plus stride warping; a walker blocked by
@@ -789,7 +789,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
   its step, knees bent; on the sloped street both feet touch. K toggles foot placement for A/B.
   Scaled races (Bosmer, Altmer): feet land on their steps too (walkers2: probe origins and samples
   now use the body scale; before, a few cm off).
-- Status: awaiting owner (agent screenshots 2026-10-12, walkers and walkers2, both caught the stairs
+- Status: FAILED (owner 2026-10-12): on some slopes the legs stop swinging; one leg freezes, the other does a reduced stride, the body slides forward.
   without a walker on them; foot placement compiled into `mw_humanoid` and probing, pose not yet seen
   close up: the owner judges it live). animfix: on stairs the pelvis drops at most 0.4 of a leg
   and a sample more than half a leg away (a ledge, a probe past the step) is ignored, so a foot may
@@ -807,7 +807,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
 - Root cause fixed (animfix 2026-10-12): a planted foot's lock drifted beyond the leg's reach when
   the body moved faster than the clip (or slid while idle), and the reach cap pulled the pelvis to
   the lock's height. Headless regression test reproduces it with the guards off.
-- Status: awaiting owner (agent: Balmora 150 s, ~40 walking: 0 pelvis clamps, 0 teleports, 0
+- Status: confirmed by owner (2026-10-12): no blow-ups, pelvis never on the ground.
   non-finite, 65 unplants; stairs 120 s: 166 pelvis clamps bounded at 0.4 leg).
 - Source: animfix.
 
@@ -1024,7 +1024,7 @@ Compare with OpenMW (same NPCs, same hour).
   pose; arms in the weapon-ready idle (stance `1h`/`2c`), not the relaxed idle.
   R sheathes: weapons vanish, arms drop to the plain idle; R again draws.
   Check the 2 `BoneOffset` models (−90° about X) if one shows up.
-- Status: awaiting owner (agent screenshot `shots/heldrender/lineup_drawn_night.png`
+- Status: confirmed by owner (2026-10-12): weapons gripped right.
   with `--night`: swords upright in hand, shields on arms, battleaxe held).
 - Source: heldrender.
 
@@ -1033,7 +1033,10 @@ Compare with OpenMW (same NPCs, same hour).
 - Look for: the chitin shield on the left forearm, face outward, not
   intersecting the arm; it stays while weapons are drawn (one-handed weapon)
   and disappears for a two-hander drawn.
-- Status: awaiting owner.
+- Status: confirmed by owner (2026-10-12): shield and weapons look right.
+  `character @imperial,guard --camera 1.2,1.4,1.6,0,1.0,0`): the Imperial guard's tower shield sits
+  rotated about 90°, long side horizontal across the front of the thighs, instead of upright on the
+  left forearm. Compare with OpenMW; check the shield part's root transform under `Shield Bone`.
 - Source: heldrender.
 
 ### HI-3: Torch-bearer at night
@@ -1053,7 +1056,7 @@ Compare with OpenMW (same NPCs, same hour).
 - Look for: walking guards/commoners carry torches whose light moves with
   them along walls and the street; no more than 12 torches lit at once
   (the nearest); no weapons shown; bows are absent (skinned models: known gap).
-- Status: awaiting owner (agent screenshot `shots/heldrender/balmora_night.png`:
+- Status: FAILED (owner 2026-10-12): flame and light follow the torch, but the arm is locked in front (no torch-holding pose) and it is very bright right next to the torch.
   a torch-bearing walker lighting the street and the wall beside the door).
 - Source: heldrender.
 
@@ -1070,7 +1073,7 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
   trails when the arm moves (walk with 1); the guard's armor near the torch is
   bright but keeps its texture (before: blown out white), the floor pool is
   warm and wide. Torch orientation in the hand is HI-3's open question.
-- Status: awaiting owner (agent screenshot `shots/actorparticles/torch_bow_night.png`:
+- Status: FAILED (owner 2026-10-12): the torch model itself renders full white while the characters are exposed correctly.
   flame at the torch end, chest bright but textured).
 - Source: actorparticles.
 
@@ -1084,7 +1087,11 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
 - Status: awaiting owner. Agent screenshot `shots/actorparticles/creatures_archer_night.png`
   shows only the pelvis glow; the hand emitters may sit outside their emission
   window (they run on a free clock, not the animation time) or need
-  `NiBSPArrayController` vertex emission: check against OpenMW.
+  `NiBSPArrayController` vertex emission: check against OpenMW. particles2:
+  the hand flames are moment-keyed (cast) and wait for `emit:` curves; the
+  body flames now cover the skeleton (PA-1). particles3: the hand flames
+  emit in `Attack1`-`3` only, the ghost's sprays in its deaths only, so an
+  idling lineup shows neither (PA-3).
 - Source: actorparticles.
 
 ### AP-3: Archers hold bows
@@ -1095,3 +1102,58 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
 - Status: awaiting owner (agent screenshot `shots/actorparticles/creatures_archer_night.png`:
   the Imperial archer's curved bow).
 - Source: actorparticles.
+
+### PA-1: Atronach body flames cover the skeleton
+- Kind: game models. Run: `.\bevyrrowind character atronach_flame atronach_frost atronach_storm --night`
+  (`RUST_LOG=bevyrrowind::actor_particles=debug` logs `live systems [(index, emitter, targets)]`).
+- Look for: the flame atronach burns all over its body and limbs (array
+  emitter: a random node of `Bip01 Pelvis`'s 51-node subtree per particle,
+  started on the bone between node and parent), not one glow at the pelvis;
+  the flames follow the idle pose; frost and storm atronachs likewise
+  (frost: 63 nodes, storm: 48). The body flames never pause, not even at
+  the end of `Idle3` (whole-range window, nif-runtime.md "Emission clocks").
+  Moment-keyed effects (hand flames, Dagoth Ur's hands, dremora death dust,
+  ghost sprays) follow the animation: PA-3.
+- Status: awaiting owner. Agent screenshot `shots/particles2/atronachs_night.png`: flame
+  atronach glows over chest, arms, legs and feet (before: pelvis only), frost atronach mist
+  over body and hands, storm atronach faint.
+- Source: particles2. Re-shot after particles3 (`emit:` curves):
+  `shots/particles3/lineup_night.png` (flame and frost atronachs still burn
+  and mist; Dagoth Ur and the dremora idle with no particles, as they should).
+
+### PA-2: Placed machine steam bursts on the controller clock
+- Kind: model viewer. Run: `.\bevyrrowind view l\light_om_brazier.nif --model`, then
+  `.\bevyrrowind view f\furn_lavacave_pool00.nif --model`.
+- Look for: the brazier's fire and the lava pool's spray rise from their
+  keyframed emitter nodes as those move (live emitter nodes, `NifNode`), not
+  from the nodes' rest places; emission follows the model's controller clock
+  (windowed systems burst in step with the model's motion; copies with random
+  start differ in phase, parts of one copy stay in step).
+- Status: awaiting owner. Agent screenshot `shots/particles2/sotha_fabsteam.png`
+  (`i\act_sotha_fabsteam.nif`, steam windowed 1 s of 2 s) shows only a box: an
+  activator whose controllers don't auto-play, so its steam waits for gameplay.
+- Source: particles2.
+
+### PA-3: Creature particles keyed to a moment of the animation
+- Kind: game models. Run: `.\bevyrrowind character dagoth_ur_1 atronach_flame dremora ancestor_ghost --night`
+  (`RUST_LOG=bevyrrowind::actor_particles=debug` logs `actor particles ...: N emitters, N systems on
+  emission curves`: 8 for Dagoth Ur, 4 for the flame atronach, 1 for the dremora, 4 for the ghost).
+- Keys (lineup, particles3): `F` plays the next fidget idle (`Idle2`, then
+  `Idle3`, `Idle4`, again `Idle2`; the log says which), `X` toggles `dead`
+  (`Death1`, held on its last frame; `X` again gets up).
+- Look for (emission follows the creature's animation clock, `emit:` clip curves):
+  - While they idle: the flame atronach's body burns (also at the end of
+    `Idle3`); Dagoth Ur, the dremora and the ghost show no particles.
+  - First `F` (`Idle2`): fire sprays from Dagoth Ur's right hand for about
+    1.7 s of the 3.7 s idle, then stops; nothing on the others.
+  - `X` (`Death1`): the dremora's dust bursts over his whole body for about
+    1.7 s of the 2.7 s fall; the ghost's sprays burst for about 0.7 s; Dagoth
+    Ur's body flashes for 0.8 s; the flame atronach keeps burning as it
+    falls. After the burst, particles fade over their life; nothing restarts
+    while the body lies still.
+  - Not reachable here: the flame atronach's hand flames (`Weapon`) belong to
+    `Attack1`-`3` and Dagoth Ur's hand bursts to `SpellCast` (no attack or
+    cast key yet: check in game when combat lands).
+- Status: awaiting owner. Agent screenshot `shots/particles3/lineup_night.png`
+  (idle only; the keys need a person).
+- Source: particles3.

@@ -121,7 +121,7 @@ fn bind(
                     }
                 }
                 Some(Effect::Material { material, channel }) => by_material.entry(material).or_default().push((i, channel)),
-                None => {}
+                Some(Effect::Emission { .. }) | None => {} // emission: actor_particles
             }
         }
         for (material, channels) in by_material {

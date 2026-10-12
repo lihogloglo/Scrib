@@ -8,6 +8,10 @@ use sf_records::RecordId;
 use sf_vfs::Vfs;
 use tes3::esp::{Cell, Npc, PathGrid};
 
+/// Per interior: wanderers with grid nodes in range, their nearest-node
+/// distances, and their homes.
+type InteriorWanderers = std::collections::BTreeMap<String, (u32, Vec<f32>, Vec<[f32; 3]>)>;
+
 fn is_balmora(name: &str) -> bool {
     name.to_ascii_lowercase().starts_with("balmora")
 }
@@ -82,8 +86,7 @@ fn balmora_pathgrids_and_wanderers() {
     let (mut wanderers, mut with_nodes, mut grid_walks) = (0, 0, 0);
     let mut nearest_ext = Vec::new();
     // Interiors: (wanderers with grid nodes in range, nearest-node distances).
-    let mut interiors: std::collections::BTreeMap<String, (u32, Vec<f32>, Vec<[f32; 3]>)> =
-        std::collections::BTreeMap::new();
+    let mut interiors = InteriorWanderers::new();
     for (_, cell) in db.iter::<Cell>().filter(|(_, c)| is_balmora(&c.name)) {
         for r in cell.references.values() {
             let Some(npc) = db.get::<Npc>(&RecordId::new(&r.id)) else {

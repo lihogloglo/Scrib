@@ -12,8 +12,8 @@
 
 use tes3::nif::glam::{Affine3A, Quat, Vec3, Vec4};
 use tes3::nif::{
-    ForceType, NiColorKey, NiGravity, NiParticleColorModifier, NiParticleGrowFade, NiParticleModifier,
-    NiParticleRotation, NiParticleSystemController, NiStream,
+    ForceType, NiColorKey, NiGravity, NiParticleColorModifier, NiParticleGrowFade, NiParticleModifier, NiParticleRotation,
+    NiParticleSystemController, NiStream,
 };
 
 use crate::anim::{Curve, Timing, color_curve};
@@ -38,8 +38,38 @@ pub enum Modifier {
     Rotation { speed: f32 },
 }
 
+/// Where an emitter places new particles.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum EmitFrom {
+    /// The emitter box, centered on the emitter node (`NiParticleSystemController`).
+    #[default]
+    Box,
+    /// A random node of [`ParticleSystem::targets`] per particle
+    /// (`NiBSPArrayController`: the emitter node and every node below it, so a
+    /// flame atronach burns all over its skeleton), the box placed in that
+    /// node's space. With `along_bones` (controller flag 0x8, set on every
+    /// vanilla file) the particle starts at a random point between the
+    /// node's parent and the node, so the flames cover the limbs.
+    Nodes { along_bones: bool },
+}
+
+/// A node an [`EmitFrom::Nodes`] system emits from, in the particle node's
+/// space. The model holds the rest pose; a host passes live ones to
+/// [`Simulation::step`] when the nodes move (an actor's joints).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EmitTarget {
+    /// Index into [`crate::Model::nodes`].
+    pub node: usize,
+    /// Index into [`crate::Model::nodes`] of its parent (the bone's start).
+    pub parent: Option<usize>,
+    pub transform: Affine3A,
+    /// The parent's origin (the node's own origin without a parent).
+    pub parent_origin: Vec3,
+}
+
 /// One emitter, as authored.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // independent flags of the format
 pub struct ParticleSystem {
     /// The particle geometry node (index into [`crate::Model::nodes`]);
     /// particles live in its space.
@@ -48,10 +78,21 @@ pub struct ParticleSystem {
     pub emitter: usize,
     /// The emitter's rest transform relative to [`Self::node`].
     pub emitter_transform: Affine3A,
+    /// How new particles are placed.
+    pub emit_from: EmitFrom,
+    /// [`EmitFrom::Nodes`]: the nodes, at rest.
+    pub targets: Vec<EmitTarget>,
+    /// The emitter or a target moves relative to the particle node in the
+    /// model's own animation (a keyframed node between them): a host
+    /// should pass their live transforms.
+    pub animated_emitter: bool,
     /// Index into [`crate::Model::materials`].
     pub material: usize,
     pub timing: Timing,
     pub auto_play: bool,
+    /// Starts at a random point of its cycle (the animation node lacks flag
+    /// 0x40); the model's keyframe controllers share the phase.
+    pub random_start: bool,
     /// Particles move with the particle node (`NiBSParticleNode` flag
     /// 0x80). Otherwise, the default, they stay where they were emitted in
     /// the world while the node moves (a torch swung in a hand trails its
@@ -60,7 +101,8 @@ pub struct ParticleSystem {
     pub max_particles: usize,
     /// Particles per second.
     pub birth_rate: f32,
-    /// Emission window in key time; empty means always.
+    /// Emission window in key time (start inclusive, stop exclusive);
+    /// empty means always. See [`Self::emits_at`].
     pub emit_start: f32,
     pub emit_stop: f32,
     pub lifespan: f32,
@@ -99,9 +141,13 @@ impl ParticleSystem {
             node: 0,
             emitter: 0,
             emitter_transform: Affine3A::IDENTITY,
+            emit_from: EmitFrom::Box,
+            targets: Vec::new(),
+            animated_emitter: false,
             material: 0,
             timing: Timing::from_controller(&controller.base),
             auto_play: true,
+            random_start: false,
             local_space: false,
             max_particles,
             birth_rate: rate,
@@ -126,13 +172,41 @@ impl ParticleSystem {
     pub fn max_lifetime(&self) -> f32 {
         self.lifespan + self.lifespan_variation.max(0.0)
     }
+
+    /// Whether the system emits at controller clock `t` (seconds): the
+    /// controller time ([`Timing::key_time`]) inside the emission window,
+    /// start inclusive and stop exclusive (as `OpenMW`, black box).
+    pub fn emits_at(&self, t: f32) -> bool {
+        if self.emit_stop <= self.emit_start {
+            return true;
+        }
+        let key = self.timing.key_time(t);
+        key >= self.emit_start && key < self.emit_stop
+    }
+
+    /// Whether the emission window covers the whole controller range (a
+    /// torch: always burning) rather than a moment of it (a creature's cast
+    /// or death effect).
+    pub fn emits_throughout(&self) -> bool {
+        self.emit_stop <= self.emit_start || {
+            let slack = WINDOW_SLACK * (self.timing.stop - self.timing.start);
+            self.emit_start <= self.timing.start + slack && self.emit_stop >= self.timing.stop - slack
+        }
+    }
 }
+
+/// Windows within this share of the controller range of its ends count as
+/// covering it (`atronach_fire.nif`'s body flames stop 1 s, 3.5 %, before the
+/// end of its 28.7 s timeline).
+const WINDOW_SLACK: f32 = 0.05;
 
 fn modifiers(stream: &NiStream, controller: &NiParticleSystemController) -> Vec<Modifier> {
     let mut out = Vec::new();
     let mut next = controller.particle_modifier.key;
     for _ in 0..32 {
-        let Some(object) = stream.objects.get(next) else { break };
+        let Some(object) = stream.objects.get(next) else {
+            break;
+        };
         if let Ok(gravity) = <&NiGravity>::try_from(object) {
             let strength = gravity.strength * GRAVITY_SCALE * coords::UNIT_METERS;
             out.push(match gravity.force_type {
@@ -157,7 +231,9 @@ fn modifiers(stream: &NiStream, controller: &NiParticleSystemController) -> Vec<
         }
         // Colliders and bombs are not simulated (one vanilla file uses a
         // planar collider).
-        let Ok(modifier) = <&NiParticleModifier>::try_from(object) else { break };
+        let Ok(modifier) = <&NiParticleModifier>::try_from(object) else {
+            break;
+        };
         next = modifier.next.key;
     }
     out
@@ -192,22 +268,26 @@ impl Simulation {
         Self { particles: Vec::new(), pending: 0.0, rng: seed | 1 }
     }
 
-    /// Runs the system for its longest particle lifetime so it starts in
-    /// its steady state (a torch is already burning when you walk in).
-    pub fn prewarm(&mut self, system: &ParticleSystem, emitter: Affine3A) {
+    /// Runs the system for its longest particle lifetime up to controller
+    /// clock `now` (see [`ParticleSystem::emits_at`]) so it starts in its
+    /// steady state (a torch is already burning when you walk in), at rest.
+    /// `emitting` overrides the clock (hosts that gate emission themselves).
+    pub fn prewarm(&mut self, system: &ParticleSystem, now: f32, emitting: Option<bool>) {
         const STEP: f32 = 1.0 / 30.0;
         let duration = system.max_lifetime().min(10.0);
-        let mut t = 0.0;
-        while t < duration {
-            self.step(system, STEP, system.timing.key_time(t), emitter);
+        let mut t = now - duration;
+        while t < now {
+            let emits = emitting.unwrap_or_else(|| system.emits_at(t));
+            self.step(system, STEP, emits, system.emitter_transform, &[]);
             t += STEP;
         }
     }
 
-    /// Advances by `dt` seconds. `key_time` is the controller time (see
-    /// [`Timing::key_time`]); `emitter` maps emitter space to the particle
-    /// node's space.
-    pub fn step(&mut self, system: &ParticleSystem, dt: f32, key_time: f32, emitter: Affine3A) {
+    /// Advances by `dt` seconds, emitting new particles if `emitting` (see
+    /// [`ParticleSystem::emits_at`]). `emitter` maps emitter space to the
+    /// particle node's space; `targets` are the live [`EmitTarget`]s of an
+    /// [`EmitFrom::Nodes`] system (empty: the rest ones).
+    pub fn step(&mut self, system: &ParticleSystem, dt: f32, emitting: bool, emitter: Affine3A, targets: &[EmitTarget]) {
         // Age, move, and retire.
         for p in &mut self.particles {
             p.age += dt;
@@ -230,8 +310,6 @@ impl Simulation {
         }
 
         // Emit.
-        let emitting = system.emit_stop <= system.emit_start
-            || (key_time >= system.emit_start && key_time <= system.emit_stop);
         if emitting {
             self.pending += system.birth_rate * dt;
         } else {
@@ -242,7 +320,8 @@ impl Simulation {
             if self.particles.len() >= system.max_particles {
                 continue;
             }
-            let particle = self.spawn(system, emitter);
+            let targets = if targets.is_empty() { system.targets.as_slice() } else { targets };
+            let particle = self.spawn(system, emitter, targets);
             self.particles.push(particle);
         }
 
@@ -281,7 +360,23 @@ impl Simulation {
         }
     }
 
-    fn spawn(&mut self, system: &ParticleSystem, emitter: Affine3A) -> Particle {
+    fn spawn(&mut self, system: &ParticleSystem, emitter: Affine3A, targets: &[EmitTarget]) -> Particle {
+        // The frame this particle is born in: the emitter, or one of the
+        // nodes (moved along its bone).
+        let emitter = match system.emit_from {
+            EmitFrom::Nodes { along_bones } if !targets.is_empty() => {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+                let pick = ((self.unit() * targets.len() as f32) as usize).min(targets.len() - 1);
+                let target = targets[pick];
+                let mut frame = target.transform;
+                if along_bones {
+                    let start = tes3::nif::glam::Vec3A::from(target.parent_origin);
+                    frame.translation = start.lerp(frame.translation, self.unit());
+                }
+                frame
+            }
+            _ => emitter,
+        };
         let declination = system.declination + system.declination_variation * self.signed();
         let planar = system.planar_angle + system.planar_angle_variation * self.signed();
         // Morrowind emitter space: tilt off +Z by the declination, then turn
@@ -329,9 +424,13 @@ mod tests {
             node: 0,
             emitter: 0,
             emitter_transform: Affine3A::IDENTITY,
+            emit_from: EmitFrom::Box,
+            targets: Vec::new(),
+            animated_emitter: false,
             material: 0,
             timing: Timing { stop: 1.0, ..Timing::default() },
             auto_play: true,
+            random_start: false,
             local_space: false,
             max_particles: 20,
             birth_rate: 20.0,
@@ -356,7 +455,7 @@ mod tests {
     fn emits_upward_and_reaches_steady_state() {
         let system = torch();
         let mut sim = Simulation::new(7);
-        sim.prewarm(&system, Affine3A::IDENTITY);
+        sim.prewarm(&system, 0.0, None);
         let n = sim.particles.len();
         assert!((15..=20).contains(&n), "about rate x lifetime particles, got {n}");
         // Declination 0 is Morrowind up, engine +Y.
@@ -371,7 +470,7 @@ mod tests {
         let system = ParticleSystem { birth_rate: 1000.0, ..torch() };
         let mut sim = Simulation::new(1);
         for _ in 0..10 {
-            sim.step(&system, 0.1, 0.0, Affine3A::IDENTITY);
+            sim.step(&system, 0.1, true, Affine3A::IDENTITY, &[]);
         }
         assert_eq!(sim.particles.len(), 20);
         assert!(sim.particles.iter().all(|p| p.age < p.lifetime));
@@ -388,10 +487,10 @@ mod tests {
             ..torch()
         };
         let mut sim = Simulation::new(3);
-        sim.step(&system, 1.0, 0.0, Affine3A::IDENTITY);
+        sim.step(&system, 1.0, true, Affine3A::IDENTITY, &[]);
         assert_eq!(sim.particles.len(), 1);
         for _ in 0..5 {
-            sim.step(&system, 0.1, 0.0, Affine3A::IDENTITY);
+            sim.step(&system, 0.1, true, Affine3A::IDENTITY, &[]);
         }
         let p = sim.particles[0];
         assert!((p.color.x - 0.5).abs() < 0.01, "{p:?}");
@@ -403,17 +502,67 @@ mod tests {
         let system = ParticleSystem { birth_rate: 1.0, ..torch() };
         let emitter = Affine3A::from_rotation_translation(Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2), Vec3::new(1.0, 2.0, 3.0));
         let mut sim = Simulation::new(5);
-        sim.step(&system, 1.0, 0.0, emitter);
+        sim.step(&system, 1.0, true, emitter, &[]);
         let p = sim.particles[0];
         assert!((p.position - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
         assert!(p.velocity.x > 0.99, "up turned to +X: {:?}", p.velocity);
     }
 
     #[test]
+    fn node_emitters_spread_particles_along_their_bones_and_follow_live_nodes() {
+        let target = |node, y: f32| EmitTarget {
+            node,
+            parent: Some(0),
+            transform: Affine3A::from_translation(Vec3::new(0.0, y, 0.0)),
+            parent_origin: Vec3::ZERO,
+        };
+        let system = ParticleSystem {
+            emit_from: EmitFrom::Nodes { along_bones: true },
+            targets: vec![target(1, 1.0), target(2, -1.0)],
+            birth_rate: 400.0,
+            max_particles: 400,
+            speed: 0.0,
+            ..torch()
+        };
+        let mut sim = Simulation::new(11);
+        sim.step(&system, 0.5, true, Affine3A::IDENTITY, &[]);
+        let ys: Vec<f32> = sim.particles.iter().map(|p| p.position.y).collect();
+        assert!(ys.iter().all(|y| y.abs() <= 1.0 + 1e-5), "on the bones");
+        assert!(ys.iter().any(|&y| y > 0.5) && ys.iter().any(|&y| y < -0.5), "both bones used");
+        assert!(ys.iter().any(|y| y.abs() < 0.5), "spread along the bone, not only at its end");
+
+        // Live targets (a posed skeleton) replace the rest ones.
+        let live = [EmitTarget {
+            transform: Affine3A::from_translation(Vec3::new(5.0, 0.0, 0.0)),
+            parent_origin: Vec3::new(5.0, 0.0, 0.0),
+            ..target(1, 0.0)
+        }];
+        let mut sim = Simulation::new(12);
+        sim.step(&system, 0.1, true, Affine3A::IDENTITY, &live);
+        assert!(!sim.particles.is_empty() && sim.particles.iter().all(|p| (p.position - Vec3::new(5.0, 0.0, 0.0)).length() < 1e-5));
+    }
+
+    #[test]
+    fn emission_windows_follow_the_controller_clock() {
+        let system = ParticleSystem { emit_start: 0.25, emit_stop: 0.5, timing: Timing { stop: 1.0, ..Timing::default() }, ..torch() };
+        assert!(!system.emits_at(0.1) && system.emits_at(0.25) && system.emits_at(0.4) && !system.emits_at(0.5));
+        assert!(system.emits_at(1.3), "loops with the controller");
+        assert!(!system.emits_throughout());
+        let always = ParticleSystem { emit_start: -1.0, emit_stop: 1.0, ..system.clone() };
+        assert!(always.emits_throughout() && always.emits_at(0.9));
+        // Prewarmed outside the window: nothing alive.
+        let mut sim = Simulation::new(2);
+        sim.prewarm(&ParticleSystem { emit_start: 0.6, emit_stop: 0.7, lifespan: 0.2, ..system.clone() }, 0.5, None);
+        assert!(sim.particles.is_empty());
+        sim.prewarm(&ParticleSystem { lifespan: 0.2, ..system }, 0.5, None);
+        assert!(!sim.particles.is_empty(), "inside the window: alive");
+    }
+
+    #[test]
     fn carried_particles_stay_put_in_the_world_while_the_node_moves() {
         let system = torch();
         let mut sim = Simulation::new(3);
-        sim.prewarm(&system, Affine3A::IDENTITY);
+        sim.prewarm(&system, 0.0, None);
         let before = Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0));
         let now = Affine3A::from_rotation_translation(Quat::from_rotation_y(0.7), Vec3::new(10.5, 0.2, -0.3));
         let world: Vec<(Vec3, Vec3)> =
