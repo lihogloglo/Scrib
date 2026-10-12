@@ -1303,9 +1303,13 @@ PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with task
 - Look for: before anything is hit, no item moves (they start asleep exactly as authored); hit items topple, roll and
   slide, then rest within about 3 s; bottles roll and stop (rolling resistance stand-in), plates slide; nothing falls
   through the counter or floor; no jitter at rest; carryable lanterns and items `items.check` flagged unsupported stay
-  put (held until grabbed, P6).
-- Status: awaiting owner (built 2026-10-13, physics-p4; not yet run in the app: the release exe was locked).
-- Source: physics-p4.
+  put (held until grabbed, P6). Shelf clutter rests on the shelves (bookshelves and cabinets whose authored collision is
+  one box simulate with their render mesh, `support.cook`): a ball into a bookshelf knocks books off the shelf, they
+  do not drop inside it. Wall-mounted weapons and shields stay put (held).
+- Status: awaiting owner (built 2026-10-13, physics-p4; runs in the app since physics-p4b; no screenshot of a throw
+  taken: `V` needs a key press). Known: a few items (about 12 in the Tradehouse) never fall asleep after load
+  (`physics: awake item ...` log lines), see ROADMAP M4 P4.
+- Source: physics-p4, physics-p4b.
 
 ### PH-5: Moved items stay where they fell
 - Kind: game location. Run: as PH-1 in an exterior with clutter (e.g. `view "Seyda Neen"`, the tradehouse porch or
@@ -1313,7 +1317,8 @@ PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with task
   drop in F3 counters), fly back.
 - Look for: every knocked item is where it came to rest, same orientation; nothing snaps back to its authored spot.
   Within a session only: the `PlacementOverlay` holds the poses (saves are M10).
-- Status: awaiting owner. Headless test `sf_physics_bevy` `moved_items_persist_through_deactivation` passes.
+- Status: awaiting owner. Headless test `sf_physics_bevy` `moved_items_persist_through_deactivation` passes; the in-app run
+  needs key presses (`V`, flying), so no agent has driven it.
 - Source: physics-p4.
 
 ### PH-6: Collider debug view (statics + terrain heightfields line up)
@@ -1337,11 +1342,13 @@ PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with task
 - Look for: every item on the counter and shelves has an orange shape hugging it (bottles as cylinders/capsules, books
   and plates as flat boxes, weapons as thin boxes or capsules along the blade); no shape offset, rotated or scaled
   away from its item; no item without a shape; nothing grossly bigger than its item.
-- Status: awaiting owner.
-- Open (physics-p4): the scene still needs a `camera:` near the counter (the default interior camera is outside the
-  40 m debug radius); get the counter coordinates with `SF_ITEMS_CELL="Seyda Neen, Arrille's Tradehouse" cargo run
-  --release -p mw_bake --example body_report` (prints every item's position and `items.check` result).
-- Source: physics-p3.
+  Bookshelves and cabinets that hold items draw their render mesh in cyan (`support.cook`), not a box.
+- Status: awaiting owner. Scene camera added (physics-p4b): ground floor, tables with a book, a staff and shelf
+  clutter in front, Arrille behind his counter at the right; sanity screenshot `shots/physics/ph7_tradehouse_a.png`
+  shows orange shapes on the book, staff and shelf items, lined up. `SF_ITEMS_CELL="<cell>"` (+ `SF_ITEMS_NEAR="x,y,z"`
+  for the statics around a point) on `cargo run --release -p mw_bake --example body_report` lists a cell's items with
+  their `items.check` result.
+- Source: physics-p3, physics-p4b.
 
 ## Night sky and sun disk (superfargoth `sky-lighting.md` "Night sky and drawn bodies"; `.sessions/nightsky.md`)
 
@@ -1386,3 +1393,25 @@ PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with task
   cirrus now reads as dark wisps (it hides the stars and Bevy's faintly lit twilight sky behind it): say if that is
   objectionable (fix: moonlit cirrus fill, or fading the high layer at night).
 - Source: nightsky.
+
+## Haze and dust (superfargoth `weather.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
+
+The `--clouds` weather now also sets the atmosphere's aerosol haze and an absorbing dust/ash term (table in
+`weather-adapter.md` "Haze and dust"); `--haze <x>` and `--dust <x>` fix them for A/B. The C key's genera use the
+fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this check.
+
+### FG-1: Haze and dust per weather (`scene fg-redmtn-clear`, `fg-redmtn-foggy`, `fg-redmtn-ashstorm`, `fg-redmtn-ashstorm-sunset`, `fg-bittercoast-morning`)
+- Kind: game location. Owner picks the defaults: the clear-day haze (20 now; try `--haze 10`, `--haze 40`), the ash
+  storm's dust (4 now; `--dust 2`, `--dust 8`) and whether blight's red is strong enough (`--clouds blight`).
+- Look for: clear: far hills sit back slightly in a pale haze, blue sky overhead (A/B `--haze 1` is the old look);
+  foggy: milky grey-white sky, the mountain veiled but readable; ash storm: grey-brown sky and veil, dimmer warmer
+  sun; blight: rusty orange cast; sunset: warm brown dusk without bands; Bitter Coast 6:30 foggy: humid milky dawn,
+  distant islands fading (morning curve x1.5, back to the weather's value by 10:00).
+- Known issue: at noon with dust (and faintly on clear days) a thin purple/white band sits on the sea horizon left
+  and right of the mountain: the seam between Bevy's sky-view LUT (16 samples on grazing rays through the dense low
+  layer) and the aerial-perspective LUT on the far sea plane. Not seen at sunset. F2's far fog covers the horizon; a
+  quick A/B for F2 is `AtmosphereSettings::sky_view_lut_samples` 16 → 32-48.
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (m6-f1, `shots/f1/redmtn_{old,clear,foggy,ashstorm,blight}.png`
+  at 10:00 (foggy and blight from the first pass: blight then had dust 6 at 1 km scale height) and
+  `redmtn_{clear,foggy,ashstorm,blight}_sunset.png` at 19:00): looks as described, with the band above.
+- Source: m6-f1.

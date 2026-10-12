@@ -164,8 +164,14 @@ exist (M8). Underwater cells and the "has water" interiors keep their water fog 
   Cloud bases default to 600-900 m above sea level for low cumulus, 400 m for ash-storm decks, high
   cirrus at 5 km. They are tuned on the screenshot set, not taken from Earth defaults (weather.md open
   question 8).
-- **Haze**: Morrowind's look is hazy. Default `haze` 2-3 on clear days and the dust term in ash regions.
+- **Haze**: Morrowind's look is hazy: weather-driven haze, and the dust term in ash weathers (below).
   The near-term N1/N2 steps calibrate this before `mw_weather` exists.
+- **Haze and dust** (M6 F1, as built; app scaffold table `exterior.rs` `SKY_*` until `mw_weather` presets carry
+  `SkyTerms`): haze (1 = clean Earth) / dust / dust tint per weather: clear 20, cloudy 24 (and the cloud genera; overcast and storm genera 32),
+  overcast 32, rain 48, thunderstorm 48, foggy 60, snow 48, blizzard 80; ash storm haze 24 + dust 4 (grey-brown);
+  blight the same with dust absorption tint (0.6, 1.4, 1.9) (rusty red). Haze follows a morning curve (×1.5 at 6:30,
+  ramps 4:00-6:30 and 6:30-10:00); dust does not. `--haze`/`--dust` fix them. Ashlands-region dust on non-storm days
+  and Bitter Coast mornings by region wait for climates (WE2). Calibrated for 1-5 km views (weather.md N1 "As built").
 - **Wind and trees**: `wind_profile` marks `meshes/f/flora_*` (the same rule as `mw_bake::far::is_flora`)
   as foliage. Kelp and bushes get leaf-level flutter only. Emperor parasols are stiff (trunk bend only).
 
