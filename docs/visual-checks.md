@@ -344,8 +344,11 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   faster than the low clouds (parallax). Sunset: warm undersides, brighter tops.
 - A/B: F10 (or `--off clouds`): the sky without clouds.
 - Calibrate: `CLOUD_WORLD_SCALE` 0.5 (sizes and heights), `CLOUD_SPEED_MPS` 10 (exterior.rs).
-- Known: lumpy/soft tops rather than crisp cauliflower billows; faint horizontal banding in
-  thick decks; no anvils on storms; weather does not change by itself yet (M6).
+- Known: lumpy/soft tops rather than crisp cauliflower billows (cumulus towers read as soft
+  vertical columns); no anvils on storms; weather does not change by itself yet (M6). Fixed
+  (clouds3), re-check: the faint horizontal banding in thick decks (step count jumped with the
+  ray span); cumulus coverage lowered to 0.34 (agent shots 2026-10-13: from the scene camera
+  the near bases still fill the top of the view; judge whether there is enough sky between towers).
 - Status: awaiting owner (S1 rework; previous FAILED 2026-10-12: too little variety, too big, static).
 - Source: clouds, clouds2.
 
@@ -357,6 +360,10 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   rim. Distant clouds fade into the same haze as the far mountains; Red Mountain and
   far-field proxies cut sharply into clouds behind them; clouds never draw on the sea or
   below the horizon.
+- Agent check (clouds3, release): stratocumulus at 17:30 hides the sun completely, no disk or
+  bloom; with `--clouds fair` the disk shows in a gap. Also look whether a dithered checker
+  pattern on a dead tree left of center (Seyda Neen camera) goes away with F10 (it showed in
+  both shots; probably foliage alpha, not clouds).
 - Status: awaiting owner.
 - Source: clouds, clouds2.
 
@@ -367,7 +374,13 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   not hundreds), drifting with the clouds over terrain, buildings and far field. Standing
   under a cloud edge at noon, the edge line is visible on the ground nearby. Under a cloud
   the ground loses its direct sun (stays lit by the sky, so not black). F10 off removes them.
-- Known: past ~8 km the map fades to the average cover; no moon shadows.
+  Walking or flying, shadows stay fixed to the clouds (they never swim or step with the
+  camera), and no straight seam line runs through a shadow edge (the map refreshes one band of
+  rows per frame; a seam would mean a band lagging).
+- Agent check (clouds3, release): shadow patches with edges on the hills east of Balmora at
+  noon, gone with `--off clouds`.
+- Known: past ~8 km the map fades to the average cover; no moon shadows. Fast decks (ashstorm)
+  may lag a band by up to a texel (16 m).
 - Status: awaiting owner (S1 fix; previous FAILED 2026-10-12: no shadow edge at all, because
   Bevy ignored the light texture without the `pbr_clustered_decals` feature).
 - Source: clouds, clouds2.
@@ -391,7 +404,9 @@ silently disabled), and the sun is fully hidden behind thick cloud.
 ### CL-6: Stable in flight (floating origin, temporal)
 - Kind: game location. Run: `.\bevyrrowind scene clouds-flight`, hold Shift+W.
 - Look for: clouds and cloud shadows stay put in the world (apart from their own drift)
-  while the floating origin moves every 256 m (no jumps); turning the camera fast leaves no
+  while the floating origin moves every 256 m (no jumps); the cloud shadow map is now toroidal
+  (anchored in 2 km world cells; a full redraw when the anchor moves), so crossing a 2 km line
+  must not make the ground shadows jump either; turning the camera fast leaves no
   ghost trails; the mountain silhouette has no smear. Re-check now that clouds move.
 - Status: awaiting owner (confirmed 2026-10-12 with static clouds; re-check with motion).
 - Source: clouds, clouds2.
@@ -1233,3 +1248,20 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
 - Status: owner 2026-10-13: Dagoth Ur's F effect is bluish particles, not fire, and emits no light. Check against the original (OpenMW side-by-side): colour, and whether the model carries an attached light.
   (idle only; the keys need a person).
 - Source: particles3.
+
+## Physics (superfargoth `physics.md`, bevyrrowind `physics-adapter.md`; `.sessions/physics-p2.md`)
+
+PH-1 to PH-5 are specified in `docs/specs/physics-adapter.md` and land with tasks P4-P10.
+
+### PH-6: Collider debug view (statics + terrain heightfields line up)
+- Kind: game locations. Run: `.\bevyrrowind scene ph-balmora-colliders` and `.\bevyrrowind scene ph-census-colliders`
+  (or any `view` with `--physics-debug`; `G` toggles the wireframes at runtime). Lines are drawn within 40 m of the
+  camera: R0 statics, doors and placed items cyan (`Fixed` until P4), terrain heightfield chunks green (64 m, 0.5 m).
+- Look for:
+  - Balmora: cyan edges sit on the walls, stairs, bridge and canal walls they belong to (no offset, no rotation, no
+    wrong scale on scaled rocks and buildings); the green grid lies on the rendered ground everywhere, including under
+    buildings' foundations and on slopes; fly around: colliders appear before you get near (R0 margin), nothing missing.
+  - Census Office: cyan on every room, counter and shelf; no green; walking through doors to the exterior and back keeps
+    the right set (each worldspace is its own physics world).
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (physics-p2): both line up.
+- Source: physics-p2.
