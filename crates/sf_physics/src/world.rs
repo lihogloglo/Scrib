@@ -592,38 +592,51 @@ impl<K> Default for PhysicsWorlds<K> {
     }
 }
 
-impl<K: Copy + Eq + Hash> PhysicsWorlds<K> {
-    pub fn get(&self, ws: K) -> Option<&PhysicsWorld> {
-        self.worlds.get(&ws)
+impl<K: Clone + Eq + Hash> PhysicsWorlds<K> {
+    pub fn get(&self, ws: &K) -> Option<&PhysicsWorld> {
+        self.worlds.get(ws)
     }
 
-    pub fn get_mut(&mut self, ws: K) -> Option<&mut PhysicsWorld> {
-        self.worlds.get_mut(&ws)
+    pub fn get_mut(&mut self, ws: &K) -> Option<&mut PhysicsWorld> {
+        self.worlds.get_mut(ws)
     }
 
     /// The world of `ws`, created anchored at `anchor` if missing.
-    pub fn get_or_create(&mut self, ws: K, anchor: WorldPos, params: &PhysicsParams) -> &mut PhysicsWorld {
-        self.worlds.entry(ws).or_insert_with(|| PhysicsWorld::new(anchor, params.clone()))
+    pub fn get_or_create(&mut self, ws: &K, anchor: WorldPos, params: &PhysicsParams) -> &mut PhysicsWorld {
+        self.worlds.entry(ws.clone()).or_insert_with(|| PhysicsWorld::new(anchor, params.clone()))
     }
 
-    pub fn remove(&mut self, ws: K) -> Option<PhysicsWorld> {
-        if self.active == Some(ws) {
+    pub fn remove(&mut self, ws: &K) -> Option<PhysicsWorld> {
+        if self.active.as_ref() == Some(ws) {
             self.active = None;
         }
-        self.worlds.remove(&ws)
+        self.worlds.remove(ws)
     }
 
     pub fn set_active(&mut self, ws: Option<K>) {
         self.active = ws;
     }
 
-    pub fn active(&self) -> Option<K> {
-        self.active
+    pub fn active(&self) -> Option<&K> {
+        self.active.as_ref()
+    }
+
+    pub fn active_world(&self) -> Option<&PhysicsWorld> {
+        self.worlds.get(self.active.as_ref()?)
     }
 
     pub fn active_world_mut(&mut self) -> Option<&mut PhysicsWorld> {
-        let ws = self.active?;
-        self.worlds.get_mut(&ws)
+        self.worlds.get_mut(self.active.as_ref()?)
+    }
+
+    /// Every world with its key.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &PhysicsWorld)> {
+        self.worlds.iter()
+    }
+
+    /// Bodies in every world.
+    pub fn body_count(&self) -> usize {
+        self.worlds.values().map(PhysicsWorld::len).sum()
     }
 
     /// Steps the active world once.

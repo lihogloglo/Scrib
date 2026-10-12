@@ -1,0 +1,41 @@
+[package]
+name = "sf_physics_bevy"
+description = "Bevy glue for sf_physics: the fixed 60 Hz step of the active worldspace's world, whole-cell rebases around the streaming anchor, interpolated write-back to grid transforms, R0 statics and terrain heightfield chunks inserted from the streaming hooks under a per-frame budget, counters and collider gizmos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Collider wireframes (`PhysicsDebug`). Needs the app to add Bevy's gizmo plugin.
+debug = ["dep:bevy_gizmos", "dep:bevy_color"]
+
+# Minimal Bevy (ARCHITECTURE Â§8b rule 6): the physics itself is Bevy-free (sf_physics).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# `PlacementSpawner::prepare` (wrapped spawners).
+bevy_asset.workspace = true
+bevy_color = { workspace = true, features = ["std"], optional = true }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_gizmos = { workspace = true, optional = true }
+bevy_math = { workspace = true, features = ["std"] }
+# Shape and heightfield builds off the main thread.
+bevy_tasks = { workspace = true, features = ["futures-lite"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+sf_controller.workspace = true
+sf_coords.workspace = true
+# Counters (`physics/...`) when the app runs `SfDiagPlugin`.
+sf_diag_bevy.workspace = true
+sf_physics.workspace = true
+# `TerrainHeightsMap`: the heights terrain chunks are built from.
+sf_terrain_bevy.workspace = true
+sf_world.workspace = true
+# Activation hooks, the scheduler's R0 cells, grid coordinates.
+sf_world_bevy = { path = "../sf_world_bevy", default-features = false }
+
+[dev-dependencies]
+bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }
+
+[lints]
+workspace = true

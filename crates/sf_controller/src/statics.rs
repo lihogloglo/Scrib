@@ -146,7 +146,7 @@ impl CollisionBuilder {
 /// Built once per model, on the task pool as cells activate, and shared by
 /// every placement through an `Arc`.
 pub struct StaticShape {
-    mesh: TriMesh,
+    mesh: Arc<TriMesh>,
     surfaces: Vec<SurfaceId>,
 }
 
@@ -158,11 +158,22 @@ impl StaticShape {
         }
         let vertices = mesh.positions.iter().map(|p| Vec3::from_array(*p)).collect();
         let tri = TriMesh::new(vertices, mesh.triangles.clone()).ok()?;
-        Some(Self { mesh: tri, surfaces: mesh.surfaces.clone() })
+        Some(Self { mesh: Arc::new(tri), surfaces: mesh.surfaces.clone() })
     }
 
     pub fn triangle_count(&self) -> usize {
         self.mesh.num_triangles()
+    }
+
+    /// The parry mesh, shared: a physics collider holds this same copy
+    /// (one triangle mesh per model; physics.md "Data model").
+    pub fn trimesh(&self) -> &Arc<TriMesh> {
+        &self.mesh
+    }
+
+    /// The surface of each triangle, in triangle order.
+    pub fn surfaces(&self) -> &[SurfaceId] {
+        &self.surfaces
     }
 
     fn surface(&self, triangle: u32) -> SurfaceId {
@@ -225,7 +236,7 @@ impl StaticWorld {
         let (shape, scale) = if (s.x - s.y).abs() <= 1e-4 * s.x.abs() && (s.x - s.z).abs() <= 1e-4 * s.x.abs() {
             (shape.clone(), s.x)
         } else {
-            let scaled = StaticShape { mesh: shape.mesh.clone().scaled(s), surfaces: shape.surfaces.clone() };
+            let scaled = StaticShape { mesh: Arc::new((*shape.mesh).clone().scaled(s)), surfaces: shape.surfaces.clone() };
             (Arc::new(scaled), 1.0)
         };
         let placed = Placed { shape, transform, pose: self.pose_of(&transform), scale };
@@ -322,7 +333,7 @@ impl StaticWorld {
                     ball = Ball::new(q.radius / s);
                     &ball
                 };
-                let mut h = cast_shapes(&at, inv * q.dir, shape, &Pose::IDENTITY, Vec3::ZERO, &p.shape.mesh, options).ok()??;
+                let mut h = cast_shapes(&at, inv * q.dir, shape, &Pose::IDENTITY, Vec3::ZERO, &*p.shape.mesh, options).ok()??;
                 h.time_of_impact *= s;
                 Some(h)
             },

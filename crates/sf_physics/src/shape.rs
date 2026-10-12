@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 use glam::Vec3;
 use parry3d::utils::Array2;
 use rapier3d::geometry::SharedShape;
-use sf_controller::{CollisionMesh, SurfaceId};
+use parry3d::shape::Shape;
+use sf_controller::{CollisionMesh, StaticShape, SurfaceId};
 
 /// A `collision.cook` mesh ready for the engine: a parry `TriMesh` with a
 /// surface per triangle. Scaled placements get scaled copies, built once per
@@ -29,6 +30,13 @@ impl MeshShape {
         Some(Arc::new(Self { shape, surfaces: mesh.surfaces.clone(), scaled: Mutex::new(Vec::new()) }))
     }
 
+    /// The engine shape over a controller [`StaticShape`]'s own mesh: one
+    /// triangle mesh per model, shared by the static query world and physics.
+    pub fn from_static(shape: &StaticShape) -> Arc<Self> {
+        let mesh: Arc<dyn Shape> = shape.trimesh().clone();
+        Arc::new(Self { shape: SharedShape(mesh), surfaces: shape.surfaces().to_vec(), scaled: Mutex::new(Vec::new()) })
+    }
+
     pub fn triangle_count(&self) -> usize {
         self.shape.as_trimesh().map_or(0, parry3d::shape::TriMesh::num_triangles)
     }
@@ -37,17 +45,34 @@ impl MeshShape {
         self.surfaces.get(triangle as usize).copied().unwrap_or_default()
     }
 
+    /// Whether `scale` needs no build: unit scale, or a cached scaled copy.
+    pub fn has_scale(&self, scale: Vec3) -> bool {
+        let key = scale.to_array().map(f32::to_bits);
+        (scale - Vec3::ONE).abs().max_element() <= 1e-6 || self.scaled.lock().expect("mesh shape cache poisoned").iter().any(|(k, _)| *k == key)
+    }
+
+    /// Builds and caches the scaled copy for `scale` (a BVH rebuild: run it off
+    /// the main thread before inserting the placement).
+    pub fn prepare_scale(&self, scale: Vec3) {
+        drop(self.shared(scale));
+    }
+
     /// The engine shape at `scale`: the shared one at unit scale, else a cached scaled copy.
     pub(crate) fn shared(&self, scale: Vec3) -> SharedShape {
         if (scale - Vec3::ONE).abs().max_element() <= 1e-6 {
             return self.shape.clone();
         }
         let key = scale.to_array().map(f32::to_bits);
-        let mut cache = self.scaled.lock().expect("mesh shape cache poisoned");
-        if let Some((_, s)) = cache.iter().find(|(k, _)| *k == key) {
-            return s.clone();
+        let cached = |cache: &[([u32; 3], SharedShape)]| cache.iter().find(|(k, _)| *k == key).map(|(_, s)| s.clone());
+        if let Some(s) = cached(&self.scaled.lock().expect("mesh shape cache poisoned")) {
+            return s;
         }
+        // Built outside the lock: other threads keep reading the cache meanwhile.
         let mesh = self.shape.as_trimesh().expect("MeshShape holds a trimesh").clone().scaled(scale);
+        let mut cache = self.scaled.lock().expect("mesh shape cache poisoned");
+        if let Some(s) = cached(&cache) {
+            return s;
+        }
         let s = SharedShape::new(mesh);
         cache.push((key, s.clone()));
         s

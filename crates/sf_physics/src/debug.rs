@@ -1,0 +1,72 @@
+//! Collider wireframes for debug drawing, culled to a sphere around a point.
+//!
+//! Rapier's `DebugRenderPipeline` draws every collider whole; an R0 holds
+//! about a million triangles of static meshes plus 129² heightfield chunks,
+//! so the debug view culls per triangle instead.
+
+use glam::Vec3;
+use sf_coords::WorldPos;
+
+use crate::layer::Layer;
+use crate::world::PhysicsWorld;
+
+impl PhysicsWorld {
+    /// Appends the edges of every collider triangle within `radius` meters of
+    /// `center` (meshes, heightfields; other shapes as their bounding boxes),
+    /// as segments in meters relative to `frame` (e.g. the render origin),
+    /// with the body's layer. Stops at `max` segments; returns how many it added.
+    pub fn debug_lines(&self, center: WorldPos, radius: f32, frame: WorldPos, max: usize, out: &mut Vec<(Vec3, Vec3, Layer)>) -> usize {
+        let start = out.len();
+        let c = self.to_local(center);
+        let base = frame.delta_f32(self.anchor());
+        let r2 = radius * radius;
+        let near = |p: Vec3| p.distance_squared(c) <= r2;
+        for (_, collider) in self.engine.colliders.iter() {
+            let aabb = collider.compute_aabb();
+            if c.clamp(aabb.mins, aabb.maxs).distance_squared(c) > r2 {
+                continue;
+            }
+            let layer = u32::try_from(collider.user_data)
+                .ok()
+                .and_then(|i| self.id_at(i))
+                .and_then(|id| self.live(id))
+                .map_or(Layer::STATIC, |l| l.layer);
+            let pose = collider.position();
+            let mut tri = |a: Vec3, b: Vec3, cc: Vec3| {
+                let (a, b, cc) = (pose.transform_point(a), pose.transform_point(b), pose.transform_point(cc));
+                if near(a) || near(b) || near(cc) {
+                    out.push((a + base, b + base, layer));
+                    out.push((b + base, cc + base, layer));
+                    out.push((cc + base, a + base, layer));
+                }
+            };
+            let shape = collider.shape();
+            if let Some(mesh) = shape.as_trimesh() {
+                for t in mesh.triangles() {
+                    tri(t.a, t.b, t.c);
+                }
+            } else if let Some(hf) = shape.as_heightfield() {
+                for t in hf.triangles() {
+                    tri(t.a, t.b, t.c);
+                }
+            } else {
+                let (lo, hi) = (aabb.mins + base, aabb.maxs + base);
+                for i in 0..4u8 {
+                    let (x0, z0) = (if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.z } else { hi.z });
+                    out.push((Vec3::new(x0, lo.y, z0), Vec3::new(x0, hi.y, z0), layer));
+                }
+                for y in [lo.y, hi.y] {
+                    out.push((Vec3::new(lo.x, y, lo.z), Vec3::new(hi.x, y, lo.z), layer));
+                    out.push((Vec3::new(hi.x, y, lo.z), Vec3::new(hi.x, y, hi.z), layer));
+                    out.push((Vec3::new(hi.x, y, hi.z), Vec3::new(lo.x, y, hi.z), layer));
+                    out.push((Vec3::new(lo.x, y, hi.z), Vec3::new(lo.x, y, lo.z), layer));
+                }
+            }
+            if out.len() - start >= max {
+                out.truncate(start + max);
+                break;
+            }
+        }
+        out.len() - start
+    }
+}

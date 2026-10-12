@@ -99,6 +99,7 @@ sf_anim_bevy = { path = "crates/sf_anim_bevy" }
 sf_character_bevy = { path = "crates/sf_character_bevy" }
 sf_controller_bevy = { path = "crates/sf_controller_bevy" }
 sf_physics = { path = "crates/sf_physics" }
+sf_physics_bevy = { path = "crates/sf_physics_bevy" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

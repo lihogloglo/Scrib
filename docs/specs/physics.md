@@ -236,6 +236,16 @@ stays. Cloth joints are outfit joints appended after the skeleton's joints in th
   dynamic only when grabbed or explicitly impulsed (script, spell): a lantern on a hook never drops
   because an NPC brushed it.
 - **Authored overlaps** wake gently: depenetration speed capped (`max_corrective_velocity` 0.5 m/s).
+- **As built (P2, 2026-10-13).** `sf_physics_bevy`: `PhysicsHook` wraps the placement spawners the host picks
+  (activation queues, deactivation removes at once); each model's `MeshShape` is built on the task pool from the
+  host's `PhysicsShapeSource` and shares the controller `StaticShape`'s `Arc<TriMesh>` (`StaticShape::trimesh()`);
+  scaled copies are built on the task pool too (a scaled trimesh rebuilds its BVH). Inserts run while the frame's
+  0.5 ms budget lasts, with `refresh_queries` every 32 bodies so broad-phase work lands in the inserting frame, not
+  in the next step. Terrain chunks cover the active worldspace's R0 cells, sampled from `TerrainHeightsMap` on the
+  task pool, nearest first, 16 per task; chunks with non-resident heights retry when the heights change (edit
+  rebuilds are still open). Debug draw is our own per-triangle cull within 40 m (`PhysicsWorld::debug_lines`):
+  rapier's `DebugRenderPipeline` draws whole colliders, too many lines for an R0. `PhysicsProbe` for the walkers
+  waits for walkers.rs to move over (it keeps its `StaticWorld` meanwhile).
 
 ### Queries: `PhysicsProbe`
 

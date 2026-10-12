@@ -17,6 +17,7 @@
 //! Spec: `docs/specs/physics.md`.
 
 mod body;
+mod debug;
 mod joint;
 mod layer;
 mod probe;
