@@ -12,6 +12,10 @@
 //! at 35°: cloud shadow patches and their edges on the ground), `up` (zenith).
 //! `--fog <visibility m>` adds height fog (100 m falloff) and ground-fog banks
 //! (weather.md "Fog", F2): from the `shadow` view the banks lie on the plane.
+//! `glass` (eye height along +X): glass panes (`FroxelFogMaterial`, blended) beside
+//! stone pillars at 20, 60, 150 and 300 m, and a lantern (point light) by each:
+//! with `--fog 400` the panes fade like the pillars (transparent fog), and at
+//! night (`--time 23`) the lanterns glow in the froxel fog (F3).
 //! Keys: C next genus, Space pause/run the clock, Up/Down wind ×2 / ÷2.
 
 use std::path::PathBuf;
@@ -22,7 +26,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::WindowResolution;
 use sf_atmos_bevy::sf_atmos::{fog, CloudPreset, CloudSettings, FogLayer, FogSettings};
-use sf_atmos_bevy::{CloudCamera, CloudShadowLight, Clouds, CloudsPlugin};
+use sf_atmos_bevy::{CloudCamera, CloudShadowLight, Clouds, CloudsPlugin, FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 use sf_sky_bevy::sf_sky::{RenderPath, SkyClock, SkySettings};
 use sf_sky_bevy::{CurrentSky, SkyCamera, SkyPlugin, SkyTime, SunLight};
 
@@ -100,7 +104,14 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, args: Res<Args>) {
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut glass: ResMut<Assets<FroxelFogMaterial>>,
+    volume: Res<FroxelVolume>,
+    args: Res<Args>,
+) {
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(24_000.0, 24_000.0).build())),
         MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::srgb(0.30, 0.34, 0.26), perceptual_roughness: 0.95, ..default() })),
@@ -112,9 +123,21 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     for i in 1..=12u8 {
         commands.spawn((Mesh3d(pillar.clone()), MeshMaterial3d(stone.clone()), Transform::from_xyz(f32::from(i) * 500.0, 10.0, -60.0)));
     }
+    if args.view == "glass" {
+        let pane = meshes.add(Cuboid::new(0.5, 6.0, 4.0));
+        let base = StandardMaterial { base_color: Color::srgba(0.85, 0.95, 1.0, 0.35), alpha_mode: AlphaMode::Blend, perceptual_roughness: 0.1, ..default() };
+        let glass = glass.add(FroxelFogMaterial { base, extension: FroxelFogExt::new(&volume) });
+        for d in [20.0, 60.0, 150.0, 300.0] {
+            let side = 3.0 + d * 0.25;
+            commands.spawn((Mesh3d(pane.clone()), MeshMaterial3d(glass.clone()), Transform::from_xyz(d, 3.0, side)));
+            commands.spawn((Mesh3d(pane.clone()), MeshMaterial3d(stone.clone()), Transform::from_xyz(d, 3.0, -side)));
+            commands.spawn((PointLight { color: Color::srgb(1.0, 0.7, 0.4), intensity: 40_000.0, range: 25.0, ..default() }, Transform::from_xyz(d - 3.0, 3.0, 0.0)));
+        }
+    }
     let transform = match args.view.as_str() {
         "shadow" => Transform::from_xyz(0.0, 200.0, 0.0).looking_to(Vec3::new(1.0, -0.7, 0.2), Vec3::Y),
         "up" => Transform::from_xyz(0.0, 2.0, 0.0).looking_to(Vec3::Y, Vec3::X),
+        "glass" => Transform::from_xyz(0.0, 2.0, 0.0).looking_to(Vec3::new(1.0, 0.02, 0.0), Vec3::Y),
         _ => Transform::from_xyz(0.0, 2.0, 0.0).looking_to(Vec3::new(1.0, 0.36, 0.0), Vec3::Y),
     };
     commands.spawn((SkyCamera::default(), CloudCamera, Camera3d::default(), transform, Bloom::NATURAL));

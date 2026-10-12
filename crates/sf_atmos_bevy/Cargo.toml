@@ -19,6 +19,7 @@ bevy_math = { workspace = true, features = ["std"] }
 # LIGHT_TEXTURES when clustered decals are usable too (bevy_pbr mesh.rs), so both are needed:
 # without `pbr_clustered_decals` the light texture is silently ignored (S1, 2026-10-13).
 bevy_pbr = { workspace = true, features = ["pbr_light_textures", "pbr_clustered_decals"] }
+bevy_reflect = { workspace = true, features = ["std"] }
 bevy_render.workspace = true
 bevy_shader.workspace = true
 bevy_time = { workspace = true, features = ["std"] }

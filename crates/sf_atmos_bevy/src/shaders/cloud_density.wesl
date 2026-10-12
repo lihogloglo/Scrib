@@ -1,7 +1,8 @@
 // Cloud density sampling: the uniform and noise bindings (group 1) shared by
 // the trace and the cloud shadow map, so both agree on where cloud is.
 
-import super::cloud_common::{Clouds, WeatherSample, combine_density, erode_density, weather_at, evolve_field, cirrus_at, ray_sphere, ramp};
+import super::cloud_common::{Clouds, WeatherSample, combine_density, erode_density, weather_at, evolve_field, cirrus_at, ray_sphere};
+import super::fog_bank::fog_bank_mask;
 
 @group(1) @binding(0) var<uniform> clouds: Clouds;
 // R Perlin-Worley, G Worley FBM. Tiles every `shape_tile` m; z = height fraction.
@@ -84,22 +85,7 @@ fn cirrus_optical_depth(p: vec3<f32>, l: vec3<f32>) -> f32 {
     return c.y * clouds.cirrus_depth / max(l.y, 0.1);
 }
 
-// The ground-fog bank mask at `p` (weather.md "Fog", F2): the weather map's
-// G channel (smooth FBM) at two scales, domain-warped by a slower third
-// sample, then thresholded (gaps between banks, not thinning). The CPU twin
-// is `sf_atmos::FogBanks::mask`. Bank function after the owner's
-// Megalophobia `ground_fog.wgsl` (MIT OR Apache-2.0, ARCHITECTURE §10).
+// The ground-fog bank mask at `p` (`fog_bank.wesl`, shared with the froxels).
 fn bank_mask(p: vec3<f32>) -> f32 {
-    let f = clouds.fog;
-    let wuv = p.xz / f.warp_tile + f.warp_off;
-    let warp = vec2(
-        textureSampleLevel(weather_texture, noise_sampler, wuv, 0.0).g,
-        textureSampleLevel(weather_texture, noise_sampler, wuv.yx + 0.37, 0.0).g,
-    ) * 2.0 - 1.0;
-    let s = p.xz + warp * f.warp_amount;
-    let coarse = textureSampleLevel(weather_texture, noise_sampler, s / f.bank_tile + f.bank_off, 0.0).g;
-    let fine = textureSampleLevel(weather_texture, noise_sampler, (s / f.detail_tile + f.detail_off).yx, 0.0).g;
-    // Stretched around the channel's median (`sf_atmos::fog::NOISE_MID`, `NOISE_GAIN`).
-    let n = (coarse * 0.65 + fine * 0.35 - 0.357) * 6.0 + 0.5;
-    return ramp(f.bank_coverage, f.bank_coverage + f.bank_sharpness, n);
+    return fog_bank_mask(clouds.fog, weather_texture, noise_sampler, p);
 }

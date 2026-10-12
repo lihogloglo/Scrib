@@ -36,6 +36,9 @@
 //! (shell, reduced resolution, temporal, LUT lighting, shadow map) is new.
 
 mod render;
+mod transparent;
+
+pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 
 use std::sync::{Arc, Mutex};
 
@@ -44,15 +47,16 @@ use bevy_asset::{embedded_asset, Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-use bevy_light::{DirectionalLight, DirectionalLightTexture};
-use bevy_math::{DVec3, Vec2, Vec3};
+use bevy_camera::visibility::ViewVisibility;
+use bevy_light::{DirectionalLight, DirectionalLightTexture, PointLight};
+use bevy_math::{DVec3, Vec2, Vec3, Vec4};
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_shader::load_shader_library;
 use bevy_time::Time;
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_atmos::scroll::TileOffsets;
-use sf_atmos::{CloudScroll, CloudSettings, FogDrift, FogOffsets, FogSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
+use sf_atmos::{CloudScroll, CloudSettings, FogDrift, FogOffsets, FogSettings, FroxelSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 
 pub use sf_atmos;
 
@@ -90,6 +94,19 @@ pub struct Clouds {
 pub struct Fog {
     pub settings: FogSettings,
     pub enabled: bool,
+    /// The froxel volume near the camera (F3: god rays, shadowed and point-lit
+    /// fog); `None` is the Low preset (analytic layers only). High by default.
+    pub froxels: Option<FroxelSettings>,
+}
+
+/// A height-field shadow for the froxels' sun light past the cascades (the
+/// terrain's shadow-height map, handed over by the app): `Rg16Float` texels of
+/// (shadow height − base, occluder distance), meters; `params` = render-space
+/// (min x, min z, 1 / extent, base height), extent 0 = none.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct FogShadowHeights {
+    pub image: Option<Handle<Image>>,
+    pub params: Vec4,
 }
 
 /// The absolute world position (meters) of the origin of origin-relative
@@ -159,6 +176,14 @@ pub(crate) struct CloudFrame {
     pub images: CloudImages,
     /// Shadow map basis: center, light-plane axes (× half extent), toward the light.
     pub shadow: Option<ShadowBasis>,
+    /// The froxel grid, when the froxels run (F3).
+    pub froxels: Option<FroxelSettings>,
+    /// The point lights lit into the froxels: (position, range), (colour × cd).
+    pub fog_lights: Vec<[Vec4; 2]>,
+    /// The terrain's shadow-height map and its params ([`FogShadowHeights`]).
+    pub far_map: Option<(Handle<Image>, Vec4)>,
+    /// The image the froxels integrate into ([`FroxelVolume`]: transparent materials read it).
+    pub volume: Option<(Handle<Image>, [u32; 3])>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -178,11 +203,17 @@ impl Plugin for CloudsPlugin {
         load_shader_library!(app, "shaders/cloud_density.wesl");
         load_shader_library!(app, "shaders/fog.wesl");
         load_shader_library!(app, "shaders/key_light.wesl");
+        load_shader_library!(app, "shaders/fog_bank.wesl");
+        load_shader_library!(app, "shaders/froxel_common.wesl");
+        load_shader_library!(app, "shaders/froxel_apply.wesl");
+        embedded_asset!(app, "shaders/transparent_fog.wesl");
         embedded_asset!(app, "shaders/cloud_trace.wesl");
         embedded_asset!(app, "shaders/cloud_resolve.wesl");
         embedded_asset!(app, "shaders/cloud_composite.wesl");
         embedded_asset!(app, "shaders/cloud_shadow.wesl");
         embedded_asset!(app, "shaders/fog_light.wesl");
+        embedded_asset!(app, "shaders/froxel_inject.wesl");
+        embedded_asset!(app, "shaders/froxel_integrate.wesl");
 
         let job = NoiseJob::default();
         let slot = job.0.clone();
@@ -200,7 +231,11 @@ impl Plugin for CloudsPlugin {
             .ok();
 
         app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true })
-            .insert_resource(Fog { settings: self.fog, enabled: true })
+            .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()) })
+            .init_resource::<FogShadowHeights>()
+            .init_resource::<FroxelVolume>()
+            .add_plugins(bevy_pbr::MaterialPlugin::<FroxelFogMaterial>::default())
+            .add_systems(PostUpdate, (transparent::update_volume, transparent::fix_new_materials).chain().before(CloudSystems::Drive))
             .init_resource::<Drift>()
             .insert_resource(job)
             .init_resource::<Scroll>()
@@ -260,6 +295,8 @@ fn poll_noise(job: Res<NoiseJob>, mut images: ResMut<Assets<Image>>, mut cloud_i
 
 type ShadowLightItem = (Entity, &'static mut GlobalTransform, Has<DirectionalLightTexture>);
 type ShadowLightFilter = (With<CloudShadowLight>, With<DirectionalLight>, Without<CloudCamera>);
+/// Point lights the froxels may light (disjoint from the shadow light's mutable transform).
+type FogLightQuery<'w, 's> = Query<'w, 's, (&'static PointLight, &'static GlobalTransform, &'static ViewVisibility), Without<DirectionalLight>>;
 
 /// Advances the wind, computes the texture offsets, places the shadow
 /// light's texture around the camera, and fills [`CloudFrame`]. Runs after
@@ -278,6 +315,9 @@ fn drive(
     mut frame: ResMut<CloudFrame>,
     cameras: Query<(&GlobalTransform, &Camera), With<CloudCamera>>,
     mut lights: Query<ShadowLightItem, ShadowLightFilter>,
+    point_lights: FogLightQuery,
+    heights: Res<FogShadowHeights>,
+    volume: Res<FroxelVolume>,
 ) {
     let s = clouds.settings;
     let dt = time.delta_secs_f64();
@@ -344,7 +384,35 @@ fn drive(
         wind_step: s.weather.wind * dt as f32,
         origin: origin.0,
         mean_cover: s.weather.mean_cover(),
+        froxels: fog.froxels.filter(|_| fog_on),
+        fog_lights: camera.zip(fog.froxels.filter(|_| fog_on)).map(|(cam, f)| fog_lights(cam, &f, &point_lights)).unwrap_or_default(),
+        far_map: heights.image.clone().map(|i| (i, heights.params)),
+        volume: Some((volume.image.clone(), volume.size)),
         images: images.clone(),
         shadow,
     };
+}
+
+/// The point lights the froxels light (weather.md "Fog", F3: lanterns in fog):
+/// visible ones whose range reaches into the froxel range, nearest first, at
+/// most `max_lights`. Colour × luminous intensity (lm / 4π, as Bevy shades
+/// point lights); unshadowed (a named limit: Bevy's cube shadow maps aren't
+/// sampled in the fog).
+fn fog_lights(camera: Vec3, froxels: &FroxelSettings, lights: &FogLightQuery) -> Vec<[Vec4; 2]> {
+    let mut found: Vec<(f32, [Vec4; 2])> = lights
+        .iter()
+        .filter(|(l, _, v)| v.get() && l.intensity > 0.0 && l.range > 0.0)
+        .filter_map(|(l, t, _)| {
+            let p = t.translation();
+            let d = p.distance(camera);
+            (d < froxels.far + l.range).then(|| {
+                let c = l.color.to_linear();
+                let cd = l.intensity / (4.0 * std::f32::consts::PI);
+                (d, [p.extend(l.range), Vec4::new(c.red * cd, c.green * cd, c.blue * cd, 0.0)])
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    found.truncate((froxels.max_lights as usize).min(sf_atmos::MAX_FOG_LIGHTS));
+    found.into_iter().map(|(_, l)| l).collect()
 }

@@ -14,17 +14,17 @@ use bevy_core_pipeline::FullscreenShader;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedSystemSet, IntoSystemSet, NodeId, Schedules, SystemSet};
 use bevy_image::Image;
-use bevy_math::{Mat4, UVec2, Vec2, Vec3};
+use bevy_math::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use bevy_pbr::resources::{AtmosphereSampler, AtmosphereTextures, AtmosphereTransform, AtmosphereTransforms, AtmosphereTransformsOffset, GpuAtmosphere};
-use bevy_pbr::{ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ViewLightsUniformOffset};
+use bevy_pbr::{ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ShadowSamplers, ViewLightsUniformOffset, ViewShadowBindings};
 use bevy_render::camera::ExtractedCamera;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::extract_component::{ComponentUniforms, DynamicUniformIndex};
 use bevy_render::render_asset::RenderAssets;
-use bevy_render::render_resource::binding_types::{sampler, texture_2d, texture_2d_multisampled, texture_3d, uniform_buffer};
+use bevy_render::render_resource::binding_types::{sampler, texture_2d, texture_2d_array, texture_2d_multisampled, texture_3d, texture_storage_3d, uniform_buffer};
 use bevy_render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent, BlendFactor, BlendOperation, BlendState,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PipelineCache,
+    CachedComputePipelineId, CachedRenderPipelineId, ColorTargetState, ComputePassDescriptor, ComputePipelineDescriptor, StorageTextureAccess, ColorWrites, FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PipelineCache,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
     ShaderType, StoreOp, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, UniformBuffer,
 };
@@ -42,6 +42,7 @@ pub(crate) fn build(app: &mut App) {
     render_app
         .init_resource::<CloudHistory>()
         .init_resource::<CloudPipelineIds>()
+        .init_resource::<FroxelPipelineIds>()
         .init_resource::<CloudFrame>()
         .add_systems(ExtractSchedule, extract)
         .add_systems(RenderStartup, bevy_render::init_gpu_resource::<CloudPipelines>)
@@ -220,6 +221,57 @@ impl FogUniform {
     }
 }
 
+/// GPU layout of `FogLight` in `froxel_common.wesl`.
+#[derive(Clone, Copy, Default, ShaderType)]
+struct FogLightGpu {
+    position_range: Vec4,
+    color: Vec4,
+}
+
+/// GPU layout of `Froxels` in `froxel_common.wesl` (field order is the layout).
+#[derive(Clone, Copy, Default, ShaderType)]
+struct FroxelUniform {
+    world_from_clip: Mat4,
+    prev_clip_from_world: Mat4,
+    camera: Vec3,
+    exposure: f32,
+    prev_camera: Vec3,
+    near: f32,
+    forward: Vec3,
+    far: f32,
+    origin_shift: Vec3,
+    history: f32,
+    size: Vec3,
+    frame: u32,
+    planet_center: Vec3,
+    inner_radius: f32,
+    shadow_center: Vec3,
+    cloud_shadow: u32,
+    shadow_x: Vec3,
+    history_valid: u32,
+    shadow_y: Vec3,
+    n_lights: u32,
+    far_map: Vec4,
+    jitter: Vec3,
+    enabled: u32,
+    shadow_light: Vec3,
+    pad: f32,
+    fog: FogUniform,
+    lights: [FogLightGpu; sf_atmos::MAX_FOG_LIGHTS],
+}
+
+/// Radical inverse in `base` (Halton): the froxels' per-frame jitter.
+#[allow(clippy::cast_precision_loss)]
+fn halton(mut i: u32, base: u32) -> f32 {
+    let (mut f, mut r) = (1.0, 0.0);
+    while i > 0 {
+        f /= base as f32;
+        r += f * (i % base) as f32;
+        i /= base;
+    }
+    r
+}
+
 // -- pipelines -----------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -241,6 +293,9 @@ struct CloudPipelines {
     fog_light: BindGroupLayoutDescriptor,
     fullscreen: FullscreenShader,
     shaders: [Handle<Shader>; 5],
+    froxel_inject: BindGroupLayoutDescriptor,
+    froxel_integrate: BindGroupLayoutDescriptor,
+    froxel_shaders: [Handle<Shader>; 2],
     noise_sampler: Sampler,
     linear_sampler: Sampler,
 }
@@ -272,6 +327,7 @@ fn atmosphere_layout(label: &'static str, msaa: bool) -> BindGroupLayoutDescript
 }
 
 impl FromWorld for CloudPipelines {
+    #[allow(clippy::too_many_lines)] // one layout per pass, declarative
     fn from_world(world: &mut World) -> Self {
         let unfiltered = TextureSampleType::Float { filterable: false };
         let device = world.resource::<RenderDevice>();
@@ -320,13 +376,49 @@ impl FromWorld for CloudPipelines {
                 "clouds_composite",
                 &BindGroupLayoutEntries::sequential(
                     ShaderStages::FRAGMENT,
-                    (uniform_buffer::<CloudUniform>(false), texture_2d(unfiltered), texture_2d(unfiltered), texture_2d(unfiltered)),
+                    (
+                        uniform_buffer::<CloudUniform>(false),
+                        texture_2d(unfiltered),
+                        texture_2d(unfiltered),
+                        texture_2d(unfiltered),
+                        uniform_buffer::<FroxelUniform>(false),
+                        texture_3d(TextureSampleType::default()),
+                        sampler(SamplerBindingType::Filtering),
+                    ),
                 ),
             ),
             fog_light: BindGroupLayoutDescriptor::new(
                 "clouds_fog_light",
                 &BindGroupLayoutEntries::single(ShaderStages::FRAGMENT, uniform_buffer::<CloudUniform>(false)),
             ),
+            froxel_inject: BindGroupLayoutDescriptor::new(
+                "atmos_froxel_inject",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::COMPUTE,
+                    (
+                        uniform_buffer::<FroxelUniform>(false),
+                        uniform_buffer::<GpuLights>(true),
+                        texture_2d(unfiltered),
+                        texture_2d(TextureSampleType::default()),
+                        sampler(SamplerBindingType::Filtering),
+                        texture_2d(TextureSampleType::default()),
+                        texture_2d(TextureSampleType::default()),
+                        sampler(SamplerBindingType::Filtering),
+                        texture_2d_array(TextureSampleType::Depth),
+                        sampler(SamplerBindingType::Comparison),
+                        texture_3d(TextureSampleType::default()),
+                        texture_storage_3d(FROXEL, StorageTextureAccess::WriteOnly),
+                    ),
+                ),
+            ),
+            froxel_integrate: BindGroupLayoutDescriptor::new(
+                "atmos_froxel_integrate",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::COMPUTE,
+                    (uniform_buffer::<FroxelUniform>(false), texture_3d(unfiltered), texture_storage_3d(FROXEL, StorageTextureAccess::WriteOnly)),
+                ),
+            ),
+            froxel_shaders: [load_embedded_asset!(world, "shaders/froxel_inject.wesl"), load_embedded_asset!(world, "shaders/froxel_integrate.wesl")],
             fullscreen: world.resource::<FullscreenShader>().clone(),
             shaders: [
                 load_embedded_asset!(world, "shaders/cloud_shadow.wesl"),
@@ -342,6 +434,8 @@ impl FromWorld for CloudPipelines {
 }
 
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
+/// Froxel volumes (weather.md: RGBA16F scattering/extinction, and the integrated light/transmittance).
+const FROXEL: TextureFormat = TextureFormat::Rgba16Float;
 /// The fog light texture (`fog_light.wesl`): 64 sky-fill azimuths, the key
 /// light's colour and direction. 32-bit: the sun's illuminance overflows f16.
 const FOG_AZIMUTHS: u32 = 64;
@@ -399,13 +493,38 @@ impl CloudPipelines {
 #[derive(Resource, Default)]
 struct CloudPipelineIds(HashMap<(Pass, u32), CachedRenderPipelineId>);
 
+/// The froxel compute pipelines (inject, integrate), queued with the first cloud camera.
+#[derive(Resource, Default)]
+struct FroxelPipelineIds(Option<(CachedComputePipelineId, CachedComputePipelineId)>);
+
+impl CloudPipelines {
+    #[allow(clippy::unused_self)] // a method so pipelines read alike
+    fn compute(&self, layout: &BindGroupLayoutDescriptor, shader: &Handle<Shader>, entry: &'static str) -> ComputePipelineDescriptor {
+        ComputePipelineDescriptor {
+            label: Some(format!("atmos_froxel_{entry}").into()),
+            layout: vec![layout.clone()],
+            shader: shader.clone(),
+            entry_point: Some(entry.into()),
+            zero_initialize_workgroup_memory: false,
+            ..ComputePipelineDescriptor::default()
+        }
+    }
+}
+
 fn queue_pipelines(
     views: Query<&Msaa, With<CloudCamera>>,
     pipelines: Option<Res<CloudPipelines>>,
     cache: Res<PipelineCache>,
     mut ids: ResMut<CloudPipelineIds>,
+    mut froxel_ids: ResMut<FroxelPipelineIds>,
 ) {
     let Some(pipelines) = pipelines else { return };
+    if froxel_ids.0.is_none() && !views.is_empty() {
+        froxel_ids.0 = Some((
+            cache.queue_compute_pipeline(pipelines.compute(&pipelines.froxel_inject, &pipelines.froxel_shaders[0], "inject")),
+            cache.queue_compute_pipeline(pipelines.compute(&pipelines.froxel_integrate, &pipelines.froxel_shaders[1], "integrate")),
+        ));
+    }
     for msaa in &views {
         let samples = msaa.samples();
         for pass in [Pass::Shadow, Pass::Trace, Pass::Resolve, Pass::Composite, Pass::FogLight] {
@@ -421,6 +540,9 @@ struct History {
     origin: bevy_math::DVec3,
     frame: u32,
     size: UVec2,
+    /// Last frame's camera position and froxel grid (none: no froxel history).
+    camera: Vec3,
+    froxels: Option<[u32; 3]>,
 }
 
 #[derive(Resource, Default)]
@@ -439,7 +561,16 @@ struct CloudView {
     samples: u32,
     shadow_image: Option<AssetId<Image>>,
     /// Rows of the shadow map to render this frame (time slicing).
+    /// The froxel passes, when the froxels run.
+    froxels: Option<FroxelPass>,
     shadow_rows: (u32, u32),
+}
+
+/// The froxel passes' bind groups and dispatch sizes (F3).
+struct FroxelPass {
+    inject: BindGroup,
+    integrate: BindGroup,
+    size: [u32; 3],
 }
 
 fn cached(cache: &mut TextureCache, device: &RenderDevice, label: &'static str, size: UVec2, format: TextureFormat) -> CachedTexture {
@@ -456,6 +587,80 @@ fn cached(cache: &mut TextureCache, device: &RenderDevice, label: &'static str, 
             view_formats: &[],
         },
     )
+}
+
+/// A froxel volume: written by a compute pass, sampled by the next.
+fn cached_3d(cache: &mut TextureCache, device: &RenderDevice, label: &'static str, size: [u32; 3]) -> CachedTexture {
+    cache.get(
+        device,
+        TextureDescriptor {
+            label: Some(label),
+            size: bevy_render::render_resource::Extent3d { width: size[0], height: size[1], depth_or_array_layers: size[2] },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D3,
+            format: FROXEL,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+    )
+}
+
+/// Per-frame values the froxel uniform shares with the clouds'.
+struct FroxelFrame {
+    origin_shift: Vec3,
+    planet_center: Vec3,
+    inner_radius: f32,
+    frame: u32,
+    /// The far shadow map's image is bound (not a stand-in).
+    far_map: bool,
+}
+
+/// The froxel uniform for one view; `settings` None: the froxels are off
+/// (`enabled` 0, the composite fogs everything analytically). `prev`: last
+/// frame's clip-from-world, camera and froxel grid.
+#[allow(clippy::cast_precision_loss)]
+fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, settings: Option<sf_atmos::FroxelSettings>, prev: (Mat4, Vec3, Option<[u32; 3]>), f: FroxelFrame) -> FroxelUniform {
+    let s = settings.unwrap_or_default();
+    let mut lights = [FogLightGpu::default(); sf_atmos::MAX_FOG_LIGHTS];
+    let n_lights = frame.fog_lights.len().min(sf_atmos::MAX_FOG_LIGHTS);
+    for (gpu, l) in lights.iter_mut().zip(&frame.fog_lights) {
+        *gpu = FogLightGpu { position_range: l[0], color: l[1] };
+    }
+    let shadow = frame.shadow.filter(|_| frame.clouds);
+    // Halton (2, 3, 5) over 16 frames: the sample's place inside its froxel.
+    let j = f.frame % 16 + 1;
+    FroxelUniform {
+        world_from_clip: view.world_from_view.to_matrix() * view.clip_from_view.inverse(),
+        prev_clip_from_world: prev.0,
+        camera: view.world_from_view.translation(),
+        exposure,
+        prev_camera: prev.1,
+        near: s.near,
+        forward: view.world_from_view.forward().as_vec3(),
+        far: s.far,
+        origin_shift: f.origin_shift,
+        history: s.history,
+        size: Vec3::new(s.size[0] as f32, s.size[1] as f32, s.size[2] as f32),
+        frame: f.frame,
+        planet_center: f.planet_center,
+        inner_radius: f.inner_radius,
+        shadow_center: shadow.map_or(Vec3::ZERO, |b| b.center),
+        cloud_shadow: u32::from(shadow.is_some()),
+        shadow_x: shadow.map_or(Vec3::X, |b| b.x),
+        history_valid: u32::from(settings.is_some() && prev.2 == Some(s.size) && f.frame > 0),
+        shadow_y: shadow.map_or(Vec3::Y, |b| b.y),
+        #[allow(clippy::cast_possible_truncation)]
+        n_lights: n_lights as u32,
+        far_map: frame.far_map.as_ref().filter(|_| f.far_map).map_or(Vec4::ZERO, |m| m.1),
+        jitter: Vec3::new(halton(j, 2), halton(j, 3), halton(j, 5)),
+        enabled: u32::from(settings.is_some()),
+        // The sun the cloud and terrain shadow maps were made for (none: neither applies).
+        shadow_light: frame.shadow.map_or(Vec3::ZERO, |b| b.light_dir),
+        pad: 0.0,
+        fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, FOG_STEPS),
+        lights,
+    }
 }
 
 /// The atmosphere resources the clouds' group 0 is built from (the same
@@ -479,6 +684,8 @@ type ViewItem = (
     &'static ViewDepthStencilTexture,
     &'static Msaa,
     Option<&'static MainPassResolutionOverride>,
+    &'static ExtractedCamera,
+    Option<&'static ViewShadowBindings>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -493,6 +700,7 @@ fn prepare_views(
     mut textures: ResMut<TextureCache>,
     mut history: ResMut<CloudHistory>,
     images: Res<RenderAssets<GpuImage>>,
+    shadow_samplers: Option<Res<ShadowSamplers>>,
     atmos: AtmosphereResources,
 ) {
     let (atmosphere_uniforms, settings_uniforms, transforms, view_uniforms, lights, media, medium_sampler, atmosphere_sampler) = atmos;
@@ -509,7 +717,7 @@ fn prepare_views(
         return;
     };
     let s = frame.settings;
-    for (entity, view, atmosphere, luts, depth, msaa, resolution) in &views {
+    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps) in &views {
         let Some(medium) = media.get(atmosphere.medium) else { continue };
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let full = resolution.map_or(UVec2::new(view.viewport.z, view.viewport.w), |r| r.0).max(UVec2::ONE);
@@ -518,11 +726,12 @@ fn prepare_views(
         let trace_size = if checker { (half + 1) / 2 } else { half };
 
         let clip_from_world = view.clip_from_view * view.world_from_view.to_matrix().inverse();
-        let h = history.0.entry(entity).or_insert(History { prev_clip_from_world: clip_from_world, origin: frame.origin, frame: 0, size: UVec2::ZERO });
+        let h = history.0.entry(entity).or_insert(History { prev_clip_from_world: clip_from_world, origin: frame.origin, frame: 0, size: UVec2::ZERO, camera: Vec3::ZERO, froxels: None });
         let valid = h.size == half && h.frame > 0;
         #[allow(clippy::cast_possible_truncation)]
         let origin_shift = (frame.origin - h.origin).as_vec3();
         let frame_index = h.frame;
+        let prev = (h.prev_clip_from_world, h.camera, h.froxels);
         let planet_center = atmosphere.world_to_atmosphere.inverse().transform_point3(Vec3::ZERO);
         let shadow = frame.shadow;
         #[allow(clippy::cast_precision_loss)]
@@ -586,6 +795,7 @@ fn prepare_views(
         h.origin = frame.origin;
         h.frame = h.frame.wrapping_add(1);
         h.size = half;
+        h.camera = view.world_from_view.translation();
 
         let mut buffer = UniformBuffer::from(uniform);
         buffer.write_buffer(&device, &queue);
@@ -642,10 +852,70 @@ fn prepare_views(
             )),
         );
         let fog_texture = cached(&mut textures, &device, "clouds_fog_light", UVec2::new(FOG_AZIMUTHS + 2, 1), FOG_LIGHT);
+        // The froxels (F3): run when fog draws and the sun's shadow maps are bound.
+        let cloud_shadow = images.get(&frame.images.shadow);
+        let settings = frame.froxels.filter(|_| frame.fog.is_some() && shadow_maps.is_some() && shadow_samplers.is_some() && cloud_shadow.is_some());
+        let froxel_uniform = froxel_uniform(&frame, view, camera.exposure, settings, prev, FroxelFrame {
+            origin_shift,
+            planet_center,
+            inner_radius: atmosphere.inner_radius,
+            frame: frame_index,
+            far_map: frame.far_map.as_ref().is_some_and(|(image, _)| images.get(image).is_some()),
+        });
+        h.froxels = settings.map(|f| f.size);
+        let mut froxel_buffer = UniformBuffer::from(froxel_uniform);
+        froxel_buffer.write_buffer(&device, &queue);
+        let Some(froxel_binding) = froxel_buffer.binding() else { continue };
+        let size = settings.map_or([1, 1, 1], |f| f.size);
+        // Integrated into the shared `FroxelVolume` image (transparent materials
+        // read it) once it exists at this size; a private texture until then.
+        let shared = frame.volume.as_ref().filter(|(_, s)| *s == size).and_then(|(image, _)| images.get(image));
+        let private = shared.is_none().then(|| cached_3d(&mut textures, &device, "atmos_froxels_integrated", size));
+        let integrated_view = shared.map_or_else(|| &private.as_ref().expect("private volume").default_view, |g| &g.texture_view);
+        let froxels = match (settings, shadow_maps, shadow_samplers.as_deref(), cloud_shadow) {
+            (Some(_), Some(maps), Some(shadow_samplers), Some(cloud_shadow)) => {
+                let (a, b) = (cached_3d(&mut textures, &device, "atmos_froxels_a", size), cached_3d(&mut textures, &device, "atmos_froxels_b", size));
+                let (write, read) = if even { (a, b) } else { (b, a) };
+                let far_map = frame.far_map.as_ref().and_then(|(image, _)| images.get(image)).map_or(&cloud_shadow.texture_view, |g| &g.texture_view);
+                let inject = device.create_bind_group(
+                    "atmos_froxel_inject",
+                    &cache.get_bind_group_layout(&pipelines.froxel_inject),
+                    &BindGroupEntries::sequential((
+                        froxel_binding.clone(),
+                        a4.clone(),
+                        &fog_texture.default_view,
+                        &weather.texture_view,
+                        &pipelines.noise_sampler,
+                        &cloud_shadow.texture_view,
+                        far_map,
+                        &pipelines.linear_sampler,
+                        &maps.directional_light_depth_texture_view,
+                        &shadow_samplers.directional_light_comparison_sampler,
+                        &read.default_view,
+                        &write.default_view,
+                    )),
+                );
+                let integrate = device.create_bind_group(
+                    "atmos_froxel_integrate",
+                    &cache.get_bind_group_layout(&pipelines.froxel_integrate),
+                    &BindGroupEntries::sequential((froxel_binding.clone(), &write.default_view, integrated_view)),
+                );
+                Some(FroxelPass { inject, integrate, size })
+            }
+            _ => None,
+        };
         let composite = device.create_bind_group(
             "clouds_composite",
             &cache.get_bind_group_layout(&pipelines.composite),
-            &BindGroupEntries::sequential((uniform_binding.clone(), &w_color.default_view, &w_dist.default_view, &fog_texture.default_view)),
+            &BindGroupEntries::sequential((
+                uniform_binding.clone(),
+                &w_color.default_view,
+                &w_dist.default_view,
+                &fog_texture.default_view,
+                froxel_binding,
+                integrated_view,
+                &pipelines.linear_sampler,
+            )),
         );
         let fog_light = frame.fog.is_some().then(|| {
             let group = device.create_bind_group(
@@ -666,6 +936,7 @@ fn prepare_views(
             samples,
             shadow_image: shadow.map(|_| frame.images.shadow.id()),
             shadow_rows: shadow.map_or((0, 0), |b| (b.rows.start, b.rows.count)),
+            froxels,
         });
     }
 }
@@ -720,6 +991,18 @@ fn fullscreen(
     span.end(&mut pass);
 }
 
+/// One compute dispatch with its GPU timer (`render/<label>/elapsed_gpu`).
+fn compute(ctx: &mut RenderContext, label: &'static str, pipeline: &bevy_render::render_resource::ComputePipeline, group: (&BindGroup, &[u32]), groups: [u32; 3]) {
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some(label), timestamp_writes: None });
+    let span = diagnostics.pass_span(&mut pass, label);
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, group.0, group.1);
+    pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
+    span.end(&mut pass);
+}
+
 fn shadow_pass(
     view: ViewQuery<(&CloudView, AtmosphereOffsets)>,
     ids: Res<CloudPipelineIds>,
@@ -741,7 +1024,13 @@ fn shadow_pass(
     fullscreen(&mut ctx, "clouds_shadow", &[attachment(&image.texture_view)], pipeline, groups, Some((size.width, start, count)));
 }
 
-fn trace_pass(view: ViewQuery<(&CloudView, AtmosphereOffsets)>, ids: Res<CloudPipelineIds>, cache: Res<PipelineCache>, mut ctx: RenderContext) {
+fn trace_pass(
+    view: ViewQuery<(&CloudView, AtmosphereOffsets)>,
+    ids: Res<CloudPipelineIds>,
+    froxel_ids: Res<FroxelPipelineIds>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
     let (cloud, offs) = view.into_inner();
     let get = |pass| ids.0.get(&(pass, cloud.samples)).and_then(|id| cache.get_render_pipeline(*id));
     let (Some(trace), Some(resolve)) = (get(Pass::Trace), get(Pass::Resolve)) else { return };
@@ -749,6 +1038,13 @@ fn trace_pass(view: ViewQuery<(&CloudView, AtmosphereOffsets)>, ids: Res<CloudPi
     // The fog's per-frame lighting (66 texels) for the composite.
     if let (Some((texture, group)), Some(pipeline)) = (cloud.fog_light.as_ref(), get(Pass::FogLight)) {
         fullscreen(&mut ctx, "clouds_fog_light", &[attachment(&texture.default_view)], pipeline, [(&cloud.atmosphere, &offsets), (group, &[])], None);
+    }
+    // The froxels (F3), after the fog light they read: inject, then integrate.
+    let froxel_pipelines = froxel_ids.0.and_then(|(a, b)| cache.get_compute_pipeline(a).zip(cache.get_compute_pipeline(b)));
+    if let (Some(froxels), Some((inject, integrate))) = (cloud.froxels.as_ref(), froxel_pipelines) {
+        let [x, y, z] = froxels.size;
+        compute(&mut ctx, "atmos_froxel_inject", inject, (&froxels.inject, &offsets[4..5]), [x.div_ceil(8), y.div_ceil(8), z]);
+        compute(&mut ctx, "atmos_froxel_integrate", integrate, (&froxels.integrate, &[]), [x.div_ceil(8), y.div_ceil(8), 1]);
     }
     fullscreen(
         &mut ctx,

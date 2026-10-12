@@ -15,6 +15,7 @@ import bevy_pbr::atmosphere::bindings::view;
 import bevy_pbr::atmosphere::functions::{uv_to_ndc, ndc_to_camera_dist, uv_to_ray_direction};
 import super::cloud_common::{Clouds, PI};
 import super::fog::{fog_depths, fog_phase};
+import super::froxel_common::{Froxels, froxel_fog};
 
 @if(MULTISAMPLED)
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
@@ -26,6 +27,11 @@ import super::fog::{fog_depths, fog_phase};
 @group(1) @binding(2) var cloud_dist: texture_2d<f32>;
 // `fog_light.wesl`: sky fill per azimuth (0-63), key light seen (64), its direction (65).
 @group(1) @binding(3) var fog_light: texture_2d<f32>;
+// The froxels (F3): their uniform and integrated volume; past `froxels.far` (or
+// with froxels off) the analytic layers carry on from where they end.
+@group(1) @binding(4) var<uniform> froxels: Froxels;
+@group(1) @binding(5) var froxel_volume: texture_3d<f32>;
+@group(1) @binding(6) var froxel_sampler: sampler;
 const AZIMUTHS: i32 = 64;
 
 @fragment
@@ -69,7 +75,16 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let rd = uv_to_ray_direction(in.uv);
         let mu = dot(up, rd);
         let d = select(fog.sky_distance, scene_t, depth > 0.0);
-        let tau = fog_depths(fog, r - clouds.inner_radius, mu, d);
+        // Near: the froxels (in-scatter pre-exposed, transmittance); the analytic
+        // layers from their end on, so the near fog isn't counted twice.
+        var front = vec4(0.0, 0.0, 0.0, 1.0);
+        var start = 0.0;
+        if froxels.enabled != 0u {
+            start = min(d, froxels.far);
+            front = froxel_fog(froxels, froxel_volume, froxel_sampler, in.uv, start);
+        }
+        var far_light = vec3(0.0);
+        let tau = fog_depths(fog, r - clouds.inner_radius + mu * start, mu, d - start);
         let t = exp(-(tau.x + tau.y * bank / bank_w));
         if t < 0.9999 {
             let key_seen = textureLoad(fog_light, vec2(AZIMUTHS, 0), 0).rgb;
@@ -83,9 +98,12 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             let i1 = (i0 + 1) % AZIMUTHS;
             let sky = mix(textureLoad(fog_light, vec2(i0, 0), 0).rgb, textureLoad(fog_light, vec2(i1, 0), 0).rgb, a - a0);
             let ambient = sky * fog.ambient;
-            let inscatter = fog.albedo * (sun + ambient) * (1.0 - t) * view.exposure;
-            acc = vec4(acc.rgb * t + inscatter, acc.a * t);
+            far_light = fog.albedo * (sun + ambient) * (1.0 - t) * view.exposure;
         }
+        // Behind = clouds over the scene: dimmed by both, lit by the froxels and
+        // by the far layers as the froxels let them through.
+        let tt = front.a * t;
+        acc = vec4(acc.rgb * tt + front.rgb + front.a * far_light, acc.a * tt);
     }
 
     if acc.a > 0.9995 && max(acc.r, max(acc.g, acc.b)) < 1e-6 {

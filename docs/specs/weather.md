@@ -617,6 +617,59 @@ maintained crate targets 0.20, so the fog is ours, in the cloud node as planned.
   moved to the fog-light texture. The 0.1 ms far-fog gate needs a quiet re-measure. Levers if over: fewer bank steps
   (8), skip the march where the bank layer's analytic depth is negligible, half-rate modulation.
 
+### Froxel fog as built (M6 F3, m6-f3/m6-f3b, 2026-10-13): god rays, lit fog, transparents
+
+**Bevy's `VolumetricFog` (decision, re-checked for 0.20).** Not used, on exteriors or as a stopgap (N3 stays
+skipped, owner decision 7). `VolumetricFog` + `VolumetricLight` + `FogVolume` raymarch each pixel through each box
+volume (`step_count` 64 by default) at full resolution: cost scales with pixels × steps × volumes (3.7 M pixels at
+1440p vs 0.92 M froxels at High), there is no temporal reprojection (only per-frame jitter for TAA), transparent
+materials can't sample it, it has no height-fog or bank density and no terrain or cloud shadow terms, and large
+volumes show the artifacts of #22574. Our froxels reuse F2's density terms and the shadow maps we already have.
+Revisit `FogVolume` only for small local volumes in interiors (M9 environment volumes), where its box shape fits.
+
+- **Model** (`sf_atmos::froxel`, CPU twin + tests): `FroxelSettings { size, near, far, history, max_lights }`,
+  presets Medium 128×72×48 to 256 m, **High 160×90×64 to 384 m (default)**, Ultra 160×90×128 to 512 m. Slices are
+  exponential in distance along the view ray (not view z), `near` 0.5 m, so a pixel's slice depends only on its
+  own distance (~10 % of the distance per slice at High: 38 m deep at the far end). `integrate_step` = Hillaire
+  2015's energy-conserving slab integral (test against the homogeneous closed form).
+- **Render** (`sf_atmos_bevy`, compute, in the cloud node after `clouds_fog_light`, before the trace):
+  1. `atmos_froxel_inject` (8×8×1 groups, one thread per froxel): a Halton (2,3,5) jittered point inside the
+     froxel; density = F2's height layer + bank layer × the bank mask (`fog_bank.wesl`, now a shared library with
+     its own weather-map binding; the cloud trace calls the same function). Light = the key light seen at the
+     camera (`clouds_fog_light`) × HG phase × **CSM** (Bevy's cascades and comparison sampler, one hard tap: a
+     froxel is far coarser than a texel) × **terrain shadow-height map** (`FogShadowHeights`, the same rule as
+     `sf_lod_bevy`'s far shadow: penumbra, distance bias, border fade) × **cloud shadow map**, + sky fill ×
+     ambient, + **point lights**: the 32 nearest visible `PointLight`s whose range reaches the froxels (CPU pick
+     per frame, unshadowed: Bevy's cube maps aren't sampled; a named limit), with Bevy's range falloff. Temporal:
+     the point is reprojected into last frame's volume (origin shifts applied), history weight 0.9 inside the
+     screen and the range, ping-pong `Rgba16Float` volumes.
+  2. `atmos_froxel_integrate` (one thread per tile column): front to back into (in-scatter, transmittance), into
+     the shared `FroxelVolume` image.
+  3. `clouds_composite`: the froxels from the camera to `min(depth, far)`, then F2's analytic layers only from the
+     froxel end (`layer_depth` from the point at `far`), so the near fog isn't counted twice; the far bank
+     modulation still shapes the analytic part. Sky pixels: froxels to `far`, analytic beyond.
+  The froxels need the cascades bound (`ViewShadowBindings`); without them (or `Fog::froxels = None`, the Low
+  preset) the composite fogs everything analytically as in F2.
+- **Transparents** (`FroxelVolume`, `froxel_apply.wesl`, `FroxelFogMaterial`): the integrated volume is a shared
+  3D `Image` that blended materials sample at their own screen position and distance (UE/Frostbite's
+  translucency path). `froxel_fog_apply` handles blend, premultiplied (in-scatter × alpha), additive and
+  multiplicative (transmittance only: the fog light isn't added twice). `FroxelFogMaterial` =
+  `ExtendedMaterial<StandardMaterial, FroxelFogExt>`; the plugin keeps every such material's volume and params
+  current. Limits: past the froxel range transparents get the volume's last slice (no analytic far layers; W2's
+  water draws its own far fog); hosts must opt in by using the material (the app's NIF/particle materials still
+  draw `StandardMaterial`: adopting it is a follow-up in the content pack).
+- Synthetic scene: `cargo run --release -p sf_atmos_bevy --example clouds -- --view glass --fog 400 [--time 23]`
+  (glass panes beside stone panes at 20/60/150/300 m, a lantern by each).
+- Weather (app): clear and fair keep a thin valley haze (40 km / 30 km visibility at sea level, ×1.5 at dawn by
+  the ground-fog curve) so dawn shafts have a medium; `--off froxels` (alias `godrays`) is the Low-preset A/B.
+- **Cost** (release, 2560×1440, RTX 4060 Laptop, `fg-balmora-foggy-noon`, A/B `--off froxels`, quiet machine for the
+  froxel run): `atmos_froxel_inject` 0.122 ms, `atmos_froxel_integrate` 0.023 ms, composite +0.01 ms: **≈ 0.16 ms**
+  against the High budget of 0.7 ms; timed GPU total 10.35 vs 10.21-10.23 ms, frame median 15.53 vs 15.31 ms (within
+  noise). Bug found on the way: a render-world-only volume image was re-created every frame (+4 ms CPU); fixed.
+  Not yet measured: the 3070, flight at 60 m/s for temporal smear, F2's quiet `--off fog` gate.
+- Solari path: without sun cascades the CSM term is 1, so near shafts come only from the terrain map and clouds. Open
+  question 6 stands (a fog-only low-res CSM vs SHM + clouds only).
+
 ## Wind
 
 **Field** (`sf_wind`; the CPU and WGSL twins agree to 1e-4, checked by a test that runs the WGSL on
