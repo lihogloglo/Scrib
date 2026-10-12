@@ -92,7 +92,8 @@ pub struct CarryParams {
     pub torque_arm: f32,
     /// Extra solver iterations for the grabbed body's island.
     pub extra_iterations: usize,
-    /// Layers that can be grabbed (limp ragdolls join with P7).
+    /// Layers that can be grabbed. `RAGDOLL` bodies are all limp in P7; P8's
+    /// powered ragdolls must leave this layer or answer `TooHeavy`.
     pub pick_layers: Layer,
     /// Layers that block the pick ray without being grabbable.
     pub block_layers: Layer,
@@ -112,7 +113,7 @@ impl Default for CarryParams {
             drag_friction: 0.6,
             torque_arm: 0.3,
             extra_iterations: 4,
-            pick_layers: Layer::DEBRIS | Layer::PROP,
+            pick_layers: Layer::DEBRIS | Layer::PROP | Layer::RAGDOLL,
             block_layers: Layer::STATIC | Layer::TERRAIN,
             max_extrapolation: 0.1,
         }
@@ -158,6 +159,8 @@ struct Grab {
     mode: GrabMode,
     mass: f32,
     layer: Layer,
+    /// The body's own extra solver iterations, restored on release.
+    iterations: usize,
     /// Grab point in the body's frame (center of mass when carried).
     anchor: Vec3,
     /// Carry: the item's rotation in the hand frame; distance eye → hand.
@@ -290,7 +293,7 @@ impl Carrier {
         if self.grab.is_some() {
             return GrabResult::Busy;
         }
-        let (Some((_, view)), Some(mass), Some(layer)) = (self.views[1], world.mass(body), world.layer(body)) else {
+        let (Some((_, view)), Some(mass), Some(layer)) = (self.views[1], world.mode_mass(body), world.layer(body)) else {
             return GrabResult::Nothing;
         };
         let Some(mode) = self.limits.mode_for(mass) else { return GrabResult::TooHeavy { body, mass } };
@@ -307,6 +310,7 @@ impl Carrier {
             mode,
             mass,
             layer,
+            iterations: 0,
             anchor: com,
             rot: Quat::IDENTITY,
             distance: p.hold_distance + radius,
@@ -323,7 +327,7 @@ impl Carrier {
         g.rot = hand_pose.rotation.inverse() * pose.rotation;
         g.hand = world.insert(&BodyDesc::new(BodyKind::Kinematic, hand_pose, ShapeRef::Sphere(0.01), Layer::empty()));
         world.set_layer(body, Layer::HELD);
-        world.set_grabbed(body, p.extra_iterations);
+        g.iterations = world.set_grabbed(body, p.extra_iterations);
         if let Some(h) = self.holder_body {
             world.exclude_pair(body, h);
         }
@@ -392,6 +396,10 @@ impl Carrier {
         let view = self.view_at(time)?;
         let target = Self::hand_for(g, &view);
         world.set_kinematic_target(g.hand, target);
+        // A held body never sleeps, nor its island (a dragged ragdoll whose
+        // limb barely moves would otherwise sleep under the hand).
+        let body = g.body;
+        world.wake(body);
         let g = self.grab.as_mut()?;
         g.target_prev = g.target.replace(target);
         None
@@ -472,7 +480,7 @@ impl Carrier {
         world.remove(g.hand);
         if world.contains(g.body) {
             world.set_layer(g.body, g.layer);
-            world.set_grabbed(g.body, 0);
+            world.set_iterations(g.body, g.iterations);
             if let Some(h) = self.holder_body {
                 world.include_pair(g.body, h);
             }

@@ -11,6 +11,8 @@ default = []
 debug = ["dep:bevy_gizmos", "dep:bevy_color"]
 # Character capsules, pushes and impacts for `sf_controller_bevy` movers (P5).
 controller = ["dep:sf_controller_bevy"]
+# Limp ragdolls on characters: `sf_ragdoll` instances, the death handoff, `PhysicsPose` to `sf_anim_bevy` (P7).
+ragdoll = ["dep:sf_ragdoll", "dep:sf_anim", "dep:sf_anim_bevy"]
 
 # Minimal Bevy (ARCHITECTURE Â§8b rule 6): the physics itself is Bevy-free (sf_physics).
 [dependencies]
@@ -30,7 +32,10 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 # `TerrainProbe` over the active worldspace's heights (the walkers' ground).
 sf_controller = { workspace = true, features = ["terrain"] }
 sf_controller_bevy = { workspace = true, optional = true }
+sf_anim = { workspace = true, optional = true }
+sf_anim_bevy = { workspace = true, optional = true }
 sf_coords.workspace = true
+sf_ragdoll = { workspace = true, optional = true }
 # Counters (`physics/...`) when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true
 sf_physics.workspace = true

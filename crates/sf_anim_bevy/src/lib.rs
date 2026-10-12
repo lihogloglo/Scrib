@@ -548,20 +548,27 @@ fn evaluate(
 /// writes its `Transform` only when the value changed, so unchanged and
 /// frozen bones never mark their subtree for propagation.
 fn write_bones(
-    animators: Query<&Animator>,
+    animators: Query<(&Animator, Option<&PhysicsPose>)>,
     mut bones: Query<(&AnimJoint, &mut Transform)>,
     mut stats: ResMut<AnimStats>,
 ) {
     let start = Instant::now();
     let written = AtomicU64::new(0);
     bones.par_iter_mut().for_each(|(joint, mut transform)| {
-        let Ok(animator) = animators.get(joint.character) else {
+        let Ok((animator, physics)) = animators.get(joint.character) else {
             return;
         };
-        if !animator.posed {
+        let j = usize::from(joint.joint);
+        let physics = physics.filter(|p| p.weight > 0.0 && j < p.pose.len());
+        let full = physics.is_some_and(|p| p.weight >= 1.0);
+        if !animator.posed && !full {
             return;
         }
-        let t = trs_transform(animator.output.pose.get(usize::from(joint.joint)));
+        let t = trs_transform(match physics {
+            Some(p) if full => p.pose[j],
+            Some(p) => blend_trs(animator.output.pose.get(j), p.pose[j], p.weight),
+            None => animator.output.pose.get(j),
+        });
         if *transform != t {
             *transform = t;
             written.fetch_add(1, Ordering::Relaxed);
@@ -569,6 +576,27 @@ fn write_bones(
     });
     stats.bones_written = usize::try_from(written.into_inner()).unwrap_or(usize::MAX);
     stats.apply_us = start.elapsed().as_secs_f32() * 1e6;
+}
+
+fn blend_trs(a: Trs, b: Trs, w: f32) -> Trs {
+    Trs {
+        translation: a.translation.lerp(b.translation, w),
+        rotation: a.rotation.slerp(b.rotation, w),
+        scale: a.scale.lerp(b.scale, w),
+    }
+}
+
+/// A physics pose over the animation (physics.md "Ragdolls and the
+/// animation blend"), on the character's `Animator` entity: the ragdoll's
+/// local pose, written by the physics layer every frame it moves; `weight`
+/// 0 = animation, 1 = physics (bones then follow it even when the graph
+/// doesn't pose this frame). P7 (limp ragdolls) blends the whole skeleton
+/// here, after the graph; P8 feeds the graph's `PoseInput` with per-region
+/// weights so procedural ops and inertialized get-ups compose with it.
+#[derive(Component, Clone, Debug, Default)]
+pub struct PhysicsPose {
+    pub pose: Vec<Trs>,
+    pub weight: f32,
 }
 
 type RootQuery = (

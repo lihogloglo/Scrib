@@ -1,0 +1,27 @@
+[package]
+name = "sf_ragdoll"
+description = "Bevy-free ragdolls for superfargoth: `ragdoll.cook` (bodies, joints, limits and masses from a skeleton's rig profile) and limp ragdoll instances in an sf_physics world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# The `ragdoll.cook` bake step (reads `skeleton.cook` and `rig.profile`).
+bake = ["dep:sf_bake"]
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+postcard.workspace = true
+serde.workspace = true
+sf_anim.workspace = true
+sf_bake = { workspace = true, optional = true }
+sf_coords.workspace = true
+sf_physics.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sf_anim = { workspace = true, features = ["fixtures"] }
+
+[lints]
+workspace = true

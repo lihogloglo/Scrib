@@ -40,6 +40,8 @@ pub mod carry;
 pub mod character;
 #[cfg(feature = "debug")]
 mod debug;
+#[cfg(feature = "ragdoll")]
+pub mod ragdoll;
 pub mod stream;
 #[cfg(test)]
 mod tests;
@@ -50,6 +52,10 @@ pub use character::{CharacterPhysics, CharacterStats, ImpactOnCharacter};
 pub use debug::PhysicsDebug;
 pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder};
 pub use sf_physics;
+#[cfg(feature = "ragdoll")]
+pub use ragdoll::{Ragdoll, RagdollConfig, RagdollLoader, RagdollSource, RagdollStats, Ragdolls};
+#[cfg(feature = "ragdoll")]
+pub use sf_ragdoll;
 pub use stream::{
     BodyLoader, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
     STATE_VERSION, ShapeLoader, hook_items, hook_physics,
@@ -249,6 +255,8 @@ impl Plugin for PhysicsPlugin {
         debug::add(app);
         #[cfg(feature = "controller")]
         character::add(app);
+        #[cfg(feature = "ragdoll")]
+        ragdoll::add(app);
     }
 }
 

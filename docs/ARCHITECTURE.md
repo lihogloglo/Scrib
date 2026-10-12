@@ -1684,3 +1684,8 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   `VfsSource::stat` (size + mtime as indexed; `DirSource` keeps the listing's, since per-file stats
   cost ~50 µs each on Windows). The profile fingerprint is stored beside the bake manifest, not in it
   (old manifests still load), and doesn't skip the incremental bake: step code isn't in it.
+- 2026-10-13 (physics-p7, M4 P7): ragdolls use rapier **impulse joints** (not multibodies) with 8 extra solver
+  iterations and a 4:1 neighbor mass-ratio cap: joint stretch 0.49 cm in a 0.5 m drop and 0.07 cm dragging 75 kg by
+  the wrist (gate 1 cm); more iterations are not monotonic (12+ stretch 3 cm). New Bevy-free crate `sf_ragdoll`
+  (`ragdoll.cook`, `RagdollInstance`). Limp ragdolls reach the skeleton through `sf_anim_bevy::PhysicsPose`, blended
+  after the graph; P8 moves powered ragdolls into the graph's `PoseInput`.

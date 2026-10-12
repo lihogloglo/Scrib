@@ -223,6 +223,35 @@ knees and elbows hinge (0..150°), shoulders and hips ball (swing 80/60°, twist
 neck ±45°, digitigrade and unguligrade legs get the extra hinge; adapter or mod override files patch
 any value. Adjacent bodies never collide.
 
+**As built (P7, 2026-10-13).** Crate `sf_ragdoll` (Bevy-free; sf_anim, sf_physics; feature `bake` for the step).
+`RagdollDef { skeleton, policy, bodies, joints, regions, total_mass, no_collide, owner }`; every body is a capsule
+(`Capsule { radius, half }` along the body's Y; a sphere when `half` is 0), `RagBody.local` is the body frame in its
+joint's model frame, `owner` maps every skeleton joint to the body that moves it. Cook details and deviations:
+- **Radii without skin extents** (outfits are separate skinned parts; P8 or later reads `mesh.rig` for creatures):
+  limbs 0.2 × segment length, hands and feet 0.3, wings and fins 0.08, tails 0.2, at least 0.4 % of the height and at
+  most half the segment. Spine bodies are as wide as their girdle (lateral distance of its left and right limb
+  roots): a body wider than long (pelvis, chest) is a capsule **across** the girdle, else along the bone.
+- Spine: the root girdle and at most 3 bodies to the neck base, the shoulder girdle getting its own when there is
+  room; neck + head one body (neck base to past the head by its subtree reach, 8–25 % of the height).
+- Limits: shoulders and wing roots ball 95° swing (arms rest in a T pose, so 80° could not hang them), twist ±60°;
+  hips 70°/±40°; wrists, ankles and other effectors 50°/±25°; spine 30°/±30°; neck 45°/±45°; tails 35°/±20°. Knees,
+  elbows and hocks hinge: they bend further the way the rest pose bends (range `[-(rest + 5°), 150° - rest]`), or for
+  a straight rest pose knees back, elbows forward, alternating down a leg.
+- **Mass balancing**: no body lighter than its parent body ÷ `max_mass_ratio` (4), then everything scaled to the
+  adapter's total. Bodies overlapping at rest go to `no_collide` (UE: "disable collision on overlapping bodies").
+- `RagdollInstance::spawn` puts the bodies at an animated model pose (character frame + uniform scale; masses scale
+  by its cube) with velocities from the previous pose; `local_pose` reads them back as a local pose (body joints take
+  rotations, other joints keep the pose frozen at the handoff, bones keep their lengths). Every body's grab mode mass
+  is the whole ragdoll's (`PhysicsWorld::set_mode_mass`); `RAGDOLL` bodies skip the item mass clamp.
+- **Open question 1 resolved: impulse joints**, 8 extra solver iterations per ragdoll body (`RagdollSettings`) and
+  the mass-ratio cap. Measured (release, 75 kg fixture biped, `stretch_table`): ratio cap 4: drop 0.5 m 0.89 / 0.61 /
+  **0.49** / 3.09 / 3.03 cm at +0 / 4 / 8 / 12 / 16 iterations, wrist drag 0.16 / 0.16 / **0.07** / 0.04 / 0.03 cm;
+  uncapped (lightest body 0.1 kg) drags break away (the hand pulls out of reach) at every count. More iterations are
+  not monotonic for the drop (12+ stretch 3 cm: rapier's substep groups); 8 is the measured optimum. Gates
+  (`cargo test -p sf_ragdoll`): limp drop ≤ 1 cm (0.49), stairs (0.32 cm, settles in 4.5 s), 75 kg dragged by the
+  wrist (0.07 cm, the body follows 1.1 m in 3 s).
+- Carry: held bodies are woken every step (a dragged corpse whose limb barely moves slept under the hand).
+
 ### Cloth lattice (`sf_character` cook, `sf_anim` op)
 
 ```rust
@@ -457,6 +486,16 @@ Per character with a ragdoll, `sf_ragdoll` owns a `RagdollInstance` (bodies, joi
    `PoseInput` node, blended per joint by the region's physics weight (0 = animation, 1 = physics).
    Procedural ops after it (foot placement, look-at) run only where the physics weight is 0.
 
+**As built (P7, 2026-10-13): limp only.** `sf_physics_bevy` feature `ragdoll`: the host puts `Ragdoll { skeleton,
+delay }` on a character's `Animator` entity after starting its death clip; after `delay` the `RagdollSource`
+definition spawns at the animated pose with the last two poses' velocities, and each frame the bodies' local pose goes
+to the new `sf_anim_bevy::PhysicsPose { pose, weight }` (weight ramps to 1 over 0.1 s), which `write_bones` blends
+**after** the graph (whole skeleton) instead of a graph `PoseInput` node: Morrowind's graphs have none, and limp
+needs no per-region weights. P8 moves it into `PoseInput` with per-region weights and inertialized get-ups.
+`Ragdolls` / `RagdollStats` (live, awake, max stretch); removing the component or despawning the entity removes the
+bodies. Not yet: the powered crumple (the clip cuts to limp), the root following the pelvis, sleeping-pose persistence
+across deactivation, placed corpses.
+
 Behaviours:
 
 - **Death**: regions switch to `Powered` following the death clip, then strength fades to `Limp` over
@@ -538,7 +577,8 @@ Gates (numbers are the M4 budgets; the spike in task P1 confirms or revises them
 
 ## Open questions
 
-1. Impulse joints or a reduced-coordinate multibody for ragdolls: the P7 spike tries both (multibodies
+1. **Resolved (P7): impulse joints** with 8 extra iterations and a 4:1 mass-ratio cap (numbers under `sf_ragdoll`
+   "As built"). History: impulse joints or a reduced-coordinate multibody for ragdolls: the P7 spike tries both (multibodies
    don't stretch and take high gains, impulse joints sleep and island more simply). P1 spike data (2026-10-12): 2 ragdolls
    + a 50-item pile step in 0.44 ms with impulse joints vs 3.1–4.3 ms with multibodies (plus a 450 ms hitch); a
    0.5 m drop stretches impulse joints 2–2.6 cm (1.1 cm at 12 extra iterations) vs 0.6 cm for multibodies. Leaning

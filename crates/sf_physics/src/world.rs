@@ -51,6 +51,8 @@ pub(crate) struct Live {
     pub awake: bool,
     /// Inserted (or recovered) asleep, not yet asleep in the engine: frozen, no events.
     pub settling: bool,
+    /// The mass a grab decides carry or drag by (a ragdoll limb: the whole ragdoll).
+    pub mode_mass: Option<f32>,
     seen: u64,
 }
 
@@ -237,7 +239,9 @@ impl PhysicsWorld {
             .user_data(u128::from(index));
         if matches!(desc.kind, BodyKind::Dynamic { .. } | BodyKind::Held) {
             let mass = desc.mass.unwrap_or_else(|| shape.mass_properties(p.density).mass());
-            cb = cb.mass(mass.clamp(p.mass_range.0, p.mass_range.1));
+            // Ragdoll bodies keep their cooked mass (a guar's torso is far over the item range).
+            let mass = if desc.layer.contains(Layer::RAGDOLL) { mass.max(0.01) } else { mass.clamp(p.mass_range.0, p.mass_range.1) };
+            cb = cb.mass(mass);
             let aabb = shape.compute_local_aabb();
             if (aabb.maxs - aabb.mins).min_element() < p.thin_extent {
                 cb = cb.contact_skin(p.thin_skin);
@@ -276,6 +280,7 @@ impl PhysicsWorld {
             rest: local,
             awake: false,
             settling: false,
+            mode_mass: None,
             seen: 0,
         });
         self.len += 1;
@@ -323,6 +328,22 @@ impl PhysicsWorld {
     pub fn mass(&self, id: BodyId) -> Option<f32> {
         let l = self.live(id)?;
         Some(self.engine.bodies.get(l.handle)?.mass())
+    }
+
+    /// The mass a grab of this body decides carry, drag or too heavy by:
+    /// [`Self::set_mode_mass`] if set (a ragdoll limb answers for the whole
+    /// ragdoll), else the simulated mass.
+    pub fn mode_mass(&self, id: BodyId) -> Option<f32> {
+        match self.live(id)?.mode_mass {
+            Some(m) => Some(m),
+            None => self.mass(id),
+        }
+    }
+
+    pub fn set_mode_mass(&mut self, id: BodyId, mass: Option<f32>) -> bool {
+        let Some(l) = self.live_mut(id) else { return false };
+        l.mode_mass = mass;
+        true
     }
 
     /// The pose after the last step.
@@ -795,12 +816,24 @@ impl PhysicsWorld {
         true
     }
 
-    /// While grabbed: extra solver iterations and CCD (0 restores the defaults).
-    pub(crate) fn set_grabbed(&mut self, id: BodyId, extra_iterations: usize) {
+    /// While grabbed: at least `extra_iterations` extra solver iterations,
+    /// and CCD. Returns the iterations it had (restored on release with
+    /// [`Self::set_iterations`]).
+    pub(crate) fn set_grabbed(&mut self, id: BodyId, extra_iterations: usize) -> usize {
+        let Some(h) = self.handle(id) else { return 0 };
+        let Some(rb) = self.engine.bodies.get_mut(h) else { return 0 };
+        let had = rb.additional_solver_iterations();
+        rb.set_additional_solver_iterations(had.max(extra_iterations));
+        rb.enable_ccd(true);
+        had
+    }
+
+    /// Sets a body's extra solver iterations (rapier solves its substep
+    /// group with the most of its bodies').
+    pub fn set_iterations(&mut self, id: BodyId, extra_iterations: usize) {
         let Some(h) = self.handle(id) else { return };
         if let Some(rb) = self.engine.bodies.get_mut(h) {
             rb.set_additional_solver_iterations(extra_iterations);
-            rb.enable_ccd(true);
         }
     }
 
