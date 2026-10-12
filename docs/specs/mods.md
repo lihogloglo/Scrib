@@ -1,6 +1,6 @@
 # Mods: pipeline end to end
 
-Status: draft (2026-10-13, m5-spec session, docs only). Built in M5 on the M0 foundations.
+Status: A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
 Crates: `sf_mods` (manifests, repository, profiles, load order, report; built M0, extended),
 `sf_vfs` (layers; built M0, gains a watcher and swap), `sf_records` (built M0, gains native
 patch files and field-level conflicts), `sf_bake` (profile fingerprint), `sf_script`
@@ -77,7 +77,8 @@ load_before = []
 
 [content]
 assets  = ["assets"]                          # VFS roots, in order (existing)
-records = ["records/items.ron", "legacy/lanterns.plugin"] # native RON, or adapter formats by extension
+records = ["records/items.ron", "legacy/lanterns.plugin"] # native RON, or adapter formats by extension; these and
+                                              # the paths below are VFS paths inside the mod's asset roots
 scripts = ["scripts/better_lanterns/main.luau"]          # entry points (scripting.md)
 
 [ui]                                          # ui.md
@@ -221,21 +222,76 @@ profile. Mods add:
 
 ## Interfaces
 
+As built in A1 (2026-10-13); the draft's `LoadOrder` became `LoadedProfile::mods`:
+
 ```rust
 // sf_mods
-pub struct ModRepository { /* manifests by id, roots, issues */ }
+pub struct ModRepository { pub issues: Vec<ModIssue>, pub scan_time: Duration, /* manifests, pre-scanned roots, invalid set */ }
+impl ModRepository { pub fn scan(mod_dirs: &[PathBuf], adapters: &[&dyn ContentAdapter]) -> Self; pub fn add(&mut self, m: ModManifest); }
 pub struct Profile { pub name: String, pub enabled: Vec<ModId>, pub settings: SettingValues, pub limits: ScriptLimits }
-pub struct LoadOrder { pub mods: Vec<ModManifest> }          // resolved
-pub struct ModReport { pub issues: Vec<ModIssue> }           // + per-mod VFS and record summaries
-pub trait ContentAdapter {                                   // implemented by content packs
-    fn discover(&self, install: &InstallInfo) -> Vec<ModManifest>;      // synthesized mods
-    fn mount(&self, m: &ModManifest, vfs: VfsBuilder) -> VfsBuilder;     // archives etc.
-    fn apply_records(&self, m: &ModManifest, file: &VfsPath, db: &mut RecordDb, src: SourceId) -> Result<(), RecordFileError>;
+pub struct ModReport { pub issues: Vec<ModIssue>, pub mods: Vec<ModSummary> }  // serde; render(only: Option<&ModId>)
+pub trait ContentAdapter {                                   // implemented by content packs; every method defaulted
+    fn name(&self) -> &str;
+    fn discover(&self, issues: &mut Vec<ModIssue>) -> Vec<ModManifest>;              // synthesized mods
+    fn mount(&self, m: &ModManifest) -> Result<Vec<Arc<dyn VfsSource>>, String>;     // archives etc., lowest first
+    fn record_extensions(&self) -> &[&str];                                          // record files it applies
+    fn register_kinds(&self, db: &mut RecordDb);
+    fn apply_records(&self, cx: &mut RecordCx<'_>, file: &VfsPath) -> Result<(), RecordFileError>;
+    fn finish_records(&self, db: &mut RecordDb);                                     // adapter-derived sources
 }
-pub fn load_profile(repo: &ModRepository, profile: &Profile, adapters: &[&dyn ContentAdapter]) -> LoadedProfile; // steps 1-4
+pub fn load_profile(repo: &ModRepository, profile: &Profile, adapters: &[&dyn ContentAdapter], api: &Version) -> LoadedProfile; // steps 2-4
+pub struct LoadedProfile { pub profile: Profile, pub mods: Vec<LoadedMod>, pub vfs: Arc<Vfs>, pub records: RecordDb, pub report: ModReport, pub timings: LoadTimings }
+impl LoadedProfile { pub fn script_contexts(&self) -> Vec<ScriptPlan>; pub fn stylesheets(&self) -> Vec<(ModId, VfsPath)>; pub fn render_report(..) -> String; }
 // sf_vfs (bevy feature): VfsWatcher, SharedVfs (swappable)
 // sf_records: KindRegistry, apply_record_file(), field-level Touch
 ```
+
+### As built (A1, 2026-10-13)
+
+Changes from the draft, each for a reason found while building:
+
+- **Content paths are VFS paths inside the mod's own asset roots.** `content.records`,
+  `content.scripts` and `ui.styles` name files as the mod's asset roots provide them (with
+  `assets = ["assets"]`, `assets/records/x.ron` is listed as `records/x.ron`), so loose folders
+  and future zip mods resolve the same way and the check is VFS case-insensitive. A record file
+  is read from the **mod's own layers** (`ModFiles`), never from a later mod shipping the same
+  path. Synthesized mods may fall back to the whole VFS (a legacy plugin sits in the shared data
+  folder, not in its archive). Entry points must be under `scripts/<mod id>/` (`sf_script`'s
+  namespace), else a Files error.
+- **One broken mod never blocks the rest.** `load_profile` drops a mod that can't load (unknown,
+  invalid, `api` incompatible, missing/mismatched dependency, enabled optional with the wrong
+  version, declared conflict present, cycle member) with an error, re-resolves, and its dependents
+  then fail with "requires X, which was not loaded". Factorio disables the same cases (its
+  `info.json` docs: an enabled optional dependency outside the version requirement makes the mod
+  incompatible); MO2 warns and loads anyway, which is how load orders silently break. The strict
+  `resolve_load_order` stays (first error wins) for adapters that resolve their own lists; its
+  `Cycle` now names only the mods on the cycle, not those downstream of it.
+- **Declared conflicts refuse the declaring mod**, not the other one (it is the one that knows).
+- **`ContentAdapter::mount` returns layers** instead of threading a `VfsBuilder`, so the pipeline
+  knows which source indices belong to which mod (provenance, `ModFiles`, the override view).
+  A mod's layers are its adapter layers, then its asset roots. Record files are routed by
+  extension to the adapter that claims it (`record_extensions`); the native RON loader (A2) is
+  one more `ContentAdapter`, so the framework format is not privileged. Until A2, a `.ron` file
+  reports "no loader".
+- **Script limits are profile-level only** (`[limits] memory_mib, call_timeout_ms,
+  frame_soft_us`, unset = runtime default): a manifest can't raise its own limits (scripting.md
+  OQ4: per-mod overrides belong to the mod manager later).
+- **Asset roots are indexed once at scan** (`DirSource` per root, `Arc`-shared) and reused by
+  every profile load; folder mods' declared files are checked against them at scan time, so a
+  mod with a missing file is invalid before ordering (its dependents drop cleanly).
+- **Profile file**: `enabled = [...]`, `[settings.<mod id>]` (free TOML tables; the settings
+  registry types them in U6), `[limits]`. The name is the file stem. `deny_unknown_fields`.
+- **Report**: `IssueKind` (one variant per row of the table above for steps 1-4, with
+  `severity()` and `area()`), `ModSummary` per loaded mod: layers, files, winning, unique, and
+  `overrides`/`overridden_by` per other mod (counts against the winner, the MO2 view). Text via
+  `render`, data via serde; `render_report` appends `ConflictReport::render`.
+- **Scripts hand-off**: `ScriptPlan` (id, mods, loaded dependencies incl. enabled optionals,
+  entry points, `api`, version, profile limits) maps one to one onto `sf_script::ContextConfig`;
+  `sf_mods` does not depend on `sf_script` (mlua stays off the content path's compile graph).
+
+Not in A1 (later tasks): profile fingerprint (A3), builtin-mod-lowest rule and default profile
+(A3), the `resolve_preferring` shadow warning (needs the adapter's alternates, A3), Scripts/UI
+issue rows (L2, U2).
 
 ## Verification
 

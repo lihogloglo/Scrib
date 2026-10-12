@@ -1,4 +1,5 @@
 use super::*;
+use semver::{Version, VersionReq};
 
 fn id(s: &str) -> ModId {
     ModId::new(s).unwrap()

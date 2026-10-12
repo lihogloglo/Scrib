@@ -1637,3 +1637,11 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   skipping N3). HD grass gets its own spec (G0) before it is built.
 
 - 2026-10-13 (orchestrator, owner asleep): M6 spec decisions 1-7 (bevyrrowind ROADMAP "## M6", water.md) adopted provisionally with the spec's recommendations (own sf_water porting bevy-aqua code; SS planar + cubemap reflections; moored small boats bob; no new rivers; water budget ~1.35 ms High; murky Bitter Coast; froxel fog without the Bevy god-ray prototype). Pending owner confirmation.
+
+- 2026-10-13 (m5-a1): `sf_mods` pipeline core built (mods.md "As built (A1)"). Lasting choices: (1) manifest content
+  paths (`records`, `scripts`, `ui.styles`) are VFS paths inside the mod's own asset roots, and record files are read
+  from the mod's own layers; (2) `load_profile` drops a mod that can't load (and, by re-resolving, its dependents) with
+  an error instead of failing the profile (Factorio semantics, incl. an enabled optional dependency with the wrong
+  version); (3) `ContentAdapter::mount` returns layers and record formats route by extension, so the native RON loader
+  (A2) is just another adapter; (4) script limits live in the profile only, never the manifest; (5) `sf_mods` hands
+  scripts a plain `ScriptPlan` and does not depend on `sf_script`.
