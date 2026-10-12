@@ -8,6 +8,9 @@
 //! - [`SkySettings::evaluate`]: everything the renderer applies each frame
 //!   ([`SkyState`]): light directions and intensities, shadow caster,
 //!   exposure, ambient floor.
+//! - [`Moon`], [`StarField`], [`SunDiskLook`]: the drawn sky bodies (any
+//!   number of moons with their own paths and phases, stars, the sun's
+//!   artistic disk and glare), evaluated into [`NightSky`].
 //! - [`Weather`] and [`Wind`]: the M6 hook, and the shared wind.
 //! - [`RenderPath`] and [`sphere_light_luminance`]: the raster/ray-traced
 //!   switch and the emissive-proxy conversion for punctual lights.
@@ -18,6 +21,7 @@ mod atmosphere;
 mod celestial;
 mod clock;
 mod curve;
+mod night;
 mod sky;
 mod weather;
 
@@ -31,6 +35,7 @@ pub use atmosphere::{AtmosphereModel, Falloff, MediumTerm, Phase, visible_disk_f
 pub use celestial::{Celestial, Orbit, SkyPosition};
 pub use clock::{Calendar, SkyClock};
 pub use curve::KeyCurve;
+pub use night::{MAX_MOONS, Moon, MoonPath, MoonState, NightSky, StarField, SunDiskLook, phase_light};
 pub use sky::{ExposureRange, SkyLight, SkySettings, SkyState, luminance};
 pub use weather::{Weather, Wind};
 

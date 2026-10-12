@@ -9,7 +9,7 @@
 //! orbital inclination is ignored. Good to well under a degree for the sun,
 //! a few degrees for the moon: plenty for lighting.
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::TAU;
 
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -121,15 +121,36 @@ impl Orbit {
         TAU * (day.floor() - f64::from(self.spring_equinox_day)) / f64::from(calendar.days_per_year)
     }
 
+    /// Sun hour angle (radians, 0 at solar noon) and ecliptic longitude.
+    fn sun_angles(&self, clock: &SkyClock, calendar: Calendar) -> (f64, f64) {
+        let day = clock.day_of_year(&calendar);
+        (TAU * (clock.day_fraction() - 0.5), self.solar_longitude(day, calendar))
+    }
+
+    /// A body on a circle of the celestial sphere seen from latitude
+    /// `latitude` (radians): declination and hour angle in radians.
+    pub fn place(&self, declination: f64, hour_angle: f64, latitude: f64) -> SkyPosition {
+        SkyPosition::from_equatorial(declination, hour_angle, latitude, self.north_rotation())
+    }
+
+    /// A moon on the ecliptic at `phase` (0 new, 0.5 full): it runs ahead
+    /// of the sun in longitude by its phase, so it transits later (full
+    /// moon at midnight).
+    pub fn synodic_moon(&self, clock: &SkyClock, calendar: &Calendar, phase: f64) -> SkyPosition {
+        let (sun_hour_angle, sun_longitude) = self.sun_angles(clock, *calendar);
+        let tilt = f64::from(self.axial_tilt_deg).to_radians();
+        let moon_longitude = sun_longitude + TAU * phase;
+        let declination = (tilt.sin() * moon_longitude.sin()).asin();
+        self.place(declination, sun_hour_angle - TAU * phase, f64::from(self.latitude_deg).to_radians())
+    }
+
     /// Sun and moon positions at `clock`.
     pub fn evaluate(&self, clock: &SkyClock, calendar: &Calendar) -> Celestial {
         let north = self.north_rotation();
         let latitude = f64::from(self.latitude_deg).to_radians();
         let tilt = f64::from(self.axial_tilt_deg).to_radians();
-        let day = clock.day_of_year(calendar);
         // Solar noon at half the day.
-        let sun_hour_angle = TAU * (clock.day_fraction() - 0.5);
-        let sun_longitude = self.solar_longitude(day, *calendar);
+        let (sun_hour_angle, sun_longitude) = self.sun_angles(clock, *calendar);
         let sun_declination = (tilt.sin() * sun_longitude.sin()).asin();
         let sun = SkyPosition::from_equatorial(sun_declination, sun_hour_angle, latitude, north);
 
@@ -146,24 +167,15 @@ impl Orbit {
         let phase = (clock.days / f64::from(self.lunar_month_days)
             + f64::from(self.moon_phase_at_epoch))
         .rem_euclid(1.0);
-        // The moon runs ahead of the sun in longitude by its phase, so it
-        // transits later: full moon (phase 0.5) transits at midnight.
-        let moon_longitude = sun_longitude + TAU * phase;
-        let moon_declination = (tilt.sin() * moon_longitude.sin()).asin();
-        let moon_hour_angle = sun_hour_angle - TAU * phase;
-        let moon = SkyPosition::from_equatorial(moon_declination, moon_hour_angle, latitude, north);
-
-        // Phase angle (sun-moon-observer): π at new moon, 0 at full.
-        let phase_angle = (PI - TAU * phase).abs();
-        let illuminated = f64::midpoint(1.0, phase_angle.cos());
-        let brightness = ((PI - phase_angle) * phase_angle.cos() + phase_angle.sin()) / PI;
-        #[expect(clippy::cast_possible_truncation, reason = "fractions")]
+        let moon = self.synodic_moon(clock, calendar, phase);
+        let (illuminated, brightness) = crate::night::phase_light(phase);
+        #[expect(clippy::cast_possible_truncation, reason = "fraction")]
         Celestial {
             sun,
             moon,
             moon_phase: phase as f32,
-            moon_illuminated: illuminated.clamp(0.0, 1.0) as f32,
-            moon_brightness: brightness.clamp(0.0, 1.0) as f32,
+            moon_illuminated: illuminated,
+            moon_brightness: brightness,
         }
     }
 }

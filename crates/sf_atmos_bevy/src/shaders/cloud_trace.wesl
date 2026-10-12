@@ -63,6 +63,17 @@ fn light_optical_depth(p: vec3<f32>, l: vec3<f32>, steps: u32, w0: WeatherSample
     return tau;
 }
 
+// The planet's shadow: 0 where the light at radius `r` and cosine `mu` is
+// below the horizon. Bevy's transmittance LUT clamps such rays to the
+// horizon (deep red, not 0): unshadowed, high clouds glowed red at night
+// (the "red streaks" with `--clouds clear`, nightsky 2026-10-13). Smoothed
+// over ~0.5° so the terminator doesn't alias.
+fn planet_lit(r: f32, mu: f32) -> f32 {
+    let rho = clouds.inner_radius / max(r, clouds.inner_radius);
+    let mu_horizon = -sqrt(max(1.0 - rho * rho, 0.0));
+    return smoothstep(mu_horizon - 0.004, mu_horizon + 0.004, mu);
+}
+
 @fragment
 fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let block = vec2<u32>(in.position.xy);
@@ -93,16 +104,24 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         return out;
     }
 
-    // The key light is the brightest directional light (sun by day, moon by night).
+    // The key light is the brightest directional light *as seen from the
+    // camera* (sun by day, moon by night). The raster path keeps the sun's
+    // unattenuated illuminance after sunset (the sky needs it for twilight),
+    // so ranking raw colors picked the set sun all night.
     var l = vec3(0.0, 1.0, 0.0);
     var light_color = vec3(0.0);
     var brightest = -1.0;
+    let r_view = length(ro_c);
+    let up_view = ro_c / r_view;
     for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
         let c = lights.directional_lights[i].color.rgb;
-        let lum = c.r + c.g + c.b;
+        let dir = normalize(lights.directional_lights[i].direction_to_light.xyz);
+        let mu = dot(up_view, dir);
+        let seen = c * sample_transmittance_lut(r_view, mu) * planet_lit(r_view, mu) + c * 1e-6;
+        let lum = seen.r + seen.g + seen.b;
         if lum > brightest {
             brightest = lum;
-            l = normalize(lights.directional_lights[i].direction_to_light.xyz);
+            l = dir;
             light_color = c;
         }
     }
@@ -163,7 +182,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
             empty_run = 0u;
             let sigma = density * clouds.extinction;
             let mu_l = dot(pc / r, l);
-            let sun_t = sample_transmittance_lut(r, mu_l);
+            let sun_t = sample_transmittance_lut(r, mu_l) * planet_lit(r, mu_l);
             let dark = 1.0 + 2.0 * w.wetness;
             // Lighting LOD: deep in the cloud (little of it still reaches the
             // eye) and far away (a few pixels per cloud) two light samples do.
@@ -212,7 +231,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         let slant = ci.y * clouds.cirrus_depth / max(abs(dot(n_up, rd)), 0.15);
         let fade = 1.0 - ramp(clouds.far * 0.6, clouds.far * 1.6, ci.x);
         let alpha = (1.0 - exp(-slant)) * fade;
-        let sun_t = sample_transmittance_lut(r, dot(n_up, l));
+        let sun_t = sample_transmittance_lut(r, dot(n_up, l)) * planet_lit(r, dot(n_up, l));
         let ice_phase = mix(henyey_greenstein(0.2, cos_t), henyey_greenstein(0.8, cos_t), 0.5);
         let lum = light_color * sun_t * ice_phase + sky_up * clouds.ambient;
         let air = aerial(uv, r_cam, mu_v, rd, ci.x);

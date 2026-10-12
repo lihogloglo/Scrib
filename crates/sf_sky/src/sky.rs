@@ -7,6 +7,7 @@ use crate::atmosphere::{AtmosphereModel, visible_disk_fraction};
 use crate::celestial::{Celestial, Orbit};
 use crate::clock::{Calendar, SkyClock};
 use crate::curve::KeyCurve;
+use crate::night::{MAX_MOONS, Moon, MoonState, NightSky, StarField, SunDiskLook};
 use crate::weather::Weather;
 
 /// Everything that defines a world's sky. Data-driven: adapters fill it from
@@ -29,6 +30,14 @@ pub struct SkySettings {
     pub moon_illuminance: f32,
     /// Moon disk angular diameter, radians.
     pub moon_angular_size: f32,
+    /// The moons. Empty: one Earth-like moon from the orbit's lunar month,
+    /// [`Self::moon_illuminance`] and [`Self::moon_angular_size`]. At most
+    /// [`MAX_MOONS`] are evaluated; one moonlight carries their sum.
+    pub moons: Vec<Moon>,
+    /// The star field.
+    pub stars: StarField,
+    /// How the sun disk is drawn (size, glare).
+    pub sun_disk: SunDiskLook,
     /// Camera EV100 as a function of sun elevation in degrees.
     pub exposure: KeyCurve,
     /// Limits of the camera EV100, whatever drives it (this schedule or
@@ -57,6 +66,9 @@ impl Default for SkySettings {
             sun_angular_size: 0.009_308_42,
             moon_illuminance: 1.0,
             moon_angular_size: 0.009_04,
+            moons: Vec::new(),
+            stars: StarField::default(),
+            sun_disk: SunDiskLook::default(),
             exposure: KeyCurve::new(vec![
                 (-18.0, 0.5),
                 (-12.0, 2.0),
@@ -167,6 +179,8 @@ pub struct SkyState {
     pub ev100: f32,
     /// Ambient floor, nits.
     pub ambient: f32,
+    /// The drawn moons and the stars' visibility.
+    pub night: NightSky,
 }
 
 /// Quadrature steps for the CPU transmittance (error < 0.5% at the horizon).
@@ -191,15 +205,12 @@ impl SkySettings {
             casts_shadows: false,
         };
         let mut sun = light(celestial.sun, self.sun_illuminance, self.sun_angular_size);
-        let mut moon = light(
-            celestial.moon,
-            self.moon_illuminance * celestial.moon_brightness,
-            self.moon_angular_size,
-        );
+        let night = self.evaluate_night(clock, weather, celestial.sun.elevation_deg(), horizon);
+        let mut moon = moonlight(night.moons());
         let sun_deg = celestial.sun.elevation_deg();
         if sun_deg > self.sun_shadow_min_elevation_deg {
             sun.casts_shadows = true;
-        } else if celestial.moon.elevation_deg() > self.moon_shadow_min_elevation_deg
+        } else if moon.elevation.to_degrees() > self.moon_shadow_min_elevation_deg
             && moon.illuminance > 0.0
         {
             moon.casts_shadows = true;
@@ -211,6 +222,92 @@ impl SkySettings {
             moon,
             ev100: self.exposure_range.clamp(self.exposure.sample(sun_deg)),
             ambient: self.ambient.sample(sun_deg),
+            night,
         }
     }
+
+    /// The moons to draw: [`Self::moons`], or the Earth-like default.
+    pub fn moon_list(&self) -> std::borrow::Cow<'_, [Moon]> {
+        if !self.moons.is_empty() {
+            return std::borrow::Cow::Borrowed(&self.moons);
+        }
+        if self.orbit.lunar_month_days <= 0.0 {
+            return std::borrow::Cow::Borrowed(&[]);
+        }
+        std::borrow::Cow::Owned(vec![Moon {
+            angular_size: self.moon_angular_size,
+            phase_period_days: self.orbit.lunar_month_days,
+            phase_at_epoch: self.orbit.moon_phase_at_epoch,
+            illuminance: self.moon_illuminance,
+            ..Moon::default()
+        }])
+    }
+
+    fn evaluate_night(&self, clock: &SkyClock, weather: &Weather, sun_deg: f32, horizon: f32) -> NightSky {
+        let direct = weather.direct_light_factor();
+        let mut night = NightSky::default();
+        for (slot, moon) in night.moons.iter_mut().zip(self.moon_list().iter()) {
+            let (phase, frame) = moon.phase(clock);
+            let position = moon.position(&self.orbit, clock, &self.calendar, phase);
+            let (illuminated, brightness) = crate::night::phase_light(phase);
+            let full = moon.illuminance * direct;
+            #[expect(clippy::cast_possible_truncation, reason = "fraction")]
+            let phase = phase as f32;
+            *slot = MoonState {
+                position,
+                phase,
+                illuminated,
+                brightness,
+                frame,
+                illuminance: full * brightness,
+                full_illuminance: full,
+                transmittance: self.atmosphere.transmittance(
+                    self.observer_altitude,
+                    position.elevation,
+                    weather.haze,
+                    TRANSMITTANCE_SAMPLES,
+                ) * visible_disk_fraction(position.elevation, horizon, moon.angular_size),
+                angular_size: moon.angular_size,
+                tint: Vec3::from(moon.tint),
+                occluder: moon.occluder,
+            };
+            night.moon_count += 1;
+        }
+        night.stars = if self.stars.enabled {
+            self.stars.visibility.sample(sun_deg).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        night
+    }
 }
+
+/// One moonlight for all moons: from the brightest moon at the ground, with
+/// the illuminance that makes its ground light the sum of all of theirs
+/// (one shadow-casting light rather than one per moon, as games do).
+fn moonlight(moons: &[MoonState]) -> SkyLight {
+    let Some(brightest) = moons
+        .iter()
+        .max_by(|a, b| a.ground_illuminance().total_cmp(&b.ground_illuminance()))
+    else {
+        return SkyLight {
+            direction: Vec3::NEG_Y,
+            elevation: -std::f32::consts::FRAC_PI_2,
+            ..SkyLight::default()
+        };
+    };
+    let total: f32 = moons.iter().map(MoonState::ground_illuminance).sum();
+    let own = luminance(brightest.transmittance);
+    let illuminance = if own > 1e-6 { total / own } else { brightest.illuminance };
+    // The disk tint colors the light too (normalized to luminance 1).
+    let tint = brightest.tint / luminance(brightest.tint).max(1e-6);
+    SkyLight {
+        direction: brightest.position.direction,
+        elevation: brightest.position.elevation,
+        illuminance,
+        transmittance: brightest.transmittance * tint,
+        casts_shadows: false,
+    }
+}
+
+const _: () = assert!(MAX_MOONS >= 1);

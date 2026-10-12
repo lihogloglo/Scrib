@@ -137,6 +137,56 @@ and `bevy_fast_clouds` (0.19) are M6 cloud candidates.
 `kj-bevy-realistic-sun` targets 0.20 but has a non-standard license. The
 sun math is ~150 lines with tests, so we own it.
 
+
+## Night sky and drawn bodies (S2/S3, nightsky 2026-10-13)
+
+What is *lit* stays physical; what is *drawn* is artistic where games are.
+
+- **Sun disk** (`SunDiskLook`): the drawn disk has its own angular size
+  (default 2°, Morrowind 2.5°, `--sun-size`), separate from the light's
+  physical 0.53° (`sun_angular_size`: horizon fade, soft shadows). Bevy's
+  `SunDisk` divides the light by the disk's solid angle, so a bigger disk
+  keeps the same total light: still ~10⁸ nits, far above white, so it
+  saturates, blooms and is hidden by cloud transmittance in the composite.
+  Glare (`glare`, share of the sun's light in an exponential halo of
+  `glare_size`) is drawn in the night pass, before the clouds, so clouds
+  hide it. Industry: UE's `SkyAtmosphere` draws the light's source angle
+  (physical by default, artists raise it) plus bloom/lens flare; Frostbite
+  (Hillaire 2016/2020) keeps a physical disk and relies on bloom; RDR2 and
+  most open worlds draw a large disk with a strong halo. We do the latter
+  with the disk energy-conserving.
+- **Moons** (`Moon`, any number, `MAX_MOONS` = 4 drawn): each has its own
+  phase cycle (`phase_period_days`, `phase_at_epoch`, optional
+  `phase_steps` for one texture per phase), path (`MoonPath::Synodic`:
+  physical, position follows phase; `MoonPath::Circuit`: its own circuit
+  period, tilt and declination for fantasy skies), size, tint, full-moon
+  illuminance and phase textures (asset paths; none: a shaded sphere lit
+  by the phase). `SkySettings::moons` empty = one Earth moon from the orbit.
+  Lighting: one moonlight (`SkyState::moon`) toward the brightest moon at the
+  ground, with the illuminance that makes its ground light the sum of all
+  moons (Lambert phase law each): one shadow caster, as games do.
+- **Stars** (`StarField`): procedural, three cube-map hash layers (few
+  bright, many faint, warm-to-blue tints, scintillation near the horizon).
+  Each star is a Gaussian about a pixel wide whose integral is its
+  illuminance (`brightest_lux`, Sirius-class 2e-5 lx), so brightness does
+  not depend on resolution. Hidden physically by the sky's own brightness
+  and the atmosphere's extinction (per-elevation transmittance table), plus
+  an artistic `visibility` curve over sun elevation (−4° → −14°).
+- **Render** (`sf_sky_bevy::night`): one fullscreen pass at the far plane,
+  depth-tested (`GreaterEqual` in reverse Z) so only sky pixels run, additive
+  onto Bevy's sky after `render_sky` and before the transparent pass; the
+  cloud composite (ordered after it by the same `SkyOrderScaffold`
+  discovery; add `SkyPlugin` before cloud plugins) then dims and hides
+  everything behind clouds. The moons' disks hide stars and farther moons
+  (`occluder`, the unlit side too). The moons' `SunDisk`s are zero-intensity
+  (the lights still scatter in the atmosphere).
+- **Why our own pass**: Bevy 0.20's atmosphere draws only uniform `SunDisk`s
+  (no texture, no phase, no stars); a transparent mesh would draw over the
+  clouds and an opaque one would replace the in-scattered sky in front of it
+  (a dark moon by day). No maintained crate draws stars/moons into Bevy's
+  atmosphere (`bevy_sky_gradient` is a gradient-sky replacement).
+- **Cost** (1440p, RTX 4060 laptop, sky-filled view): night pass 0.26 ms at night (stars + full Masser; shared machine), 0.08 ms at noon (stars off). The three star layers are most of it; a cheaper faint layer is the lever if needed.
+
 ## Data model (`sf_sky`)
 
 - `Calendar { hours_per_day, days_per_year }`; `SkyClock { days: f64,
@@ -266,7 +316,7 @@ sun math is ~150 lines with tests, so we own it.
    Fixture meshes that enclose a light (lanterns) occlude its proxy: the
    adapter should mark them `NoRayTracing` or the proxy radius must clear
    them.
-4. Night sky has no stars (M6), and the moon disk has no phase shape.
+4. ~~Night sky has no stars (M6), and the moon disk has no phase shape.~~ Done (S3, "Night sky and drawn bodies"); open: a star catalogue or a game's own star texture (adapter hook), lunar eclipses, moonlit-cloud silver lining from the moon pass.
 5. Spot lights are not proxied (a sphere has no cone). Revisit when Solari
    gains punctual lights; then delete `proxy.rs`.
 

@@ -12,9 +12,13 @@
 //!   (cargo feature `dlss`, NVIDIA RTX), off elsewhere.
 //! - [`PointLightProxy`]: punctual lights become emissive spheres for the
 //!   ray tracer, which doesn't support point lights yet.
+//! - Night sky (`night.rs`): stars, moons (textured per phase or shaded)
+//!   and the sun's glare, drawn into the sky before any cloud composite.
+//!   The sun disk's drawn size is [`sf_sky::SunDiskLook`], not the light's.
 //! - [`PointShadowBudget`]: shadow maps for the few most important
 //!   [`BudgetedShadow`] point lights, faded by distance and over time.
 
+mod night;
 mod path;
 mod proxy;
 mod shadow_budget;
@@ -223,6 +227,7 @@ impl Plugin for SkyPlugin {
                         update_medium,
                         setup_sky_cameras,
                         apply_lights,
+                        apply_sun_disk,
                         apply_cameras,
                     ),
                 )
@@ -233,12 +238,14 @@ impl Plugin for SkyPlugin {
                 PostUpdate,
                 place_atmosphere.in_set(SkySystems::Origin).after(TransformSystems::Propagate),
             );
+        night::build(app);
         path::build(app);
         proxy::build(app);
         upscale::build(app);
     }
 
     fn finish(&self, app: &mut App) {
+        night::finish(app);
         path::finish(app);
         upscale::finish(app);
     }
@@ -316,10 +323,7 @@ fn spawn_sky(
                 shadow_maps_enabled: true,
                 ..DirectionalLight::default()
             },
-            SunDisk {
-                angular_size: settings.sun_angular_size,
-                intensity: 1.0,
-            },
+            sun_disk(settings),
             cascades.clone(),
             Transform::default(),
         ));
@@ -330,13 +334,31 @@ fn spawn_sky(
                 shadow_maps_enabled: false,
                 ..DirectionalLight::default()
             },
+            // Moons are drawn by the night pass (phases, textures); the
+            // light keeps a zero-intensity disk (no disk means Bevy's default).
             SunDisk {
                 angular_size: settings.moon_angular_size,
-                intensity: 1.0,
+                intensity: 0.0,
             },
             cascades,
             Transform::default(),
         ));
+    }
+}
+
+fn sun_disk(settings: &SkySettings) -> SunDisk {
+    SunDisk {
+        angular_size: settings.sun_disk.angular_size,
+        intensity: settings.sun_disk.intensity,
+    }
+}
+
+/// The drawn sun disk follows [`SkySettings::sun_disk`].
+fn apply_sun_disk(config: Res<SkyConfig>, mut disks: Query<&mut SunDisk, With<SunLight>>) {
+    if config.is_changed() {
+        for mut disk in &mut disks {
+            *disk = sun_disk(&config.0);
+        }
     }
 }
 

@@ -425,3 +425,93 @@ fn clamped_compensation_keeps_auto_exposure_in_range() {
     // In range: unchanged.
     assert!(close(r.clamp_compensation(7.0, -3.0, -3.6), -3.6, 1e-6));
 }
+
+// ---- night sky: moons, stars, sun disk ----
+
+fn two_moons() -> SkySettings {
+    let circuit = |hour_angle_at_epoch_deg, tilt_deg| MoonPath::Circuit {
+        circuit_days: 25.0 / 24.0,
+        hour_angle_at_epoch_deg,
+        tilt_deg,
+        declination_deg: 0.0,
+    };
+    let frames = |n: &str| (0..8).map(|k| format!("{n}_{k}")).collect();
+    SkySettings {
+        moons: vec![
+            Moon {
+                name: "big".into(),
+                angular_size: 0.12,
+                phase_period_days: 24.0,
+                phase_at_epoch: 0.5,
+                phase_steps: 8,
+                path: circuit(0.0, 35.0),
+                illuminance: 0.8,
+                textures: frames("big"),
+                ..Moon::default()
+            },
+            Moon {
+                name: "small".into(),
+                angular_size: 0.05,
+                phase_period_days: 24.0,
+                phase_at_epoch: 0.5,
+                phase_steps: 8,
+                path: circuit(-20.0, 50.0),
+                illuminance: 0.2,
+                textures: frames("small"),
+                ..Moon::default()
+            },
+        ],
+        ..SkySettings::default()
+    }
+}
+
+#[test]
+fn circuit_moons_transit_at_epoch_and_rise_later_each_day() {
+    let s = two_moons();
+    let midnight = s.evaluate(&SkyClock { days: 0.0, time_scale: 0.0, paused: true }, &Weather::default());
+    let big = midnight.night.moons()[0];
+    // Highest at day 0 midnight, tilted 35° from the zenith.
+    assert!(close(big.position.elevation_deg(), 55.0, 0.5), "{}", big.position.elevation_deg());
+    // A day later it is 1/25 of a circuit behind: not yet back at transit.
+    let next = s.evaluate(&SkyClock { days: 1.0, time_scale: 0.0, paused: true }, &Weather::default());
+    let later = s.evaluate(&SkyClock { days: 1.0 + 1.0 / 24.0, time_scale: 0.0, paused: true }, &Weather::default());
+    assert!(later.night.moons()[0].position.elevation > next.night.moons()[0].position.elevation);
+    assert_eq!(midnight.night.moon_count, 2);
+}
+
+#[test]
+fn moon_phases_snap_to_frames_and_cycle() {
+    let s = two_moons();
+    let at = |days: f64| s.evaluate(&SkyClock { days, ..SkyClock::default() }, &Weather::default()).night.moons()[0];
+    let full = at(0.0);
+    assert_eq!(full.frame, Some(4));
+    assert!(close(full.brightness, 1.0, 1e-3));
+    // 3 days per step of a 24-day cycle.
+    assert_eq!(at(3.1).frame, Some(5));
+    let new = at(12.0);
+    assert_eq!(new.frame, Some(0));
+    assert!(new.illuminance < 1e-3);
+    assert_eq!(at(24.0).frame, Some(4));
+}
+
+#[test]
+fn one_moonlight_sums_the_moons_toward_the_brightest() {
+    let s = two_moons();
+    let sky = s.evaluate(&SkyClock { days: 0.0, time_scale: 0.0, paused: true }, &Weather::default());
+    let moons = sky.night.moons();
+    let total: f32 = moons.iter().map(MoonState::ground_illuminance).sum();
+    assert!(close(sky.moon.ground_illuminance(), total, total * 0.02 + 1e-6));
+    assert!(sky.moon.direction.dot(moons[0].position.direction) > 0.999);
+}
+
+#[test]
+fn default_sky_has_one_earth_moon_and_stars_fade_in_at_dusk() {
+    let s = SkySettings::default();
+    assert_eq!(s.moon_list().len(), 1);
+    let noon = s.evaluate(&SkyClock::at(172.0, 12.0, &s.calendar), &Weather::default());
+    let midnight = s.evaluate(&SkyClock::at(172.0, 0.0, &s.calendar), &Weather::default());
+    assert!(close(noon.night.stars, 0.0, 1e-6));
+    assert!(close(midnight.night.stars, 1.0, 1e-6));
+    // The drawn sun is bigger than the physical one.
+    assert!(s.sun_disk.angular_size > s.sun_angular_size * 2.0);
+}
