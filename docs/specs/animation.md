@@ -906,7 +906,7 @@ gains don't explode at our fixed step. Learned physics controllers
 - Drives are applied as torques/forces from the PD law each physics step,
   which works on either engine: avian3d 0.7 has motors only on revolute
   and prismatic joints (no spherical motor), Rapier has per-axis motors on
-  generic joints. An input to ARCHITECTURE §11's M4 physics decision.
+  generic joints. Decided 2026-10-12: rapier3d, whose implicit joint motors are used directly (physics.md "Ragdolls and the animation blend").
 - Kinematic hit reactions before physics (M3/M4): additive directional hit
   clips (the graph's additive layer) plus a `HitReact` op that kicks
   critically damped springs on the hit region's joints (`sf_anim::spring`).

@@ -119,7 +119,7 @@ across origin moves and precise near the camera. Periods that divide 256 m
 need no phase, since `rel_pos` already repeats with them. A pattern with a
 longer period gets its own entry.
 
-**Physics contract (M4 writes the avian spec against this).** The
+**Physics contract (M4: physics.md "Stepping and the floating origin" implements it on rapier3d).** The
 simulation runs in the floating-origin frame and only inside the active ring
 (R0, streaming.md), so f32 is ample. When the origin changes cell, every
 body shifts by the same exact multiple of 256 m in the same frame. Velocities

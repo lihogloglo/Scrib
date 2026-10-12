@@ -21,7 +21,7 @@ mod upscale;
 #[cfg(all(test, not(feature = "solari")))]
 mod tests;
 
-use bevy_app::{App, Plugin, Startup, Update};
+use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{Assets, Handle};
 use bevy_camera::{Camera3d, Exposure};
 use bevy_color::{Color, LinearRgba};
@@ -35,6 +35,7 @@ use bevy_math::{Dir3, Vec3};
 use bevy_pbr::AtmosphereSettings;
 use bevy_time::Time;
 use bevy_transform::components::{GlobalTransform, Transform};
+use bevy_transform::TransformSystems;
 
 pub use sf_sky;
 use sf_sky::{RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
@@ -160,7 +161,7 @@ pub struct MoonLight;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct SkyAtmosphere;
 
-/// Ordering of the plugin's systems (all in `Update`).
+/// Ordering of the plugin's systems (in `Update`, except `Origin`).
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SkySystems {
     /// Advance [`SkyTime`].
@@ -169,6 +170,10 @@ pub enum SkySystems {
     RenderPath,
     /// Evaluate [`CurrentSky`] and apply it to lights and cameras.
     Apply,
+    /// `PostUpdate`, after transform propagation: place the planet under
+    /// [`SkyRenderOptions::sea_level`]. A floating origin that moves the sea
+    /// level runs before this set, so the atmosphere follows in the same frame.
+    Origin,
 }
 
 /// The sky plugin. Insert [`SkyConfig`], [`SkyTime`], etc. before adding it
@@ -216,6 +221,10 @@ impl Plugin for SkyPlugin {
                 )
                     .chain()
                     .in_set(SkySystems::Apply),
+            )
+            .add_systems(
+                PostUpdate,
+                place_atmosphere.in_set(SkySystems::Origin).after(TransformSystems::Propagate),
             );
         path::build(app);
         proxy::build(app);
@@ -342,15 +351,14 @@ fn evaluate_sky(
     sky.0 = config.0.evaluate(&clock.0, &weather.0);
 }
 
-/// Rebuilds the medium when the atmosphere description or the haze change,
-/// and keeps the planet under the sea level.
+/// Rebuilds the medium when the atmosphere description or the haze change.
 fn update_medium(
     config: Res<SkyConfig>,
     options: Res<SkyRenderOptions>,
     weather: Res<WeatherState>,
     mut medium: ResMut<MediumState>,
     mut media: ResMut<Assets<ScatteringMedium>>,
-    mut atmospheres: Query<(&mut Atmosphere, &mut GlobalTransform), With<SkyAtmosphere>>,
+    mut atmospheres: Query<&mut Atmosphere, With<SkyAtmosphere>>,
 ) {
     let model = &config.0.atmosphere;
     let haze = weather.0.haze;
@@ -364,12 +372,26 @@ fn update_medium(
         *asset = build_medium(model, haze, options.medium_resolution);
         medium.built_from = Some((model.clone(), haze));
     }
-    if config.is_changed() || options.is_changed() {
-        for (mut atmosphere, mut transform) in &mut atmospheres {
+    if config.is_changed() {
+        for mut atmosphere in &mut atmospheres {
             atmosphere.inner_radius = model.inner_radius;
             atmosphere.outer_radius = model.outer_radius;
             atmosphere.ground_albedo = model.ground_albedo;
-            *transform = atmosphere_transform(model.inner_radius, options.sea_level);
+        }
+    }
+}
+
+/// Keeps the planet under the sea level. In `PostUpdate` so a sea level set
+/// by a floating-origin shift that frame (after propagation) applies before
+/// extraction; a frame late, the atmosphere and the cloud shell jump by a cell.
+fn place_atmosphere(
+    config: Res<SkyConfig>,
+    options: Res<SkyRenderOptions>,
+    mut atmospheres: Query<&mut GlobalTransform, With<SkyAtmosphere>>,
+) {
+    if config.is_changed() || options.is_changed() {
+        for mut transform in &mut atmospheres {
+            *transform = atmosphere_transform(config.0.atmosphere.inner_radius, options.sea_level);
         }
     }
 }

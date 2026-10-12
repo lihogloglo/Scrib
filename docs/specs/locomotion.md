@@ -101,7 +101,9 @@ Surface ids give foot-placement and footstep sounds their material
   the intents ("Local avoidance (ORCA)"). Named as a stage of the
   controller, not a scaffold: its state and inputs are the M4 controller's.
 - **Physics controller (M4)**: the same `LocomotionIntent`/`Locomotion` on
-  a physics capsule; `bevy_tnua` or our own (ARCHITECTURE §11).
+  a physics capsule; `bevy_tnua` or our own (ARCHITECTURE §11). **Decided 2026-10-12 (physics.md
+  "Controller"):** the kinematic mover stays, in `Update` at frame rate (not moved to the fixed step), with a
+  kinematic capsule body, capped pushes on dynamic bodies and `PhysicsProbe` replacing `StaticProbe`.
 
 **NPC drivers.** Until `sf_ai` (M10), NPC intents come from an adapter
 system that follows authored paths. This is the named scaffold

@@ -91,9 +91,9 @@ Two repositories, one-way dependency:
 |---|---|---|---|
 | Engine | `bevy` 0.20 | — | Solari: atmosphere, env maps, directional + emissive lights. Point/spot lights planned. |
 | TES3 formats | `Greatness7/tes3` (git, MIT) | n/a | Reads and writes ESP/ESM/NIF/KF/BSA; active (Sep 2026). Pin a commit. |
-| Physics | `avian3d` 0.7 | 0.19 | ECS-native colliders and bodies, transform interpolation. `bevy_rapier3d` 0.37 already targets 0.20 as a fallback. |
+| Physics | `rapier3d` 0.36 (direct, Bevy-free `sf_physics`) | n/a | Decided 2026-10-12 (§10, specs/physics.md): same parry3d as our probes, per-axis joint motors, own floating-origin rebase. `avian3d` 0.8 is the fallback. |
 | Lua | `mlua` 0.12, **Luau** | n/a | Sandboxed by design, 5.1-compatible, optional native codegen, type checker for mod authors. |
-| Char. controller | `bevy_tnua` 0.32 | 0.19 | Or our own kinematic controller. Decide during the physics milestone. |
+| Char. controller | own (`sf_controller`) | — | Kinematic mover kept for M4 (§10 2026-10-12); `bevy_tnua` not adopted. |
 | VFX | `bevy_hanabi` 0.19 | 0.19 | GPU particles: rain, ash, magic. |
 | Clouds, fog, weather | own (`sf_atmos_bevy` et al., spec `weather.md`) | — | No built-in clouds or height fog in Bevy; we use its `Atmosphere` (aerial perspective) and `DirectionalLightTexture` (cloud shadows). Nubis math ported from the owner's Megalophobia (license gate in weather.md). |
 | IK | own | — | Existing crates are stale (Bevy 0.8–0.14). |
@@ -108,8 +108,8 @@ milestone). For 0.19, the main crates ported within about two weeks
 |---|---|---|---|
 | `big_space` | coordinates (M2) | rc | 0.14.0-rc.0 / 0.20-rc |
 | `bevy_3d_tiles` | far-field evaluation (M2) | no | 0.5.1 / 0.19 |
-| `avian3d` | physics (M4) | no | 0.7 / 0.19 (`bevy_rapier3d` 0.37 is on 0.20) |
-| `bevy_tnua` | character controller option (M4) | no | 0.32 / 0.19 |
+| `avian3d` | physics fallback (M4; rapier3d chosen, §10 2026-10-12) | no | 0.7 / 0.19; main 0.8.0-dev on 0.19, PR #1070 ports to 0.20.0-rc.1 (checked 2026-10-12) |
+| `bevy_tnua` | not adopted (own kinematic mover, §10 2026-10-12) | no | 0.32 / 0.19 |
 | `bevy_hanabi` | GPU VFX: splashes, magic (M5–M6); rain/snow/ash don't need it (weather.md) | no | 0.19 / 0.19 (main: 0.20.0-dev, still on Bevy 0.19, checked 2026-10-11) |
 | `bevy-aqua` | water reference (M6) | no | 0.1.3 / 0.19 |
 | `bevy_fast_clouds`, `bevy_weather` | clouds/weather **references only** (M6, weather.md) | no | 0.19.0 / 0.19, 0.2.0 / 0.19.1 |
@@ -275,7 +275,7 @@ and writes the same profile files the CLI uses.
 
 ### 7.3 Rigid-body physics
 
-- **Avian**, on a fixed timestep with transform interpolation (the lesson
+- **Rapier** (`rapier3d` behind `sf_physics`; was Avian, changed 2026-10-12, §10), on a fixed timestep with transform interpolation (the lesson
   of Godotwind's "carry vibration" bug).
 - **Static world:** colliders baked from NIF collision nodes when present,
   otherwise from convex decomposition at bake time. Tile-level heightfields
@@ -1174,7 +1174,7 @@ exist; order follows what's most fun to see next, gated by §0 targets.
 
 ## 11. Open decisions
 
-- Physics character controller: `bevy_tnua` vs our own. Decide in M4.
+- ~~Physics character controller: `bevy_tnua` vs our own.~~ Resolved 2026-10-12 (§10): our kinematic mover.
 - INFO response order (prev/next linked lists across plugins): resolved by
   the dialogue system (M7), not at load.
 
@@ -1490,3 +1490,30 @@ exist; order follows what's most fun to see next, gated by §0 targets.
   their particles by the node's frame-to-frame motion instead of living in world entities (no
   floating-origin bookkeeping). Carried lights keep a horizontal clearance from the carrier and a
   reduced intensity because Bevy has no per-light near-field clamp.
+- **2026-10-12 (physics-spec; specs/physics.md, bevyrrowind physics-adapter.md): M4 physics backend is `rapier3d`
+  0.36.1 used directly, behind a Bevy-free `sf_physics`, not `avian3d` and not `bevy_rapier3d`** (supersedes §4's
+  "Physics: avian3d" row and §7.3's "Avian"). Evidence (crates.io/GitHub, 2026-10-12): avian main (0.8.0-dev) is still
+  on Bevy 0.19; open PR #1070 ports it to 0.20.0-rc.1 in ~100 changed `src/` lines but needs git forks of
+  `bevy_heavy`, `bevy_transform_interpolation` and `glam_matrix_extras`; avian's joints have motors only on revolute
+  and prismatic joints (no spherical/6-DOF motor) and its release uses parry 0.27. `bevy_rapier3d` 0.37 is on Bevy 0.20
+  but syncs bodies on `Changed<GlobalTransform>`, which big_space rewrites for every entity on an origin cell change
+  (a teleport of every body each shift). `rapier3d` has no Bevy dependency, uses **the same parry3d 0.31.1 as our M3
+  probes** (`collision.cook` shapes and `StaticShape` trimeshes go in unchanged), per-axis motors on generic joints,
+  reduced-coordinate multibodies, implicit acceleration-based motors (stable PD for powered ragdolls), and soft bodies
+  since 0.36. Physics runs in an f32 frame around an anchor cell, rebased by whole 256 m cells when the player is
+  512 m away (PhysX `shiftOrigin` style), independent of the render origin; only R0 simulates; bodies freeze into
+  `PlacementOverlay` at R0's edge. Fixed 60 Hz with interpolation; held items interpolate in holder space (the
+  carry-vibration fix). **Controller (resolves §11): keep `sf_controller`'s kinematic mover**, at frame rate, with a
+  kinematic capsule body and capped push impulses (UE CMC, Jolt `CharacterVirtual`); `bevy_tnua` (Bevy 0.19, a dynamic
+  floating capsule) not adopted. **Cloth for M4 is a bone lattice** (auto-placed cloth joints on robe/skirt hems,
+  XPBD with tethers, max distance and leg capsules, in character space) running as an animation op and rendered by
+  the existing skinning; mesh cloth for capes/banners (rapier soft bodies or GPU XPBD) is after M4. Avian 0.8 stays
+  the fallback if the P1 spike misses the physics.md gates; the swap would touch only `sf_physics`.
+- **2026-10-12 (physics-p1): owner confirmed the five M4 physics decisions** of the physics-spec entry above:
+  (1) `rapier3d` directly, not Avian; (2) cloth is a bone lattice for robes and skirts in M4, mesh cloth later;
+  (3) items are physical, asleep until touched, NPCs nudge small items, tap Activate picks up and hold grabs;
+  (4) item mass factor and holder limits are calibrated by eye later; (5) unsupported items stay fixed until grabbed
+  (`HOLD_UNTIL_GRABBED`). **Owner addition:** carry and throw limits follow the holder's strength stat (adapter
+  `HolderLimits { carry_force, carry_mass, drag_mass, throw_impulse }`; Morrowind maps Strength), and objects too heavy
+  to carry are **dragged** (ball joint at the grab point, holder slowed), including dead bodies dragged by the grabbed
+  limb (physics.md "Carry and throw", task P6).

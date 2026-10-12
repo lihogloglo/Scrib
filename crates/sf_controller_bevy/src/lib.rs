@@ -96,9 +96,15 @@ impl<G: GroundProbe + Resource> Plugin for SfControllerPlugin<G> {
                 PostUpdate,
                 feed_animators::<G>.in_set(ControllerSystems::Feed),
             );
+        // Drawn only when the app added Bevy's gizmo plugin (headless apps and
+        // tests run without it).
         #[cfg(feature = "debug")]
-        app.init_resource::<ControllerGizmos>()
-            .add_systems(PostUpdate, draw_movers.after(ControllerSystems::Feed));
+        app.init_resource::<ControllerGizmos>().add_systems(
+            PostUpdate,
+            draw_movers
+                .after(ControllerSystems::Feed)
+                .run_if(resource_exists::<bevy_gizmos::config::GizmoConfigStore>),
+        );
     }
 }
 

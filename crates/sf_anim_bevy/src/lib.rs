@@ -82,10 +82,14 @@ impl Plugin for SfAnimPlugin {
                 PostUpdate,
                 (write_bones, apply_root_and_events).in_set(AnimSystems::Apply),
             );
+        // Drawn only when the app added Bevy's gizmo plugin (headless apps and
+        // tests run without it).
         #[cfg(feature = "debug")]
         app.init_resource::<AnimGizmos>().add_systems(
             PostUpdate,
-            draw_skeletons.after(TransformSystems::Propagate),
+            draw_skeletons
+                .after(TransformSystems::Propagate)
+                .run_if(resource_exists::<bevy_gizmos::config::GizmoConfigStore>),
         );
     }
 }

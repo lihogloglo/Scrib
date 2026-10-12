@@ -67,9 +67,18 @@ pub struct Clouds {
 
 /// The absolute world position (meters) of the origin of origin-relative
 /// coordinates (`big_space`: the floating origin cell's corner). Apps without
-/// a floating origin leave it at zero.
+/// a floating origin leave it at zero. Write it before [`CloudSystems::Drive`]
+/// in the frame the origin moves, or the clouds jump by a cell for a frame.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CloudsOrigin(pub DVec3);
+
+/// The plugin's systems.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CloudSystems {
+    /// `PostUpdate`, after transform propagation: wind, texture offsets from
+    /// [`CloudsOrigin`], the shadow light, and the frame's uniform data.
+    Drive,
+}
 
 /// Render clouds for this camera (it also needs Bevy's `AtmosphereSettings`).
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -154,7 +163,7 @@ impl Plugin for CloudsPlugin {
             .init_resource::<CloudFrame>()
             .add_systems(Startup, create_shadow_image)
             .add_systems(Update, poll_noise)
-            .add_systems(PostUpdate, drive.after(TransformSystems::Propagate));
+            .add_systems(PostUpdate, drive.in_set(CloudSystems::Drive).after(TransformSystems::Propagate));
         render::build(app);
     }
 
