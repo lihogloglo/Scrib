@@ -161,5 +161,5 @@ fn actor_models_runtime_effects_census() {
         }
     }
     eprintln!("heart: {} clips, effect curves changing within a clip: {moving:?}", source.clips.len());
-    assert!(moving.iter().any(|m| m.contains("vis:")) && moving.iter().any(|m| m.contains("mat:")), "heart effects advance");
+    assert!(moving.iter().any(|m| m.contains("hide:")) && moving.iter().any(|m| m.contains("mat:")), "heart effects advance");
 }

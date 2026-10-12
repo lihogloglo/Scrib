@@ -123,3 +123,26 @@ fn stance_of_weapon() {
         assert_eq!(S::of_weapon(Drawn, Some(w)), s, "{w:?}");
     }
 }
+
+/// Humanoids loop `Torch` on the left arm, weighted by `torch`, between the
+/// `upper` slot (weapon actions) and the `full` slot (scripted groups).
+#[test]
+fn torch_arm_layers_over_weapon_actions_and_under_scripted_groups() {
+    use sf_anim_graph::asset::{LayerMode, NodeSpec, ValueSpec};
+    for t in [Template::Humanoid, Template::FirstPerson] {
+        let a = build::asset(t);
+        assert!(a.params.iter().any(|q| q.name == p::TORCH), "{t:?}");
+        assert!(a.masks.contains_key("left_arm"), "{t:?}");
+        let NodeSpec::Slot { input, .. } = &a.nodes["full_slot"] else { panic!("{t:?}: full slot") };
+        assert_eq!(input, "torch_layer", "{t:?}");
+        let NodeSpec::LayeredPerBone { base, layers } = &a.nodes["torch_layer"] else { panic!("{t:?}: torch layer") };
+        assert_eq!(base, "upper_slot", "{t:?}");
+        let [layer] = layers.as_slice() else { panic!("{t:?}: one layer") };
+        assert!(layer.mode == LayerMode::Override && layer.mask.as_deref() == Some("left_arm"));
+        assert_eq!(layer.weight, ValueSpec::Param(p::TORCH.into()));
+        let NodeSpec::Clip { clip, looping, .. } = &a.nodes[&layer.node] else { panic!("{t:?}: torch clip") };
+        assert!(clip == "Torch" && *looping == Some(true) && a.clips["Torch"].optional, "{t:?}");
+    }
+    let creature = build::asset(Template::Creature);
+    assert!(!creature.nodes.contains_key("torch_layer") && !creature.params.iter().any(|q| q.name == p::TORCH));
+}

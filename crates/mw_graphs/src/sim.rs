@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use glam::{Vec2, Vec3};
-use sf_anim::{Clip, EventEdge, Skeleton};
+use sf_anim::{Clip, EventEdge, RootDelta, Skeleton};
 use sf_anim_graph::slot::LATE_CLIP;
 use sf_anim_graph::{
     BindError, Binding, CompiledGraph, GraphInstance, GraphOutput, GroundSample, IkTarget, MontageClip, MontageId, NodeKind, ParamType, Params,
@@ -39,7 +39,16 @@ pub struct Sim {
     /// The character's measured velocity, character space (what the
     /// controller feeds; `SpeedMatch` scales playback by it).
     pub velocity: Vec3,
-    ground: Vec<Option<GroundSample>>,
+    /// How the character moved since the previous update, in its frame then
+    /// (keeps foot locks in the world); used by the next update, then cleared.
+    pub moved: RootDelta,
+    /// Turn rate, rad/s.
+    pub turn_rate: f32,
+    /// Animation LOD tier of the updates (0 = A0).
+    pub lod: usize,
+    /// Per graph leg: the ground under it (character space), as the
+    /// controller's foot probes at `out.probe_origins` give it.
+    pub ground: Vec<Option<GroundSample>>,
     ik: Vec<Option<IkTarget>>,
     warp: Vec<Option<WarpTarget>>,
 }
@@ -49,7 +58,7 @@ impl Sim {
         let instance = GraphInstance::new(&Binding::new(&graph, &skeleton, &clips)?);
         let out = GraphOutput::new(&graph);
         let (ground, ik, warp) = (vec![None; graph.legs.len()], vec![None; graph.ik_targets.len()], vec![None; graph.warp_targets.len()]);
-        Ok(Self { graph, skeleton, clips, instance, out, time: 0.0, events: Vec::new(), notices: Vec::new(), velocity: Vec3::ZERO, ground, ik, warp })
+        Ok(Self { graph, skeleton, clips, instance, out, time: 0.0, events: Vec::new(), notices: Vec::new(), velocity: Vec3::ZERO, moved: RootDelta::ZERO, turn_rate: 0.0, lod: 0, ground, ik, warp })
     }
 
     fn binding(&self) -> Binding<'_> {
@@ -80,13 +89,15 @@ impl Sim {
         for _ in 0..steps {
             let inputs = UpdateInputs {
                 velocity: self.velocity,
+                moved: std::mem::take(&mut self.moved),
+                turn_rate: self.turn_rate,
                 ground: &self.ground,
                 ik_targets: &self.ik,
                 warp_targets: &self.warp,
                 ..UpdateInputs::default()
             };
             let b = Binding { graph: &self.graph, skeleton: &self.skeleton, clips: &self.clips };
-            self.instance.update(&b, dt, 0, &inputs, &mut self.out);
+            self.instance.update(&b, dt, self.lod, &inputs, &mut self.out);
             self.time += dt;
             self.notices.extend(self.out.slot_notices.iter().map(|n| (self.time, *n)));
             for e in &self.out.events {

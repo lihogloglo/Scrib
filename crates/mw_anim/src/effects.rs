@@ -10,7 +10,13 @@
 //! geometry-morph weights, each group's clip carries their cut as float
 //! curves, and the game applies them by name after the graph blends them:
 //!
-//! - `vis:<node>`: 1 shown, 0 hidden (step keys).
+//! - `hide:<node>` / `show:<node>`: visibility, rest-neutral (step keys).
+//!   A node the file shows gets `hide:` (1 hidden), one it hides gets
+//!   `show:` (1 shown), so 0 is always the node's rest state: the graph
+//!   outputs 0 for a curve no playing clip carries, and a biped creature
+//!   plays groups of `xbase_anim.kf`, which carry none of its own curves (a
+//!   shown-is-1 curve hid the dremora's armor whenever it played one; a
+//!   hidden death-dust sphere must stay hidden there). [`hidden`] reads both.
 //! - `emit:<particle node>`: 1 while the particle controller's emission
 //!   window is open at that animation time, else 0 (step keys; see
 //!   [`emission_keys`]). A second system on a node of the same name is
@@ -25,8 +31,23 @@ use mw_nif::Model;
 use mw_nif::anim::{ColorSlot, Curve as NifCurve, Cycle, Target};
 use mw_nif::particles::ParticleSystem;
 
-/// Name prefix of visibility curves.
-pub const VISIBILITY: &str = "vis:";
+/// Name prefix of visibility curves of nodes shown at rest (1 hides the
+/// node and its subtree).
+pub const HIDE: &str = "hide:";
+/// Name prefix of visibility curves of nodes hidden at rest (1 shows them).
+pub const SHOW: &str = "show:";
+
+/// Whether a visibility effect at a blended curve value hides its node
+/// (step keys blend through 0.5 halfway across a transition); `None` for
+/// other effects.
+#[must_use]
+pub fn hidden(effect: &Effect<'_>, value: f32) -> Option<bool> {
+    match effect {
+        Effect::Hide { .. } => Some(value > 0.5),
+        Effect::Show { .. } => Some(value <= 0.5),
+        _ => None,
+    }
+}
 /// Name prefix of particle emission curves.
 pub const EMISSION: &str = "emit:";
 /// Name prefix of material curves.
@@ -78,7 +99,12 @@ impl Channel {
 /// What a clip curve name drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect<'a> {
-    Visibility {
+    /// `hide:<node>`: see [`hidden`].
+    Hide {
+        node: &'a str,
+    },
+    /// `show:<node>`: see [`hidden`].
+    Show {
         node: &'a str,
     },
     /// `name`: the curve name after the prefix, as [`emission_names`] makes it.
@@ -93,8 +119,11 @@ pub enum Effect<'a> {
 
 /// The effect a clip curve drives; `None` for other curves (morph weights).
 pub fn parse(name: &str) -> Option<Effect<'_>> {
-    if let Some(node) = name.strip_prefix(VISIBILITY) {
-        return Some(Effect::Visibility { node });
+    if let Some(node) = name.strip_prefix(HIDE) {
+        return Some(Effect::Hide { node });
+    }
+    if let Some(node) = name.strip_prefix(SHOW) {
+        return Some(Effect::Show { node });
     }
     if let Some(name) = name.strip_prefix(EMISSION) {
         return Some(Effect::Emission { name });
@@ -115,7 +144,7 @@ pub fn material_name(material: &mw_nif::Material) -> Option<&str> {
 pub struct Effects {
     /// Material channels (`mat:` names).
     pub curves: Vec<(String, NifCurve<f32>)>,
-    /// Visibility (`vis:` names): `(time, 1 shown / 0 hidden)` step keys;
+    /// Visibility (`hide:` / `show:` names): `(time, 1 off rest / 0 at rest)` step keys;
     /// particle emission (`emit:` names): `(time, 1 emitting / 0 not)`.
     pub steps: Vec<(String, Vec<(f32, f32)>)>,
     /// Controllers left out: untextured materials, ambient/specular colors.
@@ -136,8 +165,10 @@ impl Effects {
                 Target::Transform { .. } => {}
                 Target::Visibility { node, keys } => {
                     let Some(n) = model.nodes.get(*node) else { continue };
-                    let keys = keys.keys().iter().map(|&(t, shown)| (t, if shown { 1.0 } else { 0.0 })).collect();
-                    out.steps.push((format!("{VISIBILITY}{}", n.name), keys));
+                    // Rest-neutral: 0 is the node's state in the file (`visible` includes its ancestors).
+                    let prefix = if n.visible { HIDE } else { SHOW };
+                    let keys = keys.keys().iter().map(|&(t, shown)| (t, if shown == n.visible { 0.0 } else { 1.0 })).collect();
+                    out.steps.push((format!("{prefix}{}", n.name), keys));
                 }
                 Target::Alpha { material, curve } => push(*material, Channel::Alpha, curve.clone()),
                 Target::MaterialColor { material, slot, curve } => {
@@ -253,7 +284,12 @@ mod tests {
             let name = format!("{MATERIAL}ghost.dds:{}", channel.name());
             assert_eq!(parse(&name), Some(Effect::Material { material: "ghost.dds", channel }));
         }
-        assert_eq!(parse("vis:Sphere01"), Some(Effect::Visibility { node: "Sphere01" }));
+        assert_eq!(parse("hide:Sphere01"), Some(Effect::Hide { node: "Sphere01" }));
+        assert_eq!(parse("show:Sphere01"), Some(Effect::Show { node: "Sphere01" }));
+        // 0 (the rest value, and the graph's value for a curve no playing clip carries) is the rest state.
+        let (hide, show) = (Effect::Hide { node: "a" }, Effect::Show { node: "a" });
+        assert_eq!([0.0, 0.5, 1.0].map(|v| hidden(&hide, v)), [Some(false), Some(false), Some(true)]);
+        assert_eq!([0.0, 0.5, 1.0].map(|v| hidden(&show, v)), [Some(true), Some(true), Some(false)]);
         assert_eq!(parse("emit:Fire#1"), Some(Effect::Emission { name: "Fire#1" }));
         assert_eq!(parse("Tri Head#1"), None);
     }

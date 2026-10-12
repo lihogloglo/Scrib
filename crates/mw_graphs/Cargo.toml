@@ -23,6 +23,9 @@ sf_vfs.workspace = true
 mw_actors.workspace = true
 mw_install.workspace = true
 mw_vfs.workspace = true
+# `slope_walk`: the kinematic mover drives the humanoid graph on ramps and stairs.
+sf_controller.workspace = true
+sf_coords.workspace = true
 
 [lints]
 workspace = true

@@ -16,6 +16,10 @@
 //!   Lyra's linked anim layers per weapon over one locomotion machine).
 //! - **Slots**: `upper` (masked: attacks, casts, equip, block) and `full`
 //!   (scripted `PlayGroup`, `LoopGroup`) for humanoids; `full` for creatures.
+//! - **Torch arm** (humanoids): the `Torch` group loops on the left arm
+//!   (`left_arm` mask) while [`params::TORCH`] is up, over locomotion and the
+//!   `upper` slot and under `full`: the original engine's torch overlay
+//!   ranks above weapon actions and below scripted groups.
 //!
 //! Clip references are animation-group names (`WalkForward1h`), a group's
 //! sub-action (`WeaponOneHand@chop`), or the part after its loop
@@ -88,11 +92,14 @@ pub mod params {
     pub const KNOCKED_OUT: &str = "knocked_out";
     pub const DEAD: &str = "dead";
     pub const DEATH_VARIANT: &str = "death_variant";
+    /// Humanoids, 0..1: a lit light is carried in the left hand (and shown).
+    /// Weights the torch arm layer (the `Torch` group on the left arm).
+    pub const TORCH: &str = "torch";
 }
 
 /// Slot names.
 pub mod slots {
-    /// Upper body (humanoids): attacks, casts, equip, block, torch.
+    /// Upper body (humanoids): attacks, casts, equip, block.
     pub const UPPER: &str = "upper";
     /// Full body: scripted groups, creature attacks.
     pub const FULL: &str = "full";
@@ -490,6 +497,12 @@ impl Builder {
                 "upper".into(),
                 MaskSpec { default: 0.0, rules: vec![MaskRule { joint: JointRef::Rig("chest".into()), weight: 1.0, subtree: true }] },
             );
+            // The original engine's left-arm group: the left shoulder's subtree.
+            self.a.masks.insert(
+                "left_arm".into(),
+                MaskSpec { default: 0.0, rules: vec![MaskRule { joint: JointRef::Rig("leftShoulder".into()), weight: 1.0, subtree: true }] },
+            );
+            self.param(params::TORCH, ParamKind::Float(0.0));
         }
 
         // Movement states.
@@ -606,20 +619,26 @@ impl Builder {
                 "upper_slot",
                 NodeSpec::Slot { slot: slots::UPPER.into(), input: top, group: Some(slots::UPPER.into()), mask: Some("upper".into()) },
             );
+            // The torch arm: `Torch` (its start..stop range, looped) on the
+            // left arm while a lit light is carried. Skeletons without the
+            // group (optional, dropped) keep the arm as the layers below.
+            let clip = self.clip("Torch", true, None);
+            let arm = self.play("torch_arm", &clip, Some(true));
+            let weight = ValueSpec::Param(params::TORCH.into());
+            let layers = vec![LayerSpec { node: arm, mode: LayerMode::Override, mask: Some("left_arm".into()), weight }];
+            top = self.node("torch_layer", NodeSpec::LayeredPerBone { base: top, layers });
         }
         top = self.node("full_slot", NodeSpec::Slot { slot: slots::FULL.into(), input: top, group: Some(slots::FULL.into()), mask: None });
         self.a.layers = vec![LayerSpec { node: top, mode: LayerMode::Override, mask: None, weight: ValueSpec::default() }];
 
-        // Clips gameplay plays by name: weapon sub-actions, creature attacks, torch.
+        // Clips gameplay plays by name: weapon sub-actions, creature attacks.
         let mut slot_clips = Vec::new();
         for (group, sections) in WEAPON_SECTIONS {
             for s in *sections {
                 slot_clips.push(self.clip(&format!("{group}@{s}"), true, None));
             }
         }
-        if humanoid {
-            slot_clips.push(self.clip("Torch", true, None));
-        } else {
+        if !humanoid {
             for n in 1..=3 {
                 slot_clips.push(self.clip(&format!("Attack{n}"), true, None));
             }

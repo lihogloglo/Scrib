@@ -54,6 +54,14 @@ impl LightCalibration {
         GlobalAmbientLight { color: Color::srgb_u8(r, g, b), brightness: self.ambient_nits, ..GlobalAmbientLight::default() }
     }
 
+    /// Where a light of `radius` lights a white surface facing it to exactly
+    /// "fully lit" at [`crate::SCENE_EV100`]: `L = I / (π d²)` with
+    /// `I = Φ / 4π` equals [`crate::emissive_nits`]. Closer is brighter
+    /// (inverse-square, no clamp); the original saturates within `radius / 3`.
+    pub fn fully_lit_distance(&self, radius: f32) -> f32 {
+        radius * (self.lumens_per_radius_sq / (4.0 * std::f32::consts::PI * std::f32::consts::PI * crate::emissive_nits())).sqrt()
+    }
+
     pub fn point_light(&self, info: &LightInfo) -> PointLight {
         let [r, g, b] = info.color;
         PointLight {

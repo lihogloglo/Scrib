@@ -331,7 +331,7 @@ F10 toggles them and C cycles the presets live. Hours: change with `[` `]` or `-
 - A/B: F10 (or `--off clouds`): the sky without clouds.
 - Calibrate: cloud size and height (the app halves real-world heights: base
   750 m, top 1,450 m for fair; tiles 2 km shape, 128 m detail).
-- Status: awaiting owner.
+- Status: FAILED (owner 2026-10-12): too little variety: two full overcasts, one interesting pattern, one clear sky. Wants cumulus, high-altitude (cirrus/altostratus), storm clouds, the full range. Sun disk far too small.
 - Source: clouds.
 
 ### CL-2: Clouds composite with atmosphere, far field and terrain
@@ -348,7 +348,7 @@ F10 toggles them and C cycles the presets live. Hours: change with `[` `]` or `-
 - Look for: soft dark patches under clouds that drift with them over terrain,
   buildings and far field; F10 off removes them. Known: past ~8 km the shadow
   map repeats and fades to the average cover; no shadows from the moon.
-- Status: awaiting owner.
+- Status: FAILED (owner 2026-10-12): under the edge of a cloud at noon, no shadow edge on the ground at all (too diffuse, or the cookie isn't applied). Clouds are huge: one cloud covers most of the island; they don't move.
 - Source: clouds.
 
 ### CL-4: Night clouds
@@ -370,7 +370,7 @@ F10 toggles them and C cycles the presets live. Hours: change with `[` `]` or `-
 - Look for: clouds and cloud shadows stay put in the world while the floating origin
   moves every 256 m (no jumps); turning the camera fast leaves no ghost trails; the
   mountain silhouette has no smear (temporal reprojection + neighborhood clamp).
-- Status: awaiting owner.
+- Status: confirmed by owner (2026-10-12): no jump or smear in fast flight (clouds barely move; see CL-1/CL-3).
 - Source: clouds.
 
 ## Streaming spikes (superfargoth `streaming.md`, "Spikes"; `.sessions/spikes.md`)
@@ -611,6 +611,9 @@ idles.
   sit as before. Rigid parts now keep their model's root transform under
   their bone (the pants ankle part hangs 37 cm up the shin through it).
 - Status: FAILED (owner 2026-10-12): body-part seams still visible with B on and off, on every character.
+  seams (2026-10-12): diagnosed as shading steps at overlapping pieces (fixed in smooth mode, SB-6) plus
+  per-piece texture colour steps and authored rims (art; options in smooth-bodies.md "Seam shading").
+  Awaiting owner on SB-6; the legs-closed part of this check is unchanged.
   shows the gap, after.png full lineup, after_close.png closed legs).
 
 ### CH-2: Outfit swap without a pop
@@ -714,6 +717,22 @@ None of these is wider than vanilla.
 - Status: awaiting owner.
 - Source: smoothlive, animfix.
 
+### SB-6: Seam shading at neck, elbow, wrist, knee and ankle (seams)
+- Kind: game models. Run: `.\bevyrrowind character fargoth:naked "@dark elf,,f" --camera "0.55,1.2,0.35,0.2,1.15,0"`
+  (elbow), `--camera "0.15,0.55,0.55,0.08,0.5,0"` (knees), `--camera "0.12,1.5,0.45,0,1.42,0"` (neck), then
+  free camera to the wrists and ankles; add `--walk` for the moving pass.
+- Look for, smooth (default) vs vanilla (B): with B on, no bright or dark *line* in the lighting where
+  two pieces meet (shin line below the knee, wrist, the highlight on the upper arm's rim at the elbow,
+  the chin and neck-to-chest join): the shading runs on across the join. B off brings the lines back.
+  What stays in both modes and is art, not this fix: colour steps where pieces use different textures
+  (the knee bulb lighter than the thigh, the neck darker than the chest, hands lighter than wrists) and
+  the zigzag rims and knee bulb silhouette. Tell us if those colour steps are what you meant by
+  "seams": options in smooth-bodies.md "Seam shading" (seam colour levelling needs your go).
+- Shots (bind pose, smooth after the fix): `shots/seams/{knee,elbow,neck}_smooth_n.png`; before:
+  `shots/seams/{knee,elbow,neck}_vanilla.png`, `knee_smooth.png` (weld only).
+- Status: awaiting owner.
+- Source: seams.
+
 ## Node-animated creatures (superfargoth `character.md`, "Node-animated creatures"; `.sessions/nodecreatures.md`)
 
 Creature bodies are cooked for their rig (`mesh.rig`, `sf_model::cook_rig`):
@@ -733,9 +752,20 @@ rocks) follow the same rig and graph as skinned bodies.
   (morph curves are not played yet). Mixed creatures' heads (wolves, bears,
   goblins, daedroth) were bound to the root before and now ride their neck:
   check one in the world (CH-3 style) when you meet it.
-- Status: owner 2026-10-12: looks right, but some creatures walk in place while others actually move (root motion inconsistent).
-  whole; log: 0 missing parts, 0 missing joints).
-- Source: nodecreatures.
+- Root motion (rootmotion, after the owner note): press 1 (walk), then 2
+  (run). All six must step **in place** on their marks: none slides
+  forward and snaps back at the loop (scrib, forager, shalk, bonelord and
+  sphere used to: their travel sat on `Root Bone`, now extracted like
+  `Bip01`). Press 3: everyone walks off forward at its own clip speed
+  (scrib ~0.6 m/s, shalk ~0.9, bonelord ~1.8, sphere ~2.4, atronach ~0.5),
+  feet roughly planted, no loop snap; 3 again puts them back on their
+  marks. Same rule for any creature: `character "cliff racer" dreugh
+  netch_bull slaughterfish_small mudcrab` (cliff racer and dreugh fly or
+  swim off fast when 3 applies: their clips are authored that way).
+- Status: awaiting owner (root-motion fix). Owner 2026-10-12, before the
+  fix: looks right (all whole; log: 0 missing parts, 0 missing joints),
+  but some creatures walked in place while others actually moved.
+- Source: nodecreatures, rootmotion.
 
 ### NC-2: A scrib wandering in the world
 - Kind: game location. Run: `.\bevyrrowind scene nc-scrib`.
@@ -789,7 +819,16 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
   its step, knees bent; on the sloped street both feet touch. K toggles foot placement for A/B.
   Scaled races (Bosmer, Altmer): feet land on their steps too (walkers2: probe origins and samples
   now use the body scale; before, a few cm off).
-- Status: FAILED (owner 2026-10-12): on some slopes the legs stop swinging; one leg freezes, the other does a reduced stride, the body slides forward.
+- Status: awaiting owner (slopefix 2026-10-12). Was FAILED (owner): on some slopes the legs stop swinging; one leg freezes, the
+  other does a reduced stride, the body slides forward. Cause found: a path into ground too steep to climb (or a wall) at a
+  shallow angle makes the mover slide along the contour at ~1/4 speed while the walker kept facing into the slope, so the graph
+  got a slow sideways walk (WalkLeft/Right blend, whose contact curves barely plant one foot). Fix: walkers face the motion
+  the surface leaves (`Locomotion::deflect`, orient to movement). Re-check: where a walker meets a steep bank or a wall
+  edge it turns along it and walks forward (both feet plant, stride shrinks with speed), or stands facing it when head-on;
+  no sideways skating with one leg dragged. Log: `walkers strides since start: N stances, S skated, F legs without a plant`
+  (S, F should stay a few % of N; `BEVYRROWIND_STRIDE_TRACE=1` logs each case). Known open: some walkers on flat ground
+  walk with frozen contacts (one leg 0, one 1, see .sessions/slopefix.md); strafe clips (WalkLeft/Right) plant almost
+  never (cook contact detection).
   without a walker on them; foot placement compiled into `mw_humanoid` and probing, pose not yet seen
   close up: the owner judges it live). animfix: on stairs the pelvis drops at most 0.4 of a leg
   and a sample more than half a leg away (a ledge, a probe past the step) is ignored, so a foot may
@@ -850,7 +889,7 @@ by the agent: the screenshot cap).
   (no vertical streaks, no bright or dark band, no hard line at the top of
   the band). Bridges, awnings, windows and doors never blend.
 - A/B: F11 flips the blend live; `--off terrainblend` removes it entirely.
-- Status: awaiting owner.
+- Status: FAILED (owner 2026-10-12): reads as "the bottom of meshes is darker", not real terrain blending (no terrain texture/colour carried onto the mesh). Not urgent; revisit later.
 - Source: terrainblend2.
 
 ### TB-2: Bitter Coast rocks and roots at noon
@@ -860,7 +899,7 @@ by the agent: the screenshot cap).
   Camera is a guess west of Seyda Neen: fly to the nearest rocks if none
   are in view.
 - A/B: F11; `--off terrainblend`.
-- Status: awaiting owner.
+- Status: FAILED (owner 2026-10-12): reads as "the bottom of meshes is darker", not real terrain blending (no terrain texture/colour carried onto the mesh). Not urgent; revisit later.
 - Source: terrainblend2.
 
 ### TB-3: Ascadian Isles rocks in grass at noon
@@ -870,7 +909,7 @@ by the agent: the screenshot cap).
   (`.\bevyrrowind scene tb-ascadian --dlss quality`). Camera is a guess in
   the wilds: fly to rocks if none are in view.
 - A/B: F11; `--off terrainblend`.
-- Status: awaiting owner.
+- Status: FAILED (owner 2026-10-12): reads as "the bottom of meshes is darker", not real terrain blending (no terrain texture/colour carried onto the mesh). Not urgent; revisit later.
 - Source: terrainblend2.
 
 ## Synthetic scenes (framework examples)
@@ -1008,6 +1047,7 @@ bake_synthetic` (terrain bake timings) and `--example bake_throughput`.
 | AF-4 | `cargo dev character ancestor_ghost Heart_Akulakhan dremora clannfear` (shot: `shots/actorfx2/lineup.png`) | Heart of Akulakhan: fire, frost, shock and magicka shields scroll (UV) and blink in and out with its idles; log `actor fx ...: 5 hidden joints, 3 materials, 6 billboards` with `RUST_LOG=bevyrrowind::actor_fx=debug` | awaiting owner |
 | AF-5 | same lineup, orbit the heart (right mouse) | The ray sheets around the heart (6 billboard parts) keep facing the camera from every side while the heart beats; nothing sits at the heart's root | awaiting owner |
 | AF-6 | same lineup | Ancestor ghost is see-through and its robe alpha follows its idle (not a fixed fade); dremora and clannfear look as before (their effects only play in death / attack groups) | awaiting owner |
+| AF-7 | `cargo dev character dremora dremora_lord clannfear --camera 0.6,1.4,3.6,0,1.0,0` (dremora fix, `.sessions/dremora.md`; shots/dremora/before.png, after.png) | Both dremora wear their daedric armor while idling: shoulder pauldrons, upper-arm plates ("biceps"), forearm braces, thigh greaves, calf boots and shoes (before: only the leather body suit). Press X (death): the armor stays on through the fall until the clip's end, then hides as authored | awaiting owner |
 
 ## Held items (superfargoth `character.md`, "Held items at runtime"; `.sessions/heldrender.md`)
 
@@ -1056,8 +1096,14 @@ Compare with OpenMW (same NPCs, same hour).
 - Look for: walking guards/commoners carry torches whose light moves with
   them along walls and the street; no more than 12 torches lit at once
   (the nearest); no weapons shown; bows are absent (skinned models: known gap).
-- Status: FAILED (owner 2026-10-12): flame and light follow the torch, but the arm is locked in front (no torch-holding pose) and it is very bright right next to the torch.
-  a torch-bearing walker lighting the street and the wall beside the door).
+- Status: awaiting owner (torchfix 2026-10-12; was FAILED: arm locked in front, very bright next to the torch).
+  Fixed: the `Torch` group now loops on the left arm (`mw_graphs` `torch_layer`, `left_arm` mask) while a torch
+  shows; the carried light is dimmed to read "fully lit" at a third of its radius (the original's clamp edge).
+  Look for: walkers hold the torch up in a bent left arm (not straight ahead) while legs walk; the pool under
+  each walker is warm, about 2-3 m wide, no white blow-out on the walker. Known, not torchfix: placed lanterns
+  still blow walls out at night (lights calibrated at EV 7, night exposure ~EV 1: sky-lighting follow-up); a crate by
+  the door left of the camera rendered black in the agent shot (`shots/torchfix/hi4_balmora.png` vs
+  `hi4_before.png`): check whether it is lit.
 - Source: heldrender.
 
 ## Particles on actors, bows, carried-light near field (nif-runtime.md "Particles on actors"; `.sessions/actorparticles.md`)
@@ -1065,7 +1111,7 @@ Compare with OpenMW (same NPCs, same hour).
 Torch flames and creature particles are NIF emitters anchored at a skeleton
 joint or the prop root (world-space particles trail a moving joint); bows are
 skinned props on their own small skeleton (rest pose); the carried torch
-light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
+light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its radius (torchfix). Compare with OpenMW.
 
 ### AP-1: Torch-bearer at night: flame and light, not overexposed
 - Kind: game models. Run: `.\bevyrrowind character "imperial guard" "@wood elf,archer" --night --drawn` (N toggles night).
@@ -1073,8 +1119,15 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
   trails when the arm moves (walk with 1); the guard's armor near the torch is
   bright but keeps its texture (before: blown out white), the floor pool is
   warm and wide. Torch orientation in the hand is HI-3's open question.
-- Status: FAILED (owner 2026-10-12): the torch model itself renders full white while the characters are exposed correctly.
-  flame at the torch end, chest bright but textured).
+- Status: awaiting owner (torchfix 2026-10-12; was FAILED: torch model full white). Causes: the light sat
+  centimeters from the torch head (inverse-square, no near clamp in Bevy: ~100x "fully lit"), and NIF emissive
+  (the flame) was never exposed (Bevy 0.20 `emissive_exposure_weight` 0: ~150x). Now the torch model is
+  `mw_assets::self_lit` (its texture at "fully lit", like the original's saturated torch) and emissive is
+  exposed (`set_emissive`). Look for: the torch's wood and iron textures visible, not white; an orange flame
+  with grey smoke at the top; torch held upright in the bent left arm; the guard's chest warm but textured;
+  the floor pool smaller and dimmer than before (matches the original under the torch, falls off faster).
+  Agent shot: `shots/torchfix/ap1_night.png`. Also check any glowing NIF (glow maps, candle flames) in an
+  interior: emissive is now 1x "fully lit" at EV 7 instead of ~150x.
 - Source: actorparticles.
 
 ### AP-2: Flame atronach and ancestor ghost particles
@@ -1114,7 +1167,7 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
   the end of `Idle3` (whole-range window, nif-runtime.md "Emission clocks").
   Moment-keyed effects (hand flames, Dagoth Ur's hands, dremora death dust,
   ghost sprays) follow the animation: PA-3.
-- Status: awaiting owner. Agent screenshot `shots/particles2/atronachs_night.png`: flame
+- Status: confirmed by owner (2026-10-12).
   atronach glows over chest, arms, legs and feet (before: pelvis only), frost atronach mist
   over body and hands, storm atronach faint.
 - Source: particles2. Re-shot after particles3 (`emit:` curves):
@@ -1129,7 +1182,7 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
   from the nodes' rest places; emission follows the model's controller clock
   (windowed systems burst in step with the model's motion; copies with random
   start differ in phase, parts of one copy stay in step).
-- Status: awaiting owner. Agent screenshot `shots/particles2/sotha_fabsteam.png`
+- Status: confirmed by owner (2026-10-12): brazier and lava pool.
   (`i\act_sotha_fabsteam.nif`, steam windowed 1 s of 2 s) shows only a box: an
   activator whose controllers don't auto-play, so its steam waits for gameplay.
 - Source: particles2.
@@ -1154,6 +1207,6 @@ light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
   - Not reachable here: the flame atronach's hand flames (`Weapon`) belong to
     `Attack1`-`3` and Dagoth Ur's hand bursts to `SpellCast` (no attack or
     cast key yet: check in game when combat lands).
-- Status: awaiting owner. Agent screenshot `shots/particles3/lineup_night.png`
+- Status: owner 2026-10-12: looked good; Dagoth Ur's F hand fire not tried yet.
   (idle only; the keys need a person).
 - Source: particles3.

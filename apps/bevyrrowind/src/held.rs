@@ -11,7 +11,8 @@
 //!   nearest few to the camera lit (each extra clustered light costs every
 //!   fragment its range covers).
 //! - **Stance.** The graph's `stance` parameter follows the readiness and
-//!   the main-hand weapon (`mw_graphs::Stance::of_weapon`).
+//!   the main-hand weapon (`mw_graphs::Stance::of_weapon`); its `torch`
+//!   parameter raises the torch arm while a light shows in the off hand.
 
 use std::sync::Arc;
 
@@ -66,24 +67,49 @@ struct HeldTorchOf(Entity);
 
 /// Near field of carried lights. Morrowind's lights saturate inside a third
 /// of their radius (`radius / (3 d)` clamped to 1); ours are physical
-/// (inverse-square, calibrated at the radius: `LightCalibration`), so a
-/// 3.66 m torch 0.25 m from its carrier lit the body about 24x past "fully lit".
-/// Bevy has no per-light near clamp (Frostbite's `max(d², r²)`, Unreal's
-/// source radius), so the carried light keeps `clearance_m` horizontally
-/// from the carrier's vertical axis (pushed outward from the flame) and
-/// shines at `intensity_scale`: the body lands near 2x "fully lit", the
-/// pool on the ground near half of it.
+/// (inverse-square), and the placed lights' calibration reads "fully lit"
+/// at 1.15x the radius (`LightCalibration::fully_lit_distance`), so a torch
+/// at full power lit its carrier ~50x past "fully lit" at 0.5 m and the
+/// ground under it ~8x (torchfix 2026-10-12). Bevy's point light has no near
+/// clamp (Frostbite's `max(d², r²)`): its diffuse is `1 / max(d², 1 cm²)`
+/// and `PointLight::radius` only softens specular. So the carried light:
+/// - is dimmed until "fully lit" falls at `fully_lit_fraction` of its radius
+///   (1/3: where the original's clamp ends), which matches the original at
+///   the ground under the torch and is brighter only inside it (the carrier
+///   lands near 6x "fully lit" for white, textured after tone mapping);
+/// - keeps `clearance_m` horizontally from the carrier's vertical axis
+///   (pushed outward from the flame);
+/// - has the flame's size as its source radius (wider, softer highlights);
+/// - lights its own model through `mw_assets::self_lit` (the original's
+///   saturated texture), not the inverse-square spike centimeters away.
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct HeldLightTuning {
     pub clearance_m: f32,
-    pub intensity_scale: f32,
+    pub fully_lit_fraction: f32,
+    pub source_radius_m: f32,
 }
 
 impl Default for HeldLightTuning {
     fn default() -> Self {
-        Self { clearance_m: 0.7, intensity_scale: 0.7 }
+        Self { clearance_m: 0.7, fully_lit_fraction: 1.0 / 3.0, source_radius_m: 0.12 }
     }
 }
+
+impl HeldLightTuning {
+    /// The carried light's intensity factor over the placed lights'.
+    pub fn intensity_scale(&self, calibration: &LightCalibration, radius: f32) -> f32 {
+        let full = calibration.fully_lit_distance(radius);
+        if full <= 0.0 { 1.0 } else { ((self.fully_lit_fraction * radius) / full).powi(2).min(1.0) }
+    }
+}
+
+/// On a held light's prop root: its surfaces are `mw_assets::self_lit`.
+#[derive(Component, Clone, Copy, Debug)]
+struct SelfLitProp;
+
+/// Self-lit variants of prop materials, shared by every carried light.
+#[derive(Resource, Default)]
+struct SelfLitMaterials(std::collections::HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>);
 
 #[derive(Resource, Clone)]
 struct HeldRules(Arc<MwCharacters>);
@@ -93,8 +119,58 @@ pub fn add(app: &mut App, content: Arc<MwCharacters>) {
         .init_resource::<HeldDarkness>()
         .init_resource::<HeldLightBudget>()
         .init_resource::<HeldLightTuning>()
+        .init_resource::<SelfLitMaterials>()
         .add_systems(Update, carry_lights_when_dark.before(CharacterSystems))
-        .add_systems(Update, (light_held_slots, place_held_lights, budget_held_lights, feed_stance).chain().after(CharacterSystems));
+        .add_systems(
+            Update,
+            (light_held_slots, place_held_lights, budget_held_lights, feed_stance, mark_light_props, self_light_props).chain().after(CharacterSystems),
+        );
+}
+
+/// Marks the prop root of each held light.
+fn mark_light_props(mut commands: Commands, carriers: Query<&HeldProps, Changed<HeldProps>>) {
+    for props in &carriers {
+        for prop in props.props.iter().filter(|p| p.light.is_some()) {
+            commands.entity(prop.entity).try_insert(SelfLitProp);
+        }
+    }
+}
+
+type AddedMaterial = Added<MeshMaterial3d<StandardMaterial>>;
+type MaterialSlot = &'static mut MeshMaterial3d<StandardMaterial>;
+
+/// Swaps the materials under held-light props for their self-lit variants:
+/// meshes added under a marked prop, and everything under a newly marked one.
+fn self_light_props(
+    mut cache: ResMut<SelfLitMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    props: Query<(Entity, Ref<SelfLitProp>)>,
+    parents: Query<&ChildOf>,
+    children: Query<&Children>,
+    mut meshes: ParamSet<(Query<Entity, AddedMaterial>, Query<MaterialSlot>)>,
+) {
+    let mut targets: Vec<Entity> = props.iter().filter(|(_, m)| m.is_added()).flat_map(|(p, _)| children.iter_descendants(p)).collect();
+    targets.extend(meshes.p0().iter().filter(|e| parents.iter_ancestors(*e).any(|a| props.contains(a))));
+    let mut meshes = meshes.p1();
+    for entity in targets {
+        let Ok(mut mesh) = meshes.get_mut(entity) else { continue };
+        let id = mesh.0.id();
+        let handle = if let Some(h) = cache.0.get(&id) {
+            h.clone()
+        } else {
+            let Some(source) = materials.get(id) else { continue };
+            // Flames and smoke keep their own (animated) materials.
+            let Some(lit) = mw_assets::self_lit(source) else { continue };
+            let h = materials.add(lit);
+            cache.0.insert(id, h.clone());
+            // A variant is its own variant (re-marked props keep theirs).
+            cache.0.insert(h.id(), h.clone());
+            h
+        };
+        if mesh.0 != handle {
+            mesh.0 = handle;
+        }
+    }
 }
 
 /// Dark by the sky clock (exterior rule; interiors' ambient rule needs the
@@ -155,7 +231,8 @@ fn light_held_slots(
     for (entity, slot) in &slots {
         let Some(info) = torch_info(rules.0.actors().db(), slot) else { continue };
         let mut light = calibration.point_light(&info);
-        light.intensity *= tuning.intensity_scale;
+        light.intensity *= tuning.intensity_scale(&calibration, info.radius);
+        light.radius = tuning.source_radius_m;
         let mut e = commands.spawn((light, HeldTorch, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
         if let Some(carrier) = parents.iter_ancestors(entity).find(|a| carriers.contains(*a)) {
             e.insert(HeldTorchOf(carrier));
@@ -258,8 +335,16 @@ fn feed_stance(
             .map(|w| w.data.weapon_type);
         if let Ok(mut animator) = animators.get_mut(body.body) {
             animator.set_float(mw_graphs::build::params::STANCE, Stance::of_weapon(readiness, weapon).value());
+            let torch = props.is_some_and(|p| p.props.iter().any(|p| carries_light(&p.item, readiness)));
+            animator.set_float(mw_graphs::build::params::TORCH, if torch { 1.0 } else { 0.0 });
         }
     }
+}
+
+/// Whether `item` is a light shown in the off hand at `readiness` (the
+/// torch arm pose plays; hidden while a two-hander is drawn).
+fn carries_light(item: &sf_character::HeldItem, readiness: Readiness) -> bool {
+    item.hand == Hand::Off && item.light.is_some() && item.mount(readiness).is_some()
 }
 
 #[cfg(test)]
@@ -289,6 +374,45 @@ mod tests {
         assert_eq!(held_light_position(far, axis, Vec3::Z, 0.7), far, "already clear");
         let on_axis = held_light_position(axis + Vec3::Y, axis, Vec3::NEG_Z, 0.7);
         assert!((on_axis - (axis + Vec3::new(0.0, 1.0, -0.7))).length() < 1e-5, "ahead when on the axis");
+    }
+
+    #[test]
+    fn carried_lights_read_fully_lit_where_the_original_saturates() {
+        let calibration = LightCalibration::default();
+        let tuning = HeldLightTuning::default();
+        let radius = 256.0 * 0.014_285_714; // the vanilla torch, in meters
+        let scale = tuning.intensity_scale(&calibration, radius);
+        assert!(scale > 0.05 && scale < 0.15, "{scale}");
+        // Inverse-square brightness relative to "fully lit" for a white surface facing the light.
+        let full = calibration.fully_lit_distance(radius);
+        let at = |d: f32| scale * (full / d).powi(2);
+        assert!((at(radius / 3.0) - 1.0).abs() < 1e-3, "fully lit at a third of the radius");
+        assert!(at(0.5) < 8.0, "carrier at 0.5 m: {}", at(0.5));
+        assert!(at(1.5) > 0.5, "ground under the torch: {}", at(1.5));
+    }
+
+    #[test]
+    fn a_light_models_own_surfaces_glow_at_fully_lit_and_take_no_light() {
+        let opaque = StandardMaterial { base_color: Color::linear_rgb(0.5, 0.5, 0.5), ..StandardMaterial::default() };
+        let lit = mw_assets::self_lit(&opaque).expect("opaque surfaces are self-lit");
+        assert!(lit.base_color.to_linear().red.abs() < 1e-6, "no lit base");
+        assert!(lit.reflectance == 0.0 && (lit.emissive_exposure_weight - 1.0).abs() < 1e-6);
+        assert!((lit.emissive.red - 0.5 * mw_assets::emissive_nits()).abs() < 1e-3, "fully lit at the scene exposure");
+        let flame = StandardMaterial { alpha_mode: AlphaMode::Add, ..StandardMaterial::default() };
+        assert!(mw_assets::self_lit(&flame).is_none(), "flames keep their material");
+    }
+
+    #[test]
+    fn torch_arm_follows_a_shown_off_hand_light() {
+        let mount = sf_character::Mount::at("Shield Bone");
+        let light = sf_character::HeldLight { attach_node: None, color: Vec3::ONE, radius: 3.0 };
+        let mut torch = sf_character::HeldItem::always(sf_records::RecordId::new("torch"), sf_vfs::VfsPath::new("l/t.nif").unwrap(), Hand::Off, mount);
+        torch.light = Some(light);
+        assert!(carries_light(&torch, Readiness::Sheathed) && carries_light(&torch, Readiness::Drawn));
+        torch.drawn = None; // hidden while a two-hander is drawn
+        assert!(!carries_light(&torch, Readiness::Drawn));
+        torch.light = None;
+        assert!(!carries_light(&torch, Readiness::Sheathed), "a shield");
     }
 
     #[test]

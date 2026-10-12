@@ -56,6 +56,21 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      `VisibilityRange` in every view, cascades included); keep particles on CPU culling; decide the default.
    - J3 [ ] size-tiered spawn residency in `sf_world`: R1 detail tiers keyed on `d_draw`, prefix spawn by
      cutoff radius (pages are radius-sorted), `CellSummary` tier counts, activation split from visuals.
+6b. **Queued (owner 2026-10-12): sky pass**, before exterior ray tracing (item 5). One agent per job, max 3 at once:
+   - S1 clouds: cloud types across the full range (cumulus, stratocumulus, altostratus/cirrus high layers, cumulonimbus
+     storm cells), not two overcasts + one pattern + clear; visible wind motion (Morrowind `Cloud Speed` per weather,
+     weather-adapter.md) and slow shape evolution; cloud shadows actually visible on the ground (CL-1, CL-3 FAILED).
+     Owner suspects the sun disk draws in front of the clouds: check the sun behind thick cloud (composite order via
+     `SkyOrderScaffold` vs. HDR disk not attenuated enough by cloud transmittance + bloom) and whether the sun's direct
+     light dims under cloud cover (would also explain the missing shadows).
+     Owner, clouds-flight: no jump/smear (CL-6 confirmed), but clouds are far too big (one cloud covers most of the
+     island: weather/shape tile scales), static, same patterns; under a cloud edge at noon there is no shadow edge on
+     the ground at all (cookie missing or far too diffuse).
+   - Later (owner: not now, but important): object-terrain blending (R-b, M2 item) reads as "bottom of meshes darker",
+     not terrain blending: TB-1..3 FAILED. Revisit the technique (terrain albedo/normal carried onto the mesh base).
+   - S2 sun disk too small (owner): artistic angular size / glare instead of the physical 0.53°.
+   - S3 night sky: Masser + Secunda (Morrowind textures, `[Moons]` sizes, phases, colors), stars fading in at dusk.
+   - Then fog (weather.md N1/N2 haze + dust, height/ground fog, froxel fog + god rays) before item 5.
 7. **P1, M2: audit follow-ups**, after J1–J3 are measured:
    - J4 [ ] shadow-caster rules (per-cascade cost in Nsight; small casters `NotShadowCaster` per preset).
    - J5 [ ] depth-prepass dither fix as a local `[patch]` + upstream PR, then depth-only prepass and occlusion
@@ -575,13 +590,32 @@ probes, per-axis joint motors and multibodies for powered ragdolls, our own exac
 the fallback if P1 misses its gates. Done when (ARCHITECTURE §9): "Knock a table's contents over; a dead guard
 ragdolls; robes move." Tasks in dependency order:
 
-- [ ] P1 `sf_physics` core + spike (Bevy-free, rapier3d): `PhysicsWorld` per worldspace, anchor + whole-cell rebase,
+- [x] P1 `sf_physics` core + spike (Bevy-free, rapier3d): `PhysicsWorld` per worldspace, anchor + whole-cell rebase,
   layers, `BodyDesc`/`BodyId`, fixed-step interpolation state, events, `PhysicsProbe` (`GroundProbe`), statics from
   `StaticShape`/`collision.cook` sharing one `Arc` per model. Spike inside it: a 50-item pile and a 15-body ragdoll
   chain (impulse joints vs multibody), measured.
   Verify: `cargo test -p sf_physics` (rebase: stack + ragdoll with and without a mid-run rebase within 0.1 mm, no wakes;
   `PhysicsProbe` = `StaticProbe` on fixtures); bench: idle R0-sized static set ≤ 0.3 ms per step, pile + 2 ragdolls
   ≤ 2 ms, rebase ≤ 2 ms. Misses → re-decide backend (avian 0.8) before P2.
+  **Done 2026-10-12 (physics-p1): GO on rapier3d, impulse joints.** `superfargoth/crates/sf_physics` (Bevy-free; rapier3d
+  0.36.1 + parry3d 0.31.1, one parry in the tree): `PhysicsWorld`/`PhysicsWorlds`, `BodyDesc`/`BodyId` (generational),
+  `Layer` pair matrix, `MeshShape` (from `CollisionMesh`, one `Arc` per model, cached scaled copies), `HeightShape`,
+  interpolation history + `pose_at`, events (Woke/Slept/ContactForce/FellOut with rest-pose recovery), joints
+  (ball/hinge/fixed, impulse or multibody, acceleration-based drives), `PhysicsProbe`. Rapier wakes both sides of every
+  new contact and of every moved collider, so bodies inserted asleep (and sleepers during a rebase) **settle**: locked for
+  one step with a zero sleep delay, re-slept by the engine in that step, unlocked: 0 wakes, poses bit-exact. 9 tests
+  pass, clippy pedantic clean. Spike (`cargo test -p sf_physics --release -- --ignored --nocapture spike`; release,
+  shared machine, the owner's build started during the second run), R0 = 2,400 statics (120 meshes, 1.26 M placed
+  triangles) + 64 terrain chunks (129²) + 600 sleeping items: **idle 0.001 ms** (gate 0.3); **rebase** 0.09 ms call +
+  1.31 ms next step (max 1.55; re-settle of 600 sleepers + broad-phase refit; gate 2); **active** (50-item pile + 2
+  ragdolls, 15 bodies each) impulse joints limp 0.41 ms mean / 0.74 max, powered 0.44 / 0.73 (gate 2); multibody
+  limp 4.3 ms mean with a 450 ms hitch, powered 3.1 / 4.0: **misses**. Joint stretch in a 0.5 m drop: multibody 0.6 cm,
+  impulse 2.0–2.6 cm at 4 extra iterations (1.1 cm at 12), so P7 needs impulse joints with more iterations or tuned
+  mass ratios to meet its 1 cm gate (open question 1 leans impulse). Rebase gate: the step across a rebase is within
+  float noise for every body and a 30-box stack stays bit-identical over the run; a powered ragdoll's end state is not
+  compared because the P1 drives don't settle (0.5 m/s residual: per-axis targets on ball joints; P8 owns swing-twist
+  targets). Not yet met: activation insertion 12.7 µs/body and a 43 ms first step when all of R0 goes in at once: P2
+  must budget insertion (≈35 bodies per 0.5 ms frame) and measure incremental broad-phase cost.
 - [ ] P2 `sf_physics_bevy` + app wiring: `PhysicsPlugin` (60 Hz `FixedUpdate`, ≤ 3 steps/frame), write-back as
   `CellCoord + Transform` from `WorldPos`, activation hooks insert statics (replacing the walkers' `StaticWorld`
   build; `--off physics` keeps it) and terrain heightfield chunks (64 m, 0.5 m) in R0, debug gizmos.
@@ -667,6 +701,7 @@ default** (`--portals` / `BEVYRROWIND_PORTALS=1`), parked until M8 (open items i
 
 Newest first. One or two lines each: what changed, what was verified.
 
+- 2026-10-12 (slopefix): WK-4 stride collapse on slopes: a path into too-steep ground (or a wall) at a shallow angle slid the walker along the contour while it faced the slope, so the graph played a slow strafe (one leg never plants). Mover now orients to the deflected motion (`Locomotion::deflect`, `DEFLECT_FACING`); headless real-install regression `mw_graphs/tests/slope_walk.rs` (ramps 15-30° up/down, stairs, contour; slide < 1e-5 m/s) + sf_controller test; walkers stride monitor in the log. Open: strafe clip contacts, frozen-contact walkers on flat ground.
 - 2026-10-12 (physics-spec, spec only): M4 physics designed: `superfargoth/docs/specs/physics.md`, `docs/specs/physics-adapter.md`, "M4: Physics" (P1–P11), ARCHITECTURE §10. Backend `rapier3d` 0.36.1 direct behind Bevy-free `sf_physics` (bevy_rapier syncs on `Changed<GlobalTransform>`, wrong under big_space; avian main still Bevy 0.19, PR #1070 ports it but no spherical motors); kinematic mover kept; bone-lattice XPBD cloth for robes. No builds.
 
 - 2026-10-12 (cloudjump): clouds jumped at floating-origin shifts: `sync_origin` now runs before `sf_atmos_bevy::CloudSystems::Drive` (was unordered) and the sky's atmosphere placement moved to PostUpdate `SkySystems::Origin` (sea level applied a frame late on vertical shifts). Clippy clean; visual CL-6 awaiting owner.
@@ -792,3 +827,8 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-12 (animcheck): M3 health check on the combined tree. Tests pass for the 9 superfargoth animation/character crates (`--all-features`) and mw_anim, mw_graphs, mw_actors, mw_ai, mw_nif, mw_bake and the app (real install). Fixed: `sf_anim_bevy` / `sf_controller_bevy` `debug` gizmo systems panicked headless (now `run_if(resource_exists::<GizmoConfigStore>)`), one clippy lint in the mw_ai test. Clippy clean (except particles2's in-progress `particles_real_install.rs`). Smoke runs (`shots/animcheck/`): lineup 7/7 dressed and posed, Imperial guard's tower shield sideways across the thighs (HI-2); wk-balmora/wk-stairs walk (0 pelvis clamps, 0 non-finite; "walks given up" ~1/s); guar graph idles. Crowd street scoped in M3, not built. `mw_nif` actor import marked done.
 - 2026-10-12 (particles2): NIF particles finished for M1: `NiBSPArrayController` array emitters (census `mw_bake/tests/particles_real_install.rs`: 42 controllers, all flag 0x8, none at vertices; random node of the emitter subtree, on its bone, as OpenMW), live emitter nodes for actors (`LiveAnchor` per system) and keyframed placed models (`NifNode`), emission windows on the model's controller clock (`emits_at`); actor windows wait for `emit:` clip curves (scaffold `ACTOR_EMISSION_SCAFFOLD`). nif-sweep: unsupported left = path controllers 5, embedded textures 2, planar collider 1. PA-1, PA-2 awaiting owner.
 - 2026-10-12 (particles3): actor particle emission windows on the animation clock: `mw_anim::effects` `emit:<particle node>` step curves (`emission_keys` per controller cycle, `emission_names` numbers same-named `PArray` nodes; whole-range windows emit throughout), NIF anim importer v7 / KF v6, re-bake (anim.cook 3,987 rebuilt, 87 s wall at BelowNormal with the owner's game open: not a timing); `actor_particles.rs` maps systems to curves and writes `mw_assets::ActorEmitter::emitting`, `ACTOR_EMISSION_SCAFFOLD` removed. Census test `actor_emission_on_clip_timelines`: every creature system emits in some clip. Visual checks PA-1 updated, PA-3 new (awaiting owner).
+- 2026-10-12 (rootmotion): creature root motion made consistent (owner note on NC-1): 15 CREA skeletons travel on `Root Bone` (scrib, shalk, forager, bonelord, centurions, cliff racer, netches, dreugh, fish, mudcrab) and had no root-motion joint, so their walk/run travel stayed in the bones (walk off, snap back) while the 74 `Bip01` skeletons stepped in place. `mw_anim::rig::root_motion_joint` (Bip01, else Root Bone; NIF importer v8, KF v7); one rule for all actors: travel on the root-motion track, mover drives in the world, lineup stores it (key 3 applies). Census `mw_bake/tests/creature_root_motion_real_install.rs`: 507 clips, 0 flagged, no-extraction control per skeleton. Lineup screenshots at 3.0 / 4.1 s walking: every creature on its mark. Cache already re-cooked by dremora's 23:45 bake (stacked importer versions); release `bake` no-op 3.2 s. NC-1 awaiting owner. Not committed.
+- 2026-10-12 (torchfix): held torch (HI-4, AP-1 failed): torch arm = `Torch` group looped on a `left_arm` layer (`mw_graphs` `params::TORCH`, `torch_layer` between `upper` and `full` slots; RON re-blessed; fed by `held.rs`); carried light dimmed to read "fully lit" at radius/3 (`LightCalibration::fully_lit_distance`, `HeldLightTuning::fully_lit_fraction`, source radius 0.12 m); torch model `mw_assets::self_lit`; NIF emissive now exposed (`mw_assets::set_emissive`: Bevy 0.20 `emissive_exposure_weight` 0 had left it ~150x). Tests + clippy clean; HI-4, AP-1 awaiting owner. Open: placed lights blow out at night (EV 7 calibration vs night EV ~1).
+- 2026-10-12 (physics-p1): owner confirmed the five M4 physics decisions (ARCHITECTURE §10) and added Strength-based carry/throw limits plus drag mode incl. corpses by a limb (physics.md "Carry and throw", physics-adapter.md table, P6); built M4 P1 `sf_physics` (Bevy-free rapier3d core, settle-on-insert, whole-cell rebase, `PhysicsProbe` = `StaticWorld` on fixtures); spike GO on rapier with impulse joints (idle 0.001 ms, active 0.44 ms, rebase 1.4 ms; multibody misses at 3-4 ms), shared machine.
+- 2026-10-12 (dremora): "dremora has no legs and biceps": actor visibility curves are now rest-neutral (`hide:<node>` for nodes shown at rest, `show:<node>` for hidden ones; `mw_anim::effects::hidden`), since the graph outputs 0 for a curve no playing clip carries and biped creatures idle on `xbase_anim.kf` groups that carry none of theirs (the old `vis:` 1-shown curves hid all 12 dremora armor parts, 2,022 tris, on all 9 dremora records). NEW `mw_bake/tests/creature_parts_real_install.rs` (89 CREA models: 331k source tris, 92k hidden in the file by design, 239,541 cooked, 0 lost, 0 hidden at idle, 0 material curves absent from a playable clip). Left: 14 controller-shown hidden shapes (heart shields, fabricant pieces, sleeper skull, death dust) still dropped by `to_model` (nif-runtime.md). Importers NIF 10 / KF 9, re-baked. AF-7 awaiting owner.
+- 2026-10-12 (seams): CH-1b seams diagnosed (`mw_actors` example `seam_report`): legacy pieces are closed shells or overlapping rims, not shared vertex loops, so the 2 mm weld fixed only shin/wrist; added `sf_character::blend_seam_normals` (proximity normal blending within 4 cm, both sides meet at one normal; heads for shading only, in bind space) in `smooth_outfit` (Smooth mode). Left: per-piece texture colour steps and zigzag rims are art; options (seam colour levelling, rim shrink-wrap) in smooth-bodies.md "Seam shading"; SB-6 awaiting owner.

@@ -16,6 +16,7 @@
     (name: "knocked_out", kind: Bool(false)),
     (name: "dead", kind: Bool(false)),
     (name: "death_variant", kind: Float(1.0)),
+    (name: "torch", kind: Float(0.0)),
   ],
   clips: {
     "BowAndArrow@equip": (source: "BowAndArrow@equip", optional: true, fallback: Some(Drop)),
@@ -168,6 +169,7 @@
     "WeaponTwoWide@unequip": (source: "WeaponTwoWide@unequip", optional: true, fallback: Some(Drop)),
   },
   masks: {
+    "left_arm": (default: 0.0, rules: [(joint: Rig("leftShoulder"), weight: 1.0, subtree: true)]),
     "upper": (default: 0.0, rules: [(joint: Rig("chest"), weight: 1.0, subtree: true)]),
   },
   nodes: {
@@ -176,7 +178,7 @@
     "death3": Clip(clip: "Death3", rate: 1.0, looping: Some(false), start: 0.0, sync: None, root_motion: None),
     "death4": Clip(clip: "Death4", rate: 1.0, looping: Some(false), start: 0.0, sync: None, root_motion: None),
     "death5": Clip(clip: "Death5", rate: 1.0, looping: Some(false), start: 0.0, sync: None, root_motion: None),
-    "full_slot": Slot(slot: "full", input: "upper_slot", group: Some("full"), mask: None),
+    "full_slot": Slot(slot: "full", input: "torch_layer", group: Some("full"), mask: None),
     "hit1": Clip(clip: "Hit1", rate: 1.0, looping: Some(false), start: 0.0, sync: None, root_motion: None),
     "hit2": Clip(clip: "Hit2", rate: 1.0, looping: Some(false), start: 0.0, sync: None, root_motion: None),
     "hit3": Clip(clip: "Hit3", rate: 1.0, looping: Some(false), start: 0.0, sync: None, root_motion: None),
@@ -239,6 +241,8 @@
     "swim_turn_left": Clip(clip: "SwimTurnLeft", rate: 1.0, looping: Some(true), start: 0.0, sync: None, root_motion: None),
     "swim_turn_right": Clip(clip: "SwimTurnRight", rate: 1.0, looping: Some(true), start: 0.0, sync: None, root_motion: None),
     "swim_walk": BlendSpace2D(x: "move.x", y: "move.y", samples: [(clip: "SwimWalkForward", at: (0.0, 1.0), rate: 1.0), (clip: "SwimWalkBack", at: (0.0, -1.0), rate: 1.0), (clip: "SwimWalkLeft", at: (-1.0, 0.0), rate: 1.0), (clip: "SwimWalkRight", at: (1.0, 0.0), rate: 1.0)], rate: 1.0, smoothing: 0.08, looping: None, sync: None, root_motion: None),
+    "torch_arm": Clip(clip: "Torch", rate: 1.0, looping: Some(true), start: 0.0, sync: None, root_motion: None),
+    "torch_layer": LayeredPerBone(base: "upper_slot", layers: [(node: "torch_arm", mode: Override, mask: Some("left_arm"), weight: "torch")]),
     "turn_left": StateMachine(initial: None, states: [(name: "none", node: "turn_left.none", root_motion: None), (name: "hh", node: "turn_left.hh", root_motion: None), (name: "1h", node: "turn_left.1h", root_motion: None), (name: "2c", node: "turn_left.2c", root_motion: None), (name: "2w", node: "turn_left.2w", root_motion: None), (name: "crossbow", node: "turn_left.crossbow", root_motion: None), (name: "spell", node: "turn_left.spell", root_motion: None)], transitions: [(from: "*", to: "none", when: [Greater("stance", -0.5), Less("stance", 0.5)], blend: Inertialize(0.25), interruptible: true), (from: "*", to: "hh", when: [Greater("stance", 0.5), Less("stance", 1.5)], blend: Inertialize(0.25), interruptible: true), (from: "*", to: "1h", when: [Greater("stance", 1.5), Less("stance", 2.5)], blend: Inertialize(0.25), interruptible: true), (from: "*", to: "2c", when: [Greater("stance", 2.5), Less("stance", 3.5)], blend: Inertialize(0.25), interruptible: true), (from: "*", to: "2w", when: [Greater("stance", 3.5), Less("stance", 4.5)], blend: Inertialize(0.25), interruptible: true), (from: "*", to: "crossbow", when: [Greater("stance", 4.5), Less("stance", 5.5)], blend: Inertialize(0.25), interruptible: true), (from: "*", to: "spell", when: [Greater("stance", 5.5), Less("stance", 6.5)], blend: Inertialize(0.25), interruptible: true)]),
     "turn_left.1h": Clip(clip: "TurnLeft1h", rate: 1.0, looping: Some(true), start: 0.0, sync: None, root_motion: None),
     "turn_left.2c": Clip(clip: "TurnLeft2c", rate: 1.0, looping: Some(true), start: 0.0, sync: None, root_motion: None),
@@ -322,6 +326,5 @@
     "SpellCast@target",
     "SpellCast@unequip",
     "Shield@block",
-    "Torch",
   ],
 )

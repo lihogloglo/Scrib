@@ -4410,6 +4410,8 @@ dependencies = [
  "sf_anim_graph",
  "sf_bake",
  "sf_character",
+ "sf_controller",
+ "sf_coords",
  "sf_vfs",
  "tes3",
 ]

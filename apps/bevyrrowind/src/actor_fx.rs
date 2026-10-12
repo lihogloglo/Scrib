@@ -4,10 +4,13 @@
 //!
 //! - **Controllers** come as clip curves (`mw_anim::effects`): the graph
 //!   blends them with the pose, and after `AnimSystems::Apply` this module
-//!   writes them out. `vis:<node>` hides a joint's subtree by scaling the
-//!   joint to zero (the rigid parts bound to it and to its descendants
+//!   writes them out. A `hide:<node>` curve above 0.5 (`show:<node>` at or
+//!   below it, for nodes hidden at rest) hides a joint's subtree by
+//!   scaling the joint to zero (the rigid parts bound to it and to its descendants
 //!   vanish; Unreal's `HideBoneByName` does the same), and the next pose
-//!   restores it. `mat:<material>:<channel>` drives the character's own
+//!   restores it. A curve no playing clip carries reads 0, the rest state: biped
+//!   creatures play `xbase_anim.kf` groups, which carry none of theirs.
+//!   `mat:<material>:<channel>` drives the character's own
 //!   copy of that outfit material (outfits share materials across
 //!   characters, effects run on each character's animation time).
 //! - **Billboards** (`mw_anim::rig::billboard_joints`): after the pose,
@@ -65,8 +68,9 @@ pub struct ActorFx {
     /// The mesh entities and animation asset this was bound for.
     meshes: Vec<Entity>,
     asset: usize,
-    /// `(curve index, joint)`: hidden while the curve is below 0.5.
-    joints: Vec<(u16, Entity)>,
+    /// `(curve index, joint, show)`: hidden as `effects::hidden` says for a
+    /// `hide:` curve, or a `show:` one when `show` (nodes hidden at rest).
+    joints: Vec<(u16, Entity, bool)>,
     materials: Vec<FxMaterial>,
     /// Joints turned to face the camera.
     billboards: Vec<Entity>,
@@ -114,10 +118,10 @@ fn bind(
         for (i, name) in animator.asset.graph.curves.iter().enumerate() {
             let Ok(i) = u16::try_from(i) else { break };
             match mw_anim::effects::parse(name) {
-                Some(Effect::Visibility { node }) => {
+                Some(effect @ (Effect::Hide { node } | Effect::Show { node })) => {
                     // Nodes that aren't joints (skinned geometry merged into an outfit mesh) stay shown.
                     if let Some(joint) = binding.find(skeleton, node) {
-                        out.joints.push((i, joint));
+                        out.joints.push((i, joint, matches!(effect, Effect::Show { .. })));
                     }
                 }
                 Some(Effect::Material { material, channel }) => by_material.entry(material).or_default().push((i, channel)),
@@ -181,8 +185,9 @@ fn apply_fx(
     for mut fx in &mut roots {
         let fx = &mut *fx;
         let value = |i: u16| fx.values.get(usize::from(i)).copied();
-        for &(curve, joint) in &fx.joints {
-            if value(curve).is_some_and(|v| v < 0.5)
+        for &(curve, joint, show) in &fx.joints {
+            let effect = if show { Effect::Show { node: "" } } else { Effect::Hide { node: "" } };
+            if value(curve).is_some_and(|v| mw_anim::effects::hidden(&effect, v) == Some(true))
                 && let Ok(mut t) = transforms.get_mut(joint)
                 && t.scale != Vec3::ZERO
             {
@@ -243,7 +248,7 @@ pub fn apply_material(m: &mut StandardMaterial, values: impl Iterator<Item = (Ch
         if m.emissive_texture.is_none() {
             m.emissive_texture.clone_from(&m.base_color_texture);
         }
-        m.emissive = Color::srgb(r, g, b).to_linear() * mw_assets::emissive_nits();
+        mw_assets::set_emissive(m, Color::srgb(r, g, b).to_linear());
     }
     if let Some([u, v, su, sv]) = uv {
         // Tiling scales about the texture center, then offsets (as `mw_assets`).
@@ -282,11 +287,11 @@ mod tests {
         let billboard = world.spawn((Transform::default(), ChildOf(spin))).id();
         let hidden = world.spawn((Transform::default(), ChildOf(body))).id();
         let fx = ActorFx {
-            joints: vec![(0, hidden)],
+            joints: vec![(0, hidden, false)],
             materials: vec![FxMaterial { handle: material.clone(), channels: vec![(1, Channel::Alpha)], last: vec![f32::NAN] }],
             body: Some(body),
             billboards: vec![billboard],
-            values: vec![1.0, 1.0],
+            values: vec![0.0, 1.0],
             ..ActorFx::default()
         };
         let root = world.spawn(fx).id();
@@ -295,7 +300,7 @@ mod tests {
         for (step, (spin_angle, shown, alpha)) in [(0.0, 1.0, 1.0), (0.9, 0.0, 0.3), (2.1, 1.0, 0.6)].into_iter().enumerate() {
             // The "animation": the parent joint turns, the curves move.
             app.world_mut().get_mut::<Transform>(spin).unwrap().rotation = Quat::from_rotation_z(spin_angle);
-            app.world_mut().get_mut::<ActorFx>(root).unwrap().values = vec![shown, alpha];
+            app.world_mut().get_mut::<ActorFx>(root).unwrap().values = vec![1.0 - shown, alpha]; // `hide:` is 1 - shown
             if shown > 0.5 {
                 app.world_mut().get_mut::<Transform>(hidden).unwrap().scale = Vec3::ONE; // the pose's write
             }

@@ -61,7 +61,7 @@ pub(crate) fn animate_materials(
                     let Some(c) = curve.sample(t) else { continue };
                     match slot {
                         ColorSlot::Diffuse => m.base_color = Color::srgba(c.x, c.y, c.z, m.base_color.alpha()),
-                        ColorSlot::Emissive => m.emissive = Color::srgb(c.x, c.y, c.z).to_linear(),
+                        ColorSlot::Emissive => crate::set_emissive(&mut m, Color::srgb(c.x, c.y, c.z).to_linear()),
                         // No PBR equivalent worth animating.
                         ColorSlot::Ambient | ColorSlot::Specular => {}
                     }

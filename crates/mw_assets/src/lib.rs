@@ -55,6 +55,38 @@ pub fn emissive_nits() -> f32 {
     SCENE_EV100.exp2() * 1.2
 }
 
+/// Sets a NIF emissive color (linear, 1 = "fully lit") on `material`: in
+/// nits ([`emissive_nits`]) and *exposed* like lit surfaces. Bevy 0.20's
+/// `emissive_exposure_weight` defaults to 0, which adds emissive nits to
+/// the exposed image unscaled: 1 became ~150x white (torchfix 2026-10-12).
+pub fn set_emissive(material: &mut StandardMaterial, color: LinearRgba) {
+    material.emissive = color * emissive_nits();
+    material.emissive_exposure_weight = 1.0;
+}
+
+/// A surface inside its own light's saturation radius, as a light model's
+/// own geometry (a carried torch around its flame). Morrowind's light term
+/// clamps to 1 within a third of the radius, so the original shows the
+/// plain texture there; Bevy's point lights have no near clamp
+/// (`1 / max(d², 1 cm²)`), so the light a few centimeters away blows it out
+/// to white. The surface is mapped as its texture glowing at "fully lit"
+/// (the emissive rule with emissive 1) and takes no further light: black
+/// base, no specular. Blended surfaces (flames, smoke) stay as they are: `None`.
+pub fn self_lit(material: &StandardMaterial) -> Option<StandardMaterial> {
+    if matches!(material.alpha_mode, AlphaMode::Blend | AlphaMode::Add | AlphaMode::Premultiplied | AlphaMode::Multiply) {
+        return None;
+    }
+    let mut m = material.clone();
+    let base = m.base_color.to_linear();
+    if m.emissive_texture.is_none() {
+        m.emissive_texture.clone_from(&m.base_color_texture);
+    }
+    set_emissive(&mut m, LinearRgba::rgb(base.red, base.green, base.blue));
+    m.base_color = Color::linear_rgba(0.0, 0.0, 0.0, base.alpha);
+    m.reflectance = 0.0;
+    Some(m)
+}
+
 /// Shared, immutable VFS used by loaders to resolve dependencies.
 #[derive(Resource, Clone)]
 pub struct SharedVfs(pub Arc<Vfs>);
@@ -303,16 +335,17 @@ impl Surface<'_> {
 
         // Fixed-function NIF shading is `texture * (emissive + lighting)`: the
         // emissive color glows *through the base texture*. Bevy adds
-        // `emissive * emissive_texture` in nits, scaled by camera exposure, so
-        // the base texture becomes the emissive texture and the color is scaled
-        // to read as "fully lit" at the scene exposure. A glow map replaces both.
+        // `emissive * emissive_texture` in nits, scaled by camera exposure
+        // ([`set_emissive`]), so the base texture becomes the emissive texture
+        // and the color is scaled to read as "fully lit" at the scene
+        // exposure. A glow map replaces both.
         let emissive = self.emissive;
         if let Some(glow) = self.glow_texture.and_then(&mut texture) {
             material.emissive_texture = Some(glow);
-            material.emissive = LinearRgba::WHITE * emissive_nits();
+            set_emissive(&mut material, LinearRgba::WHITE);
         } else if emissive.red + emissive.green + emissive.blue > 0.0 {
             material.emissive_texture.clone_from(&material.base_color_texture);
-            material.emissive = emissive * emissive_nits();
+            set_emissive(&mut material, emissive);
         }
         material
     }

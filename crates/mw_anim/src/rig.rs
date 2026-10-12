@@ -20,12 +20,24 @@ use sf_anim::{
 };
 use sf_character::{AlignReport, AutoMapReport, HumanoidBone, RigMap, auto_map};
 
-/// The joint that carries root motion in every Morrowind actor KF.
+/// The joint that carries root motion in Biped-rigged actor KFs (every NPC,
+/// most creatures).
 pub const ROOT_MOTION_JOINT: &str = "Bip01";
 
-/// Names of the joint under which a creature's bones hang, besides
-/// [`ROOT_MOTION_JOINT`] (cliff racer, centurion spider).
+/// Names of the joint under which an actor's bones hang, in preference
+/// order: [`ROOT_MOTION_JOINT`], else `Root Bone` (15 vanilla creature
+/// skeletons: cliff racer, centurion spider and sphere, shalk, scrib,
+/// kwama forager, bonelord, netches, dreugh, fish, mudcrab). The first one
+/// present is the root-motion joint: in every vanilla CREA KF it is the
+/// joint the walk and run cycles translate (`creature_root_motion` census,
+/// `mw_bake` tests, 2026-10-12).
 pub const SKELETON_ROOTS: [&str; 2] = [ROOT_MOTION_JOINT, "Root Bone"];
+
+/// The root-motion joint among `names` (joint or track names, any case):
+/// the first [`SKELETON_ROOTS`] name present, as spelled in `names`.
+pub fn root_motion_joint<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Option<&'a str> {
+    SKELETON_ROOTS.iter().find_map(|r| names.clone().find(|n| n.eq_ignore_ascii_case(r)))
+}
 
 /// Morrowind actors face −Z in engine space (+Y in the NIF's Z-up space);
 /// the framework's characters and retargeted clips face +Z. [`skeleton`]
@@ -48,20 +60,20 @@ pub const FACING_TURN: glam::Quat = glam::Quat::from_xyzw(0.0, 1.0, 0.0, 0.0);
 /// collision subtrees are left out. Body-part sockets (`Head`, `Left Hand`,
 /// `Weapon Bone`, `Tail`…) stay: parts attach to them. Duplicate names get
 /// a ` #n` suffix. The root's rest rotation gains [`FACING_TURN`]. Root
-/// motion goes on [`ROOT_MOTION_JOINT`] when present; tags are guessed from
-/// names.
+/// motion goes on the bones root ([`root_motion_joint`]: `Bip01`, else
+/// `Root Bone`); tags are guessed from names.
 pub fn skeleton(model: &Model) -> Result<Skeleton, SkeletonError> {
     let (joints, rules) = skeleton_source(model);
     Ok(Skeleton::with_rules(&joints, &rules)?.0)
 }
 
 /// What [`skeleton`] builds from: the joints and the rules (root motion on
-/// [`ROOT_MOTION_JOINT`] when present, guessed tags). The bake's
+/// [`root_motion_joint`], guessed tags). The bake's
 /// `skeleton.cook` reads NIFs through this too (`NifAnimImporter`), so its
 /// product equals [`skeleton`].
 pub fn skeleton_source(model: &Model) -> (Vec<SourceJoint>, SkeletonRules) {
     let (joints, _) = source_joints(model);
-    let root_motion_joint = joints.iter().any(|j| j.name == ROOT_MOTION_JOINT).then(|| ROOT_MOTION_JOINT.to_owned());
+    let root_motion_joint = root_motion_joint(joints.iter().map(|j| j.name.as_str())).map(str::to_owned);
     let rules = SkeletonRules { root_motion_joint, guess_tags: true, ..SkeletonRules::default() };
     (joints, rules)
 }

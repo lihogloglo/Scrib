@@ -101,11 +101,13 @@ impl Animation {
         }
     }
 
-    /// Every group as a source clip. The root-motion joint is `Bip01` when
-    /// animated: the Biped root carries the travel (checked on
-    /// `xbase_anim.kf`: `WalkForward` moves `Bip01` 2.9 m, `Bip01 NonAccum` not at all).
+    /// Every group as a source clip. The root-motion joint is the animated
+    /// bones root ([`rig::root_motion_joint`]): `Bip01`, the Biped root,
+    /// carries the travel (checked on `xbase_anim.kf`: `WalkForward` moves
+    /// `Bip01` 2.9 m, `Bip01 NonAccum` not at all), else `Root Bone` (shalk,
+    /// scrib, cliff racer…).
     pub fn anim_source(&self) -> AnimSource {
-        let root_motion = self.tracks.iter().find(|(bone, _)| bone.eq_ignore_ascii_case(ROOT_MOTION_BONE)).map(|(bone, _)| bone.clone());
+        let root_motion = rig::root_motion_joint(self.tracks.iter().map(|(bone, _)| bone.as_str())).map(str::to_owned);
         AnimSource { skeleton: None, clips: self.groups().iter().map(|g| self.source_clip(g)).collect(), root_motion }
     }
 }
@@ -151,7 +153,11 @@ impl AnimImporter for NifAnimImporter {
         // 4: geometry-morph weight curves as clip curves (`Animation::morphs`).
         // 5: billboard nodes join the skeleton; visibility and material curves (`effects`).
         // 6: translation snaps are curve breaks (`convert::snap_breaks`).
-        6
+        // 7: particle emission windows (`effects`, `emit:` curves).
+        // 8: root motion on `Root Bone` when there is no `Bip01` (`rig::root_motion_joint`).
+        // 9: visibility as rest-neutral `hide:` curves (`effects::HIDE`).
+        // 10: `show:` curves for nodes hidden at rest (`effects::SHOW`).
+        10
     }
 
     fn import(&self, path: &str, bytes: &[u8]) -> Result<AnimSource, ImportError> {
@@ -174,7 +180,11 @@ impl AnimImporter for KfAnimImporter {
         // 3: geometry-morph weight curves from the companion `.nif`.
         // 4: visibility and material curves from the companion (`effects`).
         // 5: translation snaps are curve breaks (`convert::snap_breaks`).
-        5
+        // 6: particle emission windows from the companion (`effects`, `emit:` curves).
+        // 7: root motion on `Root Bone` when there is no `Bip01` (`rig::root_motion_joint`).
+        // 8: visibility as rest-neutral `hide:` curves (`effects::HIDE`).
+        // 9: `show:` curves for nodes hidden at rest (`effects::SHOW`).
+        9
     }
 
     /// `x<model>.kf` keys the bones; the geometry-morph weights of the same

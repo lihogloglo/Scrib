@@ -9,7 +9,8 @@
 //! not pop), F fires the `fidget` trigger (cycling `Idle2`-`Idle4`), X toggles
 //! `dead` (`Death1`), G skeleton gizmos, B smooth ↔
 //! vanilla bodies (`--bodies`; rebuilds through the same no-pop swap),
-//! 1 walk in place (`--walk`), 2 run, R draws/sheathes weapons (`--drawn`;
+//! 1 walk in place (`--walk`), 2 run, 3 applies root motion (actors walk off
+//! at their clips' speed; 3 again puts them back), R draws/sheathes weapons (`--drawn`;
 //! the graph's weapon stance follows), N night (`--night`: the stage goes
 //! dark and actors carry their torches, lit).
 //! The log lists each character's skinned meshes (one per material, plus
@@ -24,7 +25,7 @@ use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use mw_assets::MwAssetsPlugin;
-use sf_anim_bevy::{AnimGizmos, Animator};
+use sf_anim_bevy::{AnimGizmos, AnimRootMotion, Animator};
 use sf_character::{CharacterSource, CharacterState, Readiness};
 use sf_character_bevy::{Character, CharacterBody, CharacterReadiness, CharacterContent, CharacterStats, OutfitCache};
 use sf_records::{RecordDb, RecordId};
@@ -144,7 +145,7 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     .insert_resource(AnimGizmos { enabled: false })
     .insert_resource(mw_assets::LightCalibration::default().ambient([150, 150, 160]))
     .insert_resource(Lineup(entries.len()))
-    .insert_resource(Gait { walk: options.walk, run: false })
+    .insert_resource(Gait { walk: options.walk, ..Gait::default() })
     .add_systems(Update, (keys, gait, report, night));
     crate::actors::add_content(&mut app, content);
     app.insert_resource(crate::held::HeldDarkness::forced(Some(options.night)));
@@ -347,14 +348,26 @@ fn capture(
 }
 
 /// Walking in place (1; 2 runs): the lineup's limbs bend through the
-/// locomotion cycle without leaving the stage (root motion is not applied).
+/// locomotion cycle without leaving the stage. Every actor follows one
+/// rule (animation.md "Root motion"): locomotion travel is extracted at
+/// bake time onto the root-motion track (`Bip01`, else `Root Bone`), which
+/// is stored on `AnimRootMotion` but not applied, so the line stays put.
+/// 3 applies it (`AnimRootMotion::apply`): each actor walks off at its
+/// clip's authored speed; 3 again puts everyone back on their mark.
 #[derive(Resource, Clone, Copy, Default)]
 struct Gait {
     walk: bool,
     run: bool,
+    travel: bool,
 }
 
-fn gait(input: Res<ButtonInput<KeyCode>>, mut gait: ResMut<Gait>, mut animators: Query<&mut Animator>) {
+/// An actor's mark on the stage, restored when root motion stops applying.
+#[derive(Component, Clone, Copy)]
+struct Mark(Transform);
+
+type GaitQuery<'a> = (Entity, &'a mut Animator, Option<&'a mut AnimRootMotion>, Option<&'a mut Transform>, Option<&'a Mark>);
+
+fn gait(input: Res<ButtonInput<KeyCode>>, mut gait: ResMut<Gait>, mut animators: Query<GaitQuery>, mut commands: Commands) {
     if input.just_pressed(KeyCode::Digit1) {
         gait.walk = !gait.walk;
         info!("walk in place (1): {}", gait.walk);
@@ -363,7 +376,12 @@ fn gait(input: Res<ButtonInput<KeyCode>>, mut gait: ResMut<Gait>, mut animators:
         gait.run = !gait.run;
         info!("run (2): {}", gait.run);
     }
-    for mut a in &mut animators {
+    let toggled = input.just_pressed(KeyCode::Digit3);
+    if toggled {
+        gait.travel = !gait.travel;
+        info!("apply root motion (3): {}", gait.travel);
+    }
+    for (entity, mut a, root, transform, mark) in &mut animators {
         a.set_bool("moving", gait.walk);
         a.set_vec2("move", Vec2::Y);
         a.set_bool("running", gait.run);
@@ -373,6 +391,16 @@ fn gait(input: Res<ButtonInput<KeyCode>>, mut gait: ResMut<Gait>, mut animators:
         let cycle = if gait.run { "RunForward" } else { "WalkForward" };
         let speed = if gait.walk { cycle_speed(&a, cycle) } else { 0.0 };
         a.drive.velocity = Vec3::Z * speed;
+        if let Some(mut root) = root {
+            root.apply = gait.travel;
+        }
+        match (transform, mark) {
+            (Some(t), None) => {
+                commands.entity(entity).insert(Mark(*t));
+            }
+            (Some(mut t), Some(mark)) if toggled && !gait.travel => *t = mark.0,
+            _ => {}
+        }
     }
 }
 

@@ -12,7 +12,7 @@
 //! where they were emitted while the joint moves (`Simulation::carry`),
 //! pauses off view, and hides beyond [`ACTOR_PARTICLE_RANGE_M`].
 //!
-//! Creature emitters switched by visibility controllers (`vis:<node>` clip
+//! Creature emitters switched by visibility controllers (`hide:<node>` clip
 //! curves, `mw_anim::effects`) on nodes between the joint and the particle
 //! node are gated here; a curve on a joint hides the emitter with its joint
 //! (`actor_fx`, scale zero). Each creature system emits while its emission
@@ -170,8 +170,9 @@ struct PropParticles;
 #[derive(Component, Debug, Default)]
 struct BodyParticles {
     body: Option<Entity>,
-    /// `(emitter, visibility curve indices)`: hidden while any is below 0.5.
-    gates: Vec<(Entity, Vec<u16>)>,
+    /// `(emitter, [(visibility curve index, show)])`: hidden while any says so
+    /// (`mw_anim::effects::hidden`; `show` marks a `show:` curve).
+    gates: Vec<(Entity, Vec<(u16, bool)>)>,
     /// `(emitter, [(system, emission curve index)])`: a system emits while
     /// its curve is at least 0.5.
     emission: Vec<(Entity, Vec<(u32, u16)>)>,
@@ -255,14 +256,15 @@ fn body_particles(
         let mut out = BodyParticles { body: Some(body.body), ..BodyParticles::default() };
         if let Some(nif) = models.nif(&body.skeleton) {
             let skeleton = &animator.asset.skeleton;
-            let vis: Vec<(u16, &str)> = animator
+            let vis: Vec<(u16, &str, bool)> = animator
                 .asset
                 .graph
                 .curves
                 .iter()
                 .enumerate()
                 .filter_map(|(i, name)| match mw_anim::effects::parse(name) {
-                    Some(Effect::Visibility { node }) => Some((u16::try_from(i).ok()?, node)),
+                    Some(Effect::Hide { node }) => Some((u16::try_from(i).ok()?, node, false)),
+                    Some(Effect::Show { node }) => Some((u16::try_from(i).ok()?, node, true)),
                     _ => None,
                 })
                 .collect();
@@ -271,8 +273,8 @@ fn body_particles(
                 let Some(joint) = anchor.joint.as_deref().and_then(|j| binding.find(skeleton, j)) else {
                     continue;
                 };
-                let gates: Vec<u16> =
-                    vis.iter().filter(|(_, node)| anchor.path.iter().any(|p| p.eq_ignore_ascii_case(node))).map(|(i, _)| *i).collect();
+                let gates: Vec<(u16, bool)> =
+                    vis.iter().filter(|(_, node, _)| anchor.path.iter().any(|p| p.eq_ignore_ascii_case(node))).map(|(i, _, show)| (*i, *show)).collect();
                 if !anchor.visible && gates.is_empty() {
                     continue; // hidden in the file, nothing shows it
                 }
@@ -351,7 +353,10 @@ fn gate_particles(roots: Query<&BodyParticles>, animators: Query<&Animator>, mut
         }
         let curves = &animator.output.curves;
         for (entity, gates) in particles.gates.iter().filter(|(_, g)| !g.is_empty()) {
-            let shown = gates.iter().all(|&i| curves.get(usize::from(i)).is_none_or(|v| *v >= 0.5));
+            let shown = gates.iter().all(|&(i, show)| {
+                let effect = if show { Effect::Show { node: "" } } else { Effect::Hide { node: "" } };
+                curves.get(usize::from(i)).is_none_or(|&v| mw_anim::effects::hidden(&effect, v) != Some(true))
+            });
             if let Ok((mut visibility, _)) = emitters.get_mut(*entity) {
                 visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
             }

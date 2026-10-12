@@ -124,7 +124,22 @@ Code: `bevyrrowind/crates/mw_anim/src/rig.rs` (deps gained `sf_character`). Insp
   When the root holds `Bip01` (or `Root Bone`: cliff racer, centurion spider), only that subtree
   is kept under the root: the root's other children are meshes, shadow boxes, `Bounding Box` and
   editor dummies (the guar's `Dummy15` sits 0.5 m below the ground and broke support detection).
-  Body-part sockets inside it stay. Duplicate names get ` #n`. Root motion joint `Bip01`.
+  Body-part sockets inside it stay. Duplicate names get ` #n`. Root motion joint: the bones root,
+  `Bip01`, else `Root Bone` (`rig::root_motion_joint`; also the KF importers' `root_motion`).
+- **Root motion per creature (as built, rootmotion 2026-10-12).** Census
+  `mw_bake/tests/creature_root_motion_real_install.rs` (507 walk/run/swim clips, 89 CREA skeletons):
+  74 skeletons travel on `Bip01`, 15 on `Root Bone` (babelfish, bonelord, cave mudcrab, cliff racer,
+  dreugh, centurion spider, kwama forager, scrib, netch betty/bull, shalk, slaughterfish, sphere
+  centurion…). Before, only `Bip01` was a root-motion joint, so the `Root Bone` cycles kept 0.3-82 m
+  of travel in the bones: in the lineup they walked off and snapped back at each loop while the
+  `Bip01` creatures stepped in place (owner note on NC-1). Now every clip's travel is extracted (0
+  flagged; the census also cooks one clip per skeleton without extraction as a control). The rule,
+  for every actor: locomotion clips are `Match`; the travel lives on the root-motion track, never in
+  the bones. The world's mover drives and the track only sets the playback rate (SpeedMatch); the
+  `character` lineup stores it on `AnimRootMotion` without applying it (key 3 applies it: each actor
+  walks off at its clip's speed). Odd authored speeds, not fixed: cliff racer 43 m/s walk, dreugh
+  6.6 m/s (Match clamps the rate to 0.75-1.3); netch bull `WalkForward` and nixhound `RunForward`
+  have loop seams in some limbs (0.57 / 0.25 m median drift, not travel).
 - **Facing.** Morrowind actors face −Z in engine space (data: toes and thumbs at −Z). The framework
   faces +Z (character.md: "an adapter whose native clips face elsewhere turns its skeleton at
   import"), so the root joint's rest gains a 180° Y turn (`rig::FACING_TURN`). KF tracks animate
@@ -308,6 +323,14 @@ Rules as OpenMW documents them (`InventoryStore::autoEquipWeapon`/`autoEquipShie
   except while a two-handed weapon is drawn (`drawn: None`). OpenMW's optional weapon/shield sheathing (off
   by default) needs mod content (`Bip01 <weapon type>` sheath bones in `xbase_anim_sh`, `_sh` models):
   not implemented; the `sheathed` mount is where it would go. The spell stance shows the sheathed mounts.
+- **Torch arm** (torchfix 2026-10-12). Black box (OpenMW's character controller): while a lit light is the
+  carried-left item and shows, the `Torch` group plays from its start to stop keys, looped, on the left-arm
+  blend mask (`Bip01 L Clavicle` subtree), at a priority above weapon actions and below scripted groups;
+  it stops when the light goes or a two-hander hides it. Ours: `mw_graphs` humanoid/first-person graphs
+  have a `torch` float parameter weighting a `torch_layer` (Override, mask `left_arm` = `leftShoulder`
+  subtree) between the `upper` slot and the `full` slot; the `Torch` clip is optional (dropped where a
+  skeleton lacks it). `held.rs` feeds `torch` with `stance` (`carries_light`). Before: the left arm kept
+  the locomotion pose, "locked in front" (owner, HI-4).
 - **Offsets.** The model's root transform (as rigid parts), under a `BoneOffset` node's model-space position
   turned −90° about X when the model has one (OpenMW's `SceneUtil::attach`). Neither bone is a `Left` bone:
   nothing is mirrored. Vanilla skeletons have no `Weapon Bone Left` (bows go on `Weapon Bone`).

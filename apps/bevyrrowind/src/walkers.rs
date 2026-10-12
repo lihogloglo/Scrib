@@ -591,6 +591,14 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest) {
                 .chain()
                 .in_set(ControllerSystems::Drive),
         )
+        .insert_resource(StrideStats {
+            trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
+            ..StrideStats::default()
+        })
+        .add_systems(
+            PostUpdate,
+            stride_monitor.after(sf_anim_bevy::AnimSystems::Evaluate),
+        )
         .add_systems(Update, (gizmos, report));
 }
 
@@ -601,6 +609,7 @@ fn report(
     mut next: Local<f32>,
     stats: Res<sf_controller_bevy::ControllerStats>,
     anim: Option<Res<AnimStats>>,
+    strides: Res<StrideStats>,
     ground: Res<MwGround>,
     movers: Query<(&Mover, Option<&Walker>, Has<Dormant>)>,
 ) {
@@ -638,4 +647,174 @@ fn report(
             f.rejected, f.unplanted, f.reach_clamped, f.pelvis_clamped, f.teleports, f.non_finite
         );
     }
+    info!(
+        "walkers strides since start: {} stances, {} skated (planted foot moved > 5 cm), {} legs without a plant for 2 s while walking",
+        strides.stances, strides.skated, strides.frozen
+    );
+}
+
+// --- Stride monitor (slopefix) -------------------------------------------------------------
+
+/// Planted feet that skate, and legs that stop cycling, counted over every
+/// simulated walker (owner check WK-4: "one leg won't do its normal
+/// movement, the other a diminished version, the body slides"). The report
+/// logs the totals; `BEVYRROWIND_STRIDE_TRACE=1` logs each case with the
+/// mover and graph state around it.
+#[derive(Resource, Default)]
+struct StrideStats {
+    /// Stances (contact above 0.5 for at least 0.2 s) seen, and those whose
+    /// foot moved more than 5 cm in the world mid-stance.
+    stances: u64,
+    skated: u64,
+    /// Walking legs that went 2 s without planting.
+    frozen: u64,
+    trace: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FootTrack {
+    last: Option<WorldPos>,
+    stance: f32,
+    slide: f32,
+    since_plant: f32,
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
+fn stride_monitor(
+    time: Res<Time>,
+    mut stats: ResMut<StrideStats>,
+    mut tracks: Local<HashMap<Entity, Vec<FootTrack>>>,
+    mut slow: Local<HashMap<Entity, f32>>,
+    ground: Res<MwGround>,
+    movers: Query<(Entity, &Mover), Without<Dormant>>,
+    animators: Query<(&Animator, Option<&AnimLod>)>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    let mut seen = Vec::new();
+    for (e, m) in &movers {
+        let asked = m.applied.desired_velocity.with_y(0.0);
+        if stats.trace && asked.length() > 1.5 && (0.1..1.0).contains(&m.measured.length()) {
+            let t = slow.entry(e).or_insert(0.0);
+            *t += dt;
+            if *t >= 1.0 {
+                *t = 0.0;
+                let dir = asked.normalize();
+                let ahead: Vec<String> = [0.15f32, 0.3, 0.5]
+                    .iter()
+                    .map(|&s| {
+                        let q = ProbeQuery::down(m.loco.position.offset(dir * s + Vec3::Y * 0.45), 1.2);
+                        ground.probe_one(q).map_or("-".into(), |h| format!("{s}: rise {:.2} n.y {:.2}", 0.45 - h.distance, h.normal.y))
+                    })
+                    .collect();
+                info!(
+                    "stride-slow: {e} at {:.2?} asked {:.2?} vel {:.2?} measured {:.2} grounded n {:.2?} h_off {:.2} ahead {ahead:?}",
+                    m.loco.position.local,
+                    asked,
+                    m.loco.motion.velocity,
+                    m.measured.length(),
+                    m.loco.grounded.map(|g| g.normal),
+                    m.loco.height_offset,
+                );
+            }
+        } else {
+            slow.remove(&e);
+        }
+        let Some((a, lod)) = m.animator.and_then(|x| animators.get(x).ok()) else {
+            continue;
+        };
+        seen.push(e);
+        let legs = &a.asset.graph.legs;
+        let feet = tracks.entry(e).or_insert_with(|| vec![FootTrack::default(); legs.len()]);
+        if feet.len() != legs.len() || !a.posed() {
+            feet.fill(FootTrack::default());
+            continue;
+        }
+        let frame = m.loco.frame();
+        let walking = m.gait.moving;
+        for (k, leg) in legs.iter().enumerate() {
+            let t = &mut feet[k];
+            let model = a.output.model.translation(usize::from(leg.effector())) * m.body_scale;
+            let w = frame.to_world(model);
+            let contact = leg
+                .contact
+                .and_then(|c| a.output.curves.get(usize::from(c)).copied())
+                .unwrap_or(0.0);
+            let step = t.last.map_or(0.0, |p| p.delta_f32(w).with_y(0.0).length());
+            t.last = Some(w);
+            let mut why = None;
+            if contact > 0.5 && walking {
+                if t.stance == 0.0 {
+                    t.since_plant = 0.0;
+                }
+                t.stance += dt;
+                if t.stance > 0.1 {
+                    t.slide += step;
+                }
+            } else {
+                if t.stance >= 0.2 {
+                    stats.stances += 1;
+                    if t.slide > 0.05 {
+                        stats.skated += 1;
+                        why = Some(format!("skated {:.2} m over a {:.2} s stance", t.slide, t.stance));
+                    }
+                }
+                t.stance = 0.0;
+                t.slide = 0.0;
+            }
+            if stats.trace && walking && k == 0 && (2.0..3.0).contains(&t.stance) {
+                let c: Vec<String> = legs
+                    .iter()
+                    .map(|l| format!("{:.2}", l.contact.and_then(|c| a.output.curves.get(usize::from(c)).copied()).unwrap_or(-1.0)))
+                    .collect();
+                info!(
+                    "stride-long: {e} t {:.2} pos {:.2?} measured {:.2?} vel {:.2?} asked {:.2?} yaw {:.2} moving {} contacts {c:?} drive.v {:.2?} moved {:.3?}",
+                    t.stance,
+                    m.loco.position.local,
+                    m.measured,
+                    m.loco.motion.velocity,
+                    m.applied.desired_velocity,
+                    m.loco.motion.yaw,
+                    m.gait.moving,
+                    a.drive.velocity,
+                    a.drive.moved.translation,
+                );
+            }
+            t.since_plant = if walking { t.since_plant + dt } else { 0.0 };
+            if t.since_plant > 2.0 {
+                stats.frozen += 1;
+                t.since_plant = 0.0;
+                why = Some(format!("no plant for 2 s (contact {contact:.2})"));
+            }
+            if let (Some(why), true) = (why, stats.trace) {
+                let g = &a.asset.graph;
+                let locomotion = g
+                    .node(mw_graphs::build::LOCOMOTION)
+                    .and_then(|n| Some((n, a.instance.current_state(n)?)))
+                    .and_then(|(n, i)| g.state_names(n).get(i).map(|s| (*s).to_owned()));
+                let ground: Vec<String> = a
+                    .drive
+                    .ground
+                    .iter()
+                    .map(|s| s.map_or("-".into(), |s| format!("{:.2}/{:.2}", s.point.y, s.normal.y)))
+                    .collect();
+                info!(
+                    "stride: {e} leg {k} {why}: at {:?} ground n.y {:?}, measured {:.2} m/s ({:?}), asked {:.2}, moving {}, state {locomotion:?}, \
+                     samples {ground:?}, feet {:?}, tier {:?}, scale {:.2}",
+                    m.loco.position,
+                    m.loco.grounded.map(|g| g.normal.y),
+                    m.measured.length(),
+                    m.measured,
+                    m.applied.desired_velocity.length(),
+                    m.gait.moving,
+                    a.output.feet,
+                    lod.map(|l| l.tier),
+                    m.body_scale.y,
+                );
+            }
+        }
+    }
+    tracks.retain(|e, _| seen.contains(e));
 }
