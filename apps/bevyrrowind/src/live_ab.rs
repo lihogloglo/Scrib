@@ -62,14 +62,6 @@ impl Default for LiveAb {
 struct OverlayText;
 
 /// DLSS modes F4 cycles through.
-/// Presets the C key cycles through.
-const CLOUD_CYCLE: [sf_atmos_bevy::sf_atmos::CloudPreset; 4] = [
-    sf_atmos_bevy::sf_atmos::CloudPreset::Clear,
-    sf_atmos_bevy::sf_atmos::CloudPreset::Fair,
-    sf_atmos_bevy::sf_atmos::CloudPreset::Overcast,
-    sf_atmos_bevy::sf_atmos::CloudPreset::Storm,
-];
-
 const DLSS_CYCLE: [Upscaling; 5] = [
     Upscaling::Off,
     Upscaling::Dlss(UpscaleQuality::Quality),
@@ -175,10 +167,11 @@ fn keys(
     if input.just_pressed(KeyCode::KeyC)
         && let Some(c) = s.clouds.as_mut()
     {
-        *cloud_preset = (*cloud_preset + 1) % CLOUD_CYCLE.len();
-        let preset = CLOUD_CYCLE[*cloud_preset];
-        c.settings = crate::exterior::cloud_settings(preset);
-        note(format!("clouds preset {}", preset.name()));
+        // The cloud genera, in `exterior::CLOUD_CHOICES` order.
+        *cloud_preset = (*cloud_preset + 1) % crate::exterior::CLOUD_GENERA;
+        let choice = crate::exterior::CLOUD_CHOICES[*cloud_preset];
+        c.settings = crate::exterior::cloud_settings(choice);
+        note(format!("clouds {}", choice.name));
     }
     if input.just_pressed(KeyCode::F5) {
         if let Some(f) = s.far.as_mut() {

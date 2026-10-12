@@ -32,6 +32,8 @@ sf_character.workspace = true
 sf_controller = { workspace = true, features = ["bake"] }
 sf_lod = { workspace = true, features = ["bake"] }
 sf_model.workspace = true
+# `body.cook` and `items.check` (physics-adapter.md "Items").
+sf_physics = { workspace = true, features = ["bake"] }
 sf_records.workspace = true
 sf_terrain = { workspace = true, features = ["bake"] }
 sf_vfs.workspace = true

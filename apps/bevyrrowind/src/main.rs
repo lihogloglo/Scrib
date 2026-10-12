@@ -15,6 +15,7 @@ mod faces;
 mod held;
 mod live_ab;
 mod perf;
+mod physics;
 mod portal_spike;
 mod render;
 mod scenes;
@@ -181,10 +182,11 @@ struct ViewFlags {
     /// height written "+h" is h meters above the ground (or the sea).
     #[arg(long, allow_hyphen_values = true)]
     camera: Option<String>,
-    /// Exteriors: cloud weather preset: clear, fair (alias cumulus), overcast, storm.
-    /// `--off clouds` drops the clouds.
+    /// Exteriors: clouds, a genus (clear, fair, cumulus, stratocumulus, altocumulus,
+    /// altostratus, cirrus, overcast, storm) or a Morrowind weather (cloudy, foggy, rain,
+    /// thunderstorm, ashstorm, blight, snow, blizzard). `--off clouds` drops them.
     #[arg(long, default_value = "fair", value_parser = parse_clouds)]
-    clouds: sf_atmos_bevy::sf_atmos::CloudPreset,
+    clouds: exterior::CloudChoice,
     /// Exteriors: time of day in hours.
     #[arg(long, default_value_t = 10.0)]
     hour: f64,
@@ -201,6 +203,9 @@ struct ViewFlags {
     /// Exteriors: draw the streaming rings and resident cells.
     #[arg(long)]
     rings: bool,
+    /// Exteriors and streamed interiors: draw the physics colliders around the camera (`G` toggles).
+    #[arg(long)]
+    physics_debug: bool,
     /// Exteriors: the benchmark path's heights are above the ground (or sea).
     #[arg(long, requires = "bench")]
     bench_ground: bool,
@@ -250,7 +255,7 @@ struct ViewFlags {
     #[arg(long)]
     single_cell: bool,
     #[command(flatten)]
-    lighting: Lighting,
+    lighting: Box<Lighting>,
     /// Load every model from its NIF, ignoring cooked meshes.
     #[arg(long)]
     no_baked: bool,
@@ -406,6 +411,7 @@ impl ViewFlags {
             terrain_lod: self.terrain_lod,
             wireframe: self.wire,
             rings: self.rings,
+            physics_debug: self.physics_debug,
             near_ring: self.near_ring,
             far_ring: self.far_ring,
             no_lights: self.no_lights || perf.off.has(perf::Part::Lights),
@@ -430,7 +436,7 @@ impl ViewFlags {
     /// `--rt`, `--dlss` and `--off denoiser`.
     fn render(&self) -> Result<render::RenderSettings> {
         let off = perf::Off::from_flags(&self.perf.off)?;
-        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser))?)
+        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser))?.with_point_shadows(self.lighting.point_shadows))
     }
 }
 
@@ -914,6 +920,16 @@ struct Lighting {
     /// Ambient luminance (nits) for a white cell ambient.
     #[arg(long)]
     ambient: Option<f32>,
+    /// Night exposure floor, EV100: the darkest exposure a view may take.
+    #[arg(long)]
+    exposure_floor: Option<f32>,
+    /// Exterior ambient floor at night, nits.
+    #[arg(long)]
+    night_ambient: Option<f32>,
+    /// Point lights casting shadows (the nearest; default by `--quality`;
+    /// env `BEVYRROWIND_POINT_SHADOWS`).
+    #[arg(long)]
+    point_shadows: Option<usize>,
 }
 
 impl Lighting {
@@ -922,6 +938,8 @@ impl Lighting {
         calibration.lumens_per_radius_sq = self.lumens.unwrap_or(calibration.lumens_per_radius_sq);
         calibration.range_scale = self.range.unwrap_or(calibration.range_scale);
         calibration.ambient_nits = self.ambient.unwrap_or(calibration.ambient_nits);
+        calibration.exposure_floor_ev100 = self.exposure_floor.unwrap_or(calibration.exposure_floor_ev100);
+        calibration.night_ambient_nits = self.night_ambient.unwrap_or(calibration.night_ambient_nits);
         calibration
     }
 }
@@ -931,9 +949,12 @@ fn parse_quality(s: &str) -> std::result::Result<exterior::Quality, String> {
     exterior::Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: low, medium, high, ultra"))
 }
 
-/// `--clouds` values (`sf_atmos` presets).
-fn parse_clouds(s: &str) -> std::result::Result<sf_atmos_bevy::sf_atmos::CloudPreset, String> {
-    sf_atmos_bevy::sf_atmos::CloudPreset::parse(s).ok_or_else(|| format!("unknown cloud preset {s:?}: clear, fair, cumulus, overcast, storm"))
+/// `--clouds` values (genera and Morrowind weathers, `exterior::CLOUD_CHOICES`).
+fn parse_clouds(s: &str) -> std::result::Result<exterior::CloudChoice, String> {
+    exterior::CloudChoice::parse(s).ok_or_else(|| {
+        let names: Vec<_> = exterior::CLOUD_CHOICES.iter().map(|c| c.name).collect();
+        format!("unknown clouds {s:?}: {}", names.join(", "))
+    })
 }
 
 fn parse_bodies(s: &str) -> std::result::Result<sf_character_bevy::SmoothBodies, String> {

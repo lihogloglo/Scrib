@@ -16,6 +16,8 @@ sf_anim_graph = { path = "../superfargoth/crates/sf_anim_graph" }
 sf_anim_bevy = { path = "../superfargoth/crates/sf_anim_bevy" }
 sf_character_bevy = { path = "../superfargoth/crates/sf_character_bevy" }
 sf_controller_bevy = { path = "../superfargoth/crates/sf_controller_bevy" }
+sf_physics = { path = "../superfargoth/crates/sf_physics" }
+sf_physics_bevy = { path = "../superfargoth/crates/sf_physics_bevy" }
 sf_bake = { path = "../superfargoth/crates/sf_bake" }
 sf_character = { path = "../superfargoth/crates/sf_character" }
 sf_controller = { path = "../superfargoth/crates/sf_controller" }

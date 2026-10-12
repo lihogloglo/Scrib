@@ -649,10 +649,37 @@ ragdolls; robes move." Tasks in dependency order:
   rebase 0.9–1.45 ms (gate 2); insert peaks 0.66–0.79 ms/frame before the refresh reserve was added (re-measure).
   **Open:** A/B stutters vs `--off physics` (the flight bench fails its gates either way on this machine: compare
   counts), re-measure insert peaks, and move walkers.rs `MwGround` to `PhysicsProbe` once walkers3 is done.
-- [ ] P3 `body.cook` + `items.check` (framework bake steps) and `MwBodyRules` (`mw_bake`): authored `RootCollisionNode`
+  **P2 A/B (physics-p3, 2026-10-13, release, shared machine):** 60 m/s flight, `--off physics` vs on: stutters 3.4/min
+  (worst 45.9 ms, p99 33.5 ms) vs 2.5/min (worst 31.6 ms, p99 26.5 ms): physics on is not worse. Insert peaks with the
+  refresh reserve **still 0.49–0.81 ms/frame** (1–6 frames per 10 s over 0.5 ms; 67–96 bodies): gate missed, P4 must
+  time-slice the first refresh after a batch or lower `insert_batch`. Idle step 0.15–0.17 ms; step across a rebase
+  0.87–1.16 ms. Fixed in P3: `PhysicsWorld::refresh_queries` before the first step silently dropped newly inserted
+  dynamic bodies from rapier's islands (they never simulated, awake or woken); it now waits for a step while a dynamic
+  insert is pending (test `awake_bodies_fall`). P1's spike "active pile" numbers predate this fix only if the spike
+  refreshed before stepping (it doesn't call `refresh_queries`, so they stand).
+- [~] P3 `body.cook` + `items.check` (framework bake steps) and `MwBodyRules` (`mw_bake`): authored `RootCollisionNode`
   else primitive / hull / V-HACD; per-page support and overlap check.
   Verify: `cargo test -p sf_physics --features bake`; `body_report` example on the install (models, shape kinds, hulls,
   overlaps > 1 cm, unsupported items per cell, bake time; full bake stays inside the 2 min gate).
+  **Built 2026-10-13 (physics-p3), uncommitted:** `sf_physics::cook` (`BodyShape`/`ShapePart`, primitive/hull/V-HACD
+  fit, `SFBD`), `sf_physics::steps` (feature `bake`: `body.cook`, `items.check` as a 0.5 s settle test per page,
+  `SFIC`), `ShapeRef::Body`, debug draw of hulls/primitives/compounds, `PhysicsBodySource` in `sf_physics_bevy` (items
+  draw orange, `Fixed` until P4), `mw_bake::body` (`MwBodyRules`, `MwItemsRules`, `item_mass`, `bake_bodies`,
+  `check_items`, example `body_report`), both steps in `bevyrrowind bake` with report lines. Tests: `cargo test -p
+  sf_physics --features bake` (fits on fixtures: box, round, flat, open cone, concave L, authored; settle: resting,
+  hanging, off-edge, sunk, stacked, rule-held, no shape), `mw_bake` body tests; clippy pedantic clean.
+  **Census (vanilla + expansions):** 1,055 item models, 14 failed (skirt/VFX models without static geometry); sources
+  Authored 37, Primitive 26, Thin 12, Hull 809, Decomposition 171; single-part kinds box 31, cylinder 7, hull 846;
+  2,041 hull parts (4–32 vertices, mean 29); decompositions 2–8 pieces (mean 7.5); mass over 3,396 item records
+  0.2–60 kg (1,057 clamped up to 0.2 kg, 2 down to 60). **items.check:** 1,350 pages, 42,582 items: No 23,953,
+  Unsupported 16,057, Rules (carryable lights) 2,572; 21,753 overlaps > 1 cm; 32,489 statics + 468 terrain patches.
+  **Bake time:** cold (new steps) body.cook 21.4 s wall + items.check 7.2 s, whole `bevyrrowind bake` 31.7 s; warm
+  2.75 s: inside the 2 min gate. **Open (P4 first):** the unsupported (38 %) and overlap (51 %) rates are implausibly
+  high: suspect item-item interpenetration cascades in the all-at-once settle and render hulls bigger than the visual
+  footprint (most items are open meshes → one hull; primitives rarely fit within 15 %); try per-item settles against
+  statics + already-resting items, a 1–2 cm overlap allowance (shrunk hulls / contact skin), and check shapes in PH-7.
+  Holding is the safe failure (held items stay put). PH-7 sanity screenshot not usable: the default interior camera is
+  outside the 40 m debug radius; scene `ph-tradehouse-items` needs a `camera:` near the counter.
 - [ ] P4 Dynamic items (`sf_physics_bevy` + `mw_physics`): `Dynamic` placements as sleeping bodies on R0 activation,
   `HOLD_UNTIL_GRABBED`, weight → mass, debris/prop layers, CCD, coverage freeze, fell-out recovery, persistence through
   `PlacementOverlay::move_to` + `physics` state blob on deactivation.
@@ -873,3 +900,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (physics-p2): M4 P2 built: `sf_physics_bevy` (fixed step, rebase, write-back, R0 statics + terrain heightfields under a 0.5 ms insert budget, counters, collider gizmos), `StaticShape::trimesh()`, app `physics.rs` (`--physics-debug`/`G`, `--off physics`); headless test + Balmora/Census debug shots line up (PH-6 awaiting owner); flight: idle step ≤ 0.13 ms, rebase step ≤ 1.45 ms; A/B stutters and walkers on `PhysicsProbe` open.
 - 2026-10-13 (lighting): night exposure floor (owner option A): `sf_sky::ExposureRange` (UE Min/Max EV100) clamps the scheduled EV100 and is baked into the viewer auto-exposure curve; Bevyrrowind floor EV100 3.5 + night ambient 1 nit (`LightCalibration`, `--exposure-floor`/`--night-ambient`): `hi-balmora-night` EV100 1.62 -> 3.5, blown pixels 1.63 % -> 0.26 %, mean luma 72 -> 38; the cave (Addamasartus) unaffected (EV 7 scheduled, auto meters above the floor). Budgeted point-light shadows `sf_sky_bevy::PointShadowBudget` (N nearest by distance/priority, hysteresis, 15-25 m + 0.3 s fade via a shadowed/unshadowed light split, torches 2x, 0.25 m near plane, light props `NotShadowCaster`): 1440p median 9.4 / 10.2 / 13.3 / 13.8 ms for N = 0/1/2/4 (render-thread bound) -> High 1, Ultra 4, Low/Medium 0 (`--point-shadows`). LT-1..3 awaiting owner; shots/lighting.
 - 2026-10-13 (walkers5): frozen walk strides (owner "wonky guards at night"): not torch-specific; the walk blend space marker-synced a lane to an outro marker past its loop end, and once that lane led (after a turn) it played to the clip end (1.333 s) and parked. `sf_anim_graph` sync now syncs looping clips over their loop only (pairs wrap at the loop end, a follower always lands inside); tests `synced_followers_stay_inside_their_loop`, `mw_graphs` `turning_walkers_keep_every_walk_lane_cycling`. Night Balmora 150 s: stride-stuck 76 -> 0 (3 runs). Give-ups were not pathgrid first legs but straight off-grid walks (no node in reach): `WanderPlanner` remembers given-up headings/first-leg nodes per spot (`blocked_starts`, 1 m) and re-rolls away (±45°) or starts at the next-nearest node; give-ups 106 (before 123-167). Dagoth Ur: matches the NIF (texture-coloured additive particles, lavender-blue spray, no light node; nothing to wire). HI-4, WK-1, PA-3 awaiting owner. Not committed.
+- 2026-10-13 (physics-p3): M4 P3 built (uncommitted): `body.cook` (primitive/hull/V-HACD, 1,055 item models, 14 failed) and `items.check` (per-page settle test; 16k of 42.6k items flagged unsupported: too many, P4 investigates), both in `bevyrrowind bake` (cold +29 s, warm 2.75 s total); fixed `refresh_queries` dropping new dynamic bodies; P2 A/B: physics on not worse for stutters, insert peaks still 0.49–0.81 ms (gate 0.5).

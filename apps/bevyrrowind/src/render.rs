@@ -5,7 +5,15 @@
 
 use bevy::prelude::*;
 use sf_sky_bevy::sf_sky::{RenderPath, Upscaling};
-use sf_sky_bevy::{SkyRenderOptions, UpscalingSetting};
+use sf_sky_bevy::{PointShadowBudget, SkyRenderOptions, UpscalingSetting};
+
+/// Default for `--point-shadows` (perf A/B: `--env BEVYRROWIND_POINT_SHADOWS=0`).
+const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
+
+/// Point-light shadow budget of the quality presets without an override
+/// (`(count, cube face size)`; lighting job 2026-10-13, sky-lighting.md
+/// "Local-light shadows": GPU cost at `hi-balmora-night`).
+pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (1, 1024);
 
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
 const ENV_DLSS: &str = "BEVYRROWIND_DLSS";
@@ -25,6 +33,9 @@ pub struct RenderSettings {
     pub upscaling: Upscaling,
     /// DLSS Ray Reconstruction on the ray-traced path (`--off denoiser` turns it off).
     pub denoiser: bool,
+    /// Point lights with shadow maps (`--point-shadows`, else
+    /// `BEVYRROWIND_POINT_SHADOWS`, else the quality preset's).
+    pub point_shadows: Option<usize>,
 }
 
 impl RenderSettings {
@@ -45,7 +56,8 @@ impl RenderSettings {
             eprintln!("--dlss needs a build with `--features dlss`; upscaling off");
         }
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
-        Ok(Self { path, upscaling, denoiser })
+        let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
+        Ok(Self { path, upscaling, denoiser, point_shadows })
     }
 
     /// Whether the view needs the sky plugin's render-path management.
@@ -77,13 +89,55 @@ impl RenderSettings {
         let _ = app;
     }
 
+    /// `--point-shadows` from the command line (wins over the environment).
+    #[must_use]
+    pub fn with_point_shadows(mut self, count: Option<usize>) -> Self {
+        self.point_shadows = count.or(self.point_shadows);
+        self
+    }
+
+    /// The point-light shadow budget: the override's count, else the
+    /// preset's `(count, face size)`.
+    pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
+        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, ..PointShadowBudget::default() }
+    }
+
     /// Before the sky plugin: its settings resources.
     pub fn insert(self, app: &mut App) {
         app.insert_resource(UpscalingSetting(self.upscaling));
+        app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
+        app.add_systems(Last, log_lighting_at_screenshot);
     }
 
     /// After the sky plugin (it inits `SkyRenderOptions`): the denoiser switch.
     pub fn apply_options(self, options: &mut SkyRenderOptions) {
         options.ray_tracing_denoiser = self.denoiser;
     }
+}
+
+/// With every screenshot: the exposure and local-light state it was taken
+/// at (lighting job logs: EV100 per camera, the sky's, shadowed lights).
+fn log_lighting_at_screenshot(
+    shots: Query<(), Added<bevy::render::view::screenshot::Screenshot>>,
+    cameras: Query<(&Camera, &bevy::camera::Exposure, Has<bevy::post_process::auto_exposure::AutoExposure>), With<Camera3d>>,
+    sky: Option<Res<sf_sky_bevy::CurrentSky>>,
+    lights: Query<(&PointLight, &InheritedVisibility)>,
+    budget: Option<Res<PointShadowBudget>>,
+) {
+    if shots.is_empty() {
+        return;
+    }
+    let cams: Vec<String> = cameras
+        .iter()
+        .filter(|(c, _, _)| c.is_active)
+        .map(|(c, e, auto)| format!("order {} EV100 {:.2}{}", c.order, e.ev100, if auto { " + auto exposure" } else { "" }))
+        .collect();
+    let lit = lights.iter().filter(|(_, v)| v.get()).count();
+    let shadowed = lights.iter().filter(|(l, v)| v.get() && l.shadow_maps_enabled).count();
+    let sky = sky.map_or_else(String::new, |s| format!(", sky EV100 {:.2} (sun {:.1} deg)", s.0.ev100, s.0.celestial.sun.elevation_deg()));
+    info!(
+        "lighting at screenshot: cameras [{}]{sky}; point lights {lit} shown, {shadowed} shadowed (budget {})",
+        cams.join("; "),
+        budget.map_or(0, |b| b.max)
+    );
 }

@@ -45,6 +45,7 @@ use mw_assets::{LightCalibration, SharedVfs};
 use mw_world::portal::{self, DoorShape, ModelTris};
 use sf_coords::{WorldPos, WorldTransform};
 use sf_records::{RecordDb, RecordId};
+use sf_sky_bevy::sf_sky::ExposureRange;
 use sf_sky_bevy::{MoonLight, SkyCamera, SunLight, TemporalHistory};
 use sf_terrain_bevy::TerrainCamera;
 use sf_vfs::Vfs;
@@ -445,13 +446,34 @@ const SPEED_DARKEN: f32 = 2.0;
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct ExposureStrength(pub f32);
 
-fn compensation_points(strength: f32) -> [Vec2; 5] {
+/// The curve sampled every half EV and kept inside the exposure range
+/// (`LightCalibration::exposure_range`: the night floor, sky-lighting.md
+/// "Exposure range"), UE's Min/Max EV100 on Bevy's curve.
+fn compensation_points(strength: f32, range: ExposureRange) -> Vec<Vec2> {
     let e_int = INTERIOR_COMPENSATION - INTERIOR_X;
-    COMPENSATION.map(|(x, c)| Vec2::new(x, e_int + strength * ((c - x) - e_int) + x))
+    let scaled = COMPENSATION.map(|(x, c)| Vec2::new(x, e_int + strength * ((c - x) - e_int) + x));
+    let (lo, hi) = (scaled[0].x, scaled[scaled.len() - 1].x);
+    std::iter::successors(Some(lo), |x| Some(x + 0.5))
+        .take_while(|x| *x <= hi + 1e-3)
+        .map(|x| Vec2::new(x, range.clamp_compensation(mw_assets::SCENE_EV100, x, sample(&scaled, x))))
+        .collect()
 }
 
-fn compensation_curve(strength: f32) -> Option<AutoExposureCompensationCurve> {
-    AutoExposureCompensationCurve::from_curve(LinearSpline::new(compensation_points(strength)))
+/// A piecewise-linear curve's value at `x` (flat past its ends).
+fn sample(points: &[Vec2], x: f32) -> f32 {
+    points
+        .windows(2)
+        .find(|w| x <= w[1].x)
+        .map_or(points[points.len() - 1].y, |w| w[0].y + (w[1].y - w[0].y) * ((x - w[0].x) / (w[1].x - w[0].x)).clamp(0.0, 1.0))
+}
+
+/// The exposure range of the lighting calibration (default without one).
+fn exposure_range(calibration: Option<&LightCalibration>) -> ExposureRange {
+    calibration.copied().unwrap_or_default().exposure_range()
+}
+
+fn compensation_curve(strength: f32, range: ExposureRange) -> Option<AutoExposureCompensationCurve> {
+    AutoExposureCompensationCurve::from_curve(LinearSpline::new(compensation_points(strength, range)))
         .map_err(|e| warn!("portal spike: compensation curve: {e:?}"))
         .ok()
 }
@@ -463,7 +485,9 @@ fn exposure_keys(
     mut strength: ResMut<ExposureStrength>,
     adaptation: Option<Res<EyeAdaptation>>,
     mut curves: ResMut<Assets<AutoExposureCompensationCurve>>,
+    calibration: Option<Res<LightCalibration>>,
 ) {
+    let range = exposure_range(calibration.as_deref());
     let delta = if input.just_pressed(KeyCode::Equal) {
         0.1
     } else if input.just_pressed(KeyCode::Minus) {
@@ -472,21 +496,15 @@ fn exposure_keys(
         return;
     };
     strength.0 = ((strength.0 + delta) * 10.0).round().clamp(0.0, 15.0) / 10.0;
-    if let (Some(a), Some(curve)) = (adaptation, compensation_curve(strength.0))
+    if let (Some(a), Some(curve)) = (adaptation, compensation_curve(strength.0, range))
         && let Some(mut c) = curves.get_mut(&a.0)
     {
         *c = curve;
     }
     // Steady-state EV100 = base - (compensation - x), at the curve's
     // night (-11), interior (-3) and daylight (5, noon) points.
-    let points = compensation_points(strength.0);
-    let ev = |x: f32| {
-        let c = points
-            .windows(2)
-            .find(|w| x <= w[1].x)
-            .map_or(points[4].y, |w| w[0].y + (w[1].y - w[0].y) * ((x - w[0].x) / (w[1].x - w[0].x)).clamp(0.0, 1.0));
-        mw_assets::SCENE_EV100 - (c - x)
-    };
+    let points = compensation_points(strength.0, range);
+    let ev = |x: f32| mw_assets::SCENE_EV100 - (sample(&points, x) - x);
     let msg = format!(
         "portal exposure strength {:.1} (default {DEFAULT_EXPOSURE_STRENGTH}): EV100 night {:.1}, interior {:.1}, noon {:.1}",
         strength.0,
@@ -505,6 +523,7 @@ fn setup(
     mut materials: ResMut<Assets<PortalMaterial>>,
     curves: Option<ResMut<Assets<AutoExposureCompensationCurve>>>,
     strength: Option<Res<ExposureStrength>>,
+    calibration: Option<Res<LightCalibration>>,
 ) {
     let image = target_image(&mut images, UVec2::ONE);
     let material = materials.add(PortalMaterial { view: image.clone() });
@@ -535,7 +554,7 @@ fn setup(
         ))
         .id();
     if let Some(mut curves) = curves
-        && let Some(curve) = compensation_curve(strength.map_or(DEFAULT_EXPOSURE_STRENGTH, |s| s.0))
+        && let Some(curve) = compensation_curve(strength.map_or(DEFAULT_EXPOSURE_STRENGTH, |s| s.0), exposure_range(calibration.as_deref()))
     {
         commands.insert_resource(EyeAdaptation(curves.add(curve)));
     }
@@ -1106,5 +1125,29 @@ mod tests {
         let mut gate = Gate::new(true, [FRONT_M; 2]);
         let mut pose = street(Vec3::new(-3.0, 1.6, 0.5), std::f32::consts::FRAC_PI_2);
         assert_eq!(walk(&link, &mut gate, &mut pose, &mut ws, Vec3::new(0.0, 0.0, 0.03), 200, 9), 0);
+    }
+}
+
+#[cfg(test)]
+mod exposure_floor_tests {
+    use super::*;
+
+    /// The viewer's steady-state EV100 at metered average `x`.
+    fn ev(points: &[Vec2], x: f32) -> f32 {
+        mw_assets::SCENE_EV100 - (sample(points, x) - x)
+    }
+
+    #[test]
+    fn auto_exposure_stops_at_the_night_floor() {
+        let open = compensation_points(DEFAULT_EXPOSURE_STRENGTH, ExposureRange::default());
+        let floored = compensation_points(DEFAULT_EXPOSURE_STRENGTH, LightCalibration::default().exposure_range());
+        // A dark street opens past the floor without it, stops at it with it.
+        assert!(ev(&open, -14.0) < 3.0);
+        assert!((ev(&floored, -14.0) - LightCalibration::default().exposure_floor_ev100).abs() < 1e-3);
+        // A lit interior and daylight are untouched.
+        for x in [INTERIOR_X, 5.0] {
+            assert!((ev(&open, x) - ev(&floored, x)).abs() < 1e-3, "x {x}");
+        }
+        assert!(compensation_curve(DEFAULT_EXPOSURE_STRENGTH, LightCalibration::default().exposure_range()).is_some());
     }
 }

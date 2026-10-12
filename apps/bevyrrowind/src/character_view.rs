@@ -142,6 +142,9 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
         ..default()
     }))
     .add_plugins((MwAssetsPlugin { vfs }, FreeCameraPlugin, sf_anim_bevy::SfAnimPlugin))
+    // Torch shadows on the stage (the exterior's High budget).
+    .add_plugins(sf_sky_bevy::PointShadowPlugin)
+    .insert_resource(crate::render::RenderSettings::default().point_shadow_budget(crate::render::POINT_SHADOWS_DEFAULT))
     .insert_resource(AnimGizmos { enabled: false })
     .insert_resource(mw_assets::LightCalibration::default().ambient([150, 150, 160]))
     .insert_resource(Lineup(entries.len()))

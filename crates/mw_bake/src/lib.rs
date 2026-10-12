@@ -14,6 +14,7 @@
 //! Bevy-free; the viewer reads the products through `sf_model_bevy`.
 
 pub mod anim;
+pub mod body;
 pub mod collision;
 mod importer;
 mod inputs;
@@ -140,6 +141,7 @@ pub fn model_baker(store: Store, inputs: Arc<VfsInputs>) -> Baker {
         .register(MeshRestStep { importers: importers(), settings: CookSettings::default() })
         .register(MeshRigStep { importers: importers(), settings: CookSettings::default() });
     collision::register(&mut baker);
+    body::register(&mut baker);
     baker
 }
 

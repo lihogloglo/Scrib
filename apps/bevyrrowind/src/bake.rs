@@ -19,6 +19,7 @@ pub fn cache_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
     explicit.or_else(mw_bake::default_cache_root).ok_or_else(|| "no local data directory; pass --cache".into())
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let started = Instant::now();
     let root = cache_root(cache)?;
@@ -60,6 +61,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let far = mw_bake::far::bake_far(&mut baker, &db, &[world::exterior()]);
     // Animation (bake-adapter.md "Animation"): skeletons, clips and graphs of every actor.
     let anim = bake_actors(&mut baker, &db, &vfs);
+    // Item bodies and the settle test of placed items (physics-adapter.md "Items").
+    let bodies = mw_bake::body::bake_bodies(&baker, &db, &paths);
+    let items = mw_bake::body::check_items(&mut baker, &db);
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -105,6 +109,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
         eprintln!("  failed: {key}: {error}");
     }
     print_animation(&anim);
+    print!("{bodies}{items}");
     println!(
         "load content {loaded:.2?}, prepare sources {prepared:.2?}, models {:.2?}, save memo + manifest {saved:.2?} ({} products), total {:.2?}",
         report.elapsed,
@@ -126,6 +131,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     }
     if !anim.failures.is_empty() {
         errors.push(format!("{} animation products failed", anim.failures.len()));
+    }
+    if !items.failed.is_empty() {
+        errors.push(format!("{} items.check pages failed", items.failed.len()));
     }
     if errors.is_empty() { Ok(()) } else { Err(errors.join("; ").into()) }
 }

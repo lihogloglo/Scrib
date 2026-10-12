@@ -97,10 +97,12 @@ pub enum Part {
     /// Object-terrain blending (rocks, roots, foundations into the ground;
     /// superfargoth terrain.md "Object-terrain blending").
     TerrainBlend,
+    /// Rigid-body physics (`physics.rs`, M4): no physics worlds, no colliders.
+    Physics,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 26] = [
+    const ALL: [(&'static str, Part); 27] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -127,6 +129,7 @@ impl Part {
         ("ai", Part::Walkers),
         ("terrainblend", Part::TerrainBlend),
         ("groundblend", Part::TerrainBlend),
+        ("physics", Part::Physics),
     ];
 
     fn name(self) -> &'static str {

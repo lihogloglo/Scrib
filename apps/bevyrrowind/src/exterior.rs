@@ -69,6 +69,8 @@ pub struct ExteriorOptions {
     pub terrain_lod: bool,
     pub wireframe: bool,
     pub rings: bool,
+    /// Physics collider wireframes at start (`--physics-debug`).
+    pub physics_debug: bool,
     /// Ring load radii overrides (R1, R2), meters; unload keeps the default margin.
     pub near_ring: Option<f32>,
     pub far_ring: Option<f32>,
@@ -80,7 +82,7 @@ pub struct ExteriorOptions {
     pub prepass: bool,
     pub hour: f64,
     /// Cloud weather preset (`--clouds`).
-    pub clouds: sf_atmos_bevy::sf_atmos::CloudPreset,
+    pub clouds: CloudChoice,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
     /// Benchmark, window size and A/B switches.
@@ -171,6 +173,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
         crate::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone());
     }
+    if !perf.off.has(Part::Physics) {
+        crate::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug);
+    }
     // The quality preset scales LOD selection, size culling and the
     // far-field handoff with one bias (`--off sizecull`: no size culling).
     let screen = options.quality.screen(!perf.off.has(Part::SizeCull));
@@ -202,10 +207,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let mapper_vfs = vfs.clone();
     app.insert_resource(ModelMaterials(Arc::new(move |m, server| mw_assets::cooked::cooked_material(m, &mapper_vfs, server))));
 
-    let settings = SkySettings::default();
+    // The night exposure floor and ambient (LightCalibration, owner option A).
+    let mut settings = SkySettings::default();
+    options.calibration.apply_sky(&mut settings);
     let mut clock = SkyClock::at(172.0, options.hour, &settings.calendar);
     clock.paused = options.screenshot.is_some() || bench;
     render.insert(&mut app);
+    app.insert_resource(render.point_shadow_budget(options.quality.point_shadows()));
     let off_parts = &perf.off;
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
@@ -856,17 +864,79 @@ fn sun_cascades(levels: &sf_lod::FarLevels, legacy: bool) -> CascadeShadowConfig
 
 // -- clouds ------------------------------------------------------------------------
 
-/// Morrowind's world is compressed (Red Mountain is a few hundred meters
-/// tall), so the presets' real-world cloud heights are halved (weather.md
-/// open question 8; the owner calibrates on the visual checks).
-pub(crate) const CLOUD_HEIGHT_SCALE: f32 = 0.5;
+/// Morrowind's world is compressed (Vvardenfell is ~5 km across, Red Mountain
+/// a few hundred meters tall), so cloud altitudes **and sizes** are halved
+/// together (weather.md open question 8): the same angular look from the
+/// ground, about ten fair-weather cumulus across the island instead of one.
+pub(crate) const CLOUD_WORLD_SCALE: f32 = 0.5;
 
-pub(crate) fn cloud_settings(preset: sf_atmos_bevy::sf_atmos::CloudPreset) -> sf_atmos_bevy::sf_atmos::CloudSettings {
-    let mut settings = sf_atmos_bevy::sf_atmos::CloudSettings::preset(preset);
-    settings.weather = settings.weather.scaled_heights(CLOUD_HEIGHT_SCALE);
-    // Cloud and billow sizes shrink with the heights (tiles still divide 16 384 m).
-    settings.look.shape_tile = 2_048.0;
-    settings.look.detail_tile = 128.0;
+/// Meters per second of cloud-altitude wind per unit of Morrowind's `Cloud
+/// Speed` (weather-adapter.md). Cloudy (2.0) gives 20 m/s: ~2°/s overhead at
+/// the halved 600 m base, so a cloud crosses the sky in about a minute.
+/// Real-world speeds (~8 m/s) read frozen beside a 30x game clock.
+pub(crate) const CLOUD_SPEED_MPS: f32 = 10.0;
+
+use sf_atmos_bevy::sf_atmos::CloudPreset as Cp;
+
+/// What `--clouds` picks: a cloud genus and Morrowind's `Cloud Speed` for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CloudChoice {
+    pub name: &'static str,
+    pub preset: Cp,
+    pub cloud_speed: f32,
+}
+
+/// The genera (the `sf_atmos` presets, at a typical Morrowind speed) and the
+/// Morrowind weathers. Weather → genus follows each weather's sky texture and
+/// look (weather-adapter.md "Clouds"); speeds are the Morrowind.ini
+/// `[Weather *] Cloud Speed` defaults (the adapter reads the ini later).
+pub(crate) const CLOUD_CHOICES: [CloudChoice; 19] = [
+    CloudChoice { name: "clear", preset: Cp::Clear, cloud_speed: 1.25 },
+    CloudChoice { name: "fair", preset: Cp::Fair, cloud_speed: 2.0 },
+    CloudChoice { name: "cumulus", preset: Cp::Cumulus, cloud_speed: 2.0 },
+    CloudChoice { name: "stratocumulus", preset: Cp::Stratocumulus, cloud_speed: 1.5 },
+    CloudChoice { name: "altocumulus", preset: Cp::Altocumulus, cloud_speed: 2.0 },
+    CloudChoice { name: "altostratus", preset: Cp::Altostratus, cloud_speed: 1.5 },
+    CloudChoice { name: "cirrus", preset: Cp::Cirrus, cloud_speed: 2.0 },
+    CloudChoice { name: "overcast", preset: Cp::Overcast, cloud_speed: 1.5 },
+    CloudChoice { name: "storm", preset: Cp::Storm, cloud_speed: 3.0 },
+    // Morrowind weathers (`clear` and `overcast` share the genus names above).
+    CloudChoice { name: "cloudy", preset: Cp::Fair, cloud_speed: 2.0 },
+    CloudChoice { name: "foggy", preset: Cp::Altostratus, cloud_speed: 1.25 },
+    CloudChoice { name: "rain", preset: Cp::Overcast, cloud_speed: 2.0 },
+    CloudChoice { name: "thunderstorm", preset: Cp::Storm, cloud_speed: 3.0 },
+    CloudChoice { name: "ashstorm", preset: Cp::Stratocumulus, cloud_speed: 7.0 },
+    CloudChoice { name: "blight", preset: Cp::Stratocumulus, cloud_speed: 9.0 },
+    CloudChoice { name: "snow", preset: Cp::Overcast, cloud_speed: 1.5 },
+    CloudChoice { name: "blizzard", preset: Cp::Overcast, cloud_speed: 7.5 },
+    // Shorthands.
+    CloudChoice { name: "ash", preset: Cp::Stratocumulus, cloud_speed: 7.0 },
+    CloudChoice { name: "thunder", preset: Cp::Storm, cloud_speed: 3.0 },
+];
+
+/// The genera the viewer's C key cycles through.
+pub(crate) const CLOUD_GENERA: usize = 9;
+
+impl CloudChoice {
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        let s = s.trim().to_ascii_lowercase();
+        CLOUD_CHOICES.iter().find(|c| c.name == s).copied()
+    }
+}
+
+impl Default for CloudChoice {
+    fn default() -> Self {
+        CLOUD_CHOICES[1]
+    }
+}
+
+pub(crate) fn cloud_settings(choice: CloudChoice) -> sf_atmos_bevy::sf_atmos::CloudSettings {
+    let mut settings = sf_atmos_bevy::sf_atmos::CloudSettings::preset(choice.preset);
+    settings.weather = settings.weather.scaled_heights(CLOUD_WORLD_SCALE);
+    settings.look = settings.look.scaled(CLOUD_WORLD_SCALE);
+    // The preset's wind direction at Morrowind's speed for this weather.
+    let dir = settings.weather.wind.normalize_or(Vec2::X);
+    settings.weather.wind = dir * choice.cloud_speed * CLOUD_SPEED_MPS;
     settings
 }
 
@@ -916,6 +986,20 @@ impl Quality {
             Self::Medium => (0.875, 3.0, 20.0),
             Self::High => (1.0, 2.0, 24.0),
             Self::Ultra => (1.0, 1.0, 32.0),
+        }
+    }
+
+    /// Point lights with shadow maps and their cube face size
+    /// (`sf_sky_bevy::PointShadowBudget`). Cost at `hi-balmora-night`, 1440p,
+    /// RTX 4060 laptop (lighting job 2026-10-13): median frame 9.4 ms with none,
+    /// +0.8 ms with 1, +3.9 ms with 2, +4.4 ms with 4 (5 lights in reach):
+    /// render-thread CPU for the casters in each light's range (6 faces),
+    /// GPU +0.35 to +1.6 ms. High keeps one (a torch outranks lamps 2x).
+    pub const fn point_shadows(self) -> (usize, usize) {
+        match self {
+            Self::Low | Self::Medium => (0, 512),
+            Self::High => crate::render::POINT_SHADOWS_DEFAULT,
+            Self::Ultra => (4, 1024),
         }
     }
 

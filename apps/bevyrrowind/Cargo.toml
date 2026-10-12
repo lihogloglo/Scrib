@@ -50,6 +50,8 @@ sf_character_bevy = { workspace = true, features = ["world"] }
 # Walkers (`walkers.rs`): terrain heights as a ground probe, the mover stage with gizmos.
 sf_controller = { workspace = true, features = ["terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
+sf_physics = { workspace = true }
+sf_physics_bevy = { workspace = true, features = ["debug"] }
 sf_model_bevy.workspace = true
 sf_records.workspace = true
 sf_atmos_bevy.workspace = true

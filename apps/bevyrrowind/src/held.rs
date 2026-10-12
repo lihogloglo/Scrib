@@ -7,7 +7,8 @@
 //!   names the torch, and the framework swaps only the props.
 //! - **Torch lights.** A prop's `HeldLightSlot` gets the `LIGH` record's
 //!   point light: the placed lights' calibration (`LightCalibration`) and
-//!   flicker (`AnimatedLight`), no shadows. [`HeldLightBudget`] keeps the
+//!   flicker (`AnimatedLight`); shadows within the point-shadow budget
+//!   ([`TORCH_SHADOW_PRIORITY`]). [`HeldLightBudget`] keeps the
 //!   nearest few to the camera lit (each extra clustered light costs every
 //!   fragment its range covers).
 //! - **Stance.** The graph's `stance` parameter follows the readiness and
@@ -20,6 +21,8 @@ use bevy::prelude::*;
 use mw_actors::held::{DayCycle, HeldContext, exterior_dark};
 use mw_assets::LightCalibration;
 use mw_assets::lights::AnimatedLight;
+use bevy::light::NotShadowCaster;
+use sf_sky_bevy::BudgetedShadow;
 use mw_graphs::Stance;
 use mw_world::LightAnimation;
 use sf_character::{Hand, Readiness};
@@ -56,6 +59,11 @@ impl Default for HeldLightBudget {
         Self { max: 12 }
     }
 }
+
+/// Carried lights rank for a shadow map as if this many times nearer than
+/// placed ones (`sf_sky_bevy::PointShadowBudget`): a moving torch-bearer's
+/// shadow is the one players notice.
+pub const TORCH_SHADOW_PRIORITY: f32 = 2.0;
 
 /// Marks the point light on a held item (a child of its `HeldLightSlot`).
 #[derive(Component, Clone, Copy, Debug)]
@@ -141,7 +149,9 @@ type MaterialSlot = &'static mut MeshMaterial3d<StandardMaterial>;
 
 /// Swaps the materials under held-light props for their self-lit variants:
 /// meshes added under a marked prop, and everything under a newly marked one.
+/// They also cast no shadows (the carried light shines from inside them).
 fn self_light_props(
+    mut commands: Commands,
     mut cache: ResMut<SelfLitMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     props: Query<(Entity, Ref<SelfLitProp>)>,
@@ -154,6 +164,8 @@ fn self_light_props(
     let mut meshes = meshes.p1();
     for entity in targets {
         let Ok(mut mesh) = meshes.get_mut(entity) else { continue };
+        // The light sits in the prop: its surfaces cast no shadow of it.
+        commands.entity(entity).try_insert(NotShadowCaster);
         let id = mesh.0.id();
         let handle = if let Some(h) = cache.0.get(&id) {
             h.clone()
@@ -233,7 +245,7 @@ fn light_held_slots(
         let mut light = calibration.point_light(&info);
         light.intensity *= tuning.intensity_scale(&calibration, info.radius);
         light.radius = tuning.source_radius_m;
-        let mut e = commands.spawn((light, HeldTorch, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
+        let mut e = commands.spawn((light, HeldTorch, BudgetedShadow { priority: TORCH_SHADOW_PRIORITY }, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
         if let Some(carrier) = parents.iter_ancestors(entity).find(|a| carriers.contains(*a)) {
             e.insert(HeldTorchOf(carrier));
         }

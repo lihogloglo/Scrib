@@ -4,6 +4,7 @@
 use bevy::light::GlobalAmbientLight;
 use bevy::prelude::*;
 use mw_world::{LightAnimation, LightInfo};
+use sf_sky_bevy::BudgetedShadow;
 
 /// Marks a model's `AttachLight` node.
 #[derive(Component, Clone, Copy, Debug, Default, Reflect)]
@@ -40,15 +41,40 @@ pub struct LightCalibration {
     pub range_scale: f32,
     /// Ambient luminance for a white cell ambient color (nits).
     pub ambient_nits: f32,
+    /// The darkest exposure any view may take (EV100): the night floor
+    /// (owner option A, 2026-10-13). Lights are calibrated for
+    /// [`crate::SCENE_EV100`]; a night exterior opening to EV 0.5-2 showed
+    /// them 30-90x brighter than "fully lit" and blew out walls near lamps.
+    /// At the floor they read `2^(SCENE_EV100 - floor)` brighter, and the
+    /// night's readability comes from [`Self::night_ambient_nits`] instead of
+    /// a wide-open camera. Interiors sit at [`crate::SCENE_EV100`] (scheduled
+    /// exposure) or meter above the floor (viewer auto exposure).
+    pub exposure_floor_ev100: f32,
+    /// The exterior's ambient floor at night (nits, sun below -12°; the sky's
+    /// `SkySettings::ambient`): starlight and moonlit sky as one readable
+    /// floor at the exposure floor (about 4 EV under mid grey on stone).
+    pub night_ambient_nits: f32,
 }
 
 impl Default for LightCalibration {
     fn default() -> Self {
-        Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, ambient_nits: 300.0 }
+        Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, ambient_nits: 300.0, exposure_floor_ev100: 3.5, night_ambient_nits: 1.0 }
     }
 }
 
 impl LightCalibration {
+    /// The exposure range every view keeps to: [`Self::exposure_floor_ev100`] up.
+    pub fn exposure_range(&self) -> sf_sky_bevy::sf_sky::ExposureRange {
+        sf_sky_bevy::sf_sky::ExposureRange { min_ev100: self.exposure_floor_ev100, ..Default::default() }
+    }
+
+    /// The exterior sky under this calibration: the exposure floor and the
+    /// night ambient floor (fading out by -4° as the sky's own light takes over).
+    pub fn apply_sky(&self, sky: &mut sf_sky_bevy::sf_sky::SkySettings) {
+        sky.exposure_range = self.exposure_range();
+        sky.ambient = sf_sky_bevy::sf_sky::KeyCurve::new(vec![(-12.0, self.night_ambient_nits), (-4.0, 0.0)]);
+    }
+
     /// The scene's ambient light for a cell's ambient color (sRGB).
     pub fn ambient(&self, [r, g, b]: [u8; 3]) -> GlobalAmbientLight {
         GlobalAmbientLight { color: Color::srgb_u8(r, g, b), brightness: self.ambient_nits, ..GlobalAmbientLight::default() }
@@ -69,11 +95,18 @@ impl LightCalibration {
             intensity: self.lumens_per_radius_sq * info.radius * info.radius,
             range: info.radius * self.range_scale,
             radius: 0.05,
+            // Shadows only through the `PointShadowBudget` (`BudgetedShadow`).
             shadow_maps_enabled: false,
+            shadow_map_near_z: SHADOW_NEAR_Z,
             ..PointLight::default()
         }
     }
 }
+
+/// Casters nearer a light than this (meters) don't shadow it: a lantern's
+/// cage or a torch's own head around the flame (`AttachLight`) would
+/// otherwise stripe the room with its own bars.
+pub const SHADOW_NEAR_Z: f32 = 0.25;
 
 /// Spawns the light for a placement. With a `model` root, the light starts
 /// at the root and moves to the model's `AttachLight` node when it spawns.
@@ -86,7 +119,7 @@ pub fn spawn_light(
     seed: u32,
 ) -> Entity {
     let light = calibration.point_light(info);
-    let mut entity = commands.spawn((light, Visibility::Inherited));
+    let mut entity = commands.spawn((light, BudgetedShadow::default(), Visibility::Inherited));
     if info.animation != LightAnimation::Steady {
         entity.insert(AnimatedLight { intensity: light.intensity, animation: info.animation, seed });
     }

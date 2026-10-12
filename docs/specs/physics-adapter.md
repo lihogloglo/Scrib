@@ -37,6 +37,13 @@ expected) fall back to the rest-pose render geometry. Census at implementation: 
 authored collision, shape kinds chosen, hull counts, bake time (`body_report` example, like
 `collision_report`).
 
+**As built (P3, 2026-10-13).** `mw_bake::body`: `MwBodyRules` (every mesh under a `RootCollisionNode`, any
+visibility, one hull each; `NC` ignored; skinned models fit the render mesh), `MwItemsRules` (items =
+`PlacementClass::Dynamic` + lights with *Can Carry*; carryable lights `always_hold`; terrain in the exterior; the
+carryable set's digest is a key parameter), `item_mass` (moves to `mw_physics` with P4), `bake_bodies` /
+`check_items` (both run in `bevyrrowind bake`, which prints their reports), example `body_report` (body census;
+`items.check` needs the world index, so its report comes from `bevyrrowind bake`). Census: see ROADMAP M4 P3.
+
 **Authored placement** (`items.check` report): vanilla items often sit a few millimeters into tables or
 hover above them, because the original engine never simulates them. They stay exactly as placed until
 disturbed; the framework's capped depenetration resolves small overlaps when they wake. The report
