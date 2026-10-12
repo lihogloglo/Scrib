@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::{VfsPath, VfsSource};
+use crate::{FileStat, VfsPath, VfsSource};
 
 /// A directory of loose files, indexed once at construction.
 #[derive(Debug)]
 pub struct DirSource {
     label: String,
     root: PathBuf,
-    files: HashMap<VfsPath, PathBuf>,
+    files: HashMap<VfsPath, (PathBuf, FileStat)>,
     skipped: usize,
 }
 
@@ -37,7 +37,9 @@ impl DirSource {
                     // filesystem: the first one found wins, deterministically
                     // enough for a malformed mod.
                     Some(Ok(vpath)) => {
-                        self.files.entry(vpath).or_insert(path);
+                        // From the directory listing: no extra system call on Windows.
+                        let stat = entry.metadata().map_or(FileStat { size: u64::MAX, mtime_ns: 0 }, |m| FileStat::of(&m));
+                        self.files.entry(vpath).or_insert((path, stat));
                     }
                     _ => self.skipped += 1,
                 }
@@ -69,12 +71,16 @@ impl VfsSource for DirSource {
 
     fn read(&self, path: &VfsPath) -> io::Result<Vec<u8>> {
         match self.files.get(path) {
-            Some(real) => std::fs::read(real),
+            Some((real, _)) => std::fs::read(real),
             None => Err(io::Error::new(io::ErrorKind::NotFound, format!("{path} not in {}", self.label))),
         }
     }
 
     fn real_path(&self, path: &VfsPath) -> Option<PathBuf> {
-        self.files.get(path).cloned()
+        self.files.get(path).map(|(real, _)| real.clone())
+    }
+
+    fn stat(&self, path: &VfsPath) -> Option<FileStat> {
+        self.files.get(path).map(|(_, stat)| *stat)
     }
 }

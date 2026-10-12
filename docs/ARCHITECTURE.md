@@ -1661,3 +1661,26 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   layer scaled by a noise *modulation* raymarched at the clouds' reduced resolution (depth edges exact, no froxels
   needed for F2); per-frame lighting in a 66×1 texture. F3's froxels take over the near range with the same density
   terms. The sea scaffold is opaque so the pre-transparent composite fogs it; transparents wait for F3.
+- **2026-10-13 (physics-p6): carry is jitter-free by sampling the view at step time; the movers keep analytic
+  terrain.** A held item's hand target is the holder's view interpolated/extrapolated to each fixed step's time, and
+  the item renders relative to the current view (holder-space interpolation); a dragged object's force cap is what
+  slides the adapter's drag mass, not the carry grip; the holder is excluded per contact pair (rapier filter hook),
+  not by layer. The controller's ground on physics composes `TerrainProbe` with the bodies' `STATIC | PROP`:
+  heightfield casts cost ~13 µs each (physics.md "Queries", "Carry and throw" as built).
+- 2026-10-13 (m6-f3b, M6 F3): **Froxel volumetric fog is ours; Bevy's `VolumetricFog` stays unused** (re-checked on
+  0.20: per-pixel per-box raymarch, no temporal, transparents can't sample it, no height/bank density or terrain/cloud
+  shadow terms). `sf_atmos_bevy` injects F2's density terms into a 160×90×64 (High) camera grid, lit by the key light ×
+  CSM × terrain shadow-height map × cloud shadow + sky fill + the 32 nearest point lights, temporally reprojected,
+  integrated front to back into a shared `FroxelVolume` image; the composite uses it to `far` (384 m) and F2's analytic
+  layers beyond. Transparents sample the same volume (`froxel_apply.wesl`, `FroxelFogMaterial`); hosts opt in per
+  material. The ground-fog bank mask is one shared WESL library (`fog_bank.wesl`).
+
+- 2026-10-13 (m5-a3) **Content packs plug into the mod pipeline through one adapter crate; profile
+  fingerprints read stats from directory listings.** Bevyrrowind's `mw_mods` synthesizes a mod per
+  legacy plugin (archive paired by stem), one for the loose data folder, and a builtin mod the host
+  pins first in every profile (lowest layer; no framework "pinned" rule). New framework hooks, all
+  defaulted: `ContentAdapter::stamp` (what the pipeline can't stat: adapter version, archive stats,
+  generated layers) and `::modern_alternates` (drives the `ShadowedModern` warning),
+  `VfsSource::stat` (size + mtime as indexed; `DirSource` keeps the listing's, since per-file stats
+  cost ~50 µs each on Windows). The profile fingerprint is stored beside the bake manifest, not in it
+  (old manifests still load), and doesn't skip the incremental bake: step code isn't in it.

@@ -57,6 +57,24 @@ pub trait ContentAdapter {
     fn finish_records(&self, db: &mut RecordDb) {
         let _ = db;
     }
+
+    /// Bytes that change whenever a synthesized mod's content may have
+    /// changed in a way the pipeline can't stat: the adapter's version, its
+    /// archives' sizes and modification times, a hash of generated layers.
+    /// Feeds [`LoadedProfile::fingerprint`](crate::LoadedProfile::fingerprint);
+    /// files on disk (asset roots) are stat-ed by the pipeline itself.
+    fn stamp(&self, manifest: &ModManifest) -> Vec<u8> {
+        let _ = manifest;
+        Vec::new()
+    }
+
+    /// Modern file formats that take a legacy file's slot
+    /// (`Vfs::resolve_preferring`), as `(modern extension, legacy extensions
+    /// it replaces)`. The report warns when a mod's modern file is shadowed
+    /// by a later mod's legacy file.
+    fn modern_alternates(&self) -> &[(&str, &[&str])] {
+        &[]
+    }
 }
 
 /// A record file that failed to apply, with a position when the format has one.

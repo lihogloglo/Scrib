@@ -1,6 +1,6 @@
 # Mods: pipeline end to end
 
-Status: A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). A2 built (2026-10-13, m5-a2: kind registry, native RON/TOML record files, generic field patches, field-level conflicts; see "As built (A2)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
+Status: A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). A2 built (2026-10-13, m5-a2: kind registry, native RON/TOML record files, generic field patches, field-level conflicts; see "As built (A2)"). A3 built (2026-10-13, m5-a3: Bevyrrowind's adapter, builtin mod, mods folder and profiles, `mods` CLI, profile fingerprint; see "As built (A3)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
 Crates: `sf_mods` (manifests, repository, profiles, load order, report; built M0, extended),
 `sf_vfs` (layers; built M0, gains a watcher and swap), `sf_records` (built M0, gains native
 patch files and field-level conflicts), `sf_bake` (profile fingerprint), `sf_script`
@@ -246,6 +246,10 @@ impl LoadedProfile { pub fn script_contexts(&self) -> Vec<ScriptPlan>; pub fn st
 // sf_records (A2): RecordDb::register_serde / set_fingerprint / define_value / patch_value / delete_by_name / value_of / fingerprint,
 //   apply_record_file(db, source, text, RecordFormat) -> Result<FileOutcome, FileError>, Value (serde tree), PatchOp, Touch { fields }
 // sf_mods (A2): NativeRecords (ContentAdapter "native", .ron/.toml), RecordCx::error, IssueKind::{RecordConflict, RecordMerge}
+// sf_mods (A3): ContentAdapter::stamp(&ModManifest) -> Vec<u8> / modern_alternates() -> &[(&str, &[&str])] (both defaulted),
+//   LoadedProfile::fingerprint(adapters) -> [u8; 32], IssueKind::ShadowedModern { path, legacy, by } (Area::Vfs, warning)
+// sf_vfs (A3): VfsSource::stat(path) -> Option<FileStat> (defaulted; DirSource keeps the listing's size + mtime), FileStat
+// sf_bake (A3): Store::profile_fingerprint(profile) / save_profile_fingerprint(profile, &Digest)
 ```
 
 ### As built (A1, 2026-10-13)
@@ -356,6 +360,69 @@ Changes and details found while building:
 Not in A2: real-install check of a RON patch over a vanilla record (needs the TES3 record types
 to derive serde and be registered with `register_serde`, A3); hot re-apply (A4); legacy plugin
 field-level diffs (X1: they would produce `fields` lists, and the conflict logic already uses them).
+
+### As built (A3, 2026-10-13)
+
+The first content pack on the pipeline (Bevyrrowind's `mw_mods` crate; the framework side is
+the hooks in "Interfaces"). Every app command now loads through a profile; the pre-mods path
+(`mw_vfs::mount_install` + `mw_records::load`) remains only for tests and examples.
+
+- **Synthesized mods.** One mod per content file found in the data folder (headers only: the
+  first record's size is read from its 16-byte record header), id = file name lowercased with
+  other characters mapped to `_`, masters as dependencies, the adapter's known ordering facts as
+  `load_after`, `content.records = [<file>]`; its layer is the archive the game's config lists
+  with the **same stem** (the base game's archive goes with its master). A disabled plugin takes
+  its archive with it (the MO2 behaviour for paired archives); listed archives no plugin claims
+  go to the loose-data mod. The loose data folder is one more synthesized mod, ordered after
+  every plugin by `load_after` (hints to mods that aren't enabled are ignored), mounted by the
+  adapter as a `DirSource` under its original label so stat keys and labels stay unchanged.
+- **Builtin mod** (`mw`): layers the host passes in (the shipped animation graphs, the legacy
+  script runtime at `scripts/mw/mw.luau` + the generated `scripts/mw/functions.luau`). **Pinned
+  lowest** by putting it first in every profile it loads with (it has no dependencies, so the
+  ordering keeps it first); no framework rule was needed. It can't be disabled from the CLI.
+- **Default profile**: without `profiles/default.toml`, the adapter generates one (builtin, the
+  game config's content files masters first, the loose-data mod), so a fresh install loads what
+  it loaded before mods existed (62,025 live records, same layers). `mods enable|disable` write
+  the file. User data: `--user-data`, else `BEVYRROWIND_USER_DATA`, else `<local data dir>/bevyrrowind`
+  (`mods/`, `profiles/`).
+- **Record sources are named by mod id** (`morrowind.esm`, was `Morrowind.esm`). The adapter
+  keys land-texture slots by the source name, and placement ids lowercase the file name, so ids
+  and every bake product stay the same for files whose names are already valid ids.
+- **TES3 kinds are serde kinds** (the `tes3` crate's own `serde` feature; `register_serde` for
+  every tag), so native RON patches reach vanilla records and their fingerprints are blake3 of
+  postcard bytes. Cells serialize their references sorted, so CELL is fingerprintable now (the
+  `Debug`-hash scaffold in the bake inputs is gone). The switch rebuilt nothing: no step reads
+  TES3 records as direct `Input::Record`s yet.
+- **Profile fingerprint** = blake3 over the load-ordered (id, version, manifest `Debug`), each
+  synthesized mod's adapter `stamp` (adapter version; archives' size + mtime; builtin layer
+  bytes), and (path, size, mtime) of every file in every directory layer. The stats come from
+  the **directory listing** (`VfsSource::stat`, kept by `DirSource` at scan): stat-ing 7,218
+  loose files one by one cost 375 ms on Windows, the listing costs nothing extra (4 ms to hash).
+  Stored beside the manifest (`profiles/<profile>.fingerprint`) rather than in it, so manifests
+  written before A3 still load. `bake` always runs the incremental bake (step code changes aren't
+  in the fingerprint, so a match can't skip it in dev) and prints whether the fingerprint
+  changed; `mods report` prints whether the last bake is current.
+- **Shadow warning**: `modern_alternates` (Bevyrrowind: ktx2/png over dds/tga/bmp, glb/gltf over
+  nif) drives `ShadowedModern` on the modern file's mod when a later mod's legacy file wins.
+- **CLI**: `bevyrrowind [--profile P] [--user-data D] mods list | order | report [--mod ID]
+  [--conflicts N] | enable ID [--after ID] | disable ID`.
+
+Real install (owner's Steam install, release, 2026-10-13): the vanilla profile loads 62,025 live
+records; load = scan 1 ms + mount 30 ms + records 245 ms + fingerprint 4 ms (289 ms total, the
+old path took ~420 ms); a RON patch `patch(kind: "LIGH", id: "light_com_candle_01", set:
+{"data.radius": 64})` in a folder mod applies (`record LIGH light_com_candle_01` shows radius 64)
+and `mods report --mod dim_candles` shows `morrowind.esm (define) -> bloodmoon.esm (define) ->
+dim_candles (patch data.radius)`; a loose texture mod wins in `which`; adding a texture-only mod
+changes the fingerprint and re-bakes nothing. Release `bake` no-op: 3.0-3.2 s total, of which
+loading content is 0.29 s; the rest is other steps' hit checks and reports (exterior source
+0.52 s, models 0.33 s + their summary 0.37 s, interiors 0.25 s, scripts 0.18 s).
+
+Open points: a field patch over a record from a mod it doesn't depend on reports as a
+**conflict** (A2's rule treats the earlier define as a whole-record write); declaring the
+dependency silences it. Whether a later field patch over an earlier define should count as a
+merge instead is for X1. Every ESM-vs-ESM conflict is now a per-mod warning (3,165 for vanilla),
+so the CLI prints counts and `mods report` the details. Mount problems (an unreadable archive)
+are adapter-side warnings the host prints, as `ContentAdapter::mount` has no warning channel.
 
 ## Verification
 

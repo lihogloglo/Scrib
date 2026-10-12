@@ -25,6 +25,7 @@ pub enum Area {
     Order,
     Files,
     Records,
+    Vfs,
     Adapter,
 }
 
@@ -86,6 +87,10 @@ pub enum IssueKind {
     RecordConflict { kind: String, id: String, fields: Vec<String>, touches: Vec<(String, String)> },
     /// Unrelated sources patched disjoint fields of one record; both apply.
     RecordMerge { kind: String, id: String, touches: Vec<(String, String)> },
+    // VFS
+    /// This mod's modern file (`path`) would take a legacy file's slot, but a
+    /// later mod (`by`) ships the legacy file (`legacy`), which wins.
+    ShadowedModern { path: String, legacy: String, by: ModId },
     // Adapter
     /// The adapter that synthesized this mod isn't registered.
     UnknownAdapter { adapter: String },
@@ -102,6 +107,7 @@ impl IssueKind {
             | Self::EmptyAssetRoot { .. }
             | Self::RecordWarning { .. }
             | Self::RecordConflict { .. }
+            | Self::ShadowedModern { .. }
             | Self::NoManifest { .. } => Severity::Warning,
             Self::OptionalMissing { .. } | Self::RecordMerge { .. } => Severity::Info,
             _ => Severity::Error,
@@ -137,6 +143,7 @@ impl IssueKind {
             | Self::RecordWarning { .. }
             | Self::RecordConflict { .. }
             | Self::RecordMerge { .. } => Area::Records,
+            Self::ShadowedModern { .. } => Area::Vfs,
             Self::UnknownAdapter { .. } | Self::Adapter { .. } => Area::Adapter,
         }
     }
@@ -205,6 +212,9 @@ impl fmt::Display for IssueKind {
                 write!(f, "record conflict {kind} {id:?} on {what}: {}", chain(touches))
             }
             Self::RecordMerge { kind, id, touches } => write!(f, "record merge {kind} {id:?}: {}", chain(touches)),
+            Self::ShadowedModern { path, legacy, by } => {
+                write!(f, "{path} is shadowed: {by} (loaded later) ships the legacy {legacy}, which wins")
+            }
             Self::UnknownAdapter { adapter } => write!(f, "synthesized by adapter {adapter:?}, which is not registered"),
             Self::Adapter { adapter, message } => write!(f, "adapter {adapter}: {message}"),
         }

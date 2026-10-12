@@ -39,6 +39,26 @@ pub trait VfsSource: Send + Sync + 'static {
     fn real_path(&self, _path: &VfsPath) -> Option<PathBuf> {
         None
     }
+
+    /// The size and modification time of a file on disk as indexed (no I/O),
+    /// for stat-keyed fingerprints; `None` for sources without files on disk.
+    fn stat(&self, _path: &VfsPath) -> Option<FileStat> {
+        None
+    }
+}
+
+/// A file's size and modification time (nanoseconds since the Unix epoch).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FileStat {
+    pub size: u64,
+    pub mtime_ns: u128,
+}
+
+impl FileStat {
+    pub fn of(meta: &std::fs::Metadata) -> Self {
+        let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+        Self { size: meta.len(), mtime_ns: mtime.map_or(0, |d| d.as_nanos()) }
+    }
 }
 
 /// Position of a source in mount order (higher wins).

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use semver::{Version, VersionReq};
 use sf_records::{RecordDb, SourceId};
-use sf_vfs::{SourceIndex, Vfs, VfsBuilder, VfsPath, VfsSource};
+use sf_vfs::{FileStat, SourceIndex, Vfs, VfsBuilder, VfsPath, VfsSource};
 
 use crate::repo::{declared_files, is_folder_mod, origin};
 use crate::{
@@ -120,6 +120,54 @@ impl LoadedProfile {
         out.push_str(&self.records.conflict_report().render(&self.records, max_conflicts));
         out
     }
+
+    /// The profile fingerprint (mods.md "Bake cache interaction"): blake3 over
+    /// the load-ordered mods (id, version, manifest), each synthesized mod's
+    /// adapter [`stamp`](ContentAdapter::stamp), and the stat key (path, size,
+    /// modification time) of every file on disk in every layer. Reads stats
+    /// only, never file contents, so a warm start can compare it cheaply with
+    /// the one the last bake stored: equal means nothing a bake reads changed.
+    pub fn fingerprint(&self, adapters: &[&dyn ContentAdapter]) -> [u8; 32] {
+        fn field(h: &mut blake3::Hasher, bytes: &[u8]) {
+            h.update(&(bytes.len() as u64).to_le_bytes());
+            h.update(bytes);
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(b"sf_mods.profile.v1");
+        let mut files: Vec<VfsPath> = Vec::new();
+        for m in &self.mods {
+            let manifest = &m.manifest;
+            field(&mut h, manifest.id.as_str().as_bytes());
+            field(&mut h, manifest.version.to_string().as_bytes());
+            field(&mut h, format!("{manifest:?}").as_bytes());
+            if let Some(name) = &manifest.adapter {
+                let stamp = adapters.iter().find(|a| a.name() == name).map(|a| a.stamp(manifest)).unwrap_or_default();
+                field(&mut h, &stamp);
+            }
+            for layer in m.layers.clone() {
+                let source = self.vfs.source(SourceIndex(layer));
+                field(&mut h, source.label().as_bytes());
+                files.clear();
+                source.visit_files(&mut |p| files.push(p));
+                files.sort_unstable();
+                for path in &files {
+                    // As indexed (directory sources), else from disk.
+                    let stat = match source.stat(path) {
+                        Some(stat) => stat,
+                        None => match source.real_path(path) {
+                            Some(real) => std::fs::metadata(real).map_or(FileStat { size: u64::MAX, mtime_ns: 0 }, |m| FileStat::of(&m)),
+                            None => continue,
+                        },
+                    };
+                    let (size, mtime) = (stat.size, stat.mtime_ns);
+                    field(&mut h, path.as_str().as_bytes());
+                    h.update(&size.to_le_bytes());
+                    h.update(&mtime.to_le_bytes());
+                }
+            }
+        }
+        *h.finalize().as_bytes()
+    }
 }
 
 /// Runs pipeline steps 2-4 for `profile`: resolves the load order (dropping
@@ -188,9 +236,39 @@ pub fn load_profile(
     }
     record_issues(&records, &sources, &mut issues);
     timings.records = start.elapsed();
+    shadow_issues(&vfs, &mods, adapters, &mut issues);
 
     let report = ModReport { issues, mods: summarize(&vfs, &mods) };
     LoadedProfile { profile: profile.clone(), mods, vfs: Arc::new(vfs), records, report, timings }
+}
+
+/// Modern files shadowed by a later mod's legacy file (the `resolve_preferring`
+/// edge: a later legacy file beats an earlier modern one), on the modern file's mod.
+fn shadow_issues(vfs: &Vfs, mods: &[LoadedMod], adapters: &[&dyn ContentAdapter], issues: &mut Vec<ModIssue>) {
+    let alternates: Vec<(&str, &[&str])> = adapters.iter().flat_map(|a| a.modern_alternates().iter().copied()).collect();
+    if alternates.is_empty() {
+        return;
+    }
+    let owner = |s: SourceIndex| mods.iter().find(|m| m.layers.contains(&s.0));
+    for path in vfs.paths() {
+        let Some(ext) = path.extension() else { continue };
+        for &(modern, legacy_exts) in &alternates {
+            if ext != modern {
+                continue;
+            }
+            let Some(source) = vfs.resolve(path) else { continue };
+            for legacy in legacy_exts {
+                let legacy_path = path.with_extension(legacy);
+                let Some(legacy_source) = vfs.resolve(&legacy_path).filter(|s| s.0 > source.0) else { continue };
+                let (Some(m), Some(by)) = (owner(source), owner(legacy_source)) else { continue };
+                if m.id() != by.id() {
+                    let kind =
+                        IssueKind::ShadowedModern { path: path.to_string(), legacy: legacy_path.to_string(), by: by.id().clone() };
+                    issues.push(ModIssue::new(Some(m.id()), kind));
+                }
+            }
+        }
+    }
 }
 
 /// Record conflicts and merges (the xEdit conflict view), one issue per record,

@@ -125,6 +125,20 @@ impl Store {
         write_atomic(&self.manifest_path(profile), &bytes)
     }
 
+    /// The profile fingerprint stored by the last bake of `profile`
+    /// (mods.md "Bake cache interaction"); `None` if never stored or unreadable.
+    /// Kept beside the manifest (`<profile>.fingerprint`) so manifests from
+    /// before profile fingerprints still load.
+    pub fn profile_fingerprint(&self, profile: &str) -> Option<Digest> {
+        let bytes = fs::read(self.manifest_path(profile).with_extension("fingerprint")).ok()?;
+        Some(Digest(bytes.try_into().ok()?))
+    }
+
+    /// Stores the profile fingerprint a bake ran with (after its manifest).
+    pub fn save_profile_fingerprint(&self, profile: &str, fingerprint: &Digest) -> io::Result<()> {
+        write_atomic(&self.manifest_path(profile).with_extension("fingerprint"), &fingerprint.0)
+    }
+
     /// Deletes objects no profile manifest references, oldest first, until
     /// the store is at most `cap_bytes`. Referenced objects are never
     /// deleted. Temporary files from interrupted writes older than an hour
