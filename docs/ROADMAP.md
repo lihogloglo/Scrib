@@ -725,7 +725,127 @@ ragdolls; robes move." Tasks in dependency order:
   After M4: pose-search node (`posesearch.cook`) once a bring-your-own locomotion library is baked; mesh cloth for
   capes/banners and buoyancy (M6).
 
-## M5–M10
+## M5: Mods, Lua and UI
+
+Specs (draft 2026-10-13, m5-spec): `../superfargoth/docs/specs/scripting.md` (Luau runtime, curated API, limits,
+hot reload), `../superfargoth/docs/specs/mods.md` (pipeline end to end, reports, hot reload, bake fingerprints),
+`docs/specs/scripting-adapter.md` (MWScript → Luau, M5 vs M7 scope), `../superfargoth/docs/specs/ui.md` + `docs/specs/ui-adapter.md`
+(UI slice, written 2026-10-11). Decisions in ARCHITECTURE §10 (2026-10-13, m5-spec). **Runtime: Luau through `mlua`
+0.12.2 directly** (features `luau`, `serialize`, `send`), one Luau state per mod, one shared state for translated
+legacy scripts; `bevy_mod_scripting` 0.22 (on Bevy 0.20) not adopted (reflection-first, "expect significant API
+changes"). **MWScript is translated to Luau at bake time** (corpus: 1,207 scripts / 49k lines + 17,144 dialogue results).
+Done when (ARCHITECTURE §9): "A Lua mod and a texture mod both work, hot reload works; a theme mod, a CSS patch and a
+Lua inventory column work together, gamepad-only."
+
+Three lanes that can run side by side once A1 and L1 land: mods + Lua (A, L), UI (U), legacy scripts (W). Tasks in
+dependency order:
+
+- [ ] A1 `sf_mods` pipeline core (mods.md "Data model", "Pipeline" steps 1-4): `ModRepository::scan`, `Profile`
+  (`profiles/<name>.toml`), manifest `[optional]`/`[conflicts]`/`[ui]`, `api` compatibility check, `ContentAdapter`
+  trait, `load_profile`, `ModReport` with every issue type. Verify: `cargo test -p sf_mods` (scan, profile round trip,
+  each issue type, optional/conflict ordering).
+- [ ] L1 `sf_script` core + spike (scripting.md "Design", Bevy-free): per-mod contexts, sandbox, memory limit,
+  interrupt watchdog, require-by-string over `sf_vfs` (own files, `@sf/*`, dependency libraries), `storage`, named
+  timers, state serialization (postcard) + rejection paths, error isolation and suspension, per-context reload.
+  Decide by measurement: `send` vs `NonSend`, world guard (`scope` vs guarded pointer), `luau-jit` off/on.
+  Verify: `cargo test -p sf_script` (sandbox escape list, limits, isolation, round trip, determinism hash, reload keeps
+  state); `cargo bench -p sf_script` numbers written into scripting.md "Performance budget"; clean-build delta of
+  `luau0-src` recorded in the session log.
+- [ ] W1 `mw_script` lexer + lenient parser + function table (scripting-adapter.md "Pipeline" 1-2), Bevy-free, can run
+  in parallel with everything after A1/L1. Verify: real-install corpus test parses all 1,231 script texts and 17,144
+  dialogue results, leniency rules counted, 0 unrecoverable (or each listed with a reason); counts only, no vanilla
+  text committed.
+- [ ] A2 `sf_records` native record files (mods.md "Native record files"): kind registry with serde + fingerprints,
+  RON `define`/`patch` (`set`/`merge`/`remove`/`append`)/`delete`, field-level touches, conflict vs merge in the report.
+  Verify: `cargo test -p sf_records` (every op on nested types, field conflict vs merge, RON error positions).
+- [ ] W2 MWScript → Luau emitter + `mwscript.translate` bake step + `mw` runtime skeleton + coverage report
+  (scripting-adapter.md "Generated shape", "The `mw` runtime library"). Verify: every vanilla script and dialogue
+  result translates and compiles under Luau; corpus ≤ 2 s across cores; fixture goldens (our own scripts); coverage
+  report (call sites live / stub / later) in the session log.
+- [ ] A3 Bevyrrowind profile (mods.md "Mods directory and profiles"): `<user data>/mods` + `profiles/default.toml`,
+  legacy content as synthesized mods through `ContentAdapter` (`mw_records`, `mw_vfs`), builtin mod (graphs, themes,
+  `mw` runtime) mounted lowest, `bevyrrowind mods list|order|report`, profile fingerprint in the bake manifest.
+  Verify: `info` with the vanilla profile still loads 62,025 live records; a loose texture mod wins in `which`; release
+  `bake` no-op ≤ 2.5 s, and adding a texture-only mod re-bakes nothing (or only terrain layers if a land texture changed).
+- [ ] L2 `sf_script_bevy` (scripting.md "Execution model", "Entity handles"): `Input`/`Update`/`Ui` exclusive slots,
+  world guard, `PlacementId` handles, entity scripts with state in the placement overlay, engine messages
+  (`Activated`, `CellLoaded`, `InputAction`, `Died` when it exists), activation pipeline with `"handled"`, per-mod
+  `sf_diag` spans and error counters, dev Lua console. Generic `Activated` + crosshair target: share with M4 P11's
+  `sf_interaction` (whichever lands first builds it; doors.rs moves onto it). Verify: headless integration test (mod
+  reacts to `Activated`, spawns, sets a timer, edits storage; a suspended mod doesn't block others).
+- [ ] A4 Hot reload (mods.md "Hot reload"): VFS watcher over `DirSource` layers (Bevy `file_watcher` / notify 8.2),
+  index rebuild + `Arc<Vfs>` swap, winning-change `AssetSourceEvent`s, routing (assets, CSS, scripts, record files,
+  dev re-bake of affected products). Verify: `cargo test -p sf_vfs --all-features` (winner changes, shadowed edits
+  silent, readers never block); MS-1.
+- [ ] L3 API v0.1 (scripting.md "Curated API"): `@sf/core`, `events`, `timers`, `interfaces`, `world`, `records`,
+  `input`, thin `anim` (slots) and `physics` (impulse, raycast); `sf.d.luau` + docs generated from the registry.
+  Verify: golden `.d.luau`; example mods in `superfargoth/examples/mods/` run headless; MS-2.
+- [ ] U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
+  (CommonUI layers, screen stack, input router, actions with rebinding, `bevy_input_focus` navigation, device glyphs).
+  Input crate: `bevy_enhanced_input` 0.26 and `leafwing-input-manager` 0.21 are still on Bevy 0.19 (crates.io
+  2026-10-13): `[patch]` fork of bevy_enhanced_input if no 0.20 release by then, else a thin own action map (ui.md OQ4).
+  Verify: headless registry/router tests; gamepad-only navigation in a framework example.
+- [ ] U2 `sf_ui_css`: `bevy_flair` on a pinned git rev (0.20 port on `main`; MPL deps allowed unmodified, owner
+  2026-10-11), composer with `@layer mods.<id>` in load order, per-mod error attribution, CSS hot reload.
+  Verify: composer tests (layer order = load order, errors → mod id); edit a sheet in the example, see it apply.
+- [ ] U3 Widget kit + both themes (modern; `mw_classic` with TTF fonts and the `ui.frames` bake, ui-adapter.md) +
+  both presets + scale settings. Layouts as `bsn!` templates until Bevy 0.21 ships `.bsn` files (owner decision 2
+  below). Verify: screenshot matrix theme × preset × {100 %, 200 % text at 1280×720}; AccessKit pass with Narrator.
+- [ ] U4 HUD shell with slots (bars, notifications) + message box (timed and modal with buttons). Verify: gamepad-only
+  modal; HUD ≤ 0.5 ms CPU in `sf_diag`.
+- [ ] U5 Virtualized inventory on the **minimal `sf_rpg` inventory stacks** (record id → count; shared with W3) plus a
+  1,000-item synthetic container: `ui.column` records, sort/search/tabs, tooltip slot. Verify: `sf_diag` scenario
+  scrolling 1,000 items at full frame rate, heavy menu ≤ 1 ms CPU, ~40 live rows.
+- [ ] U6 Settings + keybinds + mod settings pages (settings registry records, values per profile). Verify: a mod's page
+  appears, edits persist in the profile, gamepad-only.
+- [ ] U7 `sf_ui_lua` (`@sf/ui`, ui.md "Luau surface"): slots, columns, screens, settings pages, message boxes; per-mod
+  UI time. Verify: the value-per-weight column mod works in both presets; HUD Lua ≤ 0.2 ms.
+- [ ] W3 Legacy runtime (scripting-adapter.md "Instances", "What M5 needs from M7"): `mw_script_bevy`, shared
+  `mw.legacy` context, global/local instances, MWScript active-cell region, edge flags, activation consumption,
+  message boxes on U4, **minimal `sf_rpg` quest store** (quest index, entries, known topics; no journal UI) and
+  inventory stacks (U5), live families per the spec table, neutral stubs for the rest, console snippets. Verify:
+  behaviour fixtures (OnActivate once, message-box state machine, timers, short wrap, `id.var`, save/restore, reload);
+  Balmora 5 min with all vanilla start/local scripts: 0 runtime errors (or each listed), legacy script time ≤ 0.3 ms;
+  MS-4, MS-5.
+- [ ] E1 Milestone demo + gates: example mods in `bevyrrowind/examples/mods/` (texture replacer, Lua door-notes mod
+  with a settings page, theme mod, CSS patch, value-per-weight column), `sf_diag` scenario (Balmora, inventory open
+  and scrolling, 10 mods), visual checks MS-1..MS-6 in `docs/visual-checks.md`. Verify (milestone): the §9 "Done
+  when" sentence, gamepad-only, owner sign-off on MS-1..MS-6; benchmark entry: script slots ≤ 1 ms, UI budgets per ui.md.
+- [ ] X1 (stretch; may move to M7) ESP field-level merge (§6.1 item 4): each ESP record diffed against its master so
+  only changed fields become patches; conflict report per field for legacy plugins. Verify: two ESPs editing
+  different fields of one record both apply; TES3Merge-style cases as fixtures.
+- [ ] X2 (after M5) native archive mods (zip). Verify: a zipped copy of the texture mod behaves like the folder.
+
+Owner test scenes (added to `docs/visual-checks.md` by the task that builds them, status "awaiting owner"):
+
+- MS-1 texture mod: enable `examples/mods/texture_demo` (a loud test-pattern replacement for a texture in
+  "Seyda Neen, Census and Excise Office"); the pattern shows; edit the file while the game runs (dev build): it updates
+  within a second, no restart.
+- MS-2 Lua mod: `door_notes` shows a notification naming each door you activate and counts them in its storage; edit
+  the message text in the `.luau` file while running: new text, count kept.
+- MS-3 UI together: theme mod (token colors) + a CSS patch in its own layer + the value-per-weight inventory column,
+  inventory open in both presets, theme switched live, **gamepad only** (mouse unplugged).
+- MS-4 legacy script: "Balmora, Temple", activate the Shrine of St. Rilm (`shrineRilm`) with gamepad: donation prompt
+  (35 gold, non-member stub) → blessing menu → choice; 35 gold leaves the inventory, the cast is logged as a stub.
+- MS-5 legacy activation override: a door whose script asks before passing (vanilla `passageScript`; find a placed
+  instance with `uses`): "Yes" travels, "No" stays.
+- MS-6 mod settings: the door_notes settings page (toggle, gamepad), 200 % text at 1280×720 lays out without loss.
+
+**Owner decisions for M5** (recommendations; details in ARCHITECTURE §10 2026-10-13 m5-spec):
+1. Runtime: Luau via mlua directly, state per mod, shared state for legacy translations, bevy_mod_scripting not
+   adopted. Recommend: yes.
+2. `.bsn` files: Bevy 0.21 isn't out (0.20 shipped 2026-10-08), so M5 layouts are `bsn!` templates in Rust and
+   move to `.bsn` files when 0.21 lands; M5 counts as done without `.bsn` files. Recommend: yes.
+3. Minimal `sf_rpg` data (inventory stacks, quest store) built in M5 ahead of M7, so scripts and the inventory slice use
+   real data. Recommend: yes.
+4. Dev-build hot re-bake of a changed product during play (exception to "nothing bakes during play", dev and "mod author
+   mode" only). Recommend: yes.
+5. Script faults: abort a handler after 50 ms (release), suspend a mod for the session after 3 aborts or 30 errors a
+   minute, memory default 64 MiB per mod. Recommend: yes, tune after L1.
+6. Framework script API stays `0.x` (no compatibility promise) until M7's RPG modules exist, then `1.0`. Recommend: yes.
+7. X1 ESP field-level merging inside M5 (stretch) or in M7. Recommend: after E1, keep M5's done-when unchanged.
+
+## M6–M10
 
 Not broken down yet. Scope per milestone: ARCHITECTURE.md §9; designs:
 `../superfargoth/docs/WISHLIST.md`. Break a milestone down here (with a
@@ -735,8 +855,6 @@ spec per major system) before starting it.
 M10+); far-field performance → M8, seamless interiors (portals) → M9, combat → M10. Text below written before the
 renumbering keeps the old numbers: "M8 portals" here means M9. **Priority: M4, M5, M6** (owner), then M7.
 
-Specs written ahead: M5 game UI (`../superfargoth/docs/specs/ui.md`, `docs/specs/ui-adapter.md`);
-the slice to break down is ui.md's "Milestone and first vertical slice".
 M6 weather (`../superfargoth/docs/specs/weather.md`, `docs/specs/weather-adapter.md`), stub order: `sf_wind` (+ grass/tree
 wind, `wind.paint`) → `sf_weather` + `mw_weather` (presets, climates, forecast) → `sf_atmos_bevy` clouds + cloud shadows →
 froxel/height/ground fog → `sf_surface` (wetness, puddles, snow, ash; `WorldMaterial`) → `sf_precip_bevy` → shadow-height
@@ -760,6 +878,7 @@ default** (`--portals` / `BEVYRROWIND_PORTALS=1`), parked until M8 (open items i
 
 Newest first. One or two lines each: what changed, what was verified.
 
+- 2026-10-13 (m5-spec, docs only): M5 broken down ("## M5: Mods, Lua and UI", A1-A4, L1-L3, U1-U7, W1-W3, E1, X1-X2, MS-1..MS-6, 7 owner decisions); new specs scripting.md, mods.md (superfargoth) and scripting-adapter.md; ARCHITECTURE §10 entry. Runtime Luau via mlua 0.12.2 (state per mod), MWScript → Luau at bake time; corpus measured from the install (1,231 script texts / 981 KB / 49k lines, 17,144 dialogue results). No builds.
 - 2026-10-13 (clouds2, S1): cloud shadows were never applied (Bevy needs `pbr_clustered_decals` for light textures; now on), clouds 4x too big (weather tile 16 km, now real-scale 8 km + app scales sizes with heights 0.5), static (Morrowind `Cloud Speed` x 10 m/s + two-octave field evolution + rising billows), sun leaked through thick cloud (last 1 % transmittance kept; now snapped to 0; composite order was fine). Nine genus presets + 2-D cirrus sheet; `--clouds` takes genera and Morrowind weathers; `sf_atmos_bevy` example `clouds`; 8 `clouds-*` scenes, CL-1..6 awaiting owner. sf_atmos 14 tests, clippy clean; app clippy clean (mine). Not yet: app screenshots, GPU A/B (shared machine).
 - 2026-10-13 (clouds3, S1): ran the clouds in the release game: ground shadows show (pbr_clustered_decals fix confirmed), stratocumulus hides the sun disk and bloom, cumulus still dense from the ground (coverage 0.40 -> 0.34, soft column tops). GPU per-pass timers added (RenderDiagnostics spans); clouds were 1.35-1.70 ms, over the High budget (shadow map alone 0.44-0.69). Now toroidal, time-sliced shadow map (1/16 per frame, `sf_atmos::ShadowSlicer`) 0.04 ms; trace with continuous step length (fixes the horizontal banding), empty-space skipping, lighting LOD, max steps 64: clouds 0.91 fair / 0.79 cumulus / 0.52-0.62 overcast+storm (1440p, RTX 4060 Laptop, shared machine; frames CPU-bound, so pass timers, not frame deltas). sf_atmos 15 tests, clippy clean; CL-1/2/3/6 look-fors updated, awaiting owner.
 
