@@ -18,6 +18,7 @@ use bevy_math::{Mat4, UVec2, Vec2, Vec3};
 use bevy_pbr::resources::{AtmosphereSampler, AtmosphereTextures, AtmosphereTransform, AtmosphereTransforms, AtmosphereTransformsOffset, GpuAtmosphere};
 use bevy_pbr::{ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ViewLightsUniformOffset};
 use bevy_render::camera::ExtractedCamera;
+use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::extract_component::{ComponentUniforms, DynamicUniformIndex};
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_resource::binding_types::{sampler, texture_2d, texture_2d_multisampled, texture_3d, uniform_buffer};
@@ -155,6 +156,7 @@ struct CloudUniform {
     cirrus_height: f32,
     cirrus_depth: f32,
     rise: f32,
+    shadow_camera: Vec3,
 }
 
 // -- pipelines -----------------------------------------------------------------
@@ -358,6 +360,8 @@ struct CloudView {
     composite: BindGroup,
     samples: u32,
     shadow_image: Option<AssetId<Image>>,
+    /// Rows of the shadow map to render this frame (time slicing).
+    shadow_rows: (u32, u32),
 }
 
 fn cached(cache: &mut TextureCache, device: &RenderDevice, label: &'static str, size: UVec2, format: TextureFormat) -> CachedTexture {
@@ -496,6 +500,7 @@ fn prepare_views(
             cirrus_height: s.weather.cirrus_height,
             cirrus_depth: s.look.cirrus_depth,
             rise: frame.offsets.rise,
+            shadow_camera: shadow.map_or(Vec3::ZERO, |b| b.camera),
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;
@@ -570,6 +575,7 @@ fn prepare_views(
             composite,
             samples,
             shadow_image: shadow.map(|_| frame.images.shadow.id()),
+            shadow_rows: shadow.map_or((0, 0), |b| (b.rows.start, b.rows.count)),
         });
     }
 }
@@ -593,7 +599,18 @@ fn attachment(view: &bevy_render::render_resource::TextureView) -> Option<Render
     Some(RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: Operations { load: LoadOp::Load, store: StoreOp::Store } })
 }
 
-fn fullscreen(ctx: &mut RenderContext, label: &'static str, targets: &[Option<RenderPassColorAttachment<'_>>], pipeline: &bevy_render::render_resource::RenderPipeline, groups: [(&BindGroup, &[u32]); 2]) {
+/// One fullscreen triangle; `rows` (start, count) limits it to a band of the target.
+fn fullscreen(
+    ctx: &mut RenderContext,
+    label: &'static str,
+    targets: &[Option<RenderPassColorAttachment<'_>>],
+    pipeline: &bevy_render::render_resource::RenderPipeline,
+    groups: [(&BindGroup, &[u32]); 2],
+    rows: Option<(u32, u32, u32)>,
+) {
+    // GPU timer per pass (`render/<label>/elapsed_gpu` under Bevy's `RenderDiagnosticsPlugin`).
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
     let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
         label: Some(label),
         color_attachments: targets,
@@ -602,10 +619,15 @@ fn fullscreen(ctx: &mut RenderContext, label: &'static str, targets: &[Option<Re
         occlusion_query_set: None,
         multiview_mask: None,
     });
+    let span = diagnostics.pass_span(&mut pass, label);
+    if let Some((width, start, count)) = rows {
+        pass.set_scissor_rect(0, start, width, count);
+    }
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, groups[0].0, groups[0].1);
     pass.set_bind_group(1, groups[1].0, groups[1].1);
     pass.draw(0..3, 0..1);
+    span.end(&mut pass);
 }
 
 fn shadow_pass(
@@ -619,8 +641,14 @@ fn shadow_pass(
     let Some(id) = cloud.shadow_image else { return };
     let Some(image) = images.get(id) else { return };
     let Some(pipeline) = ids.0.get(&(Pass::Shadow, cloud.samples)).and_then(|id| cache.get_render_pipeline(*id)) else { return };
+    let (start, count) = cloud.shadow_rows;
+    let size = image.texture_descriptor.size;
+    if count == 0 || start + count > size.height {
+        return;
+    }
     let offsets = offsets(offs);
-    fullscreen(&mut ctx, "clouds_shadow", &[attachment(&image.texture_view)], pipeline, [(&cloud.atmosphere, &offsets), (&cloud.density, &[])]);
+    let groups = [(&cloud.atmosphere, &offsets[..]), (&cloud.density, &[][..])];
+    fullscreen(&mut ctx, "clouds_shadow", &[attachment(&image.texture_view)], pipeline, groups, Some((size.width, start, count)));
 }
 
 fn trace_pass(view: ViewQuery<(&CloudView, AtmosphereOffsets)>, ids: Res<CloudPipelineIds>, cache: Res<PipelineCache>, mut ctx: RenderContext) {
@@ -634,6 +662,7 @@ fn trace_pass(view: ViewQuery<(&CloudView, AtmosphereOffsets)>, ids: Res<CloudPi
         &[attachment(&cloud.trace.0.default_view), attachment(&cloud.trace.1.default_view)],
         trace,
         [(&cloud.atmosphere, &offsets), (&cloud.density, &[])],
+        None,
     );
     fullscreen(
         &mut ctx,
@@ -641,6 +670,7 @@ fn trace_pass(view: ViewQuery<(&CloudView, AtmosphereOffsets)>, ids: Res<CloudPi
         &[attachment(&cloud.history.0.default_view), attachment(&cloud.history.1.default_view)],
         resolve,
         [(&cloud.atmosphere, &offsets), (&cloud.resolve, &[])],
+        None,
     );
 }
 
@@ -653,6 +683,8 @@ fn composite_pass(
     let (cloud, target, camera, resolution, offs) = view.into_inner();
     let Some(pipeline) = ids.0.get(&(Pass::Composite, cloud.samples)).and_then(|id| cache.get_render_pipeline(*id)) else { return };
     let offsets = offsets(offs);
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
     let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
         label: Some("clouds_composite"),
         color_attachments: &[Some(target.get_color_attachment())],
@@ -661,6 +693,7 @@ fn composite_pass(
         occlusion_query_set: None,
         multiview_mask: None,
     });
+    let span = diagnostics.pass_span(&mut pass, "clouds_composite");
     if let Some(v) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution) {
         #[allow(clippy::cast_precision_loss)]
         pass.set_viewport(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x as f32, v.physical_size.y as f32, v.depth.start, v.depth.end);
@@ -669,6 +702,7 @@ fn composite_pass(
     pass.set_bind_group(0, &cloud.atmosphere, &offsets);
     pass.set_bind_group(1, &cloud.composite, &[]);
     pass.draw(0..3, 0..1);
+    span.end(&mut pass);
 }
 
 

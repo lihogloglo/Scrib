@@ -18,7 +18,7 @@ import bevy_pbr::atmosphere::{
     },
     bruneton_functions::sample_transmittance_lut_segment,
 };
-import super::cloud_common::{PI, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
+import super::cloud_common::{PI, WeatherSample, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
 import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density, cirrus_hit};
 
 @if(MULTISAMPLED)
@@ -36,17 +36,27 @@ struct TraceOutput {
 
 // Optical depth (density × m) from `p` toward the light. Steps grow, so a few
 // samples reach the far side of the layer.
-fn light_optical_depth(p: vec3<f32>, l: vec3<f32>) -> f32 {
+fn light_optical_depth(p: vec3<f32>, l: vec3<f32>, steps: u32, w0: WeatherSample) -> f32 {
     var tau = 0.0;
-    var step = clouds.thickness / f32(max(clouds.light_steps, 1u));
+    // Fewer steps cover the same reach (steps grow by 1.5: the reach of n
+    // steps is a geometric sum), only more coarsely.
+    let full = f32(max(clouds.light_steps, 1u));
+    let reach_ratio = (pow(1.5, full) - 1.0) / (pow(1.5, f32(max(steps, 1u))) - 1.0);
+    var step = clouds.thickness / full * reach_ratio;
     var t = step * 0.5;
-    for (var i = 0u; i < clouds.light_steps; i += 1u) {
+    for (var i = 0u; i < steps; i += 1u) {
         let s = p + l * t;
         let h = height_fraction(s);
         if h < 0.0 || h > 1.0 {
             break;
         }
-        tau += cloud_density(s, h, weather_sample(s), false) * step;
+        // The first sample is a tenth of the layer away: the weather field
+        // (kilometer-sized) is the one at `p` there; skip its two fetches.
+        var w = w0;
+        if i > 0u {
+            w = weather_sample(s);
+        }
+        tau += cloud_density(s, h, w, false) * step;
         step *= 1.5;
         t += step;
     }
@@ -107,34 +117,59 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let ground_light = light_color * sample_transmittance_lut(clouds.inner_radius + 1.0, mu_l_ground) * max(mu_l_ground, 0.0);
     let bounce = clouds.ground_albedo * ground_light / PI * clouds.ground_bounce;
 
+    // Step length: a fixed fraction of the layer, stretched or shrunk only
+    // to keep the count in [min_steps, max_steps]. A continuous function of
+    // the span: an integer count dividing the span evenly jumps at every
+    // count change, which drew horizontal bands across thick decks.
     let span = max(end - start, 0.0);
-    let n = select(0u, u32(clamp(span / (clouds.thickness / 24.0), f32(clouds.min_steps), f32(clouds.max_steps))), has_low);
-    let ds = span / f32(n);
+    let ds = clamp(clouds.thickness / 20.0, span / f32(clouds.max_steps), span / f32(clouds.min_steps));
     var t = start + ds * ign(half_px, clouds.frame);
 
     var transmittance = 1.0;
     var luminance = vec3(0.0);
     var dist_sum = 0.0;
     var weight_sum = 0.0;
-    for (var i = 0u; i < n; i += 1u) {
-        if transmittance < 0.01 {
-            break;
-        }
+    // Empty-space skipping (Schneider 2015): outside cloud, march at twice
+    // the step with the cheap (unlit, uneroded) density; on a hit, step back
+    // and march at full rate until a run of empty samples.
+    var coarse = true;
+    var empty_run = 0u;
+    var guard = 0u;
+    while has_low && t < end && transmittance >= 0.01 && guard < clouds.max_steps * 2u {
+        guard += 1u;
         let p = ro + rd * t;
         let pc = p - clouds.planet_center;
         let r = length(pc);
         let h = (r - clouds.inner_radius - clouds.base) / clouds.thickness;
         let w = weather_sample(p);
+        if coarse {
+            if cloud_density(p, h, w, false) > 0.0 {
+                coarse = false;
+                empty_run = 0u;
+                t = max(t - ds, start);
+            } else {
+                t += 2.0 * ds;
+            }
+            continue;
+        }
         // Fade the deck over the last quarter of the reach, in the density
         // itself so it stops absorbing as well as glowing.
         let reach = 1.0 - ramp(clouds.far * 0.75, clouds.far, t);
         let density = cloud_density(p, h, w, true) * reach;
-        if density > 0.0 {
+        if density <= 0.0 {
+            empty_run += 1u;
+            coarse = empty_run >= 4u;
+        } else {
+            empty_run = 0u;
             let sigma = density * clouds.extinction;
             let mu_l = dot(pc / r, l);
             let sun_t = sample_transmittance_lut(r, mu_l);
             let dark = 1.0 + 2.0 * w.wetness;
-            let od = light_optical_depth(p, l) * clouds.extinction * dark;
+            // Lighting LOD: deep in the cloud (little of it still reaches the
+            // eye) and far away (a few pixels per cloud) two light samples do.
+            let full_light = transmittance > 0.3 && t < clouds.far * 0.15;
+            let light_n = select(min(clouds.light_steps, 2u), clouds.light_steps, full_light);
+            let od = light_optical_depth(p, l, light_n, w) * clouds.extinction * dark;
             let ms = multi_scatter(od, cos_t, clouds.phase_g, clouds.ms_falloff, clouds.ms_octaves);
             let sun = light_color * sun_t * ms * powder(density, cos_t, clouds.powder);
             let fill = mix(bounce, sky_up, saturate(h)) * clouds.ambient * (1.0 - 0.6 * w.wetness);

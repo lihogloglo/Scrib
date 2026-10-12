@@ -1181,6 +1181,26 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   `hide:`/`show:` by the node's rest state (a shown-is-1 curve hid every dremora's armor). Absolute curves
   (material values) stay allowed only where every playable clip carries them; a real-install census asserts it.
 
+- **2026-10-13 (clouds2, sky pass S1; weather.md "Cloud genera, scale, motion, shadows, sun
+  occlusion")**: cloud presets are cloud **genera** (nine `CloudPreset`s: one volumetric low/mid
+  genus + a 2-D cirrus sheet in the weather map's A channel), not "clear/fair/overcast/storm".
+  Compressed worlds scale cloud **sizes and heights together** (`CloudLook::scaled`, powers of two
+  so tiles keep dividing 16 384 m); real-scale defaults follow cloud-atlas sizes (2 km weather
+  blobs). Framework winds stay physical; adapters set game-readable speeds (Bevyrrowind: `Cloud
+  Speed` x 10 m/s). Shape evolution is two drifting weather-map octaves + a rising shape phase (no
+  map-writing pass). Light cookies in Bevy 0.20 need `pbr_clustered_decals` as well as
+  `pbr_light_textures` (otherwise silently ignored). The trace snaps its last 1 % of transmittance
+  to zero so the HDR sun disk is fully hidden behind thick cloud.
+- **2026-10-13 (clouds3, sky pass S1 budget; weather.md "Cloud genera ...", "S1 cost")**: the
+  cloud shadow map is **toroidal and time-sliced**: the light texture repeats, the light sits at a
+  world anchor that moves in 2 km cells, each texel holds its repeat nearest the camera, and one
+  band of rows refreshes per frame (`sf_atmos::ShadowSlicer`, `CloudQuality::shadow_slices`, High
+  16); a full redraw only on an anchor move, a light turn of > 4 m at the camera, or a weather
+  jump. Primary march steps are a continuous function of the span (no integer step count dividing
+  it: that drew bands), with 2x empty-space steps and a lighting LOD (2 light samples where T < 0.3
+  or past 15 % of the reach). Every cloud pass is a `RenderDiagnosticsPlugin` span: per-pass GPU ms
+  are the cloud A/B measure, not frame deltas (frames are CPU-bound on the shared machine).
+
 ## 11. Open decisions
 
 - ~~Physics character controller: `bevy_tnua` vs our own.~~ Resolved 2026-10-12 (§10): our kinematic mover.

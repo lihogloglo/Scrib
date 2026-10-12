@@ -61,6 +61,7 @@ struct Clouds {
     cirrus_height: f32,
     cirrus_depth: f32,
     rise: f32,
+    shadow_camera: vec3<f32>,
 };
 
 const PI: f32 = 3.14159265;

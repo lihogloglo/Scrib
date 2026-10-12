@@ -228,3 +228,38 @@ fn genera_and_scaling() {
     let h = w(CloudPreset::Fair).scaled_heights(0.5);
     assert!((h.cirrus_height - 4_000.0).abs() < 1e-3);
 }
+
+/// The time-sliced shadow map: bands cover every row once per cycle; the
+/// map is redrawn whole when the anchor moves, the light turns or the
+/// weather jumps, but not for a gradual blend.
+#[test]
+fn shadow_slices() {
+    use crate::shadow::{ShadowRows, ShadowSlicer};
+    let full = ShadowRows { start: 0, count: 1000 };
+    let weather = CloudWeather::preset(CloudPreset::Fair);
+    let sun = Vec3::new(0.3, 0.8, 0.2).normalize();
+    let mut s = ShadowSlicer::default();
+    assert_eq!(s.rows(1000, 8, [0, 0], sun, &weather, 3_000.0), full, "first frame");
+    let mut covered = vec![0u32; 1000];
+    for _ in 0..8 {
+        let r = s.rows(1000, 8, [0, 0], sun, &weather, 3_000.0);
+        assert!(r.count < 1000);
+        for row in r.start..r.start + r.count {
+            covered[row as usize] += 1;
+        }
+    }
+    assert!(covered.iter().all(|&c| c == 1), "each row once per cycle");
+    assert_eq!(s.rows(1000, 8, [1, 0], sun, &weather, 3_000.0), full, "anchor moved");
+    // A slow blend: no full refresh.
+    let mut blend = weather;
+    blend.coverage += 0.005;
+    assert_ne!(s.rows(1000, 8, [1, 0], sun, &blend, 3_000.0), full);
+    let jump = CloudWeather::preset(CloudPreset::Overcast);
+    assert_eq!(s.rows(1000, 8, [1, 0], sun, &jump, 3_000.0), full, "weather jump");
+    // 0.01° per frame at 3 km is 0.5 m: fine; one degree is 52 m: redraw.
+    let tiny = (sun + Vec3::X * 0.000_17).normalize();
+    assert_ne!(s.rows(1000, 8, [1, 0], tiny, &jump, 3_000.0), full);
+    let turned = (sun + Vec3::X * 0.02).normalize();
+    assert_eq!(s.rows(1000, 8, [1, 0], turned, &jump, 3_000.0), full, "time-of-day jump");
+    assert_eq!(s.rows(1000, 1, [1, 0], turned, &jump, 3_000.0), full, "one slice is every frame");
+}

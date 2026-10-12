@@ -412,8 +412,8 @@ draws under the horizon or on the sea. MSAA layouts exist but only `Msaa::Off` w
 camera (snapped to the 32 m texel grid), 8 samples through the shell per texel, edge fading to the
 mean cover; given to the sun as a **tiled** `DirectionalLightTexture` (Bevy reads 0 = black outside
 an untiled texture, which breaks the out-of-range rule). The light's `GlobalTransform` gets the
-scale/translation after propagation (Bevy builds cascades from its rotation only). Whole map every
-frame (amortizing 1/4 per frame is a next step). Moon: none yet.
+scale/translation after propagation (Bevy builds cascades from its rotation only). Since S1
+(clouds3) the map is toroidal and time-sliced, 6 samples per texel: see "S1 cost" below. Moon: none yet.
 
 **Floating origin.** The app writes `CloudsOrigin` (absolute position of the origin cell) in its
 origin sync; noise offsets carry `origin mod tile` (tiles divide 16 384 m), and the resolve shifts
@@ -494,9 +494,46 @@ genus name and for mods.
 (cirrus); the shadow map is 4x the texels with the detail fetch. Measured: see the S1
 session log line in ROADMAP (shared machine).
 
+**S1 cost (clouds3, 2026-10-13).** GPU timers: every cloud pass is a `RenderDiagnosticsPlugin`
+span (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`; the perf report's
+"GPU passes" table). Per-pass GPU ms are the A/B measure: on the shared machine the frame was
+CPU-bound (render thread ~20 ms), so frame-median deltas against `--off clouds` were noise.
+Release, 2560×1440, RTX 4060 Laptop, Balmora camera toward Red Mountain at 16:30
+(`shots/clouds3/ab.sh`, results `shots/clouds3/perf/`; shared machine: other agents compiled):
+
+| preset | before: trace / shadow / composite / resolve = total | after (High) |
+|---|---|---|
+| fair | 1.02 / 0.44 / 0.19 / 0.05 = 1.70 | 0.68 / 0.04 / 0.19 / 0.05 = 0.95 |
+| cumulus | 0.72 / 0.54 / 0.19 / 0.05 = 1.49 | 0.55 / 0.04 / 0.18 / 0.05 = 0.83 |
+| overcast | 0.53 / 0.59 / 0.19 / 0.05 = 1.35 | 0.29 / 0.09 / 0.19 / 0.05 = 0.61 (8 slices) |
+| storm | 0.53 / 0.69 / 0.19 / 0.05 = 1.47 | 0.38 / 0.09 / 0.19 / 0.05 = 0.71 (8 slices) |
+
+Against High (clouds + far fog 0.9, shadow + weather maps 0.05): the shadow map is in budget
+(0.04 at 16 slices); clouds alone are 0.91 on fair (at the line, no far fog yet), 0.79 cumulus,
+≤ 0.62 overcast/storm. What changed:
+1. *Shadow map:* **toroidal** (the light texture repeats; the light sits at a world anchor that
+   moves in 2 km cells; each texel holds the repeat of its sky column nearest the camera, edge
+   fade by distance from the camera), so texels stay fixed in the world and the map can be
+   **time-sliced** (as reflection probes and far cascades are): one band of `size / 16` rows per
+   frame (`CloudQuality::shadow_slices`, High 16, Ultra 4; `sf_atmos::ShadowSlicer`). Stale
+   bands are ≤ 16 frames old: ≤ 5 m of drift at cloudy speed against 16 m texels. A full redraw
+   on an anchor move, a light turn of more than 4 m at the camera since the oldest band (a
+   time-of-day jump), or a weather jump (a preset switch, not a blend). Each texel now marches
+   its column from sea level (before: from camera height). 6 samples per texel (Ultra 8).
+2. *Trace:* the step is a continuous function of the span (`thickness / 20`, stretched only to
+   keep the count in 32..64): an integer count dividing the span evenly jumps at every count
+   change, which drew the faint **horizontal bands** in thick decks. Empty-space skipping
+   (Schneider 2015): twice the step with the cheap density outside cloud, step back on a hit,
+   back to coarse after 4 empty samples. Lighting LOD: two light samples (stretched to the same
+   reach) where T < 0.3 or past 15 % of the reach; the first light sample reuses the primary
+   sample's weather (a tenth of the layer away). High `max_steps` 80 → 64.
+3. *Cumulus* coverage 0.40 → 0.34 (more sky between towers from the ground).
+
 **Next.** Crisper cauliflower billows (curl-noise distortion of the detail lookup, height-
-dependent erosion remap), anvils (weather map A is now cirrus: anvils need a written map),
-amortized shadow map (1/4 per frame), GPU timer.
+dependent erosion remap; tops read as soft vertical columns today), anvils (weather map A is
+now cirrus: anvils need a written map), a cheaper composite (0.19 ms, a constant full-resolution
+cost), far fog in the cloud node (no budget left on fair: trim the trace first), Low/Medium
+presets measured.
 
 ## Fog: aerial perspective, height fog, ground fog, volumetric fog, god rays
 

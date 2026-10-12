@@ -13,8 +13,12 @@
 //!   3. a depth-aware upsample composited over the sky and the opaque scene,
 //!      after Bevy's `render_sky` and before transparents.
 //! - Cloud shadows: a 1024² map along the sun direction, given to the light
-//!   with [`CloudShadowLight`] as a tiled `DirectionalLightTexture` that
-//!   follows the camera (every PBR material receives it).
+//!   with [`CloudShadowLight`] as a tiled `DirectionalLightTexture` around
+//!   the camera (every PBR material receives it). Toroidal (texels fixed in
+//!   the world, the light anchored in 2 km steps) and time-sliced: one band
+//!   of rows per frame (`CloudQuality::shadow_slices`, `sf_atmos::shadow`).
+//! - GPU timers: each pass is a `RenderDiagnosticsPlugin` span
+//!   (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`).
 //! - Floating origin: the app reports the absolute position of the
 //!   origin-relative frame in [`CloudsOrigin`]; texture offsets carry it as a
 //!   phase (tiles divide 16 384 m), so clouds never move on origin shifts.
@@ -41,12 +45,16 @@ use bevy_time::Time;
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_atmos::scroll::TileOffsets;
-use sf_atmos::{CloudScroll, CloudSettings, NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
+use sf_atmos::{CloudScroll, CloudSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 
 pub use sf_atmos;
 
 /// Half the side of the cloud shadow map's coverage, meters (16 km square).
 pub const SHADOW_HALF_EXTENT: f32 = 8_192.0;
+
+/// The shadow light's world anchor moves in steps of this many meters
+/// (the map is toroidal: texels stay put while the camera moves inside a cell).
+pub const SHADOW_ANCHOR_CELL: f64 = 2_048.0;
 
 /// The cloud renderer. `settings` seeds [`Clouds`]; `seed` the noise.
 #[derive(Clone, Debug, Default)]
@@ -108,6 +116,9 @@ struct NoiseJob(Arc<Mutex<Option<NoiseVolumes>>>);
 #[derive(Resource, Default)]
 struct Scroll(CloudScroll);
 
+#[derive(Resource, Default)]
+struct Slicer(ShadowSlicer);
+
 /// Per-frame values the render world needs (extracted).
 #[derive(Resource, Clone, Debug, Default)]
 pub(crate) struct CloudFrame {
@@ -129,6 +140,9 @@ pub(crate) struct ShadowBasis {
     pub x: Vec3,
     pub y: Vec3,
     pub light_dir: Vec3,
+    /// The camera (each texel holds its repeat nearest the camera).
+    pub camera: Vec3,
+    pub rows: ShadowRows,
 }
 
 impl Plugin for CloudsPlugin {
@@ -158,6 +172,7 @@ impl Plugin for CloudsPlugin {
         app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true })
             .insert_resource(job)
             .init_resource::<Scroll>()
+            .init_resource::<Slicer>()
             .init_resource::<CloudsOrigin>()
             .init_resource::<CloudImages>()
             .init_resource::<CloudFrame>()
@@ -225,6 +240,7 @@ fn drive(
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
+    mut slicer: ResMut<Slicer>,
     mut frame: ResMut<CloudFrame>,
     cameras: Query<(&GlobalTransform, &Camera), With<CloudCamera>>,
     mut lights: Query<ShadowLightItem, ShadowLightFilter>,
@@ -245,27 +261,37 @@ fn drive(
                 commands.entity(entity).remove::<DirectionalLightTexture>();
             }
         }
-        if !want {
+        let Some(cam) = camera.filter(|_| want) else {
+            slicer.0.invalidate();
             continue;
-        }
-        let Some(cam) = camera else { continue };
-        // Snapped to the map's texel grid in world space (texels divide the
-        // 256 m origin cell), so origin shifts and small moves don't swim.
+        };
+        // Toroidal map (`sf_atmos::shadow`): the light texture repeats and the
+        // light sits at a world anchor that moves in whole cells, so texels
+        // stay fixed in the world (no swimming, across origin shifts too) and
+        // can refresh a band of rows per frame.
+        let absolute = origin.0 + cam.as_dvec3();
+        #[allow(clippy::cast_possible_truncation)]
+        let cell = [(absolute.x / SHADOW_ANCHOR_CELL).floor() as i64, (absolute.z / SHADOW_ANCHOR_CELL).floor() as i64];
         #[allow(clippy::cast_precision_loss)]
-        let texel = 2.0 * SHADOW_HALF_EXTENT / s.quality.shadow_size.max(16) as f32;
-        let snap = |v: f32| (v / texel).round() * texel;
-        let center = Vec3::new(snap(cam.x), cam.y, snap(cam.z));
+        let anchor = (DVec3::new(cell[0] as f64 * SHADOW_ANCHOR_CELL, 0.0, cell[1] as f64 * SHADOW_ANCHOR_CELL) - origin.0).as_vec3();
         let rotation = transform.rotation();
         *transform = GlobalTransform::from(bevy_transform::components::Transform {
-            translation: center,
+            translation: anchor,
             rotation,
             scale: Vec3::new(SHADOW_HALF_EXTENT, SHADOW_HALF_EXTENT, 1.0),
         });
+        let light_dir = rotation * Vec3::Z;
+        // A turn of the light moves the pattern near the camera by about
+        // (anchor distance + 1 km of near field) × angle.
+        let lever = (cam - anchor).with_y(0.0).length() + 1_000.0;
+        let rows = slicer.0.rows(s.quality.shadow_size.max(16), s.quality.shadow_slices, cell, light_dir, &s.weather, lever);
         shadow = Some(ShadowBasis {
-            center,
+            center: anchor,
             x: rotation * Vec3::X * SHADOW_HALF_EXTENT,
             y: rotation * Vec3::Y * SHADOW_HALF_EXTENT,
-            light_dir: rotation * Vec3::Z,
+            light_dir,
+            camera: cam,
+            rows,
         });
     }
 

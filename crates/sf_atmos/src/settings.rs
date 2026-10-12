@@ -110,7 +110,7 @@ impl CloudWeather {
             CloudPreset::Clear => Self { coverage: 0.08, cloud_type: 0.75, thickness: 700.0, cirrus: 0.18, ..base },
             CloudPreset::Fair => Self { coverage: 0.36, cirrus: 0.1, ..base },
             CloudPreset::Cumulus => {
-                Self { coverage: 0.4, cloud_type: 1.0, density: 1.15, wetness: 0.1, erosion: 0.5, thickness: 2_600.0, ..base }
+                Self { coverage: 0.34, cloud_type: 1.0, density: 1.15, wetness: 0.1, erosion: 0.5, thickness: 2_600.0, ..base }
             }
             CloudPreset::Stratocumulus => Self {
                 coverage: 0.74,
@@ -307,6 +307,9 @@ pub struct CloudQuality {
     /// Cloud shadow map size (texels a side) and samples per texel.
     pub shadow_size: u32,
     pub shadow_steps: u32,
+    /// The shadow map refreshes one band of `size / shadow_slices` rows per
+    /// frame (toroidal map, [`crate::shadow`]); 1 redraws it every frame.
+    pub shadow_slices: u32,
 }
 
 impl Default for CloudQuality {
@@ -318,14 +321,15 @@ impl Default for CloudQuality {
 impl CloudQuality {
     pub const HIGH: Self = Self {
         min_steps: 32,
-        max_steps: 80,
+        max_steps: 64,
         light_steps: 5,
         ms_octaves: 3,
         checkerboard: true,
         shadow_size: 1024,
-        shadow_steps: 8,
+        shadow_steps: 6,
+        shadow_slices: 16,
     };
-    pub const ULTRA: Self = Self { max_steps: 96, light_steps: 6, checkerboard: false, ..Self::HIGH };
+    pub const ULTRA: Self = Self { max_steps: 96, light_steps: 6, checkerboard: false, shadow_steps: 8, shadow_slices: 4, ..Self::HIGH };
 }
 
 /// Everything the cloud renderer reads, per frame.
