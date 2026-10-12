@@ -57,6 +57,9 @@ meshopt = "0.6.2"
 # Collision queries (sf_controller's static query world): the library under avian and rapier.
 # Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
 parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }
+# Rigid-body engine behind the Bevy-free sf_physics (physics.md; ARCHITECTURE §10 2026-10-12). Apache-2.0, no Bevy.
+# Same parry3d as above. No `parallel` (rayon) until a measured step needs it; no `enhanced-determinism`.
+rapier3d = { version = "0.36.1", default-features = false, features = ["dim3", "f32", "std"] }
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 rayon = "1.12"
 # Same version Bevy 0.20 uses (bevy_asset, bevy_reflect): one copy in the tree. Graph assets (sf_anim_graph).
@@ -95,6 +98,7 @@ sf_character = { path = "crates/sf_character" }
 sf_anim_bevy = { path = "crates/sf_anim_bevy" }
 sf_character_bevy = { path = "crates/sf_character_bevy" }
 sf_controller_bevy = { path = "crates/sf_controller_bevy" }
+sf_physics = { path = "crates/sf_physics" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

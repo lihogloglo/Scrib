@@ -336,6 +336,38 @@ fn slopes_steeper_than_the_limit_block() {
     assert!(at.x < 1.05 && at.z > 1.0, "{at}");
 }
 
+/// Orient to movement around obstacles (owner check WK-4): a walker whose
+/// path runs into ground too steep to climb, or a wall, at a shallow angle
+/// slides along it; with no facing in its intent it turns to face that
+/// motion, so its graph is fed a forward walk (not a slow strafe while
+/// facing the slope). Head-on it keeps facing its goal.
+#[test]
+fn deflected_walkers_face_where_they_go() {
+    let params = MoverParams::default();
+    let asked = |deg: f32| Vec3::new(deg.to_radians().sin(), 0.0, deg.to_radians().cos()) * 2.1;
+    let mut slope = World::new();
+    slope.add_ramp(1.0, 60f32.to_radians());
+    let mut wall = World::new();
+    wall.add_box(Vec3::new(1.0, 0.0, -3.0), Vec3::new(1.5, 2.5, 6.0));
+    for (name, world) in [("slope", &slope), ("wall", &wall)] {
+        // 75° from the contour (+Z): the surface leaves a quarter of the speed.
+        let mut loco = Locomotion::new(p(0.6, 0.0, -2.0), 75f32.to_radians());
+        walk(world, &mut loco, toward(asked(75.0)), &params, 120, |_| {});
+        let local = loco.motion.local_velocity();
+        assert!(xyz(loco.position).x < 1.05, "{name}: went through, at {}", xyz(loco.position));
+        assert!(local.z > 0.4 && local.x.abs() < 0.1 * local.z, "{name}: local velocity {local} (yaw {})", loco.motion.yaw);
+        // Head-on: stands facing the goal.
+        let mut loco = Locomotion::new(p(0.6, 0.0, 0.0), FRAC_PI_2);
+        walk(world, &mut loco, toward(asked(89.0)), &params, 120, |_| {});
+        assert!((loco.motion.yaw - 89f32.to_radians()).abs() < 0.05, "{name}: head-on yaw {}", loco.motion.yaw);
+    }
+    // An explicit facing (a strafing player) is kept.
+    let mut loco = Locomotion::new(p(0.6, 0.0, -2.0), 0.0);
+    let intent = LocomotionIntent { desired_facing: Some(FRAC_PI_2), ..toward(asked(75.0)) };
+    walk(&slope, &mut loco, intent, &params, 120, |_| {});
+    assert!((loco.motion.yaw - FRAC_PI_2).abs() < 0.01, "strafe yaw {}", loco.motion.yaw);
+}
+
 #[test]
 fn drive_root_motion_moves_the_character() {
     let world = World::new();

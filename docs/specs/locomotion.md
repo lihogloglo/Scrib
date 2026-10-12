@@ -652,6 +652,31 @@ sync) is to drive the graph from the distance actually travelled, not from the i
   scales the clip (as observed and as OpenMW documents). Root motion `Drive` stays for hits,
   knockdowns and montages, unchanged.
 
+### Orient to movement around obstacles (slopefix, 2026-10-12)
+
+Owner report (WK-4): on some slopes one leg stops, the other takes short steps, the body slides.
+Reproduced headless (`mw_graphs/tests/slope_walk.rs`: real humanoid graph, kinematic mover, measured
+feed and foot probes as `sf_controller_bevy` runs them): plain ramps (15–30°, up and down) and stairs
+were clean; a path meeting ground too steep to climb (or a wall) at a shallow angle was not. The
+mover keeps only the motion along the contour (2.1 m/s at 75° leaves 0.54 m/s, the speed the in-game
+trace showed), but the walker kept facing its goal, into the slope, so the graph was fed a slow
+sideways walk: the WalkLeft/Right blend, whose cooked contact curves plant one foot almost never.
+
+Fix (UE `bOrientRotationToMovement`, Detour and Unity agents face their movement): a surface that
+turned the last step aside sets `Locomotion::deflect` (its horizontal normal; walls in `slide`,
+too-steep ground in `finish`). While the intent still pushes into it and names no facing, the yaw
+goal is the motion that surface leaves; nearly head-on (rest below `DEFLECT_FACING` = 0.1 of the
+speed, under the moving threshold) the walker keeps facing its goal and stands. It clears when the
+intent stops pushing into it or a step moves past where it was. Explicit facings (strafing) are
+kept. Tests: `deflected_walkers_face_where_they_go` (sf_controller),
+`walkers_turned_aside_by_steep_ground_keep_walking` + `walkers_keep_their_stride_on_ramps_and_stairs`
+(mw_graphs, real install). Bevyrrowind logs a stride monitor (stances, skated stances, legs without
+a plant for 2 s while walking; `BEVYRROWIND_STRIDE_TRACE=1` details).
+
+Open: strafe clips' contacts (sf_anim cook: in-place clips use height only; MW WalkLeft/Right feet
+are within 6% of a leg of their lowest point on 0–6 of 81 frames); some walkers on flat ground walk
+at full speed with constant contacts (one leg 0, one 1) in state `walk`, cause not yet found.
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9m3.md`).

@@ -1,0 +1,18 @@
+[package]
+name = "sf_physics"
+description = "Bevy-free physics core for superfargoth: a rapier3d world per worldspace behind our own API, floating-origin rebase by whole grid cells, layers, fixed-step interpolation, events, and a GroundProbe over the engine's queries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+glam.workspace = true
+parry3d.workspace = true
+rapier3d.workspace = true
+sf_coords.workspace = true
+# `GroundProbe` and its query types, `CollisionMesh` (the `collision.cook` product).
+sf_controller.workspace = true
+
+[lints]
+workspace = true

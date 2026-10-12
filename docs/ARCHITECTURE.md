@@ -1171,6 +1171,12 @@ exist; order follows what's most fun to see next, gated by §0 targets.
   skeletal mesh). Sockets with separate meshes stay for runtime-swapped held items. Morrowind adapter:
   `mw_anim::rig::skeleton_source` also takes root children holding unskinned geometry (storm atronach rocks),
   `NifAnimImporter` v3. Census: 89 CREA models, all cook; 1 (heart_akulakhan) keeps billboard parts on the root.
+- **2026-10-12 (dremora): animation-driven effect curves are rest-neutral.** The graph outputs 0 for a curve no
+  playing clip carries (`sf_anim_graph` output `curves`), so any curve an adapter feeds it must mean "rest" at 0, like morph
+  weights (Unity "write defaults", UE default curve values): a clip layered from another file (Morrowind biped
+  creatures idle on the humanoid file) must not switch effects. The Morrowind adapter encodes visibility as
+  `hide:`/`show:` by the node's rest state (a shown-is-1 curve hid every dremora's armor). Absolute curves
+  (material values) stay allowed only where every playable clip carries them; a real-install census asserts it.
 
 ## 11. Open decisions
 
@@ -1517,3 +1523,17 @@ exist; order follows what's most fun to see next, gated by §0 targets.
   `HolderLimits { carry_force, carry_mass, drag_mass, throw_impulse }`; Morrowind maps Strength), and objects too heavy
   to carry are **dragged** (ball joint at the grab point, holder slowed), including dead bodies dragged by the grabbed
   limb (physics.md "Carry and throw", task P6).
+- **2026-10-12 (rootmotion): one root-motion rule for every actor.** Locomotion travel always lives on the
+  clip's root-motion track (`anim.cook` extraction), never in the bones; the adapter names the joint (Bevyrrowind:
+  the bones root, `Bip01`, else `Root Bone`). The world's mover drives and the track only sets the playback rate
+  (`Match`); viewers store it on `AnimRootMotion` without applying it unless asked. A real-data census per adapter
+  (every walk/run clip: distance extracted vs. travel left in the bones, with a no-extraction control) guards it.
+  Cause of the owner's NC-1 note: 15 Morrowind creature skeletons travel on `Root Bone`, which had no root-motion
+  joint, so they walked off and snapped back while the `Bip01` ones stepped in place.
+- **2026-10-12 (physics-p1): the M4 P1 spike confirms `rapier3d`; ragdolls lean to impulse joints.** On an R0-sized
+  world (2,400 statics, 64 terrain chunks, 600 sleeping items; release, shared machine) the idle step is 0.001 ms, a
+  whole-cell rebase 1.4 ms including the next step, and a 50-item pile plus two 15-body ragdolls 0.44 ms with impulse
+  joints, all inside the physics.md gates; multibodies miss (3–4 ms, one 450 ms hitch), so avian is not reconsidered
+  and P7 starts from impulse joints. Rapier wakes the partners of every new contact and every moved collider, so
+  `sf_physics` settles sleeping bodies (one locked step, re-slept by the engine) on insert and on rebase.
+- 2026-10-12 (seams): seam shading (proximity normal blending, `blend_seam_normals`) is part of `SmoothBodies::Smooth`, not applied in Vanilla, so B keeps showing the authored look; colour seams between differently textured pieces wait for an owner decision (smooth-bodies.md "Seam shading").

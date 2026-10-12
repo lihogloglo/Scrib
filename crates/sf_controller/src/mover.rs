@@ -19,6 +19,11 @@ use crate::motion::{MotionState, SpringParams, wrap_angle};
 use crate::probe::{GroundHit, GroundProbe, ProbeQuery};
 use crate::trajectory::{LocomotionParams, Trajectory};
 
+/// Fraction of the asked speed a deflecting surface must leave for a
+/// character without an explicit facing to turn along it
+/// ([`Locomotion::deflect`]): about 84° incidence.
+pub const DEFLECT_FACING: f32 = 0.1;
+
 /// Shape and tuning of one character's mover. Defaults are generic
 /// human-scale values; adapters set their own (race scale, creature size).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -175,6 +180,11 @@ pub struct Locomotion {
     /// The last step was a traversal ([`RootMotion::traversal`]); the next
     /// non-traversal step re-grounds with the step-down probe.
     pub traversing: bool,
+    /// Horizontal unit normal of the surface that turned the last step's
+    /// motion aside (a wall slid along, ground too steep to climb), else
+    /// zero. With no facing in the intent, the next step faces the motion
+    /// that surface leaves (orient to movement), not into it.
+    pub deflect: Vec3,
 }
 
 impl Locomotion {
@@ -193,6 +203,7 @@ impl Locomotion {
             mode: MoverMode::Ground,
             attitude: Vec2::ZERO,
             traversing: false,
+            deflect: Vec3::ZERO,
         }
     }
 
@@ -248,6 +259,8 @@ struct Pending {
     yaw_goal: f32,
     /// Ground probe origin height above the feet, and the probe's reach.
     probe: Option<ProbeQuery>,
+    /// A surface turned this step aside (sets [`Locomotion::deflect`]).
+    deflected: bool,
 }
 
 /// Movement without ground snap or gravity this step.
@@ -349,7 +362,28 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     let loco = &mut *it.loco;
     let frame = loco.frame();
     let yaw0 = loco.motion.yaw;
-    let (mut v_goal, yaw_goal) = loco.motion.goals(&it.intent);
+    let (mut v_goal, mut yaw_goal) = loco.motion.goals(&it.intent);
+    // Orient to movement around obstacles: when the last step was turned
+    // aside (a wall slid along, ground too steep to climb) and the intent
+    // names no facing, face the motion that surface leaves. A walker pushed
+    // along a slope's contour then walks along it instead of side-stepping
+    // while facing into it (its legs would play a strafe at a fraction of
+    // the speed). Nearly head-on (the rest under `DEFLECT_FACING` of the
+    // speed, below the graph's moving threshold) it keeps facing the goal.
+    // The surface stays in effect while the intent pushes into it (a step
+    // that only grazes it doesn't reach the sweep, see `finish`).
+    if horizontal(v_goal).dot(loco.deflect) >= 0.0 {
+        loco.deflect = Vec3::ZERO;
+    }
+    let n = loco.deflect;
+    if it.intent.desired_facing.is_none() && n != Vec3::ZERO {
+        let v = horizontal(v_goal);
+        let along = v - n * v.dot(n).min(0.0);
+        if along.length() > DEFLECT_FACING * v.length() {
+            yaw_goal = along.x.atan2(along.z);
+            loco.motion.facing_goal = yaw_goal;
+        }
+    }
     match free {
         // 3D intent.
         Some(Free::Fly { hover: None } | Free::Swim { .. }) => v_goal.y = it.intent.desired_velocity.y,
@@ -401,7 +435,7 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     loco.attitude = loco.attitude.lerp(settled, 1.0 - w) + it.root.delta.tilt * w;
     let dy = d.y;
     d.y = 0.0;
-    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, probe: None }
+    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, probe: None, deflected: false }
 }
 
 fn horizontal(v: Vec3) -> Vec3 {
@@ -414,6 +448,7 @@ fn horizontal(v: Vec3) -> Vec3 {
 /// springs don't keep pushing.
 fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, probe: &dyn GroundProbe) {
     let params = it.params;
+    let mut deflect = Vec3::ZERO;
     let motion = &mut it.loco.motion;
     let mut pos = p.start;
     let mut rem = p.d;
@@ -432,6 +467,7 @@ fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, prob
         if n == Vec3::ZERO {
             break;
         }
+        deflect = n;
         rem -= n * rem.dot(n).min(0.0);
         motion.velocity -= n * motion.velocity.dot(n).min(0.0);
         motion.acceleration -= n * motion.acceleration.dot(n).min(0.0);
@@ -444,6 +480,10 @@ fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, prob
         }
     }
     p.d = horizontal(p.start.delta_f32(pos));
+    if deflect != Vec3::ZERO {
+        it.loco.deflect = deflect;
+        p.deflected = true;
+    }
 }
 
 /// The fall over this step from the current vertical speed: (distance, new speed).
@@ -488,6 +528,7 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
     // (a rise threshold lets the springs creep up in tiny steps).
     let climbs = |h: &GroundHit, d: Vec3| !h.walkable(min_ny) && horizontal(h.normal).dot(d) < -1e-7;
     let mut d = p.d;
+    let mut deflected = p.deflected;
     let mut feet = p.start.offset(d);
     if let Cast::Done(mut hit) = cast {
         let mut blocked = false;
@@ -497,6 +538,8 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
             // Too steep to climb: keep only the motion along the slope's contour.
             let n = horizontal(h.normal).normalize_or_zero();
             d -= n * d.dot(n).min(0.0);
+            loco.deflect = n;
+            deflected = true;
             loco.motion.velocity -= n * loco.motion.velocity.dot(n).min(0.0);
             feet = p.start.offset(d);
             hit = p.probe.and_then(|q| probe.probe_one(ProbeQuery { origin: feet.offset(Vec3::Y * (params.step_up + params.ground_radius)), ..q }));
@@ -532,6 +575,11 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
                 loco.grounded = None;
             }
         }
+    }
+    // Moved into where the surface was (past a wall's end, off the slope):
+    // it no longer turns the motion aside.
+    if !deflected && d.dot(loco.deflect) < -params.skin {
+        loco.deflect = Vec3::ZERO;
     }
     loco.position = feet;
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);

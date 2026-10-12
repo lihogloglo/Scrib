@@ -542,13 +542,19 @@ material per cooked LOD0 submesh (`sf_model_bevy::submesh_to_mesh`), uploaded on
   the bow's bones aren't in the character skeleton. Industry: UE attaches a skeletal-mesh
   component to a socket (its own skeleton), Unity a child `SkinnedMeshRenderer` with its own bones.
   `HeldModelAssets::skin` (`HeldSkinAssets`). Test: `skinned_prop_joints_are_one_per_name_and_the_palette_points_at_them`.
-- **Carried-light near field (actorparticles).** The torch's `PointLight` is a child of the slot,
-  scaled by `HeldLightTuning::intensity_scale` (0.7) and kept `clearance_m` (0.7 m) horizontally
-  off the carrier's vertical axis (pushed outward from the flame, last frame's transforms).
-  Morrowind lights saturate inside a third of their radius; ours are inverse-square, and Bevy has
-  no per-light near clamp (Frostbite `max(d², r²)`, UE source radius), so a 3.66 m torch 0.25 m
-  from the body lit it about 24x past "fully lit". Now the body is about 2x and the ground pool
-  about half (bevyrrowind `held.rs`, test `carried_lights_keep_clear_of_the_carrier`).
+- **Carried-light near field (actorparticles; recalibrated by torchfix 2026-10-12).** The torch's
+  `PointLight` is a child of the slot, kept `clearance_m` (0.7 m) horizontally off the carrier's
+  vertical axis (pushed outward from the flame, last frame's transforms). Morrowind lights saturate
+  inside a third of their radius; ours are inverse-square, and Bevy 0.20 has no per-light near clamp
+  (its diffuse is `1 / max(d², 1 cm²)`; `PointLight::radius` only widens specular; Frostbite clamps
+  `max(d², r²)`). At the placed lights' power the carrier was ~50x "fully lit" at 0.5 m and the
+  ground under the torch ~8x. Now the carried light is dimmed until "fully lit" falls at a third of
+  its radius (`HeldLightTuning::fully_lit_fraction`, from `LightCalibration::fully_lit_distance`):
+  it matches the original at the edge of its clamp (the ground under the torch) and is brighter only
+  inside it (carrier ~6x for white). Source radius 0.12 m (the flame) softens highlights. The light's
+  own model takes no light: bevyrrowind maps it `mw_assets::self_lit` (texture at "fully lit", the
+  original's saturated look), since it sits centimeters from the light (bevyrrowind `held.rs`, tests
+  `carried_lights_keep_clear_of_the_carrier`, `carried_lights_read_fully_lit_where_the_original_saturates`).
 - **Flames.** Particle systems of held props are bevyrrowind's (`actor_particles.rs`, nif-runtime.md
   "Particles on actors").
 - **Not yet:** the bow string pull (needs clip curves on the prop joints), first-person props,

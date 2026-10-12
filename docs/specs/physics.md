@@ -120,6 +120,15 @@ bitflags! pub struct Layer: u32 { STATIC, TERRAIN, DEBRIS, PROP, CHARACTER, RAGD
 ```
 
 - **Frame.** All engine positions are `anchor.delta_f32(pos)`; every read returns `WorldPos`.
+- **As built (P1, 2026-10-12).** `ShapeRef::Mesh(Arc<MeshShape>)` is built from the `collision.cook` `CollisionMesh`
+  (one parry `TriMesh` per model, cached scaled copies per distinct scale), not from `sf_controller::StaticShape`
+  (whose trimesh is private; sharing one copy between `StaticWorld` and physics needs an accessor there, P2).
+  `ShapeRef::Body` lands with `body.cook` (P3). `BodyDesc` gains `extra_iterations` (ragdolls, held items).
+  **Settle on insert:** rapier wakes both sides of every new contact and the partners of every moved collider, so
+  a body inserted asleep is locked on every axis for one step with a zero sleep delay; the engine wakes it, it can't
+  move, and the engine's own sleep pass re-sleeps it in that step; then it is unlocked. Rebases re-settle every
+  sleeper the same way. Result: 0 wakes and bit-exact poses. Queries see inserts after a step or
+  `PhysicsWorld::refresh_queries`.
 - **Layers.** `DEBRIS` = light, small dynamic items (below `debris_mass` 15 kg and `debris_extent`
   0.6 m by default): characters push them and never stand on or are blocked by them. `PROP` = everything
   else dynamic: blocks movers, is pushed with a capped force. `HELD` = the carried item (no contact with
@@ -365,8 +374,9 @@ pub trait ClothRules: Send + Sync { /* which parts are cloth, attachment joint, 
 
 Gates (numbers are the M4 budgets; the spike in task P1 confirms or revises them):
 
-- **Rebase**: a 30-body stack and a powered ragdoll stepped with and without a mid-run rebase end
-  within 0.1 mm of each other; no body wakes from a rebase; rebase ≤ 2 ms with the content pack's densest town R0.
+- **Rebase**: a 30-body stack and a powered ragdoll stepped with and without a mid-run rebase: the step across the
+  rebase within 0.1 mm for every body, the stack within 0.1 mm at the end (P1: bit-identical; a ragdoll whose drives
+  don't settle amplifies any perturbation, so its end state is compared once P8's drives settle); no body wakes from a rebase; rebase ≤ 2 ms with the content pack's densest town R0.
 - **Idle cost**: R0 in a dense town with every item asleep: step ≤ 0.3 ms. **Active**: a 50-item pile
   collapsing plus 2 ragdolls: ≤ 2 ms. Activation insertion ≤ 0.5 ms per frame.
 - **Probes**: `PhysicsProbe` hits equal `StaticProbe`'s on the walkers scenes; the 150-walker probe
@@ -388,7 +398,10 @@ Gates (numbers are the M4 budgets; the spike in task P1 confirms or revises them
 ## Open questions
 
 1. Impulse joints or a reduced-coordinate multibody for ragdolls: the P7 spike tries both (multibodies
-   don't stretch and take high gains, impulse joints sleep and island more simply).
+   don't stretch and take high gains, impulse joints sleep and island more simply). P1 spike data (2026-10-12): 2 ragdolls
+   + a 50-item pile step in 0.44 ms with impulse joints vs 3.1–4.3 ms with multibodies (plus a 450 ms hitch); a
+   0.5 m drop stretches impulse joints 2–2.6 cm (1.1 cm at 12 extra iterations) vs 0.6 cm for multibodies. Leaning
+   impulse joints with more iterations and bounded mass ratios; P7 decides.
 2. Rapier `parallel` (rayon) once a measured step exceeds budget, and whether to run the step as an
    async task overlapping render extraction (UE Chaos async physics).
 3. Mesh cloth for capes and banners: rapier soft bodies vs our own XPBD on the GPU (after M4).
