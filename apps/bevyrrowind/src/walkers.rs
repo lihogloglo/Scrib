@@ -447,16 +447,29 @@ fn processing_range(
 fn drive(
     time: Res<Time>,
     grids: Res<Pathgrids>,
-    mut walkers: Query<(&Mover, &mut Walker, &mut MoveIntent, &mut Avoider), Without<Dormant>>,
+    mut walkers: Query<(Entity, &Mover, &mut Walker, &mut MoveIntent, &mut Avoider), Without<Dormant>>,
+    ground: Res<MwGround>,
+    mut give_ups: ResMut<GiveUps>,
     mut animators: Query<&mut Animator>,
 ) {
     let dt = time.delta_secs().min(0.1);
     let hours = dt * TIMESCALE / 3600.0;
-    for (mover, mut walker, mut intent, mut avoider) in &mut walkers {
+    for (entity, mover, mut walker, mut intent, mut avoider) in &mut walkers {
         let pos = mover.loco.position;
         let walker = &mut *walker;
         let graph = grids.0.get(&walker.key);
+        let (stuck, edge) = (walker.scaffold.stuck_count(), current_edge(&walker.scaffold, pos));
         let out = walker.scaffold.update(graph, pos, dt, hours);
+        if walker.scaffold.stuck_count() > stuck {
+            let kind = give_ups.record(entity, mover, edge, &ground);
+            // The mover found the edge unwalkable: route around it, not idle.
+            if kind != "other"
+                && let Some((from, to)) = edge
+                && walker.scaffold.replan_around(graph, from, to, pos)
+            {
+                give_ups.rerouted += 1;
+            }
+        }
         intent.0 = out.intent;
         avoider.travel = walker.scaffold.follower().map_or(Vec3::ZERO, |f| {
             let t = f.target();
@@ -591,6 +604,10 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest) {
                 .chain()
                 .in_set(ControllerSystems::Drive),
         )
+        .insert_resource(GiveUps {
+            trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
+            ..GiveUps::default()
+        })
         .insert_resource(StrideStats {
             trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
             ..StrideStats::default()
@@ -603,13 +620,14 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest) {
 }
 
 /// Every 5 s: what the walkers do (log only; counters carry the timings).
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn report(
     time: Res<Time>,
     mut next: Local<f32>,
     stats: Res<sf_controller_bevy::ControllerStats>,
     anim: Option<Res<AnimStats>>,
     strides: Res<StrideStats>,
+    give_ups: Res<GiveUps>,
     ground: Res<MwGround>,
     movers: Query<(&Mover, Option<&Walker>, Has<Dormant>)>,
 ) {
@@ -631,8 +649,12 @@ fn report(
             usize::from(m.loco.grounded.is_some() || !matches!(m.loco.mode, MoverMode::Ground));
     }
     info!(
-        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} grounded, {stuck} walks given up), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
+        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} grounded, {stuck} walks given up: {} steep, {} wall, {} other; {} rerouted around a blocked edge), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
         stats.movers,
+        give_ups.steep,
+        give_ups.wall,
+        give_ups.other,
+        give_ups.rerouted,
         ground.placed(),
         ground.terrain.is_some() && ground.exterior_active,
         stats.avoid_us,
@@ -648,8 +670,8 @@ fn report(
         );
     }
     info!(
-        "walkers strides since start: {} stances, {} skated (planted foot moved > 5 cm), {} legs without a plant for 2 s while walking",
-        strides.stances, strides.skated, strides.frozen
+        "walkers strides since start: {} stances, {} skated (planted foot moved > 5 cm), {} legs without a plant for 2 s while walking, {} contacts held 1.5 s above 1 m/s",
+        strides.stances, strides.skated, strides.frozen, strides.stuck
     );
 }
 
@@ -668,6 +690,9 @@ struct StrideStats {
     skated: u64,
     /// Walking legs that went 2 s without planting.
     frozen: u64,
+    /// Walking legs whose contact curve held one value for 1.5 s (a walk
+    /// cycle's contacts change every half stride; walkers3).
+    stuck: u64,
     trace: bool,
 }
 
@@ -677,6 +702,9 @@ struct FootTrack {
     stance: f32,
     slide: f32,
     since_plant: f32,
+    /// Last contact value and how long it has held while walking.
+    contact: f32,
+    held: f32,
 }
 
 #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
@@ -686,7 +714,7 @@ fn stride_monitor(
     mut tracks: Local<HashMap<Entity, Vec<FootTrack>>>,
     mut slow: Local<HashMap<Entity, f32>>,
     ground: Res<MwGround>,
-    movers: Query<(Entity, &Mover), Without<Dormant>>,
+    movers: Query<(Entity, &Mover, Option<&Character>), Without<Dormant>>,
     animators: Query<(&Animator, Option<&AnimLod>)>,
 ) {
     let dt = time.delta_secs();
@@ -694,7 +722,7 @@ fn stride_monitor(
         return;
     }
     let mut seen = Vec::new();
-    for (e, m) in &movers {
+    for (e, m, character) in &movers {
         let asked = m.applied.desired_velocity.with_y(0.0);
         if stats.trace && asked.length() > 1.5 && (0.1..1.0).contains(&m.measured.length()) {
             let t = slow.entry(e).or_insert(0.0);
@@ -788,6 +816,16 @@ fn stride_monitor(
                 t.since_plant = 0.0;
                 why = Some(format!("no plant for 2 s (contact {contact:.2})"));
             }
+            let fast = m.measured.length() > 1.0;
+            t.held = if walking && fast && (contact - t.contact).abs() < 0.02 { t.held + dt } else { 0.0 };
+            t.contact = contact;
+            if t.held > 1.5 {
+                stats.stuck += 1;
+                t.held = 0.0;
+                if stats.trace {
+                    info!("stride-stuck: {e} leg {k} contact {contact:.2} held 1.5 s at {:.2} m/s: {}", m.measured.length(), graph_state(character, a, lod));
+                }
+            }
             if let (Some(why), true) = (why, stats.trace) {
                 let g = &a.asset.graph;
                 let locomotion = g
@@ -802,7 +840,7 @@ fn stride_monitor(
                     .collect();
                 info!(
                     "stride: {e} leg {k} {why}: at {:?} ground n.y {:?}, measured {:.2} m/s ({:?}), asked {:.2}, moving {}, state {locomotion:?}, \
-                     samples {ground:?}, feet {:?}, tier {:?}, scale {:.2}",
+                     samples {ground:?}, feet {:?}, scale {:.2}; {}",
                     m.loco.position,
                     m.loco.grounded.map(|g| g.normal.y),
                     m.measured.length(),
@@ -810,11 +848,125 @@ fn stride_monitor(
                     m.applied.desired_velocity.length(),
                     m.gait.moving,
                     a.output.feet,
-                    lod.map(|l| l.tier),
                     m.body_scale.y,
+                    graph_state(character, a, lod),
                 );
             }
         }
     }
     tracks.retain(|e, _| seen.contains(e));
+}
+
+/// What drives a walker's graph, for the stride trace: base record,
+/// stance/torch/move parameters, slot montages, the weighted players (node,
+/// lane times and weights), the LOD tier and whether this frame evaluated.
+fn graph_state(character: Option<&Character>, a: &Animator, lod: Option<&AnimLod>) -> String {
+    let g = &a.asset.graph;
+    let param = |name: &str| g.param(name).map(|id| a.instance.params.get(id));
+    let record = match character {
+        Some(Character::Record { id, .. }) => format!("{id:?}"),
+        _ => "-".into(),
+    };
+    let slots: Vec<String> = g
+        .slots
+        .iter()
+        .filter_map(|s| {
+            let m = a.instance.montage(g.slot(&s.name)?)?;
+            Some(format!("{} t{:.2}", s.name, m.time))
+        })
+        .collect();
+    let players: Vec<String> = (0..g.nodes.len())
+        .filter_map(|n| {
+            let (lanes, w) = a.instance.player(u32::try_from(n).ok()?)?;
+            (w > 0.01).then(|| {
+                let lanes: Vec<String> = lanes
+                    .iter()
+                    .filter(|l| l.1 > 0.01)
+                    .map(|l| format!("{:.3}@{:.2}", l.0, l.1))
+                    .collect();
+                format!("{} w{w:.2} [{}]", g.nodes[n].name, lanes.join(" "))
+            })
+        })
+        .collect();
+    format!(
+        "record {record} stance {:?} torch {:?} move {:?} slots {slots:?} players {players:?} tier {:?} posed {} time_scale {:.2}",
+        param(gp::STANCE).map(|v| v[0]),
+        param(gp::TORCH).map(|v| v[0]),
+        param(gp::MOVE),
+        lod.map(|l| l.tier),
+        a.posed(),
+        a.time_scale,
+    )
+}
+
+// --- Walks given up (walkers3) --------------------------------------------------------------
+
+/// The path edge a walker is on: where it comes from (the previous node, or
+/// where it stands when heading for the first) and the node it walks to.
+fn current_edge(scaffold: &PathWalkScaffold, pos: WorldPos) -> Option<(WorldPos, WorldPos)> {
+    let f = scaffold.follower()?;
+    let t = f.target();
+    let to = f.nodes.get(t)?.pos;
+    Some((if t > 0 { f.nodes[t - 1].pos } else { pos }, to))
+}
+
+/// Walks the scaffold gave up for lack of progress, by what stopped them:
+/// ground too steep to climb ahead on the edge, a wall (any other surface
+/// that turned the motion aside), or nothing the mover hit (crowding, ORCA).
+/// `BEVYRROWIND_STRIDE_TRACE=1` logs each with the ground along the edge.
+#[derive(Resource, Default)]
+struct GiveUps {
+    steep: u64,
+    wall: u64,
+    other: u64,
+    /// Steep or walled give-ups resumed at once around the blocked edge.
+    rerouted: u64,
+    trace: bool,
+}
+
+impl GiveUps {
+    fn record(&mut self, e: Entity, m: &Mover, edge: Option<(WorldPos, WorldPos)>, ground: &MwGround) -> &'static str {
+        let min_ny = m.params.min_normal_y();
+        let pos = m.loco.position;
+        let dir = edge.map_or(Vec3::ZERO, |(_, to)| pos.delta_f32(to).with_y(0.0).normalize_or_zero());
+        let lift = m.params.step_up;
+        let profile: Vec<Option<GroundHit>> = (1..=5)
+            .map(|k| {
+                #[allow(clippy::cast_precision_loss)]
+                let s = k as f32 * 0.4;
+                ground.probe_one(ProbeQuery::down(pos.offset(dir * s + Vec3::Y * (lift + 1.0)), lift + 3.0))
+            })
+            .collect();
+        let deflected = m.loco.deflect != Vec3::ZERO;
+        let steep = profile[..3].iter().flatten().any(|h| !h.walkable(min_ny));
+        let kind = match (deflected, steep) {
+            (true, true) => {
+                self.steep += 1;
+                "steep"
+            }
+            (true, false) => {
+                self.wall += 1;
+                "wall"
+            }
+            _ => {
+                self.other += 1;
+                "other"
+            }
+        };
+        if self.trace {
+            let rows: Vec<String> = profile
+                .iter()
+                .map(|h| h.map_or("-".into(), |h| format!("rise {:.2} n.y {:.2}", lift + 1.0 - h.distance, h.normal.y)))
+                .collect();
+            info!(
+                "give-up ({kind}): {e} at {:.2?} edge {:?} dist {:.2} deflect {:.2?} ground n {:.2?} ahead every 0.4 m {rows:?}",
+                pos.local,
+                edge.map(|(a, b)| (a.local, b.local)),
+                edge.map_or(0.0, |(_, to)| pos.delta_f32(to).with_y(0.0).length()),
+                m.loco.deflect,
+                m.loco.grounded.map(|g| g.normal),
+            );
+        }
+        kind
+    }
 }

@@ -825,7 +825,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
 - Look for: `AI_W` wanderers walk street pathgrid edges at walking pace, stop and idle, sometimes
   fidget (Idle2-9); the walk cycle's stride matches the ground speed (SpeedMatch, no skating);
   turns are smooth; non-wanderers stay at their posts; nobody sinks, floats or walks through walls.
-- Status: confirmed by owner (2026-10-12): no foot sliding, no stretched legs; animation quality can improve later.
+- Status: awaiting owner (walkers4, 2026-10-13), after confirmed 2026-10-12. Changed since: contact cook v4 (stances by height + speed over ground, end at heel-off; strafes now plant 37-43 % of the cycle, were ~4 %), mover steps over short steep bevels (<= step_up onto walkable ground), steep/wall give-ups reroute around the blocked pathgrid edge. Look for: sidesteps and backward walks plant both feet (no skating); feet release smoothly at heel-off (no heel dragged, no pop); walkers cross kerb bevels and rock lips instead of turning back; no one stands at spawn retrying the same edge (known: 2 actors still do, see walkers4 handoff).
   log: 472-478 movers in the near rings, 65-75 wanderers, 30-45 moving, all but 5 grounded).
   animfix (2026-10-12) changed what to expect: the walk cycle now follows the *measured* speed
   (distance actually travelled), playback 0.5-1.5x plus stride warping; a walker blocked by
@@ -857,7 +857,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
   its step, knees bent; on the sloped street both feet touch. K toggles foot placement for A/B.
   Scaled races (Bosmer, Altmer): feet land on their steps too (walkers2: probe origins and samples
   now use the body scale; before, a few cm off).
-- Status: confirmed by owner (2026-10-13).
+- Status: awaiting owner (walkers4, 2026-10-13), after confirmed 2026-10-13. Changed since: contacts end at heel-off (cook v4): headless ramps 15-30° and stairs now slide <= 0.005 m/s while planted, no reach clamps. Look for: walking up the steep Balmora streets and stairs, the back foot lifts its heel as authored instead of staying flat and stretching the leg; no foot pop at lift.
   other does a reduced stride, the body slides forward. Cause found: a path into ground too steep to climb (or a wall) at a
   shallow angle makes the mover slide along the contour at ~1/4 speed while the walker kept facing into the slope, so the graph
   got a slow sideways walk (WalkLeft/Right blend, whose contact curves barely plant one foot). Fix: walkers face the motion
@@ -1134,7 +1134,7 @@ Compare with OpenMW (same NPCs, same hour).
 - Look for: walking guards/commoners carry torches whose light moves with
   them along walls and the street; no more than 12 torches lit at once
   (the nearest); no weapons shown; bows are absent (skinned models: known gap).
-- Status: confirmed by owner (2026-10-13) for the torch pose and brightness. Open: torches cast no shadows; some guards (not other NPCs) have a wonky walk cycle in Balmora at night (torch layer + weapon stance?).
+- Status: awaiting owner (walkers4, 2026-10-13) for the walk cycle; torch pose and brightness confirmed 2026-10-13. Open: torches cast no shadows. Walk: masked overlays no longer overwrite leg contacts (walkers3), but an in-game trace (BEVYRROWIND_STRIDE_TRACE=1, 150 s) still shows 2 torch-bearers (a Hlaalu guard outside, Llandras Belaal) whose walk lane is frozen at t=1.333 s while moving 2.1 m/s: NOT fixed yet (next walkers session). Look for: torch-bearing guards walk with a moving leg cycle like everyone else; nobody glides in a frozen stride.
   Fixed: the `Torch` group now loops on the left arm (`mw_graphs` `torch_layer`, `left_arm` mask) while a torch
   shows; the carried light is dimmed to read "fully lit" at a third of its radius (the original's clamp edge).
   Look for: walkers hold the torch up in a bent left arm (not straight ahead) while legs walk; the pool under

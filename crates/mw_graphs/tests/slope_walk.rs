@@ -336,3 +336,25 @@ fn walkers_turned_aside_by_steep_ground_keep_walking() {
     }
     assert_eq!(r.idle_frames, 0, "contour: fed as standing while walking: {r:?}");
 }
+
+/// Upper-body and arm overlays (the torch arm, the crossbow and spell
+/// stance idles over the walk) must not replace the legs' contact curves:
+/// a masked override layer used to copy every curve of its clip, so the
+/// overlay idle's constant contacts (one foot 0, the other 1) froze the
+/// walk's contacts while the body travelled (walkers3: frozen contacts on
+/// flat ground).
+#[test]
+fn overlays_keep_the_walk_contacts() {
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let flat = World::new();
+    let spell = mw_graphs::build::Stance::Spell.value();
+    let crossbow = mw_graphs::build::Stance::Crossbow.value();
+    for (name, param, value) in [("torch", p::TORCH, 1.0), ("spell stance", p::STANCE, spell), ("crossbow stance", p::STANCE, crossbow)] {
+        let mut sim = humanoid_sim().unwrap();
+        sim.set(param, value);
+        let r = walk(&mut sim, &flat, Vec3::new(-4.0, 0.0, 0.0), Vec3::X, 5.0, (-1.0, 5.0), false);
+        check(name, &r);
+    }
+}

@@ -370,3 +370,65 @@ fn creature_simulation() {
     eprintln!("slaughterfish swimming: {state} {top:?}");
     assert_eq!(state, states::SWIM_WALK, "{top:?}");
 }
+
+/// Planted fraction per foot of every locomotion clip (walk, run, sneak,
+/// swim; humanoid sets and every CREA model), from the cook's contact
+/// curves: the census behind the contact detection (walkers3). Forward
+/// cycles plant each foot for a good part of the cycle; sidesteps too
+/// (they used to plant on 0–6 of 81 frames, so every strafe skated).
+#[test]
+fn contact_census() {
+    let Some((install, vfs)) = install() else { return };
+    let locomotion = |g: &str| {
+        ["Walk", "Run", "Sneak", "SwimWalk", "SwimRun"].iter().any(|p| g.starts_with(p)) && !g.contains("Turn")
+    };
+    let mut sets: Vec<AnimSet> = HUMANOID_SETS.iter().filter(|s| !s.first_person).map(|s| humanoid(&vfs, s)).collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for (_, mesh, flags) in creatures(&install) {
+        if mw_graphs::creature_template(flags) != Template::Humanoid
+            && seen.insert(mesh.to_ascii_lowercase())
+            && let Ok(s) = creature_set(&vfs, &mesh, flags)
+        {
+            sets.push(s);
+        }
+    }
+    let (mut rows, mut low) = (0, Vec::new());
+    for set in &mut sets {
+        let groups: Vec<String> = set.group_names().filter(|g| locomotion(g)).map(str::to_owned).collect();
+        for g in groups {
+            let Ok(clip) = set.cooked(&g) else { continue };
+            // The cycle that repeats (a group's intro and outro play once).
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let cycle = clip.loop_range.map(|(a, b)| ((a * clip.rate).round() as usize, (b * clip.rate).round() as usize));
+            let fractions: Vec<f32> = clip
+                .curves
+                .iter()
+                .filter(|c| c.name.starts_with("contact."))
+                .map(|c| {
+                    let (a, b) = cycle.filter(|(a, b)| a < b).map_or((0, c.values.len()), |(a, b)| (a, (b + 1).min(c.values.len())));
+                    let v = &c.values[a..b];
+                    #[allow(clippy::cast_precision_loss)]
+                    let f = v.iter().filter(|&&v| v > 0.5).count() as f32 / v.len().max(1) as f32;
+                    f
+                })
+                .collect();
+            if fractions.is_empty() {
+                continue;
+            }
+            rows += 1;
+            let line = format!("{} {g}: {:?}", set.name, fractions.iter().map(|f| format!("{:.0}%", f * 100.0)).collect::<Vec<_>>());
+            eprintln!("census {line}");
+            let walking = !g.starts_with("Swim");
+            if walking && fractions.iter().any(|&f| f < 0.15) {
+                low.push(line);
+            }
+        }
+    }
+    eprintln!("census: {rows} clips, {} with a foot planted under 15% of the cycle", low.len());
+    for l in &low {
+        eprintln!("census low: {l}");
+    }
+    assert!(rows > 100, "{rows} clips");
+    let humanoid_low: Vec<_> = low.iter().filter(|l| l.starts_with("base_anim")).collect();
+    assert!(humanoid_low.is_empty(), "humanoid locomotion with a foot that never plants: {humanoid_low:#?}");
+}

@@ -6,7 +6,7 @@
 //! `sf_ai` writes `LocomotionIntent`; `pathgrid` and `wander` stay as the
 //! data `sf_ai`'s adapter reads.
 
-use sf_controller::{LocomotionIntent, PathFollower, PathMode};
+use sf_controller::{LocomotionIntent, PathFollower, PathMode, PathNode};
 use sf_coords::WorldPos;
 
 use crate::pathgrid::PathGraph;
@@ -65,6 +65,7 @@ pub struct PathWalkScaffold {
     /// The goal of the last walk given up as stuck.
     abandoned: Option<WorldPos>,
     stuck: u32,
+    replans: u32,
 }
 
 impl PathWalkScaffold {
@@ -79,6 +80,7 @@ impl PathWalkScaffold {
             expired: false,
             abandoned: None,
             stuck: 0,
+            replans: 0,
         }
     }
 
@@ -89,6 +91,44 @@ impl PathWalkScaffold {
     /// Walks given up for lack of progress so far.
     pub fn stuck_count(&self) -> u32 {
         self.stuck
+    }
+
+    /// Walks resumed around a blocked edge ([`Self::replan_around`]).
+    pub fn replan_count(&self) -> u32 {
+        self.replans
+    }
+
+    /// After a give-up on the pathgrid edge `from` → `to` that the mover
+    /// found unwalkable (too steep, walled): remembers the edge and, instead
+    /// of idling, walks on at once to the abandoned goal around every edge
+    /// it remembers, when such a route exists. Returns whether it did.
+    pub fn replan_around(&mut self, graph: Option<&PathGraph>, from: WorldPos, to: WorldPos, pos: WorldPos) -> bool {
+        let Some(goal) = self.abandoned.filter(|_| matches!(self.state, State::Idling { .. })) else {
+            return false;
+        };
+        let Some(nodes) = self.planner.replan_around(graph, from, to, pos, goal) else {
+            return false;
+        };
+        self.state = Self::walking(nodes, pos, self.walk_speed);
+        self.abandoned = None;
+        self.replans += 1;
+        true
+    }
+
+    fn walking(nodes: Vec<PathNode>, pos: WorldPos, speed: f32) -> State {
+        let mut length = 0.0;
+        let mut prev = pos;
+        for n in &nodes {
+            length += prev.delta_f32(n.pos).length();
+            prev = n.pos;
+        }
+        State::Walking {
+            follower: PathFollower::new(nodes, PathMode::Once, speed),
+            left: 2.0 * length / speed.max(0.1) + WALK_SLACK,
+            node: usize::MAX,
+            best: f32::MAX,
+            still: 0.0,
+        }
     }
 
     /// The current walk's follower, if walking.
@@ -145,22 +185,7 @@ impl PathWalkScaffold {
                         step = self.planner.next(graph, pos, &mut self.rng);
                     }
                     self.state = match step {
-                        WanderStep::Walk { nodes, .. } => {
-                            let mut length = 0.0;
-                            let mut prev = pos;
-                            for n in &nodes {
-                                length += prev.delta_f32(n.pos).length();
-                                prev = n.pos;
-                            }
-                            let left = 2.0 * length / self.walk_speed.max(0.1) + WALK_SLACK;
-                            State::Walking {
-                                follower: PathFollower::new(nodes, PathMode::Once, self.walk_speed),
-                                left,
-                                node: usize::MAX,
-                                best: f32::MAX,
-                                still: 0.0,
-                            }
-                        }
+                        WanderStep::Walk { nodes, .. } => Self::walking(nodes, pos, self.walk_speed),
                         WanderStep::Idle { variant, seconds } => State::Idling {
                             variant,
                             left: seconds,

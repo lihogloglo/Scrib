@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use glam::DVec3;
 use mw_world::convert::{CELL_UNITS, UNIT_METERS_F64};
 use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::visit::EdgeRef;
+use petgraph::visit::{EdgeFiltered, EdgeRef};
 use sf_coords::WorldPos;
 use sf_records::{RecordDb, RecordId};
 use tes3::esp::{Cell, PathGrid};
@@ -182,19 +182,31 @@ impl PathGraph {
     /// The shortest node path from `from` to `to` (both included) along
     /// directed edges, by A* with the straight-line heuristic.
     pub fn path(&self, from: usize, to: usize) -> Option<Vec<usize>> {
+        self.path_avoiding(from, to, &[])
+    }
+
+    /// [`Self::path`] without the directed edges in `blocked` (edges an
+    /// actor found it can't walk: replanning around them).
+    pub fn path_avoiding(&self, from: usize, to: usize, blocked: &[(usize, usize)]) -> Option<Vec<usize>> {
         if from >= self.len() || to >= self.len() {
             return None;
         }
         let goal = NodeIndex::new(to);
         let goal_pos = self.graph[goal];
+        let open = EdgeFiltered::from_fn(&self.graph, |e| !blocked.contains(&(e.source().index(), e.target().index())));
         let (_, nodes) = petgraph::algo::astar(
-            &self.graph,
+            &open,
             NodeIndex::new(from),
             |n| n == goal,
             |e| *e.weight(),
             |n| self.graph[n].delta_f32(goal_pos).length(),
         )?;
         Some(nodes.into_iter().map(NodeIndex::index).collect())
+    }
+
+    /// The node at `pos` (within 1 cm), if any.
+    pub fn node_at(&self, pos: WorldPos) -> Option<usize> {
+        self.nearest(pos).filter(|&n| self.position(n).delta_f32(pos).length() < 0.01)
     }
 
     /// Length of a node path in meters.

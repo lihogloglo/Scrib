@@ -381,3 +381,42 @@ fn stuck_walks_are_given_up_and_replanned() {
     // It keeps trying other goals after standing a moment.
     assert!(s.stuck_count() >= 3, "replanned: {}", s.stuck_count());
 }
+
+/// A walk given up on an edge the mover found unwalkable (too steep, a
+/// wall) resumes at once around it: the edge is remembered both ways and
+/// A* routes over the rest of the grid to the same goal.
+#[test]
+#[allow(clippy::many_single_char_names)]
+fn blocked_edges_are_routed_around() {
+    // A square 0-1-2-3, both ways round.
+    let g = grid(
+        &[[0, 0, 0], [500, 0, 0], [500, 500, 0], [0, 500, 0]],
+        &[(0, 1), (1, 0), (1, 2), (2, 1), (2, 3), (3, 2), (3, 0), (0, 3)],
+    );
+    let graph = interior(&g);
+    assert_eq!(graph.path_avoiding(0, 1, &[(0, 1)]), Some(vec![0, 3, 2, 1]));
+    assert_eq!(graph.path_avoiding(0, 1, &[(0, 1), (3, 2)]), None);
+
+    let (a, b) = (graph.position(0), graph.position(1));
+    let mut s = PathWalkScaffold::new(WanderPlanner::new(no_idles(1024.0), a), 1.5, 3);
+    // Walk until a give-up whose walk heads from node 0 to node 1, held in place at node 0.
+    let mut resumed = false;
+    for _ in 0..2000 {
+        let edge = s.follower().map(|f| (f.target(), f.nodes.clone()));
+        s.update(Some(&graph), a, 0.1, 0.0);
+        if let Some((t, nodes)) = edge.filter(|_| s.follower().is_none() && s.stuck_count() > 0)
+            && t < nodes.len()
+            && nodes[t].pos == b
+        {
+            assert!(s.replan_around(Some(&graph), a, b, a), "a route around exists");
+            let f = s.follower().expect("walking again");
+            let route: Vec<usize> = f.nodes.iter().map(|n| graph.node_at(n.pos).unwrap()).collect();
+            assert!(!route.windows(2).any(|w| w == [0, 1] || w == [1, 0]), "{route:?}");
+            resumed = true;
+            break;
+        }
+    }
+    assert!(resumed, "never gave up on 0 -> 1");
+    assert_eq!(s.replan_count(), 1);
+    assert_eq!(s.planner.blocked, vec![(a, b), (b, a)]);
+}

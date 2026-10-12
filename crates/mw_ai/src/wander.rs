@@ -27,6 +27,8 @@ pub const MAX_WALK_SPEED: f32 = 200.0;
 pub const DEFAULT_IDLE_SECONDS: f32 = 5.0;
 /// Goals tried per decision before standing instead.
 const GOAL_TRIES: usize = 4;
+/// Blocked pathgrid edges one actor remembers (the oldest is forgotten).
+pub const BLOCKED_EDGES: usize = 8;
 
 /// A float game setting, or `fallback` when missing or not a number.
 #[allow(clippy::cast_precision_loss)]
@@ -132,6 +134,10 @@ pub struct WanderPlanner {
     pub idle_mult: f32,
     /// Seconds per idle group 2..=9 (the wiring fills them from clip lengths).
     pub idle_seconds: [f32; 8],
+    /// Pathgrid edges (from, to node positions) this actor gave up on as
+    /// too steep or walled: plans route around them (newest last, at most
+    /// [`BLOCKED_EDGES`]).
+    pub blocked: Vec<(WorldPos, WorldPos)>,
 }
 
 impl WanderPlanner {
@@ -141,6 +147,7 @@ impl WanderPlanner {
             home,
             idle_mult: IDLE_CHANCE_MULTIPLIER,
             idle_seconds: [DEFAULT_IDLE_SECONDS; 8],
+            blocked: Vec::new(),
         }
     }
 
@@ -183,22 +190,49 @@ impl WanderPlanner {
             if goal == start && allowed.len() > 1 {
                 continue;
             }
-            let Some(path) = graph.path(start, goal) else {
+            let Some(nodes) = self.route(graph, pos, start, goal) else {
                 continue;
             };
-            let mut points: Vec<WorldPos> = path.iter().map(|&n| graph.position(n)).collect();
-            // Already between the first two nodes: don't walk back to the first.
-            if points.len() >= 2
-                && pos.delta_f32(points[1]).length() < points[0].delta_f32(points[1]).length()
-            {
-                points.remove(0);
-            }
-            return WanderStep::Walk {
-                nodes: points.into_iter().map(PathNode::at).collect(),
-                via_grid: true,
-            };
+            return WanderStep::Walk { nodes, via_grid: true };
         }
         Self::stand(rng)
+    }
+
+    /// The blocked edges as `graph` node pairs.
+    fn blocked_in(&self, graph: &PathGraph) -> Vec<(usize, usize)> {
+        self.blocked.iter().filter_map(|&(a, b)| Some((graph.node_at(a)?, graph.node_at(b)?))).collect()
+    }
+
+    /// The walk from `pos` along the pathgrid from node `start` to `goal`,
+    /// around the blocked edges.
+    fn route(&self, graph: &PathGraph, pos: WorldPos, start: usize, goal: usize) -> Option<Vec<PathNode>> {
+        let path = graph.path_avoiding(start, goal, &self.blocked_in(graph))?;
+        let mut points: Vec<WorldPos> = path.iter().map(|&n| graph.position(n)).collect();
+        // Already between the first two nodes: don't walk back to the first.
+        if points.len() >= 2 && pos.delta_f32(points[1]).length() < points[0].delta_f32(points[1]).length() {
+            points.remove(0);
+        }
+        Some(points.into_iter().map(PathNode::at).collect())
+    }
+
+    /// Remembers the pathgrid edge `from` → `to` (and its reverse) as
+    /// unwalkable for this actor and plans a walk from `pos` to the node at
+    /// `goal` around every edge it remembers, if one exists. `from` must be
+    /// a node: the first leg (from where the actor stood) is no edge.
+    pub fn replan_around(&mut self, graph: Option<&PathGraph>, from: WorldPos, to: WorldPos, pos: WorldPos, goal: WorldPos) -> Option<Vec<PathNode>> {
+        let graph = graph.filter(|g| g.node_at(from).is_some() && g.node_at(to).is_some())?;
+        for edge in [(from, to), (to, from)] {
+            if !self.blocked.contains(&edge) {
+                if self.blocked.len() >= BLOCKED_EDGES {
+                    self.blocked.remove(0);
+                }
+                self.blocked.push(edge);
+            }
+        }
+        let (start, goal) = (graph.nearest(pos)?, graph.node_at(goal)?);
+        // Starting at the blocked edge's far end would lead back over it.
+        let start = if start == graph.node_at(to)? { graph.node_at(from)? } else { start };
+        self.route(graph, pos, start, goal).filter(|nodes| !nodes.is_empty())
     }
 
     /// A random point in the wander disc around home (uniform by area).
