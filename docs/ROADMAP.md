@@ -91,7 +91,7 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      night / 0.08 ms at noon (1440p). Bug fixed: red night streaks with `--clouds clear` (the cirrus was lit by the set sun
      through Bevy's horizon-clamped transmittance LUT). Open: thin cirrus reads as dark wisps at night against Bevy's
      leaky twilight sky; Masser size and star occluder set by eye.
-   - Then fog (weather.md N1/N2 haze + dust, height/ground fog, froxel fog + god rays) before item 5.
+   - Then fog: now M6 tasks F1–F3 ("## M6: Water, weather, surfaces"), before item 5.
 7. **P1, M2: audit follow-ups**, after J1–J3 are measured:
    - J4 [ ] shadow-caster rules (per-cascade cost in Nsight; small casters `NotShadowCaster` per preset).
    - J5 [ ] depth-prepass dither fix as a local `[patch]` + upstream PR, then depth-only prepass and occlusion
@@ -881,21 +881,204 @@ Owner test scenes (added to `docs/visual-checks.md` by the task that builds them
 6. Framework script API stays `0.x` (no compatibility promise) until M7's RPG modules exist, then `1.0`. Recommend: yes.
 7. X1 ESP field-level merging inside M5 (stretch) or in M7. Recommend: after E1, keep M5's done-when unchanged.
 
-## M6–M10
+## M6: Water, weather, surfaces
+
+Specs: `../superfargoth/docs/specs/weather.md` + `docs/specs/weather-adapter.md` (weather, clouds, fog, wind, precipitation,
+surface state, distant shadows; 2026-10-11), `../superfargoth/docs/specs/water.md` + `docs/specs/water-adapter.md` (water;
+draft 2026-10-13, m6-spec), `../superfargoth/docs/specs/sky-lighting.md`; HD grass needs its own spec first (G0). Decisions
+in ARCHITECTURE §10 (2026-10-13, m6-spec). **Water: our own `sf_water` + `sf_water_bevy`, porting bevy-aqua's wave, foam
+and optics code (MIT/Apache)**; bevy-aqua 0.1.3 itself is on Bevy 0.19 (no 0.20 branch, last commit 2026-09-23), has no
+floating origin, one global bed image, GPU-readback queries and planar mirror cameras, so most of it would be rewritten.
+Done when (ARCHITECTURE §9): "The Bitter Coast in a rainstorm: puddles, wet wading, a boat that floats; an ash storm at
+Red Mountain; sunrise god rays in Balmora; Bitter Coast morning fog; all within the weather.md budgets."
+
+Already built (not repeated here): S1 volumetric clouds + cloud shadows (clouds2/3, `sf_atmos`), distant shadows tier 1
+(CSM 504 m) and tier 2 v1 (terrain horizon march + CPU shadow-height map, shadows2), S2/S3 sun disk and night sky,
+night exposure floor + point-light shadow budget (lighting). Next up 6b's last bullet ("then fog") is F1-F3 below.
+
+Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, C), **water** (W), **grass and shadows**
+(G, T). Tasks in dependency order; a task names what it waits for.
+
+- [ ] F1 Haze and dust now (weather.md N1/N2; Next up 6b): `--haze` per-time-of-day curve on `sf_sky::Weather::haze`
+  (2-3 clear, 4-8 Bitter Coast mornings), absorbing dust term in `AtmosphereModel` (`Weather::dust`), until `sf_weather`
+  drives both. Skip N3 (Bevy `VolumetricFog` prototype; owner decision 7). Verify: `summit_vivec`, `redmtn_view`,
+  `bittercoast` scenes at 3 haze values and dust 0/1 (FG-1, owner picks defaults); GPU unchanged (LUT rebuilds only on
+  change).
+- [ ] WD1 `sf_wind` + `sf_wind_bevy` (weather.md "Wind"): `WindState`, `WindSource` (directional, radial, vortex, ≤ 32
+  in a storage buffer), gust field ported from Megalophobia `grass_wind.wgsl` (licensed 2026-10-12), CPU `velocity_at`
+  + WGSL `sf_wind::sample` twins, origin phase, altitude profile; `sf_sky::Wind` moves here (re-exported). Clouds read it.
+  Verify: `cargo test -p sf_wind` (CPU/WGSL twin within 1e-4 on golden points, gusts never upwind, phase-exact across
+  an origin shift); framework example `wind` (arrow field + a radial burst); upload ≤ 0.02 ms CPU.
+- [ ] WE1 `sf_weather` core (weather.md "Weather: state machine and presets as data"): `WeatherPreset`/`Climate`/
+  `PrecipKind` records, per-climate state machine, forecast as a pure function of (seed, climate, index), channel
+  lead/lag blending, border band, lightning schedule, cues, tags, `WeatherFrame` + `visibility_m`. Bevy-free.
+  Verify: `cargo test -p sf_weather` (forecast determinism + save/restore with overrides, lead/lag curves, discrete
+  crossfades never morph, border blend, Poisson lightning rate); `evaluate` ≤ 0.05 ms.
+- [ ] WE2 `mw_weather` (weather-adapter.md): REGN → climates, `Morrowind.ini [Weather*]` → presets in a synthetic mod
+  layer, precipitation kinds (rain, snow, ash, blight), Red Mountain radial storm source, MWScript mapping table for M5
+  W3, `bevyrrowind weather forecast <region> --days 3`. Waits for WE1. Verify: `cargo test -p mw_weather` (adapter
+  spec list); forecast frequencies within sampling error of REGN weights over 1,000 changes; ini edit re-runs only
+  `weather.climate`.
+- [ ] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
+  clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
+  emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
+  Verify: time-lapse clear → overcast → rain over 2 game hours (WE-1: clouds lead, rain lags, no pops); Ascadian Isles →
+  Ashlands crossing (WE-2: border blend); `sf_diag` `weather/*` counters; CPU ≤ 0.05 ms.
+- [ ] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
+  Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
+  cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
+  Bitter Coast 6:30 foggy (banks in the swamp, continuing past 400 m from a ridge); A/B `--off fog`; far fog ≤ 0.1 ms
+  over the cloud pass at 1440p.
+- [ ] F3 Froxel fog + god rays (weather.md "Fog" steps 1-4): 160×90×64 froxels (High), density (height + banks +
+  precipitation mist + local fog volume records), lighting (sun/moon × CSM × shadow-height map × cloud shadow map, sky
+  ambient, clustered point lights capped per froxel), temporal reprojection, integration, apply on opaque, the
+  `sf_atmos::fog` WESL function for transparents (water, glass, particles). Interiors keep `DistanceFog` (M9 volumes).
+  Waits for F2. Verify: FG-3 Balmora 6:15 clear (shafts between buildings and from the western ridge), FG-4 torch-lit
+  street in fog at night; budget 0.7 / 0.5 ms (High, 4060 / 3070); no temporal smear at 60 m/s (flight).
+- [ ] W0 Water census (water-adapter.md "Census", docs + ignored real-install test): exterior water heights, interior
+  `HAS_WATER` levels (visible vs hidden), boat placements (moored vs beached), authored water meshes and textures,
+  sea-level water components, regions with water. Can run any time. Verify: counts in water-adapter.md and the
+  session log (no vanilla data committed).
+- [ ] W1 `sf_water` core (water.md "Data model", "The water query"): `WaterBody`/`WaterOptics` records, bodies from
+  `Worldspace::sea_level`, body BVH + priority, `WaterQuery` (`sample`, `sample_many`, `immersion`), spectrum
+  (JONSWAP/TMA/spreading, `h0` blend), CPU twin of cascade 0 (`rustfft`), displaced-height inversion, `WaterSource`/
+  `WaterOpticsSource` hooks; `mw_water` skeleton (bodies, optics by region, ini `[Water]` mapping). Verify:
+  `cargo test -p sf_water -p mw_water` (water.md "Verification" unit list: spectrum energy, twin vs DFT, inversion,
+  origin-shift bit-identical heights, BVH priority); query ≤ 2 µs, twin ≤ 0.05 ms per step (bench).
+- [ ] W2 Ocean surface + water pass (water.md "Ocean surface", "Water pass"), replacing `SeaPlaneScaffold`
+  (water-adapter.md): GPU FFT cascades + foam (ported from bevy-aqua), geometry clipmap + horizon skirt, colour + depth
+  snapshot, water draw (refraction with validity, Beer-Lambert + scattering, GGX sun/moon + clustered lights, env-map
+  reflection, slope-variance far roughness, aerial + froxel fog), velocity redraw, origin phase; wind from WD1 (or a
+  constant until it lands); `--water scaffold|off`. Waits for W1. Verify: framework example `water_ocean`; WA-1 (calm →
+  storm at Seyda Neen, A/B scaffold), WA-8 coast flight (no jumps at origin shifts); `water/*` GPU counters within the
+  High column (FFT 0.15, draw 0.5, copies 0.1 ms); DLSS on: no wave smear. Then delete the scaffold.
+- [ ] W3 Shore, bodies, interiors (water.md "Shoreline and depth colour", "Water bodies at any height"): `water.shore`
+  bake (EDT, openness per connected component, land-only block mask), shore attenuation + shore/contact foam, wet band
+  via the surface hook (or a stub until SU1), water-level clipmap, lakes/pools/interior `Bounds` pools from `WHGT`,
+  optics by region (swamp, sea, coastal, ash, north, interior), body overlap report. Waits for W2. Verify:
+  `cargo test` (EDT vs brute force, openness on a synthetic bay + inland lake); bake adds ≤ 10 s cold, 0 warm; WA-2
+  swamp still and murky, WA-6 interior pool; sea under land not drawn (counter).
+- [ ] W4 Reflections (water.md step 2, "Off-screen reflections"): SSPR compute for the dominant plane, camera-centred dynamic reflection probe (sky + terrain + far proxies, one face per 4 frames), content probes, Fresnel; reflection A/B
+  `--off sspr`. Waits for W2. Verify: WA-4 Vivec canals at sunset (cantons reflected, no streaks at screen edges),
+  WA-1 dock reflection, far shore reflected when looking down; SSPR 0.3 + probe 0.15 ms High.
+- [ ] W5 Underwater (water.md "Underwater"): camera medium from the query, analytic underwater post (Low/Medium),
+  waterline meniscus, Snell's window / total internal reflection on the back face, `water.caustics` bake + caustics in
+  the surface hook (after SU1; terrain-only before), froxel water medium on High (after F3), `underwater` /
+  `surface_break` cues. Waits for W3. Verify: WA-5 through the surface at Seyda Neen (meniscus, caustics on sand,
+  shafts, colour near the ini's `UnderwaterColor`); underwater ≤ 0.1 ms (analytic) / +0.1 ms (froxel).
+- [ ] W6 Buoyancy (water.md "Buoyancy"; needs M4 P4 dynamic items): `sf_physics` `add_force_at` + `Floating` wake rule,
+  `water.pontoons` bake over `body.cook`, floaters system (pontoon caps, drag vs water velocity, optional hull
+  clipping), ≤ 32 awake floaters, items float/sink by density, moored boats (soft joint to the authored pose; owner
+  decision 3), demo rowboat `--spawn-floater`. Waits for W2 (W1 for headless tests). Verify: `cargo test -p sf_water
+  -p sf_physics` (density 500 box at half draft ± 2 %, 2,000 sinks, rebase unchanged); framework example `water_float`;
+  WA-7 at Seyda Neen (boat rocks in the storm, wood floats, iron sinks); floaters ≤ 0.1 ms CPU.
+- [ ] W7 Rivers as baked flow (water.md "Rivers"): `water.hydro` (priority-flood + D8 at 16 m), `water.flow` (inflows,
+  geodesic direction, discharge routing, flow map tiles), flow-advected normals and foam, flow in the query (floaters
+  drift); Bevyrrowind `FlowOnly` (owner decision 4); framework `Generate` path in the `water_bodies` example. Waits for
+  W3. Verify: `cargo test` (no sinks after flood, flow toward the outlet, still dead-end canal); `water.hydro` ≤ 2 s
+  cold; WA-3 Odai at Balmora (flows to its mouth; a thrown crate drifts); Vivec canals still.
+- [ ] W8 Wading and interaction (water.md "Wading, wetness and interaction hooks"): dynamic ripple sim (32 m, injected
+  by feet, floaters, raindrops), `immersion` for actors, swim switch from `fSwimHeightScale` (controller `Swim`
+  surface from the query), footstep/swim/splash cue mapping. Waits for W3. Verify: WA-2 walk into the swamp (rings
+  around the legs, wake behind a moving rowboat); ripples ≤ 0.05 ms.
+- [ ] W9 Authored water meshes (water-adapter.md): water mesh material on the census's water parts (Vivec waterfalls,
+  plaza pools, Mournhold), `Pool` bodies from horizontal water submeshes. Waits for W0, W3. Verify: Vivec plaza pool
+  (wade in, reflections); waterfalls keep their scroll; nif-sweep unchanged.
+- [ ] SU1 `sf_surface` + `WorldMaterial` + occlusion camera (weather.md "Surface state", "Precipitation: occlusion"):
+  surface-state clipmap (wet, puddle, snow, ash), exposure from the occlusion depth map (orthographic camera, amortized),
+  update compute, `surface_state.wesl` moves to `sf_surface_bevy`, `MaterialMapper` → `WorldMaterial =
+  ExtendedMaterial<StandardMaterial, SurfaceExt>` for cooked statics (bindless kept), wet porous response + puddles
+  (Lagarde), permeability per terrain layer, coarse persistent grid in saves, wet footsteps query. Waits for WE3.
+  Verify: `cargo test -p sf_surface` (accumulation/drying curves, grid seeding); SU-1 Seyda Neen after rain (dark wet
+  wood, puddles on paths, dry under the docks' roofs); A/B `--off surface`; 0.3 / 0.2 ms High; draw calls unchanged.
+- [ ] PR1 `sf_precip_bevy` (weather.md "Precipitation"): 3 camera-wrapped closed-form volumes, rain streaks, snow and ash
+  flakes with wind flutter, occlusion from SU1's map, rate × local cloud cover, rain mist into the froxels. Waits for
+  SU1, WD1. Verify: PR-1 Seyda Neen thunderstorm (no rain under roofs, streaks lean with the wind), PR-2 ash storm at
+  Ghostgate (ash blows away from the summit); 0.4 / 0.3 ms High; check DLSS performance mode for smear (weather.md open
+  question 9).
+- [ ] PR2 Splashes, ripples, reactive mask: splash sprites at the occlusion depth (water level from the water-level
+  clipmap on water), ripple atlas on puddles and water, lightning lights the rain; the DLSS bias-mask upstream patch
+  + mask writes in precipitation/particles/water foam (weather.md open question 9), or a post-upscale precipitation
+  pass if the patch stalls. Waits for PR1 (W2 for water ripples). Verify: PR-1 again at DLSS performance (streaks
+  survive), splashes on the pier and on the sea.
+- [ ] SU2 Snow and ash accumulation (weather.md "Surface state"): snow/ash channels on up-facing surfaces with height
+  blend, terrain displacement through the deformation stack (or deferred to M7's layer if not built), ash blown off at
+  high wind, far field wetness-only. Waits for SU1, PR1. Verify: SU-2 Red Mountain after an ash storm (grey dust on
+  rocks and roofs, clean under overhangs), SU-3 Solstheim snowfall; budget within the surface row.
+- [ ] C1 Character wetness (weather.md "Surface state: Characters", WISHLIST §5): per-character wetness uniform (rain
+  exposure from the occlusion map at the head, immersion line from `WaterQuery::immersion`, drying per hour), character
+  material darkening/smoothing below the line. Waits for SU1, W1. Verify: SU-4 an NPC walks through the swamp then
+  stands in the rain (legs wet to the waterline, then all wet, drying after); cost ≤ 0.02 ms for 50 characters.
+- [ ] WD2 Trees and impostors in the wind (weather.md "Bake-time wind data"): `wind.paint` bake (trunk/branch/leaf
+  levels, pivots, stiffness from connected components; adapter `wind_profile`: `flora_*`, parasols stiff, kelp flutter),
+  two optional vertex streams in `sf_model_bevy` (dropped from the RT LOD), hierarchical sway in forward/prepass/shadow/
+  motion vectors, impostor per-instance bend (atlas header stiffness). Waits for WD1. Verify: `cargo test` (pivots on a
+  synthetic tree, deterministic product); WD-1 Ascadian Isles in a thunderstorm (trunks bend, leaves flutter, impostors
+  agree at the handoff); bake ≤ +10 s cold; 0.15 ms High.
+- [ ] WD3 Other wind consumers: NIF particle systems (smoke, ash, embers) drift with the field, cloth (M4 P10) gets
+  `velocity_at`, fog banks and cloud advection read `sf_wind`, wind cues. Waits for WD1. Verify: WD-2 Balmora chimney
+  smoke and a robed walker in a storm leaning with the same wind; no extra GPU cost beyond the wind row.
+- [ ] G0 HD grass spec (`../superfargoth/docs/specs/grass.md`, docs only; ARCHITECTURE §7.1, research first: Tsushima
+  procedural grass, UE/Unity grass, current Bevy crates such as `bevy_feronia`): placement masks from LTEX rules, GPU
+  scatter, near blades / mid clumps / far colour, wind, interaction trail, water mask, budgets, adapter rules. Verify:
+  spec with an "Industry comparison" section; ROADMAP G1/G2 refined.
+- [ ] G1 Grass near field (per G0): GPU compute scatter per terrain tile, Bézier blades with clumping, view thickening,
+  `sf_wind` bend in every pass, no grass under water (water-level clipmap) or on roads, adapter LTEX → species. Waits
+  for G0, WD1. Verify: GR-1 Ascadian Isles meadow at noon and in wind; grass budget from G0 (target ≤ 1 ms High);
+  flight: no popping ring.
+- [ ] G2 Grass mid and far + interaction: instanced clumps/cards to the far colour, terrain albedo carry, trail map bend
+  from actors and physics bodies, flatten/burn mask. Waits for G1. Verify: GR-2 walk through grass (bent trail
+  recovering), GR-1 from a ridge (no visible band).
+- [ ] T2 Far shadows tier 2 completion (weather.md "Distant shadows"): far-field proxies cast into the shadow-height map
+  (top-down caster-height raster: cantons, strongholds, Ghostfence), per-preset cut (map-only terrain on Low/Medium),
+  the split profiled (terrain march vs fetches vs proxies) so vistas meet 0.15 + 0.08 ms High; the ocean's horizon
+  skirt reads the map (water.md open question 4). Verify: SH-* re-run, Vivec at sunset (canton shadows on the water
+  past 500 m), vista budget in perf.md.
+- [ ] E1 Milestone demo + gates: the four owner scenes below as `scenes.ron` entries and `benchmarks/*.json` cameras,
+  `perf suite` coast/balmora/red_mountain/flight per preset with each weather at 1440p, all FG/WE/WD/WA/SU/PR/GR checks
+  listed. Verify (milestone): the §9 sentence, budgets per weather.md and water.md tables (High ≈ 3.3 + 1.35 ms on the
+  3070 with DLSS), owner sign-off on WX-1..WX-4.
+
+Owner test scenes (added to `docs/visual-checks.md` by E1, status "awaiting owner"; the task checks above come with the
+tasks that build them):
+
+- WX-1 Bitter Coast rainstorm: Seyda Neen docks, 14:00, `--weather thunder`: structured overcast, rain streaks
+  occluded under the docks' roofs, puddles on the paths, dark wet wood, splashes and ripples on the sea, a lightning
+  frame; walk into the shallows (ripples, wet legs after); the demo rowboat rocking and drifting; moored boats bobbing.
+- WX-2 Ash storm at Red Mountain: near Ghostgate looking up the mountain, 16:00, `--weather ash`: low visibility,
+  brown haze (dust term), ash streaks blowing away from the summit, ash on up-facing rocks, the Ghostfence visible.
+- WX-3 Sunrise god rays in Balmora: 6:15, clear/cloudy: shafts between buildings (froxels + CSM) and from the western
+  ridge (shadow-height map), red-lit cloud undersides, the Odai flowing.
+- WX-4 Bitter Coast morning fog: 6:30, `--weather foggy`: ground fog banks in the swamp drifting with the wind, trees
+  fading into it, still murky water, fog continuing past the froxel range from a ridge view.
+
+**Owner decisions for M6** (recommendations; details in ARCHITECTURE §10 2026-10-13 m6-spec, water.md, water-adapter.md):
+1. Water: our own `sf_water` porting bevy-aqua's wave/foam/optics code (MIT/Apache, notices kept), not bevy-aqua as a
+   dependency or fork; revisit if it ships on Bevy 0.20 with origin-relative coordinates and a CPU query. Recommend: yes.
+2. Water reflections: screen-space planar reflections (SSPR) + probes + environment map on raster; no planar mirror
+   cameras (a second render of the streamed world); Bevy SSR only if weather.md open question 4 resolves; RT
+   reflections from the water pass later. Recommend: yes.
+3. Moored boats: placed rowboats, longboats and gondolas in water bob on a soft mooring; ships stay static; the demo's
+   free rowboat is spawned by the scene. Recommend: yes.
+4. Rivers for Bevyrrowind: flow only on existing sea-level water (the Odai flows, canals stay still), no generated
+   rivers above sea level (the framework can; a mod could opt in). Recommend: yes.
+5. Budget: water adds ≈ 1.35 ms (High, 1440p) to weather's ≈ 3.3 ms; High targets the 3070 with DLSS, features cut per
+   preset when over. Recommend: accept.
+6. Swamp look: Bitter Coast water murky (~3 m visibility), no waves or foam, by region optics. Recommend: yes, tune on WA-2.
+7. Skip weather.md N3 (Bevy `VolumetricFog` god-ray prototype): go straight to froxels (F3). Recommend: skip.
+
+## M7–M10
 
 Not broken down yet. Scope per milestone: ARCHITECTURE.md §9; designs:
 `../superfargoth/docs/WISHLIST.md`. Break a milestone down here (with a
-spec per major system) before starting it.
+spec per major system) before starting it. (M6 is broken down above, 2026-10-13.)
 
 **Renumbered 2026-10-13 (owner):** M7 is now the RPG core (dialogue, journal, stats/rules, magic, AI, saves; was
 M10+); far-field performance → M8, seamless interiors (portals) → M9, combat → M10. Text below written before the
 renumbering keeps the old numbers: "M8 portals" here means M9. **Priority: M4, M5, M6** (owner), then M7.
 
-M6 weather (`../superfargoth/docs/specs/weather.md`, `docs/specs/weather-adapter.md`), stub order: `sf_wind` (+ grass/tree
-wind, `wind.paint`) → `sf_weather` + `mw_weather` (presets, climates, forecast) → `sf_atmos_bevy` clouds + cloud shadows →
-froxel/height/ground fog → `sf_surface` (wetness, puddles, snow, ash; `WorldMaterial`) → `sf_precip_bevy` → shadow-height
-map tier 2. **Can start now (M2 visuals):** weather.md "Near-term visual fixes": A1 CSM to 500 m, A2/A3 far terrain shadows,
-~~B1-B3 Ghostfence/uncooked pop~~ (done 2026-10-12; B5 blended far proxies + scriptless activators next), N1/N2 haze and dust.
+The M6 weather stub order that stood here moved into "## M6" (F, WD, WE, SU, PR, T tasks); weather.md near-term fixes
+A1-A3 and B1-B3 are done, N1/N2 are M6 F1, B5 stays in the Backlog.
 M8 portals: door portal frames derived and measured (`docs/specs/world-adapter.md` "Portal frames: feasibility": 1,361
 portal-ready / 251 adjust / 216 fade-only links); next: fill `LinkEnd.frame`/`extent` in the bake (wiring there), then the
 Census Office portal spike. **Spike done (2026-10-12, `--portals`, `../superfargoth/docs/specs/portals.md`):** see-through
@@ -913,6 +1096,8 @@ default** (`--portals` / `BEVYRROWIND_PORTALS=1`), parked until M8 (open items i
 ## Session log
 
 Newest first. One or two lines each: what changed, what was verified.
+
+- 2026-10-13 (m6-spec, docs only): M6 broken down ("## M6: Water, weather, surfaces": F1-F3, WD1-WD3, WE1-WE3, W0-W9, SU1-SU2, PR1-PR2, C1, G0-G2, T2, E1; WX-1..4; 7 owner decisions); new specs water.md (superfargoth) and water-adapter.md; ARCHITECTURE §10 entry; "M6–M10" → "M7–M10". bevy-aqua 0.1.3 evaluated (Bevy 0.19, no 0.20 branch, no floating origin, GPU queries, planar cameras): ported, not adopted. No builds.
 
 - 2026-10-13 (m5-spec, docs only): M5 broken down ("## M5: Mods, Lua and UI", A1-A4, L1-L3, U1-U7, W1-W3, E1, X1-X2, MS-1..MS-6, 7 owner decisions); new specs scripting.md, mods.md (superfargoth) and scripting-adapter.md; ARCHITECTURE §10 entry. Runtime Luau via mlua 0.12.2 (state per mod), MWScript → Luau at bake time; corpus measured from the install (1,231 script texts / 981 KB / 49k lines, 17,144 dialogue results). No builds.
 - 2026-10-13 (clouds2, S1): cloud shadows were never applied (Bevy needs `pbr_clustered_decals` for light textures; now on), clouds 4x too big (weather tile 16 km, now real-scale 8 km + app scales sizes with heights 0.5), static (Morrowind `Cloud Speed` x 10 m/s + two-octave field evolution + rising billows), sun leaked through thick cloud (last 1 % transmittance kept; now snapped to 0; composite order was fine). Nine genus presets + 2-D cirrus sheet; `--clouds` takes genera and Morrowind weathers; `sf_atmos_bevy` example `clouds`; 8 `clouds-*` scenes, CL-1..6 awaiting owner. sf_atmos 14 tests, clippy clean; app clippy clean (mine). Not yet: app screenshots, GPU A/B (shared machine).

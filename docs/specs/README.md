@@ -51,3 +51,4 @@ Index:
 - [scripting-adapter.md](scripting-adapter.md): MWScript → Luau translator at bake time (measured corpus, semantics, generated shape, `mw` runtime library, M5 live/stub table vs M7) (draft, M5).
 - [weather-adapter.md](weather-adapter.md): REGN → climates, `Morrowind.ini` `[Weather*]` → presets, ash/blight storms (radial from Red Mountain), blizzards, MWScript weather, sounds, interior fog (draft, M6).
 - [physics-adapter.md](physics-adapter.md): item classes and weight → mass, `RootCollisionNode` item shapes, script hooks, ragdoll policy per creature, death/knockdown/get-up clips, robe and skirt cloth, test scenes PH-1..PH-5 (draft, M4).
+- [water-adapter.md](water-adapter.md): sea level and interior `WHGT` → water bodies, optics by region (Bitter Coast swamp), `Morrowind.ini [Water]` calibration and cues, flow on sea-level channels (Odai), authored water meshes, moored boats, `SeaPlaneScaffold` replacement, census and WA-1..WA-8 (draft, M6).
