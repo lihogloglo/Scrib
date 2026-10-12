@@ -315,63 +315,86 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
 - Status: awaiting owner.
 - Source: sky-lighting.
 
-## Clouds (superfargoth `weather.md`, "Clouds"; `.sessions/clouds.md`)
+## Clouds (superfargoth `weather.md`, "Clouds"; `.sessions/clouds.md`, `.sessions/clouds2.md`)
 
-Volumetric clouds are on by default in exteriors. `--clouds clear|fair|overcast|storm`
-picks the weather (default fair), `--off clouds` drops them (the A/B). In the viewer,
-F10 toggles them and C cycles the presets live. Hours: change with `[` `]` or `--hour`.
+Volumetric clouds are on by default in exteriors. `--clouds <name>` picks a genus (clear,
+fair, cumulus, stratocumulus, altocumulus, altostratus, cirrus, overcast, storm) or a
+Morrowind weather (cloudy, foggy, rain, thunderstorm, ashstorm, blight, snow, blizzard;
+each with its `Cloud Speed`); default fair. `--off clouds` drops them (the A/B). In the
+viewer, F10 toggles them and C cycles the nine genera live. Hours: `[` `]` or `--hour`.
+Synthetic scene (no game data): `cargo run --release -p sf_atmos_bevy --example clouds --
+--preset <genus> --scale 0.5 --view sky|sun|shadow|up` in superfargoth.
 
-### CL-1: Cloud look at noon and sunset
-- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-noon`, then
-  `.\bevyrrowind scene clouds-redmtn-sunset`. Same camera with each preset:
-  `.\bevyrrowind scene clouds-redmtn-noon --clouds clear` (also `overcast`, `storm`).
-- Look for: billowy cumulus with sunlit tops and grey bases at noon; warm, reddened
-  undersides at sunset (transmittance LUT); a silver lining toward the sun; no
-  banding rings, no blocky half-resolution edges, no shimmer when still.
+S1 rework (2026-10-13): cloud size and height both at half real scale (fair cumulus a few
+hundred meters wide, base 600 m), clouds move (Morrowind `Cloud Speed` x 10 m/s: cloudy
+20 m/s) and re-form, cloud shadows now actually reach the ground (the light texture was
+silently disabled), and the sun is fully hidden behind thick cloud.
+
+### CL-1: Cloud genera and motion
+- Kind: game location. Run: `.\bevyrrowind scene clouds-cumulus`, `clouds-stratocumulus`,
+  `clouds-altocumulus`, `clouds-altostratus`, `clouds-cirrus`, `clouds-ashstorm`,
+  `clouds-redmtn-noon` (fair), `clouds-redmtn-sunset`; in any of them C cycles the genera.
+- Look for: nine distinct skies. Fair: small separate heaps, about a dozen across the
+  island (not one cloud over all of it). Cumulus: fewer, taller towers. Stratocumulus: a low
+  lumpy deck with gaps. Altocumulus: many small cloudlets high up. Altostratus: a thin even
+  sheet, the sun a smudge. Cirrus: high white streaks along the wind. Overcast: a closed
+  grey deck. Storm: dark towers with breaks and a high veil. Motion: in real time (no
+  T time-lapse) clouds visibly drift (a cloud crosses the sky in about a minute at cloudy
+  speed; ashstorm several times faster) and change shape while they move; cirrus moves
+  faster than the low clouds (parallax). Sunset: warm undersides, brighter tops.
 - A/B: F10 (or `--off clouds`): the sky without clouds.
-- Calibrate: cloud size and height (the app halves real-world heights: base
-  750 m, top 1,450 m for fair; tiles 2 km shape, 128 m detail).
-- Status: FAILED (owner 2026-10-12): too little variety: two full overcasts, one interesting pattern, one clear sky. Wants cumulus, high-altitude (cirrus/altostratus), storm clouds, the full range. Sun disk far too small.
-- Source: clouds.
+- Calibrate: `CLOUD_WORLD_SCALE` 0.5 (sizes and heights), `CLOUD_SPEED_MPS` 10 (exterior.rs).
+- Known: lumpy/soft tops rather than crisp cauliflower billows; faint horizontal banding in
+  thick decks; no anvils on storms; weather does not change by itself yet (M6).
+- Status: awaiting owner (S1 rework; previous FAILED 2026-10-12: too little variety, too big, static).
+- Source: clouds, clouds2.
 
-### CL-2: Clouds composite with atmosphere, far field and terrain
-- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-sunset`
-- Look for: distant clouds fade into the same haze as the far mountains (aerial
-  perspective); Red Mountain and far-field proxies cut sharply into clouds behind
-  them (no halo or bleeding at the silhouette); clouds never draw on the sea or
-  below the horizon; the sun disk is hidden behind thick cloud.
+### CL-2: Clouds composite with atmosphere, far field, terrain and the sun
+- Kind: game location. Run: `.\bevyrrowind scene clouds-sun-behind` (also
+  `--clouds overcast`), `.\bevyrrowind scene clouds-redmtn-sunset`.
+- Look for: where thick cloud covers the sun, the disk and its bloom are gone completely
+  (no disk drawn over a cloud); at thin cloud edges the sun burns through with a bright
+  rim. Distant clouds fade into the same haze as the far mountains; Red Mountain and
+  far-field proxies cut sharply into clouds behind them; clouds never draw on the sea or
+  below the horizon.
 - Status: awaiting owner.
-- Source: clouds.
+- Source: clouds, clouds2.
 
 ### CL-3: Cloud shadows on the ground
-- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-noon`, press T for a time-lapse.
-- Look for: soft dark patches under clouds that drift with them over terrain,
-  buildings and far field; F10 off removes them. Known: past ~8 km the shadow
-  map repeats and fades to the average cover; no shadows from the moon.
-- Status: FAILED (owner 2026-10-12): under the edge of a cloud at noon, no shadow edge on the ground at all (too diffuse, or the cookie isn't applied). Clouds are huge: one cloud covers most of the island; they don't move.
-- Source: clouds.
+- Kind: game location. Run: `.\bevyrrowind scene clouds-shadow-edge-noon`, then
+  `.\bevyrrowind scene clouds-redmtn-noon`.
+- Look for: dark patches under the clouds with a visible edge (a blur of tens of meters,
+  not hundreds), drifting with the clouds over terrain, buildings and far field. Standing
+  under a cloud edge at noon, the edge line is visible on the ground nearby. Under a cloud
+  the ground loses its direct sun (stays lit by the sky, so not black). F10 off removes them.
+- Known: past ~8 km the map fades to the average cover; no moon shadows.
+- Status: awaiting owner (S1 fix; previous FAILED 2026-10-12: no shadow edge at all, because
+  Bevy ignored the light texture without the `pbr_clustered_decals` feature).
+- Source: clouds, clouds2.
 
 ### CL-4: Night clouds
 - Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-night`
-- Look for: faint moonlit clouds that occlude the night sky; no glowing grey sheet.
+- Look for: faint moonlit clouds that occlude the night sky; no glowing grey sheet;
+  cirrus faint, not glowing.
 - Status: awaiting owner.
 - Source: clouds.
 
 ### CL-5: Overcast and storm
 - Kind: game location. Run: `.\bevyrrowind scene clouds-bittercoast-overcast`,
   `.\bevyrrowind scene clouds-seyda-storm`.
-- Look for: overcast: a nearly closed flat deck, dimmer ground. Storm: tall cells with
-  dark wet bases, breaks between them. Known: no rain, fog or lightning yet (weather M6).
+- Look for: overcast: a closed flat grey deck, the ground evenly dimmed (no sun shadows).
+  Storm: tall separate cells a couple of km wide with dark wet bases, breaks between them,
+  dark shadow patches under the cells. Known: no rain, fog, anvil or lightning yet (M6).
 - Status: awaiting owner.
-- Source: clouds.
+- Source: clouds, clouds2.
 
 ### CL-6: Stable in flight (floating origin, temporal)
 - Kind: game location. Run: `.\bevyrrowind scene clouds-flight`, hold Shift+W.
-- Look for: clouds and cloud shadows stay put in the world while the floating origin
-  moves every 256 m (no jumps); turning the camera fast leaves no ghost trails; the
-  mountain silhouette has no smear (temporal reprojection + neighborhood clamp).
-- Status: confirmed by owner (2026-10-12): no jump or smear in fast flight (clouds barely move; see CL-1/CL-3).
-- Source: clouds.
+- Look for: clouds and cloud shadows stay put in the world (apart from their own drift)
+  while the floating origin moves every 256 m (no jumps); turning the camera fast leaves no
+  ghost trails; the mountain silhouette has no smear. Re-check now that clouds move.
+- Status: awaiting owner (confirmed 2026-10-12 with static clouds; re-check with motion).
+- Source: clouds, clouds2.
 
 ## Streaming spikes (superfargoth `streaming.md`, "Spikes"; `.sessions/spikes.md`)
 

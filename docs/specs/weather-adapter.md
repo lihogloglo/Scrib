@@ -45,12 +45,12 @@ Mapping from a `[Weather <Type>]` section (keys as `openmw-iniimporter` lists th
 
 | Ini keys | Preset fields | How |
 |---|---|---|
-| `Clouds Maximum Percent`, `Cloud Texture` | `clouds.coverage`, `clouds.type` | Coverage is calibrated per type (Clear ≈ 0.1, Cloudy ≈ 0.45, Overcast ≈ 0.9, Thunder ≈ 1.0 with storm cells). The texture name only picks a type default (cirrus-like clear, cumulus cloudy, stratus overcast). |
+| `Clouds Maximum Percent`, `Cloud Texture` | `clouds` genus preset (coverage, type, layer heights, cirrus) | Weather → genus (`sf_atmos::CloudPreset`, S1 2026-10-13): Clear → clear (a few humilis + cirrus trace), Cloudy → fair cumulus, Foggy → altostratus, Overcast/Rain/Snow/Blizzard → overcast, Thunderstorm → storm (cumulonimbus cells), Ashstorm/Blight → stratocumulus. The texture name picks the genus; as built in `exterior.rs` `CLOUD_CHOICES` until the weather adapter reads the ini. |
 | `Land Fog Day Depth`, `Land Fog Night Depth` | `fog.height_fog.density` KeyCurve (day/night) | Morrowind's fog depth is a fraction of view distance. Converted through Koschmieder to an extinction at ground level (visibility ≈ 3.9/σ), calibrated on the Foggy and Ash screenshots. |
 | `Fog * Color`, `Sky * Color`, `Ambient * Color`, `Sun * Color` (sunrise/day/sunset/night) | none directly; `sky.tint` curves only if a mod opts in | Calibration reference: with the physical atmosphere they come out of the medium. The adapter keeps them in a `MwWeatherLook` record so a "classic look" mod can blend them in as tints. |
 | `Sun Disc Sunset Color`, `Glare View` | `sky.sun_glare` | Glare scale (bloom/lens later). |
 | `Wind Speed` | `wind.speed` | Morrowind's value is unitless (≈ 0.1-0.9). Mapped linearly to 1-15 m/s at 10 m above ground, then tuned on grass and tree motion. |
-| `Cloud Speed` | `clouds.wind_factor` | Cloud-altitude speed multiplier. |
+| `Cloud Speed` | `clouds.wind` | Cloud-altitude wind = preset direction × `Cloud Speed` × 10 m/s (`CLOUD_SPEED_MPS`; ini defaults Clear 1.25, Cloudy 2, Foggy 1.25, Overcast 1.5, Rain 2, Thunderstorm 3, Ashstorm 7, Blight 9, Snow 1.5, Blizzard 7.5). Real-world speeds read frozen beside the 30x game clock. Shapes also evolve (`CloudLook::evolve`). |
 | `Transition Delta` | `transition` | Morrowind's per-frame blend rate becomes a duration in game hours (one weather change ≈ 1-2 game hours; OpenMW's interpretation is the reference) plus channel lead/lag defaults. |
 | `Using Precip`, `Rain Diameter`, `Rain Height Min/Max`, `Rain Threshold`, `Rain Entrance Speed`, `Max Raindrops` | `precipitation` (kind `mw_precip/rain`, intensity) | `Max Raindrops` sets intensity relative to Thunderstorm. `Rain Threshold` sets when rain starts during a transition (lag). Diameter and heights don't apply (our volumes are camera-wrapped). |
 | `Snow *` (Bloodmoon: diameter, heights, entrance speed, `Max Snowflakes`, threshold) | `precipitation` (kind `mw_precip/snow`) | Same as rain. |
