@@ -730,7 +730,7 @@ None of these is wider than vanilla.
   "seams": options in smooth-bodies.md "Seam shading" (seam colour levelling needs your go).
 - Shots (bind pose, smooth after the fix): `shots/seams/{knee,elbow,neck}_smooth_n.png`; before:
   `shots/seams/{knee,elbow,neck}_vanilla.png`, `knee_smooth.png` (weld only).
-- Status: awaiting owner.
+- Status: confirmed by owner (2026-10-13).
 - Source: seams.
 
 ## Node-animated creatures (superfargoth `character.md`, "Node-animated creatures"; `.sessions/nodecreatures.md`)
@@ -762,7 +762,7 @@ rocks) follow the same rig and graph as skinned bodies.
   marks. Same rule for any creature: `character "cliff racer" dreugh
   netch_bull slaughterfish_small mudcrab` (cliff racer and dreugh fly or
   swim off fast when 3 applies: their clips are authored that way).
-- Status: awaiting owner (root-motion fix). Owner 2026-10-12, before the
+- Status: confirmed by owner (2026-10-13).
   fix: looks right (all whole; log: 0 missing parts, 0 missing joints),
   but some creatures walked in place while others actually moved.
 - Source: nodecreatures, rootmotion.
@@ -819,7 +819,7 @@ the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turn
   its step, knees bent; on the sloped street both feet touch. K toggles foot placement for A/B.
   Scaled races (Bosmer, Altmer): feet land on their steps too (walkers2: probe origins and samples
   now use the body scale; before, a few cm off).
-- Status: awaiting owner (slopefix 2026-10-12). Was FAILED (owner): on some slopes the legs stop swinging; one leg freezes, the
+- Status: confirmed by owner (2026-10-13).
   other does a reduced stride, the body slides forward. Cause found: a path into ground too steep to climb (or a wall) at a
   shallow angle makes the mover slide along the contour at ~1/4 speed while the walker kept facing into the slope, so the graph
   got a slow sideways walk (WalkLeft/Right blend, whose contact curves barely plant one foot). Fix: walkers face the motion
@@ -1047,7 +1047,7 @@ bake_synthetic` (terrain bake timings) and `--example bake_throughput`.
 | AF-4 | `cargo dev character ancestor_ghost Heart_Akulakhan dremora clannfear` (shot: `shots/actorfx2/lineup.png`) | Heart of Akulakhan: fire, frost, shock and magicka shields scroll (UV) and blink in and out with its idles; log `actor fx ...: 5 hidden joints, 3 materials, 6 billboards` with `RUST_LOG=bevyrrowind::actor_fx=debug` | awaiting owner |
 | AF-5 | same lineup, orbit the heart (right mouse) | The ray sheets around the heart (6 billboard parts) keep facing the camera from every side while the heart beats; nothing sits at the heart's root | awaiting owner |
 | AF-6 | same lineup | Ancestor ghost is see-through and its robe alpha follows its idle (not a fixed fade); dremora and clannfear look as before (their effects only play in death / attack groups) | awaiting owner |
-| AF-7 | `cargo dev character dremora dremora_lord clannfear --camera 0.6,1.4,3.6,0,1.0,0` (dremora fix, `.sessions/dremora.md`; shots/dremora/before.png, after.png) | Both dremora wear their daedric armor while idling: shoulder pauldrons, upper-arm plates ("biceps"), forearm braces, thigh greaves, calf boots and shoes (before: only the leather body suit). Press X (death): the armor stays on through the fall until the clip's end, then hides as authored | awaiting owner |
+| AF-7 | `cargo dev character dremora dremora_lord clannfear --camera 0.6,1.4,3.6,0,1.0,0` (dremora fix, `.sessions/dremora.md`; shots/dremora/before.png, after.png) | Both dremora wear their daedric armor while idling: shoulder pauldrons, upper-arm plates ("biceps"), forearm braces, thigh greaves, calf boots and shoes (before: only the leather body suit). Press X (death): the armor stays on through the fall until the clip's end, then hides as authored | confirmed by owner (2026-10-13) |
 
 ## Held items (superfargoth `character.md`, "Held items at runtime"; `.sessions/heldrender.md`)
 
@@ -1096,7 +1096,7 @@ Compare with OpenMW (same NPCs, same hour).
 - Look for: walking guards/commoners carry torches whose light moves with
   them along walls and the street; no more than 12 torches lit at once
   (the nearest); no weapons shown; bows are absent (skinned models: known gap).
-- Status: awaiting owner (torchfix 2026-10-12; was FAILED: arm locked in front, very bright next to the torch).
+- Status: confirmed by owner (2026-10-13) for the torch pose and brightness. Open: torches cast no shadows; some guards (not other NPCs) have a wonky walk cycle in Balmora at night (torch layer + weapon stance?).
   Fixed: the `Torch` group now loops on the left arm (`mw_graphs` `torch_layer`, `left_arm` mask) while a torch
   shows; the carried light is dimmed to read "fully lit" at a third of its radius (the original's clamp edge).
   Look for: walkers hold the torch up in a bent left arm (not straight ahead) while legs walk; the pool under
@@ -1119,7 +1119,7 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
   trails when the arm moves (walk with 1); the guard's armor near the torch is
   bright but keeps its texture (before: blown out white), the floor pool is
   warm and wide. Torch orientation in the hand is HI-3's open question.
-- Status: awaiting owner (torchfix 2026-10-12; was FAILED: torch model full white). Causes: the light sat
+- Status: confirmed by owner (2026-10-13).
   centimeters from the torch head (inverse-square, no near clamp in Bevy: ~100x "fully lit"), and NIF emissive
   (the flame) was never exposed (Bevy 0.20 `emissive_exposure_weight` 0: ~150x). Now the torch model is
   `mw_assets::self_lit` (its texture at "fully lit", like the original's saturated torch) and emissive is
@@ -1207,6 +1207,6 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
   - Not reachable here: the flame atronach's hand flames (`Weapon`) belong to
     `Attack1`-`3` and Dagoth Ur's hand bursts to `SpellCast` (no attack or
     cast key yet: check in game when combat lands).
-- Status: owner 2026-10-12: looked good; Dagoth Ur's F hand fire not tried yet.
+- Status: owner 2026-10-13: Dagoth Ur's F effect is bluish particles, not fire, and emits no light. Check against the original (OpenMW side-by-side): colour, and whether the model carries an attached light.
   (idle only; the keys need a person).
 - Source: particles3.

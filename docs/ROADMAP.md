@@ -66,6 +66,15 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      Owner, clouds-flight: no jump/smear (CL-6 confirmed), but clouds are far too big (one cloud covers most of the
      island: weather/shape tile scales), static, same patterns; under a cloud edge at noon there is no shadow edge on
      the ground at all (cookie missing or far too diffuse).
+   - Lighting job. Night exposure: **owner chose A (2026-10-13)**: clamp auto-exposure's range (a night floor, e.g.
+     EV ~3–4 tuned by eye) so night stays dark and placed/carried lights stay physical (no exposure-scaled lights);
+     fixes walls blowing out near lamps at night (torchfix open item). Also: torches and other carried lights cast no
+     shadows (owner 2026-10-13); budgeted point-light shadows for the nearest few lights is the usual approach.
+   - Owner notes 2026-10-13, actors (queue after walkers3): some Balmora guards at night have a wonky walk cycle, other
+     NPCs don't (torch layer + weapon stance + heavy armour?); Dagoth Ur's hand effect is bluish particles with no
+     light (compare with the original). Owner on uphill strides: people take shorter steps going up than down, but
+     don't add edge cases to a locomotion system we may overhaul; note it for the locomotion refactor (slope-aware
+     stride from speed + slope, not a special case).
    - Later (owner: not now, but important): object-terrain blending (R-b, M2 item) reads as "bottom of meshes darker",
      not terrain blending: TB-1..3 FAILED. Revisit the technique (terrain albedo/normal carried onto the mesh base).
    - S2 sun disk too small (owner): artistic angular size / glare instead of the physical 0.53°.
@@ -675,6 +684,10 @@ ragdolls; robes move." Tasks in dependency order:
 Not broken down yet. Scope per milestone: ARCHITECTURE.md §9; designs:
 `../superfargoth/docs/WISHLIST.md`. Break a milestone down here (with a
 spec per major system) before starting it.
+
+**Renumbered 2026-10-13 (owner):** M7 is now the RPG core (dialogue, journal, stats/rules, magic, AI, saves; was
+M10+); far-field performance → M8, seamless interiors (portals) → M9, combat → M10. Text below written before the
+renumbering keeps the old numbers: "M8 portals" here means M9. **Priority: M4, M5, M6** (owner), then M7.
 
 Specs written ahead: M5 game UI (`../superfargoth/docs/specs/ui.md`, `docs/specs/ui-adapter.md`);
 the slice to break down is ui.md's "Milestone and first vertical slice".
