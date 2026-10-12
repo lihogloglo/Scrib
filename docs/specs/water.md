@@ -1,6 +1,6 @@
 # Water: ocean, water bodies at any height, rivers, underwater, buoyancy (M6)
 
-Status: draft (2026-10-13, m6-spec), spec only. Nothing built.
+Status: draft (2026-10-13, m6-spec). W1 `sf_water` core built (2026-10-13, m6-w1): see "As built (W1)".
 Crates (new): `sf_water` (Bevy-free: records, CPU water query, wave spectrum + CPU twin, buoyancy
 math, bake steps `water.shore`, `water.hydro`, `water.flow`, `water.caustics`, `water.pontoons`),
 `sf_water_bevy` (thin Rust, heavy WESL: FFT compute, surface mesh, water pass, water-level clipmap,
@@ -224,9 +224,9 @@ body change optics by area (a swamp inside the ocean). A bake step rasterizes it
 
 ```rust
 pub trait WaterQuery {
-    fn sample(&self, ws: &WorldspaceId, at: WorldPos, t: GameTime) -> Option<WaterSample>;
-    fn sample_many(&self, ws: &WorldspaceId, at: &[WorldPos], t: GameTime, out: &mut [Option<WaterSample>]);
-    fn immersion(&self, ws: &WorldspaceId, capsule: Capsule, t: GameTime) -> Immersion; // depth, fraction, surface point
+    fn sample(&self, ws: &WorldspaceId, at: WorldPos) -> Option<WaterSample>;   // state of the last step(t)
+    fn sample_many(&self, ws: &WorldspaceId, at: &[WorldPos], out: &mut [Option<WaterSample>]);
+    fn immersion(&self, ws: &WorldspaceId, capsule: Capsule) -> Immersion; // depth, fraction, sample
 }
 ```
 
@@ -235,7 +235,7 @@ pub trait WaterQuery {
 - **Waves**: the ocean's CPU twin evaluates cascade 0 (the longest waves; cascade 1 too on High when
   the sea state is rough) on the same 60 Hz fixed step as physics: the same `h0` spectrum the GPU uses
   (generated on the CPU from the seed and uploaded), `rustfft` 2D inverse FFT of 64², displacement
-  grids sampled bilinearly. Displaced height at an XZ needs inverting the horizontal displacement:
+  grids sampled with a Catmull-Rom cubic (W1: bilinear was 4-8 cm off). Displaced height at an XZ needs inverting the horizontal displacement:
   3 fixed-point iterations (HDRP and Crest do the same). Short cascades (chop, ripples) are left out:
   they don't move a boat (HDRP's "evaluate ripples" off). Twin vs GPU agree within 1 cm (test).
 - **Flow**: river/channel flow maps (bake) sampled bilinearly; orbital velocity from the twin.
@@ -247,7 +247,7 @@ pub trait WaterQuery {
 **Spectrum.** JONSWAP with fetch + TMA depth correction + Donelan-Banner spreading + optional swell
 (Horvath 2015), from `WindState` (weather.md) speed and direction and a per-body fetch. Cascades are
 square tiles with **power-of-two sizes in metres** (default 4: 256, 64, 16, 4 m; 256² High, 128² Low),
-each band-limited so they don't double-count energy. **Weather changes**: the FFT is linear, so a
+each band-limited so they don't double-count energy (boundary at the wavelength `size(i+1)/2`, W1). **Weather changes**: the FFT is linear, so a
 weather transition blends `h0 = mix(h0_a, h0_b, w)` (two spectra, re-uploaded when `w` moves 2 %); the
 CPU twin does the same. No pop when the wind rises.
 
@@ -548,6 +548,71 @@ group resource, not a crate dependency on the water plugin (the app wires the re
   the sea), `water_float` (boxes of different densities, a hull with pontoons and with hull clipping).
 - **Game scenes**: the adapter spec's WA-* checks and the M6 demo scenes (ROADMAP "M6").
 - **Perf**: `perf suite` coast views at 1440p per preset; budgets above; A/B per feature.
+
+## As built (W1, 2026-10-13, m6-w1)
+
+`crates/sf_water` (Bevy-free; deps `glam`, `rustfft` 6.4, `serde`, `sf_coords`, `sf_records`, `sf_world`,
+`sf_terrain`). No bake steps and no buoyancy math yet (W3, W6, W7).
+
+- `records`: `WaterBody` (`sf.water_body`), `WaterKind`, `WaterShape` (Infinite / Polygon with holes / Ribbon
+  of `RiverPoint` / Bounds), `WaveTerms` (first cascade + amplitude; per-kind defaults), `WaterOptics`
+  (`sf.water_optics`, physical defaults for clear water, `visibility()`), `WaterBody::from_worldspace`
+  (`sea_level` → Ocean/Infinite with terrain, Pool/Bounds without).
+- `spectrum`: `SpectrumParams` (wind, fetch, depth, amplitude, choppiness) with JONSWAP + TMA (Kitaigorodskii,
+  Horvath's approximation) + Donelan-Banner spreading + finite-depth dispersion; `Cascades` (power-of-two
+  tiles, band boundary `size(i+1)/split`, split 2); `H0::generate` (deterministic in seed, cascade, params; noise
+  keyed by **wave vector**, so any two grid sizes share every coefficient), `H0::blend` (weather mix),
+  `band_variance` (analytic). Swell (Horvath's second spectrum) is not in yet. `WindInput` is the named scaffold
+  for `sf_wind::WindState` (WD1): swap the field type when WD1 lands.
+- `twin`: `CascadeTwin` (per-step time evolution of the active bins only, 4 packed complex 2D inverse FFTs
+  giving height, height rate, Dx, Dz, their rates and slopes; Catmull-Rom sampling), `WaveTwin` (1-4 cascades
+  summed, displaced-height inversion with 3 fixed-point iterations), `tile_coords(WorldPos, size)` (exact
+  integer cell phase: the render origin never enters), `origin_phase(origin_cell, size)` (what the GPU adds
+  to camera-relative XZ), `reference_height` (direct sum, for tests and goldens).
+- `query`: `WaterQuery` (`sample`, `sample_many`, `immersion`), `WaterWorld` (per worldspace, `step(t)` evaluates
+  every twin), `WorldspaceWater` (bodies, 2D median-split BVH over finite bodies + unbounded bodies by priority,
+  optional `BedHeights` (impl for `TerrainHeights`), optional `WaveTwin`). The ocean is dry where the bed is above
+  the displaced surface; depth is `f32::INFINITY` where no bed is known (interiors, unstreamed terrain).
+- Hooks: `WaterSource` (bodies, `river_policy`, `ocean_spectrum`), `DefaultWaterSource`, `WaterOpticsSource`,
+  `RiverPolicy`.
+
+**Differences from the text above** (all logged in ARCHITECTURE §10): the query has no `t` argument (it reads the
+last `step`); bands split at `size/2`; cubic twin sampling; physical amplitudes (bevy-aqua normalises every sea
+state to a fixed RMS height; we don't).
+
+**Tests** (`cargo test -p sf_water`, 11): spectrum energy vs the analytic JONSWAP integral within 3 % (realised
+variance within 15 %, Donelan-Banner integrates to 1 ± 1e-3; Hs vs the JONSWAP fetch law within 40 %: the peak
+and energy fits are separate regressions, ~30 % apart); cascades power-of-two and gap-free; determinism (same
+seed → same `h0` bits; twin state a function of `t` only); 64² and 256² grids share every coefficient and the
+whole band; twin vs direct DFT: 2.4e-7 m on nodes, **2.4 mm** between nodes and vs the 256² grid (Hs 1.9 m; was
+7.7 cm bilinear with `/4` bands); inversion: 3 iterations within 2.4 mm of 40 (choppiness 1, 18 m/s, two
+cascades), converged fit 2.6e-6 m; origin shifts and far cells (cell 100 002) give bit-identical samples, the GPU
+formula lands within 1e-3 m of the CPU's tile coordinates for any origin; weather blend continuous; BVH priority
+(ocean, lake above the sea, pool inside the lake, 60 ponds, a river with height and flow by segment), dry land
+cuts the ocean, immersion; record JSON round trip.
+
+**Cost** (`cargo run --release -p sf_water --example water_bench`, 4060 Laptop machine, 201 bodies): twin step
+**0.027 ms** for cascade 0 (192 active bins; budget 0.05), 0.055 ms with cascade 1 (376 bins: High's "rough sea"
+option is 10 % over, so evaluate cascade 1 every other step or accept it); sample **0.25 µs** (budget 2), 0.43
+µs with two cascades.
+
+**W2 handoff (ocean surface + water pass)**:
+1. GPU spectrum: upload `H0::generate(params, cascades, i, 256 or 128, seed)` per cascade (RG32F per texel, layout
+   `iz * n + ix`, signed frequency mod n). Use the **same seed and `Cascades`** as the twin: the twin is then the
+   GPU's cascade 0 by construction. Time evolution on the GPU must match `CascadeTwin::evaluate`: `ω` from
+   `SpectrumParams::omega` (finite depth if set), `h̃ = h0·e^{iωt} + conj(h0(−k))·e^{−iωt}`, `D̃ = λ·i·k̂·h̃` (sign:
+   crests sharpen). The CPU reduces `ω·t` mod 2π in f64; the GPU has no f64, so W2 adds Tessendorf's repeat
+   period `T` (quantise `ω` to multiples of 2π/T in `CascadeTwin::new` too, upload `t mod T`) and keeps the
+   twin test green.
+2. Sampling position: `fract((origin_phase(origin_cell, size) + rel_xz) / size)`, origin cell from the same
+   place `sync_origin` reads (water-adapter.md "What replaces `SeaPlaneScaffold`").
+3. Golden: capture GPU displacement at a few points from `water_ocean` and compare with
+   `WaveTwin::sample` (target 1 cm; the twin is 2.4 mm from the exact field).
+4. Weather: blend with `H0::blend` (CPU) and re-upload when `w` moves 2 %; rebuild the twin from the same blended
+   `h0` (`WaveTwin::from_h0`).
+5. App wiring (owner of `exterior.rs`): `WaterWorld` as a resource, `step(t)` in `FixedUpdate` before physics,
+   one `WorldspaceWater` per active worldspace from `mw_water::MwWaterSource`, bed = the resident
+   `TerrainHeights`.
 
 ## Open questions
 

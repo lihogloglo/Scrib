@@ -1,0 +1,21 @@
+[package]
+name = "sf_water"
+description = "Bevy-free water core for superfargoth: water body records, wave spectrum, CPU wave twin, water query"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+rustfft.workspace = true
+serde.workspace = true
+sf_coords.workspace = true
+sf_records.workspace = true
+sf_terrain.workspace = true
+sf_world.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

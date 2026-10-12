@@ -1689,3 +1689,17 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   the wrist (gate 1 cm); more iterations are not monotonic (12+ stretch 3 cm). New Bevy-free crate `sf_ragdoll`
   (`ragdoll.cook`, `RagdollInstance`). Limp ragdolls reach the skeleton through `sf_anim_bevy::PhysicsPose`, blended
   after the graph; P8 moves powered ragdolls into the graph's `PoseInput`.
+- 2026-10-13 (m5-l2, M5 L2): script **world access = declared slot resources moved into one cell** shared by every
+  context (`sf_script_bevy::access`): API modules register the `Resource`s they need, a slot moves them out of the
+  `World` and back, API functions borrow them via `with_resource` (error outside a slot or on re-entry). Cost per
+  slot is one move per declared resource, independent of the context count (per-context guard installation would
+  be 0.23 µs × contexts × slots); no `unsafe`, no `scope`. Script handles resolve through `ScriptPlacements`
+  (filled by the content pack's R0 hooks) until streaming owns a `PlacementId → Entity` map. Activation is a
+  framework message (`Activated` → `ActivationOutcome { handled }`); default actions read the outcome.
+- 2026-10-13 (m6-w1, M6 W1): **`sf_water` core built** (water.md "As built (W1)"). Choices that outlive W1: the wave
+  `h0` noise is keyed by wave vector, not texel, so the 64² CPU twin and the 256² GPU grid hold identical
+  coefficients; cascade bands split at `size(i+1)/2` (not `/4`), so cascade 0 keeps 8+ texels per wave on the twin;
+  the twin samples with a Catmull-Rom cubic (bilinear at 4 m texels was 4-8 cm off at Hs 2 m, cubic 2.4 mm); the
+  query reads the state of the last fixed `step(t)` (no `t` argument: one FFT per step, then O(1) samples);
+  amplitudes are the physical JONSWAP spectrum (no fixed-RMS normalisation as in bevy-aqua). `WindInput` is a
+  named scaffold until `sf_wind::WindState` (WD1). Ported code carries its notice in `THIRD_PARTY_NOTICES.md`.
