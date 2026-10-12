@@ -83,8 +83,14 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      stride from speed + slope, not a special case).
    - Later (owner: not now, but important): object-terrain blending (R-b, M2 item) reads as "bottom of meshes darker",
      not terrain blending: TB-1..3 FAILED. Revisit the technique (terrain albedo/normal carried onto the mesh base).
-   - S2 sun disk too small (owner): artistic angular size / glare instead of the physical 0.53°.
-   - S3 night sky: Masser + Secunda (Morrowind textures, `[Moons]` sizes, phases, colors), stars fading in at dusk.
+   - S2 [~] (nightsky 2026-10-13: built, NS-1 awaiting owner) sun disk too small (owner): drawn disk 2.5° (`sf_sky::SunDiskLook`,
+     `--sun-size`; the light keeps the physical 0.53°) + a glare halo drawn into the sky before the clouds (clouds hide it).
+   - S3 [~] (nightsky 2026-10-13: built, NS-2..4 awaiting owner) night sky: Masser + Secunda (`sf_sky::Moon`: N moons, each with
+     its own phase cycle, path and textures; Morrowind `tx_masser_*`/`tx_secunda_*` 8 phases, `[Moons]` sizes and tilts,
+     `--day`), one moonlight summing the moons, procedural stars fading in at dusk; `sf_sky_bevy` night pass 0.26 ms at
+     night / 0.08 ms at noon (1440p). Bug fixed: red night streaks with `--clouds clear` (the cirrus was lit by the set sun
+     through Bevy's horizon-clamped transmittance LUT). Open: thin cirrus reads as dark wisps at night against Bevy's
+     leaky twilight sky; Masser size and star occluder set by eye.
    - Then fog (weather.md N1/N2 haze + dust, height/ground fog, froxel fog + god rays) before item 5.
 7. **P1, M2: audit follow-ups**, after J1–J3 are measured:
    - J4 [ ] shadow-caster rules (per-cascade cost in Nsight; small casters `NotShadowCaster` per preset).
@@ -680,11 +686,36 @@ ragdolls; robes move." Tasks in dependency order:
   statics + already-resting items, a 1–2 cm overlap allowance (shrunk hulls / contact skin), and check shapes in PH-7.
   Holding is the safe failure (held items stay put). PH-7 sanity screenshot not usable: the default interior camera is
   outside the 40 m debug radius; scene `ph-tradehouse-items` needs a `camera:` near the counter.
-- [ ] P4 Dynamic items (`sf_physics_bevy` + `mw_physics`): `Dynamic` placements as sleeping bodies on R0 activation,
+  **P3 open items moved to P4** (physics-p4, 2026-10-13): plausibility fix and census under P4 below.
+- [~] P4 Dynamic items (`sf_physics_bevy` + `mw_physics`): `Dynamic` placements as sleeping bodies on R0 activation,
   `HOLD_UNTIL_GRABBED`, weight → mass, debris/prop layers, CCD, coverage freeze, fell-out recovery, persistence through
   `PlacementOverlay::move_to` + `physics` state blob on deactivation.
   Verify: Arrille's Tradehouse: 0 wakes in 10 s with nobody near; a thrown item topples the counter clutter, all rest
   within 3 s; PH-5 (leave, unload, return: items where they rested); dense-town R0 idle step ≤ 0.3 ms. Visual PH-1.
+  **In progress 2026-10-13 (physics-p4), uncommitted; compiles, tests pass, not yet run in the app.** items.check fix:
+  sequential settle (each item alone, lowest first, over statics + already-tested items held fixed where placed;
+  1 cm/side overlap allowance by shrinking the test shape; early stop), census **before** (P3, all-at-once): Unsupported
+  16,057 / 42,582 (38 %), overlaps > 1 cm 21,753 (51 %); **after**: Unsupported 15,194 (36 %), overlaps 10,945 (26 %),
+  9.3 s wall (116.8 s summed). Overlaps halved; unsupported barely moved. Spot checks (report samples): the dropped items
+  are thin books, bowls and platters on shelves (5–9 cm drops), i.e. they fall *through* the static trimesh: placed
+  sunk deeper than half their thickness, two-sided contacts push them out the bottom. Fix landed, census pending: the
+  physics copy of static trimeshes is now one-sided with internal-edge fixes (`TriMeshFlags::ORIENTED |
+  FIX_INTERNAL_EDGES`, the controller keeps its two-sided mesh), items.check version 3 so the next `bevyrrowind bake`
+  re-runs it. P4 proper: items (`Dynamic` + carryable lights via `hook_items`) are sleeping dynamic bodies (CCD,
+  `ITEM_DAMPING`), `Fixed` when `items.check` holds them (read by placement id on a startup thread) or always for
+  carryable lights; mass `mw_physics::item_mass` (new crate `mw_physics`: `ItemRecords`, `carryable_lights`, rules
+  shared with `mw_bake`); `DEBRIS` < 15 kg and < 0.6 m else `PROP`; visuals under an `ItemPivot` that follows the body;
+  deactivation writes moved items to the `PlacementOverlay` (`move_to` + `physics` blob v1), activation reads it;
+  inserts two-phase (statics + refresh every 16, time-sliced by a per-body refresh estimate; then ≤ 32 items without a
+  refresh); rolling resistance (20 rad/s², contact-gated) since rapier has none; dev key `V` throws a 3 kg ball.
+  Tests: `sf_physics` `box_dropped_on_table_items_wakes_and_settles`, `refresh_before_first_step_keeps_new_bodies`,
+  settle fixtures; `sf_physics_bevy` `moved_items_persist_through_deactivation` (PH-5 headless). Visual PH-1/PH-5
+  added (awaiting owner). **Open (P4 next session, in order):** rebuild + `bevyrrowind bake` for the oriented-mesh
+  census (if unsupported is still high, `SF_ITEMS_CELL=<cell>` on `body_report` lists a cell's items with drops);
+  `cargo test` mw_physics/mw_bake + pedantic clippy on both workspaces (only sf_physics* were clippy-checked: warnings
+  fixed by hand); PH-7 `camera:` near Arrille's counter + ≤ 3 debug screenshots; 60 m/s flight bench for insert peaks
+  (now two-phase) and the items' first-step cost; Tradehouse 0 wakes in 10 s; coverage freeze, kill height, held items
+  released by impulse.
 - [ ] P5 Controller on physics (`sf_controller(_bevy)`): kinematic capsule bodies, sweeps against `STATIC | PROP`,
   capped push impulses on props and debris, `ImpactOnCharacter`, sliding on unwalkable slopes (locomotion.md open
   question 3); the mover stays in `Update`.
@@ -1020,3 +1051,5 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (lighting): night exposure floor (owner option A): `sf_sky::ExposureRange` (UE Min/Max EV100) clamps the scheduled EV100 and is baked into the viewer auto-exposure curve; Bevyrrowind floor EV100 3.5 + night ambient 1 nit (`LightCalibration`, `--exposure-floor`/`--night-ambient`): `hi-balmora-night` EV100 1.62 -> 3.5, blown pixels 1.63 % -> 0.26 %, mean luma 72 -> 38; the cave (Addamasartus) unaffected (EV 7 scheduled, auto meters above the floor). Budgeted point-light shadows `sf_sky_bevy::PointShadowBudget` (N nearest by distance/priority, hysteresis, 15-25 m + 0.3 s fade via a shadowed/unshadowed light split, torches 2x, 0.25 m near plane, light props `NotShadowCaster`): 1440p median 9.4 / 10.2 / 13.3 / 13.8 ms for N = 0/1/2/4 (render-thread bound) -> High 1, Ultra 4, Low/Medium 0 (`--point-shadows`). LT-1..3 awaiting owner; shots/lighting.
 - 2026-10-13 (walkers5): frozen walk strides (owner "wonky guards at night"): not torch-specific; the walk blend space marker-synced a lane to an outro marker past its loop end, and once that lane led (after a turn) it played to the clip end (1.333 s) and parked. `sf_anim_graph` sync now syncs looping clips over their loop only (pairs wrap at the loop end, a follower always lands inside); tests `synced_followers_stay_inside_their_loop`, `mw_graphs` `turning_walkers_keep_every_walk_lane_cycling`. Night Balmora 150 s: stride-stuck 76 -> 0 (3 runs). Give-ups were not pathgrid first legs but straight off-grid walks (no node in reach): `WanderPlanner` remembers given-up headings/first-leg nodes per spot (`blocked_starts`, 1 m) and re-rolls away (±45°) or starts at the next-nearest node; give-ups 106 (before 123-167). Dagoth Ur: matches the NIF (texture-coloured additive particles, lavender-blue spray, no light node; nothing to wire). HI-4, WK-1, PA-3 awaiting owner. Not committed.
 - 2026-10-13 (physics-p3): M4 P3 built (uncommitted): `body.cook` (primitive/hull/V-HACD, 1,055 item models, 14 failed) and `items.check` (per-page settle test; 16k of 42.6k items flagged unsupported: too many, P4 investigates), both in `bevyrrowind bake` (cold +29 s, warm 2.75 s total); fixed `refresh_queries` dropping new dynamic bodies; P2 A/B: physics on not worse for stutters, insert peaks still 0.49–0.81 ms (gate 0.5).
+- 2026-10-13 (physics-p4): M4 P4 in progress (uncommitted, compiles, tests pass, not run in the app): items.check sequential settle (overlaps 51 % -> 26 %, unsupported 38 % -> 36 %; thin items fall through two-sided static trimeshes, so physics statics are now oriented + internal-edge-fixed, census pending), items as sleeping dynamic bodies with holds/mass (new `mw_physics`), item pivots, overlay persistence, two-phase inserts, rolling resistance, `V` ball; PH-1/PH-5 awaiting owner; handoff in ROADMAP M4 P4 "Open".
+- 2026-10-13 (nightsky): sky S2 + S3 built (uncommitted): `sf_sky` night model (`Moon` N moons with own phase cycle, steps/textures, `MoonPath::Synodic|Circuit`; `StarField`; `SunDiskLook` drawn size + glare; one moonlight summing the moons; 4 tests), `sf_sky_bevy` night pass (fullscreen at the far plane, depth-tested to sky pixels, additive after `render_sky` and before the cloud composite), app `night_sky.rs` (Masser/Secunda from `[Moons]` + phase textures, sun 2.5°) and `--day`/`--sun-size`; red night streaks fixed (cloud key light by light at the camera + planet shadow in `cloud_trace.wesl`); night pass 0.26 ms night (shared machine) / 0.08 ms noon at 1440p; scenes ns-*, NS-1..4 awaiting owner.

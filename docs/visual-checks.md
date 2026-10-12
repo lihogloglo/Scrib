@@ -1294,7 +1294,27 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
 
 ## Physics (superfargoth `physics.md`, bevyrrowind `physics-adapter.md`; `.sessions/physics-p2.md`)
 
-PH-1 to PH-5 are specified in `docs/specs/physics-adapter.md` and land with tasks P4-P10.
+PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with tasks P6-P10.
+
+### PH-1: Knock over a table's contents (`V` throws a ball)
+- Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse) or any `view`; aim at the
+  counter clutter and press `V`: a 3 kg ball (red, 12 cm radius) flies from the camera at 12 m/s (8 newest kept).
+  `G` shows the shapes (orange items, cyan statics).
+- Look for: before anything is hit, no item moves (they start asleep exactly as authored); hit items topple, roll and
+  slide, then rest within about 3 s; bottles roll and stop (rolling resistance stand-in), plates slide; nothing falls
+  through the counter or floor; no jitter at rest; carryable lanterns and items `items.check` flagged unsupported stay
+  put (held until grabbed, P6).
+- Status: awaiting owner (built 2026-10-13, physics-p4; not yet run in the app: the release exe was locked).
+- Source: physics-p4.
+
+### PH-5: Moved items stay where they fell
+- Kind: game location. Run: as PH-1 in an exterior with clutter (e.g. `view "Seyda Neen"`, the tradehouse porch or
+  market stalls): knock items over with `V`, fly away until their cell leaves R0 and unloads (watch `physics/items`
+  drop in F3 counters), fly back.
+- Look for: every knocked item is where it came to rest, same orientation; nothing snaps back to its authored spot.
+  Within a session only: the `PlacementOverlay` holds the poses (saves are M10).
+- Status: awaiting owner. Headless test `sf_physics_bevy` `moved_items_persist_through_deactivation` passes.
+- Source: physics-p4.
 
 ### PH-6: Collider debug view (statics + terrain heightfields line up)
 - Kind: game locations. Run: `.\bevyrrowind scene ph-balmora-colliders` and `.\bevyrrowind scene ph-census-colliders`
@@ -1313,9 +1333,56 @@ PH-1 to PH-5 are specified in `docs/specs/physics-adapter.md` and land with task
 - Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse with `--physics-debug`;
   `G` toggles). Placed items (MISC, WEAP, ARMO, CLOT, BOOK, ...) draw orange: their `body.cook` shape (a box, capsule,
   cylinder or sphere when one fits within 15 % of the hull, else one hull of at most 32 vertices, or up to 8 hulls for
-  concave closed models). Statics stay cyan. Items are `Fixed` until P4.
+  concave closed models). Statics stay cyan. Since P4 items are sleeping dynamic bodies (held ones `Fixed`).
 - Look for: every item on the counter and shelves has an orange shape hugging it (bottles as cylinders/capsules, books
   and plates as flat boxes, weapons as thin boxes or capsules along the blade); no shape offset, rotated or scaled
   away from its item; no item without a shape; nothing grossly bigger than its item.
 - Status: awaiting owner.
+- Open (physics-p4): the scene still needs a `camera:` near the counter (the default interior camera is outside the
+  40 m debug radius); get the counter coordinates with `SF_ITEMS_CELL="Seyda Neen, Arrille's Tradehouse" cargo run
+  --release -p mw_bake --example body_report` (prints every item's position and `items.check` result).
 - Source: physics-p3.
+
+## Night sky and sun disk (superfargoth `sky-lighting.md` "Night sky and drawn bodies"; `.sessions/nightsky.md`)
+
+### NS-1: Sun disk size and glare (`scene ns-noon-sun`, `scene ns-sunset-sun`)
+- Kind: game location. The drawn sun is 2.5° (was the physical 0.53°; `--sun-size <deg>` A/B), with a glare halo
+  drawn into the sky before the clouds.
+- Look for: noon: a round white disk about 5x its old width with a soft halo a few disk widths wide, no ring or square
+  edge; `--clouds fair`: clouds crossing the sun hide disk and halo (no sun "in front of" a cloud). Sunset: a big
+  low orange disk with a warm halo (`--hour 19.5`: setting behind the hills). Too big / too small / halo too strong: say
+  which (`--sun-size`).
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (nightsky, `shots/nightsky/ns-noon-sun.png`, `ns-sunset-sun.png`):
+  disk ~2.5°, halo subtle; cirrus in front of the sun covers it.
+- Source: nightsky.
+
+### NS-2: Stars fade in at dusk (`scene ns-dusk-stars`)
+- Kind: game location. Procedural star field (framework), hidden by the sky's brightness, the atmosphere near the
+  horizon and clouds, plus a fade from sun −4° to −14°.
+- Look for: `--hour 20`: no stars; `20.5`: a few bright stars only in the dark part of the sky (east, high); `21.5`:
+  a full field of mostly faint stars, warm and blue tints, fewer and dimmer toward the horizon, a slight twinkle
+  low down; `--clouds fair`: no stars through clouds. Stars look like points, not squares or blurs.
+- Status: awaiting owner.
+- Source: nightsky.
+
+### NS-3: Masser and Secunda (`scene ns-moons-full`, `scene ns-moons-quarter`, `--day 159` crescent)
+- Kind: game location (Morrowind's `tx_masser_*` / `tx_secunda_*` phase textures, `[Moons]` sizes and tilts).
+- Look for: Masser large (~8° disk), Secunda smaller (~3.4°); the phase texture matches the day (168 full, 162 first
+  quarter, 159 crescent; both moons share the phase); no stars inside a moon's disk (dark side included) and no
+  dark ring of missing stars around it (the `occluder` margin, 0.85 of the texture); moons move east to west over
+  the night and rise about an hour later each day; by day they are invisible or faint, not dark disks.
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (nightsky, `shots/nightsky/ns-moons-*.png`): Masser full
+  texture at day 168, Secunda half-lit at 162; at dusk (`ns-dusk-stars`) Masser shows pale against the twilight.
+- Source: nightsky.
+
+### NS-4: No red streaks at night (`scene ns-night-clear`, `scene lt-torch-shadows`)
+- Kind: game location. Bug: with `--clouds clear` red/pink streaks crossed every Balmora night sky. Cause: the cirrus
+  layer was lit by the set sun (the cloud key light was picked by raw illuminance, and the raster path keeps the sun's
+  unattenuated value after sunset) through Bevy's transmittance LUT, which clamps below-horizon rays to the horizon's
+  red instead of 0. Fixed: key light by its light at the camera, and the planet's shadow at every cloud sample.
+- Look for: no red or pink anywhere in the night sky; thin cirrus shows as faint dark or moon-grey wisps; sunset
+  clouds still glow orange while the sun is up (`--hour 19.4 --clouds fair`).
+- Status: awaiting owner. Sanity screenshot 2026-10-13 (nightsky, `shots/nightsky/ns-night-clear.png`): no red; the
+  cirrus now reads as dark wisps (it hides the stars and Bevy's faintly lit twilight sky behind it): say if that is
+  objectionable (fix: moonlit cirrus fill, or fading the high layer at night).
+- Source: nightsky.

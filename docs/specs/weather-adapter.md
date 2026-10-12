@@ -48,7 +48,7 @@ Mapping from a `[Weather <Type>]` section (keys as `openmw-iniimporter` lists th
 | `Clouds Maximum Percent`, `Cloud Texture` | `clouds` genus preset (coverage, type, layer heights, cirrus) | Weather → genus (`sf_atmos::CloudPreset`, S1 2026-10-13): Clear → clear (a few humilis + cirrus trace), Cloudy → fair cumulus, Foggy → altostratus, Overcast/Rain/Snow/Blizzard → overcast, Thunderstorm → storm (cumulonimbus cells), Ashstorm/Blight → stratocumulus. The texture name picks the genus; as built in `exterior.rs` `CLOUD_CHOICES` until the weather adapter reads the ini. |
 | `Land Fog Day Depth`, `Land Fog Night Depth` | `fog.height_fog.density` KeyCurve (day/night) | Morrowind's fog depth is a fraction of view distance. Converted through Koschmieder to an extinction at ground level (visibility ≈ 3.9/σ), calibrated on the Foggy and Ash screenshots. |
 | `Fog * Color`, `Sky * Color`, `Ambient * Color`, `Sun * Color` (sunrise/day/sunset/night) | none directly; `sky.tint` curves only if a mod opts in | Calibration reference: with the physical atmosphere they come out of the medium. The adapter keeps them in a `MwWeatherLook` record so a "classic look" mod can blend them in as tints. |
-| `Sun Disc Sunset Color`, `Glare View` | `sky.sun_glare` | Glare scale (bloom/lens later). |
+| `Sun Disc Sunset Color`, `Glare View` | `SunDiskLook::glare` (per weather, M6 blend) | `Glare View` (1 clear and fair, 0.25 cloudy, 0 overcast and worse) scales the base glare once weather presets blend (M6); until then the clear value is used and cloud transmittance hides the glare. The drawn disk is 2.5° (`--sun-size`; physical 0.53°). `Sun Disc Sunset Color` is calibration only (the atmosphere reddens the disk). |
 | `Wind Speed` | `wind.speed` | Morrowind's value is unitless (≈ 0.1-0.9). Mapped linearly to 1-15 m/s at 10 m above ground, then tuned on grass and tree motion. |
 | `Cloud Speed` | `clouds.wind` | Cloud-altitude wind = preset direction × `Cloud Speed` × 10 m/s (`CLOUD_SPEED_MPS`; ini defaults Clear 1.25, Cloudy 2, Foggy 1.25, Overcast 1.5, Rain 2, Thunderstorm 3, Ashstorm 7, Blight 9, Snow 1.5, Blizzard 7.5). Real-world speeds read frozen beside the 30x game clock. Shapes also evolve (`CloudLook::evolve`). |
 | `Transition Delta` | `transition` | Morrowind's per-frame blend rate becomes a duration in game hours (one weather change ≈ 1-2 game hours; OpenMW's interpretation is the reference) plus channel lead/lag defaults. |
@@ -68,8 +68,8 @@ Global `[Weather]` keys:
 | `Precip Gravity`, `Snow Gravity Scale` | `PrecipKind.fall_speed` |
 | `Rain Ripples`, `Rain Ripple Radius/Scale/Speed`, `Snow Ripples` | ripple atlas settings in `PrecipKind` (puddles and water) |
 | `Minimum/Maximum Time Between Environmental Sounds` | region sound cue timing (below) |
-| `Stars *` fading, `Timescale Clouds` | sky-lighting (stars) and `clouds.wind_factor` behavior |
-| `[Moons]` (Masser/Secunda sizes, phases, colors) | sky-lighting moon settings (not weather) |
+| `Stars *` fading, `Timescale Clouds` | sky-lighting `StarField::visibility` (default −4° → −14° sun elevation ≈ Morrowind's 1 h post-sunset start + 2 h fade at Vvardenfell's summer latitude) and `clouds.wind_factor` behavior |
+| `[Moons]` (Masser/Secunda sizes, phases, colors) | sky-lighting `Moon`s (not weather), app `night_sky.rs` | `Size` × 0.1° (Masser 9.4°, Secunda 4°, quad size; the disk is ~85 % of it); `Daily Increment` (h) → `Circuit { circuit_days: 1 + inc/24 }` (rises that much later each day); `Axis Offset` → path tilt; 8 phases × 3 days (both start full, observed), textures `tx_{masser,secunda}_{new,one_wax,half_wax,three_wax,full,three_wan,half_wan,one_wan}.dds`. Not mapped: `Fade In/Out Start/Finish` hours and `Fade Start/End Angle` (the day sky's brightness hides the moons physically), `Speed`, `Moon Shadow Early Fade Angle`, `Script Color` (blood moon, M5 scripting). Full illuminance 0.8 + 0.2 lx (the old single 1 lx moon). `tx_mooncircle_*` (Morrowind's star blockers) are replaced by the analytic `occluder` disk. |
 
 Where the ini comes from: `mw_install` already finds the install. The adapter reads `Morrowind.ini`
 from it; OpenMW installs carry the same values as `fallback=` lines in `openmw.cfg`. Missing keys
@@ -145,7 +145,7 @@ variant when the surface wetness under the foot exceeds a threshold (`sf_surface
 
 ### Sky textures (optional reference only)
 
-`Tx_Sky_*.dds` cloud textures and `Tx_Sun_*`/`Tx_Moon_*` are not rendered by default. Uses:
+`Tx_Sky_*.dds` cloud textures and `tx_sun_*` are not rendered by default (the moons' `tx_masser_*`/`tx_secunda_*` phase textures are, see `[Moons]`; `tx_stars_*` dome textures are not: the framework star field replaces them). Uses:
 - calibration: the original cloud texture per weather tells which cloud type to default to;
 - a "classic sky" mod can map them onto the high 2D cirrus layer (weather.md "Geometry"), which takes
   a texture.
