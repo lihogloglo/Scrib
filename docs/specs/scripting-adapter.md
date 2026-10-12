@@ -1,6 +1,6 @@
 # Scripting adapter (MWScript → Luau)
 
-Status: draft (2026-10-13, m5-spec session, docs only). Built in M5.
+Status: draft (2026-10-13, m5-spec session, docs only). Built in M5; W1 front end built 2026-10-13 (m5-w1, see "As built (W1)").
 Crates (proposed): `mw_script` (Bevy-free: lexer, lenient parser, AST, function table,
 semantic checks, Luau emitter, diagnostics), a `mwscript.translate` step in `mw_bake`,
 `mw_script_bevy` (thin: the `@mw/script` API module over the framework APIs, legacy instance
@@ -251,6 +251,98 @@ items, activation, timers).
 **Demonstrable without M7**: activators, doors, shrines, levers and start-script logic that only
 use the live families; quest *state* advancing from scripts (visible in a dev journal-state
 overlay, not the journal UI).
+
+## As built (W1, 2026-10-13, m5-w1)
+
+Crate `mw_script` (Bevy-free, no dependencies): `lexer` → line parser → `resolve`, plus the
+function table. API: `parse(text, SourceKind, &FunctionTable)`, `parse_and_resolve(.., &dyn Env)`
+→ `Parsed { script, diagnostics }`, `Parsed::is_inert()`.
+
+**Reuse check.** No MWScript parser exists on crates.io (searched `mwscript`, `morrowind`,
+`tes3`); Greatness7's `tes3` (already a dependency) reads SCPT/INFO but has no compiler; OpenMW's
+compiler is C++ and bound to its interpreter. Parser generators (`chumsky`, `lalrpop`) don't fit:
+MWScript calls have no parentheses, so argument count and kinds come from a runtime table, and
+recovery is per line. Hand-written recursive descent with per-line recovery is the usual choice for
+lenient legacy front ends. OpenMW's compiler source was not read; two behaviours below are noted
+as "OpenMW-like" from memory of its warnings (unverified), pending the W2/W3 oracle runs.
+
+**Lexer.** Case-insensitive words keep their source spelling (`Ident { key, text }`); newline
+tokens (statements are lines); `;` comments; tokens carry `glued` (no whitespace before) so bare
+IDs like `Ald-ruhn` can be rejoined in ID positions. Comparison operators are normalised from any
+mix of `= < > !` (`=`, `=<`, `<==`, `<>`, `> =`).
+
+**Parser.** One statement per line; leftovers on a line are a named repair, never a cascade.
+`Begin`/`End`, `Short`/`Long`/`Float` (locals are script-wide; a bare word that is a declared local
+is a variable even before its declaration line), `Set`, `If`/`ElseIf`/`Else`/`EndIf`,
+`While`/`EndWhile`, `Return`, calls. Calls take their arguments from the **function table**
+(`src/functions.txt`, 452 functions after `{$LIST}` expansion: name, aliases, argument kinds
+`id|text|num|axis|any` with `?`/`*`, return `void|int|float`, status family, acts-on-reference).
+Numeric arguments are unary expressions (`Random 100 < 50` is `Random(100) < 50`). At a line start
+a function wins over a local of the same name; inside expressions the local wins.
+
+**AST for the emitter.** Every variable is a `VarRef` naming where its state lives: `Local(slot)`,
+`Global`, `Member { object, var }`, `Speaker` (dialogue results), `Undeclared` (reads 0, writes
+dropped). Nothing maps to a Luau global (m5-l1 finding). Statements carry source lines for
+`-- L<n>` maps; calls carry `FnId` and typed `Arg`s (`Id`, `Str`, `Expr`, `Axis`, `Missing`).
+
+**Resolution.** `Env` (globals, object IDs, `object.var` via the object's script or a script ID).
+Script names that aren't locals or globals → `UndeclaredVariable` (warning); dialogue-result names
+that aren't globals → speaker locals; unknown explicit references → `UnknownReference` (warning).
+Not yet checked: kinds of ID arguments (journal, topic, cell, sound IDs): W2, with the coverage
+report.
+
+**Policy.** Severities: `Accepted` (the original accepted it; counted), `Repaired` (defined
+repair, script runs), `Warning` (resolution), `Error` (inert). Only an unknown function at a
+statement head, an unparsable expression or a `Set` without a target are errors: an
+MWSE-dependent mod script is then inert rather than half-run.
+
+**Corpus result** (real install, `cargo test -p mw_script --release --test real_install --
+--nocapture`): 1,231 script texts (1,207 live) and 17,144 dialogue results, **0 unrecoverable**;
+400 scripts and 16,710 results with no diagnostics at all; explicit references all resolve.
+Parse + resolve of everything ≈ 0.1 s single-threaded (release).
+
+| Rule | Severity | Scripts (hits / texts) | Results (hits / texts) | What happens |
+|---|---|---|---|---|
+| `CommaBetweenArgs` | accepted | 1,287 / 261 | 1,020 / 255 | `,` is an optional separator |
+| `EndWithName` | accepted | 591 / 591 | | `End name`, name unchecked |
+| `ShadowedName` | accepted | 113 / 113 | | local named like a function or global |
+| `HyphenatedId` | accepted | 2 / 2 | 12 / 12 | `ShowMap Ald-ruhn`, `Begin a-b` |
+| `LateDeclaration` / `DuplicateLocal` | accepted | 8 / 4, 1 / 1 | | locals are script-wide; first wins |
+| `NonstandardOperator` | repaired | 80 / 52 | | `=` (79) and `<==` as comparisons |
+| `ParenthesizedCall` | repaired | 33 / 2 | | `ref->( GetItemCount x ) == 1` |
+| `UnmatchedBlockEnd` | repaired | 30 / 26 | | stray `EndIf` (mostly a commented-out `If`), ignored (OpenMW-like) |
+| `TrailingTokens` | repaired | 11 / 6 | | junk after `Else` (`else set x to 8`) ignored (OpenMW-like) |
+| `ExtraArgument` | repaired | 7 / 7 | 6 / 6 | `GetDisabled "id" == 0`, `Disable "id"`: value skipped, operator kept |
+| `ExtraEndIf` | repaired | 4 / 4 | | `ElseIf` right after an `EndIf`: that `EndIf` was extra, block reopened |
+| `TextAfterEnd` | repaired | 3 / 3 | | ignored |
+| `StrayCharacter` | repaired | 4 / 1 | 162 / 162 | `[ ]` around a condition; `Choice:` |
+| `UnbalancedParens` | repaired | 1 / 1 | | |
+| `UnknownStatement` | repaired | 2 / 2 | | a bare `( cond )` line, ignored |
+| `ReferenceOnVariable` | repaired | 1 / 1 | | `Player->localVar` reads the local |
+| `UnknownFunctionInExpression` | repaired | 1 / 1 | | `player->GetStat Level` reads 0 (Tribunal `Plague_Gedna`; inert would break a quest) |
+| `DuplicateBegin` | repaired | 1 / 1 | | |
+| `UnterminatedString` | repaired | | 1 / 1 | string runs to the line end |
+| `UndeclaredVariable` | warning | 13 / 10 | | reads 0 (typos, journal IDs used as variables, a cell name in a numeric slot) |
+
+Rules defined but not fired by vanilla (kept for mods): `SpacedOperator`, `MissingEnd`,
+`MissingBegin`, `StatementsBeforeBegin`, `MissingEndIf`, `MismatchedBlockEnd`, `ElseIfAfterElse`,
+`ElseIfAsTwoWords`, `MissingCondition`, `SetWithoutTo`, `EmptyDeclaration`, `MissingArgument`,
+`ReferenceOnKeyword`, `UnknownMember(Object)`, `UnknownReference`, and the three errors.
+
+**Handoff to W2 (emitter).**
+- Input: `Parsed` from `parse_and_resolve` with an `Env` built from the record DB (the corpus test's
+  `CorpusEnv` is the model: GLOB types, all IDs, object → script, live scripts' locals). Inert
+  scripts emit a stub module and a report line.
+- Emit `VarRef` to module tables (`v[slot]` or `v.<key>`, `mw.globals.<key>`, `mw.member(obj,var)`,
+  speaker table), never Luau globals; `Arg::Missing` reads 0 / "".
+- `Stmt::line` → `-- L<n>`; `FnId` → `functions.txt` row: add a `status` column (live / stub /
+  later) next to `family` for the coverage report. Call sites by family (vanilla, scripts + results):
+  journal 6,198, inventory 3,560, dialogue 3,546, placement 3,200, disposition 2,220, ai 1,568,
+  faction 810, combat 759, magic 659, ui 604, audio 549, map 543, stats 454, activation 428,
+  scripts 403, menu 308, events 268, deaths 255, clock 248, the rest < 120 each.
+- Still open: integer division and short/float comparison quirks (open question 1) need the oracle;
+  ID-kind checks of arguments; `ElseIf` after an extra `EndIf` and stray `EndIf` repairs should be
+  confirmed against OpenMW's behaviour on the same vanilla scripts (`HentusTravel`, `GlenmorilRaven`).
 
 ## Verification
 

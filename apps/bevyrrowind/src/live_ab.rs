@@ -104,6 +104,8 @@ struct Switches<'w> {
     time: Option<ResMut<'w, SkyTime>>,
     config: Option<Res<'w, SkyConfig>>,
     clouds: Option<ResMut<'w, sf_atmos_bevy::Clouds>>,
+    /// Haze and dust follow the C key's cloud genus.
+    sky_weather: Option<ResMut<'w, crate::exterior::SkyWeather>>,
     /// Characters: smooth or vanilla bodies (B, `actors.rs`).
     bodies: Option<Res<'w, sf_character_bevy::CharacterSettings>>,
     /// Seamless portals (`--portals`): the exposure strength when on.
@@ -171,6 +173,9 @@ fn keys(
         *cloud_preset = (*cloud_preset + 1) % crate::exterior::CLOUD_GENERA;
         let choice = crate::exterior::CLOUD_CHOICES[*cloud_preset];
         c.settings = crate::exterior::cloud_settings(choice);
+        if let Some(w) = s.sky_weather.as_mut() {
+            w.look = choice.sky;
+        }
         note(format!("clouds {}", choice.name));
     }
     if input.just_pressed(KeyCode::F5) {

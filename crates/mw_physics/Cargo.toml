@@ -1,0 +1,14 @@
+[package]
+name = "mw_physics"
+description = "Morrowind physics rules for superfargoth: which placements are items, record weight to simulated mass"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sf_records.workspace = true
+sf_world.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[lints]
+workspace = true

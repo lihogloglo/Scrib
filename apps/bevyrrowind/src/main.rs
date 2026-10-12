@@ -14,6 +14,7 @@ mod actor_particles;
 mod faces;
 mod held;
 mod live_ab;
+mod night_sky;
 mod perf;
 mod physics;
 mod portal_spike;
@@ -46,6 +47,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[expect(clippy::large_enum_variant, reason = "parsed once at startup; `view` carries every flag")]
 enum Command {
     /// Show where detection looks and what it finds.
     Detect,
@@ -187,9 +189,23 @@ struct ViewFlags {
     /// thunderstorm, ashstorm, blight, snow, blizzard). `--off clouds` drops them.
     #[arg(long, default_value = "fair", value_parser = parse_clouds)]
     clouds: exterior::CloudChoice,
+    /// Exteriors: fixed aerosol haze (`sf_sky::Weather::haze`; 1 is a pristine Earth sky)
+    /// instead of the `--clouds` weather's, without the morning curve (weather.md N1).
+    #[arg(long)]
+    haze: Option<f32>,
+    /// Exteriors: fixed dust/ash density (0 none, ~6 an ash storm) instead of the weather's
+    /// (weather.md N2).
+    #[arg(long)]
+    dust: Option<f32>,
     /// Exteriors: time of day in hours.
     #[arg(long, default_value_t = 10.0)]
     hour: f64,
+    /// Exteriors: game day (days since the sky's epoch; moon phases advance one step every 3 days).
+    #[arg(long, default_value_t = 172.0)]
+    day: f64,
+    /// Exteriors: drawn sun disk diameter in degrees (Morrowind default 2.5; physical 0.53).
+    #[arg(long)]
+    sun_size: Option<f32>,
     /// Exteriors: quality preset: low, medium, high (default), ultra: view-distance bias
     /// (LOD, size culling, far-field handoff) and the size-culling cutoff (env `BEVYRROWIND_QUALITY`).
     #[arg(long, value_parser = parse_quality)]
@@ -418,7 +434,11 @@ impl ViewFlags {
             far_tint: self.far_tint,
             prepass: self.prepass,
             hour: self.hour,
+            day: self.day,
+            sun_size: self.sun_size,
             clouds: self.clouds,
+            haze: self.haze,
+            dust: self.dust,
             quality: exterior::Quality::resolve(self.quality),
             perf,
             lights: light_infos(db),

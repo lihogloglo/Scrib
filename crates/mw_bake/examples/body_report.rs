@@ -54,5 +54,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mesh = models_report.steps.get("mesh.cook").copied().unwrap_or_default();
     println!("load {loaded:.2?}; item models {models_time:.2?} (mesh.cook built {} hit {})", mesh.built, mesh.hits);
     print!("{report}");
+    // `SF_ITEMS_CELL="<interior cell>"`: that cell's items with their
+    // `items.check` result and the items' bounds (spot checks, scene cameras).
+    if let Ok(cell) = std::env::var("SF_ITEMS_CELL") {
+        let ws = mw_world::ids::interior(&cell);
+        let items = mw_bake::body::worldspace_items(&store, &saved, &ws);
+        let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+        for it in &items {
+            let c = &it.check;
+            println!(
+                "  {:<28} {:<40} at {:>7.2} {:>6.2} {:>7.2}  {:?} drop {:.3} rise {:.3} shift {:.3}",
+                it.base, it.model, it.pos[0], it.pos[1], it.pos[2], c.hold, c.drop, c.rise, c.shift
+            );
+            for i in 0..3 {
+                lo[i] = lo[i].min(it.pos[i]);
+                hi[i] = hi[i].max(it.pos[i]);
+            }
+        }
+        println!("{cell}: {} items, bounds {lo:.2?} .. {hi:.2?}", items.len());
+        // `SF_ITEMS_NEAR="x,y,z"`: the cell's other placements whose origin is
+        // within 3 m of that point, with their collision mesh (triangles and
+        // bounds): what an unsupported item should have rested on.
+        if let Some(near) = std::env::var("SF_ITEMS_NEAR").ok().and_then(|s| parse_point(&s)) {
+            statics_near(&store, &saved, &ws, near);
+        }
+    }
     Ok(())
+}
+
+fn parse_point(s: &str) -> Option<[f64; 3]> {
+    let v: Vec<f64> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    (v.len() == 3).then(|| [v[0], v[1], v[2]])
+}
+
+fn statics_near(store: &Store, manifest: &sf_bake::Manifest, ws: &sf_world::WorldspaceId, near: [f64; 3]) {
+    let prefix = format!("{}/", ws.as_str());
+    let read = |step: &str, subject: &str| manifest.get(step, subject).and_then(|d| store.get(&d).ok());
+    for key in manifest.products.keys().filter(|k| k.step == sf_world::bake::PAGE_STEP && k.subject.starts_with(&prefix)) {
+        let Some(Ok(page)) = read(&key.step, &key.subject).map(|b| sf_world::IndexPage::from_bytes(&b)) else { continue };
+        for p in page.cells.iter().flat_map(|c| c.placements.iter().map(|p| &p.placement)) {
+            let pos = p.transform.pos.to_f64().to_array();
+            let d = (0..3).map(|i| (pos[i] - near[i]).powi(2)).sum::<f64>().sqrt();
+            let Some(model) = p.model.as_ref().map(sf_vfs::VfsPath::as_str) else { continue };
+            if d > 3.0 {
+                continue;
+            }
+            let mesh = read(sf_controller::steps::COLLISION_COOK, model)
+                .and_then(|b| sf_controller::CollisionMesh::from_bytes(&b).ok());
+            let info = mesh.map_or_else(
+                || "no collision.cook".to_owned(),
+                |m| {
+                    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+                    for q in &m.positions {
+                        for i in 0..3 {
+                            lo[i] = lo[i].min(q[i]);
+                            hi[i] = hi[i].max(q[i]);
+                        }
+                    }
+                    format!("{} tris, local {lo:.2?} .. {hi:.2?}", m.triangles.len())
+                },
+            );
+            println!(
+                "  near {:<28} {:<40} {:?} at {:>7.2} {:>6.2} {:>7.2} rot {:?} scale {:.2}: {info}",
+                p.base.id.as_str(),
+                model,
+                p.class,
+                pos[0],
+                pos[1],
+                pos[2],
+                p.transform.rotation,
+                p.transform.scale.x
+            );
+        }
+    }
 }

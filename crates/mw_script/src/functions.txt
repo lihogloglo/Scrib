@@ -1,0 +1,278 @@
+# MWScript function table (scripting-adapter.md "The `mw` runtime library").
+# Written from the public function lists (UESP "Morrowind:Script Functions", Tribunal and
+# Bloodmoon additions); signatures checked against the vanilla corpus (W1 real-install test).
+#
+# Extra trailing arguments the engine ignores are modelled as `num*` / `?` tails where the corpus
+# uses them (AIFollow/AIEscort reset flags, StopCombat target, Face third value).
+#
+# Columns (whitespace separated):
+#   name     canonical name; `|` adds aliases; `{$LIST}` or `{A,B}` expands to one row per item
+#   args     comma separated; `-` = none. Kinds: id (record/object ID, bare or quoted), text
+#            (string), num (numeric value), axis (X/Y/Z), any (string or value).
+#            Suffix `?` = optional, `*` = zero or more (last only).
+#   returns  void | int | float
+#   family   groups functions for the M5/M7 status table (W2 coverage report)
+#   ref      r = acts on a reference (implicit or `id->`); - = global function
+#
+# Lists:
+$ATTRS = Strength,Intelligence,Willpower,Agility,Speed,Endurance,Personality,Luck
+$SKILLS = Block,Armorer,MediumArmor,HeavyArmor,BluntWeapon,LongBlade,Axe,Spear,Athletics,Enchant,Destruction,Alteration,Illusion,Conjuration,Mysticism,Restoration,Alchemy,Unarmored,Security,Sneak,Acrobatics,LightArmor,ShortBlade,Marksman,Mercantile,Speechcraft,HandToHand
+$DYN = Health,Magicka,Fatigue
+$AISTATS = Hello,Fight,Flee,Alarm
+$EFFECTS = ResistMagicka,ResistFire,ResistFrost,ResistShock,ResistDisease,ResistBlight,ResistCorprus,ResistPoison,ResistParalysis,ResistNormalWeapons,WaterBreathing,Chameleon,WaterWalking,SwimSpeed,SuperJump,Flying,ArmorBonus,CastPenalty,Silence,Blindness,Paralysis,Invisible,AttackBonus,DefendBonus
+$MENUS = BirthMenu,ClassMenu,InventoryMenu,LevelUpMenu,MagicMenu,MapMenu,NameMenu,RaceMenu,StatsMenu,StatReviewMenu,Rest
+$PLAYERFLAGS = PlayerControls,PlayerFighting,PlayerJumping,PlayerLooking,PlayerMagic,PlayerViewSwitch,Teleporting,Levitation,VanityMode
+$FORCE = Jump,MoveJump,Run,Sneak
+
+# --- frame, menus, scripts -------------------------------------------------------------
+MenuMode                -                   int    menu        -
+GetSecondsPassed        -                   float  clock       -
+Random                  num                 int    control     -
+GetSquareRoot           num                 float  control     -
+StartScript             id                  void   scripts     r
+StopScript              id                  void   scripts     -
+ScriptRunning           id                  int    scripts     -
+XBox                    -                   int    control     -
+GetDeadCount            id                  int    deaths      -
+
+# --- activation, events, locks, enable ---------------------------------------------------
+Activate                -                   void   activation  r
+OnActivate              -                   int    activation  r
+OnDeath                 -                   int    events      r
+OnKnockout              -                   int    events      r
+OnMurder                -                   int    events      r
+OnPCAdd                 -                   int    events      r
+OnPCDrop                -                   int    events      r
+OnPCEquip               -                   int    events      r
+OnPCHitMe               -                   int    events      r
+OnPCRepair              -                   int    events      r
+OnPCSoulGemUse          -                   int    events      r
+OnRepair                -                   int    events      r
+HitOnMe                 id                  int    events      r
+HitAttemptOnMe          id                  int    events      r
+Lock                    num?                void   lock        r
+Unlock                  -                   void   lock        r
+GetLocked               -                   int    lock        r
+Enable                  -                   void   placement   r
+Disable                 -                   void   placement   r
+GetDisabled             -                   int    placement   r
+SetDelete               num                 void   placement   r
+
+# --- placement ----------------------------------------------------------------------------
+GetPos                  axis                float  placement   r
+SetPos                  axis,num            void   placement   r
+GetAngle                axis                float  placement   r
+SetAngle                axis,num            void   placement   r
+GetStartingPos          axis                float  placement   r
+GetStartingAngle        axis                float  placement   r
+SetAtStart              -                   void   placement   r
+Move                    axis,num            void   placement   r
+MoveWorld               axis,num            void   placement   r
+Rotate                  axis,num            void   placement   r
+RotateWorld             axis,num            void   placement   r
+Position                num,num,num,num     void   placement   r
+PositionCell            num,num,num,num,id  void   placement   r
+PlaceAtPC               id,num,num,num      void   placement   -
+PlaceAtMe               id,num,num,num      void   placement   r
+PlaceItem               id,num,num,num,num  void   placement   -
+PlaceItemCell           id,id,num,num,num,num void placement   -
+GetDistance             id                  float  placement   r
+GetScale                -                   float  placement   r
+SetScale                num                 void   placement   r
+ModScale                num                 void   placement   r
+GetLineOfSight|GetLOS   id                  int    placement   r
+GetPCCell               id                  int    placement   -
+GetInterior             -                   int    placement   -
+CellChanged             -                   int    placement   -
+GetWaterLevel           -                   float  placement   -
+SetWaterLevel           num                 void   placement   -
+ModWaterLevel           num                 void   placement   -
+CenterOnCell|COC        id                  void   console     -
+CenterOnExterior|COE    num,num             void   console     -
+
+# --- UI -------------------------------------------------------------------------------------
+MessageBox              text,any*           void   ui          -
+GetButtonPressed        -                   int    ui          -
+FadeIn                  num                 void   ui          -
+FadeOut                 num                 void   ui          -
+FadeTo                  num,num             void   ui          -
+Enable{$MENUS}          -                   void   ui          -
+ShowRestMenu            -                   void   ui          -
+MenuTest                num?                void   ui          -
+ToggleMenus|TM          -                   void   console     -
+PlayBink                text,num            void   ui          -
+ShowMap                 id                  void   map         -
+FillMap                 -                   void   map         -
+
+# --- player -------------------------------------------------------------------------------
+Disable{$PLAYERFLAGS}   -                   void   player      -
+Enable{$PLAYERFLAGS}    -                   void   player      -
+GetPlayer{ControlsDisabled,FightingDisabled,JumpingDisabled,LookingDisabled,MagicDisabled,ViewSwitch} - int player -
+PCForce1stPerson        -                   void   player      -
+PCForce3rdPerson        -                   void   player      -
+PCGet3rdPerson          -                   int    player      -
+GetPCRunning            -                   int    player      -
+GetPCSneaking           -                   int    player      -
+GetPCJumping            -                   int    player      -
+GetPCSleep              -                   int    player      -
+GetPCTraveling          -                   int    player      -
+WakeUpPC                -                   void   player      -
+Force{$FORCE}           -                   void   ai          r
+ClearForce{$FORCE}      -                   void   ai          r
+GetForce{$FORCE}        -                   int    ai          r
+
+# --- journal, dialogue --------------------------------------------------------------------
+Journal                 id,num              void   journal     -
+SetJournalIndex         id,num              void   journal     -
+GetJournalIndex         id                  int    journal     -
+AddTopic                id                  void   journal     -
+Choice                  any*                void   dialogue    -
+Goodbye                 -                   void   dialogue    -
+ForceGreeting           -                   void   dialogue    r
+ClearInfoActor          -                   void   dialogue    r
+Say                     text,text           void   audio       r
+SayDone                 -                   int    audio       r
+
+# --- inventory, equipment -----------------------------------------------------------------
+AddItem                 id,num              void   inventory   r
+RemoveItem              id,num              void   inventory   r
+GetItemCount            id                  int    inventory   r
+Equip                   id                  void   inventory   r
+Drop                    id,num?             void   inventory   r
+HasItemEquipped         id                  int    inventory   r
+GetArmorType            num                 int    inventory   r
+GetWeaponType           -                   int    inventory   r
+GetWeaponDrawn          -                   int    combat      r
+AddSoulGem              id,id               void   inventory   r
+RemoveSoulGem           id,num?             void   inventory   r
+DropSoul                id                  void   inventory   r
+HasSoulGem              id                  int    inventory   r
+
+# --- magic ---------------------------------------------------------------------------------
+AddSpell                id                  void   magic       r
+RemoveSpell             id                  void   magic       r
+GetSpell                id                  int    magic       r
+Cast                    id,id               void   magic       r
+ExplodeSpell            id                  void   magic       r
+GetSpellEffects         id                  int    magic       r
+RemoveSpellEffects      id                  void   magic       r
+RemoveEffects           num                 void   magic       r
+GetEffect               id                  int    magic       r
+GetSpellReadied         -                   int    magic       r
+GetCommonDisease        -                   int    magic       r
+GetBlightDisease        -                   int    magic       r
+Resurrect               -                   void   stats       r
+
+# --- stats ---------------------------------------------------------------------------------
+Get{$ATTRS}             -                   float  stats       r
+Set{$ATTRS}             num                 void   stats       r
+Mod{$ATTRS}             num                 void   stats       r
+Get{$SKILLS}            -                   float  stats       r
+Set{$SKILLS}            num                 void   stats       r
+Mod{$SKILLS}            num                 void   stats       r
+Get{$DYN}               -                   float  stats       r
+Set{$DYN}               num                 void   stats       r
+Mod{$DYN}               num                 void   stats       r
+ModCurrent{$DYN}        num                 void   stats       r
+Get{$DYN}GetRatio       -                   float  stats       r
+Get{$EFFECTS}           -                   int    stats       r
+Set{$EFFECTS}           num                 void   stats       r
+Mod{$EFFECTS}           num                 void   stats       r
+Get{$AISTATS}           -                   int    ai          r
+Set{$AISTATS}           num                 void   ai          r
+Mod{$AISTATS}           num                 void   ai          r
+GetLevel                -                   int    stats       r
+SetLevel                num                 void   stats       r
+GetDisposition          -                   int    disposition r
+SetDisposition          num                 void   disposition r
+ModDisposition          num                 void   disposition r
+GetReputation           -                   int    disposition r
+SetReputation           num                 void   disposition r
+ModReputation           num                 void   disposition r
+GetRace                 id                  int    stats       r
+
+# --- factions, crime ------------------------------------------------------------------------
+GetPCRank               id?                 int    faction     r
+PCRaiseRank             id?                 void   faction     r
+PCLowerRank             id?                 void   faction     r
+PCJoinFaction           id?                 void   faction     r
+PCExpell                id?                 void   faction     r
+PCExpelled              id?                 int    faction     r
+PCClearExpelled         id?                 void   faction     r
+ModPCFacRep             num,id?             void   faction     r
+SetPCFacRep             num,id?             void   faction     r
+GetPCFacRep             id?                 int    faction     r
+RaiseRank               -                   void   faction     r
+LowerRank               -                   void   faction     r
+SameFaction             -                   int    faction     r
+GetFactionReaction      id,id               int    faction     -
+SetFactionReaction      id,id,num           void   faction     -
+ModFactionReaction      id,id,num           void   faction     -
+GetPCCrimeLevel         -                   int    crime       -
+SetPCCrimeLevel         num                 void   crime       -
+ModPCCrimeLevel         num                 void   crime       -
+PayFine                 -                   void   crime       -
+PayFineThief            -                   void   crime       -
+GoToJail                -                   void   crime       -
+GetPCInJail             -                   int    crime       -
+
+# --- AI, combat -----------------------------------------------------------------------------
+AIActivate              id,num?             void   ai          r
+AIEscort                id,num,num,num,num,num* void ai        r
+AIEscortCell            id,id,num,num,num,num,num* void ai     r
+AIFollow                id,num,num,num,num,num* void ai        r
+AIFollowCell            id,id,num,num,num,num,num* void ai     r
+AITravel                num,num,num,num?    void   ai          r
+AIWander                num,num,num,num*    void   ai          r
+GetAIPackageDone        -                   int    ai          r
+GetCurrentAIPackage     -                   int    ai          r
+GetTarget               id                  int    combat      r
+GetDetected             id                  int    ai          r
+GetAttacked             -                   int    combat      r
+StartCombat             id                  void   combat      r
+StopCombat              id?                 void   combat      r
+Face                    num,num,num?        void   ai          r
+GetCollidingActor       -                   int    physics     r
+GetCollidingPC          -                   int    physics     r
+GetStandingActor        -                   int    physics     r
+GetStandingPC           -                   int    physics     r
+HurtStandingActor       num                 void   physics     r
+HurtCollidingActor      num                 void   physics     r
+Fall                    -                   void   physics     r
+
+# --- animation, sound -----------------------------------------------------------------------
+PlayGroup               id,num?             void   anim        r
+LoopGroup               id,num,num?         void   anim        r
+SkipAnim                -                   void   anim        r
+PlaySound               id                  void   audio       -
+PlaySoundVP             id,num,num          void   audio       -
+PlaySound3D             id                  void   audio       r
+PlaySound3DVP           id,num,num          void   audio       r
+PlayLoopSound3D         id                  void   audio       r
+PlayLoopSound3DVP       id,num,num          void   audio       r
+StopSound               id                  void   audio       r
+GetSoundPlaying         id                  int    audio       r
+StreamMusic             text                void   audio       -
+
+# --- weather, sky ---------------------------------------------------------------------------
+ChangeWeather           id,num              void   weather     -
+ModRegion               id,num*             void   weather     -
+GetCurrentWeather       -                   int    weather     -
+GetWindSpeed            -                   float  weather     -
+GetMasserPhase          -                   int    weather     -
+GetSecundaPhase         -                   int    weather     -
+TurnMoonRed             -                   void   weather     -
+TurnMoonWhite           -                   void   weather     -
+
+# --- levelled lists, werewolves, misc --------------------------------------------------------
+AddToLevCreature        id,id,num           void   levelled    -
+RemoveFromLevCreature   id,id,num           void   levelled    -
+AddToLevItem            id,id,num           void   levelled    -
+RemoveFromLevItem       id,id,num           void   levelled    -
+BecomeWerewolf          -                   void   werewolf    r
+UndoWerewolf            -                   void   werewolf    r
+IsWerewolf              -                   int    werewolf    r
+SetWerewolfAcrobatics   -                   void   werewolf    r
+GetWerewolfKills        -                   int    werewolf    -
+DontSaveObject          -                   void   console     -
+FixMe                   -                   void   console     -

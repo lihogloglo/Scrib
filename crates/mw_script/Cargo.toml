@@ -1,0 +1,15 @@
+[package]
+name = "mw_script"
+description = "MWScript front end: lenient lexer and parser with named leniency rules, AST, function table, name resolution (scripting-adapter.md). Bevy-free; the Luau emitter (W2) builds on it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+mw_install.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[lints]
+workspace = true

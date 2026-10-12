@@ -35,6 +35,7 @@ mw_bake.workspace = true
 mw_graphs.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
+mw_physics = { path = "../../crates/mw_physics" }
 mw_records.workspace = true
 mw_vfs.workspace = true
 mw_world.workspace = true

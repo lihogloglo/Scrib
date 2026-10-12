@@ -69,8 +69,10 @@ mw_anim = { path = "crates/mw_anim" }
 mw_bake = { path = "crates/mw_bake" }
 mw_graphs = { path = "crates/mw_graphs" }
 mw_nif = { path = "crates/mw_nif" }
+mw_physics = { path = "crates/mw_physics" }
 mw_install = { path = "crates/mw_install" }
 mw_records = { path = "crates/mw_records" }
+mw_script = { path = "crates/mw_script" }
 mw_world = { path = "crates/mw_world" }
 mw_vfs = { path = "crates/mw_vfs" }
 

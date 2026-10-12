@@ -9,7 +9,7 @@
 //! - [`MwItemsRules`]: which placements are items (`PlacementClass::Dynamic`
 //!   plus carryable lights), carryable lights always held until grabbed,
 //!   terrain in the exterior.
-//! - [`item_mass`]: record weight → simulated mass.
+//! - Mass: `mw_physics::item_mass` (record weight → simulated mass).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
@@ -23,26 +23,11 @@ use sf_bake::{BakeError, Baker, Manifest, PlanCx, ProductKey, RunCx, StepStats, 
 use sf_physics::cook::{BodyShape, BodySource, FitSettings, PartShape};
 use sf_physics::steps::{BODY_COOK, BodyCookStep, BodyRules, CheckSettings, Hold, ITEMS_CHECK, ItemChecks, ItemsCheckStep, ItemsRules};
 use sf_records::{RecordDb, RecordId};
-use sf_world::{Placement, PlacementClass, WorldspaceId};
+use sf_world::{IndexPage, Placement, WorldspaceId};
+pub use mw_physics::{KG_PER_WEIGHT, MASS_RANGE, WEIGHTLESS_DENSITY, item_mass};
 use tes3::esp::{
     Alchemy, Apparatus, Armor, Book, Clothing, Ingredient, Light, LightFlags, Lockpick, MiscItem, Probe, RepairItem, Weapon,
 };
-
-/// Morrowind weights read as roughly pounds (physics-adapter.md "Mass"): a
-/// visual calibration constant, not a rule.
-pub const KG_PER_WEIGHT: f32 = 0.5;
-/// Density for weightless items (gold, clutter), kg/m³.
-pub const WEIGHTLESS_DENSITY: f32 = 400.0;
-/// The framework's simulated mass clamp (`PhysicsParams::mass_range`).
-pub const MASS_RANGE: (f32, f32) = (0.2, 60.0);
-
-/// Simulated mass of an item: weight × [`KG_PER_WEIGHT`], or volume ×
-/// [`WEIGHTLESS_DENSITY`] for weight 0, clamped to [`MASS_RANGE`]. Burden
-/// and encumbrance keep the record weight. (Moves to `mw_physics` with P4.)
-pub fn item_mass(weight: f32, volume: f32) -> f32 {
-    let kg = if weight > 0.0 { weight * KG_PER_WEIGHT } else { volume * WEIGHTLESS_DENSITY };
-    kg.clamp(MASS_RANGE.0, MASS_RANGE.1)
-}
 
 fn is_nif(subject: &str) -> bool {
     subject.rsplit('.').next().is_some_and(|ext| ext.eq_ignore_ascii_case("nif"))
@@ -114,9 +99,7 @@ impl MwItemsRules {
     pub const VERSION: u32 = 1;
 
     pub fn new(db: &RecordDb) -> Self {
-        let mut ids: Vec<RecordId> =
-            db.iter::<Light>().filter(|(_, l)| l.data.flags.contains(LightFlags::CAN_CARRY)).map(|(id, _)| id.clone()).collect();
-        ids.sort();
+        let ids = mw_physics::carryable_lights(db);
         let joined = ids.iter().map(RecordId::as_str).collect::<Vec<_>>().join("\n");
         let digest = sf_bake::Digest::of(joined.as_bytes()).hex().into_bytes();
         Self { carryable: ids.into_iter().collect(), digest }
@@ -125,12 +108,12 @@ impl MwItemsRules {
 
 impl ItemsRules for MwItemsRules {
     fn is_item(&self, p: &Placement) -> bool {
-        p.class == PlacementClass::Dynamic || (p.class == PlacementClass::Light && self.carryable.contains(&p.base.id))
+        mw_physics::is_item(p, &self.carryable)
     }
     /// Carryable lights hang or stand where nothing would hold them in most
     /// of vanilla (physics-adapter.md "Items").
     fn always_hold(&self, p: &Placement) -> bool {
-        p.class == PlacementClass::Light
+        mw_physics::always_hold(p)
     }
     fn has_terrain(&self, ws: &WorldspaceId) -> bool {
         *ws == crate::world::exterior()
@@ -347,8 +330,12 @@ pub struct ItemsReport {
     pub overlaps: u32,
     /// Unsupported items per page (interiors: per cell), most first.
     pub unsupported: Vec<(String, u32)>,
+    /// Spot checks: unsupported items of the top pages (page, base id, model, drop m).
+    pub samples: Vec<(String, String, String, f32)>,
     pub statics: u64,
     pub terrain_patches: u64,
+    /// Statics tested with their `support.cook` mesh (their collision enclosed items).
+    pub supports: u64,
     pub failed: Vec<(String, String)>,
     pub step: Option<(StepStats, Duration)>,
 }
@@ -372,6 +359,7 @@ pub fn items_report(store: &Store, manifest: &Manifest, keys: &[ProductKey]) -> 
         out.pages += 1;
         out.statics += u64::from(checks.statics);
         out.terrain_patches += u64::from(checks.terrain_patches);
+        out.supports += checks.supports.len() as u64;
         let mut unsupported = 0;
         for c in &checks.items {
             out.items += 1;
@@ -384,6 +372,26 @@ pub fn items_report(store: &Store, manifest: &Manifest, keys: &[ProductKey]) -> 
         }
     }
     out.unsupported.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.samples = unsupported_samples(store, manifest, &out.unsupported);
+    out
+}
+
+/// Up to 3 unsupported items from each of the 6 pages with the most, with
+/// their base ids and models (spot checks of the settle test).
+fn unsupported_samples(store: &Store, manifest: &Manifest, pages: &[(String, u32)]) -> Vec<(String, String, String, f32)> {
+    let read = |step: &str, subject: &str| manifest.get(step, subject).and_then(|d| store.get(&d).ok());
+    let mut out = Vec::new();
+    for (subject, _) in pages.iter().take(6) {
+        let (Some(checks), Some(page)) = (read(ITEMS_CHECK, subject), read(sf_world::bake::PAGE_STEP, subject)) else { continue };
+        let (Ok(checks), Ok(page)) = (ItemChecks::from_bytes(&checks), IndexPage::from_bytes(&page)) else { continue };
+        let placements: BTreeMap<u128, &Placement> =
+            page.cells.iter().flat_map(|c| c.placements.iter().map(|p| (p.placement.id.0, &p.placement))).collect();
+        for c in checks.items.iter().filter(|c| c.hold == Hold::Unsupported).take(3) {
+            let Some(p) = placements.get(&c.id) else { continue };
+            let model = p.model.as_ref().map(|m| m.as_str().to_owned()).unwrap_or_default();
+            out.push((subject.clone(), p.base.id.as_str().to_owned(), model, c.drop));
+        }
+    }
     out
 }
 
@@ -392,17 +400,21 @@ impl fmt::Display for ItemsReport {
         let holds: Vec<String> = self.by_hold.iter().map(|(h, n)| format!("{h:?} {n}")).collect();
         writeln!(
             f,
-            "items.check: {} pages, {} items ({}), {} overlaps > 1 cm; {} statics + {} terrain patches tested, {} failed",
+            "items.check: {} pages, {} items ({}), {} overlaps > 1 cm; {} statics ({} with support meshes) + {} terrain patches tested, {} failed",
             self.pages,
             self.items,
             holds.join(", "),
             self.overlaps,
             self.statics,
+            self.supports,
             self.terrain_patches,
             self.failed.len()
         )?;
         let top: Vec<String> = self.unsupported.iter().take(8).map(|(p, n)| format!("{p} ({n})")).collect();
         writeln!(f, "  most unsupported: {}", top.join(", "))?;
+        for (page, id, model, drop) in &self.samples {
+            writeln!(f, "    {page}: {id} ({model}) dropped {drop:.2} m")?;
+        }
         if let Some((s, wall)) = &self.step {
             writeln!(f, "  step: built {} hit {} failed {}, run {:.2} s summed, wall {wall:.2?}", s.built, s.hits, s.failed, s.run_time.as_secs_f64())?;
         }
@@ -411,6 +423,39 @@ impl fmt::Display for ItemsReport {
         }
         Ok(())
     }
+}
+
+/// One item of a worldspace with its `items.check` result (spot checks).
+#[derive(Clone, Debug)]
+pub struct CellItem {
+    pub base: String,
+    pub model: String,
+    /// Absolute position, meters.
+    pub pos: [f64; 3],
+    pub check: sf_physics::steps::ItemCheck,
+}
+
+/// Every checked item of `ws` (all its pages), from a baked manifest.
+pub fn worldspace_items(store: &Store, manifest: &Manifest, ws: &WorldspaceId) -> Vec<CellItem> {
+    let prefix = format!("{}/", ws.as_str());
+    let read = |step: &str, subject: &str| manifest.get(step, subject).and_then(|d| store.get(&d).ok());
+    let mut out = Vec::new();
+    for key in manifest.products.keys().filter(|k| k.step == ITEMS_CHECK && k.subject.starts_with(&prefix)) {
+        let (Some(checks), Some(page)) = (read(ITEMS_CHECK, &key.subject), read(sf_world::bake::PAGE_STEP, &key.subject)) else { continue };
+        let (Ok(checks), Ok(page)) = (ItemChecks::from_bytes(&checks), IndexPage::from_bytes(&page)) else { continue };
+        let placements: BTreeMap<u128, &Placement> =
+            page.cells.iter().flat_map(|c| c.placements.iter().map(|p| (p.placement.id.0, &p.placement))).collect();
+        for c in checks.items {
+            let Some(p) = placements.get(&c.id) else { continue };
+            out.push(CellItem {
+                base: p.base.id.as_str().to_owned(),
+                model: p.model.as_ref().map(|m| m.as_str().to_owned()).unwrap_or_default(),
+                pos: p.transform.pos.to_f64().to_array(),
+                check: c,
+            });
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -451,13 +496,5 @@ mod tests {
         nif.had_skin = false;
         nif.nodes.truncate(2);
         assert!(authored_parts(&nif).is_none());
-    }
-
-    #[test]
-    fn mass_from_weight_or_volume_clamped() {
-        assert!((item_mass(10.0, 0.0) - 5.0).abs() < 1e-6);
-        assert!((item_mass(0.0, 0.001) - 0.4).abs() < 1e-6, "weightless: volume × 400");
-        assert!((item_mass(0.1, 0.0) - MASS_RANGE.0).abs() < 1e-6);
-        assert!((item_mass(500.0, 0.0) - MASS_RANGE.1).abs() < 1e-6);
     }
 }

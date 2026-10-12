@@ -18,6 +18,8 @@ mw_anim.workspace = true
 mw_graphs.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
+# Item rules and mass (`body.cook` report, `items.check` rules).
+mw_physics.workspace = true
 mw_records.workspace = true
 mw_world.workspace = true
 # `mw.anim.groups` products.

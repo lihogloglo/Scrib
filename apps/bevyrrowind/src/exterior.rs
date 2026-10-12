@@ -39,7 +39,7 @@ use sf_diag_bevy::{DiagCounters, DiagScenario, FlyThroughPose};
 use sf_model::steps::MeshCookStep;
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_sky_bevy::sf_sky::{SkyClock, SkySettings};
-use sf_sky_bevy::{MoonLight, SkyCamera, SkyPlugin, SkyRenderOptions, SunLight, TemporalHistory};
+use sf_sky_bevy::{MoonLight, SkyCamera, SkyConfig, SkyPlugin, SkyRenderOptions, SkyTime, SunLight, TemporalHistory, WeatherState};
 use sf_terrain_bevy::sf_terrain::bake::BakedTerrain;
 use sf_terrain_bevy::{GroundBlendPlugin, TerrainCamera, TerrainDebug, TerrainOrigin, TerrainPlugin, TerrainSettings, TerrainStats, TerrainSystems, TerrainWorld};
 use sf_vfs::Vfs;
@@ -81,8 +81,15 @@ pub struct ExteriorOptions {
     /// Depth + motion-vector prepass with occlusion culling (A/B experiment).
     pub prepass: bool,
     pub hour: f64,
+    /// Game day for the clock (`--day`; moon phases).
+    pub day: f64,
+    /// Drawn sun disk diameter, degrees (`--sun-size`).
+    pub sun_size: Option<f32>,
     /// Cloud weather preset (`--clouds`).
     pub clouds: CloudChoice,
+    /// Fixed haze and dust (`--haze`, `--dust`) instead of the weather's (weather.md N1/N2).
+    pub haze: Option<f32>,
+    pub dust: Option<f32>,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
     /// Benchmark, window size and A/B switches.
@@ -174,7 +181,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         crate::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone());
     }
     if !perf.off.has(Part::Physics) {
-        crate::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug);
+        crate::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
     }
     // The quality preset scales LOD selection, size culling and the
     // far-field handoff with one bias (`--off sizecull`: no size culling).
@@ -210,7 +217,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // The night exposure floor and ambient (LightCalibration, owner option A).
     let mut settings = SkySettings::default();
     options.calibration.apply_sky(&mut settings);
-    let mut clock = SkyClock::at(172.0, options.hour, &settings.calendar);
+    crate::night_sky::apply(&mut settings);
+    if let Some(degrees) = options.sun_size {
+        settings.sun_disk.angular_size = degrees.to_radians();
+    }
+    let mut clock = SkyClock::at(options.day, options.hour, &settings.calendar);
     clock.paused = options.screenshot.is_some() || bench;
     render.insert(&mut app);
     app.insert_resource(render.point_shadow_budget(options.quality.point_shadows()));
@@ -220,6 +231,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         cascades: sun_cascades(&far_settings.levels, off_parts.has(Part::ShadowTune)),
         ..SkyRenderOptions::default()
     });
+    // weather.md N1/N2: haze and dust follow the `--clouds` weather (or `--haze`/`--dust`).
+    app.insert_resource(SkyWeather { look: options.clouds.sky, haze: options.haze, dust: options.dust })
+        .add_systems(Update, drive_sky_weather.before(sf_sky_bevy::SkySystems::Apply));
     // weather.md A1: the cascades keep Bevy's 2048² maps. 4096² measured
     // +1.4 ms at 1440p (2026-10-12), over the High budget; the tighter
     // 504 m range already sharpens every cascade vs. the old 600 m.
@@ -884,6 +898,8 @@ pub(crate) struct CloudChoice {
     pub name: &'static str,
     pub preset: Cp,
     pub cloud_speed: f32,
+    /// What the weather does to the sky's medium (haze, dust).
+    pub sky: SkyLook,
 }
 
 /// The genera (the `sf_atmos` presets, at a typical Morrowind speed) and the
@@ -891,27 +907,27 @@ pub(crate) struct CloudChoice {
 /// look (weather-adapter.md "Clouds"); speeds are the Morrowind.ini
 /// `[Weather *] Cloud Speed` defaults (the adapter reads the ini later).
 pub(crate) const CLOUD_CHOICES: [CloudChoice; 19] = [
-    CloudChoice { name: "clear", preset: Cp::Clear, cloud_speed: 1.25 },
-    CloudChoice { name: "fair", preset: Cp::Fair, cloud_speed: 2.0 },
-    CloudChoice { name: "cumulus", preset: Cp::Cumulus, cloud_speed: 2.0 },
-    CloudChoice { name: "stratocumulus", preset: Cp::Stratocumulus, cloud_speed: 1.5 },
-    CloudChoice { name: "altocumulus", preset: Cp::Altocumulus, cloud_speed: 2.0 },
-    CloudChoice { name: "altostratus", preset: Cp::Altostratus, cloud_speed: 1.5 },
-    CloudChoice { name: "cirrus", preset: Cp::Cirrus, cloud_speed: 2.0 },
-    CloudChoice { name: "overcast", preset: Cp::Overcast, cloud_speed: 1.5 },
-    CloudChoice { name: "storm", preset: Cp::Storm, cloud_speed: 3.0 },
+    CloudChoice { name: "clear", preset: Cp::Clear, cloud_speed: 1.25, sky: SKY_CLEAR },
+    CloudChoice { name: "fair", preset: Cp::Fair, cloud_speed: 2.0, sky: SKY_FAIR },
+    CloudChoice { name: "cumulus", preset: Cp::Cumulus, cloud_speed: 2.0, sky: SKY_FAIR },
+    CloudChoice { name: "stratocumulus", preset: Cp::Stratocumulus, cloud_speed: 1.5, sky: SKY_FAIR },
+    CloudChoice { name: "altocumulus", preset: Cp::Altocumulus, cloud_speed: 2.0, sky: SKY_FAIR },
+    CloudChoice { name: "altostratus", preset: Cp::Altostratus, cloud_speed: 1.5, sky: SKY_FAIR },
+    CloudChoice { name: "cirrus", preset: Cp::Cirrus, cloud_speed: 2.0, sky: SKY_FAIR },
+    CloudChoice { name: "overcast", preset: Cp::Overcast, cloud_speed: 1.5, sky: SKY_OVERCAST },
+    CloudChoice { name: "storm", preset: Cp::Storm, cloud_speed: 3.0, sky: SKY_OVERCAST },
     // Morrowind weathers (`clear` and `overcast` share the genus names above).
-    CloudChoice { name: "cloudy", preset: Cp::Fair, cloud_speed: 2.0 },
-    CloudChoice { name: "foggy", preset: Cp::Altostratus, cloud_speed: 1.25 },
-    CloudChoice { name: "rain", preset: Cp::Overcast, cloud_speed: 2.0 },
-    CloudChoice { name: "thunderstorm", preset: Cp::Storm, cloud_speed: 3.0 },
-    CloudChoice { name: "ashstorm", preset: Cp::Stratocumulus, cloud_speed: 7.0 },
-    CloudChoice { name: "blight", preset: Cp::Stratocumulus, cloud_speed: 9.0 },
-    CloudChoice { name: "snow", preset: Cp::Overcast, cloud_speed: 1.5 },
-    CloudChoice { name: "blizzard", preset: Cp::Overcast, cloud_speed: 7.5 },
+    CloudChoice { name: "cloudy", preset: Cp::Fair, cloud_speed: 2.0, sky: SKY_FAIR },
+    CloudChoice { name: "foggy", preset: Cp::Altostratus, cloud_speed: 1.25, sky: SKY_FOGGY },
+    CloudChoice { name: "rain", preset: Cp::Overcast, cloud_speed: 2.0, sky: SKY_RAIN },
+    CloudChoice { name: "thunderstorm", preset: Cp::Storm, cloud_speed: 3.0, sky: SKY_THUNDER },
+    CloudChoice { name: "ashstorm", preset: Cp::Stratocumulus, cloud_speed: 7.0, sky: SKY_ASHSTORM },
+    CloudChoice { name: "blight", preset: Cp::Stratocumulus, cloud_speed: 9.0, sky: SKY_BLIGHT },
+    CloudChoice { name: "snow", preset: Cp::Overcast, cloud_speed: 1.5, sky: SKY_RAIN },
+    CloudChoice { name: "blizzard", preset: Cp::Overcast, cloud_speed: 7.5, sky: SKY_BLIZZARD },
     // Shorthands.
-    CloudChoice { name: "ash", preset: Cp::Stratocumulus, cloud_speed: 7.0 },
-    CloudChoice { name: "thunder", preset: Cp::Storm, cloud_speed: 3.0 },
+    CloudChoice { name: "ash", preset: Cp::Stratocumulus, cloud_speed: 7.0, sky: SKY_ASHSTORM },
+    CloudChoice { name: "thunder", preset: Cp::Storm, cloud_speed: 3.0, sky: SKY_THUNDER },
 ];
 
 /// The genera the viewer's C key cycles through.
@@ -927,6 +943,73 @@ impl CloudChoice {
 impl Default for CloudChoice {
     fn default() -> Self {
         CLOUD_CHOICES[1]
+    }
+}
+
+// -- haze and dust (weather.md N1/N2, weather-adapter.md "Haze") ---------------------
+
+/// What a weather does to the sky's medium: `sf_sky::Weather::haze` (1 is
+/// Bevy's clean-Earth aerosol, optical depth ~0.01) and `dust` (the
+/// absorbing dust/ash term), with the dust's absorption tint. A scaffold
+/// table until `mw_weather` presets carry it (M6 WE2/WE3).
+///
+/// Calibrated for Morrowind's compressed world, where the far field is 1-5
+/// km away (weather-adapter.md "Haze"): a clear day needs ground extinction
+/// near 9e-5 /m (haze 20, aerosol optical depth ~0.18, a typical clear
+/// continental day) for the mountains to sit back at all; the spec's first
+/// guess (2-3) assumed Earth-scale views and is invisible here.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SkyLook {
+    pub haze: f32,
+    pub dust: f32,
+    pub dust_tint: Vec3,
+}
+
+const fn sky_look(haze: f32, dust: f32) -> SkyLook {
+    SkyLook { haze, dust, dust_tint: Vec3::ONE }
+}
+const SKY_CLEAR: SkyLook = sky_look(20.0, 0.0);
+const SKY_FAIR: SkyLook = sky_look(24.0, 0.0);
+const SKY_OVERCAST: SkyLook = sky_look(32.0, 0.0);
+const SKY_RAIN: SkyLook = sky_look(48.0, 0.0);
+const SKY_THUNDER: SkyLook = sky_look(48.0, 0.0);
+const SKY_FOGGY: SkyLook = sky_look(60.0, 0.0);
+const SKY_BLIZZARD: SkyLook = sky_look(80.0, 0.0);
+/// Grey-brown ash (the model's dust colour).
+const SKY_ASHSTORM: SkyLook = sky_look(24.0, 4.0);
+/// Ash tinted red: more green/blue absorption leaves red.
+const SKY_BLIGHT: SkyLook = SkyLook { dust_tint: Vec3::new(0.6, 1.4, 1.9), ..SKY_ASHSTORM };
+
+/// Morning haze: dawn is the humid, still part of the day (aerosols swell,
+/// the night inversion traps them), so haze peaks ×1.5 at 6:30 and is back
+/// to the weather's value by 10:00. Dust doesn't follow it.
+pub(crate) fn morning_haze(hour: f32) -> f32 {
+    let x = if hour < 6.5 { (hour - 4.0) / 2.5 } else { (10.0 - hour) / 3.5 };
+    let x = x.clamp(0.0, 1.0);
+    1.0 + 0.5 * x * x * (3.0 - 2.0 * x)
+}
+
+/// The sky look in force and the `--haze`/`--dust` overrides (fixed values,
+/// no morning curve). The live C key swaps `look` with the cloud genus.
+#[derive(Resource, Clone, Copy, Debug)]
+pub(crate) struct SkyWeather {
+    pub look: SkyLook,
+    pub haze: Option<f32>,
+    pub dust: Option<f32>,
+}
+
+/// Feeds [`SkyWeather`] into `sf_sky`'s weather; the sky plugin rebuilds the
+/// medium (rate limited) when it moves by a step.
+fn drive_sky_weather(sky: Res<SkyWeather>, clock: Res<SkyTime>, config: Res<SkyConfig>, mut weather: ResMut<WeatherState>) {
+    let hour = clock.0.hour(&config.0.calendar);
+    let haze = sky.haze.unwrap_or(sky.look.haze * morning_haze(hour));
+    let dust = sky.dust.unwrap_or(sky.look.dust);
+    let w = &weather.0;
+    if (w.haze, w.dust, w.dust_tint) != (haze, dust, sky.look.dust_tint) {
+        let w = &mut weather.0;
+        w.haze = haze;
+        w.dust = dust;
+        w.dust_tint = sky.look.dust_tint;
     }
 }
 

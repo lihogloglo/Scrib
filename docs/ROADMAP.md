@@ -710,12 +710,31 @@ ragdolls; robes move." Tasks in dependency order:
   refresh); rolling resistance (20 rad/s², contact-gated) since rapier has none; dev key `V` throws a 3 kg ball.
   Tests: `sf_physics` `box_dropped_on_table_items_wakes_and_settles`, `refresh_before_first_step_keeps_new_bodies`,
   settle fixtures; `sf_physics_bevy` `moved_items_persist_through_deactivation` (PH-5 headless). Visual PH-1/PH-5
-  added (awaiting owner). **Open (P4 next session, in order):** rebuild + `bevyrrowind bake` for the oriented-mesh
-  census (if unsupported is still high, `SF_ITEMS_CELL=<cell>` on `body_report` lists a cell's items with drops);
-  `cargo test` mw_physics/mw_bake + pedantic clippy on both workspaces (only sf_physics* were clippy-checked: warnings
-  fixed by hand); PH-7 `camera:` near Arrille's counter + ≤ 3 debug screenshots; 60 m/s flight bench for insert peaks
-  (now two-phase) and the items' first-step cost; Tradehouse 0 wakes in 10 s; coverage freeze, kill height, held items
-  released by impulse.
+  added (awaiting owner).
+  **physics-p4b (2026-10-13), uncommitted; runs in the app.** Census v3 (one-sided statics) did not help: Unsupported
+  16,245 (38 %). Cause (body_report `SF_ITEMS_CELL` + new `SF_ITEMS_NEAR`): bookshelves and cabinets have an authored
+  collision proxy that is **one box around the whole piece**, so their clutter starts inside it. Fix (UE simple vs complex
+  collision): `items.check` tests whether a static's collision encloses an item center (`MeshShape::encloses`: the
+  nearest triangle below is a back face) and then uses the new `support.cook` (the `mesh.cook` LOD0 as a
+  `CollisionMesh`) for that placement, listed in `ItemChecks::supports` (format 2); the runtime gives those placements
+  the same mesh (`ItemContent::is_support`, `PhysicsBodySource::supports`), characters keep the proxy. Unsupported now
+  means the item's center **and** lowest bounds corner both dropped > 5 cm (a book tipping over in its row, or a bowl
+  rocking, is not a fall). **Census v6: Unsupported 3,478 / 42,582 (8.2 %)**, No 36,532, Rules 2,572; overlaps > 1 cm
+  12,491 (29 %); 2,288 statics (217 models) with support meshes; items.check 82 s summed, whole warm `bevyrrowind bake`
+  8.7 s. Top unsupported: weapons/shields/fishing poles on wall racks (Raven Rock smith, Maar Gan outpost: correct),
+  and books on `furn_de_bookshelf_02` in the Vivec libraries (still dropping: open). In the app (Arrille's, release):
+  **0 awake bodies in the 10 s after load** (peak 6 while loading), idle step 0.028 ms; load insert peak 0.80 ms/frame
+  (78 bodies, over the 0.5 ms gate). Fixed on the way: inserts **stalled forever** when one refresh estimate exceeded the
+  budget (2,015 bodies pending: now at least one static per frame); items woke before the counter/floor under them
+  existed and **fell through the world** (a shortsword at 82 m/s): items now wait until their worldspace has no static
+  left to insert; `--all-features` tests failed without a gizmo plugin (debug draw now `run_if` gizmos). PH-7 camera
+  added + sanity screenshot (`shots/physics/ph7_tradehouse_a.png`, shapes line up). `physics:` log: items, peak awake,
+  `awake item ...` lines. **Open (P5 handoff, in order):** flight bench (60 m/s) for insert peaks and items' first-step
+  cost (not run: tool cap); load insert peak 0.80 ms > 0.5 (time-slice the items phase too); `PhysicsParams::kill_height`
+  is `None` in the app: set a per-worldspace kill height (lowest static/terrain - margin) so fell-out recovery runs;
+  the Vivec library bookshelf case (`SF_ITEMS_CELL="Vivec, Library of Vivec" SF_ITEMS_NEAR="5.9,0.31,-3.65"`); one bowl
+  on the Tradehouse support shelf rocked until it slept (watch `awake item` lines); coverage freeze; held items released
+  by an impulse; `support.cook` surfaces are `DEFAULT` (render materials not mapped).
 - [ ] P5 Controller on physics (`sf_controller(_bevy)`): kinematic capsule bodies, sweeps against `STATIC | PROP`,
   capped push impulses on props and debris, `ImpactOnCharacter`, sliding on unwalkable slopes (locomotion.md open
   question 3); the mover stays in `Update`.
@@ -793,8 +812,12 @@ dependency order:
   Verify: `cargo test -p sf_script` (sandbox escape list, limits, isolation, round trip, determinism hash, reload keeps
   state); `cargo bench -p sf_script` numbers written into scripting.md "Performance budget"; clean-build delta of
   `luau0-src` recorded in the session log.
-- [ ] W1 `mw_script` lexer + lenient parser + function table (scripting-adapter.md "Pipeline" 1-2), Bevy-free, can run
-  in parallel with everything after A1/L1. Verify: real-install corpus test parses all 1,231 script texts and 17,144
+- [x] W1 (2026-10-13, m5-w1, uncommitted) built: `mw_script` (Bevy-free, no deps): lenient lexer + line parser with 40
+  named rules (accepted / repaired / warning / error = inert), `functions.txt` table (452 functions: arg kinds, returns,
+  status family), AST with `VarRef` = where state lives (no Luau globals), `resolve` over an `Env`. Real install: 1,231
+  script texts (1,207 live) + 17,144 results parse, **0 unrecoverable**, per-rule counts in scripting-adapter.md "As
+  built (W1)"; 11 tests, clippy clean. Original task text: `mw_script` lexer + lenient parser + function table
+  (scripting-adapter.md "Pipeline" 1-2), Bevy-free, can run in parallel with everything after A1/L1. Verify: real-install corpus test parses all 1,231 script texts and 17,144
   dialogue results, leniency rules counted, 0 unrecoverable (or each listed with a reason); counts only, no vanilla
   text committed.
 - [ ] A2 `sf_records` native record files (mods.md "Native record files"): kind registry with serde + fingerprints,
@@ -1109,6 +1132,7 @@ Newest first. One or two lines each: what changed, what was verified.
 
 - 2026-10-13 (m6-spec, docs only): M6 broken down ("## M6: Water, weather, surfaces": F1-F3, WD1-WD3, WE1-WE3, W0-W9, SU1-SU2, PR1-PR2, C1, G0-G2, T2, E1; WX-1..4; 7 owner decisions); new specs water.md (superfargoth) and water-adapter.md; ARCHITECTURE §10 entry; "M6–M10" → "M7–M10". bevy-aqua 0.1.3 evaluated (Bevy 0.19, no 0.20 branch, no floating origin, GPU queries, planar cameras): ported, not adopted. No builds.
 
+- 2026-10-13 (m5-w1, M5 W1): `mw_script` MWScript front end (lenient lexer, line parser, 452-function table, AST with state-location `VarRef`s, resolver). Real install: 1,231 script texts + 17,144 dialogue results parse with 0 unrecoverable; 20 rules fire (commas 2,307, `End name` 591, `=` as `==` 79, stray `EndIf` 30, extra-args 13, `ref->( call )` 33, ...), `Plague_Gedna`'s `GetStat` reads 0 instead of going inert; parse+resolve of everything ~0.1 s. 11 tests, clippy clean. Handoff for W2 in scripting-adapter.md "As built (W1)".
 - 2026-10-13 (m5-spec, docs only): M5 broken down ("## M5: Mods, Lua and UI", A1-A4, L1-L3, U1-U7, W1-W3, E1, X1-X2, MS-1..MS-6, 7 owner decisions); new specs scripting.md, mods.md (superfargoth) and scripting-adapter.md; ARCHITECTURE §10 entry. Runtime Luau via mlua 0.12.2 (state per mod), MWScript → Luau at bake time; corpus measured from the install (1,231 script texts / 981 KB / 49k lines, 17,144 dialogue results). No builds.
 - 2026-10-13 (clouds2, S1): cloud shadows were never applied (Bevy needs `pbr_clustered_decals` for light textures; now on), clouds 4x too big (weather tile 16 km, now real-scale 8 km + app scales sizes with heights 0.5), static (Morrowind `Cloud Speed` x 10 m/s + two-octave field evolution + rising billows), sun leaked through thick cloud (last 1 % transmittance kept; now snapped to 0; composite order was fine). Nine genus presets + 2-D cirrus sheet; `--clouds` takes genera and Morrowind weathers; `sf_atmos_bevy` example `clouds`; 8 `clouds-*` scenes, CL-1..6 awaiting owner. sf_atmos 14 tests, clippy clean; app clippy clean (mine). Not yet: app screenshots, GPU A/B (shared machine).
 - 2026-10-13 (clouds3, S1): ran the clouds in the release game: ground shadows show (pbr_clustered_decals fix confirmed), stratocumulus hides the sun disk and bloom, cumulus still dense from the ground (coverage 0.40 -> 0.34, soft column tops). GPU per-pass timers added (RenderDiagnostics spans); clouds were 1.35-1.70 ms, over the High budget (shadow map alone 0.44-0.69). Now toroidal, time-sliced shadow map (1/16 per frame, `sf_atmos::ShadowSlicer`) 0.04 ms; trace with continuous step length (fixes the horizontal banding), empty-space skipping, lighting LOD, max steps 64: clouds 0.91 fair / 0.79 cumulus / 0.52-0.62 overcast+storm (1440p, RTX 4060 Laptop, shared machine; frames CPU-bound, so pass timers, not frame deltas). sf_atmos 15 tests, clippy clean; CL-1/2/3/6 look-fors updated, awaiting owner.
@@ -1256,3 +1280,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (m5-l1): M5 L1 built (uncommitted): new Bevy-free `sf_script` (mlua 0.12.2 + Luau 0.740; workspace adds `mlua` dep and the crate), 16 tests pass in `send` and `NonSend`, clippy pedantic clean; spike (`cargo bench -p sf_script`, idle machine) confirms decision 1: Rust->Luau 66 ns raw / 148 ns guarded, Luau->Rust 38 ns, 50 contexts start in 15 ms, 394 KiB per empty context (budget raised to 512 KiB), save/restore ~30 ms/MiB (budget 5 -> 40), watchdog costs ~25 ns per safepoint (mlua trampoline); `send` kept, app-data world guard, `luau-jit` off. Clean-build delta: `mlua-sys` Luau C++ 66 s, new deps 82 s wall at -j 8 (jit +80 s).
 - 2026-10-13 (m5-a1): M5 A1 built (uncommitted): `sf_mods` repository (adapters + mods dirs, roots indexed once), profiles (`profiles/<name>.toml`: enabled, settings, limits), manifest `[optional]`/`[conflicts]`/`[ui]`, `ContentAdapter`, `load_profile` (steps 2-4; a broken mod drops with its dependents instead of failing the profile), `ModReport` (all step 1-4 issue types, MO2-style per-mod overrides), `ScriptPlan` for `sf_script::ContextConfig`; `sf_mods` now depends on `sf_vfs` + `sf_records` (lockfiles updated). 18 tests, clippy clean; mw_records still builds and passes. Spec: content paths are VFS paths inside the mod's roots, mount returns layers, limits profile-only (mods.md "As built (A1)", ARCHITECTURE §10).
 - 2026-10-13 (m6-f1): M6 F1 haze + dust built (uncommitted, [~]): `sf_sky` `Weather::dust`/`dust_tint`, `WeatherScale`, `MediumScales`, absorbing grey-brown dust term (2 km, SSA 0.87/0.81/0.71); `sf_sky_bevy` rate-limited medium rebuild (step + 0.25 s, `MediumStats`, ~2.8 ms CPU per rebuild, GPU unchanged); app `--haze`/`--dust`, per-weather haze/dust table following `--clouds` + morning curve; haze recalibrated for 1-5 km views (clear 20, not the spec's 2-3); scenes fg-*, check FG-1 awaiting owner; shots/f1. Known: noon sea-horizon seam with dust (F2).
+- 2026-10-13 (physics-p4b): M4 P4 in the app: items.check support meshes for statics whose box proxy encloses their clutter (`support.cook`) + fall = center and lowest point drop: Unsupported 38 % -> 8.2 % (wall racks mostly); Tradehouse 0 awake in 10 s; fixed insert starvation and items falling through before their statics loaded; flight bench, kill height, impulse release left for P5.
