@@ -17,6 +17,13 @@
 //!   the camera (every PBR material receives it). Toroidal (texels fixed in
 //!   the world, the light anchored in 2 km steps) and time-sliced: one band
 //!   of rows per frame (`CloudQuality::shadow_slices`, `sf_atmos::shadow`).
+//! - Fog ([`Fog`], weather.md "Fog", F2): the same node draws the height fog
+//!   and the ground-fog banks. The trace marches the banks' noise (16 steps,
+//!   quadratic, to `FogSettings::far`) and stores a modulation per traced
+//!   pixel; the composite applies both exponential layers' closed-form
+//!   optical depth to each full-resolution pixel's own depth, lit by the key
+//!   light and the sky-view LUT, in front of the clouds. Runs with the
+//!   clouds off too ([`Clouds::enabled`]); costs nothing without fog.
 //! - GPU timers: each pass is a `RenderDiagnosticsPlugin` span
 //!   (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`).
 //! - Floating origin: the app reports the absolute position of the
@@ -45,7 +52,7 @@ use bevy_time::Time;
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_atmos::scroll::TileOffsets;
-use sf_atmos::{CloudScroll, CloudSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
+use sf_atmos::{CloudScroll, CloudSettings, FogDrift, FogOffsets, FogSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 
 pub use sf_atmos;
 
@@ -60,6 +67,8 @@ pub const SHADOW_ANCHOR_CELL: f64 = 2_048.0;
 #[derive(Clone, Debug, Default)]
 pub struct CloudsPlugin {
     pub settings: CloudSettings,
+    /// Seeds [`Fog`] (default: no fog).
+    pub fog: FogSettings,
     pub seed: u64,
 }
 
@@ -71,6 +80,16 @@ pub struct Clouds {
     pub enabled: bool,
     /// Cloud shadows on the [`CloudShadowLight`].
     pub shadows: bool,
+}
+
+/// Height fog, ground-fog banks and the far fog (weather.md "Fog", F2), drawn
+/// by the same node as the clouds: the banks are marched in the cloud trace,
+/// the analytic layers applied per pixel in the composite. Weather writes
+/// `settings`; with no fog (or `enabled` off) the fog terms cost nothing.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct Fog {
+    pub settings: FogSettings,
+    pub enabled: bool,
 }
 
 /// The absolute world position (meters) of the origin of origin-relative
@@ -119,11 +138,19 @@ struct Scroll(CloudScroll);
 #[derive(Resource, Default)]
 struct Slicer(ShadowSlicer);
 
+#[derive(Resource, Default)]
+struct Drift(FogDrift);
+
 /// Per-frame values the render world needs (extracted).
 #[derive(Resource, Clone, Debug, Default)]
 pub(crate) struct CloudFrame {
     pub active: bool,
+    /// The clouds draw (`active` may hold for the fog alone).
+    pub clouds: bool,
     pub settings: CloudSettings,
+    /// The fog, when it draws.
+    pub fog: Option<FogSettings>,
+    pub fog_offsets: FogOffsets,
     pub offsets: TileOffsets,
     /// Wind displacement this frame (world X, Z), meters.
     pub wind_step: Vec2,
@@ -149,10 +176,13 @@ impl Plugin for CloudsPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "shaders/cloud_common.wesl");
         load_shader_library!(app, "shaders/cloud_density.wesl");
+        load_shader_library!(app, "shaders/fog.wesl");
+        load_shader_library!(app, "shaders/key_light.wesl");
         embedded_asset!(app, "shaders/cloud_trace.wesl");
         embedded_asset!(app, "shaders/cloud_resolve.wesl");
         embedded_asset!(app, "shaders/cloud_composite.wesl");
         embedded_asset!(app, "shaders/cloud_shadow.wesl");
+        embedded_asset!(app, "shaders/fog_light.wesl");
 
         let job = NoiseJob::default();
         let slot = job.0.clone();
@@ -170,6 +200,8 @@ impl Plugin for CloudsPlugin {
             .ok();
 
         app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true })
+            .insert_resource(Fog { settings: self.fog, enabled: true })
+            .init_resource::<Drift>()
             .insert_resource(job)
             .init_resource::<Scroll>()
             .init_resource::<Slicer>()
@@ -237,10 +269,12 @@ fn drive(
     mut commands: Commands,
     time: Res<Time>,
     clouds: Res<Clouds>,
+    fog: Res<Fog>,
     origin: Res<CloudsOrigin>,
     images: Res<CloudImages>,
     mut scroll: ResMut<Scroll>,
     mut slicer: ResMut<Slicer>,
+    mut drift: ResMut<Drift>,
     mut frame: ResMut<CloudFrame>,
     cameras: Query<(&GlobalTransform, &Camera), With<CloudCamera>>,
     mut lights: Query<ShadowLightItem, ShadowLightFilter>,
@@ -249,11 +283,15 @@ fn drive(
     let dt = time.delta_secs_f64();
     scroll.0.advance(s.weather.wind, s.look.evolve, dt, s.look.shape_tile);
     let camera = cameras.iter().find(|(_, c)| c.is_active).map(|(t, _)| t.translation());
-    let active = clouds.enabled && camera.is_some() && images.noise.is_some();
+    let fog_on = fog.enabled && fog.settings.any();
+    if fog_on {
+        drift.0.advance(fog.settings.wind, dt);
+    }
+    let active = (clouds.enabled || fog_on) && camera.is_some() && images.noise.is_some();
 
     let mut shadow = None;
     for (entity, mut transform, has_texture) in &mut lights {
-        let want = active && clouds.shadows;
+        let want = active && clouds.enabled && clouds.shadows;
         if want != has_texture {
             if want {
                 commands.entity(entity).insert(DirectionalLightTexture { image: images.shadow.clone(), tiled: true });
@@ -297,6 +335,9 @@ fn drive(
 
     *frame = CloudFrame {
         active,
+        clouds: clouds.enabled,
+        fog: fog_on.then_some(fog.settings),
+        fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
         settings: s,
         offsets: scroll.0.offsets([origin.0.x, origin.0.z], &s.look),
         #[allow(clippy::cast_possible_truncation)]

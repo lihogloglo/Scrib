@@ -4,12 +4,14 @@
 //!
 //! ```sh
 //! cargo run --release -p sf_atmos_bevy --example clouds -- [--preset fair] [--time 12]
-//!     [--view sky|sun|shadow|up] [--scale 1] [--wind 1] [--screenshot out.png] [--frames 150]
+//!     [--view sky|sun|shadow|up] [--scale 1] [--wind 1] [--fog 0] [--screenshot out.png] [--frames 150]
 //! ```
 //!
 //! Views: `sky` (eye height, looking along +X at 20°), `sun` (aimed at the sun:
 //! is the disk hidden behind thick cloud?), `shadow` (200 m up, looking down
 //! at 35°: cloud shadow patches and their edges on the ground), `up` (zenith).
+//! `--fog <visibility m>` adds height fog (100 m falloff) and ground-fog banks
+//! (weather.md "Fog", F2): from the `shadow` view the banks lie on the plane.
 //! Keys: C next genus, Space pause/run the clock, Up/Down wind ×2 / ÷2.
 
 use std::path::PathBuf;
@@ -19,7 +21,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::WindowResolution;
-use sf_atmos_bevy::sf_atmos::{CloudPreset, CloudSettings};
+use sf_atmos_bevy::sf_atmos::{fog, CloudPreset, CloudSettings, FogLayer, FogSettings};
 use sf_atmos_bevy::{CloudCamera, CloudShadowLight, Clouds, CloudsPlugin};
 use sf_sky_bevy::sf_sky::{RenderPath, SkyClock, SkySettings};
 use sf_sky_bevy::{CurrentSky, SkyCamera, SkyPlugin, SkyTime, SunLight};
@@ -33,10 +35,12 @@ struct Args {
     wind: f32,
     screenshot: Option<PathBuf>,
     frames: u32,
+    /// Height-fog visibility at the ground, meters (0: no fog).
+    fog: f32,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { preset: CloudPreset::Fair, hour: 12.0, view: "sky".into(), scale: 1.0, wind: 1.0, screenshot: None, frames: 150 };
+    let mut a = Args { preset: CloudPreset::Fair, hour: 12.0, view: "sky".into(), scale: 1.0, wind: 1.0, screenshot: None, frames: 150, fog: 0.0 };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| panic!("{flag} needs a value"));
@@ -48,10 +52,21 @@ fn parse_args() -> Args {
             "--wind" => a.wind = value().parse().expect("--wind <factor>"),
             "--screenshot" => a.screenshot = Some(PathBuf::from(value())),
             "--frames" => a.frames = value().parse().expect("--frames <count>"),
+            "--fog" => a.fog = value().parse().expect("--fog <visibility m>"),
             other => panic!("unknown flag {other}"),
         }
     }
     a
+}
+
+/// Height fog of `visibility` m at the ground plus banks at their default shape.
+fn fog_settings(visibility: f32) -> FogSettings {
+    let mut f = FogSettings::default();
+    if visibility > 0.0 {
+        f.height = FogLayer { density: fog::extinction_for_visibility(visibility), falloff: 100.0, base: 0.0 };
+        f.banks.layer = FogLayer { density: 0.03, falloff: 12.0, base: 0.0 };
+    }
+    f
 }
 
 fn settings(preset: CloudPreset, scale: f32, wind: f32) -> CloudSettings {
@@ -78,7 +93,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(SkyPlugin { settings: sky, clock, render_path: RenderPath::Raster })
-        .add_plugins(CloudsPlugin { settings: settings(args.preset, args.scale, args.wind), seed: 0x5EED_C10D })
+        .add_plugins(CloudsPlugin { settings: settings(args.preset, args.scale, args.wind), fog: fog_settings(args.fog), seed: 0x5EED_C10D })
         .insert_resource(args)
         .add_systems(Startup, setup)
         .add_systems(Update, (shadow_light, aim, keys, screenshot))

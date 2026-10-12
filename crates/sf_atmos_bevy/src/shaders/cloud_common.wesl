@@ -8,6 +8,8 @@
 // 2017 (Nubis), Hillaire 2016 (analytic step integral, octave multiple
 // scattering after Wrenninge).
 
+import super::fog::Fog;
+
 // Field order is the layout: it matches `CloudUniform` (render.rs).
 struct Clouds {
     planet_center: vec3<f32>,
@@ -62,6 +64,8 @@ struct Clouds {
     cirrus_depth: f32,
     rise: f32,
     shadow_camera: vec3<f32>,
+    fog: Fog,
+    clouds_on: u32,
 };
 
 const PI: f32 = 3.14159265;

@@ -16,7 +16,8 @@ import super::cloud_common::{Clouds, sub_pixel};
 
 struct ResolveOutput {
     @location(0) color: vec4<f32>,
-    @location(1) dist: f32,
+    // R: cloud distance; G: the fog bank modulation.
+    @location(1) dist: vec2<f32>,
 };
 
 @fragment
@@ -32,16 +33,22 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     }
     tp = min(tp, trace_max);
     let current = textureLoad(trace_color, tp, 0);
-    let current_dist = textureLoad(trace_dist, tp, 0).r;
+    let current_rg = textureLoad(trace_dist, tp, 0).rg;
+    let current_dist = current_rg.x;
 
     // Neighborhood of this frame's samples, for the history clamp.
     var lo = vec4(1e9);
     var hi = vec4(-1e9);
+    var bank_lo = 1e9;
+    var bank_hi = -1e9;
     for (var y = -1; y <= 1; y += 1) {
         for (var x = -1; x <= 1; x += 1) {
             let c = textureLoad(trace_color, clamp(tp + vec2(x, y), vec2(0), trace_max), 0);
             lo = min(lo, c);
             hi = max(hi, c);
+            let b = textureLoad(trace_dist, clamp(tp + vec2(x, y), vec2(0), trace_max), 0).g;
+            bank_lo = min(bank_lo, b);
+            bank_hi = max(bank_hi, b);
         }
     }
 
@@ -58,17 +65,19 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     if valid {
         let history = clamp(textureSampleLevel(history_color, linear_sampler, prev_uv, 0.0), lo, hi);
         let hp = clamp(vec2<i32>(prev_uv * clouds.half_size), vec2(0), vec2<i32>(clouds.half_size) - 1);
+        let history_rg = textureLoad(history_dist, hp, 0).rg;
+        let history_bank = clamp(history_rg.y, bank_lo, bank_hi);
         if fresh {
             out.color = mix(history, current, 0.5);
-            out.dist = current_dist;
+            out.dist = vec2(current_dist, mix(history_bank, current_rg.y, 0.5));
         } else {
             out.color = history;
-            out.dist = textureLoad(history_dist, hp, 0).r;
+            out.dist = vec2(history_rg.x, history_bank);
         }
     } else {
         // No history: upsample this frame's samples.
         out.color = textureSampleLevel(trace_color, linear_sampler, uv, 0.0);
-        out.dist = current_dist;
+        out.dist = current_rg;
     }
     return out;
 }

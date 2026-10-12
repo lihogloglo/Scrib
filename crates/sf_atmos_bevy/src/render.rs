@@ -157,6 +157,67 @@ struct CloudUniform {
     cirrus_depth: f32,
     rise: f32,
     shadow_camera: Vec3,
+    fog: FogUniform,
+    /// 1: the clouds draw; 0: the node runs for the fog alone.
+    clouds_on: u32,
+}
+
+/// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
+#[derive(Clone, Copy, Default, ShaderType)]
+struct FogUniform {
+    albedo: Vec3,
+    phase_g: f32,
+    height_density: f32,
+    height_falloff: f32,
+    height_base: f32,
+    bank_density: f32,
+    bank_falloff: f32,
+    bank_base: f32,
+    bank_coverage: f32,
+    bank_sharpness: f32,
+    bank_off: Vec2,
+    detail_off: Vec2,
+    warp_off: Vec2,
+    bank_tile: f32,
+    detail_tile: f32,
+    warp_tile: f32,
+    warp_amount: f32,
+    ambient: f32,
+    far: f32,
+    sky_distance: f32,
+    steps: u32,
+    /// 1: fog draws (0: every fog term is skipped).
+    enabled: u32,
+}
+
+impl FogUniform {
+    fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, steps: u32) -> Self {
+        let Some(f) = fog else { return Self::default() };
+        Self {
+            albedo: f.albedo,
+            phase_g: f.phase_g,
+            height_density: f.height.density,
+            height_falloff: f.height.falloff.max(1e-3),
+            height_base: f.height.base,
+            bank_density: f.banks.layer.density,
+            bank_falloff: f.banks.layer.falloff.max(1e-3),
+            bank_base: f.banks.layer.base,
+            bank_coverage: f.banks.coverage,
+            bank_sharpness: f.banks.sharpness,
+            bank_off: offsets.bank,
+            detail_off: offsets.detail,
+            warp_off: offsets.warp,
+            bank_tile: f.banks.tile,
+            detail_tile: f.banks.detail_tile,
+            warp_tile: f.banks.warp_tile,
+            warp_amount: f.banks.warp_amount,
+            ambient: f.ambient,
+            far: f.far,
+            sky_distance: f.sky_distance,
+            steps,
+            enabled: 1,
+        }
+    }
 }
 
 // -- pipelines -----------------------------------------------------------------
@@ -167,6 +228,7 @@ enum Pass {
     Trace,
     Resolve,
     Composite,
+    FogLight,
 }
 
 #[derive(Resource)]
@@ -176,8 +238,9 @@ struct CloudPipelines {
     density: BindGroupLayoutDescriptor,
     resolve: BindGroupLayoutDescriptor,
     composite: BindGroupLayoutDescriptor,
+    fog_light: BindGroupLayoutDescriptor,
     fullscreen: FullscreenShader,
-    shaders: [Handle<Shader>; 4],
+    shaders: [Handle<Shader>; 5],
     noise_sampler: Sampler,
     linear_sampler: Sampler,
 }
@@ -257,8 +320,12 @@ impl FromWorld for CloudPipelines {
                 "clouds_composite",
                 &BindGroupLayoutEntries::sequential(
                     ShaderStages::FRAGMENT,
-                    (uniform_buffer::<CloudUniform>(false), texture_2d(unfiltered), texture_2d(unfiltered)),
+                    (uniform_buffer::<CloudUniform>(false), texture_2d(unfiltered), texture_2d(unfiltered), texture_2d(unfiltered)),
                 ),
+            ),
+            fog_light: BindGroupLayoutDescriptor::new(
+                "clouds_fog_light",
+                &BindGroupLayoutEntries::single(ShaderStages::FRAGMENT, uniform_buffer::<CloudUniform>(false)),
             ),
             fullscreen: world.resource::<FullscreenShader>().clone(),
             shaders: [
@@ -266,6 +333,7 @@ impl FromWorld for CloudPipelines {
                 load_embedded_asset!(world, "shaders/cloud_trace.wesl"),
                 load_embedded_asset!(world, "shaders/cloud_resolve.wesl"),
                 load_embedded_asset!(world, "shaders/cloud_composite.wesl"),
+                load_embedded_asset!(world, "shaders/fog_light.wesl"),
             ],
             noise_sampler,
             linear_sampler,
@@ -274,7 +342,14 @@ impl FromWorld for CloudPipelines {
 }
 
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
-const DIST: TextureFormat = TextureFormat::R32Float;
+/// The fog light texture (`fog_light.wesl`): 64 sky-fill azimuths, the key
+/// light's colour and direction. 32-bit: the sun's illuminance overflows f16.
+const FOG_AZIMUTHS: u32 = 64;
+const FOG_LIGHT: TextureFormat = TextureFormat::Rgba32Float;
+/// Bank-march samples per traced pixel (weather.md: the far fog, 16 steps).
+const FOG_STEPS: u32 = 16;
+/// R: cloud distance; G: the bank modulation of the fog (`fog.wesl`).
+const DIST: TextureFormat = TextureFormat::Rg32Float;
 
 impl CloudPipelines {
     fn descriptor(&self, pass: Pass, samples: u32) -> RenderPipelineDescriptor {
@@ -288,6 +363,7 @@ impl CloudPipelines {
             Pass::Shadow => (vec![atmosphere, self.density.clone()], "shadow", vec![target(TextureFormat::R8Unorm)], 1, &self.shaders[0]),
             Pass::Trace => (vec![atmosphere, self.density.clone()], "trace", vec![target(HDR), target(DIST)], 1, &self.shaders[1]),
             Pass::Resolve => (vec![atmosphere, self.resolve.clone()], "resolve", vec![target(HDR), target(DIST)], 1, &self.shaders[2]),
+            Pass::FogLight => (vec![atmosphere, self.fog_light.clone()], "fog_light", vec![target(FOG_LIGHT)], 1, &self.shaders[4]),
             Pass::Composite => (
                 vec![atmosphere, self.composite.clone()],
                 "composite",
@@ -332,7 +408,7 @@ fn queue_pipelines(
     let Some(pipelines) = pipelines else { return };
     for msaa in &views {
         let samples = msaa.samples();
-        for pass in [Pass::Shadow, Pass::Trace, Pass::Resolve, Pass::Composite] {
+        for pass in [Pass::Shadow, Pass::Trace, Pass::Resolve, Pass::Composite, Pass::FogLight] {
             ids.0.entry((pass, samples)).or_insert_with(|| cache.queue_render_pipeline(pipelines.descriptor(pass, samples)));
         }
     }
@@ -353,6 +429,8 @@ struct CloudHistory(HashMap<Entity, History>);
 #[derive(Component)]
 struct CloudView {
     trace: (CachedTexture, CachedTexture),
+    /// The fog light texture and its bind group, when fog draws.
+    fog_light: Option<(CachedTexture, BindGroup)>,
     history: (CachedTexture, CachedTexture),
     atmosphere: BindGroup,
     density: BindGroup,
@@ -501,6 +579,8 @@ fn prepare_views(
             cirrus_depth: s.look.cirrus_depth,
             rise: frame.offsets.rise,
             shadow_camera: shadow.map_or(Vec3::ZERO, |b| b.camera),
+            fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, FOG_STEPS),
+            clouds_on: u32::from(frame.clouds),
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;
@@ -561,13 +641,23 @@ fn prepare_views(
                 &pipelines.linear_sampler,
             )),
         );
+        let fog_texture = cached(&mut textures, &device, "clouds_fog_light", UVec2::new(FOG_AZIMUTHS + 2, 1), FOG_LIGHT);
         let composite = device.create_bind_group(
             "clouds_composite",
             &cache.get_bind_group_layout(&pipelines.composite),
-            &BindGroupEntries::sequential((uniform_binding, &w_color.default_view, &w_dist.default_view)),
+            &BindGroupEntries::sequential((uniform_binding.clone(), &w_color.default_view, &w_dist.default_view, &fog_texture.default_view)),
         );
+        let fog_light = frame.fog.is_some().then(|| {
+            let group = device.create_bind_group(
+                "clouds_fog_light",
+                &cache.get_bind_group_layout(&pipelines.fog_light),
+                &BindGroupEntries::single(uniform_binding),
+            );
+            (fog_texture, group)
+        });
         commands.entity(entity).insert(CloudView {
             trace,
+            fog_light,
             history: (w_color, w_dist),
             atmosphere: atmosphere_group,
             density,
@@ -656,6 +746,10 @@ fn trace_pass(view: ViewQuery<(&CloudView, AtmosphereOffsets)>, ids: Res<CloudPi
     let get = |pass| ids.0.get(&(pass, cloud.samples)).and_then(|id| cache.get_render_pipeline(*id));
     let (Some(trace), Some(resolve)) = (get(Pass::Trace), get(Pass::Resolve)) else { return };
     let offsets = offsets(offs);
+    // The fog's per-frame lighting (66 texels) for the composite.
+    if let (Some((texture, group)), Some(pipeline)) = (cloud.fog_light.as_ref(), get(Pass::FogLight)) {
+        fullscreen(&mut ctx, "clouds_fog_light", &[attachment(&texture.default_view)], pipeline, [(&cloud.atmosphere, &offsets), (group, &[])], None);
+    }
     fullscreen(
         &mut ctx,
         "clouds_trace",

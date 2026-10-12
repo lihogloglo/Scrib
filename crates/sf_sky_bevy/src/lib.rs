@@ -476,7 +476,11 @@ fn setup_sky_cameras(
         // these commands apply, and a default `Exposure` (EV100 9.7) would
         // show for one frame (a flash at noon when a camera becomes a sky
         // camera, e.g. walking out of an interior).
-        e.insert(AtmosphereSettings::default());
+        // 32 sky-view samples (Bevy: 16): with dust and haze the sky-view
+        // LUT's coarse march and the aerial-view LUT disagreed at the sea
+        // horizon (a thin purple/white band at noon, m6-f1). Cost: the LUT is
+        // 400×200, so a few µs.
+        e.insert(AtmosphereSettings { sky_view_lut_samples: 32, ..AtmosphereSettings::default() });
         if sky_camera.exposure {
             e.insert(Exposure { ev100: sky.0.ev100 });
         } else {

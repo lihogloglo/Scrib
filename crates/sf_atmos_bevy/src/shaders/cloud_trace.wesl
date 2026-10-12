@@ -11,7 +11,7 @@
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_pbr::atmosphere::{
-    bindings::{view, lights, settings},
+    bindings::{view, settings},
     functions::{
         sample_transmittance_lut, sample_sky_view_lut, sample_aerial_view_lut,
         direction_world_to_atmosphere, uv_to_ray_direction, uv_to_ndc, ndc_to_camera_dist,
@@ -19,7 +19,8 @@ import bevy_pbr::atmosphere::{
     bruneton_functions::sample_transmittance_lut_segment,
 };
 import super::cloud_common::{PI, WeatherSample, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
-import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density, cirrus_hit};
+import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density, cirrus_hit, bank_mask};
+import super::key_light::{key_light, planet_lit_at};
 
 @if(MULTISAMPLED)
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
@@ -30,8 +31,9 @@ struct TraceOutput {
     // Premultiplied cloud radiance (aerial perspective applied, exposed), and
     // the cloud's transmittance.
     @location(0) color: vec4<f32>,
-    // Transmittance-weighted distance to the cloud (reprojection, upsampling).
-    @location(1) dist: f32,
+    // R: transmittance-weighted distance to the cloud (reprojection,
+    // upsampling). G: the ground-fog bank modulation (`bank_modulation`).
+    @location(1) dist: vec2<f32>,
 };
 
 // Optical depth (density × m) from `p` toward the light. Steps grow, so a few
@@ -63,15 +65,57 @@ fn light_optical_depth(p: vec3<f32>, l: vec3<f32>, steps: u32, w0: WeatherSample
     return tau;
 }
 
-// The planet's shadow: 0 where the light at radius `r` and cosine `mu` is
-// below the horizon. Bevy's transmittance LUT clamps such rays to the
-// horizon (deep red, not 0): unshadowed, high clouds glowed red at night
-// (the "red streaks" with `--clouds clear`, nightsky 2026-10-13). Smoothed
-// over ~0.5° so the terminator doesn't alias.
+// The planet's shadow (`key_light.wesl`).
 fn planet_lit(r: f32, mu: f32) -> f32 {
-    let rho = clouds.inner_radius / max(r, clouds.inner_radius);
-    let mu_horizon = -sqrt(max(1.0 - rho * rho, 0.0));
-    return smoothstep(mu_horizon - 0.004, mu_horizon + 0.004, mu);
+    return planet_lit_at(clouds.inner_radius, r, mu);
+}
+
+// The ground-fog banks along the ray (weather.md "Fog", the far fog): how
+// much of the bank layer's analytic optical depth the bank noise lets
+// through, weighted by what the eye still sees (0 between banks, 1 inside).
+// The composite multiplies the layer's closed form by it at full resolution,
+// so depth edges stay exact. Steps are quadratic in distance (fine near the
+// eye, where shapes are read); the march stops where the fog turns opaque.
+fn bank_modulation(ro: vec3<f32>, rd: vec3<f32>, h0: f32, mu: f32, d_max: f32, jitter: f32) -> f32 {
+    let f = clouds.fog;
+    let top = f.bank_base + 6.0 * f.bank_falloff;
+    var t0 = 0.0;
+    var t1 = d_max;
+    if h0 > top {
+        if mu > -1e-4 {
+            return 1.0;
+        }
+        t0 = (top - h0) / mu;
+    } else if mu > 1e-4 {
+        t1 = min(t1, (top - h0) / mu);
+    }
+    if t1 <= t0 {
+        return 1.0;
+    }
+    let n = f32(max(f.steps, 1u));
+    let span = t1 - t0;
+    var plain = 0.0;
+    var noisy = 0.0;
+    var tau = 0.0;
+    for (var i = 0u; i < f.steps; i += 1u) {
+        let u = (f32(i) + jitter) / n;
+        let t = t0 + span * u * u;
+        let ds = span * (2.0 * f32(i) + 1.0) / (n * n);
+        let h = h0 + mu * t;
+        let sigma = f.bank_density * exp(-max(h - f.bank_base, 0.0) / f.bank_falloff);
+        let mask = bank_mask(ro + rd * t);
+        let w = sigma * ds * exp(-tau);
+        plain += w;
+        noisy += w * mask;
+        tau += sigma * mask * ds;
+        if tau > 8.0 {
+            break;
+        }
+    }
+    if plain <= 1e-7 {
+        return 1.0;
+    }
+    return noisy / plain;
 }
 
 @fragment
@@ -96,35 +140,26 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let start = seg.x;
     let end = min(seg.y, min(scene_t, clouds.far));
 
+    // The ground-fog banks (F2): marched for the fog even where no cloud is.
+    var bank = 1.0;
+    let fog = clouds.fog;
+    if fog.enabled != 0u && fog.bank_density > 0.0 {
+        let r0 = length(ro_c);
+        bank = bank_modulation(ro, rd, r0 - clouds.inner_radius, dot(ro_c / r0, rd), min(scene_t, fog.far), ign(half_px, clouds.frame));
+    }
+
     var out: TraceOutput;
     out.color = vec4(0.0, 0.0, 0.0, 1.0);
-    out.dist = min(scene_t, clouds.far);
-    let has_low = end > start;
-    if !has_low && clouds.cirrus <= 0.0 {
+    out.dist = vec2(min(scene_t, clouds.far), bank);
+    let clouds_on = clouds.clouds_on != 0u;
+    let has_low = end > start && clouds_on;
+    if !has_low && (clouds.cirrus <= 0.0 || !clouds_on) {
         return out;
     }
 
-    // The key light is the brightest directional light *as seen from the
-    // camera* (sun by day, moon by night). The raster path keeps the sun's
-    // unattenuated illuminance after sunset (the sky needs it for twilight),
-    // so ranking raw colors picked the set sun all night.
-    var l = vec3(0.0, 1.0, 0.0);
-    var light_color = vec3(0.0);
-    var brightest = -1.0;
-    let r_view = length(ro_c);
-    let up_view = ro_c / r_view;
-    for (var i = 0u; i < lights.n_directional_lights; i += 1u) {
-        let c = lights.directional_lights[i].color.rgb;
-        let dir = normalize(lights.directional_lights[i].direction_to_light.xyz);
-        let mu = dot(up_view, dir);
-        let seen = c * sample_transmittance_lut(r_view, mu) * planet_lit(r_view, mu) + c * 1e-6;
-        let lum = seen.r + seen.g + seen.b;
-        if lum > brightest {
-            brightest = lum;
-            l = dir;
-            light_color = c;
-        }
-    }
+    let key = key_light(ro_c, clouds.inner_radius);
+    let l = key.dir;
+    let light_color = key.color;
     let cos_t = dot(rd, l);
 
     // Fill terms, once per pixel: sky radiance from above, and the ground's
@@ -243,7 +278,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         transmittance *= 1.0 - alpha;
     }
     out.color = vec4(color * view.exposure, transmittance);
-    out.dist = dist;
+    out.dist = vec2(dist, bank);
     return out;
 }
 

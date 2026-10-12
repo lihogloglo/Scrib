@@ -576,6 +576,47 @@ Kept for interiors until the environment volumes of M8.
 off (sky-lighting.md), so the froxels use the shadow-height map + cloud shadows only (or a cheap
 low-resolution CSM kept for the fog alone). Open question 6.
 
+### Fog as built (M6 F2, m6-f2, 2026-10-13): height fog, ground-fog banks, far fog
+
+Reuse check: Bevy 0.20 has `DistanceFog` (per-material, distance-only, no height, no noise; it would also fog
+the sky twice with the atmosphere) and `VolumetricFog`/`FogVolume` (box volumes; Megalophobia measured it grey
+and dim at our scales, and it is the froxel tier's job, F3). Neither does height or bank fog over km views, and no
+maintained crate targets 0.20, so the fog is ours, in the cloud node as planned.
+
+- **Model** (`sf_atmos::fog`, CPU twin + tests): two exponential layers over sea level, `FogSettings { height,
+  banks, albedo, phase_g, ambient, far, sky_distance, wind }`. Height fog = UE's exponential height fog
+  (`FogLayer::optical_depth`, closed form written as a difference of end densities so steep rays never overflow;
+  density capped at e² × below the base). Banks = a second, thin layer (12 m falloff in the app) × the Megalophobia
+  bank mask: the weather map's G channel at two scales (1 km and 256 m tiles), domain-warped by a third sample
+  (2 km tile, 220 m), stretched around its median (`NOISE_MID`/`NOISE_GAIN`, measured: the channel's 5-95 % spread
+  is 0.29-0.43) and thresholded (coverage 0.42 + 0.18 ramp: ~half the ground in banks, a third in clear gaps,
+  test `banks_cover_part_of_the_ground`). `FogDrift` advects banks with the ground wind (warp at 0.35×, wisps at
+  1.35×), wrapped at 16 384 m with the origin phase like the clouds' scroll.
+- **Render** (`sf_atmos_bevy`, same node as the clouds; runs with the clouds off too):
+  1. *Far fog* in `clouds_trace`: per traced pixel, 16 quadratic steps over the ray's part inside the bank layer,
+     out to `far` (6 km) or the depth buffer, store the bank **modulation** = the noise's share of the layer's
+     optical depth, weighted by what the eye still sees (G channel of the distance target, now `Rg32Float`).
+     `clouds_resolve` reprojects and clamps it with the clouds.
+  2. `clouds_fog_light` (new, 66×1 `Rgba32Float`, once per frame): sky fill per view azimuth (sky-view LUT toward
+     the horizon + zenith) and the key light (sun or moon, as seen at the camera) for the composite.
+  3. `clouds_composite`, full resolution: both layers' closed-form optical depth to **this pixel's own depth**
+     (sky pixels: `sky_distance`, 20 km), the bank layer × the bilaterally upsampled modulation, lit by the key
+     light (HG g 0.6 over an isotropic floor) and the sky fill × albedo; composed as `T·(clouds) + L` in front of
+     the clouds, so stars, moons and clouds behind dim with it. Depth edges are exact (the analytic part is per
+     pixel); the reduced-resolution part only shapes the banks.
+- Bevy `DistanceFog` was already off on the exterior camera; interiors keep their look. The sea scaffold became
+  opaque (the composite runs before transparents and fogs by depth). **Transparents (particles, glass) are not
+  fogged yet:** F3's `sf_atmos::fog` function for materials.
+- Weather: `exterior.rs` `SkyLook::fog` per weather + `ground_fog(hour)` (weather-adapter.md "Fog"); `--fog <x>`
+  scales, `--off fog` drops it. `sf_sky::Weather` stays the medium's input; the fog lives beside the clouds'
+  settings because the node that draws it reads `sf_atmos` only (WE3's `WeatherPlugin` drives both).
+- Also: Bevy's `sky_view_lut_samples` 16 → 32 on sky cameras (the F1 sea-horizon seam; a few µs).
+- **Cost** (release, 2560×1440, RTX 4060 Laptop, `fg-balmora-foggy-noon`, `--off fog` A/B; shared machine: another
+  `bevyrrowind.exe` used the GPU in every run): `clouds_fog_light` 0.004 ms; bank march +0.05-0.17 ms in
+  `clouds_trace`; composite +0.36 ms when it walked the lights and sampled the LUTs per pixel, within noise once they
+  moved to the fog-light texture. The 0.1 ms far-fog gate needs a quiet re-measure. Levers if over: fewer bank steps
+  (8), skip the march where the bank layer's analytic depth is negligible, half-rate modulation.
+
 ## Wind
 
 **Field** (`sf_wind`; the CPU and WGSL twins agree to 1e-4, checked by a test that runs the WGSL on

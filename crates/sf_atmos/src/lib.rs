@@ -10,6 +10,8 @@
 //!   CPU twin of the WGSL in `sf_atmos_bevy` (tests, gameplay queries).
 //! - [`scroll`]: wind scroll and floating-origin phase, wrapped per texture.
 //! - [`shadow`]: time slicing of the toroidal cloud shadow map.
+//! - [`fog`]: height fog and ground-fog banks (F2), the CPU twin of the
+//!   fog that the same render node draws.
 //!
 //! **Provenance.** The density model (`combine_density`, `erode_density`,
 //! `height_gradient`), the lighting math in the WGSL twin, the noise
@@ -21,6 +23,7 @@
 //! 2015/2017, Hillaire 2016, Wrenninge); no third-party code is included.
 
 pub mod density;
+pub mod fog;
 pub mod noise;
 pub mod scroll;
 pub mod settings;
@@ -30,6 +33,7 @@ pub mod shadow;
 mod tests;
 
 pub use density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at, WeatherSample};
+pub use fog::{FogBanks, FogDrift, FogLayer, FogOffsets, FogSettings};
 pub use noise::{NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 pub use scroll::CloudScroll;
 pub use settings::{CloudLook, CloudPreset, CloudQuality, CloudSettings, CloudWeather};
