@@ -1646,3 +1646,18 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   (A2) is just another adapter; (4) script limits live in the profile only, never the manifest; (5) `sf_mods` hands
   scripts a plain `ScriptPlan` and does not depend on `sf_script`.
 - 2026-10-13 (m6-f1): weather haze/dust on the atmosphere medium: `MediumTerm.weather` (`WeatherScale` None/Haze/Dust) replaces `weather_scaled`; `Weather::dust` + `dust_tint` scale an absorbing dust term in `AtmosphereModel::earth`; medium rebuilds are step- and time-limited (0.25 s). weather.md N1's "haze 2-3" is recalibrated: compressed worlds (1-5 km views) need haze ~20 (AOD ~0.18) for any aerial perspective; near fog at game distances belongs to analytic height fog (F2), not more haze.
+- 2026-10-13 (m5-a2): native record files built (mods.md "As built (A2)"). Lasting choices: (1) generic patches run on
+  our own serde value tree (`sf_records::Value`) whose RON leaves stay raw text until the record type deserializes
+  them, because `ron::Value` drops enum variants and `serde_json::Value`/JSON Patch crates can't hold enums, tuples or
+  non-string keys; (2) `register` stays serde-free and `register_serde` opts a kind into by-name writes and the default
+  fingerprint (blake3 of postcard bytes); (3) a touch records the field paths it wrote, and a blind override is a
+  conflict only when writes overlap (path, parent path, or whole record), else an automatic merge (TES3Merge/bashed
+  patch behaviour built in); define/delete/closure patches count as whole-record writes; (4) a record file's syntax
+  error rejects the file, but each failing operation is its own positioned error and the rest apply; (5) conflicts and
+  merges become per-mod `ModReport` issues on the winning mod.
+- 2026-10-13 (m6-f2): height fog + ground-fog banks + far fog live in the cloud node (`sf_atmos::fog` settings and
+  CPU twin beside the cloud settings, not in `sf_sky::Weather`: the node reads `sf_atmos` only; WE3 drives both).
+  Technique: UE-style analytic exponential layers applied per full-resolution pixel to its own depth, the bank
+  layer scaled by a noise *modulation* raymarched at the clouds' reduced resolution (depth edges exact, no froxels
+  needed for F2); per-frame lighting in a 66×1 texture. F3's froxels take over the near range with the same density
+  terms. The sea scaffold is opaque so the pre-transparent composite fogs it; transparents wait for F3.

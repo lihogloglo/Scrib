@@ -137,7 +137,7 @@ fn independent_mods_touching_one_record_conflict() {
     let conflict = &report.kinds[0].conflicts[0];
     assert_eq!(conflict.id.as_str(), "x");
     assert_eq!(conflict.history.len(), 3);
-    assert!(report.render(&db, 10).contains("mod_a (Define) -> mod_b (Patch)"));
+    assert!(report.render(&db, 10).contains("mod_a (define) -> mod_b (patch)"));
 }
 
 #[test]

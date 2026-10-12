@@ -1,6 +1,6 @@
 # Mods: pipeline end to end
 
-Status: A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
+Status: A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). A2 built (2026-10-13, m5-a2: kind registry, native RON/TOML record files, generic field patches, field-level conflicts; see "As built (A2)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
 Crates: `sf_mods` (manifests, repository, profiles, load order, report; built M0, extended),
 `sf_vfs` (layers; built M0, gains a watcher and swap), `sf_records` (built M0, gains native
 patch files and field-level conflicts), `sf_bake` (profile fingerprint), `sf_script`
@@ -243,7 +243,9 @@ pub fn load_profile(repo: &ModRepository, profile: &Profile, adapters: &[&dyn Co
 pub struct LoadedProfile { pub profile: Profile, pub mods: Vec<LoadedMod>, pub vfs: Arc<Vfs>, pub records: RecordDb, pub report: ModReport, pub timings: LoadTimings }
 impl LoadedProfile { pub fn script_contexts(&self) -> Vec<ScriptPlan>; pub fn stylesheets(&self) -> Vec<(ModId, VfsPath)>; pub fn render_report(..) -> String; }
 // sf_vfs (bevy feature): VfsWatcher, SharedVfs (swappable)
-// sf_records: KindRegistry, apply_record_file(), field-level Touch
+// sf_records (A2): RecordDb::register_serde / set_fingerprint / define_value / patch_value / delete_by_name / value_of / fingerprint,
+//   apply_record_file(db, source, text, RecordFormat) -> Result<FileOutcome, FileError>, Value (serde tree), PatchOp, Touch { fields }
+// sf_mods (A2): NativeRecords (ContentAdapter "native", .ron/.toml), RecordCx::error, IssueKind::{RecordConflict, RecordMerge}
 ```
 
 ### As built (A1, 2026-10-13)
@@ -292,6 +294,68 @@ Changes from the draft, each for a reason found while building:
 Not in A1 (later tasks): profile fingerprint (A3), builtin-mod-lowest rule and default profile
 (A3), the `resolve_preferring` shadow warning (needs the adapter's alternates, A3), Scripts/UI
 issue rows (L2, U2).
+
+### As built (A2, 2026-10-13)
+
+**Reuse check.** Bevy has no record database or patch format. Crates: `ron` 0.12 (already in the
+tree) parses the files; `ron::Value` can't be the patch tree because it drops enum variant names
+(a record with an enum doesn't round-trip); `serde-value` round-trips the data model but is
+unmaintained since 2020 and can't hold "text not yet typed" nodes; JSON Patch / JSON Merge Patch
+(RFC 6902 / 7386) give the op vocabulary (`set` = replace/add, `remove`, merge = 7386) but
+their crates work on `serde_json::Value`, which has no enums, tuples or non-string keys. So
+`sf_records::Value` is our own small serde data-model tree (~500 lines with its Serializer and
+Deserializer), with one twist: values from a RON file stay **raw RON text until the record type
+asks for them**, then `ron` parses them with the type's own hints. Enum variants, newtypes,
+`Option`s and tuples read exactly as in a normal RON file, and errors carry file positions.
+
+Changes and details found while building:
+
+- **Kind registry**: `register::<T>(kind)` is unchanged (no serde bound; legacy and closure-only
+  kinds). `register_serde::<T>(kind)` adds a serde codec and the default fingerprint (blake3 of
+  the postcard bytes; bake.md "Native kinds use serde bytes"); `set_fingerprint::<T>(fn)` lets an
+  adapter hash its own bytes. By-name API: `define_value`, `patch_value`, `delete_by_name`,
+  `value_of` (inspection), `fingerprint`, `history_of`, `kind_names`, `is_serde_kind`.
+- **File format** (RON): a list of `define(kind, id, value)`, `patch(kind, id, set: {path: v},
+  merge: {path: map}, remove: [path], append: {path: [v]})`, `delete(kind, id)`; unknown op
+  fields are errors. `implicit_some` is on by default (`radius: 5.0` fills an `Option<f32>`);
+  `#![enable(...)]` at the top of a file adds more and applies to every value in it. **TOML**:
+  `[[define]]`, `[[patch]]`, `[[delete]]` tables with the same fields, applied all defines, then
+  patches, then deletes (TOML groups arrays of tables); values are read leniently (a string is a
+  unit enum variant, `{ Variant = {...} }` a variant with data, an integer a float). Quote dotted
+  paths in TOML (`"stats.luck" = 7`), else TOML makes them nested tables.
+- **Field paths**: dot-separated struct fields, map keys (string, number, char, bool, unit-variant
+  keys as written) and list indices; `Option` and enum payloads are transparent (`flicker.rate`
+  reaches `flicker: Some(Fast(rate: ..))`). `set` may add a map key or a struct field the
+  serializer skipped; `merge` deep-merges maps and structs (anything else replaces; merging into
+  an enum keeps its variant); `remove` drops a map key or list element, or removes a struct
+  field so serde's default applies (`#[serde(default)]`, `Option` → `None`; no default = error);
+  `append` extends a list. Ops apply set, merge, remove, append; a patch is all or nothing.
+  After deserializing, the record is re-serialized and every written path must exist, so a
+  typo'd field is an error even for types without `deny_unknown_fields` (consequence: setting a
+  `skip_serializing_if` field to its skipped value reads as missing; use `remove`).
+- **Errors**: a syntax error rejects the file (`RecordFileError::at(line, col)`); otherwise each
+  op applies independently and each failing op (unknown kind, kind without serde, missing
+  record, bad path, wrong value type) is its own `RecordFile` error at the op's position, or
+  inside the value when the error is there. `RecordCx::error` was added for this. One broken op
+  never blocks the rest of the mod, matching "one broken mod never blocks the rest" (A1).
+- **Field-level touches**: `Touch { source, op, fields }`; `fields` lists the paths a generic
+  patch wrote (merge records its leaves), `None` for define, delete and closure patches (whole
+  record). Patches from one source union their fields. A blind pair (later source doesn't depend
+  on the earlier) is a **conflict** when their writes overlap (same path, a path and its parent,
+  or a whole-record touch), else a **merge**. `KindSummary` gains `merges`; `RecordConflict` gains
+  `fields` (contested paths, empty = whole record) and renders as the xEdit-style chain
+  `a (define) -> b (patch radius) -> c (patch radius) [contested: radius]`.
+- **Report**: `load_profile` turns each conflict into a `RecordConflict` warning and each merge
+  into a `RecordMerge` info on the mod whose change won (the last toucher), with the full touch
+  chain, so `mods report --mod X` shows X's record conflicts. `render_report` still appends the
+  per-kind `ConflictReport` table.
+- **Native loader**: `sf_mods::NativeRecords` (adapter name `native`, extensions `ron`/`toml`)
+  reads through `cx.files` (the mod's own layers), strips a UTF-8 BOM, and applies into the
+  mod's source. It registers no kinds; hosts pass it in `adapters` next to their content pack.
+
+Not in A2: real-install check of a RON patch over a vanilla record (needs the TES3 record types
+to derive serde and be registered with `register_serde`, A3); hot re-apply (A4); legacy plugin
+field-level diffs (X1: they would produce `fields` lists, and the conflict logic already uses them).
 
 ## Verification
 

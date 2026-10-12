@@ -6,9 +6,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+blake3.workspace = true
 indexmap.workspace = true
+postcard.workspace = true
+ron.workspace = true
+serde.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

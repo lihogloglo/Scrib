@@ -140,6 +140,13 @@ impl RecordCx<'_> {
         self.sources.get(id).copied()
     }
 
+    /// Reports an error in `file` and keeps applying it (for formats whose
+    /// operations apply independently; return `Err` to reject the whole file).
+    pub fn error(&mut self, file: &VfsPath, error: RecordFileError) {
+        let kind = IssueKind::RecordFile { path: file.to_string(), line: error.line, column: error.column, message: error.message };
+        self.issues.push(ModIssue::new(Some(&self.manifest.id), kind));
+    }
+
     /// Reports a non-fatal finding in `file`.
     pub fn warn(&mut self, file: &VfsPath, message: impl Into<String>) {
         let kind = IssueKind::RecordWarning { path: file.to_string(), message: message.into() };

@@ -186,10 +186,39 @@ pub fn load_profile(
     for adapter in adapters {
         adapter.finish_records(&mut records);
     }
+    record_issues(&records, &sources, &mut issues);
     timings.records = start.elapsed();
 
     let report = ModReport { issues, mods: summarize(&vfs, &mods) };
     LoadedProfile { profile: profile.clone(), mods, vfs: Arc::new(vfs), records, report, timings }
+}
+
+/// Record conflicts and merges (the xEdit conflict view), one issue per record,
+/// on the mod whose change won (none for adapter-derived sources).
+fn record_issues(records: &RecordDb, sources: &HashMap<ModId, SourceId>, issues: &mut Vec<ModIssue>) {
+    let owner: HashMap<SourceId, &ModId> = sources.iter().map(|(id, source)| (*source, id)).collect();
+    let report = records.conflict_report();
+    for kind in &report.kinds {
+        let lists = [(&kind.conflicts, true), (&kind.merges, false)];
+        for (list, conflict) in lists {
+            for c in list {
+                let touches: Vec<(String, String)> = c
+                    .history
+                    .iter()
+                    .map(|t| (records.source(t.source).name.clone(), sf_records::describe(t)))
+                    .collect();
+                let (kind_name, id) = (kind.kind.clone(), c.id.to_string());
+                let issue = if conflict {
+                    let fields = c.fields.iter().map(ToString::to_string).collect();
+                    IssueKind::RecordConflict { kind: kind_name, id, fields, touches }
+                } else {
+                    IssueKind::RecordMerge { kind: kind_name, id, touches }
+                };
+                let winner = c.history.last().and_then(|t| owner.get(&t.source).copied());
+                issues.push(ModIssue::new(winner, issue));
+            }
+        }
+    }
 }
 
 /// Step 2: the profile's mods in load order. Mods that can't load are dropped

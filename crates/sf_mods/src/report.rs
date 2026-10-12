@@ -80,6 +80,12 @@ pub enum IssueKind {
     RecordFile { path: String, line: Option<u32>, column: Option<u32>, message: String },
     /// A non-fatal record diagnostic from a loader.
     RecordWarning { path: String, message: String },
+    /// Two sources that don't depend on each other wrote the same field (or the
+    /// whole record) of one record; reported on the mod whose change won.
+    /// `touches` is the record's history: (source, what it did).
+    RecordConflict { kind: String, id: String, fields: Vec<String>, touches: Vec<(String, String)> },
+    /// Unrelated sources patched disjoint fields of one record; both apply.
+    RecordMerge { kind: String, id: String, touches: Vec<(String, String)> },
     // Adapter
     /// The adapter that synthesized this mod isn't registered.
     UnknownAdapter { adapter: String },
@@ -95,8 +101,9 @@ impl IssueKind {
             | Self::DuplicateInProfile
             | Self::EmptyAssetRoot { .. }
             | Self::RecordWarning { .. }
+            | Self::RecordConflict { .. }
             | Self::NoManifest { .. } => Severity::Warning,
-            Self::OptionalMissing { .. } => Severity::Info,
+            Self::OptionalMissing { .. } | Self::RecordMerge { .. } => Severity::Info,
             _ => Severity::Error,
         }
     }
@@ -125,7 +132,11 @@ impl IssueKind {
             | Self::EntryPointOutsideNamespace { .. }
             | Self::MissingStyle { .. }
             | Self::InvalidPath { .. } => Area::Files,
-            Self::UnknownRecordFormat { .. } | Self::RecordFile { .. } | Self::RecordWarning { .. } => Area::Records,
+            Self::UnknownRecordFormat { .. }
+            | Self::RecordFile { .. }
+            | Self::RecordWarning { .. }
+            | Self::RecordConflict { .. }
+            | Self::RecordMerge { .. } => Area::Records,
             Self::UnknownAdapter { .. } | Self::Adapter { .. } => Area::Adapter,
         }
     }
@@ -189,6 +200,11 @@ impl fmt::Display for IssueKind {
                 write!(f, ": {message}")
             }
             Self::RecordWarning { path, message } => write!(f, "record file {path}: {message}"),
+            Self::RecordConflict { kind, id, fields, touches } => {
+                let what = if fields.is_empty() { "the whole record".to_owned() } else { fields.join(", ") };
+                write!(f, "record conflict {kind} {id:?} on {what}: {}", chain(touches))
+            }
+            Self::RecordMerge { kind, id, touches } => write!(f, "record merge {kind} {id:?}: {}", chain(touches)),
             Self::UnknownAdapter { adapter } => write!(f, "synthesized by adapter {adapter:?}, which is not registered"),
             Self::Adapter { adapter, message } => write!(f, "adapter {adapter}: {message}"),
         }
@@ -304,4 +320,9 @@ impl ModReport {
         }
         out
     }
+}
+
+/// `a (define) -> b (patch radius)`.
+fn chain(touches: &[(String, String)]) -> String {
+    touches.iter().map(|(source, what)| format!("{source} ({what})")).collect::<Vec<_>>().join(" -> ")
 }
