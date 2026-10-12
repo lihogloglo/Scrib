@@ -1,0 +1,23 @@
+[package]
+name = "mw_anim"
+description = "Morrowind KF/NIF keyframe animation as sf_anim source clips: animation groups and text-key events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+mw_nif.workspace = true
+sf_anim.workspace = true
+sf_character.workspace = true
+
+[dev-dependencies]
+mw_install.workspace = true
+mw_vfs.workspace = true
+sf_vfs.workspace = true
+# The CC0 Quaternius fixture (glTF) for the retarget round trip; CREA records for creature tests.
+sf_anim = { workspace = true, features = ["gltf"] }
+tes3 = { workspace = true, features = ["esp"] }
+
+[lints]
+workspace = true

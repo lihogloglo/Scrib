@@ -1,0 +1,641 @@
+//! NPCs walking the streets (ROADMAP M3 demo): `sf_controller_bevy` on the
+//! characters `sf_character_bevy` spawns, driven by `mw_ai`'s
+//! `PathWalkScaffold` (PGRD pathgrids + `AI_W` wander) until `sf_ai` exists.
+//!
+//! - Ground ([`MwGround`]): the resident terrain heights of the exterior
+//!   plus a `StaticWorld` of the R0 statics' `collision.cook` shapes
+//!   (inserted and removed by the streaming activation hooks,
+//!   [`ColliderHook`]). Physics colliders wait for avian (M4).
+//! - Every dressed character gets a `Mover` (grounded, an obstacle to the
+//!   others); characters with an `AI_W` package also get a [`Walker`]
+//!   (the scaffold) and an `Avoider` (ORCA, reactive). The camera is a
+//!   non-reactive obstacle (`AvoidObstacle`), as the player will be.
+//! - The animation graph gets `moving`/`move`/`running` from the mover's
+//!   velocity (the graph's `SpeedMatch` op matches playback to speed), and
+//!   `AI_W` idles fire `fidget` with `idle_variant`.
+//!
+//! - Processing range ([`processing_range`]): a mover simulates only in the
+//!   active worldspace where every streaming cell around it is R0-active
+//!   (its colliders are loaded); elsewhere it is `Dormant` (parked, scaffold
+//!   paused, low animation significance). Interiors walk their own PGRD
+//!   (the worldspace id is the cell name). Flying creatures (`FLIES`) use
+//!   the mover's `Fly { hover }` mode.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use bevy::prelude::*;
+use mw_ai::{CellKey, PathGrids, PathWalkScaffold, Wander, WanderPlanner, gmst_float, walk_speed};
+use mw_graphs::build::params as gp;
+use sf_anim_bevy::{AnimLod, AnimStats, Animator};
+use sf_bake::{Manifest, Store};
+use sf_character_bevy::{Character, CharacterBody};
+use sf_controller::steps::COLLISION_COOK;
+use sf_controller::{
+    CollisionMesh, GroundHit, GroundProbe, Nearest, ProbeQuery, StaticId, StaticShape, StaticWorld,
+    TerrainProbe,
+};
+use sf_controller_bevy::{
+    AnimParamNames, AvoidObstacle, Avoider, ControllerGizmos, ControllerSettings,
+    ControllerSystems, Dormant, MoveIntent, Mover, MoverMode, MoverParams, SfControllerPlugin,
+};
+use sf_coords::{WorldPos, WorldTransform};
+use sf_records::{RecordDb, RecordId};
+use sf_terrain_bevy::TerrainHeightsMap;
+use sf_terrain_bevy::sf_terrain::TerrainHeights;
+use sf_world::{IndexedPlacement, Level, PlacementClass, PlacementId, WorldspaceId};
+use sf_world_bevy::coords::WorldPosOf;
+use sf_world_bevy::{
+    ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx,
+    Streaming,
+};
+use tes3::esp::{Creature, CreatureFlags, Npc};
+
+/// Morrowind's default timescale: game seconds per real second.
+const TIMESCALE: f32 = 30.0;
+/// Hover height of flying creatures over the ground, metres (cliff racers glide low).
+const FLY_HOVER: f32 = 1.5;
+/// Half size of the square around a mover whose streaming cells must all be
+/// R0-active for it to simulate, m: a walk step plus the capsule, so a mover
+/// parks before it could reach a cell without colliders.
+const PROCESS_MARGIN: f32 = 4.0;
+/// Animation significance of dormant movers (the budget drops them to a low tier).
+const DORMANT_SIGNIFICANCE: f32 = 0.25;
+
+// --- Ground ---------------------------------------------------------------------------------
+
+/// One worldspace's R0 static collision.
+#[derive(Default)]
+struct WsStatics {
+    world: Option<StaticWorld>,
+    placed: HashMap<PlacementId, StaticId>,
+    dirty: bool,
+}
+
+/// Terrain heights + R0 static collision: the controller's ground.
+///
+/// Statics are kept per worldspace (an interior's coordinates overlap the
+/// exterior's, and door prefetch activates R0 cells of other worldspaces);
+/// probes see the active worldspace only, plus the terrain when that is
+/// the exterior. Movers elsewhere are [`Dormant`] (the processing range).
+#[derive(Resource, Default)]
+pub struct MwGround {
+    terrain: Option<TerrainProbe<TerrainHeights>>,
+    worlds: HashMap<WorldspaceId, WsStatics>,
+    shapes: HashMap<String, Option<Arc<StaticShape>>>,
+    active: Option<WorldspaceId>,
+    exterior_active: bool,
+}
+
+impl MwGround {
+    fn placed(&self) -> usize {
+        self.worlds.values().map(|w| w.placed.len()).sum()
+    }
+}
+
+impl GroundProbe for MwGround {
+    fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        let terrain = self.terrain.as_ref().filter(|_| self.exterior_active);
+        let statics = self
+            .active
+            .as_ref()
+            .and_then(|ws| self.worlds.get(ws))
+            .and_then(|w| w.world.as_ref());
+        match (terrain, statics) {
+            (Some(t), Some(s)) => Nearest(&[t, s]).probe(queries, out),
+            (Some(t), None) => t.probe(queries, out),
+            (None, Some(s)) => s.probe(queries, out),
+            (None, None) => out.fill(None),
+        }
+    }
+}
+
+/// A collider change from the activation hooks: (worldspace, placement,
+/// model and transform to add, or `None` to remove).
+type ColliderOp = (WorldspaceId, PlacementId, Option<(String, WorldTransform)>);
+
+/// Collider changes from the activation hooks, applied once per frame.
+#[derive(Resource, Default)]
+struct ColliderQueue(Vec<ColliderOp>);
+
+/// Where `collision.cook` products come from.
+#[derive(Resource)]
+struct CollisionSource {
+    store: Store,
+    manifest: Manifest,
+}
+
+impl CollisionSource {
+    fn shape(&self, model: &str) -> Option<Arc<StaticShape>> {
+        let digest = self.manifest.get(COLLISION_COOK, model)?;
+        let bytes = self.store.get(&digest).ok()?;
+        let mesh = CollisionMesh::from_bytes(&bytes).ok()?;
+        StaticShape::new(&mesh).map(Arc::new)
+    }
+}
+
+/// Wraps a placement spawner: R0 activation adds the placement's static
+/// collision shape to [`MwGround`], deactivation removes it.
+pub struct ColliderHook(pub Arc<dyn PlacementSpawner>);
+
+impl PlacementSpawner for ColliderHook {
+    fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
+        self.0.spawn(world, cx, placement)
+    }
+    fn needs_model(&self, placement: &IndexedPlacement) -> bool {
+        self.0.needs_model(placement)
+    }
+    fn prepare(
+        &self,
+        assets: &AssetServer,
+        placement: &IndexedPlacement,
+        model: Option<&LoadedModel>,
+    ) -> Option<UntypedHandle> {
+        self.0.prepare(assets, placement, model)
+    }
+    fn activate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
+        self.0.activate(world, cx, placement);
+        let p = &placement.placement;
+        if let (Some(model), Some(mut queue)) =
+            (&p.model, world.get_resource_mut::<ColliderQueue>())
+        {
+            queue.0.push((
+                cx.worldspace.clone(),
+                p.id,
+                Some((model.as_str().to_owned(), p.transform)),
+            ));
+        }
+    }
+    fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
+        self.0.deactivate(world, cx, placement);
+        if let Some(mut queue) = world.get_resource_mut::<ColliderQueue>() {
+            queue
+                .0
+                .push((cx.worldspace.clone(), placement.placement.id, None));
+        }
+    }
+}
+
+/// Wraps the static classes' spawners with [`ColliderHook`] (call after the
+/// spawners are final).
+pub fn hook_colliders(spawners: &mut PlacementSpawners) {
+    for class in [
+        PlacementClass::Static,
+        PlacementClass::Dynamic,
+        PlacementClass::Door,
+    ] {
+        if let Some(inner) = spawners.for_class(class).cloned() {
+            spawners.set(class, Arc::new(ColliderHook(inner)));
+        }
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn apply_colliders(
+    mut queue: ResMut<ColliderQueue>,
+    source: Res<CollisionSource>,
+    active: Res<ActiveWorldspace>,
+    mut ground: ResMut<MwGround>,
+    counters: Option<Res<sf_diag_bevy::DiagCounters>>,
+) {
+    if active.0 != ground.active {
+        ground.exterior_active = active.0.as_ref() == Some(&mw_world::ids::exterior());
+        ground.active.clone_from(&active.0);
+    }
+    if queue.0.is_empty() {
+        return;
+    }
+    let started = std::time::Instant::now();
+    let MwGround { worlds, shapes, .. } = &mut *ground;
+    for (ws, id, op) in queue.0.drain(..) {
+        let w = worlds.entry(ws).or_default();
+        if let (Some(old), Some(s)) = (w.placed.remove(&id), w.world.as_mut()) {
+            s.remove(old);
+            w.dirty = true;
+        }
+        let Some((model, transform)) = op else {
+            continue;
+        };
+        let Some(shape) = shapes
+            .entry(model)
+            .or_insert_with_key(|m| source.shape(m))
+            .clone()
+        else {
+            continue;
+        };
+        let world = w
+            .world
+            .get_or_insert_with(|| StaticWorld::new(transform.pos));
+        w.placed.insert(id, world.insert(&shape, transform));
+        w.dirty = true;
+    }
+    worlds.retain(|_, w| {
+        if let (true, Some(s)) = (std::mem::take(&mut w.dirty), w.world.as_mut()) {
+            s.rebuild();
+        }
+        !w.placed.is_empty()
+    });
+    if let Some(c) = counters {
+        c.add_named(
+            "controller/colliders/ms",
+            sf_diag_bevy::sf_diag::unit::MS,
+            started.elapsed().as_secs_f64() * 1e3,
+        );
+        #[allow(clippy::cast_precision_loss)]
+        c.set_named(
+            "controller/statics/count",
+            sf_diag_bevy::sf_diag::unit::COUNT,
+            ground.placed() as f64,
+        );
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn refresh_terrain(map: Res<TerrainHeightsMap>, mut ground: ResMut<MwGround>) {
+    if !map.is_changed() && ground.terrain.is_some() {
+        return;
+    }
+    if let Some(h) = map.0.get(&mw_world::ids::exterior()) {
+        ground.terrain = Some(TerrainProbe(h.clone()));
+    }
+}
+
+// --- Walkers --------------------------------------------------------------------------------
+
+/// The pathgrids of every cell.
+#[derive(Resource)]
+struct Pathgrids(PathGrids);
+
+/// Records and game settings the walkers read.
+#[derive(Resource)]
+struct WalkerContent {
+    db: Arc<RecordDb>,
+    min_walk: f32,
+    max_walk: f32,
+}
+
+/// A wandering character's scaffold driver (`mw_ai`, named scaffold).
+#[derive(Component)]
+pub struct Walker {
+    scaffold: PathWalkScaffold,
+    variant: Option<u8>,
+    /// The pathgrid it walks: its exterior cell at spawn, or its interior.
+    key: CellKey,
+}
+
+/// The worldspace a mover lives in (NPCs never change worldspace in M3).
+#[derive(Component, Clone, Debug)]
+pub struct ActorSpace(pub WorldspaceId);
+
+/// Mover and walker setup for a dressed character's base record.
+struct Setup {
+    params: MoverParams,
+    mode: MoverMode,
+    wander: Option<(Wander, f32)>,
+}
+
+fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
+    // A leveled list (LEVC) walks as the creature (or NPC) it shows: the same
+    // pick `MwActors::recipe` dresses it with.
+    let picked = mw_actors::leveled_pick(&content.db, id).map(|(_, picked)| picked);
+    let id = picked.as_ref().unwrap_or(id);
+    let speed_of = |speed: f32| walk_speed(speed, content.min_walk, content.max_walk);
+    if let Some(npc) = content.db.get::<Npc>(id) {
+        let speed = npc
+            .data
+            .stats
+            .as_ref()
+            .map_or(50.0, |s| f32::from(s.attributes[4]));
+        let wander = Wander::of_npc(npc)
+            .filter(|w| w.distance > 0.0)
+            .map(|w| (w, speed_of(speed)));
+        return Setup {
+            params: MoverParams::default(),
+            mode: MoverMode::Ground,
+            wander,
+        };
+    }
+    if let Some(c) = content.db.get::<Creature>(id) {
+        #[allow(clippy::cast_precision_loss)]
+        let speed = speed_of(c.data.speed as f32);
+        let wander = Wander::of_creature(c)
+            .filter(|w| w.distance > 0.0)
+            .map(|w| (w, speed));
+        let flies = c.creature_flags.contains(CreatureFlags::FLIES);
+        let mode = if flies {
+            MoverMode::Fly {
+                hover: Some(FLY_HOVER),
+            }
+        } else {
+            MoverMode::Ground
+        };
+        // Creature capsules scale with the record's scale; size by model bounds is the next step.
+        let s = c.scale.unwrap_or(1.0).clamp(0.3, 3.0);
+        let params = MoverParams {
+            radius: 0.4 * s,
+            height: 1.2 * s,
+            ..MoverParams::default()
+        };
+        return Setup {
+            params,
+            mode,
+            wander,
+        };
+    }
+    Setup {
+        params: MoverParams::default(),
+        mode: MoverMode::Ground,
+        wander: None,
+    }
+}
+
+/// Gives dressed characters their mover (and wanderers their walker).
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+fn attach(
+    mut commands: Commands,
+    content: Res<WalkerContent>,
+    pos_of: WorldPosOf,
+    fresh: Query<(Entity, &Character, &CharacterBody, &Transform, &ChildOf), Without<Mover>>,
+    bodies: Query<&Transform>,
+) {
+    for (entity, character, body, transform, parent) in &fresh {
+        let Character::Record { id, .. } = character else {
+            continue;
+        };
+        let (Some(location), Some(frame_origin)) =
+            (pos_of.location(entity), pos_of.get(parent.parent()))
+        else {
+            continue;
+        };
+        let position = location.pos;
+        let setup = setup_of(&content, id);
+        let mut mover = Mover::new(
+            position,
+            Mover::yaw_of(transform.rotation),
+            setup.params,
+            frame_origin,
+        );
+        mover.loco.mode = setup.mode;
+        mover.animator = Some(body.body);
+        // Race height/weight: the body's scale (foot probes, motion feed).
+        if let Ok(t) = bodies.get(body.body) {
+            mover.body_scale = t.scale;
+        }
+        let mut e = commands.entity(entity);
+        e.insert((
+            mover,
+            MoveIntent::default(),
+            ActorSpace(location.worldspace.clone()),
+        ));
+        if let Some((wander, speed)) = setup.wander {
+            let seed = entity.to_bits() ^ 0x5741_4C4B;
+            let scaffold = PathWalkScaffold::new(WanderPlanner::new(wander, position), speed, seed);
+            let key = if location.worldspace == mw_world::ids::exterior() {
+                CellKey::exterior_at(position)
+            } else {
+                CellKey::interior(location.worldspace.as_str())
+            };
+            e.insert((
+                Walker {
+                    scaffold,
+                    variant: None,
+                    key,
+                },
+                Avoider {
+                    max_speed: speed * 1.5,
+                    ..Avoider::default()
+                },
+            ));
+        }
+    }
+}
+
+/// The processing range (streaming.md / locomotion.md "Processing range"):
+/// a mover simulates only in the active worldspace and only while every
+/// streaming cell within [`PROCESS_MARGIN`] of it is R0-active, i.e. its
+/// ground and static colliders are loaded (R0 activation builds them).
+/// Elsewhere it is [`Dormant`]: parked where it stands, its scaffold paused,
+/// its animation significance lowered so the budget gives it a low tier.
+#[allow(clippy::needless_pass_by_value)]
+fn processing_range(
+    mut commands: Commands,
+    streaming: Res<Streaming>,
+    active: Res<ActiveWorldspace>,
+    movers: Query<(Entity, &Mover, &ActorSpace, Has<Dormant>)>,
+    mut lods: Query<&mut AnimLod>,
+) {
+    let scheduler = streaming.scheduler();
+    for (entity, mover, space, dormant) in &movers {
+        let awake = active.0.as_ref() == Some(&space.0)
+            && scheduler.covers(&space.0, mover.loco.position, PROCESS_MARGIN, Level::Active);
+        if awake != dormant {
+            continue;
+        }
+        if awake {
+            commands.entity(entity).remove::<Dormant>();
+        } else {
+            commands.entity(entity).insert(Dormant);
+        }
+        if let Some(mut lod) = mover.animator.and_then(|a| lods.get_mut(a).ok()) {
+            lod.significance = if awake { 1.0 } else { DORMANT_SIGNIFICANCE };
+        }
+    }
+}
+
+/// The scaffold writes intents (and route directions for ORCA's yield rule).
+#[allow(clippy::needless_pass_by_value)]
+fn drive(
+    time: Res<Time>,
+    grids: Res<Pathgrids>,
+    mut walkers: Query<(&Mover, &mut Walker, &mut MoveIntent, &mut Avoider), Without<Dormant>>,
+    mut animators: Query<&mut Animator>,
+) {
+    let dt = time.delta_secs().min(0.1);
+    let hours = dt * TIMESCALE / 3600.0;
+    for (mover, mut walker, mut intent, mut avoider) in &mut walkers {
+        let pos = mover.loco.position;
+        let walker = &mut *walker;
+        let graph = grids.0.get(&walker.key);
+        let out = walker.scaffold.update(graph, pos, dt, hours);
+        intent.0 = out.intent;
+        avoider.travel = walker.scaffold.follower().map_or(Vec3::ZERO, |f| {
+            let t = f.target();
+            let from = if t > 0 { f.nodes[t - 1].pos } else { pos };
+            f.nodes.get(t).map_or(Vec3::ZERO, |n| {
+                from.delta_f32(n.pos).with_y(0.0).normalize_or_zero()
+            })
+        });
+        // AI_W idles: a new IdleN (2..=9) plays once as a fidget.
+        let variant = (!out.walking).then_some(out.idle_variant.unwrap_or(0));
+        if variant != walker.variant {
+            walker.variant = variant;
+            if let (Some(v @ 2..=9), Some(mut animator)) = (
+                variant,
+                mover.animator.and_then(|a| animators.get_mut(a).ok()),
+            ) {
+                animator.set_float(gp::IDLE_VARIANT, f32::from(v));
+                animator.fire(gp::FIDGET);
+            }
+        }
+    }
+}
+
+/// The camera as a non-reactive obstacle at its feet (about 1.2 m below the
+/// eye), so walkers step around a camera standing in the street.
+#[allow(clippy::needless_pass_by_value)]
+fn camera_obstacle(
+    mut commands: Commands,
+    time: Res<Time>,
+    pos_of: WorldPosOf,
+    mut cams: Query<(Entity, Option<&mut AvoidObstacle>), With<crate::exterior::ExteriorCamera>>,
+) {
+    let dt = time.delta_secs().max(1e-4);
+    for (entity, existing) in &mut cams {
+        let Some(eye) = pos_of.get(entity) else {
+            continue;
+        };
+        let feet = eye.offset(Vec3::Y * -1.2);
+        if let Some(mut o) = existing {
+            let v = o.position.delta_f32(feet) / dt;
+            o.velocity = if v.length() < 15.0 {
+                v.with_y(0.0)
+            } else {
+                Vec3::ZERO
+            };
+            o.position = feet;
+        } else {
+            commands.entity(entity).insert(AvoidObstacle {
+                position: feet,
+                velocity: Vec3::ZERO,
+                radius: 0.4,
+            });
+        }
+    }
+}
+
+/// `J` toggles the mover gizmos (capsule ring, velocity, trajectory), `K` foot placement.
+#[allow(clippy::needless_pass_by_value)]
+fn gizmos(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut g: ResMut<ControllerGizmos>,
+    mut settings: ResMut<ControllerSettings>,
+    grid: Query<&sf_world_bevy::big_space::prelude::Grid>,
+) {
+    if keys.just_pressed(KeyCode::KeyJ) {
+        g.enabled = !g.enabled;
+        info!("walker gizmos {}", if g.enabled { "on" } else { "off" });
+    }
+    // A/B for foot placement: K drops the per-leg ground samples.
+    if keys.just_pressed(KeyCode::KeyK) {
+        settings.foot_probes = !settings.foot_probes;
+        info!(
+            "walker foot placement {}",
+            if settings.foot_probes { "on" } else { "off" }
+        );
+    }
+    if let Some(grid) = grid.iter().next() {
+        let c = grid.local_floating_origin().cell();
+        g.origin = WorldPos::new(IVec3::new(c.x, c.y, c.z), Vec3::ZERO);
+    }
+}
+
+/// Adds the walkers: controller stage, ground, pathgrids, scaffold driver.
+pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest) {
+    let started = std::time::Instant::now();
+    let grids = PathGrids::build(&db);
+    let min_walk = gmst_float(&db, "fMinWalkSpeed", 100.0);
+    let max_walk = gmst_float(&db, "fMaxWalkSpeed", 200.0);
+    info!(
+        "walkers: {} pathgrids in {:.2} s",
+        grids.grids.len(),
+        started.elapsed().as_secs_f32()
+    );
+    let params = AnimParamNames {
+        moving: Some(gp::MOVING.into()),
+        direction: Some(gp::MOVE.into()),
+        running: Some(gp::RUNNING.into()),
+        turn: Some(gp::TURN.into()),
+        speed: None,
+    };
+    app.add_plugins(SfControllerPlugin::<MwGround>::default())
+        .insert_resource(ControllerSettings {
+            params,
+            // Measured-speed thresholds against the humanoid cycles (walk
+            // 2.2 m/s, run 3.2 m/s, `SpeedMatch` 0.5-1.5, stride warp 0.6+):
+            // moving from 0.5 m/s down to 0.25; running from 2.9 down to 2.6.
+            moving_speed: 0.5,
+            idle_speed: 0.25,
+            run_speed: 2.9,
+            run_exit: 2.6,
+            ..ControllerSettings::default()
+        })
+        .init_resource::<MwGround>()
+        .init_resource::<ColliderQueue>()
+        .insert_resource(CollisionSource { store, manifest })
+        .insert_resource(Pathgrids(grids))
+        .insert_resource(WalkerContent {
+            db,
+            min_walk,
+            max_walk,
+        })
+        .add_systems(
+            Update,
+            (
+                apply_colliders,
+                refresh_terrain,
+                attach,
+                processing_range,
+                camera_obstacle,
+                drive,
+            )
+                .chain()
+                .in_set(ControllerSystems::Drive),
+        )
+        .add_systems(Update, (gizmos, report));
+}
+
+/// Every 5 s: what the walkers do (log only; counters carry the timings).
+#[allow(clippy::needless_pass_by_value)]
+fn report(
+    time: Res<Time>,
+    mut next: Local<f32>,
+    stats: Res<sf_controller_bevy::ControllerStats>,
+    anim: Option<Res<AnimStats>>,
+    ground: Res<MwGround>,
+    movers: Query<(&Mover, Option<&Walker>, Has<Dormant>)>,
+) {
+    let now = time.elapsed_secs();
+    if now < *next {
+        return;
+    }
+    *next = now + 5.0;
+    let (mut walkers, mut walking, mut grounded, mut dormant, mut stuck, mut blocked) = (0, 0, 0, 0, 0, 0);
+    for (m, w, d) in &movers {
+        walkers += usize::from(w.is_some());
+        dormant += usize::from(d);
+        stuck += w.map_or(0, |w| w.scaffold.stuck_count());
+        walking += usize::from(m.gait.moving);
+        // Pushing without progress (blocked, crowded): the graph is told the
+        // measured speed, so these stand instead of walking in place.
+        blocked += usize::from(!d && m.applied.desired_velocity.length() > 0.5 && m.measured.length() < 0.25);
+        grounded +=
+            usize::from(m.loco.grounded.is_some() || !matches!(m.loco.mode, MoverMode::Ground));
+    }
+    info!(
+        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} grounded, {stuck} walks given up), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
+        stats.movers,
+        ground.placed(),
+        ground.terrain.is_some() && ground.exterior_active,
+        stats.avoid_us,
+        stats.move_us,
+        stats.feed_us
+    );
+    // Foot placement guards since start (animfix): rare clamps are normal;
+    // a steady climb in `reach`/`pelvis` points at a speed or ground fault.
+    if let Some(f) = anim.map(|a| a.feet_total) {
+        info!(
+            "walkers feet: {blocked} blocked; IK guards since start: {} samples rejected, {} unplanted, {} reach clamps, {} pelvis clamps, {} teleports, {} non-finite",
+            f.rejected, f.unplanted, f.reach_clamped, f.pelvis_clamped, f.teleports, f.non_finite
+        );
+    }
+}

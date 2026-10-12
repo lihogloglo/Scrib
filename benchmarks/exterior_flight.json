@@ -1,0 +1,20 @@
+{
+  "name": "exterior_flight",
+  "warmup": { "seconds": 3.0, "frames": 120 },
+  "measure": {
+    "kind": "path",
+    "speed": 60.0,
+    "keyframes": [
+      { "position": [-176.0, 120.0, 1053.0] },
+      { "position": [-293.0, 120.0, 205.0] },
+      { "position": [-176.0, 120.0, -293.0] },
+      { "position": [-176.0, 120.0, -760.0] },
+      { "position": [293.0, 120.0, -527.0] },
+      { "position": [410.0, 120.0, 1346.0] }
+    ]
+  },
+  "gates": [
+    { "gate": "max_stutters", "factor": 1.5, "window": 60, "per_minute": 1.0 },
+    { "gate": "max_frame_ms", "ms": 33.0 }
+  ]
+}

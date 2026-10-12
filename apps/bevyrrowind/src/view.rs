@@ -1,22 +1,35 @@
-﻿//! `bevyrrowind view <cell>`: renders one cell with a free-fly camera.
+//! `bevyrrowind view <cell>`: renders one cell with a free-fly camera.
+//!
+//! Static models load cooked from the bake cache (`baked://mesh.cook/...`)
+//! when the profile has them; animated, skinned, light-carrying, and
+//! un-baked models load from their NIF.
 //!
 //! With `--screenshot`, waits until every model and texture has loaded,
 //! lets the renderer settle, saves a PNG, and exits. That's the automated
-//! visual check for rendering changes.
+//! visual check for rendering changes. With `--bench`, runs an `sf_diag`
+//! scenario (warm-up held until everything is loaded) and exits with its
+//! verdict.
 
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use bevy::asset::LoadState;
 use bevy::asset::io::AssetSourceId;
 use bevy::camera::Exposure;
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
-use bevy::light::GlobalAmbientLight;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
-use mw_assets::MwAssetsPlugin;
+use mw_assets::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned, MwAssetsPlugin};
 use mw_world::{BaseKind, Placement};
+use sf_bake::{Manifest, Store};
+use sf_diag_bevy::{DiagScenario, FlyThroughCamera};
+use sf_model::steps::MeshCookStep;
+use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
+use sf_sky_bevy::sf_sky::RenderPath;
+use sf_sky_bevy::{RenderPathCamera, SkyPlugin, SkyRenderOptions};
 use sf_vfs::Vfs;
 
 pub struct ViewOptions {
@@ -28,50 +41,176 @@ pub struct ViewOptions {
     pub settle: f32,
     /// Overrides the automatic camera: eye position and look-at target (meters).
     pub camera: Option<(Vec3, Vec3)>,
+    pub calibration: mw_assets::LightCalibration,
+    /// The bake cache, when cooked models should be used.
+    pub baked: Option<Baked>,
+    /// Debug view: tint cooked models by LOD level.
+    pub lod_tint: bool,
+    /// `--skinned`: skinned models load from their cooked product.
+    pub skinned: Option<SkinnedView>,
+    /// Ray-traced lighting (`--rt`) and DLSS (`--dlss`).
+    pub render: crate::render::RenderSettings,
+    /// Benchmark, window size and A/B switches.
+    pub perf: crate::perf::Perf,
 }
+
+/// `--skinned` (scaffold, see `skinned_view`).
+pub struct SkinnedView {
+    /// The skeleton NIF; `None`: each model's own nodes.
+    pub skeleton: Option<String>,
+    /// `--animate`: an `sf_anim_bevy` rig playing the baked graph (`anim_view`).
+    pub animate: bool,
+}
+
+/// A bake store and the profile manifest to read cooked products from.
+pub struct Baked {
+    pub store: Store,
+    pub manifest: Manifest,
+}
+
+/// The cooked LOD level the ray tracer sees. Interiors are small enough
+/// for full detail; exteriors will want a reduced level.
+const RAY_TRACING_LOD: usize = 0;
 
 #[derive(Resource)]
 struct Scene {
     placements: Vec<Placement>,
     ambient: Option<[u8; 4]>,
     camera: Option<(Vec3, Vec3)>,
+    /// Model paths to load cooked.
+    cooked: HashSet<String>,
+    /// Model paths to load as cooked skinned models (`--skinned`), and the
+    /// skeleton NIF override.
+    skinned: HashSet<String>,
+    skeleton: Option<String>,
+    bench: bool,
+    /// LOD level cooked models give the ray tracer (ray-traced path only).
+    ray_tracing_lod: Option<usize>,
+    /// The camera's render path and upscaling are managed by `sf_sky_bevy`.
+    managed: bool,
 }
 
 #[derive(Resource)]
 struct Capture {
     path: PathBuf,
     settle: f32,
-    loaded_at: Option<f32>,
     taken_at: Option<f32>,
 }
 
-#[derive(Resource, Default)]
-struct Models(Vec<Handle<WorldAsset>>);
-
-pub fn run(vfs: Arc<Vfs>, options: ViewOptions) {
-    let mut app = App::new();
-    app.register_asset_source(AssetSourceId::Default, sf_vfs::bevy::asset_source(vfs.clone()))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title: options.title.clone(), ..Window::default() }),
-            ..WindowPlugin::default()
-        }))
-        .add_plugins((MwAssetsPlugin { vfs }, FreeCameraPlugin))
-        .insert_resource(Scene { placements: options.placements, ambient: options.ambient, camera: options.camera })
-        .init_resource::<Models>()
-        .add_systems(Startup, spawn);
-    if let Some(path) = options.screenshot {
-        app.insert_resource(Capture { path, settle: options.settle, loaded_at: None, taken_at: None })
-            .add_systems(Update, capture);
-    }
-    app.run();
+/// When everything (models, textures, cooked spawns) finished loading.
+#[derive(Resource)]
+struct Loading {
+    started: Instant,
+    ready_at: Option<f32>,
 }
 
-fn spawn(mut commands: Commands, scene: Res<Scene>, assets: Res<AssetServer>, mut models: ResMut<Models>) {
+pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    let cooked = match &options.baked {
+        Some(baked) => {
+            let wanted: HashSet<&str> = options
+                .placements
+                .iter()
+                // Lights attach at the model's `AttachLight` node, which
+                // cooking flattens away; those keep the NIF path for now.
+                .filter(|p| p.light.is_none() && p.kind != BaseKind::Actor)
+                .filter_map(|p| p.model.as_deref())
+                .collect();
+            mw_bake::cooked_models(&baked.store, &baked.manifest, wanted)
+        }
+        None => HashSet::new(),
+    };
+    let mut anim_views = None;
+    let (skinned, skeleton) = match (&options.baked, options.skinned) {
+        (Some(baked), Some(view)) => {
+            let wanted = options.placements.iter().filter_map(|p| p.model.as_deref());
+            if view.animate {
+                anim_views = Some(crate::anim_view::AnimViews::new(baked.store.clone(), baked.manifest.clone()));
+            }
+            (crate::skinned_view::skinned_models(&baked.store, &baked.manifest, wanted), view.skeleton)
+        }
+        _ => (HashSet::new(), None),
+    };
+    if !skinned.is_empty() {
+        println!("{} skinned models load cooked (--skinned)", skinned.len());
+    }
+    let unique: HashSet<&str> = options.placements.iter().filter_map(|p| p.model.as_deref()).collect();
+    println!("{} of {} models load cooked", cooked.len(), unique.len());
+
+    let mut app = App::new();
+    app.register_asset_source(AssetSourceId::Default, sf_vfs::bevy::asset_source(vfs.clone()));
+    if let Some(baked) = options.baked {
+        let extensions = BTreeMap::from([(MeshCookStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned())]);
+        app.register_asset_source(BAKED_SOURCE, baked_source(baked.store, BakedManifest::new(baked.manifest), extensions));
+    }
+    let render = options.render;
+    let ray_traced = render.path == RenderPath::RayTraced;
+    crate::render::RenderSettings::init(&mut app);
+    let mut perf = options.perf;
+    let bench = perf.bench.is_some();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(perf.window(options.title.clone(), None)),
+        ..WindowPlugin::default()
+    }))
+    .add_plugins((MwAssetsPlugin { vfs }, FreeCameraPlugin))
+    .insert_resource(options.calibration)
+    .insert_resource(CookedLodSettings { tint_levels: options.lod_tint, ..CookedLodSettings::default() })
+    .insert_resource(Scene {
+        placements: options.placements,
+        ambient: options.ambient,
+        camera: options.camera,
+        cooked,
+        skinned,
+        skeleton,
+        bench,
+        ray_tracing_lod: ray_traced.then_some(RAY_TRACING_LOD),
+        managed: render.managed(),
+    })
+    .insert_resource(Loading { started, ready_at: None })
+    .add_plugins(crate::skinned_view::SkinnedViewPlugin)
+    .add_plugins(crate::anim_view::AnimViewPlugin)
+    .add_systems(Startup, spawn)
+    .add_systems(Update, track_loading);
+    if let Some(views) = anim_views {
+        app.insert_resource(views);
+    }
+    if render.managed() {
+        // Interiors have no sky: the plugin only provides the render path
+        // switch, DLSS and the point-light proxies here (the sun stays dark
+        // without a `SkyCamera`).
+        render.insert(&mut app);
+        app.add_plugins(SkyPlugin { render_path: render.path, ..SkyPlugin::default() });
+        render.apply_options(&mut app.world_mut().resource_mut::<SkyRenderOptions>());
+    }
+
+    crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());
+    if let Some((_, settings)) = &mut perf.bench {
+        let models = if app.world().resource::<Scene>().cooked.is_empty() { "nif" } else { "cooked" };
+        settings.meta.insert("models".to_owned(), models.to_owned());
+        app.add_systems(Update, hold_until_loaded);
+    } else if let Some(path) = options.screenshot {
+        app.insert_resource(Capture { path, settle: options.settle, taken_at: None }).add_systems(Update, capture);
+    }
+    if perf.off.has(crate::perf::Part::Lights) {
+        app.add_systems(Update, despawn_point_lights);
+    }
+    perf.add_plugins(&mut app)?;
+    app.run();
+    Ok(())
+}
+
+fn spawn(
+    mut commands: Commands,
+    scene: Res<Scene>,
+    assets: Res<AssetServer>,
+    calibration: Res<mw_assets::LightCalibration>,
+    mut anim_views: Option<ResMut<crate::anim_view::AnimViews>>,
+) {
     let mut lo = Vec3::splat(f32::INFINITY);
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
-    let (mut spawned, mut actors) = (0, 0);
+    let (mut nif, mut cooked, mut actors) = (0, 0, 0);
 
-    for placement in &scene.placements {
+    for (index, placement) in scene.placements.iter().enumerate() {
         let t = placement.transform;
         let transform = Transform {
             translation: Vec3::from_array(t.translation),
@@ -85,39 +224,37 @@ fn spawn(mut commands: Commands, scene: Res<Scene>, assets: Res<AssetServer>, mu
             actors += 1; // assembled actors arrive in M3
             continue;
         }
+        let mut root = None;
         if let Some(model) = &placement.model {
-            let handle: Handle<WorldAsset> = assets.load(model.clone());
-            models.0.push(handle.clone());
             let visibility = if placement.editor_only { Visibility::Hidden } else { Visibility::Inherited };
-            commands.spawn((WorldAssetRoot(handle), transform, visibility, Name::new(placement.base_id.clone())));
-            spawned += 1;
+            let name = Name::new(placement.base_id.clone());
+            root = Some(if let (true, Some(views)) = (scene.skinned.contains(model), anim_views.as_deref_mut()) {
+                cooked += 1;
+                crate::anim_view::spawn(&mut commands, &assets, views, model, scene.skeleton.as_deref(), (transform, visibility, name))
+            } else if scene.skinned.contains(model) {
+                cooked += 1;
+                crate::skinned_view::spawn(&mut commands, &assets, model, scene.skeleton.as_deref(), (transform, visibility, name))
+            } else if scene.cooked.contains(model) {
+                cooked += 1;
+                let handle = mw_assets::cooked::load(&assets, model, scene.ray_tracing_lod);
+                let cooked = CookedModelRoot { model: handle, source: model.clone(), scale: t.scale };
+                commands.spawn((cooked, transform, visibility, name)).id()
+            } else {
+                nif += 1;
+                let handle: Handle<WorldAsset> = assets.load(model.clone());
+                commands.spawn((WorldAssetRoot(handle), transform, visibility, name)).id()
+            });
         }
         if let Some(light) = placement.light {
             debug!("light {} at {:.2}", placement.base_id, transform.translation);
-            let [r, g, b] = light.color;
-            commands.spawn((
-                PointLight {
-                    color: Color::srgb(r, g, b),
-                    // Morrowind radii are falloff distances; give the light
-                    // enough power to read at that range.
-                    intensity: 4_000.0 * light.radius * light.radius,
-                    range: light.radius * 1.5,
-                    radius: 0.05,
-                    shadow_maps_enabled: false,
-                    ..PointLight::default()
-                },
-                transform,
-            ));
+            let seed = u32::try_from(index).unwrap_or_default();
+            mw_assets::lights::spawn_light(&mut commands, &calibration, &light, root, transform, seed);
         }
     }
-    info!("spawned {spawned} models, skipped {actors} actors");
+    info!("spawned {cooked} cooked and {nif} NIF models, skipped {actors} actors");
 
     if let Some([r, g, b, _]) = scene.ambient {
-        commands.insert_resource(GlobalAmbientLight {
-            color: Color::srgb_u8(r, g, b),
-            brightness: 400.0,
-            ..GlobalAmbientLight::default()
-        });
+        commands.insert_resource(calibration.ambient([r, g, b]));
     }
 
     let (eye, target) = scene.camera.unwrap_or_else(|| {
@@ -129,41 +266,61 @@ fn spawn(mut commands: Commands, scene: Res<Scene>, assets: Res<AssetServer>, mu
             (Vec3::new(0.0, 2.0, 5.0), Vec3::ZERO)
         }
     });
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera3d::default(),
-        Exposure::INDOOR,
+        Exposure { ev100: mw_assets::SCENE_EV100 },
         Transform::from_translation(eye).looking_at(target, Vec3::Y),
-        FreeCamera::default(),
     ));
+    if scene.managed {
+        camera.insert(RenderPathCamera);
+    }
+    if scene.bench {
+        camera.insert(FlyThroughCamera);
+    } else {
+        camera.insert(FreeCamera::default());
+    }
+}
+
+/// Notes when every model, texture, and cooked spawn has finished loading.
+fn track_loading(
+    mut loading: ResMut<Loading>,
+    server: Res<AssetServer>,
+    nif_roots: Query<&WorldAssetRoot>,
+    cooked_waiting: Query<(), (With<CookedModelRoot>, Without<CookedSpawned>)>,
+    cooked_materials: Res<CookedMaterials>,
+) {
+    if loading.ready_at.is_some() {
+        return;
+    }
+    let nif_pending = nif_roots
+        .iter()
+        .filter(|r| {
+            !server.is_loaded_with_dependencies(&r.0) && !matches!(server.get_load_state(&r.0), Some(LoadState::Failed(_)))
+        })
+        .count();
+    let pending = nif_pending + cooked_waiting.iter().count() + cooked_materials.pending_textures(&server);
+    let elapsed = loading.started.elapsed().as_secs_f32();
+    // Give up waiting after a minute; carry on with whatever is there.
+    if pending == 0 || elapsed > 60.0 {
+        info!("assets ready {elapsed:.2}s after start ({pending} still pending)");
+        loading.ready_at = Some(elapsed);
+    }
+}
+
+fn hold_until_loaded(loading: Res<Loading>, scenario: Option<ResMut<DiagScenario>>) {
+    if let Some(mut scenario) = scenario {
+        scenario.hold = loading.ready_at.is_none();
+    }
 }
 
 fn capture(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
-    models: Res<Models>,
-    assets: Res<AssetServer>,
-    time: Res<Time>,
+    loading: Res<Loading>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let now = time.elapsed_secs();
-    if capture.loaded_at.is_none() {
-        let pending = models
-            .0
-            .iter()
-            .filter(|h| {
-                !assets.is_loaded_with_dependencies(*h)
-                    && !matches!(assets.get_load_state(*h), Some(LoadState::Failed(_)))
-            })
-            .count();
-        debug!("{pending}/{} models pending at {now:.2}s", models.0.len());
-        // Give up waiting after a minute; capture whatever is there.
-        if pending == 0 || now > 60.0 {
-            info!("assets ready at {now:.1}s ({pending} still pending)");
-            capture.loaded_at = Some(now);
-        }
-        return;
-    }
-    let loaded_at = capture.loaded_at.unwrap_or(now);
+    let Some(loaded_at) = loading.ready_at else { return };
+    let now = loading.started.elapsed().as_secs_f32();
     match capture.taken_at {
         None if now - loaded_at >= capture.settle => {
             commands.spawn(Screenshot::primary_window()).observe(save_to_disk(capture.path.clone()));
@@ -173,5 +330,12 @@ fn capture(
             exit.write(AppExit::Success);
         }
         _ => {}
+    }
+}
+
+/// `--off lights`: no point lights.
+fn despawn_point_lights(mut commands: Commands, lights: Query<Entity, Added<PointLight>>) {
+    for light in &lights {
+        commands.entity(light).despawn();
     }
 }

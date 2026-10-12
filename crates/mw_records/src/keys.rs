@@ -19,6 +19,12 @@ pub fn landscape(land: &Landscape) -> RecordId {
     exterior(land.grid)
 }
 
+/// A content file's land texture index (see `LandTextureSlot`):
+/// `"<file name>#<INTV>"`. File names compare case-insensitively.
+pub fn ltex_slot(file: &str, index: u32) -> RecordId {
+    RecordId::from(format!("{file}#{index}"))
+}
+
 /// Path grids name their cell and give a grid; the pair is stable.
 pub fn path_grid(grid: &PathGrid) -> RecordId {
     let (x, y) = grid.data.grid;

@@ -1,0 +1,1097 @@
+# Visual checks
+
+The owner's eyes judge rendering work (CLAUDE.md rule 5). Agents take a few
+sanity screenshots, then add an entry here with status **awaiting owner**
+and move on. The owner confirms in batched passes.
+
+## How to do a visual pass
+
+1. **Open a terminal in `D:\Gamedev\Bevyrrowind\play\`.** It holds a release
+   exe (built with `--features solari,dlss`), the DLSS DLLs and a copy of
+   `scenes.ron`, so builds in the repo never block it. Agents refresh it
+   after their release builds. `bevyrrowind-raster.exe` beside it is the
+   same game built without `solari`/`dlss` (plain raster, no DLSS); it
+   reads the same `scenes.ron` and bake cache: use it to rule RT/DLSS in
+   or out (`.\bevyrrowind-raster scene <name>`).
+2. **List the scenes:** `.\bevyrrowind scene --list`.
+3. **Open one:** `.\bevyrrowind scene <name>` (a unique prefix works:
+   `.\bevyrrowind scene ghostfence-f`). The console prints the equivalent
+   `view` command line and what to look for; the window shows the same in
+   its top-left overlay. Add any `view` flag after the name for an A/B run,
+   e.g. `.\bevyrrowind scene balmora --off farfield` or
+   `.\bevyrrowind scene dlss-run --dlss performance`.
+4. **Look, fly, flip.** A scene opens at its camera and hour with the clock
+   paused. Keys:
+
+   | key | does |
+   |---|---|
+   | WASD, Q/E, mouse | fly (free camera; Shift runs at 80 m/s) |
+   | F1 | show/hide the help overlay |
+   | F2 | sun shadows on/off |
+   | F3 | terrain far shadows on/off (shadows past the cascades) |
+   | F4 | DLSS: off, quality, balanced, performance, DLAA (exe built with `dlss`; on by default as `auto` since 2026-10-12, start with `--dlss off` for native) |
+   | F5 | far-field level tint (L1 green, L2 blue, L3 purple) |
+   | F6 / F7 | terrain LOD colors / terrain wireframe |
+   | F8 | streaming rings overlay |
+   | `[` / `]` | hour -/+ 0.5 (Shift: 0.1) |
+   | P | pause/resume the clock |
+   | T | time-lapse (x600; again for normal x30) |
+   | F9 | print the camera as `--camera "..." --hour h` and copy it to the clipboard |
+   | F11 | object-terrain blend on/off (rocks, roots, foundations into the ground; TB-1..3) |
+   | F12 | screenshot to `play\shots\<scene>-<time>.png` |
+
+   Not switchable live (decided at startup, compare two runs): `--off
+   farfield` (alias `lod`), `--off terrain`, `--off sky`, `--off envmap`,
+   `--off near`, `--off far`, `--off nif`, `--off lights`, `--off
+   particles`, `--off farshadows`, `--off terrainblend` (also F11 live), `--off shadowtune` (pre-2026-10-12
+   cascades), `--off denoiser`, `--lod-tint`, `--far-tint` (initial state
+   of F5), `--terrain-lod`, `--wire`, `--rt`, `--prepass`, `--resolution
+   WxH`. Several `--off` parts go comma-separated: `--off farshadows,shadowtune`.
+5. **Mark the result** in this file: change the entry's `Status:` line to
+   `confirmed` or `rejected: <what you saw>`, optionally with a camera from
+   F9 or a screenshot from F12. Agents pick up rejected entries.
+
+Scenes live in `bevyrrowind/scenes.ron` (name, cell, camera, hour, flags,
+what to look for). The exe reads `scenes.ron` from the current folder first,
+then next to the exe, then its built-in copy, so a scene can be tweaked in
+`play\scenes.ron` without a rebuild. From the repo: `cargo dev scene <name>`
+(Bevy dynamically linked), and `cargo run -p bevyrrowind --features
+dev,solari,dlss -- scene <name>` for the RT/DLSS scenes.
+
+Synthetic scenes (framework examples) isolate one system on generated data;
+they run from `D:\Gamedev\Bevyrrowind\superfargoth` with cargo (no exe in
+`play`). See "Synthetic scenes" at the end.
+
+### Entry format
+
+`ID: title` — kind (game location / synthetic), launch command, what to look
+for, A/B, status, source session. Status is one of `awaiting owner`,
+`confirmed`, `rejected: <note>`, or `known bug: <fix queued>` (the check
+shows a bug that's already understood; confirm the bug or skip).
+
+---
+
+## Far field (superfargoth `far-field.md`, "Measured on Morrowind")
+
+Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
+`redmtn_view*`, `summit_vivec*`, `ebonheart_night*`, `handoff_forest*`).
+
+### FF-1: Balmora horizon
+- Kind: game location. Run: `.\bevyrrowind scene balmora`
+- Look for: town and hills drawn out to the horizon; no holes, flicker or
+  seams around the 400 m handoff; no streaming pop while you fly around.
+- A/B: `.\bevyrrowind scene balmora --off farfield` (the old far ring: the
+  horizon stops at ~1 km and the frame costs ~2.7x).
+- Status: awaiting owner (orchestrator judged `balmora_a` good).
+- Source: farfield-lod.
+
+### FF-2: Far-field levels
+- Kind: game location. Run: `.\bevyrrowind scene balmora`, press F5.
+- Look for: L1 green from ~400 m, L2 blue from ~2 km, L3 purple beyond; no
+  untinted gap and no patch that flickers between levels while flying.
+- A/B: F5 on/off.
+- Status: awaiting owner.
+- Source: farfield-lod.
+
+### FF-3: Red Mountain is solid
+- Kind: game location. Run: `.\bevyrrowind scene redmtn-view`
+- Look for: the mountain is one solid surface; distant objects sit on it.
+- A/B: `--off farfield` shows the old see-through gaps (`redmtn_view_offfarfield.png`).
+- Status: awaiting owner (orchestrator judged good).
+- Source: farfield-lod.
+
+### FF-4: Summit to Vivec
+- Kind: game location. Run: `.\bevyrrowind scene summit-vivec`
+- Look for: Vivec, Balmora and the coast readable at 2+ km; no pop when panning.
+- A/B: `--off farfield`.
+- Status: awaiting owner.
+- Source: farfield-lod (camera added by the scenes session; the original shot's camera wasn't recorded).
+
+### FF-5: Distant lights at night
+- Kind: game location. Run: `.\bevyrrowind scene summit-vivec-night`, then
+  `.\bevyrrowind scene ebonheart-night`.
+- Look for: towns' lights as warm points/glows at the right places, not
+  oversized; they fade in from dusk (press `[` a few times to 19:00, then T).
+  Ebonheart: Vivec's cantons lit across the water, no flicker flying at them.
+- A/B: `--off farfield`.
+- Status: awaiting owner (orchestrator judged `summit_vivec_night` good).
+- Source: farfield-lod.
+
+### FF-6: Impostor trees at the handoff
+- Kind: game location. Run: `.\bevyrrowind scene handoff-forest`
+- Look for: trees at 350-450 m keep their shape, size and brightness when
+  they switch to impostors (F5 shows where: white to green).
+- A/B: F5.
+- Status: awaiting owner.
+- Source: farfield-lod.
+
+### FF-7: No pop in fast flight
+- Kind: game location. Run: `.\bevyrrowind scene redmtn-view`, hold Shift+W
+  (80 m/s) toward the mountain for ~20 s.
+- Look for: nothing appears late or vanishes at the 400 m handoff; hitches are
+  a perf issue (ROADMAP "Next up" 1), note them separately.
+- Status: awaiting owner.
+- Source: farfield-lod.
+
+## Distant shadows (superfargoth `weather.md`, "Near-term visual fixes", bug A)
+
+The shadows session (2026-10-12) moved the sun's cascades to 504 m (2048² after shadows2; 4096² cost +1.4 ms)
+and added a terrain far shadow past them. Screenshots: `shots\shadows\`
+(`before_*`, `after_*`, `north_1830_on/off.png`). Cost measured +2.5 ms at
+1440p (over budget; being cut).
+
+### SH-1: No shadow pop on approach
+- Kind: game location. Run: `.\bevyrrowind scene shadow-flyin` and fly west
+  into Balmora; also `scene shadow-approach-450` vs `scene shadow-approach-280`.
+- Look for: building shadows present at every distance below 440 m; no
+  shadow pop between 450 m and 280 m. Object shadows now fade out (dithered) over 430-504 m instead of ending on a line (shadows2; see SH-6).
+- A/B: F2 (sun shadows off); `--off shadowtune` (old cascades: shadows end
+  much closer and objects gain them as you approach).
+- Status: awaiting owner.
+- Source: shadows (check 3).
+
+### SH-2: Near shadow quality
+- Kind: game location. Run: `.\bevyrrowind scene shadow-flyin`, land in a street.
+- Look for: crisp, stable shadows close up (first cascade 10 m, 2048²): no
+  blockiness, shimmer or acne when walking.
+- A/B: `--off shadowtune`.
+- Status: awaiting owner.
+- Source: shadows.
+
+### SH-3: Terrain far shadows
+- Kind: game location. Run: `.\bevyrrowind scene ridge-shadows-north` (the
+  clearest), `scene ridge-shadows-evening`, `scene ridge-shadows-morning`.
+- Look for: long ridge shadows on distant slopes; no straight shadow line
+  across the terrain near 400-500 m; shadows move correctly with `[` / `]`.
+- A/B: F3 live; `--off farshadows` or `--off farshadows,shadowtune` (pre-session state).
+- Status: awaiting owner.
+- Source: shadows (check 2).
+
+### SH-4: Balmora sunset shadows
+- Kind: game location. Run: `.\bevyrrowind scene balmora-sunset-shadows` (1440p).
+- Look for: hills past ~400 m carry shadows; no straight line near 400-500 m.
+  Baseline `shots\shadows\before_balmora_1830.png`.
+- A/B: F3; `--off farshadows,shadowtune`.
+- Status: awaiting owner.
+- Source: shadows (check 1).
+
+### SH-5: Far objects in terrain shadow
+- Kind: game location. Run: `.\bevyrrowind scene balmora-sunset-shadows`.
+- Look for: far trees and buildings in a shadowed valley are shadowed like the terrain around them.
+- Status: awaiting owner (shadows2 added the far shadow map to proxies and impostors; A/B `--off farshadows`).
+
+### SH-6: Dithered cascade end (shadows2)
+- Kind: game location. Run: `.\bevyrrowind scene ridge-shadows-evening` and `scene balmora-sunset-shadows`;
+  or `cargo dev view "Balmora" --hour 18.5 --resolution 2560x1440 --camera "450,+60,0,0,0,0"`.
+- Look for: where long object/proxy shadows reach ~430-504 m from the camera they thin out through a
+  fine 4x4 dither and hand over to the terrain shadow; no straight line, no visible dither crawl when
+  the camera moves slowly; far proxies and impostor trees in shadowed valleys are dark (not glowing lit);
+  no blotchy false shadows on lit flat ground far away (the 24 m shadow map; bias 6 m).
+- A/B: `--off farshadows` (hard cut at 504 m, far field lit), `--off farshadows,shadowtune` (pre-session).
+  F3 toggles only the terrain part live.
+- Status: awaiting owner.
+- Source: shadows2.
+- Source: shadows (check 4).
+
+## Ghostfence (superfargoth `weather.md`, bug B)
+
+### GF-1: Ghostfence appears complete, never late
+- Kind: game location. Run: `.\bevyrrowind scene ghostfence-far` and fly
+  toward Ghostgate (the camera starts ~1.9 km south-west, 120 m up, facing it).
+- Look for: the fence segments appear at their ring (~520-650 m) already
+  loaded: no frames where the pylons stand without the field after a cell
+  group reveals (B3 preload). Not fixed yet: the field is still invisible
+  past the ring and appears there without a fade. Its segments are
+  activators made only of blended parts, so they have no far copy (weather.md
+  B5: blended far proxies + scriptless activators).
+- A/B: F5 (pylons tint green at L1; fence segments stay untinted). Compare
+  `play\` before this session's exe if kept: there the field showed up a few
+  frames after its cell.
+- Status: awaiting owner (B1-B3 built 2026-10-12; B5 queued).
+- Source: weather-spec / farfield / nifpop.
+
+### GF-2: Ghostfence energy field look
+- Kind: game location. Run: `.\bevyrrowind scene ghostfence-near`
+- Look for: the field should read as a glowing translucent barrier. Today it
+  is an opaque flat white/blue-white wall (`shots\scenes\ghostfence_near.png`,
+  unchanged in `shots\nifpop\ghostfence_near.png`).
+- Investigated (nifpop): the NIF material maps faithfully (`tx_gg_fence_01/02`,
+  non-additive blend, alpha 0.5, emissive 0.3); three stacked 0.5 planes give
+  87.5 % coverage of a pale texture under an unclamped sun. Candidates, not
+  yet changed (weather.md "Status"): vertex-color alpha replacing material
+  alpha in `AmbientDiffuse` mode, NIF light clamping, env-map specular on
+  blended planes. Owner: say whether the original reads more translucent or
+  more glowing; that picks the fix.
+- A/B: `[`/`]` hour (does it glow at night?), `--off envmap`.
+- Status: awaiting owner (decides the direction).
+- Source: farfield-exterior / weather-spec / nifpop.
+
+### NP-1: Lamps hand off to the far field without pop or double draw
+- Kind: game location. Run: `.\bevyrrowind scene lamps-handoff`, then fly
+  back (Shift+S) until the town is 400-600 m away; fly in again.
+- Look for: lamp and torch models (runtime NIF path) dither out into their
+  merged L1 copies around 400-460 m and back in when you return; no lamp is
+  drawn twice (NIF + L1) past the handoff, none pops, none appears late after
+  its cell reveals. 21 animated models (tiki torches, torches, braziers,
+  candles, lanterns, fires) now have rest-pose far copies (`mesh.rest`).
+- A/B: F5 (L1 green: the lamps should turn green past the handoff).
+- Status: awaiting owner.
+- Source: nifpop.
+
+## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
+
+Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
+
+### DL-1: Super Resolution at 720p in motion
+- Kind: game location. Run: `.\bevyrrowind scene dlss-run`, run forward
+  along the street (Shift+W) and pan across foliage.
+- Look for: smear or ghosting on alpha-tested leaves (DLSS quality renders
+  480p internally); compare F4 off vs quality vs performance.
+- A/B: F4.
+- Status: decided 2026-10-12: `--dlss` defaults to `auto` in DLSS builds (`--dlss off` for native); still awaiting owner on smear.
+- Source: dlss.
+
+### DL-2: Super Resolution at 1440p
+- Kind: game location. Run: `.\bevyrrowind scene dlss-balmora-1440`
+- Look for: as sharp as native (F4 to off) when still and when flying;
+  frame time drops ~12 to ~9 ms.
+- A/B: F4.
+- Status: awaiting owner.
+- Source: dlss.
+
+### DL-3: Ray-traced Census Office with Ray Reconstruction
+- Kind: game location. Run: `.\bevyrrowind scene census-rt` (raster
+  baseline: `.\bevyrrowind scene census`).
+- Look for: clean, stable bounce lighting without crawling noise; brightness
+  close to raster.
+- A/B: `.\bevyrrowind scene census-rt --off denoiser` (noisy); F4 changes the
+  RR quality.
+- Status: awaiting owner (`shots\dlss\census_hall_rt_rr.png` vs `_rt_noden.png`).
+- Source: dlss.
+
+### DL-4: Rug-edge black bands under RT
+- Kind: game location. Run: `.\bevyrrowind scene census-rt`, look at the floor where rugs end.
+- Look for: black bands along rug edges, with and without the denoiser.
+  Believed to be content (rug geometry), not DLSS.
+- A/B: `--off denoiser`.
+- Status: known bug: content-side, cause not investigated.
+- Source: dlss.
+
+## Terrain (superfargoth `terrain.md`, "Verification")
+
+### TR-1: No cracks or popping
+- Kind: game location. Run: `.\bevyrrowind scene terrain-valley` and
+  `.\bevyrrowind scene terrain-coast`; fly low and fast.
+- Look for: no cracks between patches, no visible LOD pop (F6 shows LOD
+  colors morphing smoothly, F7 the triangle edges); coast stable against
+  the sea plane.
+- A/B: F6, F7.
+- Status: awaiting owner (agent screenshots showed no cracks).
+- Source: terrain session (2026-10-11).
+
+### TR-2: Splat blending
+- Kind: game location. Run: `.\bevyrrowind scene terrain-valley`, look at
+  grass/rock/road transitions from 5-50 m.
+- Look for: soft, natural boundaries; no texel grid or diamond pattern.
+- Status: awaiting owner.
+- Source: terrain session.
+
+## Sky (superfargoth `sky-lighting.md`)
+
+### SK-1: Sunset and sunrise
+- Kind: game location. Run: `.\bevyrrowind scene sky-sunset` (west, 19:30)
+  and `.\bevyrrowind scene sky-dawn` (east, 6:00); T for a time-lapse.
+- Look for: warm low sun, smooth gradient (no banding), the town not black,
+  no exposure jump as the sun crosses the horizon.
+- Known: the ray-traced path darkens and reddens the sky at low sun
+  (open question 1); judge raster.
+- Status: awaiting owner.
+- Source: sky-lighting / dlss.
+
+### SK-2: Night and moon
+- Kind: game location. Run: `.\bevyrrowind scene sky-night`
+- Look for: moonlit, readable night, not grey-washed; town lights carry it.
+  Known: no stars (M6), the moon disk has no phase shape.
+- Status: awaiting owner.
+- Source: sky-lighting.
+
+## Clouds (superfargoth `weather.md`, "Clouds"; `.sessions/clouds.md`)
+
+Volumetric clouds are on by default in exteriors. `--clouds clear|fair|overcast|storm`
+picks the weather (default fair), `--off clouds` drops them (the A/B). In the viewer,
+F10 toggles them and C cycles the presets live. Hours: change with `[` `]` or `--hour`.
+
+### CL-1: Cloud look at noon and sunset
+- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-noon`, then
+  `.\bevyrrowind scene clouds-redmtn-sunset`. Same camera with each preset:
+  `.\bevyrrowind scene clouds-redmtn-noon --clouds clear` (also `overcast`, `storm`).
+- Look for: billowy cumulus with sunlit tops and grey bases at noon; warm, reddened
+  undersides at sunset (transmittance LUT); a silver lining toward the sun; no
+  banding rings, no blocky half-resolution edges, no shimmer when still.
+- A/B: F10 (or `--off clouds`): the sky without clouds.
+- Calibrate: cloud size and height (the app halves real-world heights: base
+  750 m, top 1,450 m for fair; tiles 2 km shape, 128 m detail).
+- Status: awaiting owner.
+- Source: clouds.
+
+### CL-2: Clouds composite with atmosphere, far field and terrain
+- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-sunset`
+- Look for: distant clouds fade into the same haze as the far mountains (aerial
+  perspective); Red Mountain and far-field proxies cut sharply into clouds behind
+  them (no halo or bleeding at the silhouette); clouds never draw on the sea or
+  below the horizon; the sun disk is hidden behind thick cloud.
+- Status: awaiting owner.
+- Source: clouds.
+
+### CL-3: Cloud shadows on the ground
+- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-noon`, press T for a time-lapse.
+- Look for: soft dark patches under clouds that drift with them over terrain,
+  buildings and far field; F10 off removes them. Known: past ~8 km the shadow
+  map repeats and fades to the average cover; no shadows from the moon.
+- Status: awaiting owner.
+- Source: clouds.
+
+### CL-4: Night clouds
+- Kind: game location. Run: `.\bevyrrowind scene clouds-redmtn-night`
+- Look for: faint moonlit clouds that occlude the night sky; no glowing grey sheet.
+- Status: awaiting owner.
+- Source: clouds.
+
+### CL-5: Overcast and storm
+- Kind: game location. Run: `.\bevyrrowind scene clouds-bittercoast-overcast`,
+  `.\bevyrrowind scene clouds-seyda-storm`.
+- Look for: overcast: a nearly closed flat deck, dimmer ground. Storm: tall cells with
+  dark wet bases, breaks between them. Known: no rain, fog or lightning yet (weather M6).
+- Status: awaiting owner.
+- Source: clouds.
+
+### CL-6: Stable in flight (floating origin, temporal)
+- Kind: game location. Run: `.\bevyrrowind scene clouds-flight`, hold Shift+W.
+- Look for: clouds and cloud shadows stay put in the world while the floating origin
+  moves every 256 m (no jumps); turning the camera fast leaves no ghost trails; the
+  mountain silhouette has no smear (temporal reprojection + neighborhood clamp).
+- Status: awaiting owner.
+- Source: clouds.
+
+## Streaming spikes (superfargoth `streaming.md`, "Spikes"; `.sessions/spikes.md`)
+
+### ST-1: Particles pause out of view
+- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera "-0.57,4.6,2.0,-0.57,2.6,6.74"`
+  (fireplace), then an exterior with fires or smoke (`.\bevyrrowind scene lamps-handoff`).
+- Changed: an emitter outside the view frustum (12 m margin) or past its visibility
+  range no longer simulates or rewrites its mesh; it resumes where it stopped when it
+  comes back into view.
+- Look for: turn away from the fire and back (mouse): flames and sparks keep moving
+  at once, no frozen or mis-facing quads for a frame, no burst of particles on return.
+  Fires at the screen edge still animate.
+- A/B: none at runtime; compare with an older `play/` exe if in doubt.
+- Status: awaiting owner.
+- Source: spikes.
+
+### ST-2: No pop at origin shifts in flight
+- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen" --bench benchmarks/exterior_flight.json --bench-ground`
+  (60 m/s), watch the whole flight.
+- Changed: at a floating-origin shift (every 256 m) terrain patches move in place
+  instead of respawning, terrain clipmap uploads wait two frames, and object
+  streaming (spawn, reveal, despawn) holds for up to 6 frames around the shift.
+- Look for: no terrain flicker or one-frame holes when crossing 256 m borders; no
+  objects arriving visibly late (pop-in in front of the camera) compared with before.
+- A/B: none at runtime (`StreamingConfig::origin_shift_guard_s = 0` in code).
+- Status: awaiting owner.
+- Source: spikes.
+
+### ST-3: Paced model loads arrive in time
+- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen" --bench benchmarks/exterior_flight.json --bench-ground`
+  (60 m/s), then the 7 m/s run (`--bench benchmarks/exterior_run.json`).
+- Changed: models load only while the meshes of the models already loading stay under 64
+  (`StreamingConfig::max_loading_meshes`, estimated from a running mean of meshes per model; never
+  capped in burst mode); the rest queue, so a cell's objects can be revealed a few frames later than before.
+- Look for: no objects popping in near the camera (inside ~100 m) that didn't before;
+  far objects fading in at their usual distance.
+- A/B: `$env:BEVYRROWIND_LOADING_MESHES=0` before the run restores unpaced loads.
+- Status: awaiting owner.
+- Source: spikes2. Renamed by spikes4 (the budget counts meshes, not models).
+
+### ST-4: Benchmark offscreen render size (`BEVYRROWIND_RENDER_SIZE`)
+- Kind: game location (benchmark switch, not a game feature). Run: `$env:BEVYRROWIND_RENDER_SIZE="640x360";
+  .\bevyrrowind view "Seyda Neen"`, then with `"2560x1440"`.
+- Changed: the exterior camera renders into an offscreen image of that size, shown scaled to the window by a
+  second (2D) camera and a full-window UI image, so benchmarks vary pixel count and window independently.
+- Look for: the whole window filled, right aspect, soft at 640x360 and sharp at 2560x1440; colors and
+  brightness as without the switch (no double tonemapping, no sRGB darkening); UI overlays (F1) still drawn.
+- Sanity screenshot (spikes4, 640x360 in a 1280x720 window): scene fills the window, colors normal.
+- Status: awaiting owner.
+- Source: spikes3/spikes4.
+
+## Size-based draw distance (superfargoth `industry-audit.md` J1; `.sessions/sizecull.md`)
+
+### SC-1: High preset culls nothing you can see
+- Kind: game location. Run: `.\bevyrrowind scene sizecull-balmora`
+- Look for: the town and hills look exactly as with the A/B; objects that
+  go are ~2 px wide when they fade; no holes before the 400 m far-field
+  handoff (proxy-kept objects stay to `d1`).
+- A/B: `.\bevyrrowind scene sizecull-balmora --off sizecull`.
+- Status: awaiting owner.
+- Source: sizecull.
+
+### SC-2: The cutoff fades, never pops (Low preset)
+- Kind: game location. Run: `.\bevyrrowind scene sizecull-balmora-low`, then
+  back away from a market stall or a pile of crates (S, or Shift+S).
+- Look for: small props dither out over the last 10 % of their draw distance
+  (a 6 cm cup ~23 m, a 45 cm barrel ~170 m, at Low); nothing pops; buildings,
+  doors and NPCs never go.
+- A/B: add `--off sizecull` (everything to its ring or the 300 m handoff).
+- Status: awaiting owner.
+- Source: sizecull.
+
+## Door links (superfargoth `streaming.md`, "Worldspaces at runtime"; `.sessions/interiors.md`)
+
+### DR-1: Through a door into an interior
+- Kind: game location. Run: `.\bevyrrowind scene door-balmora-guild`, press
+  Space (Morrowind's activate key) facing the door, within 4 m.
+- Look for: a short fade (0.3 s out, 0.3 s in; longer only if the interior
+  wasn't prefetched); you stand at the arrival marker inside the guild hall,
+  level, facing into the room (the marker's heading); the cell's ambient light
+  and dark clear color, no sky, sun, clouds, terrain or sea showing through;
+  the window title names the interior. `door-balmora-guild-auto` does the
+  same by itself.
+- Mouse after arrival (fixed 2026-10-12, doorfix): move the mouse right after
+  the fade lifts, and also keep moving it during the fade. The view must turn
+  smoothly from where you arrived facing, never snap back to the heading you
+  had before the door. Before the fix, Bevy's `FreeCamera` kept its own
+  yaw/pitch, so the first mouse motion jumped to the pre-door direction (the
+  "sudden turn", and the "wrong facing" when the mouse moved during the fade).
+- Height: the camera arrives 0.5 m above the marker (scaffold until the
+  character controller grounds the player). Most markers float ~1.2 m above
+  the sill, so that's eye height; a marker authored low can still leave the
+  camera near the floor (the Census Office's other door, DR-3).
+- Status: awaiting owner.
+- Source: interiors, doorfix.
+
+### DR-2: Back out
+- Kind: game location. Run: as DR-1, then turn to the door you came in by and
+  press Space. Hands-off: `.\bevyrrowind view Balmora --camera "-316.6,10.4,200.5,-312.6,10.0,200.35" --hour 10 --use-door 2`.
+- Look for: you arrive in front of the guild door outside, facing away from
+  it; sky, clouds, terrain and the town are back at once; lighting and
+  exposure match the start; mouse look as in DR-1.
+- What changed (doorfix): the exterior you left stays resident (hidden) while
+  you stand within 32 m of a door back to it, and for 5 s after leaving it
+  (`SchedulerConfig::linger_secs`), so the way out no longer reloads the near
+  ring under the fade. Measured: out 0.64 s (was 1.02 s), in 0.63 s. Also try
+  staying inside a minute near the door, then leaving: still fast. Walk more
+  than 32 m from the door in a large interior and wait 5 s: the exterior
+  streams out, and leaving takes about 1 s again.
+- Status: awaiting owner.
+- Source: interiors, doorfix.
+
+### DR-3: Interiors open in the streamed view
+- Kind: game location. Run: `.\bevyrrowind scene door-census` (or any
+  `view "<interior>"`), press Space at the door in front of you, then Space
+  at the door outside.
+- Look for: the Census Office in the streamed view (doors work, the window
+  title names the worldspace), lit like DL-3's raster baseline; no sea plane
+  or sky inside. Out: Seyda Neen with sky and terrain (the first trip out of a
+  start interior takes ~1 s: only the door's R0 was prefetched). Back in
+  through the office's other door: 0.65 s. Known: that door's marker sits
+  low, so the camera arrives near floor level (fly up).
+- Old viewer: `--single-cell` (and `--rt`, `--no-baked`, `--skinned`, which
+  the streamed view doesn't support yet) opens the single-cell viewer as
+  before; `census` and `census-rt` use it.
+- Status: awaiting owner.
+- Source: doorfix.
+
+## Skinned models (superfargoth `bake.md`, "Bevy mapping"; `.sessions/skinloader.md`)
+
+`Cooked::Skinned` bake products rendered by Bevy's own skinning and morphs
+(`sf_model_bevy::spawn_skinned`), bound by joint name to a skeleton. Bind
+pose only: no animation runtime yet.
+
+### SN-1: Cooked character vs. bevy_gltf (`sf_model_bevy`)
+- Kind: synthetic. Run from `superfargoth`: `cargo run -p sf_model_bevy --example skinned -- "D:\Gamedev\Godotwind\godotwind\assets\characters\quaternius\UAL2_Standard.glb"`
+  (CC0 Quaternius UAL2 mannequin, 65 joints; any skinned .glb works).
+- Look for: two identical mannequins in T-pose; left is the glTF imported
+  and cooked by `sf_model` and loaded through `SfMeshLoader`, right is the
+  same file through `bevy_gltf`. Same proportions, joints, shading (left
+  uses flat material colors).
+- A/B: B bends every joint of the left skeleton 30° (the skin must follow
+  its joints without tearing; B again restores), M cycles morph targets
+  when the model has any (UAL2 has none).
+- Status: awaiting owner (agent screenshot 2026-10-12: identical).
+- Source: skinloader.
+
+### SN-2: Guar from its cooked skinned product
+- Kind: game model. Run: `.\bevyrrowind scene skin-guar` (or `view r\guar.nif --model --skinned`).
+- Look for: a whole, textured guar (16 meshes, 48 joints) at the NIF's rest
+  pose: no stretched triangles, no parts at the origin, legs and claws in place.
+- A/B: K flips to the NIF runtime meshes; nothing should move or change
+  (rest pose = bind pose for vanilla skins).
+- Status: awaiting owner (agent screenshot 2026-10-12: textured, coherent; camera was too close).
+- Source: skinloader.
+
+### SN-3: Dark elf head morphs
+- Kind: game model. Run: `.\bevyrrowind scene skin-head`.
+- Look for: the head matches the NIF (K). M cycles its two geometry morph
+  targets (`#1`, `#2`) at weight 1, then none: the face deforms smoothly
+  (Bevy morph targets, gathered per mesh from the model-wide weights).
+- A/B: K (NIF meshes), M (morph).
+- Status: awaiting owner (agent screenshot 2026-10-12: head renders textured; morphs not seen).
+- Source: skinloader.
+
+## Character animation (superfargoth `animation.md`, "Bevy integration"; `.sessions/animbevy.md`)
+
+`sf_anim_bevy`: the Bevy-free graph runtime evaluated per character
+(`par_iter`), local pose written back to rig bone entities from
+`spawn_rig`, skins bound to those bones by name. Gizmos draw one green line
+per bone (yellow/orange/red at LOD A1/A2/A3).
+
+### AN-1: glTF character through a 2D blend space (`sf_anim_bevy`)
+- Kind: synthetic. Run from `superfargoth`: `cargo run -p sf_anim_bevy --features debug --example blendspace -- "D:\Gamedev\Godotwind\godotwind\assets\characters\quaternius\UAL1.glb"`
+  (CC0 Quaternius UAL1: 66 joints; samples Idle, Walk, Jog Fwd/Bwd/Left/Right, Sprint).
+- Look for: the mannequin idles; W/S/A/D blend smoothly into walk, jog
+  back and strafes, diagonals mix two clips without foot pops; Shift+W
+  sprints. The skeleton lines (G) stay inside the body.
+- A/B: G gizmos; 1-4 force A0-A3 (A3 freezes the pose, A2 updates every
+  other frame), 0 automatic; T cycles 1 / 25 / 100 copies (log line every
+  2 s: tiers, evaluate µs, bones written, events).
+- Status: awaiting owner (agent screenshot 2026-10-12: mid-stride diagonal blend, skin follows).
+- Source: animbevy.
+
+### AN-2: Guar playing its baked creature graph
+- Kind: game model. Run: `.\bevyrrowind scene anim-guar`.
+- Look for: the guar breathes in its idle (Idle group), skeleton lines on the
+  body. Arrows walk it in place (forward/back/left/right states), R runs,
+  Q/E turn, H hit, J knockdown, X death, F fidget. Events (`sound_gen`,
+  footsteps) are logged in the console.
+- A/B: G gizmos, L cycles the LOD tier (auto, A0-A3).
+- Status: awaiting owner (agent screenshot 2026-10-12: posed idle, skeleton matches the skin).
+- Source: animbevy.
+
+### AN-3: Dark elf body on base_anim, humanoid graph
+- Kind: game model. Run: `.\bevyrrowind scene anim-body`.
+- Look for: the dark elf skins (chest, hands) on `base_anim.nif` idling;
+  arrows walk (direction picks the walk forward/back/left/right group), R
+  runs, C sneaks, Z swims, N cycles stances 0-3 (hand-to-hand, weapon,
+  spell…), F fidget, H hit, J knockdown, X death. Every state should play
+  without the skin tearing.
+- A/B: G gizmos, L LOD tier.
+- Status: awaiting owner (agent screenshot 2026-10-12: idle pose, parts in place; no legs: the skins file has none).
+- Source: animbevy.
+
+## Characters (superfargoth `character.md`, "Assembly at runtime"; `.sessions/charbevy.md`)
+
+`sf_character_bevy`: `mw_actors` recipes resolved and merged per material
+off the main thread (`sf_character::assemble`), one `SkinnedMesh` per
+material (+ one per morphing head) on an `sf_anim_bevy` rig playing the
+baked graph's idle; identical looks share one cached outfit. Expected looks
+(vanilla Morrowind / OpenMW from memory, not run): guards in Imperial
+steel/templar plates, Ajira in a common robe, Huleeya in light armor with
+tail, Fargoth's naked body with a loincloth, guar and cliff racer in their
+idles.
+
+### CH-1: The M3 lineup (`bevyrrowind character`)
+- Kind: game models. Run: `.\bevyrrowind character` (Imperial guard, Ajira,
+  Huleeya, a female dark elf, naked Fargoth, guar, cliff racer), or name
+  ids: `.\bevyrrowind character "caius cosades" "sellus gravius:naked"`.
+- Look for: everyone dressed and idling (breathing, no T-pose), heads with
+  hair, hands and feet present, mirrored parts (left/right pauldrons,
+  gauntlets, boots) on the correct sides and not inside-out, beast feet and
+  tails on Ajira/Huleeya. The log lists each character's skinned meshes
+  (merged per material + morphing head) and the cache.
+- A/B: O swaps every NPC between own equipment and naked (CH-2), F fidget,
+  G skeleton gizmos.
+- Status: awaiting owner (agent screenshot 2026-10-12: all 7 dressed and
+  posed; 13-19 meshes per NPC = their material count + 1 head).
+- Source: charbevy.
+
+### CH-1b: Clothed legs closed from hip to shoe (feetfix)
+- Kind: game models. Run: `.\bevyrrowind character fargoth fargoth:naked --camera "0.3,1.2,2.4,0,0.8,0"`.
+- Look for: clothed Fargoth's pants run unbroken from the hip to the shoes
+  (rigid pants upper leg, knee and ankle parts plus shoes), no gap at the
+  shins, nothing under the floor; the naked Fargoth's neck, groin and knees
+  sit as before. Rigid parts now keep their model's root transform under
+  their bone (the pants ankle part hangs 37 cm up the shin through it).
+- Status: awaiting owner (agent screenshots 2026-10-12: shots/feetfix/before.png
+  shows the gap, after.png full lineup, after_close.png closed legs).
+
+### CH-2: Outfit swap without a pop
+- Kind: game models. Run: `.\bevyrrowind character "@imperial,guard" ajira`, press O
+  repeatedly.
+- Look for: the outfit changes in one frame: never a frame with no body or
+  with both outfits; the idle keeps playing (the rig survives the swap).
+- Status: awaiting owner (headless test `outfit_swap_keeps_the_rig_and_replaces_meshes_in_one_step`).
+- Source: charbevy.
+
+### CH-3: Balmora street with NPCs standing in place
+- Kind: game location. Run: `.\bevyrrowind scene char-balmora`.
+- Look for (with `--off walkers`; otherwise wanderers walk, WK-1): NPCs on the streets and bridges dressed and idling, feet on
+  the ground, facing their placed direction (vanilla faces -Z; we add the
+  half turn). Leveled creatures show the list's lowest entry (scaffold
+  `leveled pick`). Fly down for a close look.
+- Status: awaiting owner (agent screenshot 2026-10-12 from 12 m: two NPCs
+  standing in the street).
+- Source: charbevy.
+
+### CH-4: Census and Excise Office staff
+- Kind: game location. Run: `.\bevyrrowind scene char-census`.
+- Look for: Sellus Gravius and the officers dressed (Imperial uniforms) at
+  their posts, idling; no part floating off a joint.
+- Status: awaiting owner (not run by the agent).
+- Source: charbevy.
+
+## Smooth bodies (superfargoth `smooth-bodies.md`; `.sessions/smoothlive.md`)
+
+Segmented bodies (rigid limb pieces), armor and clothing are smoothed per
+outfit at assembly, off the main thread (`sf_character::smooth_outfit`):
+seams welded, weights blended across joints, then a per-seam guard over
+probe poses (elbows/knees 90°, shoulders raised, walk/run frames) puts back
+the authored weights wherever a seam would open wider than vanilla. Heads
+(morphs) and hair stay as authored. On by default; `--bodies vanilla` starts
+segmented, **B** toggles live (every outfit rebuilds through the no-pop swap;
+both looks stay cached). In `character`: **1** walks in place, **2** runs.
+The lineup log prints "smooth bodies: N outfits, parts rewritten, guard
+reverted, ms per outfit (indicative)".
+
+Known remaining failures (survey, `smooth-bodies.md` "Survey rerun and
+guard"), so look there first: **tail root ↔ groin / greaves pelvis opens
+44-66 mm** in run frames (naked Argonians 46 mm, iron/daedric on Argonians);
+**pauldron ↔ upper-arm pieces 13-22 mm** in elbow and run poses; **guard
+cascades**: reverting one seam reopens a neighbor up to its vanilla width
+(iron on an Imperial female 8 → 18 mm, daedric on an Argonian 33 → 66 mm).
+None of these is wider than vanilla.
+
+### SB-1: Lineup close-up at elbows and knees, walking
+- Kind: game models. Run: `.\bevyrrowind character "@imperial,guard" ajira huleeya "@dark elf,,f" fargoth "@nord,+iron_cuirass+iron_greaves+iron_pauldron_left+iron_pauldron_right+iron boots+iron_gauntlet_left+iron_gauntlet_right" "@high elf,+common_robe_01+common_shoes_01" --walk`
+  (Imperial guard, Khajiit, Argonian, female dark elf, Fargoth in his pants,
+  a Nord in iron, a High elf in a robe). Fly close (free camera).
+- Look for: elbows, knees, wrists, ankles and the neck bend without cracks,
+  see-through slits or pieces sliding over each other; no piece is
+  stretched or collapsed (a stretched plate is the step blending too far).
+  Press B (vanilla): the classic cracks open at the same joints; B again.
+  2 runs (larger bends).
+  Since animfix (2026-10-12) the lineup is a treadmill: the graph is told the
+  cycle's own speed, so walk (1) and run (2) play at their natural cadence
+  (before: 0.75x, slow-motion), and the feet play the clip (no foot locks
+  without ground: before, a planted foot stuck forward while the clip swept).
+- Status: awaiting owner.
+- Source: smoothlive, animfix.
+
+### SB-2: Armored NPC
+- Kind: game models. Run: `.\bevyrrowind character "@nord,+iron_cuirass+iron_greaves+iron_pauldron_left+iron_pauldron_right+iron boots+iron_gauntlet_left+iron_gauntlet_right" "@imperial,guard" --walk --camera "0.8,1.5,1.6,0,1.1,0"`.
+- Look for: cuirass ↔ greaves, greaves ↔ knee guard ↔ boots and gauntlet ↔
+  bare forearm stay closed as the legs and arms swing; plates stay rigid
+  in their middle. Pauldrons are the known weak spot (13-22 mm opening at
+  the shoulder ↔ upper arm, vanilla 68-99 mm). In Balmora (`scene sb-balmora`)
+  the guards walk.
+- Status: awaiting owner.
+- Source: smoothlive.
+
+### SB-3: Beast tails with greaves
+- Kind: game models. Run: `.\bevyrrowind character huleeya "huleeya+iron_cuirass+iron_greaves" "ajira+netch_leather_greaves+netch_leather_cuirass" "huleeya:naked" --walk --camera "0.5,1.0,-2.2,0,0.8,0"`
+  (camera behind them; 2 runs).
+- Look for: the tail root against the greaves' pelvis piece and against the
+  naked groin. **Known failure**: this seam still opens 44-66 mm in run
+  frames (vanilla wider); the rest of the tail and legs should be closed.
+- Status: awaiting owner.
+- Source: smoothlive.
+
+### SB-4: Toggle without a pop
+- Kind: game models. Run: SB-1's lineup, press B repeatedly (and O, the
+  outfit swap, in between).
+- Look for: every character changes look in one frame: never a frame with
+  no body or with two bodies; the walk keeps playing (the rig and animator
+  survive). The first press per look builds it (a short wait), later presses
+  reuse the cache.
+- Status: awaiting owner (headless test
+  `smooth_and_vanilla_bodies_are_separate_outfits_and_the_toggle_never_pops`).
+- Source: smoothlive.
+
+### SB-5: Walkers in Balmora
+- Kind: game location. Run: `.\bevyrrowind scene sb-balmora` (`--bodies vanilla` to start segmented).
+- Look for: walking NPCs' elbows and knees without cracks; press B for
+  vanilla and back: no NPC disappears for a frame, no hitch beyond the first
+  build of each look. Since animfix: feet planted while walking (no sliding),
+  no NPC with legs stretched behind and the pelvis on the ground (WK-7).
+- Status: awaiting owner.
+- Source: smoothlive, animfix.
+
+## Node-animated creatures (superfargoth `character.md`, "Node-animated creatures"; `.sessions/nodecreatures.md`)
+
+Creature bodies are cooked for their rig (`mesh.rig`, `sf_model::cook_rig`):
+rigid meshes become single-joint parts of their transform node, so
+creatures animated per node (scrib, kwama forager, shalk, bonelord,
+centurion sphere) and the rigid parts of mixed
+creatures (wolf, bear and goblin heads, kwama antennae, storm atronach
+rocks) follow the same rig and graph as skinned bodies.
+
+### NC-1: Node-animated lineup (`bevyrrowind character`)
+- Kind: game models. Run: `.\bevyrrowind character scrib "kwama forager" shalk bonelord centurion_sphere atronach_storm`.
+- Look for: all six whole and idling: the scrib's legs and mandibles on its
+  body, the shalk's legs moving, the bonelord's hood/robe on the skeleton,
+  the sphere centurion's ball, arms, blade and shield attached and moving,
+  the storm atronach's rocks orbiting its body (they used to sit at the
+  root). The kwama forager is one morph-animated mesh: it stays still
+  (morph curves are not played yet). Mixed creatures' heads (wolves, bears,
+  goblins, daedroth) were bound to the root before and now ride their neck:
+  check one in the world (CH-3 style) when you meet it.
+- Status: awaiting owner (agent screenshot 2026-10-12: all six posed and
+  whole; log: 0 missing parts, 0 missing joints).
+- Source: nodecreatures.
+
+### NC-2: A scrib wandering in the world
+- Kind: game location. Run: `.\bevyrrowind scene nc-scrib`.
+- Look for: see the scene's `look_for`. The placement is cell (-4,-3); the
+  camera is 12 m above where it was placed, so it may have walked off.
+- Status: awaiting owner (agent screenshot 2026-10-12 from 2 m: scrib not in
+  frame, camera too low; walkers log: 83 movers, 55 wandering, all grounded).
+- Source: nodecreatures.
+
+## Walkers (M3 demo: NPCs walk the streets)
+
+`sf_controller_bevy` (ORCA avoidance → kinematic mover → animation feed) on the characters
+`sf_character_bevy` spawns, driven by `mw_ai`'s `PathWalkScaffold` (app `walkers.rs`). Keys in
+the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turns it all off
+(CH-3 then shows everyone standing).
+
+### WK-1: Balmora wanderers walk their pathgrids
+- Kind: game location. Run: `.\bevyrrowind scene wk-balmora`.
+- Look for: `AI_W` wanderers walk street pathgrid edges at walking pace, stop and idle, sometimes
+  fidget (Idle2-9); the walk cycle's stride matches the ground speed (SpeedMatch, no skating);
+  turns are smooth; non-wanderers stay at their posts; nobody sinks, floats or walks through walls.
+- Status: awaiting owner (agent screenshot 2026-10-12: walkers mid-stride on the bridge street;
+  log: 472-478 movers in the near rings, 65-75 wanderers, 30-45 moving, all but 5 grounded).
+  animfix (2026-10-12) changed what to expect: the walk cycle now follows the *measured* speed
+  (distance actually travelled), playback 0.5-1.5x plus stride warping; a walker blocked by
+  another or a wall stands (idle) instead of walking on the spot; slowing to a stop the stride
+  shortens, then idle below 0.25 m/s; a standing NPC that turns plays its turn clip. Look for:
+  each planted foot stays put on the street while the body passes over it.
+- Source: walkers, animfix.
+
+### WK-2: Walkers avoid each other and the camera
+- Kind: game location. Run: `.\bevyrrowind scene wk-balmora`, fly down to street level and stand
+  in a walker's path.
+- Look for: walkers passing each other keep a gap (no overlap, no jitter); a walker heading at the
+  camera steps around it (the camera never gets pushed: it is non-reactive, as the player will be).
+- Status: awaiting owner (headless: `head_on_walkers_pass_and_transforms_follow`,
+  `walkers_avoid_a_standing_obstacle_that_never_moves`).
+- Source: walkers.
+
+### WK-3: Narrow crossing
+- Kind: game location. Run: `.\bevyrrowind scene wk-crossing`.
+- Look for: walkers meeting on the bridge or its stairs: one yields, both continue; no permanent
+  deadlock. Vanilla wanderers are sparse, so a meeting may take a minute; the 4 + 4 doorway swap is
+  covered headless in `sf_controller` (`avoid` tests, 13.2 s).
+- Status: awaiting owner (not watched by the agent).
+- Source: walkers.
+
+### WK-4: Feet on stairs and slopes
+- Kind: game location. Run: `.\bevyrrowind scene wk-stairs`; wait for a walker on the stairs.
+- Look for: the body rises step by step without pops (the mover smooths the height), each foot on
+  its step, knees bent; on the sloped street both feet touch. K toggles foot placement for A/B.
+  Scaled races (Bosmer, Altmer): feet land on their steps too (walkers2: probe origins and samples
+  now use the body scale; before, a few cm off).
+- Status: awaiting owner (agent screenshots 2026-10-12, walkers and walkers2, both caught the stairs
+  without a walker on them; foot placement compiled into `mw_humanoid` and probing, pose not yet seen
+  close up: the owner judges it live). animfix: on stairs the pelvis drops at most 0.4 of a leg
+  and a sample more than half a leg away (a ledge, a probe past the step) is ignored, so a foot may
+  hover at a step edge rather than the body sinking; the log counts it (`walkers feet: ...`).
+- Source: walkers, animfix.
+
+### WK-7: No blow-ups (legs far from the body, pelvis on the ground)
+- Kind: game location. Run: `.\bevyrrowind scene wk-balmora`, then fly around Balmora for a few
+  minutes: down among walkers, away past 250 m and back (dormant → active), through the crowd near
+  the bridge. Also `.\bevyrrowind scene sb-balmora`.
+- Look for: no character with its legs stretched away and the pelvis on the ground, sliding (the
+  bug the owner saw). Every 5 s the log prints `walkers feet: N blocked; IK guards since start:
+  ... unplanted, ... reach clamps, ... pelvis clamps, ... teleports, ... non-finite`; a few
+  unplants per minute are normal, non-finite should stay 0.
+- Root cause fixed (animfix 2026-10-12): a planted foot's lock drifted beyond the leg's reach when
+  the body moved faster than the clip (or slid while idle), and the reach cap pulled the pelvis to
+  the lock's height. Headless regression test reproduces it with the guards off.
+- Status: awaiting owner (agent: Balmora 150 s, ~40 walking: 0 pelvis clamps, 0 teleports, 0
+  non-finite, 65 unplants; stairs 120 s: 166 pelvis clamps bounded at 0.4 leg).
+- Source: animfix.
+
+### WK-5: Interior wanderers (Eight Plates)
+- Kind: game location. Run: `.\bevyrrowind scene wk-interior` (Balmora, Eight Plates: 4 AI_W
+  wanderers with pathgrid nodes in range).
+- Look for: patrons walk the interior pathgrid between tables and the bar, at walking pace, feet on
+  the floor (not on the exterior terrain height, not sunk), around furniture rather than through
+  it; they stop, idle, fidget. J: mover gizmos (green ring = grounded). Nobody walks through walls.
+- Status: awaiting owner (walkers2, 2026-10-12: agent screenshot `shots/walkers2/wk_interior.png`, a
+  patron standing on the corridor floor; log: 5 movers active indoors, all grounded, 83 prefetched
+  exterior actors dormant).
+- Source: walkers2.
+
+### WK-6: Processing range (no walking without collision)
+- Kind: game location. Run: `.\bevyrrowind scene wk-balmora --rings`, then fly up and away from
+  Balmora (> 250 m) and back.
+- Look for: in the log, `walkers: N movers + M dormant`: M grows as you leave (actors outside the
+  R0 cells park where they stand, in idle, never walking through buildings), and walkers resume
+  in place when you come back. Distant NPCs seen from the air stand still (low animation tier).
+- Status: awaiting owner (walkers2, 2026-10-12; rule covered by headless tests).
+- Source: walkers2.
+
+## Object-terrain blending (superfargoth `terrain.md`, "Object-terrain blending (as built)")
+
+Rocks, cliffs, tree roots and building bases take the ground's own surface
+(the same splat layers, tint and macro variation the terrain shows) over a
+band above the terrain: 0.6 m rocks, 0.4 m buildings, 0.3 m trees. The edge
+is broken up by the layers' height maps. Raster only (`--rt` keeps the old
+seam). Agent screenshots: `D:\Gamedev\Bevyrrowind\shots\terrainblend\`
+(`tb1b_on`/`tb1b_off`: first version, top-down projection, showed vertical
+streaks on wall bases; `tb1c_on`: the shipped triplanar version, not viewed
+by the agent: the screenshot cap).
+
+### TB-1: Balmora foundations at noon
+- Kind: game location. Run: `.\bevyrrowind-raster scene tb-balmora` (or
+  `.\bevyrrowind scene tb-balmora`: raster unless `--rt`).
+- Look for: house walls, buttresses and steps fade into the flagstone/dirt
+  over ~0.4 m, with the ground's colour and texture side-on on the wall
+  (no vertical streaks, no bright or dark band, no hard line at the top of
+  the band). Bridges, awnings, windows and doors never blend.
+- A/B: F11 flips the blend live; `--off terrainblend` removes it entirely.
+- Status: awaiting owner.
+- Source: terrainblend2.
+
+### TB-2: Bitter Coast rocks and roots at noon
+- Kind: game location. Run: `.\bevyrrowind scene tb-bittercoast`
+- Look for: rock bottoms take the muddy ground colour over ~0.6 m, tree
+  roots over ~0.3 m; irregular edge; lit like the rock (its shape stays).
+  Camera is a guess west of Seyda Neen: fly to the nearest rocks if none
+  are in view.
+- A/B: F11; `--off terrainblend`.
+- Status: awaiting owner.
+- Source: terrainblend2.
+
+### TB-3: Ascadian Isles rocks in grass at noon
+- Kind: game location. Run: `.\bevyrrowind scene tb-ascadian`
+- Look for: grey rocks fade into grass/soil at the base; no swimming
+  while flying (the blend is fixed in the world); no shimmer under DLSS
+  (`.\bevyrrowind scene tb-ascadian --dlss quality`). Camera is a guess in
+  the wilds: fly to rocks if none are in view.
+- A/B: F11; `--off terrainblend`.
+- Status: awaiting owner.
+- Source: terrainblend2.
+
+## Synthetic scenes (framework examples)
+
+Run from `D:\Gamedev\Bevyrrowind\superfargoth`; they bake their data on
+first run (cached afterwards). Each isolates one system on generated
+content, so a bug seen here isn't Morrowind content.
+
+### SY-1: Far field on a synthetic world (`sf_lod_bevy`)
+- Run: `cargo run --release -p sf_lod_bevy --example far_field -- [--tint] [--night] [--no-far]`
+- Isolates: HLOD levels, tree impostors and light sprites on 16 x 16 km with
+  30 towns and ~80k placements. Keys: WASD/QE, right mouse look, Shift x10,
+  F2 level tint.
+- Look for: as FF-1/FF-2/FF-6, without terrain or Morrowind assets.
+- Status: awaiting owner.
+
+### SY-2: Sky, sun and moon (`sf_sky_bevy`)
+- Run: `cargo run -p sf_sky_bevy --features solari --example sky`
+- Isolates: atmosphere, sun/moon by time of day, raster vs ray-traced switch.
+  Keys: R raster/RT, Space pause, Up/Down time speed, 1-5 jump to 6:00,
+  12:00, 19:30, 21:00, 0:00.
+- Look for: as SK-1/SK-2; RT vs raster brightness match.
+- Status: awaiting owner (agent checked 2026-10-11).
+
+### SY-3: Terrain on a procedural world (`sf_terrain_bevy`)
+- Run: `cargo run -p sf_terrain_bevy --example terrain --features bevy/dynamic_linking -- [--lod] [--wire] [--hour H]`
+- Isolates: clipmap terrain LOD, morphing, splats, sun on fBm mountains.
+  Keys: WASD/QE (Shift x5), right mouse look, wheel speed, L LOD colors,
+  F wireframe, P freeze selection, T +1 h.
+- Look for: as TR-1/TR-2 (and SH-3 once far shadows land in the example).
+- Status: awaiting owner.
+
+### SY-4: Streaming (`sf_world_bevy`)
+- Run: `cargo run -p sf_world_bevy --example stream --features bevy/dynamic_linking -- [--rings]`
+- Isolates: placement streaming over a 20 x 20 km world (~100k placements),
+  a far-precision cluster 500 km out, an interior behind a door. Keys:
+  WASD/QE, right mouse look, Shift x10, Ctrl x0.1, F1 rings.
+- Look for: no pop-in in front of the camera; walking into the house door
+  east of the start crosses into the interior and back.
+- Status: awaiting owner.
+
+Non-visual: `cargo run -p sf_terrain --features bake --release --example
+bake_synthetic` (terrain bake timings) and `--example bake_throughput`.
+
+### PT-1: Seamless door portal (M8 spike)
+- Status: awaiting owner.
+- Kind: game location. Run: `.\bevyrrowind scene portal-census` (outside) and
+  `.\bevyrrowind scene portal-census-in` (inside); both add `--portals`.
+- Look for: from the street, the Census Office's interior through the open
+  door (its warm light and exposure, no sky, no wall behind the opening);
+  from inside, Seyda Neen under the sky through the exit door, with the
+  office itself not sunlit. Walk through (W, mouse look) both ways: no fade,
+  no black or wall flash at the door, heading and speed kept. The bigger
+  door swings open or hides; the smaller hides.
+- Known (spike): a ~0.3 m strip at the bottom of the opening seen from the
+  street shows the interior's fog color; each side keeps its own exposure
+  (the street isn't blown out from inside); moving makes the opening a bit
+  soft/ghosty under DLSS (its motion vectors are the quad's); the opening
+  can show street around the small exterior door from inside (1.27 size
+  ratio). Other doors also get portals but only one opens at a time (the
+  one you look at).
+
+> PT-1 owner pass (2026-10-12): "a good start"; gap/void, white flash,
+> per-space exposure and no way back out reported. Fixed in PT-2..PT-5
+> (superfargoth portals.md "Owner findings and fixes").
+
+### PT-2: Portal opening aligned and grounded (Census Office)
+- Status: awaiting owner.
+- Kind: game location. Run: `.\bevyrrowind scene portal-noon` (street) and
+  `.\bevyrrowind scene portal-noon-in` (inside).
+- Look for: the opening is the same size from both sides (1.64 x 2.81 m,
+  the smaller door's), standing on the floor: no fog-colored strip at its
+  bottom, no street margin around it from inside; moving sideways, its
+  edges stay on the door frame. Inside, the bigger office door stays
+  closed around the (smaller) opening: no blue-grey void ring.
+- Known: in the first 0.13-0.26 m after arriving, turning round shows the
+  far side's back-of-wall (the return opening is hidden in that band).
+
+### PT-3: Viewer exposure, noon and sunset (Census Office)
+- Status: awaiting owner.
+- Kind: game location. Run: `portal-noon`, `portal-noon-in`,
+  `portal-sunset`, `portal-sunset-in`. A/B: add `--scheduled-exposure`
+  (the spike's per-space exposure).
+- Look for: noon, from the street the office is dark through the door;
+  from inside the street is blown out; crossing either way: no white
+  flash, the eye adapts over ~1-1.5 s. Sunset: both sides close in
+  brightness. The street itself looks as before (EV100 ~14 at noon) and
+  the office as before (EV100 7) once adapted.
+
+### PT-4: Viewer exposure at night (Census Office)
+- Status: awaiting owner.
+- Kind: game location. Run: `portal-night`, `portal-night-in`.
+- Look for: from the street the office glows bright and warm; the street
+  stays dark (not lifted to grey); from inside the street is dark through
+  the door; crossing adapts smoothly.
+
+### PT-5: Walk through and back (Census Office)
+- Status: awaiting owner.
+- Kind: game location. Run: `.\bevyrrowind scene portal-walk` (scripted:
+  in 4 m, back out 4 m backwards, twice), then fly yourself.
+- Look for: four crossings with no flash or wall; afterwards, by hand:
+  walk in and straight back out (S, backwards) at once, strafe through
+  (A/D), turn round inside and walk out: every crossing works both ways.
+
+> portal3 (2026-10-12): owner reported no terrain from inside, a flash frame at the crossing, exposure "too
+> intense". Fixed in PT-6; PT-2..PT-5 now run with the softer adaptation (strength 0.7, 3/2 EV/s).
+> Seamless portals are now an optional setting, off by default (`--portals` or `BEVYRROWIND_PORTALS=1`;
+> the scenes add the flag), parked until M8.
+
+### PT-6: Terrain from inside, no crossing flash, exposure strength (Census Office)
+- Status: awaiting owner.
+- Kind: game location. Run: `portal-noon-in` (terrain: look out at the hills
+  beyond the street), `portal-walk`, `portal-noon`, `portal-night`, each with
+  `play/bevyrrowind.exe` (Solari/DLSS) and `play/bevyrrowind-raster.exe`.
+- Look for: from inside, terrain (ground, hills) through the door, not
+  floating statics over void; crossing either way, no single bright or dark
+  frame (the log's `portal luma` lines show the presented frames' brightness
+  around each crossing: no lone spike). Exposure: press `-` / `=` to change
+  the adaptation strength (0.1 steps, printed with the resulting night /
+  interior / noon EV100; F1 shows it); 0.7 is the default, 1.0 was portal2's.
+  Tell us the value you like.
+- Known (parked for M8): walking in, the office is ~1 EV darker through the
+  door than once inside (a step at the crossing, not a flash); walking out
+  at noon the street blows out and adapts (physical); the opening is soft
+  while moving (motion vectors); turning round just past the door shows
+  void (thin portal band).
+
+## Actor morphs and faces (superfargoth `character.md`, "Morph playback"; `.sessions/actorfx.md`)
+
+| ID | Scene | What to look for | Status |
+|---|---|---|---|
+| AF-1 | `cargo dev run -- character "kwama forager" fargoth` (or `cargo run -p bevyrrowind --features dev -- character "kwama forager" fargoth`) | The forager's body swells and squeezes with its idle (geometry morph from its KF clip), no vertex explosions; log `morphs: 9 of 9 targets follow animation curves` with `RUST_LOG=sf_character_bevy=debug` | awaiting owner |
+| AF-2 | same lineup, fly close to Fargoth's face | Eyes blink every 2-8 s; press `Y`: the mouth flaps (fake loudness), `Y` again stops; no blink while talking | awaiting owner |
+| AF-3 | `character "kwama forager"` placed in an egg mine (any LEVC kwama) via `view` | Leveled kwama placements now wander like CREA ones (walkers report: wanderers > 0 in egg mines) | awaiting owner |
+| AF-4 | `cargo dev character ancestor_ghost Heart_Akulakhan dremora clannfear` (shot: `shots/actorfx2/lineup.png`) | Heart of Akulakhan: fire, frost, shock and magicka shields scroll (UV) and blink in and out with its idles; log `actor fx ...: 5 hidden joints, 3 materials, 6 billboards` with `RUST_LOG=bevyrrowind::actor_fx=debug` | awaiting owner |
+| AF-5 | same lineup, orbit the heart (right mouse) | The ray sheets around the heart (6 billboard parts) keep facing the camera from every side while the heart beats; nothing sits at the heart's root | awaiting owner |
+| AF-6 | same lineup | Ancestor ghost is see-through and its robe alpha follows its idle (not a fixed fade); dremora and clannfear look as before (their effects only play in death / attack groups) | awaiting owner |
+
+## Held items (superfargoth `character.md`, "Held items at runtime"; `.sessions/heldrender.md`)
+
+Weapons, shields and torches as rigid props on `Weapon Bone` / `Shield Bone`
+(`sf_character_bevy::held`), mounted by readiness (vanilla: no sheathed
+weapons), torches lit when dark (placed-light calibration + flicker, the 12
+nearest lit), the graph's weapon stance fed from readiness + weapon type.
+Compare with OpenMW (same NPCs, same hour).
+
+### HI-1: Guards with weapons drawn, stance layer
+- Kind: game models. Run: `.\bevyrrowind character "@imperial,guard" "volene llervu" "@dark elf,guard" "@redguard,guard" "@nord,guard" --drawn`.
+- Look for: each guard's weapon in the right hand, gripped at the hilt (blade
+  out of the fist, not through the forearm), the Nord's battleaxe two-handed
+  pose; arms in the weapon-ready idle (stance `1h`/`2c`), not the relaxed idle.
+  R sheathes: weapons vanish, arms drop to the plain idle; R again draws.
+  Check the 2 `BoneOffset` models (−90° about X) if one shows up.
+- Status: awaiting owner (agent screenshot `shots/heldrender/lineup_drawn_night.png`
+  with `--night`: swords upright in hand, shields on arms, battleaxe held).
+- Source: heldrender.
+
+### HI-2: Redoran with shield
+- Kind: game models. Run: `.\bevyrrowind character "volene llervu" "@dark elf,guard"` (R toggles).
+- Look for: the chitin shield on the left forearm, face outward, not
+  intersecting the arm; it stays while weapons are drawn (one-handed weapon)
+  and disappears for a two-hander drawn.
+- Status: awaiting owner.
+- Source: heldrender.
+
+### HI-3: Torch-bearer at night
+- Kind: game models. Run: `.\bevyrrowind character "imperial guard" "volene llervu" "@imperial,guard" --night` (N toggles day/night).
+- Look for: the Imperial guard holds a torch in the left hand (its shield
+  replaced, as out of combat in vanilla); warm flickering light on the floor
+  and on the neighbours; by day (N) the torch goes and the shield comes back
+  (props swap, outfit meshes stay). No flame yet (particles not rendered).
+  The carrier itself looks overexposed near the torch (inverse-square near
+  field; calibration follow-up).
+- Status: awaiting owner (agent screenshot `shots/heldrender/torch_night.png`:
+  torch in hand, orange light pool on the floor and the lineup).
+- Source: heldrender.
+
+### HI-4: Balmora at night, torch-bearing walkers (`scene hi-balmora-night`)
+- Kind: game location. Run: `cargo dev scene hi-balmora-night` (21:30, clear).
+- Look for: walking guards/commoners carry torches whose light moves with
+  them along walls and the street; no more than 12 torches lit at once
+  (the nearest); no weapons shown; bows are absent (skinned models: known gap).
+- Status: awaiting owner (agent screenshot `shots/heldrender/balmora_night.png`:
+  a torch-bearing walker lighting the street and the wall beside the door).
+- Source: heldrender.
+
+## Particles on actors, bows, carried-light near field (nif-runtime.md "Particles on actors"; `.sessions/actorparticles.md`)
+
+Torch flames and creature particles are NIF emitters anchored at a skeleton
+joint or the prop root (world-space particles trail a moving joint); bows are
+skinned props on their own small skeleton (rest pose); the carried torch
+light keeps 0.7 m off the carrier at 0.7 intensity. Compare with OpenMW.
+
+### AP-1: Torch-bearer at night: flame and light, not overexposed
+- Kind: game models. Run: `.\bevyrrowind character "imperial guard" "@wood elf,archer" --night --drawn` (N toggles night).
+- Look for: a flame (additive particles) at the torch's burning end; it
+  trails when the arm moves (walk with 1); the guard's armor near the torch is
+  bright but keeps its texture (before: blown out white), the floor pool is
+  warm and wide. Torch orientation in the hand is HI-3's open question.
+- Status: awaiting owner (agent screenshot `shots/actorparticles/torch_bow_night.png`:
+  flame at the torch end, chest bright but textured).
+- Source: actorparticles.
+
+### AP-2: Flame atronach and ancestor ghost particles
+- Kind: game models. Run: `.\bevyrrowind character atronach_flame ancestor_ghost --night`;
+  `RUST_LOG=bevyrrowind::actor_particles=debug` logs each emitter's joint and live emitter joint.
+- Look for: the atronach's fire (4 emitters: one from `Bip01 Pelvis`, three
+  from the `Weapon` hand joint) burning on the body and following it while it
+  idles; the ghost's mist sprays (4 emitters at its root) under it. Particles
+  hide beyond 60 m and pause off view.
+- Status: awaiting owner. Agent screenshot `shots/actorparticles/creatures_archer_night.png`
+  shows only the pelvis glow; the hand emitters may sit outside their emission
+  window (they run on a free clock, not the animation time) or need
+  `NiBSPArrayController` vertex emission: check against OpenMW.
+- Source: actorparticles.
+
+### AP-3: Archers hold bows
+- Kind: game models. Run: `.\bevyrrowind character "imperial archer" "@wood elf,archer" "@dark elf,archer" --drawn`.
+- Look for: a curved bow in hand (long bow, chitin short bow, steel longbow:
+  skinned props, 1 joint each), not missing; held still at rest (no string
+  pull yet). Log with `RUST_LOG=sf_character_bevy=debug`: `... is a skinned prop`.
+- Status: awaiting owner (agent screenshot `shots/actorparticles/creatures_archer_night.png`:
+  the Imperial archer's curved bow).
+- Source: actorparticles.

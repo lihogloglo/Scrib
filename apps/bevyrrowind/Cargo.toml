@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "bevyrrowind"
 description = "Morrowind on superfargoth"
 version.workspace = true
@@ -10,18 +10,58 @@ license.workspace = true
 # skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
 # `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
 dev = ["bevy/dynamic_linking", "bevy/dev"]
+# Ray-traced lighting (`view --rt`): Bevy Solari. Off by default: it forces
+# the deferred renderer at startup and needs a ray-tracing GPU.
+solari = ["sf_sky_bevy/solari", "bevy/bevy_solari"]
+# NVIDIA DLSS: Super Resolution on the raster path (`view --dlss <quality>`) and,
+# with `solari`, Ray Reconstruction denoising `--rt`. Needs the local SDK subset
+# in `../sdk` (`bash ../sdk/fetch.sh`; paths in .cargo/config.toml); build.rs
+# copies the runtime DLLs next to the exe. "Ultra": `--features solari,dlss`.
+dlss = ["bevy/dlss", "sf_sky_bevy/dlss"]
+# CPU time per system: Chrome trace (`TRACE_CHROME=<file>`; `perf trace`), or Tracy.
+# Build into its own profile so the plain profiling exe stays: docs/perf.md.
+trace = ["bevy/trace_chrome"]
+tracy = ["bevy/trace_tracy"]
 
 [dependencies]
 bevy = { workspace = true, features = ["3d", "ui", "audio", "free_camera", "dds", "tga", "bmp"] }
 clap.workspace = true
+glam.workspace = true
+mw_actors.workspace = true
+mw_ai.workspace = true
+mw_anim.workspace = true
 mw_assets = { path = "../../crates/mw_assets" }
+mw_bake.workspace = true
+mw_graphs.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
 mw_records.workspace = true
 mw_vfs.workspace = true
 mw_world.workspace = true
+sf_bake.workspace = true
+sf_coords.workspace = true
+sf_diag_bevy = { workspace = true, features = ["assets", "render"] }
+sf_lod.workspace = true
+sf_lod_bevy.workspace = true
+sf_model.workspace = true
+sf_anim_bevy = { workspace = true, features = ["debug"] }
+sf_character.workspace = true
+sf_character_bevy = { workspace = true, features = ["world"] }
+# Walkers (`walkers.rs`): terrain heights as a ground probe, the mover stage with gizmos.
+sf_controller = { workspace = true, features = ["terrain"] }
+sf_controller_bevy = { workspace = true, features = ["debug"] }
+sf_model_bevy.workspace = true
 sf_records.workspace = true
+sf_atmos_bevy.workspace = true
+sf_sky_bevy.workspace = true
+sf_terrain_bevy.workspace = true
 sf_vfs.workspace = true
+sf_world = { workspace = true, features = ["bake"] }
+sf_world_bevy.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+# Test-scene registry (`scenes.ron`, `src/scenes.rs`); both already in the graph through Bevy.
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true

@@ -36,6 +36,11 @@ pub fn affine(a: Affine3A) -> Affine3A {
     Affine3A::from_mat3_translation(linear, point(Vec3::from(a.translation)))
 }
 
+/// A Morrowind-space rotation in engine space (conjugated by the basis).
+pub fn rotation(q: Quat) -> Quat {
+    Quat::from_mat3(&(BASIS * Mat3::from_quat(q) * BASIS.transpose())).normalize()
+}
+
 /// Engine-space TRS, as plain arrays so callers need not share our glam.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Trs {
@@ -44,6 +49,12 @@ pub struct Trs {
     pub rotation: [f32; 4],
     /// Uniform scale. NIF transforms only carry uniform scale.
     pub scale: f32,
+}
+
+impl Default for Trs {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
 }
 
 impl Trs {

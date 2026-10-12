@@ -1,0 +1,28 @@
+[package]
+name = "mw_graphs"
+description = "Morrowind animation graph assets for sf_anim_graph: humanoid and creature templates, a builder and validator, headless simulation, and the PlayGroup/LoopGroup slot adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+mw_anim.workspace = true
+mw_nif.workspace = true
+ron.workspace = true
+sf_anim.workspace = true
+sf_anim_graph = { workspace = true, features = ["bake"] }
+sf_bake.workspace = true
+sf_character.workspace = true
+# `Stance::of_weapon`: weapon types.
+tes3 = { workspace = true, features = ["esp"] }
+# `builtin_source`: the shipped graphs as a VFS layer.
+sf_vfs.workspace = true
+
+[dev-dependencies]
+mw_actors.workspace = true
+mw_install.workspace = true
+mw_vfs.workspace = true
+
+[lints]
+workspace = true

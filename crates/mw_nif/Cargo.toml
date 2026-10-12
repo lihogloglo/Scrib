@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "mw_nif"
 description = "Converts Morrowind NIF models into an engine-neutral model description"
 version.workspace = true

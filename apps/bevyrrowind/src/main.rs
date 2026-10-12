@@ -3,7 +3,25 @@
 //! Today: inspection tools over the user's Morrowind install. Later, running
 //! without a subcommand will launch the game.
 
+mod actors;
+mod anim_view;
+mod bake;
+mod character_view;
+mod doors;
+mod exterior;
+mod actor_fx;
+mod actor_particles;
+mod faces;
+mod held;
+mod live_ab;
+mod perf;
+mod portal_spike;
+mod render;
+mod scenes;
+mod skinned_view;
+mod sweep;
 mod view;
+mod walkers;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -47,23 +65,457 @@ enum Command {
     },
     /// List a VFS directory.
     Ls { dir: Option<String> },
+    /// List cells that place a base record (most uses first).
+    Uses {
+        id: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Copy a file out of the VFS.
+    Extract { path: String, out: PathBuf },
     /// Show which sources provide a file, winner last.
     Which { path: String },
     /// Print a NIF model's converted node tree and materials.
     Nif { path: String },
+    /// Print a KF (or animated NIF) file's animation groups, sections, events
+    /// and root travel (`mw_anim::report`).
+    Anim {
+        /// VFS path, e.g. `meshes/xbase_anim.kf` (`meshes/` is optional).
+        path: String,
+        /// One line per text-key event, not only per group.
+        #[arg(long)]
+        events: bool,
+        /// Only this group (case-insensitive).
+        #[arg(long)]
+        group: Option<String>,
+    },
+    /// Convert every NIF in the VFS; report failures and unsupported features.
+    NifSweep {
+        /// Only NIFs whose path starts with this (e.g. "meshes/l/").
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// Example files listed per unsupported type.
+        #[arg(long, default_value_t = 3)]
+        examples: usize,
+        /// Also list fully supported types, with examples for every type.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Cook every model the records reference (meshes + LODs) into the bake cache.
+    Bake {
+        /// Cache root (default: `<local data dir>/bevyrrowind/bake`).
+        #[arg(long)]
+        cache: Option<PathBuf>,
+    },
+    /// Benchmarks: the suite runner, trace and Nsight summaries (`docs/perf.md`).
+    Perf {
+        #[command(subcommand)]
+        command: perf::cli::PerfCommand,
+    },
+    /// Open a named test scene (`scenes.ron`, `docs/visual-checks.md`) in the
+    /// interactive viewer; without a name (or with `--list`), list them.
+    Scene {
+        /// Scene name (or a unique prefix).
+        name: Option<String>,
+        /// List the scenes.
+        #[arg(long)]
+        list: bool,
+        /// Scene registry to read instead of `scenes.ron` (cwd, then next to the exe, then built in).
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// More `view` flags after the scene's own, e.g. `--off farfield`, `--dlss quality`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra: Vec<String>,
+    },
     /// Render a cell (interior name, or exterior grid as "x,y").
     View {
+        /// Interior name, exterior grid "x,y", or with `--model` a NIF path.
+        /// Hyphen values allowed so negative grids like "-4,-3" aren't read as flags.
+        #[arg(allow_hyphen_values = true)]
         cell: String,
-        /// Save a screenshot here once loaded, then exit.
+        /// Show a single model (at the origin) instead of a cell.
+        #[arg(long)]
+        model: bool,
+        #[command(flatten)]
+        flags: ViewFlags,
+    },
+    /// A lineup of dressed, idling actors (NPC_ / CREA ids; default: the M3 lineup).
+    /// `id:naked` drops equipment, `@race,class[,f]` picks the first matching NPC.
+    Character {
+        ids: Vec<String>,
+        /// Save a PNG once every character is dressed, then exit.
         #[arg(long)]
         screenshot: Option<PathBuf>,
-        /// Seconds to render after loading before the screenshot.
         #[arg(long, default_value_t = 2.0)]
         settle: f32,
-        /// Camera eye and target in meters: "ex,ey,ez,tx,ty,tz".
-        #[arg(long, value_parser = parse_camera)]
-        camera: Option<(bevy::math::Vec3, bevy::math::Vec3)>,
+        /// Eye and target, "ex,ey,ez,tx,ty,tz" (meters).
+        #[arg(long)]
+        camera: Option<String>,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        /// `smooth` (default) or `vanilla` bodies; B toggles live.
+        #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
+        bodies: sf_character_bevy::SmoothBodies,
+        /// Walk in place from the start (1 toggles, 2 runs).
+        #[arg(long)]
+        walk: bool,
+        /// Weapons drawn from the start (R toggles).
+        #[arg(long)]
+        drawn: bool,
+        /// Night from the start: dark stage, torches lit (N toggles).
+        #[arg(long)]
+        night: bool,
     },
+}
+
+#[derive(clap::Args)]
+#[expect(clippy::struct_excessive_bools, reason = "independent command-line flags")]
+struct ViewFlags {
+    /// Save a screenshot here once loaded, then exit.
+    #[arg(long)]
+    screenshot: Option<PathBuf>,
+    /// Seconds to render after loading before the screenshot.
+    #[arg(long, default_value_t = 2.0)]
+    settle: f32,
+    /// Camera eye and target in meters: "ex,ey,ez,tx,ty,tz". In exteriors a
+    /// height written "+h" is h meters above the ground (or the sea).
+    #[arg(long, allow_hyphen_values = true)]
+    camera: Option<String>,
+    /// Exteriors: cloud weather preset: clear, fair (alias cumulus), overcast, storm.
+    /// `--off clouds` drops the clouds.
+    #[arg(long, default_value = "fair", value_parser = parse_clouds)]
+    clouds: sf_atmos_bevy::sf_atmos::CloudPreset,
+    /// Exteriors: time of day in hours.
+    #[arg(long, default_value_t = 10.0)]
+    hour: f64,
+    /// Exteriors: quality preset: low, medium, high (default), ultra: view-distance bias
+    /// (LOD, size culling, far-field handoff) and the size-culling cutoff (env `BEVYRROWIND_QUALITY`).
+    #[arg(long, value_parser = parse_quality)]
+    quality: Option<exterior::Quality>,
+    /// Exteriors: color terrain patches by LOD.
+    #[arg(long)]
+    terrain_lod: bool,
+    /// Exteriors: overlay the terrain's triangle edges.
+    #[arg(long)]
+    wire: bool,
+    /// Exteriors: draw the streaming rings and resident cells.
+    #[arg(long)]
+    rings: bool,
+    /// Exteriors: the benchmark path's heights are above the ground (or sea).
+    #[arg(long, requires = "bench")]
+    bench_ground: bool,
+    /// Exteriors: R1 (near ring) load radius in meters, for calibration runs.
+    #[arg(long)]
+    near_ring: Option<f32>,
+    /// Exteriors: R2 (far ring) load radius in meters, for calibration runs.
+    #[arg(long)]
+    far_ring: Option<f32>,
+    /// Exteriors: spawn no point lights (calibration runs).
+    #[arg(long)]
+    no_lights: bool,
+    /// Exteriors: tint far-field proxies by level (L1 green, L2 blue, L3 purple).
+    #[arg(long)]
+    far_tint: bool,
+    /// Exteriors: depth + motion-vector prepass with occlusion culling (A/B
+    /// experiment). The default has none: a depth-only prepass ignores the
+    /// LOD crossfade dither in Bevy 0.20; motion vectors give it the fragment
+    /// stage that applies it. `--dlss` adds the same prepass.
+    #[arg(long)]
+    prepass: bool,
+    /// Exteriors: once the start has streamed in, walk through the nearest
+    /// door in front of the camera (as pressing Space, the activate key);
+    /// `--screenshot` then captures the other side. `--use-door 2` comes back out.
+    #[arg(long, num_args = 0..=1, default_missing_value = "1")]
+    use_door: Option<u32>,
+    /// Characters: `smooth` (default: seams welded, weights blended across
+    /// joints) or `vanilla` (segmented parts as authored). B toggles live.
+    #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
+    bodies: sf_character_bevy::SmoothBodies,
+    /// Streamed view: seamless doors, the M8 portal spike (scaffold
+    /// `portal_spike`): see through door openings, walk through without a fade.
+    /// Optional setting, off by default (doors fade); also `BEVYRROWIND_PORTALS=1`.
+    #[arg(long)]
+    portals: bool,
+    /// With `--portals`: the spike's per-space scheduled exposure (each side its
+    /// own) instead of the viewer's auto exposure (portals.md "Exposure"), for A/B.
+    #[arg(long)]
+    scheduled_exposure: bool,
+    /// With `--portals`: walk forward through the door in front and back, twice
+    /// (crossings and the frames after each are logged).
+    #[arg(long)]
+    portal_walk: bool,
+    /// Interiors: the single-cell viewer (one cell, no streaming, no doors)
+    /// instead of the streamed view. `--rt`, `--no-baked` and `--skinned`
+    /// choose it too: the streamed view doesn't support them yet.
+    #[arg(long)]
+    single_cell: bool,
+    #[command(flatten)]
+    lighting: Lighting,
+    /// Load every model from its NIF, ignoring cooked meshes.
+    #[arg(long)]
+    no_baked: bool,
+    /// Bake cache root (default: `<local data dir>/bevyrrowind/bake`).
+    #[arg(long)]
+    cache: Option<PathBuf>,
+    /// Tint cooked models by LOD level (green LOD0, yellow, orange, red, magenta).
+    #[arg(long)]
+    lod_tint: bool,
+    /// Load skinned models (actors, creatures, body parts) from their cooked
+    /// `Cooked::Skinned` product, bound by joint name to the NIF's skeleton
+    /// (scaffold until actor spawning; keys: K cooked/NIF, M cycle a morph).
+    #[arg(long)]
+    skinned: bool,
+    /// With `--skinned`: the NIF whose nodes are the skeleton (default: the
+    /// model itself; body parts use `meshes/base_anim.nif`).
+    #[arg(long)]
+    skeleton: Option<String>,
+    /// With `--skinned`: play the baked animation graph on an `sf_anim_bevy`
+    /// rig instead of binding to the NIF skeleton (keys: see `anim_view`).
+    #[arg(long, requires = "skinned")]
+    animate: bool,
+    /// Ray-traced lighting (Bevy Solari; build with `--features solari`).
+    /// Falls back to raster on GPUs without ray tracing.
+    #[arg(long)]
+    rt: bool,
+    /// Temporal upscaling with DLSS (build with `--features dlss`; NVIDIA RTX,
+    /// off elsewhere): off, auto, native (alias dlaa), quality, balanced,
+    /// performance, ultra-performance. With `--rt` it sets the denoiser's
+    /// (Ray Reconstruction) quality. Default: auto in builds with DLSS, off
+    /// otherwise; `--dlss off` turns it off. Env: `BEVYRROWIND_DLSS`.
+    #[arg(long, value_parser = sf_sky_bevy::sf_sky::Upscaling::parse)]
+    dlss: Option<sf_sky_bevy::sf_sky::Upscaling>,
+    /// Run an `sf_diag` benchmark scenario (JSON), then exit with its verdict.
+    /// Reports go to `target/diag/`; the baseline is `baselines/<file>` next
+    /// to the scenario.
+    #[arg(long)]
+    bench: Option<PathBuf>,
+    /// Record this run as the scenario's baseline instead of comparing.
+    #[arg(long, requires = "bench")]
+    bench_update_baseline: bool,
+    #[command(flatten)]
+    perf: Box<perf::PerfFlags>,
+}
+
+impl ViewFlags {
+    fn options(
+        self,
+        install: &MorrowindInstall,
+        title: String,
+        placements: Vec<mw_world::Placement>,
+        ambient: Option<[u8; 4]>,
+    ) -> Result<view::ViewOptions> {
+        let render = self.render()?;
+        let baked = if self.no_baked {
+            None
+        } else {
+            let store = sf_bake::Store::open(bake::cache_root(self.cache)?)?;
+            let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
+            if manifest.products.is_empty() {
+                println!("no baked products for this install (run `bevyrrowind bake`); loading NIFs");
+            }
+            Some(view::Baked { store, manifest })
+        };
+        let meta = std::collections::BTreeMap::from([("cell".to_owned(), title.clone()), ("render".to_owned(), render.label())]);
+        let perf = perf::Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |_| {})?;
+        Ok(view::ViewOptions {
+            title,
+            placements,
+            ambient,
+            screenshot: self.screenshot,
+            settle: self.settle,
+            camera: self.camera.as_deref().map(parse_camera).transpose()?,
+            calibration: self.lighting.calibration(),
+            baked,
+            lod_tint: self.lod_tint,
+            skinned: self.skinned.then(|| view::SkinnedView {
+                skeleton: self.skeleton.as_deref().and_then(mw_world::model_path),
+                animate: self.animate,
+            }),
+            render,
+            perf,
+        })
+    }
+
+    /// Whether an interior opens in the single-cell viewer.
+    fn wants_single_cell(&self) -> bool {
+        self.single_cell || self.rt || self.no_baked || self.skinned
+    }
+
+    /// Options for the streamed view starting at `start`.
+    fn exterior_options(
+        self,
+        install: &MorrowindInstall,
+        db: &RecordDb,
+        title: String,
+        start: StreamStart,
+    ) -> Result<exterior::ExteriorOptions> {
+        if self.no_baked {
+            return Err("the exterior streams from bake products; --no-baked is not available".into());
+        }
+        let render = self.render()?;
+        let store = sf_bake::Store::open(bake::cache_root(self.cache)?)?;
+        let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
+        let mut heights = mw_world::terrain::HeightSampler::new(db);
+        let interior = matches!(start, StreamStart::Interior { .. });
+        // Interiors have no terrain: "+h" heights are above 0.
+        let mut ground = |x: f64, z: f64| if interior { 0.0 } else { ground_m(&mut heights, x, z) };
+        let (eye, target) = match (&self.camera, &start) {
+            (Some(raw), _) => parse_exterior_camera(raw, &mut ground)?,
+            (None, StreamStart::Exterior(center)) => {
+                // Default: 150 m south-east of the place, 60 m up, looking at it.
+                let target = glam::DVec3::new(center.x, ground(center.x, center.y), center.y);
+                let (ex, ez) = (center.x + 90.0, center.y + 120.0);
+                (glam::DVec3::new(ex, ground(ex, ez).max(target.y) + 60.0, ez), target)
+            }
+            (None, StreamStart::Interior { eye, target, .. }) => (*eye, *target),
+        };
+        let worldspace = match start {
+            StreamStart::Interior { worldspace, .. } => worldspace,
+            StreamStart::Exterior(_) => mw_world::ids::exterior(),
+        };
+        let meta = std::collections::BTreeMap::from([
+            ("cell".to_owned(), title.clone()),
+            ("camera".to_owned(), format!("{eye:.1} -> {target:.1}")),
+            ("bench_ground".to_owned(), self.bench_ground.to_string()),
+            ("rings".to_owned(), format!("near {:?} far {:?}", self.near_ring, self.far_ring)),
+            ("render".to_owned(), render.label()),
+            ("prepass".to_owned(), self.prepass.to_string()),
+        ]);
+        let bench_ground = self.bench_ground;
+        let mut perf = perf::Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |scenario| {
+            if bench_ground && let sf_diag_bevy::sf_diag::Measure::Path { keyframes, .. } = &mut scenario.measure {
+                for k in keyframes {
+                    k.position.y += ground(k.position.x, k.position.z);
+                }
+            }
+        })?;
+        if let Some((_, settings)) = &mut perf.bench {
+            // big_space: the app converts the pose to grid coordinates.
+            settings.apply_transform = false;
+        }
+        println!("camera {eye:.1} -> {target:.1}");
+        Ok(exterior::ExteriorOptions {
+            title,
+            eye,
+            target,
+            screenshot: self.screenshot,
+            settle: self.settle,
+            store,
+            manifest,
+            lod_tint: self.lod_tint,
+            terrain_lod: self.terrain_lod,
+            wireframe: self.wire,
+            rings: self.rings,
+            near_ring: self.near_ring,
+            far_ring: self.far_ring,
+            no_lights: self.no_lights || perf.off.has(perf::Part::Lights),
+            far_tint: self.far_tint,
+            prepass: self.prepass,
+            hour: self.hour,
+            clouds: self.clouds,
+            quality: exterior::Quality::resolve(self.quality),
+            perf,
+            lights: light_infos(db),
+            world: doors::WorldLinks::build(db),
+            use_door: self.use_door.unwrap_or(0),
+            portals: None,
+            actors: None,
+            bodies: self.bodies,
+            worldspace,
+            calibration: self.lighting.calibration(),
+            render,
+        })
+    }
+
+    /// `--rt`, `--dlss` and `--off denoiser`.
+    fn render(&self) -> Result<render::RenderSettings> {
+        let off = perf::Off::from_flags(&self.perf.off)?;
+        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser))?)
+    }
+}
+
+/// Where the streamed view starts.
+enum StreamStart {
+    /// An exterior place: its center (x, z) in world meters.
+    Exterior(glam::DVec2),
+    /// An interior worldspace, with the default eye and target.
+    Interior { worldspace: sf_world::WorldspaceId, eye: glam::DVec3, target: glam::DVec3 },
+}
+
+/// The single-cell viewer's default framing of an interior (eye, target):
+/// above and south of the center of its placements.
+fn interior_view(placements: &[mw_world::Placement]) -> (glam::DVec3, glam::DVec3) {
+    let points = placements.iter().filter(|p| p.model.is_some()).map(|p| glam::Vec3::from_array(p.transform.translation).as_dvec3());
+    let (lo, hi) = points.fold((glam::DVec3::INFINITY, glam::DVec3::NEG_INFINITY), |(lo, hi), p| (lo.min(p), hi.max(p)));
+    if !lo.x.is_finite() {
+        return (glam::DVec3::new(0.0, 2.0, 5.0), glam::DVec3::ZERO);
+    }
+    let center = (lo + hi) / 2.0;
+    let extent = (hi - lo).max_element().max(4.0);
+    (center + glam::DVec3::new(0.0, extent * 0.45, extent * 0.55), center)
+}
+
+/// Ground height (meters) at a world position: the terrain, or the sea
+/// where the terrain is under water.
+fn ground_m(heights: &mut mw_world::terrain::HeightSampler<'_>, x: f64, z: f64) -> f64 {
+    let u = mw_world::convert::UNIT_METERS_F64;
+    #[allow(clippy::cast_possible_truncation)]
+    let h = heights.height((x / u) as f32, (-z / u) as f32).map_or(0.0, |h| f64::from(h) * u);
+    h.max(0.0)
+}
+
+/// "ex,ey,ez,tx,ty,tz" in meters, where a y written "+h" is h above the ground.
+fn parse_exterior_camera(
+    raw: &str,
+    ground: &mut dyn FnMut(f64, f64) -> f64,
+) -> std::result::Result<(glam::DVec3, glam::DVec3), String> {
+    let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
+    let [ex, ey, ez, tx, ty, tz] = parts[..] else { return Err("expected six comma-separated values".into()) };
+    let num = |v: &str| v.parse::<f64>().map_err(|e| format!("{v:?}: {e}"));
+    let mut point = |x: &str, y: &str, z: &str| -> std::result::Result<glam::DVec3, String> {
+        let (x, z) = (num(x)?, num(z)?);
+        let y = match y.strip_prefix('+') {
+            Some(h) => ground(x, z) + num(h)?,
+            None => num(y)?,
+        };
+        Ok(glam::DVec3::new(x, y, z))
+    };
+    Ok((point(ex, ey, ez)?, point(tx, ty, tz)?))
+}
+
+/// Light parameters of every `LIGH` record, by lowercase id.
+fn light_infos(db: &RecordDb) -> std::collections::HashMap<String, mw_world::LightInfo> {
+    db.iter::<tes3::esp::Light>()
+        .filter_map(|(id, _)| {
+            let (_, _, light) = mw_world::resolve_base(db, id.as_str())?;
+            Some((id.as_str().to_ascii_lowercase(), light?))
+        })
+        .collect()
+}
+
+/// An exterior place: grid "x,y" (its center) or the name of exterior
+/// cells (the center of all cells with that name), in world meters (x, z).
+fn exterior_place(db: &RecordDb, name: &str) -> Option<(String, glam::DVec2)> {
+    let trimmed = name.trim().trim_start_matches('@');
+    let grids: Vec<(i32, i32)> = if let Some((x, y)) = trimmed.split_once(',')
+        && let (Ok(x), Ok(y)) = (x.trim().parse::<i32>(), y.trim().parse::<i32>())
+    {
+        vec![(x, y)]
+    } else {
+        db.iter::<tes3::esp::Cell>()
+            .filter(|(_, c)| !c.is_interior() && c.name.eq_ignore_ascii_case(trimmed))
+            .map(|(_, c)| c.data.grid)
+            .collect()
+    };
+    if grids.is_empty() {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let n = grids.len() as f64;
+    let (sx, sy) = grids.iter().fold((0.0, 0.0), |(a, b), &(x, y)| (a + f64::from(x) + 0.5, b + f64::from(y) + 0.5));
+    let cell = mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64;
+    let label = if grids.len() == 1 { format!("{trimmed} {:?}", grids[0]) } else { format!("{trimmed} ({} cells)", grids.len()) };
+    Some((label, glam::DVec2::new(sx / n * cell, -(sy / n) * cell)))
 }
 
 fn parse_camera(raw: &str) -> std::result::Result<(bevy::math::Vec3, bevy::math::Vec3), String> {
@@ -89,16 +541,35 @@ fn main() -> ExitCode {
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn run(cli: Cli) -> Result {
-    if let Command::Detect = cli.command {
-        return detect(cli.morrowind.as_deref());
-    }
+    let command = match cli.command {
+        Command::Detect => return detect(cli.morrowind.as_deref()),
+        Command::Scene { name, list, file, extra } => {
+            return scenes::run(cli.morrowind, name.as_deref(), list, file.as_deref(), extra);
+        }
+        Command::Perf { command } => return perf::cli::run(command),
+        other => other,
+    };
     let (install, origin) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
-    match cli.command {
-        Command::Detect => unreachable!(),
+    match command {
+        Command::Detect | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
         Command::Info { conflicts } => info(&install, &origin, conflicts),
+        Command::Bake { cache } => bake::run(&install, cache),
         Command::Ls { dir } => {
             let vfs = mount(&install, false)?;
             ls(&vfs, dir.as_deref().unwrap_or(""));
+            Ok(())
+        }
+        Command::Uses { id, limit } => {
+            let (_, content) = load(&install, false)?;
+            for (cell, count) in mw_world::cells_using(&content.db, &id).into_iter().take(limit) {
+                let name = mw_world::cell_label(cell);
+                println!("{count:>4}  {name}");
+            }
+            Ok(())
+        }
+        Command::Extract { path, out } => {
+            let vfs = mount(&install, false)?;
+            std::fs::write(&out, vfs.read(&VfsPath::new(&path)?)?)?;
             Ok(())
         }
         Command::Which { path } => {
@@ -109,6 +580,19 @@ fn run(cli: Cli) -> Result {
             let vfs = mount(&install, false)?;
             nif(&vfs, &path)
         }
+        Command::Anim { path, events, group } => {
+            let vfs = mount(&install, false)?;
+            let normalized = path.to_ascii_lowercase().replace('\\', "/");
+            let path = if normalized.starts_with("meshes/") { normalized } else { format!("meshes/{normalized}") };
+            let animation = mw_anim::Animation::from_file(&path, &vfs.read(&VfsPath::new(&path)?)?)?;
+            print!("{}", mw_anim::report(&path, &animation, &mw_anim::ReportOptions { events, group }));
+            Ok(())
+        }
+        Command::NifSweep { prefix, examples, all } => {
+            let vfs = mount(&install, false)?;
+            sweep::run(&vfs, &prefix, examples, all);
+            Ok(())
+        }
         Command::Record { kind, id } => {
             let (_, content) = load(&install, false)?;
             record(&content.db, &kind, &id)
@@ -117,28 +601,84 @@ fn run(cli: Cli) -> Result {
             let (_, content) = load(&install, false)?;
             find(&content.db, &kind, pattern.as_deref(), limit)
         }
-        Command::View { cell, screenshot, settle, camera } => {
+        Command::View { cell, model: true, flags } => {
+            let vfs = mount(&install, false)?;
+            let path = mw_world::model_path(&cell).ok_or("empty model path")?;
+            let placement = mw_world::Placement {
+                base_id: path.clone(),
+                kind: mw_world::BaseKind::Static,
+                model: Some(path.clone()),
+                transform: mw_nif::coords::Trs::IDENTITY,
+                light: None,
+                editor_only: false,
+            };
+            let options =
+                flags.options(&install, format!("Bevyrrowind - {path}"), vec![placement], Some([160, 160, 160, 255]))?;
+            view::run(std::sync::Arc::new(vfs), options)
+        }
+        Command::View { cell, model: false, flags } => {
+            view_cell(&install, &cell, flags)
+        }
+        Command::Character { ids, screenshot, settle, camera, cache, bodies, walk, drawn, night } => {
             let (vfs, content) = load(&install, false)?;
-            let found = mw_world::find_cell(&content.db, &cell).ok_or_else(|| format!("no cell {cell:?}"))?;
-            let (placements, skipped) = mw_world::cell_placements(&content.db, found);
-            if !skipped.is_empty() {
-                eprintln!("warning: {} references with unknown base records", skipped.len());
-            }
-            println!("{}: {} placements", found.name, placements.len());
-            view::run(
-                std::sync::Arc::new(vfs),
-                view::ViewOptions {
-                    title: format!("Bevyrrowind - {}", found.name),
-                    placements,
-                    ambient: found.atmosphere_data.as_ref().map(|a| a.ambient_color),
-                    screenshot,
-                    settle,
-                    camera,
-                },
-            );
+            let store = sf_bake::Store::open(bake::cache_root(cache)?)?;
+            let manifest = store.load_manifest(&mw_bake::profile_name(&install))?;
+            let camera = camera.as_deref().map(parse_camera).transpose()?;
+            let options = character_view::CharacterViewOptions { ids, screenshot, settle, camera, bodies, walk, drawn, night };
+            character_view::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options);
             Ok(())
         }
     }
+}
+
+/// `view <cell>`: an exterior place or an interior, streamed; or an interior
+/// in the single-cell viewer.
+fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result {
+    let (vfs, content) = load(install, false)?;
+    // Exterior cells (by grid "x,y" or by name) stream the whole exterior.
+    let interior = mw_world::find_cell(&content.db, cell).filter(|c| c.is_interior());
+    if interior.is_none()
+        && let Some((label, center)) = exterior_place(&content.db, cell)
+    {
+        println!("exterior at {label}: ({:.0}, {:.0}) m", center.x, center.y);
+        let (portals, scheduled_exposure, portal_walk) = (flags.portals, flags.scheduled_exposure, flags.portal_walk);
+        let mut options =
+            flags.exterior_options(install, &content.db, format!("Bevyrrowind - {label}"), StreamStart::Exterior(center))?;
+        if portal_spike::enabled(portals) {
+            let mut links = portal_spike::fill_frames(&mut options.world.links, &content.db, &vfs);
+            links.scheduled_exposure = scheduled_exposure;
+            links.walk = portal_walk;
+            options.portals = Some(links);
+        }
+        options.actors = Some(std::sync::Arc::new(content.db));
+        return exterior::run(std::sync::Arc::new(vfs), options);
+    }
+    let found = interior.ok_or_else(|| format!("no cell {cell:?}"))?;
+    let (placements, skipped) = mw_world::cell_placements(&content.db, found);
+    // Interiors stream like the exterior (doors work); the single-cell
+    // viewer remains for what the streamed view lacks.
+    if !flags.wants_single_cell() {
+        let (eye, target) = interior_view(&placements);
+        let start = StreamStart::Interior { worldspace: mw_world::ids::worldspace_of(found), eye, target };
+        println!("interior {}: streamed view (--single-cell for the single-cell viewer)", found.name);
+        let (portals, scheduled_exposure, portal_walk) = (flags.portals, flags.scheduled_exposure, flags.portal_walk);
+        let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - {}", found.name), start)?;
+        if portal_spike::enabled(portals) {
+            let mut links = portal_spike::fill_frames(&mut options.world.links, &content.db, &vfs);
+            links.scheduled_exposure = scheduled_exposure;
+            links.walk = portal_walk;
+            options.portals = Some(links);
+        }
+        options.actors = Some(std::sync::Arc::new(content.db));
+        return exterior::run(std::sync::Arc::new(vfs), options);
+    }
+    if !skipped.is_empty() {
+        eprintln!("warning: {} references with unknown base records", skipped.len());
+    }
+    println!("{}: {} placements", found.name, placements.len());
+    let ambient = found.atmosphere_data.as_ref().map(|a| a.ambient_color);
+    let options = flags.options(install, format!("Bevyrrowind - {}", found.name), placements, ambient)?;
+    view::run(std::sync::Arc::new(vfs), options)
 }
 
 fn detect(explicit: Option<&std::path::Path>) -> Result {
@@ -162,7 +702,8 @@ fn detect(explicit: Option<&std::path::Path>) -> Result {
 
 fn mount(install: &MorrowindInstall, verbose: bool) -> Result<Vfs> {
     let start = Instant::now();
-    let mounted = mw_vfs::mount_install(install, Vfs::builder())?;
+    // The builtin graph assets (mw_graphs) are the lowest layer: any mod overrides them.
+    let mounted = mw_vfs::mount_install(install, Vfs::builder().mount(mw_graphs::builtin_source()))?;
     for warning in &mounted.warnings {
         eprintln!("warning: {warning:?}");
     }
@@ -246,6 +787,9 @@ fn nif(vfs: &Vfs, raw: &str) -> Result {
     };
     let model = mw_nif::load(&vfs.read(&VfsPath::new(&path)?)?)?;
     println!("{path}: marker={} no_collision={} had_skin={}", model.marker, model.no_collision, model.had_skin);
+    if let Some((lo, hi)) = mw_nif::visible_bounds(&model) {
+        println!("bounds (engine meters): {lo:.2?} .. {hi:.2?}");
+    }
     for (i, node) in model.nodes.iter().enumerate() {
         let depth = std::iter::successors(node.parent, |&p| model.nodes[p].parent).count();
         let mesh = node.mesh.map_or(String::new(), |m| {
@@ -253,10 +797,60 @@ fn nif(vfs: &Vfs, raw: &str) -> Result {
             format!("  mesh#{m} {} tris, material#{}", mesh.indices.len() / 3, mesh.material)
         });
         let hidden = if node.visible { "" } else { "  [hidden]" };
-        println!("{i:>3} {}{:?} {:?}{mesh}{hidden}", "  ".repeat(depth), node.kind, node.name);
+        let t = node.transform;
+        let transform = if t == mw_nif::coords::Trs::IDENTITY {
+            String::new()
+        } else {
+            format!("  t={:.2?} r={:.2?} s={:.2}", t.translation, t.rotation, t.scale)
+        };
+        println!("{i:>3} {}{:?} {:?}{mesh}{hidden}{transform}", "  ".repeat(depth), node.kind, node.name);
     }
     for (i, m) in model.materials.iter().enumerate() {
-        println!("material#{i}: {:?} {:?} alpha={:?}", m.base_texture, m.glow_texture, m.alpha_mode);
+        println!(
+            "material#{i}: {:?} {:?} {:?} opacity={} diffuse={:?} emissive={:?} vertex_colors={:?}",
+            m.base_texture, m.glow_texture, m.alpha_mode, m.alpha, m.diffuse, m.emissive, m.vertex_colors
+        );
+    }
+    if !model.text_keys.is_empty() {
+        println!("text keys: {:?}", model.text_keys);
+    }
+    for c in &model.controllers {
+        let target = match &c.target {
+            mw_nif::anim::Target::Transform { node, track } => format!(
+                "transform node#{node} t={} r={} s={}",
+                track.translation.is_some(),
+                track.rotation.is_some(),
+                track.scale.is_some()
+            ),
+            mw_nif::anim::Target::Visibility { node, .. } => format!("visibility node#{node}"),
+            mw_nif::anim::Target::Alpha { material, .. } => format!("alpha material#{material}"),
+            mw_nif::anim::Target::MaterialColor { material, slot, .. } => format!("{slot:?} color material#{material}"),
+            mw_nif::anim::Target::Uv { material, track } => {
+                format!("uv material#{material} at 0/0.25/0.5: {:?} {:?} {:?}", track.sample(0.0), track.sample(0.25), track.sample(0.5))
+            }
+        };
+        let t = c.timing;
+        println!(
+            "controller: {target}  [{:.2}..{:.2}] x{} {:?} auto_play={} random_start={}",
+            t.start, t.stop, t.frequency, t.cycle, c.auto_play, c.random_start
+        );
+    }
+    for p in &model.particles {
+        println!(
+            "particles: node#{} emitter#{} material#{} max={} rate={:.1}/s life={:.2}+{:.2}s speed={:.2}m/s radius={:.3}m color={:?} auto_play={} modifiers={:?}",
+            p.node,
+            p.emitter,
+            p.material,
+            p.max_particles,
+            p.birth_rate,
+            p.lifespan,
+            p.lifespan_variation,
+            p.speed,
+            p.initial_size,
+            p.initial_color.to_array(),
+            p.auto_play,
+            p.modifiers.iter().map(|m| match m { mw_nif::particles::Modifier::Color(_) => "Color".to_owned(), other => format!("{other:?}") }).collect::<Vec<_>>()
+        );
     }
     Ok(())
 }
@@ -306,4 +900,46 @@ fn find(db: &RecordDb, kind: &str, pattern: Option<&str>, limit: usize) -> Resul
         println!("... {} more (use --limit)", total - ids.len());
     }
     Ok(())
+}
+
+/// Lighting calibration overrides (see `mw_assets::LightCalibration`).
+#[derive(clap::Args)]
+struct Lighting {
+    /// Light power, lumens per square meter of light radius.
+    #[arg(long)]
+    lumens: Option<f32>,
+    /// Light range cutoff as a multiple of its radius.
+    #[arg(long)]
+    range: Option<f32>,
+    /// Ambient luminance (nits) for a white cell ambient.
+    #[arg(long)]
+    ambient: Option<f32>,
+}
+
+impl Lighting {
+    fn calibration(&self) -> mw_assets::LightCalibration {
+        let mut calibration = mw_assets::LightCalibration::default();
+        calibration.lumens_per_radius_sq = self.lumens.unwrap_or(calibration.lumens_per_radius_sq);
+        calibration.range_scale = self.range.unwrap_or(calibration.range_scale);
+        calibration.ambient_nits = self.ambient.unwrap_or(calibration.ambient_nits);
+        calibration
+    }
+}
+
+/// `--quality` values.
+fn parse_quality(s: &str) -> std::result::Result<exterior::Quality, String> {
+    exterior::Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: low, medium, high, ultra"))
+}
+
+/// `--clouds` values (`sf_atmos` presets).
+fn parse_clouds(s: &str) -> std::result::Result<sf_atmos_bevy::sf_atmos::CloudPreset, String> {
+    sf_atmos_bevy::sf_atmos::CloudPreset::parse(s).ok_or_else(|| format!("unknown cloud preset {s:?}: clear, fair, cumulus, overcast, storm"))
+}
+
+fn parse_bodies(s: &str) -> std::result::Result<sf_character_bevy::SmoothBodies, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "smooth" => Ok(sf_character_bevy::SmoothBodies::Smooth),
+        "vanilla" => Ok(sf_character_bevy::SmoothBodies::Vanilla),
+        other => Err(format!("bodies {other:?}: smooth or vanilla")),
+    }
 }

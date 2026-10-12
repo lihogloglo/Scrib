@@ -1,0 +1,18 @@
+{
+  "name": "exterior_run",
+  "warmup": { "seconds": 3.0, "frames": 120 },
+  "measure": {
+    "kind": "path",
+    "speed": 7.0,
+    "keyframes": [
+      { "position": [-150.0, 1.7, 990.0] },
+      { "position": [-80.0, 1.7, 940.0] },
+      { "position": [0.0, 1.7, 880.0] },
+      { "position": [60.0, 1.7, 820.0] }
+    ]
+  },
+  "gates": [
+    { "gate": "max_stutters", "factor": 1.5, "window": 60, "per_minute": 1.0 },
+    { "gate": "max_frame_ms", "ms": 33.0 }
+  ]
+}

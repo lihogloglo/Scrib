@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "3"
 members = ["crates/*", "apps/*"]
 
@@ -11,9 +11,30 @@ repository = "https://github.com/TODO/bevyrrowind"
 
 [workspace.dependencies]
 # Framework (MIT/Apache). Path dependencies while both repos evolve together.
+sf_anim = { path = "../superfargoth/crates/sf_anim", default-features = false }
+sf_anim_graph = { path = "../superfargoth/crates/sf_anim_graph" }
+sf_anim_bevy = { path = "../superfargoth/crates/sf_anim_bevy" }
+sf_character_bevy = { path = "../superfargoth/crates/sf_character_bevy" }
+sf_controller_bevy = { path = "../superfargoth/crates/sf_controller_bevy" }
+sf_bake = { path = "../superfargoth/crates/sf_bake" }
+sf_character = { path = "../superfargoth/crates/sf_character" }
+sf_controller = { path = "../superfargoth/crates/sf_controller" }
+sf_coords = { path = "../superfargoth/crates/sf_coords" }
+sf_diag = { path = "../superfargoth/crates/sf_diag" }
+sf_diag_bevy = { path = "../superfargoth/crates/sf_diag_bevy" }
 sf_mods = { path = "../superfargoth/crates/sf_mods" }
+sf_model = { path = "../superfargoth/crates/sf_model" }
+sf_model_bevy = { path = "../superfargoth/crates/sf_model_bevy" }
 sf_records = { path = "../superfargoth/crates/sf_records" }
+sf_atmos_bevy = { path = "../superfargoth/crates/sf_atmos_bevy" }
+sf_sky_bevy = { path = "../superfargoth/crates/sf_sky_bevy" }
+sf_terrain = { path = "../superfargoth/crates/sf_terrain" }
+sf_terrain_bevy = { path = "../superfargoth/crates/sf_terrain_bevy" }
 sf_vfs = { path = "../superfargoth/crates/sf_vfs" }
+sf_world = { path = "../superfargoth/crates/sf_world" }
+sf_world_bevy = { path = "../superfargoth/crates/sf_world_bevy" }
+sf_lod = { path = "../superfargoth/crates/sf_lod" }
+sf_lod_bevy = { path = "../superfargoth/crates/sf_lod_bevy" }
 
 # TES3 formats (MIT/Apache). Unstable API: pinned to a commit.
 tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0", default-features = false }
@@ -22,12 +43,29 @@ tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa
 # the full set. Unused Bevy features are crates we never compile.
 bevy = { version = "0.20", default-features = false }
 clap = { version = "4", features = ["derive"] }
+# Platform data directories: the bake cache lives in the local data dir.
+dirs = "6"
 encoding_rs = "0.8"
+# Seeded RNG for NPC wander rolls (same version Bevy already pulls in).
+fastrand = "2.5"
+# Same version as superfargoth (bevy_math's): sf_coords/sf_world types use it.
+glam = "0.33"
+# Pathgrid graphs and A* (same version Bevy already pulls in).
+petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
+# Same version as superfargoth's sf_bake (one copy in the tree).
+rayon = "1.12"
+# Graph assets (same version as superfargoth's sf_anim_graph).
+ron = "0.12"
 semver = "1"
 tempfile = "3"
 thiserror = "2"
 winreg = "0.55"
 
+mw_ai = { path = "crates/mw_ai" }
+mw_actors = { path = "crates/mw_actors" }
+mw_anim = { path = "crates/mw_anim" }
+mw_bake = { path = "crates/mw_bake" }
+mw_graphs = { path = "crates/mw_graphs" }
 mw_nif = { path = "crates/mw_nif" }
 mw_install = { path = "crates/mw_install" }
 mw_records = { path = "crates/mw_records" }
@@ -78,6 +116,11 @@ debug = true
 [profile.profiling]
 inherits = "release"
 debug = "line-tables-only"
+
+# `profiling` plus `--features trace` (per-system CPU spans, docs/perf.md). Its own
+# profile, so switching between the two never rebuilds the other.
+[profile.profiling-trace]
+inherits = "profiling"
 
 # Shipping builds: slow to compile, fastest to run.
 [profile.dist]

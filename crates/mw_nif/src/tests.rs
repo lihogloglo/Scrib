@@ -82,8 +82,10 @@ fn properties_inherit_and_materials_dedupe() {
 fn geometry_is_in_engine_space() {
     let mut stream = NiStream::new();
     let shape = quad(&mut stream, "q", vec![]);
-    // Node 64 units north and 64 up.
-    let top = node(&mut stream, "Root", Vec3::new(0.0, 64.0, 64.0), vec![shape], vec![]);
+    // Node 64 units north and 64 up, under a root whose own transform the
+    // engine replaces with the placement's.
+    let inner = node(&mut stream, "Inner", Vec3::new(0.0, 64.0, 64.0), vec![shape], vec![]);
+    let top = node(&mut stream, "Root", Vec3::new(500.0, 0.0, 0.0), vec![inner], vec![]);
     root(&mut stream, top);
     let model = convert(stream).unwrap();
 
@@ -93,7 +95,8 @@ fn geometry_is_in_engine_space() {
     // MW (0, 1, 0) is engine (0, 0, -unit).
     let unit = coords::UNIT_METERS;
     assert!((mesh.positions[3][2] + unit).abs() < 1e-6);
-    let t = model.nodes[0].transform.translation;
+    assert_eq!(model.nodes[0].transform, Trs::IDENTITY, "root transform is dropped");
+    let t = model.nodes[1].transform.translation;
     assert!((t[1] - 0.9144).abs() < 1e-5 && (t[2] + 0.9144).abs() < 1e-5, "{t:?}");
     let (lo, hi) = visible_bounds(&model).unwrap();
     assert!((hi[1] - lo[1]).abs() < 1e-6, "flat quad lies on a horizontal plane");
@@ -180,8 +183,19 @@ fn survives_a_save_load_round_trip() {
 }
 
 #[test]
+fn nc_markers_turn_collision_off() {
+    for value in ["NCO", "NCC", "nco", "Nc", "NCx"] {
+        assert!(no_collision_marker(value), "{value}");
+    }
+    for value in ["MRK", "N", "", "XNC"] {
+        assert!(!no_collision_marker(value), "{value}");
+    }
+}
+
+#[test]
 fn strips_become_triangles() {
     // 0-1-2-3 strip: (0,1,2), (1,3,2); a degenerate repeat is dropped.
     assert_eq!(strip_triangles(&[4], &[0, 1, 2, 3]), [0, 1, 2, 1, 3, 2]);
     assert_eq!(strip_triangles(&[3, 3], &[0, 0, 1, 2, 3, 4]), [2, 3, 4]);
 }
+mod skins_and_morphs;

@@ -192,3 +192,23 @@ fn mod_ids_are_sanitized() {
     assert_eq!(mod_id_for("Mod A (v2).esp").unwrap().as_str(), "mod_a__v2_.esp");
     assert_eq!(mod_id_for("Morrowind.esm").unwrap().as_str(), "morrowind.esm");
 }
+
+#[test]
+fn land_texture_indices_are_per_file() {
+    use tes3::esp::LandscapeTexture;
+    let ltex = |id: &str, index: u32| -> TES3Object {
+        LandscapeTexture { id: id.into(), index, file_name: format!("{id}.tga"), ..LandscapeTexture::default() }.into()
+    };
+    let master = bytes(vec![header(FileType::Esm, &[]), ltex("grass", 0), ltex("rock", 1)]);
+    let plugin = bytes(vec![header(FileType::Esp, &["Master.esm"]), ltex("sand", 0), ltex("rock", 5)]);
+    let vfs = Vfs::builder().mount(MemSource::new("data").with("Master.esm", master).with("Plugin.esp", plugin)).build();
+    let loaded = load(&vfs, &names(&["Master.esm", "Plugin.esp"])).unwrap();
+    let slot = |file: &str, index| loaded.db.get::<LandTextureSlot>(&keys::ltex_slot(file, index)).map(|s| s.texture.clone());
+    assert_eq!(slot("Master.esm", 0), Some("grass".into()));
+    assert_eq!(slot("master.esm", 1), Some("rock".into()));
+    assert_eq!(slot("Plugin.esp", 0), Some("sand".into()));
+    assert_eq!(slot("Plugin.esp", 5), Some("rock".into()));
+    assert_eq!(slot("Plugin.esp", 1), None);
+    // The record itself merges by id: the plugin's redefinition wins.
+    assert_eq!(loaded.db.get::<LandscapeTexture>(&"rock".into()).unwrap().index, 5);
+}

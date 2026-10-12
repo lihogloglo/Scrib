@@ -38,6 +38,7 @@ macro_rules! kinds {
         pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
             $(db.register::<tes3::esp::$variant>($tag)?;)*
             $(db.register::<tes3::esp::$svariant>($stag)?;)*
+            db.register::<LandTextureSlot>(LandTextureSlot::KIND)?;
             Ok(())
         }
 
@@ -76,6 +77,22 @@ kinds! {
     special {
         Cell => "CELL", Landscape => "LAND", PathGrid => "PGRD", DialogueInfo => "INFO",
     }
+}
+
+/// One content file's land texture index. `VTEX` values in a file's `LAND`
+/// records are `INTV + 1` of an `LTEX` *defined in that same file* (0 is the
+/// built-in default texture). `LTEX` records merge by ID like any simple
+/// kind, so the per-file index table is kept separately, keyed by
+/// [`keys::ltex_slot`]. Same model as `OpenMW`'s land texture store:
+/// `(plugin, index) -> id`, then `id -> texture` (latest definition wins).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LandTextureSlot {
+    /// The `LTEX` record this index names.
+    pub texture: RecordId,
+}
+
+impl LandTextureSlot {
+    pub const KIND: &'static str = "mw.ltex_slot";
 }
 
 /// Generic code over a record kind chosen at runtime (see [`visit_kind`]).
@@ -308,6 +325,15 @@ impl ApplyCtx<'_> {
             TES3Object::Dialogue(topic) => {
                 self.topic = Some(topic.clone());
                 replace(self.db, self.source, topic)
+            }
+            TES3Object::LandscapeTexture(ltex) => {
+                // The first definition of an index in a file wins (as in OpenMW).
+                let slot = keys::ltex_slot(self.file, ltex.index);
+                if !ltex.deleted() && self.db.entry::<LandTextureSlot>(&slot).is_none() {
+                    let texture = RecordId::new(&ltex.id);
+                    self.db.define(self.source, slot, LandTextureSlot { texture })?;
+                }
+                replace(self.db, self.source, ltex)
             }
             other => apply_simple(self.db, self.source, other),
         }
