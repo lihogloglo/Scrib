@@ -1,0 +1,30 @@
+[package]
+name = "sf_script"
+description = "Bevy-free Luau scripting core for superfargoth: per-mod sandboxed contexts, limits, require, storage, timers, events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["send"]
+# `mlua/send`: contexts are `Send + Sync`, so the runtime is an ordinary Bevy resource (scripting.md R2;
+# spike L1 measured the cost, see the spec's "Performance budget"). Off = `NonSend` storage.
+send = ["mlua/send"]
+# Luau native code generation (x64/arm64). Off by default (scripting.md R2); A/B in the spike bench.
+jit = ["mlua/luau-jit"]
+
+[dependencies]
+log.workspace = true
+mlua.workspace = true
+postcard.workspace = true
+semver.workspace = true
+serde.workspace = true
+sf_vfs.workspace = true
+thiserror.workspace = true
+
+[[bench]]
+name = "spike"
+harness = false
+
+[lints]
+workspace = true

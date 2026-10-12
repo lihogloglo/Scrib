@@ -1,6 +1,7 @@
 # Scripting (Luau)
 
-Status: draft (2026-10-13, m5-spec session, docs only). Built in M5.
+Status: draft (2026-10-13, m5-spec session, docs only). Built in M5. L1 (`sf_script` core + spike)
+done 2026-10-13 (m5-l1): numbers in "Spike results (L1)"; decision 1 confirmed.
 Crates (proposed): `sf_script` (Bevy-free: runtime, sandbox, API registry, state, timers, events),
 `sf_script_bevy` (plugin: schedule slots, world access, entity handles, hot reload, diagnostics),
 API modules next to the systems they expose (`sf_ui_lua` per ui.md; small modules may live in
@@ -91,15 +92,18 @@ ahead-of-time bytecode, `create_require_function` (custom `Require`), `scope`,
 | Feature | Use | Why |
 |---|---|---|
 | `luau` | yes | the runtime |
-| `serialize` (= `serde`) | yes | script state ↔ serde (saves, hot reload, event payloads) without hand-written converters |
-| `send` | yes, confirm in spike L1 | makes `Lua` `Send + Sync` so states live in ordinary resources and mods can later run on the compute pool; costs a lock per entry. Spike measures it against `NonSend` storage |
+| `serialize` (= `serde`) | yes, for API modules (L3) | typed API payloads (`LuaSerdeExt`). **Not used for script state** (L1): state goes through our own walker (`StateValue`), because mlua's serde bridge follows Lua's hash order (no canonical bytes, so no determinism hash) and stops at the first bad value without a path. Drop the feature in L3 if no API module uses it |
+| `send` | **yes** (L1: `sf_script` feature, default on) | makes `Lua` `Send + Sync` so states live in ordinary resources and mods can later run on the compute pool. Measured against `NonSend`: calls within noise (raw call 66 vs 60 ns, guarded 148 vs 144 ns, handler dispatch 206 vs 200 ns), bulk state I/O ~30 % slower (rare path) |
 | `async` | **no** | Rust futures inside scripts aren't saveable; waits are named timers |
-| `luau-jit` (native codegen) | off at M5; A/B in L1 | Luau codegen pays off on numeric loops, little on API-bound handlers; adds code memory. Turn on per mod (`--!native`, Roblox style) if a measured mod needs it |
+| `luau-jit` (native codegen) | **off** (L1: `sf_script` feature `jit`) | measured: call-heavy Luau loop 2.3× faster (30 → 13 ns/iter), a `math.sqrt` loop unchanged (70 → 66 ns), API calls unchanged, context start 2.4× slower (50 ctx: 15 → 36 ms, code generated at load), +32 KiB heap per state, +~80 s clean build. API-bound handlers don't benefit; revisit per mod (`--!native`) if a measured mod needs it |
 | `macros`, `module`, `vendored` | no | proc-macro compile cost; we embed, not extend; Luau always builds from source |
 
 Build cost: `luau0-src` compiles Luau's C++ with `cc` (MSVC on Windows: already required by
 `ufbx` for FBX bakes). Only `sf_script` depends on mlua, so it builds once, in parallel, and is
-untouched by game edits (§8b rules 1 and 5). L1 records the clean-build delta.
+untouched by game edits (§8b rules 1 and 5). **Measured (L1, -j 8, BelowNormal):** the
+`mlua-sys` build script (Luau C++) takes 66 s of one job; the whole new dependency set
+(mlua, mlua-sys, luau0-src, bstr, parking_lot, erased-serde, ...) cleans-builds in 82 s wall,
+off the critical path of the game crates. `jit` adds the codegen C++ (~+80 s).
 
 ## Design
 
@@ -123,9 +127,22 @@ Creation: a Luau state with the safe standard libraries only, minus what the san
 (`loadstring`, `getfenv`/`setfenv`, `newproxy`, `string.dump`, `collectgarbage` beyond
 `count` (Luau sandbox default), all of `os`, all of `debug` except `traceback`), install API modules for the context's `api` version,
 replace `print` with the logger, replace `math.random` with a seeded per-context PCG (state
-saved), install `require`, then `lua.sandbox(true)` (globals read-only; each loaded chunk gets
-its own environment). Memory limit from the manifest-independent player setting (default
-64 MiB per mod context, 256 MiB for shared legacy contexts; tune in L1).
+saved), install `require`, then `lua.sandbox(true)` (globals and library tables read-only;
+script globals go to a writable proxy environment of the state). Memory limit from the
+manifest-independent player setting (default 64 MiB per mod context, 256 MiB for shared legacy
+contexts; L1 found no reason to change them).
+
+L1 findings (`sf_script::ScriptContext::build`):
+
+- mlua installs `loadstring` and a **filesystem `require`** (`FsRequirer`) on every Luau state;
+  both are removed before sandboxing, with `getfenv`, `setfenv`, `newproxy` and `gcinfo`.
+  `os` is never opened; `debug` is reduced to `traceback`. The escape list is a unit test.
+- `sandbox(true)` gives the *state* one writable environment, not one per chunk: all files of a
+  mod share it (fine, state per mod). In a shared legacy context, translated scripts share it too,
+  so the adapter's generated code must keep its variables in module tables, never globals
+  (scripting-adapter.md).
+- API module tables are installed into a registry table and made read-only
+  (`Table::set_readonly`), so `require("@sf/core").x = ...` fails.
 
 Contexts are created in load order and always iterated in load order, so every observable
 ordering is deterministic.
@@ -146,6 +163,14 @@ Only source files are loadable from mods. **Mod-shipped bytecode is never loaded
 not verify bytecode; malformed bytecode can corrupt the VM). Bytecode the engine compiled
 itself (bake outputs, scripting-adapter.md) may be cached and loaded.
 
+L1 implementation (`ModRequirer`, mlua `Require` over a `ScriptSource` trait implemented by
+`sf_vfs::Vfs`): `..` never leaves `scripts/`, and the segment below it must be one of the
+context's mods or declared dependencies (so `../other/x` fails like `@other/x`); `.luau` then
+`.lua`, and `init.luau` for directories, with both present being an "ambiguous" error; no
+`.luaurc` configuration files from mods; chunks load in `ChunkMode::Text`, so a bytecode file is
+a syntax error, never executed (tested). The dev console's chunks (`=console:<id>`) may require
+by alias only.
+
 An entry point is a file listed in the manifest's `content.scripts`; it runs once at context
 start and registers handlers. Globals written by a script live in its own environment
 (sandbox), so mods can't monkey-patch each other or the API.
@@ -163,9 +188,13 @@ Scripts run in **exclusive systems at fixed schedule slots**, with a synchronous
 Inside a slot the system has `&mut World`. A Rust API function reaches it through a
 **world guard** valid only while the slot runs: the slot stores an access token in the
 context's app data before calling into Luau and clears it after, so a function captured and
-called outside a slot raises a Lua error instead of touching freed state. Mechanism (mlua
-`scope` vs a guarded pointer in app data) is decided in spike L1 by cost; both keep the API
-safe Rust at the boundary.
+called outside a slot raises a Lua error instead of touching freed state. **L1 decision: an
+app-data guard, not `scope`.** Measured per slot and context: `scope` costs ~0.5 µs per scoped
+function it creates (a slot with one API call: 730 ns; an API of 20 functions would cost ~10 µs
+per context per slot, ~1.5 ms a frame for 50 mods × 3 slots), while the guard costs ~0.23 µs per
+slot; per API call both cost ~65 ns. L2 picks how the slot's access reaches the guard (data the
+API needs moved in for the slot, or one scoped userdata per slot as the fallback); API functions
+look it up in app data and fail with "outside a script slot" when it's empty.
 
 **Writes are immediate** for component state the API owns (enable/disable, teleport, inventory,
 variables), so scripts read their own writes (Factorio semantics). **Structural changes**
@@ -223,6 +252,16 @@ references; violations are errors naming the path (`storage.quests[3].cb is a fu
 Migration: `on_load(old_state, old_version)` lets a mod upgrade its own data when its version
 changed (Factorio `on_configuration_changed`).
 
+L1 implementation: `StateValue` (nil, bool, number, string bytes, vector, handle, table with
+sorted keys; keys are strings, integral numbers or booleans) is walked from Lua by our own
+converter, which reports the path of the first violation and sorts keys, so equal states give
+equal bytes (the determinism test compares snapshot bytes). Numbers are Luau doubles (mlua reports
+integral ones as `Integer`; both store as numbers). `ContextSnapshot` = header (context, mod
+version, API version, FNV-1a of the registered timer names) + clock + RNG + storage + timers,
+postcard-encoded. Restoring writes storage **into the existing table** (scripts that captured
+`sf.storage()` stay valid) and drops, with a diagnostic, timers whose callback the current code
+no longer registers.
+
 ### Curated API and versioning
 
 The API is a **registry of modules**. Each binding is declared once with its Luau type
@@ -278,8 +317,11 @@ Dev builds (and a player toggle in a "mod author" setting), driven by the VFS wa
 
 1. A changed `.luau`/`.lua` file maps to its owning mod → its context.
 2. `on_save` the context (same serializer as saves), keep handles and timers as data.
-3. Build a new state, run entry points, `on_load(state)`; on any error **keep the old state
-   running** and report the error (Erlang/Elixir-style "upgrade or keep the old code").
+3. Build a new state, restore storage/clock/RNG, run entry points (so start code sees its data),
+   restore timers (their callbacks are registered by the entry points), `on_load(state)`; on any
+   error **keep the old state running** and report the error (Erlang/Elixir-style "upgrade or
+   keep the old code"). L1 builds steps 2-3 as `ScriptRuntime::reload` (tested: count kept, new
+   code live, broken edit keeps the old code); `on_load` arrives with the `@sf/core` API (L3).
 4. Shared legacy contexts reload the changed script module only (its instances keep their
    variable tables).
 
@@ -297,8 +339,29 @@ shape; ours is per mod and automatic.
 | Rust panic in an API function | API functions must not panic (clippy `unwrap_used`/`expect_used`/`panic` denied in API crates); each slot call is wrapped in `catch_unwind` as a last resort → context failed |
 | Per-frame soft budget exceeded (all contexts > 1 ms, or one > 0.5 ms averaged over 1 s) | warning + `sf_diag` counter; no throttling in M5 (Papyrus-style time slicing changes semantics; revisit if needed) |
 
-The interrupt callback reads a deadline set per call, so its cost is one clock read every N
-interrupts (Luau calls it at function entries and loop back-edges; L1 measures the overhead).
+The interrupt callback reads a deadline set per **host entry** (L1: one deadline and one pair of
+clock reads per context per event, timer batch or console call; each handler's error is still
+caught and counted on its own; a timeout or memory fault ends the entry). The assumption that its
+cost is "one clock read every N interrupts" was **wrong**: L1 measured that the cost is mlua's
+callback trampoline at every safepoint (function calls and loop back-edges), ~21-30 ns, paid even
+by a callback that returns at once; our check (an atomic counter, the clock every 64th safepoint)
+adds ~4 ns on top. A clock read at every safepoint would cost +400 % on a call-heavy loop
+(`Instant::now` is 28 ns on the reference laptop). So: a call-heavy pure-Luau loop runs ~1.8×
+slower under the watchdog (30 → 55 ns/iteration); API-bound handlers barely notice (handler
+dispatch, watchdog included, is ~200 ns per handler). Lever if a measured mod suffers: a raw C
+interrupt reading the atomic deadline (a few ns; needs one named, reviewed exception to
+`unsafe_code = "forbid"`), or upstream a cheaper mlua hook.
+
+Once the deadline fires, the watchdog **latches**: every later safepoint raises until the host
+disarms it. Without the latch, `while true do pcall(function() while true do end end) end` ran for
+minutes, because the 64-safepoint sampling always landed inside the inner `pcall` (found by the
+L1 test).
+
+With a memory limit set, mlua wraps every allocating call from Rust in a protected call (an
+allocation failure must not unwind through Rust frames): building a 3-field payload with two
+handles costs 2.0 µs instead of 0.77 µs. Host-side bulk work (payloads, restores, snapshot walks)
+therefore runs with the limit lifted and re-applied after (`unlimited`); host data is bounded and
+trusted, and a state left over its limit fails at its next script allocation (suspension).
 
 ### Determinism
 
@@ -315,20 +378,60 @@ Same build and same inputs give the same script results:
 
 Reference laptop (Ryzen 7 7435HS), release build, calibrate in L1/L2 with `sf_diag` spans:
 
-| Item | Budget |
-|---|---|
-| All script slots per frame, typical load (vanilla content-pack scripts in a city + 10 native mods) | ≤ 1.0 ms |
-| HUD Lua (ui.md) | ≤ 0.2 ms |
-| Rust → Luau handler call | ≤ 0.3 µs median |
-| Luau → Rust API call (simple getter) | ≤ 0.15 µs median |
-| Empty context baseline memory | ≤ 256 KiB (measured in L1) |
-| Context start, 50 mods (no scripts heavier than 1 ms) | ≤ 200 ms at game start |
-| Hot reload of one mod | ≤ 100 ms |
-| Save/restore of all script state | ≤ 5 ms per MiB |
+| Item | Budget | L1 measured (`cargo bench -p sf_script`, release, `send`) |
+|---|---|---|
+| All script slots per frame, typical load (vanilla content-pack scripts in a city + 10 native mods) | ≤ 1.0 ms | L2/W3 (needs the Bevy slots) |
+| HUD Lua (ui.md) | ≤ 0.2 ms | U7 |
+| Rust → Luau handler call | ≤ 0.3 µs median | 66 ns raw, 148 ns guarded (watchdog, stats, `catch_unwind`); ~200 ns per handler in a dispatch incl. payload: **met** |
+| Luau → Rust API call (simple getter) | ≤ 0.15 µs median | 38 ns (getter), 48 ns (number → number): **met** |
+| Empty context baseline memory | ~~≤ 256 KiB~~ **≤ 512 KiB** | 394 KiB after full GC; a bare mlua Luau state is already 378 KiB, so 256 KiB was below the floor (budget corrected; 50 mods ≈ 20-25 MiB) |
+| Context start, 50 mods (no scripts heavier than 1 ms) | ≤ 200 ms at game start | 15 ms (20 handlers each): **met** |
+| Hot reload of one mod | ≤ 100 ms (mods with ≤ 1 MiB of state) | 80-133 ms with 1.4 MiB of storage (dominated by snapshot + restore); a few ms for a small mod |
+| Save/restore of all script state | ~~≤ 5 ms per MiB~~ **≤ 40 ms per MiB each way** | snapshot 25-33 ms/MiB (Lua walk ~220-280 ns per value, postcard 3-6 ms per 1.4 MiB), restore 31-52 ms/MiB: the old budget was 7× too tight for mlua's per-value cost. Typical mod state is KiB-scale; a save with 1 MiB of script state costs ~70 ms. Lever (M7, if saves need it): a Luau-side encoder/decoder over a `buffer` (one call instead of one mlua op per value), postcard off-thread |
 
 Levers if a budget fails: native codegen per mod (`--!native`), handler throttling for
 `on_update` (`every_n_frames`), API batching (`world.nearby` returning arrays rather than
 iterators), caching record views per frame.
+
+### Spike results (L1, 2026-10-13)
+
+Ryzen 7 7435HS laptop, release (`bench` profile), machine otherwise idle (no other build or game
+running; the bench build itself overlapped another session's build). Medians; the watchdog rows
+are the best of 5 interleaved rounds because the clock speed drifts between runs.
+
+| Measure | `send` | `NonSend` | `send` + `jit` |
+|---|---|---|---|
+| Rust → Luau, empty function, raw | 66 ns | 60 ns | 67 ns |
+| Rust → Luau, guarded entry | 148 ns | 144 ns | 151 ns |
+| Luau → Rust, getter | 38 ns | 39 ns | 34 ns |
+| Luau → Rust, number → number | 48 ns | 46 ns | 48 ns |
+| Empty context heap (after GC) | 394 KiB | 394 KiB | 426 KiB |
+| Start 50 contexts × 20 handlers | 15 ms | 14 ms | 36 ms |
+| Dispatch to 1000 handlers (50 × 20), per handler | 206 ns | 200 ns | 203 ns |
+| … with a 3-field payload incl. 2 handles | 272 ns | 253 ns | 266 ns |
+| Event nobody handles, 50 contexts | 3.6 µs | 3.1 µs | 3.6 µs |
+| Call-heavy loop: no interrupt / empty callback / clock every safepoint / shipped watchdog | 30 / 51 / 154 / 55 ns | 27 / 57 / 139 / 57 ns | 13 / 38 / 134 / 41 ns |
+| World guard, 1 API call per slot: `scope` / app data | 731 / 232 ns | 711 / 198 ns | 656 / 170 ns |
+| World guard, 100 API calls per slot: `scope` / app data | 6.5 / 6.9 µs | 6.7 / 7.2 µs | 4.7 / 5.1 µs |
+| Numeric loop (`math.sqrt`, mul, mod), per iteration | 70 ns | 66 ns | 66 ns |
+| Snapshot / restore, 1.4 MiB storage (140k values) | 33 / 52 ms/MiB | 24 / 31 ms/MiB | 27 / 34 ms/MiB |
+| Hot reload of that mod | 133 ms | 80 ms | 83 ms |
+
+Assumptions checked:
+
+- **Decision 1 (Luau via mlua, state per mod): confirmed.** Call costs are 2-4× inside the
+  budget, 50 sandboxed states start in 15 ms and fit in ~20 MiB, isolation, limits, require,
+  timers and reload all work through mlua's safe API (the workspace keeps
+  `unsafe_code = "forbid"`). Nothing measured favours a shared state: dispatching to a context
+  with no subscriber is ~70 ns (a Rust-side set lookup).
+- **`send`: keep.** Same call costs as `NonSend` within noise; only bulk state I/O is ~30 %
+  slower, which is a save/reload path.
+- **World guard: app-data guard** (above).
+- **`luau-jit`: off** (R2 row).
+- **Wrong in the draft, corrected here:** baseline memory (256 → 512 KiB budget), save/restore
+  (5 → 40 ms/MiB), the watchdog's cost model (mlua trampoline per safepoint, not a clock read),
+  and the need for the watchdog latch and for lifting the memory limit during host-side
+  conversion.
 
 ## Verification
 
@@ -379,9 +482,9 @@ RFC; not re-read this session).
 
 ## Open questions
 
-1. `send` feature vs `NonSend` storage, and the world-guard mechanism (`scope` vs guarded
-   pointer): decided by numbers in L1.
-2. Native codegen default: off; per-mod opt-in (`--!native`) if a measured mod benefits.
+1. ~~`send` feature vs `NonSend` storage, and the world-guard mechanism~~: decided in L1
+   (`send`; app-data guard). Open for L2: how the slot's world access is handed to the guard.
+2. Native codegen default: off (L1 numbers); per-mod opt-in (`--!native`) if a measured mod benefits.
 3. Whether entity `tick` should support a declared rate (`tick_hz`) to cut cost for mods that
    poll; legacy scripts must tick every frame (scripting-adapter.md).
 4. Player-facing controls for limits (per-mod memory override in the mod manager): M5 has

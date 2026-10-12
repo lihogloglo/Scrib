@@ -54,6 +54,9 @@ log = "0.4"
 lz4_flex = "0.14"
 # Same version Bevy 0.20 uses for meshlets (one copy in the tree). Builds meshoptimizer (C++) with cc.
 meshopt = "0.6.2"
+# Luau runtime (scripting.md R1/R2). Only sf_script depends on it; `send` is an sf_script feature (on by
+# default) so the L1 spike can A/B it against `NonSend` storage.
+mlua = { version = "0.12.2", default-features = false, features = ["luau", "serialize"] }
 # Collision queries (sf_controller's static query world): the library under avian and rapier.
 # Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
 parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }
@@ -100,6 +103,7 @@ sf_character_bevy = { path = "crates/sf_character_bevy" }
 sf_controller_bevy = { path = "crates/sf_controller_bevy" }
 sf_physics = { path = "crates/sf_physics" }
 sf_physics_bevy = { path = "crates/sf_physics_bevy" }
+sf_script = { path = "crates/sf_script" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
