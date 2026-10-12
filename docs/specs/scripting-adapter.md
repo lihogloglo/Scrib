@@ -138,6 +138,9 @@ an edited ESP script.
    function calls against the **function table**, other scripts' variables (`id.var`), journal
    and topic IDs (warnings for unknown IDs, as they may come from later plugins at runtime).
 3. **Emit Luau**: one module per script, one function per dialogue result (grouped per topic).
+   Emitted code keeps all state in module tables, never in globals: in Luau sandbox mode a state
+   has one writable environment shared by every chunk it loads (m5-l1 finding, scripting.md
+   "Spike results (L1)"), so globals would leak between translated scripts in the shared state.
 4. **Compile**: Luau bytecode via mlua's `Compiler` (optimization level 2), stored as a bake
    product. Only engine-compiled bytecode is ever loaded (scripting.md "Modules").
 
