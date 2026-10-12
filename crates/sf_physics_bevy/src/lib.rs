@@ -27,17 +27,22 @@ use bevy_transform::components::Transform;
 use sf_coords::WorldPos;
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::unit;
-use sf_physics::{BodyDesc, BodyId, PhysicsParams, PhysicsWorld, PhysicsWorlds};
+use sf_controller::{GroundHit, GroundProbe, ProbeQuery};
+use sf_physics::{BodyDesc, BodyId, Layer, PhysicsEvent, PhysicsParams, PhysicsWorld, PhysicsWorlds};
 use sf_world::WorldspaceId;
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{ActiveWorldspace, StreamingAnchor, StreamingSystems, from_grid, transform_to_grid};
 
+#[cfg(feature = "controller")]
+pub mod character;
 #[cfg(feature = "debug")]
 mod debug;
 pub mod stream;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "controller")]
+pub use character::{CharacterPhysics, CharacterStats, ImpactOnCharacter};
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
 pub use sf_physics;
@@ -96,6 +101,26 @@ pub struct Physics {
     pub worlds: PhysicsWorlds<WorldspaceId>,
     pub params: PhysicsParams,
 }
+
+/// Layers the characters' ground and wall casts see (physics.md
+/// "Controller"): statics, terrain and props; debris never blocks, and
+/// characters avoid each other through ORCA, not collision.
+pub const GROUND_LAYERS: Layer = Layer::STATIC.union(Layer::TERRAIN).union(Layer::PROP);
+
+/// The controller's ground on physics ([`GROUND_LAYERS`] of the active
+/// world): the host's `SfControllerPlugin::<Physics>` probes it.
+impl GroundProbe for Physics {
+    fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        match self.worlds.active_world() {
+            Some(w) => w.probe(GROUND_LAYERS).probe(queries, out),
+            None => out.fill(None),
+        }
+    }
+}
+
+/// The active world's events of this frame's steps (cleared in `First`).
+#[derive(Resource, Default)]
+pub struct PhysicsEvents(pub Vec<PhysicsEvent>);
 
 impl Physics {
     /// Inserts a body into `ws`'s world (created anchored at the body's cell).
@@ -176,6 +201,7 @@ impl Plugin for PhysicsPlugin {
             .init_resource::<PhysicsStats>()
             .init_resource::<PhysicsStreaming>()
             .init_resource::<BodyEntities>()
+            .init_resource::<PhysicsEvents>()
             .add_systems(First, begin_frame)
             .add_systems(FixedUpdate, step.in_set(PhysicsSystems::Step))
             .add_systems(
@@ -185,15 +211,21 @@ impl Plugin for PhysicsPlugin {
                         .chain()
                         .in_set(PhysicsSystems::Stream)
                         .after(StreamingSystems::Drive),
-                    (track_bodies, write_back, stream::follow_items, publish).chain().in_set(PhysicsSystems::WriteBack).after(PhysicsSystems::Stream),
+                    (track_bodies, write_back, stream::follow_items, publish, stream::coverage)
+                        .chain()
+                        .in_set(PhysicsSystems::WriteBack)
+                        .after(PhysicsSystems::Stream),
                 ),
             );
         #[cfg(feature = "debug")]
         debug::add(app);
+        #[cfg(feature = "controller")]
+        character::add(app);
     }
 }
 
-fn begin_frame(mut stats: ResMut<PhysicsStats>) {
+fn begin_frame(mut stats: ResMut<PhysicsStats>, mut events: ResMut<PhysicsEvents>) {
+    events.0.clear();
     let s = &mut *stats;
     (s.steps, s.dropped_steps, s.step_ms, s.max_step_ms, s.rebases, s.inserts, s.insert_ms, s.removals) = (0, 0, 0.0, 0.0, 0, 0, 0.0, 0);
 }
@@ -215,7 +247,13 @@ fn sync_active(
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn step(mut physics: ResMut<Physics>, focus: Res<PhysicsFocus>, settings: Res<PhysicsSettings>, mut stats: ResMut<PhysicsStats>) {
+fn step(
+    mut physics: ResMut<Physics>,
+    focus: Res<PhysicsFocus>,
+    settings: Res<PhysicsSettings>,
+    mut stats: ResMut<PhysicsStats>,
+    mut events: ResMut<PhysicsEvents>,
+) {
     if stats.steps >= settings.max_steps_per_frame {
         stats.dropped_steps += 1;
         return;
@@ -228,8 +266,8 @@ fn step(mut physics: ResMut<Physics>, focus: Res<PhysicsFocus>, settings: Res<Ph
         stats.rebases += 1;
     }
     world.step();
-    // No consumers yet (impact sounds, P5 impacts): keep the queue bounded.
-    world.drain_events().for_each(drop);
+    // This frame's events (P5 impacts; cleared in `First`).
+    events.0.extend(world.drain_events());
     let ms = started.elapsed().as_secs_f32() * 1e3;
     stats.steps += 1;
     stats.step_ms += ms;

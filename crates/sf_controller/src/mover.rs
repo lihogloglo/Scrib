@@ -24,6 +24,9 @@ use crate::trajectory::{LocomotionParams, Trajectory};
 /// ([`Locomotion::deflect`]): about 84° incidence.
 pub const DEFLECT_FACING: f32 = 0.1;
 
+/// Time constant of a slide stopping on walkable ground, seconds.
+const SLIDE_STOP_S: f32 = 0.1;
+
 /// Shape and tuning of one character's mover. Defaults are generic
 /// human-scale values; adapters set their own (race scale, creature size).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -185,6 +188,10 @@ pub struct Locomotion {
     /// zero. With no facing in the intent, the next step faces the motion
     /// that surface leaves (orient to movement), not into it.
     pub deflect: Vec3,
+    /// Horizontal velocity sliding down unwalkable ground (locomotion.md open
+    /// question 3: gravity along the slope), m/s. It decays on walkable ground
+    /// and carries through the air.
+    pub slide: Vec3,
 }
 
 impl Locomotion {
@@ -204,6 +211,7 @@ impl Locomotion {
             attitude: Vec2::ZERO,
             traversing: false,
             deflect: Vec3::ZERO,
+            slide: Vec3::ZERO,
         }
     }
 
@@ -433,6 +441,10 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
         loco.attitude
     };
     loco.attitude = loco.attitude.lerp(settled, 1.0 - w) + it.root.delta.tilt * w;
+    if free.is_none() {
+        // Sliding down unwalkable ground (see `finish`).
+        d += loco.slide * dt;
+    }
     let dy = d.y;
     d.y = 0.0;
     Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, probe: None, deflected: false }
@@ -504,7 +516,8 @@ fn ground_query(it: &MoveInput<'_>, p: &Pending, dt: f32) -> Option<ProbeQuery> 
             let hover = if let Free::Fly { hover: Some(h) } = f { h + params.step_down } else { 0.0 };
             (-p.dy).max(0.0) + hover + params.skin
         }
-        None if loco.grounded.is_some() && p.d.length_squared() < 1e-12 => return None,
+        // Unwalkable ground is cast every step: the character slides off it.
+        None if loco.grounded.is_some_and(|g| g.walkable(params.min_normal_y())) && p.d.length_squared() < 1e-12 => return None,
         None if loco.grounded.is_some() || loco.traversing => params.step_down,
         None => fall(loco, params, dt).0.max(0.0) + 1e-3,
     };
@@ -575,6 +588,20 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
                 feet = feet.offset(Vec3::Y * up);
                 loco.vertical_speed = 0.0;
                 loco.grounded = Some(h);
+                if h.walkable(min_ny) {
+                    // Walkable again: the slide dies out within a few frames.
+                    loco.slide *= (-dt / SLIDE_STOP_S).exp();
+                    if loco.slide.length_squared() < 1e-4 {
+                        loco.slide = Vec3::ZERO;
+                    }
+                } else {
+                    // Too steep to stand on: gravity along the slope, of
+                    // which the horizontal part moves the feet (the ground
+                    // cast keeps them on the slope).
+                    let n = h.normal;
+                    let accel = horizontal(n) * (params.gravity * n.y);
+                    loco.slide = (loco.slide + accel * dt).clamp_length_max(params.max_fall_speed);
+                }
             }
             None => {
                 let (drop, v1) =

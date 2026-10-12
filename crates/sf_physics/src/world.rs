@@ -7,7 +7,7 @@ use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
 use glam::{IVec3, Quat, Vec3};
-use rapier3d::dynamics::{LockedAxes, RigidBody, RigidBodyActivation, RigidBodyBuilder, RigidBodyHandle, RigidBodySet, SoftBodySet, SoftBodyTearEvent};
+use rapier3d::dynamics::{LockedAxes, RigidBody, RigidBodyActivation, RigidBodyBuilder, RigidBodyHandle, RigidBodySet, RigidBodyType, SoftBodySet, SoftBodyTearEvent};
 use rapier3d::geometry::{ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent, ContactPair};
 use rapier3d::math::Pose;
 use rapier3d::pipeline::{ActiveEvents, EventHandler, PhysicsWorld as Engine};
@@ -107,6 +107,9 @@ pub struct PhysicsWorld {
     events: Vec<PhysicsEvent>,
     /// Colliders inserted or moved since the query structure was last refreshed.
     queries_dirty: bool,
+    /// Lowest point of any fixed body (absolute Y): the automatic kill height
+    /// sits `kill_margin` below it.
+    floor: Option<f64>,
     /// Bodies inserted asleep whose first contacts haven't been detected yet.
     settling: Vec<BodyId>,
 }
@@ -131,11 +134,20 @@ impl PhysicsWorld {
             queries_dirty: false,
             settling: Vec::new(),
             dynamic_inserted: false,
+            floor: None,
         }
     }
 
     pub fn params(&self) -> &PhysicsParams {
         &self.params
+    }
+
+    /// Absolute Y under which a dynamic body counts as fallen out:
+    /// [`PhysicsParams::kill_height`] if set, else `kill_margin` below the
+    /// lowest fixed body inserted so far (statics and terrain; it never rises,
+    /// so removals keep it conservative). `None` while the world has no fixed body.
+    pub fn kill_height(&self) -> Option<f64> {
+        self.params.kill_height.or_else(|| self.floor.map(|f| f - f64::from(self.params.kill_margin)))
     }
 
     /// The anchor: the center of the anchor cell.
@@ -202,6 +214,7 @@ impl PhysicsWorld {
         let p = &self.params;
         let rb = match desc.kind {
             BodyKind::Fixed => RigidBodyBuilder::fixed(),
+            BodyKind::Held => RigidBodyBuilder::fixed().linear_damping(desc.damping.0).angular_damping(desc.damping.1),
             BodyKind::Kinematic => RigidBodyBuilder::kinematic_position_based(),
             BodyKind::Dynamic { asleep } => RigidBodyBuilder::dynamic()
                 .sleeping(asleep)
@@ -218,7 +231,7 @@ impl PhysicsWorld {
             .collision_groups(desc.layer.groups())
             .sensor(desc.layer == Layer::SENSOR)
             .user_data(u128::from(index));
-        if matches!(desc.kind, BodyKind::Dynamic { .. }) {
+        if matches!(desc.kind, BodyKind::Dynamic { .. } | BodyKind::Held) {
             let mass = desc.mass.unwrap_or_else(|| shape.mass_properties(p.density).mass());
             cb = cb.mass(mass.clamp(p.mass_range.0, p.mass_range.1));
             let aabb = shape.compute_local_aabb();
@@ -237,6 +250,10 @@ impl PhysicsWorld {
         // contacts it found never get linked into the persistent islands.)
         if matches!(desc.kind, BodyKind::Dynamic { .. }) {
             self.dynamic_inserted = true;
+        }
+        if desc.kind == BodyKind::Fixed {
+            let low = f64::from(shape.compute_aabb(&pose).mins.y) + self.anchor().to_f64().y;
+            self.floor = Some(self.floor.map_or(low, |f| f.min(low)));
         }
         let mesh = match &desc.shape {
             ShapeRef::Mesh(m) => Some(m.clone()),
@@ -357,8 +374,28 @@ impl PhysicsWorld {
         true
     }
 
-    /// Applies an impulse (NÂ·s) at a world point, or at the center of mass.
+    /// Makes a [`BodyKind::Held`] body an awake dynamic one (grabbed, or
+    /// impulsed by a script or spell); false for any other body.
+    pub fn release(&mut self, id: BodyId) -> bool {
+        let Some(l) = self.live_mut(id).filter(|l| l.kind == BodyKind::Held) else {
+            return false;
+        };
+        l.kind = BodyKind::Dynamic { asleep: false };
+        let handle = l.handle;
+        if let Some(rb) = self.engine.bodies.get_mut(handle) {
+            rb.set_body_type(RigidBodyType::Dynamic, true);
+            rb.enable_ccd(true);
+        }
+        // Like an insert: the engine links it into its islands in a step.
+        self.dynamic_inserted = true;
+        self.queries_dirty = true;
+        true
+    }
+
+    /// Applies an impulse (N·s) at a world point, or at the center of mass.
+    /// A held body is released first.
     pub fn apply_impulse(&mut self, id: BodyId, impulse: Vec3, at: Option<WorldPos>) -> bool {
+        self.release(id);
         self.unsettle(id);
         let Some(h) = self.live(id).map(|l| l.handle) else {
             return false;
@@ -511,7 +548,7 @@ impl PhysicsWorld {
             .filter_map(|(_, rb)| Some((u32::try_from(rb.user_data).ok()?, Local::of(rb))))
             .collect();
         let previous = std::mem::take(&mut self.awake);
-        let kill = self.params.kill_height.map(|k| k - self.anchor().to_f64().y);
+        let kill = self.kill_height().map(|k| k - self.anchor().to_f64().y);
         let mut fell = Vec::new();
         for (index, pose) in active {
             let Some(id) = self.id_at(index) else { continue };
@@ -580,7 +617,7 @@ impl PhysicsWorld {
         if cell == self.anchor {
             return;
         }
-        // Integer cells Ã— 256 m: exact in f32 for any shift inside Â±2^15 cells.
+        // Integer cells × 256 m: exact in f32 for any shift inside ±2^15 cells.
         #[allow(clippy::cast_precision_loss)]
         let d = (cell - self.anchor).as_vec3() * GRID_CELL;
         // Moving a collider wakes its contact partners in the engine; sleepers re-settle (locked for

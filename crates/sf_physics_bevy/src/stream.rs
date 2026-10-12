@@ -140,12 +140,20 @@ pub struct PhysicsStreaming {
     placed: HashMap<Key, BodyId>,
     /// Items in the world: the pose they went in at (moved = differs).
     items: HashMap<Key, WorldTransform>,
+    /// Their placements (coverage freezes write the overlay).
+    item_placements: HashMap<Key, Placement>,
+    /// Seconds since the last coverage check.
+    coverage_s: f32,
     terrain: Terrain,
     /// Predicted cost of one query refresh after a full batch, seconds:
     /// reserved out of the budget.
     refresh_s: f64,
     /// Recent refresh cost per body inserted, seconds (decaying maximum).
     refresh_per_body_s: f64,
+    /// Recent cost of one `PhysicsWorld::insert`, statics and items apart,
+    /// seconds (decaying maxima): the next insert must fit the budget.
+    insert_static_s: f64,
+    insert_item_s: f64,
 }
 
 #[derive(Default)]
@@ -310,10 +318,55 @@ fn persist_item(world: &mut World, key: &Key, placement: &Placement) {
     overlay.set_state(placement.id, STATE_OWNER, blob);
 }
 
+/// Coverage check period (physics.md "Coverage": 4 Hz) and the margin around
+/// a body that must be `Active`, meters.
+const COVERAGE_PERIOD_S: f32 = 0.25;
+const COVERAGE_MARGIN: f32 = 1.0;
+
+/// Coverage (physics.md "Streaming"): every 0.25 s each awake item checks
+/// that the cells around it are `Active`. One that rolled or was thrown out of
+/// R0 freezes: its pose goes to the overlay (as on deactivation), its body
+/// leaves the world, and its visual stays where it stopped (R1 semantics).
+/// Nothing simulates without ground around it. Worldspaces the scheduler
+/// doesn't know (tests, synthetic worlds) are always covered.
+pub(crate) fn coverage(world: &mut World) {
+    let dt = world.get_resource::<Time>().map_or(0.0, Time::delta_secs);
+    {
+        let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() else { return };
+        s.coverage_s += dt;
+        if s.coverage_s < COVERAGE_PERIOD_S || s.items.is_empty() {
+            return;
+        }
+        s.coverage_s = 0.0;
+    }
+    let (Some(s), Some(physics), Some(streaming)) =
+        (world.get_resource::<PhysicsStreaming>(), world.get_resource::<Physics>(), world.get_resource::<Streaming>())
+    else {
+        return;
+    };
+    let scheduler = streaming.scheduler();
+    let mut out: Vec<(Key, Placement)> = Vec::new();
+    for (key, placement) in &s.item_placements {
+        let (Some(&id), Some(w)) = (s.placed.get(key), physics.worlds.get(&key.0)) else { continue };
+        if w.is_sleeping(id) != Some(false) || scheduler.directory(&key.0).is_none() {
+            continue;
+        }
+        let Some(pose) = w.pose(id) else { continue };
+        if !scheduler.covers(&key.0, pose.pos, COVERAGE_MARGIN, Level::Active) {
+            out.push((key.clone(), placement.clone()));
+        }
+    }
+    for (key, placement) in out {
+        persist_item(world, &key, &placement);
+        remove_placed(world, &key);
+    }
+}
+
 fn remove_placed(world: &mut World, key: &Key) {
     let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() else { return };
     s.pending.remove(key);
     s.items.remove(key);
+    s.item_placements.remove(key);
     let Some(id) = s.placed.remove(key) else { return };
     if let Some(mut physics) = world.get_resource_mut::<Physics>()
         && let Some(w) = physics.worlds.get_mut(&key.0)
@@ -351,6 +404,15 @@ fn item_layer(settings: &PhysicsSettings, mass: Option<f32>, shape: &BodyShape, 
     let extent = ((Vec3::from_array(shape.aabb[1]) - Vec3::from_array(shape.aabb[0])) * scale.abs()).max_element();
     let mass = mass.unwrap_or(f32::MAX);
     if mass < settings.debris_mass && extent < settings.debris_extent { Layer::DEBRIS } else { Layer::PROP }
+}
+
+/// Cost assumed for one insert (and one body's share of a refresh) before any
+/// was measured, seconds: the first loading frame must not overshoot (P1 spike:
+/// 12.7 µs per body inserted at once).
+const INSERT_PRIOR_S: f64 = 15e-6;
+
+fn measured(estimate: f64) -> f64 {
+    if estimate > 0.0 { estimate } else { INSERT_PRIOR_S }
 }
 
 /// Polls shape builds and inserts queued bodies under the frame budget.
@@ -398,16 +460,20 @@ pub(crate) fn apply_inserts(
     // work lands in the next step.
     let mut deferred: VecDeque<Key> = VecDeque::new();
     let mut held: Vec<Key> = Vec::new();
-    let (mut items_phase, mut items_done) = (false, 0);
+    let (mut items_phase, mut items_done, mut inserted) = (false, 0, 0_usize);
     loop {
         let elapsed = started.elapsed().as_secs_f64();
         let next = if items_phase {
-            ((items_done == 0 || elapsed < budget) && items_done < settings.item_batch).then(|| deferred.pop_front()).flatten()
+            // Time-sliced like the statics: the next item must fit (its insert
+            // cost is a decaying maximum). One item per frame always goes in
+            // when nothing else did, so items can't starve.
+            let fits = elapsed + measured(s.insert_item_s) < budget || inserted == 0;
+            (fits && items_done < settings.item_batch).then(|| deferred.pop_front()).flatten()
         } else {
             // At least one static per frame: a refresh estimate over the budget
             // (one slow refresh on a busy machine) must not stall streaming.
-            let fits = elapsed + s.refresh_per_body_s * ((batch + 1) as f64) < budget;
-            (fits || (batch == 0 && elapsed < budget)).then(|| s.order.pop_front()).flatten()
+            let fits = elapsed + measured(s.insert_static_s) + measured(s.refresh_per_body_s) * ((batch + 1) as f64) < budget;
+            (fits || (batch == 0 && inserted == 0)).then(|| s.order.pop_front()).flatten()
         };
         let Some(key) = next else {
             if items_phase {
@@ -444,7 +510,7 @@ pub(crate) fn apply_inserts(
                         let layer = item_layer(&settings, mass, &body, p.transform.scale);
                         let shape = ShapeRef::Body(body);
                         let desc = if hold {
-                            BodyDesc::fixed(p.transform, shape, layer)
+                            BodyDesc::held(p.transform, shape, layer, mass)
                         } else {
                             BodyDesc { ccd: true, ..BodyDesc::item(p.transform, shape, layer, mass) }
                         };
@@ -469,13 +535,21 @@ pub(crate) fn apply_inserts(
                         continue;
                     }
                 };
-                s.pending.remove(&key);
+                let removed = s.pending.remove(&key);
+                let t = Instant::now();
                 let id = physics.insert(&key.0, &desc);
+                let cost = t.elapsed().as_secs_f64();
+                let estimate = if item { &mut s.insert_item_s } else { &mut s.insert_static_s };
+                *estimate = cost.max(*estimate * 0.95);
+                inserted += 1;
                 if !touched.contains(&key.0) {
                     touched.push(key.0.clone());
                 }
                 if item {
                     s.items.insert(key.clone(), desc.pose);
+                    if let Some(p) = removed {
+                        s.item_placements.insert(key.clone(), p.placement);
+                    }
                 }
                 s.placed.insert(key, id);
                 stats.inserts += 1;

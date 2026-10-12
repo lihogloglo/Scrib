@@ -24,6 +24,10 @@ pub enum BodyKind {
     /// Moved by its owner through [`crate::PhysicsWorld::set_kinematic_target`]
     /// (character capsules, the carrying hand); pushes dynamic bodies.
     Kinematic,
+    /// Fixed until released: a placed item nothing supports (a lantern on a
+    /// hook). [`crate::PhysicsWorld::release`] or an impulse makes it an awake
+    /// dynamic body with its mass, damping and CCD; contacts never do.
+    Held,
 }
 
 /// Linear and angular damping of placed items. The angular term stands in
@@ -70,6 +74,12 @@ impl BodyDesc {
         Self { mass, damping: ITEM_DAMPING, ..Self::new(BodyKind::Dynamic { asleep: true }, pose, shape, layer) }
     }
 
+    /// A placed item held where it was placed ([`BodyKind::Held`]) until
+    /// released: with [`ITEM_DAMPING`] and CCD once it moves.
+    pub fn held(pose: WorldTransform, shape: ShapeRef, layer: Layer, mass: Option<f32>) -> Self {
+        Self { mass, damping: ITEM_DAMPING, ccd: true, ..Self::new(BodyKind::Held, pose, shape, layer) }
+    }
+
     #[must_use]
     pub fn with_user(mut self, user: u64) -> Self {
         self.user = user;
@@ -113,8 +123,11 @@ pub struct PhysicsParams {
     /// Layers that report [`PhysicsEvent::ContactForce`], and the threshold in newtons.
     pub contact_force_layers: Layer,
     pub contact_force_threshold: f32,
-    /// Absolute Y (meters) under which a dynamic body counts as fallen out.
+    /// Absolute Y (meters) under which a dynamic body counts as fallen out;
+    /// `None`: `kill_margin` below the lowest fixed body ([`crate::PhysicsWorld::kill_height`]).
     pub kill_height: Option<f64>,
+    /// Meters below the lowest fixed body for the automatic kill height.
+    pub kill_margin: f32,
     /// Rolling resistance, rad/s²: awake `DEBRIS` and `PROP` bodies touching
     /// something lose this much angular speed per second (rapier has no
     /// rolling friction; physically `μr·g·r / (I/m)`, about 20 for a 6 cm ball
@@ -136,6 +149,7 @@ impl Default for PhysicsParams {
             contact_force_layers: Layer::DEBRIS | Layer::PROP | Layer::RAGDOLL | Layer::CHARACTER | Layer::PROJECTILE,
             contact_force_threshold: 200.0,
             kill_height: None,
+            kill_margin: 10.0,
             rolling_resistance: 20.0,
         }
     }

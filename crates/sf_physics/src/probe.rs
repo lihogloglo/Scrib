@@ -68,7 +68,10 @@ impl PhysicsProbe<'_> {
             };
             let (c, hit) = w.engine.cast_shape(&Pose::from_translation(o), q.dir, shape, options, filter)?;
             // Composite (the world) first: witness1/normal1 are on the hit collider, in the engine frame.
-            let surface = self.surface_near(c, hit.witness1);
+            // Upright capsules are the movers' wall sweeps: nothing reads their
+            // surface, and finding it costs a trimesh point projection per hit
+            // (P5, walker probe budget). Spheres (ground casts) keep it.
+            let surface = if q.half_height > 0.0 { SurfaceId::DEFAULT } else { self.surface_near(c, hit.witness1) };
             (c, hit.time_of_impact, hit.witness1, hit.normal1, surface)
         };
         normal = normal.normalize_or(-q.dir);

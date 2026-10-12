@@ -315,6 +315,28 @@ fn steps_down_small_drops_and_falls_off_high_ones() {
     }
 }
 
+/// Standing on ground steeper than the slope limit slides down it (gravity
+/// along the slope) and stops on the flat; a walkable slope holds.
+#[test]
+fn unwalkable_slopes_slide() {
+    let params = MoverParams::default();
+    for (deg, slides) in [(30.0f32, false), (60.0, true)] {
+        let mut world = World::new();
+        world.add_ramp(1.0, deg.to_radians());
+        let start = p(2.0, deg.to_radians().tan(), 0.0);
+        let mut loco = Locomotion::new(start, FRAC_PI_2);
+        let mut max_slide = 0.0f32;
+        walk(&world, &mut loco, LocomotionIntent::IDLE, &params, 180, |l| max_slide = max_slide.max(l.slide.length()));
+        let at = xyz(loco.position);
+        if slides {
+            assert!(at.x < 1.0 && at.y.abs() < 0.02, "{deg}°: ended at {at}");
+            assert!(max_slide > 1.0 && loco.slide == Vec3::ZERO, "{deg}°: slide peak {max_slide}, end {}", loco.slide);
+        } else {
+            assert!((at - xyz(start)).length() < 0.01 && max_slide == 0.0, "{deg}°: moved to {at}");
+        }
+    }
+}
+
 #[test]
 fn slopes_steeper_than_the_limit_block() {
     let params = MoverParams::default();

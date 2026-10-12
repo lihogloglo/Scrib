@@ -306,8 +306,18 @@ stays. Cloth joints are outfit joints appended after the skeleton's joints in th
   unlinked from the persistent islands, which rapier's debug validation catches), so their broad-phase work lands in
   the next step. Deactivation writes items that moved (> 1 mm or 1 mrad) to the overlay (`move_to` + `physics` blob
   v1: asleep flag, linear and angular velocity); activation reads the overlay for cells whose visuals stayed loaded.
-  Not yet: coverage freeze (4 Hz `covers` check), kill height from `TerrainHeights`, reinserting awake bodies with
-  their saved velocity (all reinsert asleep), grab or impulse releasing held items (P6).
+  Not yet: reinserting awake bodies with their saved velocity (all reinsert asleep), grab releasing held items (P6).
+  **P4 leftovers (P5 session, 2026-10-13):** *coverage freeze* (`stream::coverage`, 4 Hz: an awake item whose
+  surrounding 1 m isn't `Active` per `Scheduler::covers` writes its pose to the overlay, leaves the world, and its
+  visual stays put; worldspaces the scheduler doesn't know are always covered); *kill height*: with
+  `PhysicsParams::kill_height` unset, `PhysicsWorld::kill_height` is `kill_margin` (10 m) below the lowest fixed
+  body inserted so far (statics and terrain chunks; it never rises), so every world gets fell-out recovery without
+  the host knowing its depth (`TerrainHeights − 2 m` per body would need a height lookup per awake body: not worth
+  it while the floor rule works); *held items* are `BodyKind::Held` (`BodyDesc::held`: fixed, but with mass,
+  damping and CCD ready), and `PhysicsWorld::release` or any `apply_impulse` turns one into an awake dynamic body;
+  pushes and contacts never do; *insert time-slicing*: statics and items each keep a decaying-maximum per-insert
+  cost, and the next insert goes in only while it fits the 0.5 ms budget (one per frame always, when nothing else
+  went in).
   **Rolling resistance**: rapier has none, so a knocked bottle rolled for many seconds; awake `DEBRIS`/`PROP` bodies
   in contact lose `rolling_resistance` (20 rad/s², about μr 0.05 on a 6 cm radius) of angular speed per second, and
   items get `ITEM_DAMPING` (0.1 linear, 1.5 angular). Havok exposes rolling friction per material; this is the
@@ -343,6 +353,25 @@ Changes in M4:
   slope when the ground is unwalkable; no physics body needed.
 - Ragdolled characters carry `Ragdolled` (like `Dormant`: not stepped, capsule disabled); the root
   follows the pelvis projected to the ground.
+- **As built (P5, 2026-10-13).** `sf_physics::character`: `BodyDesc::character` (kinematic `CHARACTER` capsule,
+  3 cm thinner than the mover's so a prop the mover rests against isn't shoved by an infinitely heavy body),
+  `PhysicsWorld::move_character`, `PhysicsWorld::push`. **Correction to the push formula above:** the impulse is
+  `min(m_body · Δv_n, push_force · dt)`, the body's mass, not the character's (`m_char · Δv` would launch a 0.3 kg
+  cup at the cap every frame; with the body's mass a cup takes the character's speed and a crate gets the capped
+  force). `Δv_n` uses the **intended** velocity (the mover removes the part into whatever blocked it, which would
+  leave nothing to push with); the normal is horizontal, from the capsule axis to the body's center of mass, and
+  bodies within `reach` 4 cm of the mover's capsule count (more than its 1 cm wall skin). One push pass per mover
+  step (frame rate), DEBRIS and PROP alike, held items stay held. `sf_physics_bevy` feature `controller`
+  (`character.rs`): capsules for every non-`Dormant` `Mover` in the active world, targeted after
+  `ControllerSystems::Step`, pushes from `Mover::applied`, `ImpactOnCharacter` messages from `ContactForce` events
+  on capsules over 5 N·s (`PhysicsEvents` keeps a frame's events), `CharacterStats`. Ground: `impl GroundProbe for
+  Physics` over `GROUND_LAYERS` = `STATIC | TERRAIN | PROP` of the active world; the host picks
+  `SfControllerPlugin::<Physics>` (the Bevyrrowind walkers do unless `--off physics`). Slope sliding is in the mover
+  (`Locomotion::slide`, gravity's horizontal part along the unwalkable ground normal, decays with a 0.1 s time
+  constant on walkable ground; unwalkable ground is probed every step even standing still). Tests:
+  `sf_physics` `character_tests` (a 60 kg crate blocks then yields with every push ≤ the cap; a cup never blocks;
+  a 25 m/s ball hits a standing capsule and bounces; no tunnelling through a 4 cm plank at 7 m/s),
+  `sf_controller` `unwalkable_slopes_slide`.
 
 ### Carry and throw
 

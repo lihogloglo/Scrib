@@ -17,6 +17,7 @@
 //! Spec: `docs/specs/physics.md`.
 
 mod body;
+mod character;
 pub mod cook;
 mod debug;
 mod joint;
@@ -26,6 +27,7 @@ mod shape;
 mod world;
 
 pub use body::{BodyDesc, BodyId, BodyKind, ITEM_DAMPING, PhysicsEvent, PhysicsParams};
+pub use character::{CharacterShape, PushParams, Pushed};
 pub use joint::{Drive, JointDesc, JointId, JointKind, JointSolver};
 pub use layer::Layer;
 pub use probe::PhysicsProbe;
@@ -42,3 +44,5 @@ mod tests;
 mod spike;
 #[cfg(test)]
 mod cook_tests;
+#[cfg(test)]
+mod character_tests;

@@ -289,6 +289,28 @@ fn fallen_body_returns_to_rest() {
     assert_eq!(w.is_sleeping(item), Some(true));
 }
 
+/// No explicit kill height: `kill_margin` below the lowest fixed body. An item
+/// beside a ledge falls past it and comes back to rest.
+#[test]
+fn automatic_kill_height_below_lowest_static() {
+    let base = WorldPos::new(IVec3::new(0, 0, 0), Vec3::new(0.0, 30.0, 0.0));
+    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+    assert_eq!(w.kill_height(), None);
+    ground(&mut w, base);
+    let kill = w.kill_height().expect("a fixed body sets the floor");
+    assert!((kill - (base.to_f64().y - 1.0 - 10.0)).abs() < 1e-4, "{kill}");
+    let start = base.offset(Vec3::new(25.0, 1.0, 0.0));
+    let item = w.insert(&BodyDesc::item(at(start), ShapeRef::Sphere(0.1), Layer::DEBRIS, Some(1.0)));
+    w.wake(item);
+    let mut events = Vec::new();
+    for _ in 0..240 {
+        w.step();
+        events.extend(w.drain_events());
+    }
+    assert!(events.contains(&PhysicsEvent::FellOut(item)));
+    assert!(w.pose(item).unwrap().pos.to_f64().y > kill);
+}
+
 #[test]
 fn heightfield_matches_its_samples() {
     let n = 17;
