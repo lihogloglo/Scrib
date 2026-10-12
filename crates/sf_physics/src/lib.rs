@@ -17,6 +17,7 @@
 //! Spec: `docs/specs/physics.md`.
 
 mod body;
+pub mod cook;
 mod debug;
 mod joint;
 mod layer;
@@ -28,10 +29,16 @@ pub use body::{BodyDesc, BodyId, BodyKind, PhysicsEvent, PhysicsParams};
 pub use joint::{Drive, JointDesc, JointId, JointKind, JointSolver};
 pub use layer::Layer;
 pub use probe::PhysicsProbe;
+pub use cook::{BodyShape, BodySource, FitSettings, PartShape, ShapePart};
 pub use shape::{HeightShape, MeshShape, ShapeRef};
+
+#[cfg(feature = "bake")]
+pub mod steps;
 pub use world::{PhysicsWorld, PhysicsWorlds};
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod spike;
+#[cfg(test)]
+mod cook_tests;

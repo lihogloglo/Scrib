@@ -31,7 +31,7 @@ pub use atmosphere::{AtmosphereModel, Falloff, MediumTerm, Phase, visible_disk_f
 pub use celestial::{Celestial, Orbit, SkyPosition};
 pub use clock::{Calendar, SkyClock};
 pub use curve::KeyCurve;
-pub use sky::{SkyLight, SkySettings, SkyState, luminance};
+pub use sky::{ExposureRange, SkyLight, SkySettings, SkyState, luminance};
 pub use weather::{Weather, Wind};
 
 use serde::{Deserialize, Serialize};

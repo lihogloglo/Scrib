@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# The `body.cook` and `items.check` bake steps (read `mesh.cook`, `collision.cook`,
+# `world.page` and `terrain.tile` products).
+bake = ["dep:sf_bake", "dep:sf_model", "dep:sf_world", "dep:sf_terrain", "sf_controller/bake"]
+
 [dependencies]
 bitflags.workspace = true
 glam.workspace = true
@@ -13,6 +19,16 @@ rapier3d.workspace = true
 sf_coords.workspace = true
 # `GroundProbe` and its query types, `CollisionMesh` (the `collision.cook` product).
 sf_controller.workspace = true
+# `BodyShape` (`body.cook`) and `ItemChecks` (`items.check`) products.
+postcard.workspace = true
+serde.workspace = true
+sf_bake = { workspace = true, optional = true }
+sf_model = { path = "../sf_model", optional = true, default-features = false }
+sf_terrain = { workspace = true, optional = true, features = ["bake"] }
+sf_world = { workspace = true, optional = true, features = ["bake"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

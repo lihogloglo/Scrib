@@ -31,6 +31,11 @@ pub struct SkySettings {
     pub moon_angular_size: f32,
     /// Camera EV100 as a function of sun elevation in degrees.
     pub exposure: KeyCurve,
+    /// Limits of the camera EV100, whatever drives it (this schedule or
+    /// histogram auto exposure): UE's auto-exposure Min/Max EV100. The
+    /// floor keeps a night from opening the camera so far that local lights,
+    /// calibrated for a brighter exposure, blow out.
+    pub exposure_range: ExposureRange,
     /// Extra ambient luminance (nits) as a function of sun elevation in
     /// degrees. Physically based sky light comes from the atmosphere's
     /// environment map; this is a small artistic floor for night readability.
@@ -62,10 +67,43 @@ impl Default for SkySettings {
                 (25.0, 13.5),
                 (45.0, 14.0),
             ]),
+            exposure_range: ExposureRange::default(),
             ambient: KeyCurve::new(vec![(-12.0, 0.03), (-4.0, 0.0)]),
             sun_shadow_min_elevation_deg: -1.0,
             moon_shadow_min_elevation_deg: 3.0,
         }
+    }
+}
+
+/// The range a camera's EV100 may take (inclusive). The default is wide
+/// (no clamp); games set the floor from their local-light calibration.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExposureRange {
+    /// Darkest scenes open the camera no further than this (night floor).
+    pub min_ev100: f32,
+    /// Brightest scenes close it no further than this.
+    pub max_ev100: f32,
+}
+
+impl Default for ExposureRange {
+    fn default() -> Self {
+        Self { min_ev100: -10.0, max_ev100: 20.0 }
+    }
+}
+
+impl ExposureRange {
+    /// `ev100` within the range (`max` below `min` counts as `min`).
+    pub fn clamp(&self, ev100: f32) -> f32 {
+        ev100.clamp(self.min_ev100, self.max_ev100.max(self.min_ev100))
+    }
+
+    /// For histogram auto exposure that adds `compensation - metered` EV to a
+    /// camera at `base_ev100` (Bevy's `AutoExposure` compensation curve, whose
+    /// axis is the metered average log2 luminance at the base exposure): the
+    /// compensation that keeps the resulting EV100 in range.
+    pub fn clamp_compensation(&self, base_ev100: f32, metered: f32, compensation: f32) -> f32 {
+        metered + base_ev100 - self.clamp(base_ev100 - (compensation - metered))
     }
 }
 
@@ -171,7 +209,7 @@ impl SkySettings {
             celestial,
             sun,
             moon,
-            ev100: self.exposure.sample(sun_deg),
+            ev100: self.exposure_range.clamp(self.exposure.sample(sun_deg)),
             ambient: self.ambient.sample(sun_deg),
         }
     }

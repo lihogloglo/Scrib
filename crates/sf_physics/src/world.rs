@@ -95,6 +95,8 @@ impl EventHandler for Collector {
 /// only rounding is one half-ulp at the new distance otherwise.
 pub struct PhysicsWorld {
     pub(crate) engine: Engine,
+    /// A dynamic body went in since the last step (see `insert`).
+    dynamic_inserted: bool,
     anchor: IVec3,
     params: PhysicsParams,
     slots: Vec<Slot>,
@@ -128,6 +130,7 @@ impl PhysicsWorld {
             events: Vec::new(),
             queries_dirty: false,
             settling: Vec::new(),
+            dynamic_inserted: false,
         }
     }
 
@@ -227,6 +230,12 @@ impl PhysicsWorld {
             cb = cb.active_events(ActiveEvents::CONTACT_FORCE_EVENTS).contact_force_event_threshold(p.contact_force_threshold);
         }
         let (handle, _) = self.engine.insert(rb, cb);
+        // Rapier adds new bodies to its islands in the next step's pipeline;
+        // a collision-only pass (`refresh_queries`) before it drops them, and
+        // they never simulate. Dynamic inserts hold refreshes off until a step.
+        if matches!(desc.kind, BodyKind::Dynamic { .. }) {
+            self.dynamic_inserted = true;
+        }
         let mesh = match &desc.shape {
             ShapeRef::Mesh(m) => Some(m.clone()),
             _ => None,
@@ -387,7 +396,7 @@ impl PhysicsWorld {
     /// without stepping (an activation batch before the first step). Steps
     /// refresh it anyway.
     pub fn refresh_queries(&mut self) {
-        if self.queries_dirty {
+        if self.queries_dirty && !self.dynamic_inserted {
             self.engine.detect_collisions(&(), &());
             self.queries_dirty = false;
         }
@@ -446,6 +455,7 @@ impl PhysicsWorld {
         self.engine.integration_parameters.dt = self.params.dt;
         let collector = Collector::default();
         self.engine.step_with_events(&(), &collector);
+        self.dynamic_inserted = false;
         self.queries_dirty = false;
         let dt = self.params.dt;
         for (c1, c2, force, point) in collector.contacts.into_inner().expect("collector poisoned") {

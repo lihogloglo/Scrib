@@ -8,7 +8,7 @@ use bevy_ecs::prelude::*;
 use bevy_light::DirectionalLight;
 use bevy_light::atmosphere::ScatteringMedium;
 use bevy_pbr::AtmosphereSettings;
-use bevy_transform::components::Transform;
+use bevy_transform::components::{GlobalTransform, Transform};
 
 use crate::*;
 
@@ -91,4 +91,75 @@ fn moon_takes_over_shadows_at_night() {
         .query_filtered::<&DirectionalLight, With<MoonLight>>();
     let moon = q.single(app.world()).expect("one moon");
     assert!(moon.shadow_maps_enabled && moon.illuminance > 0.0);
+}
+
+fn budget_app(budget: PointShadowBudget) -> (App, Vec<Entity>) {
+    let mut app = app(0.0);
+    app.insert_resource(budget);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(100)));
+    app.world_mut().spawn((Camera3d::default(), GlobalTransform::IDENTITY));
+    let lights = [2.0, 5.0, 8.0, 30.0]
+        .map(|z| {
+            app.world_mut()
+                .spawn((
+                    bevy_light::PointLight { intensity: 1000.0, ..Default::default() },
+                    BudgetedShadow::default(),
+                    NoLightProxy,
+                    GlobalTransform::from_xyz(0.0, 0.0, z),
+                    // No visibility propagation in these tests.
+                    bevy_camera::visibility::InheritedVisibility::VISIBLE,
+                ))
+                .id()
+        })
+        .to_vec();
+    (app, lights)
+}
+
+fn shadowed(app: &App, e: Entity) -> (bool, f32) {
+    let l = app.world().get::<bevy_light::PointLight>(e).expect("light");
+    (l.shadow_maps_enabled, l.intensity)
+}
+
+#[test]
+fn point_shadow_budget_shadows_the_nearest_within_range() {
+    let budget = PointShadowBudget { max: 2, fade_time: 0.0, ..PointShadowBudget::default() };
+    let (mut app, lights) = budget_app(budget);
+    app.update();
+    app.update();
+    let on: Vec<bool> = lights.iter().map(|e| shadowed(&app, *e).0).collect();
+    assert_eq!(on, [true, true, false, false]);
+    // The light past `fade_end` never shadows, even with a free slot.
+    app.world_mut().resource_mut::<PointShadowBudget>().max = 4;
+    app.update();
+    app.update();
+    let on: Vec<bool> = lights.iter().map(|e| shadowed(&app, *e).0).collect();
+    assert_eq!(on, [true, true, true, false]);
+    // Budget 0: nothing shadows.
+    app.world_mut().resource_mut::<PointShadowBudget>().max = 0;
+    app.update();
+    assert!(lights.iter().all(|e| !shadowed(&app, *e).0));
+}
+
+#[test]
+fn a_fading_shadow_splits_the_light_without_changing_its_power() {
+    let budget = PointShadowBudget { max: 1, fade_time: 1.0, ..PointShadowBudget::default() };
+    let (mut app, lights) = budget_app(budget);
+    for _ in 0..3 {
+        app.update();
+    }
+    let (on, part) = shadowed(&app, lights[0]);
+    let slot = *app.world().get::<ShadowSlot>(lights[0]).expect("slot");
+    assert!(on && slot.held && slot.fade > 0.0 && slot.fade < 1.0);
+    let mut twins = app.world_mut().query_filtered::<(&bevy_light::PointLight, &bevy_camera::visibility::Visibility), With<ShadowTwin>>();
+    let rest: f32 = twins
+        .iter(app.world())
+        .filter(|(_, v)| **v != bevy_camera::visibility::Visibility::Hidden)
+        .map(|(l, _)| {
+            assert!(!l.shadow_maps_enabled);
+            l.intensity
+        })
+        .sum();
+    assert!((part + rest - 1000.0).abs() < 1e-2, "{part} + {rest}");
+    // Only one map at a time: the second light waits.
+    assert!(!shadowed(&app, lights[1]).0);
 }

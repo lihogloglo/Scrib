@@ -5,6 +5,8 @@
 //! so the debug view culls per triangle instead.
 
 use glam::Vec3;
+use parry3d::math::Pose;
+use parry3d::shape::Shape;
 use sf_coords::WorldPos;
 
 use crate::layer::Layer;
@@ -12,7 +14,7 @@ use crate::world::PhysicsWorld;
 
 impl PhysicsWorld {
     /// Appends the edges of every collider triangle within `radius` meters of
-    /// `center` (meshes, heightfields; other shapes as their bounding boxes),
+    /// `center` (meshes, heightfields, hulls, primitives and their compounds; other shapes as their bounding boxes),
     /// as segments in meters relative to `frame` (e.g. the render origin),
     /// with the body's layer. Stops at `max` segments; returns how many it added.
     pub fn debug_lines(&self, center: WorldPos, radius: f32, frame: WorldPos, max: usize, out: &mut Vec<(Vec3, Vec3, Layer)>) -> usize {
@@ -49,6 +51,13 @@ impl PhysicsWorld {
                 for t in hf.triangles() {
                     tri(t.a, t.b, t.c);
                 }
+            } else if let Some(parts) = convex_parts(shape) {
+                for (part_pose, (vertices, triangles)) in parts {
+                    for t in triangles {
+                        let [a, b, cc] = t.map(|i| part_pose.transform_point(vertices[i as usize]));
+                        tri(a, b, cc);
+                    }
+                }
             } else {
                 let (lo, hi) = (aabb.mins + base, aabb.maxs + base);
                 for i in 0..4u8 {
@@ -69,4 +78,23 @@ impl PhysicsWorld {
         }
         out.len() - start
     }
+}
+
+type Tris = (Vec<Vec3>, Vec<[u32; 3]>);
+
+/// Triangles of a convex shape (hull, box, ball, capsule, cylinder) or of each
+/// part of a compound of them, with each part's pose in the collider.
+fn convex_parts(shape: &dyn Shape) -> Option<Vec<(Pose, Tris)>> {
+    let one = |s: &dyn Shape| -> Option<Tris> {
+        s.as_convex_polyhedron()
+            .map(parry3d::shape::ConvexPolyhedron::to_trimesh)
+            .or_else(|| s.as_cuboid().map(parry3d::shape::Cuboid::to_trimesh))
+            .or_else(|| s.as_ball().map(|b| b.to_trimesh(6, 8)))
+            .or_else(|| s.as_capsule().map(|c| c.to_trimesh(4, 8)))
+            .or_else(|| s.as_cylinder().map(|c| c.to_trimesh(8)))
+    };
+    if let Some(compound) = shape.as_compound() {
+        return Some(compound.shapes().iter().filter_map(|(pose, s)| Some((*pose, one(s.as_ref())?))).collect());
+    }
+    Some(vec![(Pose::IDENTITY, one(shape)?)])
 }

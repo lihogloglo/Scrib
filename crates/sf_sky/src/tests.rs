@@ -399,3 +399,29 @@ fn settings_round_trip_through_json() {
     assert!(close(partial.orbit.latitude_deg, 10.0, 0.0));
     assert!(close(partial.sun_illuminance, 130_000.0, 0.0));
 }
+
+#[test]
+fn exposure_range_floors_the_night_and_leaves_the_day() {
+    let mut settings = SkySettings::default();
+    let weather = Weather::default();
+    let cal = settings.calendar;
+    let open = settings.evaluate(&SkyClock::at(season_day(1.0), 0.0, &cal), &weather).ev100;
+    assert!(open < 3.5, "the default schedule opens past the floor at midnight: {open}");
+    settings.exposure_range.min_ev100 = 3.5;
+    let at = |hour: f64| settings.evaluate(&SkyClock::at(season_day(1.0), hour, &cal), &weather).ev100;
+    assert!(close(at(0.0), 3.5, 1e-6));
+    assert!(at(12.0) > 13.0);
+    // A max below the min collapses to the min.
+    let r = ExposureRange { min_ev100: 4.0, max_ev100: 2.0 };
+    assert!(close(r.clamp(10.0), 4.0, 1e-6) && close(r.clamp(-3.0), 4.0, 1e-6));
+}
+
+#[test]
+fn clamped_compensation_keeps_auto_exposure_in_range() {
+    let r = ExposureRange { min_ev100: 3.5, max_ev100: 15.0 };
+    // Base 7, a night street metered at -11 with -4.5 compensation: EV100 0.5, floored to 3.5.
+    let c = r.clamp_compensation(7.0, -11.0, -4.5);
+    assert!(close(7.0 - (c + 11.0), 3.5, 1e-5));
+    // In range: unchanged.
+    assert!(close(r.clamp_compensation(7.0, -3.0, -3.6), -3.6, 1e-6));
+}

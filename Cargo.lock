@@ -5636,9 +5636,16 @@ dependencies = [
  "bitflags 2.13.2",
  "glam 0.33.12",
  "parry3d",
+ "postcard",
  "rapier3d",
+ "serde",
+ "sf_bake",
  "sf_controller",
  "sf_coords",
+ "sf_model",
+ "sf_terrain",
+ "sf_world",
+ "tempfile",
 ]
 
 [[package]]

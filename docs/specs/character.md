@@ -521,7 +521,9 @@ material per cooked LOD0 submesh (`sf_model_bevy::submesh_to_mesh`), uploaded on
   (`mw_actors::held::exterior_dark`: 19:00-6:00) re-asks `MwActors::held` for every actor on a
   change and for actors spawning in the dark (`CharacterState::held`; by day the recipe's own).
   Slots get the `LIGH` record's `LightCalibration::point_light` + `AnimatedLight` flicker (placed
-  lights' path; `Off by default` ignored), no shadows; `HeldLightBudget` (default 12) keeps the
+  lights' path; `Off by default` ignored); shadows within the point-shadow budget (lighting
+  2026-10-13: `sf_sky_bevy::BudgetedShadow`, torches rank 2x placed lights, the light's own prop is
+  `NotShadowCaster`; sky-lighting.md "Local-light shadows"); `HeldLightBudget` (default 12) keeps the
   nearest lit torches to the camera on (no global light budget exists yet: placed lights rely on
   range cutoff; each clustered light costs every fragment its range covers). The `stance` graph
   parameter follows `Stance::of_weapon(readiness, main-hand WEAP type)` on body, readiness or

@@ -23,7 +23,7 @@ use bevy_math::{DVec3, IVec2, Vec2};
 use bevy_tasks::{AsyncComputeTaskPool, Task, block_on};
 use sf_controller::StaticShape;
 use sf_coords::{WorldPos, WorldTransform};
-use sf_physics::{BodyDesc, BodyId, HeightShape, Layer, MeshShape, ShapeRef};
+use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::{TerrainHeights, WorldRect};
 use sf_world::{IndexedPlacement, Level, Partition, PlacementClass, PlacementId, WorldspaceId};
@@ -39,12 +39,26 @@ pub struct PhysicsShapeSource(pub ShapeLoader);
 /// Model path → its collision shape.
 pub type ShapeLoader = Arc<dyn Fn(&str) -> Option<Arc<StaticShape>> + Send + Sync>;
 
+/// Loads a model's `body.cook` shape, for the placement classes it names
+/// (items). Without it, those classes use their `collision.cook` mesh.
+#[derive(Resource, Clone)]
+pub struct PhysicsBodySource {
+    pub loader: BodyLoader,
+    pub classes: Vec<PlacementClass>,
+}
+
+/// Model path → its body shape.
+pub type BodyLoader = Arc<dyn Fn(&str) -> Option<Arc<BodyShape>> + Send + Sync>;
+
+/// Shape cache key prefix of body shapes (mesh shapes use the bare model path).
+const BODY: &str = "body:";
+
 type Key = (WorldspaceId, PlacementId);
 type Chunks = Vec<(IVec2, Option<Arc<HeightShape>>)>;
 
 enum ShapeState {
-    Loading(Task<Option<Arc<MeshShape>>>),
-    Ready(Option<Arc<MeshShape>>),
+    Loading(Task<Option<ShapeRef>>),
+    Ready(Option<ShapeRef>),
 }
 
 /// Queued activations, placed bodies, the shape cache and terrain chunks.
@@ -108,8 +122,10 @@ impl PlacementSpawner for PhysicsHook {
         let Some(model) = &p.model else { return };
         let key = (cx.worldspace.clone(), p.id);
         remove_placed(world, &key);
+        let body = world.get_resource::<PhysicsBodySource>().is_some_and(|b| b.classes.contains(&p.class));
+        let shape_key = if body { format!("{BODY}{}", model.as_str()) } else { model.as_str().to_owned() };
         if let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() {
-            s.pending.insert(key.clone(), (model.as_str().to_owned(), p.transform));
+            s.pending.insert(key.clone(), (shape_key, p.transform));
             s.order.push_back(key);
         }
     }
@@ -148,6 +164,7 @@ pub(crate) fn apply_inserts(
     mut streaming: ResMut<PhysicsStreaming>,
     mut physics: ResMut<Physics>,
     source: Option<Res<PhysicsShapeSource>>,
+    bodies: Option<Res<PhysicsBodySource>>,
     settings: Res<PhysicsSettings>,
     mut stats: ResMut<PhysicsStats>,
 ) {
@@ -185,9 +202,23 @@ pub(crate) fn apply_inserts(
         let Some((model, _)) = s.pending.get(&key) else { continue };
         match s.shapes.get(model) {
             Some(ShapeState::Ready(shape)) => {
-                let Some(shape) = shape.clone() else {
-                    s.pending.remove(&key);
-                    continue;
+                let shape = match shape.clone() {
+                    Some(ShapeRef::Mesh(m)) => m,
+                    // Items: fixed until P4 inserts them as sleeping dynamic bodies.
+                    Some(body @ ShapeRef::Body(_)) => {
+                        let (_, transform) = s.pending.remove(&key).expect("checked");
+                        let id = physics.insert(&key.0, &BodyDesc::fixed(transform, body, Layer::PROP));
+                        if !touched.contains(&key.0) {
+                            touched.push(key.0.clone());
+                        }
+                        s.placed.insert(key, id);
+                        stats.inserts += 1;
+                        continue;
+                    }
+                    _ => {
+                        s.pending.remove(&key);
+                        continue;
+                    }
                 };
                 // A scale without a cached copy: built on the task pool first.
                 let scale = s.pending[&key].1.scale;
@@ -220,10 +251,18 @@ pub(crate) fn apply_inserts(
             }
             None => {
                 let model = model.clone();
-                let task = source.as_ref().map(|src| {
-                    let (src, m) = (src.0.clone(), model.clone());
-                    AsyncComputeTaskPool::get().spawn(async move { src(&m).map(|shape| MeshShape::from_static(&shape)) })
-                });
+                let task = if let Some(path) = model.strip_prefix(BODY) {
+                    bodies.as_ref().map(|b| {
+                        let (load, m) = (b.loader.clone(), path.to_owned());
+                        AsyncComputeTaskPool::get().spawn(async move { load(&m).map(ShapeRef::Body) })
+                    })
+                } else {
+                    source.as_ref().map(|src| {
+                        let (src, m) = (src.0.clone(), model.clone());
+                        AsyncComputeTaskPool::get()
+                            .spawn(async move { src(&m).map(|shape| ShapeRef::Mesh(MeshShape::from_static(&shape))) })
+                    })
+                };
                 let built = task.map_or(ShapeState::Ready(None), ShapeState::Loading);
                 s.shapes.insert(model.clone(), built);
                 s.waiting.entry(model).or_default().push(key);

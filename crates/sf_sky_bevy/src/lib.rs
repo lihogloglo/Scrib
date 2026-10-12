@@ -12,9 +12,12 @@
 //!   (cargo feature `dlss`, NVIDIA RTX), off elsewhere.
 //! - [`PointLightProxy`]: punctual lights become emissive spheres for the
 //!   ray tracer, which doesn't support point lights yet.
+//! - [`PointShadowBudget`]: shadow maps for the few most important
+//!   [`BudgetedShadow`] point lights, faded by distance and over time.
 
 mod path;
 mod proxy;
+mod shadow_budget;
 mod upscale;
 
 // Headless: the `solari` feature pulls in render-world plugins.
@@ -42,6 +45,7 @@ use sf_sky::{RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
+pub use shadow_budget::{BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the
@@ -206,8 +210,11 @@ impl Plugin for SkyPlugin {
                 Update,
                 (SkySystems::Clock, SkySystems::RenderPath, SkySystems::Apply).chain(),
             )
-            .add_systems(Startup, spawn_sky)
-            .add_systems(Update, advance_clock.in_set(SkySystems::Clock))
+            .add_systems(Startup, spawn_sky);
+        if !app.is_plugin_added::<PointShadowPlugin>() {
+            app.add_plugins(PointShadowPlugin);
+        }
+        app.add_systems(Update, advance_clock.in_set(SkySystems::Clock))
             .add_systems(
                 Update,
                 (

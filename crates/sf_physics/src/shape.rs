@@ -123,6 +123,8 @@ pub enum ShapeRef {
     Capsule { r: f32, half: f32 },
     Box(Vec3),
     Sphere(f32),
+    /// A `body.cook` shape (items): hulls and primitives with their mass properties.
+    Body(Arc<crate::cook::BodyShape>),
 }
 
 impl ShapeRef {
@@ -140,6 +142,8 @@ impl ShapeRef {
                 SharedShape::cuboid(h.x, h.y, h.z)
             }
             Self::Sphere(r) => SharedShape::ball(r * scale.max_element()),
+            // `body.cook` guarantees a valid part; a 1 cm ball stands in otherwise.
+            Self::Body(b) => b.shared(scale).unwrap_or_else(|| SharedShape::ball(0.005)),
         }
     }
 }

@@ -47,11 +47,52 @@ precipitation, stars, moon phases on the disk, surface wetness.
   schedule (night -4.5, interior -3.6, day -2.3 EV), opt-in through
   `SkyCamera { exposure: false }`; a new sky camera now starts at the
   scheduled EV100 (it got `Exposure::default()`, 9.7, for one frame).
+- **Exposure range** (lighting job 2026-10-13, owner option A):
+  `SkySettings::exposure_range` (`ExposureRange { min_ev100, max_ev100 }`,
+  UE's auto-exposure Min/Max EV100) clamps the camera EV100 whatever
+  drives it: the schedule clamps its sample, histogram auto exposure gets
+  the clamp baked into its compensation curve
+  (`ExposureRange::clamp_compensation`: Bevy's `AutoExposure` has a
+  metering range but no output clamp, so the curve is sampled every 0.5 EV
+  and limited to `x + base - clamp(base - (c - x))`). The framework default
+  is wide (-10..20, no clamp). Why a floor: local lights are calibrated
+  once for the interior EV100 (7); a night exterior opening to EV 0.5-2
+  showed them 30-90x brighter than calibrated and blew out walls near
+  lamps. Scaling lights by exposure (the alternative) was rejected: lights
+  stay physical and the camera stops opening. The game sets the floor
+  (Bevyrrowind: `LightCalibration::exposure_floor_ev100`, 3.5, so lights
+  read at most 2^3.5 = 11x their calibration) and pays for night
+  readability with a brighter night ambient floor (`ambient` curve, 0.4
+  nits below -12°) instead of a wide-open camera, as games do (an
+  exaggerated moon/sky light at a clamped exposure). Interiors keep EV100
+  7 on the schedule; under viewer auto exposure they meter at or above
+  the floor (a dark cave stops at 3.5 instead of ~2.6).
 - **Shadows**: one shadow-casting directional light at a time (sun above
   −1°, else the moon above 3°), 4 cascades to 300 m by default; the exterior app derives
   504 m from the far-field handoff (2048², first bound 10 m), and past it terrain, proxies and
   impostors take the terrain far shadow through `directional_shadow_factor` with a dithered
   cascade end (weather.md "Distant shadows", as built 2026-10-12).
+- **Local-light shadows** (`shadow_budget.rs`, lighting job 2026-10-13):
+  point lights marked `BudgetedShadow { priority }` compete for
+  `PointShadowBudget::max` cube shadow maps (Bevy's
+  `PointLight::shadow_maps_enabled`, faces `PointLightShadowMap::size`).
+  Ranking: distance to the viewer (the highest-order active window
+  camera) over priority; a holder ranks 1/0.8 better (hysteresis). Strength
+  fades with distance (full to `fade_start` 15 m, none past `fade_end` 25 m)
+  and over time (`fade_time` 0.3 s) when a light gains or loses its slot;
+  a newcomer waits for a free slot, so at most `max` maps exist. Bevy's
+  point light has no shadow strength, so a fading light is split: the
+  shadowed light carries `fade` of the power and an unshadowed child twin
+  (`ShadowTwin`, created on the first slot, hidden otherwise) the rest
+  (`I (1 - s + s v) = s I v + (1 - s) I`), applied in `PostUpdate` and
+  undone in `First` so game code (flicker) keeps writing full power.
+  Industry: Unity HDRP (max shadows on screen + per-light shadow fade
+  distance), UE (per-light shadow fade / resolution fade), Bethesda
+  (a small cap of shadowed lights); OpenMW has no point-light shadows
+  (comparisons from engine docs as remembered, not re-read). Casters
+  nearer a light than its `shadow_map_near_z` don't shadow it (the game
+  uses 0.25 m so a lantern's cage doesn't stripe the room). Costs are in
+  the game's presets (Bevyrrowind `Quality::point_shadows`).
 - **Ray-traced path** (Bevy Solari 0.20, verified in source and on an RTX
   4060): lights from `DirectionalLight`, emissive `StandardMaterial` meshes
   and the camera's environment map (including `AtmosphereEnvironmentMapLight`).
@@ -266,9 +307,10 @@ this session.
 | Physically based sky + aerial perspective | Hillaire 2020 LUTs: UE4.26+/UE5 SkyAtmosphere (transmittance, multi-scattering, sky-view and camera aerial-perspective froxel LUTs); Frostbite (Hillaire's origin, 2016 → 2020); Unity HDRP physically based sky (precomputed, Bruneton-style, unverified); RDR2 own atmosphere (Bauer, SIGGRAPH 2019 Advances, unverified) | Bevy `Atmosphere` (same LUT set incl. a 32 km aerial-view LUT), our medium | **match** |
 | Sky as environment lighting | UE SkyLight real-time capture; Unity HDRP sky ambient probe | `AtmosphereEnvironmentMapLight` (filtered from the atmosphere) | **match** |
 | Sun/moon from clock and latitude | UE SunPosition plugin (date, latitude); most open worlds use a hand-authored time-of-day curve instead | ephemeris + curves | **match** (more physical than most) |
-| Exposure | UE: histogram auto exposure, physical camera, **exposure compensation curve** by average luminance, local exposure (5.1+); Unity HDRP: automatic histogram or fixed/physical, curve mapping; Bethesda/OpenMW: no physical exposure (LDR-era lighting, eye adaptation as a post effect) | scheduled EV100 by sun elevation; with portals, `AutoExposure` with a compensation curve (portals.md) | **match** (the portal2 setup is the UE pattern). **Local exposure** (UE 5.1, bilateral-grid tone mapping) is not in Bevy 0.20: helps interior-looking-out shots; noted, not a job |
+| Exposure | UE: histogram auto exposure, physical camera, **exposure compensation curve** by average luminance, local exposure (5.1+); Unity HDRP: automatic histogram or fixed/physical, curve mapping; Bethesda/OpenMW: no physical exposure (LDR-era lighting, eye adaptation as a post effect) | scheduled EV100 by sun elevation; with portals, `AutoExposure` with a compensation curve (portals.md); `ExposureRange` min/max EV100 on both (2026-10-13) | **match** (the portal2 setup is the UE pattern). **Local exposure** (UE 5.1, bilateral-grid tone mapping) is not in Bevy 0.20: helps interior-looking-out shots; noted, not a job |
 | Tone mapping | UE filmic (ACES-fitted), Unity ACES/Neutral, Blender/Godot AgX | Bevy default `TonyMcMapface` | **match** (a curve choice, not a technique gap) |
 | Shadows | UE virtual shadow maps (+ CSM fallback); Unity CSM + cached shadows; RAGE CSM + far shadow (unverified); Decima CSM + cached far cascades (unverified) | 4 CSM + terrain far shadow (weather.md) | **match** for CSM; VSM / cached far cascades = audit row 14 (P2) |
+| Local-light shadows | Unity HDRP: shadow atlas, max shadows on screen, per-light shadow fade distance; UE: per-light shadow fade, small-caster culling by projected size; Bethesda: a small cap of shadowed lights; OpenMW: none (from docs as remembered, not re-read) | `PointShadowBudget`: N cube maps by distance over priority, hysteresis, distance + time fade (light split) | **match** for the budget and fade; **gap**: no caster culling per local-light shadow view (Bevy draws every caster in range on 6 faces: the measured render-thread cost) |
 | Contact shadows | UE per-light contact shadows; Unity HDRP contact shadows; Bevy 0.20 `ContactShadows` (needs depth prepass) | **off** (prepass off in exteriors) | **GAP (P1)**: open question 6 |
 | Ambient occlusion | UE SSAO/GTAO (+ Lumen short-range AO); Unity HDRP GTAO; Fallout 4 HBAO+, Skyrim SE SSAO (unverified); Bevy 0.20 SSAO = XeGTAO port (needs depth + normal prepass) | **none** on raster (Solari does it implicitly) | **GAP (P1)**: open question 6. Exteriors also lack large-scale sky occlusion: weather.md's terrain sky-visibility bake covers that |
 | Indirect diffuse (GI) | UE5 Lumen (software/hardware RT), volumetric lightmaps; Unity Adaptive Probe Volumes with lighting scenarios blended at runtime (the time-of-day pattern), Enlighten; RAGE/Decima baked probes per time of day (unverified detail); Bethesda Skyrim/FO4: none (ambient per cell/region), Starfield real-time GI (unverified); OpenMW: per-cell ambient only | raster: ambient floor + sky env map; ray-traced: Solari ReSTIR GI | **match** on the high end (Solari = Lumen class). **Differ** on raster: we match Bethesda/OpenMW, not modern raster engines. Interior baked probes: **GAP (P2)**, open question 7. Exterior time-of-day probes: skipped (sky env map + sky-visibility bake is the cheap equivalent) |

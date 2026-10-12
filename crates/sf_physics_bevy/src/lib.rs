@@ -41,7 +41,7 @@ mod tests;
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
 pub use sf_physics;
-pub use stream::{PhysicsHook, PhysicsShapeSource, ShapeLoader, hook_physics};
+pub use stream::{BodyLoader, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, ShapeLoader, hook_physics};
 
 /// Plugin settings (physics.md defaults).
 #[derive(Resource, Clone, Debug)]

@@ -155,6 +155,28 @@ of the closed mesh's (or the mesh isn't closed); else a convex decomposition (pa
 8 hulls of at most 32 vertices). CoACD (Wei et al., SIGGRAPH 2022) is the quality upgrade if V-HACD
 misfits; it has no maintained Rust crate today. Minimum extent 1 cm per axis.
 
+**As built (P3, 2026-10-13).** `sf_physics::cook` (`BodyShape`, `ShapePart`, `fit_render`, `fit_authored`; `SFBD`
+products) and `sf_physics::steps` (feature `bake`: `BodyCookStep` + `BodyRules`, `ItemsCheckStep` + `ItemsRules`).
+Shape choice as above, with these details: the primitive fit runs in the hull's covariance frame (parry `utils::obb`)
+or the model axes, whichever box is smaller, and tries box, sphere, three cylinders and three capsules, keeping the
+smallest that covers every hull vertex; "closed" means watertight after welding seams on a 0.1 mm grid; hulls keep at
+most 32 vertices (farthest-point subset of the hull's vertices, re-hulled; at most a few mm inside the true hull), the
+cap applies to single hulls too; a shape thinner than 1 cm becomes a box padded to 1 cm (`BodySource::Thin`); models
+`mesh.cook` skips use their `mesh.rest` cook; mods override with `bodies/<model>.sfbody`. Mass properties are
+unit-density (volume, center of mass, principal inertia per kg and its frame); the runtime scales by the adapter's
+mass. `ShapeRef::Body(Arc<BodyShape>)` builds the engine shape (one part, or a compound).
+**`items.check` is a settle test, not a ray/shape-cast support probe**: per page, the items go into a `PhysicsWorld`
+as awake `PROP` bodies over the static collision (`collision.cook`) whose bounds come within 1 m of an item, and,
+where the adapter says the worldspace has terrain, a 4 m heightfield patch (0.5 m, from the level-0 `terrain.tile`
+products) under each item; the world runs 0.5 s; an item that dropped more than 5 cm is `Hold::Unsupported`
+(inserted `Fixed` until grabbed); rises and slides are reported as overlaps (it started inside something). Why: a
+probe answers "is there a surface below" but not "does it stay": items leaning on a wall, half off a shelf edge, on
+a steep slope or stacked on other items all need the contact solve, and the settle test is the editor practice
+for clutter (UE "Simulate" + "Keep Simulation Changes", the Creation Kit's Havok Sim), here run as a check. Product
+`ItemChecks` (`SFIC`): per item `id`, `hold` (`No`, `Unsupported`, `Rules` = the adapter's `always_hold`,
+`NoShape`), `drop`, `rise`, `shift`. Limitation: a page sees only its own statics (exterior pages are large; an
+item within 1 m of a page edge may miss a neighbor's static and be held: the safe side).
+
 ### `sf_ragdoll` (Bevy-free; sf_anim, sf_physics)
 
 ```rust
@@ -375,7 +397,8 @@ pub trait PhysicsContent: Send + Sync {
     fn item_body(&self, placement: &Placement) -> Option<ItemBody>;
     fn holder_strength(&self, holder: Entity) -> HolderLimits;     // carry force, carry and drag mass, throw impulse
 }
-pub trait BodyRules: Send + Sync { /* authored collision for body.cook, like CollisionRules */ }
+pub trait BodyRules: Send + Sync { /* authored collision for body.cook (point sets, one hull each), like CollisionRules */ }
+pub trait ItemsRules: Send + Sync { /* items.check: is_item, always_hold, is_static, has_terrain */ }
 pub trait RagdollRules: Send + Sync { /* per skeleton: policy (Ragdoll | DeathClip | None), total mass, overrides */ }
 pub trait ClothRules: Send + Sync { /* which parts are cloth, attachment joint, lattice size, stiffness */ }
 ```
