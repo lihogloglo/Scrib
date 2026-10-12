@@ -1,7 +1,8 @@
 //! Weather inputs (the M6 hook) and the shared wind.
 //!
 //! M2 ships the data and the few effects that need no new rendering:
-//! cloud cover dims direct sun and moon light, haze scales aerosol density.
+//! cloud cover dims direct sun and moon light, haze scales aerosol density,
+//! dust scales the absorbing dust/ash term (weather.md N1/N2).
 //! M6 adds presets with blending, clouds, fog and precipitation on top of
 //! the same [`Weather`] values, and replaces [`Wind`]'s analytic gusts with
 //! a sampled field. Consumers (grass, cloth, particles, clouds) only ever
@@ -9,6 +10,8 @@
 
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+
+use crate::atmosphere::MediumScales;
 
 /// The current weather, as continuous values that blend linearly.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -20,6 +23,13 @@ pub struct Weather {
     pub overcast_dimming: f32,
     /// Aerosol density multiplier: 1 is a clear day, higher is hazy or dusty.
     pub haze: f32,
+    /// Density of the absorbing dust/ash terms (weather.md N2): 0 is none,
+    /// 1 a dusty day, 4-5 an ash storm.
+    pub dust: f32,
+    /// Per-channel multiplier on the dust terms' absorption: `ONE` is the
+    /// model's grey-brown dust; more absorption in green and blue reddens
+    /// what is left (a red dust storm).
+    pub dust_tint: Vec3,
     pub wind: Wind,
 }
 
@@ -29,6 +39,8 @@ impl Default for Weather {
             cloud_cover: 0.0,
             overcast_dimming: 0.8,
             haze: 1.0,
+            dust: 0.0,
+            dust_tint: Vec3::ONE,
             wind: Wind::default(),
         }
     }
@@ -45,7 +57,18 @@ impl Weather {
             cloud_cover: mix(self.cloud_cover, to.cloud_cover),
             overcast_dimming: mix(self.overcast_dimming, to.overcast_dimming),
             haze: mix(self.haze, to.haze),
+            dust: mix(self.dust, to.dust),
+            dust_tint: self.dust_tint.lerp(to.dust_tint, t),
             wind: self.wind.lerp(&to.wind, t),
+        }
+    }
+
+    /// What this weather does to the atmosphere's medium.
+    pub fn medium(&self) -> MediumScales {
+        MediumScales {
+            haze: self.haze,
+            dust: self.dust,
+            dust_tint: self.dust_tint,
         }
     }
 

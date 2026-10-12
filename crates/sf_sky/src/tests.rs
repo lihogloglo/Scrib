@@ -225,9 +225,9 @@ fn falloff_matches_its_endpoints() {
 #[test]
 fn transmittance_reddens_toward_the_horizon() {
     let atm = AtmosphereModel::earth();
-    let zenith = atm.transmittance(0.0, 90f32.to_radians(), 1.0, 64);
-    let low = atm.transmittance(0.0, 5f32.to_radians(), 1.0, 64);
-    let below = atm.transmittance(0.0, -5f32.to_radians(), 1.0, 64);
+    let zenith = atm.transmittance(0.0, 90f32.to_radians(), &MediumScales::haze(1.0), 64);
+    let low = atm.transmittance(0.0, 5f32.to_radians(), &MediumScales::haze(1.0), 64);
+    let below = atm.transmittance(0.0, -5f32.to_radians(), &MediumScales::haze(1.0), 64);
     // Clear-sky zenith transmittance is high, blue lowest.
     assert!(zenith.x > 0.9 && zenith.z > 0.6 && zenith.z < zenith.x);
     // Near the horizon: much dimmer and red-dominant.
@@ -235,8 +235,8 @@ fn transmittance_reddens_toward_the_horizon() {
     assert!(low.x > low.y && low.y > low.z);
     assert_eq!(below, Vec3::ZERO);
     // Haze only dims.
-    let hazy = atm.transmittance(0.0, 30f32.to_radians(), 4.0, 64);
-    let clear = atm.transmittance(0.0, 30f32.to_radians(), 1.0, 64);
+    let hazy = atm.transmittance(0.0, 30f32.to_radians(), &MediumScales::haze(4.0), 64);
+    let clear = atm.transmittance(0.0, 30f32.to_radians(), &MediumScales::haze(1.0), 64);
     assert!(hazy.cmple(clear).all() && luminance(hazy) < 0.95 * luminance(clear));
 }
 
@@ -246,10 +246,66 @@ fn transmittance_is_monotonic_in_elevation() {
     let mut prev = 0.0;
     for deg in 0..=90 {
         #[expect(clippy::cast_precision_loss)]
-        let t = luminance(atm.transmittance(0.0, (deg as f32).to_radians(), 1.0, 48));
+        let t = luminance(atm.transmittance(0.0, (deg as f32).to_radians(), &MediumScales::haze(1.0), 48));
         assert!(t >= prev, "{deg}°");
         prev = t;
     }
+}
+
+#[test]
+fn dust_dims_and_warms_the_sun() {
+    let atm = AtmosphereModel::earth();
+    let at = |scales: MediumScales| atm.transmittance(0.0, 30f32.to_radians(), &scales, 64);
+    let clear = at(MediumScales::haze(2.0));
+    // No dust is exactly the dust-free medium.
+    let mut none = MediumScales::haze(2.0);
+    none.dust_tint = Vec3::new(3.0, 0.5, 2.0);
+    assert_eq!(at(none), clear);
+    let storm = at(MediumScales { dust: 4.0, ..MediumScales::haze(2.0) });
+    assert!(luminance(storm) < 0.6 * luminance(clear), "{storm} vs {clear}");
+    // Blue absorbed most: the remaining sunlight is warmer.
+    assert!(storm.x / storm.z > clear.x / clear.z);
+    // A tint with more green/blue absorption reddens it further.
+    let red = at(MediumScales { dust: 4.0, dust_tint: Vec3::new(0.6, 1.4, 1.8), ..MediumScales::haze(2.0) });
+    assert!(red.x / red.z > storm.x / storm.z);
+    // Dust sits low: a summit 3 km up sees much less of it.
+    let summit = atm.transmittance(3000.0, 30f32.to_radians(), &MediumScales { dust: 4.0, ..MediumScales::haze(2.0) }, 64);
+    assert!(luminance(summit) > 1.5 * luminance(storm));
+}
+
+#[test]
+fn dust_term_is_absorbing_and_low() {
+    let atm = AtmosphereModel::earth();
+    let dust = atm.terms.iter().find(|t| t.weather == WeatherScale::Dust).expect("dust term");
+    let albedo = dust.scattering / dust.extinction();
+    assert!(albedo.x > albedo.y && albedo.y > albedo.z && albedo.z > 0.6 && albedo.x < 0.95, "{albedo}");
+    let ground = atm.extinction_at(0.0, &MediumScales { dust: 1.0, ..MediumScales::haze(0.0) });
+    let high = atm.extinction_at(2000.0, &MediumScales { dust: 1.0, ..MediumScales::haze(0.0) });
+    // Ground visibility at dust 1 (Koschmieder 3.912 / extinction): tens of km.
+    let visibility = 3.912 / ground.y;
+    assert!((25_000.0..60_000.0).contains(&visibility), "{visibility}");
+    assert!(high.y < 0.5 * ground.y);
+}
+
+#[test]
+fn medium_change_is_in_steps() {
+    let steps = Vec3::new(0.05, 0.02, 0.02);
+    let a = MediumScales::haze(2.0);
+    assert!(a.change(&a, steps) < 1e-6);
+    assert!(close(a.change(&MediumScales::haze(2.1), steps), 2.0, 1e-4));
+    let dusty = MediumScales { dust: 0.01, ..a };
+    assert!(a.change(&dusty, steps) < 1.0);
+    let tinted = MediumScales { dust_tint: Vec3::new(1.0, 1.0, 1.1), ..a };
+    assert!(a.change(&tinted, steps) > 4.0);
+}
+
+#[test]
+fn weather_blends_dust() {
+    let a = Weather::default();
+    let b = Weather { dust: 4.0, dust_tint: Vec3::new(0.6, 1.4, 1.8), haze: 3.0, ..Weather::default() };
+    let m = a.lerp(&b, 0.5).medium();
+    assert!(close(m.dust, 2.0, 1e-6) && close(m.haze, 2.0, 1e-6));
+    assert!(close(m.dust_tint.z, 1.4, 1e-6));
 }
 
 #[test]

@@ -31,7 +31,7 @@ mod tests;
 /// The math types used in this API.
 pub use glam;
 
-pub use atmosphere::{AtmosphereModel, Falloff, MediumTerm, Phase, visible_disk_fraction};
+pub use atmosphere::{AtmosphereModel, Falloff, MediumScales, MediumTerm, Phase, WeatherScale, visible_disk_fraction};
 pub use celestial::{Celestial, Orbit, SkyPosition};
 pub use clock::{Calendar, SkyClock};
 pub use curve::KeyCurve;

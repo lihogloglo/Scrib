@@ -1645,3 +1645,4 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   version); (3) `ContentAdapter::mount` returns layers and record formats route by extension, so the native RON loader
   (A2) is just another adapter; (4) script limits live in the profile only, never the manifest; (5) `sf_mods` hands
   scripts a plain `ScriptPlan` and does not depend on `sf_script`.
+- 2026-10-13 (m6-f1): weather haze/dust on the atmosphere medium: `MediumTerm.weather` (`WeatherScale` None/Haze/Dust) replaces `weather_scaled`; `Weather::dust` + `dust_tint` scale an absorbing dust term in `AtmosphereModel::earth`; medium rebuilds are step- and time-limited (0.25 s). weather.md N1's "haze 2-3" is recalibrated: compressed worlds (1-5 km views) need haze ~20 (AOD ~0.18) for any aerial perspective; near fog at game distances belongs to analytic height fog (F2), not more haze.

@@ -212,7 +212,7 @@ fn prepare_frame(
         #[expect(clippy::cast_precision_loss, reason = "16 rows")]
         for (row, t) in u.transmittance.iter_mut().enumerate() {
             let s = (row as f32 / (T_ROWS - 1) as f32).powi(2);
-            let rgb = settings.atmosphere.transmittance(settings.observer_altitude, s.asin(), weather.0.haze, 24);
+            let rgb = settings.atmosphere.transmittance(settings.observer_altitude, s.asin(), &weather.0.medium(), 24);
             *t = rgb.extend(1.0);
         }
     }

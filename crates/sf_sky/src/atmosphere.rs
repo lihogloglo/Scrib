@@ -58,13 +58,79 @@ pub struct MediumTerm {
     pub absorption: Vec3,
     pub falloff: Falloff,
     pub phase: Phase,
-    /// Scaled by [`crate::Weather::haze`] (aerosols).
-    pub weather_scaled: bool,
+    /// Which weather input scales this term.
+    pub weather: WeatherScale,
+}
+
+/// The weather input that scales a [`MediumTerm`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WeatherScale {
+    /// Fixed (gases, ozone).
+    #[default]
+    None,
+    /// [`crate::Weather::haze`]: the background aerosols.
+    Haze,
+    /// [`crate::Weather::dust`], absorption tinted by
+    /// [`crate::Weather::dust_tint`]: dust, ash, smoke.
+    Dust,
+}
+
+/// The weather's multipliers on the medium ([`crate::Weather::medium`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediumScales {
+    pub haze: f32,
+    pub dust: f32,
+    pub dust_tint: Vec3,
+}
+
+impl Default for MediumScales {
+    /// A clear day: haze 1, no dust.
+    fn default() -> Self {
+        Self {
+            haze: 1.0,
+            dust: 0.0,
+            dust_tint: Vec3::ONE,
+        }
+    }
+}
+
+impl MediumScales {
+    /// A clear medium with this haze.
+    pub fn haze(haze: f32) -> Self {
+        Self {
+            haze,
+            ..Self::default()
+        }
+    }
+
+    /// The largest difference from `other` in any input, in units of
+    /// that input's `steps` (haze, dust, tint): rebuilding a medium's LUTs
+    /// is worth it at ≥ 1.
+    pub fn change(&self, other: &Self, steps: Vec3) -> f32 {
+        let d = Vec3::new(
+            (self.haze - other.haze).abs(),
+            (self.dust - other.dust).abs(),
+            (self.dust_tint - other.dust_tint).abs().max_element(),
+        );
+        (d / steps.max(Vec3::splat(f32::EPSILON))).max_element()
+    }
 }
 
 impl MediumTerm {
     pub fn extinction(&self) -> Vec3 {
         self.scattering + self.absorption
+    }
+
+    /// Scattering and absorption under the weather `scales`.
+    pub fn scaled(&self, scales: &MediumScales) -> (Vec3, Vec3) {
+        match self.weather {
+            WeatherScale::None => (self.scattering, self.absorption),
+            WeatherScale::Haze => (self.scattering * scales.haze, self.absorption * scales.haze),
+            WeatherScale::Dust => {
+                let d = scales.dust.max(0.0);
+                (self.scattering * d, self.absorption * scales.dust_tint.max(Vec3::ZERO) * d)
+            }
+        }
     }
 }
 
@@ -87,12 +153,23 @@ impl Default for AtmosphereModel {
 }
 
 impl AtmosphereModel {
-    /// Earth: Rayleigh, Mie and ozone terms, 100 km thick.
+    /// Earth: Rayleigh, Mie and ozone terms, 100 km thick, plus a dust term
+    /// that is empty until the weather sets [`crate::Weather::dust`].
     ///
     /// Mie uses the literature split (scattering 3.996e-6, absorption
     /// 0.444e-6, single-scattering albedo 0.9). Bevy 0.20's
     /// `ScatteringMedium::earth` has the two swapped; extinction, and so
     /// transmittance, is the same either way, but its sun halo is ~9× dimmer.
+    ///
+    /// Dust (weather.md N2), per unit of `dust`: extinction ~9.5e-5 /m at
+    /// the ground (Koschmieder visibility ~40 km alone, ~9 km at 4), scale
+    /// height 2 km. Single-scattering albedo 0.87 / 0.81 / 0.71 (R/G/B):
+    /// mineral dust and volcanic ash absorb blue most (AERONET dust
+    /// climatologies; Bevy's `ScatteringMedium::mars` dust has the same
+    /// trend). Ours is darker than measured desert dust (~0.93-0.97) for a
+    /// grey-brown ash look: the scattered light turns brown and the sun dims
+    /// and warms. Asymmetry 0.7, less forward than background haze (larger,
+    /// rougher particles).
     pub fn earth() -> Self {
         Self {
             inner_radius: 6_360_000.0,
@@ -104,14 +181,14 @@ impl AtmosphereModel {
                     absorption: Vec3::ZERO,
                     falloff: Falloff::Exponential { scale: 8.0 / 60.0 },
                     phase: Phase::Rayleigh,
-                    weather_scaled: false,
+                    weather: WeatherScale::None,
                 },
                 MediumTerm {
                     scattering: Vec3::splat(3.996e-6),
                     absorption: Vec3::splat(0.444e-6),
                     falloff: Falloff::Exponential { scale: 1.2 / 60.0 },
                     phase: Phase::Mie { asymmetry: 0.8 },
-                    weather_scaled: true,
+                    weather: WeatherScale::Haze,
                 },
                 MediumTerm {
                     scattering: Vec3::ZERO,
@@ -121,20 +198,28 @@ impl AtmosphereModel {
                         width: 0.3,
                     },
                     phase: Phase::Isotropic,
-                    weather_scaled: false,
+                    weather: WeatherScale::None,
+                },
+                // Dust and ash (weather.md N2): empty until `Weather::dust` > 0.
+                MediumTerm {
+                    scattering: Vec3::new(8.0e-5, 7.6e-5, 7.0e-5),
+                    absorption: Vec3::new(1.2e-5, 1.8e-5, 2.8e-5),
+                    falloff: Falloff::Exponential { scale: 0.02 },
+                    phase: Phase::Mie { asymmetry: 0.7 },
+                    weather: WeatherScale::Dust,
                 },
             ],
         }
     }
 
     /// Total extinction per meter at `altitude` meters above the ground.
-    pub fn extinction_at(&self, altitude: f32, haze: f32) -> Vec3 {
+    pub fn extinction_at(&self, altitude: f32, scales: &MediumScales) -> Vec3 {
         let p = 1.0 - (altitude / (self.outer_radius - self.inner_radius)).clamp(0.0, 1.0);
         self.terms
             .iter()
             .map(|t| {
-                let scale = if t.weather_scaled { haze } else { 1.0 };
-                t.extinction() * t.falloff.sample(p) * scale
+                let (scattering, absorption) = t.scaled(scales);
+                (scattering + absorption) * t.falloff.sample(p)
             })
             .sum()
     }
@@ -142,7 +227,7 @@ impl AtmosphereModel {
     /// Transmittance from a point `altitude` meters up toward a direction
     /// `elevation` radians above the horizon, out to space. Zero when the
     /// ray hits the planet. Midpoint quadrature with `samples` steps.
-    pub fn transmittance(&self, altitude: f32, elevation: f32, haze: f32, samples: u32) -> Vec3 {
+    pub fn transmittance(&self, altitude: f32, elevation: f32, scales: &MediumScales, samples: u32) -> Vec3 {
         let r = self.inner_radius + altitude.max(0.0);
         let mu = elevation.sin();
         // Ray-sphere: distance to the ground and to the top.
@@ -161,7 +246,7 @@ impl AtmosphereModel {
             let t = (i as f32 + 0.5) * dt;
             // Radius at distance t along the ray (law of cosines).
             let ri = (r * r + t * t + 2.0 * r * t * mu).sqrt();
-            depth += self.extinction_at(ri - self.inner_radius, haze) * dt;
+            depth += self.extinction_at(ri - self.inner_radius, scales) * dt;
         }
         (-depth).exp()
     }

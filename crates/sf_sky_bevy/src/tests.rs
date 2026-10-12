@@ -163,3 +163,83 @@ fn a_fading_shadow_splits_the_light_without_changing_its_power() {
     // Only one map at a time: the second light waits.
     assert!(!shadowed(&app, lights[1]).0);
 }
+
+#[test]
+fn medium_rebuilds_on_weather_steps_rate_limited() {
+    let mut app = app(12.0);
+    app.update();
+    let rebuilds = |app: &App| app.world().resource::<MediumStats>().rebuilds;
+    let first = rebuilds(&app);
+    assert_eq!(first, 1, "built once at startup");
+    // Below a step: no rebuild.
+    app.world_mut().resource_mut::<WeatherState>().0.haze += 0.01;
+    app.update();
+    assert_eq!(rebuilds(&app), first);
+    // A dust storm arrives, but the last build is too recent.
+    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 1.0e6;
+    app.world_mut().resource_mut::<WeatherState>().0.dust = 4.0;
+    app.update();
+    assert_eq!(rebuilds(&app), first);
+    // Once the interval allows it, one rebuild with the new dust.
+    app.world_mut().resource_mut::<SkyRenderOptions>().medium_min_interval = 0.0;
+    app.update();
+    app.update();
+    assert_eq!(rebuilds(&app), first + 1);
+    let stats = *app.world().resource::<MediumStats>();
+    assert!((stats.built.dust - 4.0).abs() < 1e-6);
+    // The dust term is in the GPU medium only while there is dust.
+    let terms = |app: &App| {
+        let handle = app.world().resource::<MediumState>().handle.clone();
+        app.world().resource::<Assets<ScatteringMedium>>().get(&handle).expect("medium").terms.len()
+    };
+    assert_eq!(terms(&app), 4);
+    app.world_mut().resource_mut::<WeatherState>().0.dust = 0.0;
+    app.update();
+    assert_eq!(terms(&app), 3);
+}
+
+/// The CPU half of a medium rebuild: the LUT bake Bevy's
+/// `GpuScatteringMedium::prepare_asset` runs on the render thread (same
+/// loops, public sampling API), for the default 256² resolution.
+/// `cargo test --release -p sf_sky_bevy medium_rebuild_cost -- --ignored --nocapture`
+#[test]
+#[ignore = "timing; run in release"]
+#[expect(clippy::cast_precision_loss, reason = "LUT indices")]
+fn medium_rebuild_cost() {
+    use bevy_color::ColorToComponents;
+    use bevy_math::Vec4;
+    let model = sf_sky::AtmosphereModel::earth();
+    for (label, scales) in [
+        ("clear", MediumScales::haze(20.0)),
+        ("dust", MediumScales { dust: 4.0, ..MediumScales::haze(24.0) }),
+    ] {
+        let runs = 20;
+        let start = std::time::Instant::now();
+        let mut sink = 0.0;
+        for _ in 0..runs {
+            let medium = build_medium(&model, &scales, 256);
+            let (nf, np) = (medium.falloff_resolution, medium.phase_resolution);
+            let mut density = Vec4::ZERO;
+            for i in 0..nf {
+                let f = (i as f32 + 0.5) / nf as f32;
+                for t in &medium.terms {
+                    density += (t.absorption + t.scattering).extend(0.0) * t.falloff.sample(f);
+                }
+            }
+            let mut scattering = Vec4::ZERO;
+            for raw in 0..nf * np {
+                let f = ((raw % np) as f32 + 0.5) / nf as f32;
+                let s = 2.0 * ((raw / np) as f32 + 0.5) / np as f32 - 1.0;
+                let neg_l_dot_v = s.signum() * (1.0 - (1.0 - s.abs()).powf(2.0));
+                for t in &medium.terms {
+                    if let Some(p) = t.phase.sample(neg_l_dot_v) {
+                        scattering += (t.scattering * p.to_vec3() * t.falloff.sample(f)).extend(0.0);
+                    }
+                }
+            }
+            sink += density.x + scattering.x;
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+        println!("medium rebuild CPU ({label}, {} terms): {ms:.2} ms (sink {sink:e})", build_medium(&model, &scales, 256).terms.len());
+    }
+}

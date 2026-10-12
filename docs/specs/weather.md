@@ -939,6 +939,20 @@ because the medium is a clean Earth sky and Vvardenfell views are ≤ 10 km.
 - **N2.** Add an absorbing dust term to `AtmosphereModel` (a brown-grey Mie-like term with absorption,
   low scale height) so ash regions and storms tint the haze. The weather scales it.
   sky-lighting.md's `AtmosphereModel.terms` already supports extra terms.
+- **As built (M6 F1, m6-f1, 2026-10-13).** `Weather` gained `dust` and `dust_tint`; `MediumTerm.weather_scaled`
+  became `weather: WeatherScale { None, Haze, Dust }`; `Weather::medium()` → `MediumScales` feeds both the GPU medium
+  and the CPU transmittance. `AtmosphereModel::earth()` has a 4th term, dust (per unit: extinction ~9.5e-5 /m at the
+  ground, scale height 2 km, single-scattering albedo 0.87/0.81/0.71, Mie g 0.7); `build_medium` drops empty terms.
+  Rebuilds: a step (haze 0.05, dust 0.02, tint 0.02) and at most every `SkyRenderOptions::medium_min_interval`
+  (0.25 s real time); `MediumStats` counts them. Cost: GPU unchanged (same LUT sizes and passes; terms are baked into
+  the LUTs); a rebuild is a ~2.8 ms CPU LUT bake at 256² on the render thread (release, `medium_rebuild_cost`,
+  shared machine) plus a 1 MB upload, so ≤ 4 short hitches per second while the weather moves, none when it is still.
+  F2/WE3: lower the phase LUT resolution or bake off-thread if the hitch shows in time-lapses.
+  **Calibration changed:** "2-3 on clear days" assumed Earth-scale views. Morrowind's far field is 1-5 km away, where
+  haze 2-3 is invisible (shots/f1/redmtn_old vs clear); the app now uses haze 20 for clear (aerosol optical depth
+  ~0.18, a typical clear continental day), 60 foggy, dust 4 for ash storms (weather-adapter.md "Haze and dust"). Near
+  fog at game distances stays F2's analytic height fog, not more haze. Known issue: a purple/white seam on the sea
+  horizon at noon with dust (sky-view LUT vs aerial LUT; visual check FG-1).
 - **N3 (optional prototype, owner's eyes only).** God rays now with Bevy's own volumetrics:
   `VolumetricLight` on the sun, `VolumetricFog { jitter, step_count: 32 }` on the exterior camera, and
   one camera-following `FogVolume` (≈ 300×60×300 m, low density). Megalophobia found large boxes go
@@ -1001,7 +1015,7 @@ and over-budget features are cut per preset, not the frame.
    from `FarFieldSettings`.
 2. **Data model**: `Wind` moves to `sf_wind` (re-exported from `sf_sky`, so callers don't change).
    "M6 swaps its analytic gusts for a sampled field" now points to weather.md.
-3. **Weather hook**: `Weather` gains `dust: f32` (absorbing aerosol term scale, N2). `haze` is driven by
+3. **Weather hook** (applied in code by F1, 2026-10-13): `Weather` gains `dust: f32` (absorbing aerosol term scale, N2). `haze` is driven by
    `sf_weather`.
 4. **Interfaces**: the sun/moon entities get `DirectionalLightTexture` (cloud shadows) and, optionally,
    `VolumetricLight` (prototype N3). `SkyPlugin` must keep them when re-spawning lights. The light's

@@ -40,12 +40,12 @@ use bevy_light::{
 };
 use bevy_math::{Dir3, Vec3};
 use bevy_pbr::AtmosphereSettings;
-use bevy_time::Time;
+use bevy_time::{Real, Time};
 use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_transform::TransformSystems;
 
 pub use sf_sky;
-use sf_sky::{RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
+use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
@@ -90,6 +90,11 @@ pub struct SkyRenderOptions {
     pub ambient_color: Color,
     /// Resolution of the medium's density and phase LUTs.
     pub medium_resolution: u32,
+    /// Shortest time between two rebuilds of the medium's LUTs, seconds of
+    /// real time (weather.md N1): a blending or time-lapsed weather changes
+    /// haze and dust every frame, a rebuild costs a CPU LUT bake on the
+    /// render thread and an upload.
+    pub medium_min_interval: f32,
     /// Every `PointLight` gets a [`PointLightProxy`] unless it has
     /// [`NoLightProxy`].
     pub auto_light_proxies: bool,
@@ -121,6 +126,7 @@ impl Default for SkyRenderOptions {
             },
             ambient_color: Color::linear_rgb(0.55, 0.65, 1.0),
             medium_resolution: 256,
+            medium_min_interval: 0.25,
             auto_light_proxies: true,
             default_proxy_radius: 0.08,
             auto_ray_tracing_meshes: true,
@@ -210,6 +216,7 @@ impl Plugin for SkyPlugin {
             .init_resource::<CurrentSky>()
             .init_resource::<ActiveRenderPath>()
             .init_resource::<MediumState>()
+            .init_resource::<MediumStats>()
             .configure_sets(
                 Update,
                 (SkySystems::Clock, SkySystems::RenderPath, SkySystems::Apply).chain(),
@@ -255,18 +262,35 @@ impl Plugin for SkyPlugin {
 #[derive(Resource, Default)]
 struct MediumState {
     handle: Handle<ScatteringMedium>,
-    built_from: Option<(sf_sky::AtmosphereModel, f32)>,
+    built_from: Option<(sf_sky::AtmosphereModel, MediumScales)>,
+    /// Real time of the last rebuild, seconds.
+    built_at: f64,
 }
 
-/// Haze changes smaller than this don't rebuild the medium's LUTs.
-const HAZE_REBUILD_STEP: f32 = 0.02;
+/// How often the medium was rebuilt (weather.md N1: rebuilds are rate
+/// limited; `sf_diag` and benches read this).
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct MediumStats {
+    /// Rebuilds since startup, the first build included.
+    pub rebuilds: u32,
+    /// The weather inputs of the medium on the GPU.
+    pub built: MediumScales,
+}
 
-fn build_medium(model: &sf_sky::AtmosphereModel, haze: f32, resolution: u32) -> ScatteringMedium {
-    let terms = model.terms.iter().map(|t| {
-        let scale = if t.weather_scaled { haze } else { 1.0 };
-        ScatteringTerm {
-            absorption: t.absorption * scale,
-            scattering: t.scattering * scale,
+/// Weather changes smaller than this (haze, dust, dust tint) don't rebuild
+/// the medium's LUTs: below what the eye sees in a 10 km view.
+const MEDIUM_REBUILD_STEPS: Vec3 = Vec3::new(0.05, 0.02, 0.02);
+
+fn build_medium(model: &sf_sky::AtmosphereModel, scales: &MediumScales, resolution: u32) -> ScatteringMedium {
+    let terms = model.terms.iter().filter_map(|t| {
+        let (scattering, absorption) = t.scaled(scales);
+        // Empty terms (no dust today) only cost LUT bake time.
+        if scattering.max_element() <= 0.0 && absorption.max_element() <= 0.0 {
+            return None;
+        }
+        Some(ScatteringTerm {
+            absorption,
+            scattering,
             falloff: match t.falloff {
                 sf_sky::Falloff::Linear => Falloff::Linear,
                 sf_sky::Falloff::Exponential { scale } => Falloff::Exponential { scale },
@@ -277,11 +301,12 @@ fn build_medium(model: &sf_sky::AtmosphereModel, haze: f32, resolution: u32) -> 
                 sf_sky::Phase::Rayleigh => PhaseFunction::Rayleigh,
                 sf_sky::Phase::Mie { asymmetry } => PhaseFunction::Mie { asymmetry },
             },
-        }
+        })
     });
     ScatteringMedium::new(resolution, resolution, terms).with_label("sf_sky")
 }
 
+#[expect(clippy::too_many_arguments, reason = "system parameters")]
 fn spawn_sky(
     mut commands: Commands,
     config: Res<SkyConfig>,
@@ -289,6 +314,7 @@ fn spawn_sky(
     weather: Res<WeatherState>,
     mut media: ResMut<Assets<ScatteringMedium>>,
     mut medium: ResMut<MediumState>,
+    mut stats: ResMut<MediumStats>,
     existing: Query<(Has<SunLight>, Has<SkyAtmosphere>)>,
 ) {
     // Lights or an atmosphere the app spawned itself are kept.
@@ -297,12 +323,11 @@ fn spawn_sky(
         .fold((false, false), |(s, a), (sun, atm)| (s || sun, a || atm));
     let settings = &config.0;
     let model = &settings.atmosphere;
-    medium.handle = media.add(build_medium(
-        model,
-        weather.0.haze,
-        options.medium_resolution,
-    ));
-    medium.built_from = Some((model.clone(), weather.0.haze));
+    let scales = weather.0.medium();
+    medium.handle = media.add(build_medium(model, &scales, options.medium_resolution));
+    medium.built_from = Some((model.clone(), scales));
+    stats.rebuilds += 1;
+    stats.built = scales;
     if !has_atmosphere {
         commands.spawn((
             SkyAtmosphere,
@@ -380,26 +405,37 @@ fn evaluate_sky(
     sky.0 = config.0.evaluate(&clock.0, &weather.0);
 }
 
-/// Rebuilds the medium when the atmosphere description or the haze change.
+/// Rebuilds the medium when the atmosphere description changes, or when the
+/// weather's haze or dust moved by a step and the last rebuild is at least
+/// [`SkyRenderOptions::medium_min_interval`] old.
+#[expect(clippy::too_many_arguments, reason = "system parameters")]
 fn update_medium(
     config: Res<SkyConfig>,
     options: Res<SkyRenderOptions>,
     weather: Res<WeatherState>,
+    time: Res<Time<Real>>,
     mut medium: ResMut<MediumState>,
+    mut stats: ResMut<MediumStats>,
     mut media: ResMut<Assets<ScatteringMedium>>,
     mut atmospheres: Query<&mut Atmosphere, With<SkyAtmosphere>>,
 ) {
     let model = &config.0.atmosphere;
-    let haze = weather.0.haze;
+    let scales = weather.0.medium();
+    let now = time.elapsed_secs_f64();
     let stale = match &medium.built_from {
-        Some((built, built_haze)) => {
-            built != model || (built_haze - haze).abs() >= HAZE_REBUILD_STEP
+        Some((built, built_scales)) => {
+            built != model
+                || (scales.change(built_scales, MEDIUM_REBUILD_STEPS) >= 1.0
+                    && now - medium.built_at >= f64::from(options.medium_min_interval))
         }
         None => true,
     };
     if stale && let Some(mut asset) = media.get_mut(&medium.handle) {
-        *asset = build_medium(model, haze, options.medium_resolution);
-        medium.built_from = Some((model.clone(), haze));
+        *asset = build_medium(model, &scales, options.medium_resolution);
+        medium.built_from = Some((model.clone(), scales));
+        medium.built_at = now;
+        stats.rebuilds += 1;
+        stats.built = scales;
     }
     if config.is_changed() {
         for mut atmosphere in &mut atmospheres {

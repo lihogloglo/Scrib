@@ -199,7 +199,7 @@ impl SkySettings {
             transmittance: self.atmosphere.transmittance(
                 self.observer_altitude,
                 pos.elevation,
-                weather.haze,
+                &weather.medium(),
                 TRANSMITTANCE_SAMPLES,
             ) * visible_disk_fraction(pos.elevation, horizon, angular_size),
             casts_shadows: false,
@@ -264,7 +264,7 @@ impl SkySettings {
                 transmittance: self.atmosphere.transmittance(
                     self.observer_altitude,
                     position.elevation,
-                    weather.haze,
+                    &weather.medium(),
                     TRANSMITTANCE_SAMPLES,
                 ) * visible_disk_fraction(position.elevation, horizon, moon.angular_size),
                 angular_size: moon.angular_size,
