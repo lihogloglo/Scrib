@@ -1200,6 +1200,41 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   it: that drew bands), with 2x empty-space steps and a lighting LOD (2 light samples where T < 0.3
   or past 15 % of the reach). Every cloud pass is a `RenderDiagnosticsPlugin` span: per-pass GPU ms
   are the cloud A/B measure, not frame deltas (frames are CPU-bound on the shared machine).
+- **2026-10-13 (m5-spec; specs/scripting.md, specs/mods.md, bevyrrowind scripting-adapter.md; docs only, owner
+  confirmation pending on the items marked "owner")**: M5 scripting and mod pipeline.
+  - **Runtime: Luau through `mlua` 0.12.2 directly** (Luau 0.740 via `luau0-src` 0.22.0), in a Bevy-free `sf_script`
+    plus thin `sf_script_bevy`; features `luau`, `serialize`, `send` (confirmed by the L1 spike), not `async`, native
+    codegen off by default. Not adopted: `bevy_mod_scripting` 0.22 (on Bevy 0.20, but reflection-first against §6.2,
+    "expect significant API changes", mlua 0.11), `bevy_scriptum` (Bevy 0.18), `piccolo` (unmaintained), `rhai` (no
+    modding ecosystem), WASM (heavy; stays §6.1's "later"). Owner.
+  - **Challenges §6.2 "each mod gets its own environment": each mod gets its own Luau state** (Factorio's model), for
+    per-mod memory limits, CPU accounting, reload and later parallelism; mods talk through next-slot events and
+    `interfaces` with copied plain data. Exception: an adapter may declare one shared context for translated legacy
+    scripts (they address each other by ID across plugins). Owner.
+  - **Execution**: exclusive script slots (`Input`, `Update`, `Ui`), synchronous API with immediate writes,
+    spawn/despawn flushed at handler end, script-to-script events delivered next slot in load order. No saved
+    coroutines: waits are named timers with plain-data payloads (OpenMW's registered timer callbacks; avoids Papyrus's
+    suspended-stack save bloat). Script handles are `sf_world::PlacementId`s; entity-script state lives in the
+    placement overlay. Mod-shipped bytecode is never loaded (Luau doesn't verify bytecode).
+  - **API**: a registry of modules with Luau type declarations (generates `sf.d.luau` for luau-lsp); require-by-string
+    aliases `@sf/*` (framework), `@<adapter>/*` (content pack), `@<dependency>/*` (library code loaded into the
+    requiring state). Framework API is `0.x` until M7's RPG modules exist (owner); content-pack APIs version through a
+    dependency on the content-pack mod. ui.md's placeholder `require("sf.ui")` becomes `require("@sf/ui")`.
+  - **Limits**: per-call watchdog through Luau's interrupt (50 ms release), suspension after 3 aborts or 30 errors a
+    minute, 64 MiB per mod state (owner: defaults); budget ≤ 1 ms of script time per frame for a typical load.
+  - **§6.3 confirmed with evidence**: MWScript is translated to Luau at bake time (1,231 script texts, 981 KB, plus
+    17,144 dialogue results; control flow maps 1:1; one runtime for sandbox/limits/saves/reload), and the same Bevy-free
+    translator runs live for the dev console. Local legacy scripts tick only in MWScript's active cells, independent of
+    render streaming.
+  - **Mods**: manifest gains `[optional]`, `[conflicts]`, `[ui]`; `profiles/<name>.toml`; one mod = one record source,
+    one VFS group, one script context; native record files in RON with `set`/`merge`/`remove`/`append`, and conflicts
+    become **field-level** (disjoint patches merge). A profile fingerprint in the bake manifest decides "bake needed".
+  - **Challenges §5.1 `sf_vfs` "read-only and lock-free after the index is built"**: still true per snapshot, but
+    hot reload rebuilds the index and swaps the shared `Arc<Vfs>` atomically (readers never block). Dev builds may
+    re-bake an affected product during play (exception to "nothing bakes during play", dev/mod-author mode only; owner).
+  - Minimal `sf_rpg` data (inventory stacks, quest store) is pulled into M5 so scripts and the inventory slice use real
+    data; M7 extends it (owner). Ecosystem check 2026-10-13: `bevy_enhanced_input` 0.26, `leafwing-input-manager` 0.21,
+    `bevy_flair` 0.8.1, `bevy_fluent` 0.15, `bevy_ui_anchor` 0.12 are still on Bevy 0.19.
 
 ## 11. Open decisions
 

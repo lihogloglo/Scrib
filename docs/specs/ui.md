@@ -303,7 +303,7 @@ pub struct UiCommands<'w, 's> { /* push/pop/replace screen on its layer, open wi
 Luau surface (placeholder until `sf_script`'s API rules apply; `api_version`-gated):
 
 ```lua
-local ui = require("sf.ui")
+local ui = require("@sf/ui")   -- require-by-string alias (scripting.md "Modules and require")
 ui.slot("inventory.columns"):add{ id = "value_per_weight", header = "col-value-weight",
   width = "5rem", sort = "number", value = function(item) return item.value / math.max(item.weight, 0.01) end }
 local compass = ui.create{ layer = "hud", scene = "ui/my_mod/compass.bsn", class = "compass" }
