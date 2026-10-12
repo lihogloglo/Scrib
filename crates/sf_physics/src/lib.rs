@@ -25,7 +25,7 @@ mod probe;
 mod shape;
 mod world;
 
-pub use body::{BodyDesc, BodyId, BodyKind, PhysicsEvent, PhysicsParams};
+pub use body::{BodyDesc, BodyId, BodyKind, ITEM_DAMPING, PhysicsEvent, PhysicsParams};
 pub use joint::{Drive, JointDesc, JointId, JointKind, JointSolver};
 pub use layer::Layer;
 pub use probe::PhysicsProbe;

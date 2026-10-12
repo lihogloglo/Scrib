@@ -6,14 +6,24 @@
 //!   LOD0 (`mesh.rest` for models the plain cook skips). Mods can ship
 //!   `bodies/<model path>.sfbody`, which wins.
 //! - `items.check`, subject a `world.page` subject: a **settle test** of the
-//!   page's items. Every item becomes an awake body over the static collision
-//!   and terrain around it, the world runs [`CheckSettings::settle_time`],
-//!   and an item that dropped more than [`CheckSettings::support_tolerance`]
-//!   is unsupported: the runtime holds it fixed until grabbed. The same
-//!   idea as an editor's "simulate and keep" settle pass (UE "Keep Simulation
+//!   page's items. Each item, lowest first, becomes an awake body over the
+//!   static collision and terrain around it and the items already tested
+//!   (fixed where placed), runs for at most [`CheckSettings::settle_time`],
+//!   and an item whose center and lowest point both dropped more than
+//!   [`CheckSettings::support_tolerance`] is unsupported (a topple or a rock
+//!   in place is not a fall): the runtime holds it fixed until grabbed. The same idea
+//!   as an editor's "simulate and keep" settle pass (UE "Keep Simulation
 //!   Changes", the Creation Kit's Havok Sim), run as a check instead of a fix.
 //!   Items that rose or slid are reported as overlaps (they started inside
 //!   something and depenetrated).
+//!   A static whose collision **encloses** an item (the authored proxy is one
+//!   box around a whole bookshelf, so its items sit inside it: see
+//!   [`MeshShape::encloses`]) is tested with its `support.cook` mesh instead
+//!   and listed in [`ItemChecks::supports`]; the runtime gives those
+//!   placements the same mesh. Characters keep the proxy (`collision.cook`).
+//! - `support.cook`, subject a model path: the `mesh.cook` LOD0 as a
+//!   [`CollisionMesh`] (empty for models the plain cook skips): the "complex"
+//!   collision of a static that items rest in (UE simple vs complex collision).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -21,7 +31,7 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use serde::{Deserialize, Serialize};
 use sf_bake::{BakeError, Baker, PlanCx, ProductKey, RunCx, Step};
-use sf_controller::CollisionMesh;
+use sf_controller::{CollisionMesh, SurfaceId};
 use sf_controller::steps::COLLISION_COOK;
 use sf_coords::{WorldPos, WorldTransform};
 use sf_model::Cooked;
@@ -36,9 +46,10 @@ use crate::{BodyDesc, BodyKind, HeightShape, Layer, MeshShape, PhysicsParams, Ph
 
 pub const BODY_COOK: &str = "body.cook";
 pub const ITEMS_CHECK: &str = "items.check";
+pub const SUPPORT_COOK: &str = "support.cook";
 
-/// Version of the `items.check` product format.
-pub const ITEMS_FORMAT: u32 = 1;
+/// Version of the `items.check` product format (2: `supports`).
+pub const ITEMS_FORMAT: u32 = 2;
 const ITEMS_MAGIC: [u8; 4] = *b"SFIC";
 
 fn step_error(step: &str, subject: &str, e: impl std::fmt::Display) -> BakeError {
@@ -165,11 +176,14 @@ pub struct CheckSettings {
     pub reach: f32,
     /// Half size of the terrain patch under each item, meters (0.5 m samples).
     pub terrain_patch: f32,
+    /// Initial overlap tolerated per side, meters: each item is tested
+    /// shrunk by this much (see [`settle`]).
+    pub overlap_allowance: f32,
 }
 
 impl Default for CheckSettings {
     fn default() -> Self {
-        Self { settle_time: 0.5, support_tolerance: 0.05, reach: 1.0, terrain_patch: 2.0 }
+        Self { settle_time: 0.5, support_tolerance: 0.05, reach: 1.0, terrain_patch: 2.0, overlap_allowance: 0.01 }
     }
 }
 
@@ -192,6 +206,8 @@ pub struct ItemCheck {
     /// `PlacementId` bits.
     pub id: u128,
     pub hold: Hold,
+    /// How far the item fell: the smaller of its center's and its bounds'
+    /// lowest corner's drops (a topple or a rock in place is not a fall).
     pub drop: f32,
     pub rise: f32,
     /// Horizontal displacement.
@@ -212,6 +228,9 @@ pub struct ItemChecks {
     /// Statics and terrain patches the test inserted.
     pub statics: u32,
     pub terrain_patches: u32,
+    /// Statics whose collision encloses an item (`PlacementId` bits, sorted):
+    /// tested, and simulated at runtime, with their `support.cook` mesh.
+    pub supports: Vec<u128>,
 }
 
 impl ItemChecks {
@@ -241,8 +260,35 @@ pub struct ItemsCheckStep {
 }
 
 impl ItemsCheckStep {
+    /// Registers `items.check` and the `support.cook` it requests.
     pub fn register(rules: Arc<dyn ItemsRules>, settings: CheckSettings, baker: &mut Baker) {
         baker.register(Self { rules, settings });
+        baker.register(SupportCookStep);
+    }
+}
+
+/// `support.cook`: a static model's render LOD0 as collision (module docs).
+pub struct SupportCookStep;
+
+impl Step for SupportCookStep {
+    fn id(&self) -> &'static str {
+        SUPPORT_COOK
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
+        cx.product(MeshCookStep::ID, subject);
+        Ok(())
+    }
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        let fail = |e: &dyn std::fmt::Display| step_error(SUPPORT_COOK, subject, e);
+        let cooked = Cooked::from_bytes(&cx.product(MeshCookStep::ID, subject)?).map_err(|e| fail(&e))?;
+        let Some((positions, triangles)) = lod0(&cooked).map_err(|e| fail(&e))? else {
+            return Ok(CollisionMesh::default().to_bytes());
+        };
+        let surfaces = vec![SurfaceId::DEFAULT; triangles.len()];
+        Ok(CollisionMesh { positions: positions.iter().map(Vec3::to_array).collect(), triangles, surfaces }.to_bytes())
     }
 }
 
@@ -278,43 +324,115 @@ pub struct SettleItem {
     pub always_hold: bool,
 }
 
-/// Inserts `items` awake into `world` (which holds the statics and terrain
-/// around them), steps it for [`CheckSettings::settle_time`] and reports
-/// each item's displacement and hold decision, in order.
+/// The test pose of an item: its shape shrunk uniformly about its bounds'
+/// center so that its largest extent loses `allowance` per side (scale at
+/// least [`MIN_SHRINK`]). Vanilla-style clutter often starts a centimeter
+/// inside its neighbors; the shrink keeps that from shoving items off their
+/// shelves in the test (a negative contact offset, as `PhysX`'s rest offset).
+fn shrunk(pose: WorldTransform, shape: &BodyShape, allowance: f32) -> WorldTransform {
+    let (lo, hi) = (Vec3::from_array(shape.aabb[0]), Vec3::from_array(shape.aabb[1]));
+    let extent = ((hi - lo) * pose.scale.abs()).max_element();
+    if allowance <= 0.0 || extent <= 0.0 {
+        return pose;
+    }
+    let k = (1.0 - 2.0 * allowance / extent).max(MIN_SHRINK);
+    let center = (lo + hi) * 0.5 * pose.scale;
+    WorldTransform { pos: pose.pos.offset(pose.rotation * (center * (1.0 - k))), rotation: pose.rotation, scale: pose.scale * k }
+}
+
+/// Smallest uniform scale [`shrunk`] applies.
+const MIN_SHRINK: f32 = 0.8;
+
+/// World Y of the lowest corner of an item's bounds (settle order).
+fn bottom(it: &SettleItem) -> f64 {
+    it.shape.as_ref().map_or(f64::MAX, |shape| lowest(&it.pose, shape))
+}
+
+/// How far an item fell from `start` to `end`: the smaller of its center's
+/// and its bounds' lowest corner's drops. A book tipping over about its
+/// bottom edge drops its center but not its lowest point; a bowl rocking in
+/// place dips a bounds corner but not its center; a falling item drops both.
+fn fell(start: &WorldTransform, end: &WorldTransform, shape: &BodyShape) -> f32 {
+    #[allow(clippy::cast_possible_truncation)]
+    let low = (lowest(start, shape) - lowest(end, shape)) as f32;
+    low.min(-start.pos.delta_f32(end.pos).y)
+}
+
+/// World Y of the lowest corner of a shape's bounds box at `pose`.
+fn lowest(pose: &WorldTransform, shape: &BodyShape) -> f64 {
+    let (lo, _) = placed_bounds(pose.pos, pose, Vec3::from_array(shape.aabb[0]), Vec3::from_array(shape.aabb[1]));
+    pose.pos.to_f64().y + f64::from(lo.y)
+}
+
+/// Settles `items` one at a time, lowest first, in `world` (which holds the
+/// statics and terrain around them), and reports each item's displacement
+/// and hold decision, in input order.
+///
+/// Each item runs alone as an awake body for at most
+/// [`CheckSettings::settle_time`] (less once it is at rest or has clearly
+/// dropped), shrunk by [`CheckSettings::overlap_allowance`]; then it stays
+/// in the world as a fixed body at its placed pose, so the items above can
+/// rest on it, as they do at runtime, where every item starts at its placed
+/// pose (asleep, or fixed when held). Settling everything at once instead
+/// lets interpenetrating neighbors shove each other off shelves and tables,
+/// which flagged a third of a vanilla install's clutter (ROADMAP M4 P3/P4).
 pub fn settle(world: &mut PhysicsWorld, items: &[SettleItem], settings: &CheckSettings) -> Vec<ItemCheck> {
-    let bodies: Vec<_> = items
-        .iter()
-        .map(|it| {
-            let shape = it.shape.clone()?;
-            Some(world.insert(&BodyDesc::new(BodyKind::Dynamic { asleep: false }, it.pose, ShapeRef::Body(shape), Layer::PROP)))
-        })
-        .collect();
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let steps = (settings.settle_time / world.params().dt).ceil() as usize;
-    world.refresh_queries();
-    for _ in 0..steps {
-        world.step();
+    let bottoms: Vec<f64> = items.iter().map(bottom).collect();
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by(|&a, &b| bottoms[a].total_cmp(&bottoms[b]).then(a.cmp(&b)));
+    let mut out: Vec<ItemCheck> =
+        items.iter().map(|it| ItemCheck { id: it.id, hold: Hold::NoShape, drop: 0.0, rise: 0.0, shift: 0.0 }).collect();
+    for i in order {
+        let it = &items[i];
+        let Some(shape) = it.shape.clone() else { continue };
+        let start = shrunk(it.pose, &shape, settings.overlap_allowance);
+        let body = world.insert(&BodyDesc::new(BodyKind::Dynamic { asleep: false }, start, ShapeRef::Body(shape.clone()), Layer::PROP));
+        let mut still = 0;
+        for _ in 0..steps {
+            world.step();
+            let Some(end) = world.pose(body) else { break };
+            if fell(&start, &end, &shape) > settings.support_tolerance {
+                break;
+            }
+            let (v, w) = world.velocity(body).unwrap_or_default();
+            still = if v.length() < 0.01 && w.length() < 0.05 { still + 1 } else { 0 };
+            if still >= 5 {
+                break;
+            }
+        }
+        drop(world.drain_events());
+        let end = world.pose(body).unwrap_or(start);
+        world.remove(body);
+        world.insert(&BodyDesc::fixed(it.pose, ShapeRef::Body(shape.clone()), Layer::PROP));
+        let d = start.pos.delta_f32(end.pos);
+        let drop = fell(&start, &end, &shape).max(0.0);
+        let (rise, shift) = (d.y.max(0.0), Vec3::new(d.x, 0.0, d.z).length());
+        let hold = if it.always_hold {
+            Hold::Rules
+        } else if drop > settings.support_tolerance {
+            Hold::Unsupported
+        } else {
+            Hold::No
+        };
+        out[i] = ItemCheck { id: it.id, hold, drop, rise, shift };
     }
     drop(world.drain_events());
-    items
+    out
+}
+
+/// Whether a static's collision `shape` (placed at `t`, world `bounds` in the
+/// anchor's frame) encloses any of the item `centers` ([`MeshShape::encloses`]).
+fn encloses_any(shape: &MeshShape, anchor: WorldPos, t: &WorldTransform, bounds: (Vec3, Vec3), centers: &[Vec3]) -> bool {
+    let origin = anchor.delta_f32(t.pos);
+    let inverse = t.rotation.inverse();
+    let scale = t.scale.abs().max(Vec3::splat(1e-6));
+    let down = (inverse * Vec3::NEG_Y / scale).normalize_or_zero();
+    centers
         .iter()
-        .zip(bodies)
-        .map(|(it, body)| {
-            let Some(end) = body.and_then(|b| world.pose(b)) else {
-                return ItemCheck { id: it.id, hold: Hold::NoShape, drop: 0.0, rise: 0.0, shift: 0.0 };
-            };
-            let d = it.pose.pos.delta_f32(end.pos);
-            let (drop, rise, shift) = ((-d.y).max(0.0), d.y.max(0.0), Vec3::new(d.x, 0.0, d.z).length());
-            let hold = if it.always_hold {
-                Hold::Rules
-            } else if drop > settings.support_tolerance {
-                Hold::Unsupported
-            } else {
-                Hold::No
-            };
-            ItemCheck { id: it.id, hold, drop, rise, shift }
-        })
-        .collect()
+        .filter(|c| c.cmpge(bounds.0).all() && c.cmple(bounds.1).all())
+        .any(|c| shape.encloses(inverse * (*c - origin) / scale, down))
 }
 
 fn overlaps(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> bool {
@@ -346,7 +464,7 @@ impl Step for ItemsCheckStep {
         ITEMS_CHECK
     }
     fn version(&self) -> u32 {
-        1
+        6
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         cx.product(PAGE_STEP, subject);
@@ -392,8 +510,18 @@ impl Step for ItemsCheckStep {
             .collect();
 
         let mut world = PhysicsWorld::new(anchor, PhysicsParams::default());
+        // Item centers (the anchor's frame): enclosure tests.
+        let centers: Vec<Vec3> = items
+            .iter()
+            .filter_map(|p| {
+                let s = shape_of(p)?;
+                let (lo, hi) = placed_bounds(anchor, &p.transform, Vec3::from_array(s.aabb[0]), Vec3::from_array(s.aabb[1]));
+                Some((lo + hi) * 0.5)
+            })
+            .collect();
         // Static collision near any item.
         let mut meshes: BTreeMap<&str, Placed> = BTreeMap::new();
+        let mut supports: BTreeMap<&str, Option<Arc<MeshShape>>> = BTreeMap::new();
         for p in placements.iter().filter(|p| !self.rules.is_item(p) && self.rules.is_static(p)) {
             let Some(model) = &p.model else { continue };
             let model = model.as_str();
@@ -408,11 +536,24 @@ impl Step for ItemsCheckStep {
             });
             let Some((shape, lo, hi)) = entry else { continue };
             let bounds = placed_bounds(anchor, &p.transform, *lo, *hi);
-            if zones.iter().any(|z| overlaps(*z, bounds)) {
-                world.insert(&BodyDesc::fixed(p.transform, ShapeRef::Mesh(shape.clone()), Layer::STATIC));
-                out.statics += 1;
+            if !zones.iter().any(|z| overlaps(*z, bounds)) {
+                continue;
             }
+            let mut shape = shape.clone();
+            if encloses_any(&shape, anchor, &p.transform, bounds, &centers) {
+                let support = supports.entry(model).or_insert_with(|| {
+                    let mesh = cx.product(SUPPORT_COOK, model).ok().and_then(|b| CollisionMesh::from_bytes(&b).ok())?;
+                    MeshShape::new(&mesh)
+                });
+                if let Some(support) = support {
+                    shape = support.clone();
+                    out.supports.push(p.id.0);
+                }
+            }
+            world.insert(&BodyDesc::fixed(p.transform, ShapeRef::Mesh(shape), Layer::STATIC));
+            out.statics += 1;
         }
+        out.supports.sort_unstable();
         // Terrain patches under the items, on a shared 0.5 m grid.
         if self.rules.has_terrain(&ws) {
             let mut terrain = TerrainReader { ws: ws.clone(), heights: TerrainHeights::new(), tried: std::collections::BTreeSet::default() };

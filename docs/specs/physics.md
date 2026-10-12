@@ -176,6 +176,29 @@ for clutter (UE "Simulate" + "Keep Simulation Changes", the Creation Kit's Havok
 `ItemChecks` (`SFIC`): per item `id`, `hold` (`No`, `Unsupported`, `Rules` = the adapter's `always_hold`,
 `NoShape`), `drop`, `rise`, `shift`. Limitation: a page sees only its own statics (exterior pages are large; an
 item within 1 m of a page edge may miss a neighbor's static and be held: the safe side).
+**Revised in P4 (2026-10-13): sequential settle.** Settling a page's items all at once flagged 38 % of a vanilla
+install unsupported and 51 % overlapping: authored clutter interpenetrates its neighbors by a centimeter or more, and
+the solver shoved bottles off shelves and plates off tables. Now each item settles **alone, lowest first** (by the
+bottom of its placed bounds), over the statics, the terrain and the items already tested, which stay in the world
+`Fixed` at their placed pose (as at runtime, where every item starts there, asleep or held); its test shape is shrunk
+uniformly about its bounds' center so its largest extent loses `overlap_allowance` (1 cm) per side (at most 20 %; a
+negative contact offset, like PhysX's rest offset); it runs at most `settle_time`, stopping early once it has dropped
+past the tolerance or has been still for 5 steps. Displacements are measured from the shrunk start. Census: ROADMAP
+M4 P4.
+
+**Revised in P4 (physics-p4b): support meshes and "fell".** A legacy collision proxy is often one box around a whole
+bookshelf or cabinet, so the clutter on its shelves starts *inside* static collision (one-sided meshes let it fall
+through, two-sided ones shove it out): a third of a vanilla install's items. Engines keep two representations, simple
+collision for characters and complex (per-triangle) collision for physics props and traces (UE "simple vs complex",
+Bethesda's per-shelf Havok shapes). So: a static whose collision **encloses** an item center (`MeshShape::encloses`:
+the nearest triangle straight below the point is a back face) is tested with its `support.cook` mesh (the `mesh.cook`
+LOD0 as a `CollisionMesh`, requested by `items.check` on demand) and listed in `ItemChecks::supports`; the runtime
+gives those placements the same mesh (`ItemContent::is_support`, `PhysicsBodySource::supports`); characters keep the
+proxy. An item is unsupported only when its center **and** the lowest corner of its bounds both dropped past the
+tolerance: a book tipping over in its row, or a bowl rocking in place, did not fall. Runtime: items of a worldspace
+go in only once it has no static left to insert (a woken item above a not-yet-inserted floor falls out of the world),
+and every frame inserts at least one static whatever the refresh estimate says (one slow refresh must not stall
+streaming).
 
 ### `sf_ragdoll` (Bevy-free; sf_anim, sf_physics)
 
@@ -268,6 +291,27 @@ stays. Cloth joints are outfit joints appended after the skeleton's joints in th
   rebuilds are still open). Debug draw is our own per-triangle cull within 40 m (`PhysicsWorld::debug_lines`):
   rapier's `DebugRenderPipeline` draws whole colliders, too many lines for an R0. `PhysicsProbe` for the walkers
   waits for walkers.rs to move over (it keeps its `StaticWorld` meanwhile).
+
+- **As built (P4, 2026-10-13).** Items: the adapter's `ItemContent` (`is_item`, `item_body` → mass and hold; the
+  spec's `PhysicsContent::item_body`) on `PhysicsBodySource`; `hook_physics` (statics, or items for items) and
+  `hook_items` (items only: carryable lights among the lights). Item visuals spawn under an `ItemPivot` (translation
+  and rotation of the placement, relative to the stream cell's origin; scale stays on the visuals for their LOD
+  ranges), which follows the body's interpolated pose; a transform is written only when it changed. This replaces
+  "own grid entities on first wake" for now: items stay children of their stream cell (R0 is at most a few cells
+  wide, f32 is exact enough there), so level unloads take them along. Items go in as `BodyDesc::item` (asleep, CCD on)
+  or `Fixed` when held, `DEBRIS` under `debris_mass` 15 kg and `debris_extent` 0.6 m, else `PROP`. Inserts run in two
+  phases per frame: statics (refresh every `insert_batch` = 16 bodies, stopping while the per-body refresh estimate
+  still fits the budget), one refresh, then up to `item_batch` = 32 items with no refresh (rapier puts new dynamic
+  bodies in its islands only in a step; re-queuing them as modified after a collision-only pass leaves their contacts
+  unlinked from the persistent islands, which rapier's debug validation catches), so their broad-phase work lands in
+  the next step. Deactivation writes items that moved (> 1 mm or 1 mrad) to the overlay (`move_to` + `physics` blob
+  v1: asleep flag, linear and angular velocity); activation reads the overlay for cells whose visuals stayed loaded.
+  Not yet: coverage freeze (4 Hz `covers` check), kill height from `TerrainHeights`, reinserting awake bodies with
+  their saved velocity (all reinsert asleep), grab or impulse releasing held items (P6).
+  **Rolling resistance**: rapier has none, so a knocked bottle rolled for many seconds; awake `DEBRIS`/`PROP` bodies
+  in contact lose `rolling_resistance` (20 rad/s², about μr 0.05 on a 6 cm radius) of angular speed per second, and
+  items get `ITEM_DAMPING` (0.1 linear, 1.5 angular). Havok exposes rolling friction per material; this is the
+  stand-in.
 
 ### Queries: `PhysicsProbe`
 

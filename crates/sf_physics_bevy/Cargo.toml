@@ -15,6 +15,8 @@ debug = ["dep:bevy_gizmos", "dep:bevy_color"]
 bevy_app = { workspace = true, features = ["std"] }
 # `PlacementSpawner::prepare` (wrapped spawners).
 bevy_asset.workspace = true
+# `Visibility` on item pivots (items' visual roots).
+bevy_camera.workspace = true
 bevy_color = { workspace = true, features = ["std"], optional = true }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_gizmos = { workspace = true, optional = true }
@@ -35,6 +37,8 @@ sf_world.workspace = true
 sf_world_bevy = { path = "../sf_world_bevy", default-features = false }
 
 [dev-dependencies]
+# Item placements in the persistence test.
+sf_vfs.workspace = true
 bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }
 
 [lints]

@@ -28,7 +28,9 @@ impl Default for PhysicsDebug {
 }
 
 pub(crate) fn add(app: &mut App) {
-    app.init_resource::<PhysicsDebug>().add_systems(Update, draw.after(PhysicsSystems::WriteBack));
+    // Without the app's gizmo plugin (headless tests), nothing to draw with.
+    let gizmos = resource_exists::<bevy_gizmos::config::GizmoConfigStore>;
+    app.init_resource::<PhysicsDebug>().add_systems(Update, draw.after(PhysicsSystems::WriteBack).run_if(gizmos));
 }
 
 #[allow(clippy::needless_pass_by_value)]

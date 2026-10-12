@@ -7,8 +7,19 @@ use std::sync::{Arc, Mutex};
 use glam::Vec3;
 use parry3d::utils::Array2;
 use rapier3d::geometry::SharedShape;
-use parry3d::shape::Shape;
+use parry3d::query::{Ray, RayCast, RayCullingMode};
+use parry3d::shape::{TriMesh, TriMeshFlags};
 use sf_controller::{CollisionMesh, StaticShape, SurfaceId};
+
+/// Static triangle meshes are one-sided (outward normals) with internal-edge
+/// fixes: an item that starts sunk into a shelf or table deeper than half its
+/// thickness is pushed out the top, not through (double-sided contacts push
+/// it toward the nearer side), and bodies slide over the seams between
+/// triangles without bumps (Bullet's internal-edge adjustment, Havok's
+/// welding).
+fn mesh_flags() -> TriMeshFlags {
+    TriMeshFlags::ORIENTED | TriMeshFlags::FIX_INTERNAL_EDGES
+}
 
 /// A `collision.cook` mesh ready for the engine: a parry `TriMesh` with a
 /// surface per triangle. Scaled placements get scaled copies, built once per
@@ -26,19 +37,39 @@ impl MeshShape {
             return None;
         }
         let vertices = mesh.positions.iter().map(|p| Vec3::from_array(*p)).collect();
-        let shape = SharedShape::trimesh(vertices, mesh.triangles.clone()).ok()?;
+        let tri = TriMesh::with_flags(vertices, mesh.triangles.clone(), mesh_flags());
+        // Topology errors: two-sided, still a valid collider.
+        let tri = tri.or_else(|_| TriMesh::new(mesh.positions.iter().map(|p| Vec3::from_array(*p)).collect(), mesh.triangles.clone())).ok()?;
+        let shape = SharedShape::new(tri);
         Some(Arc::new(Self { shape, surfaces: mesh.surfaces.clone(), scaled: Mutex::new(Vec::new()) }))
     }
 
-    /// The engine shape over a controller [`StaticShape`]'s own mesh: one
-    /// triangle mesh per model, shared by the static query world and physics.
+    /// The engine shape over a controller [`StaticShape`]'s mesh: a copy with
+    /// [`mesh_flags`] (the controller's queries keep their two-sided mesh); one
+    /// per model, shared by its placements. Build it off the main thread.
     pub fn from_static(shape: &StaticShape) -> Arc<Self> {
-        let mesh: Arc<dyn Shape> = shape.trimesh().clone();
-        Arc::new(Self { shape: SharedShape(mesh), surfaces: shape.surfaces().to_vec(), scaled: Mutex::new(Vec::new()) })
+        let mut mesh: TriMesh = (**shape.trimesh()).clone();
+        // Topology errors leave the mesh two-sided: still a valid collider.
+        let _ = mesh.set_flags(mesh_flags());
+        Arc::new(Self { shape: SharedShape::new(mesh), surfaces: shape.surfaces().to_vec(), scaled: Mutex::new(Vec::new()) })
+    }
+
+    /// Whether a model-space `point` lies inside the mesh as a closed volume:
+    /// the nearest triangle straight below it (along `down`, model space) is a
+    /// back face, i.e. faces away from the point. An authored collision proxy
+    /// that is one box around a whole bookshelf or cabinet encloses the items
+    /// placed on its shelves; an open or render-derived mesh puts a shelf's top
+    /// face under them instead.
+    pub fn encloses(&self, point: Vec3, down: Vec3) -> bool {
+        let Some(mesh) = self.shape.as_trimesh() else { return false };
+        let ray = Ray::new(point, down);
+        let Some(any) = mesh.cast_local_ray(&ray, f32::MAX, false) else { return false };
+        mesh.cast_local_ray_with_culling(&ray, f32::MAX, RayCullingMode::IgnoreFrontfaces)
+            .is_some_and(|back| back.time_of_impact <= any + 1e-5)
     }
 
     pub fn triangle_count(&self) -> usize {
-        self.shape.as_trimesh().map_or(0, parry3d::shape::TriMesh::num_triangles)
+        self.shape.as_trimesh().map_or(0, TriMesh::num_triangles)
     }
 
     pub(crate) fn surface(&self, triangle: u32) -> SurfaceId {

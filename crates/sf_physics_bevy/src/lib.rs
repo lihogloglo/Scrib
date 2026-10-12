@@ -41,7 +41,10 @@ mod tests;
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
 pub use sf_physics;
-pub use stream::{BodyLoader, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, ShapeLoader, hook_physics};
+pub use stream::{
+    BodyLoader, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
+    STATE_VERSION, ShapeLoader, hook_items, hook_physics,
+};
 
 /// Plugin settings (physics.md defaults).
 #[derive(Resource, Clone, Debug)]
@@ -56,6 +59,13 @@ pub struct PhysicsSettings {
     /// Inserts between query refreshes: each batch's broad-phase work lands in
     /// its own frame instead of piling up on the next step.
     pub insert_batch: usize,
+    /// Items inserted per frame at most (after the statics' refresh; their
+    /// broad-phase work lands in the next step).
+    pub item_batch: usize,
+    /// Items lighter than `debris_mass` (kg) and smaller than `debris_extent`
+    /// (meters, largest scaled extent) are `DEBRIS`, the rest `PROP`.
+    pub debris_mass: f32,
+    pub debris_extent: f32,
     /// Terrain heightfield chunk edge (meters) and sample spacing.
     pub terrain_chunk: f32,
     pub terrain_spacing: f32,
@@ -69,7 +79,10 @@ impl Default for PhysicsSettings {
             hz: 60.0,
             max_steps_per_frame: 3,
             insert_budget_ms: 0.5,
-            insert_batch: 32,
+            insert_batch: 16,
+            item_batch: 32,
+            debris_mass: 15.0,
+            debris_extent: 0.6,
             terrain_chunk: 64.0,
             terrain_spacing: 0.5,
             terrain: true,
@@ -133,6 +146,8 @@ pub struct PhysicsStats {
     pub bodies: usize,
     pub awake: usize,
     pub terrain_chunks: usize,
+    /// Item bodies (asleep, awake or held).
+    pub items: usize,
 }
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -159,7 +174,7 @@ impl Plugin for PhysicsPlugin {
             .insert_resource(Time::<Fixed>::from_hz(self.settings.hz))
             .init_resource::<PhysicsFocus>()
             .init_resource::<PhysicsStats>()
-            .init_resource::<stream::PhysicsStreaming>()
+            .init_resource::<PhysicsStreaming>()
             .init_resource::<BodyEntities>()
             .add_systems(First, begin_frame)
             .add_systems(FixedUpdate, step.in_set(PhysicsSystems::Step))
@@ -170,7 +185,7 @@ impl Plugin for PhysicsPlugin {
                         .chain()
                         .in_set(PhysicsSystems::Stream)
                         .after(StreamingSystems::Drive),
-                    (track_bodies, write_back, publish).chain().in_set(PhysicsSystems::WriteBack).after(PhysicsSystems::Stream),
+                    (track_bodies, write_back, stream::follow_items, publish).chain().in_set(PhysicsSystems::WriteBack).after(PhysicsSystems::Stream),
                 ),
             );
         #[cfg(feature = "debug")]
@@ -265,7 +280,7 @@ fn write_back(physics: Res<Physics>, time: Res<Time<Fixed>>, mut bodies: Query<(
 #[allow(clippy::needless_pass_by_value, clippy::cast_precision_loss)]
 fn publish(
     physics: Res<Physics>,
-    streaming: Res<stream::PhysicsStreaming>,
+    streaming: Res<PhysicsStreaming>,
     mut stats: ResMut<PhysicsStats>,
     counters: Option<Res<DiagCounters>>,
 ) {
@@ -273,6 +288,7 @@ fn publish(
     stats.awake = physics.worlds.active_world().map_or(0, PhysicsWorld::awake_count);
     stats.pending = streaming.pending_count();
     stats.terrain_chunks = streaming.terrain_count();
+    stats.items = streaming.item_count();
     let Some(c) = counters else { return };
     let s = *stats;
     c.add_named("physics/step/ms", unit::MS, f64::from(s.step_ms));
@@ -286,4 +302,5 @@ fn publish(
     c.set_named("physics/awake", unit::COUNT, s.awake as f64);
     c.set_named("physics/pending", unit::COUNT, s.pending as f64);
     c.set_named("physics/terrain/chunks", unit::COUNT, s.terrain_chunks as f64);
+    c.set_named("physics/items", unit::COUNT, s.items as f64);
 }

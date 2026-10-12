@@ -26,6 +26,12 @@ pub enum BodyKind {
     Kinematic,
 }
 
+/// Linear and angular damping of placed items. The angular term stands in
+/// for rolling resistance, which rapier doesn't model: without it a knocked
+/// bottle rolls across the floor for many seconds (physics.md "Items": rest
+/// within 3 s).
+pub const ITEM_DAMPING: (f32, f32) = (0.1, 1.5);
+
 /// Everything needed to insert a body.
 #[derive(Clone)]
 pub struct BodyDesc {
@@ -59,9 +65,9 @@ impl BodyDesc {
         Self::new(BodyKind::Fixed, pose, shape, layer)
     }
 
-    /// A placed item: dynamic, inserted asleep.
+    /// A placed item: dynamic, inserted asleep, with [`ITEM_DAMPING`].
     pub fn item(pose: WorldTransform, shape: ShapeRef, layer: Layer, mass: Option<f32>) -> Self {
-        Self { mass, ..Self::new(BodyKind::Dynamic { asleep: true }, pose, shape, layer) }
+        Self { mass, damping: ITEM_DAMPING, ..Self::new(BodyKind::Dynamic { asleep: true }, pose, shape, layer) }
     }
 
     #[must_use]
@@ -109,6 +115,11 @@ pub struct PhysicsParams {
     pub contact_force_threshold: f32,
     /// Absolute Y (meters) under which a dynamic body counts as fallen out.
     pub kill_height: Option<f64>,
+    /// Rolling resistance, rad/s²: awake `DEBRIS` and `PROP` bodies touching
+    /// something lose this much angular speed per second (rapier has no
+    /// rolling friction; physically `μr·g·r / (I/m)`, about 20 for a 6 cm ball
+    /// at μr 0.05). Knocked bottles and fruit stop rolling within seconds.
+    pub rolling_resistance: f32,
 }
 
 impl Default for PhysicsParams {
@@ -125,6 +136,7 @@ impl Default for PhysicsParams {
             contact_force_layers: Layer::DEBRIS | Layer::PROP | Layer::RAGDOLL | Layer::CHARACTER | Layer::PROJECTILE,
             contact_force_threshold: 200.0,
             kill_height: None,
+            rolling_resistance: 20.0,
         }
     }
 }

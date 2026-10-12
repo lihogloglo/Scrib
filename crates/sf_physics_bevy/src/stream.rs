@@ -6,8 +6,18 @@
 //! [`PhysicsShapeSource`], sharing the controller's triangle mesh) and shared
 //! by every placement. Inserts run under [`PhysicsSettings::insert_budget_ms`]
 //! per frame, refreshing the query structure every
-//! [`PhysicsSettings::insert_batch`] bodies: inserting a whole R0 at once
-//! costs one 40 ms step (P1 spike).
+//! [`PhysicsSettings::insert_batch`] bodies and stopping while the predicted
+//! cost of the next refresh still fits: inserting a whole R0 at once costs
+//! one 40 ms step (P1 spike).
+//!
+//! Items ([`ItemContent::is_item`], P4): `body.cook` shapes from
+//! [`PhysicsBodySource`], inserted as sleeping dynamic bodies (`Fixed` when
+//! the adapter holds them until grabbed), `DEBRIS` or `PROP` by mass and
+//! size. Their visuals spawn under an [`ItemPivot`], which follows the body
+//! while it moves. Deactivation writes a moved item's rest pose into the
+//! `PlacementOverlay` (`move_to`, plus a `physics` state blob), so the cell
+//! loads it there next time; activation reads the overlay too, for cells
+//! whose visuals stayed loaded.
 //!
 //! Terrain: the active worldspace's R0 cells are covered with heightfield
 //! chunks sampled from `TerrainHeightsMap` on the task pool; a chunk whose
@@ -18,16 +28,19 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bevy_asset::{AssetServer, UntypedHandle};
+use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
-use bevy_math::{DVec3, IVec2, Vec2};
+use bevy_math::{DVec3, IVec2, Vec2, Vec3};
 use bevy_tasks::{AsyncComputeTaskPool, Task, block_on};
+use bevy_time::{Fixed, Time};
+use bevy_transform::components::Transform;
 use sf_controller::StaticShape;
 use sf_coords::{WorldPos, WorldTransform};
 use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::{TerrainHeights, WorldRect};
-use sf_world::{IndexedPlacement, Level, Partition, PlacementClass, PlacementId, WorldspaceId};
-use sf_world_bevy::{ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, Streaming};
+use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, WorldspaceId};
+use sf_world_bevy::{ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, Streaming, WorldOverlay};
 
 use crate::{Physics, PhysicsSettings, PhysicsStats};
 
@@ -39,19 +52,67 @@ pub struct PhysicsShapeSource(pub ShapeLoader);
 /// Model path → its collision shape.
 pub type ShapeLoader = Arc<dyn Fn(&str) -> Option<Arc<StaticShape>> + Send + Sync>;
 
-/// Loads a model's `body.cook` shape, for the placement classes it names
-/// (items). Without it, those classes use their `collision.cook` mesh.
+/// Item bodies: `body.cook` shapes and the adapter's item rules. Without it,
+/// every hooked placement is static collision.
 #[derive(Resource, Clone)]
 pub struct PhysicsBodySource {
     pub loader: BodyLoader,
-    pub classes: Vec<PlacementClass>,
+    pub items: Arc<dyn ItemContent>,
+    /// Model path → its `support.cook` mesh: the render collision of statics
+    /// that items rest inside ([`ItemContent::is_support`]). `None`: every
+    /// static keeps its `collision.cook` shape.
+    pub supports: Option<ShapeLoader>,
 }
 
 /// Model path → its body shape.
 pub type BodyLoader = Arc<dyn Fn(&str) -> Option<Arc<BodyShape>> + Send + Sync>;
 
+/// The adapter's item rules (physics.md "Adapter hooks", `item_body`).
+pub trait ItemContent: Send + Sync + 'static {
+    /// Whether a placement is a loose item: a body from its `body.cook`
+    /// shape instead of static collision.
+    fn is_item(&self, placement: &Placement) -> bool;
+    /// Simulated mass and hold decision of an item; `volume` is its shape's
+    /// unit-scale volume, m³.
+    fn item_body(&self, worldspace: &WorldspaceId, placement: &Placement, volume: f32) -> ItemBody;
+    /// Whether a static placement simulates with its `support.cook` mesh
+    /// instead of its `collision.cook` shape (`items.check` found items
+    /// inside its collision: a coarse proxy around shelves).
+    fn is_support(&self, _worldspace: &WorldspaceId, _placement: &Placement) -> bool {
+        false
+    }
+}
+
+/// How one item goes into the world.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ItemBody {
+    /// Simulated mass, kg (`None`: shape volume × the world's density).
+    pub mass: Option<f32>,
+    /// Held until grabbed (`items.check` unsupported, or the adapter's rule):
+    /// inserted `Fixed`.
+    pub hold: bool,
+}
+
+/// The visual root of an item placement: its spawner's entities hang under
+/// it, and it follows the item's body while the body moves. Its transform is
+/// relative to `origin` (the stream cell's origin, as the spawn's parent).
+#[derive(Component, Clone, Debug)]
+pub struct ItemPivot {
+    pub worldspace: WorldspaceId,
+    pub id: PlacementId,
+    pub origin: WorldPos,
+}
+
+/// Overlay state owner of item bodies (`PlacementOverlay::set_state`).
+pub const STATE_OWNER: &str = "physics";
+/// Version byte of the `physics` state blob: v1 = asleep flag, linear and
+/// angular velocity (6 × f32 LE).
+pub const STATE_VERSION: u8 = 1;
+
 /// Shape cache key prefix of body shapes (mesh shapes use the bare model path).
 const BODY: &str = "body:";
+/// Shape cache key prefix of `support.cook` meshes.
+const SUPPORT: &str = "support:";
 
 type Key = (WorldspaceId, PlacementId);
 type Chunks = Vec<(IVec2, Option<Arc<HeightShape>>)>;
@@ -61,19 +122,30 @@ enum ShapeState {
     Ready(Option<ShapeRef>),
 }
 
+struct Pending {
+    shape: String,
+    placement: Placement,
+    item: bool,
+}
+
 /// Queued activations, placed bodies, the shape cache and terrain chunks.
 #[derive(Resource, Default)]
 pub struct PhysicsStreaming {
-    pending: HashMap<Key, (String, WorldTransform)>,
+    pending: HashMap<Key, Pending>,
     order: VecDeque<Key>,
     waiting: HashMap<String, Vec<Key>>,
     shapes: HashMap<String, ShapeState>,
     /// Scaled copies being built, by model + scale.
     scaling: HashMap<String, Task<()>>,
     placed: HashMap<Key, BodyId>,
+    /// Items in the world: the pose they went in at (moved = differs).
+    items: HashMap<Key, WorldTransform>,
     terrain: Terrain,
-    /// Recent cost of one query refresh, seconds: reserved out of the budget.
+    /// Predicted cost of one query refresh after a full batch, seconds:
+    /// reserved out of the budget.
     refresh_s: f64,
+    /// Recent refresh cost per body inserted, seconds (decaying maximum).
+    refresh_per_body_s: f64,
 }
 
 #[derive(Default)]
@@ -100,44 +172,148 @@ impl PhysicsStreaming {
     pub fn placed_count(&self) -> usize {
         self.placed.len()
     }
+
+    /// Item bodies in the worlds.
+    pub fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Awake items (diagnostics): placement, the pose it went in at, how far
+    /// it is from there now, and its linear and angular speed.
+    pub fn awake_items(&self, physics: &Physics) -> Vec<(PlacementId, WorldTransform, f32, f32, f32)> {
+        let mut out = Vec::new();
+        for (key, start) in &self.items {
+            let (Some(&id), Some(w)) = (self.placed.get(key), physics.worlds.get(&key.0)) else { continue };
+            if w.is_sleeping(id) != Some(false) {
+                continue;
+            }
+            let (Some(pose), Some((v, a))) = (w.pose(id), w.velocity(id)) else { continue };
+            if v == Vec3::ZERO && a == Vec3::ZERO && pose.pos == start.pos {
+                continue;
+            }
+            out.push((key.1, *start, start.pos.delta_f32(pose.pos).length(), v.length(), a.length()));
+        }
+        out
+    }
+
+    /// The body of a placement, if it has one.
+    pub fn body(&self, worldspace: &WorldspaceId, id: PlacementId) -> Option<BodyId> {
+        self.placed.get(&(worldspace.clone(), id)).copied()
+    }
 }
 
-/// Wraps a placement spawner: R0 activation queues the placement's static
-/// collider, deactivation removes it.
-pub struct PhysicsHook(pub Arc<dyn PlacementSpawner>);
+/// Wraps a placement spawner: R0 activation queues the placement's body
+/// (an item's, or with `statics` a static collider), deactivation removes
+/// it.
+pub struct PhysicsHook {
+    pub inner: Arc<dyn PlacementSpawner>,
+    /// Non-items get static collision (else only items get bodies).
+    pub statics: bool,
+}
+
+fn is_item(world: &World, placement: &Placement) -> bool {
+    world.get_resource::<PhysicsBodySource>().is_some_and(|b| b.items.is_item(placement))
+}
 
 impl PlacementSpawner for PhysicsHook {
     fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
-        self.0.spawn(world, cx, placement)
+        let p = &placement.placement;
+        if !is_item(world, p) {
+            return self.inner.spawn(world, cx, placement);
+        }
+        // Items spawn under a pivot that carries the placement's translation
+        // and rotation (scale stays on the visuals: LOD ranges read it).
+        let origin = p.transform.pos.offset(-cx.local.translation);
+        let pivot_local = Transform { translation: cx.local.translation, rotation: cx.local.rotation, scale: Vec3::ONE };
+        let pivot = world
+            .spawn((
+                pivot_local,
+                Visibility::Inherited,
+                ChildOf(cx.parent),
+                ItemPivot { worldspace: cx.worldspace.clone(), id: p.id, origin },
+            ))
+            .id();
+        let inner = SpawnCx { parent: pivot, local: Transform::from_scale(cx.local.scale), ..*cx };
+        1 + self.inner.spawn(world, &inner, placement)
     }
     fn needs_model(&self, placement: &IndexedPlacement) -> bool {
-        self.0.needs_model(placement)
+        self.inner.needs_model(placement)
     }
     fn prepare(&self, assets: &AssetServer, placement: &IndexedPlacement, model: Option<&LoadedModel>) -> Option<UntypedHandle> {
-        self.0.prepare(assets, placement, model)
+        self.inner.prepare(assets, placement, model)
     }
     fn activate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
-        self.0.activate(world, cx, placement);
-        let p = &placement.placement;
+        self.inner.activate(world, cx, placement);
+        let mut p = placement.placement.clone();
         let Some(model) = &p.model else { return };
+        let item = is_item(world, &p);
+        if !item && !self.statics {
+            return;
+        }
         let key = (cx.worldspace.clone(), p.id);
         remove_placed(world, &key);
-        let body = world.get_resource::<PhysicsBodySource>().is_some_and(|b| b.classes.contains(&p.class));
-        let shape_key = if body { format!("{BODY}{}", model.as_str()) } else { model.as_str().to_owned() };
+        if item && let Some(overlay) = world.get_resource::<WorldOverlay>() {
+            // Visuals that stayed loaded carry the transform from before a move.
+            let overlay = overlay.0.read().expect("overlay lock");
+            if overlay.is_removed(p.id) {
+                return;
+            }
+            if let Some((ws, moved)) = overlay.placed(p.id)
+                && ws == cx.worldspace
+            {
+                p.transform = moved.transform;
+            }
+        }
+        let support = !item
+            && world.get_resource::<PhysicsBodySource>().is_some_and(|b| b.supports.is_some() && b.items.is_support(cx.worldspace, &p));
+        let shape = if item {
+            format!("{BODY}{}", model.as_str())
+        } else if support {
+            format!("{SUPPORT}{}", model.as_str())
+        } else {
+            model.as_str().to_owned()
+        };
         if let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() {
-            s.pending.insert(key.clone(), (shape_key, p.transform));
+            s.pending.insert(key.clone(), Pending { shape, placement: p, item });
             s.order.push_back(key);
         }
     }
     fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
-        self.0.deactivate(world, cx, placement);
-        remove_placed(world, &(cx.worldspace.clone(), placement.placement.id));
+        self.inner.deactivate(world, cx, placement);
+        let key = (cx.worldspace.clone(), placement.placement.id);
+        persist_item(world, &key, &placement.placement);
+        remove_placed(world, &key);
     }
+}
+
+/// Writes an item that moved since it went in to the overlay (physics.md
+/// "Deactivation"): `move_to` its current pose and a `physics` state blob.
+/// Saves serialize the overlay; until they exist this lasts the session.
+fn persist_item(world: &mut World, key: &Key, placement: &Placement) {
+    let Some(s) = world.get_resource::<PhysicsStreaming>() else { return };
+    let (Some(&inserted), Some(&id)) = (s.items.get(key), s.placed.get(key)) else { return };
+    let Some(w) = world.get_resource::<Physics>().and_then(|p| p.worlds.get(&key.0)) else { return };
+    let Some(pose) = w.pose(id) else { return };
+    let moved = inserted.pos.delta(pose.pos).length() > 1e-3 || inserted.rotation.angle_between(pose.rotation) > 1e-3;
+    if !moved {
+        return;
+    }
+    let asleep = w.is_sleeping(id).unwrap_or(true);
+    let (v, a) = w.velocity(id).unwrap_or_default();
+    let mut blob = vec![STATE_VERSION, u8::from(asleep)];
+    for x in v.to_array().into_iter().chain(a.to_array()) {
+        blob.extend_from_slice(&x.to_le_bytes());
+    }
+    let Some(overlay) = world.get_resource::<WorldOverlay>() else { return };
+    let mut overlay = overlay.0.write().expect("overlay lock");
+    overlay.move_to(placement, &Location { worldspace: key.0.clone(), pos: pose.pos }, pose.rotation);
+    overlay.set_state(placement.id, STATE_OWNER, blob);
 }
 
 fn remove_placed(world: &mut World, key: &Key) {
     let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() else { return };
     s.pending.remove(key);
+    s.items.remove(key);
     let Some(id) = s.placed.remove(key) else { return };
     if let Some(mut physics) = world.get_resource_mut::<Physics>()
         && let Some(w) = physics.worlds.get_mut(&key.0)
@@ -149,17 +325,36 @@ fn remove_placed(world: &mut World, key: &Key) {
     }
 }
 
-/// Wraps `classes`' spawners with [`PhysicsHook`] (call once the spawners are final).
-pub fn hook_physics(spawners: &mut PlacementSpawners, classes: &[PlacementClass]) {
+/// Wraps `classes`' spawners with [`PhysicsHook`]: static collision, or an
+/// item body for items (call once the spawners are final).
+pub fn hook_physics(spawners: &mut PlacementSpawners, classes: &[sf_world::PlacementClass]) {
+    hook(spawners, classes, true);
+}
+
+/// Wraps `classes`' spawners so that only their items get bodies (e.g.
+/// carryable lights among the lights).
+pub fn hook_items(spawners: &mut PlacementSpawners, classes: &[sf_world::PlacementClass]) {
+    hook(spawners, classes, false);
+}
+
+fn hook(spawners: &mut PlacementSpawners, classes: &[sf_world::PlacementClass], statics: bool) {
     for &class in classes {
         if let Some(inner) = spawners.for_class(class).cloned() {
-            spawners.set(class, Arc::new(PhysicsHook(inner)));
+            spawners.set(class, Arc::new(PhysicsHook { inner, statics }));
         }
     }
 }
 
-/// Polls shape builds and inserts queued statics under the frame budget.
-#[allow(clippy::needless_pass_by_value)]
+/// An item's layer by the framework defaults (physics.md "Layers"): `DEBRIS`
+/// when light and small, else `PROP`.
+fn item_layer(settings: &PhysicsSettings, mass: Option<f32>, shape: &BodyShape, scale: Vec3) -> Layer {
+    let extent = ((Vec3::from_array(shape.aabb[1]) - Vec3::from_array(shape.aabb[0])) * scale.abs()).max_element();
+    let mass = mass.unwrap_or(f32::MAX);
+    if mass < settings.debris_mass && extent < settings.debris_extent { Layer::DEBRIS } else { Layer::PROP }
+}
+
+/// Polls shape builds and inserts queued bodies under the frame budget.
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines, clippy::cast_precision_loss)]
 pub(crate) fn apply_inserts(
     mut streaming: ResMut<PhysicsStreaming>,
     mut physics: ResMut<Physics>,
@@ -197,87 +392,141 @@ pub(crate) fn apply_inserts(
     let budget = f64::from(settings.insert_budget_ms) * 1e-3;
     let mut batch = 0;
     let mut touched: Vec<WorldspaceId> = Vec::new();
-    while started.elapsed().as_secs_f64() + s.refresh_s < budget {
-        let Some(key) = s.order.pop_front() else { break };
-        let Some((model, _)) = s.pending.get(&key) else { continue };
-        match s.shapes.get(model) {
+    // Statics first, time-sliced: stop while the refresh the inserted bodies
+    // need still fits. Then, without a refresh (rapier must add them to its
+    // islands in a step first), up to `item_batch` items; their broad-phase
+    // work lands in the next step.
+    let mut deferred: VecDeque<Key> = VecDeque::new();
+    let mut held: Vec<Key> = Vec::new();
+    let (mut items_phase, mut items_done) = (false, 0);
+    loop {
+        let elapsed = started.elapsed().as_secs_f64();
+        let next = if items_phase {
+            ((items_done == 0 || elapsed < budget) && items_done < settings.item_batch).then(|| deferred.pop_front()).flatten()
+        } else {
+            // At least one static per frame: a refresh estimate over the budget
+            // (one slow refresh on a busy machine) must not stall streaming.
+            let fits = elapsed + s.refresh_per_body_s * ((batch + 1) as f64) < budget;
+            (fits || (batch == 0 && elapsed < budget)).then(|| s.order.pop_front()).flatten()
+        };
+        let Some(key) = next else {
+            if items_phase {
+                break;
+            }
+            if batch > 0 {
+                refresh(&mut physics, &touched, batch, s);
+                batch = 0;
+            }
+            items_phase = true;
+            // Items go in only once their worldspace has no static left to
+            // insert: one woken before the counter or floor under it exists
+            // falls through the world (the streamed level's collision is
+            // complete before its dynamic bodies, as engines attach a cell).
+            let loading: HashSet<&WorldspaceId> = s.pending.iter().filter(|(_, p)| !p.item).map(|(k, _)| &k.0).collect();
+            let (wait, go): (VecDeque<Key>, VecDeque<Key>) = deferred.drain(..).partition(|k| loading.contains(&k.0));
+            deferred = go;
+            held.extend(wait);
+            continue;
+        };
+        let Some(pending) = s.pending.get(&key) else { continue };
+        match s.shapes.get(&pending.shape) {
             Some(ShapeState::Ready(shape)) => {
-                let shape = match shape.clone() {
-                    Some(ShapeRef::Mesh(m)) => m,
-                    // Items: fixed until P4 inserts them as sleeping dynamic bodies.
-                    Some(body @ ShapeRef::Body(_)) => {
-                        let (_, transform) = s.pending.remove(&key).expect("checked");
-                        let id = physics.insert(&key.0, &BodyDesc::fixed(transform, body, Layer::PROP));
-                        if !touched.contains(&key.0) {
-                            touched.push(key.0.clone());
-                        }
-                        s.placed.insert(key, id);
-                        stats.inserts += 1;
+                let (desc, item) = match shape.clone() {
+                    Some(ShapeRef::Body(_)) if pending.item && !items_phase => {
+                        deferred.push_back(key);
                         continue;
+                    }
+                    Some(ShapeRef::Body(body)) if pending.item => {
+                        items_done += 1;
+                        let p = &pending.placement;
+                        let Some(content) = bodies.as_ref().map(|b| b.items.clone()) else { continue };
+                        let ItemBody { mass, hold } = content.item_body(&key.0, p, body.volume);
+                        let layer = item_layer(&settings, mass, &body, p.transform.scale);
+                        let shape = ShapeRef::Body(body);
+                        let desc = if hold {
+                            BodyDesc::fixed(p.transform, shape, layer)
+                        } else {
+                            BodyDesc { ccd: true, ..BodyDesc::item(p.transform, shape, layer, mass) }
+                        };
+                        (desc, true)
+                    }
+                    Some(ShapeRef::Mesh(m)) => {
+                        // A scale without a cached copy: built on the task pool first.
+                        let scale = pending.placement.transform.scale;
+                        if !m.has_scale(scale) {
+                            let tag = format!("{}@{:?}", pending.shape, scale.to_array().map(f32::to_bits));
+                            if !s.scaling.contains_key(&tag) {
+                                let task = AsyncComputeTaskPool::get().spawn(async move { m.prepare_scale(scale) });
+                                s.scaling.insert(tag.clone(), task);
+                            }
+                            s.waiting.entry(tag).or_default().push(key);
+                            continue;
+                        }
+                        (BodyDesc::fixed(pending.placement.transform, ShapeRef::Mesh(m), Layer::STATIC), false)
                     }
                     _ => {
                         s.pending.remove(&key);
                         continue;
                     }
                 };
-                // A scale without a cached copy: built on the task pool first.
-                let scale = s.pending[&key].1.scale;
-                if !shape.has_scale(scale) {
-                    let tag = format!("{model}@{:?}", scale.to_array().map(f32::to_bits));
-                    if !s.scaling.contains_key(&tag) {
-                        let task = AsyncComputeTaskPool::get().spawn(async move { shape.prepare_scale(scale) });
-                        s.scaling.insert(tag.clone(), task);
-                    }
-                    s.waiting.entry(tag).or_default().push(key);
-                    continue;
-                }
-                let (_, transform) = s.pending.remove(&key).expect("checked");
-                let desc = BodyDesc::fixed(transform, ShapeRef::Mesh(shape), Layer::STATIC);
+                s.pending.remove(&key);
                 let id = physics.insert(&key.0, &desc);
                 if !touched.contains(&key.0) {
                     touched.push(key.0.clone());
                 }
+                if item {
+                    s.items.insert(key.clone(), desc.pose);
+                }
                 s.placed.insert(key, id);
                 stats.inserts += 1;
-                batch += 1;
+                batch += usize::from(!item);
                 if batch >= settings.insert_batch {
+                    refresh(&mut physics, &touched, batch, s);
                     batch = 0;
-                    s.refresh_s = refresh(&mut physics, &touched, s.refresh_s);
                 }
             }
             Some(ShapeState::Loading(_)) => {
-                let model = model.clone();
-                s.waiting.entry(model).or_default().push(key);
+                let shape = pending.shape.clone();
+                s.waiting.entry(shape).or_default().push(key);
             }
             None => {
-                let model = model.clone();
-                let task = if let Some(path) = model.strip_prefix(BODY) {
+                let shape = pending.shape.clone();
+                let task = if let Some(path) = shape.strip_prefix(BODY) {
                     bodies.as_ref().map(|b| {
                         let (load, m) = (b.loader.clone(), path.to_owned());
                         AsyncComputeTaskPool::get().spawn(async move { load(&m).map(ShapeRef::Body) })
                     })
+                } else if let Some(path) = shape.strip_prefix(SUPPORT) {
+                    bodies.as_ref().and_then(|b| b.supports.clone()).map(|load| {
+                        let m = path.to_owned();
+                        AsyncComputeTaskPool::get()
+                            .spawn(async move { load(&m).map(|shape| ShapeRef::Mesh(MeshShape::from_static(&shape))) })
+                    })
                 } else {
                     source.as_ref().map(|src| {
-                        let (src, m) = (src.0.clone(), model.clone());
+                        let (src, m) = (src.0.clone(), shape.clone());
                         AsyncComputeTaskPool::get()
                             .spawn(async move { src(&m).map(|shape| ShapeRef::Mesh(MeshShape::from_static(&shape))) })
                     })
                 };
                 let built = task.map_or(ShapeState::Ready(None), ShapeState::Loading);
-                s.shapes.insert(model.clone(), built);
-                s.waiting.entry(model).or_default().push(key);
+                s.shapes.insert(shape.clone(), built);
+                s.waiting.entry(shape).or_default().push(key);
             }
         }
     }
-    s.refresh_s = refresh(&mut physics, &touched, s.refresh_s);
+    for key in deferred.into_iter().rev().chain(held) {
+        s.order.push_front(key);
+    }
     stats.insert_ms += started.elapsed().as_secs_f32() * 1e3;
 }
 
-/// Refreshes the query structure of `worlds`; returns the updated estimate of
-/// one refresh (decays toward the latest cost, jumps up at once).
-fn refresh(physics: &mut Physics, worlds: &[WorldspaceId], estimate: f64) -> f64 {
+/// Refreshes the query structure of `worlds` after `bodies` inserts and
+/// updates the cost estimates (a decaying maximum per body: jumps up at
+/// once, decays 10 % per refresh).
+fn refresh(physics: &mut Physics, worlds: &[WorldspaceId], bodies: usize, s: &mut PhysicsStreaming) {
     if worlds.is_empty() {
-        return estimate;
+        return;
     }
     let started = Instant::now();
     for ws in worlds {
@@ -285,8 +534,38 @@ fn refresh(physics: &mut Physics, worlds: &[WorldspaceId], estimate: f64) -> f64
             w.refresh_queries();
         }
     }
-    let cost = started.elapsed().as_secs_f64();
-    cost.max(estimate * 0.9)
+    #[allow(clippy::cast_precision_loss)]
+    let per_body = started.elapsed().as_secs_f64() / bodies.max(1) as f64;
+    s.refresh_per_body_s = per_body.max(s.refresh_per_body_s * 0.9);
+    s.refresh_s = s.refresh_per_body_s * 8.0;
+}
+
+/// Item visuals follow their awake bodies (interpolated); a pose is written
+/// only when it changed, so resting items cost no transform propagation.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn follow_items(
+    physics: Res<Physics>,
+    streaming: Res<PhysicsStreaming>,
+    time: Res<Time<Fixed>>,
+    mut pivots: Query<(&ItemPivot, &mut Transform)>,
+) {
+    if streaming.items.is_empty() {
+        return;
+    }
+    let alpha = time.overstep_fraction();
+    for (pivot, mut t) in &mut pivots {
+        let key = (pivot.worldspace.clone(), pivot.id);
+        let (Some(id), Some(w)) = (streaming.placed.get(&key), physics.worlds.get(&pivot.worldspace)) else { continue };
+        if !streaming.items.contains_key(&key) {
+            continue;
+        }
+        let Some(pose) = w.pose_at(*id, alpha) else { continue };
+        let translation = pivot.origin.delta_f32(pose.pos);
+        if t.translation != translation || t.rotation != pose.rotation {
+            t.translation = translation;
+            t.rotation = pose.rotation;
+        }
+    }
 }
 
 /// Heightfield chunks over the active worldspace's R0 cells.

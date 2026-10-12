@@ -426,3 +426,85 @@ fn limp_ragdoll_chains_hold_together() {
 fn spike() {
     crate::spike::run();
 }
+
+/// P4 "waking and knocking" (ROADMAP M4 P4, PH-1 in miniature): a table (a
+/// fixed slab on a fixed floor) with a row of sleeping items, refreshed for
+/// queries before the first step as the streaming inserts do. Nothing moves
+/// on its own; a box dropped onto the row wakes the items it hits, they fall
+/// off the table, and everything rests within 3 s.
+#[test]
+fn box_dropped_on_table_items_wakes_and_settles() {
+    let base = WorldPos::new(IVec3::new(3, 0, -1), Vec3::new(10.0, 4.0, -7.0));
+    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+    ground(&mut w, base);
+    // Table top: 1.2 × 0.6 m at 0.8 m (a slab on the floor's level, held fixed).
+    let top = base.offset(Vec3::new(0.0, 0.775, 0.0));
+    w.insert(&BodyDesc::fixed(at(top), ShapeRef::Box(Vec3::new(0.6, 0.025, 0.3)), Layer::STATIC));
+    let items: Vec<BodyId> = (0..6)
+        .map(|i| {
+            let p = base.offset(Vec3::new(i as f32 * 0.2 - 0.5, 0.8 + 0.06, 0.0));
+            let shape = if i % 2 == 0 { ShapeRef::Box(Vec3::splat(0.06)) } else { ShapeRef::Sphere(0.06) };
+            w.insert(&BodyDesc::item(at(p), shape, Layer::DEBRIS, Some(0.4)))
+        })
+        .collect();
+    w.refresh_queries();
+    let before = positions(&w, &items);
+    let mut events = Vec::new();
+    for _ in 0..120 {
+        w.step();
+        events.extend(w.drain_events());
+    }
+    assert_eq!(count(&events, |e| matches!(e, PhysicsEvent::Woke(_))), 0, "nothing wakes on its own");
+    assert_eq!(positions(&w, &items), before);
+    // A 3 kg box comes in low from the left end of the row and plows along it.
+    let drop = base.offset(Vec3::new(-0.9, 1.1, 0.0));
+    let mut desc = BodyDesc::new(BodyKind::Dynamic { asleep: false }, at(drop), ShapeRef::Box(Vec3::new(0.3, 0.1, 0.15)), Layer::PROP);
+    desc.mass = Some(3.0);
+    desc.ccd = true;
+    let falling = w.insert(&desc);
+    w.refresh_queries();
+    w.set_velocity(falling, Vec3::new(4.0, -0.5, 0.0), Vec3::ZERO);
+    events.clear();
+    let mut steps_to_rest = None;
+    for step in 0..360 {
+        w.step();
+        events.extend(w.drain_events());
+        let moving = items.iter().chain([&falling]).any(|&id| w.velocity(id).is_some_and(|(v, a)| v.length() > 0.02 || a.length() > 0.2));
+        if moving {
+            steps_to_rest = None;
+        } else if steps_to_rest.is_none() && step > 10 {
+            steps_to_rest = Some(step);
+        }
+    }
+    let woke = count(&events, |e| matches!(e, PhysicsEvent::Woke(id) if items.contains(id)));
+    assert!(woke >= 2, "the box wakes the items it hits ({woke})");
+    let moved = positions(&w, &items).iter().zip(&before).filter(|(a, b)| a.delta(**b).length() > 0.05).count();
+    assert!(moved >= 2, "knocked items moved ({moved})");
+    let fell = positions(&w, &items).iter().filter(|p| base.delta(**p).y < 0.5).count();
+    assert!(fell >= 1, "some fell off the table ({fell})");
+    let rest = steps_to_rest.expect("everything rests");
+    assert!(rest <= 180, "came to rest after {rest} steps (> 3 s)");
+    assert_eq!(w.awake_count(), 0, "and fell asleep");
+}
+
+/// A query refresh between insert and first step must not drop dynamic
+/// bodies from the simulation (P3 finding: the refresh waits for a step).
+#[test]
+fn refresh_before_first_step_keeps_new_bodies() {
+    let base = WorldPos::ORIGIN;
+    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+    ground(&mut w, base);
+    let falling = w.insert(&BodyDesc::new(BodyKind::Dynamic { asleep: false }, at(base.offset(Vec3::Y * 2.0)), ShapeRef::Sphere(0.1), Layer::PROP));
+    let item = w.insert(&BodyDesc::item(at(base.offset(Vec3::new(1.0, 0.1, 0.0))), ShapeRef::Box(Vec3::splat(0.1)), Layer::DEBRIS, Some(1.0)));
+    w.refresh_queries();
+    for _ in 0..30 {
+        w.step();
+    }
+    assert!(w.pose(falling).unwrap().pos.local.y < 1.5, "awake body falls after a refresh");
+    assert_eq!(w.is_sleeping(item), Some(true), "placed item asleep");
+    w.apply_impulse(item, Vec3::new(1.5, 0.0, 0.0), None);
+    for _ in 0..30 {
+        w.step();
+    }
+    assert!(w.pose(item).unwrap().pos.local.x > 1.05, "a refreshed sleeper still wakes and moves");
+}

@@ -147,7 +147,7 @@ mod settle {
             item(0, 0.0, 1.05),  // on the table
             item(1, 0.3, 1.45),  // 40 cm above it
             item(2, 3.0, 1.05),  // beside it, over nothing
-            item(3, -0.3, 1.03), // 2 cm into it
+            item(3, -0.3, 1.01), // 4 cm into it
             item(4, 0.0, 1.15),  // stacked on item 0
             SettleItem { always_hold: true, ..item(5, 0.6, 1.05) },
             SettleItem { shape: None, ..item(6, 0.8, 1.05) },
@@ -159,10 +159,56 @@ mod settle {
             [Hold::No, Hold::Unsupported, Hold::Unsupported, Hold::No, Hold::No, Hold::Rules, Hold::NoShape],
             "{checks:#?}"
         );
-        assert!(checks[0].drop < 0.005 && checks[0].overlap() < 0.005, "{:?}", checks[0]);
-        assert!(checks[1].drop > 0.3 && checks[2].drop > 0.5);
+        // The 1 cm overlap allowance shrinks the test shape: its bottom starts 1 cm up.
+        assert!(checks[0].drop < 0.015 && checks[0].overlap() < 0.005, "{:?}", checks[0]);
+        // Dropping items stop the test once past the tolerance.
+        assert!(checks[1].drop > 0.05 && checks[2].drop > 0.05);
         assert!(checks[3].rise > 0.01 && checks[3].overlap() < 0.05, "{:?}", checks[3]);
     }
+
+    /// A book standing tilted on a shelf tips over about its bottom edge: its
+    /// center drops, its lowest point doesn't, so it is supported.
+    #[test]
+    fn toppling_items_are_supported() {
+        let mut world = PhysicsWorld::new(WorldPos::ORIGIN, PhysicsParams::default());
+        let table = WorldTransform { pos: WorldPos::ORIGIN.offset(Vec3::new(0.0, 0.95, 0.0)), ..WorldTransform::IDENTITY };
+        world.insert(&BodyDesc::fixed(table, ShapeRef::Box(Vec3::new(1.0, 0.05, 1.0)), Layer::STATIC));
+        let (p, t) = box_mesh(Vec3::ZERO, Vec3::new(0.01, 0.075, 0.05));
+        let book = Arc::new(fit_render(&p, &t, &FitSettings::default()).unwrap());
+        let tilt = 30f32.to_radians();
+        let low = 0.01 * tilt.sin() + 0.075 * tilt.cos();
+        let pose = WorldTransform {
+            pos: WorldPos::ORIGIN.offset(Vec3::new(0.0, 1.0 + low + 0.002, 0.0)),
+            rotation: glam::Quat::from_rotation_z(tilt),
+            ..WorldTransform::IDENTITY
+        };
+        let items = [SettleItem { id: 0, pose, shape: Some(book), always_hold: false }];
+        let checks = settle(&mut world, &items, &CheckSettings::default());
+        assert_eq!(checks[0].hold, Hold::No, "{:?}", checks[0]);
+        assert!(checks[0].shift > 0.02 && checks[0].drop < 0.03, "it toppled in place: {:?}", checks[0]);
+    }
+}
+
+/// A closed box encloses points inside it; an open shelf board under a point
+/// (its top face toward the point) doesn't.
+#[test]
+fn closed_proxies_enclose_points_and_open_shelves_dont() {
+    use sf_controller::{CollisionMesh, SurfaceId};
+
+    use crate::MeshShape;
+
+    let mesh = |(p, t): (Vec<Vec3>, Vec<[u32; 3]>)| {
+        let n = t.len();
+        MeshShape::new(&CollisionMesh { positions: p.iter().map(Vec3::to_array).collect(), triangles: t, surfaces: vec![SurfaceId::DEFAULT; n] })
+            .unwrap()
+    };
+    let proxy = mesh(box_mesh(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.5, 1.0, 0.25)));
+    assert!(proxy.encloses(Vec3::new(0.1, 0.8, 0.0), Vec3::NEG_Y));
+    assert!(!proxy.encloses(Vec3::new(0.1, 2.3, 0.0), Vec3::NEG_Y), "on top of the box");
+    assert!(!proxy.encloses(Vec3::new(2.0, 0.8, 0.0), Vec3::NEG_Y), "beside it");
+    // A shelf board (closed slab) under the point: its top face is hit first.
+    let shelf = mesh(box_mesh(Vec3::new(0.0, 0.5, 0.0), Vec3::new(0.5, 0.01, 0.25)));
+    assert!(!shelf.encloses(Vec3::new(0.1, 0.6, 0.0), Vec3::NEG_Y));
 }
 
 /// Bodies inserted awake fall at once, primitives and `body.cook` shapes alike.

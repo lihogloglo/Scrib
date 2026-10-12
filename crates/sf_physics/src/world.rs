@@ -233,6 +233,8 @@ impl PhysicsWorld {
         // Rapier adds new bodies to its islands in the next step's pipeline;
         // a collision-only pass (`refresh_queries`) before it drops them, and
         // they never simulate. Dynamic inserts hold refreshes off until a step.
+        // (Re-queuing them as modified after the pass isn't enough: the
+        // contacts it found never get linked into the persistent islands.)
         if matches!(desc.kind, BodyKind::Dynamic { .. }) {
             self.dynamic_inserted = true;
         }
@@ -355,7 +357,7 @@ impl PhysicsWorld {
         true
     }
 
-    /// Applies an impulse (N·s) at a world point, or at the center of mass.
+    /// Applies an impulse (NÂ·s) at a world point, or at the center of mass.
     pub fn apply_impulse(&mut self, id: BodyId, impulse: Vec3, at: Option<WorldPos>) -> bool {
         self.unsettle(id);
         let Some(h) = self.live(id).map(|l| l.handle) else {
@@ -395,6 +397,9 @@ impl PhysicsWorld {
     /// Refreshes the query structure after inserts, removals or teleports
     /// without stepping (an activation batch before the first step). Steps
     /// refresh it anyway.
+    ///
+    /// A no-op while a dynamic body inserted since the last step is pending
+    /// (see `insert`): insert statics first, then refresh, then items.
     pub fn refresh_queries(&mut self) {
         if self.queries_dirty && !self.dynamic_inserted {
             self.engine.detect_collisions(&(), &());
@@ -456,6 +461,7 @@ impl PhysicsWorld {
         let collector = Collector::default();
         self.engine.step_with_events(&(), &collector);
         self.dynamic_inserted = false;
+        self.resist_rolling();
         self.queries_dirty = false;
         let dt = self.params.dt;
         for (c1, c2, force, point) in collector.contacts.into_inner().expect("collector poisoned") {
@@ -466,6 +472,33 @@ impl PhysicsWorld {
         }
         self.finish_settle();
         self.track_motion();
+    }
+
+    /// [`PhysicsParams::rolling_resistance`] on awake item bodies in contact.
+    fn resist_rolling(&mut self) {
+        let decel = self.params.rolling_resistance * self.params.dt;
+        if decel <= 0.0 {
+            return;
+        }
+        let items = Layer::DEBRIS | Layer::PROP;
+        let rolling: Vec<RigidBodyHandle> = self
+            .engine
+            .active_bodies()
+            .filter(|(_, rb)| {
+                let slot = u32::try_from(rb.user_data).ok().and_then(|i| self.slots.get(i as usize));
+                slot.and_then(|s| s.live.as_ref()).is_some_and(|l| l.layer.intersects(items) && !l.settling)
+                    && rb.angvel().length_squared() > 0.0
+                    && rb.colliders().iter().any(|&c| self.engine.narrow_phase.contact_pairs_with(c).any(ContactPair::has_any_active_contact))
+            })
+            .map(|(h, _)| h)
+            .collect();
+        for h in rolling {
+            if let Some(rb) = self.engine.bodies.get_mut(h) {
+                let w = rb.angvel();
+                let speed = w.length();
+                rb.set_angvel(w * ((speed - decel).max(0.0) / speed), false);
+            }
+        }
     }
 
     /// Interpolation history, Woke/Slept transitions and fell-out recovery.
@@ -547,7 +580,7 @@ impl PhysicsWorld {
         if cell == self.anchor {
             return;
         }
-        // Integer cells × 256 m: exact in f32 for any shift inside ±2^15 cells.
+        // Integer cells Ã— 256 m: exact in f32 for any shift inside Â±2^15 cells.
         #[allow(clippy::cast_precision_loss)]
         let d = (cell - self.anchor).as_vec3() * GRID_CELL;
         // Moving a collider wakes its contact partners in the engine; sleepers re-settle (locked for
