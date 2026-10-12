@@ -48,6 +48,36 @@ pub enum Returns {
     Float,
 }
 
+/// M5 status of a function (the `status` column; W2 coverage report).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Status {
+    /// Implemented in M5 (W3).
+    Live,
+    /// A logged neutral stand-in returning this value (0 unless `stub=<n>`).
+    Stub(i32),
+    /// No meaningful M5 stand-in: a logged no-op returning 0.
+    Later,
+}
+
+impl Status {
+    /// `live`, `stub` or `later` (the neutral value dropped).
+    pub fn name(self) -> &'static str {
+        match self {
+            Status::Live => "live",
+            Status::Stub(_) => "stub",
+            Status::Later => "later",
+        }
+    }
+
+    /// What the runtime returns while the function is not live.
+    pub fn neutral(self) -> i32 {
+        match self {
+            Status::Stub(n) => n,
+            Status::Live | Status::Later => 0,
+        }
+    }
+}
+
 /// One function's signature.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Function {
@@ -57,11 +87,17 @@ pub struct Function {
     pub returns: Returns,
     /// Status family (scripting-adapter.md "What M5 needs from M7").
     pub family: String,
+    pub status: Status,
     /// Acts on a reference (implicit instance or `id->`).
     pub on_reference: bool,
 }
 
 impl Function {
+    /// The Luau name: `snake_case` of the canonical name (`GetPCCell` → `get_pc_cell`).
+    pub fn luau_name(&self) -> String {
+        snake_case(&self.name)
+    }
+
     pub fn required_args(&self) -> usize {
         self.args
             .iter()
@@ -128,9 +164,10 @@ impl FunctionTable {
                 continue;
             }
             let cols: Vec<&str> = line.split_whitespace().collect();
-            let [names, args, returns, family, flags] = cols[..] else {
-                return Err(err(format!("expected 5 columns, got {}", cols.len())));
+            let [names, args, returns, family, status, flags] = cols[..] else {
+                return Err(err(format!("expected 6 columns, got {}", cols.len())));
             };
+            let status = parse_status(status).map_err(&err)?;
             let args = parse_args(args).map_err(&err)?;
             let returns = match returns {
                 "void" => Returns::Void,
@@ -160,12 +197,43 @@ impl FunctionTable {
                     args: args.clone(),
                     returns,
                     family: family.to_owned(),
+                    status,
                     on_reference,
                 });
             }
         }
         Ok(table)
     }
+}
+
+fn parse_status(col: &str) -> Result<Status, String> {
+    match col {
+        "live" => Ok(Status::Live),
+        "stub" => Ok(Status::Stub(0)),
+        "later" => Ok(Status::Later),
+        _ => col
+            .strip_prefix("stub=")
+            .and_then(|n| n.parse().ok())
+            .map(Status::Stub)
+            .ok_or(format!("bad status {col}")),
+    }
+}
+
+/// `GetPCCell` → `get_pc_cell`, `AIWander` → `ai_wander`, `PCForce1stPerson` → `pc_force1st_person`.
+pub fn snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            let prev = chars[i - 1];
+            let next_lower = chars.get(i + 1).is_some_and(char::is_ascii_lowercase);
+            if prev.is_ascii_lowercase() || prev.is_ascii_digit() || (prev.is_ascii_uppercase() && next_lower) {
+                out.push('_');
+            }
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
 }
 
 fn parse_args(col: &str) -> Result<Vec<ArgSpec>, String> {
@@ -246,8 +314,30 @@ mod tests {
 
     #[test]
     fn bad_rows_are_rejected() {
-        assert!(FunctionTable::parse("Foo num,bogus void x -").is_err());
-        assert!(FunctionTable::parse("Foo - void x -\nfoo - void x -").is_err());
-        assert!(FunctionTable::parse("Foo num*,num void x -").is_err());
+        assert!(FunctionTable::parse("Foo num,bogus void x live -").is_err());
+        assert!(FunctionTable::parse("Foo - void x live -\nfoo - void x live -").is_err());
+        assert!(FunctionTable::parse("Foo num*,num void x live -").is_err());
+        assert!(FunctionTable::parse("Foo - void x maybe -").is_err());
+        assert!(FunctionTable::parse("Foo - void x -").is_err());
+    }
+
+    #[test]
+    fn statuses_and_luau_names() {
+        let t = FunctionTable::vanilla();
+        let status = |n: &str| t.function(t.get(n).unwrap()).status;
+        assert_eq!(status("GetJournalIndex"), Status::Live);
+        assert_eq!(status("GetPCRank"), Status::Stub(-1));
+        assert_eq!(status("AITravel"), Status::Later);
+        let name = |n: &str| t.function(t.get(n).unwrap()).luau_name();
+        assert_eq!(name("GetPCCell"), "get_pc_cell");
+        assert_eq!(name("AIWander"), "ai_wander");
+        assert_eq!(name("PCForce1stPerson"), "pc_force1st_person");
+        assert_eq!(name("ModPCFacRep"), "mod_pc_fac_rep");
+        // Luau names are unique (the runtime dispatches on them).
+        let mut names: Vec<String> = t.functions.iter().map(Function::luau_name).collect();
+        names.sort();
+        let n = names.len();
+        names.dedup();
+        assert_eq!(names.len(), n);
     }
 }

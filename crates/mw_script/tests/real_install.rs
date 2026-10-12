@@ -4,6 +4,8 @@
 //! unrecoverable scripts; never prints or stores the source text.
 //! Skips (passes) when no Morrowind install is detected.
 
+mod support;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
@@ -297,4 +299,117 @@ fn vanilla_corpus_parses() {
     assert!(corpus.results.len() >= 10_000, "{}", corpus.results.len());
     let inert = scripts.inert.len() + results.inert.len();
     assert_eq!(inert, 0, "unrecoverable texts (listed above)");
+}
+
+/// W2: every live script and every dialogue result translates to Luau, compiles in a sandboxed
+/// `sf_script` context, and runs once (a script's first tick, each result once) against the
+/// `mw` runtime skeleton with no host; prints the coverage report. Counts only.
+#[test]
+#[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+fn vanilla_corpus_translates_and_runs() {
+    use mw_script::{CallSites, OracleFlags, Origin, emit_dialogue, emit_script, oracle_flags};
+
+    let Ok((install, _)) = MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let table = FunctionTable::vanilla();
+    let corpus = load(&install);
+    let mut live: BTreeMap<String, &str> = BTreeMap::new();
+    for (_, id, text, _) in &corpus.scripts {
+        live.insert(id.to_lowercase(), text);
+    }
+    let locals = live
+        .iter()
+        .map(|(id, text)| {
+            let p = parse(text, SourceKind::Script, table);
+            let vars = p.script.locals.iter().map(|l| (l.name.key.clone(), l.ty)).collect();
+            (id.clone(), vars)
+        })
+        .collect();
+    let env = CorpusEnv { corpus: &corpus, locals };
+
+    // Translate: one module per live script, one per (file, topic) of results.
+    let t0 = Instant::now();
+    let mut sites = CallSites::default();
+    let mut modules: Vec<(String, String)> = Vec::new();
+    let mut inert = 0;
+    let mut oracle = OracleFlags::default();
+    for (id, text) in &live {
+        let p = parse_and_resolve(text, SourceKind::Script, table, &env);
+        sites.add_parsed(&p, Origin::Script, table);
+        oracle.add(oracle_flags(&p, table, &env));
+        inert += usize::from(p.is_inert());
+        modules.push((format!("script/{id}"), emit_script(id, "test", &p, table, &env)));
+    }
+    let mut topics: BTreeMap<(String, String), Vec<(String, Parsed)>> = BTreeMap::new();
+    for (file, topic, info, text) in &corpus.results {
+        let p = parse_and_resolve(text, SourceKind::DialogueResult, table, &env);
+        sites.add_parsed(&p, Origin::DialogueResult, table);
+        oracle.add(oracle_flags(&p, table, &env));
+        inert += usize::from(p.is_inert());
+        topics.entry((file.clone(), topic.clone())).or_default().push((info.clone(), p));
+    }
+    for ((file, topic), infos) in &topics {
+        let refs: Vec<(&str, &Parsed)> = infos.iter().map(|(i, p)| (i.as_str(), p)).collect();
+        modules.push((format!("topic/{file}/{topic}"), emit_dialogue(topic, file, &refs, table, &env)));
+    }
+    let translate = t0.elapsed();
+    let source_bytes: usize = modules.iter().map(|(_, m)| m.len()).sum();
+
+    // Compile (the bake's compiler: mlua `Compiler`, level 2).
+    let t1 = Instant::now();
+    let mut bytecode_bytes = 0;
+    for (_, m) in &modules {
+        bytecode_bytes += sf_script::mlua::chunk::Compiler::new()
+            .set_optimization_level(2)
+            .compile(m)
+            .map_or(0, |b| b.len());
+    }
+    let compile = t1.elapsed();
+
+    // Load and run in a sandboxed shared context.
+    let t2 = Instant::now();
+    let mut h = support::Harness::new(table);
+    let (mut compile_errors, mut run_errors) = (Vec::new(), Vec::new());
+    for (label, m) in &modules {
+        let o = h.run_module(label, m);
+        if let Some(e) = o.compile {
+            compile_errors.push(format!("{label}: {e}"));
+        }
+        if let Some(e) = o.run {
+            run_errors.push(format!("{label}: {e}"));
+        }
+    }
+    let run = t2.elapsed();
+    let memory = h.rt.context(support::CONTEXT).unwrap().used_memory();
+
+    eprintln!(
+        "translated {} live scripts + {} results ({} modules, {inert} inert texts) in {translate:.2?}: {} KB Luau; \
+         compile {compile:.2?} ({} KB bytecode); load + run once in one sandboxed context {run:.2?} ({} KB)",
+        live.len(),
+        corpus.results.len(),
+        modules.len(),
+        source_bytes / 1024,
+        bytecode_bytes / 1024,
+        memory / 1024
+    );
+    for e in compile_errors.iter().take(20) {
+        eprintln!("  COMPILE {e}");
+    }
+    for e in run_errors.iter().take(20) {
+        eprintln!("  RUN {e}");
+    }
+    let coverage = sites.report(table);
+    eprintln!("{coverage}");
+    eprintln!("numeric semantics: {oracle}");
+    let fallbacks = h.fallback_calls();
+    let missing_live: Vec<String> = fallbacks
+        .iter()
+        .filter(|(n, _)| table.functions.iter().any(|f| f.luau_name() == *n && f.status == mw_script::Status::Live))
+        .map(|(n, c)| format!("{n} {c}"))
+        .collect();
+    eprintln!("live functions the skeleton answered (W3 host to do): {}", missing_live.join(", "));
+    assert!(compile_errors.is_empty(), "{} modules failed to compile", compile_errors.len());
+    assert!(run_errors.is_empty(), "{} modules failed to run", run_errors.len());
 }

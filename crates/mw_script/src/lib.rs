@@ -16,7 +16,9 @@
 //! for lenient legacy front ends.
 
 pub mod ast;
+pub mod coverage;
 pub mod diag;
+pub mod emit;
 pub mod functions;
 pub mod lexer;
 mod parser;
@@ -24,7 +26,9 @@ pub mod resolve;
 
 pub use ast::{Script, SourceKind};
 pub use diag::{Diagnostic, Diagnostics, Rule, Severity};
-pub use functions::{FnId, FunctionTable};
+pub use coverage::{CallSites, Coverage, OracleFlags, Origin, oracle_flags};
+pub use emit::{emit_dialogue, emit_script};
+pub use functions::{FnId, FunctionTable, Status};
 pub use resolve::{Env, MemberLookup, NoEnv};
 
 /// A parsed script and everything reported on the way.

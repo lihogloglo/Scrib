@@ -344,6 +344,81 @@ Rules defined but not fired by vanilla (kept for mods): `SpacedOperator`, `Missi
   ID-kind checks of arguments; `ElseIf` after an extra `EndIf` and stray `EndIf` repairs should be
   confirmed against OpenMW's behaviour on the same vanilla scripts (`HentusTravel`, `GlenmorilRaven`).
 
+## As built (W2, 2026-10-13, m5-w2 + m5-w2b)
+
+**Emitter** (`mw_script::emit`): `emit_script(id, origin, &Parsed, table, env)` → one module per
+SCPT; `emit_dialogue(topic, origin, &[(info id, &Parsed)], ..)` → one module per topic with
+`results[<info id>] = function(self) ... end` (run as the speaker; a result's own locals live
+in a `local v = {..}` table). A module is `return function(mw) ... return mw.script({ id, vars,
+activation, tick }) end`; `vars` lists the declared locals and types, `activation = "script"` is
+set when the script reads `OnActivate`. **No Luau globals**: locals `v.<name>`, GLOB globals
+`G.<name>` (`mw.globals`), unknown-type globals `mw.get_global/set_global`, `id.var` and speaker
+locals `mw.get_var/set_var(target, name)`, undeclared names read `0` and writes go through
+`mw.discard(x)` (calls inside `x` still run). Names that aren't Luau identifiers or are keywords
+become `t["name"]`. Calls: reference functions are handle methods (`self:get_pos("z")`,
+`ref("id"):disable()`), the rest `mw.<snake_case>(self, ...)`; a void function used as a value reads
+`(call or 0)`; `Arg::Missing` reads `0` (numeric slot) or `""`. Every statement ends `-- L<n>`.
+Inert texts: scripts become a stub module (`inert = "<first error>"`, empty `tick`, variables
+kept so `id.var` reads see zeros); inert results are listed in the topic module's `inert` table;
+both are listed in the bake report. `EMITTER_VERSION` = 1.
+
+**Numeric semantics** (open question 1, still pending the oracle): expressions evaluate in
+floating point (the original's documented float evaluation), so `/` between integers is float
+division and comparisons compare values; only assignment converts (`mw.short`/`mw.long`: truncate
+toward zero, two's-complement wrap, non-finite → 0; `mw.float`: round through `f32`).
+`mw_script::oracle_flags` counts the spots a different oracle answer would change: vanilla has
+**0 integer divisions** (both operands integer-typed) and **44 comparisons** between a
+non-literal integer operand and a `float` (integer literals compare exactly and aren't counted).
+
+**Function table status** (`functions.txt` 6th column, `live` / `stub` / `stub=<n>` / `later`):
+63 rows live, 106 stub, 59 later (rows before `{$LIST}` expansion); `Status::neutral()` is what the
+runtime returns while a function isn't live (`GetPCRank` −1, `GetHealth` 100, `SayDone` 1).
+Luau names are unique `snake_case` (`GetPCCell` → `get_pc_cell`), checked by a test.
+
+**Runtime skeleton** (`luau/mw.luau`, `emit::RUNTIME`; `emit::runtime_functions` generates the
+status table): `Runtime.new(host, functions)` returns `mw` with the conversions, globals table,
+reference handles (`mw.ref`, cached), `get_var/set_var` over host-provided variable tables,
+`mw.script`/`mw.dialogue` constructors, `new_vars`, `Random` and `GetSquareRoot`; every other
+function is a host function or a counted stand-in returning its neutral value
+(`mw.fallback_calls`). W3 supplies `host.functions` / `host.methods` / `host.vars_of` /
+`host.handle`.
+
+**Bake** (`mw_bake::script`): `RecordEnv` (GLOB types, all record IDs + `player`, object → script,
+every live script's locals) is the resolution `Env`; its digest is a parameter of every product.
+`mwscript.translate` subjects `script/<id>` and `topic/<topic>` store the module, its bytecode
+(mlua `Compiler`, level 2), inert texts, call sites, rule hits and oracle counts (postcard);
+`mwscript.coverage` (subject `corpus`) sums them. `bevyrrowind bake` prints one `scripts:` line,
+the coverage split and the oracle counts; compile errors fail the bake, inert texts don't.
+Products hold game text, so they live in the bake store only. Release bake on the owner's machine:
+2,840 translate products (1,207 scripts + 1,633 live topics, 15,852 live results: the merged DB has
+fewer INFOs than the per-file corpus) in 1.4 s CPU summed over threads, 5.6 s wall cold (mostly
+writing 2,841 small products to the store; a batched or packed product would cut it, not needed
+for the gate), **0.19 s no-op**. Coverage over the live DB: 25,449 call sites, 57.1 % live.
+
+**Corpus (real install, `cargo test -p mw_script --release --test real_install -- --nocapture`)**:
+1,207 live scripts + 17,144 results → 2,922 modules (1,207 + 1,715 per-file topics), **0 inert,
+0 compile errors, 0 run errors** (each script's first tick and every result run once in one
+sandboxed `sf_script` context with no host); 3.6 MB Luau, 3.5 MB bytecode, 15 MB context memory.
+Single-threaded release: translate 136 ms, compile 245 ms, load + run 292 ms (gate ≤ 2 s).
+
+**Coverage** (live call sites only, scripts + results): 26,704 call sites, **14,934 live (55.9 %)**,
+5,729 stub, 6,041 later. By family: journal 6,105 live; dialogue 3,546 later (`Goodbye`, `Choice`,
+`ForceGreeting`: M7); inventory 3,490 (3,354 live); placement 3,122 (3,106 live); disposition 2,211
+stub; ai 1,557 (896 stub, 661 later); faction 807 (91 stub, 716 later); combat 748 (180 stub, 568
+later); magic 652 (281 stub, 371 later); ui 596 (540 live); map 543 stub; audio 499 stub; stats
+436 (420 stub); activation 426 live; scripts 394 live; menu 297 live; events 258 stub; deaths
+247 live; clock 238 live; the rest < 120 each. Live functions the vanilla corpus reaches on a
+first tick, i.e. W3's host to-do list by hits: `journal`, `add_item`, `remove_item`,
+`get_journal_index`, `disable`, `get_disabled`, `menu_mode`, `on_activate`, `start_script`,
+`add_topic`, `enable`, `cell_changed`, `get_item_count`, `get_dead_count`, `get_distance`, then
+the long tail (positions, locks, player controls, animation groups, message boxes).
+
+**Handoff to W3**: implement `host` for `Runtime.new` in `mw_script_bevy` against the M5 stores
+and framework APIs (live rows of `functions.txt`); mount `RUNTIME` + `runtime_functions` in the
+builtin mod (A3); load translate products' bytecode in the shared `mw.legacy` context; instance
+tables from `mw.new_vars(def)` stored in the placement overlay; dialogue results stay dormant until
+M7 (console can run one). Still open: the oracle fixtures (numeric semantics, `ElseIf` repairs).
+
 ## Verification
 
 - **Corpus (real install)**: every vanilla script and dialogue result parses (failures listed by

@@ -64,6 +64,8 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     // Item bodies and the settle test of placed items (physics-adapter.md "Items").
     let bodies = mw_bake::body::bake_bodies(&baker, &db, &paths);
     let items = mw_bake::body::check_items(&mut baker, &db);
+    // Legacy scripts (scripting-adapter.md, M5 W2): MWScript -> Luau modules + bytecode, coverage report.
+    let scripts = mw_bake::script::bake_scripts(&mut baker, &store, &db);
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -110,6 +112,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     }
     print_animation(&anim);
     print!("{bodies}{items}");
+    print!("{scripts}");
     println!(
         "load content {loaded:.2?}, prepare sources {prepared:.2?}, models {:.2?}, save memo + manifest {saved:.2?} ({} products), total {:.2?}",
         report.elapsed,
@@ -134,6 +137,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     }
     if !items.failed.is_empty() {
         errors.push(format!("{} items.check pages failed", items.failed.len()));
+    }
+    if scripts.errors() > 0 {
+        errors.push(format!("{} legacy script products failed to translate or compile", scripts.errors()));
     }
     if errors.is_empty() { Ok(()) } else { Err(errors.join("; ").into()) }
 }

@@ -4194,6 +4194,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "luau0-src"
+version = "0.22.0+luau740"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ea012e8a8aaff2f7b6c788fad41a60630003b6a0932bcf045f7d14952c9bd31"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "lz4_flex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4293,6 +4302,37 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mlua"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a7ae6b65bf54b7fdd4cf5b6f44f60862350ebf3fe3779b3a9cc005e7fa14f81"
+dependencies = [
+ "bstr",
+ "either",
+ "erased-serde",
+ "libc",
+ "mlua-sys",
+ "num-traits",
+ "parking_lot",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde-value",
+]
+
+[[package]]
+name = "mlua-sys"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1631cda17bd6486410ab751d91f5fd4484f441589278cdad879eb3afc721a285"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "luau0-src",
+ "pkg-config",
 ]
 
 [[package]]
@@ -4401,6 +4441,7 @@ dependencies = [
  "mw_nif",
  "mw_physics",
  "mw_records",
+ "mw_script",
  "mw_vfs",
  "mw_world",
  "postcard",
@@ -4415,6 +4456,7 @@ dependencies = [
  "sf_model",
  "sf_physics",
  "sf_records",
+ "sf_script",
  "sf_terrain",
  "sf_vfs",
  "sf_world",
@@ -4465,6 +4507,7 @@ dependencies = [
 name = "mw_physics"
 version = "0.1.0"
 dependencies = [
+ "sf_physics",
  "sf_records",
  "sf_world",
  "tes3",
@@ -4487,6 +4530,8 @@ name = "mw_script"
 version = "0.1.0"
 dependencies = [
  "mw_install",
+ "sf_script",
+ "sf_vfs",
  "tes3",
 ]
 
@@ -5241,6 +5286,15 @@ dependencies = [
 
 [[package]]
 name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "ordered-float"
 version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c7c9e0d9b23589f26070720bac724174bfec1083e82f7854cdd0267518343c0"
@@ -5347,7 +5401,7 @@ dependencies = [
  "log",
  "num-derive 0.5.1",
  "num-traits",
- "ordered-float",
+ "ordered-float 5.5.0",
  "rstar",
  "simba",
  "slab",
@@ -5962,6 +6016,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
+dependencies = [
+ "ordered-float 2.10.1",
+ "serde",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6068,6 +6132,7 @@ dependencies = [
  "bevy_light",
  "bevy_math",
  "bevy_pbr",
+ "bevy_reflect",
  "bevy_render",
  "bevy_shader",
  "bevy_time",
@@ -6345,6 +6410,19 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "sf_script"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mlua",
+ "postcard",
+ "semver",
+ "serde",
+ "sf_vfs",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7619,7 +7697,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "once_cell",
- "ordered-float",
+ "ordered-float 5.5.0",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",

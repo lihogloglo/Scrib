@@ -735,11 +735,35 @@ ragdolls; robes move." Tasks in dependency order:
   the Vivec library bookshelf case (`SF_ITEMS_CELL="Vivec, Library of Vivec" SF_ITEMS_NEAR="5.9,0.31,-3.65"`); one bowl
   on the Tradehouse support shelf rocked until it slept (watch `awake item` lines); coverage freeze; held items released
   by an impulse; `support.cook` surfaces are `DEFAULT` (render materials not mapped).
-- [ ] P5 Controller on physics (`sf_controller(_bevy)`): kinematic capsule bodies, sweeps against `STATIC | PROP`,
+- [~] P5 Controller on physics (`sf_controller(_bevy)`): kinematic capsule bodies, sweeps against `STATIC | PROP`,
   capped push impulses on props and debris, `ImpactOnCharacter`, sliding on unwalkable slopes (locomotion.md open
   question 3); the mover stays in `Update`.
   Verify: `cargo test -p sf_controller` (push caps, debris never blocks, slope slide); walkers through a cluttered
   floor scatter debris without stalling; a crate blocks then yields to sustained pushing; 150-walker budget holds.
+  **P4 leftovers closed first (physics-p5, 2026-10-13, uncommitted).** Flight bench before the changes (60 m/s,
+  release, no other build at start): insert peaks 0.53–0.65 ms/frame (1.31 in a rebase window), idle step peaks
+  0.41–0.58 ms in windows without a rebase (over the 0.3 gate: items' first steps), 0.86–1.27 ms with rebases; frames
+  19.1 ms median, 36.3 worst, 4.2 stutters/min (gates fail as before). Items insert phase now time-sliced (decaying
+  max per-insert cost for statics and items, a 15 µs prior before any measurement, one insert per frame guaranteed):
+  Tradehouse load peak 0.80 → 0.57 ms/frame (95 bodies) before the prior; re-measure pending (P6 session: the app
+  stopped compiling at the end of this session on an in-progress `sf_atmos` edit by m6-f2). Automatic kill height
+  (`kill_margin` 10 m under the lowest fixed body; test `automatic_kill_height_below_lowest_static`), coverage freeze
+  at 4 Hz (`stream::coverage`, overlay write + body removal), held items as `BodyKind::Held` released by
+  `PhysicsWorld::release` or any impulse. Not done: the Vivec library bookshelf books (optional).
+  **P5 built (physics-p5, uncommitted).** `sf_physics::character` (kinematic `CHARACTER` capsule 3 cm inside the
+  mover's, `move_character`, capped `push` with `min(m_body · Δv_n, 400 N · dt)` from the intended velocity; spec
+  formula corrected in physics.md), `sf_controller` slope sliding (`Locomotion::slide`), `sf_physics_bevy` feature
+  `controller` (capsules for non-`Dormant` movers, pushes, `ImpactOnCharacter`, `CharacterStats`, `PhysicsEvents`,
+  `impl GroundProbe for Physics` over `STATIC | TERRAIN | PROP`); the walkers' mover runs on `Physics` unless
+  `--off physics` (their `StaticWorld` build is skipped then). Tests: `character_tests` (crate blocks then yields,
+  every push ≤ cap; debris never blocks; a 25 m/s ball hits a walker; no tunnelling through a 4 cm plank at 7 m/s),
+  `unwalkable_slopes_slide`. **wk-balmora (release, 75 s, quiet machine):** physics on vs `--off physics`: 61 vs 67
+  movers, mover stage median **584 µs vs 319 µs** (9.6 vs 4.8 µs per mover: the physics probe costs about 2× the
+  `StaticWorld`, after dropping the surface lookup on wall sweeps), strides 10 skated / 94 stances vs 11 / 211, 0 vs 0
+  legs without a plant, IK unplanted 20 vs ~21, walks given up 44 vs 55. **Open (P6 session first):** the probe
+  cost (profile `PhysicsProbe`; likely rapier's generic query path and heightfield casts where the `StaticWorld`
+  path used the analytic `TerrainProbe`: try `Nearest(TerrainProbe, physics STATIC|PROP)`), the 150-walker budget,
+  walkers through cluttered floors (no pushes seen in wk-balmora: the walkers' paths are clear), visual PH-8.
 - [ ] P6 Carry, drag and throw: pick ray, kinematic hand + 6-DOF motor joint with force cap, break distance,
   drag mode (ball joint at the grab point, holder slowed) for objects over the carry mass and for limp ragdolls by the
   grabbed limb (dead bodies), `HolderLimits` (carry force, carry mass, drag mass, throw impulse) from the adapter,
@@ -829,7 +853,17 @@ dependency order:
   files"): kind registry with serde + fingerprints,
   RON `define`/`patch` (`set`/`merge`/`remove`/`append`)/`delete`, field-level touches, conflict vs merge in the report.
   Verify: `cargo test -p sf_records` (every op on nested types, field conflict vs merge, RON error positions).
-- [ ] W2 MWScript → Luau emitter + `mwscript.translate` bake step + `mw` runtime skeleton + coverage report
+- [x] W2 (2026-10-13, m5-w2 + m5-w2b, uncommitted) built: `mw_script::emit` (module per script, module per topic
+  with a function per result, all state in module tables, `-- L<n>` source lines, inert → stub module), `coverage`
+  (call sites by function/family/status, `oracle_flags`), `functions.txt` status column (live/stub/stub=n/later),
+  `luau/mw.luau` runtime skeleton; `mw_bake::script` (`mwscript.translate` per `script/<id>` and `topic/<topic>`:
+  Luau + level-2 bytecode; `mwscript.coverage`), in `bevyrrowind bake`. Real install: 1,207 scripts + all 17,144
+  results (15,852 live in the merged DB) → 0 inert, 0 compile errors, 0 errors running each once in a sandboxed
+  `sf_script` context; translate 0.10 s + compile 0.20 s single-threaded; bake 1.4 s CPU summed (5.6 s wall cold,
+  mostly store writes), 0.19 s no-op. Coverage (live DB): 25,449 call sites, 57.1 % live, 5,320 stub, 5,590 later.
+  Oracle-pending: 0 integer divisions, 44 short/float comparisons. 18 mw_script tests, clippy clean. Details and W3
+  handoff in scripting-adapter.md "As built (W2)". Original task text:
+  MWScript → Luau emitter + `mwscript.translate` bake step + `mw` runtime skeleton + coverage report
   (scripting-adapter.md "Generated shape", "The `mw` runtime library"). Verify: every vanilla script and dialogue
   result translates and compiles under Luau; corpus ≤ 2 s across cores; fixture goldens (our own scripts); coverage
   report (call sites live / stub / later) in the session log.
@@ -963,11 +997,20 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
   Verify: time-lapse clear → overcast → rain over 2 game hours (WE-1: clouds lead, rain lags, no pops); Ascadian Isles →
   Ashlands crossing (WE-2: border blend); `sf_diag` `weather/*` counters; CPU ≤ 0.05 ms.
-- [ ] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
+- [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
   Bitter Coast 6:30 foggy (banks in the swamp, continuing past 400 m from a ridge); A/B `--off fog`; far fog ≤ 0.1 ms
   over the cloud pass at 1440p.
+  Built (m6-f2, 2026-10-13; weather.md "Fog as built"): `sf_atmos::fog` (settings, drift, CPU twin, 6 tests); in the
+  cloud node the trace marches the banks (16 steps, to 6 km) into a per-pixel modulation, a 66×1 `clouds_fog_light`
+  pass lights it once per frame, the composite applies height + bank layers in closed form per full-res pixel (exact
+  depth edges), in front of clouds, stars and moons; runs with `--off clouds`. App: `SkyLook::fog` per weather +
+  `ground_fog(hour)`, `--fog <x>`, `--off fog`; sea scaffold opaque; sky-view LUT 32 samples (F1 seam). Cost:
+  `clouds_fog_light` 0.004 ms; bank march +0.05-0.17 ms in `clouds_trace`; composite +0.36 ms with per-pixel lighting,
+  within noise after the fog-light texture (0.72 vs 0.73 ms) (release, 1440p, 4060 Laptop, shared machine: another
+  `bevyrrowind.exe` on the GPU in every run, so the ≤ 0.1 ms gate is not proven; remeasure quiet). Open: FG-2 (owner: bank density/height, ash-storm visibility; banks hard to read under foggy haze 90),
+  transparents unfogged until F3, banks by region wait for climates.
 - [ ] F3 Froxel fog + god rays (weather.md "Fog" steps 1-4): 160×90×64 froxels (High), density (height + banks +
   precipitation mist + local fog volume records), lighting (sun/moon × CSM × shadow-height map × cloud shadow map, sky
   ambient, clustered point lights capped per froxel), temporal reprojection, integration, apply on opaque, the
@@ -1287,4 +1330,7 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (m5-l1): M5 L1 built (uncommitted): new Bevy-free `sf_script` (mlua 0.12.2 + Luau 0.740; workspace adds `mlua` dep and the crate), 16 tests pass in `send` and `NonSend`, clippy pedantic clean; spike (`cargo bench -p sf_script`, idle machine) confirms decision 1: Rust->Luau 66 ns raw / 148 ns guarded, Luau->Rust 38 ns, 50 contexts start in 15 ms, 394 KiB per empty context (budget raised to 512 KiB), save/restore ~30 ms/MiB (budget 5 -> 40), watchdog costs ~25 ns per safepoint (mlua trampoline); `send` kept, app-data world guard, `luau-jit` off. Clean-build delta: `mlua-sys` Luau C++ 66 s, new deps 82 s wall at -j 8 (jit +80 s).
 - 2026-10-13 (m5-a1): M5 A1 built (uncommitted): `sf_mods` repository (adapters + mods dirs, roots indexed once), profiles (`profiles/<name>.toml`: enabled, settings, limits), manifest `[optional]`/`[conflicts]`/`[ui]`, `ContentAdapter`, `load_profile` (steps 2-4; a broken mod drops with its dependents instead of failing the profile), `ModReport` (all step 1-4 issue types, MO2-style per-mod overrides), `ScriptPlan` for `sf_script::ContextConfig`; `sf_mods` now depends on `sf_vfs` + `sf_records` (lockfiles updated). 18 tests, clippy clean; mw_records still builds and passes. Spec: content paths are VFS paths inside the mod's roots, mount returns layers, limits profile-only (mods.md "As built (A1)", ARCHITECTURE §10).
 - 2026-10-13 (m6-f1): M6 F1 haze + dust built (uncommitted, [~]): `sf_sky` `Weather::dust`/`dust_tint`, `WeatherScale`, `MediumScales`, absorbing grey-brown dust term (2 km, SSA 0.87/0.81/0.71); `sf_sky_bevy` rate-limited medium rebuild (step + 0.25 s, `MediumStats`, ~2.8 ms CPU per rebuild, GPU unchanged); app `--haze`/`--dust`, per-weather haze/dust table following `--clouds` + morning curve; haze recalibrated for 1-5 km views (clear 20, not the spec's 2-3); scenes fg-*, check FG-1 awaiting owner; shots/f1. Known: noon sea-horizon seam with dust (F2).
+- 2026-10-13 (m6-f2): M6 F2 height fog + ground-fog banks + far fog built (uncommitted, [~]): `sf_atmos::fog` (UE exponential layers, Megalophobia bank mask on the weather map G channel, drift, CPU twin + 6 tests); cloud node: bank march → per-pixel modulation in the trace, 66×1 `clouds_fog_light` pass, closed-form fog per full-res pixel in the composite in front of clouds/stars/moons, runs with `--off clouds`; app `SkyLook::fog` table + `ground_fog(hour)`, `--fog`, `--off fog`, opaque sea scaffold, sky-view LUT 32 samples; clouds example `--fog`; scenes fg-bittercoast-ridge, fg-balmora-foggy-noon, fg-night-fog, check FG-2 awaiting owner; shots/f2. Cost noisy (shared GPU), see F2.
 - 2026-10-13 (physics-p4b): M4 P4 in the app: items.check support meshes for statics whose box proxy encloses their clutter (`support.cook`) + fall = center and lowest point drop: Unsupported 38 % -> 8.2 % (wall racks mostly); Tradehouse 0 awake in 10 s; fixed insert starvation and items falling through before their statics loaded; flight bench, kill height, impulse release left for P5.
+- 2026-10-13 (physics-p5): M4 P4 leftovers (insert time-slicing: Tradehouse peak 0.80 -> 0.57 ms, prior added after; automatic kill height; 4 Hz coverage freeze; `BodyKind::Held` released by impulse) + P5 built (uncommitted, [~]): kinematic character capsules, capped pushes (`min(m_body·Δv_n, 400 N·dt)`, spec fixed), `ImpactOnCharacter`, slope sliding, walkers' mover on `impl GroundProbe for Physics`; 4 + 1 + 1 new tests, pedantic clippy clean; wk-balmora walker stats comparable, mover stage 2x the StaticWorld cost (584 vs 319 µs): profile first in P6.
+- 2026-10-13 (m5-w2b, resumed m5-w2 after an API cut-off): M5 W2 built (uncommitted): MWScript → Luau emitter (`mw_script::emit`, no Luau globals, inert → stub module), `functions.txt` live/stub/later status, coverage report + `oracle_flags`, `luau/mw.luau` runtime skeleton, `mwscript.translate` + `mwscript.coverage` bake steps in `bevyrrowind bake`. Real install: 1,207 scripts + 17,144 results translate, compile and run once in a sandboxed `sf_script` context with 0 inert / 0 compile / 0 run errors; bake 1.4 s CPU (5.6 s wall cold, 0.19 s no-op). Coverage (live DB, call sites): 25,449, live 14,539 (57.1 %), stub 5,320, later 5,590; by family (corpus test, all files) journal 6,105 live, dialogue 3,546 later, inventory 3,490 (3,354 live), placement 3,122 (3,106 live), disposition 2,211 stub, ai 1,557 (896 stub / 661 later), faction 807 (91/716), combat 748 (180/568), magic 652 (281/371), ui 596 (540 live), map 543 stub, audio 499 stub, stats 436 (420 stub), activation 426 / scripts 394 / menu 297 / deaths 247 / clock 238 live, events 258 stub. Oracle-pending: 0 integer divisions, 44 short/float comparisons. Fixed 3 pedantic clippy warnings in mw_bake script.rs. W3 handoff in scripting-adapter.md "As built (W2)".

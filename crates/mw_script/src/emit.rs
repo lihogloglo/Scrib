@@ -1,0 +1,458 @@
+//! The Luau emitter (scripting-adapter.md "Pipeline" step 3, "Generated shape"; M5 W2).
+//!
+//! One module per script and one per dialogue topic (a function per result). A module is a chunk
+//! returning `function(mw) ... end`: the runtime (`luau/mw.luau`, W3's host half) passes itself in
+//! and gets the script definition back. **No state lives in Luau globals** (sandboxed Luau states
+//! share one writable environment between chunks, m5-l1): every [`VarRef`] becomes a module-table
+//! access:
+//!
+//! | `VarRef` | read | write |
+//! |---|---|---|
+//! | `Local` | `v.name` (this instance's table) | `v.name = short(x)` (by declared type) |
+//! | `Global` | `G.name` (`mw.globals`) | `G.name = long(x)` (by the GLOB type) |
+//! | `Member` | `mw.get_var("object", "var")` | `mw.set_var("object", "var", x)` |
+//! | `Speaker` | `mw.get_var(self, "var")` | `mw.set_var(self, "var", x)` |
+//! | `Undeclared` | `0` | `mw.discard(x)` (calls in `x` still run) |
+//!
+//! Calls: reference functions are methods on a handle (`self:get_pos("z")`,
+//! `ref("id"):disable()`), the others `mw.<name>(self, ...)` with the calling instance first.
+//! Names are the function table's `snake_case` names. A missing argument reads `0` (numeric
+//! positions) or `""`. Every statement ends with `-- L<n>`, its `MWScript` line.
+//!
+//! **Numeric semantics** (spec open question 1, pending the `OpenMW` oracle): the original
+//! engine evaluates expressions in floating point (the documented reason `long` values lose
+//! precision above 2^24), so arithmetic, including `/` between integers, is plain Luau
+//! arithmetic, comparisons compare values whatever the operand types, and only **assignment**
+//! converts: to `short`/`long` by truncation toward zero with two's-complement wrap (non-finite
+//! values become 0), to `float` by rounding through `f32` (`mw.short`, `mw.long`, `mw.float`).
+
+use std::fmt::Write as _;
+
+use crate::Parsed;
+use crate::ast::{Arg, ArithOp, Axis, Call, Expr, Script, Stmt, StmtKind, Target, VarRef, VarType};
+use crate::functions::{ArgKind, Function, FunctionTable};
+use crate::lexer::CmpOp;
+use crate::resolve::Env;
+
+/// Bumped whenever the generated shape changes (bake step version).
+pub const EMITTER_VERSION: u32 = 1;
+
+/// Luau reserved words (never usable as `t.name`).
+const KEYWORDS: [&str; 21] = [
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
+    "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+];
+
+/// A Luau string literal (escapes quotes, backslashes and control characters; other bytes,
+/// UTF-8 included, are kept as they are).
+pub fn lua_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if u32::from(c) < 0x20 || c == '\u{7f}' => {
+                let _ = write!(out, "\\{:03}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `t.key` when `key` is a plain Luau name, else `t["key"]`.
+pub fn field(table: &str, key: &str) -> String {
+    let plain = key
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !KEYWORDS.contains(&key);
+    if plain {
+        format!("{table}.{key}")
+    } else {
+        format!("{table}[{}]", lua_string(key))
+    }
+}
+
+/// A table-constructor key: `key =` or `["key"] =`.
+fn ctor_key(key: &str) -> String {
+    field("", key).trim_start_matches('.').to_owned()
+}
+
+fn type_name(ty: VarType) -> &'static str {
+    match ty {
+        VarType::Short => "short",
+        VarType::Long => "long",
+        VarType::Float => "float",
+    }
+}
+
+/// The first unrecoverable diagnostic, as the inert reason.
+fn inert_reason(parsed: &Parsed) -> String {
+    parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.severity() == crate::Severity::Error)
+        .map_or_else(|| "unrecoverable".to_owned(), ToString::to_string)
+}
+
+const PRELUDE: &str = "local G, ref = mw.globals, mw.ref\nlocal short, long, float = mw.short, mw.long, mw.float\n";
+
+/// Translates one SCPT script into a Luau module. `origin` names the source (plugin file) for
+/// the header. Inert scripts get a stub module that keeps their variables (so `id.var` reads
+/// still see zeros) and never runs.
+pub fn emit_script(
+    id: &str,
+    origin: &str,
+    parsed: &Parsed,
+    table: &FunctionTable,
+    env: &dyn Env,
+) -> String {
+    let script = &parsed.script;
+    let mut e = Emitter::new(table, env, script);
+    let _ = writeln!(
+        e.out,
+        "-- generated by mw_script v{EMITTER_VERSION} from SCPT {} ({origin}), do not edit",
+        lua_string(id)
+    );
+    e.out.push_str("return function(mw)\n");
+    e.out.push_str(PRELUDE);
+    e.out.push_str("return mw.script({\n");
+    let _ = writeln!(e.out, "  id = {},", lua_string(&id.to_lowercase()));
+    e.vars_table();
+    if parsed.is_inert() {
+        let _ = writeln!(e.out, "  inert = {},", lua_string(&inert_reason(parsed)));
+        e.out.push_str("  tick = function(self, v) end,\n");
+    } else {
+        let on_activate = table.get_lower("onactivate");
+        let mut activation = false;
+        script.walk_calls(&mut |c| activation |= Some(c.function) == on_activate);
+        if activation {
+            e.out.push_str("  activation = \"script\",\n");
+        }
+        e.out.push_str("  tick = function(self, v)\n");
+        e.indent = 2;
+        e.stmts(&script.body);
+        e.out.push_str("  end,\n");
+    }
+    e.out.push_str("})\nend\n");
+    e.out
+}
+
+/// Translates a dialogue topic's results (`(info id, parsed)`, in a stable order) into one
+/// Luau module: `results[<info id>] = function(self) ... end`, run as the speaker. Inert
+/// results are listed in `inert` instead.
+pub fn emit_dialogue(
+    topic: &str,
+    origin: &str,
+    results: &[(&str, &Parsed)],
+    table: &FunctionTable,
+    env: &dyn Env,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "-- generated by mw_script v{EMITTER_VERSION} from the results of DIAL {} ({origin}), do not edit",
+        lua_string(topic)
+    );
+    out.push_str("return function(mw)\n");
+    out.push_str(PRELUDE);
+    out.push_str("local results, inert = {}, {}\n");
+    for (info, parsed) in results {
+        if parsed.is_inert() {
+            let _ = writeln!(
+                out,
+                "inert[{}] = {}",
+                lua_string(info),
+                lua_string(&inert_reason(parsed))
+            );
+            continue;
+        }
+        let mut e = Emitter::new(table, env, &parsed.script);
+        let _ = writeln!(e.out, "results[{}] = function(self)", lua_string(info));
+        if !parsed.script.locals.is_empty() {
+            e.out.push_str("  local v = {");
+            for (i, l) in parsed.script.locals.iter().enumerate() {
+                let sep = if i == 0 { " " } else { ", " };
+                let _ = write!(e.out, "{sep}{} = 0", ctor_key(&l.name.key));
+            }
+            e.out.push_str(" }\n");
+        }
+        e.indent = 1;
+        e.stmts(&parsed.script.body);
+        e.out.push_str("end\n");
+        out.push_str(&e.out);
+    }
+    let _ = writeln!(
+        out,
+        "return mw.dialogue({{ topic = {}, results = results, inert = inert }})\nend",
+        lua_string(&topic.to_lowercase())
+    );
+    out
+}
+
+struct Emitter<'a> {
+    out: String,
+    indent: usize,
+    table: &'a FunctionTable,
+    env: &'a dyn Env,
+    script: &'a Script,
+}
+
+impl<'a> Emitter<'a> {
+    fn new(table: &'a FunctionTable, env: &'a dyn Env, script: &'a Script) -> Self {
+        Self {
+            out: String::new(),
+            indent: 0,
+            table,
+            env,
+            script,
+        }
+    }
+
+    /// `vars = { name = "short", ... }` (first declaration wins).
+    fn vars_table(&mut self) {
+        self.out.push_str("  vars = {");
+        let mut seen = std::collections::HashSet::new();
+        for l in &self.script.locals {
+            if seen.insert(l.name.key.as_str()) {
+                let _ = write!(
+                    self.out,
+                    " {} = \"{}\",",
+                    ctor_key(&l.name.key),
+                    type_name(l.ty)
+                );
+            }
+        }
+        self.out.push_str(" },\n");
+    }
+
+    fn line(&mut self, text: &str, src_line: u32) {
+        for _ in 0..self.indent {
+            self.out.push_str("  ");
+        }
+        let _ = writeln!(self.out, "{text} -- L{src_line}");
+    }
+
+    fn stmts(&mut self, stmts: &[Stmt]) {
+        for s in stmts {
+            self.stmt(s);
+        }
+    }
+
+    fn block(&mut self, body: &[Stmt]) {
+        self.indent += 1;
+        self.stmts(body);
+        self.indent -= 1;
+    }
+
+    fn stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            StmtKind::Set { target, value } => {
+                let value = self.expr(value);
+                let text = self.assign(target, value);
+                self.line(&text, s.line);
+            }
+            StmtKind::If { arms, otherwise } => {
+                for (i, arm) in arms.iter().enumerate() {
+                    let kw = if i == 0 { "if" } else { "elseif" };
+                    let text = format!("{kw} {} then", self.cond(&arm.cond));
+                    self.line(&text, arm.line);
+                    self.block(&arm.body);
+                }
+                if !otherwise.is_empty() {
+                    self.line("else", s.line);
+                    self.block(otherwise);
+                }
+                self.line("end", s.line);
+            }
+            StmtKind::While { cond, body } => {
+                let text = format!("while {} do", self.cond(cond));
+                self.line(&text, s.line);
+                self.block(body);
+                self.line("end", s.line);
+            }
+            StmtKind::Return => self.line("do return end", s.line),
+            StmtKind::Call(call) => {
+                let text = self.call(call);
+                self.line(&text, s.line);
+            }
+        }
+    }
+
+    fn assign(&self, target: &VarRef, value: String) -> String {
+        let wrap = |ty: VarType| format!("{}({value})", type_name(ty));
+        match target {
+            VarRef::Local(slot) => {
+                let local = &self.script.locals[*slot];
+                format!("{} = {}", field("v", &local.name.key), wrap(local.ty))
+            }
+            VarRef::Global(name) => match self.env.global(&name.key) {
+                Some(ty) => format!("{} = {}", field("G", &name.key), wrap(ty)),
+                None => format!("mw.set_global({}, {value})", lua_string(&name.key)),
+            },
+            VarRef::Name(name) => format!("mw.set_global({}, {value})", lua_string(&name.key)),
+            VarRef::Member { object, var } => format!(
+                "mw.set_var({}, {}, {value})",
+                lua_string(&object.key),
+                lua_string(&var.key)
+            ),
+            VarRef::Speaker(var) => format!("mw.set_var(self, {}, {value})", lua_string(&var.key)),
+            VarRef::Undeclared(_) => format!("mw.discard({value})"),
+        }
+    }
+
+    fn read(&self, var: &VarRef) -> String {
+        match var {
+            VarRef::Local(slot) => field("v", &self.script.locals[*slot].name.key),
+            VarRef::Global(name) if self.env.global(&name.key).is_some() => field("G", &name.key),
+            VarRef::Global(name) | VarRef::Name(name) => {
+                format!("mw.get_global({})", lua_string(&name.key))
+            }
+            VarRef::Member { object, var } => format!(
+                "mw.get_var({}, {})",
+                lua_string(&object.key),
+                lua_string(&var.key)
+            ),
+            VarRef::Speaker(var) => format!("mw.get_var(self, {})", lua_string(&var.key)),
+            VarRef::Undeclared(_) => "0".to_owned(),
+        }
+    }
+
+    /// A condition as a Luau boolean.
+    fn cond(&self, e: &Expr) -> String {
+        match e {
+            Expr::Cmp(op, a, b) => format!("{} {} {}", self.expr(a), cmp(*op), self.expr(b)),
+            other => format!("{} ~= 0", self.expr(other)),
+        }
+    }
+
+    fn expr(&self, e: &Expr) -> String {
+        match e {
+            Expr::Int(i) if *i < 0 => format!("({i})"),
+            Expr::Int(i) => i.to_string(),
+            Expr::Float(f) => number(*f),
+            Expr::Var(v) => self.read(v),
+            Expr::Call(c) => {
+                let text = self.call(c);
+                if self.table.function(c.function).returns == crate::functions::Returns::Void {
+                    format!("({text} or 0)")
+                } else {
+                    text
+                }
+            }
+            Expr::Neg(x) => format!("(- {})", self.expr(x)),
+            Expr::Arith(op, a, b) => {
+                let op = match op {
+                    ArithOp::Add => "+",
+                    ArithOp::Sub => "-",
+                    ArithOp::Mul => "*",
+                    ArithOp::Div => "/",
+                };
+                format!("({} {op} {})", self.expr(a), self.expr(b))
+            }
+            Expr::Cmp(op, a, b) => format!(
+                "(if {} {} {} then 1 else 0)",
+                self.expr(a),
+                cmp(*op),
+                self.expr(b)
+            ),
+        }
+    }
+
+    fn call(&self, c: &Call) -> String {
+        let f = self.table.function(c.function);
+        let args: Vec<String> = c
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| self.arg(a, f, i))
+            .collect();
+        let target = match &c.target {
+            Target::Implicit => "self".to_owned(),
+            Target::Explicit(id) => format!("ref({})", lua_string(&id.key)),
+        };
+        if f.on_reference {
+            format!("{target}:{}({})", f.luau_name(), args.join(", "))
+        } else {
+            let mut all = vec![target];
+            all.extend(args);
+            format!("mw.{}({})", f.luau_name(), all.join(", "))
+        }
+    }
+
+    fn arg(&self, a: &Arg, f: &Function, index: usize) -> String {
+        match a {
+            Arg::Id(id) => lua_string(&id.key),
+            Arg::Str(s) => lua_string(s),
+            Arg::Expr(e) => self.expr(e),
+            Arg::Axis(axis) => match axis {
+                Axis::X => "\"x\"",
+                Axis::Y => "\"y\"",
+                Axis::Z => "\"z\"",
+            }
+            .to_owned(),
+            Arg::Missing => {
+                let kind = f
+                    .args
+                    .get(index)
+                    .or(f.args.last())
+                    .map_or(ArgKind::Num, |s| s.kind);
+                if kind == ArgKind::Num { "0" } else { "\"\"" }.to_owned()
+            }
+        }
+    }
+}
+
+fn cmp(op: CmpOp) -> &'static str {
+    match op {
+        CmpOp::Eq => "==",
+        CmpOp::Ne => "~=",
+        CmpOp::Lt => "<",
+        CmpOp::Le => "<=",
+        CmpOp::Gt => ">",
+        CmpOp::Ge => ">=",
+    }
+}
+
+fn number(f: f64) -> String {
+    if f.is_nan() {
+        "(0/0)".to_owned()
+    } else if f.is_infinite() {
+        if f > 0.0 { "math.huge" } else { "(-math.huge)" }.to_owned()
+    } else if f < 0.0 {
+        format!("({f:?})")
+    } else {
+        format!("{f:?}")
+    }
+}
+
+/// The Luau half of the runtime skeleton (`luau/mw.luau`): `Runtime.new(host, functions)`.
+/// A3 mounts it in the builtin mod as `scripts/mw/runtime.luau`.
+pub const RUNTIME: &str = include_str!("../luau/mw.luau");
+
+/// The function table as a Luau module for the runtime: `name = { status, neutral, ref }`,
+/// keyed by the `snake_case` name generated calls use.
+pub fn runtime_functions(table: &FunctionTable) -> String {
+    let mut out = format!(
+        "-- generated by mw_script v{EMITTER_VERSION} from functions.txt, do not edit\nreturn {{\n"
+    );
+    for f in &table.functions {
+        let _ = writeln!(
+            out,
+            "  {} = {{ status = \"{}\", neutral = {}, ref = {} }},",
+            ctor_key(&f.luau_name()),
+            f.status.name(),
+            f.status.neutral(),
+            f.on_reference
+        );
+    }
+    out.push_str("}\n");
+    out
+}

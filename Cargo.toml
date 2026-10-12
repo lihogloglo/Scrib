@@ -28,6 +28,7 @@ sf_mods = { path = "../superfargoth/crates/sf_mods" }
 sf_model = { path = "../superfargoth/crates/sf_model" }
 sf_model_bevy = { path = "../superfargoth/crates/sf_model_bevy" }
 sf_records = { path = "../superfargoth/crates/sf_records" }
+sf_script = { path = "../superfargoth/crates/sf_script" }
 sf_atmos_bevy = { path = "../superfargoth/crates/sf_atmos_bevy" }
 sf_sky_bevy = { path = "../superfargoth/crates/sf_sky_bevy" }
 sf_terrain = { path = "../superfargoth/crates/sf_terrain" }
