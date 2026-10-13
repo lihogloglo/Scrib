@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::{FileStat, VfsPath, VfsSource};
 
@@ -82,5 +83,13 @@ impl VfsSource for DirSource {
 
     fn stat(&self, path: &VfsPath) -> Option<FileStat> {
         self.files.get(path).map(|(_, stat)| *stat)
+    }
+
+    fn watch_root(&self) -> Option<&Path> {
+        Some(&self.root)
+    }
+
+    fn rescan(&self) -> io::Result<Option<Arc<dyn VfsSource>>> {
+        Ok(Some(Arc::new(Self::scan(self.label.clone(), self.root.clone())?)))
     }
 }

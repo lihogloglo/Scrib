@@ -46,6 +46,10 @@ bitflags = "2"
 # blake3 and glam match what Bevy 0.20 uses (bevy_asset, bevy_math): one copy in the tree.
 blake3 = "1.8"
 futures-lite = "2"
+# sf_vfs hot reload (M5 A4): lock-free snapshot swap; the watcher crate and channel Bevy 0.20 uses.
+arc-swap = "1.9"
+async-channel = { version = "2", default-features = false }
+notify-debouncer-full = "0.7"
 # Same version bevy_gltf 0.20 uses. No "import" feature: we never decode images here.
 gltf = { version = "1.4", default-features = false, features = ["utils", "names", "KHR_materials_unlit"] }
 glam = "0.33"

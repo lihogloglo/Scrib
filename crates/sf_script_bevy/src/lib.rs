@@ -180,6 +180,38 @@ impl Scripts {
         r
     }
 
+    /// Hot reload of changed script files (mods.md "Hot reload"): reloads, in load order, every
+    /// context that runs one of `changed` (under `scripts/<mod>/` of its mods) or can `require` it
+    /// (a dependency's library), from `source` (the new VFS snapshot). Returns each reloaded
+    /// context with its result; failures keep the old state running and are also diagnostics.
+    pub fn reload_changed<'a>(
+        &mut self,
+        changed: impl IntoIterator<Item = &'a str>,
+        source: &Arc<dyn ScriptSource>,
+    ) -> Vec<(String, Result<(), sf_script::ScriptError>)> {
+        let changed: Vec<&str> = changed.into_iter().collect();
+        let affected: Vec<String> = self
+            .runtime
+            .contexts()
+            .iter()
+            .filter(|c| {
+                let config = c.config();
+                config.mods.iter().chain(&config.dependencies).any(|m| {
+                    let root = format!("{}/", sf_script::script_root(m));
+                    changed.iter().any(|p| p.starts_with(&root))
+                })
+            })
+            .map(|c| c.id().to_owned())
+            .collect();
+        affected
+            .into_iter()
+            .map(|id| {
+                let r = self.reload(&id, Some(Arc::clone(source)));
+                (id, r)
+            })
+            .collect()
+    }
+
     /// The last [`RECENT`] faults and notices, oldest first (dev overlay, mod manager badge).
     pub fn recent(&self) -> impl Iterator<Item = &ScriptDiagnostic> {
         self.recent.iter()

@@ -12,7 +12,7 @@ use sf_vfs::{FileStat, SourceIndex, Vfs, VfsBuilder, VfsPath, VfsSource};
 
 use crate::repo::{declared_files, is_folder_mod, origin};
 use crate::{
-    ContentAdapter, IssueKind, LoadOrderError, ModFiles, ModId, ModIssue, ModManifest, ModReport, ModRepository,
+    Area, ContentAdapter, IssueKind, LoadOrderError, ModFiles, ModId, ModIssue, ModManifest, ModReport, ModRepository,
     ModSummary, Profile, RecordCx, ScriptLimits, resolve_load_order,
 };
 
@@ -194,22 +194,63 @@ pub fn load_profile(
     timings.mount = start.elapsed();
 
     let start = Instant::now();
+    let entries = order.into_iter().cloned().zip(layers);
+    let (records, mods) = record_step(entries, &vfs, adapters, true, &mut issues);
+    timings.records = start.elapsed();
+    shadow_issues(&vfs, &mods, adapters, &mut issues);
+
+    let report = ModReport { issues, mods: summarize(&vfs, &mods) };
+    LoadedProfile { profile: profile.clone(), mods, vfs: Arc::new(vfs), records, report, timings }
+}
+
+impl LoadedProfile {
+    /// Hot reload of records (mods.md "Hot reload"): adopts `vfs`, a rebuilt
+    /// snapshot of this profile's VFS (same layers, e.g. from
+    /// `Vfs::rebuild`), and re-runs step 4 on it, rebuilding the whole record
+    /// DB (record files apply in load order, and patches stack, so a changed
+    /// file can't be re-applied alone). Record issues in the report are
+    /// replaced; other areas keep their startup issues. Returns the step's time.
+    pub fn reload_records(&mut self, vfs: Arc<Vfs>, adapters: &[&dyn ContentAdapter]) -> Duration {
+        let start = Instant::now();
+        let mut issues = Vec::new();
+        let entries = self.mods.iter().map(|m| (m.manifest.clone(), m.layers.clone()));
+        let (records, mods) = record_step(entries, &vfs, adapters, false, &mut issues);
+        self.report.issues.retain(|i| i.kind.area() != Area::Records);
+        self.report.issues.append(&mut issues);
+        self.records = records;
+        self.mods = mods;
+        self.vfs = vfs;
+        self.timings.records = start.elapsed();
+        self.timings.records
+    }
+}
+
+/// Step 4: one record source per mod in load order, each mod's record files
+/// applied through the adapter for their extension, then adapters finish.
+fn record_step(
+    entries: impl Iterator<Item = (ModManifest, Range<u16>)>,
+    vfs: &Vfs,
+    adapters: &[&dyn ContentAdapter],
+    check_files: bool,
+    issues: &mut Vec<ModIssue>,
+) -> (RecordDb, Vec<LoadedMod>) {
     let mut records = RecordDb::new();
-    let mut mods = Vec::with_capacity(order.len());
+    let mut mods = Vec::new();
     let mut sources: HashMap<ModId, SourceId> = HashMap::new();
     for adapter in adapters {
         adapter.register_kinds(&mut records);
     }
-    for (manifest, layers) in order.into_iter().zip(layers) {
+    for (manifest, layers) in entries {
         let mut depends_on: Vec<SourceId> =
             manifest.dependencies.keys().chain(manifest.optional.keys()).filter_map(|d| sources.get(d).copied()).collect();
         depends_on.sort_unstable();
         let source = records.add_source(manifest.id.as_str(), &depends_on);
         sources.insert(manifest.id.clone(), source);
-        let loaded = LoadedMod { manifest: manifest.clone(), layers, source };
-        let files = loaded.files(&vfs);
-        if !is_folder_mod(manifest) {
-            check_mounted_files(manifest, files, &mut issues);
+        let loaded = LoadedMod { manifest, layers, source };
+        let manifest = &loaded.manifest;
+        let files = loaded.files(vfs);
+        if check_files && !is_folder_mod(manifest) {
+            check_mounted_files(manifest, files, issues);
         }
         for path in &manifest.content.records {
             let Ok(file) = VfsPath::new(path) else { continue };
@@ -222,7 +263,7 @@ pub fn load_profile(
                 issues.push(ModIssue::new(Some(&manifest.id), kind));
                 continue;
             };
-            let mut cx = RecordCx { manifest, source, db: &mut records, files, sources: &sources, issues: &mut issues };
+            let mut cx = RecordCx { manifest, source, db: &mut records, files, sources: &sources, issues };
             if let Err(e) = adapter.apply_records(&mut cx, &file) {
                 let kind =
                     IssueKind::RecordFile { path: path.clone(), line: e.line, column: e.column, message: e.message };
@@ -234,12 +275,8 @@ pub fn load_profile(
     for adapter in adapters {
         adapter.finish_records(&mut records);
     }
-    record_issues(&records, &sources, &mut issues);
-    timings.records = start.elapsed();
-    shadow_issues(&vfs, &mods, adapters, &mut issues);
-
-    let report = ModReport { issues, mods: summarize(&vfs, &mods) };
-    LoadedProfile { profile: profile.clone(), mods, vfs: Arc::new(vfs), records, report, timings }
+    record_issues(&records, &sources, issues);
+    (records, mods)
 }
 
 /// Modern files shadowed by a later mod's legacy file (the `resolve_preferring`

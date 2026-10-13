@@ -9,7 +9,7 @@ use std::sync::Arc;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sf_records::{RecordDb, RecordId};
-use sf_vfs::{MemSource, VfsSource};
+use sf_vfs::{MemSource, VfsPath, VfsSource};
 
 use super::*;
 
@@ -134,4 +134,47 @@ fn native_patches_merge_conflict_and_report_per_mod() {
     assert!(text.contains("warning [c] record conflict item.light \"lantern_01\" on radius: base (define) -> a (patch radius) -> c (patch radius)"), "{text}");
     assert!(text.contains("info [b] record merge item.light \"lantern_02\""), "{text}");
     assert!(text.contains("record file records/bad.ron:2:64: item.light record \"lantern_01\": field path \"colour\""), "{text}");
+}
+
+/// Hot reload (A4): an edited RON patch re-applies after a VFS rebuild, a
+/// broken edit replaces the record issues, scripts and assets route elsewhere.
+#[test]
+fn record_patch_hot_reload_reapplies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    write_mod(&mods, "a", "a.ron", &set("lantern_01", "radius", "6.0"));
+    let data = mods.join("a/data");
+    std::fs::create_dir_all(data.join("scripts/a")).unwrap();
+    std::fs::write(data.join("scripts/a/main.luau"), "-- v1").unwrap();
+    std::fs::create_dir_all(data.join("textures")).unwrap();
+    std::fs::write(data.join("textures/x.png"), "v1").unwrap();
+
+    let pack = Pack;
+    let adapters: [&dyn ContentAdapter; 2] = [&pack, &NativeRecords];
+    let repo = ModRepository::scan(std::slice::from_ref(&mods), &adapters);
+    let mut loaded = load_profile(&repo, &Profile::new("p", ["base", "a"].map(id)), &adapters, &API);
+    let radius = |l: &LoadedProfile| l.records.get::<Light>(&RecordId::new("lantern_01")).unwrap().radius;
+    assert_eq!(radius(&loaded), 6.0);
+
+    std::fs::write(data.join("records/a.ron"), set("lantern_01", "radius", "9.5")).unwrap();
+    std::fs::write(data.join("scripts/a/main.luau"), "-- v2, longer").unwrap();
+    std::fs::write(data.join("textures/x.png"), "v2, longer").unwrap();
+    let (next, changes) = loaded.vfs.rebuild(&|_| true).unwrap();
+    let plan = loaded.route(&changes);
+    assert_eq!(plan.records, [(id("a"), VfsPath::new("records/a.ron").unwrap())]);
+    assert_eq!(plan.scripts, [VfsPath::new("scripts/a/main.luau").unwrap()]);
+    assert_eq!(plan.assets.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), ["textures/x.png"]);
+    assert!(plan.styles.is_empty());
+
+    loaded.reload_records(Arc::new(next), &adapters);
+    assert_eq!(radius(&loaded), 9.5, "the edited patch re-applied");
+    assert_eq!(loaded.records.get::<Light>(&RecordId::new("lantern_02")).unwrap().radius, 2.0, "base untouched");
+
+    // A broken edit: the error replaces the record issues; the base still loads.
+    std::fs::write(data.join("records/a.ron"), "[\n  patch(kind: \"item.light\" id: \"x\"),\n]").unwrap();
+    let (next, _) = loaded.vfs.rebuild(&|_| true).unwrap();
+    loaded.reload_records(Arc::new(next), &adapters);
+    let issues: Vec<IssueKind> = loaded.report.issues_for(Some(&id("a"))).map(|i| i.kind.clone()).collect();
+    assert!(matches!(&issues[..], [IssueKind::RecordFile { line: Some(2), .. }]), "{issues:?}");
+    assert_eq!(radius(&loaded), 4.0, "the define from base, unpatched");
 }

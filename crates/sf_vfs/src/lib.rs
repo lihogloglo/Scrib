@@ -4,13 +4,20 @@
 //! priority order; for any path, the last-mounted source that has it wins.
 //! The index is built once and is immutable afterwards, so lookups are
 //! lock-free and the [`Vfs`] can be shared across threads. Changing the mod
-//! list means building a new `Vfs`.
+//! list means building a new `Vfs`; a file change on disk (hot reload) means a
+//! [`Vfs::rebuild`] of the changed directory layers, published through
+//! [`SharedVfs`] (with the `watch` feature, driven by `watch::VfsWatcher`).
 //!
 //! Archive formats are not built in: adapters implement [`VfsSource`].
 
 mod dir;
 mod mem;
 mod path;
+mod rebuild;
+mod shared;
+
+#[cfg(feature = "watch")]
+pub mod watch;
 
 #[cfg(feature = "bevy")]
 pub mod bevy;
@@ -18,6 +25,8 @@ pub mod bevy;
 pub use dir::DirSource;
 pub use mem::MemSource;
 pub use path::{PathError, VfsPath};
+pub use rebuild::{ChangeKind, VfsChange};
+pub use shared::SharedVfs;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -44,6 +53,17 @@ pub trait VfsSource: Send + Sync + 'static {
     /// for stat-keyed fingerprints; `None` for sources without files on disk.
     fn stat(&self, _path: &VfsPath) -> Option<FileStat> {
         None
+    }
+
+    /// The directory on disk this source mirrors, for hot-reload watching.
+    fn watch_root(&self) -> Option<&std::path::Path> {
+        None
+    }
+
+    /// A fresh copy reflecting the files on disk now (hot reload); `None`
+    /// when the source can't change (archives, memory).
+    fn rescan(&self) -> io::Result<Option<Arc<dyn VfsSource>>> {
+        Ok(None)
     }
 }
 
@@ -261,3 +281,5 @@ fn dir_prefix(dir: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_hot;

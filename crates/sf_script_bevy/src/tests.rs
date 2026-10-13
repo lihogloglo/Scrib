@@ -230,3 +230,32 @@ fn world_access_fails_outside_a_slot() {
     // The resource went back to the world after the slot.
     assert_eq!(app.world().resource::<ScriptPlacements>().loaded.len(), 2);
 }
+
+/// Hot reload (mods.md "Hot reload", A4): a changed file reloads only the context that runs it,
+/// with its storage kept and the new code live.
+#[test]
+fn changed_script_reloads_its_context_with_state_kept() {
+    let mut app = app();
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+    frame(&mut app);
+    assert_eq!(number(app.world().resource::<Scripts>(), "alpha", "activations"), Some(1.0));
+
+    let v2 = format!("{ALPHA}\ns.version = \"v2\"\n");
+    let source: Arc<dyn ScriptSource> = Arc::new(MemSource(HashMap::from([
+        ("scripts/alpha/main.luau".to_owned(), v2),
+        ("scripts/bad/main.luau".to_owned(), BAD.to_owned()),
+    ])));
+    let mut scripts = app.world_mut().resource_mut::<Scripts>();
+    assert!(scripts.reload_changed(["textures/x.png", "scripts/alphabet/main.luau"], &source).is_empty());
+    let reloaded = scripts.reload_changed(["scripts/alpha/main.luau"], &source);
+    assert_eq!(reloaded.len(), 1, "only alpha runs that file");
+    assert_eq!(reloaded[0].0, "alpha");
+    assert!(reloaded[0].1.is_ok(), "{:?}", reloaded[0].1);
+    assert_eq!(text(&scripts, "alpha", "version").as_deref(), Some("v2"), "new code ran");
+    assert_eq!(number(&scripts, "alpha", "activations"), Some(1.0), "storage kept");
+
+    // Handlers registered by the new code still fire.
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+    frame(&mut app);
+    assert_eq!(number(app.world().resource::<Scripts>(), "alpha", "activations"), Some(2.0));
+}

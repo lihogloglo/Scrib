@@ -1,6 +1,6 @@
 # Mods: pipeline end to end
 
-Status: A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). A2 built (2026-10-13, m5-a2: kind registry, native RON/TOML record files, generic field patches, field-level conflicts; see "As built (A2)"). A3 built (2026-10-13, m5-a3: Bevyrrowind's adapter, builtin mod, mods folder and profiles, `mods` CLI, profile fingerprint; see "As built (A3)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
+Status: A4 built (2026-10-13, m5-a4: VFS watcher, snapshot swap, hot-reload routing; see "As built (A4)"). A1 built (2026-10-13, m5-a1: repository, profiles, `ContentAdapter`, `load_profile`, report; see "As built (A1)"). A2 built (2026-10-13, m5-a2: kind registry, native RON/TOML record files, generic field patches, field-level conflicts; see "As built (A2)"). A3 built (2026-10-13, m5-a3: Bevyrrowind's adapter, builtin mod, mods folder and profiles, `mods` CLI, profile fingerprint; see "As built (A3)"). Draft 2026-10-13 (m5-spec). Built in M5 on the M0 foundations.
 Crates: `sf_mods` (manifests, repository, profiles, load order, report; built M0, extended),
 `sf_vfs` (layers; built M0, gains a watcher and swap), `sf_records` (built M0, gains native
 patch files and field-level conflicts), `sf_bake` (profile fingerprint), `sf_script`
@@ -242,7 +242,10 @@ pub trait ContentAdapter {                                   // implemented by c
 pub fn load_profile(repo: &ModRepository, profile: &Profile, adapters: &[&dyn ContentAdapter], api: &Version) -> LoadedProfile; // steps 2-4
 pub struct LoadedProfile { pub profile: Profile, pub mods: Vec<LoadedMod>, pub vfs: Arc<Vfs>, pub records: RecordDb, pub report: ModReport, pub timings: LoadTimings }
 impl LoadedProfile { pub fn script_contexts(&self) -> Vec<ScriptPlan>; pub fn stylesheets(&self) -> Vec<(ModId, VfsPath)>; pub fn render_report(..) -> String; }
-// sf_vfs (bevy feature): VfsWatcher, SharedVfs (swappable)
+// sf_vfs (A4): SharedVfs (arc-swap), Vfs::watch_roots / rebuild(dirty) -> (Vfs, Vec<VfsChange>), VfsSource::watch_root / rescan,
+//   watch::VfsWatcher::start(shared, debounce, on_event) (feature `watch`), bevy::shared_asset_source(shared, AssetEvents)
+// sf_mods (A4): LoadedProfile::route(changes) -> HotReloadPlan, LoadedProfile::reload_records(vfs, adapters)
+// sf_script_bevy (A4): Scripts::reload_changed(paths, &source) -> Vec<(context, Result)>
 // sf_records (A2): RecordDb::register_serde / set_fingerprint / define_value / patch_value / delete_by_name / value_of / fingerprint,
 //   apply_record_file(db, source, text, RecordFormat) -> Result<FileOutcome, FileError>, Value (serde tree), PatchOp, Touch { fields }
 // sf_mods (A2): NativeRecords (ContentAdapter "native", .ron/.toml), RecordCx::error, IssueKind::{RecordConflict, RecordMerge}
@@ -423,6 +426,48 @@ dependency silences it. Whether a later field patch over an earlier define shoul
 merge instead is for X1. Every ESM-vs-ESM conflict is now a per-mod warning (3,165 for vanilla),
 so the CLI prints counts and `mods report` the details. Mount problems (an unreadable archive)
 are adapter-side warnings the host prints, as `ContentAdapter::mount` has no warning channel.
+
+### As built (A4, 2026-10-13)
+
+Hot reload, dev builds only (Bevyrrowind's `dev` feature turns on `sf_vfs/watch`; release has no
+watcher and serves a fixed snapshot).
+
+- **Watcher crate: `notify-debouncer-full` 0.7.0 over `notify` 8.2.0**, the pair Bevy 0.20's
+  `file_watcher` uses (one copy in the tree; both the newest stable on crates.io, 2026-10-13;
+  `notify` CC0-1.0 OR MIT OR Apache-2.0, the debouncer MIT OR Apache-2.0). **Not Bevy's `FileWatcher`
+  itself** (the draft's step 1): it maps one directory to one asset source and forwards raw
+  directory events, while our default source is one VFS over many layers where an edit under a
+  higher layer must emit nothing. We use the same crate directly in a Bevy-free `sf_vfs::watch`
+  and connect to Bevy only at the event channel. Windows: `ReadDirectoryChangesW`; atomic saves
+  (temp file + rename) and buffer overflows ("rescan" events) are covered because a batch only
+  marks layers dirty and the rebuild diffs rescanned listings. Debounce 150 ms.
+- **Snapshot swap: `arc-swap` 1.9** (`SharedVfs`): readers `load()` an `Arc<Vfs>` and keep it as
+  long as they want a consistent view; the watcher `store()`s the next one. Lock-free both ways
+  (a `RwLock` would make readers wait out a writer). Consumers that still hold a startup
+  `Arc<Vfs>` (Bevyrrowind's model/actor loaders) keep working: loose files are read from disk
+  through any snapshot, so they see edits, only not added/removed files.
+- **Rebuild = rescan the dirty directory layers, share the rest.** `VfsSource::watch_root` and
+  `rescan` (defaulted; `DirSource` implements both, re-reading its listing, which also refreshes
+  the A3 stats). `Vfs::rebuild(dirty)` keeps every layer position (mods' layer ranges stay
+  valid) and diffs only paths of rescanned layers: a path changed when its winner's layer or
+  indexed stat (size, mtime) changed. Adding/removing mods, archives and legacy plugins still
+  need a restart.
+- **Bevy:** `shared_asset_source(SharedVfs, AssetEvents)` reads the current snapshot and, when
+  Bevy watches (`file_watcher` feature or `watch_for_changes_override`), registers Bevy's
+  `async_channel` sender through `AssetSourceBuilder::with_watcher`; the watcher sends
+  `Added/Modified/RemovedAsset` (or `...Meta` for `<path>.meta`) for each winning change. Paths
+  are VFS paths (lowercase), which is how Bevyrrowind loads textures, so the asset server matches them.
+- **Routing:** `LoadedProfile::route(changes) -> HotReloadPlan { scripts, records, styles, assets }`
+  (record and style files by the mods' declared paths, scripts by `scripts/**.luau|lua`).
+  `sf_script_bevy::Scripts::reload_changed(paths, source)` reloads every context that runs a
+  changed file or can `require` it as a dependency library (snapshot → new state → restore:
+  storage and timers kept). `LoadedProfile::reload_records(vfs, adapters)` re-runs step 4 into a
+  new DB (whole DB: patches stack in load order) and replaces the report's record issues; the
+  host publishes it (Bevyrrowind: `LiveRecords` + `RecordsChanged`; no consumer opts in yet, so
+  placed objects keep their data until their cell reloads, as documented).
+- **Not built (handoff):** dev re-bake of a changed bake input during play (owner decision 4,
+  provisional): Bevyrrowind logs "bake input changed: run `bevyrrowind bake`" for `.nif`/`.kf`;
+  the CSS route waits for U2's composer.
 
 ## Verification
 
