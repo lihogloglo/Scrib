@@ -12,11 +12,16 @@
 //!   at an animated pose with its velocities, and read back as a local pose
 //!   for the animation's physics input.
 //!
-//! Powered ragdolls (drives, strength profiles, balance, get-up) are P8.
+//! - [`powered`](StrengthProfile) (P8): stable-PD joint drives toward an
+//!   animated pose (rapier's implicit acceleration-based motors) with
+//!   per-region strength, a world-space pelvis drive, hit impulses with a
+//!   strength dip and recovery, a balance check, and get-up root placement.
+//!
 //! Frames: the skeleton's model space (Y up, +Z forward, +X left).
 
 mod cook;
 mod instance;
+mod powered;
 #[cfg(feature = "bake")]
 pub mod steps;
 
@@ -26,6 +31,7 @@ use sf_anim::SkeletonId;
 
 pub use cook::{BodyOverride, CookParams, RagdollError, RagdollPolicy, cook};
 pub use instance::{RagdollInstance, RagdollSettings, SpawnPose};
+pub use powered::{Balance, Dip, Drive, DriveParams, DriveTarget, HitImpulse, StrengthProfile, balance, get_up_root, region_gain};
 
 /// A capsule along the body frame's Y axis (a sphere when `half` is 0).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

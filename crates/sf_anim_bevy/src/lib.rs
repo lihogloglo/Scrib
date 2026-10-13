@@ -458,7 +458,7 @@ fn select_tiers(
 }
 
 fn evaluate(
-    mut chars: Query<(&mut Animator, &mut AnimLod)>,
+    mut chars: Query<(&mut Animator, &mut AnimLod, Option<&PhysicsPose>)>,
     mut stats: ResMut<AnimStats>,
     mut budget: ResMut<AnimBudget>,
     counters: Option<Res<DiagCounters>>,
@@ -466,11 +466,19 @@ fn evaluate(
     let start = Instant::now();
     let ns: [AtomicU64; 4] = Default::default();
     let count: [AtomicU64; 4] = Default::default();
-    chars.par_iter_mut().for_each(|(mut animator, mut lod)| {
+    chars.par_iter_mut().for_each(|(mut animator, mut lod, physics)| {
         animator.updated = lod.due;
         animator.posed = false;
         if !lod.due {
             return;
+        }
+        match physics.filter(|p| p.weight > 0.0) {
+            Some(p) => {
+                let weights: Vec<f32> = (0..p.pose.len()).map(|j| p.joint_weight(j)).collect();
+                animator.instance.set_physics(Some((&p.pose, &weights)));
+            }
+            None if animator.instance.has_physics() => animator.instance.set_physics(None),
+            None => {}
         }
         let t0 = Instant::now();
         let dt = std::mem::take(&mut lod.pending);
@@ -484,7 +492,7 @@ fn evaluate(
     let wall = start.elapsed();
     let mut per_tier = [0; 4];
     let mut feet = sf_anim_graph::FootStats::default();
-    for (animator, lod) in &chars {
+    for (animator, lod, _) in &chars {
         per_tier[lod.tier.index()] += 1;
         if animator.updated {
             feet += animator.output.feet;
@@ -559,16 +567,16 @@ fn write_bones(
             return;
         };
         let j = usize::from(joint.joint);
-        let physics = physics.filter(|p| p.weight > 0.0 && j < p.pose.len());
-        let full = physics.is_some_and(|p| p.weight >= 1.0);
-        if !animator.posed && !full {
-            return;
-        }
-        let t = trs_transform(match physics {
-            Some(p) if full => p.pose[j],
-            Some(p) => blend_trs(animator.output.pose.get(j), p.pose[j], p.weight),
-            None => animator.output.pose.get(j),
-        });
+        // The graph blends the physics pose in (`GraphInstance::set_physics`);
+        // frames it doesn't pose still follow a fully physical joint.
+        let t = if animator.posed {
+            trs_transform(animator.output.pose.get(j))
+        } else {
+            match physics.filter(|p| j < p.pose.len() && p.joint_weight(j) >= 1.0) {
+                Some(p) => trs_transform(p.pose[j]),
+                None => return,
+            }
+        };
         if *transform != t {
             *transform = t;
             written.fetch_add(1, Ordering::Relaxed);
@@ -578,25 +586,28 @@ fn write_bones(
     stats.apply_us = start.elapsed().as_secs_f32() * 1e6;
 }
 
-fn blend_trs(a: Trs, b: Trs, w: f32) -> Trs {
-    Trs {
-        translation: a.translation.lerp(b.translation, w),
-        rotation: a.rotation.slerp(b.rotation, w),
-        scale: a.scale.lerp(b.scale, w),
-    }
-}
-
 /// A physics pose over the animation (physics.md "Ragdolls and the
 /// animation blend"), on the character's `Animator` entity: the ragdoll's
 /// local pose, written by the physics layer every frame it moves; `weight`
 /// 0 = animation, 1 = physics (bones then follow it even when the graph
-/// doesn't pose this frame). P7 (limp ragdolls) blends the whole skeleton
-/// here, after the graph; P8 feeds the graph's `PoseInput` with per-region
-/// weights so procedural ops and inertialized get-ups compose with it.
+/// doesn't pose this frame). Evaluate hands it to the graph
+/// (`GraphInstance::set_physics`, P8), which blends it per joint after
+/// inertialization and before the procedural ops, so a get-up inertializes
+/// out of it (`GraphInstance::inertialize_from`).
 #[derive(Component, Clone, Debug, Default)]
 pub struct PhysicsPose {
     pub pose: Vec<Trs>,
     pub weight: f32,
+    /// Per joint, multiplying `weight` (a ragdoll's per-region weights);
+    /// empty = 1 everywhere.
+    pub weights: Vec<f32>,
+}
+
+impl PhysicsPose {
+    /// The physics weight of joint `j`.
+    pub fn joint_weight(&self, j: usize) -> f32 {
+        self.weight * self.weights.get(j).copied().unwrap_or(1.0)
+    }
 }
 
 type RootQuery = (

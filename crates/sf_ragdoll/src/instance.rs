@@ -53,15 +53,21 @@ pub struct RagdollInstance {
     pub scale: f32,
     /// Total simulated mass, kg (the mass a grab of any limb decides by).
     pub mass: f32,
+    /// The world-space pelvis drive: a kinematic anchor body and its joint (P8).
+    pub anchor: Option<(BodyId, JointId)>,
+    /// Strength dips from hits, recovering (P8).
+    pub dips: Vec<crate::powered::Dip>,
+    /// Whether the bodies are on the powered layer.
+    pub powered: bool,
 }
 
-fn rigid(m: &Affine3A) -> (Quat, Vec3) {
+pub(crate) fn rigid(m: &Affine3A) -> (Quat, Vec3) {
     let (_, r, t) = m.to_scale_rotation_translation();
     (r.normalize(), t)
 }
 
 /// A body's world pose for a model-space joint transform.
-fn body_world(local: (Vec3, Quat), joint: &Affine3A, root: &WorldTransform, scale: f32) -> WorldTransform {
+pub(crate) fn body_world(local: (Vec3, Quat), joint: &Affine3A, root: &WorldTransform, scale: f32) -> WorldTransform {
     let (r, t) = rigid(joint);
     let model_pos = t + r * local.0;
     WorldTransform {
@@ -126,11 +132,14 @@ impl RagdollInstance {
         for &(a, b) in &def.no_collide {
             world.exclude_pair(bodies[usize::from(a)], bodies[usize::from(b)]);
         }
-        Self { bodies, joints, scale: s, mass }
+        Self { bodies, joints, scale: s, mass, anchor: None, dips: Vec::new(), powered: false }
     }
 
     /// Removes the bodies (and with them the joints).
     pub fn remove(&self, world: &mut PhysicsWorld) {
+        if let Some((a, _)) = self.anchor {
+            world.remove(a);
+        }
         for &b in &self.bodies {
             world.remove(b);
         }

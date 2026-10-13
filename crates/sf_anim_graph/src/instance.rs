@@ -20,7 +20,8 @@ use std::sync::Arc;
 use glam::{Affine3A, Quat, Vec2, Vec3};
 use sf_anim::spring::critical_spring;
 use sf_anim::{
-    BlendLayer, Clip, EventEdge, FiredEvent, JointMask, JointWeights, LocalPose, ModelPose, RootDelta, RootMotionMode, Skeleton, apply_additive, blend_in_place,
+    BlendLayer, Clip, EventEdge, FiredEvent, JointMask, JointWeights, LocalPose, ModelPose, RootDelta, RootMotionMode, Skeleton, Trs, apply_additive,
+    blend_in_place,
     blend_layers, local_to_model,
 };
 
@@ -415,6 +416,19 @@ pub struct GraphInstance {
     /// Per montage slot ([`CompiledGraph::slots`]).
     slots: Vec<SlotState>,
     next_montage: u32,
+    /// The physics input (a ragdoll's pose and per-joint weights), blended
+    /// over the graph's pose; see [`GraphInstance::set_physics`].
+    physics: Option<PhysicsInput>,
+    /// A hand-back blend requested by [`GraphInstance::inertialize_from`].
+    handback: Option<f32>,
+}
+
+/// A pose supplied from outside the graph (a ragdoll's), with a weight per
+/// joint: 0 keeps the animation, 1 shows the physics pose.
+#[derive(Clone, Debug)]
+struct PhysicsInput {
+    pose: Vec<Trs>,
+    weights: Vec<f32>,
 }
 
 /// Read-only context of the prepare and advance passes.
@@ -453,6 +467,8 @@ impl GraphInstance {
             rest: LocalPose::rest(b.skeleton),
             identity: LocalPose::new(n),
             scratch: Scratch { frames: Vec::new(), curve_w: vec![0.0; g.curves.len()], model: ModelPose::new(n), model2: ModelPose::new(n) },
+            physics: None,
+            handback: None,
             ops: g.ops.iter().map(|o| OpState::new(&o.op)).collect(),
             speed_match: None,
             stride: (0.0, 0.0),
@@ -471,6 +487,53 @@ impl GraphInstance {
         self.history = 0;
         self.inertial.cancel();
         self.effectors.clear();
+    }
+
+    /// The physics input (physics.md "Ragdolls and the animation blend"): a
+    /// local pose blended over the graph's output per joint by `weights`
+    /// (0 = animation, 1 = physics), after inertialization and before the
+    /// pose history and the procedural ops, so a later
+    /// [`inertialize_from`](Self::inertialize_from) or state switch blends
+    /// out of the shown pose and the ops (foot placement, look-at) act only
+    /// on the animated share. `None`, or a pose of the wrong length, clears
+    /// it. This is the graph's built-in physics stage: graphs need no
+    /// authored `PoseInput` node for a ragdoll (their `PoseInput` slots stay
+    /// for other external poses).
+    pub fn set_physics(&mut self, physics: Option<(&[Trs], &[f32])>) {
+        match physics {
+            Some((pose, weights)) if pose.len() == self.rest.len() && weights.len() == pose.len() => {
+                let p = self.physics.get_or_insert_with(|| PhysicsInput { pose: Vec::new(), weights: Vec::new() });
+                p.pose.clear();
+                p.pose.extend_from_slice(pose);
+                p.weights.clear();
+                p.weights.extend_from_slice(weights);
+            }
+            _ => self.physics = None,
+        }
+    }
+
+    /// Whether a physics input is set.
+    pub fn has_physics(&self) -> bool {
+        self.physics.is_some()
+    }
+
+    /// The hand-back from physics (a get-up): the next update inertializes
+    /// from `current` (moving from `previous`, `dt` earlier) into whatever
+    /// the graph then produces, over `duration` seconds. Both poses are
+    /// local, relative to the character frame the next update runs in (the
+    /// host may have moved the root under the ragdoll's pelvis first).
+    pub fn inertialize_from(&mut self, current: &[Trs], previous: &[Trs], dt: f32, duration: f32) {
+        let n = self.rest.len();
+        if current.len() != n || previous.len() != n || dt <= 0.0 {
+            return;
+        }
+        for j in 0..n {
+            self.prev.set(j, current[j]);
+            self.prev2.set(j, previous[j]);
+        }
+        self.prev_dt = dt;
+        self.history = 2;
+        self.handback = Some(duration);
     }
 
     /// Whether an inertialization blend is running.
@@ -669,6 +732,9 @@ impl GraphInstance {
                 self.request = Some(self.request.map_or(d, |r| r.min(d)));
             }
         }
+        if let Some(d) = self.handback.take() {
+            self.request = Some(self.request.map_or(d, |r| r.min(d)));
+        }
         self.collect_events(g, out);
         self.params.clear_triggers();
 
@@ -718,6 +784,23 @@ impl GraphInstance {
             }
         }
         self.inertial.apply(&mut out.pose);
+        if let Some(p) = &self.physics {
+            for (j, (&w, &t)) in p.weights.iter().zip(&p.pose).enumerate() {
+                if w >= 1.0 {
+                    out.pose.set(j, t);
+                } else if w > 0.0 {
+                    let a = out.pose.get(j);
+                    out.pose.set(
+                        j,
+                        Trs {
+                            translation: a.translation.lerp(t.translation, w),
+                            rotation: a.rotation.slerp(t.rotation, w).normalize(),
+                            scale: a.scale.lerp(t.scale, w),
+                        },
+                    );
+                }
+            }
+        }
         if dt > 0.0 {
             std::mem::swap(&mut self.prev, &mut self.prev2);
             self.prev.copy_from(&out.pose);

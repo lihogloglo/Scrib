@@ -496,6 +496,21 @@ needs no per-region weights. P8 moves it into `PoseInput` with per-region weight
 bodies. Not yet: the powered crumple (the clip cuts to limp), the root following the pelvis, sleeping-pose persistence
 across deactivation, placed corpses.
 
+**As built (P8 core, 2026-10-13; not yet in `sf_physics_bevy`).** `sf_ragdoll::powered`: joint targets are the
+animated pose's relative rotations between the joint frames, sent as rapier's per-axis motor errors `2·asin(q.v_i)`
+(`PhysicsWorld::set_joint_target`, with the vector part's rate as velocity feed-forward), so a ball joint converges
+on swing and twist together. **Change from the spec: composite-inertia gain scaling.** An acceleration-based motor
+only sees its two bodies, so a hip or spine holding its subtree sagged (spine 121°, effectors 2.7 m off at ω 40);
+stiffness is now `strength · region gain · ω² · I_subtree(joint) / I_child`, ζ = 1 (subtree-scaled PD gains, Zordan &
+Hodgins 2002), and the world pelvis drive (kinematic anchor + `JointKind::Free` six-axis motors) scales its linear
+gain by total/pelvis mass and its angular gain by the whole body's inertia over the pelvis's. Defaults ω 160 rad/s
+(gravity sag on light distal bodies goes as g/(d·ω²): ω 40 tracked 19°, 80 7°, 160 3.2°), pelvis ω 12, `Kinematic` =
+4× the full-strength gain (bodies stay dynamic). Driven ragdolls sit on `Layer::POWERED` (outside the carry pick
+layers). Measured: joints 3.2° RMS worst (met), effectors 11.5 cm RMS (5 cm missed: pelvis placement), 0.128 ms
+per powered character with 8 (0.05 missed). The animation side: the graph's built-in physics stage
+(`GraphInstance::set_physics`, per-joint weights, after inertialization and before history and ops) replaces a
+per-graph `PoseInput` node, and `GraphInstance::inertialize_from` is the get-up hand-back (continuous at shrinking dt).
+
 Behaviours:
 
 - **Death**: regions switch to `Powered` following the death clip, then strength fades to `Limp` over

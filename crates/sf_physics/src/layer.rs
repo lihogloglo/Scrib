@@ -25,6 +25,9 @@ bitflags! {
         /// Triggers: report overlaps, never push.
         const SENSOR = 1 << 7;
         const PROJECTILE = 1 << 8;
+        /// Powered ragdoll bodies (a crumpling death, a knockdown before it
+        /// goes limp): contacts as `RAGDOLL`, outside the carry pick layers.
+        const POWERED = 1 << 9;
     }
 }
 
@@ -32,7 +35,8 @@ impl Layer {
     /// Fixed world geometry.
     pub const WORLD: Self = Self::STATIC.union(Self::TERRAIN);
     /// Everything the solver moves.
-    pub const MOVING: Self = Self::DEBRIS.union(Self::PROP).union(Self::RAGDOLL).union(Self::HELD).union(Self::PROJECTILE);
+    pub const MOVING: Self =
+        Self::DEBRIS.union(Self::PROP).union(Self::RAGDOLL).union(Self::HELD).union(Self::PROJECTILE).union(Self::POWERED);
 
     /// The layers this one makes contact with. Symmetric by construction
     /// (`a.collides_with().contains(b) == b.collides_with().contains(a)`).

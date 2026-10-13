@@ -30,6 +30,9 @@ pub enum JointKind {
     /// Rotation about the frame's X axis within `range`, radians.
     Hinge { range: [f32; 2] },
     Fixed,
+    /// No locked axis, motors only: a world-space drive from a kinematic
+    /// anchor body (UE's world-space physical animation).
+    Free,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -77,6 +80,7 @@ fn build(desc: &JointDesc) -> GenericJoint {
         JointKind::Ball { .. } => JointAxesMask::LOCKED_SPHERICAL_AXES,
         JointKind::Hinge { .. } => JointAxesMask::LOCKED_REVOLUTE_AXES,
         JointKind::Fixed => JointAxesMask::LOCKED_FIXED_AXES,
+        JointKind::Free => JointAxesMask::empty(),
     };
     let mut b = GenericJointBuilder::new(mask)
         .local_frame1(Pose::from_parts(desc.frame_parent.0, desc.frame_parent.1))
@@ -90,7 +94,7 @@ fn build(desc: &JointDesc) -> GenericJoint {
                 .limits(JointAxis::AngZ, [-swing[1], swing[1]]);
         }
         JointKind::Hinge { range } => b = b.limits(JointAxis::AngX, range),
-        JointKind::Fixed => {}
+        JointKind::Fixed | JointKind::Free => {}
     }
     b.build()
 }
@@ -141,6 +145,55 @@ impl PhysicsWorld {
             j.set_motor_model(axis, MotorModel::AccelerationBased);
             match drive {
                 Some(d) => j.set_motor(axis, angle, 0.0, d.stiffness, d.damping),
+                None => j.set_motor(axis, 0.0, 0.0, 0.0, 0.0),
+            };
+        }
+        true
+    }
+
+    /// Drives the joint's free angular axes toward the relative rotation
+    /// `target` (the child's frame in the parent's frame), or releases them
+    /// with `None`. Rapier measures an angular motor's error on axis `i` as
+    /// `2·asin(q.v_i)` of the relative rotation (`w ≥ 0`), so a rotation
+    /// maps to the per-axis targets `2·asin(target.v_i)` and the drive
+    /// converges on the whole rotation, swing and twist together (per-axis
+    /// angle targets left the P1 spike's 0.5 m/s residual).
+    /// `velocity` is the target's relative angular velocity in the parent
+    /// frame's axes (feed-forward: without it the damping term lags a
+    /// moving target by `2ζ·v/ω`).
+    pub fn set_joint_target(&mut self, id: JointId, target: Quat, velocity: Vec3, drive: Option<Drive>) -> bool {
+        let q = target.normalize();
+        let q = if q.w < 0.0 { -q } else { q };
+        let angles = [q.x, q.y, q.z].map(|v| 2.0 * v.clamp(-1.0, 1.0).asin());
+        let Some(j) = self.joint_data_mut(id) else {
+            return false;
+        };
+        for ((axis, angle), vel) in ANGULAR.into_iter().zip(angles).zip(velocity.to_array()) {
+            if j.locked_axes.contains(axis.into()) {
+                continue;
+            }
+            j.set_motor_model(axis, MotorModel::AccelerationBased);
+            match drive {
+                Some(d) => j.set_motor(axis, angle, vel, d.stiffness, d.damping),
+                None => j.set_motor(axis, 0.0, 0.0, 0.0, 0.0),
+            };
+        }
+        true
+    }
+
+    /// Drives the joint's free linear axes toward zero offset between its
+    /// two frames (acceleration-based), or releases them with `None`.
+    pub fn set_joint_linear_drive(&mut self, id: JointId, drive: Option<Drive>) -> bool {
+        let Some(j) = self.joint_data_mut(id) else {
+            return false;
+        };
+        for axis in [JointAxis::LinX, JointAxis::LinY, JointAxis::LinZ] {
+            if j.locked_axes.contains(axis.into()) {
+                continue;
+            }
+            j.set_motor_model(axis, MotorModel::AccelerationBased);
+            match drive {
+                Some(d) => j.set_motor(axis, 0.0, 0.0, d.stiffness, d.damping),
                 None => j.set_motor(axis, 0.0, 0.0, 0.0, 0.0),
             };
         }
