@@ -1367,7 +1367,7 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
 
 ### PH-9 (P8): knockdown and get-up
 
-Status: **awaiting owner; not runnable yet** (the powered core is built and unit-tested, the app wiring is P8b).
+Status: **awaiting owner; wired (P8b), not yet run by an agent**: impacts ≥ 15 N·s (`KNOCKDOWN_IMPULSE`) knock a walker down; the get-up uses the `LYING_REST_GET_UP` scaffold pose until the Knockout clip tail is sampled.
 Scene: Balmora, a walker on the Temple stairs; free camera 6 m away; press `V` to throw the 3 kg ball at the walker.
 What to look for: the walker braces and falls with the hit (no pop from the animated pose into the ragdoll), lies
 still within ~2 s, then gets up from where it lies with its feet under it (root placed under the pelvis); face-down
@@ -1525,3 +1525,19 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Status: awaiting owner. Sanity screenshots 2026-10-13 (m6-f3b): `shots/f3/fg-night-lanterns.png`,
   `ex_glass_day.png`, `ex_glass_night.png`.
 - Source: m6-f3b.
+
+### WA-1: Open sea, W2 FFT ocean (`scene wa-seyda-noon`, `wa-vivec-waterfront`, `wa-bittercoast`, `wa-sunset-sea`, `wa-night-moons`; A/B `--water scaffold`, `--water off`, `--water-wind 2` / `14`; example `water_ocean`)
+
+Status: **awaiting owner** (W2, 2026-10-13). Shots: `shots/w2/`.
+Look for: waves read as one sea (swell + chop) and move; sand visible through shallow water, colour deepening
+offshore; a thin contact-foam line where water meets sand, rocks, piers and hulls; sun glitter widening with distance,
+no sparkle noise; far water hazed like the land (aerial perspective, morning froxel fog); no square seams, cracks or
+steps (clipmap rings) and no gap at the horizon; a sunset path on the water; at night moon glints, sea not black.
+Known: reflections are the environment map only (SSPR/probe at W4), no shore wave damping yet (W3), the water may read
+too milky turquoise (W1 placeholder optics, tuned at W3), whitecaps at storm winds untuned.
+
+### WA-8: Coast flight across origin shifts (`scene wa-vivec-waterfront`, fly fast along the coast)
+
+Status: **awaiting owner** (W2). Look for: no wave jump or pattern shift when the floating origin moves (every
+256 m); with `--dlss`, no wave smear (velocity redraw). The phase is exact by construction (integer cells, W1 test);
+not yet flown in the app.

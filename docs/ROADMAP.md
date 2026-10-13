@@ -865,6 +865,22 @@ ragdolls; robes move." Tasks in dependency order:
   body). Lower ω (40) tracked 19° (gravity sag g/(d·ω²) on hands/feet). Tests: `sf_ragdoll` 13 (+2 ignored:
   `stretch_table`, `powered_cost`), `sf_anim_graph` `physics_handback_is_continuous_at_shrinking_dt`, `mw_physics`
   `creature_masses_are_plausible`; clippy pedantic clean on all touched crates.
+  **P8b (2026-10-13, physics-p8b, uncommitted):** pelvis drive was underdamped (ζ = 1/√load ≈ 0.37 from scaling only
+  the stiffness of an acceleration motor; rang ±8 cm at 2 Hz): now critically damped for the composite load +
+  gravity compensation (anchor offset −g/ω², weight torque about the pelvis). Effectors 11.5 → 6.8 cm in air (pelvis
+  9.0 → 2.2 cm, joints 5.5°), 23.8 → 11.0 cm on a floor (synthetic walk slides/sinks its feet): gate 5 cm still open.
+  Cost: `DriveParams::powered_iterations` (+8: 0.129, +4: 0.090, +2: 0.071, +0: 0.051 ms/char, 8 powered on a floor;
+  tracking degrades 11 → 26 cm); rapier `parallel` (new sf_physics feature) slower (0.153, shared machine). Default +8.
+  `sf_physics_bevy`: `RagdollMode::Death { crumple } | Knockdown { point, impulse, get_up, get_up_flag }`, FixedUpdate
+  `drive`, crumple 0.45 s, brace 0.25 over 0.8 s, budget 8, per-joint weights from `def.owner`, read-back relative to
+  the current frame, corpse frame follows `implied_frame` (heading), get-up at pelvis < 0.2 m/s for 0.5 s
+  (`get_up_root`, `LYING_REST_GET_UP` scaffold, `inertialize_from`, clears the flag, `RagdollGotUp`).
+  `ImpactOnCharacter.direction` (contact normal; `PhysicsEvent::ContactForce.normal`). App: `I` = crumple death,
+  impacts ≥ 15 N·s knock walkers down (`KnockedDown`, root takes the get-up move). Census re-run: 93 skeletons (10
+  humanoid, 83 creature), 0 failed, 2 death-clip only, 3–37 bodies, 1–1500 kg. NOT run in the app yet (tool cap).
+  **Open (P8b → P9 handoff):** app run `I`/`V` + PH-2/PH-9 screenshots; sleep-state blob + placed corpses;
+  get-up clip first-frame root body from the Knockout clip tail (removes `LYING_REST_GET_UP`); mover yaw on get-up;
+  effector gate (per-effector world drives or kinematic legs on floors); cost gate.
   **Open (P8b, in order):** effector gate (pelvis drive: try the anchor at the target's COM, or drive the pelvis
   with the full-body linear load; measure on a floor); cost (fewer extra iterations while powered, sleep limp
   bodies, rapier `parallel`); `sf_physics_bevy` modes (`Ragdoll { mode: Death { crumple } | Knockdown }`: call
@@ -993,7 +1009,21 @@ dependency order:
   `sf_diag` spans and error counters, dev Lua console. Generic `Activated` + crosshair target: share with M4 P11's
   `sf_interaction` (whichever lands first builds it; doors.rs moves onto it). Verify: headless integration test (mod
   reacts to `Activated`, spawns, sets a timer, edits storage; a suspended mod doesn't block others).
-- [ ] A4 Hot reload (mods.md "Hot reload"): VFS watcher over `DirSource` layers (Bevy `file_watcher` / notify 8.2),
+- [x] A4 (2026-10-13, m5-a4, uncommitted) built: `sf_vfs` `SharedVfs` (`arc-swap` 1.9, lock-free load/store),
+  `Vfs::rebuild(dirty)` (rescans only dirty `DirSource` layers via new `VfsSource::watch_root`/`rescan`, layer positions
+  kept, diff = winner's layer or indexed stat changed, shadowed edits silent), feature `watch`: `VfsWatcher` on
+  `notify-debouncer-full` 0.7 / `notify` 8.2 (Bevy's own pair, newest stable; Bevy's `FileWatcher` itself is one dir per
+  source with no shadowing), `bevy::shared_asset_source` (Bevy's event channel via `with_watcher`, winning
+  `Added/Modified/RemovedAsset`); `sf_mods` `LoadedProfile::route` → `HotReloadPlan` + `reload_records` (whole-DB
+  step 4 re-run, record issues replaced); `sf_script_bevy` `Scripts::reload_changed`. App (`dev` feature only):
+  `hot_reload.rs` (watched default source, routing, `LiveRecords` + `RecordsChanged`, reloaded-image log). Tests:
+  sf_vfs 15 (rebuild/winners/shadowed, swap never blocks readers, real watcher), sf_mods 20 (RON patch re-applies),
+  sf_script_bevy 5 (reload keeps state); clippy clean. Real run (release + dev, scratch `--user-data`, Census office):
+  editing the test mod's `main.luau` → "script context hello_activate reloaded (state kept)", new code logged
+  "activation count kept = 2" ~0.25 s after the save; editing its `tx_imp_wall_01.png` → "texture reloaded" ~0.15 s
+  after; rebuild 11 ms. Not built: dev re-bake of changed bake inputs during play (logged, "run `bevyrrowind bake`"),
+  CSS route (U2), MS-1 scene (E1's `texture_demo`). Details: mods.md "As built (A4)". Original task text:
+  A4 Hot reload (mods.md "Hot reload"): VFS watcher over `DirSource` layers (Bevy `file_watcher` / notify 8.2),
   index rebuild + `Arc<Vfs>` swap, winning-change `AssetSourceEvent`s, routing (assets, CSS, scripts, record files,
   dev re-bake of affected products). Verify: `cargo test -p sf_vfs --all-features` (winner changes, shadowed edits
   silent, readers never block); MS-1.
@@ -1160,13 +1190,16 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   notice in `THIRD_PARTY_NOTICES.md`) + `mw_water` skeleton (bodies, optics by region, `[Water]` ini). 11 + 3 tests,
   clippy clean. Twin vs exact field 2.4 mm (Hs 1.9 m); release: twin step 0.027 ms, sample 0.25 µs. As built and the
   W2 handoff: water.md "As built (W1)".
-- [ ] W2 Ocean surface + water pass (water.md "Ocean surface", "Water pass"), replacing `SeaPlaneScaffold`
+- [~] W2 Ocean surface + water pass (water.md "Ocean surface", "Water pass"), replacing `SeaPlaneScaffold`
   (water-adapter.md): GPU FFT cascades + foam (ported from bevy-aqua), geometry clipmap + horizon skirt, colour + depth
   snapshot, water draw (refraction with validity, Beer-Lambert + scattering, GGX sun/moon + clustered lights, env-map
   reflection, slope-variance far roughness, aerial + froxel fog), velocity redraw, origin phase; wind from WD1 (or a
   constant until it lands); `--water scaffold|off`. Waits for W1. Verify: framework example `water_ocean`; WA-1 (calm →
   storm at Seyda Neen, A/B scaffold), WA-8 coast flight (no jumps at origin shifts); `water/*` GPU counters within the
   High column (FFT 0.15, draw 0.5, copies 0.1 ms); DLSS on: no wave smear. Then delete the scaffold.
+  Status (m6-w2, 2026-10-13): built (`sf_water_bevy`, app `water.rs`, `--water on|scaffold|off`); golden GPU vs twin
+  1.9 mm; FFT 0.22 ms (over 0.15: amortise), snapshot 0.04, draw ~0.5 ms (example, shared machine); WA-1, WA-8 awaiting
+  owner; DLSS smear and in-app flight not yet checked. Handoff: water.md "As built (W2)".
 - [ ] W3 Shore, bodies, interiors (water.md "Shoreline and depth colour", "Water bodies at any height"): `water.shore`
   bake (EDT, openness per connected component, land-only block mask), shore attenuation + shore/contact foam, wet band
   via the surface hook (or a stub until SU1), water-level clipmap, lakes/pools/interior `Bounds` pools from `WHGT`,
@@ -1470,7 +1503,10 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (physics-p6): M4 P5 follow-ups + P6 (uncommitted): movers' terrain back on the analytic `TerrainProbe` composed with physics `STATIC|PROP` (probe_bench: heightfield casts 13 us; wk-balmora mover median 584 -> 424 us vs 272 off, shared machine); Tradehouse insert peak 0.60 ms, flight insert 0.45-0.55 ms, idle step 0.45-0.56 ms (gates 0.5/0.3 still missed); P6 carry/drag/throw: `sf_physics::carry` (hand + motor joint, holder-space interpolation, per-pair holder exclusion, drag force cap from drag mass), `sf_physics_bevy::carry` (Holder, messages, HeldPoses), `mw_physics::holder_limits` (Strength), app LMB/V/[ ] driver + `BEVYRROWIND_FPS_CAP`; 5 carry tests (view-space jitter <= 0.044 mm at 30/60/144 fps, throw cap, ballistic landing, thresholds, break, holder exclusion); PH-4 awaiting owner; P7 handoff in M4 P6.
 - 2026-10-13 (physics-p7): M4 P7 [~] (uncommitted): new `sf_ragdoll` (`ragdoll.cook` from rig profiles, limp `RagdollInstance`), death handoff in `sf_physics_bevy` feature `ragdoll` + `sf_anim_bevy::PhysicsPose`, corpse drag by limb (whole-ragdoll mode mass); impulse joints + 8 iterations + 4:1 mass cap: drop 0.49 cm, stairs 0.32, 75 kg wrist drag 0.07 (gate 1 cm); census 93 skeletons, 0 failed (creature masses implausible without skin extents); app `I` kills; PH-2 awaiting owner.
 - 2026-10-13 (physics-p8): M4 P8 [~] (uncommitted): powered ragdoll core (`sf_ragdoll::powered`: stable-PD joint targets with composite-inertia gains, world pelvis anchor, hits + dips, balance, get-up root, `ROLL_TO_BACK` scaffold), `Layer::POWERED`, graph physics stage + `inertialize_from` hand-back, per-joint `PhysicsPose` weights, `mw_physics::creature_mass`; joints 3.2° RMS (met), effectors 11.5 cm (missed), hand-back continuous (met), 0.128 ms per powered character (missed); app wiring, PH-2/PH-9 runs are P8b.
+- 2026-10-13 (physics-p8b): M4 P8b [~] (uncommitted, tool cap): critically damped + gravity-compensated pelvis drive (effectors 11.5 → 6.8 cm air / 11.0 cm floor, gate open), powered-iteration knob (0.129 → 0.090 ms/char at +4; parallel no gain), `sf_physics_bevy` Death crumple / Knockdown + get-up modes, budget 8, impact direction, app knockdown wiring, census 93/0 failed; app run + PH-2/PH-9 screenshots handed to P9.
 - 2026-10-13 (m5-a3): M5 A3 built (uncommitted): `mw_mods` (Morrowind `ContentAdapter`, builtin `mw` mod pinned lowest with graphs + `mw` Luau runtime, `morrowind-data`, generated default profile, `<user data>/{mods,profiles}`), TES3 kinds serde-registered, bake record fingerprints via `RecordDb::fingerprint`, profile fingerprint beside the manifest (directory-listing stats: 375 → 4 ms), `ShadowedModern`, app loads through profiles + `mods list|order|report|enable|disable`; real install 62,025 records, load 0.29 s, RON radius patch visible in `mods report`, texture mod wins `which` and re-bakes nothing; no-op bake 3.0-3.2 s (gate 2.5 s missed by non-A3 steps).
 - 2026-10-13 (m6-f3b): M6 F3 [~] (resumed m6-f3, uncommitted): froxel fog + god rays in `sf_atmos_bevy` (inject/integrate compute, CSM + shadow-height + cloud shadow, 32 point lights, temporal; analytic layers past 384 m), shared `fog_bank.wesl`, `FroxelVolume`/`FroxelFogMaterial` for transparents, `--off froxels`, clear/fair dawn haze; Bevy `VolumetricFog` rejected (weather.md); GPU 0.16 ms at 1440p; FG-3/FG-4 awaiting owner (shots/f3/).
 - 2026-10-13 (m5-l2): M5 L2 built (uncommitted): new `sf_script_bevy` (Bevy-thin: app/ecs/time/sf_diag_bevy) with `Scripts` resource, Input/Update/Ui exclusive slots, `Activated` → `ActivationOutcome { handled }`, `ScriptFact`, diagnostics messages + `script/...` counters; world access decided as declared slot resources moved into one shared cell (no per-context guard cost); `ScriptPlacements` + `@sf/world` subset; 4 headless tests + clippy clean. App `scripts.rs`: profile contexts + `mw.legacy`, R0 handle hook, crosshair pick (scaffold) on Space / `--activate N`; a scratch-folder Lua mod logged a real activation in the Census office and its timer fired.
 - 2026-10-13 (m6-w1): M6 W0 + W1 built (uncommitted): water census example (`mw_world` `water_census`: one exterior sea level, 216 visible / 21 hidden interior pools, 39 moored-boat candidates, Bitter Coast water mostly connected to the sea, so swamp calm comes from openness), new `sf_water` (records, JONSWAP/TMA/Donelan-Banner spectrum, power-of-two cascades, `h0` keyed by wave vector, rustfft CPU twin with cubic sampling, BVH/priority `WaterQuery`; twin 2.4 mm from exact, 0.027 ms/step, 0.25 µs/sample) and `mw_water` skeleton; bevy-aqua notice in `THIRD_PARTY_NOTICES.md`; W2 handoff in water.md "As built (W1)".
+- 2026-10-13 m6-w2: M6 W2 ocean + water pass built (sf_water_bevy: GPU FFT 4×256², clipmap + skirt, snapshot water draw, aerial + froxel fog, velocity redraw; golden 1.9 mm); WA-1/WA-8 awaiting owner; `SeaPlaneScaffold` behind `--water scaffold`.
+- 2026-10-13 (m5-a4): M5 A4 hot reload built (uncommitted): `sf_vfs` `SharedVfs` (arc-swap) + `Vfs::rebuild` of dirty dir layers with winning-change diff + `watch::VfsWatcher` (notify-debouncer-full 0.7, Bevy's crate) + Bevy `shared_asset_source`; `sf_mods` `route`/`reload_records`; `sf_script_bevy` `reload_changed`; app `hot_reload.rs` (dev only). 15+20+5 tests, clippy clean; real run: Lua edit reloads with state kept, texture edit reloads in the Census office, each under 0.3 s. Dev re-bake during play not built.

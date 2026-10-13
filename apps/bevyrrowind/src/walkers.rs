@@ -442,6 +442,9 @@ fn attach(
     }
 }
 
+/// Dead and knocked-down movers stay parked (physics.rs).
+type Unprocessed = (Without<crate::physics::Dead>, Without<crate::physics::KnockedDown>);
+
 /// The processing range (streaming.md / locomotion.md "Processing range"):
 /// a mover simulates only in the active worldspace and only while every
 /// streaming cell within [`PROCESS_MARGIN`] of it is R0-active, i.e. its
@@ -453,7 +456,7 @@ fn processing_range(
     mut commands: Commands,
     streaming: Res<Streaming>,
     active: Res<ActiveWorldspace>,
-    movers: Query<(Entity, &Mover, &ActorSpace, Has<Dormant>), Without<crate::physics::Dead>>,
+    movers: Query<(Entity, &Mover, &ActorSpace, Has<Dormant>), Unprocessed>,
     mut lods: Query<&mut AnimLod>,
 ) {
     let scheduler = streaming.scheduler();

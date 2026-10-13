@@ -49,7 +49,8 @@ use sf_physics_bevy::{
 use sf_anim_bevy::Animator;
 use sf_character_bevy::CharacterBody;
 use sf_controller_bevy::Dormant;
-use sf_physics_bevy::{Ragdoll, RagdollSource, RagdollStats};
+use sf_controller_bevy::Mover;
+use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats};
 use sf_ragdoll::{RAGDOLL_COOK, RagdollDef, RagdollPolicy};
 use sf_records::RecordDb;
 use sf_world::{Placement, PlacementClass, WorldspaceId};
@@ -92,7 +93,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
             (
                 toggle_debug,
                 throw_ball,
-                (kill_key, ragdoll_log).chain(),
+                (kill_key, knockdown, got_up, ragdoll_log).chain(),
                 peaks.after(sf_physics_bevy::PhysicsSystems::WriteBack),
                 (attach_holder, carry_keys).chain().before(sf_physics_bevy::PhysicsSystems::Carry),
                 carry_feedback.after(sf_physics_bevy::PhysicsSystems::Carry),
@@ -104,7 +105,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
 // --- Ragdolls (P7 debug driver) --------------------------------------------------------------
 
 /// Seconds of death clip before the body goes limp (physics.md "Death": the
-/// clip's crumple, then the ragdoll; P8 replaces the cut with a powered fade).
+/// clip, then the powered crumple: `RagdollConfig::crumple`, P8b).
 pub const DEATH_HANDOFF: f32 = 0.4;
 
 /// A character killed by [`kill_key`]: its mover stays [`Dormant`].
@@ -164,8 +165,76 @@ fn kill_key(
         animator.set_bool("dead", true);
     }
     commands.entity(root).insert((Dead, Dormant));
-    commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF });
+    commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF, mode: RagdollMode::Death { crumple: true } });
     info!("ragdoll: killed {root} ({})", body.skeleton);
+}
+
+/// Contact impulse on a character's capsule (N·s) that knocks it down: the
+/// P8b debug driver's threshold (a `V` ball at full throw). Removal: the
+/// adapter's knockdown rule (fatigue and agility) in `mw_physics`.
+pub const KNOCKDOWN_IMPULSE: f32 = 15.0;
+
+/// Seconds of knockdown clip before the handoff.
+pub const KNOCKDOWN_HANDOFF: f32 = 0.05;
+
+/// The graph flag a knockdown sets and the get-up clears (`mw_graphs` `knocked_out`).
+const KNOCKED_OUT: &str = "knocked_out";
+
+/// A knocked-down character: its mover stays [`Dormant`] until it gets up;
+/// `body_local` is its body's local transform before the ragdoll moved it.
+#[derive(Component)]
+pub struct KnockedDown {
+    body_local: Transform,
+}
+
+/// Hard impacts on a living character's capsule knock it down (PH-9).
+#[allow(clippy::needless_pass_by_value)]
+fn knockdown(
+    mut impacts: MessageReader<ImpactOnCharacter>,
+    characters: Query<&CharacterBody, (Without<Dead>, Without<KnockedDown>)>,
+    mut bodies: Query<(&mut Animator, &Transform)>,
+    mut commands: Commands,
+) {
+    let mut seen = Vec::new();
+    for hit in impacts.read() {
+        if hit.impulse < KNOCKDOWN_IMPULSE || seen.contains(&hit.entity) {
+            continue;
+        }
+        let Ok(body) = characters.get(hit.entity) else { continue };
+        let Ok((mut animator, local)) = bodies.get_mut(body.body) else { continue };
+        seen.push(hit.entity);
+        animator.set_bool(KNOCKED_OUT, true);
+        commands.entity(hit.entity).insert((KnockedDown { body_local: *local }, Dormant));
+        let mode = RagdollMode::Knockdown { point: hit.point, impulse: hit.direction * hit.impulse, get_up: None, get_up_flag: KNOCKED_OUT.to_owned() };
+        commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: KNOCKDOWN_HANDOFF, mode });
+        info!("ragdoll: knocked down {} ({:.0} N·s)", hit.entity, hit.impulse);
+    }
+}
+
+/// After a get-up the ragdoll moved the body; the walker root takes the move
+/// (its mover too) and the body goes back to its local transform.
+#[allow(clippy::needless_pass_by_value)]
+fn got_up(
+    mut events: MessageReader<RagdollGotUp>,
+    mut roots: Query<(Entity, &CharacterBody, &KnockedDown, &mut Transform, Option<&mut Mover>)>,
+    mut locals: Query<&mut Transform, Without<KnockedDown>>,
+    mut commands: Commands,
+) {
+    for e in events.read() {
+        let Some((root, _, down, mut t, mover)) = roots.iter_mut().find(|(_, b, ..)| b.body == e.entity) else { continue };
+        let Ok(mut local) = locals.get_mut(e.entity) else { continue };
+        let l0 = down.body_local;
+        let rotation = (t.rotation * local.rotation * l0.rotation.inverse()).normalize();
+        let shift = t.rotation * (t.scale * local.translation) - rotation * (t.scale * l0.translation);
+        t.rotation = rotation;
+        t.translation += shift;
+        if let Some(mut m) = mover {
+            m.loco.position = m.loco.position.offset(shift);
+        }
+        *local = l0;
+        commands.entity(root).remove::<(KnockedDown, Dormant)>();
+        info!("ragdoll: {root} got up");
+    }
 }
 
 /// Logs ragdoll spawns, failures and the largest joint stretch.
