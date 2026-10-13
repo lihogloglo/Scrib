@@ -1,6 +1,7 @@
 # Water adapter (Morrowind → sf_water)
 
-Status: draft (2026-10-13, m6-spec), spec only. Nothing built.
+Status: draft (2026-10-13, m6-spec). W0 census done and W1 `mw_water` skeleton built (2026-10-13, m6-w1):
+see "Census results" and "As built (W1)".
 Crates: `mw_water` (new, Bevy-free: `WaterSource`, `WaterOpticsSource`, optics/cue records from
 `Morrowind.ini [Water]`, water-mesh census, boat rules), app wiring in `apps/bevyrrowind`
 (`exterior.rs`: the `SeaPlaneScaffold` goes; interiors gain water); touches `mw_world` (worldspace
@@ -189,7 +190,9 @@ Replacement (task W2 in ROADMAP "M6"):
 
 ## Census (task M-W0, real install, counts only)
 
-`mw_water/tests/water_census.rs` (ignored, real install):
+As built: `cargo run --release -p mw_world --example water_census` (prints counts only, 1.1 s; an
+example rather than an ignored `mw_water` test because it needs `mw_world`'s placements, `mw_nif`
+bounds and `LAND`, which `mw_water` should not depend on). Planned list:
 - exterior cells with a water height subrecord, and any non-zero value;
 - interiors with `HAS_WATER`: count, levels, how many below all their geometry (skipped), the 10 largest
   visible water areas (WA-6 picks one);
@@ -197,6 +200,61 @@ Replacement (task W2 in ROADMAP "M6"):
 - placements of the authored water meshes and their textures (feeds the water-mesh material list);
 - connected sea-level water components and their areas (open sea, lakes, swamp pools);
 - region names present on cells with water (confirms the optics table).
+
+### Census results (W0, 2026-10-13, m6-w1; Morrowind + Tribunal + Bloodmoon)
+
+- **Exterior**: 1,559 cells, all with `HAS_WATER`, **none** with a water height subrecord: one sea level (0)
+  confirmed, nothing to ignore.
+- **Interiors**: 1,328; 237 with `HAS_WATER`: **216 visible** (level above the lowest placed geometry), **21
+  below all geometry** (skipped). Visible levels −42.9 to +217.9 m, median 0, 82 exactly at 0. Largest wet
+  extents (XZ box of geometry reaching below the level, a coarse proxy that overstates open floors):
+  Mournhold Temple Courtyard 3.4 ha, Falasmaryon Sewers 2.0, Old Mournhold: Bazaar Sewers 2.0 (−10 m),
+  Norenen-dur 2.0 (−3.1 m), Old Mournhold: Temple Sewers 1.8 (−5.7 m), Hlormaren Sewers 1.7 (−2.8 m). The
+  Mournhold "interiors" are city cells behaving as exteriors with a level at 0 that may sit under the floor:
+  W3 checks the top entries by eye and picks WA-6 from the sewers/ruins.
+- **Boats** (placements; moored = hull AABB crosses the level, above, sunk): `ex_de_rowboat` 34 (17 / 16 / 1),
+  `ex_longboat` 6 (6 / 0 / 0), `ex_longboat01` 3 (3), `ex_longboat02` 8 (8), `ex_gondola_01` 5 (5), `ex_de_ship` 9
+  (9, static by decision), `ex_longboatwrk` 6 (3 / 0 / 3), `ex_de_shipwreck` 21 (16 / 1 / 4). Moored-floater
+  candidates (rowboats, longboats, gondolas in water): **39**. The 16 rowboats "above" are beached or on decks.
+- **Authored water meshes**: 35 placed models name water in their path or base texture; 9 water textures:
+  `tx_waterfall_01/02` (`.tga` Vivec, `.dds` Mournhold), `tx_v_water_01` (Vivec plaza pool), `tx_water_enviro00`
+  (cave pools: `furn_moldcave_pool00` 93 placements, `pycave` 13, `lavacave` 3, `mudcave` 3),
+  `tx_sewer_waterwell00` (sewer corridors and canals, 13 `in_sewer_*` models, 293 placements), `tx_eggmine1_water00`
+  (`in_dwrv_obsrv10`, `ex_dwrv_cosmo00`), `tx_alpha_waterspout00`. Vivec: `ex_vivec_waterfall_01` 305 placements,
+  `_03` 17, `_05` 62, waterspouts `_01/_02/_03/_05` 70/446/18/8 (no water texture: alpha cards), plaza pool 1.
+  False positive: `in_cave_plant00` (2,519, a plant whose texture name contains "water"): W9 filters by
+  texture list, not names. Bloodmoon `f/act_bm_*water*` have no water texture (their parts use other textures).
+- **Sea-level water** (LAND vertex grid, 1.83 m, 4-connected, cells without LAND are sea): 150 components.
+  Open sea (touching the outer ring) **26.0 km²**; 149 enclosed, 0.12 km² in total: 47 under 100 m², 83 up to
+  0.1 ha, 18 up to 1 ha, one of 5.7 ha (Ascadian Isles, cell 1,−7). The inland lakes (Amaya, Masobi, Hairan) and
+  the Odai are **connected** to the open sea at this resolution.
+- **Bitter Coast**: 156 LAND cells (2.1 km²), 78.6 % below sea level: 1.63 km² connected to the open sea, only
+  0.054 km² in 87 enclosed pools. **Consequence for W3**: the swamp's calm cannot come from "its own component"
+  fetch (spec "Openness and fetch"); it must come from openness (geodesic distance through narrow water to the
+  open region) plus the swamp optics/wave terms by region. Keep openness's geodesic falloff steep enough that
+  1-2 m channels count as enclosed.
+- **Regions with water** (open-sea / enclosed km², wet share of LAND): Azura's Coast 3.78 / 0.003 (73 %),
+  Sheogorad 1.67 (72 %), Bitter Coast 1.63 / 0.054 (79 %), West Gash 1.16 (45 %), Ascadian Isles 0.73 / 0.061
+  (50 %), Hirstaang Forest 0.43 (61 %), Felsaad Coast 0.20 (53 %), Moesring Mountains 0.17, Isinfier Plains 0.14,
+  Grazelands 0.04, Molag Mar 0.04, Ashlands 0.003, no region (4 cells) 0.055; Red Mountain, Brodir Grove, Thirsk
+  dry. The optics table's region names are confirmed (no "Molag Amur" region exists: its coast is Molag Mar and
+  Ashlands).
+
+## As built (W1, 2026-10-13, m6-w1)
+
+`crates/mw_water` (Bevy-free; deps `sf_water`, `sf_world`, `sf_coords`, `encoding_rs`):
+- `MwWaterSource: WaterSource`: the framework's body from `Worldspace::sea_level` (exterior `Ocean`,
+  interiors `Pool`/`Bounds` at `WHGT`) with optics `mw_water/sea` / `mw_water/interior`; `river_policy` =
+  `FlowOnly`; `ocean_spectrum` fetch `SEA_FETCH_M` = 20 km.
+- `optics_for_region(name)` (table above, names as the census found them) and `MwWaterOptics { region_at }`:
+  `WaterOpticsSource` over a region lookup the app passes in (so the crate needs no cell grid).
+- `optics_records(&WaterIni)`: six `WaterOptics` built from a target visibility (sea 25 m, coastal 15, swamp 3,
+  ash 12 with a film tint, north 20, interior from `UnderwaterIndoorFog` vs `UnderwaterDayFog`), swamp without
+  foam and caustics × 0.2. Placeholder physics until W3 tunes them on WA-1/WA-2/WA-5.
+- `WaterIni::parse(bytes)`: the `[Water]` keys listed in "Morrowind water facts", vanilla fallbacks per key. The
+  app reads `Morrowind.ini` bytes and passes them (`mw_install` keeps parsing only what decides content loading).
+- Not yet: hidden-interior skipping (needs placement bounds: the census logic moves into the world adapter at
+  W3), moored boats (W6), water-mesh bodies and material (W9), cue ids. 3 tests.
 
 ## Verification
 

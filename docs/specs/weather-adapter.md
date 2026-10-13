@@ -173,14 +173,18 @@ exist (M8). Underwater cells and the "has water" interiors keep their water fog 
   ramps 4:00-6:30 and 6:30-10:00); dust does not. `--haze`/`--dust` fix them. Ashlands-region dust on non-storm days
   and Bitter Coast mornings by region wait for climates (WE2). Calibrated for 1-5 km views (weather.md N1 "As built").
 - **Fog** (M6 F2, as built; same scaffold table, `SkyLook::fog` = `FogLook`, until `mw_weather` reads `Land Fog Day/Night
-  Depth` through Koschmieder): height-fog visibility at sea level / falloff height per weather: clear, fair and the
-  cloud genera none; overcast 8 km / 300 m; rain 3 km / 250 m (+ banks 0.25); thunderstorm 2 km / 250 m (+ banks 0.3);
+  Depth` through Koschmieder): height-fog visibility at sea level / falloff height per weather: clear 40 km / 100 m and fair
+  30 km / 120 m (F3: a thin valley haze so dawn sun shafts have a medium), the other cloud genera none; overcast 8 km / 300 m; rain 3 km / 250 m (+ banks 0.25); thunderstorm 2 km / 250 m (+ banks 0.3);
   foggy 3 km / 150 m + banks 1.0 at dawn, a third by day; snow as rain; blizzard 300 m / 400 m; ash storm 450 m /
   500 m with ash albedo (0.55, 0.47, 0.38), blight the same with a red albedo (0.62, 0.42, 0.36). Ground-fog banks:
   0.03 /m at sea level (≈ 130 m visibility inside one), 12 m falloff, × `ground_fog(hour)` (1 from 4:30 to 8:30, gone
   by 11:00, half from 19:00 through the night). Height fog × (1 + 0.5 × the same curve). `--fog <x>` scales both,
   `--off fog` drops them. Sea level is the fog's base (Bitter Coast swamps sit in the banks; Balmora's valley gets
   the height fog). Banks by region (Bitter Coast, West Gash mornings) wait for climates (WE2/WE3).
+  F3 (froxels, god rays): the same terms fill the froxel volume near the camera (High, 384 m), lit by the sun
+  through the cascades, the terrain shadow-height map and the cloud shadow, and by the 32 nearest `LIGH` point
+  lights; `--off froxels` (alias `godrays`) is the analytic-only A/B. The app's transparent NIF and particle
+  materials still draw `StandardMaterial` (unfogged): switching blended ones to `FroxelFogMaterial` is a follow-up.
 - **Wind and trees**: `wind_profile` marks `meshes/f/flora_*` (the same rule as `mw_bake::far::is_flora`)
   as foliage. Kelp and bushes get leaf-level flutter only. Emperor parasols are stiff (trunk bend only).
 

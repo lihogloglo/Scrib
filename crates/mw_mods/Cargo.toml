@@ -1,0 +1,23 @@
+[package]
+name = "mw_mods"
+description = "Morrowind content as superfargoth mods: the ContentAdapter, the builtin mod, user mods and profiles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dirs.workspace = true
+mw_install.workspace = true
+mw_records.workspace = true
+mw_vfs.workspace = true
+semver.workspace = true
+sf_mods.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+tes3 = { workspace = true, features = ["esp", "bsa"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

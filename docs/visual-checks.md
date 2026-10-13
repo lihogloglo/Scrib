@@ -1294,7 +1294,22 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
 
 ## Physics (superfargoth `physics.md`, bevyrrowind `physics-adapter.md`; `.sessions/physics-p2.md`)
 
-PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with tasks P6-P10.
+PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH-2 (first half, P7) and PH-4 (carry) are below.
+
+### PH-2 (first half, P7): a dead guard ragdolls on the Balmora stairs
+- Kind: game location. Run: `.\bevyrrowind view "Balmora"` (release, physics on), fly (free camera) to a guard on
+  the stone stairs (the High Town steps up to the Council Club / Hlaalu manor), put the crosshair on him and press
+  `I`. He plays his death clip for 0.4 s, then goes limp. Then hold LMB on a hand or foot to drag the body (a 75 kg
+  corpse is a drag at the default Strength 50: the camera slows), release to drop.
+- What to look for: the clip-to-ragdoll cut is not a pop (velocities carry over); the body tumbles or slumps down the
+  steps without exploding, jittering or sinking into them, then rests within a few seconds; limbs bend the natural
+  way (knees back, elbows forward) and stay attached (the log's `ragdoll: joint stretch peak` stays under 1 cm);
+  the dragged corpse follows by the grabbed limb. Creatures too (a guar, a cliff racer: `I` on them).
+- Known (P8): no powered crumple yet (the clip cuts to limp); the character root stays where it died (a corpse
+  dragged far can be culled early); corpses don't persist across cell unloads; creature masses are volume
+  estimates (a guar is 1 t: too heavy to drag).
+- No sanity screenshot (session tool cap; the kill needs a key press in a live run).
+- Status: awaiting owner.
 
 ### PH-1: Knock over a table's contents (`V` throws a ball)
 - Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse) or any `view`; aim at the
@@ -1349,6 +1364,49 @@ PH-2 to PH-4 are specified in `docs/specs/physics-adapter.md` and land with task
   for the statics around a point) on `cargo run --release -p mw_bake --example body_report` lists a cell's items with
   their `items.check` result.
 - Source: physics-p3, physics-p4b.
+
+### PH-9 (P8): knockdown and get-up
+
+Status: **awaiting owner; not runnable yet** (the powered core is built and unit-tested, the app wiring is P8b).
+Scene: Balmora, a walker on the Temple stairs; free camera 6 m away; press `V` to throw the 3 kg ball at the walker.
+What to look for: the walker braces and falls with the hit (no pop from the animated pose into the ragdoll), lies
+still within ~2 s, then gets up from where it lies with its feet under it (root placed under the pelvis); face-down
+bodies roll over during the get-up blend (the `ROLL_TO_BACK` scaffold); no joint stretch, no spin of the root.
+
+### PH-8: Characters on physics (capsules, pushes, slope sliding)
+- Kind: game location. Run: `.\bevyrrowind scene wk-balmora` (walkers on the physics ground; `--off physics` is the
+  `StaticWorld` A/B), `G` for the colliders. Throw balls at walkers with `V`; for pushes, `scene ph-tradehouse-items`
+  and wait for Arrille or a customer to walk through the clutter, or throw a ball onto a walker's path.
+- Look for: walkers walk, step and stand exactly as with `--off physics` (no floating, sinking or new stalls on stairs,
+  bridges, slopes); a ball thrown at a walker bounces off its body (it never passes through) and the walker isn't
+  moved by it (no reactions yet: `ImpactOnCharacter` has no consumer before P8); light items in a walker's path are
+  pushed aside at walking speed, heavy crates/barrels block, and nothing is launched; NPCs on ground too steep to
+  stand on slide down it and stop at the bottom. The `physics:` log line counts capsules, pushes and impacts.
+- Status: awaiting owner (built 2026-10-13, physics-p5; headless tests pass; wk-balmora ran 75 s with 61 capsules,
+  0 pushes, 0 impacts: nobody threw anything).
+- Source: physics-p5.
+
+### PH-4: Carry, drag and throw (dev camera; corpse drag waits for P7)
+- Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse; or any `view`). The
+  free camera is the holder (no player yet), Strength 50 (`--env BEVYRROWIND_STRENGTH=30` / `=100` to compare). Keys:
+  **hold the left mouse button** on an item under the screen center (within 2.5 m) to grab it, release to drop; while
+  holding, **`V`** throws it (instead of a ball), **`[` / `]`** turn it 15°. Frame rate:
+  `--env BEVYRROWIND_FPS_CAP=30` (or 60, 144; for 144 add `--env BEVYRROWIND_PRESENT=mailbox`). The log prints
+  `carry: Grabbed { mode, mass }`, `TooHeavy`, `Thrown { speed }`, `Broke`.
+- Look for: a bottle, bowl or book lifts into view and stays put relative to the view while you fly and turn, at 30,
+  60 and 144 fps (no vibration or shimmer; it may lag a little on fast turns and settle); it pushes other clutter
+  aside but never you. Throws arc and knock things over (S 50: 6 N·s, a 0.5 kg bottle leaves at the 15 m/s cap).
+  Heavy items (over 15 kg at S 50: crates, sacks, barrels with a body) drag: they stay on the floor, slide or tip
+  toward you, the camera slows (`1 − m / (2·drag mass)`); a dragged object is released by `V`, not thrown. Over
+  120 kg (S 50; 88 kg at S 30) the log says `TooHeavy` and nothing moves. At S 30 a 12 kg item drags where S 50
+  carries it. Pulling a held item through a wall for 0.3 s drops it (`Broke`). Dead bodies by a limb: P7.
+- Automated (sf_physics `carry_tests`): view-space spread of a carried item while walking a 1.4 m circle at 1 rad/s:
+  0.008 / 0.010 / 0.044 mm at 30 / 60 / 144 fps (gate 1 mm); a 0.3 kg throw leaves at 15.00 m/s (cap, within 1 %);
+  a 6 m/s throw from 1.5 m lands 3.320 m out (ballistic 3.333); carry / drag / too heavy at the S 30 and S 100
+  limits; a 40 kg crate dragged 2.3 m in 3 s; an 11 kg item on a 40 N grip breaks away; the holder's capsule never
+  touches what it holds.
+- Status: awaiting owner (built 2026-10-13, physics-p6; in the app only the holder attach was seen in the log, the grab itself was not exercised by hand).
+- Source: physics-p6.
 
 ## Night sky and sun disk (superfargoth `sky-lighting.md` "Night sky and drawn bodies"; `.sessions/nightsky.md`)
 
@@ -1437,3 +1495,33 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   (one clear gap shows; most of the view is in banks plus haze 90), `fg-balmora-foggy-noon.png`,
   `fg-redmtn-ashstorm.png`, `fg-night-fog.png`.
 - Source: m6-f2.
+
+### FG-3: Froxel fog and god rays (`scene fg-balmora-sunrise-rays`, `fg-balmora-sunrise-foggy`, `fg-balmora-ridge-rays`, `fg-bittercoast-morning`, `fg-redmtn-ashstorm`)
+- Kind: game location. M6 F3 (superfargoth weather.md "Froxel fog as built"). A/B everywhere: `--off froxels` (alias
+  `godrays`: F2's analytic fog only, the Low preset), `--off farshadows` (no ridge shadows in the fog past the cascades).
+- Look for: Balmora 6:15 looking east: haze in the shade of walls and the ridge darker than with `--off froxels` (the
+  analytic fog lights everything as if in sun), shafts where the sun gets between roofs and trees; foggy dawn: thick
+  warm fog toward the sun cut by shadow shafts, greyer away from it; ridge view with `--fog 3`: valley haze darker
+  under ridges and cloud shadows. Bitter Coast morning and the ash storm look as in FG-2 (same density terms), with no
+  seam at ~384 m where the froxels hand over to the analytic layers.
+- Also check: no flicker or crawling bands when still (Halton jitter + 90 % history), no smear when turning or in
+  flight (60 m/s), no light leaking through walls at froxel resolution (16 px tiles).
+- Owner picks: clear/fair dawn haze (40 km / 30 km visibility, x1.5 at dawn: shafts are subtle on clear mornings; try
+  `--fog 3`), history weight, whether High's 384 m reach is enough.
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (m6-f3b, `shots/f3/`): `fg-balmora-sunrise-rays.png` vs
+  `-off.png` (shadowed haze darker with froxels; shafts subtle at the default clear-day haze), `fg-bittercoast-morning.png`,
+  `fg-redmtn-ashstorm.png`, `balmora_noon.png` (no seam).
+- Source: m6-f3b.
+
+### FG-4: Lanterns in fog, fogged transparents (`scene fg-night-lanterns`; example `clouds --view glass`)
+- Kind: game location + synthetic. The 32 nearest point lights scatter in the froxels (unshadowed); transparent
+  surfaces using `FroxelFogMaterial` sample the same volume.
+- Look for: warm halos around lanterns and torch carriers, fading with distance; halos don't pop when a light drops
+  out of the 32; example (`cargo run --release -p sf_atmos_bevy --example clouds -- --view glass --fog 400`, add
+  `--time 23` for night): glass panes fade with distance like the stone panes beside them.
+- Known: the street in `fg-night-lanterns` reads strongly orange (many lights × foggy density: owner picks whether
+  the fog's point-light scattering needs a scale, as UE's per-light volumetric scattering intensity); halos are not
+  shadowed (light through walls); the app's own NIF glass and particles are not yet `FroxelFogMaterial` (unfogged).
+- Status: awaiting owner. Sanity screenshots 2026-10-13 (m6-f3b): `shots/f3/fg-night-lanterns.png`,
+  `ex_glass_day.png`, `ex_glass_night.png`.
+- Source: m6-f3b.

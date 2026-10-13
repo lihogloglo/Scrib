@@ -317,7 +317,7 @@ pub(crate) fn worldspace_look(
     camera.clear_color = ClearColorConfig::Default;
     if sky && !has_sky && !off.has(Part::Sky) {
         e.insert(SkyCamera { environment_light: !off.has(Part::Envmap), ..SkyCamera::default() });
-        if !off.has(Part::Clouds) {
+        if !off.has(Part::Clouds) || !off.has(Part::Fog) {
             e.insert(sf_atmos_bevy::CloudCamera);
         }
     }

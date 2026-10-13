@@ -23,7 +23,7 @@ pub fn cache_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
 pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let started = Instant::now();
     let root = cache_root(cache)?;
-    let (vfs, content) = crate::load(install, false)?;
+    let (vfs, content, fingerprint) = crate::mods::load_content(install, false)?;
     let loaded = started.elapsed();
     let mut models = mw_bake::referenced_models(&content.db);
     // Mesh fields no importer handles (vanilla has "Add World Art").
@@ -70,6 +70,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let save = Instant::now();
     inputs.save()?;
     store.save_manifest(&profile, &manifest)?;
+    let fingerprint = sf_bake::Digest(fingerprint);
+    let profile_changed = store.profile_fingerprint(&profile) != Some(fingerprint);
+    store.save_profile_fingerprint(&profile, &fingerprint)?;
     let saved = save.elapsed();
 
     let analyze = Instant::now();
@@ -113,6 +116,8 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     print_animation(&anim);
     print!("{bodies}{items}");
     print!("{scripts}");
+    let fingerprint_hex = fingerprint.hex();
+    println!("profile fingerprint {} ({})", &fingerprint_hex[..12], if profile_changed { "changed since the last bake" } else { "unchanged" });
     println!(
         "load content {loaded:.2?}, prepare sources {prepared:.2?}, models {:.2?}, save memo + manifest {saved:.2?} ({} products), total {:.2?}",
         report.elapsed,
@@ -186,7 +191,32 @@ fn bake_actors(baker: &mut sf_bake::Baker, db: &Arc<sf_records::RecordDb>, vfs: 
     for (key, error) in failures.iter().take(10) {
         eprintln!("  failed: {key}: {error}");
     }
+    print_ragdolls(&mw_bake::ragdoll::bake_ragdolls(baker, &sets));
     anim
+}
+
+/// The `ragdoll.cook` census (physics-adapter.md "Ragdolls"); every row with
+/// `BEVYRROWIND_RAGDOLL_REPORT=1`.
+fn print_ragdolls(r: &mw_bake::ragdoll::RagdollReport) {
+    let humanoid = r.rows.iter().filter(|x| x.humanoid).count();
+    let clip_only = r.rows.iter().filter(|x| x.policy != sf_ragdoll::RagdollPolicy::Ragdoll).count();
+    let (lo, hi) = r.rows.iter().fold((usize::MAX, 0), |(lo, hi), x| (lo.min(x.bodies), hi.max(x.bodies)));
+    let (mlo, mhi) = r.rows.iter().fold((f32::MAX, 0.0f32), |(lo, hi), x| (lo.min(x.mass), hi.max(x.mass)));
+    println!(
+        "ragdolls: {} skeletons ({humanoid} humanoid, {} creature), {} failed, {clip_only} death-clip only; {lo}-{hi} bodies, {mlo:.1}-{mhi:.1} kg, {:.2} s",
+        r.rows.len(),
+        r.rows.len() - humanoid,
+        r.failed.len(),
+        r.wall.as_secs_f32()
+    );
+    for (s, e) in &r.failed {
+        eprintln!("  ragdoll failed: {s}: {e}");
+    }
+    if std::env::var_os("BEVYRROWIND_RAGDOLL_REPORT").is_some() {
+        for x in &r.rows {
+            println!("  {:<44} {:>3} actors {:>2} bodies {:>2} hinges {:>7.1} kg {:?} {:?}", x.skeleton, x.actors, x.bodies, x.hinges, x.mass, x.policy, x.regions);
+        }
+    }
 }
 
 /// Held models (weapons, carried lights) as `mesh.rest` too: the step cooks

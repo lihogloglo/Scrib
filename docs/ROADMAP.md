@@ -764,7 +764,20 @@ ragdolls; robes move." Tasks in dependency order:
   cost (profile `PhysicsProbe`; likely rapier's generic query path and heightfield casts where the `StaticWorld`
   path used the analytic `TerrainProbe`: try `Nearest(TerrainProbe, physics STATIC|PROP)`), the 150-walker budget,
   walkers through cluttered floors (no pushes seen in wk-balmora: the walkers' paths are clear), visual PH-8.
-- [ ] P6 Carry, drag and throw: pick ray, kinematic hand + 6-DOF motor joint with force cap, break distance,
+  **P5 follow-ups (physics-p6, 2026-10-13, uncommitted).** Probe cost: `sf_physics` `probe_bench` (release; 150
+  movers × capsule sweep + sphere down + 2 rays over the P1 R0) shows heightfield sphere/capsule casts at ~13 µs each:
+  `StaticWorld` + `TerrainProbe` 2.14 ms, physics `STATIC|TERRAIN|PROP` 6.36 ms, `Nearest(TerrainProbe, physics
+  STATIC|PROP)` 2.58 ms. `impl GroundProbe for Physics` now does the latter (`Physics::terrain` = the active
+  worldspace's `TerrainHeights`). wk-balmora (80 s, shared machine: builds ran during part of each run) mover stage
+  median physics vs `--off physics` **424 vs 272 µs** (69 vs 68 movers; before 584 vs 319): 1.56× instead of 1.83×;
+  the rest is rapier's all-bodies query BVH and the one-sided internal-edge statics (a statics-only BVH view is the
+  next step); both paths are over the 150-walker 0.2 ms budget at this mover count. Tradehouse load (quiet): insert
+  peak **0.60 ms/frame** (35 bodies; 8 frames over budget; gate 0.5: still missed, the per-insert estimate under-reads
+  some inserts), step peak 0.50 ms in the load window, then 0 awake, idle step 0.041 ms. Flight 60 m/s (quiet, no
+  builds): insert peaks **0.45–0.55 ms/frame** (was 0.53–0.65), idle step peaks without a rebase **0.45–0.56 ms**
+  (gate 0.3: still missed, items' first steps), with rebases 0.99–2.0 ms; frames median 18.65 ms, p99 26.5, worst
+  32.9. Not done: walkers through cluttered floors (PH-8 scene work).
+- [~] P6 Carry, drag and throw: pick ray, kinematic hand + 6-DOF motor joint with force cap, break distance,
   drag mode (ball joint at the grab point, holder slowed) for objects over the carry mass and for limp ragdolls by the
   grabbed limb (dead bodies), `HolderLimits` (carry force, carry mass, drag mass, throw impulse) from the adapter,
   rotate, drop, throw; holder-space interpolation; dev `--fps-cap`; Morrowind holder limits from Strength
@@ -772,16 +785,95 @@ ragdolls; robes move." Tasks in dependency order:
   Verify: view-space jitter of a held item < 1 mm at 30/60/144 fps while walking and turning (automated); throw speed
   within 1 % of the cap; carry/drag/too-heavy switch at the Strength thresholds; a 75 kg ragdoll dragged by a wrist with
   no joint stretch > 1 cm (needs P7; until then drag is verified on heavy items). Visual PH-4 (carry + corpse drag).
-- [ ] P7 `ragdoll.cook` + limp ragdolls (`sf_ragdoll`, `mw_physics::RagdollRules`): bodies/joints/limits/masses from
+  **Built 2026-10-13 (physics-p6), uncommitted; corpse drag waits for P7.** `sf_physics::carry` (`Carrier`,
+  `HolderLimits`, `CarryParams`; kinematic hand + rapier generic joint with acceleration-based motors, all six axes
+  for carry, linear only at the grab point for drag; pick ray; break 1 m / 0.3 s; throw capped at 15 m/s; per-pair
+  contact exclusion with the holder's capsule; hand target = the view at the step's time; holder-space render pose),
+  `sf_physics_bevy::carry` (`Holder`, `CarryInput`/`CarryFeedback`, `HeldPoses` in the write-back and item pivots),
+  `mw_physics::holder_limits(strength)` (adapter table) + `DEFAULT_STRENGTH` 50, app debug driver on the free camera
+  (hold LMB grab/carry/drag, release drop, `V` throw, `[`/`]` turn; `BEVYRROWIND_STRENGTH`, dev frame limiter
+  `BEVYRROWIND_FPS_CAP` instead of a `--fps-cap` flag). Change from the spec: the drag force cap is
+  `max(carry_force, 0.6 · g · drag_mass)` (240 N could not slide a 40 kg crate). Tests (`sf_physics` `carry_tests`):
+  view-space spread 0.008 / 0.010 / 0.044 mm at 30 / 60 / 144 fps (gate 1 mm); throw at the cap 15.00 m/s (±1 %);
+  a 6 m/s throw lands 3.320 m vs 3.333 ballistic; carry/drag/too-heavy at the S 30 and S 100 limits; a 40 kg crate
+  drags 2.3 m in 3 s (tips onto its edge, lift 0.12 m); an 11 kg item on a 40 N grip breaks away; the holder's capsule
+  never touches the held item; `mw_physics` `strength_maps_to_the_table`. PH-4 awaiting owner. **P7 handoff:** add
+  `RAGDOLL` (limp only) to `CarryParams::pick_layers`; the mode mass for a limb is the whole ragdoll's mass (pass it
+  to `Carrier::grab_body` via a mass override instead of `world.mass(body)`); drag anchors at the hit point already;
+  the ragdoll stays `Limp` and awake while dragged; check joint stretch < 1 cm dragging a 75 kg ragdoll by a wrist;
+  the drag force cap may need the joint iterations raised. The host's mover slowdown reads `Holder::speed_scale`
+  (the dev camera scales its speeds).
+- [~] P7 `ragdoll.cook` + limp ragdolls (`sf_ragdoll`, `mw_physics::RagdollRules`): bodies/joints/limits/masses from
   `RigProfile` + skin extents, override files, creature policy table, death handoff with velocity carry-over, sleep +
   persisted pose, placed corpses settle once.
   Verify: cook report for the 3 humanoid skeletons + all CREA skeletons (bodies, joints, failures); no joint stretch
   > 1 cm in a fall down stairs; dead guard on the Balmora stairs (PH-2 first half).
-- [ ] P8 Powered ragdolls + blend (`sf_ragdoll`, `sf_anim_graph` `PoseInput`, `mw_graphs` states): implicit motors from
+  **Built 2026-10-13 (physics-p7), uncommitted; PH-2 awaiting owner.** New crate `superfargoth/crates/sf_ragdoll`
+  (`cook`: capsules per spine segment (≤ 3, girdle-wide), neck+head, limb joint, tail/long extra chain (≤ 4); ball
+  limits by role, knee/elbow/hock hinges bending the rest pose's way; masses balanced to ≤ 4:1 between neighbors and
+  scaled to the adapter's total; rest overlaps → `no_collide`; `RagdollInstance` spawn at an animated pose with
+  velocities, `local_pose` readback; `ragdoll.cook` step + `RagdollRules`, `SFRD` product). `sf_physics`: grab mode
+  mass (`set_mode_mass`: a limb answers for the whole ragdoll), ragdoll bodies skip the item mass clamp, grabbed
+  bodies keep/restore their iterations and stay awake, `RAGDOLL` in the default pick layers. `sf_anim_bevy`
+  `PhysicsPose` (physics pose blended after the graph; P8 moves it to `PoseInput`). `sf_physics_bevy` feature
+  `ragdoll` (`Ragdoll` request on the `Animator` entity, `RagdollSource`, death-clip delay, velocity carry-over,
+  0.1 s blend, cleanup on despawn). Adapter: `mw_physics::ragdoll_params` (humanoids 75 kg, ghosts/wraiths/wisps
+  death clip only), `mw_bake::ragdoll` in `bevyrrowind bake` (census line), app `I` kills the character under the
+  crosshair (graph `dead`, mover `Dormant` + `Dead`, ragdoll after 0.4 s); corpses drag by the grabbed limb.
+  **Stretch (release, 75 kg fixture biped; impulse joints, +8 iterations, ratio cap 4):** 0.5 m drop 0.49 cm,
+  stairs 0.32 cm (settles in 4.5 s), dragged by the wrist 0.07 cm (follows 1.1 m in 3 s): gate 1 cm met; the P1
+  2.0–2.6 cm is gone. Table (`stretch_table`): +0/4/8/12/16 iterations drop 0.89/0.61/0.49/3.09/3.03 cm, drag
+  0.16/0.16/0.07/0.04/0.03; without the mass cap (lightest 0.1 kg) every drag breaks away. **Census** (vanilla +
+  expansions, `BEVYRROWIND_RAGDOLL_REPORT=1 bevyrrowind bake`): 93 skeletons (10 humanoid incl. biped creatures, 83
+  creature: all 89 creature body models' rigs), **0 failed**, 2 death-clip only (ancestor ghost, dwarven specter);
+  3–37 bodies; humanoids 18–22 bodies at 75 kg; guar 24 bodies, cliff racer 21, kwama forager 3. **Creature masses
+  are implausible without skin extents** (volume of length-based capsules): netch bull 12.9 t, cliff racer 1.27 t,
+  guar 1.04 t, durzog 0.97 t vs horker 4.6 kg, babelfish 1 kg, rust rat 103 kg. Tests: `sf_ragdoll` 8 (+1 ignored
+  table), sf_physics/sf_physics_bevy/sf_anim_bevy/mw_physics pass; clippy pedantic clean (superfargoth crates before a
+  half-created `sf_script_bevy` from another session broke the workspace glob; bevyrrowind mw_physics/mw_bake/app).
+  **Open (P8 handoff, in order):** creature radii and masses from skin extents (`mesh.rig` of the creature body:
+  80th-percentile vertex distance per joint) or per-creature totals; the powered crumple (P8 drives replace the
+  0.4 s clip cut); root follows the pelvis (culling, cell moves); sleep → quantized `ragdoll` state blob and placed
+  corpses; PH-2 sanity screenshot (needs a scene with a guard on the stairs; the kill needs a key press);
+  `PhysicsPose` → graph `PoseInput`; filter powered (P8) ragdolls out of `pick_layers`.
+- [~] P8 Powered ragdolls + blend (`sf_ragdoll`, `sf_anim_graph` `PoseInput`, `mw_graphs` states): implicit motors from
   the animated pose, per-region `StrengthProfile`, world pelvis drive, hit impulse + recovery, balance → stumble /
   knockdown, get-up (face up/down, `Knockout@tail`, `ROLL_TO_BACK` scaffold) with inertialization, budget of 8.
   Verify: tracking ≤ 5 cm RMS / ≤ 5° at full strength while walking; get-up angular velocity continuous at shrinking
   dt; ≤ 0.05 ms per powered character; PH-2 second half (knockdown on stairs, gets up with feet placed).
+  **Core built 2026-10-13 (physics-p8), uncommitted; not yet wired into the app.** `sf_physics`: `Layer::POWERED`
+  (contacts as `RAGDOLL`, outside the carry pick layers: P7 handoff 7), `JointKind::Free`, `set_joint_target` (a
+  rotation target as rapier's per-axis `2·asin(q.v)` errors + velocity feed-forward: converges on swing and twist
+  together, fixing the P1 residual), `set_joint_linear_drive`. `sf_ragdoll::powered`: `Drive`/`StrengthProfile`/
+  `HitImpulse`/`DriveParams`, `RagdollInstance::drive` (stable PD through acceleration-based motors with
+  **composite-inertia gain scaling**: stiffness × subtree inertia about the joint ÷ the child's own, without which the
+  spine folded 121° and effectors hung 2.7 m off; a kinematic anchor + six-axis motor joint as the world pelvis
+  drive; bodies `POWERED` while driven), `hit` + recovering `Dip`s, `nearest_body`, `pelvis_speed`,
+  `implied_frame` (root follows pelvis; face up/down), `center_of_mass`, `balance` (convex support hull: Stable /
+  Stumble / Fall), `get_up_root` (yaw + translation putting the get-up clip's first-frame pelvis on the ragdoll's;
+  `ROLL_TO_BACK` scaffold for face-down bodies). `sf_anim_graph`: the graph's built-in physics stage
+  (`GraphInstance::set_physics(pose, per-joint weights)`, blended after inertialization, before history and the
+  procedural ops) and `inertialize_from` (the hand-back); `sf_anim_bevy` `PhysicsPose` gains per-joint `weights` and
+  goes through the graph (write_bones only writes it on frames the graph doesn't pose). `mw_physics`:
+  `CREATURE_MASSES`/`creature_mass` (52 name fragments: guar 400 kg, netch bull 600, cliff racer 30, kwama queen
+  1,500, rat 6, ...; P7 handoff 1 by per-creature totals; census re-run pending). **Measured** (release, quiet
+  machine, 75 kg fixture biped walking 1.2 m/s, no floor, ω 160 rad/s, pelvis ω 12): worst joint **3.2° RMS**
+  (thigh; gate 5° met), effectors **11.5 cm RMS** (gate 5 cm **missed**: the world pelvis placement; joints
+  are right), knockdown (120 N·s shove) lies face up at rest in 1.1–1.6 s; hand-back pose step 5.8/1.3 cm per frame
+  at 60/240 Hz vs a 59 cm cut, velocity jump 0.56/0.09 m/s (continuous at shrinking dt: met). **Step cost: 1
+  powered 0.14 ms, 8 powered 1.02 ms = 0.128 ms per character (gate 0.05: missed, 2.6×**; 8 extra iterations per
+  body). Lower ω (40) tracked 19° (gravity sag g/(d·ω²) on hands/feet). Tests: `sf_ragdoll` 13 (+2 ignored:
+  `stretch_table`, `powered_cost`), `sf_anim_graph` `physics_handback_is_continuous_at_shrinking_dt`, `mw_physics`
+  `creature_masses_are_plausible`; clippy pedantic clean on all touched crates.
+  **Open (P8b, in order):** effector gate (pelvis drive: try the anchor at the target's COM, or drive the pelvis
+  with the full-body linear load; measure on a floor); cost (fewer extra iterations while powered, sleep limp
+  bodies, rapier `parallel`); `sf_physics_bevy` modes (`Ragdoll { mode: Death { crumple } | Knockdown }`: call
+  `drive` each fixed step with the Animator's model pose, fade `StrengthProfile::scaled` over 0.3–0.6 s for the
+  crumple, budget 8 by `POWERED` count, per-region `PhysicsPose.weights` from `def.owner`, read-back relative to the
+  entity's current frame); knockdown from `ImpactOnCharacter` (add a direction), get-up when `pelvis_speed` < 0.2 m/s
+  for 0.5 s → `get_up_root` with `Knockout@tail` sampled at 0 → move the walker root, graph `knocked_out` false,
+  `inertialize_from` the last two ragdoll poses (relative to the new root); root follows `implied_frame` while
+  dead; sleep → `ragdoll` state blob + placed corpses; app `I`/`V` run, PH-2 screenshot scene, PH-9.
 - [ ] P9 `HitReact` + `SpringBones` ops (animation.md layer 4; `SpringBones` is the base the cloth op extends).
   Verify: `cargo test -p sf_anim_graph` (spring decay, no drift at any frame rate); a guar's tail and an NPC hit below
   A0 react kinematically.
@@ -867,12 +959,35 @@ dependency order:
   (scripting-adapter.md "Generated shape", "The `mw` runtime library"). Verify: every vanilla script and dialogue
   result translates and compiles under Luau; corpus ≤ 2 s across cores; fixture goldens (our own scripts); coverage
   report (call sites live / stub / later) in the session log.
-- [ ] A3 Bevyrrowind profile (mods.md "Mods directory and profiles"): `<user data>/mods` + `profiles/default.toml`,
+- [x] A3 (2026-10-13, m5-a3, uncommitted) built: new Bevy-free crate `mw_mods` (`MwAdapter`: one synthesized mod
+  per ESM/ESP with masters as dependencies, `KNOWN_ORDER` as `load_after`, its same-stem ini BSA as its layer;
+  `morrowind-data` = loose Data Files + unclaimed BSAs after the plugins; builtin mod `mw` = mw_graphs + the `mw`
+  Luau runtime at `scripts/mw/`, pinned first; generated default profile; `UserDirs`), TES3 kinds `register_serde`d
+  (tes3 `serde` feature), bake record fingerprints = `RecordDb::fingerprint` (CELL included), profile fingerprint
+  (sf_mods, stats from the directory listing via new `VfsSource::stat`) stored beside the bake manifest,
+  `ShadowedModern` warning, every app command loads through `--profile`/`--user-data`, `bevyrrowind mods
+  list|order|report|enable|disable`. Real install: 62,025 live records, load 0.29 s (was ~0.42 s); RON patch on
+  `light_com_candle_01` shows `dim_candles (patch data.radius)` in `mods report`; texture mod wins in `which` and
+  re-bakes nothing; no-op bake 3.0-3.2 s total (**gate 2.5 s missed by other steps**: exterior source 0.52 s, model
+  summary 0.37 s, models 0.33 s, interiors 0.25 s; content load is 0.29 s of it). Details: mods.md "As built (A3)".
+  Original task text: A3 Bevyrrowind profile (mods.md "Mods directory and profiles"): `<user data>/mods` + `profiles/default.toml`,
   legacy content as synthesized mods through `ContentAdapter` (`mw_records`, `mw_vfs`), builtin mod (graphs, themes,
   `mw` runtime) mounted lowest, `bevyrrowind mods list|order|report`, profile fingerprint in the bake manifest.
   Verify: `info` with the vanilla profile still loads 62,025 live records; a loose texture mod wins in `which`; release
   `bake` no-op ≤ 2.5 s, and adding a texture-only mod re-bakes nothing (or only terrain layers if a land texture changed).
-- [ ] L2 `sf_script_bevy` (scripting.md "Execution model", "Entity handles"): `Input`/`Update`/`Ui` exclusive slots,
+- [x] L2 (2026-10-13, m5-l2, uncommitted) built: `sf_script_bevy` (`Scripts` resource around `ScriptRuntime`,
+  `ScriptsPlugin`, `ScriptSlot` Input/Update/Ui exclusive systems in Pre/Update/PostUpdate, `Activated` →
+  `"activated"` → `ActivationOutcome { handled }`, generic `ScriptFact` per slot, `ScriptDiagnostics` + `recent()`,
+  `script/...` sf_diag counters per slot and context), **world access = declared slot resources moved into one cell
+  shared by all contexts** (cost per slot independent of the context count; "outside a script slot" error),
+  `ScriptPlacements` handle map + `@sf/world` L2 subset (`player`, `is_loaded`, `record`, `worldspace`, `position`);
+  4 headless tests, clippy clean. App: `scripts.rs` (contexts from the profile's `script_contexts()` + shared
+  `mw.legacy` owned by `mw`, R0 spawner hook → handles, scaffold `CrosshairPick` on Space, `--activate N`,
+  `CellLoaded` → `"cell_loaded"`). Real run: a test mod in a scratch `--user-data` logs activation of
+  `furn_com_tapestry_03` in the Census office (handle, position, player actor) and its timer fires. Not in L2 (to
+  L3/W3/A4): entity scripts + overlay state, spawn, dev console, doors honouring `handled`, hot-reload wiring.
+  Details: scripting.md "As built (L2)". Original task text:
+  L2 `sf_script_bevy` (scripting.md "Execution model", "Entity handles"): `Input`/`Update`/`Ui` exclusive slots,
   world guard, `PlacementId` handles, entity scripts with state in the placement overlay, engine messages
   (`Activated`, `CellLoaded`, `InputAction`, `Died` when it exists), activation pipeline with `"handled"`, per-mod
   `sf_diag` spans and error counters, dev Lua console. Generic `Activated` + crosshair target: share with M4 P11's
@@ -1011,22 +1126,40 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   within noise after the fog-light texture (0.72 vs 0.73 ms) (release, 1440p, 4060 Laptop, shared machine: another
   `bevyrrowind.exe` on the GPU in every run, so the ≤ 0.1 ms gate is not proven; remeasure quiet). Open: FG-2 (owner: bank density/height, ash-storm visibility; banks hard to read under foggy haze 90),
   transparents unfogged until F3, banks by region wait for climates.
-- [ ] F3 Froxel fog + god rays (weather.md "Fog" steps 1-4): 160×90×64 froxels (High), density (height + banks +
+- [~] F3 Froxel fog + god rays (weather.md "Fog" steps 1-4): 160×90×64 froxels (High), density (height + banks +
   precipitation mist + local fog volume records), lighting (sun/moon × CSM × shadow-height map × cloud shadow map, sky
   ambient, clustered point lights capped per froxel), temporal reprojection, integration, apply on opaque, the
   `sf_atmos::fog` WESL function for transparents (water, glass, particles). Interiors keep `DistanceFog` (M9 volumes).
   Waits for F2. Verify: FG-3 Balmora 6:15 clear (shafts between buildings and from the western ridge), FG-4 torch-lit
   street in fog at night; budget 0.7 / 0.5 ms (High, 4060 / 3070); no temporal smear at 60 m/s (flight).
-- [ ] W0 Water census (water-adapter.md "Census", docs + ignored real-install test): exterior water heights, interior
+  Built (m6-f3 + m6-f3b, 2026-10-13): `sf_atmos::froxel` (High 160×90×64 to 384 m), inject (F2 density, key light ×
+  CSM × shadow-height map × cloud shadow, sky fill, 32 nearest point lights, temporal) + integrate compute, composite
+  with the analytic layers past the froxels, shared `fog_bank.wesl`, `FroxelVolume` + `FroxelFogMaterial` for
+  transparents, `--off froxels`; Bevy `VolumetricFog` rejected again (weather.md). GPU 0.16 ms at 1440p (4060 Laptop).
+  Open: FG-3/FG-4 (owner), app NIF/particle materials onto `FroxelFogMaterial`, flight smear check, 3070, local fog
+  volumes and precipitation mist (wait for records / PR), F2's quiet `--off fog` gate.
+- [x] W0 Water census (water-adapter.md "Census", docs + ignored real-install test): exterior water heights, interior
   `HAS_WATER` levels (visible vs hidden), boat placements (moored vs beached), authored water meshes and textures,
   sea-level water components, regions with water. Can run any time. Verify: counts in water-adapter.md and the
   session log (no vanilla data committed).
-- [ ] W1 `sf_water` core (water.md "Data model", "The water query"): `WaterBody`/`WaterOptics` records, bodies from
+  Built (m6-w1, 2026-10-13): `cargo run --release -p mw_world --example water_census` (counts only, 1.1 s); results in
+  water-adapter.md "Census results": exterior 1,559 cells, 0 water heights (one sea level confirmed); interiors 237 with
+  water (216 visible, 21 below all geometry, levels −43..+218 m); 39 moored-boat candidates; 35 water-ish models, 9
+  water textures; sea-level water 26.0 km² open sea + 149 enclosed pools (0.12 km²); Bitter Coast 1.63 km² of its water
+  **connected to the open sea** (only 87 pools, 0.054 km², enclosed), so W3's swamp calm must come from openness, not
+  per-component fetch.
+- [x] W1 `sf_water` core (water.md "Data model", "The water query"): `WaterBody`/`WaterOptics` records, bodies from
   `Worldspace::sea_level`, body BVH + priority, `WaterQuery` (`sample`, `sample_many`, `immersion`), spectrum
   (JONSWAP/TMA/spreading, `h0` blend), CPU twin of cascade 0 (`rustfft`), displaced-height inversion, `WaterSource`/
   `WaterOpticsSource` hooks; `mw_water` skeleton (bodies, optics by region, ini `[Water]` mapping). Verify:
   `cargo test -p sf_water -p mw_water` (water.md "Verification" unit list: spectrum energy, twin vs DFT, inversion,
   origin-shift bit-identical heights, BVH priority); query ≤ 2 µs, twin ≤ 0.05 ms per step (bench).
+  Built (m6-w1, 2026-10-13, uncommitted): `sf_water` (records, JONSWAP/TMA/Donelan-Banner spectrum, power-of-two cascades
+  split at size/2, `h0` keyed by wave vector, CPU twin with 4 packed rustfft IFFTs + Catmull-Rom sampling, 3-step
+  inversion, `WaterWorld`/BVH/priority query, `WaterSource`/`WaterOpticsSource` hooks; bevy-aqua code ported with its
+  notice in `THIRD_PARTY_NOTICES.md`) + `mw_water` skeleton (bodies, optics by region, `[Water]` ini). 11 + 3 tests,
+  clippy clean. Twin vs exact field 2.4 mm (Hs 1.9 m); release: twin step 0.027 ms, sample 0.25 µs. As built and the
+  W2 handoff: water.md "As built (W1)".
 - [ ] W2 Ocean surface + water pass (water.md "Ocean surface", "Water pass"), replacing `SeaPlaneScaffold`
   (water-adapter.md): GPU FFT cascades + foam (ported from bevy-aqua), geometry clipmap + horizon skirt, colour + depth
   snapshot, water draw (refraction with validity, Beer-Lambert + scattering, GGX sun/moon + clustered lights, env-map
@@ -1334,3 +1467,10 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (physics-p4b): M4 P4 in the app: items.check support meshes for statics whose box proxy encloses their clutter (`support.cook`) + fall = center and lowest point drop: Unsupported 38 % -> 8.2 % (wall racks mostly); Tradehouse 0 awake in 10 s; fixed insert starvation and items falling through before their statics loaded; flight bench, kill height, impulse release left for P5.
 - 2026-10-13 (physics-p5): M4 P4 leftovers (insert time-slicing: Tradehouse peak 0.80 -> 0.57 ms, prior added after; automatic kill height; 4 Hz coverage freeze; `BodyKind::Held` released by impulse) + P5 built (uncommitted, [~]): kinematic character capsules, capped pushes (`min(m_body·Δv_n, 400 N·dt)`, spec fixed), `ImpactOnCharacter`, slope sliding, walkers' mover on `impl GroundProbe for Physics`; 4 + 1 + 1 new tests, pedantic clippy clean; wk-balmora walker stats comparable, mover stage 2x the StaticWorld cost (584 vs 319 µs): profile first in P6.
 - 2026-10-13 (m5-w2b, resumed m5-w2 after an API cut-off): M5 W2 built (uncommitted): MWScript → Luau emitter (`mw_script::emit`, no Luau globals, inert → stub module), `functions.txt` live/stub/later status, coverage report + `oracle_flags`, `luau/mw.luau` runtime skeleton, `mwscript.translate` + `mwscript.coverage` bake steps in `bevyrrowind bake`. Real install: 1,207 scripts + 17,144 results translate, compile and run once in a sandboxed `sf_script` context with 0 inert / 0 compile / 0 run errors; bake 1.4 s CPU (5.6 s wall cold, 0.19 s no-op). Coverage (live DB, call sites): 25,449, live 14,539 (57.1 %), stub 5,320, later 5,590; by family (corpus test, all files) journal 6,105 live, dialogue 3,546 later, inventory 3,490 (3,354 live), placement 3,122 (3,106 live), disposition 2,211 stub, ai 1,557 (896 stub / 661 later), faction 807 (91/716), combat 748 (180/568), magic 652 (281/371), ui 596 (540 live), map 543 stub, audio 499 stub, stats 436 (420 stub), activation 426 / scripts 394 / menu 297 / deaths 247 / clock 238 live, events 258 stub. Oracle-pending: 0 integer divisions, 44 short/float comparisons. Fixed 3 pedantic clippy warnings in mw_bake script.rs. W3 handoff in scripting-adapter.md "As built (W2)".
+- 2026-10-13 (physics-p6): M4 P5 follow-ups + P6 (uncommitted): movers' terrain back on the analytic `TerrainProbe` composed with physics `STATIC|PROP` (probe_bench: heightfield casts 13 us; wk-balmora mover median 584 -> 424 us vs 272 off, shared machine); Tradehouse insert peak 0.60 ms, flight insert 0.45-0.55 ms, idle step 0.45-0.56 ms (gates 0.5/0.3 still missed); P6 carry/drag/throw: `sf_physics::carry` (hand + motor joint, holder-space interpolation, per-pair holder exclusion, drag force cap from drag mass), `sf_physics_bevy::carry` (Holder, messages, HeldPoses), `mw_physics::holder_limits` (Strength), app LMB/V/[ ] driver + `BEVYRROWIND_FPS_CAP`; 5 carry tests (view-space jitter <= 0.044 mm at 30/60/144 fps, throw cap, ballistic landing, thresholds, break, holder exclusion); PH-4 awaiting owner; P7 handoff in M4 P6.
+- 2026-10-13 (physics-p7): M4 P7 [~] (uncommitted): new `sf_ragdoll` (`ragdoll.cook` from rig profiles, limp `RagdollInstance`), death handoff in `sf_physics_bevy` feature `ragdoll` + `sf_anim_bevy::PhysicsPose`, corpse drag by limb (whole-ragdoll mode mass); impulse joints + 8 iterations + 4:1 mass cap: drop 0.49 cm, stairs 0.32, 75 kg wrist drag 0.07 (gate 1 cm); census 93 skeletons, 0 failed (creature masses implausible without skin extents); app `I` kills; PH-2 awaiting owner.
+- 2026-10-13 (physics-p8): M4 P8 [~] (uncommitted): powered ragdoll core (`sf_ragdoll::powered`: stable-PD joint targets with composite-inertia gains, world pelvis anchor, hits + dips, balance, get-up root, `ROLL_TO_BACK` scaffold), `Layer::POWERED`, graph physics stage + `inertialize_from` hand-back, per-joint `PhysicsPose` weights, `mw_physics::creature_mass`; joints 3.2° RMS (met), effectors 11.5 cm (missed), hand-back continuous (met), 0.128 ms per powered character (missed); app wiring, PH-2/PH-9 runs are P8b.
+- 2026-10-13 (m5-a3): M5 A3 built (uncommitted): `mw_mods` (Morrowind `ContentAdapter`, builtin `mw` mod pinned lowest with graphs + `mw` Luau runtime, `morrowind-data`, generated default profile, `<user data>/{mods,profiles}`), TES3 kinds serde-registered, bake record fingerprints via `RecordDb::fingerprint`, profile fingerprint beside the manifest (directory-listing stats: 375 → 4 ms), `ShadowedModern`, app loads through profiles + `mods list|order|report|enable|disable`; real install 62,025 records, load 0.29 s, RON radius patch visible in `mods report`, texture mod wins `which` and re-bakes nothing; no-op bake 3.0-3.2 s (gate 2.5 s missed by non-A3 steps).
+- 2026-10-13 (m6-f3b): M6 F3 [~] (resumed m6-f3, uncommitted): froxel fog + god rays in `sf_atmos_bevy` (inject/integrate compute, CSM + shadow-height + cloud shadow, 32 point lights, temporal; analytic layers past 384 m), shared `fog_bank.wesl`, `FroxelVolume`/`FroxelFogMaterial` for transparents, `--off froxels`, clear/fair dawn haze; Bevy `VolumetricFog` rejected (weather.md); GPU 0.16 ms at 1440p; FG-3/FG-4 awaiting owner (shots/f3/).
+- 2026-10-13 (m5-l2): M5 L2 built (uncommitted): new `sf_script_bevy` (Bevy-thin: app/ecs/time/sf_diag_bevy) with `Scripts` resource, Input/Update/Ui exclusive slots, `Activated` → `ActivationOutcome { handled }`, `ScriptFact`, diagnostics messages + `script/...` counters; world access decided as declared slot resources moved into one shared cell (no per-context guard cost); `ScriptPlacements` + `@sf/world` subset; 4 headless tests + clippy clean. App `scripts.rs`: profile contexts + `mw.legacy`, R0 handle hook, crosshair pick (scaffold) on Space / `--activate N`; a scratch-folder Lua mod logged a real activation in the Census office and its timer fired.
+- 2026-10-13 (m6-w1): M6 W0 + W1 built (uncommitted): water census example (`mw_world` `water_census`: one exterior sea level, 216 visible / 21 hidden interior pools, 39 moored-boat candidates, Bitter Coast water mostly connected to the sea, so swamp calm comes from openness), new `sf_water` (records, JONSWAP/TMA/Donelan-Banner spectrum, power-of-two cascades, `h0` keyed by wave vector, rustfft CPU twin with cubic sampling, BVH/priority `WaterQuery`; twin 2.4 mm from exact, 0.027 ms/step, 0.25 µs/sample) and `mw_water` skeleton; bevy-aqua notice in `THIRD_PARTY_NOTICES.md`; W2 handoff in water.md "As built (W1)".

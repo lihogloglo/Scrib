@@ -90,6 +90,8 @@ pub struct ExteriorOptions {
     /// Fixed haze and dust (`--haze`, `--dust`) instead of the weather's (weather.md N1/N2).
     pub haze: Option<f32>,
     pub dust: Option<f32>,
+    /// Fog multiplier (`--fog`) on the weather's fog (weather.md "Fog", F2).
+    pub fog: Option<f32>,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
     /// Benchmark, window size and A/B switches.
@@ -103,6 +105,8 @@ pub struct ExteriorOptions {
     pub world: crate::doors::WorldLinks,
     /// `--use-door`: cross the nearest door once the start has settled.
     pub use_door: u32,
+    /// `--activate N`: activate the crosshair target N times (`scripts.rs`).
+    pub activate: u32,
     /// `--portals`: the portal spike's links (scaffold `portal_spike`).
     pub portals: Option<crate::portal_spike::PortalLinks>,
     /// Loaded records: actor placements spawn as dressed characters
@@ -178,7 +182,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     crate::actors::add_world(&mut app, options.actors.clone(), perf.off.has(Part::Actors), &vfs, &options.store, &manifest);
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
-        crate::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone());
+        crate::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }
     if !perf.off.has(Part::Physics) {
         crate::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
@@ -232,15 +236,30 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         ..SkyRenderOptions::default()
     });
     // weather.md N1/N2: haze and dust follow the `--clouds` weather (or `--haze`/`--dust`).
-    app.insert_resource(SkyWeather { look: options.clouds.sky, haze: options.haze, dust: options.dust })
+    app.insert_resource(SkyWeather { look: options.clouds.sky, haze: options.haze, dust: options.dust, fog: options.fog })
         .add_systems(Update, drive_sky_weather.before(sf_sky_bevy::SkySystems::Apply));
     // weather.md A1: the cascades keep Bevy's 2048² maps. 4096² measured
     // +1.4 ms at 1440p (2026-10-12), over the High budget; the tighter
     // 504 m range already sharpens every cascade vs. the old 600 m.
-    // weather.md "Clouds": on by default; `--off clouds` (or `--off sky`) drops them.
-    if !perf.off.has(Part::Clouds) && !perf.off.has(Part::Sky) {
-        app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(options.clouds), seed: 0x5EED_C10D })
+    // weather.md "Clouds" and "Fog": on by default; `--off clouds` or `--off fog` drops
+    // one (the node runs for the other), `--off sky` both.
+    let (clouds_on, fog_on) = (!perf.off.has(Part::Clouds), !perf.off.has(Part::Fog));
+    if (clouds_on || fog_on) && !perf.off.has(Part::Sky) {
+        let fog = sf_atmos_bevy::sf_atmos::FogSettings::default();
+        app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(options.clouds), fog, seed: 0x5EED_C10D })
             .add_systems(Update, cloud_shadow_light);
+        app.world_mut().resource_mut::<sf_atmos_bevy::Clouds>().enabled = clouds_on;
+        let mut fog = app.world_mut().resource_mut::<sf_atmos_bevy::Fog>();
+        fog.enabled = fog_on;
+        // F3: the froxel volume (High) near the camera; `--off froxels` keeps the
+        // analytic layers only (the Low preset). Shafts past the cascades come from
+        // the terrain's shadow-height map.
+        if perf.off.has(Part::Froxels) {
+            fog.froxels = None;
+        }
+        if !perf.off.has(Part::FarShadows) {
+            app.add_systems(Update, fog_shadow_heights);
+        }
     }
 
     if far_field {
@@ -288,6 +307,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         );
 
     crate::doors::add(&mut app, options.world, options.use_door);
+    crate::scripts::add(&mut app, vfs.clone(), options.activate);
     if let Some(links) = options.portals {
         crate::portal_spike::add(&mut app, links);
     }
@@ -509,7 +529,7 @@ fn setup(
     }
     if !off.has(Part::Sky) {
         camera.insert(SkyCamera { environment_light: !off.has(Part::Envmap), ..SkyCamera::default() });
-        if !off.has(Part::Clouds) {
+        if !off.has(Part::Clouds) || !off.has(Part::Fog) {
             camera.insert(sf_atmos_bevy::CloudCamera);
         }
     }
@@ -535,17 +555,21 @@ fn setup(
 
     // The sea scaffold: 64 km square under the camera, at sea level, drawn
     // in the exterior's layer (whichever worldspace the camera starts in).
+    // Opaque (F2): the fog composite runs before the transparent pass and fogs
+    // by the depth buffer, so a blended sea showed unfogged over fogged sand.
+    // Transparents get fog with F3's `sf_atmos::fog` function; `sf_water` (W2)
+    // replaces the scaffold. No shadow caster: nothing lies under it.
     let exterior_layer = registry.ensure(&mut commands, &ids::exterior()).layer;
     commands.spawn((
         SeaPlaneScaffold,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(64_000.0, 64_000.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(0.05, 0.16, 0.2, 0.86),
+            base_color: Color::srgb(0.05, 0.16, 0.2),
             perceptual_roughness: 0.08,
             reflectance: 0.4,
-            alpha_mode: AlphaMode::Blend,
             ..StandardMaterial::default()
         })),
+        bevy::light::NotShadowCaster,
         Transform::IDENTITY,
         GlobalTransform::IDENTITY,
         RenderLayers::layer(exterior_layer),
@@ -841,6 +865,16 @@ fn far_shadow_input(map: Option<Res<sf_terrain_bevy::FarShadowMap>>, mut input: 
     }
 }
 
+/// Copies the terrain's far shadow map into the fog's (the froxels' sun shafts
+/// from ridges past the cascades, weather.md "Fog", F3).
+fn fog_shadow_heights(map: Option<Res<sf_terrain_bevy::FarShadowMap>>, mut input: ResMut<sf_atmos_bevy::FogShadowHeights>) {
+    let Some(map) = map else { return };
+    let wanted = sf_atmos_bevy::FogShadowHeights { image: Some(map.image.clone()), params: map.params };
+    if *input != wanted {
+        *input = wanted;
+    }
+}
+
 /// `config` with optional R1/R2 load radii (calibration runs).
 fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<f32>) -> StreamingConfig {
     // A/B switch (perf.md): meshes of cooked models loading at once, 0 = no cap.
@@ -963,22 +997,51 @@ pub(crate) struct SkyLook {
     pub haze: f32,
     pub dust: f32,
     pub dust_tint: Vec3,
+    pub fog: FogLook,
 }
 
-const fn sky_look(haze: f32, dust: f32) -> SkyLook {
-    SkyLook { haze, dust, dust_tint: Vec3::ONE }
+/// What a weather does to the fog (weather.md "Fog", F2; weather-adapter.md
+/// "Fog"): height-fog visibility at sea level (Koschmieder, meters; 0 none)
+/// and falloff height, ground-fog banks at their morning peak and the
+/// fraction left by day, and the fog's albedo. Scaffold table like the rest of
+/// [`SkyLook`] until `mw_weather` reads `Land Fog Day/Night Depth` (WE2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FogLook {
+    pub visibility: f32,
+    pub height: f32,
+    pub banks: f32,
+    pub banks_day: f32,
+    pub albedo: Vec3,
 }
-const SKY_CLEAR: SkyLook = sky_look(20.0, 0.0);
-const SKY_FAIR: SkyLook = sky_look(24.0, 0.0);
-const SKY_OVERCAST: SkyLook = sky_look(32.0, 0.0);
-const SKY_RAIN: SkyLook = sky_look(48.0, 0.0);
-const SKY_THUNDER: SkyLook = sky_look(48.0, 0.0);
-const SKY_FOGGY: SkyLook = sky_look(60.0, 0.0);
-const SKY_BLIZZARD: SkyLook = sky_look(80.0, 0.0);
+
+const NO_FOG: FogLook = FogLook { visibility: 0.0, height: 200.0, banks: 0.0, banks_day: 0.0, albedo: Vec3::ONE };
+const fn fog_look(visibility: f32, height: f32, banks: f32) -> FogLook {
+    FogLook { visibility, height, banks, banks_day: 0.0, albedo: Vec3::ONE }
+}
+/// Ash: grey-brown, absorbing (the dust term's colour).
+const ASH_ALBEDO: Vec3 = Vec3::new(0.55, 0.47, 0.38);
+
+const fn sky_look(haze: f32, dust: f32) -> SkyLook {
+    SkyLook { haze, dust, dust_tint: Vec3::ONE, fog: NO_FOG }
+}
+/// Clear and fair keep a thin valley haze (F3: the froxels need a medium for sun
+/// shafts; 1.5x at dawn by the ground-fog curve), far too thin to read as fog.
+const SKY_CLEAR: SkyLook = SkyLook { fog: fog_look(40_000.0, 100.0, 0.0), ..sky_look(20.0, 0.0) };
+const SKY_FAIR: SkyLook = SkyLook { fog: fog_look(30_000.0, 120.0, 0.0), ..sky_look(24.0, 0.0) };
+const SKY_OVERCAST: SkyLook = SkyLook { fog: fog_look(8_000.0, 300.0, 0.0), ..sky_look(32.0, 0.0) };
+const SKY_RAIN: SkyLook = SkyLook { fog: fog_look(3_000.0, 250.0, 0.25), ..sky_look(48.0, 0.0) };
+const SKY_THUNDER: SkyLook = SkyLook { fog: fog_look(2_000.0, 250.0, 0.3), ..sky_look(48.0, 0.0) };
+/// Foggy: banks all day (a third of the morning peak).
+const SKY_FOGGY: SkyLook = SkyLook { fog: FogLook { banks_day: 0.35, ..fog_look(3_000.0, 150.0, 1.0) }, ..sky_look(60.0, 0.0) };
+const SKY_BLIZZARD: SkyLook = SkyLook { fog: fog_look(300.0, 400.0, 0.0), ..sky_look(80.0, 0.0) };
 /// Grey-brown ash (the model's dust colour).
-const SKY_ASHSTORM: SkyLook = sky_look(24.0, 4.0);
+const SKY_ASHSTORM: SkyLook = SkyLook { fog: FogLook { albedo: ASH_ALBEDO, ..fog_look(450.0, 500.0, 0.0) }, ..sky_look(24.0, 4.0) };
 /// Ash tinted red: more green/blue absorption leaves red.
-const SKY_BLIGHT: SkyLook = SkyLook { dust_tint: Vec3::new(0.6, 1.4, 1.9), ..SKY_ASHSTORM };
+const SKY_BLIGHT: SkyLook = SkyLook {
+    dust_tint: Vec3::new(0.6, 1.4, 1.9),
+    fog: FogLook { albedo: Vec3::new(0.62, 0.42, 0.36), ..SKY_ASHSTORM.fog },
+    ..SKY_ASHSTORM
+};
 
 /// Morning haze: dawn is the humid, still part of the day (aerosols swell,
 /// the night inversion traps them), so haze peaks ×1.5 at 6:30 and is back
@@ -996,11 +1059,19 @@ pub(crate) struct SkyWeather {
     pub look: SkyLook,
     pub haze: Option<f32>,
     pub dust: Option<f32>,
+    /// `--fog`: multiplier on the look's fog.
+    pub fog: Option<f32>,
 }
 
 /// Feeds [`SkyWeather`] into `sf_sky`'s weather; the sky plugin rebuilds the
 /// medium (rate limited) when it moves by a step.
-fn drive_sky_weather(sky: Res<SkyWeather>, clock: Res<SkyTime>, config: Res<SkyConfig>, mut weather: ResMut<WeatherState>) {
+fn drive_sky_weather(
+    sky: Res<SkyWeather>,
+    clock: Res<SkyTime>,
+    config: Res<SkyConfig>,
+    mut weather: ResMut<WeatherState>,
+    fog: Option<ResMut<sf_atmos_bevy::Fog>>,
+) {
     let hour = clock.0.hour(&config.0.calendar);
     let haze = sky.haze.unwrap_or(sky.look.haze * morning_haze(hour));
     let dust = sky.dust.unwrap_or(sky.look.dust);
@@ -1011,6 +1082,43 @@ fn drive_sky_weather(sky: Res<SkyWeather>, clock: Res<SkyTime>, config: Res<SkyC
         w.dust = dust;
         w.dust_tint = sky.look.dust_tint;
     }
+    if let Some(mut fog) = fog {
+        let settings = fog_settings(&sky.look.fog, hour, sky.fog.unwrap_or(1.0), weather.0.wind.velocity, fog.settings);
+        if fog.settings != settings {
+            fog.settings = settings;
+        }
+    }
+}
+
+/// Ground-fog bank density at the morning peak, 1/m (visibility ~130 m
+/// inside a bank at its floor).
+const BANK_DENSITY: f32 = 0.03;
+/// Bank layer falloff, meters: banks hug the ground (swamps, the sea).
+const BANK_FALLOFF: f32 = 12.0;
+
+/// Ground fog by hour (weather.md "Ground fog": dense from 4 to 9 h): 1 at
+/// dawn, gone by 11 h, back to half from 19 h through the night (radiation
+/// fog forms after sunset and peaks at dawn).
+pub(crate) fn ground_fog(hour: f32) -> f32 {
+    let s = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    if hour < 12.0 { 0.5 + 0.5 * s(2.5, 4.5, hour) - s(8.5, 11.0, hour) } else { 0.5 * s(19.0, 23.0, hour) }
+}
+
+/// The fog for a look at `hour`, scaled by `scale` (`--fog`); `prev` keeps the
+/// renderer's other settings (bank noise, phase, reach).
+fn fog_settings(look: &FogLook, hour: f32, scale: f32, wind: Vec2, prev: sf_atmos_bevy::sf_atmos::FogSettings) -> sf_atmos_bevy::sf_atmos::FogSettings {
+    use sf_atmos_bevy::sf_atmos::fog::{extinction_for_visibility, FogLayer};
+    let g = ground_fog(hour).max(0.0);
+    let mut f = prev;
+    f.height = FogLayer { density: extinction_for_visibility(look.visibility) * (1.0 + 0.5 * g) * scale, falloff: look.height, base: 0.0 };
+    let banks = look.banks * (look.banks_day + (1.0 - look.banks_day) * g);
+    f.banks.layer = FogLayer { density: BANK_DENSITY * banks * scale, falloff: BANK_FALLOFF, base: 0.0 };
+    f.albedo = look.albedo;
+    f.wind = wind;
+    f
 }
 
 pub(crate) fn cloud_settings(choice: CloudChoice) -> sf_atmos_bevy::sf_atmos::CloudSettings {

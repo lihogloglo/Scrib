@@ -36,7 +36,9 @@ mw_graphs.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
 mw_physics = { path = "../../crates/mw_physics" }
+mw_mods.workspace = true
 mw_records.workspace = true
+mw_script.workspace = true
 mw_vfs.workspace = true
 mw_world.workspace = true
 sf_bake.workspace = true
@@ -52,9 +54,13 @@ sf_character_bevy = { workspace = true, features = ["world"] }
 sf_controller = { workspace = true, features = ["terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
 sf_physics = { workspace = true }
-sf_physics_bevy = { workspace = true, features = ["debug"] }
+sf_ragdoll = { workspace = true }
+sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdoll"] }
 sf_model_bevy.workspace = true
+sf_mods.workspace = true
 sf_records.workspace = true
+sf_script.workspace = true
+sf_script_bevy.workspace = true
 sf_atmos_bevy.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true

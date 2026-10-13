@@ -1,16 +1,14 @@
 //! Bake inputs over the mounted VFS and the record database.
 
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::UNIX_EPOCH;
 
 use mw_install::MorrowindInstall;
-use mw_records::KindVisitor;
 use sf_bake::{BakeError, Digest, FileHashMemo, Inputs, StatKey};
-use sf_records::{RecordDb, RecordId};
+use sf_records::{RecordDb, RecordError, RecordId};
 use sf_vfs::{Vfs, VfsPath};
 
 /// [`Inputs`] for Morrowind content.
@@ -111,30 +109,22 @@ impl Inputs for VfsInputs {
         Ok(self.vfs.read(&vfs_path(path)?)?)
     }
 
-    /// The fingerprint of a record's resolved value.
-    ///
-    /// Scaffold (`DebugRecordFingerprint`): hashes the record's `Debug`
-    /// representation, which is deterministic for every TES3 kind except
-    /// cells (their references sit in a `HashMap`), so cells are refused.
-    /// Removal path: hash the winning raw subrecord bytes plus patches, as
-    /// `bake.md` suggests, once `mw_records` keeps them.
+    /// The fingerprint of a record's resolved value: the kind's registered
+    /// fingerprint function (`RecordDb::fingerprint`; TES3 kinds are serde
+    /// kinds, hashed as blake3 of their postcard bytes), so a mod's patch to
+    /// a record changes it. Kind names match as given, else upper-cased
+    /// (TES3 tags).
     fn record_fingerprint(&self, kind: &str, id: &str) -> Result<Option<Digest>, BakeError> {
-        struct Fingerprint<'a>(&'a RecordDb, RecordId);
-        impl KindVisitor for Fingerprint<'_> {
-            type Output = Option<Digest>;
-            fn visit<T: Debug + Send + Sync + 'static>(self) -> Option<Digest> {
-                self.0.get::<T>(&self.1).map(|record| Digest::of(format!("{record:?}").as_bytes()))
-            }
-        }
         if let Some(d) = self.extra.get(&(kind.to_owned(), id.to_owned())) {
             return Ok(Some(*d));
         }
         let db = self.records.as_deref().ok_or_else(|| BakeError::Other("records are not bake inputs here".into()))?;
-        if kind.eq_ignore_ascii_case("CELL") {
-            return Err(BakeError::Other("CELL records have no stable fingerprint yet".into()));
-        }
-        mw_records::visit_kind(kind, Fingerprint(db, RecordId::new(id)))
-            .ok_or_else(|| BakeError::Other(format!("unknown record kind {kind:?}")))
+        let id = RecordId::new(id);
+        let result = match db.fingerprint(kind, &id) {
+            Err(RecordError::UnknownKind(_)) => db.fingerprint(&kind.to_ascii_uppercase(), &id),
+            other => other,
+        };
+        result.map(|fp| fp.map(Digest)).map_err(|e| BakeError::Other(format!("record {kind} {id}: {e}")))
     }
 }
 
@@ -197,6 +187,7 @@ mod tests {
         assert!(fp.is_some());
         assert_eq!(inputs.record_fingerprint("stat", "rock").unwrap(), fp);
         assert_eq!(inputs.record_fingerprint("STAT", "other").unwrap(), None);
-        assert!(inputs.record_fingerprint("CELL", "x").is_err());
+        assert_eq!(inputs.record_fingerprint("CELL", "x").unwrap(), None);
+        assert!(inputs.record_fingerprint("NOPE", "x").is_err());
     }
 }

@@ -34,10 +34,12 @@ macro_rules! kinds {
         /// Every record kind tag, in format order.
         pub const KINDS: &[&str] = &[$($tag,)* $($stag,)*];
 
-        /// Registers every TES3 record kind under its four-letter tag.
+        /// Registers every TES3 record kind under its four-letter tag, with
+        /// serde (native record files can define and patch them; their
+        /// fingerprint is blake3 of their postcard bytes).
         pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
-            $(db.register::<tes3::esp::$variant>($tag)?;)*
-            $(db.register::<tes3::esp::$svariant>($stag)?;)*
+            $(db.register_serde::<tes3::esp::$variant>($tag)?;)*
+            $(db.register_serde::<tes3::esp::$svariant>($stag)?;)*
             db.register::<LandTextureSlot>(LandTextureSlot::KIND)?;
             Ok(())
         }
@@ -230,13 +232,7 @@ pub fn load(vfs: &Vfs, requested: &[String]) -> Result<LoadedContent, LoadError>
         let objects = plugin.objects.len();
 
         let start = Instant::now();
-        let mut ctx = ApplyCtx { db: &mut db, source, file: &file.name, masters: &master_sources, warnings: &mut warnings, topic: None, moved: 0 };
-        for object in plugin.objects {
-            ctx.apply(object)?;
-        }
-        if ctx.moved > 0 {
-            ctx.warnings.push(LoadWarning::MovedReferences { file: file.name.clone(), count: ctx.moved });
-        }
+        apply_plugin(&mut db, source, &file.name, plugin, &master_sources, &mut warnings)?;
         files.push(ContentFile {
             name: file.name.clone(),
             source,
@@ -250,6 +246,46 @@ pub fn load(vfs: &Vfs, requested: &[String]) -> Result<LoadedContent, LoadError>
     }
 
     Ok(LoadedContent { db, files, warnings })
+}
+
+/// Applies one parsed content file as record source `source` (the file's
+/// mod, see the module docs for the merge rules). `file` names it in land
+/// texture slot keys and warnings: the record source's name, which is what
+/// terrain looks slots up by. `masters` holds the global source of each
+/// 1-based master index (`None`: that master isn't loaded).
+pub fn apply_plugin(
+    db: &mut RecordDb,
+    source: SourceId,
+    file: &str,
+    plugin: Plugin,
+    masters: &[Option<SourceId>],
+    warnings: &mut Vec<LoadWarning>,
+) -> Result<(), RecordError> {
+    let mut ctx = ApplyCtx { db, source, file, masters, warnings, topic: None, moved: 0 };
+    for object in plugin.objects {
+        ctx.apply(object)?;
+    }
+    if ctx.moved > 0 {
+        ctx.warnings.push(LoadWarning::MovedReferences { file: file.to_owned(), count: ctx.moved });
+    }
+    Ok(())
+}
+
+/// A content file's type and master file names, read from its `TES3`
+/// header. `bytes` may hold just the header record (see [`header_len`]).
+pub fn read_header(bytes: &[u8]) -> std::io::Result<(FileType, Vec<String>)> {
+    let mut header_only = Plugin::new();
+    header_only.load_bytes_filtered(bytes, |tag| tag == *b"TES3")?;
+    let header = header_only
+        .header()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "no TES3 header"))?;
+    Ok((header.file_type, header.masters.iter().map(|(m, _)| m.clone()).collect()))
+}
+
+/// Length of a content file's leading `TES3` record from its first 16
+/// bytes (tag, size, two flag words), so discovery reads only the header.
+pub fn header_len(prefix: &[u8; 16]) -> Option<usize> {
+    (&prefix[..4] == b"TES3").then(|| 16 + u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]) as usize)
 }
 
 /// Ordering facts about known content that headers don't state, as

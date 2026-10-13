@@ -14,12 +14,14 @@ mod actor_particles;
 mod faces;
 mod held;
 mod live_ab;
+mod mods;
 mod night_sky;
 mod perf;
 mod physics;
 mod portal_spike;
 mod render;
 mod scenes;
+mod scripts;
 mod skinned_view;
 mod sweep;
 mod view;
@@ -27,7 +29,6 @@ mod walkers;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use mw_install::{MorrowindInstall, Origin};
@@ -42,6 +43,14 @@ struct Cli {
     /// including the `BEVYRROWIND_MORROWIND` environment variable.
     #[arg(long, global = true)]
     morrowind: Option<PathBuf>,
+    /// Mod profile to load (`<user data>/profiles/<name>.toml`; `default`
+    /// falls back to the install's own content when the file doesn't exist).
+    #[arg(long, global = true, default_value = mw_mods::DEFAULT_PROFILE)]
+    profile: String,
+    /// User data folder holding `mods/` and `profiles/` (default: the
+    /// `BEVYRROWIND_USER_DATA` environment variable, else `<local data dir>/bevyrrowind`).
+    #[arg(long, global = true)]
+    user_data: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -109,6 +118,11 @@ enum Command {
         /// Cache root (default: `<local data dir>/bevyrrowind/bake`).
         #[arg(long)]
         cache: Option<PathBuf>,
+    },
+    /// Mods and profiles: list, load order, report, enable/disable (`mods.md`).
+    Mods {
+        #[command(subcommand)]
+        command: mods::ModsCommand,
     },
     /// Benchmarks: the suite runner, trace and Nsight summaries (`docs/perf.md`).
     Perf {
@@ -197,6 +211,10 @@ struct ViewFlags {
     /// (weather.md N2).
     #[arg(long)]
     dust: Option<f32>,
+    /// Exteriors: multiplier on the `--clouds` weather's fog (height fog and ground-fog banks;
+    /// 0 none, 2 twice as dense), weather.md "Fog". `--off fog` drops the fog terms.
+    #[arg(long)]
+    fog: Option<f32>,
     /// Exteriors: time of day in hours.
     #[arg(long, default_value_t = 10.0)]
     hour: f64,
@@ -248,6 +266,11 @@ struct ViewFlags {
     /// `--screenshot` then captures the other side. `--use-door 2` comes back out.
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     use_door: Option<u32>,
+    /// Exteriors and streamed interiors: once placements have streamed in,
+    /// activate the placement under the crosshair N times, one a second (as
+    /// pressing Space; mod scripts receive `activated`, M5 L2).
+    #[arg(long, num_args = 0..=1, default_missing_value = "1")]
+    activate: Option<u32>,
     /// Characters: `smooth` (default: seams welded, weights blended across
     /// joints) or `vanilla` (segmented parts as authored). B toggles live.
     #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
@@ -439,11 +462,13 @@ impl ViewFlags {
             clouds: self.clouds,
             haze: self.haze,
             dust: self.dust,
+            fog: self.fog,
             quality: exterior::Quality::resolve(self.quality),
             perf,
             lights: light_infos(db),
             world: doors::WorldLinks::build(db),
             use_door: self.use_door.unwrap_or(0),
+            activate: self.activate.unwrap_or(0),
             portals: None,
             actors: None,
             bodies: self.bodies,
@@ -567,6 +592,7 @@ fn main() -> ExitCode {
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn run(cli: Cli) -> Result {
+    mods::select(mods::Selection { user_data: cli.user_data, profile: cli.profile });
     let command = match cli.command {
         Command::Detect => return detect(cli.morrowind.as_deref()),
         Command::Scene { name, list, file, extra } => {
@@ -580,6 +606,7 @@ fn run(cli: Cli) -> Result {
         Command::Detect | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
         Command::Info { conflicts } => info(&install, &origin, conflicts),
         Command::Bake { cache } => bake::run(&install, cache),
+        Command::Mods { command } => mods::run(&install, command),
         Command::Ls { dir } => {
             let vfs = mount(&install, false)?;
             ls(&vfs, dir.as_deref().unwrap_or(""));
@@ -726,41 +753,15 @@ fn detect(explicit: Option<&std::path::Path>) -> Result {
     }
 }
 
+/// The selected mod profile's VFS (`mods.rs`): builtin graphs and runtime,
+/// then archives, loose `Data Files`, and enabled mods, in load order.
 fn mount(install: &MorrowindInstall, verbose: bool) -> Result<Vfs> {
-    let start = Instant::now();
-    // The builtin graph assets (mw_graphs) are the lowest layer: any mod overrides them.
-    let mounted = mw_vfs::mount_install(install, Vfs::builder().mount(mw_graphs::builtin_source()))?;
-    for warning in &mounted.warnings {
-        eprintln!("warning: {warning:?}");
-    }
-    if verbose {
-        println!("VFS: {} files in {:.0?}", mounted.vfs.len(), start.elapsed());
-        for s in mounted.vfs.stats() {
-            println!("  {:<20} {:>7} files, {:>7} winning", s.label, s.files, s.winning);
-        }
-    }
-    Ok(mounted.vfs)
+    mods::mount(install, verbose)
 }
 
+/// The selected mod profile's VFS and records (`mods.rs`).
 fn load(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, LoadedContent)> {
-    let vfs = mount(install, verbose)?;
-    let start = Instant::now();
-    let content = mw_records::load(&vfs, &install.game_files())?;
-    if verbose {
-        println!("\ncontent: {} files in {:.0?}", content.files.len(), start.elapsed());
-        for f in &content.files {
-            println!(
-                "  {:<24} {:?} {:>7} objects  read {:>6.0?}  parse {:>6.0?}  apply {:>6.0?}  masters: {}",
-                f.name,
-                f.file_type,
-                f.objects,
-                f.read_time,
-                f.parse_time,
-                f.apply_time,
-                if f.masters.is_empty() { "-".to_owned() } else { f.masters.join(", ") }
-            );
-        }
-    }
+    let (vfs, content, _) = mods::load_content(install, verbose)?;
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     for warning in &content.warnings {
         let name = format!("{warning:?}");
@@ -892,7 +893,7 @@ fn record(db: &RecordDb, kind: &str, id: &str) -> Result {
         fn visit<T: std::fmt::Debug + Send + Sync + 'static>(self) -> Option<String> {
             let entry = self.0.entry::<T>(&self.1)?;
             let history: Vec<String> =
-                entry.history.iter().map(|t| format!("{} ({:?})", self.0.source(t.source).name, t.op)).collect();
+                entry.history.iter().map(|t| format!("{} ({})", self.0.source(t.source).name, sf_records::describe(t))).collect();
             let value = entry.value.as_ref().map_or_else(|| "<deleted>".to_owned(), |v| format!("{v:#?}"));
             Some(format!("{value}\n\nhistory: {}", history.join(" -> ")))
         }

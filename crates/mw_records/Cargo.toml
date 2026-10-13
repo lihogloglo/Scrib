@@ -10,7 +10,8 @@ semver.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
 sf_vfs.workspace = true
-tes3 = { workspace = true, features = ["esp"] }
+# `serde`: TES3 records are serde kinds (native RON patches over vanilla records, fingerprints).
+tes3 = { workspace = true, features = ["esp", "serde"] }
 thiserror.workspace = true
 
 [lints]

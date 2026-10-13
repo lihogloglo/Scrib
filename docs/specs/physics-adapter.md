@@ -75,7 +75,7 @@ the same mapping serves the player and, later, NPCs that carry or drag:
 Masses compare against the simulated mass (items: `item_mass` above, clamped at 60 kg) or, for a corpse, the
 ragdoll's total mass (75 kg × race factors, "Ragdolls"). So an average character drags any NPC body and carries a
 bucket but not an anvil; a weak one (S 30) can drag a light corpse, struggles with a heavy Nord (the force cap makes
-it lag), and can't move one past 88 kg. Throw speed is capped by the framework at 15 m/s. Fatigue drain on throws and
+it lag), and can't move one past 88 kg. Throw speed is capped by the framework at 15 m/s. The framework caps the *drag* force at what slides the drag mass (`max(carry_force, 0.6·g·drag_mass)`, physics.md P6 as built): the `carry_force` column is the carry grip only. Fatigue drain on throws and
 drags is M10.
 
 ## Ragdolls
@@ -111,6 +111,15 @@ the cooked body volume at 1000 kg/m³ unless the table overrides it.
 - *Placed corpses* (references whose actor is dead at load): settle once as a limp ragdoll from the last
   frame of their death clip when their cell activates (a budgeted queue), then sleep; the settled pose is
   persisted in the `ragdoll` state blob.
+
+**As built (P7, 2026-10-13).** `mw_physics::ragdoll_params(skeleton, humanoid)`: humanoid skeletons (the actor sets'
+`humanoid` flag: NPC races, biped creatures such as dremora, skeletons, liches, saints) weigh `HUMANOID_MASS` 75 kg
+at scale 1; creatures keep their capsules' volume × 1000 kg/m³ (no skin extents yet: see the census outliers in
+ROADMAP M4 P7); models naming `ghost`, `spect`, `wraith` or `wisp` keep the death clip (`RagdollPolicy::DeathClip`).
+`mw_bake::ragdoll` (`MwRagdollRules`, `bake_ragdolls`) cooks every actor skeleton but first-person ones inside
+`bevyrrowind bake`'s actor phase (census line `ragdolls:`; `BEVYRROWIND_RAGDOLL_REPORT=1` lists every skeleton). The
+app's debug driver: `I` kills the character nearest the crosshair (graph `dead` flag, mover `Dormant`, `Ragdoll`
+after a 0.4 s death clip); corpses drag by the grabbed limb through the P6 carry driver.
 
 ## Cloth
 

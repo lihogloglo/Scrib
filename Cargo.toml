@@ -17,6 +17,7 @@ sf_anim_bevy = { path = "../superfargoth/crates/sf_anim_bevy" }
 sf_character_bevy = { path = "../superfargoth/crates/sf_character_bevy" }
 sf_controller_bevy = { path = "../superfargoth/crates/sf_controller_bevy" }
 sf_physics = { path = "../superfargoth/crates/sf_physics" }
+sf_ragdoll = { path = "../superfargoth/crates/sf_ragdoll" }
 sf_physics_bevy = { path = "../superfargoth/crates/sf_physics_bevy" }
 sf_bake = { path = "../superfargoth/crates/sf_bake" }
 sf_character = { path = "../superfargoth/crates/sf_character" }
@@ -29,11 +30,13 @@ sf_model = { path = "../superfargoth/crates/sf_model" }
 sf_model_bevy = { path = "../superfargoth/crates/sf_model_bevy" }
 sf_records = { path = "../superfargoth/crates/sf_records" }
 sf_script = { path = "../superfargoth/crates/sf_script" }
+sf_script_bevy = { path = "../superfargoth/crates/sf_script_bevy" }
 sf_atmos_bevy = { path = "../superfargoth/crates/sf_atmos_bevy" }
 sf_sky_bevy = { path = "../superfargoth/crates/sf_sky_bevy" }
 sf_terrain = { path = "../superfargoth/crates/sf_terrain" }
 sf_terrain_bevy = { path = "../superfargoth/crates/sf_terrain_bevy" }
 sf_vfs = { path = "../superfargoth/crates/sf_vfs" }
+sf_water = { path = "../superfargoth/crates/sf_water" }
 sf_world = { path = "../superfargoth/crates/sf_world" }
 sf_world_bevy = { path = "../superfargoth/crates/sf_world_bevy" }
 sf_lod = { path = "../superfargoth/crates/sf_lod" }
@@ -72,8 +75,10 @@ mw_graphs = { path = "crates/mw_graphs" }
 mw_nif = { path = "crates/mw_nif" }
 mw_physics = { path = "crates/mw_physics" }
 mw_install = { path = "crates/mw_install" }
+mw_mods = { path = "crates/mw_mods" }
 mw_records = { path = "crates/mw_records" }
 mw_script = { path = "crates/mw_script" }
+mw_water = { path = "crates/mw_water" }
 mw_world = { path = "crates/mw_world" }
 mw_vfs = { path = "crates/mw_vfs" }
 

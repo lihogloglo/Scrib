@@ -99,10 +99,15 @@ pub enum Part {
     TerrainBlend,
     /// Rigid-body physics (`physics.rs`, M4): no physics worlds, no colliders.
     Physics,
+    /// Height fog, ground-fog banks and the far fog (weather.md "Fog", F2).
+    Fog,
+    /// The froxel volume near the camera (god rays, lit fog; weather.md "Fog", F3):
+    /// off, the analytic layers fog everything (the Low preset).
+    Froxels,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 27] = [
+    const ALL: [(&'static str, Part); 30] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -130,6 +135,9 @@ impl Part {
         ("terrainblend", Part::TerrainBlend),
         ("groundblend", Part::TerrainBlend),
         ("physics", Part::Physics),
+        ("fog", Part::Fog),
+        ("froxels", Part::Froxels),
+        ("godrays", Part::Froxels),
     ];
 
     fn name(self) -> &'static str {

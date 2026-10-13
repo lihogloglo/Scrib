@@ -110,6 +110,33 @@ impl GroundProbe for MwGround {
     }
 }
 
+/// The walkers' ground runs on physics (`PhysicsProbe` over the active
+/// world: statics, terrain chunks and props, physics.md "Queries"); false
+/// with `--off physics`, where [`MwGround`]'s `StaticWorld` stays the ground.
+#[derive(Resource, Clone, Copy)]
+struct GroundOnPhysics(bool);
+
+/// The ground the mover uses, for the scaffold's own probes and stats.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Ground<'w> {
+    mw: Res<'w, MwGround>,
+    physics: Option<Res<'w, sf_physics_bevy::Physics>>,
+    on: Res<'w, GroundOnPhysics>,
+}
+
+impl Ground<'_> {
+    fn on_physics(&self) -> bool {
+        self.on.0 && self.physics.is_some()
+    }
+
+    fn probe(&self) -> &dyn GroundProbe {
+        match &self.physics {
+            Some(p) if self.on.0 => &**p,
+            _ => &*self.mw,
+        }
+    }
+}
+
 /// A collider change from the activation hooks: (worldspace, placement,
 /// model and transform to add, or `None` to remove).
 type ColliderOp = (WorldspaceId, PlacementId, Option<(String, WorldTransform)>);
@@ -196,11 +223,16 @@ fn apply_colliders(
     source: Res<CollisionSource>,
     active: Res<ActiveWorldspace>,
     mut ground: ResMut<MwGround>,
+    on: Res<GroundOnPhysics>,
     counters: Option<Res<sf_diag_bevy::DiagCounters>>,
 ) {
     if active.0 != ground.active {
         ground.exterior_active = active.0.as_ref() == Some(&mw_world::ids::exterior());
         ground.active.clone_from(&active.0);
+    }
+    if on.0 {
+        // On physics: its activation hooks build the statics; none here.
+        queue.0.clear();
     }
     if queue.0.is_empty() {
         return;
@@ -421,7 +453,7 @@ fn processing_range(
     mut commands: Commands,
     streaming: Res<Streaming>,
     active: Res<ActiveWorldspace>,
-    movers: Query<(Entity, &Mover, &ActorSpace, Has<Dormant>)>,
+    movers: Query<(Entity, &Mover, &ActorSpace, Has<Dormant>), Without<crate::physics::Dead>>,
     mut lods: Query<&mut AnimLod>,
 ) {
     let scheduler = streaming.scheduler();
@@ -448,7 +480,7 @@ fn drive(
     time: Res<Time>,
     grids: Res<Pathgrids>,
     mut walkers: Query<(Entity, &Mover, &mut Walker, &mut MoveIntent, &mut Avoider), Without<Dormant>>,
-    ground: Res<MwGround>,
+    ground: Ground,
     mut give_ups: ResMut<GiveUps>,
     mut animators: Query<&mut Animator>,
 ) {
@@ -461,7 +493,7 @@ fn drive(
         let (stuck, edge) = (walker.scaffold.stuck_count(), current_edge(&walker.scaffold, pos));
         let out = walker.scaffold.update(graph, pos, dt, hours);
         if walker.scaffold.stuck_count() > stuck {
-            let kind = give_ups.record(entity, mover, edge, &ground);
+            let kind = give_ups.record(entity, mover, edge, ground.probe());
             if let Some((from, to)) = edge {
                 match graph.filter(|g| g.node_at(to).is_some()) {
                     None => give_ups.off_grid += 1,
@@ -560,7 +592,7 @@ fn gizmos(
 }
 
 /// Adds the walkers: controller stage, ground, pathgrids, scaffold driver.
-pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest) {
+pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, physics: bool) {
     let started = std::time::Instant::now();
     let grids = PathGrids::build(&db);
     let min_walk = gmst_float(&db, "fMinWalkSpeed", 100.0);
@@ -577,7 +609,13 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest) {
         turn: Some(gp::TURN.into()),
         speed: None,
     };
-    app.add_plugins(SfControllerPlugin::<MwGround>::default())
+    // The mover probes physics when it runs (P5), else the `StaticWorld`.
+    if physics {
+        app.add_plugins(SfControllerPlugin::<sf_physics_bevy::Physics>::default());
+    } else {
+        app.add_plugins(SfControllerPlugin::<MwGround>::default());
+    }
+    app.insert_resource(GroundOnPhysics(physics))
         .insert_resource(ControllerSettings {
             params,
             // Measured-speed thresholds against the humanoid cycles (walk
@@ -635,7 +673,7 @@ fn report(
     anim: Option<Res<AnimStats>>,
     strides: Res<StrideStats>,
     give_ups: Res<GiveUps>,
-    ground: Res<MwGround>,
+    ground: Ground,
     movers: Query<(&Mover, Option<&Walker>, Has<Dormant>)>,
 ) {
     let now = time.elapsed_secs();
@@ -664,8 +702,8 @@ fn report(
         give_ups.first_leg,
         give_ups.off_grid,
         give_ups.rerouted,
-        ground.placed(),
-        ground.terrain.is_some() && ground.exterior_active,
+        ground.mw.placed(),
+        if ground.on_physics() { "on physics".into() } else { (ground.mw.terrain.is_some() && ground.mw.exterior_active).to_string() },
         stats.avoid_us,
         stats.move_us,
         stats.feed_us
@@ -722,7 +760,7 @@ fn stride_monitor(
     mut stats: ResMut<StrideStats>,
     mut tracks: Local<HashMap<Entity, Vec<FootTrack>>>,
     mut slow: Local<HashMap<Entity, f32>>,
-    ground: Res<MwGround>,
+    ground: Ground,
     movers: Query<(Entity, &Mover, Option<&Character>), Without<Dormant>>,
     animators: Query<(&Animator, Option<&AnimLod>)>,
 ) {
@@ -743,7 +781,7 @@ fn stride_monitor(
                     .iter()
                     .map(|&s| {
                         let q = ProbeQuery::down(m.loco.position.offset(dir * s + Vec3::Y * 0.45), 1.2);
-                        ground.probe_one(q).map_or("-".into(), |h| format!("{s}: rise {:.2} n.y {:.2}", 0.45 - h.distance, h.normal.y))
+                        ground.probe().probe_one(q).map_or("-".into(), |h| format!("{s}: rise {:.2} n.y {:.2}", 0.45 - h.distance, h.normal.y))
                     })
                     .collect();
                 info!(
@@ -939,7 +977,7 @@ struct GiveUps {
 }
 
 impl GiveUps {
-    fn record(&mut self, e: Entity, m: &Mover, edge: Option<(WorldPos, WorldPos)>, ground: &MwGround) -> &'static str {
+    fn record(&mut self, e: Entity, m: &Mover, edge: Option<(WorldPos, WorldPos)>, ground: &dyn GroundProbe) -> &'static str {
         let min_ny = m.params.min_normal_y();
         let pos = m.loco.position;
         let dir = edge.map_or(Vec3::ZERO, |(_, to)| pos.delta_f32(to).with_y(0.0).normalize_or_zero());

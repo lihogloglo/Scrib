@@ -21,6 +21,7 @@ mod inputs;
 mod summary;
 pub mod far;
 pub mod script;
+pub mod ragdoll;
 pub mod textures;
 pub mod world;
 

@@ -38,6 +38,8 @@ sf_lod = { workspace = true, features = ["bake"] }
 sf_model.workspace = true
 # `body.cook` and `items.check` (physics-adapter.md "Items").
 sf_physics = { workspace = true, features = ["bake"] }
+# `ragdoll.cook` (physics-adapter.md "Ragdolls").
+sf_ragdoll = { workspace = true, features = ["bake"] }
 sf_records.workspace = true
 # Luau `Compiler` for translated scripts (re-exported mlua).
 sf_script.workspace = true

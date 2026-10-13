@@ -16,15 +16,24 @@
 //! - `V` throws a 3 kg ball from the camera (PH-1 without a player
 //!   controller); the 8 newest stay.
 //! - `--physics-debug` (or `G`) draws collider wireframes around the camera.
-//! - `--off physics` leaves physics out. The walkers keep their own
-//!   `StaticWorld` either way for now: `PhysicsProbe` replaces it once
-//!   walkers.rs moves over (P2 handoff), and it stays as the physics-off path.
+//! - Characters (P5, `sf_physics_bevy` feature `controller`): the walkers'
+//!   mover probes this physics world (statics, terrain chunks, props), each
+//!   mover has a kinematic capsule that thrown and falling bodies hit, and
+//!   characters push debris and props with capped impulses.
+//! - `--off physics` leaves physics out; the walkers then probe their own
+//!   `StaticWorld` (walkers.rs).
 //! - Every 10 s the log gets the peaks: step and insert time per frame.
+//! - Ragdolls (P7, `sf_physics_bevy` feature `ragdoll`): `I` kills the
+//!   character nearest the crosshair ([`kill_key`], PH-2): its graph's `dead`
+//!   state plays the death clip and after [`DEATH_HANDOFF`] it goes limp
+//!   (the `ragdoll.cook` product of its skeleton). Corpses are `RAGDOLL`
+//!   bodies the carry driver drags by the grabbed limb.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera_controller::free_camera::{FreeCamera, run_freecamera_controller};
 use bevy::prelude::*;
 use mw_physics::ItemRecords;
 use sf_bake::{Manifest, Store};
@@ -34,17 +43,23 @@ use sf_coords::WorldTransform;
 use sf_physics::steps::{BODY_COOK, Hold, ITEMS_CHECK, ItemChecks, SUPPORT_COOK};
 use sf_physics::{BodyDesc, BodyKind, BodyShape, Layer, ShapeRef};
 use sf_physics_bevy::{
-    ItemBody, ItemContent, Physics, PhysicsBody, PhysicsBodySource, PhysicsDebug, PhysicsPlugin, PhysicsShapeSource,
+    CarryFeedback, CarryInput, CharacterStats, Holder, ItemBody, ItemContent, Physics, PhysicsBody, PhysicsBodySource, PhysicsDebug, PhysicsPlugin, PhysicsShapeSource,
     PhysicsSettings, PhysicsStats, PhysicsStreaming, hook_items, hook_physics,
 };
+use sf_anim_bevy::Animator;
+use sf_character_bevy::CharacterBody;
+use sf_controller_bevy::Dormant;
+use sf_physics_bevy::{Ragdoll, RagdollSource, RagdollStats};
+use sf_ragdoll::{RAGDOLL_COOK, RagdollDef, RagdollPolicy};
 use sf_records::RecordDb;
 use sf_world::{Placement, PlacementClass, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
-use sf_world_bevy::{ActiveWorldspace, PlacementSpawners, from_grid, transform_to_grid};
+use sf_world_bevy::{ActiveWorldspace, PlacementSpawners, WorldPosOf, from_grid, transform_to_grid};
 
 /// Adds physics to the streamed viewer. `db` gives item weights and the
 /// carryable lights (without it, items weigh their volume × 400 kg/m³).
 pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Option<Arc<RecordDb>>) {
+    let ragdolls = ragdoll_source(store.clone(), manifest.clone());
     let (body_store, body_manifest) = (store.clone(), manifest.clone());
     let bodies = move |model: &str| -> Option<Arc<BodyShape>> {
         let digest = body_manifest.get(BODY_COOK, model)?;
@@ -66,10 +81,202 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
         .insert_resource(PhysicsShapeSource(Arc::new(source)))
         .insert_resource(PhysicsBodySource { loader: Arc::new(bodies), items: Arc::new(items), supports: Some(Arc::new(supports)) })
         .insert_resource(PhysicsDebug { enabled: debug, ..PhysicsDebug::default() })
+        .insert_resource(ragdolls)
         .init_resource::<Peaks>()
         .init_resource::<Balls>()
         .add_systems(PostStartup, hook)
-        .add_systems(Update, (toggle_debug, throw_ball, peaks.after(sf_physics_bevy::PhysicsSystems::WriteBack)));
+        .init_resource::<FpsCap>()
+        .configure_sets(RunFixedMainLoop, sf_physics_bevy::PhysicsSystems::Views.after(run_freecamera_controller))
+        .add_systems(
+            Update,
+            (
+                toggle_debug,
+                throw_ball,
+                (kill_key, ragdoll_log).chain(),
+                peaks.after(sf_physics_bevy::PhysicsSystems::WriteBack),
+                (attach_holder, carry_keys).chain().before(sf_physics_bevy::PhysicsSystems::Carry),
+                carry_feedback.after(sf_physics_bevy::PhysicsSystems::Carry),
+            ),
+        )
+        .add_systems(Last, cap_fps);
+}
+
+// --- Ragdolls (P7 debug driver) --------------------------------------------------------------
+
+/// Seconds of death clip before the body goes limp (physics.md "Death": the
+/// clip's crumple, then the ragdoll; P8 replaces the cut with a powered fade).
+pub const DEATH_HANDOFF: f32 = 0.4;
+
+/// A character killed by [`kill_key`]: its mover stays [`Dormant`].
+#[derive(Component)]
+pub struct Dead;
+
+/// `ragdoll.cook` products by skeleton subject (cached); skeletons whose
+/// policy keeps the death clip get none.
+fn ragdoll_source(store: Store, manifest: Manifest) -> RagdollSource {
+    let cache: std::sync::Mutex<HashMap<String, Option<Arc<RagdollDef>>>> = std::sync::Mutex::default();
+    RagdollSource(Arc::new(move |skeleton: &str| {
+        let mut cache = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .entry(skeleton.to_owned())
+            .or_insert_with(|| {
+                let bytes = store.get(&manifest.get(RAGDOLL_COOK, skeleton)?).ok()?;
+                let def = RagdollDef::from_bytes(&bytes).ok()?;
+                (def.policy == RagdollPolicy::Ragdoll).then(|| Arc::new(def))
+            })
+            .clone()
+    }))
+}
+
+/// `I`: kills the character nearest the crosshair (within 40 m and 1 m of
+/// the view ray): the graph's `dead` flag starts the death clip, the mover
+/// parks, and [`Ragdoll`] hands the body to physics after [`DEATH_HANDOFF`].
+#[allow(clippy::needless_pass_by_value)]
+fn kill_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    cameras: Query<(Entity, &Transform), With<FreeCamera>>,
+    pos_of: WorldPosOf,
+    characters: Query<(Entity, &CharacterBody), Without<Dead>>,
+    mut animators: Query<&mut Animator>,
+    mut commands: Commands,
+) {
+    if !keys.just_pressed(KeyCode::KeyI) {
+        return;
+    }
+    let Some((cam, view)) = cameras.iter().next() else { return };
+    let Some(eye) = pos_of.get(cam) else { return };
+    let forward = view.rotation * Vec3::NEG_Z;
+    let mut best: Option<(f32, Entity, &CharacterBody)> = None;
+    for (e, body) in &characters {
+        let Some(feet) = pos_of.get(e) else { continue };
+        let d = eye.delta_f32(feet.offset(Vec3::Y));
+        let along = d.dot(forward);
+        let off = (d - forward * along).length();
+        if (0.0..40.0).contains(&along) && off < 1.0 && best.is_none_or(|(b, ..)| off < b) {
+            best = Some((off, e, body));
+        }
+    }
+    let Some((_, root, body)) = best else {
+        info!("ragdoll: nobody under the crosshair");
+        return;
+    };
+    if let Ok(mut animator) = animators.get_mut(body.body) {
+        animator.set_bool("dead", true);
+    }
+    commands.entity(root).insert((Dead, Dormant));
+    commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF });
+    info!("ragdoll: killed {root} ({})", body.skeleton);
+}
+
+/// Logs ragdoll spawns, failures and the largest joint stretch.
+#[allow(clippy::needless_pass_by_value)]
+fn ragdoll_log(stats: Res<RagdollStats>, mut last: Local<(usize, usize)>, mut peak: Local<f32>) {
+    if (stats.spawned, stats.failed) != *last {
+        info!("ragdoll: {} live, {} spawned, {} failed (no ragdoll.cook product or a death-clip policy)", stats.live, stats.spawned, stats.failed);
+        *last = (stats.spawned, stats.failed);
+    }
+    if stats.max_stretch > *peak + 0.002 {
+        *peak = stats.max_stretch;
+        info!("ragdoll: joint stretch peak {:.2} cm ({} awake)", stats.max_stretch * 100.0, stats.awake);
+    }
+}
+
+// --- Carry, drag and throw (P6 debug driver) ---------------------------------------------
+
+/// The dev camera carries (no player yet): hold the left mouse button on an
+/// item under the crosshair to carry it (or drag it when it is heavier than
+/// the carry mass), release to drop; `V` throws what is carried; `[` and `]`
+/// turn it. Limits from Strength [`mw_physics::DEFAULT_STRENGTH`]
+/// (`BEVYRROWIND_STRENGTH` overrides it). PH-4.
+fn attach_holder(mut commands: Commands, cameras: Query<Entity, (With<FreeCamera>, Without<Holder>)>) {
+    for e in &cameras {
+        let strength = std::env::var("BEVYRROWIND_STRENGTH").ok().and_then(|s| s.parse().ok()).unwrap_or(mw_physics::DEFAULT_STRENGTH);
+        let limits = mw_physics::holder_limits(strength);
+        info!("carry: Strength {strength} -> {limits:?}");
+        commands.entity(e).insert(Holder::new(limits));
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn carry_keys(
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    holders: Query<(Entity, &Holder)>,
+    mut input: MessageWriter<CarryInput>,
+) {
+    const TURN: f32 = 0.26;
+    for (e, h) in &holders {
+        if mouse.just_pressed(MouseButton::Left) {
+            input.write(CarryInput::Grab(e));
+        }
+        if h.carrier.held().is_none() {
+            continue;
+        }
+        if mouse.just_released(MouseButton::Left) {
+            input.write(CarryInput::Drop(e));
+        } else if keys.just_pressed(KeyCode::KeyV) {
+            input.write(CarryInput::Throw(e));
+        }
+        for (key, yaw) in [(KeyCode::BracketLeft, TURN), (KeyCode::BracketRight, -TURN)] {
+            if keys.just_pressed(key) {
+                input.write(CarryInput::Rotate { holder: e, yaw, pitch: 0.0 });
+            }
+        }
+    }
+}
+
+/// Logs grab results; a drag slows the camera by the holder's speed scale.
+#[allow(clippy::needless_pass_by_value)]
+fn carry_feedback(
+    mut feedback: MessageReader<CarryFeedback>,
+    mut cameras: Query<(&Holder, &mut FreeCamera)>,
+    mut base: Local<Option<(f32, f32)>>,
+) {
+    for f in feedback.read() {
+        info!("carry: {:?}", f.outcome);
+    }
+    for (h, mut cam) in &mut cameras {
+        let (walk, run) = *base.get_or_insert((cam.walk_speed, cam.run_speed));
+        let s = h.speed_scale();
+        if (cam.walk_speed - walk * s).abs() > 1e-4 {
+            cam.walk_speed = walk * s;
+            cam.run_speed = run * s;
+        }
+    }
+}
+
+/// `BEVYRROWIND_FPS_CAP=<fps>`: a dev frame limiter (sleep, then spin) for
+/// the PH-4 carry check at 30, 60 and 144 fps. Use a non-vsync present mode
+/// (`BEVYRROWIND_PRESENT=mailbox`) for caps above the display rate.
+#[derive(Resource)]
+struct FpsCap {
+    frame: Option<std::time::Duration>,
+    last: Option<std::time::Instant>,
+}
+
+impl Default for FpsCap {
+    fn default() -> Self {
+        let fps: Option<f64> = std::env::var("BEVYRROWIND_FPS_CAP").ok().and_then(|s| s.parse().ok()).filter(|f| *f > 0.0);
+        Self { frame: fps.map(|f| std::time::Duration::from_secs_f64(1.0 / f)), last: None }
+    }
+}
+
+fn cap_fps(mut cap: ResMut<FpsCap>) {
+    let Some(frame) = cap.frame else { return };
+    if let Some(last) = cap.last {
+        let until = last + frame;
+        let now = std::time::Instant::now();
+        let wait = until.saturating_duration_since(now).saturating_sub(std::time::Duration::from_millis(2));
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
+        while std::time::Instant::now() < until {
+            std::hint::spin_loop();
+        }
+        cap.last = Some(if until > now { until } else { now });
+    } else {
+        cap.last = Some(std::time::Instant::now());
+    }
 }
 
 /// The Morrowind item rules for the runtime (physics-adapter.md "Items").
@@ -153,6 +360,7 @@ const BALLS_KEPT: usize = 8;
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn throw_ball(
     keys: Res<ButtonInput<KeyCode>>,
+    holders: Query<&Holder>,
     mut commands: Commands,
     camera: Query<(&CellCoord, &Transform, &ChildOf, Option<&RenderLayers>), With<Camera3d>>,
     active: Res<ActiveWorldspace>,
@@ -161,7 +369,8 @@ fn throw_ball(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyV) {
+    // `V` throws the carried item instead while something is held.
+    if !keys.just_pressed(KeyCode::KeyV) || holders.iter().any(|h| h.carrier.held().is_some()) {
         return;
     }
     let (Some((cell, t, parent, layers)), Some(ws)) = (camera.iter().next(), active.0.clone()) else { return };
@@ -217,6 +426,12 @@ struct Peaks {
     rebases: u32,
     /// Most bodies awake at once (PH-7: 0 with nobody near the items).
     awake: usize,
+    /// Character capsules (most at once), pushes, the largest push (N·s) and
+    /// impacts on characters (P5).
+    capsules: usize,
+    pushes: u32,
+    max_push: f32,
+    impacts: u32,
 }
 
 /// physics.md budgets: an idle R0 step ≤ 0.3 ms, insertion ≤ 0.5 ms per frame.
@@ -224,7 +439,14 @@ const STEP_BUDGET_MS: f32 = 0.3;
 const INSERT_BUDGET_MS: f32 = 0.5;
 
 #[allow(clippy::needless_pass_by_value)]
-fn peaks(time: Res<Time>, stats: Res<PhysicsStats>, mut p: ResMut<Peaks>, physics: Res<Physics>, streaming: Res<PhysicsStreaming>) {
+fn peaks(
+    time: Res<Time>,
+    stats: Res<PhysicsStats>,
+    chars: Option<Res<CharacterStats>>,
+    mut p: ResMut<Peaks>,
+    physics: Res<Physics>,
+    streaming: Res<PhysicsStreaming>,
+) {
     if p.since + time.delta_secs() >= 10.0 {
         // Items that never sleep (PH-7: none with nobody near).
         for (id, start, moved, v, w) in streaming.awake_items(&physics).into_iter().take(6) {
@@ -245,13 +467,20 @@ fn peaks(time: Res<Time>, stats: Res<PhysicsStats>, mut p: ResMut<Peaks>, physic
     p.dropped += s.dropped_steps;
     p.rebases += s.rebases;
     p.awake = p.awake.max(s.awake);
+    if let Some(c) = chars.as_deref() {
+        p.capsules = p.capsules.max(c.capsules);
+        p.pushes += c.pushed;
+        p.max_push = p.max_push.max(c.max_push);
+        p.impacts += c.impacts;
+    }
     p.since += time.delta_secs();
     if p.since < 10.0 {
         return;
     }
     info!(
         "physics: {} bodies ({} items, {} terrain chunks, {} pending, {} awake, peak {}) | peaks over {} frames: step {:.3} ms \
-         ({:.3} ms/frame), insert {:.3} ms/frame ({} bodies) | {} frames over budget, {} dropped steps, {} rebases",
+         ({:.3} ms/frame), insert {:.3} ms/frame ({} bodies) | {} frames over budget, {} dropped steps, {} rebases | {} capsules, \
+         {} pushes (max {:.2} N·s), {} impacts",
         s.bodies,
         s.items,
         s.terrain_chunks,
@@ -265,7 +494,11 @@ fn peaks(time: Res<Time>, stats: Res<PhysicsStats>, mut p: ResMut<Peaks>, physic
         p.inserts,
         p.over_budget,
         p.dropped,
-        p.rebases
+        p.rebases,
+        p.capsules,
+        p.pushes,
+        p.max_push,
+        p.impacts
     );
     *p = Peaks::default();
 }
