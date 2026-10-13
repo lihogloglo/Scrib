@@ -56,6 +56,26 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      `VisibilityRange` in every view, cascades included); keep particles on CPU culling; decide the default.
    - J3 [ ] size-tiered spawn residency in `sf_world`: R1 detail tiers keyed on `d_draw`, prefix spawn by
      cutoff radius (pages are radius-sorted), `CellSummary` tier counts, activation split from visuals.
+6a. **Owner visual pass 2026-10-13 (play/ built from HEAD 27a3f86; notes only, nothing fixed yet).** Read before picking work:
+   - Fog/froxels: foliage (impostors?), lava and the Ghostfence render on top of the fog: visible at any distance. Likely
+     materials that skip the fog (alpha-blended/additive, custom far-field materials): apply fog to them (`FroxelFogMaterial`,
+     impostor/proxy shaders, NIF blended materials).
+   - God rays barely visible (Godotwind's settings looked okay: compare, don't copy constants).
+   - Ashstorm: the original has a particle effect (blowing ash), not just dense fog: add precipitation-style ash particles (M6 PR).
+   - Shadows: most shadows only appear very close (a few cm to m): check CSM cascade/fade settings, shadow distances per
+     preset, and the point-light budget fade. A torch-bearer casts no shadow from their own torch (expected with point light
+     at the torch, but the body should still cast the sun/moon shadow and other lights' shadows: check).
+   - Grazing-light artefact: a blocky, half-transparent outline on objects/terrain at grazing light; shimmers with DLSS off.
+     Suspects: shadow acne / normal-offset bias, dithered cascade end, terrain blend, or RT/denoiser. Owner asks for a live
+     RT on/off toggle at any time (render path switch at runtime).
+   - Water: too milky turquoise but looks good; colour must vary by area (tropical, arctic, muddy: region optics, W3
+     in progress); shore outline too white and generic; wave height by weather for open water only (not lakes).
+   - Physics: a thrown ball can push an item (e.g. the staff) through a wall (CCD / solver push-out against statics);
+     some items have no collider (big baskets, small boxes: body.cook failures or open meshes?); carry like Oblivion: hold
+     and move with the item, camera angular velocity drives the force on the held object (keep the dedicated throw key).
+   - Ragdolls: buggy (known unfinished). Knockdown is messy: some body parts spin needlessly, and there is no fall
+     animation: the NPC snaps to the lying pose. Needs a powered fall toward the ground before limp, and joint-limit/
+     spin damping.
 6b. **Queued (owner 2026-10-12): sky pass**, before exterior ray tracing (item 5). One agent per job, max 3 at once:
    - S1 clouds [~] (clouds3 2026-10-13: in game, in the High budget: shadow map 0.04 ms, clouds 0.91 fair / 0.79 cumulus / <= 0.62 overcast+storm GPU ms at 1440p; CL-1..6 awaiting owner; open: crisp billows, anvils, far fog): cloud types across the full range (cumulus, stratocumulus, altostratus/cirrus high layers, cumulonimbus
      storm cells), not two overcasts + one pattern + clear; visible wind motion (Morrowind `Cloud Speed` per weather,
@@ -1027,7 +1047,17 @@ dependency order:
   index rebuild + `Arc<Vfs>` swap, winning-change `AssetSourceEvent`s, routing (assets, CSS, scripts, record files,
   dev re-bake of affected products). Verify: `cargo test -p sf_vfs --all-features` (winner changes, shadowed edits
   silent, readers never block); MS-1.
-- [ ] L3 API v0.1 (scripting.md "Curated API"): `@sf/core`, `events`, `timers`, `interfaces`, `world`, `records`,
+- [~] L3 (2026-10-13, m5-l3, uncommitted) built: API v0.1 `@sf/core` (+ `version`, `settings()`, `game_time()`,
+  `on_load`), `@sf/events`, `@sf/timers`, new `@sf/interfaces` (sync cross-mod calls, copied plain data, callee
+  watchdog, cycles rejected), `@sf/world` (+ `nearby`, `spawn`/`despawn` via `WorldCommand` queue, entity scripts
+  `define_script`/`attach`/`detach`/`state` with state in the mod's snapshot, activated before global handlers, `tick`
+  while loaded), handle methods (`h:position()`), **`on_load` = queued, runs at the next `Update` slot (world access)**,
+  generated `superfargoth/docs/api/sf.d.luau` (golden test), example mod `superfargoth/examples/mods/api_tour` run
+  headless; mlua `serialize` dropped. sf_script 22 + sf_script_bevy 8 tests, clippy clean. App (written, **not yet
+  compiled**: build blocked by m6-w3's water.rs WIP): `LiveSpawn` scaffold applies `WorldCommand`s, doors open from
+  unhandled `ActivationOutcome`, `game_time` from the sky clock. Left: app build + real run (scratch mod `l3_test`),
+  `@sf/records`, `input`, `anim`, `physics`, MS-2. Details: scripting.md "As built (L3)". Original task text:
+  L3 API v0.1 (scripting.md "Curated API"): `@sf/core`, `events`, `timers`, `interfaces`, `world`, `records`,
   `input`, thin `anim` (slots) and `physics` (impulse, raycast); `sf.d.luau` + docs generated from the registry.
   Verify: golden `.d.luau`; example mods in `superfargoth/examples/mods/` run headless; MS-2.
 - [ ] U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
@@ -1504,9 +1534,12 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (physics-p7): M4 P7 [~] (uncommitted): new `sf_ragdoll` (`ragdoll.cook` from rig profiles, limp `RagdollInstance`), death handoff in `sf_physics_bevy` feature `ragdoll` + `sf_anim_bevy::PhysicsPose`, corpse drag by limb (whole-ragdoll mode mass); impulse joints + 8 iterations + 4:1 mass cap: drop 0.49 cm, stairs 0.32, 75 kg wrist drag 0.07 (gate 1 cm); census 93 skeletons, 0 failed (creature masses implausible without skin extents); app `I` kills; PH-2 awaiting owner.
 - 2026-10-13 (physics-p8): M4 P8 [~] (uncommitted): powered ragdoll core (`sf_ragdoll::powered`: stable-PD joint targets with composite-inertia gains, world pelvis anchor, hits + dips, balance, get-up root, `ROLL_TO_BACK` scaffold), `Layer::POWERED`, graph physics stage + `inertialize_from` hand-back, per-joint `PhysicsPose` weights, `mw_physics::creature_mass`; joints 3.2° RMS (met), effectors 11.5 cm (missed), hand-back continuous (met), 0.128 ms per powered character (missed); app wiring, PH-2/PH-9 runs are P8b.
 - 2026-10-13 (physics-p8b): M4 P8b [~] (uncommitted, tool cap): critically damped + gravity-compensated pelvis drive (effectors 11.5 → 6.8 cm air / 11.0 cm floor, gate open), powered-iteration knob (0.129 → 0.090 ms/char at +4; parallel no gain), `sf_physics_bevy` Death crumple / Knockdown + get-up modes, budget 8, impact direction, app knockdown wiring, census 93/0 failed; app run + PH-2/PH-9 screenshots handed to P9.
+- 2026-10-13 (physics-p9): M4 P9 [~] (uncommitted, stopped on usage limit before the app run): `sf_anim_graph::secondary` `HitReact` (closed-form critical rotation springs, `GraphInstance::hit`) + `SpringBones` (Verlet chains, fixed 1/120 s substep, frequency/damping, inertia), 3 tests (frame-rate independent, no drift); mw_graphs humanoid/creature carry both; `clip_root_body` get-up pose replaces the `LYING_REST_GET_UP` scaffold; app hit reactions under 15 N·s, mover yaw after get-up, `BEVYRROWIND_AUTO` dev hook (app physics.rs not yet compiled: blocked by other sessions); P8b numbers in physics.md; PH-10 added. Handoff: `../.sessions/physics-p9.md`.
 - 2026-10-13 (m5-a3): M5 A3 built (uncommitted): `mw_mods` (Morrowind `ContentAdapter`, builtin `mw` mod pinned lowest with graphs + `mw` Luau runtime, `morrowind-data`, generated default profile, `<user data>/{mods,profiles}`), TES3 kinds serde-registered, bake record fingerprints via `RecordDb::fingerprint`, profile fingerprint beside the manifest (directory-listing stats: 375 → 4 ms), `ShadowedModern`, app loads through profiles + `mods list|order|report|enable|disable`; real install 62,025 records, load 0.29 s, RON radius patch visible in `mods report`, texture mod wins `which` and re-bakes nothing; no-op bake 3.0-3.2 s (gate 2.5 s missed by non-A3 steps).
 - 2026-10-13 (m6-f3b): M6 F3 [~] (resumed m6-f3, uncommitted): froxel fog + god rays in `sf_atmos_bevy` (inject/integrate compute, CSM + shadow-height + cloud shadow, 32 point lights, temporal; analytic layers past 384 m), shared `fog_bank.wesl`, `FroxelVolume`/`FroxelFogMaterial` for transparents, `--off froxels`, clear/fair dawn haze; Bevy `VolumetricFog` rejected (weather.md); GPU 0.16 ms at 1440p; FG-3/FG-4 awaiting owner (shots/f3/).
 - 2026-10-13 (m5-l2): M5 L2 built (uncommitted): new `sf_script_bevy` (Bevy-thin: app/ecs/time/sf_diag_bevy) with `Scripts` resource, Input/Update/Ui exclusive slots, `Activated` → `ActivationOutcome { handled }`, `ScriptFact`, diagnostics messages + `script/...` counters; world access decided as declared slot resources moved into one shared cell (no per-context guard cost); `ScriptPlacements` + `@sf/world` subset; 4 headless tests + clippy clean. App `scripts.rs`: profile contexts + `mw.legacy`, R0 handle hook, crosshair pick (scaffold) on Space / `--activate N`; a scratch-folder Lua mod logged a real activation in the Census office and its timer fired.
 - 2026-10-13 (m6-w1): M6 W0 + W1 built (uncommitted): water census example (`mw_world` `water_census`: one exterior sea level, 216 visible / 21 hidden interior pools, 39 moored-boat candidates, Bitter Coast water mostly connected to the sea, so swamp calm comes from openness), new `sf_water` (records, JONSWAP/TMA/Donelan-Banner spectrum, power-of-two cascades, `h0` keyed by wave vector, rustfft CPU twin with cubic sampling, BVH/priority `WaterQuery`; twin 2.4 mm from exact, 0.027 ms/step, 0.25 µs/sample) and `mw_water` skeleton; bevy-aqua notice in `THIRD_PARTY_NOTICES.md`; W2 handoff in water.md "As built (W1)".
 - 2026-10-13 m6-w2: M6 W2 ocean + water pass built (sf_water_bevy: GPU FFT 4×256², clipmap + skirt, snapshot water draw, aerial + froxel fog, velocity redraw; golden 1.9 mm); WA-1/WA-8 awaiting owner; `SeaPlaneScaffold` behind `--water scaffold`.
 - 2026-10-13 (m5-a4): M5 A4 hot reload built (uncommitted): `sf_vfs` `SharedVfs` (arc-swap) + `Vfs::rebuild` of dirty dir layers with winning-change diff + `watch::VfsWatcher` (notify-debouncer-full 0.7, Bevy's crate) + Bevy `shared_asset_source`; `sf_mods` `route`/`reload_records`; `sf_script_bevy` `reload_changed`; app `hot_reload.rs` (dev only). 15+20+5 tests, clippy clean; real run: Lua edit reloads with state kept, texture edit reloads in the Census office, each under 0.3 s. Dev re-bake during play not built.
+- 2026-10-13 (m5-l3): M5 L3 [~] (uncommitted): script API v0.1 in sf_script/sf_script_bevy (core `on_load`/settings/game_time, new `@sf/interfaces`, `@sf/world` spawn/despawn queue + nearby + entity scripts with snapshot state, handle methods), golden `docs/api/sf.d.luau`, example mod `examples/mods/api_tour` headless, mlua `serialize` dropped; 22 + 8 tests, clippy clean. App LiveSpawn scaffold + doors on `ActivationOutcome` written but not compiled (app build blocked by m6-w3 WIP); real run pending.
+- 2026-10-13 (m6-w3, stopped early at owner usage limit, uncommitted): W2 leftovers part 1 + W3 groundwork: fused 2-dispatch FFT with runtime grid (128/256), `WaterQuality` tiers, High alternates the 256/64 m cascades (example 1600×900, shared machine: `water_fft` 0.22 → 0.139 ms + `water_mips` 0.023 ms; golden 1.0 mm), slopes mips, pipeline warm-up at startup, analytic height fog path, `sf_water::shore` (FH EDT + openness by geodesic distance, CPU query attenuation; 3 tests), `WaterSurface` (lakes/pools/interiors), region optics map in the shader, `mw_water` `wet_mask`/`optics_map` + less milky optics (2 tests). App wiring, screenshots, 1440p and DLSS checks not done; handoff in `../.sessions/m6-w3.md`.
