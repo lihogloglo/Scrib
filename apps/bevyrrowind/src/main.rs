@@ -13,6 +13,7 @@ mod actor_fx;
 mod actor_particles;
 mod faces;
 mod held;
+mod hot_reload;
 mod live_ab;
 mod mods;
 mod night_sky;
@@ -26,6 +27,7 @@ mod skinned_view;
 mod sweep;
 mod view;
 mod walkers;
+mod water;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -215,6 +217,12 @@ struct ViewFlags {
     /// 0 none, 2 twice as dense), weather.md "Fog". `--off fog` drops the fog terms.
     #[arg(long)]
     fog: Option<f32>,
+    /// Exteriors: the sea (M6 W2): `on` (FFT ocean), `scaffold` (old flat sea, A/B), `off`.
+    #[arg(long, value_enum)]
+    water: Option<water::WaterMode>,
+    /// Exteriors: 10 m wind speed for the ocean, m/s (scaffold until `sf_wind`; default 7).
+    #[arg(long)]
+    water_wind: Option<f32>,
     /// Exteriors: time of day in hours.
     #[arg(long, default_value_t = 10.0)]
     hour: f64,
@@ -393,6 +401,7 @@ impl ViewFlags {
         title: String,
         start: StreamStart,
     ) -> Result<exterior::ExteriorOptions> {
+        water::set_mode(self.water.unwrap_or_default(), self.water_wind);
         if self.no_baked {
             return Err("the exterior streams from bake products; --no-baked is not available".into());
         }

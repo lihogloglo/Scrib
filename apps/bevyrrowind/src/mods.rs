@@ -132,7 +132,7 @@ fn print_vfs(vfs: &Vfs, elapsed: std::time::Duration) {
 pub fn load_content(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, LoadedContent, [u8; 32])> {
     let start = Instant::now();
     let mods = open(install, true)?;
-    let loaded = load(&mods);
+    let mut loaded = load(&mods);
     let fingerprint_start = Instant::now();
     let fingerprint = mods.fingerprint(&loaded);
     let fingerprint_time = fingerprint_start.elapsed();
@@ -164,8 +164,13 @@ pub fn load_content(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, L
             );
         }
     }
-    let vfs = Arc::try_unwrap(loaded.vfs).map_err(|_| "VFS still shared")?;
-    Ok((vfs, LoadedContent { db: loaded.records, files, warnings }, fingerprint))
+    let vfs = std::mem::replace(&mut loaded.vfs, Arc::new(Vfs::builder().build()));
+    let vfs = Arc::try_unwrap(vfs).map_err(|_| "VFS still shared")?;
+    let db = std::mem::replace(&mut loaded.records, sf_records::RecordDb::new());
+    // Dev builds keep the profile (records and VFS moved out) for record hot reload (M5 A4).
+    #[cfg(feature = "dev")]
+    crate::hot_reload::keep_profile(mods, loaded);
+    Ok((vfs, LoadedContent { db, files, warnings }, fingerprint))
 }
 
 fn id(raw: &str) -> Result<ModId> {

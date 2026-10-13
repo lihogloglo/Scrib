@@ -168,7 +168,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let mut app = App::new();
     let render = options.render;
     crate::render::RenderSettings::init(&mut app);
-    app.register_asset_source(AssetSourceId::Default, sf_vfs::bevy::asset_source(vfs.clone()));
+    // Watched and swappable in dev builds (M5 A4 hot reload).
+    let vfs_source = crate::hot_reload::asset_source(&mut app, vfs.clone());
+    app.register_asset_source(AssetSourceId::Default, vfs_source);
     let mut extensions = BTreeMap::from([(MeshCookStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned())]);
     extensions.extend(sf_lod_bevy::baked_extensions());
     // The far field (far-field.md) when the bake has it and `--off farfield` doesn't drop it.
@@ -308,6 +310,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
 
     crate::doors::add(&mut app, options.world, options.use_door);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
+    crate::water::add(&mut app);
     if let Some(links) = options.portals {
         crate::portal_spike::add(&mut app, links);
     }
@@ -560,6 +563,10 @@ fn setup(
     // Transparents get fog with F3's `sf_atmos::fog` function; `sf_water` (W2)
     // replaces the scaffold. No shadow caster: nothing lies under it.
     let exterior_layer = registry.ensure(&mut commands, &ids::exterior()).layer;
+    // W2: only behind `--water scaffold` (A/B until WA-1 passes; water.rs draws the ocean).
+    if crate::water::mode() != crate::water::WaterMode::Scaffold {
+        return;
+    }
     commands.spawn((
         SeaPlaneScaffold,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(64_000.0, 64_000.0))),

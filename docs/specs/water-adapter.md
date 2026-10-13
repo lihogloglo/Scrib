@@ -300,3 +300,15 @@ Ours: the same levels mapped to bodies, the look as physical optics per region (
    channels only. Recommend: yes (a "rivers of Vvardenfell" mod could switch to `Generate { carve }`).
 4. **Swamp look**: murky optics with ~3 m visibility, no waves, no foam in the Bitter Coast. Recommend:
    yes, tune on WA-2.
+
+## As built (W2, 2026-10-13, m6-w2)
+
+App `src/water.rs`: `--water on|scaffold|off` (default on), `--water-wind <m/s>` (the `WindInput` scaffold, default
+7 m/s toward the north-east, until WD1). The exterior ocean body comes from `MwWaterSource` (a `Worldspace` with
+`sea_level` 0); `Water { WaterWorld, time }` steps in `FixedUpdate` before `PhysicsSystems::Step` with a 64² twin of
+cascade 0 (same seed `0x5EA00001` and cascades as the GPU); bed = the resident `TerrainHeightsMap` (re-cloned at most
+once a second while it changes); `WaterFrame` from `TerrainOrigin` after `TerrainSystems::Update` (so after
+`sync_origin`, in the frame of the origin shift); look = `mw_water/sea` optics; `WaterCamera` on the exterior
+camera; froxel volume wired from `sf_atmos_bevy::FroxelVolume`. `SeaPlaneScaffold` spawns only with
+`--water scaffold`; the scaffold, its spawn and the sea branch of `sync_origin` go once WA-1 passes. Scenes
+`wa-seyda-noon`, `wa-vivec-waterfront`, `wa-bittercoast`, `wa-sunset-sea`, `wa-night-moons` (shots in `shots/w2/`).

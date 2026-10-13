@@ -9,7 +9,7 @@ license.workspace = true
 # Fast iteration: Bevy as a shared library, so relinking after a change
 # skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
 # `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
-dev = ["bevy/dynamic_linking", "bevy/dev"]
+dev = ["bevy/dynamic_linking", "bevy/dev", "sf_vfs/watch"]
 # Ray-traced lighting (`view --rt`): Bevy Solari. Off by default: it forces
 # the deferred renderer at startup and needs a ray-tracing GPU.
 solari = ["sf_sky_bevy/solari", "bevy/bevy_solari"]
@@ -62,6 +62,9 @@ sf_records.workspace = true
 sf_script.workspace = true
 sf_script_bevy.workspace = true
 sf_atmos_bevy.workspace = true
+sf_water.workspace = true
+sf_water_bevy.workspace = true
+mw_water.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
 sf_vfs.workspace = true
