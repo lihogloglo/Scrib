@@ -63,7 +63,7 @@ fn calls() {
     row(
         "Rust→Luau call, empty fn, raw `Function::call`",
         median_ns(100_000, 21, |n| {
-            (0..n).for_each(|_| noop.call::<()>(()).unwrap())
+            (0..n).for_each(|_| noop.call::<()>(()).unwrap());
         }),
         "ns",
         "",
@@ -81,7 +81,7 @@ fn calls() {
     row(
         "Rust→Luau call, guarded (watchdog arm/disarm, stats, catch_unwind)",
         median_ns(100_000, 21, |n| {
-            (0..n).for_each(|_| ctx.call::<()>(&noop, (), "bench", &policy).unwrap())
+            (0..n).for_each(|_| ctx.call::<()>(&noop, (), "bench", &policy).unwrap());
         }),
         "ns",
         "what every handler call pays",
@@ -122,6 +122,7 @@ fn calls() {
     row("Luau loop iteration (baseline)", base, "ns", "");
 }
 
+#[allow(clippy::too_many_lines, reason = "one linear measurement script")]
 fn memory_and_start() {
     let mut rt = one_mod("");
     let ctx = rt.context_mut("m").unwrap();

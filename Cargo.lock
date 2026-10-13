@@ -4886,6 +4886,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "primal-check"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc0d895b311e3af9902528fbb8f928688abbd95872819320517cc24ca6b2bd08"
+dependencies = [
+ "num-integer",
+]
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5213,6 +5222,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustfft"
+version = "6.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21db5f9893e91f41798c88680037dba611ca6674703c1a18601b01a72c8adb89"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "primal-check",
+ "strength_reduce",
+ "transpose",
+]
+
+[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5451,6 +5474,7 @@ dependencies = [
  "bevy_light",
  "bevy_math",
  "bevy_pbr",
+ "bevy_reflect",
  "bevy_render",
  "bevy_shader",
  "bevy_time",
@@ -5692,6 +5716,7 @@ dependencies = [
 name = "sf_mods"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "semver",
  "serde",
  "sf_records",
@@ -5734,15 +5759,32 @@ dependencies = [
  "bevy_tasks",
  "bevy_time",
  "bevy_transform",
+ "sf_anim",
+ "sf_anim_bevy",
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
  "sf_diag_bevy",
  "sf_physics",
+ "sf_ragdoll",
  "sf_terrain_bevy",
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",
+]
+
+[[package]]
+name = "sf_ragdoll"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "postcard",
+ "serde",
+ "sf_anim",
+ "sf_bake",
+ "sf_coords",
+ "sf_physics",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5770,6 +5812,19 @@ dependencies = [
  "serde",
  "sf_vfs",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_script_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_time",
+ "log",
+ "semver",
+ "sf_diag_bevy",
+ "sf_script",
 ]
 
 [[package]]
@@ -5864,6 +5919,20 @@ dependencies = [
  "futures-lite",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_water"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "rustfft",
+ "serde",
+ "serde_json",
+ "sf_coords",
+ "sf_records",
+ "sf_terrain",
+ "sf_world",
 ]
 
 [[package]]
@@ -6086,6 +6155,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "strength_reduce"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "strict-num"
@@ -6448,6 +6523,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "transpose"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
+dependencies = [
+ "num-integer",
+ "strength_reduce",
 ]
 
 [[package]]

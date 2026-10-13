@@ -1,7 +1,8 @@
 # Scripting (Luau)
 
 Status: draft (2026-10-13, m5-spec session, docs only). Built in M5. L1 (`sf_script` core + spike)
-done 2026-10-13 (m5-l1): numbers in "Spike results (L1)"; decision 1 confirmed.
+done 2026-10-13 (m5-l1): numbers in "Spike results (L1)"; decision 1 confirmed. L2 (`sf_script_bevy`)
+done 2026-10-13 (m5-l2): "As built (L2)".
 Crates (proposed): `sf_script` (Bevy-free: runtime, sandbox, API registry, state, timers, events),
 `sf_script_bevy` (plugin: schedule slots, world access, entity handles, hot reload, diagnostics),
 API modules next to the systems they expose (`sf_ui_lua` per ui.md; small modules may live in
@@ -195,6 +196,20 @@ per context per slot, ~1.5 ms a frame for 50 mods × 3 slots), while the guard c
 slot; per API call both cost ~65 ns. L2 picks how the slot's access reaches the guard (data the
 API needs moved in for the slot, or one scoped userdata per slot as the fallback); API functions
 look it up in app data and fail with "outside a script slot" when it's empty.
+
+**L2 decision: slot resources moved into one shared cell** (`sf_script_bevy::access`). API
+modules declare the resources they read or write (`Scripts::register_slot_resource::<T>()`, any
+`Resource + Default`); every context's app data holds an `Arc` to the runtime's one
+`SlotAccess` cell from creation (the `@sf/world` module installs it, so restarts and reloads
+get it too). Opening a slot moves each declared resource out of the `World` into the cell
+(`mem::take` without change detection), closing moves it back; API functions borrow it with
+`with_resource::<T>(lua, |t| ..)`, which fails with "world access outside a script slot" while
+the cell is closed and with "re-entrant" instead of deadlocking. Cost: one move per declared
+resource per slot, **independent of the number of contexts** (per-context guard installation
+would be 0.23 µs × contexts × slots, 35 µs a frame at 50 mods), plus a mutex and a type lookup
+per API call. Rejected: a `World` pointer (needs `unsafe`, forbidden), `scope` (L1 cost),
+swapping the whole `World` out (breaks the running schedule's world id). Writes are immediate;
+modules that write call `mark_changed::<T>` so change-detecting systems see them.
 
 **Writes are immediate** for component state the API owns (enable/disable, teleport, inventory,
 variables), so scripts read their own writes (Factorio semantics). **Structural changes**
@@ -433,6 +448,41 @@ Assumptions checked:
   and the need for the watchdog latch and for lifting the memory limit during host-side
   conversion.
 
+### As built (L2, 2026-10-13)
+
+`sf_script_bevy` (deps: `bevy_app`, `bevy_ecs`, `bevy_time`, `sf_diag_bevy`, `sf_script`; no
+render or input crate):
+
+- **`Scripts`** resource: the `ScriptRuntime` (`pub runtime`) plus the slot cell, the declared
+  slot resources, per-context totals for counters and the last 64 diagnostics (`recent()`,
+  `stopped()`). `Scripts::new` registers `@sf/world`; `start`/`reload` keep their diagnostics
+  for the next slot. `ScriptsPlugin` inserts an empty one unless the app inserted its own.
+- **Slots** (`ScriptSlot` system sets, one exclusive system each): `Input` in `PreUpdate`
+  (`ScriptFact`s for that slot, e.g. `ScriptFact::input_action`), `Update` in `Update`
+  (`Activated` first, then `ScriptFact`s, then `ScriptRuntime::update(dt)`: queued script
+  events, due timers, `update` handlers; `dt` from `Time` (virtual)), `Ui` in `PostUpdate`
+  (`ScriptFact`s for that slot; U7 grows it). The app orders input/focus before `Input`,
+  fact-emitting gameplay before `Update`, default actions after it. A slot with no contexts
+  costs one resource check.
+- **Engine facts**: `Activated { target, actor }` (handles; `PLAYER` = `Handle(0)` for the
+  player) → event `"activated"` `{ target, actor }`; every activation gets an
+  `ActivationOutcome { activation, handled }` after the slot, `handled` when any handler
+  returned `"handled"`. Other facts are `ScriptFact { slot, name, payload }` (the app maps
+  `CellLoaded` → `"cell_loaded"`). Engine names have no colon; mod events stay `<mod>:<name>`.
+- **Handles and `@sf/world` (L2 subset)**: `ScriptPlacements` (handle → record, worldspace,
+  f64 position, radius; plus the player) is the loaded-placement map, a slot resource; the
+  content pack fills it from its R0 activation hooks (Bevyrrowind: a `PlacementSpawner` wrapper).
+  `world.player()`, `is_loaded(h)`, `record(h)`, `worldspace(h)`, `position(h)` → `x, y, z`
+  (doubles: a Luau `vector` is f32). Handle methods (`h:position()`) need the handle's userdata
+  type to dispatch to registered modules: an `sf_script` hook for L3.
+- **Diagnostics**: per slot, `take_diagnostics()` → `ScriptDiagnostics` message + `recent()`;
+  counters `script/<slot>/ms` (slot wall time) and per context `script/ctx/<id>/ms`, `calls`,
+  `errors`, `aborts` (per-slot deltas of `ContextStats`), gauge `script/ctx/<id>/mib`.
+- **Not in L2** (moved on): entity scripts with state in the placement overlay and the
+  "target's entity scripts first" half of the activation pipeline (L3 `world.attach`, W3 for
+  legacy locals), spawn/despawn (L3), the dev Lua console (needs U1 input; `ScriptContext::eval`
+  exists), `Died` (M7), hot reload wiring (A4 calls `Scripts::reload`).
+
 ## Verification
 
 - **Unit (Bevy-free, `sf_script`)**: sandbox escape list (`io`, `os`, `debug.getinfo`,
@@ -483,7 +533,7 @@ RFC; not re-read this session).
 ## Open questions
 
 1. ~~`send` feature vs `NonSend` storage, and the world-guard mechanism~~: decided in L1
-   (`send`; app-data guard). Open for L2: how the slot's world access is handed to the guard.
+   (`send`; app-data guard); L2 decided the hand-off: declared slot resources moved into one shared cell.
 2. Native codegen default: off (L1 numbers); per-mod opt-in (`--!native`) if a measured mod benefits.
 3. Whether entity `tick` should support a declared rate (`tick_hz`) to cut cost for mods that
    poll; legacy scripts must tick every frame (scripting-adapter.md).

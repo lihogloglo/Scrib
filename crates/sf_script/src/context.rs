@@ -581,7 +581,7 @@ impl ScriptContext {
                 out.calls += 1;
                 match h?.call::<Value>(&payload) {
                     Ok(Value::String(s)) if s.as_bytes().as_ref() == b"handled" => {
-                        out.handled = true
+                        out.handled = true;
                     }
                     Ok(_) => {}
                     Err(e) => {
