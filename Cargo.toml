@@ -108,6 +108,7 @@ sf_physics_bevy = { path = "crates/sf_physics_bevy" }
 sf_ragdoll = { path = "crates/sf_ragdoll" }
 sf_script = { path = "crates/sf_script" }
 sf_water = { path = "crates/sf_water" }
+sf_water_bevy = { path = "crates/sf_water_bevy" }
 sf_script_bevy = { path = "crates/sf_script_bevy" }
 
 [workspace.lints.rust]

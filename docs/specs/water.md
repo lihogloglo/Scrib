@@ -659,3 +659,42 @@ and Water System overview; Unity forum thread on HDRP water CPU simulation
 bevy_solari 0.20 sources in the local registry. Papers as cited above (from the literature, not
 re-read this session); UE water info texture and Single Layer Water details from the UE docs as
 remembered: mark unverified on detail.
+
+## As built (W2, 2026-10-13, m6-w2)
+
+`crates/sf_water_bevy` (thin Rust, WESL; minimal bevy_* deps + `sf_water`). `WaterPlugin`; host inputs `OceanSpectrum`
+(params, cascades, seed: the twin's), `WaterFrame` (time, origin cell, render-space level), `WaterLook`
+(`from_optics`), `WaterFogInput` (froxel volume), `ClipmapSettings`; markers `WaterCamera`, `OceanSurface`;
+`WaterSystems::Drive` (PostUpdate). `sf_water`: `REPEAT_PERIOD` 256 s, `omega_repeat`/`repeat_cycles` (the twin now
+evolves with them), `H0::gpu_texels`; test `waves_repeat_after_the_repeat_period`.
+- **FFT** (`water_fft.wesl`): 4 × 256² every frame: spectrum (4 packed complex signals: h, Dx, Dz, slopes, Jxx, Jzz,
+  Jxz), radix-2 inverse FFT rows then columns in workgroup memory (one line per workgroup), assemble into two RGBA16F
+  arrays (Dx,h,Dz,foam / sx,sz,Jxx,Jzz) + persistent Jacobian foam (storage buffer with decay). Phase
+  `2π·fract(cycles·(t mod T)/T)`.
+- **Golden** (`cargo run --release -p sf_water_bevy --example water_ocean -- --golden`, 14 m/s, t 37.5 s): GPU cascade 0
+  vs `CascadeTwin` on the 64² nodes **max 1.9 mm, rms 0.2 mm** (Hs ≈ 2 m; includes f16 storage). Exits 0/1.
+- **Clipmap**: one static mesh (7 rings × 128², 0.25 m, hole 30 cells, skirt to 32 km); the vertex shader snaps each
+  ring to 2× its spacing around the camera and CDLOD-morphs its outer 12 cells; a ring discards where the finer one
+  covers it, one fine cell short of the edge (there both are the same surface: no seams). Displacement fades per
+  cascade with distance (10-16 × its shortest wavelength) and to 0 at 900 m; normals fade per cascade by pixel
+  footprint, the lost variance goes into roughness (Bruneton-lite; no mips yet).
+- **Water pass**: snapshot (colour copy + depth resolve to R32F, fullscreen, ordered after everything that runs before
+  `main_transparent_pass_3d`, i.e. `render_sky` and the `sf_atmos` composite) + a compute copy of Bevy's aerial-view
+  LUT; water draw = `ExtendedMaterial<StandardMaterial, WaterExt>` in the transparent phase, depth-writing, cull none
+  (open question 1 decided: keeps Bevy's lights, shadows and environment map with the least code); refraction with
+  in-front rejection, Beer-Lambert + single-scattering body colour, Bevy PBR with F0 0.02, whitecaps (cascades 0-1),
+  contact foam (vertical depth below 0.35 m × contact), then aerial perspective (LUT in-scatter, analytic air
+  extinction) and froxel fog. **Velocity**: after the transparent pass the clipmap is redrawn procedurally into the
+  prepass motion-vector texture where the water is nearest (current vs previous displacement texture and view); only
+  when the camera has `MotionVectorPrepass` (DLSS, `--prepass`).
+- **GPU cost** (example, 1600×900, 4060 Laptop, **shared machine**: other agents' builds were running): `water_fft`
+  0.22 ms (High budget 0.15: over; amortise the 256 m cascade every 2nd frame, or 3 cascades on Medium),
+  `water_snapshot` 0.04 ms (budget 0.1), transparent pass holding the water draw 0.53 ms (draw budget 0.5). Velocity not
+  timed (the example has no prepass). Not yet re-measured in the app at 1440p.
+- **Handoff (W3/W4 and W2 leftovers)**: shore attenuation + `water.shore` (W3; waves run up beaches unattenuated now),
+  optics tuning (W1 placeholders read milky turquoise), SSPR + dynamic probe (W4: environment map only now; the
+  material's PBR call is where SSPR plugs in), underwater (W5; back faces flip the normal only), FFT amortisation and
+  the Low 128² path, normal mips, F2 analytic height fog on water when froxels are off (water gets aerial + froxels
+  only), weather `H0::blend` re-upload (WE3; `upload_spectrum` regenerates on any `OceanSpectrum` change, on the main
+  thread, tens of ms), pipeline warm-up (the FFT pipelines take ~1-2 s to compile on DX12; the water is flat until
+  then), in-app DLSS smear check and fast flight across origin shifts (WA-8).

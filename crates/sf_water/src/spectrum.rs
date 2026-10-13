@@ -28,6 +28,13 @@ use serde::{Deserialize, Serialize};
 /// Gravity in m/s².
 pub const GRAVITY: f32 = 9.81;
 
+/// Wave repeat period, seconds (Tessendorf 2001, "Making tileable" in time): every angular
+/// frequency is rounded to a whole number of cycles per `T`, so the sea repeats after `T`. The GPU
+/// has no f64: it evolves phases from `t mod T` in f32 (exact, the field is `T`-periodic); the CPU
+/// twin rounds the same way, so both stay the same field (W2). 256 s moves the longest 256 m wave's
+/// frequency by ≤ 5 % and is far longer than any period anyone watches for.
+pub const REPEAT_PERIOD: f64 = 256.0;
+
 /// Wind input for the spectrum. Scaffold until `sf_wind::WindState` lands (ROADMAP M6 WD1): the
 /// spectrum only needs the 10 m wind speed and the direction the wind blows toward.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -85,6 +92,16 @@ impl SpectrumParams {
             Some(d) => (g * k * (k * f64::from(d)).tanh()).sqrt(),
             None => (g * k).sqrt(),
         }
+    }
+
+    /// Whole cycles per [`REPEAT_PERIOD`] of wave number `k` (≥ 1, so no wave stands still).
+    pub fn repeat_cycles(&self, k: f64) -> f64 {
+        (self.omega(k) * REPEAT_PERIOD / TAU64).round().max(1.0)
+    }
+
+    /// [`Self::omega`] rounded to the repeat period: what the twin and the GPU evolve with.
+    pub fn omega_repeat(&self, k: f64) -> f64 {
+        self.repeat_cycles(k) * TAU64 / REPEAT_PERIOD
     }
 
     /// dω/dk.
@@ -350,6 +367,23 @@ impl H0 {
             h0,
             variance: v,
         }
+    }
+
+    /// The GPU upload of this cascade (water.md "As built (W1)" handoff 1): per texel, layout
+    /// `iz * n + ix`, `[h0.re, h0.im, cycles per REPEAT_PERIOD, 0]`. The GPU evolves the phase as
+    /// `2π·fract(cycles · t/T)`, the same quantised `ω` as [`crate::CascadeTwin`].
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn gpu_texels(&self, params: &SpectrumParams) -> Vec<[f32; 4]> {
+        let n = self.n;
+        let dk = TAU64 / f64::from(self.size);
+        (0..n * n)
+            .map(|i| {
+                let (ix, iz) = (i % n, i / n);
+                let k = glam::DVec2::new(f64::from(signed(ix, n)), f64::from(signed(iz, n))) * dk;
+                let cycles = if k.length() > 0.0 { params.repeat_cycles(k.length()) } else { 0.0 };
+                [self.h0[i].re, self.h0[i].im, cycles as f32, 0.0]
+            })
+            .collect()
     }
 
     /// Height variance this realization produces (Parseval): 2·Σ|h0|².

@@ -1704,3 +1704,15 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   amplitudes are the physical JONSWAP spectrum (no fixed-RMS normalisation as in bevy-aqua). `WindInput` is a
   named scaffold until `sf_wind::WindState` (WD1). Ported code carries its notice in `THIRD_PARTY_NOTICES.md`.
 - 2026-10-13 (physics-p8): **Powered ragdolls use composite-inertia gain scaling and the graph's built-in physics stage.** Rapier's acceleration-based motors see only a joint's two bodies, so drives scale stiffness by the subtree's inertia about the joint over the child body's (Zordan & Hodgins 2002) and the world pelvis drive by whole-body mass/inertia; full strength is ω 160 rad/s (stable PD). Ragdoll poses enter the graph through `GraphInstance::set_physics` (per-joint weights, after inertialization, before history and procedural ops) instead of a per-graph `PoseInput` node; get-ups hand back with `GraphInstance::inertialize_from`. Driven bodies use the new `Layer::POWERED` (not grabbable).
+- 2026-10-13 (m5-a4, M5 A4): **VFS hot reload = one Bevy-free `notify-debouncer-full` watcher over the directory layers,
+  an `arc-swap` snapshot (`SharedVfs`), and winning-change routing** (mods.md "As built (A4)"). Not Bevy's `FileWatcher`
+  (one directory per asset source, no shadowing); the same crate and version Bevy uses, connected to the asset server
+  only at its event channel (`AssetSourceBuilder::with_watcher`). A rebuild rescans only dirty `DirSource` layers and
+  keeps layer positions; a change is "the winner's layer or indexed stat changed", so shadowed edits are silent.
+  Records reload as a whole-DB re-run of step 4; placed objects don't respawn. Dev builds only; dev re-bake during play
+  (owner decision 4) not built yet.
+- 2026-10-13 (m6-w2, water.md "As built (W2)"): the water draw is an `ExtendedMaterial<StandardMaterial, WaterExt>` in
+  the transparent phase, depth-writing, reading a colour + depth snapshot taken after the sky and the `sf_atmos`
+  composite (UE Single Layer Water structure), fogging itself (aerial-view LUT copy + froxels), with a procedural
+  velocity redraw for DLSS. Waves repeat every 256 s (ω rounded to whole cycles, twin and GPU alike) so the GPU runs
+  on f32 time.

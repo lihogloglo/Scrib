@@ -489,3 +489,24 @@ fn records_round_trip_and_optics_are_physical() {
     let json = serde_json::to_string(&body).unwrap();
     assert_eq!(serde_json::from_str::<WaterBody>(&json).unwrap(), body);
 }
+
+#[test]
+fn waves_repeat_after_the_repeat_period() {
+    // W2: the GPU evolves from `t mod T` in f32; the twin must be the same T-periodic field.
+    let params = sea(14.0);
+    let cascades = Cascades::default();
+    let h0 = H0::generate(&params, &cascades, 0, 64, 7);
+    let mut a = CascadeTwin::new(&h0, &params);
+    let mut b = CascadeTwin::new(&h0, &params);
+    a.evaluate(37.25);
+    b.evaluate(37.25 + REPEAT_PERIOD * 3.0);
+    let err = a.grids().height.iter().zip(&b.grids().height).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max);
+    assert!(err < 1e-4, "not periodic: {err} m");
+    // The GPU texels carry whole cycles per period.
+    let texels = h0.gpu_texels(&params);
+    assert_eq!(texels.len(), 64 * 64);
+    assert!(texels.iter().all(|t| t[2].fract() == 0.0));
+    // Rounding moves no frequency by more than half a cycle per period.
+    let k = 0.1;
+    assert!((params.omega_repeat(k) - params.omega(k)).abs() <= std::f64::consts::PI / REPEAT_PERIOD + 1e-12);
+}

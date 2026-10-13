@@ -1,0 +1,36 @@
+[package]
+name = "sf_water_bevy"
+description = "Bevy render plugin for sf_water: GPU FFT ocean cascades, a camera-centred clipmap surface and the water pass (water.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
+bevy_light.workspace = true
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+sf_water = { path = "../sf_water" }
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+
+[lints]
+workspace = true
+
+# Synthetic ocean: sea states, an island shore, the GPU-vs-CPU golden (`--golden`).
+[[example]]
+name = "water_ocean"

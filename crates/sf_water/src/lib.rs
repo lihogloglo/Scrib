@@ -19,7 +19,7 @@ pub use query::{
 pub use records::{
     FoamTerms, RiverPoint, WaterBody, WaterKind, WaterOptics, WaterShape, WaveTerms,
 };
-pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, SpectrumParams, WindInput};
+pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, REPEAT_PERIOD, SpectrumParams, WindInput};
 pub use twin::{CascadeTwin, WaveSample, WaveTwin, origin_phase, tile_coords};
 
 use sf_coords::WorldPos;

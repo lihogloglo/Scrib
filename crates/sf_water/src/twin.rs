@@ -111,7 +111,7 @@ impl CascadeTwin {
                 let k = Vec2::new(signed(ix, n) as f32, signed(iz, n) as f32) * dk;
                 bins.push(Bin {
                     index: u32::try_from(i).expect("grid fits u32"),
-                    omega: params.omega(f64::from(k.length())),
+                    omega: params.omega_repeat(f64::from(k.length())),
                     k,
                     k_hat: k.normalize_or_zero(),
                     h0: h0.h0[i],
@@ -396,7 +396,7 @@ pub fn reference_height(h0: &H0, params: &SpectrumParams, t: f64, x0: Vec2) -> (
                 continue;
             }
             let k = glam::DVec2::new(f64::from(signed(ix, n)), f64::from(signed(iz, n))) * dk;
-            let w = params.omega(k.length());
+            let w = params.omega_repeat(k.length());
             let e = |p: f64| (p.cos(), p.sin());
             let (c, s) = e(w * t);
             let a = (f64::from(h0.h0[i].re), f64::from(h0.h0[i].im));
