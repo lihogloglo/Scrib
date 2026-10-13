@@ -61,10 +61,13 @@ struct Slot {
     live: Option<Live>,
 }
 
+/// Colliders, total force, deepest point and normal (engine frame).
+type ContactReport = (ColliderHandle, ColliderHandle, f32, Vec3, Vec3);
+
 /// Contact-force reports gathered during a step (rapier calls back through `&self`).
 #[derive(Default)]
 struct Collector {
-    contacts: Mutex<Vec<(ColliderHandle, ColliderHandle, f32, Vec3)>>,
+    contacts: Mutex<Vec<ContactReport>>,
 }
 
 impl EventHandler for Collector {
@@ -78,12 +81,14 @@ impl EventHandler for Collector {
         pair: &ContactPair,
         total_force_magnitude: f32,
     ) {
-        // The deepest contact point, in the engine frame (contacts are collider-local).
+        // The deepest contact point, in the engine frame (contacts are collider-local),
+        // and its manifold's normal (world, from collider 1 to 2).
+        let normal = pair.find_deepest_contact().map_or(Vec3::ZERO, |(m, _)| m.data.normal);
         let point = colliders.get(pair.collider1).map_or(Vec3::ZERO, |c| match pair.find_deepest_contact() {
             Some((_, contact)) => c.position().transform_point(contact.local_p1),
             None => c.translation(),
         });
-        self.contacts.lock().expect("collector poisoned").push((pair.collider1, pair.collider2, total_force_magnitude, point));
+        self.contacts.lock().expect("collector poisoned").push((pair.collider1, pair.collider2, total_force_magnitude, point, normal));
     }
 
     fn handle_soft_body_tear_event(&self, _: &SoftBodySet, _: &SoftBodyTearEvent) {}
@@ -530,10 +535,10 @@ impl PhysicsWorld {
         self.resist_rolling();
         self.queries_dirty = false;
         let dt = self.params.dt;
-        for (c1, c2, force, point) in collector.contacts.into_inner().expect("collector poisoned") {
+        for (c1, c2, force, point, normal) in collector.contacts.into_inner().expect("collector poisoned") {
             if let (Some(a), Some(b)) = (self.id_of_collider(c1), self.id_of_collider(c2)) {
                 let point = self.to_world(point);
-                self.events.push(PhysicsEvent::ContactForce { a, b, impulse: force * dt, point });
+                self.events.push(PhysicsEvent::ContactForce { a, b, impulse: force * dt, point, normal });
             }
         }
         self.finish_settle();

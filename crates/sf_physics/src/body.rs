@@ -96,7 +96,9 @@ pub enum PhysicsEvent {
     Slept(BodyId),
     /// Contact impulse (N·s) above the threshold between two bodies.
     /// Impact sounds, damage, knockback.
-    ContactForce { a: BodyId, b: BodyId, impulse: f32, point: WorldPos },
+    /// `normal`: the contact normal from `a` to `b` (the impulse on `b`'s
+    /// direction; zero if unknown).
+    ContactForce { a: BodyId, b: BodyId, impulse: f32, point: WorldPos, normal: Vec3 },
     /// A dynamic body fell below [`PhysicsParams::kill_height`]; it is back
     /// at its last rest pose, asleep.
     FellOut(BodyId),

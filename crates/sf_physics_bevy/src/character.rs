@@ -44,6 +44,8 @@ pub struct ImpactOnCharacter {
     /// Contact impulse, N·s.
     pub impulse: f32,
     pub point: WorldPos,
+    /// The impulse's direction on the character (unit, world; zero if unknown).
+    pub direction: bevy_math::Vec3,
 }
 
 /// Counters for the log and benches.
@@ -129,12 +131,13 @@ fn impacts(
     }
     let by_body: HashMap<BodyId, Entity> = map.0.iter().map(|(e, (_, id, _))| (*id, *e)).collect();
     for e in &events.0 {
-        let PhysicsEvent::ContactForce { a, b, impulse, point } = *e else { continue };
+        let PhysicsEvent::ContactForce { a, b, impulse, point, normal } = *e else { continue };
         if impulse < settings.impact_threshold {
             continue;
         }
-        if let Some(&entity) = by_body.get(&a).or_else(|| by_body.get(&b)) {
-            out.write(ImpactOnCharacter { entity, impulse, point });
+        let hit = by_body.get(&b).map(|&e| (e, normal)).or_else(|| by_body.get(&a).map(|&e| (e, -normal)));
+        if let Some((entity, direction)) = hit {
+            out.write(ImpactOnCharacter { entity, impulse, point, direction });
             stats.impacts += 1;
         }
     }

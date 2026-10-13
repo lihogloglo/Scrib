@@ -130,11 +130,19 @@ pub struct DriveParams {
     pub kinematic_gain: f32,
     /// World-space pelvis drive frequency at `pelvis_world` 1, rad/s.
     pub pelvis_omega: f32,
+    /// Gravity compensation of the pelvis drive, 0–1: the share of the
+    /// whole body's weight (and its torque about the pelvis) the drive
+    /// carries as a feed-forward, scaled by `pelvis_world`. Without it a
+    /// spring of `pelvis_omega` sags by g / ω² (6.8 cm at 12 rad/s).
+    pub gravity_compensation: f32,
+    /// Extra solver iterations while powered (the motors keep the chain
+    /// together, so it needs fewer than a limp ragdoll's).
+    pub powered_iterations: usize,
 }
 
 impl Default for DriveParams {
     fn default() -> Self {
-        Self { omega: 160.0, kinematic_gain: 4.0, pelvis_omega: 12.0 }
+        Self { omega: 160.0, kinematic_gain: 4.0, pelvis_omega: 12.0, gravity_compensation: 1.0, powered_iterations: 8 }
     }
 }
 
@@ -144,18 +152,28 @@ pub fn region_gain(name: &str) -> f32 {
     if ["tail", "wing", "fin"].iter().any(|s| name.contains(s)) { 0.5 } else { 1.0 }
 }
 
-fn gains(drive: Drive, gain: f32, dip: f32, params: &DriveParams) -> Option<sf_physics::Drive> {
+/// A critically damped drive of angular frequency `omega` on a body that
+/// carries `load` times its own inertia (its subtree): rapier's
+/// acceleration-based motor scales by the body's own effective mass, so both
+/// gains scale by `load` (scaling only the stiffness would leave the damping
+/// ratio at 1 / √load: an underdamped, ringing drive).
+fn critical(omega: f32, load: f32) -> sf_physics::Drive {
+    sf_physics::Drive { stiffness: omega * omega * load, damping: 2.0 * omega * load }
+}
+
+fn gains(drive: Drive, gain: f32, load: f32, dip: f32, params: &DriveParams) -> Option<sf_physics::Drive> {
     let strength = match drive {
         Drive::Limp => return None,
         Drive::Kinematic => params.kinematic_gain,
         Drive::Powered { strength } => strength,
     } * gain
         * dip;
-    if strength <= 0.0 {
-        return None;
-    }
-    let stiffness = strength * params.omega * params.omega;
-    Some(sf_physics::Drive { stiffness, damping: 2.0 * stiffness.sqrt() })
+    // Joint drives keep damping 2·√stiffness (ζ = 1/√load on the subtree):
+    // the measured best for the walk (the fully critical gains over-damp
+    // the stiff 160 rad/s joint motors against the feed-forward and lag
+    // ~13°; tests `powered_ragdoll_tracks_a_walk`, P8b).
+    let stiffness = strength * load * params.omega * params.omega;
+    (strength > 0.0).then(|| sf_physics::Drive { stiffness, damping: 2.0 * stiffness.sqrt() })
 }
 
 /// The rate of a relative rotation's vector part (`w ≥ 0` hemisphere), which
@@ -206,7 +224,7 @@ impl RagdollInstance {
             let pivot = rigid(&model[usize::from(def.bodies[child].joint)]);
             let pivot = (pivot.1 + pivot.0 * def.bodies[child].local.0 + rot(model, j.child) * j.frame_child.0) * self.scale;
             let load = sub.inertia_about(child, pivot) / sub.own[child].max(1e-9);
-            let g = gains(profile.drive(region), region_gain(name) * load, dip, params);
+            let g = gains(profile.drive(region), region_gain(name), load, dip, params);
             any |= g.is_some();
             let frame = |pose: &[Affine3A]| (rot(pose, j.parent) * j.frame_parent.1, rot(pose, j.child) * j.frame_child.1);
             let (f1, f2) = frame(model);
@@ -248,21 +266,22 @@ impl RagdollInstance {
             };
             self.anchor = anchor;
             if let Some((a, j)) = anchor {
-                world.set_kinematic_target(a, goal);
-                let pd = |k: f32| sf_physics::Drive { stiffness: k, damping: 2.0 * k.sqrt() };
-                let k = pelvis * params.pelvis_omega * params.pelvis_omega;
+                world.set_kinematic_target(a, self.compensated(world, def, target, &sub, goal, params));
+                let omega = params.pelvis_omega * pelvis.sqrt();
                 let linear = sub.mass[0] / (def.bodies[0].mass * self.scale.powi(3)).max(1e-6);
                 let angular = sub.inertia_about(0, sub.com(0)) / sub.own[0].max(1e-9);
-                world.set_joint_target(j, Quat::IDENTITY, Vec3::ZERO, Some(pd(k * angular)));
-                world.set_joint_linear_drive(j, Some(pd(k * linear)));
+                world.set_joint_target(j, Quat::IDENTITY, Vec3::ZERO, Some(critical(omega, angular)));
+                world.set_joint_linear_drive(j, Some(critical(omega, linear)));
             }
         } else if let Some((a, _)) = self.anchor.take() {
             world.remove(a);
         }
         if any != self.powered {
             let layer = if any { Layer::POWERED } else { Layer::RAGDOLL };
+            let iterations = if any { params.powered_iterations } else { self.iterations };
             for &b in &self.bodies {
                 world.set_layer(b, layer);
+                world.set_iterations(b, iterations);
             }
             self.powered = any;
         }
@@ -271,6 +290,26 @@ impl RagdollInstance {
                 world.wake(b);
             }
         }
+    }
+
+    /// The anchor pose of the world-space pelvis drive: the root body's
+    /// goal moved so the drive's spring carries the whole body's weight and
+    /// its torque about the pelvis as a feed-forward (gravity compensation;
+    /// the force and torque scale with the drive's strength, as the spring
+    /// does, so a fading drive lets the body down).
+    fn compensated(&self, world: &PhysicsWorld, def: &RagdollDef, target: &DriveTarget<'_>, sub: &Subtrees, goal: WorldTransform, params: &DriveParams) -> WorldTransform {
+        let comp = params.gravity_compensation.clamp(0.0, 1.0);
+        let w2 = params.pelvis_omega * params.pelvis_omega;
+        if comp <= 0.0 || w2 <= 0.0 {
+            return goal;
+        }
+        let gravity = world.params().gravity;
+        let b0 = &def.bodies[0];
+        let (r0, t0) = rigid(&target.model[usize::from(b0.joint)]);
+        let lever = target.root.rotation * (sub.com(0) - (t0 + r0 * b0.local.0) * self.scale);
+        let torque = lever.cross(gravity * sub.mass[0]);
+        let theta = -torque * comp / (w2 * sub.inertia_about(0, sub.com(0)).max(1e-9));
+        WorldTransform { pos: goal.pos.offset(-gravity * comp / w2), rotation: (Quat::from_scaled_axis(theta) * goal.rotation).normalize(), ..goal }
     }
 
     /// Applies a hit and starts its strength dip. False if the body is gone.
@@ -481,7 +520,7 @@ pub fn get_up_root(body: &WorldTransform, clip_body: (Quat, Vec3), scale: f32, r
 
 /// The rotation's heading about +Y: its twist about Y, or (rotations near
 /// 180° about a horizontal axis) the heading of its projected forward.
-fn yaw_of(q: Quat) -> Quat {
+pub fn yaw_of(q: Quat) -> Quat {
     let twist = Quat::from_xyzw(0.0, q.y, 0.0, q.w);
     if twist.length_squared() > 1e-4 {
         return twist.normalize();

@@ -59,6 +59,9 @@ pub struct RagdollInstance {
     pub dips: Vec<crate::powered::Dip>,
     /// Whether the bodies are on the powered layer.
     pub powered: bool,
+    /// Extra solver iterations while limp ([`RagdollSettings::extra_iterations`]);
+    /// powered bodies use [`crate::powered::DriveParams::powered_iterations`].
+    pub iterations: usize,
 }
 
 pub(crate) fn rigid(m: &Affine3A) -> (Quat, Vec3) {
@@ -132,7 +135,7 @@ impl RagdollInstance {
         for &(a, b) in &def.no_collide {
             world.exclude_pair(bodies[usize::from(a)], bodies[usize::from(b)]);
         }
-        Self { bodies, joints, scale: s, mass, anchor: None, dips: Vec::new(), powered: false }
+        Self { bodies, joints, scale: s, mass, anchor: None, dips: Vec::new(), powered: false, iterations: settings.extra_iterations }
     }
 
     /// Removes the bodies (and with them the joints).

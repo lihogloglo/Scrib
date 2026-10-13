@@ -60,21 +60,25 @@ fn body_pose_target(d: &RagdollDef, b: usize, model: &[Affine3A], root: &WorldTr
 
 struct Tracking {
     effector_rms: f32,
+    pelvis_rms: f32,
     joint_rms_max_deg: f32,
     worst_joint: String,
     step_ms: f32,
 }
 
-/// `n` powered bipeds walking side by side (no floor: tracking, not
-/// locomotion); errors measured on the first after a 1 s warm-up.
-fn walk(n: usize, seconds: f32) -> Tracking {
+/// `n` powered bipeds walking side by side, on a floor or in the air;
+/// errors measured on the first after a 1 s warm-up.
+fn walk(n: usize, seconds: f32, on_floor: bool, params: &DriveParams) -> Tracking {
     let (s, d) = human();
     let mut w = PhysicsWorld::new(base(), PhysicsParams::default());
+    if on_floor {
+        floor(&mut w, base());
+    }
     let dt = w.params().dt;
-    let params = DriveParams::default();
     let profile = StrengthProfile::uniform(&d, Drive::Powered { strength: 1.0 }, 1.0);
     let speed = 1.2;
-    let root_at = |i: usize, t: f32| WorldTransform::from_pos(base().offset(Vec3::new(i as f32 * 2.0, 1.0, speed * t)));
+    let lift = if on_floor { 0.0 } else { 1.0 };
+    let root_at = |i: usize, t: f32| WorldTransform::from_pos(base().offset(Vec3::new(i as f32 * 2.0, lift, speed * t)));
     let mut ragdolls: Vec<RagdollInstance> = (0..n)
         .map(|i| {
             let (now, prev) = (walk_pose(&s, 0.0), walk_pose(&s, -dt));
@@ -83,7 +87,7 @@ fn walk(n: usize, seconds: f32) -> Tracking {
         })
         .collect();
     let effectors: Vec<usize> = ["hand_l", "hand_r", "foot_l", "foot_r", "head"].iter().filter_map(|n| d.body_of_joint(s.find(n)? as u16)).collect();
-    let (mut eff_sq, mut eff_n) = (0.0f64, 0usize);
+    let (mut eff_sq, mut eff_n, mut pelvis_sq) = (0.0f64, 0usize, 0.0f64);
     let mut joint_sq = vec![0.0f64; d.joints.len()];
     let mut samples = 0usize;
     let mut step_time = std::time::Duration::ZERO;
@@ -94,7 +98,7 @@ fn walk(n: usize, seconds: f32) -> Tracking {
         let model = walk_pose(&s, t);
         for (i, r) in ragdolls.iter_mut().enumerate() {
             let target = DriveTarget { root: root_at(i, t), model: &model, previous: Some((&prev, dt)) };
-            r.drive(&mut w, &d, &target, &profile, &params);
+            r.drive(&mut w, &d, &target, &profile, params);
         }
         let t0 = std::time::Instant::now();
         w.step();
@@ -105,6 +109,8 @@ fn walk(n: usize, seconds: f32) -> Tracking {
         }
         let r = &ragdolls[0];
         let root = root_at(0, t);
+        let want = body_pose_target(&d, 0, &model, &root);
+        pelvis_sq += f64::from(w.pose(r.bodies[0]).expect("pelvis").pos.delta_f32(want.pos).length_squared());
         for &b in &effectors {
             let got = w.pose(r.bodies[b]).expect("body");
             let want = body_pose_target(&d, b, &model, &root);
@@ -124,6 +130,7 @@ fn walk(n: usize, seconds: f32) -> Tracking {
     let child = d.bodies[usize::from(d.joints[worst].child)].joint;
     Tracking {
         effector_rms: (eff_sq / eff_n.max(1) as f64).sqrt() as f32,
+        pelvis_rms: (pelvis_sq / samples.max(1) as f64).sqrt() as f32,
         joint_rms_max_deg: (max / samples.max(1) as f64).sqrt().to_degrees() as f32,
         worst_joint: s.name(usize::from(child)).to_owned(),
         step_ms: step_time.as_secs_f32() * 1000.0 / steps as f32,
@@ -132,27 +139,44 @@ fn walk(n: usize, seconds: f32) -> Tracking {
 
 #[test]
 fn powered_ragdoll_tracks_a_walk() {
-    let r = walk(1, 4.0);
-    eprintln!(
-        "tracking: effectors {:.2} cm RMS, worst joint {:.2}° RMS ({}), step {:.3} ms",
-        r.effector_rms * 100.0,
-        r.joint_rms_max_deg,
-        r.worst_joint,
-        r.step_ms
-    );
-    // Open (gate 5 cm): the joints track within 5°, but the world pelvis
-    // placement leaves the effectors ~11.5 cm RMS off: a regression bound.
-    assert!(r.effector_rms < 0.15, "effector RMS {} m", r.effector_rms);
-    assert!(r.joint_rms_max_deg < 5.0, "joint RMS {}° at {}", r.joint_rms_max_deg, r.worst_joint);
+    let air = walk(1, 4.0, false, &DriveParams::default());
+    let r = walk(1, 4.0, true, &DriveParams::default());
+    for (name, r) in [("air", &air), ("floor", &r)] {
+        eprintln!(
+            "tracking ({name}): effectors {:.2} cm RMS, pelvis {:.2} cm RMS, worst joint {:.2}° RMS ({}), step {:.3} ms",
+            r.effector_rms * 100.0,
+            r.pelvis_rms * 100.0,
+            r.joint_rms_max_deg,
+            r.worst_joint,
+            r.step_ms
+        );
+    }
+    // Gate 5 cm still open (P8b): the critically damped, gravity-compensated
+    // pelvis drive took the air case from 11.5 to 6.8 cm (pelvis 9.0 to
+    // 2.2 cm); on the floor the synthetic walk slides and sinks its stance
+    // foot (stride faster than the root, 3 cm bob), so the feet fight the
+    // floor (~11 cm, foot joint ~12°). Regression bounds.
+    assert!(air.effector_rms < 0.08, "air effector RMS {} m", air.effector_rms);
+    assert!(air.joint_rms_max_deg < 6.5, "air joint RMS {}° at {}", air.joint_rms_max_deg, air.worst_joint);
+    assert!(r.effector_rms < 0.13, "floor effector RMS {} m", r.effector_rms);
 }
 
 /// Step cost with the powered budget (8) walking; release only.
 #[test]
 #[ignore = "timing: cargo test -p sf_ragdoll --release -- --ignored --nocapture powered_cost"]
 fn powered_cost() {
-    for n in [1, 8] {
-        let r = walk(n, 4.0);
-        eprintln!("{n} powered: step {:.3} ms ({:.3} ms per character)", r.step_ms, r.step_ms / n as f32);
+    for iterations in [8, 4, 2, 0] {
+        let params = DriveParams { powered_iterations: iterations, ..DriveParams::default() };
+        for n in [1, 8] {
+            let r = walk(n, 4.0, true, &params);
+            eprintln!(
+                "+{iterations} iterations, {n} powered: step {:.3} ms ({:.3} ms per character), effectors {:.2} cm, worst joint {:.2}°",
+                r.step_ms,
+                r.step_ms / n as f32,
+                r.effector_rms * 100.0,
+                r.joint_rms_max_deg
+            );
+        }
     }
 }
 

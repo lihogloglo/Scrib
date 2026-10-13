@@ -31,7 +31,7 @@ use sf_anim::SkeletonId;
 
 pub use cook::{BodyOverride, CookParams, RagdollError, RagdollPolicy, cook};
 pub use instance::{RagdollInstance, RagdollSettings, SpawnPose};
-pub use powered::{Balance, Dip, Drive, DriveParams, DriveTarget, HitImpulse, StrengthProfile, balance, get_up_root, region_gain};
+pub use powered::{Balance, Dip, Drive, DriveParams, DriveTarget, HitImpulse, StrengthProfile, balance, get_up_root, region_gain, yaw_of};
 
 /// A capsule along the body frame's Y axis (a sphere when `half` is 0).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
