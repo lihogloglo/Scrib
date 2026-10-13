@@ -1217,3 +1217,54 @@ fn synced_followers_stay_inside_their_loop() {
     let expected = 0.133 + 0.192 / 0.475 * (0.617 - 0.133);
     assert!((t - expected).abs() < 1e-3, "follower at {t}, expected {expected}");
 }
+
+// --- Physics input and hand-back (P8) ------------------------------------------------------
+
+/// A physics pose (the rest pose swaying, standing in for a ragdoll) shown
+/// at weight 1 until `switch`, then handed back to the graph's clip, with
+/// `inertialize_from` or by just dropping the input.
+fn handback_run(dt: f32, switch: f32, total: f32, inertialize: bool) -> Vec<Vec3> {
+    let rig = Rig::new(r#"(params: [], nodes: {"w": Clip(clip: "run")}, layers: [(node: "w")])"#);
+    let b = rig.binding();
+    let mut inst = GraphInstance::new(&b);
+    let mut out = GraphOutput::new(&rig.graph);
+    let (foot, hand) = (rig.joint("foot_l"), rig.joint("hand_l"));
+    let rest = rig.skeleton.rest().to_vec();
+    let physics = |t: f32| -> Vec<Trs> {
+        rest.iter()
+            .map(|&x| Trs { rotation: (x.rotation * Quat::from_rotation_x(0.8 * (1.5 * t).sin())).normalize(), ..x })
+            .collect()
+    };
+    let ones = vec![1.0; rest.len()];
+    let mut track = Vec::new();
+    for k in 0..(total / dt).round() as usize {
+        let t = k as f32 * dt;
+        if t + 1e-6 < switch {
+            inst.set_physics(Some((&physics(t), &ones)));
+        } else if inst.has_physics() {
+            inst.set_physics(None);
+            if inertialize {
+                inst.inertialize_from(&physics(t - dt), &physics(t - 2.0 * dt), dt, 0.4);
+            }
+        }
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        track.push(out.model.translation(foot) + out.model.translation(hand));
+    }
+    track
+}
+
+#[test]
+fn physics_handback_is_continuous_at_shrinking_dt() {
+    let (coarse, fine, switch) = (1.0 / 60.0, 1.0 / 240.0, 0.5);
+    let at = |dt: f32| (switch / dt).round() as usize;
+    let a = handback_run(coarse, switch, 1.0, true);
+    let b = handback_run(fine, switch, 1.0, true);
+    let cut = handback_run(fine, switch, 1.0, false);
+    let (pa, va) = jumps(&a, coarse, at(coarse), 2);
+    let (pb, vb) = jumps(&b, fine, at(fine), 2);
+    let (pc, _) = jumps(&cut, fine, at(fine), 2);
+    eprintln!("hand-back: pose step {pa:.4}/{pb:.4} m (60/240 Hz), cut {pc:.4}; velocity jump {va:.3}/{vb:.3} m/s");
+    assert!(pa / coarse < 8.0 && pb / fine < 8.0, "pose step {pa} @60 Hz, {pb} @240 Hz");
+    assert!(pc > 10.0 * pb, "cut {pc} vs inertialized {pb}");
+    assert!(vb < va * 0.45, "velocity jump {va} @60 Hz, {vb} @240 Hz");
+}

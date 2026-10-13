@@ -235,7 +235,7 @@ fn read_back(
                 p.weight = l.weight;
             }
             None => {
-                commands.entity(*entity).insert(PhysicsPose { pose: out, weight: l.weight });
+                commands.entity(*entity).insert(PhysicsPose { pose: out, weight: l.weight, weights: Vec::new() });
             }
         }
     }
