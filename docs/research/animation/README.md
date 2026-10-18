@@ -35,7 +35,7 @@ any source (Morrowind KF, UAL, 100STYLE, LaFAN1, Mixamo, mocap) work inside thes
 
 | # | Note | Scope | Status |
 |---|---|---|---|
-| R1 | `01-faith-runner-movement.md` | faith-runner `faith_move`: controller, move set, vault/climb/wallrun/springboard, tuning, world trait, course tests | queued |
+| R1 | `01-faith-runner-movement.md` | faith-runner `faith_move`: controller, move set, vault/climb/wallrun/springboard, tuning, world trait, course tests | done 2026-10-18 |
 | R2 | `02-faith-runner-animation.md` | faith-runner `faith_anim` driver/rig/sound, `look`/`camera`: how motion drives clips, first-person body | queued |
 | R3 | `03-ac1-climbing-parkour.md` | AC1-rs `climb`, `climb_table`, `docs/PARKOUR.md`, `docs/NOTES.md`: holds, move graph, jump targets, end-pose validation | done 2026-10-18 |
 | R4 | `04-ac1-animation-ik.md` | AC1-rs `animation`, `move_blend`, `ik` crate, `docs/PIKVR.md`: blending, IK placement, mirroring, cloth, ragdoll, VR body | queued |
