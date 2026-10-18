@@ -20,6 +20,8 @@ mod night_sky;
 mod perf;
 mod physics;
 mod portal_spike;
+#[cfg(feature = "remote")]
+mod remote;
 mod render;
 mod scenes;
 mod scripts;

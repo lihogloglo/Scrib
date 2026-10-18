@@ -13,6 +13,7 @@
 //! T time-lapse, F9 copy camera (`--camera` string), F10 clouds on/off,
 //! C cycle cloud preset (clear, fair, overcast, storm), F12 screenshot,
 //! B smooth ↔ vanilla character bodies (handled in `actors.rs`).
+//! Agents reach the same switches over BRP ([`crate::remote`], `remote` feature).
 
 use std::fmt::Write as _;
 
@@ -21,14 +22,16 @@ use bevy::light::DirectionalLight;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use sf_coords::WorldPos;
-use sf_sky_bevy::sf_sky::{UpscaleQuality, Upscaling};
+use sf_sky_bevy::sf_sky::{SkyClock, UpscaleQuality, Upscaling};
 use sf_sky_bevy::{ActiveUpscaling, SkyConfig, SkyTime, UpscalingSetting};
 use sf_world_bevy::big_space::prelude::CellCoord;
 
-/// Adds the keys and overlay when the run is interactive.
+/// Adds the keys and overlay (and BRP, with the `remote` feature) when the run is interactive.
 pub fn add(app: &mut App, interactive: bool) {
     if interactive {
         app.add_plugins(LiveAbPlugin);
+        #[cfg(feature = "remote")]
+        crate::remote::add(app);
     }
 }
 
@@ -45,7 +48,7 @@ impl Plugin for LiveAbPlugin {
 
 /// Switch state that has no framework resource of its own.
 #[derive(Resource)]
-struct LiveAb {
+pub(crate) struct LiveAb {
     help: bool,
     sun_shadows: bool,
     /// Last action, shown for a few seconds.
@@ -55,6 +58,14 @@ struct LiveAb {
 impl Default for LiveAb {
     fn default() -> Self {
         Self { help: true, sun_shadows: true, note: None }
+    }
+}
+
+impl LiveAb {
+    /// Logs an action and shows it in the overlay for a few seconds.
+    pub(crate) fn note(&mut self, text: String, now: f32) {
+        println!("[A/B] {text}");
+        self.note = Some((text, now));
     }
 }
 
@@ -96,13 +107,13 @@ fn pause_scene_clock(time: Option<ResMut<SkyTime>>) {
 
 /// The debug resources the keys flip (each optional: interiors have fewer).
 #[derive(bevy::ecs::system::SystemParam)]
-struct Switches<'w> {
+pub(crate) struct Switches<'w> {
     terrain: Option<ResMut<'w, sf_terrain_bevy::TerrainDebug>>,
     far: Option<ResMut<'w, sf_lod_bevy::FarFieldDebug>>,
     rings: Option<ResMut<'w, sf_world_bevy::StreamingDebug>>,
     upscaling: Option<ResMut<'w, UpscalingSetting>>,
-    time: Option<ResMut<'w, SkyTime>>,
-    config: Option<Res<'w, SkyConfig>>,
+    pub time: Option<ResMut<'w, SkyTime>>,
+    pub config: Option<Res<'w, SkyConfig>>,
     clouds: Option<ResMut<'w, sf_atmos_bevy::Clouds>>,
     /// Haze and dust follow the C key's cloud genus.
     sky_weather: Option<ResMut<'w, crate::exterior::SkyWeather>>,
@@ -112,11 +123,186 @@ struct Switches<'w> {
     portals: Option<Res<'w, crate::portal_spike::ExposureStrength>>,
 }
 
+/// An on/off switch: its key toggles it, BRP sets it by name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Switch {
+    SunShadows,
+    TerrainFarShadows,
+    GroundBlend,
+    Clouds,
+    FarTint,
+    TerrainLodColors,
+    Wireframe,
+    Rings,
+}
+
+/// Names for BRP ([`crate::remote`]).
+#[cfg(feature = "remote")]
+impl Switch {
+    pub(crate) const ALL: [Self; 8] = [
+        Self::SunShadows,
+        Self::TerrainFarShadows,
+        Self::GroundBlend,
+        Self::Clouds,
+        Self::FarTint,
+        Self::TerrainLodColors,
+        Self::Wireframe,
+        Self::Rings,
+    ];
+
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::SunShadows => "sun_shadows",
+            Self::TerrainFarShadows => "terrain_far_shadows",
+            Self::GroundBlend => "ground_blend",
+            Self::Clouds => "clouds",
+            Self::FarTint => "far_tint",
+            Self::TerrainLodColors => "terrain_lod_colors",
+            Self::Wireframe => "wireframe",
+            Self::Rings => "rings",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    pub(crate) fn names() -> String {
+        Self::ALL.map(Self::name).join(", ")
+    }
+}
+
+impl Switch {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::SunShadows => "sun shadows",
+            Self::TerrainFarShadows => "terrain far shadows",
+            Self::GroundBlend => "object-terrain blend",
+            Self::Clouds => "clouds",
+            Self::FarTint => "far-field tint",
+            Self::TerrainLodColors => "terrain LOD colors",
+            Self::Wireframe => "terrain wireframe",
+            Self::Rings => "streaming rings",
+        }
+    }
+
+
+    /// On or off; `None` when this run has nothing for it to act on.
+    pub(crate) fn get(self, state: &LiveAb, s: &Switches) -> Option<bool> {
+        let terrain = s.terrain.as_ref();
+        match self {
+            Self::SunShadows => Some(state.sun_shadows),
+            Self::TerrainFarShadows => terrain.map(|t| !t.no_far_shadows),
+            Self::GroundBlend => terrain.map(|t| !t.no_ground_blend),
+            Self::Clouds => s.clouds.as_ref().map(|c| c.enabled),
+            Self::FarTint => s.far.as_ref().map(|f| f.level_tint),
+            Self::TerrainLodColors => terrain.map(|t| t.lod_colors),
+            Self::Wireframe => terrain.map(|t| t.wireframe),
+            Self::Rings => s.rings.as_ref().map(|r| r.enabled),
+        }
+    }
+
+    /// Sets it (`None`: toggles) and says what happened.
+    pub(crate) fn set(self, state: &mut LiveAb, s: &mut Switches, on: Option<bool>) -> String {
+        let Some(current) = self.get(state, s) else {
+            let why = match self {
+                Self::Clouds => "not in this run (interior or --off clouds)",
+                Self::FarTint => "no far field here",
+                Self::Rings => "no streaming here",
+                _ => "no terrain here",
+            };
+            return format!("{}: {why}", self.label());
+        };
+        let v = on.unwrap_or(!current);
+        match self {
+            Self::SunShadows => state.sun_shadows = v,
+            Self::Clouds => {
+                if let Some(c) = s.clouds.as_mut() {
+                    c.enabled = v;
+                }
+            }
+            Self::FarTint => {
+                if let Some(f) = s.far.as_mut() {
+                    f.level_tint = v;
+                }
+            }
+            Self::Rings => {
+                if let Some(r) = s.rings.as_mut() {
+                    r.enabled = v;
+                }
+            }
+            Self::TerrainFarShadows | Self::GroundBlend | Self::TerrainLodColors | Self::Wireframe => {
+                if let Some(t) = s.terrain.as_mut() {
+                    match self {
+                        Self::TerrainFarShadows => t.no_far_shadows = !v,
+                        Self::GroundBlend => t.no_ground_blend = !v,
+                        Self::TerrainLodColors => t.lod_colors = v,
+                        _ => t.wireframe = v,
+                    }
+                }
+            }
+        }
+        format!("{} {}", self.label(), on_off(v))
+    }
+}
+
+/// Index into `exterior::CLOUD_CHOICES` by genus name.
+#[cfg(feature = "remote")]
+pub(crate) fn cloud_choice(name: &str) -> Option<usize> {
+    crate::exterior::CLOUD_CHOICES.iter().position(|c| c.name == name)
+}
+
+/// Applies a cloud genus (`exterior::CLOUD_CHOICES` index) and its haze and dust.
+pub(crate) fn set_clouds(s: &mut Switches, choice: usize) -> String {
+    let choice = crate::exterior::CLOUD_CHOICES[choice];
+    let Some(c) = s.clouds.as_mut() else {
+        return "clouds: not in this run (interior or --off clouds)".to_owned();
+    };
+    c.settings = crate::exterior::cloud_settings(choice);
+    if let Some(w) = s.sky_weather.as_mut() {
+        w.look = choice.sky;
+    }
+    format!("clouds {}", choice.name)
+}
+
+pub(crate) fn clock_label(clock: &SkyClock) -> &'static str {
+    if clock.paused {
+        "paused"
+    } else if clock.time_scale > 100.0 {
+        "time-lapse"
+    } else {
+        "running"
+    }
+}
+
+/// The camera as a `--camera` string: eye and a target 50 m ahead, world meters.
+pub(crate) fn camera_string(global: &GlobalTransform, local: &Transform, cell: Option<&CellCoord>) -> String {
+    // Exteriors: grid cell + local offset to world meters; interiors: plain transform.
+    let eye = match cell {
+        Some(c) => WorldPos::new(IVec3::new(c.x, c.y, c.z), local.translation).to_f64(),
+        None => global.translation().as_dvec3(),
+    };
+    let target = eye + global.forward().as_dvec3() * 50.0;
+    format!("{:.1},{:.1},{:.1},{:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, target.x, target.y, target.z)
+}
+
 fn on_off(v: bool) -> &'static str {
     if v { "on" } else { "off" }
 }
 
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+/// Keys that toggle a [`Switch`].
+const SWITCH_KEYS: [(KeyCode, Switch); 8] = [
+    (KeyCode::F2, Switch::SunShadows),
+    (KeyCode::F3, Switch::TerrainFarShadows),
+    (KeyCode::F11, Switch::GroundBlend),
+    (KeyCode::F10, Switch::Clouds),
+    (KeyCode::F5, Switch::FarTint),
+    (KeyCode::F6, Switch::TerrainLodColors),
+    (KeyCode::F7, Switch::Wireframe),
+    (KeyCode::F8, Switch::Rings),
+];
+
+#[allow(clippy::too_many_arguments)]
 fn keys(
     mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
@@ -128,81 +314,28 @@ fn keys(
     mut cloud_preset: Local<usize>,
 ) {
     let now = real.elapsed_secs();
-    let mut note = |text: String| {
-        println!("[A/B] {text}");
-        state.note = Some((text, now));
-    };
-    if input.just_pressed(KeyCode::F3) {
-        if let Some(t) = s.terrain.as_mut() {
-            t.no_far_shadows = !t.no_far_shadows;
-            note(format!("terrain far shadows {}", on_off(!t.no_far_shadows)));
-        } else {
-            note("terrain far shadows: no terrain here".to_owned());
-        }
-    }
-    if input.just_pressed(KeyCode::F11) {
-        if let Some(t) = s.terrain.as_mut() {
-            t.no_ground_blend = !t.no_ground_blend;
-            note(format!("object-terrain blend {}", on_off(!t.no_ground_blend)));
-        } else {
-            note("object-terrain blend: no terrain here".to_owned());
+    for (key, switch) in SWITCH_KEYS {
+        if input.just_pressed(key) {
+            let text = switch.set(&mut state, &mut s, None);
+            state.note(text, now);
         }
     }
     if input.just_pressed(KeyCode::F4) {
-        if let Some(u) = s.upscaling.as_mut() {
+        let text = if let Some(u) = s.upscaling.as_mut() {
             let i = DLSS_CYCLE.iter().position(|m| *m == u.0).map_or(0, |i| (i + 1) % DLSS_CYCLE.len());
             u.0 = DLSS_CYCLE[i];
             let built = if cfg!(feature = "dlss") { "" } else { " (this exe has no dlss feature: stays off)" };
-            note(format!("DLSS requested {}{built}", u.0.label()));
+            format!("DLSS requested {}{built}", u.0.label())
         } else {
-            note("DLSS: start with --dlss <mode> in interiors to make it switchable".to_owned());
-        }
+            "DLSS: start with --dlss <mode> in interiors to make it switchable".to_owned()
+        };
+        state.note(text, now);
     }
-    if input.just_pressed(KeyCode::F10) {
-        if let Some(c) = s.clouds.as_mut() {
-            c.enabled = !c.enabled;
-            note(format!("clouds {}", on_off(c.enabled)));
-        } else {
-            note("clouds: not in this run (interior or --off clouds)".to_owned());
-        }
-    }
-    if input.just_pressed(KeyCode::KeyC)
-        && let Some(c) = s.clouds.as_mut()
-    {
+    if input.just_pressed(KeyCode::KeyC) && s.clouds.is_some() {
         // The cloud genera, in `exterior::CLOUD_CHOICES` order.
         *cloud_preset = (*cloud_preset + 1) % crate::exterior::CLOUD_GENERA;
-        let choice = crate::exterior::CLOUD_CHOICES[*cloud_preset];
-        c.settings = crate::exterior::cloud_settings(choice);
-        if let Some(w) = s.sky_weather.as_mut() {
-            w.look = choice.sky;
-        }
-        note(format!("clouds {}", choice.name));
-    }
-    if input.just_pressed(KeyCode::F5) {
-        if let Some(f) = s.far.as_mut() {
-            f.level_tint = !f.level_tint;
-            note(format!("far-field tint {}", on_off(f.level_tint)));
-        } else {
-            note("far-field tint: no far field here".to_owned());
-        }
-    }
-    if input.just_pressed(KeyCode::F6)
-        && let Some(t) = s.terrain.as_mut()
-    {
-        t.lod_colors = !t.lod_colors;
-        note(format!("terrain LOD colors {}", on_off(t.lod_colors)));
-    }
-    if input.just_pressed(KeyCode::F7)
-        && let Some(t) = s.terrain.as_mut()
-    {
-        t.wireframe = !t.wireframe;
-        note(format!("terrain wireframe {}", on_off(t.wireframe)));
-    }
-    if input.just_pressed(KeyCode::F8)
-        && let Some(r) = s.rings.as_mut()
-    {
-        r.enabled = !r.enabled;
-        note(format!("streaming rings {}", on_off(r.enabled)));
+        let text = set_clouds(&mut s, *cloud_preset);
+        state.note(text, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {
         let calendar = &config.0.calendar;
@@ -217,53 +350,40 @@ fn keys(
         if delta != 0.0 {
             let hour = f64::from(time.0.hour(calendar)) + delta;
             time.0.set_hour(hour, calendar);
-            note(format!("hour {:.2}", time.0.hour(calendar)));
+            state.note(format!("hour {:.2}", time.0.hour(calendar)), now);
         }
         if input.just_pressed(KeyCode::KeyP) {
             time.0.paused = !time.0.paused;
-            note(format!("clock {}", if time.0.paused { "paused" } else { "running" }));
+            state.note(format!("clock {}", if time.0.paused { "paused" } else { "running" }), now);
         }
         if input.just_pressed(KeyCode::KeyT) {
             time.0.time_scale = if time.0.time_scale < 100.0 { 600.0 } else { 30.0 };
             time.0.paused = false;
-            note(format!("time-lapse {} (x{})", on_off(time.0.time_scale > 100.0), time.0.time_scale));
+            state.note(format!("time-lapse {} (x{})", on_off(time.0.time_scale > 100.0), time.0.time_scale), now);
         }
     }
     if input.just_pressed(KeyCode::F9)
         && let Ok((global, local, cell)) = camera.single()
     {
-        // Exteriors: grid cell + local offset to world meters; interiors: plain transform.
-        let eye = match cell {
-            Some(c) => WorldPos::new(IVec3::new(c.x, c.y, c.z), local.translation).to_f64(),
-            None => global.translation().as_dvec3(),
-        };
-        let target = eye + global.forward().as_dvec3() * 50.0;
-        let raw = format!("{:.1},{:.1},{:.1},{:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, target.x, target.y, target.z);
+        let raw = camera_string(global, local, cell);
         let hour = match (s.time.as_ref(), s.config.as_ref()) {
             (Some(t), Some(c)) => format!(" --hour {:.2}", t.0.hour(&c.0.calendar)),
             _ => String::new(),
         };
         let line = format!("--camera \"{raw}\"{hour}");
         let copied = clipboard.and_then(|mut c| c.set_text(line.clone()).ok()).is_some();
-        note(format!("{line}{}", if copied { "  (copied)" } else { "" }));
+        state.note(format!("{line}{}", if copied { "  (copied)" } else { "" }), now);
     }
     if input.just_pressed(KeyCode::F12) {
         let name = crate::scenes::active().map_or("view", |s| s.name.as_str());
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let path = std::path::PathBuf::from("shots").join(format!("{name}-{secs}.png"));
         let _ = std::fs::create_dir_all("shots");
-        note(format!("screenshot {}", path.display()));
+        state.note(format!("screenshot {}", path.display()), now);
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
     }
-    // Last: `note` borrows `state` until its final use above.
     if input.just_pressed(KeyCode::F1) {
         state.help = !state.help;
-    }
-    if input.just_pressed(KeyCode::F2) {
-        state.sun_shadows = !state.sun_shadows;
-        let text = format!("sun shadows {}", on_off(state.sun_shadows));
-        println!("[A/B] {text}");
-        state.note = Some((text, now));
     }
 }
 
@@ -295,17 +415,15 @@ fn overlay(
     let title = scene.map_or_else(|| "view".to_owned(), |s| format!("scene {}", s.name));
     let mut out = format!("{title}  |  F1 {}", if state.help { "hide" } else { "help" });
     if let (Some(t), Some(c)) = (s.time.as_ref(), s.config.as_ref()) {
-        let clock = if t.0.paused { "paused" } else if t.0.time_scale > 100.0 { "time-lapse" } else { "running" };
-        let _ = write!(out, "  |  {:.2} h ({clock})", t.0.hour(&c.0.calendar));
+        let _ = write!(out, "  |  {:.2} h ({})", t.0.hour(&c.0.calendar), clock_label(&t.0));
     }
     if state.help {
-        let opt = |v: Option<bool>| v.map_or("n/a", on_off);
+        let opt = |sw: Switch| sw.get(&state, &s).map_or("n/a", on_off);
         let dlss = match (s.upscaling.as_ref(), active.as_ref()) {
             (Some(u), Some(a)) if u.0 == a.0 => u.0.label().to_owned(),
             (Some(u), Some(a)) => format!("{} (running {})", u.0.label(), a.0.label()),
             _ => "n/a".to_owned(),
         };
-        let terrain = s.terrain.as_ref();
         let flags_off = off.map_or_else(|| "none".to_owned(), |o| o.label());
         let bodies = s.bodies.as_ref().map_or_else(|| "n/a".to_owned(), |b| format!("{:?}", b.bodies).to_lowercase());
         let _ = write!(
@@ -313,14 +431,14 @@ fn overlay(
             "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
              F5 far tint {}  F6 terrain LOD colors {}  F7 wireframe {}  F8 rings {}\n\
              F10 clouds {}  F11 ground blend {}  C cloud preset  [ ] hour -/+0.5 (Shift 0.1)  P pause  T time-lapse  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
-            on_off(state.sun_shadows),
-            opt(terrain.map(|t| !t.no_far_shadows)),
-            opt(s.far.as_ref().map(|f| f.level_tint)),
-            opt(terrain.map(|t| t.lod_colors)),
-            opt(terrain.map(|t| t.wireframe)),
-            opt(s.rings.as_ref().map(|r| r.enabled)),
-            opt(s.clouds.as_ref().map(|c| c.enabled)),
-            opt(terrain.map(|t| !t.no_ground_blend)),
+            opt(Switch::SunShadows),
+            opt(Switch::TerrainFarShadows),
+            opt(Switch::FarTint),
+            opt(Switch::TerrainLodColors),
+            opt(Switch::Wireframe),
+            opt(Switch::Rings),
+            opt(Switch::Clouds),
+            opt(Switch::GroundBlend),
         );
         match s.portals.as_ref() {
             Some(p) => {

@@ -99,9 +99,17 @@ struct Capture {
 
 /// When everything (models, textures, cooked spawns) finished loading.
 #[derive(Resource)]
-struct Loading {
+pub(crate) struct Loading {
     started: Instant,
     ready_at: Option<f32>,
+}
+
+#[cfg(feature = "remote")]
+impl Loading {
+    /// Everything loaded (or the wait gave up).
+    pub(crate) const fn ready(&self) -> bool {
+        self.ready_at.is_some()
+    }
 }
 
 pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error::Error>> {

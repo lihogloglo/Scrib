@@ -9,7 +9,10 @@ license.workspace = true
 # Fast iteration: Bevy as a shared library, so relinking after a change
 # skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
 # `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
-dev = ["bevy/dynamic_linking", "bevy/dev", "sf_vfs/watch"]
+dev = ["bevy/dynamic_linking", "bevy/dev", "sf_vfs/watch", "remote"]
+# Bevy Remote Protocol on 127.0.0.1 for agents (`bevy_brp_mcp`; `src/remote.rs`,
+# CLAUDE.md "Live inspection (BRP)"). Unauthenticated HTTP: dev builds only.
+remote = ["bevy/bevy_remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde_json"]
 # Ray-traced lighting (`view --rt`): Bevy Solari. Off by default: it forces
 # the deferred renderer at startup and needs a ray-tracing GPU.
 solari = ["sf_sky_bevy/solari", "bevy/bevy_solari"]
@@ -74,6 +77,10 @@ tes3 = { workspace = true, features = ["esp"] }
 # Test-scene registry (`scenes.ron`, `src/scenes.rs`); both already in the graph through Bevy.
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
+# `remote` only. Extras without gamepad; screenshots need Bevy `png`, which extras turns on.
+bevy_brp_extras = { version = "0.23", default-features = false, features = ["diagnostics", "ui"], optional = true }
+schemars = { version = "1.2", optional = true }
+serde_json = { version = "1", optional = true }
 
 [lints]
 workspace = true

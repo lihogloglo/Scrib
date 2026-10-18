@@ -761,6 +761,30 @@ fn settled(
         })
 }
 
+/// [`settled`] as a system parameter, for runs that ask on demand ([`crate::remote`]).
+#[cfg(feature = "remote")]
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Readiness<'w, 's> {
+    streaming: Option<Res<'w, Streaming>>,
+    terrain: Option<Res<'w, TerrainStats>>,
+    server: Res<'w, AssetServer>,
+    nifs: Query<'w, 's, &'static WorldAssetRoot>,
+    materials: Res<'w, Assets<StandardMaterial>>,
+    off: Option<Res<'w, Off>>,
+    active: Option<Res<'w, ActiveWorldspace>>,
+}
+
+#[cfg(feature = "remote")]
+impl Readiness<'_, '_> {
+    /// `None` outside the exterior viewer.
+    pub(crate) fn settled(&self) -> Option<bool> {
+        let (Some(streaming), Some(terrain), Some(off), Some(active)) = (&self.streaming, &self.terrain, &self.off, &self.active) else {
+            return None;
+        };
+        Some(settled(streaming, terrain, &self.server, &self.nifs, &self.materials, off, active))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn capture(
     mut commands: Commands,
