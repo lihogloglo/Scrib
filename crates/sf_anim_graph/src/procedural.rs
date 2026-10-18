@@ -33,6 +33,7 @@ use sf_anim::{LocalPose, ModelPose, Skeleton, update_subtree};
 use crate::asset::BodyFit;
 use crate::compiled::{CompiledGraph, GirdleSeg, Leg, Op};
 use crate::instance::{FootStats, Params, UpdateInputs};
+use crate::secondary::{Hit, HitState, SpringState, hit_react, spring_bones};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LegState {
@@ -79,6 +80,8 @@ pub(crate) enum OpState {
     },
     /// Full-body IK working memory and the effector list.
     Body(Box<(FullBodyScratch, Vec<Effector>)>),
+    Hit(HitState),
+    Springs(SpringState),
 }
 
 impl OpState {
@@ -93,6 +96,8 @@ impl OpState {
                 }
             }
             Op::FullBodyIk { .. } => Self::Body(Box::default()),
+            Op::HitReact(op) => Self::Hit(HitState::new(op)),
+            Op::SpringBones(_) => Self::Springs(SpringState::default()),
             Op::LookAt { .. } => Self::Look { target: Vec3::ZERO, velocity: Vec3::ZERO, weight: 0.0, weight_velocity: 0.0, init: false },
             _ => Self::None,
         }
@@ -111,6 +116,8 @@ pub(crate) struct ProceduralCx<'a> {
     pub curves: &'a [f32],
     /// Guard counts of `FootPlacement` this update.
     pub feet: FootStats,
+    /// Hits queued since the last update (`HitReact`).
+    pub hits: &'a [Hit],
 }
 
 const ROOT: Affine3A = Affine3A::IDENTITY;
@@ -213,6 +220,11 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                 legs.fill(LegState::default());
                 girdles.fill((Spring::default(), Spring::default()));
                 *weight = Some(Spring::default());
+            }
+            match state {
+                OpState::Hit(h) => h.clear(),
+                OpState::Springs(sp) => sp.reset(),
+                _ => {}
             }
             continue;
         }
@@ -352,6 +364,8 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                 let goal = LimbGoal { position: t.position, rotation: t.rotation, pole: Vec3::ZERO, weight: w };
                 solve_limb(s, local, model, &ROOT, &chain, solver, &goal);
             }
+            (Op::HitReact(op), OpState::Hit(state)) => hit_react(op, state, cx.hits, s, local, model, cx.dt),
+            (Op::SpringBones(op), OpState::Springs(state)) => spring_bones(op, state, &cx.inputs.moved, s, local, model, cx.dt),
             _ => {}
         }
     }

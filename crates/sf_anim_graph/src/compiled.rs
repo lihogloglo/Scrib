@@ -465,6 +465,42 @@ pub enum Op {
         target: u16,
         weight: Value,
     },
+    /// Kinematic hit reactions (`crate::secondary`).
+    HitReact(HitReactOp),
+    /// Verlet secondary-motion chains (`crate::secondary`).
+    SpringBones(SpringBonesOp),
+}
+
+/// A `HitReact` op (`crate::secondary::hit_react`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HitReactOp {
+    /// Reactive joints with their gain, in skeleton order.
+    pub joints: Vec<(u16, f32)>,
+    /// Joints that react per hit: the hit one and its reactive ancestors.
+    pub depth: u8,
+    /// Gain per level up the chain.
+    pub falloff: f32,
+    /// Peak angle per unit strength, radians.
+    pub gain: f32,
+    pub max_angle: f32,
+    pub halflife: f32,
+}
+
+/// A `SpringBones` op (`crate::secondary::spring_bones`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpringBonesOp {
+    /// Joint chains, root first (two joints or more).
+    pub chains: Vec<Vec<u16>>,
+    /// Natural frequency of the pull toward the animated pose, Hz.
+    pub frequency: f32,
+    /// Damping ratio (1: critical).
+    pub damping: f32,
+    /// m/s² down in character space.
+    pub gravity: f32,
+    /// Share of the character's world motion the chains feel (0–1).
+    pub inertia: f32,
+    /// Largest angle from the animated bone direction, radians.
+    pub max_angle: f32,
 }
 
 /// One effector of a `FullBodyIk` op.

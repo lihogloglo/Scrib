@@ -703,6 +703,72 @@ pub enum OpSpec {
         #[serde(default = "lod0")]
         max_lod: u8,
     },
+    /// Kinematic hit reactions: a hit (`GraphInstance::hit`) kicks critical
+    /// rotation springs on the hit joint and up to `depth - 1` reactive
+    /// ancestors (gain × `falloff` per level), about `lever × direction`;
+    /// they peak and settle back to the animation. `joints` empty: the rig
+    /// profile's spine, neck, head and non-support limbs (gain 1).
+    HitReact {
+        #[serde(default)]
+        joints: Vec<(JointRef, f32)>,
+        #[serde(default = "hit_depth")]
+        depth: u8,
+        #[serde(default = "half")]
+        falloff: f32,
+        /// Peak angle on the hit joint per unit strength, radians.
+        #[serde(default = "hit_gain")]
+        gain: f32,
+        #[serde(default = "thirty_degrees")]
+        max_angle: f32,
+        #[serde(default = "hit_halflife")]
+        halflife: f32,
+        #[serde(default = "lod2")]
+        max_lod: u8,
+    },
+    /// Verlet secondary motion on joint chains (tails, ears, antennae,
+    /// hair): `chains` names the rig profile's tails and extra chains (empty:
+    /// every tail), `explicit` adds chains by joint, root first.
+    SpringBones {
+        #[serde(default)]
+        chains: Vec<String>,
+        #[serde(default)]
+        explicit: Vec<Vec<JointRef>>,
+        /// Natural frequency of the pull toward the animated pose, Hz.
+        #[serde(default = "spring_frequency")]
+        frequency: f32,
+        /// Damping ratio (1: critical, no overshoot).
+        #[serde(default = "spring_damping")]
+        damping: f32,
+        /// m/s², down.
+        #[serde(default)]
+        gravity: f32,
+        /// Share of the character's world motion the chains feel (0–1).
+        #[serde(default = "half")]
+        inertia: f32,
+        #[serde(default = "sixty_degrees")]
+        max_angle: f32,
+        #[serde(default = "lod1")]
+        max_lod: u8,
+    },
+}
+
+fn hit_depth() -> u8 {
+    3
+}
+fn half() -> f32 {
+    0.5
+}
+fn hit_gain() -> f32 {
+    0.35
+}
+fn hit_halflife() -> f32 {
+    0.12
+}
+fn spring_frequency() -> f32 {
+    3.0
+}
+fn spring_damping() -> f32 {
+    0.6
 }
 
 fn speed_min() -> f32 {

@@ -265,7 +265,7 @@ change the sketch above:
   ground samples per leg (character space) and the character's motion
   since the last update, so foot locks stay planted in the world; the
   output's `probe_origins` are next update's probe points.
-  `SpringBones` waits for M4.
+  `HitReact` and `SpringBones` (M4 P9): see "Next-gen roadmap" layer 4.
 - **`Mirror`** works in model space: joint `j` takes its counterpart's
   model transform reflected, times a correction computed from the rest pose
   at compile, so any joint-axis convention mirrors correctly (pairs from
@@ -941,6 +941,42 @@ gains don't explode at our fixed step. Learned physics controllers
   critically damped springs on the hit region's joints (`sf_anim::spring`).
 - Secondary motion: `SpringBones` (Verlet chains with spring constraints)
   for tails, ears, antennae and hair; cloth stays WISHLIST §7.
+
+**As built (P9, 2026-10-13; `sf_anim_graph::secondary`).** Reuse check
+(rule 8): Bevy 0.20 has no spring bones; `bevy_skeleton_modifiers` 0.1.1
+works on entities after Bevy's animation, outside our pose-buffer op stack
+(no op order with foot placement, no LOD, no graph state), and nothing else
+current fits; the technique is small (the Unity Dynamic Bone / VRM
+`springBone` / UE `AnimDynamics` family), so both ops are ours.
+- `HitReact { joints, depth 3, falloff 0.5, gain 0.35 rad, max_angle 30°,
+  halflife 0.12 s }`: `GraphInstance::hit(Hit { point, direction, strength,
+  joint })` (character space) queues a hit; at the next update the hit joint
+  (or the reactive joint nearest the point) and up to `depth − 1` reactive
+  ancestors get an angular-velocity kick about `lever × direction`, sized so
+  the hit joint peaks at `gain · strength` after `halflife / (2 ln 2)`
+  (x(t) = v0·t·e^(−yt)). The springs are Holden's closed form, so the curve
+  is the same at any frame rate (tested against the analytic curve at 30,
+  60 and 144 fps) and the pose returns exactly to the animation. Default
+  joints: the rig profile's spine (without the root girdle, which would
+  swing the support legs), neck, head and non-support limbs. Runs after
+  foot placement (feet stay planted). Additive directional hit clips stay
+  possible on the graph's additive layer.
+- `SpringBones { chains, explicit, frequency 3 Hz, damping 0.6, gravity 0,
+  inertia 0.5, max_angle 60° }`: each chain joint's child is a Verlet
+  particle pulled toward its animated offset from the simulated parent (a
+  damped spring, ω² pull and 2ζω drag, as frequency and damping ratio, not
+  per-step factors), kept at bone length and within `max_angle` of the
+  animated direction; joints are then aimed at their particles root first.
+  Particles live in character space; the character's motion since the last
+  update (`UpdateInputs::moved`) moves them back by `inertia` (1: they stay
+  put in the world). Fixed 1/120 s substeps accumulated across updates (at
+  most 12 per update) make it frame-rate independent: a strafing guar's
+  tail trails, swings and settles the same at 30, 60 and 144 fps (7 fps:
+  the same rest), with no drift; gravity sag is equal at every rate.
+  `chains` names rig-profile chains (empty: every tail). An LOD cut resets
+  both ops (springs to zero, particles re-seeded from the animation). The
+  Morrowind graphs (humanoid, creature) carry both ops with defaults.
+  `ClothLattice` (P10) extends the particle solver with lattice constraints.
 
 **Verification.** Powered at full strength, standing and walking: tracking
 error ≤ 5 cm RMS at the effectors and ≤ 5° per joint. Get-up: joint

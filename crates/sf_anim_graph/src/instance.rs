@@ -31,6 +31,7 @@ use crate::compiled::{
 };
 use crate::inertial::Inertializer;
 use crate::procedural::{OpState, ProceduralCx, run_ops};
+use crate::secondary::Hit;
 use crate::slot::{
     Montage, MontageClip, MontageId, MontageStatus, NoticeKind, SlotError, SlotId, SlotNotice, SlotRequest, SlotStart, SlotState, clip_of, curve_map,
     event_ids, warp_windows,
@@ -421,6 +422,8 @@ pub struct GraphInstance {
     physics: Option<PhysicsInput>,
     /// A hand-back blend requested by [`GraphInstance::inertialize_from`].
     handback: Option<f32>,
+    /// Hits for the `HitReact` ops, queued by [`GraphInstance::hit`].
+    hits: Vec<Hit>,
 }
 
 /// A pose supplied from outside the graph (a ragdoll's), with a weight per
@@ -469,6 +472,7 @@ impl GraphInstance {
             scratch: Scratch { frames: Vec::new(), curve_w: vec![0.0; g.curves.len()], model: ModelPose::new(n), model2: ModelPose::new(n) },
             physics: None,
             handback: None,
+            hits: Vec::new(),
             ops: g.ops.iter().map(|o| OpState::new(&o.op)).collect(),
             speed_match: None,
             stride: (0.0, 0.0),
@@ -539,6 +543,17 @@ impl GraphInstance {
     /// Whether an inertialization blend is running.
     pub fn inertializing(&self) -> bool {
         self.inertial.is_active()
+    }
+
+    /// Queues a hit for the graph's `HitReact` ops (character space); it
+    /// kicks at the next update. Graphs without the op ignore it.
+    pub fn hit(&mut self, hit: Hit) {
+        self.hits.push(hit);
+    }
+
+    /// The largest `HitReact` offset now, radians (diagnostics, tests).
+    pub fn hit_reaction(&self) -> f32 {
+        self.ops.iter().map(|o| if let OpState::Hit(h) = o { h.max_angle() } else { 0.0 }).fold(0.0, f32::max)
     }
 
     /// The current state of a state-machine node.
@@ -767,6 +782,7 @@ impl GraphInstance {
         out.posed = posed;
         if !posed {
             self.reset_history();
+            self.hits.clear();
             return;
         }
         out.pose.copy_from(&top.pose);
@@ -823,9 +839,11 @@ impl GraphInstance {
             anim_velocity: self.anim_velocity,
             curves: &out.curves,
             feet: FootStats::default(),
+            hits: &self.hits,
         };
         run_ops(&mut pcx, &mut self.ops, &mut out.pose, &mut out.model);
         out.feet = pcx.feet;
+        self.hits.clear();
     }
 
     /// Where the controller should probe before the next update: each

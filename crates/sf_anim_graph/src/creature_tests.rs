@@ -1,4 +1,4 @@
-//! Creature-ready ops and motion warping (animation.md "Next-gen roadmap",
+﻿//! Creature-ready ops and motion warping (animation.md "Next-gen roadmap",
 //! rig-profile.md "Verification"): a guar-like quadruped, an insect-like
 //! hexapod, a cliff-racer-like flyer and the biped regression, walking on
 //! slopes and stairs with foot placement; warp windows snapping attacks to
@@ -631,5 +631,109 @@ fn full_body_ik_reaches_with_the_body_and_keeps_placed_feet() {
     for l in rig.profile.support_limbs() {
         let e = usize::from(l.effector);
         assert!(out.model.translation(e).distance(rest.translation(e)) < 5e-3, "{} moved", l.name);
+    }
+}
+
+// --- Secondary motion (P9: HitReact, SpringBones) -----------------------------------------
+
+/// A still quadruped (guar-like, with a tail) with `ops` after the graph.
+fn still_quadruped(ops: &str) -> Rig {
+    let s = quadruped(1.0);
+    let idle = SourceClip { name: "idle".into(), duration: 1.0, ..SourceClip::default() };
+    let clip = cook_clip(&s, &idle, &walk_rules(), &CookSettings::default()).unwrap();
+    let ron = format!(r#"(nodes: {{"i": Clip(clip: "idle")}}, layers: [(node: "i")], procedural: [{ops}])"#);
+    Rig::new(s, vec![clip], &ron)
+}
+
+/// The tail tip's offset from its animated position at `times` (s), the
+/// character strafing at 3 m/s for the first 0.5 s, then standing, at
+/// updates of `dt`.
+fn tail_offsets(rig: &Rig, dt: f32, times: &[f32]) -> Vec<Vec3> {
+    let b = rig.binding();
+    let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+    let tip = rig.joint("tail3");
+    let animated: Vec3 = rig.skeleton.rest_model()[tip].translation.into();
+    let mut found = Vec::new();
+    let mut t = 0.0f32;
+    let mut next = 0;
+    while next < times.len() {
+        let moving = t < 0.5 - 1e-4;
+        let moved = RootDelta::new(if moving { Vec3::X * 3.0 * dt } else { Vec3::ZERO }, 0.0);
+        inst.update(&b, dt, 0, &UpdateInputs { moved, ..UpdateInputs::default() }, &mut out);
+        t += dt;
+        if t >= times[next] - 1e-4 {
+            found.push(out.model.translation(tip) - animated);
+            next += 1;
+        }
+    }
+    found
+}
+
+#[test]
+fn spring_bones_swing_decay_and_match_at_any_frame_rate() {
+    let rig = still_quadruped("SpringBones()");
+    assert!(matches!(&rig.graph.ops[0].op, Op::SpringBones(op) if op.chains == vec![vec![
+        u16::try_from(rig.joint("tail1")).unwrap(), u16::try_from(rig.joint("tail2")).unwrap(), u16::try_from(rig.joint("tail3")).unwrap()
+    ]]));
+    let times = [0.25, 0.5, 1.0, 4.0, 10.0];
+    let reference = tail_offsets(&rig, 1.0 / 60.0, &times);
+    // Strafing right (+X) the tail trails left (−X), then settles back.
+    assert!(reference[0].x < -0.02 && reference[1].x < -0.02, "trail {reference:?}");
+    assert!(reference[3].length() < 1e-3 && reference[4].length() < 1e-4, "decay {reference:?}");
+    for dt in [1.0 / 30.0, 1.0 / 144.0, 1.0 / 7.0] {
+        let other = tail_offsets(&rig, dt, &times);
+        // At 7 fps the strafe lands in 0.43 m jumps: only the settling compares.
+        let from = if dt > 0.1 { 3 } else { 0 };
+        for (k, (a, b)) in reference.iter().zip(&other).enumerate().skip(from) {
+            // The motion lands per update, so slow updates differ a little mid-swing.
+            let tolerance = if k < 3 { 0.25 * reference[0].length().max(0.01) } else { 1e-3 };
+            assert!(a.distance(*b) < tolerance, "dt {dt}: t {} {a} vs {b}", times[k]);
+        }
+        // No drift: back on the animation.
+        assert!(other[4].length() < 1e-4, "dt {dt}: drift {}", other[4]);
+    }
+}
+
+#[test]
+fn spring_bones_sag_is_frame_rate_independent() {
+    let rig = still_quadruped("SpringBones(gravity: 9.81)");
+    let sag: Vec<Vec3> = [1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0].iter().map(|&dt| tail_offsets(&rig, dt, &[8.0])[0]).collect();
+    // Lower than animated (gravity against the pull), the same at every rate.
+    assert!(sag[1].y < -0.01, "sag {sag:?}");
+    assert!(sag[0].distance(sag[1]) < 1e-3 && sag[2].distance(sag[1]) < 1e-3, "sag {sag:?}");
+}
+
+#[test]
+fn hit_react_kicks_peaks_and_settles_at_any_frame_rate() {
+    let rig = still_quadruped("HitReact()");
+    let Op::HitReact(op) = &rig.graph.ops[0].op else { panic!("HitReact") };
+    // Spine, neck and head react; the root girdle and the support legs don't.
+    assert!(op.joints.iter().any(|j| usize::from(j.0) == rig.joint("chest")));
+    assert!(!op.joints.iter().any(|j| usize::from(j.0) == rig.joint("paw_l") || usize::from(j.0) == rig.joint("pelvis")));
+    let (chest, head) = (rig.joint("chest"), rig.joint("head"));
+    let rest_head: Vec3 = rig.skeleton.rest_model()[head].translation.into();
+    let hit = Hit { point: rig.skeleton.rest_model()[chest].translation.into(), direction: Vec3::X, strength: 1.0, joint: None };
+    // The hit joint follows the kicked critical spring: gain · y·e · t · e^(−y·t), peak `gain` at t = 1/y.
+    let y = sf_anim::spring::halflife_to_damping(op.halflife) / 2.0;
+    let analytic = |t: f32| op.gain * y * std::f32::consts::E * t * (-y * t).exp();
+    for dt in [1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0] {
+        let b = rig.binding();
+        let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        inst.hit(hit);
+        let (mut peak, mut head_x) = (0.0f32, 0.0f32);
+        for k in 1..=(2.0 / dt).round() as usize {
+            inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+            let a = inst.hit_reaction();
+            // Closed-form springs: on the curve at every rate.
+            assert!((a - analytic(k as f32 * dt)).abs() < 1e-3, "dt {dt}: step {k}: {a} vs {}", analytic(k as f32 * dt));
+            if a > peak {
+                peak = a;
+                head_x = out.model.translation(head).x - rest_head.x;
+            }
+        }
+        assert!(peak > 0.9 * op.gain, "dt {dt}: peak {peak}");
+        assert!(head_x > 0.02, "dt {dt}: head pushed {head_x}");
+        assert!(inst.hit_reaction() < 1e-4 && out.model.translation(head).distance(rest_head) < 1e-4, "dt {dt}: settles");
     }
 }

@@ -29,6 +29,8 @@
 //! them by a limb), powered ones `POWERED`. Removing the component or
 //! despawning the entity removes the bodies.
 //!
+//! Hosts sample the get-up clip's first frame with [`clip_root_body`].
+//!
 //! Not yet: sleeping-pose persistence across deactivation, placed corpses.
 
 use std::collections::HashMap;
@@ -445,6 +447,24 @@ fn get_up(
         got_up.write(RagdollGotUp { entity });
         stats.got_up += 1;
     }
+}
+
+/// The get-up clip's root body at `time` (usually 0, its first frame), in
+/// model space at scale 1: what [`RagdollMode::Knockdown::get_up`] takes.
+/// The clip is sampled over the rest pose, so joints it doesn't animate
+/// keep their rest transforms.
+pub fn clip_root_body(def: &RagdollDef, skeleton: &sf_anim::Skeleton, clip: &sf_anim::Clip, time: f32) -> Option<(Quat, Vec3)> {
+    let b0 = def.bodies.first()?;
+    let joint = usize::from(b0.joint);
+    if joint >= skeleton.len() {
+        return None;
+    }
+    let mut local = sf_anim::LocalPose::rest(skeleton);
+    clip.sample(time, &mut local, None);
+    let mut model = sf_anim::ModelPose::new(skeleton.len());
+    sf_anim::local_to_model(skeleton, &local, &mut model, &Affine3A::IDENTITY);
+    let (_, r, t) = model.mats[joint].to_scale_rotation_translation();
+    Some(((r * b0.local.1).normalize(), t + r * b0.local.0))
 }
 
 /// [`LYING_REST_GET_UP`]: the handoff pose's root body turned onto its back.

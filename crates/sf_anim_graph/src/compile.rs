@@ -24,8 +24,8 @@ use crate::asset::{
 };
 use crate::blendspace::triangulate;
 use crate::compiled::{
-    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledGraph, Condition, GirdleSeg, Layer, Leg, Machine, MirrorTable, Node, NodeKind,
-    Op, OpEntry, ParamDef, ParamType, PlayerNode, Provenance, SlotDef, State, Transition, Value, WarpWindow,
+    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledGraph, Condition, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable, Node, NodeKind,
+    Op, OpEntry, ParamDef, ParamType, PlayerNode, Provenance, SlotDef, SpringBonesOp, State, Transition, Value, WarpWindow,
 };
 
 /// Where `compile` gets what the asset names.
@@ -1001,6 +1001,66 @@ impl Compiler<'_> {
                         return Err("ChainIk needs a parent-to-child chain of at least 2 joints".into());
                     }
                     (Op::ChainIk { joints, solver: *solver, target: self.ik_target(target)?, weight: self.value(weight)? }, *max_lod)
+                }
+                OpSpec::HitReact { joints, depth, falloff, gain, max_angle, halflife, max_lod } => {
+                    let mut list = weights(self, joints)?;
+                    if list.is_empty() {
+                        // A skeleton without a profile gets an op with no joints (no reaction).
+                        if let Some(p) = self.source.profile()? {
+                            let mut add = |js: &[u16]| list.extend(js.iter().map(|&j| (j, 1.0)));
+                            // The root girdle stays: turning it would swing the support legs.
+                            let root = p.girdles.first().map(|g| g.joint);
+                            if let Some(spine) = &p.spine {
+                                add(&spine.joints.iter().copied().filter(|&j| Some(j) != root).collect::<Vec<_>>());
+                            }
+                            if let Some(nh) = &p.neck_head {
+                                add(&nh.neck.joints);
+                                add(&[nh.head]);
+                            }
+                            for l in p.limbs.iter().filter(|l| !l.support) {
+                                add(&l.joints);
+                            }
+                        }
+                    }
+                    list.sort_by_key(|j| j.0);
+                    list.dedup_by_key(|j| j.0);
+                    let op = HitReactOp {
+                        joints: list,
+                        depth: (*depth).max(1),
+                        falloff: falloff.clamp(0.0, 1.0),
+                        gain: gain.max(0.0),
+                        max_angle: max_angle.max(0.0),
+                        halflife: halflife.max(1e-3),
+                    };
+                    (Op::HitReact(op), *max_lod)
+                }
+                OpSpec::SpringBones { chains: names, explicit, frequency, damping, gravity, inertia, max_angle, max_lod } => {
+                    let mut chains = Vec::new();
+                    if let Some(p) = self.source.profile()? {
+                        let all = p.tails.iter().chain(&p.extra);
+                        for c in all {
+                            let wanted = if names.is_empty() { p.tails.iter().any(|t| t.name == c.name) } else { names.contains(&c.name) };
+                            if wanted {
+                                chains.push(c.joints.clone());
+                            }
+                        }
+                    }
+                    for c in explicit {
+                        chains.push(c.iter().map(|j| self.joint(j)).collect::<R<Vec<_>>>()?);
+                    }
+                    let s = self.skeleton;
+                    // Each joint's child in the chain must be its descendant.
+                    chains.retain(|c| c.len() >= 2 && c.windows(2).all(|w| w[0] != w[1] && s.is_ancestor(usize::from(w[0]), usize::from(w[1]))));
+                    let op = SpringBonesOp {
+                        chains,
+                        // Explicit Verlet at the substep stays stable well below ω·h = 1.
+                        frequency: frequency.clamp(0.0, 0.5 / (std::f32::consts::TAU * crate::SPRING_SUBSTEP)),
+                        damping: damping.max(0.0),
+                        gravity: *gravity,
+                        inertia: inertia.clamp(0.0, 1.0),
+                        max_angle: max_angle.clamp(0.0, std::f32::consts::PI),
+                    };
+                    (Op::SpringBones(op), *max_lod)
                 }
             };
             self.out.ops.push(OpEntry { op, max_lod });

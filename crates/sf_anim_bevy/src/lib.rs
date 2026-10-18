@@ -45,6 +45,8 @@ use sf_anim_graph::{
 use sf_diag_bevy::DiagCounters;
 
 pub use lod::{AnimBudget, AnimLod, AnimLodSettings, AnimTier};
+/// A hit for the graph's `HitReact` op (`Animator::instance.hit`).
+pub use sf_anim_graph::Hit;
 
 /// The `PostUpdate` sets, chained, before `TransformSystems::Propagate`.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

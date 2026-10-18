@@ -511,6 +511,26 @@ per powered character with 8 (0.05 missed). The animation side: the graph's buil
 (`GraphInstance::set_physics`, per-joint weights, after inertialization and before history and ops) replaces a
 per-graph `PoseInput` node, and `GraphInstance::inertialize_from` is the get-up hand-back (continuous at shrinking dt).
 
+**P8b (2026-10-13).** The pelvis drive was underdamped: scaling only the stiffness of an acceleration motor by the
+composite load gives ζ = 1/√load ≈ 0.37 (it rang ±8 cm at 2 Hz). Both gains now scale by the load (critical for the
+composite body), plus gravity compensation (the anchor offset by −g/ω², the weight's torque about the pelvis);
+joint drives keep 2·√stiffness (fully critical over-damped them to 13°). Measured (75 kg fixture walking 1.2 m/s):
+effectors 11.5 → **6.8 cm RMS in air** (pelvis 9.0 → 2.2 cm, joints 5.5°), **11.0 cm on a floor** (the synthetic
+walk slides and sinks its feet); gate 5 cm still open. Cost: `DriveParams::powered_iterations` (extra solver
+iterations while powered), 8 powered on a floor: +8 **0.129**, +4 0.090, +2 0.071, +0 0.051 ms per character
+(tracking 11 / 13.8 / 21.9 / 25.7 cm); rapier's `parallel` feature (`sf_physics` feature `parallel`) was slower
+(0.153 ms). Default +8; gate 0.05 ms open. `sf_physics_bevy` modes: `RagdollMode::Death { crumple }` (full strength
+fading to limp over 0.45 s; the entity frame follows `implied_frame`'s heading and position) and `Knockdown { point,
+impulse, get_up, get_up_flag }` (the hit on the nearest body, brace 0.25 fading over 0.8 s, get-up when the pelvis
+stays under 0.2 m/s for 0.5 s); budget 8 by driven count; per-joint weights from `def.owner`; read-back relative to
+the entity's current frame. P9: hosts pass the get-up clip's first-frame root body (`clip_root_body`), so the
+`LYING_REST_GET_UP` scaffold only serves skeletons without a get-up clip.
+
+**Kinematic hit reactions and spring bones (P9, 2026-10-13).** Below the knockdown threshold (and for characters
+past the powered budget) hits go to the graph's `HitReact` op (animation.md "Secondary motion"): critically damped
+rotation springs on the hit joint and its reactive ancestors, kicked about `lever × direction`; the Morrowind app
+sends capsule impacts of 1–15 N·s with strength = impulse / 15. `SpringBones` swings tails and other chains.
+
 Behaviours:
 
 - **Death**: regions switch to `Powered` following the death clip, then strength fades to `Limp` over
