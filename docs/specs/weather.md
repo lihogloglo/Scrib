@@ -673,7 +673,7 @@ Revisit `FogVolume` only for small local volumes in interiors (M9 environment vo
 ## Wind
 
 **Field** (`sf_wind`; the CPU and WGSL twins agree to 1e-4, checked by a test that runs the WGSL on
-the CPU through `naga` + a reference or by matching golden values):
+the GPU headless and compares; see "Wind as built" below):
 - **Global**: direction + mean speed from `WindState` (weather). Speed eases with `WindTerms`.
 - **Gusts**: Megalophobia's two-octave curl-noise field advected downwind. It produces discrete gust
   cells that form, travel, swirl and die, plus a calm bias for patchy stillness and a capped swirl so
@@ -716,6 +716,76 @@ guided by an adapter hook in the style of `FarSource`:
   3): `sf_model_bevy` drops wind attributes from the RT LOD, so ray-traced trees are static.
 - Merged far-field meshes (L1-L3) carry no wind. At 400 m+ sway is sub-pixel. Impostors use the
   per-instance bend above.
+
+### Wind as built (WD1 part 1, wd1a, 2026-10-18): `sf_wind`
+
+**Reuse check (rule 8).** Bevy 0.20 has no wind. `bevy_feronia` 0.8 (Bevy 0.18) is grass-only shader
+wind with no CPU twin. Noise crates (`noise`, `fastnoise-lite`) are CPU-only and their float hashes
+can't be mirrored bit for bit in WGSL. So: our own, porting Megalophobia's `grass_wind.wgsl` (MIT OR
+Apache-2.0 by the owner, ARCHITECTURE §10 2026-10-12; provenance in `sf_wind`'s crate docs and the
+shader header).
+
+**API** (Bevy-free; deps `glam`, `serde`, `sf_coords`):
+- `Wind` (moved from `sf_sky`, re-exported there unchanged: `velocity` at the reference height,
+  `gustiness`, `gust_length`, `lerp`, plus a stateless `velocity_at(pos, t)` for constant wind).
+- `WindSettings` (swirl 0.9, gust bias 0.42, band 0.3 (Megalophobia's), gust travel 1.0 × mean speed,
+  roughness z0 0.1 m, reference height 10 m (WMO; weather-adapter.md maps `Wind Speed` at 10 m), profile
+  cap 2).
+- `WindState` (saveable): `wind`, clock, the two octaves' drift integrated in f64 and wrapped to
+  `PERIOD` (so a speed change never jumps the field), up to `MAX_SOURCES` = 32 `WindSource`s
+  (`Directional { direction }`, `Radial`, `Vortex { axis }`; center `WorldPos`, strength, inner/outer
+  radius smoothstep falloff, attack/duration/release envelope; `add_source` returns `None` when full;
+  expired sources drop in `advance`).
+- `WindFrame` = `state.frame(&settings, origin)`: `WindParams` (6 × vec4, 96 B uniform) + `WindSourceGpu`s
+  (3 × vec4, 48 B each, ≤ 1.5 KB storage), each with `to_array()` for the upload, and the CPU sampler
+  `sample(rel, above_ground)`, `global`, `gust`, `profile`. `state.velocity_at(&settings, WorldPos, h)` builds
+  a frame around the point's cell.
+- `sf_wind::WESL`: `src/shaders/sf_wind.wesl`, pure functions, no imports, no bindings: `wind_global(params,
+  rel, above_ground)`, `wind_gust(params, rel_xz) -> WindGust { dir, curl, gust }`, `wind_profile`,
+  `wind_source_count`, `wind_source(source, rel)`. Consumers bind the two buffers and sum the sources.
+
+**Model.** `v = dir × speed × (1 + gustiness·(2·gust − 1)) × profile(h) + Σ sources`. `dir` is the axis
+turned by the capped curl (at most `asin(swirl)` off it, so never upwind); `gust` the smoothstepped
+two-octave potential. Profile: `ln(h/z0 + 1) / ln(h_ref/z0 + 1)`, 0 at the ground, capped. Sources:
+directional `dir·s·fall`, radial `r·s·fall / max(|r|, 0.5 m)`, vortex `(axis × r)·s·fall / max(|axis × r|,
+0.5 m)`; sources get no altitude profile and the never-upwind cap applies to the weather wind only.
+Grass flutter (Megalophobia's harmonic `wind_press`) is a consumer detail, not part of the field.
+
+**Changes from Megalophobia, and why.**
+1. **Integer lattice hash** (PCG, Jarzynski and Olano 2020) instead of `fract(dot(...))`: the float hash
+   multiplies values to ~1e4 before `fract`, so one ulp of FMA difference moves the noise by ~1e-3 and the
+   twin could never hold 1e-4. PCG on wrapped integer cells is bit-exact on CPU and GPU.
+2. **Origin phase.** The lattices tile `PERIOD` = 1 024 m (4 grid cells; gust cells snap to `1024/n`, the
+   second octave to `1024/round(n/0.37)`). The CPU computes `(origin mod 1024 − drift) mod 1024` in f64 from
+   the origin's cell (exact) and uploads it **split** into whole lattice cells (`cells`, integers, added to the
+   cell index) and a fraction, so the shader's float math is only `rel/cell + frac`. A first version added the
+   meter offset to `rel` and lost 1.3e-4 m/s across a recenter (ulp of 1 200 m); split, the error is the
+   rounding of `rel` itself.
+3. **Drift integrated on the CPU** per octave (Megalophobia multiplied time by a fixed speed).
+
+**Twin verification (choice).** `tests/wgsl_twin.rs` runs `WESL` + a small compute harness on the GPU with
+headless `wgpu` 30 (Bevy 0.20's version; dev-dependency only, so no library pulls it), default adapter,
+falling back to the software adapter (WARP on Windows), skipping with a message if neither exists. Not
+"naga + mirrored golden table": naga has no interpreter, and a table generated by the CPU twin is
+circular; a table captured from the GPU would go stale with every shader edit. The GPU run is the real
+thing and costs ~0.5 s. Golden points: 2 048 scattered over ±600 m and −1 to 400 m above ground, ±4 cells of
+lattice boundaries, the source centers. Tolerance 1e-4 **relative above 1 m/s** (`|Δv| / max(|v|, 1)`):
+GPUs contract `rel·inv + frac` into an FMA, a 1-ulp difference that the steep gust envelope amplifies.
+Measured (RTX 4060 Laptop): worst 1.1e-5 relative (2.4e-4 m/s absolute at a 39 m/s peak), gust envelope
+4.3e-6.
+
+**Other tests** (`cargo test -p sf_wind`): never upwind (swirl 0.99, gustiness 1, three directions,
+20 steps × 500 points, also the turn angle ≤ asin(swirl)); phase-exact across a ~390 m origin recenter
+330 km out (≤ 5e-5 m/s, measured 2.9e-5: the rounding of `rel`); tiles the period; a speed change keeps
+the gust pattern; log profile; sources (radial burst envelope and expiry, vortex handedness, directional,
+capacity 32); patchiness; `Wind::velocity_at` stays within `mean·(1 ± gustiness)` (the old `sf_sky` test,
+still passing through the re-export).
+
+**Open (logged, not built).** Changing `gust_length` across a snap step (`n` changes) swaps the lattice:
+crossfade two frames if a weather blend shows it. No eviction when 32 sources are live. Vortex falloff is
+spherical (no tornado height). Motion vectors need last frame's `WindParams` (wd1b: upload a `prev` copy or
+let consumers pass it). Cloud wind keeps its own altitude speed (clouds read only the direction).
+`WindTerms` easing belongs to `sf_weather` (WE1).
 
 ## Precipitation
 

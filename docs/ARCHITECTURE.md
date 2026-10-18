@@ -1747,3 +1747,9 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   `sf_records`), `UiRegistry` (owner = defining mod; slots and columns ordered by priority, then load order),
   `ScreenStack` (routing rule), `ViewModel` as named fields (`UiValue`, not `Reflect`), keyed `ListModel`,
   `SettingsStore` over profile tables, and a Fluent `Localizer` (later mods override messages; key as last fallback).
+- **2026-10-18 (wd1a, M6 WD1 part 1; specs/weather.md "Wind as built"): `sf_wind` is a Bevy-free crate; `sf_sky::Wind`
+  moved there (re-exported).** GPU/CPU twin determinism comes from an **integer lattice hash (PCG)** and a **split origin
+  phase** (whole lattice cells as integers + a fraction in [0, 1)), not from float hashes or a meter offset added to
+  `rel`; this is the pattern for any future twin noise. Twins are verified by running the WGSL headless with `wgpu`
+  (dev-dependency, Bevy's version; software fallback; skip without an adapter), tolerance 1e-4 relative above 1 m/s
+  (GPUs contract multiply-adds), not by naga or CPU-generated golden tables.

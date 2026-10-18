@@ -4,12 +4,12 @@
 //! cloud cover dims direct sun and moon light, haze scales aerosol density,
 //! dust scales the absorbing dust/ash term (weather.md N1/N2).
 //! M6 adds presets with blending, clouds, fog and precipitation on top of
-//! the same [`Weather`] values, and replaces [`Wind`]'s analytic gusts with
-//! a sampled field. Consumers (grass, cloth, particles, clouds) only ever
-//! call [`Wind::velocity_at`], so that swap doesn't touch them.
+//! the same [`Weather`] values. [`Wind`] lives in `sf_wind` (the shared
+//! wind field, weather.md "Wind") and is re-exported here.
 
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
+pub use sf_wind::Wind;
 
 use crate::atmosphere::MediumScales;
 
@@ -75,56 +75,5 @@ impl Weather {
     /// Multiplier on direct sun and moon light from cloud cover.
     pub fn direct_light_factor(&self) -> f32 {
         1.0 - self.cloud_cover.clamp(0.0, 1.0) * self.overcast_dimming.clamp(0.0, 1.0)
-    }
-}
-
-/// Wind over the world: a mean velocity plus gusts.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Wind {
-    /// Mean horizontal velocity in m/s (x, z in the engine frame).
-    pub velocity: Vec2,
-    /// Gust amplitude relative to the mean speed, `[0, 1]`.
-    pub gustiness: f32,
-    /// Length of a gust front in meters (spatial period).
-    pub gust_length: f32,
-}
-
-impl Default for Wind {
-    fn default() -> Self {
-        Self {
-            velocity: Vec2::new(2.0, 0.5),
-            gustiness: 0.3,
-            gust_length: 60.0,
-        }
-    }
-}
-
-impl Wind {
-    #[must_use]
-    pub fn lerp(&self, to: &Self, t: f32) -> Self {
-        Self {
-            velocity: self.velocity.lerp(to.velocity, t),
-            gustiness: self.gustiness + (to.gustiness - self.gustiness) * t,
-            gust_length: self.gust_length + (to.gust_length - self.gust_length) * t,
-        }
-    }
-
-    /// Wind velocity (m/s) at world position `pos` (meters, origin-stable
-    /// coordinates) and time `t` (seconds). Gusts are fronts that travel
-    /// with the wind; deterministic, so every consumer agrees.
-    pub fn velocity_at(&self, pos: Vec3, t: f32) -> Vec3 {
-        let speed = self.velocity.length();
-        if speed <= f32::EPSILON {
-            return Vec3::ZERO;
-        }
-        let dir = self.velocity / speed;
-        let k = std::f32::consts::TAU / self.gust_length.max(1.0);
-        // Distance along the wind, minus how far the front has traveled.
-        let s = (dir.dot(Vec2::new(pos.x, pos.z)) - speed * t) * k;
-        // Two incommensurate waves so gusts don't look periodic.
-        let gust = 0.6 * s.sin() + 0.4 * (2.31 * s + 1.7).sin();
-        let v = self.velocity * (1.0 + self.gustiness * gust);
-        Vec3::new(v.x, 0.0, v.y)
     }
 }

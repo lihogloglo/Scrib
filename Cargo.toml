@@ -87,6 +87,8 @@ thiserror = "2"
 toml = "0.9"
 # FBX import at bake time (sf_anim `fbx` feature): bindings to the single-file ufbx C library, built with `cc`.
 ufbx = "0.11.5"
+# Same version Bevy 0.20 renders with. Dev-dependency only: headless GPU twin tests (sf_wind).
+wgpu = { version = "30", default-features = false }
 
 sf_bake = { path = "crates/sf_bake" }
 sf_coords = { path = "crates/sf_coords" }
@@ -116,6 +118,7 @@ sf_ragdoll = { path = "crates/sf_ragdoll" }
 sf_script = { path = "crates/sf_script" }
 sf_water = { path = "crates/sf_water" }
 sf_water_bevy = { path = "crates/sf_water_bevy" }
+sf_wind = { path = "crates/sf_wind" }
 sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
 
