@@ -58,6 +58,14 @@ never revert others' changes.
    own only when neither fits (wrong license, abandoned, stuck on an old
    Bevy with no fork path, or below our performance or quality bar), and
    say in the spec why each earlier step didn't.
+   **Don't reinvent the wheel: this covers whole projects, not just
+   crates.** Before starting a system, look for open-source games, engine
+   ports and Bevy projects that already built it (e.g. Mudcrab, a Skyrim
+   engine on Bevy, MIT/Apache, with Luau scripting). If one is building
+   what we need and isn't on our critical path, wait for it and adopt or
+   port it instead of racing it.
+9. **Finish before starting.** Drive started tasks to verified and
+   committed before opening new systems (`../bevyrrowind/CLAUDE.md` rule 10).
 
 ## Commands
 

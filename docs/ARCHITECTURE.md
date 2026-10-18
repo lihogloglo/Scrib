@@ -99,7 +99,7 @@ Two repositories, one-way dependency:
 | IK | own | — | Existing crates are stale (Bevy 0.8–0.14). |
 | Grass, ocean, terrain | own | — | No maintained crates for 0.20. These are core to the vision anyway. |
 
-**Ecosystem lag tracker** (checked 2026-10-11, three days after Bevy 0.20
+**Ecosystem lag tracker** (re-checked 2026-10-18 on crates.io + git main; first checked 2026-10-11, three days after Bevy 0.20
 shipped on 2026-10-08; re-check with the crates.io API before each
 milestone). For 0.19, the main crates ported within about two weeks
 (avian, tnua, hanabi, input managers: June 19–27, 2026).
@@ -108,23 +108,26 @@ milestone). For 0.19, the main crates ported within about two weeks
 |---|---|---|---|
 | `big_space` | coordinates (M2) | rc | 0.14.0-rc.0 / 0.20-rc |
 | `bevy_3d_tiles` | far-field evaluation (M2) | no | 0.5.1 / 0.19 |
-| `avian3d` | physics fallback (M4; rapier3d chosen, §10 2026-10-12) | no | 0.7 / 0.19; main 0.8.0-dev on 0.19, PR #1070 ports to 0.20.0-rc.1 (checked 2026-10-12) |
-| `bevy_tnua` | not adopted (own kinematic mover, §10 2026-10-12) | no | 0.32 / 0.19 |
-| `bevy_hanabi` | GPU VFX: splashes, magic (M5–M6); rain/snow/ash don't need it (weather.md) | no | 0.19 / 0.19 (main: 0.20.0-dev, still on Bevy 0.19, checked 2026-10-11) |
+| `avian3d` | physics fallback (M4; rapier3d chosen, §10 2026-10-12) | no | 0.7 / 0.19; main 0.8.0-dev still on 0.19, PR #1070 (0.20 port) still open (2026-10-18) |
+| `bevy_tnua` | not adopted (own kinematic mover, §10 2026-10-12) | yes | 0.33.0 / 0.20 (2026-10-15) |
+| `bevy_hanabi` | GPU VFX: splashes, magic (M5–M6); rain/snow/ash don't need it (weather.md) | git only | 0.19 / 0.19; main migrated to 0.20 + WESL shaders 2026-10-15 (#576), no release yet |
 | `bevy-aqua` | water reference (M6) | no | 0.1.3 / 0.19 |
 | `bevy_fast_clouds`, `bevy_weather` | clouds/weather **references only** (M6, weather.md) | no | 0.19.0 / 0.19, 0.2.0 / 0.19.1 |
 | `bevy-volumetric-clouds` | rejected (skybox clouds, ignores depth) | no | 0.2.0 / 0.18 |
 | `bevy_feronia` | grass/wind reference (M6) | no | 0.8.4 / 0.18 |
 | `bevy_enoki` | rejected (2D particles only) | yes | 0.8.0 / 0.20 |
 | `bevy_landmass` | navmesh candidate (M10) | no | 0.12.1 / 0.19 |
-| `bevy_enhanced_input` | input candidate (UI actions, M5) | no | 0.26 / 0.19 |
-| `bevy_flair` | UI styling, modder CSS (M5) | git only | 0.8.1 / 0.19; 0.20 on `main` (0.9 unreleased). Fallback: pin `rev`, then `[patch]` fork; the mod contract is our documented CSS subset, so the engine is replaceable (ui.md R2b) |
+| `bevy_enhanced_input` | input candidate (UI actions, M5) | yes | 0.27.0 / 0.20 (2026-10-14); `leafwing-input-manager` 0.22.0 / 0.20 (2026-10-16) |
+| `bevy_flair` | UI styling, modder CSS (M5) | yes | 0.9.0 / 0.20 (2026-10-14): no git pin or fork needed; the mod contract is still our documented CSS subset (ui.md R2b) |
 | `bevy_ui_anchor` | world-anchored UI candidate (M5) | no | 0.12 / 0.19 |
 | `bevy_fluent` | localization candidate (M5; or `fluent-bundle` directly) | no | 0.15 / 0.19 |
-| `bevy-inspector-egui` | dev inspector | no | 0.37 / 0.19 |
+| `bevy-inspector-egui` | dev inspector (complements BRP, CLAUDE.md "Live inspection") | yes | 0.38.0 / 0.20 (2026-10-18) |
 | `bevy_egui` | dev UI | yes | 0.43.1 |
 | `bevy_kira_audio` | audio candidate | yes | 0.27 |
 | `bevy_asset_loader` | loading states | yes | 0.28 |
+| `bevy_mod_scripting` | rejected for Lua (§10 2026-10-13; Lua parked 2026-10-18) | yes | 0.23.0 / 0.20 (2026-10-15) |
+| `bevy_rapier3d` | not used (we call `rapier3d` directly, Bevy-free) | yes | 0.37.0 / 0.20 (2026-10-10) |
+| `bevy_brp_extras` + `bevy_brp_mcp` | agent live inspection (dev only) | yes | 0.23.0 / 0.20 |
 | `mlua` (Luau) | Lua mods | n/a | Bevy-independent |
 
 **Lag policy:** we track the latest Bevy. Crates that lag go behind
