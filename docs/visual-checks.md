@@ -1616,3 +1616,16 @@ spawned on entering, despawned on leaving). The pool used to draw **opaque near-
 volume is flagged off without an active cloud camera. Look for: flat dark water with ripples only, the channel
 bottom visible through it (as with the A/B `--off froxels`, which never had the bug), level steady while moving; also
 walk out of a door and back in: no black flash on the water, and exterior glass/water fog unchanged.
+
+### WD-0: Wind field, synthetic (`cargo run -p sf_wind_bevy --example wind` in `../superfargoth`)
+
+Status: **awaiting owner** (WD1, wd1b, 2026-10-18). Shot: `shots/wd1b/wind-burst.png` (`-- --screenshot <png> --frames
+120 --burst 100`). Top-down 315 m square: white-to-orange arrows are the CPU twin (`WindField::sample`, 2 m above
+ground, length = 1 s of travel), the ground colour is the GPU field (`sf_wind_bevy::wind::wind_sample`: calm dark
+blue, mean speed green, twice the mean yellow). Look for: arrows and colours agree everywhere (longer arrows on
+greener/yellower ground); gust patches drift downwind (+x, slightly +z), form, swirl and fade, never a frozen or
+scrolling-texture look; no arrow ever points upwind; Space fires a radial burst (yellow disc, arrows pointing out,
+a calm ring on its upwind edge where it cancels the wind) that grows in 0.05 s and fades over ~2.5 s; V a vortex
+(arrows circling); Up/Down change speed without the pattern jumping; G cycles gustiness 0 / 0.3 / 0.6 (0 = uniform
+green). Known: no consumer in the game samples the GPU field yet (grass, trees, rain lanes); in game only the fog and
+cloud drift direction follow it.

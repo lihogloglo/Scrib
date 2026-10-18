@@ -2198,6 +2198,7 @@ dependencies = [
  "sf_vfs",
  "sf_water",
  "sf_water_bevy",
+ "sf_wind_bevy",
  "sf_world",
  "sf_world_bevy",
  "tes3",
@@ -6857,6 +6858,22 @@ dependencies = [
  "glam 0.33.12",
  "serde",
  "sf_coords",
+]
+
+[[package]]
+name = "sf_wind_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_platform",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_time",
+ "sf_coords",
+ "sf_wind",
 ]
 
 [[package]]

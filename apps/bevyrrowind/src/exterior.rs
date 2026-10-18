@@ -242,7 +242,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     });
     // weather.md N1/N2: haze and dust follow the `--clouds` weather (or `--haze`/`--dust`).
     app.insert_resource(SkyWeather { look: options.clouds.sky, haze: options.haze, dust: options.dust, fog: options.fog })
-        .add_systems(Update, drive_sky_weather.before(sf_sky_bevy::SkySystems::Apply));
+        .add_systems(Update, (feed_wind, drive_sky_weather).chain().before(sf_sky_bevy::SkySystems::Apply));
+    // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
+    app.add_plugins(sf_wind_bevy::WindPlugin::default())
+        .add_systems(PostUpdate, wind_origin.after(sync_origin).before(sf_wind_bevy::WindSystems::Advance));
     // weather.md A1: the cascades keep Bevy's 2048² maps. 4096² measured
     // +1.4 ms at 1440p (2026-10-12), over the High budget; the tighter
     // 504 m range already sharpens every cascade vs. the old 600 m.
@@ -1104,6 +1107,7 @@ fn drive_sky_weather(
     config: Res<SkyConfig>,
     mut weather: ResMut<WeatherState>,
     fog: Option<ResMut<sf_atmos_bevy::Fog>>,
+    wind: Res<sf_wind_bevy::WindField>,
 ) {
     let hour = clock.0.hour(&config.0.calendar);
     let haze = sky.haze.unwrap_or(sky.look.haze * morning_haze(hour));
@@ -1116,10 +1120,33 @@ fn drive_sky_weather(
         w.dust_tint = sky.look.dust_tint;
     }
     if let Some(mut fog) = fog {
-        let settings = fog_settings(&sky.look.fog, hour, sky.fog.unwrap_or(1.0), weather.0.wind.velocity, fog.settings);
+        let settings = fog_settings(&sky.look.fog, hour, sky.fog.unwrap_or(1.0), wind.state.wind.velocity, fog.settings);
         if fog.settings != settings {
             fog.settings = settings;
         }
+    }
+}
+
+/// The weather's wind drives the field (`sf_wind_bevy`; WE1's `sf_weather`
+/// will write it directly). Clouds take its direction at their own
+/// altitude speed (Morrowind's `Cloud Speed`, set in [`cloud_settings`]).
+fn feed_wind(weather: Res<WeatherState>, mut wind: ResMut<sf_wind_bevy::WindField>, clouds: Option<ResMut<sf_atmos_bevy::Clouds>>) {
+    if wind.state.wind != weather.0.wind {
+        wind.state.wind = weather.0.wind;
+    }
+    if let Some(mut clouds) = clouds {
+        let drift = clouds.settings.weather.wind;
+        let aligned = wind.state.wind.velocity.normalize_or(drift.normalize_or(Vec2::X)) * drift.length();
+        if drift.distance(aligned) > 1e-3 {
+            clouds.settings.weather.wind = aligned;
+        }
+    }
+}
+
+/// The wind field's floating origin (the terrain's, set by [`sync_origin`]).
+fn wind_origin(origin: Res<TerrainOrigin>, mut wind: ResMut<sf_wind_bevy::WindOrigin>) {
+    if wind.0 != origin.0 {
+        wind.0 = origin.0;
     }
 }
 

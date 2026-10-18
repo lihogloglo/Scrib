@@ -37,6 +37,7 @@ sf_terrain = { path = "../superfargoth/crates/sf_terrain" }
 sf_terrain_bevy = { path = "../superfargoth/crates/sf_terrain_bevy" }
 sf_vfs = { path = "../superfargoth/crates/sf_vfs" }
 sf_water = { path = "../superfargoth/crates/sf_water" }
+sf_wind_bevy = { path = "../superfargoth/crates/sf_wind_bevy" }
 sf_world = { path = "../superfargoth/crates/sf_world" }
 sf_world_bevy = { path = "../superfargoth/crates/sf_world_bevy" }
 sf_lod = { path = "../superfargoth/crates/sf_lod" }

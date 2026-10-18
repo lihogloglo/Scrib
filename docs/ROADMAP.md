@@ -1221,7 +1221,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   rebuild (step + 0.25 s, `MediumStats`), app `--haze`/`--dust` + per-weather table + morning curve following `--clouds`
   (weather-adapter.md "Haze and dust"). Haze recalibrated for 1-5 km views (clear 20, not 2-3). Rebuild ~2.8 ms CPU,
   GPU unchanged. Open: FG-1 (owner picks defaults), sea-horizon seam at noon with dust, frame-time A/B not run.
-- [~] WD1 `sf_wind` + `sf_wind_bevy` (weather.md "Wind"): `WindState`, `WindSource` (directional, radial, vortex, ≤ 32
+- [x] WD1 `sf_wind` + `sf_wind_bevy` (weather.md "Wind"): `WindState`, `WindSource` (directional, radial, vortex, ≤ 32
   in a storage buffer), gust field ported from Megalophobia `grass_wind.wgsl` (licensed 2026-10-12), CPU `velocity_at`
   + WGSL `sf_wind::sample` twins, origin phase, altitude profile; `sf_sky::Wind` moves here (re-exported). Clouds read it.
   Verify: `cargo test -p sf_wind` (CPU/WGSL twin within 1e-4 on golden points, gusts never upwind, phase-exact across
@@ -1229,7 +1229,15 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   Built (wd1a, 2026-10-18): Bevy-free `sf_wind` (weather.md "Wind as built"): PCG lattice hash, 1024 m period with a
   split whole-cell + fraction origin phase, CPU-integrated drift, log profile, 32 sources with envelopes;
   `sf_wind::WESL` (pure functions); `sf_sky::Wind` re-exported. Twin run headless on the GPU (`wgpu` dev-dep): 1.1e-5
-  relative; phase test 2.9e-5 m/s. Open: wd1b (`sf_wind_bevy` upload, `wind` example, clouds read it).
+  relative; phase test 2.9e-5 m/s.
+  Built (wd1b, 2026-10-18): `sf_wind_bevy` (weather.md "Wind as built (WD1 part 2)"): `WindPlugin`, `WindField` (state
+  + this/last frame CPU twin), app-written `WindOrigin`; one fixed 3 264 B `ShaderBuffer` (params, prev_params,
+  sources[32], prev_sources[32]) rewritten in place, so materials bind it with `#[storage]`; motion vectors from the
+  previous copy re-framed at the current origin; WESL `sf_wind::field` + `sf_wind_bevy::wind` (`wind_sample`,
+  `wind_sample_prev`; slot from `SF_WIND_GROUP`/`SF_WIND_BINDING` defs). Upload 0.0025 ms (32 sources; gate 0.02).
+  Example `wind` ran (CPU arrows agree with the GPU-shaded ground, burst; visual check WD-0). App: weather wind →
+  `WindField`, terrain origin → `WindOrigin`, fog drift and cloud direction read the field (clippy clean; not run in
+  game). Open: no GPU consumer in game yet (grass G1, trees WD2, rain PR1); `WindTerms` easing is WE1.
 - [ ] WE1 `sf_weather` core (weather.md "Weather: state machine and presets as data"): `WeatherPreset`/`Climate`/
   `PrecipKind` records, per-climate state machine, forecast as a pure function of (seed, climate, index), channel
   lead/lag blending, border band, lightning schedule, cues, tags, `WeatherFrame` + `visibility_m`. Bevy-free.
@@ -1637,3 +1645,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (p10a): M4 P10 [~] solver core `sf_anim::cloth` (Bevy-free XPBD bone lattice: geodesic tethers, max distance, swept capsules, character space with fictitious-force inertia, teleport keep-shape); tests: hem stretch 1.3–1.9 % at 30/60/144 fps (run, 180° turn, stop), no capsule penetration, teleport stable; 0.014 ms per robe (release). Next p10b cook + census + ClothRules.
 - 2026-10-18 (u1a): M5 U1 part 1 [~]: input crate `bevy_enhanced_input` 0.27 over leafwing 0.22 (prioritised, input-consuming contexts = CommonUI per-screen input; ui.md OQ4 closed, ARCHITECTURE §10); new Bevy-free `sf_ui` (UI record kinds, `UiRegistry` with owners/conflicts, `ScreenStack` router rule, keyed `ListModel`, `SettingsStore`, Fluent `Localizer`), 14 tests, clippy clean. Next: u1b `sf_ui_bevy` + gamepad example.
 - 2026-10-18 (wd1a): M6 WD1 [~] part 1: Bevy-free `sf_wind` (Wind moved from `sf_sky`, re-exported; WindState/WindSource x32/WindFrame; Megalophobia gust field with a PCG lattice hash and split origin phase; log profile; `sf_wind.wesl`); CPU/WGSL twin run headless on the GPU (1.1e-5 rel), never-upwind and origin-shift tests; next wd1b (`sf_wind_bevy`, `wind` example, clouds).
+- 2026-10-18 (wd1b): M6 WD1 [x] part 2: `sf_wind_bevy` (WindPlugin/WindField/WindOrigin; one fixed ShaderBuffer with current + previous frame for motion vectors, materials bind it with `#[storage]`; WESL `sf_wind::field` + `sf_wind_bevy::wind` with a def-chosen slot); upload 0.0025 ms (gate 0.02); `wind` example (CPU arrows over the GPU-shaded field, burst/vortex keys; visual check WD-0); app fog/cloud drift read the field. Next: WE1.

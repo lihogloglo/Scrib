@@ -67,6 +67,7 @@ sf_script_bevy.workspace = true
 sf_atmos_bevy.workspace = true
 sf_water.workspace = true
 sf_water_bevy.workspace = true
+sf_wind_bevy.workspace = true
 mw_water.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
