@@ -1591,7 +1591,7 @@ generic travelling band (wet sand band waits for SU1); waves by weather are WE3.
 
 ### WA-6: Interior water (`scene wa-interior-pool`: Hlormaren, Sewers, level −2.77 m)
 
-Status: **awaiting owner** (W3, 2026-10-18, w3fin; black pool fixed by w3pool). Shot: `shots/w3pool/wa-interior-pool.png`
+Status: **confirmed by owner (2026-10-18)** (W3, w3fin; black pool fixed by w3pool). Shot: `shots/w3pool/wa-interior-pool.png`
 (before: `shots/w3/wa-interior-pool.png`).
 The interior's water is a `WaterSurface` pool at the cell's `WHGT` (all 216 visible `HAS_WATER` interiors get one;
 spawned on entering, despawned on leaving). The pool used to draw **opaque near-black**: interiors have no
