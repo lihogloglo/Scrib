@@ -78,6 +78,11 @@ impl UiAction {
             UiAction::OpenMap => "open_map",
         }
     }
+
+    /// The action with this [`name`](Self::name).
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.name() == name)
+    }
 }
 
 /// Tags each spawned action entity with its [`UiAction`], so one query reads

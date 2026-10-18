@@ -14,14 +14,19 @@
 //!   `bevy_ui_widgets::Activate` on the focused entity.
 //! - **Device** ([`device`]): last-used device switches [`InputMode`] the same frame; a small
 //!   glyph table of our own labels the bound input per device.
+//! - **Profile** ([`profile`]): [`insert_from_profile`] builds registry, settings, strings and
+//!   bindings from an `sf_mods` profile; changes are saved back when the player leaves the menus.
 
 pub mod actions;
 pub mod device;
 pub mod nav;
+pub mod profile;
 pub mod router;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_profile;
 
 use bevy_app::{App, Last, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
@@ -30,11 +35,17 @@ use bevy_input_focus::InputFocus;
 use bevy_input_focus::directional_navigation::{
     AutoNavigationConfig, DirectionalNavigationMap, DirectionalNavigationPlugin,
 };
-use sf_ui::{Localizer, PresetId, ScreenStack, SettingsStore, ThemeId, UiRegistry};
+use bevy_ecs::system::SystemParam;
+use sf_ui::{
+    Layer, Localizer, OpenScreen, PresetId, ScreenStack, SettingsStore, StackError, ThemeId, UiRegistry,
+};
 
 pub use actions::{UiAction, UiBindings};
 pub use device::{Device, InputMode, glyph};
 pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, held_direction};
+pub use profile::{
+    BINDINGS_CONTEXT, UiLoadReport, UiLocales, UiProfile, binding_name, insert_from_profile, parse_binding,
+};
 pub use router::{
     UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts, UiScreenInput, UiScreenRoot,
 };
@@ -43,10 +54,48 @@ pub use router::{
 #[derive(Resource, Debug, Default)]
 pub struct UiRegistryRes(pub UiRegistry);
 
-/// Open screens per layer. Push and pop through it; the router reacts to
+/// Open screens per layer. Push and pop through [`UiCommands`] (or this); the router reacts to
 /// [`ScreenStack::version`] changes.
 #[derive(Resource, Debug, Default)]
 pub struct ScreenStackRes(pub ScreenStack);
+
+/// Opening and closing screens from systems: the stack with its registry, and
+/// the active layout preset enforced on open (a screen whose record lists
+/// presets opens only in those).
+#[derive(SystemParam)]
+pub struct UiCommands<'w> {
+    registry: Res<'w, UiRegistryRes>,
+    stack: ResMut<'w, ScreenStackRes>,
+    settings: Res<'w, UiSettings>,
+}
+
+impl UiCommands<'_> {
+    /// Opens a screen on top of its layer (moves it there when already open).
+    pub fn push(&mut self, id: &str) -> Result<&OpenScreen, StackError> {
+        let preset = self.settings.preset.as_str();
+        self.stack.0.push_in(&self.registry.0, id, preset)
+    }
+
+    /// Replaces the top screen of the screen's layer (tab switches).
+    pub fn replace_top(&mut self, id: &str) -> Result<&OpenScreen, StackError> {
+        let preset = self.settings.preset.as_str();
+        self.stack.0.replace_top_in(&self.registry.0, id, preset)
+    }
+
+    /// Closes the top screen of a layer.
+    pub fn pop(&mut self, layer: Layer) -> Option<OpenScreen> {
+        self.stack.0.pop(layer)
+    }
+
+    /// Closes a screen wherever it is.
+    pub fn close(&mut self, id: &str) -> bool {
+        self.stack.0.close(id)
+    }
+
+    pub fn stack(&self) -> &ScreenStack {
+        &self.stack.0
+    }
+}
 
 /// Values of the `ui.setting` registry (saved per profile by the app).
 #[derive(Resource)]
@@ -122,7 +171,7 @@ impl Plugin for SfUiPlugin {
             .init_resource::<AutoNavigationConfig>()
             .add_message::<UiActionEvent>()
             .add_observer(router::record_activation)
-            .add_systems(Last, router::clear_activations)
+            .add_systems(Last, (router::clear_activations, profile::sync_profile))
             .add_input_context::<UiScreenInput>()
             .configure_sets(
                 PreUpdate,

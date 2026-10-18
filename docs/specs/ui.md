@@ -465,6 +465,42 @@ example `ui_nav` (`--autotest [png]`: synthetic gamepad, 40 checked steps). Chan
   `Profile::settings` glue (u1c); rebinding persisted to the profile; `UiCommands` system param; `ScreenDef::presets`
   enforcement on push; PlayStation/Switch glyph names; focus visuals by `InputMode` (U2 `input` attribute).
 
+## As built (U1c, 2026-10-18)
+
+Glue between `sf_ui`/`sf_ui_bevy` and the mod pipeline (`sf_mods`, `sf_vfs`); `sf_ui` now depends on `sf_mods`
+(both Bevy-free).
+
+- **Fluent from mods** (`sf_ui::l10n_sources`, `Localizer::from_profile`): every VFS path
+  `l10n/<locale>/<name>.ftl` is attributed to the mod whose layer holds it (`LoadedProfile` layers), sources come out
+  in load order, and the chain is negotiated over the locales mods actually ship. A file named after another mod is
+  reported against the mod that ships it and ignored (a rewording mod writes the message ids it changes into its own
+  `<its id>.ftl`; files never shadow each other), as are bad locale folders, unreadable and non-UTF-8 files.
+- **Record kinds in the pipeline**: `sf_ui::UiRecordKinds`, a `ContentAdapter` that only registers the UI kinds; apps
+  pass it beside `NativeRecords` and the content pack's adapters.
+- **Settings ↔ profile**: `SettingsStore::load_from(&Profile)` / `save_to(&mut Profile) -> changed` over
+  `Profile::settings` (`ModId` keys; non-defaults plus passed-through entries, as in U1a).
+- **Bindings in the profile**: new `sf_mods::Profile::bindings` (`[bindings.<context>]`, action name → list of input
+  names), game-agnostic so a game's gameplay context can use it too. UI actions use context `ui` and store only
+  actions that differ from `UiBindings::default()`. Input names are our own small text form (`key:Enter`,
+  `key:Ctrl+Shift+KeyS`, `mouse:Left`, `pad:South`, `axis:LeftStickX`, `mouse_motion`, `mouse_wheel`, `any_key`),
+  with Bevy's variant names read through `bevy_reflect` (unit variants only). Why not serde: BEI's `serialize`
+  feature turns on `bevy/serialize` (feature churn across the workspace) and writes nested tables with bitflags,
+  not something a player edits; reflection is already compiled in.
+- **Bevy side** (`sf_ui_bevy::profile`): `insert_from_profile(world, &LoadedProfile, &UiLocales, dir)` builds and
+  inserts `UiRegistryRes`, `UiSettingsStore`, `UiLocalizer`, `UiBindings` and `UiProfile`, returning a `UiLoadReport`
+  (registry conflicts, string issues, setting errors, binding issues). `sync_profile` (`Last`) copies changed
+  settings and bindings into `UiProfile` and writes the file when no Menu or Modal screen takes input, or on
+  `AppExit` (save on leaving the options menu, never per slider step); `UiProfile::last_error` keeps a failed save.
+- **`UiCommands`** system param (push, replace_top, pop, close) and **presets enforced on open**:
+  `ScreenStack::push_in` / `replace_top_in` refuse a screen whose `presets` list doesn't name the active preset
+  (`StackError::UnsupportedPreset`); `UiCommands` passes `UiSettings::preset`. Plain `push` stays unchecked.
+- Tests: `sf_ui` 3 new (two mods × two locales with a rewording override, a misnamed file and a syntax error; settings
+  through a saved profile file; presets), `sf_ui_bevy` 4 new (input names, bindings table, settings + bindings across
+  a restart through the profile file, `UiCommands` presets).
+- Not done (logged): the game app doesn't call `insert_from_profile` yet (Bevyrrowind loads mods outside the UI so
+  far); `UiSettings` (live presentation) isn't fed from `ui.setting` values; PlayStation/Switch glyph names; focus
+  visuals by `InputMode` (U2).
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 above

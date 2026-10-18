@@ -11,17 +11,22 @@ license.workspace = true
 bevy_app = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_enhanced_input.workspace = true
-bevy_input = { workspace = true, features = ["std", "gamepad", "keyboard", "mouse"] }
+bevy_input = { workspace = true, features = ["std", "bevy_reflect", "gamepad", "keyboard", "mouse"] }
 bevy_input_focus = { workspace = true, features = ["std", "gamepad", "keyboard", "mouse"] }
 bevy_math = { workspace = true, features = ["std"] }
+bevy_reflect = { workspace = true, features = ["std"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_ui.workspace = true
 bevy_ui_widgets.workspace = true
+sf_mods.workspace = true
 sf_ui.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["ui"] }
 sf_records.workspace = true
+semver.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

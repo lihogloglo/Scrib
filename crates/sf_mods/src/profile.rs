@@ -18,6 +18,11 @@ pub const PROFILE_EXTENSION: &str = "toml";
 /// (ui.md) gives them types and defaults; the profile only stores values.
 pub type SettingValues = BTreeMap<ModId, toml::Table>;
 
+/// Player input bindings that differ from the defaults: one table per input
+/// context (`ui`, a game's `gameplay`), action name to a list of input names.
+/// The input layer (`sf_ui_bevy` for UI actions) owns the names and defaults.
+pub type InputBindings = BTreeMap<String, toml::Table>;
+
 /// One player profile.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +36,9 @@ pub struct Profile {
     pub enabled: Vec<ModId>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: SettingValues,
+    /// Rebound inputs (`[bindings.<context>]`); empty means all defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bindings: InputBindings,
     #[serde(default, skip_serializing_if = "ScriptLimits::is_unset")]
     pub limits: ScriptLimits,
 }

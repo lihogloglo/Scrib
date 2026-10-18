@@ -24,6 +24,8 @@ pub struct OpenScreen {
 pub enum StackError {
     #[error("no screen `{0}` in the UI registry")]
     UnknownScreen(String),
+    #[error("screen `{screen}` doesn't support the `{preset}` layout preset")]
+    UnsupportedPreset { screen: String, preset: String },
 }
 
 /// Open screens of every layer.
@@ -74,6 +76,29 @@ impl ScreenStack {
             .ok_or_else(|| StackError::UnknownScreen(id.to_owned()))?;
         self.layers[def.def.layer.index()].pop();
         self.push(registry, id)
+    }
+
+    /// [`push`](Self::push) under the active layout preset: a screen whose
+    /// record lists presets opens only in those (an empty list allows all).
+    pub fn push_in(
+        &mut self,
+        registry: &UiRegistry,
+        id: &str,
+        preset: &str,
+    ) -> Result<&OpenScreen, StackError> {
+        check_preset(registry, id, preset)?;
+        self.push(registry, id)
+    }
+
+    /// [`replace_top`](Self::replace_top) under the active layout preset.
+    pub fn replace_top_in(
+        &mut self,
+        registry: &UiRegistry,
+        id: &str,
+        preset: &str,
+    ) -> Result<&OpenScreen, StackError> {
+        check_preset(registry, id, preset)?;
+        self.replace_top(registry, id)
     }
 
     /// Closes the top screen of a layer.
@@ -138,5 +163,20 @@ impl ScreenStack {
 
     pub fn version(&self) -> u64 {
         self.version
+    }
+}
+
+fn check_preset(registry: &UiRegistry, id: &str, preset: &str) -> Result<(), StackError> {
+    let def = registry
+        .screen(id)
+        .ok_or_else(|| StackError::UnknownScreen(id.to_owned()))?;
+    let presets = &def.def.presets;
+    if presets.is_empty() || presets.iter().any(|p| p.as_str() == preset) {
+        Ok(())
+    } else {
+        Err(StackError::UnsupportedPreset {
+            screen: id.to_owned(),
+            preset: preset.to_owned(),
+        })
     }
 }

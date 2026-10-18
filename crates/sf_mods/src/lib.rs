@@ -28,7 +28,7 @@ pub use load::{LoadTimings, LoadedMod, LoadedProfile, ScriptPlan, load_profile};
 pub use manifest::{Content, MANIFEST_FILE, ManifestError, ModId, ModManifest, UiContent};
 pub use native::NativeRecords;
 pub use order::{LoadOrderError, resolve_load_order};
-pub use profile::{PROFILE_EXTENSION, Profile, ProfileError, ScriptLimits, SettingValues};
+pub use profile::{InputBindings, PROFILE_EXTENSION, Profile, ProfileError, ScriptLimits, SettingValues};
 pub use repo::ModRepository;
 pub use report::{Area, IssueKind, ModIssue, ModReport, ModSummary, Severity};
 

@@ -15,11 +15,13 @@
 //! - [`SettingsStore`]: typed setting values over the registry's
 //!   `ui.setting` records, read from and written to profile tables.
 //! - [`Localizer`]: Fluent strings from every mod in load order, with a
-//!   locale fallback chain.
+//!   locale fallback chain, built from each mod's `l10n/<locale>/<mod id>.ftl`
+//!   ([`l10n_sources`]); settings load from and save to the `sf_mods` profile.
 
 mod ids;
 mod l10n;
 mod list;
+mod mods;
 pub mod records;
 mod registry;
 mod settings;
@@ -28,6 +30,8 @@ mod view_model;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_mods;
 
 pub use ids::{
     ColumnId, InputContextId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, TemplateId,
@@ -37,6 +41,7 @@ pub use l10n::{
     FluentArgs, FluentValue, L10nIssue, L10nSource, LanguageIdentifier, Localizer, negotiate,
 };
 pub use list::{ListFilter, ListModel, SortSpec};
+pub use mods::{L10N_DIR, UiRecordKinds, available_locales, l10n_sources};
 pub use records::{Layer, register_kinds};
 pub use registry::{Def, Severity, UiConflict, UiRegistry};
 pub use settings::{SettingError, SettingValue, SettingsStore};
