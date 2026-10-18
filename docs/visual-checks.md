@@ -1421,6 +1421,29 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
   `BEVYRROWIND_FPS_CAP=30` and uncapped it looks the same.
 - Known: hit strength is impulse / 15 N·s (`HIT_REACT_IMPULSE` 1 N·s minimum); no additive directional hit clips yet.
 
+### PH-3 (P10): Robes and skirts as cloth (V1: lattice on the girdle, leg follow, `H` A/B)
+
+Status: **awaiting owner** (built p10c/p10d, 2026-10-18). Agent sanity shots: `shots/p10d/robe-walk.png`,
+`robe-run-simulated.png`, `robe-run-kinematic.png`, `temple-overview.png`. Cost: 20-26 µs per simulated robe (5 s
+means, dev build; gate 30 µs; the op includes target skinning and the leg capsules).
+- Kind: lineup (no scene: `character` isn't a `view`). Run: `.\bevyrrowind character "fargoth+common_robe_01" "@dark
+  elf,,f+common_robe_02" --walk` (dev: `tools/run_dev.ps1 character ...`). Keys: **2** run (again: walk), **1** walk
+  on/off, **H** cloth simulated ↔ kinematic (log `cloth: simulated|kinematic (H toggles)`), B smooth bodies. Every 5 s
+  the log prints `cloth: N parts, M simulated, op X us per simulated part`.
+- Kind: game location. `.\bevyrrowind scene ph3-balmora-temple` (the priests in their own robes; fly down to them),
+  or the synthetic `scene level-robe-walk` (TS-2: the temple priest's loop, Fargoth walking and Elone running over a
+  ramp and stairs; cameras `priest`, `course`).
+- Look for: the robe rides the hips and its lower rows swing with the stride, lagging a little and settling when the
+  actor stops (no jitter, no explosion, no stretching, nothing inside-out); no seam or gap at the waist; legs don't
+  poke through the front at a walk. `H` (kinematic) should look like the old skinned robe; simulated should look
+  looser, not broken.
+- Known (agent run, for the owner to judge, not tuned): at a **run** the simulated hem hangs straighter than the
+  stride, so the feet show well in front of and behind the hem (`robe-run-simulated.png`); kinematic follows the
+  legs (`robe-run-kinematic.png`). Leg follow is 0.7 at the hem (`CLOTH_LEG_FOLLOW`); actors beyond cloth LOD 1 are
+  kinematic. The first frames after a spawn show the rest pose. The cost line after `H` still averages the
+  simulated frames of that window.
+- Source: p10c, p10d.
+
 ### PH-8: Characters on physics (capsules, pushes, slope sliding)
 - Kind: game location. Run: `.\bevyrrowind scene wk-balmora` (walkers on the physics ground; `--off physics` is the
   `StaticWorld` A/B), `G` for the colliders. Throw balls at walkers with `V`; for pushes, `scene ph-tradehouse-items`

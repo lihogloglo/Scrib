@@ -965,6 +965,14 @@
             look_for: "flat dark water with small ripples only (no sea swell), floor visible through shallow water and fading with depth, water stays put and level while moving (no swimming or tilting with the camera), no water above the floor in dry rooms",
             checks: ["WA-6"],
         ),
+        // ---- cloth (M4 P10, physics-adapter.md; the robe lineup is `character`, see PH-3) ----
+        (
+            name: "ph3-balmora-temple",
+            cell: "Balmora, Temple",
+            description: "Balmora Temple from above (default camera): the priests' robes are cloth lattices (9 parts, 6 simulated near the camera, LOD 1); fly in with WASD",
+            look_for: "robes hang and swing with the priests' steps and idles (no explosion, no stretching to the floor, no gap at the waist); H toggles simulated vs kinematic (the hem then follows the legs rigidly)",
+            checks: ["PH-3"],
+        ),
         // ---- synthetic test levels (TS1, docs/specs/test-levels.md, levels/*.ron) ----
         (
             name: "level-flat-slopes",

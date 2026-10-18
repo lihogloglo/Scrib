@@ -979,8 +979,19 @@ ragdolls; robes move." Tasks in dependency order:
   `RagdollDef::cloth_colliders` (core, legs, tails below the line); `mw_physics::MwClothRules` (robe = Chest part,
   skirt = Skirt part, 10 × 5 / 8 × 3, `Bip01 Pelvis`). Census: 64 robes + 20 skirts, 50 cloth parts all skinned,
   48 cook (9 ms median); **no hem holds a 50° run stride (+13..+133 % stretch)**. Tests + clippy pedantic clean.
-  **Next:** p10c `ClothLattice` op (animated target blending girdle ride → authored leg skin for the lower rows),
-  bake step, merged palette, app + PH-3.
+  **Built (p10c/p10d, 2026-10-18): V1 end to end, ran in the app.** `sf_anim_graph::secondary::ClothRun` op on
+  `GraphInstance` (after foot placement; target per particle = lerp(girdle ride, authored leg skin, 0.7 × row
+  fraction); capsules posed per frame; kinematic above cloth LOD 1 or with `ClothSettings::simulate` off),
+  `sf_character::cloth_decoded` (lattice joints in the outfit palette), `sf_character_bevy::cloth` (scaffold
+  `ClothCookAtLoad`: cooks on the build task, cached per skeleton + part; removal path = `cloth.cook` bake step),
+  app: `MwCharacters` cloth hooks, **H** simulated ↔ kinematic, `cloth:` cost log; BRP in interactive `character`
+  runs. Tests (`secondary::cloth_op_tests`, sf_anim + sf_character cloth) and clippy pedantic clean. Run: two robes
+  walk and run, nothing explodes or vanishes, H A/B works; **20-26 µs per simulated robe** (dev build, gate 30 µs);
+  Balmora Temple: 9 cloth parts, 6 simulated, 22 µs each. At a run the simulated hem hangs straighter than the
+  stride (feet show front and back; owner to judge). PH-3 awaiting owner (`scene ph3-balmora-temple`, `character`
+  lineup, `scene level-robe-walk`).
+  **Left [~]: PH-3 awaiting owner.** Next (log, not polish): `cloth.cook` bake step (removes `ClothCookAtLoad`);
+  smooth bodies on cloth parts; the op into the compiled op list if graphs need to order it.
 - [ ] P11 Traversal actions and interaction points (already slotted for M4 by animation.md layer 3): vault/mantle/ledge
   from `ContextProbes` with warping, `sf_interaction` points (benches, doors, levers). Not physics; may run in parallel
   with P3–P10. Verify: per animation.md "Layer 3".
@@ -1717,3 +1728,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (u2): M5 U2 [~] part 1: `sf_ui_css` on bevy_flair 0.9.0 (composer with flat `mods-<n>-<id>` cascade layers in load order, memory root source + app-registered `sf_ui_content`, root classes + `input` attribute, per-mod CSS errors via strict probe loads); 6 tests (flair cascade = load order, errors → mod id), clippy clean (superfargoth c3d1fcb). Licence set in ui.md (MPL only cssparser/selectors/dtoa-short, unmodified). Next: U2 part 2 (run `ui_css --autotest` hot reload, UI-2 visual check).
 - 2026-10-18 (ts1b): TS1 part 2: level actors (outfit, scripted path/action, `PathFollower`) through the level index, `robe-walk` level + scene (TS-2 awaiting owner); TS-1 terrain-flash fix (no `TerrainCamera` outside the exterior, 0 patches verified via BRP); walk mode (`U`), dynamic props and the headless course runner (`sf_level/tests/course.rs`) written but not screen-verified.
 - 2026-10-18 (u2b): M5 U2 [x] part 2: `ui_css --autotest` ran (before/after `shots/u2b/`): `broken_mod` attributed, a mod sheet edited on disk restyles in 0.33 s via Bevy's loader-dependency reload of the root sheet (the planned `server.reload` fallback was not needed); UI-2 awaiting owner; `ui_nav --autotest` PASS; clippy clean. Next: U3 widget kit + themes.
+- 2026-10-18 (p10d): M4 P10 [~] cloth V1 first run: tests + clippy clean, two robes walk/run in `character` (BRP now on in interactive `character`), H A/B works, 20-26 µs per simulated robe (gate 30); Balmora Temple 9 parts / 6 simulated; at a run the hem hangs straighter than the stride; PH-3 awaiting owner (`scene ph3-balmora-temple`, `shots/p10d/`). Next: `cloth.cook` bake step.

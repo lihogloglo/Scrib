@@ -160,6 +160,10 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     });
     if let Some(path) = options.screenshot {
         app.insert_resource(Capture { path, settle: options.settle, ready_at: None }).add_systems(Update, capture);
+    } else {
+        // Interactive: BRP for `brp_extras/send_keys` and screenshots (CLAUDE.md "Live inspection (BRP)").
+        #[cfg(feature = "remote")]
+        crate::remote::add(&mut app);
     }
     app.run();
 }

@@ -139,12 +139,11 @@ impl CharacterContent for MwCharacters {
             .and_then(|d| self.store.get(&d).ok())
             .and_then(|b| sf_ragdoll::RagdollDef::from_bytes(&b).ok());
         let profile = self.animation.profile(skeleton).ok().flatten();
-        match (ragdoll, profile) {
-            (Some(r), Some(p)) => r.cloth_colliders(&p, &animation.skeleton.rest_model(), below),
-            _ => {
-                warn!("cloth on {skeleton}: no ragdoll.cook or rig.profile product; no colliders");
-                Vec::new()
-            }
+        if let (Some(r), Some(p)) = (ragdoll, profile) {
+            r.cloth_colliders(&p, &animation.skeleton.rest_model(), below)
+        } else {
+            warn!("cloth on {skeleton}: no ragdoll.cook or rig.profile product; no colliders");
+            Vec::new()
         }
     }
 
