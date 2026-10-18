@@ -537,7 +537,9 @@ fn setup(
     ));
     let camera_id = camera.id();
     // A/B runs (`--off`) leave the terrain or the sky out entirely.
-    if !off.has(Part::Terrain) {
+    // Only the exterior has land (`doors::worldspace_look` keeps this as the
+    // camera changes worldspace).
+    if !off.has(Part::Terrain) && start.worldspace == ids::exterior() {
         camera.insert(TerrainCamera);
     }
     if !off.has(Part::Sky) {

@@ -982,5 +982,13 @@
             look_for: "heights and gaps readable against the 1 m grid; colour bands green/yellow/orange/red by height; G draws the colliders exactly on the boxes",
             checks: ["TS-1"],
         ),
+        (
+            name: "level-robe-walk",
+            level: "robe-walk",
+            hour: 10.0,
+            description: "Greybox: robed NPCs on scripted paths (a priest's flat loop, Fargoth walking and Elone running over a 15° ramp, a 1 m plateau and stairs), a table and a crate stack as dynamic props (cameras: overview, course, priest, props; U: walk mode)",
+            look_for: "the three actors dressed in robes walk/run their paths without sliding or sinking (feet on ramp, plateau and steps); the priest stops at his loop's corner and fidgets; V knocks the crates and table over; U walks the player",
+            checks: ["TS-2"],
+        ),
     ],
 )

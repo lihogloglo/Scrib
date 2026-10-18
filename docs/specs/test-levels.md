@@ -54,17 +54,44 @@ Dev build, warm file cache (2026-10-18): content (records, VFS, bake manifest) 0
 (13-22 objects, 344-494 triangles, one collider each); **ready 2.1-2.8 s after process start** (window, render
 and pipeline setup dominate; logged as `level <name> ready <s> after start`).
 
-## Not built yet (TS1 part 2, ts1b)
+## Actors, walk mode, props (built, ts1b, 2026-10-18)
 
-- **Actors by id** (`actors: [(id: "...", spawn: "start", outfit: [...], path: [...], action: ...)]`):
-  put them as actor placements into the level's `MemoryIndex` page
-  (`sf_world::build_pages` with the placements instead of `std::iter::empty()`
-  in `LevelIndex::new`), so the existing actor spawner dresses them; scripted
-  path/action loops drive their `MoveIntent`.
-- **Props and interaction points:** dynamic bodies (table, chairs, stacks)
-  via the item path or direct `BodyDesc::new(Dynamic, ...)`; doors/ladders later.
-- **Headless scripted-input runner:** load a level into `sf_physics`
-  (`Shape::mesh()` → `MeshShape`, no Bevy), drive a `KinematicMover` with an
-  input script, assert positions (traversal courses, research 01).
-- **Player walk mode:** the viewer has only the free (fly) camera; walking
-  needs a player `Mover` + camera follow (not in the app yet).
+- **Actors** (`level/actors.rs`): each `actors` entry is resolved against
+  the records (`NPC_` or `CREA`; unknown ids are skipped with a warning) and
+  becomes an actor `sf_world::Placement` at its spawn in the level's
+  `MemoryIndex` page (`build_pages` in `LevelIndex::new`), so the streamed
+  world spawns it like any cell's NPC. A level spawner
+  (`LevelActorSpawner`, replacing `CharacterSpawner` for the level) dresses
+  it with `CharacterState::worn` = the outfit and tags it `LevelActor`;
+  `walkers.rs` gives it its `Mover`; the level's `script` system then drops
+  the `AI_W` scaffold and avoidance and adds the script: an
+  `sf_controller::PathFollower` (loop, back-and-forth, once; walk or run)
+  writing `MoveIntent`, and the periodic action (graph floats + a trigger,
+  e.g. `fidget` with `idle_variant`).
+- **Coverage markers:** cells with no content count as unloaded, and a mover
+  there parks (the processing range). The level index adds invisible
+  `Marker` placements every 64 m over `Level::bounds()`, so every streaming
+  cell under the level is in the directory and goes active.
+- **Walk mode** (`level/walk.rs`): the player is a level actor too
+  (Morrowind's `player` record at the `start` spawn, else the first spawn).
+  `U` toggles fly/walk: WASD in the camera's heading frame, Shift runs; the
+  free camera keeps the mouse look and sits 3.5 m behind a 1.6 m pivot.
+  Scaffold: no camera collision, no jump (the player controller is M7).
+- **Props:** `dynamic: Some(mass)` boxes are `BodyKind::Dynamic` bodies on
+  `Layer::PROP` (box shape about the center, the render mesh shifted to
+  match) with `PhysicsBody` for the pose write-back; `LevelProp` keeps the
+  `interact` hook for P11.
+- **No land:** a level worldspace never gets `TerrainCamera` (exterior
+  setup, `doors::worldspace_look`): before, the terrain streamed
+  Vvardenfell's patches around the camera and each new patch drew for a
+  frame before `terrain_layers` moved it to the exterior's layer (black
+  flashes, TS-1 failed 2026-10-18).
+- **Headless runner:** framework side (`sf_level/tests/course.rs`, see the
+  framework spec); `level.rs` tests check its `ledges.ron` copy matches ours.
+
+| level | what | scene |
+|---|---|---|
+| `robe-walk` | the Balmora temple priest (own robe) walks a flat loop and fidgets at its corner; Fargoth (common robe) walks and Elone (extravagant robe) runs back and forth over a 15° ramp, a 1 m plateau and stairs (5 × 0.20/0.32); a table (30 kg) and three stacked crates (15 kg) | `level-robe-walk` (cloth PH-3) |
+
+Leftovers: compound props (a table with legs), camera collision in walk mode,
+a `--walk` start flag (walk mode is a key only; BRP `send_keys` U).

@@ -998,8 +998,14 @@ ragdolls; robes move." Tasks in dependency order:
   (0.3-2.5 m boxes, thin vs deep, 1-4 m gaps, 0.3 m beam, wall); scenes `level-flat-slopes`, `level-ledges` (TS-1
   awaiting owner). Load: ready 2.1-2.8 s after process start (content 0.34 s, spawn 1-2 ms), dev build.
   Format decision: RON, not `DynamicScene`/BSN (no `.bsn` files in 0.20) or Skein (Bevy 0.19 only, revisit as a
-  glTF primitive). **Next (ts1b):** Morrowind actors by id with outfit and scripted path/action loops (actor placements
-  in the level's index), props and interaction points, the headless scripted-input runner; a player walk mode.
+  glTF primitive). **Built (ts1b, 2026-10-18):** level `actors` (record id at a spawn, outfit, scripted path:
+  loop/back-and-forth/once at a speed, walk or run, and a periodic graph action) as actor placements in the level's
+  index, dressed by a level spawner, driven by `sf_controller::PathFollower`; coverage markers so every cell under the
+  level is active; level `robe-walk` + scene `level-robe-walk` (priest loop, Fargoth walking and Elone running over
+  ramp/plateau/stairs; p10c's cloth already simulates on them; TS-2 awaiting owner). Fix: a level worldspace never gets
+  `TerrainCamera` (TS-1's black flashes were Vvardenfell terrain patches; 0 patches after a 400 m camera jump).
+  Also written, compiled, not yet verified on screen: `U` walk mode, dynamic box props, the headless course runner
+  (`sf_level/tests/course.rs`, 2 tests pass). **Next:** verify walk mode and props (TS-2), then course tests.
 
 - Verify (milestone): PH-1 (table knock-over), PH-2 (dead guard ragdoll + knockdown/get-up), PH-3 (robes) signed off
   by the owner; a benchmark entry for Balmora with physics on (idle step, a collapse, 2 ragdolls) within the gates.
@@ -1708,3 +1714,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (ts1a): TS1 [~] part 1: synthetic test levels: `sf_level` (Bevy-free RON greybox format, validation, meshes = colliders; 6 tests), app `level.rs` (`view level:<name>`, scenes `level:`; own worldspace with an empty streaming index, prototype-grid materials, `Fixed` mesh colliders), levels `flat-slopes` + `ledges`, scenes `level-*`, TS-1 awaiting owner; ready 2.1-2.8 s after start. RON over DynamicScene/BSN/Skein (no Bevy 0.20 Skein yet). Next ts1b: actors by id, props, headless runner.
 - 2026-10-18 (we1): M6 WE1 [x]: Bevy-free `sf_weather` (presets/climates/precip kinds as records, forecast as a pure function of seed + climate + slot with timestamped overrides in the save, per-channel lead/lag with never-morphing crossfades, border band, Poisson lightning by thinning, `WeatherFrame` with wind target, storms, `visibility_m`); `evaluate` 0.0006 ms (gate 0.05); superfargoth cbf4c44. Next: WE2 `mw_weather`, then WE3 `sf_weather_bevy`.
 - 2026-10-18 (u2): M5 U2 [~] part 1: `sf_ui_css` on bevy_flair 0.9.0 (composer with flat `mods-<n>-<id>` cascade layers in load order, memory root source + app-registered `sf_ui_content`, root classes + `input` attribute, per-mod CSS errors via strict probe loads); 6 tests (flair cascade = load order, errors → mod id), clippy clean (superfargoth c3d1fcb). Licence set in ui.md (MPL only cssparser/selectors/dtoa-short, unmodified). Next: U2 part 2 (run `ui_css --autotest` hot reload, UI-2 visual check).
+- 2026-10-18 (ts1b): TS1 part 2: level actors (outfit, scripted path/action, `PathFollower`) through the level index, `robe-walk` level + scene (TS-2 awaiting owner); TS-1 terrain-flash fix (no `TerrainCamera` outside the exterior, 0 patches verified via BRP); walk mode (`U`), dynamic props and the headless course runner (`sf_level/tests/course.rs`) written but not screen-verified.

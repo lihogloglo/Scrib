@@ -25,11 +25,14 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use mw_install::MorrowindInstall;
 use sf_controller::{CollisionMesh, SurfaceId};
 use sf_coords::{WorldPos, WorldTransform};
-use sf_level::{Level, Material};
-use sf_physics::{BodyDesc, Layer, MeshShape, ShapeRef};
-use sf_physics_bevy::Physics;
-use sf_world::{IndexParams, IndexReader, MemoryIndex, WorldIndex, WorldspaceId, build_directory, build_pages};
+use sf_level::{Level, Material, Shape};
+use sf_physics::{BodyDesc, BodyKind, Layer, MeshShape, ShapeRef};
+use sf_physics_bevy::{Physics, PhysicsBody};
+use sf_world::{IndexParams, IndexReader, MemoryIndex, Placement, WorldIndex, WorldspaceId, build_directory, build_pages};
 use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
+
+mod actors;
+mod walk;
 
 /// `view level:<name>`.
 pub const PREFIX: &str = "level:";
@@ -38,6 +41,7 @@ pub const PREFIX: &str = "level:";
 const BUILT_IN: &[(&str, &str)] = &[
     ("flat-slopes", include_str!("../../../levels/flat-slopes.ron")),
     ("ledges", include_str!("../../../levels/ledges.ron")),
+    ("robe-walk", include_str!("../../../levels/robe-walk.ron")),
 ];
 
 /// When `view level:` started: the load time is measured from here.
@@ -47,6 +51,8 @@ static STARTED: OnceLock<Instant> = OnceLock::new();
 pub struct LevelSetup {
     pub level: Arc<Level>,
     pub worldspace: WorldspaceId,
+    /// The level's actors and the walk-mode player, resolved against the records.
+    pub actors: Arc<[actors::ActorSetup]>,
 }
 
 /// The level's worldspace id.
@@ -79,8 +85,9 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     let ws = worldspace(&level.name);
     let start = crate::StreamStart::Interior { worldspace: ws.clone(), eye: camera.eye.as_dvec3(), target: camera.target.as_dvec3() };
     let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - level {}", level.name), start)?;
+    let actors = actors::resolve(&level, &content.db);
     options.actors = Some(Arc::new(content.db));
-    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws });
+    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into() });
     crate::exterior::run(Arc::new(vfs), options)
 }
 
@@ -107,18 +114,18 @@ pub fn find(name: &str) -> crate::Result<(String, Level)> {
     Ok(("built-in".to_owned(), parse(text, &format!("built-in {name}"))?))
 }
 
-/// The level's streaming index (no placements yet) over the bake's: the
-/// level worldspace has a directory, so streaming settles at once and
-/// nothing else streams in.
+/// The level's streaming index (its actors and coverage markers:
+/// `actors::placements`) over the bake's: the level worldspace has a
+/// directory, so streaming settles at once and nothing else streams in.
 struct LevelIndex {
     level: MemoryIndex,
     base: Arc<dyn IndexReader>,
 }
 
 impl LevelIndex {
-    fn new(ws: &WorldspaceId, base: Arc<dyn IndexReader>) -> Self {
+    fn new(ws: &WorldspaceId, base: Arc<dyn IndexReader>, placements: Vec<Placement>) -> Self {
         let params = IndexParams::default();
-        let (pages, stats) = build_pages(&params, std::iter::empty(), &|_| None);
+        let (pages, stats) = build_pages(&params, placements, &|_| None);
         let directory = build_directory(ws.clone(), &params, &pages);
         let mut level = MemoryIndex::new();
         level.insert(&WorldIndex { directory, pages, stats });
@@ -148,7 +155,10 @@ struct ActiveLevel(LevelSetup);
 /// Adds the level to the viewer; call after `WorldIndexSource` is inserted.
 pub fn add(app: &mut App, setup: LevelSetup) {
     let base = app.world().resource::<WorldIndexSource>().0.clone();
-    app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base))))
+    let placements = actors::placements(&setup.level, &setup.actors);
+    actors::add(app, Arc::clone(&setup.actors));
+    walk::add(app);
+    app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base, placements))))
         .insert_resource(ActiveLevel(setup))
         // After Startup's commands: the viewer's `setup` creates the worldspace root.
         .add_systems(PostStartup, spawn)
@@ -158,6 +168,14 @@ pub fn add(app: &mut App, setup: LevelSetup) {
 /// Labels a level primitive (BRP `world_find_entities_by_name` finds it by its name).
 #[derive(Component)]
 pub struct LevelObject;
+
+/// A level prop (a dynamic body). `interact` is the level's interaction
+/// hook, kept for P11 (interaction points); nothing reads it yet.
+#[derive(Component)]
+#[allow(dead_code)] // `interact`: the P11 hook, read by nothing yet
+pub struct LevelProp {
+    pub interact: Option<String>,
+}
 
 fn spawn(
     mut commands: Commands,
@@ -169,13 +187,13 @@ fn spawn(
     mut physics: Option<ResMut<Physics>>,
 ) {
     let started = Instant::now();
-    let ActiveLevel(LevelSetup { level, worldspace: ws }) = &*level;
+    let ActiveLevel(LevelSetup { level, worldspace: ws, .. }) = &*level;
     let entry = registry.ensure(&mut commands, ws);
     let grid = images.add(grid_image());
     let mut palette: Vec<(Material, Handle<StandardMaterial>)> = Vec::new();
-    let (mut bodies, mut triangles) = (0, 0);
+    let (mut bodies, mut props, mut triangles) = (0, 0, 0);
     for (i, object) in level.objects.iter().enumerate() {
-        let data = object.mesh();
+        let mut data = object.mesh();
         triangles += data.indices.len() / 3;
         let material = if let Some((_, h)) = palette.iter().find(|(m, _)| *m == object.material) {
             h.clone()
@@ -194,6 +212,33 @@ fn spawn(
         let (cell, mut transform) = to_grid(at);
         transform.rotation = object.rotation();
         let name = object.name.clone().unwrap_or_else(|| format!("level object {i}"));
+        // A prop: a dynamic box body about its center (the mesh shifts down
+        // to match); `PhysicsBody` writes its pose back to the entity.
+        if let (Some(mass), Shape::Box { size }, Some(physics)) = (object.dynamic, &object.shape, physics.as_deref_mut()) {
+            let center = at.offset(Vec3::Y * 0.5 * size.y);
+            for p in &mut data.positions {
+                p[1] -= 0.5 * size.y;
+            }
+            let pose = WorldTransform { pos: center, rotation: object.rotation(), scale: Vec3::ONE };
+            let desc = BodyDesc::new(BodyKind::Dynamic { asleep: false }, pose, ShapeRef::Box(*size * 0.5), Layer::PROP);
+            let id = physics.insert(ws, &BodyDesc { mass: Some(mass), ..desc });
+            let (cell, mut transform) = to_grid(center);
+            transform.rotation = object.rotation();
+            commands.spawn((
+                Name::new(name),
+                LevelObject,
+                LevelProp { interact: object.interact.clone() },
+                Mesh3d(meshes.add(render_mesh(&data))),
+                MeshMaterial3d(material),
+                cell,
+                transform,
+                RenderLayers::layer(entry.layer),
+                ChildOf(entry.root),
+                PhysicsBody { worldspace: ws.clone(), id },
+            ));
+            props += 1;
+            continue;
+        }
         if object.collide
             && let Some(physics) = physics.as_deref_mut()
         {
@@ -216,9 +261,10 @@ fn spawn(
         ));
     }
     info!(
-        "level {}: {} objects ({triangles} triangles), {bodies} static colliders, spawned in {:.2} ms",
+        "level {}: {} objects ({triangles} triangles), {bodies} static colliders, {props} props, {} actors, spawned in {:.2} ms (U: walk mode)",
         level.name,
         level.objects.len(),
+        level.actors.len(),
         started.elapsed().as_secs_f64() * 1e3
     );
 }
@@ -312,6 +358,34 @@ mod tests {
             let (_, level) = find(name).expect("level parses");
             assert_eq!(level.name, *name, "file name and level name agree");
         }
+    }
+
+    /// The framework's headless course tests run on a copy of `ledges`.
+    #[test]
+    fn framework_copy_of_ledges_agrees() {
+        let framework = include_str!("../../../../superfargoth/crates/sf_level/tests/levels/ledges.ron");
+        let ours = BUILT_IN.iter().find(|(n, _)| *n == "ledges").map(|(_, t)| *t).unwrap_or_default();
+        assert_eq!(framework.replace("\r\n", "\n"), ours.replace("\r\n", "\n"), "copy levels/ledges.ron to superfargoth's sf_level/tests/levels/");
+    }
+
+    /// Placements: every actor (and the player at `start`) plus markers
+    /// covering the floor's streaming cells.
+    #[test]
+    fn robe_walk_placements_cover_the_level() {
+        let (_, level) = find("robe-walk").expect("level parses");
+        let setups: Vec<actors::ActorSetup> = level
+            .actors
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, def)| actors::ActorSetup { def, kind: "NPC_", placement: sf_world::PlacementId(i as u128), player: false })
+            .collect();
+        let placements = actors::placements(&level, &setups);
+        let actors = placements.iter().filter(|p| p.class == sf_world::PlacementClass::Actor).count();
+        assert_eq!(actors, level.actors.len());
+        let cells: std::collections::HashSet<IVec3> =
+            placements.iter().map(|p| sf_world::Partition::STREAMING.cell_of(p.transform.pos)).collect();
+        assert!(cells.len() >= 4, "the floor spans the four cells around the origin: {cells:?}");
     }
 
     #[test]

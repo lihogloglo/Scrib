@@ -345,8 +345,17 @@ pub(crate) fn worldspace_look(
             e.insert(sf_atmos_bevy::CloudCamera);
         }
     }
-    if ws == mw_world::ids::exterior() && !has_terrain && !off.has(Part::Terrain) {
-        e.insert(TerrainCamera);
+    // The land is the exterior's: another worldspace under the sky (a test
+    // level, `level.rs`) has none. With `TerrainCamera` there, the terrain
+    // streamed Vvardenfell's patches around the camera and each new patch
+    // drew for a frame before `terrain_layers` moved it to the exterior's
+    // layer (black flashes in `level-ledges`, owner 2026-10-18).
+    if ws == mw_world::ids::exterior() {
+        if !has_terrain && !off.has(Part::Terrain) {
+            e.insert(TerrainCamera);
+        }
+    } else if has_terrain {
+        e.remove::<TerrainCamera>();
     }
     info!("worldspace look: {}", ws.as_str());
 }

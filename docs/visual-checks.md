@@ -1653,3 +1653,22 @@ orange, red) up to a 2 m grey plateau, three stair flights (blue comfortable, pu
 ledges: the height row 0.3-2.5 m, thin vs deep blocks, platforms with 1-4 m gaps, the beam, the wall. Fly (WASD) over
 them; `V` throws a ball that bounces off and rests on the greybox (colliders = the visible triangles); `G` draws the
 colliders. Known: no walking player yet (fly camera only), floor ends at 40 m into the fog.
+**Owner 2026-10-18: FAILED** (black shapes flash for a frame or two while the camera moves; gone with `--off terrain`,
+unchanged with F2/F3/F10 and `--off froxels`: Vvardenfell's terrain streams into the level worldspace). Fix handed to ts1b.
+**ts1b fix (2026-10-18), awaiting owner:** a level worldspace never gets `TerrainCamera` (only the exterior has land:
+`exterior.rs` setup and `doors::worldspace_look`), so no terrain patch streams or draws in a level. Re-check: fly fast
+(Shift) over `level-ledges`; no black shapes.
+
+### TS-2: Level actors, props and walk mode (`scene level-robe-walk`; also `U` in any `level-*` scene)
+
+Status: **awaiting owner** (TS1 part 2, ts1b, 2026-10-18). Three robed NPCs on scripted paths (`levels/robe-walk.ron`):
+camera `priest`: the Balmora temple priest in his own robe walks a flat 6 × 8 m loop, stops 3 s at its south-west
+corner and fidgets; camera `course`: Fargoth (common robe) walks and Elone (extravagant robe, run gait, 4 m/s) runs back
+and forth over a 15° ramp, a 1 m plateau and stairs (5 × 0.20 m) down the far side, waiting at the ends; camera
+`props`: a table and three stacked crates (dynamic bodies): `V` balls knock them over. `U` toggles walk mode: the
+`player` character at the `start` spawn walks with WASD (Shift runs) in the camera's heading, the free camera follows
+3.5 m behind (mouse look as usual). Look for: dressed characters (no T-pose, no missing parts) whose feet stay on the
+ramp, plateau and steps (no sinking or floating), walk/run playback matched to speed, turns at the path ends; crates
+tumble and rest on the floor; walking the player up the `ledges` boxes steps only onto the 0.3 m one. Cloth (PH-3) is
+p10c's: once it is wired, the robes should swing with the stride here. Known: no camera collision in walk mode, no
+jump, the table is a single box (no legs).
