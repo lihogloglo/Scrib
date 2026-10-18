@@ -955,6 +955,10 @@ ragdolls; robes move." Tasks in dependency order:
 - [ ] P11 Traversal actions and interaction points (already slotted for M4 by animation.md layer 3): vault/mantle/ledge
   from `ContextProbes` with warping, `sf_interaction` points (benches, doors, levers). Not physics; may run in parallel
   with P3–P10. Verify: per animation.md "Layer 3".
+  Scope widened (owner 2026-10-18): one general traversal and interaction layer (mantle, vault, parkour, climbing,
+  ladders, sitting, doors, levers). Learn from AC1-rs, faith-runner, ELDEN-RING-Combat-Rewrite, sekiro-rs and ozz,
+  don't copy them: animation.md "Prior art: open Rust/Bevy game reimplementations". First step: pick a clip source
+  (Morrowind has no climb/vault/sit clips), then write the traversal spec. Not started: needs the owner's go.
 
 - Verify (milestone): PH-1 (table knock-over), PH-2 (dead guard ragdoll + knockdown/get-up), PH-3 (robes) signed off
   by the owner; a benchmark entry for Balmora with physics on (idle step, a collapse, 2 ragdolls) within the gates.
