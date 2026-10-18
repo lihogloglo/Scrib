@@ -17,6 +17,14 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
    M5 **U1** (`sf_ui` + `sf_ui_bevy`; the input crate is allowed now, an exception to the crate "update all" batch;
    pick `bevy_enhanced_input` or leafwing in ui.md OQ4), M4 **P10** cloth, M6 **WD1** wind + **WE1** weather core.
    The owner wants the big roadmap carried on, not polish of existing systems: log leftovers, don't chase them.
+   **Added (owner go 2026-10-18): TS1 synthetic test levels**, before P10's last slice (PH-3 needs it, and the
+   traversal course tests after the animation study): a `scenes.ron` entry may name a synthetic level instead of a
+   cell: greybox geometry (boxes, ramps, stairs, ledges, gaps), Morrowind actors by id with an outfit and a scripted
+   path/action loop, props and interaction points, sky/light rig; same viewer, BRP, F1 A/B keys and `--screenshot`;
+   loads in seconds without world streaming; RON first, Blender → glTF components (Skein, if on Bevy 0.20) later; the
+   same level runs headless for scripted-input tests (faith-runner course tests, research/animation/01).
+   **Animation study** (owner 2026-10-18): `../superfargoth/docs/research/animation/README.md` (R1-R11, research-only
+   agents, 2 beside the 3 build lanes); its R11 rewrites the traversal/action spec before P11 starts.
    Items 1-6a below are older; don't pick them over item 0.
 1. [~] M2: streaming spikes (2026-10-12; streaming.md "Spikes", diag.md "Frame pacing"). **Gate settled
    (spikes4):** at most 1 presented stutter a minute (frame > 1.5× the moving median of 60) and none over
