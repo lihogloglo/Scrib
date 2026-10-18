@@ -781,7 +781,7 @@ plus warping plus IK, which this plan covers.
 
 **Kept: our ozz-model core and `sf_anim_graph`.** Re-checked 2026-10-11:
 `ozz-animation-rs` 0.11.0 (2025-10) is MPL-2.0 and nightly-only, and would
-duplicate `sf_anim`. `bevy_animation_graph` 0.11 is still on Bevy 0.19.
+duplicate `sf_anim` (unchanged on 2026-10-18; see "Prior art" under Layer 3). `bevy_animation_graph` 0.11 is still on Bevy 0.19.
 NVIDIA **MotionBricks** (in `NVlabs/GR00T-WholeBodyControl`, "preview
 release"): code is Apache-2.0 and weights are under the NVIDIA Open Model
 License, but the released checkpoints drive a Unitree G1 robot from SMPL
@@ -905,6 +905,73 @@ batched probe stages and returns `ContextHit` data (affordance, lip, face normal
 clearance, landing) with `warp_target`/`hang_point` for warp windows; vault/mantle actions stay M4.
 Classification and timing: locomotion.md "Context probes as built" (150 all-blocked: 0.79 ms
 single-thread, inside the budget only with the gating above).
+
+#### Prior art: open Rust/Bevy game reimplementations (owner, 2026-10-18)
+
+The owner wants one general traversal and interaction layer: mantling, vaults, parkour and
+free-running for players who want to play an assassin, climbing, ladders, sitting on chairs and
+benches, doors and levers. Several open Rust/Bevy reimplementations of commercial games built
+pieces of this in 2026. **We learn from them; we don't copy or depend on them.** They are apps,
+not libraries; they play the original game's clips from the user's install; and parts were
+reverse-engineered from executables (Ghidra), so rule 3 (clean room) applies: take ideas and
+technique, never constants, tables or names extracted from those games. Reviewed from their
+READMEs and design notes, not their code:
+
+- **AC1-rs** (Assassin's Creed, MIT; github.com/Goku436/AC1-rs, `docs/NOTES.md`). The best
+  reference for climbing. Ideas to take:
+  - **Holds as data, with a geometry fallback.** Climbable edges come from authored data where
+    the content has it; otherwise they are detected from geometry: a walkable top meeting a wall
+    below becomes a hold, a top-out needs headroom (~ a standing height) and open space past the
+    edge, narrow wall tops and beams become perches. For us: holds are interaction points
+    (`sf_interaction`) that adapters author or a bake step detects from collision geometry.
+  - **Validate a move by its end pose.** A climb move is taken only if its end pose puts both
+    hands on real holds and the feet on the wall: the pose, not just the root, must fit the world.
+  - **Jump target choice** as a scored search (posts, beams, walkable tops within a cone of the
+    wanted direction, distance and drop limits, highest first).
+  - **A move graph as data** (which action may follow which, per-action gates "can leave / locked
+    / usable while moving"): our graph's transitions plus tags, not code paths per move.
+  - **IK corrections fade in by distance** (a hand from ~20 cm of its hold, a foot near the wall),
+    and the root height follows the ground averaged ahead and behind.
+  - Its `ik` crate (two-bone with pole, look-at chains, FABRIK, CCD, foot and hand placement,
+    mirroring) is what `sf_anim::ik` already has; nothing to adopt.
+- **faith-runner** (Mirror's Edge, MIT; github.com/tnrjns/faith-runner). The reference for the
+  **parkour move set** and for keeping the controller testable:
+  - `crates/faith_move` depends only on `glam`: the host supplies a `World` trait (`sweep`,
+    `overlaps`) and per-frame input, and reads back feet, velocity, state and events. Same shape
+    as our `sf_controller` over `StaticWorld`; keep traversal logic there, Bevy-free.
+  - Move set to cover: vaults chosen by obstacle height and approach speed (six kinds), wall runs,
+    wall climbs, ledge hang and shimmy, slides, rolls and soft/hard landings by fall speed,
+    springboards, beams, swing poles, ziplines, door barges.
+  - **Scripted-input tests through every move and course section** (`cargo test -p faith_move`):
+    the model for our traversal tests (greybox courses as test fixtures, not visual checks).
+  - All tuning numbers in one file. It is first person only, and has no hand IK on ledges or foot
+    placement: our warping + full-body IK is the part it lacks.
+- **ELDEN-RING-Combat-Rewrite** (MIT, Bevy 0.19; github.com/Funny-Bones/ELDEN-RING-Combat-Rewrite).
+  Combat, not traversal: a fixed 60 Hz gameplay sim with no engine types, root motion per action,
+  hit / invulnerability / cancel windows as data, upper-body layers while moving, hit-stop. The
+  reference for M9 combat timing (our event windows already carry this). Its blending is simpler
+  than ours by its own account.
+- **sekiro-rs** (MIT/Apache; github.com/AKJama/sekiro-rs): a whole-game reimplementation; its
+  README says nothing specific about animation. Check its `docs/MOBILITY.md` (grapple, ledges)
+  before the traversal spec is written.
+- **ozz-animation** (C++, MIT; github.com/guillaumeblanc/ozz-animation): already our runtime
+  model (Canonical technique). It samples, blends and solves IK; it has no state machines, graphs
+  or traversal, which is the hard part. Not adopted (re-checked 2026-10-18): binding the C++ adds a
+  C++ build for the parts we have, and the Rust port `ozz-animation-rs` 0.11 (MPL-2.0, now allowed
+  as an unmodified dependency) still needs nightly Rust for SIMD and duplicates `sf_anim`.
+
+**What this means for the traversal layer** (bevyrrowind ROADMAP M4 P11, the GASP shape):
+context probes (built) and **interaction points** (UE Smart Objects: seats, doors, levers,
+ladders, climb holds; authored or baked from geometry) feed a **chooser** that picks an action by
+tags and probe results; **motion warping** (built) aligns the clip with the point; **full-body IK**
+puts hands and feet on it; the action is accepted only if its end pose fits (AC1-rs). Moves are
+data (graph transitions and tags), so a mod adds a move with a clip and a rule, not code.
+
+**The real bottleneck is clips, not code.** All four projects use the original game's
+animations. Morrowind ships no climb, vault, mantle or sit clips, so this layer needs a clip
+source we may use: CC0 libraries (Quaternius), Mixamo (usable in a game, not redistributable
+raw), or mocap, retargeted with the humanoid retargeting we already have (Optional clips below).
+Choosing that source comes before the traversal spec.
 
 ### Layer 4: physical animation (M4)
 
