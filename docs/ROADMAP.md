@@ -1268,11 +1268,20 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   Example `wind` ran (CPU arrows agree with the GPU-shaded ground, burst; visual check WD-0). App: weather wind →
   `WindField`, terrain origin → `WindOrigin`, fog drift and cloud direction read the field (clippy clean; not run in
   game). Open: no GPU consumer in game yet (grass G1, trees WD2, rain PR1); `WindTerms` easing is WE1.
-- [ ] WE1 `sf_weather` core (weather.md "Weather: state machine and presets as data"): `WeatherPreset`/`Climate`/
+- [x] WE1 `sf_weather` core (weather.md "Weather: state machine and presets as data"): `WeatherPreset`/`Climate`/
   `PrecipKind` records, per-climate state machine, forecast as a pure function of (seed, climate, index), channel
   lead/lag blending, border band, lightning schedule, cues, tags, `WeatherFrame` + `visibility_m`. Bevy-free.
   Verify: `cargo test -p sf_weather` (forecast determinism + save/restore with overrides, lead/lag curves, discrete
   crossfades never morph, border blend, Poisson lightning rate); `evaluate` ≤ 0.05 ms.
+  Built (we1, 2026-10-18; weather.md "Weather core as built"; superfargoth cbf4c44): records as `sf_records` kinds
+  (`weather.preset`/`.climate`/`.precip`, all `serde(default)`), `WeatherBook` (index form), `WeatherState { seed,
+  overrides }` (forces and weight edits are timestamped overrides, not record patches); slots `phase + k·mean + hashed
+  jitter` (O(1) lookup), hashed weighted draw; 6 channels (clouds/sky/wind/fog continuous; precipitation and cues
+  crossfade with in/out windows); per-preset wind wander, `sky.wind` = the `WindField` target; lightning by thinning a
+  hashed Poisson stream (cap 120/game hour); `storms` (climate storm source × preset `wind.storm`); `visibility_m`
+  (Koschmieder). Depends on `sf_atmos` (frame carries `CloudWeather`/`FogSettings`); `RecordId` gained serde.
+  10 tests green, clippy clean; `evaluate` 0.0006 ms (release, 2 climates mid-transition). Open: overrides never
+  pruned; `gust_length` swaps once mid-transition; lightning rate per game hour (adapter converts).
 - [ ] WE2 `mw_weather` (weather-adapter.md): REGN → climates, `Morrowind.ini [Weather*]` → presets in a synthetic mod
   layer, precipitation kinds (rain, snow, ash, blight), Red Mountain radial storm source, MWScript mapping table for M5
   W3, `bevyrrowind weather forecast <region> --days 3`. Waits for WE1. Verify: `cargo test -p mw_weather` (adapter
@@ -1679,3 +1688,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (p10b): M4 P10 [~] `sf_character::cook_cloth` (farthest-hit lattice placement, girdle-ride offsets, per-particle authored skin targets, `SkinRebind` bilinear + harmonic waist band), `RagdollDef::cloth_colliders`, `mw_physics::MwClothRules`; census: robes are Chest parts (not Skirt), 50 cloth parts all skinned, 48 cook in 9 ms median, no hem holds a 50° run stride (+13..+133 %). Next p10c op + app + PH-3.
 - 2026-10-18 (u1b): M5 U1 [x] part 2: `sf_ui_bevy` (screen-stack router over per-input-context BEI entities, consume + require_reset UI actions, rebindable `UiBindings`, confirm → `Activate`, layer-aware `AutoDirectionalNavigation` + focus memory + repeat, `InputMode` + glyphs); UI sets must run before BEI `Prepare` (else a closing modal's B reached the menu); 6 headless tests, `ui_nav --autotest` synthetic-gamepad PASS, clippy clean; UI-1 awaiting owner. Next: u1c glue (VFS Fluent, settings/bindings ↔ profile) or U2.
 - 2026-10-18 (u1c): M5 U1 part 3 (glue): Fluent from each mod's VFS `l10n/<locale>/<mod id>.ftl` in load order with per-mod issues, `UiRecordKinds` adapter, settings ↔ `Profile::settings`, new `Profile::bindings` (reflected input names, non-defaults), `insert_from_profile` + save on leaving menus/exit, `UiCommands`, presets enforced on open; 7 new tests, clippy clean, `ui_nav --autotest` PASS (superfargoth 860d027). Next: U2 `sf_ui_css`.
+- 2026-10-18 (we1): M6 WE1 [x]: Bevy-free `sf_weather` (presets/climates/precip kinds as records, forecast as a pure function of seed + climate + slot with timestamped overrides in the save, per-channel lead/lag with never-morphing crossfades, border band, Poisson lightning by thinning, `WeatherFrame` with wind target, storms, `visibility_m`); `evaluate` 0.0006 ms (gate 0.05); superfargoth cbf4c44. Next: WE2 `mw_weather`, then WE3 `sf_weather_bevy`.
