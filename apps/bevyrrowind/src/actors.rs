@@ -15,7 +15,7 @@ use mw_bake::anim::AnimLibrary;
 use sf_anim_bevy::AnimAsset;
 use sf_bake::{Manifest, Store};
 use sf_character::{CharacterRecipe, CharacterSource, PartLookup, SlotRegistry};
-use sf_character_bevy::{CharacterContent, CharacterSettings, Characters, SfCharacterPlugin};
+use sf_character_bevy::{CharacterContent, CharacterSettings, Characters, ClothCollider, ClothSettings, ClothStats, SfCharacterPlugin};
 use sf_model::Cooked;
 use sf_model::steps::{MeshCookStep, MeshRestStep, MeshRigStep};
 use sf_records::RecordDb;
@@ -27,12 +27,15 @@ pub struct MwCharacters {
     manifest: Manifest,
     animation: AnimLibrary,
     vfs: Arc<Vfs>,
+    /// Robes and skirts (physics-adapter.md "Cloth").
+    cloth: mw_physics::MwClothRules,
 }
 
 impl MwCharacters {
     pub fn new(db: Arc<RecordDb>, vfs: Arc<Vfs>, store: Store, manifest: Manifest) -> Self {
         let animation = AnimLibrary::new(store.clone(), manifest.clone());
-        Self { actors: MwActors::new(db, Arc::clone(&vfs)), store, manifest, animation, vfs }
+        let cloth = mw_physics::MwClothRules::new(&db);
+        Self { actors: MwActors::new(db, Arc::clone(&vfs)), store, manifest, animation, vfs, cloth }
     }
 
     pub fn actors(&self) -> &MwActors {
@@ -121,6 +124,30 @@ impl CharacterContent for MwCharacters {
         mw_actors::probes::smooth_probes(&animation.skeleton, animation.clips.iter().map(|c| &**c))
     }
 
+    /// Robes (Chest parts) and skirts (`mw_physics::MwClothRules`).
+    fn cloth_spec(&self, id: &sf_records::RecordId, part: &sf_character::BodyPart) -> Option<sf_character::ClothSpec> {
+        sf_character::ClothRules::cloth(&self.cloth, id, part)
+    }
+
+    /// The skeleton's `ragdoll.cook` capsules below the line (pelvis, legs, tail) on
+    /// its `rig.profile` (as the census does).
+    fn cloth_colliders(&self, recipe: &CharacterRecipe, animation: &AnimAsset, below: f32) -> Vec<ClothCollider> {
+        let skeleton = recipe.skeleton.as_str();
+        let ragdoll = self
+            .manifest
+            .get(sf_ragdoll::RAGDOLL_COOK, skeleton)
+            .and_then(|d| self.store.get(&d).ok())
+            .and_then(|b| sf_ragdoll::RagdollDef::from_bytes(&b).ok());
+        let profile = self.animation.profile(skeleton).ok().flatten();
+        match (ragdoll, profile) {
+            (Some(r), Some(p)) => r.cloth_colliders(&p, &animation.skeleton.rest_model(), below),
+            _ => {
+                warn!("cloth on {skeleton}: no ragdoll.cook or rig.profile product; no colliders");
+                Vec::new()
+            }
+        }
+    }
+
     fn placement_rotation(&self) -> Quat {
         Quat::from_array(mw_anim::rig::FACING_TURN.to_array())
     }
@@ -148,7 +175,7 @@ pub fn add_content(app: &mut App, content: Arc<MwCharacters>) {
     crate::actor_fx::add(app, Arc::clone(&content.vfs));
     crate::held::add(app, Arc::clone(&content));
     crate::actor_particles::add(app, Arc::clone(&content.vfs));
-    app.add_plugins(SfCharacterPlugin).insert_resource(Characters::new(content)).add_systems(Update, toggle_bodies);
+    app.add_plugins(SfCharacterPlugin).insert_resource(Characters::new(content)).add_systems(Update, (toggle_bodies, toggle_cloth, cloth_log));
 }
 
 /// B: smooth ↔ vanilla bodies (A/B, smooth-bodies.md). Every character's
@@ -157,5 +184,36 @@ fn toggle_bodies(keys: Option<Res<ButtonInput<KeyCode>>>, mut settings: ResMut<C
     if keys.is_some_and(|k| k.just_pressed(KeyCode::KeyB)) {
         settings.bodies = settings.bodies.toggled();
         info!("bodies: {:?} (B toggles)", settings.bodies);
+    }
+}
+
+/// H: cloth simulated ↔ kinematic (A/B, physics-adapter.md "Cloth", PH-3):
+/// off, robes and skirts ride the pelvis and follow the legs (the op's
+/// animated targets) with no swing.
+fn toggle_cloth(keys: Option<Res<ButtonInput<KeyCode>>>, mut settings: ResMut<ClothSettings>) {
+    if keys.is_some_and(|k| k.just_pressed(KeyCode::KeyH)) {
+        settings.simulate = !settings.simulate;
+        info!("cloth: {} (H toggles)", if settings.simulate { "simulated" } else { "kinematic" });
+    }
+}
+
+/// Every 5 s while cloth is bound: parts, simulated parts and the op's cost
+/// per simulated part (the P10 gate: ≤ 0.03 ms per robe).
+fn cloth_log(stats: Res<ClothStats>, time: Res<Time>, mut acc: Local<(f32, f32, usize, f32)>) {
+    let (elapsed, us, frames, since) = &mut *acc;
+    if stats.simulated > 0 {
+        #[allow(clippy::cast_precision_loss)]
+        let per = stats.op_us / stats.simulated as f32;
+        *us += per;
+        *frames += 1;
+    }
+    *elapsed += time.delta_secs();
+    if *elapsed - *since >= 5.0 && *frames > 0 {
+        #[allow(clippy::cast_precision_loss)]
+        let mean = *us / *frames as f32;
+        info!("cloth: {} parts, {} simulated, op {mean:.1} us per simulated part (mean of {} frames)", stats.parts, stats.simulated, *frames);
+        *since = *elapsed;
+        *us = 0.0;
+        *frames = 0;
     }
 }
