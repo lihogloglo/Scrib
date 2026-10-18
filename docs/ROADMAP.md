@@ -1150,9 +1150,15 @@ dependency order:
   kept to the target screen, focus memory per screen, held-direction repeat; `InputMode` last-used device + glyph
   table. Verify ran: 6 headless router tests; example `ui_nav --autotest` drives HUD → menu → modal → back with a
   synthetic gamepad (40 checked steps, PASS); visual check UI-1 (real pad) awaiting owner. ui.md "As built (U1b)".
-  Leftovers (u1c, small): Fluent `L10nSource`s from each mod's VFS `l10n/<locale>/<mod>.ftl`; `SettingsStore` ↔
-  `sf_mods::Profile::settings`; persist `UiBindings` to the profile; `UiCommands` param; `ScreenDef::presets` on push;
-  PlayStation/Switch glyph names. Original task text:
+  **Built part 3 (u1c, 2026-10-18):** glue to the mod pipeline: Fluent sources from each mod's VFS
+  `l10n/<locale>/<mod id>.ftl` in load order with per-mod issues (`Localizer::from_profile`; a file named after
+  another mod is reported and ignored), `UiRecordKinds` adapter, `SettingsStore` ↔ `Profile::settings`, new
+  `Profile::bindings` (`[bindings.ui]`, reflected input names like `key:Ctrl+KeyS`, `pad:South`, non-defaults only),
+  `insert_from_profile` + `UiProfile` (saved when the player leaves the menus or on exit), `UiCommands` param,
+  `ScreenDef::presets` enforced (`push_in`). Verify ran: 3 + 4 new tests (two mods × two locales + override,
+  settings and bindings across a restart through the profile file, presets), clippy clean, `ui_nav --autotest`
+  PASS. ui.md "As built (U1c)". Leftovers: the game app doesn't call `insert_from_profile` yet; `UiSettings` not fed
+  from `ui.setting` values; PlayStation/Switch glyph names. Original task text:
   U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
   (CommonUI layers, screen stack, input router, actions with rebinding, `bevy_input_focus` navigation, device glyphs).
   Input crate: `bevy_enhanced_input` 0.27 and `leafwing-input-manager` 0.22 are on Bevy 0.20 (crates.io 2026-10-14/16):
@@ -1672,3 +1678,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (wd1b): M6 WD1 [x] part 2: `sf_wind_bevy` (WindPlugin/WindField/WindOrigin; one fixed ShaderBuffer with current + previous frame for motion vectors, materials bind it with `#[storage]`; WESL `sf_wind::field` + `sf_wind_bevy::wind` with a def-chosen slot); upload 0.0025 ms (gate 0.02); `wind` example (CPU arrows over the GPU-shaded field, burst/vortex keys; visual check WD-0); app fog/cloud drift read the field. Next: WE1.
 - 2026-10-18 (p10b): M4 P10 [~] `sf_character::cook_cloth` (farthest-hit lattice placement, girdle-ride offsets, per-particle authored skin targets, `SkinRebind` bilinear + harmonic waist band), `RagdollDef::cloth_colliders`, `mw_physics::MwClothRules`; census: robes are Chest parts (not Skirt), 50 cloth parts all skinned, 48 cook in 9 ms median, no hem holds a 50° run stride (+13..+133 %). Next p10c op + app + PH-3.
 - 2026-10-18 (u1b): M5 U1 [x] part 2: `sf_ui_bevy` (screen-stack router over per-input-context BEI entities, consume + require_reset UI actions, rebindable `UiBindings`, confirm → `Activate`, layer-aware `AutoDirectionalNavigation` + focus memory + repeat, `InputMode` + glyphs); UI sets must run before BEI `Prepare` (else a closing modal's B reached the menu); 6 headless tests, `ui_nav --autotest` synthetic-gamepad PASS, clippy clean; UI-1 awaiting owner. Next: u1c glue (VFS Fluent, settings/bindings ↔ profile) or U2.
+- 2026-10-18 (u1c): M5 U1 part 3 (glue): Fluent from each mod's VFS `l10n/<locale>/<mod id>.ftl` in load order with per-mod issues, `UiRecordKinds` adapter, settings ↔ `Profile::settings`, new `Profile::bindings` (reflected input names, non-defaults), `insert_from_profile` + save on leaving menus/exit, `UiCommands`, presets enforced on open; 7 new tests, clippy clean, `ui_nav --autotest` PASS (superfargoth 860d027). Next: U2 `sf_ui_css`.
