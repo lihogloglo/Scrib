@@ -60,7 +60,7 @@ lz4_flex = "0.14"
 meshopt = "0.6.2"
 # Luau runtime (scripting.md R1/R2). Only sf_script depends on it; `send` is an sf_script feature (on by
 # default) so the L1 spike can A/B it against `NonSend` storage.
-mlua = { version = "0.12.2", default-features = false, features = ["luau", "serialize"] }
+mlua = { version = "0.12.2", default-features = false, features = ["luau"] }
 # Collision queries (sf_controller's static query world): the library under avian and rapier.
 # Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
 parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }

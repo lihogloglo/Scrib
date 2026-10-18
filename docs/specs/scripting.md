@@ -2,7 +2,9 @@
 
 Status: draft (2026-10-13, m5-spec session, docs only). Built in M5. L1 (`sf_script` core + spike)
 done 2026-10-13 (m5-l1): numbers in "Spike results (L1)"; decision 1 confirmed. L2 (`sf_script_bevy`)
-done 2026-10-13 (m5-l2): "As built (L2)".
+done 2026-10-13 (m5-l2): "As built (L2)". L3 (API v0.1: core, events, timers, interfaces, world with
+spawn/despawn and entity scripts, `on_load`, generated `.d.luau`) done 2026-10-13 (m5-l3): "As built (L3)";
+`@sf/records`, `@sf/input`, `@sf/anim`, `@sf/physics` not yet.
 Crates (proposed): `sf_script` (Bevy-free: runtime, sandbox, API registry, state, timers, events),
 `sf_script_bevy` (plugin: schedule slots, world access, entity handles, hot reload, diagnostics),
 API modules next to the systems they expose (`sf_ui_lua` per ui.md; small modules may live in
@@ -93,7 +95,7 @@ ahead-of-time bytecode, `create_require_function` (custom `Require`), `scope`,
 | Feature | Use | Why |
 |---|---|---|
 | `luau` | yes | the runtime |
-| `serialize` (= `serde`) | yes, for API modules (L3) | typed API payloads (`LuaSerdeExt`). **Not used for script state** (L1): state goes through our own walker (`StateValue`), because mlua's serde bridge follows Lua's hash order (no canonical bytes, so no determinism hash) and stops at the first bad value without a path. Drop the feature in L3 if no API module uses it |
+| `serialize` (= `serde`) | **no** (dropped in L3) | mlua's serde bridge (`LuaSerdeExt`) is used by no module: state, payloads and interface arguments all go through our own walker (`StateValue`), because mlua's bridge follows Lua's hash order (no canonical bytes, so no determinism hash) and stops at the first bad value without a path |
 | `send` | **yes** (L1: `sf_script` feature, default on) | makes `Lua` `Send + Sync` so states live in ordinary resources and mods can later run on the compute pool. Measured against `NonSend`: calls within noise (raw call 66 vs 60 ns, guarded 148 vs 144 ns, handler dispatch 206 vs 200 ns), bulk state I/O ~30 % slower (rare path) |
 | `async` | **no** | Rust futures inside scripts aren't saveable; waits are named timers |
 | `luau-jit` (native codegen) | **off** (L1: `sf_script` feature `jit`) | measured: call-heavy Luau loop 2.3× faster (30 → 13 ns/iter), a `math.sqrt` loop unchanged (70 → 66 ns), API calls unchanged, context start 2.4× slower (50 ctx: 15 → 36 ms, code generated at load), +32 KiB heap per state, +~80 s clean build. API-bound handlers don't benefit; revisit per mod (`--!native`) if a measured mod needs it |
@@ -240,11 +242,14 @@ can mark a script as handling activation statically (legacy semantics, scripting
   on an unloaded one return `nil, "unloaded"` (or raise, per function doc); data-only calls
   (record, stored state, position from the overlay) work while unloaded.
 - **Entity scripts**: records may attach a script to objects (`script` field on a base record,
-  or `world.attach(handle, "script_id")`). Each instance gets a plain-data state table, stored
-  in the placement overlay's per-placement state under `"sf.script/<context>"` (saved with the
-  overlay, survives cell unloads). The script module exports handlers (`tick`, `on_activate`,
-  `on_load`, ...); `tick` runs every `Update` while the entity is loaded and active, in
-  `PlacementId` order.
+  later) or `world.attach(handle, "name")`, where `name` was defined at context start with
+  `world.define_script(name, handlers)` (looked up by name like timers, so attachments are plain
+  data). Each attachment gets a plain-data state table. **L3 change:** the states live in the
+  owning context and travel in its snapshot (one blob per mod for saves and hot reload, survives
+  cell unloads because the context holds it), not in the placement overlay as drafted: the
+  overlay would split one mod's state across two stores with two save paths. Handlers:
+  `activated(h, payload, state)` (before the mod's global handlers) and `tick(h, dt, state)`
+  every `Update` while the placement is loaded, contexts in load order, handles in order.
 
 ### State, timers and saves
 
@@ -258,14 +263,16 @@ Per context, everything that persists:
   clock). Unregistered names are errors at schedule time, not at fire time;
 - RNG state; pending events.
 
-Serialization: mlua `serialize` → `serde` → postcard, with a per-context header (mod id,
+Serialization: `StateValue` (our walker, L1) → `serde` → postcard, with a per-context header (mod id,
 version, api version, schema hash of registered timers). Rules checked on write: no functions,
 userdata other than handles (handles serialize as `PlacementId`), metatables, cycles or shared
 references; violations are errors naming the path (`storage.quests[3].cb is a function`).
 `sf_save` (M7) stores the blobs; M5 uses them for hot reload and tests.
 
-Migration: `on_load(old_state, old_version)` lets a mod upgrade its own data when its version
-changed (Factorio `on_configuration_changed`).
+Migration: `core.on_load(function(info) ... end)` lets a mod upgrade its own data when its version
+changed (Factorio `on_configuration_changed`): `info = { reason = "start" | "reload" | "restore",
+version, old_version? }`, with storage already restored, so the handler migrates `sf.storage()` in
+place (L3; the draft's `on_load(old_state, old_version)` would have copied the state twice).
 
 L1 implementation: `StateValue` (nil, bool, number, string bytes, vector, handle, table with
 sorted keys; keys are strings, integral numbers or booleans) is walked from Lua by our own
@@ -482,6 +489,62 @@ render or input crate):
   "target's entity scripts first" half of the activation pipeline (L3 `world.attach`, W3 for
   legacy locals), spawn/despawn (L3), the dev Lua console (needs U1 input; `ScriptContext::eval`
   exists), `Died` (M7), hot reload wiring (A4 calls `Scripts::reload`).
+
+### As built (L3, 2026-10-13): API v0.1
+
+Modules (`sf_script` registers the first four, `sf_script_bevy::Scripts::new` adds `@sf/world`);
+the types are in the generated `docs/api/sf.d.luau`:
+
+| Module | v0.1 surface |
+|---|---|
+| `@sf/core` (also global `sf`) | `api_version`, `mod_id`, `version`, `log`, `random`, `storage()`, `settings()` (copy of `ContextConfig::settings`), `time()` (sim seconds), `game_time()` (hours, host-set with `ScriptRuntime::set_game_time`, nil without a clock), `on_load(fn)` |
+| `@sf/events` | `on(name, fn)`, `emit(name, payload)` (unchanged) |
+| `@sf/timers` | `register`, `after`, `every`, `cancel` (unchanged) |
+| `@sf/interfaces` | `export(name, functions)` at start, `get(mod_id, name)` → proxy or nil |
+| `@sf/world` | `player`, `is_loaded`, `record`, `worldspace`, `position`, `nearby(at, r)`, `spawn(record, at, yaw?)`, `despawn(h)`, `define_script`, `attach`, `detach`, `state`, `script_of`; handle methods `h:record()`, `h:position()`, `h:despawn()`, `h:attach(..)`, `h:state()`, ... |
+
+- **`on_load` and world access (decision).** Entry points (a script's top level) run with the slot
+  closed, so world reads there fail ("world access outside a script slot"): top level is for
+  registration only (handlers, timers, entity scripts, exports), as in Factorio (`on_load` may
+  not touch `game`) and OpenMW (scripts get the world in handlers). `core.on_load` handlers are
+  **queued** by start, hot reload (`old_version` = the snapshot's) and restore, and run once at
+  the start of the next `Update` slot (`ScriptRuntime::run_loads`, before activations), where the
+  slot is open and world reads work. Rejected: opening a slot around `Scripts::start` (start runs
+  at app build, before streaming has filled `ScriptPlacements`, so reads would see an empty
+  world), and running `on_load` inside `reload` (A4 reloads from a watcher system that has no
+  slot either). Headless users of `sf_script` get the same order from `ScriptRuntime::update`.
+- **Handle methods**: `Handle`'s `__index` falls back to a per-context method table that API
+  modules fill at install (`sf_script::handle_methods`), read-only after install; unknown method
+  names raise. Modules declare their methods' types with `ApiModule::handle_types`.
+- **Spawn/despawn**: `@sf/world` queues `WorldCommand::{Spawn, Despawn}` in the `ScriptWorld` slot
+  resource; the slot runner flushes them as Bevy messages when the slot closes. Spawned handles are
+  `FNV-1a-128("sf.script.spawn", context, n)` with the top bit set (deterministic per run; the
+  counter persists with the overlay in M7) and are in `ScriptPlacements` at once (scripts read
+  their own writes). The content pack applies the commands (Bevyrrowind: placement overlay + the
+  `LiveSpawn` scaffold in `scripts.rs`, see its removal path).
+- **Activation pipeline**: `ScriptRuntime::activate(target, payload)` offers `"activated"` to the
+  target's entity scripts (contexts in load order), then to global subscribers; `handled` if any
+  returned `"handled"`. Bevyrrowind's doors now open from `ActivationOutcome { handled: false }`
+  of a door placement (`doors.rs`), so a script can lock a door.
+- **Interfaces**: synchronous, Factorio `remote.call` style. The callee runs in its own state,
+  under its own watchdog and call limit; arguments and results are copied as `StateValue` (no
+  handles to functions or tables cross states); A → B → A cycles raise "re-entrant interface
+  call"; exports are published only after a successful start or reload (a failed reload keeps
+  the old ones). Not counted in the callee's stats or fault log yet (errors surface in the
+  caller, who may `pcall`).
+- **`.d.luau`**: `ScriptRuntime::type_definitions` emits one definitions file: `declare class
+  Handle` (every module's handle methods) and each module as a typed global `sf_<name>`
+  (`@sf/world` → `sf_world`) with its `type` aliases (`LoadInfo`, `ActivatedPayload`,
+  `Position`). Golden: `superfargoth/docs/api/sf.d.luau`, kept in sync by
+  `sf_script_bevy` test `golden_type_definitions` (`SF_BLESS=1` regenerates). Not yet checked
+  with `luau-analyze` (not installed here); mapping `require("@sf/world")` to `sf_world` for
+  `luau-lsp` needs per-module stub files (follow-up with the mod-author docs).
+- **Example mod**: `superfargoth/examples/mods/api_tour` (every module once; entity script in
+  `lamp.luau`), run headless by `sf_script_bevy` test `example_mod_api_tour_runs_headless`.
+- mlua `serialize` dropped (no module used it).
+- **Not in L3** (moved on): `@sf/records`, `@sf/input`, `@sf/anim`, `@sf/physics`; entity scripts
+  from a record's `script` field; `teleport`/`set_enabled`; timers on the game clock
+  (`at_game_time`); profile settings into `ContextConfig::settings` (U1/U6 settings registry).
 
 ## Verification
 

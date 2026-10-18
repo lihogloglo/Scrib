@@ -1716,3 +1716,12 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   composite (UE Single Layer Water structure), fogging itself (aerial-view LUT copy + froxels), with a procedural
   velocity redraw for DLSS. Waves repeat every 256 s (ω rounded to whole cycles, twin and GPU alike) so the GPU runs
   on f32 time.
+- 2026-10-13 (m5-l3, scripting.md "As built (L3)"): **script API v0.1.** A script's top level only registers
+  (handlers, timers, entity scripts, exports) and has no world access; `core.on_load(info)` handlers are queued by
+  start, hot reload and restore and run at the start of the next `Update` slot, where world reads work. Entity script
+  state lives in the owning mod's context snapshot (one blob per mod for saves and reload), not the placement overlay;
+  entity scripts are defined by name at start and attached by name (plain-data attachments, like named timers).
+  Handle methods come from a per-context method table API modules fill at install. Spawn/despawn are queued as
+  `WorldCommand` messages the content pack applies. `@sf/interfaces` calls are synchronous, copied `StateValue`s, run
+  under the callee's watchdog, cycles rejected. The `.d.luau` is generated from the registry and golden-tested
+  (`docs/api/sf.d.luau`). mlua `serialize` dropped.

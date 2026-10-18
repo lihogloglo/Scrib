@@ -1,0 +1,9 @@
+id = "api_tour"
+name = "API tour"
+version = "0.1.0"
+description = "Script API v0.1 example: every @sf module once (scripting.md). Runs headless in sf_script_bevy tests."
+api = "^0.1"
+
+[content]
+assets = ["assets"]
+scripts = ["scripts/api_tour/main.luau"]

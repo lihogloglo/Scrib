@@ -102,7 +102,7 @@ impl SlotAccess {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).is_some()
     }
 
-    fn with<T: Resource, R>(&self, mark: bool, f: impl FnOnce(&mut T) -> R) -> mlua::Result<R> {
+    pub(crate) fn with<T: Resource, R>(&self, mark: bool, f: impl FnOnce(&mut T) -> R) -> mlua::Result<R> {
         // `try_lock`: an API function that re-enters Lua while holding a resource gets an error,
         // not a deadlock.
         let mut guard = match self.0.try_lock() {

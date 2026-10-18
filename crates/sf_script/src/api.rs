@@ -5,8 +5,23 @@
 
 use mlua::{Function, Lua, Table, Value, Variadic};
 
-use crate::context::{CtxData, Event, HANDLERS, STORAGE, TIMER_CBS};
+use crate::context::{CtxData, Event, HANDLERS, LOAD_EVENT, STORAGE, TIMER_CBS};
 use crate::state::StateValue;
+
+/// Appends `f` to the handlers of event `name`.
+fn subscribe(lua: &Lua, name: &str, f: Function) -> mlua::Result<()> {
+    let handlers: Table = lua.named_registry_value(HANDLERS)?;
+    let list: Table = if let Some(l) = handlers.raw_get::<Option<Table>>(name)? {
+        l
+    } else {
+        let l = lua.create_table()?;
+        handlers.raw_set(name, &l)?;
+        l
+    };
+    list.raw_push(f)?;
+    data_mut(lua)?.subscribed.insert(name.to_owned());
+    Ok(())
+}
 
 /// What an API module may know about the context it's installed into.
 pub struct InstallCx<'a> {
@@ -16,6 +31,10 @@ pub struct InstallCx<'a> {
     pub mods: &'a [String],
     /// The framework API version the runtime provides.
     pub api_version: &'a semver::Version,
+    /// The mod's own version.
+    pub version: &'a semver::Version,
+    /// The mod's settings (a table).
+    pub settings: &'a StateValue,
 }
 
 /// One `require`-able API module. Declared once with its Luau types.
@@ -26,8 +45,14 @@ pub trait ApiModule: Send + Sync + 'static {
     fn version(&self) -> semver::Version;
     /// Builds the module table in `lua`. The runtime makes it read-only.
     fn install(&self, lua: &Lua, cx: &InstallCx<'_>) -> mlua::Result<Table>;
-    /// Luau declarations for `.d.luau` generation.
+    /// Luau declarations for `.d.luau` generation: `declare sf_<name>: { ... }` plus any `type`
+    /// aliases the module's functions use.
     fn types(&self) -> &'static str;
+    /// Method declarations this module adds to `Handle` (`function position(self): ...`), one
+    /// per line, if it installs handle methods ([`crate::handle_methods`]).
+    fn handle_types(&self) -> &'static str {
+        ""
+    }
 }
 
 fn data_mut(lua: &Lua) -> mlua::Result<mlua::AppDataRefMut<'_, CtxData>> {
@@ -86,11 +111,40 @@ impl ApiModule for CoreModule {
             "time",
             lua.create_function(|lua, ()| Ok(data_mut(lua)?.sim_time))?,
         )?;
+        t.set(
+            "game_time",
+            lua.create_function(|lua, ()| Ok(data_mut(lua)?.game_time))?,
+        )?;
+        t.set("version", cx.version.to_string())?;
+        let settings = cx.settings.clone();
+        t.set(
+            "settings",
+            lua.create_function(move |lua, ()| settings.to_lua(lua))?,
+        )?;
+        t.set(
+            "on_load",
+            lua.create_function(|lua, f: Function| {
+                if !data_mut(lua)?.starting {
+                    return Err(mlua::Error::runtime(
+                        "core.on_load must run at context start (top level of a script)",
+                    ));
+                }
+                subscribe(lua, LOAD_EVENT, f)
+            })?,
+        )?;
         Ok(t)
     }
     fn types(&self) -> &'static str {
-        "declare core: {\n  api_version: string,\n  mod_id: string,\n  log: (...any) -> (),\n  \
-         random: (m: number?, n: number?) -> number,\n  storage: () -> {[any]: any},\n  time: () -> number,\n}\n"
+        "type LoadInfo = {\n  reason: \"start\" | \"reload\" | \"restore\",\n  version: string,\n  old_version: string?,\n}\n\
+         declare sf_core: {\n  api_version: string,\n  mod_id: string,\n  version: string,\n  \
+         log: (...any) -> (),\n  random: (m: number?, n: number?) -> number,\n  \
+         -- This mod's persistent plain-data table (saved, kept across hot reloads).\n  \
+         storage: () -> { [any]: any },\n  \
+         -- This mod's settings (a copy).\n  settings: () -> { [string]: any },\n  \
+         -- Simulation time, seconds.\n  time: () -> number,\n  \
+         -- Game clock, hours, if the game has one.\n  game_time: () -> number?,\n  \
+         -- At context start: run `handler` in the first slot after start, reload or restore (world access allowed).\n  \
+         on_load: (handler: (info: LoadInfo) -> ()) -> (),\n}\n"
     }
 }
 
@@ -110,20 +164,7 @@ impl ApiModule for EventsModule {
         let t = lua.create_table()?;
         t.set(
             "on",
-            lua.create_function(|lua, (name, f): (String, Function)| {
-                let handlers: Table = lua.named_registry_value(HANDLERS)?;
-                let list: Table =
-                    if let Some(l) = handlers.raw_get::<Option<Table>>(name.as_str())? {
-                        l
-                    } else {
-                        let l = lua.create_table()?;
-                        handlers.raw_set(name.as_str(), &l)?;
-                        l
-                    };
-                list.raw_push(f)?;
-                data_mut(lua)?.subscribed.insert(name);
-                Ok(())
-            })?,
+            lua.create_function(|lua, (name, f): (String, Function)| subscribe(lua, &name, f))?,
         )?;
         t.set(
             "emit",
@@ -152,7 +193,12 @@ impl ApiModule for EventsModule {
         Ok(t)
     }
     fn types(&self) -> &'static str {
-        "declare events: {\n  on: (name: string, handler: (payload: any) -> any) -> (),\n  \
+        "type ActivatedPayload = { target: Handle, actor: Handle }\n\
+         declare sf_events: {\n  \
+         -- Engine facts (no colon: \"activated\", \"cell_loaded\", \"update\", ...) or mod events \"<mod_id>:<name>\".\n  \
+         -- Return \"handled\" from an \"activated\" handler to suppress the default action.\n  \
+         on: (name: string, handler: (payload: any) -> any) -> (),\n  \
+         -- Delivered to every subscriber at the next Update slot, in load order, as \"<this mod>:<name>\".\n  \
          emit: (name: string, payload: any?) -> (),\n}\n"
     }
 }
@@ -219,7 +265,9 @@ impl ApiModule for TimersModule {
         Ok(t)
     }
     fn types(&self) -> &'static str {
-        "declare timers: {\n  register: (name: string, callback: (payload: any) -> ()) -> (),\n  \
+        "declare sf_timers: {\n  \
+         -- At context start: name a callback (timers are saved by name with plain-data payloads).\n  \
+         register: (name: string, callback: (payload: any) -> ()) -> (),\n  \
          after: (seconds: number, name: string, payload: any?) -> number,\n  \
          every: (seconds: number, name: string, payload: any?) -> number,\n  cancel: (id: number) -> boolean,\n}\n"
     }

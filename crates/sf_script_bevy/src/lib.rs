@@ -17,8 +17,10 @@ mod world;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_api;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,7 +36,7 @@ use sf_script::{ContextConfig, Handle, ScriptDiagnostic, ScriptRuntime, ScriptSo
 
 pub use access::{SlotAccess, mark_changed, with_resource};
 use access::Mover;
-pub use world::{PLAYER, Placed, ScriptPlacements, WorldModule};
+pub use world::{PLAYER, Placed, ScriptPlacements, ScriptWorld, WorldCommand, WorldModule};
 
 /// The three script slots (scripting.md table "Slot").
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -151,6 +153,7 @@ impl Scripts {
             unsent: Vec::new(),
         };
         s.register_slot_resource::<ScriptPlacements>();
+        s.register_slot_resource::<ScriptWorld>();
         s
     }
 
@@ -275,6 +278,8 @@ impl Plugin for ScriptsPlugin {
             .add_message::<ActivationOutcome>()
             .add_message::<ScriptFact>()
             .add_message::<ScriptDiagnostics>()
+            .add_message::<WorldCommand>()
+            .init_resource::<ScriptWorld>()
             .init_resource::<ScriptPlacements>()
             .configure_sets(PreUpdate, ScriptSlot::Input)
             .configure_sets(Update, ScriptSlot::Update)
@@ -311,6 +316,11 @@ fn run_slot(world: &mut World, slot: ScriptSlot, body: impl FnOnce(&mut Scripts)
     if !diags.is_empty() {
         world.write_message(ScriptDiagnostics(diags));
     }
+    // Structural changes scripts queued (spawn, despawn): the content pack applies them.
+    let commands = world.get_resource_mut::<ScriptWorld>().map(|mut w| w.bypass_change_detection().take_commands());
+    for c in commands.unwrap_or_default() {
+        world.write_message(c);
+    }
 }
 
 fn dispatch_facts(scripts: &mut Scripts, facts: Vec<ScriptFact>) {
@@ -329,8 +339,10 @@ fn ui_slot(world: &mut World, reader: &mut FactReader) {
     run_slot(world, ScriptSlot::Ui, |s| dispatch_facts(s, facts));
 }
 
-/// Engine facts (activations first, in arrival order), then queued script events, due timers
-/// and `update(dt)` handlers (`ScriptRuntime::update`).
+/// `on_load` handlers queued by start, reload or restore (here, so they have world access), then
+/// engine facts (activations first, in arrival order: the target's entity scripts, then global
+/// subscribers), then queued script events, due timers and `update(dt)` handlers
+/// (`ScriptRuntime::update`), then entity scripts' `tick` for loaded placements.
 fn update_slot(world: &mut World, readers: &mut UpdateReaders) {
     let Ok((mut activated, mut facts)) = readers.get_mut(world) else { return };
     let activations: Vec<Activated> = activated.read().copied().collect();
@@ -339,13 +351,23 @@ fn update_slot(world: &mut World, readers: &mut UpdateReaders) {
     let mut outcomes: Vec<ActivationOutcome> =
         activations.into_iter().map(|activation| ActivationOutcome { activation, handled: false }).collect();
     run_slot(world, ScriptSlot::Update, |s| {
+        s.runtime.run_loads();
         for o in &mut outcomes {
             let a = o.activation;
             let payload = table([("target", StateValue::Handle(a.target)), ("actor", StateValue::Handle(a.actor))]);
-            o.handled = s.runtime.dispatch("activated", payload).handled;
+            o.handled = s.runtime.activate(a.target, payload).handled;
         }
         dispatch_facts(s, facts);
         s.runtime.update(dt);
+        let attached = s.runtime.attached();
+        if !attached.is_empty() {
+            // Read before ticking: handlers borrow the cell themselves.
+            let loaded: HashSet<Handle> = s
+                .access
+                .with::<ScriptPlacements, _>(false, |p| attached.into_iter().filter(|h| p.loaded.contains_key(h)).collect())
+                .unwrap_or_default();
+            s.runtime.tick_entities(dt, &|h| loaded.contains(&h));
+        }
     });
     for o in outcomes {
         world.write_message(o);

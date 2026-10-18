@@ -4,6 +4,8 @@
 //! snapshots for saves and hot reload. `sf_script_bevy` (L2) runs it in schedule slots.
 
 mod api;
+mod entity;
+mod interfaces;
 mod context;
 mod fault;
 mod handle;
@@ -14,17 +16,21 @@ mod watchdog;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_api;
 
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 pub use api::{ApiModule, CoreModule, EventsModule, InstallCx, TimersModule};
+pub use entity::{EntityState, install as install_entity_api};
+pub use interfaces::InterfacesModule;
 pub use context::{
     ContextConfig, ContextSnapshot, ContextStats, Dispatched, Event, Limits, ScriptContext, Status,
     storage_value,
 };
 pub use fault::{FaultKind, FaultLog, FaultPolicy, Verdict};
-pub use handle::Handle;
+pub use handle::{Handle, handle_methods};
 /// Re-exported so API modules and the Bevy layer use the same mlua.
 pub use mlua;
 pub use source::{ScriptSource, script_root};
@@ -92,6 +98,9 @@ pub struct ScriptRuntime {
     policy: FaultPolicy,
     source: Option<Arc<dyn ScriptSource>>,
     diagnostics: Vec<ScriptDiagnostic>,
+    /// `@sf/interfaces` exports of every context.
+    interfaces: Arc<interfaces::Registry>,
+    game_time: Option<f64>,
 }
 
 #[cfg(feature = "send")]
@@ -107,8 +116,10 @@ impl Default for ScriptRuntime {
 }
 
 impl ScriptRuntime {
-    /// A runtime with the built-in `@sf/core`, `@sf/events` and `@sf/timers` modules.
+    /// A runtime with the built-in `@sf/core`, `@sf/events`, `@sf/timers` and
+    /// `@sf/interfaces` modules.
     pub fn new(api_version: semver::Version) -> Self {
+        let interfaces = Arc::new(interfaces::Registry::default());
         let mut rt = Self {
             api_version,
             modules: Vec::new(),
@@ -117,11 +128,73 @@ impl ScriptRuntime {
             policy: FaultPolicy::default(),
             source: None,
             diagnostics: Vec::new(),
+            interfaces: Arc::clone(&interfaces),
+            game_time: None,
         };
         rt.register_module(Box::new(CoreModule));
         rt.register_module(Box::new(EventsModule));
         rt.register_module(Box::new(TimersModule));
+        rt.register_module(Box::new(InterfacesModule {
+            registry: interfaces,
+        }));
         rt
+    }
+
+    /// Sets the game clock scripts read with `core.game_time()` (hours; `None`: no clock).
+    pub fn set_game_time(&mut self, hours: Option<f64>) {
+        if self.game_time != hours {
+            self.game_time = hours;
+            for ctx in &self.contexts {
+                ctx.set_game_time(hours);
+            }
+        }
+    }
+
+    /// Runs queued `on_load` handlers (after start, reload or restore), in load order. Hosts
+    /// call it at the start of a slot with world access (`sf_script_bevy`'s `Update` slot);
+    /// [`ScriptRuntime::update`] calls it too. Returns the number of handler calls.
+    pub fn run_loads(&mut self) -> u32 {
+        let mut calls = 0;
+        for ctx in &mut self.contexts {
+            calls += ctx.run_load(&self.policy);
+        }
+        self.collect();
+        calls
+    }
+
+    /// The activation pipeline (scripting.md "Activation pipeline"): `"activated"` goes first
+    /// to the entity scripts attached to `target` (contexts in load order), then to global
+    /// subscribers. `handled` if any handler returned `"handled"`.
+    pub fn activate(&mut self, target: Handle, payload: StateValue) -> Dispatched {
+        let mut out = Dispatched::default();
+        for ctx in &mut self.contexts {
+            let d = ctx.dispatch_entity(target, "activated", &payload, &self.policy);
+            out.calls += d.calls;
+            out.handled |= d.handled;
+        }
+        let d = self.dispatch("activated", payload);
+        out.calls += d.calls;
+        out.handled |= d.handled;
+        out
+    }
+
+    /// Entity scripts' `tick(h, dt, state)`, contexts in load order, handles in order, for
+    /// handles `loaded` accepts. Hosts call it after [`ScriptRuntime::update`].
+    pub fn tick_entities(&mut self, dt: f64, loaded: &dyn Fn(Handle) -> bool) -> u32 {
+        let mut calls = 0;
+        for ctx in &mut self.contexts {
+            calls += ctx.tick_entities(dt, loaded, &self.policy);
+        }
+        self.collect();
+        calls
+    }
+
+    /// Every handle with an entity script attached (any context), sorted, deduplicated.
+    pub fn attached(&self) -> Vec<Handle> {
+        let mut all: Vec<Handle> = self.contexts.iter().flat_map(ScriptContext::attached).collect();
+        all.sort_unstable();
+        all.dedup();
+        all
     }
 
     /// Registers (or replaces, by name) an API module. Affects contexts started afterwards.
@@ -138,14 +211,26 @@ impl ScriptRuntime {
         &self.policy
     }
 
-    /// Luau declarations of every registered module (input of the `.d.luau` generator, L3).
+    /// The `.d.luau` definitions file of every registered module, for `luau-lsp`
+    /// (`--definitions`): the `Handle` class with every module's handle methods, then each
+    /// module, sorted by name, as a typed global `sf_<name>` (`@sf/world` → `sf_world`).
     pub fn type_definitions(&self) -> String {
         let mut mods: Vec<_> = self.modules.iter().collect();
         mods.sort_by_key(|m| m.name());
-        mods.iter().fold(String::new(), |mut out, m| {
-            let _ = write!(out, "-- {} {}\n{}", m.name(), m.version(), m.types());
-            out
-        })
+        let mut out = format!(
+            "--!strict\n-- Generated by sf_script::ScriptRuntime::type_definitions (API {}). Do not edit.\n\
+             -- `local world = require(\"@sf/world\")` has the type of `sf_world` below.\n\n\
+             declare class Handle\n  function id(self): string\n",
+            self.api_version
+        );
+        for m in &mods {
+            out.push_str(m.handle_types());
+        }
+        out.push_str("end\n");
+        for m in &mods {
+            let _ = write!(out, "\n-- {} {}\n{}", m.name(), m.version(), m.types());
+        }
+        out
     }
 
     /// Builds and starts contexts in the given (load) order. A context that fails to start is
@@ -179,8 +264,13 @@ impl ScriptRuntime {
         let mut ctx =
             ScriptContext::build(config, Arc::clone(source), &self.modules, &self.api_version)
                 .map_err(|e| (None, e))?;
+        ctx.set_game_time(self.game_time);
         match ctx.run_entries(source.as_ref(), &self.policy) {
-            Ok(()) => Ok(ctx),
+            Ok(()) => {
+                self.interfaces.publish(&ctx);
+                ctx.queue_load("start", None);
+                Ok(ctx)
+            }
             Err(e) => Err((Some(Box::new(ctx)), e)),
         }
     }
@@ -226,6 +316,7 @@ impl ScriptRuntime {
     /// order × load order), fire due timers, then `update(dt)` handlers.
     pub fn update(&mut self, dt: f64) -> UpdateReport {
         let mut report = UpdateReport::default();
+        report.handler_calls += self.run_loads();
         for ctx in &self.contexts {
             ctx.advance(dt);
         }
@@ -278,6 +369,7 @@ impl ScriptRuntime {
             .context_mut(id)
             .ok_or_else(|| ScriptError::NoContext(id.to_owned()))?;
         ctx.restore(&snap)?;
+        ctx.queue_load("restore", Some(&snap.version));
         self.collect();
         Ok(())
     }
@@ -307,9 +399,13 @@ impl ScriptRuntime {
             &self.modules,
             &self.api_version,
         )?;
+        fresh.set_game_time(self.game_time);
         fresh.restore_data(&snap)?;
         fresh.run_entries(source.as_ref(), &self.policy)?;
         fresh.restore_timers(&snap)?;
+        fresh.restore_entities(&snap)?;
+        fresh.queue_load("reload", Some(&snap.version));
+        self.interfaces.publish(&fresh);
         self.diagnostics.append(&mut fresh.diagnostics);
         self.contexts[index] = fresh;
         self.source = Some(source);

@@ -1,6 +1,6 @@
 //! One script context: a sandboxed Luau state plus its bookkeeping (scripting.md "Contexts").
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,6 +9,8 @@ use mlua::{Function, Lua, LuaOptions, MultiValue, StdLib, Table, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiModule, InstallCx, log_fn, random_fn};
+use crate::entity::{self, EntityState};
+use crate::handle::{HANDLE_METHODS, Handle};
 use crate::fault::{FaultKind, FaultLog, FaultPolicy, Verdict};
 use crate::source::{API_REGISTRY, ModRequirer, ScriptSource, load_text, script_root};
 use crate::state::{StateError, StateValue};
@@ -22,6 +24,8 @@ pub(crate) const STORAGE: &str = "sf.storage";
 pub(crate) const HANDLERS: &str = "sf.handlers";
 /// Registry table: timer name → callback.
 pub(crate) const TIMER_CBS: &str = "sf.timer_cbs";
+/// Event name of the `on_load` handlers (`core.on_load`).
+pub(crate) const LOAD_EVENT: &str = "load";
 
 /// Per-context limits (owner decision 5; scripting.md "Error isolation and limits").
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +84,8 @@ pub struct ContextConfig {
     pub limits: Limits,
     /// RNG seed (the runtime derives one from the context id when 0).
     pub seed: u64,
+    /// This mod's settings (profile `[settings.<id>]`), read by `core.settings()`. A table.
+    pub settings: StateValue,
 }
 
 impl ContextConfig {
@@ -94,6 +100,7 @@ impl ContextConfig {
             version: semver::Version::new(0, 0, 0),
             limits: Limits::MOD,
             seed: 0,
+            settings: StateValue::table(),
         }
     }
 }
@@ -143,6 +150,16 @@ pub(crate) struct CtxData {
     pub(crate) starting: bool,
     /// Event names with at least one handler (dispatch skips contexts without a Lua call).
     pub(crate) subscribed: HashSet<String>,
+    /// Mirrors `Status::Running` (read by cross-context interface calls).
+    pub(crate) running: bool,
+    /// The host's game clock (`core.game_time()`), if it has one.
+    pub(crate) game_time: Option<f64>,
+    /// Entity scripts: attachment (handle → script name), in handle order (determinism).
+    pub(crate) entities: BTreeMap<Handle, String>,
+    /// Entity script definitions: name → the handler names it defines.
+    pub(crate) entity_defs: HashMap<String, HashSet<String>>,
+    /// Interface names exported at start (`interfaces.export`), published by the runtime.
+    pub(crate) exports: Vec<String>,
 }
 
 /// Everything a context persists: saves (M7) and hot reload use the same blob.
@@ -157,6 +174,8 @@ pub struct ContextSnapshot {
     pub rng: Pcg32,
     pub storage: StateValue,
     pub timers: TimerQueue,
+    /// Entity script attachments and their per-placement state, in handle order.
+    pub entities: Vec<EntityState>,
 }
 
 impl ContextSnapshot {
@@ -189,6 +208,9 @@ pub struct ScriptContext {
     /// Registry tables, cached (no string lookup per dispatch).
     handlers: Table,
     timer_cbs: Table,
+    /// `on_load` payload waiting for the next `ScriptRuntime::run_loads` (inside a slot, so
+    /// handlers have world access).
+    pending_load: Option<StateValue>,
 }
 
 fn safe_libs() -> StdLib {
@@ -283,6 +305,7 @@ impl ScriptContext {
             diagnostics: Vec::new(),
             handlers,
             timer_cbs,
+            pending_load: None,
         })
     }
 
@@ -306,6 +329,11 @@ impl ScriptContext {
             rng: Pcg32::new(seed, 0x5f5f),
             starting: false,
             subscribed: HashSet::new(),
+            running: true,
+            game_time: None,
+            entities: BTreeMap::new(),
+            entity_defs: HashMap::new(),
+            exports: Vec::new(),
         });
         let g = lua.globals();
         for name in REMOVED_GLOBALS {
@@ -339,6 +367,11 @@ impl ScriptContext {
         lua.set_named_registry_value(STORAGE, lua.create_table()?)?;
         lua.set_named_registry_value(HANDLERS, lua.create_table()?)?;
         lua.set_named_registry_value(TIMER_CBS, lua.create_table()?)?;
+        lua.set_named_registry_value(entity::DEFS, lua.create_table()?)?;
+        lua.set_named_registry_value(entity::STATES, lua.create_table()?)?;
+        lua.set_named_registry_value(crate::interfaces::EXPORTS, lua.create_table()?)?;
+        let methods = lua.create_table()?;
+        lua.set_named_registry_value(HANDLE_METHODS, &methods)?;
 
         // API modules (`@sf/*`, adapter aliases), read-only.
         let registry = lua.create_table()?;
@@ -346,6 +379,8 @@ impl ScriptContext {
             context: &config.id,
             mods: &config.mods,
             api_version,
+            version: &config.version,
+            settings: &config.settings,
         };
         let mut names = HashSet::new();
         for m in modules {
@@ -358,6 +393,8 @@ impl ScriptContext {
             names.insert(m.name().to_owned());
         }
         lua.set_named_registry_value(API_REGISTRY, registry)?;
+        // Modules have added their handle methods (`h:position()`); scripts can't add more.
+        methods.set_readonly(true);
 
         let readable: HashSet<String> = config
             .mods
@@ -404,11 +441,56 @@ impl ScriptContext {
         })();
         self.set_starting(false);
         if let Err(e) = &result {
-            self.status = Status::Failed {
+            self.set_status(Status::Failed {
                 error: e.to_string(),
-            };
+            });
         }
         result
+    }
+
+    fn set_status(&mut self, status: Status) {
+        if let Some(mut d) = self.lua.app_data_mut::<CtxData>() {
+            d.running = status == Status::Running;
+        }
+        self.status = status;
+    }
+
+    /// Queues the `on_load` handlers (run by `ScriptRuntime::run_loads`, inside a slot).
+    pub(crate) fn queue_load(&mut self, reason: &str, old_version: Option<&str>) {
+        let key = |k: &str| crate::StateKey::Str(k.as_bytes().to_vec());
+        let text = |v: &str| StateValue::Str(v.as_bytes().to_vec());
+        let mut fields = vec![
+            (key("reason"), text(reason)),
+            (key("version"), text(&self.config.version.to_string())),
+        ];
+        if let Some(old) = old_version {
+            fields.push((key("old_version"), text(old)));
+        }
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        self.pending_load = Some(StateValue::Table(fields));
+    }
+
+    /// Runs the queued `on_load` handlers, if any.
+    pub(crate) fn run_load(&mut self, policy: &FaultPolicy) -> u32 {
+        let Some(payload) = self.pending_load.take() else {
+            return 0;
+        };
+        let event = Event {
+            name: LOAD_EVENT.into(),
+            payload,
+            source: None,
+        };
+        self.dispatch(&event, policy).calls
+    }
+
+    pub(crate) fn set_game_time(&self, hours: Option<f64>) {
+        if let Some(mut d) = self.lua.app_data_mut::<CtxData>() {
+            d.game_time = hours;
+        }
+    }
+
+    pub(crate) fn watchdog(&self) -> &Arc<Watchdog> {
+        &self.watchdog
     }
 
     fn set_starting(&self, starting: bool) {
@@ -528,7 +610,7 @@ impl ScriptContext {
         match self.faults.record(kind, Instant::now(), policy) {
             Verdict::Continue => {}
             Verdict::Suspend(reason) => self.suspend(reason),
-            Verdict::Fail(error) => self.status = Status::Failed { error },
+            Verdict::Fail(error) => self.set_status(Status::Failed { error }),
         }
     }
 
@@ -540,7 +622,7 @@ impl ScriptContext {
             kind: None,
             message: format!("suspended: {reason}"),
         });
-        self.status = Status::Suspended { reason };
+        self.set_status(Status::Suspended { reason });
     }
 
     pub(crate) fn advance(&self, dt: f64) {
@@ -680,6 +762,12 @@ impl ScriptContext {
             rng: d.rng,
             storage,
             timers: d.timers.clone(),
+            entities: unlimited(&self.lua, || Ok(entity::snapshot(&self.lua, &d.entities)))
+                .map_err(|e| ScriptError::lua(&self.config.id, &e))?
+                .map_err(|e| ScriptError::State {
+                    context: self.config.id.clone(),
+                    error: e,
+                })?,
         })
     }
 
@@ -687,7 +775,104 @@ impl ScriptContext {
     /// with a diagnostic.
     pub fn restore(&mut self, snap: &ContextSnapshot) -> Result<(), ScriptError> {
         self.restore_data(snap)?;
-        self.restore_timers(snap)
+        self.restore_timers(snap)?;
+        self.restore_entities(snap)
+    }
+
+    /// Restores entity script attachments and states, dropping (with a diagnostic) those whose
+    /// script the current code no longer defines. Runs after entry points, like timers.
+    pub(crate) fn restore_entities(&mut self, snap: &ContextSnapshot) -> Result<(), ScriptError> {
+        let dropped = unlimited(&self.lua, || entity::restore(&self.lua, &snap.entities))
+            .map_err(|e| ScriptError::lua(&self.config.id, &e))?;
+        for (h, script) in dropped {
+            self.diagnostics.push(ScriptDiagnostic {
+                context: self.config.id.clone(),
+                kind: None,
+                message: format!("restore: entity script {script:?} on {h:?} dropped (no longer defined)"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Offers an event to this context's entity script attached to `h`, if its script defines a
+    /// handler named `event`: `handler(h, payload, state)`. One watchdog entry.
+    pub fn dispatch_entity(
+        &mut self,
+        h: Handle,
+        event: &str,
+        payload: &StateValue,
+        policy: &FaultPolicy,
+    ) -> Dispatched {
+        let mut out = Dispatched::default();
+        if !self.is_running() {
+            return out;
+        }
+        let Some(script) = self.lua.app_data_ref::<CtxData>().and_then(|d| {
+            let s = d.entities.get(&h)?;
+            d.entity_defs.get(s)?.contains(event).then(|| s.clone())
+        }) else {
+            return out;
+        };
+        let mut errors = Vec::new();
+        self.entry(&mut errors, |lua, _| {
+            let (f, state) = entity::handler(lua, h, &script, event)?;
+            let payload = unlimited(lua, || payload.to_lua(lua))?;
+            out.calls += 1;
+            if let Value::String(s) = f.call::<Value>((h, payload, state))?
+                && s.as_bytes().as_ref() == b"handled"
+            {
+                out.handled = true;
+            }
+            Ok(())
+        });
+        self.settle(&format!("entity {script}.{event}"), errors, policy);
+        out
+    }
+
+    /// Calls `tick(h, dt, state)` on every attached entity script that defines `tick` and whose
+    /// handle `loaded` accepts, in handle order (one watchdog entry).
+    pub fn tick_entities(&mut self, dt: f64, loaded: &dyn Fn(Handle) -> bool, policy: &FaultPolicy) -> u32 {
+        if !self.is_running() {
+            return 0;
+        }
+        let due: Vec<(Handle, String)> = match self.lua.app_data_ref::<CtxData>() {
+            Some(d) => d
+                .entities
+                .iter()
+                .filter(|(h, s)| d.entity_defs.get(*s).is_some_and(|hooks| hooks.contains("tick")) && loaded(**h))
+                .map(|(h, s)| (*h, s.clone()))
+                .collect(),
+            None => return 0,
+        };
+        if due.is_empty() {
+            return 0;
+        }
+        let mut calls = 0;
+        let mut errors = Vec::new();
+        self.entry(&mut errors, |lua, errors| {
+            for (h, script) in &due {
+                let (f, state) = entity::handler(lua, *h, script, "tick")?;
+                calls += 1;
+                if let Err(e) = f.call::<()>((*h, dt, state)) {
+                    let (kind, message) = classify(&e);
+                    errors.push((kind, format!("entity {script}.tick: {message}")));
+                    if kind != FaultKind::Error {
+                        return Ok(());
+                    }
+                }
+            }
+            Ok(())
+        });
+        self.settle("entity tick", errors, policy);
+        calls
+    }
+
+    /// Handles with an entity script of this context attached.
+    pub fn attached(&self) -> Vec<Handle> {
+        self.lua
+            .app_data_ref::<CtxData>()
+            .map(|d| d.entities.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Restores storage (in place: scripts that captured `sf.storage()` keep a valid table),
