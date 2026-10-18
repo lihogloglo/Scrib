@@ -1,0 +1,9 @@
+/* Mod `broken_mod`: one valid rule, one invalid value. The valid rule still applies; the
+   invalid one is reported against this mod (UiCssReport, shown in the HUD). */
+.hud {
+    color: #9fd3ff;
+}
+
+.panel {
+    padding: lots;
+}

@@ -15,6 +15,7 @@ bevy_app = { version = "0.20", default-features = false }
 bevy_asset = { version = "0.20", default-features = false }
 bevy_diagnostic = { version = "0.20", default-features = false }
 bevy_ecs = { version = "0.20", default-features = false }
+bevy_log = { version = "0.20", default-features = false }
 bevy_mesh = { version = "0.20", default-features = false }
 bevy_platform = { version = "0.20", default-features = false }
 bevy_reflect = { version = "0.20", default-features = false }
@@ -46,6 +47,9 @@ bevy_ui_widgets = { version = "0.20", default-features = false }
 # UI input actions and prioritised, input-consuming contexts (ui.md OQ4, chosen 2026-10-18). Allowed ahead
 # of the crate "update all" batch (owner). No `state` feature: we don't drive contexts from bevy_state.
 bevy_enhanced_input = { version = "0.27", default-features = false }
+# UI styling (sf_ui_css only, ui.md R2b): CSS with cascade layers. Pulls Servo's MPL-2.0 `cssparser`/`selectors`,
+# allowed unmodified (owner 2026-10-11); no other crate may depend on it.
+bevy_flair = { version = "0.9", default-features = false }
 # Full engine: examples and tools only (dev-dependency), never a library dependency.
 bevy = { version = "0.20", default-features = false }
 # Floating-origin grids (world-coordinates.md). RC for Bevy 0.20: pinned until 0.14.0 ships.
@@ -132,6 +136,7 @@ sf_weather = { path = "crates/sf_weather" }
 sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
 sf_ui_bevy = { path = "crates/sf_ui_bevy" }
+sf_ui_css = { path = "crates/sf_ui_css" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

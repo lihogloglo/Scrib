@@ -1786,3 +1786,10 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   surface rates) crossfade per preset with separate in/out windows and never morph. Lightning is thinning of a capped
   hashed Poisson stream (frame-boundary independent). `sf_weather` depends on `sf_atmos` (the frame carries
   `CloudWeather`/`FogSettings`), and `sf_records::RecordId` is serde (its folded string).
+- 2026-10-18 (u1c, recorded by u2): new game-agnostic `sf_mods::Profile::bindings` (`[bindings.<context>]`, action →
+  input names) beside `settings`; UI rebinding persists there (ui.md "As built (U1c)").
+- 2026-10-18 (u2): `sf_ui_css` on `bevy_flair` 0.9.0 is the only crate linking MPL-2.0 code (Servo `cssparser`,
+  `selectors`, unmodified). Mod CSS cascade layers are flat `mods-<load position>-<id>` (flair parses no dotted layer
+  names); the composed root sheet sits in an in-memory asset source and imports content from a named source
+  `sf_ui_content` that apps register beside their default source; per-mod CSS errors come from strict "probe" loads
+  of each sheet (ui.md "As built (U2 part 1)").

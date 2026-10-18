@@ -501,6 +501,43 @@ Glue between `sf_ui`/`sf_ui_bevy` and the mod pipeline (`sf_mods`, `sf_vfs`); `s
   far); `UiSettings` (live presentation) isn't fed from `ui.setting` values; PlayStation/Switch glyph names; focus
   visuals by `InputMode` (U2).
 
+## As built (U2 part 1, 2026-10-18)
+
+`superfargoth/crates/sf_ui_css` on `bevy_flair` 0.9.0 (crates.io, Bevy 0.20). 6 tests (`cargo test -p sf_ui_css`),
+clippy pedantic clean. The only crate linking flair; flair types stay inside it (`UiClass` wraps its class list).
+
+- **Licence set** (`cargo tree -p sf_ui_css`, 2026-10-18): bevy_flair, bevy_flair_core/_style/_css_parser
+  `MIT OR Apache-2.0`; **MPL-2.0, unmodified**: `cssparser` 0.37, `cssparser-color` 0.5, `cssparser-macros` 0.7.1,
+  `selectors` 0.38, `dtoa-short` 0.3.5 (Open question 1, owner OK 2026-10-11); the rest MIT/Apache, Zlib, BSD,
+  CC0, MIT-0, Unlicense, Unicode-3.0 (icu_*). No GPL/LGPL. New in the lock: ariadne, phf*, servo_arc, yansi.
+- **Composer** (`Composition` → `ComposedSheet`, Bevy-free text): `@layer sf, preset, theme, mods-<n>-<id>..., user;`
+  then one `@import url("sf_ui_content://<vfs path>") layer(..)` per sheet; a mod's sheets share its layer.
+  **Layer names are flat `mods-<load position>-<id>`, not `mods.<id>`**: flair 0.9 parses one identifier in
+  `layer(..)` and `@layer a, b` (dotted names only via nested `@layer mods { }` blocks, and `@import` is top-level
+  only); mod ids may contain `.`. Ordering is the same as sub-layers.
+- **Sources**: the root sheet lives in an in-memory source `sf_ui`; imports resolve against the importing sheet's
+  source and a path can't name Bevy's default source, so content is imported from a **named source
+  `sf_ui_content`** that the app registers with `UiCssSourcePlugin::new(builder)` before `DefaultPlugins` (same
+  builder kind as its default source: `sf_vfs::bevy::shared_asset_source` in the game, `platform_default` in
+  examples). `UiCssPlugin` (after `SfUiPlugin`) adds `FlairPlugin`.
+- **Inputs**: `UiCssSheets { framework, mods, user }` (`mods_from_profile(&LoadedProfile)` = each mod's
+  `[ui] styles` in load order); preset and theme sheets (+ the `high_contrast` variant) from `UiSettings` and the
+  registry. A change recomposes, rewrites the root and `AssetServer::reload`s it; flair restyles (live swaps).
+- **Roots**: every `UiScreenRoot` gets `Styled` = the root sheet, classes (`<preset root_class>`, `theme-<id>`,
+  `high-contrast`, `reduce-motion`) and attribute `input=kbm|gamepad` from `InputMode` (focus visuals per device are
+  CSS). sf_ui_css owns flair's `ClassList`/`AttributeList` on styled nodes (`UiClass` for others).
+- **Error attribution**: flair only logs errors (or fails the whole sheet with `ReturnError`), so each source sheet is
+  also loaded alone with `ReturnError` (a "probe"); `AssetLoadFailedEvent<StyleSheet>` paths map back to the owner →
+  `UiCssReport { issues: [CssIssue { kind, mod_id, path, message }], version }` + a `warn!`; a clean reload clears it.
+  The root imports leniently, so a broken mod keeps its valid rules. Cost: each sheet parses twice at load.
+- Tests: composer (layer order = load order, owners, identifier names); headless flair app (a later mod beats a more
+  specific earlier rule, reordering mods restyles live; an invalid value is reported against `broken` while its valid
+  rule applies; `input` attribute and preset class select rules).
+- **Not yet verified (U2 part 2)**: example `ui_css` (three mod sheets, HUD shows the report, `--autotest [dir]`
+  rewrites a sheet on a temp copy and waits for hot reload, before/after screenshots) compiles but has not run; hot
+  reload of a content-source edit through the root's loader dependency is untested. Leftover: flair logs the same
+  sheet error twice (root import + probe).
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 above
