@@ -688,7 +688,8 @@ fn auto(
     time: Res<Time<Real>>,
     settled: Option<Res<crate::exterior::Settled>>,
     mut auto: ResMut<Auto>,
-    mut cameras: Query<(Entity, &mut Transform), With<FreeCamera>>,
+    // Read-only: `WorldPosOf` reads every Transform; the framed pose is written back through `commands`.
+    cameras: Query<(Entity, &Transform), With<FreeCamera>>,
     pos_of: WorldPosOf,
     characters: Query<(Entity, &CharacterBody, Has<Dead>, Has<KnockedDown>)>,
     mut animators: Query<&mut Animator>,
@@ -701,7 +702,8 @@ fn auto(
     }
     let now = time.elapsed_secs();
     let start = *auto.start.get_or_insert(now);
-    let Some((cam, mut view)) = cameras.iter_mut().next() else { return };
+    let Some((cam, current)) = cameras.iter().next() else { return };
+    let mut view = *current;
     let Some(eye) = pos_of.get(cam) else { return };
     let nearest = |alive_only: bool| {
         characters
@@ -760,6 +762,9 @@ fn auto(
         if look.length_squared() > 1e-4 {
             view.rotation = Transform::IDENTITY.looking_to(look, Vec3::Y).rotation;
         }
+    }
+    if view != *current {
+        commands.entity(cam).insert(view);
     }
 }
 
