@@ -114,8 +114,12 @@ server (`bevy_brp_mcp`, registered for this workspace; owner 2026-10-18).
 Port `BEVYRROWIND_BRP_PORT`, default 15712 (Ovid uses 15702), shown in the
 window title. Code: `apps/bevyrrowind/src/remote.rs`.
 
-- **Attach only.** Start the exe yourself the usual way (after the build
-  check above), then talk to it. `brp_launch`/`brp_shutdown` are denied:
+- **Attach only.** Build (`cargo build -p bevyrrowind --features dev`),
+  then start it with `powershell -File tools/run_dev.ps1 view "<cell>" > target/run_dev.pid`
+  (or `scene <name>`; it prints the pid; from bash redirect to a file, since a
+  `$(...)` pipe stays open while the game runs), not `cargo dev`: a `cargo run` stays alive while
+  the game is open and stalls every other session's build check. Then
+  talk to it. `brp_launch`/`brp_shutdown` are denied:
   launching builds behind our back, and the owner may be looking at the
   window. Don't call `brp_extras/shutdown` through `brp_execute` either;
   close only processes you started.
