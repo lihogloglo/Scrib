@@ -64,14 +64,55 @@ struct Slot {
 /// Colliders, total force, deepest point and normal (engine frame).
 type ContactReport = (ColliderHandle, ColliderHandle, f32, Vec3, Vec3);
 
-/// Contact-force reports gathered during a step (rapier calls back through `&self`).
+/// Hit-reporting collider, the dynamic collider that hit it, impact
+/// momentum (N·s), contact point and normal toward the target (engine frame).
+type HitReport = (ColliderHandle, ColliderHandle, f32, Vec3, Vec3);
+
+/// Contact-force and hit reports gathered during a step (rapier calls back through `&self`).
 #[derive(Default)]
 struct Collector {
     contacts: Mutex<Vec<ContactReport>>,
+    hits: Mutex<Vec<HitReport>>,
+    /// 1 / the step's dt (a kinematic body's velocity this step).
+    inv_dt: f32,
+}
+
+impl Collector {
+    /// [`PhysicsEvent::Hit`] at a pair's first contact. Rapier detects
+    /// collisions at the start of a step, before the solver, so `bodies`
+    /// still carry the approach velocities (and CCD substeps clamp positions,
+    /// not velocities).
+    fn hit(&self, bodies: &RigidBodySet, colliders: &ColliderSet, pair: &ContactPair) {
+        let Some((manifold, contact)) = pair.find_deepest_contact() else { return };
+        let (Some(c1), Some(c2)) = (colliders.get(pair.collider1), colliders.get(pair.collider2)) else { return };
+        let point = c1.position().transform_point(contact.local_p1);
+        let normal = manifold.data.normal; // from collider 1 to 2
+        let body = |c: &rapier3d::geometry::Collider| c.parent().and_then(|h| bodies.get(h));
+        // Either side may report hits; the other side must be dynamic.
+        for (target, by, toward) in [(c1, c2, -normal), (c2, c1, normal)] {
+            if !target.active_events().contains(ActiveEvents::COLLISION_EVENTS) {
+                continue;
+            }
+            let Some(other) = body(by).filter(|rb| rb.is_dynamic()) else { continue };
+            // A kinematic target's velocity this step is toward its pending target pose:
+            // rapier derives its `linvel` from that only after collision detection.
+            let target_velocity = body(target).map_or(Vec3::ZERO, |rb| {
+                if rb.is_kinematic() { (rb.next_position().translation - rb.position().translation) * self.inv_dt } else { rb.velocity_at_point(point) }
+            });
+            let impulse = crate::impact_impulse(other.mass(), other.velocity_at_point(point), target_velocity, toward);            if impulse > 0.0 {
+                let (t, b) = if std::ptr::eq(target, c1) { (pair.collider1, pair.collider2) } else { (pair.collider2, pair.collider1) };
+                self.hits.lock().expect("collector poisoned").push((t, b, impulse, point, toward));
+            }
+        }
+    }
 }
 
 impl EventHandler for Collector {
-    fn handle_collision_event(&self, _: &RigidBodySet, _: &ColliderSet, _: CollisionEvent, _: Option<&ContactPair>) {}
+    fn handle_collision_event(&self, bodies: &RigidBodySet, colliders: &ColliderSet, event: CollisionEvent, pair: Option<&ContactPair>) {
+        if let (CollisionEvent::Started(..), Some(pair)) = (event, pair) {
+            self.hit(bodies, colliders, pair);
+        }
+    }
 
     fn handle_contact_force_event(
         &self,
@@ -252,9 +293,15 @@ impl PhysicsWorld {
                 cb = cb.contact_skin(p.thin_skin);
             }
         }
+        let mut events = ActiveEvents::empty();
         if desc.layer.intersects(p.contact_force_layers) {
-            cb = cb.active_events(ActiveEvents::CONTACT_FORCE_EVENTS).contact_force_event_threshold(p.contact_force_threshold);
+            events |= ActiveEvents::CONTACT_FORCE_EVENTS;
+            cb = cb.contact_force_event_threshold(p.contact_force_threshold);
         }
+        if desc.layer.intersects(p.hit_layers) {
+            events |= ActiveEvents::COLLISION_EVENTS;
+        }
+        cb = cb.active_events(events);
         let (handle, _) = self.engine.insert(rb, cb);
         // Rapier adds new bodies to its islands in the next step's pipeline;
         // a collision-only pass (`refresh_queries`) before it drops them, and
@@ -529,7 +576,7 @@ impl PhysicsWorld {
     /// Advances one fixed step of [`PhysicsParams::dt`].
     pub fn step(&mut self) {
         self.engine.integration_parameters.dt = self.params.dt;
-        let collector = Collector::default();
+        let collector = Collector { inv_dt: 1.0 / self.params.dt.max(1e-6), ..Collector::default() };
         self.engine.step_with_events(&PairFilter(&self.excluded), &collector);
         self.dynamic_inserted = false;
         self.resist_rolling();
@@ -539,6 +586,12 @@ impl PhysicsWorld {
             if let (Some(a), Some(b)) = (self.id_of_collider(c1), self.id_of_collider(c2)) {
                 let point = self.to_world(point);
                 self.events.push(PhysicsEvent::ContactForce { a, b, impulse: force * dt, point, normal });
+            }
+        }
+        for (target, by, impulse, point, direction) in collector.hits.into_inner().expect("collector poisoned") {
+            if let (Some(target), Some(by)) = (self.id_of_collider(target), self.id_of_collider(by)) {
+                let point = self.to_world(point);
+                self.events.push(PhysicsEvent::Hit { target, by, impulse, point, direction });
             }
         }
         self.finish_settle();

@@ -5,7 +5,8 @@
 //! targeted at the mover's feet after each mover step, so falling and thrown
 //! bodies hit characters. After the step, the bodies the capsule touches get
 //! capped push impulses ([`sf_physics::PhysicsWorld::push`]) from the intent
-//! the mover ran with. Contact forces on a capsule over
+//! the mover ran with. Hits on a capsule ([`PhysicsEvent::Hit`]: the
+//! incoming body's momentum at first contact) of at least
 //! [`CharacterPhysics::impact_threshold`] become [`ImpactOnCharacter`]
 //! messages for gameplay (hit reactions, knockdowns). The mover itself keeps
 //! running in `Update` against the physics world's queries: the host makes
@@ -28,13 +29,14 @@ use crate::{Physics, PhysicsEvents, PhysicsSystems};
 #[derive(Resource, Clone, Debug)]
 pub struct CharacterPhysics {
     pub push: PushParams,
-    /// Contact impulse on a capsule (N·s) from which it counts as an impact.
+    /// Impact momentum on a capsule (N·s) from which it counts as an impact
+    /// (a 3 kg ball at 1/3 m/s; soft hits drive hit reactions).
     pub impact_threshold: f32,
 }
 
 impl Default for CharacterPhysics {
     fn default() -> Self {
-        Self { push: PushParams::default(), impact_threshold: 5.0 }
+        Self { push: PushParams::default(), impact_threshold: 1.0 }
     }
 }
 
@@ -42,7 +44,7 @@ impl Default for CharacterPhysics {
 #[derive(Message, Clone, Debug)]
 pub struct ImpactOnCharacter {
     pub entity: Entity,
-    /// Contact impulse, N·s.
+    /// Impact momentum, N·s ([`sf_physics::impact_impulse`]).
     pub impulse: f32,
     pub point: WorldPos,
     /// The impulse's direction on the character (unit, world; zero if unknown).
@@ -200,7 +202,10 @@ fn capsules(
     *stats = CharacterStats { capsules: map.0.len(), pushed, max_push, impacts: 0, fell_out: stats.fell_out };
 }
 
-/// Contact forces on capsules → [`ImpactOnCharacter`].
+/// Hits on capsules ([`PhysicsEvent::Hit`]: impact momentum at first
+/// contact, [`sf_physics::impact_impulse`]) → [`ImpactOnCharacter`]. Not the
+/// solver's contact force: that one is spread over steps for soft hits and
+/// unbounded for bodies a capsule walks into or pins (PH-10).
 #[allow(clippy::needless_pass_by_value)]
 fn impacts(
     events: Res<PhysicsEvents>,
@@ -214,12 +219,11 @@ fn impacts(
     }
     let by_body: HashMap<BodyId, Entity> = map.0.iter().map(|(e, (_, id, _))| (*id, *e)).collect();
     for e in &events.0 {
-        let PhysicsEvent::ContactForce { a, b, impulse, point, normal } = *e else { continue };
+        let PhysicsEvent::Hit { target, impulse, point, direction, .. } = *e else { continue };
         if impulse < settings.impact_threshold {
             continue;
         }
-        let hit = by_body.get(&b).map(|&e| (e, normal)).or_else(|| by_body.get(&a).map(|&e| (e, -normal)));
-        if let Some((entity, direction)) = hit {
+        if let Some(&entity) = by_body.get(&target) {
             out.write(ImpactOnCharacter { entity, impulse, point, direction });
             stats.impacts += 1;
         }

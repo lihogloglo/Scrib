@@ -99,6 +99,14 @@ pub enum PhysicsEvent {
     /// `normal`: the contact normal from `a` to `b` (the impulse on `b`'s
     /// direction; zero if unknown).
     ContactForce { a: BodyId, b: BodyId, impulse: f32, point: WorldPos, normal: Vec3 },
+    /// A dynamic body `by` started touching `target`, a body on
+    /// [`PhysicsParams::hit_layers`] (a character's capsule): hit reactions
+    /// and knockdowns. `impulse` (N·s) is the impact momentum
+    /// ([`crate::impact_impulse`]): `by`'s mass times its own approach speed
+    /// along the contact normal before the solver ran, so a character walking
+    /// into a resting body, or pressing one into the ground, is no hit.
+    /// `direction`: the contact normal toward `target` (unit, world).
+    Hit { target: BodyId, by: BodyId, impulse: f32, point: WorldPos, direction: Vec3 },
     /// A dynamic body fell below [`PhysicsParams::kill_height`]; it is back
     /// at its last rest pose, asleep.
     FellOut(BodyId),
@@ -125,6 +133,8 @@ pub struct PhysicsParams {
     /// Layers that report [`PhysicsEvent::ContactForce`], and the threshold in newtons.
     pub contact_force_layers: Layer,
     pub contact_force_threshold: f32,
+    /// Layers that report [`PhysicsEvent::Hit`] (first contact with a dynamic body).
+    pub hit_layers: Layer,
     /// Absolute Y (meters) under which a dynamic body counts as fallen out;
     /// `None`: `kill_margin` below the lowest fixed body ([`crate::PhysicsWorld::kill_height`]).
     pub kill_height: Option<f64>,
@@ -150,6 +160,7 @@ impl Default for PhysicsParams {
             thin_skin: 0.004,
             contact_force_layers: Layer::DEBRIS | Layer::PROP | Layer::RAGDOLL | Layer::CHARACTER | Layer::PROJECTILE,
             contact_force_threshold: 200.0,
+            hit_layers: Layer::CHARACTER,
             kill_height: None,
             kill_margin: 10.0,
             rolling_resistance: 20.0,

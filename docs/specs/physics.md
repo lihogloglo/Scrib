@@ -135,7 +135,7 @@ bitflags! pub struct Layer: u32 { STATIC, TERRAIN, DEBRIS, PROP, CHARACTER, RAGD
   its holder's capsule). `RAGDOLL` bodies skip contacts with jointed neighbors.
 - **Simulated mass** is clamped to `[0.2, 60]` kg by default (a cup under a cuirass is 300:1 raw); the
   gameplay weight stays in records. Thin shapes get a 4 mm contact skin.
-- **Events** (drained per step): `Woke`, `Slept`, `ContactForce { a, b, impulse, point }` above a
+- **Events** (drained per step): `Woke`, `Slept`, `Hit { target, by, impulse, point, direction }` (first contact on a `hit_layers` body, below), `ContactForce { a, b, impulse, point }` above a
   per-layer threshold (impact sounds, damage later, knockback), `LeftCoverage(BodyId)`, `FellOut(BodyId)`.
 - **Interpolation state**: previous and current pose per awake body; `pose_at(alpha)` lerp + slerp.
 
@@ -392,8 +392,14 @@ Changes in M4:
 - **Pushes**: for each `PROP` hit in a sweep, an impulse `min(m_char · Δv_n, push_force · dt)` on the
   body (default push force 400 N, per character); `DEBRIS` in the capsule's path get the same capped
   impulse. Pushed props slow the mover by their resistance (UE "push force factor").
-- **Impacts**: `ContactForce` on a `CHARACTER` capsule above `impact_threshold` becomes an
-  `ImpactOnCharacter { entity, impulse, point }` event; gameplay picks a hit reaction or a knockdown.
+- **Impacts** (as built 2026-10-18, PH-10): a `Hit` on a `CHARACTER` capsule of at least `impact_threshold` (1 N·s) becomes an
+  `ImpactOnCharacter { entity, impulse, point, direction }` event; gameplay picks a hit reaction or a knockdown.
+  A hit is the incoming body's momentum along the normal at first contact (rapier `CollisionEvent::Started`, which
+  fires before the solver, so velocities are pre-solve: PhysX's `eNOTIFY_TOUCH_FOUND` + `ePRE_SOLVER_VELOCITY`):
+  `m · min(v_by·n, (v_by − v_capsule)·n)` (`sf_physics::impact_impulse`). Not the solver's contact force: against
+  an infinitely heavy kinematic capsule that is spread over steps for soft hits and unbounded for a body the
+  capsule walks into or pins (a walker pressing a resting 3 kg ball into a wall: 423 N·s in one step; PH-10 logged a
+  72 N·s "knockdown" from a ball lying on the street). Per contact start, so sustained contact never adds up.
 - **Sliding** down unwalkable slopes (locomotion.md open question 3): the mover adds gravity along the
   slope when the ground is unwalkable; no physics body needed.
 - Ragdolled characters carry `Ragdolled` (like `Dormant`: not stepped, capsule disabled); the root
@@ -408,8 +414,8 @@ Changes in M4:
   bodies within `reach` 4 cm of the mover's capsule count (more than its 1 cm wall skin). One push pass per mover
   step (frame rate), DEBRIS and PROP alike, held items stay held. `sf_physics_bevy` feature `controller`
   (`character.rs`): capsules for every non-`Dormant` `Mover` in the active world, targeted after
-  `ControllerSystems::Step`, pushes from `Mover::applied`, `ImpactOnCharacter` messages from `ContactForce` events
-  on capsules over 5 N·s (`PhysicsEvents` keeps a frame's events), `CharacterStats`. Ground: `impl GroundProbe for
+  `ControllerSystems::Step`, pushes from `Mover::applied`, `ImpactOnCharacter` messages from `Hit` events
+  on capsules of at least 1 N·s (`PhysicsEvents` keeps a frame's events), `CharacterStats`. Ground: `impl GroundProbe for
   Physics` over `GROUND_LAYERS` = `STATIC | TERRAIN | PROP` of the active world; the host picks
   `SfControllerPlugin::<Physics>` (the Bevyrrowind walkers do unless `--off physics`). Slope sliding is in the mover
   (`Locomotion::slide`, gravity's horizontal part along the unwalkable ground normal, decays with a 0.1 s time

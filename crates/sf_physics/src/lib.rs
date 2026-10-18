@@ -29,7 +29,7 @@ mod world;
 
 pub use body::{BodyDesc, BodyId, BodyKind, ITEM_DAMPING, PhysicsEvent, PhysicsParams};
 pub use carry::{CarryEnd, CarryParams, Carrier, GrabMode, GrabResult, HolderLimits};
-pub use character::{CharacterShape, PushParams, Pushed};
+pub use character::{CharacterShape, PushParams, Pushed, impact_impulse};
 pub use joint::{Drive, JointDesc, JointId, JointKind, JointSolver};
 pub use layer::Layer;
 pub use probe::PhysicsProbe;
