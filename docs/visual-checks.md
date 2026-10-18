@@ -1423,7 +1423,11 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 
 ### PH-3 (P10): Robes and skirts as cloth (V1: lattice on the girdle, leg follow, `H` A/B)
 
-Status: **awaiting owner** (built p10c/p10d, 2026-10-18). Agent sanity shots: `shots/p10d/robe-walk.png`,
+Status: **FAILED, owner 2026-10-18** ("robes don't look great at all"): (1) wearing a robe hides the legs (Morrowind
+hides the leg parts under a robe), so when the feet step past the robe's envelope a leg is visibly missing; (2) the
+robe envelope doesn't follow the leg movement at all, so the whole thing looks wrong. Also: only robes were tried;
+capes, flags and tents (mesh cloth) are untested and out of V1. Parked by the owner for a later session.
+Previously: built p10c/p10d, 2026-10-18. Agent sanity shots: `shots/p10d/robe-walk.png`,
 `robe-run-simulated.png`, `robe-run-kinematic.png`, `temple-overview.png`. Cost: 20-26 µs per simulated robe (5 s
 means, dev build; gate 30 µs; the op includes target skinning and the leg capsules).
 - Kind: lineup (no scene: `character` isn't a `view`). Run: `.\bevyrrowind character "fargoth+common_robe_01" "@dark
@@ -1642,7 +1646,7 @@ walk out of a door and back in: no black flash on the water, and exterior glass/
 
 ### WD-0: Wind field, synthetic (`cargo run -p sf_wind_bevy --example wind` in `../superfargoth`)
 
-Status: **awaiting owner** (WD1, wd1b, 2026-10-18). Shot: `shots/wd1b/wind-burst.png` (`-- --screenshot <png> --frames
+Status: **confirmed by owner** 2026-10-18 ("wind seems great"; WD1, wd1b). Shot: `shots/wd1b/wind-burst.png` (`-- --screenshot <png> --frames
 120 --burst 100`). Top-down 315 m square: white-to-orange arrows are the CPU twin (`WindField::sample`, 2 m above
 ground, length = 1 s of travel), the ground colour is the GPU field (`sf_wind_bevy::wind::wind_sample`: calm dark
 blue, mean speed green, twice the mean yellow). Look for: arrows and colours agree everywhere (longer arrows on

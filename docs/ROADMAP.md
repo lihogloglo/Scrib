@@ -25,6 +25,8 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
    same level runs headless for scripted-input tests (faith-runner course tests, research/animation/01).
    **Animation study** (owner 2026-10-18): `../superfargoth/docs/research/animation/README.md` (R1-R11, research-only
    agents, 2 beside the 3 build lanes); its R11 rewrites the traversal/action spec before P11 starts.
+   **Queued after these (owner go 2026-10-18):** M5 **U2** (`sf_ui_css`), M6 **WE2** (`mw_weather`) then **WE3**
+   (`sf_weather_bevy` + app), as build slots free.
    Items 1-6a below are older; don't pick them over item 0.
 1. [~] M2: streaming spikes (2026-10-12; streaming.md "Spikes", diag.md "Frame pacing"). **Gate settled
    (spikes4):** at most 1 presented stutter a minute (frame > 1.5× the moving median of 60) and none over
@@ -963,6 +965,11 @@ ragdolls; robes move." Tasks in dependency order:
 - [~] P10 Cloth (`cloth.cook` in `sf_character`, `ClothLattice` op in `sf_anim`, `mw_physics::ClothRules`): robe and
   skirt lattices, outfit joints in the merged palette, XPBD in character space with inertia scaling, tethers, max
   distance, leg/pelvis/tail capsules; census of robe/skirt parts.
+  **PH-3 FAILED (owner 2026-10-18), parked for a later session:** a robe hides the legs (Morrowind's part rules), so a
+  foot stepping past the robe envelope shows a missing leg; the envelope doesn't follow the legs at all. Before more
+  tuning: research how games do long robes over walking legs (keep legs drawn under cloth? per-leg skirt panels /
+  leg-driven bones like UE skirt setups? collision vs skinning blend), then redesign. Capes, flags, tents (mesh cloth)
+  were never tried; they're the "mesh cloth" item after M4.
   Verify: unit tests (hem stretch ≤ 5 %, no particle inside a capsule at run speed, teleport stable); ≤ 0.03 ms per robe;
   visual PH-3 (`character --walk` in a robe, Balmora Temple priests).
   Split: p10a solver core → p10b `cloth.cook` + census + `ClothRules` → p10c `ClothLattice` op + app + PH-3.
@@ -1039,7 +1046,9 @@ Lua inventory column work together, gamepad-only."
 until the owner reopens it: "not urgent", and other projects can be scavenged. Candidate: Mudcrab
 (github.com/Mudcrab-Team/mudcrab, Skyrim engine on Bevy 0.19, MIT/Apache, Papyrus `.pex` → Luau in sandboxed `mlua`;
 `docs/specs/converters/pex-to-lua.md`, `docs/roadmap/03-luau-and-ui.md`): compare with it and adopt or port before
-extending `sf_script` (CLAUDE.md rules 9-10). UI tasks (U1-U6) stay queued, not started.
+extending `sf_script` (CLAUDE.md rules 9-10). **Checked 2026-10-18 (R10, `../superfargoth/docs/research/animation/10-mudcrab-borrow.md`):
+Mudcrab's Luau runtime is a ~105-line sandbox; ours is far ahead, so nothing to wait for. Lua stays parked for
+priority only.** UI tasks: U1 done, U2 queued (owner 2026-10-18).
 
 Three lanes that can run side by side once A1 and L1 land: mods + Lua (A, L), UI (U), legacy scripts (W). Tasks in
 dependency order:
