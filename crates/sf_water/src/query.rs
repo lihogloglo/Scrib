@@ -219,6 +219,7 @@ pub struct WorldspaceWater {
     bvh: Bvh,
     bed: Option<Arc<dyn BedHeights>>,
     waves: Option<WaveTwin>,
+    shore: Option<Arc<crate::ShoreField>>,
 }
 
 impl WorldspaceWater {
@@ -239,6 +240,7 @@ impl WorldspaceWater {
             unbounded,
             bed: None,
             waves: None,
+            shore: None,
         }
     }
 
@@ -253,6 +255,15 @@ impl WorldspaceWater {
     /// The ocean wave twin (sampled by bodies whose `waves.first_cascade` is 0).
     pub fn set_waves(&mut self, waves: Option<WaveTwin>) {
         self.waves = waves;
+    }
+
+    /// The ocean's shore product (`water.shore`): attenuates the twin's swell as the GPU does.
+    pub fn set_shore(&mut self, shore: Option<Arc<crate::ShoreField>>) {
+        self.shore = shore;
+    }
+
+    pub fn shore(&self) -> Option<&crate::ShoreField> {
+        self.shore.as_deref()
     }
 
     pub fn waves(&self) -> Option<&WaveTwin> {
@@ -279,6 +290,7 @@ impl WorldspaceWater {
         best
     }
 
+    #[allow(clippy::many_single_char_names)]
     pub fn sample(&self, at: WorldPos) -> Option<WaterSample> {
         let p = at.to_f64();
         let (i, level, flow) = self.body_at(DVec2::new(p.x, p.z))?;
@@ -289,9 +301,19 @@ impl WorldspaceWater {
             && let Some(w) = &self.waves
         {
             let s = w.sample(at);
-            height += f64::from(s.height * body.waves.amplitude);
-            normal = s.normal;
-            velocity += s.velocity * body.waves.amplitude;
+            // The twin is cascade 0 (swell): the shore's swell scale, as on the GPU.
+            let shore = self
+                .shore
+                .as_ref()
+                .filter(|_| matches!(body.shape, WaterShape::Infinite))
+                .map_or(1.0, |f| {
+                    let (d, o) = f.sample(p.x, p.z);
+                    f.swell_scale(d, o)
+                });
+            let scale = body.waves.amplitude * shore;
+            height += f64::from(s.height * scale);
+            normal = Vec3::Y.lerp(s.normal, shore).normalize_or(Vec3::Y);
+            velocity += s.velocity * scale;
         }
         let depth = match &self.bed {
             Some(bed) => match bed.bed_height(at) {

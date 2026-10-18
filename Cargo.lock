@@ -6038,6 +6038,7 @@ dependencies = [
  "bevy_shader",
  "bevy_transform",
  "log",
+ "sf_coords",
  "sf_water",
 ]
 

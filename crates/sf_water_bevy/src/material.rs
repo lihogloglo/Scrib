@@ -46,6 +46,25 @@ pub struct WaterParams {
     pub foam: Vec4,
     /// (cascades, skirt radius m, displacement fade end m, snapshot valid 0/1).
     pub misc: Vec4,
+    /// (swell scale, chop scale, bounded 0/1, shore field on 0/1).
+    pub waves: Vec4,
+    /// Render-space XZ rectangle (min x, min z, max x, max z) of a bounded body.
+    pub bounds: Vec4,
+    /// Shore field: render-space XZ of its corner, 1 / its extent (m).
+    pub shore: Vec4,
+    /// (range m, swell ramp m, chop ramp m, chop floor): `sf_water::ShoreSettings`.
+    pub shore2: Vec4,
+    /// (time s, shore foam band m, 0, shore foam of the body's own look).
+    pub misc2: Vec4,
+    /// Optics map: render-space XZ of cell (0, 0)'s centre, 1 / cell size, on 0/1.
+    pub regions: Vec4,
+    /// Analytic height fog when the froxels are off: (extinction at base 1/m, 1 / falloff m, base
+    /// render-space Y, on 0/1) and its in-scattered radiance (rgb, before exposure).
+    pub fog_height: Vec4,
+    pub fog_color: Vec4,
+    /// Optics table of the map, 3 per entry: (absorption, whitecaps), (scattering, contact depth),
+    /// (roughness, shore foam, 0, 0).
+    pub looks: [Vec4; 24],
 }
 
 /// The water half of [`WaterMaterial`] (bindings 100-111 of the material group).
@@ -73,6 +92,13 @@ pub struct WaterExt {
     #[texture(108, dimension = "3d")]
     #[sampler(109)]
     pub aerial: Handle<Image>,
+    /// `sf_water::ShoreField::encode_rg8` (`Rg8Unorm`), or a 1x1 open-sea texel.
+    #[texture(110, visibility(vertex, fragment))]
+    #[sampler(111, visibility(vertex, fragment))]
+    pub shore: Handle<Image>,
+    /// Optics index per map cell (`R8Uint`), or a 1x1 zero.
+    #[texture(112, sample_type = "u_int")]
+    pub regions: Handle<Image>,
 }
 
 impl WaterExt {
@@ -86,6 +112,8 @@ impl WaterExt {
             snapshot_depth: images.snapshot_depth.clone(),
             froxels: images.froxels.clone(),
             aerial: images.aerial.clone(),
+            shore: images.shore.clone(),
+            regions: images.regions.clone(),
         }
     }
 }

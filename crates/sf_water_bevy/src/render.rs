@@ -25,7 +25,8 @@ use bevy_render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer, BufferDescriptor, BufferUsages, CachedComputePipelineId,
     CachedRenderPipelineId, ColorTargetState, ColorWrites, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, FragmentState, LoadOp,
     MultisampleState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
-    ShaderStages, ShaderType, StorageTextureAccess, StoreOp, TextureFormat, TextureSampleType, UniformBuffer, VertexState,
+    ShaderStages, ShaderType, StorageTextureAccess, StoreOp, TextureFormat, TextureSampleType, TextureViewDescriptor, TextureViewDimension, UniformBuffer,
+    VertexState,
 };
 use bevy_render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy_render::sync_world::RenderEntity;
@@ -40,16 +41,17 @@ use crate::{WaterCamera, WaterImages, WaterParams, MAX_CASCADES, RESOLUTION};
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub(crate) struct FftUniform {
     pub sizes: Vec4,
+    pub dts: Vec4,
     pub n: u32,
-    pub cascades: u32,
+    pub log_n: u32,
+    pub skip: u32,
+    pub count: u32,
     pub cycles_t: f32,
-    pub dt: f32,
     pub choppiness: f32,
     pub foam_decay: f32,
     pub foam_threshold: f32,
     pub foam_gain: f32,
 }
-
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
 struct VelocityUniform {
     clip_from_world: Mat4,
@@ -66,6 +68,7 @@ pub(crate) struct ImageIds {
     snapshot_color: AssetId<Image>,
     snapshot_depth: AssetId<Image>,
     aerial: AssetId<Image>,
+    shore: AssetId<Image>,
 }
 
 impl ImageIds {
@@ -78,6 +81,7 @@ impl ImageIds {
             snapshot_color: i.snapshot_color.id(),
             snapshot_depth: i.snapshot_depth.id(),
             aerial: i.aerial.id(),
+            shore: i.shore.id(),
         }
     }
 }
@@ -87,6 +91,9 @@ impl ImageIds {
 pub(crate) struct WaterRender {
     pub active: bool,
     pub fft: FftUniform,
+    /// Mip levels of the wave images, and the cascades (array layers) written.
+    pub mips: u32,
+    pub layers: u32,
     pub params: WaterParams,
     pub images: Option<ImageIds>,
 }
@@ -107,6 +114,8 @@ struct WaterViewBindings {
 struct WaterGpu {
     buffers: Option<(Buffer, Buffer)>,
     fft: Option<BindGroup>,
+    /// Per wave image and level: (bind group, dispatch size).
+    mips: Vec<(BindGroup, [u32; 3])>,
     /// Last frame's unjittered `clip_from_world` per view (motion vectors).
     prev: HashMap<Entity, Mat4>,
 }
@@ -120,6 +129,8 @@ struct WaterPipelines {
     fft_shader: Handle<Shader>,
     snapshot_shader: Handle<Shader>,
     aerial_shader: Handle<Shader>,
+    mips: BindGroupLayoutDescriptor,
+    mips_shader: Handle<Shader>,
     velocity_shader: Handle<Shader>,
     fullscreen: FullscreenShader,
 }
@@ -149,6 +160,8 @@ impl FromWorld for WaterPipelines {
                         texture_2d_array(filtered),
                         sampler(SamplerBindingType::Filtering),
                         if ms { texture_depth_2d_multisampled() } else { texture_depth_2d() },
+                        texture_2d(filtered),
+                        sampler(SamplerBindingType::Filtering),
                     ),
                 ),
             )
@@ -180,17 +193,26 @@ impl FromWorld for WaterPipelines {
             fft_shader: load_embedded_asset!(world, "shaders/water_fft.wesl"),
             snapshot_shader: load_embedded_asset!(world, "shaders/water_snapshot.wesl"),
             aerial_shader: load_embedded_asset!(world, "shaders/water_aerial.wesl"),
+            mips: BindGroupLayoutDescriptor::new(
+                "water_mips",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::COMPUTE,
+                    (texture_2d_array(unfiltered), texture_storage_2d_array(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly)),
+                ),
+            ),
+            mips_shader: load_embedded_asset!(world, "shaders/water_mips.wesl"),
             velocity_shader: load_embedded_asset!(world, "shaders/water_velocity.wesl"),
             fullscreen: world.resource::<FullscreenShader>().clone(),
         }
     }
 }
 
-const FFT_ENTRIES: [&str; 4] = ["spectrum", "fft_rows", "fft_cols", "assemble"];
+const FFT_ENTRIES: [&str; 2] = ["fft_rows", "fft_cols"];
 
 #[derive(Resource, Default)]
 struct WaterPipelineIds {
-    fft: Option<[CachedComputePipelineId; 4]>,
+    fft: Option<[CachedComputePipelineId; 2]>,
+    mips: Option<CachedComputePipelineId>,
     aerial: Option<CachedComputePipelineId>,
     snapshot: HashMap<u32, CachedRenderPipelineId>,
     velocity: HashMap<u32, CachedRenderPipelineId>,
@@ -323,17 +345,20 @@ impl WaterPipelines {
 
 fn queue_pipelines(views: Query<&Msaa, With<WaterView>>, pipelines: Option<Res<WaterPipelines>>, cache: Res<PipelineCache>, mut ids: ResMut<WaterPipelineIds>) {
     let Some(p) = pipelines else { return };
-    if views.is_empty() {
-        return;
-    }
+    // Warm-up: the compute pipelines and the single-sample render pipelines are queued at startup,
+    // not when a water view first appears, so they have compiled (1-2 s on DX12) by the time the
+    // world has loaded and the sea is never flat on arrival.
     if ids.fft.is_none() {
         ids.fft = Some(FFT_ENTRIES.map(|e| cache.queue_compute_pipeline(p.compute(&p.fft, &p.fft_shader, e))));
+    }
+    if ids.mips.is_none() {
+        ids.mips = Some(cache.queue_compute_pipeline(p.compute(&p.mips, &p.mips_shader, "downsample")));
     }
     if ids.aerial.is_none() {
         ids.aerial = Some(cache.queue_compute_pipeline(p.compute(&p.aerial, &p.aerial_shader, "copy_aerial")));
     }
-    for msaa in &views {
-        let s = msaa.samples();
+    let warm = std::iter::once(1);
+    for s in views.iter().map(Msaa::samples).chain(warm) {
         ids.snapshot.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.snapshot_descriptor(s)));
         ids.velocity.entry(s).or_insert_with(|| cache.queue_render_pipeline(p.velocity_descriptor(s)));
     }
@@ -368,6 +393,7 @@ fn prepare(
         return;
     };
     let _ = (snap_color, snap_depth);
+    let Some(shore) = images.get(ids.shore) else { return };
     let n = RESOLUTION as u64;
     let (spec, foam) = gpu.buffers.get_or_insert_with(|| {
         let buffer = |label, size| device.create_buffer(&BufferDescriptor { label: Some(label), size, usage: BufferUsages::STORAGE, mapped_at_creation: false });
@@ -377,11 +403,36 @@ fn prepare(
     let mut fft_uniform = UniformBuffer::from(state.fft);
     fft_uniform.write_buffer(&device, &queue);
     let Some(fft_binding) = fft_uniform.binding() else { return };
+    // Single-level views: storage bindings take one mip; the mip chain reads level k−1, writes k.
+    let level = |t: &GpuImage, mip: u32| {
+        t.texture.create_view(&TextureViewDescriptor {
+            label: Some("water_wave_level"),
+            dimension: Some(TextureViewDimension::D2Array),
+            base_mip_level: mip,
+            mip_level_count: Some(1),
+            ..TextureViewDescriptor::default()
+        })
+    };
+    let (disp0, slopes0) = (level(disp, 0), level(slopes, 0));
     gpu.fft = Some(device.create_bind_group(
         "water_fft",
         &cache.get_bind_group_layout(&pipelines.fft),
-        &BindGroupEntries::sequential((fft_binding, &h0.texture_view, spec.as_entire_binding(), foam.as_entire_binding(), &disp.texture_view, &slopes.texture_view)),
+        &BindGroupEntries::sequential((fft_binding, &h0.texture_view, spec.as_entire_binding(), foam.as_entire_binding(), &disp0, &slopes0)),
     ));
+    gpu.mips.clear();
+    let levels = state.mips.min(slopes.texture.mip_level_count());
+    for t in [slopes] {
+        let size = t.texture.width();
+        for mip in 1..levels {
+            let group = device.create_bind_group(
+                "water_mips",
+                &cache.get_bind_group_layout(&pipelines.mips),
+                &BindGroupEntries::sequential((&level(t, mip - 1), &level(t, mip))),
+            );
+            let s = (size >> mip).max(1);
+            gpu.mips.push((group, [s.div_ceil(8), s.div_ceil(8), state.layers.max(1)]));
+        }
+    }
     let mut params = UniformBuffer::from(state.params);
     params.write_buffer(&device, &queue);
     for (entity, view, target, depth, msaa, atmosphere) in &views {
@@ -414,7 +465,7 @@ fn prepare(
         let velocity = device.create_bind_group(
             "water_velocity",
             &cache.get_bind_group_layout(&pipelines.velocity[ms]),
-            &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view)),
+            &BindGroupEntries::sequential((params_binding, velocity_binding, &disp.texture_view, &prev.texture_view, &disp.sampler, depth_view, &shore.texture_view, &shore.sampler)),
         );
         commands.entity(entity).insert(WaterViewBindings { samples: msaa.samples(), snapshot, aerial: aerial_group, velocity });
     }
@@ -432,27 +483,43 @@ fn fft_pass(_view: ViewQuery<&WaterView>, gpu: Res<WaterGpu>, state: Res<WaterRe
     };
     let Some(image_ids) = state.images else { return };
     let (Some(disp), Some(prev)) = (images.get(image_ids.displacement), images.get(image_ids.prev_displacement)) else { return };
-    // Last frame's displacement, for the motion vectors.
-    let n = RESOLUTION as u32;
-    let layers = MAX_CASCADES as u32;
+    // Last frame's displacement (level 0), for the motion vectors: what was drawn, so an
+    // amortised cascade that is not re-evaluated this frame correctly has no motion.
+    let n = state.fft.n;
+    if disp.texture.width() != n || prev.texture.width() != n {
+        return;
+    }
     ctx.command_encoder().copy_texture_to_texture(
         disp.texture.as_image_copy(),
         prev.texture.as_image_copy(),
-        Extent3d { width: n, height: n, depth_or_array_layers: layers },
+        Extent3d { width: n, height: n, depth_or_array_layers: MAX_CASCADES as u32 },
     );
     FFT_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let cascades = state.fft.cascades.max(1);
+    let cascades = state.fft.count;
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
     let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some("water_fft"), timestamp_writes: None });
     let span = diagnostics.pass_span(&mut pass, "water_fft");
-    pass.set_bind_group(0, group, &[]);
-    let groups = [[n / 16, n / 16, cascades], [n, cascades, 1], [n, cascades, 1], [n / 16, n / 16, cascades]];
-    for (pipeline, g) in pipelines.iter().zip(groups) {
-        pass.set_pipeline(pipeline);
-        pass.dispatch_workgroups(g[0], g[1], g[2]);
+    if cascades > 0 {
+        pass.set_bind_group(0, group, &[]);
+        for pipeline in &pipelines {
+            pass.set_pipeline(pipeline);
+            pass.dispatch_workgroups(n, cascades, 1);
+        }
     }
     span.end(&mut pass);
+    drop(pass);
+    // Mip chains of both wave images (level k from k−1).
+    if let Some(mips) = ids.mips.and_then(|id| cache.get_compute_pipeline(id)) {
+        let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some("water_mips"), timestamp_writes: None });
+        let span = diagnostics.pass_span(&mut pass, "water_mips");
+        pass.set_pipeline(mips);
+        for (group, size) in &gpu.mips {
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(size[0], size[1], size[2]);
+        }
+        span.end(&mut pass);
+    }
 }
 
 fn snapshot_pass(

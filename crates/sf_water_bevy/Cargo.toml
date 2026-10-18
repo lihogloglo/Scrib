@@ -23,6 +23,7 @@ bevy_render.workspace = true
 bevy_shader.workspace = true
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
+sf_coords = { path = "../sf_coords" }
 sf_water = { path = "../sf_water" }
 
 [dev-dependencies]

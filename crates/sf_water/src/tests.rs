@@ -510,3 +510,103 @@ fn waves_repeat_after_the_repeat_period() {
     let k = 0.1;
     assert!((params.omega_repeat(k) - params.omega(k)).abs() <= std::f64::consts::PI / REPEAT_PERIOD + 1e-12);
 }
+
+// ---- water.shore (W3) ----
+
+#[test]
+fn shore_edt_matches_brute_force() {
+    let (w, h) = (37usize, 29usize);
+    let mut state = 0x1234_5678u32;
+    let feature: Vec<bool> = (0..w * h)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state >> 28 == 0
+        })
+        .collect();
+    let fast = shore::edt_squared(&feature, w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let mut best = f64::MAX;
+            for j in 0..h {
+                for i in 0..w {
+                    if feature[j * w + i] {
+                        let (dx, dy) = (x as f64 - i as f64, y as f64 - j as f64);
+                        best = best.min(dx * dx + dy * dy);
+                    }
+                }
+            }
+            assert!((fast[y * w + x] - best).abs() < 1e-6, "({x}, {y}): {} vs {best}", fast[y * w + x]);
+        }
+    }
+}
+
+/// An island with a long bay cut into it and an enclosed lake, in an 800 m sea.
+fn island() -> WetMask {
+    let mut m = WetMask::new(200, 200, 4.0, DVec2::new(-400.0, -400.0));
+    for y in 50..150 {
+        for x in 50..150 {
+            let bay = (100..150).contains(&x) && (95..105).contains(&y);
+            let lake = (65..85).contains(&x) && (65..85).contains(&y);
+            m.wet[y * 200 + x] = bay || lake;
+        }
+    }
+    m
+}
+
+#[test]
+fn shore_openness_falls_into_bays_and_lakes_use_their_own_fetch() {
+    let settings = ShoreSettings { open_core: 60.0, open_falloff: 150.0, ..ShoreSettings::default() };
+    let f = ShoreField::bake(&island(), settings);
+    assert_eq!((f.stats.components, f.stats.open_components), (2, 1));
+    let at = |x: usize, y: usize| (f.distance[y * 200 + x], f.openness[y * 200 + x]);
+    // Open sea far from the island: fully open.
+    assert!(at(5, 5).1 > 0.99);
+    // Into the bay openness falls with the geodesic distance from the open region.
+    let (mouth, inner) = (at(148, 100).1, at(102, 100).1);
+    assert!(mouth > inner && inner < 0.6, "mouth {mouth}, inner {inner}");
+    // The lake (20 × 20 texels = 80 m) is enclosed: openness from its own size, far below the sea.
+    let (d, o) = at(75, 75);
+    assert!((d - 38.0).abs() < 4.5, "lake centre distance {d}");
+    let want = settings.enclosed_max * (2.0 * 38.0 / settings.enclosed_fetch);
+    assert!((o - want).abs() < 0.01 && o > 0.0, "lake openness {o} vs {want}");
+    // Land is negative, and swell is gone at the shore while chop keeps its floor offshore.
+    assert!(at(60, 120).0 < -30.0);
+    assert!(f.swell_scale(0.0, 1.0) == 0.0 && f.chop_scale(10.0, 0.0) >= settings.chop_floor);
+    // Outside the baked area: open deep water.
+    assert_eq!(f.sample(1e6, 0.0), (settings.range, 1.0));
+    // The GPU encoding round-trips the distance near the shore to a few cm.
+    let enc = f.encode_rg8();
+    let i = 100 * 200 + 148;
+    let e = f32::from(enc[i * 2]) / 255.0 * 2.0 - 1.0;
+    let back = e.signum() * e * e * settings.range;
+    assert!((back - f.distance[i]).abs() < 0.6, "{back} vs {}", f.distance[i]);
+}
+
+#[test]
+fn query_swell_is_attenuated_by_the_shore_product() {
+    let id = WorldspaceId::from("ws");
+    let mut ws = Worldspace::new("ws");
+    ws.has_terrain = true;
+    ws.sea_level = Some(0.0);
+    let params = sea(14.0);
+    let cascades = Cascades::default();
+    let mut water = WorldspaceWater::new(WaterBody::from_worldspace(&id, &ws).into_iter().collect());
+    water.set_waves(Some(WaveTwin::new(&params, &cascades, 7, 1, 32)));
+    let mut world = WaterWorld::new();
+    world.insert(id.clone(), water);
+    world.step(12.0);
+    let at = WorldPos::from_f64(glam::DVec3::new(-2.0, 0.0, 3.0));
+    let open = world.get(&id).unwrap().sample(at).unwrap().height;
+    assert!(open.abs() > 1e-3);
+    // Land west of x = 0: the point is ashore (no swell; no bed, so the query still answers).
+    let mut mask = WetMask::new(64, 64, 2.0, DVec2::new(-64.0, -64.0));
+    for y in 0..64 {
+        for x in 0..32 {
+            mask.wet[y * 64 + x] = false;
+        }
+    }
+    let field = ShoreField::bake(&mask, ShoreSettings::default());
+    world.get_mut(&id).unwrap().set_shore(Some(Arc::new(field)));
+    let calm = world.get(&id).unwrap().sample(at).unwrap();
+    assert!(calm.height.abs() < 1e-5, "{} vs {open}", calm.height);
+}

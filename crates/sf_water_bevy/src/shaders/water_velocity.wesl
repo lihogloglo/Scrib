@@ -4,7 +4,7 @@
 // the nearest surface: each Lagrangian point displaced now vs last frame, through this and last
 // frame's unjittered view. Without it DLSS/TAA move the waves with the bed's motion (smear).
 
-import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, displaced};
+import super::water_common::{WaterParams, clipmap_xz, covered_by_finer, displaced, shore_at, shore_scales};
 
 struct VelocityView {
     clip_from_world: mat4x4<f32>,
@@ -17,6 +17,8 @@ struct VelocityView {
 @group(0) @binding(2) var displacement: texture_2d_array<f32>;
 @group(0) @binding(3) var prev_displacement: texture_2d_array<f32>;
 @group(0) @binding(4) var wave_sampler: sampler;
+@group(0) @binding(6) var shore_field: texture_2d<f32>;
+@group(0) @binding(7) var shore_sampler: sampler;
 @if(MULTISAMPLED) @group(0) @binding(5) var scene_depth: texture_depth_multisampled_2d;
 @if(!MULTISAMPLED) @group(0) @binding(5) var scene_depth: texture_depth_2d;
 
@@ -44,8 +46,9 @@ fn vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) ring: u32) ->
     let g = vec2<f32>(cell + corner);
     let camera = vel.camera.xz;
     let x0 = clipmap_xz(water, g, f32(ring), camera);
-    let now = displaced(water, displacement, wave_sampler, x0, camera);
-    let prev = displaced(water, prev_displacement, wave_sampler, x0, camera);
+    let scales = shore_scales(water, shore_at(water, shore_field, shore_sampler, x0));
+    let now = displaced(water, displacement, wave_sampler, x0, camera, scales);
+    let prev = displaced(water, prev_displacement, wave_sampler, x0, camera, scales);
     out.clip_now = vel.clip_from_world * vec4(now.xyz, 1.0);
     out.clip_prev = vel.prev_clip_from_world * vec4(prev.xyz, 1.0);
     out.position = out.clip_now;
