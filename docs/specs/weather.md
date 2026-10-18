@@ -309,6 +309,92 @@ feeds AI perception and the dev HUD.
 forecastable. A strike = a 0.1-0.3 s flash (a temporary point light up in the cloud + cloud emission +
 the directional sky term) and a thunder cue delayed by distance / 343 m/s.
 
+### Weather core as built (WE1, we1, 2026-10-18): `sf_weather`
+
+**Reuse check (rule 8).** Bevy 0.20 has no weather. No maintained crate does a forecastable weather state
+machine (crates.io/web, 2026-10-18: Bevy state-machine crates `seldom_state`, `moonshine_behavior` are
+entity FSMs with stored state; `bevy_weather` 0.2 is on Bevy 0.19 and its driver was the reference
+above). The core is ~1 000 lines of plain Rust, so: ours. Randomness is a counter-based hash
+(SplitMix64 finalizer over `(seed, record key, salt, counter)`), not a `rand` RNG: stateless, O(1) per
+slot, nothing to save. Record keys are FNV-1a of the folded id, so load order and added mods never
+reshuffle a forecast.
+
+**Crate** (Bevy-free; deps `glam`, `serde`, `smallvec`, `sf_records`, `sf_sky`, `sf_wind`, and
+**`sf_atmos`**, not in the plan above: the frame carries the renderer's `CloudWeather` and `FogSettings`
+directly instead of mirror structs, and `visibility_m` uses `FogSettings::extinction_at`; `sf_atmos` is
+`glam` + `rayon` only). `sf_records::RecordId` gained serde (its folded string) for record references.
+
+**Records** (kinds `weather.preset`, `weather.climate`, `weather.precip`; `register_kinds`; all
+`#[serde(default)]`, so a record file or patch names only the fields it sets). As the sketch above,
+with these differences: the record id is the database key (no `id` field); references are `RecordId`
+(no typed `RecordRef<T>` exists yet); `CloudTerms` is `CloudWeather` as data with a cloud-altitude
+`speed` (the direction is the ground wind's); `FogTerms` holds the height fog and bank layer terms plus
+`height_by_hour` / `banks_by_hour` multiplier curves, `SkyTerms` a `haze_by_hour` curve (empty curve = 1);
+`WindTerms { speed: [min, max], gustiness, gust_length, direction_deg, direction_jitter_deg, storm }`;
+`PrecipKind` has an `extinction` (1/m at intensity 1) for visibility; `Climate` has `cues` (region
+ambient loops). `WeatherBook::from_db` resolves everything into indices once (rebuild when weather
+records change); unknown references become `warnings`, not panics.
+
+**State machine.** Per climate, slot `k` starts at `phase + k·mean + jitter·(2u_k − 1)` with `mean` the
+middle of `change_interval_hours` and `jitter` a quarter of its range, so every interval stays inside the
+range and the slot containing any time is found in O(1) (no summing of past intervals). Slot `k`'s preset
+is a weighted draw from `hash(seed, climate, k)`. `WeatherState { seed, overrides }` is the save: an
+`Override::Force { climate, preset, start, transition_hours, until }` (default: until the first slot start
+one minimum interval later) or `Override::Weights { climate, from, weights }` (slots starting at or after
+`from`). Overrides are **timestamped entries in the state, not record patches**: a patch has no "from
+when", so editing weights through the record overlay would rewrite the past and the current weather.
+A **segment** is one transition (at a slot start, a forced change, or a force's end) from the blend just
+before it (recursively, so a change interrupting a change starts where it was) to one preset.
+`forecast(climate, from, n)` lists segments; `current` is the preset being turned into.
+
+**Blending.** Six channels with windows from `TransitionTiming` (fractions of the transition, smoothstep
+inside): clouds 0-60 %, sky 0-60 %, wind 20-80 %, fog 40-100 %; precipitation (also lightning rate,
+surface rates, tags) in 40-100 % and **out 0-60 %**, cues the same. Continuous channels use the incoming
+preset's window (weights sum to 1); discrete channels fade each outgoing preset by its own `*_out` window
+and the incoming one by its in-window, summed per precipitation kind or sound, so rain stops before the
+sky clears, and rain → snow is two crossfading entries, never a mixed kind. Per preset the wind wanders
+inside its speed range and ±jitter direction by smooth value noise (3 h lattice) keyed by climate and
+preset; presets blend as velocity vectors; `gust_length` is discrete (the heaviest preset's, one swap at
+mid-transition, since `sf_wind` snaps it to lattice divisors).
+
+**Border band.** `border_weight(d, band)` = ½ on the border, 1 from `band/2` inside (smoothstep);
+`border_blend(own, neighbor, d, band)` returns the climate weights `evaluate` takes. The grid lookup
+(`weather.climate` bake, `ClimateSource`) is WE2/WE3.
+
+**Lightning.** A non-homogeneous Poisson process by thinning (Lewis and Shedler 1979): candidates at the
+cap rate (`LIGHTNING_CAP_PER_HOUR` = 120 per game hour) are drawn per 1/30 h bucket (Poisson count by CDF
+inversion, uniform times, all hashed), each kept with probability `rate(t) · climate weight / cap`, where
+`rate(t)` is the precipitation-channel blend of `Lightning::per_hour`. Strikes carry time, azimuth,
+distance, flash, and a thunder sound. Deterministic and independent of frame boundaries; steps over 1 h
+(sleep, skips) report none. **Rates are per game hour** (every weather duration is game time); the adapter
+converts Morrowind's real-time frequency with its time scale.
+
+**Frame** (`evaluate` / `evaluate_into`, which reuses allocations): `sky: sf_sky::Weather` (cloud cover
+= `CloudWeather::mean_cover`, haze, dust, dimming, and **`sky.wind`, the wind target** for
+`WindField.state.wind`; the transition windows are its easing), `clouds: CloudWeather` (moving with the
+wind direction at the cloud speed), `fog: FogSettings` (weather fields; look fields default, the plugin
+keeps its own; banks drift with the ground wind), `precip`, `surface`, `lightning` (strikes in
+`[prev_hours, hours)`), `lightning_per_hour`, `cues` (weather and region loops), `tags`, `storms` (a
+climate's `storm_source` with strength = the wind-channel blend of `WindTerms::storm` × climate weight;
+WE3 adds/updates the `WindSource`), `visibility_m` = min(3.912 / (fog outside banks at the camera
+altitude + Σ precipitation intensity × extinction), 100 km). No climate (interiors): calm defaults.
+
+**Verified** (`cargo test -p sf_weather`, 10 tests): forecast purity (same seed same slots, load order
+irrelevant, intervals in range, `slot_at` inverts `slot_start`), draw frequencies within 4σ of the
+weights over 8 000 slots, save/restore (RON) with a force and a weight edit gives identical frames over
+220 h, lead/lag (clouds half way at 30 %, no rain before 40 %, rain gone at 60 % of the way out,
+continuous weights sum to 1), rain → snow crossfade (only the two kinds, monotone, no coverage pops),
+border walk (2 m steps, no pops in coverage, snow or wind), lightning (count within 4σ of 30/h over
+400 h, exponential gaps (CV ≈ 1), identical strikes at 30 s and 8.6 min steps), wind easing and
+visibility, records through `sf_records` with a mod patch. **`evaluate` cost: 0.0006 ms** (release, 2
+climates mid-transition, lightning on; gate 0.05 ms).
+
+**Open (logged).** Overrides are never pruned (a long game with many scripted changes grows the save;
+prune entries older than one interval + transition, keeping the last weight edit). `gust_length` swaps
+once mid-transition (crossfade two wind frames if it shows). Lightning flash position is camera-relative
+(no world anchor). Interior fog-only presets (M8). `storm_intensity` for NPC animation: derive from
+`storms` when needed.
+
 ## Clouds
 
 **Model** (Nubis 2017, Megalophobia math). The weather map (R coverage, G type, B wetness/darkness,

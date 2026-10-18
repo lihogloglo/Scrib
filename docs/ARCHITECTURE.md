@@ -1769,3 +1769,12 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   Systems that toggle BEI contexts run before `EnhancedInputSystems::Prepare`, not just before `Update`. Bevy's
   `AutoDirectionalNavigation` is layer-agnostic, so the router moves that marker onto the input target's focusables
   only; confirm triggers `bevy_ui_widgets::Activate`, so pad, keys and mouse share the headless widgets' contract.
+- **2026-10-18 (we1, M6 WE1; specs/weather.md "Weather core as built"): weather is a pure function of time.** Each
+  climate's slots start at `phase + k·mean + hashed jitter` (O(1) slot lookup) and draw their preset from a counter-based
+  hash of `(seed, climate key, k)`; record keys are FNV-1a of the folded id, so load order and added mods never reshuffle
+  a forecast. Saves keep only `WeatherState { seed, overrides }`; **scripted weather changes and weight edits are
+  timestamped overrides in that state, not record-overlay patches** (a patch has no "from when" and would rewrite the
+  past). Blends have per-channel lead/lag windows; discrete channels (precipitation kinds, sounds, lightning, tags,
+  surface rates) crossfade per preset with separate in/out windows and never morph. Lightning is thinning of a capped
+  hashed Poisson stream (frame-boundary independent). `sf_weather` depends on `sf_atmos` (the frame carries
+  `CloudWeather`/`FogSettings`), and `sf_records::RecordId` is serde (its folded string).

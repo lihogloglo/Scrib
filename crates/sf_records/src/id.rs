@@ -48,3 +48,18 @@ impl fmt::Display for RecordId {
         f.write_str(&self.0)
     }
 }
+
+/// Serialized as its (folded) string, so records can reference other
+/// records by id in native record files (`RecordId` fields in serde kinds).
+impl serde::Serialize for RecordId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RecordId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        Ok(Self::new(&id))
+    }
+}
