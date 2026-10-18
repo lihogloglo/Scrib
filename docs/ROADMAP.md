@@ -1140,10 +1140,19 @@ dependency order:
   L3 API v0.1 (scripting.md "Curated API"): `@sf/core`, `events`, `timers`, `interfaces`, `world`, `records`,
   `input`, thin `anim` (slots) and `physics` (impulse, raycast); `sf.d.luau` + docs generated from the registry.
   Verify: golden `.d.luau`; example mods in `superfargoth/examples/mods/` run headless; MS-2.
-- [~] U1 **Built part 1 (u1a, 2026-10-18):** input crate `bevy_enhanced_input` 0.27 (ui.md OQ4 closed);
+- [x] U1 **Built part 1 (u1a, 2026-10-18):** input crate `bevy_enhanced_input` 0.27 (ui.md OQ4 closed);
   `superfargoth/crates/sf_ui` (UI record kinds, `UiRegistry` + conflicts, `ScreenStack` routing rule, `ViewModel`/
   `ListModel`, `SettingsStore` over profile tables, Fluent `Localizer`), 14 tests, clippy clean; ui.md "As built
-  (U1a)". Next: part 2 (u1b) `sf_ui_bevy` + gamepad example (handoff `.sessions/u1a.md`). Original task text:
+  (U1a)". **Built part 2 (u1b, 2026-10-18):** `superfargoth/crates/sf_ui_bevy` (`SfUiPlugin`): router = one BEI
+  context entity per screen input context id, only the input target active, above gameplay, every UI action
+  `consume_input` + `require_reset`; HUD contexts carry only open menu/map; `UiBindings` rebinding (menu open
+  included); confirm → `bevy_ui_widgets::Activate`; Back closes menu/modal targets; Bevy `AutoDirectionalNavigator`
+  kept to the target screen, focus memory per screen, held-direction repeat; `InputMode` last-used device + glyph
+  table. Verify ran: 6 headless router tests; example `ui_nav --autotest` drives HUD → menu → modal → back with a
+  synthetic gamepad (40 checked steps, PASS); visual check UI-1 (real pad) awaiting owner. ui.md "As built (U1b)".
+  Leftovers (u1c, small): Fluent `L10nSource`s from each mod's VFS `l10n/<locale>/<mod>.ftl`; `SettingsStore` ↔
+  `sf_mods::Profile::settings`; persist `UiBindings` to the profile; `UiCommands` param; `ScreenDef::presets` on push;
+  PlayStation/Switch glyph names. Original task text:
   U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
   (CommonUI layers, screen stack, input router, actions with rebinding, `bevy_input_focus` navigation, device glyphs).
   Input crate: `bevy_enhanced_input` 0.27 and `leafwing-input-manager` 0.22 are on Bevy 0.20 (crates.io 2026-10-14/16):
@@ -1662,3 +1671,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (wd1a): M6 WD1 [~] part 1: Bevy-free `sf_wind` (Wind moved from `sf_sky`, re-exported; WindState/WindSource x32/WindFrame; Megalophobia gust field with a PCG lattice hash and split origin phase; log profile; `sf_wind.wesl`); CPU/WGSL twin run headless on the GPU (1.1e-5 rel), never-upwind and origin-shift tests; next wd1b (`sf_wind_bevy`, `wind` example, clouds).
 - 2026-10-18 (wd1b): M6 WD1 [x] part 2: `sf_wind_bevy` (WindPlugin/WindField/WindOrigin; one fixed ShaderBuffer with current + previous frame for motion vectors, materials bind it with `#[storage]`; WESL `sf_wind::field` + `sf_wind_bevy::wind` with a def-chosen slot); upload 0.0025 ms (gate 0.02); `wind` example (CPU arrows over the GPU-shaded field, burst/vortex keys; visual check WD-0); app fog/cloud drift read the field. Next: WE1.
 - 2026-10-18 (p10b): M4 P10 [~] `sf_character::cook_cloth` (farthest-hit lattice placement, girdle-ride offsets, per-particle authored skin targets, `SkinRebind` bilinear + harmonic waist band), `RagdollDef::cloth_colliders`, `mw_physics::MwClothRules`; census: robes are Chest parts (not Skirt), 50 cloth parts all skinned, 48 cook in 9 ms median, no hem holds a 50° run stride (+13..+133 %). Next p10c op + app + PH-3.
+- 2026-10-18 (u1b): M5 U1 [x] part 2: `sf_ui_bevy` (screen-stack router over per-input-context BEI entities, consume + require_reset UI actions, rebindable `UiBindings`, confirm → `Activate`, layer-aware `AutoDirectionalNavigation` + focus memory + repeat, `InputMode` + glyphs); UI sets must run before BEI `Prepare` (else a closing modal's B reached the menu); 6 headless tests, `ui_nav --autotest` synthetic-gamepad PASS, clippy clean; UI-1 awaiting owner. Next: u1c glue (VFS Fluent, settings/bindings ↔ profile) or U2.

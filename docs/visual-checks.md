@@ -1629,3 +1629,14 @@ a calm ring on its upwind edge where it cancels the wind) that grows in 0.05 s a
 (arrows circling); Up/Down change speed without the pattern jumping; G cycles gustiness 0 / 0.3 / 0.6 (0 = uniform
 green). Known: no consumer in the game samples the GPU field yet (grass, trees, rain lanes); in game only the fog and
 cloud drift direction follow it.
+
+### UI-1: Gamepad-only navigation, synthetic (`cargo run -p sf_ui_bevy --example ui_nav` in `../superfargoth`)
+
+Status: **awaiting owner** (M5 U1, u1b, 2026-10-18). Shot: `shots/u1b/ui_nav_modal.png` (`-- --autotest <png>`: a
+synthetic gamepad runs 40 checked steps and exits 0). Plug in a real pad and use only it. Look for: Start opens the
+menu (focus on Inventory, yellow border); d-pad and left stick move focus between the six buttons, holding a direction
+repeats after a short delay; A on Quit opens the modal with focus on No; inside the modal Up/Down never move focus to
+the menu behind it; B closes the modal and focus returns to Quit; B again closes the menu; the bottom-left line
+switches between `Kbm` and `Gamepad` labels (Esc/Enter vs Menu/A) the moment you touch the other device, and never
+flickers while a pad button is held and the mouse moves. Known: plain placeholder styling (themes are U2/U3), Xbox
+labels for every pad (per-family glyph icons are U3).
