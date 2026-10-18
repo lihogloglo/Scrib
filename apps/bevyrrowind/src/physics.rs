@@ -31,7 +31,9 @@
 //! - Knockdowns (P8b) and hit reactions (P9): capsule impacts of at least
 //!   [`KNOCKDOWN_IMPULSE`] knock a walker down (powered ragdoll, get-up from
 //!   the `Knockout@tail` clip's first frame); lighter ones kick the graph's
-//!   `HitReact` springs.
+//!   `HitReact` springs. An impact is the incoming body's momentum at first
+//!   contact (`sf_physics::impact_impulse`), never the solver's contact
+//!   force: walking into a ball lying on the street is no hit.
 //! - `BEVYRROWIND_AUTO` ([`Auto`]): scripted kills, throws and screenshots
 //!   for agents verifying without a keyboard.
 
@@ -184,7 +186,7 @@ fn kill(root: Entity, body: &CharacterBody, animators: &mut Query<&mut Animator>
     info!("ragdoll: killed {root} ({})", body.skeleton);
 }
 
-/// Contact impulse on a character's capsule (N·s) that knocks it down: the
+/// Impact momentum on a character's capsule (N·s) that knocks it down: the
 /// P8b debug driver's threshold (a `V` ball at full throw). Removal: the
 /// adapter's knockdown rule (fatigue and agility) in `mw_physics`.
 pub const KNOCKDOWN_IMPULSE: f32 = 15.0;

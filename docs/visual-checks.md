@@ -1392,12 +1392,27 @@ from the settled start, ~13 s after launch in release). Orchestrator re-run (`ba
 fly, but the first 2 m/s ball knocked its walker down at **72 N·s** ~1.9 s after the throw (likely the walker
 walking into the ball on the street), and neither soft ball logged a `hit react`. Bug, back to physics (P9).
 
+Fix 2026-10-18 (p9soft): impacts are now the incoming body's momentum at first contact (`PhysicsEvent::Hit`,
+`sf_physics::impact_impulse`: `m · min(v_by·n, closing speed)` from rapier's pre-solve `CollisionEvent::Started`),
+not the solver's contact force (a walker pressing a resting 3 kg ball into a wall measured 423 N·s that way; now no
+hit). Second cause, found by test: the character push zone (wider than the capsule) batted incoming soft balls away
+before they touched (no hit at all) and braked balls from behind; pushes now skip trailing-side and incoming
+(> 0.25 m/s) bodies. `impact_threshold` 5 → 1 N·s. Tests: sf_physics `character_tests` (soft hit 6.0 N·s, chasing
+ball = closing speed, approaching walker, walking into a resting ball = no hit). Agent re-run (release, the
+orchestrator's `ball_at_nearest:2@4,...,ball_at_nearest@16` run): `hit react: 3915v0 (6.4 N·s, strength 0.43)`
+(second soft ball), `knocked down 3915v0 (35 N·s)` (12 m/s), `got up`; no knockdown from a ball on the street.
+Open: the first soft throw at a newly framed walker fell short of the chest (sanity shot: ball in the air at knee
+height in front, no contact; an aim issue in the `BEVYRROWIND_AUTO` throw, not detection; it hit in the previous
+run, 2.6 N·s); the knocked-down ragdoll tumbling into a neighbour gave it ~10 small `hit react`s (1–5 N·s) in
+1.5 s (real contacts; no per-character cooldown yet); hit strength tuning not done (owner: don't polish).
+Awaiting owner.
+
 Status: **awaiting owner** (physics-p9, 2026-10-13; agent-run 2026-10-18, p9fin: log `hit react: ... (5.9 N·s,
 strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself needs eyes on the live run; tails not run).
 - Kind: game location. Run (release): `$env:BEVYRROWIND_AUTO="ball_at_nearest:2@3,shot:shots/p9/hit.png@3.88,ball_at_nearest:2@6,exit@9"; .\bevyrrowind scene wk-balmora`
   (a new target is framed first and the ball leaves 0.5 s later; a 3 kg ball at 2 m/s released 0.6 m from the
   chest, about 6 N·s, under the 15 N·s knockdown; lobbed from 4 m any ball lands at ≥ 6 m/s, 18 N·s, a knockdown;
-  the `V` key always throws at 12 m/s, a knockdown). Hits under 5 N·s (`CharacterPhysics::impact_threshold`) don't
+  the `V` key always throws at 12 m/s, a knockdown). Hits under 1 N·s (`CharacterPhysics::impact_threshold`) don't
   reach the graph at all. Tails: `.\bevyrrowind view "Seyda Neen"` near the guars
   south of the lighthouse road, or `character --walk` on an Argonian/Khajiit.
 - What to look for: the hit walker's torso and head flinch away from the ball (peak ~0.09 s after the hit, back on
