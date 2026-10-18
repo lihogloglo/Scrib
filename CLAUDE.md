@@ -32,7 +32,10 @@ working tree**. Protocol:
    project, not only ours: the owner builds other projects on the same
    machine (e.g. Ovid, whose cargo lives in `%TEMP%\ovid-build-tools`).
    If another build is running, wait for it, using a background `until` loop rather than
-   sleeping. Keep the build/test/run cycle short so you don't hold the
+   sleeping. **Run every cargo command through `bash tools/cargo_turn.sh <cargo args>`**
+   (from superfargoth: `bash ../bevyrrowind/tools/cargo_turn.sh ...`): it waits for the
+   slot and runs at BelowNormal priority, so a check and its build can't drift apart.
+   Keep the build/test/run cycle short so you don't hold the
    machine for long; spec-only sessions shouldn't need to build at all.
 3. **Shared files.** `docs/ROADMAP.md`: edit only your milestone's section
    plus one session-log line. ARCHITECTURE.md §10: append only. Workspace
