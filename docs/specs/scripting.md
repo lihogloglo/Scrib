@@ -4,7 +4,9 @@ Status: draft (2026-10-13, m5-spec session, docs only). Built in M5. L1 (`sf_scr
 done 2026-10-13 (m5-l1): numbers in "Spike results (L1)"; decision 1 confirmed. L2 (`sf_script_bevy`)
 done 2026-10-13 (m5-l2): "As built (L2)". L3 (API v0.1: core, events, timers, interfaces, world with
 spawn/despawn and entity scripts, `on_load`, generated `.d.luau`) done 2026-10-13 (m5-l3): "As built (L3)";
-`@sf/records`, `@sf/input`, `@sf/anim`, `@sf/physics` not yet.
+verified in the game app 2026-10-18 (spawn/despawn, entity script state and tick, `handled` blocks the
+default action, unhandled door activation still travels). `@sf/records`, `@sf/input`, `@sf/anim`,
+`@sf/physics` and MS-2: parked (owner 2026-10-18, Lua parked after L3).
 Crates (proposed): `sf_script` (Bevy-free: runtime, sandbox, API registry, state, timers, events),
 `sf_script_bevy` (plugin: schedule slots, world access, entity handles, hot reload, diagnostics),
 API modules next to the systems they expose (`sf_ui_lua` per ui.md; small modules may live in
