@@ -354,10 +354,18 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
             .filter(|w| w.distance > 0.0)
             .map(|w| (w, speed));
         let flies = c.creature_flags.contains(CreatureFlags::FLIES);
+        // Scaffold (fallfix): pure swimmers (slaughterfish) hold their depth
+        // without gravity, `Fly { hover: None }` with a level intent, until the
+        // water queries (M6) feed `MoverMode::Swim` its surface; remove with that
+        // wiring. As `Ground` movers they sank into the sea floor at load.
+        let swims = c.creature_flags.contains(CreatureFlags::SWIMS)
+            && !c.creature_flags.contains(CreatureFlags::WALKS);
         let mode = if flies {
             MoverMode::Fly {
                 hover: Some(FLY_HOVER),
             }
+        } else if swims {
+            MoverMode::Fly { hover: None }
         } else {
             MoverMode::Ground
         };
@@ -414,10 +422,12 @@ fn attach(
             mover.body_scale = t.scale;
         }
         let mut e = commands.entity(entity);
+        // Parked until `processing_range` finds its ground loaded.
         e.insert((
             mover,
             MoveIntent::default(),
             ActorSpace(location.worldspace.clone()),
+            Dormant,
         ));
         if let Some((wander, speed)) = setup.wander {
             let seed = entity.to_bits() ^ 0x5741_4C4B;
@@ -451,19 +461,30 @@ type Unprocessed = (Without<crate::physics::Dead>, Without<crate::physics::Knock
 /// ground and static colliders are loaded (R0 activation builds them).
 /// Elsewhere it is [`Dormant`]: parked where it stands, its scaffold paused,
 /// its animation significance lowered so the budget gives it a low tier.
-#[allow(clippy::needless_pass_by_value)]
+///
+/// On physics, R0 activation only queues the statics: they go in over the
+/// following frames under the insert budget. A dormant mover wakes only
+/// once no static around it is still queued (the collision-ready gate,
+/// `PhysicsStreaming::collision_loading`): woken earlier, it fell through
+/// the floor that arrived a few frames later (fallfix, 2026-10-18). Exterior
+/// movers also wait for the terrain heights around them.
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn processing_range(
     mut commands: Commands,
     streaming: Res<Streaming>,
     active: Res<ActiveWorldspace>,
-    movers: Query<(Entity, &Mover, &ActorSpace, Has<Dormant>), Unprocessed>,
+    ready: GroundReady,
+    movers: Query<(Entity, Ref<Mover>, &ActorSpace, Has<Dormant>), Unprocessed>,
     mut lods: Query<&mut AnimLod>,
 ) {
     let scheduler = streaming.scheduler();
     for (entity, mover, space, dormant) in &movers {
+        let pos = mover.loco.position;
         let awake = active.0.as_ref() == Some(&space.0)
-            && scheduler.covers(&space.0, mover.loco.position, PROCESS_MARGIN, Level::Active);
-        if awake != dormant {
+            && scheduler.covers(&space.0, pos, PROCESS_MARGIN, Level::Active)
+            && !(dormant && ready.loading(&space.0, pos));
+        // A fresh mover starts dormant (`attach`): it still gets its significance.
+        if awake != dormant && !mover.is_added() {
             continue;
         }
         if awake {
@@ -475,6 +496,35 @@ fn processing_range(
             lod.significance = if awake { 1.0 } else { DORMANT_SIGNIFICANCE };
         }
     }
+}
+
+/// The collision-ready gate's inputs (see [`processing_range`]).
+#[derive(bevy::ecs::system::SystemParam)]
+struct GroundReady<'w> {
+    ground: Ground<'w>,
+    physics: Option<Res<'w, sf_physics_bevy::PhysicsStreaming>>,
+    heights: Option<Res<'w, TerrainHeightsMap>>,
+}
+
+impl GroundReady<'_> {
+    /// Whether the ground around `pos` in `ws` is still streaming in: a
+    /// static queued for physics, or terrain heights not resident.
+    fn loading(&self, ws: &WorldspaceId, pos: WorldPos) -> bool {
+        let statics = self.physics.as_deref().filter(|_| self.ground.on_physics());
+        statics.is_some_and(|s| s.collision_loading(ws, pos, PROCESS_MARGIN))
+            || self.heights.as_deref().is_some_and(|h| terrain_missing(h, ws, pos))
+    }
+}
+
+/// Whether `ws` has terrain but its heights around `pos` (the processing
+/// square's corners) are not resident yet: the ground probe would find no
+/// terrain there.
+fn terrain_missing(heights: &TerrainHeightsMap, ws: &WorldspaceId, pos: WorldPos) -> bool {
+    let Some(h) = heights.0.get(ws) else { return false };
+    let m = PROCESS_MARGIN;
+    [(0.0, 0.0), (-m, -m), (m, -m), (-m, m), (m, m)]
+        .into_iter()
+        .any(|(dx, dz)| h.height(pos.offset(Vec3::new(dx, 0.0, dz))).is_none())
 }
 
 /// The scaffold writes intents (and route directions for ORCA's yield rule).
@@ -664,7 +714,11 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             PostUpdate,
             stride_monitor.after(sf_anim_bevy::AnimSystems::Evaluate),
         )
-        .add_systems(Update, (gizmos, report));
+        .add_systems(Update, (gizmos, report))
+        .add_systems(
+            Update,
+            log_fell_out.run_if(resource_exists::<Messages<sf_physics_bevy::CharacterFellOut>>),
+        );
 }
 
 /// Every 5 s: what the walkers do (log only; counters carry the timings).
@@ -693,11 +747,13 @@ fn report(
         // Pushing without progress (blocked, crowded): the graph is told the
         // measured speed, so these stand instead of walking in place.
         blocked += usize::from(!d && m.applied.desired_velocity.length() > 0.5 && m.measured.length() < 0.25);
-        grounded +=
-            usize::from(m.loco.grounded.is_some() || !matches!(m.loco.mode, MoverMode::Ground));
+        // Of the simulating movers (dormant ones keep their last state).
+        grounded += usize::from(
+            !d && (m.loco.grounded.is_some() || !matches!(m.loco.mode, MoverMode::Ground)),
+        );
     }
     info!(
-        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} grounded, {stuck} walks given up: {} steep, {} wall, {} other; {} on a first leg, {} off the pathgrid; {} rerouted around a blocked edge), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
+        "walkers: {} movers + {dormant} dormant ({walkers} wander, {walking} moving, {grounded} awake grounded, {stuck} walks given up: {} steep, {} wall, {} other; {} on a first leg, {} off the pathgrid; {} rerouted around a blocked edge), {} statics, terrain {}; last frame avoid {:.0} us, move {:.0} us, feed {:.0} us",
         stats.movers,
         give_ups.steep,
         give_ups.wall,
@@ -1023,5 +1079,22 @@ impl GiveUps {
             );
         }
         kind
+    }
+}
+
+/// The physics fell-out safety net caught a walking character under the
+/// kill height and put it back on its last ground: collision was missing
+/// under it (a streaming gap the collision-ready gate should have held).
+fn log_fell_out(mut fell: MessageReader<sf_physics_bevy::CharacterFellOut>, names: Query<&Character>) {
+    for f in fell.read() {
+        let who = match names.get(f.entity) {
+            Ok(Character::Record { id, .. }) => id.as_str().to_owned(),
+            _ => format!("{}", f.entity),
+        };
+        warn!(
+            "walkers: {who} fell out of the world at {:.1?}, returned to its last ground {:.1?}",
+            f.from.to_f64(),
+            f.to.to_f64()
+        );
     }
 }

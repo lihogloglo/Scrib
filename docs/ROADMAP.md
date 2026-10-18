@@ -800,6 +800,12 @@ ragdolls; robes move." Tasks in dependency order:
   builds): insert peaks **0.45–0.55 ms/frame** (was 0.53–0.65), idle step peaks without a rebase **0.45–0.56 ms**
   (gate 0.3: still missed, items' first steps), with rebases 0.99–2.0 ms; frames median 18.65 ms, p99 26.5, worst
   32.9. Not done: walkers through cluttered floors (PH-8 scene work).
+  **Fall-through fix (fallfix, 2026-10-18).** NPCs in the Census office fell from load at 50 m/s (-11.8 km): R0
+  activation woke movers while their floor static still waited for insert budget. Collision-ready gate: movers start
+  `Dormant` and wake only when `PhysicsStreaming::collision_loading` is false and the terrain heights around them are
+  resident; safety net `character::fell_out` (in the air > 2 m under resident terrain, else under the kill height:
+  back to the last walkable ground, `CharacterFellOut` logged); pure swimmers float (`Fly`, scaffold until M6 Swim).
+  Tests `streamed_ground` (sf_physics_bevy); office NPCs at y 2.74 for 3+ min, Seyda Neen 0 fell-outs over 2 min.
 - [~] P6 Carry, drag and throw: pick ray, kinematic hand + 6-DOF motor joint with force cap, break distance,
   drag mode (ball joint at the grab point, holder slowed) for objects over the carry mass and for limp ragdolls by the
   grabbed limb (dead bodies), `HolderLimits` (carry force, carry mass, drag mass, throw impulse) from the adapter,
@@ -1592,3 +1598,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (w3fin): M6 W3 [~] wired in the app: shore field baked at start (0.5 s, worker thread) for wave damping + shore foam, region optics map with retuned optics (backscatter-sized body colour: not milky; swamp olive, lagoons teal, sea blue), interior pools at WHGT, height fog input, `--quality` -> water tier; scene wa-interior-pool; WA-2/WA-6 awaiting owner (interior pool draws black: open); in-app GPU measurements open (no quiet machine).
 - 2026-10-18 (p9fin): M4 P9 [~] app-run in `scene wk-balmora` (release, `BEVYRROWIND_AUTO`): kill, 12 m/s knockdown (36 N·s) + get-up from the `Knockout@tail` clip (no scaffold), 2 m/s hit react (5.9 N·s); fixes: `mark_settled` always runs (the auto hook never fired), auto throws frame first, release slow balls close and lead walkers; PH-2/PH-9/PH-10 agent-run, awaiting owner; open: stretch peaks 1.4–5.6 cm, one intermittent despawned-entity panic, P8b sleep/effector/cost items.
 - 2026-10-18 (w3pool): WA-6 interior pool black fixed: not the snapshot but the froxel fog (interiors drop `CloudCamera`, the unwritten `FroxelVolume` was still flagged live, transmittance 0); `sf_atmos_bevy` `update_volume` sets `params.w` = 1 only with an active cloud camera. Shots `shots/w3pool/`; WA-6 awaiting owner.
+- 2026-10-18 (fallfix): NPCs falling through floors fixed (M4 P5): collision-ready gate for movers (wait for queued statics + resident terrain heights), fell-out safety net for characters, swimmers float until Swim; tests in sf_physics_bevy; verified over BRP (Census office + Seyda Neen).
