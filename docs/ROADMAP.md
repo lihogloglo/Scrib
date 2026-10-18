@@ -1290,7 +1290,9 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   attenuation + foam, region optics map (optics retuned: no longer milky, hue by region, fainter shore foam), interior
   pools (`WaterSurface`) at `WHGT`, height fog input; shots `shots/w3/`; WA-2, WA-6 awaiting owner. Interior pool
   black fixed (w3pool: unwritten froxel volume applied in interiors, `sf_atmos_bevy` `FroxelVolume.params.w` now 0
-  without an active `CloudCamera`). Open: in-app GPU counters, sea-under-land counter, wet band
+  without an active `CloudCamera`). Owner 2026-10-18: WA-6 and region colour confirmed; **unfinished, parked by the
+  owner**: shore foam is a uniform white band (Vivec waterfront), open-sea swell very small even at wind 14/20 m/s.
+  Open: in-app GPU counters, sea-under-land counter, wet band
   (SU1), body overlap report, `water_bodies` example. Handoff: water.md / water-adapter.md "As built (W3)".
 - [ ] W4 Reflections (water.md step 2, "Off-screen reflections"): SSPR compute for the dominant plane, camera-centred dynamic reflection probe (sky + terrain + far proxies, one face per 4 frames), content probes, Fresnel; reflection A/B
   `--off sspr`. Waits for W2. Verify: WA-4 Vivec canals at sunset (cantons reflected, no streaks at screen edges),
