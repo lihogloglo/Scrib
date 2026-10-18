@@ -501,7 +501,7 @@ Glue between `sf_ui`/`sf_ui_bevy` and the mod pipeline (`sf_mods`, `sf_vfs`); `s
   far); `UiSettings` (live presentation) isn't fed from `ui.setting` values; PlayStation/Switch glyph names; focus
   visuals by `InputMode` (U2).
 
-## As built (U2 part 1, 2026-10-18)
+## As built (U2, 2026-10-18)
 
 `superfargoth/crates/sf_ui_css` on `bevy_flair` 0.9.0 (crates.io, Bevy 0.20). 6 tests (`cargo test -p sf_ui_css`),
 clippy pedantic clean. The only crate linking flair; flair types stay inside it (`UiClass` wraps its class list).
@@ -533,10 +533,15 @@ clippy pedantic clean. The only crate linking flair; flair types stay inside it 
 - Tests: composer (layer order = load order, owners, identifier names); headless flair app (a later mod beats a more
   specific earlier rule, reordering mods restyles live; an invalid value is reported against `broken` while its valid
   rule applies; `input` attribute and preset class select rules).
-- **Not yet verified (U2 part 2)**: example `ui_css` (three mod sheets, HUD shows the report, `--autotest [dir]`
-  rewrites a sheet on a temp copy and waits for hot reload, before/after screenshots) compiles but has not run; hot
-  reload of a content-source edit through the root's loader dependency is untested. Leftover: flair logs the same
-  sheet error twice (root import + probe).
+- **Verified (part 2, u2b)**: example `ui_css` (three mod sheets, HUD shows the report). `--autotest [dir]` on a
+  temp copy: buttons styled by the later mod (#2e7d32), exactly one issue attributed to `broken_mod`, then the mod's
+  sheet is rewritten on disk and the new colour applies after 0.33 s (`ui_css_before.png` / `ui_css_after.png`).
+  **Hot reload needs no extra code**: the `sf_ui_content` watcher marks the edited file changed, Bevy reloads every
+  asset that has it as a loader dependency (the root sheet imports it) and the probe, and flair restyles; the
+  `server.reload(root)` fallback planned for this case wasn't needed. `ui_nav --autotest` still PASS; clippy
+  pedantic clean. Visual check UI-2 (bevyrrowind `docs/visual-checks.md`) awaiting owner.
+- Leftovers: flair logs the same sheet error twice (root import + probe); the examples log Bevy's "no default
+  assets dir" watcher warning (only `sf_ui_content` is used).
 
 ## Industry comparison
 
