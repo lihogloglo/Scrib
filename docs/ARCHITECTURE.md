@@ -1753,3 +1753,12 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   `rel`; this is the pattern for any future twin noise. Twins are verified by running the WGSL headless with `wgpu`
   (dev-dependency, Bevy's version; software fallback; skip without an adapter), tolerance 1e-4 relative above 1 m/s
   (GPUs contract multiply-adds), not by naga or CPU-generated golden tables.
+- **2026-10-18 (wd1b, M6 WD1 part 2; specs/weather.md "Wind as built (WD1 part 2)"): shared per-frame GPU data goes in
+  a fixed-size Bevy `ShaderBuffer` asset that carries last frame's copy too.** `sf_wind_bevy` uploads one 3 264 B
+  storage buffer (`params`, `prev_params`, `sources[32]`, `prev_sources[32]`): same size each frame, so Bevy rewrites
+  it in place and every material binding it with `#[storage(n, read_only)]` keeps its bind group. Motion vectors use
+  the previous copy (Bevy's skinning/morph pattern), re-framed at the current floating origin. A shader library that
+  declares a binding takes its slot from UInt shader defs read as `constants::*` (`SF_WIND_GROUP`/`SF_WIND_BINDING`),
+  as bevy_pbr does for `MATERIAL_BIND_GROUP`. A Bevy-free crate's WESL string registers as a UUID-handle `Shader` at
+  `embedded://<crate>/<module>.wesl` (module `<crate>::<module>`). Thin plugins take the floating origin from an
+  app-written resource (`WindOrigin`, like `CloudsOrigin`) instead of depending on `sf_world_bevy`.

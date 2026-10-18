@@ -6128,6 +6128,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_wind_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_platform",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_time",
+ "sf_coords",
+ "sf_wind",
+]
+
+[[package]]
 name = "sf_world"
 version = "0.1.0"
 dependencies = [

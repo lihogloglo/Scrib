@@ -1,0 +1,33 @@
+[package]
+name = "sf_wind_bevy"
+description = "Bevy plugin for sf_wind: advances the wind field each frame, uploads it (current + previous frame) and registers its WESL modules (weather.md \"Wind\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). No sf_world_bevy: the app writes the
+# floating origin into `WindOrigin` (like sf_atmos_bevy's `CloudsOrigin`).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# Assets<ShaderBuffer>, Assets<Shader>, uuid handles.
+bevy_asset.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_math = { workspace = true, features = ["std"] }
+# Instant for the upload timer.
+bevy_platform = { workspace = true, features = ["std"] }
+# ShaderBuffer: the one storage buffer consumers bind.
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+sf_coords = { path = "../sf_coords" }
+sf_wind = { path = "../sf_wind" }
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+
+[lints]
+workspace = true
+
+# Synthetic scene: arrows from the CPU twin over a ground shaded by the GPU field, radial burst on Space.
+[[example]]
+name = "wind"

@@ -787,6 +787,58 @@ spherical (no tornado height). Motion vectors need last frame's `WindParams` (wd
 let consumers pass it). Cloud wind keeps its own altitude speed (clouds read only the direction).
 `WindTerms` easing belongs to `sf_weather` (WE1).
 
+### Wind as built (WD1 part 2, wd1b, 2026-10-18): `sf_wind_bevy`
+
+**Reuse check (rule 8).** Bevy 0.20's `ShaderBuffer` asset (`bevy_render::storage`) is the upload: a
+same-size rewrite is a `queue.write_buffer` into the existing GPU buffer, so bind groups (and every
+material that binds it with `#[storage(n, read_only)]`) stay valid. WESL modules go through
+`bevy_shader` as usual. Nothing to build but the glue.
+
+**Plugin** (`WindPlugin { wind, settings }`; deps `bevy_app/asset/ecs/math/platform/render/shader/time`,
+`sf_coords`, `sf_wind`; **not** `sf_world_bevy` as planned above: the app writes the origin, like
+`sf_atmos_bevy::CloudsOrigin`, which keeps big_space and the streaming graph out of the crate):
+- `WindField` resource: `state: WindState` (weather writes `state.wind`, gameplay `add_source`),
+  `settings`, and after `WindSystems::Advance` (`PostUpdate`) `frame()` / `prev_frame()` / `sample(rel, h)`
+  (the CPU twin for cloth, particles, audio). `WindOrigin(WorldPos)`: written by the app before
+  `PostUpdate`'s advance. `WindStats`: CPU ms of the advance + upload.
+- Each frame: `state.advance(dt)` (virtual time, so pausing stops the wind), `frame(origin)`, and the
+  previous state framed at the **current** origin; pack and rewrite the buffer.
+- **One buffer, not uniform + storage** (the handoff's plan): `WindBuffer(Handle<ShaderBuffer>)` holds
+  `WindData { params, prev_params, sources: array<WindSource, 32>, prev_sources: array<WindSource, 32> }`,
+  3 264 B, fixed size (so "bind at least one element" never arises and the size never changes). One
+  binding slot per consumer, and materials get it through `AsBindGroup` with no custom bind group.
+- Without rendering (`Assets<Shader>`/`Assets<ShaderBuffer>` absent, a server) only the CPU field runs.
+
+**WESL.** `sf_wind::WESL` is inserted as a UUID-handle `Shader` at path `embedded://sf_wind/field.wesl`;
+bevy_shader turns `embedded://a/b.wesl` into module `a::b`, so consumers `import sf_wind::field::...`.
+`sf_wind_bevy::wind` (`src/wind.wesl`, `load_shader_library!`) declares
+`@group(constants::SF_WIND_GROUP) @binding(constants::SF_WIND_BINDING) var<storage, read> wind: WindData`
+and `wind_sample(rel, above_ground)` / `wind_sample_prev(...)` (global + loop over the live sources).
+The slot comes from two UInt shader defs (`wind_shader_defs(group, binding)`), which bevy_shader exposes
+as `constants::*` (the pattern bevy_pbr uses for `MATERIAL_BIND_GROUP`).
+
+**Motion vectors (choice).** The buffer carries last frame's field (`prev_params`, `prev_sources`);
+prepass shaders call `wind_sample_prev` beside `wind_sample`. This is how Bevy handles every other
+vertex animation (previous joint matrices for skinning, previous morph weights): a second copy of last
+frame's inputs, not "sample again at `t − dt`" (the field is integrated, so last frame can't be
+recomputed from a time). Last frame is re-framed at the current origin, so a consumer passes the same
+origin-relative position to both and an origin shift adds no false motion.
+
+**Upload cost.** Advance + two `frame()` + pack + buffer write, 32 live sources (worst case), measured
+by `cargo test -p sf_wind_bevy upload_cost` (the dev/test profile here is optimized): **0.0025 ms** mean over
+2 000 frames (gate 0.02 ms); the `wind` example logs 0.003-0.007 ms per frame live (RTX 4060 laptop).
+
+**Example** `cargo run -p sf_wind_bevy --example wind`: 21×21 CPU-twin arrows (gizmos, 2 m) over a
+ground shaded by the GPU `wind_sample` (calm dark blue, mean green, 2× mean yellow); Space radial burst,
+V vortex, Up/Down speed, G gustiness; `--screenshot out.png --frames N --burst F`.
+
+**App** (bevyrrowind `exterior.rs`): the weather's `Wind` feeds `WindField.state.wind` (until WE1's
+`sf_weather` writes it), the terrain origin feeds `WindOrigin`; fog drift reads the field's mean
+velocity; clouds take the field's direction at their own altitude speed (Morrowind `Cloud Speed`).
+
+**Open.** No consumer samples the GPU field in game yet (grass, trees, precipitation: their lanes). Cloud
+and fog drift take the mean wind only (no gusts at that scale, by design).
+
 ## Precipitation
 
 **Technique** (Tatarchuk 2006; RDR2 and Watch Dogs follow the same structure):
