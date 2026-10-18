@@ -297,6 +297,8 @@ pub struct Lightning {
     pub per_hour: f32,
     /// Flash intensity scale.
     pub flash: f32,
+    /// Flash fade-out, real seconds (a visual: it doesn't follow the game clock).
+    pub fade_s: f32,
     /// Strike distance range from the camera, meters.
     pub distance_m: [f32; 2],
     /// Thunder sounds (one is picked per strike).
@@ -305,7 +307,7 @@ pub struct Lightning {
 
 impl Default for Lightning {
     fn default() -> Self {
-        Self { per_hour: 12.0, flash: 1.0, distance_m: [300.0, 6_000.0], thunder: Vec::new() }
+        Self { per_hour: 12.0, flash: 1.0, fade_s: 0.25, distance_m: [300.0, 6_000.0], thunder: Vec::new() }
     }
 }
 

@@ -70,6 +70,8 @@ pub struct LightningStrike {
     pub azimuth: f32,
     pub distance_m: f32,
     pub flash: f32,
+    /// Flash fade-out, real seconds ([`crate::Lightning::fade_s`]).
+    pub fade_s: f32,
     /// Thunder sound, delayed by `distance_m / 343` real seconds.
     pub thunder: Option<RecordId>,
 }
@@ -438,6 +440,7 @@ fn strikes(book: &WeatherBook, state: &WeatherState, climate: ClimateIx, weight:
                 azimuth: hash::unit(hash::mix(h ^ 2)) as f32 * TAU,
                 distance_m: l.distance_m[0] + (l.distance_m[1] - l.distance_m[0]) * d,
                 flash: l.flash,
+                fade_s: l.fade_s,
                 thunder,
             });
         }

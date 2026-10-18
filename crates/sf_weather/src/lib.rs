@@ -24,6 +24,10 @@ mod hash;
 mod records;
 mod state;
 
+/// The term types' crates, for adapters that build presets from cloud
+/// genera, hour curves and wind sources without depending on them directly.
+pub use {sf_atmos, sf_sky, sf_wind};
+
 pub use book::{ClimateIx, PrecipIx, PresetIx, WeatherBook};
 pub use frame::{
     BORDER_BAND_M, CueFrame, LIGHTNING_CAP_PER_HOUR, LightningStrike, MAX_VISIBILITY_M, PrecipFrame, StormFrame, WeatherFrame,
