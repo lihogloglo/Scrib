@@ -913,9 +913,29 @@ ragdolls; robes move." Tasks in dependency order:
   for 0.5 s → `get_up_root` with `Knockout@tail` sampled at 0 → move the walker root, graph `knocked_out` false,
   `inertialize_from` the last two ragdoll poses (relative to the new root); root follows `implied_frame` while
   dead; sleep → `ragdoll` state blob + placed corpses; app `I`/`V` run, PH-2 screenshot scene, PH-9.
-- [ ] P9 `HitReact` + `SpringBones` ops (animation.md layer 4; `SpringBones` is the base the cloth op extends).
+- [~] P9 `HitReact` + `SpringBones` ops (animation.md layer 4; `SpringBones` is the base the cloth op extends).
   Verify: `cargo test -p sf_anim_graph` (spring decay, no drift at any frame rate); a guar's tail and an NPC hit below
   A0 react kinematically.
+  **As built (physics-p9 2026-10-13, committed superfargoth 06fd609 / bevyrrowind 0a1405d; app-run by p9fin
+  2026-10-18):** `sf_anim_graph::secondary`: `HitReact` (hit joint + up to `depth − 1` reactive ancestors kicked about
+  `lever × direction`, Holden closed-form critical rotation springs, peak `gain · strength` after `halflife / (2 ln 2)`,
+  exact return to the animation; runs after foot placement), `GraphInstance::hit(Hit)`; `SpringBones` (Verlet chains in
+  character space, fixed 1/120 s substeps, frequency Hz + damping ratio, gravity, inertia from `UpdateInputs::moved`,
+  `max_angle` cone). Reuse check in animation.md (Bevy has none; `bevy_skeleton_modifiers` runs outside our op stack).
+  `mw_graphs`: both ops on the humanoid and creature templates (not first person). `sf_physics_bevy::clip_root_body`:
+  the get-up root from `Knockout@tail`'s first frame (`LYING_REST_GET_UP` only for skeletons without it). App
+  (`physics.rs`): impacts 1–15 N·s → `hit` (strength impulse / 15), ≥ 15 N·s knockdown, mover yaw after the get-up,
+  `BEVYRROWIND_AUTO` dev hook (kill / throw / screenshot / exit; frames a new target 0.5 s before it throws, releases
+  slow balls close so `:2` stays a hit react, leads walking targets); `mark_settled` now always runs (the hook waits
+  for `Settled`, which only `--use-door` used to insert). **App run** (release, `scene wk-balmora`, all throws hit):
+  `ragdoll: killed`, 0 failed; 12 m/s ball `knocked down (36 N·s)`, `got up` 2.2–2.5 s later, no scaffold line;
+  2 m/s ball `hit react (5.9 N·s, strength 0.40)`, also right after a get-up. 3 tests (frame-rate independence at
+  30/60/144 fps, no drift, sag); clippy pedantic clean. Shots `shots/p9/{kill,knock,getup,hit}.png`.
+  **Open:** owner PH-2/PH-9/PH-10 (the flinch and tails need eyes; tails never run in the app); joint stretch peaks
+  1.4–2.8 cm per ragdoll (5.6 cm once on a knockdown right after a get-up) vs the 1 cm PH-2 target; one intermittent
+  panic in run 5 (a command on a despawned entity, 77983v0, at the first auto refocus; not reproduced in 3 reruns);
+  P8b items unchanged: sleep-state ragdoll blob + placed corpses (not started), effector gate (6.8/11.0 cm vs 5),
+  cost gate (0.129 ms/char vs 0.05); no performance gate measured for P9.
 - [ ] P10 Cloth (`cloth.cook` in `sf_character`, `ClothLattice` op in `sf_anim`, `mw_physics::ClothRules`): robe and
   skirt lattices, outfit joints in the merged palette, XPBD in character space with inertia scaling, tethers, max
   distance, leg/pelvis/tail capsules; census of robe/skirt parts.
@@ -1569,3 +1589,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (m6-w3, stopped early at owner usage limit, uncommitted): W2 leftovers part 1 + W3 groundwork: fused 2-dispatch FFT with runtime grid (128/256), `WaterQuality` tiers, High alternates the 256/64 m cascades (example 1600×900, shared machine: `water_fft` 0.22 → 0.139 ms + `water_mips` 0.023 ms; golden 1.0 mm), slopes mips, pipeline warm-up at startup, analytic height fog path, `sf_water::shore` (FH EDT + openness by geodesic distance, CPU query attenuation; 3 tests), `WaterSurface` (lakes/pools/interiors), region optics map in the shader, `mw_water` `wet_mask`/`optics_map` + less milky optics (2 tests). App wiring, screenshots, 1440p and DLSS checks not done; handoff in `../.sessions/m6-w3.md`.
 - 2026-10-18 (l3fin): M5 L3 done for v0.1: real run in the Census office (dev exe, scratch `l3_test` mod, `--activate 4`): `on_load` with player position, entity script `counter` attach/state/tick, two LiveSpawn copies seen in the room, temp copy despawned, "handled by a script" from the 3rd activation; Space on the office door still travels (unhandled `ActivationOutcome`). No fixes. `@sf/records`/`input`/`anim`/`physics` and MS-2 parked (owner, Lua parked).
 - 2026-10-18 (w3fin): M6 W3 [~] wired in the app: shore field baked at start (0.5 s, worker thread) for wave damping + shore foam, region optics map with retuned optics (backscatter-sized body colour: not milky; swamp olive, lagoons teal, sea blue), interior pools at WHGT, height fog input, `--quality` -> water tier; scene wa-interior-pool; WA-2/WA-6 awaiting owner (interior pool draws black: open); in-app GPU measurements open (no quiet machine).
+- 2026-10-18 (p9fin): M4 P9 [~] app-run in `scene wk-balmora` (release, `BEVYRROWIND_AUTO`): kill, 12 m/s knockdown (36 N·s) + get-up from the `Knockout@tail` clip (no scaffold), 2 m/s hit react (5.9 N·s); fixes: `mark_settled` always runs (the auto hook never fired), auto throws frame first, release slow balls close and lead walkers; PH-2/PH-9/PH-10 agent-run, awaiting owner; open: stretch peaks 1.4–5.6 cm, one intermittent despawned-entity panic, P8b sleep/effector/cost items.

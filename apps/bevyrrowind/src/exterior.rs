@@ -138,7 +138,8 @@ struct Capture {
 #[derive(Resource)]
 struct Started(Instant);
 
-/// Inserted once the start has fully streamed in (`--use-door` waits for it).
+/// Inserted once the start has fully streamed in (`--use-door` and
+/// `BEVYRROWIND_AUTO` wait for it; `--use-door` removes it for each trip).
 #[derive(Resource)]
 pub struct Settled;
 
@@ -310,15 +311,14 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 .before(sf_atmos_bevy::CloudSystems::Drive),
         );
 
-    crate::doors::add(&mut app, options.world, options.use_door);
     crate::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
+    crate::doors::add(&mut app, options.world, options.use_door);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
     if let Some(links) = options.portals {
         crate::portal_spike::add(&mut app, links);
     }
-    if options.use_door > 0 {
-        app.add_systems(Update, mark_settled);
-    }
+    // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
+    app.add_systems(Update, mark_settled);
     crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());
     if bench {
         app.add_systems(Update, (hold_warmup, counters)).add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());

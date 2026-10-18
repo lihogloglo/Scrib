@@ -1308,7 +1308,10 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
 - Known (P8): no powered crumple yet (the clip cuts to limp); the character root stays where it died (a corpse
   dragged far can be culled early); corpses don't persist across cell unloads; creature masses are volume
   estimates (a guar is 1 t: too heavy to drag).
-- No sanity screenshot (session tool cap; the kill needs a key press in a live run).
+- Agent run 2026-10-18 (p9fin, release, `scene wk-balmora`, no keyboard):
+  `$env:BEVYRROWIND_AUTO="kill_nearest@3,shot:shots/p9/kill.png@4.5,exit@8"`. Log: `ragdoll: killed ...
+  (meshes/base_anim.nif)`, 1 spawned, 0 failed; joint stretch peak 1.4–2.1 cm (over the 1 cm target: open, P8b).
+  Sanity shot `shots/p9/kill.png`. Not on the stairs (wk-balmora's camera); creatures not run.
 - Status: awaiting owner.
 
 ### PH-1: Knock over a table's contents (`V` throws a ball)
@@ -1367,7 +1370,13 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
 
 ### PH-9 (P8): knockdown and get-up
 
-Status: **awaiting owner; wired (P8b), not yet run by an agent**: impacts ≥ 15 N·s (`KNOCKDOWN_IMPULSE`) knock a walker down; the get-up uses the `LYING_REST_GET_UP` scaffold pose until the Knockout clip tail is sampled.
+Status: **awaiting owner; agent-run 2026-10-18 (p9fin)**: impacts ≥ 15 N·s (`KNOCKDOWN_IMPULSE`) knock a walker
+down; the get-up root comes from the `Knockout@tail` clip's first frame (`clip_root_body`; the `LYING_REST_GET_UP`
+scaffold only for skeletons without that clip, which logs a line).
+Agent run (release, no keyboard): `$env:BEVYRROWIND_AUTO="ball_at_nearest@3,shot:shots/p9/knock.png@4.3,shot:shots/p9/getup.png@8,exit@10"; .\bevyrrowind scene wk-balmora`.
+Log: `ragdoll: knocked down ... (25–36 N·s)` for the 12 m/s ball, `got up (heading ...)` 2.2–2.5 s later, no
+scaffold line. Sanity shots `shots/p9/knock.png` (lying on the street, ball beside), `shots/p9/getup.png` (standing,
+feet under it). A second knockdown right after a get-up logged a 5.6 cm joint stretch peak (open, P8b).
 Scene: Balmora, a walker on the Temple stairs; free camera 6 m away; press `V` to throw the 3 kg ball at the walker.
 What to look for: the walker braces and falls with the hit (no pop from the animated pose into the ragdoll), lies
 still within ~2 s, then gets up from where it lies with its feet under it (root placed under the pelvis); face-down
@@ -1375,10 +1384,13 @@ bodies roll over during the get-up blend (the `ROLL_TO_BACK` scaffold); no joint
 
 ### PH-10 (P9): kinematic hit reactions and tail spring bones
 
-Status: **awaiting owner** (physics-p9, 2026-10-13).
-- Kind: game location. Run (release): `$env:BEVYRROWIND_AUTO="ball_at_nearest:5@3,shot:shots/p9/hit.png@3.15,exit@6"; .\bevyrrowind scene wk-balmora`
-  (a 3 kg ball at 5 m/s, about 8 N·s, under the 15 N·s knockdown; the `V` key always throws at 12 m/s, a
-  knockdown). Tails: `.\bevyrrowind view "Seyda Neen"` near the guars
+Status: **awaiting owner** (physics-p9, 2026-10-13; agent-run 2026-10-18, p9fin: log `hit react: ... (5.9 N·s,
+strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself needs eyes on the live run; tails not run).
+- Kind: game location. Run (release): `$env:BEVYRROWIND_AUTO="ball_at_nearest:2@3,shot:shots/p9/hit.png@3.88,ball_at_nearest:2@6,exit@9"; .\bevyrrowind scene wk-balmora`
+  (a new target is framed first and the ball leaves 0.5 s later; a 3 kg ball at 2 m/s released 0.6 m from the
+  chest, about 6 N·s, under the 15 N·s knockdown; lobbed from 4 m any ball lands at ≥ 6 m/s, 18 N·s, a knockdown;
+  the `V` key always throws at 12 m/s, a knockdown). Hits under 5 N·s (`CharacterPhysics::impact_threshold`) don't
+  reach the graph at all. Tails: `.\bevyrrowind view "Seyda Neen"` near the guars
   south of the lighthouse road, or `character --walk` on an Argonian/Khajiit.
 - What to look for: the hit walker's torso and head flinch away from the ball (peak ~0.09 s after the hit, back on
   the animation within ~0.5 s; no pop, no lasting offset, feet stay planted); log `hit react: ... strength`. A guar's

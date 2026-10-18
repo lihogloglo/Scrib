@@ -632,11 +632,15 @@ fn peaks(
 
 // --- Dev hook: scripted actions (agents verify without a keyboard) -------------------------
 
+/// Seconds `ball_at_nearest` waits after framing a new target before it throws.
+const AUTO_FRAME_DELAY: f32 = 0.5;
+
 /// `BEVYRROWIND_AUTO="kill_nearest@3,ball_at_nearest@6,shot:shots/a.png@7,exit@12"`: actions at
 /// seconds after the start settled. `kill_nearest` is `I` on the living character nearest the
 /// camera; `ball_at_nearest[:speed]` throws the `V` ball (default 12 m/s, 3 kg) on a ballistic
-/// arc at the chest of the nearest living, standing one (`:4` stays under the knockdown
-/// impulse: a `HitReact`); both frame that character from 4 m. `look` re-frames the last
+/// arc at the chest of the nearest living, standing one (`:2` stays under the knockdown
+/// impulse: a `HitReact`); both frame that character from 4 m (a throw at a new target waits
+/// [`AUTO_FRAME_DELAY`] for the framing). `look` re-frames the last
 /// target, `shot:<png>` saves a screenshot, `exit` quits.
 #[derive(Resource, Default)]
 struct Auto {
@@ -692,6 +696,7 @@ fn auto(
     cameras: Query<(Entity, &Transform), With<FreeCamera>>,
     pos_of: WorldPosOf,
     characters: Query<(Entity, &CharacterBody, Has<Dead>, Has<KnockedDown>)>,
+    movers: Query<&Mover>,
     mut animators: Query<&mut Animator>,
     mut balls: ResMut<Balls>,
     mut exit: MessageWriter<AppExit>,
@@ -728,18 +733,30 @@ fn auto(
             AutoAction::BallAtNearest(speed) => {
                 let Some((_, root, _)) = nearest(true) else { continue };
                 let Some(feet) = pos_of.get(root) else { continue };
-                auto.focus = Some(root);
+                if auto.focus != Some(root) {
+                    // A new target: frame it first and throw once the camera is there (a throw
+                    // in the frame the camera jumps missed in the 2026-10-18 runs).
+                    auto.focus = Some(root);
+                    auto.actions.insert(0, (at + AUTO_FRAME_DELAY, AutoAction::BallAtNearest(speed)));
+                    continue;
+                }
                 // Thrown from the framing camera: frame first, then aim from there.
                 let to_eye = frame_offset(eye, feet);
                 let from = feet.offset(to_eye);
                 let chest = feet.offset(Vec3::Y * 1.2);
-                let d = from.delta_f32(chest);
-                let flight = d.length() / speed.max(0.5);
-                // Ballistic: v = d/t − g·t/2 (g down), so it lands on the chest after `flight`.
-                let velocity = d / flight + Vec3::Y * (9.81 * flight / 2.0);
+                let aim = from.delta_f32(chest).normalize_or_zero();
+                // Released on the camera-chest line, at most a quarter second out: a slow ball
+                // lobbed from 4 m lands at ~6 m/s (≥ 15 N·s, a knockdown), so slow throws start
+                // closer (0.6 m minimum) and stay under the knockdown impulse.
+                let reach = (speed.max(0.5) * 0.25).min(from.delta_f32(chest).length() - 0.4).max(0.6);
+                let flight = reach / speed.max(0.5);
+                // Ballistic: v = d/t + g·t/2 up, so it lands on the chest after `flight`; plus the
+                // target's walking velocity, so it meets the chest where it will be (lead).
+                let lead = movers.get(root).map_or(Vec3::ZERO, |m| m.loco.motion.velocity);
+                let velocity = aim * speed.max(0.5) + lead + Vec3::Y * (9.81 * flight / 2.0);
                 view.translation += eye.delta_f32(from);
-                balls.request = Some((from.offset(d.normalize_or_zero() * 0.4), velocity));
-                info!("BEVYRROWIND_AUTO: ball at {root}, {speed} m/s over {:.1} m", d.length());
+                balls.request = Some((chest.offset(-aim * reach), velocity));
+                info!("BEVYRROWIND_AUTO: ball at {root}, {speed} m/s over {reach:.1} m");
             }
             AutoAction::Look => {}
             AutoAction::Shot(path) => {
