@@ -964,8 +964,15 @@ ragdolls; robes move." Tasks in dependency order:
   swept leg/pelvis capsules last; teleport keep-shape mode), `rotations()` for the cloth joints. Unit tests: hem
   stretch 1.3–1.9 % at 30/60/144 fps through run, 180° turn and dead stop; no particle inside a capsule; 50 m + 143°
   teleport stable; **0.014 ms per robe** at 60 fps (release). Clippy pedantic clean.
-  **Next:** p10b `cloth.cook` (rest rows on the part surface, `SkinRebind`, colliders from `RagdollDef`) + census of
-  robe/skirt parts (check widths vs the run stride) + `mw_physics::ClothRules`; p10c op + app + PH-3.
+  **Built (p10b, 2026-10-18): `cloth.cook` + colliders + census + rules** (physics.md / physics-adapter.md "As built
+  (p10b)"): `sf_character::cook_cloth` (rows × columns on the outermost rest surface by farthest ray hit, particles
+  ride the girdle joint with per-particle offsets, per-particle authored skin `targets`, `SkinRebind` with bilinear
+  lattice weights below row 1 and a harmonic band at the waist), `ClothRules`/`ClothSpec`;
+  `RagdollDef::cloth_colliders` (core, legs, tails below the line); `mw_physics::MwClothRules` (robe = Chest part,
+  skirt = Skirt part, 10 × 5 / 8 × 3, `Bip01 Pelvis`). Census: 64 robes + 20 skirts, 50 cloth parts all skinned,
+  48 cook (9 ms median); **no hem holds a 50° run stride (+13..+133 % stretch)**. Tests + clippy pedantic clean.
+  **Next:** p10c `ClothLattice` op (animated target blending girdle ride → authored leg skin for the lower rows),
+  bake step, merged palette, app + PH-3.
 - [ ] P11 Traversal actions and interaction points (already slotted for M4 by animation.md layer 3): vault/mantle/ledge
   from `ContextProbes` with warping, `sf_interaction` points (benches, doors, levers). Not physics; may run in parallel
   with P3–P10. Verify: per animation.md "Layer 3".
@@ -1646,3 +1653,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (u1a): M5 U1 part 1 [~]: input crate `bevy_enhanced_input` 0.27 over leafwing 0.22 (prioritised, input-consuming contexts = CommonUI per-screen input; ui.md OQ4 closed, ARCHITECTURE §10); new Bevy-free `sf_ui` (UI record kinds, `UiRegistry` with owners/conflicts, `ScreenStack` router rule, keyed `ListModel`, `SettingsStore`, Fluent `Localizer`), 14 tests, clippy clean. Next: u1b `sf_ui_bevy` + gamepad example.
 - 2026-10-18 (wd1a): M6 WD1 [~] part 1: Bevy-free `sf_wind` (Wind moved from `sf_sky`, re-exported; WindState/WindSource x32/WindFrame; Megalophobia gust field with a PCG lattice hash and split origin phase; log profile; `sf_wind.wesl`); CPU/WGSL twin run headless on the GPU (1.1e-5 rel), never-upwind and origin-shift tests; next wd1b (`sf_wind_bevy`, `wind` example, clouds).
 - 2026-10-18 (wd1b): M6 WD1 [x] part 2: `sf_wind_bevy` (WindPlugin/WindField/WindOrigin; one fixed ShaderBuffer with current + previous frame for motion vectors, materials bind it with `#[storage]`; WESL `sf_wind::field` + `sf_wind_bevy::wind` with a def-chosen slot); upload 0.0025 ms (gate 0.02); `wind` example (CPU arrows over the GPU-shaded field, burst/vortex keys; visual check WD-0); app fog/cloud drift read the field. Next: WE1.
+- 2026-10-18 (p10b): M4 P10 [~] `sf_character::cook_cloth` (farthest-hit lattice placement, girdle-ride offsets, per-particle authored skin targets, `SkinRebind` bilinear + harmonic waist band), `RagdollDef::cloth_colliders`, `mw_physics::MwClothRules`; census: robes are Chest parts (not Skirt), 50 cloth parts all skinned, 48 cook in 9 ms median, no hem holds a 50° run stride (+13..+133 %). Next p10c op + app + PH-3.

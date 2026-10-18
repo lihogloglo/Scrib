@@ -4542,12 +4542,14 @@ dependencies = [
  "mw_graphs",
  "mw_install",
  "mw_nif",
+ "mw_physics",
  "mw_records",
  "mw_vfs",
  "mw_world",
  "sf_anim",
  "sf_character",
  "sf_model",
+ "sf_ragdoll",
  "sf_records",
  "sf_vfs",
  "tes3",
@@ -4699,9 +4701,12 @@ dependencies = [
 name = "mw_physics"
 version = "0.1.0"
 dependencies = [
+ "sf_anim",
+ "sf_character",
  "sf_physics",
  "sf_ragdoll",
  "sf_records",
+ "sf_vfs",
  "sf_world",
  "tes3",
 ]

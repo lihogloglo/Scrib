@@ -8,6 +8,10 @@
 //! - Mass: [`item_mass`] from the record weight, or the shape volume for
 //!   weightless items.
 
+mod cloth;
+
+pub use cloth::{CHEST_SLOT, CLOTH_ATTACH, ClothKind, MwClothRules, SKIRT_SLOT, cloth_spec};
+
 use std::collections::{HashMap, HashSet};
 
 use sf_records::{RecordDb, RecordId};

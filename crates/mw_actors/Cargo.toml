@@ -31,6 +31,9 @@ sf_model.workspace = true
 sf_character = { workspace = true, features = ["smooth"] }
 # tests/held_install.rs: weapon type → graph stance counts.
 mw_graphs.workspace = true
+# examples/cloth_census.rs: cloth rules, ragdoll colliders, `cloth.cook`.
+mw_physics.workspace = true
+sf_ragdoll.workspace = true
 
 [lints]
 workspace = true

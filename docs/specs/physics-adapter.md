@@ -129,6 +129,20 @@ no capes; mods mark parts as cloth (`kind: cape`, attachment joint `Bip01 Spine2
 Census at implementation: robe and skirt part models, which are skinned and which rigid (the cook works
 on both: rigid parts are already rebound by `smooth_outfit`), vertex counts, cook time.
 
+**As built (p10b, 2026-10-18): `mw_physics::MwClothRules`** (`cloth.rs`) and the census
+(`cargo run --release -p mw_actors --example cloth_census`). The census corrected the rule above: **robes don't use
+the Skirt slot.** All 64 robe items (Morrowind + Tribunal + Bloodmoon) are one skinned *Chest* part from the
+shoulders to the ankles plus two ankle parts, so a robe's cloth is its Chest part below `Bip01 Pelvis` (vertices
+above keep their skin). Skirts: 20 items, 14 with a *Skirt* part, 5 with only a *Groin* part (left as is), 6 with
+neither. Rules: `(BODY, slot)` pairs, robe Chest → 10 × 5 ring, skirt Skirt → 8 × 3 ring, `ClothParams` defaults,
+attachment `Bip01 Pelvis` at its rest height. 50 cloth parts, **all skinned** (0 rigid): robes 527–1701 vertices,
+skirts 145–412; 48 cook (`c_skirt_extravagant_1` is a rigid mesh on a node named after its file, `werewolfskin`
+needs `Bip01 Tail`: both fail cleanly); cook 9 ms median, 68 ms max per part including the NIF import. Hems:
+robes 0.0–0.33 m above the ground (most at the ankles), skirts 0.10–0.53 m. **Every hem is narrower than a run
+stride needs** (+13 % to +133 % stretch, physics.md "As built (p10b)"): p10c blends the lower rows toward the
+authored leg skin. Census line items to recheck in PH-3: female robe parts are only 2 (most robes reuse the male
+part on female bodies), and beast races wear the same parts on `base_animkna.nif` (tail collider).
+
 **Colliders**: thigh, calf and pelvis capsules from the skeleton's `RagdollDef`, plus the tail chain for
 beast races (the robe ↔ tail poke-through smooth-bodies.md measured is the same contact).
 

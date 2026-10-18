@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# `GridSpec`, `ClothParams` for `cloth.cook` (the adapter's cloth rules).
+sf_anim.workspace = true
+# `ClothRules`, `ClothSpec`, `BodyPart`.
+sf_character.workspace = true
 # `HolderLimits` (the Strength mapping).
 sf_physics.workspace = true
 # `CookParams` for `ragdoll.cook` (the adapter's ragdoll rules).
@@ -13,6 +17,10 @@ sf_ragdoll.workspace = true
 sf_records.workspace = true
 sf_world.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
+
+[dev-dependencies]
+# A `BodyPart` for the `ClothRules` tests.
+sf_vfs.workspace = true
 
 [lints]
 workspace = true
