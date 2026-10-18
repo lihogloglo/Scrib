@@ -23,7 +23,8 @@ working tree**. Protocol:
 1. **Register.** At start, create `../.sessions/<short-name>.md` (the
    parent folder is not a repo, so this is never committed) with your scope:
    the crates/files you own, and what you're doing. Read the other files in
-   `../.sessions/` and stay out of their scope. Delete your file when you finish.
+   `../.sessions/` and stay out of their scope. Delete your file when you finish
+   (`../.sessions/_archive/` holds old handoffs; not live sessions, ignore it).
 2. **One build at a time.** Cargo's lock prevents corruption but not
    two sessions fighting over the CPU (a Bevy rebuild can take minutes).
    Before any `cargo build/test/clippy/run`, check for a running build
