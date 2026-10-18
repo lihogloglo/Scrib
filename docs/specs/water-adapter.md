@@ -312,3 +312,27 @@ once a second while it changes); `WaterFrame` from `TerrainOrigin` after `Terrai
 camera; froxel volume wired from `sf_atmos_bevy::FroxelVolume`. `SeaPlaneScaffold` spawns only with
 `--water scaffold`; the scaffold, its spawn and the sea branch of `sync_origin` go once WA-1 passes. Scenes
 `wa-seyda-noon`, `wa-vivec-waterfront`, `wa-bittercoast`, `wa-sunset-sea`, `wa-night-moons` (shots in `shots/w2/`).
+
+## As built (W3, 2026-10-18, m6-w3 + w3fin)
+
+- `mw_water`: `wet_mask(bounds, lands)` (every 2nd `LAND` vertex, 3.66 m texels, wet where the height is below 0, no
+  `LAND` = water), `cell_bounds` (+1 cell of sea), `optics_map(bounds, region_of)` (one texel per exterior cell, index
+  in `optics_index` order = `optics_records` order: sea, coastal, swamp, ash, north, interior), `shore_settings()`
+  (framework defaults: the WA-2 calibration point).
+- **Optics retuned** (owner 6a): `scatter_share` is now the water's diffuse reflectance, sized like real backscatter
+  (≈ 0.33 b_b/a, 2-5 %; W2's 7-25 % read milky): sea 25 m, blue clearest, 0.025; coastal 14 m, green clearest
+  (turquoise lagoons), 0.04; swamp 3 m, tea-olive (blue absorbed), 0.035, no whitecaps or shore band; ash 10 m
+  grey-brown, 0.05; north 18 m steel blue, 0.02; interior from `UnderwaterIndoorFog`, 0.03. Shore band per region
+  (sea 0.45, coastal 0.3, north 0.6, ash 0.3) and contact foam ≤ 0.7.
+- App `water.rs`: `WaterInputs::build(db)` in `exterior_options` (wet mask from every `LAND`, region map from the
+  exterior cells' `region`); the `ShoreField` bakes on a worker thread at start (**0.49-0.63 s** in release for
+  1729 × 1601 texels, 147 components, 1 open; gate ≤ 10 s) and goes to `WaterShoreInput` and the CPU query
+  (`WorldspaceWater::set_shore`); `WaterRegionsInput` with the six looks; interiors with `HAS_WATER` get a
+  `WaterSurface::pool` at their level (render space follows the floating origin) in their render layer while active;
+  `fog_input` fills the analytic height fog (`WaterFogInput.height`, in-scatter = albedo × (sun / 4π + camera ambient ×
+  fog ambient)) in the exterior, used when the froxels are off; `--quality` picks the `WaterQuality` tier.
+- Scenes: `wa-interior-pool` (Hlormaren, Sewers, −2.77 m) added; shots `shots/w3/`; WA-2 and WA-6 awaiting owner.
+- Open: the interior pool draws opaque near-black (no valid refraction snapshot in interiors; WA-6); in-app GPU
+  counters at 1440p, the WA-8 flight and the DLSS smear check (no quiet machine on 2026-10-18); "sea under land not
+  drawn" counter (fragments are discarded via the shore field, no GPU counter); wet band (SU1); body overlap report;
+  hidden-interior skipping (the 21 below-geometry interiors still get a pool, invisible under their floors).

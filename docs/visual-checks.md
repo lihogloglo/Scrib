@@ -1554,3 +1554,25 @@ too milky turquoise (W1 placeholder optics, tuned at W3), whitecaps at storm win
 Status: **awaiting owner** (W2). Look for: no wave jump or pattern shift when the floating origin moves (every
 256 m); with `--dlss`, no wave smear (velocity redraw). The phase is exact by construction (integer cells, W1 test);
 not yet flown in the app.
+
+### WA-2: Shore and region optics, W3 (`scene wa-seyda-noon`, `wa-bittercoast`, `wa-vivec-waterfront`, `wa-sunset-sea`, `wa-night-moons`)
+
+Status: **awaiting owner** (W3, 2026-10-18, w3fin). Shots: `shots/w3/` (compare with `shots/w2/`).
+Addresses the owner's 6a notes: water no longer milky turquoise (body colour sized like real backscatter, 2-5 %);
+colour by region from the cell map (Seyda Neen / Bitter Coast swamp olive-brown, Ascadian lagoons teal, open Inner Sea
+deep blue, ash grey-brown, the north steel blue; ≈ 117 m blend between cells); shore foam per region and fainter; waves
+calm toward shores and in enclosed water (`water.shore`: signed shore distance + openness, baked at start in ~0.5 s).
+Look for: the hue changes between regions without a visible seam; swamp water murky and calm near Seyda Neen; the
+shore line is a thin broken foam band, not a white outline; swell dies on beaches, open sea keeps it; no water drawn
+under land. Known: from above (`wa-bittercoast`) the swamp reads grey (sky reflection dominates at that angle; SSPR at
+W4); at night the water reads lighter than the land (env-map reflection, W4); the shore foam band shape is still the
+generic travelling band (wet sand band waits for SU1); waves by weather are WE3.
+
+### WA-6: Interior water (`scene wa-interior-pool`: Hlormaren, Sewers, level −2.77 m)
+
+Status: **awaiting owner, known broken** (W3, 2026-10-18, w3fin). Shot: `shots/w3/wa-interior-pool.png`.
+The interior's water is a `WaterSurface` pool at the cell's `WHGT` (all 216 visible `HAS_WATER` interiors get one;
+spawned on entering, despawned on leaving). Known issue: the pool draws **opaque near-black** (A/B `--water off`
+shows the lit channel bottom): the refraction finds no valid snapshot in the interior, so the path is treated as
+infinite. Suspect the snapshot pass (colour copy + depth resolve) in the interior camera's graph. Look for after the fix:
+flat dark water with ripples only, channel bottom visible through it, level steady while moving.

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use sf_coords::WorldPos;
 use sf_water::{
-    OpticsMap, WetMask,
+    OpticsMap, ShoreSettings, WetMask,
     FoamTerms, RiverPolicy, SpectrumParams, WaterBody, WaterOptics, WaterOpticsSource, WaterSource,
 };
 use sf_world::{RecordRef, Worldspace, WorldspaceId};
@@ -73,33 +73,63 @@ fn optics_with(visibility_m: f32, tint: [f32; 3], scatter_share: f32) -> WaterOp
     }
 }
 
+/// Foam terms (whitecaps, shore band, contact).
+fn foam(whitecaps: f32, shore: f32, contact: f32) -> FoamTerms {
+    FoamTerms {
+        whitecaps,
+        shore,
+        contact,
+    }
+}
+
 /// The adapter's optics records (sea, coastal, swamp, ash, north, interior).
+///
+/// W3 tuning (owner 6a: "too milky turquoise, colour must vary by area, shore outline too white"):
+/// the body colour is `scattering / extinction` lit like a diffuse surface, so `scatter_share` is
+/// the water's diffuse reflectance, which in nature follows the *backscatter* (≈ 0.33 `b_b / a`:
+/// 2-5 % for open and coastal water, Morel & Prieur 1977), not the total scattering (W2 used
+/// 7-25 %: milky). Hues by region: the open Inner Sea deep blue (blue clearest), coastal lagoons
+/// turquoise (green clearest), the Bitter Coast swamp tea-olive (blue absorbed by tannins, red
+/// and green clear), ash-fed water grey-brown, the north steel blue. Shore foam per region (calm
+/// lagoons less, the north more).
 pub fn optics_records(ini: &WaterIni) -> Vec<(&'static str, WaterOptics)> {
     let swamp = WaterOptics {
-        foam: FoamTerms {
-            whitecaps: 0.0,
-            shore: 0.0,
-            contact: 0.0,
-        },
+        foam: foam(0.0, 0.0, 0.3),
         caustics: 0.2,
-        ..optics_with(3.0, [1.6, 1.0, 1.5], 0.25)
+        ..optics_with(3.0, [1.15, 1.0, 2.6], 0.035)
     };
     let ash = WaterOptics {
         surface_tint: Some([0.35, 0.34, 0.32]),
-        ..optics_with(12.0, [1.5, 1.0, 1.1], 0.15)
+        foam: foam(0.6, 0.3, 0.6),
+        ..optics_with(10.0, [1.3, 1.0, 1.5], 0.05)
+    };
+    let sea = WaterOptics {
+        foam: foam(1.0, 0.45, 0.6),
+        ..optics_with(25.0, [3.0, 1.15, 1.0], 0.025)
+    };
+    let coastal = WaterOptics {
+        foam: foam(0.8, 0.3, 0.5),
+        ..optics_with(14.0, [2.6, 1.0, 1.2], 0.04)
+    };
+    let north = WaterOptics {
+        foam: foam(1.0, 0.6, 0.7),
+        ..optics_with(18.0, [2.4, 1.2, 1.0], 0.02)
     };
     // Morrowind multiplies its fog distance by the Underwater*Fog values: indoor vs day sets the
     // interior visibility relative to the sea's.
     let indoor = 25.0 * ini.day_fog / ini.indoor_fog.max(0.1);
     vec![
-        (optics::SEA, optics_with(25.0, [3.0, 1.0, 1.15], 0.07)),
-        (optics::COASTAL, optics_with(15.0, [2.5, 1.0, 1.4], 0.1)),
+        (optics::SEA, sea),
+        (optics::COASTAL, coastal),
         (optics::SWAMP, swamp),
         (optics::ASH, ash),
-        (optics::NORTH, optics_with(20.0, [2.5, 1.1, 1.0], 0.08)),
+        (optics::NORTH, north),
         (
             optics::INTERIOR,
-            optics_with(indoor.min(12.0), [2.0, 1.0, 1.2], 0.12),
+            WaterOptics {
+                foam: foam(0.0, 0.0, 0.4),
+                ..optics_with(indoor.min(12.0), [2.0, 1.1, 1.0], 0.03)
+            },
         ),
     ]
 }
@@ -240,6 +270,13 @@ impl WaterIni {
                 .unwrap_or(d.near_water_outdoor_id),
         }
     }
+}
+
+/// The shore product's tuning for Vvardenfell (water-adapter.md "Openness and fetch on one sea
+/// plane"): the framework defaults, the calibration point for WA-2 (Bitter Coast channels calm,
+/// the Inner Sea open).
+pub fn shore_settings() -> ShoreSettings {
+    ShoreSettings::default()
 }
 
 /// Metres per Morrowind unit.

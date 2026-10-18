@@ -478,6 +478,7 @@ impl ViewFlags {
             perf,
             lights: light_infos(db),
             world: doors::WorldLinks::build(db),
+            water: water::WaterInputs::build(db),
             use_door: self.use_door.unwrap_or(0),
             activate: self.activate.unwrap_or(0),
             portals: None,

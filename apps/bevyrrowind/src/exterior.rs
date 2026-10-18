@@ -116,6 +116,8 @@ pub struct ExteriorOptions {
     pub bodies: sf_character_bevy::SmoothBodies,
     /// The worldspace the camera starts in (the exterior, or an interior).
     pub worldspace: sf_world::WorldspaceId,
+    /// The water's shore and region inputs (`water.rs`, W3).
+    pub water: crate::water::WaterInputs,
 }
 
 #[derive(Resource)]
@@ -309,8 +311,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         );
 
     crate::doors::add(&mut app, options.world, options.use_door);
+    crate::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
-    crate::water::add(&mut app);
     if let Some(links) = options.portals {
         crate::portal_spike::add(&mut app, links);
     }

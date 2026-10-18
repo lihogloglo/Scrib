@@ -956,5 +956,13 @@
             look_for: "moonlit glints on the waves, sea darker than the sky but not black, torches of Seyda Neen reflected as specular glints (clustered lights), no bright noise",
             checks: ["WA-1"],
         ),
+        (
+            name: "wa-interior-pool",
+            cell: "Hlormaren, Sewers",
+            camera: "-49.5,-0.8,92,-49.5,-2.6,72",
+            description: "Interior water (W3): the sewer's water as a `WaterSurface` pool at the cell's WHGT level (-2.8 m), interior optics",
+            look_for: "flat dark water with small ripples only (no sea swell), floor visible through shallow water and fading with depth, water stays put and level while moving (no swimming or tilting with the camera), no water above the floor in dry rooms",
+            checks: ["WA-6"],
+        ),
     ],
 )

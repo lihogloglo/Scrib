@@ -1246,12 +1246,20 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   Status (m6-w2, 2026-10-13): built (`sf_water_bevy`, app `water.rs`, `--water on|scaffold|off`); golden GPU vs twin
   1.9 mm; FFT 0.22 ms (over 0.15: amortise), snapshot 0.04, draw ~0.5 ms (example, shared machine); WA-1, WA-8 awaiting
   owner; DLSS smear and in-app flight not yet checked. Handoff: water.md "As built (W2)".
-- [ ] W3 Shore, bodies, interiors (water.md "Shoreline and depth colour", "Water bodies at any height"): `water.shore`
+  W2 leftovers (2026-10-18, m6-w3 + w3fin): FFT amortised + fused (0.139 ms, example, shared machine), quality tiers,
+  slope mips, pipeline warm-up, height fog when froxels are off: done; shore damping: done in W3. Open: in-app 1440p
+  counters, DLSS smear, WA-8 flight (no quiet machine), scaffold deletion after WA-1.
+- [~] W3 Shore, bodies, interiors (water.md "Shoreline and depth colour", "Water bodies at any height"): `water.shore`
   bake (EDT, openness per connected component, land-only block mask), shore attenuation + shore/contact foam, wet band
   via the surface hook (or a stub until SU1), water-level clipmap, lakes/pools/interior `Bounds` pools from `WHGT`,
   optics by region (swamp, sea, coastal, ash, north, interior), body overlap report. Waits for W2. Verify:
   `cargo test` (EDT vs brute force, openness on a synthetic bay + inland lake); bake adds ≤ 10 s cold, 0 warm; WA-2
   swamp still and murky, WA-6 interior pool; sea under land not drawn (counter).
+  Status (2026-10-18, w3fin): built and wired in the app: shore bake 0.5-0.6 s at start (worker thread), shore
+  attenuation + foam, region optics map (optics retuned: no longer milky, hue by region, fainter shore foam), interior
+  pools (`WaterSurface`) at `WHGT`, height fog input; shots `shots/w3/`; WA-2, WA-6 awaiting owner. Open: interior
+  pool draws opaque black (WA-6, snapshot not valid in interiors), in-app GPU counters, sea-under-land counter, wet band
+  (SU1), body overlap report, `water_bodies` example. Handoff: water.md / water-adapter.md "As built (W3)".
 - [ ] W4 Reflections (water.md step 2, "Off-screen reflections"): SSPR compute for the dominant plane, camera-centred dynamic reflection probe (sky + terrain + far proxies, one face per 4 frames), content probes, Fresnel; reflection A/B
   `--off sspr`. Waits for W2. Verify: WA-4 Vivec canals at sunset (cantons reflected, no streaks at screen edges),
   WA-1 dock reflection, far shore reflected when looking down; SSPR 0.3 + probe 0.15 ms High.
@@ -1560,3 +1568,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (m5-l3): M5 L3 [~] (uncommitted): script API v0.1 in sf_script/sf_script_bevy (core `on_load`/settings/game_time, new `@sf/interfaces`, `@sf/world` spawn/despawn queue + nearby + entity scripts with snapshot state, handle methods), golden `docs/api/sf.d.luau`, example mod `examples/mods/api_tour` headless, mlua `serialize` dropped; 22 + 8 tests, clippy clean. App LiveSpawn scaffold + doors on `ActivationOutcome` written but not compiled (app build blocked by m6-w3 WIP); real run pending.
 - 2026-10-13 (m6-w3, stopped early at owner usage limit, uncommitted): W2 leftovers part 1 + W3 groundwork: fused 2-dispatch FFT with runtime grid (128/256), `WaterQuality` tiers, High alternates the 256/64 m cascades (example 1600×900, shared machine: `water_fft` 0.22 → 0.139 ms + `water_mips` 0.023 ms; golden 1.0 mm), slopes mips, pipeline warm-up at startup, analytic height fog path, `sf_water::shore` (FH EDT + openness by geodesic distance, CPU query attenuation; 3 tests), `WaterSurface` (lakes/pools/interiors), region optics map in the shader, `mw_water` `wet_mask`/`optics_map` + less milky optics (2 tests). App wiring, screenshots, 1440p and DLSS checks not done; handoff in `../.sessions/m6-w3.md`.
 - 2026-10-18 (l3fin): M5 L3 done for v0.1: real run in the Census office (dev exe, scratch `l3_test` mod, `--activate 4`): `on_load` with player position, entity script `counter` attach/state/tick, two LiveSpawn copies seen in the room, temp copy despawned, "handled by a script" from the 3rd activation; Space on the office door still travels (unhandled `ActivationOutcome`). No fixes. `@sf/records`/`input`/`anim`/`physics` and MS-2 parked (owner, Lua parked).
+- 2026-10-18 (w3fin): M6 W3 [~] wired in the app: shore field baked at start (0.5 s, worker thread) for wave damping + shore foam, region optics map with retuned optics (backscatter-sized body colour: not milky; swamp olive, lagoons teal, sea blue), interior pools at WHGT, height fog input, `--quality` -> water tier; scene wa-interior-pool; WA-2/WA-6 awaiting owner (interior pool draws black: open); in-app GPU measurements open (no quiet machine).
