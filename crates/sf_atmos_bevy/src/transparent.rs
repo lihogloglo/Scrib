@@ -14,6 +14,7 @@
 //! W2's water draws its own far fog).
 
 use bevy_asset::{Asset, Assets, Handle, RenderAssetUsages};
+use bevy_camera::Camera;
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageSampler, ImageSamplerDescriptor};
 use bevy_math::Vec4;
@@ -22,7 +23,7 @@ use bevy_reflect::TypePath;
 use bevy_render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_shader::ShaderRef;
 
-use crate::Fog;
+use crate::{CloudCamera, CloudImages, Fog};
 
 const SHADER: &str = "embedded://sf_atmos_bevy/shaders/transparent_fog.wesl";
 
@@ -34,6 +35,9 @@ const SHADER: &str = "embedded://sf_atmos_bevy/shaders/transparent_fog.wesl";
 pub struct FroxelVolume {
     pub image: Handle<Image>,
     /// (near, far, slices, 1 when the froxels run else 0): `sf_atmos::FroxelSettings`.
+    /// `w` is 0 while no active [`crate::CloudCamera`] writes the volume (e.g. in
+    /// an interior): the image then holds zeros or another view's stale fog,
+    /// and a reader must skip it (zero transmittance would draw it black).
     pub params: Vec4,
     /// The image's size (tiles across, down, slices).
     pub size: [u32; 3],
@@ -87,14 +91,20 @@ fn volume_image(size: [u32; 3]) -> Image {
 /// the grid changes) and every [`FroxelFogMaterial`] pointing at it.
 pub(crate) fn update_volume(
     fog: Res<Fog>,
+    cameras: Query<&Camera, With<CloudCamera>>,
+    noise: Res<CloudImages>,
     mut volume: ResMut<FroxelVolume>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<FroxelFogMaterial>>,
     mut applied: Local<Option<FroxelVolume>>,
 ) {
     let settings = fog.froxels.filter(|_| fog.enabled);
+    // The fog pass writes the volume only for an active cloud camera once the
+    // noise exists (`drive`'s `active`); the grid (image size) stays as set so
+    // leaving and re-entering an interior doesn't reallocate it.
+    let written = settings.is_some() && noise.noise.is_some() && cameras.iter().any(|c| c.is_active);
     #[allow(clippy::cast_precision_loss)]
-    let wanted = settings.map(|f| (f.size, Vec4::new(f.near, f.far, f.size[2] as f32, 1.0)));
+    let wanted = settings.map(|f| (f.size, Vec4::new(f.near, f.far, f.size[2] as f32, f32::from(u8::from(written)))));
     let (size, params) = wanted.unwrap_or(([1, 1, 1], Vec4::new(0.5, 1.0, 1.0, 0.0)));
     if volume.size != size || !images.contains(&volume.image) {
         volume.image = images.add(volume_image(size));

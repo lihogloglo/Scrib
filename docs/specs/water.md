@@ -722,8 +722,11 @@ evolves with them), `H0::gpu_texels`; test `waves_repeat_after_the_repeat_period
 - **GPU** (example `water_ocean`, 1600 × 900, 4060 Laptop, **shared machine**): `water_fft` 0.139 ms (was 0.22; High
   budget 0.15 met) + `water_mips` 0.023 ms; snapshot 0.043 ms; transparent pass 0.54 ms. Golden GPU vs twin: max 1.0 mm,
   rms 0.1 mm. In-app 1440p counters not yet measured (no quiet machine on 2026-10-18).
-- Open (handoff): pools in interiors draw opaque black (WA-6: the refraction snapshot is not valid in the interior
-  camera; check the snapshot node's ordering when `render_sky` / the `sf_atmos` composite don't run); DLSS velocity
-  check and WA-8 flight; a GPU counter for discarded sea-under-land fragments; the `water_bodies` example (lake + shore
+- Interior pools drew opaque black (WA-6; w3pool 2026-10-18): not the snapshot (`--off froxels` drew them right) but
+  the froxel fog. Interiors drop `CloudCamera`, so nothing writes `FroxelVolume`, yet its `params.w` stayed 1 and the
+  water (like any `FroxelFogMaterial`) applied the unwritten volume (transmittance 0). Fixed in `sf_atmos_bevy`:
+  `params.w` is 1 only while an active `CloudCamera` writes the volume (the industry rule: a translucent reads the
+  froxel volume only for views that integrated it).
+- Open (handoff): DLSS velocity check and WA-8 flight; a GPU counter for discarded sea-under-land fragments; the `water_bodies` example (lake + shore
   on the island). W4 (SSPR) plugs in where `apply_pbr_lighting` supplies the environment reflection; the dominant plane
   is `WaterFrame.level` or a `WaterSurface.level`.
