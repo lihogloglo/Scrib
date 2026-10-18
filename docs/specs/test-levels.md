@@ -56,6 +56,49 @@ problem at once (sizes > 0 and finite, ramp angle, step count, unique
 camera/spawn/object names, cameras with eye ≠ target, at least one camera
 and one object).
 
+### Actors and props (TS1 part 2, 2026-10-18)
+
+```ron
+    objects: [
+        (name: "crate", shape: Box(size: (0.6, 0.6, 0.6)), at: (3.0, 0.0, 0.0), dynamic: Some(15.0), interact: Some("open")),
+    ],
+    actors: [
+        (id: "<host record id>", spawn: "a", outfit: Some(["<item id>", ...]),
+         path: Some((points: [(x, y, z), ...], mode: PingPong, speed: 1.4, run: false, wait: 1.5)),
+         action: Some((trigger: "<graph trigger>", every: 6.0, params: [("<graph float>", 3.0)]))),
+    ],
+```
+
+- **Props:** `dynamic: Some(mass_kg)` makes a box a dynamic body (boxes only;
+  compound props such as a legged table wait for a `Gltf` or compound
+  primitive). `interact: Some(name)` is the interaction-point hook (P11),
+  parsed and kept, unused.
+- **Actors:** ids, outfit items and action names are the host's (opaque
+  strings here); `spawn` must name a spawn. `path` modes: `Loop` (default),
+  `PingPong` (ends are stops), `Once`; `wait` is the time at stops (a loop's
+  first point, both ends, a one-way walk's end); `speed` m/s (default 1.4),
+  `run` picks the run gait. The host maps this onto
+  `sf_controller::PathFollower` (same modes). `action` fires `trigger` after
+  setting `params`, every `every` seconds while the actor stands.
+- `Level::bounds()` gives the objects' horizontal extent (hosts cover it with
+  streaming content, so movers anywhere on the level are in range).
+
+## Headless runner (course tests)
+
+`crates/sf_level/tests/course.rs`, Bevy-free, the faith-runner model
+(`docs/research/animation/01-faith-runner-movement.md` §9): a level's collide
+objects become a `StaticWorld` (the same triangles as the render mesh), a
+`KinematicMover` steps at 60 Hz, and **input is a function of controller
+state** (`Sim::run(secs, |sim| Option<LocomotionIntent>)`; `None` ends the
+script), not a timeline, so scripts survive tuning. Assertions are outcomes.
+Built: `ledges` obstacles (row A heights, row B thin vs deep, the 3.5 m wall)
+classified by `ContextProbes` against the table in locomotion.md "Context
+probes as built", heights within 3 cm; ramp onto the first platform, feet on
+top within 2 cm, `DropAhead` sees the 1 m gap at the platform edge.
+`tests/levels/ledges.ron` is a copy of the game's level (the game's tests
+fail if they drift). Promote `Course`/`Sim` to a module (feature-gated) when
+a second crate needs them.
+
 ## Meshes
 
 `Shape::mesh()` → `MeshData { positions, normals, uvs, indices }`:
@@ -75,7 +118,7 @@ probes see it unchanged), the sky and lighting, and what spawns do.
 ## Open
 
 - `Gltf { path }` primitive (Skein once on Bevy 0.20).
-- Headless use: a traversal-course runner that loads a level into
-  `sf_physics` (no Bevy) and drives a mover with scripted input (TS1 part 2).
-- Props and interaction points (dynamic bodies, doors, ladders) and markers
-  for scripted paths: TS1 part 2.
+- Interaction points (doors, ladders, seats; P11): `interact` is the hook.
+- Compound props (a table with legs) and cylinders as dynamic bodies.
+- More course tests (vault/mantle execution once traversal actions exist,
+  M4/M7; rotated copies of a course, research 01 `mesh_tests`).

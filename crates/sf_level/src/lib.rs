@@ -8,6 +8,11 @@
 //! render mesh and the static collider, so what you see is what you collide
 //! with. The host owns spawning, materials, sky and physics.
 //!
+//! Part 2 (TS1b): `actors` (a host record id at a spawn, an optional outfit,
+//! a scripted path and a periodic action; ids are opaque strings here) and
+//! props (`dynamic: Some(mass)` boxes the host simulates; `interact` is a
+//! named hook for interaction points, unused until P11).
+//!
 //! Frame: meters, y up, x east, z south (Bevy's). Every primitive's `at` is
 //! the center of its footprint at its bottom; ramps and stairs rise toward
 //! their local -z (Bevy's forward), turned by `yaw` degrees about +y.
@@ -38,6 +43,83 @@ pub struct Level {
     #[serde(default)]
     pub spawns: Vec<Spawn>,
     pub objects: Vec<Object>,
+    /// Characters the host spawns and drives (see [`Actor`]).
+    #[serde(default)]
+    pub actors: Vec<Actor>,
+}
+
+/// A character at a spawn point. `id`, `outfit` and the action's names are
+/// the host's (record ids, item ids, animation-graph parameters): this crate
+/// only checks they are not empty.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Actor {
+    /// The host's character record id.
+    pub id: String,
+    /// A spawn name: where it starts and which way it faces.
+    pub spawn: String,
+    /// Worn items replacing the record's own equipment (host item ids).
+    #[serde(default)]
+    pub outfit: Option<Vec<String>>,
+    /// A scripted walk; none stands at the spawn.
+    #[serde(default)]
+    pub path: Option<ActorPath>,
+    /// A named animation action fired periodically while standing (at the
+    /// spawn, or waiting at a path's stops).
+    #[serde(default)]
+    pub action: Option<Action>,
+}
+
+/// A scripted walk: feet positions visited in order (the host steers its
+/// mover through them; corners are cut, stops are waited at).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActorPath {
+    pub points: Vec<Vec3>,
+    #[serde(default)]
+    pub mode: PathMode,
+    /// Cruise speed, m/s.
+    #[serde(default = "walk_speed")]
+    pub speed: f32,
+    /// Run gait instead of walk (the speed still decides how fast).
+    #[serde(default)]
+    pub run: bool,
+    /// Seconds standing at each stop (the ends of a back-and-forth, the
+    /// last point of a one-way walk, the first point of a loop).
+    #[serde(default)]
+    pub wait: f32,
+}
+
+fn walk_speed() -> f32 {
+    1.4
+}
+
+/// What happens at the last point.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PathMode {
+    /// From the last point back to the first, forever.
+    #[default]
+    Loop,
+    /// Back and forth; the ends are stops.
+    PingPong,
+    /// Walk once and stop at the last point.
+    Once,
+}
+
+/// A periodic named action: `params` are set, then `trigger` fires, every
+/// `every` seconds while the actor stands.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Action {
+    pub trigger: String,
+    #[serde(default = "action_every")]
+    pub every: f32,
+    #[serde(default)]
+    pub params: Vec<(String, f32)>,
+}
+
+fn action_every() -> f32 {
+    6.0
 }
 
 /// A viewpoint: eye and target in meters.
@@ -78,6 +160,14 @@ pub struct Object {
     /// Whether it gets a static collider.
     #[serde(default = "yes")]
     pub collide: bool,
+    /// A prop: a dynamic body of this mass (kg) instead of a static
+    /// collider (boxes only).
+    #[serde(default)]
+    pub dynamic: Option<f32>,
+    /// Interaction-point hook (P11: sit, open, pick up). Parsed and kept for
+    /// the host; nothing uses it yet.
+    #[serde(default)]
+    pub interact: Option<String>,
 }
 
 fn yes() -> bool {
@@ -122,6 +212,17 @@ impl Shape {
             Self::Stairs { steps, run, .. } => steps as f32 * run,
             Self::Cylinder { radius, .. } => 2.0 * radius,
         }
+    }
+
+    /// The footprint (x width, z length) before `yaw`.
+    pub fn footprint(&self) -> (f32, f32) {
+        let width = match *self {
+            Self::Ground { size } => size.0,
+            Self::Box { size } => size.x,
+            Self::Ramp { width, .. } | Self::Stairs { width, .. } => width,
+            Self::Cylinder { radius, .. } => 2.0 * radius,
+        };
+        (width, self.length())
     }
 
     /// Height of the top above `at.y` (ground: 0, it extends below).
@@ -240,8 +341,61 @@ impl Level {
             if let Some(p) = o.shape.problem() {
                 out.push(format!("object {label}: {p}"));
             }
+            if let Some(mass) = o.dynamic {
+                if !matches!(o.shape, Shape::Box { .. }) {
+                    out.push(format!("object {label}: only boxes can be dynamic"));
+                }
+                if !(mass.is_finite() && mass > 0.0) {
+                    out.push(format!("object {label}: mass {mass} must be > 0"));
+                }
+            }
+        }
+        for (i, a) in self.actors.iter().enumerate() {
+            let label = format!("actor #{i} {:?}", a.id);
+            if a.id.trim().is_empty() {
+                out.push(format!("{label}: empty id"));
+            }
+            if self.spawn(&a.spawn).is_none() {
+                out.push(format!("{label}: no spawn {:?}", a.spawn));
+            }
+            if a.outfit.as_ref().is_some_and(|o| o.iter().any(|item| item.trim().is_empty())) {
+                out.push(format!("{label}: empty outfit item"));
+            }
+            if let Some(p) = &a.path {
+                if p.points.len() < 2 {
+                    out.push(format!("{label}: a path needs at least 2 points"));
+                }
+                if !p.points.iter().all(|v| v.is_finite()) {
+                    out.push(format!("{label}: path point not finite"));
+                }
+                if !(p.speed.is_finite() && p.speed > 0.0 && p.wait.is_finite() && p.wait >= 0.0) {
+                    out.push(format!("{label}: path speed must be > 0 and wait >= 0"));
+                }
+            }
+            if let Some(action) = &a.action
+                && (action.trigger.trim().is_empty() || !(action.every.is_finite() && action.every > 0.0))
+            {
+                out.push(format!("{label}: action needs a trigger and every > 0"));
+            }
         }
         out
+    }
+
+    /// A spawn by name (case-insensitive).
+    pub fn spawn(&self, name: &str) -> Option<&Spawn> {
+        self.spawns.iter().find(|s| s.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The horizontal bounds (min, max) of every object's footprint, a
+    /// conservative box (each footprint's circumscribed square); `None`
+    /// without objects. Hosts use it to cover the level (streaming cells).
+    pub fn bounds(&self) -> Option<(Vec3, Vec3)> {
+        self.objects.iter().fold(None, |acc, o| {
+            let (w, l) = o.shape.footprint();
+            let r = 0.5 * w.hypot(l);
+            let (lo, hi) = (o.at - Vec3::new(r, 0.0, r), o.at + Vec3::new(r, o.shape.height(), r));
+            Some(acc.map_or((lo, hi), |(a, b): (Vec3, Vec3)| (a.min(lo), b.max(hi))))
+        })
     }
 }
 

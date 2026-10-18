@@ -105,3 +105,48 @@ fn uvs_are_meters() {
     let span = |k: usize| top.iter().map(|uv| uv[k]).fold(f32::MIN, f32::max) - top.iter().map(|uv| uv[k]).fold(f32::MAX, f32::min);
     assert!(((span(0).max(span(1))) - 4.0).abs() < 1e-5);
 }
+
+const ACTORS: &str = r#"
+(
+    name: "actors",
+    cameras: [(name: "overview", eye: (0.0, 10.0, 20.0), target: (0.0, 0.0, 0.0))],
+    spawns: [(name: "a", at: (0.0, 0.0, 5.0), yaw: 90.0), (name: "b", at: (2.0, 0.0, 5.0))],
+    objects: [
+        (shape: Ground(size: (40.0, 40.0))),
+        (name: "crate", shape: Box(size: (0.6, 0.6, 0.6)), at: (3.0, 0.0, 0.0), dynamic: Some(20.0), interact: Some("open")),
+    ],
+    actors: [
+        (id: "walker", spawn: "a", outfit: Some(["robe", "shoes"]),
+         path: Some((points: [(0.0, 0.0, 5.0), (0.0, 0.0, -5.0)], mode: PingPong, speed: 1.2, wait: 2.0))),
+        (id: "idler", spawn: "B", action: Some((trigger: "fidget", params: [("variant", 3.0)]))),
+    ],
+)
+"#;
+
+#[test]
+fn actors_and_props_parse_with_defaults() {
+    let level = Level::parse(ACTORS).expect("actors parse");
+    assert_eq!(level.actors.len(), 2);
+    let walker = &level.actors[0];
+    let path = walker.path.as_ref().expect("path");
+    assert_eq!((path.mode, path.run, path.points.len()), (crate::PathMode::PingPong, false, 2));
+    assert_eq!(walker.outfit.as_deref().map(<[String]>::len), Some(2));
+    let action = level.actors[1].action.as_ref().expect("action");
+    assert!((action.every - 6.0).abs() < 1e-6, "default period");
+    assert_eq!(level.spawn("b").map(|s| s.at.x), Some(2.0), "spawn names are case-insensitive");
+    assert_eq!(level.objects[1].dynamic, Some(20.0));
+    assert_eq!(level.objects[1].interact.as_deref(), Some("open"));
+    let (lo, hi) = level.bounds().expect("bounds");
+    assert!(lo.x <= -20.0 && hi.x >= 20.0 && lo.z <= -20.0 && hi.z >= 20.0);
+}
+
+#[test]
+fn actor_and_prop_problems_are_listed() {
+    let bad = ACTORS
+        .replace("spawn: \"B\"", "spawn: \"nowhere\"")
+        .replace("speed: 1.2", "speed: 0.0")
+        .replace("Box(size: (0.6, 0.6, 0.6))", "Cylinder(radius: 0.3, height: 0.6)")
+        .replace("trigger: \"fidget\"", "trigger: \"\"");
+    let Err(LevelError::Invalid { problems, .. }) = Level::parse(&bad) else { panic!("invalid level accepted") };
+    assert_eq!(problems.len(), 4, "{problems:#?}");
+}

@@ -13,3 +13,8 @@ thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The headless course runner (tests/course.rs): mover and context probes on a level's statics.
+sf_controller.workspace = true
+sf_coords.workspace = true
