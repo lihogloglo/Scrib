@@ -1176,7 +1176,12 @@ dependency order:
   Input crate: `bevy_enhanced_input` 0.27 and `leafwing-input-manager` 0.22 are on Bevy 0.20 (crates.io 2026-10-14/16):
   no fork needed; pick one in ui.md OQ4.
   Verify: headless registry/router tests; gamepad-only navigation in a framework example.
-- [ ] U2 `sf_ui_css`: `bevy_flair` 0.9.0 from crates.io (on Bevy 0.20 since 2026-10-14; MPL deps allowed unmodified, owner
+- [~] U2 `sf_ui_css`: **part 1 done (u2, superfargoth c3d1fcb)**: composer (flat layers `mods-<n>-<id>`, flair 0.9 has no dotted
+  layer names), sources `sf_ui` (memory root) + `sf_ui_content` (app-registered), root classes + `input` attribute, per-mod
+  errors via strict probe loads (`UiCssReport`); 6 tests pass (layer order = load order through flair, errors → mod id),
+  clippy clean; licence set in ui.md "As built (U2 part 1)". **Part 2 open**: run example `ui_css --autotest` (hot reload
+  on a temp copy, before/after screenshots), visual check UI-2, `ui_nav --autotest`. Original task text:
+  U2 `sf_ui_css`: `bevy_flair` 0.9.0 from crates.io (on Bevy 0.20 since 2026-10-14; MPL deps allowed unmodified, owner
   2026-10-11), composer with `@layer mods.<id>` in load order, per-mod error attribution, CSS hot reload.
   Verify: composer tests (layer order = load order, errors → mod id); edit a sheet in the example, see it apply.
 - [ ] U3 Widget kit + both themes (modern; `mw_classic` with TTF fonts and the `ui.frames` bake, ui-adapter.md) +
@@ -1702,3 +1707,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (u1c): M5 U1 part 3 (glue): Fluent from each mod's VFS `l10n/<locale>/<mod id>.ftl` in load order with per-mod issues, `UiRecordKinds` adapter, settings ↔ `Profile::settings`, new `Profile::bindings` (reflected input names, non-defaults), `insert_from_profile` + save on leaving menus/exit, `UiCommands`, presets enforced on open; 7 new tests, clippy clean, `ui_nav --autotest` PASS (superfargoth 860d027). Next: U2 `sf_ui_css`.
 - 2026-10-18 (ts1a): TS1 [~] part 1: synthetic test levels: `sf_level` (Bevy-free RON greybox format, validation, meshes = colliders; 6 tests), app `level.rs` (`view level:<name>`, scenes `level:`; own worldspace with an empty streaming index, prototype-grid materials, `Fixed` mesh colliders), levels `flat-slopes` + `ledges`, scenes `level-*`, TS-1 awaiting owner; ready 2.1-2.8 s after start. RON over DynamicScene/BSN/Skein (no Bevy 0.20 Skein yet). Next ts1b: actors by id, props, headless runner.
 - 2026-10-18 (we1): M6 WE1 [x]: Bevy-free `sf_weather` (presets/climates/precip kinds as records, forecast as a pure function of seed + climate + slot with timestamped overrides in the save, per-channel lead/lag with never-morphing crossfades, border band, Poisson lightning by thinning, `WeatherFrame` with wind target, storms, `visibility_m`); `evaluate` 0.0006 ms (gate 0.05); superfargoth cbf4c44. Next: WE2 `mw_weather`, then WE3 `sf_weather_bevy`.
+- 2026-10-18 (u2): M5 U2 [~] part 1: `sf_ui_css` on bevy_flair 0.9.0 (composer with flat `mods-<n>-<id>` cascade layers in load order, memory root source + app-registered `sf_ui_content`, root classes + `input` attribute, per-mod CSS errors via strict probe loads); 6 tests (flair cascade = load order, errors → mod id), clippy clean (superfargoth c3d1fcb). Licence set in ui.md (MPL only cssparser/selectors/dtoa-short, unmodified). Next: U2 part 2 (run `ui_css --autotest` hot reload, UI-2 visual check).
