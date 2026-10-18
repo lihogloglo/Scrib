@@ -1735,3 +1735,8 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   attenuation, shore foam and discarding sea under land, on GPU and CPU alike. Region optics are a cell map + a small
   look table, not per-body materials; a water body's body colour uses a backscatter-sized diffuse reflectance (2-5 %),
   not the total scattering (milky).
+- **2026-10-18 (p10a; specs/physics.md "Cloth", as built): the cloth solver lives in `sf_anim::cloth`** (Bevy-free),
+  not in `sf_anim_graph`: the cook (`sf_character`) builds `ClothLattice` and depends on `sf_anim` only; the op in
+  `sf_anim_graph` calls the solver. Character-space inertia is **fictitious forces** (scaled frame acceleration,
+  Euler, centrifugal and Coriolis terms; UE Chaos / `NvCloth`), not the position share `SpringBones` uses, so a steady
+  run is free and only speed and heading changes swing the cloth. Tethers use the geodesic (down-the-column) length.

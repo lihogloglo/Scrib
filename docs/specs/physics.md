@@ -578,6 +578,49 @@ Behaviours:
 - Budget: 0.03 ms per robe at A0 single-threaded; cloths run in the animation tasks, so they spread
   across cores with the characters.
 
+**As built (p10a, 2026-10-18): the solver core, `sf_anim::cloth`.** Placement: `sf_anim` (Bevy-free), not
+`sf_anim_graph`, because `sf_character` (the cook) depends on `sf_anim` only; the `ClothLattice` op in
+`sf_anim_graph::secondary` (p10c) calls it as `SpringBones` calls `sf_anim::spring`. Reuse check redone: no
+Bevy-free MIT/Apache cloth crate with character constraints (the list below still holds; avian has no cloth).
+- Data: `ClothLattice { rows, cols, ring, particles: ClothParticle { rest, joint, inv_mass (0 = pinned),
+  max_distance }, edges: ClothEdge { a, b, rest, kind: Structural | Shear | Bend }, tethers: ClothTether {
+  particle, anchor, length }, colliders: ClothCollider { joint, center, axis (joint frame), radius, half_length }
+  }` (serde). `ClothLattice::grid(&GridSpec { rows 5, cols 10, ring, mass 1.5 kg, max_distance_scale 0.6 },
+  rest, joints)` builds a lattice from row-major rest positions: row 0 pinned; structural edges along rows and
+  columns, shear diagonals, bend edges two apart; one tether per free particle to its column's pin at the
+  **geodesic** (down-the-column) rest length (Chaos's accurate tether setup); max distance = scale × that length.
+  `SkinRebind` stays with the cook (p10b).
+- Step: `ClothState::step(&lattice, &ClothParams, &ClothInputs { animated, capsules, moved: RootDelta, dt,
+  acceleration })` → `StepReport { substeps, teleported, seeded }`. Fixed 1/240 s substeps accumulated (at most 16
+  per update), one XPBD pass each (λ from 0, Small Steps); per substep: damped Verlet predict (damping relative
+  to the character, 1/s) with gravity, external acceleration and the angular fictitious terms; distance edges
+  (compliance per kind, defaults structural 0, shear 2e-4, bend 2e-3 m/N); tethers (one-sided, × `tether_scale`
+  1.0); max distance to the animated target; capsule push-out (radius + `thickness` 0.015 m) **last**, so no
+  particle ends a substep inside the body. Animated targets, pins and capsules are interpolated from the last
+  update across the substeps (a swept capsule, CCD-lite).
+- Inertia, decided: **fictitious forces, not the position share `SpringBones` uses**. Particles live in
+  character space; the root's velocity change over an update enters as one velocity kick
+  `−inertia_linear · Δv` (and the Euler term `−inertia_angular · Δω × r`), and the yaw rate as centrifugal and
+  Coriolis accelerations scaled by `inertia_angular` (UE Chaos `FictitiousAngularScale`, `NvCloth` linear /
+  angular / centrifugal inertia). Constant velocity is free (Galilean): a steady run hangs like standing (hem
+  offset 2 mm) and only speeding up, stopping and turning swing it (±0.2 m at `inertia_linear` 1 for a
+  0 → 6 m/s step). The total kick is the same at any frame rate.
+- Teleport: a root move > `teleport_distance` (1 m) or turn > `teleport_angle` (1 rad) in one update keeps the
+  character-space shape, drops the velocity, skips the sweep and keeps the old frame velocity (Chaos's teleport
+  mode); `reset()` re-seeds from the animation (LOD cut, respawn). `rotations()` gives each particle's
+  rest → current rotation from the lattice tangents, for the op to orient the cloth joints.
+- Verified (`cargo test -p sf_anim --lib cloth`, synthetic flaring robe 10 × 5, pelvis + thigh/shin capsules,
+  stand → 6 m/s run → 180° turn in 0.5 s → dead stop, at 30/60/144 fps): hem stretch 1.3/1.7/1.9 % (gate 5 %),
+  all structural edges ≤ 5.5 % (peak at the end of the turn), no particle inside a capsule (closest 15 mm =
+  the thickness); a 50 m + 143° teleport mid-run: shape kept, peak speed after 0.65 m/s, stretch 3 %, max
+  distance held. Cost (release, `-- --ignored cost_per_robe`): **0.014 ms per robe update at 60 fps** (4
+  substeps), 0.027 ms at 30 fps (8 substeps); gate 0.03 ms. A robe narrower than the stride cannot hold the legs
+  without stretching (collisions win, as in Chaos): the test robe flares to 0.44 m at the hem; the census (p10b)
+  should check real robe widths against the run stride.
+- Open (p10b/p10c): lattice joints' orientation from `rotations()` vs a twist-free frame (check in PH-3);
+  capsule friction (none yet); edges can pass through a capsule between particles (thickness covers a lattice
+  this coarse; look in PH-3); wind enters through `ClothInputs::acceleration` (M6 WD3).
+
 **Not in M4 (later, recorded):** mesh cloth (a per-vertex proxy mesh driving the render mesh, for
 capes and banners), evaluated then against rapier's soft bodies (0.36, CPU, coupled with rigid
 bodies) and a GPU XPBD path if counts demand it (WISHLIST §7). Crates checked 2026-10-12 and not

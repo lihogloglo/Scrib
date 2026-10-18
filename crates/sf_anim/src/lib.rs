@@ -16,6 +16,7 @@
 #[cfg(feature = "bvh")]
 mod bvh_import;
 mod clip;
+pub mod cloth;
 mod cook;
 #[cfg(feature = "fbx")]
 mod fbx_import;
