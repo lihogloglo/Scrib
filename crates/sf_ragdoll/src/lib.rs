@@ -25,9 +25,10 @@ mod powered;
 #[cfg(feature = "bake")]
 pub mod steps;
 
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
-use sf_anim::SkeletonId;
+use sf_anim::cloth::ClothCollider;
+use sf_anim::{LimbKind, RigProfile, SkeletonId};
 
 pub use cook::{BodyOverride, CookParams, RagdollError, RagdollPolicy, cook};
 pub use instance::{RagdollInstance, RagdollSettings, SpawnPose};
@@ -147,6 +148,35 @@ impl RagdollDef {
     /// The body attached to a skeleton joint, if that joint has one.
     pub fn body_of_joint(&self, joint: u16) -> Option<usize> {
         self.bodies.iter().position(|b| b.joint == joint)
+    }
+
+    /// The capsules a hanging cloth collides with (physics.md "Cloth
+    /// lattice", `cloth.cook`): the core (pelvis and spine), the legs and
+    /// the tails, skipping every capsule wholly above `below` (the cloth's
+    /// attachment height in the rest pose, model space `rest_model`), so a
+    /// robe from the waist sees the pelvis, legs and tail but not the chest.
+    /// Arms, head, wings and extra chains are left out.
+    pub fn cloth_colliders(&self, profile: &RigProfile, rest_model: &[Affine3A], below: f32) -> Vec<ClothCollider> {
+        let mut regions: Vec<&str> = vec!["core"];
+        regions.extend(profile.limbs.iter().filter(|l| matches!(l.kind, LimbKind::Leg(_))).map(|l| l.name.as_str()));
+        regions.extend(profile.tails.iter().map(|c| c.name.as_str()));
+        self.bodies
+            .iter()
+            .filter(|b| self.regions.get(usize::from(b.region)).is_some_and(|r| regions.contains(&r.as_str())))
+            .filter_map(|b| {
+                let (center, rotation) = b.local;
+                let axis = rotation * Vec3::Y;
+                let frame = *rest_model.get(usize::from(b.joint))?;
+                let ends = [frame.transform_point3(center + axis * b.shape.half), frame.transform_point3(center - axis * b.shape.half)];
+                (ends[0].y.min(ends[1].y) - b.shape.radius < below).then_some(ClothCollider {
+                    joint: b.joint,
+                    center,
+                    axis,
+                    radius: b.shape.radius,
+                    half_length: b.shape.half,
+                })
+            })
+            .collect()
     }
 }
 

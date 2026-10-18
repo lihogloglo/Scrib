@@ -281,3 +281,30 @@ fn frozen_pose_is_kept_for_unbodied_joints() {
     let model_hips = out[root_joint].to_affine() * out[hips].to_affine();
     assert!(Vec3::from(model_hips.translation).distance(Vec3::from(s.rest_model()[hips].translation)) < 1e-3);
 }
+
+/// P10 `cloth.cook`: a waist-down robe collides with the pelvis and leg capsules, not the chest, arms or head.
+#[test]
+fn cloth_colliders_below_the_waist() {
+    let (s, d) = human();
+    let profile = detect_profile(&s, &RigHints::default()).expect("profile");
+    let rest = s.rest_model();
+    let hips = s.find("hips").unwrap();
+    let waist = rest[hips].translation.y;
+    let colliders = d.cloth_colliders(&profile, &rest, waist);
+    let names: Vec<&str> = colliders.iter().map(|c| s.name(usize::from(c.joint))).collect();
+    println!("cloth colliders below {waist:.2} m: {names:?}");
+    let legs: usize = profile.limbs.iter().filter(|l| matches!(l.kind, sf_anim::LimbKind::Leg(_))).map(|l| l.joints.len()).sum();
+    assert!(colliders.len() >= 5, "pelvis + thighs + shins at least: {names:?}");
+    assert!(colliders.iter().any(|c| c.joint == d.bodies[0].joint), "the pelvis body");
+    assert!(colliders.len() <= legs + 3, "no arms or head: {names:?}");
+    for c in &colliders {
+        let b = &d.bodies[d.body_of_joint(c.joint).unwrap()];
+        assert!((c.axis.length() - 1.0).abs() < 1e-4 && (c.radius - b.shape.radius).abs() < 1e-6 && (c.half_length - b.shape.half).abs() < 1e-6);
+        let frame = rest[usize::from(c.joint)];
+        let low = frame.transform_point3(c.center + c.axis * c.half_length).y.min(frame.transform_point3(c.center - c.axis * c.half_length).y);
+        assert!(low - c.radius < waist, "{}: wholly above the waist", s.name(usize::from(c.joint)));
+    }
+    // Hung from the neck instead, the spine joins in; from the ground up, nothing.
+    assert!(d.cloth_colliders(&profile, &rest, 10.0).len() > colliders.len());
+    assert!(d.cloth_colliders(&profile, &rest, -1.0).is_empty());
+}

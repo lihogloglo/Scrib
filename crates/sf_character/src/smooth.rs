@@ -759,7 +759,7 @@ fn skin_point(p: Vec3, s: &SkinVertex, skinning: &[Affine3A]) -> Vec3 {
 }
 
 /// Sparse weights → the strongest [`MAX_INFLUENCES`], normalized.
-fn top_influences(w: &[(u16, f32)]) -> SkinVertex {
+pub(crate) fn top_influences(w: &[(u16, f32)]) -> SkinVertex {
     let mut sorted: Vec<(u16, f32)> = w.iter().copied().filter(|(_, x)| *x > 1e-4).collect();
     sorted.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     sorted.truncate(MAX_INFLUENCES);
@@ -1316,6 +1316,44 @@ fn hops(parents: &[Option<usize>], a: usize, b: usize) -> usize {
         .find_map(|(i, j)| cb.iter().position(|k| k == j).map(|k| (i, k)))
         .filter(|&(i, k)| i == 0 || k == 0 || (i == 1 && leaf(a)) || (k == 1 && leaf(b)))
         .map_or(usize::MAX, |(i, k)| i + k)
+}
+
+/// Harmonic inpainting on one surface (`cloth.cook`'s rebind band): vertices
+/// within `weld` of each other are one node; nodes with an `unknown` member
+/// are solved from their neighbors, the rest keep the mean of `weights`
+/// (sparse, any joint index space). Returns per-vertex skins (top
+/// influences), the sweeps and the residual.
+pub(crate) fn inpaint_surface(
+    surface: &SkinSurface,
+    weights: &[Vec<(u16, f32)>],
+    unknown: &[bool],
+    weld: f32,
+    iterations: usize,
+    tolerance: f32,
+) -> (Vec<SkinVertex>, usize, f32) {
+    let parts = std::slice::from_ref(surface);
+    let flat = Flat::new(parts);
+    let mut uf = UnionFind::new(flat.len());
+    let grid = PointGrid::new(&flat.positions, weld.max(1e-6));
+    for i in 0..flat.len() {
+        grid.near(&flat.positions, flat.positions[i], weld, |k| uf.union(i, k));
+    }
+    let graph = Graph::new(&flat, parts, &mut uf, std::iter::empty());
+    let mut node_weights: Vec<Vec<(u16, f32)>> = Vec::with_capacity(graph.len());
+    let mut node_unknown = vec![false; graph.len()];
+    for (n, members) in graph.members.iter().enumerate() {
+        node_unknown[n] = members.iter().any(|&i| unknown[i]);
+        let mut w = Vec::new();
+        for &i in members {
+            for &(j, x) in &weights[i] {
+                add(&mut w, j, x / count(members.len()));
+            }
+        }
+        node_weights.push(w);
+    }
+    let (sweeps, residual) = graph.inpaint(&mut node_weights, &node_unknown, &[], iterations, tolerance);
+    let skin = (0..flat.len()).map(|i| top_influences(&node_weights[graph.node[i]])).collect();
+    (skin, sweeps, residual)
 }
 
 #[cfg(test)]

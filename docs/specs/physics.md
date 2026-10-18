@@ -271,6 +271,42 @@ re-bind the part's vertices below the attachment line to the lattice joints with
 inpainting `sf_character::smooth_body` already has (smooth-bodies.md), so the hem moves and the waist
 stays. Cloth joints are outfit joints appended after the skeleton's joints in the merged palette.
 
+**As built (p10b, 2026-10-18): `sf_character::cook_cloth`** (feature `smooth`, Bevy-free; the bake step and
+`ClothLattice` op are p10c). Input: the part's rest `SkinSurface` (model space, Y up), `rest_model`, the attachment
+joint, the adapter's `ClothSpec { attach, attach_offset, grid: GridSpec, params: ClothParams }` (from
+`sf_character::ClothRules::cloth(id, part)`) and the colliders. Output `ClothCook { lattice, offsets, targets, top,
+hem, center, filled, rebind: SkinRebind }`.
+- Placement: attachment line = joint rest height + offset, clamped to the part's top; hem = the part's lowest point;
+  axis = bounding-box centre (x, z) of the vertices below the line. Rows evenly spaced (ends pulled 1 % inside),
+  columns from +Z toward +X; each particle is the **farthest** hit of a horizontal ray from the axis (Möller–Trumbore
+  over all triangles, both faces), so linings and inner layers don't count. A missed ray (uneven hem, open waist)
+  takes its column's nearest row (`filled`). Capes (`ring: false`) are an error for now. Every particle rides the
+  attachment joint: `offsets[i]` is its rest position in that joint's rest frame.
+- `targets[i]`: the authored skin where particle `i` sits (barycentric blend of the hit triangle's weights), so the
+  op can blend the animated target from riding the girdle toward following the legs (see the census below).
+- Colliders: `sf_ragdoll::RagdollDef::cloth_colliders(profile, rest_model, below)`: the `core` region and every
+  leg limb and tail region, minus capsules wholly above `below` (the line); `ClothCollider` center and axis are the
+  body's `local` frame (joint model frame, capsule along its Y). On the Morrowind humanoid: thighs, calves and feet
+  (the pelvis capsule sits above the pelvis joint).
+- `SkinRebind { base, skin, on_lattice, band, sweeps, residual }`: joint `base + i` (base = skeleton joint count)
+  is particle `i`, bound at its rest position, unrotated. Vertices below row 1 take bilinear lattice weights (row
+  from height, column from angle; below the hem row they ride it); vertices above a quarter row over the line keep
+  their weights; the band between is solved harmonically with `smooth_body`'s inpainting (`inpaint_surface`), so
+  the waist blends from the body's weights into the lattice. Row 0 (pinned) gets no direct weight.
+- Verified (`cargo test -p sf_character --features smooth --lib cloth`, synthetic flared robe with a lining):
+  particles on the outer surface within 6 mm, offsets round-trip, hem perimeter within 3 cm; rebind weights sum
+  to 1, untouched above the band, lattice-only below row 1, and moving every lattice joint 10 cm moves the hem
+  10 cm and the waist 0; targets carry the authored joint. `cargo test -p sf_ragdoll --lib cloth_colliders`.
+- **Census (Morrowind, physics-adapter.md "Cloth"): no robe or skirt hem holds a 50° run stride.** Wrapping both
+  legs at the hem height (thighs ±25°, leg radius 0.065 m + thickness) needs 1.5–2.4 m of hem; the 48 cooked parts
+  have 0.98–2.00 m: +13 % to +133 % stretch (straight robes worst). Collisions win in the solver (capsules last),
+  so for p10c the canonical fix is the hybrid most character-cloth setups use for long skirts: drive the lower
+  rows' animated target partly from the legs (`targets`, the authored skin; UE AnimDynamics / Magica BoneCloth
+  "leg follow" style) and let max distance and collisions do the rest, instead of riding the pelvis only. Decide
+  in PH-3.
+- Open: per-column hem (an uneven hem leaves the sides' bottom row filled, 0–9 particles per part); capes; the
+  rebind band is a quarter row above the line (tune in PH-3).
+
 ## Interfaces
 
 ### Stepping and the floating origin (`sf_physics_bevy`)

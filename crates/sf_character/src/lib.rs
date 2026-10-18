@@ -13,6 +13,9 @@
 mod align;
 mod assemble;
 mod automap;
+mod cloth;
+#[cfg(all(test, feature = "smooth"))]
+mod cloth_tests;
 mod humanoid;
 mod names;
 mod outfit;
@@ -30,6 +33,9 @@ pub use assemble::{
     AssembledMesh, AssembledOutfit, AssemblyPart, BEVY_JOINT_BYTES, BEVY_MORPH_BYTES, DecodedPart, OutfitBytes, ShapeWeights, assemble,
 };
 pub use automap::{AutoMapReport, auto_map};
+pub use cloth::{ClothRules, ClothSpec};
+#[cfg(feature = "smooth")]
+pub use cloth::{ClothCook, ClothCookError, SkinRebind, cook_cloth};
 pub use humanoid::{BoneSet, Finger, HumanoidBone, Limb, Side};
 pub use outfit::{Outfit, OutfitKey, PartLookup, View, outfit_key, resolve, resolve_recipe};
 pub use records::{
