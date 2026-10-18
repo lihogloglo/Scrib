@@ -1740,3 +1740,10 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   `sf_anim_graph` calls the solver. Character-space inertia is **fictitious forces** (scaled frame acceleration,
   Euler, centrifugal and Coriolis terms; UE Chaos / `NvCloth`), not the position share `SpringBones` uses, so a steady
   run is free and only speed and heading changes swing the cloth. Tethers use the geodesic (down-the-column) length.
+- **2026-10-18 (u1a, M5 U1; specs/ui.md OQ4 and "As built (U1a)"): input crate `bevy_enhanced_input` 0.27; `sf_ui`
+  core is Bevy-free.** bevy_enhanced_input over `leafwing-input-manager` 0.22 (both on Bevy 0.20): its prioritised,
+  input-consuming contexts are CommonUI's per-screen input configs, so the router is "activate the top screen's
+  context", with no clash handling of ours; it lives only in `sf_ui_bevy`. `sf_ui` holds the UI records (serde kinds in
+  `sf_records`), `UiRegistry` (owner = defining mod; slots and columns ordered by priority, then load order),
+  `ScreenStack` (routing rule), `ViewModel` as named fields (`UiValue`, not `Reflect`), keyed `ListModel`,
+  `SettingsStore` over profile tables, and a Fluent `Localizer` (later mods override messages; key as last fallback).

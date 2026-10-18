@@ -203,8 +203,8 @@ boundary on actions.**
    when 0.21 ships).
 2. **Feathers: dev tools only** (its docs say so).
 3. **Crates**: `bevy_flair` for styling (decision 3; MPL caveat, R2b), inside `sf_ui_css`.
-   `fluent-bundle` for strings. `bevy_enhanced_input` for actions once it is on 0.20
-   (fallback `leafwing-input-manager`). Evaluate `bevy_ui_anchor` in the slice.
+   `fluent-bundle` for strings. `bevy_enhanced_input` 0.27 for actions (chosen 2026-10-18,
+   Open questions 4). Evaluate `bevy_ui_anchor` in the slice.
    `bevy_egui` + inspector for dev UI only.
 4. **Own** (no crate does these on 0.20): screen registry and layers, input router, extension
    slots, view-models and list models, virtualized list, glyph prompts, stylesheet composer,
@@ -391,6 +391,41 @@ Headless tests: registry build, screen replacement, slot order, composer output 
 (100 %, 200 % text at 1280×720). An `sf_diag` scenario with the inventory open and scrolling.
 A gamepad-only pass over every stock screen. Hot-reload test: edit a mod's CSS, see it apply.
 
+## As built (U1a, 2026-10-18)
+
+`superfargoth/crates/sf_ui`, Bevy-free (deps `fluent-bundle` 0.16, `unic-langid` 0.9, `sf_records`, `toml`).
+14 headless tests, clippy pedantic clean. Changes against the Interfaces sketch:
+
+- **Records**: kinds `ui.screen`, `ui.slot` (one contribution each), `ui.column`, `ui.theme`, `ui.preset`,
+  `ui.setting`, registered as serde kinds (`register_kinds`), so mods write them in native RON/TOML record files and
+  replace or patch them like any record. The record id is the object id; the **owner** is the mod whose define the
+  value is based on (sf_mods names each record source by mod id). Built-in presets `pc_dense` (18 px, classic windows)
+  and `controller` (26 px) exist without records; a record with the same id replaces them.
+- **`UiRegistry::build(&RecordDb)`**: no `LoadOrder` argument, since record sources already are mods in load order.
+  Findings (`UiConflict`, with `Severity` and owning mod): screen replaced (info), contribution to a slot no screen
+  offers and unknown preset (warning), invalid setting default/range (error, setting dropped). Screens list the slots
+  they offer (`ScreenDef::slots`).
+- **Slot and column order: priority, then load order** (the sketch said load order, then priority, which makes
+  priority useless across mods; WoW/Factorio-style explicit ordering wins, load order breaks ties).
+- **`ScreenStack`** (the CommonUI router rule, Bevy-free): stacks per layer, reopen moves to top, `replace_top`,
+  `input_target()` = top screen of the highest input-taking layer (Hud, Menu, Modal; notifications and tooltips never
+  take input), `pauses_game()`, a version counter for the Bevy side. A screen's input context defaults to its id.
+- **`ViewModel` is not `Reflect`**: `KIND`, `fields()`, `field(name) -> UiValue`. Bevy-free (§8b) and exactly what
+  bindings, columns (`ValueSource::Field`) and sorting need; `sf_ui_bevy` may still derive `Reflect`.
+- **`ListModel<K, T>`**: rows in insertion order with per-row versions (`upsert` of an equal value is a no-op),
+  `changed_since(version)`, stable sort on a field (case-insensitive text, mixed int/float), filter (search over
+  fields + exact field matches for tabs), lazily rebuilt view, `window(first, count)` for virtualization.
+- **`SettingsStore`**: typed values over `ui.setting`; numbers clamp and snap to the step; profile I/O over
+  `BTreeMap<mod id, toml::Table>` (`sf_mods::Profile::settings`), saving only non-defaults and passing unknown entries
+  through (a disabled mod keeps its values). Profile key = setting id minus a leading `<owner>.`.
+- **`Localizer`**: one `fluent_bundle::concurrent::FluentBundle` per locale of the chain; mod files in load order with
+  `add_resource_overriding` (a later mod rewords another's message); `format("id" | "id.attr", args)` falls back
+  through the chain, then to the key; syntax errors become `L10nIssue`s per mod and the valid messages still load.
+  VFS convention `l10n/<locale>/<mod id>.ftl` (files never shadow each other). `negotiate()` is our own small filter
+  (exact, then same language, then default): `fluent-langneg` 0.14 moved to `icu_locid` while `fluent-bundle` 0.16
+  uses `unic-langid`.
+- Not in U1a: `sf_ui_bevy` (U1b: input contexts, focus, glyphs, example), CSS (U2), widgets (U3), Lua (parked).
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 above
@@ -429,7 +464,21 @@ already compare toolkits and player lessons; this table gives verdicts per techn
    `sf_vfs` is read-only today. Small addition at M5.
 3. If M5 starts before Bevy 0.21: stock screens start as `bsn!` templates in Rust (same scene
    model, no file loader) and move to `.bsn` files when they land.
-4. `bevy_enhanced_input` vs `leafwing-input-manager`: pick whichever is on 0.20 at M5.
+4. ~~`bevy_enhanced_input` vs `leafwing-input-manager`~~ **Closed 2026-10-18 (u1a): `bevy_enhanced_input`
+   0.27** (MIT/Apache; on Bevy 0.20 since 2026-10-14; github.com/simgine/bevy_enhanced_input, last push
+   2026-10-14). Why: its model *is* CommonUI's (both follow UE Enhanced Input): input contexts are
+   components evaluated newest-first or by `ContextPriority`, and actions consume their inputs by default
+   (`ActionSettings`), so the top screen's context shadows the layers below it. That is the router rule
+   above, with no clash code of ours. Actions and bindings are entities (BSN-declarable), queryable as
+   `Action<A>` without observers; conditions and modifiers (hold, tap, chord, dead zones) are built in;
+   `GamepadDevice` restricts a context to one pad; its `keybinding_menu` example rebinds at runtime and
+   persists through Bevy 0.20's `SettingsGroup` (`serialize` feature). `leafwing-input-manager` 0.22
+   (Bevy 0.20 since 2026-10-15, larger user base) keeps one `InputMap`/`ActionState` per entity with a
+   `ClashStrategy`: layered contexts and input consumption would be ours to build. Neither ships device
+   glyphs or last-used-device detection: both stay ours (Stack decision 4). Its Bevy dependency is the
+   `bevy` umbrella with only `mouse`, `keyboard`, `gamepad`, `touch`, `bevy_scene`, `bevy_log`; it lives in
+   `sf_ui_bevy`, never in `sf_ui`. Bindings persist in the profile through our settings registry (U6), so
+   profiles stay the single source; U6 decides whether to bridge or bypass `SettingsGroup`.
 5. **Subtitles (J9, P2).** A `subtitles` settings group (on/off, size scale independent of text
    scale, background opacity, speaker name, max two lines, minimum display time) and a
    `Layer::Notification`-level caption widget fed by a `Caption { speaker, text, duration }`

@@ -46,6 +46,9 @@ bitflags = "2"
 # blake3 and glam match what Bevy 0.20 uses (bevy_asset, bevy_math): one copy in the tree.
 blake3 = "1.8"
 futures-lite = "2"
+# UI strings (sf_ui, ui.md "Stack decision" 3): Project Fluent's reference crates, Bevy-free.
+fluent-bundle = "0.16"
+unic-langid = "0.9"
 # sf_vfs hot reload (M5 A4): lock-free snapshot swap; the watcher crate and channel Bevy 0.20 uses.
 arc-swap = "1.9"
 async-channel = { version = "2", default-features = false }
@@ -114,6 +117,7 @@ sf_script = { path = "crates/sf_script" }
 sf_water = { path = "crates/sf_water" }
 sf_water_bevy = { path = "crates/sf_water_bevy" }
 sf_script_bevy = { path = "crates/sf_script_bevy" }
+sf_ui = { path = "crates/sf_ui" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
