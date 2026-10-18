@@ -27,8 +27,10 @@ working tree**. Protocol:
 2. **One build at a time.** Cargo's lock prevents corruption but not
    two sessions fighting over the CPU (a Bevy rebuild can take minutes).
    Before any `cargo build/test/clippy/run`, check for a running build
-   (`tasklist | grep -iE "cargo|rustc"` in bash). If another session's build
-   is running, wait for it, using a background `until` loop rather than
+   (`tasklist | grep -iE "cargo|rustc"` in bash). Count builds from **any**
+   project, not only ours: the owner builds other projects on the same
+   machine (e.g. Ovid, whose cargo lives in `%TEMP%\ovid-build-tools`).
+   If another build is running, wait for it, using a background `until` loop rather than
    sleeping. Keep the build/test/run cycle short so you don't hold the
    machine for long; spec-only sessions shouldn't need to build at all.
 3. **Shared files.** `docs/ROADMAP.md`: edit only your milestone's section
@@ -81,6 +83,16 @@ working tree**. Protocol:
    is fine in this repo; superfargoth needs MIT/Apache/BSD/zlib). Write our
    own only when neither fits, and say in the spec why each earlier step
    didn't.
+   **Don't reinvent the wheel: this covers whole projects, not just
+   crates.** Before starting a system, look for open-source games, engine
+   ports and Bevy projects that already built it (e.g. Mudcrab, a Skyrim
+   engine on Bevy with Luau scripting; OpenMW for Morrowind behaviour).
+   If one is building what we need and isn't on our critical path, wait
+   for it and adopt or port it (license permitting) instead of racing it.
+10. **Finish before starting.** Drive started tasks (`[~]`) to verified and
+   committed before opening new systems; ask the owner before starting a
+   new lane. Parked (owner 2026-10-18): further Lua/Luau work after M5 L3
+   (see ROADMAP "## M5").
 
 ## Commands
 
@@ -93,3 +105,29 @@ cargo test --workspace && cargo clippy --workspace --all-targets --features bevy
 ```
 
 Clippy runs at `pedantic`; keep it warning-free.
+
+## Live inspection (BRP)
+
+Dev builds (`remote` feature, part of `dev`) serve the Bevy Remote Protocol
+on 127.0.0.1 in interactive `view`/`scene` runs, for the `bevy_brp` MCP
+server (`bevy_brp_mcp`, registered for this workspace; owner 2026-10-18).
+Port `BEVYRROWIND_BRP_PORT`, default 15712 (Ovid uses 15702), shown in the
+window title. Code: `apps/bevyrrowind/src/remote.rs`.
+
+- **Attach only.** Start the exe yourself the usual way (after the build
+  check above), then talk to it. `brp_launch`/`brp_shutdown` are denied:
+  launching builds behind our back, and the owner may be looking at the
+  window. Don't call `brp_extras/shutdown` through `brp_execute` either;
+  close only processes you started.
+- **Game tools first:** `brp_list_agent_tools` lists `bevyrrowind/status`
+  (scene, hour, A/B switches, camera, `ready`) and `bevyrrowind/set`
+  (switches, hour, clock, clouds, camera); call them with `brp_execute`.
+  Poll `ready` before `brp_extras_screenshot`. Other A/B keys (F4 DLSS, B
+  bodies, ...) via `brp_extras_send_keys`. `world_query` and friends only
+  see reflected, registered types (Bevy's, and few of ours yet).
+- **Not a replacement** for headless tests, `--screenshot` runs,
+  benchmarks or the owner's sign-off (rule 5): the screenshot cap still
+  holds. Never benchmark with BRP on (`--bench` runs don't start it).
+- Need a new live control? Add it to `bevyrrowind/set` or a new
+  `bevyrrowind/*` agent tool in `remote.rs` (one place, typed schema),
+  not another env-var hook.

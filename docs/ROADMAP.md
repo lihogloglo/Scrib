@@ -134,6 +134,9 @@ Wanted, but after the M2/M3 foundations. Not scheduled; pick up when the roadmap
 - Ghostfence far proxy (weather.md B5: blended far proxies, scriptless activators far-eligible), its
   white look (visual check GF-2), split cook B4.
 - Exterior ray tracing content + `bevy_solari` sunset patch (Next up 5).
+- **Crate "update all" pass (owner 2026-10-18):** one batch once `bevy_hanabi` has a 0.20 release on crates.io: adopt the
+  crates that reached 0.20 (`bevy_flair` 0.9, input crate for U1, `bevy-inspector-egui` 0.38 as a dev add-on, hanabi) and
+  bump the rest, from the tracker in ARCHITECTURE §4 (re-check it first). Until then, no piecemeal crate additions.
 
 ## M0: Data foundation (done)
 
@@ -939,6 +942,12 @@ changes"). **MWScript is translated to Luau at bake time** (corpus: 1,207 script
 Done when (ARCHITECTURE §9): "A Lua mod and a texture mod both work, hot reload works; a theme mod, a CSS patch and a
 Lua inventory column work together, gamepad-only."
 
+**Lua parked (owner 2026-10-18):** finish L3 (started), then no further Lua/Luau work (U7, W3, the Lua parts of E1)
+until the owner reopens it: "not urgent", and other projects can be scavenged. Candidate: Mudcrab
+(github.com/Mudcrab-Team/mudcrab, Skyrim engine on Bevy 0.19, MIT/Apache, Papyrus `.pex` → Luau in sandboxed `mlua`;
+`docs/specs/converters/pex-to-lua.md`, `docs/roadmap/03-luau-and-ui.md`): compare with it and adopt or port before
+extending `sf_script` (CLAUDE.md rules 9-10). UI tasks (U1-U6) stay queued, not started.
+
 Three lanes that can run side by side once A1 and L1 land: mods + Lua (A, L), UI (U), legacy scripts (W). Tasks in
 dependency order:
 
@@ -1062,10 +1071,10 @@ dependency order:
   Verify: golden `.d.luau`; example mods in `superfargoth/examples/mods/` run headless; MS-2.
 - [ ] U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
   (CommonUI layers, screen stack, input router, actions with rebinding, `bevy_input_focus` navigation, device glyphs).
-  Input crate: `bevy_enhanced_input` 0.26 and `leafwing-input-manager` 0.21 are still on Bevy 0.19 (crates.io
-  2026-10-13): `[patch]` fork of bevy_enhanced_input if no 0.20 release by then, else a thin own action map (ui.md OQ4).
+  Input crate: `bevy_enhanced_input` 0.27 and `leafwing-input-manager` 0.22 are on Bevy 0.20 (crates.io 2026-10-14/16):
+  no fork needed; pick one in ui.md OQ4.
   Verify: headless registry/router tests; gamepad-only navigation in a framework example.
-- [ ] U2 `sf_ui_css`: `bevy_flair` on a pinned git rev (0.20 port on `main`; MPL deps allowed unmodified, owner
+- [ ] U2 `sf_ui_css`: `bevy_flair` 0.9.0 from crates.io (on Bevy 0.20 since 2026-10-14; MPL deps allowed unmodified, owner
   2026-10-11), composer with `@layer mods.<id>` in load order, per-mod error attribution, CSS hot reload.
   Verify: composer tests (layer order = load order, errors → mod id); edit a sheet in the example, see it apply.
 - [ ] U3 Widget kit + both themes (modern; `mw_classic` with TTF fonts and the `ui.frames` bake, ui-adapter.md) +
