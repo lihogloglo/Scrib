@@ -43,6 +43,7 @@
 //! [`CharacterContent`]. With feature `world`, [`CharacterSpawner`] spawns
 //! actor placements of `sf_world_bevy` streaming as characters.
 
+mod cloth;
 mod held;
 mod mesh;
 mod morph;
@@ -51,6 +52,8 @@ mod tests;
 #[cfg(feature = "world")]
 mod world;
 
+pub use cloth::{ClothJoint, ClothSettings, ClothStats};
+pub use sf_anim::cloth::ClothCollider;
 pub use held::{CharacterReadiness, HeldLightSlot, HeldModelAssets, HeldModelCache, HeldProp, HeldProps, HeldSkinAssets};
 pub use mesh::{OutfitMeshError, assembled_mesh_to_mesh, outfit_inverse_bindposes};
 #[cfg(feature = "world")]
@@ -132,6 +135,25 @@ pub trait CharacterContent: Send + Sync + 'static {
         let _ = (recipe, animation);
         Vec::new()
     }
+    /// Cloth (physics.md "Cloth"): the setup of an outfit part that hangs
+    /// as cloth (robes, skirts; the adapter's `ClothRules`), `None` (the
+    /// default) for the rest.
+    fn cloth_spec(&self, id: &RecordId, part: &BodyPart) -> Option<sf_character::ClothSpec> {
+        let _ = (id, part);
+        None
+    }
+    /// The body capsules a cloth hanging from height `below` (rest pose,
+    /// model space) collides with on the recipe's skeleton (from its
+    /// ragdoll: `RagdollDef::cloth_colliders`).
+    fn cloth_colliders(&self, recipe: &CharacterRecipe, animation: &AnimAsset, below: f32) -> Vec<ClothCollider> {
+        let _ = (recipe, animation, below);
+        Vec::new()
+    }
+    /// How far a cloth's hem follows the authored leg skin instead of
+    /// riding the girdle (`sf_anim_graph::ClothBinding::new`).
+    fn cloth_leg_follow(&self) -> f32 {
+        sf_anim_bevy::CLOTH_LEG_FOLLOW
+    }
 }
 
 /// How segmented bodies are drawn (smooth-bodies.md; owner decision
@@ -203,6 +225,8 @@ pub struct CharacterBody {
     pub outfit: Arc<OutfitAssets>,
     /// The `SkinnedMesh` entities (children of `body`).
     pub meshes: Vec<Entity>,
+    /// The cloth lattice joint entities (children of `body`).
+    pub cloth_joints: Vec<Entity>,
 }
 
 /// One cached outfit's GPU assets.
@@ -212,6 +236,8 @@ pub struct OutfitAssets {
     pub joints: Vec<String>,
     pub inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
     pub meshes: Vec<OutfitMesh>,
+    /// The outfit's cloth parts (lattice joints `cloth<k>#<i>` in `joints`).
+    pub cloth: Vec<Arc<sf_anim_bevy::ClothBinding>>,
     /// First frame the outfit may be shown (uploads settle first).
     ready_frame: u32,
 }
@@ -304,6 +330,8 @@ struct Shared {
     /// Keys the main thread has in its [`OutfitCache`].
     resident: RwLock<HashSet<OutfitCacheKey>>,
     held: Mutex<HeldModels>,
+    /// Cooked cloth parts by (skeleton, part record); `None`: the cook failed.
+    cloth: Mutex<HashMap<(String, RecordId), Option<Arc<cloth::ClothPart>>>>,
 }
 
 /// Loaded held models by (model, light node); `None`: not usable.
@@ -325,6 +353,7 @@ impl Characters {
                 rigs: Mutex::default(),
                 resident: RwLock::default(),
                 held: Mutex::default(),
+                cloth: Mutex::default(),
             }),
         }
     }
@@ -347,6 +376,10 @@ impl Plugin for SfCharacterPlugin {
             .init_resource::<Frame>()
             .init_resource::<CharacterSettings>()
             .init_resource::<HeldModelCache>()
+            .init_resource::<ClothSettings>()
+            .init_resource::<ClothStats>()
+            .add_systems(PostUpdate, (cloth::apply_cloth_settings, cloth::attach_cloth).chain().before(AnimSystems::Evaluate))
+            .add_systems(PostUpdate, cloth::write_cloth_joints.in_set(AnimSystems::Apply))
             .add_systems(
                 Update,
                 (apply_settings, request_builds, finish_builds, held::sync_held, held::apply_readiness).chain().in_set(CharacterSystems),
@@ -381,6 +414,8 @@ struct Built {
     smooth: Option<(OutfitSmoothReport, f32)>,
     /// `recipe.held`'s models, loaded.
     held: Vec<Option<Arc<held::HeldCooked>>>,
+    /// The outfit's cloth parts, in palette order (`cloth<k>#<i>`).
+    cloth: Vec<Arc<sf_anim_bevy::ClothBinding>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -468,35 +503,63 @@ impl Shared {
         let held = recipe.held.iter().map(|item| self.held(item)).collect();
         let resident = self.resident.read().unwrap_or_else(PoisonError::into_inner).contains(&key);
         if resident && !force {
-            return Ok(Built { recipe, animation, key, outfit: None, missing_parts: 0, smooth: None, held });
+            return Ok(Built { recipe, animation, key, outfit: None, missing_parts: 0, smooth: None, held, cloth: Vec::new() });
         }
         let mut missing_parts = 0;
-        let mut owned: Vec<(Arc<CookedSkinned>, &BodyPart, bool)> = Vec::with_capacity(outfit.parts.len());
+        let mut owned: Vec<(Arc<CookedSkinned>, &BodyPart, bool, &RecordId)> = Vec::with_capacity(outfit.parts.len());
         for (_, id) in &outfit.parts {
             match parts.part(id).and_then(|part| Some((self.part(id, part)?, part))) {
                 // Hair stays on its joint as authored (smooth-bodies.md).
-                Some((cooked, part)) => owned.push((cooked, part, recipe.hair.as_ref() == Some(id))),
+                Some((cooked, part)) => owned.push((cooked, part, recipe.hair.as_ref() == Some(id), id)),
                 None => missing_parts += 1,
             }
         }
-        let mut assembly: Vec<AssemblyPart<'_>> = owned.iter().map(|(cooked, part, _)| AssemblyPart::new(cooked, Some(*part))).collect();
+        // Cloth parts (module `cloth`): rebound onto their lattice joints.
+        let cloth_parts: Vec<Option<Arc<cloth::ClothPart>>> =
+            owned.iter().map(|(cooked, part, _, id)| self.cloth_part(&recipe, &animation, id, cooked, part)).collect();
+        let mut assembly: Vec<AssemblyPart<'_>> = owned.iter().map(|(cooked, part, _, _)| AssemblyPart::new(cooked, Some(*part))).collect();
         let lod = usize::from(key.lod);
         let mut smooth = None;
-        let rewritten = if bodies == SmoothBodies::Smooth {
+        let mut rewritten = if bodies == SmoothBodies::Smooth {
             let started = std::time::Instant::now();
             let rig = self.smooth_rig(&recipe, &animation);
-            let exclude: Vec<bool> = owned.iter().map(|(_, _, hair)| *hair).collect();
+            // Cloth parts keep their lattice skin (not smoothed yet: physics-adapter.md "Order with smooth bodies").
+            let exclude: Vec<bool> = owned.iter().zip(&cloth_parts).map(|((_, _, hair, _), c)| *hair || c.is_some()).collect();
             let (rewritten, report) = smooth_outfit(&assembly, &exclude, lod, &rig, &OutfitSmoothing::default()).map_err(|e| e.to_string())?;
             smooth = Some((report, started.elapsed().as_secs_f32() * 1000.0));
             rewritten
         } else {
-            Vec::new()
+            vec![None; assembly.len()]
         };
+        let mut cloth = Vec::new();
+        for (slot, part) in rewritten.iter_mut().zip(&cloth_parts) {
+            if let Some(part) = part {
+                *slot = Some(cloth::renamed(part, cloth.len()));
+                cloth.push(Arc::clone(&part.binding));
+            }
+        }
         for (part, decoded) in assembly.iter_mut().zip(&rewritten) {
             part.decoded = decoded.as_ref();
         }
         let assembled = assemble(&assembly, lod, &recipe.shape).map_err(|e| e.to_string())?;
-        Ok(Built { recipe, animation, key, outfit: Some(assembled), missing_parts, smooth, held })
+        Ok(Built { recipe, animation, key, outfit: Some(assembled), missing_parts, smooth, held, cloth })
+    }
+
+    /// A cloth part's cook on the recipe's skeleton (cached; `None`: not cloth or the cook failed).
+    fn cloth_part(&self, recipe: &CharacterRecipe, animation: &AnimAsset, id: &RecordId, cooked: &CookedSkinned, part: &BodyPart) -> Option<Arc<cloth::ClothPart>> {
+        let spec = self.content.cloth_spec(id, part)?;
+        let key = (recipe.skeleton.as_str().to_owned(), id.clone());
+        if let Some(found) = lock(&self.cloth).get(&key) {
+            return found.clone();
+        }
+        let made = match cloth::cook_part(self.content.as_ref(), recipe, animation, id, cooked, part, &spec) {
+            Ok(p) => Some(Arc::new(p)),
+            Err(e) => {
+                log::warn!("cloth {id} on {}: {e}; drawn as authored", key.0);
+                None
+            }
+        };
+        lock(&self.cloth).entry(key).or_insert(made).clone()
     }
 }
 
@@ -561,6 +624,7 @@ fn upload(
         joints: built.joints.iter().map(|j| j.name.clone()).collect(),
         inverse_bindposes,
         meshes: out,
+        cloth: Vec::new(),
         ready_frame: frame + SETTLE_FRAMES,
     })
 }
@@ -633,6 +697,8 @@ fn finish_builds(
             stats.cache_misses += 1;
             match upload(outfit, shared.content.as_ref(), &mut cache, &server, &mut meshes, &mut materials, &mut inverse, frame.0) {
                 Ok(assets) => {
+                    let mut assets = assets;
+                    assets.cloth.clone_from(&built.cloth);
                     let assets = Arc::new(assets);
                     cache.entries.insert(built.key.clone(), Arc::clone(&assets));
                     shared.resident.write().unwrap_or_else(PoisonError::into_inner).insert(built.key.clone());
@@ -686,16 +752,27 @@ fn finish_builds(
                 spawn_body(&mut commands, entity, &built)
             }
         };
+        // Cloth lattice joints (module `cloth`): entities under the body, posed by the cloth op.
+        let mut cloth_joints = Vec::new();
         let joints: Vec<Entity> = assets
             .joints
             .iter()
             .map(|name| {
+                if let Some((k, i)) = cloth::parse_joint(name)
+                    && let Some(b) = assets.cloth.get(k)
+                    && let (Ok(cloth), Ok(particle)) = (u16::try_from(k), u16::try_from(i))
+                {
+                    let e = commands.spawn((ClothJoint { body: body_entity, cloth, particle }, cloth::rest_transform(b, i), ChildOf(body_entity))).id();
+                    cloth_joints.push(e);
+                    return e;
+                }
                 binding.find(&built.animation.skeleton, name).unwrap_or_else(|| {
                     stats.missing_joints += 1;
                     binding.joints[0]
                 })
             })
             .collect();
+        commands.entity(body_entity).insert(cloth::ClothPending(assets.cloth.clone()));
         let mesh_entities: Vec<Entity> = assets
             .meshes
             .iter()
@@ -723,12 +800,15 @@ fn finish_builds(
             Some(morphs) => commands.entity(entity).insert(morphs),
             None => commands.entity(entity).remove::<CharacterMorphs>(),
         };
-        let next = CharacterBody { body: body_entity, skeleton: built.key.skeleton.clone(), key: built.key, outfit: assets, meshes: mesh_entities };
+        let next = CharacterBody { body: body_entity, skeleton: built.key.skeleton.clone(), key: built.key, outfit: assets, meshes: mesh_entities, cloth_joints };
         match body {
             Some(mut old) if old.body == body_entity => {
                 // Same flush as the new meshes' spawn: no frame without either.
                 for &m in &old.meshes {
                     commands.entity(m).despawn();
+                }
+                for &j in &old.cloth_joints {
+                    commands.entity(j).despawn();
                 }
                 stats.meshes -= old.meshes.len();
                 stats.swaps += 1;
@@ -754,6 +834,7 @@ impl Built {
             missing_parts: 0,
             smooth: None,
             held: self.held.clone(),
+            cloth: self.cloth.clone(),
         }
     }
 }

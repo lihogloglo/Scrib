@@ -56,14 +56,17 @@ pub(crate) fn column_dir(c: usize, cols: usize) -> Vec3 {
 }
 
 #[cfg(feature = "smooth")]
-pub use cook::{ClothCook, ClothCookError, SkinRebind, cook_cloth};
+pub use cook::{ClothCook, ClothCookError, SkinRebind, cloth_decoded, cook_cloth};
 
 #[cfg(feature = "smooth")]
 mod cook {
-    use glam::{Affine3A, Vec3};
+    use glam::{Affine3A, Mat4, Vec3};
     use serde::{Deserialize, Serialize};
     use sf_anim::cloth::{ClothCollider, ClothLattice};
-    use sf_model::SkinVertex;
+    use sf_model::{CookedJoint, FormatError, MAX_INFLUENCES, SkinVertex};
+
+    use crate::assemble::DecodedPart;
+    use crate::smooth::bind_palette;
 
     use super::{ClothSpec, column_dir};
     use crate::smooth::{SkinSurface, SmoothSettings, inpaint_surface, top_influences};
@@ -304,5 +307,71 @@ mod cook {
             }
         }
         Some((d, top_influences(&w)))
+    }
+
+    /// The cloth part for assembly, rebound to its lattice: `decoded` (the
+    /// part's kept submeshes at the LOD `surface` was made from) gets the
+    /// rest-space positions and normals of `surface` and the skin of
+    /// `cook.rebind`, on a palette of the skeleton joints it uses (inverse
+    /// bind `rest⁻¹`, names from `names`) followed by one joint per lattice
+    /// particle named `lattice_name(i)` (inverse bind: the particle's rest
+    /// position, unrotated). The host poses those joints from the
+    /// `ClothLattice` op.
+    ///
+    /// # Errors
+    /// `decoded` and `surface` disagree on the vertex count.
+    pub fn cloth_decoded(
+        cook: &ClothCook,
+        mut decoded: DecodedPart,
+        surface: &SkinSurface,
+        names: &[String],
+        rest_model: &[Affine3A],
+        lattice_name: impl Fn(usize) -> String,
+    ) -> Result<DecodedPart, FormatError> {
+        let count: usize = decoded.submeshes.iter().map(|s| s.vertices.len()).sum();
+        if count != surface.positions.len() || count != cook.rebind.skin.len() {
+            return Err(FormatError::Body(format!("cloth part: {count} vertices vs {} on the surface", surface.positions.len())));
+        }
+        let base = cook.rebind.base;
+        let mut used: Vec<u16> = cook
+            .rebind
+            .skin
+            .iter()
+            .flat_map(|s| s.joints.iter().zip(&s.weights).filter(|(j, w)| **w > 0.0 && **j < base).map(|(j, _)| *j))
+            .collect();
+        used.sort_unstable();
+        used.dedup();
+        let used_names: Vec<String> = used.iter().map(|&j| names.get(usize::from(j)).cloned().unwrap_or_default()).collect();
+        let used_rest: Vec<Affine3A> = used.iter().map(|&j| rest_model.get(usize::from(j)).copied().unwrap_or_default()).collect();
+        decoded.joints = bind_palette(&used_names, &used_rest);
+        let first = u16::try_from(used.len()).map_err(|_| FormatError::TooLarge)?;
+        for (i, p) in cook.lattice.particles.iter().enumerate() {
+            decoded.joints.push(CookedJoint { name: lattice_name(i), inverse_bind: Mat4::from_translation(-p.rest).to_cols_array() });
+        }
+        let slot = |j: u16| {
+            if j >= base {
+                first + (j - base)
+            } else {
+                used.binary_search(&j).ok().and_then(|k| u16::try_from(k).ok()).unwrap_or(0)
+            }
+        };
+        let mut k = 0;
+        for sub in &mut decoded.submeshes {
+            for (v, s) in sub.vertices.iter_mut().zip(&mut sub.skin) {
+                v.position = surface.positions[k].to_array();
+                v.normal = surface.normals[k].to_array();
+                let src = cook.rebind.skin[k];
+                let mut skin = SkinVertex { joints: [0; MAX_INFLUENCES], weights: [0.0; MAX_INFLUENCES] };
+                for n in 0..MAX_INFLUENCES {
+                    if src.weights[n] > 0.0 {
+                        skin.joints[n] = slot(src.joints[n]);
+                        skin.weights[n] = src.weights[n];
+                    }
+                }
+                *s = skin;
+                k += 1;
+            }
+        }
+        Ok(decoded)
     }
 }

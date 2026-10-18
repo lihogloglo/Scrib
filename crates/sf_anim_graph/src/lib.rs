@@ -45,7 +45,7 @@ pub use compiled::{
     WarpWindow, parse_warp_window,
 };
 pub use inertial::Inertializer;
-pub use secondary::{Hit, SPRING_MAX_SUBSTEPS, SPRING_SUBSTEP};
+pub use secondary::{CLOTH_LEG_FOLLOW, CLOTH_MAX_LOD, ClothBinding, ClothRun, Hit, SPRING_MAX_SUBSTEPS, SPRING_SUBSTEP};
 pub use instance::{
     ActiveWarp, BindError, Binding, FootStats, GraphEvent, GraphInstance, GraphOutput, GroundSample, IkTarget, Params, UpdateInputs, WarpTarget,
 };

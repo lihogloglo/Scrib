@@ -302,6 +302,34 @@ impl Default for ClothParams {
     }
 }
 
+/// [`ClothState::rotations`] for any positions `pos` (one per lattice
+/// particle, character space), e.g. the animated targets of a cloth that
+/// isn't simulated this update (animation LOD).
+pub fn lattice_rotations(lattice: &ClothLattice, pos: &[Vec3], out: &mut Vec<Quat>) {
+    out.clear();
+    let (rows, cols) = (usize::from(lattice.rows), usize::from(lattice.cols));
+    if pos.len() != rows * cols || rows == 0 || cols == 0 {
+        return;
+    }
+    let frame = |p: &dyn Fn(usize) -> Vec3, r: usize, c: usize| {
+        let at = |r: usize, c: usize| p(r * cols + c);
+        let (r0, r1) = (r.saturating_sub(1), (r + 1).min(rows - 1));
+        let (c0, c1) = if lattice.ring { ((c + cols - 1) % cols, (c + 1) % cols) } else { (c.saturating_sub(1), (c + 1).min(cols - 1)) };
+        let down = at(r1, c) - at(r0, c);
+        let along = at(r, c1) - at(r, c0);
+        let x = along.normalize_or(Vec3::X);
+        let y = (down - x * down.dot(x)).normalize_or(x.any_orthonormal_vector());
+        Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
+    };
+    let now = |i: usize| pos[i];
+    let rest = |i: usize| lattice.particles[i].rest;
+    for r in 0..rows {
+        for c in 0..cols {
+            out.push((frame(&now, r, c) * frame(&rest, r, c).inverse()).normalize());
+        }
+    }
+}
+
 /// One update's inputs, character space.
 #[derive(Clone, Copy, Debug)]
 pub struct ClothInputs<'a> {
@@ -363,28 +391,7 @@ impl ClothState {
     /// (character space), from the lattice tangents down the column and
     /// along the row: the lattice joints' orientation for skinning.
     pub fn rotations(&self, lattice: &ClothLattice, out: &mut Vec<Quat>) {
-        out.clear();
-        let (rows, cols) = (usize::from(lattice.rows), usize::from(lattice.cols));
-        if self.pos.len() != rows * cols || rows == 0 || cols == 0 {
-            return;
-        }
-        let frame = |p: &dyn Fn(usize) -> Vec3, r: usize, c: usize| {
-            let at = |r: usize, c: usize| p(r * cols + c);
-            let (r0, r1) = (r.saturating_sub(1), (r + 1).min(rows - 1));
-            let (c0, c1) = if lattice.ring { ((c + cols - 1) % cols, (c + 1) % cols) } else { (c.saturating_sub(1), (c + 1).min(cols - 1)) };
-            let down = at(r1, c) - at(r0, c);
-            let along = at(r, c1) - at(r, c0);
-            let x = along.normalize_or(Vec3::X);
-            let y = (down - x * down.dot(x)).normalize_or(x.any_orthonormal_vector());
-            Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
-        };
-        let now = |i: usize| self.pos[i];
-        let rest = |i: usize| lattice.particles[i].rest;
-        for r in 0..rows {
-            for c in 0..cols {
-                out.push((frame(&now, r, c) * frame(&rest, r, c).inverse()).normalize());
-            }
-        }
+        lattice_rotations(lattice, &self.pos, out);
     }
 
     /// Advances the cloth by `inputs.dt` in fixed substeps.

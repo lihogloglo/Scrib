@@ -31,7 +31,7 @@ use crate::compiled::{
 };
 use crate::inertial::Inertializer;
 use crate::procedural::{OpState, ProceduralCx, run_ops};
-use crate::secondary::Hit;
+use crate::secondary::{ClothBinding, ClothRun, Hit};
 use crate::slot::{
     Montage, MontageClip, MontageId, MontageStatus, NoticeKind, SlotError, SlotId, SlotNotice, SlotRequest, SlotStart, SlotState, clip_of, curve_map,
     event_ids, warp_windows,
@@ -424,6 +424,8 @@ pub struct GraphInstance {
     handback: Option<f32>,
     /// Hits for the `HitReact` ops, queued by [`GraphInstance::hit`].
     hits: Vec<Hit>,
+    /// Bound cloth parts ([`GraphInstance::set_cloth`]).
+    cloth: Vec<ClothRun>,
 }
 
 /// A pose supplied from outside the graph (a ragdoll's), with a weight per
@@ -473,6 +475,7 @@ impl GraphInstance {
             physics: None,
             handback: None,
             hits: Vec::new(),
+            cloth: Vec::new(),
             ops: g.ops.iter().map(|o| OpState::new(&o.op)).collect(),
             speed_match: None,
             stride: (0.0, 0.0),
@@ -552,6 +555,21 @@ impl GraphInstance {
     }
 
     /// The largest `HitReact` offset now, radians (diagnostics, tests).
+    /// Binds cloth parts (an outfit's lattices; empty: none). Each update
+    /// then runs the `ClothLattice` op on them after the procedural ops.
+    pub fn set_cloth(&mut self, cloth: Vec<Arc<ClothBinding>>) {
+        self.cloth = cloth.into_iter().map(ClothRun::new).collect();
+    }
+
+    /// The bound cloth parts and their last pose, in [`Self::set_cloth`] order.
+    pub fn cloth(&self) -> &[ClothRun] {
+        &self.cloth
+    }
+
+    pub fn cloth_mut(&mut self) -> &mut [ClothRun] {
+        &mut self.cloth
+    }
+
     pub fn hit_reaction(&self) -> f32 {
         self.ops.iter().map(|o| if let OpState::Hit(h) = o { h.max_angle() } else { 0.0 }).fold(0.0, f32::max)
     }
@@ -783,6 +801,9 @@ impl GraphInstance {
         if !posed {
             self.reset_history();
             self.hits.clear();
+            for c in &mut self.cloth {
+                c.reset();
+            }
             return;
         }
         out.pose.copy_from(&top.pose);
@@ -842,6 +863,10 @@ impl GraphInstance {
             hits: &self.hits,
         };
         run_ops(&mut pcx, &mut self.ops, &mut out.pose, &mut out.model);
+        // `ClothLattice` (physics.md "Cloth"): last, on the final pose (after foot placement).
+        for c in &mut self.cloth {
+            c.update(&out.model, inputs.moved, dt, lod);
+        }
         out.feet = pcx.feet;
         self.hits.clear();
     }

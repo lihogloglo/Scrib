@@ -246,3 +246,233 @@ pub(crate) fn spring_bones(op: &SpringBonesOp, st: &mut SpringState, moved: &Roo
         }
     }
 }
+
+// --- ClothLattice ------------------------------------------------------------------------
+
+/// How far the hem row's animated target follows the authored (leg) skin
+/// instead of riding the girdle (`ClothBinding::new`'s default).
+pub const CLOTH_LEG_FOLLOW: f32 = 0.7;
+/// The highest animation LOD the cloth simulates at (A0, A1); above it the
+/// lattice joints show the animated targets.
+pub const CLOTH_MAX_LOD: usize = 1;
+
+/// One cloth part bound to a character's skeleton (physics.md "Cloth",
+/// `ClothLattice` op): the cooked lattice and where each particle's
+/// animated target comes from.
+///
+/// The target blends, per row, between riding the girdle joint (`attach` ×
+/// `offsets[i]`: the cloth hangs from the pelvis like a bell) and the
+/// part's authored skin at the particle (it follows the legs). Morrowind's
+/// robes are far too narrow at the hem for a run stride (census: +13..+133 %),
+/// so a pure girdle ride would make the capsules stretch the hem; following
+/// the legs toward the hem is the bone-chain answer UE `AnimDynamics` and
+/// Magica `BoneCloth` setups use (the simulation then adds the swing).
+#[derive(Clone, Debug)]
+pub struct ClothBinding {
+    pub lattice: sf_anim::cloth::ClothLattice,
+    pub params: sf_anim::cloth::ClothParams,
+    /// The girdle joint the top row rides.
+    pub attach: u16,
+    /// Per particle: its rest position in `attach`'s rest model frame.
+    pub offsets: Vec<Vec3>,
+    /// Per particle: the authored skin at its rest position, as
+    /// `(joint, weight, the rest position in that joint's rest model frame)`.
+    pub skin: Vec<[(u16, f32, Vec3); 4]>,
+    /// Per particle: 0 rides the girdle, 1 follows the skin.
+    pub follow: Vec<f32>,
+}
+
+impl ClothBinding {
+    /// `skin`: per particle, the authored skin's joints (skeleton indices)
+    /// and weights at its rest position; `leg_follow`: the hem row's follow
+    /// (rows in between interpolate linearly from 0 at the pinned top row).
+    #[allow(clippy::cast_precision_loss)]
+    pub fn new(
+        lattice: sf_anim::cloth::ClothLattice,
+        params: sf_anim::cloth::ClothParams,
+        attach: u16,
+        offsets: Vec<Vec3>,
+        skin: &[([u16; 4], [f32; 4])],
+        rest_model: &[glam::Affine3A],
+        leg_follow: f32,
+    ) -> Self {
+        let cols = usize::from(lattice.cols).max(1);
+        let last = usize::from(lattice.rows).saturating_sub(1).max(1);
+        let mut skin_out = Vec::with_capacity(lattice.particles.len());
+        let mut follow = Vec::with_capacity(lattice.particles.len());
+        for (i, p) in lattice.particles.iter().enumerate() {
+            let mut s = [(0u16, 0.0f32, Vec3::ZERO); 4];
+            if let Some((joints, weights)) = skin.get(i) {
+                for k in 0..4 {
+                    if weights[k] > 0.0
+                        && let Some(m) = rest_model.get(usize::from(joints[k]))
+                    {
+                        s[k] = (joints[k], weights[k], m.inverse().transform_point3(p.rest));
+                    }
+                }
+            }
+            let has_skin = s.iter().any(|x| x.1 > 0.0);
+            skin_out.push(s);
+            let row = i / cols;
+            follow.push(if has_skin { leg_follow.clamp(0.0, 1.0) * (row.min(last) as f32 / last as f32) } else { 0.0 });
+        }
+        Self { lattice, params, attach, offsets, skin: skin_out, follow }
+    }
+
+    /// Each particle's animated target in the posed model space.
+    fn animated(&self, model: &ModelPose, out: &mut Vec<Vec3>) {
+        out.clear();
+        let girdle = model.mats.get(usize::from(self.attach)).copied().unwrap_or_default();
+        for ((offset, skin), &f) in self.offsets.iter().zip(&self.skin).zip(&self.follow) {
+            let ride = girdle.transform_point3(*offset);
+            if f <= 0.0 {
+                out.push(ride);
+                continue;
+            }
+            let (mut sum, mut w) = (Vec3::ZERO, 0.0);
+            for &(j, wk, local) in skin {
+                if wk > 0.0
+                    && let Some(m) = model.mats.get(usize::from(j))
+                {
+                    sum += m.transform_point3(local) * wk;
+                    w += wk;
+                }
+            }
+            out.push(if w > 1e-6 { ride.lerp(sum / w, f) } else { ride });
+        }
+    }
+}
+
+/// One cloth on a graph instance (`GraphInstance::set_cloth`): the
+/// simulation state and the lattice joints' pose of the last update.
+#[derive(Clone, Debug)]
+pub struct ClothRun {
+    pub binding: std::sync::Arc<ClothBinding>,
+    state: sf_anim::cloth::ClothState,
+    animated: Vec<Vec3>,
+    capsules: Vec<sf_anim::cloth::Capsule>,
+    rotations: Vec<Quat>,
+    /// Whether the last update simulated (false: the joints show the
+    /// animated targets: LOD above [`CLOTH_MAX_LOD`] or disabled).
+    pub simulated: bool,
+    /// Off: the lattice joints follow the animated targets (A/B view).
+    pub enabled: bool,
+    /// The last update's time in the op, µs (diagnostics; the cost gate).
+    pub last_us: f32,
+}
+
+impl ClothRun {
+    pub fn new(binding: std::sync::Arc<ClothBinding>) -> Self {
+        Self {
+            binding,
+            state: sf_anim::cloth::ClothState::new(),
+            animated: Vec::new(),
+            capsules: Vec::new(),
+            rotations: Vec::new(),
+            simulated: false,
+            enabled: true,
+            last_us: 0.0,
+        }
+    }
+
+    /// The lattice joints' positions, model space (empty before the first posed update).
+    pub fn positions(&self) -> &[Vec3] {
+        if self.simulated { self.state.positions() } else { &self.animated }
+    }
+
+    /// The lattice joints' rotations from rest, model space.
+    pub fn rotations(&self) -> &[Quat] {
+        &self.rotations
+    }
+
+    /// Re-seeds from the animation at the next simulated update.
+    pub fn reset(&mut self) {
+        self.state.reset();
+    }
+
+    /// The op: animated targets, posed capsules, one solver step (or the
+    /// targets alone when not simulating), then the joint rotations.
+    pub(crate) fn update(&mut self, model: &ModelPose, moved: RootDelta, dt: f32, lod: usize) {
+        let started = std::time::Instant::now();
+        let b = &*self.binding;
+        b.animated(model, &mut self.animated);
+        let simulate = self.enabled && lod <= CLOTH_MAX_LOD;
+        if !simulate {
+            if self.simulated {
+                self.state.reset();
+            }
+            self.simulated = false;
+            sf_anim::cloth::lattice_rotations(&b.lattice, &self.animated, &mut self.rotations);
+            self.last_us = started.elapsed().as_secs_f32() * 1e6;
+            return;
+        }
+        self.capsules.clear();
+        for c in &b.lattice.colliders {
+            let m = model.mats.get(usize::from(c.joint)).copied().unwrap_or_default();
+            self.capsules.push(sf_anim::cloth::Capsule {
+                a: m.transform_point3(c.center + c.axis * c.half_length),
+                b: m.transform_point3(c.center - c.axis * c.half_length),
+                radius: c.radius,
+            });
+        }
+        let inputs = sf_anim::cloth::ClothInputs { animated: &self.animated, capsules: &self.capsules, moved, dt, acceleration: Vec3::ZERO };
+        self.state.step(&b.lattice, &b.params, &inputs);
+        self.simulated = true;
+        self.state.rotations(&b.lattice, &mut self.rotations);
+        self.last_us = started.elapsed().as_secs_f32() * 1e6;
+    }
+}
+
+#[cfg(test)]
+mod cloth_op_tests {
+    use std::sync::Arc;
+
+    use glam::{Affine3A, Vec3};
+    use sf_anim::cloth::{ClothLattice, ClothParams, GridSpec};
+    use sf_anim::{ModelPose, RootDelta};
+
+    use super::{CLOTH_MAX_LOD, ClothBinding, ClothRun};
+
+    /// A 4 × 6 skirt from 1 m down to 0.4 m on joint 0 (pelvis), skinned
+    /// to joint 1 (a "leg" at the origin) below the top row.
+    #[allow(clippy::cast_precision_loss)]
+    fn binding(follow: f32) -> ClothBinding {
+        let spec = GridSpec { rows: 4, cols: 6, ..GridSpec::default() };
+        let rest: Vec<Vec3> = (0..24)
+            .map(|i| {
+                let (r, c) = (i / 6, i % 6);
+                let a = std::f32::consts::TAU * c as f32 / 6.0;
+                Vec3::new(0.2 * a.sin(), 1.0 - 0.2 * r as f32, 0.2 * a.cos())
+            })
+            .collect();
+        let lattice = ClothLattice::grid(&spec, &rest, &[0; 24]);
+        let rest_model = [Affine3A::IDENTITY; 2];
+        let skin: Vec<([u16; 4], [f32; 4])> = (0..24).map(|i| if i < 6 { ([0; 4], [1.0, 0.0, 0.0, 0.0]) } else { ([1, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]) }).collect();
+        ClothBinding::new(lattice, ClothParams::default(), 0, rest, &skin, &rest_model, follow)
+    }
+
+    #[test]
+    fn follow_blends_by_row_and_lod_switches_to_targets() {
+        let b = binding(0.5);
+        assert!(b.follow[..6].iter().all(|&f| f == 0.0));
+        assert!((b.follow[23] - 0.5).abs() < 1e-6);
+        let mut run = ClothRun::new(Arc::new(b));
+        // The "leg" swings 0.3 m forward: the hem target moves by follow × 0.3.
+        let mut model = ModelPose::new(2);
+        model.mats[1] = Affine3A::from_translation(Vec3::new(0.0, 0.0, 0.3));
+        run.update(&model, RootDelta::default(), 1.0 / 60.0, CLOTH_MAX_LOD + 1);
+        assert!(!run.simulated);
+        let hem = run.positions()[18];
+        assert!((hem.z - (0.2 + 0.15)).abs() < 1e-5, "hem target {hem}");
+        assert!((run.positions()[0].z - 0.2).abs() < 1e-6, "top row rides the girdle");
+        assert_eq!(run.rotations().len(), 24);
+        // Simulated at A0: seeds, then stays within its max distance of the targets.
+        for _ in 0..30 {
+            run.update(&model, RootDelta::default(), 1.0 / 60.0, 0);
+        }
+        assert!(run.simulated);
+        assert_eq!(run.positions().len(), 24);
+        assert!(run.positions().iter().all(|p| p.is_finite()));
+        assert!(run.last_us >= 0.0);
+    }
+}
