@@ -49,6 +49,28 @@ const VANILLA: &[(&str, &str, &str)] = &[
     ("Weather Blizzard", "Transition Delta", ".030"),
     ("Weather Blizzard", "Storm Threshold", ".50"),
     ("Weather Blizzard", "Ambient Loop Sound ID", "BM Blizzard"),
+    // Visual fields (we2b).
+    ("Weather Clear", "Cloud Speed", "1.25"),
+    ("Weather Clear", "Wind Speed", ".1"),
+    ("Weather Cloudy", "Cloud Speed", "2"),
+    ("Weather Cloudy", "Wind Speed", ".2"),
+    ("Weather Foggy", "Cloud Speed", "1.25"),
+    ("Weather Foggy", "Wind Speed", "0"),
+    ("Weather Overcast", "Cloud Speed", "1.5"),
+    ("Weather Overcast", "Wind Speed", ".2"),
+    ("Weather Rain", "Cloud Speed", "2"),
+    ("Weather Rain", "Wind Speed", ".3"),
+    ("Weather Thunderstorm", "Cloud Speed", "3"),
+    ("Weather Thunderstorm", "Wind Speed", ".5"),
+    ("Weather Thunderstorm", "Flash Decrement", "4"),
+    ("Weather Ashstorm", "Cloud Speed", "7"),
+    ("Weather Ashstorm", "Wind Speed", ".8"),
+    ("Weather Blight", "Cloud Speed", "9"),
+    ("Weather Blight", "Wind Speed", ".9"),
+    ("Weather Snow", "Cloud Speed", "1.5"),
+    ("Weather Snow", "Wind Speed", "0"),
+    ("Weather Blizzard", "Cloud Speed", "7.5"),
+    ("Weather Blizzard", "Wind Speed", ".9"),
 ];
 
 fn vanilla(section: &str, key: &str) -> Option<&'static str> {

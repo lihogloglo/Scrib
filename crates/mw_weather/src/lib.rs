@@ -11,12 +11,13 @@
 //! ([`SOURCE_NAME`]), so record mods patch them field by field like any
 //! other content (everything is a mod).
 //!
-//! As built (we2a): weights, change interval, transition duration,
+//! As built (we2a, we2b): weights, change interval, transition duration,
 //! precipitation kinds and intensities with their start thresholds, sound
-//! cues, lightning rate and thunder sounds, the blight tag. Clouds, fog, sky
-//! haze and wind keep `sf_weather` defaults until we2b maps them.
+//! cues, lightning rate, flash fade and thunder sounds, the blight tag; clouds,
+//! sky haze and dust, fog and wind ([`visual`]), the Red Mountain storm source.
 
 mod ini;
+pub mod visual;
 
 use mw_install::MorrowindIni;
 use sf_records::{RecordDb, RecordError, RecordId, SourceId};
@@ -392,6 +393,7 @@ fn preset(ty: WeatherType, w: &mut WeatherIni<'_>, timescale: f32) -> WeatherPre
     if let Some(chance) = w.f32(&section, "Disease Chance").filter(|c| *c > 0.0) {
         p.tags.push((RecordId::new(BLIGHT_EXPOSURE_TAG), chance));
     }
+    visual::apply(ty, &mut p, w);
     p
 }
 
@@ -418,6 +420,11 @@ fn climate(region: &Region, hours: f32, transitions: &[Option<f32>; 10]) -> (Rec
         change_interval_hours: (hours * 0.75, hours * 1.25),
         // sf_weather has one transition length per climate: the chance-weighted
         // mean of the presets' (Morrowind's is per target weather).
+        // Ash and blight blow off Red Mountain (the source fades with distance).
+        storm_source: (f32::from(region.weather_chances.ash)
+            + f32::from(region.weather_chances.blight)
+            > 0.0)
+            .then(visual::red_mountain_storm),
         transition_hours: if total > 0.0 {
             weighted / total
         } else {

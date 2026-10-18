@@ -1339,6 +1339,14 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   `define_into` = synthetic source "Morrowind.ini weather". `MorrowindIni` keeps every value (`get`). 6 unit tests +
   real install (16 climates), clippy clean. Part 2 (we2b): clouds/fog/sky/wind terms, Red Mountain radial storm,
   region sounds, MWScript mapping table, `weather forecast` command + 1,000-slot frequency check.
+  [~] Built part 2 (we2b, 2026-10-18): `mw_weather::visual`: clouds = genus per type (the app's `CLOUD_CHOICES`) at
+  half heights, speed `Cloud Speed` × 10 m/s; sky haze/dust/tint + morning-haze `haze_by_hour`, fog (Koschmieder
+  height fog, banks, ash/blight albedo, dawn `height_by_hour`/`banks_by_hour`) = the app's `SKY_*`/`FogLook` values;
+  `Wind Speed` 0-1 → 1-15 m/s ± 25 %, ash/blight `wind.storm = 1`, climates with ash or blight get a radial
+  `storm_source` at the Red Mountain summit (highest LAND vertex, cell 3,9; 6 m/s, 3 km); `Flash Decrement` →
+  `Lightning::fade_s` (new in sf_weather, + `pub use` of sf_atmos/sf_sky/sf_wind). Tests: presets match the app tables
+  over 24 h (WE3 switch-over is a no-op), storm blows outward from 4 sides; 11 tests green, clippy clean. Part 3
+  (we2c): region sounds, MWScript table, `weather forecast` + frequency check, app calls `define_into`.
 - [ ] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
   clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
@@ -1747,3 +1755,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (u2b): M5 U2 [x] part 2: `ui_css --autotest` ran (before/after `shots/u2b/`): `broken_mod` attributed, a mod sheet edited on disk restyles in 0.33 s via Bevy's loader-dependency reload of the root sheet (the planned `server.reload` fallback was not needed); UI-2 awaiting owner; `ui_nav --autotest` PASS; clippy clean. Next: U3 widget kit + themes.
 - 2026-10-18 (p10d): M4 P10 [~] cloth V1 first run: tests + clippy clean, two robes walk/run in `character` (BRP now on in interactive `character`), H A/B works, 20-26 µs per simulated robe (gate 30); Balmora Temple 9 parts / 6 simulated; at a run the hem hangs straighter than the stride; PH-3 awaiting owner (`scene ph3-balmora-temple`, `shots/p10d/`). Next: `cloth.cook` bake step.
 - 2026-10-18 (we2a): M6 WE2 [~] part 1: Bevy-free `mw_weather` (REGN → climates, `[Weather*]` → presets, 4 precip kinds, lightning per game hour, transition from `Transition Delta` as real-time Hz, synthetic source "Morrowind.ini weather"); `MorrowindIni::get`; 7 tests (1 on the real install) green, clippy clean. Next: we2b (clouds/fog/wind terms, Red Mountain storm, region sounds, MWScript table, forecast command).
+- 2026-10-18 (we2b): M6 WE2 [~] part 2: `mw_weather` presets carry the visual fields (cloud genus + `Cloud Speed`, haze/dust/fog with hour curves = the app's `SKY_*`/`FogLook` tables, `Wind Speed`, ash/blight storm + Red Mountain radial source, `Flash Decrement` → new `Lightning::fade_s`); 11 tests (2 real install) green, clippy clean. Next: we2c (region sounds, MWScript table, forecast command, app `define_into`).

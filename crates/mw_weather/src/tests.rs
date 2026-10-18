@@ -305,3 +305,170 @@ fn records_land_in_a_synthetic_source_that_mods_patch() {
     assert_eq!(patched.change_interval_hours, (1.0, 2.0));
     assert_eq!(patched.weights.len(), 2);
 }
+
+// -- we2b: visual fields match the app's scaffold tables -------------------------
+
+/// The app's tables as of we2b (`apps/bevyrrowind/src/exterior.rs`:
+/// `CLOUD_CHOICES` genus and speed, `SKY_*` haze/dust, `FogLook`
+/// visibility, height, banks, `banks_day`), copied so WE3's switch-over can be
+/// checked against them: (type, genus, cloud speed, haze, dust, visibility,
+/// fog height, banks, banks by day).
+type AppRow = (WeatherType, CloudPreset, f32, f32, f32, f32, f32, f32, f32);
+
+#[rustfmt::skip]
+const APP_TABLE: [AppRow; 10] = [
+    (WeatherType::Clear, CloudPreset::Clear, 1.25, 20.0, 0.0, 40_000.0, 100.0, 0.0, 0.0),
+    (WeatherType::Cloudy, CloudPreset::Fair, 2.0, 24.0, 0.0, 30_000.0, 120.0, 0.0, 0.0),
+    (WeatherType::Foggy, CloudPreset::Altostratus, 1.25, 60.0, 0.0, 3_000.0, 150.0, 1.0, 0.35),
+    (WeatherType::Overcast, CloudPreset::Overcast, 1.5, 32.0, 0.0, 8_000.0, 300.0, 0.0, 0.0),
+    (WeatherType::Rain, CloudPreset::Overcast, 2.0, 48.0, 0.0, 3_000.0, 250.0, 0.25, 0.0),
+    (WeatherType::Thunderstorm, CloudPreset::Storm, 3.0, 48.0, 0.0, 2_000.0, 250.0, 0.3, 0.0),
+    (WeatherType::Ashstorm, CloudPreset::Stratocumulus, 7.0, 24.0, 4.0, 450.0, 500.0, 0.0, 0.0),
+    (WeatherType::Blight, CloudPreset::Stratocumulus, 9.0, 24.0, 4.0, 450.0, 500.0, 0.0, 0.0),
+    (WeatherType::Snow, CloudPreset::Overcast, 1.5, 48.0, 0.0, 3_000.0, 250.0, 0.25, 0.0),
+    (WeatherType::Blizzard, CloudPreset::Overcast, 7.5, 80.0, 0.0, 300.0, 400.0, 0.0, 0.0),
+];
+
+use crate::visual::{BANK_DENSITY, BANK_FALLOFF, ground_fog, morning_haze};
+use sf_weather::sf_atmos::fog::extinction_for_visibility;
+use sf_weather::sf_atmos::{CloudPreset, CloudSettings};
+use sf_weather::sf_sky::KeyCurve;
+
+fn by_hour(c: &KeyCurve, h: f32) -> f32 {
+    if c.keys().is_empty() {
+        1.0
+    } else {
+        c.sample(h)
+    }
+}
+
+fn close(a: f32, b: f32, what: &str) {
+    assert!(
+        (a - b).abs() <= 1e-2 * b.abs().max(1e-3),
+        "{what}: {a} vs {b}"
+    );
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn presets_match_the_app_tables() {
+    let w = MwWeather::build(&content_db(None), None);
+    for (ty, genus, speed, haze, dust, vis, height, banks, banks_day) in APP_TABLE {
+        let p = preset_of(&w, ty);
+        let name = ty.name();
+        // Clouds: the app's `cloud_settings` (genus, halved heights, speed × 10).
+        let mut app = CloudSettings::preset(genus).weather.scaled_heights(0.5);
+        app.wind = app.wind.normalize_or(glam::Vec2::X) * speed * 10.0;
+        let dir = app.wind.normalize_or(glam::Vec2::X);
+        let mut got = p.clouds.to_weather(dir);
+        assert!(
+            got.wind.abs_diff_eq(app.wind, 1e-4),
+            "{name} cloud wind {} vs {}",
+            got.wind,
+            app.wind
+        );
+        got.wind = app.wind;
+        assert_eq!(got, app, "{name} clouds");
+        // Sky and fog over the day: `drive_sky_weather` and `fog_settings`.
+        for i in 0..=96 {
+            #[allow(clippy::cast_precision_loss)]
+            let h = i as f32 * 0.25;
+            let g = ground_fog(h);
+            close(
+                p.sky.haze * by_hour(&p.sky.haze_by_hour, h),
+                haze * morning_haze(h),
+                &format!("{name} haze {h}"),
+            );
+            let fog = &p.fog;
+            close(
+                fog.height_density * by_hour(&fog.height_by_hour, h),
+                extinction_for_visibility(vis) * (1.0 + 0.5 * g),
+                &format!("{name} height fog {h}"),
+            );
+            close(
+                fog.bank_density * by_hour(&fog.banks_by_hour, h),
+                BANK_DENSITY * banks * (banks_day + (1.0 - banks_day) * g),
+                &format!("{name} banks {h}"),
+            );
+        }
+        assert_eq!(p.sky.dust, dust, "{name} dust");
+        assert_eq!(
+            (p.fog.height_falloff, p.fog.height_base),
+            (height, 0.0),
+            "{name} fog height"
+        );
+        assert_eq!(p.fog.bank_falloff, BANK_FALLOFF);
+    }
+    let blight = preset_of(&w, WeatherType::Blight);
+    assert_eq!(blight.sky.dust_tint, glam::Vec3::new(0.6, 1.4, 1.9));
+    assert_eq!(blight.fog.albedo, glam::Vec3::new(0.62, 0.42, 0.36));
+    assert_eq!(
+        preset_of(&w, WeatherType::Ashstorm).fog.albedo,
+        glam::Vec3::new(0.55, 0.47, 0.38)
+    );
+    assert_eq!(
+        preset_of(&w, WeatherType::Clear).fog.albedo,
+        glam::Vec3::ONE
+    );
+}
+
+#[test]
+#[allow(clippy::float_cmp, clippy::cast_possible_truncation)]
+fn wind_storm_and_flash_from_the_ini() {
+    let w = MwWeather::build(&content_db(None), None);
+    // `Wind Speed` 0..1 → 1..15 m/s mean, ±25 %.
+    let speed = |ty| preset_of(&w, ty).wind.speed;
+    assert_eq!(speed(WeatherType::Foggy), [0.75, 1.25]);
+    let ash = speed(WeatherType::Ashstorm);
+    close(f32::midpoint(ash[0], ash[1]), 1.0 + 14.0 * 0.8, "ash wind");
+    for ty in WeatherType::ALL {
+        let storm = matches!(ty, WeatherType::Ashstorm | WeatherType::Blight);
+        assert_eq!(
+            preset_of(&w, ty).wind.storm,
+            if storm { 1.0 } else { 0.0 },
+            "{}",
+            ty.name()
+        );
+    }
+    let thunder = preset_of(&w, WeatherType::Thunderstorm)
+        .lightning
+        .as_ref()
+        .unwrap();
+    close(thunder.fade_s, 0.25, "flash fade");
+
+    // Ash/blight climates blow away from the summit; others have no source.
+    assert!(
+        climate_of(&w, "Ascadian Isles Region")
+            .storm_source
+            .is_none()
+    );
+    let source = climate_of(&w, "Red Mountain Region").storm_source.unwrap();
+    let calm = sf_weather::sf_wind::Wind {
+        velocity: glam::Vec2::ZERO,
+        gustiness: 0.0,
+        ..Default::default()
+    };
+    let mut state = sf_weather::sf_wind::WindState::new(calm);
+    state.add_source(source).unwrap();
+    let settings = sf_weather::sf_wind::WindSettings::default();
+    state.advance(1.0, &settings);
+    let center = source.center.to_f64();
+    for dir in [
+        glam::DVec3::X,
+        glam::DVec3::NEG_X,
+        glam::DVec3::Z,
+        glam::DVec3::NEG_Z,
+    ] {
+        let pos = sf_coords::WorldPos::from_f64(center + dir * 1_000.0);
+        let v = state.velocity_at(&settings, pos, 10.0);
+        let out = glam::Vec2::new(v.x, v.z).dot(glam::Vec2::new(dir.x as f32, dir.z as f32));
+        assert!(out > 0.5, "{dir}: {v}");
+    }
+}
+
+#[test]
+fn hour_curves_stay_small() {
+    let c = visual::hour_curve(ground_fog);
+    assert!(c.keys().len() < 60, "{}", c.keys().len());
+    assert_eq!(visual::hour_curve(|_| 1.0).keys().len(), 2);
+}

@@ -75,3 +75,35 @@ fn regions_and_ini_become_weather_records() {
     let book = WeatherBook::from_db(&content.db);
     assert!(book.climate(&climate_id("Bitter Coast Region")).is_some());
 }
+
+/// `RED_MOUNTAIN_SUMMIT` is the highest `LAND` vertex near Red Mountain.
+#[test]
+fn red_mountain_summit_is_the_highest_land_vertex() {
+    let Ok((install, _)) = MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
+    let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+    let [sx, sy, _] = mw_weather::visual::RED_MOUNTAIN_SUMMIT;
+    let mut best = [0.0f32, 0.0, f32::MIN];
+    for (_, land) in content.db.iter::<tes3::esp::Landscape>() {
+        let data = mw_world::terrain::LandData::decode(land);
+        let (gx, gy) = data.grid;
+        if (gx - 2).abs() > 6 || (gy - 7).abs() > 6 {
+            continue;
+        }
+        for (i, &h) in data.heights.iter().enumerate() {
+            if h > best[2] {
+                #[allow(clippy::cast_precision_loss)]
+                let (x, y) = ((i % 65) as f32 * 128.0, (i / 65) as f32 * 128.0);
+                #[allow(clippy::cast_precision_loss)]
+                let corner = (gx as f32 * 8192.0, gy as f32 * 8192.0);
+                best = [corner.0 + x, corner.1 + y, h];
+            }
+        }
+    }
+    eprintln!("highest LAND vertex near Red Mountain: {best:?}");
+    let d = (best[0] - sx).hypot(best[1] - sy);
+    assert!(d < 1024.0, "summit {best:?} is {d} units from the constant");
+}

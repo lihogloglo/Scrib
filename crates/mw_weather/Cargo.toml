@@ -8,12 +8,15 @@ license.workspace = true
 [dependencies]
 mw_install.workspace = true
 sf_records.workspace = true
+sf_coords.workspace = true
 sf_weather.workspace = true
+glam.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 
 [dev-dependencies]
 mw_records.workspace = true
 mw_vfs.workspace = true
+mw_world.workspace = true
 sf_vfs.workspace = true
 
 [lints]

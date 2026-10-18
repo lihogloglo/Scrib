@@ -266,11 +266,32 @@ Mapped so far:
   Scale`; ash and blight a slow dust (extinction 8e-3/m ≈ 450 m visibility, the F2 ash fog), accumulating ash.
 - Real install: 16 climates (Vvardenfell, Solstheim, Mournhold); Red Mountain is Blight 100 before the main quest.
 
-Not yet (we2b, in order): (1) clouds: `CloudTerms` from the genus per type (`CLOUD_CHOICES`) with `Cloud Speed` × 10
-m/s; (2) fog: `Land Fog Day/Night Depth` via Koschmieder → `FogTerms` + day/night `height_by_hour`, and the
-`exterior.rs` `SKY_*`/`FogLook` scaffold table (haze, dust, tints, banks, hour curves) into presets; (3) wind: `Wind
-Speed` → `WindTerms.speed` (1-15 m/s), ash/blight `wind.storm = 1`, Red-Mountain-adjacent climates' radial
-`storm_source`; `Flash Decrement` → `Lightning.flash`; blight red tint; (4) region sounds → climate cues (needs a
-one-shot cue with chance in sf_weather, or a separate record); (5) MWScript mapping table (ChangeWeather → `force`,
-ModRegion → `set_weights`, GetCurrentWeather → `current`); (6) `bevyrrowind weather forecast <region> --days 3` and the
-1,000-slot frequency check; (7) the app calls `define_into` after content load.
+## As built: WE2 part 2 (we2b, 2026-10-18)
+
+`mw_weather::visual` fills each preset's visual fields with the values the app's scaffold tables (`exterior.rs`
+`CLOUD_CHOICES`, `SKY_*`, `FogLook`, `morning_haze`, `ground_fog`, `BANK_*`) hard-code, so WE3's switch to the presets
+is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour over 24 h, 1 % tolerance).
+
+- **Clouds**: `CloudTerms::from_weather(CloudWeather::preset(genus).scaled_heights(0.5))`, genus per type as in the
+  "Clouds" row; `speed = Cloud Speed × 10` m/s (ini, vanilla fallbacks). The app also scales the `CloudLook` (noise
+  scales) by 0.5: that is renderer look, not weather, and stays with WE3's cloud plugin.
+- **Sky**: haze, dust, `dust_tint` (blight 0.6/1.4/1.9) per type; `haze_by_hour` = morning haze (× 1.5 at 6:30).
+- **Fog**: height fog = `KOSCHMIEDER / visibility` at sea level with the type's falloff, × (1 + ½ ground fog) by hour
+  (`height_by_hour`); banks `0.03 × banks` with falloff 12 m and `banks_by_hour = banks_day + (1 − banks_day) × ground
+  fog` (Foggy, Rain, Snow, Thunderstorm); ash albedo 0.55/0.47/0.38, blight 0.62/0.42/0.36. Hour curves are linear
+  `KeyCurve`s sampled every 15 min, collinear keys dropped. `Land Fog Day/Night Depth` is **not read**: its depths are
+  fractions of the original's short view range, and our fog is calibrated on 1-5 km views (F2); an ini fog edit
+  changes nothing yet.
+- **Wind**: `Wind Speed` w (vanilla 0-0.9) → mean `1 + 14 w` m/s, range ± 25 %; Ashstorm and Blight `wind.storm = 1`.
+  Every climate with an ash or blight chance gets `storm_source = WindSource::radial(summit, 6 m/s, 3 km)` with a
+  300 m inner radius; the summit is the highest `LAND` vertex (units 29568, 73728, 18952; cell 3,9; 271 m; the
+  real-install test re-finds it), so far regions with ash (mods) get the preset wind only. Test: the source blows
+  outward 1 km N/E/S/W of the summit.
+- **Lightning**: `Flash Decrement` d (vanilla 4) → `Lightning::fade_s = 1/d` real seconds (new field in sf_weather,
+  also on `LightningStrike`). sf_weather now re-exports `sf_atmos`, `sf_sky`, `sf_wind` for adapters.
+
+Not yet (we2c, in order): (1) region sounds → climate cues (REGN sounds are one-shots with a chance; sf_weather `Cue` is
+a loop: decide a one-shot cue type in sf_weather vs a mw record); (2) MWScript mapping table (ChangeWeather → `force`,
+ModRegion → `set_weights`, GetCurrentWeather → `current`) in this spec + a test on `WeatherState`; (3) `bevyrrowind
+weather forecast <region> --days 3` (`WeatherState::forecast`) and the 1,000-slot frequency check; (4) the app calls
+`define_into` after content load, before record mods.
