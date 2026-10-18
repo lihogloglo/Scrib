@@ -81,3 +81,37 @@ fn ini_water_section_with_fallbacks() {
     assert_eq!(ini.near_water_outdoor_id, "Sea Waves");
     assert_eq!(WaterIni::parse(b""), WaterIni::default());
 }
+
+#[test]
+fn wet_mask_from_land_heights() {
+    // One cell (0, 0): land except its south-west corner vertex.
+    let mut heights = vec![100.0f32; 65 * 65];
+    heights[0] = -10.0;
+    let bounds = cell_bounds([(0, 0)]).unwrap();
+    assert_eq!(bounds, (-1, -1, 1, 1));
+    let m = wet_mask(bounds, [((0, 0), heights.as_slice())]);
+    assert_eq!((m.width, m.height), (97, 97));
+    assert!((m.texel - 3.6576).abs() < 1e-9);
+    // Cell (0, 0)'s south-west vertex is texel (32, 64) (rows run south from the north edge).
+    assert!(m.wet[64 * 97 + 32]);
+    assert!(!m.wet[64 * 97 + 34] && !m.wet[32 * 97 + 48]);
+    // Margin cells are water.
+    assert!(m.wet[0] && m.wet[96 * 97 + 96]);
+    // Texel (32, 64) sits at world x = 0, z = 0 (engine z = −north).
+    let x = m.origin.x + 32.0 * m.texel;
+    let z = m.origin.y + 64.0 * m.texel;
+    assert!(x.abs() < 1e-6 && z.abs() < 1e-6, "{x} {z}");
+}
+
+#[test]
+fn optics_map_by_region() {
+    let bounds = (-1, -1, 1, 1);
+    let map = optics_map(bounds, |x, y| {
+        (x == 0 && y == 1).then(|| "Bitter Coast Region".to_owned())
+    });
+    assert_eq!((map.width, map.height), (3, 3));
+    // Row 0 is the northernmost (y = 1).
+    assert_eq!(map.index[1], optics_index(optics::SWAMP));
+    assert_eq!(map.index[4], optics_index(optics::SEA));
+    assert_eq!(optics_index(optics::INTERIOR), 5);
+}

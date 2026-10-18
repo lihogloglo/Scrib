@@ -4596,6 +4596,7 @@ name = "mw_water"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "glam 0.33.12",
  "sf_coords",
  "sf_water",
  "sf_world",
@@ -6640,6 +6641,7 @@ dependencies = [
  "bevy_shader",
  "bevy_transform",
  "log",
+ "sf_coords",
  "sf_water",
 ]
 

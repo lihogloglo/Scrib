@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use sf_coords::WorldPos;
 use sf_water::{
+    OpticsMap, WetMask,
     FoamTerms, RiverPolicy, SpectrumParams, WaterBody, WaterOptics, WaterOpticsSource, WaterSource,
 };
 use sf_world::{RecordRef, Worldspace, WorldspaceId};
@@ -81,24 +82,24 @@ pub fn optics_records(ini: &WaterIni) -> Vec<(&'static str, WaterOptics)> {
             contact: 0.0,
         },
         caustics: 0.2,
-        ..optics_with(3.0, [1.6, 1.0, 1.4], 0.5)
+        ..optics_with(3.0, [1.6, 1.0, 1.5], 0.25)
     };
     let ash = WaterOptics {
         surface_tint: Some([0.35, 0.34, 0.32]),
-        ..optics_with(12.0, [1.5, 1.0, 1.1], 0.4)
+        ..optics_with(12.0, [1.5, 1.0, 1.1], 0.15)
     };
     // Morrowind multiplies its fog distance by the Underwater*Fog values: indoor vs day sets the
     // interior visibility relative to the sea's.
     let indoor = 25.0 * ini.day_fog / ini.indoor_fog.max(0.1);
     vec![
-        (optics::SEA, optics_with(25.0, [3.0, 1.0, 1.2], 0.2)),
-        (optics::COASTAL, optics_with(15.0, [2.5, 1.0, 1.5], 0.3)),
+        (optics::SEA, optics_with(25.0, [3.0, 1.0, 1.15], 0.07)),
+        (optics::COASTAL, optics_with(15.0, [2.5, 1.0, 1.4], 0.1)),
         (optics::SWAMP, swamp),
         (optics::ASH, ash),
-        (optics::NORTH, optics_with(20.0, [2.5, 1.1, 1.0], 0.25)),
+        (optics::NORTH, optics_with(20.0, [2.5, 1.1, 1.0], 0.08)),
         (
             optics::INTERIOR,
-            optics_with(indoor.min(12.0), [2.0, 1.0, 1.2], 0.4),
+            optics_with(indoor.min(12.0), [2.0, 1.0, 1.2], 0.12),
         ),
     ]
 }
@@ -238,5 +239,111 @@ impl WaterIni {
                 .cloned()
                 .unwrap_or(d.near_water_outdoor_id),
         }
+    }
+}
+
+/// Metres per Morrowind unit.
+const UNIT_M: f64 = 0.9144 / 64.0;
+/// Units per exterior cell side, and `LAND` vertices per side.
+const CELL_UNITS: f64 = 8192.0;
+const LAND_VERTS: usize = 65;
+
+/// Index of an optics record in [`optics_records`] (the GPU optics table's order).
+pub fn optics_index(id: &str) -> u8 {
+    [
+        optics::SEA,
+        optics::COASTAL,
+        optics::SWAMP,
+        optics::ASH,
+        optics::NORTH,
+        optics::INTERIOR,
+    ]
+    .iter()
+    .position(|o| *o == id)
+    .and_then(|i| u8::try_from(i).ok())
+    .unwrap_or(0)
+}
+
+/// Exterior cell bounds `(x0, y0, x1, y1)` of a set of cells, with one cell of open sea around.
+pub fn cell_bounds(cells: impl IntoIterator<Item = (i32, i32)>) -> Option<(i32, i32, i32, i32)> {
+    let mut b: Option<(i32, i32, i32, i32)> = None;
+    for (x, y) in cells {
+        b = Some(b.map_or((x, y, x, y), |(x0, y0, x1, y1)| {
+            (x0.min(x), y0.min(y), x1.max(x), y1.max(y))
+        }));
+    }
+    b.map(|(x0, y0, x1, y1)| (x0 - 1, y0 - 1, x1 + 1, y1 + 1))
+}
+
+/// The exterior's wet mask at the sea level (water-adapter.md "Openness and fetch on one sea plane")
+/// for `water.shore`: every second `LAND` vertex (256 units ≈ 3.66 m texels), water where the
+/// height is below 0, cells without `LAND` are water (the engine's fill is deep). `heights` are
+/// in units, `[y * 65 + x]`, rows south to north (`mw_world::terrain::LandData`). Engine axes:
+/// x = east, z = −north.
+// `manual_midpoint`: `(ox + i) / 2` halves an even vertex index, it is not a midpoint.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_precision_loss, clippy::manual_midpoint)]
+pub fn wet_mask<'a>(
+    bounds: (i32, i32, i32, i32),
+    lands: impl IntoIterator<Item = ((i32, i32), &'a [f32])>,
+) -> WetMask {
+    let (x0, y0, x1, y1) = bounds;
+    let step = LAND_VERTS - 1;
+    let cols = (x1 - x0 + 1) as usize * step;
+    let rows = (y1 - y0 + 1) as usize * step;
+    let (w, h) = (cols / 2 + 1, rows / 2 + 1);
+    let texel = 2.0 * CELL_UNITS / step as f64 * UNIT_M;
+    let origin = glam::DVec2::new(
+        f64::from(x0) * CELL_UNITS * UNIT_M,
+        -f64::from(y1 + 1) * CELL_UNITS * UNIT_M,
+    );
+    let mut mask = WetMask::new(w, h, texel, origin);
+    for ((cx, cy), heights) in lands {
+        if cx < x0 || cx > x1 || cy < y0 || cy > y1 || heights.len() < LAND_VERTS * LAND_VERTS {
+            continue;
+        }
+        let (ox, oy) = ((cx - x0) as usize * step, (cy - y0) as usize * step);
+        for j in 0..LAND_VERTS {
+            let gy = oy + j;
+            if gy % 2 != 0 {
+                continue;
+            }
+            let row = (rows - gy) / 2;
+            for i in (0..LAND_VERTS).filter(|i| (ox + i) % 2 == 0) {
+                mask.wet[row * w + (ox + i) / 2] = heights[j * LAND_VERTS + i] < 0.0;
+            }
+        }
+    }
+    mask
+}
+
+/// Optics by exterior cell (water-adapter.md "Optics by region"): one texel per cell, rows south,
+/// `region_of` gives a cell's `REGN` name (none: the open sea). The GPU blends between cell centres
+/// (≈ 117 m, the spec's 128 m border blend).
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+pub fn optics_map(
+    bounds: (i32, i32, i32, i32),
+    region_of: impl Fn(i32, i32) -> Option<String>,
+) -> OpticsMap {
+    let (x0, y0, x1, y1) = bounds;
+    let (w, h) = ((x1 - x0 + 1) as usize, (y1 - y0 + 1) as usize);
+    let mut index = vec![0u8; w * h];
+    for row in 0..h {
+        for col in 0..w {
+            let (cx, cy) = (x0 + col as i32, y1 - row as i32);
+            if let Some(r) = region_of(cx, cy) {
+                index[row * w + col] = optics_index(optics_for_region(&r));
+            }
+        }
+    }
+    let cell = CELL_UNITS * UNIT_M;
+    OpticsMap {
+        width: w,
+        height: h,
+        cell,
+        origin: glam::DVec2::new(
+            (f64::from(x0) + 0.5) * cell,
+            -(f64::from(y1) + 0.5) * cell,
+        ),
+        index,
     }
 }

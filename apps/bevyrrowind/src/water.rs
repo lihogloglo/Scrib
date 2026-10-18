@@ -157,7 +157,7 @@ fn sync(
     if *frame != next {
         *frame = next;
     }
-    let want = volume.map_or_else(WaterFogInput::default, |v| WaterFogInput { froxels: Some(v.image.clone()), params: v.params });
+    let want = volume.map_or_else(WaterFogInput::default, |v| WaterFogInput { froxels: Some(v.image.clone()), params: v.params, ..WaterFogInput::default() });
     if *fog != want {
         *fog = want;
     }
