@@ -988,6 +988,18 @@ ragdolls; robes move." Tasks in dependency order:
   ladders, sitting, doors, levers). Learn from AC1-rs, faith-runner, ELDEN-RING-Combat-Rewrite, sekiro-rs and ozz,
   don't copy them: animation.md "Prior art: open Rust/Bevy game reimplementations". First step: pick a clip source
   (Morrowind has no climb/vault/sit clips), then write the traversal spec. Not started: needs the owner's go.
+- [~] TS1 Synthetic test levels (owner go 2026-10-18; specs: superfargoth `test-levels.md` format + research,
+  `docs/specs/test-levels.md` game side): greybox levels authored as `levels/*.ron`, opened through `scene`/`view` with
+  the usual flags, BRP and F1 keys; uses: PH-3 cloth on slopes, PH checks, traversal courses (research 01).
+  **Built (ts1a, 2026-10-18):** `sf_level` (Bevy-free: RON format, validation, flat-shaded meshes with meter UVs;
+  6 tests); app `level.rs`: `view level:<name>` / scenes `level: "<name>"` run the level as its own worldspace in the
+  streamed viewer (empty `MemoryIndex` over the bake's), one mesh per primitive over a 1 m prototype grid, the same
+  triangles as `Fixed` mesh colliders on `STATIC`; levels `flat-slopes` (10-40° ramps, 3 stair flights) and `ledges`
+  (0.3-2.5 m boxes, thin vs deep, 1-4 m gaps, 0.3 m beam, wall); scenes `level-flat-slopes`, `level-ledges` (TS-1
+  awaiting owner). Load: ready 2.1-2.8 s after process start (content 0.34 s, spawn 1-2 ms), dev build.
+  Format decision: RON, not `DynamicScene`/BSN (no `.bsn` files in 0.20) or Skein (Bevy 0.19 only, revisit as a
+  glTF primitive). **Next (ts1b):** Morrowind actors by id with outfit and scripted path/action loops (actor placements
+  in the level's index), props and interaction points, the headless scripted-input runner; a player walk mode.
 
 - Verify (milestone): PH-1 (table knock-over), PH-2 (dead guard ragdoll + knockdown/get-up), PH-3 (robes) signed off
   by the owner; a benchmark entry for Balmora with physics on (idle step, a collapse, 2 ragdolls) within the gates.
@@ -1688,4 +1700,5 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (p10b): M4 P10 [~] `sf_character::cook_cloth` (farthest-hit lattice placement, girdle-ride offsets, per-particle authored skin targets, `SkinRebind` bilinear + harmonic waist band), `RagdollDef::cloth_colliders`, `mw_physics::MwClothRules`; census: robes are Chest parts (not Skirt), 50 cloth parts all skinned, 48 cook in 9 ms median, no hem holds a 50° run stride (+13..+133 %). Next p10c op + app + PH-3.
 - 2026-10-18 (u1b): M5 U1 [x] part 2: `sf_ui_bevy` (screen-stack router over per-input-context BEI entities, consume + require_reset UI actions, rebindable `UiBindings`, confirm → `Activate`, layer-aware `AutoDirectionalNavigation` + focus memory + repeat, `InputMode` + glyphs); UI sets must run before BEI `Prepare` (else a closing modal's B reached the menu); 6 headless tests, `ui_nav --autotest` synthetic-gamepad PASS, clippy clean; UI-1 awaiting owner. Next: u1c glue (VFS Fluent, settings/bindings ↔ profile) or U2.
 - 2026-10-18 (u1c): M5 U1 part 3 (glue): Fluent from each mod's VFS `l10n/<locale>/<mod id>.ftl` in load order with per-mod issues, `UiRecordKinds` adapter, settings ↔ `Profile::settings`, new `Profile::bindings` (reflected input names, non-defaults), `insert_from_profile` + save on leaving menus/exit, `UiCommands`, presets enforced on open; 7 new tests, clippy clean, `ui_nav --autotest` PASS (superfargoth 860d027). Next: U2 `sf_ui_css`.
+- 2026-10-18 (ts1a): TS1 [~] part 1: synthetic test levels: `sf_level` (Bevy-free RON greybox format, validation, meshes = colliders; 6 tests), app `level.rs` (`view level:<name>`, scenes `level:`; own worldspace with an empty streaming index, prototype-grid materials, `Fixed` mesh colliders), levels `flat-slopes` + `ledges`, scenes `level-*`, TS-1 awaiting owner; ready 2.1-2.8 s after start. RON over DynamicScene/BSN/Skein (no Bevy 0.20 Skein yet). Next ts1b: actors by id, props, headless runner.
 - 2026-10-18 (we1): M6 WE1 [x]: Bevy-free `sf_weather` (presets/climates/precip kinds as records, forecast as a pure function of seed + climate + slot with timestamped overrides in the save, per-channel lead/lag with never-morphing crossfades, border band, Poisson lightning by thinning, `WeatherFrame` with wind target, storms, `visibility_m`); `evaluate` 0.0006 ms (gate 0.05); superfargoth cbf4c44. Next: WE2 `mw_weather`, then WE3 `sf_weather_bevy`.

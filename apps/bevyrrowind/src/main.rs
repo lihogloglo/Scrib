@@ -14,6 +14,7 @@ mod actor_particles;
 mod faces;
 mod held;
 mod hot_reload;
+mod level;
 mod live_ab;
 mod mods;
 mod night_sky;
@@ -483,6 +484,7 @@ impl ViewFlags {
             activate: self.activate.unwrap_or(0),
             portals: None,
             actors: None,
+            level: None,
             bodies: self.bodies,
             worldspace,
             calibration: self.lighting.calibration(),
@@ -699,6 +701,10 @@ fn run(cli: Cli) -> Result {
 /// `view <cell>`: an exterior place or an interior, streamed; or an interior
 /// in the single-cell viewer.
 fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result {
+    // Synthetic test levels (TS1): `level:<name>`.
+    if let Some(name) = cell.strip_prefix(level::PREFIX) {
+        return level::view(install, name, flags);
+    }
     let (vfs, content) = load(install, false)?;
     // Exterior cells (by grid "x,y" or by name) stream the whole exterior.
     let interior = mw_world::find_cell(&content.db, cell).filter(|c| c.is_interior());

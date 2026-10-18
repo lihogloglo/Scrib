@@ -57,6 +57,8 @@ sf_character_bevy = { workspace = true, features = ["world"] }
 sf_controller = { workspace = true, features = ["terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
 sf_physics = { workspace = true }
+# Synthetic test levels (`level.rs`, TS1).
+sf_level.workspace = true
 sf_ragdoll = { workspace = true }
 sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdoll"] }
 sf_model_bevy.workspace = true

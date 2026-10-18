@@ -1,0 +1,37 @@
+// Synthetic test level (docs/specs/test-levels.md): flat ground, slopes and stairs.
+// Meters, y up, x east, z south; `at` = footprint center at the bottom; ramps and
+// stairs climb toward their local -z (here north), all ending at z = -5 against
+// a 2 m plateau (ramps) or a landing (stairs). Open with `bevyrrowind scene level-flat-slopes`.
+(
+    name: "flat-slopes",
+    description: "80 m floor; 10/20/30/40° ramps (2 m rise) onto a plateau; comfortable, standard and steep stairs",
+    cameras: [
+        (name: "overview", eye: (-1.0, 9.0, 20.0), target: (-3.0, 0.5, -4.0)),
+        (name: "ramps", eye: (-9.0, 2.5, 14.0), target: (-9.0, 1.0, -5.0)),
+        (name: "stairs", eye: (19.0, 2.5, 6.0), target: (11.0, 1.0, -4.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 10.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (80.0, 80.0))),
+
+        // Ramps: run = 2 / tan(angle): 11.34, 5.49, 3.46, 2.38 m; at.z = -5 + run / 2.
+        (name: "slope-10", shape: Ramp(width: 4.0, rise: 2.0, angle: 10.0), at: (-18.0, 0.0, 0.672), material: Green),
+        (name: "slope-20", shape: Ramp(width: 4.0, rise: 2.0, angle: 20.0), at: (-12.0, 0.0, -2.253), material: Yellow),
+        (name: "slope-30", shape: Ramp(width: 4.0, rise: 2.0, angle: 30.0), at: (-6.0, 0.0, -3.268), material: Orange),
+        (name: "slope-40", shape: Ramp(width: 4.0, rise: 2.0, angle: 40.0), at: (0.0, 0.0, -3.808), material: Red),
+        (name: "plateau", shape: Box(size: (24.0, 2.0, 4.0)), at: (-9.0, 0.0, -7.0), material: Grey),
+
+        // Stairs: comfortable 0.15/0.30, standard 0.18/0.28, steep 0.25/0.22; at.z = -5 + run / 2.
+        (name: "stairs-comfy", shape: Stairs(width: 3.0, steps: 12, rise: 0.15, run: 0.30), at: (7.0, 0.0, -3.2), material: Blue),
+        (name: "landing-comfy", shape: Box(size: (3.0, 1.8, 3.0)), at: (7.0, 0.0, -6.5), material: Grey),
+        (name: "stairs-standard", shape: Stairs(width: 3.0, steps: 10, rise: 0.18, run: 0.28), at: (11.0, 0.0, -3.6), material: Purple),
+        (name: "landing-standard", shape: Box(size: (3.0, 1.8, 3.0)), at: (11.0, 0.0, -6.5), material: Grey),
+        (name: "stairs-steep", shape: Stairs(width: 3.0, steps: 8, rise: 0.25, run: 0.22), at: (15.0, 0.0, -4.12), material: Red),
+        (name: "landing-steep", shape: Box(size: (3.0, 2.0, 3.0)), at: (15.0, 0.0, -6.5), material: Grey),
+
+        // A 1 m scale post at the start.
+        (name: "post-2m", shape: Cylinder(radius: 0.1, height: 2.0), at: (2.0, 0.0, 8.0), material: White),
+    ],
+)

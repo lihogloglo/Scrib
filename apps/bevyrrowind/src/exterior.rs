@@ -118,6 +118,8 @@ pub struct ExteriorOptions {
     pub worldspace: sf_world::WorldspaceId,
     /// The water's shore and region inputs (`water.rs`, W3).
     pub water: crate::water::WaterInputs,
+    /// A synthetic test level (`level.rs`, TS1): `worldspace` is its own.
+    pub level: Option<crate::level::LevelSetup>,
 }
 
 #[derive(Resource)]
@@ -218,6 +220,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     .insert_resource(ActiveWorldspace(Some(options.worldspace.clone())))
     .insert_resource(StreamingDebug { enabled: options.rings, ..StreamingDebug::default() })
     .insert_resource(options.calibration);
+    if let Some(level) = options.level {
+        crate::level::add(&mut app, level);
+    }
 
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();

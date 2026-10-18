@@ -1640,3 +1640,16 @@ the menu behind it; B closes the modal and focus returns to Quit; B again closes
 switches between `Kbm` and `Gamepad` labels (Esc/Enter vs Menu/A) the moment you touch the other device, and never
 flickers while a pad button is held and the mouse moves. Known: plain placeholder styling (themes are U2/U3), Xbox
 labels for every pad (per-family glyph icons are U3).
+
+### TS-1: Synthetic test levels, greybox (`scene level-flat-slopes`, `scene level-ledges`; `--camera <name>` picks a level camera)
+
+Status: **awaiting owner** (TS1 part 1, ts1a, 2026-10-18). Shots: `shots/ts1/level-flat-slopes.png`,
+`shots/ts1/level-ledges.png` (with `--physics-debug`: collider wireframes on every box), `shots/ts1/level-flat-slopes-balls.png`
+(`ramps` camera, overlay on, a thrown ball resting on the floor). Levels are `levels/*.ron` (`docs/specs/test-levels.md`),
+opened in the normal viewer in their own worldspace: sky at 10:00, clouds, fog, physics, F1 keys and BRP as anywhere
+else; no terrain, sea or Vvardenfell. Ready ~2-3 s after start. Look for: a 1 m grid on every surface (scale reads at a
+glance, no shimmer at grazing angles), sun shadows from every block; flat-slopes: ramps at 10/20/30/40° (green, yellow,
+orange, red) up to a 2 m grey plateau, three stair flights (blue comfortable, purple standard, red steep) with landings;
+ledges: the height row 0.3-2.5 m, thin vs deep blocks, platforms with 1-4 m gaps, the beam, the wall. Fly (WASD) over
+them; `V` throws a ball that bounces off and rests on the greybox (colliders = the visible triangles); `G` draws the
+colliders. Known: no walking player yet (fly camera only), floor ends at 40 m into the fog.

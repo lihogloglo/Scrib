@@ -1,0 +1,324 @@
+//! Synthetic test levels (TS1, `docs/specs/test-levels.md`): greybox spaces
+//! from `levels/<name>.ron` (`sf_level`), opened as `view level:<name>` or a
+//! `scenes.ron` entry with `level:`.
+//!
+//! A level is its own worldspace (`level/<name>`) in the streamed viewer
+//! (`exterior.rs`), so the sky (fixed hour), clouds, fog, wind, physics,
+//! BRP, the F1 A/B keys and `--screenshot` all work unchanged. Its
+//! streaming index is empty ([`LevelIndex`], layered over the bake's), so
+//! nothing of Vvardenfell streams in; the greybox is spawned directly: one
+//! mesh per primitive under the worldspace root and the same triangles as a
+//! `Fixed` mesh collider on the `STATIC` layer, as world statics get from
+//! their `collision.cook`. Not a separate app: actors, walkers and items come
+//! with the viewer (TS1 part 2 spawns actors through the level's index).
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
+
+use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use mw_install::MorrowindInstall;
+use sf_controller::{CollisionMesh, SurfaceId};
+use sf_coords::{WorldPos, WorldTransform};
+use sf_level::{Level, Material};
+use sf_physics::{BodyDesc, Layer, MeshShape, ShapeRef};
+use sf_physics_bevy::Physics;
+use sf_world::{IndexParams, IndexReader, MemoryIndex, WorldIndex, WorldspaceId, build_directory, build_pages};
+use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
+
+/// `view level:<name>`.
+pub const PREFIX: &str = "level:";
+
+/// Levels built into the exe (the repo's `levels/`), used when no file is found.
+const BUILT_IN: &[(&str, &str)] = &[
+    ("flat-slopes", include_str!("../../../levels/flat-slopes.ron")),
+    ("ledges", include_str!("../../../levels/ledges.ron")),
+];
+
+/// When `view level:` started: the load time is measured from here.
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// What the viewer needs to show a level.
+pub struct LevelSetup {
+    pub level: Arc<Level>,
+    pub worldspace: WorldspaceId,
+}
+
+/// The level's worldspace id.
+pub fn worldspace(name: &str) -> WorldspaceId {
+    WorldspaceId::new(&format!("level/{name}"))
+}
+
+/// `view level:<name>`: content (actors and records stay available), then the
+/// streamed viewer in the level's worldspace. `--camera <name>` picks one of
+/// the level's cameras; raw "ex,ey,ez,tx,ty,tz" still works.
+pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::ViewFlags) -> crate::Result {
+    let started = *STARTED.get_or_init(Instant::now);
+    let (source, level) = find(name)?;
+    let pick = flags.camera.as_deref().map(str::to_ascii_lowercase);
+    let camera = match pick.as_deref().and_then(|p| level.cameras.iter().find(|c| c.name.eq_ignore_ascii_case(p))) {
+        Some(c) => {
+            flags.camera = None;
+            c
+        }
+        None => &level.cameras[0],
+    };
+    println!(
+        "level {} ({source}): {} objects, cameras {}",
+        level.name,
+        level.objects.len(),
+        level.cameras.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+    );
+    let (vfs, content) = crate::load(install, false)?;
+    println!("content loaded in {:.2} s", started.elapsed().as_secs_f32());
+    let ws = worldspace(&level.name);
+    let start = crate::StreamStart::Interior { worldspace: ws.clone(), eye: camera.eye.as_dvec3(), target: camera.target.as_dvec3() };
+    let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - level {}", level.name), start)?;
+    options.actors = Some(Arc::new(content.db));
+    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws });
+    crate::exterior::run(Arc::new(vfs), options)
+}
+
+/// A level by name (`levels/<name>.ron` in the current folder, then next to
+/// the exe, then built in) or by `.ron` path; parsed and validated.
+pub fn find(name: &str) -> crate::Result<(String, Level)> {
+    let parse = |text: &str, source: &str| Level::parse(text).map_err(|e| format!("{source}: {e}"));
+    if Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("ron")) {
+        let text = std::fs::read_to_string(name).map_err(|e| format!("{name}: {e}"))?;
+        return Ok((name.to_owned(), parse(&text, name)?));
+    }
+    let file = format!("{name}.ron");
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+    for path in std::iter::once(PathBuf::from("levels").join(&file)).chain(exe_dir.map(|d| d.join("levels").join(&file))) {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let source = path.display().to_string();
+            return Ok((source.clone(), parse(&text, &source)?));
+        }
+    }
+    let (_, text) = BUILT_IN
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .ok_or_else(|| format!("no level {name:?} (levels/<name>.ron; built in: {})", BUILT_IN.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")))?;
+    Ok(("built-in".to_owned(), parse(text, &format!("built-in {name}"))?))
+}
+
+/// The level's streaming index (no placements yet) over the bake's: the
+/// level worldspace has a directory, so streaming settles at once and
+/// nothing else streams in.
+struct LevelIndex {
+    level: MemoryIndex,
+    base: Arc<dyn IndexReader>,
+}
+
+impl LevelIndex {
+    fn new(ws: &WorldspaceId, base: Arc<dyn IndexReader>) -> Self {
+        let params = IndexParams::default();
+        let (pages, stats) = build_pages(&params, std::iter::empty(), &|_| None);
+        let directory = build_directory(ws.clone(), &params, &pages);
+        let mut level = MemoryIndex::new();
+        level.insert(&WorldIndex { directory, pages, stats });
+        Self { level, base }
+    }
+}
+
+impl IndexReader for LevelIndex {
+    fn directory(&self, ws: &WorldspaceId) -> Result<Option<Vec<u8>>, String> {
+        match self.level.directory(ws)? {
+            Some(d) => Ok(Some(d)),
+            None => self.base.directory(ws),
+        }
+    }
+
+    fn page(&self, ws: &WorldspaceId, page: IVec3) -> Result<Option<Vec<u8>>, String> {
+        if self.level.directory(ws)?.is_some() {
+            return self.level.page(ws, page);
+        }
+        self.base.page(ws, page)
+    }
+}
+
+#[derive(Resource)]
+struct ActiveLevel(LevelSetup);
+
+/// Adds the level to the viewer; call after `WorldIndexSource` is inserted.
+pub fn add(app: &mut App, setup: LevelSetup) {
+    let base = app.world().resource::<WorldIndexSource>().0.clone();
+    app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base))))
+        .insert_resource(ActiveLevel(setup))
+        // After Startup's commands: the viewer's `setup` creates the worldspace root.
+        .add_systems(PostStartup, spawn)
+        .add_systems(Last, report_ready);
+}
+
+/// Labels a level primitive (BRP `world_find_entities_by_name` finds it by its name).
+#[derive(Component)]
+pub struct LevelObject;
+
+fn spawn(
+    mut commands: Commands,
+    mut registry: ResMut<WorldspaceRegistry>,
+    level: Res<ActiveLevel>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut physics: Option<ResMut<Physics>>,
+) {
+    let started = Instant::now();
+    let ActiveLevel(LevelSetup { level, worldspace: ws }) = &*level;
+    let entry = registry.ensure(&mut commands, ws);
+    let grid = images.add(grid_image());
+    let mut palette: Vec<(Material, Handle<StandardMaterial>)> = Vec::new();
+    let (mut bodies, mut triangles) = (0, 0);
+    for (i, object) in level.objects.iter().enumerate() {
+        let data = object.mesh();
+        triangles += data.indices.len() / 3;
+        let material = if let Some((_, h)) = palette.iter().find(|(m, _)| *m == object.material) {
+            h.clone()
+        } else {
+            let [r, g, b] = object.material.srgb();
+            let h = materials.add(StandardMaterial {
+                base_color: Color::srgb(r, g, b),
+                base_color_texture: Some(grid.clone()),
+                perceptual_roughness: 0.85,
+                ..StandardMaterial::default()
+            });
+            palette.push((object.material, h.clone()));
+            h
+        };
+        let at = WorldPos::from_f64(object.at.as_dvec3());
+        let (cell, mut transform) = to_grid(at);
+        transform.rotation = object.rotation();
+        let name = object.name.clone().unwrap_or_else(|| format!("level object {i}"));
+        if object.collide
+            && let Some(physics) = physics.as_deref_mut()
+        {
+            let mesh = CollisionMesh { positions: data.positions.clone(), triangles: data.triangles(), surfaces: vec![SurfaceId::DEFAULT; data.indices.len() / 3] };
+            if let Some(shape) = MeshShape::new(&mesh) {
+                let pose = WorldTransform { pos: at, rotation: object.rotation(), scale: Vec3::ONE };
+                physics.insert(ws, &BodyDesc::fixed(pose, ShapeRef::Mesh(shape), Layer::STATIC));
+                bodies += 1;
+            }
+        }
+        commands.spawn((
+            Name::new(name),
+            LevelObject,
+            Mesh3d(meshes.add(render_mesh(&data))),
+            MeshMaterial3d(material),
+            cell,
+            transform,
+            RenderLayers::layer(entry.layer),
+            ChildOf(entry.root),
+        ));
+    }
+    info!(
+        "level {}: {} objects ({triangles} triangles), {bodies} static colliders, spawned in {:.2} ms",
+        level.name,
+        level.objects.len(),
+        started.elapsed().as_secs_f64() * 1e3
+    );
+}
+
+/// Logs the time from `view level:` to the first frame with streaming settled.
+fn report_ready(streaming: Res<Streaming>, level: Res<ActiveLevel>, mut done: Local<bool>, mut frames: Local<u32>) {
+    if *done {
+        return;
+    }
+    *frames += 1;
+    if *frames > 2 && streaming.has_directory(&level.0.worldspace) && streaming.is_idle() {
+        *done = true;
+        if let Some(t) = STARTED.get() {
+            info!("level {} ready {:.2} s after start ({} frames)", level.0.level.name, t.elapsed().as_secs_f32(), *frames);
+        }
+    }
+}
+
+fn render_mesh(data: &sf_level::MeshData) -> Mesh {
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, data.positions.clone())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, data.normals.clone())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs.clone())
+        .with_inserted_indices(Indices::U32(data.indices.clone()))
+}
+
+/// The prototype grid: one tile per meter (UVs are meters), a dark line on
+/// the meter, a faint one on the half meter; white, so the material's colour
+/// tints it. Full mip chain, so it doesn't shimmer at grazing angles.
+fn grid_image() -> Image {
+    const SIZE: u32 = 128;
+    let shade = |x: u32, y: u32| -> u8 {
+        let edge = |v: u32| !(2..SIZE - 2).contains(&v);
+        let half = |v: u32| v.abs_diff(SIZE / 2) < 1;
+        if edge(x) || edge(y) {
+            150
+        } else if half(x) || half(y) {
+            215
+        } else {
+            245
+        }
+    };
+    let mut level: Vec<u8> = (0..SIZE * SIZE).map(|i| shade(i % SIZE, i / SIZE)).collect();
+    let mut data = Vec::new();
+    let mut size = SIZE;
+    let mut mips = 0;
+    loop {
+        data.extend(level.iter().flat_map(|&v| [v, v, v, 255]));
+        mips += 1;
+        if size == 1 {
+            break;
+        }
+        let next = size / 2;
+        level = (0..next * next)
+            .map(|i| {
+                let (x, y) = ((i % next) * 2, (i / next) * 2);
+                let at = |dx: u32, dy: u32| u32::from(level[((y + dy) * size + x + dx) as usize]);
+                u8::try_from((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1)) / 4).unwrap_or(u8::MAX)
+            })
+            .collect();
+        size = next;
+    }
+    // `Image::new` asserts one level's worth of data: fill the chain after.
+    let mut image = Image::new_uninit(
+        Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = Some(data);
+    image.texture_descriptor.mip_level_count = mips;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: 16,
+        ..ImageSamplerDescriptor::default()
+    });
+    image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn built_in_levels_parse() {
+        for (name, _) in BUILT_IN {
+            let (_, level) = find(name).expect("level parses");
+            assert_eq!(level.name, *name, "file name and level name agree");
+        }
+    }
+
+    #[test]
+    fn grid_image_has_a_full_mip_chain() {
+        let image = grid_image();
+        assert_eq!(image.texture_descriptor.mip_level_count, 8);
+        let bytes: u32 = (0..8).map(|m| (128u32 >> m).pow(2) * 4).sum();
+        assert_eq!(image.data.as_ref().map(Vec::len), Some(bytes as usize));
+    }
+}

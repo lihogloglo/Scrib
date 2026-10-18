@@ -101,6 +101,7 @@ working tree**. Protocol:
 cargo dev view "Seyda Neen, Census and Excise Office"   # Bevy dynamically linked
 cargo run --release -p bevyrrowind -- info              # load all content, report
 cargo dev scene --list                                  # test scenes (scenes.ron); `scene <name> [view flags]` opens one, F1 shows the A/B keys (docs/visual-checks.md)
+cargo dev view level:ledges [--camera beam]             # synthetic greybox test level (levels/*.ron, docs/specs/test-levels.md); scenes `level-*`
 cargo run -p bevyrrowind --features dev,solari,dlss -- view "<cell>" --rt [--dlss quality]   # ray traced + DLSS (SDK in ../sdk)
 cargo test --workspace && cargo clippy --workspace --all-targets --features bevyrrowind/dev
 ```

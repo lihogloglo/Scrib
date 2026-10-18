@@ -24,6 +24,7 @@ sf_character = { path = "../superfargoth/crates/sf_character" }
 sf_controller = { path = "../superfargoth/crates/sf_controller" }
 sf_coords = { path = "../superfargoth/crates/sf_coords" }
 sf_diag = { path = "../superfargoth/crates/sf_diag" }
+sf_level = { path = "../superfargoth/crates/sf_level" }
 sf_diag_bevy = { path = "../superfargoth/crates/sf_diag_bevy" }
 sf_mods = { path = "../superfargoth/crates/sf_mods" }
 sf_model = { path = "../superfargoth/crates/sf_model" }

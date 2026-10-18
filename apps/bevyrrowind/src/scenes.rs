@@ -35,7 +35,11 @@ pub struct SceneDef {
     /// Short kebab-case name (`scene <name>`).
     pub name: String,
     /// What `view` takes: interior name, exterior name, or grid "x,y".
-    pub cell: String,
+    #[serde(default)]
+    pub cell: Option<String>,
+    /// Instead of `cell`: a synthetic test level (`levels/<name>.ron`, `level.rs`).
+    #[serde(default)]
+    pub level: Option<String>,
     /// `view --camera`: "ex,ey,ez,tx,ty,tz" meters ("+h": above the ground in exteriors).
     #[serde(default)]
     pub camera: Option<String>,
@@ -101,7 +105,12 @@ pub fn run(
 
 /// The `view` arguments of a scene, then the caller's extra flags (later flags win in clap).
 fn view_args(scene: &SceneDef, extra: Vec<String>) -> Vec<String> {
-    let mut args = vec!["view".to_owned(), scene.cell.clone()];
+    let place = match (&scene.level, &scene.cell) {
+        (Some(level), _) => format!("{}{level}", crate::level::PREFIX),
+        (None, Some(cell)) => cell.clone(),
+        (None, None) => String::new(),
+    };
+    let mut args = vec!["view".to_owned(), place];
     if let Some(camera) = &scene.camera {
         args.push("--camera".to_owned());
         args.push(camera.clone());
@@ -159,6 +168,9 @@ fn parse(text: &str, source: &str) -> crate::Result<Vec<SceneDef>> {
         if !seen.insert(s.name.to_ascii_lowercase()) {
             return Err(format!("{source}: scene {:?} defined twice", s.name).into());
         }
+        if s.cell.is_some() == s.level.is_some() {
+            return Err(format!("{source}: scene {:?} needs exactly one of `cell` and `level`", s.name).into());
+        }
     }
     Ok(file.scenes)
 }
@@ -169,7 +181,8 @@ fn print_list(source: &str, scenes: &[SceneDef]) {
     for s in scenes {
         let checks = if s.checks.is_empty() { String::new() } else { format!(" [{}]", s.checks.join(", ")) };
         let build = s.build.as_ref().map_or(String::new(), |b| format!(" (build: {b})"));
-        println!("{:<width$}  {}{checks}{build}", s.name, s.description);
+        let level = s.level.as_ref().map_or(String::new(), |l| format!("[level {l}] "));
+        println!("{:<width$}  {level}{}{checks}{build}", s.name, s.description);
     }
 }
 
@@ -191,6 +204,9 @@ mod tests {
         for s in &scenes {
             let args = view_args(s, vec![]);
             assert!(crate::Cli::try_parse_from(std::iter::once("bevyrrowind".to_owned()).chain(args)).is_ok(), "scene {} parses", s.name);
+            if let Some(level) = &s.level {
+                assert!(crate::level::find(level).is_ok(), "scene {}: level {level} loads", s.name);
+            }
         }
     }
 

@@ -2182,6 +2182,7 @@ dependencies = [
  "sf_controller_bevy",
  "sf_coords",
  "sf_diag_bevy",
+ "sf_level",
  "sf_lod",
  "sf_lod_bevy",
  "sf_model",
@@ -6537,6 +6538,16 @@ dependencies = [
  "bevy_transform",
  "log",
  "sf_diag",
+]
+
+[[package]]
+name = "sf_level"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

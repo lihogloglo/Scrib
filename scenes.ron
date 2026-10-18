@@ -2,6 +2,7 @@
 // `bevyrrowind scene <name> [more view flags]` opens the interactive viewer here;
 // `bevyrrowind scene --list` lists them. Fields:
 //   name, cell (view's cell: interior name, exterior name or grid "x,y"),
+//   or level instead of cell (a synthetic test level, levels/<name>.ron; camera may name one of its cameras),
 //   camera ("ex,ey,ez,tx,ty,tz" meters; "+h" = h above ground, exteriors),
 //   hour (exteriors; the clock starts paused), flags (more view flags),
 //   build (cargo features the exe needs), description, look_for, checks (visual-checks.md ids).
@@ -963,6 +964,23 @@
             description: "Interior water (W3): the sewer's water as a `WaterSurface` pool at the cell's WHGT level (-2.8 m), interior optics",
             look_for: "flat dark water with small ripples only (no sea swell), floor visible through shallow water and fading with depth, water stays put and level while moving (no swimming or tilting with the camera), no water above the floor in dry rooms",
             checks: ["WA-6"],
+        ),
+        // ---- synthetic test levels (TS1, docs/specs/test-levels.md, levels/*.ron) ----
+        (
+            name: "level-flat-slopes",
+            level: "flat-slopes",
+            hour: 10.0,
+            description: "Greybox: 80 m floor, 10/20/30/40° ramps onto a 2 m plateau, comfortable/standard/steep stairs (cameras: overview, ramps, stairs)",
+            look_for: "1 m grid on every surface, ramps and stairs read at their angles, sun shadows on the greybox; V throws a ball that rolls down a ramp and rests on a tread",
+            checks: ["TS-1"],
+        ),
+        (
+            name: "level-ledges",
+            level: "ledges",
+            hour: 10.0,
+            description: "Greybox: boxes 0.3-2.5 m, thin vs deep blocks, 1-4 m gaps between 1 m platforms, a 0.3 m beam, a 3.5 m wall (cameras: overview, heights, gaps, beam)",
+            look_for: "heights and gaps readable against the 1 m grid; colour bands green/yellow/orange/red by height; G draws the colliders exactly on the boxes",
+            checks: ["TS-1"],
         ),
     ],
 )
