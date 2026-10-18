@@ -306,6 +306,14 @@ stays. Cloth joints are outfit joints appended after the skeleton's joints in th
   Saves serialize the overlay (`sf_save`, M10): persistence needs no new interface.
 - **Fell out.** A body below `TerrainHeights` − 2 m (or the worldspace's kill height) returns to its
   last resting pose (the pose at its last sleep) and sleeps.
+- **Collision-ready gate (characters; fallfix 2026-10-18).** Activation queues statics, inserts are
+  time-sliced, so an R0-active area can lack its floor for hundreds of frames (an interior load). A
+  character must not simulate there: `PhysicsStreaming::collision_loading(ws, pos, margin)` is true while
+  a queued, not yet inserted static's bounds reach the square around `pos`; hosts keep such movers
+  `Dormant` (new movers start dormant). Same rule as items (whole worldspace) and as engines that hold
+  actors until a streamed level's collision is in. Safety net, not a substitute: a `Ground` mover in the air more
+  than 2 m under resident terrain (else under the active world's kill height) goes back to its last walkable ground (`character::fell_out`,
+  `CharacterFellOut` message for the host's log, `CharacterStats::fell_out`), Unreal's `KillZ`.
 - **Hold until grabbed.** `items.check`'s `HOLD_UNTIL_GRABBED` placements are inserted `Fixed` and become
   dynamic only when grabbed or explicitly impulsed (script, spell): a lantern on a hook never drops
   because an NPC brushed it.

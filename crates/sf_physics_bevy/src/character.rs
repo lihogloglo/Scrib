@@ -16,7 +16,8 @@ use std::collections::HashMap;
 use bevy_app::{App, Update};
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
-use sf_controller_bevy::{ControllerSystems, Dormant, Mover};
+use bevy_transform::components::Transform;
+use sf_controller_bevy::{ControllerSystems, Dormant, Mover, MoverMode};
 use sf_coords::WorldPos;
 use sf_physics::{BodyDesc, BodyId, CharacterShape, PhysicsEvent, PushParams};
 use sf_world::WorldspaceId;
@@ -56,6 +57,8 @@ pub struct CharacterStats {
     pub pushed: u32,
     pub max_push: f32,
     pub impacts: u32,
+    /// Characters returned from under the kill height since start ([`CharacterFellOut`]).
+    pub fell_out: u32,
 }
 
 /// Each character's capsule: its world, body and shape.
@@ -66,8 +69,88 @@ pub(crate) fn add(app: &mut App) {
     app.init_resource::<CharacterPhysics>()
         .init_resource::<CharacterStats>()
         .init_resource::<Capsules>()
+        .init_resource::<SafeGround>()
         .add_message::<ImpactOnCharacter>()
-        .add_systems(Update, (capsules, impacts).chain().after(ControllerSystems::Step).before(PhysicsSystems::WriteBack));
+        .add_message::<CharacterFellOut>()
+        .add_systems(Update, (fell_out, capsules, impacts).chain().after(ControllerSystems::Step).before(PhysicsSystems::WriteBack));
+}
+
+/// A walking character fell below the active world's kill height and was
+/// returned to its last walkable ground (physics.md "Fell out"): the
+/// out-of-world safety net (Unreal's `KillZ` / `FellOutOfWorld`). The host
+/// logs it; it means collision was missing under the character.
+#[derive(Message, Clone, Debug)]
+pub struct CharacterFellOut {
+    pub entity: Entity,
+    /// Where it was caught.
+    pub from: WorldPos,
+    /// Where it was put back: its last walkable ground, else where it was first seen.
+    pub to: WorldPos,
+}
+
+/// How far under resident terrain a character counts as fallen out, m
+/// (physics.md "Fell out": `TerrainHeights` − 2 m).
+const TERRAIN_KILL_DEPTH: f32 = 2.0;
+
+/// Each simulating character's last walkable ground (first: where it was first seen).
+#[derive(Resource, Default)]
+struct SafeGround(HashMap<Entity, WorldPos>);
+
+/// Fell-out recovery for walking characters, after the mover step: in the
+/// air more than [`TERRAIN_KILL_DEPTH`] under the resident terrain, or where
+/// there is none under the active world's
+/// [`sf_physics::PhysicsWorld::kill_height`] (10 m under its lowest fixed
+/// body), a `Ground` mover goes back to its last walkable
+/// ground with no fall speed and re-grounds there with the next step.
+/// Flying and swimming movers have no gravity and are left alone.
+#[allow(clippy::needless_pass_by_value)]
+fn fell_out(
+    physics: Res<Physics>,
+    mut safe: ResMut<SafeGround>,
+    mut stats: ResMut<CharacterStats>,
+    mut out: MessageWriter<CharacterFellOut>,
+    mut movers: Query<(Entity, &mut Mover, &mut Transform), Without<Dormant>>,
+) {
+    safe.0.retain(|e, _| movers.contains(*e));
+    let kill = physics.worlds.active_world().and_then(sf_physics::PhysicsWorld::kill_height);
+    for (entity, mut m, mut t) in &mut movers {
+        let pos = m.loco.position;
+        let walkable = m.params.min_normal_y();
+        let last = *safe.0.entry(entity).or_insert(pos);
+        match m.loco.grounded {
+            Some(g) if g.walkable(walkable) => {
+                safe.0.insert(entity, pos);
+                continue;
+            }
+            // On ground, however steep or deep: not out of the world.
+            Some(_) => continue,
+            None => {}
+        }
+        // Under resident terrain by more than `TERRAIN_KILL_DEPTH`, else under the
+        // kill height (sea floors can lie deeper than any fixed body in yet).
+        let y = pos.to_f64().y;
+        let below = match physics.terrain.as_ref().and_then(|t| t.height(pos)) {
+            Some(h) => y < f64::from(h - TERRAIN_KILL_DEPTH),
+            None => kill.is_some_and(|k| y < k),
+        };
+        if !below || !matches!(m.loco.mode, MoverMode::Ground) {
+            continue;
+        }
+        let loco = &mut m.loco;
+        loco.position = last;
+        loco.vertical_speed = 0.0;
+        loco.motion.velocity = bevy_math::Vec3::ZERO;
+        loco.motion.acceleration = bevy_math::Vec3::ZERO;
+        loco.slide = bevy_math::Vec3::ZERO;
+        loco.height_offset = 0.0;
+        loco.height_offset_velocity = 0.0;
+        loco.grounded = None;
+        let (translation, rotation) = m.root_transform();
+        t.translation = translation;
+        t.rotation = rotation;
+        stats.fell_out += 1;
+        out.write(CharacterFellOut { entity, from: pos, to: last });
+    }
 }
 
 /// Inserts, moves and removes capsules; pushes what they touch.
@@ -114,7 +197,7 @@ fn capsules(
             max_push = max_push.max(p.max_impulse);
         }
     }
-    *stats = CharacterStats { capsules: map.0.len(), pushed, max_push, impacts: 0 };
+    *stats = CharacterStats { capsules: map.0.len(), pushed, max_push, impacts: 0, fell_out: stats.fell_out };
 }
 
 /// Contact forces on capsules → [`ImpactOnCharacter`].

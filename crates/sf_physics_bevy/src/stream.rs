@@ -125,6 +125,8 @@ enum ShapeState {
 struct Pending {
     shape: String,
     placement: Placement,
+    /// Bounding radius around the placement's origin, m (`IndexedPlacement::radius`).
+    radius: f32,
     item: bool,
 }
 
@@ -208,6 +210,26 @@ impl PhysicsStreaming {
     pub fn body(&self, worldspace: &WorldspaceId, id: PlacementId) -> Option<BodyId> {
         self.placed.get(&(worldspace.clone(), id)).copied()
     }
+
+    /// Whether static collision around `pos` is still streaming in: a
+    /// non-item placement of `worldspace` whose bounds reach the horizontal
+    /// square of half size `margin` around `pos` was activated but its body
+    /// is not in the world yet (shape loading, or waiting for insert budget).
+    ///
+    /// The collision-ready gate (physics.md "Streaming"): a character must
+    /// not simulate where this holds, or it falls through a floor that
+    /// arrives a few frames later (inserts are time-sliced, R0 activation is
+    /// not). Items wait the same way, per worldspace, before they go in.
+    pub fn collision_loading(&self, worldspace: &WorldspaceId, pos: WorldPos, margin: f32) -> bool {
+        self.pending.iter().any(|((ws, _), p)| {
+            if p.item || ws != worldspace {
+                return false;
+            }
+            let d = pos.delta_f32(p.placement.transform.pos);
+            let reach = margin.max(0.0) + p.radius;
+            d.x.abs() <= reach && d.z.abs() <= reach
+        })
+    }
 }
 
 /// Wraps a placement spawner: R0 activation queues the placement's body
@@ -282,7 +304,7 @@ impl PlacementSpawner for PhysicsHook {
             model.as_str().to_owned()
         };
         if let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() {
-            s.pending.insert(key.clone(), Pending { shape, placement: p, item });
+            s.pending.insert(key.clone(), Pending { shape, placement: p, radius: placement.radius, item });
             s.order.push_back(key);
         }
     }

@@ -47,7 +47,7 @@ pub mod stream;
 mod tests;
 
 #[cfg(feature = "controller")]
-pub use character::{CharacterPhysics, CharacterStats, ImpactOnCharacter};
+pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter};
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
 pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder};

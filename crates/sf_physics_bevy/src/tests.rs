@@ -178,3 +178,146 @@ mod items {
         assert!(back.rotation.angle_between(rested.rotation) < 1e-3);
     }
 }
+
+/// Fallfix (2026-10-18): characters fell through an interior floor whose
+/// static was still waiting for insert budget when they started simulating.
+mod streamed_ground {
+    use std::sync::Arc;
+
+    use bevy_app::App;
+    use bevy_ecs::prelude::*;
+    use bevy_math::{Affine3A, IVec3, Vec3};
+    use sf_controller::{CollisionBuilder, GroundProbe, ProbeQuery, StaticShape, SurfaceId};
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_world::{IndexedPlacement, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef, WorldspaceId};
+    use sf_world_bevy::{ActivateCx, PlacementSpawner, SpawnCx};
+
+    use super::app;
+    use crate::{Physics, PhysicsHook, PhysicsShapeSource, PhysicsStreaming};
+
+    struct Nothing;
+    impl PlacementSpawner for Nothing {
+        fn spawn(&self, _: &mut World, _: &SpawnCx<'_>, _: &IndexedPlacement) -> u32 {
+            0
+        }
+    }
+
+    /// A one-sided 10 m floor slab at y = 0 (model space), facing up.
+    fn floor() -> Arc<StaticShape> {
+        let mut b = CollisionBuilder::new(1e-3);
+        let p = [[-5.0, 0.0, -5.0], [5.0, 0.0, -5.0], [5.0, 0.0, 5.0], [-5.0, 0.0, 5.0]];
+        b.add(&p, &[0, 2, 1, 0, 3, 2], Affine3A::IDENTITY, SurfaceId::DEFAULT);
+        Arc::new(StaticShape::new(&b.finish()).expect("floor mesh"))
+    }
+
+    fn base() -> WorldPos {
+        WorldPos::new(IVec3::new(1, 0, 1), Vec3::new(5.0, 0.0, 5.0))
+    }
+
+    fn floor_placement() -> IndexedPlacement {
+        IndexedPlacement {
+            placement: Placement {
+                id: PlacementId(3),
+                base: RecordRef::new("STAT", "floor"),
+                model: Some(sf_vfs::VfsPath::new("floor.nif").unwrap()),
+                transform: WorldTransform { pos: base(), ..WorldTransform::IDENTITY },
+                class: PlacementClass::Static,
+                flags: PlacementFlags::empty(),
+            },
+            radius: 7.1,
+        }
+    }
+
+    /// Activates the floor and steps until its body is in the world.
+    fn stream_floor(app: &mut App, ws: &WorldspaceId) {
+        let shape = floor();
+        app.insert_resource(PhysicsShapeSource(Arc::new(move |_: &str| Some(shape.clone()))));
+        let cell_entity = app.world_mut().spawn_empty().id();
+        let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
+        hook.activate(app.world_mut(), &ActivateCx { worldspace: ws, cell: IVec3::ZERO, cell_entity }, &floor_placement());
+        for _ in 0..500 {
+            app.update();
+            if app.world().resource::<PhysicsStreaming>().body(ws, PlacementId(3)).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("floor not inserted");
+    }
+
+    /// The collision-ready gate: an activated static counts as loading
+    /// around its bounds until its body is in the world, and then the ground
+    /// probe stands on it. Far away and other worldspaces never count.
+    #[test]
+    fn collision_loading_until_the_static_is_in() {
+        let ws = WorldspaceId::new("test");
+        bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
+        let mut app = app(&ws);
+        let shape = floor();
+        app.insert_resource(PhysicsShapeSource(Arc::new(move |_: &str| Some(shape.clone()))));
+        let s = |app: &App, ws: &WorldspaceId, at: Vec3| app.world().resource::<PhysicsStreaming>().collision_loading(ws, base().offset(at), 4.0);
+        assert!(!s(&app, &ws, Vec3::ZERO), "nothing activated");
+        let cell_entity = app.world_mut().spawn_empty().id();
+        let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
+        hook.activate(app.world_mut(), &ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity }, &floor_placement());
+        assert!(s(&app, &ws, Vec3::new(1.0, 1.0, -2.0)), "on the floor");
+        assert!(s(&app, &ws, Vec3::new(10.0, 0.0, 0.0)), "within its bounds + the margin");
+        assert!(!s(&app, &ws, Vec3::new(30.0, 0.0, 0.0)), "far away");
+        assert!(!s(&app, &WorldspaceId::new("other"), Vec3::ZERO), "another worldspace");
+        // Before the floor is in, nothing is under a character standing on it.
+        let down = ProbeQuery::down(base().offset(Vec3::new(1.0, 0.5, 1.0)), 2.0);
+        assert!(app.world().resource::<Physics>().probe_one(down).is_none());
+        let mut frames = 0;
+        while s(&app, &ws, Vec3::ZERO) {
+            frames += 1;
+            assert!(frames < 500, "floor never inserted");
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(app.world().resource::<PhysicsStreaming>().body(&ws, PlacementId(3)).is_some());
+        let hit = app.world().resource::<Physics>().probe_one(down).expect("the floor is ground once in");
+        assert!(base().delta_f32(hit.point).y.abs() < 1e-3);
+    }
+
+    /// The out-of-world safety net: a walking character under the kill
+    /// height goes back to its last walkable ground and stands there again.
+    #[cfg(feature = "controller")]
+    #[test]
+    fn fallen_character_returns_to_its_last_ground() {
+        use sf_controller_bevy::{MoveIntent, Mover, MoverParams, SfControllerPlugin};
+
+        use crate::CharacterStats;
+
+        let ws = WorldspaceId::new("test");
+        bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
+        let mut app = app(&ws);
+        app.add_plugins(SfControllerPlugin::<Physics>::default());
+        stream_floor(&mut app, &ws);
+        let start = base().offset(Vec3::new(1.0, 0.2, -1.0));
+        let e = app
+            .world_mut()
+            .spawn((Mover::new(start, 0.0, MoverParams::default(), base()), MoveIntent::default(), bevy_transform::components::Transform::default()))
+            .id();
+        let feet = |app: &App| app.world().get::<Mover>(e).unwrap().loco.position;
+        for _ in 0..30 {
+            app.update();
+        }
+        let stood = feet(&app);
+        assert!(app.world().get::<Mover>(e).unwrap().loco.grounded.is_some(), "landed on the floor");
+        assert!(base().delta_f32(stood).y.abs() < 0.01, "on the floor: {:?}", base().delta_f32(stood));
+        // Fallen out (as if the floor had been missing): 50 m under it, falling.
+        {
+            let mut m = app.world_mut().get_mut::<Mover>(e).unwrap();
+            m.loco.position = base().offset(Vec3::new(1.0, -50.0, -1.0));
+            m.loco.grounded = None;
+            m.loco.vertical_speed = -50.0;
+        }
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<CharacterStats>().fell_out, 1);
+        let back = feet(&app);
+        assert!(stood.delta_f32(back).length() < 0.05, "back on its ground: {:?}", stood.delta_f32(back));
+        assert!(app.world().get::<Mover>(e).unwrap().loco.grounded.is_some(), "standing again");
+    }
+}
