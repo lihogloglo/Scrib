@@ -1641,6 +1641,20 @@ switches between `Kbm` and `Gamepad` labels (Esc/Enter vs Menu/A) the moment you
 flickers while a pad button is held and the mouse moves. Known: plain placeholder styling (themes are U2/U3), Xbox
 labels for every pad (per-family glyph icons are U3).
 
+### UI-2: Mod stylesheets and hot reload, synthetic (`cargo run -p sf_ui_css --example ui_css` in `../superfargoth`)
+
+Status: **awaiting owner** (M5 U2, u2b, 2026-10-18). Shots: `shots/u2b/ui_css_before.png` (green buttons),
+`shots/u2b/ui_css_after.png` (red, 0.33 s after the sheet was rewritten on disk; `-- --autotest <dir>` works on a temp
+copy and exits 0). A menu styled only by three mod sheets in load order: `base_ui` (layout, tokens, focus ring),
+`bright_buttons` (later, its button colour wins), `broken_mod` (one valid HUD rule, one invalid value). While it runs,
+open `crates/sf_ui_css/examples/assets/ui/bright_buttons/style.css`, change `#2e7d32` to any colour and save. Look for:
+all six buttons recolour within a second with a short fade, no restart, no flash of unstyled UI; the focused button
+keeps its yellow ring; a typo in that sheet shows up in the bottom-left line as `bright_buttons (...)` and the last
+good look stays, fixing it clears the line; touch a gamepad: the line says `Gamepad` and the focus ring gets thicker
+with a lighter fill (`[input=gamepad]`); the bottom-left line always lists `broken_mod`, and its valid rule still
+tints the HUD text blue (dimmed by the menu backdrop). Revert the colour afterwards (the example edits the real file).
+Known: placeholder look (game themes are U3); flair logs each broken sheet's warning twice.
+
 ### TS-1: Synthetic test levels, greybox (`scene level-flat-slopes`, `scene level-ledges`; `--camera <name>` picks a level camera)
 
 Status: **awaiting owner** (TS1 part 1, ts1a, 2026-10-18). Shots: `shots/ts1/level-flat-slopes.png`,

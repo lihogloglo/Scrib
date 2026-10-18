@@ -1182,11 +1182,12 @@ dependency order:
   Input crate: `bevy_enhanced_input` 0.27 and `leafwing-input-manager` 0.22 are on Bevy 0.20 (crates.io 2026-10-14/16):
   no fork needed; pick one in ui.md OQ4.
   Verify: headless registry/router tests; gamepad-only navigation in a framework example.
-- [~] U2 `sf_ui_css`: **part 1 done (u2, superfargoth c3d1fcb)**: composer (flat layers `mods-<n>-<id>`, flair 0.9 has no dotted
+- [x] U2 `sf_ui_css`: **done (u2 superfargoth c3d1fcb, u2b)**: composer (flat layers `mods-<n>-<id>`, flair 0.9 has no dotted
   layer names), sources `sf_ui` (memory root) + `sf_ui_content` (app-registered), root classes + `input` attribute, per-mod
   errors via strict probe loads (`UiCssReport`); 6 tests pass (layer order = load order through flair, errors → mod id),
-  clippy clean; licence set in ui.md "As built (U2 part 1)". **Part 2 open**: run example `ui_css --autotest` (hot reload
-  on a temp copy, before/after screenshots), visual check UI-2, `ui_nav --autotest`. Original task text:
+  clippy clean; licence set in ui.md "As built (U2)". `ui_css --autotest`: a mod sheet edited on disk restyles in 0.33 s
+  through Bevy's loader-dependency reload (no extra code), before/after shots `shots/u2b/`; UI-2 awaiting owner;
+  `ui_nav --autotest` PASS. Original task text:
   U2 `sf_ui_css`: `bevy_flair` 0.9.0 from crates.io (on Bevy 0.20 since 2026-10-14; MPL deps allowed unmodified, owner
   2026-10-11), composer with `@layer mods.<id>` in load order, per-mod error attribution, CSS hot reload.
   Verify: composer tests (layer order = load order, errors → mod id); edit a sheet in the example, see it apply.
@@ -1715,3 +1716,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (we1): M6 WE1 [x]: Bevy-free `sf_weather` (presets/climates/precip kinds as records, forecast as a pure function of seed + climate + slot with timestamped overrides in the save, per-channel lead/lag with never-morphing crossfades, border band, Poisson lightning by thinning, `WeatherFrame` with wind target, storms, `visibility_m`); `evaluate` 0.0006 ms (gate 0.05); superfargoth cbf4c44. Next: WE2 `mw_weather`, then WE3 `sf_weather_bevy`.
 - 2026-10-18 (u2): M5 U2 [~] part 1: `sf_ui_css` on bevy_flair 0.9.0 (composer with flat `mods-<n>-<id>` cascade layers in load order, memory root source + app-registered `sf_ui_content`, root classes + `input` attribute, per-mod CSS errors via strict probe loads); 6 tests (flair cascade = load order, errors → mod id), clippy clean (superfargoth c3d1fcb). Licence set in ui.md (MPL only cssparser/selectors/dtoa-short, unmodified). Next: U2 part 2 (run `ui_css --autotest` hot reload, UI-2 visual check).
 - 2026-10-18 (ts1b): TS1 part 2: level actors (outfit, scripted path/action, `PathFollower`) through the level index, `robe-walk` level + scene (TS-2 awaiting owner); TS-1 terrain-flash fix (no `TerrainCamera` outside the exterior, 0 patches verified via BRP); walk mode (`U`), dynamic props and the headless course runner (`sf_level/tests/course.rs`) written but not screen-verified.
+- 2026-10-18 (u2b): M5 U2 [x] part 2: `ui_css --autotest` ran (before/after `shots/u2b/`): `broken_mod` attributed, a mod sheet edited on disk restyles in 0.33 s via Bevy's loader-dependency reload of the root sheet (the planned `server.reload` fallback was not needed); UI-2 awaiting owner; `ui_nav --autotest` PASS; clippy clean. Next: U3 widget kit + themes.
