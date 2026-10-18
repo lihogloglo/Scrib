@@ -1125,7 +1125,11 @@ dependency order:
   L3 API v0.1 (scripting.md "Curated API"): `@sf/core`, `events`, `timers`, `interfaces`, `world`, `records`,
   `input`, thin `anim` (slots) and `physics` (impulse, raycast); `sf.d.luau` + docs generated from the registry.
   Verify: golden `.d.luau`; example mods in `superfargoth/examples/mods/` run headless; MS-2.
-- [ ] U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
+- [~] U1 **Built part 1 (u1a, 2026-10-18):** input crate `bevy_enhanced_input` 0.27 (ui.md OQ4 closed);
+  `superfargoth/crates/sf_ui` (UI record kinds, `UiRegistry` + conflicts, `ScreenStack` routing rule, `ViewModel`/
+  `ListModel`, `SettingsStore` over profile tables, Fluent `Localizer`), 14 tests, clippy clean; ui.md "As built
+  (U1a)". Next: part 2 (u1b) `sf_ui_bevy` + gamepad example (handoff `.sessions/u1a.md`). Original task text:
+  U1 `sf_ui` (Bevy-free registry, view-models, keyed list models, settings registry, Fluent) + `sf_ui_bevy`
   (CommonUI layers, screen stack, input router, actions with rebinding, `bevy_input_focus` navigation, device glyphs).
   Input crate: `bevy_enhanced_input` 0.27 and `leafwing-input-manager` 0.22 are on Bevy 0.20 (crates.io 2026-10-14/16):
   no fork needed; pick one in ui.md OQ4.
@@ -1627,3 +1631,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (p9soft): PH-10 soft-hit bug (M4 P9): impacts are the incoming body's momentum at first contact (`PhysicsEvent::Hit`, pre-solve `CollisionEvent::Started`, `sf_physics::impact_impulse`), not solver contact force (walking into a resting ball: 423 N·s before, no hit now); character pushes no longer bat away incoming bodies; threshold 1 N·s; 4 sf_physics tests. Re-run: soft hit 6.4 N·s, 12 m/s knockdown 35 N·s; open: first auto throw fell short (aim), ragdoll-on-neighbour hit-react spam, no strength tuning. PH-10 awaiting owner.
 - 2026-10-18 (orchestrator): BRP live inspection (`remote.rs`, port 15712, `tools/run_dev.ps1`, bevy_brp MCP registered); rules: check builds from all projects, reuse whole projects, finish before starting, Lua parked (Mudcrab); crate "update all" waits for hanabi; owner batch: CH-4 staff stand, WA-6 + WA-2 region colour confirmed, WA-2 shore foam/swell unfinished (parked); shadows pass + P11 general traversal (prior art in animation.md) in backlog, awaiting owner go.
 - 2026-10-18 (p10a): M4 P10 [~] solver core `sf_anim::cloth` (Bevy-free XPBD bone lattice: geodesic tethers, max distance, swept capsules, character space with fictitious-force inertia, teleport keep-shape); tests: hem stretch 1.3–1.9 % at 30/60/144 fps (run, 180° turn, stop), no capsule penetration, teleport stable; 0.014 ms per robe (release). Next p10b cook + census + ClothRules.
+- 2026-10-18 (u1a): M5 U1 part 1 [~]: input crate `bevy_enhanced_input` 0.27 over leafwing 0.22 (prioritised, input-consuming contexts = CommonUI per-screen input; ui.md OQ4 closed, ARCHITECTURE §10); new Bevy-free `sf_ui` (UI record kinds, `UiRegistry` with owners/conflicts, `ScreenStack` router rule, keyed `ListModel`, `SettingsStore`, Fluent `Localizer`), 14 tests, clippy clean. Next: u1b `sf_ui_bevy` + gamepad example.
