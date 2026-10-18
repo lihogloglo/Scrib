@@ -676,7 +676,10 @@ idles.
 - Kind: game location. Run: `.\bevyrrowind scene char-census`.
 - Look for: Sellus Gravius and the officers dressed (Imperial uniforms) at
   their posts, idling; no part floating off a joint.
-- Status: awaiting owner (not run by the agent).
+- Status: awaiting owner (not run by the agent). Owner 2026-10-18 (`view "Seyda Neen, Census and Excise Office"`):
+  the staff now stand on the floor (fallfix confirmed; before, they fell through at load). Their shadows only
+  show with the camera very close, as for every object (interior point-light shadows: 1 light, faded out over
+  15-25 m); owner asks for a general shadows pass (ROADMAP backlog).
 - Source: charbevy.
 
 ## Smooth bodies (superfargoth `smooth-bodies.md`; `.sessions/smoothlive.md`)
@@ -1384,6 +1387,11 @@ bodies roll over during the get-up blend (the `ROLL_TO_BACK` scaffold); no joint
 
 ### PH-10 (P9): kinematic hit reactions and tail spring bones
 
+Owner batch 2026-10-18: "didn't work". The window was closed ~13 s in, before the first ball (the `@` times count
+from the settled start, ~13 s after launch in release). Orchestrator re-run (`ball_at_nearest:2@4,...`): the balls
+fly, but the first 2 m/s ball knocked its walker down at **72 N·s** ~1.9 s after the throw (likely the walker
+walking into the ball on the street), and neither soft ball logged a `hit react`. Bug, back to physics (P9).
+
 Status: **awaiting owner** (physics-p9, 2026-10-13; agent-run 2026-10-18, p9fin: log `hit react: ... (5.9 N·s,
 strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself needs eyes on the live run; tails not run).
 - Kind: game location. Run (release): `$env:BEVYRROWIND_AUTO="ball_at_nearest:2@3,shot:shots/p9/hit.png@3.88,ball_at_nearest:2@6,exit@9"; .\bevyrrowind scene wk-balmora`
@@ -1569,7 +1577,8 @@ not yet flown in the app.
 
 ### WA-2: Shore and region optics, W3 (`scene wa-seyda-noon`, `wa-bittercoast`, `wa-vivec-waterfront`, `wa-sunset-sea`, `wa-night-moons`)
 
-Status: **awaiting owner** (W3, 2026-10-18, w3fin). Shots: `shots/w3/` (compare with `shots/w2/`).
+Status: **region colour confirmed by owner (2026-10-18)**: muddy water at Seyda Neen, bluish toward Suran.
+Shore foam band and open-sea swell not commented yet: awaiting owner. Shots: `shots/w3/` (compare with `shots/w2/`).
 Addresses the owner's 6a notes: water no longer milky turquoise (body colour sized like real backscatter, 2-5 %);
 colour by region from the cell map (Seyda Neen / Bitter Coast swamp olive-brown, Ascadian lagoons teal, open Inner Sea
 deep blue, ash grey-brown, the north steel blue; ≈ 117 m blend between cells); shore foam per region and fainter; waves

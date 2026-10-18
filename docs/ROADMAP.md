@@ -137,6 +137,11 @@ Wanted, but after the M2/M3 foundations. Not scheduled; pick up when the roadmap
 - **Crate "update all" pass (owner 2026-10-18):** one batch once `bevy_hanabi` has a 0.20 release on crates.io: adopt the
   crates that reached 0.20 (`bevy_flair` 0.9, input crate for U1, `bevy-inspector-egui` 0.38 as a dev add-on, hanabi) and
   bump the rest, from the tracker in ARCHITECTURE §4 (re-check it first). Until then, no piecemeal crate additions.
+- **Shadows pass (owner 2026-10-18, "we need a big work on shadows generally"):** in the Census office, characters'
+  and objects' shadows only show very close (interiors: 1 point-light shadow, `PointShadowBudget` faded out over
+  15-25 m; `POINT_SHADOWS_DEFAULT` in `render.rs`). Start with an industry audit (shadow atlas for many local
+  lights, cached static shadows, contact shadows, baked static-light shadows, RT via Solari) covering interiors and
+  exteriors (SH-1..6 still awaiting owner). Not started: needs the owner's go.
 
 ## M0: Data foundation (done)
 
