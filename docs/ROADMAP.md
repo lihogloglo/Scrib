@@ -13,6 +13,11 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
 
 ## Next up
 
+0. **Owner go (2026-10-18), start these next, in parallel (max 3 agents), to "works + committed", no polish:**
+   M5 **U1** (`sf_ui` + `sf_ui_bevy`; the input crate is allowed now, an exception to the crate "update all" batch;
+   pick `bevy_enhanced_input` or leafwing in ui.md OQ4), M4 **P10** cloth, M6 **WD1** wind + **WE1** weather core.
+   The owner wants the big roadmap carried on, not polish of existing systems: log leftovers, don't chase them.
+   Items 1-6a below are older; don't pick them over item 0.
 1. [~] M2: streaming spikes (2026-10-12; streaming.md "Spikes", diag.md "Frame pacing"). **Gate settled
    (spikes4):** at most 1 presented stutter a minute (frame > 1.5× the moving median of 60) and none over
    33 ms, run uncapped in a borderless window at the display's resolution (`benchmarks/exterior_{run,flight}.json`,
