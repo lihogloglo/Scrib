@@ -28,6 +28,12 @@
 //!   state plays the death clip and after [`DEATH_HANDOFF`] it goes limp
 //!   (the `ragdoll.cook` product of its skeleton). Corpses are `RAGDOLL`
 //!   bodies the carry driver drags by the grabbed limb.
+//! - Knockdowns (P8b) and hit reactions (P9): capsule impacts of at least
+//!   [`KNOCKDOWN_IMPULSE`] knock a walker down (powered ragdoll, get-up from
+//!   the `Knockout@tail` clip's first frame); lighter ones kick the graph's
+//!   `HitReact` springs.
+//! - `BEVYRROWIND_AUTO` ([`Auto`]): scripted kills, throws and screenshots
+//!   for agents verifying without a keyboard.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, OnceLock};
@@ -35,6 +41,7 @@ use std::sync::{Arc, OnceLock};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera_controller::free_camera::{FreeCamera, run_freecamera_controller};
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use mw_physics::ItemRecords;
 use sf_bake::{Manifest, Store};
 use sf_controller::steps::COLLISION_COOK;
@@ -46,11 +53,11 @@ use sf_physics_bevy::{
     CarryFeedback, CarryInput, CharacterStats, Holder, ItemBody, ItemContent, Physics, PhysicsBody, PhysicsBodySource, PhysicsDebug, PhysicsPlugin, PhysicsShapeSource,
     PhysicsSettings, PhysicsStats, PhysicsStreaming, hook_items, hook_physics,
 };
-use sf_anim_bevy::Animator;
+use sf_anim_bevy::{Animator, Hit};
 use sf_character_bevy::CharacterBody;
 use sf_controller_bevy::Dormant;
 use sf_controller_bevy::Mover;
-use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats};
+use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats, clip_root_body};
 use sf_ragdoll::{RAGDOLL_COOK, RagdollDef, RagdollPolicy};
 use sf_records::RecordDb;
 use sf_world::{Placement, PlacementClass, WorldspaceId};
@@ -85,6 +92,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
         .insert_resource(ragdolls)
         .init_resource::<Peaks>()
         .init_resource::<Balls>()
+        .insert_resource(Auto::from_env())
         .add_systems(PostStartup, hook)
         .init_resource::<FpsCap>()
         .configure_sets(RunFixedMainLoop, sf_physics_bevy::PhysicsSystems::Views.after(run_freecamera_controller))
@@ -92,6 +100,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
             Update,
             (
                 toggle_debug,
+                auto.before(throw_ball).before(kill_key),
                 throw_ball,
                 (kill_key, knockdown, got_up, ragdoll_log).chain(),
                 peaks.after(sf_physics_bevy::PhysicsSystems::WriteBack),
@@ -161,6 +170,12 @@ fn kill_key(
         info!("ragdoll: nobody under the crosshair");
         return;
     };
+    kill(root, body, &mut animators, &mut commands);
+}
+
+/// The graph's `dead` flag starts the death clip, the mover parks, and
+/// [`Ragdoll`] hands the body to physics after [`DEATH_HANDOFF`].
+fn kill(root: Entity, body: &CharacterBody, animators: &mut Query<&mut Animator>, commands: &mut Commands) {
     if let Ok(mut animator) = animators.get_mut(body.body) {
         animator.set_bool("dead", true);
     }
@@ -174,11 +189,20 @@ fn kill_key(
 /// adapter's knockdown rule (fatigue and agility) in `mw_physics`.
 pub const KNOCKDOWN_IMPULSE: f32 = 15.0;
 
+/// Smallest impulse (N·s) a character reacts to with the graph's `HitReact`
+/// op (P9); below [`KNOCKDOWN_IMPULSE`] the reaction is kinematic. Strength
+/// is the impulse over [`KNOCKDOWN_IMPULSE`] (1: the op's full `gain`).
+pub const HIT_REACT_IMPULSE: f32 = 1.0;
+
 /// Seconds of knockdown clip before the handoff.
 pub const KNOCKDOWN_HANDOFF: f32 = 0.05;
 
 /// The graph flag a knockdown sets and the get-up clears (`mw_graphs` `knocked_out`).
 const KNOCKED_OUT: &str = "knocked_out";
+
+/// The get-up clip (`mw_graphs` `knockout_end` state): its first frame places
+/// the character's root at the get-up ([`RagdollMode::Knockdown`] `get_up`).
+const GET_UP_CLIP: &str = "Knockout@tail";
 
 /// A knocked-down character: its mover stays [`Dormant`] until it gets up;
 /// `body_local` is its body's local transform before the ragdoll moved it.
@@ -187,32 +211,58 @@ pub struct KnockedDown {
     body_local: Transform,
 }
 
-/// Hard impacts on a living character's capsule knock it down (PH-9).
+/// Hard impacts on a living character's capsule knock it down (PH-9);
+/// lighter ones kick the graph's `HitReact` springs (P9, PH-10).
 #[allow(clippy::needless_pass_by_value)]
 fn knockdown(
     mut impacts: MessageReader<ImpactOnCharacter>,
     characters: Query<&CharacterBody, (Without<Dead>, Without<KnockedDown>)>,
-    mut bodies: Query<(&mut Animator, &Transform)>,
+    mut bodies: Query<(&mut Animator, &Transform, &GlobalTransform)>,
+    pos_of: WorldPosOf,
+    source: Res<RagdollSource>,
     mut commands: Commands,
 ) {
     let mut seen = Vec::new();
     for hit in impacts.read() {
-        if hit.impulse < KNOCKDOWN_IMPULSE || seen.contains(&hit.entity) {
+        if hit.impulse < HIT_REACT_IMPULSE || seen.contains(&hit.entity) {
             continue;
         }
         let Ok(body) = characters.get(hit.entity) else { continue };
-        let Ok((mut animator, local)) = bodies.get_mut(body.body) else { continue };
+        let Ok((mut animator, local, global)) = bodies.get_mut(body.body) else { continue };
         seen.push(hit.entity);
+        if hit.impulse < KNOCKDOWN_IMPULSE {
+            // Into the model frame: the body's world rotation and scale.
+            let Some(origin) = pos_of.get(body.body) else { continue };
+            let (scale, rotation, _) = global.to_scale_rotation_translation();
+            let inverse = rotation.inverse();
+            let point = inverse * origin.delta_f32(hit.point) / scale.y.max(1e-6);
+            let strength = hit.impulse / KNOCKDOWN_IMPULSE;
+            animator.instance.hit(Hit { point, direction: inverse * hit.direction, strength, joint: None });
+            info!("hit react: {} ({:.1} N·s, strength {strength:.2})", hit.entity, hit.impulse);
+            continue;
+        }
         animator.set_bool(KNOCKED_OUT, true);
         commands.entity(hit.entity).insert((KnockedDown { body_local: *local }, Dormant));
-        let mode = RagdollMode::Knockdown { point: hit.point, impulse: hit.direction * hit.impulse, get_up: None, get_up_flag: KNOCKED_OUT.to_owned() };
+        let get_up = get_up_body(&source, &body.skeleton, &animator);
+        if get_up.is_none() {
+            info!("ragdoll: {} has no {GET_UP_CLIP} clip: LYING_REST_GET_UP scaffold", body.skeleton);
+        }
+        let mode = RagdollMode::Knockdown { point: hit.point, impulse: hit.direction * hit.impulse, get_up, get_up_flag: KNOCKED_OUT.to_owned() };
         commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: KNOCKDOWN_HANDOFF, mode });
         info!("ragdoll: knocked down {} ({:.0} N·s)", hit.entity, hit.impulse);
     }
 }
 
+/// The get-up clip's first-frame root body, from the character's graph.
+fn get_up_body(source: &RagdollSource, skeleton: &str, animator: &Animator) -> Option<(Quat, Vec3)> {
+    let def = (source.0)(skeleton)?;
+    let slot = animator.asset.graph.clips.iter().position(|c| c.reference == GET_UP_CLIP)?;
+    clip_root_body(&def, &animator.asset.skeleton, animator.asset.clips.get(slot)?, 0.0)
+}
+
 /// After a get-up the ragdoll moved the body; the walker root takes the move
-/// (its mover too) and the body goes back to its local transform.
+/// (its mover too, heading included, or the mover would turn it back) and
+/// the body goes back to its local transform.
 #[allow(clippy::needless_pass_by_value)]
 fn got_up(
     mut events: MessageReader<RagdollGotUp>,
@@ -224,16 +274,20 @@ fn got_up(
         let Some((root, _, down, mut t, mover)) = roots.iter_mut().find(|(_, b, ..)| b.body == e.entity) else { continue };
         let Ok(mut local) = locals.get_mut(e.entity) else { continue };
         let l0 = down.body_local;
-        let rotation = (t.rotation * local.rotation * l0.rotation.inverse()).normalize();
+        let yaw = Mover::yaw_of(t.rotation * local.rotation * l0.rotation.inverse());
+        let rotation = Quat::from_rotation_y(yaw);
         let shift = t.rotation * (t.scale * local.translation) - rotation * (t.scale * l0.translation);
         t.rotation = rotation;
         t.translation += shift;
         if let Some(mut m) = mover {
             m.loco.position = m.loco.position.offset(shift);
+            m.loco.motion.yaw = yaw;
+            m.loco.motion.facing_goal = yaw;
+            m.loco.motion.angular_velocity = 0.0;
         }
         *local = l0;
         commands.entity(root).remove::<(KnockedDown, Dormant)>();
-        info!("ragdoll: {root} got up");
+        info!("ragdoll: {root} got up (heading {:.0}°)", yaw.to_degrees());
     }
 }
 
@@ -416,6 +470,8 @@ fn hook(spawners: Option<ResMut<PlacementSpawners>>) {
 #[derive(Resource, Default)]
 struct Balls {
     live: VecDeque<Entity>,
+    /// A throw asked for by the dev hook ([`auto`]): from, velocity.
+    request: Option<(sf_coords::WorldPos, Vec3)>,
     look: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
 }
 
@@ -439,17 +495,19 @@ fn throw_ball(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // `V` throws the carried item instead while something is held.
-    if !keys.just_pressed(KeyCode::KeyV) || holders.iter().any(|h| h.carrier.held().is_some()) {
+    let requested = balls.request.take();
+    if requested.is_none() && (!keys.just_pressed(KeyCode::KeyV) || holders.iter().any(|h| h.carrier.held().is_some())) {
         return;
     }
     let (Some((cell, t, parent, layers)), Some(ws)) = (camera.iter().next(), active.0.clone()) else { return };
     let eye = from_grid(cell, t);
     let forward = t.forward().as_vec3();
-    let pose = WorldTransform { pos: eye.offset(forward * 0.6), ..WorldTransform::IDENTITY };
+    let (from, velocity) = requested.unwrap_or((eye.offset(forward * 0.6), forward * BALL_SPEED));
+    let pose = WorldTransform { pos: from, ..WorldTransform::IDENTITY };
     let ball = BodyDesc::new(BodyKind::Dynamic { asleep: false }, pose, ShapeRef::Sphere(BALL_RADIUS), Layer::PROP);
     let id = physics.insert(&ws, &BodyDesc { mass: Some(BALL_MASS), ccd: true, ..ball });
     if let Some(w) = physics.world_mut(&ws) {
-        w.set_velocity(id, forward * BALL_SPEED, Vec3::ZERO);
+        w.set_velocity(id, velocity, Vec3::ZERO);
     }
     let (mesh, material) = balls
         .look
@@ -570,4 +628,145 @@ fn peaks(
         p.impacts
     );
     *p = Peaks::default();
+}
+
+// --- Dev hook: scripted actions (agents verify without a keyboard) -------------------------
+
+/// `BEVYRROWIND_AUTO="kill_nearest@3,ball_at_nearest@6,shot:shots/a.png@7,exit@12"`: actions at
+/// seconds after the start settled. `kill_nearest` is `I` on the living character nearest the
+/// camera; `ball_at_nearest[:speed]` throws the `V` ball (default 12 m/s, 3 kg) on a ballistic
+/// arc at the chest of the nearest living, standing one (`:4` stays under the knockdown
+/// impulse: a `HitReact`); both frame that character from 4 m. `look` re-frames the last
+/// target, `shot:<png>` saves a screenshot, `exit` quits.
+#[derive(Resource, Default)]
+struct Auto {
+    actions: Vec<(f32, AutoAction)>,
+    start: Option<f32>,
+    /// The last target: the camera frames it.
+    focus: Option<Entity>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum AutoAction {
+    KillNearest,
+    BallAtNearest(f32),
+    Look,
+    Shot(std::path::PathBuf),
+    Exit,
+}
+
+impl Auto {
+    fn from_env() -> Self {
+        let Ok(spec) = std::env::var("BEVYRROWIND_AUTO") else { return Self::default() };
+        let mut actions = Vec::new();
+        for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let Some((what, at)) = item.rsplit_once('@') else { continue };
+            let Ok(at) = at.parse::<f32>() else { continue };
+            let (name, arg) = what.split_once(':').unwrap_or((what, ""));
+            let action = match name {
+                "kill_nearest" => AutoAction::KillNearest,
+                "ball_at_nearest" => AutoAction::BallAtNearest(arg.parse().unwrap_or(BALL_SPEED)),
+                "look" => AutoAction::Look,
+                "shot" if !arg.is_empty() => AutoAction::Shot(arg.into()),
+                "exit" => AutoAction::Exit,
+                _ => {
+                    warn!("BEVYRROWIND_AUTO: unknown action {item:?}");
+                    continue;
+                }
+            };
+            actions.push((at, action));
+        }
+        actions.sort_by(|a, b| a.0.total_cmp(&b.0));
+        info!("BEVYRROWIND_AUTO: {actions:?}");
+        Self { actions, start: None, focus: None }
+    }
+}
+
+/// Runs the due [`Auto`] actions and keeps the camera on the target.
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+fn auto(
+    time: Res<Time<Real>>,
+    settled: Option<Res<crate::exterior::Settled>>,
+    mut auto: ResMut<Auto>,
+    mut cameras: Query<(Entity, &mut Transform), With<FreeCamera>>,
+    pos_of: WorldPosOf,
+    characters: Query<(Entity, &CharacterBody, Has<Dead>, Has<KnockedDown>)>,
+    mut animators: Query<&mut Animator>,
+    mut balls: ResMut<Balls>,
+    mut exit: MessageWriter<AppExit>,
+    mut commands: Commands,
+) {
+    if auto.actions.is_empty() || settled.is_none() {
+        return;
+    }
+    let now = time.elapsed_secs();
+    let start = *auto.start.get_or_insert(now);
+    let Some((cam, mut view)) = cameras.iter_mut().next() else { return };
+    let Some(eye) = pos_of.get(cam) else { return };
+    let nearest = |alive_only: bool| {
+        characters
+            .iter()
+            .filter(|(_, _, dead, down)| !alive_only || (!dead && !down))
+            .filter_map(|(e, b, ..)| Some((pos_of.get(e)?.delta_f32(eye).length(), e, b)))
+            .filter(|(d, ..)| *d < 60.0)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+    };
+    while auto.actions.first().is_some_and(|(at, _)| now - start >= *at) {
+        let (at, action) = auto.actions.remove(0);
+        info!("BEVYRROWIND_AUTO @{at}: {action:?}");
+        match action {
+            AutoAction::KillNearest => {
+                if let Some((_, root, body)) = nearest(true) {
+                    kill(root, body, &mut animators, &mut commands);
+                    auto.focus = Some(root);
+                } else {
+                    info!("BEVYRROWIND_AUTO: nobody within 60 m");
+                }
+            }
+            AutoAction::BallAtNearest(speed) => {
+                let Some((_, root, _)) = nearest(true) else { continue };
+                let Some(feet) = pos_of.get(root) else { continue };
+                auto.focus = Some(root);
+                // Thrown from the framing camera: frame first, then aim from there.
+                let to_eye = frame_offset(eye, feet);
+                let from = feet.offset(to_eye);
+                let chest = feet.offset(Vec3::Y * 1.2);
+                let d = from.delta_f32(chest);
+                let flight = d.length() / speed.max(0.5);
+                // Ballistic: v = d/t − g·t/2 (g down), so it lands on the chest after `flight`.
+                let velocity = d / flight + Vec3::Y * (9.81 * flight / 2.0);
+                view.translation += eye.delta_f32(from);
+                balls.request = Some((from.offset(d.normalize_or_zero() * 0.4), velocity));
+                info!("BEVYRROWIND_AUTO: ball at {root}, {speed} m/s over {:.1} m", d.length());
+            }
+            AutoAction::Look => {}
+            AutoAction::Shot(path) => {
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+            }
+            AutoAction::Exit => {
+                exit.write(AppExit::Success);
+            }
+        }
+    }
+    // Frame the target: 4 m off, 1.8 m up, looking at its chest.
+    if let Some(feet) = auto.focus.and_then(|e| pos_of.get(e)) {
+        let eye_now = pos_of.get(cam).unwrap_or(eye);
+        let want = feet.offset(frame_offset(eye_now, feet));
+        view.translation += eye_now.delta_f32(want);
+        let look = want.delta_f32(feet.offset(Vec3::Y * 1.0));
+        if look.length_squared() > 1e-4 {
+            view.rotation = Transform::IDENTITY.looking_to(look, Vec3::Y).rotation;
+        }
+    }
+}
+
+/// Where the framing camera sits relative to a character's feet: 4 m back
+/// toward the current eye, 1.8 m up.
+fn frame_offset(eye: sf_coords::WorldPos, feet: sf_coords::WorldPos) -> Vec3 {
+    let back = feet.delta_f32(eye);
+    let flat = Vec3::new(back.x, 0.0, back.z).normalize_or(Vec3::Z);
+    flat * 4.0 + Vec3::Y * 1.8
 }

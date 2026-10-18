@@ -304,6 +304,8 @@
     SpeedMatch(min: 0.5, max: 1.5, max_lod: 2),
     StrideWarp(pelvis: Rig("hips"), legs: [], min: 0.6, max: 1.6, max_lod: 1),
     FootPlacement(pelvis: Rig("hips"), legs: [], max_foot_angle: 0.5235988, release: 0.1, pelvis_halflife: 0.08, body: Lower, roll: 0.0, guards: (max_step: 0.5, max_drop: 0.4, max_rise: 0.5, unplant: 0.3, max_speed: 8.0, blend_halflife: 0.1, foot_halflife: 0.04), max_lod: 1),
+    HitReact(joints: [], depth: 3, falloff: 0.5, gain: 0.35, max_angle: 0.5235988, halflife: 0.12, max_lod: 2),
+    SpringBones(chains: [], explicit: [], frequency: 3.0, damping: 0.6, gravity: 0.0, inertia: 0.5, max_angle: 1.0471976, max_lod: 1),
   ],
   mirror: (
     pairs: [],

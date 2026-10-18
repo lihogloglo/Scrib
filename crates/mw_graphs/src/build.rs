@@ -657,6 +657,14 @@ impl Builder {
             self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"))").expect("StrideWarp defaults"));
             self.a.procedural.push(ron::from_str("FootPlacement(pelvis: Rig(\"hips\"))").expect("FootPlacement defaults"));
         }
+        // Secondary motion (M4 P9), after the feet: hits kick springs on the
+        // spine, neck and arms (the rig profile's; physics.rs sends impacts
+        // below the knockdown threshold), and tails (guars, beast races) swing.
+        // Not in first person: the view model's arms stay steady.
+        if !matches!(self.t, Template::FirstPerson) {
+            self.a.procedural.push(ron::from_str("HitReact()").expect("HitReact defaults"));
+            self.a.procedural.push(ron::from_str("SpringBones()").expect("SpringBones defaults"));
+        }
         self.a
     }
 }

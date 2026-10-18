@@ -1373,6 +1373,19 @@ What to look for: the walker braces and falls with the hit (no pop from the anim
 still within ~2 s, then gets up from where it lies with its feet under it (root placed under the pelvis); face-down
 bodies roll over during the get-up blend (the `ROLL_TO_BACK` scaffold); no joint stretch, no spin of the root.
 
+### PH-10 (P9): kinematic hit reactions and tail spring bones
+
+Status: **awaiting owner** (physics-p9, 2026-10-13).
+- Kind: game location. Run (release): `$env:BEVYRROWIND_AUTO="ball_at_nearest:5@3,shot:shots/p9/hit.png@3.15,exit@6"; .\bevyrrowind scene wk-balmora`
+  (a 3 kg ball at 5 m/s, about 8 N·s, under the 15 N·s knockdown; the `V` key always throws at 12 m/s, a
+  knockdown). Tails: `.\bevyrrowind view "Seyda Neen"` near the guars
+  south of the lighthouse road, or `character --walk` on an Argonian/Khajiit.
+- What to look for: the hit walker's torso and head flinch away from the ball (peak ~0.09 s after the hit, back on
+  the animation within ~0.5 s; no pop, no lasting offset, feet stay planted); log `hit react: ... strength`. A guar's
+  or beast race's tail trails a little when it starts, stops or turns and settles without jitter or drift; at
+  `BEVYRROWIND_FPS_CAP=30` and uncapped it looks the same.
+- Known: hit strength is impulse / 15 N·s (`HIT_REACT_IMPULSE` 1 N·s minimum); no additive directional hit clips yet.
+
 ### PH-8: Characters on physics (capsules, pushes, slope sliding)
 - Kind: game location. Run: `.\bevyrrowind scene wk-balmora` (walkers on the physics ground; `--off physics` is the
   `StaticWorld` A/B), `G` for the colliders. Throw balls at walkers with `V`; for pushes, `scene ph-tradehouse-items`
