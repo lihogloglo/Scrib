@@ -1221,11 +1221,15 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   rebuild (step + 0.25 s, `MediumStats`), app `--haze`/`--dust` + per-weather table + morning curve following `--clouds`
   (weather-adapter.md "Haze and dust"). Haze recalibrated for 1-5 km views (clear 20, not 2-3). Rebuild ~2.8 ms CPU,
   GPU unchanged. Open: FG-1 (owner picks defaults), sea-horizon seam at noon with dust, frame-time A/B not run.
-- [ ] WD1 `sf_wind` + `sf_wind_bevy` (weather.md "Wind"): `WindState`, `WindSource` (directional, radial, vortex, ≤ 32
+- [~] WD1 `sf_wind` + `sf_wind_bevy` (weather.md "Wind"): `WindState`, `WindSource` (directional, radial, vortex, ≤ 32
   in a storage buffer), gust field ported from Megalophobia `grass_wind.wgsl` (licensed 2026-10-12), CPU `velocity_at`
   + WGSL `sf_wind::sample` twins, origin phase, altitude profile; `sf_sky::Wind` moves here (re-exported). Clouds read it.
   Verify: `cargo test -p sf_wind` (CPU/WGSL twin within 1e-4 on golden points, gusts never upwind, phase-exact across
   an origin shift); framework example `wind` (arrow field + a radial burst); upload ≤ 0.02 ms CPU.
+  Built (wd1a, 2026-10-18): Bevy-free `sf_wind` (weather.md "Wind as built"): PCG lattice hash, 1024 m period with a
+  split whole-cell + fraction origin phase, CPU-integrated drift, log profile, 32 sources with envelopes;
+  `sf_wind::WESL` (pure functions); `sf_sky::Wind` re-exported. Twin run headless on the GPU (`wgpu` dev-dep): 1.1e-5
+  relative; phase test 2.9e-5 m/s. Open: wd1b (`sf_wind_bevy` upload, `wind` example, clouds read it).
 - [ ] WE1 `sf_weather` core (weather.md "Weather: state machine and presets as data"): `WeatherPreset`/`Climate`/
   `PrecipKind` records, per-climate state machine, forecast as a pure function of (seed, climate, index), channel
   lead/lag blending, border band, lightning schedule, cues, tags, `WeatherFrame` + `visibility_m`. Bevy-free.
@@ -1632,3 +1636,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (orchestrator): BRP live inspection (`remote.rs`, port 15712, `tools/run_dev.ps1`, bevy_brp MCP registered); rules: check builds from all projects, reuse whole projects, finish before starting, Lua parked (Mudcrab); crate "update all" waits for hanabi; owner batch: CH-4 staff stand, WA-6 + WA-2 region colour confirmed, WA-2 shore foam/swell unfinished (parked); shadows pass + P11 general traversal (prior art in animation.md) in backlog, awaiting owner go.
 - 2026-10-18 (p10a): M4 P10 [~] solver core `sf_anim::cloth` (Bevy-free XPBD bone lattice: geodesic tethers, max distance, swept capsules, character space with fictitious-force inertia, teleport keep-shape); tests: hem stretch 1.3–1.9 % at 30/60/144 fps (run, 180° turn, stop), no capsule penetration, teleport stable; 0.014 ms per robe (release). Next p10b cook + census + ClothRules.
 - 2026-10-18 (u1a): M5 U1 part 1 [~]: input crate `bevy_enhanced_input` 0.27 over leafwing 0.22 (prioritised, input-consuming contexts = CommonUI per-screen input; ui.md OQ4 closed, ARCHITECTURE §10); new Bevy-free `sf_ui` (UI record kinds, `UiRegistry` with owners/conflicts, `ScreenStack` router rule, keyed `ListModel`, `SettingsStore`, Fluent `Localizer`), 14 tests, clippy clean. Next: u1b `sf_ui_bevy` + gamepad example.
+- 2026-10-18 (wd1a): M6 WD1 [~] part 1: Bevy-free `sf_wind` (Wind moved from `sf_sky`, re-exported; WindState/WindSource x32/WindFrame; Megalophobia gust field with a PCG lattice hash and split origin phase; log profile; `sf_wind.wesl`); CPU/WGSL twin run headless on the GPU (1.1e-5 rel), never-upwind and origin-shift tests; next wd1b (`sf_wind_bevy`, `wind` example, clouds).

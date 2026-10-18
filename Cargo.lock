@@ -6732,6 +6732,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "serde",
+ "sf_wind",
 ]
 
 [[package]]
@@ -6847,6 +6848,15 @@ dependencies = [
  "log",
  "sf_coords",
  "sf_water",
+]
+
+[[package]]
+name = "sf_wind"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+ "sf_coords",
 ]
 
 [[package]]
