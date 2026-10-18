@@ -331,11 +331,14 @@ struct Shared {
     resident: RwLock<HashSet<OutfitCacheKey>>,
     held: Mutex<HeldModels>,
     /// Cooked cloth parts by (skeleton, part record); `None`: the cook failed.
-    cloth: Mutex<HashMap<(String, RecordId), Option<Arc<cloth::ClothPart>>>>,
+    cloth: Mutex<ClothParts>,
 }
 
 /// Loaded held models by (model, light node); `None`: not usable.
 type HeldModels = HashMap<(VfsPath, Option<String>), Option<Arc<held::HeldCooked>>>;
+
+/// Cooked cloth parts by (skeleton, part record); `None`: the cook failed.
+type ClothParts = HashMap<(String, RecordId), Option<Arc<cloth::ClothPart>>>;
 
 /// The content pack's characters: insert before spawning [`Character`]s.
 #[derive(Resource, Clone)]
