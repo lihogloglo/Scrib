@@ -118,7 +118,8 @@ pub fn add(app: &mut App, world: WorldLinks, use_door: u32) {
         .insert_resource(Environments(world.environments))
         .insert_resource(AutoDoor { remaining: use_door })
         .add_systems(Update, report_travel)
-        .add_systems(Update, activate.before(StreamingSystems::Transition))
+        // After the script slot: the activate key's door opens only if no script handled it.
+        .add_systems(Update, activate.after(sf_script_bevy::ScriptSlot::Update).before(StreamingSystems::Transition))
         // Before the sky applies: `setup_sky_cameras` must see this frame's
         // `SkyCamera` insert/remove, or a portal crossing renders one frame
         // with the other side's atmosphere and environment light (the
@@ -193,8 +194,11 @@ pub(crate) fn sync_free_camera(mut arrived: MessageReader<TravelArrived>, mut ca
     }
 }
 
-/// Space activates the door in front of the camera (`--use-door`: once the
-/// start has streamed in).
+/// Opens a door: the default action of the player's activation of a door
+/// placement that no script handled (`ActivationOutcome`, M5 L3; the activate
+/// key and crosshair pick are `scripts.rs`'s). Link ends without a door
+/// object (teleport points) keep the proximity pick on Space. `--use-door`
+/// travels directly, once the start has streamed in.
 #[allow(clippy::too_many_arguments)]
 fn activate(
     mut commands: Commands,
@@ -205,21 +209,41 @@ fn activate(
     settled: Option<Res<crate::exterior::Settled>>,
     positions: WorldPosOf,
     cams: Query<(Entity, &GlobalTransform), With<DoorUser>>,
+    mut outcomes: MessageReader<sf_script_bevy::ActivationOutcome>,
     mut travel: MessageWriter<StartTravel>,
 ) {
+    let opened: Vec<_> = outcomes
+        .read()
+        .filter(|o| !o.handled && o.activation.actor == sf_script_bevy::PLAYER)
+        .map(|o| sf_world::PlacementId(o.activation.target.0))
+        .collect();
     if fade.is_active() {
         return;
     }
     let automatic = auto.remaining > 0 && settled.is_some();
-    if !automatic && !keys.just_pressed(KeyCode::Space) {
+    let manual = keys.just_pressed(KeyCode::Space);
+    if !automatic && !manual && opened.is_empty() {
         return;
     }
     let Ok((cam, global)) = cams.single() else { return };
     let Some(here) = positions.location(cam) else { return };
+    // An activated door placement's link end, if any.
+    let by_door = links
+        .0
+        .iter()
+        .flat_map(DoorLink::exits)
+        .find(|(from, _)| from.worldspace == here.worldspace && from.door.is_some_and(|d| opened.contains(&d)));
     // `--use-door` takes the nearest door around the camera, any direction.
     let reach = if automatic { 3.0 * REACH_M } else { REACH_M };
     let forward = (!automatic).then(|| global.forward().as_vec3());
-    let Some((from, to)) = pick(&links.0, &here, forward, reach) else {
+    let picked = match by_door {
+        Some(pair) => Some(pair),
+        None if automatic => pick(&links.0, &here, forward, reach),
+        // Space on a doorless link end (no placement to activate).
+        None if manual => pick(&links.0, &here, forward, reach).filter(|(from, _)| from.door.is_none()),
+        None => return,
+    };
+    let Some((from, to)) = picked else {
         if automatic {
             // Say where the nearest one is, for a `--camera` that reaches it.
             let nearest = pick(&links.0, &here, None, f32::INFINITY).map(|(from, _)| from.frame.pos.to_f64());

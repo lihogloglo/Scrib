@@ -1,24 +1,34 @@
 //! Mod scripts in the streamed view (ROADMAP M5 L2; superfargoth `docs/specs/scripting.md`
 //! "Execution model", "Entity handles"): the profile's script contexts run in
 //! `sf_script_bevy`'s slots, placements entering R0 become script handles, and Space (the
-//! activate key) activates the placement under the crosshair.
+//! activate key) activates the placement under the crosshair. Unhandled activations of a door
+//! open it (`doors.rs`); scripts' spawns and despawns (`WorldCommand`, M5 L3) are applied by the
+//! `LiveSpawn` scaffold below; `core.game_time()` follows the sky clock.
 //!
 //! Contexts come from the loaded profile (`mods::script_plans`, one per mod with
 //! `content.scripts`, in load order), plus the shared `mw.legacy` context owned by the builtin
 //! mod `mw` (scripting-adapter.md; W3 starts translated scripts in it, L2 only creates it).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
+use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::system::SystemState;
+use bevy::math::DVec3;
 use bevy::prelude::*;
+use sf_coords::WorldPos;
 use sf_script::{ContextConfig, Handle, Limits, ScriptRuntime, ScriptSource};
 use sf_script_bevy::{
     Activated, ActivationOutcome, PLAYER, Placed, ScriptFact, ScriptPlacements, ScriptSlot, Scripts, ScriptsPlugin,
-    table,
+    WorldCommand, table,
 };
 use sf_vfs::Vfs;
-use sf_world::{IndexedPlacement, PlacementClass};
-use sf_world_bevy::{ActivateCx, CellLoaded, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, WorldPosOf};
+use sf_world::{IndexedPlacement, Level, Placement, PlacementClass, PlacementId, WorldspaceId};
+use sf_world_bevy::{
+    ActivateCx, CellLoaded, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, Streaming, WorldOverlay, WorldPosOf,
+    WorldspaceRegistry,
+};
 
 /// Id of the shared legacy context (scripting-adapter.md "Instances").
 pub const LEGACY_CONTEXT: &str = "mw.legacy";
@@ -55,6 +65,8 @@ fn configs() -> Vec<ContextConfig> {
                 version: p.version,
                 limits,
                 seed: 0,
+                // Profile `[settings.<id>]` reach scripts with the settings registry (U1/U6).
+                settings: sf_script::StateValue::table(),
             }
         })
         .collect();
@@ -85,9 +97,101 @@ pub fn add(app: &mut App, vfs: Arc<Vfs>, auto_activate: u32) {
     app.insert_resource(scripts)
         .add_plugins(ScriptsPlugin)
         .insert_resource(AutoActivate { remaining: auto_activate, timer: Timer::from_seconds(3.0, TimerMode::Once) })
+        .init_resource::<SpawnTemplates>()
+        .init_resource::<LiveSpawned>()
         .add_systems(PostStartup, hook_placements)
-        .add_systems(Update, (track_player, cell_facts, activate).chain().before(ScriptSlot::Update))
-        .add_systems(Update, report.after(ScriptSlot::Update));
+        .add_systems(Update, (track_player, cell_facts, activate, game_clock).chain().before(ScriptSlot::Update))
+        .add_systems(Update, (report, apply_world_commands).after(ScriptSlot::Update));
+}
+
+/// `core.game_time()`: game hours since the sky clock's epoch (24-hour days).
+fn game_clock(time: Option<Res<sf_sky_bevy::SkyTime>>, mut scripts: ResMut<Scripts>) {
+    scripts.bypass_change_detection().runtime.set_game_time(time.map(|t| t.0.days * 24.0));
+}
+
+/// One placement per record id seen entering R0: what a script's `world.spawn(record, ..)`
+/// copies (model, class, scale). Part of the `LiveSpawn` scaffold.
+#[derive(Resource, Default)]
+struct SpawnTemplates(HashMap<String, (Placement, f32)>);
+
+/// Holder entities of live script spawns, by handle.
+#[derive(Resource, Default)]
+struct LiveSpawned(HashMap<Handle, Entity>);
+
+/// Scaffold `LiveSpawn`: applies scripts' [`WorldCommand`]s. A spawn goes into the placement
+/// overlay (so the copy streams in with its cell from then on) and, when its cell is loaded, is
+/// spawned live now through the NIF spawner under a holder entity; a despawn removes it from the
+/// overlay and drops the live holder. Limits: only records already seen in R0 this session can be
+/// spawned (the template gives the model), activation hooks (colliders) don't run for live
+/// spawns, and a despawned *baked* placement stays visible until its cell reloads. Removal path:
+/// `sf_world_bevy` streaming re-applies overlay changes to loaded cells (a "dirty cell" refetch),
+/// then commands only edit the overlay and the real spawners and hooks do the rest.
+fn apply_world_commands(world: &mut World, reader: &mut SystemState<MessageReader<'static, 'static, WorldCommand>>) {
+    let commands: Vec<WorldCommand> = reader.get_mut(world).map(|mut r| r.read().cloned().collect()).unwrap_or_default();
+    for c in commands {
+        match c {
+            WorldCommand::Spawn { handle, record, worldspace, position, yaw, context } => {
+                live_spawn(world, handle, &record, &WorldspaceId::new(&worldspace), position, yaw, &context);
+            }
+            WorldCommand::Despawn { handle, context } => {
+                if let Some(o) = world.get_resource::<WorldOverlay>() {
+                    o.0.write().unwrap_or_else(PoisonError::into_inner).remove(PlacementId(handle.0));
+                }
+                let holder = world.resource_mut::<LiveSpawned>().0.remove(&handle);
+                // The holder is gone already if its cell unloaded meanwhile.
+                if let Some(Ok(e)) = holder.map(|h| world.get_entity_mut(h)) {
+                    e.despawn();
+                }
+                info!("script {context}: despawned {:032x}{}", handle.0, if holder.is_some() { "" } else { " (overlay only)" });
+            }
+        }
+    }
+}
+
+fn live_spawn(world: &mut World, handle: Handle, record: &str, ws: &WorldspaceId, position: [f64; 3], yaw: f64, context: &str) {
+    let Some((template, radius)) = world.resource::<SpawnTemplates>().0.get(record).cloned() else {
+        warn!("script {context}: spawn {record}: no placement of it seen yet (LiveSpawn scaffold copies a loaded one)");
+        return;
+    };
+    let mut placement = template.clone();
+    placement.id = PlacementId(handle.0);
+    placement.transform.pos = WorldPos::from_f64(DVec3::from_array(position));
+    #[allow(clippy::cast_possible_truncation, reason = "an angle")]
+    let turn = Quat::from_rotation_y(yaw as f32);
+    placement.transform.rotation = turn * template.transform.rotation;
+    if let Some(o) = world.get_resource::<WorldOverlay>() {
+        o.0.write().unwrap_or_else(PoisonError::into_inner).place(ws.clone(), placement.clone());
+    }
+    let Some(streaming) = world.get_resource::<Streaming>() else { return };
+    let Some(partition) = streaming.scheduler().directory(ws).map(|d| d.partition) else { return };
+    let cell = partition.cell_of(placement.transform.pos);
+    let Some(cell_entity) = streaming.cell_entity(ws, cell) else {
+        info!("script {context}: spawned {record} into an unloaded cell (appears when it streams in)");
+        return;
+    };
+    let lod = streaming.config().lod;
+    let layers = world.resource::<WorldspaceRegistry>().get(ws).map_or_else(RenderLayers::default, |e| RenderLayers::layer(e.layer));
+    let Some(spawner) = world.get_resource::<PlacementSpawners>().and_then(|s| s.uncooked().cloned()) else { return };
+    let holder = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(cell_entity))).id();
+    let t = &placement.transform;
+    let cx = SpawnCx {
+        worldspace: ws,
+        cell,
+        level: Level::Near,
+        parent: holder,
+        layers: &layers,
+        local: Transform { translation: partition.cell_origin(cell).delta_f32(t.pos), rotation: t.rotation, scale: t.scale },
+        model: None,
+        max_distance: 1000.0,
+        end_band: 0.0,
+        lod: &lod,
+    };
+    let entities = spawner.spawn(world, &cx, &IndexedPlacement { placement, radius });
+    world.resource_mut::<LiveSpawned>().0.insert(handle, holder);
+    if let Some(p) = world.resource_mut::<ScriptPlacements>().loaded.get_mut(&handle) {
+        p.radius = radius;
+    }
+    info!("script {context}: spawned {record} ({entities} entities) at {position:.2?}, handle {:032x}", handle.0);
 }
 
 /// Wraps the placement spawners so R0 activation registers the placement as a script handle.
@@ -116,6 +220,9 @@ impl PlacementSpawner for ScriptHandleHook {
     fn activate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
         self.0.activate(world, cx, placement);
         let p = &placement.placement;
+        if let Some(mut templates) = world.get_resource_mut::<SpawnTemplates>() {
+            templates.0.entry(p.base.id.as_str().to_owned()).or_insert_with(|| (p.clone(), placement.radius));
+        }
         if let Some(mut placements) = world.get_resource_mut::<ScriptPlacements>() {
             let pos = p.transform.pos.to_f64();
             placements.loaded.insert(
