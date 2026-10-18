@@ -1277,8 +1277,9 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   swamp still and murky, WA-6 interior pool; sea under land not drawn (counter).
   Status (2026-10-18, w3fin): built and wired in the app: shore bake 0.5-0.6 s at start (worker thread), shore
   attenuation + foam, region optics map (optics retuned: no longer milky, hue by region, fainter shore foam), interior
-  pools (`WaterSurface`) at `WHGT`, height fog input; shots `shots/w3/`; WA-2, WA-6 awaiting owner. Open: interior
-  pool draws opaque black (WA-6, snapshot not valid in interiors), in-app GPU counters, sea-under-land counter, wet band
+  pools (`WaterSurface`) at `WHGT`, height fog input; shots `shots/w3/`; WA-2, WA-6 awaiting owner. Interior pool
+  black fixed (w3pool: unwritten froxel volume applied in interiors, `sf_atmos_bevy` `FroxelVolume.params.w` now 0
+  without an active `CloudCamera`). Open: in-app GPU counters, sea-under-land counter, wet band
   (SU1), body overlap report, `water_bodies` example. Handoff: water.md / water-adapter.md "As built (W3)".
 - [ ] W4 Reflections (water.md step 2, "Off-screen reflections"): SSPR compute for the dominant plane, camera-centred dynamic reflection probe (sky + terrain + far proxies, one face per 4 frames), content probes, Fresnel; reflection A/B
   `--off sspr`. Waits for W2. Verify: WA-4 Vivec canals at sunset (cantons reflected, no streaks at screen edges),
@@ -1590,3 +1591,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (l3fin): M5 L3 done for v0.1: real run in the Census office (dev exe, scratch `l3_test` mod, `--activate 4`): `on_load` with player position, entity script `counter` attach/state/tick, two LiveSpawn copies seen in the room, temp copy despawned, "handled by a script" from the 3rd activation; Space on the office door still travels (unhandled `ActivationOutcome`). No fixes. `@sf/records`/`input`/`anim`/`physics` and MS-2 parked (owner, Lua parked).
 - 2026-10-18 (w3fin): M6 W3 [~] wired in the app: shore field baked at start (0.5 s, worker thread) for wave damping + shore foam, region optics map with retuned optics (backscatter-sized body colour: not milky; swamp olive, lagoons teal, sea blue), interior pools at WHGT, height fog input, `--quality` -> water tier; scene wa-interior-pool; WA-2/WA-6 awaiting owner (interior pool draws black: open); in-app GPU measurements open (no quiet machine).
 - 2026-10-18 (p9fin): M4 P9 [~] app-run in `scene wk-balmora` (release, `BEVYRROWIND_AUTO`): kill, 12 m/s knockdown (36 N·s) + get-up from the `Knockout@tail` clip (no scaffold), 2 m/s hit react (5.9 N·s); fixes: `mark_settled` always runs (the auto hook never fired), auto throws frame first, release slow balls close and lead walkers; PH-2/PH-9/PH-10 agent-run, awaiting owner; open: stretch peaks 1.4–5.6 cm, one intermittent despawned-entity panic, P8b sleep/effector/cost items.
+- 2026-10-18 (w3pool): WA-6 interior pool black fixed: not the snapshot but the froxel fog (interiors drop `CloudCamera`, the unwritten `FroxelVolume` was still flagged live, transmittance 0); `sf_atmos_bevy` `update_volume` sets `params.w` = 1 only with an active cloud camera. Shots `shots/w3pool/`; WA-6 awaiting owner.
