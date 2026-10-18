@@ -1728,3 +1728,10 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   `WorldCommand` messages the content pack applies. `@sf/interfaces` calls are synchronous, copied `StateValue`s, run
   under the callee's watchdog, cycles rejected. The `.d.luau` is generated from the registry and golden-tested
   (`docs/api/sf.d.luau`). mlua `serialize` dropped.
+- **2026-10-18 (m6-w3 + w3fin; specs/water.md "As built (W3)"): water FFT fused, swell amortised, shore distance as
+  the depth proxy.** The ocean FFT runs as two fused dispatches (spectrum + rows, columns + assemble) with a runtime
+  grid; High alternates the two swell cascades (3 of 4 per frame, 0.14 ms). The water material has no bed heights:
+  the baked signed shore distance (`ShoreField`, EDT + openness by connected component) is its depth proxy for wave
+  attenuation, shore foam and discarding sea under land, on GPU and CPU alike. Region optics are a cell map + a small
+  look table, not per-body materials; a water body's body colour uses a backscatter-sized diffuse reflectance (2-5 %),
+  not the total scattering (milky).

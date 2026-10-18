@@ -698,3 +698,32 @@ evolves with them), `H0::gpu_texels`; test `waves_repeat_after_the_repeat_period
   only), weather `H0::blend` re-upload (WE3; `upload_spectrum` regenerates on any `OceanSpectrum` change, on the main
   thread, tens of ms), pipeline warm-up (the FFT pipelines take ~1-2 s to compile on DX12; the water is flat until
   then), in-app DLSS smear check and fast flight across origin shifts (WA-8).
+
+## As built (W3, 2026-10-13 / 2026-10-18, m6-w3 + w3fin)
+
+- **Shore** (`sf_water::shore`): `WetMask` → `ShoreField::bake`: exact EDT (Felzenszwalb-Huttenlocher) to a signed
+  shore distance (± `range` 256 m), 4-connected components, openness = exp(−geodesic / `open_falloff`) through water
+  from the open region (the edge-touching component, ≥ `open_core` from shore; Dial 5-7 chamfer), enclosed water
+  `enclosed_max` × inscribed diameter / `enclosed_fetch`; land texels take the wettest neighbour. `sample`,
+  `swell_scale` / `chop_scale` (GPU twins in `water_common.wesl` `shore_scales`), `encode_rg8` (sqrt-encoded distance).
+  The shore distance is the GPU's depth proxy (the water material has no bed heights). `WorldspaceWater::set_shore`:
+  the CPU query attenuates the twin's swell the same way. Host input `WaterShoreInput`.
+- **Shader**: shore attenuation inside `displaced(.., scales)` (vertex and velocity share it), fragments of sea under
+  land discarded (shore distance < −2 m), shore foam band 0-6 m travelling shoreward, bounds discard for bounded
+  bodies, region optics blended from an R8Uint cell map + an 8-entry look table (`WaterRegionsInput`, `MAX_LOOKS`),
+  analytic height fog when the froxels are off (`WaterFogInput.height` / `height_color`, the `FogLayer` closed form).
+- **FFT**: two fused dispatches (`fft_rows` = spectrum + row FFT, `fft_cols` = column FFT + assemble/foam), runtime
+  n / log n, `skip` cascade, per-cascade foam dt. `WaterQuality`: Low 2 × 128², Medium 3 × 128², High 4 × 256² with
+  the two swell cascades alternating (3 per frame), Ultra 4 × 256²; `size_waves` recreates the images on a tier change.
+  Slope mips (6 levels, `water_mips.wesl`), sampled at the pixel footprint's lod, lost variance → roughness;
+  displacement foam fades at lod 2-5. Pipelines warm up at startup (FFT, mips, aerial, snapshot, velocity).
+- **Bodies**: `WaterSurface { level, bounds, swell, chop, look }` (+ `WaterSurface::pool`) draws with the ocean's
+  material and cascades in its own entity's render layers; the FFT and snapshot run while any surface is shown.
+- **GPU** (example `water_ocean`, 1600 × 900, 4060 Laptop, **shared machine**): `water_fft` 0.139 ms (was 0.22; High
+  budget 0.15 met) + `water_mips` 0.023 ms; snapshot 0.043 ms; transparent pass 0.54 ms. Golden GPU vs twin: max 1.0 mm,
+  rms 0.1 mm. In-app 1440p counters not yet measured (no quiet machine on 2026-10-18).
+- Open (handoff): pools in interiors draw opaque black (WA-6: the refraction snapshot is not valid in the interior
+  camera; check the snapshot node's ordering when `render_sky` / the `sf_atmos` composite don't run); DLSS velocity
+  check and WA-8 flight; a GPU counter for discarded sea-under-land fragments; the `water_bodies` example (lake + shore
+  on the island). W4 (SSPR) plugs in where `apply_pbr_lighting` supplies the environment reflection; the dominant plane
+  is `WaterFrame.level` or a `WaterSurface.level`.
