@@ -5788,6 +5788,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_level"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sf_lod"
 version = "0.1.0"
 dependencies = [

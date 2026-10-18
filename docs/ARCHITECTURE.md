@@ -1769,6 +1769,14 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   Systems that toggle BEI contexts run before `EnhancedInputSystems::Prepare`, not just before `Update`. Bevy's
   `AutoDirectionalNavigation` is layer-agnostic, so the router moves that marker onto the input target's focusables
   only; confirm triggers `bevy_ui_widgets::Activate`, so pad, keys and mouse share the headless widgets' contract.
+- **2026-10-18 (ts1a, TS1 part 1; specs/test-levels.md): synthetic test levels are a RON greybox format (`sf_level`,
+  Bevy-free: parse, validate, flat-shaded meshes), not Bevy scenes, BSN or Blender exports.** `DynamicScene` `.scn.ron`
+  is a reflected ECS dump with no primitives and no grid/physics semantics; Bevy 0.20 has `bsn!` but no `.bsn` asset
+  files yet; Skein (glTF extras → components) supports Bevy 0.19, not yet 0.20; Blenvy is stalled. A level is
+  primitives (ground, box, ramp, stairs, cylinder) with flat colours over a 1 m prototype grid, named cameras and
+  spawns; each primitive's one triangle list is both its render mesh and its static collider. Hosts run a level as its
+  own worldspace with an empty streaming index (`MemoryIndex`), so the whole viewer (sky, physics, debug keys, remote)
+  applies unchanged. glTF/Skein comes later as a primitive, not a second format.
 - **2026-10-18 (we1, M6 WE1; specs/weather.md "Weather core as built"): weather is a pure function of time.** Each
   climate's slots start at `phase + k·mean + hashed jitter` (O(1) slot lookup) and draw their preset from a counter-based
   hash of `(seed, climate key, k)`; record keys are FNV-1a of the folded id, so load order and added mods never reshuffle
