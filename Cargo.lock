@@ -4757,6 +4757,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_weather"
+version = "0.1.0"
+dependencies = [
+ "mw_install",
+ "mw_records",
+ "mw_vfs",
+ "sf_records",
+ "sf_vfs",
+ "sf_weather",
+ "tes3",
+]
+
+[[package]]
 name = "mw_world"
 version = "0.1.0"
 dependencies = [
@@ -6865,6 +6878,19 @@ dependencies = [
  "log",
  "sf_coords",
  "sf_water",
+]
+
+[[package]]
+name = "sf_weather"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+ "sf_atmos",
+ "sf_records",
+ "sf_sky",
+ "sf_wind",
+ "smallvec",
 ]
 
 [[package]]

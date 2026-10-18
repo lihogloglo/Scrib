@@ -1317,11 +1317,19 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   (Koschmieder). Depends on `sf_atmos` (frame carries `CloudWeather`/`FogSettings`); `RecordId` gained serde.
   10 tests green, clippy clean; `evaluate` 0.0006 ms (release, 2 climates mid-transition). Open: overrides never
   pruned; `gust_length` swaps once mid-transition; lightning rate per game hour (adapter converts).
-- [ ] WE2 `mw_weather` (weather-adapter.md): REGN → climates, `Morrowind.ini [Weather*]` → presets in a synthetic mod
+- [~] WE2 `mw_weather` (weather-adapter.md): REGN → climates, `Morrowind.ini [Weather*]` → presets in a synthetic mod
   layer, precipitation kinds (rain, snow, ash, blight), Red Mountain radial storm source, MWScript mapping table for M5
   W3, `bevyrrowind weather forecast <region> --days 3`. Waits for WE1. Verify: `cargo test -p mw_weather` (adapter
   spec list); forecast frequencies within sampling error of REGN weights over 1,000 changes; ini edit re-runs only
   `weather.climate`.
+  [~] Built part 1 (we2a, 2026-10-18): Bevy-free `mw_weather`: `MwWeather::build(db, ini)` → 10 presets
+  `mw_weather/<type>`, one climate per REGN `mw_region/<id>` (weights in REGN index order, zero chances dropped,
+  change interval `Hours Between Weather Changes` ± 25 %, transition = chance-weighted `Transition Delta` read as Hz in
+  real time, × timescale), `mw_precip/{rain,snow,ash,blight}`; precipitation intensity/start threshold, loop-sound cues,
+  lightning `per_hour = f × 60 / timescale` + thunder ids, blight tag; vanilla fallbacks per key, ini fingerprint;
+  `define_into` = synthetic source "Morrowind.ini weather". `MorrowindIni` keeps every value (`get`). 6 unit tests +
+  real install (16 climates), clippy clean. Part 2 (we2b): clouds/fog/sky/wind terms, Red Mountain radial storm,
+  region sounds, MWScript mapping table, `weather forecast` command + 1,000-slot frequency check.
 - [ ] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
   clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
@@ -1729,3 +1737,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (ts1b): TS1 part 2: level actors (outfit, scripted path/action, `PathFollower`) through the level index, `robe-walk` level + scene (TS-2 awaiting owner); TS-1 terrain-flash fix (no `TerrainCamera` outside the exterior, 0 patches verified via BRP); walk mode (`U`), dynamic props and the headless course runner (`sf_level/tests/course.rs`) written but not screen-verified.
 - 2026-10-18 (u2b): M5 U2 [x] part 2: `ui_css --autotest` ran (before/after `shots/u2b/`): `broken_mod` attributed, a mod sheet edited on disk restyles in 0.33 s via Bevy's loader-dependency reload of the root sheet (the planned `server.reload` fallback was not needed); UI-2 awaiting owner; `ui_nav --autotest` PASS; clippy clean. Next: U3 widget kit + themes.
 - 2026-10-18 (p10d): M4 P10 [~] cloth V1 first run: tests + clippy clean, two robes walk/run in `character` (BRP now on in interactive `character`), H A/B works, 20-26 µs per simulated robe (gate 30); Balmora Temple 9 parts / 6 simulated; at a run the hem hangs straighter than the stride; PH-3 awaiting owner (`scene ph3-balmora-temple`, `shots/p10d/`). Next: `cloth.cook` bake step.
+- 2026-10-18 (we2a): M6 WE2 [~] part 1: Bevy-free `mw_weather` (REGN → climates, `[Weather*]` → presets, 4 precip kinds, lightning per game hour, transition from `Transition Delta` as real-time Hz, synthetic source "Morrowind.ini weather"); `MorrowindIni::get`; 7 tests (1 on the real install) green, clippy clean. Next: we2b (clouds/fog/wind terms, Red Mountain storm, region sounds, MWScript table, forecast command).

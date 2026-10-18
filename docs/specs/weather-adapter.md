@@ -236,3 +236,41 @@ the timing and selection are the original's). No gap at the adapter level.
 2. Tribunal's Mournhold: confirm which of its cells behave like exteriors and what weather they get.
 3. Blight disease interval and exposure rule: take OpenMW's behavior as the reference when the rules
    plugin is written (M10).
+
+## As built: WE2 part 1 (we2a, 2026-10-18)
+
+`crates/mw_weather` (Bevy-free; deps `mw_install`, `sf_records`, `sf_weather`, `tes3`).
+`MwWeather::build(&db, ini: Option<&MorrowindIni>)` → `presets` (10, `mw_weather/<type>`, `WeatherType` = REGN index
+order, also MWScript's), `climates` (one per live `REGN`, `mw_region/<region id>`), `precip_kinds`
+(`mw_precip/{rain,snow,ash,blight}`), `timescale` (the `timescale` global, default 30) and `fingerprint` (FNV-1a of every
+ini value read, vanilla where absent, plus the time scale: unrelated ini edits leave it unchanged).
+`define_into(&mut db, depends_on)` registers the `weather.*` kinds and defines everything in a new source
+**"Morrowind.ini weather"**; call it after the content files and before record mods (a test patches a climate from a
+later source). `mw_install::MorrowindIni` now keeps every `key=value` (`values`, `get(section, key)`, case-insensitive).
+
+Mapped so far:
+- **Climate**: weights = REGN chances as-is (zero chances dropped; all-zero → Clear); `change_interval_hours` =
+  `Hours Between Weather Changes` × (0.75, 1.25); `transition_hours` = chance-weighted mean of the presets' durations.
+  `Transition Delta` is read as OpenMW does (`weather.cpp`: "how quickly ... in Hz ... real time", the factor drops by
+  `delta × real seconds`), so a transition lasts `1/delta` real seconds = `timescale / (delta × 3600)` game hours
+  (0.015 → 0.56 h, Blight 0.040 → 0.21 h). This answers open question 1. sf_weather has one duration per climate
+  (Morrowind's is per target weather): hence the weighted mean.
+- **Preset**: precipitation kind by type (Rain/Thunderstorm when `Using Precip`; Snow, Blizzard → snow; Ashstorm → ash;
+  Blight → blight); intensity = `Max Raindrops` / Thunderstorm's (450/650 for Rain), snow `Max Snowflakes` / 1500
+  (Blizzard 1); `transition.precipitation` starts at `Rain/Snow/Storm Threshold` (our reading: the transition fraction
+  where it begins). Surface rates from the kind (rain wet 2 × i, puddles 0.5 × i; snow 0.5 × i; ash 0.25 × i; drying
+  0.25/h without precipitation). `Ambient Loop Sound ID` and `Rain Loop Sound ID` → cues (`None` skipped). Lightning when
+  `Thunder Frequency` > 0: `per_hour = f × 60 / timescale` (f strikes per real minute; vanilla 0.4 → 0.8/game h),
+  thunder = `Thunder Sound ID 0..3`. `Disease Chance` → tag `mw_tag/blight_exposure`.
+- **Precip kinds**: `Precip Gravity` read as the rain fall speed in units/s (575 → 8.2 m/s), snow × `Snow Gravity
+  Scale`; ash and blight a slow dust (extinction 8e-3/m ≈ 450 m visibility, the F2 ash fog), accumulating ash.
+- Real install: 16 climates (Vvardenfell, Solstheim, Mournhold); Red Mountain is Blight 100 before the main quest.
+
+Not yet (we2b, in order): (1) clouds: `CloudTerms` from the genus per type (`CLOUD_CHOICES`) with `Cloud Speed` × 10
+m/s; (2) fog: `Land Fog Day/Night Depth` via Koschmieder → `FogTerms` + day/night `height_by_hour`, and the
+`exterior.rs` `SKY_*`/`FogLook` scaffold table (haze, dust, tints, banks, hour curves) into presets; (3) wind: `Wind
+Speed` → `WindTerms.speed` (1-15 m/s), ash/blight `wind.storm = 1`, Red-Mountain-adjacent climates' radial
+`storm_source`; `Flash Decrement` → `Lightning.flash`; blight red tint; (4) region sounds → climate cues (needs a
+one-shot cue with chance in sf_weather, or a separate record); (5) MWScript mapping table (ChangeWeather → `force`,
+ModRegion → `set_weights`, GetCurrentWeather → `current`); (6) `bevyrrowind weather forecast <region> --days 3` and the
+1,000-slot frequency check; (7) the app calls `define_into` after content load.
