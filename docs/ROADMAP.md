@@ -1056,16 +1056,23 @@ dependency order:
   index rebuild + `Arc<Vfs>` swap, winning-change `AssetSourceEvent`s, routing (assets, CSS, scripts, record files,
   dev re-bake of affected products). Verify: `cargo test -p sf_vfs --all-features` (winner changes, shadowed edits
   silent, readers never block); MS-1.
-- [~] L3 (2026-10-13, m5-l3, uncommitted) built: API v0.1 `@sf/core` (+ `version`, `settings()`, `game_time()`,
-  `on_load`), `@sf/events`, `@sf/timers`, new `@sf/interfaces` (sync cross-mod calls, copied plain data, callee
+- [x] L3 (2026-10-13, m5-l3; compiled + committed 2026-10-18 wipfix, superfargoth aed6116 / bevyrrowind 8c8efbb;
+  real run 2026-10-18 l3fin) **done for v0.1**. Real run (dev exe, scratch `--user-data` with `hello_activate` +
+  `l3_test`, Census office, `--activate 4` on `furn_com_tapestry_03`): `on_load start` logs the player position;
+  activation 1 attaches the `counter` entity script and spawns two copies (LiveSpawn: 1 entity each, visible in
+  the room, `shots/l3/l3_spawn.png`); 2 → counter `n = 1`, default action; 3 → `n = 2`, "handled by a script",
+  temp copy despawned; 4 → handled; `tick` ages the state ~1 s per second; `hello_activate`'s timers still fire.
+  Space on the office door (`door-census` camera, `--activate 1`): scripts see it, leave it unhandled → door
+  travel to Seyda Neen (`shots/l3/l3_door.png`). No fixes needed. **Parked (owner 2026-10-18, Lua parked):**
+  `@sf/records`, `@sf/input`, `@sf/anim`, `@sf/physics`, MS-2 (not built). As built: API v0.1 `@sf/core`
+  (+ `version`, `settings()`, `game_time()`, `on_load`), `@sf/events`, `@sf/timers`, new `@sf/interfaces` (sync cross-mod calls, copied plain data, callee
   watchdog, cycles rejected), `@sf/world` (+ `nearby`, `spawn`/`despawn` via `WorldCommand` queue, entity scripts
   `define_script`/`attach`/`detach`/`state` with state in the mod's snapshot, activated before global handlers, `tick`
   while loaded), handle methods (`h:position()`), **`on_load` = queued, runs at the next `Update` slot (world access)**,
   generated `superfargoth/docs/api/sf.d.luau` (golden test), example mod `superfargoth/examples/mods/api_tour` run
-  headless; mlua `serialize` dropped. sf_script 22 + sf_script_bevy 8 tests, clippy clean. App (written, **not yet
-  compiled**: build blocked by m6-w3's water.rs WIP): `LiveSpawn` scaffold applies `WorldCommand`s, doors open from
-  unhandled `ActivationOutcome`, `game_time` from the sky clock. Left: app build + real run (scratch mod `l3_test`),
-  `@sf/records`, `input`, `anim`, `physics`, MS-2. Details: scripting.md "As built (L3)". Original task text:
+  headless; mlua `serialize` dropped. sf_script 22 + sf_script_bevy 8 tests, clippy clean. App: `LiveSpawn` scaffold
+  applies `WorldCommand`s, doors open from unhandled `ActivationOutcome`, `game_time` from the sky clock. Details:
+  scripting.md "As built (L3)". Original task text:
   L3 API v0.1 (scripting.md "Curated API"): `@sf/core`, `events`, `timers`, `interfaces`, `world`, `records`,
   `input`, thin `anim` (slots) and `physics` (impulse, raycast); `sf.d.luau` + docs generated from the registry.
   Verify: golden `.d.luau`; example mods in `superfargoth/examples/mods/` run headless; MS-2.
@@ -1552,3 +1559,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-13 (m5-a4): M5 A4 hot reload built (uncommitted): `sf_vfs` `SharedVfs` (arc-swap) + `Vfs::rebuild` of dirty dir layers with winning-change diff + `watch::VfsWatcher` (notify-debouncer-full 0.7, Bevy's crate) + Bevy `shared_asset_source`; `sf_mods` `route`/`reload_records`; `sf_script_bevy` `reload_changed`; app `hot_reload.rs` (dev only). 15+20+5 tests, clippy clean; real run: Lua edit reloads with state kept, texture edit reloads in the Census office, each under 0.3 s. Dev re-bake during play not built.
 - 2026-10-13 (m5-l3): M5 L3 [~] (uncommitted): script API v0.1 in sf_script/sf_script_bevy (core `on_load`/settings/game_time, new `@sf/interfaces`, `@sf/world` spawn/despawn queue + nearby + entity scripts with snapshot state, handle methods), golden `docs/api/sf.d.luau`, example mod `examples/mods/api_tour` headless, mlua `serialize` dropped; 22 + 8 tests, clippy clean. App LiveSpawn scaffold + doors on `ActivationOutcome` written but not compiled (app build blocked by m6-w3 WIP); real run pending.
 - 2026-10-13 (m6-w3, stopped early at owner usage limit, uncommitted): W2 leftovers part 1 + W3 groundwork: fused 2-dispatch FFT with runtime grid (128/256), `WaterQuality` tiers, High alternates the 256/64 m cascades (example 1600×900, shared machine: `water_fft` 0.22 → 0.139 ms + `water_mips` 0.023 ms; golden 1.0 mm), slopes mips, pipeline warm-up at startup, analytic height fog path, `sf_water::shore` (FH EDT + openness by geodesic distance, CPU query attenuation; 3 tests), `WaterSurface` (lakes/pools/interiors), region optics map in the shader, `mw_water` `wet_mask`/`optics_map` + less milky optics (2 tests). App wiring, screenshots, 1440p and DLSS checks not done; handoff in `../.sessions/m6-w3.md`.
+- 2026-10-18 (l3fin): M5 L3 done for v0.1: real run in the Census office (dev exe, scratch `l3_test` mod, `--activate 4`): `on_load` with player position, entity script `counter` attach/state/tick, two LiveSpawn copies seen in the room, temp copy despawned, "handled by a script" from the 3rd activation; Space on the office door still travels (unhandled `ActivationOutcome`). No fixes. `@sf/records`/`input`/`anim`/`physics` and MS-2 parked (owner, Lua parked).
