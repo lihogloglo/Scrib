@@ -426,6 +426,45 @@ A gamepad-only pass over every stock screen. Hot-reload test: edit a mod's CSS, 
   uses `unic-langid`.
 - Not in U1a: `sf_ui_bevy` (U1b: input contexts, focus, glyphs, example), CSS (U2), widgets (U3), Lua (parked).
 
+## As built (U1b, 2026-10-18)
+
+`superfargoth/crates/sf_ui_bevy`, a thin plugin (`SfUiPlugin`) on Bevy sub-crates plus `bevy_enhanced_input` 0.27
+(`default-features = false`: no `bevy_state`). 6 headless tests (`cargo test -p sf_ui_bevy`), clippy pedantic clean;
+example `ui_nav` (`--autotest [png]`: synthetic gamepad, 40 checked steps). Changes against the Interfaces sketch:
+
+- **Resources**: `UiRegistryRes`, `ScreenStackRes` (push/pop on it; no `UiCommands` param yet), `UiSettingsStore`,
+  `UiLocalizer`, `UiSettings` (the sketch's fields; nothing consumes them before U2/U3), `InputMode(Device)`.
+- **Router = one BEI context entity per input context id** (`UiScreenInput { id }`), spawned the first time a screen
+  using it becomes the input target, at `UI_CONTEXT_PRIORITY` (2^16, above gameplay). On a `ScreenStack::version()`
+  change only the target's entity is `ContextActivity::ACTIVE`. Every UI action has `consume_input` and
+  `require_reset`, so gameplay contexts lose exactly the inputs the UI binds, and a context that gains input while its
+  button is still held doesn't fire (Start opening the menu doesn't also close it; B closing a modal doesn't also close
+  the menu). A game adds screen-specific actions to that entity (`UiInputContexts::get(id)`). **HUD-layer contexts
+  carry only `OpenMenu`/`OpenMap`**, so the HUD never swallows the d-pad or A in play.
+- **Ordering matters**: the router and rebinding run in `PreUpdate` after `InputSystems` and **before
+  `EnhancedInputSystems::Prepare`** (BEI collects the held inputs that `require_reset` keeps consuming there; running
+  between Prepare and Update let a just-closed modal's B reach the menu). Dispatch and navigation run in `Update`.
+- **Actions** (`UiAction`): `NavUp/Down/Left/Right` (bool) + `NavStick` (Vec2, `DeadZone`), `Confirm`, `Back`,
+  `TabPrev/Next`, `Context1-4`, `OpenMenu`, `OpenMap`. Bindings live in the `UiBindings` resource (KBM + pad defaults:
+  A/Enter, B/Esc/Backspace, LB/RB = Q/E, X Y LS RS = F R X C, Start/Esc, View/M); editing it respawns the actions of every
+  UI context, so all are rebindable including menu open. Started actions go out as `UiActionEvent { action, screen }`
+  messages for the target screen. Confirm triggers `bevy_ui_widgets::Activate` on the focused entity (the headless
+  widgets' contract, so mouse, keys and pad converge), once per entity per frame (the widgets' own Enter handling
+  isn't doubled). Back closes a Menu/Modal target unless its root has `UiHandlesBack`.
+- **Navigation**: Bevy's `AutoDirectionalNavigator` (manual `DirectionalNavigationMap` edges first, then screen
+  position). Bevy's auto navigation is layer-agnostic (its docs' workaround 3), so the router moves the
+  `AutoDirectionalNavigation` marker onto the `UiFocusable`s under the target's `UiScreenRoot` only. Focus moves into
+  the target when it is elsewhere: remembered focus of that screen (a closed modal returns focus to the button that
+  opened it), else `UiDefaultFocus`, else the first focusable. `NavRepeat`: four-way, fires at once, then after 0.4 s,
+  then every 0.08 s (d-pad, arrows and stick past 0.5 alike).
+- **Device**: `InputMode` switches on new use within the frame: key/mouse-button press, > 4 px mouse travel or wheel
+  vs a newly pressed pad button or a stick crossing 0.5 (edges on the `Gamepad` components, so a held button never
+  flips it back; pad wins a tie). `glyph(&UiBindings, action, device)` labels the first bound input of that device
+  (Xbox names, key names); icon atlases per pad family wait for the widget kit (U3).
+- Leftovers (logged in ROADMAP U1): Fluent sources from each mod's VFS `l10n/<locale>/<mod>.ftl` and `SettingsStore` ↔
+  `Profile::settings` glue (u1c); rebinding persisted to the profile; `UiCommands` system param; `ScreenDef::presets`
+  enforcement on push; PlayStation/Switch glyph names; focus visuals by `InputMode` (U2 `input` attribute).
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 above

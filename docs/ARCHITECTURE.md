@@ -1762,3 +1762,10 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   as bevy_pbr does for `MATERIAL_BIND_GROUP`. A Bevy-free crate's WESL string registers as a UUID-handle `Shader` at
   `embedded://<crate>/<module>.wesl` (module `<crate>::<module>`). Thin plugins take the floating origin from an
   app-written resource (`WindOrigin`, like `CloudsOrigin`) instead of depending on `sf_world_bevy`.
+- **2026-10-18 (u1b, M5 U1 part 2; specs/ui.md "As built (U1b)"): UI input routing = one `bevy_enhanced_input`
+  context entity per screen input context id, only the stack's input target active, at a priority above gameplay,
+  with `consume_input` + `require_reset` on every UI action.** That is Common UI's activatable-widget rule in BEI terms:
+  the UI shadows exactly the inputs it binds, and a context that gains input while its button is held doesn't fire.
+  Systems that toggle BEI contexts run before `EnhancedInputSystems::Prepare`, not just before `Update`. Bevy's
+  `AutoDirectionalNavigation` is layer-agnostic, so the router moves that marker onto the input target's focusables
+  only; confirm triggers `bevy_ui_widgets::Activate`, so pad, keys and mouse share the headless widgets' contract.

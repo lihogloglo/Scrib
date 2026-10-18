@@ -873,6 +873,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_enhanced_input"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b73cd17d91a012b24e3985fd3af736f61c3ad4919b542e40be5cfecd6333d6c"
+dependencies = [
+ "bevy",
+ "bevy_enhanced_input_macros",
+ "bitflags 2.13.2",
+ "smallvec",
+ "variadics_please",
+]
+
+[[package]]
+name = "bevy_enhanced_input_macros"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b328604b1e3330b1798d82eeeabfefdf490c2c78d53ffc5d0961fd147b953126"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.7",
+]
+
+[[package]]
 name = "bevy_extract"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1010,6 +1034,7 @@ dependencies = [
  "bevy_render",
  "bevy_shader",
  "bevy_shape",
+ "bevy_sprite_render",
  "bevy_transform",
  "bevy_utils",
  "bytemuck",
@@ -1171,6 +1196,8 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "bevy_ui",
+ "bevy_ui_render",
+ "bevy_ui_widgets",
  "bevy_utils",
  "bevy_window",
  "bevy_winit",
@@ -6062,6 +6089,24 @@ dependencies = [
  "thiserror 2.0.21",
  "toml 0.9.12+spec-1.1.0",
  "unic-langid",
+]
+
+[[package]]
+name = "sf_ui_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_enhanced_input",
+ "bevy_input",
+ "bevy_input_focus",
+ "bevy_math",
+ "bevy_time",
+ "bevy_ui",
+ "bevy_ui_widgets",
+ "sf_records",
+ "sf_ui",
 ]
 
 [[package]]

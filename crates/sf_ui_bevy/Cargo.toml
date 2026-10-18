@@ -1,0 +1,32 @@
+[package]
+name = "sf_ui_bevy"
+description = "Thin Bevy plugin for sf_ui: screen-stack input router over bevy_enhanced_input contexts, rebindable UI actions, layer-aware directional navigation, last-used device and glyphs (ui.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). `bevy_enhanced_input` itself pulls the `bevy` umbrella with only
+# its input features (mouse, keyboard, gamepad, touch, bevy_scene, bevy_log).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_input = { workspace = true, features = ["std", "gamepad", "keyboard", "mouse"] }
+bevy_input_focus = { workspace = true, features = ["std", "gamepad", "keyboard", "mouse"] }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_ui.workspace = true
+bevy_ui_widgets.workspace = true
+sf_ui.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["ui"] }
+sf_records.workspace = true
+
+[lints]
+workspace = true
+
+# Gamepad-only navigation across a HUD, a menu and a modal (ROADMAP M5 U1 Verify). `--autotest` drives it
+# with synthetic gamepad input and exits non-zero on a routing failure.
+[[example]]
+name = "ui_nav"

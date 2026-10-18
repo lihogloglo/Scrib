@@ -38,6 +38,14 @@ bevy_material = { version = "0.20", default-features = false }
 bevy_shader = { version = "0.20", default-features = false }
 bevy_shape = { version = "0.20", default-features = false }
 bevy_tasks = { version = "0.20", default-features = false }
+# Game UI glue (sf_ui_bevy): layout, headless widgets' `Activate`, focus and directional navigation.
+bevy_input = { version = "0.20", default-features = false }
+bevy_input_focus = { version = "0.20", default-features = false }
+bevy_ui = { version = "0.20", default-features = false }
+bevy_ui_widgets = { version = "0.20", default-features = false }
+# UI input actions and prioritised, input-consuming contexts (ui.md OQ4, chosen 2026-10-18). Allowed ahead
+# of the crate "update all" batch (owner). No `state` feature: we don't drive contexts from bevy_state.
+bevy_enhanced_input = { version = "0.27", default-features = false }
 # Full engine: examples and tools only (dev-dependency), never a library dependency.
 bevy = { version = "0.20", default-features = false }
 # Floating-origin grids (world-coordinates.md). RC for Bevy 0.20: pinned until 0.14.0 ships.
@@ -121,6 +129,7 @@ sf_water_bevy = { path = "crates/sf_water_bevy" }
 sf_wind = { path = "crates/sf_wind" }
 sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
+sf_ui_bevy = { path = "crates/sf_ui_bevy" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
