@@ -952,11 +952,20 @@ ragdolls; robes move." Tasks in dependency order:
   panic in run 5 (a command on a despawned entity, 77983v0, at the first auto refocus; not reproduced in 3 reruns);
   P8b items unchanged: sleep-state ragdoll blob + placed corpses (not started), effector gate (6.8/11.0 cm vs 5),
   cost gate (0.129 ms/char vs 0.05); no performance gate measured for P9.
-- [ ] P10 Cloth (`cloth.cook` in `sf_character`, `ClothLattice` op in `sf_anim`, `mw_physics::ClothRules`): robe and
+- [~] P10 Cloth (`cloth.cook` in `sf_character`, `ClothLattice` op in `sf_anim`, `mw_physics::ClothRules`): robe and
   skirt lattices, outfit joints in the merged palette, XPBD in character space with inertia scaling, tethers, max
   distance, leg/pelvis/tail capsules; census of robe/skirt parts.
   Verify: unit tests (hem stretch ≤ 5 %, no particle inside a capsule at run speed, teleport stable); ≤ 0.03 ms per robe;
   visual PH-3 (`character --walk` in a robe, Balmora Temple priests).
+  Split: p10a solver core → p10b `cloth.cook` + census + `ClothRules` → p10c `ClothLattice` op + app + PH-3.
+  **Built (p10a, 2026-10-18): solver core `sf_anim::cloth`** (Bevy-free; physics.md "Cloth" as built):
+  `ClothLattice::grid` (pinned top row, structural/shear/bend edges, geodesic tethers, max distance), `ClothState::step`
+  (XPBD, 1/240 s substeps, one pass each; character space with fictitious-force inertia 0.5 linear / 0.3 angular;
+  swept leg/pelvis capsules last; teleport keep-shape mode), `rotations()` for the cloth joints. Unit tests: hem
+  stretch 1.3–1.9 % at 30/60/144 fps through run, 180° turn and dead stop; no particle inside a capsule; 50 m + 143°
+  teleport stable; **0.014 ms per robe** at 60 fps (release). Clippy pedantic clean.
+  **Next:** p10b `cloth.cook` (rest rows on the part surface, `SkinRebind`, colliders from `RagdollDef`) + census of
+  robe/skirt parts (check widths vs the run stride) + `mw_physics::ClothRules`; p10c op + app + PH-3.
 - [ ] P11 Traversal actions and interaction points (already slotted for M4 by animation.md layer 3): vault/mantle/ledge
   from `ContextProbes` with warping, `sf_interaction` points (benches, doors, levers). Not physics; may run in parallel
   with P3–P10. Verify: per animation.md "Layer 3".
@@ -1617,3 +1626,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (fallfix): NPCs falling through floors fixed (M4 P5): collision-ready gate for movers (wait for queued statics + resident terrain heights), fell-out safety net for characters, swimmers float until Swim; tests in sf_physics_bevy; verified over BRP (Census office + Seyda Neen).
 - 2026-10-18 (p9soft): PH-10 soft-hit bug (M4 P9): impacts are the incoming body's momentum at first contact (`PhysicsEvent::Hit`, pre-solve `CollisionEvent::Started`, `sf_physics::impact_impulse`), not solver contact force (walking into a resting ball: 423 N·s before, no hit now); character pushes no longer bat away incoming bodies; threshold 1 N·s; 4 sf_physics tests. Re-run: soft hit 6.4 N·s, 12 m/s knockdown 35 N·s; open: first auto throw fell short (aim), ragdoll-on-neighbour hit-react spam, no strength tuning. PH-10 awaiting owner.
 - 2026-10-18 (orchestrator): BRP live inspection (`remote.rs`, port 15712, `tools/run_dev.ps1`, bevy_brp MCP registered); rules: check builds from all projects, reuse whole projects, finish before starting, Lua parked (Mudcrab); crate "update all" waits for hanabi; owner batch: CH-4 staff stand, WA-6 + WA-2 region colour confirmed, WA-2 shore foam/swell unfinished (parked); shadows pass + P11 general traversal (prior art in animation.md) in backlog, awaiting owner go.
+- 2026-10-18 (p10a): M4 P10 [~] solver core `sf_anim::cloth` (Bevy-free XPBD bone lattice: geodesic tethers, max distance, swept capsules, character space with fictitious-force inertia, teleport keep-shape); tests: hem stretch 1.3–1.9 % at 30/60/144 fps (run, 180° turn, stop), no capsule penetration, teleport stable; 0.014 ms per robe (release). Next p10b cook + census + ClothRules.
