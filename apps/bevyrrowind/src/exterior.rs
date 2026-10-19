@@ -256,6 +256,14 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows),
         ..SkyRenderOptions::default()
     });
+    // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
+    // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.
+    app.add_plugins(sf_sky_bevy::FarShadowPlugin)
+        .add_observer(no_far_shadow_terrain)
+        .add_systems(Update, sun_shadow_input);
+    if off_parts.has(Part::FarShadows) {
+        app.insert_resource(sf_sky_bevy::FarShadowConfig(None));
+    }
     // M6 WE3: the weather (`sf_weather_bevy`) drives haze, dust, cloud cover, the clouds, the
     // fog and the wind from the camera's region; `--haze`/`--dust`/`--clouds` pin terms, `--fog`
     // scales the fog. Live: the C key and BRP `bevyrrowind/set weather` (`weather::force_live`).
@@ -952,6 +960,25 @@ fn far_lights_night(sun: Query<&GlobalTransform, With<SunLight>>, mut night: Res
     if (night.0 - value).abs() > 1e-3 {
         night.0 = value;
     }
+}
+
+/// Copies the far static sun map into the terrain's input (shadows F3b).
+fn sun_shadow_input(fsm: Option<Res<sf_sky_bevy::FarSunShadow>>, input: Option<ResMut<sf_terrain_bevy::SunShadowInput>>) {
+    let (Some(fsm), Some(mut input)) = (fsm, input) else { return };
+    if input.image != fsm.image || input.clip_from_world != fsm.clip_from_world || input.params != fsm.params {
+        input.image = fsm.image.clone();
+        input.clip_from_world = fsm.clip_from_world;
+        input.params = fsm.params;
+    }
+}
+
+/// Terrain patches stay out of the far sun map: the terrain shadows itself
+/// with its own horizon term past the cascades.
+fn no_far_shadow_terrain(
+    add: On<Add<MeshMaterial3d<sf_terrain_bevy::TerrainMaterial>>>,
+    mut commands: Commands,
+) {
+    commands.entity(add.entity).insert(sf_sky_bevy::NoFarShadow);
 }
 
 /// Copies the terrain's far shadow map into the far field's input.
