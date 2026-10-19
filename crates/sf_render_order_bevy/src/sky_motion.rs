@@ -127,6 +127,12 @@ fn prepare(
         let has_mv = prepass.is_some_and(|p| p.motion_vectors.is_some());
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         if msaa.samples() != 1 || !has_mv {
+            // Render views are retained: bindings from a frame when this view
+            // was single-sampled would run the 1-sample pipeline against MSAA
+            // targets after a settings switch (F4 DLSS -> MSAA: wgpu
+            // validation error, app quits).
+            commands.entity(entity).remove::<SkyMotionBindings>();
+            prev.0.remove(&entity);
             continue;
         }
         let now = rotation_clip(view);
@@ -141,7 +147,7 @@ fn prepare(
 
 #[allow(clippy::needless_pass_by_value)]
 fn sky_motion_pass(
-    view: ViewQuery<(&SkyMotionBindings, &ViewPrepassTextures)>,
+    view: ViewQuery<(&SkyMotionBindings, &ViewPrepassTextures, &Msaa)>,
     pipeline: Res<SkyMotionPipeline>,
     switch: Res<SkyMotion>,
     cache: Res<PipelineCache>,
@@ -150,7 +156,10 @@ fn sky_motion_pass(
     if !switch.0 {
         return;
     }
-    let (bindings, prepass) = view.into_inner();
+    let (bindings, prepass, msaa) = view.into_inner();
+    if msaa.samples() != 1 {
+        return;
+    }
     let Some(motion) = prepass.motion_vectors.as_ref() else { return };
     let Some(render_pipeline) = pipeline.id.and_then(|id| cache.get_render_pipeline(id)) else { return };
     let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {

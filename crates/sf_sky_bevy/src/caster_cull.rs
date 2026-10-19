@@ -31,8 +31,12 @@ pub struct CasterCulling {
 }
 
 impl Default for CasterCulling {
+    /// Off (2026-10-19): measured ~0.3 ms in Balmora, and the cascades refit
+    /// to the view as the camera turns, so small casters crossing a cascade
+    /// boundary lost and regained their shadows (owner: shadows following
+    /// the camera angle). A rule that pays must be stable per caster.
     fn default() -> Self {
-        Self { min_texels: 1.5 }
+        Self { min_texels: 0.0 }
     }
 }
 
