@@ -145,7 +145,7 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   bindings); balmora_walk bench + whole-system A/B (near statics are the cost); precombine slices 1-2; anim budget
   and caster cull reverted (regressions); contact shadows = SH-14; new FG-1 fog bands. Pushed.
 - 2026-10-19 (phase1): 1.1 built (DR-4 crash class `try_*` + shipped error handler, black UI fade held for the
-  arrival, AU-1 interior audio snapshot); 1.2 measured (render thread bound) + gates; 1.3 TAA as the base. Uncommitted.
+  arrival, AU-1 interior audio snapshot); 1.2 measured (render thread bound) + gates; 1.3 TAA as the base. Committed.
 
 - 2026-10-19 (phase0): audit; owner check pass (14 windows); ROADMAP rewritten into phases; ARCHITECTURE §10/§11
   moved to `superfargoth/docs/DECISIONS.md`.
