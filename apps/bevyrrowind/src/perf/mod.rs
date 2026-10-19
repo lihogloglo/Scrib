@@ -104,10 +104,13 @@ pub enum Part {
     /// The froxel volume near the camera (god rays, lit fog; weather.md "Fog", F3):
     /// off, the analytic layers fog everything (the Low preset).
     Froxels,
+    /// Fog on blended and additive NIF materials (`transparent_fog.rs`: they draw
+    /// after the fog composite); off, they skip the fog (the old look, an A/B).
+    TransFog,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 30] = [
+    const ALL: [(&'static str, Part); 31] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -138,6 +141,7 @@ impl Part {
         ("fog", Part::Fog),
         ("froxels", Part::Froxels),
         ("godrays", Part::Froxels),
+        ("transfog", Part::TransFog),
     ];
 
     fn name(self) -> &'static str {

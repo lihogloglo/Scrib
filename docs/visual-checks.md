@@ -1593,6 +1593,16 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   `ex_glass_day.png`, `ex_glass_night.png`.
 - Source: m6-f3b.
 
+### FG-5: Blended surfaces in fog (`view "Seyda Neen" --hour 11 --weather foggy`; `scene ghostfence-far --weather foggy`)
+- Kind: game location. Blended and additive NIF surfaces (tree leaves, the Ghostfence field, glows, particles) draw
+  after the fog composite and now fog themselves from the froxels (fogfix 2026-10-19).
+- Look for: Seyda Neen's palms and far trees fade into the fog like their trunks and the ground (no dark leaf
+  silhouettes over white fog at any distance); fly toward the Ghostfence and Red Mountain: the field fades in with
+  distance. A/B: `--off transfog` (the old look). Also judge whether near leaves read too dark in fog (lit colour
+  under the dim foggy key light; not a fog term).
+- Status: awaiting owner. Sanity: before/after shots in fogfix (old exe: leaves unfogged at all distances).
+- Source: fogfix.
+
 ### WA-1: Open sea, W2 FFT ocean (`scene wa-seyda-noon`, `wa-vivec-waterfront`, `wa-bittercoast`, `wa-sunset-sea`, `wa-night-moons`; A/B `--water scaffold`, `--water off`, `--water-wind 2` / `14`; example `water_ocean`)
 
 Status: **awaiting owner** (W2, 2026-10-13). Shots: `shots/w2/`.

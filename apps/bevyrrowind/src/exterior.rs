@@ -290,6 +290,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         if !perf.off.has(Part::FarShadows) {
             app.add_systems(Update, fog_shadow_heights);
         }
+        // Blended and additive NIF surfaces draw after the fog composite: they
+        // fog themselves from the froxels (`--off transfog` is the A/B).
+        if fog_on && !perf.off.has(Part::TransFog) {
+            crate::transparent_fog::add(&mut app);
+        }
     }
 
     if far_field {
