@@ -1871,3 +1871,5 @@ horizon, zenith clear, no columns; the Ashlands deck ends ~3 km out where the re
 decks can't fill the low sky). Also check: no jump in the far sky when the map recenters (walk 2 km).
 
 WE4e (we4e): time-lapse the forced Ashlands thunderstorm (BRP `time_scale`); distant flashes should light the far deck only (not the ridge or rain); thunder follows by distance / 343. Agent shots (`shots/we4e/`) caught no strike: **awaiting owner**.
+
+PR-1 (rainocc, awaiting owner): Seyda Neen in rain (`set {"weather":"rain"}`, F1 view): stand under a roof overhang and under a palm: no streaks beneath, rain continues outside the edge (about 6 m recenter is invisible). A/B: `PrecipOcclusionConfig(false)`. Agent saw only open-sky rain (shots target/rainocc_*.png), not yet under a roof.

@@ -2195,6 +2195,7 @@ dependencies = [
  "sf_records",
  "sf_script",
  "sf_script_bevy",
+ "sf_shadow_cache_bevy",
  "sf_sky_bevy",
  "sf_terrain_bevy",
  "sf_vfs",
@@ -6436,6 +6437,8 @@ dependencies = [
  "bevy_transform",
  "log",
  "sf_atmos",
+ "sf_render_order_bevy",
+ "sf_weather",
 ]
 
 [[package]]
@@ -6614,6 +6617,7 @@ dependencies = [
  "sf_lod",
  "sf_model",
  "sf_model_bevy",
+ "sf_render_order_bevy",
  "sf_world",
  "sf_world_bevy",
  "thiserror 2.0.21",
@@ -6717,6 +6721,7 @@ dependencies = [
  "bevy_asset",
  "bevy_camera",
  "bevy_ecs",
+ "bevy_image",
  "bevy_light",
  "bevy_material",
  "bevy_math",
@@ -6725,7 +6730,10 @@ dependencies = [
  "bevy_reflect",
  "bevy_render",
  "bevy_shader",
+ "bevy_shape",
  "bevy_time",
+ "bevy_transform",
+ "glam 0.33.12",
  "sf_render_order_bevy",
 ]
 
@@ -6762,10 +6770,13 @@ name = "sf_render_order_bevy"
 version = "0.1.0"
 dependencies = [
  "bevy_app",
+ "bevy_asset",
  "bevy_core_pipeline",
  "bevy_ecs",
+ "bevy_image",
  "bevy_math",
  "bevy_render",
+ "bevy_shader",
 ]
 
 [[package]]
@@ -6792,6 +6803,26 @@ dependencies = [
  "semver",
  "sf_diag_bevy",
  "sf_script",
+]
+
+[[package]]
+name = "sf_shadow_cache_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_core_pipeline",
+ "bevy_ecs",
+ "bevy_light",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_time",
+ "bevy_transform",
+ "log",
 ]
 
 [[package]]
@@ -6822,6 +6853,7 @@ dependencies = [
  "bevy_reflect",
  "bevy_render",
  "bevy_shader",
+ "bevy_shape",
  "bevy_solari",
  "bevy_time",
  "bevy_transform",
@@ -7007,6 +7039,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_gizmos",
  "bevy_image",
+ "bevy_light",
  "bevy_material",
  "bevy_math",
  "bevy_mesh",
@@ -7025,6 +7058,7 @@ dependencies = [
  "sf_diag_bevy",
  "sf_model",
  "sf_model_bevy",
+ "sf_render_order_bevy",
  "sf_vfs",
  "sf_world",
 ]

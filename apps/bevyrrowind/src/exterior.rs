@@ -982,14 +982,14 @@ fn no_far_shadow_terrain(
     add: On<Add<MeshMaterial3d<sf_terrain_bevy::TerrainMaterial>>>,
     mut commands: Commands,
 ) {
-    commands.entity(add.entity).insert(sf_sky_bevy::NoFarShadow);
+    commands.entity(add.entity).insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
 }
 
 /// Far proxies stay out of the far sun map: they sample it (a pass can't
 /// write the depth texture its materials bind), and the terrain's own far
 /// term already shadows them past the cascades.
 fn no_far_shadow_proxy(add: On<Add<MeshMaterial3d<sf_lod_bevy::ProxyMaterial>>>, mut commands: Commands) {
-    commands.entity(add.entity).insert(sf_sky_bevy::NoFarShadow);
+    commands.entity(add.entity).insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
 }
 
 /// Copies the terrain's far shadow map and the far static sun map into the
