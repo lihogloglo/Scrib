@@ -10,6 +10,7 @@ mw_install.workspace = true
 sf_records.workspace = true
 sf_coords.workspace = true
 sf_weather.workspace = true
+sf_audio.workspace = true
 glam.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 

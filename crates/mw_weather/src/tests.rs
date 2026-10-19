@@ -676,3 +676,9 @@ fn glare_view_maps_to_the_sky_sun_glare() {
     close(preset_of(&w, WeatherType::Overcast).sky.sun_glare, 0.4, "overcast ini");
     close(preset_of(&w, WeatherType::Rain).sky.sun_glare, 1.0, "clamped");
 }
+
+#[test]
+fn sound_paths_become_vfs_paths() {
+    assert_eq!(sound_file_path("Fx\\amb\\rain.wav"), "Sound/Fx/amb/rain.wav");
+    assert_eq!(sound_file_path("\\Fx\\storm.mp3"), "Sound/Fx/storm.mp3");
+}

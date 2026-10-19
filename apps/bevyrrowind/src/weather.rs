@@ -136,6 +136,8 @@ pub struct WeatherSetup {
     pub fallback: Option<sf_weather::ClimateIx>,
     /// The weather at the start (forced, or the start cell's forecast), printed.
     pub start: Option<mw_weather::WeatherType>,
+    /// `SOUN` id -> VFS sound file for `sf_audio_bevy` (filled by `load_sounds`).
+    pub sounds: sf_audio::SoundBank,
 }
 
 impl WeatherSetup {
@@ -161,7 +163,7 @@ impl WeatherSetup {
         }
         let start_climate = cells.get(&grid_at(eye)).copied().or(fallback);
         let start = force.or_else(|| start_climate.and_then(|c| state.current(&book, c, hours)).and_then(|p| weather_type_of(book.preset_id(p))));
-        Self { book: std::sync::Arc::new(book), state, cells, fallback, start }
+        Self { book: std::sync::Arc::new(book), state, cells, fallback, start, sounds: sf_audio::SoundBank::default() }
     }
 
     /// The exterior's region raster for the world weather map (WE4c): the
@@ -269,4 +271,15 @@ pub(crate) fn live_weather(book: &WeatherBook, state: &WeatherState, climate: sf
     let forced = forecast.iter().take_while(|e| e.start <= now).last().is_some_and(|e| e.forced);
     let next = forecast.iter().find(|e| e.start > now).map(|e| (name(e.preset), e.start - now));
     Some(LiveWeather { current: name(current), clouds: w[sf_weather::CLOUDS], fog: w[sf_weather::FOG], forced, next })
+}
+
+impl WeatherSetup {
+    /// Resolves the `SOUN` records to sound files in the VFS (mods' replacements win; a `.wav`
+    /// may be replaced by an `.mp3` of the same name).
+    pub fn load_sounds(&mut self, db: &sf_records::RecordDb, vfs: &sf_vfs::Vfs) {
+        self.sounds = mw_weather::sound_bank(db, |raw| {
+            let path = sf_vfs::VfsPath::new(raw).ok()?;
+            vfs.resolve_preferring(&path, &["mp3", "wav"]).map(|(p, _)| p.as_str().to_owned())
+        });
+    }
 }

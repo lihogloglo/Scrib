@@ -284,6 +284,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // WE3 part 2b: rain, snow, ash and blight fall from the frame (`sf_precip_bevy`).
         app.add_plugins((WeatherPlugin { book: weather.book, state: weather.state }, sf_weather_bevy::sf_precip_bevy::PrecipPlugin))
             .insert_resource(overrides);
+        app.add_plugins(sf_audio_bevy::SfAudioPlugin { bank: weather.sounds.clone(), playback: true });
         if let Some(raster) = raster {
             app.insert_resource(sf_weather_bevy::WorldWeatherMap::new(raster))
                 .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));

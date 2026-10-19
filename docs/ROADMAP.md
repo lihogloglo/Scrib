@@ -1395,7 +1395,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   real install (16 regions), 1,000 slots each, within 4.5 σ. Verify: tests + frequencies met; "ini edit re-runs only
   `weather.climate`" moot (no weather bake step: records rebuilt at every load). Leftovers: positional one-shots;
   REGN edits from an ESP in a folder mod ordered after `morrowind-weather` are ignored (weather-adapter.md).
-- [~] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
+- [x] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
   clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
   Verify: time-lapse clear → overcast → rain over 2 game hours (WE-1: clouds lead, rain lags, no pops); Ascadian Isles →
@@ -1414,7 +1414,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   lightning (pure `flash_at`, shadowless flash light, cloud ambient glow as the emission stand-in), `WeatherSound`
   messages (loops; thunder after distance / 343 s), region border blend in `weather_site`; WE-2 awaiting owner. CPU:
   `cost_per_frame` gate 0.05 ms holds. **Left for [x]:** owner sign-off WE-1 + WE-2; `SunDiskLook` glare per weather (built sunglare 2026-10-19: `Glare View` -> `sun_glare`, SKY-channel blend; shots in shots/sunglare-*.png did not frame the disk; NS-1 owner pass);
-  audio playback of `WeatherSound` (no audio backend yet); rain occlusion under roofs/trees is PR1's.)
+  rain occlusion under roofs/trees is PR1's.) **Audio done (we3audio, 2026-10-19):** superfargoth `sf_audio` (buses, fades, one-shot scheduler, sound bank) + `sf_audio_bevy` on Bevy's `bevy_audio` (audio.md: kira/seedling compared, no new crate; app adds `wav`/`mp3` features); `WeatherSound` loops fade 2 s, thunder and region one-shots play; `mw_weather::sound_bank` maps `SOUN` to VFS files. WE3 is [x] built; owner passes pending: WE-0..WE-3, NS-1 (WE-3 = listening).
 - [x] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
   Ashlands seen from Balmora, rain shafts under distant clouds), as RDR2 / MSFS / Horizon do. Research first (weather.md
   has no spatial weather yet): evaluate neighbouring regions (pure function, ~0.003 ms each) into a coarse weather map
@@ -1916,3 +1916,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we4e): M6 WE4e: `sf_weather::world_strikes` (seed + 2 km cell + 1/30 h bucket, thinned by the owning climate; 1 test), `Clouds::glows` (4 in-cloud emitters, cloud_trace), flash light/rain only within 3-9 km, thunder from camera distance. Clippy clean; game flash shots not caught (awaiting owner). WE4 done.
 - 2026-10-19 (rainocc): M6 PR1: `sf_precip_bevy` occlusion map (top-down depth as a shadow view of the sun light, 512² over 80 m, recentered at 6 m, drop shader kills streaks under casters; NoPrecipOcclusion on terrain/proxies). Clippy clean, rain runs; not yet seen under a roof (visual-checks PR-1); splashes + GPU A/B not done.
 - 2026-10-19 (intpanic): interior render-thread panic ("Failed to get directional light visible entities", bevy_pbr light.rs:3093) fixed: far sun map and rain occlusion views now share `sf_sky_bevy::sun_view`, which spawns an extra sun view only when the light still has shadow maps and its visible-entities entry at render time (stale PreUpdate request after the sky turned sun shadows off indoors); 1 unit test. Census and Excise Office screenshot and Seyda Neen rain screenshot run clean; door transition not run.
+- 2026-10-19 (we3audio): M6 WE3 [x] (awaiting owner passes): audio backend. superfargoth audio.md + `sf_audio` (Bevy-free: buses, fade, OneShotScheduler, SoundBank) + `sf_audio_bevy` (bevy_audio; crate decision: kira 0.27 supports Bevy 0.20 but adds a second stack, seedling 0.8 is Bevy 0.19) playing `WeatherSound` loops/thunder and region one-shots; `mw_weather::sound_bank`; headless `view --weather thunderstorm` logs loop start + one-shots, no missing sounds; 6+2+1 tests, clippy clean; WE-3 listening check awaiting owner.

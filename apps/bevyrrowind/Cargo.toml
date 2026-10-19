@@ -27,7 +27,7 @@ trace = ["bevy/trace_chrome"]
 tracy = ["bevy/trace_tracy"]
 
 [dependencies]
-bevy = { workspace = true, features = ["3d", "ui", "audio", "free_camera", "dds", "tga", "bmp"] }
+bevy = { workspace = true, features = ["3d", "ui", "audio", "wav", "mp3", "free_camera", "dds", "tga", "bmp"] }
 clap.workspace = true
 glam.workspace = true
 mw_actors.workspace = true
@@ -75,6 +75,8 @@ mw_water.workspace = true
 mw_weather.workspace = true
 sf_weather.workspace = true
 sf_weather_bevy.workspace = true
+sf_audio.workspace = true
+sf_audio_bevy.workspace = true
 sf_sky_bevy = { workspace = true, features = ["pcss"] }
 sf_shadow_cache_bevy.workspace = true
 

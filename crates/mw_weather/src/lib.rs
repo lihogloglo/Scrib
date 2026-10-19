@@ -502,5 +502,24 @@ fn climate(
     (climate_id(&region.id), climate)
 }
 
+
+/// A `SOUN` record's `FNAM` (relative to `Sound/`, backslashes) as a VFS path.
+pub fn sound_file_path(sound_path: &str) -> String {
+    format!("Sound/{}", sound_path.trim_start_matches(['\\', '/']).replace('\\', "/"))
+}
+
+/// Every `SOUN` record as a sound bank entry (weather cue ids, region sounds, thunder): the
+/// file `resolve` finds for its path (the VFS, with mods' replacements and wav/mp3 alternates)
+/// and its volume (`DATA` 0..255 as 0..1). Sounds with no file are left out.
+pub fn sound_bank(db: &RecordDb, resolve: impl Fn(&str) -> Option<String>) -> sf_audio::SoundBank {
+    let mut bank = sf_audio::SoundBank::default();
+    for (id, s) in db.iter::<tes3::esp::Sound>() {
+        if let Some(path) = resolve(&sound_file_path(&s.sound_path)) {
+            bank.0.insert(id.clone(), sf_audio::SoundFile { path, volume: f32::from(s.data.volume) / 255.0 });
+        }
+    }
+    bank
+}
+
 #[cfg(test)]
 mod tests;

@@ -745,6 +745,9 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
         let (portals, scheduled_exposure, portal_walk) = (flags.portals, flags.scheduled_exposure, flags.portal_walk);
         let mut options =
             flags.exterior_options(install, &content.db, format!("Bevyrrowind - {label}"), StreamStart::Exterior(center))?;
+        if let Some(w) = &mut options.weather {
+            w.load_sounds(&content.db, &vfs);
+        }
         if portal_spike::enabled(portals) {
             let mut links = portal_spike::fill_frames(&mut options.world.links, &content.db, &vfs);
             links.scheduled_exposure = scheduled_exposure;
@@ -764,6 +767,9 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
         println!("interior {}: streamed view (--single-cell for the single-cell viewer)", found.name);
         let (portals, scheduled_exposure, portal_walk) = (flags.portals, flags.scheduled_exposure, flags.portal_walk);
         let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - {}", found.name), start)?;
+        if let Some(w) = &mut options.weather {
+            w.load_sounds(&content.db, &vfs);
+        }
         if portal_spike::enabled(portals) {
             let mut links = portal_spike::fill_frames(&mut options.world.links, &content.db, &vfs);
             links.scheduled_exposure = scheduled_exposure;

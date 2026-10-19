@@ -398,4 +398,4 @@ is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour ov
 - **Region border blend:** `ClimateMap::border_at` takes the camera's square's climate and the nearest square of another
   climate among the 8 around it (distance to that square); `border_blend` with a band of min(256 m, 2 squares). Cells
   without a region use the fallback climate, so coasts next to region-less sea cells blend toward it.
-- **Cues:** `WeatherSound` messages are emitted (rain/ash loops, thunder); nothing plays them yet (no audio in the app).
+- **Cues:** `WeatherSound` messages (rain/ash loops, thunder) and the frame's region one-shot sets are played by `sf_audio_bevy` (superfargoth audio.md): `SOUN` ids -> VFS files in `mw_weather::sound_bank` (path `Sound/<FNAM>`, wav or mp3 via `resolve_preferring`, volume DATA/255; filled at launch by `WeatherSetup::load_sounds`). Log lines `audio: loop start/stop`, `audio: one-shot` are the headless check; owner listens (visual-checks WE-3).

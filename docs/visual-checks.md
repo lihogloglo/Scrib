@@ -1816,6 +1816,13 @@ unit-level: `sf_weather::border_blend`; app `ClimateMap::border_at`). How: force
 in the Ashlands is not possible with one global force, so use the forecast (`set {"weather": "auto"}`) or step the hour
 until the two regions differ, then fly across the border. Look for: haze, clouds, fog and wind crossfade over ~230 m
 around the border (half each side), no pop when the camera crosses a cell edge; precipitation intensity fades in, not on.
+### WE-3: Weather sound (`view "Seyda Neen" --weather rain`, then C to step to thunderstorm)
+
+Status: **awaiting owner** (M6 WE3 audio, 2026-10-19; agents cannot hear, the log lines `audio: loop start/stop`,
+`audio: one-shot` were checked headless). Look/listen for: rain loop fades in over ~2 s and out when the weather
+changes (C key), the thunderstorm adds its loop, thunder follows each flash after distance / 343 s, region ambience
+(birds, wind) draws now and then on a clear day. Levels sane against each other; mp3 and wav both play.
+
 
 
 ### WE-4b: Two climates on the world weather map (`cargo run --release -p sf_atmos_bevy --example clouds -- --split clear,storm`, in superfargoth)
