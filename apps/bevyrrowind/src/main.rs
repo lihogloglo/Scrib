@@ -393,6 +393,7 @@ impl ViewFlags {
         };
         let meta = std::collections::BTreeMap::from([("cell".to_owned(), title.clone()), ("render".to_owned(), render.label())]);
         let perf = perf::Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |_| {})?;
+        mw_assets::set_cutout_foliage(!perf.off.has(perf::Part::LeafMask));
         Ok(view::ViewOptions {
             title,
             placements,
@@ -466,6 +467,7 @@ impl ViewFlags {
                 }
             }
         })?;
+        mw_assets::set_cutout_foliage(!perf.off.has(perf::Part::LeafMask));
         if let Some((_, settings)) = &mut perf.bench {
             // big_space: the app converts the pose to grid coordinates.
             settings.apply_transform = false;

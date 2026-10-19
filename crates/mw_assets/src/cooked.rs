@@ -103,10 +103,14 @@ impl CookedMaterials {
 }
 
 /// The NIF surface a cooked material describes (inverse of the importer's mapping).
-fn surface(m: &sf_model::Material) -> Surface<'_> {
+fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs) -> Surface<'a> {
     let [red, green, blue, alpha] = m.base_color;
     let [emissive_r, emissive_g, emissive_b] = m.emissive;
     let additive = m.extras.get(extras::BLEND).is_some_and(|mode| mode == "additive");
+    // `--off leafmask`: cutouts promoted from an authored blend draw blended.
+    let cutout = m.extras.get(extras::BLEND).map(String::as_str);
+    let blended = !crate::cutout_foliage() && cutout == Some("cutout");
+    let candidate = cutout == Some("cutout_candidate") && crate::texture_is_cutout(vfs, m.base_color_texture.as_deref());
     Surface {
         base_color: Color::linear_rgba(red, green, blue, alpha),
         base_texture: m.base_color_texture.as_deref(),
@@ -114,8 +118,10 @@ fn surface(m: &sf_model::Material) -> Surface<'_> {
         emissive: LinearRgba::rgb(emissive_r, emissive_g, emissive_b),
         alpha_mode: match m.alpha {
             SfAlpha::Opaque => AlphaMode::Opaque,
+            SfAlpha::Mask(_) if blended => AlphaMode::Blend,
             SfAlpha::Mask(cutoff) => AlphaMode::Mask(cutoff),
             SfAlpha::Blend if additive => AlphaMode::Add,
+            SfAlpha::Blend if candidate => AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF),
             SfAlpha::Blend => AlphaMode::Blend,
         },
         double_sided: m.double_sided,
@@ -204,7 +210,7 @@ fn fallback(commands: &mut Commands, server: &AssetServer, entity: Entity, root:
 /// mapper for streamed statics (`sf_world_bevy::ModelMaterials`). Textures
 /// resolve through `vfs` and load from the default asset source.
 pub fn cooked_material(m: &sf_model::Material, vfs: &sf_vfs::Vfs, server: &AssetServer) -> StandardMaterial {
-    surface(m).to_material(|path| {
+    surface(m, vfs).to_material(|path| {
         let resolved = resolve_texture(path, vfs, "cooked model")?;
         Some(server.load_builder().with_settings(image_settings).load(resolved))
     })
@@ -223,7 +229,7 @@ fn make_materials(
         .materials
         .iter()
         .map(|m| {
-            let mut material = surface(m).to_material(|path| {
+            let mut material = surface(m, &vfs.0).to_material(|path| {
                 let resolved = resolve_texture(path, &vfs.0, source)?;
                 let handle: Handle<Image> = server.load_builder().with_settings(image_settings).load(resolved);
                 textures.push(handle.clone());

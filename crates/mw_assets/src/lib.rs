@@ -292,6 +292,10 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
         emissive: Color::srgb(er, eg, eb).to_linear(),
         alpha_mode: match m.alpha_mode {
             NifAlpha::Opaque => AlphaMode::Opaque,
+            NifAlpha::Mask { .. } if m.cutout != mw_nif::Cutout::No && !cutout_foliage() => AlphaMode::Blend,
+            NifAlpha::Blend { additive: false } if m.cutout == mw_nif::Cutout::Candidate && texture_is_cutout(vfs, m.base_texture.as_deref()) => {
+                AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF)
+            }
             NifAlpha::Mask { cutoff } => AlphaMode::Mask(cutoff),
             NifAlpha::Blend { additive: true } => AlphaMode::Add,
             NifAlpha::Blend { additive: false } => AlphaMode::Blend,
@@ -303,6 +307,43 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
         let resolved = resolve_texture(path, vfs, &source)?;
         Some(load_context.load_builder().with_settings(image_settings).load(resolved))
     })
+}
+
+/// A/B switch (`--off leafmask`): authored blend + "alpha > 0" surfaces
+/// (foliage) draw as cutouts (on, the default) or blended as authored (off).
+static CUTOUT_FOLIAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Sets the [`CUTOUT_FOLIAGE`] A/B; call before models load.
+pub fn set_cutout_foliage(on: bool) {
+    CUTOUT_FOLIAGE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether cutout surfaces (`mw_nif::Cutout`) draw as cutouts.
+pub fn cutout_foliage() -> bool {
+    CUTOUT_FOLIAGE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether a [`mw_nif::Cutout::Candidate`] surface draws as a cutout: its
+/// texture's alpha has holes, not translucency ([`mw_bake::textures::alpha_is_cutout`]).
+/// Decodes the top mip once per texture (cached). Scaffold: belongs in a bake
+/// step (`texture.alpha_class`, with coverage-preserving mips) once textures cook.
+pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
+    static CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+        std::sync::LazyLock::new(Default::default);
+    let Some(texture) = texture.filter(|_| cutout_foliage()) else { return false };
+    if let Some(known) = CACHE.lock().ok().and_then(|c| c.get(texture).copied()) {
+        return known;
+    }
+    let cutout = VfsPath::new(texture)
+        .ok()
+        .and_then(|p| vfs.resolve_preferring(&p, TEXTURE_ALTERNATES))
+        .and_then(|(resolved, _)| Some((vfs.read(&resolved).ok()?, resolved)))
+        .and_then(|(bytes, resolved)| mw_bake::textures::decode_rgba(resolved.as_str(), &bytes).ok())
+        .is_some_and(|image| mw_bake::textures::alpha_is_cutout(&image));
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(texture.to_owned(), cutout);
+    }
+    cutout
 }
 
 /// A NIF surface, whichever path it came from (a NIF parsed at runtime or a

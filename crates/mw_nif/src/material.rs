@@ -4,7 +4,7 @@ use tes3::nif::{
     NiAlphaProperty, NiMaterialProperty, NiStencilProperty, NiStream, NiTexturingProperty, NiVertexColorProperty,
     NiZBufferProperty, SourceVertexMode, TextureMap, TextureSource,
 };
-use tes3::nif::{AlphaBlendFunction, DrawMode, NiKey};
+use tes3::nif::{AlphaBlendFunction, AlphaTestFunction, DrawMode, NiKey};
 
 use crate::Inherited;
 
@@ -52,6 +52,8 @@ pub struct Material {
     pub glossiness: f32,
     pub alpha: f32,
     pub alpha_mode: AlphaMode,
+    /// Whether `alpha_mode` is (or may become) a cutout drawn from an authored blend.
+    pub cutout: Cutout,
     pub vertex_colors: VertexColorMode,
     pub double_sided: bool,
     pub depth_test: bool,
@@ -72,6 +74,7 @@ impl Default for Material {
             glossiness: 0.0,
             alpha: 1.0,
             alpha_mode: AlphaMode::Opaque,
+            cutout: Cutout::No,
             vertex_colors: VertexColorMode::AmbientDiffuse,
             double_sided: false,
             depth_test: true,
@@ -82,7 +85,7 @@ impl Default for Material {
 
 /// The non-float fields of a [`Material`], for equality and hashing.
 type FlagKey<'a> =
-    (&'a Option<String>, &'a Option<String>, &'a Option<String>, &'a Option<String>, VertexColorMode, [bool; 3]);
+    (&'a Option<String>, &'a Option<String>, &'a Option<String>, &'a Option<String>, VertexColorMode, [bool; 3], Cutout);
 
 impl Material {
     /// Every float as raw bits, for exact equality and hashing.
@@ -109,7 +112,7 @@ impl Material {
             &self.detail_texture,
             &self.glow_texture,
             self.vertex_colors,
-            [self.double_sided, self.depth_test, self.depth_write],
+            [self.double_sided, self.depth_test, self.depth_write], self.cutout,
         )
     }
 }
@@ -127,6 +130,78 @@ impl Hash for Material {
         self.flags().hash(state);
         for bits in self.float_bits() {
             bits.hash(state);
+        }
+    }
+}
+
+/// Alpha-test cutoff for authored blend + "alpha > 0" surfaces drawn as
+/// cutouts. 0.5 keeps a card's covered area equal to its blended average
+/// for symmetric edge ramps (the usual masked-foliage cutoff, glTF's
+/// default); lower thickens the foliage, higher thins it.
+pub const CUTOUT_CUTOFF: f32 = 0.5;
+
+/// How an authored blend relates to alpha testing (see [`AuthoredAlpha::resolve`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Cutout {
+    /// Drawn as authored.
+    #[default]
+    No,
+    /// Blend + "alpha > 0" test, promoted to [`AlphaMode::Mask`] at [`CUTOUT_CUTOFF`].
+    Promoted,
+    /// Plain blend of a textured, unfaded surface: Morrowind's foliage (`0xED`:
+    /// src-alpha / inv-src-alpha, no test) and glass, potions alike. The flags
+    /// can't tell them apart; the texture's alpha can (holes vs. soft), so
+    /// the consumer decides and draws cutouts as a Mask at [`CUTOUT_CUTOFF`].
+    Candidate,
+}
+
+/// The alpha state an `NiAlphaProperty` authors.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AuthoredAlpha {
+    pub blending: bool,
+    pub additive: bool,
+    pub testing: bool,
+    pub test: AlphaTestFunction,
+    pub test_ref: u8,
+}
+
+impl AuthoredAlpha {
+    /// How to draw it, and whether that is a cutout promoted from a blend
+    /// (see [`Cutout`]).
+    ///
+    /// Alpha testing that does real work (`ref > 0`) wins: no sorting, and
+    /// it keeps depth. Morrowind's foliage, hair and banners author blend +
+    /// test `GREATER 0` (the test only skips empty texels): drawn blended
+    /// they write no depth, so they miss the deferred fog, shadows and
+    /// motion vectors (TAA/DLSS smear) and sort per mesh. Modern engines
+    /// draw such cards alpha-tested (UE "Masked", Unity "Cutout"), so they
+    /// become a [`AlphaMode::Mask`] at [`CUTOUT_CUTOFF`]. True translucents
+    /// stay blended: additive (glows, Ghostfence), blends without the test
+    /// (glass, smoke), untextured or faded surfaces (`material_alpha` < 1:
+    /// ghosts). Animated fades and particles are demoted by the caller,
+    /// which knows the controllers.
+    pub fn resolve(self, material_alpha: f32, textured: bool) -> (AlphaMode, Cutout) {
+        let passes_above = matches!(self.test, AlphaTestFunction::Greater | AlphaTestFunction::GreaterEqual);
+        if self.testing && self.test_ref > 0 {
+            (AlphaMode::Mask { cutoff: f32::from(self.test_ref) / 255.0 }, Cutout::No)
+        } else if !self.blending {
+            (AlphaMode::Opaque, Cutout::No)
+        } else if self.additive || !textured || material_alpha < 1.0 || (self.testing && !passes_above) {
+            (AlphaMode::Blend { additive: self.additive }, Cutout::No)
+        } else if self.testing {
+            (AlphaMode::Mask { cutoff: CUTOUT_CUTOFF }, Cutout::Promoted)
+        } else {
+            (AlphaMode::Blend { additive: false }, Cutout::Candidate)
+        }
+    }
+}
+
+impl Material {
+    /// Undoes a cutout promotion: back to the authored blend.
+    pub fn restore_blend(&mut self) {
+        if self.cutout != Cutout::No {
+            self.alpha_mode = AlphaMode::Blend { additive: false };
+            self.cutout = Cutout::No;
         }
     }
 }
@@ -181,16 +256,14 @@ pub(crate) fn from_properties(stream: &NiStream, inherited: &Inherited) -> Mater
     }
 
     if let Some(alpha) = get::<NiAlphaProperty>(stream, inherited.alpha) {
-        // Prefer alpha testing when it does real work: it needs no sorting
-        // and keeps depth for foliage. Blending covers the rest (glass,
-        // smoke, glows).
-        material.alpha_mode = if alpha.alpha_testing() && alpha.test_ref > 0 {
-            AlphaMode::Mask { cutoff: f32::from(alpha.test_ref) / 255.0 }
-        } else if alpha.alpha_blending() {
-            AlphaMode::Blend { additive: alpha.dst_blend_mode() == AlphaBlendFunction::One }
-        } else {
-            AlphaMode::Opaque
+        let authored = AuthoredAlpha {
+            blending: alpha.alpha_blending(),
+            additive: alpha.dst_blend_mode() == AlphaBlendFunction::One,
+            testing: alpha.alpha_testing(),
+            test: alpha.test_mode(),
+            test_ref: alpha.test_ref,
         };
+        (material.alpha_mode, material.cutout) = authored.resolve(material.alpha, material.base_texture.is_some());
     }
 
     if let Some(vertex) = get::<NiVertexColorProperty>(stream, inherited.vertex_color) {
@@ -232,5 +305,51 @@ mod tests {
         let c = Material { alpha_mode: AlphaMode::Mask { cutoff: 0.5 }, ..a.clone() };
         let set: HashSet<Material> = [a, b, c].into_iter().collect();
         assert_eq!(set.len(), 2);
+    }
+
+    fn authored(blending: bool, additive: bool, testing: bool, test: AlphaTestFunction, test_ref: u8) -> AuthoredAlpha {
+        AuthoredAlpha { blending, additive, testing, test, test_ref }
+    }
+
+    #[test]
+    fn foliage_blend_with_zero_test_becomes_cutout() {
+        let leaves = authored(true, false, true, AlphaTestFunction::Greater, 0);
+        assert_eq!(leaves.resolve(1.0, true), (AlphaMode::Mask { cutoff: CUTOUT_CUTOFF }, Cutout::Promoted));
+    }
+
+    #[test]
+    fn real_alpha_test_keeps_its_ref() {
+        let tested = authored(true, false, true, AlphaTestFunction::Greater, 128);
+        assert_eq!(tested.resolve(1.0, true), (AlphaMode::Mask { cutoff: 128.0 / 255.0 }, Cutout::No));
+    }
+
+    #[test]
+    fn true_translucents_stay_blended() {
+        let blend = (AlphaMode::Blend { additive: false }, Cutout::No);
+        let glow = authored(true, true, true, AlphaTestFunction::Greater, 0);
+        assert_eq!(glow.resolve(1.0, true), (AlphaMode::Blend { additive: true }, Cutout::No));
+        let glass = authored(true, false, false, AlphaTestFunction::Greater, 0);
+        // Plain blend (foliage `0xED`, glass): the texture decides.
+        assert_eq!(glass.resolve(1.0, true), (AlphaMode::Blend { additive: false }, Cutout::Candidate));
+        assert_eq!(glass.resolve(0.5, true), blend);
+        // Faded (ghosts) or untextured: the alpha is the material's, not holes.
+        let leaves = authored(true, false, true, AlphaTestFunction::Greater, 0);
+        assert_eq!(leaves.resolve(0.5, true), blend);
+        assert_eq!(leaves.resolve(1.0, false), blend);
+        let always = authored(true, false, true, AlphaTestFunction::Always, 0);
+        assert_eq!(always.resolve(1.0, true), blend);
+        let opaque = authored(false, false, false, AlphaTestFunction::Always, 0);
+        assert_eq!(opaque.resolve(1.0, true), (AlphaMode::Opaque, Cutout::No));
+    }
+
+    #[test]
+    fn restore_blend_undoes_only_cutouts() {
+        let mut leaves =
+            Material { alpha_mode: AlphaMode::Mask { cutoff: CUTOUT_CUTOFF }, cutout: Cutout::Promoted, ..Material::default() };
+        leaves.restore_blend();
+        assert_eq!(leaves.alpha_mode, AlphaMode::Blend { additive: false });
+        let mut tested = Material { alpha_mode: AlphaMode::Mask { cutoff: 0.5 }, ..Material::default() };
+        tested.restore_blend();
+        assert_eq!(tested.alpha_mode, AlphaMode::Mask { cutoff: 0.5 });
     }
 }

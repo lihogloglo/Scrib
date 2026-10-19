@@ -23,7 +23,7 @@ pub mod particles;
 pub mod skin;
 
 pub use kf::{KeyframeFile, load_kf};
-pub use material::{AlphaMode, Material, VertexColorMode, texture_path};
+pub use material::{AlphaMode, CUTOUT_CUTOFF, Cutout, Material, VertexColorMode, texture_path};
 /// The math types in this crate's API (glam, as used by `tes3`).
 pub use tes3::nif::glam;
 
@@ -487,7 +487,12 @@ impl Builder<'_> {
         });
         let uv = geometry.and_then(|(key, g)| g.base.base.controllers_of_type::<NiUVController>(stream).next().map(|c| (key, c)));
 
-        let material = material::from_properties(stream, inherited);
+        let mut material = material::from_properties(stream, inherited);
+        // Fading surfaces and particles (soft smoke, sparks) are true
+        // translucents: no cutout for them.
+        if property_animated || geometry.is_none() {
+            material.restore_blend();
+        }
         let index_key = (material.clone(), inherited.material.filter(|_| property_animated), uv.map(|(k, _)| k));
         if let Some(&index) = self.material_index.get(&index_key) {
             return index;

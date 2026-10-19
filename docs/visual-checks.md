@@ -1772,3 +1772,13 @@ caught a vanishing plant: CPU visibility kept every near placement visible). How
 then stay solid). Check the log for Bevy's "More than 65535 distinct `VisibilityRange`s" warning (should never
 appear now). If plants still vanish, note which (tree vs bush, leaves only vs whole plant) and try `--off transfog`
 (fogfix's blended-material swap) and the leaf alpha-test change (leafmask) to separate the causes.
+
+### LM-1: Leaves as alpha-tested cutouts (`view "Seyda Neen" --hour 11 --weather foggy`, then `--weather clear`; forest: fly west into the Bitter Coast)
+
+Status: **awaiting owner** (leafmask, 2026-10-19). Agent shots: foggy Seyda Neen (leaves fog like the trunks), clear
+Seyda Neen (tree shadow on the island and the water). A/B: `--off leafmask` (leaves drawn blended as before: no depth,
+no shadows, no motion vectors). Look for: crisp-edged leaf cards fogged exactly like trunks and terrain at every distance
+(no leaves showing through fog); dappled leaf shadows on the ground under trees at 11:00 clear (with `--off leafmask`:
+trunk and branch shadows only); no smearing behind foliage with TAA/DLSS (F4); distant trees not thinning to bare twigs
+(cutoff 0.5, no coverage-preserving mips yet: if they thin, note at what distance). Glass, potions, Ghostfence, glows,
+smoke and ghosts must still look translucent (if one became a hard-edged cutout, note the object).

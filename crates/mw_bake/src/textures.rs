@@ -79,6 +79,24 @@ fn decode_dds(bytes: &[u8]) -> Result<Rgba8, String> {
     Ok(Rgba8 { width: w, height: h, rgba })
 }
 
+/// Whether a blended texture's alpha is a cutout (leaf cards: holes plus
+/// solid texels, a thin soft rim) rather than translucency (glass, potions:
+/// broad partial alpha). Cutouts draw alpha-tested ([`mw_nif::Cutout`]).
+/// Thresholds: alpha <= 0.1 is a hole, >= 0.9 solid; soft texels may be at
+/// most a quarter of the covered ones (a 256² leaf atlas with filtered edges
+/// sits well below that).
+pub fn alpha_is_cutout(image: &Rgba8) -> bool {
+    let (mut holes, mut solid, mut soft) = (0usize, 0usize, 0usize);
+    for a in image.rgba.as_chunks::<4>().0.iter().map(|p| p[3]) {
+        match a {
+            0..=25 => holes += 1,
+            230..=255 => solid += 1,
+            _ => soft += 1,
+        }
+    }
+    holes > 0 && solid > 0 && soft * 4 <= solid + soft
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +139,22 @@ mod tests {
     #[test]
     fn rejects_unknown_extensions() {
         assert!(decode_rgba("a.xyz", &[]).is_err());
+    }
+
+    fn alphas(values: &[u8]) -> Rgba8 {
+        let rgba = values.iter().flat_map(|&a| [0, 0, 0, a]).collect();
+        Rgba8 { width: u32::try_from(values.len()).unwrap(), height: 1, rgba }
+    }
+
+    #[test]
+    fn leaf_alpha_is_a_cutout_glass_is_not() {
+        // Leaf card: holes, solid texels, a thin filtered rim.
+        let leaf: Vec<u8> = [0; 40].into_iter().chain([255; 50]).chain([128; 10]).collect();
+        assert!(alpha_is_cutout(&alphas(&leaf)));
+        // Glass / potion: broad partial alpha.
+        let glass: Vec<u8> = [0; 10].into_iter().chain([255; 20]).chain([100; 70]).collect();
+        assert!(!alpha_is_cutout(&alphas(&glass)));
+        // No holes: nothing to cut.
+        assert!(!alpha_is_cutout(&alphas(&[255; 16])));
     }
 }

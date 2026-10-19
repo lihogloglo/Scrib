@@ -48,7 +48,9 @@ pub mod extras {
     pub const VERTEX_COLORS: &str = "nif.vertex_colors";
     /// VFS path of the glow map; replaces the emissive color when present.
     pub const GLOW_TEXTURE: &str = "nif.glow_texture";
-    /// `"additive"` for additive blending (`AlphaMode::Blend` only).
+    /// `"additive"` for additive blending (`AlphaMode::Blend` only); `"cutout"`
+    /// for a `Mask` promoted from an authored blend (`mw_nif::Cutout::Promoted`); `"cutout_candidate"` for a plain
+    /// blend whose texture alpha decides at load (`mw_nif::Cutout::Candidate`).
     pub const BLEND: &str = "nif.blend";
     /// `"false"` when the surface doesn't write depth.
     pub const DEPTH_WRITE: &str = "nif.depth_write";
@@ -63,7 +65,8 @@ pub struct NifImporter;
 impl NifImporter {
     /// Bump when [`to_model`]'s output changes (invalidates cooked products).
     /// 2: skin data and geometry morphs (only skinned or morphing NIFs change).
-    pub const VERSION: u32 = 2;
+    /// 3: foliage cutouts (`nif.blend = "cutout"` / `"cutout_candidate"`, `mw_nif::Cutout`).
+    pub const VERSION: u32 = 3;
 }
 
 impl ModelImporter for NifImporter {
@@ -235,7 +238,7 @@ pub fn to_model(nif: &mw_nif::Model) -> Model {
             });
             let mut part = Bounds::default();
             part.add_mesh(mesh, &world[i]);
-            n.lod = if matches!(source.alpha_mode, NifAlpha::Blend { .. }) {
+            n.lod = if matches!(source.alpha_mode, NifAlpha::Blend { .. }) || source.cutout != mw_nif::Cutout::No {
                 LodPolicy::Keep
             } else if part.radius() < model_radius * DROP_FRACTION {
                 LodPolicy::Drop
@@ -350,6 +353,10 @@ fn material(m: &mw_nif::Material, index: usize) -> Material {
     }
     if matches!(m.alpha_mode, NifAlpha::Blend { additive: true }) {
         out.extras.insert(extras::BLEND.into(), "additive".into());
+    } else if m.cutout == mw_nif::Cutout::Promoted {
+        out.extras.insert(extras::BLEND.into(), "cutout".into());
+    } else if m.cutout == mw_nif::Cutout::Candidate {
+        out.extras.insert(extras::BLEND.into(), "cutout_candidate".into());
     }
     if !m.depth_write {
         out.extras.insert(extras::DEPTH_WRITE.into(), "false".into());

@@ -87,6 +87,8 @@ pub enum Part {
     Denoiser,
     FarShadows,
     ShadowTune,
+    /// Screen-space contact shadows (shadows F1).
+    ContactShadows,
     Clouds,
     /// Size-based draw distance (industry-audit.md J1).
     SizeCull,
@@ -113,10 +115,13 @@ pub enum Part {
     /// Fog on blended and additive NIF materials (`transparent_fog.rs`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
+    /// Foliage cutouts (`mw_nif::Cutout`): off, authored blend +
+    /// "alpha > 0" surfaces draw blended as before (the old look, an A/B).
+    LeafMask,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 33] = [
+    const ALL: [(&'static str, Part); 35] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -135,6 +140,7 @@ impl Part {
         ("denoiser", Part::Denoiser),
         ("farshadows", Part::FarShadows),
         ("shadowtune", Part::ShadowTune),
+        ("contactshadows", Part::ContactShadows),
         ("clouds", Part::Clouds),
         ("sizecull", Part::SizeCull),
         ("actors", Part::Actors),
@@ -150,6 +156,7 @@ impl Part {
         ("fogdither", Part::FogDither),
         ("fogjitter", Part::FogJitter),
         ("transfog", Part::TransFog),
+        ("leafmask", Part::LeafMask),
     ];
 
     fn name(self) -> &'static str {
