@@ -1411,13 +1411,19 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   messages (loops; thunder after distance / 343 s), region border blend in `weather_site`; WE-2 awaiting owner. CPU:
   `cost_per_frame` gate 0.05 ms holds. **Left for [x]:** owner sign-off WE-1 + WE-2; `SunDiskLook` glare per weather;
   audio playback of `WeatherSound` (no audio backend yet); rain occlusion under roofs/trees is PR1's.)
-- [ ] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
+- [~] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
   Ashlands seen from Balmora, rain shafts under distant clouds), as RDR2 / MSFS / Horizon do. Research first (weather.md
   has no spatial weather yet): evaluate neighbouring regions (pure function, ~0.003 ms each) into a coarse weather map
   around the camera that the volumetric clouds sample (coverage, genus, darkness per location), precipitation shafts
   and lightning flashes under distant cells, far fog by location. Co-op: the map is a pure function of (seed, clock,
   regions), so it replicates for free. Verify: WE-3 from a ridge with a forced storm in a neighbouring region; cost
   in the cloud pass at 1440p.
+  Part a built (we4a, 2026-10-19; weather.md "WE4a as built"): `sf_weather::WeatherMap` (Bevy-free): `ClimateRaster`
+  (region raster, sea → nearest region by Euclidean dilation, `site_at` = border blend), per-climate table (each climate
+  evaluated once at weight 1, 31 continuous channels), world-anchored toroidal texel window (1/8 recenter steps, strips
+  only), uniform-day skip; `sample(camera)` = `evaluate(site)` within 1e-5 on a 2 m border walk (5 tests). Table 0.0034 ms
+  for 16 climates (release; estimate 0.02). Next: WE4b GPU map + clouds read it, then WE4c app (`site_at` replaces
+  `ClimateMap::border_at`, dilated sea raster, WE-3 scene).
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1866,3 +1872,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (renderorder): render-order audit after the day's four order bugs: superfargoth specs/render-order.md (frame graph in order, per-material fog/sort/depth/prepass/shadow inventory, six rules, UE/Frostbite comparison, violations RO-1..12) + guard test `sf_render_order_bevy` `translucent_guard`. Top: RO-1 blended/additive NIF surfaces and particles cast shadows (High), RO-2 distant light sprites and RO-3 precipitation unfogged, RO-4 translucent fog swap lives in the host. No fixes (cheap ones touch leafmask files).
 - 2026-10-19 (physcrash): owner crash `rapier persistent.rs member(link.body1) || member(link.body2)` (Seyda Neen, time-lapse) = `refresh_queries` ran rapier's collision-only pass, corrupting persistent islands under streaming churn; now it only updates the broad-phase BVH (superfargoth ff33eb3); headless `churn_tests` (chunks, item piles, capsules, rebases, 20 steps/frame) pass with rapier validation.
 - 2026-10-19 (leafmask): Morrowind foliage as alpha-tested cutouts (`mw_nif` AuthoredAlpha::resolve, CUTOUT_CUTOFF 0.5; texture-alpha classifier for plain blends; importer v3, bake 62 s): leaves write depth, take the composite fog, cast/receive sun shadows, write motion vectors; translucents stay blended; `--off leafmask` A/B (dev build, Seyda Neen: GPU 8.03 vs 8.07 ms, render thread +1.7 ms); LM-1 awaiting owner. Left: Castaño coverage mips need a texture cook.
+- 2026-10-19 (we4a): M6 WE4 part a: `sf_weather::WeatherMap` CPU world weather map (climate raster with sea dilated to the nearest region, per-climate table at weight 1, toroidal world-anchored texel window, uniform skip); map at the camera = `evaluate(site)` (1e-5, 2 m border walk); table 0.0034 ms / 16 climates release. 5 tests, clippy clean. Next WE4b (GPU resolve + clouds sample the map).
