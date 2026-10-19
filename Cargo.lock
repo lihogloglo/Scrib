@@ -6492,6 +6492,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_weather_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_platform",
+ "sf_coords",
+ "sf_diag_bevy",
+ "sf_records",
+ "sf_sky_bevy",
+ "sf_weather",
+ "sf_wind_bevy",
+ "smallvec",
+]
+
+[[package]]
 name = "sf_wind"
 version = "0.1.0"
 dependencies = [

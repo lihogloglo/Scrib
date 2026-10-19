@@ -928,6 +928,30 @@ velocity; clouds take the field's direction at their own altitude speed (Morrowi
 **Open.** No consumer samples the GPU field in game yet (grass, trees, precipitation: their lanes). Cloud
 and fog drift take the mean wind only (no gusts at that scale, by design).
 
+### WE3 as built (part 1, we3a, 2026-10-19): `sf_weather_bevy`
+
+**Reuse check (rule 8).** Bevy has no weather system; the crate is glue between `sf_weather` (logic), `sf_sky_bevy`
+(clock, sky medium) and `sf_wind_bevy` (field). Deps: `bevy_app/ecs/platform`, `sf_diag_bevy` (counters),
+`sf_sky_bevy`, `sf_weather`, `sf_wind_bevy`, `smallvec`. Not on `sf_atmos_bevy`: clouds and fog read the frame from
+their own consumers (part 2).
+
+- `WeatherPlugin { book: Arc<WeatherBook>, state: WeatherState }` inserts `WeatherRecords`, `WorldWeather` (the save
+  data: seed + overrides; scripts and debug flags `force` through it), `WeatherSite` (camera climates with spatial
+  weights + altitude, **written by the app**: only it knows its regions), `CurrentWeather { frame, hours, valid }`,
+  `WeatherOverrides { haze, dust }` (debug pins), `WeatherStats`.
+- `WeatherSystems::{Evaluate, Apply}`, chained in `Update` after `SkySystems::Clock`, before `SkySystems::Apply`.
+  Evaluate: game hours = `SkyTime.days × hours_per_day`; lightning window `(prev, now]` clamped to
+  `MAX_STEP_HOURS` (0.25 h, a clock jump skips strikes) and empty on the first frame or when the clock goes back;
+  an empty site skips (keeps the last weather, e.g. interiors). Apply: sky `haze`/`dust`/`dust_tint` written only on
+  change (the sky's rate-limited rebuild sees no churn); `WindField.state.wind` = `frame.wind()`; one radial source
+  per storming climate, added once and retuned in place (new `WindState::source_mut`) so its attack never restarts.
+- **Not driven yet:** the sky's `cloud_cover` / `overcast_dimming` (they change the lit look; part 2 with the cloud
+  genus blend), clouds, fog, precipitation, lightning light, cues, border blend.
+- **Replication (co-op, net.md):** the frame is a pure function of (records, `WorldWeather`, clock, site); a host
+  replicates the seed + overrides and the clock, each peer evaluates its own site.
+- Counters: `weather/eval/ms`, `weather/apply/ms`, `weather/strikes`. Cost: evaluate 0.0027 ms mean, whole
+  `app.update` with the plugin 0.005 ms (test `cost_per_frame`, opt-level 1; gate 0.05 ms).
+
 ## Precipitation
 
 **Technique** (Tatarchuk 2006; RDR2 and Watch Dogs follow the same structure):

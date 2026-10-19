@@ -125,6 +125,12 @@ impl WindState {
         self.sources.len() != before
     }
 
+    /// A live source, to retune it in place (e.g. a weather storm's
+    /// strength) without restarting its attack.
+    pub fn source_mut(&mut self, id: WindSourceId) -> Option<&mut WindSource> {
+        self.sources.iter_mut().find(|(i, _, _)| *i == id).map(|(_, _, s)| s)
+    }
+
     pub fn sources(&self) -> impl Iterator<Item = (WindSourceId, &WindSource)> {
         self.sources.iter().map(|(id, _, s)| (*id, s))
     }
