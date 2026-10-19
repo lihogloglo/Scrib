@@ -206,6 +206,21 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: awaiting owner (shf12 saw only small differences at 15:00; GPU cost not yet benchmarked).
 - Source: shf12 (shadows F1 + F2).
 
+### SH-8: Sun cascades to 250 m (shadows F3a)
+- Kind: game location. Run: `.\bevyrrowind view "Balmora" --camera "-280,+12,200,-295,+1,180" --hour 15 --weather clear`,
+  then a street view down the Odai with houses at 30-150 m (fly with the free camera), then `view "Seyda Neen"
+  --camera "-143.5,4.4,1020.0,-153.5,2.4,1010.0"`; all at `--hour 15` and `--hour 7`. Then fly slowly from ~400 m
+  toward a Balmora building.
+- Look for: shadows of NPCs, awnings, rails and crates at 30-150 m visibly sharper than with `--off shadowsplits`;
+  no shimmer/crawl of shadow edges while the camera moves or turns (Bevy texel snapping); no visible line where
+  cascades meet (~10, 27, 75 m); the cascade end at ~212-250 m fades (dithered) rather than cuts. Known gap until
+  F3b (cached far map): objects past 250 m cast no shadows, and a shadow cast onto a building at ~250 m may end on a
+  line there.
+- A/B: `--off shadowsplits` (A1 4 cascades to 504 m); `--quality low` (3 cascades to 200 m).
+- Status: awaiting owner (shf3 agent shots at 15:00/07:30 were inconclusive: near view nearly identical, the
+  Balmora vista was backlit; GPU ≈ 0, dev frame −3.5 ms at Seyda Neen).
+- Source: shf3 (shadows F3 step a).
+
 ## Ghostfence (superfargoth `weather.md`, bug B)
 
 ### GF-1: Ghostfence appears complete, never late

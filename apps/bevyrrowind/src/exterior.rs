@@ -25,7 +25,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
-use bevy::light::{CascadeShadowConfigBuilder, ShadowFilteringMethod};
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, ShadowFilteringMethod};
 use bevy::pbr::ContactShadows;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -252,7 +252,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows, ..render.point_shadow_budget(options.quality.point_shadows()) });
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
-        cascades: sun_cascades(&far_settings.levels, off_parts.has(Part::ShadowTune)),
+        cascades: sun_cascades(options.quality, &far_settings.levels, off_parts.has(Part::ShadowTune), off_parts.has(Part::ShadowSplits)),
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows),
         ..SkyRenderOptions::default()
     });
@@ -275,9 +275,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
     app.add_plugins(sf_wind_bevy::WindPlugin::default())
         .add_systems(PostUpdate, wind_origin.after(sync_origin).before(sf_wind_bevy::WindSystems::Advance));
-    // weather.md A1: the cascades keep Bevy's 2048² maps. 4096² measured
-    // +1.4 ms at 1440p (2026-10-12), over the High budget; the tighter
-    // 504 m range already sharpens every cascade vs. the old 600 m.
+    // The cascades keep Bevy's 2048² maps: 4096² measured +1.4 ms at 1440p
+    // (weather.md A1, 2026-10-12); shadows F3 sharpens them with a 250 m range instead.
     // weather.md "Clouds" and "Fog": on by default; `--off clouds` or `--off fog` drops
     // one (the node runs for the other), `--off sky` both.
     let (clouds_on, fog_on) = (!perf.off.has(Part::Clouds), !perf.off.has(Part::Fog));
@@ -985,12 +984,17 @@ fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<
     config
 }
 
-/// The sun's shadow cascades (weather.md "Near-term visual fixes", A1): they
-/// reach past every individual object (the far-field handoff plus its fade
-/// band, +10 % and a margin), so no object crosses the cascades' end and
-/// pops; past them the terrain shadows itself (`sf_terrain_bevy`'s far
-/// shadow). `legacy` is the previous tuning, for A/B runs.
-fn sun_cascades(levels: &sf_lod::FarLevels, legacy: bool) -> CascadeShadowConfigBuilder {
+/// The sun's shadow cascades (shadows F3, weather.md "Distant shadows"): a
+/// practical split to ~250 m per preset ([`Quality::sun_cascades`]), 2× sharper
+/// at mid range than the A1 layout; past them the terrain shadows itself
+/// (`sf_terrain_bevy`'s far shadow) and, once built, the cached far static map
+/// takes the objects. `splits_off` (`--off shadowsplits`) is the A1 layout (4
+/// geometric cascades past every individual object: handoff + band, +10 %, + 20 m
+/// = 504 m), `legacy` (`--off shadowtune`) the one before it, for A/B runs.
+fn sun_cascades(quality: Quality, levels: &sf_lod::FarLevels, legacy: bool, splits_off: bool) -> CascadeShadowConfig {
+    if !legacy && !splits_off {
+        return quality.sun_cascades().build();
+    }
     let objects = levels.handoff(1) + levels.band_width(1);
     let (first, max) = if legacy { (20.0, 600.0) } else { (10.0, objects * 1.1 + 20.0) };
     CascadeShadowConfigBuilder {
@@ -1000,6 +1004,7 @@ fn sun_cascades(levels: &sf_lod::FarLevels, legacy: bool) -> CascadeShadowConfig
         maximum_distance: max,
         overlap_proportion: 0.2,
     }
+    .build()
 }
 
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
@@ -1223,6 +1228,19 @@ impl Quality {
             Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.5 }),
             Self::High | Self::Ultra => Some(ContactShadows { linear_steps: 16, thickness: 0.1, length: 0.5 }),
         }
+    }
+
+    /// Sun cascades (shadows F3): practical split (PSSM log/uniform blend, split
+    /// near 1 m), Bevy's sphere fit + texel snap + 20 % overlap blend. At 70° FOV,
+    /// 16:9, 2048² the texels are 1.4 / 3.8 / 11 / 35 cm on High (A1: 1.4 / 5.2 / 19 /
+    /// 70 cm, `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`). Low
+    /// drops a cascade (one less caster pass) and ends at 200 m.
+    pub const fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
+        let (num_cascades, maximum_distance, lambda) = match self {
+            Self::Low => (3, 200.0, 0.85),
+            Self::Medium | Self::High | Self::Ultra => (4, 250.0, 0.9),
+        };
+        sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion: 0.2 }
     }
 
     /// Shadow-map filtering (shadows F2): Hardware2x2 on Low (one tap), Gaussian

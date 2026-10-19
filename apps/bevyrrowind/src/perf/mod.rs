@@ -89,6 +89,8 @@ pub enum Part {
     ShadowTune,
     /// Screen-space contact shadows (shadows F1).
     ContactShadows,
+    /// Shadows F3 sun cascades (practical split to ~250 m); off = the A1 504 m layout.
+    ShadowSplits,
     Clouds,
     /// Size-based draw distance (industry-audit.md J1).
     SizeCull,
@@ -121,7 +123,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 35] = [
+    const ALL: [(&'static str, Part); 36] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -141,6 +143,7 @@ impl Part {
         ("farshadows", Part::FarShadows),
         ("shadowtune", Part::ShadowTune),
         ("contactshadows", Part::ContactShadows),
+        ("shadowsplits", Part::ShadowSplits),
         ("clouds", Part::Clouds),
         ("sizecull", Part::SizeCull),
         ("actors", Part::Actors),
