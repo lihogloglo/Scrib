@@ -75,6 +75,8 @@ mw_weather.workspace = true
 sf_weather.workspace = true
 sf_weather_bevy.workspace = true
 sf_sky_bevy.workspace = true
+sf_shadow_cache_bevy.workspace = true
+
 sf_terrain_bevy.workspace = true
 sf_vfs.workspace = true
 sf_world = { workspace = true, features = ["bake"] }

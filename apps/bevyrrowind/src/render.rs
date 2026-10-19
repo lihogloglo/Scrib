@@ -36,6 +36,8 @@ pub struct RenderSettings {
     /// Point lights with shadow maps (`--point-shadows`, else
     /// `BEVYRROWIND_POINT_SHADOWS`, else the quality preset's).
     pub point_shadows: Option<usize>,
+    /// Cached point-light shadow maps (`--off shadowcache` turns them off).
+    pub shadow_cache: bool,
 }
 
 impl RenderSettings {
@@ -57,7 +59,7 @@ impl RenderSettings {
         }
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
         let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
-        Ok(Self { path, upscaling, denoiser, point_shadows })
+        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true })
     }
 
     /// Whether the view needs the sky plugin's render-path management.
@@ -96,6 +98,13 @@ impl RenderSettings {
         self
     }
 
+    /// `--off shadowcache`: Bevy redraws every shadowed light every frame.
+    #[must_use]
+    pub fn with_shadow_cache(mut self, on: bool) -> Self {
+        self.shadow_cache = on;
+        self
+    }
+
     /// The point-light shadow budget: the override's count, else the
     /// preset's `(count, face size)`.
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
@@ -106,6 +115,10 @@ impl RenderSettings {
     pub fn insert(self, app: &mut App) {
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
+        // Shadows F6 slice 2: static casters cached per light, movers drawn over the copy.
+        app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
+            .insert_resource(sf_shadow_cache_bevy::ShadowCacheSettings { enabled: self.shadow_cache, ..Default::default() });
+
         app.add_systems(Last, log_lighting_at_screenshot);
     }
 

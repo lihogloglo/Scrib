@@ -232,6 +232,10 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Cost: uncached Bevy maps, ~1.9 ms per light (census bench: 4.8 / 6.6 / 12.2 / 21.7 ms for 0 / 1 / 4 / 8), so the
   presets are unchanged until cached maps (superfargoth `docs/specs/shadows.md` slice 2). Owner: is 8 the look you want?
 - Status: awaiting owner (shf6 saw 1 vs 8 at the camera above: 8 adds table/chair/chandelier shadows, clearly moodier).
+  Since shf6b (slice 2) maps come from a cache (`--off shadowcache` for Bevy's own): also look for NPC shadows
+  following them, no shadow left behind when a door opens or an item is moved, no 1-3 frame flicker of actor
+  shadows when a light recaptures. Not yet seen by an agent (no screenshots).
+
 - Source: shf6 (shadows F6 slice 1).
 
 ## Ghostfence (superfargoth `weather.md`, bug B)

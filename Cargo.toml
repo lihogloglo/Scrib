@@ -34,6 +34,8 @@ sf_script = { path = "../superfargoth/crates/sf_script" }
 sf_script_bevy = { path = "../superfargoth/crates/sf_script_bevy" }
 sf_atmos_bevy = { path = "../superfargoth/crates/sf_atmos_bevy" }
 sf_sky_bevy = { path = "../superfargoth/crates/sf_sky_bevy" }
+sf_shadow_cache_bevy = { path = "../superfargoth/crates/sf_shadow_cache_bevy" }
+
 sf_terrain = { path = "../superfargoth/crates/sf_terrain" }
 sf_terrain_bevy = { path = "../superfargoth/crates/sf_terrain_bevy" }
 sf_vfs = { path = "../superfargoth/crates/sf_vfs" }

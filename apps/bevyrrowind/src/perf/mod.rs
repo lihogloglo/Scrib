@@ -91,6 +91,8 @@ pub enum Part {
     ContactShadows,
     /// Shadows F3 sun cascades (practical split to ~250 m); off = the A1 504 m layout.
     ShadowSplits,
+    /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`).
+    ShadowCache,
     Clouds,
     /// Size-based draw distance (industry-audit.md J1).
     SizeCull,
@@ -123,7 +125,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 36] = [
+    const ALL: [(&'static str, Part); 37] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -144,6 +146,8 @@ impl Part {
         ("shadowtune", Part::ShadowTune),
         ("contactshadows", Part::ContactShadows),
         ("shadowsplits", Part::ShadowSplits),
+        ("shadowcache", Part::ShadowCache),
+
         ("clouds", Part::Clouds),
         ("sizecull", Part::SizeCull),
         ("actors", Part::Actors),
