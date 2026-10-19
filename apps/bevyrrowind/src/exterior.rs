@@ -260,6 +260,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.
     app.add_plugins(sf_sky_bevy::FarShadowPlugin)
         .add_observer(no_far_shadow_terrain)
+        .add_observer(no_far_shadow_proxy)
         .add_systems(Update, sun_shadow_input);
     if off_parts.has(Part::FarShadows) {
         app.insert_resource(sf_sky_bevy::FarShadowConfig(None));
@@ -981,10 +982,29 @@ fn no_far_shadow_terrain(
     commands.entity(add.entity).insert(sf_sky_bevy::NoFarShadow);
 }
 
-/// Copies the terrain's far shadow map into the far field's input.
-fn far_shadow_input(map: Option<Res<sf_terrain_bevy::FarShadowMap>>, mut input: ResMut<sf_lod_bevy::FarShadowInput>) {
+/// Far proxies stay out of the far sun map: they sample it (a pass can't
+/// write the depth texture its materials bind), and the terrain's own far
+/// term already shadows them past the cascades.
+fn no_far_shadow_proxy(add: On<Add<MeshMaterial3d<sf_lod_bevy::ProxyMaterial>>>, mut commands: Commands) {
+    commands.entity(add.entity).insert(sf_sky_bevy::NoFarShadow);
+}
+
+/// Copies the terrain's far shadow map and the far static sun map into the
+/// far field's input (proxies sample both past the cascades).
+fn far_shadow_input(
+    map: Option<Res<sf_terrain_bevy::FarShadowMap>>,
+    sun: Option<Res<sf_sky_bevy::FarSunShadow>>,
+    mut input: ResMut<sf_lod_bevy::FarShadowInput>,
+) {
     let Some(map) = map else { return };
-    let wanted = sf_lod_bevy::FarShadowInput { image: Some(map.image.clone()), params: map.params, generation: map.generation };
+    let wanted = sf_lod_bevy::FarShadowInput {
+        image: Some(map.image.clone()),
+        params: map.params,
+        generation: map.generation,
+        sun_map: sun.as_ref().map(|s| s.image.clone()),
+        sun_clip_from_world: sun.as_ref().map_or(Mat4::IDENTITY, |s| s.clip_from_world),
+        sun_params: sun.as_ref().map_or(Vec4::ZERO, |s| s.params),
+    };
     if *input != wanted {
         *input = wanted;
     }

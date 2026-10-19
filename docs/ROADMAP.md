@@ -1682,6 +1682,7 @@ Each slice 1-2 steps, verified and committed before the next.
 - [ ] N8 Steam transport (after M7): lobby, relay, invites, opt-in game feature. Done: invite a friend through Steam.
 
 ## Session log
+- 2026-10-19 shf3d: shadows F3b verified drawn (48k casters queued, Balmora), sun redraw threshold 0.03 -> 0.25 deg (1 redraw / 2 s), far proxies receive the far sun map; fixed proxy caster/receiver texture conflict; owed: NIF statics receivers, redraw GPU cost, SH-8 shots.
 
 Newest first. One or two lines each: what changed, what was verified.
 
