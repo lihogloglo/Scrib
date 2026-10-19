@@ -1,6 +1,6 @@
 # Shadows: local lights at scale (F6)
 
-Status: **draft** (shf6, 2026-10-19). Crates: `sf_sky_bevy` (`shadow_budget.rs` today; the cache in a new
+Status: **slice 2 built, slice 2b next** (shf6 2026-10-19; shf6b slice 2). Crates: `sf_sky_bevy` (`shadow_budget.rs` today; the cache in a new
 `sf_shadow_cache_bevy` from slice 2). Sun shadows (cascades, contact shadows, far tiers) stay in
 [weather.md](weather.md) ("Distant shadows", "Shadow bias and contact shadows"); the diagnosis and the owner's order
 (F1+F2, F3, **F6**, F5) are in [../research/shadows/README.md](../research/shadows/README.md). The current budget
@@ -95,7 +95,43 @@ home (raise it upstream with this design, adopt if it lands). Crates: none found
 2026-10-19: Bevy tracker has no shadow-caching issue/PR; other engines' code is not reusable here). Clockwork is
 GPL and a different renderer: behaviour only.
 
+## Slice 2 as built (shf6b, 2026-10-19): cache works, Bevy's per-view cost remains
+
+Crate `sf_shadow_cache_bevy` (`ShadowCachePlugin`, `ShadowCacheSettings`, `ShadowMobility`, `ShadowCacheStats`;
+Bevyrrowind adds it in `render.rs`, A/B `--off shadowcache`). Built as specified above with these choices:
+
+- **Mobility is automatic** (no game markers needed): skinned meshes and `ShadowMobility::Movable` always move; any
+  other mesh is baked once it has been still for `settle_time` (1 s) after appearing; a baked caster that moves
+  (transform, `InheritedVisibility` or `Aabb` change) unbakes the lights it touches and **stays a mover** (at most one
+  bake + one unbake per caster; without this rule actors' rigid parts and live emitters kept the lights recapturing,
+  p99 300 ms). A light that moves is left to Bevy until it stops; flicker (intensity) never recaptures.
+- **Copies are draws:** Bevy's cube texture has no `COPY_*` usage, so a fullscreen depth-copy pipeline
+  (`copy_depth.wesl`, compare Always, `frag_depth`) restores our layer into Bevy's face view before
+  `shared_shadow_pass` (taking the attachment's first use, so Bevy loads instead of clearing) and captures Bevy's
+  face after the late shadow pass. GPU: 0.027 ms restore, 0.024 ms capture (8 lights, census).
+- Captures are confirmed (six faces, current generation) only while no pipeline is compiling; slots are LRU, the
+  cache texture grows in steps of 4 cubes (24 max at 1024² = 576 MiB worst case; usually 8 → 192 MiB).
+- Known gaps: movers are missing from a light's map for the 2-3 frames of a capture; a static mesh whose asset
+  loads more than `settle_time` after its entity spawns is baked without it.
+
+**Measured (census bench, 720p, `--off farshadows`, machine busy with other builds):** median frame / render
+thread, cache on vs off: 1 light 6.3 / 6.5 ms; 4: 12.0 / 13.0; 8: 20.7 / 21.0 (render thread 20.3 / 20.7);
+16: 28.2 / 29.8. Without actors (`--off actors`, 8 lights): 19.6 / 20.2 ms, render thread 19.3 / 20.5. **So the
+cost is not the casters drawn: it is Bevy's fixed per-view work** (~0.35 ms render thread per face view: view
+setup, specialize/queue/batch/preprocess per view, even with an empty `CubemapVisibleEntities`). Emptying the
+lists, as planned, saves only ~1 ms at 8 lights. Presets stay 0/0/1/4.
+
+**Next (slice 2b): skip Bevy's views for cached lights.** In the render world after `prepare_lights`, take the
+six face-view entities of a cached light out of Bevy's per-view systems (remove `ExtractedView` and
+`RootNonCameraView`, keep `ShadowView` for its texture layer) and run our restore from one system (e.g. the
+camera's Core3d before `shared_shadow_pass`, looping over cached lights), with movers drawn by our own small
+shadow phase or by letting Bevy keep views only on faces whose frustum holds a mover (spec "per-face"). Check
+that `prepare_lights` doesn't re-insert the removed components each frame (it does only for new/changed lights;
+a flickering light is "changed" every frame: then filter `changed_point_lights` or re-remove after it). Then
+re-bench 1/4/8/16 and raise High to 8.
+
 ## Slices
+
 
 1. **(done)** Spec; importance selection (presets unchanged: the cost table shows uncached maps cost ~1.9 ms each).
 2. Cache, static only: `ShadowMobility` marker, persistent cube array, dirty tracking, copy node, cached lights
@@ -130,7 +166,7 @@ draws (empty `CubemapVisibleEntities` → nothing to queue). Visually 8 lights a
 |---|---|---|---|
 | Shadowed-light budget + fade | HDRP max shadows + fade distance; UE per-light fade; Clockwork | `PointShadowBudget`, importance, hysteresis, crossfade | **match** |
 | Selection by contribution incl. off-screen lights | Clockwork; HDRP (screen-size based) | `shadow_importance` on shown lights, in view or not | **match** |
-| Static caster caching | Doom 2016, HDRP mixed cached, UE cached shadows, Flax | none (Bevy redraws all) | **GAP (P1)**: slice 2 |
+| Static caster caching | Doom 2016, HDRP mixed cached, UE cached shadows, Flax | `sf_shadow_cache_bevy` (auto mobility); Bevy still runs its per-face views | **partial**: slice 2b skips the views |
 | Dynamic casters over cached copy | HDRP, UE, Clockwork (30 Hz) | none | **GAP (P1)**: slice 3 |
 | Atlas, per-light resolution | Doom, HDRP | one global cube size | **GAP (P2)**: slice 3 |
 | Contact shadows for unshadowed lights | UE | budgeted lights only (cost × lights) | **differ**: cheap stopgap, revisit with measurements |
