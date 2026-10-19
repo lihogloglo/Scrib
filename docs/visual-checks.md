@@ -1423,7 +1423,7 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 
 ### PH-3 (P10): Robes and skirts drawn as authored (legs always covered)
 
-Status: **awaiting owner** (rewritten p10s, 2026-10-19). V1 (simulated lattice on the girdle) FAILED, owner
+Status: **confirmed by owner 2026-10-19** (Morrowind-style robes fine; rewritten p10s, 2026-10-19). V1 (simulated lattice on the girdle) FAILED, owner
 2026-10-18: legs went missing when a foot stepped past the robe, and the robe didn't follow the legs. Owner decision
 2026-10-19: full robe simulation is overkill, so robes and skirts now use their **authored thigh/calf skin** by
 default, as in vanilla (physics-adapter.md "Cloth"; research `../superfargoth/docs/research/cloth/long-robes.md`).
@@ -1651,7 +1651,7 @@ cloud drift direction follow it.
 
 ### UI-1: Gamepad-only navigation, synthetic (`cargo run -p sf_ui_bevy --example ui_nav` in `../superfargoth`)
 
-Status: **awaiting owner** (M5 U1, u1b, 2026-10-18). Shot: `shots/u1b/ui_nav_modal.png` (`-- --autotest <png>`: a
+Status: **confirmed by owner 2026-10-19** (gamepad works; not Morrowind-themed yet, U3; M5 U1, u1b, 2026-10-18). Shot: `shots/u1b/ui_nav_modal.png` (`-- --autotest <png>`: a
 synthetic gamepad runs 40 checked steps and exits 0). Plug in a real pad and use only it. Look for: Start opens the
 menu (focus on Inventory, yellow border); d-pad and left stick move focus between the six buttons, holding a direction
 repeats after a short delay; A on Quit opens the modal with focus on No; inside the modal Up/Down never move focus to
@@ -1662,7 +1662,7 @@ labels for every pad (per-family glyph icons are U3).
 
 ### UI-2: Mod stylesheets and hot reload, synthetic (`cargo run -p sf_ui_css --example ui_css` in `../superfargoth`)
 
-Status: **awaiting owner** (M5 U2, u2b, 2026-10-18). Shots: `shots/u2b/ui_css_before.png` (green buttons),
+Status: **confirmed by owner 2026-10-19** (M5 U2, u2b, 2026-10-18). Shots: `shots/u2b/ui_css_before.png` (green buttons),
 `shots/u2b/ui_css_after.png` (red, 0.33 s after the sheet was rewritten on disk; `-- --autotest <dir>` works on a temp
 copy and exits 0). A menu styled only by three mod sheets in load order: `base_ui` (layout, tokens, focus ring),
 `bright_buttons` (later, its button colour wins), `broken_mod` (one valid HUD rule, one invalid value). While it runs,
@@ -1676,7 +1676,7 @@ Known: placeholder look (game themes are U3); flair logs each broken sheet's war
 
 ### TS-1: Synthetic test levels, greybox (`scene level-flat-slopes`, `scene level-ledges`; `--camera <name>` picks a level camera)
 
-Status: **awaiting owner** (TS1 part 1, ts1a, 2026-10-18). Shots: `shots/ts1/level-flat-slopes.png`,
+Status: **confirmed by owner 2026-10-19** (TS1 part 1, ts1a, 2026-10-18). Shots: `shots/ts1/level-flat-slopes.png`,
 `shots/ts1/level-ledges.png` (with `--physics-debug`: collider wireframes on every box), `shots/ts1/level-flat-slopes-balls.png`
 (`ramps` camera, overlay on, a thrown ball resting on the floor). Levels are `levels/*.ron` (`docs/specs/test-levels.md`),
 opened in the normal viewer in their own worldspace: sky at 10:00, clouds, fog, physics, F1 keys and BRP as anywhere
@@ -1694,7 +1694,7 @@ unchanged with F2/F3/F10 and `--off froxels`: Vvardenfell's terrain streams into
 
 ### TS-2: Level actors, props and walk mode (`scene level-robe-walk`; also `U` in any `level-*` scene)
 
-Status: **awaiting owner** (TS1 part 2, ts1b, 2026-10-18; walk mode and props agent-checked by ts1c 2026-10-19: W/Shift moves the player, follow camera, V shoves the crates). Three robed NPCs on scripted paths (`levels/robe-walk.ron`):
+Status: **confirmed by owner 2026-10-19** (TS1 part 2, ts1b, 2026-10-18; walk mode and props agent-checked by ts1c 2026-10-19: W/Shift moves the player, follow camera, V shoves the crates). Three robed NPCs on scripted paths (`levels/robe-walk.ron`):
 camera `priest`: the Balmora temple priest in his own robe walks a flat 6 × 8 m loop, stops 3 s at its south-west
 corner and fidgets; camera `course`: Fargoth (common robe) walks and Elone (extravagant robe, run gait, 4 m/s) runs back
 and forth over a 15° ramp, a 1 m plateau and stairs (5 × 0.20 m) down the far side, waiting at the ends; camera
