@@ -50,7 +50,9 @@ and effects. Every task reports its ms cost per preset.
   spawned (timeout), no rough far-field shapes or loading objects on arrival (DR-4).
 - [~] 1.2 **Frame budget + gates.** 2026-10-19 (phase1): median 11 ms gates + budget table + A/B and trace in `perf.md`
   "Frame budget": 14.3-19.3 ms, **render thread bound** (sun cascades ~4.8 ms, actors ~3 ms main); caster size rule
-  ~0.3 ms; cube-cache plugin dropped (parked). Left: the cuts (1.4 shadows, 1.9, anim LOD), Nsight per pass (UAC). Nsight per pass + Tracy per system on the owner's laptop; a budget table per
+  ~0.3 ms; cube-cache plugin dropped (parked). Eye-height walk `balmora_walk` 26 ms: the near-ring statics are the
+  cost (`--off statics` 7.5 ms); NoCpuCulling tried (81 ms, dropped); anim budget on. Next: merge statics per cell at
+  bake time (OpenMW/MGE practice), fewer shadow views; Nsight per pass (UAC). Nsight per pass + Tracy per system on the owner's laptop; a budget table per
   preset in `perf.md`; `benchmarks/exterior_*.json` get a median gate at the target (they only checked 33 ms, so
   the fall from ~11 ms on 10-12 to ~30 fps never failed). Then cut whatever is over budget.
 - [~] 1.3 **Temporal resolve as the base.** 2026-10-19 (phase1): `Upscaling::Taa` (Bevy TAA) default when DLSS is off
