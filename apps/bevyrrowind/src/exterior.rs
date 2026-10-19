@@ -257,12 +257,15 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         ..SkyRenderOptions::default()
     });
     // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
+    // scaffold switch [`FAR_STATIC_SHADOWS`], off until verified;
     // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.
     app.add_plugins(sf_sky_bevy::FarShadowPlugin)
         .add_observer(no_far_shadow_terrain)
         .add_observer(no_far_shadow_proxy)
         .add_systems(Update, sun_shadow_input);
-    if off_parts.has(Part::FarShadows) {
+    // Off by default until it is verified (owner 2026-10-19): with it on, interior release
+    // runs panic in bevy_pbr light.rs ("Failed to get directional light visible entities").
+    if off_parts.has(Part::FarShadows) || !FAR_STATIC_SHADOWS {
         app.insert_resource(sf_sky_bevy::FarShadowConfig(None));
     }
     // M6 WE3: the weather (`sf_weather_bevy`) drives haze, dust, cloud cover, the clouds, the
@@ -1073,6 +1076,12 @@ fn sun_shadow(legacy: bool, contact_shadows: bool) -> sf_sky_bevy::SunShadow {
     }
     sf_sky_bevy::SunShadow { depth_bias: SUN_DEPTH_BIAS, normal_bias: SUN_NORMAL_BIAS, contact_shadows }
 }
+
+/// Scaffold: the far static sun shadow map (shadows F3b, weather.md "Sun
+/// cascades and the far static map"). Off until it is verified on screen
+/// and the interior panic is fixed; removal path: delete once it is on by
+/// default (or the map is dropped).
+const FAR_STATIC_SHADOWS: bool = false;
 
 /// Sun shadow depth bias, meters along the light (Bevy: 0.02).
 const SUN_DEPTH_BIAS: f32 = 0.02;
