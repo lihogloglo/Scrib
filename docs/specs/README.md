@@ -12,6 +12,12 @@ match, differ (and why), or lack it (gap + priority). A spec without it is
 not "agreed". Existing specs get theirs through roadmap job J9;
 industry-audit.md is the cross-system starting point.
 
+**Every spec follows the eight net-ready rules** in [net.md](net.md) (rule since 2026-10-19,
+co-op N0): fixed-tick gameplay, commands as the only input, state apart from presentation, pure
+steps, one owner per piece of state, no singleton player, stable ids and absolute positions,
+events as data. It says how in a "Co-op" section or line, or lists its exceptions; known
+violations are in net.md's audit table.
+
 Index:
 
 | Spec | Status | Crates | Milestone |
@@ -30,6 +36,9 @@ Index:
 | [scripting.md](scripting.md): Luau runtime via mlua (state per mod, sandbox, memory/CPU limits), schedule slots, curated versioned API + `.d.luau`, named timers and plain-data state, hot reload, error isolation | draft (2026-10-13) | `sf_script`, `sf_script_bevy` | M5 |
 | [mods.md](mods.md): mod pipeline end to end (repository, profiles, load order, VFS/records/scripts/UI per mod, RON record patches with field-level conflicts, reports, hot reload, bake fingerprints) | draft (2026-10-13) | `sf_mods`, `sf_vfs`, `sf_records`, `sf_bake` | M5 |
 | [locomotion.md](locomotion.md): intent, trajectory springs, ground probes, kinematic mover | draft (2026-10-11) | `sf_controller`, `sf_controller_bevy` | M3 |
+| [action.md](action.md): action layer (commands, move rules, chooser on the fixed tick, motion owners, windows, mode profiles, stat bands, interaction points and edges, co-op readiness), phases A1-F | draft, awaiting owner review (R11b, 2026-10-19) | `sf_action`, `sf_action_bevy`, `sf_interaction` | M4 P11 (A1-B5), M10 (E) |
+| [camera.md](camera.md): third person (orbit, collision, optional lock-on), first person from a baked camera track, per-move look limits, framed moves, comfort | draft, awaiting owner review (R11b, 2026-10-19) | `sf_camera`, `sf_camera_bevy` | M4 P11 (D1) |
+| [net.md](net.md): 2-4 player co-op, host-authoritative listen server, own-character prediction, replication and ownership per system, context player, multi-region host, saves, quest model, crate criteria, the 8 net-ready rules and the spec audit | spec (N0, 2026-10-19) | `sf_net` (N2) | co-op N0-N8 |
 | [physics.md](physics.md): rapier3d behind Bevy-free `sf_physics`, floating-origin rebase, sleeping items + `body.cook`, controller pushes, carry/throw, `ragdoll.cook` + powered ragdolls, bone-lattice cloth | draft (2026-10-12) | `sf_physics`, `sf_physics_bevy`, `sf_ragdoll`, `sf_anim`, `sf_character`, `sf_controller` | M4 |
 | [rig-profile.md](rig-profile.md): limb-chain rig profile for any skeleton (girdles, N limbs, spine, neck/head, tails, wings), auto-detection, creature support | draft (2026-10-11) | `sf_anim`, `sf_anim_graph`, `sf_controller`, `sf_character` | M3 |
 | [weather.md](weather.md): weather state machine + presets as records, Nubis clouds + cloud shadows, froxel/height/ground fog + god rays, wind field, precipitation with occlusion, surface state (wetness, puddles, snow, ash), distant shadows (CSM + shadow-height map); near-term shadow-pop and Ghostfence-pop fixes | draft (2026-10-11) | `sf_wind`, `sf_weather`, `sf_atmos`, `sf_surface` + `_bevy` plugins, `sf_precip_bevy` | M6 (near-term fixes: M2) |

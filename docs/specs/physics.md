@@ -415,19 +415,36 @@ filtered per leaf) and the one-sided internal-edge static meshes: a statics-only
 ### Controller
 
 `KinematicMover` stays (locomotion.md); `bevy_tnua` is not adopted. Reasons: the mover is already
-batched (150 characters, 0.096 ms), drives root motion, ORCA and the animation feed at frame rate, and
+batched (150 characters, 0.096 ms), drives root motion, ORCA and the animation feed in one stage, and
 the industry's character controllers are kinematic (UE CMC, Unity CCT, Jolt `CharacterVirtual`).
 A floating dynamic capsule (tnua) would put 150 bodies in the solver and fight root motion.
 Changes in M4:
 
-- The mover keeps running in `Update` at frame rate (locomotion.md had planned a move to the fixed
-  step; UE's CMC also ticks per frame). Each character also owns a **kinematic capsule** body
-  (`CHARACTER`) whose target before each fixed step is the mover's latest position, so falling and
-  thrown bodies hit characters.
+- **The mover steps on the fixed tick** (revised 2026-10-19, N0; supersedes the 2026-10-12 "keeps
+  running in `Update` at frame rate"). It runs in `FixedUpdate` at the physics rate (60 Hz,
+  `Time<Fixed>`), once per tick, after the action layer's chooser (`sf_action`, action.md) and before
+  the physics step, at most 3 ticks per frame like the physics step. Rendering interpolates the root
+  between the last two tick poses (the same interpolation the bodies' write-back uses), and the render
+  body's correction spring (locomotion.md "Action-layer changes (R11b)") hides what is left. Far
+  tiers (A2/A3) may step every second or fourth tick. Reasons: the chooser, input buffer, coyote and
+  jump-buffer timers count ticks; action root motion comes from baked tracks on the action clock in
+  the same tick (no one-frame root-motion handoff); and co-op prediction (net.md "Prediction") must
+  replay several ticks in one frame, with host and client agreeing tick for tick (net.md rule 1).
+  Overwatch and UE's Mover plugin (Network Prediction, fixed-tick mode) tick characters on a fixed
+  step for the same reason; the per-frame CMC needs its saved-moves machinery to replay a variable
+  `dt`. Budget: the mover stage per tick stays within 10 % of today's per-frame cost on wk-balmora
+  (action.md phase A2, which builds this; until A2 the code still steps per frame, as built below).
+- Each character owns a **kinematic capsule** body (`CHARACTER`) whose target for each physics step
+  is the mover's pose of the same tick, so falling and thrown bodies hit characters.
+- **Co-op ownership** (net.md): the host steps every mover. A client steps only its own player's
+  mover (predicted, replayed on correction) against its local static world, with props and other
+  characters at their interpolated poses; it never pushes props (pushes and impacts are host-only,
+  their results arrive as replicated body state).
 - Sweeps include `STATIC | PROP` (and `TERRAIN` via `TerrainProbe`); `DEBRIS` never blocks.
 - **Pushes**: for each `PROP` hit in a sweep, an impulse `min(m_char · Δv_n, push_force · dt)` on the
-  body (default push force 400 N, per character); `DEBRIS` in the capsule's path get the same capped
-  impulse. Pushed props slow the mover by their resistance (UE "push force factor").
+  body (default push force 400 N, per character; `dt` is the tick, 1/60 s); `DEBRIS` in the capsule's
+  path get the same capped impulse. Pushed props slow the mover by their resistance (UE "push force
+  factor").
 - **Impacts** (as built 2026-10-18, PH-10): a `Hit` on a `CHARACTER` capsule of at least `impact_threshold` (1 N·s) becomes an
   `ImpactOnCharacter { entity, impulse, point, direction }` event; gameplay picks a hit reaction or a knockdown.
   A hit is the incoming body's momentum along the normal at first contact (rapier `CollisionEvent::Started`, which
@@ -448,7 +465,7 @@ Changes in M4:
   force). `Δv_n` uses the **intended** velocity (the mover removes the part into whatever blocked it, which would
   leave nothing to push with); the normal is horizontal, from the capsule axis to the body's center of mass, and
   bodies within `reach` 4 cm of the mover's capsule count (more than its 1 cm wall skin). One push pass per mover
-  step (frame rate), DEBRIS and PROP alike, held items stay held. `sf_physics_bevy` feature `controller`
+  step (frame rate as built; per tick from action.md A2), DEBRIS and PROP alike, held items stay held. `sf_physics_bevy` feature `controller`
   (`character.rs`): capsules for every non-`Dormant` `Mover` in the active world, targeted after
   `ControllerSystems::Step`, pushes from `Mover::applied`, `ImpactOnCharacter` messages from `Hit` events
   on capsules of at least 1 N·s (`PhysicsEvents` keeps a frame's events), `CharacterStats`. Ground: `impl GroundProbe for

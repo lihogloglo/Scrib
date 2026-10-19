@@ -1821,3 +1821,20 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   mover; physics.md not yet edited: follow-up). (6) Camera: third person primary with optional lock-on, first person from a baked virtual
   camera track with per-move look limits and soft aim only, framed cameras for paired moves, comfort switches.
   (7) Clips stay bones-only (`clip.annotate` + slot defaults + moveset sheet); gaps filled from packs only.
+- **2026-10-19 (n0; specs/net.md, physics.md "Controller"; docs only): co-op N0.** From R12 (`research/coop/README.md`)
+  and the owner's decisions of 2026-10-19 (shared world with own characters; N0 now, N1-N5 after M6, N6-N8 after M7;
+  direct IP/LAN first, Steam later as an opt-in game feature). (1) **Listen server, host-authoritative**: the host
+  simulates everything; each client predicts only its own character (and held item) from per-tick commands and
+  interpolates the rest ~100 ms behind; single-player is a host with no clients. (2) **The eight net-ready rules are
+  binding for every spec** (specs/README.md); net.md's audit table lists each known violation, its required change and
+  its slice. (3) **physics.md "Controller" revised: the kinematic mover steps on the fixed tick (60 Hz) with render
+  interpolation**, supersedes 2026-10-12's frame-rate mover; built in action.md A2. (4) `PlayerId` (0-3, wire) plus a
+  persistent player key (saves); scripts get a **context player** (acting/talking player, else nearest player for local
+  scripts, else the party leader); no world pause in co-op, rest is a party vote. (5) **Multi-region host**: R0 around
+  every player, one Rapier world per player cluster (Rapier f64 as fallback, N5 measures). (6) Quests: world state
+  (journal, topics, globals, NPC state) shared, character state (stats, inventory, factions, bounty) per player;
+  rewards to the context player. (7) Saves: host world save + per-player character file, host copy wins in its
+  world. (8) N1 crate rule: lightyear if it passes Bevy lag, listen-server quality, non-Avian kinematic prediction
+  and build cost; else replicon + renet2/quinnet + our own one-entity rollback. Biggest audit findings: the
+  frame-rate mover (fixed now in the spec), "one active worldspace / one gameplay anchor" in streaming.md and
+  physics.md "Stepping" (N5), and MWScript's and the Lua API's singleton `Player` (N6).
