@@ -1024,6 +1024,10 @@ ragdolls; robes move." Tasks in dependency order:
   ladders, sitting, doors, levers). Learn from AC1-rs, faith-runner, ELDEN-RING-Combat-Rewrite, sekiro-rs and ozz,
   don't copy them: animation.md "Prior art: open Rust/Bevy game reimplementations". First step: pick a clip source
   (Morrowind has no climb/vault/sit clips), then write the traversal spec. Not started: needs the owner's go.
+  **Spec: `../superfargoth/docs/specs/action.md`** (R11b; owner answered its open questions 2026-10-19) with `camera.md`; P11 is its
+  phases **A1-B5** ("Build plan": A1 backbone, A2 fixed tick in Bevy incl. movers on the fixed tick (physics.md
+  "Controller" revised in co-op N0), B1 progress + chain warp, B2 mantle and vault, B3 ledge catch and hang, B4 edge
+  index + ladders, B5 free-run); C1 interactions and D1 camera follow. Net-ready per `specs/net.md`.
 - [x] TS1 Synthetic test levels (owner go 2026-10-18; specs: superfargoth `test-levels.md` format + research,
   `docs/specs/test-levels.md` game side): greybox levels authored as `levels/*.ron`, opened through `scene`/`view` with
   the usual flags, BRP and F1 keys; uses: PH-3 cloth on slopes, PH checks, traversal courses (research 01).
@@ -1599,6 +1603,34 @@ and strafing); checks PT-2..PT-5 awaiting owner.
 setup a frame late), softer adaptation with live strength keys; seamless portals are an optional setting, **off by
 default** (`--portals` / `BEVYRROWIND_PORTALS=1`), parked until M8 (open items in portals.md "Last fix pass"); PT-6.
 
+## Co-op (N0-N8)
+
+2-4 player co-op: one player hosts, host-authoritative with prediction of your own character only; shared world,
+own characters (owner 2026-10-19). Research R12 `../superfargoth/docs/research/coop/README.md`; spec
+`../superfargoth/docs/specs/net.md` (rules, ownership, replication, context player, saves, quest model, audit).
+**Timing (owner): N0 now; N1-N5 after M6; N6-N8 after M7.** Transport: direct IP/LAN first, Steam later (opt-in).
+Each slice 1-2 steps, verified and committed before the next.
+
+- [x] N0 Net spec + audit (docs only): `specs/net.md` (8 net-ready rules binding for every spec, ownership per
+  system, `PlayerId` + context player, multi-region host, saves, quest model, N1 crate criteria); audit table of all
+  specs (spec | violation | required change | slice); physics.md "Controller": mover on the fixed tick with
+  interpolation; specs README index + rule; ARCHITECTURE §10.
+- [ ] N1 Crate spike (after M6): two processes, capsules on `sf_level` courses, lightyear vs replicon + own
+  one-entity rollback at 100 ms / 1 % loss; clean build time, bandwidth, feel. Done: crate picked, §10 entry.
+- [ ] N2 `sf_net` thin plugin (after M6): host/join over UDP (direct IP, LAN discovery), content fingerprint
+  handshake, `PlayerId`, remote players interpolated. Done: 2 players walk Balmora together.
+- [ ] N3 Predicted locomotion, jump and swim (after M6): reconciliation, net debug overlay. Done: no visible
+  correction at 100 ms RTT.
+- [ ] N4 Predicted actions (after M6): attacks, dodge, traversal with warps; host hit authority, lag compensation,
+  host-allocated spawn ids. Done: two players fight one NPC; mantles stay correct.
+- [ ] N5 World (after M6): several R0 regions and physics regions on the host, interest management, overlay per
+  cell, props, carry/throw, ragdolls. Done: players 5 km apart, host frame within budget.
+- [ ] N6 Scripts and RPG (after M7): host-only MWScript/Lua with the context player, routed MessageBox and dialogue,
+  container/barter requests, per-player menus. Done: a scripted main-quest chain completes in co-op.
+- [ ] N7 Saves (after M7): host world + per-player character, join in progress, reconnect, clock, rest vote. Done:
+  save, quit, resume with a guest.
+- [ ] N8 Steam transport (after M7): lobby, relay, invites, opt-in game feature. Done: invite a friend through Steam.
+
 ## Session log
 
 Newest first. One or two lines each: what changed, what was verified.
@@ -1797,3 +1829,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (ts1c): TS1 [x] part 3: `--camera` through `scene` (ts1b report not reproduced; real bug fixed: a repeated `view` flag now overrides, so `scene X --camera` works on scenes with their own camera; `level::pick_camera` + 2 tests); walk mode verified via BRP (player dressed at `start`, W/Shift move it, follow camera, start/stop log line); props verified (`V` balls shove the crates; G colliders on meshes). TS-1/TS-2 awaiting owner.
 - 2026-10-19 (we2c2): M6 WE2 [x] part 3b: weather records load as the synthesized mod `morrowind-weather` (mw_mods, after content, before user mods; a record mod patches a preset in a test); `bevyrrowind weather forecast <region> --days 3`; 1,000-slot frequency tests vs REGN (synthetic + all 16 real regions) green; clippy clean. Next: WE3 (we3a `sf_weather_bevy` WeatherPlugin + sky/wind).
 - 2026-10-19 (p10s): M4 P10 [~] S1 robes and skirts drawn as authored by default (owner: full robe sim is overkill): `mw_physics::ClothMode`, `--cloth robes` opt-in keeps V1; unit test + clippy clean; walk/run lineup shows legs covered, no `cloth:` line; PH-3 rewritten (awaiting owner); parked leg follow, hem widening, `cloth.cook` bake; S2 hem-only painted-max-distance drape logged.
+- 2026-10-19 (n0, docs only): co-op N0 [x]: `superfargoth/docs/specs/net.md` (listen server, own-character prediction, 8 net-ready rules binding, ownership per system, context player, multi-region host, saves, quest model, N1 crate criteria) + audit table of all specs; physics.md "Controller" mover on the fixed tick; specs README index (action, camera, net); new "## Co-op (N0-N8)" section; P11 points to action.md A1-B5; §10 entry. No builds.
