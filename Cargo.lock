@@ -2201,6 +2201,7 @@ dependencies = [
  "sf_water",
  "sf_water_bevy",
  "sf_weather",
+ "sf_weather_bevy",
  "sf_wind_bevy",
  "sf_world",
  "sf_world_bevy",
@@ -6896,6 +6897,20 @@ dependencies = [
  "sf_records",
  "sf_sky",
  "sf_wind",
+ "smallvec",
+]
+
+[[package]]
+name = "sf_weather_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_platform",
+ "sf_diag_bevy",
+ "sf_sky_bevy",
+ "sf_weather",
+ "sf_wind_bevy",
  "smallvec",
 ]
 

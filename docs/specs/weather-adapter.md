@@ -351,3 +351,22 @@ is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour ov
   `mw_weather::{register_kinds, weather_type_of, MwWeather::define_in}`.
 - Verify item "ini edit re-runs only `weather.climate`" is moot as built: there is no weather bake step; the records
   are rebuilt from `REGN` + ini at every load (the `fingerprint` field stays for a future cached step).
+
+## As built: WE3 part 1 (we3a, 2026-10-19)
+
+- **App wiring** (`exterior.rs`, `weather.rs`): `WeatherSetup::build(db, eye, hours, force, seed 0)` resolves the
+  `WeatherBook` from the loaded `RecordDb` (the `morrowind-weather` mod), maps every exterior `CELL` grid square to
+  `mw_region/<region>`'s climate, and falls back to the Bitter Coast climate (synthetic levels, regionless cells).
+  `weather_site` writes `WeatherSite` from the exterior camera's grid square (absolute engine position = terrain
+  origin cell + camera translation) and altitude; in an interior worldspace it keeps the last climate.
+- **Haze, dust and dust tint now come from the presets** (`sf_weather_bevy` drives `sf_sky`); the app's `SkyLook`
+  keeps only the fog look (part 2 moves fog and the cloud genus to the frame). The we2b test proves the presets equal
+  the removed table at every quarter hour, so `--weather X` looks as `--clouds X` did. `morning_haze` moved to the
+  presets' `haze_by_hour` curve. Wind: the field now follows the preset (`1 + 14 w` m/s, wandering) instead of
+  `sf_sky::Wind::default()`; the Red Mountain storm source joins in ash/blight weather.
+- **Flags:** `--weather <type>` forces one Morrowind weather in every climate (no transition, held for good);
+  `--clouds` now defaults to the start weather's genus (forced, or the start cell's forecast at the start hour,
+  printed as `weather <Type>`); `--haze`/`--dust` pin the sky terms (`WeatherOverrides`). The live C key still swaps
+  cloud genus + fog look only.
+- **Bridge until part 2:** clouds and fog are picked once at start from the start weather; haze and wind follow the
+  live forecast, so a long run can show e.g. rain haze under the start's clear clouds.

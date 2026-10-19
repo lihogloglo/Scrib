@@ -217,11 +217,17 @@ struct ViewFlags {
     camera: Option<String>,
     /// Exteriors: clouds, a genus (clear, fair, cumulus, stratocumulus, altocumulus,
     /// altostratus, cirrus, overcast, storm) or a Morrowind weather (cloudy, foggy, rain,
-    /// thunderstorm, ashstorm, blight, snow, blizzard). `--off clouds` drops them.
-    #[arg(long, default_value = "fair", value_parser = parse_clouds)]
-    clouds: exterior::CloudChoice,
+    /// thunderstorm, ashstorm, blight, snow, blizzard). Default: the `--weather` (or the start
+    /// cell's forecast) weather's genus. `--off clouds` drops them.
+    #[arg(long, value_parser = parse_clouds)]
+    clouds: Option<exterior::CloudChoice>,
+    /// Exteriors: force a Morrowind weather everywhere (clear, cloudy, foggy, overcast, rain,
+    /// thunderstorm, ashstorm, blight, snow, blizzard) instead of the regions' forecast
+    /// (M6 WE3, `sf_weather_bevy`).
+    #[arg(long, value_parser = weather::parse_weather_type)]
+    weather: Option<mw_weather::WeatherType>,
     /// Exteriors: fixed aerosol haze (`sf_sky::Weather::haze`; 1 is a pristine Earth sky)
-    /// instead of the `--clouds` weather's, without the morning curve (weather.md N1).
+    /// instead of the weather's, without the morning curve (weather.md N1).
     #[arg(long)]
     haze: Option<f32>,
     /// Exteriors: fixed dust/ash density (0 none, ~6 an ash storm) instead of the weather's
@@ -466,6 +472,10 @@ impl ViewFlags {
             settings.apply_transform = false;
         }
         println!("camera {eye:.1} -> {target:.1}");
+        let weather = weather::WeatherSetup::build(db, eye, self.day * 24.0 + self.hour, self.weather, 0);
+        if let Some(t) = weather.start {
+            println!("weather {}{}", t.name(), if self.weather.is_some() { " (forced)" } else { "" });
+        }
         Ok(exterior::ExteriorOptions {
             title,
             eye,
@@ -487,10 +497,11 @@ impl ViewFlags {
             hour: self.hour,
             day: self.day,
             sun_size: self.sun_size,
-            clouds: self.clouds,
+            clouds: self.clouds.or_else(|| weather.start.and_then(|t| exterior::CloudChoice::parse(t.name()))).unwrap_or_default(),
             haze: self.haze,
             dust: self.dust,
             fog: self.fog,
+            weather: Some(weather),
             quality: exterior::Quality::resolve(self.quality),
             perf,
             lights: light_infos(db),

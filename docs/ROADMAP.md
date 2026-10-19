@@ -1388,11 +1388,16 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   real install (16 regions), 1,000 slots each, within 4.5 σ. Verify: tests + frequencies met; "ini edit re-runs only
   `weather.climate`" moot (no weather bake step: records rebuilt at every load). Leftovers: positional one-shots;
   REGN edits from an ESP in a folder mod ordered after `morrowind-weather` are ignored (weather-adapter.md).
-- [ ] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
+- [~] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
   clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
   Verify: time-lapse clear → overcast → rain over 2 game hours (WE-1: clouds lead, rain lags, no pops); Ascadian Isles →
   Ashlands crossing (WE-2: border blend); `sf_diag` `weather/*` counters; CPU ≤ 0.05 ms.
+  **Part 1 done (we3a, 2026-10-19):** new `sf_weather_bevy` (`WeatherPlugin`: clock → evaluate at the app-written
+  `WeatherSite` → `CurrentWeather`; drives sky haze/dust/tint and the wind field + storm sources; `weather/*` counters;
+  evaluate 0.0027 ms); app maps CELL grid → REGN climate, `--weather <type>`, `SkyLook` reduced to fog, `--clouds`
+  defaults to the start weather; WE-0 awaiting owner. **Part 2 (we3b):** cloud genus blend (keep `CloudLook.scaled(0.5)`),
+  fog, sky cover/dimming, precipitation, lightning/thunder, region border blend, WE-1/WE-2.
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1830,3 +1835,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we2c2): M6 WE2 [x] part 3b: weather records load as the synthesized mod `morrowind-weather` (mw_mods, after content, before user mods; a record mod patches a preset in a test); `bevyrrowind weather forecast <region> --days 3`; 1,000-slot frequency tests vs REGN (synthetic + all 16 real regions) green; clippy clean. Next: WE3 (we3a `sf_weather_bevy` WeatherPlugin + sky/wind).
 - 2026-10-19 (p10s): M4 P10 [~] S1 robes and skirts drawn as authored by default (owner: full robe sim is overkill): `mw_physics::ClothMode`, `--cloth robes` opt-in keeps V1; unit test + clippy clean; walk/run lineup shows legs covered, no `cloth:` line; PH-3 rewritten (awaiting owner); parked leg follow, hem widening, `cloth.cook` bake; S2 hem-only painted-max-distance drape logged.
 - 2026-10-19 (n0, docs only): co-op N0 [x]: `superfargoth/docs/specs/net.md` (listen server, own-character prediction, 8 net-ready rules binding, ownership per system, context player, multi-region host, saves, quest model, N1 crate criteria) + audit table of all specs; physics.md "Controller" mover on the fixed tick; specs README index (action, camera, net); new "## Co-op (N0-N8)" section; P11 points to action.md A1-B5; §10 entry. No builds.
+- 2026-10-19 (we3a): M6 WE3 [~] part 1: new `sf_weather_bevy` `WeatherPlugin` (SkyTime → `sf_weather::evaluate` at the camera's REGN climate → `CurrentWeather`; drives sky haze/dust/tint + wind field and storm source; `weather/*` counters; 0.0027 ms, gate 0.05; `WindState::source_mut`); app `--weather <type>`, haze/dust table replaced by the presets, `--clouds` defaults to the start weather; 4 tests green, clippy clean; Seyda Neen clear/overcast screenshots sane, WE-0 awaiting owner. Next: we3b (clouds genus blend, fog, precip, lightning, border blend).

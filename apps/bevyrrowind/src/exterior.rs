@@ -39,7 +39,8 @@ use sf_diag_bevy::{DiagCounters, DiagScenario, FlyThroughPose};
 use sf_model::steps::MeshCookStep;
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_sky_bevy::sf_sky::{SkyClock, SkySettings};
-use sf_sky_bevy::{MoonLight, SkyCamera, SkyConfig, SkyPlugin, SkyRenderOptions, SkyTime, SunLight, TemporalHistory, WeatherState};
+use sf_sky_bevy::{MoonLight, SkyCamera, SkyConfig, SkyPlugin, SkyRenderOptions, SkyTime, SunLight, TemporalHistory};
+use sf_weather_bevy::{WeatherOverrides, WeatherPlugin, WeatherSite, WeatherSystems};
 use sf_terrain_bevy::sf_terrain::bake::BakedTerrain;
 use sf_terrain_bevy::{GroundBlendPlugin, TerrainCamera, TerrainDebug, TerrainOrigin, TerrainPlugin, TerrainSettings, TerrainStats, TerrainSystems, TerrainWorld};
 use sf_vfs::Vfs;
@@ -92,6 +93,8 @@ pub struct ExteriorOptions {
     pub dust: Option<f32>,
     /// Fog multiplier (`--fog`) on the weather's fog (weather.md "Fog", F2).
     pub fog: Option<f32>,
+    /// The live weather (M6 WE3): records, state and the grid's climates.
+    pub weather: Option<crate::weather::WeatherSetup>,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
     /// Benchmark, window size and A/B switches.
@@ -247,9 +250,16 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         cascades: sun_cascades(&far_settings.levels, off_parts.has(Part::ShadowTune)),
         ..SkyRenderOptions::default()
     });
-    // weather.md N1/N2: haze and dust follow the `--clouds` weather (or `--haze`/`--dust`).
-    app.insert_resource(SkyWeather { look: options.clouds.sky, haze: options.haze, dust: options.dust, fog: options.fog })
-        .add_systems(Update, (feed_wind, drive_sky_weather).chain().before(sf_sky_bevy::SkySystems::Apply));
+    // M6 WE3: the weather (`sf_weather_bevy`) drives haze, dust and wind from the camera's
+    // region (`--haze`/`--dust` pin them); the fog look still follows `--clouds` (WE3 part 2).
+    app.insert_resource(SkyWeather { look: options.clouds.sky, fog: options.fog })
+        .add_systems(Update, (feed_wind, drive_sky_weather).chain().after(WeatherSystems::Apply).before(sf_sky_bevy::SkySystems::Apply));
+    if let Some(weather) = options.weather {
+        app.add_plugins(WeatherPlugin { book: weather.book, state: weather.state })
+            .insert_resource(WeatherOverrides { haze: options.haze, dust: options.dust })
+            .insert_resource(ClimateMap { cells: weather.cells, fallback: weather.fallback })
+            .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
+    }
     // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
     app.add_plugins(sf_wind_bevy::WindPlugin::default())
         .add_systems(PostUpdate, wind_origin.after(sync_origin).before(sf_wind_bevy::WindSystems::Advance));
@@ -1025,31 +1035,21 @@ impl Default for CloudChoice {
     }
 }
 
-// -- haze and dust (weather.md N1/N2, weather-adapter.md "Haze") ---------------------
+// -- fog look and live weather (weather.md "Fog", M6 WE3) ----------------------------
 
-/// What a weather does to the sky's medium: `sf_sky::Weather::haze` (1 is
-/// Bevy's clean-Earth aerosol, optical depth ~0.01) and `dust` (the
-/// absorbing dust/ash term), with the dust's absorption tint. A scaffold
-/// table until `mw_weather` presets carry it (M6 WE2/WE3).
-///
-/// Calibrated for Morrowind's compressed world, where the far field is 1-5
-/// km away (weather-adapter.md "Haze"): a clear day needs ground extinction
-/// near 9e-5 /m (haze 20, aerosol optical depth ~0.18, a typical clear
-/// continental day) for the mountains to sit back at all; the spec's first
-/// guess (2-3) assumed Earth-scale views and is invisible here.
+/// What a weather does to the fog: a scaffold table until WE3 part 2 drives
+/// the fog from the `WeatherFrame`. Haze, dust and their tint moved to the
+/// `mw_weather` presets (`sf_weather_bevy` drives them; `mw_weather`'s test
+/// proves the presets equal the old table at every quarter hour).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SkyLook {
-    pub haze: f32,
-    pub dust: f32,
-    pub dust_tint: Vec3,
     pub fog: FogLook,
 }
 
 /// What a weather does to the fog (weather.md "Fog", F2; weather-adapter.md
 /// "Fog"): height-fog visibility at sea level (Koschmieder, meters; 0 none)
 /// and falloff height, ground-fog banks at their morning peak and the
-/// fraction left by day, and the fog's albedo. Scaffold table like the rest of
-/// [`SkyLook`] until `mw_weather` reads `Land Fog Day/Night Depth` (WE2).
+/// fraction left by day, and the fog's albedo.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FogLook {
     pub visibility: f32,
@@ -1059,75 +1059,38 @@ pub(crate) struct FogLook {
     pub albedo: Vec3,
 }
 
-const NO_FOG: FogLook = FogLook { visibility: 0.0, height: 200.0, banks: 0.0, banks_day: 0.0, albedo: Vec3::ONE };
 const fn fog_look(visibility: f32, height: f32, banks: f32) -> FogLook {
     FogLook { visibility, height, banks, banks_day: 0.0, albedo: Vec3::ONE }
 }
 /// Ash: grey-brown, absorbing (the dust term's colour).
 const ASH_ALBEDO: Vec3 = Vec3::new(0.55, 0.47, 0.38);
 
-const fn sky_look(haze: f32, dust: f32) -> SkyLook {
-    SkyLook { haze, dust, dust_tint: Vec3::ONE, fog: NO_FOG }
-}
 /// Clear and fair keep a thin valley haze (F3: the froxels need a medium for sun
 /// shafts; 1.5x at dawn by the ground-fog curve), far too thin to read as fog.
-const SKY_CLEAR: SkyLook = SkyLook { fog: fog_look(40_000.0, 100.0, 0.0), ..sky_look(20.0, 0.0) };
-const SKY_FAIR: SkyLook = SkyLook { fog: fog_look(30_000.0, 120.0, 0.0), ..sky_look(24.0, 0.0) };
-const SKY_OVERCAST: SkyLook = SkyLook { fog: fog_look(8_000.0, 300.0, 0.0), ..sky_look(32.0, 0.0) };
-const SKY_RAIN: SkyLook = SkyLook { fog: fog_look(3_000.0, 250.0, 0.25), ..sky_look(48.0, 0.0) };
-const SKY_THUNDER: SkyLook = SkyLook { fog: fog_look(2_000.0, 250.0, 0.3), ..sky_look(48.0, 0.0) };
+const SKY_CLEAR: SkyLook = SkyLook { fog: fog_look(40_000.0, 100.0, 0.0) };
+const SKY_FAIR: SkyLook = SkyLook { fog: fog_look(30_000.0, 120.0, 0.0) };
+const SKY_OVERCAST: SkyLook = SkyLook { fog: fog_look(8_000.0, 300.0, 0.0) };
+const SKY_RAIN: SkyLook = SkyLook { fog: fog_look(3_000.0, 250.0, 0.25) };
+const SKY_THUNDER: SkyLook = SkyLook { fog: fog_look(2_000.0, 250.0, 0.3) };
 /// Foggy: banks all day (a third of the morning peak).
-const SKY_FOGGY: SkyLook = SkyLook { fog: FogLook { banks_day: 0.35, ..fog_look(3_000.0, 150.0, 1.0) }, ..sky_look(60.0, 0.0) };
-const SKY_BLIZZARD: SkyLook = SkyLook { fog: fog_look(300.0, 400.0, 0.0), ..sky_look(80.0, 0.0) };
+const SKY_FOGGY: SkyLook = SkyLook { fog: FogLook { banks_day: 0.35, ..fog_look(3_000.0, 150.0, 1.0) } };
+const SKY_BLIZZARD: SkyLook = SkyLook { fog: fog_look(300.0, 400.0, 0.0) };
 /// Grey-brown ash (the model's dust colour).
-const SKY_ASHSTORM: SkyLook = SkyLook { fog: FogLook { albedo: ASH_ALBEDO, ..fog_look(450.0, 500.0, 0.0) }, ..sky_look(24.0, 4.0) };
-/// Ash tinted red: more green/blue absorption leaves red.
-const SKY_BLIGHT: SkyLook = SkyLook {
-    dust_tint: Vec3::new(0.6, 1.4, 1.9),
-    fog: FogLook { albedo: Vec3::new(0.62, 0.42, 0.36), ..SKY_ASHSTORM.fog },
-    ..SKY_ASHSTORM
-};
+const SKY_ASHSTORM: SkyLook = SkyLook { fog: FogLook { albedo: ASH_ALBEDO, ..fog_look(450.0, 500.0, 0.0) } };
+/// Blight: the ash fog tinted red.
+const SKY_BLIGHT: SkyLook = SkyLook { fog: FogLook { albedo: Vec3::new(0.62, 0.42, 0.36), ..SKY_ASHSTORM.fog } };
 
-/// Morning haze: dawn is the humid, still part of the day (aerosols swell,
-/// the night inversion traps them), so haze peaks ×1.5 at 6:30 and is back
-/// to the weather's value by 10:00. Dust doesn't follow it.
-pub(crate) fn morning_haze(hour: f32) -> f32 {
-    let x = if hour < 6.5 { (hour - 4.0) / 2.5 } else { (10.0 - hour) / 3.5 };
-    let x = x.clamp(0.0, 1.0);
-    1.0 + 0.5 * x * x * (3.0 - 2.0 * x)
-}
-
-/// The sky look in force and the `--haze`/`--dust` overrides (fixed values,
-/// no morning curve). The live C key swaps `look` with the cloud genus.
+/// The fog look in force (the live C key swaps it with the cloud genus).
 #[derive(Resource, Clone, Copy, Debug)]
 pub(crate) struct SkyWeather {
     pub look: SkyLook,
-    pub haze: Option<f32>,
-    pub dust: Option<f32>,
     /// `--fog`: multiplier on the look's fog.
     pub fog: Option<f32>,
 }
 
-/// Feeds [`SkyWeather`] into `sf_sky`'s weather; the sky plugin rebuilds the
-/// medium (rate limited) when it moves by a step.
-fn drive_sky_weather(
-    sky: Res<SkyWeather>,
-    clock: Res<SkyTime>,
-    config: Res<SkyConfig>,
-    mut weather: ResMut<WeatherState>,
-    fog: Option<ResMut<sf_atmos_bevy::Fog>>,
-    wind: Res<sf_wind_bevy::WindField>,
-) {
+/// Feeds the fog look into the fog renderer at this hour.
+fn drive_sky_weather(sky: Res<SkyWeather>, clock: Res<SkyTime>, config: Res<SkyConfig>, fog: Option<ResMut<sf_atmos_bevy::Fog>>, wind: Res<sf_wind_bevy::WindField>) {
     let hour = clock.0.hour(&config.0.calendar);
-    let haze = sky.haze.unwrap_or(sky.look.haze * morning_haze(hour));
-    let dust = sky.dust.unwrap_or(sky.look.dust);
-    let w = &weather.0;
-    if (w.haze, w.dust, w.dust_tint) != (haze, dust, sky.look.dust_tint) {
-        let w = &mut weather.0;
-        w.haze = haze;
-        w.dust = dust;
-        w.dust_tint = sky.look.dust_tint;
-    }
     if let Some(mut fog) = fog {
         let settings = fog_settings(&sky.look.fog, hour, sky.fog.unwrap_or(1.0), wind.state.wind.velocity, fog.settings);
         if fog.settings != settings {
@@ -1136,13 +1099,46 @@ fn drive_sky_weather(
     }
 }
 
-/// The weather's wind drives the field (`sf_wind_bevy`; WE1's `sf_weather`
-/// will write it directly). Clouds take its direction at their own
-/// altitude speed (Morrowind's `Cloud Speed`, set in [`cloud_settings`]).
-fn feed_wind(weather: Res<WeatherState>, mut wind: ResMut<sf_wind_bevy::WindField>, clouds: Option<ResMut<sf_atmos_bevy::Clouds>>) {
-    if wind.state.wind != weather.0.wind {
-        wind.state.wind = weather.0.wind;
+/// The exterior grid's climates (`WeatherSetup`) for [`weather_site`].
+#[derive(Resource)]
+struct ClimateMap {
+    cells: HashMap<(i32, i32), sf_weather::ClimateIx>,
+    fallback: Option<sf_weather::ClimateIx>,
+}
+
+/// The weather's site: the camera's exterior cell's climate (`REGN`), or the
+/// fallback; kept as is in interiors (the camera's grid there is not the
+/// exterior's). Region borders blend in WE3 part 2.
+fn weather_site(
+    camera: Query<&GlobalTransform, With<ExteriorCamera>>,
+    origin: Res<TerrainOrigin>,
+    active: Res<ActiveWorldspace>,
+    map: Res<ClimateMap>,
+    mut site: ResMut<WeatherSite>,
+) {
+    let exterior = active.0.as_ref().is_none_or(|ws| ws.as_str() == ids::EXTERIOR);
+    let Some(camera) = camera.iter().next() else { return };
+    if !exterior && !site.climates.is_empty() {
+        return;
     }
+    let p = WorldPos::new(origin.0.cell, camera.translation()).to_f64();
+    let climate = map.cells.get(&crate::weather::grid_at(p)).copied().or(map.fallback);
+    #[expect(clippy::cast_possible_truncation, reason = "altitude in meters fits f32")]
+    let altitude = p.y as f32;
+    let Some(climate) = climate else { return };
+    if site.climates.first().map(|c| c.0) != Some(climate) {
+        site.climates.clear();
+        site.climates.push((climate, 1.0));
+    }
+    if (site.altitude - altitude).abs() > 1.0 {
+        site.altitude = altitude;
+    }
+}
+
+/// The weather's wind drives the field (`sf_weather_bevy`). Clouds take its
+/// direction at their own altitude speed (Morrowind's `Cloud Speed`, set in
+/// [`cloud_settings`]).
+fn feed_wind(wind: Res<sf_wind_bevy::WindField>, clouds: Option<ResMut<sf_atmos_bevy::Clouds>>) {
     if let Some(mut clouds) = clouds {
         let drift = clouds.settings.weather.wind;
         let aligned = wind.state.wind.velocity.normalize_or(drift.normalize_or(Vec2::X)) * drift.length();

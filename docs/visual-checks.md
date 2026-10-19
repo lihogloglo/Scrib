@@ -1705,3 +1705,11 @@ ramp, plateau and steps (no sinking or floating), walk/run playback matched to s
 tumble and rest on the floor; walking the player up the `ledges` boxes steps only onto the 0.3 m one. Cloth (PH-3) is
 p10c's: once it is wired, the robes should swing with the stride here. Known: no camera collision in walk mode, no
 jump, the table is a single box (no legs).
+
+### WE-0: Weather drives sky haze and wind (`view "Seyda Neen" --hour 11 --weather clear`, then `--weather overcast`)
+
+Status: **awaiting owner** (M6 WE3 part 1, we3a, 2026-10-19). Shots: `target/we3a/{clear,overcast,natural}.png`
+(`--screenshot`). Look for: `--weather clear` matches the old `--clouds clear` (blue sky, thin haze, mountains sitting
+back but sharp); `--weather overcast` matches the old `--clouds overcast` (grey, hazy, 8 km fog); no flag prints
+`weather <Type>` for the start cell's forecast and shows that weather's clouds/fog. Known (part 2): clouds and fog
+are fixed at start, haze/wind follow the live forecast; no rain, lightning or border blend yet.

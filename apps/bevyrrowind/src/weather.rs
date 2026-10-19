@@ -111,3 +111,64 @@ fn clock(hours: f64) -> String {
     let (day, rem) = (minutes.div_euclid(24 * 60), minutes.rem_euclid(24 * 60));
     format!("day {day} {:02}:{:02}", rem / 60, rem % 60)
 }
+
+// -- live weather (M6 WE3, weather-adapter.md "App") --------------------------------
+
+/// Climate when the camera's cell has none (synthetic levels, cells
+/// without a region): Seyda Neen's.
+const FALLBACK_REGION: &str = "Bitter Coast Region";
+
+/// `--weather` values: the Morrowind weather types, any case.
+pub fn parse_weather_type(s: &str) -> std::result::Result<mw_weather::WeatherType, String> {
+    mw_weather::WeatherType::ALL.into_iter().find(|t| t.name().eq_ignore_ascii_case(s.trim())).ok_or_else(|| {
+        let names: Vec<_> = mw_weather::WeatherType::ALL.iter().map(|t| t.name().to_ascii_lowercase()).collect();
+        format!("unknown weather {s:?}: {}", names.join(", "))
+    })
+}
+
+/// What an exterior run needs for `sf_weather_bevy::WeatherPlugin`: the
+/// records, the state (seed, `--weather` force), and the exterior grid's
+/// climates (`mw_region/<CELL region>`).
+pub struct WeatherSetup {
+    pub book: std::sync::Arc<WeatherBook>,
+    pub state: WeatherState,
+    pub cells: std::collections::HashMap<(i32, i32), sf_weather::ClimateIx>,
+    pub fallback: Option<sf_weather::ClimateIx>,
+    /// The weather at the start (forced, or the start cell's forecast): the
+    /// cloud genus and fog look until WE3 part 2 drives them from the frame.
+    pub start: Option<mw_weather::WeatherType>,
+}
+
+impl WeatherSetup {
+    /// `eye`: start camera (engine meters); `hours`: the clock in game hours.
+    pub fn build(db: &sf_records::RecordDb, eye: glam::DVec3, hours: f64, force: Option<mw_weather::WeatherType>, seed: u64) -> Self {
+        let book = WeatherBook::from_db(db);
+        let cells: std::collections::HashMap<(i32, i32), sf_weather::ClimateIx> = db
+            .iter::<tes3::esp::Cell>()
+            .filter(|(_, c)| !c.is_interior())
+            .filter_map(|(_, c)| Some((c.data.grid, book.climate(&climate_id(c.region.as_deref()?))?)))
+            .collect();
+        let fallback = book.climate(&climate_id(FALLBACK_REGION));
+        let mut state = WeatherState::new(seed);
+        if let Some(t) = force {
+            // Every climate, from long before the start, held for good: a
+            // debug flag, not a scripted change (no transition).
+            let mut climates: Vec<_> = cells.values().copied().chain(fallback).collect();
+            climates.sort_unstable();
+            climates.dedup();
+            for c in climates {
+                state.force(book.climate_id(c), &t.preset_id(), hours - 1.0e4, Some(0.0), Some(1.0e7));
+            }
+        }
+        let start_climate = cells.get(&grid_at(eye)).copied().or(fallback);
+        let start = force.or_else(|| start_climate.and_then(|c| state.current(&book, c, hours)).and_then(|p| weather_type_of(book.preset_id(p))));
+        Self { book: std::sync::Arc::new(book), state, cells, fallback, start }
+    }
+}
+
+/// The exterior grid square under an engine position (meters, +Z south).
+#[allow(clippy::cast_possible_truncation)]
+pub fn grid_at(p: glam::DVec3) -> (i32, i32) {
+    let cell = mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64;
+    ((p.x / cell).floor() as i32, (-p.z / cell).floor() as i32)
+}
