@@ -1795,3 +1795,10 @@ no shadows, no motion vectors). Look for: crisp-edged leaf cards fogged exactly 
 trunk and branch shadows only); no smearing behind foliage with TAA/DLSS (F4); distant trees not thinning to bare twigs
 (cutoff 0.5, no coverage-preserving mips yet: if they thin, note at what distance). Glass, potions, Ghostfence, glows,
 smoke and ghosts must still look translucent (if one became a hard-edged cutout, note the object).
+
+### RO-A: Translucents cast no shadows; distant lights and rain fade into fog (render-order RO-1/2/3, rofix1)
+Status: awaiting owner (2026-10-19). Agent check: dev build renders, shaders compile, rain at night visible (`view "Seyda Neen"`, hour 22, rain); fading not judged.
+1. `view "Balmora" --hour 11 --weather clear`: torch flames, glow cards and glass cast no shadow on sunlit walls/ground; trees (cutout leaves) and solid props still do. Compare `--off transfog` (old: flames/glows cast near-solid shadows).
+2. `view "Seyda Neen" --hour 22 --weather foggy`, fly ~1-3 km out: the far town's light points dim with distance and vanish into the fog instead of staying full-bright.
+3. `view "Seyda Neen" --hour 15 --weather rain` (then `foggy` + rain via C): far rain streaks fade into the fog colour; near streaks unchanged.
+4. Ghostfence (`view "Ghostgate" --hour 12`): the field casts no shadow.
