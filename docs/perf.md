@@ -65,6 +65,27 @@ Cuts to make (they belong to 1.4 shadows, 1.9 culling levers and 3.x animation):
 draws per cascade (static cascade caching or a far cascade at half rate), actor animation LOD, and
 fewer views (check what the 16 visibility passes are).
 
+**The gameplay view: `balmora_walk`** (eye height on Balmora's path grid, 4 m/s, 254 m; added 2026-10-19).
+It is the worst case: **25.8-26.0 ms** median, render 23.9-24.3, main 12.1, GPU 8.9. Whole-system A/B on it:
+
+| `--off` | frame | render | main | reading |
+|---|---:|---:|---:|---|
+| statics (= near) | **7.5** | 4.7 | 3.5 | **the near-ring statics are the cost**: everything else is small |
+| sky (no sun, so no sun shadows) | 17.1 | 15.2 | 9.7 | mostly the shadows below |
+| shadows | 18.3 | 16.4 | 9.4 | -7.7 ms walking (-4.8 standing): cascades re-cull as they follow the camera |
+| actors | 21.2 | 19.8 | 7.4 | -4.8 ms main, -4.1 render |
+| physics, fog, terrain, walkers | 25.0-25.7 | | | -0.3 to -1 ms each |
+| clouds, froxels, envmap, godrays, far | 25.5-26.3 | | | nothing |
+
+Tried and dropped: Bevy 0.20 `NoCpuCulling` on static opaque/masked parts (the research's top item): **81 ms**
+on the walk (render 81, GPU 22): with no CPU culling every part is queued for every view (cascades, point-light
+faces, the water snapshot) and every LOD level, and the GPU path doesn't make up for it in our setup. Kept: the
+animation budget (`ANIM_BUDGET_US` 1 ms, `--off animbudget`): walk 24.7 ms (main 11.5 vs 12.1).
+So the lever is the number of static mesh entities in the near ring and the views they're queued in: merge statics
+per cell at bake time (OpenMW active-grid paging, MGE XE: a cell in one or two draws;
+`docs/research/perf-morrowind-engines.md`) and cut shadow views; the big_space propagation patch and skinned
+bounds next (`superfargoth/docs/research/perf/README.md`).
+
 Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
 pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.
 

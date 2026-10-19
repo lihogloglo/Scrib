@@ -97,6 +97,8 @@ pub enum Part {
     ShadowCache,
     /// Sun-cascade caster size culling (`sf_sky_bevy::CasterCulling`, ROADMAP 1.2).
     CasterCull,
+    /// The animation budget (`sf_anim_bevy::AnimLodSettings::budget_us`, animation.md "LOD and budget").
+    AnimBudget,
     Clouds,
     /// Size-based draw distance (industry-audit.md J1).
     SizeCull,
@@ -132,7 +134,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 40] = [
+    const ALL: [(&'static str, Part); 41] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -156,6 +158,7 @@ impl Part {
         ("shadowsplits", Part::ShadowSplits),
         ("shadowcache", Part::ShadowCache),
         ("castercull", Part::CasterCull),
+        ("animbudget", Part::AnimBudget),
 
         ("clouds", Part::Clouds),
         ("sizecull", Part::SizeCull),

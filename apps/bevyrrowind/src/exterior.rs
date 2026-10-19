@@ -255,6 +255,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
+    // Animation budget (animation.md target: the stage <= 1.0 ms): the allocator demotes the
+    // least significant characters a tier until it fits (`--off animbudget`: distance tiers only).
+    if !off_parts.has(Part::AnimBudget) {
+        app.insert_resource(sf_anim_bevy::AnimLodSettings { budget_us: Some(ANIM_BUDGET_US), ..Default::default() });
+    }
     // Sun casters under 1.5 texels of a cascade skip it (`--off castercull`: all draw).
     if off_parts.has(Part::CasterCull) {
         app.insert_resource(sf_sky_bevy::CasterCulling { min_texels: 0.0 });
@@ -368,7 +373,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(),
             prepass: options.prepass,
             contact: if perf.off.has(Part::ContactShadows) { None } else { options.quality.contact_shadows() },
-            shadow_filter: options.quality.shadow_filter(),
+            shadow_filter: options.quality.shadow_filter(options.render.upscaling.is_temporal()),
         })
         .insert_resource(Started(Instant::now()))
         // Chained: both reserve the worldspace root through `Commands`; unordered,
@@ -1067,6 +1072,9 @@ fn sun_cascades(quality: Quality, levels: &sf_lod::FarLevels, legacy: bool, spli
     .build()
 }
 
+/// Animation evaluation budget per frame, µs summed over threads (animation.md target 1.0 ms).
+const ANIM_BUDGET_US: f32 = 1000.0;
+
 /// PCSS light size in cascade texels (see [`Quality::soft_shadow_size`]); tuned by eye.
 const SOFT_SHADOW_SIZE: f32 = 10.0;
 
@@ -1276,12 +1284,18 @@ impl Quality {
         }
     }
 
-    /// Shadow-map filtering (shadows F2): Hardware2x2 on Low (one tap), Gaussian
-    /// above (Temporal needs TAA, which raster doesn't run).
-    pub const fn shadow_filter(self) -> ShadowFilteringMethod {
-        match self {
-            Self::Low => ShadowFilteringMethod::Hardware2x2,
-            Self::Medium | Self::High | Self::Ultra => ShadowFilteringMethod::Gaussian,
+    /// Shadow-map filtering (shadows F2): Hardware2x2 on Low (one tap); above it
+    /// Temporal when a temporal resolve runs (TAA or DLSS, ROADMAP 1.3), else Gaussian.
+    /// Temporal rotates the PCF and PCSS sample kernel every frame so the resolve
+    /// averages it out; with Gaussian, PCSS's noise rotation is a fixed screen-space
+    /// pattern: the blocky, half-transparent, swimming penumbra at object edges under
+    /// grazing light (SH-12; Bevy's own note in `shadow_sampling.wesl` calls the
+    /// non-temporal PCSS "rather noisy").
+    pub const fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod {
+        match (self, temporal) {
+            (Self::Low, _) => ShadowFilteringMethod::Hardware2x2,
+            (_, true) => ShadowFilteringMethod::Temporal,
+            (_, false) => ShadowFilteringMethod::Gaussian,
         }
     }
 

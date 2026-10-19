@@ -43,6 +43,11 @@ pub const SCENARIOS: &[SuiteScenario] = &[
         args: &["view", "Seyda Neen", "--bench", "benchmarks/exterior_run.json", "--bench-ground"],
     },
     SuiteScenario {
+        name: "balmora_walk",
+        about: "walk at 4 m/s, eye height (path grid + 1.7 m), 254 m of Balmora streets and terraces (the gameplay view)",
+        args: &["view", "Balmora", "--bench", "benchmarks/exterior_balmora_walk.json"],
+    },
+    SuiteScenario {
         name: "flight",
         about: "flight at 60 m/s, 120 m above the ground, Seyda Neen - Balmora - Red Mountain - Vivec",
         args: &["view", "Seyda Neen", "--bench", "benchmarks/exterior_flight.json", "--bench-ground"],

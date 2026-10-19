@@ -1,0 +1,31 @@
+{
+  "name": "exterior_balmora_walk",
+  "warmup": { "seconds": 3.0, "frames": 120 },
+  "measure": {
+    "kind": "path",
+    "speed": 4.0,
+    "keyframes": [
+      { "position": [-217.7, 12.5, 175.7] },
+      { "position": [-228.6, 7.8, 185.6] },
+      { "position": [-237.3, 4.2, 185.9] },
+      { "position": [-253.9, 10.6, 194.2] },
+      { "position": [-267.3, 4.3, 212.6] },
+      { "position": [-286.2, 4.4, 212.6] },
+      { "position": [-292.8, 4.0, 222.8] },
+      { "position": [-293.0, 4.0, 226.9] },
+      { "position": [-301.2, 9.0, 226.9] },
+      { "position": [-305.8, 6.8, 229.5] },
+      { "position": [-309.4, 8.7, 241.2] },
+      { "position": [-324.7, 8.0, 246.1] },
+      { "position": [-322.8, 7.5, 266.0] },
+      { "position": [-295.7, 4.8, 283.3] },
+      { "position": [-264.3, 5.8, 283.5] },
+      { "position": [-236.6, 6.1, 282.8] }
+    ]
+  },
+  "gates": [
+    { "gate": "max_frame_stat", "stat": "median", "ms": 11.0 },
+    { "gate": "max_stutters", "factor": 1.5, "window": 60, "per_minute": 1.0 },
+    { "gate": "max_frame_ms", "ms": 33.0 }
+  ]
+}

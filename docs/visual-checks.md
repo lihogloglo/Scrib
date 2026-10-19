@@ -122,7 +122,13 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Seen by owner 2026-10-19 (round 2, again): object edges under grazing light shimmer and don't look solid.
   Suspects: no temporal AA on the raster path (aliasing of shadow terminators and alpha edges), normal-offset
   bias, dithered cascade end.
-- Status: known bug: Phase 1 (TAA baseline + shadow bias).
+- Cause found (phase1, 2026-10-19, from Bevy's shader): soft sun shadows (PCSS, High) rotate their sample kernel by
+  a screen-space noise that is *fixed* under our `Gaussian` filter, so wide grazing-light penumbrae show a blocky,
+  half-transparent pattern that swims as the camera moves. Fix: `ShadowFilteringMethod::Temporal` whenever TAA or
+  DLSS runs (the noise changes per frame and the resolve averages it). Owner still sees it after 2026-10-19 → recheck
+  with this build: `.\bevyrrowind view Balmora --camera "-280,+12,200,-295,+1,180" --hour 7 --weather clear`, move.
+  A/B: `--off softshadows` (PCSS off: if the outline goes, PCSS noise it was), `--dlss off` (MSAA: Gaussian again).
+- Status: awaiting owner (fix built, phase1).
 
 ### SH-13: Point-light (lamp) shadows (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora, 22:00).
