@@ -195,3 +195,11 @@ a shadow, but it's half of the "grounded" look. Log it, don't bundle it.
    cached far map (F3)? It's sharper near and mid, but it's a new bespoke pass.
 3. **Interiors:** go for the cached point-light shadow atlas (F6, multi-slice, our own pass), or live with contact
    shadows plus 1-4 shadowed lights for now?
+
+## Owner decisions (2026-10-19)
+
+- **Soft, contact-hardening shadows** (F5, PCSS-style): crisp at contact, softer with distance; cheaper filter on low presets.
+- **Drop the 504 m cascade rule** (F3): sun cascades to ~250 m plus a cached static far shadow map beyond.
+- **Interior shadow atlas soon** (F6): right after F1-F3, before F5.
+- Order: F1+F2 (contact shadows, bias) -> F3 -> F6 -> F5; F4 leaf shadows with leafmask; render-order.md RO-1
+  (translucents casting solid shadows) after leafmask.
