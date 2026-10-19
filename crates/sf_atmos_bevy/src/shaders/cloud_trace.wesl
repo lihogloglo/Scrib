@@ -19,7 +19,8 @@ import bevy_pbr::atmosphere::{
     bruneton_functions::sample_transmittance_lut_segment,
 };
 import super::cloud_common::{PI, WeatherSample, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
-import super::cloud_density::{clouds, weather_sample_a, map_a, ray_a, ray_b, ray_local_a, ray_local_b, height_fraction, cloud_density, cirrus_hit, bank_mask};
+import super::fog::fog_phase;
+import super::cloud_density::{clouds, weather_sample_a, map_a, map_layer, ray_a, ray_b, ray_local_a, ray_local_b, height_fraction, cloud_density, cirrus_hit, bank_mask};
 import super::key_light::{key_light, planet_lit_at};
 
 @if(MULTISAMPLED)
@@ -126,6 +127,110 @@ fn bank_modulation(ro: vec3<f32>, rd: vec3<f32>, h0: f32, mu: f32, d_max: f32, j
     return noisy / plain;
 }
 
+// Distant weather (weather.md WE4d): precipitation shafts under wet map
+// cells and far fog by location, marched below the cloud deck out to the
+// map window's half width (High/Ultra: per-sample map only). Both add only
+// what the camera's own weather lacks: shaft extinction is the map's
+// precipitation extinction (`PrecipKind.extinction` × intensity, layer D, the
+// number `visibility_m` uses) minus the camera's, and the fog term the map's
+// height-fog density minus the camera's, on the camera layer's height
+// profile. At the camera both are zero, so the near rain (particles) and the
+// analytic fog are unchanged and crossing a border band fades the curtain out
+// exactly as the camera's weather fades in (no pop, no double rain).
+struct FarWeather {
+    color: vec3<f32>,
+    transmittance: f32,
+    dist_sum: f32,
+    weight: f32,
+};
+
+const FAR_STEPS: u32 = 8u;
+// Horizontal drift of the rain per meter of fall (slanted curtains).
+const FAR_SHEAR: f32 = 0.35;
+
+fn far_weather(ro: vec3<f32>, rd: vec3<f32>, scene_t: f32, jitter: f32, light_color: vec3<f32>, l: vec3<f32>, cos_t: f32, fill0: vec3<f32>) -> FarWeather {
+    var out: FarWeather;
+    out.color = vec3(0.0);
+    out.transmittance = 1.0;
+    out.dist_sum = 0.0;
+    out.weight = 0.0;
+    let t0 = 32.0;
+    let t1 = min(scene_t, 0.5 * clouds.map_size / max(clouds.map_inv_texel, 1e-9));
+    if t1 <= t0 {
+        return out;
+    }
+    let cam_c = map_layer(ro, 2);
+    let cam_d = map_layer(ro, 3);
+    let f = clouds.fog;
+    let fog_on = f.enabled != 0u && f.height_falloff > 0.0;
+    let wl = length(clouds.wind_step.xz);
+    let shear = select(vec2(0.0), clouds.wind_step.xz / max(wl, 1e-9) * FAR_SHEAR, wl > 1e-6);
+    let sun_phase = fog_phase(0.6, cos_t);
+    let n = f32(FAR_STEPS);
+    let span = t1 - t0;
+    var tr = 1.0;
+    for (var i = 0u; i < FAR_STEPS; i += 1u) {
+        // Quadratic in distance like the bank march: fine near the hand-off.
+        let u = (f32(i) + jitter) / n;
+        let t = t0 + span * u * u;
+        let ds = span * (2.0 * f32(i) + 1.0) / (n * n);
+        let p = ro + rd * t;
+        let pc = p - clouds.planet_center;
+        let r = length(pc);
+        let alt = r - clouds.inner_radius;
+        let b = map_layer(p, 1);
+        let d = map_layer(p, 3);
+        var sigma_p = 0.0;
+        var sigma_f = 0.0;
+        var shadow = 1.0;
+        var dim = 1.0;
+        var grey = 0.0;
+        let dp = max(d.x - cam_d.x, 0.0) * 1e-3;
+        if dp > 0.0 && alt < b.x {
+            // The rain at `p` left the base upwind; it falls where the deck's
+            // cells are (the clouds' own weather noise), so curtains hang under
+            // the storm's cells, not under the whole region.
+            let q = p + vec3(shear.x, 0.0, shear.y) * (b.x - alt);
+            let w = weather_sample_a(q, map_a(q));
+            sigma_p = dp * ramp(0.05, 0.5, w.coverage) * (1.0 - ramp(b.x - 150.0, b.x, alt)) * ramp(32.0, 128.0, t);
+            // Key light through the deck above (a column estimate from the
+            // map: dark under the cell, bright at its sunlit edge), sky fill
+            // dimmed by the wet deck like the clouds' own.
+            shadow = exp(-w.coverage * b.z * b.y * clouds.extinction * 0.3);
+            dim = 1.0 - 0.6 * w.wetness;
+            // Under the deck the sky fill is cloud light: grey, not the blue zenith.
+            grey = w.coverage;
+        }
+        if fog_on {
+            let c = map_layer(p, 2);
+            sigma_f = max(c.z - cam_c.z, 0.0) * exp(min(-(alt - f.height_base) / f.height_falloff, 2.0));
+        }
+        let sigma = sigma_p + sigma_f;
+        if sigma <= 1e-9 {
+            continue;
+        }
+        let mu_l = dot(pc / r, l);
+        let sun = light_color * sample_transmittance_lut(r, mu_l) * planet_lit(r, mu_l) * sun_phase;
+        let tint = d.yzw / max(d.x, 1e-6);
+        let fill = mix(fill0, vec3(dot(fill0, vec3(0.2126, 0.7152, 0.0722))), grey);
+        var scattered = sigma_p * tint * (sun * shadow + fill * dim);
+        if sigma_f > 0.0 {
+            scattered += sigma_f * f.albedo * (sun + fill0 * f.ambient);
+        }
+        let step_t = exp(-sigma * ds);
+        out.color += tr * (scattered - scattered * step_t) / sigma;
+        let absorbed = tr * (1.0 - step_t);
+        out.dist_sum += t * absorbed;
+        out.weight += absorbed;
+        tr *= step_t;
+        if tr < 0.01 {
+            break;
+        }
+    }
+    out.transmittance = tr;
+    return out;
+}
+
 @fragment
 fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let block = vec2<u32>(in.position.xy);
@@ -163,7 +268,8 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     out.dist = vec2(min(scene_t, clouds.far), bank);
     let clouds_on = clouds.clouds_on != 0u;
     let has_low = end > start && clouds_on;
-    if !has_low && (clouds.cirrus_max <= 0.0 || !clouds_on) {
+    let far_on = clouds.far_weather != 0u && clouds_on;
+    if !has_low && (clouds.cirrus_max <= 0.0 || !clouds_on) && !far_on {
         return out;
     }
 
@@ -306,6 +412,19 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
             dist = ci.x;
         }
         transmittance *= 1.0 - alpha;
+    }
+    // Distant shafts and far fog (WE4d): below the deck, so in front of it.
+    if far_on {
+        let fw = far_weather(ro, rd, scene_t, fract(ign(half_px, clouds.frame) + 0.5), light_color, l, cos_t, mix(bounce, sky_up, 0.6));
+        if fw.weight > 1e-4 {
+            let fw_dist = fw.dist_sum / fw.weight;
+            let air = aerial(uv, r_cam, mu_v, rd, fw_dist);
+            color = fw.color * air.transmittance + air.inscatter * (1.0 - fw.transmittance) + fw.transmittance * color;
+            if 1.0 - fw.transmittance > (1.0 - transmittance) * fw.transmittance {
+                dist = fw_dist;
+            }
+            transmittance *= fw.transmittance;
+        }
     }
     out.color = vec4(color * view.exposure, transmittance);
     out.dist = vec2(dist, bank);

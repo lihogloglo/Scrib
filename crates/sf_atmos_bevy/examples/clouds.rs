@@ -5,7 +5,7 @@
 //! ```sh
 //! cargo run --release -p sf_atmos_bevy --example clouds -- [--preset fair] [--time 12]
 //!     [--view sky|sun|shadow|up] [--scale 1] [--wind 1] [--fog 0] [--screenshot out.png] [--frames 150]
-//!     [--split clear,storm] [--per-ray]
+//!     [--split clear,storm] [--per-ray] [--far-fog <visibility m>] [--no-far] [--size 2560x1440]
 //! ```
 //!
 //! Views: `sky` (eye height, looking along +X at 20°), `sun` (aimed at the sun:
@@ -49,10 +49,16 @@ struct Args {
     split: Option<(CloudPreset, CloudPreset)>,
     /// `--per-ray`: the Medium/Low map lookup (3 per ray) instead of per sample.
     per_ray: bool,
+    /// `--far-fog <visibility m>`: the east climate's height fog when split (far fog by location, `WE4d`).
+    far_fog: f32,
+    /// `--no-far`: no distant shafts / far fog (`CloudQuality::far_weather` off, cost A/B).
+    no_far: bool,
+    /// `--size WxH`: window size (GPU timers at 1440p).
+    size: (u32, u32),
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { preset: CloudPreset::Fair, hour: 12.0, view: "sky".into(), scale: 1.0, wind: 1.0, screenshot: None, frames: 150, fog: 0.0, split: None, per_ray: false };
+    let mut a = Args { preset: CloudPreset::Fair, hour: 12.0, view: "sky".into(), scale: 1.0, wind: 1.0, screenshot: None, frames: 150, fog: 0.0, split: None, per_ray: false, far_fog: 0.0, no_far: false, size: (1280, 720) };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| panic!("{flag} needs a value"));
@@ -71,6 +77,13 @@ fn parse_args() -> Args {
                 a.split = Some((CloudPreset::parse(w).expect("west genus"), CloudPreset::parse(e).expect("east genus")));
             }
             "--per-ray" => a.per_ray = true,
+            "--no-far" => a.no_far = true,
+            "--far-fog" => a.far_fog = value().parse().expect("--far-fog <visibility m>"),
+            "--size" => {
+                let v = value();
+                let (w, h) = v.split_once('x').expect("--size <w>x<h>");
+                a.size = (w.parse().expect("width"), h.parse().expect("height"));
+            }
             other => panic!("unknown flag {other}"),
         }
     }
@@ -105,7 +118,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "sf_atmos clouds".into(),
-                resolution: WindowResolution::new(1280, 720).with_scale_factor_override(1.0),
+                resolution: WindowResolution::new(args.size.0, args.size.1).with_scale_factor_override(1.0),
                 ..default()
             }),
             ..default()
@@ -220,6 +233,7 @@ fn screenshot(
 fn cloud_settings(args: &Args) -> CloudSettings {
     let mut s = settings(args.split.map_or(args.preset, |p| p.0), args.scale, args.wind);
     s.quality.map_per_sample = !args.per_ray;
+    s.quality.far_weather = !args.no_far;
     s
 }
 
@@ -238,15 +252,23 @@ fn split_map(
         let raster = ClimateRaster::new(DVec2::splat(-8000.0), 500.0, 32, 32, &cells, 400.0).expect("climates");
         let mut m = WeatherMap::new(raster, MAP_SIZE, 64.0);
         m.set_cpu_texels(false);
-        let row = |p: CloudPreset| {
+        let camera_fog = fog_settings(args.fog).height.density;
+        let row = |p: CloudPreset, fog_density: f32| {
             let w = settings(p, args.scale, args.wind).weather;
             let mut ch = [0.0; row::LEN];
+            // Wet decks rain (WE4d shafts): heavy rain, ~2 km visibility, grey-blue drops.
+            let rain = w.wetness.max(w.storm).clamp(0.0, 1.0);
+            let ext = 2e-3 * rain;
+            (ch[row::PRECIP], ch[row::PRECIP_EXTINCTION]) = (rain, ext);
+            (ch[row::PRECIP_TINT_R], ch[row::PRECIP_TINT_G], ch[row::PRECIP_TINT_B]) = (0.55 * ext, 0.6 * ext, 0.68 * ext);
+            ch[row::FOG_DENSITY] = fog_density;
             (ch[row::COVERAGE], ch[row::CLOUD_TYPE], ch[row::WETNESS], ch[row::STORM]) = (w.coverage, w.cloud_type, w.wetness, w.storm);
             (ch[row::BASE], ch[row::THICKNESS], ch[row::DENSITY], ch[row::EROSION]) = (w.base, w.thickness, w.density, w.erosion);
             ch[row::CIRRUS] = w.cirrus;
             ClimateRow { ch, look: None }
         };
-        m.set_rows(&[row(west), row(east)]);
+        let east_fog = if args.far_fog > 0.0 { fog::extinction_for_visibility(args.far_fog) } else { camera_fog };
+        m.set_rows(&[row(west, camera_fog), row(east, east_fog)]);
         m
     });
     let p = camera.translation();

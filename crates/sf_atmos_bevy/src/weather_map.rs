@@ -6,7 +6,7 @@
 //! [`CloudWeatherMap::sync`]. The render world uploads the raster (once) and
 //! the climate table (when it changed), then the `weather_map` compute pass
 //! (`sf_weather::MAP_WGSL`, the GPU twin of the CPU resolve) writes the
-//! 256² world-anchored toroidal map, layers A, B, C (`Rgba16Float`): the
+//! 256² world-anchored toroidal map, layers A, B, C, D (`Rgba16Float`): the
 //! whole window when the table changed, only the entering strips on a
 //! recenter, nothing on a uniform day (the clouds then keep their uniform
 //! scalars). The clouds and the cloud shadow map sample layer A
@@ -45,17 +45,23 @@ pub struct CloudWeatherMap {
     window: IVec2,
     uniform: bool,
     /// `envelope(rows)`, kept with the rows.
-    envelope: [f32; 3],
+    envelope: [f32; 4],
 }
 
 /// Lowest cloud base, highest cloud top and most cirrus over the table's rows
-/// (A, B, C per row): the trace's envelope shell. A blend of rows is a convex
-/// combination, so every texel's layer lies inside it.
-fn envelope(rows: &[[f32; 4]]) -> [f32; 3] {
-    rows.as_chunks::<3>().0.iter().fold([f32::INFINITY, f32::NEG_INFINITY, 0.0], |e, r| {
-        let (b, c) = (r[1], r[2]);
-        [e[0].min(b[0]), e[1].max(b[0] + b[1].max(1.0)), e[2].max(c[0])]
-    })
+/// (A, B, C, D per row): the trace's envelope shell. A blend of rows is a convex
+/// combination, so every texel's layer lies inside it. `[3]`: 1 when some row
+/// precipitates or the rows' height-fog densities differ (the trace's distant
+/// shafts and far fog, `WE4d`), else 0.
+fn envelope(rows: &[[f32; 4]]) -> [f32; 4] {
+    let (mut e, mut fog) = ([f32::INFINITY, f32::NEG_INFINITY, 0.0, 0.0], (f32::INFINITY, f32::NEG_INFINITY));
+    for r in rows.as_chunks::<4>().0 {
+        let (b, c, d) = (r[1], r[2], r[3]);
+        e = [e[0].min(b[0]), e[1].max(b[0] + b[1].max(1.0)), e[2].max(c[0]), e[3].max(d[0])];
+        fog = (fog.0.min(c[2]), fog.1.max(c[2]));
+    }
+    e[3] = f32::from(e[3] > 1e-3 || fog.1 - fog.0 > 1e-7);
+    e
 }
 
 impl CloudWeatherMap {
@@ -103,15 +109,16 @@ pub(crate) struct MapView {
     pub window: IVec2,
     pub size: i32,
     pub texel_m: f64,
-    /// Lowest base, highest top, most cirrus over the map's climates.
-    pub envelope: [f32; 3],
+    /// Lowest base, highest top, most cirrus over the map's climates; 1 when
+    /// distant precipitation or fog differences exist (`WE4d`).
+    pub envelope: [f32; 4],
 }
 
 /// Render world: the map texture, its inputs and the pending resolve.
 #[derive(Resource)]
 pub(crate) struct WeatherMapGpu {
     size: i32,
-    /// Sampled view (layers A, B, C), bound by the clouds.
+    /// Sampled view (layers A, B, C, D), bound by the clouds.
     pub view: TextureView,
     storage: TextureView,
     layout: BindGroupLayoutDescriptor,
@@ -130,7 +137,7 @@ fn map_texture(device: &RenderDevice, size: i32) -> (TextureView, TextureView) {
     let edge = size.unsigned_abs();
     let texture = device.create_texture(&TextureDescriptor {
         label: Some("weather_map"),
-        size: Extent3d { width: edge, height: edge, depth_or_array_layers: 3 },
+        size: Extent3d { width: edge, height: edge, depth_or_array_layers: sf_weather::MAP_LAYERS },
         mip_level_count: 1,
         sample_count: 1,
         dimension: TextureDimension::D2,

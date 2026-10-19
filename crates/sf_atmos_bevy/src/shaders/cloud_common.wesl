@@ -74,6 +74,7 @@ struct Clouds {
     shell_base: f32,
     shell_thickness: f32,
     cirrus_max: f32,
+    far_weather: u32,
 };
 
 const PI: f32 = 3.14159265;

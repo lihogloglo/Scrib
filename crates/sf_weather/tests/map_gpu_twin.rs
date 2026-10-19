@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 
 use glam::{DVec2, IVec2};
-use sf_weather::{ClimateIx, ClimateRaster, ClimateRow, MAP_WGSL, MapGpuGeometry, MapTexel, WeatherMap, resolve_rects, row};
+use sf_weather::{ClimateIx, ClimateRaster, ClimateRow, MAP_LAYERS, MAP_WGSL, MapGpuGeometry, MapTexel, WeatherMap, resolve_rects, row};
 use wgpu::util::DeviceExt;
 
 const SIZE: u32 = 64;
@@ -64,7 +64,7 @@ impl Gpu {
         });
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("map"),
-            size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 3 },
+            size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: MAP_LAYERS },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -106,7 +106,7 @@ impl Gpu {
     /// The map's texels in storage order (A, B, C per texel).
     fn read(&self) -> Vec<MapTexel> {
         let row_bytes = SIZE * 8;
-        let size = u64::from(row_bytes * SIZE * 3);
+        let size = u64::from(row_bytes * SIZE * MAP_LAYERS);
         let read = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read"),
             size,
@@ -120,7 +120,7 @@ impl Gpu {
                 buffer: &read,
                 layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row_bytes), rows_per_image: Some(SIZE) },
             },
-            wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 3 },
+            wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: MAP_LAYERS },
         );
         self.queue.submit([encoder.finish()]);
         read.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
@@ -132,7 +132,7 @@ impl Gpu {
             let o = (layer * n + i) * 4;
             [halves[o], halves[o + 1], halves[o + 2], halves[o + 3]]
         };
-        (0..n).map(|i| MapTexel { a: px(0, i), b: px(1, i), c: px(2, i), look: None }).collect()
+        (0..n).map(|i| MapTexel { a: px(0, i), b: px(1, i), c: px(2, i), d: px(3, i), look: None }).collect()
     }
 }
 

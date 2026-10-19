@@ -212,7 +212,12 @@ pub mod row {
     pub const SNOW: usize = 28;
     pub const ASH: usize = 29;
     pub const DRYING: usize = 30;
-    pub const LEN: usize = 31;
+    /// Σ intensity × `PrecipKind::extinction` × the kind's tint (linear rgb):
+    /// the extinction-weighted tint, premultiplied so rows blend linearly (`WE4d`).
+    pub const PRECIP_TINT_R: usize = 31;
+    pub const PRECIP_TINT_G: usize = 32;
+    pub const PRECIP_TINT_B: usize = 33;
+    pub const LEN: usize = 34;
 }
 
 /// The continuous channels of a [`WeatherFrame`]: one climate at weight 1
@@ -237,11 +242,15 @@ impl ClimateRow {
         let c = &frame.clouds;
         let f = &frame.fog;
         let s = &frame.surface;
-        let (mut precip, mut ext, mut heaviest) = (0.0, 0.0, (0.0, None));
+        let (mut precip, mut ext, mut tint, mut heaviest) = (0.0, 0.0, [0.0; 3], (0.0, None));
         for e in &frame.precip {
             let kind = book.precip_kind(e.kind);
             precip += e.intensity;
-            ext += kind.extinction.max(0.0) * e.intensity;
+            let x = kind.extinction.max(0.0) * e.intensity;
+            ext += x;
+            for (t, k) in tint.iter_mut().zip(kind.tint) {
+                *t += x * k;
+            }
             if e.intensity > heaviest.0 {
                 heaviest = (e.intensity, Some(kind.look));
             }
@@ -280,6 +289,9 @@ impl ClimateRow {
                 s.snow,
                 s.ash,
                 s.drying,
+                tint[0],
+                tint[1],
+                tint[2],
             ],
             look: heaviest.1,
         }
@@ -298,7 +310,7 @@ impl ClimateRow {
     }
 }
 
-/// One texel of the weather map: textures A, B, C of the spec's resolve.
+/// One texel of the weather map: textures A, B, C (and D, `WE4d`) of the spec's resolve.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MapTexel {
     /// Coverage, cloud type (genus), wetness, storm.
@@ -307,18 +319,25 @@ pub struct MapTexel {
     pub b: [f32; 4],
     /// Cirrus, precipitation intensity, height-fog density (1/m), overcast dimming (darkness).
     pub c: [f32; 4],
+    /// Precipitation extinction and its extinction-weighted tint (rgb), all per **km** (heavy
+    /// rain ≈ 2/km: well inside f16 and `MAP_EPSILON`'s reach): the distant shafts (`WE4d`).
+    pub d: [f32; 4],
     /// The heaviest precipitation's look.
     pub look: Option<PrecipLook>,
 }
 
 impl MapTexel {
     pub fn from_row(r: &ClimateRow) -> Self {
-        use row::{BASE, CIRRUS, CLOUD_TYPE, COVERAGE, DENSITY, DIMMING, EROSION, FOG_DENSITY, PRECIP, STORM, THICKNESS, WETNESS};
+        use row::{
+            BASE, CIRRUS, CLOUD_TYPE, COVERAGE, DENSITY, DIMMING, EROSION, FOG_DENSITY, PRECIP, PRECIP_EXTINCTION, PRECIP_TINT_B, PRECIP_TINT_G,
+            PRECIP_TINT_R, STORM, THICKNESS, WETNESS,
+        };
         let ch = &r.ch;
         Self {
             a: [ch[COVERAGE], ch[CLOUD_TYPE], ch[WETNESS], ch[STORM]],
             b: [ch[BASE], ch[THICKNESS], ch[DENSITY], ch[EROSION]],
             c: [ch[CIRRUS], ch[PRECIP], ch[FOG_DENSITY], ch[DIMMING]],
+            d: [ch[PRECIP_EXTINCTION], ch[PRECIP_TINT_R], ch[PRECIP_TINT_G], ch[PRECIP_TINT_B]].map(|x| x * 1000.0),
             look: r.look,
         }
     }
@@ -329,7 +348,7 @@ impl MapTexel {
             return f32::INFINITY;
         }
         let d = |a: &[f32; 4], b: &[f32; 4]| a.iter().zip(b).map(|(x, y)| (x - y).abs() / x.abs().max(y.abs()).max(1.0)).fold(0.0, f32::max);
-        d(&self.a, &o.a).max(d(&self.b, &o.b)).max(d(&self.c, &o.c))
+        d(&self.a, &o.a).max(d(&self.b, &o.b)).max(d(&self.c, &o.c)).max(d(&self.d, &o.d))
     }
 }
 
@@ -337,6 +356,8 @@ impl MapTexel {
 pub const MAP_EPSILON: f32 = 1e-3;
 /// Texels per side of the weather map (weather.md WE4 "Weather map").
 pub const MAP_SIZE: u32 = 256;
+/// Layers of the GPU map (A, B, C, D of [`MapTexel`]); vec4s per row in [`WeatherMap::gpu_rows`].
+pub const MAP_LAYERS: u32 = 4;
 
 /// What [`WeatherMap::update`] did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -375,7 +396,7 @@ pub struct WeatherMap {
 /// the row blend. Bindings (group 0): 0 [`MapGpuGeometry::params`]
 /// (uniform), 1 [`ClimateRaster::gpu_cells`] (`array<u32>`), 2
 /// [`WeatherMap::gpu_rows`] (`array<vec4<f32>>`), 3 the map
-/// (`texture_storage_2d_array<rgba16float, write>`, layers A, B, C).
+/// (`texture_storage_2d_array<rgba16float, write>`, layers A, B, C, D).
 /// Entry point `resolve`, workgroup 8 × 8; dispatch `(size / 8, size / 8, rects)`.
 pub const MAP_WGSL: &str = include_str!("map.wgsl");
 
@@ -545,13 +566,13 @@ impl WeatherMap {
         }
     }
 
-    /// The table as the resolve reads it: A, B, C per row ([`MapTexel`] packing).
+    /// The table as the resolve reads it: A, B, C, D per row ([`MapTexel`] packing).
     pub fn gpu_rows(&self) -> Vec<[f32; 4]> {
         self.rows
             .iter()
             .flat_map(|r| {
                 let t = MapTexel::from_row(r);
-                [t.a, t.b, t.c]
+                [t.a, t.b, t.c, t.d]
             })
             .collect()
     }

@@ -2,7 +2,7 @@
 // `ClimateRaster::site_at` + `WeatherMap::blend` (map.rs). One thread per
 // map texel: its climate weights from the raster (own square + the nearest
 // other climate within the reach, `border_blend`), then the blend of the
-// two table rows, written to layers A, B, C at the texel's toroidal storage
+// two table rows, written to layers A, B, C, D at the texel's toroidal storage
 // index (world texel mod size). Rects select what to write: the full window
 // or the strips that entered it on a recenter.
 
@@ -104,10 +104,10 @@ fn resolve(@builtin(global_invocation_id) id: vec3<u32>) {
         w = border_weight(best_d, params.band_m);
     }
     let s = ((t % params.size) + params.size) % params.size;
-    for (var k = 0u; k < 3u; k += 1u) {
-        var v = rows[own * 3u + k] * w;
+    for (var k = 0u; k < 4u; k += 1u) {
+        var v = rows[own * 4u + k] * w;
         if found && w < 1.0 {
-            v += rows[best_c * 3u + k] * (1.0 - w);
+            v += rows[best_c * 4u + k] * (1.0 - w);
         }
         textureStore(map_out, s, k, v);
     }

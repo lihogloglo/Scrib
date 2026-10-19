@@ -1746,7 +1746,7 @@ the in-layer segment and lerp), A-only fetches (B every 8 samples), and 8 shaft 
   Balmora at 14:00, own region Clear, forced Thunderstorm in the Ascadian Isles and Ashstorm in the
   Ashlands: a dark deck over each neighbour, clear sky overhead, no seam at the border band; walk across:
   no pop (screenshots at 400/200/100/0 m).
-- **WE4d** Shafts + far fog by location. **Needs WE3 precipitation (we3b2)** for the near hand-off and
+- **WE4d** (built, we4d 2026-10-19: "WE4d as built" below) Shafts + far fog by location. **Needs WE3 precipitation (we3b2)** for the near hand-off and
   `PrecipKind` looks. *Verify:* WE-3 shots show slanted curtains under the storm, ash brown in the Ashlands;
   the approach sequence shows no double rain at the hand-off; FG-2 Bitter Coast fog seen from a dry ridge;
   shafts ≤ 0.06 ms.
@@ -1924,3 +1924,39 @@ so the twin test runs it in raw wgpu like `sf_wind`'s; `sf_atmos_bevy` now depen
   under a 700 m base can't fill the sky below ~10°). **Not done:** 1440p re-time (trace, map pass, High per sample vs
   Medium per ray; no GPU pass timers over BRP and the dev window opened at 720p); the window's own radial projection
   recenters with the window (32-texel steps), so the sky past 8 km can shift on a recenter (unchecked).
+
+### WE4d as built (we4d, 2026-10-19): distant precipitation shafts and far fog by location
+
+**Reuse check (rule 8).** Bevy has no participating-media rain or spatial fog; this is ~90 lines inside our own cloud
+trace (Design §6/§7's option (a)), no new pass, no new texture besides one map layer.
+
+- **Map layer D** (`sf_weather`): `MapTexel::d` = precipitation extinction (Σ intensity × `PrecipKind.extinction`, the
+  number `visibility_m` uses) and its extinction-weighted tint (`PrecipKind.tint` rgb, premultiplied so rows blend
+  linearly), all **per km** (f16 and `MAP_EPSILON` friendly). New row channels `PRECIP_TINT_R/G/B` (`row::LEN` 34);
+  `MAP_LAYERS` = 4 (resolve, Bevy texture, `gpu_rows`, twin test: still ≤ 1e-3). The map's envelope gains a flag: some
+  row precipitates or the rows' height-fog densities differ.
+- **Trace** (`cloud_trace.wesl` `far_weather`): when `Clouds.far_weather` (per-sample map = High/Ultra, the new
+  `CloudQuality::far_weather` on, the flag set), 8 quadratic steps from 32 m to min(depth, half the map window = 8 km).
+  Per step, layers B/D (and C with fog on): **shaft** σ = max(D(x) − D(camera), 0) × the clouds' own weather noise
+  coverage at the point the rain left the base (sheared downwind 0.35 m per m of fall: slanted curtains under the
+  storm's cells) × a 150 m fade below the local base × `ramp(32 m, 128 m, t)`; lit by the key light through a column
+  estimate of the deck above (coverage × density × thickness from the map: dark under the cell, bright at its sunlit
+  edge) + the sky/bounce fill greyed and dimmed by the wet deck, × the tint. **Far fog** σ = max(C.z(x) − C.z(camera), 0)
+  on the camera layer's height profile, lit like the fog (albedo, key light × phase, sky × ambient). Composited in
+  front of the clouds with aerial perspective at its mean distance; the composite's camera fog then lies over it, so
+  curtains fade into the far fog.
+- **Deviation (near = far):** shafts add only the **difference** from the camera's precipitation, like §7's fog, not
+  the full extinction from 128 m out. At the camera both terms are zero, so local rain (sf_precip particles, the
+  camera's fog) looks as before and walking into a storm fades the curtain out exactly as the camera's weather fades in
+  over the band (no pop, no double rain). Not drawn: a camera in rain looking at a drier region (can't subtract in a
+  front layer), virga fraction and vertical fall streaks (no per-preset virga; noise cells only).
+- **Verified:** `cargo test -p sf_weather` (18 + GPU twin with 4 layers), clippy pedantic clean. `clouds --split
+  clear,storm --time 14` (example rows: wet decks rain 2e-3/m, grey-blue): an opaque dark grey-blue curtain under the
+  storm from the ground to its base, a sunlit gap between cells with slanted edges, pillars on the clear side untouched
+  (`--no-far` A/B, `--far-fog <m>` for an east fog). Game `we3-ridge`, Ashlands forced thunderstorm: grey rain veil
+  over the far terrain on the storm side fading into the haze, clear side and zenith unchanged (one shot, owner check
+  WE-3).
+- **Cost, 2560 × 1440** (RTX 4060 Laptop, High, `clouds --size 2560x1440`, two runs each): trace with shafts
+  **0.601 ms** vs `--no-far` **0.541 ms** = **+0.06** (12 steps: +0.07, so 8). **1440p re-time** (we4c2's open item):
+  split per sample 0.54 ms (no shafts) vs `--per-ray` 0.558 ms vs uniform storm 0.512 ms; shadow 0.019-0.024;
+  weather_map resolve 0.018 ms (on change). Per-ray still saves nothing at 1440p; the map costs ≈ +0.03 over uniform.

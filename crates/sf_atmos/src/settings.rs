@@ -314,6 +314,9 @@ pub struct CloudQuality {
     /// (`true`, High and Ultra) or 3 times per ray, lerped along the
     /// in-layer segment (`false`, Medium and Low: cheaper, softer region edges).
     pub map_per_sample: bool,
+    /// Distant precipitation shafts and far fog by location (`WE4d`), marched
+    /// with the clouds; only with `map_per_sample` (no shafts on Medium/Low).
+    pub far_weather: bool,
 }
 
 impl Default for CloudQuality {
@@ -333,6 +336,7 @@ impl CloudQuality {
         shadow_steps: 6,
         shadow_slices: 16,
         map_per_sample: true,
+        far_weather: true,
     };
     pub const ULTRA: Self = Self { max_steps: 96, light_steps: 6, checkerboard: false, shadow_steps: 8, shadow_slices: 4, ..Self::HIGH };
 }

@@ -178,6 +178,10 @@ struct CloudUniform {
     shell_thickness: f32,
     /// Most cirrus anywhere (the map's layer C gives the local cover).
     cirrus_max: f32,
+    /// 1: march the distant precipitation shafts and far fog by location
+    /// (WE4d): the map is sampled per sample (High/Ultra) and some climate
+    /// precipitates or has other fog than another.
+    far_weather: u32,
 }
 
 /// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
@@ -736,8 +740,10 @@ fn prepare_views(
         None => (0, 1.0, 0.0, Vec2::ZERO, Vec2::ZERO),
     };
     let mut shell = (s.weather.base, s.weather.base + s.weather.thickness.max(1.0), s.weather.cirrus);
+    let mut far_weather = 0;
     if let Some(v) = map.active {
         shell = (shell.0.min(v.envelope[0]), shell.1.max(v.envelope[1]), shell.2.max(v.envelope[2]));
+        far_weather = u32::from(map_on == 1 && s.quality.far_weather && v.envelope[3] > 0.5);
     }
     for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps) in &views {
         let Some(medium) = media.get(atmosphere.medium) else { continue };
@@ -820,6 +826,7 @@ fn prepare_views(
             shell_base: shell.0,
             shell_thickness: shell.1 - shell.0,
             cirrus_max: shell.2,
+            far_weather,
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;
