@@ -344,6 +344,11 @@ Adapter (bevyrrowind; spec `docs/specs/world-adapter.md`):
   band per model from `mw_assets::ground_blend_band`). Raster only; not on far-field proxies (vertex-
   colour bake later). `--off terrainblend`, live F11. Awaiting owner: TB-1..3 (visual-checks.md).
 - Verify: fly from Seyda Neen to Balmora within the frame-time targets; benchmark entry.
+- [~] LA1 near foliage vanishing (owner 2026-10-19, lodaudit): CPU chain (streaming, ranges, AABBs, proxy handoff) checked live via BRP,
+  never hid a near placement. Structural fix: Bevy keeps one GPU slot per distinct `VisibilityRange` for the app lifetime (65535 max,
+  then slot 0 aliasing dithers meshes out); our per-instance ranges were near-unique, now snapped by `sf_world_bevy::shared_range`
+  (streaming.md "Visibility range slots"). Not yet confirmed as the owner's trigger; other suspects: blended leaves (leafmask), fogfix
+  material swap (`--off transfog`). Verify: LA-1. Left: `mw_assets` interior ranges unsnapped.
 
 ## M3: Characters + animation
 
@@ -1855,3 +1860,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we3b1): M6 WE3 [~] part 2a: clouds (genus blend, speed), fog (height, banks, ash/blight albedo) and sky cover/dimming follow the live weather via `sf_weather_bevy` (`apply_clouds`/`apply_fog`, `WeatherOverrides.clouds`/`fog_scale`); app scaffold tables removed (`CLOUD_CHOICES`, `SkyLook`/`FogLook`/`SKY_*`); live weather controls (C next weather, T clock x1/x4/x20, BRP `set weather`/`transition_hours`/`time_scale`, `status.weather`); 6 framework tests green (transition glides, clouds lead), clippy clean; Seyda Neen clear → overcast shots sane, WE-1 awaiting owner. Next: we3b2 (precip, lightning/thunder, border blend).
 - 2026-10-19 (fogfix): fog on blended NIF surfaces (leaves, Ghostfence, glows): `transparent_fog.rs` swaps them to FroxelFogMaterial, far fog past the froxels (superfargoth 8aa4fba); pipeline audit in weather.md; FG-5 awaiting owner.
 - 2026-10-19 (we3b2): M6 WE3 [~] part 2b: precipitation (new superfargoth `sf_precip_bevy`: closed-form camera-wrapped streak/flake volumes, wind slant, blowing-ash streaks), lightning (pure flash + thunder delay, flash light, cloud glow), `WeatherSound` cue messages, region border blend in the app; tests green, clippy clean; BRP rain/ashstorm/thunderstorm sane (target/we3b2); WE-2 awaiting owner. No occlusion map or audio yet.
+- 2026-10-19 (lodaudit): foliage-vanishing audit: CPU visibility chain clean live (BRP step-in); per-instance `VisibilityRange`s exhausted Bevy's 65535 app-lifetime GPU slots (slot-0 aliasing dithers near meshes out) -> `shared_range` log-grid snapping (superfargoth); LA-1 awaiting owner.

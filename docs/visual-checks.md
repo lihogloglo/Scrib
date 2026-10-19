@@ -1748,3 +1748,13 @@ in the Ashlands is not possible with one global force, so use the forecast (`set
 until the two regions differ, then fly across the border. Look for: haze, clouds, fog and wind crossfade over ~230 m
 around the border (half each side), no pop when the camera crosses a cell edge; precipitation intensity fades in, not on.
 
+
+### LA-1: Near foliage stays drawn after a long flight (`view "Seyda Neen" --hour 11`)
+
+Status: **awaiting owner** (lodaudit, 2026-10-19). Not screenshotted after the fix (the agent's live repro never
+caught a vanishing plant: CPU visibility kept every near placement visible). How: fly around for several minutes
+(several km, F8 rings on if useful), come back to the swamp trees east of Seyda Neen and fly into them from ~60 m to
+~2 m. Look for: no tree, bush or plant vanishing as the camera closes in (it may dither while crossing a LOD switch,
+then stay solid). Check the log for Bevy's "More than 65535 distinct `VisibilityRange`s" warning (should never
+appear now). If plants still vanish, note which (tree vs bush, leaves only vs whole plant) and try `--off transfog`
+(fogfix's blended-material swap) and the leaf alpha-test change (leafmask) to separate the causes.
