@@ -124,10 +124,13 @@ pub enum Part {
     /// Foliage cutouts (`mw_nif::Cutout`): off, authored blend +
     /// "alpha > 0" surfaces draw blended as before (the old look, an A/B).
     LeafMask,
+    /// Camera motion vectors for sky and cloud pixels (`sf_render_order_bevy::SkyMotion`, RO-7); off,
+    /// they carry none and DLSS/TAA smear the sky on camera turns (the old look, an A/B).
+    SkyMotion,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 38] = [
+    const ALL: [(&'static str, Part); 39] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -167,6 +170,7 @@ impl Part {
         ("fogjitter", Part::FogJitter),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
+        ("skymotion", Part::SkyMotion),
     ];
 
     fn name(self) -> &'static str {

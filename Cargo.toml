@@ -87,6 +87,7 @@ mw_script = { path = "crates/mw_script" }
 mw_water = { path = "crates/mw_water" }
 mw_weather = { path = "crates/mw_weather" }
 sf_water_bevy = { path = "../superfargoth/crates/sf_water_bevy" }
+sf_render_order_bevy = { path = "../superfargoth/crates/sf_render_order_bevy" }
 mw_world = { path = "crates/mw_world" }
 mw_vfs = { path = "crates/mw_vfs" }
 

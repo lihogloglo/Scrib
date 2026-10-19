@@ -297,6 +297,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // weather.md "Clouds" and "Fog": on by default; `--off clouds` or `--off fog` drops
     // one (the node runs for the other), `--off sky` both.
     let (clouds_on, fog_on) = (!perf.off.has(Part::Clouds), !perf.off.has(Part::Fog));
+    if perf.off.has(Part::SkyMotion) {
+        app.insert_resource(sf_render_order_bevy::SkyMotion(false));
+    }
     if (clouds_on || fog_on) && !perf.off.has(Part::Sky) {
         let fog = sf_atmos_bevy::sf_atmos::FogSettings::default();
         app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(), fog, seed: 0x5EED_C10D })
