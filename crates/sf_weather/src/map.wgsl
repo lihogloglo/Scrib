@@ -67,9 +67,13 @@ fn resolve(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let t = rect.xy + local;
-    // Texel center in raster squares, clamped to the raster (edge squares past it).
+    // Texel center in raster squares; past the raster, projected toward its
+    // center onto the edge (`ClimateRaster::site_at`'s radial rule).
     let rs = vec2<f32>(params.raster_size);
-    let l = clamp((vec2<f32>(t - params.origin_i) + 0.5 - params.origin_f) * params.cells_per_texel, vec2(0.0), rs - 1e-4);
+    let c = 0.5 * rs;
+    let d = (vec2<f32>(t - params.origin_i) + 0.5 - params.origin_f) * params.cells_per_texel - c;
+    let k = min(1.0, min(c.x / max(abs(d.x), 1e-6), c.y / max(abs(d.y), 1e-6)));
+    let l = clamp(c + d * k, vec2(0.0), rs - 1e-4);
     let g = vec2<i32>(floor(l));
     let f = l - vec2<f32>(g);
     let own = own_at(g.x, g.y);

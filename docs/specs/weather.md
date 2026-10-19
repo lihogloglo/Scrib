@@ -1905,7 +1905,21 @@ so the twin test runs it in raw wgpu like `sf_wind`'s; `sf_atmos_bevy` now depen
   (`bevyrrowind/set {"weather", "region"}`). `Quality::cloud_map_per_sample`: High/Ultra per sample, Medium/Low per ray.
 - **Verified:** builds, clippy clean (our code); scene `we3-ridge` with Ashlands = ashstorm, Ascadian Isles =
   thunderstorm: per-region forces apply, the zenith stays clear, the forced regions get clouds.
-- **Open bug (next slice):** the distant decks stop short of the horizon and show as grey vertical columns ("curtains"
-  hanging from the shell) near the camera (`bevyrrowind/shots/we4c/`). Suspect the trace's step budget across the tall
-  envelope shell: `ds` stays the camera (clear) layer's thickness / 20, so low-elevation rays spend `max_steps` within a
-  few km; also check the column look (local base B vs shell). 1440p re-time (trace, map pass, A/B `map_per_sample`) not done.
+- **Bug fixed (we4c2, 2026-10-19): distant decks cut short, grey columns.** Cause, from the numbers: (1) **past-the-edge
+  rule**: the resolve clamped positions past the raster per axis (and the trace clamped past the 16 km window per axis),
+  so each edge square stretched into a stripe of constant width out to the 50 km cloud reach. Morrowind's raster is the
+  island (~6 km, 117 m cells) + 4 sea squares, so a region touching the edge narrowly (Ascadian Isles' dilated sea)
+  became a ~1 km stripe running to the horizon, drawn as a tall column tapering into the distance (8.9 km storm deck).
+  (2) **step length**: the shell (700-8900 m with ashstorm + thunderstorm) puts the camera inside it, so every grazing ray
+  spans ~50 km and `ds` = span / `max_steps` ≈ 780 m (coarse 1.56 km): near decks drew as banded slabs, narrow ones were
+  stepped over. Fix: past the edge, positions are **projected toward the raster's (window's) center onto its edge**
+  (`ClimateRaster::site_at`, `map.wgsl`, `map_layer`): each edge square owns a wedge that widens outward (a coastal
+  region's weather reaches the horizon in its direction; the twin test still matches). The trace step is
+  **`ds = local thickness / 20 + g·t`** (distance-proportional, as Nubis/UE scale steps with view distance), `g` sized so
+  `max_steps` coarse steps grow t from the start to `end`, capped at span / `min_steps`: a thin deck keeps 35 m steps, an
+  8 km tower 400 m, far samples ~2 km. `clouds --split clear,storm` (1280 × 720, High): trace **0.215 ms** (was 0.239),
+  deck to ~1° above the horizon. Game `we3-ridge` (`shots/we4c2/`): the Ascadian Isles storm is a wide wall reaching the
+  horizon, clear zenith, no striations; the Ashlands deck ends ~3 km out because the region does (geometry: a 2-3 km region
+  under a 700 m base can't fill the sky below ~10°). **Not done:** 1440p re-time (trace, map pass, High per sample vs
+  Medium per ray; no GPU pass timers over BRP and the dev window opened at 720p); the window's own radial projection
+  recenters with the window (32-texel steps), so the sky past 8 km can shift on a recenter (unchecked).

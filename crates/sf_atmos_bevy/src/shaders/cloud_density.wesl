@@ -18,9 +18,15 @@ import super::fog_bank::fog_bank_mask;
 @group(1) @binding(5) var weather_map: texture_2d_array<f32>;
 
 // A map layer (0 A, 1 B, 2 C) at the origin-relative `p`: one bilinear
-// fetch, clamped to the window's edge texels (past the map: the edge weather).
+// fetch. Past the window: projected toward the window's center onto its
+// edge (radial, not a per-axis clamp: that stretched each edge texel into a
+// stripe to the horizon, so a climate narrow on the edge drew as a grey
+// column; radially it widens into a wedge, as `sf_weather`'s raster does).
 fn map_layer(p: vec3<f32>, layer: i32) -> vec4<f32> {
-    let local = clamp(p.xz * clouds.map_inv_texel + clouds.map_offset, vec2(0.5), vec2(clouds.map_size - 0.5));
+    let c = 0.5 * clouds.map_size;
+    let d = p.xz * clouds.map_inv_texel + clouds.map_offset - c;
+    let s = min(1.0, (c - 0.5) / max(max(abs(d.x), abs(d.y)), 1e-3));
+    let local = clamp(c + d * s, vec2(0.5), vec2(clouds.map_size - 0.5));
     let uv = (local + clouds.map_wrap) / clouds.map_size;
     return textureSampleLevel(weather_map, noise_sampler, uv, layer, 0.0);
 }

@@ -181,12 +181,21 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let ground_light = light_color * sample_transmittance_lut(clouds.inner_radius + 1.0, mu_l_ground) * max(mu_l_ground, 0.0);
     let bounce = clouds.ground_albedo * ground_light / PI * clouds.ground_bounce;
 
-    // Step length: a fixed fraction of the layer, stretched or shrunk only
-    // to keep the count in [min_steps, max_steps]. A continuous function of
-    // the span: an integer count dividing the span evenly jumps at every
-    // count change, which drew horizontal bands across thick decks.
+    // Step length grows with distance, `ds = ds0 + g·t` (a constant angular
+    // footprint, as Nubis and UE's volumetric clouds scale steps with view
+    // distance): near cloud keeps its local layer's step (thickness / 20)
+    // however tall the envelope shell, and the budget still reaches `end`:
+    // `g` lets `max_steps` coarse (2·ds) steps grow t geometrically from
+    // `t_ref` to `end`. Before (WE4c) one step served the whole span
+    // (span / max_steps): ~780 m on every grazing ray through an 8 km storm
+    // shell, so near decks drew as banded grey slabs. Continuous in the span
+    // (no integer count: that drew bands), capped at span / min_steps.
     let span = max(end - start, 0.0);
-    let ds = clamp(clouds.thickness / 20.0, span / f32(clouds.max_steps), span / f32(clouds.min_steps));
+    let ds0 = clouds.thickness / 20.0;
+    let t_ref = max(start, 8.0 * ds0);
+    let g = 0.5 * max(pow(max(end, t_ref) / t_ref, 1.0 / f32(clouds.max_steps)) - 1.0, 0.0);
+    let ds_max = max(span / f32(clouds.min_steps), 1.0);
+    var ds = min(ds0 + g * start, ds_max);
     var t = start + ds * ign(half_px, clouds.frame);
     // The world weather map: per sample (High/Ultra) or 3 lookups per ray (Medium/Low).
     let ray = ray_a(ro, rd, start, end);
@@ -212,6 +221,9 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         let a = ray_local_a(ray, f, p);
         // The local layer (base, thickness, density, erosion): map layer B.
         let b = ray_local_b(ray_heights, f, p);
+        // The step: a twentieth of the local layer (fine in a thin deck, long
+        // in an 8 km storm tower) plus the distance term.
+        ds = min(0.05 * max(b.y, 1.0) + g * t, ds_max);
         let h = (r - clouds.inner_radius - b.x) / max(b.y, 1.0);
         let w = weather_sample_a(p, a);
         if coarse {

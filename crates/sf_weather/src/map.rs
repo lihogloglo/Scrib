@@ -98,12 +98,18 @@ impl ClimateRaster {
 
     /// The climate weights at world X, Z `p`: the own square's climate and
     /// the nearest other one within half the band (distance from `p` to that
-    /// square), blended across the band. Past the raster: the edge squares'
-    /// (the position is clamped).
+    /// square), blended across the band. Past the raster: `p` projected
+    /// toward the raster's center onto its edge (radial: each edge square
+    /// owns a wedge widening outward, so a coastal climate's weather reaches
+    /// the horizon in its direction; a per-axis clamp stretched each edge
+    /// square into a stripe of constant width, drawn as a column).
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::many_single_char_names)]
     pub fn site_at(&self, p: DVec2) -> Site {
         let size = DVec2::new(f64::from(self.width), f64::from(self.height));
-        let l = ((p - self.origin) / self.cell_m).clamp(DVec2::ZERO, size - 1e-9);
+        let c = size * 0.5;
+        let d = (p - self.origin) / self.cell_m - c;
+        let s = (c / d.abs().max(DVec2::splat(1e-12))).min_element().min(1.0);
+        let l = (c + d * s).clamp(DVec2::ZERO, size - 1e-9);
         let g = l.floor().as_ivec2();
         let f = l - g.as_dvec2();
         let own = self.own[(g.x + g.y * self.width) as usize];
