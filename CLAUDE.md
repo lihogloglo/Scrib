@@ -43,7 +43,9 @@ working tree**. Protocol:
    crate or dependency, and note it in your session file.
 4. **Never commit unless the user asks.** If asked, stage explicit paths
    (`git add <your files>`), never `git add -A` or `commit -a`: the other
-   session's work is in the same tree.
+   session's work is in the same tree. The index is shared too: commit with
+   `git commit -- <paths>` (commits only those paths, whatever else is staged;
+   `git add` new files first), never a bare `git commit` after `git add`.
 5. **Don't revert changes you didn't make.** Files changing under you are
    likely the other session's work; check `../.sessions/` and adapt.
 
