@@ -1600,7 +1600,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   silhouettes over white fog at any distance); fly toward the Ghostfence and Red Mountain: the field fades in with
   distance. A/B: `--off transfog` (the old look). Also judge whether near leaves read too dark in fog (lit colour
   under the dim foggy key light; not a fog term).
-- Status: awaiting owner. Sanity: before/after shots in fogfix (old exe: leaves unfogged at all distances).
+- Status: **confirmed by owner 2026-10-19** (foliage no longer over the fog). Sanity: before/after shots in fogfix (old exe: leaves unfogged at all distances).
 - Source: fogfix.
 
 ### WA-1: Open sea, W2 FFT ocean (`scene wa-seyda-noon`, `wa-vivec-waterfront`, `wa-bittercoast`, `wa-sunset-sea`, `wa-night-moons`; A/B `--water scaffold`, `--water off`, `--water-wind 2` / `14`; example `water_ocean`)
@@ -1755,7 +1755,7 @@ around the border (half each side), no pop when the camera crosses a cell edge; 
 
 ### LA-1: Near foliage stays drawn after a long flight (`view "Seyda Neen" --hour 11`)
 
-Status: **awaiting owner** (lodaudit, 2026-10-19). Not screenshotted after the fix (the agent's live repro never
+Status: **confirmed by owner 2026-10-19** (foliage OK in recent runs; lodaudit, 2026-10-19). Not screenshotted after the fix (the agent's live repro never
 caught a vanishing plant: CPU visibility kept every near placement visible). How: fly around for several minutes
 (several km, F8 rings on if useful), come back to the swamp trees east of Seyda Neen and fly into them from ~60 m to
 ~2 m. Look for: no tree, bush or plant vanishing as the camera closes in (it may dither while crossing a LOD switch,
