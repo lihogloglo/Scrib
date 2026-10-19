@@ -5923,6 +5923,7 @@ dependencies = [
  "bevy_transform",
  "log",
  "sf_atmos",
+ "sf_render_order_bevy",
  "sf_sky_bevy",
 ]
 
@@ -6125,6 +6126,7 @@ dependencies = [
  "sf_lod",
  "sf_model",
  "sf_model_bevy",
+ "sf_render_order_bevy",
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",
@@ -6235,6 +6237,7 @@ dependencies = [
  "bevy_asset",
  "bevy_camera",
  "bevy_ecs",
+ "bevy_image",
  "bevy_light",
  "bevy_material",
  "bevy_math",
@@ -6280,10 +6283,13 @@ name = "sf_render_order_bevy"
 version = "0.1.0"
 dependencies = [
  "bevy_app",
+ "bevy_asset",
  "bevy_core_pipeline",
  "bevy_ecs",
+ "bevy_image",
  "bevy_math",
  "bevy_render",
+ "bevy_shader",
 ]
 
 [[package]]
@@ -6512,6 +6518,7 @@ dependencies = [
 name = "sf_weather"
 version = "0.1.0"
 dependencies = [
+ "futures-lite",
  "glam 0.33.12",
  "ron",
  "serde",
@@ -6521,6 +6528,7 @@ dependencies = [
  "sf_sky",
  "sf_wind",
  "smallvec",
+ "wgpu",
 ]
 
 [[package]]

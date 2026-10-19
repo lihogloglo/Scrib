@@ -158,6 +158,10 @@ impl Plugin for FarFieldPlugin {
 
         let shared = runtime::FarShared::default();
         let levels = &self.settings.levels;
+        if !app.is_plugin_added::<sf_render_order_bevy::RenderOrderPlugin>() {
+            // `TranslucentFog`, which the light sprites sample.
+            app.add_plugins(sf_render_order_bevy::RenderOrderPlugin);
+        }
         app.add_plugins((MaterialPlugin::<ImpostorMaterial>::default(), MaterialPlugin::<LightSpriteMaterial>::default(), MaterialPlugin::<ProxyMaterial>::default()))
             .init_asset::<FarNodeAsset>()
             .init_asset::<FarDirectoryAsset>()

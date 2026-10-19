@@ -9,10 +9,13 @@ license.workspace = true
 # that rewrites the Transparent3d sort keys of tagged draws before Bevy sorts.
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
 bevy_core_pipeline.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 bevy_render.workspace = true
+bevy_shader.workspace = true
 
 [lints]
 workspace = true

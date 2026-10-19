@@ -60,6 +60,7 @@ pub(crate) fn create_materials(
     mut proxies: ResMut<Assets<ProxyMaterial>>,
     mut sprites: ResMut<Assets<LightSpriteMaterial>>,
     settings: Res<FarFieldSettings>,
+    fog: Res<sf_render_order_bevy::TranslucentFog>,
 ) {
     let proxy = [1u8, 2, 3].map(|level| {
         proxies.add(ProxyMaterial {
@@ -77,6 +78,8 @@ pub(crate) fn create_materials(
     });
     let lights = sprites.add(LightSpriteMaterial {
         params: SpriteParams { p: Vec4::new(1.0, settings.light_min_pixels, 0.35, 1.0), tint: Vec4::ONE },
+        fog_params: fog.params,
+        fog_volume: fog.volume.clone(),
     });
     commands.insert_resource(FarMaterials { proxy, lights });
 }
@@ -661,9 +664,16 @@ pub(crate) fn update_materials(
     mut impostors: ResMut<Assets<ImpostorMaterial>>,
     mut sprites: ResMut<Assets<LightSpriteMaterial>>,
     night: Res<crate::FarLightsNight>,
+    fog: Res<sf_render_order_bevy::TranslucentFog>,
     mut applied: Local<Option<(bool, f32)>>,
 ) {
     let Some(far) = far else { return };
+    if sprites.get(&far.lights).is_some_and(|m| m.fog_params != fog.params || m.fog_volume != fog.volume)
+        && let Some(mut m) = sprites.get_mut(&far.lights)
+    {
+        m.fog_params = fog.params;
+        m.fog_volume.clone_from(&fog.volume);
+    }
     let wanted = (debug.level_tint, (night.0 * 100.0).round() / 100.0);
     if *applied == Some(wanted) {
         return;

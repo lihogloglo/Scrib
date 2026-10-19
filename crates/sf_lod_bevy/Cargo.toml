@@ -40,6 +40,7 @@ sf_diag_bevy.workspace = true
 sf_lod.workspace = true
 sf_model = { path = "../sf_model", default-features = false }
 sf_model_bevy.workspace = true
+sf_render_order_bevy = { path = "../sf_render_order_bevy" }
 sf_world.workspace = true
 sf_world_bevy = { path = "../sf_world_bevy", default-features = false }
 thiserror.workspace = true

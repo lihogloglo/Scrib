@@ -10,6 +10,7 @@ license.workspace = true
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
 bevy_asset.workspace = true
+bevy_image.workspace = true
 bevy_camera.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_light.workspace = true

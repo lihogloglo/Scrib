@@ -1,11 +1,14 @@
 // Distant light sprites: camera-facing additive glows with a minimum size
 // in pixels, so a town's lights stay visible as points across the map.
 // Faded by a night factor (0 by day) set from the sky.
+// Fogged like any additive translucent (render-order.md RO-2): dimmed by the
+// fog's transmittance to the light, no in-scatter.
 //
 // Mesh: four vertices per light. @location(0) light position (node space),
 // @location(1) corner in [-1, 1]², @location(2) (linear rgb, intensity),
 // @location(3) (radius m, 0, 0, 0).
 
+import sf_render_order_bevy::translucent_fog::froxel_fog_lookup;
 import bevy_pbr::render::{
     mesh_functions,
     mesh_view_bindings::view,
@@ -23,6 +26,10 @@ struct SpriteParams {
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> sprite: SpriteParams;
+// `TranslucentFog`: (near, far, slices, enabled), the integrated volume.
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> fog_params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var fog_volume: texture_3d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var fog_sampler: sampler;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -36,6 +43,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) corner: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(3) @interpolate(flat) dist: f32,
     @if(VISIBILITY_RANGE_DITHER)
     @location(2) @interpolate(flat) visibility_range_dither: i32,
 }
@@ -65,6 +73,7 @@ fn vertex(v: Vertex) -> VertexOutput {
         out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     out.corner = v.corner;
+    out.dist = dist;
     out.color = vec4<f32>(v.color.rgb * sprite.tint.rgb, v.color.a * sprite.p.x * sprite.p.w * mix(0.35, 1.0, energy));
 @if(VISIBILITY_RANGE_DITHER)
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(v.instance_index, world_from_local[3]);
@@ -82,5 +91,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // A bright core and a soft halo.
     let glow = exp(-r2 * 12.0) * 2.0 + exp(-r2 * 3.0) * 0.4;
     // Bevy's additive mode is premultiplied blending: alpha 0 adds.
-    return vec4<f32>(in.color.rgb * in.color.a * glow, 0.0);
+    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let transmittance = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, in.dist).a;
+    return vec4<f32>(in.color.rgb * (in.color.a * glow * transmittance), 0.0);
 }

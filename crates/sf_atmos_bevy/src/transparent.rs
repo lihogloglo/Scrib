@@ -8,7 +8,7 @@
 //! before the transparent pass, and blended surfaces don't write depth. The
 //! industry answer (UE Volumetric Fog, Frostbite, Decima) is that each
 //! translucent material fetches the integrated froxel volume at its own
-//! screen position and distance: `froxel_apply.wesl`'s
+//! screen position and distance: `sf_render_order_bevy::translucent_fog`'s
 //! `froxel_fog_apply`. Past the froxel range the ray's medium carries on as
 //! the froxels saw it (`froxel_fog_lookup`: `T_far^(d/far)`), a stand-in for
 //! the composite's analytic far layers; W2's water draws its own far fog.
@@ -24,6 +24,7 @@ use bevy_render::render_resource::{AsBindGroup, Extent3d, TextureDimension, Text
 use bevy_shader::ShaderRef;
 
 use crate::{CloudCamera, CloudImages, Fog};
+use sf_render_order_bevy::TranslucentFog;
 
 const SHADER: &str = "embedded://sf_atmos_bevy/shaders/transparent_fog.wesl";
 
@@ -63,6 +64,15 @@ impl FroxelFogExt {
 }
 
 impl MaterialExtension for FroxelFogExt {
+    /// Translucents cast no shadows (render-order.md rule 4, RO-1; UE and Unity
+    /// translucent materials don't by default): Bevy's shadow pass would draw a
+    /// blended or additive surface as solid wherever alpha >= 0.05, so flames,
+    /// glows, glass and force fields cast near-opaque shadows. Cutouts are
+    /// `AlphaMode::Mask` `StandardMaterial`s and keep casting with their cutoff.
+    fn enable_shadows() -> bool {
+        false
+    }
+
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
     }
@@ -89,11 +99,13 @@ fn volume_image(size: [u32; 3]) -> Image {
 
 /// Keeps [`FroxelVolume`] matching the fog's froxel settings (a new image when
 /// the grid changes) and every [`FroxelFogMaterial`] pointing at it.
+#[allow(clippy::too_many_arguments)] // a system's parameters
 pub(crate) fn update_volume(
     fog: Res<Fog>,
     cameras: Query<&Camera, With<CloudCamera>>,
     noise: Res<CloudImages>,
     mut volume: ResMut<FroxelVolume>,
+    mut translucent: ResMut<TranslucentFog>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<FroxelFogMaterial>>,
     mut applied: Local<Option<FroxelVolume>>,
@@ -112,6 +124,10 @@ pub(crate) fn update_volume(
     }
     if volume.params != params {
         volume.params = params;
+    }
+    let wanted = TranslucentFog { volume: volume.image.clone(), params: volume.params };
+    if *translucent != wanted {
+        *translucent = wanted;
     }
     if applied.as_ref() == Some(&*volume) {
         return;

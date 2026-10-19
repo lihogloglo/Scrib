@@ -128,6 +128,14 @@ pub struct SpriteParams {
 pub struct LightSpriteMaterial {
     #[uniform(0)]
     pub params: SpriteParams,
+    /// [`sf_render_order_bevy::TranslucentFog::params`]: the glows fade with the
+    /// fog's transmittance (render-order.md rule 1, RO-2; additive: no in-scatter).
+    #[uniform(1)]
+    pub fog_params: Vec4,
+    /// [`sf_render_order_bevy::TranslucentFog::volume`].
+    #[texture(2, dimension = "3d")]
+    #[sampler(3)]
+    pub fog_volume: Handle<Image>,
 }
 
 impl Material for LightSpriteMaterial {

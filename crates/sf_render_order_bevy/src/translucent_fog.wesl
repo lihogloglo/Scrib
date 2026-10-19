@@ -1,9 +1,10 @@
-// Froxel fog for materials (weather.md "Fog", F3 step 4: the `sf_atmos::fog`
-// function transparent surfaces call). Bind the froxels' integrated volume
-// (`sf_atmos_bevy::FroxelVolume`: rgb in-scattered light, pre-exposed; a
-// transmittance) with a filtering sampler and its params (near, far, slices,
-// enabled), then fog the lit colour by the fragment's screen position and
-// distance. CPU twin of the slice mapping: `sf_atmos::froxel`.
+// Fog for translucent materials (render-order.md rule 1; weather.md "Fog", F3
+// step 4). Every translucent shader imports this module
+// (`sf_render_order_bevy::translucent_fog`) and binds `TranslucentFog`: the fog
+// owner's integrated froxel volume (`sf_atmos_bevy::FroxelVolume`: rgb
+// in-scattered light, pre-exposed; a transmittance) with a filtering sampler
+// and its params (near, far, slices, enabled; enabled 0 = no fog). CPU twin of
+// the slice mapping: `sf_atmos::froxel`.
 
 // The integrated fog between the camera and distance `d` through screen `uv`
 // (0,0 top left). Past the froxels' far end the ray's medium carries on as it

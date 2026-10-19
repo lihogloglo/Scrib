@@ -1,8 +1,8 @@
 // `sf_atmos_bevy::FroxelFogMaterial`: Bevy's StandardMaterial fragment
-// (forward) fogged by the froxel volume (`froxel_apply.wesl`), for blended
+// (forward) fogged by the froxel volume (`sf_render_order_bevy::translucent_fog`), for blended
 // surfaces the fog composite can't reach (weather.md "Fog", F3 step 4).
 
-import super::froxel_apply::{froxel_fog_lookup, froxel_fog_apply, FOG_BLEND, FOG_PREMULTIPLIED, FOG_ADD, FOG_MULTIPLY};
+import sf_render_order_bevy::translucent_fog::{froxel_fog_lookup, froxel_fog_apply, FOG_BLEND, FOG_PREMULTIPLIED, FOG_ADD, FOG_MULTIPLY};
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::pbr_types::{
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED,

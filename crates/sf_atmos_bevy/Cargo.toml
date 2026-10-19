@@ -26,6 +26,7 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 sf_atmos = { path = "../sf_atmos" }
+sf_render_order_bevy = { path = "../sf_render_order_bevy" }
 
 [lints]
 workspace = true

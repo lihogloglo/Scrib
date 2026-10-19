@@ -1,6 +1,6 @@
 # Render order: the frame graph, its rules and its guard
 
-Status: audit + rules (renderorder, 2026-10-19). Crates: every `*_bevy` crate that draws;
+Status: audit + rules (renderorder, 2026-10-19); RO-1, RO-2, RO-3 fixed (rofix1, 2026-10-19). Crates: every `*_bevy` crate that draws;
 `sf_render_order_bevy` owns the transparent-band policy and the guard test.
 
 **Why this spec.** On 2026-10-19 the owner found four render-order bugs, each fixed on its own:
@@ -21,7 +21,7 @@ water plugin gets all of it; interiors skip clouds, fog volume and water.
 | # | Pass (system / phase) | Owner | What | Reads | Writes |
 |---|---|---|---|---|---|
 | 0a | `RenderSystems::PhaseSort`: `apply_bands` before `sort_phase_system::<Transparent3d>` | `sf_render_order_bevy` | rewrites sort keys of `DrawBand`-tagged draws | `ExtractedBands` | phase sort info |
-| 0b | shadow views (CSM, budgeted point/spot) | Bevy | every mesh without `NotShadowCaster`, opaque, masked **and blended** (see RO-1) | material alpha (discard) | shadow maps |
+| 0b | shadow views (CSM, budgeted point/spot) | Bevy | every mesh without `NotShadowCaster` whose material casts: opaque and masked (alpha-tested); translucent materials disable shadows (rule 4) | material alpha (discard) | shadow maps |
 | 0c | `shadow_pass` (after `Prepass`, before `MainPass`) | `sf_atmos_bevy` | cloud shadow map, toroidal, time-sliced | cloud noise | `DirectionalLightTexture` |
 | 0d | `fft_pass` (same slot) | `sf_water_bevy` | ocean FFT cascades | spectrum | displacement arrays (current + previous) |
 | 1 | `Core3dSystems::Prepass` | Bevy + material prepass shaders | depth (`DepthPrepass`, for `OcclusionCulling`); motion vectors + jitter when DLSS SR is on (`MotionVectorPrepass`, `TemporalJitter`, `MipBias`, `upscale.rs`); deferred G-buffer only on the Solari path (`path.rs`) | — | depth, motion vectors |
@@ -50,24 +50,26 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 |---|---|---|---|---|---|---|
 | NIF opaque `StandardMaterial` (`mw_assets`, `sf_world_bevy` spawn) | Opaque3d | world, binned | write | std (depth, MV) | composite | cast / receive |
 | NIF masked, incl. cutout foliage (leafmask) | AlphaMask3d | world, binned | write | std, alpha discard | composite | cast with the material cutoff / receive |
-| NIF blended (glass, Ghostfence, animated-alpha, foliage on `--leaves blend`) → `FroxelFogMaterial` (app `transparent_fog.rs`) | Transparent3d Sorted | world, AABB centre | test only | none | froxel | **casts, discard only a < 0.05** (RO-1) / receive |
-| NIF additive (glows, flames) → `FroxelFogMaterial` | Sorted | world | test only | none | froxel (dim only) | **casts** (RO-1) |
-| NIF particles (`mw_assets` `particles.rs`, CPU quads in an emitter-local dynamic mesh) | Sorted | `NoFrustumCulling` ⇒ no AABB ⇒ key = emitter origin (RO-10) | test only | none | froxel (StandardMaterial swap) | **casts** (RO-1) |
+| NIF blended (glass, Ghostfence, animated-alpha, foliage on `--leaves blend`) → `FroxelFogMaterial` (app `transparent_fog.rs`) | Transparent3d Sorted | world, AABB centre | test only | none | froxel | none (`FroxelFogExt::enable_shadows` false) / receive |
+| NIF additive (glows, flames) → `FroxelFogMaterial` | Sorted | world | test only | none | froxel (dim only) | none (as blended) |
+| NIF particles (`mw_assets` `particles.rs`, CPU quads in an emitter-local dynamic mesh) | Sorted | `NoFrustumCulling` ⇒ no AABB ⇒ key = emitter origin (RO-10) | test only | none | froxel (StandardMaterial swap) | none (as blended) |
 | Held props (`held.rs`) | as their material | world (character child) | | std | composite | `NotShadowCaster` for **every** light (RO-11) |
 | `TerrainMaterial` (`sf_terrain_bevy`) | Opaque3d | world (`NoFrustumCulling` on some chunks: opaque, no sort issue) | write | custom `terrain_prepass.wesl` with MV | composite | cast / receive + far shadow map |
 | Ground blend (`StandardMaterial` + `GroundBlendExt`, forward) | Opaque3d / AlphaMask3d | world | write | std | composite | cast / receive |
 | LOD proxies (`StandardMaterial` + `FarShadowExt`) | Opaque3d | world, baked AABB (`NoAutoAabb`) | write | std | composite | cast only L1 with `l1_shadows` / far shadow map |
 | `ImpostorMaterial` (`sf_lod_bevy`, `Mask(tint.w)`, forward) | AlphaMask3d | world, baked AABB | write | custom `impostor_prepass.wesl` with MV | composite | per LOD settings, alpha-tested |
-| `LightSpriteMaterial` (`sf_lod_bevy`, Add) | Sorted | world, baked AABB; billboard grows in the shader inside it | test only | disabled | **none** (RO-2) | none (`enable_shadows` false) |
+| `LightSpriteMaterial` (`sf_lod_bevy`, Add) | Sorted | world, baked AABB; billboard grows in the shader inside it | test only | disabled | froxel via `TranslucentFog`, transmittance only | none (`enable_shadows` false) |
 | `WaterMaterial` (`StandardMaterial` Blend + `WaterExt`) | Refractive | shader-placed clipmap at the origin, `NoFrustumCulling`, `DrawBand::Refractive` | **write** + test, no culling | none; MV by step 9 | own (froxels, else analytic height fog) | `NotShadowCaster` / receive |
-| `PrecipMaterial` (`sf_precip_bevy`, Blend) | Overlay | shader-placed camera-wrapped boxes, `NoFrustumCulling`, `DrawBand::Overlay` | test only | disabled | **none** (RO-3) | none |
-| Fade overlay (`sf_world_bevy` `fade.rs`, unlit Blend quad, camera child at 0.2 m) | Sorted | camera-local **without a band** (RO-9) | test only | none | host swap (pointless, unlit) | **casts while fading** (RO-9) |
+| `PrecipMaterial` (`sf_precip_bevy`, Blend) | Overlay | shader-placed camera-wrapped boxes, `NoFrustumCulling`, `DrawBand::Overlay` | test only | disabled | froxel via `TranslucentFog` (blend) | none |
+| Fade overlay (`sf_world_bevy` `fade.rs`, unlit Blend quad, camera child at 0.2 m) | Sorted | camera-local **without a band** (RO-9) | test only | none | host swap (pointless, unlit) | none in bevyrrowind (the swap); casts in a host without it (RO-9) |
 | Sea plane scaffold (`exterior.rs`) | Opaque3d | world | write | std | composite | `NotShadowCaster` |
 
 ## Rules
 
 1. **Every translucent is fogged through the fog path.** A `Blend`/`Premultiplied`/`Add`/`Multiply`
-   material fetches the froxel volume (`froxel_fog_apply`; additive: transmittance only), or fogs
+   material binds `sf_render_order_bevy::TranslucentFog` (the fog owner, `sf_atmos_bevy`, writes it;
+   without one it is a clear 1³ volume) and its shader imports `sf_render_order_bevy::translucent_fog`
+   (`froxel_fog_lookup` + `froxel_fog_apply`; additive: transmittance only), or fogs
    itself as documented in its spec (water), or is a listed violation. The opaque fog is the
    composite (step 6); nothing translucent may rely on it.
 2. **Every shader-placed or camera-local translucent has a `DrawBand`.** Bevy's key is the view depth
@@ -80,7 +82,11 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
    impostors and water do; wind-animated foliage must when it lands).
 4. **Shadows match coverage.** Opaque/masked casters alpha-test in the shadow pass with the same
    cutoff as the colour pass. Translucents cast nothing unless their class opts in (and then with an
-   explicit shadow cutoff). Camera-local and light-proxy geometry never casts.
+   explicit shadow cutoff). Camera-local and light-proxy geometry never casts. Policy (UE, Unity: translucent materials
+   don't cast unless "cast as masked" is set): the opt-out is per material *type*
+   (`enable_shadows() -> false`): `FroxelFogExt` (every NIF blended/additive surface and particle after
+   the host swap), `LightSpriteMaterial`, `PrecipMaterial`. An opt-in class (e.g. blended foliage
+   on `--leaves blend`) needs its own material type with a shadow cutoff in a prepass fragment.
 5. **Scene-colour and depth reads happen at named points only.** Colour: `snapshot_pass` (step 7).
    Opaque depth: clouds/fog trace and composite (5-6), water snapshot (7), velocity (9). History
    buffers: clouds, froxels (own), DLSS. A new reader names its point here.
@@ -92,7 +98,7 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 
 | Engine | Order | Us |
 |---|---|---|
-| UE5 (deferred) | depth prepass (+ velocity for movable) → base pass → shadow depths → lighting → volumetric fog (froxels, compute) → sky atmosphere / volumetric clouds → height fog composite on opaque → **Single Layer Water** → translucency (sorted by bounds origin, per-pixel or per-vertex froxel fog; "after DOF" separate translucency) → TSR/DLSS → bloom → tonemap → UI. Translucent shadows are opt-in (opacity-masked or volumetric). | Same order (forward raster instead of deferred); water before translucents; froxels for translucents. Gaps: translucents cast by default (RO-1), no translucent velocity/reactive mask (RO-6). |
+| UE5 (deferred) | depth prepass (+ velocity for movable) → base pass → shadow depths → lighting → volumetric fog (froxels, compute) → sky atmosphere / volumetric clouds → height fog composite on opaque → **Single Layer Water** → translucency (sorted by bounds origin, per-pixel or per-vertex froxel fog; "after DOF" separate translucency) → TSR/DLSS → bloom → tonemap → UI. Translucent shadows are opt-in (opacity-masked or volumetric). | Same order (forward raster instead of deferred); water before translucents; froxels for translucents. Gap: no translucent velocity/reactive mask (RO-6). |
 | Frostbite (Hillaire 2015, "Physically based and unified volumetric rendering") | depth → G-buffer → lighting → froxel fog shared by opaque (composite) and every transparent (per-vertex/pixel fetch) → refractive surfaces first → sorted transparents → particles (often half-res, opacity shadow maps) | Same structure; particles full-res and not in a separate pass. |
 | Unity HDRP | depth prepass → G-buffer → lighting → sky/fog → "before refraction" transparents → colour pyramid snapshot → refractive transparents → "after post" | Our snapshot is before *all* translucents (UE-style); translucents under water are invisible through it (accepted, water.md). |
 | Decima (Horizon, Schneider 2015/2017) | clouds raymarched at reduced res with temporal reprojection, composited before translucency | Same (sf_atmos). |
@@ -100,22 +106,16 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 ## Violations
 
 Severity: **High** visible every play session; **Medium** visible in common conditions;
-**Low** rare or scaffold-only. Each has a proposed slice; none is fixed by this audit (the cheap
-ones touch files other sessions own today).
+**Low** rare or scaffold-only. Each has a proposed slice. Fixed ones keep a one-line entry.
 
-- **RO-1** (High, shadows): blended and additive surfaces cast near-opaque shadows. Bevy 0.20's
-  shadow pass queues `Blend`/`Add`/`Premultiplied` with `MAY_DISCARD` and discards only alpha below
-  `PREMULTIPLIED_ALPHA_CUTOFF`; nothing sets `NotShadowCaster` on NIF blended/additive meshes or
-  particle instances. Flames, glows, the Ghostfence field, glass and smoke quads cast shadows;
-  blended foliage casts blobby shadows. *Slice* (after leafmask lands, `mw_assets` + `particles.rs`):
-  `Add`/`Multiply` and particles → `NotShadowCaster`; `Blend` → casts with a 0.5 shadow cutoff via a
-  prepass fragment on `FroxelFogMaterial`, glass-like (no texture alpha) → no cast; test scene in
-  visual-checks (torch flame and window on a sunlit wall).
-- **RO-2** (Medium-High): `LightSpriteMaterial` (distant town lights, additive) is not fogged: a
-  town shows full-bright points through fog. *Slice*: `light_sprite.wesl` multiplies by
-  `froxel_fog_lookup` transmittance (with the analytic far fallback, as water does).
-- **RO-3** (Medium): `PrecipMaterial` is not fogged: rain and snow streaks keep full contrast in dense
-  fog. *Slice*: `froxel_fog_apply` in `precip.wesl` (camera-local, one fetch per fragment).
+- **RO-1** fixed (rofix1, 2026-10-19; was High): blended and additive NIF surfaces and particles cast
+  near-opaque shadows (Bevy 0.20's shadow pass discards only alpha < 0.05). `FroxelFogExt::enable_shadows`
+  is false, so nothing swapped to `FroxelFogMaterial` casts; masked cutouts (leafmask) keep casting with
+  their cutoff. Blended foliage on `--leaves blend` now casts nothing (opt-in material type if wanted);
+  `--off transfog` restores the old casting too. Visual check RO-A (bevyrrowind visual-checks).
+- **RO-2** fixed (rofix1): `light_sprite.wesl` multiplies by the `TranslucentFog` transmittance to the
+  light (no in-scatter); past the froxel range `froxel_fog_lookup` extends it as `T_far^(d/far)`.
+- **RO-3** fixed (rofix1): `precip.wesl` applies `froxel_fog_apply` (blend) per fragment.
 - **RO-4** (Medium): fog for translucents lives in the host (`transparent_fog.rs` swap); the
   framework's own generic spawn (`sf_world_bevy` `spawn.rs`) emits blended `StandardMaterial`s that
   any other host draws unfogged. *Slice*: move the swap (it has no game knowledge) into
@@ -159,8 +159,11 @@ holds a `SITES` table (file, fog treatment, placement, violation id). It fails w
 1. a file gains a translucent site that isn't declared, or a declared site is gone;
 2. a shader-placed or camera-local site has no `DrawBand::` and no violation id, or a file spawning
    `NoFrustumCulling` with a translucent is declared world-placed;
-3. a site declared `Own`/`Froxel` fogged sits in a crate that never references the froxel volume, or
-   an unfogged (`Host`/`Missing`) site lacks a violation id listed in this spec.
+3. a `Froxel` site's crate doesn't bind `TranslucentFog` and call `froxel_fog_lookup` from the
+   `translucent_fog` module, an `Own` site's crate never references the froxel volume, or an unfogged
+   (`Host`/`Missing`) site lacks a violation id listed in this spec;
+4. a site's own `Material`, or `sf_atmos_bevy`'s `FroxelFogExt`, doesn't return `false` from
+   `enable_shadows` (rule 4).
 
 Adding a translucent class: give it fog (rule 1) and, if shader-placed or camera-local, a band
 (rule 2), then add its row here and in `SITES`. Fixing a violation: change its row to the fixed
@@ -170,4 +173,4 @@ state, drop the id, delete it here.
 so a source scan can't see it. A `dev`-feature system in bevyrrowind, every 60 frames: warn (once per
 entity) when an entity still draws a blended `MeshMaterial3d<StandardMaterial>` two frames after
 spawn (the fog swap missed it), when a translucent entity has `NoFrustumCulling` and no `DrawBand`,
-and when a blended/additive entity casts shadows without an explicit opt-in (RO-1, after its slice).
+and when a blended/additive entity draws a `StandardMaterial` that still casts (the swap missed it, RO-1).

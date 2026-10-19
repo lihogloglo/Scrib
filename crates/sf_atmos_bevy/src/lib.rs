@@ -205,7 +205,6 @@ impl Plugin for CloudsPlugin {
         load_shader_library!(app, "shaders/key_light.wesl");
         load_shader_library!(app, "shaders/fog_bank.wesl");
         load_shader_library!(app, "shaders/froxel_common.wesl");
-        load_shader_library!(app, "shaders/froxel_apply.wesl");
         embedded_asset!(app, "shaders/transparent_fog.wesl");
         embedded_asset!(app, "shaders/cloud_trace.wesl");
         embedded_asset!(app, "shaders/cloud_resolve.wesl");
@@ -230,6 +229,10 @@ impl Plugin for CloudsPlugin {
             })
             .ok();
 
+        if !app.is_plugin_added::<sf_render_order_bevy::RenderOrderPlugin>() {
+            // `TranslucentFog` and the `translucent_fog` shader module `transparent_fog.wesl` imports.
+            app.add_plugins(sf_render_order_bevy::RenderOrderPlugin);
+        }
         app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true })
             .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()) })
             .init_resource::<FogShadowHeights>()

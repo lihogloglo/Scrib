@@ -13,16 +13,21 @@
 //!    (Bevy's sort key, the mesh AABB centre, means nothing for it), and a file
 //!    spawning a translucent with `NoFrustumCulling` (no AABB, so the key is
 //!    the entity origin) is not declared world-placed;
-//! 3. fog: `Froxel`/`Own` sites reference the froxel volume in their crate;
-//!    `Host` and `Missing` sites name a violation id that render-order.md lists.
+//! 3. fog: `Froxel` sites bind `TranslucentFog` and import the
+//!    `translucent_fog` shader module, `Own` sites reference the froxel volume
+//!    in their crate; `Host` and `Missing` sites name a violation id that
+//!    render-order.md lists;
+//! 4. shadows (rule 4, RO-1): a site's own `Material` and the host fog
+//!    material (`sf_atmos_bevy` `FroxelFogExt`) disable shadow casting.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // `Froxel`: the target for RO-2/RO-3; no framework site uses it yet.
+#[allow(dead_code)] // `Missing`: no framework site is unfogged today.
 enum Fog {
-    /// The fragment shader applies `sf_atmos_bevy`'s froxel volume.
+    /// The material binds `TranslucentFog` and its shader imports
+    /// `sf_render_order_bevy::translucent_fog` (render-order.md rule 1).
     Froxel,
     /// The crate fogs it its own way (documented in its spec).
     Own,
@@ -54,8 +59,8 @@ struct Site {
 
 /// The framework's translucent draws (render-order.md "Material inventory").
 const SITES: &[Site] = &[
-    Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows)", fog: Fog::Missing, placement: Placement::World, violation: Some("RO-2") },
-    Site { file: "sf_precip_bevy/src/lib.rs", what: "PrecipMaterial (camera-wrapped rain/snow boxes)", fog: Fog::Missing, placement: Placement::ShaderPlaced, violation: Some("RO-3") },
+    Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows)", fog: Fog::Froxel, placement: Placement::World, violation: None },
+    Site { file: "sf_precip_bevy/src/lib.rs", what: "PrecipMaterial (camera-wrapped rain/snow boxes)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_water_bevy/src/lib.rs", what: "WaterMaterial (clipmap, refractive)", fog: Fog::Own, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_world_bevy/src/fade.rs", what: "FadeTransition overlay quad (camera child)", fog: Fog::Host, placement: Placement::CameraLocal, violation: Some("RO-9") },
     Site { file: "sf_world_bevy/src/spawn.rs", what: "generic model spawn, sf_model Blend -> StandardMaterial", fog: Fog::Host, placement: Placement::World, violation: Some("RO-4") },
@@ -164,7 +169,18 @@ fn every_translucent_is_fogged_or_a_tracked_violation() {
             errors.push(format!("{}: violation {id} is not listed in render-order.md", site.file));
         }
         match site.fog {
-            Fog::Froxel | Fog::Own => {
+            Fog::Froxel => {
+                let krate = site.file.split('/').next().unwrap_or_default();
+                let mut files = Vec::new();
+                rust_files(&root.join(krate).join("src"), &mut files);
+                let binds = files.iter().any(|f| fs::read_to_string(f).is_ok_and(|t| t.contains("TranslucentFog")));
+                let shaders = fs::read_dir(root.join(krate).join("src/shaders")).map(|d| d.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default();
+                let imports = shaders.iter().any(|f| fs::read_to_string(f).is_ok_and(|t| t.contains("import sf_render_order_bevy::translucent_fog::") && t.contains("froxel_fog_lookup(")));
+                if !binds || !imports {
+                    errors.push(format!("{}: declared Froxel but its crate doesn't bind TranslucentFog ({binds}) and call the translucent_fog module's froxel_fog_lookup ({imports})", site.file));
+                }
+            }
+            Fog::Own => {
                 let krate = site.file.split('/').next().unwrap_or_default();
                 let mut files = Vec::new();
                 rust_files(&root.join(krate).join("src"), &mut files);
@@ -178,6 +194,28 @@ fn every_translucent_is_fogged_or_a_tracked_violation() {
                     errors.push(format!("{}: unfogged ({:?}) without a render-order.md violation id", site.file, site.fog));
                 }
             }
+        }
+    }
+    assert!(errors.is_empty(), "\n{}", errors.join("\n"));
+}
+
+/// Rule 4 (RO-1): translucents cast no shadows unless their class opts in.
+/// Bevy's shadow pass draws a blended or additive surface as solid wherever
+/// alpha >= 0.05, so the policy lives in the materials: every framework
+/// translucent `Material` and the host fog material (every NIF blended/additive
+/// surface and particle is swapped to it) return `false` from `enable_shadows`.
+#[test]
+fn translucents_cast_no_shadows() {
+    let root = crates_dir();
+    let no_shadows = |text: &str| code(text).replace(char::is_whitespace, "").contains("fnenable_shadows()->bool{false}");
+    let mut errors = Vec::new();
+    let mut files: Vec<&str> = SITES.iter().map(|s| s.file).collect();
+    files.push("sf_atmos_bevy/src/transparent.rs");
+    for file in files {
+        let text = fs::read_to_string(root.join(file)).unwrap_or_default();
+        let own = text.contains("impl Material for") || text.contains("impl MaterialExtension for FroxelFogExt");
+        if own && !no_shadows(&text) {
+            errors.push(format!("{file}: translucent material without `fn enable_shadows() -> bool {{ false }}` (render-order.md rule 4)"));
         }
     }
     assert!(errors.is_empty(), "\n{}", errors.join("\n"));

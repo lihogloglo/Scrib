@@ -9,6 +9,7 @@
 // @location(1) corner in [-1, 1]², @location(2) (rank, size t, phase, 0):
 // a drop shows while rank < intensity.
 
+import sf_render_order_bevy::translucent_fog::{froxel_fog_lookup, froxel_fog_apply, FOG_BLEND};
 import bevy_pbr::render::{
     mesh_view_bindings::view,
     view_transformations::position_world_to_clip,
@@ -29,6 +30,10 @@ struct PrecipParams {
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> precip: PrecipParams;
+// `TranslucentFog`: (near, far, slices, enabled), the integrated volume.
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> fog_params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var fog_volume: texture_3d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var fog_sampler: sampler;
 
 struct Vertex {
     @location(0) seed: vec3<f32>,
@@ -40,6 +45,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) corner: vec2<f32>,
     @location(1) @interpolate(flat) alpha: f32,
+    @location(2) dist: f32,
 }
 
 fn max3(v: vec3<f32>) -> f32 {
@@ -98,6 +104,7 @@ fn vertex(v: Vertex) -> VertexOutput {
     }
     out.position = position_world_to_clip(p);
     out.alpha = precip.color.a * fade * energy;
+    out.dist = distance(p, cam);
     return out;
 }
 
@@ -118,5 +125,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if alpha < 0.002 {
         discard;
     }
-    return vec4<f32>(precip.color.rgb, alpha);
+    // Fogged like any translucent (RO-3): streaks fade into the fog with distance.
+    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let fog = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, in.dist);
+    return froxel_fog_apply(vec4<f32>(precip.color.rgb, alpha), fog, FOG_BLEND);
 }

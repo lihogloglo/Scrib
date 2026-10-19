@@ -14,8 +14,10 @@
 //! The draw follows whatever camera renders it (`view.world_position`).
 //!
 //! Not built: the occlusion map (roofs and trees don't block yet: hosts
-//! switch [`Precip::enabled`] off indoors), splashes, fog on the streaks,
-//! textures (procedural shapes).
+//! switch [`Precip::enabled`] off indoors), splashes, textures (procedural
+//! shapes). The streaks fog themselves from [`TranslucentFog`] (render-order.md
+//! rule 1, RO-3): dimmed by the transmittance to their distance plus the
+//! in-scatter in front of them.
 
 use bevy_app::{App, Plugin, Update};
 use bevy_asset::{Asset, Assets, Handle, RenderAssetUsages, embedded_asset};
@@ -27,7 +29,7 @@ use bevy_math::{Vec2, Vec3, Vec4};
 use bevy_mesh::{Indices, Mesh, Mesh3d, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexFormat};
 use bevy_pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin, MeshMaterial3d};
 use bevy_reflect::TypePath;
-use sf_render_order_bevy::{DrawBand, RenderOrderPlugin};
+use sf_render_order_bevy::{DrawBand, RenderOrderPlugin, TranslucentFog};
 use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
 use bevy_shader::ShaderRef;
 use bevy_time::Time;
@@ -129,6 +131,13 @@ pub struct PrecipParams {
 pub struct PrecipMaterial {
     #[uniform(0)]
     pub params: PrecipParams,
+    /// [`TranslucentFog::params`] (render-order.md rule 1; kept current by the plugin).
+    #[uniform(1)]
+    pub fog_params: Vec4,
+    /// [`TranslucentFog::volume`].
+    #[texture(2, dimension = "3d")]
+    #[sampler(3)]
+    pub fog_volume: Handle<bevy_image::Image>,
 }
 
 impl Material for PrecipMaterial {
@@ -264,12 +273,13 @@ pub fn layer_params(slot: &PrecipSlot, layer: usize, precip: &Precip, offset: Ve
     }
 }
 
-fn spawn_layers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<PrecipMaterial>>) {
+#[allow(clippy::needless_pass_by_value)]
+fn spawn_layers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<PrecipMaterial>>, fog: Res<TranslucentFog>) {
     for (layer, (_, count)) in LAYERS.iter().enumerate() {
         #[expect(clippy::cast_possible_truncation, reason = "three layers")]
         let mesh = meshes.add(drop_mesh(*count, layer as u32 + 1));
         for slot in 0..SLOTS {
-            let material = materials.add(PrecipMaterial { params: PrecipParams::default() });
+            let material = materials.add(PrecipMaterial { params: PrecipParams::default(), fog_params: fog.params, fog_volume: fog.volume.clone() });
             commands.spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material),
@@ -294,6 +304,7 @@ pub fn update_layers(
     mut stats: ResMut<PrecipStats>,
     mut layers: Query<(&mut PrecipLayer, &MeshMaterial3d<PrecipMaterial>, &mut Visibility)>,
     mut materials: ResMut<Assets<PrecipMaterial>>,
+    fog: Res<TranslucentFog>,
 ) {
     let dt = time.delta_secs().min(0.25);
     // Wrapped so the flutter phase keeps f32 precision.
@@ -314,10 +325,12 @@ pub fn update_layers(
         drops += shown;
         let params = layer_params(&slot, l.layer, &precip, l.offset, t);
         let id: &Handle<PrecipMaterial> = &handle.0;
-        if materials.get(id).is_some_and(|m| m.params != params)
+        if materials.get(id).is_some_and(|m| m.params != params || m.fog_params != fog.params || m.fog_volume != fog.volume)
             && let Some(mut m) = materials.get_mut(id)
         {
             m.params = params;
+            m.fog_params = fog.params;
+            m.fog_volume.clone_from(&fog.volume);
         }
     }
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a drop count")]

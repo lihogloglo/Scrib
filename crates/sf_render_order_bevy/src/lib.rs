@@ -16,7 +16,11 @@
 //! 3. [`DrawBand::Overlay`]: camera-local volumes (precipitation, particles),
 //!    last, ranked by `order` (ascending: higher draws on top).
 //!
-//! Crates that tag draws add the plugin if it is missing.
+//! The plugin also holds [`TranslucentFog`], the fog every translucent applies
+//! to itself (render-order.md rule 1), and its shader module
+//! `sf_render_order_bevy::translucent_fog`.
+//!
+//! Crates that tag draws or fog translucents add the plugin if it is missing.
 
 use bevy_app::{App, Plugin};
 use bevy_core_pipeline::core_3d::{Transparent3d, TransparentSortingInfo3d};
@@ -26,6 +30,9 @@ use bevy_render::render_phase::{ViewSortedRenderPhases, sort_phase_system};
 use bevy_render::sync_world::{MainEntity, MainEntityHashMap};
 use bevy_render::view::ExtractedView;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
+
+mod fog;
+pub use fog::{NO_FOG, TranslucentFog};
 
 /// Where a blended draw goes in the transparent phase.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,6 +75,7 @@ pub struct RenderOrderPlugin;
 
 impl Plugin for RenderOrderPlugin {
     fn build(&self, app: &mut App) {
+        fog::init(app);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<ExtractedBands>().add_systems(ExtractSchedule, extract_bands).add_systems(
             Render,
