@@ -12,7 +12,7 @@
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import super::cloud_common::{ramp, shell_segment};
-import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density, cirrus_optical_depth};
+import super::cloud_density::{clouds, weather_sample_a, ray_a, ray_local_a, height_fraction, cloud_density, cirrus_optical_depth};
 
 @fragment
 fn shadow(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -40,11 +40,14 @@ fn shadow(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let n = max(clouds.shadow_steps, 1u);
         let span = min(seg.y - seg.x, clouds.thickness * 4.0);
         let ds = span / f32(n);
+        // The world weather map: per sample, or 3 lookups along this texel's ray (Medium/Low).
+        let ray = ray_a(p, l, seg.x, seg.x + span);
         var tau = 0.0;
         for (var i = 0u; i < n; i += 1u) {
             let s = p + l * (seg.x + (f32(i) + 0.5) * ds);
             // With the erosion octave: the shadow edge is as crisp as the cloud edge.
-            tau += cloud_density(s, height_fraction(s), weather_sample(s), true) * ds;
+            let a = ray_local_a(ray, (f32(i) + 0.5) / f32(n), s);
+            tau += cloud_density(s, height_fraction(s), weather_sample_a(s, a), true) * ds;
         }
         od = tau * clouds.extinction;
     }

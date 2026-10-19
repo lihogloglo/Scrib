@@ -19,7 +19,7 @@ import bevy_pbr::atmosphere::{
     bruneton_functions::sample_transmittance_lut_segment,
 };
 import super::cloud_common::{PI, WeatherSample, ramp, multi_scatter, powder, shell_segment, sub_pixel, ign, henyey_greenstein, ray_sphere};
-import super::cloud_density::{clouds, weather_sample, height_fraction, cloud_density, cirrus_hit, bank_mask};
+import super::cloud_density::{clouds, weather_sample_a, map_a, ray_a, ray_local_a, height_fraction, cloud_density, cirrus_hit, bank_mask};
 import super::key_light::{key_light, planet_lit_at};
 
 @if(MULTISAMPLED)
@@ -38,7 +38,9 @@ struct TraceOutput {
 
 // Optical depth (density × m) from `p` toward the light. Steps grow, so a few
 // samples reach the far side of the layer.
-fn light_optical_depth(p: vec3<f32>, l: vec3<f32>, steps: u32, w0: WeatherSample) -> f32 {
+// `a`: the primary sample's layer-A weather (per-ray map lookup or uniform);
+// the per-sample map refetches it along the light.
+fn light_optical_depth(p: vec3<f32>, l: vec3<f32>, steps: u32, w0: WeatherSample, a: vec4<f32>) -> f32 {
     var tau = 0.0;
     // Fewer steps cover the same reach (steps grow by 1.5: the reach of n
     // steps is a geometric sum), only more coarsely.
@@ -56,7 +58,11 @@ fn light_optical_depth(p: vec3<f32>, l: vec3<f32>, steps: u32, w0: WeatherSample
         // (kilometer-sized) is the one at `p` there; skip its two fetches.
         var w = w0;
         if i > 0u {
-            w = weather_sample(s);
+            var ai = a;
+            if clouds.map_on == 1u {
+                ai = map_a(s);
+            }
+            w = weather_sample_a(s, ai);
         }
         tau += cloud_density(s, h, w, false) * step;
         step *= 1.5;
@@ -178,6 +184,9 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let span = max(end - start, 0.0);
     let ds = clamp(clouds.thickness / 20.0, span / f32(clouds.max_steps), span / f32(clouds.min_steps));
     var t = start + ds * ign(half_px, clouds.frame);
+    // The world weather map: per sample (High/Ultra) or 3 lookups per ray (Medium/Low).
+    let ray = ray_a(ro, rd, start, end);
+    let inv_span = 1.0 / max(span, 1e-3);
 
     var transmittance = 1.0;
     var luminance = vec3(0.0);
@@ -195,7 +204,8 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         let pc = p - clouds.planet_center;
         let r = length(pc);
         let h = (r - clouds.inner_radius - clouds.base) / clouds.thickness;
-        let w = weather_sample(p);
+        let a = ray_local_a(ray, (t - start) * inv_span, p);
+        let w = weather_sample_a(p, a);
         if coarse {
             if cloud_density(p, h, w, false) > 0.0 {
                 coarse = false;
@@ -223,7 +233,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
             // eye) and far away (a few pixels per cloud) two light samples do.
             let full_light = transmittance > 0.3 && t < clouds.far * 0.15;
             let light_n = select(min(clouds.light_steps, 2u), clouds.light_steps, full_light);
-            let od = light_optical_depth(p, l, light_n, w) * clouds.extinction * dark;
+            let od = light_optical_depth(p, l, light_n, w, a) * clouds.extinction * dark;
             let ms = multi_scatter(od, cos_t, clouds.phase_g, clouds.ms_falloff, clouds.ms_octaves);
             let sun = light_color * sun_t * ms * powder(density, cos_t, clouds.powder);
             let fill = mix(bounce, sky_up, saturate(h)) * clouds.ambient * (1.0 - 0.6 * w.wetness);

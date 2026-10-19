@@ -37,8 +37,10 @@
 
 mod render;
 mod transparent;
+mod weather_map;
 
 pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
+pub use weather_map::CloudWeatherMap;
 
 use std::sync::{Arc, Mutex};
 

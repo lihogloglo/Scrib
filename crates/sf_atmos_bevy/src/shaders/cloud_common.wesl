@@ -66,6 +66,11 @@ struct Clouds {
     shadow_camera: vec3<f32>,
     fog: Fog,
     clouds_on: u32,
+    map_on: u32,
+    map_size: f32,
+    map_inv_texel: f32,
+    map_offset: vec2<f32>,
+    map_wrap: vec2<f32>,
 };
 
 const PI: f32 = 3.14159265;

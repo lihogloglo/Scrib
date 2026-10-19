@@ -26,6 +26,8 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 sf_atmos = { path = "../sf_atmos" }
+# The world weather map (WE4b): `WeatherMap`, the resolve shader `MAP_WGSL`.
+sf_weather = { path = "../sf_weather" }
 sf_render_order_bevy = { path = "../sf_render_order_bevy" }
 
 [lints]

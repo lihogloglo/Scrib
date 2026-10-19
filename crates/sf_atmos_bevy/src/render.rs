@@ -14,7 +14,7 @@ use bevy_core_pipeline::FullscreenShader;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedSystemSet, IntoSystemSet, NodeId, Schedules, SystemSet};
 use bevy_image::Image;
-use bevy_math::{Mat4, UVec2, Vec2, Vec3, Vec4};
+use bevy_math::{DVec2, IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
 use bevy_pbr::resources::{AtmosphereSampler, AtmosphereTextures, AtmosphereTransform, AtmosphereTransforms, AtmosphereTransformsOffset, GpuAtmosphere};
 use bevy_pbr::{ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ShadowSamplers, ViewLightsUniformOffset, ViewShadowBindings};
 use bevy_render::camera::ExtractedCamera;
@@ -38,6 +38,7 @@ use bevy_shader::Shader;
 use crate::{CloudCamera, CloudFrame};
 
 pub(crate) fn build(app: &mut App) {
+    crate::weather_map::build(app);
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
     render_app
         .init_resource::<CloudHistory>()
@@ -50,6 +51,7 @@ pub(crate) fn build(app: &mut App) {
         .add_systems(
             Core3d,
             (
+                crate::weather_map::map_pass.after(Core3dSystems::Prepass).before(shadow_pass),
                 shadow_pass.after(Core3dSystems::Prepass).before(Core3dSystems::MainPass),
                 trace_pass.after(main_opaque_pass_3d).before(main_transparent_pass_3d),
             ),
@@ -161,6 +163,15 @@ struct CloudUniform {
     fog: FogUniform,
     /// 1: the clouds draw; 0: the node runs for the fog alone.
     clouds_on: u32,
+    /// World weather map (WE4b): 0 off (uniform weather), 1 per sample
+    /// (High/Ultra), 2 per ray (3 lookups along the in-layer segment).
+    map_on: u32,
+    map_size: f32,
+    map_inv_texel: f32,
+    /// Window-relative texel coordinate of the origin-relative zero.
+    map_offset: Vec2,
+    /// Storage texel of the window's minimum corner (window mod size).
+    map_wrap: Vec2,
 }
 
 /// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
@@ -344,6 +355,8 @@ impl FromWorld for CloudPipelines {
                         texture_3d(TextureSampleType::default()),
                         texture_2d(TextureSampleType::default()),
                         sampler(SamplerBindingType::Filtering),
+                        // The world weather map (WE4b), layers A, B, C.
+                        texture_2d_array(TextureSampleType::default()),
                     ),
                 ),
             ),
@@ -689,6 +702,7 @@ fn prepare_views(
     mut history: ResMut<CloudHistory>,
     images: Res<RenderAssets<GpuImage>>,
     shadow_samplers: Option<Res<ShadowSamplers>>,
+    map: Option<Res<crate::weather_map::WeatherMapGpu>>,
     atmos: AtmosphereResources,
 ) {
     let (atmosphere_uniforms, settings_uniforms, transforms, view_uniforms, lights, media, medium_sampler, atmosphere_sampler) = atmos;
@@ -705,6 +719,16 @@ fn prepare_views(
         return;
     };
     let s = frame.settings;
+    let Some(map) = map else { return };
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    let (map_on, map_size, map_inv_texel, map_offset, map_wrap) = match map.active {
+        Some(v) => {
+            let o = DVec2::new(frame.origin.x, frame.origin.z) / v.texel_m - v.window.as_dvec2();
+            let wrap = IVec2::new(v.window.x.rem_euclid(v.size), v.window.y.rem_euclid(v.size));
+            (if s.quality.map_per_sample { 1 } else { 2 }, v.size as f32, (1.0 / v.texel_m) as f32, o.as_vec2(), wrap.as_vec2())
+        }
+        None => (0, 1.0, 0.0, Vec2::ZERO, Vec2::ZERO),
+    };
     for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps) in &views {
         let Some(medium) = media.get(atmosphere.medium) else { continue };
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
@@ -778,6 +802,11 @@ fn prepare_views(
             shadow_camera: shadow.map_or(Vec3::ZERO, |b| b.camera),
             fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, FOG_STEPS),
             clouds_on: u32::from(frame.clouds),
+            map_on,
+            map_size,
+            map_inv_texel,
+            map_offset,
+            map_wrap,
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;
@@ -825,7 +854,7 @@ fn prepare_views(
         let density = device.create_bind_group(
             "clouds_density",
             &cache.get_bind_group_layout(&pipelines.density),
-            &BindGroupEntries::sequential((uniform_binding.clone(), &shape.texture_view, &detail.texture_view, &weather.texture_view, &pipelines.noise_sampler)),
+            &BindGroupEntries::sequential((uniform_binding.clone(), &shape.texture_view, &detail.texture_view, &weather.texture_view, &pipelines.noise_sampler, &map.view)),
         );
         let resolve = device.create_bind_group(
             "clouds_resolve",
@@ -980,7 +1009,7 @@ fn fullscreen(
 }
 
 /// One compute dispatch with its GPU timer (`render/<label>/elapsed_gpu`).
-fn compute(ctx: &mut RenderContext, label: &'static str, pipeline: &bevy_render::render_resource::ComputePipeline, group: (&BindGroup, &[u32]), groups: [u32; 3]) {
+pub(crate) fn compute(ctx: &mut RenderContext, label: &'static str, pipeline: &bevy_render::render_resource::ComputePipeline, group: (&BindGroup, &[u32]), groups: [u32; 3]) {
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
     let mut pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some(label), timestamp_writes: None });

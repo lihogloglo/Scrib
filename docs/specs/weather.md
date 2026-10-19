@@ -1100,7 +1100,7 @@ field structure, with a heightfield horizon map instead of distance fields):
 
 | Tier | Range | Casters → receivers | Mechanism |
 |---|---|---|---|
-| 1 CSM | 0 → `s_max` ≥ `d1 + w` + margin (default **500 m**) | everything near → everything | Bevy cascades (4), retuned |
+| 1 CSM | 0 → `s_max` (**250 m** since shadows F3; was ≥ `d1 + w` + margin = 504 m) | everything near → everything | Bevy cascades (4), retuned |
 | 2 Far sun visibility | `0.8·s_max` → horizon | terrain (+ later far-field proxies) → terrain, proxies, impostors, grass, fog, clouds' ground bounce | **shadow-height map** (SHM) + the far-shadow correction in our materials |
 | 3 Cloud shadows | 16 km around the camera | clouds → everything | cloud shadow map → `DirectionalLightTexture`, fog |
 | 4 Terrain sky visibility (optional) | whole world, static | terrain → ambient on terrain/objects | baked horizon-based ambient occlusion per terrain tile (`terrain.skyvis` bake step, 8 directions) |
@@ -1204,6 +1204,55 @@ Research: `docs/research/shadows/README.md` (fixes F1, F2). Rule 8: all Bevy 0.2
 - Seen 2026-10-19 (1080p, 15:00): differences are small at a high sun; cascade 0 already grounds feet and pots.
   Contact shadows mainly darken creases (column bases, wall feet) and the 30-40 m NPC contact. Expected larger
   at low sun and in cascades 2-3; owner sign-off SH-7.
+
+### Sun cascades and the far static map (shadows F3, step a as built 2026-10-19)
+
+Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop the 504 m rule). **Supersedes
+"Why `s_max` ≥ `d1 + w`"** and A1's range: the CSM no longer has to contain every L0 object.
+
+- **Splits:** `sf_sky_bevy::CascadeSplits`, the practical split (PSSM, GPU Gems 3 ch. 10): each bound is
+  `λ·n·(f/n)^(i/N) + (1−λ)·(n + (f−n)·i/N)` with a 1 m split near (the 0.1 m camera near would give a 0.7 m first
+  cascade). It builds a plain Bevy `CascadeShadowConfig` (`SkyRenderOptions::cascades` is now the built component),
+  so Bevy 0.20 still does the rest: bounding-sphere fit per slice + snapping to whole texels (`bevy_light`
+  `cascade.rs` `calculate_cascade`: stable cascades, no shimmer as the camera moves or turns) and the 20 % overlap
+  blend between cascades. Rule 8: Bevy's builder can only do "first bound + geometric", so the split is ours (12 lines).
+- **Presets** (`exterior.rs` `Quality::sun_cascades`): Low 3 cascades to 200 m (λ 0.85); Medium/High/Ultra 4 to
+  250 m (λ 0.9). Maps stay 2048² (4096² was +1.4 ms).
+- **Texels** (70° vertical FOV, 16:9, 2048²; `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`, Bevy's
+  sizing): High bounds 9.9 / 26.8 / 75.4 / 250 m, texels **1.4 / 3.8 / 10.5 / 35 cm**; A1 (10 / 36.9 / 136 / 504 m):
+  1.4 / 5.2 / 19 / 70 cm. Cascade 3 is 2× sharper, cascades 1-2 1.4-1.8×; with the 0.8-texel normal bias the
+  lift in the last cascade falls from 56 to 28 cm.
+- **Cost** (dev build, 1440p, `exterior_seyda_neen` bench 2 × 12 s each, RTX 4060 Laptop): Bevy-timed GPU
+  17.4 / 16.2 ms vs A1 16.8 / 16.4 ms (noise, ≈ 0); frame median 30.0 / 29.4 ms vs 35.0 / 33.3 ms (the dev build is
+  CPU-bound: fewer casters queued in the last cascade). VRAM unchanged (4 × 2048² × 32 bit = 64 MB; Low 48 MB).
+- **A/B:** `--off shadowsplits` = the A1 504 m layout (F2 bias kept); `--off shadowtune` = the 600 m one before it.
+- **Gap until step b:** L0 objects at 250-440 m get no object shadows: their shadows on terrain fade with the
+  dithered cascade end (212-250 m, unchanged code: it reads `s_max` from the light), and object *receivers* (NIF
+  statics' materials have no far term) end on Bevy's hard cut at 250 m. The terrain march (to 700 m) and the SHM
+  are unchanged.
+
+**Step b (not built; design for the next slice): cached far static shadow map (FSM).**
+- *Bevy first:* Bevy 0.20 has no shadow caching (every shadow view re-renders every frame, maps from the
+  `TextureCache`) and no API for an extra or orthographic shadow view. A second shadow-casting `DirectionalLight`
+  with zero illuminance would get cascades, but they are fitted to the camera frustum (re-rendered every frame,
+  re-fit on every turn), share `DirectionalLightShadowMap`'s size (2048²: ~2.8 m texels over 2 km) and add a
+  cascade lookup to every material. Rejected. *Crates:* none for Bevy 0.20. *Ours:* a plain `Camera` (no `Camera3d`,
+  so no material queues into the main phases) with an orthographic sun-aligned projection, its own
+  `CameraRenderGraph` sub-graph and a custom binned depth-only phase (Bevy's `custom_render_phase` example pattern:
+  `SpecializedMeshPipeline`, `SetMeshBindGroup` + `DrawMesh`, GPU preprocessing per view), queuing only
+  `FarShadowCaster` entities (static L0 placements + L1 proxies; masked foliage later). Bevy then gives it
+  visibility, frustum culling and batching; caching = the camera is `is_active` only on refresh frames, and its
+  depth is copied into a persistent 4096² `Depth32` image (64 MB).
+- *Refresh:* sun turns > 0.02-0.05°, camera moves 1/16 of the map's reach, or a far cell streams in; texel-snapped
+  ortho centre (stable); spread over N frames by drawing one of N horizontal strips per frame (scissor), so the
+  amortised cost stays ≈ 0.05-0.2 ms.
+- *Which far mechanism wins where:* 0 → 0.85·s_max: CSM only. 0.85·s_max → s_max: dithered CSM → far term (as
+  now). Past s_max: `far = min(FSM_objects, terrain)`, where the terrain term is the horizon march to 700 m then the
+  SHM (unchanged); the FSM holds **objects only** (no terrain casters: the march/SHM are sharper and cheaper for
+  terrain and reach 9.2 km), fades out at its border (~2 km, 4096² at ~1 m texels). Receivers: terrain, proxies,
+  impostors through their existing `directional_shadow_factor` hook, and NIF statics (needs a far hook in their
+  material extension: coordinate with whoever owns `FroxelFogExt`/`mw_assets`).
+- *Verify:* SH-8 (no object-shadow pop at 250 m), SH-1/SH-6 re-run, SH-11; GPU A/B per refresh frame and amortised.
 
 ## Near-term visual fixes (before M6)
 
@@ -1763,3 +1812,41 @@ textures at `storage_index`, full on table change, strips on recenter, skipped w
 the origin phase, uniform fast-path flag keeps today's scalars; (4) envelope shell (max base + thickness over the table)
 and per-sample local base/thickness; (5) cloud shadow map reads the same map; (6) `clouds` example `--split clear,storm`
 + GPU timer A/B; (7) log the "no written weather map" reversal in ARCHITECTURE §10.
+
+### WE4b as built, steps 1-2 (we4b, 2026-10-19): GPU map, clouds and cloud shadow map read it
+
+**Reuse check (rule 8).** Bevy has no spatial weather texture or cloud weather hook; the resolve is one ~100-line compute
+shader over our own raster/table, so it is ours. The WGSL lives in the Bevy-free `sf_weather` (`MAP_WGSL`, `src/map.wgsl`)
+so the twin test runs it in raw wgpu like `sf_wind`'s; `sf_atmos_bevy` now depends on `sf_weather` (Bevy-free, small).
+
+- **CPU side** (`sf_weather::map`): `ClimateRaster::gpu_cells` (each square's table row index, `u32` storage buffer:
+  deviation from "R16Uint texture", 16 KB for 64², simpler indexing), `WeatherMap::gpu_rows` (A, B, C per row),
+  `gpu_geometry` → `MapGpuGeometry::params(window, rects)` (96-byte uniform; raster origin split into integer + fractional
+  world texels so f32 precision doesn't depend on world size), `resolve_rects(window, size, from)` (≤ 2 strips; `None` =
+  full), `set_cpu_texels(false)` (`update` only tracks table/window; the GPU owns the texels), `set_rows` + `update_window`
+  (a table without a `WeatherBook`, for examples/tools).
+- **Resolve** (`map.wgsl`, entry `resolve`, 8 × 8, dispatch `(size/8, size/8, rects)`): per texel the 3 × 3 (reach)
+  point-to-square search, `border_weight`, blend of two rows, written to a `Rgba16Float` 2-D array (layers A, B, C;
+  deviation: C is `Rgba16Float` too, it carries absolute fog density) at `t mod size`. Ties: lower distance, then lower
+  row index (= lower `ClimateIx`, the CPU's order).
+- **Bevy** (`sf_atmos_bevy::weather_map`): main-world `CloudWeatherMap::sync(&map, update)` (raster re-upload on new
+  geometry, rows when the table was resolved anew); render world uploads, schedules full / strip / no resolve (a resolve
+  that never ran, e.g. no camera, forces a full one next frame), Core3d pass `weather_map` (GPU timer) before
+  `clouds_shadow`. Uniform day or no map: `map_on = 0`, the clouds keep today's uniform scalars.
+- **Clouds** (`cloud_density.wesl`): `map_a(p)` = one bilinear fetch of layer A by world texel (`map_offset` = origin /
+  texel − window in f64 on the CPU, `map_wrap` = window mod size, Repeat sampler, clamped to the window's edge texels);
+  `weather_sample_a(p, a)` feeds `weather_at` with the map's coverage, genus, wetness (darkness) and storm instead of the
+  uniforms. `CloudQuality::map_per_sample` (High/Ultra `true`): every density sample (trace, light march, shadow map);
+  `false` (Medium/Low, owner decision): `ray_a` = 3 fetches along the in-layer segment (trace) or the shadow texel's
+  light ray, lerped by the sample's fraction; the light march reuses the primary sample's value.
+- **Verified**: `cargo test -p sf_weather --test map_gpu_twin` (RTX 4060 Laptop): 3 climates over sea, 64² map of 32 m,
+  full resolve and a recenter (2 strips covering exactly the entering texels) match the CPU twin within **9.2e-4**
+  (`MapTexel::max_diff`, f16 storage; gate 1e-3). `clouds --split clear,storm` (Clear west of x = 2.5 km, Storm east,
+  400 m band): zenith clear with the storm deck beyond the border, ground lit on the clear side (shadow map reads the
+  map); visual check **WE-4b** awaiting owner.
+- **Cost** (1280 × 720, RTX 4060 Laptop, High, averaged GPU timers): resolve **0.017 ms** (full 256², only on change);
+  `clouds_trace` uniform storm 0.255 ms vs split per sample 0.253 ms vs per ray 0.250 ms; `clouds_shadow` 0.019 / 0.019 /
+  0.025 ms. The extra fetch is lost in the noise at this resolution; re-measure at 1440p in the app (WE4c).
+- **Not yet** (next, in order): (3/4) envelope shell + local base/thickness/density/erosion from layer B (the shell is
+  still the uniform `Clouds` weather's; the example uses the east climate's heights), plume anchor hook; WE4c app wiring
+  (`site_at`, `sf_weather_bevy` drives `CloudWeatherMap`); cirrus stays uniform (layer C unused by the clouds).

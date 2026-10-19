@@ -5925,6 +5925,7 @@ dependencies = [
  "sf_atmos",
  "sf_render_order_bevy",
  "sf_sky_bevy",
+ "sf_weather",
 ]
 
 [[package]]

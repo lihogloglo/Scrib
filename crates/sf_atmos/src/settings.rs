@@ -310,6 +310,10 @@ pub struct CloudQuality {
     /// The shadow map refreshes one band of `size / shadow_slices` rows per
     /// frame (toroidal map, [`crate::shadow`]); 1 redraws it every frame.
     pub shadow_slices: u32,
+    /// Clouds sample the world weather map (`WE4b`) at every density sample
+    /// (`true`, High and Ultra) or 3 times per ray, lerped along the
+    /// in-layer segment (`false`, Medium and Low: cheaper, softer region edges).
+    pub map_per_sample: bool,
 }
 
 impl Default for CloudQuality {
@@ -328,6 +332,7 @@ impl CloudQuality {
         shadow_size: 1024,
         shadow_steps: 6,
         shadow_slices: 16,
+        map_per_sample: true,
     };
     pub const ULTRA: Self = Self { max_steps: 96, light_steps: 6, checkerboard: false, shadow_steps: 8, shadow_slices: 4, ..Self::HIGH };
 }

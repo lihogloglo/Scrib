@@ -1848,3 +1848,17 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   frame-rate mover (fixed now in the spec), "one active worldspace / one gameplay anchor" in streaming.md and
   physics.md "Stepping" (N5), and MWScript's and the Lua API's singleton `Player` (N6).
 - 2026-10-19 (rainwater): transparent draw order is one policy, `sf_render_order_bevy` `DrawBand` (Refractive water first, Sorted translucents, Overlay precipitation/camera-local volumes last), applied in `RenderSystems::PhaseSort` before Bevy's Transparent3d sort; no per-material `depth_bias` ordering hacks. Shader-placed draws must take a band (their AABB-centre sort key is meaningless). water.md "Render order".
+- 2026-10-19 (we4b): **The clouds read a written world weather map again** (reverses weather.md "Clouds as built"'s
+  "no compute pass writes one" deviation). `sf_weather::WeatherMap` (CPU table + window) feeds a GPU resolve
+  (`sf_weather::MAP_WGSL`, twin-tested against the CPU resolve) into a 256² world-anchored toroidal map in
+  `sf_atmos_bevy`; clouds and the cloud shadow map take coverage/genus/wetness/storm from it per sample (High/Ultra) or
+  per ray (Medium/Low). WGSL that has a CPU twin lives in the Bevy-free crate (as `sf_wind`), so `sf_atmos_bevy` now
+  depends on `sf_weather`.
+- 2026-10-19 (shf3; weather.md "Sun cascades and the far static map", research/shadows F3): **the 504 m cascade rule
+  (2026-10-12, "`s_max` ≥ `d1 + w`") is replaced** (owner decision 2026-10-19). Sun cascades use a practical split
+  (`sf_sky_bevy::CascadeSplits`, PSSM λ-blend, built into a plain Bevy `CascadeShadowConfig`, so Bevy keeps the
+  sphere fit, texel snapping and overlap blend) to ~250 m per preset (Low 3 / 200 m, else 4 / 250 m): texels 1.4 /
+  3.8 / 10.5 / 35 cm instead of 1.4 / 5.2 / 19 / 70 cm. Objects past the CSM get their shadows from a **cached far
+  static shadow map** (objects only; terrain stays on the horizon march + SHM; `min` of both past `s_max`), our own
+  pass (Bevy 0.20 has no shadow caching or extra shadow-view API); designed, not built yet. Until it lands, L0
+  objects at 250-440 m cast no object shadows (`--off shadowsplits` restores the 504 m layout).

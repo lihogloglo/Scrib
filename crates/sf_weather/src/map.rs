@@ -83,6 +83,13 @@ impl ClimateRaster {
         self.band_m
     }
 
+    /// The resolve pass's raster (WE4b): each square's climate as its row
+    /// index in the table ([`ClimateRaster::climates`] order), row-major.
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn gpu_cells(&self) -> Vec<u32> {
+        self.own.iter().map(|c| self.climates.binary_search(c).unwrap_or(0) as u32).collect()
+    }
+
     /// The climate owning square `(x, z)` (after filling), if inside.
     #[allow(clippy::cast_sign_loss, reason = "x, z checked non-negative")]
     pub fn climate(&self, x: i32, z: i32) -> Option<ClimateIx> {
@@ -353,7 +360,91 @@ pub struct WeatherMap {
     /// The texels hold `resolved` over `window`.
     valid: bool,
     texels: Vec<MapTexel>,
+    /// Resolve on the CPU too (tests, tools); off when the GPU pass owns the texels.
+    cpu_texels: bool,
     scratch: WeatherFrame,
+}
+
+/// The resolve shader (WGSL, `WE4b`): the GPU twin of [`ClimateRaster::site_at`] plus
+/// the row blend. Bindings (group 0): 0 [`MapGpuGeometry::params`]
+/// (uniform), 1 [`ClimateRaster::gpu_cells`] (`array<u32>`), 2
+/// [`WeatherMap::gpu_rows`] (`array<vec4<f32>>`), 3 the map
+/// (`texture_storage_2d_array<rgba16float, write>`, layers A, B, C).
+/// Entry point `resolve`, workgroup 8 × 8; dispatch `(size / 8, size / 8, rects)`.
+pub const MAP_WGSL: &str = include_str!("map.wgsl");
+
+/// What the resolve pass needs besides the window: map and raster geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MapGpuGeometry {
+    /// Texels per side.
+    pub size: i32,
+    /// Texel size, meters.
+    pub texel_m: f64,
+    reach: i32,
+    raster_size: IVec2,
+    /// Raster origin in world texels: integer and fractional parts (f32 keeps
+    /// only the in-raster offset, so precision doesn't depend on the world size).
+    origin_i: IVec2,
+    origin_f: Vec2,
+    cells_per_texel: f32,
+    cell_m: f32,
+    band_m: f32,
+}
+
+impl MapGpuGeometry {
+    /// The resolve uniform (24 words, `MapParams` in `map.wgsl`): `window`
+    /// plus up to two texel rects `(min x, min z, width, height)` to write.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn params(&self, window: IVec2, rects: &[[i32; 4]]) -> [u32; 24] {
+        let i = |v: i32| v as u32;
+        let mut w = [0u32; 24];
+        w[..14].copy_from_slice(&[
+            i(window.x),
+            i(window.y),
+            i(self.size),
+            i(self.reach),
+            i(self.raster_size.x),
+            i(self.raster_size.y),
+            i(self.origin_i.x),
+            i(self.origin_i.y),
+            self.origin_f.x.to_bits(),
+            self.origin_f.y.to_bits(),
+            self.cells_per_texel.to_bits(),
+            self.cell_m.to_bits(),
+            self.band_m.to_bits(),
+            rects.len().min(2) as u32,
+        ]);
+        for (k, r) in rects.iter().take(2).enumerate() {
+            for (j, v) in r.iter().enumerate() {
+                w[16 + 4 * k + j] = i(*v);
+            }
+        }
+        w
+    }
+}
+
+/// The texel rects of `window` that are not in `from` (the previous window;
+/// `None`: all of it), as `(min x, min z, width, height)`: at most two strips.
+pub fn resolve_rects(window: IVec2, size: i32, from: Option<IVec2>) -> SmallVec<[[i32; 4]; 2]> {
+    let mut out = SmallVec::new();
+    let d = from.map(|f| window - f);
+    match d {
+        Some(d) if d == IVec2::ZERO => {}
+        Some(d) if d.x.abs() < size && d.y.abs() < size => {
+            let f = from.unwrap_or(window);
+            if d.x != 0 {
+                let x0 = if d.x > 0 { f.x + size } else { window.x };
+                out.push([x0, window.y, d.x.abs(), size]);
+            }
+            if d.y != 0 {
+                let x0 = if d.x > 0 { window.x } else { window.x - d.x.min(0) };
+                let y0 = if d.y > 0 { f.y + size } else { window.y };
+                out.push([x0, y0, size - d.x.abs(), d.y.abs()]);
+            }
+        }
+        _ => out.push([window.x, window.y, size, size]),
+    }
+    out
 }
 
 impl WeatherMap {
@@ -372,6 +463,7 @@ impl WeatherMap {
             window: IVec2::ZERO,
             valid: false,
             texels: vec![MapTexel::default(); (size as usize) * (size as usize)],
+            cpu_texels: true,
             scratch: WeatherFrame::default(),
         }
     }
@@ -401,8 +493,61 @@ impl WeatherMap {
             evaluate_into(book, state, &input, &mut self.scratch);
             self.rows[i] = ClimateRow::from_frame(book, &self.scratch);
         }
+        self.refresh_uniform();
+    }
+
+    /// Sets the table directly (rows parallel to `raster().climates()`; examples
+    /// and tools without a [`WeatherBook`]); follow with [`WeatherMap::update_window`].
+    pub fn set_rows(&mut self, rows: &[ClimateRow]) {
+        assert_eq!(rows.len(), self.rows.len(), "one row per raster climate");
+        self.rows.copy_from_slice(rows);
+        self.refresh_uniform();
+    }
+
+    fn refresh_uniform(&mut self) {
         let first = MapTexel::from_row(&self.rows[0]);
         self.uniform = self.rows.iter().all(|r| MapTexel::from_row(r).max_diff(&first) <= MAP_EPSILON);
+    }
+
+    /// Whether [`WeatherMap::update`] writes the CPU texels (default on).
+    /// Off when the GPU resolve owns them: `update` then only tracks the
+    /// table and the window (and still counts the texels to write).
+    pub fn set_cpu_texels(&mut self, on: bool) {
+        self.cpu_texels = on;
+    }
+
+    pub fn texel_m(&self) -> f64 {
+        self.texel_m
+    }
+
+    /// The resolve pass's geometry (`WE4b`).
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn gpu_geometry(&self) -> MapGpuGeometry {
+        let r = &self.raster;
+        let o = r.origin / self.texel_m;
+        let oi = o.floor();
+        MapGpuGeometry {
+            size: self.size,
+            texel_m: self.texel_m,
+            reach: r.reach,
+            raster_size: IVec2::new(r.width, r.height),
+            origin_i: IVec2::new(oi.x as i32, oi.y as i32),
+            origin_f: (o - oi).as_vec2(),
+            cells_per_texel: (self.texel_m / r.cell_m) as f32,
+            cell_m: r.cell_m as f32,
+            band_m: r.band_m,
+        }
+    }
+
+    /// The table as the resolve reads it: A, B, C per row ([`MapTexel`] packing).
+    pub fn gpu_rows(&self) -> Vec<[f32; 4]> {
+        self.rows
+            .iter()
+            .flat_map(|r| {
+                let t = MapTexel::from_row(r);
+                [t.a, t.b, t.c]
+            })
+            .collect()
     }
 
     /// The table at `hours`, then the window around world X, Z `camera`:
@@ -410,6 +555,11 @@ impl WeatherMap {
     /// entering strips), skipped when uniform.
     pub fn update(&mut self, book: &WeatherBook, state: &WeatherState, hours: f64, hour_of_day: f32, camera: DVec2) -> MapUpdate {
         self.update_table(book, state, hours, hour_of_day);
+        self.update_window(camera)
+    }
+
+    /// [`WeatherMap::update`] after the table was set (`update_table` or `set_rows`).
+    pub fn update_window(&mut self, camera: DVec2) -> MapUpdate {
         let table_changed =
             self.rows.iter().zip(&self.resolved).any(|(r, o)| MapTexel::from_row(r).max_diff(&MapTexel::from_row(o)) > MAP_EPSILON);
         let window = self.window_for(camera);
@@ -463,7 +613,7 @@ impl WeatherMap {
     /// The resolved texel holding `p` (`None` when uniform, unresolved or outside the window).
     pub fn texel_at(&self, p: DVec2) -> Option<&MapTexel> {
         let t = self.texel_of(p) - self.window;
-        (self.valid && (0..self.size).contains(&t.x) && (0..self.size).contains(&t.y)).then(|| &self.texels[self.storage_index(t + self.window)])
+        (self.valid && self.cpu_texels && (0..self.size).contains(&t.x) && (0..self.size).contains(&t.y)).then(|| &self.texels[self.storage_index(t + self.window)])
     }
 
     /// The texels in storage order (row-major over `t mod size`), for upload.
@@ -518,11 +668,14 @@ impl WeatherMap {
                 if keep.is_some_and(|k| inside(k, t)) {
                     continue;
                 }
+                n += 1;
+                if !self.cpu_texels {
+                    continue;
+                }
                 let site = self.raster.site_at(self.texel_center(t));
                 let r = Self::blend(&self.raster.climates, &self.resolved, &site);
                 let k = self.storage_index(t);
                 self.texels[k] = MapTexel::from_row(&r);
-                n += 1;
             }
         }
         n
