@@ -279,3 +279,17 @@ fn practical_split_cascades_and_texel_sizes() {
     println!("old bounds {:?} texels {old_texels:?}", old.bounds);
     assert!(texels[3] < old_texels[3] * 0.6);
 }
+
+#[test]
+fn shadow_importance_prefers_strong_near_lights() {
+    // Same light: nearer ranks higher; inside 1 m no further gain.
+    assert!(shadow_importance(8.0, 3.0, 1.0) > shadow_importance(8.0, 6.0, 1.0));
+    assert!((shadow_importance(8.0, 0.5, 1.0) - shadow_importance(8.0, 1.0, 1.0)).abs() < 1e-6);
+    // A brazier (range 16 m) at 10 m outranks a candle (range 2 m) at 3 m.
+    assert!(shadow_importance(16.0, 10.0, 1.0) > shadow_importance(2.0, 3.0, 1.0));
+    // Out of range it falls off by coverage too (continuous at d = range).
+    assert!((shadow_importance(4.0, 4.0, 1.0) - 1.0).abs() < 1e-6);
+    assert!(shadow_importance(4.0, 8.0, 1.0) < shadow_importance(4.0, 4.0, 1.0) / 4.0 + 1e-6);
+    // Priority 4 ranks like half the distance (inside range).
+    assert!((shadow_importance(20.0, 8.0, 4.0) - shadow_importance(20.0, 4.0, 1.0)).abs() < 1e-3);
+}

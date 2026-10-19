@@ -6349,6 +6349,7 @@ dependencies = [
  "bevy_reflect",
  "bevy_render",
  "bevy_shader",
+ "bevy_shape",
  "bevy_solari",
  "bevy_time",
  "bevy_transform",

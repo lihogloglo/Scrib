@@ -19,6 +19,7 @@
 //!   [`BudgetedShadow`] point lights, faded by distance and over time.
 
 mod cascades;
+mod far_shadow;
 mod night;
 mod path;
 mod proxy;
@@ -49,9 +50,10 @@ pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
+pub use far_shadow::{FarShadowConfig, FarShadowPlugin, FarShadowStats, FarSunShadow, NoFarShadow};
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
-pub use shadow_budget::{BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
+pub use shadow_budget::{importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the
 /// atmosphere medium is rebuilt when its description changes.

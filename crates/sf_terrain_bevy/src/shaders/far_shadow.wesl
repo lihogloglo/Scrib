@@ -24,11 +24,17 @@
 // Past FAR_MARCH_END the CPU shadow-height map (far_map.rs; one fetch, the
 // same one far-field proxies and impostors read) replaces the march.
 
-import super::common::{height_at, origin_y, debug_flags, pf, P_DETAIL, P_FAR, DEBUG_NO_FAR_SHADOWS, far_map, far_sampler};
+import super::common::{height_at, origin_y, debug_flags, pf, P_DETAIL, P_FAR, P_SUN, P_SUN_CLIP, DEBUG_NO_FAR_SHADOWS, far_map, far_sampler};
 import bevy_pbr::render::{
     mesh_view_bindings::{view, lights},
     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
 };
+
+// The far static sun map (sf_sky_bevy `FarSunShadow`): objects' shadows past
+// the cascades; reverse-Z depth, comparison `GreaterEqual` (1 = lit). Here,
+// not in common.wesl: the ground blend binds its own uniform at 113.
+@group(constants::MATERIAL_BIND_GROUP) @binding(120) var sun_map: texture_depth_2d;
+@group(constants::MATERIAL_BIND_GROUP) @binding(121) var sun_sampler: sampler_comparison;
 
 /// Steps per march.
 const FAR_STEPS: u32 = 14u;
@@ -126,6 +132,30 @@ fn map_visibility(p: vec3<f32>, dist: f32) -> f32 {
     return mix(vis, 1.0, smoothstep(0.85, 1.0, edge));
 }
 
+/// Far static sun map visibility of render-space `p` (normal `n`, toward the
+/// light `l`): normal offset plus a two-texel lift toward the sun, a 2x2
+/// bilinear-compare PCF (3x3-texel tent), faded out at the map border.
+fn sun_map_visibility(p: vec3<f32>, n: vec3<f32>, l: vec3<f32>) -> f32 {
+    let s = pf(P_SUN);
+    if s.x <= 0.0 {
+        return 1.0;
+    }
+    let clip = mat4x4<f32>(pf(P_SUN_CLIP), pf(P_SUN_CLIP + 1u), pf(P_SUN_CLIP + 2u), pf(P_SUN_CLIP + 3u));
+    let nl = clamp(dot(n, l), 0.0, 1.0);
+    let q = clip * vec4<f32>(p + n * (s.y * 1.5 * (1.0 - nl)) + l * (s.y * 2.0), 1.0);
+    let edge = max(abs(q.x), abs(q.y));
+    if edge >= 1.0 || q.z <= 0.0 || q.z >= 1.0 {
+        return 1.0;
+    }
+    let uv = q.xy * vec2<f32>(0.5, -0.5) + 0.5;
+    let d = 0.5 / vec2<f32>(textureDimensions(sun_map));
+    var vis = textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(-d.x, -d.y), q.z);
+    vis += textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(d.x, -d.y), q.z);
+    vis += textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(-d.x, d.y), q.z);
+    vis += textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(d.x, d.y), q.z);
+    return mix(vis * 0.25, 1.0, smoothstep(0.9, 1.0, edge));
+}
+
 /// The far shadow of the shadowed directional light (sun or moon) at
 /// render-space `p` with shading normal `n`, for pixel `frag_xy`.
 fn far_shadow_term(p: vec4<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> FarShadow {
@@ -159,6 +189,8 @@ fn far_shadow_term(p: vec4<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> FarShadow 
             } else {
                 out.factor = terrain_light_visibility(p.xyz, l, dist);
             }
+            // Objects' shadows: the far static sun map (min: either occludes).
+            out.factor = min(out.factor, sun_map_visibility(p.xyz, n, l));
         }
         return out;
     }

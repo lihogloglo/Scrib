@@ -229,6 +229,7 @@ impl Plugin for TerrainPlugin {
                     .before(VisibilitySystems::CalculateBounds),
             )
             .add_systems(bevy_app::Startup, far_map::setup_far_map)
+            .add_systems(bevy_app::PreStartup, setup_sun_shadow_input)
             .add_systems(
                 PostUpdate,
                 (setup_terrain, update_terrain, far_map::update_far_map).chain().in_set(TerrainSystems::Update),
@@ -357,6 +358,39 @@ fn layer_array(size: u32, mips: u32, layers: usize, format: TextureFormat, data:
     image
 }
 
+/// The far static sun shadow map the terrain samples past the cascades
+/// (weather.md "Sun cascades and the far static map"). The host copies it
+/// in each frame (e.g. from `sf_sky_bevy::FarSunShadow`); until then a 1²
+/// stand-in with `params.x = 0` (off).
+#[derive(Resource, Clone, Debug)]
+pub struct SunShadowInput {
+    /// `Depth32Float`, reverse Z, sampled with a `GreaterEqual` comparison sampler.
+    pub image: Handle<Image>,
+    /// World (render space) to the map's clip space.
+    pub clip_from_world: bevy_math::Mat4,
+    /// (valid 0/1, texel m, depth range m, -).
+    pub params: bevy_math::Vec4,
+}
+
+fn setup_sun_shadow_input(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let mut image = Image::new_uninit(
+        Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        TextureFormat::Depth32Float,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.usage = bevy_render::render_resource::TextureUsages::TEXTURE_BINDING;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        compare: Some(bevy_image::ImageCompareFunction::GreaterEqual),
+        ..ImageSamplerDescriptor::default()
+    });
+    commands.insert_resource(SunShadowInput {
+        image: images.add(image),
+        clip_from_world: bevy_math::Mat4::IDENTITY,
+        params: bevy_math::Vec4::ZERO,
+    });
+}
+
 /// Creates the GPU resources when a [`TerrainWorld`] appears or changes.
 #[allow(clippy::too_many_arguments)]
 fn setup_terrain(
@@ -369,6 +403,7 @@ fn setup_terrain(
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     far_map: Option<Res<FarShadowMap>>,
+    sun: Res<SunShadowInput>,
 ) {
     let Some(world) = world else {
         if let Some(state) = state {
@@ -427,6 +462,7 @@ fn setup_terrain(
         albedo_height: images.add(albedo),
         normal_ao_roughness: images.add(nar),
         far_map: far_map.map(|m| m.image.clone()).unwrap_or_default(),
+        sun_map: sun.image.clone(),
     });
     // What the bake used where there is no source, for tiles that don't exist.
     let fill = table.fill_height;
@@ -714,6 +750,8 @@ fn update_terrain(
     debug: Res<TerrainDebug>,
     origin: Res<TerrainOrigin>,
     far_map: Option<Res<FarShadowMap>>,
+    sun: Res<SunShadowInput>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
     mut heights_map: ResMut<TerrainHeightsMap>,
     mut terrain_stats: ResMut<TerrainStats>,
     mut writes: ResMut<ClipmapWrites>,
@@ -956,6 +994,15 @@ fn update_terrain(
     }
     if let Some(far) = &far_map {
         p.set_f(params::P_FAR, far.params.to_array());
+    }
+    p.set_f(params::P_SUN, sun.params.to_array());
+    for c in 0..4 {
+        p.set_f(params::P_SUN_CLIP + c, sun.clip_from_world.col(c).to_array());
+    }
+    if materials.get(&state.material).is_some_and(|m| m.sun_map != sun.image)
+        && let Some(mut m) = materials.get_mut(&state.material)
+    {
+        m.sun_map = sun.image.clone();
     }
     if let Some(mut buffer) = buffers.get_mut(&state.params)
         && let Some(slots) = buffer.cast_slice_mut::<[u32; 4]>()

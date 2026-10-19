@@ -31,6 +31,7 @@ bevy_pbr.workspace = true
 bevy_reflect = { workspace = true, features = ["std"] }
 bevy_render.workspace = true
 bevy_shader.workspace = true
+bevy_shape.workspace = true
 bevy_solari = { workspace = true, optional = true }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
