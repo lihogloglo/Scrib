@@ -50,3 +50,5 @@ mod cook_tests;
 mod character_tests;
 #[cfg(test)]
 mod carry_tests;
+#[cfg(test)]
+mod churn_tests;

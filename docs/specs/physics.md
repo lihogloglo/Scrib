@@ -412,6 +412,18 @@ with the bodies' `STATIC | PROP`; the chunks stay for bodies. wk-balmora mover s
 physics` (shared machine): 424 vs 272 µs (was 584 vs 319). The rest of the gap is rapier's query BVH (every body,
 filtered per leaf) and the one-sided internal-edge static meshes: a statics-only BVH view is the next step if needed.
 
+**Query refresh (as built, physcrash 2026-10-19).** `refresh_queries` used rapier's collision-only pass
+(`detect_collisions`). That pass consumes body changes outside the step's island bookkeeping while still linking
+the contacts it finds into the persistent islands and the solver graph; under streaming (refreshes between chunk,
+capsule and item inserts) and time-lapse substeps it broke rapier's invariant and panicked
+(`island_manager/persistent.rs` `member(link.body1) || member(link.body2)`, owner run in Seyda Neen). Now it only
+touches the broad-phase BVH, the part queries read: `RigidBodySet::propagate_modified_body_positions_to_colliders`
+(teleports, rebases), then `BroadPhaseBvh::set_aabb` for each collider inserted or moved since the last step (every
+collider after a rebase). Contacts, islands and the solver graph are left to the step. Kinematic targets are seen
+after the next step, as before. Regression: `sf_physics` `churn_tests` (chunks, sleeping item piles, walker
+capsules, knocks, up to 20 steps a frame; debug builds run rapier's island validation every step). Never call
+`detect_collisions` on a stepped world.
+
 ### Controller
 
 `KinematicMover` stays (locomotion.md); `bevy_tnua` is not adopted. Reasons: the mover is already

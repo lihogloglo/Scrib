@@ -144,8 +144,11 @@ impl EventHandler for Collector {
 /// only rounding is one half-ulp at the new distance otherwise.
 pub struct PhysicsWorld {
     pub(crate) engine: Engine,
-    /// A dynamic body went in since the last step (see `insert`).
-    dynamic_inserted: bool,
+    /// Colliders inserted since the last step, not yet in the broad-phase BVH
+    /// (see `refresh_queries`).
+    query_pending: Vec<ColliderHandle>,
+    /// Every collider's broad-phase AABB is stale (a rebase since the last step).
+    query_all: bool,
     anchor: IVec3,
     params: PhysicsParams,
     slots: Vec<Slot>,
@@ -184,7 +187,8 @@ impl PhysicsWorld {
             events: Vec::new(),
             queries_dirty: false,
             settling: Vec::new(),
-            dynamic_inserted: false,
+            query_pending: Vec::new(),
+            query_all: false,
             floor: None,
             excluded: Vec::new(),
         }
@@ -302,15 +306,8 @@ impl PhysicsWorld {
             events |= ActiveEvents::COLLISION_EVENTS;
         }
         cb = cb.active_events(events);
-        let (handle, _) = self.engine.insert(rb, cb);
-        // Rapier adds new bodies to its islands in the next step's pipeline;
-        // a collision-only pass (`refresh_queries`) before it drops them, and
-        // they never simulate. Dynamic inserts hold refreshes off until a step.
-        // (Re-queuing them as modified after the pass isn't enough: the
-        // contacts it found never get linked into the persistent islands.)
-        if matches!(desc.kind, BodyKind::Dynamic { .. }) {
-            self.dynamic_inserted = true;
-        }
+        let (handle, collider) = self.engine.insert(rb, cb);
+        self.query_pending.push(collider);
         if desc.kind == BodyKind::Fixed {
             let low = f64::from(shape.compute_aabb(&pose).mins.y) + self.anchor().to_f64().y;
             self.floor = Some(self.floor.map_or(low, |f| f.min(low)));
@@ -436,6 +433,7 @@ impl PhysicsWorld {
         let handle = l.handle;
         if let Some(rb) = self.engine.bodies.get_mut(handle) {
             rb.set_position(Pose::from_parts(local.pos, local.rot), false);
+            self.query_pending.extend_from_slice(rb.colliders());
         }
         self.queries_dirty = true;
         true
@@ -467,8 +465,6 @@ impl PhysicsWorld {
             rb.set_body_type(RigidBodyType::Dynamic, true);
             rb.enable_ccd(true);
         }
-        // Like an insert: the engine links it into its islands in a step.
-        self.dynamic_inserted = true;
         self.queries_dirty = true;
         true
     }
@@ -516,13 +512,35 @@ impl PhysicsWorld {
     /// without stepping (an activation batch before the first step). Steps
     /// refresh it anyway.
     ///
-    /// A no-op while a dynamic body inserted since the last step is pending
-    /// (see `insert`): insert statics first, then refresh, then items.
+    /// Only the broad-phase BVH (what queries read) is touched: each collider
+    /// inserted since the last step gets its AABB set there. Bodies, islands,
+    /// contacts and the solver graph are left to the next step. Rapier's
+    /// collision-only pass (`detect_collisions`) must never run on this world:
+    /// it consumes body changes without the island manager while still linking
+    /// contacts into the persistent islands and the solver graph, which breaks
+    /// their invariants (the 2026-10-19 `member(link.body1) || member(link.body2)`
+    /// panic; physics.md "Query refresh"). Removed colliders keep their stale
+    /// leaf until the step; queries skip it (the collider is gone). Teleported
+    /// and rebased bodies get their collider poses synced first (rapier's
+    /// query-only helper); kinematic targets are seen after the next step.
     pub fn refresh_queries(&mut self) {
-        if self.queries_dirty && !self.dynamic_inserted {
-            self.engine.detect_collisions(&(), &());
-            self.queries_dirty = false;
+        if !self.queries_dirty {
+            return;
         }
+        let e = &mut self.engine;
+        e.bodies.propagate_modified_body_positions_to_colliders(&mut e.colliders);
+        if std::mem::take(&mut self.query_all) {
+            self.query_pending.clear();
+            self.query_pending.extend(e.colliders.iter().map(|(h, _)| h));
+        }
+        for h in self.query_pending.drain(..) {
+            let Some(co) = e.colliders.get(h).filter(|c| c.is_enabled()) else { continue };
+            let aabb = co.compute_broad_phase_aabb(&e.integration_parameters, &e.bodies);
+            if aabb.mins.is_finite() && aabb.maxs.is_finite() {
+                e.broad_phase.set_aabb(&e.integration_parameters, h, aabb);
+            }
+        }
+        self.queries_dirty = false;
     }
 
     /// Freezes a body that must start asleep until the engine has put it to
@@ -578,7 +596,8 @@ impl PhysicsWorld {
         self.engine.integration_parameters.dt = self.params.dt;
         let collector = Collector { inv_dt: 1.0 / self.params.dt.max(1e-6), ..Collector::default() };
         self.engine.step_with_events(&PairFilter(&self.excluded), &collector);
-        self.dynamic_inserted = false;
+        self.query_pending.clear();
+        self.query_all = false;
         self.resist_rolling();
         self.queries_dirty = false;
         let dt = self.params.dt;
@@ -729,6 +748,7 @@ impl PhysicsWorld {
             }
         }
         self.anchor = cell;
+        self.query_all = true;
         self.queries_dirty = true;
         for id in sleepers {
             self.begin_settle(id);
