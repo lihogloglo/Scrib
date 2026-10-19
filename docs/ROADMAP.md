@@ -1424,8 +1424,14 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   (region raster, sea → nearest region by Euclidean dilation, `site_at` = border blend), per-climate table (each climate
   evaluated once at weight 1, 31 continuous channels), world-anchored toroidal texel window (1/8 recenter steps, strips
   only), uniform-day skip; `sample(camera)` = `evaluate(site)` within 1e-5 on a 2 m border walk (5 tests). Table 0.0034 ms
-  for 16 climates (release; estimate 0.02). Next: WE4b GPU map + clouds read it, then WE4c app (`site_at` replaces
-  `ClimateMap::border_at`, dilated sea raster, WE-3 scene).
+  for 16 climates (release; estimate 0.02). 
+  Part b steps 1-2 built (we4b, 2026-10-19; weather.md "WE4b as built"): GPU map (`sf_weather::MAP_WGSL` resolve, the twin of
+  the CPU resolve, readback test 9.2e-4 at f16; full on table change, strips on recenter, skipped on uniform days) in
+  `sf_atmos_bevy::CloudWeatherMap`; clouds + cloud shadow map read layer A (coverage, genus, wetness, storm) per sample
+  (`CloudQuality::map_per_sample`, High/Ultra) or 3x per ray (Medium/Low). `clouds --split clear,storm`: resolve 0.017 ms,
+  trace 0.253 vs 0.255 ms uniform (no measurable cost). Visual check WE-4b awaiting owner. Next: WE4b steps 3-4 (envelope
+  shell + local base/thickness from layer B, plume hook), then WE4c app (`site_at` replaces `ClimateMap::border_at`,
+  dilated sea raster, WE-3 scene).
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1877,4 +1883,5 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we4a): M6 WE4 part a: `sf_weather::WeatherMap` CPU world weather map (climate raster with sea dilated to the nearest region, per-climate table at weight 1, toroidal world-anchored texel window, uniform skip); map at the camera = `evaluate(site)` (1e-5, 2 m border walk); table 0.0034 ms / 16 climates release. 5 tests, clippy clean. Next WE4b (GPU resolve + clouds sample the map).
 - 2026-10-19 (shf12): shadows F1+F2: Bevy `ContactShadows` on the exterior camera (+ depth/MV prepass on Medium+), `contact_shadows_enabled` on the sun (`sf_sky_bevy::SunShadow`) and budgeted point lights (`PointShadowBudget::contact_shadows`), sun normal bias 0.8 texels, `ShadowFilteringMethod` per preset; `--off contactshadows`; weather.md "Shadow bias and contact shadows"; SH-7 awaiting owner; GPU cost A/B not run (owner was testing).
 - 2026-10-19 (rofix1): render-order RO-1/2/3 fixed: translucents cast no shadows (`FroxelFogExt::enable_shadows` false; cutouts keep casting), distant light sprites and rain/snow fogged through the new shared `sf_render_order_bevy::TranslucentFog` + `translucent_fog` shader module (moved from sf_atmos_bevy); guard test checks fog binding + shadow opt-out; RO-A awaiting owner.
+- 2026-10-19 (we4b): M6 WE4 part b steps 1-2: GPU world weather map (WGSL resolve twin of `sf_weather` map, raster + table upload, strips on recenter, uniform skip; GPU-vs-CPU readback 9.2e-4) and clouds + cloud shadow map read it per sample (High/Ultra) or per ray (Medium/Low); `clouds --split clear,storm` shows a clear zenith with the storm deck beyond the border; resolve 0.017 ms, trace unchanged (0.253 vs 0.255 ms). Next: envelope shell (layer B), then WE4c app wiring.
 - 2026-10-19 (shf3): shadows F3 step a: practical-split sun cascades to 250 m per preset (`sf_sky_bevy::CascadeSplits`, Bevy keeps sphere fit + texel snap + overlap blend), texels 2× sharper in the last cascade, GPU ≈ 0; 504 m rule replaced (ARCHITECTURE §10); far static map (step b) designed in weather.md, not built; `--off shadowsplits`; SH-8 awaiting owner.

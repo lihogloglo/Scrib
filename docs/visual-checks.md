@@ -1791,6 +1791,14 @@ until the two regions differ, then fly across the border. Look for: haze, clouds
 around the border (half each side), no pop when the camera crosses a cell edge; precipitation intensity fades in, not on.
 
 
+### WE-4b: Two climates on the world weather map (`cargo run --release -p sf_atmos_bevy --example clouds -- --split clear,storm`, in superfargoth)
+
+Status: **awaiting owner** (M6 WE4b, we4b, 2026-10-19). Synthetic scene: west of x = 2.5 km is Clear, east is Storm
+(400 m band); the camera stands on the clear side looking +X. Also `--view up` (zenith: clear sky, storm deck at the top
+edge = east) and `--view shadow` (ground lit on the clear side, dark beyond the border), `--per-ray` for the Medium/Low
+lookup. Look for: the storm deck starts at the border, not overhead; no seam or hard line at the band; the cloud shadow
+edge on the ground matches the deck edge. Known: the shell height is still the storm's everywhere (envelope = WE4b step 4).
+
 ### LA-1: Near foliage stays drawn after a long flight (`view "Seyda Neen" --hour 11`)
 
 Status: **confirmed by owner 2026-10-19** (foliage OK in recent runs; lodaudit, 2026-10-19). Not screenshotted after the fix (the agent's live repro never
