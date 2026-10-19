@@ -61,7 +61,7 @@ rebind.** This matches vanilla Morrowind and most shipped games, and costs **0 �
 in the palette. Coverage is guaranteed the same way the original guarantees it: the authored weights follow the
 hidden legs.
 
-A cheap hem swing is **optional and parked**, not part of this fix. If the owner wants one later, use 4 spring
+A cheap hem swing is **optional and parked**, not part of this fix (S2 below now uses a painted max distance on the hem vertices instead; the spring-bone idea is kept for reference). If the owner wants one later, use 4 spring
 bones at the hem (front, back, left, right) on the existing `sf_anim_graph::secondary::SpringBones`, blended into
 the hem vertices at a small weight *on top of* the authored skin, never in place of it. Leg follow stays at 1, so
 coverage holds. Estimated cost is a few µs per robe.
@@ -93,9 +93,19 @@ Nothing needs deleting. The switch is one rule default plus docs.
    with the opt-in. `character "fargoth+common_robe_01" "@dark elf,,f+common_robe_02" --walk`, keys 1/2: the log
    shows no `cloth:` line, and screenshots at walk and run show no missing leg. Then the owner re-checks PH-3 in
    `scene level-robe-walk` (cameras `priest`, `course`) and `scene ph3-balmora-temple`.
-2. **(Optional, only on owner request) hem springs:** 4 `SpringBones` hem joints added to the authored skin.
-   *Verify:* the slice 1 shots unchanged at a dead stop; the hem lags on a stop or turn; ≤ 5 µs per robe in the
-   `cloth:` log.
+   *Done (p10s, 2026-10-19):* `mw_physics::ClothMode` (`Authored` default, `Robes` opt-in = `--cloth robes`).
+2. **(Low priority, owner idea 2026-10-19; replaces the hem-spring idea) hem-only drape on the authored skin.**
+   - *What is simulated:* only the bottom rows of hem vertices. Every vertex keeps its authored Morrowind skin as
+     its target position; the hem vertices are particles pulled toward that skinned position (gravity, inertia, the
+     leg capsules), the rest are drawn exactly as authored.
+   - *Constraint:* each simulated vertex is tethered to its own skinned position by a **max distance painted per
+     vertex**, 0 at the waist and on every unsimulated row, ramping to a few cm at the hem: the standard "painted max
+     distance" of Chaos Cloth (UE) and NvCloth (and Magica Cloth's max distance). No lattice, no rebind: the
+     authored weights stay.
+   - *Coverage guarantee:* no vertex can stray more than its radius from its skinned position, and the skinned
+     position already covers the hidden legs, so the legs stay covered at any stride; the worst case is S1.
+   - *Cost target:* ≤ 5 µs per robe (`cloth:` log), only a few dozen hem vertices per robe.
+   - *Verify:* the slice 1 shots unchanged at a dead stop; the hem settles a little behind on a stop or turn.
 
 ### Owner questions
 

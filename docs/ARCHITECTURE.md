@@ -1242,6 +1242,11 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   - Minimal `sf_rpg` data (inventory stacks, quest store) is pulled into M5 so scripts and the inventory slice use real
     data; M7 extends it (owner). Ecosystem check 2026-10-13: `bevy_enhanced_input` 0.26, `leafwing-input-manager` 0.21,
     `bevy_flair` 0.8.1, `bevy_fluent` 0.15, `bevy_ui_anchor` 0.12 are still on Bevy 0.19.
+- **2026-10-19 (p10s; physics.md "Cloth", research/cloth/long-robes.md; owner): long robes and skirts are skinned as
+  authored, not simulated, by default.** PH-3 V1 (lattice rebind below the pelvis) failed: hidden legs stepped out
+  of the robe. Industry and the original skin long garments to the legs and hide the body; simulation is an extra.
+  Adapters' `ClothRules` answer `None` for them unless opted in (Bevyrrowind `--cloth robes`); the XPBD cloth stays
+  for capes and mesh cloth. Parked: leg-follow tuning, hem widening, the `cloth.cook` bake step.
 
 ## 11. Open decisions
 

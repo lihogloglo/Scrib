@@ -601,6 +601,12 @@ Behaviours:
 
 ### Cloth
 
+**Decision (2026-10-19, research `docs/research/cloth/long-robes.md`):** long garments that hide the legs (robes,
+long skirts) stay **skinned as authored** by default: a content adapter's `ClothRules` answers `None` for them, so
+nothing is cooked or rebound. The lattice below replaced the authored leg weights and could not keep the hidden legs
+covered at a stride. The XPBD lattice stays for garments that hide nothing (capes, banners, tents) and as an
+adapter opt-in for long garments.
+
 - `ClothLattice` op in the procedural op stack, after foot placement (it needs the final legs), at
   A0–A1; at A2 and below the lattice joints take their animated (skinned) rest offsets, which is how the
   robe looked before M4.
