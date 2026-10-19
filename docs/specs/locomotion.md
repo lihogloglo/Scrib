@@ -104,6 +104,8 @@ Surface ids give foot-placement and footstep sounds their material
   a physics capsule; `bevy_tnua` or our own (ARCHITECTURE §11). **Decided 2026-10-12 (physics.md
   "Controller"):** the kinematic mover stays, in `Update` at frame rate (not moved to the fixed step), with a
   kinematic capsule body, capped pushes on dynamic bodies and `PhysicsProbe` replacing `StaticProbe`.
+  **Required change (R11b + R12 co-op rule 1, 2026-10-19):** movers step on the fixed tick; see
+  "Action-layer changes (R11b)" below.
 
 **NPC drivers.** Until `sf_ai` (M10), NPC intents come from an adapter
 system that follows authored paths. This is the named scaffold
@@ -676,6 +678,53 @@ a plant for 2 s while walking; `BEVYRROWIND_STRIDE_TRACE=1` details).
 Open: strafe clips' contacts (sf_anim cook: in-place clips use height only; MW WalkLeft/Right feet
 are within 6% of a leg of their lowest point on 0–6 of 81 frames); some walkers on flat ground walk
 at full speed with constant contacts (one leg 0, one 1) in state `walk`, cause not yet found.
+
+## Action-layer changes (R11b, 2026-10-19)
+
+Draft, awaiting owner review. The action layer ([action.md](action.md)) now decides every move and
+owns jump, air and traversal timing. Only what the owner's decisions change is here; the rest of
+this spec stands.
+
+**Fixed tick.** Movers step on the fixed tick (60 Hz, the physics rate) with transform
+interpolation for rendering, not in `Update` at frame rate. Reason: the chooser runs on the fixed
+tick, and co-op prediction replays gameplay ticks from commands (action.md "Co-op readiness"). For
+action moves the root delta comes from `sf_action` (baked root track at the action clock) on the
+same tick, which removes today's one-frame root-motion handoff. Far tiers (A2/A3) may step every
+second or fourth tick. This is required by the co-op net-ready rules (`../research/coop/README.md` §4 rule 1)
+and supersedes physics.md "Controller" on this point; physics.md itself is a follow-up (not edited here).
+
+**Jump and air** (R1 spec gap). Jump is set by height: launch speed from the wanted apex (mode
+profile × stat band, action.md). Air control steers and brakes but never exceeds the launch's
+horizontal speed (R5 adopt 9). Landing classes by fall speed (normal, roll, hard, lethal) are action
+rules. Coyote time and jump buffer are action-layer timers in ticks.
+
+**Momentum mover mode** (R1 adopt 9; the player in the FreeRun profile). A ground mode beside the
+springs: speed builds up toward sprint along a curve instead of a spring, momentum carries through
+landings and vaults (each rule's exit velocity), the turn rate falls with speed (view-turn damping),
+and back-to-back jumps lose some speed (hop tax). Holden springs stay for NPCs and for the Normal
+and Sneak profiles. Tuned on `flat-slopes` and `ledges`.
+
+**Correction springs** (R8 adopt 2, Holden's "Code vs Data Driven Displacement"). The gameplay
+capsule is the truth; the render body's root may sit off it while the clip catches up. The offset
+decays toward zero with a halflife (position ~0.1 s, rotation slower), is **velocity-limited** (at
+most ~0.5× the character's own speed, so feet don't skate at plants, starts and stops) and
+**clamped** (a maximum distance and angle). Separate position and rotation dials. The same spring
+hides co-op reconciliation corrections. Bevy-free math in `sf_controller`; applied to the render
+transform by the Bevy shell, never fed back.
+
+**Docked mover mode** (R5 adopt 5; ledges and ladders). `MoverMode::Docked { edge, s, side, offset }`:
+- the character is on an `sf_interaction` edge chain (a ledge, or a ladder's vertical chain) at
+  parameter `s`;
+- gravity, ground snap and pushes are off; collision stays on;
+- input inside a side cone moves `s` at the docked speed (from the clip's root distance, scaled by
+  the stat band); edge ends and corners are probed ahead and stop or turn the move;
+- the hang offset (hand joints vs root) comes from the clip at bake, not a constant;
+- leaving is an action rule: climb up (Warp), let go (Air), drop to the ground, ladder exit.
+
+**Context probes** (needed by action rules, built in the phases that use them): speed, vertical
+speed and time-to-contact gating (R1 adopt 4, 8); a `WallAhead` query; back-ledge and landing
+targets for vaults (R7 §5); state-gated probes when a rule asks; the player polled every airborne
+tick. NPC gating (A0, blocked only) stays.
 
 ## Industry comparison
 

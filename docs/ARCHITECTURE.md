@@ -1798,3 +1798,21 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   reports which sets are on (`WeatherFrame.one_shots`) and the audio layer schedules draws, since ambience density
   mustn't follow the game time scale. `WeatherPreset.climate_ambience` gates a climate's ambience per weather as a
   number on the cue channel (weather.md "Weather core as built").
+- **2026-10-19 (r11b; specs/action.md, specs/camera.md, animation.md "Decided shape (R11b)", locomotion.md
+  "Action-layer changes (R11b)"; docs only, awaiting owner review): an action layer decides every move.** From the
+  animation study R1-R10 and the owner's R11a decisions (`research/animation/11-tradeoffs.md`). (1) **New Bevy-free
+  `sf_action` + thin `sf_action_bevy`, not a module of `sf_controller`**: the chooser changes daily (§8b rule 5) and
+  needs `sf_anim_graph` windows and baked root tracks, which `sf_controller` (5 dependents incl. `sf_physics`) doesn't
+  depend on (rule 3). (2) **Data move rules on the fixed tick** (FromSoftware's "decider decides, graph plays, clip
+  windows gate"; UE GASP's probe → chooser → warp): fixed predicate vocabulary, validators (AC1 end-pose acceptance),
+  one priority list, Sekiro-style two-stage input buffer, bounded settle loop; Luau never in the per-tick loop. Mods add
+  `MoveRule` records + clip slots + moveset sheet rows. (3) **Motion owner per move kind**: Sim (locomotion, air),
+  Warp (contact traversal, interactions; `Progress` root mode, chain warping, no steering until the tail), Docked
+  (hang, shimmy, ladders), Clip (attacks, dodges, paired), Physics (ragdoll). (4) **Net-ready for 2-4 co-op,
+  host-authoritative with prediction**: commands are the only input, the gameplay body (`ActionState` + `Locomotion`)
+  is authoritative and ticks only on the fixed step, gameplay reads baked clip data on the action clock and never the
+  evaluated pose; graph, IK, first-person bodies, camera and correction springs are presentation. Follows the eight net-ready rules of `research/coop/README.md` §4 (R12); the crate is chosen at the co-op milestone.
+  (5) **Required: movers move to the fixed tick** with interpolation (R12 rule 1; supersedes physics.md "Controller"'s frame-rate
+  mover; physics.md not yet edited: follow-up). (6) Camera: third person primary with optional lock-on, first person from a baked virtual
+  camera track with per-move look limits and soft aim only, framed cameras for paired moves, comfort switches.
+  (7) Clips stay bones-only (`clip.annotate` + slot defaults + moveset sheet); gaps filled from packs only.

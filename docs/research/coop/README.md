@@ -318,3 +318,10 @@ it holds), and sees every other entity interpolated about 100 ms in the past.
    N6-N7 need those? Recommended: N0 now (docs only), N1-N5 after M6, N6-N8 after M7.
 3. **Transport:** is Steam (lobby, relay, no port forwarding) the target for release, or is direct
    IP/LAN enough at first?
+
+## Owner decisions (2026-10-19)
+
+- **Quests:** shared world, own characters (Enshrouded model): world and quest state shared, each player keeps
+  their own character, inventory and skills; anyone in the party can advance a quest.
+- **Timing:** N0 (net spec + audit of existing specs, docs only) now; N1-N5 after M6; N6-N8 after M7.
+- **Transport:** direct IP / LAN first (relay if needed); Steam lobbies later as an opt-in game feature.

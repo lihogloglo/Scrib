@@ -2,7 +2,8 @@
 
 Status: draft (2026-10-11); `sf_anim` and `sf_anim_graph` built; next-gen
 roadmap (warping, full-body IK, context probes, physical animation, pose
-search, creatures) drafted, not built
+search, creatures) drafted, not built; R11b (2026-10-19): the decider moved to
+[action.md](action.md), see "Next-gen roadmap: Decided shape (R11b)" for what changes here
 Crates: `sf_anim` (new, Bevy-free: skeletons, cooked clips, sampling, pose
 ops, root motion, events and curves, IK solvers, retarget math, bake steps),
 `sf_anim_graph` (new, Bevy-free: graph assets, layers, state machines, blend
@@ -756,7 +757,7 @@ feature extraction. Candidate data is the 100STYLE dataset (CC BY 4.0, BVH,
 as bring-your-own sources baked privately on the user's machine, never
 shipped (data plan and license table: `bevyrrowind/docs/specs/animation-sources.md`).
 
-## Next-gen roadmap (anim-plan, 2026-10-11)
+## Next-gen roadmap (anim-plan, 2026-10-11; shape replaced by R11b, 2026-10-19)
 
 The target, in the owner's words: next-gen like Assassin's Creed or Elden
 Ring / Dark Souls 3; IK is mandatory; characters react to their
@@ -764,20 +765,64 @@ environment; the system works for creatures. Each layer below names its
 canonical technique, its interface against the crates as built, its
 milestone, and measurable criteria.
 
-### Shape: authored backbone, data-driven where data exists
+### Decided shape (R11b, 2026-10-19)
 
-**Hybrid, as UE5's Game Animation Sample (GASP) does it.** Authored state
-machines with root motion and event windows stay the backbone: souls-like
-combat needs exact, authored timing (startup, active, recovery, cancel
-windows, i-frames; WISHLIST §9), and creatures have a handful of authored
-clips each. Motion matching is an optional graph node for humanoid
-locomotion once a library is baked (GASP 5.8 itself moved to a Chooser
-with a pose-match column plus blend spaces in its blend stack, i.e. hybrid,
-not pure MM). FromSoftware has given no public tech talks; what is
-observable in DS3 and Elden Ring (authored attack clips whose root
-rotation tracks the target during the wind-up, foot IK on slopes for
-players and large bosses, ragdolls on death) is exactly authored clips
-plus warping plus IK, which this plan covers.
+The generic "authored backbone" shape written here from READMEs (2026-10-11) is replaced by the
+animation study (`../research/animation/`, notes R1-R10) and the owner's decisions
+(`11-tradeoffs.md` "Decisions"). **Read [action.md](action.md) and [camera.md](camera.md) first.**
+In one line: a Rust **action layer** (`sf_action`) decides every move from data rules on the fixed
+tick; the graph only plays and blends; typed clip windows gate when a choice is allowed (the
+FromSoftware split, R5 §1). Gameplay reads baked clip data on the action clock, never the evaluated
+pose, so the graph, IK, first-person bodies and camera are presentation (net-ready for co-op).
+Motion matching stays an optional locomotion node ("Later" below).
+
+What changes in this spec (each is built in the action.md phase named):
+
+1. **`Progress` root mode** (phase B1; R2 adopt 1). A fourth mode beside `Drive`, `Match`,
+   `Ignore`: the player's playhead is set each update from a parameter (seconds or normalised,
+   either direction), as UE's sequence evaluator; its root output is not applied to the character.
+   Every move the action layer starts plays this way, from `ActionOutput`'s playhead, so the graph
+   never drifts from the gameplay clock. `Drive` stays for hosts without an action layer (viewers,
+   scripted one-offs).
+2. **Chain warping** (phase B1; R3 §5, §11). Layer 1 below is single-clip. Added: a warp across a
+   chain of clips (the correction carried by the clip with the most root motion), correction
+   profiles `Linear` and `Late` (cubic: rise first, over the lip late), a **refusal ratio** (correction
+   / root distance) the action layer checks before starting, variant mixing before warping, an
+   `arc` mode (ballistic flight with a clip-given arrival time, R5 adopt 8), and `mode=scale` with
+   min/max clamps and a stand-off for attack lunges (exempt from the 2 cm check; R6 adapt). The warp
+   function stays Bevy-free in `sf_anim_graph` and is called by both the graph (presentation) and
+   `sf_action` (gameplay root).
+3. **Typed windows and window-gated interruption** (phases B2, E1; R5 adopt 1, R6 adopt 2).
+   `animgraph.compile` parses clip `Event` windows into the typed vocabulary of action.md
+   "Windows" (accept, cancel per action class, tail, turn, lunge, contact, i-frames, hit, camera...).
+   Slot/montage requests carry an action class; an interrupt is allowed only inside a `cancel`
+   window for that class or on an unrestricted clip (today: priority only). Priority stays the
+   tie-break.
+4. **Gap-sized inertial blends and pose-matched entry** (phase B2; R4 adopt 1-2). Transitions get
+   `duration: Auto`: the inertialization length from the largest hand/foot gap between the current
+   pose and the new source's entry frame, clamped ~0.05-0.3 s; combat cancels default to ~0.1 s.
+   A `Player` start mode picks the entry frame (cycle phase and leading foot) by leg-joint match.
+   Root impulses due on a clip's first frame apply on the start tick (R8 §1.1).
+5. **`clip.annotate` bake step** (phase B2 minimal, E1 full; R9 §6). On the retargeted clip it
+   writes: reconstructed root motion for in-place one-shots, foot **and hand** contacts, markers,
+   leading foot, phase, turn windows, flight phases, end pose and effector spacing, a
+   contact-bounded warp window, the weapon/hand socket track (root space), the **virtual camera
+   track** (camera.md), IK weight hints, reach and first-contact proposals. Category defaults come
+   from the clip's slot; a moveset RON sidecar per moveset holds the design numbers (about one line
+   per attack slot). It replaces `ClipRules::events` as the authoring point. Lints: unconfirmed hit
+   windows, warp residual over the refusal ratio, missing hand contacts on traversal slots,
+   reconstructed roots, seam/jolt checks, tempo outliers.
+6. **First-person render bodies** (phase D2; R7 §2.1, R8 §3). One gameplay body; a first-person
+   render body (arms, legs when looking down, own FOV and scale, head hidden) plus the world body
+   for shadows. Per action: arms layer (a content pack's own first-person clips allowed as
+   presentation on the shared clock) or full body with the baked camera track. Hits always come
+   from the world body's baked socket tracks. character.md's "view-model arms plus shadow body"
+   section is superseded by this model and is rewritten in D2.
+
+Also from the study, smaller: IK policy as data (ramps, gating, latching, proximity weights;
+R3 adopt 5, R4 adopt 4), `ArmClearance` and reach assist (R4 adopt 5, 8), hit-stop as a
+per-character clock scale shrinking with crowd size (R6 adopt 4, R8 adopt 5), large-turn
+inertialization (R4 adopt 3). Each lands with the phase that first needs it.
 
 **Kept: our ozz-model core and `sf_anim_graph`.** Re-checked 2026-10-11:
 `ozz-animation-rs` 0.11.0 (2025-10) is MPL-2.0 and nightly-only, and would
@@ -906,72 +951,17 @@ clearance, landing) with `warp_target`/`hang_point` for warp windows; vault/mant
 Classification and timing: locomotion.md "Context probes as built" (150 all-blocked: 0.79 ms
 single-thread, inside the budget only with the gating above).
 
-#### Prior art: open Rust/Bevy game reimplementations (owner, 2026-10-18)
+#### Prior art: open Rust/Bevy game reimplementations (owner, 2026-10-18; superseded 2026-10-19)
 
-The owner wants one general traversal and interaction layer: mantling, vaults, parkour and
-free-running for players who want to play an assassin, climbing, ladders, sitting on chairs and
-benches, doors and levers. Several open Rust/Bevy reimplementations of commercial games built
-pieces of this in 2026. **We learn from them; we don't copy or depend on them.** They are apps,
-not libraries; they play the original game's clips from the user's install; and parts were
-reverse-engineered from executables (Ghidra), so rule 3 (clean room) applies: take ideas and
-technique, never constants, tables or names extracted from those games. Reviewed from their
-READMEs and design notes, not their code:
-
-- **AC1-rs** (Assassin's Creed, MIT; github.com/Goku436/AC1-rs, `docs/NOTES.md`). The best
-  reference for climbing. Ideas to take:
-  - **Holds as data, with a geometry fallback.** Climbable edges come from authored data where
-    the content has it; otherwise they are detected from geometry: a walkable top meeting a wall
-    below becomes a hold, a top-out needs headroom (~ a standing height) and open space past the
-    edge, narrow wall tops and beams become perches. For us: holds are interaction points
-    (`sf_interaction`) that adapters author or a bake step detects from collision geometry.
-  - **Validate a move by its end pose.** A climb move is taken only if its end pose puts both
-    hands on real holds and the feet on the wall: the pose, not just the root, must fit the world.
-  - **Jump target choice** as a scored search (posts, beams, walkable tops within a cone of the
-    wanted direction, distance and drop limits, highest first).
-  - **A move graph as data** (which action may follow which, per-action gates "can leave / locked
-    / usable while moving"): our graph's transitions plus tags, not code paths per move.
-  - **IK corrections fade in by distance** (a hand from ~20 cm of its hold, a foot near the wall),
-    and the root height follows the ground averaged ahead and behind.
-  - Its `ik` crate (two-bone with pole, look-at chains, FABRIK, CCD, foot and hand placement,
-    mirroring) is what `sf_anim::ik` already has; nothing to adopt.
-- **faith-runner** (Mirror's Edge, MIT; github.com/tnrjns/faith-runner). The reference for the
-  **parkour move set** and for keeping the controller testable:
-  - `crates/faith_move` depends only on `glam`: the host supplies a `World` trait (`sweep`,
-    `overlaps`) and per-frame input, and reads back feet, velocity, state and events. Same shape
-    as our `sf_controller` over `StaticWorld`; keep traversal logic there, Bevy-free.
-  - Move set to cover: vaults chosen by obstacle height and approach speed (six kinds), wall runs,
-    wall climbs, ledge hang and shimmy, slides, rolls and soft/hard landings by fall speed,
-    springboards, beams, swing poles, ziplines, door barges.
-  - **Scripted-input tests through every move and course section** (`cargo test -p faith_move`):
-    the model for our traversal tests (greybox courses as test fixtures, not visual checks).
-  - All tuning numbers in one file. It is first person only, and has no hand IK on ledges or foot
-    placement: our warping + full-body IK is the part it lacks.
-- **ELDEN-RING-Combat-Rewrite** (MIT, Bevy 0.19; github.com/Funny-Bones/ELDEN-RING-Combat-Rewrite).
-  Combat, not traversal: a fixed 60 Hz gameplay sim with no engine types, root motion per action,
-  hit / invulnerability / cancel windows as data, upper-body layers while moving, hit-stop. The
-  reference for M9 combat timing (our event windows already carry this). Its blending is simpler
-  than ours by its own account.
-- **sekiro-rs** (MIT/Apache; github.com/AKJama/sekiro-rs): a whole-game reimplementation; its
-  README says nothing specific about animation. Check its `docs/MOBILITY.md` (grapple, ledges)
-  before the traversal spec is written.
-- **ozz-animation** (C++, MIT; github.com/guillaumeblanc/ozz-animation): already our runtime
-  model (Canonical technique). It samples, blends and solves IK; it has no state machines, graphs
-  or traversal, which is the hard part. Not adopted (re-checked 2026-10-18): binding the C++ adds a
-  C++ build for the parts we have, and the Rust port `ozz-animation-rs` 0.11 (MPL-2.0, now allowed
-  as an unmodified dependency) still needs nightly Rust for SIMD and duplicates `sf_anim`.
-
-**What this means for the traversal layer** (bevyrrowind ROADMAP M4 P11, the GASP shape):
-context probes (built) and **interaction points** (UE Smart Objects: seats, doors, levers,
-ladders, climb holds; authored or baked from geometry) feed a **chooser** that picks an action by
-tags and probe results; **motion warping** (built) aligns the clip with the point; **full-body IK**
-puts hands and feet on it; the action is accepted only if its end pose fits (AC1-rs). Moves are
-data (graph transitions and tags), so a mod adds a move with a clip and a rule, not code.
-
-**The real bottleneck is clips, not code.** All four projects use the original game's
-animations. Morrowind ships no climb, vault, mantle or sit clips, so this layer needs a clip
-source we may use: CC0 libraries (Quaternius), Mixamo (usable in a game, not redistributable
-raw), or mocap, retargeted with the humanoid retargeting we already have (Optional clips below).
-Choosing that source comes before the traversal spec.
+**Superseded by the animation study.** These projects were read in detail in
+`../research/animation/` (faith-runner R1-R2, AC1-rs R3-R4, sekiro-rs R5, ELDEN-RING-Combat-Rewrite
+and sekiro-rs combat R6, Mudcrab R10), which also corrects claims the old summary made (R2: faith-runner
+has wall-arm IK; R3: jump targets are nearest-first except hangs, and AC1's chooser is code +
+tables; R4: AC1's IK policy is worth adopting; R5: sekiro-rs is the best open description of the
+FromSoftware split). The traversal layer is now [action.md](action.md); the clip question is
+answered there ("Clip gaps") and in R9. The README-level summary that stood here was removed (git history
+before 2026-10-19). Still true from it: ozz-animation (C++, MIT) and `ozz-animation-rs` 0.11 (MPL-2.0,
+nightly SIMD) are not adopted; they would duplicate `sf_anim` and have no graphs or traversal.
 
 ### Layer 4: physical animation (M4)
 

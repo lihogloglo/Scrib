@@ -46,7 +46,7 @@ any source (Morrowind KF, UAL, 100STYLE, LaFAN1, Mixamo, mocap) work inside thes
 | R9 | `09-clip-pipeline.md` | making any clip work: retargeting (UE IK Retargeter, Unity Humanoid), auto-annotation (contacts, sync markers, warp windows), style/timing normalisation, coverage of the move list by our sources (animation-sources.md), first-person arms; owner's local `D:\Gamedev\Animation morrowind` (UAL Standard + Source, ARP retarget blends) | done 2026-10-18 |
 | R10 | `10-mudcrab-borrow.md` | Mudcrab (Apache-2.0) whole project vs ours: what to adopt or port (converters, LOD, launcher/mods, colour pipeline, profiling, Luau) | done 2026-10-18 |
 | R11a | `11-tradeoffs.md` | **Brainstorm with the owner** (owner, 2026-10-18): these games' mechanics serve different purposes and conflict, and first vs third person trade off. Find a system that reconciles them, or decide which trade-offs we accept. Seed list below; each conflict gets options, who does it which way, cost, and a recommendation; the owner decides | decided with owner 2026-10-19 (see "Decisions") |
-| R11b | spec rewrite | synthesis of R1-R10 and the R11a decisions into a concrete spec (move taxonomy, action layer and chooser, data per clip, first/third person, combat timing, test courses), owner review | after R11a |
+| R11b | spec rewrite: `../../specs/action.md` (new), `../../specs/camera.md` (new), animation.md "Decided shape (R11b)", locomotion.md "Action-layer changes (R11b)" | synthesis of R1-R10 and the R11a decisions into a concrete spec (move taxonomy, action layer and chooser, data per clip, first/third person, combat timing, test courses), owner review | spec drafted, awaiting owner review, 2026-10-19 |
 
 ### R11a seed: conflicts found so far
 
