@@ -124,14 +124,19 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   translucent is fogged there, and opaque interior fog is the clear colour only (`doors.rs`).
   *Slice*: an interior fog path (analytic distance fog in the composite, its parameters in
   `FroxelVolume` for the translucent fallback).
-- **RO-6** (Medium): translucents write no motion vectors and no reactive/transparency mask, so
-  particles, rain and sprites ghost under DLSS. *Slice*: DLSS bias-current-colour mask from the
-  Overlay/Sorted bands if Bevy's DLSS integration exposes it, else motion vectors for precipitation
-  via a redraw like water's step 9.
-- **RO-7** (Medium, VERIFIED by code 2026-10-19: no sf_atmos_bevy/sf_sky_bevy pass writes a motion-vector target; sky + cloud resolve write colour only, so MV = prepass clear = 0 on sky pixels; not captured via BRP, DLSS needs the far-depth pass below): sky and cloud pixels may carry zero motion vectors (Bevy's prepass
-  clears to 0; Bevy's `Skybox` has a motion-vector prepass, `Atmosphere`'s `render_sky` is not known
-  to): DLSS would reproject the sky as screen-fixed and smear clouds on rotation. *Slice*: check with
-  a BRP capture of the MV texture; if so, a fullscreen far-depth camera-motion pass after step 1.
+- **RO-6** (Medium, OPEN; checked 2026-10-19 ro6): translucents write no motion vectors and no reactive/transparency mask, so
+  particles, rain and sprites ghost under DLSS. Bevy 0.20 blocks option (a): `bevy_anti_alias` `dlss/node.rs`
+  hardcodes `bias: None // TODO` for Super Resolution (`dlss_wgpu` accepts `pInBiasCurrentColorMask`), Ray
+  Reconstruction passes `transparency_overlay: None`, and TAA has no reactive input. No per-translucent mask until
+  upstream exposes one (or we fork the node). Remaining slice: motion vectors for precipitation via a redraw like
+  water's velocity pass (camera-wrapped boxes: MV = camera motion + fall velocity); light sprites and blended NIF
+  surfaces keep the ghost (accepted).
+- **RO-7** (FIXED 2026-10-19 ro6, awaiting owner eyes; `sf_render_order_bevy::SkyMotion`, A/B `--off skymotion`): sky and cloud
+  pixels carried zero motion vectors (the prepass clears to 0; no sf_atmos/sf_sky pass writes the target), so DLSS/TAA
+  reprojected the sky as screen-fixed and smeared clouds on rotation. Fix: a fullscreen pass after the transparent
+  pass (like water's velocity redraw) writes the camera's rotation-only motion (unjittered current vs previous
+  `clip_from_world`, translation zeroed: the sky is at infinity) into the prepass motion-vector target wherever depth
+  is still at the far plane (reverse-Z 0). Single-sample views only. Scaffold; removal path: Bevy's `Atmosphere` writes MVs.
 - **RO-8** (FIXED 2026-10-19 ro48: `sf_render_order_bevy::add_pass` + `PassStage` {Night, Clouds, Snapshot}, ordered by set, test for all add orders; was: `SkyOrderScaffold` is copied in three crates (`night.rs`,
   `sf_atmos_bevy` `render.rs`, `sf_water_bevy` `render.rs`) and the resulting order depends on
   plugin add order (Sky → Clouds → Water); a wrong order silently reorders steps 4-7. *Slice*: one

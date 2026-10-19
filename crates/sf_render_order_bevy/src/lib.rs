@@ -33,8 +33,10 @@ use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 
 mod fog;
 mod passes;
+mod sky_motion;
 pub use fog::{NO_FOG, TranslucentFog};
 pub use passes::{PassStage, add_pass};
+pub use sky_motion::{SkyMotion, SkyMotionPlugin};
 
 /// Where a blended draw goes in the transparent phase.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -78,6 +80,7 @@ pub struct RenderOrderPlugin;
 impl Plugin for RenderOrderPlugin {
     fn build(&self, app: &mut App) {
         fog::init(app);
+        app.add_plugins(SkyMotionPlugin);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<ExtractedBands>().add_systems(ExtractSchedule, extract_bands).add_systems(
             Render,
