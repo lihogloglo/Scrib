@@ -75,6 +75,7 @@ struct Clouds {
     shell_thickness: f32,
     cirrus_max: f32,
     far_weather: u32,
+    glows: array<vec4<f32>, 4>,
 };
 
 const PI: f32 = 3.14159265;

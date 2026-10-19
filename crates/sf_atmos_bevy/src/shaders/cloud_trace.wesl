@@ -363,8 +363,17 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
             let ms = multi_scatter(od, cos_t, clouds.phase_g, clouds.ms_falloff, clouds.ms_octaves);
             let sun = light_color * sun_t * ms * powder(density, cos_t, clouds.powder);
             let fill = mix(bounce, sky_up, saturate(h)) * clouds.ambient * (1.0 - 0.6 * w.wetness);
+            // Lightning inside the cloud (WE4e): each strike lights the cloud around it.
+            var glow = vec3<f32>(0.0);
+            for (var gi = 0u; gi < 4u; gi += 1u) {
+                let g = clouds.glows[gi];
+                if g.w > 0.0 {
+                    let gd = p - g.xyz;
+                    glow += (g.w / (1.0 + dot(gd, gd) * (1.0 / (2500.0 * 2500.0)))) * vec3<f32>(0.78, 0.86, 1.0);
+                }
+            }
             // × sigma: the step integral divides by sigma (bounded, scale-free).
-            let scattered = (sun + fill) * sigma;
+            let scattered = (sun + fill + glow) * sigma;
             let step_t = exp(-sigma * ds);
             luminance += transmittance * (scattered - scattered * step_t) / sigma;
             let absorbed = transmittance * (1.0 - step_t);

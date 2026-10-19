@@ -204,6 +204,7 @@ fn sky_app() -> App {
             settings: sf_atmos_bevy::sf_atmos::CloudSettings::default(),
             enabled: true,
             shadows: false,
+            glows: [bevy_math::Vec4::ZERO; sf_atmos_bevy::GLOWS],
         })
         .insert_resource(sf_atmos_bevy::Fog {
             settings: FogSettings::default(),
@@ -388,4 +389,11 @@ fn slots_keep_their_kind_through_a_crossfade() {
     assert!(precip_brightness(-0.5, 0.0, 0.0) < 0.05);
     assert!(precip_brightness(0.5, 1.0, 0.0) < precip_brightness(0.5, 0.0, 0.0));
     assert!(lightning_direction(0.0).y < -0.5, "light shines down");
+}
+
+#[test]
+fn only_near_strikes_light_the_land() {
+    assert!((near_factor(1000.0) - 1.0).abs() < 1e-6);
+    assert!(near_factor(6000.0) > 0.0 && near_factor(6000.0) < 1.0);
+    assert!(near_factor(12_000.0).abs() < 1e-6);
 }

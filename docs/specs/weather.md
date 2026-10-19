@@ -1960,3 +1960,20 @@ trace (Design §6/§7's option (a)), no new pass, no new texture besides one map
   **0.601 ms** vs `--no-far` **0.541 ms** = **+0.06** (12 steps: +0.07, so 8). **1440p re-time** (we4c2's open item):
   split per sample 0.54 ms (no shafts) vs `--per-ray` 0.558 ms vs uniform storm 0.512 ms; shadow 0.019-0.024;
   weather_map resolve 0.018 ms (on change). Per-ray still saves nothing at 1440p; the map costs ≈ +0.03 over uniform.
+
+### WE4e as built (we4e, 2026-10-19): lightning on distant storms
+
+- **Placement (`sf_weather::world_strikes`, pure):** a 2 km world grid within 16 km of the camera; per cell and 1/30 h bucket a
+  hashed Poisson candidate count (cap rate spread over the disk so the disk carries the climates' `lightning_per_hour`), a hashed
+  position in the cell and time, thinned by the rate of the climate that owns the spot (`ClimateRaster::site_at`, blend at the
+  strike time). Pure in (seed, cell, bucket), independent of frame cuts: co-op peers agree with no messages. Test
+  `world_strikes_are_deterministic_and_placed_in_stormy_cells`. When a `WorldWeatherMap` exists the frame's strikes come from it
+  (`CurrentWeather::strike_pos` holds each world X, Z); azimuth, distance and the thunder delay (distance / 343) are from the camera.
+- **Glow:** `Clouds::glows` (4 slots, render-space position at 35 % of the layer, intensity `flash_at × LIGHTNING_GLOW`) added as
+  emission to the march's scattered light with a 2.5 km Lorentzian falloff (`cloud_trace.wesl`): the nearest-brightest 4 live
+  strikes; the old uniform ambient gain remains only for camera-relative strikes. The flash light and rain brightening scale by
+  `near_factor` (full within 3 km, none past 9 km), so a far strike lights its cloud only.
+- **Cost:** 4 vec4 reads + a branch per lit cloud sample (zero-intensity slots skip the math); the placement loop is 81 cells ×
+  1-2 buckets of hashing per frame. Not timed on the GPU.
+- **Not done:** Nubis' stable mask so the temporal pass holds the flash (the glow rides the history blend today; flashes last
+  ~0.3 s), the owner's visual sign-off (agent shots caught no strike), per-climate flash radius.

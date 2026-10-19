@@ -531,3 +531,31 @@ fn sun_glare_follows_the_sky_channel_without_pops() {
     }
     assert!(glare(10.8) > 0.0 && glare(10.8) < 1.0, "mid-transition is partial");
 }
+
+#[test]
+fn world_strikes_are_deterministic_and_placed_in_stormy_cells() {
+    let b = book();
+    let s = WeatherState::new(9);
+    let (sunny, stormy) = (b.climate(&id("sunny")).unwrap(), b.climate(&id("stormy")).unwrap());
+    // 4 × 4 squares of 8192 m, centered on the origin: west half sunny, east half stormy.
+    let cells: Vec<_> = (0..16).map(|i| Some(if i % 4 < 2 { sunny } else { stormy })).collect();
+    let raster = ClimateRaster::new(glam::DVec2::splat(-16_384.0), 8192.0, 4, 4, &cells, 100.0).unwrap();
+    let cam = glam::DVec2::ZERO;
+    let run = |from: f64, to: f64| {
+        let mut out = Vec::new();
+        world_strikes(&b, &s, &raster, cam, from, to, &mut out);
+        out
+    };
+    let all = run(10.0, 10.9);
+    assert!(all.len() > 5, "a stormy half produces strikes: {}", all.len());
+    assert_eq!(all, run(10.0, 10.9), "pure function of the seed");
+    // Independent of how the window is cut.
+    let mut split = run(10.0, 10.4);
+    split.extend(run(10.4, 10.9));
+    assert_eq!(split.len(), all.len());
+    for (st, pos) in &all {
+        assert!(pos.x > -100.0, "no strikes over the sunny west: {pos}");
+        assert!(pos.length() <= WORLD_STRIKE_RADIUS_M + 1.0 && (f64::from(st.distance_m) - pos.length()).abs() < 1.0);
+        assert!(st.thunder.is_some());
+    }
+}

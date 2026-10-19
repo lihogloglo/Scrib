@@ -182,6 +182,7 @@ struct CloudUniform {
     /// (WE4d): the map is sampled per sample (High/Ultra) and some climate
     /// precipitates or has other fog than another.
     far_weather: u32,
+    glows: [Vec4; 4],
 }
 
 /// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
@@ -827,6 +828,7 @@ fn prepare_views(
             shell_thickness: shell.1 - shell.0,
             cirrus_max: shell.2,
             far_weather,
+            glows: frame.glows,
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;

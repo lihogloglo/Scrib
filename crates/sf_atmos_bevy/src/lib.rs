@@ -78,6 +78,9 @@ pub struct CloudsPlugin {
     pub seed: u64,
 }
 
+/// Strike glows the cloud march lights at once.
+pub const GLOWS: usize = 4;
+
 /// What the clouds render with this frame. Weather writes `settings`.
 #[derive(Resource, Clone, Debug)]
 pub struct Clouds {
@@ -86,6 +89,8 @@ pub struct Clouds {
     pub enabled: bool,
     /// Cloud shadows on the [`CloudShadowLight`].
     pub shadows: bool,
+    /// In-cloud lightning glows (`WE4e`): render-space position, intensity (0: unused).
+    pub glows: [Vec4; GLOWS],
 }
 
 /// Height fog, ground-fog banks and the far fog (weather.md "Fog", F2), drawn
@@ -166,6 +171,7 @@ pub(crate) struct CloudFrame {
     pub active: bool,
     /// The clouds draw (`active` may hold for the fog alone).
     pub clouds: bool,
+    pub glows: [Vec4; GLOWS],
     pub settings: CloudSettings,
     /// The fog, when it draws.
     pub fog: Option<FogSettings>,
@@ -235,7 +241,7 @@ impl Plugin for CloudsPlugin {
             // `TranslucentFog` and the `translucent_fog` shader module `transparent_fog.wesl` imports.
             app.add_plugins(sf_render_order_bevy::RenderOrderPlugin);
         }
-        app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true })
+        app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true, glows: [Vec4::ZERO; GLOWS] })
             .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()) })
             .init_resource::<FogShadowHeights>()
             .init_resource::<FroxelVolume>()
@@ -383,6 +389,7 @@ fn drive(
         clouds: clouds.enabled,
         fog: fog_on.then_some(fog.settings),
         fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
+        glows: clouds.glows,
         settings: s,
         offsets: scroll.0.offsets([origin.0.x, origin.0.z], &s.look),
         #[allow(clippy::cast_possible_truncation)]

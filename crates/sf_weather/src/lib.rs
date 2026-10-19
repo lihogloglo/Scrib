@@ -36,7 +36,7 @@ pub use {sf_atmos, sf_sky, sf_wind};
 pub use book::{ClimateIx, PrecipIx, PresetIx, WeatherBook};
 pub use frame::{
     BORDER_BAND_M, CueFrame, LIGHTNING_CAP_PER_HOUR, LightningStrike, MAX_VISIBILITY_M, OneShotFrame, PrecipFrame, SPEED_OF_SOUND, StormFrame,
-    WeatherFrame, WeatherInput, border_blend, border_weight, evaluate, evaluate_into,
+    WORLD_STRIKE_CELL_M, WORLD_STRIKE_RADIUS_M, WeatherFrame, WeatherInput, border_blend, border_weight, evaluate, evaluate_into, world_strikes,
 };
 pub use map::{ClimateRaster, ClimateRow, MAP_EPSILON, MAP_LAYERS, MAP_SIZE, MAP_WGSL, MapGpuGeometry, MapTexel, MapUpdate, Site, WeatherMap, resolve_rects, row};
 pub use records::{

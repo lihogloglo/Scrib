@@ -3,7 +3,7 @@
 
 use std::f32::consts::TAU;
 
-use glam::Vec2;
+use glam::{DVec2, Vec2};
 use smallvec::SmallVec;
 
 use sf_atmos::fog::KOSCHMIEDER;
@@ -14,6 +14,7 @@ use sf_wind::{Wind, WindSource};
 
 use crate::book::{BookPreset, ClimateIx, PrecipIx, PresetIx, WeatherBook};
 use crate::hash::{self, salt};
+use crate::map::ClimateRaster;
 use crate::records::{CloudTerms, FogTerms, SurfaceRates};
 use crate::state::{Blend, CHANNELS, CLOUDS, CUES, FOG, PRECIP, SKY, WIND, WeatherState};
 
@@ -525,4 +526,84 @@ fn poisson(lambda: f64, u: f64) -> u64 {
         cdf += p;
     }
     k
+}
+
+/// Cell size of the world strike grid, meters.
+pub const WORLD_STRIKE_CELL_M: f64 = 2000.0;
+/// How far from the camera world strikes are placed, meters (storms past it are the clouds' business).
+pub const WORLD_STRIKE_RADIUS_M: f64 = 16_000.0;
+
+/// Strikes placed in world space (`WE4e`): a pure function of the seed, the
+/// time bucket and the grid cell (thinned like [`strikes`] by the rate of the
+/// climate that owns the spot), so co-op peers agree without messages. The
+/// disk of radius [`WORLD_STRIKE_RADIUS_M`] around `camera` carries the
+/// climates' rate in total (`lightning_per_hour` is per disk, as for the
+/// camera's own frame). Each strike's azimuth and distance are from `camera`;
+/// `out` gets `(strike, world X, Z)`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::many_single_char_names)]
+pub fn world_strikes(
+    book: &WeatherBook,
+    state: &WeatherState,
+    raster: &ClimateRaster,
+    camera: DVec2,
+    from: f64,
+    to: f64,
+    out: &mut Vec<(LightningStrike, DVec2)>,
+) {
+    if to <= from || to - from > LIGHTNING_MAX_SPAN_HOURS {
+        return;
+    }
+    let cap = f64::from(LIGHTNING_CAP_PER_HOUR);
+    let disk = std::f64::consts::PI * WORLD_STRIKE_RADIUS_M * WORLD_STRIKE_RADIUS_M;
+    let mean = cap * LIGHTNING_BUCKET_HOURS * WORLD_STRIKE_CELL_M * WORLD_STRIKE_CELL_M / disk;
+    let c0 = ((camera - DVec2::splat(WORLD_STRIKE_RADIUS_M)) / WORLD_STRIKE_CELL_M).floor();
+    let n = (2.0 * WORLD_STRIKE_RADIUS_M / WORLD_STRIKE_CELL_M) as i64 + 1;
+    let first = (from / LIGHTNING_BUCKET_HOURS).floor() as i64;
+    let last = (to / LIGHTNING_BUCKET_HOURS).floor() as i64;
+    for iz in 0..n {
+        for ix in 0..n {
+            let (cx, cz) = (c0.x as i64 + ix, c0.y as i64 + iz);
+            let key = hash::mix((cx as u64) ^ hash::mix(cz as u64));
+            for b in first..=last {
+                let count = poisson(mean, hash::unit(hash::hash(state.seed, key, salt::STRIKE_COUNT, b as u64)));
+                for i in 0..count {
+                    let h = hash::hash(state.seed, key, salt::STRIKE, (b as u64).wrapping_mul(64).wrapping_add(i));
+                    let time = (b as f64 + hash::unit(h)) * LIGHTNING_BUCKET_HOURS;
+                    if time < from || time >= to {
+                        continue;
+                    }
+                    let pos = DVec2::new(
+                        (cx as f64 + hash::unit(hash::mix(h ^ 5))) * WORLD_STRIKE_CELL_M,
+                        (cz as f64 + hash::unit(hash::mix(h ^ 6))) * WORLD_STRIKE_CELL_M,
+                    );
+                    if pos.distance(camera) > WORLD_STRIKE_RADIUS_M {
+                        continue;
+                    }
+                    let site = raster.site_at(pos);
+                    let Some(&(climate, weight)) = site.iter().max_by(|a, b| a.1.total_cmp(&b.1)) else { continue };
+                    let blend = state.blend(book, climate, time);
+                    let (rate, heaviest) = strike_rate(book, &blend);
+                    let Some(p) = heaviest else { continue };
+                    if hash::unit(hash::mix(h ^ 1)) * cap >= f64::from(rate * weight) {
+                        continue;
+                    }
+                    let l = book.p(p).record.lightning.as_ref().expect("heaviest has lightning");
+                    let thunder = (!l.thunder.is_empty()).then(|| l.thunder[(hash::mix(h ^ 4) % l.thunder.len() as u64) as usize].clone());
+                    let d = pos - camera;
+                    out.push((
+                        LightningStrike {
+                            time,
+                            climate,
+                            azimuth: d.y.atan2(d.x) as f32,
+                            distance_m: d.length() as f32,
+                            flash: l.flash,
+                            fade_s: l.fade_s,
+                            thunder,
+                        },
+                        pos,
+                    ));
+                }
+            }
+        }
+    }
 }

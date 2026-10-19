@@ -16,7 +16,7 @@
 use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
 use bevy_light::DirectionalLight;
-use bevy_math::{Dir3, Vec3};
+use bevy_math::{DVec2, Dir3, Vec3, Vec4};
 use bevy_platform::time::Instant;
 use bevy_time::{Real, Time};
 use bevy_transform::components::Transform;
@@ -35,6 +35,18 @@ pub const LIGHTNING_CLOUD_GAIN: f32 = 6.0;
 /// Strike elevation seen from the camera, radians (the flash comes from the
 /// cloud base, not the horizon).
 pub const LIGHTNING_ELEVATION: f32 = 0.95;
+/// In-cloud glow at flash 1 (shader units, lux-like): see `cloud_trace.wesl`.
+pub const LIGHTNING_GLOW: f32 = 30_000.0;
+/// A strike lights the land (flash light, rain) within this distance, fading out by the second, meters.
+pub const LIGHTNING_NEAR_M: [f32; 2] = [3_000.0, 9_000.0];
+/// Height of the glow in the cloud layer (fraction of its thickness).
+pub const LIGHTNING_GLOW_HEIGHT: f32 = 0.35;
+
+/// How much a strike at `distance_m` lights the land: 1 near, 0 past the far edge.
+pub fn near_factor(distance_m: f32) -> f32 {
+    let t = ((distance_m - LIGHTNING_NEAR_M[0]) / (LIGHTNING_NEAR_M[1] - LIGHTNING_NEAR_M[0])).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
 /// Loop volume change that sends a new [`WeatherSound::Loop`].
 pub const CUE_STEP: f32 = 0.02;
 
@@ -57,6 +69,8 @@ pub struct LightningFlash {
     pub age_s: f32,
     /// This frame's flash (0 = none).
     pub level: f32,
+    /// World X, Z of `strike` when it is world-anchored.
+    pub pos: Option<DVec2>,
 }
 
 /// The lightning's directional light (spawned on the first strike).
@@ -159,13 +173,15 @@ pub fn lightning_direction(azimuth: f32) -> Vec3 {
     -Vec3::new(c * e.cos(), e.sin(), s * e.cos())
 }
 
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::cast_possible_truncation, clippy::many_single_char_names)]
 pub fn apply_lightning(
     mut commands: Commands,
     current: Res<CurrentWeather>,
     real: Option<Res<Time<Real>>>,
     mut flash: ResMut<LightningFlash>,
     mut pending: Local<PendingThunder>,
+    mut glows: Local<Vec<(DVec2, LightningStrike, f64)>>,
+    origin: Option<Res<sf_atmos_bevy::CloudsOrigin>>,
     mut sounds: MessageWriter<WeatherSound>,
     mut light: Query<(&mut DirectionalLight, &mut Transform, &mut Visibility), With<LightningLight>>,
     clouds: Option<ResMut<sf_atmos_bevy::Clouds>>,
@@ -180,11 +196,16 @@ pub fn apply_lightning(
     {
         flash.strike = Some(s.clone());
         flash.age_s = 0.0;
-        for s in &current.frame.lightning {
+        flash.pos = current.strike_pos.last().copied();
+        for (i, s) in current.frame.lightning.iter().enumerate() {
             pending.0.push((now + f64::from(s.thunder_delay_s()), s.clone()));
+            if let Some(p) = current.strike_pos.get(i) {
+                glows.push((*p, s.clone(), now));
+            }
         }
     }
-    let level = flash.strike.as_ref().map_or(0.0, |s| s.flash_at(flash.age_s));
+    let near = flash.strike.as_ref().map_or(1.0, |s| if flash.pos.is_some() { near_factor(s.distance_m) } else { 1.0 });
+    let level = near * flash.strike.as_ref().map_or(0.0, |s| s.flash_at(flash.age_s));
     flash.level = if level > 1e-3 { level } else { 0.0 };
     // Thunder.
     pending.0.retain(|(due, s)| {
@@ -232,8 +253,31 @@ pub fn apply_lightning(
             Name::new("weather/lightning"),
         ));
     }
-    // Cloud glow: the look's ambient raised during the flash, restored after.
+    // Cloud glow. World-anchored strikes glow where they are (the clouds' `glows`, at the
+    // strike's own position, whatever its distance: a distant storm lights up alone); a
+    // camera-relative strike raises the look's ambient everywhere, restored after.
+    glows.retain(|(_, s, born)| ((now - born) as f32) < 8.0 * s.fade_s.max(0.05) + 1.0);
     if let Some(mut clouds) = clouds {
+        let mut live: Vec<(f32, Vec4)> = Vec::new();
+        let o = origin.map_or(bevy_math::DVec3::ZERO, |o| o.0);
+        let w = &clouds.settings.weather;
+        let y = f64::from(w.base + w.thickness * LIGHTNING_GLOW_HEIGHT);
+        for (p, s, born) in &*glows {
+            let g = s.flash_at((now - born) as f32);
+            if g > 1e-3 {
+                let v = Vec4::new((p.x - o.x) as f32, (y - o.y) as f32, (p.y - o.z) as f32, g * LIGHTNING_GLOW);
+                live.push((g, v));
+            }
+        }
+        live.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut slots = [Vec4::ZERO; sf_atmos_bevy::GLOWS];
+        for (slot, (_, v)) in slots.iter_mut().zip(&live) {
+            *slot = *v;
+        }
+        if clouds.glows != slots {
+            clouds.glows = slots;
+        }
+        let on = on && flash.pos.is_none();
         if on {
             let base = *cloud_base.get_or_insert(clouds.settings.look.ambient);
             clouds.settings.look.ambient = base * (1.0 + LIGHTNING_CLOUD_GAIN * flash.level);

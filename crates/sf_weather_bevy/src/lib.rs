@@ -52,7 +52,7 @@ mod fx;
 mod tests;
 
 pub use fx::{
-    CUE_STEP, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
+    CUE_STEP, LIGHTNING_GLOW, LIGHTNING_GLOW_HEIGHT, LIGHTNING_NEAR_M, near_factor, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
     lightning_direction, precip_brightness, precip_slot,
 };
 pub use sf_precip_bevy;
@@ -95,6 +95,8 @@ pub struct CurrentWeather {
     /// Game hours since the clock's epoch the frame was evaluated at.
     pub hours: f64,
     pub valid: bool,
+    /// World X, Z of `frame.lightning[i]` when the strikes are world-anchored (`WE4e`; empty: camera-relative).
+    pub strike_pos: Vec<DVec2>,
 }
 
 /// Fixed terms instead of the weather's (debug flags, photo modes).
@@ -203,6 +205,7 @@ fn evaluate(
     records: Res<WeatherRecords>,
     world: Res<WorldWeather>,
     site: Res<WeatherSite>,
+    world_map: Option<Res<WorldWeatherMap>>,
     mut current: ResMut<CurrentWeather>,
     mut stats: ResMut<WeatherStats>,
     counters: Option<Res<DiagCounters>>,
@@ -229,6 +232,20 @@ fn evaluate(
     };
     let current = &mut *current;
     evaluate_into(&records.0, &world.0, &input, &mut current.frame);
+    // World-anchored strikes (WE4e) replace the camera-relative ones.
+    current.strike_pos.clear();
+    if let Some(m) = world_map.as_deref()
+        && let Some(cam) = m.camera
+    {
+        let mut out = Vec::new();
+        sf_weather::world_strikes(&records.0, &world.0, m.map.raster(), cam, prev, hours, &mut out);
+        out.sort_by(|a, b| a.0.time.total_cmp(&b.0.time));
+        current.frame.lightning.clear();
+        for (s, p) in out {
+            current.frame.lightning.push(s);
+            current.strike_pos.push(p);
+        }
+    }
     current.hours = hours;
     current.valid = true;
     #[expect(clippy::cast_possible_truncation, reason = "milliseconds fit f32")]
