@@ -157,6 +157,10 @@ pub struct SunShadow {
     pub normal_bias: f32,
     /// `DirectionalLight::contact_shadows_enabled`.
     pub contact_shadows: bool,
+    /// `DirectionalLight::soft_shadow_size` (PCSS light size in cascade shadow-map texels:
+    /// the penumbra grows with the blocker-receiver gap times this). `None` = hard PCF.
+    /// Needs the `pcss` feature, else ignored.
+    pub soft_size: Option<f32>,
 }
 
 impl Default for SunShadow {
@@ -165,6 +169,7 @@ impl Default for SunShadow {
             depth_bias: DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS,
             normal_bias: DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS,
             contact_shadows: false,
+            soft_size: None,
         }
     }
 }
@@ -382,6 +387,8 @@ fn spawn_sky(
                 shadow_depth_bias: options.sun_shadow.depth_bias,
                 shadow_normal_bias: options.sun_shadow.normal_bias,
                 contact_shadows_enabled: options.sun_shadow.contact_shadows,
+                #[cfg(feature = "pcss")]
+                soft_shadow_size: options.sun_shadow.soft_size,
                 ..DirectionalLight::default()
             },
             sun_disk(settings),

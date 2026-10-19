@@ -7,6 +7,8 @@ license.workspace = true
 
 [features]
 default = []
+# Soft contact-hardening sun shadows (Bevy PCSS, `experimental_pbr_pcss`; shadows F5).
+pcss = ["bevy_light/experimental_pbr_pcss", "bevy_pbr/experimental_pbr_pcss"]
 # Ray-traced lighting path (Bevy Solari). Without it the render path is always raster.
 solari = ["dep:bevy_solari"]
 # DLSS (NVIDIA RTX): Super Resolution on the raster path (`UpscalingSetting`) and,

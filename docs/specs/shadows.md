@@ -130,6 +130,20 @@ that `prepare_lights` doesn't re-insert the removed components each frame (it do
 a flickering light is "changed" every frame: then filter `changed_point_lights` or re-remove after it). Then
 re-bench 1/4/8/16 and raise High to 8.
 
+## F5 as built (shf5, 2026-10-19): Bevy PCSS sun shadows
+
+Bevy 0.20 has PCSS behind `experimental_pbr_pcss` (`DirectionalLight::soft_shadow_size`; point and spot lights have
+`soft_shadows_enabled`, using `radius`). `sf_sky_bevy` gets a `pcss` feature forwarding it to `bevy_light` and
+`bevy_pbr`; `SunShadow::soft_size` sets the sun's size. The game sets it on High and Ultra (`Quality::soft_shadow_size`,
+10 texels); Medium keeps Gaussian PCF, Low Hardware2x2. `--off softshadows` is the A/B.
+- The directional size is in **cascade texels**, not an angle: blur = (blocker gap in normalized depth) x size / depth,
+  so the ~0.53 deg sun can't be set literally; 10 was tuned by eye (6 was barely visible, 14 fades tips strongly).
+  A per-cascade angular size would need a Bevy shader change.
+- Bevy's PCSS always uses the Jimenez-14 filter, noisy without `ShadowFilteringMethod::Temporal` + TAA; raster runs no
+  TAA, so a faint dither shows (fine under `--dlss`). Not enabled on point lights (uncached maps already cost ~1.9 ms each).
+- GPU at Seyda Neen 15:00 (dev build, 15 s bench): median 22.6 ms on vs 23.2 ms off, within noise (frame is not shadow bound).
+- Owner check SH-10.
+
 ## Slices
 
 
