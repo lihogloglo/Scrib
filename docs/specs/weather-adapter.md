@@ -388,3 +388,14 @@ is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour ov
   (`weather::force_live`), so it replays like a script's `ChangeWeather`; `auto` forces the forecast's weather at
   now, released at the next natural change (removing the override would pop).
 
+
+## As built: WE3 part 2b (we3b2, 2026-10-19)
+
+- **Precipitation:** the app adds `sf_precip_bevy::PrecipPlugin` with the weather (re-exported by `sf_weather_bevy`);
+  `weather_site` switches `Precip.enabled` off in interiors (no occlusion map yet, so nothing else stops rain indoors).
+  `mw_weather` kinds gain tints: rain grey-blue (0.3 opacity), snow white (0.85), ash grey-brown and blight red-brown
+  (0.75), and ash/blight grit grows to 4-10 mm so it reads as blowing streaks in a storm.
+- **Region border blend:** `ClimateMap::border_at` takes the camera's square's climate and the nearest square of another
+  climate among the 8 around it (distance to that square); `border_blend` with a band of min(256 m, 2 squares). Cells
+  without a region use the fallback climate, so coasts next to region-less sea cells blend toward it.
+- **Cues:** `WeatherSound` messages are emitted (rain/ash loops, thunder); nothing plays them yet (no audio in the app).

@@ -260,7 +260,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             clouds: options.clouds.map(pinned_clouds),
             fog_scale: options.fog,
         };
-        app.add_plugins(WeatherPlugin { book: weather.book, state: weather.state })
+        // WE3 part 2b: rain, snow, ash and blight fall from the frame (`sf_precip_bevy`).
+        app.add_plugins((WeatherPlugin { book: weather.book, state: weather.state }, sf_weather_bevy::sf_precip_bevy::PrecipPlugin))
             .insert_resource(overrides)
             .insert_resource(ClimateMap { cells: weather.cells, fallback: weather.fallback })
             .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
@@ -1001,31 +1002,79 @@ impl ClimateMap {
         out.dedup();
         out
     }
+
+    /// The climate of grid square `g` (its region's, or the fallback).
+    fn climate(&self, g: (i32, i32)) -> Option<sf_weather::ClimateIx> {
+        self.cells.get(&g).copied().or(self.fallback)
+    }
+
+    /// The climate under `p` (engine meters, +Z south) and the nearest other
+    /// climate in the 8 squares around with its distance, meters. One ring
+    /// is enough: the blend band stays under two squares wide.
+    fn border_at(&self, p: DVec3) -> Option<(sf_weather::ClimateIx, Option<(f32, sf_weather::ClimateIx)>)> {
+        let cell = mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64;
+        let g = crate::weather::grid_at(p);
+        let own = self.climate(g)?;
+        // Position inside the square, [0, 1)² (x east, y north).
+        let (lx, ly) = (p.x / cell - f64::from(g.0), -p.z / cell - f64::from(g.1));
+        let mut best: Option<(f32, sf_weather::ClimateIx)> = None;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let Some(c) = self.climate((g.0 + dx, g.1 + dy)).filter(|c| (dx, dy) != (0, 0) && *c != own) else { continue };
+                let gap = |d: i32, l: f64| match d {
+                    -1 => l,
+                    1 => 1.0 - l,
+                    _ => 0.0,
+                };
+                #[expect(clippy::cast_possible_truncation, reason = "meters within a square fit f32")]
+                let d = (gap(dx, lx).hypot(gap(dy, ly)) * cell) as f32;
+                if best.is_none_or(|(b, _)| d < b) {
+                    best = Some((d, c));
+                }
+            }
+        }
+        Some((own, best))
+    }
 }
 
+/// Width of the climate blend across a region border, meters: the
+/// framework's default, capped at two grid squares (the ring `border_at`
+/// searches).
+#[expect(clippy::cast_possible_truncation, reason = "meters fit f32")]
+const BORDER_BAND_M: f32 = sf_weather::BORDER_BAND_M.min(2.0 * (mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64) as f32);
+
 /// The weather's site: the camera's exterior cell's climate (`REGN`), or the
-/// fallback; kept as is in interiors (the camera's grid there is not the
-/// exterior's). Region borders blend in WE3 part 2.
+/// fallback, blended with a neighbor region's across [`BORDER_BAND_M`]
+/// (`sf_weather::border_blend`); kept as is in interiors (the camera's grid
+/// there is not the exterior's), where precipitation is off (no roofs in
+/// the occlusion yet: there is none).
 fn weather_site(
     camera: Query<&GlobalTransform, With<ExteriorCamera>>,
     origin: Res<TerrainOrigin>,
     active: Res<ActiveWorldspace>,
     map: Res<ClimateMap>,
     mut site: ResMut<WeatherSite>,
+    precip: Option<ResMut<sf_weather_bevy::sf_precip_bevy::Precip>>,
 ) {
     let exterior = active.0.as_ref().is_none_or(|ws| ws.as_str() == ids::EXTERIOR);
+    if let Some(mut precip) = precip
+        && precip.enabled != exterior
+    {
+        precip.enabled = exterior;
+    }
     let Some(camera) = camera.iter().next() else { return };
     if !exterior && !site.climates.is_empty() {
         return;
     }
     let p = WorldPos::new(origin.0.cell, camera.translation()).to_f64();
-    let climate = map.cells.get(&crate::weather::grid_at(p)).copied().or(map.fallback);
     #[expect(clippy::cast_possible_truncation, reason = "altitude in meters fits f32")]
     let altitude = p.y as f32;
-    let Some(climate) = climate else { return };
-    if site.climates.first().map(|c| c.0) != Some(climate) {
-        site.climates.clear();
-        site.climates.push((climate, 1.0));
+    let Some((own, near)) = map.border_at(p) else { return };
+    let climates = sf_weather::border_blend(own, near.map(|n| n.1), near.map_or(f32::MAX, |n| n.0), BORDER_BAND_M);
+    let same = site.climates.len() == climates.len()
+        && site.climates.iter().zip(&climates).all(|(a, b)| a.0 == b.0 && (a.1 - b.1).abs() < 1e-3);
+    if !same {
+        site.climates = climates;
     }
     if (site.altitude - altitude).abs() > 1.0 {
         site.altitude = altitude;

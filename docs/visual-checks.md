@@ -1734,5 +1734,17 @@ BRP: `bevyrrowind/set {"weather": "overcast", "transition_hours": 1}`, `"auto"` 
 `bevyrrowind/status` shows `weather.clouds`/`weather.fog` progress. Look for: the clouds build and the sky dims first
 (clouds 0-60 % of the transition), the fog thickens after (40-100 %); no pop in cloud positions, cover, fog or
 light at any point, including when the cloud speed changes (ash storm, blight are fast); ash/blight fog turns
-grey-brown/red. Known (part 2b): no rain/snow/ash particles, lightning or region border blend yet.
+grey-brown/red. Known gaps (after part 2b, we3b2): rain falls under roofs and trees outdoors (no occlusion map), no splashes, streaks
+unfogged, no thunder/rain audio (cue messages only), lightning lights the clouds uniformly (ambient glow, no in-cloud
+flash at the strike). Also check: rain (`set {"weather": "rain"}`) slants with the wind; ash storm shows blowing
+grey-brown streaks; thunderstorm flashes light the land and clouds (`time_scale` 600 for more strikes). Shots
+`target/we3b2/{a_rain,c_ashstorm2}.png`.
+
+### WE-2: Region border blend, Ascadian Isles → Ashlands (`view "Pelagiad" --hour 12`, fly north toward the Ashlands)
+
+Status: **awaiting owner** (M6 WE3 part 2b, we3b2, 2026-10-19). Not screenshotted by the agent (border blend is
+unit-level: `sf_weather::border_blend`; app `ClimateMap::border_at`). How: force a clear Ascadian Isles and an ash storm
+in the Ashlands is not possible with one global force, so use the forecast (`set {"weather": "auto"}`) or step the hour
+until the two regions differ, then fly across the border. Look for: haze, clouds, fog and wind crossfade over ~230 m
+around the border (half each side), no pop when the camera crosses a cell edge; precipitation intensity fades in, not on.
 

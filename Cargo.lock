@@ -6710,6 +6710,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_precip_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_ecs",
+ "bevy_light",
+ "bevy_material",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_reflect",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_time",
+]
+
+[[package]]
 name = "sf_ragdoll"
 version = "0.1.0"
 dependencies = [
@@ -6905,10 +6924,17 @@ name = "sf_weather_bevy"
 version = "0.1.0"
 dependencies = [
  "bevy_app",
+ "bevy_camera",
  "bevy_ecs",
+ "bevy_light",
+ "bevy_math",
  "bevy_platform",
+ "bevy_time",
+ "bevy_transform",
  "sf_atmos_bevy",
  "sf_diag_bevy",
+ "sf_precip_bevy",
+ "sf_records",
  "sf_sky_bevy",
  "sf_weather",
  "sf_wind_bevy",

@@ -1400,7 +1400,12 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   cover/dimming follow `CurrentWeather` (`sf_weather_bevy` `apply_clouds`/`apply_fog`; no pops: per-channel windows,
   integrated scroll); app tables `CLOUD_CHOICES`/`SkyLook`/`FogLook`/`SKY_*` removed, `--clouds` = genus pin; live
   controls C (next weather), T (clock x1/x4/x20), BRP `set weather/transition_hours/time_scale`, `status.weather`;
-  WE-1 awaiting owner. **Part 2b (we3b2):** precipitation, lightning/thunder, region border blend, WE-2.
+  WE-1 awaiting owner. **Part 2b done (we3b2, 2026-10-19):** precipitation (new `sf_precip_bevy`: closed-form streaks/
+  flakes in 3 camera-wrapped boxes, wind slant, ash/blight as blowing streaks; no particle crate: `bevy_hanabi` not on 0.20),
+  lightning (pure `flash_at`, shadowless flash light, cloud ambient glow as the emission stand-in), `WeatherSound`
+  messages (loops; thunder after distance / 343 s), region border blend in `weather_site`; WE-2 awaiting owner. CPU:
+  `cost_per_frame` gate 0.05 ms holds. **Left for [x]:** owner sign-off WE-1 + WE-2; `SunDiskLook` glare per weather;
+  audio playback of `WeatherSound` (no audio backend yet); rain occlusion under roofs/trees is PR1's.)
 - [ ] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
   Ashlands seen from Balmora, rain shafts under distant clouds), as RDR2 / MSFS / Horizon do. Research first (weather.md
   has no spatial weather yet): evaluate neighbouring regions (pure function, ~0.003 ms each) into a coarse weather map
@@ -1516,7 +1521,8 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   (Lagarde), permeability per terrain layer, coarse persistent grid in saves, wet footsteps query. Waits for WE3.
   Verify: `cargo test -p sf_surface` (accumulation/drying curves, grid seeding); SU-1 Seyda Neen after rain (dark wet
   wood, puddles on paths, dry under the docks' roofs); A/B `--off surface`; 0.3 / 0.2 ms High; draw calls unchanged.
-- [ ] PR1 `sf_precip_bevy` (weather.md "Precipitation"): 3 camera-wrapped closed-form volumes, rain streaks, snow and ash
+- [~] PR1 `sf_precip_bevy` (weather.md "Precipitation") **volumes done in WE3 part 2b (we3b2)**; left: occlusion camera +
+  map, fog on streaks, textures;: 3 camera-wrapped closed-form volumes, rain streaks, snow and ash
   flakes with wind flutter, occlusion from SU1's map, rate × local cloud cover, rain mist into the froxels. Waits for
   SU1, WD1. Verify: PR-1 Seyda Neen thunderstorm (no rain under roofs, streaks lean with the wind), PR-2 ash storm at
   Ghostgate (ash blows away from the summit); 0.4 / 0.3 ms High; check DLSS performance mode for smear (weather.md open
@@ -1848,3 +1854,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we3a): M6 WE3 [~] part 1: new `sf_weather_bevy` `WeatherPlugin` (SkyTime → `sf_weather::evaluate` at the camera's REGN climate → `CurrentWeather`; drives sky haze/dust/tint + wind field and storm source; `weather/*` counters; 0.0027 ms, gate 0.05; `WindState::source_mut`); app `--weather <type>`, haze/dust table replaced by the presets, `--clouds` defaults to the start weather; 4 tests green, clippy clean; Seyda Neen clear/overcast screenshots sane, WE-0 awaiting owner. Next: we3b (clouds genus blend, fog, precip, lightning, border blend).
 - 2026-10-19 (we3b1): M6 WE3 [~] part 2a: clouds (genus blend, speed), fog (height, banks, ash/blight albedo) and sky cover/dimming follow the live weather via `sf_weather_bevy` (`apply_clouds`/`apply_fog`, `WeatherOverrides.clouds`/`fog_scale`); app scaffold tables removed (`CLOUD_CHOICES`, `SkyLook`/`FogLook`/`SKY_*`); live weather controls (C next weather, T clock x1/x4/x20, BRP `set weather`/`transition_hours`/`time_scale`, `status.weather`); 6 framework tests green (transition glides, clouds lead), clippy clean; Seyda Neen clear → overcast shots sane, WE-1 awaiting owner. Next: we3b2 (precip, lightning/thunder, border blend).
 - 2026-10-19 (fogfix): fog on blended NIF surfaces (leaves, Ghostfence, glows): `transparent_fog.rs` swaps them to FroxelFogMaterial, far fog past the froxels (superfargoth 8aa4fba); pipeline audit in weather.md; FG-5 awaiting owner.
+- 2026-10-19 (we3b2): M6 WE3 [~] part 2b: precipitation (new superfargoth `sf_precip_bevy`: closed-form camera-wrapped streak/flake volumes, wind slant, blowing-ash streaks), lightning (pure flash + thunder delay, flash light, cloud glow), `WeatherSound` cue messages, region border blend in the app; tests green, clippy clean; BRP rain/ashstorm/thunderstorm sane (target/we3b2); WE-2 awaiting owner. No occlusion map or audio yet.

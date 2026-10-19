@@ -301,8 +301,10 @@ fn precip_kinds(w: &mut WeatherIni<'_>) -> Vec<(RecordId, PrecipKind)> {
     let dust = PrecipKind {
         look: PrecipLook::Dust,
         fall_speed: 1.0,
-        size: [0.0005, 0.002],
+        // Blowing grit: specks big enough to read as particles in a storm.
+        size: [0.004, 0.01],
         accumulates: SurfaceChannel::Ash,
+        tint: [0.30, 0.26, 0.22, 0.75],
         // ≈ 450 m visibility in a full storm (the F2 ash fog).
         extinction: 8e-3,
         ..PrecipKind::default()
@@ -313,6 +315,7 @@ fn precip_kinds(w: &mut WeatherIni<'_>) -> Vec<(RecordId, PrecipKind)> {
             let kind = match p {
                 Precip::Rain => PrecipKind {
                     fall_speed: rain_fall,
+                    tint: [0.55, 0.6, 0.65, 0.3],
                     ..PrecipKind::default()
                 },
                 Precip::Snow => PrecipKind {
@@ -321,10 +324,15 @@ fn precip_kinds(w: &mut WeatherIni<'_>) -> Vec<(RecordId, PrecipKind)> {
                     size: [0.004, 0.012],
                     accumulates: SurfaceChannel::Snow,
                     extinction: 6e-3,
+                    tint: [0.95, 0.95, 1.0, 0.85],
                     ..PrecipKind::default()
                 },
-                // Blight is ash tinted red; the tint is fog albedo (we2b).
-                Precip::Ash | Precip::Blight => dust.clone(),
+                // Blight is ash tinted red (the fog albedo too, we2b).
+                Precip::Ash => dust.clone(),
+                Precip::Blight => PrecipKind {
+                    tint: [0.42, 0.2, 0.15, 0.75],
+                    ..dust.clone()
+                },
             };
             (p.id(), kind)
         })
