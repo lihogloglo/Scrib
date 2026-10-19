@@ -356,6 +356,8 @@ for M6.
 
 ## Render order (transparent side; rainwater, 2026-10-19)
 
+Whole-frame picture (every pass, fog/shadow/prepass per material), the rules and the guard test: [render-order.md](render-order.md) (renderorder, 2026-10-19).
+
 **Canonical order** (UE's Single Layer Water pass before translucency; Unity's render queues
 Transparent < Overlay; Frostbite's "refractive first, then sorted translucency, then particles"):
 the opaque scene, then the **water** (it refracts the opaque scene, so nothing translucent may be under

@@ -1247,6 +1247,15 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   of the robe. Industry and the original skin long garments to the legs and hide the body; simulation is an extra.
   Adapters' `ClothRules` answer `None` for them unless opted in (Bevyrrowind `--cloth robes`); the XPBD cloth stays
   for capes and mesh cloth. Parked: leg-follow tuning, hem widening, the `cloth.cook` bake step.
+- **2026-10-19 (renderorder; specs/render-order.md): one frame-graph spec and a guard for the render-order class.**
+  After four separate render-order bugs in one day (leaves as sorted translucency, unfogged translucents, rain
+  under the ocean, froxel pulse), render-order.md is the authoritative order of every pass and phase item (what it
+  reads, how it is fogged, sorted and shadowed) with six rules: every translucent fogged through the froxel path
+  or its own documented fog; every shader-placed/camera-local translucent has a `DrawBand`; opaque/masked surfaces
+  write prepass depth + motion vectors; shadows match coverage (translucents opt in); scene-colour reads only at
+  the water snapshot; the opaque-to-transparent order is declared. Guard: `sf_render_order_bevy` test
+  `translucent_guard` (source scan + declared `SITES` table, violations RO-n tracked in the spec). Top open
+  violation: blended/additive surfaces cast shadows (Bevy discards only alpha < 0.05), RO-1.
 
 ## 11. Open decisions
 
