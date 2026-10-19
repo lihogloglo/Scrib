@@ -1,5 +1,8 @@
 # Portals: seamless door links (M8)
 
+> **2026-10-19:** the app-side spike (`bevyrrowind/apps/bevyrrowind/src/portal_spike.rs`, `--portals`) was deleted
+> in the phase-0 cleanup (owner go); recover it from git history. This spec and its findings stay the design for M9.
+
 Status: **spike done (2026-10-12)**, owner findings fixed (PT-2..PT-6, awaiting owner); **parked until M8**: seamless
 portals are an optional setting, off by default (`--portals` or `BEVYRROWIND_PORTALS=1`; classic fade doors stay the
 default, owner decision 2026-10-12). Production design below. The spike is

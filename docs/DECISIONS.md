@@ -1404,3 +1404,7 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - **2026-10-19 (phase0, owner audit): work ordered in phases, not milestones** (ROADMAP): 0 cleanup, 1 performance +
   stability + image quality (frame-time gates, temporal resolve, one shadow design), 2 playable vertical slice
   (Fargoth's ring), 3 animation/combat/physics, 4 eye candy. Docs get a size budget (CLAUDE.md); this log moved here.
+- **2026-10-19 (owner): frame target** High, 1440p + DLSS Quality on the RTX 4060 Laptop, ≤ 11 ms exterior median
+  (stretch 7 ms); **raster must meet it, Solari is Ultra and may cost more**; **shadows: one simpler design that
+  works first** (far static map + point cube cache parked; new techniques only if they're the better standard way).
+
