@@ -253,7 +253,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
         cascades: sun_cascades(options.quality, &far_settings.levels, off_parts.has(Part::ShadowTune), off_parts.has(Part::ShadowSplits)),
-        sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows),
+        sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
     // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
@@ -1064,17 +1064,20 @@ fn sun_cascades(quality: Quality, levels: &sf_lod::FarLevels, legacy: bool, spli
     .build()
 }
 
+/// PCSS light size in cascade texels (see [`Quality::soft_shadow_size`]); tuned by eye.
+const SOFT_SHADOW_SIZE: f32 = 10.0;
+
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
 /// Bevy's 1.8-texel normal offset lifts every lookup off the surface by 1.3 m in
 /// the last cascade, so small casters lose the shadow where they touch the ground;
 /// `SUN_NORMAL_BIAS` texels keep acne away at grazing sun. `legacy` (`--off shadowtune`)
 /// is Bevy's default.
-fn sun_shadow(legacy: bool, contact_shadows: bool) -> sf_sky_bevy::SunShadow {
+fn sun_shadow(legacy: bool, contact_shadows: bool, soft_size: Option<f32>) -> sf_sky_bevy::SunShadow {
     let defaults = sf_sky_bevy::SunShadow::default();
     if legacy {
-        return sf_sky_bevy::SunShadow { contact_shadows, ..defaults };
+        return sf_sky_bevy::SunShadow { contact_shadows, soft_size, ..defaults };
     }
-    sf_sky_bevy::SunShadow { depth_bias: SUN_DEPTH_BIAS, normal_bias: SUN_NORMAL_BIAS, contact_shadows }
+    sf_sky_bevy::SunShadow { depth_bias: SUN_DEPTH_BIAS, normal_bias: SUN_NORMAL_BIAS, contact_shadows, soft_size }
 }
 
 /// Scaffold: the far static sun shadow map (shadows F3b, weather.md "Sun
@@ -1257,6 +1260,17 @@ impl Quality {
             Self::Medium | Self::High | Self::Ultra => (4, 250.0, 0.9),
         };
         sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion: 0.2 }
+    }
+
+    /// Soft contact-hardening sun shadows (shadows F5): Bevy PCSS light size in cascade
+    /// texels (`DirectionalLight::soft_shadow_size`; penumbra = blocker gap x size, so it
+    /// is crisp at contact and widens with distance). High and Ultra only; Medium keeps
+    /// the Gaussian PCF, Low the 2x2 tap.
+    pub const fn soft_shadow_size(self) -> Option<f32> {
+        match self {
+            Self::Low | Self::Medium => None,
+            Self::High | Self::Ultra => Some(SOFT_SHADOW_SIZE),
+        }
     }
 
     /// Shadow-map filtering (shadows F2): Hardware2x2 on Low (one tap), Gaussian

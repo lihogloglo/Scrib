@@ -221,6 +221,16 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   Balmora vista was backlit; GPU ≈ 0, dev frame −3.5 ms at Seyda Neen).
 - Source: shf3 (shadows F3 step a).
 
+### SH-10: Soft contact-hardening sun shadows (shadows F5)
+- Kind: game location. Run: `.evyrrowind view "Seyda Neen" --camera "-143.5,4.4,1020.0,-153.5,2.4,1010.0" --hour 15 --weather clear`
+  (tree shadow across the street); compare `--off softshadows`, `--quality medium` (Gaussian PCF) and `--quality low`.
+- Look for: shadow edges crisp where the shadow touches its caster (trunk base, wall foot, feet) and softer toward the far
+  tip; no banding; faint dither noise is expected on raster (no TAA; clean with `--dlss`). Soft size is
+  `SOFT_SHADOW_SIZE` in exterior.rs (texels, 10): too soft or too sharp? (6 barely visible, 14 fades tips strongly).
+- Cost: within noise at Seyda Neen (22.6 vs 23.2 ms median, dev build).
+- Status: awaiting owner (shf5 saw the tree shadow tip fade softly at 14, near-identical at 6).
+- Source: shf5 (shadows F5).
+
 ### SH-9: Many shadowed lights indoors (shadows F6)
 - Kind: game location. Run: `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera "1.0,4.2,5.5,2.7,3.0,-4.0" --point-shadows 8`
   (desk, chair, chandeliers, two NPCs at 6-10 m); compare `--point-shadows 1` (High today) and `--point-shadows 4` (Ultra).

@@ -87,6 +87,8 @@ pub enum Part {
     Denoiser,
     FarShadows,
     ShadowTune,
+    /// Soft contact-hardening sun shadows (shadows F5, Bevy PCSS).
+    SoftShadows,
     /// Screen-space contact shadows (shadows F1).
     ContactShadows,
     /// Shadows F3 sun cascades (practical split to ~250 m); off = the A1 504 m layout.
@@ -125,7 +127,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 37] = [
+    const ALL: [(&'static str, Part); 38] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -144,6 +146,7 @@ impl Part {
         ("denoiser", Part::Denoiser),
         ("farshadows", Part::FarShadows),
         ("shadowtune", Part::ShadowTune),
+        ("softshadows", Part::SoftShadows),
         ("contactshadows", Part::ContactShadows),
         ("shadowsplits", Part::ShadowSplits),
         ("shadowcache", Part::ShadowCache),
