@@ -118,7 +118,7 @@ pub enum Part {
     FogDither,
     /// The froxels' temporal jitter: off, every froxel samples its centre (diagnosis).
     FogJitter,
-    /// Fog on blended and additive NIF materials (`transparent_fog.rs`: they draw
+    /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
     /// Foliage cutouts (`mw_nif::Cutout`): off, authored blend +

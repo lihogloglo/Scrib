@@ -327,7 +327,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // Blended and additive NIF surfaces draw after the fog composite: they
         // fog themselves from the froxels (`--off transfog` is the A/B).
         if fog_on && !perf.off.has(Part::TransFog) {
-            crate::transparent_fog::add(&mut app);
+            app.add_plugins(sf_atmos_bevy::FogTranslucentsPlugin);
         }
     }
 

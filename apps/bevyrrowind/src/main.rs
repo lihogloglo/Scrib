@@ -28,7 +28,6 @@ mod scenes;
 mod scripts;
 mod skinned_view;
 mod sweep;
-mod transparent_fog;
 mod view;
 mod walkers;
 mod water;
