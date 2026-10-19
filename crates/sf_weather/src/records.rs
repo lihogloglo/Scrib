@@ -318,8 +318,58 @@ pub struct Cue {
     pub volume: f32,
 }
 
+/// Random one-shot ambience (a "scatterer": FMOD Studio's scatterer
+/// instrument, Wwise random containers on a trigger rate, UE sound cues with
+/// Random + Delay, region sound lists with chances): every `interval_s` (a
+/// uniform draw in the range) one draw from `sounds`, where each entry's
+/// chance is its probability per draw and the rest is silence.
+///
+/// Intervals are **real seconds**, not game hours: ambience density is
+/// perceptual and mustn't follow the time scale. The audio layer schedules
+/// draws ([`OneShotSet::next_interval_s`], [`OneShotSet::pick`]); the weather
+/// only says which sets are on and how loud ([`crate::OneShotFrame`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OneShotSet {
+    /// Sounds with their chance per draw (0..1). Chances summing above 1
+    /// are normalized (no silence).
+    pub sounds: Vec<(RecordId, f32)>,
+    /// Time between draws, real seconds `[min, max]`.
+    pub interval_s: [f32; 2],
+    pub volume: f32,
+}
+
+impl Default for OneShotSet {
+    fn default() -> Self {
+        Self { sounds: Vec::new(), interval_s: [1.0, 5.0], volume: 1.0 }
+    }
+}
+
+impl OneShotSet {
+    /// The sound of one draw with `u` uniform in `[0, 1)`, or `None` (silence).
+    pub fn pick(&self, u: f32) -> Option<&RecordId> {
+        let total: f32 = self.sounds.iter().map(|(_, c)| c.max(0.0)).sum();
+        let mut x = u * total.max(1.0);
+        for (sound, chance) in &self.sounds {
+            let c = chance.max(0.0);
+            if x < c {
+                return Some(sound);
+            }
+            x -= c;
+        }
+        None
+    }
+
+    /// Seconds until the next draw, with `u` uniform in `[0, 1)`.
+    pub fn next_interval_s(&self, u: f32) -> f32 {
+        let [a, b] = self.interval_s.map(|s| s.max(0.0));
+        let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+        lo + (hi - lo) * u
+    }
+}
+
 /// One weather type.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WeatherPreset {
     pub clouds: CloudTerms,
@@ -330,9 +380,31 @@ pub struct WeatherPreset {
     pub surface: SurfaceRates,
     pub lightning: Option<Lightning>,
     pub cues: Vec<Cue>,
+    /// How much of the climate's own ambience (its `cues` and `one_shots`)
+    /// plays during this weather, 0..1 (e.g. birds hush in a storm). Fades
+    /// on the cue channel.
+    pub climate_ambience: f32,
     /// Gameplay tags with a strength (rules read them).
     pub tags: Vec<(RecordId, f32)>,
     pub transition: TransitionTiming,
+}
+
+impl Default for WeatherPreset {
+    fn default() -> Self {
+        Self {
+            clouds: CloudTerms::default(),
+            sky: SkyTerms::default(),
+            fog: FogTerms::default(),
+            precipitation: Vec::new(),
+            wind: WindTerms::default(),
+            surface: SurfaceRates::default(),
+            lightning: None,
+            cues: Vec::new(),
+            climate_ambience: 1.0,
+            tags: Vec::new(),
+            transition: TransitionTiming::default(),
+        }
+    }
 }
 
 /// Region weather: which presets occur, how often the weather changes.
@@ -349,6 +421,8 @@ pub struct Climate {
     pub storm_source: Option<WindSource>,
     /// Ambient loops of the region (played under the weather's own cues).
     pub cues: Vec<Cue>,
+    /// Random one-shot ambience of the region (birds, insects, distant calls).
+    pub one_shots: Vec<OneShotSet>,
 }
 
 impl Default for Climate {
@@ -359,6 +433,7 @@ impl Default for Climate {
             transition_hours: 1.5,
             storm_source: None,
             cues: Vec::new(),
+            one_shots: Vec::new(),
         }
     }
 }

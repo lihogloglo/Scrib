@@ -1793,3 +1793,8 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   names); the composed root sheet sits in an in-memory asset source and imports content from a named source
   `sf_ui_content` that apps register beside their default source; per-mod CSS errors come from strict "probe" loads
   of each sheet (ui.md "As built (U2 part 1)").
+- 2026-10-19 (we2c1): random one-shot ambience is a weather-core record type, `sf_weather::OneShotSet` on
+  `Climate.one_shots` (a "scatterer": chance per draw, rest silence), with intervals in **real seconds**: the weather
+  reports which sets are on (`WeatherFrame.one_shots`) and the audio layer schedules draws, since ambience density
+  mustn't follow the game time scale. `WeatherPreset.climate_ambience` gates a climate's ambience per weather as a
+  number on the cue channel (weather.md "Weather core as built").

@@ -332,7 +332,10 @@ with these differences: the record id is the database key (no `id` field); refer
 `height_by_hour` / `banks_by_hour` multiplier curves, `SkyTerms` a `haze_by_hour` curve (empty curve = 1);
 `WindTerms { speed: [min, max], gustiness, gust_length, direction_deg, direction_jitter_deg, storm }`;
 `PrecipKind` has an `extinction` (1/m at intensity 1) for visibility; `Climate` has `cues` (region
-ambient loops). `WeatherBook::from_db` resolves everything into indices once (rebuild when weather
+ambient loops) and `one_shots` (`OneShotSet`, random one-shot ambience: sounds with a chance per draw, rest silence,
+interval in **real seconds**; the audio layer schedules the draws, a "scatterer" as in FMOD Studio), and
+`WeatherPreset.climate_ambience` (0..1, cue channel) scales the climate's loops and one-shots, so storms hush
+birds (we2c1). `WeatherBook::from_db` resolves everything into indices once (rebuild when weather
 records change); unknown references become `warnings`, not panics.
 
 **State machine.** Per climate, slot `k` starts at `phase + k·mean + jitter·(2u_k − 1)` with `mean` the
@@ -374,7 +377,7 @@ converts Morrowind's real-time frequency with its time scale.
 `WindField.state.wind`; the transition windows are its easing), `clouds: CloudWeather` (moving with the
 wind direction at the cloud speed), `fog: FogSettings` (weather fields; look fields default, the plugin
 keeps its own; banks drift with the ground wind), `precip`, `surface`, `lightning` (strikes in
-`[prev_hours, hours)`), `lightning_per_hour`, `cues` (weather and region loops), `tags`, `storms` (a
+`[prev_hours, hours)`), `lightning_per_hour`, `cues` (weather and region loops), `one_shots` (climate sets on, with volume), `tags`, `storms` (a
 climate's `storm_source` with strength = the wind-channel blend of `WindTerms::storm` × climate weight;
 WE3 adds/updates the `WindSource`), `visibility_m` = min(3.912 / (fog outside banks at the camera
 altitude + Σ precipitation intensity × extinction), 100 km). No climate (interiors): calm defaults.

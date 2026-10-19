@@ -424,3 +424,68 @@ fn evaluate_cost() {
     let gate = if cfg!(debug_assertions) { 0.5 } else { 0.05 };
     assert!(ms < gate, "evaluate {ms} ms > {gate} ms");
 }
+
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn one_shot_sets_draw_by_chance_and_hush_with_the_weather() {
+    // A draw: each chance is a probability, the rest is silence.
+    let set = OneShotSet { sounds: vec![(id("bird"), 0.2), (id("frog"), 0.1)], interval_s: [5.0, 1.0], volume: 0.5 };
+    let n = 10_000;
+    let (mut bird, mut frog, mut silent) = (0, 0, 0);
+    for i in 0..n {
+        match set.pick((i as f32 + 0.5) / n as f32) {
+            Some(s) if *s == id("bird") => bird += 1,
+            Some(s) if *s == id("frog") => frog += 1,
+            Some(s) => panic!("unexpected {s:?}"),
+            None => silent += 1,
+        }
+    }
+    assert!((bird - 2000_i32).abs() <= 1 && (frog - 1000_i32).abs() <= 1 && (silent - 7000_i32).abs() <= 1, "{bird} {frog} {silent}");
+    // Chances above 1 in total normalize: never silent.
+    let loud = OneShotSet { sounds: vec![(id("a"), 1.0), (id("b"), 3.0)], ..OneShotSet::default() };
+    assert_eq!(loud.pick(0.2), Some(&id("a")));
+    assert_eq!(loud.pick(0.3), Some(&id("b")));
+    assert_eq!(loud.pick(0.999_9), Some(&id("b")));
+    assert_eq!(OneShotSet::default().pick(0.0), None);
+    // Intervals: uniform in the range, either order.
+    assert_eq!(set.next_interval_s(0.0), 1.0);
+    assert_eq!(set.next_interval_s(0.5), 3.0);
+    assert_eq!(set.next_interval_s(1.0), 5.0);
+
+    // In the frame: the climate's sets and loops play at the weather's
+    // `climate_ambience`, fading on the cue channel (snow hushes them).
+    let mut presets = presets();
+    presets.iter_mut().find(|(p, _)| *p == id("snow")).unwrap().1.climate_ambience = 0.0;
+    let mut climates = climates();
+    climates.push((
+        id("birdland"),
+        Climate {
+            cues: vec![Cue { sound: id("crickets"), volume: 0.4 }],
+            one_shots: vec![set.clone(), OneShotSet::default()],
+            ..climate(&[("clear", 1.0)])
+        },
+    ));
+    let book = WeatherBook::new(presets, climates, precip());
+    assert!(book.warnings.is_empty(), "{:?}", book.warnings);
+    let c = book.climate(&id("birdland")).unwrap();
+    let mut state = WeatherState::new(7);
+    state.force(&id("birdland"), &id("snow"), 10.0, Some(1.0), Some(100.0));
+    let f = evaluate(&book, &state, &input(&[(c, 1.0)], 5.0));
+    // The empty set (no sounds) isn't reported.
+    assert_eq!(f.one_shots, vec![OneShotFrame { climate: c, set: 0, volume: 0.5 }]);
+    assert_eq!(book.climate_record(c).one_shots[0], set);
+    let crickets = |f: &WeatherFrame| f.cues.iter().find(|e| e.region && e.sound == id("crickets")).map_or(0.0, |e| e.volume);
+    assert!((crickets(&f) - 0.4).abs() < 1e-6);
+    let mut last = 0.5;
+    for i in 1..=8 {
+        let f = evaluate(&book, &state, &input(&[(c, 1.0)], 10.0 + f64::from(i) / 8.0));
+        let v = f.one_shots.first().map_or(0.0, |o| o.volume);
+        assert!(v <= last + 1e-6, "ambience rises mid-transition: {last} -> {v}");
+        assert!((crickets(&f) - v * 0.8).abs() < 1e-5, "loops and one-shots fade together");
+        last = v;
+    }
+    assert_eq!(last, 0.0, "snow hushes the region");
+    // Half the spatial weight on a border: half the volume.
+    let f = evaluate(&book, &state, &input(&[(c, 0.5), (book.climate(&id("sunny")).unwrap(), 0.5)], 5.0));
+    assert!((f.one_shots[0].volume - 0.25).abs() < 1e-6);
+}

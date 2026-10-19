@@ -60,6 +60,17 @@ pub struct CueFrame {
     pub region: bool,
 }
 
+/// A climate's one-shot ambience set that is on, at a volume (the set's
+/// own × spatial climate weight × the weather's `climate_ambience`). The
+/// audio layer schedules its draws: `book.climate_record(climate).one_shots[set]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OneShotFrame {
+    pub climate: ClimateIx,
+    /// Index into the climate's `one_shots`.
+    pub set: usize,
+    pub volume: f32,
+}
+
 /// A lightning strike in this frame's time step.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightningStrike {
@@ -99,6 +110,7 @@ pub struct WeatherFrame {
     /// Current mean strike rate, per game hour.
     pub lightning_per_hour: f32,
     pub cues: Vec<CueFrame>,
+    pub one_shots: Vec<OneShotFrame>,
     pub tags: Vec<(RecordId, f32)>,
     pub storms: Vec<StormFrame>,
     /// Meteorological visibility at the camera (Koschmieder), meters.
@@ -116,6 +128,7 @@ impl Default for WeatherFrame {
             lightning: Vec::new(),
             lightning_per_hour: 0.0,
             cues: Vec::new(),
+            one_shots: Vec::new(),
             tags: Vec::new(),
             storms: Vec::new(),
             visibility_m: MAX_VISIBILITY_M,
@@ -212,6 +225,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
     frame.precip.clear();
     frame.lightning.clear();
     frame.cues.clear();
+    frame.one_shots.clear();
     frame.tags.clear();
     frame.storms.clear();
 
@@ -246,6 +260,8 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
         *wc /= total;
         let climate = book.c(*c);
         let mut storm = 0.0;
+        // How much of the climate's ambience the weather hushes (cue channel).
+        let mut hush = 0.0;
         for (p, w) in blend.iter() {
             let bp = book.p(*p);
             let rec = &bp.record;
@@ -272,6 +288,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
                 acc.gust_length = (w[WIND], rec.wind.gust_length);
             }
             storm += rec.wind.storm * w[WIND];
+            hush += (1.0 - rec.climate_ambience.clamp(0.0, 1.0)) * w[CUES];
             // Discrete channels: each preset's contribution on its own.
             for &(kind, intensity) in &bp.precip {
                 let x = intensity * w[PRECIP];
@@ -291,8 +308,15 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
                 add_cue(&mut frame.cues, &cue.sound, cue.volume * w[CUES], false);
             }
         }
+        let ambience = (*wc - hush).max(0.0);
         for cue in &climate.record.cues {
-            add_cue(&mut frame.cues, &cue.sound, cue.volume * *wc, true);
+            add_cue(&mut frame.cues, &cue.sound, cue.volume * ambience, true);
+        }
+        for (set, s) in climate.record.one_shots.iter().enumerate() {
+            let volume = s.volume * ambience;
+            if volume > 1e-6 && !s.sounds.is_empty() {
+                frame.one_shots.push(OneShotFrame { climate: *c, set, volume });
+            }
         }
         if let Some(source) = climate.record.storm_source
             && storm > 0.0

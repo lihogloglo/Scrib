@@ -30,12 +30,12 @@ pub use {sf_atmos, sf_sky, sf_wind};
 
 pub use book::{ClimateIx, PrecipIx, PresetIx, WeatherBook};
 pub use frame::{
-    BORDER_BAND_M, CueFrame, LIGHTNING_CAP_PER_HOUR, LightningStrike, MAX_VISIBILITY_M, PrecipFrame, StormFrame, WeatherFrame,
-    WeatherInput, border_blend, border_weight, evaluate, evaluate_into,
+    BORDER_BAND_M, CueFrame, LIGHTNING_CAP_PER_HOUR, LightningStrike, MAX_VISIBILITY_M, OneShotFrame, PrecipFrame, StormFrame,
+    WeatherFrame, WeatherInput, border_blend, border_weight, evaluate, evaluate_into,
 };
 pub use records::{
-    CLIMATE_KIND, Climate, CloudTerms, Cue, FogTerms, Lightning, PRECIP_KIND, PRESET_KIND, PrecipKind, PrecipLook, PrecipTerm,
-    SkyTerms, SurfaceChannel, SurfaceRates, TransitionTiming, WeatherPreset, WindTerms, Window,
+    CLIMATE_KIND, Climate, CloudTerms, Cue, FogTerms, Lightning, OneShotSet, PRECIP_KIND, PRESET_KIND, PrecipKind, PrecipLook,
+    PrecipTerm, SkyTerms, SurfaceChannel, SurfaceRates, TransitionTiming, WeatherPreset, WindTerms, Window,
 };
 pub use state::{Blend, CHANNELS, CLOUDS, CUES, FOG, ForecastEntry, Override, PRECIP, SKY, WIND, WeatherState};
 

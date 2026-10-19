@@ -145,6 +145,10 @@ impl WeatherBook {
         &self.climates[c.0 as usize].id
     }
 
+    pub fn climate_record(&self, c: ClimateIx) -> &Climate {
+        &self.climates[c.0 as usize].record
+    }
+
     pub fn precip_id(&self, k: PrecipIx) -> &RecordId {
         &self.precip[k.0 as usize].0
     }
