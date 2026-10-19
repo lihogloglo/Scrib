@@ -180,6 +180,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let mut app = App::new();
     let render = options.render;
     crate::render::RenderSettings::init(&mut app);
+    crate::shipped_errors(&mut app);
     // Watched and swappable in dev builds (M5 A4 hot reload).
     let vfs_source = crate::hot_reload::asset_source(&mut app, vfs.clone());
     app.register_asset_source(AssetSourceId::Default, vfs_source);
@@ -254,6 +255,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
+    // Sun casters under 1.5 texels of a cascade skip it (`--off castercull`: all draw).
+    if off_parts.has(Part::CasterCull) {
+        app.insert_resource(sf_sky_bevy::CasterCulling { min_texels: 0.0 });
+    }
     // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
     // scaffold switch [`FAR_STATIC_SHADOWS`], off until verified;
     // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.
@@ -432,9 +437,9 @@ impl NifSpawner {
         let mut commands = world.commands();
         let light = mw_assets::lights::spawn_light(&mut commands, &calibration, info, root, cx.local, seed);
         // The worldspace's layer: lights reach only their own worldspace's meshes.
-        commands.entity(light).insert(cx.layers.clone());
+        commands.entity(light).try_insert(cx.layers.clone());
         if root.is_none() {
-            commands.entity(light).insert(ChildOf(cx.parent));
+            commands.entity(light).try_insert(ChildOf(cx.parent));
         }
         world.flush();
         1
@@ -980,14 +985,14 @@ fn no_far_shadow_terrain(
     add: On<Add<MeshMaterial3d<sf_terrain_bevy::TerrainMaterial>>>,
     mut commands: Commands,
 ) {
-    commands.entity(add.entity).insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
+    commands.entity(add.entity).try_insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
 }
 
 /// Far proxies stay out of the far sun map: they sample it (a pass can't
 /// write the depth texture its materials bind), and the terrain's own far
 /// term already shadows them past the cascades.
 fn no_far_shadow_proxy(add: On<Add<MeshMaterial3d<sf_lod_bevy::ProxyMaterial>>>, mut commands: Commands) {
-    commands.entity(add.entity).insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
+    commands.entity(add.entity).try_insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
 }
 
 /// Copies the terrain's far shadow map and the far static sun map into the

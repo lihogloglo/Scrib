@@ -139,6 +139,7 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     app.register_asset_source(AssetSourceId::Default, sf_vfs::bevy::asset_source(vfs.clone()));
     // DLSS builds: the project id must exist before `DefaultPlugins`.
     crate::render::RenderSettings::init(&mut app);
+    crate::shipped_errors(&mut app);
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window { title: "Bevyrrowind - characters".into(), ..default() }),
         ..default()

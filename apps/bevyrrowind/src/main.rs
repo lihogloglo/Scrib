@@ -338,11 +338,12 @@ struct ViewFlags {
     /// Falls back to raster on GPUs without ray tracing.
     #[arg(long)]
     rt: bool,
-    /// Temporal upscaling with DLSS (build with `--features dlss`; NVIDIA RTX,
-    /// off elsewhere): off, auto, native (alias dlaa), quality, balanced,
-    /// performance, ultra-performance. With `--rt` it sets the denoiser's
-    /// (Ray Reconstruction) quality. Default: auto in builds with DLSS, off
-    /// otherwise; `--dlss off` turns it off. Env: `BEVYRROWIND_DLSS`.
+    /// Temporal resolve: `taa` (Bevy TAA, native resolution), DLSS (build with
+    /// `--features dlss`; NVIDIA RTX, TAA elsewhere): auto, native (alias dlaa),
+    /// quality, balanced, performance, ultra-performance; or `off` (MSAA). With
+    /// `--rt` it sets the denoiser's (Ray Reconstruction) quality. Default on
+    /// Medium and up: auto in builds with DLSS, taa otherwise; Low: off.
+    /// Env: `BEVYRROWIND_DLSS`.
     #[arg(long, value_parser = sf_sky_bevy::sf_sky::Upscaling::parse)]
     dlss: Option<sf_sky_bevy::sf_sky::Upscaling>,
     /// Run an `sf_diag` benchmark scenario (JSON), then exit with its verdict.
@@ -508,7 +509,8 @@ impl ViewFlags {
     /// `--rt`, `--dlss`, `--off denoiser` and `--off shadowcache`.
     fn render(&self) -> Result<render::RenderSettings> {
         let off = perf::Off::from_flags(&self.perf.off)?;
-        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser))?.with_point_shadows(self.lighting.point_shadows)
+        let low = exterior::Quality::resolve(self.quality) == exterior::Quality::Low;
+        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows)
             .with_shadow_cache(!off.has(perf::Part::ShadowCache)))
     }
 }
@@ -604,6 +606,23 @@ fn parse_camera(raw: &str) -> std::result::Result<(bevy::math::Vec3, bevy::math:
         [ex, ey, ez, tx, ty, tz] => Ok((bevy::math::Vec3::new(ex, ey, ez), bevy::math::Vec3::new(tx, ty, tz))),
         _ => Err("expected six comma-separated numbers".into()),
     }
+}
+
+/// Shipped builds log a failed command or a system's returned error instead
+/// of panicking (Bevy's default): a command on an entity that streaming
+/// despawned the same frame (DR-4) must not end the game. Real panics keep
+/// unwinding. Dev builds keep Bevy's default so these bugs stay loud.
+pub(crate) fn shipped_errors(app: &mut bevy::app::App) {
+    #[cfg(not(feature = "dev"))]
+    app.insert_resource(bevy::ecs::error::FallbackErrorHandler(|mut err, ctx| {
+        use bevy::ecs::error::{Severity, error, match_severity};
+        if let Some(payload) = err.take_payload() {
+            std::panic::resume_unwind(payload);
+        }
+        if err.severity() == Severity::Panic { error(err, ctx) } else { match_severity(err, ctx) }
+    }));
+    #[cfg(feature = "dev")]
+    let _ = app;
 }
 
 fn main() -> ExitCode {

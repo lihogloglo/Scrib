@@ -120,13 +120,13 @@ fn attach_faces(
             faces.cache.entry(model.clone()).or_insert_with(|| vfs.read(&model).ok().and_then(|b| Face::from_nif(&b)).map(Arc::new)).clone()
         });
         let Some(face) = face else {
-            commands.entity(entity).insert(NoFace);
+            commands.entity(entity).try_insert(NoFace);
             continue;
         };
         #[allow(clippy::cast_possible_truncation)] // a seed: mixing, not a value
         let mut seed = ((entity.to_bits() ^ (entity.to_bits() >> 29)) as u32).wrapping_mul(0x9E37_79B9) | 1;
         let blink = -next_pause(&mut seed);
-        commands.entity(entity).insert((MorphCurvePlayer::new(Arc::clone(&face.tracks)), FaceState { face, blink, clock: 0.0, seed }));
+        commands.entity(entity).try_insert((MorphCurvePlayer::new(Arc::clone(&face.tracks)), FaceState { face, blink, clock: 0.0, seed }));
     }
 }
 

@@ -44,14 +44,18 @@ character (default: create only); cargo-deny in superfargoth; UAL2 clip pack pur
 Goal: the frame target (decision 1, raster path) in Balmora, Seyda Neen and the flight bench, with clean, grain-free shadows
 and effects. Every task reports its ms cost per preset.
 
-- [ ] 1.1 **Stability first.** DR-4 crash (command on a despawned entity on leaving an interior): streamed
+- [~] 1.1 **Stability first.** Built 2026-10-19 (phase1), awaiting owner (DR-4, AU-1 in visual-checks). DR-4 crash (command on a despawned entity on leaving an interior): streamed
   entities via `try_insert`/`queue_silenced`; shipped builds set Bevy's error handler to log, dev keeps panicking.
   Weather/region sound plays indoors (AU-1). Door travel: black fade held until the destination's near ring is
   spawned (timeout), no rough far-field shapes or loading objects on arrival (DR-4).
-- [ ] 1.2 **Frame budget + gates.** Nsight per pass + Tracy per system on the owner's laptop; a budget table per
+- [~] 1.2 **Frame budget + gates.** 2026-10-19 (phase1): median 11 ms gates + budget table + A/B and trace in `perf.md`
+  "Frame budget": 14.3-19.3 ms, **render thread bound** (sun cascades ~4.8 ms, actors ~3 ms main); caster size rule
+  ~0.3 ms; cube-cache plugin dropped (parked). Left: the cuts (1.4 shadows, 1.9, anim LOD), Nsight per pass (UAC). Nsight per pass + Tracy per system on the owner's laptop; a budget table per
   preset in `perf.md`; `benchmarks/exterior_*.json` get a median gate at the target (they only checked 33 ms, so
   the fall from ~11 ms on 10-12 to ~30 fps never failed). Then cut whatever is over budget.
-- [ ] 1.3 **Temporal resolve as the base.** Bevy TAA on the raster path when DLSS is off (Medium+), DLSS when on;
+- [~] 1.3 **Temporal resolve as the base.** 2026-10-19 (phase1): `Upscaling::Taa` (Bevy TAA) default when DLSS is off
+  or missing, MSAA on Low only, F4 cycles; 1440p TAA 15.4 ms vs MSAA 18.5; history reset on door travel. Awaiting
+  owner (TA-1); motion vectors for translucents (RO-6) still open. Bevy TAA on the raster path when DLSS is off (Medium+), DLSS when on;
   every pass writes motion vectors (render-order.md RO-6/RO-7); MSAA off where TAA replaces it. Fixes the grain
   in weather/fog/soft shadows (WE-2, WE-3), grazing-light edge shimmer (SH-12), water moiré (WA-1).
 - [ ] 1.4 **One shadow design, finished.** Sun: cascades + contact shadows + terrain far shadow (keep SH-7/8/10).
@@ -118,6 +122,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [p] Crate "update all" pass once `bevy_hanabi` supports Bevy 0.20 (archive Backlog).
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+
+- 2026-10-19 (phase1): 1.1 built (DR-4 crash class `try_*` + shipped error handler, black UI fade held for the
+  arrival, AU-1 interior audio snapshot); 1.2 measured (render thread bound) + gates; 1.3 TAA as the base. Uncommitted.
 
 - 2026-10-19 (phase0): audit; owner check pass (14 windows); ROADMAP rewritten into phases; ARCHITECTURE §10/§11
   moved to `superfargoth/docs/DECISIONS.md`.

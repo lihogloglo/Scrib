@@ -225,7 +225,7 @@ fn prop_particles(
 ) {
     for props in &roots {
         for prop in props.props.iter().filter(|p| !done.contains(p.entity)) {
-            commands.entity(prop.entity).insert(PropParticles);
+            commands.entity(prop.entity).try_insert(PropParticles);
             let path = prop.item.model.as_str();
             let Some(nif) = models.nif(path) else {
                 continue;
@@ -305,7 +305,7 @@ fn body_particles(
                     systems.iter().map(|s| (s.system, s.emitter.is_some(), s.targets.len())).collect::<Vec<_>>()
                 );
                 if !systems.is_empty() {
-                    commands.entity(entity).insert(LiveEmitter { systems });
+                    commands.entity(entity).try_insert(LiveEmitter { systems });
                 }
                 out.gates.push((entity, gates));
                 out.emission.push((entity, emission));
@@ -319,7 +319,7 @@ fn body_particles(
         match done {
             Some(mut d) => *d = out,
             None => {
-                commands.entity(root).insert(out);
+                commands.entity(root).try_insert(out);
             }
         }
     }
@@ -334,7 +334,7 @@ fn visible_chain(commands: &mut Commands, joints: &Query<(Option<&ChildOf>, Has<
             return;
         };
         if !has {
-            commands.entity(at).insert(Visibility::Inherited);
+            commands.entity(at).try_insert(Visibility::Inherited);
         }
         let Some(parent) = parent else { return };
         at = parent.parent();

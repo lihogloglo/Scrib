@@ -125,7 +125,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: known bug: Phase 1 (TAA baseline + shadow bias).
 
 ### SH-13: Point-light (lamp) shadows (owner report)
-- Kind: game location. Run: `.evyrrowind scene lamps-handoff` (Balmora, 22:00).
+- Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora, 22:00).
 - Seen by owner 2026-10-19 (round 5): lamp shadows only visible a few metres from the lamp; some have a grainy,
   dithered pattern; walking guards cast a shadow that isn't their outline; some shadows flicker.
   Suspects (unverified): budget of 1 shadowed light at High with a 15-25 m fade (dithered fade = the grain),
@@ -171,6 +171,15 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 ## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
 
 Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
+
+### TA-1: TAA as the base temporal resolve (ROADMAP 1.3)
+- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen" --hour 11 --weather foggy --dlss taa`, fly
+  around; then `--weather ashstorm` far away (WE-2 grain) and Balmora at a grazing sun (SH-12 edge shimmer).
+- Look for: fog, far bad weather and soft shadow edges smooth instead of grainy; no ghost trails behind moving
+  actors, rain or the ship's sail (translucents write no motion vectors yet, RO-6); not blurrier than DLSS Q.
+- A/B: F4 cycles off (MSAA) / taa / DLSS modes. Agent shots: `shots/p1-aa-off.png`, `shots/p1-aa-taa.png`.
+  Cost (1440p native, Balmora): TAA 15.4 ms vs MSAA 18.5 (TAA pass 0.39 ms; no MSAA saves more).
+- Status: awaiting owner (phase1, 2026-10-19). Default now: DLSS auto where available, else TAA; Low: MSAA.
 
 ### DL-2: Super Resolution at 1440p
 - Kind: game location. Run: `.\bevyrrowind scene dlss-balmora-1440`
@@ -311,7 +320,7 @@ silently disabled), and the sun is fully hidden behind thick cloud.
 - Source: interiors, doorfix.
 
 ### DR-4: Door travel polish and crash (owner report)
-- Kind: game location. Run: `.evyrrowind scene door-balmora-guild`, several round trips (Space at the doors).
+- Kind: game location. Run: `.\bevyrrowind scene door-balmora-guild`, several round trips (Space at the doors).
 - Seen by owner 2026-10-19 (round 8):
   - during the load, big rough shapes appear first and real models replace them (likely the far-field L1 copies,
     shown until the near ring's models arrive: the fade lifts before the near ring is ready);
@@ -321,10 +330,13 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   - a few round trips ended in a **crash** (release exe, 10:55:47 UTC, leaving the bookseller to @exterior): Bevy's
     default command error handler panicked on a command to a despawned entity (30782v1). Same class as the walkers.rs
     `Dormant` crash fixed earlier today.
-- Fix direction (standard practice): hold the fade until the destination's near ring is spawned (with a timeout),
-  black fade; commands on streamed entities use `try_insert`/`queue_silenced`, and shipped builds set Bevy's error
-  handler to log instead of panic (dev builds keep panicking so bugs stay loud).
-- Status: known bug: Phase 1 (crash + load gate), prompt in Phase 2.
+- Fixed (phase1, 2026-10-19): the fade is a full-window UI node (after post-processing: truly black); it holds at
+  black until the arrival's near cells are spawned and the meshes within 48 m have their textures (10 s cap); ~100
+  commands on streamed entities use `try_*`; release builds log failed commands instead of panicking. Agent run:
+  4 crossings, 0.70–0.90 s each (was 0.64), the log line now says how long it held at black.
+- Look for: a black fade (no fogged grey); on arrival no rough shapes, no objects popping in front of you; a long trip
+  (bookseller, wait > 5 s inside so the town unloads) still arrives complete. No crash over many round trips.
+- Status: awaiting owner (prompt on doors: Phase 2).
 
 ### DR-3: Interiors open in the streamed view
 - Kind: game location. Run: `.\bevyrrowind scene door-census` (or any
@@ -858,7 +870,7 @@ generic travelling band (wet sand band waits for SU1); waves by weather are WE3.
 
 ### AU-1: Weather sound (`view "Seyda Neen" --weather rain`, then C to step to thunderstorm)
 
-Status: **confirmed outdoors 2026-10-19; BUG indoors:** weather/region ambience keeps playing in interiors (Census Office); gate on exterior or "behave like exterior" cells (round 1 weather pass; M6 WE3 audio; agents cannot hear, the log lines `audio: loop start/stop`,
+Status: **confirmed outdoors 2026-10-19; indoor fix awaiting owner** (phase1): an interior (no sky in its cell flags) ducks the weather bus to silence over 0.5 s and draws no region ambience; log `audio: listener indoors/outdoors`. Listen: `scene door-balmora-guild` with `--weather rain`, walk in (rain gone), out (rain back); also the Census Office and a cave. Was: weather/region ambience kept playing indoors (round 1 weather pass; M6 WE3 audio; agents cannot hear, the log lines `audio: loop start/stop`,
 `audio: one-shot` were checked headless). Look/listen for: rain loop fades in over ~2 s and out when the weather
 changes (C key), the thunderstorm adds its loop, thunder follows each flash after distance / 343 s, region ambience
 (birds, wind) draws now and then on a clear day. Levels sane against each other; mp3 and wav both play.
@@ -885,7 +897,7 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 4. Ghostfence (`view "Ghostgate" --hour 12`): the field casts no shadow.
 
 ### WE-5: Ash/blight storm ignores terrain and objects, wrong direction (owner report)
-- Kind: game location. Run: `.evyrrowind scene summit-vivec` (or any ashstorm/blight weather near Red Mountain).
+- Kind: game location. Run: `.\bevyrrowind scene summit-vivec` (or any ashstorm/blight weather near Red Mountain).
 - Seen by owner 2026-10-19 (round 3): the blight storm (maybe other weather effects too) is not occluded by terrain or
   objects: it draws over them. Also the ash storm should blow from Red Mountain (Morrowind storms have a source;
   we2b already derives the summit storm source from LAND), which it doesn't seem to.

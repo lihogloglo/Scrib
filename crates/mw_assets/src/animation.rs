@@ -95,7 +95,7 @@ pub(crate) fn assign_phases(
         } else {
             0.0
         };
-        commands.entity(entity).insert(AnimationPhase(phase));
+        commands.entity(entity).try_insert(AnimationPhase(phase));
     }
 }
 

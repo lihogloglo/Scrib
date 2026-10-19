@@ -423,7 +423,7 @@ fn attach(
         }
         let mut e = commands.entity(entity);
         // Parked until `processing_range` finds its ground loaded.
-        e.insert((
+        e.try_insert((
             mover,
             MoveIntent::default(),
             ActorSpace(location.worldspace.clone()),
@@ -610,7 +610,7 @@ fn camera_obstacle(
             };
             o.position = feet;
         } else {
-            commands.entity(entity).insert(AvoidObstacle {
+            commands.entity(entity).try_insert(AvoidObstacle {
                 position: feet,
                 velocity: Vec3::ZERO,
                 radius: 0.4,

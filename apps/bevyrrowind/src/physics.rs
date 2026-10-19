@@ -181,8 +181,8 @@ fn kill(root: Entity, body: &CharacterBody, animators: &mut Query<&mut Animator>
     if let Ok(mut animator) = animators.get_mut(body.body) {
         animator.set_bool("dead", true);
     }
-    commands.entity(root).insert((Dead, Dormant));
-    commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF, mode: RagdollMode::Death { crumple: true } });
+    commands.entity(root).try_insert((Dead, Dormant));
+    commands.entity(body.body).try_insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF, mode: RagdollMode::Death { crumple: true } });
     info!("ragdoll: killed {root} ({})", body.skeleton);
 }
 
@@ -244,13 +244,13 @@ fn knockdown(
             continue;
         }
         animator.set_bool(KNOCKED_OUT, true);
-        commands.entity(hit.entity).insert((KnockedDown { body_local: *local }, Dormant));
+        commands.entity(hit.entity).try_insert((KnockedDown { body_local: *local }, Dormant));
         let get_up = get_up_body(&source, &body.skeleton, &animator);
         if get_up.is_none() {
             info!("ragdoll: {} has no {GET_UP_CLIP} clip: LYING_REST_GET_UP scaffold", body.skeleton);
         }
         let mode = RagdollMode::Knockdown { point: hit.point, impulse: hit.direction * hit.impulse, get_up, get_up_flag: KNOCKED_OUT.to_owned() };
-        commands.entity(body.body).insert(Ragdoll { skeleton: body.skeleton.clone(), delay: KNOCKDOWN_HANDOFF, mode });
+        commands.entity(body.body).try_insert(Ragdoll { skeleton: body.skeleton.clone(), delay: KNOCKDOWN_HANDOFF, mode });
         info!("ragdoll: knocked down {} ({:.0} N·s)", hit.entity, hit.impulse);
     }
 }
@@ -288,7 +288,7 @@ fn got_up(
             m.loco.motion.angular_velocity = 0.0;
         }
         *local = l0;
-        commands.entity(root).remove::<(KnockedDown, Dormant)>();
+        commands.entity(root).try_remove::<(KnockedDown, Dormant)>();
         info!("ragdoll: {root} got up (heading {:.0}°)", yaw.to_degrees());
     }
 }
@@ -318,7 +318,7 @@ fn attach_holder(mut commands: Commands, cameras: Query<Entity, (With<FreeCamera
         let strength = std::env::var("BEVYRROWIND_STRENGTH").ok().and_then(|s| s.parse().ok()).unwrap_or(mw_physics::DEFAULT_STRENGTH);
         let limits = mw_physics::holder_limits(strength);
         info!("carry: Strength {strength} -> {limits:?}");
-        commands.entity(e).insert(Holder::new(limits));
+        commands.entity(e).try_insert(Holder::new(limits));
     }
 }
 
@@ -527,7 +527,7 @@ fn throw_ball(
     balls.live.push_back(entity.id());
     while balls.live.len() > BALLS_KEPT {
         if let Some(old) = balls.live.pop_front() {
-            commands.entity(old).despawn();
+            commands.entity(old).try_despawn();
         }
     }
 }

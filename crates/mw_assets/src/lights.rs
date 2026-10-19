@@ -126,11 +126,11 @@ pub fn spawn_light(
     let id = entity.id();
     match model {
         Some(root) => {
-            commands.entity(id).insert((Transform::IDENTITY, ChildOf(root)));
-            commands.entity(root).insert(CarriedLight(id));
+            commands.entity(id).try_insert((Transform::IDENTITY, ChildOf(root)));
+            commands.entity(root).try_insert(CarriedLight(id));
         }
         None => {
-            commands.entity(id).insert(transform);
+            commands.entity(id).try_insert(transform);
         }
     }
     id
@@ -144,7 +144,7 @@ pub(crate) fn attach_lights(
 ) {
     for node in &added {
         if let Some(light) = parents.iter_ancestors(node).find_map(|a| carriers.get(a).ok()) {
-            commands.entity(light.0).insert((ChildOf(node), Transform::IDENTITY));
+            commands.entity(light.0).try_insert((ChildOf(node), Transform::IDENTITY));
         }
     }
 }

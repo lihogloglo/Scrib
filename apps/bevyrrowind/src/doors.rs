@@ -182,9 +182,17 @@ pub fn arrival_rotation(rotation: Quat) -> Quat {
 /// Bevy's `FreeCamera` caches yaw and pitch and rebuilds the rotation from
 /// them on the next mouse motion, so a camera the fade turned would snap
 /// back. Resync the cache (as the controller's own init does, Y-X-Z Euler)
-/// and drop the carried velocity when a travel moves the camera.
-pub(crate) fn sync_free_camera(mut arrived: MessageReader<TravelArrived>, mut cams: Query<&mut FreeCameraState>) {
+/// and drop the carried velocity when a travel moves the camera. The
+/// temporal resolve (TAA/DLSS) starts over: last frame was the other side.
+pub(crate) fn sync_free_camera(
+    mut arrived: MessageReader<TravelArrived>,
+    mut cams: Query<&mut FreeCameraState>,
+    mut history: Option<ResMut<sf_sky_bevy::TemporalHistory>>,
+) {
     for travel in arrived.read() {
+        if let Some(h) = history.as_mut() {
+            h.reset = true;
+        }
         let Ok(mut state) = cams.get_mut(travel.traveler) else { continue };
         let (yaw, pitch, _) = travel.rotation.to_euler(EulerRot::YXZ);
         state.yaw = yaw;
@@ -276,7 +284,11 @@ fn report_travel(fade: Res<FadeTransition>, mut last: Local<Option<f32>>) {
     if fade.last_duration != *last {
         *last = fade.last_duration;
         if let Some(secs) = fade.last_duration {
-            info!("door travel took {secs:.2} s (fade {:.1} s each way)", fade.fade_secs);
+            info!(
+                "door travel took {secs:.2} s (fade {:.1} s each way, held {:.2} s at black)",
+                fade.fade_secs,
+                fade.last_hold.unwrap_or_default()
+            );
         }
     }
 }
@@ -285,6 +297,7 @@ fn report_travel(fade: Res<FadeTransition>, mut last: Local<Option<f32>>) {
 /// its cell flags) drops the sky, clouds and terrain from the camera, lights
 /// with the cell's ambient color at interior exposure, and clears to its fog
 /// color; the exterior (or a cell that behaves like one) gets them back.
+/// The listener is outdoors exactly where the sky shows.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn worldspace_look(
     mut commands: Commands,
@@ -294,6 +307,7 @@ pub(crate) fn worldspace_look(
     calibration: Res<LightCalibration>,
     off: Res<crate::perf::Off>,
     mut ambient: ResMut<GlobalAmbientLight>,
+    outdoors: Option<ResMut<sf_audio_bevy::ListenerOutdoors>>,
     mut cams: Query<(Entity, &mut Camera, Option<&Exposure>, Has<SkyCamera>, Has<TerrainCamera>), With<DoorUser>>,
     sky_lights: Query<Entity, Or<(With<SunLight>, With<MoonLight>)>>,
     mut seen: Local<Option<WorldspaceId>>,
@@ -309,6 +323,10 @@ pub(crate) fn worldspace_look(
     *seen = Some(ws.clone());
     let env = envs.0.get(&ws);
     let sky = env.is_none_or(|e| e.sky);
+    // Weather and region sound stay outside (AU-1): the mixer's interior snapshot.
+    if let Some(mut outdoors) = outdoors {
+        outdoors.0 = sky;
+    }
     // Sun and moon light the worldspace that shows the sky, and only that:
     // moving them onto an interior's layer lit the office with the noon sun
     // for the frame of a portal crossing (the white flash, portals.md).
@@ -368,7 +386,7 @@ fn terrain_layers(
 ) {
     let Some(entry) = registry.get(&mw_world::ids::exterior()) else { return };
     for e in &patches {
-        commands.entity(e).insert(bevy::camera::visibility::RenderLayers::layer(entry.layer));
+        commands.entity(e).try_insert(bevy::camera::visibility::RenderLayers::layer(entry.layer));
     }
 }
 

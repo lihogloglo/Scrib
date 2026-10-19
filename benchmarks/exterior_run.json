@@ -12,6 +12,7 @@
     ]
   },
   "gates": [
+    { "gate": "max_frame_stat", "stat": "median", "ms": 11.0 },
     { "gate": "max_stutters", "factor": 1.5, "window": 60, "per_minute": 1.0 },
     { "gate": "max_frame_ms", "ms": 33.0 }
   ]

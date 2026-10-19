@@ -205,7 +205,7 @@ fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity
         });
         let action = setup.def.action.clone().map(|a| (a, 0.0));
         let mut e = commands.entity(entity);
-        e.remove::<(crate::walkers::Walker, Avoider)>().insert(ActorScript { follower, action });
+        e.try_remove::<(crate::walkers::Walker, Avoider)>().try_insert(ActorScript { follower, action });
         if setup.player {
             e.insert(super::walk::WalkPlayer);
         }

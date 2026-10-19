@@ -15,15 +15,25 @@ const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
 /// "Local-light shadows": GPU cost at `hi-balmora-night`).
 pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (1, 1024);
 
+/// Point-light shadow cube cache (shadows F6 slice 2, `sf_shadow_cache_bevy`):
+/// parked by owner decision 3 (2026-10-19, simpler shadows first); off, its
+/// plugin isn't even added (its caster tracking cost ~0.5 ms a frame in
+/// Balmora, `docs/perf.md` "Frame budget"). Resume needs the owner's go.
+const POINT_SHADOW_CACHE: bool = false;
+
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
 const ENV_DLSS: &str = "BEVYRROWIND_DLSS";
 
-/// Upscaling without `--dlss` or `BEVYRROWIND_DLSS`: DLSS `auto` (Quality
-/// at our resolutions) in builds with DLSS, which falls back to native on
-/// GPUs without it; off in builds without (owner decision, ARCHITECTURE.md
-/// §10, 2026-10-12). `--dlss off` turns it off.
-pub fn default_upscaling() -> Upscaling {
-    if cfg!(feature = "dlss") { Upscaling::parse("auto").unwrap_or(Upscaling::Off) } else { Upscaling::Off }
+/// Upscaling without `--dlss` or `BEVYRROWIND_DLSS`: a temporal resolve on
+/// Medium and up (ROADMAP 1.3): DLSS `auto` (Quality at our resolutions) in
+/// builds with DLSS, which falls back to TAA on GPUs without it; TAA in
+/// builds without. The Low preset keeps MSAA. `--dlss taa|off` picks.
+pub fn default_upscaling(low: bool) -> Upscaling {
+    match (low, cfg!(feature = "dlss")) {
+        (true, _) => Upscaling::Off,
+        (false, true) => Upscaling::parse("auto").unwrap_or(Upscaling::Taa),
+        (false, false) => Upscaling::Taa,
+    }
 }
 
 /// The render options of a view.
@@ -42,20 +52,20 @@ pub struct RenderSettings {
 
 impl RenderSettings {
     /// From the flags; `--dlss` falls back to `BEVYRROWIND_DLSS`, then to
-    /// [`default_upscaling`].
-    pub fn new(ray_traced: bool, dlss: Option<Upscaling>, denoiser: bool) -> Result<Self, String> {
+    /// [`default_upscaling`] (`low`: the Low quality preset).
+    pub fn new(ray_traced: bool, dlss: Option<Upscaling>, denoiser: bool, low: bool) -> Result<Self, String> {
         let upscaling = match dlss {
             Some(u) => u,
             None => match std::env::var(ENV_DLSS) {
                 Ok(raw) if !raw.trim().is_empty() => Upscaling::parse(&raw)?,
-                _ => default_upscaling(),
+                _ => default_upscaling(low),
             },
         };
         if ray_traced && !cfg!(feature = "solari") {
             eprintln!("--rt needs a build with `--features solari`; rendering raster");
         }
-        if upscaling != Upscaling::Off && !cfg!(feature = "dlss") {
-            eprintln!("--dlss needs a build with `--features dlss`; upscaling off");
+        if matches!(upscaling, Upscaling::Dlss(_)) && !cfg!(feature = "dlss") {
+            eprintln!("--dlss needs a build with `--features dlss`; TAA instead");
         }
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
         let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
@@ -76,6 +86,7 @@ impl RenderSettings {
         };
         match self.upscaling {
             Upscaling::Off => path.to_owned(),
+            Upscaling::Taa => format!("{path} taa"),
             u @ Upscaling::Dlss(_) => format!("{path} dlss={}", u.label()),
         }
     }
@@ -116,8 +127,10 @@ impl RenderSettings {
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
         // Shadows F6 slice 2: static casters cached per light, movers drawn over the copy.
-        app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
-            .insert_resource(sf_shadow_cache_bevy::ShadowCacheSettings { enabled: self.shadow_cache, ..Default::default() });
+        if POINT_SHADOW_CACHE && self.shadow_cache {
+            app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
+                .insert_resource(sf_shadow_cache_bevy::ShadowCacheSettings { enabled: true, ..Default::default() });
+        }
 
         app.add_systems(Last, log_lighting_at_screenshot);
     }

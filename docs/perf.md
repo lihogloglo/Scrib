@@ -17,6 +17,57 @@ cargo build --release -p bevyrrowind --features solari,dlss   # ray tracing + DL
 at it); `build.rs` copies the two NVIDIA DLLs next to the executable. `dlss` alone (without
 `solari`) is enough for Super Resolution on raster.
 
+## Frame budget (ROADMAP 1.2)
+
+Target (owner decision 1): High, 2560x1440 output + DLSS Quality (1707x960 internal) on the RTX 4060
+Laptop: **median <= 11 ms** in every exterior benchmark (`max_frame_stat` median gate in
+`benchmarks/exterior_*.json`; the gates assume this setup: `perf suite <tag> --resolution 2560x1440
+--env BEVYRROWIND_DLSS=quality` with a `dlss` build). Bevy pipelines the main thread, the render thread
+and the GPU, so a frame costs about the slowest of the three: each gets the whole 11 ms minus ~1.5 ms
+headroom for spikes and thermal clocks.
+
+| lane (High, 1440p DLSS Q) | budget ms | Balmora | Seyda Neen | Red Mountain | flight |
+|---|---:|---:|---:|---:|---:|
+| frame (median) | 11.0 | 14.3 | 17.7 | 17.2 | 19.3 |
+| render thread busy | 9.5 | 12.9 | 15.9 | 15.5 | 16.7 |
+| - of it graph encoding | 4.0 | 5.0 | 6.1 | 5.8 | 5.9 |
+| main thread busy | 9.5 | 8.8 | 10.0 | 10.5 | 13.7 |
+| GPU (Bevy-timed) | 9.5 | 8.4 | 8.7 | 7.9 | 7.7 |
+| - opaque + prepass | 3.5 | 2.6 | 2.1 | 2.0 | 2.0 |
+| - DLSS SR | 2.1 | 2.1 | 2.1 | 2.0 | 2.0 |
+| - sky, clouds, fog, light probes | 1.5 | 1.6 | 1.6 | 1.7 | 1.7 |
+
+Measured 2026-10-19 (phase1, `target/perf/p1-dlssq`, profiling `dlss` build, 2 runs each, quiet machine,
+GPU 2.58 GHz, 65 °C): **the render thread is the bottleneck everywhere** (GPU 53-78 % busy), at
+44-52 k meshes and 65-88 k entities. Next: a per-system trace of the render thread (extract, prepare,
+queue, batching per view and shadow cascade), then cut what is over. Medium and Low get their own rows
+once High meets its budget.
+
+What costs what (Balmora, same session, warm machine: baseline 15.3 ms; A/B runs vary +-0.4 ms, so only
+differences above ~0.5 ms count):
+
+| `--off` | frame | render | main | GPU | reading |
+|---|---:|---:|---:|---:|---|
+| (none) | 15.3 | 13.7 | 9.2 | 8.5 | reference |
+| shadows | 10.5 | 9.1 | 8.5 | 7.9 | **sun cascades: -4.8 ms**, all CPU (12.6 k caster entries over 4 cascades) |
+| actors | 12.4 | 11.2 | 5.8 | 8.6 | **actors: -3 ms main** (anim, skinning, skinned AABBs), -2 ms render |
+| farshadows, particles, lights | 15.1-15.3 | 13.4-13.6 | 9.0-9.2 | 8.3-8.4 | nothing measurable |
+| shadowcache (old build) | 14.8 | 13.3 | 9.0 | 8.6 | -0.5 ms: the parked cube cache's tracking; its plugin is gone now |
+| castercull (on vs off, 3 pairs each) | 14.7 / 15.0 | 13.1 / 13.4 | | | caster size rule removes 8 % of entries: ~-0.3 ms, at the noise floor |
+| farfield | 37.3 | 34.7 | 24.5 | 10.5 | the far field is what makes towns affordable |
+
+Trace (`perf trace`, profiling-trace build): the main thread waits ~4.5 ms per frame in `RenderExtractApp` for the
+render thread (Bevy's pipelined extract), confirming the render thread as the critical path. Its biggest
+spans: `prepare_preprocess_bind_groups` 2.3 ms, `queue_submit` 2.4 ms (33 submits), shadow
+`write_binned_instance_buffers` 1.4 ms + shadow pass encoding 1.2 ms, skins 1.2 ms. Main thread:
+big_space low-precision propagation 2.5 ms (task time), visibility 2-4 ms (x16 views), animation 1.5 ms.
+Cuts to make (they belong to 1.4 shadows, 1.9 culling levers and 3.x animation): fewer or cheaper caster
+draws per cascade (static cascade caching or a far cascade at half rate), actor animation LOD, and
+fewer views (check what the 16 visibility passes are).
+
+Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
+pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.
+
 ## Dev loop
 
 Compile and bake times are gated like frame times (owner 2026-10-11: "must be super fast for the dev

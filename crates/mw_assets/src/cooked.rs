@@ -196,14 +196,14 @@ pub(crate) fn spawn_cooked(
                 }
             }
         }
-        commands.entity(entity).insert(CookedSpawned { fallback: false });
+        commands.entity(entity).try_insert(CookedSpawned { fallback: false });
     }
 }
 
 fn fallback(commands: &mut Commands, server: &AssetServer, entity: Entity, root: &CookedModelRoot) {
     commands
         .entity(entity)
-        .insert((WorldAssetRoot(server.load(root.source.clone())), CookedSpawned { fallback: true }));
+        .try_insert((WorldAssetRoot(server.load(root.source.clone())), CookedSpawned { fallback: true }));
 }
 
 /// One cooked material as Bevy's, mapped like the NIF path's: the material

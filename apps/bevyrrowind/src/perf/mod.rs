@@ -93,8 +93,10 @@ pub enum Part {
     ContactShadows,
     /// Shadows F3 sun cascades (practical split to ~250 m); off = the A1 504 m layout.
     ShadowSplits,
-    /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`).
+    /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`; parked: off anyway).
     ShadowCache,
+    /// Sun-cascade caster size culling (`sf_sky_bevy::CasterCulling`, ROADMAP 1.2).
+    CasterCull,
     Clouds,
     /// Size-based draw distance (industry-audit.md J1).
     SizeCull,
@@ -130,7 +132,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 39] = [
+    const ALL: [(&'static str, Part); 40] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -153,6 +155,7 @@ impl Part {
         ("contactshadows", Part::ContactShadows),
         ("shadowsplits", Part::ShadowSplits),
         ("shadowcache", Part::ShadowCache),
+        ("castercull", Part::CasterCull),
 
         ("clouds", Part::Clouds),
         ("sizecull", Part::SizeCull),
@@ -367,7 +370,7 @@ fn no_shadows(mut lights: Query<&mut DirectionalLight>) {
 
 /// `--off particles`: NIF particle emitters never start.
 fn no_particles(add: On<Add<mw_assets::ParticleEmitter>>, mut commands: Commands) {
-    commands.entity(add.entity).remove::<mw_assets::ParticleEmitter>();
+    commands.entity(add.entity).try_remove::<mw_assets::ParticleEmitter>();
 }
 
 /// `--off near` / `--off far` / `--off nif`: spawns nothing for the

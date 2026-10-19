@@ -138,7 +138,7 @@ fn bind(
                     let source = materials.get(&m.material).cloned().unwrap_or_default();
                     materials.add(source)
                 });
-                commands.entity(mesh).insert(MeshMaterial3d(handle.clone()));
+                commands.entity(mesh).try_insert(MeshMaterial3d(handle.clone()));
             }
             if let Some(handle) = copy {
                 let last = vec![f32::NAN; channels.len()];
@@ -147,7 +147,7 @@ fn bind(
         }
         out.billboards = models.billboards(&body.skeleton).iter().filter_map(|name| binding.find(skeleton, name)).collect();
         if out.is_empty() {
-            commands.entity(entity).remove::<ActorFx>().insert(NoActorFx { meshes: body.meshes.clone() });
+            commands.entity(entity).try_remove::<ActorFx>().try_insert(NoActorFx { meshes: body.meshes.clone() });
         } else {
             debug!(
                 "actor fx {entity}: {} hidden joints, {} materials, {} billboards",
@@ -155,7 +155,7 @@ fn bind(
                 out.materials.len(),
                 out.billboards.len()
             );
-            commands.entity(entity).remove::<NoActorFx>().insert(out);
+            commands.entity(entity).try_remove::<NoActorFx>().try_insert(out);
         }
     }
 }

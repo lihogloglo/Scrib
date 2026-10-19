@@ -72,9 +72,10 @@ impl LiveAb {
 #[derive(Component)]
 struct OverlayText;
 
-/// DLSS modes F4 cycles through.
-const DLSS_CYCLE: [Upscaling; 5] = [
+/// Temporal resolve modes F4 cycles through (`off` = MSAA).
+const DLSS_CYCLE: [Upscaling; 6] = [
     Upscaling::Off,
+    Upscaling::Taa,
     Upscaling::Dlss(UpscaleQuality::Quality),
     Upscaling::Dlss(UpscaleQuality::Balanced),
     Upscaling::Dlss(UpscaleQuality::Performance),
@@ -357,10 +358,10 @@ fn keys(
         let text = if let Some(u) = s.upscaling.as_mut() {
             let i = DLSS_CYCLE.iter().position(|m| *m == u.0).map_or(0, |i| (i + 1) % DLSS_CYCLE.len());
             u.0 = DLSS_CYCLE[i];
-            let built = if cfg!(feature = "dlss") { "" } else { " (this exe has no dlss feature: stays off)" };
-            format!("DLSS requested {}{built}", u.0.label())
+            let built = if cfg!(feature = "dlss") || !matches!(u.0, Upscaling::Dlss(_)) { "" } else { " (this exe has no dlss feature: TAA)" };
+            format!("temporal resolve requested {}{built}", u.0.label())
         } else {
-            "DLSS: start with --dlss <mode> in interiors to make it switchable".to_owned()
+            "temporal resolve: start with --dlss <mode> in interiors to make it switchable".to_owned()
         };
         state.note(text, now);
     }

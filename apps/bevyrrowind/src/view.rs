@@ -154,6 +154,7 @@ pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error
     let render = options.render;
     let ray_traced = render.path == RenderPath::RayTraced;
     crate::render::RenderSettings::init(&mut app);
+    crate::shipped_errors(&mut app);
     let mut perf = options.perf;
     let bench = perf.bench.is_some();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {

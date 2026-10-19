@@ -150,7 +150,7 @@ pub(crate) fn start_particles(
         let Some(animation) = animations.get(&emitter.animation) else {
             continue;
         };
-        commands.entity(entity).insert(ParticlesStarted);
+        commands.entity(entity).try_insert(ParticlesStarted);
         // A placed model's keyframed emitter nodes, by model node index.
         let model_nodes = || {
             let root = parents.iter_ancestors(entity).find(|&a| roots.contains(a)).unwrap_or(entity);
