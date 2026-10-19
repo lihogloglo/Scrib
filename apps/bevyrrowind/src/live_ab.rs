@@ -124,8 +124,6 @@ pub(crate) struct Switches<'w> {
     weather_overrides: Option<ResMut<'w, sf_weather_bevy::WeatherOverrides>>,
     /// Characters: smooth or vanilla bodies (B, `actors.rs`).
     bodies: Option<Res<'w, sf_character_bevy::CharacterSettings>>,
-    /// Seamless portals (`--portals`): the exposure strength when on.
-    portals: Option<Res<'w, crate::portal_spike::ExposureStrength>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -476,12 +474,6 @@ fn overlay(
             opt(Switch::Clouds),
             opt(Switch::GroundBlend),
         );
-        match s.portals.as_ref() {
-            Some(p) => {
-                let _ = write!(out, "\nseamless portals on (--portals): - = exposure strength {:.1}", p.0);
-            }
-            None => out.push_str("\nseamless portals off (default; --portals or BEVYRROWIND_PORTALS=1)"),
-        }
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {
             let _ = write!(out, "\nlook for: {look}");
         }

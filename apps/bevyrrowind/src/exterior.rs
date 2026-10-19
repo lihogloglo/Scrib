@@ -111,8 +111,6 @@ pub struct ExteriorOptions {
     pub use_door: u32,
     /// `--activate N`: activate the crosshair target N times (`scripts.rs`).
     pub activate: u32,
-    /// `--portals`: the portal spike's links (scaffold `portal_spike`).
-    pub portals: Option<crate::portal_spike::PortalLinks>,
     /// Loaded records: actor placements spawn as dressed characters
     /// (`sf_character_bevy`; `--off actors` drops them).
     pub actors: Option<Arc<sf_records::RecordDb>>,
@@ -386,9 +384,6 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     crate::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
     crate::doors::add(&mut app, options.world, options.use_door);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
-    if let Some(links) = options.portals {
-        crate::portal_spike::add(&mut app, links);
-    }
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled);
     crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());
@@ -671,8 +666,7 @@ fn setup(
 /// `big_space`'s propagation, before the terrain update, the sky's atmosphere
 /// placement and the clouds' drive, so all of them move in the same frame as
 /// the origin (a frame late, the clouds jumped by a cell at every shift). The origin is that of the worldspace
-/// the terrain camera stands in (the exterior's, also when a portal camera
-/// looks out of an interior: `--portals`), else the active worldspace's.
+/// the terrain camera stands in (the exterior's), else the active worldspace's.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn sync_origin(
     roots: Query<(&WorldspaceRoot, &Grid)>,

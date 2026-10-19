@@ -10,16 +10,18 @@ Everything before 2026-10-19 (as-built notes, measurements, the session log) is 
 A task is `[x]` only when its Verify ran; visual tasks need the owner's eyes (`visual-checks.md`).
 Legend: `[x]` done, `[~]` started, `[ ]` not started, `[p]` parked (needs the owner's go to resume).
 
-## Owner decisions open
+## Owner decisions
 
-1. **Frame target** (proposal): High preset, 1440p + DLSS Quality on the owner's laptop (Ryzen 7 7435HS,
-   RTX 4060 Laptop): ≤ 11 ms median exterior (~90 fps), stretch 7 ms (~140 fps). Today ~30 fps.
-2. **Ray tracing role** (proposal): raster is the main path at the frame target; Solari is the "Ultra" tier
-   (60 fps target, WISHLIST §0). Alternative: RT-first with raster as fallback.
-3. Park the far static sun map (`FAR_STATIC_SHADOWS` off) and the point-shadow cube cache slice 2b
-   (built, no gain): proposal **park both** (phase 1.4 picks one shadow design).
-4. Older, low priority: storm spill past region borders (~2 km vs strict); co-op guest imports a single-player
-   character (default: create only); cargo-deny in superfargoth; UAL2 clip pack purchase.
+Decided 2026-10-19:
+1. **Frame target:** High preset, 1440p + DLSS Quality on the owner's laptop (Ryzen 7 7435HS, RTX 4060 Laptop):
+   ≤ 11 ms median exterior (~90 fps), stretch 7 ms (~140 fps). Today ~30 fps.
+2. **Ray tracing:** raster is the main path and must meet the target; Solari is the "Ultra" tier and may cost
+   more ("ray tracing will impact perfs, that's okay"; WISHLIST §0: 60 fps).
+3. **Shadows: something simpler that works well first.** Park the far static sun map and the point-shadow cube
+   cache. New techniques only when they are the better, industry-standard way, not as extra layers.
+
+Still open (low priority): storm spill past region borders (~2 km vs strict); co-op guest imports a single-player
+character (default: create only); cargo-deny in superfargoth; UAL2 clip pack purchase.
 
 ## Phase 0: stop and clean up (now)
 
@@ -32,11 +34,12 @@ Legend: `[x]` done, `[~]` started, `[ ]` not started, `[p]` parked (needs the ow
 - [ ] 0.4 Specs over ~25 KB split into design + short "As built" (weather.md 172 KB, animation.md 108 KB,
   physics.md 72 KB, water.md 62 KB, locomotion.md, character.md, streaming.md, ui.md, scripting.md); history to
   `archive/` next to them. Do each when its phase starts, not all at once.
-- [ ] 0.5 `portal_spike.rs` (53 KB, parked until M9) out of the default build (feature `portals`) or deleted.
+- [x] 0.5 `portal_spike.rs` + its shader, `--portals` flags and the 9 `portal-*` scenes deleted (owner go 2026-10-19;
+  git history keeps them, design and results in `superfargoth/docs/specs/portals.md`; `mw_world::portal` stays).
 
 ## Phase 1: performance, stability, image quality
 
-Goal: the frame target (decision 1) in Balmora, Seyda Neen and the flight bench, with clean, grain-free shadows
+Goal: the frame target (decision 1, raster path) in Balmora, Seyda Neen and the flight bench, with clean, grain-free shadows
 and effects. Every task reports its ms cost per preset.
 
 - [ ] 1.1 **Stability first.** DR-4 crash (command on a despawned entity on leaving an interior): streamed
@@ -51,7 +54,8 @@ and effects. Every task reports its ms cost per preset.
   in weather/fog/soft shadows (WE-2, WE-3), grazing-light edge shimmer (SH-12), water moiré (WA-1).
 - [ ] 1.4 **One shadow design, finished.** Sun: cascades + contact shadows + terrain far shadow (keep SH-7/8/10).
   Fix distant flashes on camera move (SH-11); lamp shadows: short reach, grain, flicker, wrong guard outline
-  (SH-13); leaf shadows on some trees only (LM-1); translucent casters (RO-1). Park the rest (decision 3).
+  (SH-13); leaf shadows on some trees only (LM-1); translucent casters (RO-1). Far static map and cube cache
+  parked (decision 3).
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [ ] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset.
 - [ ] 1.6 Object-terrain blending redo (TB-1..3 rejected: reads as a darkened base). Standard technique: terrain
@@ -64,7 +68,7 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.9 Streaming and culling levers from the old M2 list (archive "Next up" 1, 6, 7): render-thread spikes,
   `NoCpuCulling` A/B (J2), shadow-caster rules (J4), pipeline warm-up (J7), precombine evaluation (J6);
   deferred checks ST-2, ST-3, SC-2.
-- [ ] 1.10 RT per decision 2: exterior RT content (`ray_tracing_lod`, `NoRayTracing` on proxies, terrain RT
+- [ ] 1.10 RT as the Ultra tier (decision 2): exterior RT content (`ray_tracing_lod`, `NoRayTracing` on proxies, terrain RT
   proxy), Solari sunset patch; checks DL-2, DL-3 (needs a `solari,dlss` build).
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
@@ -113,3 +117,4 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - 2026-10-19 (phase0): audit; owner check pass (14 windows); ROADMAP rewritten into phases; ARCHITECTURE §10/§11
   moved to `superfargoth/docs/DECISIONS.md`.
+- 2026-10-19 (phase0): owner decisions 1-3 recorded; portal spike deleted (clippy clean, app tests pass).

@@ -20,7 +20,6 @@ mod mods;
 mod night_sky;
 mod perf;
 mod physics;
-mod portal_spike;
 #[cfg(feature = "remote")]
 mod remote;
 mod render;
@@ -306,19 +305,6 @@ struct ViewFlags {
     /// or `robes` (simulated cloth, the opt-in; physics-adapter.md "Cloth").
     #[arg(long, default_value = "authored")]
     cloth: mw_physics::ClothMode,
-    /// Streamed view: seamless doors, the M8 portal spike (scaffold
-    /// `portal_spike`): see through door openings, walk through without a fade.
-    /// Optional setting, off by default (doors fade); also `BEVYRROWIND_PORTALS=1`.
-    #[arg(long)]
-    portals: bool,
-    /// With `--portals`: the spike's per-space scheduled exposure (each side its
-    /// own) instead of the viewer's auto exposure (portals.md "Exposure"), for A/B.
-    #[arg(long)]
-    scheduled_exposure: bool,
-    /// With `--portals`: walk forward through the door in front and back, twice
-    /// (crossings and the frames after each are logged).
-    #[arg(long)]
-    portal_walk: bool,
     /// Interiors: the single-cell viewer (one cell, no streaming, no doors)
     /// instead of the streamed view. `--rt`, `--no-baked` and `--skinned`
     /// choose it too: the streamed view doesn't support them yet.
@@ -509,7 +495,6 @@ impl ViewFlags {
             water: water::WaterInputs::build(db),
             use_door: self.use_door.unwrap_or(0),
             activate: self.activate.unwrap_or(0),
-            portals: None,
             actors: None,
             level: None,
             bodies: self.bodies,
@@ -742,17 +727,10 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
         && let Some((label, center)) = exterior_place(&content.db, cell)
     {
         println!("exterior at {label}: ({:.0}, {:.0}) m", center.x, center.y);
-        let (portals, scheduled_exposure, portal_walk) = (flags.portals, flags.scheduled_exposure, flags.portal_walk);
         let mut options =
             flags.exterior_options(install, &content.db, format!("Bevyrrowind - {label}"), StreamStart::Exterior(center))?;
         if let Some(w) = &mut options.weather {
             w.load_sounds(&content.db, &vfs);
-        }
-        if portal_spike::enabled(portals) {
-            let mut links = portal_spike::fill_frames(&mut options.world.links, &content.db, &vfs);
-            links.scheduled_exposure = scheduled_exposure;
-            links.walk = portal_walk;
-            options.portals = Some(links);
         }
         options.actors = Some(std::sync::Arc::new(content.db));
         return exterior::run(std::sync::Arc::new(vfs), options);
@@ -765,16 +743,9 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
         let (eye, target) = interior_view(&placements);
         let start = StreamStart::Interior { worldspace: mw_world::ids::worldspace_of(found), eye, target };
         println!("interior {}: streamed view (--single-cell for the single-cell viewer)", found.name);
-        let (portals, scheduled_exposure, portal_walk) = (flags.portals, flags.scheduled_exposure, flags.portal_walk);
         let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - {}", found.name), start)?;
         if let Some(w) = &mut options.weather {
             w.load_sounds(&content.db, &vfs);
-        }
-        if portal_spike::enabled(portals) {
-            let mut links = portal_spike::fill_frames(&mut options.world.links, &content.db, &vfs);
-            links.scheduled_exposure = scheduled_exposure;
-            links.walk = portal_walk;
-            options.portals = Some(links);
         }
         options.actors = Some(std::sync::Arc::new(content.db));
         return exterior::run(std::sync::Arc::new(vfs), options);
