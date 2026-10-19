@@ -350,3 +350,44 @@ fn faceted_sources_simplify_and_keep_hard_edges() {
         assert!((n.abs().max_element() - 1.0).abs() < 1e-4, "hard edge kept: {n}");
     }
 }
+
+/// Precombine (precombine.md): members merge per material and LOD level in
+/// cell space; actors, blended models and vetoed placements stay out; size
+/// classes split.
+#[test]
+fn near_precombine_merges_statics_per_level() {
+    use crate::near::{BUCKET_EDGES, NearCombine, bucket_of, build_near};
+    let model = Arc::new(sphere_model());
+    let cell = IVec3::new(2, 1, 3);
+    let origin = Partition::STREAMING.cell_origin(cell).to_f64();
+    let mut placements: Vec<IndexedPlacement> =
+        (0..3).map(|i| placement(i, origin + DVec3::new(20.0 + f64::from(i) * 30.0, 0.0, 40.0), PlacementClass::Static)).collect();
+    placements.push(placement(10, origin + DVec3::new(60.0, 0.0, 60.0), PlacementClass::Actor));
+    let mut small = placement(11, origin + DVec3::new(70.0, 0.0, 70.0), PlacementClass::Static);
+    small.radius = 0.3;
+    placements.push(small);
+    let vetoed = placements[2].placement.id;
+    let lookup = |_: &VfsPath| Some(model.clone());
+    let near = build_near(Partition::STREAMING, cell, &placements, &lookup, &|p| p.id == vetoed).expect("builds").expect("some");
+    assert_eq!(near.member_count(), 3, "two statics + the small one; actor and vetoed out");
+    assert_eq!(near.buckets.len(), 2, "size classes split");
+    let big = near.buckets.iter().find(|b| b.members.len() == 2).expect("big bucket");
+    assert_eq!(big.model.lods.len(), model.lods.len());
+    for (k, lod) in big.model.lods.iter().enumerate() {
+        assert_eq!(lod.triangle_count(), 2 * model.lods[k].triangle_count(), "level {k}");
+        assert!((lod.error - model.lods[k].error).abs() < 1e-6);
+    }
+    assert_eq!(big.model.materials.len(), 1, "one shared material");
+    // The two spheres (radius 3, 30 m apart) span ~36 m in X around the center.
+    let w = big.model.bounds.max[0] - big.model.bounds.min[0];
+    assert!((w - 36.0).abs() < 0.5, "width {w}");
+    assert!(big.reach > 15.0);
+    assert_eq!(NearCombine::from_bytes(&near.to_bytes()).expect("decodes"), near);
+    // Blended materials keep a placement out entirely.
+    let mut glass = (*model).clone();
+    glass.materials[0].alpha = sf_model::AlphaMode::Blend;
+    let glass = Arc::new(glass);
+    let none = build_near(Partition::STREAMING, cell, &placements[..2], &|_: &VfsPath| Some(glass.clone()), &|_| false).expect("builds");
+    assert!(none.is_none());
+    assert_eq!((bucket_of(0.1), bucket_of(BUCKET_EDGES[0]), bucket_of(3.0), bucket_of(50.0)), (0, 1, 2, 3));
+}

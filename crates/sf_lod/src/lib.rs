@@ -13,6 +13,7 @@ pub mod build;
 pub mod cluster;
 pub mod impostor;
 pub mod levels;
+pub mod near;
 pub mod node;
 pub mod octa;
 pub mod policy;
@@ -26,6 +27,7 @@ pub use blob::{FarDirectory, ImpostorInstance, ImpostorModel, LightPoint, NodeBl
 pub use build::{FarBakeSettings, FarModel, build_l1, build_parent, impostor_sphere, yaw_of};
 pub use impostor::{CaptureMesh, ImpostorAtlas, ImpostorSettings, capture};
 pub use levels::{FadeRange, FarLevels};
+pub use near::{NearBucket, NearCombine, build_near, near_eligible};
 pub use node::{FIRST_LEVEL, LAST_LEVEL, NodeKey};
 pub use octa::OctaMode;
 pub use texture::{TextureDecoder, TextureImage};
