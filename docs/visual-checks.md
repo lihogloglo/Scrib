@@ -1841,11 +1841,13 @@ Status: awaiting owner (2026-10-19). Agent check: dev build renders, shaders com
 
 ### WE-3: Neighbouring regions' weather seen from afar (`scene we3-ridge`, then BRP region forces)
 
-Status: **awaiting owner; known bug** (M6 WE4c, we4c, 2026-10-19). Camera on the ridge NE of Balmora (West Gash, forced
+Status: **awaiting owner** (M6 WE4c, we4c, 2026-10-19; bug fixed we4c2). Camera on the ridge NE of Balmora (West Gash, forced
 Clear) at 14:00. Force neighbours over BRP (port in the title): `bevyrrowind/set {"weather": "ashstorm", "region":
 "Ashlands Region", "transition_hours": 0}` and `{"weather": "thunderstorm", "region": "Ascadian Isles Region",
 "transition_hours": 0}`; look north (Ashlands, Red Mountain) and south-east (Ascadian Isles, Vivec). Look for: clear sky
 overhead; a dark deck over each forced region only, starting at its border, continuing to the horizon; no seam at the
 band; walking toward a border (400/200/100/0 m), no pop. Agent shots (`shots/we4c/`): the forced regions do get clouds
 and the zenith stays clear, but the decks stop short of the horizon and hang as grey vertical columns near the camera
-(bug, see weather.md "WE4c as built").
+(bug, see weather.md "WE4c as built"). Fixed (we4c2, `shots/we4c2/`): the Ascadian Isles storm is a wall reaching the
+horizon, zenith clear, no columns; the Ashlands deck ends ~3 km out where the region does (small regions under real-scale
+decks can't fill the low sky). Also check: no jump in the far sky when the map recenters (walk 2 km).
