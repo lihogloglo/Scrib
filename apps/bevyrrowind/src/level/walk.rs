@@ -37,7 +37,26 @@ pub struct WalkPlayer;
 pub fn add(app: &mut App) {
     app.init_resource::<WalkMode>()
         .add_systems(Update, (toggle, input).chain().in_set(ControllerSystems::Drive))
-        .add_systems(Update, follow.after(ControllerSystems::Step).after(run_freecamera_controller));
+        .add_systems(Update, follow.after(ControllerSystems::Step).after(run_freecamera_controller))
+        .add_systems(Update, report.after(ControllerSystems::Step));
+}
+
+/// Logs the player's start and stop (position, wanted and measured speed),
+/// so a walk run can be checked from the log.
+#[allow(clippy::needless_pass_by_value)]
+fn report(mode: Res<WalkMode>, players: Query<(&Mover, &MoveIntent), With<WalkPlayer>>, mut moving: Local<bool>) {
+    let Ok((mover, intent)) = players.single() else { return };
+    let now = mode.on && intent.0.desired_velocity.length_squared() > 1e-4;
+    if now != *moving {
+        *moving = now;
+        info!(
+            "walk: player {} at {:.2?}, wants {:.2} m/s, measured {:.2} m/s",
+            if now { "starts" } else { "stops" },
+            mover.loco.position,
+            intent.0.desired_velocity.length(),
+            mover.measured.length()
+        );
+    }
 }
 
 #[allow(clippy::needless_pass_by_value)]

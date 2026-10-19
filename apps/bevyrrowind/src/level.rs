@@ -66,14 +66,7 @@ pub fn worldspace(name: &str) -> WorldspaceId {
 pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::ViewFlags) -> crate::Result {
     let started = *STARTED.get_or_init(Instant::now);
     let (source, level) = find(name)?;
-    let pick = flags.camera.as_deref().map(str::to_ascii_lowercase);
-    let camera = match pick.as_deref().and_then(|p| level.cameras.iter().find(|c| c.name.eq_ignore_ascii_case(p))) {
-        Some(c) => {
-            flags.camera = None;
-            c
-        }
-        None => &level.cameras[0],
-    };
+    let camera = pick_camera(&level, &mut flags.camera);
     println!(
         "level {} ({source}): {} objects, cameras {}",
         level.name,
@@ -89,6 +82,17 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     options.actors = Some(Arc::new(content.db));
     options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into() });
     crate::exterior::run(Arc::new(vfs), options)
+}
+
+/// The start camera: the level camera `--camera` names (case-insensitive;
+/// the flag is then consumed), else the first one, with a raw
+/// "ex,ey,ez,tx,ty,tz" flag left for the viewer to apply.
+fn pick_camera<'a>(level: &'a Level, flag: &mut Option<String>) -> &'a sf_level::CameraDef {
+    let named = flag.as_deref().and_then(|p| level.cameras.iter().find(|c| c.name.eq_ignore_ascii_case(p)));
+    if named.is_some() {
+        *flag = None;
+    }
+    named.unwrap_or(&level.cameras[0])
 }
 
 /// A level by name (`levels/<name>.ron` in the current folder, then next to
@@ -386,6 +390,20 @@ mod tests {
         let cells: std::collections::HashSet<IVec3> =
             placements.iter().map(|p| sf_world::Partition::STREAMING.cell_of(p.transform.pos)).collect();
         assert!(cells.len() >= 4, "the floor spans the four cells around the origin: {cells:?}");
+    }
+
+    /// `--camera <name>` (as `scene level-robe-walk --camera course` passes
+    /// it) picks that camera and is consumed; a raw pose stays for the viewer.
+    #[test]
+    fn camera_flag_picks_a_named_camera() {
+        let (_, level) = find("robe-walk").expect("level parses");
+        let mut flag = Some("Course".to_owned());
+        assert_eq!(pick_camera(&level, &mut flag).name, "course");
+        assert_eq!(flag, None);
+        let mut raw = Some("1,2,3,4,5,6".to_owned());
+        assert_eq!(pick_camera(&level, &mut raw).name, level.cameras[0].name);
+        assert!(raw.is_some(), "a raw pose reaches the viewer");
+        assert_eq!(pick_camera(&level, &mut None).name, level.cameras[0].name);
     }
 
     #[test]

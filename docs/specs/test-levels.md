@@ -77,10 +77,21 @@ and pipeline setup dominate; logged as `level <name> ready <s> after start`).
   `U` toggles fly/walk: WASD in the camera's heading frame, Shift runs; the
   free camera keeps the mouse look and sits 3.5 m behind a 1.6 m pivot.
   Scaffold: no camera collision, no jump (the player controller is M7).
+  Verified (ts1c, 2026-10-19, BRP): the player spawns dressed at `start`,
+  W walks it 2.6 m in 2 s (1.6 m/s), Shift+W asks 4.5 m/s, the camera follows;
+  the log prints `walk: player starts/stops at ..., wants ..., measured ...`.
 - **Props:** `dynamic: Some(mass)` boxes are `BodyKind::Dynamic` bodies on
   `Layer::PROP` (box shape about the center, the render mesh shifted to
   match) with `PhysicsBody` for the pose write-back; `LevelProp` keeps the
   `interact` hook for P11.
+  Verified (ts1c): `V` balls (3 kg, 12 m/s) shove the 15 kg crates off their
+  stack; with `G` the colliders sit on the meshes. They shove rather than
+  topple: a heavier throw or lighter crates if the owner wants a knock-over.
+- **`--camera`:** `level::pick_camera` takes a level camera by name (tested);
+  `view` lets a repeated flag override the earlier one (`args_override_self`),
+  so `scene <name> --camera ...` also replaces a scene's own camera (before:
+  a clap error). ts1b's "course camera not applied" did not reproduce: BRP
+  status reports (14, 2.5, 3) -> (4, 1, 2) for `scene level-robe-walk --camera course`.
 - **No land:** a level worldspace never gets `TerrainCamera` (exterior
   setup, `doors::worldspace_look`): before, the terrain streamed
   Vvardenfell's patches around the camera and each new patch drew for a

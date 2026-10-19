@@ -150,6 +150,9 @@ enum Command {
         extra: Vec<String>,
     },
     /// Render a cell (interior name, or exterior grid as "x,y").
+    // A repeated flag replaces the earlier one: `scene <name> --camera ...`
+    // overrides the scene's own camera instead of a clap error.
+    #[command(args_override_self = true)]
     View {
         /// Interior name, exterior grid "x,y", or with `--model` a NIF path.
         /// Hyphen values allowed so negative grids like "-4,-3" aren't read as flags.

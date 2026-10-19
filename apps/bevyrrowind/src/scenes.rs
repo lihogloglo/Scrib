@@ -210,6 +210,23 @@ mod tests {
         }
     }
 
+    /// Flags after the scene name win, also over flags the scene sets itself.
+    #[test]
+    fn extra_flags_override_the_scene() {
+        let scenes = parse(BUILT_IN, "built-in").expect("scenes.ron parses");
+        let camera_of = |s: &SceneDef, extra: &[&str]| {
+            let args = view_args(s, extra.iter().map(|&a| a.to_owned()).collect());
+            match crate::Cli::try_parse_from(std::iter::once("bevyrrowind".to_owned()).chain(args)).expect("parses").command {
+                crate::Command::View { flags, .. } => flags.camera,
+                _ => panic!("a scene runs `view`"),
+            }
+        };
+        let level = find(&scenes, "level-robe-walk").expect("scene");
+        assert_eq!(camera_of(level, &["--camera", "course"]).as_deref(), Some("course"));
+        let placed = scenes.iter().find(|s| s.camera.is_some()).expect("a scene with its own camera");
+        assert_eq!(camera_of(placed, &["--camera", "1,2,3,4,5,6"]).as_deref(), Some("1,2,3,4,5,6"));
+    }
+
     #[test]
     fn prefix_lookup() {
         let scenes = parse(BUILT_IN, "built-in").expect("scenes.ron parses");

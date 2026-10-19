@@ -1006,7 +1006,7 @@ ragdolls; robes move." Tasks in dependency order:
   ladders, sitting, doors, levers). Learn from AC1-rs, faith-runner, ELDEN-RING-Combat-Rewrite, sekiro-rs and ozz,
   don't copy them: animation.md "Prior art: open Rust/Bevy game reimplementations". First step: pick a clip source
   (Morrowind has no climb/vault/sit clips), then write the traversal spec. Not started: needs the owner's go.
-- [~] TS1 Synthetic test levels (owner go 2026-10-18; specs: superfargoth `test-levels.md` format + research,
+- [x] TS1 Synthetic test levels (owner go 2026-10-18; specs: superfargoth `test-levels.md` format + research,
   `docs/specs/test-levels.md` game side): greybox levels authored as `levels/*.ron`, opened through `scene`/`view` with
   the usual flags, BRP and F1 keys; uses: PH-3 cloth on slopes, PH checks, traversal courses (research 01).
   **Built (ts1a, 2026-10-18):** `sf_level` (Bevy-free: RON format, validation, flat-shaded meshes with meter UVs;
@@ -1022,8 +1022,11 @@ ragdolls; robes move." Tasks in dependency order:
   level is active; level `robe-walk` + scene `level-robe-walk` (priest loop, Fargoth walking and Elone running over
   ramp/plateau/stairs; p10c's cloth already simulates on them; TS-2 awaiting owner). Fix: a level worldspace never gets
   `TerrainCamera` (TS-1's black flashes were Vvardenfell terrain patches; 0 patches after a 400 m camera jump).
-  Also written, compiled, not yet verified on screen: `U` walk mode, dynamic box props, the headless course runner
-  (`sf_level/tests/course.rs`, 2 tests pass). **Next:** verify walk mode and props (TS-2), then course tests.
+  Headless course runner `sf_level/tests/course.rs` (2 tests). **Verified (ts1c, 2026-10-19, BRP):** `U` walk mode
+  (player dressed at `start`, W 1.6 m/s, Shift 4.5 m/s, follow camera; start/stop logged) and props (`V` balls shove the
+  crates); `--camera` fix: `view` repeated flags override (`scene X --camera` over a scene camera was a clap error),
+  `level::pick_camera` + tests. TS-1/TS-2 awaiting owner. Leftovers: course cases (vault/mantle once traversal exists),
+  compound table, camera collision + jump in walk mode, `--walk` start flag.
 
 - Verify (milestone): PH-1 (table knock-over), PH-2 (dead guard ragdoll + knockdown/get-up), PH-3 (robes) signed off
   by the owner; a benchmark entry for Balmora with physics on (idle step, a collapse, 2 ragdolls) within the gates.
@@ -1765,3 +1768,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (we2a): M6 WE2 [~] part 1: Bevy-free `mw_weather` (REGN → climates, `[Weather*]` → presets, 4 precip kinds, lightning per game hour, transition from `Transition Delta` as real-time Hz, synthetic source "Morrowind.ini weather"); `MorrowindIni::get`; 7 tests (1 on the real install) green, clippy clean. Next: we2b (clouds/fog/wind terms, Red Mountain storm, region sounds, MWScript table, forecast command).
 - 2026-10-18 (we2b): M6 WE2 [~] part 2: `mw_weather` presets carry the visual fields (cloud genus + `Cloud Speed`, haze/dust/fog with hour curves = the app's `SKY_*`/`FogLook` tables, `Wind Speed`, ash/blight storm + Red Mountain radial source, `Flash Decrement` → new `Lightning::fade_s`); 11 tests (2 real install) green, clippy clean. Next: we2c (region sounds, MWScript table, forecast command, app `define_into`).
 - 2026-10-19 (we2c1): M6 WE2 [~] part 3a: REGN sounds → new generic sf_weather `OneShotSet` ("scatterer", real-second intervals, audio layer schedules) + `WeatherPreset.climate_ambience` (storms hush the region); `mw_weather::script` maps ChangeWeather/ModRegion/GetCurrentWeather/GetWindSpeed onto `WeatherState`, table in weather-adapter.md; mw_weather 13 + sf_weather 11 tests green, clippy clean. superfargoth d2c1898. Next: we2c2 (forecast command + frequency check, app `define_into`).
+- 2026-10-19 (ts1c): TS1 [x] part 3: `--camera` through `scene` (ts1b report not reproduced; real bug fixed: a repeated `view` flag now overrides, so `scene X --camera` works on scenes with their own camera; `level::pick_camera` + 2 tests); walk mode verified via BRP (player dressed at `start`, W/Shift move it, follow camera, start/stop log line); props verified (`V` balls shove the crates; G colliders on meshes). TS-1/TS-2 awaiting owner.

@@ -1702,11 +1702,11 @@ unchanged with F2/F3/F10 and `--off froxels`: Vvardenfell's terrain streams into
 
 ### TS-2: Level actors, props and walk mode (`scene level-robe-walk`; also `U` in any `level-*` scene)
 
-Status: **awaiting owner** (TS1 part 2, ts1b, 2026-10-18). Three robed NPCs on scripted paths (`levels/robe-walk.ron`):
+Status: **awaiting owner** (TS1 part 2, ts1b, 2026-10-18; walk mode and props agent-checked by ts1c 2026-10-19: W/Shift moves the player, follow camera, V shoves the crates). Three robed NPCs on scripted paths (`levels/robe-walk.ron`):
 camera `priest`: the Balmora temple priest in his own robe walks a flat 6 × 8 m loop, stops 3 s at its south-west
 corner and fidgets; camera `course`: Fargoth (common robe) walks and Elone (extravagant robe, run gait, 4 m/s) runs back
 and forth over a 15° ramp, a 1 m plateau and stairs (5 × 0.20 m) down the far side, waiting at the ends; camera
-`props`: a table and three stacked crates (dynamic bodies): `V` balls knock them over. `U` toggles walk mode: the
+`props`: a table and three stacked crates (dynamic bodies): `V` balls shove them (aim close: a 3 kg ball moves a 15 kg crate, the stack slides apart rather than toppling). `U` toggles walk mode: the
 `player` character at the `start` spawn walks with WASD (Shift runs) in the camera's heading, the free camera follows
 3.5 m behind (mouse look as usual). Look for: dressed characters (no T-pose, no missing parts) whose feet stay on the
 ramp, plateau and steps (no sinking or floating), walk/run playback matched to speed, turns at the path ends; crates
