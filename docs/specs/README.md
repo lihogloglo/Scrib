@@ -30,6 +30,7 @@ Index:
 | [far-field.md](far-field.md): HLOD hierarchy over the streaming grid, octahedral impostors, distant lights, crossfade | draft (2026-10-11) | `sf_lod`, `sf_lod_bevy` | M2 (moved from M7) |
 | [diag.md](diag.md): counters, frame stats, gates, baselines, fly-throughs | implemented (2026-10-11) | `sf_diag`, `sf_diag_bevy` | M1 |
 | [sky-lighting.md](sky-lighting.md): atmosphere, sun/moon from clock and latitude, exposure, raster/Solari switch, point-light proxies, weather/wind hooks | implemented (2026-10-11) | `sf_sky`, `sf_sky_bevy` | M2 |
+| [shadows.md](shadows.md): local-light shadows at scale (importance budget, cached static cube maps, F6) | draft (2026-10-19) | `sf_sky_bevy` (+ `sf_shadow_cache_bevy`) | 6a |
 | [animation.md](animation.md): cooked clips, pose runtime, layered graph, blend spaces, root motion, events, IK, LOD/budget | draft (2026-10-11) | `sf_anim`, `sf_anim_graph`, `sf_anim_bevy` | M3 |
 | [character.md](character.md): assembly + merging, equipment slots, standard humanoid rig, bake-time retargeting, first/third person | draft (2026-10-11) | `sf_character`, `sf_character_bevy`, `sf_model` | M3 |
 | [ui.md](ui.md): game UI stack (CommonUI-style layers, MVVM), two themes × two layout presets, CSS styling via bevy_flair layered by load order, slots, Luau UI API, gamepad-complete input, scaling, a11y | draft, design complete (2026-10-11) | `sf_ui`, `sf_ui_bevy`, `sf_ui_css`, `sf_ui_screens`, `sf_ui_lua`, `sf_devui` | M5 |

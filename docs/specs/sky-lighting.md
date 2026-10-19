@@ -76,8 +76,8 @@ precipitation, stars, moon phases on the disk, surface wetness.
   point lights marked `BudgetedShadow { priority }` compete for
   `PointShadowBudget::max` cube shadow maps (Bevy's
   `PointLight::shadow_maps_enabled`, faces `PointLightShadowMap::size`).
-  Ranking: distance to the viewer (the highest-order active window
-  camera) over priority; a holder ranks 1/0.8 better (hysteresis). Strength
+  Ranking: `shadow_importance` (strength at the viewer × screen coverage ×
+  priority, lights out of view included; [shadows.md](shadows.md)); a holder ranks 1/0.8 better (hysteresis). Strength
   fades with distance (full to `fade_start` 15 m, none past `fade_end` 25 m)
   and over time (`fade_time` 0.3 s) when a light gains or loses its slot;
   a newcomer waits for a free slot, so at most `max` maps exist. Bevy's

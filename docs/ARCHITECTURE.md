@@ -1862,3 +1862,10 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   static shadow map** (objects only; terrain stays on the horizon march + SHM; `min` of both past `s_max`), our own
   pass (Bevy 0.20 has no shadow caching or extra shadow-view API); designed, not built yet. Until it lands, L0
   objects at 250-440 m cast no object shadows (`--off shadowsplits` restores the 504 m layout).
+- 2026-10-19 (shf6): local-light shadows (spec `specs/shadows.md`): the shadowed set is chosen by
+  `sf_sky_bevy::shadow_importance` (strength at the viewer from `range`, not the flickering intensity, × screen
+  coverage × priority, off-screen lights included, hysteresis), replacing nearest-first. Bevy 0.20 redraws every
+  point shadow every frame and is render-thread bound (~1.9 ms per light in the census office), so more shadowed
+  lights need our own cache: static casters cached per light in a persistent cube array, movable casters drawn over
+  a copy, the result copied into Bevy's cube array while Bevy's own views for those lights are emptied (Bevy keeps
+  sampling and filtering; upstream if it stays small).

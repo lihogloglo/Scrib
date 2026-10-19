@@ -9,8 +9,9 @@
 //! `PointLightShadowMap`) but neither a budget nor a per-light shadow
 //! strength, so this module:
 //!
-//! - ranks the lights marked [`BudgetedShadow`] by distance to the viewer
-//!   over their priority, with hysteresis, and lets at most
+//! - ranks the lights marked [`BudgetedShadow`] by [`importance`] at the
+//!   viewer (spec `docs/specs/shadows.md`, "Light selection"), lights out
+//!   of view included, with hysteresis, and lets at most
 //!   [`PointShadowBudget::max`] hold a shadow map at once;
 //! - fades a shadow in and out (distance band and over time) by splitting
 //!   the light: the shadowed light carries `fade` of its power and an
@@ -44,8 +45,8 @@ pub struct PointShadowBudget {
     /// Seconds for a shadow to fade fully in or out when a light gains or
     /// loses its slot.
     pub fade_time: f32,
-    /// A light holding a slot keeps it until a challenger ranks better by
-    /// this factor (no flicker between two lights at similar distances).
+    /// A light holding a slot keeps it until a challenger's importance is
+    /// higher by `1 / hysteresis` (no flicker between two lights at similar distances).
     pub hysteresis: f32,
     /// Face size of the cube maps (`PointLightShadowMap::size`).
     pub map_size: usize,
@@ -77,8 +78,27 @@ impl PointShadowBudget {
     }
 }
 
+/// How much a point light's shadow matters to a viewer `distance` meters
+/// away (spec `docs/specs/shadows.md`, "Light selection"): its strength at
+/// the viewer times the share of the view its lit volume covers,
+/// `(range / max(d, 1))² · min(1, range / d)²`, times `priority`.
+///
+/// Strength enters through `range`, not `intensity`: games set the range
+/// where the light fades out (Bevy's cutoff), so `range²` tracks the
+/// light's power, and it doesn't change with flicker (an animated
+/// intensity would reshuffle the shadowed set every frame). Inside its
+/// range a light scores its illuminance at the eye (`∝ range² / d²`);
+/// outside, that falls off once more by its screen coverage. Clamped below
+/// 1 m so the light you stand next to doesn't swamp the ranking.
+#[must_use]
+pub fn importance(range: f32, distance: f32, priority: f32) -> f32 {
+    let near = (range / distance.max(1.0)).powi(2);
+    let coverage = (range / distance.max(1e-3)).min(1.0).powi(2);
+    priority.max(0.0) * near * coverage
+}
+
 /// A point light that may cast shadows within the [`PointShadowBudget`].
-/// Higher `priority` ranks as if nearer (a carried torch over a lamp).
+/// `priority` multiplies its [`importance`] (a carried torch over a lamp).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct BudgetedShadow {
     pub priority: f32,
@@ -162,22 +182,24 @@ fn budget_shadows(
     mut twins: Query<(&mut PointLight, &mut Visibility), With<ShadowTwin>>,
 ) {
     let eye = viewer(&cameras).map(|t| t.translation());
-    // The best `max` candidates: shown, inside the fade band; slot holders
-    // rank better by the hysteresis factor.
+    // The best `max` candidates by importance: shown (in view or not, so
+    // turning the camera changes nothing), inside the fade band; slot
+    // holders rank better by 1 / hysteresis.
     let mut ranked: Vec<(f32, Entity)> = Vec::new();
     if let Some(eye) = eye
         && budget.max > 0
     {
-        for (entity, _, slot, prio, at, vis, inherited) in &lights {
+        for (entity, light, slot, prio, at, vis, inherited) in &lights {
             let shown = *vis != Visibility::Hidden && inherited.is_none_or(|v| v.get());
             let d = at.translation().distance(eye);
             if shown && d < budget.fade_end {
                 let held = slot.is_some_and(|s| s.held);
-                ranked.push((d / prio.priority.max(1e-3) * if held { budget.hysteresis } else { 1.0 }, entity));
+                let score = importance(light.range, d, prio.priority);
+                ranked.push((if held { score / budget.hysteresis.max(1e-3) } else { score }, entity));
             }
         }
     }
-    ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
     ranked.truncate(budget.max);
     let target_of = |entity: Entity, at: &GlobalTransform| match eye {
         Some(eye) if ranked.iter().any(|r| r.1 == entity) => budget.distance_fade(at.translation().distance(eye)),
