@@ -151,6 +151,8 @@ pub struct SkyTerms {
     pub dust: f32,
     pub dust_tint: Vec3,
     pub overcast_dimming: f32,
+    /// Sun glare multiplier, `[0, 1]` (`sf_sky::Weather::sun_glare`).
+    pub sun_glare: f32,
     /// Multiplier on `haze` over the hour of day (empty: 1), e.g. morning haze.
     pub haze_by_hour: KeyCurve,
 }
@@ -163,6 +165,7 @@ impl Default for SkyTerms {
             dust: w.dust,
             dust_tint: w.dust_tint,
             overcast_dimming: w.overcast_dimming,
+            sun_glare: w.sun_glare,
             haze_by_hour: KeyCurve::default(),
         }
     }

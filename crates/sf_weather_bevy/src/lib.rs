@@ -293,8 +293,8 @@ fn apply_sky(
         .clouds
         .map_or(f.cloud_cover, |c| c.mean_cover());
     let w = &sky.0;
-    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming)
-        != (haze, dust, f.dust_tint, cover, f.overcast_dimming)
+    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming, w.sun_glare)
+        != (haze, dust, f.dust_tint, cover, f.overcast_dimming, f.sun_glare)
     {
         let w = &mut sky.0;
         w.haze = haze;
@@ -302,6 +302,7 @@ fn apply_sky(
         w.dust_tint = f.dust_tint;
         w.cloud_cover = cover;
         w.overcast_dimming = f.overcast_dimming;
+        w.sun_glare = f.sun_glare;
     }
 }
 

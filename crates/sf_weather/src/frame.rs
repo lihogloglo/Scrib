@@ -240,6 +240,7 @@ struct Acc {
     dust: f32,
     dust_tint: glam::Vec3,
     dimming: f32,
+    glare: f32,
     w_clouds: f32,
     w_sky: f32,
     w_fog: f32,
@@ -311,6 +312,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
             acc.dust += rec.sky.dust * w[SKY];
             acc.dust_tint += rec.sky.dust_tint * w[SKY];
             acc.dimming += rec.sky.overcast_dimming * w[SKY];
+            acc.glare += rec.sky.sun_glare * w[SKY];
             acc.w_sky += w[SKY];
             let f = &rec.fog;
             let hf = by_hour(&f.height_by_hour, input.hour_of_day);
@@ -382,6 +384,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
         haze: acc.haze * ns,
         dust: acc.dust * ns,
         dust_tint: acc.dust_tint * ns,
+        sun_glare: if acc.w_sky > 0.0 { acc.glare * ns } else { 1.0 },
         wind,
     };
     frame.surface = surface;

@@ -23,7 +23,7 @@ fn presets() -> Vec<(RecordId, WeatherPreset)> {
     let cloudy = WeatherPreset { clouds: CloudTerms { coverage: 0.5, ..CloudTerms::default() }, ..clear.clone() };
     let rain = WeatherPreset {
         clouds: CloudTerms { coverage: 0.95, wetness: 0.6, ..CloudTerms::default() },
-        sky: SkyTerms { haze: 3.0, ..SkyTerms::default() },
+        sky: SkyTerms { haze: 3.0, sun_glare: 0.0, ..SkyTerms::default() },
         fog: FogTerms { height_density: 1e-3, ..FogTerms::default() },
         precipitation: vec![PrecipTerm { kind: id("rain"), intensity: 1.0 }],
         wind: WindTerms { speed: [5.0, 8.0], gustiness: 0.6, ..WindTerms::default() },
@@ -513,3 +513,21 @@ fn thunder_delay_and_flash_are_pure() {
 }
 
 mod map;
+
+#[test]
+fn sun_glare_follows_the_sky_channel_without_pops() {
+    let b = book();
+    let (s, c) = forced(&b, "sunny", "rain", 6.0);
+    let climates = [(c, 1.0)];
+    let glare = |t: f64| evaluate(&b, &s, &input(&climates, t)).sky.sun_glare;
+    assert!((glare(5.0) - 1.0).abs() < 1e-6, "clear sky: full glare");
+    assert!(glare(13.0).abs() < 1e-6, "rain: none");
+    // The way in is monotone and continuous (2 h transition from hour 10).
+    let mut last = glare(9.9);
+    for i in 0..=100 {
+        let g = glare(10.0 + 2.0 * f64::from(i) / 100.0);
+        assert!(g <= last + 1e-6 && (g - last).abs() < 0.1, "no pop: {last} -> {g}");
+        last = g;
+    }
+    assert!(glare(10.8) > 0.0 && glare(10.8) < 1.0, "mid-transition is partial");
+}

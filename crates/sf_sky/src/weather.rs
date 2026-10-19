@@ -30,6 +30,9 @@ pub struct Weather {
     /// model's grey-brown dust; more absorption in green and blue reddens
     /// what is left (a red dust storm).
     pub dust_tint: Vec3,
+    /// Multiplier on `SunDiskLook::glare`, `[0, 1]`: 1 a clear sky, 0 no
+    /// halo (overcast, rain, fog).
+    pub sun_glare: f32,
     pub wind: Wind,
 }
 
@@ -41,6 +44,7 @@ impl Default for Weather {
             haze: 1.0,
             dust: 0.0,
             dust_tint: Vec3::ONE,
+            sun_glare: 1.0,
             wind: Wind::default(),
         }
     }
@@ -59,6 +63,7 @@ impl Weather {
             haze: mix(self.haze, to.haze),
             dust: mix(self.dust, to.dust),
             dust_tint: self.dust_tint.lerp(to.dust_tint, t),
+            sun_glare: mix(self.sun_glare, to.sun_glare),
             wind: self.wind.lerp(&to.wind, t),
         }
     }

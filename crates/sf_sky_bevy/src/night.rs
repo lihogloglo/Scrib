@@ -203,7 +203,7 @@ fn prepare_frame(
     u.sun_direction = state.sun.direction;
     u.glare_size = look.glare_size;
     let spread = 2.0 * std::f32::consts::PI * look.glare_size * look.glare_size;
-    u.glare_radiance = state.sun.transmittance * (look.glare * state.sun.illuminance / spread.max(1e-9));
+    u.glare_radiance = state.sun.transmittance * (look.glare * weather.0.sun_glare.clamp(0.0, 1.0) * state.sun.illuminance / spread.max(1e-9));
     u.star_density = settings.stars.density.max(0.05);
     u.star_lux = settings.stars.brightest_lux * state.night.stars * weather.0.direct_light_factor();
     u.twinkle = settings.stars.twinkle;

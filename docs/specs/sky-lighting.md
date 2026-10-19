@@ -150,6 +150,7 @@ What is *lit* stays physical; what is *drawn* is artistic where games are.
   saturates, blooms and is hidden by cloud transmittance in the composite.
   Glare (`glare`, share of the sun's light in an exponential halo of
   `glare_size`) is drawn in the night pass, before the clouds, so clouds
+  Built (sunglare 2026-10-19): the weather scales the glare with `sf_sky::Weather::sun_glare` (`[0, 1]`, default 1; `SkyTerms::sun_glare` per preset, blended on the SKY channel with its lead/lag like haze, `WeatherFrame.sky`, applied by `sf_weather_bevy::apply_sky`); the night pass multiplies `glare` by it (no `SkySettings` rebuild, nothing pops). The disk itself dims through cloud transmittance and `direct_light_factor`.
   hide it. Industry: UE's `SkyAtmosphere` draws the light's source angle
   (physical by default, artists raise it) plus bloom/lens flare; Frostbite
   (Hillaire 2016/2020) keeps a physical disk and relies on bloom; RDR2 and
