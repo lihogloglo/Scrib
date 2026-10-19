@@ -191,6 +191,7 @@ pub(crate) fn apply(ty: WeatherType, p: &mut WeatherPreset, w: &mut WeatherIni<'
         dust: look.dust,
         dust_tint: look.dust_tint,
         haze_by_hour: hour_curve(morning_haze),
+        sun_glare: w.f32(&section, "Glare View").map_or(1.0, |g| g.clamp(0.0, 1.0)),
         ..SkyTerms::default()
     };
 

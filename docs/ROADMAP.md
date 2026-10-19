@@ -1413,7 +1413,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   flakes in 3 camera-wrapped boxes, wind slant, ash/blight as blowing streaks; no particle crate: `bevy_hanabi` not on 0.20),
   lightning (pure `flash_at`, shadowless flash light, cloud ambient glow as the emission stand-in), `WeatherSound`
   messages (loops; thunder after distance / 343 s), region border blend in `weather_site`; WE-2 awaiting owner. CPU:
-  `cost_per_frame` gate 0.05 ms holds. **Left for [x]:** owner sign-off WE-1 + WE-2; `SunDiskLook` glare per weather;
+  `cost_per_frame` gate 0.05 ms holds. **Left for [x]:** owner sign-off WE-1 + WE-2; `SunDiskLook` glare per weather (built sunglare 2026-10-19: `Glare View` -> `sun_glare`, SKY-channel blend; shots in shots/sunglare-*.png did not frame the disk; NS-1 owner pass);
   audio playback of `WeatherSound` (no audio backend yet); rain occlusion under roofs/trees is PR1's.)
 - [~] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
   Ashlands seen from Balmora, rain shafts under distant clouds), as RDR2 / MSFS / Horizon do. Research first (weather.md
@@ -1904,3 +1904,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we4c): M6 WE4 part c: the game runs the world weather map (region raster with dilated sea, map + cloud map sync per frame, camera site from `site_at`), Medium/Low per-ray map lookup, BRP per-region force (`set {"weather","region"}`), scene `we3-ridge` + WE-3 awaiting owner; open bug: distant decks cut short / hanging columns (shots/we4c/), 1440p re-time not done. Next: we4c2 fix.
 - 2026-10-19 (we4c2): M6 WE4c bug: distant decks cut short / grey columns were per-axis clamps past the raster and map window (edge squares stretched into stripes to the horizon) plus ~780 m trace steps over the 8 km shell; radial past-the-edge projection (sf_weather twin + trace) and step = local thickness/20 + distance term; Ascadian Isles storm now a wall to the horizon (shots/we4c2/), split trace 0.215 ms (was 0.239); 1440p re-time open.
 - 2026-10-19 (ro-small): render-order RO-9 fixed (fade quad Overlay band + NotShadowCaster), RO-5/RO-7 verified by code (interiors unfogged; sky/cloud MV zero), RO-10 accepted, RO-11 deferred (no per-light caster mask).
+- 2026-10-19 (sunglare): WE3 leftover: ini `Glare View` -> `SkyTerms::sun_glare` -> `Weather::sun_glare` (SKY channel lead/lag blend) scales `SunDiskLook::glare` in the night pass; 2 tests + mw_weather test; no pops.

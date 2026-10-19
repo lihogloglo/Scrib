@@ -81,6 +81,17 @@ const VANILLA: &[(&str, &str, &str)] = &[
     ("Weather Snow", "Wind Speed", "0"),
     ("Weather Blizzard", "Cloud Speed", "7.5"),
     ("Weather Blizzard", "Wind Speed", ".9"),
+    // `Glare View`: how much of the sun's glare shows (weather-adapter.md).
+    ("Weather Clear", "Glare View", "1"),
+    ("Weather Cloudy", "Glare View", "0.25"),
+    ("Weather Foggy", "Glare View", "0"),
+    ("Weather Overcast", "Glare View", "0"),
+    ("Weather Rain", "Glare View", "0"),
+    ("Weather Thunderstorm", "Glare View", "0"),
+    ("Weather Ashstorm", "Glare View", "0"),
+    ("Weather Blight", "Glare View", "0"),
+    ("Weather Snow", "Glare View", "0"),
+    ("Weather Blizzard", "Glare View", "0"),
 ];
 
 fn vanilla(section: &str, key: &str) -> Option<&'static str> {

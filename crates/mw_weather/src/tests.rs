@@ -660,3 +660,19 @@ fn forecast_frequencies_follow_the_regn_chances() {
         assert!(weather_type_of(book.preset_id(e.preset)).is_some());
     }
 }
+
+#[test]
+fn glare_view_maps_to_the_sky_sun_glare() {
+    let w = MwWeather::build(&content_db(None), None);
+    let glare = |ty| preset_of(&w, ty).sky.sun_glare;
+    close(glare(WeatherType::Clear), 1.0, "clear");
+    close(glare(WeatherType::Cloudy), 0.25, "cloudy");
+    for ty in [WeatherType::Overcast, WeatherType::Rain, WeatherType::Foggy, WeatherType::Blizzard] {
+        close(glare(ty), 0.0, ty.name());
+    }
+    // The ini overrides, clamped to 0..1.
+    let ini = MorrowindIni::parse(b"[Weather Overcast]\nGlare View=0.4\n[Weather Rain]\nGlare View=7\n");
+    let w = MwWeather::build(&content_db(None), Some(&ini));
+    close(preset_of(&w, WeatherType::Overcast).sky.sun_glare, 0.4, "overcast ini");
+    close(preset_of(&w, WeatherType::Rain).sky.sun_glare, 1.0, "clamped");
+}
