@@ -18,6 +18,7 @@
 //! - [`PointShadowBudget`]: shadow maps for the few most important
 //!   [`BudgetedShadow`] point lights, faded by distance and over time.
 
+mod cascades;
 mod night;
 mod path;
 mod proxy;
@@ -36,7 +37,7 @@ use bevy_ecs::prelude::*;
 use bevy_light::atmosphere::{Falloff, PhaseFunction, ScatteringMedium, ScatteringTerm};
 use bevy_light::{
     AmbientLight, Atmosphere, AtmosphereEnvironmentMapLight, CascadeShadowConfig,
-    CascadeShadowConfigBuilder, DirectionalLight, SunDisk,
+    DirectionalLight, SunDisk,
 };
 use bevy_math::{Dir3, Vec3};
 use bevy_pbr::AtmosphereSettings;
@@ -47,6 +48,7 @@ use bevy_transform::TransformSystems;
 pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
+pub use cascades::{cascade_texel_sizes, CascadeSplits};
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
@@ -84,7 +86,8 @@ pub struct SkyRenderOptions {
     /// glue updates it when the floating origin changes cell vertically.
     pub sea_level: f32,
     /// Shadow cascades of the sun and moon on the raster path.
-    pub cascades: CascadeShadowConfigBuilder,
+    /// Built from a [`CascadeSplits`] (practical split) or Bevy's builder.
+    pub cascades: CascadeShadowConfig,
     /// Bias and contact shadows of the sun (raster path).
     pub sun_shadow: SunShadow,
     /// Tint of the ambient floor ([`SkySettings::ambient`]).
@@ -118,13 +121,15 @@ impl Default for SkyRenderOptions {
     fn default() -> Self {
         Self {
             sea_level: 0.0,
-            cascades: CascadeShadowConfigBuilder {
+            cascades: CascadeSplits {
                 num_cascades: 4,
                 minimum_distance: 0.1,
-                first_cascade_far_bound: 12.0,
-                maximum_distance: 300.0,
+                split_near: 1.0,
+                maximum_distance: 250.0,
+                lambda: 0.9,
                 overlap_proportion: 0.2,
-            },
+            }
+            .build(),
             sun_shadow: SunShadow::default(),
             ambient_color: Color::linear_rgb(0.55, 0.65, 1.0),
             medium_resolution: 256,
@@ -367,7 +372,7 @@ fn spawn_sky(
         ));
     }
     if !has_sun {
-        let cascades: CascadeShadowConfig = options.cascades.build();
+        let cascades = options.cascades.clone();
         commands.spawn((
             SunLight,
             DirectionalLight {

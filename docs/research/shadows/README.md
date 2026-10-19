@@ -203,3 +203,9 @@ a shadow, but it's half of the "grounded" look. Log it, don't bundle it.
 - **Interior shadow atlas soon** (F6): right after F1-F3, before F5.
 - Order: F1+F2 (contact shadows, bias) -> F3 -> F6 -> F5; F4 leaf shadows with leafmask; render-order.md RO-1
   (translucents casting solid shadows) after leafmask.
+
+## Status
+
+- **F3 step a built (shf3, 2026-10-19):** practical-split cascades to 250 m (Low 3 / 200 m), texels 1.4 / 3.8 / 10.5 /
+  35 cm; GPU ≈ 0 at Seyda Neen. Step b (cached far static map) designed, not built: weather.md "Sun cascades and the
+  far static map". Owner check SH-8.

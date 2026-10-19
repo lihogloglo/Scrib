@@ -243,3 +243,39 @@ fn medium_rebuild_cost() {
         println!("medium rebuild CPU ({label}, {} terms): {ms:.2} ms (sink {sink:e})", build_medium(&model, &scales, 256).terms.len());
     }
 }
+
+#[test]
+fn practical_split_cascades_and_texel_sizes() {
+    use crate::{cascade_texel_sizes, CascadeSplits};
+    let splits = CascadeSplits {
+        num_cascades: 4,
+        minimum_distance: 0.1,
+        split_near: 1.0,
+        maximum_distance: 250.0,
+        lambda: 0.9,
+        overlap_proportion: 0.2,
+    };
+    let config = splits.build();
+    assert_eq!(config.bounds.len(), 4);
+    assert!((config.bounds[3] - 250.0).abs() < 1e-3);
+    assert!(config.bounds.windows(2).all(|w| w[0] < w[1]));
+    // Lambda 1 is the pure log split, 0 the uniform one.
+    let log = CascadeSplits { lambda: 1.0, ..splits }.bounds();
+    assert!((log[1] - 250.0_f32.sqrt()).abs() < 1e-2);
+    let uniform = CascadeSplits { lambda: 0.0, ..splits }.bounds();
+    assert!((uniform[1] - 125.5).abs() < 1e-3);
+    // Texel sizes at 70 deg vertical FOV, 16:9, 2048² (printed for the spec).
+    let texels = cascade_texel_sizes(&config, 70f32.to_radians(), 16.0 / 9.0, 2048);
+    let old = bevy_light::CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        minimum_distance: 0.1,
+        first_cascade_far_bound: 10.0,
+        maximum_distance: 504.0,
+        overlap_proportion: 0.2,
+    }
+    .build();
+    let old_texels = cascade_texel_sizes(&old, 70f32.to_radians(), 16.0 / 9.0, 2048);
+    println!("new bounds {:?} texels {texels:?}", config.bounds);
+    println!("old bounds {:?} texels {old_texels:?}", old.bounds);
+    assert!(texels[3] < old_texels[3] * 0.6);
+}

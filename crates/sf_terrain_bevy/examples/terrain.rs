@@ -150,7 +150,8 @@ fn main() {
             first_cascade_far_bound: 30.0,
             maximum_distance: 3000.0,
             overlap_proportion: 0.2,
-        },
+        }
+        .build(),
         ..SkyRenderOptions::default()
     })
     .add_plugins(TerrainPlugin { settings: terrain_settings(&args) })
