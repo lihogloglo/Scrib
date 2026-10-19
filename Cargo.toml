@@ -16,6 +16,7 @@ bevy_asset = { version = "0.20", default-features = false }
 bevy_diagnostic = { version = "0.20", default-features = false }
 bevy_ecs = { version = "0.20", default-features = false }
 bevy_log = { version = "0.20", default-features = false }
+bevy_audio = { version = "0.20", default-features = false }
 bevy_mesh = { version = "0.20", default-features = false }
 bevy_platform = { version = "0.20", default-features = false }
 bevy_reflect = { version = "0.20", default-features = false }
@@ -110,6 +111,8 @@ sf_model = { path = "crates/sf_model" }
 sf_model_bevy = { path = "crates/sf_model_bevy" }
 sf_vfs = { path = "crates/sf_vfs" }
 sf_records = { path = "crates/sf_records" }
+sf_audio = { path = "crates/sf_audio" }
+sf_audio_bevy = { path = "crates/sf_audio_bevy" }
 sf_sky = { path = "crates/sf_sky" }
 sf_mods = { path = "crates/sf_mods" }
 sf_world = { path = "crates/sf_world" }

@@ -5930,6 +5930,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_audio"
+version = "0.1.0"
+dependencies = [
+ "sf_records",
+]
+
+[[package]]
+name = "sf_audio_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_audio",
+ "bevy_ecs",
+ "bevy_log",
+ "bevy_time",
+ "sf_audio",
+ "sf_records",
+ "sf_weather",
+ "sf_weather_bevy",
+]
+
+[[package]]
 name = "sf_bake"
 version = "0.1.0"
 dependencies = [

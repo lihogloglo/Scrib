@@ -1,0 +1,12 @@
+[package]
+name = "sf_audio"
+description = "Bevy-free audio core for superfargoth: buses and mixer gains, fade easing, one-shot scheduler, id -> file sound bank (audio.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sf_records.workspace = true
+
+[lints]
+workspace = true

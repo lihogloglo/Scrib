@@ -1869,3 +1869,5 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   lights need our own cache: static casters cached per light in a persistent cube array, movable casters drawn over
   a copy, the result copied into Bevy's cube array while Bevy's own views for those lights are emptied (Bevy keeps
   sampling and filtering; upstream if it stays small).
+
+- **2026-10-19, audio (audio.md):** playback is Bevy's `bevy_audio` (rodio) behind a thin `sf_audio_bevy`, with a Bevy-free `sf_audio` for bus gains, fades and one-shot draws. `bevy_kira_audio` 0.27 (Bevy 0.20) and `bevy_seedling` 0.8 (Bevy 0.19 only) are the upgrade paths when music/DSP needs them; the Mixer/SoundBank layer stays. No new external crate; the app enables `wav`/`mp3`.

@@ -1005,8 +1005,8 @@ their own consumers (part 2).
   flash; **cloud emission stand-in:** the clouds' `look.ambient` × (1 + 6 × flash), restored after (a true in-cloud
   emission at the strike position is still open). Rain brightens with the flash.
 - **Cues:** `WeatherSound` message: `Loop { sound, volume, region }` on start / stop (volume 0) / change ≥ 0.02;
-  `OneShot { sound, volume, azimuth, distance_m }` for thunder when its delay has passed. **No audio backend in the
-  workspace yet**, so nothing plays them (host's job, logged). Climate one-shot sets are not emitted yet.
+  `OneShot { sound, volume, azimuth, distance_m }` for thunder when its delay has passed. Played by `sf_audio_bevy` (audio.md; WE3 audio, 2026-10-19):
+  loops fade over 2 s on the Weather bus, thunder plays on arrival, and the frame's `one_shots` are drawn by `sf_audio::OneShotScheduler` on the Ambience bus.
 - **Border blend (app):** `weather_site` finds the nearest grid square of another climate among the 8 around the
   camera (distance to that square), and writes `border_blend(own, neighbor, d, band)`, band = min(`BORDER_BAND_M`,
   2 squares) ≈ 234 m in Morrowind; written only on a weight change ≥ 1e-3. Interiors switch `Precip.enabled` off.
@@ -1015,7 +1015,7 @@ their own consumers (part 2).
 - **Occlusion map (as built, rainocc 2026-10-19):** `sf_precip_bevy/src/occlusion.rs`, a top-down ortho depth map (512², 80 m square, 100 m depth, reverse Z) drawn as one more shadow view of the strongest shadow-casting directional light (same mechanism as the far sun map, subview 0xFB, no pass of our own), redrawn when the camera moves 6 m (8 m vertically) or casters stream in (30-frame throttle). The vertex shader kills a drop with a caster above it (0.3 m slack). Hosts add `NoPrecipOcclusion` to terrain and far proxies (done in exterior.rs). `PrecipOcclusionConfig(false)` turns it off. Render side shared with the far map in `sf_sky_bevy::sun_view` (no view when the light has no shadow maps by render time; see "Shared sun-view mechanism"). Since it rides on the sun's shadows, no occlusion when the sun casts none (overcast weather, if the sky turns them off). Not yet seen under a roof/tree (owner check). Splashes not built (need ground height: the map excludes terrain).
 - **Not built:** splashes, ripples, fog on the streaks (transparent
   fog path, fogfix), textures (`PrecipKind.texture` unused: procedural shapes), cloud shadow-map rate modulation,
-  in-cloud emission at the strike, audio playback.
+  in-cloud emission at the strike.
 
 
 ## Precipitation

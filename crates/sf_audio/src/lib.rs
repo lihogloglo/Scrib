@@ -1,0 +1,142 @@
+//! Bevy-free audio core (audio.md): buses, fades, one-shot draws, the sound bank.
+//! Playing is `sf_audio_bevy`'s; the math lives here so it is tested without a device.
+
+use std::collections::HashMap;
+
+use sf_records::RecordId;
+
+/// Mixer buses (audio.md "Model"). `Master` scales all the others.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Bus {
+    Master,
+    Ambience,
+    Weather,
+    Sfx,
+    Music,
+    Ui,
+}
+
+impl Bus {
+    pub const ALL: [Bus; 6] = [Bus::Master, Bus::Ambience, Bus::Weather, Bus::Sfx, Bus::Music, Bus::Ui];
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Linear bus volumes and mutes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mixer {
+    volume: [f32; 6],
+    muted: [bool; 6],
+}
+
+impl Default for Mixer {
+    fn default() -> Self {
+        Self { volume: [1.0; 6], muted: [false; 6] }
+    }
+}
+
+impl Mixer {
+    pub fn set_volume(&mut self, bus: Bus, volume: f32) {
+        self.volume[bus.index()] = volume.max(0.0);
+    }
+    pub fn set_muted(&mut self, bus: Bus, muted: bool) {
+        self.muted[bus.index()] = muted;
+    }
+    /// A bus's effective gain: its volume times master's; 0 when it or master is muted.
+    pub fn bus_gain(&self, bus: Bus) -> f32 {
+        let one = |b: Bus| if self.muted[b.index()] { 0.0 } else { self.volume[b.index()] };
+        if bus == Bus::Master { one(bus) } else { one(bus) * one(Bus::Master) }
+    }
+    /// A voice's output gain: `level` (its fade, 0..1) x `base` (the sound's own volume) x bus gain.
+    pub fn gain(&self, bus: Bus, level: f32, base: f32) -> f32 {
+        level.max(0.0) * base.max(0.0) * self.bus_gain(bus)
+    }
+}
+
+/// Seconds a loop takes to fade from silence to its full volume (and back).
+pub const FADE_S: f32 = 2.0;
+
+/// Moves `level` toward `target` by at most `dt / fade_s` per call (linear, no overshoot).
+/// Two loops fading opposite ways are a crossfade.
+pub fn fade_toward(level: f32, target: f32, dt: f32, fade_s: f32) -> f32 {
+    if fade_s <= 0.0 {
+        return target;
+    }
+    let step = dt.max(0.0) / fade_s;
+    if target >= level { (level + step).min(target) } else { (level - step).max(target) }
+}
+
+/// A sound file a bank entry resolves to: asset path in the VFS and the sound's own volume (0..1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundFile {
+    pub path: String,
+    pub volume: f32,
+}
+
+/// Sound id -> file, filled by the content adapter (the framework never names a format's records).
+#[derive(Clone, Debug, Default)]
+pub struct SoundBank(pub HashMap<RecordId, SoundFile>);
+
+impl SoundBank {
+    pub fn get(&self, id: &RecordId) -> Option<&SoundFile> {
+        self.0.get(id)
+    }
+}
+
+/// Draws one sound every `interval` seconds (uniform in the range) from weighted choices
+/// (a scatterer: audio.md "One-shots"). Deterministic from its seed.
+#[derive(Clone, Debug)]
+pub struct OneShotScheduler {
+    rng: u64,
+    wait_s: Option<f32>,
+}
+
+impl OneShotScheduler {
+    pub fn new(seed: u64) -> Self {
+        Self { rng: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1, wait_s: None }
+    }
+
+    fn next_unit(&mut self) -> f32 {
+        // xorshift64*: top 24 bits as a float in [0, 1).
+        self.rng ^= self.rng >> 12;
+        self.rng ^= self.rng << 25;
+        self.rng ^= self.rng >> 27;
+        let v = (self.rng.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) as u32;
+        #[expect(clippy::cast_precision_loss, reason = "24 bits")]
+        let f = v as f32 / 16_777_216.0;
+        f
+    }
+
+    /// Advances by `dt` seconds; returns the index of the drawn choice when a draw is due and
+    /// lands on one. `choices` hold chances per draw; sums above 1 are normalized (no silence),
+    /// sums below 1 leave the rest as silence.
+    pub fn tick(&mut self, dt: f32, interval_s: [f32; 2], choices: &[f32]) -> Option<usize> {
+        let wait = if let Some(w) = self.wait_s {
+            w
+        } else {
+            let (lo, hi) = (interval_s[0].min(interval_s[1]).max(0.0), interval_s[0].max(interval_s[1]).max(0.0));
+            lo + (hi - lo) * self.next_unit()
+        };
+        let wait = wait - dt;
+        if wait > 0.0 {
+            self.wait_s = Some(wait);
+            return None;
+        }
+        self.wait_s = None;
+        let total: f32 = choices.iter().map(|c| c.max(0.0)).sum();
+        let norm = total.max(1.0);
+        let mut r = self.next_unit();
+        for (i, c) in choices.iter().enumerate() {
+            let p = c.max(0.0) / norm;
+            if r < p {
+                return Some(i);
+            }
+            r -= p;
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests;

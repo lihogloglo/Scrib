@@ -27,6 +27,7 @@ Index:
 | [portals.md](portals.md): seamless door portals (render-to-texture views, crossing) | spike done (2026-10-12) | `sf_world_bevy` (M8: `sf_portal_bevy`) | M8 |
 | [terrain.md](terrain.md): height stack, CDLOD + clipmaps, splatting, upsampling | agreed (2026-10-11) | `sf_terrain`, `sf_terrain_bevy` | M2 |
 | [bake.md](bake.md): `sf_bake`, content-hash cache, mesh LODs | agreed (2026-10-11) | `sf_bake`, `sf_model`, `sf_model_bevy` | M2 |
+| [audio.md](audio.md): buses, faded loops, one-shots, bevy_audio decision | draft (2026-10-19) | `sf_audio`, `sf_audio_bevy` | M6 (WE3) |
 | [far-field.md](far-field.md): HLOD hierarchy over the streaming grid, octahedral impostors, distant lights, crossfade | draft (2026-10-11) | `sf_lod`, `sf_lod_bevy` | M2 (moved from M7) |
 | [diag.md](diag.md): counters, frame stats, gates, baselines, fly-throughs | implemented (2026-10-11) | `sf_diag`, `sf_diag_bevy` | M1 |
 | [sky-lighting.md](sky-lighting.md): atmosphere, sun/moon from clock and latitude, exposure, raster/Solari switch, point-light proxies, weather/wind hooks | implemented (2026-10-11) | `sf_sky`, `sf_sky_bevy` | M2 |
