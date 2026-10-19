@@ -1407,4 +1407,4 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - **2026-10-19 (owner): frame target** High, 1440p + DLSS Quality on the RTX 4060 Laptop, ≤ 11 ms exterior median
   (stretch 7 ms); **raster must meet it, Solari is Ultra and may cost more**; **shadows: one simpler design that
   works first** (far static map + point cube cache parked; new techniques only if they're the better standard way).
-
+- **2026-10-19 (owner): ray tracing is not a priority**: Solari work waits until the game is good ("cherry on top"), Phase 4.
