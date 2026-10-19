@@ -13,6 +13,7 @@ use bevy_asset::{Assets, Handle};
 use bevy_camera::Camera;
 use bevy_camera::visibility::RenderLayers;
 use bevy_color::Color;
+use bevy_light::NotShadowCaster;
 use bevy_ecs::prelude::*;
 use bevy_material::AlphaMode;
 use bevy_math::Quat;
@@ -21,6 +22,7 @@ use bevy_mesh::{Mesh, Mesh3d};
 use bevy_pbr::{MeshMaterial3d, StandardMaterial};
 use bevy_time::{Real, Time};
 use bevy_transform::components::Transform;
+use sf_render_order_bevy::DrawBand;
 use sf_world::Location;
 
 use crate::coords::to_grid;
@@ -118,6 +120,9 @@ fn spawn_overlay(
             // Just past the default near plane (0.1 m), facing the camera.
             Transform::from_xyz(0.0, 0.0, -0.2),
             RenderLayers::layer(0),
+            // Last of all translucents (over precipitation), casts no shadow.
+            DrawBand::Overlay { order: i16::MAX },
+            NotShadowCaster,
             ChildOf(camera),
         ))
         .id();

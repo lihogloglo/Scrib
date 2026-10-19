@@ -120,7 +120,7 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   framework's own generic spawn (`sf_world_bevy` `spawn.rs`) emits blended `StandardMaterial`s that
   any other host draws unfogged. *Slice*: move the swap (it has no game knowledge) into
   `sf_atmos_bevy` as a `FogTranslucentsPlugin`; bevyrrowind keeps only the `--off transfog` A/B.
-- **RO-5** (Medium, to verify): interiors have no froxel volume (`FroxelVolume.params.w = 0`), so no
+- **RO-5** (Medium, VERIFIED 2026-10-19 by code: `FroxelVolume.params` doc in `transparent.rs`, `doors.rs` `interior_look` sets only ambient + clear colour; no fog pass runs in interiors): interiors have no froxel volume (`FroxelVolume.params.w = 0`), so no
   translucent is fogged there, and opaque interior fog is the clear colour only (`doors.rs`).
   *Slice*: an interior fog path (analytic distance fog in the composite, its parameters in
   `FroxelVolume` for the translucent fallback).
@@ -128,7 +128,7 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   particles, rain and sprites ghost under DLSS. *Slice*: DLSS bias-current-colour mask from the
   Overlay/Sorted bands if Bevy's DLSS integration exposes it, else motion vectors for precipitation
   via a redraw like water's step 9.
-- **RO-7** (Medium, to verify): sky and cloud pixels may carry zero motion vectors (Bevy's prepass
+- **RO-7** (Medium, VERIFIED by code 2026-10-19: no sf_atmos_bevy/sf_sky_bevy pass writes a motion-vector target; sky + cloud resolve write colour only, so MV = prepass clear = 0 on sky pixels; not captured via BRP, DLSS needs the far-depth pass below): sky and cloud pixels may carry zero motion vectors (Bevy's prepass
   clears to 0; Bevy's `Skybox` has a motion-vector prepass, `Atmosphere`'s `render_sky` is not known
   to): DLSS would reproject the sky as screen-fixed and smear clouds on rotation. *Slice*: check with
   a BRP capture of the MV texture; if so, a fullscreen far-depth camera-motion pass after step 1.
@@ -137,14 +137,14 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   plugin add order (Sky → Clouds → Water); a wrong order silently reorders steps 4-7. *Slice*: one
   helper in `sf_render_order_bevy` plus a startup check that asserts the declared order; delete it
   when Bevy names the `render_sky` set.
-- **RO-9** (Low, scaffold): the fade overlay is camera-local without a band (precipitation's Overlay
+- **RO-9** (FIXED 2026-10-19 ro-small: quad now has `DrawBand::Overlay { order: i16::MAX }` + `NotShadowCaster`; the host-fog row stays, unlit so pointless; was: the fade overlay is camera-local without a band (precipitation's Overlay
   band draws over the black fade) and casts a shadow while fading. *Slice*: `NotShadowCaster` +
   `DrawBand::Overlay { order: i16::MAX }`, or a screen-space fade when M8 replaces the scaffold.
-- **RO-10** (Low): particles sort by the emitter origin (no AABB). Fine for small emitters; large
+- **RO-10** (accepted limit 2026-10-19, Bevy has no per-draw sort key beyond the AABB centre/`TransparentSortingInfo3d`; revisit with the AABB slice if an ash storm mis-sorts): particles sort by the emitter origin (no AABB). Fine for small emitters; large
   ones (ash storms, spell volumes) can mis-sort against windows and leaves. *Slice*: an AABB from
   the simulation's live bounds each frame (UE: fixed per-emitter bounds) instead of
   `NoFrustumCulling`.
-- **RO-11** (Low): held-prop meshes get `NotShadowCaster`, which in Bevy is for every light, so a
+- **RO-11** (DEFERRED 2026-10-19: cause is that the torch is a shadow-casting point light inside the prop and Bevy has no per-light caster mask; `NotShadowCaster` is the only way to stop self-shadowing, a small fix needs upstream masks or `RenderLayers` light partitioning): held-prop meshes get `NotShadowCaster`, which in Bevy is for every light, so a
   carried torch's prop casts no sun shadow either. *Slice*: per-light caster masks upstream, or limit
   it to the sub-mesh around the flame.
 - **RO-12** (accepted): translucents under the water are absent from the refraction snapshot (UE has

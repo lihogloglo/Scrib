@@ -31,6 +31,8 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_mesh.workspace = true
 # StandardMaterial, MeshMaterial3d.
 bevy_pbr.workspace = true
+bevy_light.workspace = true
+sf_render_order_bevy = { path = "../sf_render_order_bevy" }
 # Instant for stage timings.
 bevy_platform = { workspace = true, features = ["std"] }
 # WorldOrigin uniform: extraction, uniform buffer, RenderAssetBytesPerFrame.
