@@ -1,6 +1,6 @@
 [package]
 name = "sf_weather_bevy"
-description = "Bevy plugin for sf_weather: game clock -> evaluate at the camera's climate -> CurrentWeather (WeatherFrame), driving the sky medium (haze, dust, tint) and the wind field (weather.md \"Canonical technique\", \"WE3 as built\")"
+description = "Bevy plugin for sf_weather: game clock -> evaluate at the camera's climate -> CurrentWeather (WeatherFrame), driving the sky medium (haze, dust, tint, cloud cover), clouds, fog and the wind field (weather.md \"Canonical technique\", \"WE3 as built\")"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,6 +13,8 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_platform = { workspace = true, features = ["std"] }
 # Counters (`weather/...`) when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true
+# Clouds and Fog (the settings the frame drives).
+sf_atmos_bevy = { path = "../sf_atmos_bevy" }
 # SkyTime (the game clock), SkyConfig (calendar), WeatherState (the sky medium).
 sf_sky_bevy = { path = "../sf_sky_bevy" }
 sf_weather.workspace = true
@@ -23,5 +25,6 @@ smallvec.workspace = true
 workspace = true
 
 [dev-dependencies]
+glam.workspace = true
 sf_coords.workspace = true
 sf_records.workspace = true

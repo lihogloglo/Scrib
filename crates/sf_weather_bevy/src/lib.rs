@@ -12,17 +12,23 @@
 //!    host that replicates those three replicates the weather.
 //! 2. [`WeatherSystems::Apply`]: the frame drives the sky medium (haze,
 //!    dust, dust tint on `sf_sky_bevy::WeatherState`; [`WeatherOverrides`]
-//!    pins either) and the wind field (`sf_wind_bevy::WindField`: the ground
-//!    wind target and one radial source per storming climate).
+//!    pins either; plus the cloud cover and its dimming), the clouds
+//!    (`sf_atmos_bevy::Clouds`: the blended layer and its wind), the fog
+//!    (`sf_atmos_bevy::Fog`: height fog, banks, albedo; the renderer's look
+//!    fields stay) and the wind field (`sf_wind_bevy::WindField`: the ground
+//!    wind target and one radial source per storming climate). Every term is
+//!    a blend of the presets' (each channel on its own transition window), so
+//!    a weather change glides: no pops.
 //!
-//! Cloud cover and dimming, fog, precipitation and lightning are read from
-//! [`CurrentWeather`] by their own consumers (M6 WE3 part 2).
+//! Precipitation and lightning are read from [`CurrentWeather`] by their
+//! own consumers (M6 WE3 part 2b).
 
 use std::sync::Arc;
 
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
 use bevy_platform::time::Instant;
+use sf_atmos_bevy::sf_atmos::{CloudWeather, FogBanks, FogLayer, FogSettings};
 use sf_diag_bevy::DiagCounters;
 use sf_sky_bevy::{SkyConfig, SkySystems, SkyTime};
 use sf_weather::{ClimateIx, WeatherBook, WeatherFrame, WeatherInput, WeatherState, evaluate_into};
@@ -75,11 +81,16 @@ pub struct CurrentWeather {
     pub valid: bool,
 }
 
-/// Fixed sky terms instead of the weather's (debug flags, photo modes).
+/// Fixed terms instead of the weather's (debug flags, photo modes).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeatherOverrides {
     pub haze: Option<f32>,
     pub dust: Option<f32>,
+    /// A pinned cloud layer (a genus) instead of the weather's; its wind
+    /// still follows the weather.
+    pub clouds: Option<CloudWeather>,
+    /// Multiplier on the weather's fog densities (height fog and banks).
+    pub fog_scale: Option<f32>,
 }
 
 /// CPU cost of [`WeatherSystems`] (evaluate + apply), milliseconds.
@@ -94,7 +105,7 @@ pub struct WeatherStats {
 pub enum WeatherSystems {
     /// `Update`, after `SkySystems::Clock`: fill [`CurrentWeather`].
     Evaluate,
-    /// `Update`, before `SkySystems::Apply`: sky medium and wind.
+    /// `Update`, before `SkySystems::Apply`: sky medium, clouds, fog, wind.
     Apply,
 }
 
@@ -116,7 +127,8 @@ impl Plugin for WeatherPlugin {
             .add_systems(Update, evaluate.in_set(WeatherSystems::Evaluate))
             .add_systems(
                 Update,
-                (apply_sky, apply_wind).in_set(WeatherSystems::Apply),
+                (apply_sky, apply_clouds, apply_fog, apply_wind)
+                    .in_set(WeatherSystems::Apply),
             );
     }
 }
@@ -172,9 +184,10 @@ fn evaluate(
     }
 }
 
-/// The sky medium: haze (with the preset's hour curve), dust and its tint.
-/// Written only when they change, so the sky's rate-limited rebuild sees
-/// no churn.
+/// The sky medium: haze (with the preset's hour curve), dust and its tint,
+/// the cloud cover (the drawn layer's: a pinned genus counts) and its
+/// dimming. Written only when they change, so the sky's rate-limited rebuild
+/// sees no churn.
 #[allow(clippy::needless_pass_by_value)]
 fn apply_sky(
     current: Res<CurrentWeather>,
@@ -188,12 +201,93 @@ fn apply_sky(
     let f = &current.frame.sky;
     let haze = overrides.haze.unwrap_or(f.haze);
     let dust = overrides.dust.unwrap_or(f.dust);
+    let cover = overrides
+        .clouds
+        .map_or(f.cloud_cover, |c| c.mean_cover());
     let w = &sky.0;
-    if (w.haze, w.dust, w.dust_tint) != (haze, dust, f.dust_tint) {
+    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming)
+        != (haze, dust, f.dust_tint, cover, f.overcast_dimming)
+    {
         let w = &mut sky.0;
         w.haze = haze;
         w.dust = dust;
         w.dust_tint = f.dust_tint;
+        w.cloud_cover = cover;
+        w.overcast_dimming = f.overcast_dimming;
+    }
+}
+
+/// The cloud layer: the frame's blend (coverage, type, heights, wind at
+/// cloud altitude), or the pinned genus moving with the weather's wind. The
+/// scroll integrates the wind, so a speed change never jumps the clouds.
+#[allow(clippy::needless_pass_by_value)]
+fn apply_clouds(
+    current: Res<CurrentWeather>,
+    overrides: Res<WeatherOverrides>,
+    clouds: Option<ResMut<sf_atmos_bevy::Clouds>>,
+) {
+    let Some(mut clouds) = clouds else { return };
+    if !current.valid {
+        return;
+    }
+    let w = cloud_weather(&current.frame.clouds, overrides.clouds.as_ref());
+    if clouds.settings.weather != w {
+        clouds.settings.weather = w;
+    }
+}
+
+/// The cloud layer for a frame's clouds and an optional pinned genus.
+pub fn cloud_weather(frame: &CloudWeather, pinned: Option<&CloudWeather>) -> CloudWeather {
+    pinned.map_or(*frame, |p| CloudWeather {
+        wind: frame.wind,
+        ..*p
+    })
+}
+
+/// The fog: the frame's weather part, densities × `fog_scale`.
+#[allow(clippy::needless_pass_by_value)]
+fn apply_fog(
+    current: Res<CurrentWeather>,
+    overrides: Res<WeatherOverrides>,
+    fog: Option<ResMut<sf_atmos_bevy::Fog>>,
+) {
+    let Some(mut fog) = fog else { return };
+    if !current.valid {
+        return;
+    }
+    let settings = fog_settings(
+        &current.frame.fog,
+        overrides.fog_scale.unwrap_or(1.0),
+        &fog.settings,
+    );
+    if fog.settings != settings {
+        fog.settings = settings;
+    }
+}
+
+/// The weather part of `frame` (height fog, the banks' layer and coverage,
+/// albedo, phase, ambient, wind) with densities × `scale`, over the
+/// renderer's look fields in `look` (reach, sky distance, bank noise).
+pub fn fog_settings(frame: &FogSettings, scale: f32, look: &FogSettings) -> FogSettings {
+    let scale = scale.max(0.0);
+    FogSettings {
+        height: FogLayer {
+            density: frame.height.density * scale,
+            ..frame.height
+        },
+        banks: FogBanks {
+            layer: FogLayer {
+                density: frame.banks.layer.density * scale,
+                ..frame.banks.layer
+            },
+            coverage: frame.banks.coverage,
+            ..look.banks
+        },
+        albedo: frame.albedo,
+        phase_g: frame.phase_g,
+        ambient: frame.ambient,
+        wind: frame.wind,
+        ..*look
     }
 }
 

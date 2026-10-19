@@ -6498,6 +6498,8 @@ dependencies = [
  "bevy_app",
  "bevy_ecs",
  "bevy_platform",
+ "glam 0.33.12",
+ "sf_atmos_bevy",
  "sf_coords",
  "sf_diag_bevy",
  "sf_records",

@@ -952,6 +952,27 @@ their own consumers (part 2).
 - Counters: `weather/eval/ms`, `weather/apply/ms`, `weather/strikes`. Cost: evaluate 0.0027 ms mean, whole
   `app.update` with the plugin 0.005 ms (test `cost_per_frame`, opt-level 1; gate 0.05 ms).
 
+### WE3 as built (part 2a, we3b1, 2026-10-19): clouds, fog, sky cover
+
+- `sf_weather_bevy` now also depends on `sf_atmos_bevy` (the `Clouds` and `Fog` resources are the consumers; a
+  separate glue crate would be one more node for three small systems). `WeatherSystems::Apply` runs `apply_sky`,
+  `apply_clouds`, `apply_fog`, `apply_wind`; all write only on change, and each is a no-op without its resource.
+- **Clouds:** `Clouds.settings.weather` = `frame.clouds` (the per-channel genus blend: coverage, type, density,
+  wetness, heights, cirrus, and the wind at cloud altitude = ground wind direction × the presets' blended `speed`).
+  The look (`CloudLook`, noise tiles) stays the app's, so its `scaled(0.5)` halving survives. No pops: every term is a
+  smoothstep blend on the clouds window (0-60 %), and the scroll integrates the wind (`CloudScroll` travel), so a speed
+  change never jumps positions.
+- **Sky:** `cloud_cover` (= the drawn layer's `mean_cover`) and `overcast_dimming` join haze/dust/tint.
+- **Fog:** `fog_settings(frame.fog, scale, look)`: height fog, bank layer + coverage, albedo, phase, ambient and wind
+  from the frame (hour curves already applied by `evaluate`), the renderer's look fields (reach, sky distance, bank
+  noise tiles/warp) kept. Fog follows on its own window (40-100 %): clouds lead, fog lags.
+- `WeatherOverrides` gains `clouds: Option<CloudWeather>` (a pinned genus; its wind stays the weather's) and
+  `fog_scale: Option<f32>` (density multiplier).
+- Tests (6 green): `frame_drives_clouds_and_fog` (clouds = frame, fog ×2 scale, look fields kept, cover/dimming, pin
+  keeps the wind); `transition_glides_clouds_lead` (clear → overcast over 2 h in 400 steps: max per-step change within a
+  smoothstep's bound, clouds pass half-way before the fog). Cost unchanged (gate 0.05 ms).
+
+
 ## Precipitation
 
 **Technique** (Tatarchuk 2006; RDR2 and Watch Dogs follow the same structure):
