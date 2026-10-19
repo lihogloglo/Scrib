@@ -288,6 +288,15 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         if perf.off.has(Part::Froxels) {
             fog.froxels = None;
         }
+        // weather.md "Temporal sampling": `--off fogdither` is the old shared jitter, `--off fogjitter` none.
+        if let Some(f) = fog.froxels.as_mut() {
+            use sf_atmos_bevy::sf_atmos::FroxelJitter;
+            if perf.off.has(Part::FogJitter) {
+                f.jitter = FroxelJitter::Off;
+            } else if perf.off.has(Part::FogDither) {
+                f.jitter = FroxelJitter::Shared;
+            }
+        }
         if !perf.off.has(Part::FarShadows) {
             app.add_systems(Update, fog_shadow_heights);
         }

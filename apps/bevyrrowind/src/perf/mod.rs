@@ -104,13 +104,19 @@ pub enum Part {
     /// The froxel volume near the camera (god rays, lit fog; weather.md "Fog", F3):
     /// off, the analytic layers fog everything (the Low preset).
     Froxels,
+    /// Per-froxel sample rotation (weather.md "Temporal sampling"): off, one Halton
+    /// offset for the whole volume, history read at the jittered point (the old
+    /// pulsing fog, an A/B).
+    FogDither,
+    /// The froxels' temporal jitter: off, every froxel samples its centre (diagnosis).
+    FogJitter,
     /// Fog on blended and additive NIF materials (`transparent_fog.rs`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 31] = [
+    const ALL: [(&'static str, Part); 33] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -141,6 +147,8 @@ impl Part {
         ("fog", Part::Fog),
         ("froxels", Part::Froxels),
         ("godrays", Part::Froxels),
+        ("fogdither", Part::FogDither),
+        ("fogjitter", Part::FogJitter),
         ("transfog", Part::TransFog),
     ];
 

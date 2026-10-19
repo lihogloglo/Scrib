@@ -1603,6 +1603,16 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Status: **confirmed by owner 2026-10-19** (foliage no longer over the fog). Sanity: before/after shots in fogfix (old exe: leaves unfogged at all distances).
 - Source: fogfix.
 
+### FG-6: Fog without the pulse (`view "Seyda Neen" --hour 11 --weather foggy`, also `--hour 6.5`; T x20)
+- Kind: game location. The froxel fog no longer pulses: per-froxel jitter, history at froxel centres (shimmer
+  2026-10-19, weather.md "Temporal sampling").
+- Look for: stand still (P pauses the clock): the fog, shafts and the ground under it hold steady, no breathing or
+  flicker a few times a second; with T x20 the light changes smoothly as the sun moves (that drift is real). A/B
+  `--off fogdither` (the old pulsing fog: watch near shadowed buildings/trees in the fog), `--off fogjitter`
+  (no temporal sampling: still, but shadow edges in the fog go blocky). Also check for new fine grain in the fog.
+- Status: awaiting owner.
+- Source: shimmer.
+
 ### WA-1: Open sea, W2 FFT ocean (`scene wa-seyda-noon`, `wa-vivec-waterfront`, `wa-bittercoast`, `wa-sunset-sea`, `wa-night-moons`; A/B `--water scaffold`, `--water off`, `--water-wind 2` / `14`; example `water_ocean`)
 
 Status: **awaiting owner** (W2, 2026-10-13). Shots: `shots/w2/`.
