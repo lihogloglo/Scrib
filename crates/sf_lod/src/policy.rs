@@ -99,6 +99,12 @@ pub trait FarSource: Send + Sync {
     fn light(&self, _placement: &Placement) -> Option<FarLight> {
         None
     }
+    /// Keep a placement out of its cell's near precombine (precombine.md):
+    /// what only the content pack knows, e.g. statics a script can disable
+    /// or move. Part of `lod.near`'s key through [`FarSource::fingerprint`].
+    fn precombine_exclude(&self, _placement: &Placement) -> bool {
+        false
+    }
 }
 
 /// No overrides.

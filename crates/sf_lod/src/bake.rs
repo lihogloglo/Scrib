@@ -8,6 +8,7 @@
 //! | `lod.l2` | `<ws>/<x>,<y>,<z>` (node) | `world.dir`; *dynamic*: child `lod.l1` | [`NodeBlob`] |
 //! | `lod.l3` | `<ws>/<x>,<y>,<z>` (node) | `world.dir`; *dynamic*: child `lod.l2` | [`NodeBlob`] |
 //! | `lod.dir` | `<ws>` | `world.dir`; *dynamic*: every node | [`FarDirectory`] |
+//! | `lod.near` | `<ws>/<x>,<y>,<z>` (cell) | `world.page`; *dynamic*: `mesh.cook` | [`NearCombine`] (precombine.md) |
 //!
 //! Every key includes [`FarBakeSettings::key_bytes`] and the adapter's
 //! [`FarSource::fingerprint`]. [`FarBake::bake_worldspaces`] bakes level by
@@ -31,7 +32,8 @@ use crate::impostor::{CaptureMesh, capture};
 use crate::node::NodeKey;
 use crate::policy::{FarPolicy, FarSource, ModelSummary, default_policy};
 use crate::texture::{TextureDecoder, TextureImage};
-pub use crate::products::{DIR_STEP as DIR_STEP_LOD, IMPOSTOR_STEP, L1_STEP, L2_STEP, L3_STEP, POLICY_STEP, level_step, node_subject};
+pub use crate::products::{DIR_STEP as DIR_STEP_LOD, IMPOSTOR_STEP, L1_STEP, L2_STEP, L3_STEP, NEAR_STEP, POLICY_STEP, level_step, node_subject};
+use crate::near::{NearCombine, build_near};
 use crate::products::parse_node;
 
 /// The product key of a node.
@@ -90,7 +92,7 @@ impl FarBake {
         &self.settings
     }
 
-    /// Registers the six steps (the baker also needs `mesh.cook` and the
+    /// Registers the seven steps (the baker also needs `mesh.cook` and the
     /// `world.*` steps).
     pub fn register(self: &Arc<Self>, baker: &mut Baker) {
         baker
@@ -99,7 +101,8 @@ impl FarBake {
             .register(NodeStep { far: self.clone(), level: 1 })
             .register(NodeStep { far: self.clone(), level: 2 })
             .register(NodeStep { far: self.clone(), level: 3 })
-            .register(DirStep(self.clone()));
+            .register(DirStep(self.clone()))
+            .register(NearStep(self.clone()));
     }
 
     /// The far directory's product key.
@@ -130,6 +133,12 @@ impl FarBake {
                 cells.iter().flat_map(|(ws, c)| nodes_of(level, c).into_iter().map(move |k| node_key(ws, k))).collect();
             products.extend(baker.bake(&keys).products);
         }
+        // Near precombines, one per cell (precombine.md).
+        let near: Vec<ProductKey> = cells
+            .iter()
+            .flat_map(|(ws, c)| nodes_of(1, c).into_iter().map(move |k| ProductKey::new(NEAR_STEP, node_subject(ws, k))))
+            .collect();
+        products.extend(baker.bake(&near).products);
         let dirs: Vec<ProductKey> = worldspaces.iter().map(Self::directory_key).collect();
         let report = baker.bake(&dirs);
         let mut atlases = Vec::new();
@@ -357,6 +366,54 @@ impl Step for NodeStep {
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
         let (ws, key) = parse_node(self.level, subject).ok_or_else(|| step_err(self.id(), subject, "malformed subject"))?;
         if self.level == 1 { self.run_l1(subject, &ws, key, cx) } else { self.run_parent(subject, &ws, key, cx) }
+    }
+}
+
+// -- lod.near -------------------------------------------------------------------
+
+/// A cell's near precombine. An empty [`NearCombine`] (no buckets) when
+/// nothing in the cell qualifies.
+pub struct NearStep(pub Arc<FarBake>);
+
+impl Step for NearStep {
+    fn id(&self) -> &'static str {
+        NEAR_STEP
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
+        let (ws, key) = parse_node(1, subject).ok_or_else(|| step_err(NEAR_STEP, subject, "malformed subject"))?;
+        cx.product(PAGE_STEP, page_subject(&ws, Partition::page_of(key.index())));
+        cx.param("source", self.0.source.fingerprint().to_vec());
+        Ok(())
+    }
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        let (ws, key) = parse_node(1, subject).ok_or_else(|| step_err(NEAR_STEP, subject, "malformed subject"))?;
+        let cell = key.index();
+        let page = IndexPage::from_bytes(&cx.product(PAGE_STEP, &page_subject(&ws, Partition::page_of(cell)))?)
+            .map_err(|e| step_err(NEAR_STEP, subject, e))?;
+        let placements = page.cell(cell).map(|c| c.placements.clone()).unwrap_or_default();
+        // Only `mesh.cook` statics (no rest poses: their near copies animate).
+        let mut models: BTreeMap<VfsPath, Option<Arc<CookedModel>>> = BTreeMap::new();
+        for p in placements.iter().filter(|p| p.placement.class == sf_world::PlacementClass::Static) {
+            let Some(path) = &p.placement.model else { continue };
+            if models.contains_key(path) {
+                continue;
+            }
+            let bytes = cx.product(MeshCookStep::ID, path.as_str())?;
+            let model = match Cooked::from_bytes(&bytes).map_err(|e| step_err(MeshCookStep::ID, path.as_str(), e))? {
+                Cooked::Static(m) => Some(Arc::new(m)),
+                Cooked::Skipped { .. } | Cooked::Skinned(_) => None,
+            };
+            models.insert(path.clone(), model);
+        }
+        let source = &self.0.source;
+        let near = build_near(page.partition, cell, &placements, &|m: &VfsPath| models.get(m).cloned().flatten(), &|p| {
+            source.precombine_exclude(p)
+        })
+        .map_err(|e| step_err(NEAR_STEP, subject, e))?;
+        Ok(near.unwrap_or(NearCombine { center: [0.0; 3], buckets: Vec::new() }).to_bytes())
     }
 }
 

@@ -215,6 +215,15 @@ fn far_bake_is_complete_and_deterministic() {
     }
     assert_eq!(lights, 600 / 7 + 1, "every Light placement is a sprite at L1");
     assert!(instances > 250, "trees are impostors at L1: {instances}");
+
+    // Near precombines (precombine.md): every static house and tree joins its
+    // cell's precombine; lights (class) and the animated mill (not cooked) don't.
+    let mut members = 0;
+    for (key, digest) in a.products.iter().filter(|(k, _)| k.step == crate::bake::NEAR_STEP) {
+        let near = crate::NearCombine::from_bytes(&store.get(digest).expect("bytes")).unwrap_or_else(|e| panic!("{key}: {e}"));
+        members += near.member_count();
+    }
+    assert_eq!(members, 600 - 2 * 86, "houses and trees");
 }
 
 /// Test textures: `[width, height, rgba…]`.

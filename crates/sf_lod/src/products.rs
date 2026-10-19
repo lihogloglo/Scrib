@@ -11,11 +11,19 @@ pub const L1_STEP: &str = "lod.l1";
 pub const L2_STEP: &str = "lod.l2";
 pub const L3_STEP: &str = "lod.l3";
 pub const DIR_STEP: &str = "lod.dir";
+/// Near-cell precombine (precombine.md); subject as an L1 node.
+pub const NEAR_STEP: &str = "lod.near";
 
 /// File extensions the runtime loaders register, per step (pass them to
 /// `sf_model_bevy::baked_source`).
-pub const EXTENSIONS: [(&str, &str); 5] =
-    [(L1_STEP, "sfnode"), (L2_STEP, "sfnode"), (L3_STEP, "sfnode"), (DIR_STEP, "sffar"), (IMPOSTOR_STEP, "sfimp")];
+pub const EXTENSIONS: [(&str, &str); 6] = [
+    (L1_STEP, "sfnode"),
+    (L2_STEP, "sfnode"),
+    (L3_STEP, "sfnode"),
+    (DIR_STEP, "sffar"),
+    (IMPOSTOR_STEP, "sfimp"),
+    (NEAR_STEP, "sfnear"),
+];
 
 /// The step making nodes of `level`.
 pub fn level_step(level: u8) -> &'static str {
