@@ -613,10 +613,10 @@ fn far_shadow_cache_refreshes_on_sun_turn_recentre_and_invalidate_in_strips() {
     assert_eq!(drain(&mut cache, sun, Vec3::ZERO), vec![(0, 0), (1, 0), (2, 0)]);
     assert_eq!(cache.front().map(|(_, i)| i), Some(0));
     // Small sun turn and camera step: nothing.
-    let small = glam::Quat::from_rotation_z(0.01_f32.to_radians()) * sun;
+    let small = glam::Quat::from_rotation_z(0.1_f32.to_radians()) * sun;
     assert!(drain(&mut cache, small, Vec3::new(50.0, 0.0, 0.0)).is_empty());
     // Sun past the threshold: refresh into the back map (1), then swap.
-    let big = glam::Quat::from_rotation_z(0.05_f32.to_radians()) * sun;
+    let big = glam::Quat::from_rotation_z(0.4_f32.to_radians()) * sun;
     assert_eq!(drain(&mut cache, big, Vec3::ZERO), vec![(0, 1), (1, 1), (2, 1)]);
     assert_eq!(cache.front().map(|(_, i)| i), Some(1));
     // The camera moving 1/16 of the reach recentres.

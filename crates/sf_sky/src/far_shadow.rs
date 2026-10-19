@@ -19,7 +19,9 @@ pub struct FarShadowSettings {
     /// Depth range along the sun, meters, centred on the camera (casters on
     /// a hill above or a valley below still land in it).
     pub depth_range: f32,
-    /// Re-render once the sun has turned this far, degrees (0.02-0.05).
+    /// Re-render once the sun has turned this far, degrees. 0.25: a shadow
+    /// tip 10 m from its caster moves under one 1 m texel at 30° elevation,
+    /// and a 30x clock (0.125°/s) redraws every 2 s.
     pub sun_threshold_deg: f32,
     /// Re-render once the camera has moved this fraction of `reach` (1/16).
     pub recentre_fraction: f32,
@@ -29,7 +31,7 @@ pub struct FarShadowSettings {
 
 impl Default for FarShadowSettings {
     fn default() -> Self {
-        Self { resolution: 4096, reach: 2048.0, depth_range: 4000.0, sun_threshold_deg: 0.03, recentre_fraction: 1.0 / 16.0, strips: 4 }
+        Self { resolution: 4096, reach: 2048.0, depth_range: 4000.0, sun_threshold_deg: 0.25, recentre_fraction: 1.0 / 16.0, strips: 4 }
     }
 }
 

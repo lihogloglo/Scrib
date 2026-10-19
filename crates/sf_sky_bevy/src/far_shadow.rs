@@ -142,6 +142,7 @@ impl Plugin for FarShadowPlugin {
                 (
                     inject_casters.in_set(RenderSystems::PrepareAssets).before(collect_visible_cpu_culled_entities),
                     prepare_view.in_set(RenderSystems::CreateViews).after(prepare_lights),
+                    report.in_set(RenderSystems::PhaseSort),
                 ),
             );
     }
@@ -319,4 +320,20 @@ fn prepare_view(
     view_lights.lights.push(entity.id());
     phases.prepare_for_new_frame(key, mode);
     *spawned = Some(entity.id());
+}
+
+/// Logs a redraw once its casters are queued: the casters handed to Bevy and
+/// the bins its shadow pass draws (no bins: nothing drawn).
+fn report(frame: Res<FarShadowFrame>, phases: Res<ViewBinnedRenderPhases<Shadow>>, mut count: Local<u64>) {
+    let Some(redraw) = &frame.0 else { return };
+    *count += 1;
+    let (sets, bins) = phases
+        .get(&redraw.retained())
+        .map_or((0, 0), |p| (p.multidrawable_meshes.len(), p.batchable_meshes.len() + p.unbatchable_meshes.len()));
+    let casters = redraw.casters.len();
+    if *count <= 4 || count.is_power_of_two() {
+        log::info!("far sun shadow redraw {}: {casters} casters, {sets} multidraw sets + {bins} bins queued", *count);
+    } else {
+        log::debug!("far sun shadow redraw {}: {casters} casters, {sets} multidraw sets + {bins} bins queued", *count);
+    }
 }

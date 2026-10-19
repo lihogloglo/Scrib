@@ -93,6 +93,14 @@ pub struct FarShadowInput {
     pub params: bevy_math::Vec4,
     /// Changes whenever the image contents do.
     pub generation: u32,
+    /// The far static sun map (`Depth32Float`, reverse Z, `GreaterEqual`
+    /// comparison: e.g. `sf_sky_bevy::FarSunShadow`): objects' shadows on the
+    /// proxies past the cascades. `None`: off.
+    pub sun_map: Option<bevy_asset::Handle<bevy_image::Image>>,
+    /// World (render space) to the sun map's clip space.
+    pub sun_clip_from_world: bevy_math::Mat4,
+    /// (valid 0/1, texel m, depth range m, -).
+    pub sun_params: bevy_math::Vec4,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]

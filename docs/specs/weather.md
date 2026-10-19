@@ -1268,6 +1268,7 @@ Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop
 
 ## Near-term visual fixes (before M6)
 
+**Step b as built (shf3c/shf3d 2026-10-19):** the far map is one more sun shadow view on redraw frames (`sf_sky_bevy` far_shadow.rs), drawn by Bevy's shadow pass. Verified drawn: Balmora logs 48 844 casters / 122 multidraw sets queued per redraw, no validation errors. Redraw policy: sun turn > 0.25° (0.125°/s at a 30x clock = one redraw per 2 s; a 10 m caster's shadow tip moves < 1 texel at 30° elevation), camera moved > reach/16, streamed casters (≤ 1 per 30 frames). Receivers: terrain and far proxies (`sf_lod_bevy` proxy.wesl, same 2x2 compare PCF; proxies get NoFarShadow since a pass can't write a depth texture its casters' materials bind). Owed: NIF statics past 250 m (StandardMaterial has no hook; needs a material extension), impostors, GPU cost of a redraw frame, visual sign-off (SH-8).
 ### Bug A: distant objects have no shadows, then acquire them up close
 
 **Cause** (verified in source):
