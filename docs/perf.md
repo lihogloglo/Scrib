@@ -53,7 +53,7 @@ differences above ~0.5 ms count):
 | actors | 12.4 | 11.2 | 5.8 | 8.6 | **actors: -3 ms main** (anim, skinning, skinned AABBs), -2 ms render |
 | farshadows, particles, lights | 15.1-15.3 | 13.4-13.6 | 9.0-9.2 | 8.3-8.4 | nothing measurable |
 | shadowcache (old build) | 14.8 | 13.3 | 9.0 | 8.6 | -0.5 ms: the parked cube cache's tracking; its plugin is gone now |
-| castercull (on vs off, 3 pairs each) | 14.7 / 15.0 | 13.1 / 13.4 | | | caster size rule removes 8 % of entries: ~-0.3 ms, at the noise floor |
+| castercull (on vs off, 3 pairs each) | 14.7 / 15.0 | 13.1 / 13.4 | | | caster size rule removes 8 % of entries: ~-0.3 ms, at the noise floor; off again (shadows popped with view) |
 | farfield | 37.3 | 34.7 | 24.5 | 10.5 | the far field is what makes towns affordable |
 
 Trace (`perf trace`, profiling-trace build): the main thread waits ~4.5 ms per frame in `RenderExtractApp` for the
@@ -79,8 +79,11 @@ It is the worst case: **25.8-26.0 ms** median, render 23.9-24.3, main 12.1, GPU 
 
 Tried and dropped: Bevy 0.20 `NoCpuCulling` on static opaque/masked parts (the research's top item): **81 ms**
 on the walk (render 81, GPU 22): with no CPU culling every part is queued for every view (cascades, point-light
-faces, the water snapshot) and every LOD level, and the GPU path doesn't make up for it in our setup. Kept: the
-animation budget (`ANIM_BUDGET_US` 1 ms, `--off animbudget`): walk 24.7 ms (main 11.5 vs 12.1).
+faces, the water snapshot) and every LOD level, and the GPU path doesn't make up for it in our setup.
+**Lead (not yet tested):** Bevy runs the GPU frustum + `VisibilityRange` test only in views with GPU culling; a view
+with `NoIndirectDrawing` (`PreprocessingOnly`, e.g. our extra sun views in `sf_sky_bevy` `sun_view.rs`) culls a
+`NoCpuCulling` mesh nowhere, so every part at every LOD draws there. Retry once every view supports GPU culling. Reverted the same day: the animation budget (1 ms; it "saved" ~1 ms by freezing poses: characters slid) and the
+caster size rule (its cascades refit with the view, so small casters lost and regained shadows as the camera turned).
 So the lever is the number of static mesh entities in the near ring and the views they're queued in: merge statics
 per cell at bake time (OpenMW active-grid paging, MGE XE: a cell in one or two draws;
 `docs/research/perf-morrowind-engines.md`) and cut shadow views; the big_space propagation patch and skinned

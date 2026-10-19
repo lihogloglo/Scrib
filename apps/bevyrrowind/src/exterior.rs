@@ -255,15 +255,6 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
-    // Animation budget (animation.md target: the stage <= 1.0 ms): the allocator demotes the
-    // least significant characters a tier until it fits (`--off animbudget`: distance tiers only).
-    if !off_parts.has(Part::AnimBudget) {
-        app.insert_resource(sf_anim_bevy::AnimLodSettings { budget_us: Some(ANIM_BUDGET_US), ..Default::default() });
-    }
-    // Sun casters under 1.5 texels of a cascade skip it (`--off castercull`: all draw).
-    if off_parts.has(Part::CasterCull) {
-        app.insert_resource(sf_sky_bevy::CasterCulling { min_texels: 0.0 });
-    }
     // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
     // scaffold switch [`FAR_STATIC_SHADOWS`], off until verified;
     // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.
@@ -1071,9 +1062,6 @@ fn sun_cascades(quality: Quality, levels: &sf_lod::FarLevels, legacy: bool, spli
     }
     .build()
 }
-
-/// Animation evaluation budget per frame, µs summed over threads (animation.md target 1.0 ms).
-const ANIM_BUDGET_US: f32 = 1000.0;
 
 /// PCSS light size in cascade texels (see [`Quality::soft_shadow_size`]); tuned by eye.
 const SOFT_SHADOW_SIZE: f32 = 10.0;
