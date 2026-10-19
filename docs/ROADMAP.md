@@ -1443,6 +1443,10 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   the edge (wedges, not per-axis stripes that drew narrow regions as columns), trace step = local thickness / 20 + a
   distance term (was ~780 m on every grazing ray through the 8 km shell); split example trace 0.215 ms (was 0.239).
   1440p re-time still open. Next: WE4d/WE4e.
+  Part d built (we4d, 2026-10-19; weather.md "WE4d as built"): map layer D (precipitation extinction + tint), distant
+  rain shafts and far fog by location in the cloud trace (High/Ultra, only the difference from the camera's weather:
+  no pop, no double rain), `CloudQuality::far_weather`; +0.06 ms at 1440p; 1440p re-time done. WE-3 note awaiting owner.
+  Next: WE4e lightning.
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1903,5 +1907,6 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (shf6b): shadows F6 slice 2: superfargoth `sf_shadow_cache_bevy` (static casters cached per light, movers over the copy, depth-copy draws around Bevy's shadow pass, `--off shadowcache`); census 8 lights 21.0 -> 20.7 ms: Bevy's per-face-view overhead dominates, presets unchanged; next slice 2b skips Bevy's views for cached lights.
 - 2026-10-19 (we4c): M6 WE4 part c: the game runs the world weather map (region raster with dilated sea, map + cloud map sync per frame, camera site from `site_at`), Medium/Low per-ray map lookup, BRP per-region force (`set {"weather","region"}`), scene `we3-ridge` + WE-3 awaiting owner; open bug: distant decks cut short / hanging columns (shots/we4c/), 1440p re-time not done. Next: we4c2 fix.
 - 2026-10-19 (we4c2): M6 WE4c bug: distant decks cut short / grey columns were per-axis clamps past the raster and map window (edge squares stretched into stripes to the horizon) plus ~780 m trace steps over the 8 km shell; radial past-the-edge projection (sf_weather twin + trace) and step = local thickness/20 + distance term; Ascadian Isles storm now a wall to the horizon (shots/we4c2/), split trace 0.215 ms (was 0.239); 1440p re-time open.
+- 2026-10-19 (we4d): M6 WE4 part d: distant rain shafts + far fog by location (map layer D, 8-step march in the cloud trace, difference from the camera's weather), +0.06 ms at 1440p (0.601 vs 0.541); 1440p re-time: per sample 0.54 / per ray 0.558 / uniform 0.512 ms. Game we3-ridge: grey veil under the Ashlands storm, clear side untouched. Next: WE4e.
 - 2026-10-19 (ro-small): render-order RO-9 fixed (fade quad Overlay band + NotShadowCaster), RO-5/RO-7 verified by code (interiors unfogged; sky/cloud MV zero), RO-10 accepted, RO-11 deferred (no per-light caster mask).
 - 2026-10-19 (sunglare): WE3 leftover: ini `Glare View` -> `SkyTerms::sun_glare` -> `Weather::sun_glare` (SKY channel lead/lag blend) scales `SunDiskLook::glare` in the night pass; 2 tests + mw_weather test; no pops.

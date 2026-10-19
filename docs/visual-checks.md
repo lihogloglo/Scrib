@@ -1845,6 +1845,10 @@ Status: awaiting owner (2026-10-19). Agent check: dev build renders, shaders com
 
 ### WE-3: Neighbouring regions' weather seen from afar (`scene we3-ridge`, then BRP region forces)
 
+WE4d (we4d, 2026-10-19), High/Ultra: under a forced rain/thunderstorm region look for grey rain curtains under the
+deck, fading into the far fog, nothing over the clear side; walking in, the curtain fades as the near rain starts
+(no double rain). A forced foggy region (e.g. Bitter Coast) shows its extra fog from a dry ridge.
+
 Status: **awaiting owner** (M6 WE4c, we4c, 2026-10-19; bug fixed we4c2). Camera on the ridge NE of Balmora (West Gash, forced
 Clear) at 14:00. Force neighbours over BRP (port in the title): `bevyrrowind/set {"weather": "ashstorm", "region":
 "Ashlands Region", "transition_hours": 0}` and `{"weather": "thunderstorm", "region": "Ascadian Isles Region",
