@@ -122,13 +122,15 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Seen by owner 2026-10-19 (round 2, again): object edges under grazing light shimmer and don't look solid.
   Suspects: no temporal AA on the raster path (aliasing of shadow terminators and alpha edges), normal-offset
   bias, dithered cascade end.
-- Cause found (phase1, 2026-10-19, from Bevy's shader): soft sun shadows (PCSS, High) rotate their sample kernel by
-  a screen-space noise that is *fixed* under our `Gaussian` filter, so wide grazing-light penumbrae show a blocky,
-  half-transparent pattern that swims as the camera moves. Fix: `ShadowFilteringMethod::Temporal` whenever TAA or
-  DLSS runs (the noise changes per frame and the resolve averages it). Owner still sees it after 2026-10-19 → recheck
-  with this build: `.\bevyrrowind view Balmora --camera "-280,+12,200,-295,+1,180" --hour 7 --weather clear`, move.
-  A/B: `--off softshadows` (PCSS off: if the outline goes, PCSS noise it was), `--dlss off` (MSAA: Gaussian again).
-- Status: awaiting owner (fix built, phase1).
+- Cause (owner A/B 2026-10-19, round 15, Balmora 17:30 toward the sun): **the clouds** (gone with `--off clouds`;
+  still there with `--off softshadows` and `--off godrays`). The half/quarter-res checkerboarded cloud trace and its
+  temporal resolve leak bright forward-scattered sky onto silhouettes (blocky fringe inside the meshes). A first
+  depth-aware resolve/composite (uncommitted) removed the inner fringe but drew a stippled halo in the sky outside
+  silhouettes, and the sky seems to wobble as the camera moves (owner: `Desktop/outline.jpg`). Research under way:
+  `superfargoth/docs/research/clouds-upsampling.md`. (The Temporal shadow filter with TAA/DLSS stays: right pairing.)
+- Fixed (superfargoth c31e397): trace marches to the furthest depth of a 6x6 window and stores the cut depth;
+  resolve and composite match taps by population (open sky vs cut at the same depth); jittered history matrix.
+- Status: **confirmed by owner 2026-10-19** (round 15: fringe, halo and sky wobble gone).
 
 ### SH-13: Point-light (lamp) shadows (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora, 22:00).
