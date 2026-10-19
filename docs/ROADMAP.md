@@ -1398,6 +1398,13 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   evaluate 0.0027 ms); app maps CELL grid → REGN climate, `--weather <type>`, `SkyLook` reduced to fog, `--clouds`
   defaults to the start weather; WE-0 awaiting owner. **Part 2 (we3b):** cloud genus blend (keep `CloudLook.scaled(0.5)`),
   fog, sky cover/dimming, precipitation, lightning/thunder, region border blend, WE-1/WE-2.
+- [ ] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
+  Ashlands seen from Balmora, rain shafts under distant clouds), as RDR2 / MSFS / Horizon do. Research first (weather.md
+  has no spatial weather yet): evaluate neighbouring regions (pure function, ~0.003 ms each) into a coarse weather map
+  around the camera that the volumetric clouds sample (coverage, genus, darkness per location), precipitation shafts
+  and lightning flashes under distant cells, far fog by location. Co-op: the map is a pure function of (seed, clock,
+  regions), so it replicates for free. Verify: WE-3 from a ridge with a forced storm in a neighbouring region; cost
+  in the cloud pass at 1440p.
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
