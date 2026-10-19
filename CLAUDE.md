@@ -6,16 +6,18 @@ the roadmap: see `../bevyrrowind/docs/ROADMAP.md`.
 
 ## Start of every session
 
-1. Read `docs/ARCHITECTURE.md` (vision, crate plan, build rules §8b, decisions §10)
-   and `docs/WISHLIST.md` (feature targets, performance numbers, early decisions).
-2. Read `../bevyrrowind/docs/ROADMAP.md` for what's next.
+1. Read `../bevyrrowind/docs/ROADMAP.md` (short: owner decisions, current phase).
+2. For structural work, read `docs/ARCHITECTURE.md` (vision, crate plan, build rules §8b);
+   `docs/WISHLIST.md` when you need feature targets or performance numbers.
+   `docs/DECISIONS.md` is append-only history: grep it, don't read it whole.
 3. For the system you touch, read its spec in `docs/specs/`. No spec yet
    for a major system? Write it first.
 
 ## End of every session
 
-Update the roadmap (in the bevyrrowind repo) and ARCHITECTURE.md §10 for
-lasting decisions.
+Update the roadmap (in the bevyrrowind repo: status mark + one "Recent" line) and append
+lasting decisions to `docs/DECISIONS.md` (one dated bullet, ≤ 3 lines). Doc budget as in
+`../bevyrrowind/CLAUDE.md` ("End of every session").
 
 ## Parallel sessions
 

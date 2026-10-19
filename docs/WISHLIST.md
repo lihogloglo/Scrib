@@ -229,6 +229,22 @@ door links as first-class records, not per-cell teleports.
   terrain. Bevy has neither yet; this is our engine work, and a good
   candidate to upstream.
 
+## 11. Foliage look (later; owner 2026-10-19, wishlist only)
+
+- **Light through leaves**: the owner asked for "SSR in the leaves", read as
+  subsurface scattering / diffuse transmission (sun glowing through foliage
+  from behind); confirm before designing. Check Bevy's
+  `StandardMaterial::diffuse_transmission` first.
+
+## 12. Water look (later; owner 2026-10-19, round 12 of the visual pass)
+
+- **Crest subsurface scattering**: light glowing through thin wave tips
+  (the usual ocean "SSS" term on top of water.md's volume scattering).
+- **Shore that lives**: swash (water running up and down the beach), wavelets
+  over the first ~20 m growing gradually into open-sea waves, never a flat band;
+  foam with texture, breakup and varying width, not a fixed white line.
+- **Whitecaps** on crests (water.md: Jacobian foam), scaled by wind/weather.
+
 ---
 
 ## Early decisions this list forces
