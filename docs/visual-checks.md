@@ -1739,6 +1739,10 @@ unfogged, no thunder/rain audio (cue messages only), lightning lights the clouds
 flash at the strike). Also check: rain (`set {"weather": "rain"}`) slants with the wind; ash storm shows blowing
 grey-brown streaks; thunderstorm flashes light the land and clouds (`time_scale` 600 for more strikes). Shots
 `target/we3b2/{a_rain,c_ashstorm2}.png`.
+Rain over the sea (rainwater, 2026-10-19, **awaiting owner**): `set {"weather": "rain", "camera": "-60,8,1290,-60,-4,1320"}`
+(looking down at the sea off Seyda Neen): streaks show over the water as over the rocks at every pitch; water
+shading/refraction unchanged. Was: rain hidden over the ocean when looking down (Transparent3d sort; water.md
+"Render order"). Shots `target/rainwater/{a_sea_down,b_open_sea_down}.png`.
 
 ### WE-2: Region border blend, Ascadian Isles → Ashlands (`view "Pelagiad" --hour 12`, fly north toward the Ashlands)
 

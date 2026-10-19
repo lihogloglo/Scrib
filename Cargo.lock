@@ -6726,6 +6726,7 @@ dependencies = [
  "bevy_render",
  "bevy_shader",
  "bevy_time",
+ "sf_render_order_bevy",
 ]
 
 [[package]]
@@ -6754,6 +6755,17 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "sf_render_order_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_core_pipeline",
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_render",
 ]
 
 [[package]]
@@ -6903,6 +6915,7 @@ dependencies = [
  "bevy_transform",
  "log",
  "sf_coords",
+ "sf_render_order_bevy",
  "sf_water",
 ]
 
