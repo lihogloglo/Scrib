@@ -971,6 +971,43 @@ their own consumers (part 2).
   smoothstep's bound, clouds pass half-way before the fog). Cost unchanged (gate 0.05 ms).
 
 
+### WE3 as built (part 2b, we3b2, 2026-10-19): precipitation, lightning, cues, border blend
+
+- **New crate `sf_precip_bevy`** (thin; `PrecipPlugin`, `Precip` resource, `PrecipMaterial`, `precip.wesl`). The
+  technique of "Precipitation" below minus occlusion: three nested camera-centered boxes (8 / 24 / 64 m, 3000 / 6000 /
+  8000 drops at intensity 1), one draw each per kind slot (2 slots, so a crossfade draws both; 6 entities). Drop
+  position closed-form in the vertex shader: `cam + (fract((seed·L + offset − cam) / L) − ½)·L`, the offset being
+  velocity (fall + wind × follow) integrated on the CPU and wrapped to `[0, L)` (a wind change never jumps drops).
+  A drop shows while its rank (evenly spread, shuffled) < intensity. Streaks stretch along the velocity
+  (`STREAK_S` 0.035 s of travel) and face the camera; flakes are soft discs that flutter. Minimum width 1 px
+  (flakes 1.5) with alpha dimmed to keep energy; faded at the box faces, inside the nested box, and within 1 m of
+  the camera. Far boxes are more transparent. Alpha blended, no prepass, no shadows, `NoFrustumCulling`.
+  **No particle crate:** `bevy_hanabi` is not on Bevy 0.20 (crate table above) and the closed form needs no simulator.
+- `PrecipKind.tint` (linear rgb + opacity) is new. Looks: `Streak` = rain (wind follow 0.8); `Flake` = snow
+  (flutter 0.15 m); `Dust` = blowing grit **drawn as wind streaks** (flutter 0.3 m, follow 1): ash storms at 10-12 m/s
+  read as near-horizontal blowing ash (owner, Next up 6a), not specks.
+- `sf_weather_bevy::fx`: `apply_precip` maps `frame.precip` into `Precip` slots (a kind keeps its slot while it falls:
+  `assign_slots`), wind = `frame.wind().velocity`, brightness = `precip_brightness(sun elevation, overcast dimming,
+  flash)` (night floor 0.04). Written only on change.
+- **Lightning:** `LightningStrike::{flash_at, thunder_delay_s, thunder_volume}` in `sf_weather` (pure: decay over
+  `fade_s` + two re-strokes placed by the strike time; delay = distance / `SPEED_OF_SOUND` 343). `apply_lightning`:
+  the latest strike restarts `LightningFlash` (real time); a shadowless `DirectionalLight` (`LightningLight`, spawned on
+  the first strike, hidden between flashes) from the strike's azimuth at 0.95 rad elevation, `LIGHTNING_LUX` 40 000 ×
+  flash; **cloud emission stand-in:** the clouds' `look.ambient` × (1 + 6 × flash), restored after (a true in-cloud
+  emission at the strike position is still open). Rain brightens with the flash.
+- **Cues:** `WeatherSound` message: `Loop { sound, volume, region }` on start / stop (volume 0) / change ≥ 0.02;
+  `OneShot { sound, volume, azimuth, distance_m }` for thunder when its delay has passed. **No audio backend in the
+  workspace yet**, so nothing plays them (host's job, logged). Climate one-shot sets are not emitted yet.
+- **Border blend (app):** `weather_site` finds the nearest grid square of another climate among the 8 around the
+  camera (distance to that square), and writes `border_blend(own, neighbor, d, band)`, band = min(`BORDER_BAND_M`,
+  2 squares) ≈ 234 m in Morrowind; written only on a weight change ≥ 1e-3. Interiors switch `Precip.enabled` off.
+- Tests: sf_precip_bevy 3 (mesh/ranks, wrap, nesting/light), sf_weather `thunder_delay_and_flash_are_pure`,
+  sf_weather_bevy `frame_drives_precip_cues_and_lightning`, `slots_keep_their_kind_through_a_crossfade`.
+- **Not built:** occlusion map (rain under roofs / trees outdoors), splashes, ripples, fog on the streaks (transparent
+  fog path, fogfix), textures (`PrecipKind.texture` unused: procedural shapes), cloud shadow-map rate modulation,
+  in-cloud emission at the strike, audio playback.
+
+
 ## Precipitation
 
 **Technique** (Tatarchuk 2006; RDR2 and Watch Dogs follow the same structure):

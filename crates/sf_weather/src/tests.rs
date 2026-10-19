@@ -489,3 +489,25 @@ fn one_shot_sets_draw_by_chance_and_hush_with_the_weather() {
     let f = evaluate(&book, &state, &input(&[(c, 0.5), (book.climate(&id("sunny")).unwrap(), 0.5)], 5.0));
     assert!((f.one_shots[0].volume - 0.25).abs() < 1e-6);
 }
+
+#[test]
+fn thunder_delay_and_flash_are_pure() {
+    let s = LightningStrike {
+        time: 12.345,
+        climate: ClimateIx(0),
+        azimuth: 0.0,
+        distance_m: 3430.0,
+        flash: 1.0,
+        fade_s: 0.5,
+        thunder: None,
+    };
+    assert!((s.thunder_delay_s() - 10.0).abs() < 1e-4);
+    assert!((s.thunder_volume() - 500.0 / 3430.0).abs() < 1e-6);
+    assert_eq!(s.flash_at(-0.1), 0.0);
+    let peak = s.flash_at(0.0);
+    assert!(peak > 0.9 && peak <= 1.0, "{peak}");
+    assert!(s.flash_at(3.0) < 0.01, "fades out");
+    assert_eq!(s.flash_at(0.13), s.clone().flash_at(0.13), "same strike, same flash");
+    let samples: Vec<f32> = (0..60_u8).map(|i| s.flash_at(f32::from(i) * 0.01)).collect();
+    assert!(samples.windows(2).any(|w| w[1] > w[0] + 1e-3), "no re-stroke");
+}

@@ -20,8 +20,9 @@
 //!    a blend of the presets' (each channel on its own transition window), so
 //!    a weather change glides: no pops.
 //!
-//! Precipitation and lightning are read from [`CurrentWeather`] by their
-//! own consumers (M6 WE3 part 2b).
+//! Part 2b (`fx`): precipitation into `sf_precip_bevy::Precip` (when the
+//! host draws it), the lightning flash (a directional light, cloud glow)
+//! and [`WeatherSound`] messages (loops; thunder delayed by distance / 343).
 
 use std::sync::Arc;
 
@@ -38,8 +39,15 @@ use smallvec::SmallVec;
 
 pub use sf_weather;
 
+mod fx;
 #[cfg(test)]
 mod tests;
+
+pub use fx::{
+    CUE_STEP, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
+    lightning_direction, precip_brightness, precip_slot,
+};
+pub use sf_precip_bevy;
 
 /// Longest stretch of game time one frame evaluates lightning over, game
 /// hours: a clock jump (sleep, wait, time-lapse) skips strikes instead of
@@ -117,6 +125,8 @@ impl Plugin for WeatherPlugin {
             .init_resource::<CurrentWeather>()
             .init_resource::<WeatherOverrides>()
             .init_resource::<WeatherStats>()
+            .init_resource::<LightningFlash>()
+            .add_message::<WeatherSound>()
             .configure_sets(
                 Update,
                 (WeatherSystems::Evaluate, WeatherSystems::Apply)
@@ -127,8 +137,16 @@ impl Plugin for WeatherPlugin {
             .add_systems(Update, evaluate.in_set(WeatherSystems::Evaluate))
             .add_systems(
                 Update,
-                (apply_sky, apply_clouds, apply_fog, apply_wind)
-                    .in_set(WeatherSystems::Apply),
+                (
+                    apply_sky,
+                    apply_clouds,
+                    apply_fog,
+                    apply_wind,
+                    (fx::apply_lightning, fx::apply_precip).chain(),
+                    fx::emit_cues,
+                )
+                    .in_set(WeatherSystems::Apply)
+                    .before(sf_precip_bevy::PrecipSystems),
             );
     }
 }

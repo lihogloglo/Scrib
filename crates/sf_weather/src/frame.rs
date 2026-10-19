@@ -87,6 +87,44 @@ pub struct LightningStrike {
     pub thunder: Option<RecordId>,
 }
 
+/// Speed of sound for thunder delays, m/s.
+pub const SPEED_OF_SOUND: f32 = 343.0;
+
+impl LightningStrike {
+    /// Real seconds from the flash to the thunder: `distance_m / 343`.
+    pub fn thunder_delay_s(&self) -> f32 {
+        self.distance_m.max(0.0) / SPEED_OF_SOUND
+    }
+
+    /// Thunder loudness, `(0, 1]`: full within 500 m, then falling as
+    /// 1/distance (a floor of 0.1 so far storms still rumble).
+    pub fn thunder_volume(&self) -> f32 {
+        (500.0 / self.distance_m.max(500.0)).max(0.1)
+    }
+
+    /// The flash `t_s` real seconds after the strike: the strike's `flash`
+    /// fading over `fade_s`, flickering with two re-strokes (return strokes
+    /// down the same channel) placed by the strike time. Pure, so every
+    /// peer sees the same flash.
+    pub fn flash_at(&self, t_s: f32) -> f32 {
+        if t_s < 0.0 {
+            return 0.0;
+        }
+        let fade = self.fade_s.max(0.05);
+        let decay = (-t_s / fade).exp();
+        #[expect(clippy::cast_possible_truncation, reason = "a phase")]
+        let phase = (self.time.fract() * 9973.0).fract() as f32;
+        let mut pulse = 0.0_f32;
+        for (gain, at) in [(1.0, 0.0), (0.5, 0.08 + 0.1 * phase), (0.33, 0.25 + 0.15 * phase)] {
+            let dt = t_s - at * fade;
+            if dt >= 0.0 {
+                pulse = pulse.max(gain * (-dt / 0.06).exp());
+            }
+        }
+        (self.flash * (0.35 * decay + 0.65 * pulse)).max(0.0)
+    }
+}
+
 /// A climate's storm wind source and how strongly it is on (0..1).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StormFrame {

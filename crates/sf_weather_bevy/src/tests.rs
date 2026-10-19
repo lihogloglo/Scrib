@@ -304,3 +304,88 @@ fn transition_glides_clouds_lead() {
     assert!(max_fog_step < 1e-3 * 1.6 / 240.0, "fog step {max_fog_step}");
     assert!(cloud_half.unwrap() < fog_half.unwrap(), "{cloud_half:?} {fog_half:?}");
 }
+
+fn storm_app() -> App {
+    let storm = WeatherPreset {
+        precipitation: vec![sf_weather::PrecipTerm { kind: id("rain"), intensity: 0.8 }],
+        cues: vec![sf_weather::Cue { sound: id("rain_loop"), volume: 1.0 }],
+        lightning: Some(sf_weather::Lightning {
+            per_hour: 100.0,
+            thunder: vec![id("thunder")],
+            ..sf_weather::Lightning::default()
+        }),
+        ..WeatherPreset::default()
+    };
+    let climate = Climate {
+        weights: vec![(id("storm"), 1.0)],
+        ..Climate::default()
+    };
+    let book = Arc::new(WeatherBook::new(
+        [(id("storm"), storm)],
+        [(id("land"), climate)],
+        [(id("rain"), sf_weather::PrecipKind::default())],
+    ));
+    let mut app = App::new();
+    app.insert_resource(SkyTime(SkyClock::default()))
+        .init_resource::<SkyConfig>()
+        .init_resource::<sf_sky_bevy::WeatherState>()
+        .init_resource::<sf_precip_bevy::Precip>()
+        .add_plugins(WeatherPlugin { book, state: WeatherState::new(3) });
+    site(&mut app);
+    app
+}
+
+#[test]
+fn frame_drives_precip_cues_and_lightning() {
+    let mut app = storm_app();
+    app.update();
+    let p = app.world().resource::<sf_precip_bevy::Precip>().clone();
+    let slot = p.slots[0].expect("rain falls");
+    assert_eq!(slot.shape, sf_precip_bevy::PrecipShape::Streak);
+    assert!((slot.intensity - 0.8).abs() < 1e-5, "{}", slot.intensity);
+    assert!(p.slots[1].is_none());
+    assert!(p.brightness > 0.5, "noon without sky: day light");
+    let loops: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<WeatherSound>>()
+        .drain()
+        .collect();
+    assert_eq!(loops, vec![WeatherSound::Loop { sound: id("rain_loop"), volume: 1.0, region: false }]);
+    // ~100 strikes per game hour: step the clock until one fires.
+    let mut struck = false;
+    for _ in 0..400 {
+        app.world_mut().resource_mut::<SkyTime>().0.days += 0.05 / 24.0;
+        app.update();
+        if app.world().resource::<LightningFlash>().strike.is_some() {
+            struck = true;
+            break;
+        }
+    }
+    assert!(struck, "no strike");
+    let flash = app.world().resource::<LightningFlash>();
+    assert!(flash.level > 0.5 && flash.age_s == 0.0, "{flash:?}");
+    // No real clock in the test: the thunder is due now (delay counted from 0
+    // only when real time runs), so it waits; the light spawns next frame.
+    app.update();
+    let lights = app
+        .world_mut()
+        .query_filtered::<&bevy_light::DirectionalLight, With<LightningLight>>()
+        .iter(app.world())
+        .count();
+    assert_eq!(lights, 1);
+}
+
+#[test]
+fn slots_keep_their_kind_through_a_crossfade() {
+    use sf_weather::PrecipIx;
+    let mut a = [None; sf_precip_bevy::SLOTS];
+    assign_slots(&mut a, &[(PrecipIx(1), 1.0)]);
+    assert_eq!(a, [Some(PrecipIx(1)), None]);
+    assign_slots(&mut a, &[(PrecipIx(0), 0.9), (PrecipIx(1), 0.2)]);
+    assert_eq!(a, [Some(PrecipIx(1)), Some(PrecipIx(0))], "rain stays in its box");
+    assign_slots(&mut a, &[(PrecipIx(0), 1.0)]);
+    assert_eq!(a, [None, Some(PrecipIx(0))]);
+    assert!(precip_brightness(-0.5, 0.0, 0.0) < 0.05);
+    assert!(precip_brightness(0.5, 1.0, 0.0) < precip_brightness(0.5, 0.0, 0.0));
+    assert!(lightning_direction(0.0).y < -0.5, "light shines down");
+}

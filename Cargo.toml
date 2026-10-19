@@ -134,6 +134,7 @@ sf_wind = { path = "crates/sf_wind" }
 sf_atmos = { path = "crates/sf_atmos" }
 sf_weather = { path = "crates/sf_weather" }
 sf_weather_bevy = { path = "crates/sf_weather_bevy" }
+sf_precip_bevy = { path = "crates/sf_precip_bevy" }
 sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
 sf_ui_bevy = { path = "crates/sf_ui_bevy" }

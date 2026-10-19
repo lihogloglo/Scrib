@@ -471,6 +471,8 @@ pub struct PrecipKind {
     /// Extinction at intensity 1, 1/m (heavy rain ≈ 2e-3: about 2 km
     /// visibility; snow and ash much more). Feeds `visibility_m`.
     pub extinction: f32,
+    /// Linear rgb and opacity of the drops (lit by the sky's brightness).
+    pub tint: [f32; 4],
 }
 
 impl Default for PrecipKind {
@@ -483,6 +485,7 @@ impl Default for PrecipKind {
             splash: None,
             accumulates: SurfaceChannel::Wet,
             extinction: 2e-3,
+            tint: [0.55, 0.6, 0.65, 0.3],
         }
     }
 }

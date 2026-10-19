@@ -1,0 +1,26 @@
+[package]
+name = "sf_precip_bevy"
+description = "Precipitation for Bevy: rain streaks and snow/ash flakes in camera-wrapped nested volumes, positions closed-form in the vertex shader (weather.md \"Precipitation\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Thin (ARCHITECTURE §8b rule 6): no simulation, no CPU per-drop work. The
+# weather (sf_weather_bevy) writes `Precip`; this crate only draws it.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_light.workspace = true
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true
