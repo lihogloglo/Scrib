@@ -193,6 +193,19 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Source: shadows2.
 - Source: shadows (check 4).
 
+### SH-7: Contact shadows and shadow bias (shadows F1 + F2)
+- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen" --camera "-143.5,4.4,1020.0,-153.5,2.4,1010.0" --hour 15 --weather clear`
+  (street by the Census Office, NPCs at 5-15 m, houses at 20-30 m); then `view "Balmora" --camera "-280,+12,200,-295,+1,180" --hour 15 --weather clear`
+  (pots under the arch ~25 m, NPCs at 30-40 m); then both at `--hour 7` (grazing sun).
+- Look for: feet, pots, crates and column/wall bases darkened where they touch the ground at every distance
+  (no floating objects); no dark halos beside thin objects or at depth edges; no shadow acne (stripes, speckle)
+  on walls and ground at 07:00, and the 6a "blocky half-transparent outline" at grazing light gone or smaller;
+  shadows not detached from their casters (peter-panning).
+- A/B: `--off contactshadows` (contact shadows only); `--off shadowtune` (Bevy's 1.8-texel normal bias + old
+  cascades); both together = before this slice. `--quality low` = Hardware2x2 filtering, no contact shadows.
+- Status: awaiting owner (shf12 saw only small differences at 15:00; GPU cost not yet benchmarked).
+- Source: shf12 (shadows F1 + F2).
+
 ## Ghostfence (superfargoth `weather.md`, bug B)
 
 ### GF-1: Ghostfence appears complete, never late

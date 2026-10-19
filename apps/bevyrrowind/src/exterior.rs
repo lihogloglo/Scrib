@@ -25,7 +25,8 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
-use bevy::light::CascadeShadowConfigBuilder;
+use bevy::light::{CascadeShadowConfigBuilder, ShadowFilteringMethod};
+use bevy::pbr::ContactShadows;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::transform::TransformPlugin;
@@ -134,6 +135,9 @@ struct Start {
     target: DVec3,
     bench: bool,
     prepass: bool,
+    /// Screen-space contact shadows (`None`: off; `--off contactshadows`).
+    contact: Option<ContactShadows>,
+    shadow_filter: ShadowFilteringMethod,
 }
 
 #[derive(Resource)]
@@ -243,11 +247,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let mut clock = SkyClock::at(options.day, options.hour, &settings.calendar);
     clock.paused = options.screenshot.is_some() || bench;
     render.insert(&mut app);
-    app.insert_resource(render.point_shadow_budget(options.quality.point_shadows()));
     let off_parts = &perf.off;
+    let contact_shadows = !off_parts.has(Part::ContactShadows) && options.quality.contact_shadows().is_some();
+    app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows, ..render.point_shadow_budget(options.quality.point_shadows()) });
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
         cascades: sun_cascades(&far_settings.levels, off_parts.has(Part::ShadowTune)),
+        sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows),
         ..SkyRenderOptions::default()
     });
     // M6 WE3: the weather (`sf_weather_bevy`) drives haze, dust, cloud cover, the clouds, the
@@ -334,7 +340,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         lights: Arc::new(if options.no_lights { HashMap::new() } else { options.lights }),
         lod_tint: options.lod_tint,
     })
-        .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(), prepass: options.prepass })
+        .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(),
+            prepass: options.prepass,
+            contact: if perf.off.has(Part::ContactShadows) { None } else { options.quality.contact_shadows() },
+            shadow_filter: options.quality.shadow_filter(),
+        })
         .insert_resource(Started(Instant::now()))
         // Chained: both reserve the worldspace root through `Commands`; unordered,
         // one could queue `ChildOf(root)` ahead of the root's spawn (a panic with
@@ -582,6 +592,13 @@ fn setup(
     }
     if start.prepass {
         camera.insert((DepthPrepass, MotionVectorPrepass, OcclusionCulling));
+    }
+    // weather.md "Shadow bias and contact shadows" (shadows F1): contact shadows ray-march
+    // the depth prepass, which needs motion vectors here so it applies the LOD dither
+    // (see the note above).
+    camera.insert(start.shadow_filter);
+    if let Some(contact) = start.contact {
+        camera.insert((contact, DepthPrepass, MotionVectorPrepass));
     }
     if !start.bench {
         camera.insert(FreeCamera { walk_speed: 12.0, run_speed: 80.0, ..FreeCamera::default() });
@@ -985,6 +1002,24 @@ fn sun_cascades(levels: &sf_lod::FarLevels, legacy: bool) -> CascadeShadowConfig
     }
 }
 
+/// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
+/// Bevy's 1.8-texel normal offset lifts every lookup off the surface by 1.3 m in
+/// the last cascade, so small casters lose the shadow where they touch the ground;
+/// `SUN_NORMAL_BIAS` texels keep acne away at grazing sun. `legacy` (`--off shadowtune`)
+/// is Bevy's default.
+fn sun_shadow(legacy: bool, contact_shadows: bool) -> sf_sky_bevy::SunShadow {
+    let defaults = sf_sky_bevy::SunShadow::default();
+    if legacy {
+        return sf_sky_bevy::SunShadow { contact_shadows, ..defaults };
+    }
+    sf_sky_bevy::SunShadow { depth_bias: SUN_DEPTH_BIAS, normal_bias: SUN_NORMAL_BIAS, contact_shadows }
+}
+
+/// Sun shadow depth bias, meters along the light (Bevy: 0.02).
+const SUN_DEPTH_BIAS: f32 = 0.02;
+/// Sun shadow normal bias, texels of each cascade (Bevy: 1.8).
+const SUN_NORMAL_BIAS: f32 = 0.8;
+
 // -- clouds ------------------------------------------------------------------------
 
 /// Morrowind's world is compressed, so cloud altitudes **and sizes** are
@@ -1175,6 +1210,27 @@ impl Quality {
             Self::Low | Self::Medium => (0, 512),
             Self::High => crate::render::POINT_SHADOWS_DEFAULT,
             Self::Ultra => (4, 1024),
+        }
+    }
+
+    /// Screen-space contact shadows (shadows F1, weather.md "Shadow bias and contact
+    /// shadows"): Bevy's depth-prepass ray march toward the sun and the budgeted point
+    /// lights, so small objects stay grounded at any cascade texel size. Off on Low
+    /// (it costs the depth + motion-vector prepass).
+    pub const fn contact_shadows(self) -> Option<ContactShadows> {
+        match self {
+            Self::Low => None,
+            Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.5 }),
+            Self::High | Self::Ultra => Some(ContactShadows { linear_steps: 16, thickness: 0.1, length: 0.5 }),
+        }
+    }
+
+    /// Shadow-map filtering (shadows F2): Hardware2x2 on Low (one tap), Gaussian
+    /// above (Temporal needs TAA, which raster doesn't run).
+    pub const fn shadow_filter(self) -> ShadowFilteringMethod {
+        match self {
+            Self::Low => ShadowFilteringMethod::Hardware2x2,
+            Self::Medium | Self::High | Self::Ultra => ShadowFilteringMethod::Gaussian,
         }
     }
 
