@@ -571,3 +571,57 @@ fn default_sky_has_one_earth_moon_and_stars_fade_in_at_dusk() {
     // The drawn sun is bigger than the physical one.
     assert!(s.sun_disk.angular_size > s.sun_angular_size * 2.0);
 }
+
+#[test]
+fn far_shadow_view_is_texel_snapped_and_covers_the_reach() {
+    let s = FarShadowSettings::default();
+    assert!(close(s.texel(), 1.0, 1e-6));
+    let to_sun = Vec3::new(0.4, 0.8, -0.3).normalize();
+    // Re-centring moves the map by whole texels in the light's plane (texel
+    // edges stay put: no shimmer), and the centre stays within a texel of the camera.
+    let a = FarShadowView::fit(to_sun, Vec3::new(100.0, 20.0, 300.0), &s);
+    let b = FarShadowView::fit(to_sun, Vec3::new(137.3, 22.0, 281.6), &s);
+    let shift = a.view_from_world.transform_point3(b.centre);
+    for v in [shift.x, shift.y] {
+        assert!(close(v, v.round(), 1e-3), "{shift:?}");
+    }
+    assert!(a.centre.distance(Vec3::new(100.0, 20.0, 300.0)) <= s.texel());
+    // The centre is at clip (0, 0) and a point `reach` along the light's x at the map edge.
+    let c = a.clip_from_world.project_point3(a.centre);
+    assert!(close(c.x, 0.0, 1e-4) && close(c.y, 0.0, 1e-4) && close(c.z, 0.5, 1e-4), "{c:?}");
+    // Reverse Z: toward the sun is nearer (larger depth).
+    let up = a.clip_from_world.project_point3(a.centre + to_sun * 100.0);
+    assert!(up.z > c.z);
+    let side = a.view_from_world.inverse().transform_vector3(Vec3::X);
+    let edge = a.clip_from_world.project_point3(a.centre + side * s.reach);
+    assert!(close(edge.x, 1.0, 1e-3) && close(edge.y, 0.0, 1e-3), "{edge:?}");
+}
+
+#[test]
+fn far_shadow_cache_refreshes_on_sun_turn_recentre_and_invalidate_in_strips() {
+    let s = FarShadowSettings { strips: 3, ..FarShadowSettings::default() };
+    let sun = Vec3::new(0.3, 0.9, 0.1).normalize();
+    let mut cache = FarShadowCache::default();
+    let drain = |cache: &mut FarShadowCache, sun: Vec3, cam: Vec3| {
+        let mut strips = Vec::new();
+        while let FarShadowWork::Strip { strip, target, .. } = cache.update(sun, cam, &s) {
+            strips.push((strip, target));
+        }
+        strips
+    };
+    // First refresh: three strips into map 0, then it is the front map.
+    assert_eq!(drain(&mut cache, sun, Vec3::ZERO), vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(cache.front().map(|(_, i)| i), Some(0));
+    // Small sun turn and camera step: nothing.
+    let small = glam::Quat::from_rotation_z(0.01_f32.to_radians()) * sun;
+    assert!(drain(&mut cache, small, Vec3::new(50.0, 0.0, 0.0)).is_empty());
+    // Sun past the threshold: refresh into the back map (1), then swap.
+    let big = glam::Quat::from_rotation_z(0.05_f32.to_radians()) * sun;
+    assert_eq!(drain(&mut cache, big, Vec3::ZERO), vec![(0, 1), (1, 1), (2, 1)]);
+    assert_eq!(cache.front().map(|(_, i)| i), Some(1));
+    // The camera moving 1/16 of the reach recentres.
+    assert_eq!(drain(&mut cache, big, Vec3::new(140.0, 0.0, 0.0)).len(), 3);
+    // A far cell arriving forces one.
+    cache.invalidate();
+    assert_eq!(drain(&mut cache, big, Vec3::new(140.0, 0.0, 0.0)).len(), 3);
+}
