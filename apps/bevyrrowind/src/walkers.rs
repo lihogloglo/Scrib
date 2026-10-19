@@ -487,10 +487,11 @@ fn processing_range(
         if awake != dormant && !mover.is_added() {
             continue;
         }
+        // `try_`: streaming may despawn the mover before these commands apply.
         if awake {
-            commands.entity(entity).remove::<Dormant>();
+            commands.entity(entity).try_remove::<Dormant>();
         } else {
-            commands.entity(entity).insert(Dormant);
+            commands.entity(entity).try_insert(Dormant);
         }
         if let Some(mut lod) = mover.animator.and_then(|a| lods.get_mut(a).ok()) {
             lod.significance = if awake { 1.0 } else { DORMANT_SIGNIFICANCE };

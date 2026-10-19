@@ -5,15 +5,21 @@ Morrowind content pack and game binary on the superfargoth framework.
 
 ## Start of every session
 
-1. Read `docs/ROADMAP.md` ("Next up" and the current milestone).
-2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md`.
+1. Read `docs/ROADMAP.md` (short: owner decisions, current phase).
+2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~480 lines).
 3. For the system you touch, read its spec in `docs/specs/` (or
    `../superfargoth/docs/specs/`). No spec yet for a major system? Write it first.
+4. **Don't read archives whole.** `docs/archive/` (old roadmap, closed visual checks) and
+   `../superfargoth/docs/DECISIONS.md` are append-only history: grep them for your system.
 
 ## End of every session
 
-Update `docs/ROADMAP.md`: status marks, "Next up", one session-log line.
-Record decisions with lasting effect in ARCHITECTURE.md §10.
+Update `docs/ROADMAP.md`: your task's status mark and one line under "Recent" (drop the oldest
+past ~10). As-built detail goes in the spec and the commit message, never the roadmap.
+Record decisions with lasting effect as one dated bullet (≤ 3 lines) in
+`../superfargoth/docs/DECISIONS.md`.
+**Doc budget:** ROADMAP ≤ ~250 lines, a spec ≤ ~25 KB (split "As built" history into an archive
+file next to it), a visual-check entry ≤ ~10 lines. Agents load these files; size is context.
 
 ## Parallel sessions
 
@@ -37,8 +43,8 @@ working tree**. Protocol:
    slot and runs at BelowNormal priority, so a check and its build can't drift apart.
    Keep the build/test/run cycle short so you don't hold the
    machine for long; spec-only sessions shouldn't need to build at all.
-3. **Shared files.** `docs/ROADMAP.md`: edit only your milestone's section
-   plus one session-log line. ARCHITECTURE.md §10: append only. Workspace
+3. **Shared files.** `docs/ROADMAP.md`: edit only your task's lines plus
+   one "Recent" line. `DECISIONS.md`: append only. Workspace
    `Cargo.toml` / `Cargo.lock`: change only when your scope needs a new
    crate or dependency, and note it in your session file.
 4. **Never commit unless the user asks.** If asked, stage explicit paths

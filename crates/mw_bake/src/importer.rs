@@ -66,7 +66,9 @@ impl NifImporter {
     /// Bump when [`to_model`]'s output changes (invalidates cooked products).
     /// 2: skin data and geometry morphs (only skinned or morphing NIFs change).
     /// 3: foliage cutouts (`nif.blend = "cutout"` / `"cutout_candidate"`, `mw_nif::Cutout`).
-    pub const VERSION: u32 = 3;
+    /// 4: re-key after a v3 cook cached by a build that predated the cutout mapping in
+    /// `mw_nif` (leaves stayed blended, so cast no shadows; leafshadow 2026-10-19).
+    pub const VERSION: u32 = 4;
 }
 
 impl ModelImporter for NifImporter {
