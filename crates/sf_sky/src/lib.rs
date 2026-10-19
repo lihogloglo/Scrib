@@ -72,10 +72,14 @@ impl RenderPath {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Upscaling {
-    /// Native resolution, the renderer's own anti-aliasing (MSAA).
+    /// Native resolution, the renderer's own anti-aliasing (MSAA): the Low
+    /// preset, no temporal resolve.
     #[default]
     Off,
-    /// NVIDIA DLSS Super Resolution (RTX GPUs; falls back to `Off`).
+    /// Native resolution, temporal anti-aliasing (Bevy's TAA): the base for
+    /// grain-free stochastic effects (soft shadows, dithered fades, fog).
+    Taa,
+    /// NVIDIA DLSS Super Resolution (RTX GPUs; falls back to `Taa`).
     Dlss(UpscaleQuality),
 }
 
@@ -120,7 +124,7 @@ impl UpscaleQuality {
 }
 
 impl Upscaling {
-    /// Parses a setting: `off`, or a quality name (`auto`, `native`/`dlaa`,
+    /// Parses a setting: `off`, `taa`, or a quality name (`auto`, `native`/`dlaa`,
     /// `quality`, `balanced`, `performance`, `ultra-performance`) for DLSS.
     ///
     /// # Errors
@@ -130,30 +134,42 @@ impl Upscaling {
         if raw.eq_ignore_ascii_case("off") || raw.eq_ignore_ascii_case("none") {
             return Ok(Self::Off);
         }
+        if raw.eq_ignore_ascii_case("taa") {
+            return Ok(Self::Taa);
+        }
         UpscaleQuality::NAMES
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(raw) || n.replace('-', "_").eq_ignore_ascii_case(raw))
             .map(|(_, q)| Self::Dlss(*q))
             .ok_or_else(|| {
                 let names: Vec<&str> = UpscaleQuality::NAMES.iter().map(|(n, _)| *n).collect();
-                format!("unknown upscaling {raw:?}; known: off, {}", names.join(", "))
+                format!("unknown upscaling {raw:?}; known: off, taa, {}", names.join(", "))
             })
     }
 
-    /// The setting that actually runs: DLSS only where it is supported.
+    /// The setting that actually runs: DLSS only where it is supported,
+    /// else TAA (the temporal resolve stays; MSAA only when asked for).
     #[must_use]
     pub fn resolve(self, dlss_supported: bool) -> Self {
         match self {
-            Self::Dlss(_) if dlss_supported => self,
-            _ => Self::Off,
+            Self::Dlss(_) if !dlss_supported => Self::Taa,
+            _ => self,
         }
     }
 
-    /// `off` or the quality name.
+    /// Whether a temporal resolve (TAA or DLSS) runs: jittered frames,
+    /// motion vectors, no MSAA.
+    #[must_use]
+    pub fn is_temporal(self) -> bool {
+        self != Self::Off
+    }
+
+    /// `off`, `taa` or the DLSS quality name.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "off",
+            Self::Taa => "taa",
             Self::Dlss(q) => q.name(),
         }
     }

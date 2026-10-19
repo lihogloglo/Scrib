@@ -216,7 +216,7 @@ fn budget_shadows(
                 let twin = commands
                     .spawn((PointLight { shadow_maps_enabled: false, contact_shadows_enabled: false, ..*light }, ShadowTwin, NoLightProxy, Transform::IDENTITY, Visibility::Hidden, ChildOf(entity)))
                     .id();
-                commands.entity(entity).insert(ShadowSlot { fade: 0.0, held: true, full: light.intensity, twin });
+                commands.entity(entity).try_insert(ShadowSlot { fade: 0.0, held: true, full: light.intensity, twin });
             }
             continue;
         };

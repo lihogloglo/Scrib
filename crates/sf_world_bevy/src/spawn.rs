@@ -247,7 +247,7 @@ pub fn apply_subtree_ranges(
             current = parent.parent();
         }
         if let Some(Some(range)) = found {
-            commands.entity(entity).insert(range);
+            commands.entity(entity).try_insert(range);
         }
     }
 }
@@ -277,7 +277,7 @@ pub fn apply_subtree_layers(
         for _ in 0..MAX_SUBTREE_DEPTH {
             let Ok((parent, layers)) = nodes.get(current) else { break };
             if let Some(layers) = layers {
-                commands.entity(entity).insert(layers.0.clone());
+                commands.entity(entity).try_insert(layers.0.clone());
                 break;
             }
             let Some(parent) = parent else { break };

@@ -283,8 +283,16 @@ prefetch into a worldspace without a directory is reported
 (`missing_worldspaces`) so the engine can load it.
 
 **Transition (M2): the `FadeTransition` scaffold.** Fade out (0.3 s),
-swap the active worldspace, move the player to `arrival`, fade in. If the
-target isn't resident yet, hold the fade in burst mode. Removal path: M8's
+swap the active worldspace, move the player to `arrival`, fade in. The fade
+holds at full black in burst mode until the arrival can be shown (DR-4,
+2026-10-19): at least 3 frames, the content cells within `ready_margin_m`
+(16 m) of the arrival at Near or above and no Near load pending in the
+worldspace (`Scheduler::arrival_ready`; burst restarts if it ended before
+the anchor arrived), and every mesh within `ready_radius_m` (48 m) of the
+traveler with its textures loaded (a material whose image is loading doesn't
+draw, so objects popped in). `max_hold_secs` (10 s) caps it with a warning.
+The fade is a full-window UI node (after post-processing, so truly black;
+the earlier 3D quad was fogged and drawn over by later passes). Removal path: M8's
 portal crossing replaces it with no change to the data model.
 
 **Residency cache for the worldspace just left** (2026-10-12). When an

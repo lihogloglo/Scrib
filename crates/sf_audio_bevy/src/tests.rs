@@ -84,3 +84,16 @@ fn unknown_sound_is_skipped() {
     assert!(events(&mut app).is_empty());
     assert_eq!(level(&mut app, "nope"), None);
 }
+
+#[test]
+fn indoors_eases_the_weather_bus_out_and_back() {
+    let mut app = app();
+    let gain = |app: &App| app.world().resource::<AudioMixer>().0.bus_gain(Bus::Weather);
+    assert!((gain(&app) - 1.0).abs() < 1e-6);
+    app.insert_resource(ListenerOutdoors(false));
+    app.update();
+    assert!(gain(&app) <= 0.0, "a 500 ms frame covers the 0.5 s swing: {}", gain(&app));
+    app.insert_resource(ListenerOutdoors(true));
+    app.update();
+    assert!((gain(&app) - 1.0).abs() < 1e-6);
+}

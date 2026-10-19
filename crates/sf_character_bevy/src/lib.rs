@@ -590,7 +590,7 @@ fn request_builds(
     let Some(characters) = characters else { return };
     for (entity, spec) in &changed {
         // Replaces (cancels) a running build and a pending swap.
-        commands.entity(entity).remove::<PendingSwap>().insert(spawn_build(&characters.shared, spec, settings.bodies, false));
+        commands.entity(entity).try_remove::<PendingSwap>().try_insert(spawn_build(&characters.shared, spec, settings.bodies, false));
     }
 }
 
@@ -668,7 +668,7 @@ fn finish_builds(
     let mut ready: Vec<(Entity, Built, Arc<OutfitAssets>)> = Vec::new();
     for (entity, spec, mut build) in &mut building {
         let Some(result) = future::block_on(future::poll_once(&mut build.0)) else { continue };
-        commands.entity(entity).remove::<CharacterBuild>();
+        commands.entity(entity).try_remove::<CharacterBuild>();
         let built = match result {
             Ok(built) => built,
             Err(e) => {
@@ -715,24 +715,24 @@ fn finish_builds(
             }
         } else {
             // Evicted between the task's look and now: assemble after all.
-            commands.entity(entity).insert(spawn_build(shared, spec, built.key.bodies, true));
+            commands.entity(entity).try_insert(spawn_build(shared, spec, built.key.bodies, true));
             continue;
         };
         ready.push((entity, built, assets));
     }
     for (entity, swap) in &pending {
         ready.push((entity, swap.0.clone_for_swap(), Arc::clone(&swap.1)));
-        commands.entity(entity).remove::<PendingSwap>();
+        commands.entity(entity).try_remove::<PendingSwap>();
     }
     for (entity, built, assets) in ready {
         let Ok((body, layers)) = roots.get_mut(entity) else { continue };
         let has_body = body.is_some();
         if has_body && frame.0 < assets.ready_frame {
             // The old outfit stays until the new one has settled.
-            commands.entity(entity).insert(PendingSwap(built, assets));
+            commands.entity(entity).try_insert(PendingSwap(built, assets));
             continue;
         }
-        commands.entity(entity).insert(held::HeldPending {
+        commands.entity(entity).try_insert(held::HeldPending {
             items: built.recipe.held.clone(),
             cooked: built.held.clone(),
             animation: Arc::clone(&built.animation),
@@ -749,7 +749,7 @@ fn finish_builds(
             },
             old => {
                 if let Some(old) = old {
-                    commands.entity(old.body).despawn();
+                    commands.entity(old.body).try_despawn();
                     stats.meshes -= old.meshes.len();
                 }
                 spawn_body(&mut commands, entity, &built)
@@ -775,7 +775,7 @@ fn finish_builds(
                 })
             })
             .collect();
-        commands.entity(body_entity).insert(cloth::ClothPending(assets.cloth.clone()));
+        commands.entity(body_entity).try_insert(cloth::ClothPending(assets.cloth.clone()));
         let mesh_entities: Vec<Entity> = assets
             .meshes
             .iter()
@@ -800,18 +800,18 @@ fn finish_builds(
             .collect();
         stats.meshes += mesh_entities.len();
         match CharacterMorphs::of_outfit(&assets, &mesh_entities) {
-            Some(morphs) => commands.entity(entity).insert(morphs),
-            None => commands.entity(entity).remove::<CharacterMorphs>(),
+            Some(morphs) => commands.entity(entity).try_insert(morphs),
+            None => commands.entity(entity).try_remove::<CharacterMorphs>(),
         };
         let next = CharacterBody { body: body_entity, skeleton: built.key.skeleton.clone(), key: built.key, outfit: assets, meshes: mesh_entities, cloth_joints };
         match body {
             Some(mut old) if old.body == body_entity => {
                 // Same flush as the new meshes' spawn: no frame without either.
                 for &m in &old.meshes {
-                    commands.entity(m).despawn();
+                    commands.entity(m).try_despawn();
                 }
                 for &j in &old.cloth_joints {
-                    commands.entity(j).despawn();
+                    commands.entity(j).try_despawn();
                 }
                 stats.meshes -= old.meshes.len();
                 stats.swaps += 1;
@@ -819,7 +819,7 @@ fn finish_builds(
             }
             _ => {
                 stats.spawned += usize::from(!has_body);
-                commands.entity(entity).insert(next);
+                commands.entity(entity).try_insert(next);
             }
         }
     }
@@ -850,6 +850,6 @@ fn spawn_body(commands: &mut Commands, root: Entity, built: &Built) -> (Entity, 
     let binding = spawn_rig(commands, body, &built.animation.skeleton);
     let asset = Arc::clone(&built.animation);
     let lod = AnimLod::new(asset.rest_height() * scale.y);
-    commands.entity(body).insert((Animator::new(asset), lod, AnimRootMotion::default()));
+    commands.entity(body).try_insert((Animator::new(asset), lod, AnimRootMotion::default()));
     (body, binding)
 }

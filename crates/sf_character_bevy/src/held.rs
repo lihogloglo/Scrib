@@ -291,7 +291,7 @@ pub(crate) fn sync_held(
     let Some(characters) = characters else { return };
     let content = characters.content().as_ref();
     for (root, pending, body, props, readiness, layers) in &mut roots {
-        commands.entity(root).remove::<HeldPending>();
+        commands.entity(root).try_remove::<HeldPending>();
         let Ok(binding) = bindings.get(body.body) else { continue };
         let readiness = readiness.map(|r| r.0).unwrap_or_default();
         let mut old = match &props {
@@ -371,14 +371,14 @@ pub(crate) fn sync_held(
             next.push(HeldProp { item: item.clone(), entity, light, drawn, sheathed, parent });
         }
         for gone in old {
-            commands.entity(gone.entity).despawn();
+            commands.entity(gone.entity).try_despawn();
             stats.held = stats.held.saturating_sub(1);
         }
         let held = HeldProps { body: Some(body.body), props: next };
         match props {
             Some(mut p) => *p = held,
             None => {
-                commands.entity(root).insert(held);
+                commands.entity(root).try_insert(held);
             }
         }
     }
@@ -392,7 +392,7 @@ fn visible_chain(commands: &mut Commands, joints: &Query<(Option<&ChildOf>, Has<
     while at != body {
         let Ok((parent, has)) = joints.get(at) else { return };
         if !has {
-            commands.entity(at).insert(Visibility::Inherited);
+            commands.entity(at).try_insert(Visibility::Inherited);
         }
         let Some(parent) = parent else { return };
         at = parent.parent();
@@ -406,13 +406,13 @@ pub(crate) fn apply_readiness(mut commands: Commands, mut roots: Query<(&Charact
             match prop.at(readiness.0) {
                 Some((joint, transform)) => {
                     if prop.parent != joint {
-                        commands.entity(prop.entity).insert(ChildOf(joint));
+                        commands.entity(prop.entity).try_insert(ChildOf(joint));
                         prop.parent = joint;
                     }
-                    commands.entity(prop.entity).insert((transform, Visibility::Inherited));
+                    commands.entity(prop.entity).try_insert((transform, Visibility::Inherited));
                 }
                 None => {
-                    commands.entity(prop.entity).insert(Visibility::Hidden);
+                    commands.entity(prop.entity).try_insert(Visibility::Hidden);
                 }
             }
         }

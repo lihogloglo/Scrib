@@ -31,20 +31,20 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_mesh.workspace = true
 # StandardMaterial, MeshMaterial3d.
 bevy_pbr.workspace = true
-bevy_light.workspace = true
-sf_render_order_bevy = { path = "../sf_render_order_bevy" }
 # Instant for stage timings.
 bevy_platform = { workspace = true, features = ["std"] }
 # WorldOrigin uniform: extraction, uniform buffer, RenderAssetBytesPerFrame.
 bevy_render.workspace = true
 # The WorldOrigin shader library.
 bevy_shader.workspace = true
-# Rectangle (fade quad), Aabb3d (overlay).
+# Aabb3d (ring overlay).
 bevy_shape.workspace = true
 # IoTaskPool for index fetches.
 bevy_tasks = { workspace = true, features = ["futures-lite"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+# The fade (a full-window node, drawn after post-processing).
+bevy_ui.workspace = true
 big_space.workspace = true
 glam.workspace = true
 log.workspace = true

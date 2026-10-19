@@ -36,6 +36,16 @@ fn mixer_gain_multiplies_bus_and_master() {
 }
 
 #[test]
+fn indoors_silences_the_weather_bus_only() {
+    let mut m = Mixer { outdoor: 0.0, ..Mixer::default() };
+    assert_eq!(m.gain(Bus::Weather, 1.0, 1.0), 0.0);
+    assert_eq!(m.gain(Bus::Ambience, 1.0, 1.0), 1.0);
+    assert_eq!(m.gain(Bus::Sfx, 1.0, 1.0), 1.0);
+    m.outdoor = 0.5;
+    assert!((m.gain(Bus::Weather, 1.0, 0.8) - 0.4).abs() < 1e-6);
+}
+
+#[test]
 fn scheduler_waits_the_interval_then_draws() {
     let mut s = OneShotScheduler::new(7);
     // Interval 4..6 s, chance 1 (always a sound): a draw within 4..6.1 s.

@@ -98,7 +98,7 @@ pub fn spawn_rest_skeleton(
             .parent
             .and_then(|p| entities.get(p as usize).copied())
             .unwrap_or(parent);
-        commands.entity(entity).insert(ChildOf(up));
+        commands.entity(entity).try_insert(ChildOf(up));
         by_name.entry(node.name.clone()).or_insert(entity);
     }
     by_name
@@ -150,7 +150,7 @@ pub fn spawn_skinned(
         spawned.push(entity.id());
     }
     if !weights.is_empty() {
-        commands.entity(root).insert(ModelMorphWeights(weights));
+        commands.entity(root).try_insert(ModelMorphWeights(weights));
     }
     spawned
 }

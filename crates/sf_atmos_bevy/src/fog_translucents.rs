@@ -72,7 +72,7 @@ fn swap(
             .entry(material.id())
             .or_insert_with(|| fog_materials.add(FroxelFogMaterial { base: base.clone(), extension: FroxelFogExt::new(&volume) }))
             .clone();
-        commands.entity(entity).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(handle));
+        commands.entity(entity).try_remove::<MeshMaterial3d<StandardMaterial>>().try_insert(MeshMaterial3d(handle));
     }
 }
 

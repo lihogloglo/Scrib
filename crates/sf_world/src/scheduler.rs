@@ -553,6 +553,22 @@ impl Scheduler {
         true
     }
 
+    /// Whether an arrival at `pos` in `ws` can be shown (a fade's hold,
+    /// streaming.md "Transition"): every content cell touched by the square
+    /// of half size `margin` around it is at [`Level::Near`] or above, and
+    /// no load to `Near` or above is pending in `ws`. Unlike [`Self::covers`],
+    /// cells with no content don't hold it up (nothing to show there).
+    pub fn arrival_ready(&self, ws: &WorldspaceId, pos: WorldPos, margin: f32) -> bool {
+        let Some(dir) = self.directory(ws) else { return false };
+        let m = margin.max(0.0);
+        let spawned = [(-m, -m), (m, -m), (-m, m), (m, m)].into_iter().all(|(dx, dz)| {
+            let cell = dir.partition.cell_of(pos.offset(Vec3::new(dx, 0.0, dz)));
+            dir.find(cell).is_none() || self.level(ws, cell) >= Level::Near
+        });
+        spawned
+            && !self.requests.values().any(|r| r.kind == RequestKind::Load && r.target >= Level::Near && r.worldspace == *ws)
+    }
+
     /// Resident cells of a worldspace with their levels, in index order.
     pub fn resident(&self, ws: &WorldspaceId) -> impl Iterator<Item = (IVec3, Level)> + '_ {
         self.worlds.get(ws).into_iter().flat_map(|w| {

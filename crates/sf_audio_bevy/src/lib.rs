@@ -11,7 +11,7 @@ use bevy_audio::{AudioPlayer, AudioSink, AudioSinkPlayback, PlaybackSettings, Vo
 use bevy_ecs::prelude::*;
 use bevy_log::{info, warn};
 use bevy_time::{Real, Time};
-use sf_audio::{Bus, FADE_S, Mixer, OneShotScheduler, SoundBank, fade_toward};
+use sf_audio::{Bus, FADE_S, Mixer, OUTDOOR_FADE_S, OneShotScheduler, SoundBank, fade_toward};
 use sf_records::RecordId;
 use sf_weather::ClimateIx;
 use sf_weather_bevy::{CurrentWeather, WeatherRecords, WeatherSound};
@@ -19,6 +19,18 @@ use sf_weather_bevy::{CurrentWeather, WeatherRecords, WeatherSound};
 /// The bus mixer (change a bus volume here; voices follow within a frame).
 #[derive(Resource, Default, Clone, Debug)]
 pub struct AudioMixer(pub Mixer);
+
+/// Whether the listener is under the open sky (the host sets it from the active worldspace).
+/// Indoors the mixer's outdoor exposure eases to 0: weather loops and thunder go silent and no
+/// region ambience is drawn (audio.md "Snapshots").
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListenerOutdoors(pub bool);
+
+impl Default for ListenerOutdoors {
+    fn default() -> Self {
+        Self(true)
+    }
+}
 
 /// Sound id -> file, from the content adapter.
 #[derive(Resource, Default, Clone, Debug)]
@@ -57,11 +69,12 @@ struct Playback(bool);
 impl Plugin for SfAudioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AudioMixer>()
+            .init_resource::<ListenerOutdoors>()
             .insert_resource(AudioBank(self.bank.clone()))
             .insert_resource(Playback(self.playback))
             .add_message::<AudioEvent>()
             .add_message::<WeatherSound>()
-            .add_systems(Update, (route_weather_sounds, schedule_region_one_shots, fade_voices, log_events).chain());
+            .add_systems(Update, (ease_outdoor, route_weather_sounds, schedule_region_one_shots, fade_voices, log_events).chain());
     }
 }
 
@@ -144,7 +157,7 @@ fn schedule_region_one_shots(
     mut schedulers: Local<BTreeMap<(ClimateIx, usize), OneShotScheduler>>,
 ) {
     let Some(records) = records else { return };
-    if !current.valid {
+    if !current.valid || mixer.0.outdoor < 0.5 {
         return;
     }
     let server = if playback.0 { server.as_deref() } else { None };
@@ -164,6 +177,19 @@ fn schedule_region_one_shots(
     }
 }
 
+/// Eases the mixer's outdoor exposure toward the listener's space.
+#[allow(clippy::needless_pass_by_value)]
+fn ease_outdoor(time: Res<Time<Real>>, outdoors: Res<ListenerOutdoors>, mut mixer: ResMut<AudioMixer>) {
+    if outdoors.is_changed() && !outdoors.is_added() {
+        info!("audio: listener {}", if outdoors.0 { "outdoors" } else { "indoors (weather bus out)" });
+    }
+    let target = if outdoors.0 { 1.0 } else { 0.0 };
+    if (mixer.0.outdoor - target).abs() > 0.0 {
+        let next = fade_toward(mixer.0.outdoor, target, time.delta_secs(), OUTDOOR_FADE_S);
+        mixer.0.outdoor = next;
+    }
+}
+
 /// Eases loop levels, applies bus gains to the sinks, and drops faded-out loops.
 #[allow(clippy::needless_pass_by_value)]
 fn fade_voices(
@@ -180,7 +206,7 @@ fn fade_voices(
                 v.level = level;
             }
             if v.level <= 0.0 && v.target <= 0.0 {
-                commands.entity(e).despawn();
+                commands.entity(e).try_despawn();
                 continue;
             }
         }

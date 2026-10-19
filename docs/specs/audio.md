@@ -23,6 +23,12 @@ distance delay, region one-shot ambience. Volumes follow a bus mixer. Nothing he
   Region ambience (`OneShotSet`: sounds with chances, interval, volume) is drawn by
   `sf_audio::OneShotScheduler` (pure, deterministic xorshift, interval uniform in range, chances
   normalized) from the frame's `one_shots`; the plugin plays the draw on the Ambience bus.
+- **Snapshots** (AU-1, 2026-10-19): the mixer's `outdoor` exposure (0..1) scales the outdoor
+  buses (`Mixer::is_outdoor`: Weather). The host sets `ListenerOutdoors` from where the listener is
+  (bevyrrowind: the active worldspace shows the sky); `sf_audio_bevy` eases it over
+  `OUTDOOR_FADE_S` (0.5 s, under the door fade) and draws no region ambience below 0.5. This is
+  the interior snapshot of Wwise/FMOD in its smallest form; a muffled "rain on the roof" layer
+  (low-pass on the weather bus instead of silence) waits for DSP.
 - **Positional (later)**: thunder carries `azimuth` and `distance_m`; the minimal build plays it
   non-spatially (distance already shapes `thunder_volume`). Spatial = `PlaybackSettings::with_spatial`
   plus a `SpatialListener` on the camera when a system needs it.
@@ -57,7 +63,7 @@ simulation state; no sound has gameplay effect, so each peer plays its own and m
 ## Industry comparison
 
 - Wwise/FMOD: buses with snapshot-driven gains, scatterer/random containers for ambience, 3D
-  attenuation curves. We match the bus gain and scatterer ideas (small), lack snapshots, DSP,
+  attenuation curves. We match the bus gain and scatterer ideas (small) and one snapshot (interior), lack DSP,
   occlusion and attenuation curves (gap, low until positional audio).
 - UE: Sound Classes/Submixes, Ambient Sound with fade in/out, Sound Cues Random+Delay. Same coverage.
 - Creation/OpenMW: OpenMW fades weather loops and plays region sounds on a random timer

@@ -23,16 +23,19 @@ impl Bus {
     }
 }
 
-/// Linear bus volumes and mutes.
+/// Linear bus volumes and mutes, and the listener's outdoor exposure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mixer {
     volume: [f32; 6],
     muted: [bool; 6],
+    /// 1 under the open sky, 0 indoors: scales the outdoor buses (the interior
+    /// snapshot, audio.md "Snapshots"). The host eases it.
+    pub outdoor: f32,
 }
 
 impl Default for Mixer {
     fn default() -> Self {
-        Self { volume: [1.0; 6], muted: [false; 6] }
+        Self { volume: [1.0; 6], muted: [false; 6], outdoor: 1.0 }
     }
 }
 
@@ -43,10 +46,17 @@ impl Mixer {
     pub fn set_muted(&mut self, bus: Bus, muted: bool) {
         self.muted[bus.index()] = muted;
     }
-    /// A bus's effective gain: its volume times master's; 0 when it or master is muted.
+    /// Buses heard only outdoors: the weather (rain, wind, thunder). Region ambience is drawn
+    /// only outdoors instead (`sf_audio_bevy`), so the Ambience bus stays free for interiors.
+    pub const fn is_outdoor(bus: Bus) -> bool {
+        matches!(bus, Bus::Weather)
+    }
+    /// A bus's effective gain: its volume times master's (times `outdoor` for an outdoor bus);
+    /// 0 when it or master is muted.
     pub fn bus_gain(&self, bus: Bus) -> f32 {
         let one = |b: Bus| if self.muted[b.index()] { 0.0 } else { self.volume[b.index()] };
-        if bus == Bus::Master { one(bus) } else { one(bus) * one(Bus::Master) }
+        let exposure = if Self::is_outdoor(bus) { self.outdoor.clamp(0.0, 1.0) } else { 1.0 };
+        if bus == Bus::Master { one(bus) } else { one(bus) * one(Bus::Master) * exposure }
     }
     /// A voice's output gain: `level` (its fade, 0..1) x `base` (the sound's own volume) x bus gain.
     pub fn gain(&self, bus: Bus, level: f32, base: f32) -> f32 {
@@ -56,6 +66,8 @@ impl Mixer {
 
 /// Seconds a loop takes to fade from silence to its full volume (and back).
 pub const FADE_S: f32 = 2.0;
+/// Seconds the outdoor exposure takes to swing fully (through a door, under the fade).
+pub const OUTDOOR_FADE_S: f32 = 0.5;
 
 /// Moves `level` toward `target` by at most `dt / fade_s` per call (linear, no overshoot).
 /// Two loops fading opposite ways are a crossfade.

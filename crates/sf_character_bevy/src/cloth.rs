@@ -128,7 +128,7 @@ pub(crate) fn attach_cloth(mut commands: Commands, settings: Res<ClothSettings>,
         for run in animator.instance.cloth_mut() {
             run.enabled = settings.simulate;
         }
-        commands.entity(entity).remove::<ClothPending>();
+        commands.entity(entity).try_remove::<ClothPending>();
     }
 }
 

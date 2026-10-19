@@ -395,21 +395,21 @@ mod solari {
                     let mesh = variant.map_or(&mesh.0, |v| &v.0).clone();
                     commands
                         .entity(entity)
-                        .insert((RaytracingMesh3d(mesh), MirroredRayTracing));
+                        .try_insert((RaytracingMesh3d(mesh), MirroredRayTracing));
                 }
             }
             for (entity, visibility) in &hidden {
                 if !visibility.get() {
                     commands
                         .entity(entity)
-                        .remove::<(RaytracingMesh3d, MirroredRayTracing)>();
+                        .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
                 }
             }
         } else if active.is_changed() || options.is_changed() {
             for entity in &mirrored {
                 commands
                     .entity(entity)
-                    .remove::<(RaytracingMesh3d, MirroredRayTracing)>();
+                    .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
             }
         }
     }

@@ -1408,3 +1408,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   (stretch 7 ms); **raster must meet it, Solari is Ultra and may cost more**; **shadows: one simpler design that
   works first** (far static map + point cube cache parked; new techniques only if they're the better standard way).
 - **2026-10-19 (owner): ray tracing is not a priority**: Solari work waits until the game is good ("cherry on top"), Phase 4.
+- **2026-10-19 (phase1): temporal resolve is the base**: `Upscaling::Taa` (Bevy TAA) runs whenever DLSS is off or
+  unavailable (DLSS falls back to TAA, not MSAA); MSAA only on Low. Door fades are a UI node held until the arrival
+  is spawned and textured; shipped builds log failed commands instead of panicking (dev keeps Bevy's panic).

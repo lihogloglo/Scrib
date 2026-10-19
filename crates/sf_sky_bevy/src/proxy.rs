@@ -63,7 +63,7 @@ fn auto_proxies(
 ) {
     if options.auto_light_proxies {
         for entity in &lights {
-            commands.entity(entity).insert(PointLightProxy::default());
+            commands.entity(entity).try_insert(PointLightProxy::default());
         }
     }
 }
@@ -214,7 +214,7 @@ mod solari {
                 if shadows_were_enabled {
                     light.shadow_maps_enabled = false;
                 }
-                commands.entity(entity).insert(ProxyLink {
+                commands.entity(entity).try_insert(ProxyLink {
                     proxy: proxy_entity,
                     material,
                     shadows_were_enabled,
@@ -240,7 +240,7 @@ mod solari {
         if link.shadows_were_enabled {
             light.shadow_maps_enabled = true;
         }
-        commands.entity(entity).remove::<ProxyLink>();
+        commands.entity(entity).try_remove::<ProxyLink>();
     }
 
     /// Follows changes of intensity, color, radius and visibility.

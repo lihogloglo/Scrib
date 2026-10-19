@@ -61,7 +61,6 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 | `LightSpriteMaterial` (`sf_lod_bevy`, Add) | Sorted | world, baked AABB; billboard grows in the shader inside it | test only | disabled | froxel via `TranslucentFog`, transmittance only | none (`enable_shadows` false) |
 | `WaterMaterial` (`StandardMaterial` Blend + `WaterExt`) | Refractive | shader-placed clipmap at the origin, `NoFrustumCulling`, `DrawBand::Refractive` | **write** + test, no culling | none; MV by step 9 | own (froxels, else analytic height fog) | `NotShadowCaster` / receive |
 | `PrecipMaterial` (`sf_precip_bevy`, Blend) | Overlay | shader-placed camera-wrapped boxes, `NoFrustumCulling`, `DrawBand::Overlay` | test only | disabled | froxel via `TranslucentFog` (blend) | none |
-| Fade overlay (`sf_world_bevy` `fade.rs`, unlit Blend quad, camera child at 0.2 m) | Sorted | camera-local **without a band** (RO-9) | test only | none | host swap (pointless, unlit) | none in bevyrrowind (the swap); casts in a host without it (RO-9) |
 | Sea plane scaffold (`exterior.rs`) | Opaque3d | world | write | std | composite | `NotShadowCaster` |
 
 ## Rules
@@ -142,7 +141,7 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   plugin add order (Sky → Clouds → Water); a wrong order silently reorders steps 4-7. *Slice*: one
   helper in `sf_render_order_bevy` plus a startup check that asserts the declared order; delete it
   when Bevy names the `render_sky` set.)
-- **RO-9** (FIXED 2026-10-19 ro-small: quad now has `DrawBand::Overlay { order: i16::MAX }` + `NotShadowCaster`; the host-fog row stays, unlit so pointless; was: the fade overlay is camera-local without a band (precipitation's Overlay
+- **RO-9** (GONE 2026-10-19 phase1: the fade is a UI node now, drawn after post-processing; FIXED earlier, ro-small: quad now has `DrawBand::Overlay { order: i16::MAX }` + `NotShadowCaster`; the host-fog row stays, unlit so pointless; was: the fade overlay is camera-local without a band (precipitation's Overlay
   band draws over the black fade) and casts a shadow while fading. *Slice*: `NotShadowCaster` +
   `DrawBand::Overlay { order: i16::MAX }`, or a screen-space fade when M8 replaces the scaffold.
 - **RO-10** (accepted limit 2026-10-19, Bevy has no per-draw sort key beyond the AABB centre/`TransparentSortingInfo3d`; revisit with the AABB slice if an ash storm mis-sorts): particles sort by the emitter origin (no AABB). Fine for small emitters; large

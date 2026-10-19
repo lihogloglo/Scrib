@@ -391,7 +391,7 @@ fn read_back(
                 p.weights.clone_from(&l.weights);
             }
             None => {
-                commands.entity(*entity).insert(PhysicsPose { pose: out, weight: l.weight, weights: l.weights.clone() });
+                commands.entity(*entity).try_insert(PhysicsPose { pose: out, weight: l.weight, weights: l.weights.clone() });
             }
         }
     }
@@ -426,7 +426,7 @@ fn get_up(
         let Some(w) = physics.worlds.get_mut(&l.worldspace) else { continue };
         let (Some(pelvis), Some((_, frame, scale)), Ok(mut animator)) = (w.pose(l.instance.bodies[0]), world_frame(entity, &frames.p0(), &roots), characters.get_mut(entity)) else {
             l.instance.remove(w);
-            commands.entity(entity).remove::<(Ragdoll, PhysicsPose)>();
+            commands.entity(entity).try_remove::<(Ragdoll, PhysicsPose)>();
             continue;
         };
         let clip_body = clip_body.unwrap_or_else(|| lying_rest(&l.def, &l.target));
@@ -443,7 +443,7 @@ fn get_up(
         }
         animator.set_bool(get_up_flag, false);
         l.instance.remove(w);
-        commands.entity(entity).remove::<(Ragdoll, PhysicsPose)>();
+        commands.entity(entity).try_remove::<(Ragdoll, PhysicsPose)>();
         got_up.write(RagdollGotUp { entity });
         stats.got_up += 1;
     }

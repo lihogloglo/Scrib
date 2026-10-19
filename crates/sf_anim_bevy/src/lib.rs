@@ -374,10 +374,10 @@ pub fn spawn_rig(
         .collect();
     for (j, &e) in joints.iter().enumerate() {
         let parent = skeleton.parent(j).map_or(character, |p| joints[p]);
-        commands.entity(e).insert(ChildOf(parent));
+        commands.entity(e).try_insert(ChildOf(parent));
     }
     let binding = SkeletonBinding { joints };
-    commands.entity(character).insert(binding.clone());
+    commands.entity(character).try_insert(binding.clone());
     binding
 }
 

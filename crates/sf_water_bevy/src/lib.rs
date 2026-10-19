@@ -546,7 +546,7 @@ fn attach_surface(
             base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..StandardMaterial::default() },
             extension: WaterExt::new(&images, WaterParams::default()),
         };
-        commands.entity(e).insert((Mesh3d(meshes.add(mesh::clipmap(&clip))), MeshMaterial3d(materials.add(material)), NotShadowCaster, NoFrustumCulling, DrawBand::Refractive));
+        commands.entity(e).try_insert((Mesh3d(meshes.add(mesh::clipmap(&clip))), MeshMaterial3d(materials.add(material)), NotShadowCaster, NoFrustumCulling, DrawBand::Refractive));
     }
 }
 

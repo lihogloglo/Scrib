@@ -191,6 +191,24 @@ fn covers_needs_every_touched_cell_at_the_level() {
     assert!(!s.covers(&ws("nowhere"), at(64.0), 2.0, Level::Far));
 }
 
+/// A fade's hold: the arrival shows once its content cells are spawned and
+/// no near load is left; empty cells don't hold it up.
+#[test]
+fn arrival_ready_waits_for_the_near_cells() {
+    let mut sim = Sim::new(SchedulerConfig::default(), vec![grid_world("w", 12, 3, 0)]);
+    let at = |x: f64| WorldPos::from_f64(DVec3::new(x, 1.0, 192.0));
+    assert!(!sim.s.arrival_ready(&ws("w"), at(64.0), 8.0), "nothing spawned yet");
+    let player = anchor(0, AnchorRole::Gameplay, "w", DVec3::new(64.0, 1.0, 192.0));
+    let camera = anchor(1, AnchorRole::Visual, "w", DVec3::new(64.0, 1.0, 192.0));
+    sim.run(2, &[player.clone(), camera.clone()]);
+    assert!(!sim.s.arrival_ready(&ws("w"), at(64.0), 8.0), "loads still pending");
+    sim.run(800, &[player, camera]);
+    let s = &sim.s;
+    assert!(s.arrival_ready(&ws("w"), at(64.0), 8.0));
+    assert!(s.arrival_ready(&ws("w"), at(-500.0), 8.0), "no content there");
+    assert!(!s.arrival_ready(&ws("nowhere"), at(64.0), 8.0));
+}
+
 /// x position of a scripted oscillation around `center`.
 fn wobble(center: f64, amp: f64, t: f64) -> (f64, f64) {
     let w = std::f64::consts::TAU / 3.0;

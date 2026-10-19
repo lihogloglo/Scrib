@@ -421,7 +421,11 @@ fn upscaling_parses_and_falls_back() {
     assert!(Upscaling::parse("fsr").is_err());
     let q = Upscaling::Dlss(UpscaleQuality::Balanced);
     assert_eq!(q.resolve(true), q);
-    assert_eq!(q.resolve(false), Upscaling::Off);
+    assert_eq!(q.resolve(false), Upscaling::Taa, "no DLSS: the temporal resolve stays");
+    assert_eq!(Upscaling::parse("TAA"), Ok(Upscaling::Taa));
+    assert_eq!(Upscaling::Taa.resolve(false), Upscaling::Taa);
+    assert_eq!(Upscaling::Off.resolve(true), Upscaling::Off);
+    assert!(Upscaling::Taa.is_temporal() && q.is_temporal() && !Upscaling::Off.is_temporal());
     assert_eq!(q.label(), "balanced");
     for (name, quality) in UpscaleQuality::NAMES {
         assert_eq!(Upscaling::parse(name), Ok(Upscaling::Dlss(quality)));

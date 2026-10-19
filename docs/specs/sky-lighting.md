@@ -126,8 +126,14 @@ precipitation, stars, moon phases on the disk, surface wetness.
   Super Resolution on the raster path, Ray Reconstruction (denoise +
   upscale) on the ray-traced path, one quality setting for both. Off on
   non-NVIDIA GPUs and in builds without the `dlss` feature; Bevy 0.20 has
-  no FSR/XeSS, and its own TAA (`TemporalAntiAliasing`) is the obvious
-  vendor-neutral fallback to wire later.
+  no FSR/XeSS.
+- **Temporal resolve as the base** (ROADMAP 1.3, 2026-10-19): every preset
+  from Medium up resolves temporally, as UE5 (TSR), Frostbite and Decima
+  do: stochastic effects (soft shadows, dithered LOD fades, fog and cloud
+  noise) are built to converge over frames, and without a resolve they read
+  as grain (WE-2/WE-3, SH-12, WA-1). `Upscaling::Taa` is Bevy's TAA at native
+  resolution, the vendor-neutral path and DLSS's fallback; `Off` (MSAA) is
+  the Low preset only.
 
 Reuse check (2026-10-11): no maintained sky crate fits. `bevy_weather` 0.2
 (MIT/Apache, Bevy 0.19, one maintainer) wraps the same Bevy atmosphere and
@@ -233,12 +239,12 @@ What is *lit* stays physical; what is *drawn* is artistic where games are.
   `NoRayTracing`; proxies every `PointLight` unless `NoLightProxy`.
 - Upscaling (`upscale.rs`; feature `dlss` for DLSS, which no longer
   implies `solari`): `UpscalingSetting(sf_sky::Upscaling)` (requested:
-  `Off` or `Dlss(UpscaleQuality)`, quality `auto`, `native` (DLAA),
+  `Off` (MSAA), `Taa` or `Dlss(UpscaleQuality)` (falls back to `Taa`), quality `auto`, `native` (DLAA),
   `quality`, `balanced`, `performance`, `ultra-performance`; serde, so a
   settings file holds it), `ActiveUpscaling` (running), `UpscalingSupport`
   (SR / RR available), `TemporalHistory { reset }` (camera cuts, teleports,
-  origin shifts). On raster, `RenderPathCamera`s get `Dlss<SuperResolution>`
-  plus what it requires (jitter, mip bias, depth + motion-vector prepass)
+  origin shifts, door travel). On raster, `RenderPathCamera`s get
+  `TemporalAntiAliasing` or `Dlss<SuperResolution>` plus what it requires (jitter, mip bias, depth + motion-vector prepass)
   and `Msaa::Off`; a snapshot restores the camera when it is turned off at
   runtime. On the ray-traced path the quality goes to
   `Dlss<RayReconstruction>` (`Auto` when upscaling is off). ReSTIR is
@@ -368,7 +374,7 @@ this session.
 | Reflections | UE Lumen reflections / SSR + reflection captures; Unity SSR + reflection probes | env map; SSR available in Bevy, not wired | **differ**: source content is mostly diffuse; revisit with PBR generation (M7) |
 | Many-light culling | clustered/tiled forward or deferred everywhere; UE MegaLights (5.5, stochastic) | Bevy clustered forward; Solari for RT | **match** |
 | Bloom / glare | universal | not on game cameras | **GAP (P2, small)**: open question 8 |
-| Upscaling | DLSS/FSR/XeSS/TSR | DLSS (SR + RR); TAA fallback not wired | **match** on NVIDIA; vendor-neutral path open (above) |
+| Upscaling | DLSS/FSR/XeSS/TSR | DLSS (SR + RR); Bevy TAA as the base and fallback | **match** on NVIDIA; vendor-neutral path open (above) |
 
 **Sources** (checked 2026-10-12):
 - Hillaire, "A Scalable and Production Ready Sky and Atmosphere Rendering Technique", EGSR 2020: https://sebh.github.io/publications/egsr2020.pdf

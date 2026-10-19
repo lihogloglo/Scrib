@@ -38,6 +38,7 @@ enum Fog {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // `CameraLocal`: no framework site follows the camera today (the fade is UI).
 enum Placement {
     /// Mesh AABB matches where it draws: Bevy's sort key is meaningful.
     World,
@@ -62,7 +63,6 @@ const SITES: &[Site] = &[
     Site { file: "sf_lod_bevy/src/materials.rs", what: "LightSpriteMaterial (additive distant light glows)", fog: Fog::Froxel, placement: Placement::World, violation: None },
     Site { file: "sf_precip_bevy/src/lib.rs", what: "PrecipMaterial (camera-wrapped rain/snow boxes)", fog: Fog::Froxel, placement: Placement::ShaderPlaced, violation: None },
     Site { file: "sf_water_bevy/src/lib.rs", what: "WaterMaterial (clipmap, refractive)", fog: Fog::Own, placement: Placement::ShaderPlaced, violation: None },
-    Site { file: "sf_world_bevy/src/fade.rs", what: "FadeTransition overlay quad (camera child)", fog: Fog::Host, placement: Placement::CameraLocal, violation: Some("RO-9") },
     Site { file: "sf_world_bevy/src/spawn.rs", what: "generic model spawn, sf_model Blend -> StandardMaterial", fog: Fog::Host, placement: Placement::World, violation: Some("RO-4") },
 ];
 

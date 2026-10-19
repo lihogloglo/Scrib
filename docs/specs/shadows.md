@@ -1,6 +1,7 @@
 # Shadows: local lights at scale (F6)
 
-Status: **slice 2 built, slice 2b next** (shf6 2026-10-19; shf6b slice 2). Crates: `sf_sky_bevy` (`shadow_budget.rs` today; the cache in a new
+Status: **slice 2 built, then parked** (owner decision 3, 2026-10-19: simpler shadows first; the app no longer adds
+`sf_shadow_cache_bevy`, `POINT_SHADOW_CACHE` in bevyrrowind `render.rs`). Sun caster rules below are live (ROADMAP 1.2). Crates: `sf_sky_bevy` (`shadow_budget.rs` today; the cache in a new
 `sf_shadow_cache_bevy` from slice 2). Sun shadows (cascades, contact shadows, far tiers) stay in
 [weather.md](weather.md) ("Distant shadows", "Shadow bias and contact shadows"); the diagnosis and the owner's order
 (F1+F2, F3, **F6**, F5) are in [../research/shadows/README.md](../research/shadows/README.md). The current budget
@@ -143,6 +144,16 @@ Bevy 0.20 has PCSS behind `experimental_pbr_pcss` (`DirectionalLight::soft_shado
   TAA, so a faint dither shows (fine under `--dlss`). Not enabled on point lights (uncached maps already cost ~1.9 ms each).
 - GPU at Seyda Neen 15:00 (dev build, 15 s bench): median 22.6 ms on vs 23.2 ms off, within noise (frame is not shadow bound).
 - Owner check SH-10.
+
+## Sun caster rules (ROADMAP 1.2, 2026-10-19)
+
+Measured first (`bevyrrowind/docs/perf.md` "Frame budget"): at the frame target the render thread is the
+bottleneck, and `--off shadows` takes ~4.8 ms off it in Balmora; the point lights and the far shadow take nothing
+measurable, so the cost is the four sun cascades queueing, batching and encoding every caster they touch.
+Rule 1, **caster size per cascade** (`sf_sky_bevy::CasterCulling`, UE `r.Shadow.RadiusThreshold`): a caster with a
+bounding radius under `min_texels` (1.5) texels of a cascade leaves that cascade's list (High texels 1.4 / 3.8 /
+11 / 35 cm: a 10 cm cup shadows in the first two only). It filters Bevy's `CascadesVisibleEntities` right after
+`check_dir_light_mesh_visibility`, one task per cascade. A/B `--off castercull`.
 
 ## Slices
 
