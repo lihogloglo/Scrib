@@ -603,3 +603,60 @@ fn mwscript_weather_functions_map_to_the_state() {
         Some(WeatherType::Clear)
     );
 }
+
+/// Counts each weather over `n` consecutive slots (weather changes) of a
+/// climate and checks it against the `REGN` chances: within 4.5 standard
+/// deviations of the binomial (≈ 1 false alarm in 150,000 per weather).
+#[allow(clippy::cast_precision_loss)]
+fn assert_frequencies(book: &WeatherBook, climate: &Climate, region: &str, seed: u64, n: i64) {
+    let c = book.climate(&climate_id(region)).unwrap();
+    let state = WeatherState::new(seed);
+    let mut counts = std::collections::HashMap::new();
+    for k in 0..n {
+        let p = state.slot_preset(book, c, k).unwrap();
+        *counts.entry(book.preset_id(p).clone()).or_insert(0_i64) += 1;
+    }
+    let total: f32 = climate.weights.iter().map(|(_, w)| w).sum();
+    let mut listed = 0;
+    for (id, w) in &climate.weights {
+        let p = f64::from(*w / total);
+        let expected = n as f64 * p;
+        let sigma = (n as f64 * p * (1.0 - p)).sqrt();
+        let got = counts.get(id).copied().unwrap_or(0);
+        listed += got;
+        assert!(
+            (got as f64 - expected).abs() <= 4.5 * sigma + 1.0,
+            "{region} {}: {got} of {n}, expected {expected:.0} ± {sigma:.1}",
+            id.as_str()
+        );
+    }
+    assert_eq!(listed, n, "{region}: a weather outside the climate");
+}
+
+#[test]
+fn forecast_frequencies_follow_the_regn_chances() {
+    let mut db = content_db(None);
+    let w = MwWeather::build(&db, None);
+    w.define_into(&mut db, &[SourceId(0)]).unwrap();
+    let book = WeatherBook::from_db(&db);
+    for region in [
+        "Ascadian Isles Region",
+        "Red Mountain Region",
+        "Moesring Mountains Region",
+    ] {
+        for seed in [1, 0x5eed] {
+            assert_frequencies(&book, climate_of(&w, region), region, seed, 1000);
+        }
+    }
+
+    // The forecast lists exactly those changes (no overrides): one entry per slot.
+    let c = book.climate(&climate_id("Ascadian Isles Region")).unwrap();
+    let state = WeatherState::new(1);
+    let f = state.forecast(&book, c, 100.0, 1000);
+    assert_eq!(f.len(), 1000);
+    let k0 = state.slot_at(&book, c, 100.0);
+    for (k, e) in (k0..).zip(&f) {
+        assert_eq!(Some(e.preset), state.slot_preset(&book, c, k));
+        assert!(weather_type_of(book.preset_id(e.preset)).is_some());
+    }
+}

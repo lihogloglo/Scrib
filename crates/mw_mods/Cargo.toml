@@ -10,6 +10,7 @@ dirs.workspace = true
 mw_install.workspace = true
 mw_records.workspace = true
 mw_vfs.workspace = true
+mw_weather.workspace = true
 semver.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true

@@ -74,13 +74,13 @@ fn default_profile_loads_like_the_install() {
     let mods = Mods::open(MwAdapter::new(install, builtin()), user, DEFAULT_PROFILE).unwrap();
     assert!(!mods.profile_from_file);
     let loaded = mods.load(&api());
-    assert_eq!(ids(&loaded), ["mw", "morrowind.esm", "tribunal.esm", "morrowind-data"]);
+    assert_eq!(ids(&loaded), ["mw", "morrowind.esm", "tribunal.esm", "morrowind-data", "morrowind-weather"]);
     let errors: Vec<_> = loaded.report.issues.iter().filter(|i| i.severity() == Severity::Error).collect();
     assert!(errors.is_empty(), "{errors:?}");
 
     // Layers: builtin < Morrowind.bsa < Tribunal.bsa < Extra.bsa < Data Files.
     let labels: Vec<String> = loaded.vfs.stats().into_iter().map(|s| s.label).collect();
-    assert_eq!(labels, ["builtin", "Morrowind.bsa", "Tribunal.bsa", "Extra.bsa", "Data Files"]);
+    assert_eq!(labels, ["builtin", "Morrowind.bsa", "Tribunal.bsa", "Extra.bsa", "Data Files", "weather"]);
     assert_eq!(loaded.vfs.read(&p("textures/a.dds")).unwrap(), b"base");
     assert_eq!(loaded.vfs.read(&p("textures/b.dds")).unwrap(), b"tribunal");
     assert_eq!(loaded.vfs.read(&p(RUNTIME_PATH)).unwrap(), b"return {}");
@@ -99,7 +99,11 @@ fn mods_patch_records_override_files_and_change_the_fingerprint() {
     let dir = tempfile::tempdir().unwrap();
     let install = install(dir.path());
     let user = UserDirs::new(dir.path().join("user"));
-    let patch = r#"[ patch(kind: "LIGH", id: "lantern_01", set: { "data.radius": 5 }) ]"#;
+    // A record mod patches the content and the weather mod's generated records alike.
+    let patch = r#"[
+        patch(kind: "LIGH", id: "lantern_01", set: { "data.radius": 5 }),
+        patch(kind: "weather.preset", id: "mw_weather/clear", set: { "climate_ambience": 0.5 }),
+    ]"#;
     let root = user.mods().join("dim_lanterns");
     fs::create_dir_all(root.join("assets/records")).unwrap();
     fs::write(root.join("assets/records/lights.ron"), patch).unwrap();
@@ -116,12 +120,15 @@ fn mods_patch_records_override_files_and_change_the_fingerprint() {
     let mods = Mods::open(MwAdapter::new(install, builtin()), user.clone(), DEFAULT_PROFILE).unwrap();
     assert!(mods.profile_from_file);
     let loaded = mods.load(&api());
-    assert_eq!(ids(&loaded)[4..], ["dim_lanterns", "textures", "legacy"]);
+    assert_eq!(ids(&loaded)[5..], ["dim_lanterns", "textures", "legacy"]);
 
     let lantern = loaded.records.get::<Light>(&RecordId::new("lantern_01")).unwrap();
     assert_eq!(lantern.data.radius, 5);
     let report = loaded.render_report(None, 5);
     assert!(report.contains("patch data.radius"), "{report}");
+    assert!(report.contains("patch climate_ambience"), "{report}");
+    let errors: Vec<_> = loaded.report.issues.iter().filter(|i| i.severity() == Severity::Error).collect();
+    assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(loaded.vfs.read(&p("textures/a.dds")).unwrap(), b"mod");
     let shadowed = loaded.report.issues.iter().any(|i| {
         matches!(&i.kind, IssueKind::ShadowedModern { path, by, .. } if path == "textures/m.ktx2" && by.as_str() == "legacy")
@@ -158,9 +165,20 @@ fn disabled_plugin_drops_its_archive_and_dependents() {
     profile.save(&user.profiles()).unwrap();
     let mods = Mods::open(MwAdapter::new(install, builtin()), user, DEFAULT_PROFILE).unwrap();
     let loaded = mods.load(&api());
-    assert_eq!(ids(&loaded), ["mw", "morrowind-data"]);
+    assert_eq!(ids(&loaded), ["mw", "morrowind-data", "morrowind-weather"]);
     assert!(loaded.report.issues.iter().any(|i| matches!(i.kind, IssueKind::MissingDependency { .. })));
     // Morrowind.bsa went with its plugin; the unclaimed Extra.bsa stays.
     assert_eq!(loaded.vfs.read(&p("textures/a.dds")).unwrap(), b"builtin");
     assert_eq!(loaded.vfs.read(&p("textures/e.dds")).unwrap(), b"extra");
+}
+
+#[test]
+fn ensure_weather_adds_it_after_the_loose_data() {
+    let mut profile = Profile::new("p", [builtin_id(), data_id(), ModId::new("later").unwrap()]);
+    assert!(ensure_weather(&mut profile));
+    assert_eq!(profile.enabled[2], weather_id());
+    assert!(!ensure_weather(&mut profile));
+    let mut bare = Profile::new("p", [builtin_id()]);
+    assert!(ensure_weather(&mut bare));
+    assert_eq!(bare.enabled, [builtin_id(), weather_id()]);
 }

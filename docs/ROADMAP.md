@@ -1329,7 +1329,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   (Koschmieder). Depends on `sf_atmos` (frame carries `CloudWeather`/`FogSettings`); `RecordId` gained serde.
   10 tests green, clippy clean; `evaluate` 0.0006 ms (release, 2 climates mid-transition). Open: overrides never
   pruned; `gust_length` swaps once mid-transition; lightning rate per game hour (adapter converts).
-- [~] WE2 `mw_weather` (weather-adapter.md): REGN → climates, `Morrowind.ini [Weather*]` → presets in a synthetic mod
+- [x] WE2 `mw_weather` (weather-adapter.md): REGN → climates, `Morrowind.ini [Weather*]` → presets in a synthetic mod
   layer, precipitation kinds (rain, snow, ash, blight), Red Mountain radial storm source, MWScript mapping table for M5
   W3, `bevyrrowind weather forecast <region> --days 3`. Waits for WE1. Verify: `cargo test -p mw_weather` (adapter
   spec list); forecast frequencies within sampling error of REGN weights over 1,000 changes; ini edit re-runs only
@@ -1358,6 +1358,14 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   `ModRegion` → `set_weights` (all zero = Clear), `GetCurrentWeather` → `current` (the target at once), `GetWindSpeed`
   → inverse of the `Wind Speed` map; table in weather-adapter.md. 13 mw_weather tests (2 real install) + 11 sf_weather
   green, clippy clean. Part 3b (we2c2): `weather forecast` + 1,000-slot frequency check, app calls `define_into`.
+  [x] Built part 3b (we2c2, 2026-10-19): the records load as the synthesized mod `morrowind-weather` (mw_mods: after
+  the plugins + `morrowind-data`, before user mods, so record mods patch them; built from every plugin's REGN + ini when
+  its generated marker record file applies; `ensure_weather` keeps it in profile files; stamp = ini size/mtime);
+  real install: 16 climates, 10 presets, 4 precip kinds in `info`. `bevyrrowind weather forecast <region> [--days 3]
+  [--seed] [--from]` prints one row per change slot + counts. Frequency tests: synthetic (3 regions × 2 seeds) and
+  real install (16 regions), 1,000 slots each, within 4.5 σ. Verify: tests + frequencies met; "ini edit re-runs only
+  `weather.climate`" moot (no weather bake step: records rebuilt at every load). Leftovers: positional one-shots;
+  REGN edits from an ESP in a folder mod ordered after `morrowind-weather` are ignored (weather-adapter.md).
 - [ ] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
   clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
@@ -1769,3 +1777,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (we2b): M6 WE2 [~] part 2: `mw_weather` presets carry the visual fields (cloud genus + `Cloud Speed`, haze/dust/fog with hour curves = the app's `SKY_*`/`FogLook` tables, `Wind Speed`, ash/blight storm + Red Mountain radial source, `Flash Decrement` → new `Lightning::fade_s`); 11 tests (2 real install) green, clippy clean. Next: we2c (region sounds, MWScript table, forecast command, app `define_into`).
 - 2026-10-19 (we2c1): M6 WE2 [~] part 3a: REGN sounds → new generic sf_weather `OneShotSet` ("scatterer", real-second intervals, audio layer schedules) + `WeatherPreset.climate_ambience` (storms hush the region); `mw_weather::script` maps ChangeWeather/ModRegion/GetCurrentWeather/GetWindSpeed onto `WeatherState`, table in weather-adapter.md; mw_weather 13 + sf_weather 11 tests green, clippy clean. superfargoth d2c1898. Next: we2c2 (forecast command + frequency check, app `define_into`).
 - 2026-10-19 (ts1c): TS1 [x] part 3: `--camera` through `scene` (ts1b report not reproduced; real bug fixed: a repeated `view` flag now overrides, so `scene X --camera` works on scenes with their own camera; `level::pick_camera` + 2 tests); walk mode verified via BRP (player dressed at `start`, W/Shift move it, follow camera, start/stop log line); props verified (`V` balls shove the crates; G colliders on meshes). TS-1/TS-2 awaiting owner.
+- 2026-10-19 (we2c2): M6 WE2 [x] part 3b: weather records load as the synthesized mod `morrowind-weather` (mw_mods, after content, before user mods; a record mod patches a preset in a test); `bevyrrowind weather forecast <region> --days 3`; 1,000-slot frequency tests vs REGN (synthetic + all 16 real regions) green; clippy clean. Next: WE3 (we3a `sf_weather_bevy` WeatherPlugin + sky/wind).

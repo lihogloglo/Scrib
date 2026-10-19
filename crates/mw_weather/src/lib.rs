@@ -237,8 +237,16 @@ impl MwWeather {
         db: &mut RecordDb,
         depends_on: &[SourceId],
     ) -> Result<SourceId, RecordError> {
-        sf_weather::register_kinds(db)?;
+        register_kinds(db)?;
         let source = db.add_source(SOURCE_NAME, depends_on);
+        self.define_in(db, source)?;
+        Ok(source)
+    }
+
+    /// Defines every record in an existing `source` whose kinds are already
+    /// registered ([`register_kinds`]): the mod pipeline's path, where
+    /// `mw_mods`' synthesized `morrowind-weather` mod owns the source.
+    pub fn define_in(&self, db: &mut RecordDb, source: SourceId) -> Result<(), RecordError> {
         for (id, kind) in &self.precip_kinds {
             db.define(source, id.clone(), kind.clone())?;
         }
@@ -248,8 +256,20 @@ impl MwWeather {
         for (id, climate) in &self.climates {
             db.define(source, id.clone(), climate.clone())?;
         }
-        Ok(source)
+        Ok(())
     }
+}
+
+/// Registers the `weather.*` record kinds (`sf_weather::register_kinds`).
+pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
+    sf_weather::register_kinds(db)
+}
+
+/// The weather type a preset record id names (`mw_weather/<type>`).
+pub fn weather_type_of(preset: &RecordId) -> Option<WeatherType> {
+    WeatherType::ALL
+        .into_iter()
+        .find(|t| t.preset_id() == *preset)
 }
 
 fn timescale(db: &RecordDb) -> f32 {

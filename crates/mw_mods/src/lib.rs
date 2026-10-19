@@ -14,7 +14,12 @@
 //!   lists the file, and its archive (the `Morrowind.ini` BSA with the same
 //!   stem, e.g. `Tribunal.bsa`) is its VFS layer;
 //! - [`DATA`] (`morrowind-data`): the loose `Data Files` folder, after every
-//!   plugin, with the ini archives no plugin claims below it.
+//!   plugin, with the ini archives no plugin claims below it;
+//! - [`WEATHER`] (`morrowind-weather`): `mw_weather`'s records (presets,
+//!   region climates, precipitation) built from every plugin's `REGN` and
+//!   `Morrowind.ini` when its generated record file applies, after the content
+//!   and before user mods, so record mods patch them; [`ensure_weather`] keeps
+//!   it in every profile.
 //!
 //! Content files apply through [`mw_records::apply_plugin`], masters resolved
 //! through [`RecordCx::source_of`]. User mods live in `<user data>/mods`,
@@ -39,7 +44,7 @@ use sf_mods::{
     RecordCx, RecordFileError, load_profile,
 };
 use sf_records::{RecordDb, SourceId};
-use sf_vfs::{DirSource, VfsPath, VfsSource};
+use sf_vfs::{DirSource, MemSource, VfsPath, VfsSource};
 use tes3::esp::{FileType, Plugin};
 
 /// The adapter's name (`ModManifest::adapter` of its synthesized mods).
@@ -48,6 +53,10 @@ pub const ADAPTER: &str = "morrowind";
 pub const BUILTIN: &str = "mw";
 /// The loose `Data Files` mod's id.
 pub const DATA: &str = "morrowind-data";
+/// The synthesized weather mod's id: `mw_weather`'s records (`REGN` + `Morrowind.ini`).
+pub const WEATHER: &str = "morrowind-weather";
+/// Its one generated record file (applied by [`MwAdapter`], not parsed).
+pub const WEATHER_RECORDS: &str = "weather/morrowind-weather.mwweather";
 /// The profile used when none is named.
 pub const DEFAULT_PROFILE: &str = "default";
 /// Environment variable overriding the user data folder.
@@ -67,6 +76,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The builtin mod's id.
 pub fn builtin_id() -> ModId {
     ModId::new(BUILTIN).expect("valid id")
+}
+
+/// The weather mod's id ([`WEATHER`]).
+pub fn weather_id() -> ModId {
+    ModId::new(WEATHER).expect("valid id")
 }
 
 /// The loose `Data Files` mod's id.
@@ -112,8 +126,22 @@ pub fn default_profile(install: &MorrowindInstall) -> Profile {
     let mut files = install.game_files();
     files.sort_by_key(|f| !Path::new(f).extension().is_some_and(|e| e.eq_ignore_ascii_case("esm")));
     let plugins = files.iter().filter_map(|f| mod_id_for(f).ok());
-    let ids = std::iter::once(builtin_id()).chain(plugins).chain(std::iter::once(data_id()));
+    let ids = std::iter::once(builtin_id()).chain(plugins).chain([data_id(), weather_id()]);
     Profile::new(DEFAULT_PROFILE, ids)
+}
+
+/// Enables the weather mod in `profile` if it's missing, right after
+/// `morrowind-data` (else last): its records are core data that record mods
+/// patch, so they must exist before any user mod applies. Returns whether
+/// the profile changed.
+pub fn ensure_weather(profile: &mut Profile) -> bool {
+    let id = weather_id();
+    if profile.enabled.contains(&id) {
+        return false;
+    }
+    let at = profile.enabled.iter().position(|m| *m == data_id()).map_or(profile.enabled.len(), |i| i + 1);
+    profile.enabled.insert(at, id);
+    true
 }
 
 /// Loads `<profiles>/<name>.toml`; the default profile falls back to
@@ -124,6 +152,7 @@ pub fn load_profile_named(user: &UserDirs, name: &str, install: &MorrowindInstal
     let (mut profile, from_file) =
         if name == DEFAULT_PROFILE && !path.exists() { (default_profile(install), false) } else { (Profile::load(&path)?, true) };
     pin_builtin(&mut profile);
+    ensure_weather(&mut profile);
     Ok((profile, from_file))
 }
 
@@ -315,12 +344,20 @@ impl ContentAdapter for MwAdapter {
                 issues.push(ModIssue::new(None, IssueKind::Adapter { adapter: ADAPTER.into(), message }));
             }
         }
-        std::iter::once(builtin).chain(plugins).chain(std::iter::once(data)).collect()
+        // The weather records derive from every plugin's REGN (and the ini), so
+        // they come after the content and before user mods, which patch them.
+        let mut weather = ModManifest::synthesized(weather_id(), "Morrowind.ini weather", Version::parse(VERSION).expect("crate version"));
+        weather.description = "weather presets, region climates and precipitation from REGN and Morrowind.ini (mw_weather)".into();
+        weather.load_after = plugins.iter().map(|m| m.id.clone()).chain(std::iter::once(data_id())).collect();
+        weather.content.records = vec![WEATHER_RECORDS.into()];
+        std::iter::once(builtin).chain(plugins).chain([data, weather]).collect()
     }
 
     fn mount(&self, manifest: &ModManifest) -> Result<Vec<Arc<dyn VfsSource>>, String> {
         match manifest.id.as_str() {
             BUILTIN => Ok(self.builtin.clone()),
+            // The generated record file: a marker the pipeline hands back to `apply_records`.
+            WEATHER => Ok(vec![Arc::new(MemSource::new("weather").with(WEATHER_RECORDS, ""))]),
             DATA => {
                 let mut layers = self.open_archives(manifest);
                 let loose = DirSource::scan("Data Files", &self.install.data_files)
@@ -336,16 +373,22 @@ impl ContentAdapter for MwAdapter {
     }
 
     fn record_extensions(&self) -> &[&str] {
-        &["esm", "esp"]
+        &["esm", "esp", "mwweather"]
     }
 
     fn register_kinds(&self, db: &mut RecordDb) {
         mw_records::register_kinds(db).expect("TES3 kinds register once");
+        mw_weather::register_kinds(db).expect("weather kinds register once");
     }
 
     fn apply_records(&self, cx: &mut RecordCx<'_>, file: &VfsPath) -> Result<(), RecordFileError> {
         if !self.apply {
             return Ok(());
+        }
+        if file.extension() == Some("mwweather") {
+            // Built from the records so far (every plugin's REGN) and the ini.
+            let weather = mw_weather::MwWeather::build(cx.db, self.install.ini.as_ref());
+            return weather.define_in(cx.db, cx.source).map_err(|e| RecordFileError::new(e.to_string()));
         }
         let name = file.file_name().to_owned();
         let start = Instant::now();
@@ -397,6 +440,12 @@ impl ContentAdapter for MwAdapter {
                     out.extend(layer.read(&path).unwrap_or_default());
                 }
             }
+            return out;
+        }
+        if manifest.id.as_str() == WEATHER {
+            // Its records also read Morrowind.ini (the REGN side is in the plugins' stamps).
+            let (size, mtime) = stat_bytes(&self.install.root.join("Morrowind.ini"));
+            out.extend(format!("Morrowind.ini {size} {mtime}\n").into_bytes());
             return out;
         }
         for name in self.archives_of(manifest) {

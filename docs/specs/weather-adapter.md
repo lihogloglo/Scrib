@@ -38,7 +38,8 @@ selection per region, transition timing, storm direction, thunder), `components/
 Morrowind has ten weather types, indexed in this order in `REGN`'s weather chances: Clear, Cloudy,
 Foggy, Overcast, Rain, Thunder, Ash, Blight, then Snow and Blizzard (Bloodmoon). Each becomes one
 `WeatherPreset` record, `mw_weather/<type>`, generated in a **synthetic mod layer** ("Morrowind.ini
-weather") that sits right after the master files. Our own record mods and other mods patch it field by
+weather", the synthesized mod `morrowind-weather`) that sits after the content files and the loose Data Files
+and before user mods. Our own record mods and other mods patch it field by
 field, as with any record (rule 3).
 
 Mapping from a `[Weather <Type>]` section (keys as `openmw-iniimporter` lists them):
@@ -320,5 +321,33 @@ is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour ov
 - Not done: no positional one-shots (distance ring, as FMOD's scatterer min/max distance) and no per-sound weather
   filter beyond `climate_ambience`; the audio layer (later) may add both.
 
-Not yet (we2c2, in order): (1) `bevyrrowind weather forecast <region> --days 3` (`WeatherState::forecast`) and the
-1,000-slot frequency check; (2) the app calls `define_into` after content load, before record mods.
+
+## As built: WE2 part 3b (we2c2, 2026-10-19)
+
+- **The weather records are a synthesized mod**, `morrowind-weather` ("Morrowind.ini weather", `mw_mods::WEATHER`),
+  not an app call after loading. Record mods apply *inside* the `sf_mods` record step, one source per mod, and
+  patches are eager (patching a record that doesn't exist yet fails), so a source defined after the load would come
+  after every record mod and none could patch it. `MwAdapter::discover` adds the mod with `load_after` = every
+  plugin + `morrowind-data`; `mount` gives it one generated marker file (`weather/morrowind-weather.mwweather`, a
+  `MemSource` layer like the builtin mod's), which `apply_records` answers with `MwWeather::build(db so far, ini)`
+  + `MwWeather::define_in(db, mod source)`, so the climates see every plugin's `REGN` (the original reads regions
+  from the final load order too). `mw_mods::default_profile` lists it after `morrowind-data`; `ensure_weather` adds it
+  to profile files that lack it (like `pin_builtin`). Its `stamp` is the adapter version + `Morrowind.ini`'s size
+  and mtime, so an ini edit changes the profile fingerprint. `MwWeather::define_into` (own source) stays for tests and
+  tools. Known limit: an ESP inside a *folder* mod ordered after `morrowind-weather` changes no climate (its `REGN`
+  edits come too late); fix when it bites (order the weather mod after such mods, or rebuild climates in
+  `finish_records` for REGN-only changes).
+- Real install: `info` lists `weather.climate 16`, `weather.precip 4`, `weather.preset 10`; `mods report --mod
+  morrowind-weather` is clean. A test record mod patches `mw_weather/clear` (`climate_ambience`) through the pipeline.
+- **`bevyrrowind weather forecast <region> [--days 3] [--seed 0] [--from <game h>]`** (`apps/bevyrrowind/src/weather.rs`):
+  loads the profile, builds a `WeatherBook` from the records, prints the climate's weights, change interval and
+  transition, then one row per change slot from `WeatherState::forecast` (`day N hh:mm`, weather type name or the
+  preset id for mod-added presets, transition hours, `(forced)`), and the per-type counts. The first row is the
+  weather already running at `--from`. Example (Bitter Coast, seed 0): Thunderstorm, then Cloudy ×4 over 3 days.
+- **Frequency check**: `mw_weather` test `forecast_frequencies_follow_the_regn_chances` (synthetic REGN: Ascadian
+  Isles, Red Mountain, Moesring; two seeds; 1,000 slots each; every type within 4.5 binomial σ + 1, nothing outside
+  the climate; the forecast lists exactly the slots' presets) and `real_install.rs`
+  `real_regions_forecast_their_regn_chances` (all 16 real regions, 1,000 slots; skips without an install). Helpers:
+  `mw_weather::{register_kinds, weather_type_of, MwWeather::define_in}`.
+- Verify item "ini edit re-runs only `weather.climate`" is moot as built: there is no weather bake step; the records
+  are rebuilt from `REGN` + ini at every load (the `fingerprint` field stays for a future cached step).

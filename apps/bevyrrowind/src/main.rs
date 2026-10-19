@@ -31,6 +31,7 @@ mod sweep;
 mod view;
 mod walkers;
 mod water;
+mod weather;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -117,6 +118,11 @@ enum Command {
         /// Also list fully supported types, with examples for every type.
         #[arg(long)]
         all: bool,
+    },
+    /// Weather records: forecasts per region (`weather.rs`).
+    Weather {
+        #[command(subcommand)]
+        command: weather::WeatherCommand,
     },
     /// Cook every model the records reference (meshes + LODs) into the bake cache.
     Bake {
@@ -623,6 +629,7 @@ fn run(cli: Cli) -> Result {
         Command::Detect | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
         Command::Info { conflicts } => info(&install, &origin, conflicts),
         Command::Bake { cache } => bake::run(&install, cache),
+        Command::Weather { command } => weather::run(&install, command),
         Command::Mods { command } => mods::run(&install, command),
         Command::Ls { dir } => {
             let vfs = mount(&install, false)?;
