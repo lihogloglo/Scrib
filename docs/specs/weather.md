@@ -1891,3 +1891,21 @@ so the twin test runs it in raw wgpu like `sf_wind`'s; `sf_atmos_bevy` now depen
   covers it (owner).
 - **Not done** (by scope): plume anchor hook; cirrus height per climate (one sheet); a per-ray B saving on Medium/Low
   (could reuse `ray_a`'s 3 points with a 2-layer fetch helper if Medium/Low trace time matters at 1440p).
+
+### WE4c as built (we4c, 2026-10-19): the game runs the world weather map
+
+- **`sf_weather_bevy::WorldWeatherMap`** (`map: WeatherMap`, `camera: Option<DVec2>`): built from the app's
+  `ClimateRaster` with `MAP_SIZE` 256 and `MAP_TEXEL_M` 64 m (a quarter of the 256 m band; 16.4 km window), CPU texels
+  off. System `update_map`, chained after `evaluate` in `WeatherSystems::Evaluate`: `map.update(book, state, hours,
+  hour, camera)` then `CloudWeatherMap::sync`; counter `weather/map/ms`. `site_at` / `climates` helpers.
+- **App** (bevyrrowind): `WeatherSetup::raster` = the region cells' bounding box + 4 sea squares, rows along +Z (south),
+  unowned squares dilated to the nearest region; without region cells one square of the fallback climate. `weather_site`
+  writes `map.camera` and takes the site from `site_at` (the old `ClimateMap::border_at` and its 2-square band cap are
+  gone; the band is now `BORDER_BAND_M` 256 m). Live control forces every raster climate, or one region's
+  (`bevyrrowind/set {"weather", "region"}`). `Quality::cloud_map_per_sample`: High/Ultra per sample, Medium/Low per ray.
+- **Verified:** builds, clippy clean (our code); scene `we3-ridge` with Ashlands = ashstorm, Ascadian Isles =
+  thunderstorm: per-region forces apply, the zenith stays clear, the forced regions get clouds.
+- **Open bug (next slice):** the distant decks stop short of the horizon and show as grey vertical columns ("curtains"
+  hanging from the shell) near the camera (`bevyrrowind/shots/we4c/`). Suspect the trace's step budget across the tall
+  envelope shell: `ds` stays the camera (clear) layer's thickness / 20, so low-elevation rays spend `max_steps` within a
+  few km; also check the column look (local base B vs shell). 1440p re-time (trace, map pass, A/B `map_per_sample`) not done.

@@ -20,6 +20,13 @@
 //!    a blend of the presets' (each channel on its own transition window), so
 //!    a weather change glides: no pops.
 //!
+//! Distant weather (`WE4c`): with a [`WorldWeatherMap`] (the app's region raster), the same
+//! system set also refreshes the world weather map each frame (every
+//! climate's row and the window around the camera) and mirrors it into
+//! `sf_atmos_bevy::CloudWeatherMap`, so distant regions show their own
+//! clouds; the app takes the camera's [`WeatherSite`] from
+//! [`WorldWeatherMap::site_at`], so near and far agree.
+//!
 //! Part 2b (`fx`): precipitation into `sf_precip_bevy::Precip` (when the
 //! host draws it), the lightning flash (a directional light, cloud glow)
 //! and [`WeatherSound`] messages (loops; thunder delayed by distance / 343).
@@ -28,11 +35,12 @@ use std::sync::Arc;
 
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
+use bevy_math::DVec2;
 use bevy_platform::time::Instant;
 use sf_atmos_bevy::sf_atmos::{CloudWeather, FogBanks, FogLayer, FogSettings};
 use sf_diag_bevy::DiagCounters;
 use sf_sky_bevy::{SkyConfig, SkySystems, SkyTime};
-use sf_weather::{ClimateIx, WeatherBook, WeatherFrame, WeatherInput, WeatherState, evaluate_into};
+use sf_weather::{ClimateIx, ClimateRaster, MAP_SIZE, Site, WeatherBook, WeatherFrame, WeatherInput, WeatherMap, WeatherState, evaluate_into};
 use sf_wind_bevy::WindField;
 use sf_wind_bevy::sf_wind::WindSourceId;
 use smallvec::SmallVec;
@@ -101,6 +109,43 @@ pub struct WeatherOverrides {
     pub fog_scale: Option<f32>,
 }
 
+/// Texel size of the world weather map, meters: a quarter of the default
+/// border band (`sf_weather::BORDER_BAND_M`, 256 m), so the band spans 4
+/// texels; the 256² window covers 16.4 km around the camera.
+pub const MAP_TEXEL_M: f64 = 64.0;
+
+/// The world weather map (`WE4c`, weather.md "Distant weather"): the app's
+/// region raster and every climate's row. The app inserts it per worldspace
+/// and writes `camera` (absolute world X, Z, meters) each frame; the plugin
+/// refreshes it after `evaluate` (in [`WeatherSystems::Evaluate`]) and
+/// mirrors it into `sf_atmos_bevy::CloudWeatherMap` (CPU texels off: the
+/// GPU resolves the window).
+#[derive(Resource)]
+pub struct WorldWeatherMap {
+    pub map: WeatherMap,
+    /// The camera's world X, Z (`None`: not placed yet; the map waits).
+    pub camera: Option<DVec2>,
+}
+
+impl WorldWeatherMap {
+    pub fn new(raster: ClimateRaster) -> Self {
+        let mut map = WeatherMap::new(raster, MAP_SIZE, MAP_TEXEL_M);
+        map.set_cpu_texels(false);
+        Self { map, camera: None }
+    }
+
+    /// The climates at world X, Z `p` with their weights: the camera's site
+    /// by the map's own rule, so the near weather equals the map there.
+    pub fn site_at(&self, p: DVec2) -> Site {
+        self.map.raster().site_at(p)
+    }
+
+    /// Every climate of the raster, once each.
+    pub fn climates(&self) -> &[ClimateIx] {
+        self.map.raster().climates()
+    }
+}
+
 /// CPU cost of [`WeatherSystems`] (evaluate + apply), milliseconds.
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct WeatherStats {
@@ -134,7 +179,7 @@ impl Plugin for WeatherPlugin {
                     .after(SkySystems::Clock)
                     .before(SkySystems::Apply),
             )
-            .add_systems(Update, evaluate.in_set(WeatherSystems::Evaluate))
+            .add_systems(Update, (evaluate, update_map).chain().in_set(WeatherSystems::Evaluate))
             .add_systems(
                 Update,
                 (
@@ -199,6 +244,31 @@ fn evaluate(
             "count",
             current.frame.lightning.len() as f64,
         );
+    }
+}
+
+/// Distant weather (`WE4c`): the world weather map's table (each climate at weight 1) and window
+/// for this frame's clock and camera, mirrored into the clouds' map.
+#[allow(clippy::needless_pass_by_value)]
+fn update_map(
+    time: Res<SkyTime>,
+    config: Res<SkyConfig>,
+    records: Res<WeatherRecords>,
+    world: Res<WorldWeather>,
+    map: Option<ResMut<WorldWeatherMap>>,
+    clouds: Option<ResMut<sf_atmos_bevy::CloudWeatherMap>>,
+    counters: Option<Res<DiagCounters>>,
+) {
+    let (Some(mut map), Some(mut clouds)) = (map, clouds) else { return };
+    let Some(camera) = map.camera else { return };
+    let t0 = Instant::now();
+    let calendar = &config.0.calendar;
+    let hours = time.0.days * f64::from(calendar.hours_per_day);
+    let map = &mut *map;
+    let update = map.map.update(&records.0, &world.0, hours, time.0.hour(calendar), camera);
+    clouds.sync(&map.map, update);
+    if let Some(c) = counters {
+        c.add_named("weather/map/ms", sf_diag_bevy::sf_diag::unit::MS, t0.elapsed().as_secs_f64() * 1000.0);
     }
 }
 
