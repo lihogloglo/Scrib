@@ -1415,7 +1415,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   messages (loops; thunder after distance / 343 s), region border blend in `weather_site`; WE-2 awaiting owner. CPU:
   `cost_per_frame` gate 0.05 ms holds. **Left for [x]:** owner sign-off WE-1 + WE-2; `SunDiskLook` glare per weather (built sunglare 2026-10-19: `Glare View` -> `sun_glare`, SKY-channel blend; shots in shots/sunglare-*.png did not frame the disk; NS-1 owner pass);
   audio playback of `WeatherSound` (no audio backend yet); rain occlusion under roofs/trees is PR1's.)
-- [~] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
+- [x] WE4 Distant weather (owner go 2026-10-19; after WE3): see weather in other regions from afar (a storm over the
   Ashlands seen from Balmora, rain shafts under distant clouds), as RDR2 / MSFS / Horizon do. Research first (weather.md
   has no spatial weather yet): evaluate neighbouring regions (pure function, ~0.003 ms each) into a coarse weather map
   around the camera that the volumetric clouds sample (coverage, genus, darkness per location), precipitation shafts
@@ -1446,7 +1446,7 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   Part d built (we4d, 2026-10-19; weather.md "WE4d as built"): map layer D (precipitation extinction + tint), distant
   rain shafts and far fog by location in the cloud trace (High/Ultra, only the difference from the camera's weather:
   no pop, no double rain), `CloudQuality::far_weather`; +0.06 ms at 1440p; 1440p re-time done. WE-3 note awaiting owner.
-  Next: WE4e lightning.
+  Part e built (we4e, 2026-10-19; weather.md "WE4e as built"): world-anchored strikes + in-cloud glows. WE4a-e done; left: owner flash sign-off, temporal mask for the glow, per-cell thunder tuning.
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1911,3 +1911,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (ro-small): render-order RO-9 fixed (fade quad Overlay band + NotShadowCaster), RO-5/RO-7 verified by code (interiors unfogged; sky/cloud MV zero), RO-10 accepted, RO-11 deferred (no per-light caster mask).
 - 2026-10-19 (sunglare): WE3 leftover: ini `Glare View` -> `SkyTerms::sun_glare` -> `Weather::sun_glare` (SKY channel lead/lag blend) scales `SunDiskLook::glare` in the night pass; 2 tests + mw_weather test; no pops.
 - 2026-10-19 (shf5): shadows F5: Bevy PCSS (`experimental_pbr_pcss`) soft sun shadows via `sf_sky_bevy` `pcss` feature + `SunShadow::soft_size`, High/Ultra only (size 10 cascade texels, by eye; not an angle), `--off softshadows`; GPU within noise at Seyda Neen; raster is noisy without TAA. Spec shadows.md "F5 as built", owner check SH-10.
+- 2026-10-19 (we4e): M6 WE4e: `sf_weather::world_strikes` (seed + 2 km cell + 1/30 h bucket, thinned by the owning climate; 1 test), `Clouds::glows` (4 in-cloud emitters, cloud_trace), flash light/rain only within 3-9 km, thunder from camera distance. Clippy clean; game flash shots not caught (awaiting owner). WE4 done.

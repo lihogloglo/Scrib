@@ -1869,3 +1869,5 @@ and the zenith stays clear, but the decks stop short of the horizon and hang as 
 (bug, see weather.md "WE4c as built"). Fixed (we4c2, `shots/we4c2/`): the Ascadian Isles storm is a wall reaching the
 horizon, zenith clear, no columns; the Ashlands deck ends ~3 km out where the region does (small regions under real-scale
 decks can't fill the low sky). Also check: no jump in the far sky when the map recenters (walk 2 km).
+
+WE4e (we4e): time-lapse the forced Ashlands thunderstorm (BRP `time_scale`); distant flashes should light the far deck only (not the ridge or rain); thunder follows by distance / 343. Agent shots (`shots/we4e/`) caught no strike: **awaiting owner**.
