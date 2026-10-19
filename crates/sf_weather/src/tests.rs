@@ -511,3 +511,5 @@ fn thunder_delay_and_flash_are_pure() {
     let samples: Vec<f32> = (0..60_u8).map(|i| s.flash_at(f32::from(i) * 0.01)).collect();
     assert!(samples.windows(2).any(|w| w[1] > w[0] + 1e-3), "no re-stroke");
 }
+
+mod map;

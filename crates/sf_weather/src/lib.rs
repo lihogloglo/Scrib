@@ -17,10 +17,15 @@
 //! - **Output**: [`evaluate`] → [`WeatherFrame`] (sky medium + wind target,
 //!   clouds, fog, precipitation, surface rates, lightning strikes from a
 //!   Poisson schedule, cues, tags, storm wind sources, `visibility_m`).
+//! - **World map** ([`WeatherMap`], WE4): every climate evaluated once into
+//!   a table, blended over a climate raster ([`ClimateRaster`]) into a
+//!   world-anchored texel window; the camera's weather is the same map's
+//!   sample.
 
 mod book;
 mod frame;
 mod hash;
+mod map;
 mod records;
 mod state;
 
@@ -33,6 +38,7 @@ pub use frame::{
     BORDER_BAND_M, CueFrame, LIGHTNING_CAP_PER_HOUR, LightningStrike, MAX_VISIBILITY_M, OneShotFrame, PrecipFrame, SPEED_OF_SOUND, StormFrame,
     WeatherFrame, WeatherInput, border_blend, border_weight, evaluate, evaluate_into,
 };
+pub use map::{ClimateRaster, ClimateRow, MAP_EPSILON, MAP_SIZE, MapTexel, MapUpdate, Site, WeatherMap, row};
 pub use records::{
     CLIMATE_KIND, Climate, CloudTerms, Cue, FogTerms, Lightning, OneShotSet, PRECIP_KIND, PRESET_KIND, PrecipKind, PrecipLook,
     PrecipTerm, SkyTerms, SurfaceChannel, SurfaceRates, TransitionTiming, WeatherPreset, WindTerms, Window,

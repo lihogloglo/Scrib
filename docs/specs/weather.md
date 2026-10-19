@@ -1648,7 +1648,7 @@ the in-layer segment and lerp), A-only fetches (B every 8 samples), and 8 shaft 
 
 ### Slices (1-2 steps each; one build agent each)
 
-- **WE4a** `sf_weather::WeatherMap` (Bevy-free): climate raster type over WE3's border grid, per-climate
+- **WE4a** (built, we4a 2026-10-19: "WE4a as built" below) `sf_weather::WeatherMap` (Bevy-free): climate raster type over WE3's border grid, per-climate
   table (`evaluate` at weight 1), `site_at(pos)` and `sample(pos)` (CPU twin of the resolve).
   *Verify:* tests: map at the camera = `evaluate(site)` (1e-5, continuous channels) on a 2 m border walk;
   same seed → same table; table cost ≤ 0.02 ms for 16 climates (release). **Needs WE3's border grid (we3b2).**
@@ -1688,3 +1688,54 @@ log the reversal of "Clouds as built"'s "no written weather map" deviation in AR
   cells drifting across borders are a later slice on the same map.
 - **Regionless sea cells take the nearest region's weather** (blended), not a default clear sky.
 - **Cost:** full weather map on High and Ultra; Medium and Low use the cheaper per-ray lookup (coarser, no rain shafts).
+
+### WE4a as built (we4a, 2026-10-19): `sf_weather::WeatherMap` (CPU side)
+
+**Reuse check (rule 8).** Bevy has no spatial weather; the map is ~400 lines over `sf_weather`'s own `evaluate` and
+`border_blend`, so it lives in that crate (module `map`, no new deps: `glam`, `smallvec`, `sf_atmos::fog`).
+
+- **`ClimateRaster`** (world X, Z origin, square size, `width × height` of `Option<ClimateIx>`, band): the adapter's
+  region raster. Unowned squares (sea) take the **nearest** owned square's climate (owner decision 1): Euclidean
+  dilation by vector propagation (Danielsson 1980: a BFS that carries each square's source square and relaxes on a
+  closer one; ties to the lower climate index, then the lower source), so two regions meet at sea on their Voronoi
+  border and blend there like on land. `site_at(p)` = own square's climate + the nearest other climate among the squares
+  within half the band (point-to-square distance), through `border_blend`: the same rule as the app's `ClimateMap::border_at`
+  (one ring when the band ≤ 2 squares), generalized to any band. Past the raster: clamped to the edge squares.
+  Deviation from Design §2: no stored per-square `(neighbor, distance)`; the distance is exact per query from the
+  neighborhood (WE4b's resolve does the same 3 × 3 search per texel, trivial at 65 k threads).
+- **`ClimateRow`** (the table): each raster climate evaluated **once at weight 1** (`update_table`; lightning window
+  empty: strikes stay the camera frame's) into 31 continuous channels (`row::*`: cloud genus terms + cloud speed, dimming,
+  haze, dust, ground wind, gustiness, height fog + bank terms, total precipitation, precipitation extinction, lightning
+  rate, surface rates) and the heaviest precipitation's `look`. `ClimateRow::visibility_m(alt)` recomputes the frame's
+  Koschmieder visibility from the blended terms (nonlinear, so not blended itself).
+- **`WeatherMap`** (`new(raster, size, texel_m)`, default `MAP_SIZE` 256): `sample(p)` / `sample_site(site)` = the
+  weight-normalized sum of rows (the CPU twin of the resolve); `update(book, state, hours, hour_of_day, camera)` refreshes
+  the table, then the **world-anchored toroidal window**: world texel `t = floor(p / texel_m)` (absolute f64 position,
+  so floating-origin shifts move nothing) stored at `t mod size`, window = camera texel snapped to 1/8-map steps − size/2.
+  A full resolve when the table moved past `MAP_EPSILON` (1e-3, relative over 1) since the last resolve, else only the
+  strips entering the window on a recenter. `MapTexel` = the spec's A (coverage, genus, wetness, storm), B (base, thickness,
+  density, erosion), C (cirrus, precipitation, **height-fog density**, **overcast dimming = darkness**) + `look`.
+  Deviation: C carries absolute fog density and dimming instead of "fog scale" and the look byte (the look is a separate
+  field); WE4b decides the packing. **Uniform skip**: when every row's map channels agree (all regions Clear: their
+  winds differ, the map channels don't), `update` writes nothing, `texel_at` is `None` and `uniform_row()` stands for the map.
+- **Near = far:** the camera's site is meant to come from `raster.site_at(camera)` (WE4c replaces the app's
+  `ClimateMap::border_at` with it); `CurrentWeather.frame` = `evaluate(site)` and `map.sample(camera)` agree by construction.
+- **Verified** (`cargo test -p sf_weather`, 5 new, 17 total): `raster_fills_sea_with_the_nearest_region` (islands + sea:
+  sea columns split at the midpoint, ½/½ at the sea border, edge clamp, empty raster → `None`);
+  `map_at_the_camera_is_the_current_weather` (2 m walk across a 200 m band, two climates mid-transition: all 31 channels
+  of `sample` = `ClimateRow::from_frame(evaluate(site_at))` within 1e-5 relative, same look, visibility within 1e-4, no
+  coverage/precipitation step ≥ 0.02, resolved texel = sample at its center); `map_is_a_pure_function_of_seed_overrides_clock_raster`;
+  `uniform_day_skips_and_recentering_writes_only_new_strips` (clear + clear: 0 texels; storm: 32² once; same inputs: nothing;
+  one step east: 4 × 32 texels, every texel = its world sample); `map_cost`.
+- **Cost** (release, 16 climates, 64 × 64 raster): **table 0.0034 ms** (estimate ≤ 0.02 incl. upload; dev opt-level 1:
+  0.0053 ms). CPU resolve of the full 256² window 3.5 ms release (5.4 ms dev): fine for tests and a one-off, not per frame;
+  the per-frame resolve is WE4b's GPU pass (≤ 0.01 ms estimate). Recentering strips (256 × 32) would be ~0.4 ms on the CPU.
+
+**Next (WE4b, ordered):** (1) `sf_atmos_bevy` resource with the raster (R16Uint own-climate texture, uploaded once)
+and the table (storage buffer of rows, ≤ 64 × 31 f32, re-uploaded when `MapUpdate.table_changed`); (2) WGSL resolve
+compute pass, twin of `ClimateRaster::site_at` + `WeatherMap::blend` (3 × 3 search, `border_blend`), writing A/B/C
+textures at `storage_index`, full on table change, strips on recenter, skipped when uniform; a GPU-vs-CPU texel test
+(readback ≤ 1e-3) like `sf_wind`'s twin; (3) `weather_sample(p)` in the cloud trace reads A (and B) by world texel with
+the origin phase, uniform fast-path flag keeps today's scalars; (4) envelope shell (max base + thickness over the table)
+and per-sample local base/thickness; (5) cloud shadow map reads the same map; (6) `clouds` example `--split clear,storm`
++ GPU timer A/B; (7) log the "no written weather map" reversal in ARCHITECTURE §10.
