@@ -354,6 +354,42 @@ Solari's world cache (open question 3). Underwater beds lit by Solari get no wat
 sunlight (they're lit as if dry); the water pass's transmittance covers the view path only. Accepted
 for M6.
 
+## Render order (transparent side; rainwater, 2026-10-19)
+
+**Canonical order** (UE's Single Layer Water pass before translucency; Unity's render queues
+Transparent < Overlay; Frostbite's "refractive first, then sorted translucency, then particles"):
+the opaque scene, then the **water** (it refracts the opaque scene, so nothing translucent may be under
+it in the snapshot), then the **other translucents** back to front, then **particles and
+precipitation** last.
+
+**As built (Bevy 0.20 Core3d):**
+
+| Step | Node / phase | What | Sort |
+|---|---|---|---|
+| 1 | `main_opaque_pass_3d` (Opaque3d, AlphaMask3d) | terrain, statics, impostor/proxy meshes | binned |
+| 2 | sky, `sf_atmos` fog composite | froxel fog on opaque pixels | (fullscreen) |
+| 3 | `water_snapshot` (after everything before the transparent pass) | colour + depth copy for refraction | (fullscreen) |
+| 4 | `main_transparent_pass_3d` (Transparent3d), band **Refractive** | ocean + water surfaces (Blend, depth-write) | `AlwaysOnTop` = drawn first |
+| 5 | same phase, band **Sorted** (default) | blended NIF meshes and leaves swapped to `FroxelFogMaterial` (`transparent_fog.rs`), additive NIF particles / flames (`AlphaMode::Add`), `sf_lod_bevy` impostor light sprites (Add) | Bevy: view depth of mesh AABB centre + `depth_bias`, back to front |
+| 6 | same phase, band **Overlay** | `sf_precip_bevy` boxes (64 m, 24 m, 8 m) | `OVERLAY_BASE` + order: after every sorted draw, far box first |
+| 7 | `water_velocity` (after the transparent pass) | water motion vectors for DLSS/TAA | (redraw) |
+
+**One policy, one place:** `sf_render_order_bevy` (`DrawBand` component, a render system in
+`RenderSystems::PhaseSort` before Bevy's `sort_phase_system::<Transparent3d>` rewriting the sorting info
+of tagged draws). Never order draws with a per-material `depth_bias` sort hack. A new shader-placed or
+camera-local translucent (its mesh AABB centre isn't where it draws) must take a band.
+
+**Why (the bug):** Bevy sorts by the AABB centre. The water clipmap (grid-space positions, entity at the
+origin) and the precipitation boxes (seed-space positions, at the origin) are both placed in the shader,
+so their keys differed only by `forward · (0.5, -3.5, 0.5)`: looking down at the sea drew the rain first
+and the water (near-opaque refracted colour, depth-write) erased it. Every world-placed translucent vs the
+water was arbitrary the same way (the water key was the distance to the world origin). Test:
+`sf_render_order_bevy` `bevy_keys_alone_flip_water_and_rain_with_pitch` + the band-order test.
+
+**Known gaps:** translucents *under* the water are not in the snapshot (they draw after it and fail the
+water's depth): accepted (UE has the same limit). World-placed particles stay in the Sorted band (smoke
+must sort against windows and leaves); only camera-local volumes are Overlay.
+
 ## Water bodies at any height (lakes, pools, interiors)
 
 - Every body draws with the same material. Kinds differ in mesh and waves: Ocean = clipmap + all

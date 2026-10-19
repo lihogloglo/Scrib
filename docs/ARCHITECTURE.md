@@ -1838,3 +1838,4 @@ interiors and combat moved to M8, M9, M10. Specs and logs written before that da
   and build cost; else replicon + renet2/quinnet + our own one-entity rollback. Biggest audit findings: the
   frame-rate mover (fixed now in the spec), "one active worldspace / one gameplay anchor" in streaming.md and
   physics.md "Stepping" (N5), and MWScript's and the Lua API's singleton `Player` (N6).
+- 2026-10-19 (rainwater): transparent draw order is one policy, `sf_render_order_bevy` `DrawBand` (Refractive water first, Sorted translucents, Overlay precipitation/camera-local volumes last), applied in `RenderSystems::PhaseSort` before Bevy's Transparent3d sort; no per-material `depth_bias` ordering hacks. Shader-placed draws must take a band (their AABB-centre sort key is meaningless). water.md "Render order".

@@ -27,6 +27,7 @@ use bevy_math::{Vec2, Vec3, Vec4};
 use bevy_mesh::{Indices, Mesh, Mesh3d, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexFormat};
 use bevy_pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin, MeshMaterial3d};
 use bevy_reflect::TypePath;
+use sf_render_order_bevy::{DrawBand, RenderOrderPlugin};
 use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
 use bevy_shader::ShaderRef;
 use bevy_time::Time;
@@ -183,6 +184,10 @@ pub struct PrecipPlugin;
 impl Plugin for PrecipPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/precip.wesl");
+        // Precipitation draws after every other translucent (water.md "Render order").
+        if !app.is_plugin_added::<RenderOrderPlugin>() {
+            app.add_plugins(RenderOrderPlugin);
+        }
         app.add_plugins(MaterialPlugin::<PrecipMaterial>::default())
             .init_resource::<Precip>()
             .init_resource::<PrecipStats>()
@@ -272,6 +277,8 @@ fn spawn_layers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
                 Visibility::Hidden,
                 NoFrustumCulling,
                 NotShadowCaster,
+                // Far box first, near box on top.
+                DrawBand::Overlay { order: -i16::try_from(layer).unwrap_or(i16::MAX) },
                 Name::new(format!("precip/{slot}/{layer}")),
             ));
         }

@@ -24,6 +24,7 @@ bevy_shader.workspace = true
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 sf_coords = { path = "../sf_coords" }
+sf_render_order_bevy = { path = "../sf_render_order_bevy" }
 sf_water = { path = "../sf_water" }
 
 [dev-dependencies]

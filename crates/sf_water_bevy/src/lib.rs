@@ -31,6 +31,7 @@ use bevy_light::NotShadowCaster;
 use bevy_material::AlphaMode;
 use bevy_math::{DVec2, IVec3, UVec2, UVec3, Vec2, Vec3, Vec4};
 use bevy_mesh::{Mesh, Mesh3d};
+use sf_render_order_bevy::{DrawBand, RenderOrderPlugin};
 use bevy_pbr::{AtmosphereSettings, MaterialPlugin, MeshMaterial3d, StandardMaterial};
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension};
 use bevy_shader::load_shader_library;
@@ -278,6 +279,10 @@ pub struct WaterPlugin;
 
 impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
+        // Water draws first among the translucents (water.md "Render order").
+        if !app.is_plugin_added::<RenderOrderPlugin>() {
+            app.add_plugins(RenderOrderPlugin);
+        }
         load_shader_library!(app, "shaders/water_common.wesl");
         embedded_asset!(app, "shaders/water_material.wesl");
         embedded_asset!(app, "shaders/water_fft.wesl");
@@ -541,7 +546,7 @@ fn attach_surface(
             base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..StandardMaterial::default() },
             extension: WaterExt::new(&images, WaterParams::default()),
         };
-        commands.entity(e).insert((Mesh3d(meshes.add(mesh::clipmap(&clip))), MeshMaterial3d(materials.add(material)), NotShadowCaster, NoFrustumCulling));
+        commands.entity(e).insert((Mesh3d(meshes.add(mesh::clipmap(&clip))), MeshMaterial3d(materials.add(material)), NotShadowCaster, NoFrustumCulling, DrawBand::Refractive));
     }
 }
 

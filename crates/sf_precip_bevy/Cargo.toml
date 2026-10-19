@@ -22,5 +22,7 @@ bevy_render.workspace = true
 bevy_shader.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 
+sf_render_order_bevy = { path = "../sf_render_order_bevy" }
+
 [lints]
 workspace = true

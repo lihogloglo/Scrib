@@ -1,0 +1,18 @@
+[package]
+name = "sf_render_order_bevy"
+description = "Transparent draw-order policy for Bevy: refractive surfaces first, sorted translucents, camera-local overlays (precipitation, particles) last (water.md \"Render order\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Thin (ARCHITECTURE §8b rule 6): one component, one render-world system
+# that rewrites the Transparent3d sort keys of tagged draws before Bevy sorts.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+
+[lints]
+workspace = true
