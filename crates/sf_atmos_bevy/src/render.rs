@@ -255,21 +255,10 @@ struct FroxelUniform {
     jitter: Vec3,
     enabled: u32,
     shadow_light: Vec3,
-    pad: f32,
+    /// 1: `FroxelJitter::PerFroxel` (per-froxel rotation, history at the froxel centre).
+    jitter_mode: u32,
     fog: FogUniform,
     lights: [FogLightGpu; sf_atmos::MAX_FOG_LIGHTS],
-}
-
-/// Radical inverse in `base` (Halton): the froxels' per-frame jitter.
-#[allow(clippy::cast_precision_loss)]
-fn halton(mut i: u32, base: u32) -> f32 {
-    let (mut f, mut r) = (1.0, 0.0);
-    while i > 0 {
-        f /= base as f32;
-        r += f * (i % base) as f32;
-        i /= base;
-    }
-    r
 }
 
 // -- pipelines -----------------------------------------------------------------
@@ -628,8 +617,6 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
         *gpu = FogLightGpu { position_range: l[0], color: l[1] };
     }
     let shadow = frame.shadow.filter(|_| frame.clouds);
-    // Halton (2, 3, 5) over 16 frames: the sample's place inside its froxel.
-    let j = f.frame % 16 + 1;
     FroxelUniform {
         world_from_clip: view.world_from_view.to_matrix() * view.clip_from_view.inverse(),
         prev_clip_from_world: prev.0,
@@ -653,11 +640,12 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
         #[allow(clippy::cast_possible_truncation)]
         n_lights: n_lights as u32,
         far_map: frame.far_map.as_ref().filter(|_| f.far_map).map_or(Vec4::ZERO, |m| m.1),
-        jitter: Vec3::new(halton(j, 2), halton(j, 3), halton(j, 5)),
+        // The sample's place inside its froxel this frame (weather.md "Temporal sampling").
+        jitter: Vec3::from_array(sf_atmos::froxel::frame_jitter(s.jitter, f.frame)),
         enabled: u32::from(settings.is_some()),
         // The sun the cloud and terrain shadow maps were made for (none: neither applies).
         shadow_light: frame.shadow.map_or(Vec3::ZERO, |b| b.light_dir),
-        pad: 0.0,
+        jitter_mode: u32::from(s.jitter == sf_atmos::FroxelJitter::PerFroxel),
         fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, FOG_STEPS),
         lights,
     }

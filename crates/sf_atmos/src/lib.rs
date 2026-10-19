@@ -35,7 +35,7 @@ mod tests;
 
 pub use density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at, WeatherSample};
 pub use fog::{FogBanks, FogDrift, FogLayer, FogOffsets, FogSettings};
-pub use froxel::{FroxelSettings, MAX_FOG_LIGHTS};
+pub use froxel::{FroxelJitter, FroxelSettings, MAX_FOG_LIGHTS};
 pub use noise::{NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 pub use scroll::CloudScroll;
 pub use settings::{CloudLook, CloudPreset, CloudQuality, CloudSettings, CloudWeather};

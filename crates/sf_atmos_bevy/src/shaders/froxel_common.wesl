@@ -44,13 +44,15 @@ struct Froxels {
     n_lights: u32,
     // The terrain's shadow-height map: (min x, min z, 1 / extent, base y); z 0: none.
     far_map: vec4<f32>,
-    // This frame's sample offset inside each froxel, 0..1.
+    // This frame's sample offset inside each froxel, 0..1 (`sf_atmos::froxel::frame_jitter`).
     jitter: vec3<f32>,
     // 1: the froxels run; 0: the analytic layers fog everything.
     enabled: u32,
     // The shadowed directional light the cloud and far maps were made for.
     shadow_light: vec3<f32>,
-    pad: f32,
+    // 1: per-froxel sample rotation, history read at the froxel centre
+    // (`sf_atmos::FroxelJitter::PerFroxel`); 0: `jitter` as is.
+    jitter_mode: u32,
     fog: Fog,
     lights: array<FogLight, MAX_FOG_LIGHTS>,
 };

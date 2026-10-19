@@ -109,13 +109,35 @@ fn cloud_visibility(p: vec3<f32>) -> f32 {
     return textureSampleLevel(cloud_shadow, noise_sampler, uv, 0.0).r;
 }
 
+// A froxel's fixed offset, 0..1 per axis: pcg3d (Jarzynski and Olano 2020).
+// CPU twin: `sf_atmos::froxel::froxel_hash` (keep in step).
+fn froxel_hash(cell: vec3<u32>) -> vec3<f32> {
+    var v = cell * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> vec3(16u);
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return vec3<f32>(v >> vec3(8u)) * (1.0 / 16777216.0);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = vec3<u32>(fx.size);
     if any(id >= size) {
         return;
     }
-    let cell = vec3<f32>(id) + fx.jitter;
+    // This frame's sample inside the froxel (weather.md "Temporal sampling"):
+    // per froxel, the frame's R3 offset rotated by the froxel's hash, so
+    // neighbours err independently (noise the history and TAA average) instead
+    // of in step (a pulse of the whole volume).
+    var j = fx.jitter;
+    if fx.jitter_mode == 1u {
+        j = fract(j + froxel_hash(id));
+    }
+    let cell = vec3<f32>(id) + j;
     let uv = cell.xy / fx.size.xy;
     let rd = froxel_ray(fx, uv);
     let d = slice_distance(fx, cell.z / fx.size.z);
@@ -158,9 +180,17 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     var value = vec4(scatter, sigma);
 
-    // Temporal reprojection: where this froxel's point was in last frame's volume.
+    // Temporal reprojection: where this froxel was in last frame's volume. The
+    // history holds the froxel's mean, so it is read at the froxel's centre
+    // (a still camera reads texel centres: no drift, no blur), not at the
+    // jittered sample, which would shift the whole history by the jitter.
     if fx.history_valid != 0u && fx.history > 0.0 {
-        let pp = p + fx.origin_shift;
+        var q = p;
+        if fx.jitter_mode == 1u {
+            let mid = vec3<f32>(id) + 0.5;
+            q = fx.camera + froxel_ray(fx, mid.xy / fx.size.xy) * slice_distance(fx, mid.z / fx.size.z);
+        }
+        let pp = q + fx.origin_shift;
         let clip = fx.prev_clip_from_world * vec4(pp, 1.0);
         if clip.w > 0.0 {
             let puv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;

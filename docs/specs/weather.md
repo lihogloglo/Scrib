@@ -716,7 +716,7 @@ materials can't sample it, it has no height-fog or bank density and no terrain o
 volumes show the artifacts of #22574. Our froxels reuse F2's density terms and the shadow maps we already have.
 Revisit `FogVolume` only for small local volumes in interiors (M9 environment volumes), where its box shape fits.
 
-- **Model** (`sf_atmos::froxel`, CPU twin + tests): `FroxelSettings { size, near, far, history, max_lights }`,
+- **Model** (`sf_atmos::froxel`, CPU twin + tests): `FroxelSettings { size, near, far, history, max_lights, jitter }`,
   presets Medium 128×72×48 to 256 m, **High 160×90×64 to 384 m (default)**, Ultra 160×90×128 to 512 m. Slices are
   exponential in distance along the view ray (not view z), `near` 0.5 m, so a pixel's slice depends only on its
   own distance (~10 % of the distance per slice at High: 38 m deep at the far end). `integrate_step` = Hillaire
@@ -732,6 +732,15 @@ Revisit `FogVolume` only for small local volumes in interiors (M9 environment vo
      per frame, unshadowed: Bevy's cube maps aren't sampled; a named limit), with Bevy's range falloff. Temporal:
      the point is reprojected into last frame's volume (origin shifts applied), history weight 0.9 inside the
      screen and the range, ping-pong `Rgba16Float` volumes.
+     **Temporal sampling (shimmer, 2026-10-19):** the first build used ONE Halton(2,3,5) offset for the whole
+     volume (16-frame cycle) and read the history at the jittered point. Every froxel erred in step, a
+     history of 0.9 keeps ~26 % of a 16-frame cycle, and screen TAA cannot clamp a coherent change: the fog
+     pulsed (owner report; measured ~1-2 % of frame luminance, static camera, clock paused, worst where shadow
+     and bank edges sit in the volume). As built: `FroxelJitter::PerFroxel` (default): the frame offset is R3
+     (Roberts 2018, never repeats) rotated per froxel by a pcg3d hash (Cranley-Patterson), so the residual is
+     spatially uncorrelated noise the history and TAA/DLSS average; the history is read at the froxel centre
+     (a still camera reads texel centres, no drift). A/B `--off fogdither` (old), `--off fogjitter` (centres).
+     Cost: one integer hash + one centre ray per froxel (not benchmarked; negligible next to the CSM tap).
   2. `atmos_froxel_integrate` (one thread per tile column): front to back into (in-scatter, transmittance), into
      the shared `FroxelVolume` image.
   3. `clouds_composite`: the froxels from the camera to `min(depth, far)`, then F2's analytic layers only from the
