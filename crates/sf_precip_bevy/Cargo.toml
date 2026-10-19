@@ -21,6 +21,9 @@ bevy_pbr.workspace = true
 bevy_reflect = { workspace = true, features = ["std"] }
 bevy_render.workspace = true
 bevy_shader.workspace = true
+bevy_shape.workspace = true
+glam.workspace = true
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 bevy_time = { workspace = true, features = ["std"] }
 
 sf_render_order_bevy = { path = "../sf_render_order_bevy" }

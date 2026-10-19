@@ -1012,7 +1012,8 @@ their own consumers (part 2).
   2 squares) ≈ 234 m in Morrowind; written only on a weight change ≥ 1e-3. Interiors switch `Precip.enabled` off.
 - Tests: sf_precip_bevy 3 (mesh/ranks, wrap, nesting/light), sf_weather `thunder_delay_and_flash_are_pure`,
   sf_weather_bevy `frame_drives_precip_cues_and_lightning`, `slots_keep_their_kind_through_a_crossfade`.
-- **Not built:** occlusion map (rain under roofs / trees outdoors), splashes, ripples, fog on the streaks (transparent
+- **Occlusion map (as built, rainocc 2026-10-19):** `sf_precip_bevy/src/occlusion.rs`, a top-down ortho depth map (512², 80 m square, 100 m depth, reverse Z) drawn as one more shadow view of the strongest shadow-casting directional light (same mechanism as the far sun map, subview 0xFB, no pass of our own), redrawn when the camera moves 6 m (8 m vertically) or casters stream in (30-frame throttle). The vertex shader kills a drop with a caster above it (0.3 m slack). Hosts add `NoPrecipOcclusion` to terrain and far proxies (done in exterior.rs). `PrecipOcclusionConfig(false)` turns it off. Not yet seen under a roof/tree (owner check). Splashes not built (need ground height: the map excludes terrain).
+- **Not built:** splashes, ripples, fog on the streaks (transparent
   fog path, fogfix), textures (`PrecipKind.texture` unused: procedural shapes), cloud shadow-map rate modulation,
   in-cloud emission at the strike, audio playback.
 

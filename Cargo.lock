@@ -6247,7 +6247,10 @@ dependencies = [
  "bevy_reflect",
  "bevy_render",
  "bevy_shader",
+ "bevy_shape",
  "bevy_time",
+ "bevy_transform",
+ "glam 0.33.12",
  "sf_render_order_bevy",
 ]
 

@@ -35,6 +35,28 @@ struct PrecipParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var fog_volume: texture_3d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var fog_sampler: sampler;
 
+// Top-down occlusion map (reverse Z, 1 at the top): clip_from_world,
+// (valid, depth range m, 0, 0), the depth texture.
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var<uniform> occ_clip: mat4x4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var<uniform> occ_params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var occ_map: texture_depth_2d;
+
+// True when something in the map is above `p` (under a roof or a tree).
+fn occluded(p: vec3<f32>) -> bool {
+    if occ_params.x < 0.5 {
+        return false;
+    }
+    let c = occ_clip * vec4<f32>(p, 1.0);
+    let uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+        return false;
+    }
+    let dims = vec2<f32>(textureDimensions(occ_map));
+    let top = textureLoad(occ_map, vec2<i32>(uv * dims), 0);
+    // 0.3 m of slack so a drop at a surface's own height isn't cut.
+    return top > c.z + 0.3 / occ_params.y;
+}
+
 struct Vertex {
     @location(0) seed: vec3<f32>,
     @location(1) corner: vec2<f32>,
@@ -72,6 +94,9 @@ fn vertex(v: Vertex) -> VertexOutput {
         let t = precip.offset.w;
         let ph = v.drop.z * 6.2831853;
         p += vec3<f32>(sin(t * 1.7 + ph), 0.35 * sin(t * 2.3 + ph * 3.0), cos(t * 1.3 + ph * 1.7)) * flutter;
+    }
+    if occluded(p) {
+        return out;
     }
     // Fade at the box faces (no pop on wrap) and inside the nested box.
     let a = abs(rel);

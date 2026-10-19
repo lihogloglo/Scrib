@@ -34,6 +34,9 @@ use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, Shader
 use bevy_shader::ShaderRef;
 use bevy_time::Time;
 
+mod occlusion;
+pub use occlusion::{NoPrecipOcclusion, PrecipOcclusion, PrecipOcclusionConfig, PrecipOcclusionStats};
+
 #[cfg(test)]
 mod tests;
 
@@ -138,6 +141,15 @@ pub struct PrecipMaterial {
     #[texture(2, dimension = "3d")]
     #[sampler(3)]
     pub fog_volume: Handle<bevy_image::Image>,
+    /// [`PrecipOcclusion::clip_from_world`].
+    #[uniform(4)]
+    pub occ_clip: bevy_math::Mat4,
+    /// [`PrecipOcclusion::params`].
+    #[uniform(5)]
+    pub occ_params: Vec4,
+    /// [`PrecipOcclusion::image`] (top-down depth).
+    #[texture(6, sample_type = "depth")]
+    pub occ_map: Handle<bevy_image::Image>,
 }
 
 impl Material for PrecipMaterial {
@@ -197,10 +209,11 @@ impl Plugin for PrecipPlugin {
         if !app.is_plugin_added::<RenderOrderPlugin>() {
             app.add_plugins(RenderOrderPlugin);
         }
+        occlusion::build(app);
         app.add_plugins(MaterialPlugin::<PrecipMaterial>::default())
             .init_resource::<Precip>()
             .init_resource::<PrecipStats>()
-            .add_systems(bevy_app::Startup, spawn_layers)
+            .add_systems(bevy_app::Startup, spawn_layers.after(occlusion::setup))
             .add_systems(Update, update_layers.in_set(PrecipSystems));
     }
 }
@@ -274,12 +287,12 @@ pub fn layer_params(slot: &PrecipSlot, layer: usize, precip: &Precip, offset: Ve
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn spawn_layers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<PrecipMaterial>>, fog: Res<TranslucentFog>) {
+fn spawn_layers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<PrecipMaterial>>, fog: Res<TranslucentFog>, occ: Res<PrecipOcclusion>) {
     for (layer, (_, count)) in LAYERS.iter().enumerate() {
         #[expect(clippy::cast_possible_truncation, reason = "three layers")]
         let mesh = meshes.add(drop_mesh(*count, layer as u32 + 1));
         for slot in 0..SLOTS {
-            let material = materials.add(PrecipMaterial { params: PrecipParams::default(), fog_params: fog.params, fog_volume: fog.volume.clone() });
+            let material = materials.add(PrecipMaterial { params: PrecipParams::default(), fog_params: fog.params, fog_volume: fog.volume.clone(), occ_clip: occ.clip_from_world, occ_params: occ.params, occ_map: occ.image.clone() });
             commands.spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material),
@@ -305,6 +318,7 @@ pub fn update_layers(
     mut layers: Query<(&mut PrecipLayer, &MeshMaterial3d<PrecipMaterial>, &mut Visibility)>,
     mut materials: ResMut<Assets<PrecipMaterial>>,
     fog: Res<TranslucentFog>,
+    occ: Res<PrecipOcclusion>,
 ) {
     let dt = time.delta_secs().min(0.25);
     // Wrapped so the flutter phase keeps f32 precision.
@@ -325,12 +339,15 @@ pub fn update_layers(
         drops += shown;
         let params = layer_params(&slot, l.layer, &precip, l.offset, t);
         let id: &Handle<PrecipMaterial> = &handle.0;
-        if materials.get(id).is_some_and(|m| m.params != params || m.fog_params != fog.params || m.fog_volume != fog.volume)
+        if materials.get(id).is_some_and(|m| m.params != params || m.fog_params != fog.params || m.fog_volume != fog.volume || m.occ_clip != occ.clip_from_world || m.occ_params != occ.params || m.occ_map != occ.image)
             && let Some(mut m) = materials.get_mut(id)
         {
             m.params = params;
             m.fog_params = fog.params;
             m.fog_volume.clone_from(&fog.volume);
+            m.occ_clip = occ.clip_from_world;
+            m.occ_params = occ.params;
+            m.occ_map.clone_from(&occ.image);
         }
     }
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a drop count")]
