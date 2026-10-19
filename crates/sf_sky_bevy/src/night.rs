@@ -11,14 +11,13 @@
 
 use std::collections::HashMap;
 
-use bevy_app::{App, SubApp};
+use bevy_app::App;
 use bevy_asset::{AssetId, AssetServer, Handle, embedded_asset, load_embedded_asset};
 use bevy_camera::{Camera3d, MainPassResolutionOverride, Viewport};
-use bevy_core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, main_opaque_pass_3d, main_transparent_pass_3d};
-use bevy_core_pipeline::schedule::Core3d;
+use bevy_core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
 use bevy_core_pipeline::FullscreenShader;
 use bevy_ecs::prelude::*;
-use bevy_ecs::schedule::{InternedSystemSet, IntoSystemSet, NodeId, Schedules};
+use bevy_ecs::schedule::IntoSystemSet;
 use bevy_image::Image;
 use bevy_math::{Vec3, Vec4};
 use bevy_render::camera::ExtractedCamera;
@@ -36,6 +35,7 @@ use bevy_render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery}
 use bevy_render::sync_world::RenderEntity;
 use bevy_render::texture::{FallbackImage, GpuImage};
 use bevy_render::view::{Msaa, ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms};
+use sf_render_order_bevy::PassStage;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 use bevy_time::Time;
@@ -113,40 +113,10 @@ pub(crate) fn build(app: &mut App) {
         .add_systems(Render, (queue_pipelines, prepare_bind_group).chain().in_set(RenderSystems::PrepareBindGroups));
 }
 
-/// Orders the pass after Bevy's `render_sky`, before anything later
-/// plugins add between the opaque and transparent passes (a cloud composite
-/// that discovers the same way then runs after this pass).
-///
-/// Scaffold `SkyOrderScaffold` (shared with `sf_atmos_bevy`): `render_sky`
-/// is private to `bevy_pbr`, so its set can't be named. Removal path: a
-/// public `render_sky` set upstream. Add `SkyPlugin` before cloud plugins.
+/// Orders the pass after Bevy's `render_sky` and before the cloud composite
+/// ([`PassStage::Night`], render-order.md RO-8).
 pub(crate) fn finish(app: &mut App) {
-    let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
-    let sets = sets_before_transparent(render_app);
-    let mut config = night_pass.after(main_opaque_pass_3d).before(main_transparent_pass_3d).into_configs();
-    for set in sets {
-        config = config.after(set);
-    }
-    render_app.add_systems(Core3d, config);
-}
-
-fn sets_before_transparent(render_app: &mut SubApp) -> Vec<InternedSystemSet> {
-    let transparent = main_transparent_pass_3d.into_system_set().intern();
-    let world = render_app.world_mut();
-    let schedules = world.resource::<Schedules>();
-    let Some(schedule) = schedules.get(Core3d) else { return Vec::new() };
-    let graph = schedule.graph();
-    let Some(key) = graph.system_sets.get_key(transparent) else { return Vec::new() };
-    let systems: HashMap<_, _> = graph.systems.iter().map(|(k, system, _)| (k, system)).collect();
-    let mut out = Vec::new();
-    for node in graph.dependency().graph().neighbors_directed(NodeId::Set(key), bevy_ecs::schedule::graph::Direction::Incoming) {
-        if let NodeId::System(k) = node
-            && let Some(system) = systems.get(&k)
-        {
-            out.extend(system.default_system_sets().into_iter().filter(|set| *set != transparent));
-        }
-    }
-    out
+    sf_render_order_bevy::add_pass(app, PassStage::Night, night_pass.into_system_set().intern(), &[], night_pass);
 }
 
 // -- main world ----------------------------------------------------------------

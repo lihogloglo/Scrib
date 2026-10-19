@@ -4,14 +4,14 @@
 
 use std::collections::HashMap;
 
-use bevy_app::{App, SubApp};
+use bevy_app::App;
 use bevy_asset::{load_embedded_asset, AssetId, Handle};
-use bevy_core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
+use bevy_core_pipeline::core_3d::main_transparent_pass_3d;
 use bevy_core_pipeline::prepass::ViewPrepassTextures;
 use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy_core_pipeline::FullscreenShader;
 use bevy_ecs::prelude::*;
-use bevy_ecs::schedule::{InternedSystemSet, IntoSystemSet, NodeId, Schedules};
+use bevy_ecs::schedule::IntoSystemSet;
 use bevy_image::Image;
 use bevy_math::{Mat4, Vec4};
 use bevy_pbr::resources::AtmosphereTextures;
@@ -32,6 +32,7 @@ use bevy_render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery}
 use bevy_render::sync_world::RenderEntity;
 use bevy_render::texture::GpuImage;
 use bevy_render::view::{ExtractedView, Msaa, ViewDepthStencilTexture, ViewTarget};
+use sf_render_order_bevy::PassStage;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
 
@@ -236,41 +237,12 @@ pub(crate) fn build(app: &mut App) {
         );
 }
 
-/// The snapshot goes after everything ordered before the transparent pass (Bevy's
-/// `render_sky`, the `sf_atmos` cloud/fog composite), as `sf_atmos_bevy` orders its composite.
-/// Add `WaterPlugin` after the atmosphere plugins so their systems exist here.
+/// The snapshot ([`PassStage::Snapshot`]) goes after everything ordered before the
+/// transparent pass (Bevy's `render_sky`, the sky and cloud passes), whatever the
+/// plugin add order (render-order.md RO-8).
 pub(crate) fn finish(app: &mut App) {
-    let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
-    let sets = sets_before_transparent(render_app);
-    let mut config = snapshot_pass.after(main_opaque_pass_3d).before(main_transparent_pass_3d).into_configs();
-    for set in sets {
-        config = config.after(set);
-    }
-    render_app.add_systems(Core3d, config);
-}
-
-fn sets_before_transparent(render_app: &mut SubApp) -> Vec<InternedSystemSet> {
     let mine = [fft_pass.into_system_set().intern(), velocity_pass.into_system_set().intern()];
-    let transparent = main_transparent_pass_3d.into_system_set().intern();
-    let world = render_app.world_mut();
-    let schedules = world.resource::<Schedules>();
-    let Some(schedule) = schedules.get(Core3d) else { return Vec::new() };
-    let graph = schedule.graph();
-    let Some(key) = graph.system_sets.get_key(transparent) else { return Vec::new() };
-    let systems: HashMap<_, _> = graph.systems.iter().map(|(k, system, _)| (k, system)).collect();
-    let mut out = Vec::new();
-    for node in graph.dependency().graph().neighbors_directed(NodeId::Set(key), bevy_ecs::schedule::graph::Direction::Incoming) {
-        if let NodeId::System(k) = node
-            && let Some(system) = systems.get(&k)
-        {
-            for set in system.default_system_sets() {
-                if !mine.contains(&set) && set != transparent {
-                    out.push(set);
-                }
-            }
-        }
-    }
-    out
+    sf_render_order_bevy::add_pass(app, PassStage::Snapshot, snapshot_pass.into_system_set().intern(), &mine, snapshot_pass);
 }
 
 #[allow(clippy::type_complexity)]

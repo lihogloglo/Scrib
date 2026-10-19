@@ -5914,6 +5914,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_image",
  "bevy_light",
+ "bevy_material",
  "bevy_math",
  "bevy_pbr",
  "bevy_reflect",
@@ -6378,6 +6379,7 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "log",
+ "sf_render_order_bevy",
  "sf_sky",
 ]
 

@@ -14,6 +14,7 @@ bevy_core_pipeline.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_image.workspace = true
 bevy_light.workspace = true
+bevy_material.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 # `pbr_light_textures`: cloud shadows through `DirectionalLightTexture`. Bevy only defines
 # LIGHT_TEXTURES when clustered decals are usable too (bevy_pbr mesh.rs), so both are needed:

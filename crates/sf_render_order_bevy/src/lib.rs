@@ -32,7 +32,9 @@ use bevy_render::view::ExtractedView;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 
 mod fog;
+mod passes;
 pub use fog::{NO_FOG, TranslucentFog};
+pub use passes::{PassStage, add_pass};
 
 /// Where a blended draw goes in the transparent phase.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]

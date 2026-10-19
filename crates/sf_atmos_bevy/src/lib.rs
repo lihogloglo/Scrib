@@ -35,10 +35,12 @@
 //! (MIT OR Apache-2.0, ARCHITECTURE §10, 2026-10-12); the architecture
 //! (shell, reduced resolution, temporal, LUT lighting, shadow map) is new.
 
+mod fog_translucents;
 mod render;
 mod transparent;
 mod weather_map;
 
+pub use fog_translucents::FogTranslucentsPlugin;
 pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
 pub use weather_map::CloudWeatherMap;
 

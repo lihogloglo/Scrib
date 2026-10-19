@@ -116,10 +116,10 @@ Severity: **High** visible every play session; **Medium** visible in common cond
 - **RO-2** fixed (rofix1): `light_sprite.wesl` multiplies by the `TranslucentFog` transmittance to the
   light (no in-scatter); past the froxel range `froxel_fog_lookup` extends it as `T_far^(d/far)`.
 - **RO-3** fixed (rofix1): `precip.wesl` applies `froxel_fog_apply` (blend) per fragment.
-- **RO-4** (Medium): fog for translucents lives in the host (`transparent_fog.rs` swap); the
+- **RO-4** (FIXED 2026-10-19 ro48: `sf_atmos_bevy::FogTranslucentsPlugin` holds the swap, bevyrrowind adds it unless `--off transfog`; it covers any blended `StandardMaterial` of a host that adds it; was: fog for translucents lives in the host (`transparent_fog.rs` swap); the
   framework's own generic spawn (`sf_world_bevy` `spawn.rs`) emits blended `StandardMaterial`s that
   any other host draws unfogged. *Slice*: move the swap (it has no game knowledge) into
-  `sf_atmos_bevy` as a `FogTranslucentsPlugin`; bevyrrowind keeps only the `--off transfog` A/B.
+  `sf_atmos_bevy` as a `FogTranslucentsPlugin`; bevyrrowind keeps only the `--off transfog` A/B.)
 - **RO-5** (Medium, VERIFIED 2026-10-19 by code: `FroxelVolume.params` doc in `transparent.rs`, `doors.rs` `interior_look` sets only ambient + clear colour; no fog pass runs in interiors): interiors have no froxel volume (`FroxelVolume.params.w = 0`), so no
   translucent is fogged there, and opaque interior fog is the clear colour only (`doors.rs`).
   *Slice*: an interior fog path (analytic distance fog in the composite, its parameters in
@@ -132,11 +132,11 @@ Severity: **High** visible every play session; **Medium** visible in common cond
   clears to 0; Bevy's `Skybox` has a motion-vector prepass, `Atmosphere`'s `render_sky` is not known
   to): DLSS would reproject the sky as screen-fixed and smear clouds on rotation. *Slice*: check with
   a BRP capture of the MV texture; if so, a fullscreen far-depth camera-motion pass after step 1.
-- **RO-8** (Low-Medium, fragility): `SkyOrderScaffold` is copied in three crates (`night.rs`,
+- **RO-8** (FIXED 2026-10-19 ro48: `sf_render_order_bevy::add_pass` + `PassStage` {Night, Clouds, Snapshot}, ordered by set, test for all add orders; was: `SkyOrderScaffold` is copied in three crates (`night.rs`,
   `sf_atmos_bevy` `render.rs`, `sf_water_bevy` `render.rs`) and the resulting order depends on
   plugin add order (Sky → Clouds → Water); a wrong order silently reorders steps 4-7. *Slice*: one
   helper in `sf_render_order_bevy` plus a startup check that asserts the declared order; delete it
-  when Bevy names the `render_sky` set.
+  when Bevy names the `render_sky` set.)
 - **RO-9** (FIXED 2026-10-19 ro-small: quad now has `DrawBand::Overlay { order: i16::MAX }` + `NotShadowCaster`; the host-fog row stays, unlit so pointless; was: the fade overlay is camera-local without a band (precipitation's Overlay
   band draws over the black fade) and casts a shadow while fading. *Slice*: `NotShadowCaster` +
   `DrawBand::Overlay { order: i16::MAX }`, or a screen-space fade when M8 replaces the scaffold.
