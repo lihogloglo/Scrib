@@ -187,7 +187,7 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
   close to raster.
 - A/B: `.\bevyrrowind scene census-rt --off denoiser` (noisy); F4 changes the
   RR quality.
-- Status: deferred 2026-10-19 (phase0): recheck with a solari,dlss build when the RT role is decided (Phase 1).
+- Status: confirmed by owner 2026-10-19 (round 14, solari,dlss build): the Census Office looks nice. Feels very smooth (owner). Gaps: no characters (`--rt` still opens the single-cell viewer, which spawns no actors, and Solari 0.20 traces static BLASes only: skinned meshes need a compute skin cache). Phase 1.10.
 - Source: dlss.
 
 ### DL-4: Rug-edge black bands under RT
@@ -195,7 +195,7 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
 - Look for: black bands along rug edges, with and without the denoiser.
   Believed to be content (rug geometry), not DLSS.
 - A/B: `--off denoiser`.
-- Status: known bug: content-side, cause not investigated.
+- Status: known bug, owner 2026-10-19 (round 14): black bands at the edges of rugs, and also a table, a bench and a chair. Cause not investigated. Suspects: objects touching or interpenetrating the floor (contact gaps fully occluded, ray-origin offset too small), double-sided or flipped faces, then bad normals. First test: same camera in raster; if the bands are RT-only, it's the RT scene, not the meshes. Phase 1.10.
 - Source: dlss.
 
 ## Sky (superfargoth `sky-lighting.md`)

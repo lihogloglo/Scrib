@@ -17,6 +17,8 @@ Decided 2026-10-19:
    ≤ 11 ms median exterior (~90 fps), stretch 7 ms (~140 fps). Today ~30 fps.
 2. **Ray tracing:** raster is the main path and must meet the target; Solari is the "Ultra" tier and may cost
    more ("ray tracing will impact perfs, that's okay"; WISHLIST §0: 60 fps).
+   **Not a priority** (owner, later 2026-10-19): RT comes "once we have a nice game already, like cherry on top"
+   → moved to Phase 4.
 3. **Shadows: something simpler that works well first.** Park the far static sun map and the point-shadow cube
    cache. New techniques only when they are the better, industry-standard way, not as extra layers.
 
@@ -68,8 +70,6 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.9 Streaming and culling levers from the old M2 list (archive "Next up" 1, 6, 7): render-thread spikes,
   `NoCpuCulling` A/B (J2), shadow-caster rules (J4), pipeline warm-up (J7), precombine evaluation (J6);
   deferred checks ST-2, ST-3, SC-2.
-- [ ] 1.10 RT as the Ultra tier (decision 2): exterior RT content (`ray_tracing_lod`, `NoRayTracing` on proxies, terrain RT
-  proxy), Solari sunset patch; checks DL-2, DL-3 (needs a `solari,dlss` build).
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
 
@@ -106,6 +106,10 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   precipitation splashes (PR2), surfaces/wetness/snow (SU1, SU2), wind on trees (WD2, WD3).
 - [p] Water polish (WA-1 notes, WISHLIST §12): shore swash + gradual wavelets, textured foam, whitecaps,
   weather-driven wave height (verify), crest SSS; W4 reflections, W5 underwater, W6 buoyancy, W7 rivers.
+- [p] RT as the Ultra tier (decision 2; was 1.10): exterior RT content (`ray_tracing_lod`, `NoRayTracing` on proxies, terrain RT
+  proxy), Solari sunset patch; `--rt` in the streamed view (it still opens the single-cell viewer: no actors, no
+  doors); characters in the RT scene (compute skin cache, DECISIONS 2026-10-11); black bands at contact edges (DL-4);
+  DL-3 confirmed 2026-10-19, DL-2 open (needs a `solari,dlss` build).
 - [p] Foliage light transmission (WISHLIST §11).
 - [p] Cloth: capes/banners/tents (robes stay authored skin; PH-3 confirmed).
 - [p] Seamless portals (M9), far-field performance (M8: HLOD, texture streaming, PBR generation).
@@ -118,3 +122,4 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - 2026-10-19 (phase0): audit; owner check pass (14 windows); ROADMAP rewritten into phases; ARCHITECTURE §10/§11
   moved to `superfargoth/docs/DECISIONS.md`.
 - 2026-10-19 (phase0): owner decisions 1-3 recorded; portal spike deleted (clippy clean, app tests pass).
+- 2026-10-19 (phase0): RT checks DL-3 (Census, smooth) + outdoor RT looked at; RT parked to Phase 4 (owner).
