@@ -995,7 +995,7 @@ struct Lighting {
     /// Exterior ambient floor at night, nits.
     #[arg(long)]
     night_ambient: Option<f32>,
-    /// Point lights casting shadows (the nearest; default by `--quality`;
+    /// Point lights casting shadows (the most important, `sf_sky_bevy::shadow_importance`; default by `--quality`;
     /// env `BEVYRROWIND_POINT_SHADOWS`).
     #[arg(long)]
     point_shadows: Option<usize>,
