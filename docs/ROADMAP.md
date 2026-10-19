@@ -63,7 +63,12 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.4 **One shadow design, finished.** Sun: cascades + contact shadows + terrain far shadow (keep SH-7/8/10).
   Fix distant flashes on camera move (SH-11); lamp shadows: short reach, grain, flicker, wrong guard outline
   (SH-13); leaf shadows on some trees only (LM-1); translucent casters (RO-1). Far static map and cube cache
-  parked (decision 3).
+  parked (decision 3). Owner 2026-10-20: shadows still bad overall ("only showing when super close");
+  **contact shadows confirmed** as the thin view-dependent bands at object edges (SH-14: shorten to Bevy's
+  0.3 m or close range only); soft-shadow (PCSS) size is in cascade texels, so penumbrae jump between
+  cascades; with the cube-cache plugin dropped, a shadowed lamp redraws 6 faces/frame (~1.9 ms): decide
+  High = 0 lamp shadows or unpark. Two A/B lessons: no rule that depends on view-refit cascades (caster cull),
+  no budget that freezes poses (anim budget).
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [ ] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset.
 - [ ] 1.6 Object-terrain blending redo (TB-1..3 rejected: reads as a darkened base). Standard technique: terrain
@@ -73,11 +78,22 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5); Ghostfence field
   has no far copy and its far light sprites float in the gap (GF-1, B5); far-field L2/L3 never selected or never
   tinted (FF-2: 25 L2 + 4 L3 nodes resident).
-- [ ] 1.9 Streaming and culling levers from the old M2 list (archive "Next up" 1, 6, 7): render-thread spikes,
+- [~] 1.9 Streaming and culling levers from the old M2 list (archive "Next up" 1, 6, 7): render-thread spikes,
   `NoCpuCulling` A/B (J2), shadow-caster rules (J4), pipeline warm-up (J7), precombine evaluation (J6);
-  deferred checks ST-2, ST-3, SC-2.
+  deferred checks ST-2, ST-3, SC-2. **Precombine (J6, owner go 2026-10-19)**: `superfargoth/docs/specs/
+  precombine.md`; slices 1 (builder) + 2 (`lod.near` bake + Morrowind script veto) done; slice 3 = runtime
+  (spawn buckets, skip member visuals, keep colliders, `--off precombine`), re-bake, measure on `balmora_walk`
+  (target most of the 26 → 7.5 ms `--off statics` gap). `NoCpuCulling` retry once every view does GPU culling
+  (perf.md "Lead"); big_space propagation patch; skinned bounds (research/perf/README.md).
+- [ ] 1.10 Volumetric fog black bands (FG-1, owner 2026-10-20): dark vertical bands in light-lit fog at night
+  when the camera turns fast; froxel history reprojection/rejection on yaw is the suspect (`sf_atmos_bevy`
+  froxels).
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
+
+**Next session, in order:** (1) precombine slice 3 + re-bake + measure; (2) 1.4 shadows (contact shadows SH-14,
+PCSS consistency, lamp reach SH-13, cube-cache decision); (3) FG-1 fog bands; (4) owner checks still open: DR-4,
+AU-1, TA-1; Nsight per pass (UAC).
 
 ## Phase 2: a playable vertical slice (the basics)
 
@@ -125,6 +141,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-19/20 (phase1): SH-12 fixed (cloud upsampling redesign, owner confirmed); F4 crash fixed (sky motion
+  bindings); balmora_walk bench + whole-system A/B (near statics are the cost); precombine slices 1-2; anim budget
+  and caster cull reverted (regressions); contact shadows = SH-14; new FG-1 fog bands. Pushed.
 - 2026-10-19 (phase1): 1.1 built (DR-4 crash class `try_*` + shipped error handler, black UI fade held for the
   arrival, AU-1 interior audio snapshot); 1.2 measured (render thread bound) + gates; 1.3 TAA as the base. Uncommitted.
 

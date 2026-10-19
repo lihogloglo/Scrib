@@ -139,7 +139,26 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   Suspects (unverified): budget of 1 shadowed light at High with a 15-25 m fade (dithered fade = the grain),
   `shadow_importance` switching which light casts (flicker), skinned casters or 1024² cube faces + bias (guards).
 - Owner 2026-10-19 (round 9, lt-cave): grain varies, some lamp shadows are clean and others very grainy (per-light: budget fade dither vs. the fully shadowed light?).
-- Status: known bug: Phase 1 shadow pass.
+- Owner 2026-10-20: shadows overall "only showing when super close from the object". Note: since 2026-10-19 the
+  app no longer adds the parked cube-cache plugin, so the one shadowed lamp redraws its 6 faces every frame.
+- Status: known bug: Phase 1 shadow pass (1.4).
+
+### SH-14: Contact-shadow bands at object edges (owner report)
+- Kind: game location. Run: `.\bevyrrowind view Balmora --camera "-280,+12,200,-295,+1,180" --hour 15 --weather clear`,
+  turn the camera; A/B `--off contactshadows`.
+- Seen by owner 2026-10-20: thin shadow bands around object edges that move with the camera angle; gone with
+  `--off contactshadows` (confirmed cause). Ours march 0.5 m with 0.1 m thickness (Bevy default 0.3 m), Medium 8 /
+  High 16 steps (`exterior.rs` `Quality::contact_shadows`). Fix direction: shorter rays, or contact shadows for
+  close contact only, as engines use them; then recheck SH-7's grounding.
+- Status: known bug: Phase 1 shadow pass (1.4).
+
+### FG-1: Volumetric fog black bands on fast turns (owner report)
+- Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
+  21:15, fog). Turn the camera fast left or right.
+- Seen by owner 2026-10-20: dark vertical bands appear in the lit fog during fast yaw. Suspects (unverified): the
+  froxel volume's temporal reprojection or history rejection on rotation, or the froxel light/shadow lookup at
+  history edges (`sf_atmos_bevy` froxel_inject / froxel_integrate). A/B to try: `--off froxels`, `--off fogjitter`.
+- Status: known bug: Phase 1 (1.10).
 
 
 ## Ghostfence (superfargoth `weather.md`, bug B)
