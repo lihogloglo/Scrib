@@ -11,19 +11,22 @@
 //! ([`SOURCE_NAME`]), so record mods patch them field by field like any
 //! other content (everything is a mod).
 //!
-//! As built (we2a, we2b): weights, change interval, transition duration,
+//! As built (we2a, we2b, we2c1): weights, change interval, transition duration,
 //! precipitation kinds and intensities with their start thresholds, sound
 //! cues, lightning rate, flash fade and thunder sounds, the blight tag; clouds,
-//! sky haze and dust, fog and wind ([`visual`]), the Red Mountain storm source.
+//! sky haze and dust, fog and wind ([`visual`]), the Red Mountain storm source;
+//! region sounds as one-shot ambience; the `MWScript` weather functions
+//! ([`script`]).
 
 mod ini;
+pub mod script;
 pub mod visual;
 
 use mw_install::MorrowindIni;
 use sf_records::{RecordDb, RecordError, RecordId, SourceId};
 use sf_weather::{
-    Climate, Cue, Lightning, PrecipKind, PrecipLook, PrecipTerm, SurfaceChannel, SurfaceRates,
-    WeatherPreset, Window,
+    Climate, Cue, Lightning, OneShotSet, PrecipKind, PrecipLook, PrecipTerm, SurfaceChannel,
+    SurfaceRates, WeatherPreset, Window,
 };
 use tes3::esp::{GlobalValue, GlobalVariable, Region, WeatherChances};
 
@@ -204,9 +207,16 @@ impl MwWeather {
             .f32("Weather", "Hours Between Weather Changes")
             .filter(|h| *h > 0.0)
             .unwrap_or(20.0);
+        // Region sounds: one draw per environmental-sound interval (real seconds).
+        let sound_interval_s = [
+            w.f32("Weather", "Minimum Time Between Environmental Sounds")
+                .unwrap_or(1.0),
+            w.f32("Weather", "Maximum Time Between Environmental Sounds")
+                .unwrap_or(5.0),
+        ];
         let mut climates: Vec<_> = db
             .iter::<Region>()
-            .map(|(_, r)| climate(r, hours, &transitions))
+            .map(|(_, r)| climate(r, hours, &transitions, sound_interval_s))
             .collect();
         climates.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -374,6 +384,11 @@ fn preset(ty: WeatherType, w: &mut WeatherIni<'_>, timescale: f32) -> WeatherPre
             if !p.cues.iter().any(|c| c.sound == sound) {
                 p.cues.push(Cue { sound, volume: 1.0 });
             }
+            // A weather with its own ambient loop (ash, blight, blizzard)
+            // replaces the region's ambience (weather-adapter.md "Regions").
+            if key == "Ambient Loop Sound ID" {
+                p.climate_ambience = 0.0;
+            }
         }
     }
 
@@ -397,7 +412,28 @@ fn preset(ty: WeatherType, w: &mut WeatherIni<'_>, timescale: f32) -> WeatherPre
     p
 }
 
-fn climate(region: &Region, hours: f32, transitions: &[Option<f32>; 10]) -> (RecordId, Climate) {
+/// A region's `REGN` sounds (`SOUN` id, chance in percent per draw) as one
+/// one-shot set; `None` when it has no audible sound.
+fn region_sounds(region: &Region, interval_s: [f32; 2]) -> Option<OneShotSet> {
+    let sounds: Vec<_> = region
+        .sounds
+        .iter()
+        .filter(|(id, chance)| *chance > 0 && !id.0.is_empty())
+        .map(|(id, chance)| (RecordId::new(&id.0), f32::from(*chance) / 100.0))
+        .collect();
+    (!sounds.is_empty()).then_some(OneShotSet {
+        sounds,
+        interval_s,
+        volume: 1.0,
+    })
+}
+
+fn climate(
+    region: &Region,
+    hours: f32,
+    transitions: &[Option<f32>; 10],
+    sound_interval_s: [f32; 2],
+) -> (RecordId, Climate) {
     let mut weights = Vec::new();
     let (mut weighted, mut total) = (0.0, 0.0);
     for ty in WeatherType::ALL {
@@ -430,6 +466,9 @@ fn climate(region: &Region, hours: f32, transitions: &[Option<f32>; 10]) -> (Rec
         } else {
             defaults.transition_hours
         },
+        one_shots: region_sounds(region, sound_interval_s)
+            .into_iter()
+            .collect(),
         ..defaults
     };
     (climate_id(&region.id), climate)

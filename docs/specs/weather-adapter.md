@@ -92,8 +92,11 @@ Each `REGN` record becomes `Climate mw_region/<id>`:
   the presets above. A zero chance means the type never occurs there.
 - `change_interval_hours` = the global `Hours Between Weather Changes` (± a jitter we add, so regions
   don't all change in the same frame).
-- **Region sounds** (`REGN` sound list with chances) become ambient cues on the climate, played at the
-  ini's environmental sound interval when the weather has no ambient loop of its own.
+- **Region sounds** (`REGN` sound list with chances) become one `OneShotSet` in `Climate.one_shots`:
+  every `Minimum/Maximum Time Between Environmental Sounds` real seconds (vanilla 1-5 s) one draw, each
+  sound with its chance / 100 per draw, the rest silence. Weathers with an ambient loop of their own
+  (`Ambient Loop Sound ID`: ash, blight, blizzard) have `climate_ambience = 0`, which fades the region's
+  ambience out on the cue channel.
 - `REGN`'s sleep creature list is not weather (it goes to the rest system later).
 
 `ClimateSource::climate_at(ws, pos)`: the exterior cell's region name (`CELL` region field). Cells
@@ -125,21 +128,25 @@ without a region use the worldspace default (Clear only). Interiors return none.
 
 ### Scripting (MWScript → overrides)
 
-| MWScript | `sf_weather` call |
-|---|---|
-| `ChangeWeather "<region>" <type>` | `force(mw_region/<id>, mw_weather/<type>, transition: preset default)` |
-| `ModRegion "<region>" c0 c1 … c9` | runtime overlay patch of `Climate.weights` (saved) |
-| `GetCurrentWeather` | current dominant preset of the player's climate → type index |
-| `GetWindSpeed` | `WindState` speed at the player, converted back to Morrowind units |
+| MWScript | `mw_weather::script` | `sf_weather` call |
+|---|---|---|
+| `ChangeWeather "<region>" <type>` | `change_weather(state, region, type, now)` | `WeatherState::force(mw_region/<id>, mw_weather/<type>, now, None, None)`: the climate's transition, held until the first slot start one minimum interval later; a type outside 0-9 does nothing |
+| `ModRegion "<region>" c0 … c9` | `mod_region(state, region, chances, now)` | `WeatherState::set_weights(mw_region/<id>, now, …)`: slots starting from `now` draw from the new chances (the weather in progress stays, the past doesn't change); 8 values (pre-Bloodmoon) leave Snow/Blizzard at 0; all zero = Clear |
+| `GetCurrentWeather` | `current_weather(state, book, region, now)` → `WeatherType` (`.index()`) | `WeatherState::current`: the preset the climate is in **or turning into**, so a script sees its own `ChangeWeather` at once (the original reports the old weather until the transition ends) |
+| `GetWindSpeed` | `wind_speed(frame)` | `WeatherFrame::wind()` speed mapped back through `WIND_SPEED_RANGE` to the ini's `Wind Speed` 0..1 scale (wander and blends show through) |
+| `GetMasserPhase`, `GetSecundaPhase`, `TurnMoonRed`, `TurnMoonWhite` | none | sky (moons, `night_sky.rs`), not weather |
 
+These are the only weather functions in `mw_script`'s function table (`functions.txt`, "weather, sky").
 They go through the MWScript → Luau layer (M5), which calls the curated weather API (`weather.force`,
 `weather.set_climate_weights`, `weather.current`, `weather.wind_at`). OpenMW-Lua's `core.weather`
-(where present) maps to the same calls.
+(where present) maps to the same calls. The region is the script's argument; for `GetCurrentWeather` and
+`GetWindSpeed` the caller passes the player's region / the frame at the player.
 
 ### Sounds
 
 Cues carry `SOUN` record refs: weather ambient loops (rain, heavy rain, ash storm, blight, blizzard),
-thunder sets (delayed by distance), region ambient sounds. The audio system (later) owns playback.
+thunder sets (delayed by distance); region ambient sounds are one-shot sets (`OneShotSet`, above).
+The audio system (later) owns playback and schedules the one-shot draws.
 Interiors attenuate exterior loops via the occlusion/environment volumes (M8). Footsteps pick a wet
 variant when the surface wetness under the foot exceeds a threshold (`sf_surface` query).
 
@@ -290,8 +297,28 @@ is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour ov
 - **Lightning**: `Flash Decrement` d (vanilla 4) → `Lightning::fade_s = 1/d` real seconds (new field in sf_weather,
   also on `LightningStrike`). sf_weather now re-exports `sf_atmos`, `sf_sky`, `sf_wind` for adapters.
 
-Not yet (we2c, in order): (1) region sounds → climate cues (REGN sounds are one-shots with a chance; sf_weather `Cue` is
-a loop: decide a one-shot cue type in sf_weather vs a mw record); (2) MWScript mapping table (ChangeWeather → `force`,
-ModRegion → `set_weights`, GetCurrentWeather → `current`) in this spec + a test on `WeatherState`; (3) `bevyrrowind
-weather forecast <region> --days 3` (`WeatherState::forecast`) and the 1,000-slot frequency check; (4) the app calls
-`define_into` after content load, before record mods.
+## As built: WE2 part 3a (we2c1, 2026-10-19)
+
+- **Region sounds → one-shot sets, in sf_weather** (not a mw record). Random one-shot ambience is a generic,
+  industry-standard construct: FMOD Studio's scatterer instrument (playlist, spawn interval, randomization), Wwise
+  random containers on a trigger rate, UE sound cues with Random + Delay nodes, and Bethesda's later region records
+  (sound + chance, gated by weather class). So `sf_weather::OneShotSet { sounds: [(id, chance per draw)], interval_s:
+  [min, max], volume }` (chances summing over 1 normalize; the rest is silence) lives on `Climate.one_shots`.
+  **Intervals are real seconds** (ambience density is perceptual, it mustn't follow the time scale), so the weather
+  core doesn't schedule draws: `WeatherFrame.one_shots: Vec<OneShotFrame { climate, set, volume }>` says which sets are
+  on and how loud (set volume × spatial climate weight × ambience), and the audio layer draws with
+  `OneShotSet::next_interval_s(u)` / `pick(u)` and reads the set via `WeatherBook::climate_record`. New
+  `WeatherPreset.climate_ambience` (default 1) is the weather-class gate as a number: the climate's loops and
+  one-shots play at `max(0, w_climate − Σ w_cue·(1 − ambience))`, so a storm fades them out with its cue window.
+  The adapter: chance % / 100, empty or 0 % sounds dropped, interval from the ini (vanilla 1-5 s), `climate_ambience
+  = 0` where `Ambient Loop Sound ID` is set. Tests: draw frequencies (stratified 10k draws), normalization,
+  interval range, frame fade monotone with loops and one-shots together, half volume on a border; REGN sounds map,
+  ash/blight/blizzard hush.
+- **MWScript** (`mw_weather::script`, table above): `change_weather`, `mod_region`, `current_weather`, `wind_speed`,
+  tested on `WeatherState` (invalid types ignored, forced type held 10 h, unknown region `None`, wind inside the
+  preset's range, `ModRegion` keeps the past and every later change Clear for 100 %, all zero = Clear).
+- Not done: no positional one-shots (distance ring, as FMOD's scatterer min/max distance) and no per-sound weather
+  filter beyond `climate_ambience`; the audio layer (later) may add both.
+
+Not yet (we2c2, in order): (1) `bevyrrowind weather forecast <region> --days 3` (`WeatherState::forecast`) and the
+1,000-slot frequency check; (2) the app calls `define_into` after content load, before record mods.

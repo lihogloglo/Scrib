@@ -1347,6 +1347,14 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   `Lightning::fade_s` (new in sf_weather, + `pub use` of sf_atmos/sf_sky/sf_wind). Tests: presets match the app tables
   over 24 h (WE3 switch-over is a no-op), storm blows outward from 4 sides; 11 tests green, clippy clean. Part 3
   (we2c): region sounds, MWScript table, `weather forecast` + frequency check, app calls `define_into`.
+  [~] Built part 3a (we2c1, 2026-10-19): region sounds → sf_weather `OneShotSet` (new, generic "scatterer": sounds with
+  a chance per draw, rest silence, interval in real seconds; the audio layer schedules) on `Climate.one_shots`, reported
+  as `WeatherFrame.one_shots`; `WeatherPreset.climate_ambience` (0..1, cue channel) hushes the climate's loops and
+  one-shots, 0 for weathers with an `Ambient Loop Sound ID` (ash, blight, blizzard). REGN chance % / 100, interval = ini
+  `Min/Max Time Between Environmental Sounds` (vanilla 1-5 s). `mw_weather::script`: `ChangeWeather` → `force`,
+  `ModRegion` → `set_weights` (all zero = Clear), `GetCurrentWeather` → `current` (the target at once), `GetWindSpeed`
+  → inverse of the `Wind Speed` map; table in weather-adapter.md. 13 mw_weather tests (2 real install) + 11 sf_weather
+  green, clippy clean. Part 3b (we2c2): `weather forecast` + 1,000-slot frequency check, app calls `define_into`.
 - [ ] WE3 `sf_weather_bevy` + app (weather.md "Canonical technique"): `WeatherPlugin` (clock → evaluate → sky haze/dust,
   clouds genus blend replacing `CLOUD_CHOICES`, wind, fog, precip, surface rates), lightning flash light + cloud
   emission, cue messages, `--weather <type>`, region border blend; `SunDiskLook` glare per weather. Waits for WE2, WD1.
@@ -1756,3 +1764,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-18 (p10d): M4 P10 [~] cloth V1 first run: tests + clippy clean, two robes walk/run in `character` (BRP now on in interactive `character`), H A/B works, 20-26 µs per simulated robe (gate 30); Balmora Temple 9 parts / 6 simulated; at a run the hem hangs straighter than the stride; PH-3 awaiting owner (`scene ph3-balmora-temple`, `shots/p10d/`). Next: `cloth.cook` bake step.
 - 2026-10-18 (we2a): M6 WE2 [~] part 1: Bevy-free `mw_weather` (REGN → climates, `[Weather*]` → presets, 4 precip kinds, lightning per game hour, transition from `Transition Delta` as real-time Hz, synthetic source "Morrowind.ini weather"); `MorrowindIni::get`; 7 tests (1 on the real install) green, clippy clean. Next: we2b (clouds/fog/wind terms, Red Mountain storm, region sounds, MWScript table, forecast command).
 - 2026-10-18 (we2b): M6 WE2 [~] part 2: `mw_weather` presets carry the visual fields (cloud genus + `Cloud Speed`, haze/dust/fog with hour curves = the app's `SKY_*`/`FogLook` tables, `Wind Speed`, ash/blight storm + Red Mountain radial source, `Flash Decrement` → new `Lightning::fade_s`); 11 tests (2 real install) green, clippy clean. Next: we2c (region sounds, MWScript table, forecast command, app `define_into`).
+- 2026-10-19 (we2c1): M6 WE2 [~] part 3a: REGN sounds → new generic sf_weather `OneShotSet` ("scatterer", real-second intervals, audio layer schedules) + `WeatherPreset.climate_ambience` (storms hush the region); `mw_weather::script` maps ChangeWeather/ModRegion/GetCurrentWeather/GetWindSpeed onto `WeatherState`, table in weather-adapter.md; mw_weather 13 + sf_weather 11 tests green, clippy clean. superfargoth d2c1898. Next: we2c2 (forecast command + frequency check, app `define_into`).

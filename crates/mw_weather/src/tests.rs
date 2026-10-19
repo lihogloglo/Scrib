@@ -1,5 +1,6 @@
 use super::*;
-use sf_weather::WeatherBook;
+use sf_weather::{OneShotSet, WeatherBook, WeatherInput, WeatherState};
+use tes3::esp::FixedString;
 
 fn region(id: &str, chances: [u8; 10]) -> Region {
     let [
@@ -471,4 +472,134 @@ fn hour_curves_stay_small() {
     let c = visual::hour_curve(ground_fog);
     assert!(c.keys().len() < 60, "{}", c.keys().len());
     assert_eq!(visual::hour_curve(|_| 1.0).keys().len(), 2);
+}
+
+#[test]
+fn region_sounds_become_one_shot_ambience() {
+    let mut db = content_db(None);
+    let esp = db.add_source("Sounds.esp", &[]);
+    let gash = Region {
+        sounds: vec![
+            (FixedString("Birds".into()), 10),
+            (FixedString("Silent".into()), 0),
+            (FixedString("Crickets".into()), 25),
+        ],
+        ..region("West Gash Region", [60, 40, 0, 0, 0, 0, 0, 0, 0, 0])
+    };
+    db.define(esp, RecordId::new("West Gash Region"), gash)
+        .unwrap();
+    let w = MwWeather::build(&db, None);
+    let set = OneShotSet {
+        sounds: vec![
+            (RecordId::new("Birds"), 0.1),
+            (RecordId::new("Crickets"), 0.25),
+        ],
+        interval_s: [1.0, 5.0],
+        volume: 1.0,
+    };
+    assert_eq!(climate_of(&w, "West Gash Region").one_shots, vec![set]);
+    assert!(climate_of(&w, "Ascadian Isles Region").one_shots.is_empty());
+    // Weathers with their own ambient loop replace the region's ambience.
+    for ty in WeatherType::ALL {
+        let hushed = matches!(
+            ty,
+            WeatherType::Ashstorm | WeatherType::Blight | WeatherType::Blizzard
+        );
+        let expected = if hushed { 0.0 } else { 1.0 };
+        assert!(
+            (preset_of(&w, ty).climate_ambience - expected).abs() < 1e-6,
+            "{ty:?}"
+        );
+    }
+}
+
+#[test]
+fn mwscript_weather_functions_map_to_the_state() {
+    let w = MwWeather::build(&content_db(None), None);
+    let book = WeatherBook::new(
+        w.presets.clone(),
+        w.climates.clone(),
+        w.precip_kinds.clone(),
+    );
+    assert!(book.warnings.is_empty(), "{:?}", book.warnings);
+    let isles = "Ascadian Isles Region";
+    let now = 100.0;
+
+    // ChangeWeather → force; GetCurrentWeather → current.
+    let mut state = WeatherState::new(3);
+    assert!(!script::change_weather(&mut state, isles, 10, now));
+    assert!(!script::change_weather(&mut state, isles, -1, now));
+    assert!(state.overrides.is_empty());
+    assert!(script::change_weather(&mut state, isles, 6, now));
+    for dt in [0.0, 0.01, 1.0, 10.0] {
+        assert_eq!(
+            script::current_weather(&state, &book, isles, now + dt),
+            Some(WeatherType::Ashstorm),
+            "+{dt} h"
+        );
+    }
+    assert_eq!(script::current_weather(&state, &book, "Nowhere", now), None);
+
+    // GetWindSpeed → the frame's wind, back on the ini's 0..1 scale.
+    let climates = [(book.climate(&climate_id(isles)).unwrap(), 1.0)];
+    let hours = now + 5.0;
+    let frame = sf_weather::evaluate(
+        &book,
+        &state,
+        &WeatherInput {
+            hours,
+            prev_hours: hours,
+            hour_of_day: 12.0,
+            altitude: 0.0,
+            climates: &climates,
+        },
+    );
+    let [lo, hi] = visual::WIND_SPEED_RANGE;
+    let [a, b] = preset_of(&w, WeatherType::Ashstorm)
+        .wind
+        .speed
+        .map(|s| (s - lo) / (hi - lo));
+    let speed = script::wind_speed(&frame);
+    assert!(
+        (a - 1e-4..=b + 1e-4).contains(&speed),
+        "{speed} outside {a}..{b}"
+    );
+
+    // ModRegion → set_weights, from now on: the weather in progress stays,
+    // later changes draw from the new chances (8 values, pre-Bloodmoon).
+    let mountain = "Red Mountain Region";
+    let mut state = WeatherState::new(5);
+    let before = script::current_weather(&state, &book, mountain, now - 1.0);
+    assert!(matches!(
+        before,
+        Some(WeatherType::Ashstorm | WeatherType::Blight)
+    ));
+    script::mod_region(
+        &mut state,
+        mountain,
+        &[100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        now,
+    );
+    assert_eq!(
+        script::current_weather(&state, &book, mountain, now - 1.0),
+        before,
+        "the past doesn't change"
+    );
+    let interval = climate_of(&w, mountain).change_interval_hours.1;
+    for i in 0..40 {
+        let t = now + f64::from(interval) + f64::from(i) * 7.0;
+        assert_eq!(
+            script::current_weather(&state, &book, mountain, t),
+            Some(WeatherType::Clear),
+            "{t} h"
+        );
+    }
+    // All zero: Clear, like a REGN without chances.
+    let mut state = WeatherState::new(5);
+    script::mod_region(&mut state, mountain, &[0.0; 10], now);
+    let t = now + f64::from(interval) * 2.0;
+    assert_eq!(
+        script::current_weather(&state, &book, mountain, t),
+        Some(WeatherType::Clear)
+    );
 }

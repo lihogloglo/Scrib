@@ -10,6 +10,16 @@ const VANILLA: &[(&str, &str, &str)] = &[
     ("Weather", "Hours Between Weather Changes", "20"),
     ("Weather", "Precip Gravity", "575"),
     ("Weather", "Snow Gravity Scale", "0.1"),
+    (
+        "Weather",
+        "Minimum Time Between Environmental Sounds",
+        "1.0",
+    ),
+    (
+        "Weather",
+        "Maximum Time Between Environmental Sounds",
+        "5.0",
+    ),
     ("Weather Clear", "Transition Delta", ".015"),
     ("Weather Clear", "Ambient Loop Sound ID", "None"),
     ("Weather Cloudy", "Transition Delta", ".015"),
