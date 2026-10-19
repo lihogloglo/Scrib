@@ -522,7 +522,6 @@ impl ViewFlags {
     }
 
     /// `--rt`, `--dlss`, `--off denoiser` and `--off shadowcache`.
-
     fn render(&self) -> Result<render::RenderSettings> {
         let off = perf::Off::from_flags(&self.perf.off)?;
         Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser))?.with_point_shadows(self.lighting.point_shadows)
