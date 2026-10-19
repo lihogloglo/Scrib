@@ -522,13 +522,13 @@ From R9 §4, by phase. "BYO" = usable in the user's own bake, not shippable raw 
 Sources: notes R1-R10 in `../research/animation/` (each cites its talks and repos); UE Character
 Movement networking and root motion source docs (to be re-checked by R12).
 
-## Open questions (owner)
+## Owner answers (2026-10-19)
 
-1. Bindings for `Up` and `Down`: proposal `Up` = Jump (context) and a dedicated `Down` button
-   (gamepad face button, keyboard key), with `Down` also letting go while hanging.
-2. First clip source for B2-B3: UAL1 + Mixamo as BYO (not shippable raw), and buy UAL2 only after
-   its clip list shows vaults and top-outs?
-3. Stealth takedown in first person: stay in first person with a framed look limit (default), or cut
-   to third person?
+1. **`Up` = Jump (context), `Down` = Sneak/Crouch pressed at an edge** (drop to a hang, climb
+   down, let go while hanging). No dedicated Down button. Sneak held while moving still never
+   triggers traversal; only the deliberate press at an edge does.
+2. **Clips: free sources first** (UAL1 and other free packs; Mixamo for prototyping only, not
+   shipped raw). Buy UAL2 only after its clip list shows it covers the vault/top-out gaps.
+3. **First-person stealth takedown stays in first person**, framed by look limits; no camera cut.
 
 Not a question any more: movers on the fixed tick (R12 rule 1, required; phase A2).
