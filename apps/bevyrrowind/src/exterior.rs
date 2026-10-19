@@ -266,11 +266,16 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             clouds: options.clouds.map(pinned_clouds),
             fog_scale: options.fog,
         };
+        // WE4c: the world weather map over the region raster (`sf_weather_bevy::WorldWeatherMap`):
+        // distant regions show their own clouds; the camera's site comes from it.
+        let raster = weather.raster();
         // WE3 part 2b: rain, snow, ash and blight fall from the frame (`sf_precip_bevy`).
         app.add_plugins((WeatherPlugin { book: weather.book, state: weather.state }, sf_weather_bevy::sf_precip_bevy::PrecipPlugin))
-            .insert_resource(overrides)
-            .insert_resource(ClimateMap { cells: weather.cells, fallback: weather.fallback })
-            .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
+            .insert_resource(overrides);
+        if let Some(raster) = raster {
+            app.insert_resource(sf_weather_bevy::WorldWeatherMap::new(raster))
+                .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
+        }
     }
     // weather.md "Wind" (WD1): one wind field; fog and cloud drift read it.
     app.add_plugins(sf_wind_bevy::WindPlugin::default())
@@ -284,7 +289,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         let fog = sf_atmos_bevy::sf_atmos::FogSettings::default();
         app.add_plugins(sf_atmos_bevy::CloudsPlugin { settings: cloud_settings(), fog, seed: 0x5EED_C10D })
             .add_systems(Update, cloud_shadow_light);
-        app.world_mut().resource_mut::<sf_atmos_bevy::Clouds>().enabled = clouds_on;
+        let mut clouds = app.world_mut().resource_mut::<sf_atmos_bevy::Clouds>();
+        clouds.enabled = clouds_on;
+        clouds.settings.quality.map_per_sample = options.quality.cloud_map_per_sample();
         let mut fog = app.world_mut().resource_mut::<sf_atmos_bevy::Fog>();
         fog.enabled = fog_on;
         // F3: the froxel volume (High) near the camera; `--off froxels` keeps the
@@ -907,11 +914,11 @@ fn hold_warmup(
     server: Res<AssetServer>,
     nifs: Query<&WorldAssetRoot>,
     materials: Res<Assets<StandardMaterial>>,
-    off: Res<Off>,
+    (off, active): (Res<Off>, Res<ActiveWorldspace>),
     scenario: Option<ResMut<DiagScenario>>,
 ) {
     if let Some(mut s) = scenario {
-        s.hold = !settled(&streaming, &terrain, &server, &nifs, &materials, &off, &ActiveWorldspace(Some(ids::exterior())));
+        s.hold = !settled(&streaming, &terrain, &server, &nifs, &materials, &off, &active);
     }
 }
 
@@ -1033,75 +1040,20 @@ pub(crate) const CLOUD_WORLD_SCALE: f32 = mw_weather::visual::CLOUD_WORLD_SCALE;
 
 use sf_atmos_bevy::sf_atmos::CloudPreset;
 
-// -- live weather (weather.md "Fog" and "Clouds", M6 WE3) ---------------------------
+// -- live weather (weather.md "Fog", "Clouds" and "Distant weather", M6 WE3/WE4c) ------
 
-/// The exterior grid's climates (`WeatherSetup`) for [`weather_site`] and
-/// the live weather control (every climate turns at once).
-#[derive(Resource)]
-pub(crate) struct ClimateMap {
-    cells: HashMap<(i32, i32), sf_weather::ClimateIx>,
-    fallback: Option<sf_weather::ClimateIx>,
-}
-
-impl ClimateMap {
-    /// Every climate of the grid and the fallback, once each.
-    pub(crate) fn climates(&self) -> Vec<sf_weather::ClimateIx> {
-        let mut out: Vec<_> = self.cells.values().copied().chain(self.fallback).collect();
-        out.sort_unstable();
-        out.dedup();
-        out
-    }
-
-    /// The climate of grid square `g` (its region's, or the fallback).
-    fn climate(&self, g: (i32, i32)) -> Option<sf_weather::ClimateIx> {
-        self.cells.get(&g).copied().or(self.fallback)
-    }
-
-    /// The climate under `p` (engine meters, +Z south) and the nearest other
-    /// climate in the 8 squares around with its distance, meters. One ring
-    /// is enough: the blend band stays under two squares wide.
-    fn border_at(&self, p: DVec3) -> Option<(sf_weather::ClimateIx, Option<(f32, sf_weather::ClimateIx)>)> {
-        let cell = mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64;
-        let g = crate::weather::grid_at(p);
-        let own = self.climate(g)?;
-        // Position inside the square, [0, 1)² (x east, y north).
-        let (lx, ly) = (p.x / cell - f64::from(g.0), -p.z / cell - f64::from(g.1));
-        let mut best: Option<(f32, sf_weather::ClimateIx)> = None;
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let Some(c) = self.climate((g.0 + dx, g.1 + dy)).filter(|c| (dx, dy) != (0, 0) && *c != own) else { continue };
-                let gap = |d: i32, l: f64| match d {
-                    -1 => l,
-                    1 => 1.0 - l,
-                    _ => 0.0,
-                };
-                #[expect(clippy::cast_possible_truncation, reason = "meters within a square fit f32")]
-                let d = (gap(dx, lx).hypot(gap(dy, ly)) * cell) as f32;
-                if best.is_none_or(|(b, _)| d < b) {
-                    best = Some((d, c));
-                }
-            }
-        }
-        Some((own, best))
-    }
-}
-
-/// Width of the climate blend across a region border, meters: the
-/// framework's default, capped at two grid squares (the ring `border_at`
-/// searches).
-#[expect(clippy::cast_possible_truncation, reason = "meters fit f32")]
-const BORDER_BAND_M: f32 = sf_weather::BORDER_BAND_M.min(2.0 * (mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64) as f32);
-
-/// The weather's site: the camera's exterior cell's climate (`REGN`), or the
-/// fallback, blended with a neighbor region's across [`BORDER_BAND_M`]
-/// (`sf_weather::border_blend`); kept as is in interiors (the camera's grid
-/// there is not the exterior's), where precipitation is off (no roofs in
-/// the occlusion yet: there is none).
+/// The weather's site (WE4c): the climates at the camera from the world
+/// weather map's region raster (`WorldWeatherMap::site_at`: own region,
+/// blended with a neighbour's across `sf_weather::BORDER_BAND_M`; sea takes
+/// the nearest region's), so the near weather equals the map's there. Also
+/// places the map's window on the camera. Kept as is in interiors (the
+/// camera there is not on the exterior's grid), where precipitation is off
+/// (no roofs in the occlusion yet: there is none).
 fn weather_site(
     camera: Query<&GlobalTransform, With<ExteriorCamera>>,
     origin: Res<TerrainOrigin>,
     active: Res<ActiveWorldspace>,
-    map: Res<ClimateMap>,
+    mut map: ResMut<sf_weather_bevy::WorldWeatherMap>,
     mut site: ResMut<WeatherSite>,
     precip: Option<ResMut<sf_weather_bevy::sf_precip_bevy::Precip>>,
 ) {
@@ -1118,8 +1070,9 @@ fn weather_site(
     let p = WorldPos::new(origin.0.cell, camera.translation()).to_f64();
     #[expect(clippy::cast_possible_truncation, reason = "altitude in meters fits f32")]
     let altitude = p.y as f32;
-    let Some((own, near)) = map.border_at(p) else { return };
-    let climates = sf_weather::border_blend(own, near.map(|n| n.1), near.map_or(f32::MAX, |n| n.0), BORDER_BAND_M);
+    let xz = bevy::math::DVec2::new(p.x, p.z);
+    map.camera = Some(xz);
+    let climates = map.site_at(xz);
     let same = site.climates.len() == climates.len()
         && site.climates.iter().zip(&climates).all(|(a, b)| a.0 == b.0 && (a.1 - b.1).abs() < 1e-3);
     if !same {
@@ -1204,12 +1157,19 @@ impl Quality {
         }
     }
 
+    /// Whether the clouds read the world weather map's layer per density
+    /// sample (High/Ultra) or per ray, 3 fetches lerped (Medium/Low;
+    /// `sf_atmos::CloudQuality::map_per_sample`, weather.md, distant weather as built).
+    pub const fn cloud_map_per_sample(self) -> bool {
+        matches!(self, Self::High | Self::Ultra)
+    }
+
     /// Point lights with shadow maps and their cube face size
-    /// (`sf_sky_bevy::PointShadowBudget`). Cost at `hi-balmora-night`, 1440p,
-    /// RTX 4060 laptop (lighting job 2026-10-13): median frame 9.4 ms with none,
-    /// +0.8 ms with 1, +3.9 ms with 2, +4.4 ms with 4 (5 lights in reach):
-    /// render-thread CPU for the casters in each light's range (6 faces),
-    /// GPU +0.35 to +1.6 ms. High keeps one (a torch outranks lamps 2x).
+    /// (`sf_sky_bevy::PointShadowBudget`, ranked by `shadow_importance`). Bevy
+    /// redraws each map every frame: census office bench (720p, RTX 4060 laptop,
+    /// shf6 2026-10-19) median frame 4.8 ms with none, 6.6 / 12.2 / 21.7 ms with
+    /// 1 / 4 / 8, render-thread bound (GPU ~0.55 ms per light at 1024²). Counts
+    /// rise once cached maps land (superfargoth `docs/specs/shadows.md`).
     pub const fn point_shadows(self) -> (usize, usize) {
         match self {
             Self::Low | Self::Medium => (0, 512),

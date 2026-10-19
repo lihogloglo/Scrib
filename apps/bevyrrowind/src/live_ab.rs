@@ -119,7 +119,7 @@ pub(crate) struct Switches<'w> {
     /// climates, the camera's site and the pins.
     weather: Option<ResMut<'w, sf_weather_bevy::WorldWeather>>,
     weather_records: Option<Res<'w, sf_weather_bevy::WeatherRecords>>,
-    climates: Option<Res<'w, crate::exterior::ClimateMap>>,
+    climates: Option<Res<'w, sf_weather_bevy::WorldWeatherMap>>,
     site: Option<Res<'w, sf_weather_bevy::WeatherSite>>,
     weather_overrides: Option<ResMut<'w, sf_weather_bevy::WeatherOverrides>>,
     /// Characters: smooth or vanilla bodies (B, `actors.rs`).
@@ -267,17 +267,26 @@ fn weather_now(s: &Switches) -> Option<f64> {
     Some(time.0.days * f64::from(config.0.calendar.hours_per_day))
 }
 
-/// Forces a weather everywhere from now over `transition_hours` (`None`: the
-/// climate's; 0 skips), or with `None` glides back to the forecast.
-pub(crate) fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transition_hours: Option<f32>) -> String {
+/// Forces a weather from now over `transition_hours` (`None`: the climate's;
+/// 0 skips), or with `None` glides back to the forecast: every climate, or
+/// only `region`'s (a `REGN` id or name, e.g. "Ashlands Region"), for distant weather.
+pub(crate) fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transition_hours: Option<f32>, region: Option<&str>) -> String {
     let Some(now) = weather_now(s) else {
         return "weather: no clock in this run".to_owned();
     };
     let (Some(world), Some(records), Some(map)) = (s.weather.as_mut(), s.weather_records.as_ref(), s.climates.as_ref()) else {
         return "weather: not in this run (interior or no weather records)".to_owned();
     };
-    crate::weather::force_live(&records.0, &mut world.0, &map.climates(), ty, now, transition_hours);
-    format!("weather -> {}", ty.map_or("auto (forecast)", mw_weather::WeatherType::name))
+    let climates = match region {
+        None => map.climates().to_vec(),
+        Some(r) => match records.0.climate(&mw_weather::climate_id(r)) {
+            Some(c) => vec![c],
+            None => return format!("weather: unknown region {r:?}"),
+        },
+    };
+    crate::weather::force_live(&records.0, &mut world.0, &climates, ty, now, transition_hours);
+    let name = ty.map_or("auto (forecast)", mw_weather::WeatherType::name);
+    region.map_or_else(|| format!("weather -> {name}"), |r| format!("weather -> {name} in {r}"))
 }
 
 /// The weather at the camera's climate.
@@ -360,7 +369,7 @@ fn keys(
     if input.just_pressed(KeyCode::KeyC) && s.weather.is_some() {
         // The Morrowind weathers in `REGN` order, each over the climate's transition.
         *cloud_preset = (*cloud_preset + 1) % mw_weather::WeatherType::ALL.len();
-        let text = set_weather(&mut s, Some(mw_weather::WeatherType::ALL[*cloud_preset]), None);
+        let text = set_weather(&mut s, Some(mw_weather::WeatherType::ALL[*cloud_preset]), None, None);
         state.note(text, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {

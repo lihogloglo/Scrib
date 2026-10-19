@@ -104,6 +104,9 @@ struct Set {
     /// thunderstorm, ashstorm, blight, snow, blizzard) over the climate's transition;
     /// "auto" glides back to the forecast.
     weather: Option<String>,
+    /// With `weather`: only this region's climate (a `REGN` id, e.g. "Ashlands Region";
+    /// to see a neighbour's weather from afar); "auto" returns just that region.
+    region: Option<String>,
     /// With `weather`: the transition, game hours (0 skips it).
     transition_hours: Option<f32>,
     /// Clock speed, game seconds per real second (30 is Morrowind's; 120 shows a
@@ -172,7 +175,7 @@ fn set(
         state.note(note, now);
     }
     if let Some(ty) = weather {
-        let note = crate::live_ab::set_weather(&mut s, ty, params.transition_hours);
+        let note = crate::live_ab::set_weather(&mut s, ty, params.transition_hours, params.region.as_deref());
         if !note.starts_with("weather ->") {
             return Err(invalid(note));
         }

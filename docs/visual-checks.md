@@ -1838,3 +1838,14 @@ Status: awaiting owner (2026-10-19). Agent check: dev build renders, shaders com
 2. `view "Seyda Neen" --hour 22 --weather foggy`, fly ~1-3 km out: the far town's light points dim with distance and vanish into the fog instead of staying full-bright.
 3. `view "Seyda Neen" --hour 15 --weather rain` (then `foggy` + rain via C): far rain streaks fade into the fog colour; near streaks unchanged.
 4. Ghostfence (`view "Ghostgate" --hour 12`): the field casts no shadow.
+
+### WE-3: Neighbouring regions' weather seen from afar (`scene we3-ridge`, then BRP region forces)
+
+Status: **awaiting owner; known bug** (M6 WE4c, we4c, 2026-10-19). Camera on the ridge NE of Balmora (West Gash, forced
+Clear) at 14:00. Force neighbours over BRP (port in the title): `bevyrrowind/set {"weather": "ashstorm", "region":
+"Ashlands Region", "transition_hours": 0}` and `{"weather": "thunderstorm", "region": "Ascadian Isles Region",
+"transition_hours": 0}`; look north (Ashlands, Red Mountain) and south-east (Ascadian Isles, Vivec). Look for: clear sky
+overhead; a dark deck over each forced region only, starting at its border, continuing to the horizon; no seam at the
+band; walking toward a border (400/200/100/0 m), no pop. Agent shots (`shots/we4c/`): the forced regions do get clouds
+and the zenith stays clear, but the decks stop short of the horizon and hang as grey vertical columns near the camera
+(bug, see weather.md "WE4c as built").

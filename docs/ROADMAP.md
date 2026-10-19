@@ -1435,6 +1435,11 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   local base/thickness/density/erosion from layer B per sample or per ray, cirrus cover from layer C; split storm trace
   0.239 vs 0.210 ms uniform. Next: WE4c app (`site_at` replaces `ClimateMap::border_at`, dilated sea raster, WE-3 scene);
   plume hook later.
+  Part c built, partly verified (we4c, 2026-10-19; weather.md "WE4c as built"): app builds the region raster (+4 sea squares,
+  dilated), `sf_weather_bevy::WorldWeatherMap` updates the map + `CloudWeatherMap::sync` each frame, camera site =
+  `site_at` (`ClimateMap` removed), Medium/Low `map_per_sample=false`, BRP `set {weather, region}`, scene `we3-ridge`, WE-3.
+  **Open bug:** distant decks don't reach the horizon and hang as grey columns near the camera (shots/we4c/); likely the
+  trace's step budget over the tall envelope shell. 1440p re-time not done. Next: fix that (we4c2), then WE4d/WE4e.
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1891,3 +1896,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (shf3): shadows F3 step a: practical-split sun cascades to 250 m per preset (`sf_sky_bevy::CascadeSplits`, Bevy keeps sphere fit + texel snap + overlap blend), texels 2× sharper in the last cascade, GPU ≈ 0; 504 m rule replaced (ARCHITECTURE §10); far static map (step b) designed in weather.md, not built; `--off shadowsplits`; SH-8 awaiting owner.
 - 2026-10-19 (shf3b): shadows F3 step b, part 1: "no Balmora sun shadows" was a backlit view (shadows present, same with `--off shadowsplits`: nothing broken); `sf_sky::far_shadow` (Bevy-free FSM core: sun-aligned ortho fit snapped to 1 m texels, refresh on 0.03° sun / 128 m recentre / far-cell invalidate, 4 strips into a back map then swap; tests). Render pass (own camera schedule + binned depth phase) and receiver hooks not built: handoff `.sessions/_archive/shf3b.md`.
 - 2026-10-19 (shf6): shadows F6 slice 1: spec superfargoth `docs/specs/shadows.md` (Bevy point shadows uncached; cache plan), shadowed lights by `shadow_importance` (range-based, off-screen lights count, hysteresis), torch priority 2 -> 4 (same "twice nearer"); census bench 0/1/4/8 shadowed lights 4.8/6.6/12.2/21.7 ms, presets unchanged; interior `--bench` hold fixed; SH-9 awaiting owner.
+- 2026-10-19 (we4c): M6 WE4 part c: the game runs the world weather map (region raster with dilated sea, map + cloud map sync per frame, camera site from `site_at`), Medium/Low per-ray map lookup, BRP per-region force (`set {"weather","region"}`), scene `we3-ridge` + WE-3 awaiting owner; open bug: distant decks cut short / hanging columns (shots/we4c/), 1440p re-time not done. Next: we4c2 fix.

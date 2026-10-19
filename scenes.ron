@@ -911,6 +911,17 @@
             look_for: "soft warm halos around lanterns and torch carriers, fading with distance; the fog between lights stays moonlit blue-grey, not black; halos don't pop when a light leaves the 32 nearest",
             checks: ["FG-4"],
         ),
+        // ---- distant weather (superfargoth weather.md "Distant weather", M6 WE4c; .sessions/we4c.md) ----
+        (
+            name: "we3-ridge",
+            cell: "Balmora",
+            camera: "-150,+110,60,0,200,-800",
+            hour: 14.0,
+            flags: ["--weather", "clear"],
+            description: "Ridge NE of Balmora (West Gash) at 14:00 looking north toward the Ashlands and Red Mountain; the world weather map shows each region's own clouds. Force neighbours over BRP: set {\"weather\": \"ashstorm\", \"region\": \"Ashlands Region\", \"transition_hours\": 0}, {\"weather\": \"thunderstorm\", \"region\": \"Ascadian Isles Region\", \"transition_hours\": 0} (pan right/south-east for it)",
+            look_for: "clear sky overhead; a dark deck over the forced region only, starting at its border (no seam line); walking toward it, no pop",
+            checks: ["WE-3"],
+        ),
         // ---- water (M6 W2, water-adapter.md WA-*) ----
         (
             name: "wa-seyda-noon",

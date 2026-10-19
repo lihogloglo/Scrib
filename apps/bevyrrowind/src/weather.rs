@@ -163,7 +163,41 @@ impl WeatherSetup {
         let start = force.or_else(|| start_climate.and_then(|c| state.current(&book, c, hours)).and_then(|p| weather_type_of(book.preset_id(p))));
         Self { book: std::sync::Arc::new(book), state, cells, fallback, start }
     }
+
+    /// The exterior's region raster for the world weather map (WE4c): the
+    /// grid's climates over their bounding box plus [`RASTER_MARGIN`]
+    /// squares of sea; squares without a region (sea) take the nearest
+    /// region's climate (`ClimateRaster` dilation, owner decision WE4 1).
+    /// Without any region cell: one square of the fallback climate.
+    pub fn raster(&self) -> Option<sf_weather::ClimateRaster> {
+        let cell = mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64;
+        let band = sf_weather::BORDER_BAND_M;
+        if self.cells.is_empty() {
+            let origin = glam::DVec2::new(0.0, -cell);
+            return sf_weather::ClimateRaster::new(origin, cell, 1, 1, &[self.fallback], band);
+        }
+        let (mut lo, mut hi) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
+        for &(x, y) in self.cells.keys() {
+            (lo, hi) = ((lo.0.min(x), lo.1.min(y)), (hi.0.max(x), hi.1.max(y)));
+        }
+        let (lo, hi) = ((lo.0 - RASTER_MARGIN, lo.1 - RASTER_MARGIN), (hi.0 + RASTER_MARGIN, hi.1 + RASTER_MARGIN));
+        #[expect(clippy::cast_sign_loss, reason = "hi >= lo")]
+        let (w, h) = ((hi.0 - lo.0 + 1) as u32, (hi.1 - lo.1 + 1) as u32);
+        // Raster rows run along world +Z (south), so row 0 is the northmost grid row.
+        let mut cells = vec![None; (w as usize) * (h as usize)];
+        for (&(x, y), &c) in &self.cells {
+            #[expect(clippy::cast_sign_loss, reason = "inside the box")]
+            let i = (x - lo.0) as usize + (hi.1 - y) as usize * w as usize;
+            cells[i] = Some(c);
+        }
+        let origin = glam::DVec2::new(f64::from(lo.0) * cell, -f64::from(hi.1 + 1) * cell);
+        sf_weather::ClimateRaster::new(origin, cell, w, h, &cells, band)
+    }
 }
+
+/// Sea squares around the exterior's region cells in the weather raster
+/// (the map clamps to the edge squares past it).
+const RASTER_MARGIN: i32 = 4;
 
 /// The exterior grid square under an engine position (meters, +Z south).
 #[allow(clippy::cast_possible_truncation)]
