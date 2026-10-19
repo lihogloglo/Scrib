@@ -41,6 +41,8 @@ pub struct CharacterViewOptions {
     pub settle: f32,
     pub camera: Option<(Vec3, Vec3)>,
     pub bodies: sf_character_bevy::SmoothBodies,
+    /// `--cloth`: robes and skirts authored (default) or simulated (opt-in).
+    pub cloth: mw_physics::ClothMode,
     /// Start walking in place (1 toggles).
     pub walk: bool,
     /// Weapons drawn from the start (R toggles).
@@ -119,7 +121,7 @@ struct LineupEntry {
 }
 
 pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf_bake::Manifest, options: CharacterViewOptions) {
-    let content = Arc::new(crate::actors::MwCharacters::new(Arc::clone(&db), Arc::clone(&vfs), store, manifest));
+    let content = Arc::new(crate::actors::MwCharacters::new(Arc::clone(&db), Arc::clone(&vfs), store, manifest, options.cloth));
     let specs: Vec<String> =
         if options.ids.is_empty() { DEFAULT_LINEUP.iter().map(|s| (*s).to_owned()).collect() } else { options.ids.clone() };
     let mut entries = Vec::new();

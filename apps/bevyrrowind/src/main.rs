@@ -187,6 +187,9 @@ enum Command {
         /// `smooth` (default) or `vanilla` bodies; B toggles live.
         #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
         bodies: sf_character_bevy::SmoothBodies,
+        /// Robes and skirts: `authored` (default) or `robes` (simulated, opt-in).
+        #[arg(long, default_value = "authored")]
+        cloth: mw_physics::ClothMode,
         /// Walk in place from the start (1 toggles, 2 runs).
         #[arg(long)]
         walk: bool,
@@ -295,6 +298,10 @@ struct ViewFlags {
     /// joints) or `vanilla` (segmented parts as authored). B toggles live.
     #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
     bodies: sf_character_bevy::SmoothBodies,
+    /// Robes and skirts: `authored` (default: their authored skin, as vanilla)
+    /// or `robes` (simulated cloth, the opt-in; physics-adapter.md "Cloth").
+    #[arg(long, default_value = "authored")]
+    cloth: mw_physics::ClothMode,
     /// Streamed view: seamless doors, the M8 portal spike (scaffold
     /// `portal_spike`): see through door openings, walk through without a fade.
     /// Optional setting, off by default (doors fade); also `BEVYRROWIND_PORTALS=1`.
@@ -495,6 +502,7 @@ impl ViewFlags {
             actors: None,
             level: None,
             bodies: self.bodies,
+            cloth: self.cloth,
             worldspace,
             calibration: self.lighting.calibration(),
             render,
@@ -696,12 +704,12 @@ fn run(cli: Cli) -> Result {
         Command::View { cell, model: false, flags } => {
             view_cell(&install, &cell, flags)
         }
-        Command::Character { ids, screenshot, settle, camera, cache, bodies, walk, drawn, night } => {
+        Command::Character { ids, screenshot, settle, camera, cache, bodies, cloth, walk, drawn, night } => {
             let (vfs, content) = load(&install, false)?;
             let store = sf_bake::Store::open(bake::cache_root(cache)?)?;
             let manifest = store.load_manifest(&mw_bake::profile_name(&install))?;
             let camera = camera.as_deref().map(parse_camera).transpose()?;
-            let options = character_view::CharacterViewOptions { ids, screenshot, settle, camera, bodies, walk, drawn, night };
+            let options = character_view::CharacterViewOptions { ids, screenshot, settle, camera, bodies, cloth, walk, drawn, night };
             character_view::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options);
             Ok(())
         }

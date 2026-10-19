@@ -997,8 +997,26 @@ ragdolls; robes move." Tasks in dependency order:
   Balmora Temple: 9 cloth parts, 6 simulated, 22 µs each. At a run the simulated hem hangs straighter than the
   stride (feet show front and back; owner to judge). PH-3 awaiting owner (`scene ph3-balmora-temple`, `character`
   lineup, `scene level-robe-walk`).
-  **Left [~]: PH-3 awaiting owner.** Next (log, not polish): `cloth.cook` bake step (removes `ClothCookAtLoad`);
-  smooth bodies on cloth parts; the op into the compiled op list if graphs need to order it.
+  **Redesign (owner 2026-10-19, research `../superfargoth/docs/research/cloth/long-robes.md`): full robe simulation
+  is overkill.** **Built (p10s, S1): robes and skirts drawn as authored by default** (physics-adapter.md "Cloth"):
+  `mw_physics::ClothMode` (`Authored` default, `Robes` opt-in), `MwClothRules::with_mode`, `cloth()` → `None` when
+  authored, so `sf_character_bevy` takes the "drawn as authored" path (no cook, rebind, lattice joints or op: 0 µs);
+  **opt-in `--cloth robes`** on `view`/`scene`/`level` and `character` keeps the V1 simulation (H A/B) for A/B and
+  mods; census opts in. Unit test (robes/skirts `None` by default, `Some` with the opt-in), clippy pedantic clean;
+  agent run of the `character` robe lineup at walk and run: no `cloth:` line, legs covered. PH-3 rewritten, awaiting
+  owner (`scene level-robe-walk`, `character` lineup, `scene ph3-balmora-temple`). No code deleted.
+  **Parked** (only matter for simulated robes): leg-follow tuning (`CLOTH_LEG_FOLLOW` 0.7), hem widening for a run
+  stride (+13..+133 %), the `cloth.cook` bake step (scaffold `ClothCookAtLoad` stays until a default path cooks cloth:
+  capes, mesh cloth); smooth bodies on cloth parts dropped for robes.
+  **Next slice S2 (owner idea 2026-10-19, low priority, not started): hem-only drape on the authored skin.** Keep
+  every vertex on its authored Morrowind skin and simulate only the bottom rows of hem vertices. Each simulated
+  vertex is tethered to its own skinned position by a max distance painted from 0 at the waist (and on every
+  unsimulated row) ramping to a few cm at the hem: the standard "painted max distance" of Chaos Cloth and NvCloth.
+  Coverage guarantee: no vertex can stray past its radius from the skinned position, and the skinned position already
+  covers the legs, so the legs stay covered at any stride. Target ≤ 5 µs per robe (`cloth:` log). Verify: S1's shots
+  unchanged at a dead stop; the hem settles a little behind on a stop or turn.
+  **Left [~]: PH-3 awaiting owner (S1).** Next (log, not polish): S2 on owner request; the op into the compiled op
+  list if graphs need to order it.
 - [ ] P11 Traversal actions and interaction points (already slotted for M4 by animation.md layer 3): vault/mantle/ledge
   from `ContextProbes` with warping, `sf_interaction` points (benches, doors, levers). Not physics; may run in parallel
   with P3–P10. Verify: per animation.md "Layer 3".
@@ -1778,3 +1796,4 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (we2c1): M6 WE2 [~] part 3a: REGN sounds → new generic sf_weather `OneShotSet` ("scatterer", real-second intervals, audio layer schedules) + `WeatherPreset.climate_ambience` (storms hush the region); `mw_weather::script` maps ChangeWeather/ModRegion/GetCurrentWeather/GetWindSpeed onto `WeatherState`, table in weather-adapter.md; mw_weather 13 + sf_weather 11 tests green, clippy clean. superfargoth d2c1898. Next: we2c2 (forecast command + frequency check, app `define_into`).
 - 2026-10-19 (ts1c): TS1 [x] part 3: `--camera` through `scene` (ts1b report not reproduced; real bug fixed: a repeated `view` flag now overrides, so `scene X --camera` works on scenes with their own camera; `level::pick_camera` + 2 tests); walk mode verified via BRP (player dressed at `start`, W/Shift move it, follow camera, start/stop log line); props verified (`V` balls shove the crates; G colliders on meshes). TS-1/TS-2 awaiting owner.
 - 2026-10-19 (we2c2): M6 WE2 [x] part 3b: weather records load as the synthesized mod `morrowind-weather` (mw_mods, after content, before user mods; a record mod patches a preset in a test); `bevyrrowind weather forecast <region> --days 3`; 1,000-slot frequency tests vs REGN (synthetic + all 16 real regions) green; clippy clean. Next: WE3 (we3a `sf_weather_bevy` WeatherPlugin + sky/wind).
+- 2026-10-19 (p10s): M4 P10 [~] S1 robes and skirts drawn as authored by default (owner: full robe sim is overkill): `mw_physics::ClothMode`, `--cloth robes` opt-in keeps V1; unit test + clippy clean; walk/run lineup shows legs covered, no `cloth:` line; PH-3 rewritten (awaiting owner); parked leg follow, hem widening, `cloth.cook` bake; S2 hem-only painted-max-distance drape logged.

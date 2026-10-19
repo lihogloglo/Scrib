@@ -32,9 +32,10 @@ pub struct MwCharacters {
 }
 
 impl MwCharacters {
-    pub fn new(db: Arc<RecordDb>, vfs: Arc<Vfs>, store: Store, manifest: Manifest) -> Self {
+    /// `cloth`: robes and skirts authored (the default) or simulated (`--cloth robes`).
+    pub fn new(db: Arc<RecordDb>, vfs: Arc<Vfs>, store: Store, manifest: Manifest, cloth: mw_physics::ClothMode) -> Self {
         let animation = AnimLibrary::new(store.clone(), manifest.clone());
-        let cloth = mw_physics::MwClothRules::new(&db);
+        let cloth = mw_physics::MwClothRules::new(&db).with_mode(cloth);
         Self { actors: MwActors::new(db, Arc::clone(&vfs)), store, manifest, animation, vfs, cloth }
     }
 
@@ -124,7 +125,8 @@ impl CharacterContent for MwCharacters {
         mw_actors::probes::smooth_probes(&animation.skeleton, animation.clips.iter().map(|c| &**c))
     }
 
-    /// Robes (Chest parts) and skirts (`mw_physics::MwClothRules`).
+    /// Robes (Chest parts) and skirts (`mw_physics::MwClothRules`): `None`
+    /// (drawn as authored) unless `--cloth robes`.
     fn cloth_spec(&self, id: &sf_records::RecordId, part: &sf_character::BodyPart) -> Option<sf_character::ClothSpec> {
         sf_character::ClothRules::cloth(&self.cloth, id, part)
     }
@@ -154,16 +156,16 @@ impl CharacterContent for MwCharacters {
 
 /// The streamed world's actors: with `db` (and no `--off actors`), the
 /// character plugin with Morrowind's content.
-pub fn add_world(app: &mut App, db: Option<Arc<RecordDb>>, off: bool, vfs: &Arc<Vfs>, store: &Store, manifest: &Manifest) {
+pub fn add_world(app: &mut App, db: Option<Arc<RecordDb>>, off: bool, vfs: &Arc<Vfs>, store: &Store, manifest: &Manifest, cloth: mw_physics::ClothMode) {
     if let (Some(db), false) = (db, off) {
-        add(app, db, Arc::clone(vfs), store.clone(), manifest.clone());
+        add(app, db, Arc::clone(vfs), store.clone(), manifest.clone(), cloth);
     }
 }
 
 /// Adds the character plugin with Morrowind's content.
-pub fn add(app: &mut App, db: Arc<RecordDb>, vfs: Arc<Vfs>, store: Store, manifest: Manifest) {
+pub fn add(app: &mut App, db: Arc<RecordDb>, vfs: Arc<Vfs>, store: Store, manifest: Manifest, cloth: mw_physics::ClothMode) {
     let started = std::time::Instant::now();
-    let content = MwCharacters::new(db, vfs, store, manifest);
+    let content = MwCharacters::new(db, vfs, store, manifest, cloth);
     info!("characters: mw_actors ready in {:.2} s", started.elapsed().as_secs_f32());
     add_content(app, Arc::new(content));
 }

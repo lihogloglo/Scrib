@@ -123,6 +123,20 @@ after a 0.4 s death clip); corpses drag by the grabbed limb through the P6 carry
 
 ## Cloth
 
+**Decision (owner 2026-10-19, p10s; research `../superfargoth/docs/research/cloth/long-robes.md`): robes and skirts
+are drawn with their authored skin by default.** PH-3 V1 failed because the lattice replaced the robe's authored
+thigh/calf weights below the pelvis, so the hidden legs could step out of it. Shipped games and vanilla Morrowind
+skin long garments to the legs and hide the body under them; simulation is at most an extra on top. So
+`mw_physics::MwClothRules` defaults to `ClothMode::Authored`: `ClothRules::cloth` answers `None` for every part, and
+`sf_character_bevy` takes its "drawn as authored" path (no cook, no rebind, no lattice joints, no op: 0 µs per robe).
+**Opt-in: `--cloth robes`** (`ClothMode::Robes`, on `view`/`scene`/`level` and `character`) restores the V1
+simulated robes below, for A/B and mods; **H** then toggles simulated ↔ kinematic as before. `kind()`/`parts()` and
+the census still list the cloth parts. Parked (only matter for simulated robes): leg-follow tuning
+(`CLOTH_LEG_FOLLOW` 0.7), hem widening for a run stride, the `cloth.cook` bake step (keeps scaffold
+`ClothCookAtLoad` until a default path cooks cloth, i.e. capes and mesh cloth). The solver, op, colliders and `H`
+stay for capes, banners and tents. Next slice (S2, owner idea, low priority): hem-only drape on the authored skin
+(ROADMAP P10, long-robes.md S2). The V1 text below describes the opt-in.
+
 **Which parts** (`ClothRules`): body parts of CLOT type *Robe* and *Skirt* below the waist line, attached
 to `Bip01 Pelvis`. Default lattice: robes 10 columns × 5 rows (ring), skirts 8 × 3 (ring). Vanilla has
 no capes; mods mark parts as cloth (`kind: cape`, attachment joint `Bip01 Spine2`) in the same RON file.
@@ -156,7 +170,7 @@ the lattice weights below the attachment line.
 |---|---|---|
 | PH-1 table knock-over | `cargo dev view "Seyda Neen, Arrille's Tradehouse"`, push and throw into the counter clutter; synthetic `physics_table` example | items rest exactly as authored until touched; then topple, roll and settle within 3 s; no jitter, no item through the counter; bottles roll, plates slide |
 | PH-2 dead guard | Balmora exterior on the stairs by the guard tower; dev key kills the nearest guard (and a second key knocks one down) | the guard crumples from his death clip into a ragdoll down the stairs, limbs within limits, no stretching, rests; the knocked-down guard gets up on the stairs with feet placed |
-| PH-3 robes | `character --walk` with a robe outfit (e.g. `common_robe_01`; verify the id) and `"Balmora, Temple"` priests | hem swings with the stride and lags on turns, no legs through the robe at a run, waist doesn't move |
+| PH-3 robes | `character "fargoth+common_robe_01" "@dark elf,,f+common_robe_02" --walk`, `scene level-robe-walk`, `scene ph3-balmora-temple` | robes drawn as authored (default): legs always covered at walk and run, the robe follows the stride, no seam at the waist |
 | PH-4 carry | grab a bucket or bottle in Arrille's Tradehouse, walk up the stairs at 30, 60 and 144 fps (a dev `--fps-cap` flag, added by the carry task) | no vibration of the held item relative to the view; heavy items drag; throw arcs; hold Activate on a dead guard (PH-2) and drag him by a wrist, then by an ankle: the body follows the grabbed limb, no stretching; with Strength lowered (console) the same body barely moves 
 | PH-5 persistence | knock items over in PH-1, walk out of the cell and far enough to unload, return | every moved item is where it came to rest |
 
@@ -167,7 +181,7 @@ the lattice weights below the attachment line.
 | Loose items | Original and OpenMW: static until taken; Oblivion, Skyrim, Fallout: Havok items that wake on contact; MWSE "Perfect Placement" (community mod) lets players place items by hand | Physical, asleep until touched, overlay persistence | **better** than the original (modern behavior, rule 6) |
 | Deaths | Original and OpenMW: death clips; Oblivion onward: Havok ragdolls after death | Clip-driven crumple into a ragdoll, persisted pose | **match** later Bethesda, **better** than the original |
 | Knockdown | Original: knockdown clip and get-up | Physical knockdown and the original get-up clip | **better** |
-| Robes | Original: rigid or skinned, no motion; Skyrim community: HDT-SMP / CBPC cloth physics mods on skinned capes and skirts | Bone-lattice cloth, no new art | **match** the modding standard |
+| Robes | Original: rigid or skinned, no motion; Skyrim community: HDT-SMP / CBPC cloth physics mods on skinned capes and skirts | Authored skin by default (owner 2026-10-19); bone-lattice cloth as the `--cloth robes` opt-in | **match** the original and shipped games; opt-in matches the modding standard |
 
 ## Open questions
 

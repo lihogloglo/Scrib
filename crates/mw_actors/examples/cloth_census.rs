@@ -15,7 +15,7 @@ use std::time::Instant;
 use glam::Vec3;
 use mw_actors::{MwActors, part_id};
 use mw_install::MorrowindInstall;
-use mw_physics::{ClothKind, MwClothRules};
+use mw_physics::{ClothKind, ClothMode, MwClothRules};
 use sf_anim::cloth::EdgeKind;
 use sf_character::{ClothRules, PartKind, PartLookup, SkinSurface, cook_cloth};
 use sf_model::{CookSettings, Cooked, CookedSkinned, ModelImporter};
@@ -41,7 +41,7 @@ fn main() {
     let content = mw_records::load(&vfs, &install.game_files()).unwrap();
     let db = Arc::new(content.db);
     let a = MwActors::new(Arc::clone(&db), Arc::clone(&vfs));
-    let rules = MwClothRules::new(&db);
+    let rules = MwClothRules::new(&db).with_mode(ClothMode::Robes);
 
     // Items and the slots they fill.
     for (kind, ty) in [("robes", ClothingType::Robe), ("skirts", ClothingType::Skirt)] {

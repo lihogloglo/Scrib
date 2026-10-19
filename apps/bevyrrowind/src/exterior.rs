@@ -114,6 +114,8 @@ pub struct ExteriorOptions {
     pub actors: Option<Arc<sf_records::RecordDb>>,
     /// `--bodies`: smooth (default) or vanilla segmented bodies.
     pub bodies: sf_character_bevy::SmoothBodies,
+    /// `--cloth`: robes and skirts authored (default) or simulated (opt-in).
+    pub cloth: mw_physics::ClothMode,
     /// The worldspace the camera starts in (the exterior, or an interior).
     pub worldspace: sf_world::WorldspaceId,
     /// The water's shore and region inputs (`water.rs`, W3).
@@ -186,7 +188,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     );
     let perf = options.perf;
     let bench = perf.bench.is_some();
-    crate::actors::add_world(&mut app, options.actors.clone(), perf.off.has(Part::Actors), &vfs, &options.store, &manifest);
+    crate::actors::add_world(&mut app, options.actors.clone(), perf.off.has(Part::Actors), &vfs, &options.store, &manifest, options.cloth);
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
         crate::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));

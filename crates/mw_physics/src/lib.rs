@@ -10,7 +10,7 @@
 
 mod cloth;
 
-pub use cloth::{CHEST_SLOT, CLOTH_ATTACH, ClothKind, MwClothRules, SKIRT_SLOT, cloth_spec};
+pub use cloth::{CHEST_SLOT, CLOTH_ATTACH, ClothKind, ClothMode, MwClothRules, SKIRT_SLOT, cloth_spec};
 
 use std::collections::{HashMap, HashSet};
 
