@@ -1181,6 +1181,30 @@ shadow maps (the sun moves).
 **Solari path:** ray-traced shadows have no range limit. Tiers 2 and 4 are off. Tier 3 applies if
 Solari honors the light texture.
 
+### Shadow bias and contact shadows (shadows F1 + F2, as built 2026-10-19)
+
+Research: `docs/research/shadows/README.md` (fixes F1, F2). Rule 8: all Bevy 0.20, no new code paths.
+
+- **Contact shadows (F1):** Bevy's `ContactShadows` on the exterior camera (screen-space march of the depth
+  prepass toward the light, `bevy_pbr` `calculate_contact_shadow`) plus `contact_shadows_enabled` on the sun
+  (`sf_sky_bevy::SunShadow::contact_shadows`) and on the budgeted shadowed point lights only
+  (`PointShadowBudget::contact_shadows`; never the fade twins: one march per lit pixel per light). Bevy multiplies
+  it into the shadow-map term, so it only darkens, and only where the map says lit. Presets: Low off; Medium
+  8 steps; High/Ultra 16 steps; length 0.5 m, thickness 0.1 m. The moon gets none (it has no shadow map and
+  would add a second march all day). A/B `--off contactshadows`; live: BRP `DirectionalLight.contact_shadows_enabled`.
+- **The prepass it needs:** `ContactShadows` requires `DepthPrepass`; ours adds `MotionVectorPrepass` with it,
+  because a depth-only prepass ignores the `VisibilityRange` dither (holes at LOD crossfades, `exterior.rs`
+  note). So Medium and up now run the depth + MV prepass (measured 0.4 ms earlier); Low keeps none.
+- **Bias (F2):** sun normal bias 1.8 → **0.8 texels** (depth bias 0.02 m kept), `exterior.rs` `SUN_NORMAL_BIAS`;
+  per cascade the lift falls from 2.5 / 9 / 34 / 130 cm to 1.1 / 4 / 15 / 56 cm. No acne seen at 15:00 in Seyda
+  Neen or Balmora; grazing sun (07:00, the 6a outline) is the owner check SH-7. `--off shadowtune` restores
+  Bevy's 1.8 with the old cascades. Point lights keep Bevy's 0.08 m / 0.6 texel (already in range).
+- **Filtering (F2):** `ShadowFilteringMethod` per preset on the camera: Low `Hardware2x2`, Medium and up
+  `Gaussian`. `Temporal` needs TAA (raster runs none); revisit with F5 (PCSS).
+- Seen 2026-10-19 (1080p, 15:00): differences are small at a high sun; cascade 0 already grounds feet and pots.
+  Contact shadows mainly darken creases (column bases, wall feet) and the 30-40 m NPC contact. Expected larger
+  at low sun and in cascades 2-3; owner sign-off SH-7.
+
 ## Near-term visual fixes (before M6)
 
 ### Bug A: distant objects have no shadows, then acquire them up close

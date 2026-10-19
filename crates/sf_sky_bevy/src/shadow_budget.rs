@@ -49,12 +49,17 @@ pub struct PointShadowBudget {
     pub hysteresis: f32,
     /// Face size of the cube maps (`PointLightShadowMap::size`).
     pub map_size: usize,
+    /// Screen-space contact shadows (`PointLight::contact_shadows_enabled`)
+    /// on the lights holding a shadow map; needs Bevy's `ContactShadows` on
+    /// the camera. One ray march per lit pixel per light, so only the
+    /// budgeted few get it, never their twins.
+    pub contact_shadows: bool,
 }
 
 impl Default for PointShadowBudget {
     /// Off: the budget is opt-in per game and preset.
     fn default() -> Self {
-        Self { max: 0, fade_start: 15.0, fade_end: 25.0, fade_time: 0.3, hysteresis: 0.8, map_size: 1024 }
+        Self { max: 0, fade_start: 15.0, fade_end: 25.0, fade_time: 0.3, hysteresis: 0.8, map_size: 1024, contact_shadows: false }
     }
 }
 
@@ -187,7 +192,7 @@ fn budget_shadows(
             if target > 0.0 && held < budget.max {
                 held += 1;
                 let twin = commands
-                    .spawn((PointLight { shadow_maps_enabled: false, ..*light }, ShadowTwin, NoLightProxy, Transform::IDENTITY, Visibility::Hidden, ChildOf(entity)))
+                    .spawn((PointLight { shadow_maps_enabled: false, contact_shadows_enabled: false, ..*light }, ShadowTwin, NoLightProxy, Transform::IDENTITY, Visibility::Hidden, ChildOf(entity)))
                     .id();
                 commands.entity(entity).insert(ShadowSlot { fade: 0.0, held: true, full: light.intensity, twin });
             }
@@ -212,6 +217,10 @@ fn budget_shadows(
         if light.shadow_maps_enabled != shadows {
             light.shadow_maps_enabled = shadows;
         }
+        let contact = shadows && budget.contact_shadows;
+        if light.contact_shadows_enabled != contact {
+            light.contact_shadows_enabled = contact;
+        }
         let split = shadows && fade < 1.0;
         if split {
             light.intensity = full * fade;
@@ -219,7 +228,7 @@ fn budget_shadows(
         if let Ok((mut twin, mut vis)) = twins.get_mut(slot.twin) {
             vis.set_if_neq(if split { Visibility::Inherited } else { Visibility::Hidden });
             if split {
-                *twin = PointLight { intensity: full * (1.0 - fade), shadow_maps_enabled: false, ..*light };
+                *twin = PointLight { intensity: full * (1.0 - fade), shadow_maps_enabled: false, contact_shadows_enabled: false, ..*light };
             }
         }
     }

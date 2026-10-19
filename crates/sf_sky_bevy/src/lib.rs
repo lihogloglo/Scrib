@@ -49,8 +49,7 @@ use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState
 
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
-pub use shadow_budget::{BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};
-pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
+pub use shadow_budget::{BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the
 /// atmosphere medium is rebuilt when its description changes.
@@ -86,6 +85,8 @@ pub struct SkyRenderOptions {
     pub sea_level: f32,
     /// Shadow cascades of the sun and moon on the raster path.
     pub cascades: CascadeShadowConfigBuilder,
+    /// Bias and contact shadows of the sun (raster path).
+    pub sun_shadow: SunShadow,
     /// Tint of the ambient floor ([`SkySettings::ambient`]).
     pub ambient_color: Color,
     /// Resolution of the medium's density and phase LUTs.
@@ -124,6 +125,7 @@ impl Default for SkyRenderOptions {
                 maximum_distance: 300.0,
                 overlap_proportion: 0.2,
             },
+            sun_shadow: SunShadow::default(),
             ambient_color: Color::linear_rgb(0.55, 0.65, 1.0),
             medium_resolution: 256,
             medium_min_interval: 0.25,
@@ -132,6 +134,30 @@ impl Default for SkyRenderOptions {
             auto_ray_tracing_meshes: true,
             ray_tracing_restir: None,
             ray_tracing_denoiser: true,
+        }
+    }
+}
+
+/// The sun's shadow-map bias and screen-space contact shadows
+/// (`docs/specs/weather.md` "Shadow bias and contact shadows"). Defaults are
+/// Bevy's: depth 0.02 m, normal 1.8 texels, no contact shadows. Contact
+/// shadows also need Bevy's `ContactShadows` on the camera.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SunShadow {
+    /// `DirectionalLight::shadow_depth_bias`, meters along the light.
+    pub depth_bias: f32,
+    /// `DirectionalLight::shadow_normal_bias`, in shadow-map texels of each cascade.
+    pub normal_bias: f32,
+    /// `DirectionalLight::contact_shadows_enabled`.
+    pub contact_shadows: bool,
+}
+
+impl Default for SunShadow {
+    fn default() -> Self {
+        Self {
+            depth_bias: DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS,
+            normal_bias: DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS,
+            contact_shadows: false,
         }
     }
 }
@@ -346,6 +372,9 @@ fn spawn_sky(
             SunLight,
             DirectionalLight {
                 shadow_maps_enabled: true,
+                shadow_depth_bias: options.sun_shadow.depth_bias,
+                shadow_normal_bias: options.sun_shadow.normal_bias,
+                contact_shadows_enabled: options.sun_shadow.contact_shadows,
                 ..DirectionalLight::default()
             },
             sun_disk(settings),
