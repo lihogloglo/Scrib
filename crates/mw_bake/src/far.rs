@@ -13,8 +13,13 @@
 //!   under two pixels.
 //! - **Lights.** `LIGH` color and radius drive the sprite; lights flagged
 //!   negative or off by default don't glow.
+//! - **Precombine veto** (precombine.md). A static whose base id appears in
+//!   any script or dialogue result text can be the target of `"id"->Disable`,
+//!   `SetPos`, `Position`…, so it stays its own entity. A token match, so a
+//!   false positive (an id that is also a variable name) only keeps an object
+//!   out of the merge.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use mw_world::convert::UNIT_METERS_F64;
@@ -23,7 +28,7 @@ use sf_lod::bake::FarBake;
 use sf_lod::{FarBakeSettings, FarLight, FarPolicy, FarSource, ModelSummary, TextureDecoder, TextureImage};
 use sf_records::RecordDb;
 use sf_world::{Placement, WorldspaceId};
-use tes3::esp::{Light, LightFlags};
+use tes3::esp::{DialogueInfo, Light, LightFlags, Script};
 
 use crate::textures::decode_rgba;
 
@@ -31,13 +36,32 @@ use crate::textures::decode_rgba;
 pub const IMPOSTOR_MIN_HEIGHT: f32 = 3.0;
 
 /// Bumped when the rules below change (part of every far bake key).
-const RULES_VERSION: u32 = 1;
+const RULES_VERSION: u32 = 2;
 
 /// [`FarSource`] for Morrowind content.
 pub struct MwFarSource {
     /// Light parameters by base record id (lowercase).
     lights: BTreeMap<String, FarLight>,
+    /// Every identifier-like token of every script and dialogue result (lowercase).
+    script_tokens: BTreeSet<String>,
     fingerprint: [u8; 32],
+}
+
+/// The ids a script text can name, lowercase: quoted strings whole (ids with
+/// spaces, `"chargen boat"->Disable`) and every identifier-like word.
+fn script_tokens(text: &str, out: &mut BTreeSet<String>) {
+    for quoted in text.split('"').skip(1).step_by(2) {
+        let t = quoted.trim();
+        if !t.is_empty() {
+            out.insert(t.to_ascii_lowercase());
+        }
+    }
+    let text = text.replace("->", " ");
+    for word in text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '\''))) {
+        if !word.is_empty() {
+            out.insert(word.to_ascii_lowercase());
+        }
+    }
 }
 
 impl MwFarSource {
@@ -46,14 +70,25 @@ impl MwFarSource {
         for (id, light) in db.iter::<Light>() {
             lights.insert(id.as_str().to_ascii_lowercase(), far_light(light));
         }
+        let mut script_tokens_set = BTreeSet::new();
+        for (_, script) in db.iter::<Script>() {
+            script_tokens(&script.text, &mut script_tokens_set);
+        }
+        for (_, info) in db.iter::<DialogueInfo>() {
+            script_tokens(&info.script_text, &mut script_tokens_set);
+        }
         let mut bytes = RULES_VERSION.to_le_bytes().to_vec();
+        for t in &script_tokens_set {
+            bytes.extend(t.as_bytes());
+            bytes.push(0);
+        }
         for (id, l) in &lights {
             bytes.extend(id.as_bytes());
             for f in l.color.iter().chain(&[l.intensity, l.radius]) {
                 bytes.extend(f.to_le_bytes());
             }
         }
-        Self { lights, fingerprint: Digest::of(&bytes).0 }
+        Self { lights, script_tokens: script_tokens_set, fingerprint: Digest::of(&bytes).0 }
     }
 
     pub fn light_count(&self) -> usize {
@@ -97,6 +132,10 @@ impl FarSource for MwFarSource {
 
     fn light(&self, placement: &Placement) -> Option<FarLight> {
         Some(self.lights.get(&placement.base.id.as_str().to_ascii_lowercase()).copied().unwrap_or(FarLight { intensity: 0.0, ..FarLight::default() }))
+    }
+
+    fn precombine_exclude(&self, placement: &Placement) -> bool {
+        self.script_tokens.contains(&placement.base.id.as_str().to_ascii_lowercase())
     }
 }
 
@@ -155,5 +194,19 @@ mod tests {
         assert!((l.color[0] - 1.0).abs() < 1e-6 && l.color[2] < 1e-6 && l.intensity > 0.0);
         light.data.flags = LightFlags::NEGATIVE;
         assert!(far_light(&light).intensity.abs() < f32::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod precombine_tests {
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn script_tokens_find_quoted_and_bare_ids() {
+        let mut t = BTreeSet::new();
+        super::script_tokens("if ( GetJournalIndex A1 >= 10 )\n\"chargen boat\"->Disable\nex_rock_01->SetPos x 10\nendif", &mut t);
+        for id in ["chargen boat", "ex_rock_01", "getjournalindex", "a1"] {
+            assert!(t.contains(id), "{id}");
+        }
     }
 }
