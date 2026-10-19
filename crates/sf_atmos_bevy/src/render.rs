@@ -17,7 +17,7 @@ use bevy_image::Image;
 use bevy_math::{DVec2, IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
 use bevy_pbr::resources::{AtmosphereSampler, AtmosphereTextures, AtmosphereTransform, AtmosphereTransforms, AtmosphereTransformsOffset, GpuAtmosphere};
 use bevy_pbr::{ExtractedAtmosphere, GpuAtmosphereSettings, GpuLights, GpuScatteringMedium, LightMeta, ScatteringMediumSampler, ShadowSamplers, ViewLightsUniformOffset, ViewShadowBindings};
-use bevy_render::camera::ExtractedCamera;
+use bevy_render::camera::{ExtractedCamera, TemporalJitter};
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::extract_component::{ComponentUniforms, DynamicUniformIndex};
 use bevy_render::render_asset::RenderAssets;
@@ -419,8 +419,11 @@ const FOG_AZIMUTHS: u32 = 64;
 const FOG_LIGHT: TextureFormat = TextureFormat::Rgba32Float;
 /// Bank-march samples per traced pixel (weather.md: the far fog, 16 steps).
 const FOG_STEPS: u32 = 16;
-/// R: cloud distance; G: the bank modulation of the fog (`fog.wesl`).
-const DIST: TextureFormat = TextureFormat::Rg32Float;
+/// R: cloud distance; G: the bank modulation of the fog (`fog.wesl`); B: the
+/// cut depth, the scene distance that stopped the march, or `far` for an
+/// "open" texel that saw sky (weather.md "Clouds", Rendering 4-5;
+/// research/clouds-upsampling.md). A: spare.
+const DIST: TextureFormat = TextureFormat::Rgba32Float;
 
 impl CloudPipelines {
     fn descriptor(&self, pass: Pass, samples: u32) -> RenderPipelineDescriptor {
@@ -662,6 +665,7 @@ type ViewItem = (
     Option<&'static MainPassResolutionOverride>,
     &'static ExtractedCamera,
     Option<&'static ViewShadowBindings>,
+    Option<&'static TemporalJitter>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -710,7 +714,7 @@ fn prepare_views(
         shell = (shell.0.min(v.envelope[0]), shell.1.max(v.envelope[1]), shell.2.max(v.envelope[2]));
         far_weather = u32::from(map_on == 1 && s.quality.far_weather && v.envelope[3] > 0.5);
     }
-    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps) in &views {
+    for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps, jitter) in &views {
         let Some(medium) = media.get(atmosphere.medium) else { continue };
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
         let full = resolution.map_or(UVec2::new(view.viewport.z, view.viewport.w), |r| r.0).max(UVec2::ONE);
@@ -718,7 +722,14 @@ fn prepare_views(
         let checker = s.quality.checkerboard;
         let trace_size = if checker { (half + 1) / 2 } else { half };
 
-        let clip_from_world = view.clip_from_view * view.world_from_view.to_matrix().inverse();
+        // Jittered like the rays the trace casts (Bevy's view uniform under TAA/DLSS):
+        // an unjittered previous matrix fetched the history a sub-pixel off every
+        // frame, so the clouds swam even with the camera still.
+        let mut clip_from_view = view.clip_from_view;
+        if let Some(jitter) = jitter {
+            jitter.jitter_projection(&mut clip_from_view, full.as_vec2());
+        }
+        let clip_from_world = clip_from_view * view.world_from_view.to_matrix().inverse();
         let h = history.0.entry(entity).or_insert(History { prev_clip_from_world: clip_from_world, origin: frame.origin, frame: 0, size: UVec2::ZERO, camera: Vec3::ZERO, froxels: None });
         let valid = h.size == half && h.frame > 0;
         #[allow(clippy::cast_possible_truncation)]

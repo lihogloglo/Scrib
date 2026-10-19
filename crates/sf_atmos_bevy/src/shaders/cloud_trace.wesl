@@ -34,7 +34,9 @@ struct TraceOutput {
     @location(0) color: vec4<f32>,
     // R: transmittance-weighted distance to the cloud (reprojection,
     // upsampling). G: the ground-fog bank modulation (`bank_modulation`).
-    @location(1) dist: vec2<f32>,
+    // B: the cut depth (the scene distance that stopped the march), or
+    // `clouds.far` for an open texel that saw sky. A: spare.
+    @location(1) dist: vec4<f32>,
 };
 
 // Optical depth (density × m) from `p` toward the light. Steps grow, so a few
@@ -239,8 +241,20 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         half_px = vec2<f32>(block * 2u + sub_pixel(clouds.frame)) + 0.5;
     }
     let uv = half_px / clouds.half_size;
+    // The march stops at the FURTHEST scene depth of the 6x6 full-resolution
+    // pixels this texel can reach (its 2x2 footprint, the composite's bilinear
+    // reach and the jitter), the low-res depth rule of UE's and Nubis' cloud
+    // passes: a texel that touches any sky traces the whole sky layer (open),
+    // so sky pixels beside a silhouette never upsample a cloud-free texel.
+    // Reverse-Z: the smallest depth is the furthest, 0 is the sky.
     let full_px = clamp(vec2<i32>(uv * clouds.full_size), vec2(0), vec2<i32>(clouds.full_size) - 1);
-    let depth = textureLoad(depth_texture, full_px, 0);
+    let full_max = vec2<i32>(clouds.full_size) - 1;
+    var depth = 1.0;
+    for (var dy = -3; dy <= 2; dy += 1) {
+        for (var dx = -3; dx <= 2; dx += 1) {
+            depth = min(depth, textureLoad(depth_texture, clamp(full_px + vec2(dx, dy), vec2(0), full_max), 0));
+        }
+    }
     var scene_t = 1e30;
     if depth > 0.0 {
         scene_t = ndc_to_camera_dist(vec3(uv_to_ndc(uv), depth));
@@ -265,7 +279,9 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
 
     var out: TraceOutput;
     out.color = vec4(0.0, 0.0, 0.0, 1.0);
-    out.dist = vec2(min(scene_t, clouds.far), bank);
+    // Open (no geometry before the shell exit or the far limit) or cut at scene_t.
+    let cut = select(scene_t, clouds.far, scene_t >= min(max(seg.y, 0.0), clouds.far));
+    out.dist = vec4(min(scene_t, clouds.far), bank, cut, 0.0);
     let clouds_on = clouds.clouds_on != 0u;
     let has_low = end > start && clouds_on;
     let far_on = clouds.far_weather != 0u && clouds_on;
@@ -436,7 +452,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         }
     }
     out.color = vec4(color * view.exposure, transmittance);
-    out.dist = vec2(dist, bank);
+    out.dist = vec4(dist, bank, cut, 0.0);
     return out;
 }
 

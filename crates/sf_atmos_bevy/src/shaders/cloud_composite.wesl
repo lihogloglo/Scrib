@@ -45,27 +45,42 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let base = floor(hp);
     let f = hp - base;
     let hmax = vec2<i32>(clouds.half_size) - 1;
-    // The bank modulation is upsampled bilaterally: taps traced at a very
-    // different depth (a tree's edge against the sky) count 1/50.
-    let pixel_dist = min(scene_t, clouds.far);
-    var acc = vec4(0.0);
-    var bank = 0.0;
-    var bank_w = 0.0;
+    // Taps by population (research/clouds-upsampling.md): a sky pixel takes
+    // open texels only (they traced the whole sky layer), a geometry pixel
+    // prefers texels cut at its own depth, else open ones behind the occlusion
+    // test, else plain bilinear. Color and bank share the weights.
+    let sky = depth <= 0.0;
+    var acc_sets = array<vec4<f32>, 3>(vec4(0.0), vec4(0.0), vec4(0.0));
+    var bank_sets = vec3(0.0);
+    var w_sets = vec3(0.0);
     for (var i = 0; i < 4; i += 1) {
         let o = vec2(i & 1, i >> 1u);
         let q = clamp(vec2<i32>(base) + o, vec2(0), hmax);
         var c = textureLoad(cloud_color, q, 0);
-        let d = textureLoad(cloud_dist, q, 0).rg;
+        let d = textureLoad(cloud_dist, q, 0);
         if d.x > scene_t * 1.02 + 10.0 {
             c = vec4(0.0, 0.0, 0.0, 1.0);
         }
         let w = mix(1.0 - f.x, f.x, f32(o.x)) * mix(1.0 - f.y, f.y, f32(o.y));
-        acc += c * w;
-        let near = abs(d.x - pixel_dist) < 0.1 * pixel_dist + 5.0;
-        let bw = w * select(0.02, 1.0, near) + 1e-6;
-        bank += d.y * bw;
-        bank_w += bw;
+        let open = d.z >= clouds.far;
+        let own_cut = !open && abs(d.z - scene_t) <= 0.1 * scene_t + 5.0;
+        // Set 0: preferred (sky: open; geometry: cut at this depth). 1: open. 2: all.
+        let ws = vec3(w * f32(select(own_cut, open, sky)), w * f32(open), w);
+        for (var s = 0; s < 3; s += 1) {
+            acc_sets[s] += c * ws[s];
+        }
+        bank_sets += d.y * ws;
+        w_sets += ws;
     }
+    var pick = 2;
+    if w_sets.x > 1e-4 {
+        pick = 0;
+    } else if w_sets.y > 1e-4 {
+        pick = 1;
+    }
+    var acc = acc_sets[pick] / w_sets[pick];
+    let bank = bank_sets[pick];
+    let bank_w = w_sets[pick];
 
     let fog = clouds.fog;
     if fog.enabled != 0u {
