@@ -9,9 +9,9 @@
 //! industry answer (UE Volumetric Fog, Frostbite, Decima) is that each
 //! translucent material fetches the integrated froxel volume at its own
 //! screen position and distance: `froxel_apply.wesl`'s
-//! `froxel_fog_apply`. Past the froxel range the volume's last slice is used
-//! (the analytic far layers are not applied to transparents; a named limit,
-//! W2's water draws its own far fog).
+//! `froxel_fog_apply`. Past the froxel range the ray's medium carries on as
+//! the froxels saw it (`froxel_fog_lookup`: `T_far^(d/far)`), a stand-in for
+//! the composite's analytic far layers; W2's water draws its own far fog.
 
 use bevy_asset::{Asset, Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
