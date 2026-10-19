@@ -1231,7 +1231,19 @@ Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop
   statics' materials have no far term) end on Bevy's hard cut at 250 m. The terrain march (to 700 m) and the SHM
   are unchanged.
 
-**Step b (not built; design for the next slice): cached far static shadow map (FSM).**
+**Step b (CPU core built 2026-10-19 shf3b; render pass + receivers not built yet): cached far static shadow map (FSM).**
+- *Built (shf3b):* `sf_sky::far_shadow` (Bevy-free): `FarShadowSettings` (4096², reach ±2048 m = 1 m texels, 4 km
+  depth, sun 0.03°, recentre 1/16 reach = 128 m, 4 strips), `FarShadowView::fit` (sun-aligned ortho, fixed up hint,
+  centre snapped to whole texels in the light plane, reverse Z like Bevy's shadow views), `FarShadowCache::update`
+  (refresh on sun turn / recentre / `invalidate()` on far-cell arrival, one strip per frame into the *back* map, then
+  swap). Two maps, not one: strips drawn into the sampled map would mix two views, so VRAM is **2 × 64 MB = 128 MB**
+  at 4096² (or 1 × 64 MB with a whole-map refresh in one frame and no strips). Tests: `far_shadow_*` in `sf_sky`.
+- *Bevy 0.20 render hooks found (for the next slice):* cameras run a schedule (`CameraRenderGraph(ScheduleLabel)`,
+  `bevy_core_pipeline::schedule`, `Core3dSystems`), so the FSM camera gets its own schedule with one system; Bevy's
+  own shadow queue (`bevy_pbr` `render/light.rs` `queue_shadows`, retained bins with `DirtySpecializations`, phase
+  `ViewBinnedRenderPhases<Shadow>`, drawn by `per_view_shadow_pass` over `ViewLightEntities`, target
+  `ShadowView::depth_attachment`) is the template for the binned depth-only phase. Step 1 check: the Balmora SH-8 vista
+  does have sun shadows (backlit at 15:00, sun 48°; identical with `--off shadowsplits`): nothing broken.
 - *Bevy first:* Bevy 0.20 has no shadow caching (every shadow view re-renders every frame, maps from the
   `TextureCache`) and no API for an extra or orthographic shadow view. A second shadow-casting `DirectionalLight`
   with zero illuminance would get cascades, but they are fitted to the camera frustum (re-rendered every frame,
@@ -1850,3 +1862,32 @@ so the twin test runs it in raw wgpu like `sf_wind`'s; `sf_atmos_bevy` now depen
 - **Not yet** (next, in order): (3/4) envelope shell + local base/thickness/density/erosion from layer B (the shell is
   still the uniform `Clouds` weather's; the example uses the east climate's heights), plume anchor hook; WE4c app wiring
   (`site_at`, `sf_weather_bevy` drives `CloudWeatherMap`); cirrus stays uniform (layer C unused by the clouds).
+
+### WE4b as built, steps 3-4 (we4b2, 2026-10-19): local layer heights and cirrus from the map
+
+- **Envelope shell.** `CloudWeatherMap` keeps `envelope(rows)` = lowest base, highest top (base + thickness) and most cirrus
+  over the table's rows; the render world grows the uniform (camera) layer to it (`Clouds.shell_base`, `shell_thickness`,
+  `cirrus_max`). A texel is a convex blend of rows, so every local layer lies inside the shell. The trace and the cloud
+  shadow map march the shell (the shadow map's span cap is 4 × the shell's thickness); off the map it is the uniform layer.
+- **Local layer from B.** Each density sample reads layer B (base, thickness, density, erosion) next to A, by the same
+  rule: per sample on High/Ultra (`map_layer(p, 1)`, one more bilinear fetch of the same texel), else `ray_b` = 3 fetches
+  along the in-layer segment, lerped (Medium/Low). `height_fraction(p, b)` and `cloud_density(p, h, w, b, detailed)`
+  use the local base/thickness (detail octave z, density, erosion); the uniform `Clouds.base/thickness/density/erosion`
+  are now only the no-map / uniform-day layer. The light march keeps the primary sample's B (the border band, ≥ 400 m,
+  is wider than the march's reach at the steps it takes); the trace step `ds` stays the camera layer's thickness / 20
+  (clamped by the step counts), so near clouds keep their sampling under a tall neighbour. Shader helpers are
+  generic per layer (`map_layer`, `uniform_layer`, `local_layer`, `ray_layer`, `ray_local`, `_a`/`_b` wrappers).
+- **Cirrus from C.** The sheet stays one sphere at the camera layer's `cirrus_height` (one ray-sphere hit); its cover is
+  layer C's cirrus at the hit point (any map mode: one fetch per ray), gated by `cirrus_max`. The shadow map's cirrus
+  term reads it too (`cirrus_optical_depth` → `cirrus_hit`).
+- **Example**: `clouds --split` now sets the plugin's uniform layer to the **west** (camera) climate, as the app will.
+- **Verified** (1280 × 720, RTX 4060 Laptop, High, averaged GPU timers, `clouds`): `--preset storm` (uniform) trace
+  **0.210 ms**, shadow 0.020; `--split clear,storm` per sample trace **0.239 ms** (+0.03, the storm deck now 8.9 km tall
+  beyond the border while the clear side is a 700 m layer), shadow 0.019, resolve 0.018; `--per-ray` trace 0.249 ms
+  (no saving at this resolution; the 6 per-ray fetches + lerp cost about what the per-sample fetch does), shadow 0.019.
+  All inside the WE4 gate (+0.15 High). Shots: from the clear side the storm rises as a wall at the border band with its
+  tops against blue sky (`--scale 0.3` to see the tops in frame), clear zenith, cirrus streaks; no seam line in the
+  sky; the `shadow` view shows only soft patches on the clear-side ground (no band at the border). Visual check WE-4b
+  covers it (owner).
+- **Not done** (by scope): plume anchor hook; cirrus height per climate (one sheet); a per-ray B saving on Medium/Low
+  (could reuse `ray_a`'s 3 points with a 2-layer fetch helper if Medium/Low trace time matters at 1440p).

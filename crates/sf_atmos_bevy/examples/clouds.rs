@@ -215,10 +215,10 @@ fn screenshot(
     }
 }
 
-/// The plugin settings: the east climate's heights when split (the shell is
-/// still uniform until the `WE4b` envelope lands), the map lookup per quality.
+/// The plugin settings: the camera's (west) climate when split, as the app
+/// does (the map gives every other place its own layer), the map lookup per quality.
 fn cloud_settings(args: &Args) -> CloudSettings {
-    let mut s = settings(args.split.map_or(args.preset, |p| p.1), args.scale, args.wind);
+    let mut s = settings(args.split.map_or(args.preset, |p| p.0), args.scale, args.wind);
     s.quality.map_per_sample = !args.per_ray;
     s
 }

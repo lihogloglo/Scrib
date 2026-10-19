@@ -172,6 +172,12 @@ struct CloudUniform {
     map_offset: Vec2,
     /// Storage texel of the window's minimum corner (window mod size).
     map_wrap: Vec2,
+    /// The envelope shell the trace and shadow map march: the uniform layer,
+    /// grown to the map's lowest base and highest top (`WE4b`).
+    shell_base: f32,
+    shell_thickness: f32,
+    /// Most cirrus anywhere (the map's layer C gives the local cover).
+    cirrus_max: f32,
 }
 
 /// GPU layout of `Fog` in `fog.wesl` (weather.md "Fog", F2).
@@ -729,6 +735,10 @@ fn prepare_views(
         }
         None => (0, 1.0, 0.0, Vec2::ZERO, Vec2::ZERO),
     };
+    let mut shell = (s.weather.base, s.weather.base + s.weather.thickness.max(1.0), s.weather.cirrus);
+    if let Some(v) = map.active {
+        shell = (shell.0.min(v.envelope[0]), shell.1.max(v.envelope[1]), shell.2.max(v.envelope[2]));
+    }
     for (entity, view, atmosphere, luts, depth, msaa, resolution, camera, shadow_maps) in &views {
         let Some(medium) = media.get(atmosphere.medium) else { continue };
         let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
@@ -807,6 +817,9 @@ fn prepare_views(
             map_inv_texel,
             map_offset,
             map_wrap,
+            shell_base: shell.0,
+            shell_thickness: shell.1 - shell.0,
+            cirrus_max: shell.2,
         };
         h.prev_clip_from_world = clip_from_world;
         h.origin = frame.origin;

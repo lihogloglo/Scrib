@@ -44,6 +44,18 @@ pub struct CloudWeatherMap {
     table_gen: u64,
     window: IVec2,
     uniform: bool,
+    /// `envelope(rows)`, kept with the rows.
+    envelope: [f32; 3],
+}
+
+/// Lowest cloud base, highest cloud top and most cirrus over the table's rows
+/// (A, B, C per row): the trace's envelope shell. A blend of rows is a convex
+/// combination, so every texel's layer lies inside it.
+fn envelope(rows: &[[f32; 4]]) -> [f32; 3] {
+    rows.as_chunks::<3>().0.iter().fold([f32::INFINITY, f32::NEG_INFINITY, 0.0], |e, r| {
+        let (b, c) = (r[1], r[2]);
+        [e[0].min(b[0]), e[1].max(b[0] + b[1].max(1.0)), e[2].max(c[0])]
+    })
 }
 
 impl CloudWeatherMap {
@@ -59,6 +71,7 @@ impl CloudWeatherMap {
         let full = update.table_changed || update.texels == size.unsigned_abs().pow(2);
         if full || self.rows.is_empty() {
             self.rows = Arc::new(map.gpu_rows());
+            self.envelope = envelope(&self.rows);
             self.table_gen += 1;
         }
         self.window = window;
@@ -72,6 +85,7 @@ impl CloudWeatherMap {
         self.raster_gen += 1;
         self.table_gen += 1;
         self.rows = Arc::new(map.gpu_rows());
+        self.envelope = envelope(&self.rows);
     }
 
     /// No map: the clouds use their uniform weather.
@@ -89,6 +103,8 @@ pub(crate) struct MapView {
     pub window: IVec2,
     pub size: i32,
     pub texel_m: f64,
+    /// Lowest base, highest top, most cirrus over the map's climates.
+    pub envelope: [f32; 3],
 }
 
 /// Render world: the map texture, its inputs and the pending resolve.
@@ -222,7 +238,7 @@ fn prepare(map: Res<ExtractedMap>, gpu: Option<ResMut<WeatherMapGpu>>, device: R
         gpu.pending = Some((group, n));
     }
     gpu.resolved = Some(m.window);
-    gpu.active = Some(MapView { window: m.window, size: geometry.size, texel_m: geometry.texel_m });
+    gpu.active = Some(MapView { window: m.window, size: geometry.size, texel_m: geometry.texel_m, envelope: m.envelope });
 }
 
 /// The resolve dispatch (GPU timer `render/weather_map/elapsed_gpu`); once

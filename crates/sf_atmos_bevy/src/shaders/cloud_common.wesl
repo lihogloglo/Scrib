@@ -71,6 +71,9 @@ struct Clouds {
     map_inv_texel: f32,
     map_offset: vec2<f32>,
     map_wrap: vec2<f32>,
+    shell_base: f32,
+    shell_thickness: f32,
+    cirrus_max: f32,
 };
 
 const PI: f32 = 3.14159265;
