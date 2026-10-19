@@ -1637,3 +1637,10 @@ log the reversal of "Clouds as built"'s "no written weather map" deviation in AR
    basis, later)?
 3. **Cost tier**: WE4 adds ≈ 0.15-0.25 ms when a storm is in view, with clouds already at the High line.
    Accept on High (trim elsewhere), or use the per-ray map lookup (cheaper, softer region edges) on High too?
+
+### WE4 owner decisions (2026-10-19)
+
+- **Regions first, moving storms later:** WE4 shows each region's own weather from afar, blended at borders; storm
+  cells drifting across borders are a later slice on the same map.
+- **Regionless sea cells take the nearest region's weather** (blended), not a default clear sky.
+- **Cost:** full weather map on High and Ultra; Medium and Low use the cheaper per-ray lookup (coarser, no rain shafts).
