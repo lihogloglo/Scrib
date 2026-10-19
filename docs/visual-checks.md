@@ -217,7 +217,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   F3b (cached far map): objects past 250 m cast no shadows, and a shadow cast onto a building at ~250 m may end on a
   line there.
 - A/B: `--off shadowsplits` (A1 4 cascades to 504 m); `--quality low` (3 cascades to 200 m).
-- Status: awaiting owner (shf3 agent shots at 15:00/07:30 were inconclusive: near view nearly identical, the
+- Status: awaiting owner (shf3b 2026-10-19: the 15:00 vista does show sun shadows, backlit, and is identical with `--off shadowsplits`; shf3 agent shots at 15:00/07:30 were inconclusive: near view nearly identical, the
   Balmora vista was backlit; GPU ≈ 0, dev frame −3.5 ms at Seyda Neen).
 - Source: shf3 (shadows F3 step a).
 

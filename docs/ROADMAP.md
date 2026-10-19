@@ -79,7 +79,7 @@ Legend: `[x]` done and verified, `[~]` in progress or partially done,
      preset, and the point-light budget fade. A torch-bearer casts no shadow from their own torch (expected with point light
      at the torch, but the body should still cast the sun/moon shadow and other lights' shadows: check).
      **F1+F2 built (shf12 2026-10-19):** Bevy contact shadows (sun + budgeted point lights; Medium 8 / High+ 16 steps, 0.5 m; needs the depth+MV prepass on Medium+), sun normal bias 1.8 -> 0.8, Hardware2x2 on Low; `--off contactshadows`, `--off shadowtune`; SH-7 awaiting owner, GPU A/B owed. Next: F3 (250 m CSM + cached far map), F6, F5.
-     **F3 step a built (shf3 2026-10-19):** practical-split sun cascades to 250 m (`sf_sky_bevy::CascadeSplits`; Low 3 / 200 m), texels 1.4 / 3.8 / 10.5 / 35 cm (was 1.4 / 5.2 / 19 / 70); GPU ≈ 0; `--off shadowsplits` = old 504 m; SH-8 awaiting owner. **F3 step b (cached far static map) designed, not built** (weather.md "Sun cascades and the far static map"): until then L0 objects at 250-440 m cast no shadows. Next: F3b, F6, F5.
+     **F3 step a built (shf3 2026-10-19):** practical-split sun cascades to 250 m (`sf_sky_bevy::CascadeSplits`; Low 3 / 200 m), texels 1.4 / 3.8 / 10.5 / 35 cm (was 1.4 / 5.2 / 19 / 70); GPU ≈ 0; `--off shadowsplits` = old 504 m; SH-8 awaiting owner. **F3 step b (cached far static map): CPU core built (shf3b: `sf_sky::far_shadow` fit + texel snap + refresh/strip policy, 2 × 64 MB), render pass + receivers not built** (weather.md "Sun cascades and the far static map"): until then L0 objects at 250-440 m cast no shadows. Next: F3b, F6, F5.
    - Grazing-light artefact: a blocky, half-transparent outline on objects/terrain at grazing light; shimmers with DLSS off.
      Suspects: shadow acne / normal-offset bias, dithered cascade end, terrain blend, or RT/denoiser. Owner asks for a live
      RT on/off toggle at any time (render path switch at runtime).
@@ -1429,9 +1429,11 @@ Lanes (the orchestrator runs at most 3 agents): **weather** (F, WD, WE, SU, PR, 
   the CPU resolve, readback test 9.2e-4 at f16; full on table change, strips on recenter, skipped on uniform days) in
   `sf_atmos_bevy::CloudWeatherMap`; clouds + cloud shadow map read layer A (coverage, genus, wetness, storm) per sample
   (`CloudQuality::map_per_sample`, High/Ultra) or 3x per ray (Medium/Low). `clouds --split clear,storm`: resolve 0.017 ms,
-  trace 0.253 vs 0.255 ms uniform (no measurable cost). Visual check WE-4b awaiting owner. Next: WE4b steps 3-4 (envelope
-  shell + local base/thickness from layer B, plume hook), then WE4c app (`site_at` replaces `ClimateMap::border_at`,
-  dilated sea raster, WE-3 scene).
+  trace 0.253 vs 0.255 ms uniform (no measurable cost). Visual check WE-4b awaiting owner. Part b steps 3-4 built (we4b2,
+  2026-10-19; weather.md "WE4b as built, steps 3-4"): envelope shell (lowest base to highest top over the map's climates),
+  local base/thickness/density/erosion from layer B per sample or per ray, cirrus cover from layer C; split storm trace
+  0.239 vs 0.210 ms uniform. Next: WE4c app (`site_at` replaces `ClimateMap::border_at`, dilated sea raster, WE-3 scene);
+  plume hook later.
 - [~] F2 Height fog, ground fog and far fog (weather.md "Fog" rows 2-3): analytic exponential height fog (UE formula, the
   Low preset path), Megalophobia ground-fog bank density with a time-of-day curve, far fog raymarch at ¼ res inside the
   cloud node, `DistanceFog` off on the exterior camera. Waits for WE3 (or `--fog` flags until then). Verify: FG-2
@@ -1884,4 +1886,6 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (shf12): shadows F1+F2: Bevy `ContactShadows` on the exterior camera (+ depth/MV prepass on Medium+), `contact_shadows_enabled` on the sun (`sf_sky_bevy::SunShadow`) and budgeted point lights (`PointShadowBudget::contact_shadows`), sun normal bias 0.8 texels, `ShadowFilteringMethod` per preset; `--off contactshadows`; weather.md "Shadow bias and contact shadows"; SH-7 awaiting owner; GPU cost A/B not run (owner was testing).
 - 2026-10-19 (rofix1): render-order RO-1/2/3 fixed: translucents cast no shadows (`FroxelFogExt::enable_shadows` false; cutouts keep casting), distant light sprites and rain/snow fogged through the new shared `sf_render_order_bevy::TranslucentFog` + `translucent_fog` shader module (moved from sf_atmos_bevy); guard test checks fog binding + shadow opt-out; RO-A awaiting owner.
 - 2026-10-19 (we4b): M6 WE4 part b steps 1-2: GPU world weather map (WGSL resolve twin of `sf_weather` map, raster + table upload, strips on recenter, uniform skip; GPU-vs-CPU readback 9.2e-4) and clouds + cloud shadow map read it per sample (High/Ultra) or per ray (Medium/Low); `clouds --split clear,storm` shows a clear zenith with the storm deck beyond the border; resolve 0.017 ms, trace unchanged (0.253 vs 0.255 ms). Next: envelope shell (layer B), then WE4c app wiring.
+- 2026-10-19 (we4b2): M6 WE4 part b steps 3-4: cloud envelope shell over the map's climates, local base/thickness/density/erosion (layer B) and cirrus cover (layer C) in the trace and the cloud shadow map; `clouds --split clear,storm`: the 8.9 km storm rises at the border from a 700 m clear layer, no seam; trace 0.239 vs 0.210 ms uniform storm. Next: WE4c app wiring.
 - 2026-10-19 (shf3): shadows F3 step a: practical-split sun cascades to 250 m per preset (`sf_sky_bevy::CascadeSplits`, Bevy keeps sphere fit + texel snap + overlap blend), texels 2× sharper in the last cascade, GPU ≈ 0; 504 m rule replaced (ARCHITECTURE §10); far static map (step b) designed in weather.md, not built; `--off shadowsplits`; SH-8 awaiting owner.
+- 2026-10-19 (shf3b): shadows F3 step b, part 1: "no Balmora sun shadows" was a backlit view (shadows present, same with `--off shadowsplits`: nothing broken); `sf_sky::far_shadow` (Bevy-free FSM core: sun-aligned ortho fit snapped to 1 m texels, refresh on 0.03° sun / 128 m recentre / far-cell invalidate, 4 strips into a back map then swap; tests). Render pass (own camera schedule + binned depth phase) and receiver hooks not built: handoff `.sessions/_archive/shf3b.md`.
