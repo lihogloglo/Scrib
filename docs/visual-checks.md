@@ -1527,7 +1527,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 
 ### FG-1: Haze and dust per weather (`scene fg-redmtn-clear`, `fg-redmtn-foggy`, `fg-redmtn-ashstorm`, `fg-redmtn-ashstorm-sunset`, `fg-bittercoast-morning`)
 - Kind: game location. Owner picks the defaults: the clear-day haze (20 now; try `--haze 10`, `--haze 40`), the ash
-  storm's dust (4 now; `--dust 2`, `--dust 8`) and whether blight's red is strong enough (`--clouds blight`).
+  storm's dust (4 now; `--dust 2`, `--dust 8`) and whether blight's red is strong enough (`--weather blight`).
 - Look for: clear: far hills sit back slightly in a pale haze, blue sky overhead (A/B `--haze 1` is the old look);
   foggy: milky grey-white sky, the mountain veiled but readable; ash storm: grey-brown sky and veil, dimmer warmer
   sun; blight: rusty orange cast; sunset: warm brown dusk without bands; Bitter Coast 6:30 foggy: humid milky dawn,
@@ -1711,5 +1711,18 @@ jump, the table is a single box (no legs).
 Status: **awaiting owner** (M6 WE3 part 1, we3a, 2026-10-19). Shots: `target/we3a/{clear,overcast,natural}.png`
 (`--screenshot`). Look for: `--weather clear` matches the old `--clouds clear` (blue sky, thin haze, mountains sitting
 back but sharp); `--weather overcast` matches the old `--clouds overcast` (grey, hazy, 8 km fog); no flag prints
-`weather <Type>` for the start cell's forecast and shows that weather's clouds/fog. Known (part 2): clouds and fog
-are fixed at start, haze/wind follow the live forecast; no rain, lightning or border blend yet.
+`weather <Type>` for the start cell's forecast and shows that weather's clouds/fog. Since part 2a (we3b1) clouds and
+fog follow the live weather too; C and T (see WE-1) change the weather live. No rain, lightning or border blend yet.
+
+### WE-1: Live weather transition, clouds lead and fog follows (`view "Seyda Neen" --hour 11 --weather clear`)
+
+Status: **awaiting owner** (M6 WE3 part 2a, we3b1, 2026-10-19). Shots: `target/we3b1/{a_clear,b_mid,c_overcast}.png`
+(BRP, clock paused, hour stepped 11.0 / 11.35 / 12.1 after `set {weather: "overcast", transition_hours: 1}`).
+How: press **C** to force the next weather (clear → cloudy → foggy → overcast → rain → ...) over the region's
+transition (~0.2-0.6 game h), **T** for x4 game time so a transition takes ~10-25 s (again for x20, again for x1).
+BRP: `bevyrrowind/set {"weather": "overcast", "transition_hours": 1}`, `"auto"` back to the forecast;
+`bevyrrowind/status` shows `weather.clouds`/`weather.fog` progress. Look for: the clouds build and the sky dims first
+(clouds 0-60 % of the transition), the fog thickens after (40-100 %); no pop in cloud positions, cover, fog or
+light at any point, including when the cloud speed changes (ash storm, blight are fast); ash/blight fog turns
+grey-brown/red. Known (part 2b): no rain/snow/ash particles, lightning or region border blend yet.
+

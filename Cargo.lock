@@ -6907,6 +6907,7 @@ dependencies = [
  "bevy_app",
  "bevy_ecs",
  "bevy_platform",
+ "sf_atmos_bevy",
  "sf_diag_bevy",
  "sf_sky_bevy",
  "sf_weather",

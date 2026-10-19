@@ -134,8 +134,7 @@ pub struct WeatherSetup {
     pub state: WeatherState,
     pub cells: std::collections::HashMap<(i32, i32), sf_weather::ClimateIx>,
     pub fallback: Option<sf_weather::ClimateIx>,
-    /// The weather at the start (forced, or the start cell's forecast): the
-    /// cloud genus and fog look until WE3 part 2 drives them from the frame.
+    /// The weather at the start (forced, or the start cell's forecast), printed.
     pub start: Option<mw_weather::WeatherType>,
 }
 
@@ -171,4 +170,69 @@ impl WeatherSetup {
 pub fn grid_at(p: glam::DVec3) -> (i32, i32) {
     let cell = mw_world::convert::CELL_UNITS * mw_world::convert::UNIT_METERS_F64;
     ((p.x / cell).floor() as i32, (-p.z / cell).floor() as i32)
+}
+
+// -- live control (BRP `bevyrrowind/set weather`, the C key) ------------------------
+
+/// How long a live forced weather holds, game hours (until `auto`).
+const LIVE_HOLD_HOURS: f32 = 1.0e6;
+
+/// Forces `ty` on every climate from `now` over `transition_hours` (`None`:
+/// the climate's own; 0 skips), held until the next call; `None` returns to
+/// the forecast: each climate glides to the weather its forecast has at
+/// `now` (a force of that weather, released at the climate's next natural
+/// change). Overrides are the save state, so the change replays.
+pub(crate) fn force_live(
+    book: &WeatherBook,
+    state: &mut WeatherState,
+    climates: &[sf_weather::ClimateIx],
+    ty: Option<mw_weather::WeatherType>,
+    now: f64,
+    transition_hours: Option<f32>,
+) {
+    let natural = WeatherState {
+        seed: state.seed,
+        overrides: state.overrides.iter().filter(|o| !matches!(o, sf_weather::Override::Force { .. })).cloned().collect(),
+    };
+    for &c in climates {
+        let climate = book.climate_id(c).clone();
+        match ty {
+            Some(t) => state.force(&climate, &t.preset_id(), now, transition_hours, Some(LIVE_HOLD_HOURS)),
+            None => {
+                if let Some(p) = natural.current(book, c, now) {
+                    state.force(&climate, &book.preset_id(p).clone(), now, transition_hours, None);
+                }
+            }
+        }
+    }
+}
+
+/// The weather at a climate for `bevyrrowind/status` and the C key's note.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[cfg_attr(feature = "remote", derive(schemars::JsonSchema))]
+pub(crate) struct LiveWeather {
+    /// The weather in force or being turned into.
+    pub current: String,
+    /// How far the current weather has come in, per channel (1: done):
+    /// clouds lead, fog follows.
+    pub clouds: f32,
+    pub fog: f32,
+    /// A forced weather (`--weather`, a live force or a script).
+    pub forced: bool,
+    /// The next change: weather and game hours until it starts.
+    pub next: Option<(String, f64)>,
+}
+
+pub(crate) fn live_weather(book: &WeatherBook, state: &WeatherState, climate: sf_weather::ClimateIx, now: f64) -> Option<LiveWeather> {
+    let name = |p: sf_weather::PresetIx| {
+        let id = book.preset_id(p);
+        weather_type_of(id).map_or_else(|| id.as_str().to_owned(), |t| t.name().to_ascii_lowercase())
+    };
+    let current = state.current(book, climate, now)?;
+    let blend = state.blend(book, climate, now);
+    let w = blend.iter().find(|(p, _)| *p == current).map_or([1.0; sf_weather::CHANNELS], |(_, w)| *w);
+    let forecast = state.forecast(book, climate, now, 3);
+    let forced = forecast.iter().take_while(|e| e.start <= now).last().is_some_and(|e| e.forced);
+    let next = forecast.iter().find(|e| e.start > now).map(|e| (name(e.preset), e.start - now));
+    Some(LiveWeather { current: name(current), clouds: w[sf_weather::CLOUDS], fog: w[sf_weather::FOG], forced, next })
 }

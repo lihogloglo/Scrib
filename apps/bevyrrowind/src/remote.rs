@@ -82,6 +82,9 @@ struct Status {
     camera: Option<String>,
     /// Streaming, terrain, models and textures settled.
     ready: Option<bool>,
+    /// The weather at the camera's climate: current, how far it has come in
+    /// (clouds lead, fog follows), forced or not, the next change.
+    weather: Option<crate::weather::LiveWeather>,
 }
 
 /// `bevyrrowind/set`'s parameters; absent fields stay as they are.
@@ -94,8 +97,18 @@ struct Set {
     hour: Option<f64>,
     paused: Option<bool>,
     time_lapse: Option<bool>,
-    /// Cloud genus name.
+    /// Pin a cloud genus (clear, fair, cumulus, stratocumulus, altocumulus, altostratus,
+    /// cirrus, overcast, storm) over the weather's clouds; "weather" unpins.
     clouds: Option<String>,
+    /// Force a weather everywhere from now (clear, cloudy, foggy, overcast, rain,
+    /// thunderstorm, ashstorm, blight, snow, blizzard) over the climate's transition;
+    /// "auto" glides back to the forecast.
+    weather: Option<String>,
+    /// With `weather`: the transition, game hours (0 skips it).
+    transition_hours: Option<f32>,
+    /// Clock speed, game seconds per real second (30 is Morrowind's; 120 shows a
+    /// weather transition in ~10-25 s).
+    time_scale: Option<f32>,
     /// `x,y,z,tx,ty,tz`, world meters.
     camera: Option<String>,
 }
@@ -135,16 +148,34 @@ fn set(
     let clouds = params
         .clouds
         .as_deref()
-        .map(|name| crate::live_ab::cloud_choice(name).ok_or_else(|| invalid(format!("unknown cloud preset {name:?}"))))
+        .map(|name| match name {
+            "weather" | "auto" => Ok(None),
+            _ => sf_atmos_bevy::sf_atmos::CloudPreset::parse(name).map(Some).ok_or_else(|| invalid(format!("unknown cloud genus {name:?}"))),
+        })
         .transpose()?;
+    let weather = params
+        .weather
+        .as_deref()
+        .map(|name| if name.eq_ignore_ascii_case("auto") { Ok(None) } else { crate::weather::parse_weather_type(name).map(Some).map_err(invalid) })
+        .transpose()?;
+    if params.transition_hours.is_some_and(|h| h.is_nan() || h < 0.0) {
+        return Err(invalid("transition_hours: want >= 0"));
+    }
     let eye_target = params.camera.as_deref().map(|c| parse_camera(c).ok_or_else(|| invalid(format!("camera {c:?}: want x,y,z,tx,ty,tz")))).transpose()?;
 
     for (sw, on) in switches {
         let note = sw.set(&mut state, &mut s, Some(on));
         state.note(note, now);
     }
-    if let Some(i) = clouds {
-        let note = crate::live_ab::set_clouds(&mut s, i);
+    if let Some(genus) = clouds {
+        let note = crate::live_ab::set_clouds(&mut s, genus);
+        state.note(note, now);
+    }
+    if let Some(ty) = weather {
+        let note = crate::live_ab::set_weather(&mut s, ty, params.transition_hours);
+        if !note.starts_with("weather ->") {
+            return Err(invalid(note));
+        }
         state.note(note, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {
@@ -158,10 +189,14 @@ fn set(
                 time.0.paused = false;
             }
         }
+        if let Some(scale) = params.time_scale.filter(|s| *s > 0.0) {
+            time.0.time_scale = scale;
+            time.0.paused = false;
+        }
         if let Some(paused) = params.paused {
             time.0.paused = paused;
         }
-    } else if params.hour.is_some() || params.paused.is_some() || params.time_lapse.is_some() {
+    } else if params.hour.is_some() || params.paused.is_some() || params.time_lapse.is_some() || params.time_scale.is_some() {
         return Err(invalid("no sky clock in this run"));
     }
     if let Some((eye, target)) = eye_target {
@@ -214,6 +249,7 @@ fn report(
         switches,
         camera,
         ready: ready.settled().or_else(|| interior.map(crate::view::Loading::ready)),
+        weather: crate::live_ab::live_weather(s),
     }
 }
 

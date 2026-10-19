@@ -10,8 +10,8 @@
 //! Keys: F1 help, F2 sun shadows, F3 terrain far shadows, F4 DLSS mode,
 //! F5 far-field tint, F6 terrain LOD colors, F7 terrain wireframe,
 //! F8 streaming rings, F11 object-terrain blend, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
-//! T time-lapse, F9 copy camera (`--camera` string), F10 clouds on/off,
-//! C cycle cloud preset (clear, fair, overcast, storm), F12 screenshot,
+//! T clock speed (x1, x4, x20), F9 copy camera (`--camera` string), F10 clouds on/off,
+//! C next weather (forced everywhere with its transition), F12 screenshot,
 //! B smooth ↔ vanilla character bodies (handled in `actors.rs`).
 //! Agents reach the same switches over BRP ([`crate::remote`], `remote` feature).
 
@@ -115,8 +115,13 @@ pub(crate) struct Switches<'w> {
     pub time: Option<ResMut<'w, SkyTime>>,
     pub config: Option<Res<'w, SkyConfig>>,
     clouds: Option<ResMut<'w, sf_atmos_bevy::Clouds>>,
-    /// Haze and dust follow the C key's cloud genus.
-    sky_weather: Option<ResMut<'w, crate::exterior::SkyWeather>>,
+    /// The live weather (C key, BRP `weather`): the world state, records, the grid's
+    /// climates, the camera's site and the pins.
+    weather: Option<ResMut<'w, sf_weather_bevy::WorldWeather>>,
+    weather_records: Option<Res<'w, sf_weather_bevy::WeatherRecords>>,
+    climates: Option<Res<'w, crate::exterior::ClimateMap>>,
+    site: Option<Res<'w, sf_weather_bevy::WeatherSite>>,
+    weather_overrides: Option<ResMut<'w, sf_weather_bevy::WeatherOverrides>>,
     /// Characters: smooth or vanilla bodies (B, `actors.rs`).
     bodies: Option<Res<'w, sf_character_bevy::CharacterSettings>>,
     /// Seamless portals (`--portals`): the exposure strength when on.
@@ -246,24 +251,45 @@ impl Switch {
     }
 }
 
-/// Index into `exterior::CLOUD_CHOICES` by genus name.
+/// Pins a cloud genus over the weather's clouds (`None`: the weather's).
 #[cfg(feature = "remote")]
-pub(crate) fn cloud_choice(name: &str) -> Option<usize> {
-    crate::exterior::CLOUD_CHOICES.iter().position(|c| c.name == name)
+pub(crate) fn set_clouds(s: &mut Switches, genus: Option<sf_atmos_bevy::sf_atmos::CloudPreset>) -> String {
+    let Some(o) = s.weather_overrides.as_mut() else {
+        return "clouds: no weather in this run (interior)".to_owned();
+    };
+    o.clouds = genus.map(crate::exterior::pinned_clouds);
+    genus.map_or_else(|| "clouds follow the weather".to_owned(), |g| format!("clouds pinned {}", g.name()))
 }
 
-/// Applies a cloud genus (`exterior::CLOUD_CHOICES` index) and its haze and dust.
-pub(crate) fn set_clouds(s: &mut Switches, choice: usize) -> String {
-    let choice = crate::exterior::CLOUD_CHOICES[choice];
-    let Some(c) = s.clouds.as_mut() else {
-        return "clouds: not in this run (interior or --off clouds)".to_owned();
-    };
-    c.settings = crate::exterior::cloud_settings(choice);
-    if let Some(w) = s.sky_weather.as_mut() {
-        w.look = choice.sky;
-    }
-    format!("clouds {}", choice.name)
+/// Game hours since the clock's epoch (the weather's time).
+fn weather_now(s: &Switches) -> Option<f64> {
+    let (time, config) = (s.time.as_ref()?, s.config.as_ref()?);
+    Some(time.0.days * f64::from(config.0.calendar.hours_per_day))
 }
+
+/// Forces a weather everywhere from now over `transition_hours` (`None`: the
+/// climate's; 0 skips), or with `None` glides back to the forecast.
+pub(crate) fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transition_hours: Option<f32>) -> String {
+    let Some(now) = weather_now(s) else {
+        return "weather: no clock in this run".to_owned();
+    };
+    let (Some(world), Some(records), Some(map)) = (s.weather.as_mut(), s.weather_records.as_ref(), s.climates.as_ref()) else {
+        return "weather: not in this run (interior or no weather records)".to_owned();
+    };
+    crate::weather::force_live(&records.0, &mut world.0, &map.climates(), ty, now, transition_hours);
+    format!("weather -> {}", ty.map_or("auto (forecast)", mw_weather::WeatherType::name))
+}
+
+/// The weather at the camera's climate.
+pub(crate) fn live_weather(s: &Switches) -> Option<crate::weather::LiveWeather> {
+    let now = weather_now(s)?;
+    let climate = s.site.as_ref()?.climates.first()?.0;
+    crate::weather::live_weather(&s.weather_records.as_ref()?.0, &s.weather.as_ref()?.0, climate, now)
+}
+
+/// The T key's clock speeds: normal (Morrowind's 30x), x4 (a weather
+/// transition in ~10-25 s), x20 (a day in ~2.4 min).
+pub(crate) const TIME_SCALES: [f32; 3] = [30.0, 120.0, 600.0];
 
 pub(crate) fn clock_label(clock: &SkyClock) -> &'static str {
     if clock.paused {
@@ -331,10 +357,10 @@ fn keys(
         };
         state.note(text, now);
     }
-    if input.just_pressed(KeyCode::KeyC) && s.clouds.is_some() {
-        // The cloud genera, in `exterior::CLOUD_CHOICES` order.
-        *cloud_preset = (*cloud_preset + 1) % crate::exterior::CLOUD_GENERA;
-        let text = set_clouds(&mut s, *cloud_preset);
+    if input.just_pressed(KeyCode::KeyC) && s.weather.is_some() {
+        // The Morrowind weathers in `REGN` order, each over the climate's transition.
+        *cloud_preset = (*cloud_preset + 1) % mw_weather::WeatherType::ALL.len();
+        let text = set_weather(&mut s, Some(mw_weather::WeatherType::ALL[*cloud_preset]), None);
         state.note(text, now);
     }
     if let (Some(time), Some(config)) = (s.time.as_mut(), s.config.as_ref()) {
@@ -357,9 +383,10 @@ fn keys(
             state.note(format!("clock {}", if time.0.paused { "paused" } else { "running" }), now);
         }
         if input.just_pressed(KeyCode::KeyT) {
-            time.0.time_scale = if time.0.time_scale < 100.0 { 600.0 } else { 30.0 };
+            let i = TIME_SCALES.iter().position(|s| *s >= time.0.time_scale).map_or(0, |i| (i + 1) % TIME_SCALES.len());
+            time.0.time_scale = TIME_SCALES[i];
             time.0.paused = false;
-            state.note(format!("time-lapse {} (x{})", on_off(time.0.time_scale > 100.0), time.0.time_scale), now);
+            state.note(format!("clock x{} (game time x{})", time.0.time_scale / TIME_SCALES[0], time.0.time_scale), now);
         }
     }
     if input.just_pressed(KeyCode::F9)
@@ -430,7 +457,7 @@ fn overlay(
             out,
             "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
              F5 far tint {}  F6 terrain LOD colors {}  F7 wireframe {}  F8 rings {}\n\
-             F10 clouds {}  F11 ground blend {}  C cloud preset  [ ] hour -/+0.5 (Shift 0.1)  P pause  T time-lapse  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
+             F10 clouds {}  F11 ground blend {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),

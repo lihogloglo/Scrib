@@ -62,7 +62,6 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-#[expect(clippy::large_enum_variant, reason = "parsed once at startup; `view` carries every flag")]
 enum Command {
     /// Show where detection looks and what it finds.
     Detect,
@@ -215,12 +214,11 @@ struct ViewFlags {
     /// height written "+h" is h meters above the ground (or the sea).
     #[arg(long, allow_hyphen_values = true)]
     camera: Option<String>,
-    /// Exteriors: clouds, a genus (clear, fair, cumulus, stratocumulus, altocumulus,
-    /// altostratus, cirrus, overcast, storm) or a Morrowind weather (cloudy, foggy, rain,
-    /// thunderstorm, ashstorm, blight, snow, blizzard). Default: the `--weather` (or the start
-    /// cell's forecast) weather's genus. `--off clouds` drops them.
+    /// Exteriors: pin a cloud genus (clear, fair, cumulus, stratocumulus, altocumulus,
+    /// altostratus, cirrus, overcast, storm) over the weather's clouds (their wind stays the
+    /// weather's). Default: the weather's. `--off clouds` drops them.
     #[arg(long, value_parser = parse_clouds)]
-    clouds: Option<exterior::CloudChoice>,
+    clouds: Option<sf_atmos_bevy::sf_atmos::CloudPreset>,
     /// Exteriors: force a Morrowind weather everywhere (clear, cloudy, foggy, overcast, rain,
     /// thunderstorm, ashstorm, blight, snow, blizzard) instead of the regions' forecast
     /// (M6 WE3, `sf_weather_bevy`).
@@ -234,7 +232,7 @@ struct ViewFlags {
     /// (weather.md N2).
     #[arg(long)]
     dust: Option<f32>,
-    /// Exteriors: multiplier on the `--clouds` weather's fog (height fog and ground-fog banks;
+    /// Exteriors: multiplier on the weather's fog (height fog and ground-fog banks;
     /// 0 none, 2 twice as dense), weather.md "Fog". `--off fog` drops the fog terms.
     #[arg(long)]
     fog: Option<f32>,
@@ -497,7 +495,7 @@ impl ViewFlags {
             hour: self.hour,
             day: self.day,
             sun_size: self.sun_size,
-            clouds: self.clouds.or_else(|| weather.start.and_then(|t| exterior::CloudChoice::parse(t.name()))).unwrap_or_default(),
+            clouds: self.clouds,
             haze: self.haze,
             dust: self.dust,
             fog: self.fog,
@@ -1017,10 +1015,10 @@ fn parse_quality(s: &str) -> std::result::Result<exterior::Quality, String> {
     exterior::Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: low, medium, high, ultra"))
 }
 
-/// `--clouds` values (genera and Morrowind weathers, `exterior::CLOUD_CHOICES`).
-fn parse_clouds(s: &str) -> std::result::Result<exterior::CloudChoice, String> {
-    exterior::CloudChoice::parse(s).ok_or_else(|| {
-        let names: Vec<_> = exterior::CLOUD_CHOICES.iter().map(|c| c.name).collect();
+/// `--clouds` values (the `sf_atmos` cloud genera).
+fn parse_clouds(s: &str) -> std::result::Result<sf_atmos_bevy::sf_atmos::CloudPreset, String> {
+    sf_atmos_bevy::sf_atmos::CloudPreset::parse(s).ok_or_else(|| {
+        let names: Vec<_> = sf_atmos_bevy::sf_atmos::CloudPreset::ALL.iter().map(|c| c.0).collect();
         format!("unknown clouds {s:?}: {}", names.join(", "))
     })
 }

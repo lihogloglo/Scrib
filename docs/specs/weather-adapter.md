@@ -370,3 +370,21 @@ is a no-op on screen (test `presets_match_the_app_tables`, every quarter hour ov
   cloud genus + fog look only.
 - **Bridge until part 2:** clouds and fog are picked once at start from the start weather; haze and wind follow the
   live forecast, so a long run can show e.g. rain haze under the start's clear clouds.
+
+## As built: WE3 part 2a (we3b1, 2026-10-19)
+
+- **Clouds, fog and sky cover follow the live weather** (`sf_weather_bevy` writes `Clouds`/`Fog` from the frame). The
+  app's scaffold tables are gone: `CLOUD_CHOICES`/`CloudChoice`, `SkyLook`/`FogLook`/`SKY_*`, `SkyWeather`,
+  `drive_sky_weather`, `feed_wind`, `fog_settings`, `ground_fog`. Their values live in the presets
+  (`mw_weather::visual`, proven equal by we2b's test). The app keeps only the cloud look (`CloudLook.scaled(0.5)`)
+  and `CLOUD_WORLD_SCALE` (now `mw_weather::visual`'s).
+- **Flags:** `--clouds <genus>` pins a genus over the weather's clouds (Morrowind weather names moved to
+  `--weather`); `--fog <x>` scales the weather's fog densities.
+- **Live controls** (owner request): C forces the next weather (REGN order) everywhere over the climate's
+  transition; T cycles the clock x1/x4/x20 (game time x30/x120/x600). BRP `bevyrrowind/set`: `weather: "<type>"`
+  (or `"auto"`: glide back to the forecast), `transition_hours` (0 skips), `time_scale`, `clouds: "<genus>"`
+  (`"weather"` unpins). `bevyrrowind/status.weather`: `current`, `clouds`/`fog` (how far the current weather has
+  come in per channel), `forced`, `next` (weather, hours until). A live force is an override in `WorldWeather`
+  (`weather::force_live`), so it replays like a script's `ChangeWeather`; `auto` forces the forecast's weather at
+  now, released at the next natural change (removing the override would pop).
+
