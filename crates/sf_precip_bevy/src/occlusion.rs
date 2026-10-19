@@ -2,7 +2,8 @@
 //! one top-down orthographic depth map around the camera that the drop shader
 //! samples to kill streaks under roofs and trees.
 //!
-//! Same technique as `sf_sky_bevy`'s far sun map (no pass of our own): on a
+//! Same mechanism as `sf_sky_bevy`'s far sun map, shared in
+//! [`sf_sky_bevy::sun_view`] (no pass of our own): on a
 //! redraw frame the map becomes one more shadow view of a shadow-casting
 //! directional light, looking straight down, so Bevy's shadow pass draws the
 //! casters (alpha mask included). Redrawn when the camera moved
@@ -10,36 +11,22 @@
 //! streamed in; steady frames cost nothing. Terrain and far proxies carry
 //! [`NoPrecipOcclusion`] (hosts add it): the ground is not an occluder.
 
-use core::any::TypeId;
-
 use glam::camera::rh::{proj::directx::orthographic, view::look_to_mat4};
 
 use bevy_app::{App, PreUpdate, Startup};
-use bevy_asset::{AssetId, Assets, Handle, RenderAssetUsages};
-use bevy_camera::primitives::{Aabb, Frustum};
-use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
+use bevy_asset::{Assets, Handle, RenderAssetUsages};
+use bevy_camera::primitives::Aabb;
+use bevy_camera::visibility::InheritedVisibility;
 use bevy_camera::{Camera, Camera3d};
 use bevy_ecs::prelude::*;
-use bevy_ecs::system::SystemChangeTick;
 use bevy_image::{Image, ImageSampler};
 use bevy_light::{DirectionalLight, NotShadowCaster};
-use bevy_math::{Dir3, Mat4, UVec4, Vec3, Vec4};
+use bevy_math::{Dir3, Mat4, Vec3, Vec4};
 use bevy_mesh::Mesh3d;
-use bevy_pbr::{prepare_lights, ExtractedDirectionalLight, LightEntity, Shadow, ShadowView, ViewLightEntities};
-use bevy_render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
-use bevy_render::render_asset::RenderAssets;
-use bevy_render::render_phase::ViewBinnedRenderPhases;
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_render::sync_world::{MainEntity, RenderEntity};
-use bevy_render::texture::{DepthStencilViewAttachment, DepthStencilViews, GpuImage};
-use bevy_render::view::{
-    collect_visible_cpu_culled_entities, ExtractedView, NoIndirectDrawing, RenderExtractedShadowMapVisibleEntities,
-    RenderExtractedVisibleEntities, RenderExtractedVisibleEntitiesClass, RenderShadowMapVisibleEntities, RenderVisibleEntities,
-    RetainedViewEntity,
-};
-use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
-use bevy_shape::{HalfSpace, ViewFrustum};
 use bevy_transform::components::GlobalTransform;
+use sf_sky_bevy::sun_view::{add_sun_view, SunViewRequest, SunViewSource};
 
 /// Subview index among the light's subviews (cascades 0..4, far sun map 0xFA).
 const SUBVIEW: u32 = 0xFB;
@@ -87,21 +74,12 @@ pub struct PrecipOcclusionStats {
 }
 
 #[derive(Resource, Clone, Debug, Default)]
-struct Frame(Option<Redraw>);
+struct Frame(Option<SunViewRequest>);
 
-#[derive(Clone, Debug)]
-struct Redraw {
-    view_from_world: Mat4,
-    clip_from_world: Mat4,
-    light: Entity,
-    camera: Entity,
-    image: AssetId<Image>,
-    casters: Vec<(Entity, MainEntity)>,
-}
-
-impl Redraw {
-    fn retained(&self) -> RetainedViewEntity {
-        RetainedViewEntity::new(MainEntity::from(self.light), Some(MainEntity::from(self.camera)), SUBVIEW)
+impl SunViewSource for Frame {
+    const PASS_NAME: &'static str = "precip_occlusion";
+    fn request(&self) -> Option<&SunViewRequest> {
+        self.0.as_ref()
     }
 }
 
@@ -117,17 +95,9 @@ pub fn top_down(center: Vec3) -> (Mat4, Mat4) {
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<PrecipOcclusionConfig>()
         .init_resource::<PrecipOcclusionStats>()
-        .init_resource::<Frame>()
         .add_systems(Startup, setup)
         .add_systems(PreUpdate, update);
-    let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
-    render_app.init_resource::<Frame>().add_systems(ExtractSchedule, extract).add_systems(
-        Render,
-        (
-            inject_casters.in_set(RenderSystems::PrepareAssets).before(collect_visible_cpu_culled_entities),
-            prepare_view.in_set(RenderSystems::CreateViews).after(prepare_lights),
-        ),
-    );
+    add_sun_view::<Frame>(app);
 }
 
 fn map_image(size: u32) -> Image {
@@ -204,81 +174,15 @@ fn update(
     stats.casters = found.len();
     out.clip_from_world = clip_from_world;
     out.params = Vec4::new(1.0, ABOVE_M + BELOW_M, 0.0, 0.0);
-    frame.0 = Some(Redraw { view_from_world, clip_from_world, light, camera, image: out.image.id(), casters: found });
+    frame.0 = Some(SunViewRequest {
+        light,
+        camera,
+        subview: SUBVIEW,
+        image: out.image.id(),
+        size: MAP_SIZE,
+        view_from_world,
+        clip_from_world,
+        casters: found,
+    });
 }
 
-fn extract(mut commands: Commands, frame: Extract<Res<Frame>>) {
-    commands.insert_resource(Frame(frame.0.clone()));
-}
-
-fn inject_casters(
-    frame: Res<Frame>,
-    ticks: SystemChangeTick,
-    mut lights: Query<
-        (&MainEntity, &mut RenderShadowMapVisibleEntities, &mut RenderExtractedShadowMapVisibleEntities),
-        With<ExtractedDirectionalLight>,
-    >,
-) {
-    let Some(redraw) = &frame.0 else { return };
-    for (main, mut visible, mut extracted) in &mut lights {
-        if main.id() != redraw.light {
-            continue;
-        }
-        let key = redraw.retained();
-        visible.subviews.insert(key, (ticks.this_run(), RenderVisibleEntities::default()));
-        let mut list = RenderExtractedVisibleEntities::default();
-        list.classes.insert(TypeId::of::<Mesh3d>(), RenderExtractedVisibleEntitiesClass { entities: redraw.casters.clone() });
-        extracted.subviews.insert(key, list);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_view(
-    mut commands: Commands,
-    frame: Res<Frame>,
-    images: Res<RenderAssets<GpuImage>>,
-    lights: Query<(Entity, &MainEntity, Option<&RenderLayers>), With<ExtractedDirectionalLight>>,
-    mut views: Query<(&MainEntity, &mut ViewLightEntities, Has<NoIndirectDrawing>)>,
-    mut phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
-    support: Res<GpuPreprocessingSupport>,
-    mut spawned: Local<Option<Entity>>,
-) {
-    if let Some(old) = spawned.take() {
-        commands.entity(old).despawn();
-    }
-    let Some(redraw) = &frame.0 else { return };
-    let Some(gpu) = images.get(redraw.image) else { return };
-    let Some((light, _, layers)) = lights.iter().find(|(_, m, _)| m.id() == redraw.light) else { return };
-    let Some((_, mut view_lights, no_indirect)) = views.iter_mut().find(|(m, _, _)| m.id() == redraw.camera) else { return };
-    let mode = support.min(if no_indirect { GpuPreprocessingMode::PreprocessingOnly } else { GpuPreprocessingMode::Culling });
-    let key = redraw.retained();
-    let world_from_view = redraw.view_from_world.inverse();
-    let mut frustum = ViewFrustum::from_clip_from_world(&redraw.clip_from_world);
-    // Casters above the top plane still cast (like Bevy's cascades).
-    let near = frustum.half_spaces[ViewFrustum::NEAR_PLANE_IDX].normal();
-    frustum.half_spaces[ViewFrustum::NEAR_PLANE_IDX] = HalfSpace::new(near.extend(f32::INFINITY));
-    let depth_attachment =
-        DepthStencilViewAttachment::new(DepthStencilViews::DepthOnly { depth_view: gpu.texture_view.clone() }, Some(0.0), None);
-    let mut entity = commands.spawn((
-        ShadowView { depth_attachment, pass_name: "precip_occlusion".into() },
-        ExtractedView {
-            retained_view_entity: key,
-            viewport: UVec4::new(0, 0, MAP_SIZE, MAP_SIZE),
-            world_from_view: GlobalTransform::from(world_from_view),
-            clip_from_view: redraw.clip_from_world * world_from_view,
-            clip_from_world: Some(redraw.clip_from_world),
-            target_format: bevy_pbr::CORE_3D_SHADOW_MAP_FORMAT,
-            color_grading: bevy_render::view::ColorGrading::default(),
-            invert_culling: false,
-        },
-        Frustum(frustum),
-        LightEntity::Directional { light_entity: light, cascade_index: 0 },
-        layers.cloned().unwrap_or_default(),
-    ));
-    if mode != GpuPreprocessingMode::Culling {
-        entity.insert(NoIndirectDrawing);
-    }
-    view_lights.lights.push(entity.id());
-    phases.prepare_for_new_frame(key, mode);
-    *spawned = Some(entity.id());
-}

@@ -6252,6 +6252,7 @@ dependencies = [
  "bevy_transform",
  "glam 0.33.12",
  "sf_render_order_bevy",
+ "sf_sky_bevy",
 ]
 
 [[package]]

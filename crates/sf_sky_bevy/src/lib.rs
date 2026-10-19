@@ -24,6 +24,7 @@ mod night;
 mod path;
 mod proxy;
 mod shadow_budget;
+pub mod sun_view;
 mod upscale;
 
 // Headless: the `solari` feature pulls in render-world plugins.

@@ -27,6 +27,7 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 bevy_time = { workspace = true, features = ["std"] }
 
 sf_render_order_bevy = { path = "../sf_render_order_bevy" }
+sf_sky_bevy = { path = "../sf_sky_bevy" }
 
 [lints]
 workspace = true
