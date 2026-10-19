@@ -608,6 +608,21 @@ two-cell hysteresis, so shifts drop by half or more; the shift guard's
 prediction in `stream.rs` must follow it). The gate formulation is settled
 (diag.md "Frame pacing").
 
+### Visibility range slots (lodaudit, 2026-10-19)
+
+Bevy 0.20 keeps one GPU slot per **distinct** `VisibilityRange` for the app's lifetime
+(`RenderVisibilityRanges` in bevy_render `view/visibility/range.rs`: never reused, so baked mesh
+indices stay valid) and has 65535 of them; past that, new ranges share slot 0 (one `warn_once`), and the
+shader dither (`get_visibility_range_dither_level`) reads slot 0's bounds while the CPU check still says
+visible: a near mesh can dither fully out. Our ranges were per instance (scale × LOD error, size-cull
+radius, subtree offset, far-node lead), so nearly every placement minted new ones and a long flight walks
+toward the cap. Industry engines share LOD distances per level or per class, never per instance (UE
+screen-size per LOD, HLOD per layer). As built: `sf_world_bevy::shared_range` rounds every bound **up**
+onto a log grid (`RANGE_STEPS_PER_OCTAVE` = 32, ~2.2 %); monotone and bit-stable, so matched crossfades
+and proxy lead overlaps survive. Used by `visibility_range` (static chains, subtree ranges) and
+`sf_lod_bevy` node ranges. Left: `mw_assets` interior cooked path still builds raw ranges (few per cell);
+unverified live that the cap was the owner's trigger (warning not hit in a 5-spot BRP flight).
+
 ## Verification
 
 - Unit tests (`sf_world`): scheduler outputs are deterministic for scripted

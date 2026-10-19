@@ -254,9 +254,10 @@ fn subtree_ranges_reach_late_meshes() {
     let mesh = world.spawn((Transform::from_xyz(0.0, 4.0, 0.0), ChildOf(node), Mesh3d::default())).id();
     let loose = world.spawn((Transform::default(), Mesh3d::default())).id();
     world.run_system_once(apply_subtree_ranges).expect("runs");
-    // Offset |(3, 4, 0)| × 2 = 10 m: fade 110..120 m.
+    // Offset |(3, 4, 0)| × 2 = 10 m: fade 110..120 m, snapped outward onto the shared grid.
     let range = world.get::<VisibilityRange>(mesh).expect("range");
-    assert!((range.end_margin.start - 110.0).abs() < 1e-4 && (range.end_margin.end - 120.0).abs() < 1e-4, "{:?}", range.end_margin);
+    let near = |v: f32, want: f32| v >= want && v < want * 1.022;
+    assert!(near(range.end_margin.start, 110.0) && near(range.end_margin.end, 120.0), "{:?}", range.end_margin);
     assert!(world.get::<VisibilityRange>(loose).is_none(), "meshes outside a subtree keep no range");
 }
 
@@ -299,4 +300,37 @@ fn size_culling_shortens_small_placements_only() {
     // Off.
     let off = sf_model::LodScreen { min_pixels: 0.0, ..lod };
     assert_eq!(size_culled_end(&off, &at(PlacementClass::Dynamic, none, 0.06), 648.0, 0.0, None), (648.0, 0.0));
+}
+
+/// Per-instance ranges snap onto a shared grid (streaming.md, "Visibility range
+/// slots"): few distinct ranges, bounds never pulled in, matched crossfades kept.
+#[test]
+fn shared_ranges_collapse_per_instance_values() {
+    use std::collections::HashSet;
+    let lod = sf_model::LodScreen::default();
+    let mut distinct = HashSet::new();
+    // 20k placements with distinct scales: errors scale per instance.
+    for i in 0..20_000u32 {
+        #[allow(clippy::cast_precision_loss)]
+        let scale = 0.7 + i as f32 * 3.1e-5;
+        let errors = [0.0, 0.01 * scale, 0.04 * scale];
+        let ranges = chain_ranges(&errors, &lod, 400.0 + scale, 40.0);
+        let vis: Vec<_> = ranges.iter().filter_map(visibility_range).collect();
+        for (a, b) in vis.iter().zip(vis.iter().skip(1)) {
+            assert_eq!(a.end_margin, b.start_margin, "matched crossfade survives rounding");
+        }
+        for (r, v) in ranges.iter().zip(ranges.iter().map(visibility_range)) {
+            let Some(v) = v else { continue };
+            assert!(v.end_margin.end >= r.end, "bounds only move outward");
+            assert_eq!(v.start_margin.start == 0.0, r.start - r.start_margin * 0.5 <= 0.0);
+            distinct.insert([v.start_margin.start, v.start_margin.end, v.end_margin.start, v.end_margin.end].map(f32::to_bits));
+        }
+    }
+    assert!(distinct.len() < 2_000, "{} distinct ranges", distinct.len());
+    let q = shared_range(bevy::camera::visibility::VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: 100.0..110.0,
+        use_aabb: false,
+    });
+    assert!(q.end_margin.start >= 100.0 && q.end_margin.start < 100.0 * 1.022);
 }

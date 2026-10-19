@@ -388,7 +388,46 @@ pub fn visibility_range(r: &LodRange) -> Option<VisibilityRange> {
         em *= k;
     }
     let band = |center: f32, half: f32| -> Range<f32> { (center - half).max(0.0)..center + half };
-    Some(VisibilityRange { start_margin: band(r.start, sm), end_margin: band(r.end, em), use_aabb: false })
+    Some(shared_range(VisibilityRange { start_margin: band(r.start, sm), end_margin: band(r.end, em), use_aabb: false }))
+}
+
+/// Grid steps per doubling of distance for [`shared_range`]: 2^(1/32), about
+/// 2.2 %, so 1 m to 16 km is ~450 values per bound.
+pub const RANGE_STEPS_PER_OCTAVE: f32 = 32.0;
+
+/// A visibility range with every bound rounded **up** onto a shared
+/// logarithmic grid ([`RANGE_STEPS_PER_OCTAVE`]), so that placements share
+/// a small set of distinct ranges (streaming.md, "Visibility range slots").
+///
+/// Why: Bevy 0.20's render world gives every distinct `VisibilityRange` a
+/// GPU slot for the app's lifetime (`RenderVisibilityRanges`, never reused)
+/// and has only 65535; past that, new ranges share slot 0 and the shader's
+/// dither reads slot 0's bounds, so a mesh the CPU keeps visible can be
+/// dithered out (near foliage vanishing after a flight). Per-instance
+/// ranges (scale × LOD error, size culling, subtree offsets) made nearly
+/// every placement's range unique. Engines share LOD distances per level or
+/// per class, never per instance; this keeps our per-instance math but
+/// snaps its output.
+///
+/// The rounding is monotone (`a ≤ b` stays `a ≤ b`) and equal inputs give
+/// bit-equal outputs, so matched crossfades (a level's end band equal to
+/// the next one's start band) and lead overlaps with far-field proxies
+/// survive; bounds only move outward by under 2.2 %.
+pub fn shared_range(r: VisibilityRange) -> VisibilityRange {
+    let q = |d: f32| -> f32 {
+        if d <= 0.0 || !d.is_finite() {
+            return d;
+        }
+        let k = (d.log2() * RANGE_STEPS_PER_OCTAVE).ceil();
+        let v = (k / RANGE_STEPS_PER_OCTAVE).exp2();
+        // log2/exp2 rounding can land a hair below `d`: take the next step.
+        if v < d { ((k + 1.0) / RANGE_STEPS_PER_OCTAVE).exp2() } else { v }
+    };
+    VisibilityRange {
+        start_margin: q(r.start_margin.start)..q(r.start_margin.end),
+        end_margin: q(r.end_margin.start)..q(r.end_margin.end),
+        use_aabb: r.use_aabb,
+    }
 }
 
 /// Maps a model's engine-neutral material to Bevy's.

@@ -175,7 +175,8 @@ fn node_path(ws: &WorldspaceId, key: NodeKey) -> String {
 }
 
 fn visibility(r: &FadeRange) -> VisibilityRange {
-    VisibilityRange { start_margin: r.start.clone(), end_margin: r.end.clone(), use_aabb: false }
+    // Shared slots: Bevy keeps one GPU slot per distinct range (sf_world_bevy::shared_range).
+    sf_world_bevy::shared_range(VisibilityRange { start_margin: r.start.clone(), end_margin: r.end.clone(), use_aabb: false })
 }
 
 /// Runtime levels: the baked handoffs (from the directory) on the
