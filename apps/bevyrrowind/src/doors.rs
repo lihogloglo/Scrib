@@ -16,7 +16,7 @@ use bevy::light::{AmbientLight, GlobalAmbientLight};
 use bevy::prelude::*;
 use mw_assets::LightCalibration;
 use mw_world::CellEnvironment;
-use sf_sky_bevy::{MoonLight, SkyCamera, SunLight};
+use sf_sky_bevy::SkyCamera;
 use sf_terrain_bevy::{TerrainCamera, TerrainPatch};
 use sf_world::{DoorLink, LinkEnd, Location, Worldspace, WorldspaceId};
 use sf_world_bevy::{
@@ -309,7 +309,6 @@ pub(crate) fn worldspace_look(
     mut ambient: ResMut<GlobalAmbientLight>,
     outdoors: Option<ResMut<sf_audio_bevy::ListenerOutdoors>>,
     mut cams: Query<(Entity, &mut Camera, Option<&Exposure>, Has<SkyCamera>, Has<TerrainCamera>), With<DoorUser>>,
-    sky_lights: Query<Entity, Or<(With<SunLight>, With<MoonLight>)>>,
     mut seen: Local<Option<WorldspaceId>>,
     mut saved: Local<ExteriorLook>,
 ) {
@@ -318,7 +317,9 @@ pub(crate) fn worldspace_look(
     if seen.as_ref() == Some(&ws) {
         return;
     }
-    let Some(entry) = registry.get(&ws) else { return };
+    if registry.get(&ws).is_none() {
+        return;
+    }
     let Ok((cam, mut camera, exposure, has_sky, has_terrain)) = cams.single_mut() else { return };
     *seen = Some(ws.clone());
     let env = envs.0.get(&ws);
@@ -327,12 +328,9 @@ pub(crate) fn worldspace_look(
     if let Some(mut outdoors) = outdoors {
         outdoors.0 = sky;
     }
-    // Sun and moon light the worldspace that shows the sky, and only that:
-    // moving them onto an interior's layer lit the office with the noon sun
-    // for the frame of a portal crossing (the white flash, portals.md).
-    for light in sky_lights.iter().filter(|_| sky) {
-        commands.entity(light).insert(bevy::camera::visibility::RenderLayers::from_layers(&[0, entry.layer]));
-    }
+    // Sun and moon light the worldspace that shows the sky, and only that
+    // (`exterior::light_layers`; on an interior's layer they lit the office with
+    // the noon sun for the frame of a portal crossing, the white flash, portals.md).
     let mut e = commands.entity(cam);
     if let Some((amb, clear)) = interior_look(env, &calibration) {
         if saved.ambient.is_none() {

@@ -249,6 +249,16 @@ lamp covers the room (at 3 m the walkers likely stay out of every lamp, so the c
 lampcost's census split (contact 0.68, PCF 0.11, aux 0.13-0.16 per lamp, render thread +0.5 per cached lamp); the lab
 runs ~15% higher because every lamp covers the full screen. Not swept yet: `--off shadowcache`, 960p, filter, orbit.
 
+**Shadow reset A1 (shadowA1, 2026-10-21; `target/perf/a1-*`; 1440p, High, profiling exe, x3; the lock screen kept
+idle-clock GPU load at 25-40 %, so runs went with `--max-wait-min 0.3`).** Lamp contact off, sun/moon out of interior
+views, GTAO. Lab `point-shadows` 0/2/4/8 (`--off ssao`): frame 3.30/5.59/8.09/12.50 → **3.15/4.39/5.26/6.93**, opaque
+2.19/4.24/6.29/9.75 → 1.34/1.63/1.94/2.49 (= the old `--off contactshadows` sweep, minus the leak). GTAO (Bevy
+`ScreenSpaceAmbientOcclusion`, needs the normal prepass): timed GPU lab 4.64 → Low 5.24 / **Medium 5.45** / High 6.05;
+census +0.92, walk +0.93 (SSAO pass 0.75 + normal prepass 0.07-0.15); frame medians +0.3 (CPU/render-thread bound).
+High = Medium level (`Quality::ssao`); ~half under DLSS Quality. Real scenes vs `s2final-8` (8 lamps, x1): census
+median 9.63 → 8.71 (p95 16.7 → 11.0, timed GPU 9.97 → 5.90; 8.37/4.98 `--off ssao`); walk 12.61 → 13.26 (GPU 8.50 →
+9.66; 12.94/8.73 `--off ssao`): the walk is not GPU-bound, so GTAO and the reset barely move its median.
+
 
 ## Dev loop
 

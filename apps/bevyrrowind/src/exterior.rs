@@ -26,7 +26,7 @@ use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, ShadowFilteringMethod};
-use bevy::pbr::ContactShadows;
+use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::transform::TransformPlugin;
@@ -135,6 +135,8 @@ struct Start {
     prepass: bool,
     /// Screen-space contact shadows (`None`: off; `--off contactshadows`).
     contact: Option<ContactShadows>,
+    /// Bevy GTAO (`None`: off; Low preset, `--off ssao`).
+    ssao: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
     shadow_filter: ShadowFilteringMethod,
 }
 
@@ -253,7 +255,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     render.insert(&mut app);
     let off_parts = &perf.off;
     let contact_shadows = !off_parts.has(Part::ContactShadows) && options.quality.contact_shadows().is_some();
-    app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows, ..render.point_shadow_budget(options.quality.point_shadows()) });
+    // Shadow reset A1 (shadows.md "Reset A1 as built"): contact shadows are the sun's and
+    // moon's only; per lamp the march cost 0.8 ms GPU (perf.md "Light lab cost model") and
+    // drew the thin view-dependent bands of SH-14. A/B: BEVYRROWIND_LAMP_CONTACT=1.
+    let lamp_contact = contact_shadows && std::env::var("BEVYRROWIND_LAMP_CONTACT").as_deref() == Ok("1");
+    app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows: lamp_contact, ..render.point_shadow_budget(options.quality.point_shadows()) });
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
         cascades: sun_cascades(options.quality, render.sun_cascades, &far_settings.levels, off_parts.has(Part::ShadowTune), off_parts.has(Part::ShadowSplits)),
@@ -365,6 +371,18 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(),
             prepass: options.prepass,
             contact: if perf.off.has(Part::ContactShadows) { None } else { options.quality.contact_shadows() },
+            // A1 A/B: BEVYRROWIND_SSAO=low|medium|high|ultra overrides the preset's level.
+            ssao: if perf.off.has(Part::Ssao) {
+                None
+            } else {
+                match std::env::var("BEVYRROWIND_SSAO").as_deref() {
+                    Ok("low") => Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
+                    Ok("medium") => Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
+                    Ok("high") => Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
+                    Ok("ultra") => Some(ScreenSpaceAmbientOcclusionQualityLevel::Ultra),
+                    _ => options.quality.ssao(),
+                }
+            },
             // lampcost A/B (perf.md "Per-lamp GPU cost"): BEVYRROWIND_SHADOW_FILTER=hardware|gaussian|temporal.
             shadow_filter: match std::env::var("BEVYRROWIND_SHADOW_FILTER").as_deref() { Ok("hardware") => ShadowFilteringMethod::Hardware2x2, Ok("gaussian") => ShadowFilteringMethod::Gaussian, Ok("temporal") => ShadowFilteringMethod::Temporal, _ => options.quality.shadow_filter(options.render.upscaling.is_temporal()) },
         })
@@ -620,6 +638,12 @@ fn setup(
     if let Some(contact) = start.contact {
         camera.insert((contact, DepthPrepass, MotionVectorPrepass));
     }
+    // ROADMAP 1.5: Bevy GTAO on the same camera outdoors and indoors. It needs the depth +
+    // normal prepass (motion vectors too, so the prepass applies the LOD dither) and MSAA off:
+    // the native fallback of F4 restores the spawn MSAA (`sf_sky_bevy::upscale`).
+    if let Some(quality_level) = start.ssao {
+        camera.insert((ScreenSpaceAmbientOcclusion { quality_level, ..default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
+    }
     if !start.bench {
         camera.insert(FreeCamera { walk_speed: 12.0, run_speed: 80.0, ..FreeCamera::default() });
     }
@@ -732,18 +756,34 @@ fn sync_origin(
     }
 }
 
-type SkyLightsWithoutLayers = (Or<(With<SunLight>, With<MoonLight>)>, Without<RenderLayers>);
+type SkyLights = Or<(With<SunLight>, With<MoonLight>)>;
 type CameraNotPlayer = (With<ExteriorCamera>, Without<Player>);
 
-/// The sky's sun and moon light (and shadow) the exterior's render layer too.
+/// The sky's sun and moon light (and shadow) the active worldspace while it shows the
+/// sky, `[0, its layer]` like its camera, and no view otherwise. Bevy filters
+/// directional lights per view by layers (not per mesh), so a sun on `[0, exterior]`
+/// stayed in every interior view through the shared layer 0: unlit there (no
+/// `SkyCamera`, illuminance 0) but still evaluated per pixel with its contact-shadow
+/// march (0.8 ms at 1440p, perf.md "Shadow reset A1"). The only writer of these layers.
 fn light_layers(
     mut commands: Commands,
     registry: Res<WorldspaceRegistry>,
-    lights: Query<Entity, SkyLightsWithoutLayers>,
+    active: Res<ActiveWorldspace>,
+    envs: Option<Res<crate::doors::Environments>>,
+    lights: Query<(Entity, Option<&RenderLayers>), SkyLights>,
 ) {
-    let Some(entry) = registry.get(&ids::exterior()) else { return };
-    for e in &lights {
-        commands.entity(e).insert(RenderLayers::from_layers(&[0, entry.layer]));
+    let ws = active.0.clone().unwrap_or_else(ids::exterior);
+    let sky = envs.is_none_or(|envs| envs.0.get(&ws).is_none_or(|e| e.sky));
+    let want = if sky {
+        let Some(entry) = registry.get(&ws) else { return };
+        RenderLayers::from_layers(&[0, entry.layer])
+    } else {
+        RenderLayers::none()
+    };
+    for (e, layers) in &lights {
+        if layers != Some(&want) {
+            commands.entity(e).insert(want.clone());
+        }
     }
 }
 
@@ -1083,6 +1123,9 @@ fn sun_cascades(quality: Quality, fixed: Option<(usize, f32)>, levels: &sf_lod::
 /// PCSS light size in cascade texels (see [`Quality::soft_shadow_size`]); tuned by eye.
 const SOFT_SHADOW_SIZE: f32 = 10.0;
 
+/// Contact-shadow ray length, meters (Bevy's default; [`Quality::contact_shadows`]).
+const CONTACT_LENGTH: f32 = 0.3;
+
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
 /// Bevy's 1.8-texel normal offset lifts every lookup off the surface by 1.3 m in
 /// the last cascade, so small casters lose the shadow where they touch the ground;
@@ -1256,12 +1299,26 @@ impl Quality {
     /// Screen-space contact shadows (shadows F1, weather.md "Shadow bias and contact
     /// shadows"): Bevy's depth-prepass ray march toward the sun and the budgeted point
     /// lights, so small objects stay grounded at any cascade texel size. Off on Low
-    /// (it costs the depth + motion-vector prepass).
+    /// (it costs the depth + motion-vector prepass). Sun and moon only since shadow reset A1
+    /// (lamps: `BEVYRROWIND_LAMP_CONTACT=1`); length 0.3 m = Bevy's default (was 0.5: the
+    /// long view-dependent bands at object edges, SH-14).
     pub const fn contact_shadows(self) -> Option<ContactShadows> {
         match self {
             Self::Low => None,
-            Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.5 }),
-            Self::High | Self::Ultra => Some(ContactShadows { linear_steps: 16, thickness: 0.1, length: 0.5 }),
+            Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: CONTACT_LENGTH }),
+            Self::High | Self::Ultra => Some(ContactShadows { linear_steps: 16, thickness: 0.1, length: CONTACT_LENGTH }),
+        }
+    }
+
+    /// Bevy GTAO quality (ROADMAP 1.5, shadows.md "Reset A1 as built"): off on Low (MSAA,
+    /// no prepass), slices x samples 1x2 / 2x2 / 3x3 on Medium / High / Ultra, temporal
+    /// noise under TAA or DLSS.
+    pub const fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel> {
+        match self {
+            Self::Low => None,
+            Self::Medium => Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
+            Self::High => Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
+            Self::Ultra => Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
         }
     }
 

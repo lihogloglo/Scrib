@@ -163,6 +163,17 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   pop in a few metres ahead (end of the hall gets its shadows only when walking through the door): shadowed-set
   changes are visible. Goes to slice A/B (budget + light lab).
 
+### SH-16: Shadow reset A1 (lamp contact off, sun out of interiors, GTAO)
+- Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office"`; `.\bevyrrowind
+  scene lamps-handoff` (Balmora 22:00, walk the street); `.\bevyrrowind view Balmora --camera "-280,+12,200,-295,+1,180"
+  --hour 15 --weather clear` (SH-14's spot), turn the camera. A/B `--off ssao`, env `BEVYRROWIND_LAMP_CONTACT=1`.
+- Look for: no thin view-dependent bands at object edges near lamps (SH-14), the sun's own contact shadow short
+  (0.3 m); soft darkening in room corners, under tables/crates and where walls meet the floor, without dark halos
+  around NPCs or a grainy crawl under TAA/DLSS; indoors nothing lit or shadowed from the sun's direction; at night
+  torch-bearers' own lights cast moving shadows (within High's 8); outdoors sun shadows, cloud shadows and rain
+  occlusion under roofs as before.
+- Status: awaiting owner.
+
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
   21:15, fog). Turn the camera fast left or right.

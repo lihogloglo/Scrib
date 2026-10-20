@@ -80,8 +80,11 @@ and effects. Every task reports its ms cost per preset.
   fade 30-40 m; census 8 lamps 16.8 → ~6.3 ms; walk gate not met (walkers by lamps). Owner: SH-15, High's count.
   **Audit 2026-10-21 (render-audit):** no renderer rewrite; shadow lane reset proposed (Bevy patch instead of
   injection, delete layers, GTAO + capsule shadows); owner decision pending. `research/shadows/2026-10-21-audit.md`.
+  **Reset A1 done (2026-10-21, shadowA1):** lamp contact off, sun 0.3 m, sun/moon out of interiors, GTAO; lab 8 lamps
+  12.5 → 6.9 ms, census GPU 9.97 → 5.90; torch-bearers in the budget (verified). SH-16 awaiting owner. Next A2.
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
-- [ ] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset.
+- [~] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset. Built in A1 (Low off, Medium/High/Ultra = Bevy Low/Medium/
+  High; ~0.9 ms GPU at 1440p native on High, perf.md "Shadow reset A1"); look awaiting owner (SH-16).
 - [x] 1.6 Object-terrain blending removed (2026-10-20, lights1): code, `--off terrainblend`, F11, TB-1..3; `lod.near` v3.
   Walk 1440p 25.9 → 14.7 ms, Balmora 15.9 → 13.1 (perf.md "Terrain blend removed"). Redo is eye candy (WISHLIST §13).
 - [ ] 1.7 Night brightness (LT-1 rejected: "can't see anything"): exposure floor + night ambient retune; then
@@ -158,6 +161,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   existing Morrowind groundcover mods (mesh instances from their plugins; bevy_grass has no custom meshes).
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+
+- 2026-10-21 (shadowA1): shadow reset A1: lamp contact shadows off, sun contact 0.3 m, sun/moon off interior views
+  (layer-0 leak; they never lit interiors), GTAO per preset (+0.9 ms GPU High 1440p); lab 8 lamps 12.5 → 6.9 ms.
 
 - 2026-10-21 (lightlab): light lab: level `light-lab` + `perf sweep` (one variable per run); cost model in perf.md:
   per lamp 0.11 ms unshadowed, +0.49 ms shadowed (cube+PCF), +1.15 ms with contact (0.80 march); sun leak reproduced.

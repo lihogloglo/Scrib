@@ -410,7 +410,7 @@ pub(super) fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[Su
 }
 
 fn run_name(scenario: &str, variant: &str, repeat: usize) -> String {
-    format!("{scenario}@{}-{repeat}", variant.replace([' ', ','], "_"))
+    format!("{scenario}@{}-{repeat}", variant.replace([' ', ',', ':'], "_"))
 }
 
 /// Waits for a quiet machine: none of `busy` running, GPU and CPU idle.

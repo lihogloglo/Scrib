@@ -92,6 +92,8 @@ pub enum Part {
     SoftShadows,
     /// Screen-space contact shadows (shadows F1).
     ContactShadows,
+    /// Screen-space ambient occlusion (Bevy GTAO, ROADMAP 1.5; Medium and up).
+    Ssao,
     /// Shadows F3 sun cascades (practical split to ~250 m); off = the A1 504 m layout.
     ShadowSplits,
     /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`; parked: off anyway).
@@ -133,7 +135,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 39] = [
+    const ALL: [(&'static str, Part); 40] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -154,6 +156,7 @@ impl Part {
         ("shadowtune", Part::ShadowTune),
         ("softshadows", Part::SoftShadows),
         ("contactshadows", Part::ContactShadows),
+        ("ssao", Part::Ssao),
         ("shadowsplits", Part::ShadowSplits),
         ("shadowcache", Part::ShadowCache),
         ("envslice", Part::EnvSlice),
