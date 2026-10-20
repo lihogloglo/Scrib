@@ -12,7 +12,10 @@
 //! - *Cached*: Bevy's views see **moving** casters only. Before Bevy's shadow pass
 //!   a depth-copy draw restores the cached faces into Bevy's cube layer (which
 //!   turns Bevy's clear into a load), so Bevy draws the movers over the copy and
-//!   its sampling (filters, PCSS, clusters) is unchanged.
+//!   its sampling (filters, PCSS, clusters) is unchanged. A cached face with no
+//!   mover in it loses its Bevy view altogether (shadows v2 V1): each Bevy face
+//!   view runs the whole `Core3d` schedule (~0.35 ms of render thread), so
+//!   those faces are restored by one pass in the camera's schedule instead.
 //! - A moving light is left to Bevy (full redraw) until it stops.
 //!
 //! Casters are classified automatically: skinned meshes and anything marked
@@ -283,6 +286,19 @@ impl Lights {
     }
 }
 
+/// Keeps a light's face lists to static casters (capturing) or movers
+/// (restoring); returns the faces left with something to draw (bit per face).
+fn filter_faces(faces: &mut CubemapVisibleEntities, moving: &HashSet<Entity>, capture: bool) -> u8 {
+    let mut drawn = 0u8;
+    for (i, face) in faces.iter_mut().enumerate() {
+        face.entities.retain(|e| moving.contains(e) != capture);
+        if !face.entities.is_empty() {
+            drawn |= 1 << i;
+        }
+    }
+    drawn
+}
+
 /// Texture capacity for `used` slots: steps of 4, at most `max`.
 fn capacity_for(used: u32, max: u32) -> u32 {
     used.div_ceil(4).max(1).saturating_mul(4).min(max)
@@ -376,15 +392,13 @@ fn classify_lights(
             SlotState::Capture => true,
             SlotState::Valid => false,
         };
-        for face in faces.iter_mut() {
-            face.entities.retain(|e| casters.moving.contains(e) != capture);
-        }
+        let movers = filter_faces(&mut faces, &casters.moving, capture);
         if capture {
             counts.capturing += 1;
         } else {
             counts.cached += 1;
         }
-        frame.lights.push(render::CachedLight { light: entity, slot: cached.slot, capture, generation: cached.generation });
+        frame.lights.push(render::CachedLight { light: entity, slot: cached.slot, capture, generation: cached.generation, movers });
     }
     let capacity = capacity_for(l.next, max);
     if capacity != l.capacity {

@@ -1,14 +1,18 @@
-//! Render world: the persistent cube array and the two depth-copy passes
-//! around Bevy's point-light shadow pass (restore before, capture after).
+//! Render world: the persistent cube array and the depth-copy passes around
+//! Bevy's point-light shadow pass (restore before, capture after). Cached
+//! faces with no mover lose their Bevy view right after `prepare_lights`
+//! ([`detach_views`]) and are restored once per frame from the camera's
+//! schedule ([`restore_detached`]).
 
 use std::collections::HashMap;
 
 use bevy_app::App;
 use bevy_asset::{load_embedded_asset, Handle};
-use bevy_core_pipeline::schedule::Core3d;
+use bevy_core_pipeline::schedule::{Core3d, RootNonCameraView};
 use bevy_core_pipeline::FullscreenShader;
 use bevy_ecs::prelude::*;
-use bevy_pbr::{shared_shadow_pass, ExtractedPointLight, LightEntity, ShadowView, CORE_3D_SHADOW_MAP_FORMAT, EARLY_SHADOW_PASS, LATE_SHADOW_PASS};
+use bevy_pbr::{prepare_lights, shared_shadow_pass, ExtractedPointLight, LightEntity, ShadowView, CORE_3D_SHADOW_MAP_FORMAT, EARLY_SHADOW_PASS, LATE_SHADOW_PASS};
+use bevy_render::camera::ExtractedCamera;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::render_resource::binding_types::texture_depth_2d;
 use bevy_render::render_resource::{
@@ -34,6 +38,8 @@ pub(crate) struct CachedLight {
     /// Capture (store Bevy's faces) or restore (load ours into Bevy's).
     pub(crate) capture: bool,
     pub(crate) generation: u32,
+    /// Faces whose visible list holds a moving caster (bit per face).
+    pub(crate) movers: u8,
 }
 
 /// The frame's cached lights and the cache texture's shape.
@@ -50,10 +56,14 @@ pub(crate) fn build(app: &mut App, shared: SharedCaptures) {
         .init_resource::<CacheFrame>()
         .init_resource::<CacheTexture>()
         .init_resource::<LightModes>()
+        .init_resource::<Detached>()
         .insert_resource(shared)
         .add_systems(ExtractSchedule, extract)
         .add_systems(RenderStartup, bevy_render::init_gpu_resource::<CopyPipeline>)
-        .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups));
+        .add_systems(
+            Render,
+            (detach_views.in_set(RenderSystems::CreateViews).after(prepare_lights), prepare.in_set(RenderSystems::PrepareBindGroups)),
+        );
 }
 
 pub(crate) fn finish(app: &mut App) {
@@ -62,6 +72,7 @@ pub(crate) fn finish(app: &mut App) {
         Core3d,
         (
             restore_pass.before(shared_shadow_pass::<EARLY_SHADOW_PASS>),
+            restore_detached.before(shared_shadow_pass::<EARLY_SHADOW_PASS>),
             capture_pass.after(shared_shadow_pass::<LATE_SHADOW_PASS>),
         ),
     );
@@ -119,16 +130,55 @@ struct CacheTexture {
 #[derive(Resource, Default)]
 struct LightModes(HashMap<Entity, CachedLight>);
 
+/// Face views taken out of Bevy's camera driver this frame (view entity,
+/// cache layer), restored once by [`restore_detached`].
+#[derive(Resource, Default)]
+struct Detached {
+    faces: Vec<(Entity, u32)>,
+    restored: bool,
+}
+
+/// Right after `prepare_lights`: this frame's cached lights by render
+/// entity, and the faces of restoring lights that hold no mover leave Bevy's
+/// camera driver (no `RootNonCameraView`: Bevy runs no schedule for them).
+/// Bevy re-inserts the marker when a light changes (a flicker is a change),
+/// so this runs every frame.
+fn detach_views(
+    mut commands: Commands,
+    frame: Res<CacheFrame>,
+    mut modes: ResMut<LightModes>,
+    mut detached: ResMut<Detached>,
+    lights: Query<(Entity, &MainEntity), With<ExtractedPointLight>>,
+    views: Query<(Entity, &LightEntity), With<RootNonCameraView>>,
+) {
+    modes.0.clear();
+    detached.faces.clear();
+    detached.restored = false;
+    if frame.lights.is_empty() || frame.slots == 0 {
+        return;
+    }
+    let by_main: HashMap<Entity, CachedLight> = frame.lights.iter().map(|l| (l.light, *l)).collect();
+    for (entity, main) in &lights {
+        if let Some(light) = by_main.get(&main.id()) {
+            modes.0.insert(entity, *light);
+        }
+    }
+    for (view, light) in &views {
+        let Some((cached, face)) = cached_face(light, &modes) else { continue };
+        if !cached.capture && cached.movers & (1 << face) == 0 {
+            commands.entity(view).remove::<RootNonCameraView>();
+            detached.faces.push((view, cached.slot * 6 + face));
+        }
+    }
+}
+
 fn prepare(
     frame: Res<CacheFrame>,
     device: Res<RenderDevice>,
     pipeline: Option<Res<CopyPipeline>>,
     cache: Res<PipelineCache>,
     mut texture: ResMut<CacheTexture>,
-    mut modes: ResMut<LightModes>,
-    lights: Query<(Entity, &MainEntity), With<ExtractedPointLight>>,
 ) {
-    modes.0.clear();
     let Some(pipeline) = pipeline else { return };
     if frame.lights.is_empty() || frame.slots == 0 {
         return;
@@ -165,12 +215,6 @@ fn prepare(
             .collect();
         texture.texture = Some(new);
         texture.shape = shape;
-    }
-    let by_main: HashMap<Entity, CachedLight> = frame.lights.iter().map(|l| (l.light, *l)).collect();
-    for (entity, main) in &lights {
-        if let Some(light) = by_main.get(&main.id()) {
-            modes.0.insert(entity, *light);
-        }
     }
 }
 
@@ -215,6 +259,44 @@ fn restore_pass(
     pass.set_bind_group(0, group, &[]);
     pass.draw(0..3, 0..1);
     span.end(&mut pass);
+}
+
+/// From the first camera's schedule, before its shadow pass: every detached
+/// face's cached depth into Bevy's cube layer (the depth compare is Always,
+/// so the attachment's clear-or-load doesn't matter).
+fn restore_detached(
+    _camera: ViewQuery<&ExtractedCamera>,
+    mut detached: ResMut<Detached>,
+    faces: Query<&ShadowView>,
+    texture: Res<CacheTexture>,
+    pipeline: Option<Res<CopyPipeline>>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    if detached.restored || detached.faces.is_empty() {
+        return;
+    }
+    detached.restored = true;
+    let Some(pipeline) = pipeline else { return };
+    let Some(render_pipeline) = cache.get_render_pipeline(pipeline.id) else { return };
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    for &(view, layer) in &detached.faces {
+        let (Ok(shadow), Some(group)) = (faces.get(view), texture.restore.get(layer as usize)) else { continue };
+        let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
+            label: Some("shadow_cache_restore_detached"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(shadow.depth_attachment.get_attachment(StoreOp::Store)),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let span = diagnostics.pass_span(&mut pass, "shadow_cache_restore_detached");
+        pass.set_pipeline(render_pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.draw(0..3, 0..1);
+        span.end(&mut pass);
+    }
 }
 
 /// After Bevy's shadow pass: a capturing light's freshly drawn face (static
