@@ -1432,3 +1432,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (doorwalls): the game camera is HDR in every worldspace (an interior start was LDR until the sky's
   atmosphere required HDR, doubling main-pass pipeline variants), and the door fade also holds, within its gate cap,
   while the arrival camera's visible meshes wait for main-pass pipelines (bevyrrowind `pipeline_watch.rs`).
+- 2026-10-21 (shadowB1): Bevy 0.20.0 `bevy_core_pipeline`/`bevy_pbr`/`bevy_render` vendored with PRs #26149 + #26161
+  (`vendor/README.md`; drop on the Bevy release that ships both). The lamp cube cache stays: the patch alone redraws a
+  whole cube for any moving/skinned caster (census 15.0 vs 9.0 ms); patch + cache ships (census 6.5 ms).

@@ -149,6 +149,12 @@ sf_ui_css = { path = "crates/sf_ui_css" }
 # "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.
 [patch.crates-io]
 big_space = { path = "vendor/big_space" }
+# Bevy 0.20.0 with bevyengine/bevy PRs #26149 (`Core3dShadows`: a slim schedule for point/spot shadow
+# views) and #26161 (skip re-rendering unchanged point/spot shadow maps); vendor/README.md. Drop on
+# the Bevy release that ships both.
+bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
+bevy_pbr = { path = "vendor/bevy_pbr" }
+bevy_render = { path = "vendor/bevy_render" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

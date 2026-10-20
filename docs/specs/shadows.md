@@ -50,6 +50,18 @@ Goal: interiors lit by 20-30 point lights where every light that matters on scre
 more on Ultra), at well under 1 ms, with no visible popping when the shadowed set changes. Today High shadows
 **one** light, faded out over 15-25 m, because every shadowed light re-renders six cube faces every frame.
 
+## Reset B1 as built (shadowB1, 2026-10-21)
+
+- **Vendored Bevy patch**: `bevy_core_pipeline`, `bevy_pbr`, `bevy_render` 0.20.0 + PRs #26149 (`Core3dShadows`, a
+  slim schedule per point/spot shadow view) and #26161 (`SkipRootViewRendering`: skip a light's views while its
+  visible casters, view and queued count are unchanged) in `vendor/` (README: rebase/drop). ~300 lines, clean apply.
+- **The lamp cache stays** (`sf_shadow_cache_bevy`; DECISIONS 2026-10-21 rule failed): #26161 redraws a whole cube
+  whenever any caster in it moves or is skinned, so walkers/NPCs defeat it (lab 8 lamps 11.4 vs 6.9 ms; census 15.0
+  vs 9.0); skipped views still cost ~0.13 ms render thread per lamp. Patch + cache ships: census 9.0 → 6.5 ms.
+- Door-fade gate unchanged (still the cache's `settled()`); `--off shadowcache` is now the patched Bevy path.
+- Open (B1b): attribute (d)'s census gain; a static-casters-only skip upstream (movers drawn over a cached copy,
+  i.e. the cache's design) is what would let the cache go. Directional maps are not covered by either PR.
+
 ## Reset A2 as built (shadowA2, 2026-10-21)
 
 - **Lamp maps are captured during the door fade.** `FadeTransition::hold()` (sf_world_bevy) is a gate: once the
