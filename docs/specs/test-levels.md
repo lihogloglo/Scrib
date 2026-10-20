@@ -122,3 +122,17 @@ probes see it unchanged), the sky and lighting, and what spawns do.
 - Compound props (a table with legs) and cylinders as dynamic bodies.
 - More course tests (vault/mantle execution once traversal actions exist,
   M4/M7; rotated copies of a course, research 01 `mesh_tests`).
+
+## Lights and interiors (2026-10-21, light-cost lab)
+
+```ron
+    lights: Some((count: 8, layout: Grid(spacing: 4.0), at: (0.0, 3.5, 0.0), radius: 3.0, color: (1.0, 0.85, 0.6), orbit: 0.0)),
+    interior: Some((ambient: (0.12, 0.11, 0.10))),
+```
+
+- `lights` (`LightRig`): `count` point lights generated from parameters, not hand-placed, so a perf sweep can
+  step one variable from the command line. Layouts: `Grid(spacing)` (rows of `ceil(sqrt(count))`, centered on `at`)
+  or `Ring(radius)` (a horizontal circle about `at`); `at.y` is the height. `radius` is the host's light size
+  (meters; the host maps it to range and power as for its own lights); `orbit` (deg/s) turns every light about `at`
+  (`LightRig::positions(t)`). Validation: count <= 1024, sizes > 0, all finite.
+- `interior`: an enclosed level, no sky, sun or moon; the host shows it with this ambient (sRGB 0..=1).

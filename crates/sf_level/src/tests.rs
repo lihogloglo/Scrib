@@ -150,3 +150,34 @@ fn actor_and_prop_problems_are_listed() {
     let Err(LevelError::Invalid { problems, .. }) = Level::parse(&bad) else { panic!("invalid level accepted") };
     assert_eq!(problems.len(), 4, "{problems:#?}");
 }
+
+#[test]
+fn light_rig_lays_out_grid_and_ring() {
+    use crate::{LightLayout, LightRig};
+    let mut rig = LightRig { count: 5, layout: LightLayout::Grid { spacing: 2.0 }, at: Vec3::new(0.0, 4.0, 0.0), radius: 3.0, color: Vec3::ONE, orbit: 0.0 };
+    let grid = rig.positions(0.0);
+    assert_eq!(grid.len(), 5);
+    // 3 columns, 2 rows, centered: x in {-2, 0, 2}, z in {-1, 1}.
+    assert!(grid.iter().all(|p| (p.y - 4.0).abs() < 1e-6 && p.x.abs() <= 2.0 + 1e-6 && (p.z.abs() - 1.0).abs() < 1e-6));
+    rig.layout = LightLayout::Ring { radius: 5.0 };
+    rig.orbit = 90.0;
+    for p in rig.positions(1.0) {
+        assert!((p.x.hypot(p.z) - 5.0).abs() < 1e-4);
+    }
+    // A quarter turn after 1 s: the first light moves from +x to -z (rotation about +y).
+    assert!((rig.positions(1.0)[0] - Vec3::new(0.0, 4.0, -5.0)).length() < 1e-4);
+    rig.count = 0;
+    assert!(rig.positions(0.0).is_empty());
+}
+
+#[test]
+fn lights_and_interior_parse() {
+    let text = r#"(name: "lab", cameras: [(name: "a", eye: (0.0, 2.0, 5.0), target: (0.0, 1.0, 0.0))],
+        objects: [(shape: Ground(size: (4.0, 4.0)))],
+        lights: Some((count: 4, layout: Ring(radius: 3.0), at: (0.0, 3.0, 0.0), radius: 2.5, orbit: 30.0)),
+        interior: Some((ambient: (0.2, 0.2, 0.2))))"#;
+    let level = Level::parse(text).unwrap();
+    assert_eq!(level.lights.as_ref().map(|l| l.count), Some(4));
+    assert!(level.interior.is_some());
+    assert!(Level::parse(&text.replace("radius: 2.5", "radius: 0.0")).is_err());
+}

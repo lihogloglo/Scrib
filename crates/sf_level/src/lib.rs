@@ -22,10 +22,12 @@ use std::collections::HashSet;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+mod lights;
 mod mesh;
 #[cfg(test)]
 mod tests;
 
+pub use lights::{Interior, LightLayout, LightRig};
 pub use mesh::MeshData;
 
 /// A level file.
@@ -46,6 +48,12 @@ pub struct Level {
     /// Characters the host spawns and drives (see [`Actor`]).
     #[serde(default)]
     pub actors: Vec<Actor>,
+    /// Parametric point lights (the light-cost lab, see [`LightRig`]).
+    #[serde(default)]
+    pub lights: Option<LightRig>,
+    /// Enclosed: no sky, this ambient (see [`Interior`]).
+    #[serde(default)]
+    pub interior: Option<Interior>,
 }
 
 /// A character at a spawn point. `id`, `outfit` and the action's names are
@@ -377,6 +385,12 @@ impl Level {
             {
                 out.push(format!("{label}: action needs a trigger and every > 0"));
             }
+        }
+        if let Some(p) = self.lights.as_ref().and_then(LightRig::problem) {
+            out.push(p);
+        }
+        if self.interior.as_ref().is_some_and(|i| !i.ambient.is_finite()) {
+            out.push("interior: ambient not finite".to_owned());
         }
         out
     }
