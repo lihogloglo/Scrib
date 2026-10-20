@@ -130,10 +130,14 @@ pub enum Part {
     /// Near cells drawn from their precombines (superfargoth precombine.md); off, one entity per
     /// static placement, LOD level and part (the old way, an A/B; no rebake needed).
     Precombine,
+    /// Point/spot (lamp) shadows filtered with 2x2 hardware PCF while the sun keeps the preset's filter
+    /// (vendored `bevy_pbr::PointSpotShadowsHardware2x2`, shadow reset B2); off, lamps use the camera's
+    /// filter as stock Bevy does (an A/B).
+    LampFilter,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 38] = [
+    const ALL: [(&'static str, Part); 39] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -173,6 +177,7 @@ impl Part {
         ("leafmask", Part::LeafMask),
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
+        ("lampfilter", Part::LampFilter),
     ];
 
     fn name(self) -> &'static str {

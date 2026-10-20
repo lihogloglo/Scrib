@@ -138,6 +138,8 @@ struct Start {
     /// Bevy GTAO (`None`: off; Low preset, `--off ssao`).
     ssao: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
     shadow_filter: ShadowFilteringMethod,
+    /// Lamp shadows on 2x2 hardware PCF (`bevy_pbr::PointSpotShadowsHardware2x2`; `--off lampfilter`).
+    lamp_hw_filter: bool,
 }
 
 #[derive(Resource)]
@@ -374,6 +376,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             },
             // lampcost A/B (perf.md "Per-lamp GPU cost"): BEVYRROWIND_SHADOW_FILTER=hardware|gaussian|temporal.
             shadow_filter: match std::env::var("BEVYRROWIND_SHADOW_FILTER").as_deref() { Ok("hardware") => ShadowFilteringMethod::Hardware2x2, Ok("gaussian") => ShadowFilteringMethod::Gaussian, Ok("temporal") => ShadowFilteringMethod::Temporal, _ => options.quality.shadow_filter(options.render.upscaling.is_temporal()) },
+            lamp_hw_filter: !perf.off.has(Part::LampFilter),
         })
         .insert_resource(Started(Instant::now()))
         // Chained: both reserve the worldspace root through `Commands`; unordered,
@@ -632,6 +635,9 @@ fn setup(
     // the depth prepass, which needs motion vectors here so it applies the LOD dither
     // (see the note above).
     camera.insert(start.shadow_filter);
+    if start.lamp_hw_filter {
+        camera.insert(bevy::pbr::PointSpotShadowsHardware2x2);
+    }
     if let Some(contact) = start.contact {
         camera.insert((contact, DepthPrepass, MotionVectorPrepass));
     }

@@ -192,6 +192,16 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   updates its shadow. Same with `--off shadowcache` (slower, should look identical).
 - Status: awaiting owner.
 
+### SH-19: Shadow reset B2 (lamp shadows on 2x2 hardware PCF)
+- Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera
+  "1.0,4.2,5.0,1.0,3.6,-6.0"`, then walk to the desk and the NPCs; also `view Balmora --hour 22` by lamps.
+  A/B: `--off lampfilter` (lamps back on the preset's Temporal filter, the old look).
+- Look for: lamp shadow edges (table legs, chandeliers, NPCs on the floor) as soft as before under TAA, no stair-step
+  aliasing or crawling/shimmer on the edges while walking; the sun's shadows outdoors unchanged. Agent screenshot
+  pair at that camera looked identical at full-screen scale; motion is the open question.
+- Owner decides: keep 2x2 for lamps (-0.1 ms GPU per shadowed lamp at 1440p) or `--off lampfilter` as default.
+- Status: awaiting owner.
+
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
   21:15, fog). Turn the camera fast left or right.

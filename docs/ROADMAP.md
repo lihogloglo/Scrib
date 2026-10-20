@@ -86,7 +86,10 @@ and effects. Every task reports its ms cost per preset.
   far static map, caster cull, `shadowtune`/`shadowsplits` deleted (~820 LOC); no perf change. SH-17 awaiting owner. Next B.
   **Reset B1 done (2026-10-21, shadowB1):** Bevy PRs #26149/#26161 vendored (superfargoth `vendor/`); alone they lose to
   the cache (walkers/NPCs redraw whole cubes: census 15.0 vs 9.0 ms), so the cache stays and the patch ships under it:
-  census 9.0 → 6.5 ms, walk 13.3 → 13.0 (perf.md "Shadow reset B1"). SH-18 awaiting owner. Next B2.
+  census 9.0 → 6.5 ms, walk 13.3 → 13.0 (perf.md "Shadow reset B1"). SH-18 awaiting owner.
+  **Reset B2 done (2026-10-21, shadowB2):** own `bevy_pbr` hunks: point/spot shadow fetch skipped where the light adds
+  nothing (exact), lamps on 2x2 hardware PCF (`--off lampfilter`): -0.1 ms GPU per shadowed lamp, census opaque
+  2.94 → 2.08; frames render-thread bound, medians ~unchanged (perf.md "Shadow reset B2"). SH-19 awaiting owner.
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [~] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset. Built in A1 (Low off, Medium/High/Ultra = Bevy Low/Medium/
   High; ~0.9 ms GPU at 1440p native on High, perf.md "Shadow reset A1"); look awaiting owner (SH-16).
@@ -167,6 +170,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (shadowB2): shadow reset B2: own bevy_pbr patch, lamp shadow fetch skipped where unlit + lamps on 2x2
+  hardware PCF (sun keeps Temporal): -0.1 ms GPU per shadowed lamp at 1440p; SH-19 (edge look) awaiting owner.
 - 2026-10-21 (shadowB1): shadow reset B1: Bevy PRs #26149/#26161 vendored (3 crates); cache kept (patch alone loses with
   walkers), patch + cache: census 9.0 → 6.5 ms; `perf sweep --var a+b` steps two flags together.
 - 2026-10-21 (doorwalls): SH-17 fixed: back in an interior after a trip outside, meshes drew depth only for seconds
@@ -192,6 +197,3 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - 2026-10-20 (lights1): 1.6 terrain blend removed (walk 25.9 → 14.7 ms, Balmora 15.9 → 13.1); lights researched
   (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Then audit:
   big_space patch, env map every 8 frames (perf.md "Audit"); shadows v2 spec; V1 lamp cache built, off (handoff).
-
-- 2026-10-20 (precombine3): precombine slice 3 built (no frame gain); feature ladder in perf.md: terrain blend
-  +10-13 ms on the walk (to remove), lights +2, actors +3; groundcover + vanilla option parked in Phase 4.

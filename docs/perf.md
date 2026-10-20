@@ -294,6 +294,33 @@ Decision rule (c >= b) failed: the cache stays, and the patch ships under it ((d
 schedule). (d)'s census gain (-1.5 ms render busy) is not attributed yet. (b) census 9.00 vs A2's 8.06: doorwalls'
 always-HDR camera, unmeasured. Door round trip at 22:00: both builds hit the 1.5 s gate cap (pipelines), same image.
 
+**Shadow reset B2 (shadowB2, 2026-10-21; `target/perf/b2-*`; 1440p, High, profiling exe, x3, medians of runs, quiet
+machine every run).** Own `bevy_pbr` hunks (superfargoth `vendor/README.md`): (1) **early-out**: Bevy fetched the
+point/spot shadow (and lamp contact) before evaluating the light, with no range, N·L or cone test; now the light is
+evaluated first and the fetch runs only where its contribution is non-zero (exact). (2) **lamp filter**: camera
+marker `PointSpotShadowsHardware2x2`, lamps on 1-tap 2x2 hardware PCF, the sun keeps the preset's filter (`--off
+lampfilter` = stock). Exes `profiling/b2-base.exe` (B1 state), `b2-patch.exe` (eo = `--off lampfilter`, f = both).
+Lab (`--var point-shadows+lab-lights`, `--off ssao`), frame median / main opaque GPU ms:
+
+| shadowed+lamps | 0+8 | 2+8 | 4+8 | 8+8 | 16+16 |
+|---|---:|---:|---:|---:|---:|
+| base | 3.20 / 1.28 | 4.26 / 1.58 | 5.30 / 1.87 | 6.82 / 2.43 | 10.64 / 4.83 |
+| early-out | 3.15 / 1.39 | 4.29 / 1.64 | 5.28 / 1.88 | 6.84 / 2.29 | 10.73 / 4.35 |
+| early-out + lamp filter | 3.16 / 1.36 | 4.29 / 1.42 | 5.26 / 1.47 | 6.77 / **1.57** | 10.58 / **2.72** |
+
+Lab p95 and render busy unchanged (8+8: 7.59/7.61/7.49 p95, busy 5.81/5.82/5.75); timed GPU 8+8 4.75/4.59/3.81,
+16+16 8.19/7.66/6.70. Real scenes, median / p95 / timed GPU / main opaque / render busy:
+
+| scene | base | early-out | early-out + lamp filter |
+|---|---|---|---|
+| census | 6.52 / 10.86 / 5.64 / 2.94 / 6.32 | 7.77 / 10.82 / 5.40 / 2.58 / 6.64 | **6.41 / 10.77 / 4.96 / 2.08** / 6.33 |
+| balmora_walk | 13.22 / 19.93 / 9.44 / 3.18 / 11.68 | 12.95 / 20.03 / 9.48 / 3.15 / 11.74 | 12.80 / 19.90 / 9.37 / 3.12 / 11.59 |
+| balmora_walk_night | 12.59 / 19.68 / 8.87 / 2.73 / 11.78 | 12.55 / 19.73 / 8.83 / 2.72 / 11.75 | 12.46 / 19.48 / 8.81 / 2.68 / 11.64 |
+
+Reading: the filter is the win, ~0.09-0.10 ms main-pass GPU per shadowed lamp (lab 8 lamps -0.72, 16 -1.63, census
+-0.50); the early-out only pays where lamps light few pixels (census -0.36 opaque, lab 16 lamps -0.48, lab 0-4 noise
+to +0.1: the lab's lamps face every wall). Frame medians barely move: the lab and the walks are render-thread
+bound, and census frame medians are bimodal run to run (6.2 vs 7.8-8.6 ms in all three builds; eo's 7.77 is that).
 
 ## Dev loop
 
@@ -417,7 +444,8 @@ proxies), `sky` (no atmosphere: also the sun and its shadows), `envmap` (sky env
 Reconstruction off on `--rt`). `farshadows` (terrain/proxy/impostor far shadow and the dithered cascade
 end off; `shadowtune`/`shadowsplits`, the legacy cascade layouts, were deleted in shadow reset A2, 2026-10-21),
 `sizecull` (no size-based draw distance: every object drawn to its ring or the far-field handoff), `precombine` (near
-cells spawn one entity per static again instead of their merged `lod.near` buckets; no rebake). Compare against a run without.
+cells spawn one entity per static again instead of their merged `lod.near` buckets; no rebake), `lampfilter` (lamp
+shadows back on the camera's filter instead of 2x2 hardware PCF, shadow reset B2). Compare against a run without.
 
 Render options (not `--off` parts):
 

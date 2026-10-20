@@ -1926,3 +1926,5 @@ Newest first. One or two lines each: what changed, what was verified.
   moved to `superfargoth/docs/DECISIONS.md`.
 - 2026-10-19 (phase0): owner decisions 1-3 recorded; portal spike deleted (clippy clean, app tests pass).
 - 2026-10-19 (phase0): RT checks DL-3 (Census, smooth) + outdoor RT looked at; RT parked to Phase 4 (owner).
+- 2026-10-20 (precombine3): precombine slice 3 built (no frame gain); feature ladder in perf.md: terrain blend
+  +10-13 ms on the walk (to remove), lights +2, actors +3; groundcover + vanilla option parked in Phase 4.
