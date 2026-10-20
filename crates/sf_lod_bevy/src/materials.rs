@@ -6,7 +6,7 @@
 use bevy_asset::{Asset, Handle, RenderAssetUsages};
 use bevy_image::Image;
 use bevy_material::{AlphaMode, OpaqueRendererMethod};
-use bevy_math::{Mat4, UVec4, Vec3, Vec4};
+use bevy_math::{UVec4, Vec3, Vec4};
 use bevy_mesh::{Indices, Mesh, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexFormat};
 use bevy_pbr::{ExtendedMaterial, Material, MaterialExtension, MaterialPipeline, MaterialPipelineKey, StandardMaterial};
 use bevy_reflect::TypePath;
@@ -105,37 +105,6 @@ pub struct FarShadowExt {
     #[texture(101)]
     #[sampler(102)]
     pub map: Handle<Image>,
-    /// The far static sun map's view and params ([`crate::FarShadowInput`]).
-    #[uniform(103)]
-    pub sun: SunMapParams,
-    /// The far static sun map (depth, comparison sampler); a 1² stand-in while off.
-    #[texture(104, sample_type = "depth")]
-    #[sampler(105, sampler_type = "comparison")]
-    pub sun_map: Handle<Image>,
-}
-
-/// `proxy.wesl`'s `SunMap`.
-#[derive(Clone, Copy, Debug, Default, ShaderType)]
-pub struct SunMapParams {
-    /// (valid 0/1, texel m, depth range m, -).
-    pub params: Vec4,
-    pub clip_from_world: Mat4,
-}
-
-/// A 1² `Depth32Float` stand-in for [`FarShadowExt::sun_map`] while there is no map.
-pub(crate) fn sun_map_stand_in() -> Image {
-    let mut image = Image::new_uninit(
-        bevy_render::render_resource::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-        bevy_render::render_resource::TextureDimension::D2,
-        bevy_render::render_resource::TextureFormat::Depth32Float,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_descriptor.usage = bevy_render::render_resource::TextureUsages::TEXTURE_BINDING;
-    image.sampler = bevy_image::ImageSampler::Descriptor(bevy_image::ImageSamplerDescriptor {
-        compare: Some(bevy_image::ImageCompareFunction::GreaterEqual),
-        ..bevy_image::ImageSamplerDescriptor::default()
-    });
-    image
 }
 
 impl MaterialExtension for FarShadowExt {

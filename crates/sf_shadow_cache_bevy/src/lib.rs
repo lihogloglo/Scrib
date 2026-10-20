@@ -77,11 +77,29 @@ pub struct ShadowCacheSettings {
     pub captures_per_frame: usize,
     /// Seconds between a light's recaptures when static casters in its range change.
     pub recapture_interval: f32,
+    /// Set by the host while the screen is hidden (a loading fade): captures are
+    /// unlimited, recaptures immediate, and casters that appear settle after
+    /// [`Self::warmup_settle_time`]; [`ShadowCacheStats::pending`] then also counts
+    /// lights a settling caster touches, so the host can wait for
+    /// [`ShadowCacheStats::settled`] before showing the frame.
+    pub warmup: bool,
+    /// Settle time of casters that appear during a warmup, seconds.
+    pub warmup_settle_time: f32,
 }
 
 impl Default for ShadowCacheSettings {
     fn default() -> Self {
-        Self { enabled: true, max_lights: 24, settle_time: 1.0, move_threshold: 0.01, reuse_layers: true, captures_per_frame: 2, recapture_interval: 2.0 }
+        Self {
+            enabled: true,
+            max_lights: 24,
+            settle_time: 1.0,
+            move_threshold: 0.01,
+            reuse_layers: true,
+            captures_per_frame: 2,
+            recapture_interval: 2.0,
+            warmup: false,
+            warmup_settle_time: 0.2,
+        }
     }
 }
 
@@ -116,6 +134,18 @@ pub struct ShadowCacheStats {
     pub touched: u64,
     /// Captures completed since start (each is six faces).
     pub captures: u64,
+    /// Shadowed lights in view with a slot whose cached faces aren't final yet
+    /// (waiting for or in a capture, due a recapture; in a warmup also
+    /// touched by a settling caster). A moving light (a swaying lantern) isn't
+    /// pending: Bevy draws it whole every frame.
+    pub pending: u32,
+}
+
+impl ShadowCacheStats {
+    /// Every shadowed light in view draws from final cached faces (or has no slot).
+    pub fn settled(&self) -> bool {
+        self.pending == 0
+    }
 }
 
 /// A floating-origin shift reported by the host: every render-space position
@@ -278,7 +308,8 @@ fn track_casters(
         } else {
             c.moving.insert(entity);
             let why = if mobility == ShadowMobility::Movable { 3 } else if skinned { 1 } else if was_baked.is_some() { 2 } else { 0 };
-            Caster { sphere, until: if always { f32::INFINITY } else { now + settings.settle_time }, moving: true, at, visible, why, settled_at: f32::INFINITY }
+            let settle = if settings.warmup { settings.warmup_settle_time } else { settings.settle_time };
+            Caster { sphere, until: if always { f32::INFINITY } else { now + settle }, moving: true, at, visible, why, settled_at: f32::INFINITY }
         };
         c.map.insert(entity, caster);
     }
@@ -404,10 +435,17 @@ fn classify_lights(
     mut query: Query<(Entity, &PointLight, &GlobalTransform, &ViewVisibility, &mut CubemapVisibleEntities)>,
     mut removed: RemovedComponents<PointLight>,
     (time, names, parents, mut next_report, mut touchers): (Res<Time>, Query<&Name>, Query<&ChildOf>, Local<f32>, Local<Vec<Entity>>),
-    (render_entities, mut shift): (Query<&RenderEntity>, ResMut<ShadowOriginShift>),
+    (render_entities, mut shift, mut why_pending): (Query<&RenderEntity>, ResMut<ShadowOriginShift>, Local<[u32; 3]>),
 ) {
     frame.captures.clear();
     frame.lights.clear();
+    // A warmup that ended unsettled (the host's timeout): why its last frame wasn't.
+    if settings.warmup || why_pending.iter().all(|n| *n == 0) {
+        *why_pending = [0; 3];
+    } else {
+        let [capture, stale, settling] = std::mem::take(&mut *why_pending);
+        log::debug!("shadow cache: warmup ended unsettled: {capture} light(s) not captured, {stale} due a recapture, {settling} touched by a settling caster");
+    }
     // Movers seen in cached lights' faces this frame (a few, for the report).
     let mut sample: Vec<Entity> = Vec::new();
     let now = time.elapsed_secs();
@@ -495,7 +533,8 @@ fn classify_lights(
         // then a caster settled after the capture is drawn as a mover; one removed
         // since leaves its shadow for at most the interval.
         cached.stale |= touched && !moved;
-        if cached.stale && cached.state == SlotState::Valid && now - cached.captured_at >= settings.recapture_interval {
+        let interval = if settings.warmup { 0.0 } else { settings.recapture_interval };
+        if cached.stale && cached.state == SlotState::Valid && now - cached.captured_at >= interval {
             counts.touched += 1;
             cached.generation = cached.generation.wrapping_add(1);
             cached.state = SlotState::Capture;
@@ -503,12 +542,30 @@ fn classify_lights(
             cached.stale = false;
         }
         let captured_at = cached.captured_at;
+        let settling = |k: &Caster| k.why == 0 && k.until.is_finite() && k.sphere.touches(position, light.range);
+        if view_visibility.get() {
+            // Why it isn't final (warmup report): not captured yet, due a recapture, a caster settling.
+            let why = if cached.state == SlotState::Capture {
+                Some(0)
+            } else if cached.stale {
+                Some(1)
+            } else if settings.warmup && casters.moving.iter().any(|e| casters.map.get(e).is_some_and(settling)) {
+                Some(2)
+            } else {
+                None
+            };
+            if let Some(i) = why {
+                counts.pending += 1;
+                why_pending[i] += u32::from(settings.warmup);
+            }
+        }
+        let per_frame = if settings.warmup { u32::MAX } else { u32::try_from(settings.captures_per_frame).unwrap_or(u32::MAX) };
         match cached.state {
             // Bevy draws the light whole (its faces keep every caster), and on its
             // turn a capture view per face draws the static casters into the cache:
             // what is on screen never lacks the movers.
             // (Only lights Bevy extracts this frame: one out of every view has no faces.)
-            SlotState::Capture if view_visibility.get() && counts.capturing < u32::try_from(settings.captures_per_frame).unwrap_or(u32::MAX) => {
+            SlotState::Capture if view_visibility.get() && counts.capturing < per_frame => {
                 counts.capturing += 1;
                 let statics = |i: usize| {
                     let mut list: Vec<(Entity, MainEntity)> = faces

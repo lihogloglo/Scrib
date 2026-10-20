@@ -27,8 +27,6 @@ const FAR_BIAS_PER_M: f32 = 0.0015;
 struct FarShadow {
     factor: f32,
     position: vec4<f32>,
-    /// Toward the shadowed light when the pixel is past the cascades and faces it, else 0.
-    to_light: vec3<f32>,
 }
 
 fn view_depth(p: vec3<f32>) -> f32 {
@@ -71,7 +69,7 @@ fn map_visibility(p: vec3<f32>, map: texture_2d<f32>, samp: sampler, far: vec4<f
 /// The far shadow of the shadowed directional light at render-space `p`
 /// with shading normal `n`, for pixel `frag_xy`.
 fn far_map_shadow(p: vec4<f32>, n: vec3<f32>, frag_xy: vec2<f32>, map: texture_2d<f32>, samp: sampler, far: vec4<f32>) -> FarShadow {
-    var out = FarShadow(1.0, p, vec3<f32>(0.0));
+    var out = FarShadow(1.0, p);
     // No map (none yet, or switched off): the cascades alone, as Bevy draws them.
     if far.z <= 0.0 {
         return out;
@@ -93,33 +91,8 @@ fn far_map_shadow(p: vec4<f32>, n: vec3<f32>, frag_xy: vec2<f32>, map: texture_2
         }
         if dot(n, (*light).direction_to_light) > 0.0 {
             out.factor = map_visibility(p.xyz, map, samp, far);
-            out.to_light = (*light).direction_to_light;
         }
         return out;
     }
     return out;
-}
-
-/// Far static sun map visibility (shadows F3b, the objects' shadows) of
-/// render-space `p` with normal `n`, toward the light `l`: normal offset plus
-/// a two-texel lift toward the sun, a 2x2 bilinear-compare PCF, faded out at
-/// the map border. `params`: (valid, texel m, depth range m, -). Same filter
-/// as the terrain's (`sf_terrain_bevy` far_shadow.wesl), so the two match.
-fn sun_map_visibility(p: vec3<f32>, n: vec3<f32>, l: vec3<f32>, sun_map: texture_depth_2d, sun_sampler: sampler_comparison, params: vec4<f32>, clip: mat4x4<f32>) -> f32 {
-    if params.x <= 0.0 {
-        return 1.0;
-    }
-    let nl = clamp(dot(n, l), 0.0, 1.0);
-    let q = clip * vec4<f32>(p + n * (params.y * 1.5 * (1.0 - nl)) + l * (params.y * 2.0), 1.0);
-    let edge = max(abs(q.x), abs(q.y));
-    if edge >= 1.0 || q.z <= 0.0 || q.z >= 1.0 {
-        return 1.0;
-    }
-    let uv = q.xy * vec2<f32>(0.5, -0.5) + 0.5;
-    let d = 0.5 / vec2<f32>(textureDimensions(sun_map));
-    var vis = textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(-d.x, -d.y), q.z);
-    vis += textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(d.x, -d.y), q.z);
-    vis += textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(-d.x, d.y), q.z);
-    vis += textureSampleCompareLevel(sun_map, sun_sampler, uv + vec2<f32>(d.x, d.y), q.z);
-    return mix(vis * 0.25, 1.0, smoothstep(0.9, 1.0, edge));
 }

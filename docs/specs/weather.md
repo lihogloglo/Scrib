@@ -1012,7 +1012,7 @@ their own consumers (part 2).
   2 squares) ≈ 234 m in Morrowind; written only on a weight change ≥ 1e-3. Interiors switch `Precip.enabled` off.
 - Tests: sf_precip_bevy 3 (mesh/ranks, wrap, nesting/light), sf_weather `thunder_delay_and_flash_are_pure`,
   sf_weather_bevy `frame_drives_precip_cues_and_lightning`, `slots_keep_their_kind_through_a_crossfade`.
-- **Occlusion map (as built, rainocc 2026-10-19):** `sf_precip_bevy/src/occlusion.rs`, a top-down ortho depth map (512², 80 m square, 100 m depth, reverse Z) drawn as one more shadow view of the strongest shadow-casting directional light (same mechanism as the far sun map, subview 0xFB, no pass of our own), redrawn when the camera moves 6 m (8 m vertically) or casters stream in (30-frame throttle). The vertex shader kills a drop with a caster above it (0.3 m slack). Hosts add `NoPrecipOcclusion` to terrain and far proxies (done in exterior.rs). `PrecipOcclusionConfig(false)` turns it off. Render side shared with the far map in `sf_sky_bevy::sun_view` (no view when the light has no shadow maps by render time; see "Shared sun-view mechanism"). Since it rides on the sun's shadows, no occlusion when the sun casts none (overcast weather, if the sky turns them off). Not yet seen under a roof/tree (owner check). Splashes not built (need ground height: the map excludes terrain).
+- **Occlusion map (as built, rainocc 2026-10-19):** `sf_precip_bevy/src/occlusion.rs`, a top-down ortho depth map (512², 80 m square, 100 m depth, reverse Z) drawn as one more shadow view of the strongest shadow-casting directional light (subview 0xFB, no pass of our own), redrawn when the camera moves 6 m (8 m vertically) or casters stream in (30-frame throttle). The vertex shader kills a drop with a caster above it (0.3 m slack). Hosts add `NoPrecipOcclusion` to terrain and far proxies (done in exterior.rs). `PrecipOcclusionConfig(false)` turns it off. Render side: `sf_sky_bevy::sun_view` (no view when the light has no shadow maps by render time; see "Shared sun-view mechanism"). Since it rides on the sun's shadows, no occlusion when the sun casts none (overcast weather, if the sky turns them off). Not yet seen under a roof/tree (owner check). Splashes not built (need ground height: the map excludes terrain).
 - **Not built:** splashes, ripples, fog on the streaks (transparent
   fog path, fogfix), textures (`PrecipKind.texture` unused: procedural shapes), cloud shadow-map rate modulation,
   in-cloud emission at the strike.
@@ -1198,15 +1198,14 @@ Research: `docs/research/shadows/README.md` (fixes F1, F2). Rule 8: all Bevy 0.2
   note). So Medium and up now run the depth + MV prepass (measured 0.4 ms earlier); Low keeps none.
 - **Bias (F2):** sun normal bias 1.8 → **0.8 texels** (depth bias 0.02 m kept), `exterior.rs` `SUN_NORMAL_BIAS`;
   per cascade the lift falls from 2.5 / 9 / 34 / 130 cm to 1.1 / 4 / 15 / 56 cm. No acne seen at 15:00 in Seyda
-  Neen or Balmora; grazing sun (07:00, the 6a outline) is the owner check SH-7. `--off shadowtune` restores
-  Bevy's 1.8 with the old cascades. Point lights keep Bevy's 0.08 m / 0.6 texel (already in range).
+  Neen or Balmora; grazing sun (07:00, the 6a outline) is the owner check SH-7. Point lights keep Bevy's 0.08 m / 0.6 texel (already in range).
 - **Filtering (F2):** `ShadowFilteringMethod` per preset on the camera: Low `Hardware2x2`, Medium and up
   `Gaussian`. `Temporal` needs TAA (raster runs none); revisit with F5 (PCSS).
 - Seen 2026-10-19 (1080p, 15:00): differences are small at a high sun; cascade 0 already grounds feet and pots.
   Contact shadows mainly darken creases (column bases, wall feet) and the 30-40 m NPC contact. Expected larger
   at low sun and in cascades 2-3; owner sign-off SH-7.
 
-### Sun cascades and the far static map (shadows F3, step a as built 2026-10-19)
+### Sun cascades (shadows F3, step a as built 2026-10-19)
 
 Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop the 504 m rule). **Supersedes
 "Why `s_max` ≥ `d1 + w`"** and A1's range: the CSM no longer has to contain every L0 object.
@@ -1226,52 +1225,18 @@ Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop
 - **Cost** (dev build, 1440p, `exterior_seyda_neen` bench 2 × 12 s each, RTX 4060 Laptop): Bevy-timed GPU
   17.4 / 16.2 ms vs A1 16.8 / 16.4 ms (noise, ≈ 0); frame median 30.0 / 29.4 ms vs 35.0 / 33.3 ms (the dev build is
   CPU-bound: fewer casters queued in the last cascade). VRAM unchanged (4 × 2048² × 32 bit = 64 MB; Low 48 MB).
-- **A/B:** `--off shadowsplits` = the A1 504 m layout (F2 bias kept); `--off shadowtune` = the 600 m one before it.
-- **Gap until step b:** L0 objects at 250-440 m get no object shadows: their shadows on terrain fade with the
+- **A/B:** the legacy layouts (`--off shadowsplits`, `--off shadowtune`) were deleted in shadow reset A2 (2026-10-21).
+- **Gap:** L0 objects at 250-440 m get no object shadows: their shadows on terrain fade with the
   dithered cascade end (212-250 m, unchanged code: it reads `s_max` from the light), and object *receivers* (NIF
   statics' materials have no far term) end on Bevy's hard cut at 250 m. The terrain march (to 700 m) and the SHM
   are unchanged.
 
-**Step b (CPU core built 2026-10-19 shf3b; render pass + receivers not built yet): cached far static shadow map (FSM).**
-- *Built (shf3b):* `sf_sky::far_shadow` (Bevy-free): `FarShadowSettings` (4096², reach ±2048 m = 1 m texels, 4 km
-  depth, sun 0.03°, recentre 1/16 reach = 128 m, 4 strips), `FarShadowView::fit` (sun-aligned ortho, fixed up hint,
-  centre snapped to whole texels in the light plane, reverse Z like Bevy's shadow views), `FarShadowCache::update`
-  (refresh on sun turn / recentre / `invalidate()` on far-cell arrival, one strip per frame into the *back* map, then
-  swap). Two maps, not one: strips drawn into the sampled map would mix two views, so VRAM is **2 × 64 MB = 128 MB**
-  at 4096² (or 1 × 64 MB with a whole-map refresh in one frame and no strips). Tests: `far_shadow_*` in `sf_sky`.
-- *Bevy 0.20 render hooks found (for the next slice):* cameras run a schedule (`CameraRenderGraph(ScheduleLabel)`,
-  `bevy_core_pipeline::schedule`, `Core3dSystems`), so the FSM camera gets its own schedule with one system; Bevy's
-  own shadow queue (`bevy_pbr` `render/light.rs` `queue_shadows`, retained bins with `DirtySpecializations`, phase
-  `ViewBinnedRenderPhases<Shadow>`, drawn by `per_view_shadow_pass` over `ViewLightEntities`, target
-  `ShadowView::depth_attachment`) is the template for the binned depth-only phase. Step 1 check: the Balmora SH-8 vista
-  does have sun shadows (backlit at 15:00, sun 48°; identical with `--off shadowsplits`): nothing broken.
-- *Bevy first:* Bevy 0.20 has no shadow caching (every shadow view re-renders every frame, maps from the
-  `TextureCache`) and no API for an extra or orthographic shadow view. A second shadow-casting `DirectionalLight`
-  with zero illuminance would get cascades, but they are fitted to the camera frustum (re-rendered every frame,
-  re-fit on every turn), share `DirectionalLightShadowMap`'s size (2048²: ~2.8 m texels over 2 km) and add a
-  cascade lookup to every material. Rejected. *Crates:* none for Bevy 0.20. *Ours:* a plain `Camera` (no `Camera3d`,
-  so no material queues into the main phases) with an orthographic sun-aligned projection, its own
-  `CameraRenderGraph` sub-graph and a custom binned depth-only phase (Bevy's `custom_render_phase` example pattern:
-  `SpecializedMeshPipeline`, `SetMeshBindGroup` + `DrawMesh`, GPU preprocessing per view), queuing only
-  `FarShadowCaster` entities (static L0 placements + L1 proxies; masked foliage later). Bevy then gives it
-  visibility, frustum culling and batching; caching = the camera is `is_active` only on refresh frames, and its
-  depth is copied into a persistent 4096² `Depth32` image (64 MB).
-- *Refresh:* sun turns > 0.02-0.05°, camera moves 1/16 of the map's reach, or a far cell streams in; texel-snapped
-  ortho centre (stable); spread over N frames by drawing one of N horizontal strips per frame (scissor), so the
-  amortised cost stays ≈ 0.05-0.2 ms.
-- *Which far mechanism wins where:* 0 → 0.85·s_max: CSM only. 0.85·s_max → s_max: dithered CSM → far term (as
-  now). Past s_max: `far = min(FSM_objects, terrain)`, where the terrain term is the horizon march to 700 m then the
-  SHM (unchanged); the FSM holds **objects only** (no terrain casters: the march/SHM are sharper and cheaper for
-  terrain and reach 9.2 km), fades out at its border (~2 km, 4096² at ~1 m texels). Receivers: terrain, proxies,
-  impostors through their existing `directional_shadow_factor` hook, and NIF statics (needs a far hook in their
-  material extension: coordinate with whoever owns `FroxelFogExt`/`mw_assets`).
-- *Verify:* SH-8 (no object-shadow pop at 250 m), SH-1/SH-6 re-run, SH-11; GPU A/B per refresh frame and amortised.
+**Step b (cached far static shadow map, shf3b-d, never on by default): deleted in shadow reset A2 (2026-10-21).**
+
+**Shared sun-view mechanism (intpanic 2026-10-19):** extra sun shadow views (now only the precipitation occlusion map) go through `sf_sky_bevy::sun_view` (`SunViewRequest`, `SunViewSource`, `add_sun_view::<S>`): extract the request, inject its casters as a light subview, spawn the view after `prepare_lights`. Invariant from `bevy_pbr` (`get_shadow_map_visible_entities` panics otherwise): a `LightEntity::Directional` view in `ViewLightEntities` needs the light's `RenderShadowMapVisibleEntities` with its subview key, which Bevy extracts only for a visible light with shadow maps on. The main-world request (PreUpdate) can be stale (the sky turns sun shadows off in Update, e.g. interiors), which panicked the render thread in interiors; `view_allowed` now gates the spawn and the request is dropped (unit test `view_needs_shadows_and_its_entry`).
 
 ## Near-term visual fixes (before M6)
 
-**Step b as built (shf3c/shf3d 2026-10-19):** the far map is one more sun shadow view on redraw frames (`sf_sky_bevy` far_shadow.rs), drawn by Bevy's shadow pass. Verified drawn: Balmora logs 48 844 casters / 122 multidraw sets queued per redraw, no validation errors. Redraw policy: sun turn > 0.25° (0.125°/s at a 30x clock = one redraw per 2 s; a 10 m caster's shadow tip moves < 1 texel at 30° elevation), camera moved > reach/16, streamed casters (≤ 1 per 30 frames). Receivers: terrain and far proxies (`sf_lod_bevy` proxy.wesl, same 2x2 compare PCF; proxies get NoFarShadow since a pass can't write a depth texture its casters' materials bind). Owed: NIF statics past 250 m (StandardMaterial has no hook; needs a material extension), impostors, GPU cost of a redraw frame, visual sign-off (SH-8).
-
-**Shared sun-view mechanism (intpanic 2026-10-19):** the far map and the precipitation occlusion map use one module, `sf_sky_bevy::sun_view` (`SunViewRequest`, `SunViewSource`, `add_sun_view::<S>`): extract the request, inject its casters as a light subview, spawn the view after `prepare_lights`. Invariant from `bevy_pbr` (`get_shadow_map_visible_entities` panics otherwise): a `LightEntity::Directional` view in `ViewLightEntities` needs the light's `RenderShadowMapVisibleEntities` with its subview key, which Bevy extracts only for a visible light with shadow maps on. The main-world request (PreUpdate) can be stale (the sky turns sun shadows off in Update, e.g. interiors), which panicked the render thread in interiors; `view_allowed` now gates the spawn and the request is dropped (unit test `view_needs_shadows_and_its_entry`).
 ### Bug A: distant objects have no shadows, then acquire them up close
 
 **Cause** (verified in source):
@@ -1312,7 +1277,7 @@ Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop
   overlap 0.2). A2 + A3 done for terrain, proxies and impostors, through Bevy's
   `directional_shadow_factor` and a dithered cascade end (see "As built" in "Distant shadows").
   The app ran the CSM at 600 m before this (not the 300 m this spec assumed). A/B:
-  `--off farshadows` (far term off everywhere), `--off shadowtune` (old 600 m / 20 m cascades).
+  `--off farshadows` (far term off everywhere); `--off shadowtune` (old cascades) was deleted in shadow reset A2.
 
 ### Bug B: some objects pop in close (the Ghostfence)
 

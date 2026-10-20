@@ -35,10 +35,6 @@ bevy_reflect = { workspace = true, features = ["std"] }
 bevy_render.workspace = true
 bevy_shader.workspace = true
 bevy_shape.workspace = true
-# Per-cascade caster culling runs one task per cascade.
-bevy_tasks.workspace = true
-# Caster-cull counters in perf reports.
-sf_diag_bevy.workspace = true
 bevy_solari = { workspace = true, optional = true }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }

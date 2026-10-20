@@ -207,5 +207,5 @@ a shadow, but it's half of the "grounded" look. Log it, don't bundle it.
 ## Status
 
 - **F3 step a built (shf3, 2026-10-19):** practical-split cascades to 250 m (Low 3 / 200 m), texels 1.4 / 3.8 / 10.5 /
-  35 cm; GPU ≈ 0 at Seyda Neen. Step b (cached far static map) designed, not built: weather.md "Sun cascades and the
-  far static map". Owner check SH-8.
+  35 cm; GPU ≈ 0 at Seyda Neen. Step b (cached far static map) built off by default, then deleted in shadow reset A2
+  (2026-10-21); weather.md "Sun cascades". Owner check SH-8.

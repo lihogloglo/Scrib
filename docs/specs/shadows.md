@@ -19,15 +19,15 @@ shadows visible to the far-field handoff (~500 m).
 
 | Tier | What | Redrawn | Bevy pieces | Ours |
 |---|---|---|---|---|
-| Sun near | CSM, **3 cascades** to ~150 m (Clockwork: 3 to 230 m), practical split | every frame | cascades, PCF/PCSS | splits (`CascadeSplits`), caster size cull |
-| Sun far | **one cached static map** over the view distance (Clockwork, UE cached shadows), statics only; terrain horizon march past it | on sun move > 0.25°, camera move > 1/16 reach, new cells; spread over frames | an extra shadow view on redraw frames only | `sf_sky::far_shadow` (built F3b-d, off: verify, fix the interior panic) |
+| Sun near | CSM, **3 cascades** to ~150 m (Clockwork: 3 to 230 m), practical split | every frame | cascades, PCF/PCSS | splits (`CascadeSplits`); caster size cull deleted in shadow reset A2 (2026-10-21) |
+| Sun far | **one cached static map** over the view distance (Clockwork, UE cached shadows), statics only; terrain horizon march past it | on sun move > 0.25°, camera move > 1/16 reach, new cells; spread over frames | an extra shadow view on redraw frames only | none: the far static map (F3b-d, never on) was deleted in shadow reset A2 (2026-10-21); terrain far shadow only |
 | Lamps | **cached static cube faces** (Doom 2016, HDRP mixed cached, Clockwork 8-61 lamps); movers drawn over the copy, per face | statics on change; movers per frame (30 Hz Low/Medium), only faces holding one | cube array + sampling | `sf_shadow_cache_bevy` + **2b: no Bevy views for cached faces** |
 | Contact | screen-space, sun + shadowed lamps, **short** (SH-14) | every frame | `ContactShadows` (0.19) | lengths per preset |
 | Grounding | GTAO | every frame | SSAO (XeGTAO) | ROADMAP 1.5 |
 
 **What goes away:** High's one-uncached-lamp budget (replaced by 8 cached), the 504 m four-cascade CSM (3 short
-cascades + the far map), cascade-texel PCSS sizes (world-size penumbra, V3). Kept: importance selection, crossfade,
-caster size cull, terrain far shadow, rain occlusion (vertical, already redrawn only on demand: Nsight 0.04/frame).
+cascades), cascade-texel PCSS sizes (world-size penumbra, V3). Kept: importance selection, crossfade,
+terrain far shadow, rain occlusion (vertical, already redrawn only on demand: Nsight 0.04/frame).
 
 **Slices (each measured with the perf suite + Nsight; owner checks per slice):**
 - **V0** Measure today's shadow costs: `--off shadows`, 3 vs 4 cascades, Nsight per cascade, census 8 lamps.
@@ -37,7 +37,7 @@ caster size cull, terrain far shadow, rain occlusion (vertical, already redrawn 
   view that loads (not clears) the restored depth. Raise High to 8 lamps at 512², fade 40 m. Gate: 8 lamps ≤ 1 ms
   render thread (census, walk); no flicker when the set changes. **Built (shadows2, 2026-10-20), gate not met on
   the walk**: see "V1 as built" below.
-- **V2 Sun**: 3 cascades on High/Ultra to ~150 m + far static map on (verified on screen, interior panic fixed).
+- **V2 Sun**: 3 cascades on High/Ultra to ~150 m (the far static map was deleted in shadow reset A2, 2026-10-21).
   Gate: render -1 ms, shadows present 0-500 m (owner check).
 - **V3 Soft shadows by world size**: Bevy's directional PCSS size is in cascade texels (penumbra jumps between
   cascades); scale it per cascade so the penumbra is the sun's angular size × blocker distance (Clockwork). Needs a
@@ -49,6 +49,19 @@ caster size cull, terrain far shadow, rain occlusion (vertical, already redrawn 
 Goal: interiors lit by 20-30 point lights where every light that matters on screen casts a shadow (8-16 on High,
 more on Ultra), at well under 1 ms, with no visible popping when the shadowed set changes. Today High shadows
 **one** light, faded out over 15-25 m, because every shadowed light re-renders six cube faces every frame.
+
+## Reset A2 as built (shadowA2, 2026-10-21)
+
+- **Lamp maps are captured during the door fade.** `FadeTransition::hold()` (sf_world_bevy) is a gate: once the
+  arrival's cells and textures are ready the hold lasts 3 more frames, then while a gate asks, at most `gate_max_secs`
+  (1.5 s). The game's gate (`render.rs::shadow_captures_at_black`) sets `ShadowCacheSettings::warmup` while black
+  (unlimited captures, immediate recaptures, new casters settle in 0.2 s, not 1 s) and holds until the budget has
+  shadowed `min(max, lamps within fade_end)` lamps and `ShadowCacheStats::settled()` (no shadowed lamp in view waiting
+  for or in a capture, due a recapture or touched by a settling caster; moving lamps don't count). Census: 0.35 s of
+  gate. First exterior visit (dev build): capture pipelines still compiling at 1.5 s, the cap fades in. No initial-load
+  fade exists, so no gate there. Not done (to B): a lamp's shadow fade-in waiting for its capture.
+- **Deleted:** the far static sun map (`sf_sky::far_shadow`, `sf_sky_bevy::far_shadow`, the terrain/proxy sampling),
+  `sf_sky_bevy::caster_cull`, `--off shadowtune`/`--off shadowsplits`. `--off farshadows` stays (terrain far shadow).
 
 ## Reset A1 as built (shadowA1, 2026-10-21)
 

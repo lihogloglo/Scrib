@@ -84,8 +84,6 @@ pub struct FarFieldDebug {
     pub level_tint: bool,
 }
 
-/// How strongly distant lights glow: 0 by day, 1 at night. The sky (or the
-/// app) sets it from the sun's elevation.
 /// The terrain's far shadow map for proxies and impostors (weather.md
 /// "Distant shadows", tier 2). The host copies it in (e.g. from
 /// `sf_terrain_bevy::FarShadowMap`); without it they keep the cascades only.
@@ -97,16 +95,10 @@ pub struct FarShadowInput {
     pub params: bevy_math::Vec4,
     /// Changes whenever the image contents do.
     pub generation: u32,
-    /// The far static sun map (`Depth32Float`, reverse Z, `GreaterEqual`
-    /// comparison: e.g. `sf_sky_bevy::FarSunShadow`): objects' shadows on the
-    /// proxies past the cascades. `None`: off.
-    pub sun_map: Option<bevy_asset::Handle<bevy_image::Image>>,
-    /// World (render space) to the sun map's clip space.
-    pub sun_clip_from_world: bevy_math::Mat4,
-    /// (valid 0/1, texel m, depth range m, -).
-    pub sun_params: bevy_math::Vec4,
 }
 
+/// How strongly distant lights glow: 0 by day, 1 at night. The sky (or the
+/// app) sets it from the sun's elevation.
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct FarLightsNight(pub f32);
 

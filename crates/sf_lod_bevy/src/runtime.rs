@@ -40,7 +40,7 @@ use sf_world::{Level, WorldspaceId};
 use sf_world_bevy::{CellProxies, ProxySpawnCx, Streaming, WorldspaceRegistry, to_grid};
 
 use crate::assets::{FarDirectoryAsset, FarNodeAsset, ImpostorAtlasAsset};
-use crate::materials::{FarShadowExt, SunMapParams, sun_map_stand_in, ImpostorMaterial, ImpostorParams, LightSpriteMaterial, ProxyMaterial, SpriteParams, impostor_mesh, light_mesh};
+use crate::materials::{FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial, ProxyMaterial, SpriteParams, impostor_mesh, light_mesh};
 use crate::{FarFieldDebug, FarFieldSettings, FarFieldStats};
 
 /// Level tint colors (debug): L1 green, L2 blue, L3 purple.
@@ -53,8 +53,6 @@ pub struct FarMaterials {
     /// colors carry albedo) plus the far shadow map.
     pub proxy: [Handle<ProxyMaterial>; 3],
     pub lights: Handle<LightSpriteMaterial>,
-    /// The proxies' sun map while the host gives none.
-    pub sun_stand_in: Handle<Image>,
 }
 
 pub(crate) fn create_materials(
@@ -63,9 +61,7 @@ pub(crate) fn create_materials(
     mut sprites: ResMut<Assets<LightSpriteMaterial>>,
     settings: Res<FarFieldSettings>,
     fog: Res<sf_render_order_bevy::TranslucentFog>,
-    mut images: ResMut<Assets<Image>>,
 ) {
-    let sun_stand_in = images.add(sun_map_stand_in());
     let proxy = [1u8, 2, 3].map(|level| {
         proxies.add(ProxyMaterial {
             base: StandardMaterial {
@@ -80,8 +76,6 @@ pub(crate) fn create_materials(
             extension: FarShadowExt {
                 far: Vec4::ZERO,
                 map: Handle::default(),
-                sun: SunMapParams::default(),
-                sun_map: sun_stand_in.clone(),
             },
         })
     });
@@ -90,7 +84,7 @@ pub(crate) fn create_materials(
         fog_params: fog.params,
         fog_volume: fog.volume.clone(),
     });
-    commands.insert_resource(FarMaterials { proxy, lights, sun_stand_in });
+    commands.insert_resource(FarMaterials { proxy, lights });
 }
 
 /// An impostor model set ready to draw: one material, a layer per model.
@@ -733,14 +727,9 @@ pub(crate) fn update_far_shadow(
     *applied = Some((input.clone(), sets.len()));
     let map = input.image.clone().unwrap_or_default();
     let params = if input.image.is_some() { input.params } else { Vec4::ZERO };
-    let sun_map = input.sun_map.clone().unwrap_or_else(|| far.sun_stand_in.clone());
-    let sun = SunMapParams {
-        params: if input.sun_map.is_some() { input.sun_params } else { Vec4::ZERO },
-        clip_from_world: input.sun_clip_from_world,
-    };
     for h in &far.proxy {
         if let Some(mut m) = proxies.get_mut(h) {
-            m.extension = FarShadowExt { far: params, map: map.clone(), sun, sun_map: sun_map.clone() };
+            m.extension = FarShadowExt { far: params, map: map.clone() };
         }
     }
     for h in &sets {

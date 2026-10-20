@@ -50,11 +50,6 @@ pub struct TerrainMaterial {
     #[texture(111)]
     #[sampler(112)]
     pub far_map: Handle<Image>,
-    /// The far static sun shadow map ([`crate::SunShadowInput`]): objects'
-    /// shadows past the cascades (depth, comparison sampler).
-    #[texture(120, sample_type = "depth")]
-    #[sampler(121, sampler_type = "comparison")]
-    pub sun_map: Handle<Image>,
 }
 
 impl Material for TerrainMaterial {

@@ -10,6 +10,8 @@
 //! [`FadeTransition::ready_radius_m`] of the traveler has its textures (a
 //! material whose image is still loading doesn't draw: objects would pop in
 //! in front of the player). [`FadeTransition::max_hold_secs`] caps the hold.
+//! Gates ([`FadeTransition::hold`], e.g. a shadow cache capturing the
+//! arrival's lamps) extend it, by at most [`FadeTransition::gate_max_secs`].
 //! [`TravelArrived`] tells the app the traveler moved (to resync camera
 //! controllers). Removal path: M8's portal crossing replaces it without
 //! changing the data model.
@@ -61,14 +63,19 @@ pub enum FadePhase {
     #[default]
     Idle,
     Out { t: f32, travel: StartTravel },
-    /// At full black, waiting for the arrival (`frames`: since the move).
-    Hold { waited: f32, frames: u32, traveler: Entity, to: Location },
+    /// At full black, waiting for the arrival (`frames`: since the move;
+    /// `ready`: frames and seconds since the cells and textures were ready).
+    Hold { waited: f32, frames: u32, traveler: Entity, to: Location, ready: Option<(u32, f32)> },
     In { t: f32 },
 }
 
 /// Frames the hold lasts at least: the move's commands apply and the
 /// traveler's transform propagates before the readiness checks trust it.
 const MIN_HOLD_FRAMES: u32 = 3;
+
+/// Frames the hold lasts past the arrival's readiness: gates
+/// ([`FadeTransition::hold`]) see the arrived content before it shows.
+const GATE_FRAMES: u32 = 3;
 
 /// The fade state and settings.
 #[derive(Resource, Debug)]
@@ -89,6 +96,13 @@ pub struct FadeTransition {
     pub last_duration: Option<f32>,
     /// Seconds the last hold waited at full black.
     pub last_hold: Option<f32>,
+    /// Longest a gate ([`FadeTransition::hold`]) keeps the screen black after
+    /// the arrival is ready, seconds.
+    pub gate_max_secs: f32,
+    /// Seconds of the last hold that gates added.
+    pub last_gate: Option<f32>,
+    /// A gate asked to stay black this frame (cleared by the fade).
+    gated: bool,
     elapsed: f32,
 }
 
@@ -104,12 +118,28 @@ impl Default for FadeTransition {
             camera: None,
             last_duration: None,
             last_hold: None,
+            gate_max_secs: 1.5,
+            last_gate: None,
+            gated: false,
             elapsed: 0.0,
         }
     }
 }
 
 impl FadeTransition {
+    /// Keeps the screen black one more frame (call each frame, before
+    /// [`crate::StreamingSystems::Transition`], while something the arrival
+    /// needs isn't ready: shadow maps, GPU caches). Honoured only during the
+    /// hold, for at most [`Self::gate_max_secs`] after the cells and textures.
+    pub fn hold(&mut self) {
+        self.gated = true;
+    }
+
+    /// At full black, waiting for the arrival.
+    pub fn is_holding(&self) -> bool {
+        matches!(self.phase, FadePhase::Hold { .. })
+    }
+
     pub fn phase(&self) -> &FadePhase {
         &self.phase
     }
@@ -179,6 +209,9 @@ pub(crate) fn run_fade(
     near: NearTextures,
 ) {
     let dt = time.delta_secs();
+    if !fade.is_holding() {
+        fade.gated = false;
+    }
     let latest = requests.read().last().cloned();
     if let (FadePhase::Idle, Some(travel)) = (&fade.phase, latest) {
         fade.camera = cameras.contains(travel.traveler).then_some(travel.traveler);
@@ -204,10 +237,10 @@ pub(crate) fn run_fade(
             streaming.begin_burst();
             let (traveler, to) = (travel.traveler, travel.to.clone());
             arrived.write(TravelArrived { traveler: travel.traveler, to: travel.to, rotation: travel.rotation });
-            FadePhase::Hold { waited: 0.0, frames: 0, traveler, to }
+            FadePhase::Hold { waited: 0.0, frames: 0, traveler, to, ready: None }
         }
         FadePhase::Out { t, travel } => FadePhase::Out { t: t + dt, travel },
-        FadePhase::Hold { waited, frames, traveler, to } => {
+        FadePhase::Hold { waited, frames, traveler, to, ready: prior } => {
             let ws = &to.worldspace;
             let settled = frames >= MIN_HOLD_FRAMES;
             let cells = streaming.has_directory(ws) && streaming.scheduler().arrival_ready(ws, to.pos, fade.ready_margin_m);
@@ -216,16 +249,24 @@ pub(crate) fn run_fade(
             if settled && !cells && !streaming.in_burst() {
                 streaming.begin_burst();
             }
-            let ready = settled && cells && near.ready(traveler, fade.ready_radius_m);
+            // Once ready the arrival stays ready (no unloading at black): count from the first time.
+            let ready = prior.or_else(|| (settled && cells && near.ready(traveler, fade.ready_radius_m)).then_some((0, 0.0)));
+            let gated = std::mem::take(&mut fade.gated);
             let waited = waited + dt;
-            if ready || waited >= fade.max_hold_secs {
-                if !ready {
+            // Gates (shadow maps, ...) get a few frames to see the arrival, then hold up to their cap.
+            let open = ready.is_some_and(|(n, secs)| n >= GATE_FRAMES && (!gated || secs >= fade.gate_max_secs));
+            if open || waited >= fade.max_hold_secs {
+                if ready.is_none() {
                     log::warn!("sf_world_bevy: fade: {} not ready after {waited:.1} s, fading in", ws.as_str());
+                } else if gated {
+                    log::warn!("sf_world_bevy: fade: a gate held {} past {:.1} s, fading in", ws.as_str(), fade.gate_max_secs);
                 }
                 fade.last_hold = Some(waited);
+                fade.last_gate = ready.map(|(_, secs)| secs);
                 FadePhase::In { t: 0.0 }
             } else {
-                FadePhase::Hold { waited, frames: frames + 1, traveler, to }
+                let ready = ready.map(|(n, secs)| (n + 1, secs + dt));
+                FadePhase::Hold { waited, frames: frames + 1, traveler, to, ready }
             }
         }
         FadePhase::In { t } if t + dt >= fade_secs => {

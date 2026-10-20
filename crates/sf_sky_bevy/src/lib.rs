@@ -19,9 +19,7 @@
 //!   [`BudgetedShadow`] point lights, faded by distance and over time.
 
 mod cascades;
-mod caster_cull;
 mod env_refresh;
-mod far_shadow;
 mod night;
 mod path;
 mod proxy;
@@ -53,11 +51,10 @@ pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
-pub use far_shadow::{FarShadowConfig, FarShadowPlugin, FarShadowStats, FarSunShadow, NoFarShadow};
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
-pub use shadow_budget::{importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
-pub use caster_cull::{CasterCulling, keeps_caster};
+pub use shadow_budget::{importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};
+pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the
@@ -293,7 +290,6 @@ impl Plugin for SkyPlugin {
         path::build(app);
         proxy::build(app);
         upscale::build(app);
-        caster_cull::build(app);
     }
 
     fn finish(&self, app: &mut App) {

@@ -21,7 +21,6 @@ mod atmosphere;
 mod celestial;
 mod clock;
 mod curve;
-mod far_shadow;
 mod night;
 mod sky;
 mod weather;
@@ -36,7 +35,6 @@ pub use atmosphere::{AtmosphereModel, Falloff, MediumScales, MediumTerm, Phase, 
 pub use celestial::{Celestial, Orbit, SkyPosition};
 pub use clock::{Calendar, SkyClock};
 pub use curve::KeyCurve;
-pub use far_shadow::{FarShadowCache, FarShadowSettings, FarShadowView, FarShadowWork};
 pub use night::{MAX_MOONS, Moon, MoonPath, MoonState, NightSky, StarField, SunDiskLook, phase_light};
 pub use sky::{ExposureRange, SkyLight, SkySettings, SkyState, luminance};
 pub use weather::{Weather, Wind};

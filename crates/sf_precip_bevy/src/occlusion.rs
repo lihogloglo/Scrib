@@ -2,8 +2,7 @@
 //! one top-down orthographic depth map around the camera that the drop shader
 //! samples to kill streaks under roofs and trees.
 //!
-//! Same mechanism as `sf_sky_bevy`'s far sun map, shared in
-//! [`sf_sky_bevy::sun_view`] (no pass of our own): on a
+//! Render side: [`sf_sky_bevy::sun_view`] (no pass of our own): on a
 //! redraw frame the map becomes one more shadow view of a shadow-casting
 //! directional light, looking straight down, so Bevy's shadow pass draws the
 //! casters (alpha mask included). Redrawn when the camera moved
@@ -28,7 +27,7 @@ use bevy_render::sync_world::{MainEntity, RenderEntity};
 use bevy_transform::components::GlobalTransform;
 use sf_sky_bevy::sun_view::{add_sun_view, SunViewRequest, SunViewSource};
 
-/// Subview index among the light's subviews (cascades 0..4, far sun map 0xFA).
+/// Subview index among the light's subviews (cascades use 0..4).
 const SUBVIEW: u32 = 0xFB;
 /// Map edge in texels.
 pub const MAP_SIZE: u32 = 512;

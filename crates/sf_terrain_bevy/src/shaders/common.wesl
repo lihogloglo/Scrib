@@ -34,8 +34,6 @@ const P_MACRO: u32 = 29u;       // 10 levels
 const P_DETAIL: u32 = 39u;      // x: splat range (m), y: height-blend depth, z: max detail LOD weight, w: max terrain height (world m)
 const P_LAYERS: u32 = 40u;      // 2 slots per layer: (tiling, displacement, triplanar, -), (mean rgb, mean height)
 const P_FAR: u32 = 552u;       // far shadow map: (min x, min z, 1 / extent, base height), render space
-const P_SUN: u32 = 553u;       // far static sun map: (valid, texel m, depth range m, -)
-const P_SUN_CLIP: u32 = 554u;  // its clip_from_world, 4 column slots
 
 const MIN_LOD: i32 = -2;
 const HEIGHT_LEVELS: u32 = 10u;

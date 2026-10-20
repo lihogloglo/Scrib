@@ -19,12 +19,7 @@ pub const MAX_LAYERS: usize = 256;
 /// The far shadow map: (min x, min z, 1 / extent, base height), render
 /// space; extent 0 = none.
 pub const P_FAR: usize = P_LAYERS + 2 * MAX_LAYERS;
-/// The far static sun shadow map (`sf_sky_bevy::FarSunShadow`, via
-/// [`crate::SunShadowInput`]): (valid, texel m, depth range m, -), then its
-/// `clip_from_world` (4 column slots).
-pub const P_SUN: usize = P_FAR + 1;
-pub const P_SUN_CLIP: usize = P_FAR + 2;
-pub const SLOTS: usize = P_FAR + 6;
+pub const SLOTS: usize = P_FAR + 1;
 
 pub const HEIGHT_LEVELS: usize = 10;
 pub const LAYER_LEVELS: usize = 3;

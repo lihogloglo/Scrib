@@ -1,6 +1,5 @@
 //! Extra depth views of a shadow-casting directional light, drawn by Bevy's
-//! own shadow pass: the far static sun map ([`crate::FarShadowPlugin`]) and
-//! `sf_precip_bevy`'s rain occlusion map share this one mechanism.
+//! own shadow pass. `sf_precip_bevy`'s rain occlusion map uses it.
 //!
 //! A host system fills a [`SunViewSource`] resource in the main world on a
 //! redraw frame; [`add_sun_view`] mirrors it into the render world, adds the
