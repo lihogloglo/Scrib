@@ -1417,3 +1417,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - **2026-10-20 (lights1): no local-light budget for now** (specs/lights.md): Bevy 0.20 GPU clustering makes ~290
   unshadowed lights nearly free (≤ 0.5 ms GPU); the cost was the shadowed lamp plus a Bevy leak of stale cube-face views
   (each a full `Core3d` run), despawned by `sf_sky_bevy::shadow_budget` after `prepare_lights` until upstream fixes it.
+- 2026-10-20 (particles1): CPU-simulated particles render by vertex pulling (one `ShaderBuffer`, slot per emitter via
+  `MeshTag`, static shared quad meshes, view-facing in the vertex shader), never by rewriting `Mesh` assets per frame
+  (Bevy rescans every `Mesh3d`). Bevy 0.20's `storage_buffer` pattern; GPU simulation waits for `bevy_hanabi` on 0.20.
