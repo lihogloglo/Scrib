@@ -1917,3 +1917,12 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-19 (rainocc): M6 PR1: `sf_precip_bevy` occlusion map (top-down depth as a shadow view of the sun light, 512² over 80 m, recentered at 6 m, drop shader kills streaks under casters; NoPrecipOcclusion on terrain/proxies). Clippy clean, rain runs; not yet seen under a roof (visual-checks PR-1); splashes + GPU A/B not done.
 - 2026-10-19 (intpanic): interior render-thread panic ("Failed to get directional light visible entities", bevy_pbr light.rs:3093) fixed: far sun map and rain occlusion views now share `sf_sky_bevy::sun_view`, which spawns an extra sun view only when the light still has shadow maps and its visible-entities entry at render time (stale PreUpdate request after the sky turned sun shadows off indoors); 1 unit test. Census and Excise Office screenshot and Seyda Neen rain screenshot run clean; door transition not run.
 - 2026-10-19 (we3audio): M6 WE3 [x] (awaiting owner passes): audio backend. superfargoth audio.md + `sf_audio` (Bevy-free: buses, fade, OneShotScheduler, SoundBank) + `sf_audio_bevy` (bevy_audio; crate decision: kira 0.27 supports Bevy 0.20 but adds a second stack, seedling 0.8 is Bevy 0.19) playing `WeatherSound` loops/thunder and region one-shots; `mw_weather::sound_bank`; headless `view --weather thunderstorm` logs loop start + one-shots, no missing sounds; 6+2+1 tests, clippy clean; AU-1 listening check awaiting owner.
+- 2026-10-19/20 (phase1): SH-12 fixed (cloud upsampling redesign, owner confirmed); F4 crash fixed (sky motion
+  bindings); balmora_walk bench + whole-system A/B (near statics are the cost); precombine slices 1-2; anim budget
+  and caster cull reverted (regressions); contact shadows = SH-14; new FG-1 fog bands. Pushed.
+- 2026-10-19 (phase1): 1.1 built (DR-4 crash class `try_*` + shipped error handler, black UI fade held for the
+  arrival, AU-1 interior audio snapshot); 1.2 measured (render thread bound) + gates; 1.3 TAA as the base. Committed.
+- 2026-10-19 (phase0): audit; owner check pass (14 windows); ROADMAP rewritten into phases; ARCHITECTURE §10/§11
+  moved to `superfargoth/docs/DECISIONS.md`.
+- 2026-10-19 (phase0): owner decisions 1-3 recorded; portal spike deleted (clippy clean, app tests pass).
+- 2026-10-19 (phase0): RT checks DL-3 (Census, smooth) + outdoor RT looked at; RT parked to Phase 4 (owner).

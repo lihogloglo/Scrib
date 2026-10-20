@@ -179,8 +179,9 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Look for: on arrival inside, the lamps' shadows are there from the first visible frame: no flicker or shadows
   switching on as the fade lifts (SH-15's "flicker at first"); the extra black time is short (~0.3-0.5 s, capped 1.5 s).
   Outdoors the first visit may hit the 1.5 s cap (shader compiles): any flicker left there is expected.
-- Seen in a dev `--use-door 2` run (cause not triaged; the gate only delays the fade): back inside after the round trip most static meshes
-  (walls) were missing; triage separately.
+- Also (doorwalls fix): back inside, everything in view draws on the first frame: walls, floor, rug and the NPCs,
+  no fog-colored holes or silhouettes (were: main-pass pipelines still compiling). Inside, the gate may hit the 1.5 s cap
+  while the exterior's pipelines still compile (log `pipelines: ... compiling`).
 - Status: awaiting owner.
 
 ### FG-1: Volumetric fog black bands on fast turns (owner report)

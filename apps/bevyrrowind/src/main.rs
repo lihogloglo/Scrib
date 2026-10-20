@@ -20,6 +20,7 @@ mod mods;
 mod night_sky;
 mod perf;
 mod physics;
+mod pipeline_watch;
 #[cfg(feature = "remote")]
 mod remote;
 mod render;

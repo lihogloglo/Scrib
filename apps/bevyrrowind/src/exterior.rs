@@ -394,6 +394,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
 
     crate::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
     crate::doors::add(&mut app, options.world, options.use_door);
+    crate::pipeline_watch::add(&mut app);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled);
@@ -589,6 +590,13 @@ fn setup(
     let layers = RenderLayers::from_layers(&[0, entry.layer]);
     let mut camera = commands.spawn((
         Camera3d::default(),
+        // HDR in every worldspace, as it is under the sky (Bevy's atmosphere
+        // requires it). Without it a start indoors rendered LDR (tonemapping in
+        // the PBR shader), the first exterior visit made the camera HDR for
+        // good, and back inside every material needed new main-pass pipelines:
+        // they compiled behind the exterior's backlog after the fade lifted and
+        // those meshes drew depth only (walls missing for seconds, SH-17).
+        bevy::camera::Hdr,
         Projection::Perspective(PerspectiveProjection {
             fov: 70f32.to_radians(),
             near: 0.1,

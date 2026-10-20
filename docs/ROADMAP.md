@@ -164,6 +164,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (doorwalls): SH-17 fixed: back in an interior after a trip outside, meshes drew depth only for seconds
+  (main-pass pipelines compiling; a start indoors was LDR and the sky made the camera HDR). Camera HDR everywhere; door fade
+  holds while visible meshes wait for pipelines (`pipeline_watch.rs`, also logs compiles).
 - 2026-10-21 (shadowA2): shadow reset A2: lamp shadow captures while the door fade is black (no arrival flicker), dead
   shadow layers deleted (far static map, caster cull, legacy cascades; ~820 LOC); perf runner ignores idle-clock GPU load.
 - 2026-10-21 (shadowA1): shadow reset A1: lamp contact shadows off, sun contact 0.3 m, sun/moon off interior views
@@ -187,13 +190,3 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - 2026-10-20 (precombine3): precombine slice 3 built (no frame gain); feature ladder in perf.md: terrain blend
   +10-13 ms on the walk (to remove), lights +2, actors +3; groundcover + vanilla option parked in Phase 4.
-- 2026-10-19/20 (phase1): SH-12 fixed (cloud upsampling redesign, owner confirmed); F4 crash fixed (sky motion
-  bindings); balmora_walk bench + whole-system A/B (near statics are the cost); precombine slices 1-2; anim budget
-  and caster cull reverted (regressions); contact shadows = SH-14; new FG-1 fog bands. Pushed.
-- 2026-10-19 (phase1): 1.1 built (DR-4 crash class `try_*` + shipped error handler, black UI fade held for the
-  arrival, AU-1 interior audio snapshot); 1.2 measured (render thread bound) + gates; 1.3 TAA as the base. Committed.
-
-- 2026-10-19 (phase0): audit; owner check pass (14 windows); ROADMAP rewritten into phases; ARCHITECTURE §10/§11
-  moved to `superfargoth/docs/DECISIONS.md`.
-- 2026-10-19 (phase0): owner decisions 1-3 recorded; portal spike deleted (clippy clean, app tests pass).
-- 2026-10-19 (phase0): RT checks DL-3 (Census, smooth) + outdoor RT looked at; RT parked to Phase 4 (owner).

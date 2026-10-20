@@ -285,7 +285,7 @@ fn report_travel(fade: Res<FadeTransition>, mut last: Local<Option<f32>>) {
         *last = fade.last_duration;
         if let Some(secs) = fade.last_duration {
             info!(
-                "door travel took {secs:.2} s (fade {:.1} s each way, held {:.2} s at black, {:.2} s of it for gates: lamp shadow captures)",
+                "door travel took {secs:.2} s (fade {:.1} s each way, held {:.2} s at black, {:.2} s of it for gates: lamp shadow captures, pipelines)",
                 fade.fade_secs,
                 fade.last_hold.unwrap_or_default(),
                 fade.last_gate.unwrap_or_default()
