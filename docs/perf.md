@@ -156,7 +156,20 @@ clustering). The walk's light cost was High's **one shadowed lamp**, plus a Bevy
 shadow keeps its 6 cube-face views, each running the whole `Core3d` schedule (trace: 15.7 `Core3d` runs/frame for
 a budget of 1). `sf_sky_bevy` now despawns them (shadows.md "Stale cube-face views"): walk -2.0 ms. The one lamp
 still costs ~1.5 ms frame / 1.4 ms render thread on the walk (`staleviews` vs `ps0`). Traces: `trl-on`/`trl-off`
-(deleted, summaries only). Note the walk's frame (12.7) sits above every lane (render 10.7, main 9.4, GPU 8.1).
+(deleted, summaries only). Note the walk's frame (12.7) sits above every lane (render 10.7, main 9.4, GPU 8.1):
+most likely extraction (`RenderExtractApp` ~2 ms inclusive), which runs between the main and render threads.
+
+**Audit (2026-10-20, lights1): Nsight + A/B traces, walk and Balmora.** Nsight (`target/perf/nsys/walk1-passes.md`,
+walk 1440p, GPU sum 10.2 ms): main opaque 3.16, `atmosphere_luts` 0.69 (every frame), cascade 3 0.59, env-map
+filtering 0.54 + 0.29 (every frame), indirect parameters 0.51, TAA 0.43, prepass 0.39; the one lamp's six faces
+0.17 in all (its cost is CPU). Fixes and leads (1 run each, `target/perf/audit1*`):
+
+| item | finding | change | measured |
+|---|---|---|---|
+| big_space low-precision propagation | walked every static mesh every frame (no dirty-tree pruning) | vendored patch (`superfargoth/vendor/big_space`) | trace 2.7 + 0.7 → 0.44 + 0.27 ms main-thread tasks; walk main busy 9.45 → 8.78 |
+| sky env map | re-filtered every frame | `EnvMapRefresh` every 8 frames, `--off envslice` | Balmora 1440p 13.3 → 12.4, 960p 9.5 → 8.9 |
+| NIF particles | CPU quads rewritten into `Mesh` assets every frame: Bevy rescans all `Mesh3d` (0.74 ms), re-allocates and re-prepares meshes | **open**: GPU-expanded billboards from a buffer | `--off particles`: walk 1440p 12.7 → 11.7 (render -1.0, main -0.9) |
+| `atmosphere_luts` | Bevy recomputes all LUTs each frame | open (upstream) | 0.69 ms GPU |
 
 Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
 pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.

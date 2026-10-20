@@ -2215,8 +2215,6 @@ dependencies = [
 [[package]]
 name = "big_space"
 version = "0.14.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b702c3115707240359e88ccaae011b49e2e896aed3bed0c2404412aecc31b650"
 dependencies = [
  "async-channel",
  "bevy_app",

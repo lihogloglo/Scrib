@@ -93,6 +93,10 @@ sf_render_order_bevy = { path = "../superfargoth/crates/sf_render_order_bevy" }
 mw_world = { path = "crates/mw_world" }
 mw_vfs = { path = "crates/mw_vfs" }
 
+# Same patched big_space as superfargoth (its Cargo.toml, `[patch.crates-io]`).
+[patch.crates-io]
+big_space = { path = "../superfargoth/vendor/big_space" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 rust_2018_idioms = { level = "warn", priority = -1 }

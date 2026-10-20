@@ -260,6 +260,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
+    if off_parts.has(Part::EnvSlice) {
+        app.insert_resource(sf_sky_bevy::EnvMapRefresh(1));
+    }
     // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
     // scaffold switch [`FAR_STATIC_SHADOWS`], off until verified;
     // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.

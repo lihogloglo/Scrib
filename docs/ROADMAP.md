@@ -152,7 +152,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 ## Recent (last ~10 entries; older ones drop into the archive)
 
 - 2026-10-20 (lights1): 1.6 terrain blend removed (walk 25.9 → 14.7 ms, Balmora 15.9 → 13.1); lights researched
-  (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Uncommitted.
+  (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Then audit:
+  big_space patch, env map every 8 frames (perf.md "Audit"); shadows v2 spec; V1 lamp cache built, off (handoff).
 
 - 2026-10-20 (precombine3): precombine slice 3 built (no frame gain); feature ladder in perf.md: terrain blend
   +10-13 ms on the walk (to remove), lights +2, actors +3; groundcover + vanilla option parked in Phase 4.

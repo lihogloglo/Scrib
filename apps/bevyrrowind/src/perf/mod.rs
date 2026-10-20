@@ -95,6 +95,8 @@ pub enum Part {
     ShadowSplits,
     /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`; parked: off anyway).
     ShadowCache,
+    /// Time-sliced sky environment map (`sf_sky_bevy::EnvMapRefresh`): off, Bevy re-filters it every frame.
+    EnvSlice,
     Clouds,
     /// Size-based draw distance (industry-audit.md J1).
     SizeCull,
@@ -130,7 +132,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 38] = [
+    const ALL: [(&'static str, Part); 39] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -153,6 +155,7 @@ impl Part {
         ("contactshadows", Part::ContactShadows),
         ("shadowsplits", Part::ShadowSplits),
         ("shadowcache", Part::ShadowCache),
+        ("envslice", Part::EnvSlice),
 
         ("clouds", Part::Clouds),
         ("sizecull", Part::SizeCull),

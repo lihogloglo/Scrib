@@ -15,10 +15,9 @@ const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
 /// "Local-light shadows": GPU cost at `hi-balmora-night`).
 pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (1, 1024);
 
-/// Point-light shadow cube cache (shadows F6 slice 2, `sf_shadow_cache_bevy`):
-/// parked by owner decision 3 (2026-10-19, simpler shadows first); off, its
-/// plugin isn't even added (its caster tracking cost ~0.5 ms a frame in
-/// Balmora, `docs/perf.md` "Frame budget"). Resume needs the owner's go.
+/// Point-light shadow cube cache (`sf_shadow_cache_bevy`, shadows.md v2 V1):
+/// off until the shadows session verifies V1 on screen (lights1 handoff,
+/// 2026-10-20); its plugin isn't added. `--off shadowcache` is the A/B once on.
 const POINT_SHADOW_CACHE: bool = false;
 
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
