@@ -229,6 +229,27 @@ sun/moon off interior views (-0.85 ms); range_scale 4 -> 2 for shadowed lamps (-
 -2 ms render thread; visual call); budget <= 4 lamps, since stock cubes without the cache cost ~12 ms of render thread for 8.
 Slice B (vendored patch): shadow/contact fetch only when range x NdotL > 0; per-light filter (Hardware2x2 for lamps, -0.9 ms).
 
+**Light lab cost model (lightlab, 2026-10-21; `target/perf/ll-*/sweep.md`).** Level `light-lab` (closed 20 x 20 x 5 m
+interior, 16 casters, two walkers, 8 lamps radius 3 m = range 12 m covering the room; test-levels.md "Light lab"),
+fixed `wide` camera, 1440p, High, profiling exe, 3 interleaved repeats per value, quiet machine. Run a sweep:
+`target/profiling/bevyrrowind.exe perf sweep <tag> light_lab --var point-shadows --values 0,1,2,4,8 --repeat 3 --resolution 2560x1440`
+(`--var` = any view flag, `off` (`none`, `a+b`), `resolution`, `env:KEY`; suite flags `--off`/`--env` fix the rest).
+Per lamp, slope of the medians (ms), every lamp lighting the whole screen:
+
+| per lamp | main opaque GPU | shadow views GPU | render thread (busy) | frame |
+|---|---:|---:|---:|---:|
+| unshadowed (0..32 lamps) | 0.10-0.12 | 0 | ~0 | GPU-bound past ~8 lamps (3.3 → 5.5 ms at 32) |
+| shadowed, contact off (cube + 8-tap PCF) | 0.14 | 0.16 | 0.46 | 0.49 (render-thread bound) |
+| shadowed, High (+ contact march) | 0.95 | 0.18 | 0.64 | 1.15 (3.3 → 12.5 ms for 8) |
+
+Contact march per shadowed lamp 0.80 ms; with **no** shadowed lamp contact still costs 0.79 ms (opaque 2.19 vs 1.40,
+8 lamps): lampcost's sun-into-interior leak reproduces in a pure interior. Coverage (`--range` 1/2/4/8 = 3/6/12/24 m,
+4 shadowed): opaque 2.14/4.61/6.66/6.67, shadow views 0/0.18/0.73/0.83: cost tracks screen coverage and stops once a
+lamp covers the room (at 3 m the walkers likely stay out of every lamp, so the cache re-renders nothing). Agrees with
+lampcost's census split (contact 0.68, PCF 0.11, aux 0.13-0.16 per lamp, render thread +0.5 per cached lamp); the lab
+runs ~15% higher because every lamp covers the full screen. Not swept yet: `--off shadowcache`, 960p, filter, orbit.
+
+
 ## Dev loop
 
 Compile and bake times are gated like frame times (owner 2026-10-11: "must be super fast for the dev

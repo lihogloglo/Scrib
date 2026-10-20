@@ -159,6 +159,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (lightlab): light lab: level `light-lab` + `perf sweep` (one variable per run); cost model in perf.md:
+  per lamp 0.11 ms unshadowed, +0.49 ms shadowed (cube+PCF), +1.15 ms with contact (0.80 march); sun leak reproduced.
+
 - 2026-10-21 (render-audit): rendering + shadows audit (code, Bevy ecosystem, industry); shadows2 + particles1
   work committed. Owner decides the shadow reset (superfargoth `research/shadows/2026-10-21-audit.md`).
 
