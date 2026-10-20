@@ -86,16 +86,14 @@ pub enum Part {
     Nif,
     FarField,
     Denoiser,
+    /// The terrain's far shadow past the cascades (horizon march + far map; also on proxies and impostors).
     FarShadows,
-    ShadowTune,
     /// Soft contact-hardening sun shadows (shadows F5, Bevy PCSS).
     SoftShadows,
     /// Screen-space contact shadows (shadows F1).
     ContactShadows,
     /// Screen-space ambient occlusion (Bevy GTAO, ROADMAP 1.5; Medium and up).
     Ssao,
-    /// Shadows F3 sun cascades (practical split to ~250 m); off = the A1 504 m layout.
-    ShadowSplits,
     /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`; parked: off anyway).
     ShadowCache,
     /// Time-sliced sky environment map (`sf_sky_bevy::EnvMapRefresh`): off, Bevy re-filters it every frame.
@@ -135,7 +133,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 40] = [
+    const ALL: [(&'static str, Part); 38] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -153,11 +151,9 @@ impl Part {
         ("lod", Part::FarField),
         ("denoiser", Part::Denoiser),
         ("farshadows", Part::FarShadows),
-        ("shadowtune", Part::ShadowTune),
         ("softshadows", Part::SoftShadows),
         ("contactshadows", Part::ContactShadows),
         ("ssao", Part::Ssao),
-        ("shadowsplits", Part::ShadowSplits),
         ("shadowcache", Part::ShadowCache),
         ("envslice", Part::EnvSlice),
 

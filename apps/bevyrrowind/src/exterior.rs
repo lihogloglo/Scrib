@@ -25,7 +25,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
-use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, ShadowFilteringMethod};
+use bevy::light::{CascadeShadowConfig, ShadowFilteringMethod};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -262,25 +262,14 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows: lamp_contact, ..render.point_shadow_budget(options.quality.point_shadows()) });
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
-        cascades: sun_cascades(options.quality, render.sun_cascades, &far_settings.levels, off_parts.has(Part::ShadowTune), off_parts.has(Part::ShadowSplits)),
-        sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
+        cascades: sun_cascades(options.quality, render.sun_cascades),
+        sun_shadow: sun_shadow(contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
     if off_parts.has(Part::EnvSlice) {
         app.insert_resource(sf_sky_bevy::EnvMapRefresh(1));
     }
-    // Shadows F3b: the far static sun map (objects' shadows past the cascades, on the terrain;
-    // scaffold switch [`FAR_STATIC_SHADOWS`], off until verified;
-    // weather.md "Sun cascades and the far static map"). `--off farshadows` turns it off too.
-    app.add_plugins(sf_sky_bevy::FarShadowPlugin)
-        .add_observer(no_far_shadow_terrain)
-        .add_observer(no_far_shadow_proxy)
-        .add_systems(Update, sun_shadow_input);
-    // Off by default until it is verified (owner 2026-10-19): with it on, interior release
-    // runs panic in bevy_pbr light.rs ("Failed to get directional light visible entities").
-    if off_parts.has(Part::FarShadows) || !FAR_STATIC_SHADOWS {
-        app.insert_resource(sf_sky_bevy::FarShadowConfig(None));
-    }
+    app.add_observer(no_precip_occlusion_terrain).add_observer(no_precip_occlusion_proxy);
     // M6 WE3: the weather (`sf_weather_bevy`) drives haze, dust, cloud cover, the clouds, the
     // fog and the wind from the camera's region; `--haze`/`--dust`/`--clouds` pin terms, `--fog`
     // scales the fog. Live: the C key and BRP `bevyrrowind/set weather` (`weather::force_live`).
@@ -1019,47 +1008,27 @@ fn far_lights_night(sun: Query<&GlobalTransform, With<SunLight>>, mut night: Res
     }
 }
 
-/// Copies the far static sun map into the terrain's input (shadows F3b).
-fn sun_shadow_input(fsm: Option<Res<sf_sky_bevy::FarSunShadow>>, input: Option<ResMut<sf_terrain_bevy::SunShadowInput>>) {
-    let (Some(fsm), Some(mut input)) = (fsm, input) else { return };
-    if input.image != fsm.image || input.clip_from_world != fsm.clip_from_world || input.params != fsm.params {
-        input.image = fsm.image.clone();
-        input.clip_from_world = fsm.clip_from_world;
-        input.params = fsm.params;
-    }
-}
-
-/// Terrain patches stay out of the far sun map: the terrain shadows itself
-/// with its own horizon term past the cascades.
-fn no_far_shadow_terrain(
+/// Terrain patches stay out of the rain occlusion map.
+fn no_precip_occlusion_terrain(
     add: On<Add<MeshMaterial3d<sf_terrain_bevy::TerrainMaterial>>>,
     mut commands: Commands,
 ) {
-    commands.entity(add.entity).try_insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
+    commands.entity(add.entity).try_insert(sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion);
 }
 
-/// Far proxies stay out of the far sun map: they sample it (a pass can't
-/// write the depth texture its materials bind), and the terrain's own far
-/// term already shadows them past the cascades.
-fn no_far_shadow_proxy(add: On<Add<MeshMaterial3d<sf_lod_bevy::ProxyMaterial>>>, mut commands: Commands) {
-    commands.entity(add.entity).try_insert((sf_sky_bevy::NoFarShadow, sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion));
+/// Far proxies stay out of the rain occlusion map.
+fn no_precip_occlusion_proxy(add: On<Add<MeshMaterial3d<sf_lod_bevy::ProxyMaterial>>>, mut commands: Commands) {
+    commands.entity(add.entity).try_insert(sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion);
 }
 
-/// Copies the terrain's far shadow map and the far static sun map into the
-/// far field's input (proxies sample both past the cascades).
-fn far_shadow_input(
-    map: Option<Res<sf_terrain_bevy::FarShadowMap>>,
-    sun: Option<Res<sf_sky_bevy::FarSunShadow>>,
-    mut input: ResMut<sf_lod_bevy::FarShadowInput>,
-) {
+/// Copies the terrain's far shadow map into the far field's input (proxies
+/// and impostors sample it past the cascades).
+fn far_shadow_input(map: Option<Res<sf_terrain_bevy::FarShadowMap>>, mut input: ResMut<sf_lod_bevy::FarShadowInput>) {
     let Some(map) = map else { return };
     let wanted = sf_lod_bevy::FarShadowInput {
         image: Some(map.image.clone()),
         params: map.params,
         generation: map.generation,
-        sun_map: sun.as_ref().map(|s| s.image.clone()),
-        sun_clip_from_world: sun.as_ref().map_or(Mat4::IDENTITY, |s| s.clip_from_world),
-        sun_params: sun.as_ref().map_or(Vec4::ZERO, |s| s.params),
     };
     if *input != wanted {
         *input = wanted;
@@ -1097,27 +1066,12 @@ fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<
 /// The sun's shadow cascades (shadows F3, weather.md "Distant shadows"): a
 /// practical split to ~250 m per preset ([`Quality::sun_cascades`]), 2× sharper
 /// at mid range than the A1 layout; past them the terrain shadows itself
-/// (`sf_terrain_bevy`'s far shadow) and, once built, the cached far static map
-/// takes the objects. `splits_off` (`--off shadowsplits`) is the A1 layout (4
-/// geometric cascades past every individual object: handoff + band, +10 %, + 20 m
-/// = 504 m), `legacy` (`--off shadowtune`) the one before it, for A/B runs.
-/// `fixed` (`--sun-cascades`) replaces the preset's count and last bound.
-fn sun_cascades(quality: Quality, fixed: Option<(usize, f32)>, levels: &sf_lod::FarLevels, legacy: bool, splits_off: bool) -> CascadeShadowConfig {
-    if !legacy && !splits_off {
-        let preset = quality.sun_cascades();
-        let (num_cascades, maximum_distance) = fixed.unwrap_or((preset.num_cascades, preset.maximum_distance));
-        return sf_sky_bevy::CascadeSplits { num_cascades, maximum_distance, ..preset }.build();
-    }
-    let objects = levels.handoff(1) + levels.band_width(1);
-    let (first, max) = if legacy { (20.0, 600.0) } else { (10.0, objects * 1.1 + 20.0) };
-    CascadeShadowConfigBuilder {
-        num_cascades: 4,
-        minimum_distance: 0.1,
-        first_cascade_far_bound: first,
-        maximum_distance: max,
-        overlap_proportion: 0.2,
-    }
-    .build()
+/// (`sf_terrain_bevy`'s far shadow). `fixed` (`--sun-cascades`) replaces the
+/// preset's count and last bound.
+fn sun_cascades(quality: Quality, fixed: Option<(usize, f32)>) -> CascadeShadowConfig {
+    let preset = quality.sun_cascades();
+    let (num_cascades, maximum_distance) = fixed.unwrap_or((preset.num_cascades, preset.maximum_distance));
+    sf_sky_bevy::CascadeSplits { num_cascades, maximum_distance, ..preset }.build()
 }
 
 /// PCSS light size in cascade texels (see [`Quality::soft_shadow_size`]); tuned by eye.
@@ -1129,21 +1083,10 @@ const CONTACT_LENGTH: f32 = 0.3;
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
 /// Bevy's 1.8-texel normal offset lifts every lookup off the surface by 1.3 m in
 /// the last cascade, so small casters lose the shadow where they touch the ground;
-/// `SUN_NORMAL_BIAS` texels keep acne away at grazing sun. `legacy` (`--off shadowtune`)
-/// is Bevy's default.
-fn sun_shadow(legacy: bool, contact_shadows: bool, soft_size: Option<f32>) -> sf_sky_bevy::SunShadow {
-    let defaults = sf_sky_bevy::SunShadow::default();
-    if legacy {
-        return sf_sky_bevy::SunShadow { contact_shadows, soft_size, ..defaults };
-    }
+/// `SUN_NORMAL_BIAS` texels keep acne away at grazing sun.
+fn sun_shadow(contact_shadows: bool, soft_size: Option<f32>) -> sf_sky_bevy::SunShadow {
     sf_sky_bevy::SunShadow { depth_bias: SUN_DEPTH_BIAS, normal_bias: SUN_NORMAL_BIAS, contact_shadows, soft_size }
 }
-
-/// Scaffold: the far static sun shadow map (shadows F3b, weather.md "Sun
-/// cascades and the far static map"). Off until it is verified on screen
-/// and the interior panic is fixed; removal path: delete once it is on by
-/// default (or the map is dropped).
-const FAR_STATIC_SHADOWS: bool = false;
 
 /// Sun shadow depth bias, meters along the light (Bevy: 0.02).
 const SUN_DEPTH_BIAS: f32 = 0.02;

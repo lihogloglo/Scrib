@@ -81,7 +81,9 @@ and effects. Every task reports its ms cost per preset.
   **Audit 2026-10-21 (render-audit):** no renderer rewrite; shadow lane reset proposed (Bevy patch instead of
   injection, delete layers, GTAO + capsule shadows); owner decision pending. `research/shadows/2026-10-21-audit.md`.
   **Reset A1 done (2026-10-21, shadowA1):** lamp contact off, sun 0.3 m, sun/moon out of interiors, GTAO; lab 8 lamps
-  12.5 → 6.9 ms, census GPU 9.97 → 5.90; torch-bearers in the budget (verified). SH-16 awaiting owner. Next A2.
+  12.5 → 6.9 ms, census GPU 9.97 → 5.90; torch-bearers in the budget (verified). SH-16 awaiting owner.
+  **Reset A2 done (2026-10-21, shadowA2):** lamp maps captured during the door fade (gate, +0.35 s census, cap 1.5 s);
+  far static map, caster cull, `shadowtune`/`shadowsplits` deleted (~820 LOC); no perf change. SH-17 awaiting owner. Next B.
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [~] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset. Built in A1 (Low off, Medium/High/Ultra = Bevy Low/Medium/
   High; ~0.9 ms GPU at 1440p native on High, perf.md "Shadow reset A1"); look awaiting owner (SH-16).
@@ -162,6 +164,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (shadowA2): shadow reset A2: lamp shadow captures while the door fade is black (no arrival flicker), dead
+  shadow layers deleted (far static map, caster cull, legacy cascades; ~820 LOC); perf runner ignores idle-clock GPU load.
 - 2026-10-21 (shadowA1): shadow reset A1: lamp contact shadows off, sun contact 0.3 m, sun/moon off interior views
   (layer-0 leak; they never lit interiors), GTAO per preset (+0.9 ms GPU High 1440p); lab 8 lamps 12.5 → 6.9 ms.
 

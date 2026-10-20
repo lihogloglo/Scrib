@@ -380,7 +380,7 @@ pub(super) fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[Su
     let _ = writeln!(header, "- A/B off: {} · hitch threshold: {}", if args.off.is_empty() { "none".to_owned() } else { args.off.join(",") }, args.hitch_ms.map_or("2.5 × median, ≥ 25 ms".to_owned(), |h| format!("{h} ms")));
     let _ = writeln!(header, "- scenarios: {}", SCENARIOS.iter().filter(|s| runs.iter().any(|r| r.scenario == s.name)).map(|s| format!("`{}` {}", s.name, s.about)).collect::<Vec<_>>().join("; "));
     if notes.is_empty() {
-        let _ = writeln!(header, "- machine: quiet (before each run: no {} process, GPU ≤ 15%, CPU ≤ 20%; during: other processes ≤ {OTHER_CPU_LIMIT}% CPU)", busy.join("/"));
+        let _ = writeln!(header, "- machine: quiet (before each run: no {} process, GPU ≤ 15% at ≥ {IDLE_GPU_CLOCK_MHZ} MHz, CPU ≤ 20%; during: other processes ≤ {OTHER_CPU_LIMIT}% CPU)", busy.join("/"));
     } else {
         for n in notes {
             let _ = writeln!(header, "- **busy machine**: {n}");
@@ -450,12 +450,28 @@ fn wait_quiet(busy: &[&str], max_wait: Duration, no_wait: bool) -> Result<(Optio
     }
 }
 
-/// Mean GPU load over `span` (0 without `nvidia-smi`).
+/// Below this graphics clock a GPU's utilisation is idle housekeeping, not
+/// work: the lock screen and desktop compositor keep 25-40 % "utilisation" at
+/// ~210 MHz, while any real 3D load clocks up past 1 GHz (perf.md "Quiet machine").
+const IDLE_GPU_CLOCK_MHZ: f64 = 600.0;
+
+/// Mean GPU load over `span` (0 without `nvidia-smi`); samples at an idle
+/// clock (below [`IDLE_GPU_CLOCK_MHZ`]) count as 0 %.
 fn gpu_load(span: Duration) -> f64 {
     let Ok(gpu) = GpuSampler::start(250) else { return 0.0 };
     std::thread::sleep(span);
     let taken = gpu.stop();
-    GpuSummary::over(&taken, 0.0, f64::INFINITY).map_or(0.0, |s| s.util_mean)
+    working_gpu_load(&taken)
+}
+
+/// Mean utilisation, idle-clock samples counted as 0 %.
+fn working_gpu_load(samples: &[suite::GpuSample]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    #[allow(clippy::cast_precision_loss)] // a few samples
+    let n = samples.len() as f64;
+    samples.iter().map(|s| if s.clock_mhz < IDLE_GPU_CLOCK_MHZ { 0.0 } else { s.util_pct }).sum::<f64>() / n
 }
 
 fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str]) -> RunResult {
@@ -570,4 +586,28 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
 /// As `sf_diag_bevy` names report files.
 fn file_stem(name: &str) -> String {
     name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_clock_gpu_load_counts_as_idle() {
+        let at = |util_pct, clock_mhz| suite::GpuSample {
+            unix_s: 0.0,
+            util_pct,
+            clock_mhz,
+            mem_clock_mhz: 0.0,
+            power_w: 0.0,
+            temp_c: 0.0,
+            vram_mib: 0.0,
+            throttle: 0,
+        };
+        // The lock screen: 25-40 % at ~210 MHz is idle.
+        assert!(working_gpu_load(&[at(40.0, 210.0), at(25.0, 210.0)]) < 1.0);
+        // A game: counted.
+        assert!((working_gpu_load(&[at(90.0, 1800.0), at(10.0, 210.0)]) - 45.0).abs() < 1e-9);
+        assert!(working_gpu_load(&[]) < 1e-9);
+    }
 }

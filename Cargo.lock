@@ -6891,11 +6891,9 @@ dependencies = [
  "bevy_shader",
  "bevy_shape",
  "bevy_solari",
- "bevy_tasks",
  "bevy_time",
  "bevy_transform",
  "log",
- "sf_diag_bevy",
  "sf_render_order_bevy",
  "sf_sky",
 ]

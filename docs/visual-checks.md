@@ -45,10 +45,9 @@ says what to expect (memory: owner-visual-confirmation). The old `play\` folder 
    Not switchable live (decided at startup, compare two runs): `--off
    farfield` (alias `lod`), `--off terrain`, `--off sky`, `--off envmap`,
    `--off near`, `--off far`, `--off nif`, `--off lights`, `--off
-   particles`, `--off farshadows`, `--off shadowtune` (pre-2026-10-12
-   cascades), `--off denoiser`, `--lod-tint`, `--far-tint` (initial state
-   of F5), `--terrain-lod`, `--wire`, `--rt`, `--prepass`, `--resolution
-   WxH`. Several `--off` parts go comma-separated: `--off farshadows,shadowtune`.
+   particles`, `--off farshadows` (terrain far shadow), `--off denoiser`,
+   `--lod-tint`, `--far-tint` (initial state of F5), `--terrain-lod`,
+   `--wire`, `--rt`, `--prepass`, `--resolution WxH`. Several `--off` parts go comma-separated: `--off farshadows,lights`.
 5. **Mark the result** in this file: change the entry's `Status:` line to
    `confirmed` or `rejected: <what you saw>`, optionally with a camera from
    F9 or a screenshot from F12. Agents pick up rejected entries.
@@ -172,6 +171,16 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   around NPCs or a grainy crawl under TAA/DLSS; indoors nothing lit or shadowed from the sun's direction; at night
   torch-bearers' own lights cast moving shadows (within High's 8); outdoors sun shadows, cloud shadows and rain
   occlusion under roofs as before.
+- Status: awaiting owner.
+
+### SH-17: Shadow reset A2 (lamp maps captured during the door fade)
+- Kind: game location. Run (release): `.\bevyrrowind scene door-census` at night (`--hour 22`): Space out to Seyda Neen,
+  Space at the office door back in. The log line "door travel took ... s of it for gates" gives the extra black time.
+- Look for: on arrival inside, the lamps' shadows are there from the first visible frame: no flicker or shadows
+  switching on as the fade lifts (SH-15's "flicker at first"); the extra black time is short (~0.3-0.5 s, capped 1.5 s).
+  Outdoors the first visit may hit the 1.5 s cap (shader compiles): any flicker left there is expected.
+- Seen in a dev `--use-door 2` run (cause not triaged; the gate only delays the fade): back inside after the round trip most static meshes
+  (walls) were missing; triage separately.
 - Status: awaiting owner.
 
 ### FG-1: Volumetric fog black bands on fast turns (owner report)

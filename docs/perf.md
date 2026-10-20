@@ -259,6 +259,12 @@ High = Medium level (`Quality::ssao`); ~half under DLSS Quality. Real scenes vs 
 median 9.63 → 8.71 (p95 16.7 → 11.0, timed GPU 9.97 → 5.90; 8.37/4.98 `--off ssao`); walk 12.61 → 13.26 (GPU 8.50 →
 9.66; 12.94/8.73 `--off ssao`): the walk is not GPU-bound, so GTAO and the reset barely move its median.
 
+**Shadow reset A2 (shadowA2, 2026-10-21; `target/perf/a2-*`; 1440p, High, profiling exe, x3; no lock-screen wait with
+the idle-clock rule).** Lamp maps captured during the door fade, far static map / caster cull / legacy cascade layouts
+deleted. Lab `point-shadows` 0/8 (`--off ssao`): 3.14/6.83 ms (A1 3.15/6.93), timed GPU 2.07/4.67. Census median of
+medians 8.06 (runs 8.06/6.50/8.44; A1 8.71 x1), walk 13.16 (13.16/13.82/12.82; A1 13.26): no regression. Door
+census gate (dev build): +0.35 s black, 8 lamps captured before the fade-in; first exterior visit hits the 1.5 s cap.
+
 
 ## Dev loop
 
@@ -306,7 +312,9 @@ restore the file afterwards.
 
 Numbers from a busy machine are noise. The suite waits, before every run, until no `cargo`, `rustc`,
 `bevyrrowind` or `ovid` process runs (other agents build here), GPU load <= 15 % and CPU load <= 20 %
-(`--wait-for name,...` adds names; `--max-wait-min`, `--no-wait`). During the run it compares system and
+(`--wait-for name,...` adds names; `--max-wait-min`, `--no-wait`). GPU samples below 600 MHz graphics clock
+count as idle: the lock screen and compositor show 25-40 % at ~210 MHz, any 3D load clocks past 1 GHz (shadowA2;
+unattended runs used to wait out `--max-wait-min`). During the run it compares system and
 process CPU (Bevy's `SystemInformationDiagnosticsPlugin`): other processes above 25 % mark the run busy and it
 is retried (`--retries`, default 2). Busy runs are flagged in the report and the summary.
 
@@ -378,7 +386,7 @@ warm-up (loading) included, with what changed in that frame and the one before: 
 proxies), `sky` (no atmosphere: also the sun and its shadows), `envmap` (sky environment light only),
 `shadows`, `lights`, `particles`, `nif` (models on the runtime NIF path), `denoiser` (DLSS Ray
 Reconstruction off on `--rt`). `farshadows` (terrain/proxy/impostor far shadow and the dithered cascade
-end off), `shadowtune` (the old 600 m / 20 m cascades instead of the derived 504 m / 10 m),
+end off; `shadowtune`/`shadowsplits`, the legacy cascade layouts, were deleted in shadow reset A2, 2026-10-21),
 `sizecull` (no size-based draw distance: every object drawn to its ring or the far-field handoff), `precombine` (near
 cells spawn one entity per static again instead of their merged `lod.near` buckets; no rebake). Compare against a run without.
 

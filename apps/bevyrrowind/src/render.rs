@@ -159,7 +159,8 @@ impl RenderSettings {
         if POINT_SHADOW_CACHE && self.shadow_cache {
             app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
                 .insert_resource(sf_shadow_cache_bevy::ShadowCacheSettings { enabled: true, ..Default::default() })
-                .add_observer(movable_characters);
+                .add_observer(movable_characters)
+                .add_systems(Update, shadow_captures_at_black.before(sf_world_bevy::StreamingSystems::Transition));
         }
 
         app.add_systems(Last, log_lighting_at_screenshot);
@@ -168,6 +169,44 @@ impl RenderSettings {
     /// After the sky plugin (it inits `SkyRenderOptions`): the denoiser switch.
     pub fn apply_options(self, options: &mut SkyRenderOptions) {
         options.ray_tracing_denoiser = self.denoiser;
+    }
+}
+
+/// Shadow reset A2: lamp maps are captured during the door fade. While the
+/// screen is black the cache warms up (unlimited captures, short settle), and
+/// the fade stays black until every shadowed lamp in view has its final cached
+/// faces (capped by `FadeTransition::gate_max_secs`), so the first visible
+/// frames have no capture flicker. Removal path: slice B's patched `bevy_pbr`
+/// replaces the cache.
+/// The budget must have caught up first: the arrival's lamps take a slot over
+/// two frames (twin, then the map), so until then the cache has nothing pending.
+#[allow(clippy::type_complexity)]
+fn shadow_captures_at_black(
+    mut fade: ResMut<sf_world_bevy::FadeTransition>,
+    mut settings: ResMut<sf_shadow_cache_bevy::ShadowCacheSettings>,
+    stats: Res<sf_shadow_cache_bevy::ShadowCacheStats>,
+    budget: Res<PointShadowBudget>,
+    places: Query<&GlobalTransform>,
+    lights: Query<(&GlobalTransform, &PointLight, &InheritedVisibility), (With<sf_sky_bevy::BudgetedShadow>, Without<sf_sky_bevy::ShadowTwin>)>,
+) {
+    let eye = match fade.phase() {
+        sf_world_bevy::FadePhase::Hold { traveler, .. } => places.get(*traveler).ok().map(GlobalTransform::translation),
+        _ => None,
+    };
+    let black = eye.is_some();
+    if settings.warmup != black {
+        settings.warmup = black;
+    }
+    let Some(eye) = eye else { return };
+    let (mut candidates, mut shadowed) = (0, 0);
+    for (at, light, shown) in &lights {
+        if shown.get() && at.translation().distance(eye) < budget.fade_end {
+            candidates += 1;
+            shadowed += usize::from(light.shadow_maps_enabled);
+        }
+    }
+    if !stats.settled() || shadowed < candidates.min(budget.max) {
+        fade.hold();
     }
 }
 
