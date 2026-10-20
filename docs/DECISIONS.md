@@ -1423,3 +1423,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-20 (shadows2): meshes that cast no shadow carry `NotShadowCaster` even when their material disables
   shadows (particles, billboards, translucents): caster tracking and Bevy's per-light visibility see the entity, not
   the material. Lamp shadow caches capture through their own views and recapture on a schedule, never per event.
+- 2026-10-21 (render-audit, owner): shadows reset. Stock Bevy shadow path first (A), then upstream PRs #26149/#26161
+  carried as a vendored `bevy_pbr` patch (B); no more injection into Bevy's private render-world state. The lamp cube
+  cache (`sf_shadow_cache_bevy`, 947efc5) is deleted in A: #26161 replaces it. Torch-bearers cast shadows by budget.
