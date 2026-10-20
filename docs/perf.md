@@ -185,8 +185,14 @@ background CPU ~26 % (`target/perf/p1-base`, `p1-base-off`, `p1-gpu`); frame med
 
 Reading: standing Balmora now costs what no particles cost (-0.9 ms at 960p, render thread -1 to -2 ms). On the
 walk, particles no longer cost anything measurable even before the change (the audit's -1.0 ms didn't reproduce
-after the big_space patch); the walk's 12.3 ms is elsewhere. All benches run at 10:00: night (torch walkers'
-flames and lights, far light sprites) is unmeasured.
+after the big_space patch); the walk's 12.3 ms is elsewhere.
+
+**Night (22:00, clear; new scenarios `balmora_night`, `balmora_walk_night`).** Single runs, before / `--off
+particles` / after: Balmora 1440p 12.44 / 12.40 / 12.48, 960p 8.98 / 8.99 / 9.35; walk 1440p 11.41 / 11.43 /
+12.55, 960p 11.65 / 11.82 / 12.21. The walk's +1.1 ms didn't survive repeats (×3, 1440p): before 11.86, 12.20
+(render 10.25, 10.49; a third run lost the device, old exe, driver error), after 12.12, 11.98, 11.97 (render 10.33,
+10.24, 10.24): equal. Night costs no more than day (lamps are on at every hour; ~306 vs 293 point lights on the
+walk). Lesson: single runs here vary ±0.5 ms; repeat 3 before calling a delta under ~1 ms.
 
 Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
 pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.

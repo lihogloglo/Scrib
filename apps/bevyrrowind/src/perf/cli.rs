@@ -48,6 +48,16 @@ pub const SCENARIOS: &[SuiteScenario] = &[
         args: &["view", "Balmora", "--bench", "benchmarks/exterior_balmora_walk.json"],
     },
     SuiteScenario {
+        name: "balmora_night",
+        about: "Balmora standing at 22:00, clear: torch-bearing walkers, far light sprites, moon shadows",
+        args: &["view", "Balmora", "--hour", "22", "--weather", "clear", "--bench", "benchmarks/exterior_balmora.json"],
+    },
+    SuiteScenario {
+        name: "balmora_walk_night",
+        about: "balmora_walk at 22:00, clear: walkers carry lit torches (flame emitters), lamps light the street",
+        args: &["view", "Balmora", "--hour", "22", "--weather", "clear", "--bench", "benchmarks/exterior_balmora_walk.json"],
+    },
+    SuiteScenario {
         name: "flight",
         about: "flight at 60 m/s, 120 m above the ground, Seyda Neen - Balmora - Red Mountain - Vivec",
         args: &["view", "Seyda Neen", "--bench", "benchmarks/exterior_flight.json", "--bench-ground"],
