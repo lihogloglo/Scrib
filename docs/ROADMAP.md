@@ -21,6 +21,10 @@ Decided 2026-10-19:
    → moved to Phase 4.
 3. **Shadows: something simpler that works well first.** Park the far static sun map and the point-shadow cube
    cache. New techniques only when they are the better, industry-standard way, not as extra layers.
+   **2026-10-21 (after the render audit):** (A) stock Bevy shadows, delete the injected layers (lamp cache, far
+   static map, extra sun views where possible), nearest lamps + torches by budget, short contact shadows, GTAO;
+   then (B) carry Bevy PRs #26149/#26161 as a vendored patch. Torch-bearers cast shadows (within the budget).
+   Own shadow atlas (C) only if A+B fall short. First: diagnose the ~0.8 ms GPU per shadowed lamp.
 
 Still open (low priority): storm spill past region borders (~2 km vs strict); co-op guest imports a single-player
 character (default: create only); cargo-deny in superfargoth; UAL2 clip pack purchase.
