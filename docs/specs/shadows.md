@@ -50,6 +50,19 @@ Goal: interiors lit by 20-30 point lights where every light that matters on scre
 more on Ultra), at well under 1 ms, with no visible popping when the shadowed set changes. Today High shadows
 **one** light, faded out over 15-25 m, because every shadowed light re-renders six cube faces every frame.
 
+## Reset A1 as built (shadowA1, 2026-10-21)
+
+- **Contact shadows: sun and moon only**, as engines use them (one key light, short ray). Lamps and carried torches
+  get none (`PointShadowBudget::contact_shadows` false; game A/B `BEVYRROWIND_LAMP_CONTACT=1`): it was 0.80 ms GPU per
+  shadowed lamp at 1440p and drew SH-14's bands. Ray length 0.3 m (Bevy's default; was 0.5), Medium 8 / High 16 steps.
+- **Sun and moon leave interior views.** Bevy filters directional lights per *view* by `RenderLayers`, never per mesh;
+  on `[0, exterior]` they stayed in every interior view (camera `[0, interior]`) through layer 0. They did not light
+  interiors (illuminance 0 without a `SkyCamera`) but were shaded per pixel with the contact march (0.8 ms). The game
+  now gives them `[0, active layer]` under the sky and `RenderLayers::none()` indoors (one writer, `light_layers`).
+- **GTAO**: Bevy `ScreenSpaceAmbientOcclusion` (depth + normal + motion-vector prepass, `Msaa::Off`), Low preset off,
+  levels Low/Medium/High on Medium/High/Ultra; ~0.9 ms at 1440p native on High. Torch-bearers: verified in the budget
+  (BRP, Balmora 22:00: a `HeldLightSlot` light holds one of High's 8 maps). Numbers: bevyrrowind perf.md "Shadow reset A1".
+
 ## V1 as built (shadows2, 2026-10-20)
 
 The cache built in lights1 cached **nothing**: diagnostic counters (now a 5 s `debug` log in the crate) showed
