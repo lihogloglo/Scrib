@@ -159,7 +159,9 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   close to a lamp or when NPCs walk by; NPC shadows follow them without 1-frame gaps; no shadow left behind
   where an object streamed out (≤ 2 s is by design); no shadow "swimming" with a carried torch.
 - Owner decides: High's lamp count (8 now; walk ~+2 ms vs 0 lamps, perf.md "Shadows v2").
-- Status: awaiting owner. Not seen by an agent (no screenshots taken).
+- Status: partial (owner 2026-10-21, census, 8 lamps): flicker at first, stable once the maps are captured; shadows
+  pop in a few metres ahead (end of the hall gets its shadows only when walking through the door): shadowed-set
+  changes are visible. Goes to slice A/B (budget + light lab).
 
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
