@@ -36,7 +36,7 @@ pub use animation::{ModelAnimation, NifAnimation, NodeAnimation};
 pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
 pub use lights::{AttachLight, LightCalibration};
-pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleRange};
+pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleExt, ParticleMaterial, ParticleRange};
 
 /// Extensions that may replace a texture reference, in preference order.
 /// `dds` first is the original engine's behavior; `ktx2`/`png` let modern
@@ -98,6 +98,14 @@ pub struct MwAssetsPlugin {
 
 impl Plugin for MwAssetsPlugin {
     fn build(&self, app: &mut App) {
+        bevy::asset::embedded_asset!(app, "shaders/particles.wesl");
+        // Particles fog themselves from `TranslucentFog` (render-order.md rule 1).
+        if !app.is_plugin_added::<sf_render_order_bevy::RenderOrderPlugin>() {
+            app.add_plugins(sf_render_order_bevy::RenderOrderPlugin);
+        }
+        app.add_plugins(MaterialPlugin::<ParticleMaterial>::default())
+            .init_resource::<particles::ParticleBuffers>()
+            .add_observer(particles::release_slot);
         app.insert_resource(SharedVfs(self.vfs.clone()))
             .init_resource::<LightCalibration>()
             .init_resource::<CookedLodSettings>()
@@ -110,7 +118,7 @@ impl Plugin for MwAssetsPlugin {
                 (
                     animation::animate_materials,
                     (animation::assign_phases, animation::animate_nodes).chain(),
-                    (particles::start_particles, particles::simulate_particles).chain(),
+                    (particles::sync_materials, particles::start_particles, particles::simulate_particles, particles::upload_particles).chain(),
                     lights::attach_lights,
                     lights::animate_lights,
                     cooked::spawn_cooked,

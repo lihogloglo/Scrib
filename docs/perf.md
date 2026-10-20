@@ -168,8 +168,25 @@ filtering 0.54 + 0.29 (every frame), indirect parameters 0.51, TAA 0.43, prepass
 |---|---|---|---|
 | big_space low-precision propagation | walked every static mesh every frame (no dirty-tree pruning) | vendored patch (`superfargoth/vendor/big_space`) | trace 2.7 + 0.7 → 0.44 + 0.27 ms main-thread tasks; walk main busy 9.45 → 8.78 |
 | sky env map | re-filtered every frame | `EnvMapRefresh` every 8 frames, `--off envslice` | Balmora 1440p 13.3 → 12.4, 960p 9.5 → 8.9 |
-| NIF particles | CPU quads rewritten into `Mesh` assets every frame: Bevy rescans all `Mesh3d` (0.74 ms), re-allocates and re-prepares meshes | **open**: GPU-expanded billboards from a buffer | `--off particles`: walk 1440p 12.7 → 11.7 (render -1.0, main -0.9) |
+| NIF particles | CPU quads rewritten into `Mesh` assets every frame: Bevy rescans all `Mesh3d` (0.74 ms), re-allocates and re-prepares meshes | **done** (particles1): vertex pulling, see below | `--off particles`: walk 1440p 12.7 → 11.7 (render -1.0, main -0.9) |
 | `atmosphere_luts` | Bevy recomputes all LUTs each frame | open (upstream) | 0.69 ms GPU |
+
+**GPU particles (2026-10-20, particles1).** CPU simulation kept; each emitter writes its slot of one `ShaderBuffer`,
+its `MeshTag` is the slot, the vertex shader turns static shared quads to the view (`mw_assets` particles.rs,
+Bevy 0.20's `storage_buffer` pattern). Mesh modifications on the walk 17.9/frame → 0. Profiling build, 1 run each,
+background CPU ~26 % (`target/perf/p1-base`, `p1-base-off`, `p1-gpu`); frame median ms (render / main busy):
+
+| run | before | `--off particles` | after |
+|---|---:|---:|---:|
+| balmora 1440p | 12.89 (9.9 / 8.2) | 12.34 (8.6 / 7.2) | **12.49** (7.7 / 6.1) |
+| balmora 960p | 9.94 (8.4 / 7.4) | 9.05 (7.6 / 6.8) | **9.00** (7.4 / 6.9) |
+| balmora_walk 1440p | 12.29 (10.6 / 8.6) | 12.29 (10.4 / 8.2) | 12.66 (10.8 / 8.4) |
+| balmora_walk 960p | 12.31 (10.6 / 8.6) | 12.23 (10.6 / 8.3) | 12.32 (10.5 / 8.4) |
+
+Reading: standing Balmora now costs what no particles cost (-0.9 ms at 960p, render thread -1 to -2 ms). On the
+walk, particles no longer cost anything measurable even before the change (the audit's -1.0 ms didn't reproduce
+after the big_space patch); the walk's 12.3 ms is elsewhere. All benches run at 10:00: night (torch walkers'
+flames and lights, far light sprites) is unmeasured.
 
 Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
 pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.

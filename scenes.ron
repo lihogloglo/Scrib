@@ -495,6 +495,15 @@
             look_for: "NPCs walk street/bridge pathgrid edges at a walking pace with the walk cycle matching speed (no skating), stop, idle and sometimes fidget; they pass each other without overlapping; stand in their path: they step around you. J: mover gizmos (ring, velocity, trajectory); --off walkers: everyone stands",
             checks: ["WK-1", "WK-2"],
         ),
+        // ---- particles (.sessions/particles1.md) ----
+        (
+            name: "particles-census-fire",
+            cell: "Seyda Neen, Census and Excise Office",
+            camera: "-0.57,4.6,2.0,-0.57,2.6,6.74",
+            description: "Census Office fireplace: NIF flames and sparks drawn from the GPU particle buffer (vertex pulling)",
+            look_for: "flames and sparks as before: camera-facing from any angle (orbit the fire), additive glow, no stray quads, no flicker",
+            checks: ["PA-4"],
+        ),
         // ---- held items (.sessions/heldrender.md) ----
         (
             name: "hi-balmora-night",

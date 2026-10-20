@@ -4610,6 +4610,7 @@ dependencies = [
  "mw_world",
  "sf_model",
  "sf_model_bevy",
+ "sf_render_order_bevy",
  "sf_sky_bevy",
  "sf_vfs",
  "thiserror 2.0.21",

@@ -13,6 +13,7 @@ mw_nif.workspace = true
 sf_model.workspace = true
 sf_model_bevy.workspace = true
 sf_sky_bevy.workspace = true
+sf_render_order_bevy.workspace = true
 mw_world.workspace = true
 thiserror.workspace = true
 

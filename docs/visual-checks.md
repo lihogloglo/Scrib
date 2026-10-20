@@ -600,6 +600,17 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
   idling lineup shows neither (PA-3).
 - Source: actorparticles.
 
+### PA-4: GPU-drawn particles look as before (ROADMAP 1.2, particles1)
+- Kind: game location. Run: `.\bevyrrowind scene particles-census-fire` (fireplace), then
+  `.\bevyrrowind scene hi-balmora-night` (torch flames on walkers, braziers) and `.\bevyrrowind character atronach_flame --night`.
+- Changed: quads are placed and turned to the camera in the vertex shader from one shared particle buffer
+  (`mw_assets` particles.rs, `shaders/particles.wesl`) instead of a mesh rewritten per emitter per frame.
+- Look for: flames, sparks and smoke as before (size, colour, additive glow, soft blended smoke, spin); quads
+  face the camera from any angle; torch flames still trail a moving hand; no flicker, no stray quads at the
+  fire's base, none vanishing near the screen edge; fog dims far fires as before.
+- A/B: the previous exe (none at runtime; `--off particles` removes them).
+- Status: awaiting owner. Source: particles1.
+
 ### AP-3: Archers hold bows
 - Kind: game models. Run: `.\bevyrrowind character "imperial archer" "@wood elf,archer" "@dark elf,archer" --drawn`.
 - Look for: a curved bow in hand (long bow, chitin short bow, steel longbow:

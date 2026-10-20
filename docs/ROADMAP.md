@@ -151,6 +151,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-20 (particles1): NIF particles drawn by vertex pulling (ShaderBuffer + MeshTag, CPU sim kept): Balmora
+  960p 9.9 → 9.0 ms (= `--off particles`), walk unchanged (perf.md "GPU particles"); PA-4 awaiting owner.
+
 - 2026-10-20 (lights1): 1.6 terrain blend removed (walk 25.9 → 14.7 ms, Balmora 15.9 → 13.1); lights researched
   (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Then audit:
   big_space patch, env map every 8 frames (perf.md "Audit"); shadows v2 spec; V1 lamp cache built, off (handoff).
