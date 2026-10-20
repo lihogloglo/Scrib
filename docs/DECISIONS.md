@@ -1426,3 +1426,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (render-audit, owner): shadows reset. Stock Bevy shadow path first (A), then upstream PRs #26149/#26161
   carried as a vendored `bevy_pbr` patch (B); no more injection into Bevy's private render-world state. The lamp cube
   cache (`sf_shadow_cache_bevy`, 947efc5) is deleted in A: #26161 replaces it. Torch-bearers cast shadows by budget.
+- 2026-10-21 (render-audit, after lampcost): the lamp cube cache stays through slice A and is deleted only when slice B's
+  patch (#26149/#26161) measures equal or better: stock Bevy costs ~+12 ms render thread for 8 lamps (perf.md
+  "Per-lamp GPU cost"). The ~0.8 ms GPU per lamp was Bevy contact shadows (0.68/lamp), not the cube maps.
