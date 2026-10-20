@@ -18,7 +18,8 @@ pub struct SweepArgs {
     suite: SuiteArgs,
     /// The variable: a view flag without its dashes (`point-shadows`, `lab-lights`, `range`,
     /// `lab-radius`, `lab-orbit`, ...), `off` (an `--off` part; `none` for the baseline),
-    /// `resolution` (`WxH`), or `env:KEY` (an environment variable, e.g.
+    /// `a+b` (flags stepped together, values `1+2`), `resolution` (`WxH`), or `env:KEY` (an
+    /// environment variable, e.g.
     /// `env:BEVYRROWIND_SHADOW_FILTER`).
     #[arg(long)]
     var: String,
@@ -44,6 +45,11 @@ impl Step {
             step.envs.push((key.to_owned(), value.to_owned()));
         } else if var == "off" {
             step.off.extend(value.split('+').filter(|v| *v != "none").map(str::to_owned));
+        } else if var.contains('+') {
+            // Flags stepped together (`point-shadows+lab-lights` = `16+16`), value by value.
+            for (flag, value) in var.split('+').zip(value.split('+')) {
+                step.args.extend([format!("--{}", flag.trim_start_matches('-')), value.to_owned()]);
+            }
         } else if var != "resolution" {
             step.args.extend([format!("--{}", var.trim_start_matches('-')), value.to_owned()]);
         }
@@ -147,6 +153,7 @@ mod tests {
     #[test]
     fn steps_map_to_flags_off_parts_and_env() {
         assert_eq!(Step::new("point-shadows", "4").args, ["--point-shadows", "4"]);
+        assert_eq!(Step::new("point-shadows+lab-lights", "16+16").args, ["--point-shadows", "16", "--lab-lights", "16"]);
         assert_eq!(Step::new("off", "none").off, Vec::<String>::new());
         assert_eq!(Step::new("off", "contactshadows+shadowcache").off, ["contactshadows", "shadowcache"]);
         assert_eq!(Step::new("env:BEVYRROWIND_SHADOW_FILTER", "hardware").envs, [("BEVYRROWIND_SHADOW_FILTER".to_owned(), "hardware".to_owned())]);

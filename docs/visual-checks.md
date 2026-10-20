@@ -184,6 +184,14 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   while the exterior's pipelines still compile (log `pipelines: ... compiling`).
 - Status: awaiting owner.
 
+### SH-18: Shadow reset B1 (vendored Bevy shadow patch under the lamp cache)
+- Kind: game location. Run (release): `.\bevyrrowind scene door-census --hour 22`, then Balmora at night
+  (`view Balmora --hour 22`, walk the streets by lamps and torch-bearers). A/B: `--off shadowcache` = patch alone.
+- Look for: lamp shadows as in SH-15/17 (all 8 census lamps, NPCs casting while walking); no flicker; no stale
+  shadows: a walker's shadow follows it and leaves nothing behind when it walks out of a lamp, a door that opens
+  updates its shadow. Same with `--off shadowcache` (slower, should look identical).
+- Status: awaiting owner.
+
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
   21:15, fog). Turn the camera fast left or right.

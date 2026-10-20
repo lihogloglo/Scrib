@@ -23,8 +23,10 @@ pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (8, 512);
 const LAMP_SHADOW_FADE: (f32, f32) = (30.0, 40.0);
 
 /// Point-light shadow cube cache (`sf_shadow_cache_bevy`, shadows.md v2 V1):
-/// on since shadows2 (2026-10-20); `--off shadowcache` is the A/B (Bevy redraws
-/// every face every frame). Removal path: delete the switch once V1 is signed off.
+/// on since shadows2 (2026-10-20); `--off shadowcache` is the A/B (vendored Bevy patch: a
+/// light's unchanged maps are skipped, any other redrawn whole). Shadow reset B1
+/// kept it: the patch re-renders a whole cube for any skinned caster in view (census 15.0 vs 9.0 ms).
+/// Removal path: when Bevy caches static casters per face itself (perf.md "Shadow reset B1").
 const POINT_SHADOW_CACHE: bool = true;
 
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
@@ -137,7 +139,9 @@ impl RenderSettings {
         self
     }
 
-    /// `--off shadowcache`: Bevy redraws every shadowed light every frame.
+    /// `--off shadowcache`: the patched Bevy path (superfargoth/vendor, PRs #26149/#26161): a
+    /// shadowed light redraws all six faces whenever a caster it sees moves or deforms, and
+    /// skips them otherwise (shadow reset B1, perf.md: slower than the cache with walkers).
     #[must_use]
     pub fn with_shadow_cache(mut self, on: bool) -> Self {
         self.shadow_cache = on;

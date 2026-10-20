@@ -96,6 +96,10 @@ mw_vfs = { path = "crates/mw_vfs" }
 # Same patched big_space as superfargoth (its Cargo.toml, `[patch.crates-io]`).
 [patch.crates-io]
 big_space = { path = "../superfargoth/vendor/big_space" }
+# Same patched Bevy crates as superfargoth (PRs #26149/#26161; ../superfargoth/vendor/README.md).
+bevy_core_pipeline = { path = "../superfargoth/vendor/bevy_core_pipeline" }
+bevy_pbr = { path = "../superfargoth/vendor/bevy_pbr" }
+bevy_render = { path = "../superfargoth/vendor/bevy_render" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

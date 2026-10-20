@@ -84,6 +84,9 @@ and effects. Every task reports its ms cost per preset.
   12.5 → 6.9 ms, census GPU 9.97 → 5.90; torch-bearers in the budget (verified). SH-16 awaiting owner.
   **Reset A2 done (2026-10-21, shadowA2):** lamp maps captured during the door fade (gate, +0.35 s census, cap 1.5 s);
   far static map, caster cull, `shadowtune`/`shadowsplits` deleted (~820 LOC); no perf change. SH-17 awaiting owner. Next B.
+  **Reset B1 done (2026-10-21, shadowB1):** Bevy PRs #26149/#26161 vendored (superfargoth `vendor/`); alone they lose to
+  the cache (walkers/NPCs redraw whole cubes: census 15.0 vs 9.0 ms), so the cache stays and the patch ships under it:
+  census 9.0 → 6.5 ms, walk 13.3 → 13.0 (perf.md "Shadow reset B1"). SH-18 awaiting owner. Next B2.
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [~] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset. Built in A1 (Low off, Medium/High/Ultra = Bevy Low/Medium/
   High; ~0.9 ms GPU at 1440p native on High, perf.md "Shadow reset A1"); look awaiting owner (SH-16).
@@ -164,6 +167,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (shadowB1): shadow reset B1: Bevy PRs #26149/#26161 vendored (3 crates); cache kept (patch alone loses with
+  walkers), patch + cache: census 9.0 → 6.5 ms; `perf sweep --var a+b` steps two flags together.
 - 2026-10-21 (doorwalls): SH-17 fixed: back in an interior after a trip outside, meshes drew depth only for seconds
   (main-pass pipelines compiling; a start indoors was LDR and the sky made the camera HDR). Camera HDR everywhere; door fade
   holds while visible meshes wait for pipelines (`pipeline_watch.rs`, also logs compiles).

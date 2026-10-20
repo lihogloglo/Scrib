@@ -265,6 +265,35 @@ deleted. Lab `point-shadows` 0/8 (`--off ssao`): 3.14/6.83 ms (A1 3.15/6.93), ti
 medians 8.06 (runs 8.06/6.50/8.44; A1 8.71 x1), walk 13.16 (13.16/13.82/12.82; A1 13.26): no regression. Door
 census gate (dev build): +0.35 s black, 8 lamps captured before the fade-in; first exterior visit hits the 1.5 s cap.
 
+**Shadow reset B1 (shadowB1, 2026-10-21; `target/perf/b1-*`; 1440p, High, profiling exe, x3, medians of runs).** Bevy
+PRs #26149 (`Core3dShadows`) + #26161 (skip unchanged point/spot maps) vendored (superfargoth `vendor/README.md`).
+(a) stock `--off shadowcache`, (b) cache (A2 state), (c) patch `--off shadowcache`, (d) patch + cache (shipped).
+Lab: 16 lamps, `--var point-shadows+lab-lights`, `--off ssao`; frame median ms (render busy ms):
+
+| shadowed lamps | 0 | 2 | 4 | 8 | 16 |
+|---|---:|---:|---:|---:|---:|
+| (a) stock | 3.58 (2.47) | 6.00 (5.04) | 8.58 (7.53) | 13.34 (12.20) | 23.14 (21.95) |
+| (b) cache | 3.58 (2.49) | 4.65 (3.65) | 5.45 (4.49) | 7.16 (6.14) | 11.11 (10.02) |
+| (c) patch | 3.57 (2.43) | 5.36 (4.40) | 7.31 (6.28) | 11.54 (10.43) | 20.11 (18.94) |
+| (d) patch + cache | | | | | 10.60 (9.51) |
+
+Shadow views GPU 2/4 lamps: (a) 0.86/1.72, (b) 0.44/0.63, (c) 0.86/1.73 (8+ lamps: timestamps read "?" in a, c).
+Lab 8 lamps (default): walkers (b) 6.90 / (c) 11.40 / (d) 6.83; `--off actors` 3.77 / 4.38 / 3.76 (shadow views 0
+in all; the patch's skipped views still cost +0.13 ms render per lamp in prepare/queue, the cache's 0.05); orbit
+30°/s (moving lights) (b) 11.53 = (c) 11.51. #26161 redraws a light's whole cube whenever any caster it sees moves or
+is skinned, so the lab's walkers, and the census NPCs, defeat it; only #26149's slim schedule (-13%) remains.
+Real scenes, median / p95 / shadow views GPU / main opaque / render busy:
+
+| scene | (b) cache | (c) patch | (d) patch + cache |
+|---|---|---|---|
+| census | 9.00 / 11.40 / 1.23 / 2.97 / 7.88 | 15.03 / 17.09 / 3.30 / 2.57 / 13.46 | **6.54 / 10.85** / 0.91 / 2.94 / 6.42 |
+| balmora_walk | 13.29 / 21.02 / 0.83 / 3.17 / 12.35 | 13.02 / 20.84 / 0.82 / 3.15 / 12.25 | **12.95 / 19.78** / 0.62 / 3.14 / 11.61 |
+| balmora_walk_night | 12.85 / 20.59 / 0.81 / 2.77 / 12.30 | 12.65 / 20.89 / 0.84 / 2.78 / 12.19 | **12.35 / 18.93** / 0.61 / 2.73 / 11.59 |
+
+Decision rule (c >= b) failed: the cache stays, and the patch ships under it ((d), the cache's faces keep its own
+schedule). (d)'s census gain (-1.5 ms render busy) is not attributed yet. (b) census 9.00 vs A2's 8.06: doorwalls'
+always-HDR camera, unmeasured. Door round trip at 22:00: both builds hit the 1.5 s gate cap (pipelines), same image.
+
 
 ## Dev loop
 

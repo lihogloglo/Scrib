@@ -94,7 +94,7 @@ pub enum Part {
     ContactShadows,
     /// Screen-space ambient occlusion (Bevy GTAO, ROADMAP 1.5; Medium and up).
     Ssao,
-    /// Cached point-light shadow maps (shadows F6 slice 2, `sf_shadow_cache_bevy`; parked: off anyway).
+    /// Cached point-light shadow maps (`sf_shadow_cache_bevy`; off = the patched Bevy path, perf.md "Shadow reset B1").
     ShadowCache,
     /// Time-sliced sky environment map (`sf_sky_bevy::EnvMapRefresh`): off, Bevy re-filters it every frame.
     EnvSlice,
