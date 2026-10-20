@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Patched third-party crates (`[patch.crates-io]` below), not ours to lint or test.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -142,6 +144,11 @@ sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
 sf_ui_bevy = { path = "crates/sf_ui_bevy" }
 sf_ui_css = { path = "crates/sf_ui_css" }
+
+# big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
+# "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.
+[patch.crates-io]
+big_space = { path = "vendor/big_space" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

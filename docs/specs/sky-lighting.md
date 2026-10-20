@@ -194,6 +194,16 @@ What is *lit* stays physical; what is *drawn* is artistic where games are.
   atmosphere (`bevy_sky_gradient` is a gradient-sky replacement).
 - **Cost** (1440p, RTX 4060 laptop, sky-filled view): night pass 0.26 ms at night (stars + full Masser; shared machine), 0.08 ms at noon (stars off). The three star layers are most of it; a cheaper faint layer is the lever if needed.
 
+## Environment map refresh (lights1, 2026-10-20)
+
+Bevy 0.20 re-filters the sky's `AtmosphereEnvironmentMapLight` (a `GeneratedEnvironmentMapLight`) every frame:
+Nsight on the Balmora walk, 1440p: `lightprobe_irradiance_map` 0.54 ms + `lightprobe_radiance_map` 0.29 ms of GPU.
+`sf_sky_bevy::EnvMapRefresh(n)` (default 8) re-filters every n-th frame and keeps the last result in between (UE
+sky light capture time slicing, HDRP probe update modes): the render system drops Bevy's `RenderEnvironmentMap`
+after extraction on the other frames; a new camera is filtered on its first frame. Balmora 1440p 13.3 → 12.4 ms,
+960p 9.5 → 8.9 (GPU bound). A/B `--off envslice`. Left as is: `atmosphere_luts` 0.69 ms per frame (Bevy recomputes
+transmittance and multiscattering though the medium rarely changes; an upstream change, not ours).
+
 ## Data model (`sf_sky`)
 
 - `Calendar { hours_per_day, days_per_year }`; `SkyClock { days: f64,

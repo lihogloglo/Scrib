@@ -51,6 +51,42 @@ fn entities_a_millimeter_apart_a_thousand_km_out_stay_a_millimeter_apart() {
     assert!(ga.length() < 300.0, "origin-relative, not absolute: {ga}");
 }
 
+/// The patched big_space (`vendor/big_space`) skips unchanged low-precision
+/// subtrees: a moved grandchild, a moved middle node and a reparented leaf
+/// must still update, and untouched siblings keep their transforms.
+#[test]
+fn low_precision_propagation_follows_changes_deep_in_a_still_tree() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, BigSpaceMinimalPlugins));
+    let root = app.world_mut().spawn((big_space::prelude::BigSpace::default(), world_grid(), GlobalTransform::default())).id();
+    let (cell, transform) = to_grid(WorldPos::from_f64(DVec3::ZERO));
+    app.world_mut().spawn((cell, transform, ChildOf(root), FloatingOrigin));
+    let (cell, transform) = to_grid(WorldPos::from_f64(DVec3::new(5.0, 0.0, 0.0)));
+    let anchor = app.world_mut().spawn((cell, transform, ChildOf(root))).id();
+    let at = |x: f32| Transform::from_xyz(x, 0.0, 0.0);
+    let middle = app.world_mut().spawn((at(1.0), ChildOf(anchor))).id();
+    let leaf = app.world_mut().spawn((at(1.0), ChildOf(middle))).id();
+    let sibling = app.world_mut().spawn((at(2.0), ChildOf(middle))).id();
+    let other = app.world_mut().spawn((at(10.0), ChildOf(anchor))).id();
+    let x = |app: &App, e: Entity| app.world().get::<GlobalTransform>(e).unwrap().translation().x;
+    app.update();
+    assert_eq!((x(&app, leaf), x(&app, sibling), x(&app, other)), (7.0, 8.0, 15.0));
+    // A few still frames, then move the leaf only.
+    app.update();
+    app.update();
+    app.world_mut().get_mut::<Transform>(leaf).unwrap().translation.x = 3.0;
+    app.update();
+    assert_eq!((x(&app, leaf), x(&app, sibling), x(&app, other)), (9.0, 8.0, 15.0));
+    // Move the middle node: both children follow.
+    app.world_mut().get_mut::<Transform>(middle).unwrap().translation.x = 2.0;
+    app.update();
+    assert_eq!((x(&app, leaf), x(&app, sibling)), (10.0, 9.0));
+    // Reparent the leaf under `other`.
+    app.world_mut().entity_mut(leaf).insert(ChildOf(other));
+    app.update();
+    assert_eq!(x(&app, leaf), 18.0);
+}
+
 #[test]
 fn grid_conversions_round_trip() {
     for p in [DVec3::ZERO, DVec3::new(127.9, -128.0, 5.0e5), DVec3::new(-3.0e7, 12.5, 7.0e6)] {

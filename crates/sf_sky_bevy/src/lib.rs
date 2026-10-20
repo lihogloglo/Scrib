@@ -20,6 +20,7 @@
 
 mod cascades;
 mod caster_cull;
+mod env_refresh;
 mod far_shadow;
 mod night;
 mod path;
@@ -57,6 +58,7 @@ pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use caster_cull::{CasterCulling, keeps_caster};
+pub use env_refresh::EnvMapRefresh;
 
 /// The sky's settings (orbit, atmosphere, curves). Change at will; the
 /// atmosphere medium is rebuilt when its description changes.
@@ -287,6 +289,7 @@ impl Plugin for SkyPlugin {
                 place_atmosphere.in_set(SkySystems::Origin).after(TransformSystems::Propagate),
             );
         night::build(app);
+        env_refresh::build(app);
         path::build(app);
         proxy::build(app);
         upscale::build(app);

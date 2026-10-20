@@ -1,0 +1,105 @@
+name: CI
+on: 
+  pull_request:
+  push:
+    branches:
+      - main
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Packages
+        run: sudo apt-get update -yq
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -yq --no-install-recommends \
+          g++ \
+          pkg-config \
+          libx11-dev \
+          libasound2-dev \
+          libudev-dev \
+          libxkbcommon-dev \
+          libxkbcommon-x11-dev \
+          libwayland-dev \
+          libwayland-client0 \
+          libwayland-cursor0 \
+          libwayland-egl1 \
+          libwayland-bin \
+          wayland-protocols
+  format:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+
+  check:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: cargo check --all-features --all-targets
+
+  check-no-defaults:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: cargo check --no-default-features --all-targets --features=libm
+
+  clippy:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: rustup component add clippy
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+
+  doc:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+    
+  test:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: cargo test --all-features
+
+  check-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: cargo check --all-features --lib --examples --tests --target wasm32-unknown-unknown
+
+  doctest:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.0
+      - run: cargo test --all-features --doc

@@ -1,0 +1,533 @@
+//! Spatial hashing acceleration structure. See [`CellHashingPlugin`].
+
+use core::marker::PhantomData;
+
+use crate::prelude::*;
+use bevy_app::prelude::*;
+use bevy_ecs::entity::EntityHashSet;
+use bevy_ecs::{prelude::*, query::QueryFilter};
+
+pub mod component;
+pub mod map;
+
+/// Add spatial hashing acceleration to `big_space`, accessible through the [`CellLookup`] resource,
+/// and [`CellId`] components.
+///
+/// You can optionally add a [`SpatialHashFilter`] to this plugin to only run the spatial hashing on
+/// entities that match the query filter. This is useful if you only want to, say, compute hashes
+/// and insert in the [`CellLookup`] for `Player` entities.
+///
+/// If you are adding multiple copies of this plugin with different filters, there are optimizations
+/// in place to avoid duplicating work. However, you should still take care to avoid excessively
+/// overlapping filters.
+pub struct CellHashingPlugin<F = ()>(PhantomData<F>)
+where
+    F: SpatialHashFilter;
+
+impl<F> CellHashingPlugin<F>
+where
+    F: SpatialHashFilter,
+{
+    /// Create a new instance of [`CellHashingPlugin`].
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<F> Plugin for CellHashingPlugin<F>
+where
+    F: SpatialHashFilter,
+{
+    fn build(&self, app: &mut App) {
+        app.init_resource::<CellLookup<F>>()
+            .init_resource::<ChangedCells<F>>()
+            .register_type::<CellId>()
+            .add_systems(
+                PostUpdate,
+                (
+                    ChangedCells::<F>::clear
+                        .in_set(SpatialHashSystems::ClearChangedCells)
+                        .after(BigSpaceSystems::Init),
+                    CellId::update::<F>
+                        .in_set(SpatialHashSystems::UpdateCellHashes)
+                        .after(BigSpaceSystems::RecenterLargeTransforms)
+                        .after(SpatialHashSystems::ClearChangedCells),
+                    // NOTE: compute_stationary_cell is intentionally NOT in UpdateCellHashes.
+                    // Placing it in that set would force the entire downstream hashing chain
+                    // (CellLookup -> PartitionLookup -> PartitionEntities) to complete before
+                    // high-precision propagation can start. By keeping it out of the set and
+                    // using only explicit `.before(PropagateHighPrecision)`, the rest of the
+                    // hashing chain remains free to run in parallel with propagation.
+                    CellId::compute_stationary_cell::<F>
+                        .after(CellId::update::<F>)
+                        .after(SpatialHashSystems::ClearChangedCells)
+                        .before(BigSpaceSystems::PropagateHighPrecision),
+                    // Flush deferred commands from compute_stationary_cell so that
+                    // newly-inserted CellId/CellHash components are visible to
+                    // CellLookup::update in the same frame.
+                    ApplyDeferred
+                        .after(CellId::compute_stationary_cell::<F>)
+                        .before(CellLookup::<F>::update),
+                    CellLookup::<F>::update
+                        .in_set(SpatialHashSystems::UpdateCellLookup)
+                        .after(SpatialHashSystems::UpdateCellHashes),
+                ),
+            );
+    }
+}
+
+impl Default for CellHashingPlugin<()> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+/// System sets for [`CellHashingPlugin`].
+#[derive(SystemSet, Hash, Debug, PartialEq, Eq, Clone)]
+pub enum SpatialHashSystems {
+    /// [`CellId`] and [`CellHash`] updated.
+    UpdateCellHashes,
+    /// [`CellLookup`] updated.
+    UpdateCellLookup,
+    /// [`PartitionLookup`] updated.
+    UpdatePartitionLookup,
+    /// [`PartitionEntities`] updated.
+    UpdatePartitionChange,
+    /// Clear the [`ChangedCells`] resource.
+    ClearChangedCells,
+}
+
+/// Used as a [`QueryFilter`] to include or exclude certain types of entities from spatial
+/// hashing.The trait is automatically implemented for all compatible types, like [`With`] or
+/// [`Without`].
+///
+/// By default, this is `()`, but it can be overridden when adding the [`CellHashingPlugin`] and
+/// [`CellLookup`]. For example, if you use `With<Players>` as your filter, only `Player`s would be
+/// considered when building spatial hash maps. This is useful when you only care about querying
+/// certain entities and want to avoid the plugin doing bookkeeping work for entities you don't
+/// care about.
+pub trait SpatialHashFilter: QueryFilter + Send + Sync + 'static {}
+impl<T: QueryFilter + Send + Sync + 'static> SpatialHashFilter for T {}
+
+/// Resource to manually track entities that have moved between cells, for optimization purposes.
+///
+/// Updated every frame in [`CellId::update`] in [`SpatialHashSystems::UpdateCellHashes`].
+///
+/// We use a manual collection instead of a `Changed` query because a query that uses `Changed`
+/// still has to iterate over every single entity. By making a shortlist of changed entities
+/// ourselves, we can make this 1000x faster.
+///
+/// Note that this is optimized for *sparse* updates, this may perform worse if you are updating
+/// every entity. The observation here is that usually entities are not moving between grid cells,
+/// and thus their spatial hash is not changing. On top of that, many entities are completely
+/// static.
+///
+/// It may be possible to remove this if bevy gets archetype change detection, or observers that can
+/// react to a component being mutated. For now, this performs well enough.
+#[derive(Resource)]
+pub struct ChangedCells<F: SpatialHashFilter> {
+    updated: EntityHashSet,
+    spooky: PhantomData<F>,
+}
+
+impl<F: SpatialHashFilter> Default for ChangedCells<F> {
+    fn default() -> Self {
+        Self {
+            updated: Default::default(),
+            spooky: PhantomData,
+        }
+    }
+}
+
+impl<F: SpatialHashFilter> ChangedCells<F> {
+    /// Clear the list of updated entities.
+    pub fn clear(mut this: ResMut<Self>) {
+        this.updated.clear();
+    }
+
+    /// Iterate over all entities that have moved between cells.
+    pub fn iter(&self) -> impl Iterator<Item = &Entity> {
+        self.updated.iter()
+    }
+
+    /// Returns the number of entities that have moved between cells this frame.
+    pub fn len(&self) -> usize {
+        self.updated.len()
+    }
+
+    /// Returns true if there are no entities that have moved between cells this frame.
+    pub fn is_empty(&self) -> bool {
+        self.updated.is_empty()
+    }
+
+    /// Mark an entity as having changed grid cells.
+    pub fn insert(&mut self, entity: Entity) {
+        self.updated.insert(entity);
+    }
+}
+
+// TODO:
+//
+// - When an entity is re-parented, is is removed/updated in the spatial map?
+// - Entities are hashed with their parent - what happens if an entity is moved to the root? Is the
+//   hash ever recomputed? Is it removed? Is the spatial map updated?
+#[cfg(test)]
+mod tests {
+    use crate::plugin::BigSpaceMinimalPlugins;
+    use crate::{hash::map::SpatialEntryToEntities, prelude::*};
+    use bevy_ecs::entity::EntityHashSet;
+    use bevy_platform::sync::OnceLock;
+
+    #[test]
+    fn entity_despawn() {
+        use bevy::prelude::*;
+
+        static ENTITY: OnceLock<Entity> = OnceLock::new();
+
+        let setup = |mut commands: Commands| {
+            commands.spawn_big_space_default(|root| {
+                let entity = root.spawn_spatial(CellCoord::ZERO).id();
+                ENTITY.set(entity).ok();
+            });
+        };
+
+        let mut app = App::new();
+        app.add_plugins(CellHashingPlugin::default())
+            .add_systems(Update, setup)
+            .update();
+
+        let hash = *app
+            .world()
+            .entity(*ENTITY.get().unwrap())
+            .get::<CellId>()
+            .unwrap();
+
+        assert!(app.world().resource::<CellLookup>().get(&hash).is_some());
+
+        app.world_mut().despawn(*ENTITY.get().unwrap());
+
+        app.update();
+
+        assert!(app.world().resource::<CellLookup>().get(&hash).is_none());
+    }
+
+    #[test]
+    fn get_hash() {
+        use bevy::prelude::*;
+
+        #[derive(Resource, Clone)]
+        struct ParentSet {
+            a: Entity,
+            b: Entity,
+            c: Entity,
+        }
+
+        #[derive(Resource, Clone)]
+        struct ChildSet {
+            x: Entity,
+            y: Entity,
+            z: Entity,
+        }
+
+        let setup = |mut commands: Commands| {
+            commands.spawn_big_space_default(|root| {
+                let a = root.spawn_spatial(CellCoord::new(0, 1, 2)).id();
+                let b = root.spawn_spatial(CellCoord::new(0, 1, 2)).id();
+                let c = root.spawn_spatial(CellCoord::new(5, 5, 5)).id();
+
+                root.commands().insert_resource(ParentSet { a, b, c });
+
+                root.with_grid_default(|grid| {
+                    let x = grid.spawn_spatial(CellCoord::new(0, 1, 2)).id();
+                    let y = grid.spawn_spatial(CellCoord::new(0, 1, 2)).id();
+                    let z = grid.spawn_spatial(CellCoord::new(5, 5, 5)).id();
+                    grid.commands().insert_resource(ChildSet { x, y, z });
+                });
+            });
+        };
+
+        let mut app = App::new();
+        app.add_plugins(CellHashingPlugin::default())
+            .add_systems(Update, setup);
+
+        app.update();
+
+        let mut spatial_hashes = app.world_mut().query::<&CellId>();
+
+        let parent = app.world().resource::<ParentSet>().clone();
+        let child = app.world().resource::<ChildSet>().clone();
+
+        assert_eq!(
+            spatial_hashes.get(app.world(), parent.a).unwrap(),
+            spatial_hashes.get(app.world(), parent.b).unwrap(),
+            "Same parent, same cell"
+        );
+
+        assert_ne!(
+            spatial_hashes.get(app.world(), parent.a).unwrap(),
+            spatial_hashes.get(app.world(), parent.c).unwrap(),
+            "Same parent, different cell"
+        );
+
+        assert_eq!(
+            spatial_hashes.get(app.world(), child.x).unwrap(),
+            spatial_hashes.get(app.world(), child.y).unwrap(),
+            "Same parent, same cell"
+        );
+
+        assert_ne!(
+            spatial_hashes.get(app.world(), child.x).unwrap(),
+            spatial_hashes.get(app.world(), child.z).unwrap(),
+            "Same parent, different cell"
+        );
+
+        assert_ne!(
+            spatial_hashes.get(app.world(), parent.a).unwrap(),
+            spatial_hashes.get(app.world(), child.x).unwrap(),
+            "Same cell, different parent"
+        );
+
+        let entities = &app
+            .world()
+            .resource::<CellLookup>()
+            .get(spatial_hashes.get(app.world(), parent.a).unwrap())
+            .unwrap()
+            .entities;
+
+        assert!(entities.contains(&parent.a));
+        assert!(entities.contains(&parent.b));
+        assert!(!entities.contains(&parent.c));
+        assert!(!entities.contains(&child.x));
+        assert!(!entities.contains(&child.y));
+        assert!(!entities.contains(&child.z));
+    }
+
+    #[test]
+    fn neighbors() {
+        use bevy::prelude::*;
+
+        #[derive(Resource, Clone)]
+        struct Entities {
+            a: Entity,
+            b: Entity,
+            c: Entity,
+        }
+
+        let setup = |mut commands: Commands| {
+            commands.spawn_big_space_default(|root| {
+                let a = root.spawn_spatial(CellCoord::new(0, 0, 0)).id();
+                let b = root.spawn_spatial(CellCoord::new(1, 1, 1)).id();
+                let c = root.spawn_spatial(CellCoord::new(2, 2, 2)).id();
+
+                root.commands().insert_resource(Entities { a, b, c });
+            });
+        };
+
+        let mut app = App::new();
+        app.add_plugins(CellHashingPlugin::default())
+            .add_systems(Startup, setup);
+
+        app.update();
+
+        let entities = app.world().resource::<Entities>().clone();
+        let parent = app
+            .world_mut()
+            .query::<&ChildOf>()
+            .get(app.world(), entities.a)
+            .unwrap();
+
+        let map = app.world().resource::<CellLookup>();
+        let entry = map.get(&CellId::new(parent, &CellCoord::ZERO)).unwrap();
+        let neighbors: EntityHashSet = map.nearby(entry).entities().collect();
+
+        assert!(neighbors.contains(&entities.a));
+        assert!(neighbors.contains(&entities.b));
+        assert!(!neighbors.contains(&entities.c));
+
+        let flooded: EntityHashSet = map
+            .flood(&CellId::new(parent, &CellCoord::ZERO), None)
+            .entities()
+            .collect();
+
+        assert!(flooded.contains(&entities.a));
+        assert!(flooded.contains(&entities.b));
+        assert!(flooded.contains(&entities.c));
+    }
+
+    #[test]
+    fn query_filters() {
+        use bevy::prelude::*;
+
+        #[derive(Component)]
+        struct Player;
+
+        static ROOT: OnceLock<Entity> = OnceLock::new();
+
+        let setup = |mut commands: Commands| {
+            commands.spawn_big_space_default(|root| {
+                root.spawn_spatial((CellCoord::ZERO, Player));
+                root.spawn_spatial(CellCoord::ZERO);
+                root.spawn_spatial(CellCoord::ZERO);
+                ROOT.set(root.id()).ok();
+            });
+        };
+
+        let mut app = App::new();
+        app.add_plugins((
+            CellHashingPlugin::default(),
+            CellHashingPlugin::<With<Player>>::new(),
+            CellHashingPlugin::<Without<Player>>::new(),
+        ))
+        .add_systems(Startup, setup)
+        .update();
+
+        let zero_hash = CellId::from_parent(*ROOT.get().unwrap(), &CellCoord::ZERO);
+
+        let map = app.world().resource::<CellLookup>();
+        assert_eq!(
+            map.get(&zero_hash).unwrap().entities.iter().count(),
+            3,
+            "There are a total of 3 spatial entities"
+        );
+
+        let map = app.world().resource::<CellLookup<With<Player>>>();
+        assert_eq!(
+            map.get(&zero_hash).unwrap().entities.iter().count(),
+            1,
+            "There is only one entity with the Player component"
+        );
+
+        let map = app.world().resource::<CellLookup<Without<Player>>>();
+        assert_eq!(
+            map.get(&zero_hash).unwrap().entities.iter().count(),
+            2,
+            "There are two entities without the player component"
+        );
+    }
+
+    /// Regression test for the `spatial_hash` example crash.
+    ///
+    /// On the first frame an entity spawned in `Startup` has its [`CellId`] inserted via deferred
+    /// commands during [`SpatialHashSystems::UpdateCellHashes`].  Any user system that queries the
+    /// [`CellLookup`] must therefore be ordered *after*
+    /// [`SpatialHashSystems::UpdateCellLookup`]; otherwise the entity is not yet present in the
+    /// map and an unwrap will panic.
+    #[test]
+    fn cell_lookup_populated_when_ordered_after_update() {
+        use bevy::prelude::*;
+
+        static ENTITY: OnceLock<Entity> = OnceLock::new();
+        // Set inside the PostUpdate system when the entity's CellId is found in the lookup.
+        static FOUND: OnceLock<()> = OnceLock::new();
+
+        let setup = |mut commands: Commands| {
+            commands.spawn_big_space_default(|root| {
+                let entity = root.spawn_spatial(CellCoord::ZERO).id();
+                ENTITY.set(entity).ok();
+            });
+        };
+
+        // This system mimics `move_player` from the spatial_hash example.
+        // It runs BEFORE UpdateCellLookup (wrong ordering), so the entity should NOT be
+        // in the lookup on the first frame - replicating the crash.
+        let check = |all_hashes: Query<(Entity, &CellId)>, lookup: Res<CellLookup>| {
+            let target = *ENTITY.get().unwrap();
+            if let Some((_, hash)) = all_hashes.iter().find(|(e, _)| *e == target) {
+                if lookup.get(hash).is_some() {
+                    FOUND.set(()).ok();
+                }
+            }
+        };
+
+        let mut app = App::new();
+        app.add_plugins((BigSpaceMinimalPlugins, CellHashingPlugin::default()))
+            .add_systems(Startup, setup)
+            .add_systems(
+                PostUpdate,
+                check.after(SpatialHashSystems::UpdateCellLookup),
+            );
+
+        app.update();
+
+        assert!(
+            FOUND.get().is_some(),
+            "Entity spawned in Startup should be in CellLookup when the user system runs \
+             after SpatialHashSystems::UpdateCellLookup"
+        );
+    }
+
+    /// Verify that [`CellLookup::newly_emptied`] and [`CellLookup::newly_occupied`] work correctly when
+    /// entities are spawned and move between cells.
+    #[test]
+    fn spatial_map_changed_cell_tracking() {
+        use bevy::prelude::*;
+
+        #[derive(Resource, Clone)]
+        struct Entities {
+            a: Entity,
+            b: Entity,
+            c: Entity,
+        }
+
+        let setup = |mut commands: Commands| {
+            commands.spawn_big_space_default(|root| {
+                let a = root.spawn_spatial(CellCoord::new(0, 0, 0)).id();
+                let b = root.spawn_spatial(CellCoord::new(1, 1, 1)).id();
+                let c = root.spawn_spatial(CellCoord::new(2, 2, 2)).id();
+
+                root.commands().insert_resource(Entities { a, b, c });
+            });
+        };
+
+        let mut app = App::new();
+        app.add_plugins((BigSpaceMinimalPlugins, CellHashingPlugin::default()))
+            .add_systems(Startup, setup);
+
+        app.update();
+
+        let entities = app.world().resource::<Entities>().clone();
+        let get_hash = |app: &mut App, entity| {
+            *app.world_mut()
+                .query::<&CellId>()
+                .get(app.world(), entity)
+                .unwrap()
+        };
+
+        let a_hash_t0 = get_hash(&mut app, entities.a);
+        let b_hash_t0 = get_hash(&mut app, entities.b);
+        let c_hash_t0 = get_hash(&mut app, entities.c);
+        let map = app.world().resource::<CellLookup>();
+        assert!(map.newly_occupied().contains(&a_hash_t0));
+        assert!(map.newly_occupied().contains(&b_hash_t0));
+        assert!(map.newly_occupied().contains(&c_hash_t0));
+
+        // Move entities and run an update
+        app.world_mut()
+            .entity_mut(entities.a)
+            .get_mut::<CellCoord>()
+            .unwrap()
+            .z += 1;
+        app.world_mut()
+            .entity_mut(entities.b)
+            .get_mut::<Transform>()
+            .unwrap()
+            .translation
+            .z += 1e10;
+        app.update();
+
+        let a_hash_t1 = get_hash(&mut app, entities.a);
+        let b_hash_t1 = get_hash(&mut app, entities.b);
+        let c_hash_t1 = get_hash(&mut app, entities.c);
+        let map = app.world().resource::<CellLookup>();
+
+        // Last grid
+        assert!(map.newly_emptied().contains(&a_hash_t0)); // Moved cell
+        assert!(map.newly_emptied().contains(&b_hash_t0)); // Moved cell via transform
+        assert!(!map.newly_emptied().contains(&c_hash_t0)); // Did not move
+
+        // Current grid
+        assert!(map.newly_occupied().contains(&a_hash_t1)); // Moved cell
+        assert!(map.newly_occupied().contains(&b_hash_t1)); // Moved cell via transform
+        assert!(!map.newly_occupied().contains(&c_hash_t1)); // Did not move
+    }
+}
