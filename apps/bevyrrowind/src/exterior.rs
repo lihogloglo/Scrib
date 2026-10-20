@@ -365,7 +365,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .insert_resource(Start { worldspace: options.worldspace, eye: options.eye, target: options.target, bench: bench || options.screenshot.is_some(),
             prepass: options.prepass,
             contact: if perf.off.has(Part::ContactShadows) { None } else { options.quality.contact_shadows() },
-            shadow_filter: options.quality.shadow_filter(options.render.upscaling.is_temporal()),
+            // lampcost A/B (perf.md "Per-lamp GPU cost"): BEVYRROWIND_SHADOW_FILTER=hardware|gaussian|temporal.
+            shadow_filter: match std::env::var("BEVYRROWIND_SHADOW_FILTER").as_deref() { Ok("hardware") => ShadowFilteringMethod::Hardware2x2, Ok("gaussian") => ShadowFilteringMethod::Gaussian, Ok("temporal") => ShadowFilteringMethod::Temporal, _ => options.quality.shadow_filter(options.render.upscaling.is_temporal()) },
         })
         .insert_resource(Started(Instant::now()))
         // Chained: both reserve the worldspace root through `Commands`; unordered,

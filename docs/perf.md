@@ -204,6 +204,31 @@ walk night 1440p 11.17 / 12.18 (19.9); census 1440p 4.28 / 9.63 (timed GPU 3.50 
 (capture/recapture spikes, unconfirmed); indoors the cost is **GPU** (~0.8 ms/lamp in the main pass at 1440p,
 not yet diagnosed). `s2final-off` (`--off shadowcache`) was never completed.
 
+**Per-lamp GPU cost (lampcost, 2026-10-21; `target/perf/lc-*`; census 1440p, profiling exe, no DLSS, x2-3 runs).**
+Cause: Bevy **contact shadows**, not the cube maps. High gives every budgeted lamp `contact_shadows_enabled` and the camera
+16 linear steps; Bevy's point loop (`pbr_functions.wesl` ~463) ray-marches the depth prepass per pixel per shadowed lamp in
+the cluster, before range/NdotL (no early out), and lamp range = MW radius x 4 (`range_scale`) puts the whole room in every
+lamp's clusters. Main opaque pass, ms (frame median in brackets):
+
+| case | p0 | p1 | p8 |
+|---|---:|---:|---:|
+| High (Temporal, contact 16) | 2.78 (4.3) | 3.90 (5.5) | 8.20-8.66 (10.4) |
+| `--off contactshadows` | 1.93 (4.5) | | 2.93-2.97 (8.4-9.2, render-thread bound) |
+| `BEVYRROWIND_SHADOW_FILTER=hardware` (+ contact off) | | | 7.6 (9.7) / 2.07 (5.9-6.9) |
+| `--range 1` / `--range 2` | 1.69 / 2.10 | | 3.37 (5.3) / 6.10 (7.5) |
+| `--off shadowcache` (stock Bevy cubes) | | | 6.85 (**16.9**; aux GPU 3.2, render/busy 15.2) |
+
+Split for 8 lamps: contact march ~5.4 ms (0.68/lamp), 8-tap cube PCF ~0.9 ms (0.11/lamp; 1-tap 0.02), cached cube faces
+(`auxiliary_views`) 1.0-1.3 ms GPU, render thread +4.4 ms (3.3 -> 7.7 busy; 48 face views). 960p p8: opaque 4.0 vs 1.31.
+Surprise: with **no** shadowed lamp, contact still costs 0.85 ms (16 steps) / 0.56 (Medium, 8 steps) per frame indoors: it
+scales with steps, so it is a real march, most likely the sky's sun (`contact_shadows_enabled`) leaking into the interior
+view through shared layer 0 (camera `[0, interior]`, sun `[0, exterior]`, exterior.rs ~582/746). Verify whether it also
+*lights* interiors. Not causes: fade twins (hidden outside fades), cache restores (0.013 ms), shader variant, froxel fog
+(samples only the sun's CSM). Fixes, slice A (stock Bevy): lamp contact shadows off (or nearest 1-2) -5.4 ms GPU; keep
+sun/moon off interior views (-0.85 ms); range_scale 4 -> 2 for shadowed lamps (-2.3 ms with contact, cube culling -0.5 GPU,
+-2 ms render thread; visual call); budget <= 4 lamps, since stock cubes without the cache cost ~12 ms of render thread for 8.
+Slice B (vendored patch): shadow/contact fetch only when range x NdotL > 0; per-light filter (Hardware2x2 for lamps, -0.9 ms).
+
 ## Dev loop
 
 Compile and bake times are gated like frame times (owner 2026-10-11: "must be super fast for the dev
