@@ -17,7 +17,6 @@
 //!   their origin resource and add [`TerrainOriginPlugin`].
 
 mod far_map;
-mod ground_blend;
 mod material;
 mod params;
 mod render;
@@ -54,7 +53,6 @@ use sf_terrain::{
 use sf_world::WorldspaceId;
 
 pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FarShadowMap};
-pub use ground_blend::{EDGE_BREAKUP, GroundBlendCache, GroundBlendExt, GroundBlendMaterial, GroundBlendPlugin};
 pub use material::TerrainMaterial;
 use params::Params;
 pub use params::{HEIGHT_LEVELS, LAYER_LEVELS, MACRO_LEVELS};
@@ -113,9 +111,6 @@ pub struct TerrainDebug {
     /// Turn off the terrain shadow past the shadow cascades (A/B; see
     /// `shaders/far_shadow.wesl`).
     pub no_far_shadows: bool,
-    /// Turn off object-terrain blending (A/B; [`GroundBlendPlugin`],
-    /// `shaders/ground_blend.wesl`).
-    pub no_ground_blend: bool,
 }
 
 /// The view that drives selection, morphing and residency. One per app.
@@ -955,8 +950,7 @@ fn update_terrain(
         ];
         let debug_bits =
             (u32::from(debug.lod_colors) * params::DEBUG_LOD) | (u32::from(debug.wireframe) * params::DEBUG_WIREFRAME)
-                | (u32::from(debug.no_far_shadows) * params::DEBUG_NO_FAR_SHADOWS)
-                | (u32::from(debug.no_ground_blend) * params::DEBUG_NO_GROUND_BLEND);
+                | (u32::from(debug.no_far_shadows) * params::DEBUG_NO_FAR_SHADOWS);
         p.0[params::P_MISC] = [
             (o_abs.x.rem_euclid(1024.0) as f32).to_bits(),
             (o_abs.z.rem_euclid(1024.0) as f32).to_bits(),

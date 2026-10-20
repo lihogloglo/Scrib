@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use bevy_asset::{AssetServer, Assets, Handle, RecursiveDependencyLoadState, UntypedHandle};
+use bevy_asset::{AssetServer, Assets, Handle, LoadState, RecursiveDependencyLoadState, UntypedHandle};
 use bevy_camera::visibility::{RenderLayers, Visibility};
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
@@ -35,13 +35,17 @@ use sf_model_bevy::{CookedModelAsset, baked_path};
 use sf_vfs::VfsPath;
 use sf_world::{
     Anchor, AnchorId, AnchorRole, CellDirectory, DoorLink, IndexPage, IndexReader, IndexedPlacement, Level,
-    LevelContent, Location, PageCache, Partition, PlacementOverlay, Request, RequestId, RequestKind, RingConfig,
+    LevelContent, Location, PageCache, Partition, PlacementId, PlacementOverlay, Request, RequestId, RequestKind, RingConfig,
     Scheduler, SchedulerConfig, Stage, StageStep, TickInput, Worldspace, WorldspaceId,
 };
 
 use crate::coords::{GRID_SWITCH, from_grid, to_grid};
 use crate::far::{FarProxies, ProxySpawnCx};
-use crate::spawn::{ActivateCx, GroundBlendModels, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawners, SpawnCx, TemplateLod, model_aabb, size_culled_end};
+use crate::precombine::{CellPrecombine, Precombines, bucket_ranges};
+use crate::spawn::{
+    ActivateCx, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawners, SpawnCx, TemplateLod, model_aabb,
+    size_culled_end, spawn_template_ranges,
+};
 use crate::worldspace::{WorldspaceRegistry, WorldspaceRoot};
 
 /// Longest run of frames the origin-shift guard may hold the main-thread
@@ -84,6 +88,11 @@ pub struct StreamingConfig {
     /// budget (at least one model), so it bounds the meshes arriving per
     /// frame; the rest queue in request order (streaming.md, "Spikes").
     pub max_loading_meshes: usize,
+    /// Spawn near levels from their cells' precombines when [`Precombines`]
+    /// is installed (precombine.md): merged buckets instead of one entity per
+    /// member placement, LOD level and part. Only with a far field (its near
+    /// level holds every placement of the cell).
+    pub precombine: bool,
 }
 
 impl Default for StreamingConfig {
@@ -97,6 +106,7 @@ impl Default for StreamingConfig {
             page_cache_bytes: PageCache::DEFAULT_CAP,
             origin_shift_guard_s: 0.05,
             max_loading_meshes: 64,
+            precombine: true,
         }
     }
 }
@@ -183,6 +193,11 @@ pub struct StreamStats {
     /// Assets spawners asked the assets stage to load before reveal
     /// ([`PlacementSpawner::prepare`]), summed over loads.
     pub prepared: u64,
+    /// Placements drawn by precombine buckets instead of their own entities.
+    pub precombined: u64,
+    /// Near loads whose precombine was dropped (a member moved, removed or
+    /// missing): the cell spawned the old way.
+    pub precombine_fallbacks: u64,
     pub fetch_errors: u64,
     pub resident_cells: usize,
     pub models_loaded: usize,
@@ -212,11 +227,21 @@ struct Work {
     prepared: Option<Vec<UntypedHandle>>,
     /// The assets were ready last frame (one settle frame before spawning).
     assets_settled: bool,
+    /// The cell's precombine (near loads with [`Precombines`]); the fetch
+    /// completes once it loaded or failed.
+    near: Option<Handle<CellPrecombine>>,
+    /// Its members, once validated against the fetched placements: no model,
+    /// no visuals of their own.
+    members: Arc<HashSet<PlacementId>>,
+    near_spawned: bool,
 }
 
 struct Group {
     entity: Entity,
     models: Vec<VfsPath>,
+    /// Held while the level is resident (its buckets' meshes are labeled
+    /// assets of this load).
+    _precombine: Option<Handle<CellPrecombine>>,
 }
 
 struct CellRuntime {
@@ -418,7 +443,7 @@ impl Streaming {
             }
         }
 
-        self.poll_fetches(now, spawners, counters);
+        self.poll_fetches(world, now, spawners, counters);
         self.rt.poll_models(world, self.scheduler.in_burst());
         let world_ref: &World = world;
         let running: Vec<RequestId> =
@@ -604,11 +629,31 @@ impl Streaming {
             Ok(Arc::new(content.step(&placements, from, to).cloned().collect()))
         });
         self.fetches.insert(request.id, task);
-        self.rt.work.insert(request.id, Work::default());
+        let near = match world.get_resource::<Precombines>() {
+            Some(p)
+                if self.rt.config.precombine
+                    && self.rt.far.is_installed()
+                    && request.kind == RequestKind::Load
+                    && request.to == Level::Near =>
+            {
+                (p.path)(world, &request.worldspace, request.cell).map(|path| world.resource::<AssetServer>().load(path))
+            }
+            _ => None,
+        };
+        self.rt.work.insert(request.id, Work { near, ..Work::default() });
     }
 
-    fn poll_fetches(&mut self, now: f64, spawners: &PlacementSpawners, counters: Option<&Counters>) {
-        let done: Vec<RequestId> = self.fetches.iter().filter(|(_, t)| t.is_finished()).map(|(id, _)| *id).collect();
+    fn poll_fetches(&mut self, world: &World, now: f64, spawners: &PlacementSpawners, counters: Option<&Counters>) {
+        let asset_server = world.resource::<AssetServer>();
+        let work = &self.rt.work;
+        // A near load's fetch also waits for its precombine (loaded or failed).
+        let settled = |id: &RequestId| {
+            work.get(id).and_then(|w| w.near.as_ref()).is_none_or(|h| {
+                !matches!(asset_server.get_load_state(h.id()), Some(LoadState::NotLoaded | LoadState::Loading))
+            })
+        };
+        let done: Vec<RequestId> =
+            self.fetches.iter().filter(|(id, t)| t.is_finished() && settled(id)).map(|(id, _)| *id).collect();
         for id in done {
             let task = self.fetches.remove(&id).expect("listed above");
             let placements = future::block_on(task).unwrap_or_else(|e| {
@@ -620,12 +665,19 @@ impl Streaming {
                 self.rt.work.remove(&id);
                 continue;
             };
-            // Models to load: only for spawning steps, and only those a
-            // spawner will use.
+            let near = self.rt.work.get(&id).and_then(|w| w.near.clone());
+            let members = near.as_ref().and_then(|h| world.resource::<Assets<CellPrecombine>>().get(h)).and_then(|c| {
+                let members = valid_members(c, &placements, world.get_resource::<WorldOverlay>());
+                self.rt.stats.precombine_fallbacks += u64::from(members.is_none());
+                members
+            });
+            // Models to load: only for spawning steps, only those a spawner
+            // will use, and none for precombined members.
             let mut models = BTreeSet::new();
             if request.kind == RequestKind::Load && request.to != Level::Active {
                 for p in placements.iter() {
                     if let Some(m) = &p.placement.model
+                        && !members.as_ref().is_some_and(|s| s.contains(&p.placement.id))
                         && spawners.for_class(p.placement.class).is_some_and(|s| s.needs_model(p))
                     {
                         models.insert(m.clone());
@@ -636,6 +688,10 @@ impl Streaming {
             let work = self.rt.work.entry(id).or_default();
             work.placements = placements;
             work.models = models.into_iter().collect();
+            match members {
+                Some(m) => work.members = Arc::new(m),
+                None => work.near = None,
+            }
             let assets = u32::try_from(work.models.len()).unwrap_or(u32::MAX);
             self.scheduler.fetched(id, now, assets, upload);
             if let Some(c) = counters {
@@ -805,7 +861,6 @@ impl Runtime {
             return;
         }
         let mapper = world.get_resource::<ModelMaterials>().cloned().unwrap_or_default();
-        let blend = world.get_resource::<GroundBlendModels>().cloned();
         world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
             let asset_server = world.resource::<AssetServer>().clone();
             let cooked = world.resource::<Assets<CookedModelAsset>>();
@@ -825,14 +880,12 @@ impl Runtime {
                                 #[allow(clippy::cast_precision_loss)]
                                 let n = asset.meshes.len() as f32;
                                 self.meshes_per_model += (n - self.meshes_per_model) * 0.05;
-                                let ground_blend = blend.as_ref().and_then(|b| (b.0)(model.as_str()));
                                 LoadedModel::Cooked(Arc::new(build_template(
                                     asset,
                                     &mut materials,
                                     &mut self.materials,
                                     &mapper,
                                     &asset_server,
-                                    ground_blend,
                                 )))
                             }
                         }
@@ -945,10 +998,89 @@ impl Runtime {
         entity
     }
 
+    /// What decides where placements of this load stop being drawn.
+    fn ends(&self, world: &World, request: &Request, info: &WsInfo) -> Ends {
+        let handoff = self.far.handoff.filter(|_| self.far.is_installed());
+        // Size culling (industry-audit.md J1) keeps what the cell's proxy
+        // represents drawn to the handoff.
+        let kept = match (&self.far.proxies, handoff) {
+            (Some(proxies), Some(_)) => proxies.kept_radius(world, &request.worldspace, request.cell),
+            _ => 0.0,
+        };
+        Ends {
+            lod: self.config.lod,
+            rings: info.rings,
+            content: LevelContent { far_min_radius: info.rings.far_min_radius, proxies: self.far.is_installed() },
+            handoff,
+            kept,
+        }
+    }
+
+    /// Spawns a cell's precombine buckets (precombine.md) into a new batch.
+    /// Each bucket draws as far as its farthest-reaching member: to the
+    /// far-field handoff (measured from the bucket origin, which is the
+    /// proxy's) or, for members that end earlier (size culling) or at the
+    /// ring, that end plus the bucket's reach.
+    fn spawn_precombine(
+        &mut self,
+        world: &mut World,
+        request: &Request,
+        handle: &Handle<CellPrecombine>,
+        group: Entity,
+        layers: &RenderLayers,
+        ends: &Ends,
+    ) -> u32 {
+        let Some(work) = self.work.get(&request.id) else { return 0 };
+        let (placements, members) = (work.placements.clone(), work.members.clone());
+        let by_id: HashMap<PlacementId, &IndexedPlacement> =
+            placements.iter().filter(|p| members.contains(&p.placement.id)).map(|p| (p.placement.id, p)).collect();
+        let origin = self.info(&request.worldspace).partition.cell_origin(request.cell);
+        let mapper = world.get_resource::<ModelMaterials>().cloned().unwrap_or_default();
+        let mut buckets = Vec::new();
+        world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
+            let asset_server = world.resource::<AssetServer>().clone();
+            let Some(combine) = world.resource::<Assets<CellPrecombine>>().get(handle) else { return };
+            for bucket in &combine.buckets {
+                let (mut end, mut band) = (0.0f32, 0.0f32);
+                for p in bucket.members.iter().filter_map(|id| by_id.get(id)) {
+                    let e = ends.of(p);
+                    let reach = if e.at_handoff { 0.0 } else { bucket.reach };
+                    if e.distance + reach > end {
+                        (end, band) = (e.distance + reach, e.band);
+                    }
+                }
+                let template = build_template(&bucket.model, &mut materials, &mut self.materials, &mapper, &asset_server);
+                let errors: Vec<f32> = template.lods.iter().map(|l| l.error).collect();
+                let ranges = bucket_ranges(&errors, &ends.lod, end, band, bucket.reach);
+                buckets.push((template, ranges, end, band));
+            }
+        });
+        let Some(center) = world.resource::<Assets<CellPrecombine>>().get(handle).map(|c| c.center) else { return 0 };
+        let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(group))).id();
+        let mut n = 1;
+        for (template, ranges, end, band) in &buckets {
+            let cx = SpawnCx {
+                worldspace: &request.worldspace,
+                cell: request.cell,
+                level: request.to,
+                parent: batch,
+                layers,
+                local: Transform::from_translation(origin.delta_f32(center)),
+                model: None,
+                max_distance: *end,
+                end_band: *band,
+                lod: &ends.lod,
+            };
+            n += spawn_template_ranges(world, &cx, template, ranges);
+        }
+        n
+    }
+
     /// Spawns the next few placements of a load step into a new batch.
     fn spawn_item(&mut self, world: &mut World, request: &Request, spawners: &PlacementSpawners) -> bool {
         let cell_entity = self.cell_entity(world, &request.worldspace, request.cell);
         let info = self.info(&request.worldspace);
+        let ends = self.ends(world, request, &info);
         let Some(work) = self.work.get_mut(&request.id) else { return true };
         let group =
             *work.group.get_or_insert_with(|| world.spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(cell_entity))).id());
@@ -972,22 +1104,28 @@ impl Runtime {
             }
             return self.work.get(&request.id).is_none_or(|w| w.next >= w.placements.len());
         }
+        // Then the precombine's buckets: one spawn item of their own.
+        if !work.near_spawned
+            && let Some(handle) = work.near.clone()
+        {
+            work.near_spawned = true;
+            let n = self.spawn_precombine(world, request, &handle, group, &layers, &ends);
+            self.stats.entities_spawned += u64::from(n);
+            return self.work.get(&request.id).is_none_or(|w| w.next >= w.placements.len());
+        }
         let (start, end) = (work.next, (work.next + self.config.placements_per_item).min(work.placements.len()));
         if start >= end {
             return true;
         }
         let placements = work.placements.clone();
+        let members = work.members.clone();
         let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(group))).id();
-        let content = LevelContent { far_min_radius: info.rings.far_min_radius, proxies: self.far.is_installed() };
-        let handoff = self.far.handoff.filter(|_| self.far.is_installed());
-        // Size culling (industry-audit.md J1) keeps what the cell's proxy
-        // represents drawn to the handoff.
-        let kept = match (&self.far.proxies, handoff) {
-            (Some(proxies), Some(_)) => proxies.kept_radius(world, &request.worldspace, request.cell),
-            _ => 0.0,
-        };
         let mut entities = 0u64;
         for p in &placements[start..end] {
+            if members.contains(&p.placement.id) {
+                self.stats.precombined += 1;
+                continue;
+            }
             let model = p.placement.model.as_ref().and_then(|m| match self.models.get(m).map(|s| &s.state) {
                 Some(SlotState::Ready(loaded)) => Some(loaded),
                 _ => None,
@@ -997,16 +1135,9 @@ impl Runtime {
             }
             let Some(spawner) = spawners.spawner_for(p, model) else { continue };
             let t = &p.placement.transform;
-            let far = content.level_of(p) == Some(Level::Far);
-            // A far-field proxy takes over from eligible placements at its
-            // handoff; the rest keep their ring's range.
-            let (max_distance, end_band, kept_radius) = match handoff {
-                Some((d, band)) if p.placement.far_eligible() => (d, band, Some(kept)),
-                _ => (if far { info.rings.far.unload } else { info.rings.near.unload }, 0.0, None),
-            };
-            let ring_end = max_distance;
-            let (max_distance, end_band) = size_culled_end(&self.config.lod, p, max_distance, end_band, kept_radius);
-            self.stats.size_culled += u64::from(max_distance < ring_end);
+            let end = ends.of(p);
+            let (max_distance, end_band) = (end.distance, end.band);
+            self.stats.size_culled += u64::from(end.size_culled);
             let cx = SpawnCx {
                 worldspace: &request.worldspace,
                 cell: request.cell,
@@ -1037,7 +1168,7 @@ impl Runtime {
             e.insert(Visibility::Inherited);
         }
         let cell = self.cells.get_mut(&(request.worldspace.clone(), request.cell)).expect("spawned above");
-        cell.groups.insert(request.to, Group { entity: group, models: std::mem::take(&mut work.models) });
+        cell.groups.insert(request.to, Group { entity: group, models: std::mem::take(&mut work.models), _precombine: work.near.take() });
         true
     }
 
@@ -1133,6 +1264,59 @@ fn stage_name(stage: Stage) -> &'static str {
     }
 }
 
+/// Where placements of one load stop being drawn ([`Runtime::ends`]).
+struct Ends {
+    lod: LodScreen,
+    rings: RingConfig,
+    content: LevelContent,
+    /// The far-field handoff distance and band, with a far field.
+    handoff: Option<(f32, f32)>,
+    /// The smallest radius the cell's proxy represents (size culling clamp).
+    kept: f32,
+}
+
+/// One placement's end ([`Ends::of`]).
+struct End {
+    distance: f32,
+    band: f32,
+    /// Ends at the far-field handoff (not earlier).
+    at_handoff: bool,
+    /// Size culling ended it before its ring or the handoff.
+    size_culled: bool,
+}
+
+impl Ends {
+    fn of(&self, p: &IndexedPlacement) -> End {
+        // A far-field proxy takes over from eligible placements at its
+        // handoff; the rest keep their ring's range.
+        let (max_distance, end_band, kept_radius) = match self.handoff {
+            Some((d, band)) if p.placement.far_eligible() => (d, band, Some(self.kept)),
+            _ if self.content.level_of(p) == Some(Level::Far) => (self.rings.far.unload, 0.0, None),
+            _ => (self.rings.near.unload, 0.0, None),
+        };
+        let (distance, band) = size_culled_end(&self.lod, p, max_distance, end_band, kept_radius);
+        let size_culled = distance < max_distance;
+        End { distance, band, at_handoff: kept_radius.is_some() && !size_culled, size_culled }
+    }
+}
+
+/// A precombine's members, if every one is among the fetched placements and
+/// untouched by the overlay (precombine.md, phase 1: any moved, removed or
+/// missing member drops the whole precombine; the cell spawns the old way).
+fn valid_members(combine: &CellPrecombine, placements: &[IndexedPlacement], overlay: Option<&WorldOverlay>) -> Option<HashSet<PlacementId>> {
+    let fetched: HashSet<PlacementId> = placements.iter().map(|p| p.placement.id).collect();
+    let overlay = overlay.map(|o| o.0.read().unwrap_or_else(PoisonError::into_inner));
+    let mut members = HashSet::new();
+    for &id in combine.buckets.iter().flat_map(|b| &b.members) {
+        let touched = overlay.as_ref().is_some_and(|o| o.is_removed(id) || o.placed(id).is_some());
+        if touched || !fetched.contains(&id) {
+            return None;
+        }
+        members.insert(id);
+    }
+    Some(members)
+}
+
 /// A decoded page, from the cache or the reader.
 fn load_page(reader: &dyn IndexReader, cache: &Mutex<PageCache>, ws: &WorldspaceId, page: IVec3) -> Result<Arc<IndexPage>, String> {
     if let Some(p) = cache.lock().unwrap_or_else(PoisonError::into_inner).get(ws, page) {
@@ -1152,7 +1336,6 @@ fn build_template(
     cache: &mut HashMap<String, Handle<StandardMaterial>>,
     mapper: &ModelMaterials,
     asset_server: &AssetServer,
-    ground_blend: Option<f32>,
 ) -> ModelTemplate {
     let mut material = |i: u32| -> Handle<StandardMaterial> {
         let desc = asset.materials.get(i as usize).cloned().unwrap_or_default();
@@ -1167,5 +1350,5 @@ fn build_template(
             parts: lod.parts.iter().map(|(mesh, mat)| (asset.meshes[*mesh].clone(), material(*mat))).collect(),
         })
         .collect();
-    ModelTemplate { lods, aabb: model_aabb(&asset.bounds), ground_blend }
+    ModelTemplate { lods, aabb: model_aabb(&asset.bounds) }
 }

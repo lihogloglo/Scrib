@@ -19,7 +19,9 @@ mod assets;
 mod materials;
 mod runtime;
 
-pub use assets::{FarDirectoryAsset, FarDirectoryLoader, FarLoadError, FarNodeAsset, FarNodeLoader, ImpostorAtlasAsset, ImpostorAtlasLoader};
+pub use assets::{
+    FarDirectoryAsset, FarDirectoryLoader, FarLoadError, FarNodeAsset, FarNodeLoader, ImpostorAtlasAsset, ImpostorAtlasLoader, NearCombineLoader,
+};
 pub use materials::{
     ATTRIBUTE_IMPOSTOR, ATTRIBUTE_SPRITE, FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial, ProxyMaterial, SpriteParams,
     impostor_mesh, light_mesh,
@@ -33,9 +35,11 @@ use bevy_asset::{AssetApp, embedded_asset};
 use bevy_ecs::prelude::*;
 use bevy_pbr::MaterialPlugin;
 use bevy_shader::load_shader_library;
-use sf_lod::FarLevels;
+use sf_lod::products::{NEAR_STEP, node_subject};
+use sf_lod::{FarLevels, NodeKey};
+use sf_model_bevy::baked_path;
 use sf_world::{RingRadii, WorldspaceId};
-use sf_world_bevy::{FarProxies, StreamingConfig, StreamingSystems};
+use sf_world_bevy::{FarProxies, Precombines, StreamingConfig, StreamingSystems};
 
 /// Far-field settings. `levels.handoff` and `band` are replaced by the
 /// baked values of each worldspace's directory; the screen (pixel error,
@@ -177,6 +181,16 @@ impl Plugin for FarFieldPlugin {
             .register_asset_loader(FarNodeLoader)
             .register_asset_loader(FarDirectoryLoader)
             .register_asset_loader(ImpostorAtlasLoader)
+            .register_asset_loader(NearCombineLoader)
+            // Near levels spawn from the cells' precombines (precombine.md).
+            .insert_resource(Precombines {
+                path: Arc::new(|world: &World, ws: &WorldspaceId, cell| {
+                    world
+                        .get_resource::<FarWorldspaces>()
+                        .is_none_or(|f| f.contains(ws))
+                        .then(|| baked_path(NEAR_STEP, &node_subject(ws, NodeKey::of_cell(cell)), Some("sfnear")))
+                }),
+            })
             .insert_resource(self.settings.clone())
             .init_resource::<FarFieldDebug>()
             .init_resource::<FarWorldspaces>()

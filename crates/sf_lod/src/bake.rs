@@ -380,7 +380,9 @@ impl Step for NearStep {
         NEAR_STEP
     }
     fn version(&self) -> u32 {
-        1
+        // 2: buckets split by terrain-blend band; 3: band split removed
+        // (object-terrain blending removed, 2026-10-20).
+        3
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (ws, key) = parse_node(1, subject).ok_or_else(|| step_err(NEAR_STEP, subject, "malformed subject"))?;
@@ -409,9 +411,13 @@ impl Step for NearStep {
             models.insert(path.clone(), model);
         }
         let source = &self.0.source;
-        let near = build_near(page.partition, cell, &placements, &|m: &VfsPath| models.get(m).cloned().flatten(), &|p| {
-            source.precombine_exclude(p)
-        })
+        let near = build_near(
+            page.partition,
+            cell,
+            &placements,
+            &|m: &VfsPath| models.get(m).cloned().flatten(),
+            &|p| source.precombine_exclude(p),
+        )
         .map_err(|e| step_err(NEAR_STEP, subject, e))?;
         Ok(near.unwrap_or(NearCombine { center: [0.0; 3], buckets: Vec::new() }).to_bytes())
     }

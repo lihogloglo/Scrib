@@ -25,6 +25,7 @@ mod debug;
 mod fade;
 mod far;
 mod origin;
+mod precombine;
 mod spawn;
 mod stream;
 mod worldspace;
@@ -36,9 +37,10 @@ pub use debug::{StreamingDebug, level_color};
 pub use fade::{FadePhase, FadeTransition, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginUniform};
+pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombines, bucket_ranges};
 pub use spawn::{
-    ActivateCx, GroundBlend, GroundBlendModels, GroundBlendRule, LoadedModel, MaterialMapper, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SubtreeLayers,
-    SubtreeRange, SpawnCx, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, standard_material,
+    ActivateCx, LoadedModel, MaterialMapper, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SubtreeLayers,
+    SubtreeRange, SpawnCx, StaticSpawner, RANGE_STEPS_PER_OCTAVE, shared_range, TemplateLod, apply_subtree_layers, apply_subtree_ranges, chain_ranges, model_aabb, size_culled_end, spawn_template, spawn_template_ranges, standard_material,
     visibility_range,
 };
 pub use stream::{
@@ -48,6 +50,7 @@ pub use stream::{
 pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceRegistry, WorldspaceRoot};
 
 use bevy_app::{App, Last, Plugin, PostStartup, PostUpdate, Update};
+use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
 use bevy_render::render_asset::RenderAssetBytesPerFrame;
 use big_space::plugin::{BigSpaceCorePlugin, BigSpaceMinimalPlugins, BigSpaceSystems, BigSpaceTimingStatsPlugin};
@@ -90,6 +93,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<PlacementSpawners>()
             .init_resource::<ModelMaterials>()
             .init_resource::<FadeTransition>()
+            .init_asset::<CellPrecombine>()
             .insert_resource(Streaming::new(self.config.clone()))
             .add_message::<CellLoaded>()
             .add_message::<CellUnloaded>()

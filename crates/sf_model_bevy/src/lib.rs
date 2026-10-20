@@ -21,7 +21,8 @@ mod spawn;
 
 pub use loader::{
     CookedLodMeshes, CookedModelAsset, CookedRayTracing, SfMeshLoadError, SfMeshLoader,
-    SfMeshLoaderSettings, compression_args, submesh_to_mesh, submesh_to_ray_tracing_mesh,
+    SfMeshLoaderSettings, compression_args, static_model_asset, submesh_to_mesh,
+    submesh_to_ray_tracing_mesh,
 };
 pub use skinned::{
     CookedSkin, MAX_JOINTS, SkinnedMeshInfo, gather_weights, inverse_bindposes, morph_attributes,

@@ -240,93 +240,14 @@ cheap GPU copy), or we patch aqua to sample the clipmap. Its queries are GPU
 readback (about one frame of latency, 256 probes per frame). That doesn't
 affect terrain, but it is not the CPU water query we decided on (§10).
 
-## Object-terrain blending (as built, 2026-10-12, terrainblend)
+## Object-terrain blending (removed, 2026-10-20)
 
-Placed rocks, cliffs, tree roots and building bases blend into the ground
-they stand on, instead of meeting the splat with a hard seam.
-
-**Technique.** The UE runtime-virtual-texture mesh blend (the landscape
-writes base color and world height into RVTs; mesh materials sample them and
-lerp albedo and normal by height above the landscape over a fade band) and
-CryEngine 5's "terrain layer blending into objects" (the object shader
-blends the terrain's layers, per-object flag). Our clipmaps already are what
-the RVT provides there: camera-centered height, splat layers and macro
-albedo, so object shaders sample them directly and no virtual texture is
-needed. Reuse order: Bevy has no terrain blend; no crate blends into a
-custom terrain; so this is our own, on Bevy's `ExtendedMaterial`.
-
-**How it works.**
-- `GroundBlendMaterial = ExtendedMaterial<StandardMaterial, GroundBlendExt>`
-  (`sf_terrain_bevy::ground_blend`). The extension carries the terrain
-  material's own handles (params buffer, height, layer, macro, normal
-  clipmaps, layer arrays, far map) at the terrain's bindings, renumbered to
-  100..112 so they sit beside `StandardMaterial`'s 0..30, plus the band
-  (`#[uniform(113)]`: band meters, edge break-up).
-- Fragment `shaders/ground_blend.wesl`: Bevy's
-  `pbr_input_from_standard_material`, then height above terrain =
-  fragment height − `height_bicubic(xz)` (the same Catmull-Rom height the
-  near terrain is drawn with). Inside the band it runs `terrain_surface`
-  (`shaders/surface.wesl`: the terrain fragment's surface code, moved into a
-  shared module so terrain and objects can't drift) and lerps base color,
-  roughness, metallic (to 0), emissive (to 0), diffuse occlusion and the
-  shading normal toward the ground's (layers projected by the object's
-  normal, see below), weight
-  `smoothstep(0.35, 0.75, t + 0.5 · (h − 0.5))` with `t` = 1 at the ground
-  and 0 at the band top and `h` the splat layers' blended height map, so
-  pebbles and grains creep higher than flat soil (the height-blend rule, as
-  the terrain's own layers). Outside the band the cost is the one height
-  lookup. Forward only (`opaque_render_method = Forward`); prepass and shadow
-  passes are `StandardMaterial`'s, so depth, motion vectors (DLSS/TAA) and
-  shadows are unchanged.
-- **Opt-in per model, by the adapter.** `sf_world_bevy::GroundBlendModels`
-  (a rule: model path → band in meters) is evaluated once per model when its
-  template is built (`ModelTemplate::ground_blend`); `spawn_template` adds
-  `GroundBlend { band, worldspace }` to every part. `GroundBlendPlugin::<M>`
-  (`sf_terrain_bevy`, generic over the host's marker so neither crate depends
-  on the other) swaps marked parts in the terrain's worldspace to a cached
-  `GroundBlendMaterial` per (source material, band), drops the marker in
-  other worldspaces (interiors share coordinates; they must never sample the
-  terrain) and on transparent materials, and rebinds every cached material
-  in place when the terrain is rebuilt. Bevyrrowind's rule
-  (`mw_assets::ground_blend_band`, from a census of the vanilla and
-  expansion meshes): rocks and cliffs 0.6 m, building bases 0.4 m (Hlaalu,
-  Redoran, Imperial, Telvanni, Velothi, Dwemer, Nord, stronghold sets,
-  minus bridges, docks, awnings, windows, doors and other parts that hang
-  above the ground), tree trunks and roots 0.3 m.
-- **A/B.** `--off terrainblend` leaves out the rule and the plugin (no
-  extended material exists). The live key F11 flips
-  `TerrainDebug::no_ground_blend` (params flag `DEBUG_NO_GROUND_BLEND`), so
-  the band test is skipped on the GPU without re-spawning.
-
-**Not blended (decisions).**
-- Far-field proxies: no runtime blend (their merged, vertex-colored cell
-  meshes mix blending and non-blending models; the seam is sub-pixel at
-  proxy distance). Follow-up: bake the blend into proxy vertex colors (macro
-  albedo by vertex height above terrain).
-- `--rt` (Solari): off. Solari's RT scene reads `MeshMaterial3d<StandardMaterial>`
-  only, so an extended material would drop the mesh from the RT scene.
-- Pixel depth offset + dithered temporal AA (the UE trick for soft
-  intersections): rejected for now. PDO writes depth from the fragment
-  shader (no early-Z on those meshes, prepass and shadow interplay) and the
-  dither is noisy under DLSS.
-
-**Change from the RVT blend (2026-10-12).** The first version projected the
-layers top-down, as UE's RVT blend does: on Balmora's wall bases that read
-as vertical streaks and a bright band (the ground's up-facing normal on a
-wall). `terrain_surface` now takes the object's normal and
-`force_triplanar`: flat parts still continue the ground top-down, steep
-faces get the same layers, tint and variation side-on, and the shading
-normal stays around the object's, so the lighting keeps its shape. The
-terrain passes `false` (its own triplanar stays per-layer flagged).
-
-**Known limits.** Triplanar side projections don't line up with the
-ground's top-down texture at the contact line (colour matches; pattern
-turns 90°). The height
-reference ignores detail displacement (±8 cm, inside the band). Blended
-parts are not bindless (the extension isn't), so they draw in their own
-batches. GPU cost (indicative, not measured: owner on the machine): one
-bicubic height lookup (16 loads) per fragment of a blended model, plus the
-full splat shading inside the band.
+Built 2026-10-12 (`sf_terrain_bevy::ground_blend`: a `StandardMaterial` extension sampling the clipmaps, per-model
+band from an adapter rule) and removed 2026-10-20: the owner saw only a darkened base (TB-1..3 rejected), and its
+non-batched per-part materials cost 10-13 ms of render thread on the Balmora walk (bevyrrowind perf.md "Feature
+ladder"). Precombine buckets no longer split by band (`lod.near` v3). The design (UE RVT mesh blend family) is in
+git history before that date; a redo is eye candy, WISHLIST §13: batched (bindless or one material per bucket), and
+look for a Bevy crate first.
 
 ## Verification
 
@@ -387,7 +308,7 @@ J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`).
 | Distant texturing | Unity terrain "basemap" (precomposited low-res albedo past a distance); OpenMW "composite map" (distant chunks' layers pre-rendered); Far Cry 4 adaptive virtual texture (Chen 2015); UE runtime virtual texture (RVT) caching the layer blend | splat to ~2 km, baked macro-albedo pyramid beyond | **match** basemap/composite map; RVT caching is audit row 25 (P2, M7). Note: distant normals come from central differences of the coarse height level; UE stores landscape normals with the heightmap (unverified), so lighting detail drops with level. Watch in vistas, not a gap yet |
 | Splat blending | height-based blending (Mishkinis 2013) in UE (`Height Blend` layers), Unity HDRP/URP terrain (height-based blend option), most AAA; triplanar on steep slopes | height blend, top-4 layers per texel, triplanar per layer | **match** |
 | Anti-tiling | macro variation and distance UV scale (universal); **stochastic / hex tiling** (Heitz & Neyret 2018 by-example noise; Mikkelsen 2022 "Practical Real-Time Hex-Tiling", Unity Labs; UE material-node ports) | macro variation + distance UV scale + tint | **GAP (P2)**: hex tiling is cheap (3 taps per layer, or only on the nearest layers) and kills the grid pattern on large uniform layers. Open question 1 |
-| **Object-terrain blending** | UE RVT "blend with meshes": rocks and props sample the landscape's virtual texture and blend into it near the ground (Epic RVT docs list it as a primary use); Far Cry 5, Horizon, Star Citizen do the same family (unverified per title) | object shaders sample the terrain clipmaps (our RVT) and lerp albedo, roughness, AO and normal toward the ground over a per-model band (adapter opt-in); CryEngine 5 "terrain layer blending into objects" is the same family | **match** (2026-10-12, "Object-terrain blending (as built)"). Not on far-field proxies (vertex-colour bake later) or `--rt`. UE pixel depth offset + dither: rejected for now |
+| **Object-terrain blending** | UE RVT "blend with meshes", CryEngine 5 terrain layer blending, Skyrim SE terrain-blending mods | none | **removed** 2026-10-20 (first attempt rejected by the owner, +10-13 ms render thread on the walk); redo is WISHLIST §13 |
 | Holes | UE landscape visibility mask, Unity terrain holes, Bethesda/OpenMW none (caves are meshes) | 1 bit per 0.5 m quad | **match** |
 | Self-shadowing far away | UE distance field shadows / far shadows (unverified for landscape), Bethesda LOD shadows | horizon march + CPU shadow-height map (weather.md) | **match** |
 | Horizon/terrain occlusion of objects | common in terrain engines | none | gap already listed (audit row 16, P2) |
@@ -414,13 +335,4 @@ From J9 (2026-10-12, industry comparison above):
    layers of each texel (or on layers flagged `anti_tile` in `TerrainLayer`),
    with the usual mip-safe gradients. Cost: 3 fetches per affected layer.
    Decide with a screenshot pair on a large uniform layer and a GPU A/B.
-2. **Object-terrain blending: closed 2026-10-12** (see "Object-terrain
-   blending (as built)"; per-model adapter opt-in instead of a bake flag,
-   since the band test is per fragment). The original note: static meshes flagged by the
-   bake as touching terrain (`GROUNDED` footprint, or vertex within ~0.5 m
-   of the surface) blend their albedo/normal toward the terrain's shaded
-   layers by height above terrain (fade over ~0.3–1 m), sampling the layer
-   clipmap (near) or macro albedo (far) through a WGSL import exported by
-   `sf_terrain_bevy`. Same family as UE RVT mesh blending without a virtual
-   texture. Needs: the clipmaps bindable from object materials (bind group
-   cost), a per-mesh opt-in, and a check against the Solari path.
+2. **Object-terrain blending: removed 2026-10-20** (see "Object-terrain blending (removed)").

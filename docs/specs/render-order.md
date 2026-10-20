@@ -25,7 +25,7 @@ water plugin gets all of it; interiors skip clouds, fog volume and water.
 | 0c | `shadow_pass` (after `Prepass`, before `MainPass`) | `sf_atmos_bevy` | cloud shadow map, toroidal, time-sliced | cloud noise | `DirectionalLightTexture` |
 | 0d | `fft_pass` (same slot) | `sf_water_bevy` | ocean FFT cascades | spectrum | displacement arrays (current + previous) |
 | 1 | `Core3dSystems::Prepass` | Bevy + material prepass shaders | depth (`DepthPrepass`, for `OcclusionCulling`); motion vectors + jitter when DLSS SR is on (`MotionVectorPrepass`, `TemporalJitter`, `MipBias`, `upscale.rs`); deferred G-buffer only on the Solari path (`path.rs`) | — | depth, motion vectors |
-| 2 | `main_opaque_pass_3d`: `Opaque3d`, `AlphaMask3d` (binned) | Bevy | NIF statics/actors, terrain, ground blend, LOD proxies, impostors, sea-plane scaffold | shadow maps, cloud shadow, far shadow map | colour, depth |
+| 2 | `main_opaque_pass_3d`: `Opaque3d`, `AlphaMask3d` (binned) | Bevy | NIF statics/actors, terrain, LOD proxies, impostors, sea-plane scaffold | shadow maps, cloud shadow, far shadow map | colour, depth |
 | 3 | `render_sky` (private set; `SkyOrderScaffold`) | Bevy `Atmosphere` | sky on depth = far | atmosphere LUTs | colour |
 | 4 | `night_pass` (after `render_sky`) | `sf_sky_bevy` | stars, moons; no depth write | depth | colour |
 | 5 | `trace_pass` (after opaque, before transparent) | `sf_atmos_bevy` | clouds half-res raymarch + temporal resolve; ground-fog bank march; froxel inject + integrate (per-froxel jitter, own history) | opaque depth, LUTs, shadow maps, own histories | cloud/fog textures, `FroxelVolume` |
@@ -55,7 +55,6 @@ spec. "Shadow" = casts / receives / alpha test in the shadow pass.
 | NIF particles (`mw_assets` `particles.rs`, CPU quads in an emitter-local dynamic mesh) | Sorted | `NoFrustumCulling` ⇒ no AABB ⇒ key = emitter origin (RO-10) | test only | none | froxel (StandardMaterial swap) | none (as blended) |
 | Held props (`held.rs`) | as their material | world (character child) | | std | composite | `NotShadowCaster` for **every** light (RO-11) |
 | `TerrainMaterial` (`sf_terrain_bevy`) | Opaque3d | world (`NoFrustumCulling` on some chunks: opaque, no sort issue) | write | custom `terrain_prepass.wesl` with MV | composite | cast / receive + far shadow map |
-| Ground blend (`StandardMaterial` + `GroundBlendExt`, forward) | Opaque3d / AlphaMask3d | world | write | std | composite | cast / receive |
 | LOD proxies (`StandardMaterial` + `FarShadowExt`) | Opaque3d | world, baked AABB (`NoAutoAabb`) | write | std | composite | cast only L1 with `l1_shadows` / far shadow map |
 | `ImpostorMaterial` (`sf_lod_bevy`, `Mask(tint.w)`, forward) | AlphaMask3d | world, baked AABB | write | custom `impostor_prepass.wesl` with MV | composite | per LOD settings, alpha-tested |
 | `LightSpriteMaterial` (`sf_lod_bevy`, Add) | Sorted | world, baked AABB; billboard grows in the shader inside it | test only | disabled | froxel via `TranslucentFog`, transmittance only | none (`enable_shadows` false) |

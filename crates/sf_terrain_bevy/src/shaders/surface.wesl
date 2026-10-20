@@ -1,7 +1,6 @@
 // The terrain's surface shading (albedo, roughness, AO, shading normal) at a
-// point, shared by the terrain's own fragment (terrain.wesl) and by objects
-// that blend into the ground near their base (ground_blend.wesl; terrain.md
-// "Object-terrain blending"). Spec: superfargoth/docs/specs/terrain.md.
+// point, for the terrain's fragment (terrain.wesl). Spec:
+// superfargoth/docs/specs/terrain.md.
 //
 // Only textureLoad, textureSampleLevel and textureSampleGrad (explicit
 // derivatives): safe in non-uniform control flow.
@@ -103,13 +102,12 @@ fn sample_layer(
     dpy: vec3<f32>,
     n: vec3<f32>,
     steep: f32,
-    force_triplanar: bool,
 ) -> LayerSample {
     let inv = 1.0 / layer_tiling(id);
     var top = sample_projection(id, wpos.xz * inv, dpx.xz * inv, dpy.xz * inv);
     let ty = vec3<f32>(top.normal.xy + n.xz, abs(top.normal.z) * n.y);
     top.normal = ty.xzy;
-    if steep <= 0.0 || !(force_triplanar || layer_triplanar(id)) {
+    if steep <= 0.0 || !layer_triplanar(id) {
         return top;
     }
     var blend = pow(abs(n), vec3<f32>(4.0));
@@ -137,18 +135,12 @@ struct TerrainSurface {
     ao: f32,
     /// World-space shading normal.
     n: vec3<f32>,
-    /// The height blend's surface height (0..1, the layers' height maps
-    /// blended; 0.5 where no layer is sampled): breaks up blend edges.
-    height: f32,
 }
 
 /// The terrain's surface at render XZ `xz` (world position `wpos`, its
 /// screen derivatives `dpx`/`dpy`), geometric normal `n_geo`, `dist` meters
 /// from the camera. Height-based splat blending near the camera, the macro
-/// albedo past the splat range. `force_triplanar`: project every layer
-/// triplanar on steep `n_geo` (objects: walls and rock faces get the ground
-/// texture side-on instead of streaked from above), not only the layers the
-/// bake flags.
+/// albedo past the splat range.
 fn terrain_surface(
     xz: vec2<f32>,
     wpos: vec3<f32>,
@@ -156,7 +148,6 @@ fn terrain_surface(
     dpy: vec3<f32>,
     n_geo: vec3<f32>,
     dist: f32,
-    force_triplanar: bool,
 ) -> TerrainSurface {
     let wxz = wpos.xz;
     let macro_c = macro_albedo(xz);
@@ -166,7 +157,6 @@ fn terrain_surface(
     var roughness = 0.85;
     var ao = 1.0;
     var n = n_geo;
-    var height = 0.5;
 
     let detail = pf(P_DETAIL);
     let near = 1.0 - smoothstep(0.7 * detail.x, detail.x, dist);
@@ -192,14 +182,12 @@ fn terrain_surface(
             var a = vec3<f32>(0.0);
             var surface = vec2<f32>(0.0);
             var nb = vec3<f32>(0.0);
-            var hb = 0.0;
             for (var k = 0; k < 4; k += 1) {
                 if bw[k] > 0.0 {
-                    let l = sample_layer(s.ids[k], wpos, dpx, dpy, n_geo, steep, force_triplanar);
+                    let l = sample_layer(s.ids[k], wpos, dpx, dpy, n_geo, steep);
                     a += bw[k] * l.albedo_height.rgb;
                     surface += bw[k] * l.surface;
                     nb += bw[k] * l.normal;
-                    hb += bw[k] * l.albedo_height.a;
                 }
             }
             // The macro map carries the tint (bake: mean albedo x tint), so
@@ -212,7 +200,6 @@ fn terrain_surface(
             roughness = mix(roughness, surface.y, near);
             ao = mix(1.0, surface.x, near);
             n = normalize(mix(n_geo, normalize(nb), near));
-            height = mix(0.5, hb, near);
         }
     }
     albedo *= variation;
@@ -222,6 +209,5 @@ fn terrain_surface(
     out.roughness = roughness;
     out.ao = ao;
     out.n = n;
-    out.height = height;
     return out;
 }

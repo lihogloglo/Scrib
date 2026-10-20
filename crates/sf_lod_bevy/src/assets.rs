@@ -1,14 +1,17 @@
 //! Asset loaders for far-field bake products, served by `baked://`:
-//! nodes (`.sfnode`), the per-worldspace directory (`.sffar`) and impostor
-//! atlases (`.sfimp`). Decoding runs on Bevy's loader tasks, off the main
-//! thread.
+//! nodes (`.sfnode`), the per-worldspace directory (`.sffar`), impostor
+//! atlases (`.sfimp`) and near-cell precombines (`.sfnear`). Decoding runs on
+//! Bevy's loader tasks, off the main thread.
 
 use bevy_asset::io::Reader;
 use bevy_asset::{Asset, AssetLoader, Handle, LoadContext, RenderAssetUsages};
 use bevy_mesh::Mesh;
 use bevy_reflect::TypePath;
-use sf_lod::{FarDirectory, ImpostorAtlas, ImpostorInstance, LightPoint, NodeBlob, NodeHeader};
-use sf_model_bevy::submesh_to_mesh;
+use glam::DVec3;
+use sf_coords::WorldPos;
+use sf_lod::{FarDirectory, ImpostorAtlas, ImpostorInstance, LightPoint, NearCombine, NodeBlob, NodeHeader};
+use sf_model_bevy::{SfMeshLoaderSettings, static_model_asset, submesh_to_mesh};
+use sf_world_bevy::{CellPrecombine, PrecombineBucket};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FarLoadError {
@@ -82,6 +85,40 @@ impl AssetLoader for FarDirectoryLoader {
 
     fn extensions(&self) -> &[&str] {
         &["sffar"]
+    }
+}
+
+/// Loads a cell's near precombine (`.sfnear`, precombine.md) as streaming's
+/// [`CellPrecombine`]: every bucket's levels as meshes labeled
+/// `bucket<b>/lod<k>/<i>`.
+#[derive(Default, TypePath)]
+pub struct NearCombineLoader;
+
+impl AssetLoader for NearCombineLoader {
+    type Asset = CellPrecombine;
+    type Settings = ();
+    type Error = FarLoadError;
+
+    async fn load(&self, reader: &mut dyn Reader, (): &(), cx: &mut LoadContext<'_>) -> Result<CellPrecombine, FarLoadError> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        let near = NearCombine::from_bytes(&bytes).map_err(|e| FarLoadError::Mesh(e.to_string()))?;
+        let settings = SfMeshLoaderSettings::default();
+        let mut buckets = Vec::with_capacity(near.buckets.len());
+        for (b, bucket) in near.buckets.into_iter().enumerate() {
+            let model = static_model_asset(bucket.model, &settings, &format!("bucket{b}/"), cx).map_err(|e| FarLoadError::Mesh(e.to_string()))?;
+            buckets.push(PrecombineBucket {
+                max_radius: bucket.max_radius,
+                reach: bucket.reach,
+                members: bucket.members,
+                model,
+            });
+        }
+        Ok(CellPrecombine { center: WorldPos::from_f64(DVec3::from_array(near.center)), buckets })
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["sfnear"]
     }
 }
 

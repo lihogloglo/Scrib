@@ -334,3 +334,22 @@ fn shared_ranges_collapse_per_instance_values() {
     });
     assert!(q.end_margin.start >= 100.0 && q.end_margin.start < 100.0 * 1.022);
 }
+
+/// Precombine buckets (precombine.md, "Ranges"): every switch distance moves
+/// out by the bucket's reach, never past the chain's end; the end and its
+/// fade band stay where the members' end is.
+#[test]
+fn bucket_ranges_push_switches_by_reach() {
+    let lod = sf_model::LodScreen::default();
+    let errors = [0.0, 0.01, 0.04];
+    let alone = chain_ranges(&errors, &lod, 400.0, 40.0);
+    let merged = bucket_ranges(&errors, &lod, 400.0, 40.0, 30.0);
+    assert_eq!(merged.len(), alone.len());
+    for k in 0..errors.len() - 1 {
+        assert!((merged[k].end - (alone[k].end + 30.0).min(420.0)).abs() < 1e-3, "switch {k}");
+    }
+    assert_eq!((merged[2].end, merged[2].end_margin), (alone[2].end, alone[2].end_margin), "same end and band");
+    // A reach past the end collapses the coarser levels into the end.
+    let wide = bucket_ranges(&errors, &lod, 50.0, 0.0, 500.0);
+    assert!((wide[0].end - 50.0).abs() < 1e-3 && wide[1].end <= wide[1].start && wide[2].end <= wide[2].start);
+}

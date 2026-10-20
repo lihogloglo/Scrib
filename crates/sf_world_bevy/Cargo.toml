@@ -33,6 +33,8 @@ bevy_mesh.workspace = true
 bevy_pbr.workspace = true
 # Instant for stage timings.
 bevy_platform = { workspace = true, features = ["std"] }
+# TypePath of the CellPrecombine asset.
+bevy_reflect.workspace = true
 # WorldOrigin uniform: extraction, uniform buffer, RenderAssetBytesPerFrame.
 bevy_render.workspace = true
 # The WorldOrigin shader library.

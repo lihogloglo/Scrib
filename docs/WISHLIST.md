@@ -245,6 +245,13 @@ door links as first-class records, not per-cell teleports.
   foam with texture, breakup and varying width, not a fixed white line.
 - **Whitecaps** on crests (water.md: Jacobian foam), scaled by wind/weather.
 
+## 13. Object-terrain blending (later; owner 2026-10-20, eye candy, low priority)
+
+- Rocks, roots and foundations take on the terrain's albedo/normal where they meet the ground, the way the
+  Skyrim SE "terrain blending" mods do (nexusmods.com/skyrimspecialedition/mods/147616), not a darkened band.
+- The first attempt (`sf_terrain_bevy::ground_blend`) only darkened the base and cost 10-13 ms of render thread
+  on the Balmora walk (non-batched per-part materials); removed 2026-10-20. Look for a Bevy crate first.
+
 ---
 
 ## Early decisions this list forces

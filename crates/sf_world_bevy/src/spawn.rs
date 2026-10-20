@@ -37,29 +37,6 @@ pub struct ModelTemplate {
     /// Model-space bounds of LOD0 (used as every part's `Aabb`, so Bevy
     /// never needs the mesh data on the CPU).
     pub aabb: Aabb,
-    /// Blend into the terrain near the ground over this band (meters above
-    /// it), per [`GroundBlendModels`]: parts spawn with [`GroundBlend`].
-    pub ground_blend: Option<f32>,
-}
-
-/// The content pack's rule for which models blend into the terrain near
-/// their base (rocks, cliffs, roots, foundations), and over what band in
-/// meters (terrain.md "Object-terrain blending"). Evaluated once per model
-/// path when its template is built. Absent: nothing blends.
-#[derive(Resource, Clone)]
-pub struct GroundBlendModels(pub GroundBlendRule);
-
-/// Model path to band in meters (`None`: the model doesn't blend).
-pub type GroundBlendRule = Arc<dyn Fn(&str) -> Option<f32> + Send + Sync>;
-
-/// On a static part whose model blends into the terrain: the renderer side
-/// (`sf_terrain_bevy::GroundBlendPlugin`) swaps its material when it is in
-/// the terrain's worldspace, then removes this.
-#[derive(Component, Clone, Debug)]
-pub struct GroundBlend {
-    /// Meters above the terrain where the blend ends.
-    pub band: f32,
-    pub worldspace: WorldspaceId,
 }
 
 #[derive(Debug)]
@@ -302,8 +279,13 @@ pub fn spawn_template(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTempl
     let scale = cx.local.scale.abs().max_element();
     let errors: Vec<f32> = template.lods.iter().map(|l| l.error * scale).collect();
     let ranges = chain_ranges(&errors, cx.lod, cx.max_distance, cx.end_band);
+    spawn_template_ranges(world, cx, template, &ranges)
+}
+
+/// [`spawn_template`] with the levels' ranges given (one per level).
+pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate, ranges: &[LodRange]) -> u32 {
     let mut batch = Vec::new();
-    for (lod, range) in template.lods.iter().zip(&ranges) {
+    for (lod, range) in template.lods.iter().zip(ranges) {
         let Some(visibility) = visibility_range(range) else { continue };
         for (mesh, material) in &lod.parts {
             batch.push((
@@ -320,12 +302,7 @@ pub fn spawn_template(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTempl
         }
     }
     let n = u32::try_from(batch.len()).unwrap_or(u32::MAX);
-    if let Some(band) = template.ground_blend {
-        let blend = GroundBlend { band, worldspace: cx.worldspace.clone() };
-        world.spawn_batch(batch.into_iter().map(|b| (b, blend.clone())));
-    } else {
-        world.spawn_batch(batch);
-    }
+    world.spawn_batch(batch);
     n
 }
 

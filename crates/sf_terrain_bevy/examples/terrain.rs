@@ -162,7 +162,6 @@ fn main() {
         freeze: false,
         no_culling: args.no_cull,
         no_far_shadows: false,
-        no_ground_blend: false,
     })
     .insert_resource(WorldSize(size))
     .add_systems(Startup, setup)

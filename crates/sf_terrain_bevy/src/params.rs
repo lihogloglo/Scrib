@@ -34,7 +34,6 @@ pub const MORPH_LODS: usize = 12;
 pub const DEBUG_LOD: u32 = 1;
 pub const DEBUG_WIREFRAME: u32 = 2;
 pub const DEBUG_NO_FAR_SHADOWS: u32 = 4;
-pub const DEBUG_NO_GROUND_BLEND: u32 = 8;
 
 /// Builder over the slot array.
 pub struct Params(pub Vec<[u32; 4]>);

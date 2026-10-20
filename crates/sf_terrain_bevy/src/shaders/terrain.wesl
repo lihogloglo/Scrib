@@ -73,7 +73,7 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
 
     let n_geo = terrain_normal(xz, in.lod);
     let dist = distance(view.world_position, in.world_position.xyz);
-    let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist, false);
+    let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist);
     var albedo = s.albedo;
 
     if (debug & DEBUG_LOD) != 0u {

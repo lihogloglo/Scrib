@@ -115,51 +115,64 @@ impl AssetLoader for SfMeshLoader {
                 });
             }
         };
-        let usage = if settings.keep_cpu_copy {
-            RenderAssetUsages::all()
-        } else {
-            RenderAssetUsages::RENDER_WORLD
-        };
-        let mut meshes = Vec::new();
-        let mut lods = Vec::with_capacity(model.lods.len());
-        for (level, lod) in model.lods.iter().enumerate() {
-            let mut parts = Vec::with_capacity(lod.submeshes.len());
-            for (i, sub) in lod.submeshes.iter().enumerate() {
-                let mesh = submesh_to_mesh(&model, sub, usage, settings.compress)?;
-                parts.push((meshes.len(), sub.material));
-                meshes.push(load_context.add_labeled_asset(format!("lod{level}/{i}"), mesh));
-            }
-            lods.push(CookedLodMeshes {
-                error: lod.error,
-                parts,
-            });
-        }
-        let ray_tracing = match settings.ray_tracing_lod {
-            Some(wanted) if !model.lods.is_empty() => {
-                let level = wanted.min(model.lods.len() - 1);
-                let mut rt = Vec::with_capacity(model.lods[level].submeshes.len());
-                for (i, sub) in model.lods[level].submeshes.iter().enumerate() {
-                    let mesh = submesh_to_ray_tracing_mesh(&model, sub)?;
-                    rt.push(load_context.add_labeled_asset(format!("lod{level}/{i}/rt"), mesh));
-                }
-                Some(CookedRayTracing { level, meshes: rt })
-            }
-            _ => None,
-        };
-        Ok(CookedModelAsset {
-            meshes,
-            lods,
-            materials: model.materials,
-            bounds: model.bounds,
-            skipped: None,
-            ray_tracing,
-            skin: None,
-        })
+        static_model_asset(model, settings, "", load_context)
     }
 
     fn extensions(&self) -> &[&str] {
         &["sfmesh"]
     }
+}
+
+/// A static cooked model's meshes as labeled assets of the current load
+/// (`<label>lod<k>/<i>`, ray-tracing variants `<label>lod<k>/<i>/rt`). The
+/// `.sfmesh` loader passes an empty label; products holding several models
+/// (precombined cells, precombine.md) prefix each one.
+pub fn static_model_asset(
+    model: CookedModel,
+    settings: &SfMeshLoaderSettings,
+    label: &str,
+    load_context: &mut LoadContext<'_>,
+) -> Result<CookedModelAsset, SfMeshLoadError> {
+    let usage = if settings.keep_cpu_copy {
+        RenderAssetUsages::all()
+    } else {
+        RenderAssetUsages::RENDER_WORLD
+    };
+    let mut meshes = Vec::new();
+    let mut lods = Vec::with_capacity(model.lods.len());
+    for (level, lod) in model.lods.iter().enumerate() {
+        let mut parts = Vec::with_capacity(lod.submeshes.len());
+        for (i, sub) in lod.submeshes.iter().enumerate() {
+            let mesh = submesh_to_mesh(&model, sub, usage, settings.compress)?;
+            parts.push((meshes.len(), sub.material));
+            meshes.push(load_context.add_labeled_asset(format!("{label}lod{level}/{i}"), mesh));
+        }
+        lods.push(CookedLodMeshes {
+            error: lod.error,
+            parts,
+        });
+    }
+    let ray_tracing = match settings.ray_tracing_lod {
+        Some(wanted) if !model.lods.is_empty() => {
+            let level = wanted.min(model.lods.len() - 1);
+            let mut rt = Vec::with_capacity(model.lods[level].submeshes.len());
+            for (i, sub) in model.lods[level].submeshes.iter().enumerate() {
+                let mesh = submesh_to_ray_tracing_mesh(&model, sub)?;
+                rt.push(load_context.add_labeled_asset(format!("{label}lod{level}/{i}/rt"), mesh));
+            }
+            Some(CookedRayTracing { level, meshes: rt })
+        }
+        _ => None,
+    };
+    Ok(CookedModelAsset {
+        meshes,
+        lods,
+        materials: model.materials,
+        bounds: model.bounds,
+        skipped: None,
+        ray_tracing,
+        skin: None,
+    })
 }
 
 /// The `Cooked::Skinned` branch of [`SfMeshLoader`]: one mesh per LOD and

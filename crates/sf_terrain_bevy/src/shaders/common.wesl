@@ -1,8 +1,7 @@
 // Terrain bindings and the CDLOD vertex logic shared by the main and
 // prepass shaders. Spec: superfargoth/docs/specs/terrain.md.
 //
-// Bindings start at 100 so a `StandardMaterial` extension (the ground
-// blend, `ground_blend.wesl`) can bind them beside Bevy's 0..30.
+// Bindings start at 100, clear of Bevy's material bindings 0..30.
 //
 // Parameters live in one storage buffer of vec4<u32> slots (layout in
 // `params.rs`), written once per frame without touching the material.
@@ -46,7 +45,6 @@ const SIZE: i32 = 512;
 const DEBUG_LOD: u32 = 1u;
 const DEBUG_WIREFRAME: u32 = 2u;
 const DEBUG_NO_FAR_SHADOWS: u32 = 4u;
-const DEBUG_NO_GROUND_BLEND: u32 = 8u;
 
 fn pf(i: u32) -> vec4<f32> {
     return bitcast<vec4<f32>>(params[i]);

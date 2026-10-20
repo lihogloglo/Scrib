@@ -80,6 +80,9 @@ pub fn bucket_of(radius: f32) -> usize {
     BUCKET_EDGES.iter().take_while(|&&e| radius >= e).count()
 }
 
+/// A bucket's identity: size class, vertex attributes.
+type BucketKey = (usize, (bool, bool, bool));
+
 /// Merged geometry of one level, per material.
 #[derive(Default)]
 struct LevelBuffers {
@@ -194,14 +197,15 @@ pub fn build_near(
     }
     members.sort_by_key(|(p, _)| p.placement.id);
     let center = node_center(NodeKey::of_cell(cell), partition, members.iter().map(|(p, _)| p.placement.transform.pos));
-    // Bucket key: size class, then the attribute set (a member without vertex
+    // Bucket key: size class and the attribute set (a member without vertex
     // colors must not join a colored mesh: its zeros would draw black).
-    let mut buckets: BTreeMap<(usize, (bool, bool, bool)), BucketBuilder> = BTreeMap::new();
+    let mut buckets: BTreeMap<BucketKey, BucketBuilder> = BTreeMap::new();
     for (p, model) in &members {
         let t = &p.placement.transform;
         let to_cell = Affine3A::from_scale_rotation_translation(t.scale, t.rotation, center.delta_f32(t.pos));
         let signature = (model.has_normals, model.has_uvs, model.has_colors);
-        let b = buckets.entry((bucket_of(p.radius), signature)).or_insert_with(|| BucketBuilder {
+        let key = (bucket_of(p.radius), signature);
+        let b = buckets.entry(key).or_insert_with(|| BucketBuilder {
             max_radius: 0.0,
             members: Vec::new(),
             materials: Vec::new(),

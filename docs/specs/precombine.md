@@ -1,6 +1,6 @@
 # Near-cell precombine (`sf_lod` `lod.near`, `sf_world_bevy`)
 
-Status: **spec, slice 1 next** (2026-10-19, phase1; owner go 2026-10-19). Roadmap: bevyrrowind ROADMAP 1.2 (the
+Status: **slices 1-3 built** (2026-10-20; owner go 2026-10-19); measurement and visual check in "As built". Roadmap: bevyrrowind ROADMAP 1.2 (the
 cut) and industry-audit.md J6/#10 ("Precombined near geometry", missing). Related: far-field.md (L1 proxies
 merge the same cells, simplified and untextured), bake.md (`mesh.cook`), streaming.md (spawn stage).
 
@@ -36,7 +36,7 @@ uniform already (position, normal, uv, color), so merging is a transform and an 
 
 **Members (eligibility, Bevy-free, plus an adapter veto).** Class `Static`; model cooked `Static` (not
 `Skipped`, not `Skinned`); no flag in `NO_LOD | NEAR_ONLY | EDITOR_ONLY | DISABLED`; no blended material
-(sorted translucents stay separate entities, whole placement); not a ground-blend model; not a light, door,
+(sorted translucents stay separate entities, whole placement); not a light, door,
 item, actor or marker (classes). The adapter hook `PrecombineSource::exclude(placement)` vetoes what only the
 content pack knows: in Morrowind, statics a script can `Disable`/`Enable`/`SetPos` (MWScript object
 references), so quests that hide a rock keep working. Placements the world overlay moved or removed are
@@ -73,8 +73,7 @@ the cell the old way (rare, correct); phase 2 would rebuild in the background.
 **What else it touches.**
 - Shadows: merged buckets cast as a few large casters (the cascade cost was the second biggest item).
 - Picking / activation: statics aren't activatable; doors, containers, activators aren't members.
-- Fog swap, terrain blend, RT: members never include blended or ground-blend parts; RT `ray_tracing_lod`
-  works per mesh as before.
+- Fog swap, RT: members never include blended parts; RT `ray_tracing_lod` works per mesh as before.
 - Memory: unique geometry per cell instead of shared instances; measure (expected tens of MB in towns).
 - Hot reload / mods: a mod editing a member changes the cell's inputs: rebake as for every product.
 
@@ -92,3 +91,20 @@ the cell the old way (rare, correct); phase 2 would rebuild in the background.
 1. Bevy-free builder `sf_lod::near` (members → buckets → `CookedModel`), tests.
 2. Bake step `lod.near` + Morrowind adapter (`PrecombineSource`: script-referenced statics), bake report.
 3. Runtime: fetch, synthetic placements, member skip, `--off precombine`, overlay fallback; measure; visual check.
+
+## As built (2026-10-20)
+
+- **Terrain blend gone (2026-10-20).** Buckets were keyed by blend band too (`lod.near` v2); object-terrain
+  blending was removed (terrain.md), so the key is size class + attributes again (`lod.near` v3).
+- **Runtime hook, not synthetic placements.** `sf_world_bevy` owns the asset type (`CellPrecombine`: center,
+  buckets of `CookedModelAsset`) and a `Precombines` resource (asset path per cell); `sf_lod_bevy` registers
+  `NearCombineLoader` (`.sfnear`, meshes labeled `bucket<b>/lod<k>/<i>`, via `sf_model_bevy::static_model_asset`)
+  and installs the resource. A near load's fetch waits for the precombine (loaded or failed); members are
+  validated (all fetched, none moved or removed by the overlay, else fallback) and their models never load.
+  The buckets spawn as one spawn item (after the proxy item rule) through `spawn_template_ranges`; members skip
+  their spawner (activation, so colliders, is unchanged). Only with a far field (its near level holds every
+  placement). The level group holds the asset handle while resident.
+- **Ranges.** A bucket ends at its farthest-reaching member: at the handoff (the center is the L1 node's X/Z,
+  so it fades with its proxy) or, for members that end at their size-culled draw distance or their ring, that
+  end plus the bucket's reach; switch distances move out by the reach (`bucket_ranges`).
+- Off (`StreamingConfig::precombine` false): `--off precombine`, `--off near`, `--off nif`, `--lod-tint`.
