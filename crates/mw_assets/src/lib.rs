@@ -16,7 +16,6 @@
 pub mod animation;
 pub mod billboard;
 pub mod cooked;
-pub mod ground_blend;
 pub mod lights;
 pub mod particles;
 
@@ -36,7 +35,6 @@ use sf_vfs::{Vfs, VfsPath};
 pub use animation::{ModelAnimation, NifAnimation, NodeAnimation};
 pub use billboard::Billboard;
 pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned};
-pub use ground_blend::ground_blend_band;
 pub use lights::{AttachLight, LightCalibration};
 pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleRange};
 

@@ -69,10 +69,13 @@ and effects. Every task reports its ms cost per preset.
   cascades; with the cube-cache plugin dropped, a shadowed lamp redraws 6 faces/frame (~1.9 ms): decide
   High = 0 lamp shadows or unpark. Two A/B lessons: no rule that depends on view-refit cascades (caster cull),
   no budget that freezes poses (anim budget).
+  **Lights done first (2026-10-20, lights1, `specs/lights.md`):** unshadowed lights are ~free (GPU clustering), no
+  budget built; a Bevy leak of stale lamp cube-face views fixed on our side (walk 14.7 → 12.7 ms). One lamp
+  shadow still costs ~1.5 ms on the walk: owner picks High = 0 lamps, 1 at this cost, or cache slice 2b.
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [ ] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset.
-- [ ] 1.6 Object-terrain blending redo (TB-1..3 rejected: reads as a darkened base). Standard technique: terrain
-  albedo/normal blended onto the mesh base by height above the terrain; AO does the contact darkening.
+- [x] 1.6 Object-terrain blending removed (2026-10-20, lights1): code, `--off terrainblend`, F11, TB-1..3; `lod.near` v3.
+  Walk 1440p 25.9 → 14.7 ms, Balmora 15.9 → 13.1 (perf.md "Terrain blend removed"). Redo is eye candy (WISHLIST §13).
 - [ ] 1.7 Night brightness (LT-1 rejected: "can't see anything"): exposure floor + night ambient retune; then
   the deferred night checks (SK-2, NS-2..4).
 - [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5); Ghostfence field
@@ -81,9 +84,8 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.9 Streaming and culling levers from the old M2 list (archive "Next up" 1, 6, 7): render-thread spikes,
   `NoCpuCulling` A/B (J2), shadow-caster rules (J4), pipeline warm-up (J7), precombine evaluation (J6);
   deferred checks ST-2, ST-3, SC-2. **Precombine (J6, owner go 2026-10-19)**: `superfargoth/docs/specs/
-  precombine.md`; slices 1 (builder) + 2 (`lod.near` bake + Morrowind script veto) done; slice 3 = runtime
-  (spawn buckets, skip member visuals, keep colliders, `--off precombine`), re-bake, measure on `balmora_walk`
-  (target most of the 26 → 7.5 ms `--off statics` gap). `NoCpuCulling` retry once every view does GPU culling
+  precombine.md`; slices 1-3 built (2026-10-20, uncommitted): meshes -45 % but frame unchanged (perf.md); the
+  walk's gap was terrain blend (1.6). Default on/off still the owner's call. `NoCpuCulling` retry once every view does GPU culling
   (perf.md "Lead"); big_space propagation patch; skinned bounds (research/perf/README.md).
 - [ ] 1.10 Volumetric fog black bands (FG-1, owner 2026-10-20): dark vertical bands in light-lit fog at night
   when the camera turns fast; froxel history reprojection/rejection on yaw is the suspect (`sf_atmos_bevy`
@@ -91,8 +93,8 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
 
-**Next session, in order:** (1) precombine slice 3 + re-bake + measure; (2) 1.4 shadows (contact shadows SH-14,
-PCSS consistency, lamp reach SH-13, cube-cache decision); (3) FG-1 fog bands; (4) owner checks still open: DR-4,
+**Next session, in order (owner 2026-10-20):** (1) 1.6 remove terrain blend (done); (2) lights (done, lights1) then 1.4 shadows (contact shadows SH-14, PCSS consistency, lamp reach SH-13, cube-cache
+decision); actor perf parked until the animation system exists; (3) FG-1 fog bands; (4) owner checks still open: DR-4,
 AU-1, TA-1; Nsight per pass (UAC).
 
 ## Phase 2: a playable vertical slice (the basics)
@@ -138,9 +140,22 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [p] Co-op N1–N8 (`specs/net.md`; N1–N5 after this phase, N6–N8 after M7).
 - [p] Lua/Luau beyond L3; mods milestone demo (M5 E1, U7, X1, X2).
 - [p] Crate "update all" pass once `bevy_hanabi` supports Bevy 0.20 (archive Backlog).
+- [p] Vanilla option (owner 2026-10-20, not urgent): players choose classic or modernized. (a) Classic graphics
+  preset: short view distance + fog, no shadows/volumetrics, Morrowind-like simple lighting, original sky; built
+  on the `--off` switches (feature ladder, perf.md). (b) Vanilla rules profile (data-driven, after Phase 3).
+  OpenMW as behaviour reference only, no GPL code in superfargoth.
+- [p] Groundcover (owner 2026-10-20, low priority; replaces archived G0–G2). (a) Procedural grass: evaluate
+  `bevy_grass` (github.com/GEMI/bevy-grass: MIT, Bevy 0.20, GPU compute scatter, 3 LODs, wind, trampling, far
+  colour; git only, pre-release) before building our own; masks from LTEX, wind from `sf_wind`. (b) Later: load
+  existing Morrowind groundcover mods (mesh instances from their plugins; bevy_grass has no custom meshes).
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-20 (lights1): 1.6 terrain blend removed (walk 25.9 → 14.7 ms, Balmora 15.9 → 13.1); lights researched
+  (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Uncommitted.
+
+- 2026-10-20 (precombine3): precombine slice 3 built (no frame gain); feature ladder in perf.md: terrain blend
+  +10-13 ms on the walk (to remove), lights +2, actors +3; groundcover + vanilla option parked in Phase 4.
 - 2026-10-19/20 (phase1): SH-12 fixed (cloud upsampling redesign, owner confirmed); F4 crash fixed (sky motion
   bindings); balmora_walk bench + whole-system A/B (near statics are the cost); precombine slices 1-2; anim budget
   and caster cull reverted (regressions); contact shadows = SH-14; new FG-1 fog bands. Pushed.

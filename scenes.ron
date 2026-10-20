@@ -580,34 +580,6 @@
             look_for: "a scrib on the ground below the camera (search around if it wandered): legs and body parts stay attached and move with its idle/walk cycle (no part frozen at the origin, no T-pose scatter), feet on the ground while it walks; J: mover gizmos",
             checks: ["NC-2"],
         ),
-        // ---- object-terrain blending (superfargoth terrain.md "Object-terrain blending") ----
-        (
-            name: "tb-balmora",
-            cell: "Balmora",
-            camera: "-284,+3.5,196,-293,+0.5,186",
-            hour: 12.0,
-            description: "Balmora street at noon, Hlaalu houses and walls on the dirt: object-terrain blending (terrainblend)",
-            look_for: "house bases and wall feet fade into the street dirt over ~0.4 m (soil colour creeping up, broken by pebbles), no hard line where plaster meets ground; F11 flips the blend (off = the old seam); bridges, awnings and windows never blend",
-            checks: ["TB-1"],
-        ),
-        (
-            name: "tb-bittercoast",
-            cell: "Seyda Neen",
-            camera: "-215,+2.5,985,-240,+0.5,970",
-            hour: 12.0,
-            description: "Bitter Coast rocks and tree roots west of Seyda Neen at noon: object-terrain blending (terrainblend)",
-            look_for: "rock bottoms take the muddy ground colour over ~0.6 m and roots over ~0.3 m; the edge is irregular (height blend), lit like the ground; no glow, no dark ring; F11 A/B",
-            checks: ["TB-2"],
-        ),
-        (
-            name: "tb-ascadian",
-            cell: "-4,-3",
-            camera: "-395,+3,350,-410,+0.5,335",
-            hour: 12.0,
-            description: "Ascadian Isles rocks in grass at noon: object-terrain blending (terrainblend)",
-            look_for: "grey rocks fade into the grass/soil at the base (grass colour and texture on the lowest ~0.6 m, broken up), shading continuous across the contact; F11 A/B; the blend stays put while flying (no swimming with the camera)",
-            checks: ["TB-3"],
-        ),
         // ---- physics (M4 P2, .sessions/physics-p2.md) ----
         (
             name: "ph-balmora-colliders",

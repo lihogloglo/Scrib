@@ -102,9 +102,6 @@ pub enum Part {
     Actors,
     /// NPCs walking (controller, avoidance, wander scaffold; `walkers.rs`).
     Walkers,
-    /// Object-terrain blending (rocks, roots, foundations into the ground;
-    /// superfargoth terrain.md "Object-terrain blending").
-    TerrainBlend,
     /// Rigid-body physics (`physics.rs`, M4): no physics worlds, no colliders.
     Physics,
     /// Height fog, ground-fog banks and the far fog (weather.md "Fog", F2).
@@ -127,10 +124,13 @@ pub enum Part {
     /// Camera motion vectors for sky and cloud pixels (`sf_render_order_bevy::SkyMotion`, RO-7); off,
     /// they carry none and DLSS/TAA smear the sky on camera turns (the old look, an A/B).
     SkyMotion,
+    /// Near cells drawn from their precombines (superfargoth precombine.md); off, one entity per
+    /// static placement, LOD level and part (the old way, an A/B; no rebake needed).
+    Precombine,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 39] = [
+    const ALL: [(&'static str, Part); 38] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -160,8 +160,6 @@ impl Part {
         ("npcs", Part::Actors),
         ("walkers", Part::Walkers),
         ("ai", Part::Walkers),
-        ("terrainblend", Part::TerrainBlend),
-        ("groundblend", Part::TerrainBlend),
         ("physics", Part::Physics),
         ("fog", Part::Fog),
         ("froxels", Part::Froxels),
@@ -171,6 +169,7 @@ impl Part {
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("skymotion", Part::SkyMotion),
+        ("precombine", Part::Precombine),
     ];
 
     fn name(self) -> &'static str {

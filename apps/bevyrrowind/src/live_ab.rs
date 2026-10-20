@@ -9,7 +9,7 @@
 //!
 //! Keys: F1 help, F2 sun shadows, F3 terrain far shadows, F4 DLSS mode,
 //! F5 far-field tint, F6 terrain LOD colors, F7 terrain wireframe,
-//! F8 streaming rings, F11 object-terrain blend, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
+//! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
 //! T clock speed (x1, x4, x20), F9 copy camera (`--camera` string), F10 clouds on/off,
 //! C next weather (forced everywhere with its transition), F12 screenshot,
 //! B smooth ↔ vanilla character bodies (handled in `actors.rs`).
@@ -132,7 +132,6 @@ pub(crate) struct Switches<'w> {
 pub(crate) enum Switch {
     SunShadows,
     TerrainFarShadows,
-    GroundBlend,
     Clouds,
     FarTint,
     TerrainLodColors,
@@ -143,10 +142,9 @@ pub(crate) enum Switch {
 /// Names for BRP ([`crate::remote`]).
 #[cfg(feature = "remote")]
 impl Switch {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
-        Self::GroundBlend,
         Self::Clouds,
         Self::FarTint,
         Self::TerrainLodColors,
@@ -158,7 +156,6 @@ impl Switch {
         match self {
             Self::SunShadows => "sun_shadows",
             Self::TerrainFarShadows => "terrain_far_shadows",
-            Self::GroundBlend => "ground_blend",
             Self::Clouds => "clouds",
             Self::FarTint => "far_tint",
             Self::TerrainLodColors => "terrain_lod_colors",
@@ -181,7 +178,6 @@ impl Switch {
         match self {
             Self::SunShadows => "sun shadows",
             Self::TerrainFarShadows => "terrain far shadows",
-            Self::GroundBlend => "object-terrain blend",
             Self::Clouds => "clouds",
             Self::FarTint => "far-field tint",
             Self::TerrainLodColors => "terrain LOD colors",
@@ -197,7 +193,6 @@ impl Switch {
         match self {
             Self::SunShadows => Some(state.sun_shadows),
             Self::TerrainFarShadows => terrain.map(|t| !t.no_far_shadows),
-            Self::GroundBlend => terrain.map(|t| !t.no_ground_blend),
             Self::Clouds => s.clouds.as_ref().map(|c| c.enabled),
             Self::FarTint => s.far.as_ref().map(|f| f.level_tint),
             Self::TerrainLodColors => terrain.map(|t| t.lod_colors),
@@ -235,11 +230,10 @@ impl Switch {
                     r.enabled = v;
                 }
             }
-            Self::TerrainFarShadows | Self::GroundBlend | Self::TerrainLodColors | Self::Wireframe => {
+            Self::TerrainFarShadows | Self::TerrainLodColors | Self::Wireframe => {
                 if let Some(t) = s.terrain.as_mut() {
                     match self {
                         Self::TerrainFarShadows => t.no_far_shadows = !v,
-                        Self::GroundBlend => t.no_ground_blend = !v,
                         Self::TerrainLodColors => t.lod_colors = v,
                         _ => t.wireframe = v,
                     }
@@ -325,10 +319,9 @@ fn on_off(v: bool) -> &'static str {
 }
 
 /// Keys that toggle a [`Switch`].
-const SWITCH_KEYS: [(KeyCode, Switch); 8] = [
+const SWITCH_KEYS: [(KeyCode, Switch); 7] = [
     (KeyCode::F2, Switch::SunShadows),
     (KeyCode::F3, Switch::TerrainFarShadows),
-    (KeyCode::F11, Switch::GroundBlend),
     (KeyCode::F10, Switch::Clouds),
     (KeyCode::F5, Switch::FarTint),
     (KeyCode::F6, Switch::TerrainLodColors),
@@ -465,7 +458,7 @@ fn overlay(
             out,
             "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
              F5 far tint {}  F6 terrain LOD colors {}  F7 wireframe {}  F8 rings {}\n\
-             F10 clouds {}  F11 ground blend {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
+             F10 clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),
@@ -473,7 +466,6 @@ fn overlay(
             opt(Switch::Wireframe),
             opt(Switch::Rings),
             opt(Switch::Clouds),
-            opt(Switch::GroundBlend),
         );
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {
             let _ = write!(out, "\nlook for: {look}");

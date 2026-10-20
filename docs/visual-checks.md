@@ -40,13 +40,12 @@ says what to expect (memory: owner-visual-confirmation). The old `play\` folder 
    | P | pause/resume the clock |
    | T | time-lapse (x600; again for normal x30) |
    | F9 | print the camera as `--camera "..." --hour h` and copy it to the clipboard |
-   | F11 | object-terrain blend on/off (rocks, roots, foundations into the ground; TB-1..3) |
    | F12 | screenshot to `play\shots\<scene>-<time>.png` |
 
    Not switchable live (decided at startup, compare two runs): `--off
    farfield` (alias `lod`), `--off terrain`, `--off sky`, `--off envmap`,
    `--off near`, `--off far`, `--off nif`, `--off lights`, `--off
-   particles`, `--off farshadows`, `--off terrainblend` (also F11 live), `--off shadowtune` (pre-2026-10-12
+   particles`, `--off farshadows`, `--off shadowtune` (pre-2026-10-12
    cascades), `--off denoiser`, `--lod-tint`, `--far-tint` (initial state
    of F5), `--terrain-lod`, `--wire`, `--rt`, `--prepass`, `--resolution
    WxH`. Several `--off` parts go comma-separated: `--off farshadows,shadowtune`.
@@ -539,48 +538,6 @@ rocks) follow the same rig and graph as skinned bodies.
 the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turns it all off
 (CH-3 then shows everyone standing).
 
-## Object-terrain blending (superfargoth `terrain.md`, "Object-terrain blending (as built)")
-
-Rocks, cliffs, tree roots and building bases take the ground's own surface
-(the same splat layers, tint and macro variation the terrain shows) over a
-band above the terrain: 0.6 m rocks, 0.4 m buildings, 0.3 m trees. The edge
-is broken up by the layers' height maps. Raster only (`--rt` keeps the old
-seam). Agent screenshots: `D:\Gamedev\Bevyrrowind\shots\terrainblend\`
-(`tb1b_on`/`tb1b_off`: first version, top-down projection, showed vertical
-streaks on wall bases; `tb1c_on`: the shipped triplanar version, not viewed
-by the agent: the screenshot cap).
-
-### TB-1: Balmora foundations at noon
-- Kind: game location. Run: `.\bevyrrowind-raster scene tb-balmora` (or
-  `.\bevyrrowind scene tb-balmora`: raster unless `--rt`).
-- Look for: house walls, buttresses and steps fade into the flagstone/dirt
-  over ~0.4 m, with the ground's colour and texture side-on on the wall
-  (no vertical streaks, no bright or dark band, no hard line at the top of
-  the band). Bridges, awnings, windows and doors never blend.
-- A/B: F11 flips the blend live; `--off terrainblend` removes it entirely.
-- Status: rejected (owner 2026-10-12, re-seen 2026-10-19 round 7: only a darkening of the mesh, object edges still clearly visible); technique redo in Phase 1.
-- Source: terrainblend2.
-
-### TB-2: Bitter Coast rocks and roots at noon
-- Kind: game location. Run: `.\bevyrrowind scene tb-bittercoast`
-- Look for: rock bottoms take the muddy ground colour over ~0.6 m, tree
-  roots over ~0.3 m; irregular edge; lit like the rock (its shape stays).
-  Camera is a guess west of Seyda Neen: fly to the nearest rocks if none
-  are in view.
-- A/B: F11; `--off terrainblend`.
-- Status: rejected (owner 2026-10-12); Phase 1 redo.
-- Source: terrainblend2.
-
-### TB-3: Ascadian Isles rocks in grass at noon
-- Kind: game location. Run: `.\bevyrrowind scene tb-ascadian`
-- Look for: grey rocks fade into grass/soil at the base; no swimming
-  while flying (the blend is fixed in the world); no shimmer under DLSS
-  (`.\bevyrrowind scene tb-ascadian --dlss quality`). Camera is a guess in
-  the wilds: fly to rocks if none are in view.
-- A/B: F11; `--off terrainblend`.
-- Status: rejected (owner 2026-10-12); Phase 1 redo.
-- Source: terrainblend2.
-
 ## Synthetic scenes (framework examples)
 
 Run from `D:\Gamedev\Bevyrrowind\superfargoth`; they bake their data on
@@ -931,3 +888,11 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Also (owner 2026-10-19, round 6): in some weathers the clouds extend very high into the sky (deck base/thickness, WE4b local heights?).
 - Status: known bug: occlusion in Phase 1 (render correctness), storm direction in Phase 4.
 
+
+### PC-1: Precombined near cells look the same as separate objects (ROADMAP 1.9, superfargoth precombine.md)
+- Kind: game location. Run: `.\bevyrrowind scene balmora`, then walk the streets at eye height; A/B with `--off precombine`
+  (one entity per object, the old way). Also `scene seyda-neen` (docks, small clutter).
+- Look for: nothing missing or doubled; pots, crates, baskets and other small clutter appear and disappear at about
+  the same distances as before; no popping when buildings switch detail; shadows unchanged; no hole or double image
+  where the far field takes over (~400 m). A script-disabled static (e.g. a quest rock) must still disappear.
+- Status: **awaiting owner** (2026-10-20, precombine3; not seen on screen by the agent yet).

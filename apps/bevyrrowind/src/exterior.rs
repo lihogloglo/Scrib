@@ -43,7 +43,7 @@ use sf_sky_bevy::sf_sky::{SkyClock, SkySettings};
 use sf_sky_bevy::{MoonLight, SkyCamera, SkyPlugin, SkyRenderOptions, SunLight, TemporalHistory};
 use sf_weather_bevy::{WeatherOverrides, WeatherPlugin, WeatherSite, WeatherSystems};
 use sf_terrain_bevy::sf_terrain::bake::BakedTerrain;
-use sf_terrain_bevy::{GroundBlendPlugin, TerrainCamera, TerrainDebug, TerrainOrigin, TerrainPlugin, TerrainSettings, TerrainStats, TerrainSystems, TerrainWorld};
+use sf_terrain_bevy::{TerrainCamera, TerrainDebug, TerrainOrigin, TerrainPlugin, TerrainSettings, TerrainStats, TerrainSystems, TerrainWorld};
 use sf_vfs::Vfs;
 use sf_world::bake::BakedIndex;
 use sf_world::{IndexedPlacement, PlacementClass};
@@ -51,7 +51,7 @@ use sf_world::{IndexedPlacement, PlacementClass};
 use crate::perf::{Off, Part};
 use sf_world_bevy::big_space::prelude::{CellCoord, FloatingOrigin, Grid};
 use sf_world_bevy::{
-    ActiveWorldspace, FadeTransition, GroundBlend, GroundBlendModels, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SpawnCx,
+    ActiveWorldspace, FadeTransition, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SpawnCx,
     StaticSpawner, Streaming, StreamingAnchor, StreamingConfig, StreamingDebug, StreamingSystems, SubtreeLayers, SubtreeRange, TemplateLod,
     WorldIndexSource, WorldStreamingPlugin, WorldspaceRegistry, WorldspaceRoot, spawn_template, to_grid,
 };
@@ -215,6 +215,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     };
     let mut streaming = streaming_config(base, options.near_ring, options.far_ring);
     streaming.lod = screen;
+    // Buckets bypass the spawners: off with `--off precombine`, and where a
+    // spawner must see every static (no near statics, the runtime NIF path,
+    // the LOD tint view).
+    streaming.precombine =
+        !(perf.off.has(Part::Precombine) || perf.off.has(Part::Near) || perf.off.has(Part::Nif) || options.lod_tint);
     app.add_plugins(
         DefaultPlugins
             .build()
@@ -349,13 +354,6 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.add_plugins(TerrainPlugin { settings: TerrainSettings::default() })
         .insert_resource(TerrainWorld { baked: terrain })
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
-    // Object-terrain blending (terrain.md): rocks, roots and foundations
-    // blend into the ground. Raster only: Solari's RT scene reads plain
-    // `StandardMaterial`s, so blended parts would drop out of it.
-    if !perf.off.has(Part::TerrainBlend) && render.path != sf_sky_bevy::sf_sky::RenderPath::RayTraced {
-        app.insert_resource(GroundBlendModels(Arc::new(mw_assets::ground_blend_band)))
-            .add_plugins(GroundBlendPlugin::<GroundBlend> { read: |g| (&g.worldspace, g.band) });
-    }
 
     app.insert_resource(Spawners {
         lights: Arc::new(if options.no_lights { HashMap::new() } else { options.lights }),
@@ -501,7 +499,6 @@ impl PlacementSpawner for TintSpawner {
                 })
                 .collect(),
             aabb: template.aabb,
-            ground_blend: None,
         };
         spawn_template(world, cx, &tinted)
     }

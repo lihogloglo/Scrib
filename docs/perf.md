@@ -89,6 +89,75 @@ per cell at bake time (OpenMW active-grid paging, MGE XE: a cell in one or two d
 `docs/research/perf-morrowind-engines.md`) and cut shadow views; the big_space propagation patch and skinned
 bounds next (`superfargoth/docs/research/perf/README.md`).
 
+**Bare baseline and precombine (2026-10-20, precombine3; profiling build without `dlss`, native 1440p TAA, 1 run each,
+`target/perf/{bare-pre,full-pre,pc-on,pc-off,bare-pc}`).** "Bare" = terrain + models only (`--off sky,envmap,shadows,
+farshadows,lights,particles,clouds,fog,froxels,actors,walkers,physics,terrainblend`; `terrainblend` is gone since 2026-10-20):
+
+| run | bare | bare + precombine | full, `--off precombine` | full + precombine | meshes full (off → on) |
+|---|---:|---:|---:|---:|---:|
+| balmora | 7.1 (GPU 98 %) | 7.0 | 15.3 | 15.7 | 46.1 k → 25.1 k |
+| balmora_walk | 6.1 | 5.9 | 24.4 | 25.0 | 55.1 k → 32.4 k |
+| seyda_neen | 7.3 (GPU 97 %) | 7.2 | 16.3 | 17.7 | 46.2 k → 23.3 k |
+| CPU floor 960x600 | 4.8-5.4 | 4.7-5.6 | | | |
+
+Reading: models + terrain alone are GPU-bound at 1440p native and far under budget. Precombine halves the mesh
+entities but **does not move the frame** (walk render thread 22.6 → 23.3 ms, main 11.2 → 9.9): the render-thread
+cost does not scale with static mesh entities, so the `--off statics` 7.5 ms above came from something else that
+switch also removes (it drops every near placement: ~290 point lights, NIF-path objects, items, doors). Next:
+per-system render-thread trace of the walk and `--off lights` on the walk.
+
+**Feature ladder (2026-10-20, precombine3; same build, 1 run each, other processes ~27 % CPU throughout,
+`target/perf/ladder-NN-*`).** Each step turns one system back on, cumulatively. `balmora_walk`, frame median ms (Δ):
+
+| step | 1440p | Δ | render Δ | GPU Δ | 1707x960 | Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| bare (terrain + models) | 6.5 | | | | 6.1 | |
+| + sky | 6.4 | 0 | 0 | +0.1 | 6.3 | +0.2 |
+| + envmap | 7.1 | +0.7 | +0.7 | +1.2 | 6.5 | +0.2 |
+| + shadows | 8.0 | +0.8 | +0.9 | 0 | 7.2 | +0.7 |
+| + farshadows | 8.4 | +0.4 | +0.4 | +0.3 | 7.8 | +0.6 |
+| + lights | 10.4 | +2.0 | +2.0 | +1.7 | 9.9 | +2.2 |
+| + fog, froxels | 11.1 | +0.7 | +0.6 | +0.7 | 10.2 | +0.3 |
+| + clouds | 11.7 | +0.7 | +0.7 | +0.6 | 10.3 | +0.1 |
+| + particles | 11.6 | 0 | 0 | 0 | 11.1 | +0.9 |
+| + actors | 14.8 | +3.2 | +2.9 (main +2.2) | 0 | 14.3 | +3.2 |
+| + walkers, physics | 15.0 | +0.2 | +0.2 (main +1.7) | 0 | 14.9 | +0.5 |
+| + terrainblend (= full) | 25.9 | **+10.9** | +10.5 | +2.0 | 27.9 | **+13.0** |
+
+Standing (`balmora`) 1440p: bare 7.1, envmap +1.5, shadows +1.2, lights +1.3, fog +0.8, terrainblend +2.5,
+full 15.9. Reading: the walk is render-thread bound (full: GPU 10.9 vs frame 25.9), so lower internal
+resolution doesn't help; terrain blend (non-batched `GroundBlendMaterial` per part) was the walk's main cost
+and is removed (owner 2026-10-20). Next: lights, then shadows.
+
+**Terrain blend removed (2026-10-20, lights1; ROADMAP 1.6; profiling build, `lod.near` v3 re-baked, 1 run each,
+CPU ~26 % background, `target/perf/tb-removed` vs `ladder-12-terrainblend`).** Frame median ms, render thread busy
+in brackets:
+
+| run | before | after | Δ |
+|---|---:|---:|---:|
+| balmora 1440p | 15.9 (13.5) | **13.1** (8.2, GPU 98 %) | -2.8 |
+| balmora 960p | 14.6 (12.9) | **9.5** (7.7) | -5.1 |
+| balmora_walk 1440p | 25.9 (23.8) | **14.7** (13.0) | -11.2 |
+| balmora_walk 960p | 27.9 (26.5) | **14.6** (12.8) | -13.3 |
+
+Standing Balmora at 1440p is now GPU bound; the walk is still render-thread bound (13 ms busy: lights, shadows,
+actors next). Meshes 25.1 k → 24.6 k (precombine buckets no longer split by band).
+
+**Lights (2026-10-20, lights1; superfargoth `specs/lights.md`; same setup, 1 run each).** Frame median ms
+(render thread busy; GPU timed):
+
+| run (1440p / 960p) | today | stale views fixed | `--point-shadows 0` | `--off lights` |
+|---|---:|---:|---:|---:|
+| balmora | 13.1 / 9.5 | 13.5 / 9.2 | 13.0 / 9.2 | 12.4 / 9.5 (GPU 10.1 vs 10.7) |
+| balmora_walk | 14.7 / 14.6 (13.0; 8.7) | **12.7 / 12.4** (10.7; 8.1) | 11.2 / 11.0 (9.3; 7.5) | 11.5 / 11.6 (9.6; 7.4) |
+
+Reading: the ~290 unshadowed lights cost ~0.5 ms GPU standing and nothing measurable on the walk (Bevy 0.20 GPU
+clustering). The walk's light cost was High's **one shadowed lamp**, plus a Bevy 0.20 leak: a lamp that loses its
+shadow keeps its 6 cube-face views, each running the whole `Core3d` schedule (trace: 15.7 `Core3d` runs/frame for
+a budget of 1). `sf_sky_bevy` now despawns them (shadows.md "Stale cube-face views"): walk -2.0 ms. The one lamp
+still costs ~1.5 ms frame / 1.4 ms render thread on the walk (`staleviews` vs `ps0`). Traces: `trl-on`/`trl-off`
+(deleted, summaries only). Note the walk's frame (12.7) sits above every lane (render 10.7, main 9.4, GPU 8.1).
+
 Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
 pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.
 
@@ -211,7 +280,8 @@ proxies), `sky` (no atmosphere: also the sun and its shadows), `envmap` (sky env
 `shadows`, `lights`, `particles`, `nif` (models on the runtime NIF path), `denoiser` (DLSS Ray
 Reconstruction off on `--rt`). `farshadows` (terrain/proxy/impostor far shadow and the dithered cascade
 end off), `shadowtune` (the old 600 m / 20 m cascades instead of the derived 504 m / 10 m),
-`sizecull` (no size-based draw distance: every object drawn to its ring or the far-field handoff). Compare against a run without.
+`sizecull` (no size-based draw distance: every object drawn to its ring or the far-field handoff), `precombine` (near
+cells spawn one entity per static again instead of their merged `lod.near` buckets; no rebake). Compare against a run without.
 
 Render options (not `--off` parts):
 
