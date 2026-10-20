@@ -32,6 +32,27 @@ more on Ultra), at well under 1 ms, with no visible popping when the shadowed se
 So Bevy gives the sampling (cube lookup, filtering, PCSS, clustering) and a correct but uncached renderer. The
 budget on top of it is ours (`PointShadowBudget`, since 2026-10-13).
 
+### Why a face view costs ~0.35 ms, and the stale cube-face views (lights1, 2026-10-20)
+
+- **Each cube face is a root view running the whole `Core3d` schedule.** `prepare_lights` gives every face a
+  `RootNonCameraView(Core3d)`; `bevy_core_pipeline::camera_driver` runs the full camera schedule once per root
+  view (prepass, opaque, transparent, post-process systems, each checking and mostly skipping its work). Sun
+  cascades are not root views (they render inside the camera's `shared_shadow_pass`). This is the fixed per-face
+  cost slice 2 measured; slice 2b (skip the views) stays the right fix.
+- **Bevy 0.20 leak, worked around in `sf_sky_bevy::shadow_budget` (`drop_stale_light_views`):** `prepare_lights`
+  frees a point light's six views only while the light sorts among the first `min(point lights, max cubes)` (42),
+  shadowed first, then by entity. A lamp that loses its shadow sorts back among hundreds of unshadowed lights and
+  a hidden light isn't visited at all, so their views live on and keep running `Core3d`. Walking Balmora with a
+  budget of 1, the trace showed 15.7 `Core3d` runs per frame (1 camera + ~2.4 lamps' views). Our render-world
+  system after `prepare_lights` despawns the views of any light without a shadow map this frame: walk 14.7 →
+  12.7 ms (1440p). Report upstream; remove when Bevy frees them itself.
+- **What one lamp costs now:** ~1.5 ms frame, 1.4 ms render thread on the walk (1024², bevyrrowind perf.md
+  "Lights"). High's lamp count is the owner's call (ROADMAP 1.4): 0, or 1 at this cost, or slice 2b.
+- **GPU-driven paths:** shadow views use Bevy's GPU preprocessing (instance culling, indirect draws); two-phase
+  occlusion culling exists only for directional cascades and only when the light entity has `OcclusionCulling`
+  (we put it on the camera only). Point/spot shadow views have no GPU occlusion culling ("TODO" in
+  `prepare_lights`). Neither touches the render-thread cost per view.
+
 ## Industry design
 
 - **Shadow atlas + caching.** Doom 2016 (one 8k² atlas; a light's tile is redrawn only when something in its

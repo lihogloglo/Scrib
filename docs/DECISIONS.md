@@ -1411,3 +1411,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - **2026-10-19 (phase1): temporal resolve is the base**: `Upscaling::Taa` (Bevy TAA) runs whenever DLSS is off or
   unavailable (DLSS falls back to TAA, not MSAA); MSAA only on Low. Door fades are a UI node held until the arrival
   is spawned and textured; shipped builds log failed commands instead of panicking (dev keeps Bevy's panic).
+- **2026-10-20 (owner): object-terrain blending removed**: `sf_terrain_bevy::ground_blend` only darkened mesh
+  bases and cost 10-13 ms of render thread on the Balmora walk (per-part non-batched materials). Redo is wishlist eye
+  candy (WISHLIST §13), crate first. Actor perf parked until the animation system exists; lights then shadows next.
+- **2026-10-20 (lights1): no local-light budget for now** (specs/lights.md): Bevy 0.20 GPU clustering makes ~290
+  unshadowed lights nearly free (≤ 0.5 ms GPU); the cost was the shadowed lamp plus a Bevy leak of stale cube-face views
+  (each a full `Core3d` run), despawned by `sf_sky_bevy::shadow_budget` after `prepare_lights` until upstream fixes it.

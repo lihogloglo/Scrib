@@ -20,12 +20,18 @@
 //!
 //! Game code keeps writing the full intensity in `Update`: the split is
 //! applied in `PostUpdate` and undone in `First`.
+//!
+//! Also works around a Bevy 0.20 leak (shadows.md "Stale cube-face views"):
+//! `drop_stale_light_views` despawns the six face views of a light that
+//! lost its shadow, which Bevy's `prepare_lights` keeps alive.
 
 use bevy_app::{App, First, Plugin, PostUpdate};
 use bevy_camera::visibility::{InheritedVisibility, Visibility, VisibilitySystems};
 use bevy_camera::{Camera, Camera3d, RenderTarget};
 use bevy_ecs::prelude::*;
 use bevy_light::{PointLight, PointLightShadowMap};
+use bevy_pbr::{ExtractedPointLight, PointAndSpotLightViewEntities, prepare_lights};
+use bevy_render::{Render, RenderApp, RenderSystems};
 use bevy_time::Time;
 use bevy_transform::TransformSystems;
 use bevy_transform::components::{GlobalTransform, Transform};
@@ -148,6 +154,35 @@ fn add(app: &mut App) {
                 .after(TransformSystems::Propagate)
                 .before(VisibilitySystems::VisibilityPropagate),
         );
+    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        render_app.add_systems(Render, drop_stale_light_views.in_set(RenderSystems::CreateViews).after(prepare_lights));
+    }
+}
+
+/// Despawns the cube-face views of point and spot lights that have no
+/// shadow map this frame (shadow turned off, or the light hidden).
+///
+/// Bevy 0.20's `prepare_lights` frees a light's views only while the light
+/// sorts among the first `min(point lights, max cubes)` (42 at wgpu's 256
+/// layers), shadowed lights first, then by entity. A light that loses its
+/// shadow usually sorts far past that among hundreds of unshadowed lights,
+/// and a hidden light isn't visited at all, so its six views stay alive and
+/// each runs the whole `Core3d` schedule every frame (~0.35 ms of render
+/// thread per face). Remove once Bevy frees them itself.
+fn drop_stale_light_views(
+    mut commands: Commands,
+    mut lights: Query<(&mut PointAndSpotLightViewEntities, Option<&ExtractedPointLight>)>,
+) {
+    for (mut views, light) in &mut lights {
+        if views.is_empty() || light.is_some_and(|l| l.shadow_maps_enabled) {
+            continue;
+        }
+        for view in std::mem::take(&mut **views) {
+            if let Ok(mut e) = commands.get_entity(view) {
+                e.despawn();
+            }
+        }
+    }
 }
 
 fn sync_map_size(budget: Res<PointShadowBudget>, map: Option<ResMut<PointLightShadowMap>>) {
