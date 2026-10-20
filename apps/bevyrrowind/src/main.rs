@@ -510,7 +510,7 @@ impl ViewFlags {
     fn render(&self) -> Result<render::RenderSettings> {
         let off = perf::Off::from_flags(&self.perf.off)?;
         let low = exterior::Quality::resolve(self.quality) == exterior::Quality::Low;
-        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows)
+        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
             .with_shadow_cache(!off.has(perf::Part::ShadowCache)))
     }
 }
@@ -995,6 +995,9 @@ struct Lighting {
     /// env `BEVYRROWIND_POINT_SHADOWS`).
     #[arg(long)]
     point_shadows: Option<usize>,
+    /// Sun cascades `COUNT:METERS` instead of the preset's (A/B; env `BEVYRROWIND_SUN_CASCADES`).
+    #[arg(long, value_parser = render::parse_sun_cascades)]
+    sun_cascades: Option<(usize, f32)>,
 }
 
 impl Lighting {

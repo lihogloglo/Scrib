@@ -469,6 +469,10 @@ pub(crate) fn start_particles(
                 MeshTag::new(slot.first),
                 // The quads' bounds are a point (the shader places them).
                 NoFrustumCulling,
+                // The material casts none either; without the marker every shadowed
+                // light's faces list the emitter (unculled), and the lamp cache
+                // counts it as a mover that never settles (shadows2).
+                bevy::light::NotShadowCaster,
                 Transform::IDENTITY,
                 Visibility::Inherited,
                 ChildOf(entity),

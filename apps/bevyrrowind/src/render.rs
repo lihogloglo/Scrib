@@ -10,15 +10,22 @@ use sf_sky_bevy::{PointShadowBudget, SkyRenderOptions, UpscalingSetting};
 /// Default for `--point-shadows` (perf A/B: `--env BEVYRROWIND_POINT_SHADOWS=0`).
 const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
 
+/// Default for `--sun-cascades` (perf A/B: `--env BEVYRROWIND_SUN_CASCADES=3:150`).
+const ENV_SUN_CASCADES: &str = "BEVYRROWIND_SUN_CASCADES";
+
 /// Point-light shadow budget of the quality presets without an override
-/// (`(count, cube face size)`; lighting job 2026-10-13, sky-lighting.md
-/// "Local-light shadows": GPU cost at `hi-balmora-night`).
-pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (1, 1024);
+/// (`(count, cube face size)`): 8 cached lamps at 512² since shadows v2 V1
+/// (shadows2 2026-10-20; superfargoth `docs/specs/shadows.md`, perf.md "Shadows v2").
+pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (8, 512);
+
+/// Lamp shadows fade out between these viewer distances, m (was 15-25 with one
+/// uncached lamp: shadows "only when super close", SH-13).
+const LAMP_SHADOW_FADE: (f32, f32) = (30.0, 40.0);
 
 /// Point-light shadow cube cache (`sf_shadow_cache_bevy`, shadows.md v2 V1):
-/// off until the shadows session verifies V1 on screen (lights1 handoff,
-/// 2026-10-20); its plugin isn't added. `--off shadowcache` is the A/B once on.
-const POINT_SHADOW_CACHE: bool = false;
+/// on since shadows2 (2026-10-20); `--off shadowcache` is the A/B (Bevy redraws
+/// every face every frame). Removal path: delete the switch once V1 is signed off.
+const POINT_SHADOW_CACHE: bool = true;
 
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
 const ENV_DLSS: &str = "BEVYRROWIND_DLSS";
@@ -47,6 +54,20 @@ pub struct RenderSettings {
     pub point_shadows: Option<usize>,
     /// Cached point-light shadow maps (`--off shadowcache` turns them off).
     pub shadow_cache: bool,
+    /// Sun cascades `(count, last bound m)` instead of the preset's
+    /// (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`).
+    pub sun_cascades: Option<(usize, f32)>,
+}
+
+/// `N:M`: `N` sun cascades out to `M` meters.
+pub fn parse_sun_cascades(s: &str) -> Result<(usize, f32), String> {
+    let (n, m) = s.trim().split_once(':').ok_or_else(|| format!("sun cascades {s:?}: expected COUNT:METERS, e.g. 3:150"))?;
+    let n: usize = n.parse().map_err(|_| format!("sun cascades {s:?}: bad count"))?;
+    let m: f32 = m.parse().map_err(|_| format!("sun cascades {s:?}: bad distance"))?;
+    if !(1..=4).contains(&n) || m <= 1.0 {
+        return Err(format!("sun cascades {s:?}: 1-4 cascades, distance > 1 m"));
+    }
+    Ok((n, m))
 }
 
 impl RenderSettings {
@@ -68,7 +89,8 @@ impl RenderSettings {
         }
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
         let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
-        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true })
+        let sun_cascades = std::env::var(ENV_SUN_CASCADES).ok().and_then(|v| parse_sun_cascades(&v).ok());
+        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true, sun_cascades })
     }
 
     /// Whether the view needs the sky plugin's render-path management.
@@ -108,6 +130,13 @@ impl RenderSettings {
         self
     }
 
+    /// `--sun-cascades` from the command line (wins over the environment).
+    #[must_use]
+    pub fn with_sun_cascades(mut self, cascades: Option<(usize, f32)>) -> Self {
+        self.sun_cascades = cascades.or(self.sun_cascades);
+        self
+    }
+
     /// `--off shadowcache`: Bevy redraws every shadowed light every frame.
     #[must_use]
     pub fn with_shadow_cache(mut self, on: bool) -> Self {
@@ -118,7 +147,8 @@ impl RenderSettings {
     /// The point-light shadow budget: the override's count, else the
     /// preset's `(count, face size)`.
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
-        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, ..PointShadowBudget::default() }
+        let (fade_start, fade_end) = LAMP_SHADOW_FADE;
+        PointShadowBudget { max: self.point_shadows.unwrap_or(preset.0), map_size: preset.1, fade_start, fade_end, ..PointShadowBudget::default() }
     }
 
     /// Before the sky plugin: its settings resources.
@@ -128,7 +158,8 @@ impl RenderSettings {
         // Shadows F6 slice 2: static casters cached per light, movers drawn over the copy.
         if POINT_SHADOW_CACHE && self.shadow_cache {
             app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
-                .insert_resource(sf_shadow_cache_bevy::ShadowCacheSettings { enabled: true, ..Default::default() });
+                .insert_resource(sf_shadow_cache_bevy::ShadowCacheSettings { enabled: true, ..Default::default() })
+                .add_observer(movable_characters);
         }
 
         app.add_systems(Last, log_lighting_at_screenshot);
@@ -138,6 +169,13 @@ impl RenderSettings {
     pub fn apply_options(self, options: &mut SkyRenderOptions) {
         options.ray_tracing_denoiser = self.denoiser;
     }
+}
+
+/// Characters (and what hangs off them: held items, attachments) are movers
+/// of the lamp shadow cache: never baked, so an NPC that stops and starts
+/// doesn't recapture the lights around it (a 1-frame loss of actor shadows).
+fn movable_characters(add: On<Add<sf_character_bevy::Character>>, mut commands: Commands) {
+    commands.entity(add.entity).try_insert(sf_shadow_cache_bevy::ShadowMobility::Movable);
 }
 
 /// With every screenshot: the exposure and local-light state it was taken

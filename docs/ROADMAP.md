@@ -72,6 +72,10 @@ and effects. Every task reports its ms cost per preset.
   **Lights done first (2026-10-20, lights1, `specs/lights.md`):** unshadowed lights are ~free (GPU clustering), no
   budget built; a Bevy leak of stale lamp cube-face views fixed on our side (walk 14.7 → 12.7 ms). One lamp
   shadow still costs ~1.5 ms on the walk: owner picks High = 0 lamps, 1 at this cost, or cache slice 2b.
+  **V0 + V1 built (2026-10-20, shadows2):** lamp cache fixed (it cached nothing) and on; High = 8 lamps,
+  fade 30-40 m; census 8 lamps 16.8 → ~6.3 ms; walk gate not met (walkers by lamps). Owner: SH-15, High's count.
+  **Audit 2026-10-21 (render-audit):** no renderer rewrite; shadow lane reset proposed (Bevy patch instead of
+  injection, delete layers, GTAO + capsule shadows); owner decision pending. `research/shadows/2026-10-21-audit.md`.
   Spec: `superfargoth/docs/specs/shadows.md`, research `research/shadows/README.md`.
 - [ ] 1.5 Ambient occlusion: Bevy's SSAO (GTAO), per preset.
 - [x] 1.6 Object-terrain blending removed (2026-10-20, lights1): code, `--off terrainblend`, F11, TB-1..3; `lod.near` v3.
@@ -94,7 +98,7 @@ and effects. Every task reports its ms cost per preset.
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
 
 **Next session, in order (owner 2026-10-20):** (1) 1.6 remove terrain blend (done); (2) lights (done, lights1) then 1.4 shadows (contact shadows SH-14, PCSS consistency, lamp reach SH-13, cube-cache
-decision); actor perf parked until the animation system exists; (3) FG-1 fog bands; (4) owner checks still open: DR-4,
+decision); actor perf parked until the animation system exists; (3) FG-1 fog bands; (4) owner checks still open: PA-4 (particles), DR-4,
 AU-1, TA-1; Nsight per pass (UAC).
 
 ## Phase 2: a playable vertical slice (the basics)
@@ -150,6 +154,12 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   existing Morrowind groundcover mods (mesh instances from their plugins; bevy_grass has no custom meshes).
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+
+- 2026-10-21 (render-audit): rendering + shadows audit (code, Bevy ecosystem, industry); shadows2 + particles1
+  work committed. Owner decides the shadow reset (superfargoth `research/shadows/2026-10-21-audit.md`).
+
+- 2026-10-20 (shadows2): shadows v2 V0 measured + V1 lamp cache made to work (8 bugs: non-casters tracked, writes
+  taken for moves, full `Core3d` per face, capture frames dropping movers, streaming recaptures...); High 8 lamps.
 
 - 2026-10-20 (particles1): NIF particles drawn by vertex pulling (ShaderBuffer + MeshTag, CPU sim kept): Balmora
   960p 9.9 → 9.0 ms (= `--off particles`), walk unchanged (perf.md "GPU particles"); PA-4 awaiting owner.

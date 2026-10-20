@@ -151,6 +151,16 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   close contact only, as engines use them; then recheck SH-7's grounding.
 - Status: known bug: Phase 1 shadow pass (1.4).
 
+### SH-15: 8 cached lamp shadows (shadows v2 V1, shadows2)
+- Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office"`, walk up to the
+  desk and the NPCs; then `.\bevyrrowind scene lamps-handoff` (Balmora 22:00), walk the street past torch-bearers.
+  A/B: `--point-shadows 1` (old High), `--off shadowcache` (Bevy redraws every face).
+- Look for: lamp shadows from several lamps at once, out to ~30-40 m (was a few metres); no flicker when walking
+  close to a lamp or when NPCs walk by; NPC shadows follow them without 1-frame gaps; no shadow left behind
+  where an object streamed out (≤ 2 s is by design); no shadow "swimming" with a carried torch.
+- Owner decides: High's lamp count (8 now; walk ~+2 ms vs 0 lamps, perf.md "Shadows v2").
+- Status: awaiting owner. Not seen by an agent (no screenshots taken).
+
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
   21:15, fog). Turn the camera fast left or right.

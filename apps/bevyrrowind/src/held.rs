@@ -61,10 +61,10 @@ impl Default for HeldLightBudget {
 }
 
 /// Carried lights' shadow importance over placed ones
-/// (`sf_sky_bevy::shadow_importance`, which falls with distance squared): 4
-/// ranks a torch as if twice nearer. A moving torch-bearer's shadow is the
-/// one players notice.
-pub const TORCH_SHADOW_PRIORITY: f32 = 4.0;
+/// (`sf_sky_bevy::shadow_importance`, which falls with distance squared): 1, ranked
+/// like a lamp (shadows2 2026-10-20). It was 4 ("twice nearer") with one shadowed
+/// light: the shadow hopped between passing torch-bearers (owner: flicker, SH-13).
+pub const TORCH_SHADOW_PRIORITY: f32 = 1.0;
 
 /// Marks the point light on a held item (a child of its `HeldLightSlot`).
 #[derive(Component, Clone, Copy, Debug)]

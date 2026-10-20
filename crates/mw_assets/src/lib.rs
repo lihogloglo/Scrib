@@ -226,8 +226,14 @@ fn build_world(model: &Model, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> 
     // Nodes that keyframed emitters follow live (`particles::static_live`).
     let live_nodes = particles::live_nodes(model);
     let mut entities: Vec<Entity> = Vec::with_capacity(model.nodes.len());
+    // Nodes under an `NiBillboardNode` (flames, glows): they turn with the
+    // camera, so a light's shadow of them would change with the view (and
+    // the lamp shadow cache would redraw every face around its own flame).
+    let mut billboarded: Vec<bool> = Vec::with_capacity(model.nodes.len());
     for node in &model.nodes {
         let parent = node.parent.map_or(root, |p| entities[p]);
+        let in_billboard = node.kind == NodeKind::Billboard || node.parent.is_some_and(|p| billboarded[p]);
+        billboarded.push(in_billboard);
         let t = node.transform;
         let mut entity = world.spawn((
             Transform {
@@ -263,6 +269,9 @@ fn build_world(model: &Model, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> 
                 entity.insert(CollisionGeometry(meshes[mesh_index].clone()));
             } else {
                 entity.insert((Mesh3d(meshes[mesh_index].clone()), MeshMaterial3d(materials[mesh.material].clone())));
+                if in_billboard {
+                    entity.insert(bevy::light::NotShadowCaster);
+                }
             }
         }
         entities.push(entity.id());

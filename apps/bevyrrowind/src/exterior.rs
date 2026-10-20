@@ -256,7 +256,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows, ..render.point_shadow_budget(options.quality.point_shadows()) });
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
-        cascades: sun_cascades(options.quality, &far_settings.levels, off_parts.has(Part::ShadowTune), off_parts.has(Part::ShadowSplits)),
+        cascades: sun_cascades(options.quality, render.sun_cascades, &far_settings.levels, off_parts.has(Part::ShadowTune), off_parts.has(Part::ShadowSplits)),
         sun_shadow: sun_shadow(off_parts.has(Part::ShadowTune), contact_shadows, if off_parts.has(Part::SoftShadows) { None } else { options.quality.soft_shadow_size() }),
         ..SkyRenderOptions::default()
     });
@@ -380,7 +380,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 .after(TransformSystems::Propagate)
                 .before(TerrainSystems::Update)
                 .before(sf_sky_bevy::SkySystems::Origin)
-                .before(sf_atmos_bevy::CloudSystems::Drive),
+                .before(sf_atmos_bevy::CloudSystems::Drive)
+                .before(sf_shadow_cache_bevy::ShadowCacheSystems),
         );
 
     crate::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
@@ -675,7 +676,12 @@ fn sync_origin(
     camera: Query<&GlobalTransform, With<ExteriorCamera>>,
     terrain_camera: Query<(&GlobalTransform, &ChildOf), (With<TerrainCamera>, Without<SeaPlaneScaffold>)>,
     mut terrain_origin: ResMut<TerrainOrigin>,
-    (mut sky, mut history, cloud_origin): (ResMut<SkyRenderOptions>, ResMut<TemporalHistory>, Option<ResMut<sf_atmos_bevy::CloudsOrigin>>),
+    (mut sky, mut history, cloud_origin, shadow_shift): (
+        ResMut<SkyRenderOptions>,
+        ResMut<TemporalHistory>,
+        Option<ResMut<sf_atmos_bevy::CloudsOrigin>>,
+        Option<ResMut<sf_shadow_cache_bevy::ShadowOriginShift>>,
+    ),
     mut sea: Query<&mut GlobalTransform, (With<SeaPlaneScaffold>, Without<ExteriorCamera>)>,
     counters: Option<Res<DiagCounters>>,
 ) {
@@ -686,6 +692,13 @@ fn sync_origin(
     let c = grid.local_floating_origin().cell();
     let origin = WorldPos::new(IVec3::new(c.x, c.y, c.z), Vec3::ZERO);
     if terrain_origin.0 != origin {
+        // big_space moved every render-space position by whole cells: the lamp shadow
+        // cache moves what it remembers along instead of recapturing everything.
+        if let Some(mut shift) = shadow_shift {
+            #[allow(clippy::cast_precision_loss)]
+            let cells = (terrain_origin.0.cell - origin.cell).as_vec3();
+            shift.0 += cells * sf_coords::GRID_CELL;
+        }
         terrain_origin.0 = origin;
         // The terrain's motion vectors pair this frame's positions with last
         // frame's view: across a shift they are off by a cell, so temporal
@@ -1047,9 +1060,12 @@ fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<
 /// takes the objects. `splits_off` (`--off shadowsplits`) is the A1 layout (4
 /// geometric cascades past every individual object: handoff + band, +10 %, + 20 m
 /// = 504 m), `legacy` (`--off shadowtune`) the one before it, for A/B runs.
-fn sun_cascades(quality: Quality, levels: &sf_lod::FarLevels, legacy: bool, splits_off: bool) -> CascadeShadowConfig {
+/// `fixed` (`--sun-cascades`) replaces the preset's count and last bound.
+fn sun_cascades(quality: Quality, fixed: Option<(usize, f32)>, levels: &sf_lod::FarLevels, legacy: bool, splits_off: bool) -> CascadeShadowConfig {
     if !legacy && !splits_off {
-        return quality.sun_cascades().build();
+        let preset = quality.sun_cascades();
+        let (num_cascades, maximum_distance) = fixed.unwrap_or((preset.num_cascades, preset.maximum_distance));
+        return sf_sky_bevy::CascadeSplits { num_cascades, maximum_distance, ..preset }.build();
     }
     let objects = levels.handoff(1) + levels.band_width(1);
     let (first, max) = if legacy { (20.0, 600.0) } else { (10.0, objects * 1.1 + 20.0) };
@@ -1223,16 +1239,16 @@ impl Quality {
     }
 
     /// Point lights with shadow maps and their cube face size
-    /// (`sf_sky_bevy::PointShadowBudget`, ranked by `shadow_importance`). Bevy
-    /// redraws each map every frame: census office bench (720p, RTX 4060 laptop,
-    /// shf6 2026-10-19) median frame 4.8 ms with none, 6.6 / 12.2 / 21.7 ms with
-    /// 1 / 4 / 8, render-thread bound (GPU ~0.55 ms per light at 1024²). Counts
-    /// rise once cached maps land (superfargoth `docs/specs/shadows.md`).
+    /// (`sf_sky_bevy::PointShadowBudget`, ranked by `shadow_importance`).
+    /// High: 8 cached lamps (`sf_shadow_cache_bevy`: static casters drawn once,
+    /// movers over the copy; perf.md "Shadows v2"). Before the cache (shf6, census,
+    /// 720p): 4.8 ms with none, 6.6 / 12.2 / 21.7 ms with 1 / 4 / 8, render-thread
+    /// bound. Medium/Low: none (the main pass samples every shadowed lamp per pixel).
     pub const fn point_shadows(self) -> (usize, usize) {
         match self {
             Self::Low | Self::Medium => (0, 512),
             Self::High => crate::render::POINT_SHADOWS_DEFAULT,
-            Self::Ultra => (4, 1024),
+            Self::Ultra => (8, 1024),
         }
     }
 

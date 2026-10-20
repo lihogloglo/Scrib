@@ -197,6 +197,13 @@ walk). Lesson: single runs here vary ±0.5 ms; repeat 3 before calling a delta u
 Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
 pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.
 
+**Shadows v2 (shadows2, 2026-10-20; `target/perf/s2final-0`, `-8`; profiling exe, no DLSS, single runs).**
+0 vs 8 cached lamps, median (p95): walk 960p 11.36 (12.8) / 12.18 (**19.8**); walk 1440p 11.08 / 12.61 (20.4);
+walk night 1440p 11.17 / 12.18 (19.9); census 1440p 4.28 / 9.63 (timed GPU 3.50 / **9.97**); census 960p 4.07 /
+5.67; Balmora 1440p 12.28 / 12.49. Reading: 8 lamps cost ~+1 ms median on the walk but p95 nearly doubles
+(capture/recapture spikes, unconfirmed); indoors the cost is **GPU** (~0.8 ms/lamp in the main pass at 1440p,
+not yet diagnosed). `s2final-off` (`--off shadowcache`) was never completed.
+
 ## Dev loop
 
 Compile and bake times are gated like frame times (owner 2026-10-11: "must be super fast for the dev
