@@ -1435,3 +1435,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (shadowB1): Bevy 0.20.0 `bevy_core_pipeline`/`bevy_pbr`/`bevy_render` vendored with PRs #26149 + #26161
   (`vendor/README.md`; drop on the Bevy release that ships both). The lamp cube cache stays: the patch alone redraws a
   whole cube for any moving/skinned caster (census 15.0 vs 9.0 ms); patch + cache ships (census 6.5 ms).
+- 2026-10-21 (shadowB2): lamp (point/spot) shadows filter with 2x2 hardware PCF while the sun keeps the preset's
+  filter (own `bevy_pbr` hunk, camera marker `PointSpotShadowsHardware2x2`; -0.1 ms GPU per shadowed lamp at 1440p);
+  pending the owner's look (SH-19, `--off lampfilter` reverts). Own Bevy hunks live beside the PR diff, marked `own`.

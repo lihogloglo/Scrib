@@ -50,6 +50,19 @@ Goal: interiors lit by 20-30 point lights where every light that matters on scre
 more on Ultra), at well under 1 ms, with no visible popping when the shadowed set changes. Today High shadows
 **one** light, faded out over 15-25 m, because every shadowed light re-renders six cube faces every frame.
 
+## Reset B2 as built (shadowB2, 2026-10-21)
+
+- **Own `bevy_pbr` patch** (`vendor/README.md`, `patches/superfargoth-shadow-early-out-lamp-filter.diff`, 44+/9-):
+  - *Shadow early-out:* stock Bevy fetched a point/spot shadow (and lamp contact) for every shadow-receiving fragment
+    in the light's clusters, before evaluating the light (no range, N·L or cone test). The loop now evaluates the light
+    first and fetches only where the contribution is non-zero. Exact (skips only products with zero).
+  - *Lamp filter:* camera marker `PointSpotShadowsHardware2x2` → shader def: point cubes and spot maps use 1-tap 2x2
+    hardware PCF, directional keeps the camera's `ShadowFilteringMethod` (Temporal on High). Game: on by default,
+    `--off lampfilter` = stock. Forward/prepass only (not deferred lighting or meshlets); PCSS lights unchanged.
+- **Cost** (perf.md "Shadow reset B2"): filter -0.09-0.10 ms main-pass GPU per shadowed lamp at 1440p (lab 16 lamps
+  4.83 → 2.72, census opaque 2.94 → 2.08); early-out helps only where lamps light little (census -0.36). Frames are
+  render-thread bound, so medians barely move. Look: SH-19 (owner).
+
 ## Reset B1 as built (shadowB1, 2026-10-21)
 
 - **Vendored Bevy patch**: `bevy_core_pipeline`, `bevy_pbr`, `bevy_render` 0.20.0 + PRs #26149 (`Core3dShadows`, a

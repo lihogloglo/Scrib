@@ -3,6 +3,7 @@ import package::render::{
     mesh_view_bindings as view_bindings,
     shadow_sampling::{
         SPOT_SHADOW_TEXEL_SIZE, sample_shadow_cubemap, sample_shadow_cubemap_pcss,
+        sample_shadow_map_hardware, // superfargoth patch (own: lamp shadow filter)
         sample_shadow_map, sample_shadow_map_pcss,
     }
 };
@@ -122,6 +123,10 @@ fn fetch_spot_shadow(
         );
     }
 
+    // superfargoth patch (own: lamp shadow filter): 2x2 hardware PCF for spot lights, directional keeps the view's filter.
+    @if(POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2)
+    return sample_shadow_map_hardware(shadow_uv, depth, array_index);
+    @else
     return sample_shadow_map(
         shadow_uv,
         depth,

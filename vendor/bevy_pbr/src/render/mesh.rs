@@ -358,6 +358,14 @@ fn mark_all_meshes_for_reextraction(
 #[derive(Resource, Deref, DerefMut, Default, Debug, Clone)]
 pub struct ViewKeyCache(HashMap<RetainedViewEntity, MeshPipelineKey>);
 
+// superfargoth patch (own: lamp shadow filter)
+/// Add to a camera so point and spot light shadows use the 2x2 hardware filter
+/// ([`ShadowFilteringMethod::Hardware2x2`]) while directional lights keep the camera's
+/// [`ShadowFilteringMethod`]. Forward and prepass pipelines only (not deferred lighting, meshlets).
+#[derive(Component, Clone, Copy, Default, Debug, bevy_render::extract_component::ExtractComponent)]
+#[extract_app(RenderApp)]
+pub struct PointSpotShadowsHardware2x2;
+
 pub fn check_views_need_specialization(
     mut view_key_cache: ResMut<ViewKeyCache>,
     mut dirty_specializations: ResMut<DirtySpecializations>,
@@ -387,6 +395,7 @@ pub fn check_views_need_specialization(
             Has<ExtractedAtmosphere>,
             Has<ScreenSpaceReflectionsUniform>,
             Has<ContactShadows>,
+            Has<PointSpotShadowsHardware2x2>, // superfargoth patch (own: lamp shadow filter)
         ),
     )>,
     mut seen_views: Local<HashSet<RetainedViewEntity>>,
@@ -406,7 +415,7 @@ pub fn check_views_need_specialization(
         projection,
         distance_fog,
         (has_environment_maps, has_irradiance_volumes),
-        (has_oit, has_atmosphere, has_ssr, has_contact_shadows),
+        (has_oit, has_atmosphere, has_ssr, has_contact_shadows, has_point_spot_hw2x2), // superfargoth patch (own: lamp shadow filter)
     ) in views.iter_mut()
     {
         seen_views.insert(view.retained_view_entity);
@@ -452,6 +461,11 @@ pub fn check_views_need_specialization(
 
         if has_atmosphere {
             view_key |= MeshPipelineKey::ATMOSPHERE;
+        }
+
+        // superfargoth patch (own: lamp shadow filter)
+        if has_point_spot_hw2x2 {
+            view_key |= MeshPipelineKey::POINT_SPOT_SHADOWS_HARDWARE_2X2;
         }
 
         if has_contact_shadows {
@@ -3128,7 +3142,8 @@ bitflags::bitflags! {
         const INVERT_CULLING                    = 1 << 22;
         const PREPASS_READS_MATERIAL            = 1 << 23;
         const CONTACT_SHADOWS                   = 1 << 24;
-        const LAST_FLAG                         = Self::CONTACT_SHADOWS.bits();
+        const POINT_SPOT_SHADOWS_HARDWARE_2X2   = 1 << 25; // superfargoth patch (own: lamp shadow filter)
+        const LAST_FLAG                         = Self::POINT_SPOT_SHADOWS_HARDWARE_2X2.bits();
 
         const ALL_PREPASS_BITS                  = Self::DEPTH_PREPASS.bits()
                                                 | Self::NORMAL_PREPASS.bits()
@@ -3679,6 +3694,11 @@ impl SpecializedMeshPipeline for MeshPipeline {
         }
         if key.contains(MeshPipelineKey::LIGHTMAP_BICUBIC_SAMPLING) {
             shader_defs.push("LIGHTMAP_BICUBIC_SAMPLING".into());
+        }
+
+        // superfargoth patch (own: lamp shadow filter)
+        if key.contains(MeshPipelineKey::POINT_SPOT_SHADOWS_HARDWARE_2X2) {
+            shader_defs.push("POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2".into());
         }
 
         if key.contains(MeshPipelineKey::TEMPORAL_JITTER) {

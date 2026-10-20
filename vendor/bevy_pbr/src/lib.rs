@@ -246,6 +246,8 @@ impl Plugin for PbrPlugin {
                 ScatteringMediumPlugin,
                 AtmospherePlugin,
                 GpuClusteringPlugin,
+                // superfargoth patch (own: lamp shadow filter)
+                bevy_render::extract_component::ExtractComponentPlugin::<PointSpotShadowsHardware2x2>::default(),
             ));
 
         #[cfg(feature = "bevy_gltf")]

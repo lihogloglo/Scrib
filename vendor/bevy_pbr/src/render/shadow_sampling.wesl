@@ -513,7 +513,10 @@ fn sample_shadow_cubemap(
     light_id: u32,
     frag_coord_xy: vec2<f32>,
 ) -> f32 {
-    @if(SHADOW_FILTER_METHOD_GAUSSIAN)
+    // superfargoth patch (own: lamp shadow filter): 2x2 hardware PCF for point lights.
+    @if(POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2)
+    return sample_shadow_cubemap_hardware(light_local, depth, light_id);
+    @elif(SHADOW_FILTER_METHOD_GAUSSIAN)
     return sample_shadow_cubemap_gaussian(
         light_local, depth, POINT_SHADOW_SCALE, distance_to_light, light_id);
     @elif(SHADOW_FILTER_METHOD_TEMPORAL)

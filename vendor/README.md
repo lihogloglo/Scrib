@@ -9,6 +9,7 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 |---|---|---|---|
 | `big_space` | crates.io release | dirty-tree pruning in low-precision propagation (`docs/research/perf/README.md` item 2) | upstream has it |
 | `bevy_core_pipeline`, `bevy_pbr`, `bevy_render` | 0.20.0 (crates.io) | bevyengine/bevy [#26149](https://github.com/bevyengine/bevy/pull/26149) + [#26161](https://github.com/bevyengine/bevy/pull/26161) (`patches/bevy-26149-26161.diff`, both PRs' stacked diff at head `4e718df0`) | the Bevy release that ships both PRs |
+| `bevy_pbr` (own, on top of the row above) | same | `superfargoth patch (own: shadow early-out)` + `(own: lamp shadow filter)` (`patches/superfargoth-shadow-early-out-lamp-filter.diff`, 44+/9- lines, shadow reset B2) | early-out: Bevy skips the point/spot shadow fetch where the light contributes nothing; filter: Bevy gets a per-light-type (or per-light) shadow filter |
 
 ## The Bevy shadow patch (#26149, #26161)
 
@@ -23,6 +24,23 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 
 The diff applied cleanly to the 0.20.0 sources (`patch -p1` from `vendor/`, two hunks
 offset by 9 lines).
+
+## Our own Bevy patches (shadow reset B2)
+
+Not upstream PRs; ours, marked `superfargoth patch (own: …)`, diffed against the PR-patched sources in
+`patches/superfargoth-shadow-early-out-lamp-filter.diff` (`patch -p1` from `vendor/`, after the PR diff).
+
+- **Shadow early-out** (`pbr_functions.wesl`): the point and spot loops evaluate the light first and fetch the
+  shadow (and lamp contact shadows) only if `any(light_contrib != 0)`. Range falloff, N·L and the spot cone
+  saturate to exactly 0, so skipped fragments are the ones the shadow would have been multiplied by zero: exact.
+  Transmission (`STANDARD_MATERIAL_DIFFUSE_TRANSMISSION`) still fetches unconditionally.
+- **Lamp shadow filter**: camera marker `PointSpotShadowsHardware2x2` (`render/mesh.rs`, extracted like other
+  camera settings) sets `MeshPipelineKey::POINT_SPOT_SHADOWS_HARDWARE_2X2` → shader def
+  `POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2`: point cubes (`sample_shadow_cubemap`) and spot maps
+  (`fetch_spot_shadow`) take Bevy's 1-tap 2x2 hardware PCF; directional keeps the camera's
+  `ShadowFilteringMethod`. PCSS lights (`soft_shadow_size`) unchanged. Forward/prepass only: the deferred
+  lighting pipeline and meshlets don't read the key. Volumetric fog's point/spot lookups share the functions.
+- On a Bevy upgrade, re-apply this diff after the PR diff (or drop each hunk per the "Drop when" column).
 
 ## Rebase or drop on a Bevy upgrade
 
