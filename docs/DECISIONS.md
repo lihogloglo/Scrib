@@ -1420,3 +1420,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-20 (particles1): CPU-simulated particles render by vertex pulling (one `ShaderBuffer`, slot per emitter via
   `MeshTag`, static shared quad meshes, view-facing in the vertex shader), never by rewriting `Mesh` assets per frame
   (Bevy rescans every `Mesh3d`). Bevy 0.20's `storage_buffer` pattern; GPU simulation waits for `bevy_hanabi` on 0.20.
+- 2026-10-20 (shadows2): meshes that cast no shadow carry `NotShadowCaster` even when their material disables
+  shadows (particles, billboards, translucents): caster tracking and Bevy's per-light visibility see the entity, not
+  the material. Lamp shadow caches capture through their own views and recapture on a schedule, never per event.

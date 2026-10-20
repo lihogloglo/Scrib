@@ -35,7 +35,8 @@ caster size cull, terrain far shadow, rain occlusion (vertical, already redrawn 
   `RootNonCameraView`/`ExtractedView` after `prepare_lights` (Bevy runs nothing for them); one node per frame
   restores cached faces into Bevy's layers (slice 2's depth copy); faces whose frustum holds a mover keep a Bevy
   view that loads (not clears) the restored depth. Raise High to 8 lamps at 512², fade 40 m. Gate: 8 lamps ≤ 1 ms
-  render thread (census, walk); no flicker when the set changes.
+  render thread (census, walk); no flicker when the set changes. **Built (shadows2, 2026-10-20), gate not met on
+  the walk**: see "V1 as built" below.
 - **V2 Sun**: 3 cascades on High/Ultra to ~150 m + far static map on (verified on screen, interior panic fixed).
   Gate: render -1 ms, shadows present 0-500 m (owner check).
 - **V3 Soft shadows by world size**: Bevy's directional PCSS size is in cascade texels (penumbra jumps between
@@ -48,6 +49,38 @@ caster size cull, terrain far shadow, rain occlusion (vertical, already redrawn 
 Goal: interiors lit by 20-30 point lights where every light that matters on screen casts a shadow (8-16 on High,
 more on Ultra), at well under 1 ms, with no visible popping when the shadowed set changes. Today High shadows
 **one** light, faded out over 15-25 m, because every shadowed light re-renders six cube faces every frame.
+
+## V1 as built (shadows2, 2026-10-20)
+
+The cache built in lights1 cached **nothing**: diagnostic counters (now a 5 s `debug` log in the crate) showed
+48 of 48 census faces holding a "mover". Causes and fixes, in the order found:
+
+1. **Casters that cast nothing were tracked**: NIF particles (unculled, in every face), billboard subtrees and
+   translucents swapped to `FroxelFogMaterial` (material shadows off, entity not marked). Hosts now put
+   `NotShadowCaster` on them (`mw_assets` particles + billboards, `sf_atmos_bevy::FogTranslucentsPlugin`).
+2. **Change detection fires on writes**: animation and propagation rewrite unchanged transforms; ~650 still casters
+   (candles) never settled. The cache compares affine, bounds and visibility (1 mm).
+3. **Per-face schedule**: every face ran the whole `Core3d` (dozens of host systems). Face views now run
+   `LampShadowView` (GPU preprocessing + Bevy's shadow passes + ours), Bevy PR #26149's split, done from outside.
+4. **Restores**: a detached face is re-copied only when Bevy's layer went stale (`CleanLayers`: Bevy's
+   `TextureCache` returns the same cube texture while the shadowed count is unchanged; nothing clears a detached
+   face). 731 restores in 50 k detached face-frames.
+5. **Capture frames dropped movers** (actor shadows blinked, ~26 captures/s on the walk): captures now draw into
+   the cache through their own views (subviews 6-11 of the light, injected like `sf_sky_bevy::sun_view`); Bevy
+   draws the capturing light whole. ≤ 2 captures per frame; off-screen lights (not extracted) don't take a turn.
+6. **Streaming dirtied lamps continuously** (40 k settles + 19 k despawns on the walk: LOD swaps, size culling):
+   a light recaptures at most every 2 s; casters settled after its capture are drawn as its movers meanwhile.
+7. **Captures never confirmed while streaming** (a global "pipelines compiling" check): now only the capture's
+   own bins' pipelines count.
+8. Floating-origin shifts re-express every transform: hosts report them (`ShadowOriginShift`); characters and
+   their attachments are `ShadowMobility::Movable` (inherited from an ancestor), so NPCs that stop never bake.
+
+Presets (bevyrrowind `render.rs`): High 8 lamps at 512², Ultra 8 at 1024², fade 30-40 m (was 1 lamp, 15-25 m);
+carried torches rank like lamps (priority 4 → 1: with one slot the shadow hopped between torch-bearers).
+Numbers: bevyrrowind `perf.md` "Shadows v2". **Gate**: census 8 lamps 16.8 → ~6.3 ms (960p; 0 lamps 4.0), met
+in spirit; the Balmora walk is not: walkers next to lamps keep most cached faces holding a mover (each a Bevy
+view, ~0.1 ms). Next levers (not built): movers at 30 Hz with layer reuse (Clockwork), movers only within a
+distance of the light, a cheaper lamp PCF (the main pass pays ~0.5 ms GPU per shadowed lamp at 1440p).
 
 ## What Bevy 0.20 gives (read in `bevy_light-0.20.0` / `bevy_pbr-0.20.0`, 2026-10-19)
 

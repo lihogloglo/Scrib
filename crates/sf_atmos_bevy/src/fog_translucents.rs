@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_asset::{AssetEvent, AssetId, Assets, Handle};
 use bevy_ecs::prelude::*;
+use bevy_light::NotShadowCaster;
 use bevy_pbr::{MeshMaterial3d, StandardMaterial};
 use bevy_material::AlphaMode;
 
@@ -72,7 +73,9 @@ fn swap(
             .entry(material.id())
             .or_insert_with(|| fog_materials.add(FroxelFogMaterial { base: base.clone(), extension: FroxelFogExt::new(&volume) }))
             .clone();
-        commands.entity(entity).try_remove::<MeshMaterial3d<StandardMaterial>>().try_insert(MeshMaterial3d(handle));
+        // The marker too (rule 4): the material casts none, and without it shadow-map
+        // visibility and caster tracking (lamp cache) still treat the mesh as a caster.
+        commands.entity(entity).try_remove::<MeshMaterial3d<StandardMaterial>>().try_insert((MeshMaterial3d(handle), NotShadowCaster));
     }
 }
 
