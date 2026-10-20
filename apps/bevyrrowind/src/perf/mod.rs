@@ -4,6 +4,7 @@
 //! `docs/perf.md`; framework side: `superfargoth/docs/specs/diag.md`.
 
 pub mod cli;
+mod sweep;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

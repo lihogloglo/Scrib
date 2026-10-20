@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use super::sweep::SweepArgs;
 use sf_diag_bevy::sf_diag::suite::{self, GaugeColumn, GpuSampler, GpuSummary, SuiteRun};
 use sf_diag_bevy::sf_diag::{Report, Scenario, nsys, trace};
 
@@ -67,13 +68,18 @@ pub const SCENARIOS: &[SuiteScenario] = &[
         about: "interior: Seyda Neen Census and Excise Office walk-through",
         args: &["view", "Seyda Neen, Census and Excise Office", "--bench", "benchmarks/census_office.json"],
     },
+    SuiteScenario {
+        name: "light_lab",
+        about: "light-cost lab (level light-lab): closed room, 8 lamps, two walkers, fixed `wide` camera; `perf sweep` steps one variable",
+        args: &["view", "level:light-lab", "--camera", "wide", "--bench", "benchmarks/light_lab.json"],
+    },
 ];
 
 /// The resolution of a CPU-floor run: small enough that the GPU drops out.
 const FLOOR_RESOLUTION: &str = "960x600";
 
 /// Processes that make numbers noise: builds, other game instances.
-const BUSY: &[&str] = &["cargo", "rustc", "bevyrrowind", "ovid"];
+pub(super) const BUSY: &[&str] = &["cargo", "rustc", "bevyrrowind", "ovid"];
 
 #[derive(clap::Subcommand)]
 pub enum PerfCommand {
@@ -81,6 +87,10 @@ pub enum PerfCommand {
     List,
     /// Print a scenario's `bevyrrowind` arguments, one per line (for scripts).
     Args { scenario: String },
+    /// Step one variable per run over a scenario (the light lab, docs/perf.md "Light lab"):
+    /// `perf sweep <tag> light_lab --var point-shadows --values 0,1,2,4,8 --repeat 3`; writes
+    /// `sweep.md` and `sweep.csv` (medians over repeats) beside the suite summary.
+    Sweep(Box<SweepArgs>),
     /// Run named scenarios (all by default) and summarize them. Run from
     /// the repo root with the profiling build:
     /// `target/profiling/bevyrrowind.exe perf suite <tag> balmora --repeat 3`.
@@ -126,21 +136,21 @@ pub enum PerfCommand {
 #[expect(clippy::struct_excessive_bools, reason = "independent command-line flags")]
 pub struct SuiteArgs {
     /// Name of this suite run: results go to `<out>/<tag>/`.
-    tag: String,
+    pub(super) tag: String,
     /// Scenarios to run (default: all); see `perf list`.
-    scenarios: Vec<String>,
+    pub(super) scenarios: Vec<String>,
     /// Runs per scenario and resolution.
     #[arg(long, default_value_t = 1)]
-    repeat: usize,
+    pub(super) repeat: usize,
     /// Window sizes, `WxH` (repeatable). Default `1280x720`.
     #[arg(long = "resolution")]
-    resolutions: Vec<String>,
+    pub(super) resolutions: Vec<String>,
     /// Also run each scenario at 960x600, where the GPU drops out: the CPU floor.
     #[arg(long)]
     floor: bool,
     /// A/B: parts to leave out (see `view --help`, `--off`).
     #[arg(long, value_delimiter = ',')]
-    off: Vec<String>,
+    pub(super) off: Vec<String>,
     /// Hitch threshold in ms (default 2.5 × median, at least 25 ms).
     #[arg(long)]
     hitch_ms: Option<f64>,
@@ -149,21 +159,21 @@ pub struct SuiteArgs {
     envs: Vec<String>,
     /// The game executable (default: this one).
     #[arg(long)]
-    exe: Option<PathBuf>,
+    pub(super) exe: Option<PathBuf>,
     /// Write a Chrome trace per run (`TRACE_CHROME`; needs an exe built with
     /// `--features trace`).
     #[arg(long)]
     trace: bool,
     /// Results root.
     #[arg(long, default_value = "target/perf")]
-    out: PathBuf,
+    pub(super) out: PathBuf,
     /// Also copy the summary and each run's report (md + json) here, e.g.
     /// `benchmarks/runs/<tag>`.
     #[arg(long)]
-    save: Option<PathBuf>,
+    pub(super) save: Option<PathBuf>,
     /// More process names to wait for (comma-separated).
     #[arg(long, value_delimiter = ',')]
-    wait_for: Vec<String>,
+    pub(super) wait_for: Vec<String>,
     /// Start runs even when the machine is busy (results are flagged).
     #[arg(long)]
     no_wait: bool,
@@ -175,7 +185,7 @@ pub struct SuiteArgs {
     retries: usize,
     /// Print the commands without running them.
     #[arg(long)]
-    dry_run: bool,
+    pub(super) dry_run: bool,
 }
 
 pub fn run(command: PerfCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -194,6 +204,7 @@ pub fn run(command: PerfCommand) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         PerfCommand::Suite(args) => run_suite(&args),
+        PerfCommand::Sweep(args) => super::sweep::run(&args),
         PerfCommand::Trace { file, from, to, top } => {
             let (from, to) = window(&file, from, to)?;
             let summary = trace::summarize(BufReader::new(File::open(&file)?), from, to)?;
@@ -265,10 +276,12 @@ type RunResult = Result<Option<(SuiteRun, Option<String>, bool)>, Box<dyn std::e
 const OTHER_CPU_LIMIT: f64 = 25.0;
 
 /// One planned run.
-struct Planned {
-    scenario: &'static SuiteScenario,
-    resolution: String,
-    repeat: usize,
+pub(super) struct Planned {
+    pub(super) scenario: &'static SuiteScenario,
+    pub(super) resolution: String,
+    pub(super) repeat: usize,
+    /// `perf sweep`: this run's value of the swept variable.
+    pub(super) step: Option<super::sweep::Step>,
 }
 
 fn run_suite(args: &SuiteArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -292,7 +305,7 @@ fn run_suite(args: &SuiteArgs) -> Result<(), Box<dyn std::error::Error>> {
     for scenario in chosen {
         for resolution in &resolutions {
             for repeat in 1..=args.repeat.max(1) {
-                plan.push(Planned { scenario, resolution: resolution.clone(), repeat });
+                plan.push(Planned { scenario, resolution: resolution.clone(), repeat, step: None });
             }
         }
     }
@@ -306,17 +319,27 @@ fn run_suite(args: &SuiteArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("{} runs → {}", plan.len(), dir.display());
 
+    let (runs, notes) = execute(args, &exe, &dir, &plan, &busy);
+    if args.dry_run || runs.is_empty() {
+        return Ok(());
+    }
+    let runs: Vec<SuiteRun> = runs.into_iter().map(|(_, r)| r).collect();
+    write_summary(args, &exe, &dir, &runs, &notes, &busy)
+}
+
+/// Runs the plan (quiet-machine waits, busy retries); each run with its plan index.
+pub(super) fn execute(args: &SuiteArgs, exe: &Path, dir: &Path, plan: &[Planned], busy: &[&str]) -> (Vec<(usize, SuiteRun)>, Vec<String>) {
     let mut runs = Vec::new();
     let mut notes = Vec::new();
     for (i, p) in plan.iter().enumerate() {
-        println!("[{}/{}] {} @ {} #{}", i + 1, plan.len(), p.scenario.name, p.resolution, p.repeat);
-        let mut result = run_one(args, &exe, &dir, p, &busy);
+        println!("[{}/{}] {} @ {}{} #{}", i + 1, plan.len(), p.scenario.name, p.resolution, p.step.as_ref().map_or(String::new(), |s| format!(" {}", s.label)), p.repeat);
+        let mut result = run_one(args, exe, dir, p, busy);
         for retry in 1..=args.retries {
             if !matches!(result, Ok(Some((_, _, true)))) {
                 break;
             }
             println!("    busy during the run; retry {retry}/{}", args.retries);
-            result = run_one(args, &exe, &dir, p, &busy);
+            result = run_one(args, exe, dir, p, busy);
         }
         match result {
             Ok(Some((run, note, _))) => {
@@ -331,20 +354,17 @@ fn run_suite(args: &SuiteArgs) -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 notes.extend(note);
-                runs.push(run);
+                runs.push((i, run));
             }
             Ok(None) => {}
             Err(e) => eprintln!("    failed: {e}"),
         }
     }
-    if args.dry_run || runs.is_empty() {
-        return Ok(());
-    }
-    write_summary(args, &exe, &dir, &runs, &notes, &busy)
+    (runs, notes)
 }
 
 /// `summary.md` across the runs, and the copies under `--save`.
-fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[SuiteRun], notes: &[String], busy: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn write_summary(args: &SuiteArgs, exe: &Path, dir: &Path, runs: &[SuiteRun], notes: &[String], busy: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     let gauges = [
         GaugeColumn { label: "entities".into(), counter: sf_diag_bevy::ENTITIES.into() },
         GaugeColumn { label: "meshes".into(), counter: "world/meshes".into() },
@@ -439,13 +459,19 @@ fn gpu_load(span: Duration) -> f64 {
 }
 
 fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str]) -> RunResult {
-    let variant = if args.off.is_empty() { p.resolution.clone() } else { format!("{} off={}", p.resolution, args.off.join(",")) };
+    let mut off = args.off.clone();
+    off.extend(p.step.iter().flat_map(|s| s.off.iter().cloned()));
+    let mut variant = if off.is_empty() { p.resolution.clone() } else { format!("{} off={}", p.resolution, off.join(",")) };
+    if let Some(s) = &p.step {
+        variant = format!("{variant} {}", s.label);
+    }
     let name = run_name(p.scenario.name, &variant, p.repeat);
     let run_dir = dir.join(&name);
     let mut cmd_args: Vec<String> = p.scenario.args.iter().map(|a| (*a).to_owned()).collect();
+    cmd_args.extend(p.step.iter().flat_map(|s| s.args.iter().cloned()));
     cmd_args.extend(["--resolution".to_owned(), p.resolution.clone(), "--bench-out".to_owned(), run_dir.display().to_string(), "--bench-baseline".to_owned(), "none".to_owned()]);
-    if !args.off.is_empty() {
-        cmd_args.extend(["--off".to_owned(), args.off.join(",")]);
+    if !off.is_empty() {
+        cmd_args.extend(["--off".to_owned(), off.join(",")]);
     }
     if let Some(h) = args.hitch_ms {
         cmd_args.extend(["--hitch-ms".to_owned(), h.to_string()]);
@@ -455,6 +481,7 @@ fn run_one(args: &SuiteArgs, exe: &Path, dir: &Path, p: &Planned, busy: &[&str])
         let (k, v) = pair.split_once('=').ok_or_else(|| format!("--env {pair:?}: expected KEY=VALUE"))?;
         envs.push((k.to_owned(), v.to_owned()));
     }
+    envs.extend(p.step.iter().flat_map(|s| s.envs.iter().cloned()));
     if args.trace {
         envs.push(("TRACE_CHROME".to_owned(), run_dir.join("trace.json").display().to_string()));
     }

@@ -106,3 +106,21 @@ and pipeline setup dominate; logged as `level <name> ready <s> after start`).
 
 Leftovers: compound props (a table with legs), camera collision in walk mode,
 a `--walk` start flag (walk mode is a key only; BRP `send_keys` U).
+
+## Light lab (built, lightlab, 2026-10-21)
+
+Controlled cost model for lights and shadows (owner 2026-10-21: one variable at a time, fixed camera; real scenes stay
+pass/fail gates). `levels/light-lab.ron`, scene `level-light-lab`, suite scenario `light_lab`.
+
+- **Room:** closed 20 x 20 x 5 m (walls, ceiling), a 4 x 4 grid of pillars (r 0.3, 2.5 m) and boxes (1 x 1.2 x 1 m),
+  two NPCs walking an 8 m loop (movers; `--off actors` drops them). Cameras `wide` (eye height, whole room), `close`, `top`.
+- **Interior:** the level's `interior` registers a `CellEnvironment` (no sky) for its worldspace, so
+  `doors::worldspace_look` treats it exactly as a Morrowind interior cell (cell ambient, sun and moon off its layer).
+- **Lights:** the level's `lights` rig (`sf_level::LightRig`) spawns through `mw_assets::lights::spawn_light`, the
+  lamp path: `LightCalibration` range (radius x `--range`) and power, `BudgetedShadow`, the worldspace's layer, so the
+  point-shadow budget, contact shadows and the shadow cache treat them as lamps. Default 8 lamps, grid 4 m, 3.5 m up,
+  radius 3 m (range 12 m). Differences from game lamps: steady (no flicker), no lamp mesh, no `AttachLight` parent.
+- **Flags:** `--lab-lights N`, `--lab-ring D` (ring of radius D about the room center), `--lab-radius R`,
+  `--lab-orbit DEG_S` (all lights orbit the center: carried torches; moving lights defeat the shadow cache). With the
+  existing `--point-shadows N`, `--range`, `--off contactshadows|shadowcache|actors`, `BEVYRROWIND_SHADOW_FILTER`.
+- **Sweeps:** `perf sweep` (docs/perf.md "Light lab cost model").

@@ -312,6 +312,8 @@ struct ViewFlags {
     single_cell: bool,
     #[command(flatten)]
     lighting: Box<Lighting>,
+    #[command(flatten)]
+    lab: Box<LabFlags>,
     /// Load every model from its NIF, ignoring cooked meshes.
     #[arg(long)]
     no_baked: bool,
@@ -998,6 +1000,24 @@ struct Lighting {
     /// Sun cascades `COUNT:METERS` instead of the preset's (A/B; env `BEVYRROWIND_SUN_CASCADES`).
     #[arg(long, value_parser = render::parse_sun_cascades)]
     sun_cascades: Option<(usize, f32)>,
+}
+
+/// Light-lab knobs (`view level:light-lab`, docs/specs/test-levels.md "light-lab"): they edit the
+/// level's parametric lights, so a perf sweep (`perf sweep`) steps one per run.
+#[derive(clap::Args)]
+struct LabFlags {
+    /// Levels with `lights`: this many lights instead of the level's count.
+    #[arg(long = "lab-lights")]
+    lights: Option<u32>,
+    /// Levels with `lights`: lay them on a ring of this radius (m) around the rig center.
+    #[arg(long = "lab-ring")]
+    ring: Option<f32>,
+    /// Levels with `lights`: the lights' radius, m (range = radius x `--range`).
+    #[arg(long = "lab-radius")]
+    radius: Option<f32>,
+    /// Levels with `lights`: orbit the rig center at this rate, deg/s (moving lights).
+    #[arg(long = "lab-orbit")]
+    orbit: Option<f32>,
 }
 
 impl Lighting {

@@ -29,6 +29,7 @@ use sf_level::{Level, Material, Shape};
 use sf_physics::{BodyDesc, BodyKind, Layer, MeshShape, ShapeRef};
 use sf_physics_bevy::{Physics, PhysicsBody};
 use sf_world::{IndexParams, IndexReader, MemoryIndex, Placement, WorldIndex, WorldspaceId, build_directory, build_pages};
+use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
 
 mod actors;
@@ -42,6 +43,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("flat-slopes", include_str!("../../../levels/flat-slopes.ron")),
     ("ledges", include_str!("../../../levels/ledges.ron")),
     ("robe-walk", include_str!("../../../levels/robe-walk.ron")),
+    ("light-lab", include_str!("../../../levels/light-lab.ron")),
 ];
 
 /// When `view level:` started: the load time is measured from here.
@@ -65,7 +67,8 @@ pub fn worldspace(name: &str) -> WorldspaceId {
 /// the level's cameras; raw "ex,ey,ez,tx,ty,tz" still works.
 pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::ViewFlags) -> crate::Result {
     let started = *STARTED.get_or_init(Instant::now);
-    let (source, level) = find(name)?;
+    let (source, mut level) = find(name)?;
+    lab_overrides(&mut level, &flags)?;
     let camera = pick_camera(&level, &mut flags.camera);
     println!(
         "level {} ({source}): {} objects, cameras {}",
@@ -82,6 +85,26 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     options.actors = Some(Arc::new(content.db));
     options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into() });
     crate::exterior::run(Arc::new(vfs), options)
+}
+
+/// The light-lab flags (`--lab-lights`, `--lab-ring`, `--lab-radius`, `--lab-orbit`) edit the
+/// level's [`sf_level::LightRig`]: a perf sweep steps one of them per run.
+fn lab_overrides(level: &mut Level, flags: &crate::ViewFlags) -> crate::Result<()> {
+    let lab = &flags.lab;
+    if lab.lights.is_none() && lab.ring.is_none() && lab.radius.is_none() && lab.orbit.is_none() {
+        return Ok(());
+    }
+    let Some(rig) = level.lights.as_mut() else {
+        return Err(format!("level {}: --lab-* flags need a level with `lights`", level.name).into());
+    };
+    rig.count = lab.lights.unwrap_or(rig.count);
+    if let Some(radius) = lab.ring {
+        rig.layout = sf_level::LightLayout::Ring { radius };
+    }
+    rig.radius = lab.radius.unwrap_or(rig.radius);
+    rig.orbit = lab.orbit.unwrap_or(rig.orbit);
+    let problems = level.problems();
+    if problems.is_empty() { Ok(()) } else { Err(format!("level {}: {problems:?}", level.name).into()) }
 }
 
 /// The start camera: the level camera `--camera` names (case-insensitive;
@@ -165,7 +188,9 @@ pub fn add(app: &mut App, setup: LevelSetup) {
     app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base, placements))))
         .insert_resource(ActiveLevel(setup))
         // After Startup's commands: the viewer's `setup` creates the worldspace root.
-        .add_systems(PostStartup, spawn)
+        .add_systems(PreStartup, interior_environment)
+        .add_systems(PostStartup, (spawn, spawn_lights).chain())
+        .add_systems(Update, orbit_lights)
         .add_systems(Last, report_ready);
 }
 
@@ -271,6 +296,51 @@ fn spawn(
         level.actors.len(),
         started.elapsed().as_secs_f64() * 1e3
     );
+}
+
+/// A light of the level's [`sf_level::LightRig`] (its index in [`sf_level::LightRig::positions`]).
+#[derive(Component)]
+pub struct LabLight(usize);
+
+/// The rig's lights through the game's own path (`mw_assets::lights::spawn_light`: the
+/// calibration's range and power for the radius, `BudgetedShadow`, so the point-shadow budget,
+/// contact shadows and the shadow cache treat them as lamps), on the worldspace's layer.
+fn spawn_lights(mut commands: Commands, mut registry: ResMut<WorldspaceRegistry>, level: Res<ActiveLevel>, calibration: Res<mw_assets::LightCalibration>) {
+    let ActiveLevel(LevelSetup { level, worldspace: ws, .. }) = &*level;
+    let Some(rig) = &level.lights else { return };
+    let entry = registry.ensure(&mut commands, ws);
+    let info = mw_world::LightInfo { color: rig.color.to_array(), radius: rig.radius, animation: mw_world::LightAnimation::Steady, fire: false };
+    let positions = rig.positions(0.0);
+    for (i, at) in positions.iter().enumerate() {
+        let (cell, transform) = to_grid(WorldPos::from_f64(at.as_dvec3()));
+        #[allow(clippy::cast_possible_truncation)]
+        let light = mw_assets::lights::spawn_light(&mut commands, &calibration, &info, None, transform, i as u32);
+        commands.entity(light).try_insert((Name::new(format!("lab light {i}")), LabLight(i), cell, transform, RenderLayers::layer(entry.layer), ChildOf(entry.root)));
+    }
+    info!("level {}: {} lights ({:?}, radius {} m, orbit {} deg/s)", level.name, positions.len(), rig.layout, rig.radius, rig.orbit);
+}
+
+/// Orbiting rig lights (`orbit` deg/s): carried torches, for the cost of moving shadowed lights.
+fn orbit_lights(time: Res<Time>, level: Res<ActiveLevel>, mut lights: Query<(&LabLight, &mut CellCoord, &mut Transform)>) {
+    let Some(rig) = level.0.level.lights.as_ref().filter(|r| r.orbit != 0.0) else { return };
+    let positions = rig.positions(time.elapsed_secs());
+    for (light, mut cell, mut transform) in &mut lights {
+        if let Some(at) = positions.get(light.0) {
+            let (c, t) = to_grid(WorldPos::from_f64(at.as_dvec3()));
+            cell.set_if_neq(c);
+            transform.translation = t.translation;
+        }
+    }
+}
+
+/// An enclosed level (`interior`) is an interior to the viewer: no sky, sun or moon in its
+/// worldspace, the level's ambient (`doors::worldspace_look`, as for a Morrowind interior cell).
+fn interior_environment(level: Res<ActiveLevel>, mut envs: ResMut<crate::doors::Environments>) {
+    if let Some(interior) = &level.0.level.interior {
+        let a = interior.ambient.to_array();
+        let atmosphere = mw_world::worldspaces::Atmosphere { ambient: a, sunlight: [0.0; 3], fog_color: [0.0; 3], fog_density: 0.0 };
+        envs.0.insert(level.0.worldspace.clone(), mw_world::CellEnvironment { atmosphere: Some(atmosphere), sky: false, water_level: None });
+    }
 }
 
 /// Logs the time from `view level:` to the first frame with streaming settled.

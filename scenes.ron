@@ -898,5 +898,12 @@
             look_for: "the three actors dressed in robes walk/run their paths without sliding or sinking (feet on ramp, plateau and steps); the priest stops at his loop's corner and fidgets; V knocks the crates and table over; U walks the player",
             checks: ["TS-2"],
         ),
+        (
+            name: "level-light-lab",
+            level: "light-lab",
+            hour: 12.0,
+            description: "Greybox light-cost lab: closed 20 x 20 x 5 m room (no sky), 16 pillar/box casters, two walkers, 8 parametric lamps through the game's lamp path (cameras: wide, close, top; --lab-lights N, --lab-ring D, --lab-radius R, --lab-orbit DEG_S)",
+            look_for: "a lit closed room, no sunlight; lamps on a grid at 3.5 m; with --point-shadows N the nearest N lamps cast pillar and walker shadows",
+        ),
     ],
 )
