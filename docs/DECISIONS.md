@@ -1429,3 +1429,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (render-audit, after lampcost): the lamp cube cache stays through slice A and is deleted only when slice B's
   patch (#26149/#26161) measures equal or better: stock Bevy costs ~+12 ms render thread for 8 lamps (perf.md
   "Per-lamp GPU cost"). The ~0.8 ms GPU per lamp was Bevy contact shadows (0.68/lamp), not the cube maps.
+- 2026-10-21 (doorwalls): the game camera is HDR in every worldspace (an interior start was LDR until the sky's
+  atmosphere required HDR, doubling main-pass pipeline variants), and the door fade also holds, within its gate cap,
+  while the arrival camera's visible meshes wait for main-pass pipelines (bevyrrowind `pipeline_watch.rs`).
