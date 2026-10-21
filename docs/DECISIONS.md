@@ -1468,3 +1468,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   Refusal for topics, not greetings. `sf_rpg::DialogueRules::fallback` (default None) is the refusal hook.
 - 2026-10-21 (rpg-core): result scripts stay "one runtime": `mw_rpg::ResultRunner` emits `ResultEffect`s; only a test
   double exists; the W3 Luau `mw` library is the game's runner (rpg-adapter.md lists what it must provide).
+- 2026-10-21 (renderfix1, bevyrrowind LM-1): a blended texture is a cutout if mostly solid (soft ≤ ¼ of visible) or a
+  sparse atlas (≥ 10 % holes, soft ≤ 1.25× solid), measured on vanilla (`mw_bake/examples/foliage_report`). Still
+  classified at load time; later move it into the texture bake with coverage-preserving mips.
