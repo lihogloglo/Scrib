@@ -66,7 +66,8 @@ and effects. Every task reports its ms cost per preset.
   in weather/fog/soft shadows (WE-2, WE-3), grazing-light edge shimmer (SH-12), water moiré (WA-1).
 - [ ] 1.4 **One shadow design, finished.** Sun: cascades + contact shadows + terrain far shadow (keep SH-7/8/10).
   Fix distant flashes on camera move (SH-11); lamp shadows: short reach, grain, flicker, wrong guard outline
-  (SH-13); leaf shadows on some trees only (LM-1); translucent casters (RO-1). Far static map and cube cache
+  (SH-13); leaf shadows on some trees only (LM-1: cutout classifier missed thin-twig leaf atlases, so they stayed
+  blended without shadows; sparse-atlas rule added 2026-10-21, awaiting owner); translucent casters (RO-1). Far static map and cube cache
   parked (decision 3). Owner 2026-10-20: shadows still bad overall ("only showing when super close");
   **contact shadows confirmed** as the thin view-dependent bands at object edges (SH-14: shorten to Bevy's
   0.3 m or close range only); soft-shadow (PCSS) size is in cascade texels, so penumbrae jump between
@@ -98,7 +99,8 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.7 Night brightness (LT-1 rejected: "can't see anything"): exposure floor + night ambient retune; then
   the deferred night checks (SK-2, NS-2..4). 2026-10-21 (renderfix1): night ambient 1 → 4 nits (~2 EV under mid grey
   on stone), EV100 floor 3.5 kept; LT-1 awaiting owner.
-- [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5); Ghostfence field
+- [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5: precip streaks ruled
+  out 2026-10-21; suspect ash height fog or cloud composite; next A/B `--off clouds|fog|froxels` at the owner's view); Ghostfence field
   has no far copy and its far light sprites float in the gap (GF-1, B5); far-field L2/L3 never selected or never
   tinted (FF-2: 25 L2 + 4 L3 nodes resident).
 - [~] 1.9 Streaming and culling levers from the old M2 list (archive "Next up" 1, 6, 7): render-thread spikes,
@@ -182,6 +184,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (renderfix1): LM-1: 66 flora textures (Bitter Coast leaves, branches, roobrush, wickwheat...) were
+  rejected as cutouts and stayed blended (no shadows); sparse-atlas rule + `mw_bake` `foliage_report` example.
 - 2026-10-21 (rpg-core): `mw_rpg`: Morrowind dialogue on `sf_rpg` (OpenMW-order INFO filters, macros, journal, equip);
   Fargoth's ring flow passes headless on the real ESMs (12 + 1 tests); result scripts behind `ResultRunner`.
 - 2026-10-21 (audio-pass): Morrowind sound in game: `mw_audio` (SOUN/SNDG cues, GMST ranges, music playlists), load-door

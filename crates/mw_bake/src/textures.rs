@@ -82,9 +82,16 @@ fn decode_dds(bytes: &[u8]) -> Result<Rgba8, String> {
 /// Whether a blended texture's alpha is a cutout (leaf cards: holes plus
 /// solid texels, a thin soft rim) rather than translucency (glass, potions:
 /// broad partial alpha). Cutouts draw alpha-tested ([`mw_nif::Cutout`]).
-/// Thresholds: alpha <= 0.1 is a hole, >= 0.9 solid; soft texels may be at
-/// most a quarter of the covered ones (a 256² leaf atlas with filtered edges
-/// sits well below that).
+/// Thresholds: alpha <= 0.1 is a hole, >= 0.9 solid. Two shapes count:
+/// - mostly solid (banners, hair): soft texels at most a quarter of the
+///   covered ones;
+/// - sparse atlases (leaves, twigs, ferns: >= 10% holes): soft texels at
+///   most 1.25x the solid ones. Thin twigs are mostly filtered rim
+///   (`tx_bc_leaves_02`: 45% holes, 32% solid, 23% soft), which the first
+///   rule alone rejected, so those trees stayed blended and cast no
+///   shadow (LM-1). Translucents keep failing both: glass, waterfalls and
+///   crystals have no solid texels to speak of, decals and glows (chalk,
+///   flares, webbing) are almost all soft, lava/oil crusts have few holes.
 pub fn alpha_is_cutout(image: &Rgba8) -> bool {
     let (mut holes, mut solid, mut soft) = (0usize, 0usize, 0usize);
     for a in image.rgba.as_chunks::<4>().0.iter().map(|p| p[3]) {
@@ -94,7 +101,10 @@ pub fn alpha_is_cutout(image: &Rgba8) -> bool {
             _ => soft += 1,
         }
     }
-    holes > 0 && solid > 0 && soft * 4 <= solid + soft
+    let total = holes + solid + soft;
+    let mostly_solid = soft * 4 <= solid + soft;
+    let sparse_atlas = holes * 10 >= total && soft * 4 <= solid * 5;
+    holes > 0 && solid > 0 && (mostly_solid || sparse_atlas)
 }
 
 #[cfg(test)]
@@ -156,5 +166,28 @@ mod tests {
         assert!(!alpha_is_cutout(&alphas(&glass)));
         // No holes: nothing to cut.
         assert!(!alpha_is_cutout(&alphas(&[255; 16])));
+    }
+
+    /// Histograms (holes, solid, soft %) measured on the vanilla textures
+    /// with `examples/foliage_report` (LM-1).
+    fn histogram(holes: usize, solid: usize, soft: usize) -> Rgba8 {
+        let v: Vec<u8> = [0].repeat(holes).into_iter().chain([255].repeat(solid)).chain([128].repeat(soft)).collect();
+        alphas(&v)
+    }
+
+    #[test]
+    fn twig_atlases_are_cutouts_decals_and_crusts_are_not() {
+        for (name, h, s, f) in [("bc_leaves_02", 45, 32, 23), ("branches_01", 85, 10, 5), ("bc_moss_01", 53, 23, 24)] {
+            assert!(alpha_is_cutout(&histogram(h, s, f)), "{name}");
+        }
+        for (name, h, s, f) in [
+            ("dagoth_chalk00", 71, 2, 27),
+            ("bc_moss_03", 35, 5, 61),
+            ("lava_crust", 5, 48, 46),
+            ("bc_podplant_03", 5, 40, 54),
+            ("waterfall_02", 13, 0, 87),
+        ] {
+            assert!(!alpha_is_cutout(&histogram(h, s, f)), "{name}");
+        }
     }
 }

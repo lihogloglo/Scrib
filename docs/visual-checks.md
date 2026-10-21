@@ -938,7 +938,8 @@ step in time with their gait (bare-foot sounds until equipment is wired); none w
 
 ### LM-1: Leaves as alpha-tested cutouts (`view "Seyda Neen" --hour 11 --weather foggy`, then `--weather clear`; forest: fly west into the Bitter Coast)
 
-Status: **partial (owner 2026-10-19, round 2, release exe with the v4 bake): some trees' foliage casts shadows, other trees' doesn't**, so not a global regression (the earlier 'none anywhere' was likely the stale v3 bake). Open: which materials stay blended (load-time promotion path?). Phase 1. Earlier: **rejected 2026-10-19: no foliage shadows anywhere** (owner, round 2, clear sky; fog and crisp edges OK in round 1; leafmask). Agent shots: foggy Seyda Neen (leaves fog like the trunks), clear
+Status: **fix awaiting owner (renderfix1, 2026-10-21; no re-bake, load-time):** cause confirmed with `cargo run -p mw_bake --example foliage_report`: plain-blend foliage is promoted only if `textures::alpha_is_cutout` reads holes; its "soft <= 1/4 of covered" rule rejected thin-twig atlases (`tx_bc_leaves_02` of `flora_bc_tree_01`: 45% holes, 32% solid, 23% soft; also `tx_leaves_07`, `tx_branches_01/02`, roobrush, wickwheat, fire fern, bc moss), so those trees stayed Blend (no shadow caster). Now also a cutout: >= 10% holes and soft <= 1.25x solid; glass, waterfalls, crystals, chalk/glow decals, lava/oil crust still blend. New cutouts to eyeball: `tx_stain_pueblo00`, `tx_scroll_fleur`, awning thatch, woven rope. Shots: `shots/renderfix1/lm1_fix.png`, `lm1_close.png` (Bitter Coast, all canopies drawn as cutouts). Look for: dappled shadows under the big Bitter Coast trees too. Side finding: with `--off leafmask` (`lm1_off.png`) blended leaves vanish entirely at ~100 m+, so the A/B no longer shows "blended as before"; logged, not fixed.
+Earlier: **partial (owner 2026-10-19, round 2, release exe with the v4 bake): some trees' foliage casts shadows, other trees' doesn't**, so not a global regression (the earlier 'none anywhere' was likely the stale v3 bake). Open: which materials stay blended (load-time promotion path?). Phase 1. Earlier: **rejected 2026-10-19: no foliage shadows anywhere** (owner, round 2, clear sky; fog and crisp edges OK in round 1; leafmask). Agent shots: foggy Seyda Neen (leaves fog like the trunks), clear
 Cause found (leafshadow): stale bake, leaves cooked under importer v3 before the cutout code existed, so still Blend -> fog swap casts no shadows. Fix (uncommitted): NifImporter::VERSION 4 + re-bake. Recheck with the v4 exe: dappled leaf shadows under trees at 11:00 clear.
 Recheck 2026-10-19 (owner, v4 release exe after re-bake): STILL no foliage shadows at all. Stale bake was not (or not the only) cause. Untested leads: most MW foliage is plain blend without alpha test (Cutout::Candidate), promoted at load only if the texture alpha reads as holes: check that the load-time check runs (compressed DDS alpha, texture not loaded yet when the material is built), else leaves stay Blend and the fog swap drops their shadows.
 Seyda Neen (tree shadow on the island and the water). A/B: `--off leafmask` (leaves drawn blended as before: no depth,
@@ -962,6 +963,13 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   we2b already derives the summit storm source from LAND), which it doesn't seem to.
 - Also (owner 2026-10-19, round 6): in some weathers the clouds extend very high into the sky (deck base/thickness, WE4b local heights?).
 - Status: known bug: occlusion in Phase 1 (render correctness), storm direction in Phase 4.
+- Diagnosis (renderfix1 2026-10-21, hypothesis only, no code): the ash/blight streaks (`sf_precip_bevy`, `PrecipMaterial`
+  Blend, Transparent3d Overlay band) are depth-tested (stock Blend pipeline, `specialize` keeps Bevy's depth state) and
+  live in boxes of at most 64 m around the camera, so they can't paint over terrain beyond ~32 m; near ones that cross
+  the camera look "over" rocks but are in front (`shots/renderfix1/we5_ash.png`). Suspects: the ash look's dense height
+  fog (visibility 450 m, fog height 500 m, sky dust 4 in `mw_weather` visual.rs) or the Stratocumulus deck, both
+  composited by `sf_atmos_bevy` (FG-1 lane), e.g. sky-pixel fog/cloud on terrain silhouettes or depth mismatch. Next experiment: owner's view (F9 copy) with
+  `--weather ashstorm`, A/B in one sitting `--off clouds`, `--off fog`, `--off froxels`; whichever removes the overdraw owns it.
 
 
 ### PC-1: Precombined near cells look the same as separate objects (ROADMAP 1.9, superfargoth precombine.md)
