@@ -1453,3 +1453,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   ones drop); ids on the wire are FNV-1a keys of content ids. Lock-on target lives in `sf_action`, framing in `sf_camera`.
 - 2026-10-21 (orchestrator): `PlayerId` is defined twice (`sf_action`, `sf_rpg`); unify into one tiny Bevy-free id crate
   before either crate is wired into the app (follow-up, owner of the merge: action-a1 lane).
+- 2026-10-21 (renderfix1; sky-lighting.md): night readability comes from the ambient floor, not the camera: EV100
+  floor stays 3.5 (lamps don't blow out), night ambient 4 nits (~2 EV under mid grey on stone); 1 nit rejected (LT-1).

@@ -62,7 +62,7 @@ precipitation, stars, moon phases on the disk, surface wetness.
   stay physical and the camera stops opening. The game sets the floor
   (Bevyrrowind: `LightCalibration::exposure_floor_ev100`, 3.5, so lights
   read at most 2^3.5 = 11x their calibration) and pays for night
-  readability with a brighter night ambient floor (`ambient` curve, 0.4
+  readability with a brighter night ambient floor (`ambient` curve, 4
   nits below -12°) instead of a wide-open camera, as games do (an
   exaggerated moon/sky light at a clamped exposure). Interiors keep EV100
   7 on the schedule; under viewer auto exposure they meter at or above
