@@ -125,8 +125,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - [~] 2.1 Player character: third-person controller + camera (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`),
   activation with a "press to use" prompt. `sf_action` A1 done 2026-10-21 (commands, RON move rules, two-stage buffer,
-  chooser, jump buffer/coyote/landing, use prompt, net-ready state); next `sf_camera`, then `sf_controller` launch +
-  serde, then A2 (`sf_action_bevy`, fixed tick, app wiring).
+  chooser, jump buffer/coyote/landing, use prompt, net-ready state); `sf_camera` rig math done (orbit spring, push-in,
+  lock-on, first-person limits, shake); next `sf_controller` launch + serde, then A2 (`sf_action_bevy`, fixed tick, app
+  wiring) and D1 (`sf_camera_bevy`).
 - [ ] 2.2 UI: widget kit + Morrowind theme (M5 U3), HUD + message box (U4), inventory on minimal `sf_rpg` stacks
   (U5), settings/options + keybinds (U6). `sf_ui`, `sf_ui_bevy`, `sf_ui_css` exist (U1, U2 confirmed).
 - [ ] 2.3 Text: fonts, books and scrolls, notifications.
@@ -177,6 +178,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (action-a1): `sf_camera` rig math, Bevy-free (orbit + critically damped pivot, sphere-cast push-in, lock-on
+  hysteresis/LOS, first-person limits, trauma shake; 16 tests); action.md split (30.5 KB + archive); dolly rejected.
 - 2026-10-21 (renderfix1): night ambient 1 → 4 nits (LT-1 awaiting owner); FG-1 repro + `--off foghistory`: not the
   froxel history, diagnosis open.
 - 2026-10-21 (action-a1): `sf_action` A1, Bevy-free: input sampler + command feed, RON move rules with load errors,
