@@ -1445,3 +1445,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   shared, `CharacterRpg` (loadout) per player; `PlayerId` (0-3) lives in `sf_rpg` until `sf_net` (N2) or a shared id crate.
 - 2026-10-21 (rpg-adapter.md): Morrowind.esm has no quest-name/finished flags (Tribunal and Bloodmoon add them): without
   the expansions the journal is a flat dated log. No `@topic#` markers in Morrowind.esm dialogue text.
+- 2026-10-21 (audio-pass; audio.md): the sound pass stays on bevy_audio (rodio). Distance curves are ours
+  (`sf_audio::Attenuation`); rodio's 1/d² is neutralised by per-voice `SpatialScale(1/max_m)`, so rodio only pans. Cues =
+  sound groups; music = mood-tag playlists, equal-power crossfade. kira 0.27 / seedling (once on Bevy 0.20) = effects path.

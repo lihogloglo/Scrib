@@ -1,19 +1,21 @@
 [package]
 name = "sf_audio_bevy"
-description = "Thin Bevy plugin for sf_audio: plays WeatherSound loops (faded) and thunder, and region one-shot ambience, through bevy_audio on the mixer buses (audio.md)"
+description = "Thin Bevy plugin for sf_audio: weather loops, cue one-shots (2D and positional), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Thin (ARCHITECTURE section 8b rule 6): the math is Bevy-free (sf_audio). Codecs (wav, mp3) are
-# Bevy features the app turns on.
+# Thin (ARCHITECTURE section 8b rule 6): the logic is Bevy-free (sf_audio). Codecs (wav, mp3) are
+# Bevy features the app turns on. bevy_math/bevy_transform are already in bevy_audio's graph.
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
 bevy_asset.workspace = true
 bevy_audio.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_log.workspace = true
+bevy_math.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_audio.workspace = true
 sf_records.workspace = true
 sf_weather.workspace = true

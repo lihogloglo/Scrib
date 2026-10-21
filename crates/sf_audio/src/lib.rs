@@ -1,12 +1,27 @@
-//! Bevy-free audio core (audio.md): buses, fades, one-shot draws, the sound bank.
-//! Playing is `sf_audio_bevy`'s; the math lives here so it is tested without a device.
+//! Bevy-free audio core (audio.md): buses, fades, attenuation, sound groups (cues), the music
+//! player, footstep mapping, ambience layers and one-shot draws. Playing is `sf_audio_bevy`'s;
+//! the logic lives here so it is tested without a device.
 
 use std::collections::HashMap;
 
 use sf_records::RecordId;
 
+mod ambience;
+mod attenuation;
+mod footsteps;
+mod group;
+mod music;
+mod rng;
+
+pub use ambience::{AmbienceLayers, LoopChange, Space, reconcile_loops};
+pub use attenuation::{Attenuation, Rolloff};
+pub use footsteps::{Foot, FootstepMap, StrideTimer};
+pub use group::{Cue, CueBank, SoundGroup, Variant};
+pub use music::{MUSIC_FADE_S, MusicCommand, MusicPlayer, MusicVoiceId};
+pub use rng::Rng;
+
 /// Mixer buses (audio.md "Model"). `Master` scales all the others.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Bus {
     Master,
     Ambience,
@@ -14,10 +29,14 @@ pub enum Bus {
     Sfx,
     Music,
     Ui,
+    /// Speech (dialogue, greetings, combat barks).
+    Voice,
 }
 
 impl Bus {
-    pub const ALL: [Bus; 6] = [Bus::Master, Bus::Ambience, Bus::Weather, Bus::Sfx, Bus::Music, Bus::Ui];
+    pub const COUNT: usize = 7;
+    pub const ALL: [Bus; Self::COUNT] =
+        [Bus::Master, Bus::Ambience, Bus::Weather, Bus::Sfx, Bus::Music, Bus::Ui, Bus::Voice];
     const fn index(self) -> usize {
         self as usize
     }
@@ -26,8 +45,8 @@ impl Bus {
 /// Linear bus volumes and mutes, and the listener's outdoor exposure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mixer {
-    volume: [f32; 6],
-    muted: [bool; 6],
+    volume: [f32; Bus::COUNT],
+    muted: [bool; Bus::COUNT],
     /// 1 under the open sky, 0 indoors: scales the outdoor buses (the interior
     /// snapshot, audio.md "Snapshots"). The host eases it.
     pub outdoor: f32,
@@ -35,7 +54,7 @@ pub struct Mixer {
 
 impl Default for Mixer {
     fn default() -> Self {
-        Self { volume: [1.0; 6], muted: [false; 6], outdoor: 1.0 }
+        Self { volume: [1.0; Bus::COUNT], muted: [false; Bus::COUNT], outdoor: 1.0 }
     }
 }
 
@@ -43,8 +62,14 @@ impl Mixer {
     pub fn set_volume(&mut self, bus: Bus, volume: f32) {
         self.volume[bus.index()] = volume.max(0.0);
     }
+    pub fn volume(&self, bus: Bus) -> f32 {
+        self.volume[bus.index()]
+    }
     pub fn set_muted(&mut self, bus: Bus, muted: bool) {
         self.muted[bus.index()] = muted;
+    }
+    pub fn is_muted(&self, bus: Bus) -> bool {
+        self.muted[bus.index()]
     }
     /// Buses heard only outdoors: the weather (rain, wind, thunder). Region ambience is drawn
     /// only outdoors instead (`sf_audio_bevy`), so the Ambience bus stays free for interiors.
@@ -79,6 +104,12 @@ pub fn fade_toward(level: f32, target: f32, dt: f32, fade_s: f32) -> f32 {
     if target >= level { (level + step).min(target) } else { (level - step).max(target) }
 }
 
+/// Equal-power fade law: maps a linear fade position (0..1) to a gain whose square sums to 1
+/// across a crossfade (`sin(x * pi/2)`), so tonal material (music) does not dip mid-fade.
+pub fn equal_power(level: f32) -> f32 {
+    (level.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2).sin()
+}
+
 /// A sound file a bank entry resolves to: asset path in the VFS and the sound's own volume (0..1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundFile {
@@ -100,36 +131,20 @@ impl SoundBank {
 /// (a scatterer: audio.md "One-shots"). Deterministic from its seed.
 #[derive(Clone, Debug)]
 pub struct OneShotScheduler {
-    rng: u64,
+    rng: Rng,
     wait_s: Option<f32>,
 }
 
 impl OneShotScheduler {
     pub fn new(seed: u64) -> Self {
-        Self { rng: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1, wait_s: None }
-    }
-
-    fn next_unit(&mut self) -> f32 {
-        // xorshift64*: top 24 bits as a float in [0, 1).
-        self.rng ^= self.rng >> 12;
-        self.rng ^= self.rng << 25;
-        self.rng ^= self.rng >> 27;
-        let v = (self.rng.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) as u32;
-        #[expect(clippy::cast_precision_loss, reason = "24 bits")]
-        let f = v as f32 / 16_777_216.0;
-        f
+        Self { rng: Rng::new(seed), wait_s: None }
     }
 
     /// Advances by `dt` seconds; returns the index of the drawn choice when a draw is due and
     /// lands on one. `choices` hold chances per draw; sums above 1 are normalized (no silence),
     /// sums below 1 leave the rest as silence.
     pub fn tick(&mut self, dt: f32, interval_s: [f32; 2], choices: &[f32]) -> Option<usize> {
-        let wait = if let Some(w) = self.wait_s {
-            w
-        } else {
-            let (lo, hi) = (interval_s[0].min(interval_s[1]).max(0.0), interval_s[0].max(interval_s[1]).max(0.0));
-            lo + (hi - lo) * self.next_unit()
-        };
+        let wait = self.wait_s.unwrap_or_else(|| self.rng.range(interval_s[0].max(0.0), interval_s[1].max(0.0)));
         let wait = wait - dt;
         if wait > 0.0 {
             self.wait_s = Some(wait);
@@ -138,7 +153,7 @@ impl OneShotScheduler {
         self.wait_s = None;
         let total: f32 = choices.iter().map(|c| c.max(0.0)).sum();
         let norm = total.max(1.0);
-        let mut r = self.next_unit();
+        let mut r = self.rng.unit();
         for (i, c) in choices.iter().enumerate() {
             let p = c.max(0.0) / norm;
             if r < p {

@@ -97,3 +97,97 @@ fn indoors_eases_the_weather_bus_out_and_back() {
     app.update();
     assert!((gain(&app) - 1.0).abs() < 1e-6);
 }
+
+fn cue_events(app: &mut App) -> Vec<RecordId> {
+    events(app)
+        .into_iter()
+        .filter_map(|e| if let AudioEvent::Cue { sound, .. } = e { Some(sound) } else { None })
+        .collect()
+}
+
+fn play(app: &mut App, cue: &str, at: SoundAt) {
+    app.world_mut().write_message(PlaySound { cue: id(cue), at });
+}
+
+#[test]
+fn cues_pick_variants_cap_instances_and_cull_by_distance() {
+    let mut app = app();
+    let mut group = sf_audio::SoundGroup::of([id("rain"), id("storm")]);
+    group.attenuation = Some(Attenuation::new(1.0, 10.0));
+    group.max_instances = 2;
+    app.world_mut().resource_mut::<AudioCues>().0.insert(id("step"), group);
+    app.world_mut().spawn((SpatialListener::new(0.2), GlobalTransform::default()));
+    // Three plays in a frame: the cap of two holds, and variants do not repeat.
+    for _ in 0..3 {
+        play(&mut app, "step", SoundAt::Point(Vec3::new(2.0, 0.0, 0.0)));
+    }
+    app.update();
+    let played = cue_events(&mut app);
+    assert_eq!(played.len(), 2, "{played:?}");
+    assert_ne!(played[0], played[1]);
+    // Beyond max distance nothing starts (cue cap aside: a new cue id, the plain bank sound).
+    play(&mut app, "thunder", SoundAt::Point(Vec3::new(500.0, 0.0, 0.0)));
+    app.update();
+    assert!(cue_events(&mut app).is_empty());
+    // 2D cues ignore distance.
+    play(&mut app, "thunder", SoundAt::Listener);
+    app.update();
+    assert_eq!(cue_events(&mut app), vec![id("thunder")]);
+}
+
+#[test]
+fn voice_gain_follows_the_distance_curve() {
+    let mixer = Mixer::default();
+    let v = Voice { sound: id("x"), bus: Bus::Sfx, base: 0.5, level: 1.0, target: 1.0, looping: false };
+    let s = SpatialVoice(Attenuation { min_m: 1.0, max_m: 11.0, rolloff: sf_audio::Rolloff::Linear });
+    let ear = Some(Vec3::ZERO);
+    assert!((voice_gain(&mixer, &v, None, ear) - 0.5).abs() < 1e-6);
+    assert!((voice_gain(&mixer, &v, Some((&s, Vec3::new(6.0, 0.0, 0.0))), ear) - 0.25).abs() < 1e-6);
+    assert!(voice_gain(&mixer, &v, Some((&s, Vec3::new(0.0, 0.0, 20.0))), ear).abs() < 1e-6);
+    // No listener yet: unattenuated.
+    assert!((voice_gain(&mixer, &v, Some((&s, Vec3::new(6.0, 0.0, 0.0))), None) - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn ambience_beds_follow_layers_and_the_door() {
+    let mut app = app();
+    app.world_mut().resource_mut::<AmbienceLoops>().0.set_layer(
+        "cell",
+        vec![(id("rain"), 1.0, sf_audio::Space::Outdoor), (id("storm"), 0.5, sf_audio::Space::Indoor)],
+    );
+    app.update();
+    assert_eq!(events(&mut app), vec![AudioEvent::LoopStart { sound: id("rain"), target: 1.0 }]);
+    for _ in 0..4 {
+        app.update();
+    }
+    assert!((level(&mut app, "rain").unwrap() - 1.0).abs() < 1e-5);
+    // Go inside: the outdoor bed fades out and the indoor bed fades in.
+    app.insert_resource(ListenerOutdoors(false));
+    app.update();
+    let ev = events(&mut app);
+    for _ in 0..7 {
+        app.update();
+    }
+    assert!(ev.contains(&AudioEvent::LoopStop { sound: id("rain") }), "{ev:?}");
+    assert!(ev.contains(&AudioEvent::LoopStart { sound: id("storm"), target: 0.5 }), "{ev:?}");
+    assert_eq!(level(&mut app, "rain"), None);
+    assert!((level(&mut app, "storm").unwrap() - 0.5).abs() < 1e-5);
+}
+
+#[test]
+fn music_requests_start_tracks() {
+    let mut app = app();
+    {
+        let mut music = app.world_mut().resource_mut::<Music>();
+        music.0.set_playlist("explore", vec!["Music/a.mp3".into()]);
+        music.0.request(Some("explore"));
+    }
+    app.update();
+    assert!(events(&mut app).contains(&AudioEvent::MusicStart { path: "Music/a.mp3".into() }));
+    assert_eq!(app.world_mut().query::<&MusicVoice>().iter(app.world()).count(), 1);
+    app.world_mut().resource_mut::<Music>().0.request(None);
+    for _ in 0..8 {
+        app.update();
+    }
+    assert_eq!(app.world_mut().query::<&MusicVoice>().iter(app.world()).count(), 0);
+}
