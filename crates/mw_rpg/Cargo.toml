@@ -1,0 +1,24 @@
+[package]
+name = "mw_rpg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Morrowind RPG adapter: DIAL/INFO filtering, topic linking, journal, inventory and quest rules"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+sf_records.workspace = true
+sf_rpg.workspace = true
+mw_records.workspace = true
+
+[dev-dependencies]
+mw_install.workspace = true
+mw_vfs.workspace = true
+postcard.workspace = true
+sf_vfs.workspace = true
+
+[lints]
+workspace = true

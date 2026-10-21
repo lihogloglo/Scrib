@@ -1,9 +1,10 @@
 # Morrowind RPG adapter (`mw_rpg`)
 
-Status: **spec** (rpg-core slice 1, 2026-10-21); implementation is slice 2. Framework spec:
-`../superfargoth/docs/specs/rpg.md` (`sf_rpg`). Roadmap: Phase 2.4. Behaviour reference: OpenMW
-(GPL, fine in this repo) and UESP's Morrowind modding pages; "verify" marks behaviour still to
-check against OpenMW or the original.
+Status: **implemented** (rpg-core slice 2, 2026-10-21) except result scripts (W3, see "As
+built"). Framework spec: `../superfargoth/docs/specs/rpg.md` (`sf_rpg`). Roadmap: Phase 2.4.
+Behaviour reference: OpenMW (GPL, fine in this repo) and UESP's Morrowind modding pages. The
+"verify" marks below are resolved in "OpenMW findings" at the end; where they disagree, the
+findings (and the code) win.
 
 ## Goal
 
@@ -157,3 +158,74 @@ choices offered → choose 2 without the ring → response 3 → give the player
 Filters read the context player (`ctx.player`): `Item`, PC functions, player faction. Quest,
 journal, topics and dispositions are world state; inventories per character. One conversation
 per NPC (`Conversations` claim).
+
+## OpenMW findings (checked 2026-10-21, OpenMW master)
+
+- **Topic links** (`mwdialogue/keywordsearch.cpp`): case-insensitive; a match must **start**
+  after a separator (text start, space, tab, newline, `'`, `"`, `(`, `[`), has **no end check**
+  ("ring" links in "rings", "ring's", not in "bring"); overlaps resolve longest-first. We use
+  `LinkRules { word_start: true, word_end: false }`; differences: our start boundary is any
+  non-alphanumeric (so "x.ring" links for us, not in OpenMW) and overlaps resolve leftmost-longest.
+  OpenMW scans the raw text (before macros); we link the rendered text.
+- **Learning linked topics** (`DialogueManager::addTopicsFromText`): the search set is all
+  topics, but a topic is learned only if the **speaker answers it** (a passing INFO, Info
+  Refusal fallback included), when the line is shown (after its result script). The host
+  filters `DialogueOutput::Learned` with `MwDialogueRules::speaker_answers`. The window only
+  hyperlinks known topics.
+- **Repeated `Journal`** (`Journal::addEntry`): no new entry if the journal already has that
+  quest's INFO at that index; the stage only **rises** through `Journal` (a lower index is
+  ignored). An index with no INFO just raises the stage, silently. `SetJournalIndex` sets
+  (up or down) without an entry. `QSTF` sets finished, `QSTR` clears it (OpenMW also reopens
+  other finished quests with the same `QSTN` name: not done, M7).
+- **INFO order** (`InfoOrder::insertInfo`): only `PNAM` counts (NNAM ignored): empty → front,
+  found → right after it, missing → end; a redefinition with the same `PNAM` stays in place,
+  otherwise moves. Deleted INFOs keep their chain slot until all plugins load.
+- **Filters** (`mwdialogue/filter.cpp`): the INFO cell (`ANAM`) is the **player's** cell,
+  case-insensitive prefix; `NotCell` is the speaker's cell, prefix. `Not*` kinds ignore the
+  comparison and value. `Local` fails without the script or variable; `NotLocal` passes then.
+  A missing global makes the filter pass. Creatures pass race/class/faction/rank, but fail
+  INFOs with no speaker id, and skip the disposition check. Player rank without `DNAM` uses
+  the speaker's faction. `Choice` is -1 when no choice is pending.
+- **Info Refusal**: when no INFO passes but one failed only on disposition, the first passing
+  `Info Refusal` response shows; **not for greetings**. The topic list uses the same search
+  (disposition included, refusal counts as an answer). Greetings: `Greeting 0..9` by id order.
+- **Macros** (`fixDefinesDialog`): `%` or `^`; `PCName PCRace PCClass PCRank NextPCRank
+  PCNextRank Name Race Class Rank Faction Cell PCCrimeLevel` (case-insensitive prefix), then
+  globals (longest id prefix; shorts/longs as integers, floats as C++ `<<`, 6 significant
+  digits). Unknown macros stay. `Action*` key-binding macros are not done (UI work).
+- **Equipping** (`ActionEquip`, `Clothing::getEquipmentSlots`): rings go left first, then
+  right; both full → the left ring comes off, right moves left, new goes right. Two-handers
+  use the weapon slot only; the shield stays equipped (hidden while the weapon is drawn).
+  Ammunition and thrown weapons equip whole stacks.
+
+## As built (slice 2)
+
+- `MwDialogue::from_records(&RecordDb)`: `DialogueDb` (kinds as above, greetings, linker),
+  `MwJournalDb` (quest → `QSTN` name + index → text/flags), and the INFO records keyed by
+  `response_id(topic, info)` (the `mw_records` key). INFO order: OpenMW's insert rule over the
+  merged records in first-definition order (an override that moves an INFO is placed at its
+  first definition's turn; deleted INFOs are gone from the merged db, so a later INFO whose
+  `PNAM` names one lands at the end). `from_topics` builds from ordered lists (tests).
+- `MwDialogueRules::new(&MwDialogue, &dyn MwView)`: `accepts`/`render`/`fallback` (sf_rpg
+  hook added for Info Refusal), `speaker_answers`, `expand` (macros for journal text),
+  `neutral_functions` (filter functions evaluated as 0 because the view returned `None`; the
+  host logs them). `MwView` is the host's read access: speaker/player `ActorFacts`
+  (`ActorFacts::from_npc` resolves names from records), player faction rank, globals, speaker
+  locals, quest stage, item count, dead count, derived disposition, rank names, functions.
+- `MwDialogue::journal_command` / `set_journal_index`: the rules above as `RpgCommand`s.
+- `NpcStates`: per-`ActorKey` disposition modifier (serde, world state).
+- `MwEquipRules` (+ `slot_table`, `MwSlot`, `MwEquipKind`): kinds from ARMO/CLOT/WEAP/LIGH
+  (carryable)/LOCK/PROB; `MwEquipRules::equip(&mut Loadout, stack)` applies the ring rule
+  (`EquipRules::placement` alone uses the first candidate slot).
+- **Result scripts**: `ResultRunner::run(ResultCall) -> Vec<ResultEffect>` is the seam; the
+  host applies effects (`Journal` through `journal_command`, items as `sf_rpg` commands with
+  `Target` → `Holder`, `Choices`/`Goodbye` on the session, dispositions in `NpcStates`, locals
+  in the script runtime). `tests/fargoth.rs` has a test double that parses Fargoth's calls.
+- **W3 must provide** (Luau runtime in `sf_script`, one runtime per DECISIONS 2026-10-13): a
+  `ResultRunner` that runs the W1 translation of `script_text` as the speaker with context
+  player `ctx.player`; an `mw` library mapping `Journal`, `SetJournalIndex`/`GetJournalIndex`,
+  `AddTopic`, `AddItem`/`RemoveItem`/`GetItemCount` (with `->` targets), `Choice`, `Goodbye`,
+  `ModDisposition`/`SetDisposition`, locals (`set x to`) and stubs (`ModPCFacRep`,
+  `PCRaiseRank`, `ModReputation`, ...) to `ResultEffect`s; reads through the same view data
+  (quest stage, item counts, globals); speaker-local storage that `MwView::local` reads
+  (declared locals from the script's header, default 0).

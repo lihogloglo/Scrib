@@ -69,6 +69,8 @@ fastrand = "2.5"
 glam = "0.33"
 # Pathgrid graphs and A* (same version Bevy already pulls in).
 petgraph = { version = "0.8.3", default-features = false, features = ["std"] }
+# Save/wire format round-trip tests (same spec as superfargoth's).
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 # Same version as superfargoth's sf_bake (one copy in the tree).
 rayon = "1.12"
 # Graph assets (same version as superfargoth's sf_anim_graph).
@@ -88,6 +90,7 @@ mw_physics = { path = "crates/mw_physics" }
 mw_install = { path = "crates/mw_install" }
 mw_mods = { path = "crates/mw_mods" }
 mw_records = { path = "crates/mw_records" }
+mw_rpg = { path = "crates/mw_rpg" }
 mw_script = { path = "crates/mw_script" }
 mw_water = { path = "crates/mw_water" }
 mw_weather = { path = "crates/mw_weather" }

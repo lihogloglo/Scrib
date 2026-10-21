@@ -133,7 +133,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [ ] 2.3 Text: fonts, books and scrolls, notifications.
 - [~] 2.4 Dialogue + journal + minimal quest store (`specs/rpg.md`, `rpg-adapter.md`; `sf_rpg`, `mw_rpg`), MWScript legacy runtime for the slice (M5 W3;
   MWScript → Luau translation exists, W1/W2). `sf_rpg` core done (2026-10-21: response DB + session, stacks/loadout,
-  quests/journal/topics, topic linker); next `mw_rpg` + Fargoth headless test.
+  quests/journal/topics, topic linker). `mw_rpg` done 2026-10-21 (INFO order, filters with OpenMW semantics, macros,
+  journal, equip slots): Fargoth's ring headless test passes on real data + save round trip. Next: W3 Luau result
+  runner (`ResultRunner`), a game `MwView` (stats table until M7), dialogue UI (2.2) and app wiring.
 - [ ] 2.5 Saves (M7 subset): world overlay + player; net-ready per `specs/net.md`.
 - [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
   (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
@@ -180,6 +182,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (rpg-core): `mw_rpg`: Morrowind dialogue on `sf_rpg` (OpenMW-order INFO filters, macros, journal, equip);
+  Fargoth's ring flow passes headless on the real ESMs (12 + 1 tests); result scripts behind `ResultRunner`.
 - 2026-10-21 (audio-pass): Morrowind sound in game: `mw_audio` (SOUN/SNDG cues, GMST ranges, music playlists), load-door
   sounds, light/activator loop emitters, stride footsteps, explore music; audio tests no longer build the renderer.
 - 2026-10-21 (action-a1): `sf_camera` rig math, Bevy-free (orbit + critically damped pivot, sphere-cast push-in, lock-on
