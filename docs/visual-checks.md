@@ -192,9 +192,13 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   watch the shadow of a walking NPC.
 - Seen by owner 2026-10-21 (bw-owner10, SH-17/18 pass): NPC shadows move in coarse steps, so the shadow animation
   looks choppy while the NPC itself is smooth.
-- Suspects: the lamp cube cache (B3 per-face cache / skip-unchanged) refreshing skinned casters too rarely, or the
-  animation budget. Tell sun from lamp shadows first; A/B `--off shadowcache`.
-- Status: known bug, diagnosis lane `charshadows` (ROADMAP 1.12).
+- Cause (charshadows 2026-10-21, confirmed in code, not yet at runtime): lamp shadows only. Shadow reset B3's skip
+  rule in vendored `bevy_pbr` light.rs hashes a skinned caster by its root on a ≥ 20 cm grid (joints ignored) and
+  refreshes ≤ 2 faces/frame, so a walker's lamp shadow redraws ~5-8 Hz and an idler's never animates. Not the cube
+  cache (`POINT_SHADOW_CACHE` off since B3, so `--off shadowcache` is a no-op) nor the anim budget.
+- Fix parked, unbuilt: `superfargoth/vendor/parked/SH-20-*.diff` (redraw a face when its casters move/deform,
+  outside the budget; `--off movershadows`). Needs build, A/B, perf (census, balmora_walk_night ≤ 11 ms).
+- Status: known bug, on the rendering-bugs list (ROADMAP 1.12).
 
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
@@ -621,7 +625,14 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
   and `jagged.mp4`. Static, so an agent can repro by screenshot.
 - Suspects: clustered light assignment (Bevy cluster z-slices / limits, far-plane or range cull), shadowed-lamp budget
   (High = 8) chosen by view, light frustum culling vs range sphere, far light sprites.
-- Status: known bug, diagnosis lane `lightclusters` (ROADMAP 1.12).
+- Owner A/B 2026-10-21 (release, same spot): blocks appear ONLY with F4 = DLSS quality; F4 = taa (native) is clean.
+  Trigger is DLSS upscaling: lead is the cluster grid sized for one resolution and indexed at the other.
+- Cause (lightclusters 2026-10-21, confirmed by source + release A/B shots `shots/lightclusters/`): Bevy 0.20 bug.
+  `clustered_forward.wesl` `view_fragment_cluster_index` multiplies a render-res `frag_coord` by `cluster_factors`
+  sized for the output viewport, so under `MainPassResolutionOverride` (DLSS) pixels read the grid's top-left part.
+- Fix parked, unbuilt: `superfargoth/vendor/parked/LT-4-cluster-main-pass-viewport.diff` (rescale by
+  `viewport / main_pass_viewport`, exactly 1.0 without DLSS). File an upstream Bevy issue.
+- Status: known bug, on the rendering-bugs list (ROADMAP 1.12).
 
 ### LT-3: Point-light shadows, torch-bearers (`scene lt-torch-shadows`; stage: `character "imperial guard" --night`)
 - Kind: game location + game models.
@@ -843,7 +854,11 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Seen by owner 2026-10-21 (bw-owner10, AU-2 and PA-4): smoke sometimes goes missing in front of the sky and/or does
   not hide the objects behind it properly. Render order (translucent sort vs sky/clouds/fog passes), Phase 1. Not the
   GPU particle path itself (PA-4 confirmed). ROADMAP 1.12 calls it "RO-8" (render-order.md RO-8 is a different, fixed item).
-- Status: known bug, diagnosis lane `smokeorder` (ROADMAP 1.12).
+- Ruled out (smokeorder 2026-10-21, by code): sky, stars, cloud/fog composite all draw before the transparent pass.
+  Open: H1 particles sort by emitter origin (no bounds, `NoFrustumCulling`), so smoke metres up sorts as the flame
+  (RO-10); H2 particles always lit (`particles.wesl` ignores unlit): dark smoke on dark sky; H3 TAA, no smoke MVs.
+- Status: known bug, awaiting diagnosis; next: one A/B run at an exterior fire against the sky (F4 off, `--off
+  skymotion`, `--off transfog`), hours 12 and 21.5 (`.sessions/smokeorder.md`).
 
 ### LM-2: Leaf side findings (from LM-1, renderfix1)
 - With `--off leafmask`, blended leaves vanish entirely at ~100 m+, so the A/B no longer shows "blended as before".
