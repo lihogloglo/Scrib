@@ -174,7 +174,7 @@ Built so far (M0): `sf_vfs`, `sf_records`, `sf_mods`.
 | `sf_character` | Character assembly from parts (body, head, hair, equipment slots), skeleton retargeting, first and third person. |
 | `sf_controller` | Player and NPC locomotion on physics: kinematic controller, swimming, climbing hooks. |
 | `sf_interaction` | Activation, grab/carry/throw (Oblivion-style), doors, containers. |
-| `sf_rpg` | *Generic* RPG primitives: attributes, effects, inventory, dialogue graph, quests, journal, factions. The **rules** (formulas, leveling, combat math) are supplied by the content pack as a rules plugin, never hardcoded. |
+| `sf_rpg` | *Generic* RPG primitives: attributes, effects, inventory, dialogue (condition-filtered response database + session state, not a graph; `specs/rpg.md`), quests, journal, factions. The **rules** (formulas, leveling, combat math) are supplied by the content pack as a rules plugin, never hardcoded. |
 | `sf_ai` | Navmesh generation per streamed tile, behavior layer (schedules and packages), perception. |
 | `sf_ui` | Game UI (spec `ui.md`): bevy_ui + headless `bevy_ui_widgets` with our styled widget kit, CommonUI-style layers and input routing, MVVM view-models, two themes and two layout presets, CSS styling via `bevy_flair` layered by mod load order, extension slots, settings registry; HUD, menus, dialogue, journal, all scriptable. Feathers for dev tools only. Crates: `sf_ui` (Bevy-free), `sf_ui_bevy`, `sf_ui_css`, `sf_ui_screens`, `sf_ui_lua`, `sf_devui`. |
 
@@ -347,7 +347,7 @@ come from the adapter.
 | `mw_assets` | NIF → Bevy scene loader: geometry, materials, skinning, controllers (keyframe/vis/UV/alpha), particles, billboards, switch nodes, collision. DDS/TGA. |
 | `mw_world` | `WorldSource` impl over the loaded records; coordinate mapper (Z-up, ~1.42 cm per unit); LAND → terrain tiles; LTEX → terrain layers and grass rules; doors → transitions. |
 | `mw_rules` | Morrowind formulas: combat, magic, skills, leveling, persuasion, as a rules plugin for `sf_rpg`. |
-| `mw_dialogue` | INFO filtering semantics (OpenMW reuse allowed here). |
+| `mw_rpg` | DIAL/INFO filtering semantics, topic links, journal, equipment rules (`rpg-adapter.md`; OpenMW reuse allowed here). |
 | `mw_script` | MWScript compiler → Luau + `mw` compatibility library. |
 | `mw_openmw_lua` | OpenMW-Lua API compatibility (later). |
 | `mw_weather` | Morrowind weather presets (ash storm, blight, snow) as `sf_sky` data. |

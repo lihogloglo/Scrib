@@ -1438,3 +1438,10 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (shadowB2): lamp (point/spot) shadows filter with 2x2 hardware PCF while the sun keeps the preset's
   filter (own `bevy_pbr` hunk, camera marker `PointSpotShadowsHardware2x2`; -0.1 ms GPU per shadowed lamp at 1440p);
   pending the owner's look (SH-19, `--off lampfilter` reverts). Own Bevy hunks live beside the PR diff, marked `own`.
+- 2026-10-21 (rpg-core; rpg.md): dialogue is a condition-filtered response database (first response the adapter's
+  `DialogueRules` accepts, in adapter priority order) + a serde session state machine, not a graph (ARCH §5.3 updated).
+  Yarn Spinner, bevy_talks, Ink rejected (graph model, Bevy-coupled). Topic links: aho-corasick, boundaries before longest.
+- 2026-10-21 (rpg-core): RPG state changes only via `RpgCommand` → `RpgEvent`s; `WorldRpg` (quests, journal, topics) is
+  shared, `CharacterRpg` (loadout) per player; `PlayerId` (0-3) lives in `sf_rpg` until `sf_net` (N2) or a shared id crate.
+- 2026-10-21 (rpg-adapter.md): Morrowind.esm has no quest-name/finished flags (Tribunal and Bloodmoon add them): without
+  the expansions the journal is a flat dated log. No `@topic#` markers in Morrowind.esm dialogue text.

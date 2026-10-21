@@ -71,6 +71,8 @@ notify-debouncer-full = "0.7"
 # Same version bevy_gltf 0.20 uses. No "import" feature: we never decode images here.
 gltf = { version = "1.4", default-features = false, features = ["utils", "names", "KHR_materials_unlit"] }
 glam = "0.33"
+# Dialogue topic hyperlinks (sf_rpg, rpg.md "Topic links"); already in the lock through regex.
+aho-corasick = "1.1"
 indexmap = "2"
 log = "0.4"
 lz4_flex = "0.14"
@@ -144,6 +146,7 @@ sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
 sf_ui_bevy = { path = "crates/sf_ui_bevy" }
 sf_ui_css = { path = "crates/sf_ui_css" }
+sf_rpg = { path = "crates/sf_rpg" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
 # "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.
