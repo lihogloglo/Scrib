@@ -146,6 +146,7 @@ sf_script_bevy = { path = "crates/sf_script_bevy" }
 sf_ui = { path = "crates/sf_ui" }
 sf_ui_bevy = { path = "crates/sf_ui_bevy" }
 sf_ui_css = { path = "crates/sf_ui_css" }
+sf_action = { path = "crates/sf_action" }
 sf_rpg = { path = "crates/sf_rpg" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,

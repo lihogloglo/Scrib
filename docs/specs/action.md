@@ -1,6 +1,7 @@
 # Action layer: moves, move rules, chooser, input, co-op readiness
 
-Status: **draft, awaiting owner review (R11b, 2026-10-19).** Nothing built.
+Status: **draft, awaiting owner review (R11b, 2026-10-19).** Slice A1 built 2026-10-21 (`sf_action`,
+see "As built (A1)" at the end, which wins where it differs from the design text above).
 Crates: `sf_action` (Bevy-free core, new), `sf_action_bevy` (thin plugin, new).
 Sources: the animation study `../research/animation/` (notes R1-R10, cited "R3 §7"), and its decision
 list in `11-tradeoffs.md` "Decisions (owner brainstorm, 2026-10-19)", which this spec implements,
@@ -156,7 +157,7 @@ One RON record per move, of record kind `MoveRule` (patchable like other records
     ),
     validate: [EndPoseFree, PathOverTop, HandsOnLip],
     windows: Category,                   // category defaults, moveset sheet overrides
-    exits: [(on: End, to: Loco), (on: Tail(Move), to: Loco), (on: Tail(Jump), to: "air.jump")],
+    exits: [(on: End, to: Loco), (on: Tail(Move), to: Loco), (on: Tail(Jump), to: Rule("air.jump"))],
     exit_velocity: KeepPlanar(0.6),
     redo_ticks: 12,
     look: (yaw: 70.0, pitch: (-45.0, 35.0), ease: 0.15),        // first-person limits around entry yaw
@@ -532,3 +533,61 @@ Movement networking and root motion source docs (to be re-checked by R12).
 3. **First-person stealth takedown stays in first person**, framed by look limits; no camera cut.
 
 Not a question any more: movers on the fixed tick (R12 rule 1, required; phase A2).
+
+## As built (A1, 2026-10-21)
+
+`crates/sf_action` (Bevy-free; deps `sf_controller`, glam, serde, ron, thiserror). Public API:
+`Command` / `InputSampler` / `CommandFeed`; `MoveRule` → `RuleSetBuilder` → `RuleSet`;
+`SlotSource` / `SlotTable` / `Window`; `ActionState`; `step(&StepCtx, &mut ActionState,
+&Command, &Sense, &mut ActionOutput)`; `BASE_RULES` (framework rules: `loco`, `air.fall`,
+`air.jump`, `land.normal`, `land.hard`, `interact.use`). Tests: `src/tests.rs`.
+
+Reuse: no crate covers a gameplay input buffer or move chooser (`leafwing-input-manager` and
+`bevy_enhanced_input` map devices to actions; ggrs/lightyear buffer netcode inputs). The A2
+shell feeds `InputSampler` from `bevy_enhanced_input` actions.
+
+Changes against the design above:
+- **`step` decides, the shell moves.** Chooser step 9 is not inside `step`: it emits the Sim
+  owner's `LocomotionIntent` plus `launch` (vertical m/s) in `ActionOutput`, and the shell runs
+  one batched `KinematicMover::step_batch` for all characters (the mover batches probes across
+  characters). The mover result is next tick's `Sense` (grounded, vertical and planar speed,
+  yaw, interaction focus). `step` mutates state in place; same inputs, same bytes.
+- **Windows come through `SlotSource`** (slot length + typed windows on the action clock), so
+  A1 needs neither `sf_anim` nor `sf_anim_graph`; B1 implements it over `animgraph.compile`.
+  A slot chain plays each finite slot then the next; a looping or unknown slot holds it; an
+  empty chain is an instant move. Rule field `windows: Category | Unrestricted | Committed` sets
+  the policy when the slot authors no windows (A1 defaults: Landing, Jump, Locomotion,
+  Passover unrestricted; the rest committed until E1 adds combat defaults).
+- **Integer clocks.** `ClockTime` is thousandths of a tick (1 s = 60 000); the clock rate is
+  per mille (hit-stop). Ids on the wire are FNV-1a 32 keys of the content ids (`RuleKey`,
+  `SlotKey`, `TagId`, collisions are load errors).
+- **Requests wait for windows, not predicates.** A latched request that could fire now but that
+  no rule takes is dropped, with the refusal logged ("keep it latched" above made a refused
+  Interact or Jump fire seconds later). Traversal's "can't" feedback hangs off the refusal (B2).
+- **Jump buffer and coyote are ticks stored as ticks:** a Jump pressed in the air up to
+  `jump_buffer_ticks` (6) before the landing tick fires on it, in the settle round after the
+  forced landing; a Jump on the first `coyote_ticks` (6) airborne ticks after walking off an
+  edge is a ground jump (`Phase::Coyote`). A committed (hard) landing lets the buffer lapse,
+  but a press during it latches and fires on its end tick.
+- **Vocabulary in A1:** entry `classes, need_forward (60° cone), modes, states (Grounded,
+  Coyote, AirRising, AirFalling, Landed), speed, vspeed (the impact speed on the Landed tick),
+  auto_in, focus`; exits `End, Touchdown, Airborne` to `Loco` or `Rule(id)`; `launch:
+  JumpHeight | Speed(v)`; `steer` (false stops a Sim move); `redo_ticks`. Validators, probes,
+  targets, plans and the other owners arrive with B1-B3. Unknown fields are load errors.
+- **Candidates:** forced (framework category, no classes) always; requested when a latched
+  class is in `cancel`; automatic (no classes) when the current move is over (ended, exited,
+  or an automatic move whose own entry stopped holding) or `cancel(Move)` is open with the
+  stick active. The current move restarts only once it is over. Mod rules in `Forced`,
+  `Landing` or `AirCatch` are load errors; a later rule with the same id replaces the earlier
+  (field-level patches come from `sf_records` once the shell registers `MoveRule` as a kind).
+- **"Press to use" hook:** the shell passes `Sense.focus` (target id + tag) from its view cone;
+  `ActionOutput.prompt` names the rule a press would start and whether it's accepted now;
+  `interact.use` (instant, `focus: Some([])`) emits `EventKind::Activate(tag)` with the target,
+  a host-validated request in co-op. C1's warped interactions are more `focus` rules.
+- **Net:** `Command`, `ActionState`, `ActionEvent` are serde (postcard round-trip tested; a
+  state snapshot is < 64 bytes). `CommandFeed` orders and de-duplicates a player's commands on
+  the host and repeats stick, view and held buttons (no new presses) for 6 missing ticks.
+
+Found for A2 (in `sf_controller`, not changed here): the mover has no launch, so a rising
+body re-snaps to the ground within `step_up` (needs a `launch` that skips the ground cast
+while rising), and `Locomotion` is not serde yet (net rule 3).

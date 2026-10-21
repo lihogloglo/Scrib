@@ -1448,3 +1448,8 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (audio-pass; audio.md): the sound pass stays on bevy_audio (rodio). Distance curves are ours
   (`sf_audio::Attenuation`); rodio's 1/d² is neutralised by per-voice `SpatialScale(1/max_m)`, so rodio only pans. Cues =
   sound groups; music = mood-tag playlists, equal-power crossfade. kira 0.27 / seedling (once on Bevy 0.20) = effects path.
+- 2026-10-21 (action-a1; action.md "As built (A1)"): `step()` decides, the shell moves (one batched mover after all steps);
+  windows via a `SlotSource` trait (no anim deps until B1); buffered requests wait for windows, not predicates (refused
+  ones drop); ids on the wire are FNV-1a keys of content ids. Lock-on target lives in `sf_action`, framing in `sf_camera`.
+- 2026-10-21 (orchestrator): `PlayerId` is defined twice (`sf_action`, `sf_rpg`); unify into one tiny Bevy-free id crate
+  before either crate is wired into the app (follow-up, owner of the merge: action-a1 lane).

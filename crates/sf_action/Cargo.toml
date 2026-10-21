@@ -1,0 +1,25 @@
+[package]
+name = "sf_action"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free action layer: commands, move rules, chooser, input buffer, net-ready state"
+
+# Slice A1 (docs/specs/action.md): kept shallow on purpose. `sf_controller` supplies the Sim
+# owner's `LocomotionIntent`/`Gait` vocabulary. Slot lengths and windows come in through the
+# `SlotSource` trait, so `sf_anim_graph` joins only when B1 compiles windows from clips; the
+# `MoveRule` type is plain serde, so the shell registers it as an `sf_records` kind without a
+# dependency here.
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+ron.workspace = true
+serde.workspace = true
+sf_controller.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true
