@@ -157,8 +157,18 @@ pub enum MoverMode {
     Swim { surface: f32 },
 }
 
-/// A character's controller state (saved).
-#[derive(Clone, Debug, PartialEq)]
+/// Serde for `sf_anim`'s [`RootDelta`] (a remote derive: `sf_anim` stays serde-free there).
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "RootDelta")]
+struct RootDeltaDef {
+    translation: Vec3,
+    yaw: f32,
+    tilt: Vec2,
+}
+
+/// A character's controller state (saved, and the co-op snapshot: plain serde data, net
+/// rule 3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Locomotion {
     /// Feet: the bottom center of the capsule, exactly on the ground.
     pub position: WorldPos,
@@ -173,6 +183,7 @@ pub struct Locomotion {
     pub height_offset_velocity: f32,
     /// How the drawn root moved in the last step, in its frame before the
     /// step: the graph's `UpdateInputs::moved`.
+    #[serde(with = "RootDeltaDef")]
     pub moved: RootDelta,
     pub mode: MoverMode,
     /// The drawn root's attitude `(pitch, roll)` in its heading frame,
@@ -233,6 +244,19 @@ impl Locomotion {
 
     pub fn params(&self) -> LocomotionParams {
         LocomotionParams::of(self)
+    }
+
+    /// Launches the body at `speed` m/s upward (a jump, a knock-up), applied before the
+    /// next mover step: `sf_action`'s `ActionOutput::launch` maps onto it one to one. The
+    /// character leaves the ground at once and flies a ballistic arc: while it rises
+    /// nothing snaps it back (Unity KCC's `ForceUnground`, UE `LaunchCharacter` into
+    /// falling mode, Rapier's snap-to-ground only when not moving up); a ceiling stops the
+    /// head and the upward speed; ground probing lands it on the way down. Horizontal
+    /// motion stays with the springs (air control is the intent's business). Ground mode
+    /// only: flying and swimming have no vertical speed (their intent's Y moves them).
+    pub fn launch(&mut self, speed: f32) {
+        self.vertical_speed = speed;
+        self.grounded = None;
     }
 }
 
@@ -504,6 +528,35 @@ fn fall(loco: &Locomotion, params: &MoverParams, dt: f32) -> (f32, f32) {
     (-(loco.vertical_speed + v1) * 0.5 * dt, v1)
 }
 
+/// One step of a launched body that starts it rising ([`Locomotion::launch`]): gravity
+/// integrates the vertical speed, a ceiling sweep stops the head (and the upward speed),
+/// and the ground under the slid position (`hit`, from the step's own ground cast) only
+/// keeps the feet out of it, e.g. a ledge entered on the way up; nothing snaps, and the
+/// body lands only if it reaches that ground once its speed has turned downward (the
+/// step past the apex). Returns the new feet.
+fn rise_ballistic(loco: &mut Locomotion, params: &MoverParams, feet: WorldPos, hit: Option<GroundHit>, probe: &dyn GroundProbe, dt: f32) -> WorldPos {
+    let (drop, mut v1) = fall(loco, params, dt);
+    let mut dy = -drop;
+    if dy > 0.0
+        && let Some(h) = params.sweep(feet, Vec3::Y * dy).and_then(|q| probe.probe_one(q))
+    {
+        dy = (h.distance - params.skin).clamp(0.0, dy);
+        v1 = v1.min(0.0);
+    }
+    loco.grounded = None;
+    if let Some(h) = hit
+        && dy <= rise(params, &h)
+    {
+        dy = rise(params, &h);
+        if v1 <= 0.0 {
+            loco.grounded = Some(h);
+            v1 = 0.0;
+        }
+    }
+    loco.vertical_speed = v1;
+    feet.offset(Vec3::Y * dy)
+}
+
 /// The downward cast at the slid position, or `None` when a grounded
 /// character stands still (its ground can't have moved: R0 statics never
 /// unload under a character).
@@ -543,7 +596,11 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
     let mut d = p.d;
     let mut deflected = p.deflected;
     let mut feet = p.start.offset(d);
-    if let Cast::Done(mut hit) = cast {
+    if loco.grounded.is_none() && loco.vertical_speed > 0.0 {
+        // Launched and still rising: ballistic, never snapped to the ground.
+        let hit = if let Cast::Done(hit) = cast { hit } else { None };
+        feet = rise_ballistic(loco, params, feet, hit, probe, dt);
+    } else if let Cast::Done(mut hit) = cast {
         let mut blocked = false;
         if loco.grounded.is_some()
             && let Some(h) = hit.filter(|h| climbs(h, d))

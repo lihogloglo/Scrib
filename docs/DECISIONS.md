@@ -1471,3 +1471,8 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (renderfix1, bevyrrowind LM-1): a blended texture is a cutout if mostly solid (soft ≤ ¼ of visible) or a
   sparse atlas (≥ 10 % holes, soft ≤ 1.25× solid), measured on vanilla (`mw_bake/examples/foliage_report`). Still
   classified at load time; later move it into the texture bake with coverage-preserving mips.
+- 2026-10-21 (action-a1, locomotion.md "Launch"): jumps go through `Locomotion::launch(v)`; while airborne and rising
+  the mover never snaps to the ground (as Rapier, UE `LaunchCharacter`, Unity KCC), with a ceiling sweep; no unground
+  timer. `ActionOutput.launch` maps to it one to one. `Locomotion` is serde.
+- 2026-10-21 (action-a1): `PlayerId` + `MAX_PLAYERS` live in the serde-only `sf_ids` crate (resolves the duplicate);
+  `sf_rpg` and `sf_action` re-export it; `sf_net` (N2) will re-export it rather than own it.

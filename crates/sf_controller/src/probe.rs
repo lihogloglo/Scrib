@@ -52,7 +52,7 @@ impl ProbeQuery {
 }
 
 /// The first contact of a cast.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GroundHit {
     /// Contact point on the surface.
     pub point: WorldPos,

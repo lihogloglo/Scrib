@@ -5832,6 +5832,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_action"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "postcard",
+ "ron",
+ "serde",
+ "sf_controller",
+ "sf_coords",
+ "sf_ids",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sf_anim"
 version = "0.1.0"
 dependencies = [
@@ -5937,10 +5951,11 @@ dependencies = [
  "bevy_audio",
  "bevy_ecs",
  "bevy_log",
+ "bevy_math",
  "bevy_time",
+ "bevy_transform",
  "sf_audio",
  "sf_records",
- "sf_weather",
  "sf_weather_bevy",
 ]
 
@@ -5955,6 +5970,17 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_camera"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+ "sf_anim",
+ "sf_controller",
+ "sf_coords",
 ]
 
 [[package]]
@@ -6079,6 +6105,14 @@ dependencies = [
  "serde_json",
  "sf_diag",
  "tempfile",
+]
+
+[[package]]
+name = "sf_ids"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
 ]
 
 [[package]]
@@ -6311,6 +6345,20 @@ dependencies = [
  "bevy_math",
  "bevy_render",
  "bevy_shader",
+]
+
+[[package]]
+name = "sf_rpg"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "indexmap",
+ "postcard",
+ "serde",
+ "sf_ids",
+ "sf_records",
+ "smallvec",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6769,6 +6817,9 @@ name = "smallvec"
 version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smithay-client-toolkit"

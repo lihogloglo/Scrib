@@ -13,6 +13,8 @@ serde.workspace = true
 smallvec = { workspace = true, features = ["serde"] }
 thiserror.workspace = true
 sf_records.workspace = true
+# `PlayerId` (re-exported from `ids`).
+sf_ids.workspace = true
 
 [dev-dependencies]
 postcard.workspace = true

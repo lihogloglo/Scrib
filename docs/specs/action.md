@@ -418,6 +418,7 @@ Changes against the design above:
   state snapshot is < 64 bytes). `CommandFeed` orders and de-duplicates a player's commands on
   the host and repeats stick, view and held buttons (no new presses) for 6 missing ticks.
 
-Found for A2 (in `sf_controller`, not changed here): the mover has no launch, so a rising
-body re-snaps to the ground within `step_up` (needs a `launch` that skips the ground cast
-while rising), and `Locomotion` is not serde yet (net rule 3).
+A2 prerequisites, fixed 2026-10-21 (slice 3): the shell maps `ActionOutput::launch` to
+`Locomotion::launch(v)` before the batched mover step (no snap while rising, see locomotion.md
+"Launch"); `Locomotion` is serde (postcard round-trip tested); `PlayerId` comes from the new
+serde-only `sf_ids` crate, shared with `sf_rpg` (validated 0-3, rejected on deserialize).

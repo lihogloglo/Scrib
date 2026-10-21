@@ -16,10 +16,14 @@ glam = { workspace = true, features = ["serde"] }
 ron.workspace = true
 serde.workspace = true
 sf_controller.workspace = true
+# `PlayerId` (shared with `sf_rpg`).
+sf_ids.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 postcard.workspace = true
+# `WorldPos` for the real-mover jump test.
+sf_coords.workspace = true
 
 [lints]
 workspace = true

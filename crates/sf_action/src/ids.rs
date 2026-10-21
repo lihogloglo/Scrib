@@ -21,9 +21,9 @@ impl Tick {
     }
 }
 
-/// A person in the session: 0-3, assigned by the host at join (net.md "Players").
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct PlayerId(pub u8);
+/// A person in the session: 0-3, assigned by the host at join (net.md "Players"); shared
+/// with `sf_rpg`, validated on deserialize.
+pub use sf_ids::PlayerId;
 
 /// A character's stable id (spawn id, placement id or player character), never a Bevy `Entity`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

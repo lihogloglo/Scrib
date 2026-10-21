@@ -698,6 +698,18 @@ profile × stat band, action.md). Air control steers and brakes but never exceed
 horizontal speed (R5 adopt 9). Landing classes by fall speed (normal, roll, hard, lethal) are action
 rules. Coyote time and jump buffer are action-layer timers in ticks.
 
+**Launch** (as built 2026-10-21). `Locomotion::launch(speed)` sets the vertical speed and clears
+`grounded`; `sf_action`'s `ActionOutput::launch` maps onto it one to one. While an airborne body
+rises (`vertical_speed > 0`) the mover never snaps it to the ground (`rise_ballistic` in
+`mover.rs`): gravity integrates exactly, a capsule sweep up stops the head and zeroes the upward
+speed, and ground the step's own cast finds above the feet only keeps them out of it (a ledge met on
+the way up). It lands through the normal airborne cast once descending. This is the common
+controller rule: Rapier snaps to ground only when not moving up, UE `LaunchCharacter` enters
+falling mode, Unity KCC `ForceUnground`. No time window is needed because snapping only runs while
+`grounded` is set. Tests in `src/tests/launch.rs` cover the arc, apex and air time, a running jump,
+a head bump, and a jump onto a 0.8 m box. `Locomotion` (with `GroundHit`, and `RootDelta` through a
+remote derive) is serde data and round-trips through postcard.
+
 **Momentum mover mode** (R1 adopt 9; the player in the FreeRun profile). A ground mode beside the
 springs: speed builds up toward sprint along a curve instead of a spring, momentum carries through
 landings and vaults (each rule's exit velocity), the turn rate falls with speed (view-turn damping),

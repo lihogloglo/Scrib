@@ -466,8 +466,8 @@ fn a_press_and_release_between_ticks_still_counts() {
     let mut s = InputSampler::new();
     s.press(ActionClass::Jump);
     s.release(ActionClass::Jump);
-    let c = s.sample(Tick(1), Some(PlayerId(1)));
-    assert!(c.pressed(ActionClass::Jump) && !c.held(ActionClass::Jump) && c.player == Some(PlayerId(1)));
+    let c = s.sample(Tick(1), PlayerId::new(1));
+    assert!(c.pressed(ActionClass::Jump) && !c.held(ActionClass::Jump) && c.player == PlayerId::new(1));
     assert!(!s.sample(Tick(2), None).pressed(ActionClass::Jump), "consumed by the first tick");
 }
 
@@ -519,7 +519,7 @@ fn identical_outcomes_at_30_60_144_fps() {
 #[test]
 fn command_feed_orders_dedupes_and_repeats_then_goes_empty() {
     let mut feed = CommandFeed::new();
-    let mut c = Command { player: Some(PlayerId(2)), stick: Vec2::new(0.0, 1.0), ..cmd_press(ActionClass::Guard) };
+    let mut c = Command { player: PlayerId::new(2), stick: Vec2::new(0.0, 1.0), ..cmd_press(ActionClass::Guard) };
     c.tick = Tick(11);
     let mut c10 = c;
     c10.tick = Tick(10);
@@ -535,7 +535,7 @@ fn command_feed_orders_dedupes_and_repeats_then_goes_empty() {
         assert!(r.held(ActionClass::Guard) && !r.pressed(ActionClass::Guard), "held stays, no new presses");
     }
     let r = feed.take(Tick(18));
-    assert_eq!((r.stick, r.buttons, r.player), (Vec2::ZERO, ButtonEdges::default(), Some(PlayerId(2))));
+    assert_eq!((r.stick, r.buttons, r.player), (Vec2::ZERO, ButtonEdges::default(), PlayerId::new(2)));
 }
 
 // ---- Net readiness: serde, determinism -------------------------------------------------
@@ -549,7 +549,7 @@ fn state_command_and_events_round_trip_through_postcard() {
     let bytes = postcard::to_allocvec(&sim.state).unwrap();
     assert!(bytes.len() < 64, "snapshot stays small: {} bytes", bytes.len());
     assert_eq!(postcard::from_bytes::<ActionState>(&bytes).unwrap(), sim.state);
-    let cmd = Command { tick: Tick(5), player: Some(PlayerId(3)), stick: Vec2::new(0.5, -0.5), lock_request: LockRequest::Next(LockSide::Right), ..cmd_press(ActionClass::Up) };
+    let cmd = Command { tick: Tick(5), player: PlayerId::new(3), stick: Vec2::new(0.5, -0.5), lock_request: LockRequest::Next(LockSide::Right), ..cmd_press(ActionClass::Up) };
     assert_eq!(postcard::from_bytes::<Command>(&postcard::to_allocvec(&cmd).unwrap()).unwrap(), cmd);
     let ev = sim.out.events.clone();
     assert_eq!(postcard::from_bytes::<Vec<ActionEvent>>(&postcard::to_allocvec(&ev).unwrap()).unwrap(), ev);
@@ -583,4 +583,47 @@ fn rule_keys_are_stable_fnv1a() {
     assert_eq!(fnv1a32(b""), 0x811c_9dc5);
     assert_eq!(fnv1a32(b"a"), 0xe40c_292c);
     assert_eq!(ClockTime::from_secs(0.4), ClockTime::from_ticks(24));
+}
+
+/// Flat ground at y = 0 for the real mover.
+struct FlatGround;
+
+impl sf_controller::HeightSurface for FlatGround {
+    fn height(&self, _p: sf_coords::WorldPos) -> Option<f32> {
+        Some(0.0)
+    }
+    fn normal(&self, _p: sf_coords::WorldPos) -> Option<Vec3> {
+        Some(Vec3::Y)
+    }
+    fn raycast(&self, origin: sf_coords::WorldPos, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
+        let t = -sf_coords::WorldPos::ORIGIN.delta_f32(origin).y / dir.y;
+        (dir.y.abs() > 1e-6 && (0.0..=max).contains(&t)).then_some((t, Vec3::Y))
+    }
+}
+
+#[test]
+fn a_jump_launch_flies_the_real_mover_to_its_apex() {
+    use sf_controller::{KinematicMover, Locomotion, MoveInput, MoverParams, RootMotion, TerrainProbe};
+    let mut sim = Sim::base(Body::at(0.0));
+    sim.idle();
+    let out = sim.press(ActionClass::Jump).clone();
+    let (probe, params) = (TerrainProbe(FlatGround), MoverParams::default());
+    let mut loco = Locomotion::new(sf_coords::WorldPos::ORIGIN, 0.0);
+    let mut mover = KinematicMover::new();
+    let mut step = |loco: &mut Locomotion| mover.step(MoveInput { loco, intent: out.intent, params: &params, root: RootMotion::default() }, &probe, DT);
+    step(&mut loco);
+    assert!(loco.grounded.is_some());
+    // The shell's whole mapping of `ActionOutput::launch`.
+    loco.launch(out.launch.expect("launch"));
+    let (mut apex, mut ticks) = (0.0f32, 0);
+    while ticks < 120 {
+        step(&mut loco);
+        ticks += 1;
+        apex = apex.max(sf_coords::WorldPos::ORIGIN.delta_f32(loco.position).y);
+        if loco.grounded.is_some() {
+            break;
+        }
+    }
+    // Jump by height: the base rule asks for a 1 m apex.
+    assert!((apex - 1.0).abs() < 0.02 && loco.grounded.is_some() && ticks > 50, "apex {apex} after {ticks} ticks");
 }

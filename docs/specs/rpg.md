@@ -236,8 +236,8 @@ topics are ASCII; revisit for localised packs).
 1, 4: no clock or RNG inside `sf_rpg`; `GameTime` comes from the caller. 2, 5: commands and
 host-applied requests only. 3: plain serde data, no presentation. 6: `PlayerId` in every context;
 no singleton player. 7: `ActorKey`, `StackId`, `RecordId`, never `Entity`. 8: `RpgEvent` is data.
-`PlayerId` lives here until a shared low-level crate (`sf_net`, N2) exists; it then moves there
-and `sf_rpg` re-exports it.
+`PlayerId` lives in the serde-only `sf_ids` crate (2026-10-21); `sf_rpg` and `sf_action` re-export
+it, and `sf_net` (N2) will re-export it rather than own it.
 
 ## Tests
 
@@ -248,6 +248,5 @@ greeting order/first-match/choice re-ask/goodbye/claim, postcard round-trips of 
 
 ## Open questions
 
-1. Where `PlayerId` finally lives (`sf_net` at N2 or a tiny `sf_ids` crate now if `sf_action` A2
-   needs it first).
+1. (Resolved 2026-10-21: `PlayerId` lives in `sf_ids`.)
 2. Journal text snapshot vs re-render on display for localisation (snapshot kept as fallback).

@@ -984,6 +984,27 @@ fn mover_shapes_come_from_rig_profiles() {
     assert_eq!(MoverParams::from_profile(&none), MoverParams::default());
 }
 
+#[test]
+fn locomotion_round_trips_through_postcard() {
+    // Net rule 3: the controller state is plain serde data (saves, co-op snapshots).
+    let world = World::new();
+    let params = MoverParams::default();
+    let mut loco = Locomotion::new(p(0.5, 0.0, -2.0), 0.3);
+    walk(&world, &mut loco, toward(Vec3::new(1.0, 0.0, 3.0)), &params, 20, |_| {});
+    loco.launch(2.0);
+    loco.attitude = glam::Vec2::new(0.1, -0.2);
+    loco.deflect = Vec3::X;
+    loco.slide = Vec3::new(0.0, 0.0, 0.5);
+    assert!(loco.moved != RootDelta::ZERO && loco.trajectory[4].offset != Vec3::ZERO);
+    let grounded = Locomotion { grounded: Some(GroundHit { point: p(1.0, 0.0, 2.0), normal: Vec3::Y, distance: 0.45, surface: SurfaceId(3) }), ..loco.clone() };
+    for (i, mode) in [MoverMode::Ground, MoverMode::Fly { hover: Some(0.5) }, MoverMode::Swim { surface: 1.25 }].into_iter().enumerate() {
+        let l = Locomotion { mode, ..if i == 0 { grounded.clone() } else { loco.clone() } };
+        let bytes = postcard::to_allocvec(&l).unwrap();
+        assert_eq!(postcard::from_bytes::<Locomotion>(&bytes).unwrap(), l);
+    }
+}
+
 mod context;
 
 mod avoid;
+mod launch;
