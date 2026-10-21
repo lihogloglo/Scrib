@@ -13,7 +13,7 @@ use bevy_app::{App, Plugin};
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
     prelude::Entity,
-    query::{Has, With},
+    query::{Has, With, Without},
     resource::Resource,
     schedule::IntoScheduleConfigs as _,
     system::{Query, Res, ResMut, StaticSystemParam},
@@ -47,7 +47,7 @@ use crate::{
     },
     renderer::{RenderAdapter, RenderAdapterInfo, RenderDevice, RenderQueue},
     sync_world::{MainEntity, MainEntityHashMap},
-    view::{ExtractedView, NoIndirectDrawing, RetainedViewEntity},
+    view::{ExtractedView, NoIndirectDrawing, RetainedViewEntity, SkipRootViewRendering},
     GpuResourceAppExt, Render, RenderApp, RenderDebugFlags, RenderSystems,
 };
 
@@ -2086,7 +2086,8 @@ pub fn batch_and_prepare_binned_render_phase<BPI, GFBD>(
             Has<NoIndirectDrawing>,
             Has<OcclusionCulling>,
         ),
-        With<ExtractedView>,
+        // superfargoth patch (own: skip view preprocessing)
+        (With<ExtractedView>, Without<SkipRootViewRendering>),
     >,
     param: StaticSystemParam<GFBD::Param>,
 ) where
@@ -2838,7 +2839,8 @@ pub fn write_batched_instance_buffers<GFBD>(
 /// The bin data consists of the IDs of the mesh instances, as well as the
 /// metadata needed for the `unpack_bins` shader to unpack them.
 pub fn write_binned_instance_buffers<BPI, GFBD>(
-    mut views: Query<&ExtractedView>,
+    // superfargoth patch (own: skip view preprocessing)
+    mut views: Query<(&ExtractedView, Has<SkipRootViewRendering>)>,
     mut view_binned_render_phases: ResMut<ViewBinnedRenderPhases<BPI>>,
     bin_unpacking_buffers: ResMut<SceneUnpackingBuffers>,
     render_device: Res<RenderDevice>,
@@ -2855,8 +2857,11 @@ pub fn write_binned_instance_buffers<BPI, GFBD>(
     // delete buffers corresponding to views that went away.
     let mut all_seen_view_entities = HashSet::new();
 
-    for extracted_view in &mut views {
+    for (extracted_view, skip_view_rendering) in &mut views {
         all_seen_view_entities.insert(extracted_view.retained_view_entity);
+        if skip_view_rendering {
+            continue;
+        }
 
         let Some(view_binned_render_phase) =
             view_binned_render_phases.get_mut(&extracted_view.retained_view_entity)

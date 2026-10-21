@@ -53,7 +53,10 @@ use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
 pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
-pub use shadow_budget::{importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin, ShadowSlot, ShadowTwin};
+pub use shadow_budget::{
+    importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin,
+    ShadowSlot,
+};
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;
 

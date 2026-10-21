@@ -151,13 +151,7 @@ struct CameraWindows(EntityHashSet);
 pub struct RootNonCameraView(#[reflect(ignore)] pub InternedScheduleLabel);
 
 // superfargoth patch (#26161)
-/// A render-world marker for a [`RootNonCameraView`] whose output from the last
-/// frame is still valid, so its schedule doesn't need to run this frame.
-///
-/// For example, a point or spot light shadow map whose light and shadow casters
-/// haven't changed.
-#[derive(Clone, Copy, Component, Debug, Default)]
-pub struct SkipRootViewRendering;
+pub use bevy_render::view::SkipRootViewRendering;
 
 /// The default entry point for camera driven rendering added to the root [`bevy_render::renderer::RenderGraph`]
 /// schedule. This system iterates over all cameras in the world, executing their associated

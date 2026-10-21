@@ -1,7 +1,7 @@
 use core::{any::TypeId, mem};
 
 use bevy_ecs::{
-    change_detection::Tick,
+    change_detection::{DetectChanges, Tick},
     component::Component,
     entity::Entity,
     prelude::ReflectComponent,
@@ -352,6 +352,24 @@ pub fn collect_visible_cpu_culled_entities(
         mut maybe_render_shadow_map_visible_entities_cpu_culling,
     ) in lights.iter_mut()
     {
+        // superfargoth patch (own: skip unchanged shadow visibility diff):
+        // When `extract_lights` didn't re-extract this light's visible entities,
+        // the CPU-culled entity list is identical to last frame; just clear
+        // `added_entities` and `removed_entities` in O(1).
+        let extracted_changed = maybe_render_shadow_map_visible_entities_cpu_culling
+            .as_ref()
+            .is_some_and(DetectChanges::is_changed);
+        if !extracted_changed {
+            for (_, render_visible_entities) in
+                render_shadow_map_visible_entities.subviews.values_mut()
+            {
+                for entities in render_visible_entities.classes.values_mut() {
+                    entities.prepare_for_new_frame();
+                }
+            }
+            continue;
+        }
+
         for (subview, (_, render_visible_entities)) in
             render_shadow_map_visible_entities.subviews.iter_mut()
         {

@@ -64,8 +64,8 @@ use bevy_render::{
     renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
     settings::WgpuFeatures,
     view::{
-        ExtractedView, NoIndirectDrawing, RenderVisibilityRanges, RetainedViewEntity, ViewUniform,
-        ViewUniformOffset, ViewUniforms,
+        ExtractedView, NoIndirectDrawing, RenderVisibilityRanges, RetainedViewEntity,
+        SkipRootViewRendering, ViewUniform, ViewUniformOffset, ViewUniforms,
     },
     GpuResourceAppExt, Render, RenderApp, RenderSystems,
 };
@@ -2218,7 +2218,8 @@ impl UniformAllocationPipelines {
 )]
 pub fn prepare_preprocess_bind_groups(
     mut commands: Commands,
-    views: Query<(Entity, &ExtractedView)>,
+    // superfargoth patch (own: skip view preprocessing)
+    views: Query<(Entity, &ExtractedView), Without<SkipRootViewRendering>>,
     view_depth_pyramids: Query<(&ViewDepthPyramid, &PreviousViewUniformOffset)>,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,

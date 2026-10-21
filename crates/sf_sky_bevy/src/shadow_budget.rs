@@ -10,33 +10,30 @@
 //! strength, so this module:
 //!
 //! - ranks the lights marked [`BudgetedShadow`] by [`importance`] at the
-//!   viewer (spec `docs/specs/shadows.md`, "Light selection"), lights out
-//!   of view included, with hysteresis, and lets at most
-//!   [`PointShadowBudget::max`] hold a shadow map at once;
-//! - fades a shadow in and out (distance band and over time) by splitting
-//!   the light: the shadowed light carries `fade` of its power and an
-//!   unshadowed twin the rest, `I (1 - s + s v) = s I v + (1 - s) I`. The
-//!   twin exists only for budgeted lights and is hidden outside a fade.
-//!
-//! Game code keeps writing the full intensity in `Update`: the split is
-//! applied in `PostUpdate` and undone in `First`.
+//!   viewer (spec `docs/specs/shadows.md`, "Light selection"), with
+//!   forward-hemisphere weighting outside a light's range and hysteresis,
+//!   and lets at most [`PointShadowBudget::max`] hold a shadow map at once;
+//! - fades a shadow in and out (distance band and over time) natively in the
+//!   PBR fragment shader via [`PointLightShadowFade`] (`mix(1.0, shadow, fade)`),
+//!   without mutating [`PointLight::intensity`] or spawning duplicate light
+//!   entities.
 //!
 //! Also works around a Bevy 0.20 leak (shadows.md "Stale cube-face views"):
 //! `drop_stale_light_views` despawns the six face views of a light that
 //! lost its shadow, which Bevy's `prepare_lights` keeps alive.
 
-use bevy_app::{App, First, Plugin, PostUpdate};
+use bevy_app::{App, Plugin, PostUpdate};
 use bevy_camera::visibility::{InheritedVisibility, Visibility, VisibilitySystems};
 use bevy_camera::{Camera, Camera3d, RenderTarget};
 use bevy_ecs::prelude::*;
 use bevy_light::{PointLight, PointLightShadowMap};
-use bevy_pbr::{ExtractedPointLight, PointAndSpotLightViewEntities, prepare_lights};
+use bevy_pbr::{
+    ExtractedPointLight, PointAndSpotLightViewEntities, PointLightShadowFade, prepare_lights,
+};
 use bevy_render::{Render, RenderApp, RenderSystems};
 use bevy_time::Time;
 use bevy_transform::TransformSystems;
-use bevy_transform::components::{GlobalTransform, Transform};
-
-use crate::NoLightProxy;
+use bevy_transform::components::GlobalTransform;
 
 /// How many point lights cast shadows, and how they fade. A graphics
 /// setting: games map their quality presets onto it.
@@ -118,21 +115,13 @@ impl Default for BudgetedShadow {
 
 /// Budget state of a [`BudgetedShadow`] light, added when it first gets a
 /// shadow map.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Default)]
 pub struct ShadowSlot {
     /// Current shadow strength, 0..=1.
     pub fade: f32,
     /// Holds one of the budget's shadow maps (fading in, shown or fading out).
     pub held: bool,
-    /// The light's full intensity this frame (restored in `First`).
-    full: f32,
-    /// The unshadowed part of the light while it fades.
-    twin: Entity,
 }
-
-/// The unshadowed twin of a budgeted light (a child of it).
-#[derive(Component, Clone, Copy, Debug)]
-pub struct ShadowTwin;
 
 /// The point-shadow budget on its own (`SkyPlugin` adds it; viewers without
 /// a sky add it directly).
@@ -146,7 +135,6 @@ impl Plugin for PointShadowPlugin {
 
 fn add(app: &mut App) {
     app.init_resource::<PointShadowBudget>()
-        .add_systems(First, restore_split)
         .add_systems(
             PostUpdate,
             (sync_map_size, budget_shadows)
@@ -203,73 +191,137 @@ fn viewer(cameras: &Query<(&Camera, &GlobalTransform, Option<&RenderTarget>), Wi
         .map(|(_, t, _)| *t)
 }
 
-/// Picks the shadowed lights, advances their fades and splits them.
+/// Picks the shadowed lights and advances their native shader shadow fades.
 #[allow(clippy::type_complexity)]
 fn budget_shadows(
     mut commands: Commands,
     budget: Res<PointShadowBudget>,
     time: Res<Time>,
     cameras: Query<(&Camera, &GlobalTransform, Option<&RenderTarget>), With<Camera3d>>,
-    mut lights: Query<
-        (Entity, &mut PointLight, Option<&mut ShadowSlot>, &BudgetedShadow, &GlobalTransform, &Visibility, Option<&InheritedVisibility>),
-        Without<ShadowTwin>,
-    >,
-    mut twins: Query<(&mut PointLight, &mut Visibility), With<ShadowTwin>>,
+    mut lights: Query<(
+        Entity,
+        &mut PointLight,
+        Option<&mut ShadowSlot>,
+        Option<&mut PointLightShadowFade>,
+        &BudgetedShadow,
+        &GlobalTransform,
+        &Visibility,
+        Option<&InheritedVisibility>,
+    )>,
 ) {
-    let eye = viewer(&cameras).map(|t| t.translation());
-    // The best `max` candidates by importance: shown (in view or not, so
-    // turning the camera changes nothing), inside the fade band; slot
-    // holders rank better by 1 / hysteresis.
+    let viewer_tf = viewer(&cameras);
+    let eye = viewer_tf.map(|t| t.translation());
+    let view_forward = viewer_tf.map(|t| t.forward().as_vec3());
+
+    // The best `max` candidates by importance: shown, inside the fade band;
+    // slot holders rank better by 1 / hysteresis. Lights whose lit volume does
+    // not reach the viewer (`d > light.range`) are weighted by hemisphere
+    // alignment so lamps ahead of the player take priority over distant lamps
+    // behind the camera.
     let mut ranked: Vec<(f32, Entity)> = Vec::new();
-    if let Some(eye) = eye
+    if let (Some(eye), Some(forward)) = (eye, view_forward)
         && budget.max > 0
     {
-        for (entity, light, slot, prio, at, vis, inherited) in &lights {
+        for (entity, light, slot, _, prio, at, vis, inherited) in &lights {
             let shown = *vis != Visibility::Hidden && inherited.is_none_or(|v| v.get());
-            let d = at.translation().distance(eye);
+            let to_light = at.translation() - eye;
+            let d = to_light.length();
             if shown && d < budget.fade_end {
                 let held = slot.is_some_and(|s| s.held);
-                let score = importance(light.range, d, prio.priority);
-                ranked.push((if held { score / budget.hysteresis.max(1e-3) } else { score }, entity));
+                let view_weight = if d <= light.range || d <= 1e-3 {
+                    1.0
+                } else {
+                    let cos_theta = (to_light / d).dot(forward);
+                    0.625 + 0.375 * cos_theta
+                };
+                let score = importance(light.range, d, prio.priority) * view_weight;
+                ranked.push((
+                    if held {
+                        score / budget.hysteresis.max(1e-3)
+                    } else {
+                        score
+                    },
+                    entity,
+                ));
             }
         }
     }
     ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
     ranked.truncate(budget.max);
+
     let target_of = |entity: Entity, at: &GlobalTransform| match eye {
-        Some(eye) if ranked.iter().any(|r| r.1 == entity) => budget.distance_fade(at.translation().distance(eye)),
+        Some(eye) if ranked.iter().any(|r| r.1 == entity) => {
+            budget.distance_fade(at.translation().distance(eye))
+        }
         _ => 0.0,
     };
-    let mut held = lights.iter().filter(|l| l.2.as_ref().is_some_and(|s| s.held)).count();
-    let step = if budget.fade_time > 0.0 { time.delta_secs() / budget.fade_time } else { 1.0 };
-    for (entity, mut light, slot, _, at, _, _) in &mut lights {
+
+    let step = if budget.fade_time > 0.0 {
+        time.delta_secs() / budget.fade_time
+    } else {
+        1.0
+    };
+
+    // First pass: advance existing held slots and release any that have finished
+    // fading out, so newly ranked lights can claim freed slots in the same frame.
+    let mut held = 0usize;
+    for (entity, _, slot, _, _, at, _, _) in &mut lights {
+        let Some(mut slot) = slot else {
+            continue;
+        };
+        if !slot.held {
+            continue;
+        }
+        let target = target_of(entity, at);
+        let fade = if slot.fade < target {
+            (slot.fade + step).min(target)
+        } else {
+            (slot.fade - step).max(target)
+        };
+        slot.fade = fade;
+        if fade <= 0.0 && target <= 0.0 {
+            slot.held = false;
+        } else {
+            held += 1;
+        }
+    }
+
+    // Second pass: assign free slots to newly ranked lights and sync components.
+    // When `fade_time > 0.0`, stagger new slot acquisitions to at most 1 light per
+    // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
+    let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
+    let mut new_slots = 0usize;
+    for (entity, mut light, slot, shadow_fade, _, at, _, _) in &mut lights {
         let target = target_of(entity, at);
         let Some(mut slot) = slot else {
-            // First slot: the twin is spawned now, the fade starts next frame.
-            if target > 0.0 && held < budget.max {
+            if target > 0.0 && held < budget.max && new_slots < max_new_slots {
                 held += 1;
-                let twin = commands
-                    .spawn((PointLight { shadow_maps_enabled: false, contact_shadows_enabled: false, ..*light }, ShadowTwin, NoLightProxy, Transform::IDENTITY, Visibility::Hidden, ChildOf(entity)))
-                    .id();
-                commands.entity(entity).try_insert(ShadowSlot { fade: 0.0, held: true, full: light.intensity, twin });
+                new_slots += 1;
+                let fade = step.min(target);
+                let shadows = fade > 0.0;
+                if light.shadow_maps_enabled != shadows {
+                    light.shadow_maps_enabled = shadows;
+                }
+                let contact = shadows && budget.contact_shadows;
+                if light.contact_shadows_enabled != contact {
+                    light.contact_shadows_enabled = contact;
+                }
+                commands.entity(entity).try_insert((
+                    ShadowSlot { fade, held: true },
+                    PointLightShadowFade(fade),
+                ));
             }
             continue;
         };
-        // A light takes a slot only when one is free (a fading-out light
-        // keeps its map until it reaches 0): never more than `max` maps.
-        if !slot.held && target > 0.0 && held < budget.max {
+
+        if !slot.held && target > 0.0 && held < budget.max && new_slots < max_new_slots {
             slot.held = true;
             held += 1;
+            new_slots += 1;
+            slot.fade = (slot.fade + step).min(target);
         }
-        let goal = if slot.held { target } else { 0.0 };
-        let fade = if slot.fade < goal { (slot.fade + step).min(goal) } else { (slot.fade - step).max(goal) };
-        slot.fade = fade;
-        if slot.held && fade <= 0.0 && target <= 0.0 {
-            slot.held = false;
-            held -= 1;
-        }
-        let full = light.intensity;
-        slot.full = full;
+
+        let fade = slot.fade;
         let shadows = slot.held && fade > 0.0;
         if light.shadow_maps_enabled != shadows {
             light.shadow_maps_enabled = shadows;
@@ -278,25 +330,12 @@ fn budget_shadows(
         if light.contact_shadows_enabled != contact {
             light.contact_shadows_enabled = contact;
         }
-        let split = shadows && fade < 1.0;
-        if split {
-            light.intensity = full * fade;
-        }
-        if let Ok((mut twin, mut vis)) = twins.get_mut(slot.twin) {
-            vis.set_if_neq(if split { Visibility::Inherited } else { Visibility::Hidden });
-            if split {
-                *twin = PointLight { intensity: full * (1.0 - fade), shadow_maps_enabled: false, contact_shadows_enabled: false, ..*light };
+        if let Some(mut shadow_fade) = shadow_fade {
+            if (shadow_fade.0 - fade).abs() > 1e-5 {
+                shadow_fade.0 = fade;
             }
-        }
-    }
-}
-
-/// Gives the shadowed part of a split light back its full intensity, so
-/// game code in `Update` (flicker, budgets) sees what it wrote.
-fn restore_split(mut lights: Query<(&mut PointLight, &ShadowSlot), Without<ShadowTwin>>) {
-    for (mut light, slot) in &mut lights {
-        if light.shadow_maps_enabled && slot.fade < 1.0 {
-            light.intensity = slot.full;
+        } else {
+            commands.entity(entity).try_insert(PointLightShadowFade(fade));
         }
     }
 }

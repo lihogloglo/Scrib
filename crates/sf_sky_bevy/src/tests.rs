@@ -147,19 +147,15 @@ fn a_fading_shadow_splits_the_light_without_changing_its_power() {
     for _ in 0..3 {
         app.update();
     }
-    let (on, part) = shadowed(&app, lights[0]);
+    let (on, intensity) = shadowed(&app, lights[0]);
     let slot = *app.world().get::<ShadowSlot>(lights[0]).expect("slot");
+    let fade = app
+        .world()
+        .get::<bevy_pbr::PointLightShadowFade>(lights[0])
+        .expect("shadow fade");
     assert!(on && slot.held && slot.fade > 0.0 && slot.fade < 1.0);
-    let mut twins = app.world_mut().query_filtered::<(&bevy_light::PointLight, &bevy_camera::visibility::Visibility), With<ShadowTwin>>();
-    let rest: f32 = twins
-        .iter(app.world())
-        .filter(|(_, v)| **v != bevy_camera::visibility::Visibility::Hidden)
-        .map(|(l, _)| {
-            assert!(!l.shadow_maps_enabled);
-            l.intensity
-        })
-        .sum();
-    assert!((part + rest - 1000.0).abs() < 1e-2, "{part} + {rest}");
+    assert!((fade.0 - slot.fade).abs() < 1e-5);
+    assert!((intensity - 1000.0).abs() < 1e-2, "{intensity}");
     // Only one map at a time: the second light waits.
     assert!(!shadowed(&app, lights[1]).0);
 }

@@ -166,8 +166,11 @@ fn calculate_uv_offset_scale_jimenez_fourteen(texel_size: f32, blur_size: f32) -
     let shadow_map_size = vec2<f32>(textureDimensions(view_bindings::directional_shadow_textures));
 
     // Empirically chosen fudge factor to make PCF look better across different CSM cascades
-    let f = map(0.00390625, 0.022949219, 0.015, 0.035, texel_size);
-    return f * blur_size / (texel_size * shadow_map_size);
+    // superfargoth patch (own: world-space directional PCF/PCSS): clamp the world-space
+    // filter scale `f` so far cascades (large `texel_size`) don't extrapolate `map(...)`
+    // into a huge penumbra jump across cascade splits, while keeping >= 1.1 texels.
+    let f = clamp(map(0.00390625, 0.022949219, 0.015, 0.035, texel_size), 0.015, 0.045);
+    return max(f * blur_size, 1.1 * texel_size) / (texel_size * shadow_map_size);
 }
 
 fn sample_shadow_map_jimenez_fourteen(
@@ -222,7 +225,10 @@ fn search_for_blockers_in_shadow_map(
     search_size: f32,
 ) -> f32 {
     let shadow_map_size = vec2<f32>(textureDimensions(view_bindings::directional_shadow_textures));
-    let uv_offset_scale = search_size / (texel_size * shadow_map_size);
+    // superfargoth patch (own: world-space directional PCSS): bound the blocker search
+    // radius in world meters and cascade texels so large `soft_shadow_size` values don't
+    // sample unrelated blockers meters away.
+    let uv_offset_scale = min(search_size * 0.02, 6.0 * texel_size) / (texel_size * shadow_map_size);
 
     let offset0 = D3D_SAMPLE_POINT_POSITIONS[0] * uv_offset_scale;
     let offset1 = D3D_SAMPLE_POINT_POSITIONS[1] * uv_offset_scale;

@@ -51,8 +51,15 @@ fn fetch_point_shadow(
     // If soft shadows are enabled, use the PCSS path. Cubemaps assume a
     // left-handed coordinate space, so we have to flip the z-axis when
     // sampling.
+    // superfargoth patch (own: point shadow fade): `spot_light_tan_angle` carries
+    // `PointLightShadowFade` (0..=1) for point lights without growing `GpuClusteredLight`.
+    let shadow_fade = (*light).spot_light_tan_angle;
+    if (shadow_fade <= 0.0) {
+        return 1.0;
+    }
+    var shadow: f32;
     if ((*light).soft_shadow_size > 0.0) {
-        return sample_shadow_cubemap_pcss(
+        shadow = sample_shadow_cubemap_pcss(
             frag_ls * flip_z,
             distance_to_light,
             depth,
@@ -60,11 +67,12 @@ fn fetch_point_shadow(
             (*light).soft_shadow_size,
             frag_coord_xy,
         );
+    } else {
+        // Do the lookup, using HW PCF and comparison. Cubemaps assume a left-handed
+        // coordinate space, so we have to flip the z-axis when sampling.
+        shadow = sample_shadow_cubemap(frag_ls * flip_z, distance_to_light, depth, light_id, frag_coord_xy);
     }
-
-    // Do the lookup, using HW PCF and comparison. Cubemaps assume a left-handed
-    // coordinate space, so we have to flip the z-axis when sampling.
-    return sample_shadow_cubemap(frag_ls * flip_z, distance_to_light, depth, light_id, frag_coord_xy);
+    return mix(1.0, shadow, shadow_fade);
 }
 
 fn fetch_spot_shadow(

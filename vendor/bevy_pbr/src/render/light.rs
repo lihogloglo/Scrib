@@ -77,6 +77,20 @@ use decal::clustered::RenderClusteredDecals;
 use tracing::info_span;
 use tracing::{error, warn};
 
+/// Smooth shadow fade factor in `0.0..=1.0` for a [`PointLight`].
+///
+/// Used by shadow-budget systems to fade point-light shadows in and out in the
+/// fragment shader without spawning duplicate light entities.
+// superfargoth patch: native point-light shadow fade
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PointLightShadowFade(pub f32);
+
+impl Default for PointLightShadowFade {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 #[derive(Component)]
 #[require(PointAndSpotLightViewEntities)]
 pub struct ExtractedPointLight {
@@ -96,6 +110,9 @@ pub struct ExtractedPointLight {
     pub soft_shadows_enabled: bool,
     /// whether this point light contributes diffuse light to lightmapped meshes
     pub affects_lightmapped_mesh_diffuse: bool,
+    /// Smooth shadow fade factor in `0.0..=1.0` for point lights.
+    // superfargoth patch: native point-light shadow fade
+    pub shadow_fade: f32,
 }
 
 #[derive(Component, Debug)]
@@ -340,13 +357,14 @@ pub fn extract_lights(
             (
                 Entity,
                 RenderEntity,
-                &PointLight,
+                Ref<PointLight>,
                 &CubemapVisibleEntities,
-                &GlobalTransform,
-                &ViewVisibility,
-                &CubemapFrusta,
-                Option<&RenderLayers>,
-                Option<&VolumetricLight>,
+                Ref<GlobalTransform>,
+                Ref<ViewVisibility>,
+                Ref<CubemapFrusta>,
+                Option<Ref<RenderLayers>>,
+                Option<Ref<VolumetricLight>>,
+                Option<Ref<PointLightShadowFade>>,
             ),
             Or<(
                 Changed<PointLight>,
@@ -356,6 +374,7 @@ pub fn extract_lights(
                 Changed<RenderLayers>,
                 Changed<CubemapFrusta>,
                 Changed<VolumetricLight>,
+                Changed<PointLightShadowFade>,
             )>,
         >,
     >,
@@ -442,6 +461,12 @@ pub fn extract_lights(
         &mut RenderExtractedShadowMapVisibleEntities,
         &mut RenderShadowMapVisibleEntities,
     )>,
+    // superfargoth patch: skip redundant extraction when CubemapVisibleEntities is mutated in-place
+    (changes, existing_extracted_point_lights, mut prev_light_entities): (
+        Res<ShadowCasterChanges>,
+        Query<(), With<ExtractedPointLight>>,
+        Local<EntityHashMap<u64>>,
+    ),
     mut all_lights_found: Local<EntityHashSet>,
     mut rect_light_missing_luts_warning_emitted: Local<bool>,
     system_change_tick: SystemChangeTick,
@@ -478,6 +503,7 @@ pub fn extract_lights(
         frusta,
         maybe_render_layers,
         volumetric_light,
+        shadow_fade,
     ) in point_lights.iter()
     {
         if !view_visibility.get() {
@@ -488,116 +514,152 @@ pub fn extract_lights(
         }
 
         if point_light.shadow_maps_enabled {
-            // Fetch or create the visible entities for each cubemap face.
-            let (
-                mut render_extracted_shadow_map_visible_entities,
-                mut render_shadow_map_visible_entities,
-            ) = match existing_render_shadow_map_visible_entities.get_mut(render_entity) {
-                Ok((
-                    _,
-                    ref mut existing_extracted_shadow_map_visible_entities,
-                    ref mut existing_shadow_map_visible_entities,
-                )) => (
-                    mem::take(&mut **existing_extracted_shadow_map_visible_entities),
-                    mem::take(&mut **existing_shadow_map_visible_entities),
-                ),
-                Err(_) => (
-                    RenderExtractedShadowMapVisibleEntities::default(),
-                    RenderShadowMapVisibleEntities::default(),
-                ),
-            };
-
             all_lights_found.insert(render_entity);
 
-            for face_index in 0..6 {
-                let retained_view_entity = RetainedViewEntity {
-                    main_entity: MainEntity::from(main_entity),
-                    auxiliary_entity: None,
-                    subview_index: face_index,
+            // superfargoth patch: only rebuild RenderExtractedShadowMapVisibleEntities when the
+            // visible entity list actually changed, since check_light_mesh_visibility derefs
+            // &mut CubemapVisibleEntities every frame.
+            let current_entities_hash = changes
+                .light_entities
+                .get(&MainEntity::from(main_entity))
+                .copied();
+            let entities_unchanged = existing_render_shadow_map_visible_entities
+                .contains(render_entity)
+                && current_entities_hash.is_some()
+                && prev_light_entities.get(&render_entity).copied() == current_entities_hash;
+
+            if !entities_unchanged {
+                // Fetch or create the visible entities for each cubemap face.
+                let (
+                    mut render_extracted_shadow_map_visible_entities,
+                    mut render_shadow_map_visible_entities,
+                ) = match existing_render_shadow_map_visible_entities.get_mut(render_entity) {
+                    Ok((
+                        _,
+                        ref mut existing_extracted_shadow_map_visible_entities,
+                        ref mut existing_shadow_map_visible_entities,
+                    )) => (
+                        mem::take(&mut **existing_extracted_shadow_map_visible_entities),
+                        mem::take(&mut **existing_shadow_map_visible_entities),
+                    ),
+                    Err(_) => (
+                        RenderExtractedShadowMapVisibleEntities::default(),
+                        RenderShadowMapVisibleEntities::default(),
+                    ),
                 };
+
+                for face_index in 0..6 {
+                    let retained_view_entity = RetainedViewEntity {
+                        main_entity: MainEntity::from(main_entity),
+                        auxiliary_entity: None,
+                        subview_index: face_index,
+                    };
+                    render_shadow_map_visible_entities
+                        .subviews
+                        .entry(retained_view_entity)
+                        .or_insert_with(|| (system_change_tick.this_run(), Default::default()));
+
+                    // Extract the visible entities to the list for this face.
+                    let extracted_entities = &mut render_extracted_shadow_map_visible_entities
+                        .subviews
+                        .entry(retained_view_entity)
+                        .or_default()
+                        .classes
+                        .entry(TypeId::of::<Mesh3d>())
+                        .or_default()
+                        .entities;
+                    extracted_entities.clear();
+                    let visible_mesh_entities = cubemap_visible_entities.get(face_index as usize);
+                    extracted_entities.extend(visible_mesh_entities.entities.iter().map(
+                        |main_entity| {
+                            let render_entity = match mapper.get(*main_entity) {
+                                Ok(render_entity) => **render_entity,
+                                Err(_) => Entity::PLACEHOLDER,
+                            };
+                            (render_entity, MainEntity::from(*main_entity))
+                        },
+                    ));
+                }
+
+                // Clear out visible entity lists corresponding to subviews that no
+                // longer exist.
+                render_extracted_shadow_map_visible_entities
+                    .subviews
+                    .retain(|view_entity, _| {
+                        view_entity.main_entity.entity() == main_entity
+                            && view_entity.auxiliary_entity.is_none()
+                            && view_entity.subview_index < 6
+                    });
                 render_shadow_map_visible_entities
                     .subviews
-                    .entry(retained_view_entity)
-                    .or_insert_with(|| (system_change_tick.this_run(), Default::default()));
+                    .retain(|view_entity, _| {
+                        view_entity.main_entity.entity() == main_entity
+                            && view_entity.auxiliary_entity.is_none()
+                            && view_entity.subview_index < 6
+                    });
 
-                // Extract the visible entities to the list for this face.
-                let extracted_entities = &mut render_extracted_shadow_map_visible_entities
-                    .subviews
-                    .entry(retained_view_entity)
-                    .or_default()
-                    .classes
-                    .entry(TypeId::of::<Mesh3d>())
-                    .or_default()
-                    .entities;
-                extracted_entities.clear();
-                let visible_mesh_entities = cubemap_visible_entities.get(face_index as usize);
-                extracted_entities.extend(visible_mesh_entities.entities.iter().map(
-                    |main_entity| {
-                        let render_entity = match mapper.get(*main_entity) {
-                            Ok(render_entity) => **render_entity,
-                            Err(_) => Entity::PLACEHOLDER,
-                        };
-                        (render_entity, MainEntity::from(*main_entity))
-                    },
+                let mut entity_commands = commands.entity(render_entity);
+                entity_commands.insert((
+                    render_extracted_shadow_map_visible_entities,
+                    render_shadow_map_visible_entities,
                 ));
+                if let Some(hash) = current_entities_hash {
+                    prev_light_entities.insert(render_entity, hash);
+                }
             }
-
-            // Clear out visible entity lists corresponding to subviews that no
-            // longer exist.
-            render_extracted_shadow_map_visible_entities
-                .subviews
-                .retain(|view_entity, _| {
-                    view_entity.main_entity.entity() == main_entity
-                        && view_entity.auxiliary_entity.is_none()
-                        && view_entity.subview_index < 6
-                });
-            render_shadow_map_visible_entities
-                .subviews
-                .retain(|view_entity, _| {
-                    view_entity.main_entity.entity() == main_entity
-                        && view_entity.auxiliary_entity.is_none()
-                        && view_entity.subview_index < 6
-                });
-
-            let mut entity_commands = commands.entity(render_entity);
-            entity_commands.insert((
-                render_extracted_shadow_map_visible_entities,
-                render_shadow_map_visible_entities,
-            ));
         }
 
-        let mut entity_commands = commands.entity(render_entity);
-        let extracted_point_light = ExtractedPointLight {
-            color: point_light.color.into(),
-            // NOTE: Map from luminous power in lumens to luminous intensity in lumens per steradian
-            // for a point light. See https://google.github.io/filament/Filament.md.html#mjx-eqn-pointLightLuminousPower
-            // for details.
-            intensity: point_light.intensity / (4.0 * core::f32::consts::PI),
-            range: point_light.range,
-            radius: point_light.radius,
-            transform: *transform,
-            shadow_maps_enabled: point_light.shadow_maps_enabled,
-            contact_shadows_enabled: point_light.contact_shadows_enabled,
-            shadow_depth_bias: point_light.shadow_depth_bias,
-            // The factor of SQRT_2 is for the worst-case diagonal offset
-            shadow_normal_bias: point_light.shadow_normal_bias
-                * point_light_texel_size
-                * core::f32::consts::SQRT_2,
-            shadow_map_near_z: point_light.shadow_map_near_z,
-            spot_light_angles: None,
-            volumetric: volumetric_light.is_some(),
-            affects_lightmapped_mesh_diffuse: point_light.affects_lightmapped_mesh_diffuse,
-            #[cfg(feature = "experimental_pbr_pcss")]
-            soft_shadows_enabled: point_light.soft_shadows_enabled,
-            #[cfg(not(feature = "experimental_pbr_pcss"))]
-            soft_shadows_enabled: false,
-        };
-        entity_commands.insert((
-            extracted_point_light,
-            (*frusta).clone(),
-            MainEntity::from(main_entity),
-            maybe_render_layers.unwrap_or_default().clone(),
-        ));
+        // superfargoth patch: avoid re-inserting ExtractedPointLight on frames where only
+        // CubemapVisibleEntities was touched in-place.
+        let light_changed = !existing_extracted_point_lights.contains(render_entity)
+            || point_light.is_changed()
+            || transform.is_changed()
+            || view_visibility.is_changed()
+            || frusta.is_changed()
+            || maybe_render_layers
+                .as_ref()
+                .is_some_and(DetectChanges::is_changed)
+            || volumetric_light
+                .as_ref()
+                .is_some_and(DetectChanges::is_changed)
+            || shadow_fade.as_ref().is_some_and(DetectChanges::is_changed)
+            || point_light_shadow_map.is_changed();
+
+        if light_changed {
+            let mut entity_commands = commands.entity(render_entity);
+            let extracted_point_light = ExtractedPointLight {
+                color: point_light.color.into(),
+                // NOTE: Map from luminous power in lumens to luminous intensity in lumens per steradian
+                // for a point light. See https://google.github.io/filament/Filament.md.html#mjx-eqn-pointLightLuminousPower
+                // for details.
+                intensity: point_light.intensity / (4.0 * core::f32::consts::PI),
+                range: point_light.range,
+                radius: point_light.radius,
+                transform: *transform,
+                shadow_maps_enabled: point_light.shadow_maps_enabled,
+                contact_shadows_enabled: point_light.contact_shadows_enabled,
+                shadow_depth_bias: point_light.shadow_depth_bias,
+                // The factor of SQRT_2 is for the worst-case diagonal offset
+                shadow_normal_bias: point_light.shadow_normal_bias
+                    * point_light_texel_size
+                    * core::f32::consts::SQRT_2,
+                shadow_map_near_z: point_light.shadow_map_near_z,
+                spot_light_angles: None,
+                volumetric: volumetric_light.is_some(),
+                affects_lightmapped_mesh_diffuse: point_light.affects_lightmapped_mesh_diffuse,
+                #[cfg(feature = "experimental_pbr_pcss")]
+                soft_shadows_enabled: point_light.soft_shadows_enabled,
+                #[cfg(not(feature = "experimental_pbr_pcss"))]
+                soft_shadows_enabled: false,
+                shadow_fade: shadow_fade.map_or(1.0, |fade| fade.0.clamp(0.0, 1.0)),
+            };
+            entity_commands.insert((
+                extracted_point_light,
+                (*frusta).clone(),
+                MainEntity::from(main_entity),
+                maybe_render_layers.as_deref().cloned().unwrap_or_default(),
+            ));
+        }
     }
 
     for (
@@ -730,6 +792,7 @@ pub fn extract_lights(
             soft_shadows_enabled: spot_light.soft_shadows_enabled,
             #[cfg(not(feature = "experimental_pbr_pcss"))]
             soft_shadows_enabled: false,
+            shadow_fade: 1.0,
         };
         entity_commands.insert((
             extracted_spot_light,
@@ -938,6 +1001,7 @@ pub fn extract_lights(
 
     // Clear out any shadow maps that correspond to lights that have become
     // invisible or have their shadow mapping turned off.
+    prev_light_entities.retain(|render_entity, _| all_lights_found.contains(render_entity));
     for (render_entity, _, _) in existing_render_shadow_map_visible_entities
         .iter()
         .filter(|(render_entity, _, _)| !all_lights_found.contains(render_entity))
@@ -1050,29 +1114,41 @@ pub enum LightEntity {
 }
 
 // superfargoth patch (#26161)
-/// For each point and spot light, a hash of the meshes it can see this frame and
-/// whether any of them changed in a way that could change its shadow map.
+/// Per-subview (`(MainEntity, subview_index)`) shadow caster state hashes,
+/// plus a combined per-light visible-entity hash used by `extract_lights` to skip
+/// redundant `RenderExtractedShadowMapVisibleEntities` rebuilds.
 #[derive(Resource, Default)]
-pub struct ShadowCasterChanges(pub MainEntityHashMap<ShadowCasterChange>);
-
-/// The shadow casters a point or spot light sees this frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ShadowCasterChange {
-    /// A hash of the visible mesh entities.
-    pub casters: u64,
-    /// Whether any of them moved, changed mesh, or deforms (skinned or morphed).
-    pub changed: bool,
+pub struct ShadowCasterChanges {
+    /// Per-(light, face_index) quantized light-relative caster state hash.
+    pub faces: HashMap<(MainEntity, u32), u64>,
+    /// Combined visible-entity hash across all faces of a light.
+    pub light_entities: MainEntityHashMap<u64>,
 }
 
-/// Records, for each point and spot light, which meshes it can see and whether
-/// any of them changed since the last extraction, so that shadow maps whose
-/// light and casters are unchanged needn't be rendered again.
+/// Maximum number of already-valid point/spot shadow map faces that may re-render
+/// in a single frame due to caster movement or LOD swaps. Additional dirty faces
+/// keep their existing shadow map for 1–2 frames and are refreshed in strict
+/// least-recently-updated (LRU) order, preventing multi-lamp burst hitches during
+/// streaming/LOD transitions.
+const MAX_SHADOW_FACE_REFRESHES_PER_FRAME: usize = 2;
+
+/// Records, for each point-light cubemap face and spot light, a light-relative
+/// state hash of the meshes it can see so that shadow map faces whose light and
+/// casters are unchanged needn't be rendered again.
+///
+/// Crucially, caster positions are hashed **relative to the light's translation**, which
+/// makes the cache invariant to `big_space` floating-origin cell recentering and isolates
+/// changes per cubemap face rather than invalidating all 6 faces of a light when a single
+/// caster moves on 1 face.
 pub fn extract_shadow_caster_changes(
     mut changes: ResMut<ShadowCasterChanges>,
     lights: Extract<
         Query<
             (
                 Entity,
+                &GlobalTransform,
+                Option<&PointLight>,
+                Option<&SpotLight>,
                 Option<&VisibleMeshEntities>,
                 Option<&CubemapVisibleEntities>,
             ),
@@ -1081,67 +1157,102 @@ pub fn extract_shadow_caster_changes(
     >,
     casters: Extract<
         Query<(
-            Ref<GlobalTransform>,
-            Ref<Mesh3d>,
+            &GlobalTransform,
+            &Mesh3d,
             Has<bevy_mesh::skinning::SkinnedMesh>,
-            Has<bevy_mesh::morph::MeshMorphWeights>,
         )>,
     >,
-    mut mesh_events: Extract<MessageReader<bevy_asset::AssetEvent<bevy_mesh::Mesh>>>,
 ) {
-    use core::hash::{BuildHasher, Hasher};
+    use core::hash::{BuildHasher, Hash, Hasher};
 
-    let modified_meshes: HashSet<bevy_asset::AssetId<bevy_mesh::Mesh>> = mesh_events
-        .read()
-        .filter_map(|event| match event {
-            bevy_asset::AssetEvent::Modified { id }
-            | bevy_asset::AssetEvent::Added { id }
-            | bevy_asset::AssetEvent::LoadedWithDependencies { id } => Some(*id),
-            _ => None,
-        })
-        .collect();
+    changes.faces.clear();
+    changes.light_entities.clear();
 
-    changes.0.clear();
     let mut visible: Vec<Entity> = Vec::new();
-    for (light, spot_visible, point_visible) in &lights {
-        visible.clear();
-        if let Some(spot_visible) = spot_visible {
-            visible.extend(spot_visible.entities.iter().copied());
+    for (light, light_transform, point_light, spot_light, spot_visible, point_visible) in &lights {
+        let shadows_enabled = point_light.is_some_and(|l| l.shadow_maps_enabled)
+            || spot_light.is_some_and(|l| l.shadow_maps_enabled);
+        if !shadows_enabled {
+            continue;
         }
-        if let Some(point_visible) = point_visible {
-            for face in 0..6 {
-                visible.extend(point_visible.get(face).entities.iter().copied());
-            }
-        }
-        visible.sort_unstable();
-        visible.dedup();
 
-        let mut hasher = FixedHasher.build_hasher();
-        let mut changed = false;
-        for &entity in &visible {
-            hasher.write_u64(entity.to_bits());
-            if let Ok((transform, mesh, skinned, morphed)) = casters.get(entity) {
-                changed |= transform.is_changed()
-                    || mesh.is_changed()
-                    || skinned
-                    || morphed
-                    || modified_meshes.contains(&mesh.id());
+        let main_light = MainEntity::from(light);
+        let light_pos = light_transform.translation();
+        let mut light_entities_hasher = FixedHasher.build_hasher();
+
+        let face_count = if point_visible.is_some() { 6u32 } else { 1u32 };
+        for face_idx in 0..face_count {
+            visible.clear();
+            if let Some(point_visible) = point_visible {
+                visible.extend(
+                    point_visible
+                        .get(face_idx as usize)
+                        .entities
+                        .iter()
+                        .copied(),
+                );
+            } else if let Some(spot_visible) = spot_visible {
+                visible.extend(spot_visible.entities.iter().copied());
             }
+            visible.sort_unstable();
+            visible.dedup();
+
+            light_entities_hasher.write_u32(face_idx);
+            light_entities_hasher.write_usize(visible.len());
+
+            let mut face_hasher = FixedHasher.build_hasher();
+            face_hasher.write_usize(visible.len());
+
+            for &entity in &visible {
+                let entity_bits = entity.to_bits();
+                light_entities_hasher.write_u64(entity_bits);
+                face_hasher.write_u64(entity_bits);
+
+                if let Ok((caster_transform, mesh, is_skinned)) = casters.get(entity) {
+                    mesh.id().hash(&mut face_hasher);
+
+                    let affine = caster_transform.affine();
+                    let rel = Vec3::from(affine.translation) - light_pos;
+                    if is_skinned {
+                        // Quantize skinned character root relative to the light using a
+                        // distance-proportional step (>= 20 cm, or ~3.5% of distance to light).
+                        // This keeps standing/idling NPCs from continuously invalidating street
+                        // lamp cubemaps while updating walking NPC shadows smoothly.
+                        let grid = 0.20_f32.max(rel.length() * 0.035);
+                        let rel_root = (rel / grid).round().as_ivec3();
+                        rel_root.hash(&mut face_hasher);
+                    } else {
+                        // Static/rigid mesh: quantize light-relative translation to 1 mm and
+                        // rotation/scale matrix3 elements to 1e-4. This is 100% invariant to
+                        // `big_space` floating-origin cell shifts.
+                        let rel_pos = (rel * 1000.0).round().as_ivec3();
+                        rel_pos.hash(&mut face_hasher);
+                        for v in affine.matrix3.to_cols_array() {
+                            face_hasher.write_i32((v * 10000.0).round() as i32);
+                        }
+                    }
+                }
+            }
+
+            changes
+                .faces
+                .insert((main_light, face_idx), face_hasher.finish());
         }
-        changes.0.insert(
-            MainEntity::from(light),
-            ShadowCasterChange {
-                casters: hasher.finish(),
-                changed,
-            },
-        );
+
+        changes
+            .light_entities
+            .insert(main_light, light_entities_hasher.finish());
     }
 }
 
 /// Marks the point and spot light shadow views whose shadow maps are still valid
-/// with [`SkipRootViewRendering`]: the same texture layer, light view and
-/// projection as when last rendered, and the same shadow casters, none of them
-/// changed.
+/// with [`SkipRootViewRendering`]: the same texture layer, light view orientation
+/// and projection as when last rendered, and the same shadow casters on that face,
+/// none of them changed relative to the light.
+///
+/// When more than [`MAX_SHADOW_FACE_REFRESHES_PER_FRAME`] already-rendered faces
+/// have caster changes on the same frame (e.g. during a building LOD swap), refreshes
+/// are scheduled in least-recently-updated (LRU) order across frames to prevent hitches.
 pub fn skip_unchanged_shadow_views(
     mut commands: Commands,
     views: Query<
@@ -1157,14 +1268,14 @@ pub fn skip_unchanged_shadow_views(
     main_entities: Query<&MainEntity>,
     bindings: Query<&ViewShadowBindings>,
     changes: Res<ShadowCasterChanges>,
-    (phases, pipeline_cache): (Res<ViewBinnedRenderPhases<Shadow>>, Res<PipelineCache>),
-    mut rendered: Local<HashMap<RetainedViewEntity, (u64, u64)>>,
+    phases: Res<ViewBinnedRenderPhases<Shadow>>,
+    mut rendered: Local<HashMap<RetainedViewEntity, (u64, u64, u32)>>,
+    mut frame_counter: Local<u32>,
 ) {
     use core::hash::{BuildHasher, Hash, Hasher};
 
-    // While pipelines are being compiled, a shadow map may have been rendered
-    // without some of its casters: none is kept until they are all ready.
-    let settled = pipeline_cache.waiting_pipelines().next().is_none();
+    *frame_counter = frame_counter.wrapping_add(1);
+    let current_frame = *frame_counter;
 
     // The shadow map textures this frame (shared by all cameras); without them,
     // nothing can be known to be unchanged.
@@ -1175,6 +1286,9 @@ pub fn skip_unchanged_shadow_views(
         )
     });
     let mut live = HashSet::new();
+    let mut mandatory_renders = 0usize;
+    let mut refresh_candidates: Vec<(u32, Entity, RetainedViewEntity, u64, u64, bool)> = Vec::new();
+
     for (view_entity, view, shadow_view, light, skipped) in &views {
         let (light_entity, texture) = match *light {
             LightEntity::Point { light_entity, .. } => (light_entity, textures.map(|t| t.0)),
@@ -1184,58 +1298,126 @@ pub fn skip_unchanged_shadow_views(
         let retained = view.retained_view_entity;
         live.insert(retained);
 
-        let mut hasher = FixedHasher.build_hasher();
+        let mut view_hasher = FixedHasher.build_hasher();
         // The texture and, by the pass's name, the layer it renders to.
-        texture.hash(&mut hasher);
-        shadow_view.pass_name.hash(&mut hasher);
-        view.viewport.hash(&mut hasher);
-        // The casters queued to draw: one whose mesh, material or pipeline was
-        // not ready is not queued yet.
-        phases
-            .get(&retained)
-            .map(BinnedRenderPhase::entity_count)
-            .hash(&mut hasher);
+        texture.hash(&mut view_hasher);
+        shadow_view.pass_name.hash(&mut view_hasher);
+        view.viewport.hash(&mut view_hasher);
+        // Hash view rotation/scale (matrix3) and projection (clip_from_view), omitting
+        // world-space translation because caster positions are already checked relative
+        // to the light's translation in `extract_shadow_caster_changes`. This prevents
+        // `big_space` floating-origin shifts from invalidating all cubemap faces at once.
         for value in view
             .world_from_view
-            .to_matrix()
+            .affine()
+            .matrix3
             .to_cols_array()
             .into_iter()
             .chain(view.clip_from_view.to_cols_array())
         {
-            hasher.write_u32(value.to_bits());
+            view_hasher.write_u32(value.to_bits());
         }
-        let view_key = hasher.finish();
+        let view_key = view_hasher.finish();
 
-        let change = main_entities
+        // `phase_entity_count` reflects how many casters actually have compiled
+        // pipelines and loaded meshes/materials queued for this specific face.
+        // Including it in `casters_key` means that if a pipeline finishes compiling
+        // asynchronously, only the specific faces containing that caster mark dirty
+        // rather than invalidating all 48+ cubemap faces globally.
+        let phase_entity_count = phases
+            .get(&retained)
+            .map_or(0, BinnedRenderPhase::entity_count);
+        let casters_key = main_entities
             .get(light_entity)
             .ok()
-            .and_then(|main| changes.0.get(main));
-        let unchanged = settled
-            && texture.is_some()
-            && change.is_some_and(|change| {
-                !change.changed && rendered.get(&retained) == Some(&(view_key, change.casters))
+            .and_then(|main| changes.faces.get(&(*main, retained.subview_index)))
+            .map(|&face_hash| {
+                let mut h = FixedHasher.build_hasher();
+                h.write_u64(face_hash);
+                h.write_usize(phase_entity_count);
+                h.finish()
             });
 
-        if unchanged {
-            if !skipped {
-                commands.entity(view_entity).insert(SkipRootViewRendering);
-            }
-        } else {
+        if texture.is_none() {
             if skipped {
                 commands
                     .entity(view_entity)
                     .remove::<SkipRootViewRendering>();
             }
-            match change {
-                Some(change) => {
-                    rendered.insert(retained, (view_key, change.casters));
+            mandatory_renders += 1;
+            rendered.remove(&retained);
+            continue;
+        }
+
+        let Some(casters_key) = casters_key else {
+            if skipped {
+                commands
+                    .entity(view_entity)
+                    .remove::<SkipRootViewRendering>();
+            }
+            mandatory_renders += 1;
+            rendered.remove(&retained);
+            continue;
+        };
+
+        match rendered.get(&retained).copied() {
+            Some((prev_view_key, prev_casters_key, _))
+                if prev_view_key == view_key && prev_casters_key == casters_key =>
+            {
+                // Neither the view/layer nor the casters changed: skip rendering.
+                if !skipped {
+                    commands.entity(view_entity).insert(SkipRootViewRendering);
                 }
-                None => {
-                    rendered.remove(&retained);
+            }
+            Some((prev_view_key, _, last_frame)) if prev_view_key == view_key => {
+                // The shadow map already has a valid capture for this light & layer,
+                // but its casters changed (mover or LOD swap). Queue for LRU refresh.
+                refresh_candidates.push((
+                    last_frame,
+                    view_entity,
+                    retained,
+                    view_key,
+                    casters_key,
+                    skipped,
+                ));
+            }
+            _ => {
+                // First capture for this view or its texture/layer changed: must render now.
+                if skipped {
+                    commands
+                        .entity(view_entity)
+                        .remove::<SkipRootViewRendering>();
                 }
+                mandatory_renders += 1;
+                rendered.insert(retained, (view_key, casters_key, current_frame));
             }
         }
     }
+
+    // Sort dirty caster-refresh candidates by oldest `last_frame` first (LRU).
+    // Deduct any mandatory new-light captures this frame so new-slot captures and
+    // mover refreshes never stack in the same frame.
+    let refresh_budget = MAX_SHADOW_FACE_REFRESHES_PER_FRAME.saturating_sub(mandatory_renders);
+    refresh_candidates.sort_unstable_by_key(|&(last_frame, _, _, _, _, _)| last_frame);
+    for (idx, (_, view_entity, retained, view_key, casters_key, skipped)) in
+        refresh_candidates.into_iter().enumerate()
+    {
+        if idx < refresh_budget {
+            if skipped {
+                commands
+                    .entity(view_entity)
+                    .remove::<SkipRootViewRendering>();
+            }
+            rendered.insert(retained, (view_key, casters_key, current_frame));
+        } else {
+            // Defer to a subsequent frame; keep `rendered` at the old casters_key so
+            // this face remains dirty and at the front of the LRU queue next frame.
+            if !skipped {
+                commands.entity(view_entity).insert(SkipRootViewRendering);
+            }
+        }
+    }
+
     rendered.retain(|retained, _| live.contains(retained));
 }
 
@@ -1266,11 +1448,15 @@ pub fn prepare_lights(
         mut max_rect_lights_warning_emitted,
         mut max_cascades_per_light_warning_emitted,
         mut live_shadow_mapping_lights,
+        mut point_shadow_slots,
+        mut max_point_shadow_cubes,
     ): (
         Local<bool>,
         Local<bool>,
         Local<bool>,
         Local<HashSet<RetainedViewEntity>>,
+        Local<Vec<Option<Entity>>>,
+        Local<(usize, usize)>,
     ),
     (
         mut point_lights,
@@ -1311,7 +1497,7 @@ pub fn prepare_lights(
         Option<Res<RenderClusteredDecals>>,
     ),
     (existing_shadow_views, mut light_key_cache, mut specialized_shadow_material_pipeline_cache): (
-        Query<&ShadowView>,
+        Query<(&ShadowView, Option<&CachedShadowViewState>)>,
         ResMut<LightKeyCache>,
         ResMut<SpecializedShadowMaterialPipelineCache>,
     ),
@@ -1469,6 +1655,66 @@ pub fn prepare_lights(
         )
     });
 
+    // superfargoth patch: keep each shadowed point light in a persistent cubemap slot
+    // index `0..N` across frames. Without this, whenever a lower-Entity-ID point light
+    // disables shadows, all higher-Entity-ID shadowed point lights shift their `light_index`
+    // by -1 and must re-render all 6 cubemap faces into their shifted array layers at once.
+    if max_point_shadow_cubes.0 != point_light_shadow_map.size {
+        *max_point_shadow_cubes = (point_light_shadow_map.size, 0);
+        point_shadow_slots.clear();
+    }
+    for slot in point_shadow_slots.iter_mut() {
+        if let Some(e) = *slot {
+            let still_shadowed = point_lights
+                .get(e)
+                .is_ok_and(|(_, _, l, _, _, _)| l.shadow_maps_enabled && l.spot_light_angles.is_none());
+            if !still_shadowed {
+                *slot = None;
+            }
+        }
+    }
+    for &entity in &point_light_entities[..point_light_shadow_maps_count] {
+        if !point_shadow_slots.contains(&Some(entity)) {
+            if let Some(empty_slot) = point_shadow_slots.iter_mut().find(|s| s.is_none()) {
+                *empty_slot = Some(entity);
+            } else if point_shadow_slots.len() < max_texture_cubes {
+                point_shadow_slots.push(Some(entity));
+            }
+        }
+    }
+    while point_shadow_slots.len() > point_light_count && point_shadow_slots.last() == Some(&None) {
+        point_shadow_slots.pop();
+    }
+    if point_shadow_slots.len() > point_light_count {
+        point_shadow_slots.retain(Option::is_some);
+    }
+
+    let slot_count = point_shadow_slots.len().min(point_light_count);
+    if slot_count > 0 {
+        let mut remaining_point_lights: Vec<Entity> = point_light_entities[..point_light_count]
+            .iter()
+            .copied()
+            .filter(|e| !point_shadow_slots[..slot_count].contains(&Some(*e)))
+            .collect();
+        let mut rem_iter = remaining_point_lights.drain(..);
+        for (idx, slot) in point_shadow_slots[..slot_count].iter().enumerate() {
+            point_light_entities[idx] = match *slot {
+                Some(entity) => entity,
+                None => rem_iter.next().unwrap(),
+            };
+        }
+        for (idx, entity) in rem_iter.enumerate() {
+            point_light_entities[slot_count + idx] = entity;
+        }
+    }
+    let point_light_shadow_bound = point_light_shadow_maps_count
+        .max(slot_count)
+        .min(max_texture_cubes);
+    max_point_shadow_cubes.1 = max_point_shadow_cubes
+        .1
+        .max(point_light_shadow_bound)
+        .min(max_texture_cubes);
+
     // Sort lights by
     // - those with volumetric (and shadows) enabled first, so that the
     //   volumetric lighting pass can quickly find the volumetric lights;
@@ -1495,9 +1741,9 @@ pub fn prepare_lights(
 
         let mut flags = PointLightFlags::NONE;
 
-        // Lights are sorted, shadow enabled lights are first
+        // Lights are sorted, shadow enabled lights are first (or in persistent slots `0..point_light_shadow_bound`)
         if light.shadow_maps_enabled
-            && (index < point_light_shadow_maps_count
+            && (index < point_light_shadow_bound
                 || (light.spot_light_angles.is_some()
                     && index - point_light_count < spot_light_shadow_maps_count))
         {
@@ -1554,8 +1800,8 @@ pub fn prepare_lights(
                         cube_face_projection.w_axis.z,
                         cube_face_projection.w_axis.w,
                     ),
-                    // unused
-                    0.0,
+                    // superfargoth patch: store point-light shadow fade in spot_light_tan_angle
+                    light.shadow_fade,
                 )
             }
         };
@@ -1678,7 +1924,10 @@ pub fn prepare_lights(
             size: Extent3d {
                 width: point_light_shadow_map.size as u32,
                 height: point_light_shadow_map.size as u32,
-                depth_or_array_layers: point_light_shadow_maps_count.max(1) as u32 * 6,
+                // superfargoth patch: use high-water-mark cube count so momentary slot
+                // handoffs (e.g. 12 -> 11 -> 12) do not reallocate the cubemap array texture
+                // and invalidate all cached shadow cubemaps.
+                depth_or_array_layers: max_point_shadow_cubes.1.max(1) as u32 * 6,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -1797,6 +2046,7 @@ pub fn prepare_lights(
                 &mut commands,
                 &mut point_light_depth_attachments,
                 &global_clusterable_object_meta,
+                &existing_shadow_views,
                 (
                     &cube_face_rotations,
                     point_light_frusta,
@@ -1809,12 +2059,13 @@ pub fn prepare_lights(
             );
 
             point_and_spot_light_view_entities.0 = light_view_entities;
-        } else if changed_point_lights.get(*light_entity).is_ok() {
-            // Update the point shadow maps with the changes.
+        } else {
+            // Update the point shadow maps only if their state or layer index changed.
             create_point_shadow_maps(
                 &mut commands,
                 &mut point_light_depth_attachments,
                 &global_clusterable_object_meta,
+                &existing_shadow_views,
                 (
                     &cube_face_rotations,
                     point_light_frusta,
@@ -2298,7 +2549,7 @@ pub fn prepare_lights(
 
     // Mark the existing shadow maps as unused this frame so that the first
     // drawcall to them will clear them.
-    for existing_shadow_view in &existing_shadow_views {
+    for (existing_shadow_view, _) in &existing_shadow_views {
         existing_shadow_view
             .depth_attachment
             .prepare_for_new_frame();
@@ -2319,6 +2570,21 @@ pub fn prepare_lights(
         .retain(|entity, _| live_shadow_mapping_lights.contains(entity));
 }
 
+/// Cached state for a point-light cubemap face view so we can avoid recreating
+/// `wgpu::TextureView`s and re-inserting `ShadowView`/`ExtractedView` when nothing changed.
+// superfargoth patch
+#[derive(Component, Clone, PartialEq)]
+pub struct CachedShadowViewState {
+    pub texture_id: TextureId,
+    pub array_layer: u32,
+    pub viewport_size: u32,
+    pub world_from_view: GlobalTransform,
+    pub clip_from_view: Mat4,
+    pub range: f32,
+    pub light_entity: Entity,
+    pub render_layers: RenderLayers,
+}
+
 /// Creates six point shadow maps for a `RetainedViewEntity` identified by the `light_main_entity`
 /// and the six cube face rotation indices. These shadow maps are shared across
 /// all cameras.
@@ -2326,6 +2592,7 @@ fn create_point_shadow_maps(
     commands: &mut Commands,
     point_light_depth_attachments: &mut HashMap<u32, DepthStencilViewAttachment>,
     global_clusterable_object_meta: &ResMut<GlobalClusterableObjectMeta>,
+    existing_shadow_views: &Query<(&ShadowView, Option<&CachedShadowViewState>)>,
     (cube_face_rotations, point_light_frusta, light_view_entities): (
         &Vec<Transform>,
         Option<&CubemapFrusta>,
@@ -2355,6 +2622,7 @@ fn create_point_shadow_maps(
         1.0,
         light.shadow_map_near_z,
     );
+    let texture_id = point_light_depth_texture.texture.id();
 
     for (face_index, ((view_rotation, frustum), view_light_entity)) in cube_face_rotations
         .iter()
@@ -2363,34 +2631,68 @@ fn create_point_shadow_maps(
         .enumerate()
     {
         let base_array_layer = (light_index * 6 + face_index) as u32;
+        let world_from_view = view_translation * *view_rotation;
+        let new_state = CachedShadowViewState {
+            texture_id,
+            array_layer: base_array_layer,
+            viewport_size: point_light_shadow_map_size,
+            world_from_view,
+            clip_from_view: cube_face_projection,
+            range: light.range,
+            light_entity: *light_entity,
+            render_layers: (*light_render_layers).clone(),
+        };
 
-        let depth_attachment = point_light_depth_attachments
-            .entry(base_array_layer)
-            .or_insert_with(|| {
-                let depth_texture_view =
-                    point_light_depth_texture
-                        .texture
-                        .create_view(&TextureViewDescriptor {
-                            label: Some("point_light_shadow_map_texture_view"),
-                            format: None,
-                            dimension: Some(TextureViewDimension::D2),
-                            usage: None,
-                            aspect: TextureAspect::All,
-                            base_mip_level: 0,
-                            mip_level_count: None,
-                            base_array_layer,
-                            array_layer_count: Some(1u32),
-                        });
+        let existing = existing_shadow_views.get(view_light_entity).ok();
+        if existing.is_some_and(|(_, cached)| cached == Some(&new_state)) {
+            continue;
+        }
 
-                DepthStencilViewAttachment::new(
-                    DepthStencilViews::DepthOnly {
-                        depth_view: depth_texture_view,
-                    },
-                    Some(0.0),
-                    None,
-                )
-            })
-            .clone();
+        // Only create a new wgpu::TextureView and ShadowView when the texture or array layer
+        // changed (or on initial spawn). When only the light's transform changed (e.g. during
+        // a floating-origin shift), the existing ShadowView on `view_light_entity` remains valid.
+        let needs_shadow_view = !existing.is_some_and(|(_, cached)| {
+            cached.is_some_and(|c| c.texture_id == texture_id && c.array_layer == base_array_layer)
+        });
+
+        if needs_shadow_view {
+            let depth_attachment = point_light_depth_attachments
+                .entry(base_array_layer)
+                .or_insert_with(|| {
+                    let depth_texture_view =
+                        point_light_depth_texture
+                            .texture
+                            .create_view(&TextureViewDescriptor {
+                                label: Some("point_light_shadow_map_texture_view"),
+                                format: None,
+                                dimension: Some(TextureViewDimension::D2),
+                                usage: None,
+                                aspect: TextureAspect::All,
+                                base_mip_level: 0,
+                                mip_level_count: None,
+                                base_array_layer,
+                                array_layer_count: Some(1u32),
+                            });
+
+                    DepthStencilViewAttachment::new(
+                        DepthStencilViews::DepthOnly {
+                            depth_view: depth_texture_view,
+                        },
+                        Some(0.0),
+                        None,
+                    )
+                })
+                .clone();
+
+            commands.entity(view_light_entity).insert(ShadowView {
+                depth_attachment,
+                pass_name: format!(
+                    "shadow_point_light_{}_{}",
+                    light_index,
+                    face_index_to_name(face_index)
+                ),
+            });
+        }
 
         // Point light shadow maps are shared across all cameras,
         // so the retained view entity must not include the camera.
@@ -2398,14 +2700,6 @@ fn create_point_shadow_maps(
             RetainedViewEntity::new(*light_main_entity, None, face_index as u32);
 
         commands.entity(view_light_entity).insert((
-            ShadowView {
-                depth_attachment,
-                pass_name: format!(
-                    "shadow_point_light_{}_{}",
-                    light_index,
-                    face_index_to_name(face_index)
-                ),
-            },
             ExtractedView {
                 retained_view_entity,
                 viewport: UVec4::new(
@@ -2414,7 +2708,7 @@ fn create_point_shadow_maps(
                     point_light_shadow_map_size,
                     point_light_shadow_map_size,
                 ),
-                world_from_view: view_translation * *view_rotation,
+                world_from_view,
                 clip_from_world: None,
                 clip_from_view: cube_face_projection,
                 target_format: CORE_3D_SHADOW_MAP_FORMAT,
@@ -2427,6 +2721,7 @@ fn create_point_shadow_maps(
                 face_index,
             },
             (*light_render_layers).clone(),
+            new_state,
             // superfargoth patch (#26149)
             RootNonCameraView(Core3dShadows.intern()),
         ));

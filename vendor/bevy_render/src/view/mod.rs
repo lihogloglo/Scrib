@@ -902,6 +902,13 @@ impl From<ColorGrading> for ColorGradingUniform {
 #[derive(Component, Default)]
 pub struct NoIndirectDrawing;
 
+// superfargoth patch (#26161 + own: skip view preprocessing)
+/// A render-world marker for a root view whose output from the last frame is
+/// still valid, so its preprocessing and render schedule don't need to run this
+/// frame.
+#[derive(Clone, Copy, Component, Debug, Default)]
+pub struct SkipRootViewRendering;
+
 impl ViewTarget {
     /// Retrieve this target's main texture's color attachment.
     pub fn get_color_attachment(&self) -> RenderPassColorAttachment<'_> {
@@ -1177,15 +1184,19 @@ pub fn prepare_view_uniforms(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut view_uniforms: ResMut<ViewUniforms>,
-    views: Query<(
-        Entity,
-        Option<&ExtractedCamera>,
-        &ExtractedView,
-        Option<&Frustum>,
-        Option<&TemporalJitter>,
-        Option<&MipBias>,
-        Option<&MainPassResolutionOverride>,
-    )>,
+    views: Query<
+        (
+            Entity,
+            Option<&ExtractedCamera>,
+            &ExtractedView,
+            Option<&Frustum>,
+            Option<&TemporalJitter>,
+            Option<&MipBias>,
+            Option<&MainPassResolutionOverride>,
+        ),
+        // superfargoth patch (own: skip view preprocessing)
+        Without<SkipRootViewRendering>,
+    >,
     frame_count: Res<FrameCount>,
     shadow_lod_origin: Option<Res<RenderShadowLodOrigin>>,
 ) {

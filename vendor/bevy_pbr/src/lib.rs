@@ -378,9 +378,10 @@ impl Plugin for PbrPlugin {
             .add_systems(
                 ExtractSchedule,
                 (
-                    extract_lights,
-                    // superfargoth patch (#26161)
+                    // superfargoth patch (#26161): run extract_shadow_caster_changes before
+                    // extract_lights so extract_lights can skip unchanged visible-entity lists.
                     extract_shadow_caster_changes,
+                    extract_lights.after(extract_shadow_caster_changes),
                     extract_ambient_light_resource,
                     extract_ambient_light,
                     extract_shadow_filtering_method,
@@ -396,8 +397,13 @@ impl Plugin for PbrPlugin {
                         .after(sort_cameras),
                     // superfargoth patch (#26161)
                     // Once the shadow phases are queued: what they hold is part of
-                    // what a shadow map was rendered from.
-                    skip_unchanged_shadow_views.in_set(RenderSystems::PrepareResources),
+                    // what a shadow map was rendered from. Flush immediately with
+                    // ApplyDeferred before prepare_view_uniforms and PrepareResourcesBatchPhases
+                    // so skipped shadow views skip uniform prep, batching, and bind group creation.
+                    (skip_unchanged_shadow_views, ApplyDeferred)
+                        .chain()
+                        .in_set(RenderSystems::PrepareResources)
+                        .before(bevy_render::view::prepare_view_uniforms),
                     prepare_clusters_for_cpu_clustering
                         .in_set(RenderSystems::PrepareResources)
                         .run_if(
