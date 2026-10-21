@@ -52,13 +52,16 @@ pub struct LightCalibration {
     pub exposure_floor_ev100: f32,
     /// The exterior's ambient floor at night (nits, sun below -12°; the sky's
     /// `SkySettings::ambient`): starlight and moonlit sky as one readable
-    /// floor at the exposure floor (about 4 EV under mid grey on stone).
+    /// floor at the exposure floor. 4 nits (x the sky's blue ambient colour,
+    /// luminance ~0.65) puts moonlit stone about 2 EV under mid grey, the usual
+    /// "dark but readable" game night; 1 nit (LT-1, ~4 EV under) was rejected
+    /// by the owner 2026-10-19 as "can't see anything".
     pub night_ambient_nits: f32,
 }
 
 impl Default for LightCalibration {
     fn default() -> Self {
-        Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, ambient_nits: 300.0, exposure_floor_ev100: 3.5, night_ambient_nits: 1.0 }
+        Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, ambient_nits: 300.0, exposure_floor_ev100: 3.5, night_ambient_nits: 4.0 }
     }
 }
 

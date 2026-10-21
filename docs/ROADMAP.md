@@ -95,8 +95,9 @@ and effects. Every task reports its ms cost per preset.
   High; ~0.9 ms GPU at 1440p native on High, perf.md "Shadow reset A1"); look awaiting owner (SH-16).
 - [x] 1.6 Object-terrain blending removed (2026-10-20, lights1): code, `--off terrainblend`, F11, TB-1..3; `lod.near` v3.
   Walk 1440p 25.9 → 14.7 ms, Balmora 15.9 → 13.1 (perf.md "Terrain blend removed"). Redo is eye candy (WISHLIST §13).
-- [ ] 1.7 Night brightness (LT-1 rejected: "can't see anything"): exposure floor + night ambient retune; then
-  the deferred night checks (SK-2, NS-2..4).
+- [~] 1.7 Night brightness (LT-1 rejected: "can't see anything"): exposure floor + night ambient retune; then
+  the deferred night checks (SK-2, NS-2..4). 2026-10-21 (renderfix1): night ambient 1 → 4 nits (~2 EV under mid grey
+  on stone), EV100 floor 3.5 kept; LT-1 awaiting owner.
 - [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5); Ghostfence field
   has no far copy and its far light sprites float in the gap (GF-1, B5); far-field L2/L3 never selected or never
   tinted (FF-2: 25 L2 + 4 L3 nodes resident).
@@ -106,9 +107,10 @@ and effects. Every task reports its ms cost per preset.
   precombine.md`; slices 1-3 built (2026-10-20, uncommitted): meshes -45 % but frame unchanged (perf.md); the
   walk's gap was terrain blend (1.6). Default on/off still the owner's call. `NoCpuCulling` retry once every view does GPU culling
   (perf.md "Lead"); big_space propagation patch; skinned bounds (research/perf/README.md).
-- [ ] 1.10 Volumetric fog black bands (FG-1, owner 2026-10-20): dark vertical bands in light-lit fog at night
-  when the camera turns fast; froxel history reprojection/rejection on yaw is the suspect (`sf_atmos_bevy`
-  froxels).
+- [~] 1.10 Volumetric fog black bands (FG-1, owner 2026-10-20): dark vertical bands in light-lit fog at night
+  when the camera turns fast. 2026-10-21 (renderfix1): repro by BRP yaw script (Sadrith Mora, foggy, 21:25); the hard
+  glow edge stays with `--off foghistory` (new A/B), so not the froxel history; next: TAA/sky reprojection, the
+  composite's froxel/far-fog split, lamp range spheres (`.sessions/renderfix1.md`).
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
 
@@ -175,6 +177,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (renderfix1): night ambient 1 → 4 nits (LT-1 awaiting owner); FG-1 repro + `--off foghistory`: not the
+  froxel history, diagnosis open.
 - 2026-10-21 (action-a1): `sf_action` A1, Bevy-free: input sampler + command feed, RON move rules with load errors,
   Sekiro two-stage buffer, chooser, jump/coyote/landing, use prompt; deterministic at 30/60/144 fps (21 tests).
 - 2026-10-21 (audio-pass): `sf_audio` cues/sound groups, distance curves, music mood playlists with crossfade, footstep

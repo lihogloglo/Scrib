@@ -328,6 +328,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             } else if perf.off.has(Part::FogDither) {
                 f.jitter = FroxelJitter::Shared;
             }
+            // `--off foghistory`: no temporal reprojection (FG-1 A/B).
+            if perf.off.has(Part::FogHistory) {
+                f.history = 0.0;
+            }
         }
         if !perf.off.has(Part::FarShadows) {
             app.add_systems(Update, fog_shadow_heights);

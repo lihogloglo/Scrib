@@ -118,6 +118,9 @@ pub enum Part {
     FogDither,
     /// The froxels' temporal jitter: off, every froxel samples its centre (diagnosis).
     FogJitter,
+    /// The froxels' temporal history (reprojected last frame): off, each frame stands
+    /// alone (FG-1 diagnosis: bands on fast turns that vanish here are the history's).
+    FogHistory,
     /// Fog on blended and additive NIF materials (`sf_atmos_bevy::FogTranslucentsPlugin`: they draw
     /// after the fog composite); off, they skip the fog (the old look, an A/B).
     TransFog,
@@ -137,7 +140,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 39] = [
+    const ALL: [(&'static str, Part); 40] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -173,6 +176,7 @@ impl Part {
         ("godrays", Part::Froxels),
         ("fogdither", Part::FogDither),
         ("fogjitter", Part::FogJitter),
+        ("foghistory", Part::FogHistory),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
         ("skymotion", Part::SkyMotion),

@@ -522,7 +522,7 @@
             camera: "-283,+5,198,-293,+0.5,185",
             hour: 21.5,
             flags: ["--clouds", "clear"],
-            description: "Balmora at night with the exposure floor (EV100 3.5, LightCalibration) and the night ambient (1 nit); A/B: add `--exposure-floor=-10 --night-ambient 0.03` (the old wide-open night, EV100 1.6)",
+            description: "Balmora at night with the exposure floor (EV100 3.5, LightCalibration) and the night ambient (4 nits); A/B: `--night-ambient 1` (the rejected LT-1 night), `--exposure-floor=-10 --night-ambient 0.03` (the old wide-open night, EV100 1.6)",
             look_for: "the wall around the door lantern on the left is bright but keeps its plaster texture (before: a white blown patch); the street reads as night: lit pools under lamps, dark but visible facades and stairs between them (not pure black); no grey, washed-out night",
             checks: ["LT-1"],
         ),

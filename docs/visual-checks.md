@@ -208,7 +208,11 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Seen by owner 2026-10-20: dark vertical bands appear in the lit fog during fast yaw. Suspects (unverified): the
   froxel volume's temporal reprojection or history rejection on rotation, or the froxel light/shadow lookup at
   history edges (`sf_atmos_bevy` froxel_inject / froxel_integrate). A/B to try: `--off froxels`, `--off fogjitter`.
-- Status: known bug: Phase 1 (1.10).
+- Agent repro 2026-10-21 (renderfix1): `view "Sadrith Mora" --hour 21.25 --weather foggy`, camera
+  `2160,40,-460,2140,30,-500`, then `shots/renderfix1/yaw.sh` (BRP camera steps, shot mid-turn): lamp glow in the fog
+  shows a hard vertical edge at mid-screen (`fg_yaw2.png`), and still does with `--off foghistory` (new A/B: froxel
+  history weight 0; `fg_yaw_nohist.png`): so not (only) the froxel history. Next A/B: `--off skymotion`, no TAA.
+- Status: known bug: Phase 1 (1.10), diagnosis open.
 
 
 ## Ghostfence (superfargoth `weather.md`, bug B)
@@ -676,16 +680,15 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
 Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night; `night2.png`: floor 3.5 + night ambient 1;
 `cave_in1*.png`; `torch_stage.png`).
 
-### LT-1: Night exposure floor (`scene lt-night-floor`)
-- Kind: game location. Run: `cargo dev scene lt-night-floor` (21:30, clear, sun -13.5 deg).
-- Look for: the plaster around the door lantern (left) is bright but textured, not a white patch; lit pools under
-  the lamps; facades, stairs and the far houses between the pools dark but visible (night ambient), not pure black;
-  the night does not look grey or washed out. A/B: `--exposure-floor=-10 --night-ambient 0.03` (the old night).
-- Measured (1280x720, mean sRGB luma / pixels > 235 / pixels < 6): old night EV100 1.62: 72.1 / 1.63 % / 28.7 %;
-  floor 3.5 + ambient 0.4: 38.6 / 0.26 % / 34.9 %; floor 3.5 + ambient 1.0 (default): 38.4 / 0.26 % / 26.9 %.
-  With `--portals` (viewer auto exposure, curve clamped to the floor): 40.1 / 0.22 % / 37.7 % (ambient 0.4).
+### LT-1: Night exposure floor + night ambient (`scene lt-night-floor`, `scene lamps-handoff`)
+- Kind: game location. Run: `cargo dev scene lt-night-floor --hour 22`, then `cargo dev scene lamps-handoff` (22:00,
+  where the owner rejected round 5). Retune 2026-10-21 (renderfix1): floor EV100 3.5 kept (lamps not blown), night
+  ambient 1 -> 4 nits (x the sky's blue ambient colour): moonlit stone ~2 EV under mid grey instead of ~4.
+- Look for: facades, street, stairs and far hills between the lamp pools readable in a cool moonlit blue, lamp pools
+  warm, lantern walls textured (no white patch); dark, not grey or washed out. A/B: `--night-ambient 1` (the rejected
+  night), `--night-ambient 2` / `6` to bracket. Agent pair: `shots/renderfix1/night_amb1.png`, `night_amb4.png`.
 - Tune: `--exposure-floor <EV100>` (higher = darker night, dimmer lamps), `--night-ambient <nits>`.
-- Status: rejected by owner 2026-10-19 (round 5, seen in scene lamps-handoff at 22:00, not lt-night-floor): night is far too dark, you can't see anything. Phase 1 (exposure floor / night ambient retune).
+- Status: awaiting owner (retune; round 5 rejected 1 nit as "can't see anything").
 
 ### LT-2: Dark interior keeps its lights (`scene lt-cave`)
 - Kind: game location. Run: `cargo dev scene lt-cave` (Addamasartus, mine tunnel).
