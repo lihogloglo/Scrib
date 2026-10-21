@@ -122,7 +122,9 @@ Done when: new game in Seyda Neen → walk in third person → talk to Fargoth �
 save, quit, load. Break it down (and write the missing specs: dialogue, journal, saves) before building.
 
 - [~] 2.1 Player character: third-person controller + camera (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`),
-  activation with a "press to use" prompt.
+  activation with a "press to use" prompt. `sf_action` A1 done 2026-10-21 (commands, RON move rules, two-stage buffer,
+  chooser, jump buffer/coyote/landing, use prompt, net-ready state); next `sf_camera`, then `sf_controller` launch +
+  serde, then A2 (`sf_action_bevy`, fixed tick, app wiring).
 - [ ] 2.2 UI: widget kit + Morrowind theme (M5 U3), HUD + message box (U4), inventory on minimal `sf_rpg` stacks
   (U5), settings/options + keybinds (U6). `sf_ui`, `sf_ui_bevy`, `sf_ui_css` exist (U1, U2 confirmed).
 - [ ] 2.3 Text: fonts, books and scrolls, notifications.
@@ -173,6 +175,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (action-a1): `sf_action` A1, Bevy-free: input sampler + command feed, RON move rules with load errors,
+  Sekiro two-stage buffer, chooser, jump/coyote/landing, use prompt; deterministic at 30/60/144 fps (21 tests).
 - 2026-10-21 (audio-pass): `sf_audio` cues/sound groups, distance curves, music mood playlists with crossfade, footstep
   hook, ambience layers; `sf_audio_bevy` positional one-shots + loop emitters on bevy_audio (30 tests).
 - 2026-10-21 (rpg-core): specs `rpg.md` + `rpg-adapter.md`; `sf_rpg` built (dialogue response DB + session, item
