@@ -5,6 +5,7 @@
 
 mod actors;
 mod anim_view;
+mod audio;
 mod bake;
 mod character_view;
 mod doors;

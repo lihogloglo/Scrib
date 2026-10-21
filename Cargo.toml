@@ -49,6 +49,9 @@ sf_world = { path = "../superfargoth/crates/sf_world" }
 sf_world_bevy = { path = "../superfargoth/crates/sf_world_bevy" }
 sf_lod = { path = "../superfargoth/crates/sf_lod" }
 sf_lod_bevy = { path = "../superfargoth/crates/sf_lod_bevy" }
+sf_action = { path = "../superfargoth/crates/sf_action" }
+sf_camera = { path = "../superfargoth/crates/sf_camera" }
+sf_rpg = { path = "../superfargoth/crates/sf_rpg" }
 
 # TES3 formats (MIT/Apache). Unstable API: pinned to a commit.
 tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0", default-features = false }
@@ -88,6 +91,7 @@ mw_records = { path = "crates/mw_records" }
 mw_script = { path = "crates/mw_script" }
 mw_water = { path = "crates/mw_water" }
 mw_weather = { path = "crates/mw_weather" }
+mw_audio = { path = "crates/mw_audio" }
 sf_water_bevy = { path = "../superfargoth/crates/sf_water_bevy" }
 sf_render_order_bevy = { path = "../superfargoth/crates/sf_render_order_bevy" }
 mw_world = { path = "crates/mw_world" }

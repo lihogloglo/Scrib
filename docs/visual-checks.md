@@ -924,6 +924,16 @@ Status: **confirmed outdoors 2026-10-19; indoor fix awaiting owner** (phase1): a
 changes (C key), the thunderstorm adds its loop, thunder follows each flash after distance / 343 s, region ambience
 (birds, wind) draws now and then on a clear day. Levels sane against each other; mp3 and wav both play.
 
+### AU-2: World sounds and music (`cargo dev scene door-balmora-guild`, then a cave: `cargo dev view "Addamasartus"`)
+
+Status: **awaiting owner** (audio-pass slice 2, ROADMAP 2.6; agents cannot hear: the log has `audio: playlist`,
+`audio: music`, `audio: cue`, `audio: N loop emitters loaded, M audible`). Listen for: explore music starts within
+a few seconds and the next track crossfades in when one ends (battle music needs Phase 3 combat; nothing triggers
+it yet). Walk up to a street lamp or brazier with a fire: its crackle grows as you approach and fades out by ~11 m,
+panned left/right as you turn. Activate the guild door: the door sound plays from the door's side and carries
+through the load. In the cave, the drip and wind loops come from their spots. Footsteps: NPC walkers within 15 m
+step in time with their gait (bare-foot sounds until equipment is wired); none while flying the free camera.
+
 
 
 ### LM-1: Leaves as alpha-tested cutouts (`view "Seyda Neen" --hour 11 --weather foggy`, then `--weather clear`; forest: fly west into the Bitter Coast)

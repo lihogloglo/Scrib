@@ -137,7 +137,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [ ] 2.5 Saves (M7 subset): world overlay + player; net-ready per `specs/net.md`.
 - [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
   (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
-  layers; positional one-shots/emitters on bevy_audio); next: Morrowind wiring (`mw_audio`, app glue), AU-2.
+  layers; positional one-shots/emitters on bevy_audio). Morrowind wiring done 2026-10-21 (`mw_audio`: SOUN/SNDG cues,
+  door sounds, loop emitters, vanilla footsteps, VFS music; app `audio.rs`); AU-2 awaiting owner. Left: UI sounds (no
+  menus yet), swinging-door sounds, boots class from equipment, modern-preset beds/surfaces/bus volume settings.
 
 ## Phase 3: animation, combat, physics
 
@@ -178,6 +180,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (audio-pass): Morrowind sound in game: `mw_audio` (SOUN/SNDG cues, GMST ranges, music playlists), load-door
+  sounds, light/activator loop emitters, stride footsteps, explore music; audio tests no longer build the renderer.
 - 2026-10-21 (action-a1): `sf_camera` rig math, Bevy-free (orbit + critically damped pivot, sphere-cast push-in, lock-on
   hysteresis/LOS, first-person limits, trauma shake; 16 tests); action.md split (30.5 KB + archive); dolly rejected.
 - 2026-10-21 (renderfix1): night ambient 1 → 4 nits (LT-1 awaiting owner); FG-1 repro + `--off foghistory`: not the

@@ -73,10 +73,11 @@ sf_render_order_bevy.workspace = true
 sf_wind_bevy.workspace = true
 mw_water.workspace = true
 mw_weather.workspace = true
+mw_audio.workspace = true
 sf_weather.workspace = true
 sf_weather_bevy.workspace = true
 sf_audio.workspace = true
-sf_audio_bevy.workspace = true
+sf_audio_bevy = { workspace = true, features = ["weather"] }
 sf_sky_bevy = { workspace = true, features = ["pcss"] }
 sf_shadow_cache_bevy.workspace = true
 

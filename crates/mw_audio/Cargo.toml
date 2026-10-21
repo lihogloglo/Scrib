@@ -1,0 +1,16 @@
+[package]
+name = "mw_audio"
+description = "Morrowind sound content for sf_audio: SOUN bank and cues, SNDG creature cues, door and loop-emitter sounds, footsteps, music playlists (audio.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Bevy-free (ARCHITECTURE section 8b rule 6): records in, sf_audio data out. The app's audio.rs is the glue.
+[dependencies]
+sf_audio.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[lints]
+workspace = true
