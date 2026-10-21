@@ -108,9 +108,9 @@ and effects. Every task reports its ms cost per preset.
   walk's gap was terrain blend (1.6). Default on/off still the owner's call. `NoCpuCulling` retry once every view does GPU culling
   (perf.md "Lead"); big_space propagation patch; skinned bounds (research/perf/README.md).
 - [~] 1.10 Volumetric fog black bands (FG-1, owner 2026-10-20): dark vertical bands in light-lit fog at night
-  when the camera turns fast. 2026-10-21 (renderfix1): repro by BRP yaw script (Sadrith Mora, foggy, 21:25); the hard
-  glow edge stays with `--off foghistory` (new A/B), so not the froxel history; next: TAA/sky reprojection, the
-  composite's froxel/far-fog split, lamp range spheres (`.sessions/renderfix1.md`).
+  when the camera turns fast. 2026-10-21 (renderfix1): the Sadrith Mora repro was a static lamp-range edge (428k lm,
+  29 m range), not the bug (TAA, sun cascades, froxel history ruled out there). Owner's bars unreproduced: need the
+  owner's camera (F9) + DLSS mode at the cave/mushroom spot, then A/B foghistory / F4 / froxels (`spin.sh`).
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
 

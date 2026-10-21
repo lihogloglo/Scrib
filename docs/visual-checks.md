@@ -208,11 +208,11 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Seen by owner 2026-10-20: dark vertical bands appear in the lit fog during fast yaw. Suspects (unverified): the
   froxel volume's temporal reprojection or history rejection on rotation, or the froxel light/shadow lookup at
   history edges (`sf_atmos_bevy` froxel_inject / froxel_integrate). A/B to try: `--off froxels`, `--off fogjitter`.
-- Agent repro 2026-10-21 (renderfix1): `view "Sadrith Mora" --hour 21.25 --weather foggy`, camera
-  `2160,40,-460,2140,30,-500`, then `shots/renderfix1/yaw.sh` (BRP camera steps, shot mid-turn): lamp glow in the fog
-  shows a hard vertical edge at mid-screen (`fg_yaw2.png`), and still does with `--off foghistory` (new A/B: froxel
-  history weight 0; `fg_yaw_nohist.png`): so not (only) the froxel history. Next A/B: `--off skymotion`, no TAA.
-- Status: known bug: Phase 1 (1.10), diagnosis open.
+- Agent repro 2026-10-21 (renderfix1, `view "Sadrith Mora" --hour 21.45 --weather foggy`, `shots/renderfix1/spin.sh`):
+  the vertical glow edge seen there is static, NOT the owner's bug: same still vs mid-turn, TAA vs F4 off, sun shadows
+  on/off. It is the tower lamps' range silhouette (column of 428k lm lights, range 29.3 m: bright right up to the
+  Bevy-style window). The owner's transient rectangle bars are still unreproduced; froxel history is not ruled out.
+- Status: known bug: Phase 1 (1.10), diagnosis open: needs the owner's spot (camera via F9) to repro.
 
 
 ## Ghostfence (superfargoth `weather.md`, bug B)
