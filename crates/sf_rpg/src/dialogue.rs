@@ -113,6 +113,13 @@ pub trait DialogueRules {
     fn accepts(&self, ctx: &ConversationCtx, topic: &RecordId, response: &RecordId) -> bool;
     /// The response text with macros expanded.
     fn render(&self, ctx: &ConversationCtx, topic: &RecordId, response: &RecordId) -> String;
+    /// A line to show when no response under `topic` is accepted (e.g. a refusal when only
+    /// a disposition check failed), as (topic, response). A topic with a fallback still
+    /// shows in the topic list. Default: none.
+    fn fallback(&self, ctx: &ConversationCtx, topic: &RecordId) -> Option<(RecordId, RecordId)> {
+        let _ = (ctx, topic);
+        None
+    }
 }
 
 /// What a step produced, in order.
@@ -234,8 +241,11 @@ impl DialogueSession {
     }
 
     fn select_and_show(&mut self, db: &DialogueDb, rules: &dyn DialogueRules, topic: RecordId) -> Vec<DialogueOutput> {
-        match db.select(rules, &self.ctx, &topic) {
-            Some(response) => self.show(db, rules, topic, response),
+        if let Some(response) = db.select(rules, &self.ctx, &topic) {
+            return self.show(db, rules, topic, response);
+        }
+        match rules.fallback(&self.ctx, &topic) {
+            Some((shown, response)) => self.show(db, rules, shown, response),
             None => vec![DialogueOutput::NoResponse { topic: Some(topic) }],
         }
     }
@@ -309,7 +319,7 @@ impl DialogueSession {
         let mut out: Vec<(&str, RecordId)> = db
             .topics()
             .filter(|(id, t)| t.kind == TopicKind::Conversation && known.knows(id))
-            .filter(|(id, _)| db.select(rules, &self.ctx, id).is_some())
+            .filter(|(id, _)| db.select(rules, &self.ctx, id).is_some() || rules.fallback(&self.ctx, id).is_some())
             .map(|(id, t)| (t.name.as_str(), id.clone()))
             .collect();
         out.sort_by_cached_key(|(name, _)| name.to_lowercase());

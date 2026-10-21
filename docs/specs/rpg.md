@@ -175,6 +175,9 @@ directly. Events carry the stable ids (`Holder`, quest, topic), never entities.
 trait DialogueRules {
     fn accepts(&self, ctx: &ConversationCtx, topic: &RecordId, response: &RecordId) -> bool;
     fn render(&self, ctx: &ConversationCtx, topic: &RecordId, response: &RecordId) -> String;
+    /// Default None. A (topic, response) to show when nothing under `topic` is accepted
+    /// (a refusal line); such a topic still counts in `available_topics`. Not for greetings.
+    fn fallback(&self, ctx: &ConversationCtx, topic: &RecordId) -> Option<(RecordId, RecordId)>;
 }
 ```
 

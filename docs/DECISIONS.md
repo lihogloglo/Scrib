@@ -1463,3 +1463,8 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (audio-pass, bevyrrowind): vanilla loop ambience comes from sound activators, matched by a strict
   `PlayLoopSound3D*`-only script pattern into `LoopEmitter`s (named stopgap until the script runtime plays sounds).
   Battle music = vanilla rule via the `CombatMusic` hook, 5 s hold; footsteps use the boots weight class only for now.
+- 2026-10-21 (rpg-core, rpg-adapter.md): Morrowind dialogue follows OpenMW behaviour: INFO order by the previous-INFO
+  link only; text-learned topics need a speaker answer; `Journal` adds one entry per index, stage only rises; Info
+  Refusal for topics, not greetings. `sf_rpg::DialogueRules::fallback` (default None) is the refusal hook.
+- 2026-10-21 (rpg-core): result scripts stay "one runtime": `mw_rpg::ResultRunner` emits `ResultEffect`s; only a test
+  double exists; the W3 Luau `mw` library is the game's runner (rpg-adapter.md lists what it must provide).
