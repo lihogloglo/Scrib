@@ -91,8 +91,8 @@ From `Morrowind.bsa` (checked by listing the archive):
 
 - Topic links: INFO text is linked against the topics the player knows (case-insensitive,
   longest match first; Aho-Corasick, `aho-corasick` crate, MIT/Unlicense), plus explicit
-  `@topic#` markers (verify). Each link is a `TextSpan` (framework spec, "Dialogue
-  hyperlinks"). Text macros (`%PCName`, `%PCRace`, ...) are expanded by `mw_dialogue` first.
+  `@topic#` markers (none in Morrowind.esm dialogue, counted 2026-10-21). Each link is a `TextSpan` (framework spec,
+  "Dialogue hyperlinks"). Text macros (`%PCName`, `%PCRace`, ...) are expanded by `mw_rpg` first (`rpg-adapter.md`).
 - `Choice` in dialogue results renders as choice buttons in the dialogue screen.
 - Journal uses `tx_menubook` in `mw_classic`; quests, topics index and search come from the
   framework's journal screen.

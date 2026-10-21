@@ -212,7 +212,7 @@ end
 ### Dialogue results
 
 Translated and compiled for the whole corpus in M5 (compile coverage). They execute only when
-`mw_dialogue` exists (M7); in M5 the dev console can run one against an actor for testing.
+`mw_rpg` runs dialogue (Phase 2.4, `rpg-adapter.md`); in M5 the dev console can run one against an actor for testing.
 
 ## What M5 needs from M7, and the M5 slice
 

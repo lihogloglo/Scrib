@@ -121,16 +121,17 @@ AU-1, TA-1; Nsight per pass (UAC).
 Done when: new game in Seyda Neen → walk in third person → talk to Fargoth → get his ring back → journal entry →
 save, quit, load. Break it down (and write the missing specs: dialogue, journal, saves) before building.
 
-- [ ] 2.1 Player character: third-person controller + camera (`specs/action.md`, `camera.md`; `sf_action` exists),
+- [~] 2.1 Player character: third-person controller + camera (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`),
   activation with a "press to use" prompt.
 - [ ] 2.2 UI: widget kit + Morrowind theme (M5 U3), HUD + message box (U4), inventory on minimal `sf_rpg` stacks
   (U5), settings/options + keybinds (U6). `sf_ui`, `sf_ui_bevy`, `sf_ui_css` exist (U1, U2 confirmed).
 - [ ] 2.3 Text: fonts, books and scrolls, notifications.
-- [ ] 2.4 Dialogue + journal + minimal quest store (M7 subset), MWScript legacy runtime for the slice (M5 W3;
-  MWScript → Luau translation exists, W1/W2).
+- [~] 2.4 Dialogue + journal + minimal quest store (`specs/rpg.md`, `rpg-adapter.md`; `sf_rpg`, `mw_rpg`), MWScript legacy runtime for the slice (M5 W3;
+  MWScript → Luau translation exists, W1/W2). `sf_rpg` core done (2026-10-21: response DB + session, stacks/loadout,
+  quests/journal/topics, topic linker); next `mw_rpg` + Fargoth headless test.
 - [ ] 2.5 Saves (M7 subset): world overlay + player; net-ready per `specs/net.md`.
-- [ ] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
-  (`sf_audio` exists, minimal).
+- [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
+  (`sf_audio`, `sf_audio_bevy`).
 
 ## Phase 3: animation, combat, physics
 
@@ -153,6 +154,7 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   proxy), Solari sunset patch; `--rt` in the streamed view (it still opens the single-cell viewer: no actors, no
   doors); characters in the RT scene (compute skin cache, DECISIONS 2026-10-11); black bands at contact edges (DL-4);
   DL-3 confirmed 2026-10-19, DL-2 open (needs a `solari,dlss` build).
+- [p] Raster GI & sky occlusion (owner 2026-10-21): Bevy 0.20 `IrradianceVolume` / sky-visibility SH probes baked per cell in `sf_bake` (occludes sky cubemap under overhangs/alleys/interiors + 1-bounce color bleed) + screen-space GI/bent normals over the depth/normal/history prepass.
 - [p] Foliage light transmission (WISHLIST §11).
 - [p] Cloth: capes/banners/tents (robes stay authored skin; PH-3 confirmed).
 - [p] Seamless portals (M9), far-field performance (M8: HLOD, texture streaming, PBR generation).
@@ -170,6 +172,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (rpg-core): specs `rpg.md` + `rpg-adapter.md`; `sf_rpg` built (dialogue response DB + session, item
+  stacks/loadout, quests, journal, topic linker; 19 tests); Fargoth quest IDs verified against the installed ESMs.
 - 2026-10-21 (shadowB2): shadow reset B2: own bevy_pbr patch, lamp shadow fetch skipped where unlit + lamps on 2x2
   hardware PCF (sun keeps Temporal): -0.1 ms GPU per shadowed lamp at 1440p; SH-19 (edge look) awaiting owner.
 - 2026-10-21 (shadowB1): shadow reset B1: Bevy PRs #26149/#26161 vendored (3 crates); cache kept (patch alone loses with
