@@ -18,13 +18,12 @@ fn app() -> App {
     let mut app = App::new();
     app.add_plugins(TimePlugin)
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(500)))
-        .init_resource::<CurrentWeather>()
         .add_plugins(SfAudioPlugin { bank, playback: false });
     app.update();
     app
 }
 
-fn send(app: &mut App, m: WeatherSound) {
+fn send(app: &mut App, m: BusSound) {
     app.world_mut().write_message(m);
 }
 
@@ -32,8 +31,8 @@ fn events(app: &mut App) -> Vec<AudioEvent> {
     app.world_mut().resource_mut::<Messages<AudioEvent>>().drain().collect()
 }
 
-fn lp(sound: &str, volume: f32) -> WeatherSound {
-    WeatherSound::Loop { sound: id(sound), volume, region: false }
+fn lp(sound: &str, volume: f32) -> BusSound {
+    BusSound::Loop { sound: id(sound), volume, bus: Bus::Weather }
 }
 
 fn level(app: &mut App, sound: &str) -> Option<f32> {
@@ -65,7 +64,7 @@ fn clear_rain_thunderstorm_starts_fades_and_stops_loops() {
     let (r, s) = (level(&mut app, "rain").unwrap(), level(&mut app, "storm").unwrap());
     assert!(r < 1.0 && r > 0.0 && s > 0.0 && s < 1.0, "{r} {s}");
     // Thunder one-shot plays at once at its volume on the weather bus.
-    send(&mut app, WeatherSound::OneShot { sound: id("thunder"), volume: 0.8, azimuth: 0.0, distance_m: 900.0 });
+    send(&mut app, BusSound::OneShot { sound: id("thunder"), volume: 0.8, bus: Bus::Weather });
     app.update();
     assert!(events(&mut app).contains(&AudioEvent::OneShot { sound: id("thunder"), volume: 0.8, bus: Bus::Weather }));
     for _ in 0..6 {
@@ -190,4 +189,17 @@ fn music_requests_start_tracks() {
         app.update();
     }
     assert_eq!(app.world_mut().query::<&MusicVoice>().iter(app.world()).count(), 0);
+}
+
+#[test]
+fn one_shot_sets_draw_on_the_ambience_bus_outdoors() {
+    let mut app = app();
+    app.world_mut().resource_mut::<OneShotSets>().0 =
+        vec![OneShotSet { key: 7, interval_s: [0.4, 0.6], sounds: vec![(id("thunder"), 1.0)], volume: 0.5 }];
+    let mut drawn = 0;
+    for _ in 0..8 {
+        app.update();
+        drawn += events(&mut app).iter().filter(|e| **e == AudioEvent::OneShot { sound: id("thunder"), volume: 0.5, bus: Bus::Ambience }).count();
+    }
+    assert!(drawn >= 2, "{drawn}");
 }

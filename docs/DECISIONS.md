@@ -1458,3 +1458,8 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (action-a1; camera.md "As built"): `sf_camera` is Bevy-free and independent of `sf_action` (the shell maps
   modes/ids); pivot spring follows gameplay velocity exactly, springs only snaps; collision reuses `GroundProbe` sphere
   casts; `LockTimers` live beside the `sf_action` lock target. dolly rejected (glam ≤0.28, no collision/lock-on).
+- 2026-10-21 (audio-pass): `sf_audio_bevy` takes neutral `BusSound`/`OneShotSets` inputs; weather glue sits behind its
+  `weather` feature (`WeatherAudioPlugin`), so audio builds and tests without the render stack (§8b rule 6).
+- 2026-10-21 (audio-pass, bevyrrowind): vanilla loop ambience comes from sound activators, matched by a strict
+  `PlayLoopSound3D*`-only script pattern into `LoopEmitter`s (named stopgap until the script runtime plays sounds).
+  Battle music = vanilla rule via the `CombatMusic` hook, 5 s hold; footsteps use the boots weight class only for now.

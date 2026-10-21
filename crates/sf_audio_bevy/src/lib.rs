@@ -1,6 +1,8 @@
-//! Thin Bevy plugin for `sf_audio` (audio.md): weather loops and thunder, region one-shots,
-//! cue one-shots (2D or positional), looping emitters, ambience beds and the music player, all
-//! played through `bevy_audio` at the mixer's bus gains. Positional voices take their distance
+//! Thin Bevy plugin for `sf_audio` (audio.md): bus loops and one-shots ([`BusSound`]: weather
+//! beds, thunder), random one-shot sets ([`OneShotSets`]: region ambience), cue one-shots (2D or
+//! positional), looping emitters, ambience beds and the music player, all
+//! played through `bevy_audio` at the mixer's bus gains. The weather glue is the `weather`
+//! feature's [`weather::WeatherAudioPlugin`], so this crate builds without the render stack. Positional voices take their distance
 //! curve from `sf_audio::Attenuation`; Bevy's `SpatialListener` (the host puts it on the camera)
 //! only pans them. Every start and stop is an [`AudioEvent`] message and an `info!` line (agents
 //! cannot hear; the log is the headless check).
@@ -23,8 +25,9 @@ use sf_audio::{
     MusicVoiceId, OUTDOOR_FADE_S, OneShotScheduler, SoundBank, equal_power, fade_toward, reconcile_loops,
 };
 use sf_records::RecordId;
-use sf_weather::ClimateIx;
-use sf_weather_bevy::{CurrentWeather, WeatherRecords, WeatherSound};
+
+#[cfg(feature = "weather")]
+pub mod weather;
 
 /// One-shot voices allowed at once; plays over the budget are dropped (audio.md "Voice budget").
 pub const MAX_ONE_SHOTS: usize = 64;
@@ -76,7 +79,39 @@ pub enum SoundAt {
     Point(Vec3),
     /// Follows an entity (the voice is its child).
     Entity(Entity),
+    /// Follows an entity at an offset in its local space (a door beside the player that
+    /// travels with them through a load).
+    Offset(Entity, Vec3),
 }
+
+/// A non-positional sound on a bus from a system that keeps its own state (weather beds and
+/// thunder). A `Loop` sets the looping sound's target level on its bus (0 fades it out; a new
+/// one starts silent and fades in); a `OneShot` plays once at `volume`.
+#[derive(Message, Clone, Debug, PartialEq)]
+pub enum BusSound {
+    Loop { sound: RecordId, volume: f32, bus: Bus },
+    OneShot { sound: RecordId, volume: f32, bus: Bus },
+}
+
+/// A set of random one-shots drawn while on (region ambience: birds, distant wind).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OneShotSet {
+    /// Stable key (keeps the set's scheduler across frames; its seed).
+    pub key: u64,
+    /// Seconds between draws, uniform in this range.
+    pub interval_s: [f32; 2],
+    /// Sound and chance (0..1) per draw.
+    pub sounds: Vec<(RecordId, f32)>,
+    pub volume: f32,
+}
+
+/// The one-shot sets on this frame; drawn on the Ambience bus while the listener is outdoors.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct OneShotSets(pub Vec<OneShotSet>);
+
+/// The plugin's systems (feeders such as the weather bridge run before).
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AudioSystems;
 
 /// Play a cue once (gameplay, UI and animation events write these).
 #[derive(Message, Clone, Debug, PartialEq)]
@@ -150,17 +185,18 @@ impl Plugin for SfAudioPlugin {
             .init_resource::<AudioCues>()
             .init_resource::<AmbienceLoops>()
             .init_resource::<Music>()
+            .init_resource::<OneShotSets>()
             .insert_resource(AudioBank(self.bank.clone()))
             .insert_resource(Playback(self.playback))
             .add_message::<AudioEvent>()
-            .add_message::<WeatherSound>()
+            .add_message::<BusSound>()
             .add_message::<PlaySound>()
             .add_systems(
                 Update,
                 (
                     ease_outdoor,
-                    route_weather_sounds,
-                    schedule_region_one_shots,
+                    route_bus_sounds,
+                    schedule_one_shot_sets,
                     reconcile_ambience,
                     play_cues,
                     start_emitters,
@@ -168,7 +204,8 @@ impl Plugin for SfAudioPlugin {
                     fade_voices,
                     log_events,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(AudioSystems),
             );
     }
 }
@@ -213,8 +250,8 @@ fn spawn_voice<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn route_weather_sounds(
-    mut sounds: MessageReader<WeatherSound>,
+fn route_bus_sounds(
+    mut sounds: MessageReader<BusSound>,
     mut events: MessageWriter<AudioEvent>,
     mut voices: Query<&mut Voice>,
     bank: Res<AudioBank>,
@@ -226,12 +263,12 @@ fn route_weather_sounds(
 ) {
     let server = if playback.0 { server.as_deref() } else { None };
     for s in sounds.read() {
-        let (id, volume, looping) = match s {
-            WeatherSound::Loop { sound, volume, .. } => (sound, *volume, true),
-            WeatherSound::OneShot { sound, volume, .. } => (sound, *volume, false),
+        let (id, volume, bus, looping) = match s {
+            BusSound::Loop { sound, volume, bus } => (sound, *volume, *bus, true),
+            BusSound::OneShot { sound, volume, bus } => (sound, *volume, *bus, false),
         };
         if looping {
-            if let Some(mut v) = voices.iter_mut().find(|v| v.looping && v.bus == Bus::Weather && v.sound == *id) {
+            if let Some(mut v) = voices.iter_mut().find(|v| v.looping && v.bus == bus && v.sound == *id) {
                 if volume <= 0.0 && v.target > 0.0 {
                     events.write(AudioEvent::LoopStop { sound: id.clone() });
                 }
@@ -250,21 +287,20 @@ fn route_weather_sounds(
             continue;
         };
         // A one-shot's volume is its level (no fade); base stays the sound's own.
-        let voice = Voice { sound: id.clone(), bus: Bus::Weather, base: file.volume, level: if looping { 0.0 } else { volume }, target: volume, looping };
+        let voice = Voice { sound: id.clone(), bus, base: file.volume, level: if looping { 0.0 } else { volume }, target: volume, looping };
         events.write(if looping {
             AudioEvent::LoopStart { sound: id.clone(), target: volume }
         } else {
-            AudioEvent::OneShot { sound: id.clone(), volume, bus: Bus::Weather }
+            AudioEvent::OneShot { sound: id.clone(), volume, bus }
         });
         spawn_voice(&mut commands, server, &file.path, voice, &mixer.0, &Start::default());
     }
 }
 
-/// The frame's region one-shot sets: each on set has a scheduler; draws play on the Ambience bus.
+/// The frame's one-shot sets: each on set has a scheduler; draws play on the Ambience bus.
 #[allow(clippy::too_many_arguments)]
-fn schedule_region_one_shots(
-    current: Res<CurrentWeather>,
-    records: Option<Res<WeatherRecords>>,
+fn schedule_one_shot_sets(
+    sets: Res<OneShotSets>,
     time: Res<Time<Real>>,
     bank: Res<AudioBank>,
     mixer: Res<AudioMixer>,
@@ -272,22 +308,19 @@ fn schedule_region_one_shots(
     server: Option<Res<AssetServer>>,
     mut events: MessageWriter<AudioEvent>,
     mut commands: Commands,
-    mut schedulers: Local<BTreeMap<(ClimateIx, usize), OneShotScheduler>>,
+    mut schedulers: Local<BTreeMap<u64, OneShotScheduler>>,
 ) {
-    let Some(records) = records else { return };
-    if !current.valid || mixer.0.outdoor < 0.5 {
+    if mixer.0.outdoor < 0.5 {
         return;
     }
     let server = if playback.0 { server.as_deref() } else { None };
-    let on: Vec<_> = current.frame.one_shots.iter().filter(|o| o.volume > 0.0).collect();
-    schedulers.retain(|k, _| on.iter().any(|o| (o.climate, o.set) == *k));
+    let on: Vec<_> = sets.0.iter().filter(|o| o.volume > 0.0).collect();
+    schedulers.retain(|k, _| on.iter().any(|o| o.key == *k));
     for o in on {
-        let Some(set) = records.0.climate_record(o.climate).one_shots.get(o.set) else { continue };
-        let seed = u64::from(o.climate.0) << 16 | o.set as u64;
-        let sched = schedulers.entry((o.climate, o.set)).or_insert_with(|| OneShotScheduler::new(seed));
-        let chances: Vec<f32> = set.sounds.iter().map(|(_, c)| *c).collect();
-        let Some(i) = sched.tick(time.delta_secs(), set.interval_s, &chances) else { continue };
-        let id = &set.sounds[i].0;
+        let sched = schedulers.entry(o.key).or_insert_with(|| OneShotScheduler::new(o.key));
+        let chances: Vec<f32> = o.sounds.iter().map(|(_, c)| *c).collect();
+        let Some(i) = sched.tick(time.delta_secs(), o.interval_s, &chances) else { continue };
+        let id = &o.sounds[i].0;
         let Some(file) = bank.0.get(id) else { continue };
         events.write(AudioEvent::OneShot { sound: id.clone(), volume: o.volume, bus: Bus::Ambience });
         let voice = Voice { sound: id.clone(), bus: Bus::Ambience, base: file.volume, level: o.volume, target: o.volume, looping: false };
@@ -362,6 +395,7 @@ fn play_cues(
             SoundAt::Listener => None,
             SoundAt::Point(p) => Some(p),
             SoundAt::Entity(e) => Some(places.get(e).map_or(Vec3::ZERO, GlobalTransform::translation)),
+            SoundAt::Offset(e, offset) => Some(places.get(e).map_or(Vec3::ZERO, |g| g.transform_point(offset))),
         };
         let spatial = if at.is_some() { cue.attenuation } else { None };
         let distance_gain = match (spatial, at, ear) {
@@ -387,6 +421,9 @@ fn play_cues(
             }
             SoundAt::Entity(parent) => {
                 e.insert((Transform::IDENTITY, ChildOf(parent)));
+            }
+            SoundAt::Offset(parent, offset) => {
+                e.insert((Transform::from_translation(offset), ChildOf(parent)));
             }
         }
     }

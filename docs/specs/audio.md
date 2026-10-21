@@ -26,8 +26,16 @@ music with crossfades. Volumes follow a bus mixer. Nothing here is gameplay.
 - **Positional** (`sf_audio::Attenuation`): `min_m` (full volume inside), `max_m` (silent from, and
   never started beyond), `Rolloff::Inverse` (default: `min/d`, offset to reach 0 exactly at `max_m`)
   or `Linear`. The curve is ours; the backend only pans (see "Backend"). `PlaySound { cue, at }` with
-  `SoundAt::{Listener, Point, Entity}`; an `Entity` voice is a child so it follows its source.
+  `SoundAt::{Listener, Point, Entity, Offset}`; an `Entity` voice is a child so it follows its source
+  (`Offset(e, v)`: a child at `v` in `e`'s local space, e.g. a door sound beside a player who travels).
   `LoopEmitter { cue }` on an entity adds a looping positional child voice (fires, water, machines).
+- **Bus feeders** (2026-10-21): systems that keep their own sound state send `BusSound::{Loop,
+  OneShot} { sound, volume, bus }` (a loop's message sets its target level; 0 fades it out) and fill
+  `OneShotSets` (keyed random one-shot sets drawn on the Ambience bus outdoors). The weather is one
+  such feeder: `sf_audio_bevy::weather::WeatherAudioPlugin` behind the `weather` cargo feature maps
+  `WeatherSound` and the frame's region sets onto them, so `sf_audio_bevy` itself builds and tests
+  without `sf_weather_bevy`'s render crates (ARCHITECTURE section 8b rule 6). Feeders run before
+  `AudioSystems`.
   The host puts Bevy's `SpatialListener` on the camera (one listener; co-op is one listener per peer).
 - **Voice budget**: at most `MAX_ONE_SHOTS` (64) cue one-shots at once, plus per-cue caps; plays
   beyond `max_m` are culled before they start. Loop emitters keep playing at gain 0 out of range

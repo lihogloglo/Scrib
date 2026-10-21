@@ -1,6 +1,6 @@
 [package]
 name = "sf_audio_bevy"
-description = "Thin Bevy plugin for sf_audio: weather loops, cue one-shots (2D and positional), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
+description = "Thin Bevy plugin for sf_audio: bus loops (weather bridge behind a feature), cue one-shots (2D and positional), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,8 +18,12 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_audio.workspace = true
 sf_records.workspace = true
-sf_weather.workspace = true
-sf_weather_bevy.workspace = true
+# The weather bridge (`weather` feature, module `weather`): off by default so testing audio does
+# not compile the render stack sf_weather_bevy pulls in (ARCHITECTURE section 8b rule 6).
+sf_weather_bevy = { workspace = true, optional = true }
+
+[features]
+weather = ["dep:sf_weather_bevy"]
 
 [dev-dependencies]
 
