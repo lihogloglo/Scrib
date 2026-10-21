@@ -13,7 +13,9 @@ run line, what to look for, status. History goes in the spec, not here.
 Since 2026-10-19 the session runs the pass: it copies a current release exe (`target/release`, built with
 `--features solari,dlss`; check the build's features first) plus the DLSS DLLs and `scenes.ron` into
 `%TEMP%\bw-owner<N>`, so repo builds never block it, then launches **one window per check** for the owner and
-says what to expect (memory: owner-visual-confirmation). The old `play\` folder is gone. Running it yourself:
+says what to expect (memory: owner-visual-confirmation). The session launches every window and every A/B
+variant (`--off ...`, `--dlss ...`) itself; the owner never types commands or relaunches with flags (owner
+2026-10-21). The old `play\` folder is gone. Running it yourself:
 
 1. **Open a terminal in the newest `%TEMP%\bw-owner<N>` folder.**
 2. **List the scenes:** `.\bevyrrowind scene --list`.
@@ -171,26 +173,8 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   around NPCs or a grainy crawl under TAA/DLSS; indoors nothing lit or shadowed from the sun's direction; at night
   torch-bearers' own lights cast moving shadows (within High's 8); outdoors sun shadows, cloud shadows and rain
   occlusion under roofs as before.
-- Status: awaiting owner.
-
-### SH-17: Shadow reset A2 (lamp maps captured during the door fade)
-- Kind: game location. Run (release): `.\bevyrrowind scene door-census` at night (`--hour 22`): Space out to Seyda Neen,
-  Space at the office door back in. The log line "door travel took ... s of it for gates" gives the extra black time.
-- Look for: on arrival inside, the lamps' shadows are there from the first visible frame: no flicker or shadows
-  switching on as the fade lifts (SH-15's "flicker at first"); the extra black time is short (~0.3-0.5 s, capped 1.5 s).
-  Outdoors the first visit may hit the 1.5 s cap (shader compiles): any flicker left there is expected.
-- Also (doorwalls fix): back inside, everything in view draws on the first frame: walls, floor, rug and the NPCs,
-  no fog-colored holes or silhouettes (were: main-pass pipelines still compiling). Inside, the gate may hit the 1.5 s cap
-  while the exterior's pipelines still compile (log `pipelines: ... compiling`).
-- Status: awaiting owner.
-
-### SH-18: Shadow reset B1 (vendored Bevy shadow patch under the lamp cache)
-- Kind: game location. Run (release): `.\bevyrrowind scene door-census --hour 22`, then Balmora at night
-  (`view Balmora --hour 22`, walk the streets by lamps and torch-bearers). A/B: `--off shadowcache` = patch alone.
-- Look for: lamp shadows as in SH-15/17 (all 8 census lamps, NPCs casting while walking); no flicker; no stale
-  shadows: a walker's shadow follows it and leaves nothing behind when it walks out of a lamp, a door that opens
-  updates its shadow. Same with `--off shadowcache` (slower, should look identical).
-- Status: awaiting owner.
+- Status: inconclusive 2026-10-21 (bw-owner10): owner can't judge AO / contact shadows without live on/off toggles
+  (and is unsure contact shadows work at all); needs the dev console (ROADMAP 1.13, queued).
 
 ### SH-19: Shadow reset B2 (lamp shadows on 2x2 hardware PCF)
 - Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera
@@ -200,19 +184,25 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   aliasing or crawling/shimmer on the edges while walking; the sun's shadows outdoors unchanged. Agent screenshot
   pair at that camera looked identical at full-screen scale; motion is the open question.
 - Owner decides: keep 2x2 for lamps (-0.1 ms GPU per shadowed lamp at 1440p) or `--off lampfilter` as default.
-- Status: awaiting owner.
+- Status: inconclusive 2026-10-21 (bw-owner10): owner can't judge the lamp filter without live on/off toggles; needs
+  the dev console (ROADMAP 1.13, queued).
+
+### SH-20: Character shadows update very infrequently (owner report)
+- Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora 22:00) and a daytime street with walkers;
+  watch the shadow of a walking NPC.
+- Seen by owner 2026-10-21 (bw-owner10, SH-17/18 pass): NPC shadows move in coarse steps, so the shadow animation
+  looks choppy while the NPC itself is smooth.
+- Suspects: the lamp cube cache (B3 per-face cache / skip-unchanged) refreshing skinned casters too rarely, or the
+  animation budget. Tell sun from lamp shadows first; A/B `--off shadowcache`.
+- Status: known bug, diagnosis lane `charshadows` (ROADMAP 1.12).
 
 ### FG-1: Volumetric fog black bands on fast turns (owner report)
 - Kind: game location: fog lit by lamps at night (owner shot `Desktop/shadow fog.jpg`: giant-mushroom/cave area,
   21:15, fog). Turn the camera fast left or right.
-- Seen by owner 2026-10-20: dark vertical bands appear in the lit fog during fast yaw. Suspects (unverified): the
-  froxel volume's temporal reprojection or history rejection on rotation, or the froxel light/shadow lookup at
-  history edges (`sf_atmos_bevy` froxel_inject / froxel_integrate). A/B to try: `--off froxels`, `--off fogjitter`.
-- Agent repro 2026-10-21 (renderfix1, `view "Sadrith Mora" --hour 21.45 --weather foggy`, `shots/renderfix1/spin.sh`):
-  the vertical glow edge seen there is static, NOT the owner's bug: same still vs mid-turn, TAA vs F4 off, sun shadows
-  on/off. It is the tower lamps' range silhouette (column of 428k lm lights, range 29.3 m: bright right up to the
-  Bevy-style window). The owner's transient rectangle bars are still unreproduced; froxel history is not ruled out.
-- Status: known bug: Phase 1 (1.10), diagnosis open: needs the owner's spot (camera via F9) to repro.
+- Seen by owner 2026-10-20: dark vertical bands in the lit fog during fast yaw. Repro history (renderfix1, froxel
+  history, lamp-range edge, sun cascades) is in `archive/visual-checks-closed.md`, "FG-1 history".
+- Status: not reproduced 2026-10-21 (owner, Sadrith Mora 21:15 foggy): fog code unchanged since the report; the sun
+  cascades changed in shadow reset A2/B3, likely the fix. Reopen if seen.
 
 
 ## Ghostfence (superfargoth `weather.md`, bug B)
@@ -246,21 +236,13 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   blended planes. Owner: say whether the original reads more translucent or
   more glowing; that picks the fix.
 - A/B: `[`/`]` hour (does it glow at night?), `--off envmap`.
-- Status: awaiting owner (next pass; small leftover).
+- Status: known bug, owner 2026-10-21 (bw-owner10): the original reads more translucent than ours, and it emits
+  blue light at night. Fix toward translucency plus a night glow (ROADMAP 1.12).
 - Source: farfield-exterior / weather-spec / nifpop.
 
 ## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
 
 Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
-
-### TA-1: TAA as the base temporal resolve (ROADMAP 1.3)
-- Kind: game location. Run: `.\bevyrrowind view "Seyda Neen" --hour 11 --weather foggy --dlss taa`, fly
-  around; then `--weather ashstorm` far away (WE-2 grain) and Balmora at a grazing sun (SH-12 edge shimmer).
-- Look for: fog, far bad weather and soft shadow edges smooth instead of grainy; no ghost trails behind moving
-  actors, rain or the ship's sail (translucents write no motion vectors yet, RO-6); not blurrier than DLSS Q.
-- A/B: F4 cycles off (MSAA) / taa / DLSS modes. Agent shots: `shots/p1-aa-off.png`, `shots/p1-aa-taa.png`.
-  Cost (1440p native, Balmora): TAA 15.4 ms vs MSAA 18.5 (TAA pass 0.39 ms; no MSAA saves more).
-- Status: awaiting owner (phase1, 2026-10-19). Default now: DLSS auto where available, else TAA; Low: MSAA.
 
 ### DL-2: Super Resolution at 1440p
 - Kind: game location. Run: `.\bevyrrowind scene dlss-balmora-1440`
@@ -289,16 +271,6 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
 - Source: dlss.
 
 ## Sky (superfargoth `sky-lighting.md`)
-
-### SK-1: Sunset and sunrise
-- Kind: game location. Run: `.\bevyrrowind scene sky-sunset` (west, 19:30)
-  and `.\bevyrrowind scene sky-dawn` (east, 6:00); T for a time-lapse.
-- Look for: warm low sun, smooth gradient (no banding), the town not black,
-  no exposure jump as the sun crosses the horizon.
-- Known: the ray-traced path darkens and reddens the sky at low sun
-  (open question 1); judge raster.
-- Status: awaiting owner (next pass; small leftover).
-- Source: sky-lighting / dlss.
 
 ### SK-2: Night and moon
 - Kind: game location. Run: `.\bevyrrowind scene sky-night`
@@ -399,41 +371,6 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   streams out, and leaving takes about 1 s again.
 - Status: partial, owner 2026-10-19 (round 8): works, see DR-4.
 - Source: interiors, doorfix.
-
-### DR-4: Door travel polish and crash (owner report)
-- Kind: game location. Run: `.\bevyrrowind scene door-balmora-guild`, several round trips (Space at the doors).
-- Seen by owner 2026-10-19 (round 8):
-  - during the load, big rough shapes appear first and real models replace them (likely the far-field L1 copies,
-    shown until the near ring's models arrive: the fade lifts before the near ring is ready);
-  - the fade isn't black;
-  - sometimes you arrive in an interior that's still loading (objects appear in front of you);
-  - no "press Space" prompt on doors (expected: HUD, Phase 2);
-  - a few round trips ended in a **crash** (release exe, 10:55:47 UTC, leaving the bookseller to @exterior): Bevy's
-    default command error handler panicked on a command to a despawned entity (30782v1). Same class as the walkers.rs
-    `Dormant` crash fixed earlier today.
-- Fixed (phase1, 2026-10-19): the fade is a full-window UI node (after post-processing: truly black); it holds at
-  black until the arrival's near cells are spawned and the meshes within 48 m have their textures (10 s cap); ~100
-  commands on streamed entities use `try_*`; release builds log failed commands instead of panicking. Agent run:
-  4 crossings, 0.70–0.90 s each (was 0.64), the log line now says how long it held at black.
-- Look for: a black fade (no fogged grey); on arrival no rough shapes, no objects popping in front of you; a long trip
-  (bookseller, wait > 5 s inside so the town unloads) still arrives complete. No crash over many round trips.
-- Status: awaiting owner (prompt on doors: Phase 2).
-
-### DR-3: Interiors open in the streamed view
-- Kind: game location. Run: `.\bevyrrowind scene door-census` (or any
-  `view "<interior>"`), press Space at the door in front of you, then Space
-  at the door outside.
-- Look for: the Census Office in the streamed view (doors work, the window
-  title names the worldspace), lit like DL-3's raster baseline; no sea plane
-  or sky inside. Out: Seyda Neen with sky and terrain (the first trip out of a
-  start interior takes ~1 s: only the door's R0 was prefetched). Back in
-  through the office's other door: 0.65 s. Known: that door's marker sits
-  low, so the camera arrives near floor level (fly up).
-- Old viewer: `--single-cell` (and `--rt`, `--no-baked`, `--skinned`, which
-  the streamed view doesn't support yet) opens the single-cell viewer as
-  before; `census` and `census-rt` use it.
-- Status: awaiting owner (next pass; small leftover).
-- Source: doorfix.
 
 ## Skinned models (superfargoth `bake.md`, "Bevy mapping"; `.sessions/skinloader.md`)
 
@@ -655,17 +592,6 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
   idling lineup shows neither (PA-3).
 - Source: actorparticles.
 
-### PA-4: GPU-drawn particles look as before (ROADMAP 1.2, particles1)
-- Kind: game location. Run: `.\bevyrrowind scene particles-census-fire` (fireplace), then
-  `.\bevyrrowind scene hi-balmora-night` (torch flames on walkers, braziers) and `.\bevyrrowind character atronach_flame --night`.
-- Changed: quads are placed and turned to the camera in the vertex shader from one shared particle buffer
-  (`mw_assets` particles.rs, `shaders/particles.wesl`) instead of a mesh rewritten per emitter per frame.
-- Look for: flames, sparks and smoke as before (size, colour, additive glow, soft blended smoke, spin); quads
-  face the camera from any angle; torch flames still trail a moving hand; no flicker, no stray quads at the
-  fire's base, none vanishing near the screen edge; fog dims far fires as before.
-- A/B: the previous exe (none at runtime; `--off particles` removes them).
-- Status: awaiting owner. Source: particles1.
-
 ### AP-3: Archers hold bows
 - Kind: game models. Run: `.\bevyrrowind character "imperial archer" "@wood elf,archer" "@dark elf,archer" --drawn`.
 - Look for: a curved bow in hand (long bow, chitin short bow, steel longbow:
@@ -680,22 +606,22 @@ light keeps 0.7 m off the carrier, dimmed to read "fully lit" at a third of its 
 Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night; `night2.png`: floor 3.5 + night ambient 1;
 `cave_in1*.png`; `torch_stage.png`).
 
-### LT-1: Night exposure floor + night ambient (`scene lt-night-floor`, `scene lamps-handoff`)
-- Kind: game location. Run: `cargo dev scene lt-night-floor --hour 22`, then `cargo dev scene lamps-handoff` (22:00,
-  where the owner rejected round 5). Retune 2026-10-21 (renderfix1): floor EV100 3.5 kept (lamps not blown), night
-  ambient 1 -> 4 nits (x the sky's blue ambient colour): moonlit stone ~2 EV under mid grey instead of ~4.
-- Look for: facades, street, stairs and far hills between the lamp pools readable in a cool moonlit blue, lamp pools
-  warm, lantern walls textured (no white patch); dark, not grey or washed out. A/B: `--night-ambient 1` (the rejected
-  night), `--night-ambient 2` / `6` to bracket. Agent pair: `shots/renderfix1/night_amb1.png`, `night_amb4.png`.
-- Tune: `--exposure-floor <EV100>` (higher = darker night, dimmer lamps), `--night-ambient <nits>`.
-- Status: awaiting owner (retune; round 5 rejected 1 nit as "can't see anything").
-
 ### LT-2: Dark interior keeps its lights (`scene lt-cave`)
 - Kind: game location. Run: `cargo dev scene lt-cave` (Addamasartus, mine tunnel).
 - Look for: rock texture readable in the torch pools, the far tunnel dark but not black; the wooden beam and post
   shadow the rock (point-light shadows). A/B `--portals`: auto exposure meters this cave at the same level with or
   without the floor (luma 50.8 vs 50.4): the floor never darkens it.
 - Status: partial, owner 2026-10-19 (round 9, scene lt-cave): lighting OK (rock readable, far tunnel dark not black); beam/post shadows only when very close, and very grainy (SH-13).
+
+### LT-4: Lamp light cut along block edges, view-dependent (owner report; ROADMAP 1.12 calls it "LT-2")
+- Kind: game location. Run: `.\bevyrrowind scene lt-night-floor --hour 22`, Balmora canal by the lantern arch, then
+  turn the camera / walk along the staircase.
+- Seen by owner 2026-10-21 (bw-owner10, SK-1 time-lapse): lamp light is cut along screen-aligned block edges on the
+  staircases and changes with the view ("like seeing the camera's cone"). Evidence: `Desktop/jagged.jpg`
+  and `jagged.mp4`. Static, so an agent can repro by screenshot.
+- Suspects: clustered light assignment (Bevy cluster z-slices / limits, far-plane or range cull), shadowed-lamp budget
+  (High = 8) chosen by view, light frustum culling vs range sphere, far light sprites.
+- Status: known bug, diagnosis lane `lightclusters` (ROADMAP 1.12).
 
 ### LT-3: Point-light shadows, torch-bearers (`scene lt-torch-shadows`; stage: `character "imperial guard" --night`)
 - Kind: game location + game models.
@@ -731,19 +657,6 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
   Sanity shot `shots/p9/kill.png`. Not on the stairs (wk-balmora's camera); creatures not run.
 - **Lead (owner 2026-10-19, round 11, with `G` collider view):** the ragdoll's physics capsules behave normally when hit; it's the skinned mesh that doesn't follow them. So the solver is fine and the bug is the pose write-back (bodies → bones: bone/body offset, local vs world frame, or the floating-origin offset), which would explain sinking, floating, spinning and the odd joint angles.
 - Status: rejected by owner 2026-10-19 (round 10): ragdolls very bad: most bodies sink into the ground, float and turn around; joints look unconstrained (unnatural angles); they don't explode. Drag doesn't match the expected Oblivion-style hold/drag UX (later). Phase 3.
-
-### PH-6: Collider debug view (statics + terrain heightfields line up)
-- Kind: game locations. Run: `.\bevyrrowind scene ph-balmora-colliders` and `.\bevyrrowind scene ph-census-colliders`
-  (or any `view` with `--physics-debug`; `G` toggles the wireframes at runtime). Lines are drawn within 40 m of the
-  camera: R0 statics, doors and placed items cyan (`Fixed` until P4), terrain heightfield chunks green (64 m, 0.5 m).
-- Look for:
-  - Balmora: cyan edges sit on the walls, stairs, bridge and canal walls they belong to (no offset, no rotation, no
-    wrong scale on scaled rocks and buildings); the green grid lies on the rendered ground everywhere, including under
-    buildings' foundations and on slopes; fly around: colliders appear before you get near (R0 margin), nothing missing.
-  - Census Office: cyan on every room, counter and shelf; no green; walking through doors to the exterior and back keeps
-    the right set (each worldspace is its own physics world).
-- Status: awaiting owner (next pass; small leftover).
-- Source: physics-p2.
 
 ### PH-7: Item body shapes (`body.cook`)
 - Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse with `--physics-debug`;
@@ -917,38 +830,6 @@ under land. Known: from above (`wa-bittercoast`) the swamp reads grey (sky refle
 W4); at night the water reads lighter than the land (env-map reflection, W4); the shore foam band shape is still the
 generic travelling band (wet sand band waits for SU1); waves by weather are WE3.
 
-### AU-1: Weather sound (`view "Seyda Neen" --weather rain`, then C to step to thunderstorm)
-
-Status: **confirmed outdoors 2026-10-19; indoor fix awaiting owner** (phase1): an interior (no sky in its cell flags) ducks the weather bus to silence over 0.5 s and draws no region ambience; log `audio: listener indoors/outdoors`. Listen: `scene door-balmora-guild` with `--weather rain`, walk in (rain gone), out (rain back); also the Census Office and a cave. Was: weather/region ambience kept playing indoors (round 1 weather pass; M6 WE3 audio; agents cannot hear, the log lines `audio: loop start/stop`,
-`audio: one-shot` were checked headless). Look/listen for: rain loop fades in over ~2 s and out when the weather
-changes (C key), the thunderstorm adds its loop, thunder follows each flash after distance / 343 s, region ambience
-(birds, wind) draws now and then on a clear day. Levels sane against each other; mp3 and wav both play.
-
-### AU-2: World sounds and music (`cargo dev scene door-balmora-guild`, then a cave: `cargo dev view "Addamasartus"`)
-
-Status: **awaiting owner** (audio-pass slice 2, ROADMAP 2.6; agents cannot hear: the log has `audio: playlist`,
-`audio: music`, `audio: cue`, `audio: N loop emitters loaded, M audible`). Listen for: explore music starts within
-a few seconds and the next track crossfades in when one ends (battle music needs Phase 3 combat; nothing triggers
-it yet). Walk up to a street lamp or brazier with a fire: its crackle grows as you approach and fades out by ~11 m,
-panned left/right as you turn. Activate the guild door: the door sound plays from the door's side and carries
-through the load. In the cave, the drip and wind loops come from their spots. Footsteps: NPC walkers within 15 m
-step in time with their gait (bare-foot sounds until equipment is wired); none while flying the free camera.
-
-
-
-### LM-1: Leaves as alpha-tested cutouts (`view "Seyda Neen" --hour 11 --weather foggy`, then `--weather clear`; forest: fly west into the Bitter Coast)
-
-Status: **fix awaiting owner (renderfix1, 2026-10-21; no re-bake, load-time):** cause confirmed with `cargo run -p mw_bake --example foliage_report`: plain-blend foliage is promoted only if `textures::alpha_is_cutout` reads holes; its "soft <= 1/4 of covered" rule rejected thin-twig atlases (`tx_bc_leaves_02` of `flora_bc_tree_01`: 45% holes, 32% solid, 23% soft; also `tx_leaves_07`, `tx_branches_01/02`, roobrush, wickwheat, fire fern, bc moss), so those trees stayed Blend (no shadow caster). Now also a cutout: >= 10% holes and soft <= 1.25x solid; glass, waterfalls, crystals, chalk/glow decals, lava/oil crust still blend. New cutouts to eyeball: `tx_stain_pueblo00`, `tx_scroll_fleur`, awning thatch, woven rope. Shots: `shots/renderfix1/lm1_fix.png`, `lm1_close.png` (Bitter Coast, all canopies drawn as cutouts). Look for: dappled shadows under the big Bitter Coast trees too. Side finding: with `--off leafmask` (`lm1_off.png`) blended leaves vanish entirely at ~100 m+, so the A/B no longer shows "blended as before"; logged, not fixed.
-Earlier: **partial (owner 2026-10-19, round 2, release exe with the v4 bake): some trees' foliage casts shadows, other trees' doesn't**, so not a global regression (the earlier 'none anywhere' was likely the stale v3 bake). Open: which materials stay blended (load-time promotion path?). Phase 1. Earlier: **rejected 2026-10-19: no foliage shadows anywhere** (owner, round 2, clear sky; fog and crisp edges OK in round 1; leafmask). Agent shots: foggy Seyda Neen (leaves fog like the trunks), clear
-Cause found (leafshadow): stale bake, leaves cooked under importer v3 before the cutout code existed, so still Blend -> fog swap casts no shadows. Fix (uncommitted): NifImporter::VERSION 4 + re-bake. Recheck with the v4 exe: dappled leaf shadows under trees at 11:00 clear.
-Recheck 2026-10-19 (owner, v4 release exe after re-bake): STILL no foliage shadows at all. Stale bake was not (or not the only) cause. Untested leads: most MW foliage is plain blend without alpha test (Cutout::Candidate), promoted at load only if the texture alpha reads as holes: check that the load-time check runs (compressed DDS alpha, texture not loaded yet when the material is built), else leaves stay Blend and the fog swap drops their shadows.
-Seyda Neen (tree shadow on the island and the water). A/B: `--off leafmask` (leaves drawn blended as before: no depth,
-no shadows, no motion vectors). Look for: crisp-edged leaf cards fogged exactly like trunks and terrain at every distance
-(no leaves showing through fog); dappled leaf shadows on the ground under trees at 11:00 clear (with `--off leafmask`:
-trunk and branch shadows only); no smearing behind foliage with TAA/DLSS (F4); distant trees not thinning to bare twigs
-(cutoff 0.5, no coverage-preserving mips yet: if they thin, note at what distance). Glass, potions, Ghostfence, glows,
-smoke and ghosts must still look translucent (if one became a hard-edged cutout, note the object).
-
 ### RO-A: Translucents cast no shadows; distant lights and rain fade into fog (render-order RO-1/2/3, rofix1)
 Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in Balmora); steps 2-4 not checked. Agent check: dev build renders, shaders compile, rain at night visible (`view "Seyda Neen"`, hour 22, rain); fading not judged.
 1. `view "Balmora" --hour 11 --weather clear`: torch flames, glow cards and glass cast no shadow on sunlit walls/ground; trees (cutout leaves) and solid props still do. Compare `--off transfog` (old: flames/glows cast near-solid shadows).
@@ -956,26 +837,40 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 3. `view "Seyda Neen" --hour 15 --weather rain` (then `foggy` + rain via C): far rain streaks fade into the fog colour; near streaks unchanged.
 4. Ghostfence (`view "Ghostgate" --hour 12`): the field casts no shadow.
 
+### RO-B: Fire/torch smoke not drawn in front of the sky, or not hiding objects behind it (owner report)
+- Kind: game location. Run: `.\bevyrrowind scene hi-balmora-night` and `.\bevyrrowind scene particles-census-fire`;
+  look at torch/brazier smoke with the sky (and then a wall or NPC) behind it.
+- Seen by owner 2026-10-21 (bw-owner10, AU-2 and PA-4): smoke sometimes goes missing in front of the sky and/or does
+  not hide the objects behind it properly. Render order (translucent sort vs sky/clouds/fog passes), Phase 1. Not the
+  GPU particle path itself (PA-4 confirmed). ROADMAP 1.12 calls it "RO-8" (render-order.md RO-8 is a different, fixed item).
+- Status: known bug, diagnosis lane `smokeorder` (ROADMAP 1.12).
+
+### LM-2: Leaf side findings (from LM-1, renderfix1)
+- With `--off leafmask`, blended leaves vanish entirely at ~100 m+, so the A/B no longer shows "blended as before".
+- Leaves (and water) look bright white at night (`shots/renderfix1/night_amb4.png`, Balmora): not traced; hypothesis
+  is still-Blend leaves on the forward FroxelFog path.
+- 4 textures could not be decoded, so they are never promoted to cutouts: `poxyclouds2`, `tx_banner_temple_04`,
+  `tx_eggmine_banner*`, `tx_rope_net_01`.
+- Status: known bug, logged by renderfix1 2026-10-21; not scheduled.
+
 ### WE-5: Ash/blight storm ignores terrain and objects, wrong direction (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene summit-vivec` (or any ashstorm/blight weather near Red Mountain).
 - Seen by owner 2026-10-19 (round 3): the blight storm (maybe other weather effects too) is not occluded by terrain or
   objects: it draws over them. Also the ash storm should blow from Red Mountain (Morrowind storms have a source;
   we2b already derives the summit storm source from LAND), which it doesn't seem to.
 - Also (owner 2026-10-19, round 6): in some weathers the clouds extend very high into the sky (deck base/thickness, WE4b local heights?).
-- Status: known bug: occlusion in Phase 1 (render correctness), storm direction in Phase 4.
-- Diagnosis (renderfix1 2026-10-21, hypothesis only, no code): the ash/blight streaks (`sf_precip_bevy`, `PrecipMaterial`
-  Blend, Transparent3d Overlay band) are depth-tested (stock Blend pipeline, `specialize` keeps Bevy's depth state) and
-  live in boxes of at most 64 m around the camera, so they can't paint over terrain beyond ~32 m; near ones that cross
-  the camera look "over" rocks but are in front (`shots/renderfix1/we5_ash.png`). Suspects: the ash look's dense height
-  fog (visibility 450 m, fog height 500 m, sky dust 4 in `mw_weather` visual.rs) or the Stratocumulus deck, both
-  composited by `sf_atmos_bevy` (FG-1 lane), e.g. sky-pixel fog/cloud on terrain silhouettes or depth mismatch. Next experiment: owner's view (F9 copy) with
-  `--weather ashstorm`, A/B in one sitting `--off clouds`, `--off fog`, `--off froxels`; whichever removes the overdraw owns it.
+- Status: known bug, fix queued (ROADMAP 1.12). Cause found by owner 2026-10-21 (bw-owner10): ash/blight particles
+  travel horizontally/diagonally from the volcano, but precipitation occlusion only tests what is above a particle
+  (top-down map), not between the particle and the storm source, so upwind terrain and buildings don't block it.
+  renderfix1's "precip ruled out" checked depth, not the occlusion mask. Fix: occlusion map oriented along the
+  storm's travel direction (tilted ortho depth view). Storm direction from Red Mountain: Phase 4.
 
+## Terrain (superfargoth `terrain.md`)
 
-### PC-1: Precombined near cells look the same as separate objects (ROADMAP 1.9, superfargoth precombine.md)
-- Kind: game location. Run: `.\bevyrrowind scene balmora`, then walk the streets at eye height; A/B with `--off precombine`
-  (one entity per object, the old way). Also `scene seyda-neen` (docks, small clutter).
-- Look for: nothing missing or doubled; pots, crates, baskets and other small clutter appear and disappear at about
-  the same distances as before; no popping when buildings switch detail; shadows unchanged; no hole or double image
-  where the far field takes over (~400 m). A script-disabled static (e.g. a quest rock) must still disappear.
-- Status: **awaiting owner** (2026-10-20, precombine3; not seen on screen by the agent yet).
+### TR-3: Terrain looks glossy, not rough enough (owner report)
+- Kind: game location. Run: any outdoor view in sun, e.g. `.\bevyrrowind scene balmora` at 11:00, look at bare ground
+  and grass at a grazing sun angle; A/B `--off envmap`.
+- Seen by owner 2026-10-21 (bw-owner10, during AU-2): the terrain reads glossy / not rough, like wet ground.
+- Check: the terrain material's roughness and specular (perceptual roughness near 1, no env-map or sun specular on
+  ground), and whether the terrain blend/normal-map path lowers roughness.
+- Status: known bug, unverified (diagnose first; ROADMAP 1.12).

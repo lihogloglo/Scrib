@@ -98,7 +98,7 @@ and effects. Every task reports its ms cost per preset.
   Walk 1440p 25.9 → 14.7 ms, Balmora 15.9 → 13.1 (perf.md "Terrain blend removed"). Redo is eye candy (WISHLIST §13).
 - [~] 1.7 Night brightness (LT-1 rejected: "can't see anything"): exposure floor + night ambient retune; then
   the deferred night checks (SK-2, NS-2..4). 2026-10-21 (renderfix1): night ambient 1 → 4 nits (~2 EV under mid grey
-  on stone), EV100 floor 3.5 kept; LT-1 awaiting owner.
+  on stone), EV100 floor 3.5 kept; LT-1 confirmed by owner 2026-10-21. Left: the deferred night checks.
 - [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5: precip streaks ruled
   out 2026-10-21; suspect ash height fog or cloud composite; next A/B `--off clouds|fog|froxels` at the owner's view); Ghostfence field
   has no far copy and its far light sprites float in the gap (GF-1, B5); far-field L2/L3 never selected or never
@@ -110,11 +110,18 @@ and effects. Every task reports its ms cost per preset.
   walk's gap was terrain blend (1.6). Default on/off still the owner's call. `NoCpuCulling` retry once every view does GPU culling
   (perf.md "Lead"); big_space propagation patch; skinned bounds (research/perf/README.md).
 - [~] 1.10 Volumetric fog black bands (FG-1, owner 2026-10-20): dark vertical bands in light-lit fog at night
-  when the camera turns fast. 2026-10-21 (renderfix1): the Sadrith Mora repro was a static lamp-range edge (428k lm,
-  29 m range), not the bug (TAA, sun cascades, froxel history ruled out there). Owner's bars unreproduced: need the
-  owner's camera (F9) + DLSS mode at the cave/mushroom spot, then A/B foghistory / F4 / froxels (`spin.sh`).
+  when the camera turns fast. Not reproduced by the owner 2026-10-21 (fog code unchanged; sun cascades changed in
+  shadow reset A2/B3, likely the fix). Reopen if seen; `--off foghistory` A/B kept.
 - [ ] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates).
+- [ ] 1.12 Owner pass 2026-10-21 bugs: lamp light cut along cluster block edges, view-dependent (LT-4, lane
+  `lightclusters`); choppy character shadows (SH-20, `charshadows`); smoke not drawn in front of the sky (RO-B,
+  `smokeorder`); terrain looks glossy (TR-3, check roughness); ash storm occlusion only tests overhead (WE-5, owner found
+  the cause: orient the occlusion map along the storm direction); Ghostfence: more translucent + blue night glow (GF-2).
+- [ ] 1.13 Dev console (owner 2026-10-21): in-game console with live on/off for every `--off` part (SSAO, contact
+  shadows, lamp filter, fog history/jitter/froxels...), so the owner can A/B without relaunching; SH-16/SH-19 wait on it.
+- [ ] 1.14 Build churn (2026-10-21): workspace-hack (`cargo hakari`) so per-`-p` feature sets stop rebuilding Bevy
+  (22-32 cached `bevy_render` variants per target); re-measure dev-loop gates.
 
 **Next session, in order (owner 2026-10-20):** (1) 1.6 remove terrain blend (done); (2) lights (done, lights1) then 1.4 shadows (contact shadows SH-14, PCSS consistency, lamp reach SH-13, cube-cache
 decision); actor perf parked until the animation system exists; (3) FG-1 fog bands; (4) owner checks still open: PA-4 (particles), DR-4,
@@ -142,8 +149,10 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
   (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
   layers; positional one-shots/emitters on bevy_audio). Morrowind wiring done 2026-10-21 (`mw_audio`: SOUN/SNDG cues,
-  door sounds, loop emitters, vanilla footsteps, VFS music; app `audio.rs`); AU-2 awaiting owner. Left: UI sounds (no
-  menus yet), swinging-door sounds, boots class from equipment, modern-preset beds/surfaces/bus volume settings.
+  door sounds, loop emitters, vanilla footsteps, VFS music; app `audio.rs`); AU-1 + AU-2 confirmed by owner 2026-10-21.
+  Left: NPC voices (greetings, idle lines), object impact sounds (physics, e.g. the V ball), volume mixer (bus
+  sliders in settings, with 2.2 U6), UI sounds (no menus yet), swinging-door sounds, boots class from equipment,
+  modern-preset beds/surfaces.
 
 ## Phase 3: animation, combat, physics
 
@@ -159,7 +168,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 ## Phase 4: eye candy and the wider world (after phase 2)
 
 - [p] Weather polish: storm blows from Red Mountain (WE-5), clouds too tall in some weathers, ash particles,
-  precipitation splashes (PR2), surfaces/wetness/snow (SU1, SU2), wind on trees (WD2, WD3).
+  precipitation splashes (PR2), surfaces/wetness/snow (SU1, SU2), wind on trees (WD2, WD3). Owner 2026-10-21: rain
+  puddles + wet (glossier) objects, cheap like the Clockwork renderer does it (research its approach first).
 - [p] Water polish (WA-1 notes, WISHLIST §12): shore swash + gradual wavelets, textured foam, whitecaps,
   weather-driven wave height (verify), crest SSS; W4 reflections, W5 underwater, W6 buoyancy, W7 rivers.
 - [p] RT as the Ultra tier (decision 2; was 1.10): exterior RT content (`ray_tracing_lod`, `NoRayTracing` on proxies, terrain RT
@@ -184,6 +194,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (owner pass, bw-owner10): confirmed LT-1, LM-1, AU-1, AU-2, SH-17, SH-18, TA-1, PA-4, PC-1, DR-3, DR-4,
+  SK-1, PH-6; FG-1 not reproduced; WE-5 cause found; SH-16/19 need a console; new bugs in 1.12.
 - 2026-10-21 (action-a1): mover launch (no ground snap while rising, head bump; 4 failing-first tests), serde
   `Locomotion`, `PlayerId` merged into new `sf_ids`; A2 prerequisites done.
 - 2026-10-21 (renderfix1): LM-1: 66 flora textures (Bitter Coast leaves, branches, roobrush, wickwheat...) were
