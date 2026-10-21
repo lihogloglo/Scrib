@@ -1455,3 +1455,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   before either crate is wired into the app (follow-up, owner of the merge: action-a1 lane).
 - 2026-10-21 (renderfix1; sky-lighting.md): night readability comes from the ambient floor, not the camera: EV100
   floor stays 3.5 (lamps don't blow out), night ambient 4 nits (~2 EV under mid grey on stone); 1 nit rejected (LT-1).
+- 2026-10-21 (action-a1; camera.md "As built"): `sf_camera` is Bevy-free and independent of `sf_action` (the shell maps
+  modes/ids); pivot spring follows gameplay velocity exactly, springs only snaps; collision reuses `GroundProbe` sphere
+  casts; `LockTimers` live beside the `sf_action` lock target. dolly rejected (glam ≤0.28, no collision/lock-on).

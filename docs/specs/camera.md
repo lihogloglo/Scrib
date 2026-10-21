@@ -1,7 +1,8 @@
 # Camera: third person, first person, framed moves, comfort
 
-Status: **draft, awaiting owner review (R11b, 2026-10-19).** Nothing built (the game has a free fly
-camera only). Crates: `sf_camera` (Bevy-free rig math, new), `sf_camera_bevy` (thin plugin, new).
+Status: **draft, awaiting owner review (R11b, 2026-10-19).** Rig math built 2026-10-21 (`sf_camera`,
+see "As built (rig math)" at the end, which wins where it differs); no Bevy shell yet (the game has a
+free fly camera only). Crates: `sf_camera` (Bevy-free rig math, new), `sf_camera_bevy` (thin plugin, new).
 Sources: `../research/animation/11-tradeoffs.md` §5-6 and "Decisions"; R2 §5-7, R5 §4, R6 §5, §9,
 R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
 
@@ -90,6 +91,58 @@ From XAG 117 and DL/ME practice (R7 §2.2, R8 §1.4):
 | Lock-on in FP | KCD hard lock; most FP melee soft aim (R8 §2) | soft aim only | **match** (owner chose soft aim) |
 | Comfort | XAG 117; DL tuned FOV and clip speed; ME centre dot, no bob (R7 §2.2) | settings list above | **match** |
 
+## Reuse (2026-10-21)
+
+- **Bevy** has no gameplay camera rig (only `Camera`/`Projection` and free-fly examples).
+- **`dolly`** (MIT/Apache, Bevy-agnostic rig composition: `Position`, `YawPitch`, `Arm`, `Smooth`,
+  `LookAt`) is the closest fit in shape, but: last release 0.6.0 (2024-07) pins `glam <= 0.28` (we
+  are on 0.33: a second glam plus `mint` conversions every frame); `Smooth` is exponential, not the
+  critically damped spring with velocity feed-forward the pivot needs; and it has none of the hard
+  parts (collision through our probe, lock-on, look limits, trauma shake). The part it would cover
+  (yaw/pitch + arm composition) is ~20 lines. Not adopted; revisit if it moves to current glam.
+- **`smooth-bevy-cameras`, `bevy_third_person_camera`**: Bevy ECS plugins that own input and
+  `Transform`, so not usable in a Bevy-free core with a command-driven look; their collision (where
+  present) is not our `GroundProbe`. Not adopted.
+- Reused in-house: `sf_anim::spring` (Holden's critically damped spring and damper) and
+  `sf_controller`'s `GroundProbe` + `ProbeQuery::sphere` (same statics and terrain as the mover).
+
 ## Open questions
 
 None beyond action.md open question 3.
+
+## As built (rig math, 2026-10-21)
+
+`crates/sf_camera` (Bevy-free; deps glam, serde, `sf_anim` (springs), `sf_controller` (probe),
+`sf_coords`; not `sf_action`, which changes daily: the shell maps modes and ids). Frame-rate
+presentation: every function takes the frame `dt`; nothing here is saved or replicated except
+`LockTimers`. Tests: `src/tests.rs` (16).
+- **`Look`** (yaw about +Y, 0 faces +Z, pitch up; same as `ViewDir`): `forward`, `right`,
+  `rotation` (camera -Z onto forward), `turned` (input, yaw wrap, pitch clamp), `eased`.
+- **`OrbitRig::update(params, body, body_vel, look, RigMode, dt) -> OrbitPose { pivot, look, arm }`**:
+  pivot at `pivot_height`, shoulder offset with an eased `swap_shoulder`, pitch clamped, arm length
+  per `RigMode` (Normal/Sneak/FreeRun/Locked) eased. The pivot spring works in the body's frame:
+  motion the gameplay velocity explains is followed exactly (no steady lag at any `dt`), snaps and
+  velocity changes become lag a critically damped spring removes (separate horizontal/vertical
+  half-lives); lag past `max_lag` snaps (teleports). `recentre_behind` (comfort, off by default)
+  proposes a look the shell writes back.
+- **`ArmCollision::update(probe, pivot, arm, params, dt) -> ArmResult { eye, length, free, fade,
+  blocked }`**: one sphere cast (radius + margin) pivot to eye; the length is never above this
+  frame's free length (push-in at once, never inside), and eases out with `out_halflife`; `fade`
+  is a smoothstep of the arm length for the body's dither.
+- **Lock-on** (target in `sf_action`, math here): `acquire` (cone + range + LOS, score mixes
+  angle and distance), `switch_target` (smallest yaw step to a side), `LockTimers` (serde, kept
+  with the target: `check` breaks past `break_range` > `acquire_range`, on a lost target, or
+  after `los_timeout` without LOS; `break_for_traversal` / `touchdown` / `reacquire` offer the
+  same target back for `reacquire_window` after landing), `locked_look` (yaw on the target line,
+  pitch from the height gap plus a bias, clamped; ease with `Look::eased`).
+- **`FirstPersonLook`**: `set_limits(Option<LookLimits>, entry_yaw)` on move change,
+  `update(look, delta, ignore_look, free_pitch, dt)` blends free and limited look by a
+  smoothstepped weight ramped over `ease`; the shell stores the result as its look, so input
+  pushed past a limit never needs unwinding.
+- **Comfort**: `ComfortSettings` (shake on + strength, head bob off, auto-camera off, world and
+  body FOV, centre dot, motion blur, `ViewChoice`); `TraumaShake` (trauma decays linearly, shake =
+  trauma² x hashed smooth noise, rotation only, compose as `look.rotation() * shake`).
+
+Next: `sf_camera_bevy` (D1 shell: look from `bevy_enhanced_input`, candidates and LOS from the
+world, dither fade, CAM-1 check); `sf_action` gains the lock target + `LockTimers` + a
+`breaks_lock` rule field (E2); the first-person eye track arrives with D2.

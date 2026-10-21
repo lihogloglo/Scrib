@@ -1,0 +1,19 @@
+[package]
+name = "sf_camera"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free camera rig math: third-person orbit, collision push-in, lock-on, first-person look limits, comfort"
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+# Critically damped springs and dampers (already under sf_controller).
+sf_anim.workspace = true
+# `GroundProbe` / `ProbeQuery::sphere` for the collision cast.
+sf_controller.workspace = true
+sf_coords.workspace = true
+
+[lints]
+workspace = true
