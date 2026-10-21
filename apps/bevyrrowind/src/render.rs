@@ -14,20 +14,19 @@ const ENV_POINT_SHADOWS: &str = "BEVYRROWIND_POINT_SHADOWS";
 const ENV_SUN_CASCADES: &str = "BEVYRROWIND_SUN_CASCADES";
 
 /// Point-light shadow budget of the quality presets without an override
-/// (`(count, cube face size)`): 8 cached lamps at 512² since shadows v2 V1
-/// (shadows2 2026-10-20; superfargoth `docs/specs/shadows.md`, perf.md "Shadows v2").
+/// (`(count, cube face size)`): 8 cached lamps at 512² using Bevy's native
+/// per-face light-relative shadow cache (`bevy_pbr::skip_unchanged_shadow_views`)
+/// with forward-hemisphere priority weighting in `sf_sky_bevy`.
 pub const POINT_SHADOWS_DEFAULT: (usize, usize) = (8, 512);
 
-/// Lamp shadows fade out between these viewer distances, m (was 15-25 with one
-/// uncached lamp: shadows "only when super close", SH-13).
-const LAMP_SHADOW_FADE: (f32, f32) = (30.0, 40.0);
+/// Lamp shadows fade out between these viewer distances, m (`PointLightShadowFade`
+/// in the PBR shader; 35–45 m covers Balmora street blocks without nearby pop-in).
+const LAMP_SHADOW_FADE: (f32, f32) = (35.0, 45.0);
 
-/// Point-light shadow cube cache (`sf_shadow_cache_bevy`, shadows.md v2 V1):
-/// on since shadows2 (2026-10-20); `--off shadowcache` is the A/B (vendored Bevy patch: a
-/// light's unchanged maps are skipped, any other redrawn whole). Shadow reset B1
-/// kept it: the patch re-renders a whole cube for any skinned caster in view (census 15.0 vs 9.0 ms).
-/// Removal path: when Bevy caches static casters per face itself (perf.md "Shadow reset B1").
-const POINT_SHADOW_CACHE: bool = true;
+/// Legacy static/mover cubemap cache (`sf_shadow_cache_bevy`): off now that
+/// vendored `bevy_pbr` caches shadow maps per cubemap face in light-relative
+/// coordinates and skips `Prepare` / `Batch` / `Preprocess` for unchanged faces.
+const POINT_SHADOW_CACHE: bool = false;
 
 /// Default for `--dlss` when the flag isn't given (perf suite: `--env BEVYRROWIND_DLSS=quality`).
 const ENV_DLSS: &str = "BEVYRROWIND_DLSS";
@@ -191,7 +190,7 @@ fn shadow_captures_at_black(
     stats: Res<sf_shadow_cache_bevy::ShadowCacheStats>,
     budget: Res<PointShadowBudget>,
     places: Query<&GlobalTransform>,
-    lights: Query<(&GlobalTransform, &PointLight, &InheritedVisibility), (With<sf_sky_bevy::BudgetedShadow>, Without<sf_sky_bevy::ShadowTwin>)>,
+    lights: Query<(&GlobalTransform, &PointLight, &InheritedVisibility), With<sf_sky_bevy::BudgetedShadow>>,
 ) {
     let eye = match fade.phase() {
         sf_world_bevy::FadePhase::Hold { traveler, .. } => places.get(*traveler).ok().map(GlobalTransform::translation),

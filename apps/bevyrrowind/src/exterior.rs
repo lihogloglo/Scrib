@@ -1247,9 +1247,10 @@ impl Quality {
     /// bound. Medium/Low: none (the main pass samples every shadowed lamp per pixel).
     pub const fn point_shadows(self) -> (usize, usize) {
         match self {
-            Self::Low | Self::Medium => (0, 512),
+            Self::Low => (0, 512),
+            Self::Medium => (6, 512),
             Self::High => crate::render::POINT_SHADOWS_DEFAULT,
-            Self::Ultra => (8, 1024),
+            Self::Ultra => (12, 1024),
         }
     }
 
@@ -1285,11 +1286,12 @@ impl Quality {
     /// 70 cm, `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`). Low
     /// drops a cascade (one less caster pass) and ends at 200 m.
     pub const fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
-        let (num_cascades, maximum_distance, lambda) = match self {
-            Self::Low => (3, 200.0, 0.85),
-            Self::Medium | Self::High | Self::Ultra => (4, 250.0, 0.9),
+        let (num_cascades, maximum_distance, lambda, overlap_proportion) = match self {
+            Self::Low => (3, 150.0, 0.85, 0.15),
+            Self::Medium | Self::High => (3, 180.0, 0.85, 0.15),
+            Self::Ultra => (4, 250.0, 0.9, 0.2),
         };
-        sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion: 0.2 }
+        sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion }
     }
 
     /// Soft contact-hardening sun shadows (shadows F5): Bevy PCSS light size in cascade
