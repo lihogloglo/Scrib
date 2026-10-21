@@ -131,7 +131,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   quests/journal/topics, topic linker); next `mw_rpg` + Fargoth headless test.
 - [ ] 2.5 Saves (M7 subset): world overlay + player; net-ready per `specs/net.md`.
 - [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
-  (`sf_audio`, `sf_audio_bevy`).
+  (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
+  layers; positional one-shots/emitters on bevy_audio); next: Morrowind wiring (`mw_audio`, app glue), AU-2.
 
 ## Phase 3: animation, combat, physics
 
@@ -172,6 +173,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (audio-pass): `sf_audio` cues/sound groups, distance curves, music mood playlists with crossfade, footstep
+  hook, ambience layers; `sf_audio_bevy` positional one-shots + loop emitters on bevy_audio (30 tests).
 - 2026-10-21 (rpg-core): specs `rpg.md` + `rpg-adapter.md`; `sf_rpg` built (dialogue response DB + session, item
   stacks/loadout, quests, journal, topic linker; 19 tests); Fargoth quest IDs verified against the installed ESMs.
 - 2026-10-21 (shadowB2): shadow reset B2: own bevy_pbr patch, lamp shadow fetch skipped where unlit + lamps on 2x2
