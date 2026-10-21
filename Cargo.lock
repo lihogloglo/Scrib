@@ -2152,6 +2152,7 @@ dependencies = [
  "mw_ai",
  "mw_anim",
  "mw_assets",
+ "mw_audio",
  "mw_bake",
  "mw_graphs",
  "mw_install",
@@ -4611,6 +4612,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_audio"
+version = "0.1.0"
+dependencies = [
+ "sf_audio",
+ "sf_records",
+ "sf_vfs",
+ "tes3",
+]
+
+[[package]]
 name = "mw_bake"
 version = "0.1.0"
 dependencies = [
@@ -4726,6 +4737,22 @@ dependencies = [
  "semver",
  "sf_mods",
  "sf_records",
+ "sf_vfs",
+ "tes3",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "mw_rpg"
+version = "0.1.0"
+dependencies = [
+ "mw_install",
+ "mw_records",
+ "mw_vfs",
+ "postcard",
+ "serde",
+ "sf_records",
+ "sf_rpg",
  "sf_vfs",
  "tes3",
  "thiserror 2.0.21",
@@ -6463,10 +6490,11 @@ dependencies = [
  "bevy_audio",
  "bevy_ecs",
  "bevy_log",
+ "bevy_math",
  "bevy_time",
+ "bevy_transform",
  "sf_audio",
  "sf_records",
- "sf_weather",
  "sf_weather_bevy",
 ]
 
@@ -6590,6 +6618,13 @@ dependencies = [
  "bevy_transform",
  "log",
  "sf_diag",
+]
+
+[[package]]
+name = "sf_ids"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -6807,6 +6842,19 @@ dependencies = [
  "bevy_math",
  "bevy_render",
  "bevy_shader",
+]
+
+[[package]]
+name = "sf_rpg"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "indexmap",
+ "serde",
+ "sf_ids",
+ "sf_records",
+ "smallvec",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

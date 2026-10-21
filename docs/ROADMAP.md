@@ -128,8 +128,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [~] 2.1 Player character: third-person controller + camera (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`),
   activation with a "press to use" prompt. `sf_action` A1 done 2026-10-21 (commands, RON move rules, two-stage buffer,
   chooser, jump buffer/coyote/landing, use prompt, net-ready state); `sf_camera` rig math done (orbit spring, push-in,
-  lock-on, first-person limits, shake); next `sf_controller` launch + serde, then A2 (`sf_action_bevy`, fixed tick, app
-  wiring) and D1 (`sf_camera_bevy`).
+  lock-on, first-person limits, shake); `sf_controller` launch + serde `Locomotion` + shared `PlayerId` (`sf_ids`) done;
+  next A2 (`sf_action_bevy`, movers on the fixed tick, app wiring) and D1 (`sf_camera_bevy`).
 - [ ] 2.2 UI: widget kit + Morrowind theme (M5 U3), HUD + message box (U4), inventory on minimal `sf_rpg` stacks
   (U5), settings/options + keybinds (U6). `sf_ui`, `sf_ui_bevy`, `sf_ui_css` exist (U1, U2 confirmed).
 - [ ] 2.3 Text: fonts, books and scrolls, notifications.
@@ -184,6 +184,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-21 (action-a1): mover launch (no ground snap while rising, head bump; 4 failing-first tests), serde
+  `Locomotion`, `PlayerId` merged into new `sf_ids`; A2 prerequisites done.
 - 2026-10-21 (renderfix1): LM-1: 66 flora textures (Bitter Coast leaves, branches, roobrush, wickwheat...) were
   rejected as cutouts and stayed blended (no shadows); sparse-atlas rule + `mw_bake` `foliage_report` example.
 - 2026-10-21 (rpg-core): `mw_rpg`: Morrowind dialogue on `sf_rpg` (OpenMW-order INFO filters, macros, journal, equip);
