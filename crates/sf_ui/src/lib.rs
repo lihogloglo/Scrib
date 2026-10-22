@@ -17,13 +17,19 @@
 //! - [`Localizer`]: Fluent strings from every mod in load order, with a
 //!   locale fallback chain, built from each mod's `l10n/<locale>/<mod id>.ftl`
 //!   ([`l10n_sources`]); settings load from and save to the `sf_mods` profile.
+//! - [`RichDoc`] and [`Pagination`]: books, scrolls and notes (ui-text.md): a
+//!   rich-text document model that content packs' markup parsers build, cut
+//!   into pages (a two-page spread, or one long scroll page) over a
+//!   [`TextMeasure`] that the text engine implements.
 
 mod ids;
 mod l10n;
 mod list;
 mod mods;
+mod paginate;
 pub mod records;
 mod registry;
+mod rich_text;
 mod settings;
 mod stack;
 mod view_model;
@@ -32,6 +38,8 @@ mod view_model;
 mod tests;
 #[cfg(test)]
 mod tests_mods;
+#[cfg(test)]
+mod tests_text;
 
 pub use ids::{
     ColumnId, InputContextId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, TemplateId,
@@ -42,8 +50,15 @@ pub use l10n::{
 };
 pub use list::{ListFilter, ListModel, SortSpec};
 pub use mods::{L10N_DIR, UiRecordKinds, available_locales, l10n_sources};
+pub use paginate::{
+    DocPos, Fragment, LineMetrics, Page, PageFormat, PageView, Pagination, Placed, Size,
+    TextMeasure,
+};
 pub use records::{Layer, register_kinds};
 pub use registry::{Def, Severity, UiConflict, UiRegistry};
+pub use rich_text::{
+    Align, Block, ImageRef, Inline, OBJECT_REPLACEMENT, Paragraph, Rgba8, RichDoc, RunStyle,
+};
 pub use settings::{SettingError, SettingValue, SettingsStore};
 pub use stack::{OpenScreen, ScreenStack, StackError};
 pub use view_model::{UiValue, ViewModel};
