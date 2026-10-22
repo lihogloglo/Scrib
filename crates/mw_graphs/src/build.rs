@@ -607,7 +607,10 @@ impl Builder {
             go(&move_names, m.state, m.when.clone(), inert(0.2));
             let once: Vec<&str> = [&hit_names[..], &knock_once].concat();
             go(&once, m.state, [&[C::Finished][..], &m.when].concat(), inert(0.25));
-            go(&[states::SWIM_KNOCKOUT], m.state, [&[not(p::KNOCKED_OUT)][..], &m.when].concat(), inert(0.25));
+            // Knockout's exit when it has no `Knockout@tail` (a dropped
+            // `knockout_end` takes its transitions with it; AN-13: the guar
+            // looped `Knockout` forever after the get-up). Below `knockout_end`.
+            go(&knock_loop, m.state, [&[not(p::KNOCKED_OUT)][..], &m.when].concat(), inert(0.25));
             go(&death_names, m.state, [&[not(p::DEAD)][..], &m.when].concat(), inert(0.3));
         }
         self.a.nodes.insert(LOCOMOTION.into(), NodeSpec::StateMachine { initial: Some(states::IDLE.into()), states: st, transitions: tr });

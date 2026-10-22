@@ -202,6 +202,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-22 (anim-fixes-2): AN-9 heel-to-toe foot lock (cooked roll curves), AN-10 face-down get-up roll axis,
+  AN-13 creature knockout exit, AN-14 death during knockdown stays dead; AN-11/12/15 open.
+
 - 2026-10-22 (anim-refactor run 3): owner pass AN-1..8 at the root: capsule targets per physics step, A2 feeds
   compose root deltas, footsteps from clip keys, constant-decel arrival, in-place get-up clip + hand-back blend, creature shapes from bounds.
 - 2026-10-22 (anim-refactor): `anim-lab` test level (AL-1..7); R0 ragdoll write-back (every joint at weight 1,

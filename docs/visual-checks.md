@@ -1001,3 +1001,13 @@ Scene `level-anim-idles` (or `-overview`, camera `idles-close`), F7 + G on. Look
 on the row) have a physics shape over their whole body (an upright cylinder, orange, as wide as the shell or body and as
 high as the back), not the old 0.4 m column inside the shell; people keep their capsule. Throw a ball (`V`) at the crab:
 it should hit the shell's outline. Known: the shape is round, so a long body (guar) is covered with some slack at the sides.
+
+### AN-9 Planted foot holds through the heel roll (awaiting owner)
+Scene `level-anim-loop` (camera `loop-close`). Look for: a planted foot stays put from heel-strike until the toe leaves the
+ground; at weight transfer (the other foot landing) the heel rises and the foot rolls over a fixed toe, with no forward
+slide. Any correction happens while the foot is in the air. Fix: cooked `roll.<foot>` curves (heel-off to toe-off) pin the toe.
+
+### AN-10, AN-13, AN-14 Get-ups (awaiting owner)
+Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the guar: it falls, gets up once and stands
+idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
+while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.

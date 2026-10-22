@@ -352,6 +352,12 @@ fn creature_simulation() {
     let id = s.play_slot(slots::FULL, attack).unwrap();
     s.run(2.0, DT);
     assert!(s.events.iter().any(|e| e.time > t0 && e.montage == Some(id) && e.name == "attack.hit"), "guar attack hit");
+    // AN-13: the guar has no `Knockout` / `Knockout@tail`; clearing the flag
+    // (the ragdoll's get-up) must still leave the knockout state.
+    s.set(p::KNOCKED_OUT, 1.0);
+    assert_eq!(settle(&mut s, 1.0), states::KNOCKOUT);
+    s.set(p::KNOCKED_OUT, 0.0);
+    expect(&mut s, 1.0, states::IDLE, "Idle");
     s.set(p::DEAD, 1.0);
     expect(&mut s, 3.0, "death1", "Death1");
 
