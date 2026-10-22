@@ -415,6 +415,10 @@ A gamepad-only pass over every stock screen. Hot-reload test: edit a mod's CSS, 
 - **`ListModel<K, T>`**: rows in insertion order with per-row versions (`upsert` of an equal value is a no-op),
   `changed_since(version)`, stable sort on a field (case-insensitive text, mixed int/float), filter (search over
   fields + exact field matches for tabs), lazily rebuilt view, `window(first, count)` for virtualization.
+- **Built-in settings** (2026-10-22): the framework's own settings exist without records, like the presets (owner
+  `sf`, values in `[settings.sf]`): the audio page's volume slider and mute per bus (`AUDIO_BUSES`,
+  `audio_volume_key`/`audio_muted_key`; audio.md "Volume mixer"). A record with a built-in's id retunes it and the
+  value stays under `sf`. Float steps that are 1/n snap by dividing (0.6, not 0.6000000000000001, in the profile).
 - **`SettingsStore`**: typed values over `ui.setting`; numbers clamp and snap to the step; profile I/O over
   `BTreeMap<mod id, toml::Table>` (`sf_mods::Profile::settings`), saving only non-defaults and passing unknown entries
   through (a disabled mod keeps its values). Profile key = setting id minus a leading `<owner>.`.

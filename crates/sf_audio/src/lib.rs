@@ -1,5 +1,6 @@
 //! Bevy-free audio core (audio.md): buses, fades, attenuation, sound groups (cues), the music
-//! player, footstep mapping, ambience layers and one-shot draws. Playing is `sf_audio_bevy`'s;
+//! player, footstep mapping, ambience layers, one-shot draws and the player's volume mixer
+//! (slider curve, mutes, ducking). Playing is `sf_audio_bevy`'s;
 //! the logic lives here so it is tested without a device.
 
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ mod footsteps;
 mod group;
 mod music;
 mod rng;
+mod volume;
 
 pub use ambience::{AmbienceLayers, LoopChange, Space, reconcile_loops};
 pub use attenuation::{Attenuation, Rolloff};
@@ -19,8 +21,13 @@ pub use footsteps::{Foot, FootstepMap, StrideTimer};
 pub use group::{Cue, CueBank, SoundGroup, Variant};
 pub use music::{MUSIC_FADE_S, MusicCommand, MusicPlayer, MusicVoiceId};
 pub use rng::Rng;
+pub use volume::{
+    BusVolume, DuckRule, DuckTrigger, Ducker, VOLUME_RANGE_DB, VOLUME_TAPER, VolumeSettings, db_to_gain, gain_to_db,
+    gain_to_slider, slider_to_db, slider_to_gain,
+};
 
-/// Mixer buses (audio.md "Model"). `Master` scales all the others.
+/// Mixer buses (audio.md "Model"), a tree: `Master` scales all the others, `Ambience` also
+/// scales `Weather` (one "ambience" slider for beds, region sounds and weather).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Bus {
     Master,
@@ -37,16 +44,43 @@ impl Bus {
     pub const COUNT: usize = 7;
     pub const ALL: [Bus; Self::COUNT] =
         [Bus::Master, Bus::Ambience, Bus::Weather, Bus::Sfx, Bus::Music, Bus::Ui, Bus::Voice];
+    /// The buses a settings menu shows (audio.md "Volume mixer"); `Weather` follows `Ambience`.
+    pub const USER: [Bus; 6] = [Bus::Master, Bus::Music, Bus::Sfx, Bus::Voice, Bus::Ambience, Bus::Ui];
     const fn index(self) -> usize {
         self as usize
     }
+    /// The bus this one feeds (`None` for `Master`).
+    pub const fn parent(self) -> Option<Bus> {
+        match self {
+            Bus::Master => None,
+            Bus::Weather => Some(Bus::Ambience),
+            _ => Some(Bus::Master),
+        }
+    }
+    /// Stable lowercase name (settings keys, logs).
+    pub const fn name(self) -> &'static str {
+        match self {
+            Bus::Master => "master",
+            Bus::Ambience => "ambience",
+            Bus::Weather => "weather",
+            Bus::Sfx => "sfx",
+            Bus::Music => "music",
+            Bus::Ui => "ui",
+            Bus::Voice => "voice",
+        }
+    }
+    pub fn from_name(name: &str) -> Option<Bus> {
+        Self::ALL.into_iter().find(|b| b.name() == name)
+    }
 }
 
-/// Linear bus volumes and mutes, and the listener's outdoor exposure.
+/// Linear bus volumes, mutes and duck gains, and the listener's outdoor exposure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mixer {
     volume: [f32; Bus::COUNT],
     muted: [bool; Bus::COUNT],
+    /// Ducking attenuation per bus (linear, 1 = none), written by `Ducker::apply`.
+    duck: [f32; Bus::COUNT],
     /// 1 under the open sky, 0 indoors: scales the outdoor buses (the interior
     /// snapshot, audio.md "Snapshots"). The host eases it.
     pub outdoor: f32,
@@ -54,7 +88,7 @@ pub struct Mixer {
 
 impl Default for Mixer {
     fn default() -> Self {
-        Self { volume: [1.0; Bus::COUNT], muted: [false; Bus::COUNT], outdoor: 1.0 }
+        Self { volume: [1.0; Bus::COUNT], muted: [false; Bus::COUNT], duck: [1.0; Bus::COUNT], outdoor: 1.0 }
     }
 }
 
@@ -71,17 +105,32 @@ impl Mixer {
     pub fn is_muted(&self, bus: Bus) -> bool {
         self.muted[bus.index()]
     }
+    /// Sets a bus's ducking gain (0..1).
+    pub fn set_duck(&mut self, bus: Bus, gain: f32) {
+        self.duck[bus.index()] = gain.clamp(0.0, 1.0);
+    }
+    pub fn duck(&self, bus: Bus) -> f32 {
+        self.duck[bus.index()]
+    }
     /// Buses heard only outdoors: the weather (rain, wind, thunder). Region ambience is drawn
     /// only outdoors instead (`sf_audio_bevy`), so the Ambience bus stays free for interiors.
     pub const fn is_outdoor(bus: Bus) -> bool {
         matches!(bus, Bus::Weather)
     }
-    /// A bus's effective gain: its volume times master's (times `outdoor` for an outdoor bus);
-    /// 0 when it or master is muted.
+    /// A bus's effective gain: volume x duck of it and every bus above it (`Bus::parent`), times
+    /// `outdoor` for an outdoor bus; 0 when it or a bus above is muted.
     pub fn bus_gain(&self, bus: Bus) -> f32 {
-        let one = |b: Bus| if self.muted[b.index()] { 0.0 } else { self.volume[b.index()] };
         let exposure = if Self::is_outdoor(bus) { self.outdoor.clamp(0.0, 1.0) } else { 1.0 };
-        if bus == Bus::Master { one(bus) } else { one(bus) * one(Bus::Master) * exposure }
+        let mut gain = exposure;
+        let mut at = Some(bus);
+        while let Some(b) = at {
+            if self.muted[b.index()] {
+                return 0.0;
+            }
+            gain *= self.volume[b.index()] * self.duck[b.index()];
+            at = b.parent();
+        }
+        gain
     }
     /// A voice's output gain: `level` (its fade, 0..1) x `base` (the sound's own volume) x bus gain.
     pub fn gain(&self, bus: Bus, level: f32, base: f32) -> f32 {

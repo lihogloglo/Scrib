@@ -1,6 +1,6 @@
 [package]
 name = "sf_audio_bevy"
-description = "Thin Bevy plugin for sf_audio: bus loops (weather bridge behind a feature), cue one-shots (2D and positional), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
+description = "Thin Bevy plugin for sf_audio: bus loops (weather and settings bridges behind features), volume mixer and ducking, cue one-shots (2D and positional), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,9 +21,14 @@ sf_records.workspace = true
 # The weather bridge (`weather` feature, module `weather`): off by default so testing audio does
 # not compile the render stack sf_weather_bevy pulls in (ARCHITECTURE section 8b rule 6).
 sf_weather_bevy = { workspace = true, optional = true }
+# The settings bridge (`settings` feature, module `settings`): volume sliders and mutes from the
+# UI settings store, off by default for the same reason (sf_ui_bevy pulls bevy_ui and input).
+sf_ui = { workspace = true, optional = true }
+sf_ui_bevy = { workspace = true, optional = true }
 
 [features]
 weather = ["dep:sf_weather_bevy"]
+settings = ["dep:sf_ui", "dep:sf_ui_bevy"]
 
 [dev-dependencies]
 

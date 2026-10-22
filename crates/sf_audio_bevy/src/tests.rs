@@ -203,3 +203,47 @@ fn one_shot_sets_draw_on_the_ambience_bus_outdoors() {
     }
     assert!(drawn >= 2, "{drawn}");
 }
+
+#[test]
+fn volumes_reach_the_mixer_and_voices() {
+    let mut app = app();
+    {
+        let mut volumes = app.world_mut().resource_mut::<AudioVolumes>();
+        volumes.0.set_level(Bus::Ambience, 0.5);
+        volumes.0.set_muted(Bus::Music, true);
+    }
+    app.update();
+    let mixer = app.world().resource::<AudioMixer>().0.clone();
+    assert!((mixer.bus_gain(Bus::Ambience) - sf_audio::slider_to_gain(0.5)).abs() < 1e-7);
+    assert!((mixer.bus_gain(Bus::Weather) - sf_audio::slider_to_gain(0.5)).abs() < 1e-7, "weather under ambience");
+    assert!(mixer.bus_gain(Bus::Music) <= 0.0);
+    assert!((mixer.bus_gain(Bus::Sfx) - 1.0).abs() < 1e-7);
+}
+
+#[test]
+fn speech_ducks_the_music_bus_and_releases() {
+    let mut app = app();
+    app.world_mut().resource_mut::<AudioDucking>().0.add_rule(sf_audio::DuckRule {
+        trigger: sf_audio::DuckTrigger::Bus(Bus::Voice),
+        target: Bus::Music,
+        depth_db: 8.0,
+        attack_s: 0.25,
+        release_s: 1.0,
+    });
+    let music = |app: &App| app.world().resource::<AudioMixer>().0.bus_gain(Bus::Music);
+    app.update();
+    assert!((music(&app) - 1.0).abs() < 1e-7, "nothing speaks");
+    // A line of speech (a voice on the Voice bus): full duck within one 500 ms frame.
+    let line = app
+        .world_mut()
+        .spawn(Voice { sound: id("rain"), bus: Bus::Voice, base: 1.0, level: 1.0, target: 1.0, looping: false })
+        .id();
+    app.update();
+    assert!((music(&app) - sf_audio::db_to_gain(-8.0)).abs() < 1e-6, "{}", music(&app));
+    // The line ends: released over 1 s (two frames).
+    app.world_mut().despawn(line);
+    app.update();
+    assert!((music(&app) - sf_audio::db_to_gain(-4.0)).abs() < 1e-5, "{}", music(&app));
+    app.update();
+    assert!((music(&app) - 1.0).abs() < 1e-7);
+}

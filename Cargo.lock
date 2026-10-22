@@ -5972,6 +5972,8 @@ dependencies = [
  "bevy_transform",
  "sf_audio",
  "sf_records",
+ "sf_ui",
+ "sf_ui_bevy",
  "sf_weather_bevy",
 ]
 

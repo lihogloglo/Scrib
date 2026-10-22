@@ -4,14 +4,79 @@
 //! values per mod (`[settings.<mod>]` tables, `sf_mods::Profile::settings`).
 //! The store keeps values for every registered setting, and passes through
 //! profile entries it doesn't know (a mod disabled for now keeps its values).
+//!
+//! The framework's own settings are built in (owner `sf`, stored under
+//! `[settings.sf]`): the audio page's per-bus volume sliders and mutes
+//! ([`AUDIO_BUSES`], audio.md "Volume mixer").
 
 use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 
 use crate::ids::{ModId, SettingKey};
-use crate::records::SettingKind;
-use crate::registry::UiRegistry;
+use crate::records::{SettingDef, SettingKind};
+use crate::registry::{FRAMEWORK_MOD, UiRegistry};
+
+/// Volume buses on the framework's audio settings page, in menu order
+/// (the names `sf_audio::Bus::USER` uses).
+pub const AUDIO_BUSES: [&str; 6] = ["master", "music", "sfx", "voice", "ambience", "ui"];
+
+/// Key of a bus's volume slider (`sf.audio_music_volume`): a float 0..1, the
+/// slider position (the audio side maps it to dB).
+pub fn audio_volume_key(bus: &str) -> String {
+    format!("{FRAMEWORK_MOD}.audio_{bus}_volume")
+}
+
+/// Key of a bus's mute toggle (`sf.audio_music_muted`).
+pub fn audio_muted_key(bus: &str) -> String {
+    format!("{FRAMEWORK_MOD}.audio_{bus}_muted")
+}
+
+/// Step of the volume sliders: 20 steps, a few presses on a gamepad.
+pub const AUDIO_VOLUME_STEP: f64 = 0.05;
+
+impl SettingDef {
+    /// The framework's built-in settings, in page order: a volume slider and a
+    /// mute per [`AUDIO_BUSES`] entry (page `audio`, group `volume`; labels
+    /// `set-audio-<bus>-volume` / `-muted`, which the content's strings give).
+    /// A record with the same id replaces the definition (range, default),
+    /// and the value stays in `[settings.sf]`.
+    pub fn builtins() -> Vec<(SettingKey, SettingDef)> {
+        let def = |label: String, kind| SettingDef {
+            label,
+            description: None,
+            page: Some("audio".into()),
+            group: Some("volume".into()),
+            kind,
+        };
+        AUDIO_BUSES
+            .iter()
+            .flat_map(|bus| {
+                [
+                    (
+                        SettingKey::new(audio_volume_key(bus)),
+                        def(
+                            format!("set-audio-{bus}-volume"),
+                            SettingKind::Float {
+                                default: 1.0,
+                                min: 0.0,
+                                max: 1.0,
+                                step: Some(AUDIO_VOLUME_STEP),
+                            },
+                        ),
+                    ),
+                    (
+                        SettingKey::new(audio_muted_key(bus)),
+                        def(
+                            format!("set-audio-{bus}-muted"),
+                            SettingKind::Bool { default: false },
+                        ),
+                    ),
+                ]
+            })
+            .collect()
+    }
+}
 
 /// A setting value.
 #[derive(Clone, Debug, PartialEq)]
@@ -224,7 +289,16 @@ fn coerce(
             };
             let mut x = x.clamp(*min, *max);
             if let Some(step) = step {
-                x = (min + ((x - min) / step).round() * step).min(*max);
+                let k = ((x - min) / step).round();
+                // A step like 0.05 is 1/20: dividing by 20 lands on 0.6 where
+                // multiplying by 0.05 gives 0.6000000000000001 (saved as such).
+                let per_unit = (1.0 / step).round();
+                let offset = if per_unit >= 1.0 && (1.0 / step - per_unit).abs() < 1e-9 {
+                    k / per_unit
+                } else {
+                    k * step
+                };
+                x = (min + offset).min(*max);
             }
             Ok(SettingValue::Float(x))
         }

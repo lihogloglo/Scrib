@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use sf_records::{RecordDb, RecordFormat, apply_record_file};
 
-use crate::records::{PausePolicy, ScreenImpl, SettingKind};
+use crate::records::{PausePolicy, ScreenImpl, SettingDef, SettingKind};
 use crate::*;
 
 const BASE: &str = r#"
@@ -201,7 +201,74 @@ fn columns_presets_themes_settings() {
         .unwrap();
     assert_eq!(invalid.severity(), Severity::Error);
     assert!(invalid.to_string().contains("better.rows"), "{invalid}");
-    assert_eq!(reg.settings().count(), 4);
+    assert_eq!(
+        reg.settings().count(),
+        4 + SettingDef::builtins().len(),
+        "the mods' plus the built-ins"
+    );
+}
+
+#[test]
+fn audio_volume_settings_are_built_in_and_retunable() {
+    let (reg, conflicts) = UiRegistry::build(&RecordDb::new());
+    assert_eq!(conflicts, []);
+    let keys: Vec<&str> = reg.settings().map(|d| d.id.as_str()).collect();
+    assert_eq!(keys.len(), 2 * AUDIO_BUSES.len());
+    assert_eq!(
+        &keys[..2],
+        ["sf.audio_master_volume", "sf.audio_master_muted"]
+    );
+    for bus in AUDIO_BUSES {
+        let volume = reg.setting(&audio_volume_key(bus)).unwrap();
+        assert_eq!(volume.owner.as_str(), "sf");
+        assert_eq!(volume.def.page.as_deref(), Some("audio"));
+        assert!(matches!(
+            volume.def.kind,
+            SettingKind::Float { default, min, max, step: Some(_) }
+                if (default, min, max) == (1.0, 0.0, 1.0)
+        ));
+        let muted = reg.setting(&audio_muted_key(bus)).unwrap();
+        assert_eq!(muted.def.kind, SettingKind::Bool { default: false });
+    }
+
+    // A content pack retunes the music default; the value still saves under `sf`.
+    let mut db = RecordDb::new();
+    register_kinds(&mut db).unwrap();
+    let pack = db.add_source("pack", &[]);
+    let text = r#"
+[[define]]
+kind = "ui.setting"
+id = "sf.audio_music_volume"
+value = { label = "music", page = "audio", kind = { Float = { default = 0.7, min = 0.0, max = 1.0, step = 0.05 } } }
+"#;
+    let outcome = apply_record_file(&mut db, pack, text, RecordFormat::Toml).unwrap();
+    assert_eq!(outcome.errors, []);
+    let (reg, _) = UiRegistry::build(&db);
+    let music = reg.setting("sf.audio_music_volume").unwrap();
+    assert_eq!((music.owner.as_str(), music.source), ("sf", Some(pack)));
+    assert_eq!(
+        reg.settings().count(),
+        2 * AUDIO_BUSES.len(),
+        "replaced in place"
+    );
+    let mut store = SettingsStore::new(&reg);
+    assert_eq!(store.get_f64("sf.audio_music_volume"), Some(0.7));
+    // Sliders clamp and snap; mutes are bools.
+    assert_eq!(
+        store.set("sf.audio_sfx_volume", SettingValue::Float(1.7)),
+        Ok(&SettingValue::Float(1.0))
+    );
+    store
+        .set("sf.audio_sfx_volume", SettingValue::Float(0.52))
+        .unwrap();
+    assert!((store.get_f64("sf.audio_sfx_volume").unwrap() - 0.5).abs() < 1e-12);
+    store
+        .set("sf.audio_voice_muted", SettingValue::Bool(true))
+        .unwrap();
+    let saved = store.to_profile();
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved["sf"]["audio_voice_muted"], toml::Value::Boolean(true));
+    assert!(saved["sf"].contains_key("audio_sfx_volume"));
 }
 
 #[test]

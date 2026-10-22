@@ -174,6 +174,12 @@ fn settings_round_trip_through_a_profile_file() {
         .set("base.text_scale", SettingValue::Float(1.4))
         .unwrap();
     store.set("reword.loud", SettingValue::Bool(true)).unwrap();
+    store
+        .set(&audio_volume_key("music"), SettingValue::Float(0.6))
+        .unwrap();
+    store
+        .set(&audio_muted_key("ui"), SettingValue::Bool(true))
+        .unwrap();
     assert!(store.save_to(&mut profile));
     assert!(!store.save_to(&mut profile), "saving again changes nothing");
     assert_eq!(profile.settings[&id("base")].len(), 1, "only non-defaults");
@@ -191,6 +197,13 @@ fn settings_round_trip_through_a_profile_file() {
         "snapped to the step, then kept"
     );
     assert_eq!(fresh.get_bool("reword.loud"), Some(true));
+    assert_eq!(
+        fresh.get_f64("sf.audio_music_volume"),
+        Some(0.6),
+        "built-in volumes persist under [settings.sf]"
+    );
+    assert_eq!(fresh.get_bool("sf.audio_ui_muted"), Some(true));
+    assert_eq!(fresh.get_f64("sf.audio_master_volume"), Some(1.0));
     assert_eq!(
         fresh.get("base.subtitles"),
         Some(&SettingValue::Text("on".into()))
