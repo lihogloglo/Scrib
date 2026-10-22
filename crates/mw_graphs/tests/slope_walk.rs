@@ -63,6 +63,14 @@ fn humanoid_sim_of(index: usize) -> Option<Sim> {
             Arc::make_mut(c).meta.stance_velocity = Vec3::ZERO;
         }
     }
+    if std::env::var_os("GAIT_NOROLL").is_some() {
+        // Before AN-9: the lock releases at heel-off, with the toe still down.
+        for c in &mut clips {
+            for t in Arc::make_mut(c).curves.iter_mut().filter(|t| t.name.starts_with("roll.")) {
+                t.values.fill(0.0);
+            }
+        }
+    }
     Some(Sim::new(v.graph, set.skeleton.clone(), clips).unwrap())
 }
 
@@ -178,6 +186,11 @@ struct Report {
     /// Per leg: the sole's lowest clearance (heel or toe) as a metric with
     /// the ground at 0: penetration = deepest point, float = gap to the ground.
     soles: Vec<FootMetrics>,
+    /// Per leg: the toe's horizontal world travel while it is down (within 2 cm of the
+    /// ground) after the heel let go (the weight transfer: AN-9), and the number of such
+    /// episodes (heel-offs with the toe still down).
+    roll_slide: Vec<f32>,
+    roll_episodes: Vec<u32>,
 }
 
 /// Per leg (graph order): the foot joint's height over flat ground with
@@ -247,6 +260,9 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
     let (mut measured, mut moving) = (Vec3::ZERO, false);
     let mut r = Report { plants: vec![0; legs.len()], plant_times: vec![Vec::new(); legs.len()], slide: vec![0.0; legs.len()], foot_travel: vec![0.0; legs.len()], min_measured: f32::MAX, ..Report::default() };
     let mut stance = vec![0.0f32; legs.len()];
+    let mut toe_last: Vec<Option<Vec3>> = vec![None; legs.len()];
+    r.roll_slide = vec![0.0; legs.len()];
+    r.roll_episodes = vec![0; legs.len()];
     let sole_heights = soles(sim);
     let mut meters: Vec<FootMeter> = sole_heights.iter().map(|&sole| FootMeter::new(MeterRules { sole, ..MeterRules::default() })).collect();
     let mut sole_meters: Vec<FootMeter> = sole_heights.iter().map(|_| FootMeter::new(MeterRules::default())).collect();
@@ -333,6 +349,23 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
                 let t = WorldPos::ORIGIN.delta_f32(f.to_world(sim.out.model.translation(toe)));
                 let toe_ground = ground_at(world, t);
                 m.push(FootFrame { position: t, contact, ground: toe_ground }, DT);
+                // Heel-off until the toe first lifts: the toe is the pivot, so it must not move
+                // (the weight transfer).
+                let heel_off = last[k].is_some_and(|(_, pc)| pc > 0.5) && contact <= 0.5;
+                let down = toe_ground.is_some_and(|g| t.y - g - toe_sole < 0.02);
+                if heel_off && down {
+                    toe_last[k] = Some(t);
+                    r.roll_episodes[k] += 1;
+                } else if let (Some(pt), true) = (toe_last[k], contact <= 0.5) {
+                    if down {
+                        r.roll_slide[k] += Vec2::new(t.x - pt.x, t.z - pt.z).length();
+                        toe_last[k] = Some(t);
+                    } else {
+                        toe_last[k] = None;
+                    }
+                } else {
+                    toe_last[k] = None;
+                }
                 if let (Some(h), Some(g)) = (gap, toe_ground) {
                     gap = Some(h.min(t.y - g - toe_sole));
                 }
@@ -576,16 +609,26 @@ fn gaits_plant_their_feet_on_flat_ground() {
             let m = &sim.clips[i].meta;
             (m.average_velocity.length(), m.stance_velocity.length())
         });
+        let roll_cm: Vec<f32> = r.roll_slide.iter().zip(&r.roll_episodes).map(|(s, &n)| s * 100.0 / n.max(1) as f32).collect();
         let mean_drift = r.stats.drift_sum / r.stats.drift_count.max(1) as f32;
         eprintln!(
-            "{gait:10} [{state}] {:4.1} m | {top} root {root:.2} stance {stance:.2} m/s | worst slide {:4.1} cm/st, lock drift max {:4.1} mean {:4.1} cm, unplanted {} | {}",
+            "{gait:10} [{state}] {:4.1} m | {top} root {root:.2} stance {stance:.2} m/s | worst slide {:4.1} cm/st, lock drift max {:4.1} mean {:4.1} cm, unplanted {} | toe slide after heel-off {:.1}/{:.1} cm per roll ({:?} rolls) | {}",
             r.travel,
             r.feet.iter().map(FootMetrics::slide_per_stance).fold(0.0, f32::max) * 100.0,
             r.stats.drift_max * 100.0,
             mean_drift * 100.0,
             r.stats.unplanted,
+            roll_cm[0],
+            roll_cm[1],
+            r.roll_episodes,
             legs.join(" | ")
         );
+        // AN-9: the toe stays put from heel-off until it lifts (cook `roll.*` curves + the foot
+        // lock's toe pin); released at heel-off it slid 14-16 cm per step. Strafes skim the toe
+        // close to the ground in swing, so only the forward walk is gated (a lead for the rest).
+        if gait == "walk fwd" && roll_cm.iter().any(|&c| c > 4.0) {
+            failures.push(format!("{gait}: toe slides {roll_cm:?} cm per heel-off"));
+        }
         for (k, m) in r.feet.iter().enumerate() {
             if m.stances < 2 || m.stuck(1.5) || m.slide_per_stance() > 0.03 || m.max_penetration > 0.03 {
                 failures.push(format!("{gait}: leg {k} {m:?}"));
@@ -593,6 +636,31 @@ fn gaits_plant_their_feet_on_flat_ground() {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// AN-9: the cooked walk and run clips of every humanoid skeleton carry a
+/// `roll.<foot>` curve beside each `contact.<foot>` (heel-off to toe-off, the
+/// toe still planted), or the foot lock's toe pin never engages. The humanoid
+/// skeletons have no toe bone (only the beast races have `Toe0`): the cook
+/// uses the foot's first child (the body-part socket) as the toe.
+#[test]
+fn walk_clips_carry_heel_roll_curves() {
+    for (index, name) in [(0, "male"), (1, "female"), (2, "beast")] {
+        let Some(sim) = humanoid_sim_of(index) else { return };
+        let mut walkers = 0;
+        for clip in sim.clips.iter().filter(|c| c.curves.iter().any(|t| t.name.starts_with("contact."))) {
+            let rolls: Vec<&sf_anim::CurveTrack> = clip.curves.iter().filter(|t| t.name.starts_with("roll.")).collect();
+            let rolling = rolls.iter().filter(|t| t.values.iter().any(|&v| v > 0.5)).count();
+            eprintln!("{name}: {:<16} rolls {} ({} rolling)", clip.name, rolls.len(), rolling);
+            if clip.name.starts_with("Walk") || clip.name.starts_with("Run") {
+                walkers += 1;
+                // The human walk rolls both heels; elsewhere a toe may leave with its heel, so one foot may not.
+                let want = if clip.name == "WalkForward" && index < 2 { 2 } else { 1 };
+                assert!(rolling >= want, "{name}: {} has {rolling} rolling curves of {}", clip.name, rolls.len());
+            }
+        }
+        assert!(walkers >= 4, "{name}: {walkers} walk/run clips with contact curves");
+    }
 }
 
 /// AN-3: footstep sounds come from the clips' `SoundGen: Left/Right` text keys

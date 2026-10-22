@@ -1006,6 +1006,15 @@ it should hit the shell's outline. Known: the shape is round, so a long body (gu
 Scene `level-anim-loop` (camera `loop-close`). Look for: a planted foot stays put from heel-strike until the toe leaves the
 ground; at weight transfer (the other foot landing) the heel rises and the foot rolls over a fixed toe, with no forward
 slide. Any correction happens while the foot is in the air. Fix: cooked `roll.<foot>` curves (heel-off to toe-off) pin the toe.
+Note (run 2): the male/female skeletons have no toe bone (only the beast races have `Toe0`); the cook and compiler use the foot's
+socket child as the toe, so the roll works on humans too. Gated: `slope_walk` forward walk toe slide 2 cm per heel-off (14-16 cm
+without the roll curves). Strafes not gated (lead: walk right 7/15 cm, likely swing-foot skim, check in the scene).
+
+### AN-11 Ragdoll spine bends like a spine (awaiting owner)
+Scene `level-anim-idles` (camera `idles-close`): throw balls (`V`) at several dummies and press `I` on one to kill it. Look for:
+a falling or dead body keeps a believable back (a gentle curve, 15 degrees of bend and twist per spine segment) and no longer
+folds in half or corkscrews. Re-bake first (ragdoll.cook v2). Known trade-off: a hard tumble down stairs stretches a joint
+up to 1.8 cm for a moment (gate relaxed from 1 to 2.5 cm).
 
 ### AN-10, AN-13, AN-14 Get-ups (awaiting owner)
 Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the guar: it falls, gets up once and stands
