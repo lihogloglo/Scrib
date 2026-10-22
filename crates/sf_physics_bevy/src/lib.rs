@@ -27,7 +27,7 @@ use bevy_transform::components::Transform;
 use sf_coords::WorldPos;
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::unit;
-use sf_controller::{GroundHit, GroundProbe, Nearest, ProbeQuery, TerrainProbe};
+use sf_controller::{GroundHit, GroundProbe, HeightSurface, Nearest, ProbeQuery, TerrainProbe};
 use sf_physics::{BodyDesc, BodyId, Layer, PhysicsEvent, PhysicsParams, PhysicsWorld, PhysicsWorlds};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::TerrainHeights;
@@ -307,12 +307,29 @@ fn step(
         stats.rebases += 1;
     }
     world.step();
-    // This frame's events (P5 impacts; cleared in `First`).
-    events.0.extend(world.drain_events());
+    // This frame's events (P5 impacts, contact reports; cleared in `First`).
+    let drained: Vec<PhysicsEvent> = world.drain_events().collect();
+    let world = &*world;
+    events.0.extend(drained.into_iter().map(|e| terrain_surfaces(world, physics.terrain.as_ref(), e)));
     let ms = started.elapsed().as_secs_f32() * 1e3;
     stats.steps += 1;
     stats.step_ms += ms;
     stats.max_step_ms = stats.max_step_ms.max(ms);
+}
+
+/// A contact report against a terrain chunk carries the terrain's surface under the contact
+/// (`HeightSurface::surface`, the ground probe's: footsteps and impacts agree) instead of the
+/// chunk body's untagged one.
+fn terrain_surfaces(world: &PhysicsWorld, terrain: Option<&TerrainHeights>, event: PhysicsEvent) -> PhysicsEvent {
+    let (PhysicsEvent::Contact { a, b, impulse, speed, slide, point, normal, mut surfaces }, Some(t)) = (event, terrain) else {
+        return event;
+    };
+    for (side, body) in [a, b].into_iter().enumerate() {
+        if world.layer(body).is_some_and(|l| l.contains(Layer::TERRAIN)) {
+            surfaces[side] = HeightSurface::surface(t, point);
+        }
+    }
+    PhysicsEvent::Contact { a, b, impulse, speed, slide, point, normal, surfaces }
 }
 
 /// Which body each entity owns, so despawns remove bodies.

@@ -1,6 +1,7 @@
 //! Thin Bevy plugin for `sf_audio` (audio.md): bus loops and one-shots ([`BusSound`]: weather
 //! beds, thunder), random one-shot sets ([`OneShotSets`]: region ambience), cue one-shots (2D or
-//! positional), looping emitters, ambience beds and the music player, all
+//! positional), physics impacts and slide loops ([`ContactSound`]; the `physics` feature's
+//! [`physics::PhysicsAudioPlugin`] feeds them), looping emitters, ambience beds and the music player, all
 //! played through `bevy_audio` at the mixer's bus gains. The weather glue is the `weather`
 //! feature's [`weather::WeatherAudioPlugin`], so this crate builds without the render stack. Positional voices take their distance
 //! curve from `sf_audio::Attenuation`; Bevy's `SpatialListener` (the host puts it on the camera)
@@ -26,8 +27,13 @@ use sf_audio::{
 };
 use sf_records::RecordId;
 
+mod contacts;
+#[cfg(feature = "physics")]
+pub mod physics;
 #[cfg(feature = "weather")]
 pub mod weather;
+
+pub use contacts::{ContactAudio, ContactSound, PlaySoundScaled, SlideVoice};
 
 /// One-shot voices allowed at once; plays over the budget are dropped (audio.md "Voice budget").
 pub const MAX_ONE_SHOTS: usize = 64;
@@ -186,11 +192,14 @@ impl Plugin for SfAudioPlugin {
             .init_resource::<AmbienceLoops>()
             .init_resource::<Music>()
             .init_resource::<OneShotSets>()
+            .init_resource::<ContactAudio>()
             .insert_resource(AudioBank(self.bank.clone()))
             .insert_resource(Playback(self.playback))
             .add_message::<AudioEvent>()
             .add_message::<BusSound>()
             .add_message::<PlaySound>()
+            .add_message::<PlaySoundScaled>()
+            .add_message::<ContactSound>()
             .add_systems(
                 Update,
                 (
@@ -198,6 +207,7 @@ impl Plugin for SfAudioPlugin {
                     route_bus_sounds,
                     schedule_one_shot_sets,
                     reconcile_ambience,
+                    contacts::play_contacts,
                     play_cues,
                     start_emitters,
                     drive_music,
@@ -369,10 +379,12 @@ fn listener_pos(listener: &Query<&GlobalTransform, With<SpatialListener>>) -> Op
     listener.iter().next().map(GlobalTransform::translation)
 }
 
-/// Resolves `PlaySound` cues and starts them, culled by distance and capped per cue and overall.
+/// Resolves `PlaySound` and `PlaySoundScaled` cues and starts them, culled by distance and capped
+/// per cue and overall.
 #[allow(clippy::too_many_arguments)]
 fn play_cues(
     mut plays: MessageReader<PlaySound>,
+    mut scaled: MessageReader<PlaySoundScaled>,
     mut cues: ResMut<AudioCues>,
     bank: Res<AudioBank>,
     mixer: Res<AudioMixer>,
@@ -388,7 +400,7 @@ fn play_cues(
     let ear = listener_pos(&listener);
     let mut one_shots = instances.iter().filter(|(_, v)| !v.looping).count();
     let mut started: Vec<RecordId> = Vec::new();
-    for play in plays.read() {
+    for (play, scale) in plays.read().map(|p| (p, 1.0)).chain(scaled.read().map(|s| (&s.play, s.volume.max(0.0)))) {
         let Some(cue) = cues.0.resolve(&play.cue) else { continue };
         let Some(file) = bank.0.get(&cue.sound) else { continue };
         let at = match play.at {
@@ -410,7 +422,7 @@ fn play_cues(
         started.push(cue.cue.clone());
         events.write(AudioEvent::Cue { cue: cue.cue.clone(), sound: cue.sound.clone(), bus: cue.bus });
         let Cue { cue: cue_id, sound, bus, volume, pitch, .. } = cue;
-        let voice = Voice { sound, bus, base: file.volume * volume, level: 1.0, target: 1.0, looping: false };
+        let voice = Voice { sound, bus, base: file.volume * volume * scale, level: 1.0, target: 1.0, looping: false };
         let start = Start { spatial, pitch: Some(pitch), distance_gain: Some(distance_gain) };
         let mut e = spawn_voice(&mut commands, server, &file.path, voice, &mixer.0, &start);
         e.insert(CueInstance(cue_id));

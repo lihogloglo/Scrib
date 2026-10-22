@@ -1,6 +1,7 @@
 //! Body handles, descriptions, events and world parameters.
 
 use glam::Vec3;
+use sf_controller::SurfaceId;
 use sf_coords::{WorldPos, WorldTransform};
 
 use crate::layer::Layer;
@@ -12,6 +13,14 @@ use crate::shape::ShapeRef;
 pub struct BodyId {
     pub(crate) index: u32,
     pub(crate) generation: u32,
+}
+
+impl BodyId {
+    /// A stable 64-bit key (index and generation): per-body state outside the
+    /// world (audio rate limits) without depending on this crate.
+    pub fn to_bits(self) -> u64 {
+        u64::from(self.generation) << 32 | u64::from(self.index)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,11 +70,15 @@ pub struct BodyDesc {
     pub min_inertia: f32,
     /// Owner data (a placement id, an entity): returned by [`crate::PhysicsWorld::user`].
     pub user: u64,
+    /// Surface material (adapter-defined, as on collision triangles and the
+    /// ground probe), carried by [`PhysicsEvent::Contact`]. Mesh shapes use
+    /// their per-triangle surfaces instead.
+    pub surface: SurfaceId,
 }
 
 impl BodyDesc {
     pub fn new(kind: BodyKind, pose: WorldTransform, shape: ShapeRef, layer: Layer) -> Self {
-        Self { kind, pose, shape, layer, mass: None, ccd: false, damping: (0.0, 0.05), extra_iterations: 0, user: 0, min_inertia: 0.0 }
+        Self { kind, pose, shape, layer, mass: None, ccd: false, damping: (0.0, 0.05), extra_iterations: 0, user: 0, min_inertia: 0.0, surface: SurfaceId::DEFAULT }
     }
 
     /// A fixed body (static placement, terrain chunk).
@@ -87,6 +100,12 @@ impl BodyDesc {
     #[must_use]
     pub fn with_user(mut self, user: u64) -> Self {
         self.user = user;
+        self
+    }
+
+    #[must_use]
+    pub fn with_surface(mut self, surface: SurfaceId) -> Self {
+        self.surface = surface;
         self
     }
 }
@@ -111,6 +130,25 @@ pub enum PhysicsEvent {
     /// into a resting body, or pressing one into the ground, is no hit.
     /// `direction`: the contact normal toward `target` (unit, world).
     Hit { target: BodyId, by: BodyId, impulse: f32, point: WorldPos, direction: Vec3 },
+    /// A touching pair after a step, reported for impact and slide sounds
+    /// (audio.md "Impacts"): `a` is an awake dynamic body on
+    /// [`PhysicsParams::contact_report_layers`], `b` what it touches (any
+    /// body). Reported only when `speed` or `slide` reaches
+    /// [`PhysicsParams::contact_report_speed`], so resting and rolling
+    /// contacts stay silent: holding a body up against gravity changes its
+    /// velocity by only `g * dt` (0.16 m/s at 60 Hz) per step.
+    ///
+    /// - `impulse`: the pair's normal impulse this step, N·s (solver).
+    /// - `speed`: the normal velocity change it caused, `impulse * (1/m_a +
+    ///   1/m_b)` (fixed and kinematic sides count as infinite mass), m/s: the
+    ///   impact speed for an inelastic hit, independent of mass.
+    /// - `slide`: tangential speed of `a` relative to `b` at the contact point
+    ///   after the step, m/s (scrapes; a rolling body has none).
+    /// - `point`, `normal`: the deepest contact, normal from `a` to `b`.
+    /// - `surfaces`: `a`'s and `b`'s surface there: the touched triangle's on
+    ///   a mesh shape, [`BodyDesc::surface`] otherwise (a heightfield's is
+    ///   its body's: the host knows the terrain's).
+    Contact { a: BodyId, b: BodyId, impulse: f32, speed: f32, slide: f32, point: WorldPos, normal: Vec3, surfaces: [SurfaceId; 2] },
     /// A dynamic body fell below [`PhysicsParams::kill_height`]; it is back
     /// at its last rest pose, asleep.
     FellOut(BodyId),
@@ -139,6 +177,11 @@ pub struct PhysicsParams {
     pub contact_force_threshold: f32,
     /// Layers that report [`PhysicsEvent::Hit`] (first contact with a dynamic body).
     pub hit_layers: Layer,
+    /// Awake dynamic bodies on these layers report [`PhysicsEvent::Contact`]
+    /// when the normal velocity change or the slide speed (m/s) reaches
+    /// `contact_report_speed`. Empty: no contact reports (no cost).
+    pub contact_report_layers: Layer,
+    pub contact_report_speed: f32,
     /// Absolute Y (meters) under which a dynamic body counts as fallen out;
     /// `None`: `kill_margin` below the lowest fixed body ([`crate::PhysicsWorld::kill_height`]).
     pub kill_height: Option<f64>,
@@ -165,6 +208,8 @@ impl Default for PhysicsParams {
             contact_force_layers: Layer::DEBRIS | Layer::PROP | Layer::RAGDOLL | Layer::CHARACTER | Layer::PROJECTILE,
             contact_force_threshold: 200.0,
             hit_layers: Layer::CHARACTER,
+            contact_report_layers: Layer::MOVING,
+            contact_report_speed: 0.3,
             kill_height: None,
             kill_margin: 10.0,
             rolling_resistance: 20.0,

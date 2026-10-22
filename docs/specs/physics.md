@@ -136,7 +136,13 @@ bitflags! pub struct Layer: u32 { STATIC, TERRAIN, DEBRIS, PROP, CHARACTER, RAGD
 - **Simulated mass** is clamped to `[0.2, 60]` kg by default (a cup under a cuirass is 300:1 raw); the
   gameplay weight stays in records. Thin shapes get a 4 mm contact skin.
 - **Events** (drained per step): `Woke`, `Slept`, `Hit { target, by, impulse, point, direction }` (first contact on a `hit_layers` body, below), `ContactForce { a, b, impulse, point }` above a
-  per-layer threshold (impact sounds, damage later, knockback), `LeftCoverage(BodyId)`, `FellOut(BodyId)`.
+  per-layer threshold (damage later, knockback), `LeftCoverage(BodyId)`, `FellOut(BodyId)`.
+  `Contact { a, b, impulse, speed, slide, point, normal, surfaces }` (2026-10-22, audio.md "Impacts"):
+  after each step, every touching pair of an awake dynamic body on `contact_report_layers` (default
+  `MOVING`) whose normal speed change `impulse·(1/m_a + 1/m_b)` or contact slip reaches
+  `contact_report_speed` (0.3 m/s; resting support is `g·dt` = 0.16). `surfaces` are
+  `sf_controller::SurfaceId`s: the touched triangle's on a mesh, `BodyDesc::surface` otherwise;
+  `sf_physics_bevy` replaces a terrain chunk's with the terrain's own (`HeightSurface::surface`).
 - **Interpolation state**: previous and current pose per awake body; `pose_at(alpha)` lerp + slerp.
 
 **Bake products** (feature `bake`, sf_bake steps):

@@ -36,7 +36,7 @@ use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
 use sf_controller::StaticShape;
 use sf_coords::{WorldPos, WorldTransform};
-use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef};
+use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef, SurfaceId};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::{TerrainHeights, WorldRect};
 use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, WorldspaceId};
@@ -80,6 +80,11 @@ pub trait ItemContent: Send + Sync + 'static {
     /// inside its collision: a coarse proxy around shelves).
     fn is_support(&self, _worldspace: &WorldspaceId, _placement: &Placement) -> bool {
         false
+    }
+    /// An item body's surface material (contact reports: impact and slide
+    /// sounds). Static meshes carry theirs per triangle (`collision.cook`).
+    fn surface(&self, _worldspace: &WorldspaceId, _placement: &Placement) -> SurfaceId {
+        SurfaceId::DEFAULT
     }
 }
 
@@ -536,6 +541,7 @@ pub(crate) fn apply_inserts(
                         } else {
                             BodyDesc { ccd: true, ..BodyDesc::item(p.transform, shape, layer, mass) }
                         };
+                        let desc = desc.with_surface(content.surface(&key.0, p));
                         (desc, true)
                     }
                     Some(ShapeRef::Mesh(m)) => {
