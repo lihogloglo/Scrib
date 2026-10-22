@@ -15,7 +15,6 @@ use super::*;
 fn id(s: &str) -> RecordId {
     RecordId::new(s)
 }
-
 // ---------------------------------------------------------------- test double
 
 enum Cond {
