@@ -114,7 +114,7 @@ pub struct ExteriorOptions {
     /// Loaded records: actor placements spawn as dressed characters
     /// (`sf_character_bevy`; `--off actors` drops them).
     pub actors: Option<Arc<sf_records::RecordDb>>,
-    /// `--bodies`: smooth (default) or vanilla segmented bodies.
+    /// `--bodies`: vanilla segmented bodies (default) or smooth (opt-in).
     pub bodies: sf_character_bevy::SmoothBodies,
     /// `--cloth`: robes and skirts authored (default) or simulated (opt-in).
     pub cloth: mw_physics::ClothMode,

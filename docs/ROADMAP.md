@@ -136,7 +136,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   activation with a "press to use" prompt. `sf_action` A1 done 2026-10-21 (commands, RON move rules, two-stage buffer,
   chooser, jump buffer/coyote/landing, use prompt, net-ready state); `sf_camera` rig math done (orbit spring, push-in,
   lock-on, first-person limits, shake); `sf_controller` launch + serde `Locomotion` + shared `PlayerId` (`sf_ids`) done;
-  next A2 (`sf_action_bevy`, movers on the fixed tick, app wiring) and D1 (`sf_camera_bevy`).
+  A2 slice 1 done 2026-10-22 (`sf_action_bevy`: fixed tick, interpolation, correction spring, input sampling);
+  next A2 slice 2 (app wiring, owner check) and D1 (`sf_camera_bevy`).
 - [ ] 2.2 UI: widget kit + Morrowind theme (M5 U3), HUD + message box (U4), inventory on minimal `sf_rpg` stacks
   (U5), settings/options + keybinds (U6). `sf_ui`, `sf_ui_bevy`, `sf_ui_css` exist (U1, U2 confirmed).
 - [ ] 2.3 Text: fonts, books and scrolls, notifications.
@@ -160,7 +161,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   old P11. Clip sources: packs only (free first).
   Potential (owner 2026-10-22): evaluate MotionBricks as an animation source (licence, rig fit, quality vs packs).
 - [~] 3.2 Ragdolls (PH-2 rejected). R0 write-back fixed headless 2026-10-22 (PH-2 awaiting owner, `level-anim-drop`, F7+G).
-  Owner pass AN-1..8 fixed 2026-10-22 (awaiting owner: AN-* in visual-checks). Then powered falls (PH-9).
+  Owner passes AN-1..21 fixed 2026-10-22 (AN-16..21 confirmed). Left: limp_drop/stairs stretch gates (more solver
+  iterations add energy on contact), beast left toe pin. Then powered falls (PH-9), which the owner expects to help most.
   Order: `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
 - [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
   `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
@@ -168,7 +170,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   small boxes: PH-7), immovable candles (PH-1), ball pushing items through walls (archive 6a).
 - [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10. CH-1/3 variety and SB-5 feet
   done headless 2026-10-22 (awaiting owner); stairs 5b and powered falls R3 next (`animation-plan.md`).
-- [ ] 3.5 Combat (M10).
+- [ ] 3.5 Combat (M10). Owner 2026-10-22: not Morrowind's rules; adopt before building: evaluate
+  github.com/Funny-Bones/ELDEN-RING-Playermodel-Rust (MIT code, Bevy 0.19; its timings/clips are extracted ER data,
+  not shippable) as the base for action.md E1 (chains, guard, hit-stop, reactions) on our own clips.
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 
@@ -202,6 +206,11 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-22 (anim-fixes-3): owner pass fixes: AN-16 stride (SpeedMatch `rate_share` 0.3), AN-17 loop-seam contact gap, AN-19
+  footskate cleanup in the cook (`anim.cook` v8), AN-21 slope stride + lean (`GRAPH_FORMAT` 6), AN-18/20 ragdoll mass and
+  inertia conditioning + anatomical cones (`ragdoll.cook` v5); smooth bodies off by default. All confirmed by the owner.
+- 2026-10-22 (a2-slice1): `sf_action_bevy`: chooser + batched mover on a 60 Hz `FixedUpdate`, `WorldPos` interpolation,
+  render-body correction spring (`sf_controller::RenderCorrection`), `bevy_enhanced_input` sampling; ticks identical at 30/60/144 fps.
 - 2026-10-22 (anim-fixes-2): AN-9 heel-to-toe foot lock (cooked roll curves), AN-10 face-down get-up roll axis,
   AN-13 creature knockout exit, AN-14 death during knockdown stays dead; AN-11 spine limits 30 to 15 degrees a segment (run 2); AN-12/15 open.
 
@@ -219,36 +228,3 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   Fargoth's ring flow passes headless on the real ESMs (12 + 1 tests); result scripts behind `ResultRunner`.
 - 2026-10-21 (audio-pass): Morrowind sound in game: `mw_audio` (SOUN/SNDG cues, GMST ranges, music playlists), load-door
   sounds, light/activator loop emitters, stride footsteps, explore music; audio tests no longer build the renderer.
-- 2026-10-21 (action-a1): `sf_camera` rig math, Bevy-free (orbit + critically damped pivot, sphere-cast push-in, lock-on
-  hysteresis/LOS, first-person limits, trauma shake; 16 tests); action.md split (30.5 KB + archive); dolly rejected.
-- 2026-10-21 (renderfix1): night ambient 1 → 4 nits (LT-1 awaiting owner); FG-1 repro + `--off foghistory`: not the
-  froxel history, diagnosis open.
-- 2026-10-21 (action-a1): `sf_action` A1, Bevy-free: input sampler + command feed, RON move rules with load errors,
-  Sekiro two-stage buffer, chooser, jump/coyote/landing, use prompt; deterministic at 30/60/144 fps (21 tests).
-- 2026-10-21 (audio-pass): `sf_audio` cues/sound groups, distance curves, music mood playlists with crossfade, footstep
-  hook, ambience layers; `sf_audio_bevy` positional one-shots + loop emitters on bevy_audio (30 tests).
-- 2026-10-21 (rpg-core): specs `rpg.md` + `rpg-adapter.md`; `sf_rpg` built (dialogue response DB + session, item
-  stacks/loadout, quests, journal, topic linker; 19 tests); Fargoth quest IDs verified against the installed ESMs.
-- 2026-10-21 (shadowB2): shadow reset B2: own bevy_pbr patch, lamp shadow fetch skipped where unlit + lamps on 2x2
-  hardware PCF (sun keeps Temporal): -0.1 ms GPU per shadowed lamp at 1440p; SH-19 (edge look) awaiting owner.
-- 2026-10-21 (shadowB1): shadow reset B1: Bevy PRs #26149/#26161 vendored (3 crates); cache kept (patch alone loses with
-  walkers), patch + cache: census 9.0 → 6.5 ms; `perf sweep --var a+b` steps two flags together.
-- 2026-10-21 (doorwalls): SH-17 fixed: back in an interior after a trip outside, meshes drew depth only for seconds
-  (main-pass pipelines compiling; a start indoors was LDR and the sky made the camera HDR). Camera HDR everywhere; door fade
-  holds while visible meshes wait for pipelines (`pipeline_watch.rs`, also logs compiles).
-- 2026-10-21 (shadowA2): shadow reset A2: lamp shadow captures while the door fade is black (no arrival flicker), dead
-  shadow layers deleted (far static map, caster cull, legacy cascades; ~820 LOC); perf runner ignores idle-clock GPU load.
-- 2026-10-21 (shadowA1): shadow reset A1: lamp contact shadows off, sun contact 0.3 m, sun/moon off interior views
-  (layer-0 leak; they never lit interiors), GTAO per preset (+0.9 ms GPU High 1440p); lab 8 lamps 12.5 → 6.9 ms.
-
-- 2026-10-21 (lightlab): light lab: level `light-lab` + `perf sweep` (one variable per run); cost model in perf.md:
-  per lamp 0.11 ms unshadowed, +0.49 ms shadowed (cube+PCF), +1.15 ms with contact (0.80 march); sun leak reproduced.
-
-- 2026-10-21 (render-audit): rendering + shadows audit (code, Bevy ecosystem, industry); shadows2 + particles1
-  work committed. Owner decides the shadow reset (superfargoth `research/shadows/2026-10-21-audit.md`).
-
-- 2026-10-20 (shadows2): shadows v2 V0 measured + V1 lamp cache made to work (8 bugs: non-casters tracked, writes
-  taken for moves, full `Core3d` per face, capture frames dropping movers, streaming recaptures...); High 8 lamps.
-
-- 2026-10-20 (particles1): NIF particles drawn by vertex pulling (ShaderBuffer + MeshTag, CPU sim kept): Balmora
-  960p 9.9 → 9.0 ms (= `--off particles`), walk unchanged (perf.md "GPU particles"); PA-4 awaiting owner.

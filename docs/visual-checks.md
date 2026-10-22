@@ -1010,7 +1010,27 @@ Note (run 2): the male/female skeletons have no toe bone (only the beast races h
 socket child as the toe, so the roll works on humans too. Gated: `slope_walk` forward walk toe slide 2 cm per heel-off (14-16 cm
 without the roll curves). Strafes not gated (lead: walk right 7/15 cm, likely swing-foot skim, check in the scene).
 
-### AN-11 Ragdoll spine bends like a spine (awaiting owner)
+### AN-19 Fargoth's walk has no per-step jolt (owner OK 2026-10-22, with rate_share 0.3)
+Scene `level-anim-loop`, camera `loop-close` (Fargoth on the 12 m square, 1.4 m/s). Needs re-bake (`anim.cook` v8).
+Look for: each planted foot stays put until it rolls off and lifts smoothly, no little snap forward as it leaves the
+ground; the hips no longer swivel the whole body left/right each step; the body may surge a touch per step (as authored).
+Compare a beast walker (Ajira) and Elone. Was: the male clip's root carried the hips' ±17° yaw and its feet skated
+unevenly, so the lock let go of 12-19 cm each stance. Headless: `slope_walk walk_clip_stance_feet_keep_pace_with_the_body`.
+
+### AN-21 Walkers shorten their steps uphill and lean into the slope (owner OK 2026-10-22 after "stronger": lean gains doubled, 30 deg +5/-2.4 deg)
+Scene `level-anim-stairs`, camera `stairs` (lab ramps 10/20/30° and stairs). Needs re-bake (graph RON, graph format 6).
+Look for: uphill, shorter quicker steps (about a quarter shorter at 30°); downhill, slightly longer ones (about +14%);
+the upper body tipped a few degrees forward going up, a touch back going down, easing in over ~0.3 s, never a jolt;
+feet still flat on the ramp. Flat ground looks exactly as before. Too much or too little: knobs in `mw_graphs`
+build.rs (`StrideWarp grade up/down`, `Lean grade up/down/max`). Headless: `slope_walk walkers_shorten_their_steps_uphill_and_lean_into_the_slope`.
+
+### AN-18 Ragdoll torso doesn't spin (confirmed by owner 2026-10-22 with AN-20; supersedes AN-11)
+Scene `level-anim-idles` (camera `idles-close`): throw balls (`V`) at several dummies, then press `I` on one to kill it. Look for:
+the torso stays one piece through the fall (no pelvis whirling, no back twisted round or folded past ~45 degrees over the whole
+spine), the body comes to rest without a twisted waist, and arms, legs, hands, feet and head swing less loosely than before.
+Re-bake first (ragdoll.cook v3). Known: limb cones are still symmetric (no separate forward/back hip or shoulder range yet).
+
+### AN-11 Ragdoll spine bends like a spine (superseded by AN-18, confirmed 2026-10-22)
 Scene `level-anim-idles` (camera `idles-close`): throw balls (`V`) at several dummies and press `I` on one to kill it. Look for:
 a falling or dead body keeps a believable back (a gentle curve, 15 degrees of bend and twist per spine segment) and no longer
 folds in half or corkscrews. Re-bake first (ragdoll.cook v2). Known trade-off: a hard tumble down stairs stretches a joint
@@ -1020,3 +1040,19 @@ up to 1.8 cm for a moment (gate relaxed from 1 to 2.5 cm).
 Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the guar: it falls, gets up once and stands
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
+
+### AN-16 Walkers take human-length steps at 1.4 m/s (owner OK 2026-10-22: "much better", then rate_share 0.5 -> 0.3)
+Scene `level-anim-loop`, camera `loop-close` (Fargoth on the 12 m square, 1.4 m/s). Needs re-bake (`anim.cook` v7, graph RON).
+Look for: a brisk cadence (about 1.1-1.2 s per two steps) with moderate steps, not slow lunging strides; legs not locked
+straight behind the body. Was: the MW male walk (made for 2.1 m/s) played at 0.64x, 1.1 m steps, 76 steps/min.
+Headless: `slope_walk walkers_keep_a_human_stride_and_plant_once_per_step` (male 1.66, Fargoth 1.77 leg lengths/cycle, was 2.21).
+
+### AN-17 Elone's walk is smooth, no jolt per step (confirmed by owner 2026-10-22: "perfect")
+Scene `level-anim-props`, camera `props-close` (Elone by the orange boxes, 1.4 m/s). Needs re-bake (`anim.cook` v7).
+Look for: each foot plants once and stays until it rolls off; no twitch or snap of the left foot mid stance. Was: the
+female walk's left contact dropped for one frame at the loop seam, so the lock released and re-planted every left step.
+
+### AN-20: hit bodies loose, joints still in limits (confirmed by owner 2026-10-22: "good"; ragdoll.cook v5; limp_drop/stairs stretch gates 0.4-0.03 cm over, logged)
+Scene `level-anim-idles`, camera `idles-close`. Knock an NPC down with the ball, then kill one limp. Check: arms and
+head swing and flop as they fall (no wooden plank, no frozen arms), hips fold forward far but barely backward, shoulders
+reach forward more than back, no elbow/knee bending backward, no spinning torso. Compare a stagger: brief give, quick recovery.

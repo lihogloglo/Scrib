@@ -184,8 +184,8 @@ enum Command {
         camera: Option<String>,
         #[arg(long)]
         cache: Option<PathBuf>,
-        /// `smooth` (default) or `vanilla` bodies; B toggles live.
-        #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
+        /// `vanilla` (default) or `smooth` bodies; B toggles live. Smooth is opt-in (owner 2026-10-22).
+        #[arg(long, default_value = "vanilla", value_parser = parse_bodies)]
         bodies: sf_character_bevy::SmoothBodies,
         /// Robes and skirts: `authored` (default) or `robes` (simulated, opt-in).
         #[arg(long, default_value = "authored")]
@@ -299,9 +299,9 @@ struct ViewFlags {
     /// pressing Space; mod scripts receive `activated`, M5 L2).
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     activate: Option<u32>,
-    /// Characters: `smooth` (default: seams welded, weights blended across
-    /// joints) or `vanilla` (segmented parts as authored). B toggles live.
-    #[arg(long, default_value = "smooth", value_parser = parse_bodies)]
+    /// Characters: `vanilla` (default, owner 2026-10-22; segmented parts as authored) or `smooth`
+    /// (opt-in: seams welded, weights blended across joints). B toggles live.
+    #[arg(long, default_value = "vanilla", value_parser = parse_bodies)]
     bodies: sf_character_bevy::SmoothBodies,
     /// Robes and skirts: `authored` (default: their authored skin, as vanilla)
     /// or `robes` (simulated cloth, the opt-in; physics-adapter.md "Cloth").

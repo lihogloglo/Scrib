@@ -654,14 +654,29 @@ impl Builder {
         // reach 2.2: sidestep and backpedal clips' planted feet move at a third to
         // half of the body speed (`ClipMeta::stance_velocity`), and a strafe-run
         // needs that much playback for the foot lock to hold (anim slice 4b).
-        self.a.procedural = vec![OpSpec::SpeedMatch { min: 0.5, max: if matches!(self.t, Template::Humanoid) { 2.2 } else { 1.5 }, max_lod: 2 }];
+        self.a.procedural = vec![OpSpec::SpeedMatch {
+            min: 0.5,
+            max: if matches!(self.t, Template::Humanoid) { 2.2 } else { 1.5 },
+            // Humanoids shorten their steps as they slow down (AN-16; owner 0.3, 2026-10-22).
+            rate_share: if matches!(self.t, Template::Humanoid) { 0.3 } else { 1.0 },
+            max_lod: 2,
+        }];
         if matches!(self.t, Template::Humanoid) {
             // Feet on the ground (walkers, 2026-10-12): legs from the rig
             // profile (the humanoid rig map's), the pelvis by its humanoid
             // bone; the host probes the ground at the graph's `probe_origins`.
             self.a.profile_limbs = sf_anim_graph::asset::ProfileLimbs::Support;
-            self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"))").expect("StrideWarp defaults"));
+            // Slopes (AN-21): shorter steps uphill (26% at 30°), longer downhill
+            // (14%), the cadence taking the rest; the stride warp's 0.6-1.6 bounds it.
+            self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"), grade: (up: 0.45, down: 0.25))").expect("StrideWarp defaults"));
             self.a.procedural.push(ron::from_str("FootPlacement(pelvis: Rig(\"hips\"))").expect("FootPlacement defaults"));
+            // A subtle trunk lean into the slope (AN-21): 4° forward at 30° uphill,
+            // 2° back downhill, over the chest and neck: the thighs hang off `Bip01 Spine`
+            // (biped rigs), so leaning it would swing the placed legs.
+            // No turn roll (gain 0): flat walking stays as authored.
+            self.a.procedural.push(
+                ron::from_str("Lean(joints: [(Rig(\"chest\"), 0.7), (Rig(\"neck\"), 0.3)], gain: 0.0, grade: (up: 0.4, down: 0.12, max: 0.21), halflife: 0.3)").expect("Lean defaults"),
+            );
         }
         // Secondary motion (M4 P9), after the feet: hits kick springs on the
         // spine, neck and arms (the rig profile's; physics.rs sends impacts

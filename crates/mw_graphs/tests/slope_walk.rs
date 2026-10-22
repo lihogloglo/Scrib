@@ -7,6 +7,7 @@
 //! Morrowind install is detected. `-- --nocapture` prints the reports.
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use glam::{Affine3A, Quat, Vec2, Vec3};
@@ -191,6 +192,14 @@ struct Report {
     /// episodes (heel-offs with the toe still down).
     roll_slide: Vec<f32>,
     roll_episodes: Vec<u32>,
+    /// Per leg: the largest hip-to-ankle distance over the leg's length while the
+    /// contact is up (1 = straight), and the foot's fastest horizontal world speed, m/s.
+    extension: Vec<f32>,
+    foot_peak: Vec<f32>,
+    /// Per measured frame: the graph's filtered ground grade and the trunk's
+    /// pitch (chest to head, forward positive, radians) in character space (AN-21).
+    grades: Vec<f32>,
+    trunk: Vec<f32>,
 }
 
 /// Per leg (graph order): the foot joint's height over flat ground with
@@ -263,6 +272,9 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
     let mut toe_last: Vec<Option<Vec3>> = vec![None; legs.len()];
     r.roll_slide = vec![0.0; legs.len()];
     r.roll_episodes = vec![0; legs.len()];
+    r.extension = vec![0.0; legs.len()];
+    r.foot_peak = vec![0.0; legs.len()];
+    let chains: Vec<Vec<usize>> = sim.graph.legs.iter().map(|l| l.joints.iter().map(|&j| usize::from(j)).collect()).collect();
     let sole_heights = soles(sim);
     let mut meters: Vec<FootMeter> = sole_heights.iter().map(|&sole| FootMeter::new(MeterRules { sole, ..MeterRules::default() })).collect();
     let mut sole_meters: Vec<FootMeter> = sole_heights.iter().map(|_| FootMeter::new(MeterRules::default())).collect();
@@ -337,6 +349,11 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
         r.idle_frames += u32::from(!moving);
         r.min_measured = r.min_measured.min(flat.length());
         r.stats += sim.out.feet;
+        r.grades.push(sim.out.grade);
+        if let (Some(pelvis), Some(neck)) = (sim.skeleton.find("Bip01 Spine1"), sim.skeleton.find("Bip01 Head")) {
+            let t = sim.out.model.translation(neck) - sim.out.model.translation(pelvis);
+            r.trunk.push(t.z.atan2(t.y));
+        }
         for (k, &(j, c)) in legs.iter().enumerate() {
             let w = WorldPos::ORIGIN.delta_f32(f.to_world(sim.out.model.translation(j)));
             let contact = c.map_or(0.0, |c| sim.out.curves[c]);
@@ -371,8 +388,15 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
                 }
             }
             sole_meters[k].push(FootFrame { position: w.with_y(gap.unwrap_or(0.0)), contact, ground: gap.map(|_| 0.0) }, DT);
+            let chain = &chains[k];
+            let at = |i: usize| sim.out.model.translation(chain[i]);
+            let length: f32 = (1..chain.len()).map(|i| at(i).distance(at(i - 1))).sum();
+            if contact > 0.5 {
+                r.extension[k] = r.extension[k].max(at(0).distance(at(chain.len() - 1)) / length.max(1e-3));
+            }
             if let Some((pw, pc)) = last[k] {
                 let d = Vec2::new(w.x - pw.x, w.z - pw.z).length();
+                r.foot_peak[k] = r.foot_peak[k].max(d / DT);
                 r.foot_travel[k] += d;
                 if contact > 0.5 && pc <= 0.5 {
                     r.plants[k] += 1;
@@ -404,8 +428,11 @@ fn check(name: &str, r: &Report) {
     for k in 0..r.plants.len() {
         assert!(r.plants[k] as f32 >= expect * 0.7, "{name}: leg {k} planted {} times over {:.1} m (stride 2.2 m): {r:?}", r.plants[k], r.travel);
         assert!(r.slide[k] <= 0.02, "{name}: leg {k} slides {:.3} m/s while planted: {r:?}", r.slide[k]);
-        assert!((r.foot_travel[k] - r.travel).abs() < 0.25 * r.travel, "{name}: leg {k} moved {:.2} m, body {:.2} m: {r:?}", r.foot_travel[k], r.travel);
+        // Per leg, a short window (stairs: 1.4 cycles) holds one swing more or less than the other leg's.
+        assert!((r.foot_travel[k] - r.travel).abs() < 0.4 * r.travel, "{name}: leg {k} moved {:.2} m, body {:.2} m: {r:?}", r.foot_travel[k], r.travel);
     }
+    let mean = r.foot_travel.iter().sum::<f32>() / r.foot_travel.len().max(1) as f32;
+    assert!((mean - r.travel).abs() < 0.25 * r.travel, "{name}: legs moved {mean:.2} m on average, body {:.2} m: {r:?}", r.travel);
     assert_eq!(r.idle_frames, 0, "{name}: fed as standing while walking: {r:?}");
 }
 
@@ -693,13 +720,225 @@ fn footstep_keys_land_on_their_foot_plants() {
             match near {
                 // Vanilla keys sit 50-130 ms after the cooked contact rises (heel strike vs
                 // foot flat); a sound may trail its sight by ~125 ms unnoticed (ITU-R BT.1359), lead by far less.
-                Some(d) if (-0.05..=0.15).contains(&d) => offsets.push(d),
+                // (Plants land on 60 Hz frames: 0.15 s is 9 of them, summed in f32.)
+                Some(d) if (-0.05..=0.15 + 1e-4).contains(&d) => offsets.push(d),
                 _ => failures.push(format!("{gait}: {} step at {:.2} s, nearest plant {near:?}", e.payload, e.time)),
             }
         }
         eprintln!("{gait:9}: {} steps, key - plant {:?} s", offsets.len(), offsets.iter().map(|d| (d * 100.0).round() / 100.0).collect::<Vec<_>>());
         if offsets.len() < 4 {
             failures.push(format!("{gait}: only {} steps on plants", offsets.len()));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+/// AN-16/AN-17: each lab walker at its path speed (1.4 m/s in the world,
+/// `1.4 / scale` in its unscaled skeleton space) walks with a human cadence
+/// and step: a full cycle of 0.9-1.35 s covering 1.2-1.85 leg lengths (the
+/// legacy male walk, made for 2.1 m/s, played its 2.2-leg cycle at 0.64:
+/// 1.58 s), and every foot plants once per cycle (the female walk's contact
+/// dropped for a frame at its loop seam: two plants per left step).
+/// `-- --nocapture` prints the numbers.
+#[test]
+fn walkers_keep_a_human_stride_and_plant_once_per_step() {
+    use std::f32::consts::FRAC_PI_2;
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let flat = World::new();
+    let mut failures = Vec::new();
+    for (who, set, scale) in [("fargoth (male x0.9)", 0, 0.9), ("male", 0, 1.0), ("elone (female)", 1, 1.0), ("ajira (beast)", 2, 1.0)] {
+        let mut sim = humanoid_sim_of(set).unwrap();
+        let speed = 1.4 / scale;
+        let r = walk_at(&mut sim, &flat, (Vec3::new(-4.0, 0.0, 0.0), Vec3::X * speed, Some(FRAC_PI_2)), 6.0, (-9.0, 99.0), false);
+        let leg = &sim.graph.legs[0];
+        let at = |j: u16| sim.out.model.translation(usize::from(j));
+        let length: f32 = leg.joints.windows(2).map(|w| at(w[0]).distance(at(w[1]))).sum();
+        let mut ok = true;
+        let mut cycles = Vec::new();
+        for (k, t) in r.plant_times.iter().enumerate() {
+            let gaps: Vec<f32> = t.windows(2).map(|w| w[1] - w[0]).collect();
+            let mut sorted = gaps.clone();
+            sorted.sort_by(f32::total_cmp);
+            let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+            // Once per cycle: every interval near the cycle (a mid-stance re-plant halves one).
+            if gaps.len() < 2 || gaps.iter().any(|&g| (g - median).abs() > 0.25 * median) {
+                failures.push(format!("{who} leg {k}: plant intervals {gaps:.2?}"));
+                ok = false;
+            }
+            cycles.push(median);
+        }
+        let cycle = cycles.iter().sum::<f32>() / cycles.len().max(1) as f32;
+        let stride = speed * cycle / length;
+        eprintln!(
+            "{who:20} v {speed:4.2} | cycle {cycle:4.2} s, stride {:4.2} m = {stride:4.2} legs | lock drift max {:4.1} mean {:4.1} cm | stance extension {:.2?} | foot peak {:.2?} m/s",
+            speed * cycle,
+            r.stats.drift_max * 100.0,
+            r.stats.drift_sum / r.stats.drift_count.max(1) as f32 * 100.0,
+            r.extension,
+            r.foot_peak,
+        );
+        if ok && !((0.9..=1.35).contains(&cycle) && (1.2..=1.85).contains(&stride)) {
+            failures.push(format!("{who}: cycle {cycle:.2} s, stride {stride:.2} leg lengths"));
+        }
+        // AN-19: the lock holds each stance within a few cm, and its release adds no whip: the
+        // fastest foot stays near the clip's own fastest (body at the clip's stride speed).
+        let drift = r.stats.drift_sum / r.stats.drift_count.max(1) as f32;
+        let (_, authored, _) = walk_clip_feet(&sim);
+        let fastest = r.foot_peak.iter().fold(0.0f32, |m, &p| m.max(p)) / speed;
+        eprintln!("{who:20} foot peak {fastest:.2}x the walk speed, authored {authored:.2}x");
+        if drift > 0.03 || fastest > authored * 1.15 {
+            failures.push(format!("{who}: lock drift mean {:.1} cm, foot peak {fastest:.2}x (authored {authored:.2}x)", drift * 100.0));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// AN-19: in a walk clip's own time, a planted foot must keep pace with the
+/// body: with the body moving at the clip's stride speed (what speed
+/// matching plays it by), the foot lock's offset from the animation at
+/// release is the foot's drift over its stance. The legacy male walk's
+/// stance feet moved unevenly against its root and its root carried the
+/// hips' ±17° yaw swing (12-19 cm per stance): the lock let go of that much
+/// each step, a jolt. Per stance, heel while `contact` is up, then the toe
+/// while `roll` is (the pin). Returns the worst drift per stance, the
+/// fastest foot over the body's speed as authored (body at the stride
+/// speed), and a report.
+fn walk_clip_feet(sim: &Sim) -> (f32, f32, String) {
+    let clip = sim.clips.iter().find(|c| c.name == "WalkForward").expect("WalkForward");
+    let v = clip.meta.stride_velocity().with_y(0.0);
+    let (a, b) = clip.loop_range.unwrap_or((0.0, clip.duration));
+    let dt = 1.0 / clip.rate;
+    let frames = ((b - a) / dt).round() as usize;
+    let mut local = sf_anim::LocalPose::new(sim.skeleton.len());
+    let mut model = sf_anim::ModelPose::new(sim.skeleton.len());
+    let toe_joints = toes(sim);
+    let (mut worst, mut peak, mut out) = (0.0f32, 0.0f32, format!("v {:.2} m/s, cycle {frames}f", v.length()));
+    for (k, leg) in sim.graph.legs.iter().enumerate() {
+        let foot = usize::from(leg.effector());
+        let name = sim.skeleton.name(foot);
+        let curve = |prefix: &str| clip.curves.iter().position(|c| c.name == format!("{prefix}.{name}"));
+        let (contact, roll) = (curve("contact").expect("contact curve"), curve("roll"));
+        let toe = toe_joints[k].map(|(t, _)| t);
+        // Two cycles from the first stance start, so every stance is whole.
+        let (mut pinned, mut last): (Vec<Option<Vec3>>, Option<Vec3>) = (Vec::new(), None);
+        for f in 0..2 * frames {
+            let t = a + (f % frames) as f32 * dt;
+            clip.sample(t, &mut local, None);
+            sf_anim::local_to_model(&sim.skeleton, &local, &mut model, &Affine3A::IDENTITY);
+            let at = |j: usize| model.translation(j).with_y(0.0) + v * (f as f32 * dt);
+            if let Some(p) = last.filter(|_| f % frames != 0) {
+                peak = peak.max((at(foot) - p).length() / dt / v.length());
+            }
+            last = Some(at(foot));
+            let heel = clip.curve(contact, t) > 0.5;
+            let rolling = roll.is_some_and(|r| clip.curve(r, t) > 0.5);
+            pinned.push(if heel { Some(at(foot)) } else if rolling { toe.map(at) } else { None });
+        }
+        let start = pinned.iter().position(Option::is_none).unwrap_or(0);
+        let mut f = start;
+        let _ = write!(out, " | {name}:");
+        while f < 2 * frames {
+            let Some(p0) = pinned[f] else {
+                f += 1;
+                continue;
+            };
+            let (mut drift, mut len, mut max, mut base, mut prev) = (0.0, 0, 0.0f32, p0, p0);
+            while let Some(&Some(p)) = pinned.get(f) {
+                // The pin point switches heel -> toe at heel-off: the toe is held from there.
+                if (p - prev).length() > 0.05 {
+                    base += p - prev;
+                }
+                prev = p;
+                drift = (p - base).length();
+                max = max.max(drift);
+                len += 1;
+                f += 1;
+            }
+            if f - len < start + frames {
+                let _ = write!(out, " {len}f {:.1}/{:.1} cm", drift * 100.0, max * 100.0);
+                worst = worst.max(max);
+            }
+        }
+    }
+    (worst, peak, out)
+}
+
+/// AN-19 in clip time (see [`walk_clip_feet`]): no stance foot drifts more
+/// than 5 cm from its lock (was 12-19 cm on the male and beast walks).
+/// `-- --nocapture` prints per stance: frames, drift at release / max.
+#[test]
+fn walk_clip_stance_feet_keep_pace_with_the_body() {
+    let mut failures = Vec::new();
+    for (index, who) in [(0, "male"), (1, "female"), (2, "beast")] {
+        let Some(sim) = humanoid_sim_of(index) else { return };
+        let (worst, peak, report) = walk_clip_feet(&sim);
+        eprintln!("{who:6} {report} | foot peak {peak:.2}x");
+        if worst > 0.05 {
+            failures.push(format!("{who}: a stance foot drifts {:.1} cm from its lock", worst * 100.0));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Grade-aware gait (AN-21): on the lab ramps (10/20/30°) walkers take shorter steps uphill and
+/// longer ones downhill at the same speed (the cadence takes the rest), and the trunk leans a
+/// little into the slope: forward uphill, slightly back downhill, within its cap and without
+/// jolts. Flat ground keeps grade 0 (stride and lean as authored). Feet on the ramps stay gated
+/// by `feet_meet_the_ground_on_ramps`.
+#[test]
+fn walkers_shorten_their_steps_uphill_and_lean_into_the_slope() {
+    if humanoid_sim().is_none() {
+        return;
+    }
+    // Step length = speed x the mean interval between plants of one leg / 2.
+    let step = |r: &Report| {
+        let cycles: Vec<f32> = r.plant_times.iter().flat_map(|t| t.windows(2).map(|w| w[1] - w[0])).collect();
+        let cycle = cycles.iter().sum::<f32>() / cycles.len().max(1) as f32;
+        r.travel / r.seconds.max(1e-3) * cycle / 2.0
+    };
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32;
+    let jolt = |v: &[f32]| v.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+    let mut sim = humanoid_sim().unwrap();
+    let flat = walk(&mut sim, &World::new(), Vec3::new(-4.0, 0.0, 0.0), Vec3::X, 6.0, (-1.0, 5.0), false);
+    let (flat_step, flat_trunk, flat_jolt) = (step(&flat), mean(&flat.trunk), jolt(&flat.trunk));
+    let flat_grade = flat.grades.iter().fold(0.0f32, |m, g| m.max(g.abs()));
+    eprintln!("flat      step {flat_step:.3} m trunk {:5.2}° jolt {:.2}° grade {flat_grade:.4}", flat_trunk.to_degrees(), flat_jolt.to_degrees());
+    let mut failures = Vec::new();
+    if flat_grade > 1e-3 {
+        failures.push(format!("flat: grade {flat_grade}"));
+    }
+    let (mut last_up, mut last_down) = (flat_step, flat_step);
+    for deg in [10.0f32, 20.0, 30.0] {
+        let (w, top) = World::ramp(deg, 8.0);
+        let up = walk(&mut humanoid_sim().unwrap(), &w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, 6.0, (1.0, top.x - 1.0), false);
+        let (w, top) = World::ramp(deg, 8.0);
+        let down = walk(&mut humanoid_sim().unwrap(), &w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, 6.0, (1.0, top.x - 1.0), false);
+        let tan = deg.to_radians().tan();
+        for (name, r, sign) in [("up", &up, 1.0f32), ("down", &down, -1.0)] {
+            let (s, lean, j) = (step(r), mean(&r.trunk) - flat_trunk, jolt(&r.trunk));
+            let g = mean(&r.grades);
+            eprintln!("{name:4} {deg:2}° step {s:.3} m ({:+4.0}%) lean {:+5.2}° jolt {:.2}° grade {g:+.3} (tan {:+.3})", (s / flat_step - 1.0) * 100.0, lean.to_degrees(), j.to_degrees(), sign * tan);
+            if (g - sign * tan).abs() > 0.25 * tan + 0.02 {
+                failures.push(format!("{name} {deg}°: grade {g} vs {}", sign * tan));
+            }
+            // Owner 2026-10-22: "stronger", then "more pronounced" uphill (up 0.4, cap 12°): forward up (at least 6° at 30°), back down (at least 2°).
+            let least = if deg >= 30.0 { if sign > 0.0 { 6.0 } else { 2.0 } } else { 0.0 };
+            if lean.abs() > 13f32.to_radians() || lean * sign < f32::to_radians(least) {
+                failures.push(format!("{name} {deg}°: lean {:.2}° (forward up, back down, within 13°)", lean.to_degrees()));
+            }
+            if j > flat_jolt + 0.5f32.to_radians() {
+                failures.push(format!("{name} {deg}°: trunk jolt {:.2}° vs flat {:.2}°", j.to_degrees(), flat_jolt.to_degrees()));
+            }
+        }
+        let (su, sd) = (step(&up), step(&down));
+        // Shorter uphill, longer downhill, by a sane margin at 30° (and monotonic in the grade).
+        if su >= last_up || sd <= last_down * 0.99 {
+            failures.push(format!("{deg}°: up {su:.3} (prev {last_up:.3}) down {sd:.3} (prev {last_down:.3}) not monotonic"));
+        }
+        (last_up, last_down) = (su, sd);
+        if deg >= 30.0 && (su > flat_step * 0.88 || sd < flat_step * 1.05) {
+            failures.push(format!("30°: up {su:.3} down {sd:.3} vs flat {flat_step:.3}: under the margin"));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

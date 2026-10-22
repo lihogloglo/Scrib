@@ -550,6 +550,7 @@
             cell: "Balmora",
             camera: "-284,+2,197,-293,+1,185",
             hour: 10.0,
+            flags: ["--bodies", "smooth"],
             description: "Balmora walkers with smooth bodies (seams welded, weights blended at assembly; sf_character::smooth_outfit); B toggles smooth/vanilla",
             look_for: "Walking NPCs: elbows, knees, wrists and ankles bend without cracks or shearing pieces; armor plates bend with the limb; press B: every NPC swaps to vanilla segmented parts in one frame (no frame without bodies, the walk cycle keeps going), press again to come back",
             checks: ["SB-2", "SB-5"],
