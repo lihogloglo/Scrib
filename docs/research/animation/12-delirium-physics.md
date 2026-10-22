@@ -202,6 +202,7 @@ owner"). **R0-R1 are ROADMAP 3.2; R2-R5 are 3.2's "powered falls"; R6 needs 3.5;
   physics-weight outputs are not consumed yet (weights stay 1), `upright`/`grounded` sensing, per-region profiles.
   Known change: a limp (over-budget) knockdown now waits for the 0.8 s curve before getting up.
 
+- **As built (R3-3, 2026-10-22):** knockdown hand-off closed: `RagdollFailed` for requests that can't spawn, every get-up path (incl. skipped `GettingUp`) hands back, `ReactionSet::settle_timeout`; get-up frame on the ground, pelvis-anchored hand-back pose, hand-back blend owns the switch; in-place get-up tails anchored on their last frame (AN-4..6).
 ### R3. Powered falls on authored clips (PH-9 "no fall animation")
 - **Goal:** knockdown and death follow the content pack's reaction clips (`KnockDown`, `DeathKnockDown`,
   `Death1-5`) as drive targets at the R2 strength curve, instead of going limp at once. Falls look authored

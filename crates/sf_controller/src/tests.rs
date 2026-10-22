@@ -633,6 +633,66 @@ fn path_follower_cuts_corners_waits_and_finishes() {
     assert!(targets.len() >= 4 && targets.windows(2).all(|w| w[0] != w[1]), "{targets:?}");
 }
 
+/// How a walker cruising at `speed` stops at a path's end node (AN-2).
+struct Stop {
+    /// From the first frame below 98 % of cruise to standing, meters.
+    distance: f32,
+    /// From the same frame until the speed falls below 0.1 m/s, seconds.
+    time: f32,
+    /// Seconds spent between 0.1 and 0.5 m/s (a creep plays the walk loop at its rate floor).
+    crawl: f32,
+    /// Final position past the node (positive) or short of it, meters.
+    error: f32,
+}
+
+fn stop_at_path_end(speed: f32, gait: Gait) -> Stop {
+    let world = World::new();
+    let params = MoverParams::default();
+    let end = 12.0;
+    let mut path = PathFollower::new(vec![PathNode::at(p(0.0, 0.0, end))], PathMode::Once, speed);
+    path.gait = gait;
+    let mut loco = Locomotion::new(p(0.0, 0.0, 0.0), 0.0);
+    let mut mover = KinematicMover::new();
+    let (mut braking, mut slow, mut crawl) = (None, None, 0.0);
+    for frame in 0..900u16 {
+        let intent = path.update(loco.position, DT).intent;
+        mover.step(MoveInput { loco: &mut loco, intent, params: &params, root: RootMotion::default() }, &world, DT);
+        let v = loco.motion.velocity.length();
+        let t = f32::from(frame) * DT;
+        if t > 2.0 && braking.is_none() && v < 0.98 * speed {
+            braking = Some((t, xyz(loco.position).z));
+        }
+        if let Some((t0, _)) = braking {
+            if slow.is_none() && v < 0.1 {
+                slow = Some(t - t0);
+            }
+            if v > 0.1 && v < 0.5 {
+                crawl += DT;
+            }
+        }
+    }
+    let (_, z0) = braking.expect("never braked");
+    let z = xyz(loco.position).z;
+    assert!(loco.motion.velocity.length() < 0.01, "still moving");
+    Stop { distance: z - z0, time: slow.expect("never slowed down"), crawl, error: z - end }
+}
+
+#[test]
+fn walkers_stop_within_a_step_without_a_creep() {
+    // Walk: about one step (owner AN-2: "inertia, not supertankers"); the
+    // old exponential approach braked over 2 m and crept for 1.5 s.
+    let walk = stop_at_path_end(1.5, Gait::Walk);
+    assert!(walk.distance < 0.8 && walk.time < 1.1, "walk stops in {:.2} m, {:.2} s", walk.distance, walk.time);
+    assert!(walk.crawl < 0.45, "walk crawls {:.2} s", walk.crawl);
+    assert!(walk.error.abs() < 0.1, "walk stops {:+.2} m from the node", walk.error);
+    // Run: a few steps. The crawl bound is the velocity spring settling
+    // from 0.5 to 0.1 m/s (0.4 s at its 0.27 s half-life).
+    let run = stop_at_path_end(3.5, Gait::Run);
+    assert!((2.0..3.0).contains(&run.distance) && run.time < 1.7, "run stops in {:.2} m, {:.2} s", run.distance, run.time);
+    assert!(run.crawl < 0.45, "run crawls {:.2} s", run.crawl);
+    assert!(run.error.abs() < 0.1, "run stops {:+.2} m from the node", run.error);
+}
+
 // --- Bake step ---------------------------------------------------------------------------
 
 #[cfg(feature = "bake")]
@@ -1008,3 +1068,21 @@ mod context;
 
 mod avoid;
 mod launch;
+
+#[test]
+fn mover_shapes_come_from_bind_pose_bounds() {
+    // A wide, low shell (1.6 x 1.2 m footprint, 0.6 m high) against the old fixed 0.4 m / 1.2 m column.
+    let (min, max) = (Vec3::new(-0.8, 0.0, -0.6), Vec3::new(0.8, 0.6, 0.6));
+    let p = MoverParams::from_bounds(min, max);
+    let (hx, hz) = (0.8_f32, 0.6_f32);
+    let covered = |r: f32| (PI * r * r).min(PI * hx * hz) / (PI * hx * hz);
+    assert!(covered(p.radius) > 0.95, "{p:?}");
+    assert!(covered(0.4) < 0.5, "the old column covered {:.0} %", 100.0 * covered(0.4));
+    assert!((p.height - 0.6).abs() < 1e-6 && p.step_up <= 0.3 * 0.6 + 1e-6 && p.step_down == p.step_up, "{p:?}");
+    // A human-sized body keeps human steps.
+    let h = MoverParams::from_bounds(Vec3::new(-0.3, 0.0, -0.2), Vec3::new(0.3, 1.8, 0.2));
+    assert!((h.height - 1.8).abs() < 1e-6 && h.step_up == MoverParams::default().step_up && h.radius < 0.3, "{h:?}");
+    // Degenerate bounds: the defaults.
+    assert_eq!(MoverParams::from_bounds(Vec3::ZERO, Vec3::ZERO), MoverParams::default());
+    assert_eq!(MoverParams::from_bounds(Vec3::splat(f32::NAN), Vec3::ONE), MoverParams::default());
+}

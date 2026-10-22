@@ -268,6 +268,9 @@ pub struct OutfitAssets {
     pub joints: Vec<String>,
     pub inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
     pub meshes: Vec<OutfitMesh>,
+    /// Min and max corners of the bind-pose vertices (model space; with the
+    /// body scale, the character's size: capsule fit).
+    pub bind_bounds: Option<(Vec3, Vec3)>,
     /// The outfit's cloth parts (lattice joints `cloth<k>#<i>` in `joints`).
     pub cloth: Vec<Arc<sf_anim_bevy::ClothBinding>>,
     /// First frame the outfit may be shown (uploads settle first).
@@ -660,6 +663,7 @@ fn upload(
         joints: built.joints.iter().map(|j| j.name.clone()).collect(),
         inverse_bindposes,
         meshes: out,
+        bind_bounds: built.bind_bounds().map(|(lo, hi)| (Vec3::from(lo), Vec3::from(hi))),
         cloth: Vec::new(),
         ready_frame: frame + SETTLE_FRAMES,
     })

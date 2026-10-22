@@ -226,3 +226,69 @@ fn knockdown_gets_up_through_the_controller() {
     assert!(frame as f32 / 60.0 >= 0.85, "got up at frame {frame}");
     assert!(s.app.world().get::<Ragdoll>(s.body).is_none());
 }
+
+/// The pelvis bone's world position (relative to `base`) from the bone entities.
+fn pelvis_world(s: &Scene, base: WorldPos) -> Option<Vec3> {
+    let world = s.app.world();
+    let (cell, root_t) = (world.get::<CellCoord>(s.root)?, world.get::<Transform>(s.root)?);
+    let composed = root_t.mul_transform(*world.get::<Transform>(s.body)?);
+    let origin = base.delta_f32(from_grid(cell, &composed));
+    let frame = Affine3A::from_scale_rotation_translation(composed.scale, composed.rotation, origin);
+    let animator = world.get::<Animator>(s.body)?;
+    let skeleton = &animator.asset.skeleton;
+    let binding = world.get::<SkeletonBinding>(s.body)?;
+    let pelvis = usize::from(s.def.bodies[0].joint);
+    let mut model = vec![Affine3A::IDENTITY; skeleton.len()];
+    for j in 0..=pelvis {
+        let local = world.get::<Transform>(binding.joints[j])?.compute_affine();
+        model[j] = skeleton.parent(j).map_or(frame, |p| model[p]) * local;
+    }
+    Some(Vec3::from(model[pelvis].translation))
+}
+
+/// AN-4: a request whose ragdoll can't spawn (no ragdoll for the skeleton)
+/// ends once, with `RagdollFailed` and the component removed; it retried
+/// every `delay` forever and the host never learned of it.
+#[test]
+fn a_failed_handoff_ends_the_request_once() {
+    let mut s = scene(|_| RagdollMode::Death { crumple: false });
+    s.app.insert_resource(RagdollSource(Arc::new(|_| None)));
+    let mut failed = 0;
+    for _ in 0..60 {
+        s.app.update();
+        failed += s.app.world().resource::<Messages<super::RagdollFailed>>().iter_current_update_messages().count();
+    }
+    assert_eq!(s.app.world().resource::<RagdollStats>().failed, 1);
+    assert_eq!(failed, 1);
+    assert!(s.app.world().get::<Ragdoll>(s.body).is_none());
+}
+
+/// AN-5/AN-6: at the get-up the frame lands on the ground under the body
+/// (where the capsule goes and the clip stands up) and the pelvis doesn't
+/// jump across the hand-back.
+#[test]
+fn get_up_lands_on_the_ground_without_a_pelvis_jump() {
+    let base = WorldPos::new(IVec3::new(3, 0, -2), Vec3::new(10.0, 5.0, 20.0));
+    let mut s = scene(|base| RagdollMode::Knockdown { point: base.offset(Vec3::new(0.0, 1.6, 0.0)), impulse: Vec3::new(-60.0, 0.0, 0.0), get_up: None, get_up_flag: "down".into() });
+    let mut before = None;
+    // The fixture walk drives its frame by root motion: off, so only the hand-back moves the pelvis.
+    s.app.world_mut().get_mut::<AnimRootMotion>(s.body).unwrap().apply = false;
+    for _ in 0..900 {
+        let last = pelvis_world(&s, base);
+        s.app.update();
+        if s.app.world().resource::<RagdollStats>().got_up > 0 {
+            before = last;
+            break;
+        }
+    }
+    let before = before.expect("gets up");
+    let after = pelvis_world(&s, base).unwrap();
+    assert!(before.distance(after) < 0.03, "pelvis jumped {:.3} m at the hand-back", before.distance(after));
+    // The slope (20° about Z through `base`): the frame sits on it.
+    let world = s.app.world();
+    let composed = world.get::<Transform>(s.root).unwrap().mul_transform(*world.get::<Transform>(s.body).unwrap());
+    let frame = base.delta_f32(from_grid(world.get::<CellCoord>(s.root).unwrap(), &composed));
+    let n = Quat::from_rotation_z(20f32.to_radians()) * Vec3::Y;
+    let surface = -(n.x * frame.x + n.z * frame.z) / n.y;
+    assert!((frame.y - surface).abs() < 0.02, "frame {:.3} m above the ground", frame.y - surface);
+}

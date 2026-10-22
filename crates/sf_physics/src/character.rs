@@ -64,11 +64,15 @@ impl CharacterShape {
 }
 
 impl BodyDesc {
-    /// A character's kinematic capsule standing at `feet`.
+    /// A character's kinematic capsule standing at `feet`; a body wider than it is high
+    /// (radius over half the height: a crab) gets an upright cylinder of its full
+    /// footprint instead, as a capsule cannot reach below its own height.
     pub fn character(feet: WorldPos, shape: CharacterShape, push: &PushParams) -> Self {
         let r = (shape.radius - push.capsule_inset).max(0.02);
         let pose = WorldTransform::from_pos(shape.center(feet));
-        Self::new(BodyKind::Kinematic, pose, ShapeRef::Capsule { r, half: shape.half(r) }, Layer::CHARACTER)
+        let flat = shape.radius > 0.5 * shape.height;
+        let shape_ref = if flat { ShapeRef::Cylinder { r, half: 0.5 * shape.height } } else { ShapeRef::Capsule { r, half: shape.half(r) } };
+        Self::new(BodyKind::Kinematic, pose, shape_ref, Layer::CHARACTER)
     }
 }
 

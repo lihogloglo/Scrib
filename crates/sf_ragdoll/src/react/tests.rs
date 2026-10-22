@@ -309,3 +309,18 @@ fn curves_interpolate_and_hold() {
     assert_eq!(c.eval(9.0), 1.0);
     assert_eq!(Curve(Vec::new()).eval(1.0), 0.0);
 }
+
+/// AN-4: a body that never comes to rest (lying on a rolling ball, jitter)
+/// still settles and gets up once it has fallen for `settle_timeout`.
+#[test]
+fn a_pelvis_that_never_rests_still_settles_at_the_timeout() {
+    let mut c = controller();
+    let timeout = c.set.settle_timeout;
+    assert!(timeout > 0.0);
+    c.request(request(ReactionClass::Knockdown, 120.0, 1));
+    let moving = Sensed { pelvis_speed: 2.0, ..Sensed::default() };
+    let outs = run(&mut c, 60.0, timeout + 0.5, &moving);
+    let settle = outs.iter().position(|o| o.events.contains(&ReactionEvent::Settled)).expect("settles");
+    assert!(((settle + 1) as f32 / 60.0 - timeout).abs() < 0.03, "settled at step {settle}");
+    assert!(events(&outs).contains(&ReactionEvent::GettingUp));
+}

@@ -14,11 +14,12 @@
 
 use std::collections::HashMap;
 
-use bevy_app::{App, Update};
+use bevy_app::{App, FixedUpdate, Update};
 use bevy_ecs::prelude::*;
+use bevy_math::{Quat, Vec3};
 use bevy_time::Time;
 use bevy_transform::components::Transform;
-use sf_controller_bevy::{ControllerSystems, Dormant, Mover, MoverMode};
+use sf_controller_bevy::{ControllerSettings, ControllerSystems, Dormant, Mover, MoverMode};
 use sf_coords::WorldPos;
 use sf_physics::{BodyDesc, BodyId, CharacterShape, PhysicsEvent, PushParams};
 use sf_world::WorldspaceId;
@@ -48,7 +49,7 @@ pub struct ImpactOnCharacter {
     pub impulse: f32,
     pub point: WorldPos,
     /// The impulse's direction on the character (unit, world; zero if unknown).
-    pub direction: bevy_math::Vec3,
+    pub direction: Vec3,
 }
 
 /// Counters for the log and benches.
@@ -63,9 +64,20 @@ pub struct CharacterStats {
     pub fell_out: u32,
 }
 
-/// Each character's capsule: its world, body and shape.
+/// Each character's capsule: its world, body and shape, and the mover's feet
+/// at the last mover step with their world velocity and the virtual time then,
+/// from which each fixed step targets the feet at its own time.
 #[derive(Resource, Default)]
-struct Capsules(HashMap<Entity, (WorldspaceId, BodyId, CharacterShape)>);
+pub(crate) struct Capsules(pub(crate) HashMap<Entity, Capsule>);
+
+pub(crate) struct Capsule {
+    pub(crate) worldspace: WorldspaceId,
+    pub(crate) id: BodyId,
+    shape: CharacterShape,
+    feet: WorldPos,
+    velocity: Vec3,
+    time: f64,
+}
 
 pub(crate) fn add(app: &mut App) {
     app.init_resource::<CharacterPhysics>()
@@ -74,7 +86,8 @@ pub(crate) fn add(app: &mut App) {
         .init_resource::<SafeGround>()
         .add_message::<ImpactOnCharacter>()
         .add_message::<CharacterFellOut>()
-        .add_systems(Update, (fell_out, capsules, impacts).chain().after(ControllerSystems::Step).before(PhysicsSystems::WriteBack));
+        .add_systems(Update, (fell_out, capsules, impacts).chain().after(ControllerSystems::Step).before(PhysicsSystems::WriteBack))
+        .add_systems(FixedUpdate, target_capsules.before(PhysicsSystems::Step));
 }
 
 /// A walking character fell below the active world's kill height and was
@@ -141,9 +154,9 @@ fn fell_out(
         let loco = &mut m.loco;
         loco.position = last;
         loco.vertical_speed = 0.0;
-        loco.motion.velocity = bevy_math::Vec3::ZERO;
-        loco.motion.acceleration = bevy_math::Vec3::ZERO;
-        loco.slide = bevy_math::Vec3::ZERO;
+        loco.motion.velocity = Vec3::ZERO;
+        loco.motion.acceleration = Vec3::ZERO;
+        loco.slide = Vec3::ZERO;
         loco.height_offset = 0.0;
         loco.height_offset_velocity = 0.0;
         loco.grounded = None;
@@ -155,23 +168,28 @@ fn fell_out(
     }
 }
 
-/// Inserts, moves and removes capsules; pushes what they touch.
+/// Inserts and removes capsules, records where each mover's feet are and how
+/// fast they move (for [`target_capsules`]); pushes what the capsules touch.
 #[allow(clippy::needless_pass_by_value)]
 fn capsules(
     time: Res<Time>,
     settings: Res<CharacterPhysics>,
+    controller: Option<Res<ControllerSettings>>,
     mut physics: ResMut<Physics>,
     mut map: ResMut<Capsules>,
     mut stats: ResMut<CharacterStats>,
     movers: Query<(Entity, &Mover), Without<Dormant>>,
 ) {
     let dt = time.delta_secs();
+    // The mover step's time (`sf_controller_bevy` clamps a long frame).
+    let step_dt = controller.map_or(dt, |c| dt.min(c.max_dt));
+    let now = time.elapsed_secs_f64();
     let active = physics.worlds.active().cloned();
     // Gone, dormant, or in another worldspace: out.
-    map.0.retain(|e, (ws, id, _)| {
-        let keep = movers.contains(*e) && Some(&*ws) == active.as_ref();
-        if !keep && let Some(w) = physics.worlds.get_mut(ws) {
-            w.remove(*id);
+    map.0.retain(|e, c| {
+        let keep = movers.contains(*e) && Some(&c.worldspace) == active.as_ref();
+        if !keep && let Some(w) = physics.worlds.get_mut(&c.worldspace) {
+            w.remove(c.id);
         }
         keep
     });
@@ -182,16 +200,23 @@ fn capsules(
         for (e, m) in &movers {
             let shape = CharacterShape { radius: m.params.radius, height: m.params.height };
             let feet = m.loco.position;
-            match map.0.get(&e) {
-                Some((_, id, s)) if *s == shape => {
-                    w.move_character(*id, feet, shape);
+            // The last step's displacement (in the frame before it) in world space;
+            // teleports (fell out, got up) set the position and aren't in it.
+            let moved = m.loco.moved;
+            let world = Quat::from_rotation_y(m.loco.motion.yaw - moved.yaw) * moved.translation;
+            let velocity = if step_dt > 0.0 && world.is_finite() { world / step_dt } else { Vec3::ZERO };
+            match map.0.get_mut(&e) {
+                Some(c) if c.shape == shape => {
+                    c.feet = feet;
+                    c.velocity = velocity;
+                    c.time = now;
                 }
                 other => {
-                    if let Some((_, id, _)) = other {
-                        w.remove(*id);
+                    if let Some(c) = other {
+                        w.remove(c.id);
                     }
                     let id = w.insert(&BodyDesc::character(feet, shape, &settings.push));
-                    map.0.insert(e, (ws.clone(), id, shape));
+                    map.0.insert(e, Capsule { worldspace: ws.clone(), id, shape, feet, velocity, time: now });
                 }
             }
             let p = w.push(feet, shape, m.applied.desired_velocity, &settings.push, dt);
@@ -200,6 +225,23 @@ fn capsules(
         }
     }
     *stats = CharacterStats { capsules: map.0.len(), pushed, max_push, impacts: 0, fell_out: stats.fell_out };
+}
+
+/// `FixedUpdate`, before each step: every capsule targets its mover's feet *at
+/// the step's time*, extrapolated from the last mover step (the mover runs at
+/// frame rate, the step at 60 Hz). Targeting the last frame's feet instead
+/// moved the capsule by 0, 1 or 2 frames of walking per step as the two
+/// clocks beat: the capsule vibrated against the body (AN-7).
+#[allow(clippy::needless_pass_by_value)]
+fn target_capsules(time: Res<Time>, mut physics: ResMut<Physics>, map: Res<Capsules>) {
+    // In `FixedUpdate` the generic clock is the fixed one: this step's end.
+    let now = time.elapsed_secs_f64();
+    let Some(w) = physics.worlds.active_world_mut() else { return };
+    for c in map.0.values() {
+        #[allow(clippy::cast_possible_truncation)]
+        let lead = (now - c.time).max(0.0) as f32;
+        w.move_character(c.id, c.feet.offset(c.velocity * lead), c.shape);
+    }
 }
 
 /// Hits on capsules ([`PhysicsEvent::Hit`]: impact momentum at first
@@ -217,7 +259,7 @@ fn impacts(
     if events.0.is_empty() || map.0.is_empty() {
         return;
     }
-    let by_body: HashMap<BodyId, Entity> = map.0.iter().map(|(e, (_, id, _))| (*id, *e)).collect();
+    let by_body: HashMap<BodyId, Entity> = map.0.iter().map(|(e, c)| (c.id, *e)).collect();
     for e in &events.0 {
         let PhysicsEvent::Hit { target, impulse, point, direction, .. } = *e else { continue };
         if impulse < settings.impact_threshold {

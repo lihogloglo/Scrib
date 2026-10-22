@@ -468,6 +468,9 @@ scenario is our M3 floor, not the ceiling.
   `AnimLod`, `SkeletonBinding`, `AnimJoint { character, joint }` on bones,
   `AnimRootMotion { delta, drive_weight, apply }` (store for the mover, or
   apply to the root `Transform` when there is no mover).
+  `AnimDrive::moved` is composed by the host each frame (`RootDelta::then`)
+  and reset by Evaluate per update, so A2 updates get every frame's motion
+  (R3-1). `AnimEvent`/`AnimNotify` carry the clip event's `payload`.
 - `spawn_rig(commands, character, &Skeleton)`: one entity per joint with
   `Name`, rest `Transform`, `AnimJoint`, parented by the skeleton. It
   replaces `sf_model_bevy::spawn_rest_skeleton` for animated characters

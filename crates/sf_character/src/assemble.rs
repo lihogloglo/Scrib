@@ -167,6 +167,18 @@ impl AssembledOutfit {
         self.merged.iter().chain(&self.morphed)
     }
 
+    /// Min and max corners of every mesh's bind-pose vertices (the model's
+    /// space, skinning not applied); `None` without vertices.
+    pub fn bind_bounds(&self) -> Option<([f32; 3], [f32; 3])> {
+        let mut out: Option<([f32; 3], [f32; 3])> = None;
+        for v in self.meshes().flat_map(|m| &m.vertices) {
+            let (lo, hi) = out.get_or_insert((v.position, v.position));
+            *lo = std::array::from_fn(|a| lo[a].min(v.position[a]));
+            *hi = std::array::from_fn(|a| hi[a].max(v.position[a]));
+        }
+        out
+    }
+
     pub fn gpu_bytes(&self) -> OutfitBytes {
         let per_vertex = 56 + if self.has_colors { 16 } else { 0 };
         let mut out = OutfitBytes::default();

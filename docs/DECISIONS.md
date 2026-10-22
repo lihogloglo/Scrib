@@ -1491,3 +1491,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   picks clips; falls from lost balance are decided on the host only.
 - 2026-10-22 (anim 4b): speed matching plays a travelling loop by its planted feet's speed (`ClipMeta::stance_velocity`, the slower of heel and toe; used when it differs from the root's by > 20 %), not its root speed, so strafe/backpedal foot locks hold (slide 30-55 -> 0 cm/stance).
   Humanoid SpeedMatch max 1.5 -> 2.2 (run strafes need it; owner may trade cadence for slide). Cook version 4 -> 5, `CLIP_FORMAT` 3: a re-bake of `anim.cook`.
+- 2026-10-22 (anim R3-1): frame-rate stages feeding slower clocks hand over *at the consumer's time*: kinematic capsules target the mover's feet extrapolated to each 60 Hz step; `AnimDrive::moved` is composed by hosts and consumed per graph update (A2). Footstep audio comes from animation events (leading clip, weight ≥ 0.5), the distance timer only for movers without an animator.
+- 2026-10-22 (anim R3-2, AN-2): path arrival is a constant-deceleration plan (`sqrt(2ad)`, `ArrivalParams` per mover and gait) aimed so the velocity spring's own coast (`2v/y + a/y²`) ends on the node, cut to zero below 0.1 m/s; replaces the exponential `braking`/`min_speed` approach (2 m glide + creep).
+  The spring (Holden) stays the inertia model; the feed leaves the walk loop at `stop_speed` when the intent stops (Lyra-style stop trigger). Stop clips/distance matching later.
+- 2026-10-22 (anim R3-3, AN-4..6): ragdoll requests always end (`RagdollGotUp` or new `RagdollFailed`, settle timeout 6 s);
+  the get-up hand-back owns the blend over a same-update state switch; get-up frame on the ground; in-place get-up tails
+  cut from a longer take cook anchored on their last frame (`RootMotionRules::anchor_end`), so they end over the capsule.

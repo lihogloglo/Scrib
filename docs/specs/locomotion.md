@@ -220,9 +220,18 @@ change them. Conventions: Y up, meters, yaw about +Y with yaw 0 facing +Z
   M3). Override: `collision/<model path>.sfcol`.
 - **Path follower** (`PathFollower`): `Once`, `Loop`, `PingPong`;
   walk-through nodes are cut within `arrival_radius` (0.5 m), stop nodes
-  (waits, ends) are approached at `min(speed, max(distance · braking,
-  min_speed))` with braking `ln 2 / (4 · halflife)`, which keeps the closed
-  loop with the velocity spring from overshooting. Waiting outputs the
+  (waits, ends) are approached on a constant-deceleration profile
+  (as built R3-2, AN-2): commanded speed `min(speed, sqrt(2·a·(d − c)))`,
+  `a` per gait from `MoverParams::arrival` (`ArrivalParams`, walk 6, run
+  3.5 m/s²; `PathFollower::for_mover`), `c` the distance the mover's
+  velocity spring still coasts if released now (`2v/y + a_s/y²`, from a
+  copy of that spring driven by the command), so the walker comes to rest
+  on the node. Below `cutoff_speed` (0.1 m/s) the command drops to zero
+  and the stop arrives when the spring has settled: no creep. Walk
+  1.5 m/s: 0.59 m, 0.87 s to < 0.1 m/s; run 3.5 m/s: 2.4 m, 1.5 s. The
+  feed's `ControllerSettings::stop_speed` hands the graph to idle earlier
+  while the intent asks for no motion. Stop clips / distance matching
+  (Lyra) are a later step: vanilla has no stop clips. Waiting outputs the
   node's idle variant and facing.
 - **Separation**: `separate` pushes overlapping characters apart (half
   each, sort-and-sweep on X, ignores characters 1.5 m apart vertically).
@@ -765,7 +774,7 @@ J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9m3.md`).
 | Turn toward movement | OpenMW "turn to movement direction" (lower body turns on side and diagonal moves, head follows the view) and "smooth movement"; UE orientation warping | `desired_facing` + `OrientationWarp` (animation.md) | **match** |
 | **Local avoidance between characters** | UE: **RVO** avoidance inside the Character Movement Component (agents only, no navmesh) or the **Detour Crowd** manager (adaptive RVO sampling plus path-corridor optimization, navmesh-aware, slower); use one, not both. Unity: `NavMeshAgent` avoidance with quality levels (`obstacleAvoidanceType`) and `avoidancePriority` 0–99 (default 50; an avoiding agent ignores lower-priority agents). OpenMW: "NPCs avoid collisions" (evasion maneuvers, default off) and "NPCs give way" (standing NPCs step aside for moving ones, default on) | ORCA on the intent's desired velocity before the springs (`sf_controller::avoid`, from the paper), player non-reactive, idle NPCs give way, opposing pairs yield by priority or a heading rule, keep-right bias, per-frame spatial hash; the radius push stays as the overlap fallback | **match (G2 resolved 2026-10-12, M3-b)**: head-on passes with a 4.3 cm gap; 4 + 4 agents swap through a 1.5 m doorway in 13.2 s; 150 agents 0.054 ms (street) to 0.087 ms (dense square) single-thread. `dodgy_2d` 0.5.5 evaluated, not taken (glam 0.29 + rand 0.9 duplicates, random tie-break, per-call allocation, slack split by responsibility): "Local avoidance (ORCA)". Not built: Detour-Crowd-style path-corridor optimization and wall segments in the solver (navmesh, M10). `landmass` stays an M10 candidate |
 | Movement LOD | UE: distant AI can walk on the navmesh instead of sweeping collision (`NavWalking`, unverified detail); Creation Engine process levels; OpenMW stops AI, animation and physics past "actors processing range" | open question 1 (A3 walkers on terrain height only) | **match** in plan |
-| Stop and pivot prediction | UE's locomotion library predicts the ground-movement stop location from the movement component's braking (feeds distance matching; unverified function name) | trajectory points only | **GAP (P2)**: the springs give the stop point in closed form (a critically damped spring's remaining displacement); needed only with distance matching (animation.md open question 5). Open question 4 |
+| Stop and pivot prediction | UE's locomotion library predicts the ground-movement stop location from the movement component's braking (feeds distance matching; unverified function name) | trajectory points only | **GAP (P2)**: the springs give the stop point in closed form (a critically damped spring's remaining displacement; `PathFollower` arrival uses it since R3-2); the animation side needs it only with distance matching (animation.md open question 5). Open question 4 |
 | Batched ground probes | UE sweeps per character on the game thread; Mass batches by processor | one batched probe stage per frame for every consumer | **match**, ahead of per-character sweeps |
 
 Sources (checked 2026-10-12):

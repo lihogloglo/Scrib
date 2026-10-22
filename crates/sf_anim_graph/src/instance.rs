@@ -809,8 +809,11 @@ impl GraphInstance {
                 self.request = Some(self.request.map_or(d, |r| r.min(d)));
             }
         }
+        // The hand-back owns the blend: a state switch on the same update (the
+        // host clearing its knocked-out flag) starts from the same pose, and
+        // its shorter blend snapped the lying pose onto the clip (AN-5).
         if let Some(d) = self.handback.take() {
-            self.request = Some(self.request.map_or(d, |r| r.min(d)));
+            self.request = Some(d);
         }
         self.collect_events(g, out);
         self.params.clear_triggers();

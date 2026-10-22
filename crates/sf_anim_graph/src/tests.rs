@@ -1332,3 +1332,37 @@ fn ops_skip_joints_physics_owns() {
         assert!(out.model.translation(j).distance(model.translation(j)) < 1e-5, "{}: stale model", rig.skeleton.name(j));
     }
 }
+
+/// AN-5: the host hands a ragdoll back (`inertialize_from`, 0.4 s) and clears
+/// its knocked-out flag in the same frame, which switches the graph's state
+/// with a 0.1 s blend. The hand-back owns the blend: it must still run after
+/// 0.25 s (the shorter switch blend snapped the lying pose onto the clip).
+#[test]
+fn handback_blend_wins_over_a_switch_on_the_same_update() {
+    let rig = Rig::new(
+        r#"(
+        params: [(name: "down", kind: Bool(true))],
+        nodes: {
+            "sm": StateMachine(states: [(name: "lying", node: "w"), (name: "up", node: "r")],
+                transitions: [(from: "lying", to: "up", when: [IsFalse("down")], blend: Inertialize(0.1))]),
+            "w": Clip(clip: "walk"),
+            "r": Clip(clip: "run"),
+        },
+        layers: [(node: "sm")],
+    )"#,
+    );
+    let b = rig.binding();
+    let mut inst = GraphInstance::new(&b);
+    let mut out = GraphOutput::new(&rig.graph);
+    let dt = 1.0 / 60.0;
+    for _ in 0..30 {
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+    }
+    let lying: Vec<Trs> = rig.skeleton.rest().iter().map(|&x| Trs { rotation: (x.rotation * Quat::from_rotation_x(1.2)).normalize(), ..x }).collect();
+    inst.inertialize_from(&lying, &lying, dt, 0.4);
+    inst.params.set_bool(rig.param("down"), false);
+    for k in 0..15 {
+        inst.update(&b, dt, 0, &UpdateInputs::default(), &mut out);
+        assert!(inst.inertializing(), "the hand-back blend ended after {} s", (k + 1) as f32 * dt);
+    }
+}

@@ -258,6 +258,12 @@ pub struct ControllerSettings {
     /// …and below which a moving one stops (hysteresis: no idle/walk
     /// flicker while avoidance slows a walker down).
     pub idle_speed: f32,
+    /// …or below which a moving one stops while its intent asks for no
+    /// motion: it is braking, so the idle blend overlaps the velocity
+    /// spring's settle instead of the loop playing at its rate floor (the
+    /// stop transition fires on the stop request, as in Lyra). Keep it
+    /// under `moving_speed` for hysteresis.
+    pub stop_speed: f32,
     /// Measured speed above which the graph is told `running`, m/s (walk or
     /// run by the speed actually travelled; the adapter sets it between its
     /// walk and run cycles' speeds). Infinite: by the applied gait.
@@ -283,6 +289,7 @@ impl Default for ControllerSettings {
             max_dt: 0.1,
             moving_speed: 0.3,
             idle_speed: 0.15,
+            stop_speed: 0.25,
             run_speed: f32::INFINITY,
             run_exit: f32::INFINITY,
             foot_probe_up: 0.5,
@@ -523,11 +530,12 @@ impl FeedValues {
         let velocity = mover.measured;
         let flat = Vec2::new(-velocity.x, velocity.z);
         let speed = flat.length();
+        let braking = mover.applied.desired_velocity.length_squared() < 1e-6;
         let moving = speed
-            > if last.moving {
-                settings.idle_speed
-            } else {
-                settings.moving_speed
+            > match (last.moving, braking) {
+                (false, _) => settings.moving_speed,
+                (true, false) => settings.idle_speed,
+                (true, true) => settings.stop_speed.max(settings.idle_speed),
             };
         let direction = if speed > 1e-3 { flat / speed } else { Vec2::Y };
         let running = moving
@@ -617,9 +625,11 @@ fn feed_animators<G: GroundProbe + Resource>(
             m.loco.frame().dir_to_local(m.loco.motion.acceleration) * inv
         };
         a.drive.turn_rate = v.turn;
-        // Zeroed when the mover went dormant (and not stepped since).
-        a.drive.moved = m.loco.moved;
-        a.drive.moved.translation *= inv;
+        // Composed until the graph's next update consumes it (A2 updates every
+        // other frame, AN-1); zero when the mover went dormant (and not stepped since).
+        let mut moved = m.loco.moved;
+        moved.translation *= inv;
+        a.drive.moved = a.drive.moved.then(moved);
         if let Some(n) = &names.moving {
             a.set_bool(n, v.moving);
         }

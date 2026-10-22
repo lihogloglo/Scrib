@@ -537,3 +537,29 @@ fn refresh_before_first_step_keeps_new_bodies() {
 fn probe_bench() {
     crate::spike::probe_bench();
 }
+
+/// G draws a ragdoll's joints: five segments per impulse joint (two links and a cross), none far away.
+#[test]
+fn debug_draws_impulse_joints() {
+    let base = WorldPos::new(IVec3::ZERO, Vec3::new(0.0, 1.0, 0.0));
+    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+    let rd = ragdoll(&mut w, base, JointSolver::Impulse, None);
+    let mut lines = Vec::new();
+    let n = w.debug_joint_lines(base, 10.0, base, 1.0, &mut lines);
+    assert!(n >= 5 && n.is_multiple_of(5) && n == lines.len(), "{n} segments for {} bodies", rd.bodies.len());
+    assert!(lines.iter().all(|(a, b)| a.is_finite() && b.is_finite()));
+    let far = WorldPos::new(IVec3::new(4, 0, 0), Vec3::ZERO);
+    assert_eq!(w.debug_joint_lines(far, 10.0, base, 1.0, &mut Vec::new()), 0);
+}
+
+/// A wide, low character (a crab) gets a cylinder over its whole footprint; an upright one a capsule.
+#[test]
+fn flat_characters_get_a_cylinder() {
+    let feet = WorldPos::new(IVec3::ZERO, Vec3::ZERO);
+    let push = crate::character::PushParams::default();
+    let crab = BodyDesc::character(feet, crate::character::CharacterShape { radius: 1.1, height: 0.7 }, &push);
+    let ShapeRef::Cylinder { r, half } = crab.shape else { panic!("a crab is no capsule") };
+    assert!(r > 1.0 && (half - 0.35).abs() < 1e-6, "{r} {half}");
+    let human = BodyDesc::character(feet, crate::character::CharacterShape { radius: 0.3, height: 1.8 }, &push);
+    assert!(matches!(human.shape, ShapeRef::Capsule { .. }));
+}

@@ -135,6 +135,16 @@ pub struct RagdollGotUp {
     pub entity: Entity,
 }
 
+/// A ragdoll request that couldn't be handed to physics (no ragdoll for the
+/// skeleton, no frame or world): the [`Ragdoll`] component is removed and the
+/// character stays animated; the host undoes what it set up for the ragdoll
+/// (a knockdown's flag, a parked mover). Every knockdown request ends in
+/// [`RagdollGotUp`] or this, unless the host removes it first (AN-4).
+#[derive(Message, Clone, Copy, Debug)]
+pub struct RagdollFailed {
+    pub entity: Entity,
+}
+
 /// Live ragdolls and requests, by their `Animator` entity.
 #[derive(Resource, Default)]
 pub struct Ragdolls {
@@ -211,6 +221,7 @@ pub(crate) fn add(app: &mut App) {
         .init_resource::<Ragdolls>()
         .init_resource::<RagdollStats>()
         .add_message::<RagdollGotUp>()
+        .add_message::<RagdollFailed>()
         .add_systems(FixedUpdate, drive.before(PhysicsSystems::Step))
         .add_systems(Update, (handoff, read_back, get_up).chain().after(PhysicsSystems::WriteBack));
 }
@@ -257,6 +268,8 @@ fn handoff(
     requests: Query<(Entity, &Ragdoll, &Animator)>,
     mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     roots: Query<&WorldspaceRoot>,
+    mut commands: Commands,
+    mut failed: MessageWriter<RagdollFailed>,
 ) {
     let dt = time.delta_secs();
     let Ragdolls { pending, live } = &mut *ragdolls;
@@ -288,14 +301,20 @@ fn handoff(
         let model = p.poses[1].clone().unwrap_or_else(|| skeleton.rest_model());
         let (Some(def), Some((ws, root, scale))) = ((source.0)(&request.skeleton), world_frame(entity, &frames.p0(), &roots)) else {
             stats.failed += 1;
+            commands.entity(entity).try_remove::<Ragdoll>();
+            failed.write(RagdollFailed { entity });
             continue;
         };
         if def.owner.len() != skeleton.len() || model.len() != skeleton.len() {
             stats.failed += 1;
+            commands.entity(entity).try_remove::<Ragdoll>();
+            failed.write(RagdollFailed { entity });
             continue;
         }
         let Some(world) = physics.worlds.get_mut(&ws) else {
             stats.failed += 1;
+            commands.entity(entity).try_remove::<Ragdoll>();
+            failed.write(RagdollFailed { entity });
             continue;
         };
         let previous = p.poses[0].as_deref().map(|prev| (prev, p.dt));
@@ -439,6 +458,10 @@ fn read_back(
     stats.max_stretch = stretch;
 }
 
+/// The get-up's ground probe: from this far above the frame (m), and this
+/// far below it.
+const GET_UP_PROBE: (f32, f32) = (1.0, 2.0);
+
 /// Knocked-down ragdolls at rest get up.
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn get_up(
@@ -455,21 +478,41 @@ fn get_up(
     let ready: Vec<Entity> = ragdolls
         .live
         .iter()
-        .filter(|(_, l)| matches!(l.mode, RagdollMode::Knockdown { .. }) && l.controller.state() == ReactionState::GettingUp)
+        // Past the get-up, too: several fixed steps between two `Update`s can
+        // carry the controller through its get-up timeline into `Tracking`,
+        // and a poll for `GettingUp` alone then never handed it back (AN-4).
+        .filter(|(_, l)| matches!(l.mode, RagdollMode::Knockdown { .. }) && matches!(l.controller.state(), ReactionState::GettingUp | ReactionState::Tracking))
         .map(|(e, _)| *e)
         .collect();
     for entity in ready {
         let l = ragdolls.live.remove(&entity).expect("listed");
         let RagdollMode::Knockdown { get_up: clip_body, get_up_flag, .. } = &l.mode else { continue };
-        let Some(w) = physics.worlds.get_mut(&l.worldspace) else { continue };
+        let Some(w) = physics.worlds.get_mut(&l.worldspace) else {
+            commands.entity(entity).try_remove::<(Ragdoll, PhysicsPose)>();
+            got_up.write(RagdollGotUp { entity });
+            continue;
+        };
         let (Some(pelvis), Some((_, frame, scale)), Ok(mut animator)) = (w.pose(l.instance.bodies[0]), world_frame(entity, &frames.p0(), &roots), characters.get_mut(entity)) else {
+            // Handed back where it lies, unaligned: the host still restores it.
             l.instance.remove(w);
             commands.entity(entity).try_remove::<(Ragdoll, PhysicsPose)>();
+            got_up.write(RagdollGotUp { entity });
             continue;
         };
         let clip_body = clip_body.unwrap_or_else(|| lying_rest(&l.def, &l.target));
+        // The clip plays under the build's own (non-uniform) scale, restored
+        // below: its root body sits at that scale, not the uniform one.
+        let build = l.own_scale / l.own_scale.y.max(1e-4);
+        let clip_body = (clip_body.0, clip_body.1 * build);
         let face_down = l.instance.implied_frame(w, &l.def, &l.target, 1.0).is_some_and(|f| (f.rotation * Vec3::Z).y < 0.0);
-        let to = get_up_root(&pelvis, clip_body, l.scale, face_down);
+        let mut to = get_up_root(&pelvis, clip_body, l.scale, face_down);
+        // On the ground under it (physics.md "get-up"): the frame is where the
+        // capsule goes and where the clip stands up, so the mover doesn't
+        // re-ground it after the hand-back.
+        let probe = sf_controller::ProbeQuery::ray(to.pos.offset(Vec3::Y * GET_UP_PROBE.0), Vec3::NEG_Y, GET_UP_PROBE.0 + GET_UP_PROBE.1);
+        if let Some((_, hit)) = w.probe(sf_physics::Layer::WORLD).cast(&probe) {
+            to.pos = to.pos.offset(Vec3::Y * to.pos.delta_f32(hit.point).y);
+        }
         if let Ok(mut t) = frames.p1().get_mut(entity) {
             move_frame(&mut t, &frame, scale, &to);
             t.scale = l.own_scale;
@@ -478,6 +521,11 @@ fn get_up(
         // relative to the new frame (at rest: no velocity).
         let mut pose = Vec::new();
         if l.instance.local_pose(w, &l.def, &animator.asset.skeleton, &to, 1.0, &l.frozen, &mut pose) {
+            // That pose is in the uniform scale the ragdoll showed; under the
+            // restored build scale its pelvis would move (5 cm for a 0.95/0.9
+            // build, AN-5). Shift the whole pose so the pelvis stays exactly on
+            // the body; the limbs' few-% skew blends out with the clip.
+            anchor_pelvis(&animator.asset.skeleton, usize::from(l.def.bodies[0].joint), build, &mut pose);
             animator.instance.inertialize_from(&pose, &pose, 1.0 / 60.0, config.get_up_blend);
         }
         animator.set_bool(get_up_flag, false);
@@ -486,6 +534,22 @@ fn get_up(
         got_up.write(RagdollGotUp { entity });
         stats.got_up += 1;
     }
+}
+
+/// Shifts a local pose (model space at the uniform scale) so `pelvis` keeps
+/// its world position when shown under the per-axis scale ratio `build`.
+fn anchor_pelvis(skeleton: &sf_anim::Skeleton, pelvis: usize, build: Vec3, pose: &mut [Trs]) {
+    let mut chain = vec![pelvis];
+    while let Some(p) = skeleton.parent(*chain.last().expect("non-empty")) {
+        chain.push(p);
+    }
+    let Some(&top) = chain.last() else { return };
+    if chain.iter().any(|&j| j >= pose.len()) {
+        return;
+    }
+    let model = chain.iter().rev().fold(Affine3A::IDENTITY, |m, &j| m * pose[j].to_affine());
+    let p = Vec3::from(model.translation);
+    pose[top].translation += p / build.max(Vec3::splat(1e-4)) - p;
 }
 
 /// The get-up clip's root body at `time` (usually 0, its first frame), in

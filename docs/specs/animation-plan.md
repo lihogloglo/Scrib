@@ -38,7 +38,7 @@ Combat (3.5), R4-R8 and the B3+ traversal phases come after this plan.
 - [x] 4 foot-slide metric (fix not landed: 4b)
 - [x] 4b strafe/back slide: lock-drift metric, toe-aware stance velocity, per-gait stride speed
 - [x] 5 feet on stairs and slopes (stairs left for 5b): ramps gated (sole within 2 cm), toe probes + slope clearance; stairs ignored (comfy-up toe 5 cm: lock vs heel-strike; steep flight needs grade-aware stride, 5b)
-- [ ] 5b stairs: foot lock follows toe roll in stance; steep-stair stride (owner call); map MW toe bones
+- [ ] 5b stairs (owner 2026-10-22: look fine in the lab; low priority, measure only): foot lock follows toe roll in stance; steep-stair stride (owner call); map MW toe bones
 - [x] 6 R2 reaction controller core (`sf_ragdoll::react` + thin wiring in `sf_physics_bevy`; stagger/weight outputs consumed in R3)
 
 ## Owner pass 2026-10-22 (anim-lab, after slices 1-6): open issues
@@ -46,13 +46,30 @@ Combat (3.5), R4-R8 and the B3+ traversal phases come after this plan.
 Fix the cause, not the symptom: for each, find which stage (clip data, cook, graph, root motion, controller,
 physics, ragdoll hand-off, write-back) produces it, and say why in the slice handoff before changing code.
 
-- **AN-1 Foot slide at one moment of the walk cycle:** the planted foot moves with the body during one specific
+- **AN-1 Foot slide at one moment of the walk cycle:** fixed R3-1 (A2 updates got only the last frame's motion for the foot lock; the feed now composes `drive.moved` until an update consumes it). the planted foot moves with the body during one specific
   phase of the walk (seen on the walker next to the orange cube). Slices 4/4b gated strafe/back, not this.
-- **AN-2 Stops are far too slow:** walkers reaching their destination decelerate over a long glide. People stop
+- **AN-2 Stops are far too slow:** fixed R3-2 (`PathFollower` exponential arrival braking 0.64/s from 2 m plus a 0.25 m/s creep; now constant-deceleration arrival that budgets the velocity spring's lag, cutoff to zero, idle on the stop request; walk 1.5 m/s stops in 0.59 m/0.87 s, was 1.9 m/3.0 s). walkers reaching their destination decelerate over a long glide. People stop
   within one or two steps at normal speed. Look at how shipped games do it (stop clips/foot-aware stops, decel).
-- **AN-3 Footstep sounds out of sync** with the feet (animation text keys vs playback rate/SpeedMatch?).
-- **AN-4 Pushed by the ball, characters sometimes freeze** (animation stops) and **lose their capsule**.
-- **AN-5 Get-up pops:** a teleport from the lying ragdoll pose to the first frame of the stand-up clip.
-- **AN-6 After get-up, the character slides** to its capsule at the end of the stand-up clip.
-- **AN-7 Capsule vibrates while walking** (G view). Is it expected? Probably not.
-- **AN-8 Mudcrab capsule too small** while standing.
+- **AN-3 Footstep sounds out of sync:** fixed R3-1 (sounds came from a distance timer, not the animation; now the graph's `SoundGen` key events, payload = foot). with the feet (animation text keys vs playback rate/SpeedMatch?).
+- **AN-4 Pushed by the ball, characters sometimes freeze** (animation stops) and **lose their capsule**: fixed R3-3 (knockdown paths that never returned: failed handoff retried forever, fallback get-up and a skipped `GettingUp` never told the host, no settle timeout; now `RagdollFailed`, every path hands back, 6 s timeout).
+- **AN-5 Get-up pops:** fixed R3-3 (the 0.1 s state-switch blend overrode the 0.3 s hand-back; frame not on the ground; pelvis moved by the build-scale restore). A teleport from the lying ragdoll pose to the first frame of the stand-up clip.
+- **AN-6 After get-up, the character slides** (fixed R3-3: the get-up tail kept its lying root offset, 1.1 m off the capsule; now cooked in place, anchored on its last frame) to its capsule at the end of the stand-up clip.
+- **AN-7 Capsule vibrates while walking:** fixed R3-1 (capsule targeted the last frame's feet, beating against the 60 Hz step; now the feet at each step's time, G draws interpolated poses). (G view). Is it expected? Probably not.
+- **AN-8 Mudcrab capsule too small** while standing: fixed R3-4 (every creature got a fixed `0.4*s` x `1.2*s` column, never sized from its model; now `MoverParams::from_bounds` over the outfit's bind-pose bounds, and a body wider than it is high gets an upright cylinder, `BodyDesc::character`).
+
+## Owner pass 2026-10-22, second (after run 3): open issues
+
+AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the cause before changing code.
+
+- **AN-9 Residual foot slide on every walker:** a planted foot holds for most of its stance, then slides a few
+  cm forward right when weight transfers and the other foot lands. Owner suspects something fundamental in
+  how foot placement/locking works, or an incompatibility with Morrowind's base anims, not a near/far issue.
+- **AN-10 Get-up spin:** no horizontal slide anymore, but characters often spin fast between the lying pose
+  and the first frame of the stand-up clip (heading mismatch between the ragdoll and the clip's start).
+- **AN-11 Ragdoll torso:** the torso rotates freely with the hips and bends unnaturally; check every joint's
+  constraint (limits, axes, twist/swing, spine chain).
+- **AN-12 Guar box too small** (not tall enough). Creature shapes must fit their models.
+- **AN-13 Guar hit by the ball loops forever** between falling and standing up.
+- **AN-14 Dead stays dead:** an actor killed while knocked down must not stand up.
+- **AN-15 Creature collision from several primitives** (industry standard, e.g. per-girdle shapes) so
+  quadrupeds stand correctly on slopes; replaces the single oversized capsule/cylinder.

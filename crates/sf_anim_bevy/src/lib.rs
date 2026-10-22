@@ -151,6 +151,10 @@ pub struct AnimDrive {
     pub turn_rate: f32,
     pub look_target: Option<Vec3>,
     /// How the character moved since the previous update (its frame then).
+    /// Hosts compose each frame's motion onto it ([`RootDelta::then`]);
+    /// [`AnimSystems::Evaluate`] consumes (resets) it with each update, so an
+    /// A2 update every other frame gets both frames' motion and its foot locks
+    /// stay planted in the world (AN-1).
     pub moved: RootDelta,
     /// Per probe (each leg, then each leg toe): ground under it, probed at last output's `probe_origins`.
     pub ground: Vec<Option<GroundSample>>,
@@ -311,6 +315,8 @@ pub struct AnimEvent {
     /// Graph-wide event id and name (`CompiledGraph::events`).
     pub id: u16,
     pub name: Arc<str>,
+    /// The clip event's payload (`sf_anim::Event::payload`, e.g. which foot), if any.
+    pub payload: Option<Arc<str>>,
     pub edge: EventEdge,
     pub weight: f32,
     pub montage: Option<MontageId>,
@@ -323,6 +329,7 @@ pub struct AnimNotify {
     pub entity: Entity,
     pub id: u16,
     pub name: Arc<str>,
+    pub payload: Option<Arc<str>>,
     pub edge: EventEdge,
     pub weight: f32,
 }
@@ -492,6 +499,8 @@ fn evaluate(
         let t0 = Instant::now();
         let dt = std::mem::take(&mut lod.pending);
         animator.update(dt, lod.tier);
+        // Consumed: the motion from here on is the next update's input.
+        animator.drive.moved = RootDelta::default();
         animator.posed = animator.output.posed;
         let i = lod.tier.index();
         #[allow(clippy::cast_possible_truncation)]
@@ -663,10 +672,20 @@ fn apply_root_and_events(
                 .get(usize::from(e.id))
                 .cloned()
                 .unwrap_or_else(|| Arc::from("?"));
+            // The clip event's payload (e.g. which foot); late-bound montage
+            // clips aren't in the asset.
+            let payload = animator
+                .asset
+                .clips
+                .get(usize::from(e.clip))
+                .and_then(|c| c.events.get(e.event as usize))
+                .filter(|ev| !ev.payload.is_empty())
+                .map(|ev| Arc::from(ev.payload.as_str()));
             messages.write(AnimEvent {
                 entity,
                 id: e.id,
                 name: name.clone(),
+                payload: payload.clone(),
                 edge: e.edge,
                 weight: e.weight,
                 montage: e.montage,
@@ -675,6 +694,7 @@ fn apply_root_and_events(
                 entity,
                 id: e.id,
                 name,
+                payload,
                 edge: e.edge,
                 weight: e.weight,
             });

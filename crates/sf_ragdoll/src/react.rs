@@ -213,10 +213,19 @@ pub struct ReactionSet {
     /// Settled: the pelvis slower than this (m/s) for `rest_time` s, grounded.
     pub rest_speed: f32,
     pub rest_time: f32,
+    /// Falling longer than this (s) settles anyway, at any pelvis speed: a
+    /// body that never comes to rest (lying on a rolling ball, jitter, a slow
+    /// slide) still gets up instead of staying down for good (AN-4). 0: never.
+    #[serde(default = "default_settle_timeout")]
+    pub settle_timeout: f32,
 }
 
 /// The default [`ReactionSet`] (`data/reactions.ron`).
 pub const DEFAULT_RON: &str = include_str!("../data/reactions.ron");
+
+fn default_settle_timeout() -> f32 {
+    6.0
+}
 
 impl Default for ReactionSet {
     fn default() -> Self {
@@ -451,7 +460,8 @@ impl ReactionController {
                     }
                 }
                 S::Falling => {
-                    if self.elapsed >= scaled_end && self.slow >= self.set.rest_time && sensed.grounded {
+                    let timed_out = self.set.settle_timeout > 0.0 && self.elapsed >= self.set.settle_timeout;
+                    if self.elapsed >= scaled_end && (self.slow >= self.set.rest_time || timed_out) && sensed.grounded {
                         self.state = S::Down;
                         self.elapsed = 0.0;
                         self.pending.push(ReactionEvent::Settled);

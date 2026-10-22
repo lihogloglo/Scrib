@@ -447,7 +447,9 @@ Changes in M4:
   `dt`. Budget: the mover stage per tick stays within 10 % of today's per-frame cost on wk-balmora
   (action.md phase A2, which builds this; until A2 the code still steps per frame, as built below).
 - Each character owns a **kinematic capsule** body (`CHARACTER`) whose target for each physics step
-  is the mover's pose of the same tick, so falling and thrown bodies hit characters.
+  is the mover's pose of the same tick, so falling and thrown bodies hit characters. As built (R3-1, AN-7): the
+  mover runs at frame rate, so each step targets the feet extrapolated to the step's time from the last mover step
+  (`target_capsules`, `FixedUpdate`); the G view draws moving bodies at their interpolated pose.
 - **Co-op ownership** (net.md): the host steps every mover. A client steps only its own player's
   mover (predicted, replayed on correction) against its local static world, with props and other
   characters at their interpolated poses; it never pushes props (pushes and impacts are host-only,
@@ -627,6 +629,7 @@ Behaviours:
 - **Get-up**: when the pelvis is slower than 0.2 m/s for 0.5 s, face up or down from the pelvis axis
   picks the get-up clip; the character root is placed under the pelvis with the clip's first-frame yaw;
   `PoseInput` inertializes from the ragdoll pose into the clip (the transition test in animation.md).
+  *As built R3-3 (2026-10-22):* the frame goes on the ground under the pelvis (WORLD ray), the hand-back pose is pelvis-anchored for the restored build scale and its 0.3 s blend wins over the graph's state switch; the host must use an in-place get-up clip that ends over its origin (MW: `Knockout@tail` cooked with `RootMotionRules::anchor_end`) or apply its root motion, never both. Every request ends in `RagdollGotUp` or `RagdollFailed`; a fall settles after `settle_timeout` (6 s) at any speed.
 - **Budget**: at most 8 powered ragdolls at once (others answer kinematically), limp ones unlimited
   but each asleep within seconds.
 

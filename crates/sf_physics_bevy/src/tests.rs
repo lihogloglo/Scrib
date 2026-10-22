@@ -320,4 +320,47 @@ mod streamed_ground {
         assert!(stood.delta_f32(back).length() < 0.05, "back on its ground: {:?}", stood.delta_f32(back));
         assert!(app.world().get::<Mover>(e).unwrap().loco.grounded.is_some(), "standing again");
     }
+
+    /// AN-7: a walking character's capsule keeps a steady place under it at
+    /// any frame rate. The mover runs per frame and physics at 60 Hz: at
+    /// 144 fps, targeting the last frame's feet moved the capsule by 0, 1 or 2
+    /// frames of walking per step, so the drawn (interpolated) capsule shook
+    /// against the body by about a centimetre at walking speed.
+    #[cfg(feature = "controller")]
+    #[test]
+    fn walking_capsule_keeps_steady_under_the_mover_at_144_fps() {
+        use bevy_time::{Fixed, Time, TimeUpdateStrategy};
+        use sf_controller::LocomotionIntent;
+        use sf_controller_bevy::{MoveIntent, Mover, MoverParams, SfControllerPlugin};
+
+        use crate::character::Capsules;
+
+        let ws = WorldspaceId::new("test");
+        bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
+        let mut app = app(&ws);
+        app.add_plugins(SfControllerPlugin::<Physics>::default())
+            .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(1.0 / 144.0)));
+        stream_floor(&mut app, &ws);
+        let start = base().offset(Vec3::new(-2.0, 0.0, -1.0));
+        let intent = LocomotionIntent { desired_velocity: Vec3::X * 1.4, ..LocomotionIntent::IDLE };
+        let e = app
+            .world_mut()
+            .spawn((Mover::new(start, 0.0, MoverParams::default(), base()), MoveIntent(intent), bevy_transform::components::Transform::default()))
+            .id();
+        let mut offsets = Vec::new();
+        for frame in 0..400 {
+            app.update();
+            if frame < 200 {
+                continue;
+            }
+            let feet = app.world().get::<Mover>(e).unwrap().loco.position;
+            let alpha = app.world().resource::<Time<Fixed>>().overstep_fraction();
+            let id = app.world().resource::<Capsules>().0[&e].id;
+            let pose = app.world().resource::<Physics>().worlds.active_world().unwrap().pose_at(id, alpha).unwrap();
+            offsets.push(feet.delta_f32(pose.pos).x);
+        }
+        let (lo, hi) = offsets.iter().fold((f32::MAX, f32::MIN), |(l, h), &o| (l.min(o), h.max(o)));
+        assert!(lo < -0.01, "interpolation draws a step behind: {lo}");
+        assert!(hi - lo < 0.002, "the capsule shakes {:.1} mm against the mover ({lo:.4}..{hi:.4} m)", (hi - lo) * 1000.0);
+    }
 }

@@ -152,6 +152,9 @@ pub enum ShapeRef {
     Heightfield(Arc<HeightShape>),
     /// Upright (Y axis) capsule: radius, half height of the cylinder part.
     Capsule { r: f32, half: f32 },
+    /// Upright (Y axis) cylinder: radius, half height. Round in plan, so yaw does not matter:
+    /// the shape of a wide, low character a capsule cannot cover.
+    Cylinder { r: f32, half: f32 },
     Box(Vec3),
     Sphere(f32),
     /// A `body.cook` shape (items): hulls and primitives with their mass properties.
@@ -167,6 +170,10 @@ impl ShapeRef {
             Self::Capsule { r, half } => {
                 let s = scale.x.max(scale.z);
                 SharedShape::capsule_y(half * scale.y, r * s)
+            }
+            Self::Cylinder { r, half } => {
+                let s = scale.x.max(scale.z);
+                SharedShape::cylinder(half * scale.y, r * s)
             }
             Self::Box(h) => {
                 let h = *h * scale;

@@ -225,6 +225,55 @@ fn feed_uses_measured_speed_with_hysteresis() {
     assert_eq!(feed(&mut m, 0.2), (false, false));
 }
 
+/// AN-2: a walker braking into a path's end hands the graph to idle once,
+/// soon, and doesn't hold the walk loop at its rate floor through a creep
+/// (the old exponential approach kept `moving` on the hysteresis edge at
+/// 0.25 m/s for 1.5 s, the loop at half rate with shrunken strides).
+#[test]
+fn stopping_walkers_hand_over_to_idle_promptly() {
+    let settings = ControllerSettings {
+        moving_speed: 0.5,
+        idle_speed: 0.25,
+        stop_speed: 0.45,
+        ..ControllerSettings::default()
+    };
+    let cruise = 1.5;
+    let dt = 1.0 / 60.0;
+    let node = sf_controller::PathNode::at(WorldPos::ORIGIN.offset(Vec3::Z * 12.0));
+    let mut path = sf_controller::PathFollower::new(vec![node], sf_controller::PathMode::Once, cruise);
+    let mut m = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
+    let springs = m.params.springs;
+    let (mut braking, mut idle_at, mut switches, mut slow_walk) = (None, None, 0, 0.0);
+    for frame in 0..600u16 {
+        let t = f32::from(frame) * dt;
+        let intent = path.update(m.loco.position, dt).intent;
+        m.applied = intent;
+        let (v_goal, yaw_goal) = m.loco.motion.goals(&intent);
+        let d = m.loco.motion.advance(v_goal, yaw_goal, &springs, dt);
+        m.loco.position = m.loco.position.offset(d);
+        m.measured = m.loco.motion.velocity;
+        let v = crate::FeedValues::of(&m, &settings, m.gait);
+        switches += usize::from(v.moving != m.gait.moving);
+        m.gait = v.gait();
+        if t > 3.0 && braking.is_none() && v.speed < 0.98 * cruise {
+            braking = Some(t);
+        }
+        if let Some(t0) = braking {
+            if idle_at.is_none() && !v.moving {
+                idle_at = Some(t - t0);
+            }
+            // The walk loop below half its cruise speed: SpeedMatch's rate floor.
+            if v.moving && v.speed < 0.5 * cruise {
+                slow_walk += dt;
+            }
+        }
+    }
+    let idle_at = idle_at.expect("never went idle");
+    assert_eq!(switches, 2, "moving flickered");
+    assert!(idle_at < 0.75, "idle {idle_at:.2} s after braking began");
+    assert!(slow_walk < 0.3, "walk loop below half speed for {slow_walk:.2} s");
+}
+
 /// Processing range: a dormant mover never moves (whatever its intent) and
 /// stands still; removing [`Dormant`] resumes it from where it stood.
 #[test]
@@ -257,4 +306,83 @@ fn dormant_movers_never_move_and_resume_when_woken() {
         parked.delta_f32(pos_of(&app)).length() > 0.3,
         "woken mover resumed walking"
     );
+}
+
+/// The synthetic biped walk of `sf_anim`'s fixtures as a one-clip graph.
+fn walk_asset() -> std::sync::Arc<sf_anim_bevy::AnimAsset> {
+    use std::sync::Arc;
+
+    use sf_anim::fixtures::{biped, gait};
+    use sf_anim::{ClipRules, CookSettings, Looping, cook_clip};
+
+    struct Walk(sf_anim::Clip);
+    impl sf_anim_graph::CompileSource for Walk {
+        fn clip(&mut self, reference: &str) -> Result<(sf_bake::ProductKey, sf_anim::Clip), String> {
+            Ok((sf_bake::ProductKey::new("anim.cook", reference), self.0.clone()))
+        }
+        fn subgraph(&mut self, _: &str) -> Result<sf_anim_graph::asset::GraphAsset, String> {
+            Err("none".into())
+        }
+    }
+    let skeleton = biped();
+    let src = gait(&skeleton, "walk", 1.0, 1.4, 0.5, 0.6, &[("thigh_l", "foot_l", 0.0), ("thigh_r", "foot_r", 0.5)]);
+    let rules = ClipRules { looping: Looping::Whole, ..ClipRules::default() };
+    let clip = cook_clip(&skeleton, &src, &rules, &CookSettings::default()).unwrap();
+    let ron = r#"(nodes: {"walk": Clip(clip: "walk")}, layers: [(node: "walk")])"#;
+    let graph = sf_anim_graph::compile_str("walk", ron, &skeleton, &mut Walk(clip.clone())).unwrap();
+    let clips = graph.clips.iter().map(|_| Arc::new(clip.clone())).collect();
+    Arc::new(sf_anim_bevy::AnimAsset::new(Arc::new(skeleton), Arc::new(graph), clips).unwrap())
+}
+
+/// What the graph got at each of its updates: the walker's position then and
+/// `drive.moved`; `.1` holds this frame's until Evaluate shows whether it was consumed.
+#[derive(Resource, Default)]
+struct Fed(Vec<(WorldPos, Vec3)>, Option<(WorldPos, Vec3)>);
+
+/// AN-1: an A2 animator updates every other frame, and each update must get
+/// the motion of every frame since the last one (its foot locks undo exactly
+/// that), not just the last frame's: else planted feet slide at half the
+/// body's speed on every walker far enough away for A2.
+#[test]
+fn a2_updates_get_all_the_motion_since_their_last_update() {
+    use bevy_app::PostUpdate;
+    use sf_anim_bevy::{AnimLod, AnimSystems, AnimTier, Animator};
+
+    let mut app = app();
+    app.add_plugins(sf_anim_bevy::SfAnimPlugin).init_resource::<Fed>().add_systems(
+        PostUpdate,
+        (
+            (|movers: Query<&Mover>, animators: Query<&Animator>, mut fed: ResMut<Fed>| {
+                let m = movers.single().unwrap();
+                let a = animators.get(m.animator.unwrap()).unwrap();
+                fed.1 = Some((m.loco.position, a.drive.moved.translation));
+            })
+            .after(AnimSystems::Probe)
+            .before(AnimSystems::Evaluate),
+            // Evaluate resets what an update consumed.
+            (|animators: Query<&Animator>, mut fed: ResMut<Fed>| {
+                let consumed = animators.single().unwrap().drive.moved.translation == Vec3::ZERO;
+                if let Some(f) = fed.1.take().filter(|f| consumed && f.1 != Vec3::ZERO) {
+                    fed.0.push(f);
+                }
+            })
+            .after(AnimSystems::Evaluate),
+        ),
+    );
+    let e = walker(&mut app, 0.0, Vec3::Z * 1.4);
+    let anim = app.world_mut().spawn((Animator::new(walk_asset()), AnimLod::forced(AnimTier::A2))).id();
+    app.world_mut().get_mut::<Mover>(e).unwrap().animator = Some(anim);
+    for _ in 0..30 {
+        app.update();
+    }
+    app.world_mut().resource_mut::<Fed>().0.clear();
+    for _ in 0..60 {
+        app.update();
+    }
+    let fed = &app.world().resource::<Fed>().0;
+    assert!(fed.len() >= 29, "A2: every other frame ({})", fed.len());
+    let travelled = fed[0].0.delta_f32(fed[fed.len() - 1].0).length();
+    let told: f32 = fed[1..].iter().map(|f| f.1.length()).sum();
+    assert!(travelled > 1.0, "walking: {travelled} m");
+    assert!((told - travelled).abs() < 0.01 * travelled, "the graph was told {told:.3} m of {travelled:.3} m");
 }

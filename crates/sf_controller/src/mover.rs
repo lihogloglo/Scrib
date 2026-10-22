@@ -16,6 +16,7 @@ use sf_coords::WorldPos;
 use crate::frame::CharacterFrame;
 use crate::intent::LocomotionIntent;
 use crate::motion::{MotionState, SpringParams, wrap_angle};
+use crate::path::ArrivalParams;
 use crate::probe::{GroundHit, GroundProbe, ProbeQuery};
 use crate::trajectory::{LocomotionParams, Trajectory};
 
@@ -52,6 +53,8 @@ pub struct MoverParams {
     /// How far below the water surface the feet hang while swimming at it
     /// (`MoverMode::Swim`), meters.
     pub swim_depth: f32,
+    /// How path followers brake this character into a stop.
+    pub arrival: ArrivalParams,
 }
 
 impl Default for MoverParams {
@@ -69,6 +72,7 @@ impl Default for MoverParams {
             max_fall_speed: 50.0,
             ground_radius: 0.0,
             swim_depth: 1.35,
+            arrival: ArrivalParams::default(),
         }
     }
 }
@@ -98,6 +102,31 @@ impl MoverParams {
         p.step_up = 0.5 * leg;
         p.step_down = 0.5 * leg;
         p.swim_depth = 0.75 * m.height;
+        p
+    }
+
+    /// The shape for a body's bind-pose bounds (feet at the model origin,
+    /// bounds already scaled to the world): the upright capsule over the
+    /// body's horizontal footprint (an equal-area circle, so a wide low shell
+    /// is covered and a long body is not a needle) as high as its back. Steps
+    /// scale with the height so a low creature still climbs what it should,
+    /// the swim depth with it. A capsule cannot lie flat: when the footprint
+    /// radius exceeds half the height the wall sweep clamps it to that, and the
+    /// physics body is an upright cylinder of the full footprint
+    /// (`BodyDesc::character`). Degenerate bounds keep
+    /// the defaults.
+    pub fn from_bounds(min: Vec3, max: Vec3) -> Self {
+        let mut p = Self::default();
+        let (hx, hz) = (0.5 * (max.x - min.x), 0.5 * (max.z - min.z));
+        let top = max.y;
+        if !(hx > 0.0 && hz > 0.0 && top > 0.0 && hx.is_finite() && hz.is_finite() && top.is_finite()) {
+            return p;
+        }
+        p.radius = (hx * hz).sqrt().max(0.05);
+        p.height = top;
+        p.step_up = p.step_up.min(0.3 * top);
+        p.step_down = p.step_down.min(0.3 * top);
+        p.swim_depth = 0.75 * top;
         p
     }
 

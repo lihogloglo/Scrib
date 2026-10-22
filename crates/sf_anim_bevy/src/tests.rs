@@ -39,7 +39,10 @@ fn walk_asset() -> Arc<AnimAsset> {
         0.6,
         &[("thigh_l", "foot_l", 0.0), ("thigh_r", "foot_r", 0.5)],
     );
-    src.events.push(Event::point(0.25, "step"));
+    src.events.push(Event {
+        payload: "left".into(),
+        ..Event::point(0.25, "step")
+    });
     let rules = ClipRules {
         looping: Looping::Whole,
         root_motion: RootMotionRules {
@@ -58,6 +61,8 @@ fn walk_asset() -> Arc<AnimAsset> {
 #[derive(Resource, Default)]
 struct Seen {
     messages: usize,
+    /// "step" messages carrying their clip event's payload.
+    left_steps: usize,
     observed: usize,
 }
 
@@ -71,7 +76,10 @@ fn app() -> App {
         .add_systems(
             PostUpdate,
             (|mut r: MessageReader<AnimEvent>, mut seen: ResMut<Seen>| {
-                seen.messages += r.read().count();
+                for e in r.read() {
+                    seen.messages += 1;
+                    seen.left_steps += usize::from(&*e.name == "step" && e.payload.as_deref() == Some("left"));
+                }
             })
                 .after(crate::AnimSystems::Apply),
         );
@@ -138,6 +146,7 @@ fn walk_writes_bones_root_motion_and_events() {
     let seen = app.world().resource::<Seen>();
     // One "step" per cycle per character, plus the gait's own events.
     assert!(seen.messages >= 2 * 2, "{}", seen.messages);
+    assert!(seen.left_steps >= 2, "payloads ride along: {}", seen.left_steps);
     assert_eq!(
         seen.messages, seen.observed,
         "every message is also observed"

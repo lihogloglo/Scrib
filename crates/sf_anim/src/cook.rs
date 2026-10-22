@@ -87,11 +87,19 @@ pub struct RootMotionRules {
     /// Pitch and roll in the heading frame (flyers, swimmers): the root's
     /// attitude leaves the pose and becomes an attitude track.
     pub attitude: bool,
+    /// In-place clips only (`extract` off): re-base the clip so the
+    /// root-motion joint's ground position and heading at the **last**
+    /// frame are the model origin and +Z (heading against its rest
+    /// rotation). For in-place parts cut from a longer take that end standing
+    /// away from the take's origin (a get-up tail): the character then ends
+    /// over its frame, so a capsule placed at the frame needs no slide.
+    #[serde(default)]
+    pub anchor_end: bool,
 }
 
 impl Default for RootMotionRules {
     fn default() -> Self {
-        Self { mode: RootMotionMode::Match, extract: true, horizontal: true, vertical: false, yaw: true, attitude: false }
+        Self { mode: RootMotionMode::Match, extract: true, horizontal: true, vertical: false, yaw: true, attitude: false, anchor_end: false }
     }
 }
 
@@ -301,7 +309,11 @@ pub fn cook_clip_for(
     });
 
     let rates = candidate_rates(bound.native_rate(), settings);
-    let truth = Truth { skeleton, bound: &bound, start, duration };
+    let anchor = skeleton
+        .root_motion_joint()
+        .filter(|_| rules.root_motion.anchor_end && rm_joint.is_none() && rules.additive.is_none())
+        .map(|rm| (rm, end_anchor(skeleton, &bound, start + duration, rm)));
+    let truth = Truth { skeleton, bound: &bound, start, duration, anchor };
     // Rates go coarsest first and the first that passes wins. A pass whose
     // resampling error alone exceeds 1.5x the bound can't pass
     // (quantization adds at most half the bound, its budget), so it is
@@ -467,6 +479,35 @@ pub(crate) fn model_of(skeleton: &Skeleton, local: &[Trs], out: &mut Vec<Affine3
 
 /// Removes the root motion from `frames` (in place) and returns the track.
 ///
+/// The ancestors of `joint`, root first.
+fn ancestors(skeleton: &Skeleton, joint: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut a = skeleton.parent(joint);
+    while let Some(p) = a {
+        out.push(p);
+        a = skeleton.parent(p);
+    }
+    out.reverse();
+    out
+}
+
+/// [`RootMotionRules::anchor_end`]: the inverse of the root-motion joint's
+/// ground frame at source time `end`: its ground position (less its rest
+/// ground offset turned by the heading) and its heading against its rest
+/// rotation, about +Y.
+fn end_anchor(skeleton: &Skeleton, bound: &BoundSource<'_>, end: f32, rm: usize) -> Affine3A {
+    let mut pose = skeleton.rest().to_vec();
+    bound.sample(end, skeleton.rest(), &mut pose);
+    let mut model = Vec::new();
+    model_of(skeleton, &pose, &mut model);
+    let rest = skeleton.rest_model();
+    let ground = |m: &Affine3A| Vec3::new(m.translation.x, 0.0, m.translation.z);
+    let yaw = math::twist_angle(math::affine_rotation(&model[rm]) * math::affine_rotation(&rest[rm]).inverse(), Vec3::Y);
+    let heading = Quat::from_rotation_y(yaw);
+    let origin = ground(&model[rm]) - heading * ground(&rest[rm]);
+    Affine3A::from_rotation_translation(heading, origin).inverse()
+}
+
 /// The character root at frame `f` is `C_f = (c_f, yaw_f)` with
 /// `c_f = h(p_f) − R_y(yaw_f)·h(p_0)`, where `p` is the root-motion joint's
 /// model position and `h` keeps the extracted axes. In the root's frame the
@@ -853,12 +894,22 @@ struct Truth<'a> {
     bound: &'a BoundSource<'a>,
     start: f32,
     duration: f32,
+    /// [`RootMotionRules::anchor_end`]: the root-motion joint and the inverse
+    /// of its ground frame at the last frame, applied to every sample.
+    anchor: Option<(usize, Affine3A)>,
 }
 
 impl Truth<'_> {
     /// Local pose at frame `f` of `n` (clip time `frame_time(f, n)`).
     fn frame(&self, f: usize, n: usize, out: &mut [Trs]) {
         self.bound.sample(self.start + frame_time(f, n, self.duration), self.skeleton.rest(), out);
+        if let Some((rm, inverse)) = self.anchor {
+            let parent = ancestors(self.skeleton, rm).iter().fold(Affine3A::IDENTITY, |m, &j| m * out[j].to_affine());
+            let local = parent.inverse() * inverse * parent * out[rm].to_affine();
+            let t = Trs::from_affine(&local);
+            out[rm].translation = t.translation;
+            out[rm].rotation = t.rotation;
+        }
     }
 
     /// Model pose at grid point `s` of `points` (`local` is scratch).
