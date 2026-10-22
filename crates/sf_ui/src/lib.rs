@@ -24,12 +24,19 @@
 //!   rich-text document model that content packs' markup parsers build, cut
 //!   into pages (a two-page spread, or one long scroll page) over a
 //!   [`TextMeasure`] that the text engine implements.
+//! - [`Keymap`] and [`Rebinder`]: the keybinds screen (U6). Rebindable actions
+//!   with per-device slots, conflicts per scope, swap/unbind resolution,
+//!   resets, the profile's `[bindings.<context>]` tables; [`glyph`] labels
+//!   input names per device and pad family.
 
 mod ids;
+mod input;
+mod keymap;
 mod l10n;
 mod list;
 mod mods;
 mod paginate;
+mod rebind;
 pub mod records;
 mod registry;
 mod rich_text;
@@ -43,6 +50,8 @@ mod tests;
 #[cfg(test)]
 mod tests_list;
 #[cfg(test)]
+mod tests_keymap;
+#[cfg(test)]
 mod tests_mods;
 #[cfg(test)]
 mod tests_text;
@@ -50,6 +59,11 @@ mod tests_text;
 pub use ids::{
     ColumnId, InputContextId, ListId, ModId, PresetId, ScreenId, SettingKey, SlotId, TemplateId,
     ThemeId,
+};
+pub use input::{Device, Glyph, Input, InputKind, Mods, Overlap, PadFamily, glyph, overlap};
+pub use keymap::{
+    ActionDef, ActionRef, ActionShape, Conflict, InputValidator, KeybindRow, Keymap, KeymapError,
+    KeymapIssue, Proposal, Resolution, SlotRef,
 };
 pub use l10n::{
     FluentArgs, FluentValue, L10nIssue, L10nSource, LanguageIdentifier, Localizer, negotiate,
@@ -60,6 +74,7 @@ pub use paginate::{
     DocPos, Fragment, LineMetrics, Page, PageFormat, PageView, Pagination, Placed, Size,
     TextMeasure,
 };
+pub use rebind::{CAPTURE_TIMEOUT, CaptureFrame, RebindEvent, Rebinder};
 pub use records::{Layer, register_kinds};
 pub use registry::{Def, Severity, UiConflict, UiRegistry};
 pub use rich_text::{

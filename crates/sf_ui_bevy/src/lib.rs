@@ -6,19 +6,23 @@
 //!   context id (`UiScreenInput`), created on first use. When the stack changes, only the input
 //!   target's context is active; it runs at [`UI_CONTEXT_PRIORITY`], so its bound inputs are
 //!   consumed before gameplay contexts see them (Common UI's activatable-widget rule).
-//! - **Actions** ([`actions`]): named UI actions with keyboard/mouse and gamepad defaults in
-//!   [`UiBindings`]; changing the resource rebinds every UI context (menu open included).
+//! - **Actions** ([`actions`]): named UI actions with keyboard/mouse and gamepad defaults in the
+//!   player's [`UiKeymap`] (`sf_ui::Keymap`); a keymap change rebuilds [`UiBindings`], which
+//!   rebinds every UI context (menu open included).
+//! - **Keybinds** ([`keybinds`]): [`UiRebinder`] captures an input for a keymap slot from this
+//!   frame's keys, buttons and sticks; UI actions stay quiet while it runs.
 //! - **Navigation** ([`nav`]): Bevy's `AutoDirectionalNavigator`, kept to the input target's
 //!   screen by moving the `AutoDirectionalNavigation` marker onto its [`UiFocusable`]s only
 //!   (Bevy's navigation is layer-agnostic), held directions repeat; confirm triggers
 //!   `bevy_ui_widgets::Activate` on the focused entity.
-//! - **Device** ([`device`]): last-used device switches [`InputMode`] the same frame; a small
-//!   glyph table of our own labels the bound input per device.
+//! - **Device** ([`device`]): last-used device switches [`InputMode`] the same frame, and the
+//!   last pad's vendor sets [`GamepadFamily`] for glyphs (`sf_ui::glyph`).
 //! - **Profile** ([`profile`]): [`insert_from_profile`] builds registry, settings, strings and
 //!   bindings from an `sf_mods` profile; changes are saved back when the player leaves the menus.
 
 pub mod actions;
 pub mod device;
+pub mod keybinds;
 pub mod nav;
 pub mod profile;
 pub mod router;
@@ -40,11 +44,13 @@ use sf_ui::{
     Layer, Localizer, OpenScreen, PresetId, ScreenStack, SettingsStore, StackError, ThemeId, UiRegistry,
 };
 
-pub use actions::{UiAction, UiBindings};
-pub use device::{Device, InputMode, glyph};
+pub use actions::{HUD_SCOPE, UiAction, UiBindings, UiKeymap, ui_keymap};
+pub use device::{Device, GamepadFamily, Glyph, InputMode, PadFamily, glyph};
+pub use keybinds::{UiRebindEvent, UiRebinder, ui_input_open};
 pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, held_direction};
 pub use profile::{
     BINDINGS_CONTEXT, UiLoadReport, UiLocales, UiProfile, binding_name, insert_from_profile, parse_binding,
+    parse_inputs, validate_input,
 };
 pub use router::{
     UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts, UiScreenInput, UiScreenRoot,
@@ -140,7 +146,8 @@ impl Default for UiSettings {
 pub enum UiSystems {
     /// Last-used device (`PreUpdate`, before action evaluation).
     Device,
-    /// Stack change → active context; rebinding (`PreUpdate`, before action evaluation).
+    /// Keybind capture; stack change → active context; keymap → bindings → rebinding
+    /// (`PreUpdate`, before action evaluation).
     Route,
     /// Forward fired actions, move focus (`Update`).
     Dispatch,
@@ -162,7 +169,10 @@ impl Plugin for SfUiPlugin {
             .init_resource::<ScreenStackRes>()
             .init_resource::<UiSettings>()
             .init_resource::<InputMode>()
+            .init_resource::<GamepadFamily>()
+            .init_resource::<UiKeymap>()
             .init_resource::<UiBindings>()
+            .init_resource::<UiRebinder>()
             .init_resource::<UiInputContexts>()
             .init_resource::<nav::NavState>()
             .init_resource::<router::FocusMemory>()
@@ -170,6 +180,7 @@ impl Plugin for SfUiPlugin {
             .init_resource::<InputFocus>()
             .init_resource::<AutoNavigationConfig>()
             .add_message::<UiActionEvent>()
+            .add_message::<UiRebindEvent>()
             .add_observer(router::record_activation)
             .add_systems(Last, (router::clear_activations, profile::sync_profile))
             .add_input_context::<UiScreenInput>()
@@ -188,7 +199,12 @@ impl Plugin for SfUiPlugin {
             )
             .add_systems(
                 PreUpdate,
-                (router::route_stack, actions::apply_rebinding)
+                (
+                    keybinds::drive_rebind,
+                    router::route_stack,
+                    actions::apply_keymap,
+                    actions::apply_rebinding,
+                )
                     .chain()
                     .in_set(UiSystems::Route),
             )
@@ -196,8 +212,8 @@ impl Plugin for SfUiPlugin {
                 Update,
                 (
                     router::sync_navigable,
-                    router::dispatch_actions,
-                    nav::navigate,
+                    router::dispatch_actions.run_if(ui_input_open),
+                    nav::navigate.run_if(ui_input_open),
                 )
                     .chain()
                     .in_set(UiSystems::Dispatch),

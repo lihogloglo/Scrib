@@ -5,9 +5,10 @@
 //!   loads setting values, builds the Fluent strings from every mod's
 //!   `l10n/<locale>/<mod id>.ftl` and applies rebound inputs, then inserts the
 //!   resources and a [`UiProfile`] that remembers where to save.
-//! - Rebound UI actions go to `[bindings.ui]` as input names (`key:Enter`,
-//!   `key:Ctrl+KeyS`, `pad:South`, `axis:LeftStickX`, `mouse:Left`); only
-//!   actions that differ from [`UiBindings::default`] are written.
+//! - Rebound actions go to `[bindings.<context>]` as input names (`key:Enter`,
+//!   `key:Ctrl+KeyS`, `pad:South`, `stick:Left`, `mouse:Left`), through
+//!   [`UiKeymap`] (`sf_ui::Keymap::save_to`): only actions and devices that
+//!   differ from the defaults are written (`confirm = { kbm = ["key:Space"] }`).
 //! - Saving follows console and PC convention: changes are written when the
 //!   player leaves the menus (no Menu or Modal screen takes input), or on exit,
 //!   never once per slider step.
@@ -24,14 +25,14 @@ use bevy_reflect::enums::{DynamicEnum, DynamicVariant, Enum, VariantInfo, Varian
 use bevy_reflect::{FromReflect, TypeInfo, Typed};
 use sf_mods::{LoadedProfile, Profile};
 use sf_ui::{
-    L10nIssue, LanguageIdentifier, Layer, Localizer, SettingError, SettingsStore, UiConflict,
-    UiRegistry,
+    KeymapIssue, L10nIssue, LanguageIdentifier, Layer, Localizer, SettingError, SettingsStore,
+    UiConflict, UiRegistry,
 };
 
-use crate::actions::{UiAction, UiBindings};
+use crate::actions::{UiBindings, UiKeymap};
 use crate::{ScreenStackRes, UiLocalizer, UiRegistryRes, UiSettingsStore};
 
-/// Context name of the UI actions in `Profile::bindings`.
+/// Context name of the UI actions in the keymap and `Profile::bindings`.
 pub const BINDINGS_CONTEXT: &str = "ui";
 
 /// The profile the UI saves into, and where.
@@ -52,7 +53,7 @@ pub struct UiLoadReport {
     pub conflicts: Vec<UiConflict>,
     pub strings: Vec<L10nIssue>,
     pub settings: Vec<SettingError>,
-    pub bindings: Vec<String>,
+    pub bindings: Vec<KeymapIssue>,
 }
 
 /// Locale choice for [`insert_from_profile`].
@@ -69,7 +70,9 @@ pub struct UiLocales {
 
 /// Builds the UI resources from `loaded` and inserts them into `world`:
 /// [`UiRegistryRes`], [`UiSettingsStore`] (profile values), [`UiLocalizer`],
-/// [`UiBindings`] (profile overrides on the defaults) and [`UiProfile`].
+/// [`UiKeymap`] (profile overrides on the defaults; actions a game registered
+/// in an existing `UiKeymap` before this call load too), [`UiBindings`] and
+/// [`UiProfile`].
 pub fn insert_from_profile(
     world: &mut World,
     loaded: &LoadedProfile,
@@ -82,18 +85,14 @@ pub fn insert_from_profile(
     let requested: Vec<&str> = locales.requested.iter().map(String::as_str).collect();
     let (localizer, strings) =
         Localizer::from_profile(loaded, &requested, &locales.default, locales.use_isolating);
-    let empty = toml::Table::new();
-    let table = loaded
-        .profile
-        .bindings
-        .get(BINDINGS_CONTEXT)
-        .unwrap_or(&empty);
-    let (bindings, binding_issues) = UiBindings::from_table(table);
+    let mut keymap = world.remove_resource::<UiKeymap>().unwrap_or_default();
+    let binding_issues = keymap.0.load_from(&loaded.profile);
 
     world.insert_resource(UiRegistryRes(registry));
     world.insert_resource(UiSettingsStore(store));
     world.insert_resource(UiLocalizer(localizer));
-    world.insert_resource(bindings);
+    world.insert_resource(UiBindings::from_keymap(&keymap.0));
+    world.insert_resource(keymap);
     world.insert_resource(UiProfile {
         profile: loaded.profile.clone(),
         dir,
@@ -105,63 +104,6 @@ pub fn insert_from_profile(
         strings,
         settings,
         bindings: binding_issues,
-    }
-}
-
-impl UiBindings {
-    /// Profile table of the actions whose bindings differ from the defaults.
-    /// A binding with no input name (an unidentified key) is left out.
-    pub fn to_table(&self) -> toml::Table {
-        let defaults = UiBindings::default();
-        UiAction::ALL
-            .iter()
-            .filter(|a| self.get(**a) != defaults.get(**a))
-            .map(|a| {
-                let names = self
-                    .get(*a)
-                    .iter()
-                    .filter_map(binding_name)
-                    .map(toml::Value::String)
-                    .collect();
-                (a.name().to_owned(), toml::Value::Array(names))
-            })
-            .collect()
-    }
-
-    /// Defaults with the table's actions replaced. Unknown actions, values
-    /// that aren't lists of names, and unknown input names are reported; an
-    /// action with a bad entry keeps the rest of its list.
-    pub fn from_table(table: &toml::Table) -> (Self, Vec<String>) {
-        let mut out = UiBindings::default();
-        let mut issues = Vec::new();
-        for (name, value) in table {
-            let Some(action) = UiAction::from_name(name) else {
-                issues.push(format!(
-                    "[bindings.{BINDINGS_CONTEXT}] unknown action `{name}`"
-                ));
-                continue;
-            };
-            let Some(list) = value.as_array() else {
-                issues.push(format!(
-                    "[bindings.{BINDINGS_CONTEXT}] `{name}` must be a list of input names"
-                ));
-                continue;
-            };
-            let mut bindings = Vec::with_capacity(list.len());
-            for item in list {
-                match item.as_str().map(parse_binding) {
-                    Some(Ok(b)) => bindings.push(b),
-                    Some(Err(e)) => {
-                        issues.push(format!("[bindings.{BINDINGS_CONTEXT}] `{name}`: {e}"));
-                    }
-                    None => issues.push(format!(
-                        "[bindings.{BINDINGS_CONTEXT}] `{name}`: {item} is not a name"
-                    )),
-                }
-            }
-            out.set(action, bindings);
-        }
-        (out, issues)
     }
 }
 
@@ -199,6 +141,28 @@ pub fn binding_name(binding: &Binding) -> Option<String> {
         Binding::AnyKey => "any_key".to_owned(),
         _ => return None,
     })
+}
+
+/// Engine bindings of an input name: [`parse_binding`], plus `stick:Left` /
+/// `stick:Right` (both axes of a stick, for 2D actions).
+pub fn parse_inputs(name: &str) -> Result<Vec<Binding>, String> {
+    Ok(match name {
+        "stick:Left" => vec![
+            GamepadAxis::LeftStickX.into(),
+            GamepadAxis::LeftStickY.into(),
+        ],
+        "stick:Right" => vec![
+            GamepadAxis::RightStickX.into(),
+            GamepadAxis::RightStickY.into(),
+        ],
+        _ => vec![parse_binding(name)?],
+    })
+}
+
+/// The keymap's engine check ([`sf_ui::Keymap::set_validator`]): the name maps
+/// to Bevy inputs.
+pub fn validate_input(name: &str) -> Result<(), String> {
+    parse_inputs(name).map(drop)
 }
 
 /// Parses a name written by [`binding_name`].
@@ -280,7 +244,7 @@ const _: fn() = || {
 pub(crate) fn sync_profile(
     profile: Option<ResMut<UiProfile>>,
     store: Option<Res<UiSettingsStore>>,
-    bindings: Res<UiBindings>,
+    keymap: Res<UiKeymap>,
     stack: Res<ScreenStackRes>,
     mut exit: MessageReader<AppExit>,
 ) {
@@ -289,20 +253,8 @@ pub(crate) fn sync_profile(
     if let Some(store) = store.filter(|s| s.is_changed() && !s.is_added()) {
         profile.dirty |= store.0.save_to(&mut profile.profile);
     }
-    if bindings.is_changed() && !bindings.is_added() {
-        let table = bindings.to_table();
-        let old = profile.profile.bindings.get(BINDINGS_CONTEXT);
-        if old.map_or(!table.is_empty(), |t| *t != table) {
-            if table.is_empty() {
-                profile.profile.bindings.remove(BINDINGS_CONTEXT);
-            } else {
-                profile
-                    .profile
-                    .bindings
-                    .insert(BINDINGS_CONTEXT.to_owned(), table);
-            }
-            profile.dirty = true;
-        }
+    if keymap.is_changed() && !keymap.is_added() {
+        profile.dirty |= keymap.0.save_to(&mut profile.profile);
     }
     let exiting = exit.read().count() > 0;
     let in_menus = matches!(

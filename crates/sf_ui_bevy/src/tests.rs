@@ -213,24 +213,29 @@ fn rebinding_applies_to_open_contexts() {
     h.push("hud");
     h.app.update();
     // Rebind "open menu" to Y (menu open is rebindable too).
-    h.app.world_mut().resource_mut::<UiBindings>().set(
-        UiAction::OpenMenu,
-        vec![GamepadButton::North.into(), KeyCode::Tab.into()],
-    );
+    let mut keymap = h.app.world_mut().resource_mut::<UiKeymap>();
+    let menu = UiAction::OpenMenu.id();
+    keymap
+        .0
+        .set(&menu, Device::Gamepad, &["pad:North"])
+        .unwrap();
+    keymap.0.set(&menu, Device::Kbm, &["key:Tab"]).unwrap();
     h.app.update();
     h.tap(GamepadButton::Start);
     assert_eq!(h.take_seen(), []);
     h.tap(GamepadButton::North);
     assert_eq!(h.take_seen(), [(UiAction::OpenMenu, "hud".to_owned())]);
-    let bindings = h.app.world().resource::<UiBindings>().clone();
+    let keymap = h.app.world().resource::<UiKeymap>();
+    let label = |device, family| glyph(keymap, UiAction::OpenMenu, device, family).map(|g| g.label);
     assert_eq!(
-        glyph(&bindings, UiAction::OpenMenu, Device::Gamepad).as_deref(),
+        label(Device::Gamepad, PadFamily::Xbox).as_deref(),
         Some("Y")
     );
     assert_eq!(
-        glyph(&bindings, UiAction::OpenMenu, Device::Kbm).as_deref(),
-        Some("Tab")
+        label(Device::Gamepad, PadFamily::PlayStation).as_deref(),
+        Some("Triangle")
     );
+    assert_eq!(label(Device::Kbm, PadFamily::Xbox).as_deref(), Some("Tab"));
 }
 
 #[test]
@@ -327,4 +332,110 @@ fn last_used_device_switches_input_mode() {
         });
     h.app.update();
     assert_eq!(h.app.world().resource::<InputMode>().0, Device::Kbm);
+}
+
+#[derive(Resource, Default)]
+struct Rebinds(Vec<sf_ui::RebindEvent>);
+
+#[test]
+fn capture_rebinds_without_firing_ui_actions() {
+    use sf_ui::{RebindEvent, Resolution, SlotRef};
+    let mut h = Harness::new();
+    h.app.init_resource::<Rebinds>().add_systems(
+        Update,
+        |mut r: MessageReader<UiRebindEvent>, mut seen: ResMut<Rebinds>| {
+            seen.0.extend(r.read().map(|e| e.0.clone()));
+        },
+    );
+    let take_rebinds =
+        |h: &mut Harness| std::mem::take(&mut h.app.world_mut().resource_mut::<Rebinds>().0);
+    let start = |h: &mut Harness, action: UiAction| {
+        let world = h.app.world_mut();
+        let keymap = world.resource::<UiKeymap>().clone();
+        let slot = SlotRef {
+            action: action.id(),
+            device: Device::Gamepad,
+            slot: 0,
+        };
+        world
+            .resource_mut::<UiRebinder>()
+            .start(&keymap, slot)
+            .unwrap();
+    };
+    h.push("hud");
+    h.push("menu");
+    h.app.update();
+
+    // The player picks the "open menu" row with A; capture starts while A is held.
+    h.set_button(GamepadButton::South, true);
+    h.app.update();
+    start(&mut h, UiAction::OpenMenu);
+    h.take_seen();
+    h.set_button(GamepadButton::South, false);
+    h.app.update();
+    h.tap(GamepadButton::LeftTrigger2);
+    assert_eq!(
+        take_rebinds(&mut h),
+        [RebindEvent::Applied {
+            slot: SlotRef {
+                action: UiAction::OpenMenu.id(),
+                device: Device::Gamepad,
+                slot: 0
+            },
+            input: "pad:LeftTrigger2".into()
+        }]
+    );
+    assert_eq!(
+        h.take_seen(),
+        [],
+        "the A that opened the capture didn't land"
+    );
+
+    // Capturing B for context 1 collides with back; the menu stays open.
+    start(&mut h, UiAction::Context1);
+    h.app.update();
+    h.set_button(GamepadButton::East, true);
+    h.app.update();
+    assert!(
+        matches!(&take_rebinds(&mut h)[..], [RebindEvent::Conflict(p)] if p.conflicts[0].other == UiAction::Back.id())
+    );
+    assert!(
+        h.app.world().resource::<UiRebinder>().0.blocks_ui(),
+        "B still held"
+    );
+    h.set_button(GamepadButton::East, false);
+    h.app.update();
+    assert_eq!(h.top().as_deref(), Some("menu"));
+    assert_eq!(h.take_seen(), []);
+    let world = h.app.world_mut();
+    world.resource_scope(|world, mut rebinder: Mut<UiRebinder>| {
+        let mut keymap = world.resource_mut::<UiKeymap>();
+        assert!(matches!(
+            rebinder.resolve(&mut keymap, Resolution::Swap),
+            Some(RebindEvent::Applied { .. })
+        ));
+    });
+    h.app.update();
+    let keymap = &h.app.world().resource::<UiKeymap>().0;
+    assert_eq!(
+        keymap.bound(&UiAction::Context1.id(), Device::Gamepad),
+        ["pad:East"]
+    );
+    assert_eq!(
+        keymap.bound(&UiAction::Back.id(), Device::Gamepad),
+        ["pad:West"]
+    );
+
+    // The new bindings drive the engine: X backs out, the left trigger opens the menu.
+    h.tap(GamepadButton::LeftTrigger2);
+    h.tap(GamepadButton::Start);
+    h.tap(GamepadButton::West);
+    assert_eq!(
+        h.take_seen(),
+        [
+            (UiAction::OpenMenu, "menu".to_owned()),
+            (UiAction::Back, "menu".to_owned())
+        ]
+    );
+    assert_eq!(h.top().as_deref(), Some("hud"));
 }

@@ -1,6 +1,6 @@
 [package]
 name = "sf_ui"
-description = "Bevy-free game UI core for superfargoth: UI records and registry, screen stack, view-models, keyed and virtualized list models, settings registry, Fluent strings, rich-text documents and pagination (books, scrolls)"
+description = "Bevy-free game UI core for superfargoth: UI records and registry, screen stack, view-models, keyed and virtualized list models, settings registry, keymap and keybind capture, glyphs, Fluent strings, rich-text documents and pagination (books, scrolls)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

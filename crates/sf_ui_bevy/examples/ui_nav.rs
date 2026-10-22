@@ -18,8 +18,8 @@ use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use sf_records::{RecordDb, RecordFormat, apply_record_file};
 use sf_ui::{Layer, UiRegistry, register_kinds};
 use sf_ui_bevy::{
-    Device, InputMode, ScreenStackRes, SfUiPlugin, UiAction, UiActionEvent, UiBindings,
-    UiDefaultFocus, UiFocusable, UiRegistryRes, UiScreenRoot, glyph,
+    Device, GamepadFamily, InputMode, ScreenStackRes, SfUiPlugin, UiAction, UiActionEvent,
+    UiDefaultFocus, UiFocusable, UiKeymap, UiRegistryRes, UiScreenRoot, glyph,
 };
 
 const SCREENS: &str = r#"
@@ -288,11 +288,16 @@ fn highlight_focus(
 
 fn hud_text(
     mode: Res<InputMode>,
-    bindings: Res<UiBindings>,
+    keymap: Res<UiKeymap>,
+    family: Res<GamepadFamily>,
     mut text: Query<&mut Text, With<HudText>>,
 ) {
     let device = mode.0;
-    let g = |a| glyph(&bindings, a, device).unwrap_or_default();
+    let g = |a| {
+        glyph(&keymap, a, device, family.0)
+            .map(|g| g.label)
+            .unwrap_or_default()
+    };
     for mut text in &mut text {
         text.0 = format!(
             "{:?} | {} menu  {} confirm  {} back  {}/{} tabs  {} map",

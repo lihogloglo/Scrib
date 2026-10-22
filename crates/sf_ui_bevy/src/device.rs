@@ -2,25 +2,23 @@
 //! switches glyphs and focus visuals within the frame; it never swaps layout).
 
 use bevy_ecs::prelude::*;
-use bevy_enhanced_input::prelude::Binding;
 use bevy_input::ButtonState;
-use bevy_input::gamepad::{Gamepad, GamepadAxis, GamepadButton};
-use bevy_input::keyboard::{KeyCode, KeyboardInput};
+use bevy_input::gamepad::{Gamepad, GamepadButton};
+use bevy_input::keyboard::KeyboardInput;
 use bevy_input::mouse::{MouseButtonInput, MouseMotion, MouseWheel};
+pub use sf_ui::{Device, Glyph, PadFamily};
 
-use crate::actions::{UiAction, UiBindings};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Device {
-    #[default]
-    Kbm,
-    Gamepad,
-}
+use crate::actions::{UiAction, UiKeymap};
 
 /// The last-used input device (the root attribute `input=kbm|gamepad` for
 /// stylesheets in U2).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InputMode(pub Device);
+
+/// Family of the last-used gamepad (from its USB vendor id), for glyphs:
+/// the same `pad:South` reads A, Cross or B.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GamepadFamily(pub PadFamily);
 
 /// Stick deflection that counts as gamepad use (ignores drift).
 const AXIS_USE: f32 = 0.5;
@@ -36,8 +34,10 @@ pub(crate) struct PadEdges {
     deflected: Vec<Entity>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn track_input_mode(
     mut mode: ResMut<InputMode>,
+    mut family: ResMut<GamepadFamily>,
     mut keys: MessageReader<KeyboardInput>,
     mut buttons: MessageReader<MouseButtonInput>,
     mut motion: MessageReader<MouseMotion>,
@@ -59,14 +59,19 @@ pub(crate) fn track_input_mode(
     let mut pressed = Vec::new();
     let mut deflected = Vec::new();
     for (entity, gamepad) in &gamepads {
+        let mut used = false;
         for &button in gamepad.get_pressed() {
-            pad |= !edges.pressed.contains(&(entity, button));
+            used |= !edges.pressed.contains(&(entity, button));
             pressed.push((entity, button));
         }
         if gamepad.left_stick().length() > AXIS_USE || gamepad.right_stick().length() > AXIS_USE {
-            pad |= !edges.deflected.contains(&entity);
+            used |= !edges.deflected.contains(&entity);
             deflected.push(entity);
         }
+        if used && let Some(vendor) = gamepad.vendor_id() {
+            family.set_if_neq(GamepadFamily(PadFamily::from_vendor_id(vendor)));
+        }
+        pad |= used;
     }
     *edges = PadEdges { pressed, deflected };
     // Both in one frame: the gamepad wins (mouse jitter is common, a stray
@@ -83,62 +88,14 @@ pub(crate) fn track_input_mode(
     }
 }
 
-/// Label of the first input bound to `action` on `device` (our own small
-/// table, Xbox-style names; icon atlases per pad family come with the widget
-/// kit, U3). `None` when nothing on that device is bound.
-pub fn glyph(bindings: &UiBindings, action: UiAction, device: Device) -> Option<String> {
-    bindings.get(action).iter().find_map(|b| match (device, b) {
-        (Device::Gamepad, Binding::GamepadButton(button)) => Some(pad_button(*button).to_owned()),
-        (Device::Gamepad, Binding::GamepadAxis(axis)) => Some(pad_axis(*axis).to_owned()),
-        (Device::Kbm, Binding::Keyboard { key, .. }) => Some(key_name(*key)),
-        (Device::Kbm, Binding::MouseButton { button, .. }) => Some(format!("Mouse {button:?}")),
-        _ => None,
-    })
-}
-
-fn pad_button(button: GamepadButton) -> &'static str {
-    use GamepadButton as G;
-    match button {
-        G::South => "A",
-        G::East => "B",
-        G::West => "X",
-        G::North => "Y",
-        G::LeftTrigger => "LB",
-        G::RightTrigger => "RB",
-        G::LeftTrigger2 => "LT",
-        G::RightTrigger2 => "RT",
-        G::Select => "View",
-        G::Start => "Menu",
-        G::LeftThumb => "LS",
-        G::RightThumb => "RS",
-        G::DPadUp => "D-pad Up",
-        G::DPadDown => "D-pad Down",
-        G::DPadLeft => "D-pad Left",
-        G::DPadRight => "D-pad Right",
-        _ => "?",
-    }
-}
-
-fn pad_axis(axis: GamepadAxis) -> &'static str {
-    match axis {
-        GamepadAxis::LeftStickX | GamepadAxis::LeftStickY => "Left Stick",
-        GamepadAxis::RightStickX | GamepadAxis::RightStickY => "Right Stick",
-        _ => "?",
-    }
-}
-
-fn key_name(key: KeyCode) -> String {
-    match key {
-        KeyCode::Escape => "Esc".to_owned(),
-        KeyCode::ArrowUp => "Up".to_owned(),
-        KeyCode::ArrowDown => "Down".to_owned(),
-        KeyCode::ArrowLeft => "Left".to_owned(),
-        KeyCode::ArrowRight => "Right".to_owned(),
-        other => {
-            let name = format!("{other:?}");
-            name.strip_prefix("Key")
-                .or_else(|| name.strip_prefix("Digit"))
-                .map_or_else(|| name.clone(), str::to_owned)
-        }
-    }
+/// Glyph of the first input bound to `action` on `device`, for the pad
+/// family (labels and icon ids from `sf_ui::glyph`; icon atlases per family
+/// come with the widget kit, U3). `None` when nothing on that device is bound.
+pub fn glyph(
+    keymap: &UiKeymap,
+    action: UiAction,
+    device: Device,
+    family: PadFamily,
+) -> Option<Glyph> {
+    keymap.glyph(action, device, family)
 }
