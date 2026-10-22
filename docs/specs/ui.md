@@ -357,6 +357,8 @@ gamepad, a link cursor moves through links in reading order using `run_geometry`
 shows focus with `TextBackgroundColor`; the topic list beside the text is a normal focusable
 list, which is also how screen readers reach links (spans have no AccessKit nodes).
 
+**Books, scrolls and notes**: rich-text documents and pagination are in [ui-text.md](ui-text.md).
+
 **World-space UI**: nameplates, markers and prompts are screen-space nodes anchored to
 entities, positioned in `UiSystems` after transform propagation (same frame); diegetic surfaces
 render UI to a texture (`UiTargetCamera` on an image, `ViewportNode` picking).
