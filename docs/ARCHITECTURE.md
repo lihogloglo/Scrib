@@ -181,7 +181,9 @@ Built so far (M0): `sf_vfs`, `sf_records`, `sf_mods`.
 ### 5.4 Tools
 
 `sf_viewer` (asset and record browser), `sf_bake` (CLI around the asset
-processor: HLOD, impostors, navmesh, terrain tiles), and benchmark scenes.
+processor: HLOD, impostors, navmesh, terrain tiles), benchmark scenes, and the dev
+console (`sf_console` + `sf_console_bevy`, spec `specs/console.md`: typed variables and
+commands every plugin registers, live switches).
 
 ## 6. Mod system
 

@@ -152,6 +152,8 @@ sf_action_bevy = { path = "crates/sf_action_bevy", version = "0.1.0" }
 sf_camera = { path = "crates/sf_camera", version = "0.1.0" }
 sf_rpg = { path = "crates/sf_rpg", version = "0.1.0" }
 sf_ids = { path = "crates/sf_ids", version = "0.1.0" }
+sf_console = { path = "crates/sf_console", version = "0.1.0" }
+sf_console_bevy = { path = "crates/sf_console_bevy", version = "0.1.0" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
 # "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.
