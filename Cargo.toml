@@ -107,50 +107,51 @@ ufbx = "0.11.5"
 # Same version Bevy 0.20 renders with. Dev-dependency only: headless GPU twin tests (sf_wind).
 wgpu = { version = "30", default-features = false }
 
-sf_bake = { path = "crates/sf_bake" }
-sf_coords = { path = "crates/sf_coords" }
-sf_diag = { path = "crates/sf_diag" }
-sf_diag_bevy = { path = "crates/sf_diag_bevy" }
-sf_model = { path = "crates/sf_model" }
-sf_model_bevy = { path = "crates/sf_model_bevy" }
-sf_vfs = { path = "crates/sf_vfs" }
-sf_records = { path = "crates/sf_records" }
-sf_audio = { path = "crates/sf_audio" }
-sf_audio_bevy = { path = "crates/sf_audio_bevy" }
-sf_sky = { path = "crates/sf_sky" }
-sf_mods = { path = "crates/sf_mods" }
-sf_world = { path = "crates/sf_world" }
-sf_terrain = { path = "crates/sf_terrain" }
-sf_terrain_bevy = { path = "crates/sf_terrain_bevy" }
-sf_lod = { path = "crates/sf_lod" }
-sf_lod_bevy = { path = "crates/sf_lod_bevy" }
-sf_anim = { path = "crates/sf_anim", default-features = false }
-sf_anim_graph = { path = "crates/sf_anim_graph" }
-sf_controller = { path = "crates/sf_controller" }
-sf_character = { path = "crates/sf_character" }
-sf_anim_bevy = { path = "crates/sf_anim_bevy" }
-sf_character_bevy = { path = "crates/sf_character_bevy" }
-sf_controller_bevy = { path = "crates/sf_controller_bevy" }
-sf_physics = { path = "crates/sf_physics" }
-sf_physics_bevy = { path = "crates/sf_physics_bevy" }
-sf_ragdoll = { path = "crates/sf_ragdoll" }
-sf_script = { path = "crates/sf_script" }
-sf_water = { path = "crates/sf_water" }
-sf_water_bevy = { path = "crates/sf_water_bevy" }
-sf_wind = { path = "crates/sf_wind" }
-sf_atmos = { path = "crates/sf_atmos" }
-sf_weather = { path = "crates/sf_weather" }
-sf_weather_bevy = { path = "crates/sf_weather_bevy" }
-sf_precip_bevy = { path = "crates/sf_precip_bevy" }
-sf_script_bevy = { path = "crates/sf_script_bevy" }
-sf_ui = { path = "crates/sf_ui" }
-sf_ui_bevy = { path = "crates/sf_ui_bevy" }
-sf_ui_css = { path = "crates/sf_ui_css" }
-sf_action = { path = "crates/sf_action" }
-sf_action_bevy = { path = "crates/sf_action_bevy" }
-sf_camera = { path = "crates/sf_camera" }
-sf_rpg = { path = "crates/sf_rpg" }
-sf_ids = { path = "crates/sf_ids" }
+# Our crates: `version` matches `workspace.package.version` (cargo-deny `wildcards`; crates.io needs it).
+sf_bake = { path = "crates/sf_bake", version = "0.1.0" }
+sf_coords = { path = "crates/sf_coords", version = "0.1.0" }
+sf_diag = { path = "crates/sf_diag", version = "0.1.0" }
+sf_diag_bevy = { path = "crates/sf_diag_bevy", version = "0.1.0" }
+sf_model = { path = "crates/sf_model", version = "0.1.0" }
+sf_model_bevy = { path = "crates/sf_model_bevy", version = "0.1.0" }
+sf_vfs = { path = "crates/sf_vfs", version = "0.1.0" }
+sf_records = { path = "crates/sf_records", version = "0.1.0" }
+sf_audio = { path = "crates/sf_audio", version = "0.1.0" }
+sf_audio_bevy = { path = "crates/sf_audio_bevy", version = "0.1.0" }
+sf_sky = { path = "crates/sf_sky", version = "0.1.0" }
+sf_mods = { path = "crates/sf_mods", version = "0.1.0" }
+sf_world = { path = "crates/sf_world", version = "0.1.0" }
+sf_terrain = { path = "crates/sf_terrain", version = "0.1.0" }
+sf_terrain_bevy = { path = "crates/sf_terrain_bevy", version = "0.1.0" }
+sf_lod = { path = "crates/sf_lod", version = "0.1.0" }
+sf_lod_bevy = { path = "crates/sf_lod_bevy", version = "0.1.0" }
+sf_anim = { path = "crates/sf_anim", version = "0.1.0", default-features = false }
+sf_anim_graph = { path = "crates/sf_anim_graph", version = "0.1.0" }
+sf_controller = { path = "crates/sf_controller", version = "0.1.0" }
+sf_character = { path = "crates/sf_character", version = "0.1.0" }
+sf_anim_bevy = { path = "crates/sf_anim_bevy", version = "0.1.0" }
+sf_character_bevy = { path = "crates/sf_character_bevy", version = "0.1.0" }
+sf_controller_bevy = { path = "crates/sf_controller_bevy", version = "0.1.0" }
+sf_physics = { path = "crates/sf_physics", version = "0.1.0" }
+sf_physics_bevy = { path = "crates/sf_physics_bevy", version = "0.1.0" }
+sf_ragdoll = { path = "crates/sf_ragdoll", version = "0.1.0" }
+sf_script = { path = "crates/sf_script", version = "0.1.0" }
+sf_water = { path = "crates/sf_water", version = "0.1.0" }
+sf_water_bevy = { path = "crates/sf_water_bevy", version = "0.1.0" }
+sf_wind = { path = "crates/sf_wind", version = "0.1.0" }
+sf_atmos = { path = "crates/sf_atmos", version = "0.1.0" }
+sf_weather = { path = "crates/sf_weather", version = "0.1.0" }
+sf_weather_bevy = { path = "crates/sf_weather_bevy", version = "0.1.0" }
+sf_precip_bevy = { path = "crates/sf_precip_bevy", version = "0.1.0" }
+sf_script_bevy = { path = "crates/sf_script_bevy", version = "0.1.0" }
+sf_ui = { path = "crates/sf_ui", version = "0.1.0" }
+sf_ui_bevy = { path = "crates/sf_ui_bevy", version = "0.1.0" }
+sf_ui_css = { path = "crates/sf_ui_css", version = "0.1.0" }
+sf_action = { path = "crates/sf_action", version = "0.1.0" }
+sf_action_bevy = { path = "crates/sf_action_bevy", version = "0.1.0" }
+sf_camera = { path = "crates/sf_camera", version = "0.1.0" }
+sf_rpg = { path = "crates/sf_rpg", version = "0.1.0" }
+sf_ids = { path = "crates/sf_ids", version = "0.1.0" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
 # "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.

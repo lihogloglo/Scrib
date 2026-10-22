@@ -14,11 +14,11 @@ bevy_platform = { workspace = true, features = ["std"] }
 # Counters (`weather/...`) when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true
 # Clouds and Fog (the settings the frame drives).
-sf_atmos_bevy = { path = "../sf_atmos_bevy" }
+sf_atmos_bevy = { path = "../sf_atmos_bevy", version = "0.1.0" }
 # SkyTime (the game clock), SkyConfig (calendar), WeatherState (the sky medium).
-sf_sky_bevy = { path = "../sf_sky_bevy" }
+sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 sf_weather.workspace = true
-sf_wind_bevy = { path = "../sf_wind_bevy" }
+sf_wind_bevy = { path = "../sf_wind_bevy", version = "0.1.0" }
 smallvec.workspace = true
 # Part 2b: the precipitation it drives, the lightning light, real time for
 # flashes and thunder delays, sound ids.

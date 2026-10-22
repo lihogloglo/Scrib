@@ -52,7 +52,7 @@ glam.workspace = true
 log.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy.workspace = true
-sf_model = { path = "../sf_model", default-features = false }
+sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
 sf_model_bevy.workspace = true
 sf_vfs.workspace = true
 sf_world.workspace = true
