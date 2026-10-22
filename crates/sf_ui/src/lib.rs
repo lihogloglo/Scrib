@@ -16,7 +16,8 @@
 //! - [`VirtualList`]: scroll, keyed focus and a recycled row pool over a
 //!   `ListModel`, so thousands of rows cost a few dozen widgets.
 //! - [`SettingsStore`]: typed setting values over the registry's
-//!   `ui.setting` records, read from and written to profile tables.
+//!   `ui.setting` records and the framework's built-ins (the audio page's
+//!   volumes and mutes), read from and written to profile tables.
 //! - [`Localizer`]: Fluent strings from every mod in load order, with a
 //!   locale fallback chain, built from each mod's `l10n/<locale>/<mod id>.ftl`
 //!   ([`l10n_sources`]); settings load from and save to the `sf_mods` profile.
@@ -80,7 +81,10 @@ pub use registry::{Def, Severity, UiConflict, UiRegistry};
 pub use rich_text::{
     Align, Block, ImageRef, Inline, OBJECT_REPLACEMENT, Paragraph, Rgba8, RichDoc, RunStyle,
 };
-pub use settings::{SettingError, SettingValue, SettingsStore};
+pub use settings::{
+    AUDIO_BUSES, AUDIO_VOLUME_STEP, SettingError, SettingValue, SettingsStore, audio_muted_key,
+    audio_volume_key,
+};
 pub use stack::{OpenScreen, ScreenStack, StackError};
 pub use view_model::{UiValue, ViewModel};
 pub use virtual_list::{ListFrame, RowBinding, VirtualList};

@@ -7,6 +7,11 @@
 //! curve from `sf_audio::Attenuation`; Bevy's `SpatialListener` (the host puts it on the camera)
 //! only pans them. Every start and stop is an [`AudioEvent`] message and an `info!` line (agents
 //! cannot hear; the log is the headless check).
+//!
+//! The player's volume mixer: [`AudioVolumes`] (per-bus slider levels and mutes through
+//! `sf_audio`'s perceptual curve) and [`AudioDucking`] (rules and host holds) write the mixer
+//! each frame. The `settings` feature's `settings::SettingsAudioPlugin` feeds the volumes from
+//! the settings store (`sf_ui_bevy`), which persists them in the profile.
 
 use std::collections::BTreeMap;
 
@@ -22,14 +27,17 @@ use bevy_math::Vec3;
 use bevy_time::{Real, Time};
 use bevy_transform::components::{GlobalTransform, Transform};
 use sf_audio::{
-    AmbienceLayers, Attenuation, Bus, Cue, CueBank, FADE_S, LoopChange, Mixer, MusicCommand, MusicPlayer,
-    MusicVoiceId, OUTDOOR_FADE_S, OneShotScheduler, SoundBank, equal_power, fade_toward, reconcile_loops,
+    AmbienceLayers, Attenuation, Bus, Cue, CueBank, Ducker, FADE_S, LoopChange, Mixer, MusicCommand, MusicPlayer,
+    MusicVoiceId, OUTDOOR_FADE_S, OneShotScheduler, SoundBank, VolumeSettings, equal_power, fade_toward,
+    reconcile_loops,
 };
 use sf_records::RecordId;
 
 mod contacts;
 #[cfg(feature = "physics")]
 pub mod physics;
+#[cfg(feature = "settings")]
+pub mod settings;
 #[cfg(feature = "weather")]
 pub mod weather;
 
@@ -41,6 +49,16 @@ pub const MAX_ONE_SHOTS: usize = 64;
 /// The bus mixer (change a bus volume here; voices follow within a frame).
 #[derive(Resource, Default, Clone, Debug)]
 pub struct AudioMixer(pub Mixer);
+
+/// The player's volume settings (slider levels and mutes per bus); written into [`AudioMixer`]
+/// when changed. A settings menu (or `settings::SettingsAudioPlugin`) writes this, not the mixer.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct AudioVolumes(pub VolumeSettings);
+
+/// Ducking rules and holds (audio.md "Volume mixer"): add rules (speech ducking music), switch
+/// named holds from game state (`set_hold("menu", true)`). Bus triggers follow the playing voices.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct AudioDucking(pub Ducker);
 
 /// Whether the listener is under the open sky (the host sets it from the active worldspace).
 /// Indoors the mixer's outdoor exposure eases to 0: weather loops and thunder go silent, no
@@ -188,6 +206,8 @@ impl Plugin for SfAudioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AudioMixer>()
             .init_resource::<ListenerOutdoors>()
+            .init_resource::<AudioVolumes>()
+            .init_resource::<AudioDucking>()
             .init_resource::<AudioCues>()
             .init_resource::<AmbienceLoops>()
             .init_resource::<Music>()
@@ -203,6 +223,7 @@ impl Plugin for SfAudioPlugin {
             .add_systems(
                 Update,
                 (
+                    apply_volumes,
                     ease_outdoor,
                     route_bus_sounds,
                     schedule_one_shot_sets,
@@ -211,6 +232,7 @@ impl Plugin for SfAudioPlugin {
                     play_cues,
                     start_emitters,
                     drive_music,
+                    duck_buses,
                     fade_voices,
                     log_events,
                 )
@@ -506,6 +528,38 @@ fn drive_music(
         if let (Some(mut sink), Some(level)) = (sink, levels.get(&v.0)) {
             sink.set_volume(Volume::Linear(mixer.0.gain(Bus::Music, equal_power(*level), 1.0)));
         }
+    }
+}
+
+/// Writes the player's volumes into the mixer when they change.
+fn apply_volumes(volumes: Res<AudioVolumes>, mut mixer: ResMut<AudioMixer>) {
+    if volumes.is_changed() {
+        volumes.0.apply(&mut mixer.0);
+    }
+}
+
+/// Advances the duck envelopes from the buses that sound now (any voice with a level, any
+/// music voice) and the host's holds, and writes the duck gains into the mixer.
+fn duck_buses(
+    time: Res<Time<Real>>,
+    mut ducking: ResMut<AudioDucking>,
+    voices: Query<&Voice>,
+    music: Res<Music>,
+    mut mixer: ResMut<AudioMixer>,
+) {
+    if ducking.0.rules().is_empty() {
+        return;
+    }
+    let mut playing = [false; Bus::COUNT];
+    for v in &voices {
+        playing[v.bus as usize] |= v.level > 0.0;
+    }
+    playing[Bus::Music as usize] |= music.0.voices().any(|(_, level)| level > 0.0);
+    ducking.0.tick(time.delta_secs(), |bus| playing[bus as usize]);
+    let mut next = mixer.0.clone();
+    ducking.0.apply(&mut next);
+    if next != mixer.0 {
+        mixer.0 = next;
     }
 }
 

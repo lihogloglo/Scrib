@@ -315,6 +315,9 @@ What the code does where it differs from the sketches above. Details, tests and 
   `sf_ui_content`, screen roots carry the preset/theme/a11y classes and `input=kbm|gamepad`, and
   each sheet is also probed alone to attribute errors to their mod (`UiCssReport`). Hot reload
   needs no extra code.
+- **Built-in settings** (2026-10-22): framework settings without records, like the presets (owner `sf`,
+  values in `[settings.sf]`): the audio page's volume slider and mute per bus (`AUDIO_BUSES`,
+  `audio_volume_key`/`audio_muted_key`; audio.md "Volume mixer"). A record with a built-in's id retunes it.
 - **Not done yet**: the game app doesn't call `insert_from_profile`; `UiSettings` isn't fed from
   `ui.setting` values; PlayStation/Switch glyph names; widgets (U3) and Lua (parked).
 

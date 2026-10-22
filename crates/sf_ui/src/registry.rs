@@ -11,7 +11,7 @@ use crate::records::{
     ColumnDef, PresetDef, ScreenDef, SettingDef, SettingKind, SlotContribution, ThemeDef,
 };
 
-/// Mod id of the built-in definitions (presets the framework ships).
+/// Mod id of the built-in definitions (presets and settings the framework ships).
 pub const FRAMEWORK_MOD: &str = "sf";
 
 /// A resolved record: id, owning mod, load position, and value.
@@ -226,10 +226,34 @@ impl UiRegistry {
             list.sort_by_key(|d| (d.def.priority, d.source));
         }
 
-        for d in collect::<SettingDef, _>(db, SettingKey::new) {
+        reg.add_settings(db, &mut conflicts);
+
+        (reg, conflicts)
+    }
+
+    /// Built-in settings, then `ui.setting` records (invalid ones dropped
+    /// with an error; a record with a built-in's id retunes it).
+    fn add_settings(&mut self, db: &RecordDb, conflicts: &mut Vec<UiConflict>) {
+        for (id, def) in SettingDef::builtins() {
+            self.settings.insert(
+                id.clone(),
+                Def {
+                    id,
+                    owner: ModId::from(FRAMEWORK_MOD),
+                    source: None,
+                    def,
+                },
+            );
+        }
+        for mut d in collect::<SettingDef, _>(db, SettingKey::new) {
             match validate_setting(&d.def.kind) {
                 Ok(()) => {
-                    reg.settings.insert(d.id.clone(), d);
+                    // A mod retuning a built-in setting doesn't move its value out
+                    // of `[settings.sf]`; `source` still names the mod.
+                    if self.settings.get(&d.id).is_some_and(|b| b.source.is_none()) {
+                        d.owner = ModId::from(FRAMEWORK_MOD);
+                    }
+                    self.settings.insert(d.id.clone(), d);
                 }
                 Err(reason) => conflicts.push(UiConflict::InvalidSetting {
                     key: d.id,
@@ -238,8 +262,6 @@ impl UiRegistry {
                 }),
             }
         }
-
-        (reg, conflicts)
     }
 
     pub fn screen(&self, id: &str) -> Option<&Def<ScreenId, ScreenDef>> {

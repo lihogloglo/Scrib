@@ -5974,6 +5974,8 @@ dependencies = [
  "sf_coords",
  "sf_physics_bevy",
  "sf_records",
+ "sf_ui",
+ "sf_ui_bevy",
  "sf_weather_bevy",
  "sf_world",
  "sf_world_bevy",
