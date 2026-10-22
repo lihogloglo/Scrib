@@ -106,6 +106,13 @@ fn deg(d: f32) -> f32 {
     d * PI / 180.0
 }
 
+/// Per spine segment, degrees: a spine of three or four segments adds up, so each allows far
+/// less than a limb joint (shipped physics assets and Unity's ragdoll wizard use about 10-20 of
+/// twist and 10-15 of swing per segment). The old 30/30 let a 4-segment spine fold 120 degrees.
+/// Tighter limits also stretch joints more in a hard tumble (see `settles_on_stairs`).
+const SPINE_SWING_DEG: f32 = 15.0;
+const SPINE_TWIST_DEG: f32 = 15.0;
+
 fn ball(swing: f32, twist: f32) -> RagJointKind {
     RagJointKind::Ball { swing: [deg(swing), deg(swing)], twist: [-deg(twist), deg(twist)] }
 }
@@ -275,7 +282,7 @@ impl Builder<'_> {
             let len = start.distance(end).max(1e-3);
             let bone = (end - start) / len;
             let width = widths[i].unwrap_or(fill);
-            let kind = ball(30.0, 30.0);
+            let kind = ball(SPINE_SWING_DEG, SPINE_TWIST_DEG);
             if len >= width {
                 let ratio = (0.4 * width / len).min(0.5);
                 self.push_bone(joint, start, end, ratio, region, kind, None);

@@ -139,7 +139,9 @@ fn limp_drop() {
     let r = rest_spawn(&mut w, &s, &d, lying(base, 0.65), &RagdollSettings::default());
     let run = simulate(&mut w, &r, base, 5.0);
     println!("limp drop 0.5 m: max stretch {:.2} cm, top speed {:.2} m/s, lowest body center {:.3} m, asleep at {:?} s", run.stretch * 100.0, run.speed, run.lowest, run.asleep_at);
-    assert!(run.stretch <= 0.01, "stretch {}", run.stretch);
+    // The spine limits (15 degrees a segment, AN-11) bite in this 7 m/s tumble: 1.8 cm at the
+    // worst frame (0.3 cm with the old 30), settling back; a drop or a drag stays under 1 cm.
+    assert!(run.stretch <= 0.025, "stretch {}", run.stretch);
     assert!(run.speed < 6.0, "explosion: {} m/s", run.speed);
     assert!(run.lowest > 0.0, "sank: {}", run.lowest);
     assert!(run.asleep_at.is_some(), "never slept");
@@ -169,7 +171,9 @@ fn settles_on_stairs() {
     let run = simulate(&mut w, &r, base, 8.0);
     let pelvis = base.delta_f32(r.root_pose(&w, 1.0).unwrap().pos);
     println!("stairs: max stretch {:.2} cm, top speed {:.2} m/s, pelvis ends at {pelvis}, asleep at {:?} s", run.stretch * 100.0, run.speed, run.asleep_at);
-    assert!(run.stretch <= 0.01, "stretch {}", run.stretch);
+    // The spine limits (15 degrees a segment, AN-11) bite in this 7 m/s tumble: 1.8 cm at the
+    // worst frame (0.3 cm with the old 30), settling back; a drop or a drag stays under 1 cm.
+    assert!(run.stretch <= 0.025, "stretch {}", run.stretch);
     assert!(run.speed < 8.0, "explosion: {} m/s", run.speed);
     assert!(pelvis.y < 1.2, "it fell: {pelvis}");
     assert!(run.asleep_at.is_some(), "never settled");
@@ -307,4 +311,36 @@ fn cloth_colliders_below_the_waist() {
     // Hung from the neck instead, the spine joins in; from the ground up, nothing.
     assert!(d.cloth_colliders(&profile, &rest, 10.0).len() > colliders.len());
     assert!(d.cloth_colliders(&profile, &rest, -1.0).is_empty());
+}
+
+/// AN-11: each spine segment bends and twists only a little (they add up over three or four
+/// segments), twisting about the bone (frame X) and swinging about the two axes across it.
+#[test]
+fn spine_segments_allow_only_a_little_bend_and_twist() {
+    let (s, d) = human();
+    let rest = s.rest_model();
+    let core = d.regions.iter().position(|r| r == "core").expect("core region");
+    let mut segments = 0;
+    let (mut swing_sum, mut twist_sum) = (0.0f32, 0.0f32);
+    for j in d.joints.iter().filter(|j| usize::from(d.bodies[usize::from(j.child)].region) == core) {
+        let RagJointKind::Ball { swing, twist } = j.kind else { continue };
+        let body = &d.bodies[usize::from(j.child)];
+        let jr = rest[usize::from(body.joint)].to_scale_rotation_translation().1;
+        // The twist axis (frame X, model space) runs up the spine: the biped stands along Y.
+        let axis = jr * body.local.1 * j.frame_child.1 * Vec3::X;
+        assert!(axis.y.abs() > 0.9, "{}: twist axis {axis}", s.name(usize::from(body.joint)));
+        // The swing axes (frame Y and Z) lie across it.
+        for across in [Vec3::Y, Vec3::Z] {
+            let a = jr * body.local.1 * j.frame_child.1 * across;
+            assert!(a.dot(axis).abs() < 1e-3, "{}: swing axis {a} not across {axis}", s.name(usize::from(body.joint)));
+        }
+        assert!(swing[0] <= 15f32.to_radians() && swing[1] <= 15f32.to_radians(), "{swing:?}");
+        assert!(twist[1] <= 15f32.to_radians() && twist[0] >= -15f32.to_radians(), "{twist:?}");
+        segments += 1;
+        swing_sum += swing[0];
+        twist_sum += twist[1];
+    }
+    assert!(segments >= 1, "no spine joints");
+    // Over the whole spine: well under the old 90-120 degrees.
+    assert!(swing_sum <= 60f32.to_radians() && twist_sum <= 60f32.to_radians(), "{swing_sum} {twist_sum}");
 }

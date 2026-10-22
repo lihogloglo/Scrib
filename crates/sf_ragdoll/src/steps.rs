@@ -34,7 +34,7 @@ impl Step for RagdollCookStep {
         RAGDOLL_COOK
     }
     fn version(&self) -> u32 {
-        1
+        2 // 2: spine joints 15/15 degrees a segment (AN-11)
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         cx.product(SKELETON_COOK, subject).product(RIG_PROFILE, subject);

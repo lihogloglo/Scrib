@@ -67,7 +67,7 @@ AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the ca
 - **AN-10 Get-up spin:** fixed AF2-3 (`ROLL_TO_BACK` rolled face-down bodies about the frame's up axis, a 180° heading flip; now about the root body's long axis). no horizontal slide anymore, but characters often spin fast between the lying pose
   and the first frame of the stand-up clip (heading mismatch between the ragdoll and the clip's start).
 - **AN-11 Ragdoll torso:** the torso rotates freely with the hips and bends unnaturally; check every joint's
-  constraint (limits, axes, twist/swing, spine chain).
+  constraint (limits, axes, twist/swing, spine chain). **Fixed (run 2, awaiting owner):** axes were right (AngX = twist about the bone, AngY/Z = swing across it); the spine allowed 30/30 degrees per segment, now 15/15 (`sf_ragdoll` cook, `ragdoll.cook` v2); test `spine_segments_allow_only_a_little_bend_and_twist`.
 - **AN-12 Guar box too small** (not tall enough). Creature shapes must fit their models.
 - **AN-13 Guar hit by the ball loops forever** fixed AF2-1 (no `Knockout@tail`: `knockout_end` dropped with its transitions, so `knockout` had no exit; it now exits to locomotion when the flag clears) between falling and standing up.
 - **AN-14 Dead stays dead:** fixed AF2-1 (a live knockdown ragdoll ignored the host's replaced death request; it now goes to the controller's terminal Dead). an actor killed while knocked down must not stand up.
