@@ -1,0 +1,12 @@
+[package]
+name = "sf_console"
+description = "Bevy-free dev console core for superfargoth: command registry with typed args, named variables, completion, history, output log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

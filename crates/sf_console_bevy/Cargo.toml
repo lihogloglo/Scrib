@@ -1,0 +1,17 @@
+[package]
+name = "sf_console_bevy"
+description = "Bevy plugin for sf_console: the console as a resource, submitted lines as messages, variable changes as messages, run conditions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): no UI here, the front end (sf_devui) comes later.
+[dependencies]
+# App, Plugin, PreUpdate.
+bevy_app = { workspace = true, features = ["std"] }
+# Resource, Message, exclusive system, run conditions.
+bevy_ecs = { workspace = true, features = ["std"] }
+sf_console.workspace = true
+
+[lints]
+workspace = true

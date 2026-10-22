@@ -1508,3 +1508,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   the planted foot), not at runtime; SpeedMatch splits a speed change between rate and stride (`rate_share`, MW 0.3).
 - 2026-10-22 (AN-18/20): ragdoll joint limits hold by conditioning, not stiffness: core bodies at least their heaviest
   child, inertia floors on core and end bodies only, drive gains from the floored inertia; anatomical asymmetric cones.
+- 2026-10-22 (dev console core, 1.13): own Bevy-free `sf_console` (typed variables + commands, one namespace, completion,
+  history, log) + thin `sf_console_bevy` (changes as messages, `console_flag` run condition). `bevy_console`/`bevy_minibuffer`
+  rejected: full `bevy` + egui/clap, no typed variables. Variables are local dev state, never replicated (`console.md`).

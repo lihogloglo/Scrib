@@ -6048,6 +6048,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_console"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_console_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "sf_console",
+]
+
+[[package]]
 name = "sf_controller"
 version = "0.1.0"
 dependencies = [
