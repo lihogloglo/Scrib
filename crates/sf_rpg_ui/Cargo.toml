@@ -1,0 +1,19 @@
+[package]
+name = "sf_rpg_ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free view-models for RPG screens: the journal (paged book, quests, topic index, search, new markers)"
+
+[dependencies]
+serde.workspace = true
+sf_rpg.workspace = true
+# `ListModel` / `ViewModel` for the quest list and topic index.
+sf_ui.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true
