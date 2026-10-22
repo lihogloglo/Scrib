@@ -22,6 +22,8 @@ pub struct Fired {
     pub clip: String,
     pub name: String,
     pub payload: String,
+    /// Weight of the clip that fired it.
+    pub weight: f32,
     pub edge: EventEdge,
     pub montage: Option<MontageId>,
 }
@@ -109,7 +111,7 @@ impl Sim {
                     (self.graph.clips[c].reference.clone(), payload)
                 };
                 let name = self.graph.events[usize::from(e.id)].clone();
-                self.events.push(Fired { time: self.time, clip, name, payload, edge: e.edge, montage: e.montage });
+                self.events.push(Fired { time: self.time, clip, name, payload, weight: e.weight, edge: e.edge, montage: e.montage });
             }
         }
     }

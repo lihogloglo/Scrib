@@ -324,6 +324,8 @@ struct Setup {
     params: MoverParams,
     mode: MoverMode,
     wander: Option<(Wander, f32)>,
+    /// Size the capsule from the dressed body's bind-pose bounds (`params` is the fallback).
+    fit_to_body: bool,
 }
 
 fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
@@ -345,6 +347,7 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
             params: MoverParams::default(),
             mode: MoverMode::Ground,
             wander,
+            fit_to_body: false,
         };
     }
     if let Some(c) = content.db.get::<Creature>(id) {
@@ -369,7 +372,8 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
         } else {
             MoverMode::Ground
         };
-        // Creature capsules scale with the record's scale; size by model bounds is the next step.
+        // Fallback until the body is dressed: the record's scale on a human-ish column. `attach` fits
+        // the capsule to the model's bind-pose bounds (AN-8: a fixed 0.4 m column swallowed no mudcrab).
         let s = c.scale.unwrap_or(1.0).clamp(0.3, 3.0);
         let params = MoverParams {
             radius: 0.4 * s,
@@ -380,12 +384,14 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
             params,
             mode,
             wander,
+            fit_to_body: true,
         };
     }
     Setup {
         params: MoverParams::default(),
         mode: MoverMode::Ground,
         wander: None,
+        fit_to_body: false,
     }
 }
 
@@ -409,18 +415,30 @@ fn attach(
         };
         let position = location.pos;
         let setup = setup_of(&content, id);
+        let body_scale = bodies.get(body.body).map_or(Vec3::ONE, |t| t.scale);
+        let mut params = setup.params;
+        if setup.fit_to_body
+            && let Some((lo, hi)) = body.outfit.bind_bounds
+        {
+            params = MoverParams::from_bounds(lo * body_scale, hi * body_scale);
+            // A capsule cannot lie flat: a wide, low body gets an upright cylinder (`BodyDesc::character`).
+            let flat = params.radius > 0.5 * params.height;
+            if flat {
+                info!("creature {id}: wide and low, physics cylinder {:.2} m radius x {:.2} m high", params.radius, params.height);
+            } else {
+                debug!("creature {id}: capsule {:.2} m radius x {:.2} m high", params.radius, params.height);
+            }
+        }
         let mut mover = Mover::new(
             position,
             Mover::yaw_of(transform.rotation),
-            setup.params,
+            params,
             frame_origin,
         );
         mover.loco.mode = setup.mode;
         mover.animator = Some(body.body);
         // Race height/weight: the body's scale (foot probes, motion feed).
-        if let Ok(t) = bodies.get(body.body) {
-            mover.body_scale = t.scale;
-        }
+        mover.body_scale = body_scale;
         let mut e = commands.entity(entity);
         // Parked until `processing_range` finds its ground loaded.
         e.try_insert((
@@ -674,9 +692,11 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             params,
             // Measured-speed thresholds against the humanoid cycles (walk
             // 2.2 m/s, run 3.2 m/s, `SpeedMatch` 0.5-1.5, stride warp 0.6+):
-            // moving from 0.5 m/s down to 0.25; running from 2.9 down to 2.6.
+            // moving from 0.5 m/s down to 0.25 (0.45 when braking to a stop,
+            // so idle blends in over the last of the stop); running from 2.9 down to 2.6.
             moving_speed: 0.5,
             idle_speed: 0.25,
+            stop_speed: 0.45,
             run_speed: 2.9,
             run_exit: 2.6,
             ..ControllerSettings::default()
@@ -914,7 +934,7 @@ fn stride_monitor(
                     m.loco.motion.yaw,
                     m.gait.moving,
                     a.drive.velocity,
-                    a.drive.moved.translation,
+                    m.loco.moved.translation,
                 );
             }
             t.since_plant = if walking { t.since_plant + dt } else { 0.0 };

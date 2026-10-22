@@ -85,7 +85,7 @@ impl GroupInfo {
     /// The cook rules of the whole group (`None`), its loop tail
     /// (`"tail"`) or a section (`"chop"`): as `mw_graphs::AnimSet::cooked`.
     pub fn rules(&self, part: Option<&str>) -> Option<ClipRules> {
-        let once = |range| ClipRules { range: Some(range), looping: Looping::Once, ..ClipRules::default() };
+        let once = |range| ClipRules { range: Some(range), looping: Looping::Once, root_motion: mw_anim::root_motion_rules(&self.name, part), ..ClipRules::default() };
         match part {
             None => Some(ClipRules { looping: self.looping, ..ClipRules::default() }),
             Some("tail") => self.loop_range.map(|(_, stop)| once((stop, self.duration))),

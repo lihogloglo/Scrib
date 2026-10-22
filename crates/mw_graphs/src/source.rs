@@ -138,7 +138,12 @@ impl AnimSet {
         let mut source = animation.source_clip(group);
         reference.clone_into(&mut source.name);
         let rules = match range {
-            Some(r) => ClipRules { range: Some(r), looping: Looping::Once, ..ClipRules::default() },
+            Some(r) => ClipRules {
+                range: Some(r),
+                looping: Looping::Once,
+                root_motion: mw_anim::root_motion_rules(&group.name, reference.split_once('@').map(|(_, p)| p)),
+                ..ClipRules::default()
+            },
             None => mw_anim::clip_rules(group),
         };
         let clip = Arc::new(cook_clip(&self.skeleton, &source, &rules, &self.settings).map_err(|e| format!("{reference}: {e}"))?);

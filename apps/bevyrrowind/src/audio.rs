@@ -10,8 +10,9 @@
 //!   and audible.
 //! - Music: explore by default; battle while [`CombatMusic`] says a hostile fights the player,
 //!   held 5 s after (`mw_audio::MusicMood`). Nothing sets the flag before Phase 3 combat.
-//! - Footsteps: `StrideTimer` fallback on grounded `Mover`s near the listener (animation text
-//!   keys replace it in Phase 3); the sound follows the vanilla boots weight rule (`Footwear`).
+//! - Footsteps: animated movers near the listener step on their clips' `SoundGen` text keys (the
+//!   graph's `footstep` events); movers without an animator fall back to a `StrideTimer`. The
+//!   sound follows the vanilla boots weight rule (`Footwear`).
 //! - Interior beds: vanilla interiors get their ambience from sound activators (positional, the
 //!   emitters above); the `AmbienceLayers` "cell" bed table for the modern preset is a follow-up.
 
@@ -23,6 +24,7 @@ use bevy::prelude::*;
 use mw_audio::{Footwear, MusicMood};
 use sf_audio::{FootstepMap, Foot, StrideTimer};
 use sf_audio_bevy::{AudioBank, AudioCues, LoopEmitter, Music, PlaySound, SfAudioPlugin, SoundAt, SpatialVoice, Voice};
+use sf_anim_bevy::AnimEvent;
 use sf_controller_bevy::Mover;
 use sf_records::{RecordDb, RecordId};
 use sf_vfs::Vfs;
@@ -91,6 +93,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
                 music_mood,
                 door_sounds.after(sf_script_bevy::ScriptSlot::Update),
                 add_footsteps,
+                anim_footsteps,
                 footsteps,
                 emitter_census,
             )
@@ -150,7 +153,38 @@ fn add_footsteps(mut commands: Commands, movers: Query<Entity, Added<Mover>>) {
     }
 }
 
-/// One step per stride of grounded travel (`mw_audio::stride_m` from the speed).
+/// Animated movers step on their clips' `SoundGen: Left/Right` text keys
+/// (`mw_anim::events::FOOTSTEP`, payload the foot), as the graph's leading clip
+/// fires them at its playback rate: the sound lands on the plant (AN-3). Only
+/// a dominant clip's keys count (weight ≥ 0.5), so a crossfade doesn't step twice.
+#[allow(clippy::needless_pass_by_value)]
+fn anim_footsteps(
+    audio: Res<MwAudio>,
+    mut events: MessageReader<AnimEvent>,
+    listener: Query<&GlobalTransform, With<SpatialListener>>,
+    movers: Query<(Entity, &Mover, &GlobalTransform, &Footsteps)>,
+    mut play: MessageWriter<PlaySound>,
+) {
+    let ear = listener.iter().next().map(GlobalTransform::translation);
+    let mut by_animator: Option<HashMap<Entity, Entity>> = None;
+    for e in events.read() {
+        if &*e.name != mw_anim::events::FOOTSTEP || e.weight < 0.5 {
+            continue;
+        }
+        let (Some(ear), Some(foot)) = (ear, e.payload.as_deref()) else { continue };
+        let map = by_animator.get_or_insert_with(|| movers.iter().filter_map(|(m, mover, ..)| Some((mover.animator?, m))).collect());
+        let Some((entity, mover, global, steps)) = map.get(&e.entity).and_then(|&m| movers.get(m).ok()) else { continue };
+        if mover.loco.grounded.is_none() || global.translation().distance(ear) > STEP_RANGE_M {
+            continue;
+        }
+        if let Some(cue) = audio.footsteps.resolve(foot, Some(steps.footwear.surface())) {
+            play.write(PlaySound { cue: cue.clone(), at: SoundAt::Entity(entity) });
+        }
+    }
+}
+
+/// Movers without an animator: one step per stride of grounded travel
+/// (`mw_audio::stride_m` from the speed).
 fn footsteps(
     time: Res<Time>,
     audio: Res<MwAudio>,
@@ -161,6 +195,9 @@ fn footsteps(
     let dt = time.delta_secs();
     let Some(ear) = listener.iter().next().map(GlobalTransform::translation) else { return };
     for (e, mover, global, mut steps) in &mut movers {
+        if mover.animator.is_some() {
+            continue;
+        }
         let pos = global.translation();
         let Some(last) = steps.last.replace(pos) else { continue };
         let travel = (pos - last).with_y(0.0).length();

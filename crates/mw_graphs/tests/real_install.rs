@@ -432,3 +432,33 @@ fn contact_census() {
     let humanoid_low: Vec<_> = low.iter().filter(|l| l.starts_with("base_anim")).collect();
     assert!(humanoid_low.is_empty(), "humanoid locomotion with a foot that never plants: {humanoid_low:#?}");
 }
+
+/// AN-6: the get-up clip (`Knockout@tail`) is authored in place: the actor
+/// doesn't move while knocked out, so the clip starts lying beside its origin
+/// and ends standing over it. Cooked with root-motion extraction, the Biped
+/// root kept its lying frame-0 ground position the whole clip (the extracted
+/// track went to a mover nobody fed), so the character stood up beside its
+/// capsule and slid onto it when the clip ended. The knock clips cook in
+/// place (`mw_anim::clip_rules`): the clip must end with the root over the
+/// origin, and carry no root track.
+#[test]
+fn get_up_clip_ends_standing_over_its_origin() {
+    let Some((_, vfs)) = install() else { return };
+    let mut set = humanoid(&vfs, &HUMANOID_SETS[0]);
+    let clip = set.cooked("Knockout@tail").unwrap();
+    let skeleton = set.skeleton.clone();
+    let root = skeleton.root_motion_joint().expect("Bip01");
+    let at = |t: f32| {
+        let mut local = sf_anim::LocalPose::rest(&skeleton);
+        clip.sample(t, &mut local, None);
+        let mut model = sf_anim::ModelPose::new(skeleton.len());
+        sf_anim::local_to_model(&skeleton, &local, &mut model, &glam::Affine3A::IDENTITY);
+        glam::Vec3::from(model.mats[root].translation)
+    };
+    let (start, end) = (at(0.0), at(clip.duration));
+    let track = clip.root_motion.as_ref().and_then(|r| r.frames.last().copied());
+    eprintln!("Knockout@tail {:.2} s: root at start {start:.2}, at end {end:.2}; root track end {track:?}", clip.duration);
+    let ground = Vec2::new(end.x, end.z).length();
+    assert!(ground < 0.1, "the get-up ends {ground:.2} m from its origin (root at {end:.2})");
+    assert!(track.is_none_or(|f| glam::Vec3::new(f[0], f[1], f[2]).length() < 1e-3 && f[3].abs() < 1e-3), "root track {track:?}");
+}

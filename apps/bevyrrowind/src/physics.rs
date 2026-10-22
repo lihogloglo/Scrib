@@ -59,7 +59,7 @@ use sf_anim_bevy::{Animator, Hit};
 use sf_character_bevy::CharacterBody;
 use sf_controller_bevy::Dormant;
 use sf_controller_bevy::Mover;
-use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats, clip_root_body};
+use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollFailed, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats, clip_root_body};
 use sf_ragdoll::{RAGDOLL_COOK, RagdollDef, RagdollPolicy};
 use sf_records::RecordDb;
 use sf_world::{Placement, PlacementClass, WorldspaceId};
@@ -265,16 +265,34 @@ fn get_up_body(source: &RagdollSource, skeleton: &str, animator: &Animator) -> O
 /// After a get-up the ragdoll moved the body; the walker root takes the move
 /// (its mover too, heading included, or the mover would turn it back) and
 /// the body goes back to its local transform.
-#[allow(clippy::needless_pass_by_value)]
+/// A knockdown whose ragdoll couldn't spawn ([`RagdollFailed`]: no ragdoll for
+/// the skeleton) gets its flag, mover and capsule back where it stands (AN-4:
+/// it stayed parked without a capsule forever).
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn got_up(
     mut events: MessageReader<RagdollGotUp>,
+    mut failed: MessageReader<RagdollFailed>,
     mut roots: Query<(Entity, &CharacterBody, &KnockedDown, &mut Transform, Option<&mut Mover>)>,
-    mut locals: Query<&mut Transform, Without<KnockedDown>>,
+    mut locals: Query<(&mut Transform, Option<&mut Animator>), Without<KnockedDown>>,
     mut commands: Commands,
 ) {
+    for e in failed.read() {
+        let Some((root, _, down, ..)) = roots.iter_mut().find(|(_, b, ..)| b.body == e.entity) else { continue };
+        if let Ok((mut local, animator)) = locals.get_mut(e.entity) {
+            *local = down.body_local;
+            if let Some(mut a) = animator {
+                a.set_bool(KNOCKED_OUT, false);
+            }
+        }
+        commands.entity(root).try_remove::<(KnockedDown, Dormant)>();
+        info!("ragdoll: {root} has no ragdoll: knockdown cancelled, back on its feet");
+    }
     for e in events.read() {
         let Some((root, _, down, mut t, mover)) = roots.iter_mut().find(|(_, b, ..)| b.body == e.entity) else { continue };
-        let Ok(mut local) = locals.get_mut(e.entity) else { continue };
+        let Ok((mut local, _)) = locals.get_mut(e.entity) else {
+            commands.entity(root).try_remove::<(KnockedDown, Dormant)>();
+            continue;
+        };
         let l0 = down.body_local;
         let yaw = Mover::yaw_of(t.rotation * local.rotation * l0.rotation.inverse());
         let rotation = Quat::from_rotation_y(yaw);

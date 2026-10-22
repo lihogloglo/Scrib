@@ -663,6 +663,8 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
   steps without exploding, jittering or sinking into them, then rests within a few seconds; limbs bend the natural
   way (knees back, elbows forward) and stay attached (the log's `ragdoll: joint stretch peak` stays under 1 cm);
   the dragged corpse follows by the grabbed limb. Creatures too (a guar, a cliff racer: `I` on them).
+- Press F7 + G to see the skinned-mesh wireframe (yellow) over the ragdoll capsules (orange) and joints (magenta):
+  the mesh must follow the bodies (heads are not drawn: morph-target meshes crash Bevy's wireframe pass). Both keys are in the F1 overlay.
 - Known (P8): no powered crumple yet (the clip cuts to limp); the character root stays where it died (a corpse
   dragged far can be culled early); corpses don't persist across cell unloads; creature masses are volume
   estimates (a guar is 1 t: too heavy to drag).
@@ -955,3 +957,47 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Variety (CH-1/CH-3 crowd): `scene level-anim-crowd` (camera `idles-crowd`): four identical Fargoths, same idle and fidget set. No two neighbours
   breathe in sync, fidgets begin at different times and vary, none repeats back to back (`@fidget`: Idle2/3/4 at 50/30/20, every 3-8 s).
   Status: awaiting owner.
+
+### AN-7: Capsule steady under a walker (owner pass 2026-10-22, slice R3-1)
+- `scene level-anim-loop` (camera `loop-close`), `G` for collider wireframes.
+- Look for: the orange capsule glides with the walker and the runner, a constant hair behind them (one physics
+  step, ~2 cm walking, ~7 cm running), no shaking or stutter. Was: target from the last frame's feet, beating against
+  the 60 Hz step. Status: awaiting owner.
+
+### AN-1: Planted feet stay put on distant walkers (slice R3-1)
+- `scene level-anim-overview` (camera `overview`, all walkers at A2 LOD there), then `level-anim-props`/`loop`.
+- Look for: on the props walker (beside the orange crates) and the loop walker, the standing foot doesn't drift with
+  the body during its stance, far and near. Was: A2 updates got half the body motion. Status: awaiting owner.
+
+### AN-3: Footsteps on the feet (slice R3-1)
+- `scene level-anim-loop` (camera `loop-close`), sound on; then `level-anim-props` for the walker's stops.
+- Look for: each step sound as a foot lands (left/right alternate), at walk and run, none while standing. Sounds come
+  from the clips' `SoundGen` keys now (were one per 0.7 m of travel). Status: awaiting owner.
+
+### AN-2: Walkers stop within a step (slice R3-2)
+- `scene level-anim-stairs` (camera `stairs`): the ramp/stair walkers and the runner turn round at each end after
+  a 1 s wait; `level-anim-overview` shows the same area from afar.
+- Look for: a walker slows over its last step (about 0.5 m, under 1 s) and stands, the runner over 2-3 steps
+  (about 2 m, 1.5 s); no long glide, no slow-motion walk at the end, idle blends in as it settles. Was: braking
+  from 2 m out plus a 1.5 s creep at 0.25 m/s (3 s). Status: awaiting owner.
+
+### AN-4 Knockdowns always come back (awaiting owner)
+Scene `level-anim-overview` (or `level-anim-drop`), G on. Throw `V` balls at walkers, the knockdown dummy, the guar
+and the mudcrab, hard and soft. Look for: every knocked-down character gets up within ~6 s, then has its capsule
+(G) and walks/idles again; a creature without a ragdoll logs "knockdown cancelled" and keeps its capsule. Never a
+character frozen lying or standing without a capsule.
+
+### AN-5 Get-up starts from the lying pose (awaiting owner)
+Scene `level-anim-overview`, the `@impact` knockdown dummy (idles row, every 12 s). Look for: at the moment the
+ragdoll hands back, no snap: the limbs flow from where they lie into the stand-up over ~0.3 s, the pelvis doesn't
+jump, and the body doesn't rise or sink to meet the ground.
+
+### AN-6 Get-up ends on the capsule (awaiting owner)
+Same scene, G on. Look for: when the get-up starts the capsule appears under the lying pelvis (not ~1 m away), the
+character stands up onto it, and nothing slides when the clip ends and idle takes over.
+
+### AN-8 Creature capsules fit the creature (awaiting owner)
+Scene `level-anim-idles` (or `-overview`, camera `idles-close`), F7 + G on. Look for: the mudcrab and the guar (last two
+on the row) have a physics shape over their whole body (an upright cylinder, orange, as wide as the shell or body and as
+high as the back), not the old 0.4 m column inside the shell; people keep their capsule. Throw a ball (`V`) at the crab:
+it should hit the shell's outline. Known: the shape is round, so a long body (guar) is covered with some slack at the sides.

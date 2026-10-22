@@ -162,6 +162,8 @@ struct Report {
     /// Per leg: plants (contact rising above 0.5), the planted feet's
     /// horizontal world slide, m/s of stance, and how far the foot moved.
     plants: Vec<u32>,
+    /// Per leg: simulation times of those plants.
+    plant_times: Vec<Vec<f32>>,
     slide: Vec<f32>,
     foot_travel: Vec<f32>,
     /// Frames the feed said "not moving" while the body moved.
@@ -243,7 +245,7 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
     sim.set(p::MOVING, 0.0);
     sim.velocity = Vec3::ZERO;
     let (mut measured, mut moving) = (Vec3::ZERO, false);
-    let mut r = Report { plants: vec![0; legs.len()], slide: vec![0.0; legs.len()], foot_travel: vec![0.0; legs.len()], min_measured: f32::MAX, ..Report::default() };
+    let mut r = Report { plants: vec![0; legs.len()], plant_times: vec![Vec::new(); legs.len()], slide: vec![0.0; legs.len()], foot_travel: vec![0.0; legs.len()], min_measured: f32::MAX, ..Report::default() };
     let mut stance = vec![0.0f32; legs.len()];
     let sole_heights = soles(sim);
     let mut meters: Vec<FootMeter> = sole_heights.iter().map(|&sole| FootMeter::new(MeterRules { sole, ..MeterRules::default() })).collect();
@@ -341,6 +343,7 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
                 r.foot_travel[k] += d;
                 if contact > 0.5 && pc <= 0.5 {
                     r.plants[k] += 1;
+                    r.plant_times[k].push(sim.time);
                     stance[k] = 0.0;
                 } else if contact > 0.5 {
                     stance[k] += DT;
@@ -587,6 +590,48 @@ fn gaits_plant_their_feet_on_flat_ground() {
             if m.stances < 2 || m.stuck(1.5) || m.slide_per_stance() > 0.03 || m.max_penetration > 0.03 {
                 failures.push(format!("{gait}: leg {k} {m:?}"));
             }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// AN-3: footstep sounds come from the clips' `SoundGen: Left/Right` text keys
+/// (`mw_anim::events::FOOTSTEP`, the graph's leading clip fires them), so they
+/// must land on the matching foot's plant at every speed-matched rate. The
+/// app's old distance timer (one step per 0.7 m) knew nothing of the feet.
+#[test]
+fn footstep_keys_land_on_their_foot_plants() {
+    use std::f32::consts::FRAC_PI_2;
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let flat = World::new();
+    let mut failures = Vec::new();
+    for (gait, speed) in [("walk slow", 1.4), ("walk", SPEED), ("run", 3.7)] {
+        let mut sim = humanoid_sim().unwrap();
+        sim.set(p::RUNNING, if speed > SPEED { 1.0 } else { 0.0 });
+        let r = walk_at(&mut sim, &flat, (Vec3::new(-4.0, 0.0, 0.0), Vec3::X * speed, Some(FRAC_PI_2)), 5.0, (-9.0, 99.0), false);
+        let side = |k: usize| {
+            let name = sim.skeleton.name(sim.graph.legs[k].effector().into()).to_ascii_lowercase();
+            if name.contains(" l ") { "left" } else { "right" }
+        };
+        let mut offsets = Vec::new();
+        for e in sim.fired(mw_anim::events::FOOTSTEP, 2.5) {
+            if e.weight < 0.5 {
+                continue;
+            }
+            let Some(k) = (0..r.plant_times.len()).find(|&k| side(k) == e.payload) else { continue };
+            let near = r.plant_times[k].iter().map(|t| e.time - t).min_by(|a, b| a.abs().total_cmp(&b.abs()));
+            match near {
+                // Vanilla keys sit 50-130 ms after the cooked contact rises (heel strike vs
+                // foot flat); a sound may trail its sight by ~125 ms unnoticed (ITU-R BT.1359), lead by far less.
+                Some(d) if (-0.05..=0.15).contains(&d) => offsets.push(d),
+                _ => failures.push(format!("{gait}: {} step at {:.2} s, nearest plant {near:?}", e.payload, e.time)),
+            }
+        }
+        eprintln!("{gait:9}: {} steps, key - plant {:?} s", offsets.len(), offsets.iter().map(|d| (d * 100.0).round() / 100.0).collect::<Vec<_>>());
+        if offsets.len() < 4 {
+            failures.push(format!("{gait}: only {} steps on plants", offsets.len()));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

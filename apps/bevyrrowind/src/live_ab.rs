@@ -8,7 +8,7 @@
 //! startup: use the `--off`/`--lod-tint` flags and compare two runs.
 //!
 //! Keys: F1 help, F2 sun shadows, F3 terrain far shadows, F4 DLSS mode,
-//! F5 far-field tint, F6 terrain LOD colors, F7 terrain wireframe,
+//! F5 far-field tint, F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
 //! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
 //! T clock speed (x1, x4, x20), F9 copy camera (`--camera` string), F10 clouds on/off,
 //! C next weather (forced everywhere with its transition), F12 screenshot,
@@ -19,6 +19,9 @@ use std::fmt::Write as _;
 
 use bevy::camera_controller::free_camera::FreeCamera;
 use bevy::light::DirectionalLight;
+use bevy::mesh::morph::MeshMorphWeights;
+use bevy::mesh::skinning::SkinnedMesh;
+use bevy::pbr::wireframe::{Wireframe, WireframeColor, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use sf_coords::WorldPos;
@@ -39,9 +42,13 @@ pub struct LiveAbPlugin;
 
 impl Plugin for LiveAbPlugin {
     fn build(&self, app: &mut App) {
+        // F7 on skinned meshes (is the mesh following the ragdoll?).
+        if !app.is_plugin_added::<WireframePlugin>() {
+            app.add_plugins(WireframePlugin::default());
+        }
         app.init_resource::<LiveAb>()
             .add_systems(Startup, (spawn_overlay, pause_scene_clock))
-            .add_systems(Update, (keys, overlay).chain())
+            .add_systems(Update, (keys, overlay, skinned_wireframe).chain())
             .add_systems(PostUpdate, sun_shadows_off);
     }
 }
@@ -51,13 +58,15 @@ impl Plugin for LiveAbPlugin {
 pub(crate) struct LiveAb {
     help: bool,
     sun_shadows: bool,
+    /// F7: wireframe over the skinned meshes (the terrain has its own flag).
+    mesh_wire: bool,
     /// Last action, shown for a few seconds.
     note: Option<(String, f32)>,
 }
 
 impl Default for LiveAb {
     fn default() -> Self {
-        Self { help: true, sun_shadows: true, note: None }
+        Self { help: true, sun_shadows: true, mesh_wire: false, note: None }
     }
 }
 
@@ -181,7 +190,7 @@ impl Switch {
             Self::Clouds => "clouds",
             Self::FarTint => "far-field tint",
             Self::TerrainLodColors => "terrain LOD colors",
-            Self::Wireframe => "terrain wireframe",
+            Self::Wireframe => "wireframe",
             Self::Rings => "streaming rings",
         }
     }
@@ -196,7 +205,7 @@ impl Switch {
             Self::Clouds => s.clouds.as_ref().map(|c| c.enabled),
             Self::FarTint => s.far.as_ref().map(|f| f.level_tint),
             Self::TerrainLodColors => terrain.map(|t| t.lod_colors),
-            Self::Wireframe => terrain.map(|t| t.wireframe),
+            Self::Wireframe => Some(state.mesh_wire),
             Self::Rings => s.rings.as_ref().map(|r| r.enabled),
         }
     }
@@ -215,6 +224,12 @@ impl Switch {
         let v = on.unwrap_or(!current);
         match self {
             Self::SunShadows => state.sun_shadows = v,
+            Self::Wireframe => {
+                state.mesh_wire = v;
+                if let Some(t) = s.terrain.as_mut() {
+                    t.wireframe = v;
+                }
+            }
             Self::Clouds => {
                 if let Some(c) = s.clouds.as_mut() {
                     c.enabled = v;
@@ -230,12 +245,11 @@ impl Switch {
                     r.enabled = v;
                 }
             }
-            Self::TerrainFarShadows | Self::TerrainLodColors | Self::Wireframe => {
+            Self::TerrainFarShadows | Self::TerrainLodColors => {
                 if let Some(t) = s.terrain.as_mut() {
                     match self {
                         Self::TerrainFarShadows => t.no_far_shadows = !v,
-                        Self::TerrainLodColors => t.lod_colors = v,
-                        _ => t.wireframe = v,
+                        _ => t.lod_colors = v,
                     }
                 }
             }
@@ -415,6 +429,28 @@ fn keys(
     }
 }
 
+/// F7: wireframe over every skinned mesh (characters), so the mesh can be judged against the
+/// physics capsules G draws (PH-2). Meshes dressed later pick it up on the next frame.
+/// Meshes with morph targets (heads) are skipped: Bevy 0.20's wireframe pipeline has no morph bind
+/// group layout, so drawing them is a validation error that quits the app.
+#[allow(clippy::type_complexity)]
+fn skinned_wireframe(
+    state: Res<LiveAb>,
+    mut commands: Commands,
+    plain: Query<Entity, (With<SkinnedMesh>, Without<Wireframe>, Without<MeshMorphWeights>)>,
+    wired: Query<Entity, (With<SkinnedMesh>, With<Wireframe>)>,
+) {
+    if state.mesh_wire {
+        for e in &plain {
+            commands.entity(e).try_insert((Wireframe, WireframeColor { color: Color::srgb(0.95, 0.95, 0.2) }));
+        }
+    } else {
+        for e in &wired {
+            commands.entity(e).try_remove::<(Wireframe, WireframeColor)>();
+        }
+    }
+}
+
 /// F2 off: the sky re-enables the sun's shadow maps in `Update` each frame
 /// it wants them; this turns them off again before extraction.
 fn sun_shadows_off(state: Res<LiveAb>, mut lights: Query<&mut DirectionalLight>) {
@@ -428,13 +464,14 @@ fn sun_shadows_off(state: Res<LiveAb>, mut lights: Query<&mut DirectionalLight>)
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn overlay(
     real: Res<Time<Real>>,
     state: Res<LiveAb>,
     s: Switches,
     active: Option<Res<ActiveUpscaling>>,
     off: Option<Res<crate::perf::Off>>,
+    colliders: Option<Res<sf_physics_bevy::PhysicsDebug>>,
     mut text: Query<&mut Text, With<OverlayText>>,
     mut last: Local<String>,
 ) {
@@ -452,12 +489,14 @@ fn overlay(
             (Some(u), Some(a)) => format!("{} (running {})", u.0.label(), a.0.label()),
             _ => "n/a".to_owned(),
         };
+        let colliders = colliders.map_or("n/a", |d| on_off(d.enabled));
         let flags_off = off.map_or_else(|| "none".to_owned(), |o| o.label());
         let bodies = s.bodies.as_ref().map_or_else(|| "n/a".to_owned(), |b| format!("{:?}", b.bodies).to_lowercase());
         let _ = write!(
             out,
             "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
-             F5 far tint {}  F6 terrain LOD colors {}  F7 wireframe {}  F8 rings {}\n\
+             F5 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
+             G physics colliders (ragdoll capsules, joints) {colliders}\n\
              F10 clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),

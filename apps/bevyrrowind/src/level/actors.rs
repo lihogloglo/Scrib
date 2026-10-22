@@ -182,8 +182,8 @@ pub struct ActorScript {
 
 /// Once `walkers.rs` gave a level actor its mover: its script replaces the
 /// `AI_W` scaffold and local avoidance (scripted paths stay on their line).
-fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity, &LevelActor), Added<Mover>>) {
-    for (entity, actor) in &fresh {
+fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity, &LevelActor, &Mover), Added<Mover>>) {
+    for (entity, actor, mover) in &fresh {
         let Some(setup) = actors.0.get(actor.index) else { continue };
         let follower = setup.def.path.as_ref().map(|p| {
             let n = p.points.len();
@@ -205,7 +205,8 @@ fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity
                 sf_level::PathMode::PingPong => PathMode::PingPong,
                 sf_level::PathMode::Once => PathMode::Once,
             };
-            let mut f = PathFollower::new(nodes, mode, p.speed);
+            // Brakes into stops like this mover (arrival deceleration, velocity spring).
+            let mut f = PathFollower::new(nodes, mode, p.speed).for_mover(&mover.params);
             f.gait = if p.run { Gait::Run } else { Gait::Walk };
             f
         });

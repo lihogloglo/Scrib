@@ -24,7 +24,7 @@ pub mod text_keys;
 
 use mw_nif::anim::{Curve as NifCurve, Target, TransformTrack};
 use mw_nif::{Model, ModelError};
-use sf_anim::{AnimImporter, AnimSource, ClipRules, ImportError, SourceClip};
+use sf_anim::{AnimImporter, AnimSource, ClipRules, ImportError, RootMotionRules, SourceClip};
 
 pub use report::{ReportOptions, report};
 pub use text_keys::{Group, Section, events, groups};
@@ -114,6 +114,22 @@ impl Animation {
 
 /// The 3ds Max Biped root, which carries root motion in Morrowind animation.
 pub const ROOT_MOTION_BONE: &str = "Bip01";
+
+/// Groups whose loop tail is a get-up: authored in place (the actor stays put
+/// while knocked out), cut from the middle of the take, ending standing away
+/// from the take's origin (Knockout's tail: 1.07 m). Their tails cook in place,
+/// anchored on the last frame (`RootMotionRules::anchor_end`): the clip ends
+/// standing over its origin, where the host puts the capsule (AN-6).
+pub const GET_UP_GROUPS: [&str; 2] = ["Knockout", "SwimKnockout"];
+
+/// The root-motion rules of a group's clip (`part`: `"tail"` or a section).
+pub fn root_motion_rules(group: &str, part: Option<&str>) -> RootMotionRules {
+    if part == Some("tail") && GET_UP_GROUPS.iter().any(|g| g.eq_ignore_ascii_case(group)) {
+        RootMotionRules { extract: false, anchor_end: true, ..RootMotionRules::default() }
+    } else {
+        RootMotionRules::default()
+    }
+}
 
 /// The cook rules of a group's clip: its default looping (the clip is
 /// already cut to the group, so no range).

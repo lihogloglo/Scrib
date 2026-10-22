@@ -158,8 +158,10 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - [ ] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
   old P11. Clip sources: packs only (free first).
-- [~] 3.2 Ragdolls (PH-2 rejected). R0 write-back fixed headless 2026-10-22 (PH-2 awaiting owner, `level-anim-drop`).
-  Then powered falls (PH-9: no fall animation). Order: `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
+  Potential (owner 2026-10-22): evaluate MotionBricks as an animation source (licence, rig fit, quality vs packs).
+- [~] 3.2 Ragdolls (PH-2 rejected). R0 write-back fixed headless 2026-10-22 (PH-2 awaiting owner, `level-anim-drop`, F7+G).
+  Owner pass AN-1..8 fixed 2026-10-22 (awaiting owner: AN-* in visual-checks). Then powered falls (PH-9).
+  Order: `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
 - [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
   `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
 - [ ] 3.3 Physics follow-ups: Oblivion-style hold/drag/throw (PH-4), items with no shape (ceiling candle holders,
@@ -200,6 +202,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-22 (anim-refactor run 3): owner pass AN-1..8 at the root: capsule targets per physics step, A2 feeds
+  compose root deltas, footsteps from clip keys, constant-decel arrival, in-place get-up clip + hand-back blend, creature shapes from bounds.
 - 2026-10-22 (anim-refactor): `anim-lab` test level (AL-1..7); R0 ragdoll write-back (every joint at weight 1,
   frame follows pelvis); idle/crowd variety; foot metrics, strafe/back slide 0; feet on ramps; R2 reaction controller.
 - 2026-10-21 (owner pass, bw-owner10): confirmed LT-1, LM-1, AU-1, AU-2, SH-17, SH-18, TA-1, PA-4, PC-1, DR-3, DR-4,
@@ -245,7 +249,3 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - 2026-10-20 (particles1): NIF particles drawn by vertex pulling (ShaderBuffer + MeshTag, CPU sim kept): Balmora
   960p 9.9 → 9.0 ms (= `--off particles`), walk unchanged (perf.md "GPU particles"); PA-4 awaiting owner.
-
-- 2026-10-20 (lights1): 1.6 terrain blend removed (walk 25.9 → 14.7 ms, Balmora 15.9 → 13.1); lights researched
-  (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Then audit:
-  big_space patch, env map every 8 frames (perf.md "Audit"); shadows v2 spec; V1 lamp cache built, off (handoff).
