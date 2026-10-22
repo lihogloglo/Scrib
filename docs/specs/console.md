@@ -8,7 +8,8 @@ Crates: `sf_console` (new, Bevy-free: registry, variables, binding, completion, 
 
 One place to flip any engine switch live, and to run debug commands, without a rebuild or a
 restart. First user: every `--off` switch of the Bevyrrowind app becomes a console variable
-(`render.shadows off`), so A/B checks happen in one session. Later users: the in-game overlay
+(`render.shadows off`), so A/B checks happen in one session: SSAO, contact shadows, lamp filter,
+fog history/jitter/froxels and the rest (owner 2026-10-21; owner checks SH-16 and SH-19 wait on it). Later users: the in-game overlay
 (`sf_devui`), Luau snippets, config files, the command line, test scripts.
 
 Non-goals here: the UI (an egui or bevy_ui overlay comes later and only draws the `Log`, edits a
