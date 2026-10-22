@@ -40,7 +40,7 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use sf_anim::{Clip, EventEdge, RootDelta, Skeleton, Trs};
 use sf_anim_graph::{
     BindError, Binding, CompiledGraph, GraphInstance, GraphOutput, GroundSample, IkTarget,
-    MontageId, ParamId, UpdateInputs, WarpTarget,
+    MontageId, ParamId, UpdateInputs, Variety, WarpTarget,
 };
 use sf_diag_bevy::DiagCounters;
 
@@ -152,7 +152,7 @@ pub struct AnimDrive {
     pub look_target: Option<Vec3>,
     /// How the character moved since the previous update (its frame then).
     pub moved: RootDelta,
-    /// Per graph leg: ground under it, probed at last output's `probe_origins`.
+    /// Per probe (each leg, then each leg toe): ground under it, probed at last output's `probe_origins`.
     pub ground: Vec<Option<GroundSample>>,
     pub ik_targets: Vec<Option<IkTarget>>,
     pub warp_targets: Vec<Option<WarpTarget>>,
@@ -179,7 +179,7 @@ impl Animator {
         let instance = GraphInstance::new(&b);
         let output = GraphOutput::new(&asset.graph);
         let drive = AnimDrive {
-            ground: vec![None; asset.graph.legs.len()],
+            ground: vec![None; asset.graph.probe_count()],
             ik_targets: vec![None; asset.graph.ik_targets.len()],
             warp_targets: vec![None; asset.graph.warp_targets.len()],
             ..AnimDrive::default()
@@ -193,6 +193,13 @@ impl Animator {
             updated: false,
             posed: false,
         }
+    }
+
+    /// Gives this character its own start phase and rate jitter (idle and crowd
+    /// variety; see [`sf_anim_graph::Variety`]).
+    pub fn set_variety(&mut self, variety: Variety) {
+        let b = self.asset.binding();
+        self.instance.set_variety(&b, variety);
     }
 
     pub fn param(&self, name: &str) -> Option<ParamId> {
@@ -617,6 +624,7 @@ type RootQuery = (
     &'static Animator,
     Option<&'static mut AnimRootMotion>,
     Option<&'static mut Transform>,
+    Option<&'static PhysicsPose>,
 );
 
 fn apply_root_and_events(
@@ -628,15 +636,19 @@ fn apply_root_and_events(
 ) {
     let start = Instant::now();
     let mut events = 0;
-    for (entity, animator, root, transform) in &mut chars {
+    for (entity, animator, root, transform, physics) in &mut chars {
         if !animator.updated {
             continue;
         }
         let out = &animator.output;
+        // A physics pose owns the body (a ragdoll moves the frame itself):
+        // the clip's root motion must not move the frame under it.
+        let physical = physics.is_some_and(|p| p.weight > 0.0);
         if let Some(mut root) = root {
-            root.delta = out.root;
+            root.delta = if physical { RootDelta::default() } else { out.root };
             root.drive_weight = out.drive_weight;
             if root.apply
+                && !physical
                 && let Some(mut t) = transform
             {
                 let step = t.rotation * out.root.translation;

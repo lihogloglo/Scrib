@@ -1117,6 +1117,7 @@ fn root_meta(clip: &mut Clip) {
 /// zero). In-place clips slide their planted feet back at the ground
 /// speed: it is estimated from the low feet (component median, then the
 /// mean of those that move with it) and written to the clip's meta.
+#[allow(clippy::too_many_lines)]
 fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[Trs], clip: &mut Clip, rules: &ContactRules) {
     let joints = skeleton.len();
     let n = clip.frame_count as usize;
@@ -1126,10 +1127,16 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
     }
     let mut model = Vec::new();
     let mut positions = vec![Vec::with_capacity(n); feet.len()];
+    // The toe beside each foot (stance velocity: a rolling heel isn't slide).
+    let toes: Vec<Option<usize>> = feet.iter().map(|&foot| toe_joint(skeleton, profile, foot)).collect();
+    let mut toe_positions = vec![Vec::with_capacity(n); feet.len()];
     for f in 0..n {
         model_of(skeleton, &source_frames[f * joints..(f + 1) * joints], &mut model);
         for (i, &foot) in feet.iter().enumerate() {
             positions[i].push(Vec3::from(model[foot].translation));
+            if let Some(toe) = toes[i] {
+                toe_positions[i].push(Vec3::from(model[toe].translation));
+            }
         }
     }
     // A clip travels if its root (or the skeleton root) moves over the ground.
@@ -1181,6 +1188,9 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
         .collect();
     let mut planted_velocity = Vec3::ZERO;
     let mut planted_count = 0u32;
+    // Travelling loops: the planted feet's slide in the source's own space.
+    let measure_stance = !in_place && clip.root_motion.is_some() && loop_frames.is_some_and(|(a, b)| a < b);
+    let (mut stance_slide, mut stance_count) = (Vec3::ZERO, 0u32);
     for (i, &foot) in feet.iter().enumerate() {
         let (h, v, rise) = (&heights[i], &velocities[i], &rises[i]);
         let (height, speed, lift) = (rules.height * leg_lengths[i], rules.speed * leg_lengths[i], rules.lift * leg_lengths[i]);
@@ -1208,6 +1218,12 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
                 planted_count += 1;
             }
         }
+        if measure_stance {
+            let toe_v = (toe_positions[i].len() == n).then(|| foot_velocities(&toe_positions[i], dt).0);
+            let (slide, count) = stance_slide_of(&planted, v, toe_v.as_deref(), &cycle);
+            stance_slide += slide;
+            stance_count += count;
+        }
         let values: Vec<f32> = planted.iter().map(|&p| if p { 1.0 } else { 0.0 }).collect();
         let name = skeleton.name(foot);
         let looping = clip.loop_range.is_some();
@@ -1221,6 +1237,9 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
         }
         clip.curves.push(CurveTrack { name: format!("contact.{name}"), values });
     }
+    if measure_stance {
+        clip.meta.stance_velocity = stance_velocity(clip.meta.average_velocity, stance_slide, stance_count);
+    }
     if in_place && clip.root_motion.is_none() && planted_count > 0 {
         // Planted feet slide backward at the ground speed.
         #[allow(clippy::cast_precision_loss)]
@@ -1228,6 +1247,40 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
         clip.meta.average_velocity = v;
         clip.meta.cycle_distance = v.length() * clip.loop_range.map_or(clip.duration, |(a, b)| b - a);
     }
+}
+
+/// One foot's slide over the source's ground, summed over its planted
+/// frames of the loop `cycle` (not its closing duplicate), with their
+/// count: the slower of heel and toe per frame, the point that stays down.
+fn stance_slide_of(planted: &[bool], heel: &[Vec3], toe: Option<&[Vec3]>, cycle: &std::ops::Range<usize>) -> (Vec3, u32) {
+    let (mut sum, mut count) = (Vec3::ZERO, 0u32);
+    for f in cycle.start..cycle.end.saturating_sub(1) {
+        if planted[f] {
+            sum += toe.map_or(heel[f], |t| if t[f].length_squared() < heel[f].length_squared() { t[f] } else { heel[f] });
+            count += 1;
+        }
+    }
+    (sum, count)
+}
+
+/// How fast the planted feet move against the body: the root's velocity
+/// minus their mean slide over the source's ground (`slide` summed over
+/// `count` planted frames). Zero (unmeasured) unless it still travels the
+/// root's way at a fair fraction of its speed.
+fn stance_velocity(root: Vec3, slide: Vec3, count: u32) -> Vec3 {
+    if count == 0 {
+        return Vec3::ZERO;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let stance = root - slide / count as f32;
+    if stance.dot(root) > 0.0 && stance.length() > 0.25 * root.length() { stance } else { Vec3::ZERO }
+}
+
+/// The toe beside a contact foot: the rig profile's, else the foot's first
+/// child joint (None for a foot with neither).
+fn toe_joint(skeleton: &Skeleton, profile: Option<&RigProfile>, foot: usize) -> Option<usize> {
+    let mapped = profile.and_then(|p| p.limbs.iter().find(|l| usize::from(l.effector) == foot)).and_then(|l| l.foot.as_ref()).and_then(|f| f.toe);
+    mapped.map(usize::from).or_else(|| (0..skeleton.len()).find(|&j| skeleton.parent(j) == Some(foot)))
 }
 
 /// One foot's per-frame velocity by central differences: horizontal, and

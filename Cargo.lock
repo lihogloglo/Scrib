@@ -6268,6 +6268,8 @@ dependencies = [
  "bevy_transform",
  "sf_anim",
  "sf_anim_bevy",
+ "sf_anim_graph",
+ "sf_bake",
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
@@ -6311,6 +6313,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "postcard",
+ "ron",
  "serde",
  "sf_anim",
  "sf_bake",

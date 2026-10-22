@@ -791,6 +791,9 @@ impl Compiler<'_> {
             Some((x, y, z)) => Some(girdle_rot.inverse() * Vec3::new(x, y, z).normalize_or(Vec3::Z)),
             None => rest_bend(s, &joints, solver).map(|b| girdle_rot.inverse() * b),
         };
+        // Graph-defined limbs name no foot: no tip probe.
+        let toe = None;
+        let sole = rest[usize::from(last_of(&joints))].translation.y;
         Ok(Leg {
             name: l.name.clone(),
             joints,
@@ -799,6 +802,8 @@ impl Compiler<'_> {
             pole,
             support: l.support,
             contact: self.contact_curve(&l.name, l.contact.as_ref(), true)?,
+            toe,
+            sole,
         })
     }
 
@@ -815,6 +820,8 @@ impl Compiler<'_> {
         if which != ProfileLimbs::None {
             let profile = self.source.profile()?.ok_or("profile_limbs needs the skeleton's rig profile")?;
             profile.validate(self.skeleton).map_err(|e| e.to_string())?;
+            // Rigid heel-to-toe feet (tip probes): bipeds; quadruped paws stay point contacts.
+            let one_girdle = profile.support_limbs().map(|l| l.girdle).collect::<std::collections::BTreeSet<_>>().len() == 1;
             for pl in profile.limbs.iter().filter(|l| l.support || which == ProfileLimbs::All) {
                 if self.out.legs.iter().any(|x| x.name == pl.name) {
                     continue; // the graph's own definition wins
@@ -832,7 +839,17 @@ impl Compiler<'_> {
                     pole,
                     support: pl.support,
                     contact: self.contact_curve(&pl.name, contact.as_ref(), false)?,
+                    toe: if one_girdle && pl.support && pl.solver == LimbSolver::TwoBone && pl.kind == sf_anim::LimbKind::Leg(sf_anim::LegKind::Plantigrade) { tip_of(self.skeleton, &self.skeleton.rest_model(), last_of(&pl.joints), pl.foot.as_ref().and_then(|f| f.toe)) } else { None },
+                    sole: self.skeleton.rest_model()[usize::from(last_of(&pl.joints))].translation.y,
                 });
+            }
+        }
+        // Toe probe slots follow the leg probes.
+        let mut slot = self.out.legs.len();
+        for leg in &mut self.out.legs {
+            if let Some((_, s, _)) = &mut leg.toe {
+                *s = u16_of(slot, "probes")?;
+                slot += 1;
             }
         }
         Ok(())
@@ -1089,4 +1106,21 @@ fn rest_bend(s: &Skeleton, joints: &[u16], limb_solver: LimbSolver) -> Option<Ve
     let off = k - a;
     let side = off - line * (off.dot(line) / line.length_squared().max(1e-12));
     (side.length() > 0.02 * length).then(|| side.normalize())
+}
+
+fn last_of(joints: &[u16]) -> u16 {
+    *joints.last().expect("limbs have joints")
+}
+
+/// A support limb's foot tip ([`Leg::toe`]): `toe` if given, else the
+/// effector's child farthest from it horizontally in the rest pose (at
+/// least 3 cm: a foot, not a stub); its probe slot is set later.
+fn tip_of(s: &Skeleton, rest: &[glam::Affine3A], effector: u16, toe: Option<u16>) -> Option<(u16, u16, f32)> {
+    let e = usize::from(effector);
+    let flat = |j: usize| {
+        let d = rest[j].translation - rest[e].translation;
+        d.x.hypot(d.z)
+    };
+    let tip = toe.map(usize::from).or_else(|| (0..s.len()).filter(|&j| s.parent(j) == Some(e)).max_by(|&a, &b| flat(a).total_cmp(&flat(b))))?;
+    (flat(tip) >= 0.03).then_some((u16::try_from(tip).ok()?, 0, rest[tip].translation.y))
 }

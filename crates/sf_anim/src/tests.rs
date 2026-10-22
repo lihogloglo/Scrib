@@ -1390,3 +1390,13 @@ fn skating_keyframed_steps_still_plant_each_foot() {
         assert_eq!(clip.markers.iter().filter(|m| m.name == side).count(), 1, "{side}: {:?}", clip.markers);
     }
 }
+
+#[test]
+fn stride_speed_follows_the_feet_only_where_they_differ_from_the_root() {
+    let meta = |root: f32, feet: f32| ClipMeta { average_velocity: Vec3::Z * root, stance_velocity: Vec3::Z * feet, ..ClipMeta::default() };
+    // Unmeasured, or within the tolerance (forward gaits): the root's.
+    assert_eq!(meta(1.7, 0.0).stride_velocity(), Vec3::Z * 1.7);
+    assert_eq!(meta(2.2, 1.97).stride_velocity(), Vec3::Z * 2.2);
+    // A sidestep whose root outruns its planted feet: the feet's.
+    assert_eq!(meta(1.72, 0.92).stride_velocity(), Vec3::Z * 0.92);
+}

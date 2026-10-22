@@ -6,20 +6,22 @@
 //! the clip plays and the last two animated model poses are kept; then the
 //! skeleton's [`RagdollDef`] (from [`RagdollSource`]) is spawned at the
 //! animated pose with its velocities, and every frame the bodies' pose goes
-//! to the animator as a [`PhysicsPose`] (per-joint weights from the owning
-//! body's region) whose weight ramps to 1 over [`RagdollConfig::fade`].
+//! to the animator as a [`PhysicsPose`] (every joint, including those above
+//! the root body, at weight 1) whose weight ramps to 1 over
+//! [`RagdollConfig::fade`]. In every mode the entity's frame follows the
+//! ragdoll's implied frame (heading and position), so culling and cell
+//! moves follow the body, and its own scale is made uniform (bodies scale
+//! uniformly) until the get-up restores it. Root motion is off while a
+//! physics pose shows (`sf_anim_bevy`).
 //!
 //! Modes ([`RagdollMode`]), driven every fixed step toward the handoff pose:
 //! - `Death { crumple }`: with `crumple` the joints hold the handoff pose at
-//!   full strength and fade to limp over [`RagdollConfig::crumple`] (the
-//!   knees give first by gravity, a powered crumple rather than a sack);
-//!   the entity's frame follows the ragdoll's implied frame (heading and
-//!   position), so culling and cell moves follow the corpse.
+//!   full strength and fade to limp along the reaction set's death curves (the
+//!   knees give first by gravity, a powered crumple rather than a sack).
 //! - `Knockdown`: the hit's impulse lands on the nearest body, the joints
-//!   brace at [`RagdollConfig::brace`] fading over
-//!   [`RagdollConfig::brace_fade`]; once the pelvis stays slower than
-//!   [`RagdollConfig::rest_speed`] for [`RagdollConfig::rest_time`] the
-//!   character gets up: its frame moves to [`get_up_root`] for the get-up
+//!   brace and fade along the reaction set's knockdown curves; once the
+//!   controller settles (pelvis slower than the set's rest speed for its rest
+//!   time) and enters its get-up the character gets up: its frame moves to [`get_up_root`] for the get-up
 //!   clip's first root-body pose, the graph inertializes from the ragdoll's
 //!   pose, the host's `get_up_flag` graph bool is cleared, the bodies are
 //!   removed and the component with them ([`RagdollGotUp`] tells the host).
@@ -44,12 +46,19 @@ use bevy_transform::components::Transform;
 use sf_anim::Trs;
 use sf_anim_bevy::{Animator, PhysicsPose};
 use sf_coords::{WorldPos, WorldTransform};
-use sf_ragdoll::{Drive, DriveParams, DriveTarget, HitImpulse, RagdollDef, RagdollInstance, RagdollSettings, SpawnPose, StrengthProfile, get_up_root, yaw_of};
+use sf_ragdoll::{
+    Drive, DriveParams, DriveTarget, HitImpulse, RagdollDef, RagdollInstance, RagdollSettings, ReactionClass, ReactionController, ReactionRequest, ReactionSet, ReactionState, Region, Sensed, SpawnPose,
+    StrengthProfile, get_up_root, yaw_of,
+};
 use sf_world::WorldspaceId;
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{WorldspaceRoot, from_grid};
 
 use crate::{Physics, PhysicsSystems};
+
+#[cfg(test)]
+#[path = "ragdoll_tests.rs"]
+mod tests;
 
 /// The host's ragdoll definitions, by the skeleton subject it names in
 /// [`Ragdoll::skeleton`] (usually the `ragdoll.cook` product).
@@ -65,14 +74,10 @@ pub struct RagdollConfig {
     pub drive: DriveParams,
     /// Animation → physics blend time after the handoff, s.
     pub fade: f32,
-    /// Death crumple: full strength to limp over this, s (0.3–0.6).
-    pub crumple: f32,
-    /// Knockdown brace strength and its fade to limp, s.
-    pub brace: f32,
-    pub brace_fade: f32,
-    /// Get-up when the pelvis stays below `rest_speed` (m/s) for `rest_time` s.
-    pub rest_speed: f32,
-    pub rest_time: f32,
+    /// The reaction curves and thresholds: the death crumple, the knockdown
+    /// brace and its fade, the rest speed and time before the get-up
+    /// (`sf_ragdoll::react`, RON `ReactionSet`).
+    pub reactions: Arc<ReactionSet>,
     /// Get-up hand-back inertialization, s.
     pub get_up_blend: f32,
     /// Powered ragdolls at once (the budget; physics.md "Budgets").
@@ -85,11 +90,7 @@ impl Default for RagdollConfig {
             settings: RagdollSettings::default(),
             drive: DriveParams::default(),
             fade: 0.1,
-            crumple: 0.45,
-            brace: 0.25,
-            brace_fade: 0.8,
-            rest_speed: 0.2,
-            rest_time: 0.5,
+            reactions: Arc::new(ReactionSet::default()),
             get_up_blend: 0.3,
             max_powered: 8,
         }
@@ -182,13 +183,15 @@ struct Live {
     weight: f32,
     /// Per joint: the owning body's region weight (1 = physics).
     weights: Vec<f32>,
-    /// The drive profile at full strength and its fade time (0: limp).
-    profile: StrengthProfile,
-    fade: f32,
-    elapsed: f32,
-    /// Seconds the pelvis has been slower than the rest speed.
-    slow: f32,
+    /// The reaction state machine: strength timeline, rest detection, get-up.
+    controller: ReactionController,
+    /// Per ragdoll region, the controller region its curves address.
+    regions: Vec<Region>,
+    /// Within the powered budget and not yet faded to limp.
     driving: bool,
+    /// The entity's own scale before the handoff made it uniform, restored
+    /// at the get-up (bodies are scaled uniformly; see [`handoff`]).
+    own_scale: Vec3,
 }
 
 #[derive(Resource, Default, Clone, Copy, Debug)]
@@ -252,7 +255,7 @@ fn handoff(
     mut ragdolls: ResMut<Ragdolls>,
     mut stats: ResMut<RagdollStats>,
     requests: Query<(Entity, &Ragdoll, &Animator)>,
-    spatial: FrameQuery,
+    mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     roots: Query<&WorldspaceRoot>,
 ) {
     let dt = time.delta_secs();
@@ -283,7 +286,7 @@ fn handoff(
         let p = pending.remove(&entity).expect("present");
         let skeleton = &animator.asset.skeleton;
         let model = p.poses[1].clone().unwrap_or_else(|| skeleton.rest_model());
-        let (Some(def), Some((ws, root, scale))) = ((source.0)(&request.skeleton), world_frame(entity, &spatial, &roots)) else {
+        let (Some(def), Some((ws, root, scale))) = ((source.0)(&request.skeleton), world_frame(entity, &frames.p0(), &roots)) else {
             stats.failed += 1;
             continue;
         };
@@ -299,45 +302,81 @@ fn handoff(
         let pose = SpawnPose { root, scale, model: &model, previous, root_velocity: Vec3::ZERO };
         let mut instance = RagdollInstance::spawn(world, &def, &pose, &config.settings);
         let budget = live.values().filter(|l| l.driving).count() < config.max_powered;
-        let (profile, fade) = match &request.mode {
-            RagdollMode::Death { crumple: true } if budget => (StrengthProfile::uniform(&def, Drive::Powered { strength: 1.0 }, 0.0), config.crumple),
+        // The controller owns the strength timeline (R2): a death crumples
+        // along the set's death curves, a knockdown braces along its fall
+        // curves; outside the powered budget (or a death without a crumple)
+        // the bodies stay limp whatever the curves say.
+        let mut controller = ReactionController::new(config.reactions.clone());
+        let seed = entity.to_bits();
+        let (driving, class, body, point, impulse) = match &request.mode {
+            RagdollMode::Death { crumple } => (*crumple && budget, ReactionClass::Death, 0, WorldPos::default(), Vec3::ZERO),
             RagdollMode::Knockdown { point, impulse, .. } => {
-                if let Some(body) = instance.nearest_body(world, *point) {
+                let body = instance.nearest_body(world, *point);
+                if let Some(body) = body {
                     instance.hit(world, &def, &HitImpulse { body, point: *point, impulse: *impulse, dip: 1.0, recover: 0.5 });
                 }
-                if budget { (StrengthProfile::uniform(&def, Drive::Powered { strength: config.brace }, 0.0), config.brace_fade) } else { (StrengthProfile::limp(), 0.0) }
+                (budget, ReactionClass::Knockdown, body.unwrap_or(0), *point, *impulse)
             }
-            RagdollMode::Death { .. } => (StrengthProfile::limp(), 0.0),
         };
-        // Every joint follows the body that owns it (all regions simulated;
-        // partial ragdolls set region weights below 1).
-        let weights = def.owner.iter().map(|o| f32::from(u8::from(o.is_some()))).collect();
+        controller.request(ReactionRequest { class, body, point, impulse, tick: 0, seed });
+        let regions = def.regions.iter().map(|name| Region::of_name(name)).collect();
+        // Every joint shows the ragdoll (all regions simulated), including
+        // the joints above the root body: they carry the body's placement
+        // in the frame (R0: at weight 0 the clip's root moved the mesh off
+        // the bodies). Partial ragdolls will set region weights below 1.
+        let weights = vec![1.0; skeleton.len()];
         let frozen = (0..skeleton.len()).map(|j| animator.output.pose.get(j)).collect();
-        let driving = fade > 0.0;
+        // Bodies scale uniformly (`scale` is the frame's Y): a non-uniform
+        // build scale (height on Y, build on X/Z) would skew bones lying
+        // sideways off their bodies, so the ragdoll shows the uniform height
+        // scale until the get-up restores the build.
+        let own_scale = frames.p1().get_mut(entity).map_or(Vec3::ONE, |mut t| {
+            let own = t.scale;
+            t.scale = Vec3::splat(own.y);
+            own
+        });
         live.insert(
             entity,
-            Live { worldspace: ws, def, instance, mode: request.mode.clone(), frozen, target: model, root, scale, weight: 0.0, weights, profile, fade, elapsed: 0.0, slow: 0.0, driving },
+            Live {
+                worldspace: ws,
+                def,
+                instance,
+                mode: request.mode.clone(),
+                frozen,
+                target: model,
+                root,
+                scale,
+                weight: 0.0,
+                weights,
+                controller,
+                regions,
+                driving,
+                own_scale,
+            },
         );
         stats.spawned += 1;
     }
 }
 
-/// Every fixed step: the powered drives (fading), dips, and the rest timer.
+/// Every fixed step: the reaction controller (strength timeline, rest
+/// detection), the powered drives it sets, and dips.
 #[allow(clippy::needless_pass_by_value)]
 fn drive(fixed: Res<Time<Fixed>>, config: Res<RagdollConfig>, mut physics: ResMut<Physics>, mut ragdolls: ResMut<Ragdolls>) {
     let dt = fixed.delta_secs();
     for l in ragdolls.live.values_mut() {
         let Some(w) = physics.worlds.get_mut(&l.worldspace) else { continue };
-        l.elapsed += dt;
+        // `upright` and `grounded` are for the stagger and balance slices (R3/R4):
+        // knockdown and death only use the pelvis speed.
+        let sensed = Sensed { pelvis_speed: l.instance.pelvis_speed(w), ..Sensed::default() };
+        let out = l.controller.step(dt, &sensed);
         if l.driving {
-            let k = if l.fade > 0.0 { 1.0 - (l.elapsed / l.fade).min(1.0) } else { 0.0 };
-            let profile = l.profile.scaled(k, &config.drive);
+            let region = l.regions.iter().zip(0u8..).map(|(r, i)| (i, Drive::Powered { strength: out.strength(*r) })).collect();
+            let profile = StrengthProfile { region, pelvis_world: 0.0 };
             let target = DriveTarget { root: l.root, model: &l.target, previous: None };
             l.instance.drive(w, &l.def, &target, &profile, &config.drive);
-            l.driving = k > 0.0;
+            l.driving = out.max_strength() > 0.0;
         }
         l.instance.advance(dt);
-        l.slow = if l.instance.pelvis_speed(w) < config.rest_speed { l.slow + dt } else { 0.0 };
     }
 }
 
@@ -368,12 +407,11 @@ fn read_back(
         if asleep && !fading && pose.is_some() {
             continue;
         }
-        // The pose is read back relative to the entity's current frame; a
-        // corpse's frame follows the ragdoll first.
+        // The pose is read back relative to the entity's current frame,
+        // which first follows the ragdoll in every mode (heading and
+        // position), so culling, LOD and cell moves follow the body.
         let Some((_, mut frame, scale)) = world_frame(*entity, &frames.p0(), &roots) else { continue };
-        if matches!(l.mode, RagdollMode::Death { .. })
-            && let Some(implied) = l.instance.implied_frame(w, &l.def, &l.target, alpha)
-        {
+        if let Some(implied) = l.instance.implied_frame(w, &l.def, &l.target, alpha) {
             let to = WorldTransform { pos: implied.pos, rotation: yaw_of(implied.rotation), scale: Vec3::ONE };
             if let Ok(mut t) = frames.p1().get_mut(*entity) {
                 move_frame(&mut t, &frame, scale, &to);
@@ -417,7 +455,7 @@ fn get_up(
     let ready: Vec<Entity> = ragdolls
         .live
         .iter()
-        .filter(|(_, l)| matches!(l.mode, RagdollMode::Knockdown { .. }) && !l.driving && l.slow >= config.rest_time)
+        .filter(|(_, l)| matches!(l.mode, RagdollMode::Knockdown { .. }) && l.controller.state() == ReactionState::GettingUp)
         .map(|(e, _)| *e)
         .collect();
     for entity in ready {
@@ -434,6 +472,7 @@ fn get_up(
         let to = get_up_root(&pelvis, clip_body, l.scale, face_down);
         if let Ok(mut t) = frames.p1().get_mut(entity) {
             move_frame(&mut t, &frame, scale, &to);
+            t.scale = l.own_scale;
         }
         // Hand back: the graph inertializes out of the ragdoll's pose, read
         // relative to the new frame (at rest: no velocity).

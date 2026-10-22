@@ -603,7 +603,9 @@ fading to limp over 0.45 s; the entity frame follows `implied_frame`'s heading a
 impulse, get_up, get_up_flag }` (the hit on the nearest body, brace 0.25 fading over 0.8 s, get-up when the pelvis
 stays under 0.2 m/s for 0.5 s); budget 8 by driven count; per-joint weights from `def.owner`; read-back relative to
 the entity's current frame. P9: hosts pass the get-up clip's first-frame root body (`clip_root_body`), so the
-`LYING_REST_GET_UP` scaffold only serves skeletons without a get-up clip.
+`LYING_REST_GET_UP` scaffold only serves skeletons without a get-up clip. R2: those constants now live in
+`sf_ragdoll::react`'s RON `ReactionSet` (`RagdollConfig::reactions`, default `data/reactions.ron`); a
+`ReactionController` per live ragdoll sets the strengths and signals the get-up.
 
 **Kinematic hit reactions and spring bones (P9, 2026-10-13).** Below the knockdown threshold (and for characters
 past the powered budget) hits go to the graph's `HitReact` op (animation.md "Secondary motion"): critically damped

@@ -675,9 +675,24 @@ kept. Tests: `deflected_walkers_face_where_they_go` (sf_controller),
 (mw_graphs, real install). Bevyrrowind logs a stride monitor (stances, skated stances, legs without
 a plant for 2 s while walking; `BEVYRROWIND_STRIDE_TRACE=1` details).
 
-Open: strafe clips' contacts (sf_anim cook: in-place clips use height only; MW WalkLeft/Right feet
-are within 6% of a leg of their lowest point on 0–6 of 81 frames); some walkers on flat ground walk
-at full speed with constant contacts (one leg 0, one 1) in state `walk`, cause not yet found.
+**Foot metrics (anim slices 4 and 4b, 2026-10-22).** `sf_anim::foot_metrics` (`FootMeter`, Bevy-free) measures slide
+while planted, sole penetration/float, stances. `gaits_plant_their_feet_on_flat_ground` (male, flat, walk 2.1 / run
+3.7 m/s) gates every gait at <= 3 cm/stance and prints the stance lock drift (`FootStats::drift_*`: lock vs animated
+foot). Worst-leg slide before: walk right 30, run back 55, run left 32, run right 36 cm/stance (others 0); after: 0.
+Cause: sidestep/back clips' root outruns their planted ankles (WalkRight root 1.72, feet 0.92 m/s). Fix: the cook
+stores `ClipMeta::stance_velocity` (root minus the slower of heel/toe's slide in stance); `stride_velocity()` uses it
+where it differs from the root by > 20 % (RunForward 3.18 vs 2.59 stays on the root) and SpeedMatch plays by it; the
+humanoid's SpeedMatch max is 2.2 (was 1.5: run strafes need ~2x playback; owner may trade it for slide). Stance drift (mean/max cm,
+before -> after): walk left 10/26 -> 6/16, walk right 17/41 -> 6/22, run back 20/53 -> 8/14, run left 18/45 -> 11/24, run right 16/45 -> 12/25; forward gaits 12-14/23 unchanged.
+
+**Feet on slopes and stairs (anim slice 5, 2026-10-22).** `feet_meet_the_ground_on_ramps` gates the sole
+(heel and toe as a rigid foot: deepest point, lowest-point gap) within 2 cm on planted frames. `FootPlacement`
+now keeps the sole's clearance along a tilted ground's normal and probes each foot's tip too (`Leg::toe`,
+slots after the legs in `probe_origins`): a tip over a higher step lifts the foot until it clears. Worst leg,
+cm, before → after: ramps 10/20/30° sole pen 1.6/2.0/2.6 → 1.5/1.3/1.0 (flat 1.5: the clip's own offset);
+stairs 0.15/0.30 up toe 16.5 → 5.3 (the lock keeps the heel-strike height while the toe rolls onto the
+tread), down 1.5; steep 0.25/0.22 up/down 37/68 unchanged: a 1.1 m walk step spans five treads (1.25 m of
+rise), beyond the leg. Stairs stay `#[ignore]` (`feet_meet_the_ground_on_stairs`) until grade-aware stride.
 
 ## Action-layer changes (R11b, 2026-10-19)
 

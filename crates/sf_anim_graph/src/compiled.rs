@@ -257,6 +257,13 @@ pub struct Leg {
     pub support: bool,
     /// Graph curve index of the contact curve.
     pub contact: Option<u16>,
+    /// The foot's tip (rig profile toe, else the effector's farthest child
+    /// in the rest pose), its probe slot in [`CompiledGraph::probe_count`]
+    /// order and its rest height: `FootPlacement` lifts a foot whose tip is over a higher step.
+    pub toe: Option<(u16, u16, f32)>,
+    /// Effector height in the rest pose (standing on y = 0): its clearance
+    /// over the ground, kept along a tilted ground's normal.
+    pub sole: f32,
 }
 
 impl Leg {
@@ -631,6 +638,12 @@ impl CompiledGraph {
 
     pub fn joint_count(&self) -> usize {
         usize::from(self.joint_count)
+    }
+
+    /// Ground probes per update: one per leg, then one per leg toe
+    /// ([`Leg::toe`]); the length of `probe_origins` and of `ground`.
+    pub fn probe_count(&self) -> usize {
+        self.legs.len() + self.legs.iter().filter(|l| l.toe.is_some()).count()
     }
 
     pub fn param(&self, name: &str) -> Option<ParamId> {

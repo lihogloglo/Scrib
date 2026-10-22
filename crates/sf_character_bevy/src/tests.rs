@@ -463,3 +463,17 @@ fn held_items_mount_on_their_socket_follow_it_and_move_with_readiness() {
     assert_eq!(w.resource::<CharacterStats>().held, 1);
     assert_eq!(w.resource::<CharacterStats>().swaps, 0);
 }
+
+#[test]
+fn anim_variety_is_seeded_by_the_stable_id_not_the_entity() {
+    use crate::{AnimSeed, AnimVarietySettings, seed_variety};
+    let on = AnimVarietySettings::default();
+    let at = |x| Transform::from_xyz(x, 0.0, 0.0);
+    // The same id, wherever it stands or whatever entity it is: the same variety.
+    let id = AnimSeed::from_id(0xABCD);
+    assert_eq!(seed_variety(on, Some(&id), &at(0.0)), seed_variety(on, Some(&id), &at(9.0)));
+    // Neighbours without ids differ by position; no variety when disabled.
+    assert_ne!(seed_variety(on, None, &at(0.0)), seed_variety(on, None, &at(3.5)));
+    let off = AnimVarietySettings { enabled: false, ..on };
+    assert_eq!(seed_variety(off, Some(&id), &at(0.0)), sf_anim_graph::Variety::default());
+}

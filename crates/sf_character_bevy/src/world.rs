@@ -28,7 +28,7 @@ impl PlacementSpawner for CharacterSpawner {
         let mut local = cx.local;
         local.rotation *= turn;
         let character = Character::Record { kind: p.base.kind.clone(), id: p.base.id.clone(), state: CharacterState::default() };
-        world.spawn((character, local, Visibility::Inherited, ChildOf(cx.parent), cx.layers.clone()));
+        world.spawn((character, local, Visibility::Inherited, ChildOf(cx.parent), cx.layers.clone(), crate::AnimSeed::from_id(p.id.0)));
         1
     }
 

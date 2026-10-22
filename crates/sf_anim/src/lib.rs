@@ -20,6 +20,7 @@ pub mod cloth;
 mod cook;
 #[cfg(feature = "fbx")]
 mod fbx_import;
+pub mod foot_metrics;
 #[cfg(any(test, feature = "fixtures"))]
 #[doc(hidden)]
 pub mod fixtures;

@@ -37,6 +37,7 @@ use crate::slot::{
     event_ids, warp_windows,
 };
 use crate::sync::{loop_span, phase, sync_time, wrapped_delta};
+use crate::variety::Variety;
 
 const EPS: f32 = 1e-5;
 
@@ -141,7 +142,7 @@ pub struct UpdateInputs<'a> {
     /// How the character moved since the previous update, in its frame at
     /// the previous update (keeps foot locks planted in the world).
     pub moved: RootDelta,
-    /// Per graph leg ([`CompiledGraph::legs`]): the ground under it, from
+    /// Per probe ([`CompiledGraph::probe_count`]: each leg, then each leg toe): the ground under it, from
     /// probes at the previous update's [`GraphOutput::probe_origins`].
     pub ground: &'a [Option<GroundSample>],
     pub look_target: Option<Vec3>,
@@ -248,8 +249,16 @@ pub struct GraphOutput {
 
 /// `FootPlacement` guard counts of one update (hosts sum them as
 /// diagnostics: a healthy crowd rarely clamps).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FootStats {
+    /// Lock drift: how far the animated foot strayed from its locked spot
+    /// (horizontal, m), on every update a foot was locked in stance (its
+    /// contact curve up; the release fade doesn't count). Largest, sum
+    /// and count (mean = sum / count). A foot whose clip outruns the body
+    /// drifts until it passes the unplant distance.
+    pub drift_max: f32,
+    pub drift_sum: f32,
+    pub drift_count: u32,
     /// Ground samples rejected (step limit, non-finite, too steep).
     pub rejected: u32,
     /// Foot targets pulled back within the leg's reach of its hip (by more
@@ -267,6 +276,9 @@ pub struct FootStats {
 
 impl std::ops::AddAssign for FootStats {
     fn add_assign(&mut self, o: Self) {
+        self.drift_max = self.drift_max.max(o.drift_max);
+        self.drift_sum += o.drift_sum;
+        self.drift_count += o.drift_count;
         self.rejected += o.rejected;
         self.reach_clamped += o.reach_clamped;
         self.pelvis_clamped += o.pelvis_clamped;
@@ -287,7 +299,7 @@ impl GraphOutput {
             drive_weight: 0.0,
             events: Vec::new(),
             curves: vec![0.0; graph.curves.len()],
-            probe_origins: vec![Vec3::ZERO; graph.legs.len()],
+            probe_origins: vec![Vec3::ZERO; graph.probe_count()],
             warp: None,
             slot_notices: Vec::new(),
             feet: FootStats::default(),
@@ -426,6 +438,8 @@ pub struct GraphInstance {
     hits: Vec<Hit>,
     /// Bound cloth parts ([`GraphInstance::set_cloth`]).
     cloth: Vec<ClothRun>,
+    /// Phase offset and rate jitter ([`GraphInstance::set_variety`]).
+    variety: Variety,
 }
 
 /// A pose supplied from outside the graph (a ragdoll's), with a weight per
@@ -483,9 +497,39 @@ impl GraphInstance {
             effectors: Vec::new(),
             slots: vec![SlotState::default(); g.slots.len()],
             next_montage: 0,
+            variety: Variety::default(),
         };
         inst.reset_range(b, 0, u32::try_from(g.nodes.len()).expect("node count fits u32"));
         inst
+    }
+
+    /// Gives this character its own phase and rate ([`Variety`]): looping
+    /// clips start `variety.phase` of a cycle in (the running ones shift now)
+    /// and play `variety.rate` times as fast, except root-motion-driven ones.
+    pub fn set_variety(&mut self, b: &Binding<'_>, variety: Variety) {
+        let delta = variety.phase - self.variety.phase;
+        self.variety = variety;
+        if delta == 0.0 {
+            return;
+        }
+        for (node, state) in b.graph.nodes.iter().zip(&mut self.nodes) {
+            let (NodeKind::Player(p), NodeState::Player(st)) = (&node.kind, state) else { continue };
+            if !p.looping {
+                continue;
+            }
+            for (lane, &clip) in st.lanes.iter_mut().zip(&p.lanes) {
+                let (a, e) = loop_span(&b.clips[usize::from(clip)], true);
+                if e - a > 1e-6 {
+                    lane.time = a + (lane.time - a + delta * (e - a)).rem_euclid(e - a);
+                    lane.prev = lane.time;
+                }
+            }
+        }
+    }
+
+    /// The variety set by [`GraphInstance::set_variety`].
+    pub fn variety(&self) -> Variety {
+        self.variety
     }
 
     /// Forgets the pose history (after a teleport or a pose snap), so the
@@ -863,6 +907,20 @@ impl GraphInstance {
             hits: &self.hits,
         };
         run_ops(&mut pcx, &mut self.ops, &mut out.pose, &mut out.model);
+        // Ops (foot placement, look-at, hit springs) leave the joints physics
+        // fully owns alone (R0: feet planted on the slope under a ragdoll).
+        if let Some(p) = &self.physics {
+            let mut owned = false;
+            for (j, (&w, &t)) in p.weights.iter().zip(&p.pose).enumerate() {
+                if w >= 1.0 {
+                    out.pose.set(j, t);
+                    owned = true;
+                }
+            }
+            if owned {
+                local_to_model(b.skeleton, &out.pose, &mut out.model, &Affine3A::IDENTITY);
+            }
+        }
         // `ClothLattice` (physics.md "Cloth"): last, on the final pose (after foot placement).
         for c in &mut self.cloth {
             c.update(&out.model, inputs.moved, dt, lod);
@@ -883,6 +941,7 @@ impl GraphInstance {
     fn probe_origins(&mut self, g: &CompiledGraph, dt: f32, out: &mut GraphOutput) {
         out.probe_origins.clear();
         let history = self.effectors.len() == g.legs.len();
+        let mut leads = Vec::with_capacity(g.legs.len());
         for (i, leg) in g.legs.iter().enumerate() {
             let f = out.model.translation(usize::from(leg.effector()));
             let lead = if history && dt > 0.0 {
@@ -892,6 +951,13 @@ impl GraphInstance {
                 Vec3::ZERO
             };
             out.probe_origins.push(f + lead);
+            leads.push(lead);
+        }
+        // Toe probes (slots after the legs, in leg order) share their foot's lead.
+        for (leg, lead) in g.legs.iter().zip(leads) {
+            if let Some((toe, _, _)) = leg.toe {
+                out.probe_origins.push(out.model.translation(usize::from(toe)) + lead);
+            }
         }
         if dt > 0.0 {
             self.effectors.clear();
@@ -1012,7 +1078,10 @@ impl GraphInstance {
         let g = cx.g;
         match &g.nodes[n].kind {
             NodeKind::Player(p) => {
-                let own_rate = rate * self.params.value(p.rate);
+                // Variety: looping clips that don't drive root motion (idles, and
+                // locomotion, whose speed match divides it back out).
+                let jitter = if p.looping && p.root_motion != RootMotionMode::Drive { self.variety.rate } else { 1.0 };
+                let own_rate = rate * self.params.value(p.rate) * jitter;
                 let (x, y) = match &p.space {
                     Some(s) => (self.params.value(s.x), s.y.map_or(0.0, |v| self.params.value(v))),
                     None => (0.0, 0.0),
@@ -1105,13 +1174,14 @@ impl GraphInstance {
 
     /// Resets the nodes `start..end` (a subtree) to their entry state.
     fn reset_range(&mut self, b: &Binding<'_>, start: u32, end: u32) {
+        let offset = self.variety.phase;
         for k in start as usize..end as usize {
             match (&b.graph.nodes[k].kind, &mut self.nodes[k]) {
                 (NodeKind::Player(p), NodeState::Player(st)) => {
                     for (lane, &clip) in st.lanes.iter_mut().zip(&p.lanes) {
                         let c = &b.clips[usize::from(clip)];
                         let (a, e) = loop_span(c, p.looping);
-                        let time = if p.looping { a + p.start * (e - a) } else { p.start * c.duration };
+                        let time = if p.looping { a + (p.start + offset).rem_euclid(1.0) * (e - a) } else { p.start * c.duration };
                         *lane = Lane { time, prev: time, ..Lane::default() };
                     }
                     st.fresh = true;
@@ -1313,15 +1383,21 @@ impl GraphInstance {
         let speed_match = self.speed_match;
         let mut stride = None;
         let mut anim_vel = Vec3::ZERO;
+        let mut stride_vel = Vec3::ZERO;
         let st = self.player_mut(n);
         let mut rate = st.rate;
         let dt = cx.dt;
         if def.root_motion == RootMotionMode::Match {
             let total: f32 = st.lanes.iter().map(|l| l.weight).sum::<f32>().max(EPS);
             for (lane, &c) in st.lanes.iter().zip(&def.lanes) {
-                anim_vel += cx.clips[usize::from(c)].meta.average_velocity * (lane.weight / total);
+                let meta = &cx.clips[usize::from(c)].meta;
+                anim_vel += meta.average_velocity * (lane.weight / total);
+                stride_vel += meta.stride_velocity() * (lane.weight / total);
             }
-            let natural = Vec2::new(anim_vel.x, anim_vel.z).length() * rate;
+            // Speed matching plays by the planted feet's speed where it
+            // differs from the root's (sidesteps, backpedals), so a foot
+            // lock holds; the body direction stays the root's.
+            let natural = Vec2::new(stride_vel.x, stride_vel.z).length() * rate;
             if let Some((min, max)) = speed_match
                 && natural > 1e-3
             {

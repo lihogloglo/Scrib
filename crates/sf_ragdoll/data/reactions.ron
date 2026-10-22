@@ -1,0 +1,31 @@
+// The default reaction set (physics.md "Ragdolls", research 12 R2): game-agnostic
+// curves, in seconds. Knockdown and death reproduce the P8b constants
+// (brace 0.25 fading to limp over 0.8 s; crumple 1 -> 0 over 0.45 s).
+// Stagger dips and recovers; its last keys are 1 (strength) and 0 (physics weight)
+// so the return to tracking is continuous.
+(
+    stagger: (
+        strength: (
+            all: [(0.0, 1.0), (0.08, 0.35), (0.5, 1.0)],
+            overrides: { Legs: [(0.0, 1.0), (0.08, 0.6), (0.5, 1.0)] },
+        ),
+        physics_weight: (all: [(0.0, 0.0), (0.08, 0.2), (0.5, 0.0)]),
+        variation: 0.1,
+    ),
+    knockdown: (
+        strength: (all: [(0.0, 0.25), (0.8, 0.0)]),
+        physics_weight: (all: [(0.0, 1.0)]),
+    ),
+    death: (
+        strength: (all: [(0.0, 1.0), (0.45, 0.0)]),
+        physics_weight: (all: [(0.0, 1.0)]),
+    ),
+    get_up: (
+        strength: (all: [(0.0, 0.0), (0.3, 1.0)]),
+        physics_weight: (all: [(0.0, 1.0), (0.3, 0.0)]),
+    ),
+    fall_impulse: 90.0,
+    fall_upright: 0.5,
+    rest_speed: 0.2,
+    rest_time: 0.5,
+)

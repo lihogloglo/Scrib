@@ -1144,6 +1144,44 @@ fn a0_update_timing() {
     println!("A0 update ({} joints): {us:.2} µs", rig.skeleton.len());
 }
 
+#[test]
+fn variety_offsets_looping_phase_and_jitters_rate_except_root_motion_drive() {
+    let rig = Rig::new(MAIN);
+    let b = rig.binding();
+    let idle = rig.graph.node("idle_clip").unwrap();
+    let time = |inst: &GraphInstance, n| inst.player(n).unwrap().0[0].0;
+    let mut out = GraphOutput::new(&rig.graph);
+
+    // Default: authored phase and rate.
+    let mut plain = GraphInstance::new(&b);
+    assert!(time(&plain, idle).abs() < 1e-6);
+    step(&rig, &mut plain, &mut out, 0.1);
+    assert!((time(&plain, idle) - 0.1).abs() < 1e-5);
+
+    // A quarter of the 2 s cycle in, 4 % fast; shifting a running instance works too.
+    let v = Variety { phase: 0.25, rate: 1.04 };
+    let mut a = GraphInstance::new(&b);
+    a.set_variety(&b, v);
+    assert!((time(&a, idle) - 0.5).abs() < 1e-5, "{}", time(&a, idle));
+    step(&rig, &mut a, &mut out, 0.1);
+    assert!((time(&a, idle) - (0.5 + 0.1 * 1.04)).abs() < 1e-5);
+    let mut late = GraphInstance::new(&b);
+    step(&rig, &mut late, &mut out, 0.1);
+    late.set_variety(&b, v);
+    assert!((time(&late, idle) - 0.6).abs() < 1e-5, "{}", time(&late, idle));
+    // A wrap keeps the playhead inside the cycle.
+    late.set_variety(&b, Variety { phase: 0.9, rate: 1.0 });
+    assert!((0.0..2.0).contains(&time(&late, idle)));
+
+    // Root-motion Drive clips (the attack) keep their rate, and are not looping so keep their start.
+    let attack = rig.graph.node("attack_clip").unwrap();
+    step(&rig, &mut a, &mut out, 0.05);
+    a.params.fire(rig.param("attack"));
+    step(&rig, &mut a, &mut out, 0.1);
+    let t = time(&a, attack);
+    assert!(t > 0.0 && t <= 0.1 + 1e-5, "attack time {t}");
+}
+
 mod optional;
 mod slot;
 
@@ -1267,4 +1305,30 @@ fn physics_handback_is_continuous_at_shrinking_dt() {
     assert!(pa / coarse < 8.0 && pb / fine < 8.0, "pose step {pa} @60 Hz, {pb} @240 Hz");
     assert!(pc > 10.0 * pb, "cut {pc} vs inertialized {pb}");
     assert!(vb < va * 0.45, "velocity jump {va} @60 Hz, {vb} @240 Hz");
+}
+
+/// R0: procedural ops leave joints at physics weight 1 alone. Foot placement
+/// on a step would otherwise lift a ragdoll's foot off its body.
+#[test]
+fn ops_skip_joints_physics_owns() {
+    let rig = proc_rig(r#"FootPlacement(pelvis: Joint("hips"), legs: ["l", "r"])"#);
+    let b = rig.binding();
+    let mut inst = GraphInstance::new(&b);
+    let mut out = GraphOutput::new(&rig.graph);
+    let up = Vec3::Y;
+    let ground = [Some(GroundSample { point: Vec3::new(0.0, 0.2, 0.0), normal: up }), Some(GroundSample { point: Vec3::new(0.0, 0.15, 0.0), normal: up })];
+    let rest = rig.skeleton.rest().to_vec();
+    let ones = vec![1.0; rest.len()];
+    let mut model = sf_anim::ModelPose::new(rest.len());
+    sf_anim::local_to_model(&rig.skeleton, &LocalPose::rest(&rig.skeleton), &mut model, &glam::Affine3A::IDENTITY);
+    for _ in 0..20 {
+        inst.set_physics(Some((&rest, &ones)));
+        let inputs = UpdateInputs { ground: &ground, ..UpdateInputs::default() };
+        inst.update(&b, 1.0 / 60.0, 0, &inputs, &mut out);
+    }
+    for (j, &r) in rest.iter().enumerate() {
+        let a = out.pose.get(j);
+        assert!(a.translation.distance(r.translation) < 1e-5 && a.rotation.angle_between(r.rotation) < 1e-5, "{}: ops moved it", rig.skeleton.name(j));
+        assert!(out.model.translation(j).distance(model.translation(j)) < 1e-5, "{}: stale model", rig.skeleton.name(j));
+    }
 }

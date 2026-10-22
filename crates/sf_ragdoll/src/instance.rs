@@ -172,8 +172,11 @@ impl RagdollInstance {
     /// character frame `root`: body joints take their rotations from the
     /// bodies (interpolated by `alpha`); joints without a body keep their
     /// `frozen` local transform (the pose at the handoff); joints above the
-    /// root body follow it rigidly. Bones keep their frozen lengths; only
-    /// the skeleton's top joint moves. False if a body is gone.
+    /// root body follow it rigidly. Body joints take their positions from
+    /// their bodies (so each bone sits exactly on its body); other bones
+    /// keep their frozen lengths. Hosts show every joint at physics weight
+    /// 1, including the joints above the root body: they carry the whole
+    /// body's placement in `root`. False if a body is gone.
     #[allow(clippy::too_many_arguments, clippy::many_single_char_names)]
     pub fn local_pose(
         &self,
@@ -192,11 +195,13 @@ impl RagdollInstance {
         let inv_root = root.rotation.inverse();
         let s = self.scale.max(1e-4);
         let mut model: Vec<Option<(Quat, Vec3)>> = vec![None; n];
+        let mut bodied = vec![false; n];
         for (b, &id) in def.bodies.iter().zip(&self.bodies) {
             let Some(w) = world.pose_at(id, alpha) else { return false };
             let q = (inv_root * w.rotation * b.local.1.inverse()).normalize();
             let p = inv_root * root.pos.delta_f32(w.pos) / s - q * b.local.0;
             model[usize::from(b.joint)] = Some((q, p));
+            bodied[usize::from(b.joint)] = true;
         }
         // Up from the root body: each parent from its child and the frozen local.
         let mut j = usize::from(def.bodies[0].joint);
@@ -219,6 +224,10 @@ impl RagdollInstance {
             let (q, p) = model[j].expect("set");
             let f = frozen[j];
             match skeleton.parent(j).and_then(|p| model[p]) {
+                // A body joint takes its position from its body too (R0): the
+                // bone lands exactly on the body, absorbing the joints'
+                // sub-centimetre stretch instead of drifting down the chain.
+                Some((qp, pp)) if bodied[j] => Trs { translation: qp.inverse() * (p - pp), rotation: (qp.inverse() * q).normalize(), scale: f.scale },
                 Some((qp, _)) => Trs { translation: f.translation, rotation: (qp.inverse() * q).normalize(), scale: f.scale },
                 None => Trs { translation: p, rotation: q, scale: f.scale },
             }

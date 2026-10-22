@@ -397,6 +397,7 @@ impl Retargeter {
             }
         }
         out.meta.average_velocity *= s;
+        out.meta.stance_velocity *= s;
         out.meta.cycle_distance *= s;
         out.meta.unbound_joints.clear();
         Ok(out)

@@ -17,11 +17,16 @@
 //!   per-region strength, a world-space pelvis drive, hit impulses with a
 //!   strength dip and recovery, a balance check, and get-up root placement.
 //!
+//! - [`react`](ReactionController) (R2): the reaction state machine (tracking,
+//!   stagger, falling, down, getting up, dead) with strength and
+//!   physics-weight timelines from a RON [`ReactionSet`].
+//!
 //! Frames: the skeleton's model space (Y up, +Z forward, +X left).
 
 mod cook;
 mod instance;
 mod powered;
+mod react;
 #[cfg(feature = "bake")]
 pub mod steps;
 
@@ -32,6 +37,7 @@ use sf_anim::{LimbKind, RigProfile, SkeletonId};
 
 pub use cook::{BodyOverride, CookParams, RagdollError, RagdollPolicy, cook};
 pub use instance::{RagdollInstance, RagdollSettings, SpawnPose};
+pub use react::{Curve, DEFAULT_RON as DEFAULT_REACTIONS_RON, ReactionClass, ReactionController, ReactionEvent, ReactionOutput, ReactionRequest, ReactionSet, ReactionState, Region, RegionCurves, Sensed, Timeline};
 pub use powered::{Balance, Dip, Drive, DriveParams, DriveTarget, HitImpulse, StrengthProfile, balance, get_up_root, region_gain, yaw_of};
 
 /// A capsule along the body frame's Y axis (a sphere when `half` is 0).

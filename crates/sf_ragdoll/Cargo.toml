@@ -13,6 +13,7 @@ bake = ["dep:sf_bake"]
 [dependencies]
 glam = { workspace = true, features = ["serde"] }
 postcard.workspace = true
+ron.workspace = true
 serde.workspace = true
 sf_anim.workspace = true
 sf_bake = { workspace = true, optional = true }

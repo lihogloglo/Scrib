@@ -32,6 +32,7 @@ futures-lite.workspace = true
 log.workspace = true
 sf_anim.workspace = true
 sf_anim_bevy.workspace = true
+sf_anim_graph.workspace = true
 # "smooth": smooth bodies at assembly (`smooth_outfit`; parry3d, already in the tree).
 sf_character = { workspace = true, features = ["smooth"] }
 sf_model = { path = "../sf_model", default-features = false }

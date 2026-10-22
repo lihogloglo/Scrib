@@ -139,12 +139,33 @@ pub struct ClipMeta {
     /// Mean root velocity over the loop range (or the clip), model space,
     /// m/s. For in-place clips it is estimated from planted feet.
     pub average_velocity: Vec3,
+    /// Travelling loops: how fast the planted feet move against the body
+    /// (root velocity minus the stance feet's own slide over the source's
+    /// ground; the slower of heel and toe, so a rolling heel doesn't
+    /// count). Zero where unmeasured. See [`ClipMeta::stride_velocity`].
+    pub stance_velocity: Vec3,
     /// Mean turn rate, radians per second.
     pub turn_rate: f32,
     /// Root displacement over one loop (or the clip), meters.
     pub cycle_distance: f32,
     /// Source tracks naming joints the skeleton lacks.
     pub unbound_joints: Vec<String>,
+}
+
+/// How far the stance feet's speed may differ from the root's before
+/// speed matching uses the feet's ([`ClipMeta::stride_velocity`]).
+pub const STRIDE_TOLERANCE: f32 = 0.20;
+
+impl ClipMeta {
+    /// The velocity speed matching plays this clip by: the planted feet's
+    /// ([`ClipMeta::stance_velocity`]) where it differs from the root's by
+    /// more than [`STRIDE_TOLERANCE`] (sidesteps and backpedals whose root
+    /// outruns their feet, so a foot lock would drift), else the root's.
+    #[must_use]
+    pub fn stride_velocity(&self) -> Vec3 {
+        let (root, feet) = (self.average_velocity, self.stance_velocity);
+        if feet != Vec3::ZERO && (feet.length() - root.length()).abs() > STRIDE_TOLERANCE * root.length() { feet } else { root }
+    }
 }
 
 /// Bit width marking a raw (f32) track.
@@ -246,7 +267,7 @@ pub struct Advance {
 
 const MAGIC: &[u8; 4] = b"SFAN";
 /// Version of the cooked clip format.
-pub const CLIP_FORMAT: u32 = 2;
+pub const CLIP_FORMAT: u32 = 3;
 
 impl Clip {
     #[allow(clippy::too_many_arguments)]

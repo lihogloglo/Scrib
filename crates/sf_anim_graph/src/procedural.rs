@@ -371,6 +371,16 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
     }
 }
 
+/// Toe ground above the heel's ground plane by more than this is a step
+/// edge (`FootPlacement` lifts the foot onto it), meters.
+const STEP_EDGE: f32 = 0.02;
+
+/// A rest-pose height as a ground clearance: rigs whose rest pose doesn't
+/// stand on y = 0 (beyond a quarter of the leg) get none.
+fn clearance(rest_height: f32, reach: f32) -> f32 {
+    if (0.0..=0.25 * reach).contains(&rest_height) { rest_height } else { 0.0 }
+}
+
 /// A foot target before the body fit: the leg, its index among the op's
 /// legs, the target, the ground normal and the animated foot rotation.
 type FootTarget<'a> = (&'a Leg, usize, Vec3, Option<Vec3>, Quat);
@@ -438,8 +448,29 @@ fn foot_placement(
             let n = gs.normal.normalize_or(Vec3::Y);
             let ground = gs.point.y - (n.x * (f.x - gs.point.x) + n.z * (f.z - gs.point.z)) / n.y;
             if n.y > 0.1 && ground.is_finite() && ground.abs() <= guards.max_step * reaches[k] {
-                lift = ground;
+                // The sole keeps its clearance along the normal of the
+                // ground it tilts to (vertically `sole / cos tilt`).
+                let tilt = n.y.clamp(-1.0, 1.0).acos().min(*max_foot_angle);
+                // Only rigid feet (a tip beyond the effector); point contacts keep theirs.
+                let sole = if leg.toe.is_some() { clearance(leg.sole, reaches[k]) } else { 0.0 };
+                lift = ground + sole * (1.0 / tilt.cos() - 1.0);
                 normal = Some(n);
+                // Step-aware: a tip over higher ground than the heel's plane
+                // (a riser between them) lifts the foot until the tip clears
+                // that step at its animated height, so toes never sink into
+                // the next tread; the heel then hangs over the nosing.
+                if let Some((toe, slot, rest)) = leg.toe
+                    && let Some(Some(ts)) = cx.inputs.ground.get(usize::from(slot))
+                {
+                    let t = model.translation(usize::from(toe));
+                    let tn = ts.normal.normalize_or(Vec3::Y);
+                    let at_toe = ts.point.y - (tn.x * (t.x - ts.point.x) + tn.z * (t.z - ts.point.z)) / tn.y;
+                    let plane = gs.point.y - (n.x * (t.x - gs.point.x) + n.z * (t.z - gs.point.z)) / n.y;
+                    let need = at_toe - (t.y - clearance(rest, reaches[k]));
+                    if tn.y > 0.1 && at_toe - plane > STEP_EDGE && need > lift && need.abs() <= guards.max_step * reaches[k] {
+                        lift = need;
+                    }
+                }
             } else {
                 cx.feet.rejected += 1;
             }
@@ -449,6 +480,14 @@ fn foot_placement(
         }
         let mut target = f + Vec3::Y * st.height.update(lift, guards.foot_halflife, dt);
         let contact = leg.contact.and_then(|c| cx.curves.get(usize::from(c)).copied()).unwrap_or(0.0);
+        if let Some(l) = st.lock
+            && contact > 0.5
+        {
+            let drift = horizontal(l - target).length();
+            cx.feet.drift_max = cx.feet.drift_max.max(drift);
+            cx.feet.drift_sum += drift;
+            cx.feet.drift_count += 1;
+        }
         if let Some(l) = st.lock
             && !st.unplanting
             && horizontal(l - target).length() > guards.unplant * reaches[k]

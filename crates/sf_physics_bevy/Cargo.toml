@@ -46,6 +46,10 @@ sf_world.workspace = true
 sf_world_bevy = { path = "../sf_world_bevy", default-features = false }
 
 [dev-dependencies]
+# The R0 write-back test: fixture biped, a compiled walk graph.
+sf_anim = { workspace = true, features = ["fixtures"] }
+sf_anim_graph = { workspace = true, features = ["bake"] }
+sf_bake.workspace = true
 # Item placements in the persistence test.
 sf_vfs.workspace = true
 bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }

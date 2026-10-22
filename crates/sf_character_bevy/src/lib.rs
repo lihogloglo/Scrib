@@ -75,6 +75,7 @@ use bevy_pbr::{MeshMaterial3d, StandardMaterial};
 use bevy_tasks::{AsyncComputeTaskPool, Task};
 use bevy_transform::components::Transform;
 use futures_lite::future;
+use sf_anim_graph::Variety;
 use sf_anim_bevy::{AnimAsset, AnimLod, AnimRootMotion, AnimSystems, Animator, SkeletonBinding, spawn_rig};
 use sf_character::{
     AssembledOutfit, AssemblyPart, BodyPart, CharacterRecipe, CharacterSource, CharacterState, OutfitKey, OutfitSmoothReport, OutfitSmoothing, PartKind,
@@ -182,6 +183,37 @@ impl SmoothBodies {
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CharacterSettings {
     pub bodies: SmoothBodies,
+}
+
+/// Idle and crowd variety (animation.md): each new character starts its looping
+/// clips at its own phase and plays them `1 +- rate_jitter` as fast, seeded by
+/// [`AnimSeed`] so same-record characters never breathe in lockstep. Read when
+/// a body spawns; changing it affects characters spawned later.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct AnimVarietySettings {
+    pub enabled: bool,
+    /// Largest relative rate change (0.05 = +-5 %).
+    pub rate_jitter: f32,
+}
+
+impl Default for AnimVarietySettings {
+    fn default() -> Self {
+        Self { enabled: true, rate_jitter: sf_anim_graph::variety::DEFAULT_RATE_JITTER }
+    }
+}
+
+/// The seed of a character's animation variety: a stable id (a placement id
+/// through [`sf_anim_graph::variety::seed_from_u128`]), never an entity index.
+/// Without it the spawn position seeds it.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnimSeed(pub u64);
+
+impl AnimSeed {
+    /// The seed of a stable 128-bit id (a placement id).
+    #[must_use]
+    pub fn from_id(id: u128) -> Self {
+        Self(sf_anim_graph::variety::seed_from_u128(id))
+    }
 }
 
 /// The merged-mesh cache key (character.md): equal keys look identical.
@@ -378,6 +410,7 @@ impl Plugin for SfCharacterPlugin {
             .init_resource::<CharacterStats>()
             .init_resource::<Frame>()
             .init_resource::<CharacterSettings>()
+            .init_resource::<AnimVarietySettings>()
             .init_resource::<HeldModelCache>()
             .init_resource::<ClothSettings>()
             .init_resource::<ClothStats>()
@@ -659,7 +692,8 @@ fn finish_builds(
     mut inverse: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut building: Query<(Entity, &Character, &mut CharacterBuild)>,
     pending: Query<(Entity, &PendingSwap)>,
-    mut roots: Query<(Option<&mut CharacterBody>, Option<&RenderLayers>)>,
+    mut roots: Query<(Option<&mut CharacterBody>, Option<&RenderLayers>, Option<&AnimSeed>, &Transform)>,
+    variety: Res<AnimVarietySettings>,
     bindings: Query<&SkeletonBinding>,
 ) {
     frame.0 = frame.0.wrapping_add(1);
@@ -725,7 +759,7 @@ fn finish_builds(
         commands.entity(entity).try_remove::<PendingSwap>();
     }
     for (entity, built, assets) in ready {
-        let Ok((body, layers)) = roots.get_mut(entity) else { continue };
+        let Ok((body, layers, seed, at)) = roots.get_mut(entity) else { continue };
         let has_body = body.is_some();
         if has_body && frame.0 < assets.ready_frame {
             // The old outfit stays until the new one has settled.
@@ -752,7 +786,7 @@ fn finish_builds(
                     commands.entity(old.body).try_despawn();
                     stats.meshes -= old.meshes.len();
                 }
-                spawn_body(&mut commands, entity, &built)
+                spawn_body(&mut commands, entity, &built, seed_variety(*variety, seed, at))
             }
         };
         // Cloth lattice joints (module `cloth`): entities under the body, posed by the cloth op.
@@ -843,13 +877,27 @@ impl Built {
 }
 
 /// The body under `root`: race scale, rig, animator.
-fn spawn_body(commands: &mut Commands, root: Entity, built: &Built) -> (Entity, SkeletonBinding) {
+fn spawn_body(commands: &mut Commands, root: Entity, built: &Built, variety: Variety) -> (Entity, SkeletonBinding) {
     let scale = built.recipe.scale;
     let scale = if scale.cmpgt(Vec3::ZERO).all() { scale } else { Vec3::ONE };
     let body = commands.spawn((Name::new("body"), Transform::from_scale(scale), Visibility::default(), ChildOf(root))).id();
     let binding = spawn_rig(commands, body, &built.animation.skeleton);
     let asset = Arc::clone(&built.animation);
     let lod = AnimLod::new(asset.rest_height() * scale.y);
-    commands.entity(body).try_insert((Animator::new(asset), lod, AnimRootMotion::default()));
+    let mut animator = Animator::new(asset);
+    animator.set_variety(variety);
+    commands.entity(body).try_insert((animator, lod, AnimRootMotion::default()));
     (body, binding)
+}
+
+/// The variety of a new body: seeded by [`AnimSeed`], else by where it spawned.
+fn seed_variety(settings: AnimVarietySettings, seed: Option<&AnimSeed>, at: &Transform) -> Variety {
+    if !settings.enabled {
+        return Variety::default();
+    }
+    let seed = seed.map_or_else(
+        || at.translation.to_array().iter().fold(0x57A7_E5ED, |h, c| sf_anim_graph::variety::mix64(h ^ u64::from(c.to_bits()))),
+        |s| s.0,
+    );
+    Variety::from_seed(seed, settings.rate_jitter)
 }

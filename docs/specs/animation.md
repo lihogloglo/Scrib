@@ -4,6 +4,7 @@ Status: draft (2026-10-11); `sf_anim` and `sf_anim_graph` built; next-gen
 roadmap (warping, full-body IK, context probes, physical animation, pose
 search, creatures) drafted, not built; R11b (2026-10-19): the decider moved to
 [action.md](action.md), see "Next-gen roadmap: Decided shape (R11b)" for what changes here
+Slice plan and execution order (2026-10-22): [animation-plan.md](animation-plan.md).
 Crates: `sf_anim` (new, Bevy-free: skeletons, cooked clips, sampling, pose
 ops, root motion, events and curves, IK solvers, retarget math, bake steps),
 `sf_anim_graph` (new, Bevy-free: graph assets, layers, state machines, blend
@@ -1461,6 +1462,12 @@ IK inside Havok Behavior; `bCastFarShadow`'s default value.
    set should be resolved by `GraphRules` at spawn rather than per request.
 8. Crowd pose sharing (gap, P2): A2 characters on the same skeleton and
    clip, bucketed by quantized phase, copy one evaluated pose (UE Animation
-   Sharing). Also randomize start phase and rate (±5%) per character so
-   crowds playing one clip never march in lockstep; check whether
-   `Player`'s start phase is per instance today.
+   Sharing). Still open. **Variety half built 2026-10-22 (animation-plan
+   slice 3):** `sf_anim_graph::variety`: `Variety::from_seed(seed, 0.05)` (splitmix64
+   hash of a stable id; `AnimSeed::from_id(placement id)` in `sf_character_bevy`, else spawn
+   position) gives a start phase in [0,1) and a rate in 1±5 %. `GraphInstance::set_variety`
+   applies the phase at every looping player (re)start and the rate to looping players that are
+   not root-motion `Drive` (locomotion's speed match divides it back out: no foot slide).
+   `FidgetPicker`: weighted, min/max gap, never the same fidget twice in a row (a sole
+   candidate may repeat). Off via `AnimVarietySettings.enabled`. Content: AI idle rolls skip the
+   last fidget (`mw_ai`), level `@fidget` action (lab crowd, `level-anim-crowd`).

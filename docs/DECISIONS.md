@@ -1476,3 +1476,18 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   timer. `ActionOutput.launch` maps to it one to one. `Locomotion` is serde.
 - 2026-10-21 (action-a1): `PlayerId` + `MAX_PLAYERS` live in the serde-only `sf_ids` crate (resolves the duplicate);
   `sf_rpg` and `sf_action` re-export it; `sf_net` (N2) will re-export it rather than own it.
+- 2026-10-22 (anim-refactor R0): a ragdoll owns every joint at physics weight 1, including those above the root body;
+  body joints take positions from their bodies. While ragdolled the character shows a uniform (height) scale, restored
+  at the get-up. Root motion and procedural ops never move what physics owns.
+- 2026-10-22 (anim-refactor): idle/crowd variety is seeded by a stable placement id (`AnimSeed`), never the entity
+  index; the phase offset applies to all looping clips, rate jitter (±5 %) only to looping non-root-motion clips;
+  fidgets never repeat back to back (except a sole candidate).
+- 2026-10-22 (anim-refactor): foot slide is measured with `sf_anim::foot_metrics` on the real graph (mw_graphs gaits
+  test). Strafe/backward slide comes from clip root speed exceeding planted-ankle speed under SpeedMatch, not contacts.
+- 2026-10-22 (anim-refactor): FootPlacement also probes biped foot tips (`Leg::toe`, slots after the legs in
+  `probe_origins`, hosts size ground by `probe_count`); a tip over a higher step lifts the foot. Quadruped paws stay points.
+- 2026-10-22 (anim-refactor R2): reaction curves and thresholds (brace, crumple, rest, stagger dip) live in a RON
+  `ReactionSet` read by `sf_ragdoll::react`; `RagdollConfig::reactions` replaces the constants. The controller never
+  picks clips; falls from lost balance are decided on the host only.
+- 2026-10-22 (anim 4b): speed matching plays a travelling loop by its planted feet's speed (`ClipMeta::stance_velocity`, the slower of heel and toe; used when it differs from the root's by > 20 %), not its root speed, so strafe/backpedal foot locks hold (slide 30-55 -> 0 cm/stance).
+  Humanoid SpeedMatch max 1.5 -> 2.2 (run strafes need it; owner may trade cadence for slide). Cook version 4 -> 5, `CLIP_FORMAT` 3: a re-bake of `anim.cook`.
