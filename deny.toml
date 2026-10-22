@@ -25,6 +25,9 @@ allow = [
     "Zlib",
     "ISC",
     "Unicode-3.0",
+    # Public-domain-like, no attribution needed (owner decision 2026-10-22): encase (Bevy), notify.
+    "MIT-0",
+    "CC0-1.0",
 ]
 confidence-threshold = 0.93
 # MPL-2.0 is allowed only for unmodified crates.io dependencies (owner decision 2026-10-11), and only

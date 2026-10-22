@@ -37,9 +37,9 @@ your option.
 cargo deny check
 ```
 
-- **Licences:** MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0. MPL-2.0 only for the
-  named, unmodified crates.io crates behind `bevy_flair` (owner decision 2026-10-11). Never GPL,
-  LGPL or AGPL; a dual-licensed crate passes through its permissive arm.
+- **Licences:** MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0, MIT-0, CC0-1.0.
+  MPL-2.0 only for the named, unmodified crates.io crates behind `bevy_flair` (owner decision
+  2026-10-11). Never GPL, LGPL or AGPL; a dual-licensed crate passes through its permissive arm.
 - **Advisories:** RustSec vulnerabilities, unsound and unmaintained crates fail; yanked ones warn.
 - **Bans:** duplicate crate versions (Bevy's above all) warn; wildcard versions fail.
 - **Sources:** crates.io only.
