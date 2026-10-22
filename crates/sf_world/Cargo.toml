@@ -21,7 +21,7 @@ serde.workspace = true
 sf_bake = { workspace = true, optional = true }
 sf_coords.workspace = true
 # No glTF importer: only `ModelInfo` / `ModelInfoStep` are used.
-sf_model = { path = "../sf_model", optional = true, default-features = false }
+sf_model = { path = "../sf_model", version = "0.1.0", optional = true, default-features = false }
 sf_records.workspace = true
 sf_vfs.workspace = true
 thiserror.workspace = true

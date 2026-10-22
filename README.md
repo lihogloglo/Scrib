@@ -27,3 +27,22 @@ for the vision, design, and milestones.
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
 your option.
+
+## Dependency policy
+
+`deny.toml` holds the dependency rules; check them with
+[cargo-deny](https://github.com/EmbarkStudios/cargo-deny) (`cargo install cargo-deny --locked`):
+
+```sh
+cargo deny check
+```
+
+- **Licences:** MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0. MPL-2.0 only for the
+  named, unmodified crates.io crates behind `bevy_flair` (owner decision 2026-10-11). Never GPL,
+  LGPL or AGPL; a dual-licensed crate passes through its permissive arm.
+- **Advisories:** RustSec vulnerabilities, unsound and unmaintained crates fail; yanked ones warn.
+- **Bans:** duplicate crate versions (Bevy's above all) warn; wildcard versions fail.
+- **Sources:** crates.io only.
+
+There is no CI yet: run it before adding or updating a dependency. A failure is fixed (upgrade,
+swap, drop) or raised with the owner, never silenced in `deny.toml`.

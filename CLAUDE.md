@@ -74,4 +74,5 @@ never revert others' changes.
 ```sh
 cargo test --workspace --all-features
 cargo clippy --workspace --all-features --all-targets
+cargo deny check   # licences, advisories, duplicates (deny.toml; README "Dependency policy")
 ```

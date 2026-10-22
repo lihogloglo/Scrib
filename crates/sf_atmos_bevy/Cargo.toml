@@ -26,17 +26,17 @@ bevy_shader.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
-sf_atmos = { path = "../sf_atmos" }
+sf_atmos = { path = "../sf_atmos", version = "0.1.0" }
 # The world weather map (WE4b): `WeatherMap`, the resolve shader `MAP_WGSL`.
-sf_weather = { path = "../sf_weather" }
-sf_render_order_bevy = { path = "../sf_render_order_bevy" }
+sf_weather = { path = "../sf_weather", version = "0.1.0" }
+sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
-sf_sky_bevy = { path = "../sf_sky_bevy" }
+sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 
 # Synthetic test scene: each cloud genus, the shadow edge, the sun behind cloud.
 [[example]]

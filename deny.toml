@@ -1,0 +1,59 @@
+# cargo-deny policy for the superfargoth workspace: `cargo deny check` (README.md "Dependency policy").
+# Config reference: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+# Check every crate any feature can pull in (DLSS, Solari, FBX...), not just the defaults.
+all-features = true
+
+[advisories]
+# RustSec advisory database. Vulnerabilities, unsound and unmaintained crates are errors; yanked
+# versions are warnings. Accepting an advisory needs an `ignore` entry with its reason.
+version = 2
+unmaintained = "all"
+yanked = "warn"
+ignore = []
+
+[licenses]
+version = 2
+# Ours is MIT OR Apache-2.0 (CLAUDE.md hard rule 8): permissive licences only. GPL, LGPL and AGPL
+# are never listed here, so a crate is accepted only through a permissive arm of its expression.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "ISC",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+# MPL-2.0 is allowed only for unmodified crates.io dependencies (owner decision 2026-10-11), and only
+# for the crates named here, all pulled in by `bevy_flair` (sf_ui_css). A new MPL crate fails the check
+# until it is reviewed and added. Never patch or vendor these (`[patch.crates-io]`, vendor/).
+exceptions = [
+    { crate = "cssparser", allow = ["MPL-2.0"] },
+    { crate = "cssparser-color", allow = ["MPL-2.0"] },
+    { crate = "cssparser-macros", allow = ["MPL-2.0"] },
+    { crate = "dtoa-short", allow = ["MPL-2.0"] },
+    { crate = "selectors", allow = ["MPL-2.0"] },
+]
+
+[licenses.private]
+# Our own crates are unpublished workspace members; their licence is the workspace's.
+ignore = true
+
+[bans]
+# Two versions of one crate cost compile time (ARCHITECTURE §8b). Warn on every duplicate, Bevy's
+# above all; the summary names them. Errors would block on transitive platform crates we don't control.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies (our workspace and vendor/ patches) are not wildcards.
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+# crates.io only. A git dependency must be listed here on purpose.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

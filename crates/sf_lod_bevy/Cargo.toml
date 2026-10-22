@@ -38,11 +38,11 @@ log.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy.workspace = true
 sf_lod.workspace = true
-sf_model = { path = "../sf_model", default-features = false }
+sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
 sf_model_bevy.workspace = true
-sf_render_order_bevy = { path = "../sf_render_order_bevy" }
+sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 sf_world.workspace = true
-sf_world_bevy = { path = "../sf_world_bevy", default-features = false }
+sf_world_bevy = { path = "../sf_world_bevy", version = "0.1.0", default-features = false }
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -51,7 +51,7 @@ postcard.workspace = true
 sf_bake.workspace = true
 sf_lod = { workspace = true, features = ["bake"] }
 sf_world = { workspace = true, features = ["bake"] }
-sf_world_bevy = { path = "../sf_world_bevy" }
+sf_world_bevy = { path = "../sf_world_bevy", version = "0.1.0" }
 sf_vfs.workspace = true
 
 

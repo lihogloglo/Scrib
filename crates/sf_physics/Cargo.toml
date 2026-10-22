@@ -25,7 +25,7 @@ sf_controller.workspace = true
 postcard.workspace = true
 serde.workspace = true
 sf_bake = { workspace = true, optional = true }
-sf_model = { path = "../sf_model", optional = true, default-features = false }
+sf_model = { path = "../sf_model", version = "0.1.0", optional = true, default-features = false }
 sf_terrain = { workspace = true, optional = true, features = ["bake"] }
 sf_world = { workspace = true, optional = true, features = ["bake"] }
 
