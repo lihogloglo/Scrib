@@ -2,6 +2,7 @@
 
 Status: draft, design complete (2026-10-11); owner decisions recorded below. Built from M5.
 Crates (proposed): `sf_ui` (Bevy-free: records, registry, view-models, Fluent),
+`sf_rpg_ui` (Bevy-free RPG screen view-models: dialogue),
 `sf_ui_bevy` (runtime, widget kit, layers, input router), `sf_ui_css` (bevy_flair
 integration and stylesheet composer, isolated on purpose), `sf_ui_screens` (stock screens),
 `sf_ui_lua` (Luau bindings, part of `sf_script`'s API surface), `sf_devui` (dev tools only).
@@ -304,6 +305,67 @@ What the code does where it differs from the sketches above. Details, tests and 
   needs no extra code.
 - **Not done yet**: the game app doesn't call `insert_from_profile`; `UiSettings` isn't fed from
   `ui.setting` values; PlayStation/Switch glyph names; widgets (U3) and Lua (parked).
+
+## Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
+
+The logic of the stock dialogue screen, Bevy-free, over an `sf_rpg` session (rpg.md "Dialogue"). No rendering:
+`sf_ui_screens` binds it later. Crate `sf_rpg_ui` (deps `sf_rpg`, `sf_ui`, `serde`): a leaf, so `sf_ui` stays
+RPG-agnostic and `sf_rpg` stays presentation-free (net rule 3); journal and inventory view-models go here too.
+
+**Research.** Morrowind: scrollback of answers with the topic as a heading, topic hyperlinks in the text, a sorted topic
+list beside it with Goodbye under it, choices as links at the end of the text, "journal updated" inline. Skyrim, Fallout
+4, The Witcher 3: options already explored are dimmed, unexplored ones bright (our `new`). Disco Elysium and Baldur's
+Gate 3: the log echoes the player's pick; numbered choices for keyboard. Yarn Spinner for Bevy (`bevy_yarnspinner` 0.8,
+2026-03; its `example_dialogue_view` crate) renders a node-graph runner's lines and options through Bevy events: graph
+model, Bevy-coupled, no topic list or links (rpg.md "Reuse"), so not reusable here. No Bevy-free dialogue view-model
+crate exists; ours reuses `sf_ui::ListModel` for the topic list (sort, search, per-row versions).
+
+**Data flow** (net-ready: the view never touches game state; requests are what a client sends):
+input (`nav(DialogueNav)` or `activate(DialogueFocus)` for a click) → `DialogueRequest { Ask(topic) | Choose(value) |
+Goodbye }` → host `request.apply(&mut session, db, rules)` → `apply_outputs(db, &outputs)` (lines) → result scripts →
+`apply_events(&rpg_events)` (notices) → `refresh(db, state, available, known)` (or `refresh_from(session, ..)` on the
+host).
+
+- **Scrollback**: `Entry { id: EntryId, kind }`, ids monotonic and stable when old entries drop (cap
+  `DEFAULT_MAX_ENTRIES` = 256, `with_max_entries`). Kinds: `Line(ViewLine { topic, response, heading, runs })`,
+  `Chosen { label }` (the echo), `JournalUpdated { quests }` (consecutive journal entries of one step share one notice;
+  the screen formats it with Fluent and may also toast it). `heading` = topic name for `Conversation` topics, none for
+  greetings and service replies.
+- **Hyperlinks**: a line's text is split by the db's `TopicLinker` into `TextRun { text, link: Option<TopicLink {
+  topic, state }> }` (one `TextSpan` each). `LinkState`: `New`, `Known`, `Unavailable` (the speaker has nothing on it:
+  styled, not followable). States are restyled on every refresh and ask.
+- **Topic list**: `ListModel<RecordId, TopicRow { name, new, enabled }>` sorted by name (case-insensitive), rows = the
+  session's `available_topics`; `new` = no heard line under the topic in `Topics` and not asked in this conversation;
+  `enabled` only while talking. `set_topic_search` filters by name (PC-dense).
+- **Mode** from the session state: `Talking`, `Choosing` (only choices live), `GoodbyeOnly` (forced goodbye),
+  `Ended` (`is_closed`). `choices()`, `can_goodbye()`, `links_active()`; `DialogueView` is a `ViewModel` (`speaker`,
+  `mode`, `can_goodbye`, `links_active`).
+- **Focus** (`DialogueFocus::{Topic, Link { entry, run }, Choice, Goodbye}`), driven by `DialogueNav::{Prev, Next,
+  PrevRegion, NextRegion, Confirm, Back}`; the stock screen maps up/down/left/right/confirm/back to them. Two regions
+  while talking: the topic list (rows, then Goodbye) and the **link cursor** (followable links in reading order, ui.md
+  "Screens": spans are not layout nodes, so Bevy's directional navigation can't reach them). Prev/Next clamp, no wrap
+  (held-direction repeat). PrevRegion enters the text on the newest line with a live link; NextRegion returns to the
+  remembered row (or the row now at its index). Choosing: choices only, Back does nothing (a choice must be made).
+  Forced goodbye: Goodbye only. Back = goodbye otherwise. A focus the view placed itself follows the best target until
+  the player moves it (the greeting arrives before the topic list); an invalid focus falls back after every change
+  (trimmed line, search, mode change).
+- **Scroll**: `take_scroll_request() -> Option<EntryId>`: the new line (read from its top) or the line under the link
+  cursor; the screen scrolls, the view holds no geometry.
+- `version()` changes on any change (view counter + the topic list's), for cheap rebinding.
+
+Tests (`cargo test -p sf_rpg_ui`, 5): a host test double (response table with conditions, rendered texts, result
+scripts that offer choices, set stages with journal entries and force goodbye) drives a whole conversation by pad input:
+greeting runs and link states, sorted list with new/known, ask, choice lock and echo, merged journal notice, link cursor
+order and follow, goodbye; pointer activation and search; scrollback cap with a trimmed focused link; no linker / no
+greeting.
+
+| Technique | Industry | Ours | Verdict |
+|---|---|---|---|
+| Topic list + hyperlinked keywords | Morrowind (keyword topics, links in text) | same, from `TopicLinker` spans | **match** |
+| Explored vs unexplored options | Skyrim/Fallout 4 dim explored lines; Witcher 3 greys read options | `TopicRow::new`, `LinkState` | **match** |
+| Player line echoed in the log | Disco Elysium, BG3 | `EntryKind::Chosen` | **match** |
+| Numbered choices (1-9 keys) | BG3, Disco Elysium | `activate(Choice(i))`; the key map is the screen's | **match** (screen side) |
+| Gamepad-reachable inline links | Morrowind links are pointer-only (unverified for later ports) | link cursor region | **beyond** |
 
 ## Industry comparison
 

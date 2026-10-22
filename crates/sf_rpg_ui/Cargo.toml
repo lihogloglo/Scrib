@@ -1,0 +1,16 @@
+[package]
+name = "sf_rpg_ui"
+description = "Bevy-free view-models for the RPG screens over sf_rpg state: the dialogue window (topics, hyperlinked text, choices, notices, scrollback, focus)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+sf_rpg.workspace = true
+# `ViewModel`, `UiValue`, `ListModel` (keyed, sortable, filterable rows).
+sf_ui.workspace = true
+
+[lints]
+workspace = true

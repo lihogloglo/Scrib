@@ -6399,6 +6399,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_rpg_ui"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sf_rpg",
+ "sf_ui",
+]
+
+[[package]]
 name = "sf_script"
 version = "0.1.0"
 dependencies = [

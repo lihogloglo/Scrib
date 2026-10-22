@@ -16,7 +16,7 @@ prices, weight), filter semantics, text macros and scripting live in the adapter
 same values are saved (`sf_save`, M7) and replicated (net.md).
 
 Out of scope here: stats/skills/magic/factions (M7, separate spec), barter, containers' UI
-(ui.md), the Bevy plugin (`sf_rpg_bevy`, when the UI slice needs it), the script runtime.
+(ui.md; the dialogue window's view-model is `sf_rpg_ui`, ui.md "Dialogue window view-model"), the Bevy plugin (`sf_rpg_bevy`, when the UI slice needs it), the script runtime.
 
 ## Research (2026-10-21)
 
