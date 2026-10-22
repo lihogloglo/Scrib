@@ -16,6 +16,7 @@ use mw_graphs::build::params as p;
 use mw_graphs::sim::Sim;
 use mw_graphs::{AnimSet, HUMANOID_SETS, Template};
 use mw_install::MorrowindInstall;
+use sf_anim::foot_metrics::{FootFrame, FootMeter, FootMetrics, MeterRules};
 use sf_anim_graph::GroundSample;
 use sf_controller::{
     CollisionBuilder, CollisionMesh, GroundProbe, HeightSurface, KinematicMover, Locomotion, LocomotionIntent, MoveInput, MoverParams, Nearest,
@@ -54,7 +55,14 @@ fn humanoid_sim_of(index: usize) -> Option<Sim> {
     }
     let mut set = AnimSet::new(set.name, skeleton, anims).with_humanoid_rig();
     let v = mw_graphs::validate(&mut set, Template::Humanoid).unwrap();
-    let clips = set.binding_clips(&v.graph).unwrap();
+    #[allow(unused_mut)]
+    let mut clips = set.binding_clips(&v.graph).unwrap();
+    if std::env::var_os("GAIT_BASELINE").is_some() {
+        // Before the stride speed: speed matching by the roots' velocity.
+        for c in &mut clips {
+            Arc::make_mut(c).meta.stance_velocity = Vec3::ZERO;
+        }
+    }
     Some(Sim::new(v.graph, set.skeleton.clone(), clips).unwrap())
 }
 
@@ -161,6 +169,58 @@ struct Report {
     /// Lowest walk-cycle playback rate seen, as a fraction of the stride.
     min_measured: f32,
     stats: sf_anim_graph::FootStats,
+    /// Per leg: `sf_anim::foot_metrics` over the measured stretch, for the
+    /// foot joint and for its toe (the rig profile's, if any).
+    feet: Vec<FootMetrics>,
+    toes: Vec<Option<FootMetrics>>,
+    /// Per leg: the sole's lowest clearance (heel or toe) as a metric with
+    /// the ground at 0: penetration = deepest point, float = gap to the ground.
+    soles: Vec<FootMetrics>,
+}
+
+/// Per leg (graph order): the foot joint's height over flat ground with
+/// the sole down (the rig profile's `foot.sole`).
+fn soles(sim: &Sim) -> Vec<f32> {
+    let profile = rig::humanoid(&sim.skeleton).ok().and_then(|r| r.map.profile(&sim.skeleton).ok());
+    sim.graph
+        .legs
+        .iter()
+        .map(|l| {
+            let e = usize::from(l.effector());
+            profile
+                .as_ref()
+                .and_then(|p| p.limbs.iter().find(|m| usize::from(m.effector) == e))
+                .and_then(|m| m.foot.as_ref())
+                .map_or(0.0, |f| f.sole)
+        })
+        .collect()
+}
+
+/// Per leg (graph order): the toe joint (the rig profile's, else the
+/// foot's first child) and its height over flat ground in the rest pose
+/// (where the rig profile's `foot.sole` is measured).
+fn toes(sim: &Sim) -> Vec<Option<(usize, f32)>> {
+    let profile = rig::humanoid(&sim.skeleton).ok().and_then(|r| r.map.profile(&sim.skeleton).ok());
+    let rest = sim.skeleton.rest_model();
+    sim.graph
+        .legs
+        .iter()
+        .map(|l| {
+            let e = usize::from(l.effector());
+            let foot = profile.as_ref()?.limbs.iter().find(|m| usize::from(m.effector) == e)?.foot.clone()?;
+            let child = (0..rest.len()).find(|&j| sim.skeleton.parent(j) == Some(e));
+            let toe = foot.toe.map(usize::from).or(child)?;
+            Some((toe, rest[toe].translation.y - (rest[e].translation.y - foot.sole)))
+        })
+        .collect()
+}
+
+/// Ground height straight under `p` (a thin probe from half a meter above).
+fn ground_at(world: &World, p: Vec3) -> Option<f32> {
+    let q = sf_controller::ProbeQuery { origin: WorldPos::ORIGIN.offset(p + Vec3::Y * 0.5), dir: -Vec3::Y, max: 1.5, radius: 0.01, half_height: 0.0 };
+    let mut hit = [None];
+    world.probe(&[q], &mut hit);
+    hit[0].as_ref().map(|h| WorldPos::ORIGIN.delta_f32(h.point).y)
 }
 
 /// Walks from `start` toward `dir` at `SPEED` for `seconds`, measuring
@@ -185,6 +245,11 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
     let (mut measured, mut moving) = (Vec3::ZERO, false);
     let mut r = Report { plants: vec![0; legs.len()], slide: vec![0.0; legs.len()], foot_travel: vec![0.0; legs.len()], min_measured: f32::MAX, ..Report::default() };
     let mut stance = vec![0.0f32; legs.len()];
+    let sole_heights = soles(sim);
+    let mut meters: Vec<FootMeter> = sole_heights.iter().map(|&sole| FootMeter::new(MeterRules { sole, ..MeterRules::default() })).collect();
+    let mut sole_meters: Vec<FootMeter> = sole_heights.iter().map(|_| FootMeter::new(MeterRules::default())).collect();
+    let toe_joints = toes(sim);
+    let mut toe_meters: Vec<Option<FootMeter>> = toe_joints.iter().map(|t| t.map(|(_, sole)| FootMeter::new(MeterRules { sole, ..MeterRules::default() }))).collect();
     let mut last: Vec<Option<(Vec3, f32)>> = vec![None; legs.len()];
     let mut prev_body: Option<Vec3> = None;
     let frames = (seconds / DT).round() as usize;
@@ -257,6 +322,20 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
         for (k, &(j, c)) in legs.iter().enumerate() {
             let w = WorldPos::ORIGIN.delta_f32(f.to_world(sim.out.model.translation(j)));
             let contact = c.map_or(0.0, |c| sim.out.curves[c]);
+            let heel_ground = ground_at(world, w);
+            meters[k].push(FootFrame { position: w, contact, ground: heel_ground }, DT);
+            // The sole (heel and toe as a rigid foot): its lowest clearance,
+            // so a foot on a stair nosing with the heel hanging counts as touching.
+            let mut gap = heel_ground.map(|g| w.y - g - sole_heights[k]);
+            if let (Some((toe, toe_sole)), Some(m)) = (toe_joints[k], &mut toe_meters[k]) {
+                let t = WorldPos::ORIGIN.delta_f32(f.to_world(sim.out.model.translation(toe)));
+                let toe_ground = ground_at(world, t);
+                m.push(FootFrame { position: t, contact, ground: toe_ground }, DT);
+                if let (Some(h), Some(g)) = (gap, toe_ground) {
+                    gap = Some(h.min(t.y - g - toe_sole));
+                }
+            }
+            sole_meters[k].push(FootFrame { position: w.with_y(gap.unwrap_or(0.0)), contact, ground: gap.map(|_| 0.0) }, DT);
             if let Some((pw, pc)) = last[k] {
                 let d = Vec2::new(w.x - pw.x, w.z - pw.z).length();
                 r.foot_travel[k] += d;
@@ -277,6 +356,9 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
     for s in &mut r.slide {
         *s /= r.seconds.max(1e-3);
     }
+    r.feet = meters.iter().map(FootMeter::metrics).collect();
+    r.toes = toe_meters.iter().map(|m| m.as_ref().map(FootMeter::metrics)).collect();
+    r.soles = sole_meters.iter().map(FootMeter::metrics).collect();
     r
 }
 
@@ -315,6 +397,82 @@ fn walkers_keep_their_stride_on_ramps_and_stairs() {
     let (w, top) = World::stairs(12, 0.18, 0.32);
     let r = walk(&mut sim, &w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, 6.0, (0.5, top.x - 0.5), trace);
     check("stairs up", &r);
+}
+
+/// Feet on the surface at contact frames (owner checks WK-4, SB-5, AL-3;
+/// animation-plan.md slice 5): walkers up and down the lab's 10/20/30°
+/// ramps (and flat ground). Every planted frame's sole (heel and toe, a rigid foot) must
+/// touch the ground within 2 cm: no point deeper, lowest point no higher.
+/// `-- --nocapture` prints the table (locomotion.md "Foot metrics").
+#[test]
+fn feet_meet_the_ground_on_ramps() {
+    feet_meet_the_ground(true, &[]);
+}
+
+/// The lab staircases (rise/run 0.15/0.30 x 12; 0.25/0.22 x 16 so each leg
+/// plants twice). Comfortable, up: a toe sinks 5 cm (the lock keeps the
+/// heel-strike height while the toe rolls down onto the next tread). Steep:
+/// a 1.1 m walk step spans five treads (1.25 m of rise), beyond the leg, so
+/// samples are rejected and feet sink or float 25-68 cm; needs shorter steps
+/// on steep grades (animation-plan.md slice 5).
+#[test]
+#[ignore = "stairs: toe sinks 5 cm going up (lock vs heel-strike), steep flight needs shorter steps (animation-plan.md slice 5)"]
+fn feet_meet_the_ground_on_stairs() {
+    feet_meet_the_ground(false, &[(12, 0.15, 0.30), (16, 0.25, 0.22)]);
+}
+
+/// A named walk: world, start, direction, measured x window.
+type Walk = (String, World, Vec3, Vec3, (f32, f32));
+
+fn feet_meet_the_ground(ramps: bool, stairs: &[(usize, f32, f32)]) {
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let mut walks: Vec<Walk> = Vec::new();
+    if ramps {
+        walks.push(("flat".to_owned(), World::new(), Vec3::new(-4.0, 0.0, 0.0), Vec3::X, (-1.0, 5.0)));
+        for deg in [10.0, 20.0, 30.0] {
+            let (w, top) = World::ramp(deg, 8.0);
+            walks.push((format!("up {deg}°"), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (1.0, top.x - 1.0)));
+            let (w, top) = World::ramp(deg, 8.0);
+            walks.push((format!("down {deg}°"), w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, (1.0, top.x - 1.0)));
+        }
+    }
+    for &(n, rise, run) in stairs {
+        let (w, top) = World::stairs(n, rise, run);
+        walks.push((format!("up {rise}/{run}"), w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (0.3, top.x - 0.3)));
+        let (w, top) = World::stairs(n, rise, run);
+        walks.push((format!("down {rise}/{run}"), w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, (0.3, top.x - 0.3)));
+    }
+    let mut failures = Vec::new();
+    for (name, world, start, dir, window) in &walks {
+        let mut sim = humanoid_sim().unwrap();
+        let trace = std::env::var("SLOPE_TRACE").is_ok_and(|g| g == *name);
+        let r = walk(&mut sim, world, *start, *dir, 6.0, *window, trace);
+        let legs: Vec<String> = r
+            .soles
+            .iter()
+            .zip(r.feet.iter().zip(&r.toes))
+            .map(|(s, (m, t))| {
+                let toe = t.map_or(f32::NAN, |t| t.max_penetration * 100.0);
+                format!(
+                    "{} st sole pen {:4.1} float {:4.1} (heel pen {:4.1} toe pen {toe:4.1}) slide {:3.1}",
+                    s.stances,
+                    s.max_penetration * 100.0,
+                    s.max_float * 100.0,
+                    m.max_penetration * 100.0,
+                    m.slide_per_stance() * 100.0
+                )
+            })
+            .collect();
+        eprintln!("{name:14} {:3.1} m | {} | rej {} reach {} pelvis {}", r.travel, legs.join(" | "), r.stats.rejected, r.stats.reach_clamped, r.stats.pelvis_clamped);
+        for (k, m) in r.soles.iter().enumerate() {
+            if m.stances < 1 || m.max_penetration > 0.02 || m.max_float > 0.02 {
+                failures.push(format!("{name}: leg {k} {m:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 /// A path into ground too steep to climb, at a shallow angle: the mover
@@ -357,4 +515,79 @@ fn overlays_keep_the_walk_contacts() {
         let r = walk(&mut sim, &flat, Vec3::new(-4.0, 0.0, 0.0), Vec3::X, 5.0, (-1.0, 5.0), false);
         check(name, &r);
     }
+}
+
+/// Foot-slide and penetration per gait on flat ground (owner checks SB-5,
+/// WK-3; animation.md "Verification"): walk and run forward, back and
+/// sideways (`sf_anim::foot_metrics` on the measured stretch). Every leg
+/// must keep planting, and planted feet must stay put and on the ground.
+/// `-- --nocapture` prints the table (locomotion.md "Foot metrics").
+#[test]
+fn gaits_plant_their_feet_on_flat_ground() {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    const RUN: f32 = 3.7;
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let flat = World::new();
+    let mut failures = Vec::new();
+    // Body moves +X (yaw π/2 faces it); the facing offset picks the gait. Every gait is
+    // gated: strafes and backpedals play by their planted feet's speed (locomotion.md "Foot metrics").
+    for (gait, speed, offset) in [
+        ("walk fwd", SPEED, 0.0),
+        ("walk back", SPEED, PI),
+        ("walk left", SPEED, -FRAC_PI_2),
+        ("walk right", SPEED, FRAC_PI_2),
+        ("run fwd", RUN, 0.0),
+        ("run back", RUN, PI),
+        ("run left", RUN, -FRAC_PI_2),
+        ("run right", RUN, FRAC_PI_2),
+    ] {
+        let mut sim = humanoid_sim().unwrap();
+        sim.set(p::RUNNING, if speed > SPEED { 1.0 } else { 0.0 });
+        let trace = std::env::var("GAIT_TRACE").is_ok_and(|g| g == gait);
+        let r = walk_at(&mut sim, &flat, (Vec3::new(-4.0, 0.0, 0.0), Vec3::X * speed, Some(FRAC_PI_2 + offset)), 5.0, (-9.0, 99.0), trace);
+        if trace {
+            eprintln!("{gait}: playing {:?}, {:?}", sim.playing(), r.stats);
+        }
+        let state = sim.state(mw_graphs::build::LOCOMOTION).unwrap_or("?").to_owned();
+        let legs: Vec<String> = r
+            .feet
+            .iter()
+            .map(|m| {
+                format!(
+                    "{:2} st {:4.1} cm/st {:4.1} cm/s pen {:4.1} float {:4.1} cm, swing {:3.1} stance {:3.1} s",
+                    m.stances,
+                    m.slide_per_stance() * 100.0,
+                    m.slide_speed() * 100.0,
+                    m.max_penetration * 100.0,
+                    m.max_float * 100.0,
+                    m.longest_swing,
+                    m.longest_stance
+                )
+            })
+            .collect();
+        // The top clip's root and toe-aware stance speed, and the foot lock's drift.
+        let top = sim.playing().first().map(|(n, _)| n.clone()).unwrap_or_default();
+        let (root, stance) = sim.graph.clips.iter().position(|c| c.reference == top).map_or((0.0, 0.0), |i| {
+            let m = &sim.clips[i].meta;
+            (m.average_velocity.length(), m.stance_velocity.length())
+        });
+        let mean_drift = r.stats.drift_sum / r.stats.drift_count.max(1) as f32;
+        eprintln!(
+            "{gait:10} [{state}] {:4.1} m | {top} root {root:.2} stance {stance:.2} m/s | worst slide {:4.1} cm/st, lock drift max {:4.1} mean {:4.1} cm, unplanted {} | {}",
+            r.travel,
+            r.feet.iter().map(FootMetrics::slide_per_stance).fold(0.0, f32::max) * 100.0,
+            r.stats.drift_max * 100.0,
+            mean_drift * 100.0,
+            r.stats.unplanted,
+            legs.join(" | ")
+        );
+        for (k, m) in r.feet.iter().enumerate() {
+            if m.stances < 2 || m.stuck(1.5) || m.slide_per_stance() > 0.03 || m.max_penetration > 0.03 {
+                failures.push(format!("{gait}: leg {k} {m:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }

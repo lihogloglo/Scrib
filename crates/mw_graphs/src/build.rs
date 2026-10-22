@@ -647,8 +647,11 @@ impl Builder {
         // Playback follows the measured speed over the cycle's authored root
         // speed (animfix 2026-10-12: walk 2.2 m/s, run 3.2 m/s; NPC walkers
         // 1.9-2.4 m/s, slower while avoiding). 0.5-1.5 keeps the cadence
-        // believable; stride warping takes the rest so feet don't slide.
-        self.a.procedural = vec![OpSpec::SpeedMatch { min: 0.5, max: 1.5, max_lod: 2 }];
+        // believable; stride warping takes the rest so feet don't slide. Humanoids
+        // reach 2.2: sidestep and backpedal clips' planted feet move at a third to
+        // half of the body speed (`ClipMeta::stance_velocity`), and a strafe-run
+        // needs that much playback for the foot lock to hold (anim slice 4b).
+        self.a.procedural = vec![OpSpec::SpeedMatch { min: 0.5, max: if matches!(self.t, Template::Humanoid) { 2.2 } else { 1.5 }, max_lod: 2 }];
         if matches!(self.t, Template::Humanoid) {
             // Feet on the ground (walkers, 2026-10-12): legs from the rig
             // profile (the humanoid rig map's), the pelvis by its humanoid

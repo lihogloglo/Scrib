@@ -116,7 +116,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
 // --- Ragdolls (P7 debug driver) --------------------------------------------------------------
 
 /// Seconds of death clip before the body goes limp (physics.md "Death": the
-/// clip, then the powered crumple: `RagdollConfig::crumple`, P8b).
+/// clip, then the powered crumple: `ReactionSet::death`, P8b).
 pub const DEATH_HANDOFF: f32 = 0.4;
 
 /// A character killed by [`kill_key`]: its mover stays [`Dormant`].

@@ -168,13 +168,25 @@ impl WanderPlanner {
     }
 
     /// The next step for an actor at `pos`, using its cell's pathgrid if any.
-    pub fn next(
+    pub fn next(&self, graph: Option<&PathGraph>, pos: WorldPos, rng: &mut fastrand::Rng) -> WanderStep {
+        self.next_after(graph, pos, rng, None)
+    }
+
+    /// [`Self::next`] for an actor whose last fidget was `last_idle` (2..=9):
+    /// that group is not rolled, so no fidget plays twice in a row (idle and
+    /// crowd variety; the other chances keep their vanilla rule).
+    pub fn next_after(
         &self,
         graph: Option<&PathGraph>,
         pos: WorldPos,
         rng: &mut fastrand::Rng,
+        last_idle: Option<u8>,
     ) -> WanderStep {
-        if let Some(variant) = roll_idle(&self.wander.idle_chances, self.idle_mult, rng) {
+        let mut chances = self.wander.idle_chances;
+        if let Some(last @ 2..=9) = last_idle {
+            chances[usize::from(last - 2)] = 0;
+        }
+        if let Some(variant) = roll_idle(&chances, self.idle_mult, rng) {
             return WanderStep::Idle {
                 variant,
                 seconds: self.idle_seconds[usize::from(variant - 2)],

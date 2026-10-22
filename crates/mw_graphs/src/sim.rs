@@ -57,7 +57,7 @@ impl Sim {
     pub fn new(graph: CompiledGraph, skeleton: Skeleton, clips: Vec<Arc<Clip>>) -> Result<Self, BindError> {
         let instance = GraphInstance::new(&Binding::new(&graph, &skeleton, &clips)?);
         let out = GraphOutput::new(&graph);
-        let (ground, ik, warp) = (vec![None; graph.legs.len()], vec![None; graph.ik_targets.len()], vec![None; graph.warp_targets.len()]);
+        let (ground, ik, warp) = (vec![None; graph.probe_count()], vec![None; graph.ik_targets.len()], vec![None; graph.warp_targets.len()]);
         Ok(Self { graph, skeleton, clips, instance, out, time: 0.0, events: Vec::new(), notices: Vec::new(), velocity: Vec3::ZERO, moved: RootDelta::ZERO, turn_rate: 0.0, lod: 0, ground, ik, warp })
     }
 

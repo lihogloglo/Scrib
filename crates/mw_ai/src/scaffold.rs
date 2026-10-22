@@ -66,6 +66,8 @@ pub struct PathWalkScaffold {
     abandoned: Option<WorldPos>,
     stuck: u32,
     replans: u32,
+    /// The fidget (Idle2..9) of the last step, if it was one.
+    last_idle: Option<u8>,
 }
 
 impl PathWalkScaffold {
@@ -81,6 +83,7 @@ impl PathWalkScaffold {
             abandoned: None,
             stuck: 0,
             replans: 0,
+            last_idle: None,
         }
     }
 
@@ -175,15 +178,19 @@ impl PathWalkScaffold {
         for _ in 0..2 {
             match &mut self.state {
                 State::Choosing => {
-                    let mut step = self.planner.next(graph, pos, &mut self.rng);
+                    let mut step = self.planner.next_after(graph, pos, &mut self.rng, self.last_idle);
                     // Don't head straight back to the goal just given up.
                     if let (Some(gone), WanderStep::Walk { nodes, .. }) = (self.abandoned, &step)
                         && nodes
                             .last()
                             .is_some_and(|n| flat(n.pos, gone) < SAME_GOAL)
                     {
-                        step = self.planner.next(graph, pos, &mut self.rng);
+                        step = self.planner.next_after(graph, pos, &mut self.rng, self.last_idle);
                     }
+                    self.last_idle = match &step {
+                        WanderStep::Idle { variant: v @ 2..=9, .. } => Some(*v),
+                        _ => None,
+                    };
                     self.state = match step {
                         WanderStep::Walk { nodes, .. } => Self::walking(nodes, pos, self.walk_speed),
                         WanderStep::Idle { variant, seconds } => State::Idling {

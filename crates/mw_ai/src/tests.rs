@@ -498,3 +498,21 @@ fn off_grid_give_ups_avoid_the_blocked_heading() {
     assert!(blocked.len() >= 3 && walks >= blocked.len(), "{} give-ups, {walks} walks", blocked.len());
     assert_eq!(s.planner.blocked_starts.len(), blocked.len().min(wander::BLOCKED_EDGES));
 }
+
+#[test]
+fn an_idle_never_repeats_back_to_back() {
+    // Distance 0 stands: every step is an idle, a fidget when the roll hits.
+    let mut wander = no_idles(0.0);
+    wander.idle_chances = [100, 100, 0, 0, 0, 0, 0, 0];
+    let planner = WanderPlanner::new(wander, WorldPos::from_f64(DVec3::ZERO));
+    let mut rng = fastrand::Rng::with_seed(11);
+    let (mut last, mut fidgets) = (None, 0);
+    for _ in 0..5000 {
+        let WanderStep::Idle { variant, .. } = planner.next_after(None, WorldPos::from_f64(DVec3::ZERO), &mut rng, last) else { panic!() };
+        let now = (variant >= 2).then_some(variant);
+        assert!(now.is_none() || now != last, "{variant} twice in a row");
+        fidgets += usize::from(now.is_some());
+        last = now;
+    }
+    assert!(fidgets > 1000, "{fidgets}");
+}

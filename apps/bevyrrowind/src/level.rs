@@ -44,6 +44,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("ledges", include_str!("../../../levels/ledges.ron")),
     ("robe-walk", include_str!("../../../levels/robe-walk.ron")),
     ("light-lab", include_str!("../../../levels/light-lab.ron")),
+    ("anim-lab", include_str!("../../../levels/anim-lab.ron")),
 ];
 
 /// When `view level:` started: the load time is measured from here.

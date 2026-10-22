@@ -158,11 +158,14 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - [ ] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
   old P11. Clip sources: packs only (free first).
-- [ ] 3.2 Ragdolls (PH-2 rejected). **Lead:** the physics capsules behave; the skinned mesh doesn't follow them →
-  pose write-back bug (body/bone offset, frame, or floating origin). Then powered falls (PH-9: no fall animation).
+- [~] 3.2 Ragdolls (PH-2 rejected). R0 write-back fixed headless 2026-10-22 (PH-2 awaiting owner, `level-anim-drop`).
+  Then powered falls (PH-9: no fall animation). Order: `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
+- [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
+  `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
 - [ ] 3.3 Physics follow-ups: Oblivion-style hold/drag/throw (PH-4), items with no shape (ceiling candle holders,
   small boxes: PH-7), immovable candles (PH-1), ball pushing items through walls (archive 6a).
-- [ ] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10.
+- [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10. CH-1/3 variety and SB-5 feet
+  done headless 2026-10-22 (awaiting owner); stairs 5b and powered falls R3 next (`animation-plan.md`).
 - [ ] 3.5 Combat (M10).
 
 ## Phase 4: eye candy and the wider world (after phase 2)
@@ -170,6 +173,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [p] Weather polish: storm blows from Red Mountain (WE-5), clouds too tall in some weathers, ash particles,
   precipitation splashes (PR2), surfaces/wetness/snow (SU1, SU2), wind on trees (WD2, WD3). Owner 2026-10-21: rain
   puddles + wet (glossier) objects, cheap like the Clockwork renderer does it (research its approach first).
+  Researched 2026-10-22 (`superfargoth/docs/research/borrow-audit-2026-10.md`: bevy_atmos technique, MIT/Apache).
+  Owner 2026-10-22: wetness persists in saves; puddles reflect the scene with screen-space reflections
+  (Bevy's SSR first), sky/probe as the fallback where SSR misses.
 - [p] Water polish (WA-1 notes, WISHLIST §12): shore swash + gradual wavelets, textured foam, whitecaps,
   weather-driven wave height (verify), crest SSS; W4 reflections, W5 underwater, W6 buoyancy, W7 rivers.
 - [p] RT as the Ultra tier (decision 2; was 1.10): exterior RT content (`ray_tracing_lod`, `NoRayTracing` on proxies, terrain RT
@@ -194,6 +200,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-22 (anim-refactor): `anim-lab` test level (AL-1..7); R0 ragdoll write-back (every joint at weight 1,
+  frame follows pelvis); idle/crowd variety; foot metrics, strafe/back slide 0; feet on ramps; R2 reaction controller.
 - 2026-10-21 (owner pass, bw-owner10): confirmed LT-1, LM-1, AU-1, AU-2, SH-17, SH-18, TA-1, PA-4, PC-1, DR-3, DR-4,
   SK-1, PH-6; FG-1 not reproduced; WE-5 cause found; SH-16/19 need a console; new bugs in 1.12.
 - 2026-10-21 (action-a1): mover launch (no ground snap while rising, head bump; 4 failing-first tests), serde

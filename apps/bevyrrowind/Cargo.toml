@@ -51,6 +51,7 @@ sf_lod.workspace = true
 sf_lod_bevy.workspace = true
 sf_model.workspace = true
 sf_anim_bevy = { workspace = true, features = ["debug"] }
+sf_anim_graph.workspace = true
 sf_character.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 # Walkers (`walkers.rs`): terrain heights as a ground probe, the mover stage with gizmos.

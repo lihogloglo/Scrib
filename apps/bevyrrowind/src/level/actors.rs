@@ -11,13 +11,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use mw_graphs::build::params as gp;
 use sf_anim_bevy::Animator;
+use sf_anim_graph::FidgetPicker;
 use sf_character::{CharacterState, WearableRef};
 use sf_character_bevy::{Character, CharacterSpawner, Characters};
 use sf_controller::{Gait, PathFollower, PathMode, PathNode};
 use sf_controller_bevy::{Avoider, ControllerSystems, Dormant, MoveIntent, Mover};
 use sf_coords::{WorldPos, WorldTransform};
 use sf_level::Level;
+use sf_physics_bevy::ImpactOnCharacter;
 use sf_records::{RecordDb, RecordId};
 use sf_world::{IndexedPlacement, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef};
 use sf_world_bevy::{PlacementSpawner, PlacementSpawners, SpawnCx};
@@ -133,7 +136,7 @@ impl PlacementSpawner for LevelActorSpawner {
         local.rotation *= turn;
         let character = Character::Record { kind: p.base.kind.clone(), id: p.base.id.clone(), state: state.clone() };
         let name = Name::new(format!("level actor {} ({})", index, p.base.id.as_str()));
-        world.spawn((character, local, Visibility::Inherited, ChildOf(cx.parent), cx.layers.clone(), LevelActor { index: *index }, name));
+        world.spawn((character, local, Visibility::Inherited, ChildOf(cx.parent), cx.layers.clone(), LevelActor { index: *index }, name, sf_character_bevy::AnimSeed::from_id(p.id.0)));
         1
     }
 
@@ -148,6 +151,7 @@ struct LevelActors(Arc<[ActorSetup]>);
 
 pub fn add(app: &mut App, actors: Arc<[ActorSetup]>) {
     app.insert_resource(LevelActors(actors))
+        .add_message::<ImpactOnCharacter>()
         .add_systems(PostStartup, install)
         .add_systems(Update, (script, drive).chain().in_set(ControllerSystems::Drive));
 }
@@ -172,6 +176,8 @@ fn install(actors: Res<LevelActors>, spawners: Option<ResMut<PlacementSpawners>>
 pub struct ActorScript {
     follower: Option<PathFollower>,
     action: Option<(sf_level::Action, f32)>,
+    /// `@fidget` actions: which idle to play and when (idle and crowd variety).
+    fidgets: Option<FidgetPicker>,
 }
 
 /// Once `walkers.rs` gave a level actor its mover: its script replaces the
@@ -203,26 +209,62 @@ fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity
             f.gait = if p.run { Gait::Run } else { Gait::Walk };
             f
         });
-        let action = setup.def.action.clone().map(|a| (a, 0.0));
+        let (action, fidgets) = match setup.def.action.clone() {
+            Some(a) if a.trigger == FIDGET_TRIGGER => (None, Some(fidget_picker(&a, actor.index))),
+            a => (a.map(|a| (a, 0.0)), None),
+        };
         let mut e = commands.entity(entity);
-        e.try_remove::<(crate::walkers::Walker, Avoider)>().try_insert(ActorScript { follower, action });
+        e.try_remove::<(crate::walkers::Walker, Avoider)>().try_insert(ActorScript { follower, action, fidgets });
         if setup.player {
             e.insert(super::walk::WalkPlayer);
         }
     }
 }
 
+/// An action with this trigger is no graph trigger: it hits the actor's capsule like a thrown
+/// body (`ImpactOnCharacter`; params `impulse` N·s, default 25, and `dir` degrees, 0 = -z), so
+/// physics.rs knocks it down (PH-9) or reacts (PH-10) and it gets up again.
+const IMPACT_TRIGGER: &str = "@impact";
+
+/// An action with this trigger plays idle fidgets (`FidgetPicker`): every `every` to `max` seconds
+/// while the actor stands, one of `Idle2`..`Idle9` weighted by the params `idle2`..`idle9` (the AI
+/// package's idle chances, 0 to 100), never the same one twice in a row.
+const FIDGET_TRIGGER: &str = "@fidget";
+
+/// The picker an `@fidget` action describes; `index` seeds it, so level actors fidget out of step.
+fn fidget_picker(action: &sf_level::Action, index: usize) -> FidgetPicker {
+    let param = |n: &str, d: f32| action.params.iter().find(|p| p.0 == n).map_or(d, |p| p.1);
+    let weights: Vec<f32> = (2..=9).map(|v| param(&format!("idle{v}"), 0.0)).collect();
+    FidgetPicker::new(&weights, action.every, param("max", action.every * 2.0), sf_anim_graph::variety::mix64(index as u64))
+}
+
 /// Paths write the intent; actions fire while standing.
 #[allow(clippy::needless_pass_by_value)]
-fn drive(time: Res<Time>, mut actors: Query<(&Mover, &mut MoveIntent, &mut ActorScript), Without<Dormant>>, mut animators: Query<&mut Animator>) {
+fn drive(
+    time: Res<Time>,
+    mut actors: Query<(Entity, &Mover, &mut MoveIntent, &mut ActorScript), Without<Dormant>>,
+    mut animators: Query<&mut Animator>,
+    mut impacts: MessageWriter<ImpactOnCharacter>,
+) {
     let dt = time.delta_secs().min(0.1);
-    for (mover, mut intent, mut script) in &mut actors {
+    for (entity, mover, mut intent, mut script) in &mut actors {
         let script = &mut *script;
         let mut standing = true;
         if let Some(f) = &mut script.follower {
             let out = f.update(mover.loco.position, dt);
             standing = out.intent.desired_velocity.length_squared() < 1e-6;
             intent.0 = out.intent;
+        }
+        if let Some(picker) = &mut script.fidgets {
+            if !standing {
+                picker.restart();
+            } else if let Some(i) = picker.update(dt)
+                && let Some(mut animator) = mover.animator.and_then(|a| animators.get_mut(a).ok())
+            {
+                animator.set_float(gp::IDLE_VARIANT, f32::from(u8::try_from(i + 2).unwrap_or(2)));
+                animator.fire(gp::FIDGET);
+            }
+            continue;
         }
         let Some((action, t)) = &mut script.action else { continue };
         if !standing {
@@ -232,6 +274,14 @@ fn drive(time: Res<Time>, mut actors: Query<(&Mover, &mut MoveIntent, &mut Actor
         *t += dt;
         if *t >= action.every {
             *t = 0.0;
+            if action.trigger == IMPACT_TRIGGER {
+                let param = |n: &str, d: f32| action.params.iter().find(|p| p.0 == n).map_or(d, |p| p.1);
+                let dir = param("dir", 0.0).to_radians();
+                let direction = Vec3::new(-dir.sin(), 0.0, -dir.cos());
+                let point = mover.loco.position.offset(Vec3::Y * 1.2);
+                impacts.write(ImpactOnCharacter { entity, impulse: param("impulse", 25.0), point, direction });
+                continue;
+            }
             if let Some(mut animator) = mover.animator.and_then(|a| animators.get_mut(a).ok()) {
                 for (name, v) in &action.params {
                     animator.set_float(name, *v);

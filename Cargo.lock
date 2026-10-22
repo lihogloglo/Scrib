@@ -2170,6 +2170,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sf_anim_bevy",
+ "sf_anim_graph",
  "sf_atmos_bevy",
  "sf_audio",
  "sf_audio_bevy",
@@ -6542,6 +6543,7 @@ dependencies = [
  "log",
  "sf_anim",
  "sf_anim_bevy",
+ "sf_anim_graph",
  "sf_character",
  "sf_model",
  "sf_model_bevy",
@@ -6808,6 +6810,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "postcard",
+ "ron",
  "serde",
  "sf_anim",
  "sf_bake",

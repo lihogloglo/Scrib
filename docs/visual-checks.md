@@ -419,6 +419,8 @@ tail, Fargoth's naked body with a loincloth, guar and cliff racer in their
 idles.
 
 ### CH-1: The M3 lineup (`bevyrrowind character`)
+- Update 2026-10-22 (anim-refactor slice 3): characters now start their idles at their own phase and rate (+-5 %), so same-record NPCs no
+  longer breathe in lockstep; the isolated check is `scene level-anim-crowd` (AL-7). Status: awaiting owner there.
 - Kind: game models. Run: `.\bevyrrowind character` (Imperial guard, Ajira,
   Huleeya, a female dark elf, naked Fargoth, guar, cliff racer), or name
   ids: `.\bevyrrowind character "caius cosades" "sellus gravius:naked"`.
@@ -434,6 +436,8 @@ idles.
 - Source: charbevy.
 
 ### CH-3: Balmora street with NPCs standing in place
+- Update 2026-10-22 (anim-refactor slice 3): idle phase, rate and AI fidget choice (never the same Idle2-9 twice in a row) vary per NPC;
+  check no two neighbours breathe in sync (also `scene level-anim-crowd`). Status: awaiting owner.
 - Kind: game location. Run: `.\bevyrrowind scene char-balmora`.
 - Look for (with `--off walkers`; otherwise wanderers walk, WK-1): NPCs on the streets and bridges dressed and idling, feet on
   the ground, facing their placed direction (vanilla faces -Z; we add the
@@ -667,7 +671,15 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
   (meshes/base_anim.nif)`, 1 spawned, 0 failed; joint stretch peak 1.4–2.1 cm (over the 1 cm target: open, P8b).
   Sanity shot `shots/p9/kill.png`. Not on the stairs (wk-balmora's camera); creatures not run.
 - **Lead (owner 2026-10-19, round 11, with `G` collider view):** the ragdoll's physics capsules behave normally when hit; it's the skinned mesh that doesn't follow them. So the solver is fine and the bug is the pose write-back (bodies → bones: bone/body offset, local vs world frame, or the floating-origin offset), which would explain sinking, floating, spinning and the odd joint angles.
-- Status: rejected by owner 2026-10-19 (round 10): ragdolls very bad: most bodies sink into the ground, float and turn around; joints look unconstrained (unnatural angles); they don't explode. Drag doesn't match the expected Oblivion-style hold/drag UX (later). Phase 3.
+- Earlier status: rejected by owner 2026-10-19 (round 10): ragdolls very bad: most bodies sink into the ground, float and turn around; joints look unconstrained (unnatural angles); they don't explode. Drag doesn't match the expected Oblivion-style hold/drag UX (later). Phase 3.
+- **R0 fix (anim-refactor, 2026-10-22):** the clip's root still placed the mesh (joints above the pelvis body had physics
+  weight 0, and root motion kept moving the frame); non-uniform race build scale skewed lying limbs; foot placement
+  bent ragdoll legs. Headless test now holds every bone on its body within 0.1 mm while the frame moves, yaws and
+  rebases (`sf_physics_bevy` `bones_follow_bodies_*`). Not checked live by the agent.
+- Re-check: `scene level-anim-drop` (AL-6), press `G`: the mesh sits inside the capsules during the fall, the knockdown
+  and at rest (no sinking, floating or spinning; limbs follow their capsules); `I` on the walker, then on a Balmora
+  guard on the stairs as above. Expect a slight width change at death on races whose build ≠ height (uniform scale
+  while ragdolled, restored at get-up). Status: **awaiting owner**.
 
 ### PH-7: Item body shapes (`body.cook`)
 - Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse with `--physics-debug`;
@@ -889,3 +901,57 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Check: the terrain material's roughness and specular (perceptual roughness near 1, no env-map or sun specular on
   ground), and whether the terrain blend/normal-map path lowers roughness.
 - Status: known bug, unverified (diagnose first; ROADMAP 1.12).
+
+## Animation lab (`levels/anim-lab.ron`, test-levels.md; `.sessions/anim-refactor.md`, slice 1)
+
+One greybox for the animation checks, six areas apart. Open the scenes below (or `scene level-anim-overview --camera <name>`; cameras are in the
+level file). NPCs only run their scripts near the camera (processing range), so fly to an area first. All entries: kind synthetic level, status
+awaiting owner. Known issue ids this feeds: SN-2/3 (guar, beasts), CH-1/3/4 (dressed NPCs), SB-1/2/3/5 (spring bones, tails), HI-3, AP-2/3 (not
+here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
+
+### AL-1: Animation lab overview
+- `.\bevyrrowind scene level-anim-overview`. Look for: six areas apart (ledges + props near the origin, loop south, slopes/stairs west-north,
+  drops north-east, idles south-west), nothing sunk or missing, every NPC dressed. Status: awaiting owner.
+
+### AL-2: Walk loop, turns (SB-1, CH-1)
+- `scene level-anim-loop` (cameras `loop`, `loop-close`). Fargoth walks a 12 m square, Elone runs a 24 m square.
+- Look for: foot sliding or skating at the four corners, a smooth turn (no snap, body leads), cycle speed matching the move speed at walk and run,
+  spring bones and tails settling after turns. Status: awaiting owner.
+- Slice 4b (headless, 2026-10-22): sidestep and backpedal no longer slide (walk right 30, run back 55, run strafes 32-36 cm per stance,
+  now 0). Strafe (A/D) and back-pedal (S) in a free-walk `view`, at walk and run: feet planted, no skating. The price: speed matching
+  now plays strafe clips up to 2.2x (was 1.5x), so a run-strafe has a brisk cadence. If it looks frantic, lower SpeedMatch `max` in
+  `mw_humanoid.animgraph.ron` (and `build.rs`) and accept some slide. Status: awaiting owner.
+
+### AL-3: Ramps and stairs (feet on slopes, SB-1)
+- `scene level-anim-stairs` (cameras `slopes`, `stairs`, `stairs-close`). Runner on 10 deg, walkers on 20 and 30 deg and on 0.15 m x 12 and
+  0.25 m x 8 stairs, all to a 2 m plateau and back.
+- Look for: feet on the surface (no floating or sinking, no knees through treads), lean with the slope, no pelvis jitter on the steps, a
+  steep (30 deg, 0.25 m) climb still plausible. K toggles foot placement (A/B).
+- Slice 5 (headless, 2026-10-22): ramps within 2 cm (toe no longer sinks on 30 deg); comfy stairs going up: toes lift onto the next
+  tread (was 16 cm into it, now about 5; heel may hang over the nosing). Known bad: the steep 0.25 m flight at walk speed (feet sink or
+  float up to ~0.6 m; needs shorter steps, not IK). Status: awaiting owner.
+
+### AL-4: Traversal heights (future vault / mantle / climb)
+- `scene level-anim-ledges` (cameras `ledges`, `ledges-close`); `U` for walk mode, walk into each box and the 3 m wall.
+- Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
+  baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
+
+### AL-5: Props push (PH-1, physics-adapter.md)
+- `scene level-anim-props` (cameras `props`, `props-close`); `U`, walk about 14 m east of the start, push crates, boxes and the table; `V` throws.
+- Look for: the NPC brushing the crate row without sliding through it, light boxes shoved with a lean or step (not a stuck walk cycle), the
+  300 kg block unmoved, crates not jittering. Status: awaiting owner.
+
+### AL-6: Falls and ragdoll (PH-2, PH-9)
+- `scene level-anim-drop` (cameras `drop`, `drop-side`, `drop-close`); `G` shows collider wireframes, `I` kills the NPC under the crosshair, `V` throws.
+- Look for: the walker stepping off the 3 m edge (a fall animation or a snap? it must not freeze), the dummy knocked down every 10 s
+  (`@impact` 25 N*s: ragdoll, then get-up), with `G` the capsules following the mesh, no pop into the ragdoll, no spin on the 15 deg slope.
+  No 6 m fall exists for actors (no way to place one on the platform): throw or fly. Status: awaiting owner.
+
+### AL-7: Idles, reactions, other rigs (SN-2/3, CH-3, SB-3, PH-10)
+- `scene level-anim-idles` (cameras `idles`, `idles-close`). Left to right: Fargoth, a Khajiit (Ajira), an Argonian (Huleeya) fidgeting with
+  different idle variants; Elone hit-reacting every 4 s; a dummy knocked down every 12 s; a guar; a mudcrab.
+- Look for: distinct fidget clips (no T-pose, no sliding), flinch and recovery on the hit, Khajiit and Argonian legs and tails bending
+  correctly, creatures standing idle (no graph fidget for them yet). Status: awaiting owner.
+- Variety (CH-1/CH-3 crowd): `scene level-anim-crowd` (camera `idles-crowd`): four identical Fargoths, same idle and fidget set. No two neighbours
+  breathe in sync, fidgets begin at different times and vary, none repeats back to back (`@fidget`: Idle2/3/4 at 50/30/20, every 3-8 s).
+  Status: awaiting owner.

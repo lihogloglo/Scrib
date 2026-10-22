@@ -103,6 +103,7 @@ and pipeline setup dominate; logged as `level <name> ready <s> after start`).
 | level | what | scene |
 |---|---|---|
 | `robe-walk` | the Balmora temple priest (own robe) walks a flat loop and fidgets at its corner; Fargoth (common robe) walks and Elone (extravagant robe) runs back and forth over a 15° ramp, a 1 m plateau and stairs (5 × 0.20/0.32); a table (30 kg) and three stacked crates (15 kg) | `level-robe-walk` (cloth PH-3) |
+| `anim-lab` | animation lab, six areas: ledges 0.5/1/1.5/2 m + 3 m wall (player start); props (crate row an NPC brushes, stack, light/heavy boxes, table); walk loop (12 m walker, 24 m runner); 10/20/30° ramps + 0.15/0.25 m stairs to a 2 m plateau with walkers; 3 m / 6 m drops over a 15° slope (walker steps off, `@impact` knockdown dummy); idles (three races fidgeting, hit and knockdown dummies, guar, mudcrab) | `level-anim-{overview,loop,stairs,ledges,props,drop,idles}` (AL-1..7) |
 
 Leftovers: compound props (a table with legs), camera collision in walk mode,
 a `--walk` start flag (walk mode is a key only; BRP `send_keys` U).
