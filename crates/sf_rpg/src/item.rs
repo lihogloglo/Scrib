@@ -122,6 +122,14 @@ pub enum InventoryError {
     NoStack(StackId),
     #[error("item can't be equipped")]
     Unequippable,
+    #[error("stacks {0:?} and {1:?} hold different items or instance data")]
+    NotSameKind(StackId, StackId),
+    #[error("a stack can't merge into itself")]
+    SameStack,
+    #[error("stack {0:?} is equipped and can't merge")]
+    Equipped(StackId),
+    #[error("no stack {0:?} can merge into")]
+    NoMergeTarget(StackId),
 }
 
 /// An ordered list of stacks (insertion order is display order; sorting is the UI's).
@@ -285,5 +293,23 @@ impl Inventory {
         let target_id = target.id;
         self.stacks.remove(i);
         Ok(target_id)
+    }
+
+    /// Moves every piece of stack `from` into stack `into` (same item and instance data).
+    /// `into` keeps its id and position; `from` is gone. Atomic.
+    pub fn merge(&mut self, from: StackId, into: StackId) -> Result<StackId, InventoryError> {
+        if from == into {
+            return Err(InventoryError::SameStack);
+        }
+        let i = self.index_of(from)?;
+        let j = self.index_of(into)?;
+        let (src, dst) = (&self.stacks[i], &self.stacks[j]);
+        if !dst.is_same_kind(&src.item, &src.attrs) {
+            return Err(InventoryError::NotSameKind(from, into));
+        }
+        let total = dst.count.checked_add(src.count).ok_or(InventoryError::Overflow)?;
+        self.stacks[j].count = total;
+        self.stacks.remove(i);
+        Ok(into)
     }
 }

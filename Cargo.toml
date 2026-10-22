@@ -154,6 +154,7 @@ sf_rpg = { path = "crates/sf_rpg", version = "0.1.0" }
 sf_ids = { path = "crates/sf_ids", version = "0.1.0" }
 sf_console = { path = "crates/sf_console", version = "0.1.0" }
 sf_console_bevy = { path = "crates/sf_console_bevy", version = "0.1.0" }
+sf_ui_inventory = { path = "crates/sf_ui_inventory", version = "0.1.0" }
 sf_rpg_ui = { path = "crates/sf_rpg_ui", version = "0.1.0" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,

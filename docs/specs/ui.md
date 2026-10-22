@@ -367,6 +367,65 @@ greeting.
 | Numbered choices (1-9 keys) | BG3, Disco Elysium | `activate(Choice(i))`; the key map is the screen's | **match** (screen side) |
 | Gamepad-reachable inline links | Morrowind links are pointer-only (unverified for later ports) | link cursor region | **beyond** |
 
+## As built (U5, 2026-10-22): inventory logic
+
+`superfargoth/crates/sf_ui_inventory`, Bevy-free (deps `sf_ui`, `sf_rpg`; no rendering), plus list
+extensions in `sf_ui` and stack commands in `sf_rpg` (rpg.md). 8 tests + 1 timing report, `sf_ui` 6 new,
+`sf_rpg` 2 new; clippy pedantic clean. Serves inventory, container and both barter sides (one view per holder).
+
+**Research.** SkyUI (Nexus 12604/49095 pages): stat columns sortable, equipped/stolen/enchanted shown as
+multi-state columns, sorting by equipped groups worn items but keeps names A→Z inside, full-text search;
+its known bug: the sort resets when a view lacks the column (our tabs filter one list with one column set,
+so the sort survives tab switches). Unity UI Toolkit `ListView` (manual 2022.3): `FixedHeight`
+virtualization is the fast path, rows recycled through `makeItem`/`bindItem`/`unbindItem`; Unreal
+`UListView` pools entry widgets the same way (unverified this session). Compare-with-equipped: R5 (Elden
+Ring / Diablo before/after deltas). **Reuse**: Bevy 0.20 has a scroll area but no virtualization or list
+models (R1); `bevy_scroller` 0.1 is Bevy 0.11-era and not virtual; `virtualizer` (docs.rs, not fetched
+here) is range math only, the ~10 lines we'd save, without keyed focus, slot recycling or model
+integration; `egui_virtual_list`/floem are other toolkits. Own, as Stack decision 4 planned.
+
+- **`sf_ui` list model**: sort *chains* (`set_sort_keys`: column, then name, then insertion order);
+  `ListFilter::one_of` (a tab over several categories) and word search (every whitespace word must appear,
+  any order: "iron sw" finds "Iron Longsword"); `reorder(keys)` moves rows without bumping row versions;
+  sort keys and lowercased search text are **cached per row** until the row, sort or searched fields
+  change (a rebuild after one changed row re-sorts cached keys). `iter()`, `position()`.
+- **`sf_ui::VirtualList<K>`**: fixed row extent, viewport, overscan (2), clamped scroll (wheel, rows,
+  scrollbar thumb fractions), `index_at(y)` hit test; **keyed focus** that survives sort and filter (a row
+  that disappears hands focus to the row now at its index); `move_focus`, `page` (visible rows - 1),
+  `reveal_focus`; `update(&mut ListModel) -> ListFrame` assigns **stable pool slots** (keys that stay in the
+  window keep their widget; `rebind` only for new keys or changed row versions; released slots are reused
+  before the pool grows). Row-extent changes (UI/text scale) scale the scroll so the same rows stay.
+- **`InventoryView`** (holder, tabs, row extent, viewport): `sync(&Loadout, &SlotTable, &dyn ItemCatalog)`
+  diffs the loadout: unchanged stacks keep their row (no `describe`, no rebind), equipment-only changes
+  update markers, rows follow inventory order through `reorder`; `refresh` re-describes all (mod reload,
+  language). Row view-model `ItemRow` (`inventory.item`): `name category count weight total_weight value
+  total_value value_per_weight equipped slots icon` and `stat.<id>`, so `ui.column` records bind them.
+- **Adapter hook `ItemCatalog`**: `describe(&ItemStack) -> ItemInfo { name, category, weight, value, icon,
+  stats }`, `stats() -> &[StatDef { id, label, better: Higher|Lower|Neither }]`, and `carried_weight(stack,
+  info, equipped)` (default: every piece counts, Bethesda's rule). Tabs are `InventoryTab { categories,
+  equipped_only }` data from the content pack; `tab_counts()` ignores the search (badges).
+- **Sort**: `sort_by_column(&ColumnDef)`: a new column sorts text A→Z and numbers high→low (our choice:
+  heaviest, most valuable first), the same column flips; ties go by name, then inventory order; Lua columns
+  refuse until the Lua UI. Optional equipped-first pinning (off by default).
+- **Totals**: `Encumbrance { carried, capacity }` (`ratio`, `is_over`, `remaining`, `after(delta)` for
+  take-all/barter previews; what "over" does is the game's), total value, stacks, pieces.
+- **Compare** (`compare(stack, &Loadout, &dyn EquipRules, &dyn ItemCatalog)`): against what equipping
+  would displace (the placement's slots, exactly what `Loadout::equip` takes off), each stat summed over
+  them (a two-hander against sword + shield), deltas `Better/Worse/Same/Changed` by `StatDef::better`;
+  a worn item compares with itself; unequippable → `None`.
+- **Split/merge**: `QuantityPicker` (split: 1..=count-1, starts at half; `step`, `set_fraction`);
+  `actions()` for the action bar; `split_command` / `merge_command` build `RpgCommand::SplitStack` /
+  `MergeStacks` after the same checks the host runs; `on_event` moves focus to the split-off or merged-into
+  stack and says when to re-sync.
+- **Timing** (`cargo test -p sf_ui_inventory --release -- --ignored --nocapture`, cloud Linux container,
+  not the reference laptop): 1,000 stacks: re-sync 43 µs, one new stack sync + frame 0.11 ms, re-sort
+  0.30 ms, search 0.26 ms, scroll frame 3.4 µs; 5,000: 0.29 / 1.06 / 1.78 / 1.58 ms / 5 µs; 20,000: 1.6 /
+  7.7 / 11 / 7.7 ms. Within the menu budget (≤ 1 ms) at the 1,000-item target; a re-sort at 5,000+ is a
+  one-frame hitch on the click.
+- Not done: the Bevy screen (`sf_ui_screens`, needs the U3 widget kit), equip/unequip/drop/transfer
+  commands (equip needs the adapter's rules on the host), variable row heights, grid (icon) layout,
+  diacritic-folding search, barter price columns (the adapter's formulas).
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 (archive)

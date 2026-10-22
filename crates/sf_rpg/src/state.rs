@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::equip::Loadout;
 use crate::ids::Holder;
-use crate::item::{Attrs, InventoryError};
+use crate::item::{Attrs, InventoryError, StackId};
 use crate::quest::{EntryDraft, HeardLine, Journal, QuestLog, QuestState, StageFlags, Topics};
 
 /// Shared, host-owned RPG world state (net.md "Quest model").
@@ -31,13 +31,20 @@ pub enum RpgCommand {
     HearLine { topic: RecordId, line: HeardLine },
     AddItem { holder: Holder, item: RecordId, count: u32, attrs: Attrs },
     RemoveItem { holder: Holder, item: RecordId, count: u32 },
+    /// Split `count` pieces off a stack into a new stack (UI "split").
+    SplitStack { holder: Holder, stack: StackId, count: u32 },
+    /// Merge stack `from` into the identical stack `into` (UI "merge", drop onto a stack).
+    MergeStacks { holder: Holder, from: StackId, into: StackId },
 }
 
 impl RpgCommand {
     /// The inventory an item command targets (`None` for world commands).
     pub fn holder(&self) -> Option<Holder> {
         match self {
-            Self::AddItem { holder, .. } | Self::RemoveItem { holder, .. } => Some(*holder),
+            Self::AddItem { holder, .. }
+            | Self::RemoveItem { holder, .. }
+            | Self::SplitStack { holder, .. }
+            | Self::MergeStacks { holder, .. } => Some(*holder),
             _ => None,
         }
     }
@@ -50,6 +57,10 @@ pub enum RpgEvent {
     JournalAdded { seq: u32, quest: Option<RecordId> },
     TopicLearned(RecordId),
     ItemsChanged { holder: Holder, item: RecordId, delta: i64 },
+    /// A stack was split; counts per item are unchanged.
+    StackSplit { holder: Holder, source: StackId, new: StackId },
+    /// Stack `from` merged into `into`; counts per item are unchanged.
+    StacksMerged { holder: Holder, from: StackId, into: StackId },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -87,7 +98,10 @@ impl WorldRpg {
                     events.push(RpgEvent::TopicLearned(topic));
                 }
             }
-            RpgCommand::AddItem { .. } | RpgCommand::RemoveItem { .. } => return Err(RpgError::NotAWorldCommand),
+            RpgCommand::AddItem { .. }
+            | RpgCommand::RemoveItem { .. }
+            | RpgCommand::SplitStack { .. }
+            | RpgCommand::MergeStacks { .. } => return Err(RpgError::NotAWorldCommand),
         }
         Ok(events)
     }
@@ -105,6 +119,14 @@ impl CharacterRpg {
             RpgCommand::RemoveItem { holder, item, count } => {
                 self.loadout.remove(&item, count)?;
                 Ok(vec![RpgEvent::ItemsChanged { holder, item, delta: -i64::from(count) }])
+            }
+            RpgCommand::SplitStack { holder, stack, count } => {
+                let new = self.loadout.split(stack, count)?;
+                Ok(vec![RpgEvent::StackSplit { holder, source: stack, new }])
+            }
+            RpgCommand::MergeStacks { holder, from, into } => {
+                self.loadout.merge(from, into)?;
+                Ok(vec![RpgEvent::StacksMerged { holder, from, into }])
             }
             _ => Err(RpgError::NotAnItemCommand),
         }

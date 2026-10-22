@@ -176,7 +176,7 @@ Built so far (M0): `sf_vfs`, `sf_records`, `sf_mods`.
 | `sf_interaction` | Activation, grab/carry/throw (Oblivion-style), doors, containers. |
 | `sf_rpg` | *Generic* RPG primitives: attributes, effects, inventory, dialogue (condition-filtered response database + session state, not a graph; `specs/rpg.md`), quests, journal, factions. The **rules** (formulas, leveling, combat math) are supplied by the content pack as a rules plugin, never hardcoded. |
 | `sf_ai` | Navmesh generation per streamed tile, behavior layer (schedules and packages), perception. |
-| `sf_ui` | Game UI (spec `ui.md`): bevy_ui + headless `bevy_ui_widgets` with our styled widget kit, CommonUI-style layers and input routing, MVVM view-models, two themes and two layout presets, CSS styling via `bevy_flair` layered by mod load order, extension slots, settings registry; HUD, menus, dialogue, journal, all scriptable. Feathers for dev tools only. Crates: `sf_ui` (Bevy-free), `sf_rpg_ui` (Bevy-free RPG screen view-models over `sf_rpg`: dialogue window, journal), `sf_ui_bevy`, `sf_ui_css`, `sf_ui_screens`, `sf_ui_lua`, `sf_devui`. |
+| `sf_ui` | Game UI (spec `ui.md`): bevy_ui + headless `bevy_ui_widgets` with our styled widget kit, CommonUI-style layers and input routing, MVVM view-models, two themes and two layout presets, CSS styling via `bevy_flair` layered by mod load order, extension slots, settings registry; HUD, menus, dialogue, journal, all scriptable. Feathers for dev tools only. Crates: `sf_ui` (Bevy-free), `sf_rpg_ui` (Bevy-free RPG screen view-models over `sf_rpg`: dialogue window, journal), `sf_ui_inventory` (Bevy-free item-list logic: inventory, container, barter), `sf_ui_bevy`, `sf_ui_css`, `sf_ui_screens`, `sf_ui_lua`, `sf_devui`. |
 
 ### 5.4 Tools
 

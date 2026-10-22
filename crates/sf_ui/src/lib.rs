@@ -11,7 +11,10 @@
 //!   `sf_ui_bevy` wraps it in a resource and feeds the input crate's contexts.
 //! - [`ViewModel`] and [`ListModel`]: MVVM data that game systems write and
 //!   screens read; list rows have stable keys, so sorting and filtering
-//!   never rebuild rows.
+//!   never rebuild rows; sorts chain keys (weight, then name) and filters combine
+//!   word search, exact matches and value sets (tabs).
+//! - [`VirtualList`]: scroll, keyed focus and a recycled row pool over a
+//!   `ListModel`, so thousands of rows cost a few dozen widgets.
 //! - [`SettingsStore`]: typed setting values over the registry's
 //!   `ui.setting` records, read from and written to profile tables.
 //! - [`Localizer`]: Fluent strings from every mod in load order, with a
@@ -33,9 +36,12 @@ mod rich_text;
 mod settings;
 mod stack;
 mod view_model;
+mod virtual_list;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_list;
 #[cfg(test)]
 mod tests_mods;
 #[cfg(test)]
@@ -62,3 +68,4 @@ pub use rich_text::{
 pub use settings::{SettingError, SettingValue, SettingsStore};
 pub use stack::{OpenScreen, ScreenStack, StackError};
 pub use view_model::{UiValue, ViewModel};
+pub use virtual_list::{ListFrame, RowBinding, VirtualList};
