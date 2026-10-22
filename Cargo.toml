@@ -150,6 +150,7 @@ sf_action = { path = "crates/sf_action" }
 sf_action_bevy = { path = "crates/sf_action_bevy" }
 sf_camera = { path = "crates/sf_camera" }
 sf_rpg = { path = "crates/sf_rpg" }
+sf_rpg_ui = { path = "crates/sf_rpg_ui" }
 sf_ids = { path = "crates/sf_ids" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
