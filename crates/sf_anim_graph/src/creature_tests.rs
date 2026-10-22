@@ -737,3 +737,105 @@ fn hit_react_kicks_peaks_and_settles_at_any_frame_rate() {
         assert!(inst.hit_reaction() < 1e-4 && out.model.translation(head).distance(rest_head) < 1e-4, "dt {dt}: settles");
     }
 }
+
+// --- Heel roll (AN-9) ---------------------------------------------------------------------
+
+/// The fixture biped with a toe 15 cm ahead of each foot.
+fn biped_with_toes() -> Skeleton {
+    let j = |name: &str, parent: Option<usize>, t: [f32; 3]| sf_anim::SourceJoint { name: name.into(), parent, rest: sf_anim::Trs::from_translation(Vec3::from(t)) };
+    let v = [
+        j("root", None, [0.0, 0.0, 0.0]),
+        j("hips", Some(0), [0.0, 1.0, 0.0]),
+        j("spine", Some(1), [0.0, 0.1, 0.0]),
+        j("chest", Some(2), [0.0, 0.25, 0.0]),
+        j("head", Some(3), [0.0, 0.3, 0.0]),
+        j("thigh_l", Some(1), [0.1, -0.05, 0.0]),
+        j("shin_l", Some(5), [0.0, -0.45, 0.02]),
+        j("foot_l", Some(6), [0.0, -0.45, -0.02]),
+        j("thigh_r", Some(1), [-0.1, -0.05, 0.0]),
+        j("shin_r", Some(8), [0.0, -0.45, 0.02]),
+        j("foot_r", Some(9), [0.0, -0.45, -0.02]),
+        j("upperarm_l", Some(3), [0.15, 0.2, 0.0]),
+        j("forearm_l", Some(11), [0.28, 0.0, 0.0]),
+        j("hand_l", Some(12), [0.25, 0.0, 0.0]),
+        j("upperarm_r", Some(3), [-0.15, 0.2, 0.0]),
+        j("forearm_r", Some(14), [-0.28, 0.0, 0.0]),
+        j("hand_r", Some(15), [-0.25, 0.0, 0.0]),
+        j("toe_l", Some(7), [0.0, 0.0, 0.15]),
+        j("toe_r", Some(10), [0.0, 0.0, 0.15]),
+    ];
+    let rules = sf_anim::SkeletonRules { root_motion_joint: Some("root".into()), ..sf_anim::SkeletonRules::default() };
+    Skeleton::with_rules(&v, &rules).unwrap().0
+}
+
+/// The planted foot slid forward at weight transfer: heel-off (the contact
+/// curve dropping) released the ankle lock over `release` seconds while the
+/// toe was still down, handing back the lock-vs-animation drift of the
+/// whole stance (here 5 cm, the character walking faster than the clip's
+/// still foot). The heel roll curve keeps the toe pinned through heel-off;
+/// the drift is paid back in the swing.
+#[test]
+fn heel_roll_pins_the_toe_from_heel_off_to_toe_off() {
+    let s = biped_with_toes();
+    let (base, shin) = (Vec3::new(0.1, 0.05, 0.0), Vec3::new(0.1, 0.5, 0.02));
+    // The animated left foot (ankle in model space, pitch): still to 0.40 s,
+    // rolling over its toe (15 cm ahead) to 0.65 s, then swinging back to its start.
+    let roll_end = |th: f32| base + Vec3::new(0.0, 0.15 * th.sin(), 0.15 * (1.0 - th.cos()));
+    let pose = move |t: f32| -> (Vec3, f32) {
+        if t < 0.4 {
+            (base, 0.0)
+        } else if t < 0.65 {
+            let th = 0.6 * (t - 0.4) / 0.25;
+            (roll_end(th), th)
+        } else {
+            let k = ((t - 0.65) / 0.25).min(1.0);
+            (roll_end(0.6).lerp(base, k) + Vec3::Y * 0.15 * (std::f32::consts::PI * k).sin(), 0.6 * (1.0 - k))
+        }
+    };
+    let src = SourceClip {
+        name: "roll".into(),
+        duration: 1.0,
+        tracks: vec![SourceTrack {
+            joint: "foot_l".into(),
+            translation: Some(sampled(1.0, move |t| pose(t).0 - shin)),
+            rotation: Some(sampled(1.0, move |t| Quat::from_rotation_x(pose(t).1))),
+            ..SourceTrack::default()
+        }],
+        curves: vec![
+            sf_anim::SourceCurve { name: "contact.foot_l".into(), curve: sampled(1.0, |t| if t < 0.4 { 1.0 } else { 0.0 }) },
+            sf_anim::SourceCurve { name: "roll.foot_l".into(), curve: sampled(1.0, |t| if (0.375..0.65).contains(&t) { 1.0 } else { 0.0 }) },
+        ],
+        ..SourceClip::default()
+    };
+    let clip = cook_clip(&s, &src, &walk_rules(), &CookSettings::default()).unwrap();
+    let ron = r#"(
+        nodes: {"w": Clip(clip: "roll")},
+        layers: [(node: "w")],
+        profile_limbs: Support,
+        procedural: [FootPlacement(pelvis: Joint("hips"))],
+    )"#;
+    let rig = Rig::new(s, vec![clip], ron);
+    assert!(rig.graph.legs.iter().any(|l| l.roll.is_some() && l.toe.is_some()), "the left leg resolves its roll curve and has a toe");
+    let b = rig.binding();
+    let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+    let ground = vec![Some(GroundSample { point: Vec3::ZERO, normal: Vec3::Y }); rig.graph.probe_count()];
+    let (contact, roll) = (rig.graph.curve("contact.foot_l").unwrap(), rig.graph.curve("roll.foot_l").unwrap());
+    let (foot, toe) = (rig.joint("foot_l"), rig.joint("toe_l"));
+    // 0.125 m/s over the 0.39 s stance: the lock trails the still animated foot by ~5 cm.
+    let (speed, dt) = (0.125f32, 1.0 / 60.0);
+    let mut travelled = Vec3::ZERO;
+    let mut rolling = Vec::new();
+    for _ in 0..52 {
+        let moved = RootDelta::new(Vec3::Z * speed * dt, 0.0);
+        inst.update(&b, dt, 0, &UpdateInputs { velocity: Vec3::Z * speed, moved, ground: &ground, ..UpdateInputs::default() }, &mut out);
+        travelled += Vec3::Z * speed * dt;
+        if out.curves[contact] <= 0.5 && out.curves[roll] > 0.5 {
+            rolling.push((out.model.translation(toe) + travelled, out.model.translation(foot).y));
+        }
+    }
+    assert!(rolling.len() >= 10, "{} rolling frames", rolling.len());
+    let slide = rolling.iter().map(|(p, _)| p.distance(rolling[0].0)).fold(0.0f32, f32::max);
+    assert!(slide < 5e-3, "the toe slid {slide} m between heel-off and toe-off");
+    let rise = rolling.last().unwrap().1 - rolling[0].1;
+    assert!(rise > 0.05, "the heel rolled up {rise} m");
+}

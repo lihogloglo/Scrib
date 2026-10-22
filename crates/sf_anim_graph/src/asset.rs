@@ -597,7 +597,7 @@ pub enum OpSpec {
         legs: Vec<String>,
         #[serde(default = "thirty_degrees")]
         max_foot_angle: f32,
-        /// Seconds to release a lock.
+        /// Seconds to release a lock: the offset from the animated foot decays with half-life `release / 2`.
         #[serde(default = "tenth")]
         release: f32,
         #[serde(default = "pelvis_halflife")]

@@ -61,15 +61,15 @@ physics, ragdoll hand-off, write-back) produces it, and say why in the slice han
 
 AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the cause before changing code.
 
-- **AN-9 Residual foot slide on every walker:** a planted foot holds for most of its stance, then slides a few
+- **AN-9 Residual foot slide on every walker:** fixed AF2-2 (the stance ended at heel-off and the ankle lock lerped back to the animation while the toe was still down, returning all the stance drift at weight transfer; now cooked `roll.<foot>` curves pin the toe from heel-off to toe-off and the release decays in swing). a planted foot holds for most of its stance, then slides a few
   cm forward right when weight transfers and the other foot lands. Owner suspects something fundamental in
   how foot placement/locking works, or an incompatibility with Morrowind's base anims, not a near/far issue.
-- **AN-10 Get-up spin:** no horizontal slide anymore, but characters often spin fast between the lying pose
+- **AN-10 Get-up spin:** fixed AF2-3 (`ROLL_TO_BACK` rolled face-down bodies about the frame's up axis, a 180° heading flip; now about the root body's long axis). no horizontal slide anymore, but characters often spin fast between the lying pose
   and the first frame of the stand-up clip (heading mismatch between the ragdoll and the clip's start).
 - **AN-11 Ragdoll torso:** the torso rotates freely with the hips and bends unnaturally; check every joint's
   constraint (limits, axes, twist/swing, spine chain).
 - **AN-12 Guar box too small** (not tall enough). Creature shapes must fit their models.
-- **AN-13 Guar hit by the ball loops forever** between falling and standing up.
-- **AN-14 Dead stays dead:** an actor killed while knocked down must not stand up.
+- **AN-13 Guar hit by the ball loops forever** fixed AF2-1 (no `Knockout@tail`: `knockout_end` dropped with its transitions, so `knockout` had no exit; it now exits to locomotion when the flag clears) between falling and standing up.
+- **AN-14 Dead stays dead:** fixed AF2-1 (a live knockdown ragdoll ignored the host's replaced death request; it now goes to the controller's terminal Dead). an actor killed while knocked down must not stand up.
 - **AN-15 Creature collision from several primitives** (industry standard, e.g. per-girdle shapes) so
   quadrupeds stand correctly on slopes; replaces the single oversized capsule/cylinder.

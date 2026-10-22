@@ -300,7 +300,8 @@ impl Step for AnimCookStep {
         // 3: rate search skips rates whose resampling error can't pass, guessed bit search (animcook).
         // 4: contacts from height and speed over the ground with hysteresis, stance ends at heel-off (walkers3/4).
         // 5: `ClipMeta::stance_velocity` (toe-aware planted-foot speed of travelling loops).
-        5
+        // 6: `roll.<foot>` heel-roll curves, heel-off to toe-off (AN-9).
+        6
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;

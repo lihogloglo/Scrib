@@ -227,6 +227,29 @@ fn knockdown_gets_up_through_the_controller() {
     assert!(s.app.world().get::<Ragdoll>(s.body).is_none());
 }
 
+/// AN-14: killed while knocked down, the character stays dead: the host's
+/// death request replaces the live knockdown, and no get-up follows.
+#[test]
+fn a_death_during_a_knockdown_never_gets_up() {
+    let mut s = scene(|base| RagdollMode::Knockdown {
+        point: base.offset(Vec3::new(0.0, 1.6, 0.0)),
+        impulse: Vec3::new(-60.0, 0.0, 0.0),
+        get_up: None,
+        get_up_flag: "down".into(),
+    });
+    for _ in 0..30 {
+        s.app.update();
+    }
+    assert_eq!(s.app.world().resource::<RagdollStats>().spawned, 1, "the knockdown is live");
+    s.app.world_mut().entity_mut(s.body).insert(Ragdoll { skeleton: "biped".into(), delay: 0.1, mode: RagdollMode::Death { crumple: true } });
+    for _ in 0..900 {
+        s.app.update();
+    }
+    let stats = *s.app.world().resource::<RagdollStats>();
+    assert_eq!((stats.got_up, stats.spawned, stats.live), (0, 1, 1), "{stats:?}");
+    assert!(s.app.world().get::<Ragdoll>(s.body).is_some());
+}
+
 /// The pelvis bone's world position (relative to `base`) from the bone entities.
 fn pelvis_world(s: &Scene, base: WorldPos) -> Option<Vec3> {
     let world = s.app.world();

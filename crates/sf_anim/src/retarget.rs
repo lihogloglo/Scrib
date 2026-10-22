@@ -130,8 +130,8 @@ pub struct Retargeter {
     scale: f32,
     ik: Vec<IkChain>,
     /// Source joint name → target joint name, for chain joints paired one
-    /// to one and for chain ends (renames `contact.*` curves and `down.*`
-    /// markers).
+    /// to one and for chain ends (renames `contact.*` and `roll.*` curves
+    /// and `down.*` markers).
     renames: Vec<(String, String)>,
 }
 
@@ -387,8 +387,11 @@ impl Retargeter {
             }
         }
         for c in &mut out.curves {
-            if let Some(n) = c.name.strip_prefix("contact.").and_then(|j| self.rename(j)) {
-                c.name = format!("contact.{n}");
+            for prefix in ["contact.", "roll."] {
+                if let Some(n) = c.name.strip_prefix(prefix).and_then(|j| self.rename(j)) {
+                    c.name = format!("{prefix}{n}");
+                    break;
+                }
             }
         }
         for m in &mut out.markers {

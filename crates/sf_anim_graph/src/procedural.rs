@@ -12,8 +12,10 @@
 //! - `OrientationWarp`: pelvis turned toward the velocity, spine
 //!   counter-rotated so the torso keeps its heading (UE Orientation Warping).
 //! - `FootPlacement`: foot height and tilt from ground samples, world
-//!   locks while the contact curve is above 0.5, released over `release`
-//!   seconds. One offset per girdle (critical springs): `Lower` drops each
+//!   locks while the contact curve is above 0.5 (then the toe, while the
+//!   `roll.<effector>` curve says the heel rolls), released into a decaying
+//!   offset of half-life `release` / 2 (the swing takes the correction);
+//!   one offset per girdle (critical springs): `Lower` drops each
 //!   girdle by its legs' largest need; `Fit` follows their mean ground
 //!   offset capped by reach, then the body pitches between girdles and
 //!   rolls by `roll` (the "pelvis plus chest" extension of Johansen 2009).
@@ -37,8 +39,16 @@ use crate::secondary::{Hit, HitState, SpringState, hit_react, spring_bones};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LegState {
+    /// The planted effector's (ankle's) character-space position.
     lock: Option<Vec3>,
-    lock_weight: f32,
+    /// The toe's, pinned while the heel rolls (the contact curve is down,
+    /// the roll curve up): the foot pivots on it.
+    toe_lock: Option<Vec3>,
+    /// The release: the locked target's offset from the animated one, and
+    /// its velocity, a critical spring decaying to zero (the correction
+    /// goes into the swing).
+    offset: Vec3,
+    offset_velocity: Vec3,
     /// The lock drifted past the unplant distance: it releases and does
     /// not re-lock until it has (then it re-plants where the foot is).
     unplanting: bool,
@@ -435,10 +445,13 @@ fn foot_placement(
     for (k, &li) in legs.iter().enumerate() {
         let leg = &g.legs[usize::from(li)];
         let st = &mut ls[k];
-        if let Some(l) = &mut st.lock
-            && finite_moved
-        {
-            *l = unmove * (*l - moved.translation);
+        if finite_moved {
+            for l in st.lock.iter_mut().chain(&mut st.toe_lock) {
+                *l = unmove * (*l - moved.translation);
+            }
+            // A displacement between two points of the character's frame.
+            st.offset = unmove * st.offset;
+            st.offset_velocity = unmove * st.offset_velocity;
         }
         let foot = usize::from(leg.effector());
         let f = model.translation(foot);
@@ -479,38 +492,58 @@ fn foot_placement(
             st.height = Spring { value: lift, velocity: 0.0 };
         }
         let mut target = f + Vec3::Y * st.height.update(lift, guards.foot_halflife, dt);
-        let contact = leg.contact.and_then(|c| cx.curves.get(usize::from(c)).copied()).unwrap_or(0.0);
-        if let Some(l) = st.lock
-            && contact > 0.5
-        {
-            let drift = horizontal(l - target).length();
+        let curve = |c: Option<u16>| c.and_then(|c| cx.curves.get(usize::from(c)).copied()).unwrap_or(0.0);
+        let contact = curve(leg.contact);
+        // Heel roll: the contact is over (heel-off) but the toe is still
+        // down: the toe pins, the ankle rises and turns about it as animated.
+        let toe = leg.toe.map(|(j, _, _)| model.translation(usize::from(j)));
+        let rolling = contact <= 0.5 && curve(leg.roll) > 0.5 && !st.unplanting;
+        if let (true, Some(l), Some(t)) = (rolling, st.lock, toe) {
+            // The toe under the locked foot (lifted as the foot is).
+            st.toe_lock.get_or_insert(l + (t - f));
+        } else if contact > 0.5 {
+            st.toe_lock = None;
+        }
+        // The locked target: the ankle's lock, or the animated foot moved
+        // onto the pinned toe.
+        let toe_pin = st.toe_lock.zip(toe).map(|(l, t)| l + (f - t));
+        let pin = if contact > 0.5 { st.lock } else if rolling { toe_pin } else { None };
+        if let Some(p) = pin {
+            let drift = horizontal(p - target).length();
             cx.feet.drift_max = cx.feet.drift_max.max(drift);
             cx.feet.drift_sum += drift;
             cx.feet.drift_count += 1;
-        }
-        if let Some(l) = st.lock
-            && !st.unplanting
-            && horizontal(l - target).length() > guards.unplant * reaches[k]
-        {
-            st.unplanting = true;
-            cx.feet.unplanted += 1;
-        }
-        if contact > 0.5 && !st.unplanting {
-            if st.lock.is_none() {
-                // A foot plants on the ground it touches, not on the
-                // smoothed height still catching up (stair edges).
-                st.height = Spring { value: lift, velocity: 0.0 };
-                st.lock = Some(f + Vec3::Y * lift);
+            if !st.unplanting && drift > guards.unplant * reaches[k] {
+                st.unplanting = true;
+                cx.feet.unplanted += 1;
             }
-            st.lock_weight = 1.0;
-        } else if st.lock.is_some() {
-            st.lock_weight -= dt / release.max(1e-3);
-            if st.lock_weight <= 0.0 {
+        }
+        if contact > 0.5 && !st.unplanting && st.lock.is_none() {
+            // A foot plants on the ground it touches, not on the smoothed
+            // height still catching up (stair edges); where it is, with what
+            // is left of a release.
+            st.height = Spring { value: lift, velocity: 0.0 };
+            let l = f + Vec3::Y * lift + st.offset;
+            (st.lock, st.offset, st.offset_velocity) = (Some(l), Vec3::ZERO, Vec3::ZERO);
+            target = l;
+        } else if let (Some(p), false) = (pin, st.unplanting) {
+            target = p;
+        } else {
+            // Released (toe-off, no roll curve, unplanting): the locked
+            // target's offset from the animation decays in a critical spring
+            // of half-life `release / 2`, so the swing takes the correction
+            // rather than the foot sliding at weight transfer.
+            if let Some(l) = st.lock.take() {
+                st.offset = toe_pin.unwrap_or(l) - target;
+                st.offset_velocity = Vec3::ZERO;
+                st.toe_lock = None;
+            }
+            critical_spring(&mut st.offset, &mut st.offset_velocity, Vec3::ZERO, 0.5 * release.max(1e-3), dt);
+            if st.offset.length() < 1e-3 {
                 *st = LegState { height: st.height, ..LegState::default() };
+            } else {
+                target += st.offset;
             }
-        }
-        if let Some(l) = st.lock {
-            target = target.lerp(l, st.lock_weight);
         }
         targets.push((leg, k, f.lerp(target, w), normal, model.rotation(foot)));
     }

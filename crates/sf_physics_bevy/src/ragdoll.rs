@@ -284,7 +284,15 @@ fn handoff(
     });
     let Some(source) = source else { return };
     for (entity, request, animator) in &requests {
-        if live.contains_key(&entity) {
+        if let Some(l) = live.get_mut(&entity) {
+            // A death on a live knockdown (the host replaced the request):
+            // the same bodies crumple through the controller's terminal
+            // `Dead` and never get up (AN-14: the new mode was ignored).
+            if matches!(request.mode, RagdollMode::Death { .. }) && !matches!(l.mode, RagdollMode::Death { .. }) {
+                let seed = entity.to_bits();
+                l.controller.request(ReactionRequest { class: ReactionClass::Death, body: 0, point: WorldPos::default(), impulse: Vec3::ZERO, tick: 0, seed });
+                l.mode = request.mode.clone();
+            }
             continue;
         }
         let p = pending.entry(entity).or_insert_with(|| Pending { left: request.delay, poses: [None, None], dt: 0.0 });
@@ -505,7 +513,11 @@ fn get_up(
         let build = l.own_scale / l.own_scale.y.max(1e-4);
         let clip_body = (clip_body.0, clip_body.1 * build);
         let face_down = l.instance.implied_frame(w, &l.def, &l.target, 1.0).is_some_and(|f| (f.rotation * Vec3::Z).y < 0.0);
-        let mut to = get_up_root(&pelvis, clip_body, l.scale, face_down);
+        // The root body's long axis in its own frame: model up in the rest pose.
+        let b0 = &l.def.bodies[0];
+        let rest = animator.asset.skeleton.rest_model();
+        let spine = rest.get(usize::from(b0.joint)).map_or(Vec3::Y, |m| (m.to_scale_rotation_translation().1 * b0.local.1).inverse() * Vec3::Y);
+        let mut to = get_up_root(&pelvis, clip_body, spine, l.scale, face_down);
         // On the ground under it (physics.md "get-up"): the frame is where the
         // capsule goes and where the clip stands up, so the mover doesn't
         // re-ground it after the hand-back.

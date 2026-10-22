@@ -1263,6 +1263,15 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
             }
         }
         trim_heel_off(&mut planted, rise, lift);
+        let toe_v = (toe_positions[i].len() == n).then(|| foot_velocities(&toe_positions[i], dt).0);
+        // The heel roll: after heel-off the toe is still down (same trigger
+        // thresholds as the foot's "stay", over its own floor in the cycle).
+        let roll = toe_v.as_ref().map(|tv| {
+            let tp = &toe_positions[i];
+            let floor = tp[cycle.clone()].iter().map(|v| v.y).fold(f32::INFINITY, f32::min);
+            let toe_down = |f: usize| tp[f].y - floor < height * release && (tv[f] + ground - reference[f]).length() < speed * release;
+            roll_frames(&planted, toe_down, clip.loop_range.is_some())
+        });
         if in_place {
             for f in (0..n).filter(|&f| planted[f]) {
                 planted_velocity += v[f];
@@ -1270,7 +1279,6 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
             }
         }
         if measure_stance {
-            let toe_v = (toe_positions[i].len() == n).then(|| foot_velocities(&toe_positions[i], dt).0);
             let (slide, count) = stance_slide_of(&planted, v, toe_v.as_deref(), &cycle);
             stance_slide += slide;
             stance_count += count;
@@ -1287,6 +1295,9 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
             }
         }
         clip.curves.push(CurveTrack { name: format!("contact.{name}"), values });
+        if let Some(values) = roll {
+            clip.curves.push(CurveTrack { name: format!("roll.{name}"), values });
+        }
     }
     if measure_stance {
         clip.meta.stance_velocity = stance_velocity(clip.meta.average_velocity, stance_slide, stance_count);
@@ -1366,6 +1377,30 @@ fn trim_heel_off(planted: &mut [bool], rise: &[f32], lift: f32) {
             }
         }
     }
+}
+
+/// The heel roll (`roll.<foot>`, 1 = rolling): from each stance's end (the
+/// foot's heel-off, where `planted` drops) while the toe is still down
+/// (`toe_down`), until the toe lifts or the foot plants again. The toe is
+/// the pivot of the roll: `FootPlacement` pins it there instead of
+/// releasing the whole foot at heel-off. Loops wrap.
+fn roll_frames(planted: &[bool], toe_down: impl Fn(usize) -> bool, looping: bool) -> Vec<f32> {
+    let n = planted.len();
+    let mut roll = vec![0.0; n];
+    for f in 0..n {
+        let prev = if f > 0 { planted[f - 1] } else { looping && planted[n - 1] };
+        if !prev || planted[f] {
+            continue;
+        }
+        for k in 0..n {
+            let g = if f + k < n { f + k } else if looping { f + k - n } else { break };
+            if planted[g] || !toe_down(g) {
+                break;
+            }
+            roll[g] = 1.0;
+        }
+    }
+    roll
 }
 
 /// The ground velocity of an in-place clip, in its space: its planted feet

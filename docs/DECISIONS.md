@@ -1497,3 +1497,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-22 (anim R3-3, AN-4..6): ragdoll requests always end (`RagdollGotUp` or new `RagdollFailed`, settle timeout 6 s);
   the get-up hand-back owns the blend over a same-update state switch; get-up frame on the ground; in-place get-up tails
   cut from a longer take cook anchored on their last frame (`RootMotionRules::anchor_end`), so they end over the capsule.
+- 2026-10-22 (anim AF2, AN-9): foot locks follow the heel-to-toe roll: the cook writes `roll.<foot>` (heel-off to
+  toe-off, toe planted) beside `contact.<foot>`; FootPlacement pins the toe during the roll and releases at toe-off with
+  a critically damped offset decay (half-life `release/2`) instead of a linear lerp at heel-off.

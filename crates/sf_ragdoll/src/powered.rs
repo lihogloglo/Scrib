@@ -505,14 +505,16 @@ fn outside_distance(c: Vec2, hull: &[Vec2]) -> f32 {
 /// the body (the host may snap it to the ground).
 ///
 /// `roll` is the **`ROLL_TO_BACK` scaffold**: with only a face-up get-up
-/// clip, a body lying face down is first turned 180° about its spine, so
-/// the inertialized hand-back rolls it over while it starts to rise.
+/// clip, a body lying face down is first turned 180° about its spine
+/// (`spine`: the root body's long axis in its own frame, toward the head),
+/// so the inertialized hand-back rolls it over while it starts to rise.
+/// (AN-10: the roll used the frame's up axis, vertical, so face-down bodies
+/// got a 180° heading flip and spun through the hand-back.)
 /// Removal: face-down get-up clips from the adapter.
-pub fn get_up_root(body: &WorldTransform, clip_body: (Quat, Vec3), scale: f32, roll: bool) -> WorldTransform {
+pub fn get_up_root(body: &WorldTransform, clip_body: (Quat, Vec3), spine: Vec3, scale: f32, roll: bool) -> WorldTransform {
     let mut rot = body.rotation;
     if roll {
-        let spine = (rot * clip_body.0.inverse()) * Vec3::Y;
-        rot = Quat::from_axis_angle(spine.try_normalize().unwrap_or(Vec3::Y), PI) * rot;
+        rot = (rot * Quat::from_axis_angle(spine.try_normalize().unwrap_or(Vec3::Y), PI)).normalize();
     }
     let yaw = yaw_of(rot * clip_body.0.inverse());
     WorldTransform { pos: body.pos.offset(-(yaw * clip_body.1 * scale)), rotation: yaw, scale: Vec3::ONE }

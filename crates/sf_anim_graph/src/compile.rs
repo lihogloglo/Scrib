@@ -764,6 +764,13 @@ impl Compiler<'_> {
         }
     }
 
+    /// The heel-roll curve (`roll.<effector>`) beside a contact curve
+    /// (`contact.<effector>`); None when the clips cooked none.
+    fn roll_curve(&self, contact: Option<&String>) -> R<Option<u16>> {
+        let Some(name) = contact.and_then(|c| c.strip_prefix("contact.")).map(|e| format!("roll.{e}")) else { return Ok(None) };
+        self.out.curve(&name).map(|i| u16_of(i, "curves")).transpose()
+    }
+
     /// A limb from a spec, checked: a parent-to-child chain of 2–8 joints.
     fn limb(&self, l: &LegSpec) -> R<Leg> {
         let refs: Vec<&JointRef> = if l.joints.is_empty() {
@@ -802,6 +809,7 @@ impl Compiler<'_> {
             pole,
             support: l.support,
             contact: self.contact_curve(&l.name, l.contact.as_ref(), true)?,
+            roll: self.roll_curve(l.contact.as_ref())?,
             toe,
             sole,
         })
@@ -839,6 +847,7 @@ impl Compiler<'_> {
                     pole,
                     support: pl.support,
                     contact: self.contact_curve(&pl.name, contact.as_ref(), false)?,
+                    roll: self.roll_curve(contact.as_ref())?,
                     toe: if one_girdle && pl.support && pl.solver == LimbSolver::TwoBone && pl.kind == sf_anim::LimbKind::Leg(sf_anim::LegKind::Plantigrade) { tip_of(self.skeleton, &self.skeleton.rest_model(), last_of(&pl.joints), pl.foot.as_ref().and_then(|f| f.toe)) } else { None },
                     sole: self.skeleton.rest_model()[usize::from(last_of(&pl.joints))].translation.y,
                 });

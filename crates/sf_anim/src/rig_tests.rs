@@ -310,7 +310,9 @@ fn contacts_come_from_support_limbs_scaled_by_leg_length() {
         for l in p.support_limbs() {
             assert!(names.contains(&l.foot.as_ref().unwrap().contact.as_str()), "{names:?}");
         }
-        assert_eq!(names.len(), 4);
+        // One contact curve per support limb, and a heel roll for each foot with a toe.
+        assert_eq!(names.iter().filter(|n| n.starts_with("contact.")).count(), 4, "{names:?}");
+        assert!(names.iter().all(|n| n.starts_with("contact.") || n.starts_with("roll.")), "{names:?}");
         patterns.push(clip.curves.iter().map(|c| c.values.clone()).collect::<Vec<_>>());
         // Without a profile, contact-tagged joints are used (none tagged here
         // but the front `wrist`s are hands): nothing for the hind paws.

@@ -257,6 +257,10 @@ pub struct Leg {
     pub support: bool,
     /// Graph curve index of the contact curve.
     pub contact: Option<u16>,
+    /// Graph curve index of the heel-roll curve (`roll.<effector>`, 1 from
+    /// heel-off until the toe lifts): `FootPlacement` pins the toe through
+    /// it. None for clips cooked without it (the foot then releases at heel-off).
+    pub roll: Option<u16>,
     /// The foot's tip (rig profile toe, else the effector's farthest child
     /// in the rest pose), its probe slot in [`CompiledGraph::probe_count`]
     /// order and its rest height: `FootPlacement` lifts a foot whose tip is over a higher step.

@@ -611,12 +611,66 @@ fn foot_contacts_become_curves_and_markers() {
     assert_eq!(values[0], 1.0);
     assert_eq!(values[values.len() / 2], 0.0, "lifted mid-clip");
     assert_eq!(*values.last().unwrap(), 1.0);
+    assert!(clip.find_curve("roll.foot").is_none(), "no toe, no heel roll");
     assert_eq!(clip.markers.len(), 1, "one touch-down; the loop start is not an onset");
     assert_eq!(clip.markers[0].name, "down.foot");
     assert!((0.72..0.76).contains(&clip.markers[0].time), "{}", clip.markers[0].time);
     let (prev, next, phase) = clip.marker_phase(0.2).unwrap();
     assert_eq!((prev, next), (0, 0));
     assert!((0.0..=1.0).contains(&phase));
+}
+
+/// The heel roll curve (`roll.<foot>`): 1 from a stance's heel-off (where
+/// the contact curve drops) while the toe is still down, until the toe lifts.
+#[test]
+fn heel_roll_curve_spans_heel_off_to_toe_off() {
+    let joints = [
+        j("root", None, [0.0; 3]),
+        j("thigh", Some(0), [0.0, 0.9, 0.0]),
+        j("shin", Some(1), [0.0, -0.45, 0.0]),
+        j("foot", Some(2), [0.0, -0.45, 0.0]),
+        j("toe", Some(3), [0.0, 0.0, 0.15]),
+    ];
+    let s = Skeleton::with_rules(&joints, &SkeletonRules::default()).unwrap().0;
+    // The ankle (model space, shin at y = 0.45): still to 0.40 s, rolling over
+    // the toe (15 cm ahead) to 0.65 s, then swinging back to its start.
+    let roll_end = |th: f32| Vec3::new(0.0, 0.15 * th.sin(), 0.15 * (1.0 - th.cos()));
+    let pose = move |t: f32| -> (Vec3, f32) {
+        if t < 0.4 {
+            (Vec3::ZERO, 0.0)
+        } else if t < 0.65 {
+            let th = 0.6 * (t - 0.4) / 0.25;
+            (roll_end(th), th)
+        } else {
+            let k = ((t - 0.65) / 0.25).min(1.0);
+            (roll_end(0.6) * (1.0 - k) + Vec3::Y * 0.15 * (std::f32::consts::PI * k).sin(), 0.6 * (1.0 - k))
+        }
+    };
+    let src = SourceClip {
+        name: "step".into(),
+        duration: 1.0,
+        tracks: vec![SourceTrack {
+            joint: "foot".into(),
+            translation: Some(fixtures::sampled(1.0, move |t| pose(t).0 - Vec3::Y * 0.45)),
+            rotation: Some(fixtures::sampled(1.0, move |t| Quat::from_rotation_x(pose(t).1))),
+            ..SourceTrack::default()
+        }],
+        ..SourceClip::default()
+    };
+    let contacts = ContactRules { feet: vec!["foot".into()], ..ContactRules::default() };
+    let clip = cook(&s, &src, &ClipRules { looping: Looping::Whole, contacts, ..no_root_motion() });
+    let values = |name: &str| clip.curves[clip.find_curve(name).unwrap_or_else(|| panic!("{name}"))].values.clone();
+    let (contact, roll) = (values("contact.foot"), values("roll.foot"));
+    let time = |f: usize| f as f32 / clip.rate;
+    let heel_off = (1..contact.len()).find(|&f| contact[f - 1] > 0.5 && contact[f] <= 0.5).expect("a stance ends");
+    let rolling: Vec<usize> = (0..roll.len()).filter(|&f| roll[f] > 0.5).collect();
+    assert!(rolling.len() >= 3, "{roll:?}");
+    assert_eq!(rolling[0], heel_off, "the roll starts at heel-off: contact {contact:?} roll {roll:?}");
+    assert!(rolling.windows(2).all(|w| w[1] == w[0] + 1), "one run: {rolling:?}");
+    assert!(rolling.iter().all(|&f| contact[f] <= 0.5), "never while planted");
+    let last = time(*rolling.last().unwrap());
+    assert!((0.6..0.8).contains(&last), "the roll ends as the toe lifts, not before the heel is up nor in mid-swing: {last}");
+    assert!(time(heel_off) < 0.45, "heel-off {}", time(heel_off));
 }
 
 #[test]

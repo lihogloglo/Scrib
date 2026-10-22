@@ -229,7 +229,7 @@ fn knockdown_falls_and_rests_then_root_goes_under_the_pelvis() {
     let (rr, tt) = rigid(&rest[usize::from(b0.joint)]);
     let lying = Quat::from_rotation_x(-PI / 2.0);
     let clip_body = (lying * rr * b0.local.1, lying * (tt + rr * b0.local.0) + Vec3::new(0.0, -0.8, 0.0));
-    let g = get_up_root(&pelvis, clip_body, 1.0, false);
+    let g = get_up_root(&pelvis, clip_body, Vec3::Y, 1.0, false);
     let landed = g.pos.offset(g.rotation * clip_body.1);
     assert!(landed.delta_f32(pelvis.pos).length() < 1e-3);
 }
@@ -239,13 +239,14 @@ fn get_up_root_recovers_the_frame_and_rolls_face_down_bodies() {
     let clip_body = (Quat::from_rotation_x(-1.4) * Quat::from_rotation_y(0.2), Vec3::new(0.05, 0.15, -0.6));
     let root = WorldTransform { pos: base().offset(Vec3::new(3.0, 0.0, 1.0)), rotation: Quat::from_rotation_y(0.7), scale: Vec3::ONE };
     let body = WorldTransform { pos: root.pos.offset(root.rotation * clip_body.1), rotation: root.rotation * clip_body.0, scale: Vec3::ONE };
-    let g = get_up_root(&body, clip_body, 1.0, false);
+    let g = get_up_root(&body, clip_body, Vec3::Y, 1.0, false);
     assert!(g.pos.delta_f32(root.pos).length() < 1e-4);
     assert!(g.rotation.angle_between(root.rotation) < 1e-3);
-    // Face down: the same body turned 180° about its spine.
-    let spine = (body.rotation * clip_body.0.inverse()) * Vec3::Y;
-    let down = WorldTransform { rotation: Quat::from_axis_angle(spine, PI) * body.rotation, ..body };
-    let g = get_up_root(&down, clip_body, 1.0, true);
+    // Face down: the same body turned 180° about its own long axis (body-local
+    // Y here: the clip lies it along the ground), not about the vertical (AN-10).
+    let down = WorldTransform { rotation: body.rotation * Quat::from_rotation_y(PI), ..body };
+    assert!((down.rotation * Vec3::Y).y.abs() < 0.2, "the spine lies along the ground");
+    let g = get_up_root(&down, clip_body, Vec3::Y, 1.0, true);
     assert!(g.rotation.angle_between(root.rotation) < 1e-3, "rolled back: {}", g.rotation.angle_between(root.rotation));
 }
 
