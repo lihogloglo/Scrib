@@ -299,7 +299,8 @@ fn step(
         stats.dropped_steps += 1;
         return;
     }
-    let Some(world) = physics.worlds.active_world_mut() else { return };
+    let Physics { worlds, terrain, .. } = &mut *physics;
+    let Some(world) = worlds.active_world_mut() else { return };
     let started = Instant::now();
     if let Some(f) = focus.0
         && world.follow(f)
@@ -310,7 +311,7 @@ fn step(
     // This frame's events (P5 impacts, contact reports; cleared in `First`).
     let drained: Vec<PhysicsEvent> = world.drain_events().collect();
     let world = &*world;
-    events.0.extend(drained.into_iter().map(|e| terrain_surfaces(world, physics.terrain.as_ref(), e)));
+    events.0.extend(drained.into_iter().map(|e| terrain_surfaces(world, terrain.as_ref(), e)));
     let ms = started.elapsed().as_secs_f32() * 1e3;
     stats.steps += 1;
     stats.step_ms += ms;

@@ -44,3 +44,52 @@ pub fn contact_sounds(events: Res<PhysicsEvents>, physics: Res<Physics>, origin:
         }));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy_app::App;
+    use bevy_ecs::message::Messages;
+    use bevy_math::Vec3;
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_physics_bevy::sf_physics::{BodyDesc, Layer, PhysicsParams, PhysicsWorlds, ShapeRef, SurfaceId};
+    use sf_world::WorldspaceId;
+
+    use super::*;
+
+    /// A ball dropped on a slab two grid cells east of the world origin: its landing becomes a
+    /// `ContactSound` near the listener's frame origin, with its surfaces and its body keyed.
+    #[test]
+    fn landings_become_contact_sounds_in_the_listener_frame() {
+        let cell = IVec3::new(2, 0, 0);
+        let base = WorldPos::new(cell, Vec3::ZERO);
+        let ws = WorldspaceId::new("test");
+        let mut worlds = PhysicsWorlds::default();
+        let w = worlds.get_or_create(&ws, base, &PhysicsParams::default());
+        let slab = WorldTransform::from_pos(base.offset(Vec3::new(0.0, -0.5, 0.0)));
+        w.insert(&BodyDesc::fixed(slab, ShapeRef::Box(Vec3::new(5.0, 0.5, 5.0)), Layer::STATIC).with_surface(SurfaceId(2)));
+        let drop = WorldTransform::from_pos(base.offset(Vec3::new(1.0, 1.0, 0.0)));
+        let desc = BodyDesc::new(BodyKind::Dynamic { asleep: false }, drop, ShapeRef::Sphere(0.06), Layer::DEBRIS);
+        let ball = w.insert(&BodyDesc { mass: Some(0.3), ccd: true, ..desc }.with_surface(SurfaceId(1)));
+        let mut events = PhysicsEvents::default();
+        for _ in 0..60 {
+            w.step();
+            events.0.extend(w.drain_events());
+        }
+        worlds.set_active(Some(ws));
+
+        let mut app = App::new();
+        app.insert_resource(Physics { worlds, params: PhysicsParams::default(), terrain: None })
+            .insert_resource(events)
+            .insert_resource(WorldOrigin::new(None, cell))
+            .add_message::<ContactSound>()
+            .add_systems(Update, contact_sounds);
+        app.update();
+        let sounds: Vec<ContactSound> = app.world_mut().resource_mut::<Messages<ContactSound>>().drain().collect();
+        let first = sounds.first().expect("the landing").0;
+        assert_eq!(first.bodies, [Some(ball.to_bits()), None]);
+        assert_eq!(first.surfaces, [1, 2]);
+        assert!(first.speed > 3.0, "{first:?}");
+        let at = Vec3::from_array(first.at);
+        assert!((at - Vec3::new(1.0, 0.0, 0.0)).length() < 0.1, "{at}");
+    }
+}

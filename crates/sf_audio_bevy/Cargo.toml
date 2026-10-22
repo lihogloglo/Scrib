@@ -31,6 +31,9 @@ weather = ["dep:sf_weather_bevy"]
 physics = ["dep:sf_physics_bevy", "dep:sf_world_bevy"]
 
 [dev-dependencies]
+# The physics bridge's test builds a world by hand.
+sf_coords.workspace = true
+sf_world.workspace = true
 
 [lints]
 workspace = true
