@@ -5971,8 +5971,12 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "sf_audio",
+ "sf_coords",
+ "sf_physics_bevy",
  "sf_records",
  "sf_weather_bevy",
+ "sf_world",
+ "sf_world_bevy",
 ]
 
 [[package]]
