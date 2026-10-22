@@ -58,34 +58,43 @@ fn binding_names_round_trip() {
 }
 
 #[test]
-fn bindings_table_holds_only_changes() {
-    let mut b = UiBindings::default();
-    assert!(b.to_table().is_empty());
-    b.set(
-        UiAction::Confirm,
-        vec![KeyCode::Space.into(), GamepadButton::South.into()],
-    );
-    let table = b.to_table();
-    assert_eq!(table.len(), 1);
+fn keymap_drives_engine_bindings() {
+    // The keymap's defaults are the engine defaults; a stick is its two axes.
+    let keymap = ui_keymap();
+    assert_eq!(keymap.conflicts(), vec![], "defaults don't conflict");
+    let bindings = UiBindings::from_keymap(&keymap);
+    assert_eq!(bindings, UiBindings::default());
     assert_eq!(
-        table["confirm"],
-        toml::Value::Array(vec!["key:Space".into(), "pad:South".into()])
-    );
-
-    let mut text: toml::Table =
-        toml::from_str("open_map = [\"key:Tab\", \"pad:Nope\"]\nwhatever = []\nback = 3").unwrap();
-    text.extend(table);
-    let (read, issues) = UiBindings::from_table(&text);
-    assert_eq!(issues.len(), 3, "{issues:?}");
-    assert_eq!(read.get(UiAction::Confirm), b.get(UiAction::Confirm));
-    assert_eq!(
-        read.get(UiAction::OpenMap),
-        [Binding::from(KeyCode::Tab)],
-        "bad entry dropped, rest kept"
+        bindings.get(UiAction::NavStick),
+        [
+            Binding::from(GamepadAxis::LeftStickX),
+            Binding::from(GamepadAxis::LeftStickY)
+        ]
     );
     assert_eq!(
-        read.get(UiAction::Back),
-        UiBindings::default().get(UiAction::Back)
+        bindings.get(UiAction::Back),
+        [
+            Binding::from(KeyCode::Escape),
+            Binding::from(KeyCode::Backspace),
+            Binding::from(GamepadButton::East)
+        ]
+    );
+    // The engine check rejects names Bevy doesn't have.
+    let mut keymap = ui_keymap();
+    let confirm = UiAction::Confirm.id();
+    assert!(keymap.set(&confirm, Device::Kbm, &["key:NotAKey"]).is_err());
+    keymap
+        .set(&confirm, Device::Kbm, &["key:ctrl+KeyS"])
+        .unwrap();
+    assert_eq!(
+        UiBindings::from_keymap(&keymap).get(UiAction::Confirm),
+        [
+            Binding::Keyboard {
+                key: KeyCode::KeyS,
+                mod_keys: ModKeys::CONTROL
+            },
+            Binding::from(GamepadButton::South)
+        ]
     );
 }
 
@@ -180,10 +189,11 @@ fn settings_and_bindings_survive_a_restart() {
         .0
         .set("game.text_scale", SettingValue::Float(1.5))
         .unwrap();
-    world.resource_mut::<UiBindings>().set(
-        UiAction::OpenMenu,
-        vec![KeyCode::F10.into(), GamepadButton::Start.into()],
-    );
+    world
+        .resource_mut::<UiKeymap>()
+        .0
+        .set(&UiAction::OpenMenu.id(), Device::Kbm, &["key:F10"])
+        .unwrap();
     app.update();
     assert!(app.world().resource::<UiProfile>().dirty);
     assert!(!saved.exists(), "not written while the menu is open");
@@ -204,9 +214,11 @@ fn settings_and_bindings_survive_a_restart() {
 
     // Restart: read the file, load the mods again, build the UI again.
     let reread = Profile::load(&saved).unwrap();
+    let expected: toml::Table = toml::from_str("kbm = [\"key:F10\"]").unwrap();
     assert_eq!(
         reread.bindings[BINDINGS_CONTEXT]["open_menu"],
-        toml::Value::Array(vec!["key:F10".into(), "pad:Start".into()])
+        toml::Value::Table(expected),
+        "only the changed device is saved"
     );
     let loaded = load(&mods, &reread);
     let (app, report) = start_app(&loaded, &profiles);

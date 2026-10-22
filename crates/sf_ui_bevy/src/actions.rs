@@ -1,17 +1,24 @@
-//! Named UI actions and their rebindable bindings (ui.md "Input").
+//! Named UI actions and their rebindable bindings (ui.md "Input", "Keybinds").
 //!
 //! Every action is a `bevy_enhanced_input` action on a UI context entity. The
-//! bindings come from [`UiBindings`]; changing that resource respawns the
-//! actions of every UI context, so a rebind (menu open included) applies at
-//! once to open and future screens.
+//! player's bindings live in [`UiKeymap`] (the Bevy-free `sf_ui::Keymap`, as
+//! input names); [`UiBindings`] is its engine form. A keymap change rebuilds
+//! `UiBindings`, which respawns the actions of every UI context, so a rebind
+//! (menu open included) applies at once to open and future screens.
 
 use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
-use bevy_input::gamepad::{GamepadAxis, GamepadButton};
-use bevy_input::keyboard::KeyCode;
+use bevy_input::gamepad::GamepadAxis;
 use bevy_math::Vec2;
+use sf_ui::{ActionDef, ActionRef, Keymap};
 
+use crate::profile::{BINDINGS_CONTEXT, parse_inputs, validate_input};
 use crate::router::{UiInputContexts, UiScreenInput};
+
+/// Keymap scope of the HUD's actions (open menu, open map): live beside
+/// gameplay, so a game links its gameplay scope to it
+/// (`keymap.link_scopes("gameplay", HUD_SCOPE)`) to see conflicts.
+pub const HUD_SCOPE: &str = "ui.hud";
 
 /// The framework's UI actions. Screens and games react to them through
 /// [`crate::UiActionEvent`]; navigation and confirm also drive focus.
@@ -83,6 +90,80 @@ impl UiAction {
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|a| a.name() == name)
     }
+
+    /// The action in the keymap (context [`BINDINGS_CONTEXT`]).
+    pub fn id(self) -> ActionRef {
+        ActionRef::new(BINDINGS_CONTEXT, self.name())
+    }
+
+    /// Keymap definition with the defaults: console and PC convention
+    /// (A/Enter confirm, B/Esc back, bumpers tab, Start/Esc menu, View/M map).
+    /// Navigation, confirm, back and menu open are required: rebindable, never
+    /// left unbound on a device.
+    pub fn def(self) -> ActionDef {
+        let name = self.name();
+        let button =
+            |defaults: &[&str]| ActionDef::button(BINDINGS_CONTEXT, name, defaults.iter().copied());
+        match self {
+            UiAction::NavUp => button(&["key:ArrowUp", "pad:DPadUp"]).required(),
+            UiAction::NavDown => button(&["key:ArrowDown", "pad:DPadDown"]).required(),
+            UiAction::NavLeft => button(&["key:ArrowLeft", "pad:DPadLeft"]).required(),
+            UiAction::NavRight => button(&["key:ArrowRight", "pad:DPadRight"]).required(),
+            UiAction::NavStick => ActionDef::stick(BINDINGS_CONTEXT, name, ["stick:Left"]),
+            UiAction::Confirm => button(&["key:Enter", "pad:South"]).required(),
+            UiAction::Back => button(&["key:Escape", "key:Backspace", "pad:East"]).required(),
+            UiAction::TabPrev => button(&["key:KeyQ", "pad:LeftTrigger"]),
+            UiAction::TabNext => button(&["key:KeyE", "pad:RightTrigger"]),
+            UiAction::Context1 => button(&["key:KeyF", "pad:West"]),
+            UiAction::Context2 => button(&["key:KeyR", "pad:North"]),
+            UiAction::Context3 => button(&["key:KeyX", "pad:LeftThumb"]),
+            UiAction::Context4 => button(&["key:KeyC", "pad:RightThumb"]),
+            UiAction::OpenMenu => button(&["key:Escape", "pad:Start"])
+                .required()
+                .also_in(HUD_SCOPE),
+            UiAction::OpenMap => button(&["key:KeyM", "pad:Select"]).also_in(HUD_SCOPE),
+        }
+    }
+}
+
+/// A keymap holding the UI actions at their defaults, with the engine's input
+/// check. Back and open menu share Esc by design (Esc closes a menu and opens
+/// the main menu from play).
+pub fn ui_keymap() -> Keymap {
+    let mut keymap = Keymap::new();
+    keymap.set_validator(validate_input);
+    for action in UiAction::ALL {
+        keymap
+            .register(action.def())
+            .expect("UI action defaults are valid");
+    }
+    keymap.allow_shared(UiAction::Back.id(), UiAction::OpenMenu.id());
+    keymap
+}
+
+/// The player's keymap: the UI actions, plus any actions a game registers
+/// (its gameplay context) so one keybinds screen and one profile table cover
+/// both. Edit it to rebind (or through [`crate::UiRebinder`]); changes reach
+/// [`UiBindings`] and the profile.
+#[derive(Resource, Clone, Debug)]
+pub struct UiKeymap(pub Keymap);
+
+impl Default for UiKeymap {
+    fn default() -> Self {
+        Self(ui_keymap())
+    }
+}
+
+impl UiKeymap {
+    /// Glyph of the first input bound to a UI action on `device`.
+    pub fn glyph(
+        &self,
+        action: UiAction,
+        device: sf_ui::Device,
+        family: sf_ui::PadFamily,
+    ) -> Option<sf_ui::Glyph> {
+        self.0.glyph(&action.id(), device, family)
+    }
 }
 
 /// Tags each spawned action entity with its [`UiAction`], so one query reads
@@ -118,13 +199,31 @@ ui_actions! {
     UiOpenMap: bool;
 }
 
-/// Bindings per UI action, keyboard/mouse and gamepad together. Defaults
-/// follow console and PC convention (A/Enter confirm, B/Esc back, bumpers
-/// tab, Start/Esc menu, Back/M map). Edit to rebind; all are rebindable.
+/// Engine bindings per UI action, keyboard/mouse and gamepad together, built
+/// from [`UiKeymap`] whenever it changes (rebind through the keymap: it is
+/// what the profile saves). The default is [`ui_keymap`]'s.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct UiBindings(pub Vec<(UiAction, Vec<Binding>)>);
 
 impl UiBindings {
+    /// The UI actions' bindings in `keymap` (keyboard/mouse first). A stick
+    /// becomes its two axes.
+    pub fn from_keymap(keymap: &Keymap) -> Self {
+        Self(
+            UiAction::ALL
+                .into_iter()
+                .map(|action| {
+                    let bindings = keymap
+                        .bound_all(&action.id())
+                        .filter_map(|name| parse_inputs(name).ok())
+                        .flatten()
+                        .collect();
+                    (action, bindings)
+                })
+                .collect(),
+        )
+    }
+
     pub fn get(&self, action: UiAction) -> &[Binding] {
         self.0
             .iter()
@@ -143,56 +242,15 @@ impl UiBindings {
 
 impl Default for UiBindings {
     fn default() -> Self {
-        use GamepadButton as G;
-        use KeyCode as K;
-        let b = |list: &[Binding]| list.to_vec();
-        Self(vec![
-            (UiAction::NavUp, b(&[K::ArrowUp.into(), G::DPadUp.into()])),
-            (
-                UiAction::NavDown,
-                b(&[K::ArrowDown.into(), G::DPadDown.into()]),
-            ),
-            (
-                UiAction::NavLeft,
-                b(&[K::ArrowLeft.into(), G::DPadLeft.into()]),
-            ),
-            (
-                UiAction::NavRight,
-                b(&[K::ArrowRight.into(), G::DPadRight.into()]),
-            ),
-            (
-                UiAction::NavStick,
-                b(&[
-                    GamepadAxis::LeftStickX.into(),
-                    GamepadAxis::LeftStickY.into(),
-                ]),
-            ),
-            (UiAction::Confirm, b(&[K::Enter.into(), G::South.into()])),
-            (
-                UiAction::Back,
-                b(&[K::Escape.into(), K::Backspace.into(), G::East.into()]),
-            ),
-            (
-                UiAction::TabPrev,
-                b(&[K::KeyQ.into(), G::LeftTrigger.into()]),
-            ),
-            (
-                UiAction::TabNext,
-                b(&[K::KeyE.into(), G::RightTrigger.into()]),
-            ),
-            (UiAction::Context1, b(&[K::KeyF.into(), G::West.into()])),
-            (UiAction::Context2, b(&[K::KeyR.into(), G::North.into()])),
-            (
-                UiAction::Context3,
-                b(&[K::KeyX.into(), G::LeftThumb.into()]),
-            ),
-            (
-                UiAction::Context4,
-                b(&[K::KeyC.into(), G::RightThumb.into()]),
-            ),
-            (UiAction::OpenMenu, b(&[K::Escape.into(), G::Start.into()])),
-            (UiAction::OpenMap, b(&[K::KeyM.into(), G::Select.into()])),
-        ])
+        Self::from_keymap(&ui_keymap())
+    }
+}
+
+/// Keymap → engine bindings, only when they differ (a capture that changed
+/// nothing doesn't respawn actions).
+pub(crate) fn apply_keymap(keymap: Res<UiKeymap>, mut bindings: ResMut<UiBindings>) {
+    if keymap.is_changed() {
+        bindings.set_if_neq(UiBindings::from_keymap(&keymap.0));
     }
 }
 

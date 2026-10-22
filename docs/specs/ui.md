@@ -329,6 +329,18 @@ on-screen keyboard and default names, held directions repeat. The last-used devi
 glyphs and focus visuals within the frame; it never swaps layout (BG3 lesson). Classic windows
 on gamepad: shoulder buttons cycle open windows, the d-pad moves inside one.
 
+**Keybinds screen (U6).** One keymap holds the UI actions and whatever a game registers
+(gameplay context), each with slots per device (keyboard/mouse, gamepad), defaults and the
+scopes where it is live. The screen lists rows per context and device, captures an input for a
+slot, flags conflicts per scope (with explicit exemptions such as Esc for back and menu open),
+asks swap / unbind / keep both, resets an action, a context or everything (per device or all),
+and saves only what differs from the defaults to the profile. Confirm, back, menu open and the
+d-pad/arrows are rebindable but never left unbound on a device (no lock-out). Glyphs follow the
+last-used pad's family (Xbox, PlayStation, Nintendo). Model: UE5 `EnhancedInputUserSettings`
+(player-mappable keys in slots, `ResetMappingToDefault`/`ResetKeyProfileToDefault`, a failure
+reason on `MapPlayerKey`) and Unity Input System binding overrides (defaults stay, only
+overrides are saved; the rebinding sample offers swap on duplicates).
+
 ## Presets, theming, scaling, localization, accessibility
 
 - **PC-dense**: lists with columns, sort, search, category tabs, compare; hover tooltips;
@@ -543,6 +555,64 @@ clippy pedantic clean. The only crate linking flair; flair types stay inside it 
 - Leftovers: flair logs the same sheet error twice (root import + probe); the examples log Bevy's "no default
   assets dir" watcher warning (only `sf_ui_content` is used).
 
+## As built (U6, 2026-10-22)
+
+Keybinds screen logic: Bevy-free in `sf_ui` (`input.rs`, `keymap.rs`, `rebind.rs`), engine side in
+`sf_ui_bevy` (`actions.rs`, `keybinds.rs`, `profile.rs`). 13 `sf_ui` tests + 2 `sf_ui_bevy` tests, clippy
+pedantic clean. The screen widget itself waits for the widget kit (U3); this is everything under it.
+
+- **Reuse check (rule 8)**: Bevy 0.20 has no rebinding model. `bevy_enhanced_input` 0.27 binds inputs and
+  its `keybinding_menu` example rebinds, but has no slots per device, conflict scopes, required actions or
+  capture flow, and persists through Bevy's `SettingsGroup` (needs its `serialize` feature, U1c). We keep BEI
+  for evaluation and build the keymap over it. `bevy_input_prompts` 0.2 (glyphs, MIT) is on Bevy 0.16 and
+  ties glyphs to the Kenney/Xelu asset packs: not adopted; our glyphs are text plus icon ids a content pack maps.
+- **Open question 4 closed (bypass `SettingsGroup`)**: bindings persist only in the profile
+  (`Profile::bindings`), so profiles stay the single source; the keymap mirrors `SettingsStore`
+  (`load_from(&Profile)` / `save_to(&mut Profile) -> changed`, saved by `sync_profile` on leaving the menus).
+- **Input names are the model.** The keymap stores the U1c text names (`key:Ctrl+KeyS`, `pad:South`, ...) plus
+  new `stick:Left|Right` (a whole stick for 2D actions; the engine side expands it to both axes). `sf_ui` knows
+  only the grammar: device class by prefix, modifiers, canonical spelling, overlap. The engine checks that a
+  name exists through `Keymap::set_validator` (`sf_ui_bevy::validate_input`). `Device` moved to `sf_ui`
+  (re-exported by `sf_ui_bevy`).
+- **Keymap** (`sf_ui::Keymap`): `ActionDef { id: (context, action), label (Fluent id), shape: Button | Stick,
+  slots [kbm, gamepad], defaults, required, scopes }`. Conflicts: two actions collide when a scope meets
+  (equal, or linked with `link_scopes`) and their inputs overlap: the same input, or **partial** (a key
+  without modifiers fires on its chord in BEI, `any_key` on every key, `stick:Left` on `axis:LeftStickX`).
+  `allow_shared` exempts a pair. `propose(slot, input) -> Proposal { previous, conflicts }`, then
+  `apply(proposal, Swap | Unbind | KeepBoth)`; refused when stale or when a required action would lose its
+  last binding on a device. Moving an input between two slots of the same action swaps them. `unbind`,
+  `set` (code/scripts), `reset(action, device?)`, `reset_context`, `reset_all`; `rows(context)` is the
+  screen's view-model (slots per device, `conflicted`, `modified`).
+- **Profile format**: per action, only the devices that differ, `confirm = { kbm = ["key:Space"] }` (an empty
+  list unbinds that device). U1c's flat list still loads (it sets every device). Unregistered actions'
+  entries pass through and apply when the action registers later (a disabled mod's actions keep their keys).
+  Bad names, unknown devices, too many inputs and wrong shapes are reported (`KeymapIssue`) and dropped; a
+  required action left unbound gets that device's defaults back.
+- **Capture** (`sf_ui::Rebinder`): arms only once every input is released (the A/Enter/click that started it
+  is never captured); ignores other devices and shapes; a modifier key waits for a chord and binds alone if
+  released alone; **no cancel input** (every input is bindable, menu open on Esc included), so capture ends on
+  a 5 s timeout or `cancel()`; after a capture UI actions stay blocked until every input is released, so a
+  captured Esc or B doesn't also close the menu. A conflict waits in `pending()` for `resolve`.
+- **Bevy side**: `UiKeymap` (resource, `ui_keymap()` = the UI actions; a game registers its gameplay actions
+  in it and links its scope to `HUD_SCOPE`, where open menu/map live) is the source of truth; `UiBindings` is
+  derived from it (`apply_keymap`, only when different), then respawns contexts as before. `UiRebinder` +
+  `drive_rebind` (`PreUpdate`, first in `UiSystems::Route`) feed keys, mouse buttons, pad buttons and stick
+  crossings as names and emit `UiRebindEvent`s; `dispatch_actions` and `navigate` run only under
+  `ui_input_open`. `GamepadFamily` follows the last-used pad's vendor id (Sony 0x054C, Nintendo 0x057E,
+  else Xbox). `glyph(&UiKeymap, action, device, family) -> Glyph { label, icons }`: Xbox / PlayStation /
+  Switch names (Bevy's pad buttons are positional: `South` is A, Cross or B), key names, chords as
+  `Ctrl+S`; icon ids such as `pad-ps-South` and `mod-Ctrl` for atlases (U3) and `glyph-<id>` Fluent rewording.
+- Tests: input grammar and overlap; glyphs per family; registration checks; conflicts per scope (UI vs
+  gameplay, HUD linked, shared Esc, partial chord); swap / unbind / keep-both, stale and required refusals;
+  slot moves; resets; profile tables (only changed devices, U1c form, issues, pass-through and late
+  registration); capture (arming, device filter, draining, chords, lone modifier, sticks, conflict, timeout,
+  refused swap). Headless Bevy: a pad capture rebinds menu open while the A that started it is ignored, a
+  B capture conflicts with back without closing the menu, the swap drives the engine bindings.
+- Leftovers: keyboard-layout-aware key labels (`KeyQ` reads Q on AZERTY; Bevy 0.20 has no physical → logical
+  lookup outside key events); the screen widget and icon atlases (U3); per-pad bindings for local co-op
+  (BEI `GamepadDevice`); gameplay actions are registered by the game (Bevyrrowind) once it has a gameplay
+  context.
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 above
@@ -596,6 +666,7 @@ already compare toolkits and player lessons; this table gives verdicts per techn
    `bevy` umbrella with only `mouse`, `keyboard`, `gamepad`, `touch`, `bevy_scene`, `bevy_log`; it lives in
    `sf_ui_bevy`, never in `sf_ui`. Bindings persist in the profile through our settings registry (U6), so
    profiles stay the single source; U6 decides whether to bridge or bypass `SettingsGroup`.
+   **U6 (2026-10-22): bypass.** Bindings live in `Profile::bindings` through `sf_ui::Keymap` (As built U6).
 5. **Subtitles (J9, P2).** A `subtitles` settings group (on/off, size scale independent of text
    scale, background opacity, speaker name, max two lines, minimum display time) and a
    `Layer::Notification`-level caption widget fed by a `Caption { speaker, text, duration }`

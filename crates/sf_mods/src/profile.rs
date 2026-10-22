@@ -19,8 +19,9 @@ pub const PROFILE_EXTENSION: &str = "toml";
 pub type SettingValues = BTreeMap<ModId, toml::Table>;
 
 /// Player input bindings that differ from the defaults: one table per input
-/// context (`ui`, a game's `gameplay`), action name to a list of input names.
-/// The input layer (`sf_ui_bevy` for UI actions) owns the names and defaults.
+/// context (`ui`, a game's `gameplay`), action name to the changed devices'
+/// input names (`confirm = { kbm = ["key:Space"] }`; a flat list sets every
+/// device). The keymap (`sf_ui::Keymap`) owns the names and defaults.
 pub type InputBindings = BTreeMap<String, toml::Table>;
 
 /// One player profile.

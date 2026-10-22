@@ -1,6 +1,6 @@
 [package]
 name = "sf_ui_bevy"
-description = "Thin Bevy plugin for sf_ui: screen-stack input router over bevy_enhanced_input contexts, rebindable UI actions, layer-aware directional navigation, last-used device and glyphs (ui.md)"
+description = "Thin Bevy plugin for sf_ui: screen-stack input router over bevy_enhanced_input contexts, rebindable UI actions over the sf_ui keymap, keybind capture, layer-aware directional navigation, last-used device and glyphs (ui.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,13 +20,13 @@ bevy_ui.workspace = true
 bevy_ui_widgets.workspace = true
 sf_mods.workspace = true
 sf_ui.workspace = true
-toml.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["ui"] }
 sf_records.workspace = true
 semver.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true
