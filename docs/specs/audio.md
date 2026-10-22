@@ -70,6 +70,29 @@ music with crossfades. Volumes follow a bus mixer. Nothing here is gameplay.
   notifies, surface tags from the host's ground query; both are content strings. `StrideTimer` is
   the fallback trigger for rigs without step events: a step per stride of ground travel (the first
   at half a stride), alternating feet; the host resets it when airborne or still.
+- **Impacts** (2026-10-22; `sf_audio::ImpactAudio`, `ImpactMap`): physics contact reports become
+  hit one-shots and slide loops. Input per report (`ContactSample`): the normal impulse (N·s), the
+  normal speed change it caused (m/s, the impact speed independent of mass), the slide speed at the
+  contact, both surfaces (`SurfaceId` values: per collision triangle on meshes, the ground probe's
+  on terrain, `ItemContent::surface` on items) and which sides are moving bodies. A cue is picked
+  by surface pair (exact pair, then the moving body's surface against any, then the other's, then
+  a catch-all) and impulse band (`(min impulse, cue)` per entry: heavy bodies get heavy samples, a
+  hit under the lowest band is silent); its volume ramps linearly with impact speed from
+  `min_volume` (0.15) at `min_speed` (0.5 m/s) to 1 at `full_speed` (6 m/s). No machine-gun:
+  (1) the speed gate (holding a body up against gravity changes its speed by `g·dt` = 0.16 m/s per
+  step, so resting and rolling contacts never pass; physics already drops reports under 0.3 m/s),
+  (2) one hit per moving body per `cooldown_s` (0.1 s) unless at least `override_ratio` (2x) harder
+  than its last sound (world geometry is never limited: two balls on one floor both sound),
+  (3) at most `max_per_tick` (8) hits per frame, loudest first. Slides: one loop per moving body
+  (its fastest contact's pair), level from slide speed (0.4..3 m/s -> 0.3..1), eased over
+  `slide_fade_s` (0.1 s), held `slide_hold_s` (0.12 s) after the last report, then faded and stopped;
+  a change of surface swaps the loop. Rolling makes no slide (the contact point does not slip);
+  a rolling loop from angular speed is future work. Industry: Havok/PhysX contact listeners with
+  separating-velocity thresholds, Source's per-object impact-sound delay and scrape sounds, UE
+  Chaos hit/slide events, Unity `relativeVelocity`/impulse recipes: same gates. Bevy side:
+  `ContactSound` messages (positions in the listener's frame) -> `PlaySoundScaled` hits at the
+  contact point and `SlideVoice` loops that follow it; the `physics` feature's
+  `PhysicsAudioPlugin` writes them from `PhysicsEvents`. Pitch by speed and mass waits for content.
 - **Streaming vs decoded**: `bevy_audio` keeps the encoded bytes in the asset and decodes while
   playing (mp3/wav), so a 5 MB music track costs 5 MB of RAM, not its PCM size. True disk streaming
   is not needed at our sizes.
@@ -121,7 +144,11 @@ own listener; draws (variants, pitch, region one-shots, track order) may differ 
 Bevy-free (`sf_audio`): fades, mixer gains, outdoor exposure, scheduler draw/interval/determinism,
 attenuation (bounds, monotonic, shapes), group picks (no repeat, weights, empty), cue resolution and
 fallback, music (crossfade levels, shuffle bag without repeats, hold, silence), footstep map fallback
-and stride cadence, ambience exposure weights and loop reconciliation. Bevy (`sf_audio_bevy`, mini
+and stride cadence, ambience exposure weights and loop reconciliation, impacts (pair fallback, bands,
+speed gate and volume, cooldown and override, bounces, per-tick cap, slide start/follow/stop and
+surface switch). `sf_physics`: contact reports (landing speed, rolling and resting silent, slide
+speed, per-triangle surfaces). Bevy (`sf_audio_bevy`, mini
 app with `playback: false`): weather loops/thunder, indoor easing, cue caps/variants/distance cull,
-distance gain, ambience beds through a door, music start/fade. Agents cannot hear: audible checks
+distance gain, ambience beds through a door, music start/fade, contacts (scaled hits, a slide loop
+that follows and stops). Agents cannot hear: audible checks
 are owner passes (docs/visual-checks.md).

@@ -203,3 +203,46 @@ fn one_shot_sets_draw_on_the_ambience_bus_outdoors() {
     }
     assert!(drawn >= 2, "{drawn}");
 }
+
+fn contact(body: u64, speed: f32, slide: f32, at: [f32; 3]) -> ContactSound {
+    ContactSound(sf_audio::ContactSample { bodies: [Some(body), None], surfaces: [1, 0], impulse: speed * 0.3, speed, slide, at })
+}
+
+#[test]
+fn contacts_play_hits_scaled_by_speed_and_slide_loops_that_follow() {
+    let mut app = app();
+    app.world_mut().resource_mut::<ContactAudio>().0.map.insert(
+        Some(1),
+        None,
+        sf_audio::ImpactCues::impact(0.0, id("thunder")).with_slide(id("rain")),
+    );
+    // A hard hit and a soft one, two bodies: both play, the soft one quieter.
+    app.world_mut().write_message(contact(1, 6.0, 0.0, [1.0, 0.0, 0.0]));
+    app.world_mut().write_message(contact(2, 0.5, 0.0, [2.0, 0.0, 0.0]));
+    app.update();
+    assert_eq!(cue_events(&mut app), vec![id("thunder"), id("thunder")]);
+    let mut bases: Vec<f32> = app.world_mut().query::<&Voice>().iter(app.world()).map(|v| v.base).collect();
+    bases.sort_by(f32::total_cmp);
+    assert!((bases[0] - 0.5 * 0.15).abs() < 1e-5 && (bases[1] - 0.5).abs() < 1e-5, "{bases:?}");
+    // Resting contacts (g dt) are no hits.
+    app.world_mut().write_message(contact(3, 0.16, 0.0, [0.0; 3]));
+    app.update();
+    assert!(cue_events(&mut app).is_empty());
+
+    // A body slides: one loop voice at the contact, following it.
+    app.world_mut().write_message(contact(4, 0.16, 3.0, [1.0, 0.0, 0.0]));
+    app.update();
+    assert_eq!(cue_events(&mut app), vec![id("rain")]);
+    let mut slides = app.world_mut().query::<(&SlideVoice, &Voice, &Transform)>();
+    let found: Vec<_> = slides.iter(app.world()).map(|(s, v, t)| (s.0, v.looping, t.translation)).collect();
+    assert_eq!(found, vec![(4, true, Vec3::X)]);
+    app.world_mut().write_message(contact(4, 0.16, 3.0, [2.0, 0.0, 0.0]));
+    app.update();
+    let found: Vec<_> = slides.iter(app.world()).map(|(_, v, t)| (v.level, t.translation)).collect();
+    assert!(matches!(found[..], [(level, at)] if (level - 1.0).abs() < 1e-6 && at == Vec3::new(2.0, 0.0, 0.0)), "{found:?}");
+    // It stops: the loop goes after its hold and fade (500 ms frames here).
+    app.update();
+    app.update();
+    assert!(events(&mut app).contains(&AudioEvent::LoopStop { sound: id("rain") }));
+    assert_eq!(slides.iter(app.world()).count(), 0);
+}

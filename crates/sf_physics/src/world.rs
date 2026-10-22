@@ -2,7 +2,7 @@
 //! an anchor grid cell, rebased by whole cells (physics.md "Stepping and the
 //! floating origin").
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +13,7 @@ use rapier3d::math::Pose;
 use rapier3d::parry::mass_properties::MassProperties;
 use rapier3d::pipeline::{ActiveEvents, ActiveHooks, EventHandler, PairFilterContext, PhysicsHooks, PhysicsWorld as Engine};
 use rapier3d::geometry::SolverFlags;
+use sf_controller::SurfaceId;
 use sf_coords::{GRID_CELL, WorldPos, WorldTransform};
 
 use crate::body::{BodyDesc, BodyId, BodyKind, PhysicsEvent, PhysicsParams};
@@ -42,6 +43,7 @@ pub(crate) struct Live {
     pub kind: BodyKind,
     pub layer: Layer,
     pub user: u64,
+    pub surface: SurfaceId,
     pub scale: Vec3,
     pub mesh: Option<Arc<MeshShape>>,
     /// Interpolation history: the poses after the last two steps.
@@ -330,6 +332,7 @@ impl PhysicsWorld {
             kind: desc.kind,
             layer: desc.layer,
             user: desc.user,
+            surface: desc.surface,
             scale: desc.pose.scale,
             mesh,
             prev: local,
@@ -375,6 +378,16 @@ impl PhysicsWorld {
 
     pub fn user(&self, id: BodyId) -> Option<u64> {
         self.live(id).map(|l| l.user)
+    }
+
+    /// A body's own surface ([`BodyDesc::surface`]).
+    pub fn surface(&self, id: BodyId) -> Option<SurfaceId> {
+        self.live(id).map(|l| l.surface)
+    }
+
+    /// Retags a body's surface (later [`PhysicsEvent::Contact`]s carry it).
+    pub fn set_surface(&mut self, id: BodyId, surface: SurfaceId) -> bool {
+        self.live_mut(id).map(|l| l.surface = surface).is_some()
     }
 
     pub fn layer(&self, id: BodyId) -> Option<Layer> {
@@ -607,6 +620,7 @@ impl PhysicsWorld {
         self.query_pending.clear();
         self.query_all = false;
         self.resist_rolling();
+        let contacts = self.contact_reports();
         self.queries_dirty = false;
         let dt = self.params.dt;
         for (c1, c2, force, point, normal) in collector.contacts.into_inner().expect("collector poisoned") {
@@ -623,6 +637,73 @@ impl PhysicsWorld {
         }
         self.finish_settle();
         self.track_motion();
+        // After `Woke`: a body's first contact report follows its wake.
+        self.events.extend(contacts);
+    }
+
+    /// [`PhysicsEvent::Contact`] for the touching pairs of awake dynamic bodies
+    /// on [`PhysicsParams::contact_report_layers`] (each pair once).
+    fn contact_reports(&self) -> Vec<PhysicsEvent> {
+        let layers = self.params.contact_report_layers;
+        if layers.is_empty() {
+            return Vec::new();
+        }
+        let min = self.params.contact_report_speed;
+        let bodies = &self.engine.bodies;
+        let colliders = &self.engine.colliders;
+        let parent = |c: ColliderHandle| colliders.get(c).and_then(rapier3d::geometry::Collider::parent).and_then(|h| bodies.get(h));
+        let inv_mass = |rb: Option<&RigidBody>| rb.filter(|rb| rb.is_dynamic()).map_or(0.0, |rb| 1.0 / rb.mass().max(1e-6));
+        // A mesh's triangle (the manifold's subshape) has its own surface.
+        let surface = |c: ColliderHandle, triangle: u32| {
+            let index = colliders.get(c).and_then(|c| u32::try_from(c.user_data).ok());
+            let live = index.and_then(|i| self.slots.get(i as usize)?.live.as_ref());
+            live.map_or(SurfaceId::DEFAULT, |l| l.mesh.as_ref().map_or(l.surface, |m| m.surface(triangle)))
+        };
+        let mut seen = HashSet::new();
+        let mut reports = Vec::new();
+        for (_, rb) in self.engine.active_bodies() {
+            let live = u32::try_from(rb.user_data).ok().and_then(|i| self.slots.get(i as usize)?.live.as_ref());
+            if !rb.is_dynamic() || !live.is_some_and(|l| l.layer.intersects(layers) && !l.settling) {
+                continue;
+            }
+            for &c in rb.colliders() {
+                for pair in self.engine.narrow_phase.contact_pairs_with(c) {
+                    if !pair.has_any_active_contact() || !seen.insert((pair.collider1, pair.collider2)) {
+                        continue;
+                    }
+                    let Some((manifold, contact)) = pair.find_deepest_contact() else { continue };
+                    let (Some(c1), Some(c2)) = (colliders.get(pair.collider1), colliders.get(pair.collider2)) else { continue };
+                    let other = if pair.collider1 == c { pair.collider2 } else { pair.collider1 };
+                    let other_rb = parent(other);
+                    let impulse = pair.total_impulse_magnitude();
+                    let speed = impulse * (inv_mass(Some(rb)) + inv_mass(other_rb));
+                    // Contacts are found before the step integrates, so a collider-local point has
+                    // turned with its body since (a rolling ball's by a large angle). The point on a
+                    // side that doesn't move is exact; between two moving bodies, take the middle.
+                    let p1 = c1.position().transform_point(contact.local_p1);
+                    let p2 = c2.position().transform_point(contact.local_p2);
+                    let point = match (parent(pair.collider1).is_some_and(RigidBody::is_dynamic), parent(pair.collider2).is_some_and(RigidBody::is_dynamic)) {
+                        (true, false) => p2,
+                        (false, true) => p1,
+                        _ => (p1 + p2) * 0.5,
+                    };
+                    // The manifold's normal points from collider 1 to 2; ours from `a` (this body) out.
+                    let normal = if pair.collider1 == c { manifold.data.normal } else { -manifold.data.normal };
+                    let relative = rb.velocity_at_point(point) - other_rb.map_or(Vec3::ZERO, |o| o.velocity_at_point(point));
+                    let slide = (relative - normal * relative.dot(normal)).length();
+                    if speed < min && slide < min {
+                        continue;
+                    }
+                    let (sub_c, sub_other) = if pair.collider1 == c { (manifold.subshape1, manifold.subshape2) } else { (manifold.subshape2, manifold.subshape1) };
+                    reports.push((c, other, impulse, speed, slide, point, normal, [surface(c, sub_c), surface(other, sub_other)]));
+                }
+            }
+        }
+        let event = |(c, other, impulse, speed, slide, point, normal, surfaces)| {
+            let (a, b) = (self.id_of_collider(c)?, self.id_of_collider(other)?);
+            Some(PhysicsEvent::Contact { a, b, impulse, speed, slide, point: self.to_world(point), normal, surfaces })
+        };
+        reports.into_iter().filter_map(event).collect()
     }
 
     /// [`PhysicsParams::rolling_resistance`] on awake item bodies in contact.

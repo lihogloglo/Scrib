@@ -1,5 +1,5 @@
 //! Bevy-free audio core (audio.md): buses, fades, attenuation, sound groups (cues), the music
-//! player, footstep mapping, ambience layers and one-shot draws. Playing is `sf_audio_bevy`'s;
+//! player, footstep mapping, physics impacts and slides, ambience layers and one-shot draws. Playing is `sf_audio_bevy`'s;
 //! the logic lives here so it is tested without a device.
 
 use std::collections::HashMap;
@@ -10,6 +10,7 @@ mod ambience;
 mod attenuation;
 mod footsteps;
 mod group;
+mod impacts;
 mod music;
 mod rng;
 
@@ -17,6 +18,7 @@ pub use ambience::{AmbienceLayers, LoopChange, Space, reconcile_loops};
 pub use attenuation::{Attenuation, Rolloff};
 pub use footsteps::{Foot, FootstepMap, StrideTimer};
 pub use group::{Cue, CueBank, SoundGroup, Variant};
+pub use impacts::{ContactSample, ImpactAudio, ImpactCues, ImpactFrame, ImpactMap, ImpactParams, ImpactPlay, SlideChange};
 pub use music::{MUSIC_FADE_S, MusicCommand, MusicPlayer, MusicVoiceId};
 pub use rng::Rng;
 

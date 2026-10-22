@@ -28,6 +28,7 @@ mod shape;
 mod world;
 
 pub use body::{BodyDesc, BodyId, BodyKind, ITEM_DAMPING, PhysicsEvent, PhysicsParams};
+pub use sf_controller::SurfaceId;
 pub use carry::{CarryEnd, CarryParams, Carrier, GrabMode, GrabResult, HolderLimits};
 pub use character::{CharacterShape, PushParams, Pushed, impact_impulse};
 pub use joint::{Drive, JointDesc, JointId, JointKind, JointSolver};
@@ -52,3 +53,5 @@ mod character_tests;
 mod carry_tests;
 #[cfg(test)]
 mod churn_tests;
+#[cfg(test)]
+mod contact_tests;

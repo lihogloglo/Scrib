@@ -1,6 +1,6 @@
 [package]
 name = "sf_audio_bevy"
-description = "Thin Bevy plugin for sf_audio: bus loops (weather bridge behind a feature), cue one-shots (2D and positional), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
+description = "Thin Bevy plugin for sf_audio: bus loops (weather bridge behind a feature), cue one-shots (2D and positional), physics impacts and slides (physics bridge behind a feature), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,11 +21,19 @@ sf_records.workspace = true
 # The weather bridge (`weather` feature, module `weather`): off by default so testing audio does
 # not compile the render stack sf_weather_bevy pulls in (ARCHITECTURE section 8b rule 6).
 sf_weather_bevy = { workspace = true, optional = true }
+# The physics bridge (`physics` feature, module `physics`): contact reports -> impact and slide
+# sounds. Off by default for the same reason (rapier, the streaming stack).
+sf_physics_bevy = { workspace = true, optional = true }
+sf_world_bevy = { path = "../sf_world_bevy", default-features = false, optional = true }
 
 [features]
 weather = ["dep:sf_weather_bevy"]
+physics = ["dep:sf_physics_bevy", "dep:sf_world_bevy"]
 
 [dev-dependencies]
+# The physics bridge's test builds a world by hand.
+sf_coords.workspace = true
+sf_world.workspace = true
 
 [lints]
 workspace = true
