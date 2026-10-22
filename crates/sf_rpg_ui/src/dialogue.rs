@@ -322,7 +322,7 @@ impl DialogueView {
         self.topics.set_filter(ListFilter {
             search: search.to_owned(),
             search_fields: vec!["name".into()],
-            equals: Vec::new(),
+            ..ListFilter::default()
         });
         self.settle_focus();
     }

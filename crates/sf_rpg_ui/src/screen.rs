@@ -432,6 +432,7 @@ impl JournalScreen {
                 .iter()
                 .map(|l| ("initial".to_owned(), UiValue::Text(l.clone())))
                 .collect(),
+            ..ListFilter::default()
         });
         self.topics.set_sort(Some(SortSpec {
             field: "name".to_owned(),

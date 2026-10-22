@@ -6408,6 +6408,7 @@ dependencies = [
 name = "sf_rpg_ui"
 version = "0.1.0"
 dependencies = [
+ "postcard",
  "serde",
  "sf_rpg",
  "sf_ui",
