@@ -1,6 +1,7 @@
 # Physics: rigid bodies, items, carry/throw, ragdolls, cloth (M4)
 
-Status: draft; decisions owner-confirmed 2026-10-12 (ARCHITECTURE §10). P1 (`sf_physics` core + spike) in progress.
+Status: draft; decisions owner-confirmed 2026-10-12 (ARCHITECTURE §10). Built: P1-P10a, R3 (as-built logs,
+measurements, the backend survey and superseded sketches: [archive/physics-history.md](archive/physics-history.md)).
 Crates: `sf_physics` (new, Bevy-free: world, bodies, queries, `body.cook`, `items.check`),
 `sf_physics_bevy` (new, thin plugin), `sf_ragdoll` (new, Bevy-free: `ragdoll.cook`, drives, balance,
 get-up), cloth lattice in `sf_anim` (procedural op) + `cloth.cook` in `sf_character`; touches
@@ -52,33 +53,21 @@ networking and cross-platform lockstep determinism, combat hitboxes (M9 uses thi
 
 ### Backend decision (rule 9: Bevy, then crates, then our own)
 
-**Bevy 0.20** has no physics engine, scene queries or interpolation. So it comes down to crates.
-
-Checked 2026-10-12 (crates.io API, GitHub):
-
-| Option | State | For | Against |
-|---|---|---|---|
-| **`rapier3d` 0.36.1 directly** (chosen) | 2026-10-10, Apache-2.0, no Bevy | On any Bevy version, now and later. **Same `parry3d` 0.31.1 as our probes**, so `collision.cook` shapes and `StaticShape` trimeshes go in unchanged and the tree keeps one parry. Joints: generic 6-DOF joints with **per-axis motors and limits** (spherical included), reduced-coordinate **multibodies** (Featherstone), implicit motors with an `AccelerationBased` model (mass-independent gains), recent joint-limit fixes (0.35). **Soft bodies** since 0.36 (particles, distance and bending edges, pinned particles with kinematic targets, coupled with rigid bodies). SIMD + optional rayon parallelism, CCD, contact-force events, `enhanced-determinism`, serde snapshots. A Bevy-free core matches §8b | We write the ECS sync, interpolation and debug draw (~1 k lines, thin). Pulls `nalgebra` + `simba` (compiled once, cached; isolated in `sf_physics`) |
-| `bevy_rapier3d` 0.37.0 | 2026-10-10, on Bevy 0.20 | Ready today; same engine | Syncs bodies and colliders from Bevy transforms on `Changed<GlobalTransform>` (`bindings/bevy_rapier/src/plugin/systems/rigid_body.rs`, `collider.rs`). Under big_space `GlobalTransform` is origin-relative and every one is rewritten when the origin changes cell (world-coordinates.md "Implementation notes"), which this sync reads as a teleport of every body: wakes all sleepers and moves the solver frame each shift. Mirrors all of rapier's state into ECS. Couples the physics core to Bevy (tests need an `App`) |
-| `avian3d` 0.7.0 / 0.8.0-dev | 0.7 on Bevy 0.19; main still on 0.19. A port exists: PR #1070 (andriyDev, open, "Bump Bevy to 0.20.0-rc.1, and Parry to 0.31"): about 100 changed lines in `src/` (mostly `On<Insert, B>` → `On<Insert<B>>`), plus git forks of `bevy_heavy`, `bevy_transform_interpolation` and `glam_matrix_extras` whose own 0.20 PRs are open | ECS-native, MIT/Apache, built-in interpolation, `move_and_slide` helpers, `enhanced-determinism`, f64 only for world positions (#1027, Jolt-style) | **No spherical or generic joint motor** on main (motors only on revolute and prismatic; `src/dynamics/joints/`), so powered-ragdoll shoulders and hips would need explicit PD torques, the unstable kind at high gains. No articulations, no cloth or soft bodies. Release on parry 0.27, so two parry versions until 0.8 ships. Components live in the Bevy world, so no Bevy-free core. Same `GlobalTransform`-based sync question under big_space (avian issue #439 on large worlds is still open; #1027 answers it with f64, which we don't need). Each Bevy release blocks on four repos |
-| Wait for avian 0.8 | For 0.19 the main crates took about two weeks (ARCHITECTURE §4 lag tracker); 0.20 shipped 2026-10-08 | Zero porting | Doesn't change the joint-motor and Bevy-coupling points above; blocks M4 on someone else's schedule |
-| Our `[patch]` fork of avian on 0.20 | PR #1070 + 3 dependency forks; rc.1 → 0.20.0 likely trivial; about a day | | Same technical points; a fork to maintain until 0.8 |
-| Jolt (C++) through `joltc-sys`/`rolt` | 0.3.1, Jolt 5.0.0, last release 2024-05 | The industry reference (Decima: Horizon Forbidden West, Death Stranding 2): swing-twist motors, ragdoll pose drives, skinned soft bodies, double-precision big worlds | Bindings unmaintained for 2.5 years and behind Jolt; C++ toolchain at build; not worth owning bindings when Rapier covers M4 |
-| `bevy_tnua` 0.32 (controller) | Bevy 0.19; `bevy-tnua-rapier3d` 0.18 is on `bevy_rapier3d` 0.36 / Bevy 0.19 | | See "Controller": we keep our kinematic mover |
-
-**Why rapier directly, in one line each:** it is on our Bevy today and never blocks a Bevy upgrade again;
-it shares our parry, so the M3 static world moves in unchanged; it has the per-axis motors and
-articulations powered ragdolls need; the floating-origin contract is ours to implement exactly
-instead of fighting a transform sync; and it keeps physics logic Bevy-free (§8b, rule 7).
-**Performance** is not settled by reading: task P1's spike measures it against the gates below, and
-avian 0.8 stays the fallback if Rapier misses them (the `sf_physics` API hides the engine, so a swap
-touches one crate).
+**Bevy 0.20** has no physics engine, scene queries or interpolation, so it came down to crates
+(survey of 2026-10-12 in the [archive](archive/physics-history.md#backend-decision-rule-9-bevy-then-crates-then-our-own):
+`bevy_rapier3d`, `avian3d` 0.7/0.8, an avian fork, Jolt bindings, `bevy_tnua`).
+**Chosen: `rapier3d` directly**, because it is on our Bevy today and never blocks a Bevy upgrade;
+it shares our `parry3d` 0.31.1, so the M3 static world moves in unchanged; it has the per-axis
+motors and articulations powered ragdolls need (avian has no spherical or generic joint motor); the
+floating-origin contract is ours to implement exactly instead of fighting a `GlobalTransform` sync
+under big_space; and physics logic stays Bevy-free (§8b, rule 7). avian stays the fallback if
+Rapier misses the gates (the `sf_physics` API hides the engine, so a swap touches one crate).
 
 **Determinism.** Same binary, same inputs, same insertion order → same result with the serial solver
 (insertion follows index order, which is source-order independent: streaming.md). That is enough for
 replay tests and the `items.check` bake. Cross-platform `enhanced-determinism` (no SIMD) stays off.
 Rayon `parallel` stays off until a measured step exceeds its budget (Bevy's task pools already use the
-cores; oversubscription is a known cost).
+cores; oversubscription is a known cost; P8b measured it slower).
 
 ## Industry comparison
 
@@ -108,27 +97,25 @@ pub struct PhysicsWorld { /* rapier sets, pipeline, anchor: WorldPos, interpolat
 pub struct PhysicsWorlds(HashMap<WorldspaceId, PhysicsWorld>);  // only the active one steps
 
 #[derive(Clone, Copy)] pub struct BodyId(u32, u32);     // index + generation; never a rapier handle
-pub enum BodyKind { Fixed, Dynamic { asleep: bool }, Kinematic }
+pub enum BodyKind { Fixed, Dynamic { asleep: bool }, Kinematic, Held }   // Held: fixed until grabbed or impulsed
 pub struct BodyDesc {
     pub kind: BodyKind, pub pose: WorldTransform, pub shape: ShapeRef, pub layer: Layer,
     pub mass: Option<f32>,          // kg (simulated mass, clamped); None = shape volume × density
     pub ccd: bool, pub damping: (f32, f32), pub user: u64,   // user: PlacementId low bits / entity
+    pub extra_iterations: u8,       // ragdolls, held items
 }
-pub enum ShapeRef { Static(Arc<StaticShape>), Body(Arc<BodyShape>), Capsule { r: f32, half: f32 },
+pub enum ShapeRef { Mesh(Arc<MeshShape>), Body(Arc<BodyShape>), Capsule { r: f32, half: f32 },
                     Box(Vec3), Sphere(f32), Heightfield(Arc<HeightChunk>) }
-bitflags! pub struct Layer: u32 { STATIC, TERRAIN, DEBRIS, PROP, CHARACTER, RAGDOLL, HELD, SENSOR, PROJECTILE }
+bitflags! pub struct Layer: u32 { STATIC, TERRAIN, DEBRIS, PROP, CHARACTER, RAGDOLL, POWERED, HELD, SENSOR, PROJECTILE }
 ```
 
 - **Frame.** All engine positions are `anchor.delta_f32(pos)`; every read returns `WorldPos`.
-- **As built (P1, 2026-10-12).** `ShapeRef::Mesh(Arc<MeshShape>)` is built from the `collision.cook` `CollisionMesh`
-  (one parry `TriMesh` per model, cached scaled copies per distinct scale), not from `sf_controller::StaticShape`
-  (whose trimesh is private; sharing one copy between `StaticWorld` and physics needs an accessor there, P2).
-  `ShapeRef::Body` lands with `body.cook` (P3). `BodyDesc` gains `extra_iterations` (ragdolls, held items).
-  **Settle on insert:** rapier wakes both sides of every new contact and the partners of every moved collider, so
-  a body inserted asleep is locked on every axis for one step with a zero sleep delay; the engine wakes it, it can't
-  move, and the engine's own sleep pass re-sleeps it in that step; then it is unlocked. Rebases re-settle every
-  sleeper the same way. Result: 0 wakes and bit-exact poses. Queries see inserts after a step or
-  `PhysicsWorld::refresh_queries`.
+- **Shapes.** `ShapeRef::Mesh` is one parry `TriMesh` per model from the `collision.cook`
+  `CollisionMesh`, shared with the controller's `StaticShape` (one `Arc`), with cached scaled copies;
+  `ShapeRef::Body` builds a hull or compound from `body.cook`.
+- **Settle on insert.** A body inserted asleep is locked on every axis for one step, so the contacts
+  rapier wakes can't move it and its own sleep pass re-sleeps it; rebases re-settle every sleeper the
+  same way: 0 wakes, bit-exact poses (P1).
 - **Layers.** `DEBRIS` = light, small dynamic items (below `debris_mass` 15 kg and `debris_extent`
   0.6 m by default): characters push them and never stand on or are blocked by them. `PROP` = everything
   else dynamic: blocks movers, is pushed with a capped force. `HELD` = the carried item (no contact with
@@ -144,7 +131,7 @@ bitflags! pub struct Layer: u32 { STATIC, TERRAIN, DEBRIS, PROP, CHARACTER, RAGD
 | Step | Subject | Inputs | Output |
 |---|---|---|---|
 | `body.cook` | model | `mesh.cook` LOD0/LOD1, adapter `BodyRules::authored` (authored collision), settings | `BodyShape { parts: Vec<ShapePart>, volume, center_of_mass, unit_inertia, aabb, source }`; `ShapePart = Hull(points) \| Box \| Capsule \| Cylinder \| Sphere`, each with a local isometry |
-| `items.check` | index page | page placements of class `Dynamic`, their `body.cook` products, statics' `collision.cook` | per placement: `support` (gap to the surface below), `penetration`, flag `HOLD_UNTIL_GRABBED` when nothing supports it within 5 cm (hanging lanterns, floating props); a report of overlaps over 1 cm |
+| `items.check` | index page | page placements of class `Dynamic`, their `body.cook` products, statics' `collision.cook` | `ItemChecks` (`SFIC`): per item `hold` (`No`, `Unsupported` = held until grabbed: hanging lanterns, floating props; `Rules`; `NoShape`), `drop`, `rise`, `shift`; the `supports` statics (below) |
 | `ragdoll.cook` | skeleton | skeleton, `RigProfile`, skin extents, adapter overrides | `RagdollDef` (below) |
 | `cloth.cook` | (part model, skeleton) | cooked skinned part, `RigProfile`, adapter `ClothRules` | `ClothLattice` (below) |
 
@@ -155,157 +142,51 @@ of the closed mesh's (or the mesh isn't closed); else a convex decomposition (pa
 8 hulls of at most 32 vertices). CoACD (Wei et al., SIGGRAPH 2022) is the quality upgrade if V-HACD
 misfits; it has no maintained Rust crate today. Minimum extent 1 cm per axis.
 
-**As built (P3, 2026-10-13).** `sf_physics::cook` (`BodyShape`, `ShapePart`, `fit_render`, `fit_authored`; `SFBD`
-products) and `sf_physics::steps` (feature `bake`: `BodyCookStep` + `BodyRules`, `ItemsCheckStep` + `ItemsRules`).
-Shape choice as above, with these details: the primitive fit runs in the hull's covariance frame (parry `utils::obb`)
-or the model axes, whichever box is smaller, and tries box, sphere, three cylinders and three capsules, keeping the
-smallest that covers every hull vertex; "closed" means watertight after welding seams on a 0.1 mm grid; hulls keep at
-most 32 vertices (farthest-point subset of the hull's vertices, re-hulled; at most a few mm inside the true hull), the
-cap applies to single hulls too; a shape thinner than 1 cm becomes a box padded to 1 cm (`BodySource::Thin`); models
-`mesh.cook` skips use their `mesh.rest` cook; mods override with `bodies/<model>.sfbody`. Mass properties are
-unit-density (volume, center of mass, principal inertia per kg and its frame); the runtime scales by the adapter's
-mass. `ShapeRef::Body(Arc<BodyShape>)` builds the engine shape (one part, or a compound).
-**`items.check` is a settle test, not a ray/shape-cast support probe**: per page, the items go into a `PhysicsWorld`
-as awake `PROP` bodies over the static collision (`collision.cook`) whose bounds come within 1 m of an item, and,
-where the adapter says the worldspace has terrain, a 4 m heightfield patch (0.5 m, from the level-0 `terrain.tile`
-products) under each item; the world runs 0.5 s; an item that dropped more than 5 cm is `Hold::Unsupported`
-(inserted `Fixed` until grabbed); rises and slides are reported as overlaps (it started inside something). Why: a
-probe answers "is there a surface below" but not "does it stay": items leaning on a wall, half off a shelf edge, on
-a steep slope or stacked on other items all need the contact solve, and the settle test is the editor practice
-for clutter (UE "Simulate" + "Keep Simulation Changes", the Creation Kit's Havok Sim), here run as a check. Product
-`ItemChecks` (`SFIC`): per item `id`, `hold` (`No`, `Unsupported`, `Rules` = the adapter's `always_hold`,
-`NoShape`), `drop`, `rise`, `shift`. Limitation: a page sees only its own statics (exterior pages are large; an
-item within 1 m of a page edge may miss a neighbor's static and be held: the safe side).
-**Revised in P4 (2026-10-13): sequential settle.** Settling a page's items all at once flagged 38 % of a vanilla
-install unsupported and 51 % overlapping: authored clutter interpenetrates its neighbors by a centimeter or more, and
-the solver shoved bottles off shelves and plates off tables. Now each item settles **alone, lowest first** (by the
-bottom of its placed bounds), over the statics, the terrain and the items already tested, which stay in the world
-`Fixed` at their placed pose (as at runtime, where every item starts there, asleep or held); its test shape is shrunk
-uniformly about its bounds' center so its largest extent loses `overlap_allowance` (1 cm) per side (at most 20 %; a
-negative contact offset, like PhysX's rest offset); it runs at most `settle_time`, stopping early once it has dropped
-past the tolerance or has been still for 5 steps. Displacements are measured from the shrunk start. Census: ROADMAP
-M4 P4.
-
-**Revised in P4 (physics-p4b): support meshes and "fell".** A legacy collision proxy is often one box around a whole
-bookshelf or cabinet, so the clutter on its shelves starts *inside* static collision (one-sided meshes let it fall
-through, two-sided ones shove it out): a third of a vanilla install's items. Engines keep two representations, simple
-collision for characters and complex (per-triangle) collision for physics props and traces (UE "simple vs complex",
-Bethesda's per-shelf Havok shapes). So: a static whose collision **encloses** an item center (`MeshShape::encloses`:
-the nearest triangle straight below the point is a back face) is tested with its `support.cook` mesh (the `mesh.cook`
-LOD0 as a `CollisionMesh`, requested by `items.check` on demand) and listed in `ItemChecks::supports`; the runtime
-gives those placements the same mesh (`ItemContent::is_support`, `PhysicsBodySource::supports`); characters keep the
-proxy. An item is unsupported only when its center **and** the lowest corner of its bounds both dropped past the
-tolerance: a book tipping over in its row, or a bowl rocking in place, did not fall. Runtime: items of a worldspace
-go in only once it has no static left to insert (a woken item above a not-yet-inserted floor falls out of the world),
-and every frame inserts at least one static whatever the refresh estimate says (one slow refresh must not stall
-streaming).
+`items.check` is a **settle test**, not a support probe (editor practice: UE "Simulate", the
+Creation Kit's Havok Sim): each item settles **alone, lowest first**, over the statics within 1 m, a
+terrain patch and the items already tested (`Fixed` at their placed pose), shrunk by
+`overlap_allowance` (1 cm per side), for at most 0.5 s. A static whose simple collision **encloses**
+the item's center is tested with its per-triangle `support.cook` mesh (UE "simple vs complex"), which
+the runtime gives that placement too. `Hold::Unsupported` only when the center **and** the lowest
+corner dropped more than 5 cm; rises and slides are overlaps. `body.cook` products are unit-density;
+mods override with `bodies/<model>.sfbody`.
 
 ### `sf_ragdoll` (Bevy-free; sf_anim, sf_physics)
 
 ```rust
 pub struct RagdollDef {
-    pub bodies: Vec<RagBody>,      // joint: u16, shape: Capsule|Box|Sphere, local: Isometry, mass, region: u8
-    pub joints: Vec<RagJoint>,     // parent, child, frames, kind: Ball { swing: [f32; 2], twist: [f32; 2] } | Hinge { axis, range } | Fixed
-    pub regions: Vec<String>,      // "core", "head", "arm_l", ..., from the rig profile's limb names
-    pub total_mass: f32,
+    pub skeleton, pub policy,       // Ragdoll | DeathClip | None
+    pub bodies: Vec<RagBody>,       // joint, Capsule { radius, half } along its Y (sphere when half = 0), local, mass, region
+    pub joints: Vec<RagJoint>,      // parent, child, frames, kind: Ball { swing, twist } | Hinge { axis, range } | Fixed
+    pub regions: Vec<String>,       // "core", "head", "arm_l", ..., from the rig profile's limb names
+    pub total_mass: f32, pub no_collide: Vec<(u16, u16)>, pub owner: Vec<u16>,  // owner: skeleton joint → body
 }
 pub enum Drive { Kinematic, Powered { strength: f32 }, Limp }        // per region
 pub struct StrengthProfile { pub region: Vec<(u8, Drive)>, pub pelvis_world: f32 }
 pub struct HitImpulse { pub body: u16, pub point: Vec3, pub impulse: Vec3, pub dip: f32, pub recover: f32 }
 ```
 
-`ragdoll.cook`: one body per girdle, spine segment (merged to at most 3), neck+head, and limb joint
-(hands and feet kept, fingers and toes merged into them); tails and `extra` chains get bodies up to
-`max_chain_bodies` (4). Capsules run along the bone to its child, radius = the 80th percentile of
-vertex distances to the bone axis among vertices with weight ≥ 0.5 on that joint (rest pose), else
-`length / 4`. Mass = volume × 1000 kg/m³, then scaled to the adapter's total mass. Limits by limb kind:
-knees and elbows hinge (0..150°), shoulders and hips ball (swing 80/60°, twist ±40°), spine ±30°,
-neck ±45°, digitigrade and unguligrade legs get the extra hinge; adapter or mod override files patch
-any value. Adjacent bodies never collide.
-
-**As built (P7, 2026-10-13).** Crate `sf_ragdoll` (Bevy-free; sf_anim, sf_physics; feature `bake` for the step).
-`RagdollDef { skeleton, policy, bodies, joints, regions, total_mass, no_collide, owner }`; every body is a capsule
-(`Capsule { radius, half }` along the body's Y; a sphere when `half` is 0), `RagBody.local` is the body frame in its
-joint's model frame, `owner` maps every skeleton joint to the body that moves it. Cook details and deviations:
-- **Radii without skin extents** (outfits are separate skinned parts; P8 or later reads `mesh.rig` for creatures):
-  limbs 0.2 × segment length, hands and feet 0.3, wings and fins 0.08, tails 0.2, at least 0.4 % of the height and at
-  most half the segment. Spine bodies are as wide as their girdle (lateral distance of its left and right limb
-  roots): a body wider than long (pelvis, chest) is a capsule **across** the girdle, else along the bone.
-- Spine: the root girdle and at most 3 bodies to the neck base, the shoulder girdle getting its own when there is
-  room; neck + head one body (neck base to past the head by its subtree reach, 8–25 % of the height).
-- Limits: shoulders and wing roots ball 95° swing (arms rest in a T pose, so 80° could not hang them), twist ±60°;
-  hips 70°/±40°; wrists, ankles and other effectors 50°/±25°; spine 30°/±30°; neck 45°/±45°; tails 35°/±20°. Knees,
-  elbows and hocks hinge: they bend further the way the rest pose bends (range `[-(rest + 5°), 150° - rest]`), or for
-  a straight rest pose knees back, elbows forward, alternating down a leg.
-- **Mass balancing**: no body lighter than its parent body ÷ `max_mass_ratio` (4), then everything scaled to the
-  adapter's total. Bodies overlapping at rest go to `no_collide` (UE: "disable collision on overlapping bodies").
-- `RagdollInstance::spawn` puts the bodies at an animated model pose (character frame + uniform scale; masses scale
-  by its cube) with velocities from the previous pose; `local_pose` reads them back as a local pose (body joints take
-  rotations, other joints keep the pose frozen at the handoff, bones keep their lengths). Every body's grab mode mass
-  is the whole ragdoll's (`PhysicsWorld::set_mode_mass`); `RAGDOLL` bodies skip the item mass clamp.
-- **Open question 1 resolved: impulse joints**, 8 extra solver iterations per ragdoll body (`RagdollSettings`) and
-  the mass-ratio cap. Measured (release, 75 kg fixture biped, `stretch_table`): ratio cap 4: drop 0.5 m 0.89 / 0.61 /
-  **0.49** / 3.09 / 3.03 cm at +0 / 4 / 8 / 12 / 16 iterations, wrist drag 0.16 / 0.16 / **0.07** / 0.04 / 0.03 cm;
-  uncapped (lightest body 0.1 kg) drags break away (the hand pulls out of reach) at every count. More iterations are
-  not monotonic for the drop (12+ stretch 3 cm: rapier's substep groups); 8 is the measured optimum. Gates
-  (`cargo test -p sf_ragdoll`): limp drop ≤ 1 cm (0.49), stairs (0.32 cm, settles in 4.5 s), 75 kg dragged by the
-  wrist (0.07 cm, the body follows 1.1 m in 3 s).
-- Carry: held bodies are woken every step (a dragged corpse whose limb barely moves slept under the hand).
+`ragdoll.cook` from the `RigProfile`: one capsule per girdle, at most 3 spine bodies to the neck base,
+neck + head as one, one per limb joint (fingers and toes merged into hands and feet), tails and
+`extra` chains up to `max_chain_bodies` (4). Radii are fractions of the segment (limbs 0.2, hands and
+feet 0.3, wings and fins 0.08), girdle bodies as wide as the girdle; skin extents for creatures later.
+Limits by limb kind: shoulders and wing roots ball 95°/±60° (arms rest in a T pose), hips 70°/±40°,
+effectors 50°/±25°, spine 30°/±30°, neck 45°/±45°, tails 35°/±20°; knees, elbows and hocks hinge
+toward the rest pose's bend. No body lighter than its parent ÷ `max_mass_ratio` (4), then scaled to the
+adapter's total; bodies overlapping at rest don't collide. Adapter or mod override files patch any
+value. Ragdolls use impulse joints with 8 extra solver iterations (Open question 1).
 
 ### Cloth lattice (`sf_character` cook, `sf_anim` op)
 
-```rust
-pub struct ClothLattice {
-    pub rows: u8, pub cols: u8, pub ring: bool,            // a skirt is a ring; a cape is open
-    pub particles: Vec<ClothParticle>,  // rest pos (character space), parent joint, max_distance, inv_mass
-    pub edges: Vec<(u16, u16, Kind)>,   // Structural | Shear | Bend | Tether (one-sided, to the pinned row)
-    pub colliders: Vec<(u16, f32, f32)>, // body joint, radius, half length: from RagdollDef capsules (legs, pelvis, spine)
-    pub weights: SkinRebind,             // part vertices → lattice joints (+ residual original weights)
-}
-```
-
-`cloth.cook`: for parts the adapter marks as cloth (skirt and robe hems, capes), place `cols` columns
-around the body's vertical axis (or across, for a cape) and `rows` rows from the attachment line to the
-hem on the rest-pose surface (default 10 × 5 for a full robe); pin the top row to its girdle joint;
-re-bind the part's vertices below the attachment line to the lattice joints with the harmonic
-inpainting `sf_character::smooth_body` already has (smooth-bodies.md), so the hem moves and the waist
-stays. Cloth joints are outfit joints appended after the skeleton's joints in the merged palette.
-
-**As built (p10b, 2026-10-18): `sf_character::cook_cloth`** (feature `smooth`, Bevy-free; the bake step and
-`ClothLattice` op are p10c). Input: the part's rest `SkinSurface` (model space, Y up), `rest_model`, the attachment
-joint, the adapter's `ClothSpec { attach, attach_offset, grid: GridSpec, params: ClothParams }` (from
-`sf_character::ClothRules::cloth(id, part)`) and the colliders. Output `ClothCook { lattice, offsets, targets, top,
-hem, center, filled, rebind: SkinRebind }`.
-- Placement: attachment line = joint rest height + offset, clamped to the part's top; hem = the part's lowest point;
-  axis = bounding-box centre (x, z) of the vertices below the line. Rows evenly spaced (ends pulled 1 % inside),
-  columns from +Z toward +X; each particle is the **farthest** hit of a horizontal ray from the axis (Möller–Trumbore
-  over all triangles, both faces), so linings and inner layers don't count. A missed ray (uneven hem, open waist)
-  takes its column's nearest row (`filled`). Capes (`ring: false`) are an error for now. Every particle rides the
-  attachment joint: `offsets[i]` is its rest position in that joint's rest frame.
-- `targets[i]`: the authored skin where particle `i` sits (barycentric blend of the hit triangle's weights), so the
-  op can blend the animated target from riding the girdle toward following the legs (see the census below).
-- Colliders: `sf_ragdoll::RagdollDef::cloth_colliders(profile, rest_model, below)`: the `core` region and every
-  leg limb and tail region, minus capsules wholly above `below` (the line); `ClothCollider` center and axis are the
-  body's `local` frame (joint model frame, capsule along its Y). On the Morrowind humanoid: thighs, calves and feet
-  (the pelvis capsule sits above the pelvis joint).
-- `SkinRebind { base, skin, on_lattice, band, sweeps, residual }`: joint `base + i` (base = skeleton joint count)
-  is particle `i`, bound at its rest position, unrotated. Vertices below row 1 take bilinear lattice weights (row
-  from height, column from angle; below the hem row they ride it); vertices above a quarter row over the line keep
-  their weights; the band between is solved harmonically with `smooth_body`'s inpainting (`inpaint_surface`), so
-  the waist blends from the body's weights into the lattice. Row 0 (pinned) gets no direct weight.
-- Verified (`cargo test -p sf_character --features smooth --lib cloth`, synthetic flared robe with a lining):
-  particles on the outer surface within 6 mm, offsets round-trip, hem perimeter within 3 cm; rebind weights sum
-  to 1, untouched above the band, lattice-only below row 1, and moving every lattice joint 10 cm moves the hem
-  10 cm and the waist 0; targets carry the authored joint. `cargo test -p sf_ragdoll --lib cloth_colliders`.
-- **Census (Morrowind, physics-adapter.md "Cloth"): no robe or skirt hem holds a 50° run stride.** Wrapping both
-  legs at the hem height (thighs ±25°, leg radius 0.065 m + thickness) needs 1.5–2.4 m of hem; the 48 cooked parts
-  have 0.98–2.00 m: +13 % to +133 % stretch (straight robes worst). Collisions win in the solver (capsules last),
-  so for p10c the canonical fix is the hybrid most character-cloth setups use for long skirts: drive the lower
-  rows' animated target partly from the legs (`targets`, the authored skin; UE AnimDynamics / Magica BoneCloth
-  "leg follow" style) and let max distance and collisions do the rest, instead of riding the pelvis only. Decide
-  in PH-3.
-- Open: per-column hem (an uneven hem leaves the sides' bottom row filled, 0–9 particles per part); capes; the
-  rebind band is a quarter row above the line (tune in PH-3).
+Opt-in only since 2026-10-19 (Interfaces "Cloth"). `sf_anim::cloth::ClothLattice`: rows × columns of
+particles (row 0 pinned to the attachment joint, a ring for skirts), structural, shear and bend edges,
+one tether per free particle to its column's pin (geodesic rest length), max distance to the animated
+target, and leg/pelvis capsule colliders from `RagdollDef::cloth_colliders`. `sf_character::cook_cloth`
+(adapter `ClothRules`) places particles on the garment's **outermost** surface, keeps the authored
+skin under each as its animated target, and rebinds the vertices below the attachment line to the
+lattice joints (outfit joints after the skeleton's), blending the band at the waist harmonically with
+`smooth_body`'s inpainting. Capes (`ring: false`) are not supported yet. Sketch, cook rules, tests and
+the robe census: [archive](archive/physics-history.md#cloth-lattice).
 
 ## Interfaces
 
@@ -321,10 +202,10 @@ hem, center, filled, rebind: SkinRebind }`.
   ≤ 31 µm inside R0), velocities and sleep states untouched, interpolation history shifted alike, then one broad-phase refit. Rebases are
   independent of big_space's render origin (camera cell, 32 m hysteresis): rendering reads `WorldPos`,
   never the engine frame. Worst case inside R0: 768 m from the anchor, ulp 61 µm.
-- **Write-back.** Each frame, every awake body's interpolated pose → `WorldPos` → `CellCoord + Transform`
-  (`sf_world_bevy::to_grid`). Items begin as low-precision children of their stream cell, like statics;
-  on first wake they become their own grid entities (streaming.md: "Dynamic objects get their own
-  `CellCoord` when activated") and are `Stationary` while asleep.
+- **Write-back.** Each frame, every awake body's interpolated pose → `WorldPos` → its entity. Items
+  spawn under an `ItemPivot` (placement translation and rotation relative to its stream cell; scale
+  stays on the visuals) that follows the body, and stay children of their stream cell, so level
+  unloads take them along (R0 is a few cells wide; f32 is exact there).
 - **Other worldspaces** (door prefetch, M8 portal views) hold their statics and items but don't step.
 
 ### Streaming
@@ -340,61 +221,21 @@ hem, center, filled, rebind: SkinRebind }`.
 - **Deactivation (R0 → R1).** Bodies that moved since activation write `move_to` + a `physics` state
   blob (`set_state(id, "physics", ..)`: v1 = asleep flag, linear and angular velocity); then removal.
   Saves serialize the overlay (`sf_save`, M10): persistence needs no new interface.
-- **Fell out.** A body below `TerrainHeights` − 2 m (or the worldspace's kill height) returns to its
-  last resting pose (the pose at its last sleep) and sleeps.
-- **Collision-ready gate (characters; fallfix 2026-10-18).** Activation queues statics, inserts are
-  time-sliced, so an R0-active area can lack its floor for hundreds of frames (an interior load). A
-  character must not simulate there: `PhysicsStreaming::collision_loading(ws, pos, margin)` is true while
-  a queued, not yet inserted static's bounds reach the square around `pos`; hosts keep such movers
-  `Dormant` (new movers start dormant). Same rule as items (whole worldspace) and as engines that hold
-  actors until a streamed level's collision is in. Safety net, not a substitute: a `Ground` mover in the air more
-  than 2 m under resident terrain (else under the active world's kill height) goes back to its last walkable ground (`character::fell_out`,
-  `CharacterFellOut` message for the host's log, `CharacterStats::fell_out`), Unreal's `KillZ`.
-- **Hold until grabbed.** `items.check`'s `HOLD_UNTIL_GRABBED` placements are inserted `Fixed` and become
-  dynamic only when grabbed or explicitly impulsed (script, spell): a lantern on a hook never drops
-  because an NPC brushed it.
-- **Authored overlaps** wake gently: depenetration speed capped (`max_corrective_velocity` 0.5 m/s).
-- **As built (P2, 2026-10-13).** `sf_physics_bevy`: `PhysicsHook` wraps the placement spawners the host picks
-  (activation queues, deactivation removes at once); each model's `MeshShape` is built on the task pool from the
-  host's `PhysicsShapeSource` and shares the controller `StaticShape`'s `Arc<TriMesh>` (`StaticShape::trimesh()`);
-  scaled copies are built on the task pool too (a scaled trimesh rebuilds its BVH). Inserts run while the frame's
-  0.5 ms budget lasts, with `refresh_queries` every 32 bodies so broad-phase work lands in the inserting frame, not
-  in the next step. Terrain chunks cover the active worldspace's R0 cells, sampled from `TerrainHeightsMap` on the
-  task pool, nearest first, 16 per task; chunks with non-resident heights retry when the heights change (edit
-  rebuilds are still open). Debug draw is our own per-triangle cull within 40 m (`PhysicsWorld::debug_lines`):
-  rapier's `DebugRenderPipeline` draws whole colliders, too many lines for an R0. `PhysicsProbe` for the walkers
-  waits for walkers.rs to move over (it keeps its `StaticWorld` meanwhile).
-
-- **As built (P4, 2026-10-13).** Items: the adapter's `ItemContent` (`is_item`, `item_body` → mass and hold; the
-  spec's `PhysicsContent::item_body`) on `PhysicsBodySource`; `hook_physics` (statics, or items for items) and
-  `hook_items` (items only: carryable lights among the lights). Item visuals spawn under an `ItemPivot` (translation
-  and rotation of the placement, relative to the stream cell's origin; scale stays on the visuals for their LOD
-  ranges), which follows the body's interpolated pose; a transform is written only when it changed. This replaces
-  "own grid entities on first wake" for now: items stay children of their stream cell (R0 is at most a few cells
-  wide, f32 is exact enough there), so level unloads take them along. Items go in as `BodyDesc::item` (asleep, CCD on)
-  or `Fixed` when held, `DEBRIS` under `debris_mass` 15 kg and `debris_extent` 0.6 m, else `PROP`. Inserts run in two
-  phases per frame: statics (refresh every `insert_batch` = 16 bodies, stopping while the per-body refresh estimate
-  still fits the budget), one refresh, then up to `item_batch` = 32 items with no refresh (rapier puts new dynamic
-  bodies in its islands only in a step; re-queuing them as modified after a collision-only pass leaves their contacts
-  unlinked from the persistent islands, which rapier's debug validation catches), so their broad-phase work lands in
-  the next step. Deactivation writes items that moved (> 1 mm or 1 mrad) to the overlay (`move_to` + `physics` blob
-  v1: asleep flag, linear and angular velocity); activation reads the overlay for cells whose visuals stayed loaded.
-  Not yet: reinserting awake bodies with their saved velocity (all reinsert asleep), grab releasing held items (P6).
-  **P4 leftovers (P5 session, 2026-10-13):** *coverage freeze* (`stream::coverage`, 4 Hz: an awake item whose
-  surrounding 1 m isn't `Active` per `Scheduler::covers` writes its pose to the overlay, leaves the world, and its
-  visual stays put; worldspaces the scheduler doesn't know are always covered); *kill height*: with
-  `PhysicsParams::kill_height` unset, `PhysicsWorld::kill_height` is `kill_margin` (10 m) below the lowest fixed
-  body inserted so far (statics and terrain chunks; it never rises), so every world gets fell-out recovery without
-  the host knowing its depth (`TerrainHeights − 2 m` per body would need a height lookup per awake body: not worth
-  it while the floor rule works); *held items* are `BodyKind::Held` (`BodyDesc::held`: fixed, but with mass,
-  damping and CCD ready), and `PhysicsWorld::release` or any `apply_impulse` turns one into an awake dynamic body;
-  pushes and contacts never do; *insert time-slicing*: statics and items each keep a decaying-maximum per-insert
-  cost, and the next insert goes in only while it fits the 0.5 ms budget (one per frame always, when nothing else
-  went in).
-  **Rolling resistance**: rapier has none, so a knocked bottle rolled for many seconds; awake `DEBRIS`/`PROP` bodies
-  in contact lose `rolling_resistance` (20 rad/s², about μr 0.05 on a 6 cm radius) of angular speed per second, and
-  items get `ITEM_DAMPING` (0.1 linear, 1.5 angular). Havok exposes rolling friction per material; this is the
-  stand-in.
+- **Fell out.** A body below the world's kill height returns to its last resting pose and sleeps. The
+  kill height is `PhysicsParams::kill_height`, else `kill_margin` (10 m) below the lowest fixed body
+  inserted so far (never rises), so every world gets recovery without the host knowing its depth.
+- **Collision-ready gate** (characters, fallfix 2026-10-18): while a queued static's bounds reach the
+  square around a mover (`PhysicsStreaming::collision_loading`), the host keeps it `Dormant`, as
+  engines hold actors until streamed collision is in. Safety net: a `Ground` mover more than 2 m under
+  resident terrain (else the kill height) returns to its last walkable ground (UE `KillZ`).
+- **Hold until grabbed**: `Hold::Unsupported` placements go in `Held` and become dynamic only when
+  grabbed or impulsed (a lantern on a hook never drops because an NPC brushed it). **Authored
+  overlaps** wake gently: `max_corrective_velocity` 0.5 m/s.
+- **Inserts** run while a decaying-maximum per-insert cost fits the 0.5 ms budget (at least one static
+  per frame); a worldspace's items go in only once its statics are in. Deactivation writes moved items
+  (> 1 mm or 1 mrad) as `move_to` + `physics` blob v1; all reinsert asleep for now.
+- **Rolling resistance** (rapier has none): awake `DEBRIS`/`PROP` in contact lose 20 rad/s² of angular
+  speed; items get `ITEM_DAMPING` (0.1 linear, 1.5 angular).
 
 ### Queries: `PhysicsProbe`
 
@@ -404,25 +245,15 @@ renderer uses), composed through `Nearest` as today. Context probes, activation 
 crosshair and M9 hit tests all use it. `StaticWorld` stays as the physics-off path (`--off physics`)
 and the equality oracle in tests.
 
-**Revised (P6 session, 2026-10-13): terrain stays analytic for the movers.** A sphere or capsule cast against a
-heightfield chunk costs ~13 µs (`sf_physics` `probe_bench`: 150 movers × 4 casts, `StaticWorld` + `TerrainProbe` 2.14
-ms, physics over `STATIC | TERRAIN | PROP` 6.36 ms, `Nearest(TerrainProbe, physics STATIC | PROP)` 2.58 ms). So
-`impl GroundProbe for Physics` composes `TerrainProbe` over the active worldspace's `TerrainHeights` (`Physics::terrain`)
-with the bodies' `STATIC | PROP`; the chunks stay for bodies. wk-balmora mover stage median, physics vs `--off
-physics` (shared machine): 424 vs 272 µs (was 584 vs 319). The rest of the gap is rapier's query BVH (every body,
-filtered per leaf) and the one-sided internal-edge static meshes: a statics-only BVH view is the next step if needed.
+**Terrain stays analytic for the movers**: a cast against a heightfield chunk costs ~13 µs, so
+`impl GroundProbe for Physics` composes `TerrainProbe` with the bodies' `STATIC | PROP` (`GROUND_LAYERS`
+adds `TERRAIN` through it); the chunks stay for bodies. Measurements in the archive (P6 session).
 
-**Query refresh (as built, physcrash 2026-10-19).** `refresh_queries` used rapier's collision-only pass
-(`detect_collisions`). That pass consumes body changes outside the step's island bookkeeping while still linking
-the contacts it finds into the persistent islands and the solver graph; under streaming (refreshes between chunk,
-capsule and item inserts) and time-lapse substeps it broke rapier's invariant and panicked
-(`island_manager/persistent.rs` `member(link.body1) || member(link.body2)`, owner run in Seyda Neen). Now it only
-touches the broad-phase BVH, the part queries read: `RigidBodySet::propagate_modified_body_positions_to_colliders`
-(teleports, rebases), then `BroadPhaseBvh::set_aabb` for each collider inserted or moved since the last step (every
-collider after a rebase). Contacts, islands and the solver graph are left to the step. Kinematic targets are seen
-after the next step, as before. Regression: `sf_physics` `churn_tests` (chunks, sleeping item piles, walker
-capsules, knocks, up to 20 steps a frame; debug builds run rapier's island validation every step). Never call
-`detect_collisions` on a stepped world.
+**Query refresh**: `refresh_queries` updates only the broad-phase BVH that queries read (body positions
+to colliders, then `BroadPhaseBvh::set_aabb` for colliders inserted or moved since the last step).
+Contacts, islands and the solver graph are left to the step. **Never call `detect_collisions` on a
+stepped world**: it broke rapier's island invariant under streaming (physcrash 2026-10-19; regression
+`sf_physics` `churn_tests`).
 
 ### Controller
 
@@ -431,126 +262,63 @@ batched (150 characters, 0.096 ms), drives root motion, ORCA and the animation f
 the industry's character controllers are kinematic (UE CMC, Unity CCT, Jolt `CharacterVirtual`).
 A floating dynamic capsule (tnua) would put 150 bodies in the solver and fight root motion.
 Changes in M4:
-
-- **The mover steps on the fixed tick** (revised 2026-10-19, N0; supersedes the 2026-10-12 "keeps
-  running in `Update` at frame rate"). It runs in `FixedUpdate` at the physics rate (60 Hz,
-  `Time<Fixed>`), once per tick, after the action layer's chooser (`sf_action`, action.md) and before
-  the physics step, at most 3 ticks per frame like the physics step. Rendering interpolates the root
-  between the last two tick poses (the same interpolation the bodies' write-back uses), and the render
-  body's correction spring (locomotion.md "Action-layer changes (R11b)") hides what is left. Far
-  tiers (A2/A3) may step every second or fourth tick. Reasons: the chooser, input buffer, coyote and
-  jump-buffer timers count ticks; action root motion comes from baked tracks on the action clock in
-  the same tick (no one-frame root-motion handoff); and co-op prediction (net.md "Prediction") must
-  replay several ticks in one frame, with host and client agreeing tick for tick (net.md rule 1).
-  Overwatch and UE's Mover plugin (Network Prediction, fixed-tick mode) tick characters on a fixed
-  step for the same reason; the per-frame CMC needs its saved-moves machinery to replay a variable
-  `dt`. Budget: the mover stage per tick stays within 10 % of today's per-frame cost on wk-balmora
-  (action.md phase A2, which builds this; until A2 the code still steps per frame, as built below).
-- Each character owns a **kinematic capsule** body (`CHARACTER`) whose target for each physics step
-  is the mover's pose of the same tick, so falling and thrown bodies hit characters. As built (R3-1, AN-7): the
-  mover runs at frame rate, so each step targets the feet extrapolated to the step's time from the last mover step
-  (`target_capsules`, `FixedUpdate`); the G view draws moving bodies at their interpolated pose.
+- **The mover steps on the fixed tick** (N0, 2026-10-19): `FixedUpdate` at 60 Hz, after the action
+  layer's chooser and before the physics step, rendering interpolated; far tiers may step every second
+  or fourth tick. The chooser's timers count ticks, action root motion comes from the same tick, and
+  co-op prediction replays ticks (net.md rule 1), as in Overwatch and UE's Mover. Budget: within 10 % of
+  today's per-frame cost. Built in action.md A2; until then capsule targets are extrapolated per step.
+- Each character owns a **kinematic capsule** body (`CHARACTER`, 3 cm thinner than the mover's) whose
+  target for each physics step is the mover's pose of the same tick, so falling and thrown bodies hit
+  characters.
 - **Co-op ownership** (net.md): the host steps every mover. A client steps only its own player's
   mover (predicted, replayed on correction) against its local static world, with props and other
   characters at their interpolated poses; it never pushes props (pushes and impacts are host-only,
   their results arrive as replicated body state).
 - Sweeps include `STATIC | PROP` (and `TERRAIN` via `TerrainProbe`); `DEBRIS` never blocks.
-- **Pushes**: for each `PROP` hit in a sweep, an impulse `min(m_char · Δv_n, push_force · dt)` on the
-  body (default push force 400 N, per character; `dt` is the tick, 1/60 s); `DEBRIS` in the capsule's
-  path get the same capped impulse. Pushed props slow the mover by their resistance (UE "push force
-  factor").
-- **Impacts** (as built 2026-10-18, PH-10): a `Hit` on a `CHARACTER` capsule of at least `impact_threshold` (1 N·s) becomes an
-  `ImpactOnCharacter { entity, impulse, point, direction }` event; gameplay picks a hit reaction or a knockdown.
-  A hit is the incoming body's momentum along the normal at first contact (rapier `CollisionEvent::Started`, which
-  fires before the solver, so velocities are pre-solve: PhysX's `eNOTIFY_TOUCH_FOUND` + `ePRE_SOLVER_VELOCITY`):
-  `m · min(v_by·n, (v_by − v_capsule)·n)` (`sf_physics::impact_impulse`). Not the solver's contact force: against
-  an infinitely heavy kinematic capsule that is spread over steps for soft hits and unbounded for a body the
-  capsule walks into or pins (a walker pressing a resting 3 kg ball into a wall: 423 N·s in one step; PH-10 logged a
-  72 N·s "knockdown" from a ball lying on the street). Per contact start, so sustained contact never adds up.
+- **Pushes**: for each `DEBRIS` or `PROP` body within `reach` (4 cm) of the mover's capsule, a
+  horizontal impulse `min(m_body · Δv_n, push_force · dt)` along the capsule-to-center-of-mass normal
+  (default push force 400 N per character; `dt` the tick; `Δv_n` from the **intended** velocity). The
+  body's mass, not the character's: a cup takes the character's speed, a crate gets the capped force.
+  Pushed props slow the mover by their resistance (UE "push force factor"). Held items stay held.
+- **Impacts**: a `Hit` on a `CHARACTER` capsule of at least `impact_threshold` (1 N·s) becomes
+  `ImpactOnCharacter { entity, impulse, point, direction }`; gameplay picks a hit reaction or a
+  knockdown. The impulse is the incoming body's pre-solve momentum along the normal at first contact,
+  `m · min(v_by·n, (v_by − v_capsule)·n)` (PhysX `eNOTIFY_TOUCH_FOUND` + `ePRE_SOLVER_VELOCITY`), never
+  the solver's contact force (unbounded against a kinematic capsule), once per contact start.
 - **Sliding** down unwalkable slopes (locomotion.md open question 3): the mover adds gravity along the
   slope when the ground is unwalkable; no physics body needed.
 - Ragdolled characters carry `Ragdolled` (like `Dormant`: not stepped, capsule disabled); the root
   follows the pelvis projected to the ground.
-- **As built (P5, 2026-10-13).** `sf_physics::character`: `BodyDesc::character` (kinematic `CHARACTER` capsule,
-  3 cm thinner than the mover's so a prop the mover rests against isn't shoved by an infinitely heavy body),
-  `PhysicsWorld::move_character`, `PhysicsWorld::push`. **Correction to the push formula above:** the impulse is
-  `min(m_body · Δv_n, push_force · dt)`, the body's mass, not the character's (`m_char · Δv` would launch a 0.3 kg
-  cup at the cap every frame; with the body's mass a cup takes the character's speed and a crate gets the capped
-  force). `Δv_n` uses the **intended** velocity (the mover removes the part into whatever blocked it, which would
-  leave nothing to push with); the normal is horizontal, from the capsule axis to the body's center of mass, and
-  bodies within `reach` 4 cm of the mover's capsule count (more than its 1 cm wall skin). One push pass per mover
-  step (frame rate as built; per tick from action.md A2), DEBRIS and PROP alike, held items stay held. `sf_physics_bevy` feature `controller`
-  (`character.rs`): capsules for every non-`Dormant` `Mover` in the active world, targeted after
-  `ControllerSystems::Step`, pushes from `Mover::applied`, `ImpactOnCharacter` messages from `Hit` events
-  on capsules of at least 1 N·s (`PhysicsEvents` keeps a frame's events), `CharacterStats`. Ground: `impl GroundProbe for
-  Physics` over `GROUND_LAYERS` = `STATIC | TERRAIN | PROP` of the active world; the host picks
-  `SfControllerPlugin::<Physics>` (the Bevyrrowind walkers do unless `--off physics`). Slope sliding is in the mover
-  (`Locomotion::slide`, gravity's horizontal part along the unwalkable ground normal, decays with a 0.1 s time
-  constant on walkable ground; unwalkable ground is probed every step even standing still). Tests:
-  `sf_physics` `character_tests` (a 60 kg crate blocks then yields with every push ≤ the cap; a cup never blocks;
-  a 25 m/s ball hits a standing capsule and bounces; no tunnelling through a 4 cm plank at 7 m/s),
-  `sf_controller` `unwalkable_slopes_slide`.
+- Host side: `sf_physics_bevy` feature `controller`; the host picks `SfControllerPlugin::<Physics>`
+  (`--off physics` keeps `StaticWorld`).
 
 ### Carry and throw
 
-- **Pick target**: `PhysicsProbe` ray from the view within `reach` (2.5 m), layers `DEBRIS | PROP`, plus
-  `RAGDOLL` bodies of **limp** ragdolls (corpses, knocked-out characters).
-- **Holder limits** come from the adapter per holder (`PhysicsContent::holder_strength`), tied to the
-  character's strength stat (owner request, 2026-10-12): `HolderLimits { carry_force, carry_mass,
-  drag_mass, throw_impulse }`. The framework never names a stat; the adapter maps its own.
-- **Mode by mass** (simulated mass of the item, or the whole ragdoll's mass for a limb):
-  - **Carry** (`mass ≤ carry_mass`): the item lifts to the hold point, as below.
-  - **Drag** (`carry_mass < mass ≤ drag_mass`): too heavy to lift, light enough to move. The joint is a
-    **ball joint at the grab point** (position motors only, rotation free), so the object hangs from
-    the hand, rests its weight on the floor and slides, tips or trails behind (Amnesia, Skyrim's grab on
-    heavy objects, Half-Life 2 crates). The hand target sits at waist height ahead of the holder, the
-    force cap still applies, and the holder's mover speed is scaled by `1 − mass / (2 · drag_mass)`
-    (gameplay may override). **Dead bodies are dragged by a limb**: the pick ray hits one ragdoll body
-    (a wrist, an ankle, the head) and the ball joint attaches to that body at the hit point; the rest
-    of the ragdoll follows through its joints, so a corpse is pulled by the arm or leg that was grabbed.
-    The ragdoll stays `Limp` and awake while dragged; its pelvis-follow root (Controller, last bullet)
-    keeps the character's entity with the body.
-  - **Too heavy** (`mass > drag_mass`): no grab; the attempt returns `GrabResult::TooHeavy` so the game
-    can show feedback.
-- **Grab (carry)**: a kinematic **hand** body at `view · hold_offset`, a 6-DOF joint from the hand to the item's
-  grab point with motors on all axes (stiffness tuned for a 0.15 s settle, critically damped) and a
-  **force cap** from the holder's strength (adapter). Over the cap the item lags and drags on the
-  floor (Amnesia), and over `break_distance` (1 m) for 0.3 s it drops. Held items are `HELD` (no contact
-  with the holder), never ground for the mover, and wake whatever they touch.
-- **Rotate** (modifier + look input) turns `hold_offset`; **drop** releases; **throw** releases with the
-  hand's velocity plus an impulse along the view (`throw_impulse` from the adapter, speed capped at
-  15 m/s; carry mode only, a dragged object is released, not thrown), CCD on.
-- **No carry vibration** (Godotwind's bug, ARCHITECTURE §7.3). The view moves at frame rate and the item
-  at 60 Hz, so the item is rendered **in holder space**: `render = view_now · (view_at_step⁻¹ · item_at_step)`
-  interpolated, which removes the step-rate beat between the two clocks. Test below.
-- Pick-into-inventory, ownership and crime are gameplay (M5/M10) on top of the same target query.
-- **As built (P6, 2026-10-13).** `sf_physics::carry`: `Carrier` (one holder's grab state), `HolderLimits`
-  (`mode_for(mass)`), `CarryParams` (reach 2.5 m, hold distance 0.6 m + the item's bounding radius, settle 0.15 s,
-  break 1 m / 0.3 s, throw cap 15 m/s, torque arm 0.3 m, 4 extra iterations), `GrabResult`, `CarryEnd`. The hand is a
-  kinematic body with no collision layer; the joint is a rapier generic joint with every axis free and
-  acceleration-based motors (ω = 5.8 / settle time, ζ = 1): carry on all six axes (linear cap `carry_force` per axis,
-  angular `carry_force · torque_arm`), drag on the three linear axes at the grab point. The pick ray sees
-  `pick_layers | STATIC | TERRAIN` and accepts the first hit only if it is a grabbable dynamic or `Held` body (a
-  `Held` item is released by the grab). The carried body moves to `HELD` (restored on release), and its holder's
-  capsule is excluded **per pair** (`PhysicsWorld::exclude_pair`, a rapier contact-pair filter hook: PhysX's filter
-  shader, Jolt's group filter), not by layer, so it still hits other characters. Deviations from the bullets above:
-  - **Drag force cap**: `max(carry_force, drag_friction · g · drag_mass)` with `drag_friction` 0.6, not `carry_force`:
-    with the adapter's numbers (S 50: 240 N, drag mass 120 kg) the grip cannot even slide a 40 kg crate pulled at its
-    top (measured: it doesn't move), so "light enough to move" would not move. The drag hand keeps the grab point's
-    horizontal distance and its height below the eye from the moment of the grab, turning with the view's yaw (not a
-    fixed waist height: a crate grabbed by its top edge is not lifted by it).
-  - **No carry vibration** takes two parts: each step's hand target is the view **at the step's time** (interpolated
-    or extrapolated from the last two recorded views, at most 0.1 s ahead), so two steps in one 30 fps frame don't move
-    the hand in one jump; and the carried item renders at `hand(view_now) · lerp(rel_prev, rel_curr, alpha)` with
-    `rel` the item relative to the hand target after each step. A dragged object renders at its own interpolated
-    pose (its weight is on the floor). Test: view-space spread 0.008 / 0.010 / 0.044 mm at 30 / 60 / 144 fps.
-  - Throw speed is `|hand velocity + view · throw_impulse / mass|` capped at 15 m/s.
-  `sf_physics_bevy::carry`: `Holder` component (its entity's `CellCoord + Transform` is the eye, −Z forward),
-  `CarryInput` / `CarryFeedback` messages, `HeldPoses` (read by the write-back and item pivots), views recorded in
-  `RunFixedMainLoop` (`PhysicsSystems::Views`, after camera controllers that run there) and hands driven around the
-  step in `FixedUpdate`; changing worldspace drops. The adapter maps Strength (`mw_physics::holder_limits`); the host
-  fills `Holder::carrier.limits` (the `PhysicsContent::holder_strength` hook becomes this host call until characters
-  carry). Not yet: limp-ragdoll limbs (P7), the holder's mover slowdown (the host reads `Holder::speed_scale`).
+- **Pick**: a ray from the view within `reach` (2.5 m) over `DEBRIS | PROP`, `RAGDOLL` bodies of
+  **limp** ragdolls, and the statics and terrain that block it; a `Held` item is released by the grab.
+- **Holder limits** from the adapter per holder, tied to the character's strength stat (owner,
+  2026-10-12): `HolderLimits { carry_force, carry_mass, drag_mass, throw_impulse }`. The framework
+  never names a stat.
+- **Mode by mass** (simulated mass, or the whole ragdoll's for a limb): **carry** up to `carry_mass`;
+  **drag** up to `drag_mass` (too heavy to lift: a ball joint at the grab point, so it rests on the
+  floor and slides, tips or trails, as in Amnesia, Skyrim and Half-Life 2; the holder slows by
+  `1 − mass / (2 · drag_mass)`; **dead bodies are dragged by the limb hit**, the ragdoll staying `Limp`
+  and awake); above, `GrabResult::TooHeavy`.
+- **Grab**: a kinematic **hand** body (no collision layer) at `view · hold_offset` (0.6 m + the item's
+  bounding radius) and a generic joint with acceleration-based motors (ω = 5.8 / 0.15 s settle, ζ = 1):
+  six axes for carry, capped by `carry_force` (angular cap × `torque_arm` 0.3 m); three linear axes for
+  drag, capped by `max(carry_force, drag_friction · g · drag_mass)` (0.6, so a draggable crate moves),
+  the hand keeping the grab point's distance and height below the eye, turning with the view's yaw.
+  Over the cap the item lags; over `break_distance` (1 m) for 0.3 s it drops. The carried body is `HELD`
+  (never ground for the mover), and only its holder's capsule is excluded, **per pair** (a contact-pair
+  filter, like PhysX filter shaders and Jolt group filters).
+- **Rotate** (modifier + look input) turns `hold_offset`; **drop** releases; **throw** (carry only)
+  releases at `|hand velocity + view · throw_impulse / mass|`, capped at 15 m/s, CCD on.
+- **No carry vibration** (Godotwind's bug, ARCHITECTURE §7.3): each step's hand target is the view **at
+  the step's time** (at most 0.1 s extrapolated), and the carried item renders in holder space,
+  `hand(view_now) · lerp(rel_prev, rel_curr, alpha)`; a dragged one at its own interpolated pose.
+- Pick-into-inventory, ownership and crime are gameplay (M5/M10) on the same target query. Host side:
+  `sf_physics_bevy::carry` (`Holder`, `CarryInput` / `CarryFeedback`, `HeldPoses`).
 
 ### Ragdolls and the animation blend
 
@@ -558,78 +326,40 @@ Per character with a ragdoll, `sf_ragdoll` owns a `RagdollInstance` (bodies, joi
 `StrengthProfile`). Flow per frame:
 
 1. The graph evaluates the animated model pose (animation.md).
-2. `sf_ragdoll::drive_targets` turns it into joint motor targets (local rotations), kinematic targets
-   for `Kinematic` regions, and the pelvis world target. Motors are rapier's implicit, acceleration-
-   based joint motors (stiffness = strength × the region's gain, damping for ζ = 1), i.e. stable PD with mass-independent
-   gains; avian could only add explicit torques here. A world-space pelvis drive (UE's world-space
-   physical animation) holds powered characters up; it is off for `Limp`.
+2. `sf_ragdoll::powered` turns it into joint motor targets (each joint's relative rotation, as per-axis
+   errors `2·asin(q.v_i)` with velocity feed-forward), kinematic targets and the pelvis world target.
+   Motors are rapier's implicit acceleration-based ones: stable PD with **composite-inertia gains**
+   (stiffness `strength · region gain · ω² · I_subtree / I_child`, ω 160 rad/s, damping 2·√stiffness;
+   Zordan & Hodgins 2002), since a motor sees only its two bodies. A world-space pelvis drive (kinematic
+   anchor, six-axis motors, ω 12, both gains scaled by the composite load, plus gravity compensation)
+   holds powered characters up; it is off for `Limp`. Driven bodies sit on `Layer::POWERED`.
 3. Physics steps (fixed). Bodies read back interpolated → joint local rotations → the graph's
-   `PoseInput` node, blended per joint by the region's physics weight (0 = animation, 1 = physics).
-   Procedural ops after it (foot placement, look-at) run only where the physics weight is 0.
+   **physics stage** (`GraphInstance::set_physics`, per-joint weights from `def.owner`, after
+   inertialization and before history and ops; 0 = animation, 1 = physics). Procedural ops run only
+   where the physics weight is 0.
 
-**As built (P7, 2026-10-13): limp only.** `sf_physics_bevy` feature `ragdoll`: the host puts `Ragdoll { skeleton,
-delay }` on a character's `Animator` entity after starting its death clip; after `delay` the `RagdollSource`
-definition spawns at the animated pose with the last two poses' velocities, and each frame the bodies' local pose goes
-to the new `sf_anim_bevy::PhysicsPose { pose, weight }` (weight ramps to 1 over 0.1 s), which `write_bones` blends
-**after** the graph (whole skeleton) instead of a graph `PoseInput` node: Morrowind's graphs have none, and limp
-needs no per-region weights. P8 moves it into `PoseInput` with per-region weights and inertialized get-ups.
-`Ragdolls` / `RagdollStats` (live, awake, max stretch); removing the component or despawning the entity removes the
-bodies. Not yet: the powered crumple (the clip cuts to limp), the root following the pelvis, sleeping-pose persistence
-across deactivation, placed corpses.
+Behaviours (`sf_physics_bevy` feature `ragdoll`, `RagdollMode`; strengths in `sf_ragdoll::react`'s RON
+`ReactionSet`, default `data/reactions.ron`, driven by a `ReactionController` per ragdoll):
 
-**As built (P8 core, 2026-10-13; not yet in `sf_physics_bevy`).** `sf_ragdoll::powered`: joint targets are the
-animated pose's relative rotations between the joint frames, sent as rapier's per-axis motor errors `2·asin(q.v_i)`
-(`PhysicsWorld::set_joint_target`, with the vector part's rate as velocity feed-forward), so a ball joint converges
-on swing and twist together. **Change from the spec: composite-inertia gain scaling.** An acceleration-based motor
-only sees its two bodies, so a hip or spine holding its subtree sagged (spine 121°, effectors 2.7 m off at ω 40);
-stiffness is now `strength · region gain · ω² · I_subtree(joint) / I_child`, ζ = 1 (subtree-scaled PD gains, Zordan &
-Hodgins 2002), and the world pelvis drive (kinematic anchor + `JointKind::Free` six-axis motors) scales its linear
-gain by total/pelvis mass and its angular gain by the whole body's inertia over the pelvis's. Defaults ω 160 rad/s
-(gravity sag on light distal bodies goes as g/(d·ω²): ω 40 tracked 19°, 80 7°, 160 3.2°), pelvis ω 12, `Kinematic` =
-4× the full-strength gain (bodies stay dynamic). Driven ragdolls sit on `Layer::POWERED` (outside the carry pick
-layers). Measured: joints 3.2° RMS worst (met), effectors 11.5 cm RMS (5 cm missed: pelvis placement), 0.128 ms
-per powered character with 8 (0.05 missed). The animation side: the graph's built-in physics stage
-(`GraphInstance::set_physics`, per-joint weights, after inertialization and before history and ops) replaces a
-per-graph `PoseInput` node, and `GraphInstance::inertialize_from` is the get-up hand-back (continuous at shrinking dt).
-
-**P8b (2026-10-13).** The pelvis drive was underdamped: scaling only the stiffness of an acceleration motor by the
-composite load gives ζ = 1/√load ≈ 0.37 (it rang ±8 cm at 2 Hz). Both gains now scale by the load (critical for the
-composite body), plus gravity compensation (the anchor offset by −g/ω², the weight's torque about the pelvis);
-joint drives keep 2·√stiffness (fully critical over-damped them to 13°). Measured (75 kg fixture walking 1.2 m/s):
-effectors 11.5 → **6.8 cm RMS in air** (pelvis 9.0 → 2.2 cm, joints 5.5°), **11.0 cm on a floor** (the synthetic
-walk slides and sinks its feet); gate 5 cm still open. Cost: `DriveParams::powered_iterations` (extra solver
-iterations while powered), 8 powered on a floor: +8 **0.129**, +4 0.090, +2 0.071, +0 0.051 ms per character
-(tracking 11 / 13.8 / 21.9 / 25.7 cm); rapier's `parallel` feature (`sf_physics` feature `parallel`) was slower
-(0.153 ms). Default +8; gate 0.05 ms open. `sf_physics_bevy` modes: `RagdollMode::Death { crumple }` (full strength
-fading to limp over 0.45 s; the entity frame follows `implied_frame`'s heading and position) and `Knockdown { point,
-impulse, get_up, get_up_flag }` (the hit on the nearest body, brace 0.25 fading over 0.8 s, get-up when the pelvis
-stays under 0.2 m/s for 0.5 s); budget 8 by driven count; per-joint weights from `def.owner`; read-back relative to
-the entity's current frame. P9: hosts pass the get-up clip's first-frame root body (`clip_root_body`), so the
-`LYING_REST_GET_UP` scaffold only serves skeletons without a get-up clip. R2: those constants now live in
-`sf_ragdoll::react`'s RON `ReactionSet` (`RagdollConfig::reactions`, default `data/reactions.ron`); a
-`ReactionController` per live ragdoll sets the strengths and signals the get-up.
-
-**Kinematic hit reactions and spring bones (P9, 2026-10-13).** Below the knockdown threshold (and for characters
-past the powered budget) hits go to the graph's `HitReact` op (animation.md "Secondary motion"): critically damped
-rotation springs on the hit joint and its reactive ancestors, kicked about `lever × direction`; the Morrowind app
-sends capsule impacts of 1–15 N·s with strength = impulse / 15. `SpringBones` swings tails and other chains.
-
-Behaviours:
-
-- **Death**: regions switch to `Powered` following the death clip, then strength fades to `Limp` over
-  0.3–0.6 s (a crumple, not a drop); initial body velocities come from the last two animated poses.
-  After the ragdoll sleeps for 2 s its bodies stay asleep; on deactivation the pose is quantized into a
-  `ragdoll` state blob and restored frozen.
+- **Death** (`Death { crumple }`): full strength following the death clip, fading to `Limp` over 0.45 s
+  (a crumple, not a drop); initial velocities from the last two animated poses; the entity frame follows
+  the pelvis. Later: after 2 s asleep the bodies stay asleep, and deactivation stores the pose in a
+  quantized `ragdoll` blob, restored frozen.
+- **Knockdown** (`Knockdown { point, impulse, get_up, .. }`): the hit on the nearest body, brace 0.25
+  fading over 0.8 s, get-up when settled.
 - **Hit reaction** (A0 characters): `HitImpulse` on a body + a strength dip on its region recovering
-  over `recover` s. Below A0, or past the powered budget, the kinematic `HitReact` op (animation.md)
-  answers instead.
+  over `recover` s. Below the knockdown threshold, below A0 or past the powered budget, the kinematic
+  `HitReact` op answers (animation.md "Secondary motion"; capsule impacts of 1-15 N·s, strength =
+  impulse / 15); `SpringBones` swings tails and other chains.
 - **Balance**: the center of mass against the support polygon of `support` limbs' contacts; outside by
   more than `stumble_margin` → a stumble step (a mover intent nudge + stumble clip); beyond recovery →
   knockdown (`Limp` for `down_time`).
-- **Get-up**: when the pelvis is slower than 0.2 m/s for 0.5 s, face up or down from the pelvis axis
-  picks the get-up clip; the character root is placed under the pelvis with the clip's first-frame yaw;
-  `PoseInput` inertializes from the ragdoll pose into the clip (the transition test in animation.md).
-  *As built R3-3 (2026-10-22):* the frame goes on the ground under the pelvis (WORLD ray), the hand-back pose is pelvis-anchored for the restored build scale and its 0.3 s blend wins over the graph's state switch; the host must use an in-place get-up clip that ends over its origin (MW: `Knockout@tail` cooked with `RootMotionRules::anchor_end`) or apply its root motion, never both. Every request ends in `RagdollGotUp` or `RagdollFailed`; a fall settles after `settle_timeout` (6 s) at any speed.
+- **Get-up**: when the pelvis is slower than 0.2 m/s for 0.5 s (any speed after `settle_timeout`, 6 s),
+  face up or down picks the clip; the frame goes on the ground under the pelvis (WORLD ray) with the
+  clip's first-frame root body (`clip_root_body`); the hand-back pose is pelvis-anchored and its 0.3 s
+  inertialized blend (`GraphInstance::inertialize_from`) wins over the graph's state switch. The host
+  uses an in-place get-up clip that ends over its origin, or applies its root motion, never both. Every
+  request ends in `RagdollGotUp` or `RagdollFailed`.
 - **Budget**: at most 8 powered ragdolls at once (others answer kinematically), limp ones unlimited
   but each asleep within seconds.
 
@@ -641,68 +371,17 @@ nothing is cooked or rebound. The lattice below replaced the authored leg weight
 covered at a stride. The XPBD lattice stays for garments that hide nothing (capes, banners, tents) and as an
 adapter opt-in for long garments.
 
-- `ClothLattice` op in the procedural op stack, after foot placement (it needs the final legs), at
-  A0–A1; at A2 and below the lattice joints take their animated (skinned) rest offsets, which is how the
-  robe looked before M4.
-- Solver: XPBD, fixed internal substep 1/240 s accumulated over the frame (Small Steps), in **character
-  space**: the character's world acceleration enters scaled by `inertia_scale` (0.5 linear, 0.3
-  angular by default), so teleports, root snaps and fast turns don't whip the hem. Constraints:
-  structural, shear and bend edges with compliances; tethers (one-sided, to the pinned row: no
-  stretch, the long-range attachment); max distance to the animated position (0 at the pins, growing
-  with row); capsule collisions with the rig's leg and pelvis capsules (from `RagdollDef`) with a
-  thickness. Wind (M6 `sf_wind`) and drag come in through one external acceleration.
-- Budget: 0.03 ms per robe at A0 single-threaded; cloths run in the animation tasks, so they spread
-  across cores with the characters.
+The opt-in path: a `ClothLattice` op after foot placement at A0-A1 (A2 and below take the animated
+rest offsets); XPBD in **character space** at fixed 1/240 s substeps (Small Steps), inertia entering as
+**fictitious forces** scaled by `inertia_linear` / `inertia_angular` (UE Chaos, NvCloth), so a steady
+run hangs like standing; capsule push-out last; teleports keep the shape and drop the velocity; wind
+through `ClothInputs::acceleration`. Budget 0.03 ms per robe at A0 (measured 0.014 ms). A robe narrower
+than the stride can't cover the legs without stretching, which is why long garments stay skinned.
+Solver details and measurements: [archive](archive/physics-history.md#cloth).
 
-**As built (p10a, 2026-10-18): the solver core, `sf_anim::cloth`.** Placement: `sf_anim` (Bevy-free), not
-`sf_anim_graph`, because `sf_character` (the cook) depends on `sf_anim` only; the `ClothLattice` op in
-`sf_anim_graph::secondary` (p10c) calls it as `SpringBones` calls `sf_anim::spring`. Reuse check redone: no
-Bevy-free MIT/Apache cloth crate with character constraints (the list below still holds; avian has no cloth).
-- Data: `ClothLattice { rows, cols, ring, particles: ClothParticle { rest, joint, inv_mass (0 = pinned),
-  max_distance }, edges: ClothEdge { a, b, rest, kind: Structural | Shear | Bend }, tethers: ClothTether {
-  particle, anchor, length }, colliders: ClothCollider { joint, center, axis (joint frame), radius, half_length }
-  }` (serde). `ClothLattice::grid(&GridSpec { rows 5, cols 10, ring, mass 1.5 kg, max_distance_scale 0.6 },
-  rest, joints)` builds a lattice from row-major rest positions: row 0 pinned; structural edges along rows and
-  columns, shear diagonals, bend edges two apart; one tether per free particle to its column's pin at the
-  **geodesic** (down-the-column) rest length (Chaos's accurate tether setup); max distance = scale × that length.
-  `SkinRebind` stays with the cook (p10b).
-- Step: `ClothState::step(&lattice, &ClothParams, &ClothInputs { animated, capsules, moved: RootDelta, dt,
-  acceleration })` → `StepReport { substeps, teleported, seeded }`. Fixed 1/240 s substeps accumulated (at most 16
-  per update), one XPBD pass each (λ from 0, Small Steps); per substep: damped Verlet predict (damping relative
-  to the character, 1/s) with gravity, external acceleration and the angular fictitious terms; distance edges
-  (compliance per kind, defaults structural 0, shear 2e-4, bend 2e-3 m/N); tethers (one-sided, × `tether_scale`
-  1.0); max distance to the animated target; capsule push-out (radius + `thickness` 0.015 m) **last**, so no
-  particle ends a substep inside the body. Animated targets, pins and capsules are interpolated from the last
-  update across the substeps (a swept capsule, CCD-lite).
-- Inertia, decided: **fictitious forces, not the position share `SpringBones` uses**. Particles live in
-  character space; the root's velocity change over an update enters as one velocity kick
-  `−inertia_linear · Δv` (and the Euler term `−inertia_angular · Δω × r`), and the yaw rate as centrifugal and
-  Coriolis accelerations scaled by `inertia_angular` (UE Chaos `FictitiousAngularScale`, `NvCloth` linear /
-  angular / centrifugal inertia). Constant velocity is free (Galilean): a steady run hangs like standing (hem
-  offset 2 mm) and only speeding up, stopping and turning swing it (±0.2 m at `inertia_linear` 1 for a
-  0 → 6 m/s step). The total kick is the same at any frame rate.
-- Teleport: a root move > `teleport_distance` (1 m) or turn > `teleport_angle` (1 rad) in one update keeps the
-  character-space shape, drops the velocity, skips the sweep and keeps the old frame velocity (Chaos's teleport
-  mode); `reset()` re-seeds from the animation (LOD cut, respawn). `rotations()` gives each particle's
-  rest → current rotation from the lattice tangents, for the op to orient the cloth joints.
-- Verified (`cargo test -p sf_anim --lib cloth`, synthetic flaring robe 10 × 5, pelvis + thigh/shin capsules,
-  stand → 6 m/s run → 180° turn in 0.5 s → dead stop, at 30/60/144 fps): hem stretch 1.3/1.7/1.9 % (gate 5 %),
-  all structural edges ≤ 5.5 % (peak at the end of the turn), no particle inside a capsule (closest 15 mm =
-  the thickness); a 50 m + 143° teleport mid-run: shape kept, peak speed after 0.65 m/s, stretch 3 %, max
-  distance held. Cost (release, `-- --ignored cost_per_robe`): **0.014 ms per robe update at 60 fps** (4
-  substeps), 0.027 ms at 30 fps (8 substeps); gate 0.03 ms. A robe narrower than the stride cannot hold the legs
-  without stretching (collisions win, as in Chaos): the test robe flares to 0.44 m at the hem; the census (p10b)
-  should check real robe widths against the run stride.
-- Open (p10b/p10c): lattice joints' orientation from `rotations()` vs a twist-free frame (check in PH-3);
-  capsule friction (none yet); edges can pass through a capsule between particles (thickness covers a lattice
-  this coarse; look in PH-3); wind enters through `ClothInputs::acceleration` (M6 WD3).
-
-**Not in M4 (later, recorded):** mesh cloth (a per-vertex proxy mesh driving the render mesh, for
-capes and banners), evaluated then against rapier's soft bodies (0.36, CPU, coupled with rigid
-bodies) and a GPU XPBD path if counts demand it (WISHLIST §7). Crates checked 2026-10-12 and not
-taken: `bevy_silk` 0.10 (Bevy 0.17), `bevy_softbody` 0.1 (GPU XPBD, Bevy 0.19, one release),
-`rapier-cloth-core` 0.3 (MIT, XPBD mesh cloth, four weeks old, no character constraints): references
-for the mesh-cloth step.
+**Not in M4 (later):** mesh cloth (a per-vertex proxy mesh) for capes and banners, against rapier's
+soft bodies and a GPU XPBD path (WISHLIST §7); crates `bevy_silk`, `bevy_softbody`,
+`rapier-cloth-core` checked 2026-10-12 and not taken.
 
 ### Adapter hooks (game-agnostic)
 
@@ -745,12 +424,9 @@ Gates (numbers are the M4 budgets; the spike in task P1 confirms or revises them
 
 ## Open questions
 
-1. **Resolved (P7): impulse joints** with 8 extra iterations and a 4:1 mass-ratio cap (numbers under `sf_ragdoll`
-   "As built"). History: impulse joints or a reduced-coordinate multibody for ragdolls: the P7 spike tries both (multibodies
-   don't stretch and take high gains, impulse joints sleep and island more simply). P1 spike data (2026-10-12): 2 ragdolls
-   + a 50-item pile step in 0.44 ms with impulse joints vs 3.1–4.3 ms with multibodies (plus a 450 ms hitch); a
-   0.5 m drop stretches impulse joints 2–2.6 cm (1.1 cm at 12 extra iterations) vs 0.6 cm for multibodies. Leaning
-   impulse joints with more iterations and bounded mass ratios; P7 decides.
+1. **Resolved (P7): impulse joints** with 8 extra iterations and a 4:1 mass-ratio cap, over
+   reduced-coordinate multibodies (P1 spike: 0.44 ms vs 3.1-4.3 ms for 2 ragdolls + a 50-item pile).
+   Spike numbers and history in the archive.
 2. Rapier `parallel` (rayon) once a measured step exceeds budget, and whether to run the step as an
    async task overlapping render extraction (UE Chaos async physics).
 3. Mesh cloth for capes and banners: rapier soft bodies vs our own XPBD on the GPU (after M4).

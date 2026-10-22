@@ -10,7 +10,7 @@ default = []
 # The `body.cook` and `items.check` bake steps (read `mesh.cook`, `collision.cook`,
 # `world.page` and `terrain.tile` products).
 bake = ["dep:sf_bake", "dep:sf_model", "dep:sf_world", "dep:sf_terrain", "sf_controller/bake"]
-# rapier's island-parallel solver (rayon); measured in P8b, see physics.md.
+# rapier's island-parallel solver (rayon); measured in P8b (specs/archive/physics-history.md).
 parallel = ["rapier3d/parallel"]
 
 [dependencies]
