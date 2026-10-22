@@ -139,6 +139,63 @@ impl Loadout {
         Ok(taken)
     }
 
+    /// Whether a stack is split-equipped (one piece worn): it never splits or merges.
+    pub fn is_locked(&self, stack: StackId) -> bool {
+        self.locked.contains(&stack)
+    }
+
+    /// Splits `count` pieces off a stack into a new, unequipped stack right after it (the
+    /// UI's "split stack"). Splitting a whole-stack-equipped stack (a quiver) leaves the
+    /// rest equipped.
+    pub fn split(&mut self, stack: StackId, count: u32) -> Result<StackId, InventoryError> {
+        if self.locked.contains(&stack) {
+            return Err(InventoryError::Equipped(stack));
+        }
+        self.inventory.split(stack, count)
+    }
+
+    /// Checks [`Loadout::merge`] without changing anything (the UI greys out the action).
+    pub fn can_merge(&self, from: StackId, into: StackId) -> Result<(), InventoryError> {
+        if from == into {
+            return Err(InventoryError::SameStack);
+        }
+        let src = self.inventory.get(from).ok_or(InventoryError::NoStack(from))?;
+        let dst = self.inventory.get(into).ok_or(InventoryError::NoStack(into))?;
+        if !dst.is_same_kind(&src.item, &src.attrs) {
+            return Err(InventoryError::NotSameKind(from, into));
+        }
+        for id in [from, into] {
+            if self.locked.contains(&id) {
+                return Err(InventoryError::Equipped(id));
+            }
+        }
+        // Two equipped stacks would leave one stack in two placements.
+        if self.is_equipped(from) && self.is_equipped(into) {
+            return Err(InventoryError::Equipped(from));
+        }
+        src.count.checked_add(dst.count).ok_or(InventoryError::Overflow)?;
+        Ok(())
+    }
+
+    /// Merges stack `from` into the identical stack `into` (the UI's "merge" or drop-onto).
+    /// Split-equipped stacks never merge. When `from` is whole-stack-equipped, its slots
+    /// move to `into`, so merging a quiver into loose arrows keeps them equipped.
+    pub fn merge(&mut self, from: StackId, into: StackId) -> Result<StackId, InventoryError> {
+        self.can_merge(from, into)?;
+        self.inventory.merge(from, into)?;
+        for id in self.slots.values_mut() {
+            if *id == from {
+                *id = into;
+            }
+        }
+        Ok(into)
+    }
+
+    /// Stacks `from` may merge into, in inventory order.
+    pub fn merge_targets(&self, from: StackId) -> impl Iterator<Item = StackId> + '_ {
+        self.inventory.stacks().iter().map(|s| s.id).filter(move |id| self.can_merge(from, *id).is_ok())
+    }
+
     /// Takes pieces out of one stack (drop, give, sell).
     pub fn take(&mut self, stack: StackId, count: u32) -> Result<ItemStack, InventoryError> {
         let taken = self.inventory.take(stack, count)?;

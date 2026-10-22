@@ -1,7 +1,8 @@
 # RPG core: items, equipment, quests, journal, dialogue (`sf_rpg`)
 
 Status: **spec + core implemented** (rpg-core slice 1, 2026-10-21: modules `ids`, `item`, `equip`,
-`quest`, `link`, `dialogue`, `state`; 19 unit tests incl. postcard round trips).
+`quest`, `link`, `dialogue`, `state`; 19 unit tests incl. postcard round trips; stack split/merge
+commands 2026-10-22 for the inventory screen, ui.md U5, 21 tests).
 **Challenges ARCHITECTURE §5.3** ("dialogue graph"): dialogue is a condition-filtered response
 database with a session state machine, not a graph (Research below). Adapter: Bevyrrowind
 `docs/specs/rpg-adapter.md` (`mw_rpg`). Roadmap: Phase 2.4.
@@ -111,6 +112,10 @@ All ids are `RecordId` (case-folded strings) unless noted. All types derive
   - `unequip(SlotId)`; `remove`/`take` unequip what they empty. Split-equipped stacks never take
     merges; whole-stack-equipped stacks do (picking up arrows tops up the quiver).
 - Requirements (skills, race, beast feet) are rules, checked by the adapter before `equip`.
+- `split(StackId, n)` / `merge(from, into)` (UI stack commands, ui.md U5): split-equipped stacks never
+  split or merge (`Equipped`); merging a whole-stack-equipped stack moves its slots to `into` (a quiver
+  merged into loose arrows stays equipped); two equipped stacks never merge; `can_merge` and
+  `merge_targets` let the UI grey out what the host would refuse. `into` keeps its id and position.
 
 ### Quests
 
@@ -152,6 +157,8 @@ returns `RpgEvent`s (data) for UI, replication and scripts.
 | `AddTopic(id)` | learn a topic (idempotent) | `TopicLearned` (first time only) |
 | `HearLine { topic, line }` | append a heard response (learns the topic) | `TopicLearned` (first time only) |
 | `AddItem { holder, item, count, attrs }` / `RemoveItem { holder, item, count }` | inventory change | `ItemsChanged { holder, item, delta }` |
+| `SplitStack { holder, stack, count }` | split pieces off into a new stack after it | `StackSplit { holder, source, new }` |
+| `MergeStacks { holder, from, into }` | move every piece of `from` into identical `into` | `StacksMerged { holder, from, into }` |
 
 `WorldRpg::apply` handles world commands; item commands are applied to the target
 `CharacterRpg` by the caller, which resolves `Holder` (the Bevy layer owns the holder map).

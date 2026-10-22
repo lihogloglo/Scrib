@@ -187,6 +187,65 @@ fn remove_prefers_unequipped() {
     assert!(lo.is_equipped(worn));
 }
 
+#[test]
+fn split_and_merge_respect_equipment() {
+    let r = rules();
+    let (finger, ammo) = (r.table.id("finger").unwrap(), r.table.id("ammo").unwrap());
+    let mut lo = Loadout::new();
+    let arrows = lo.add(id("arrow"), 20, Attrs::new()).unwrap();
+    lo.equip(arrows, &r).unwrap();
+    // Splitting a quiver leaves the rest equipped; the piece is a plain stack after it.
+    let loose = lo.split(arrows, 5).unwrap();
+    assert_eq!(lo.inventory().stacks()[1].id, loose);
+    assert_eq!((lo.slot(ammo), lo.inventory().get(arrows).unwrap().count), (Some(arrows), 15));
+    assert!(!lo.is_equipped(loose));
+    // Merging the quiver into loose arrows moves the slot with it.
+    assert_eq!(lo.merge_targets(arrows).collect::<Vec<_>>(), [loose]);
+    assert_eq!(lo.merge(arrows, loose).unwrap(), loose);
+    assert_eq!((lo.slot(ammo), lo.inventory().get(loose).unwrap().count), (Some(loose), 20));
+    assert!(lo.inventory().get(arrows).is_none());
+
+    // A worn ring (split-equipped) neither splits nor merges; failures change nothing.
+    let rings = lo.add(id("ring"), 3, Attrs::new()).unwrap();
+    let worn = lo.equip(rings, &r).unwrap().equipped;
+    assert_eq!(lo.slot(finger), Some(worn));
+    let before = lo.clone();
+    assert_eq!(lo.merge(worn, rings), Err(InventoryError::Equipped(worn)));
+    assert_eq!(lo.merge(rings, worn), Err(InventoryError::Equipped(worn)));
+    assert_eq!(lo.split(worn, 1), Err(InventoryError::Equipped(worn)));
+    assert_eq!(lo.merge(rings, rings), Err(InventoryError::SameStack));
+    assert_eq!(lo.merge(rings, loose), Err(InventoryError::NotSameKind(rings, loose)));
+    assert_eq!(lo.merge(rings, StackId(99)), Err(InventoryError::NoStack(StackId(99))));
+    assert!(matches!(lo.split(rings, 2), Err(InventoryError::NotEnough { .. })), "two left: split 1 at most");
+    let piece = lo.split(rings, 1).unwrap();
+    assert_eq!(lo.merge(piece, rings).unwrap(), rings);
+    assert_eq!(lo.count(&id("ring")), before.count(&id("ring")));
+    assert_eq!(lo.inventory().get(rings).unwrap().count, 2);
+    // Different instance data never merges.
+    let worn_out = lo.add(id("ring"), 1, Attrs::new().with("condition", AttrValue::Int(3))).unwrap();
+    assert_eq!(lo.can_merge(worn_out, rings), Err(InventoryError::NotSameKind(worn_out, rings)));
+    round_trip(&lo);
+}
+
+#[test]
+fn stack_commands_emit_events() {
+    let holder = Holder::Player(PlayerId::HOST);
+    let mut pc = CharacterRpg::default();
+    pc.apply(RpgCommand::AddItem { holder, item: id("gold"), count: 10, attrs: Attrs::new() }).unwrap();
+    let gold = pc.loadout.inventory().stacks()[0].id;
+    let split = RpgCommand::SplitStack { holder, stack: gold, count: 4 };
+    assert_eq!(split.holder(), Some(holder));
+    assert_eq!(WorldRpg::default().apply(split.clone()), Err(RpgError::NotAWorldCommand));
+    let ev = pc.apply(split).unwrap();
+    let RpgEvent::StackSplit { source, new, .. } = ev[0] else { panic!("{ev:?}") };
+    assert_eq!((source, pc.loadout.inventory().get(new).unwrap().count), (gold, 4));
+    let merge = RpgCommand::MergeStacks { holder, from: new, into: gold };
+    assert_eq!(pc.apply(merge.clone()).unwrap(), vec![RpgEvent::StacksMerged { holder, from: new, into: gold }]);
+    assert!(matches!(pc.apply(merge), Err(RpgError::Inventory(InventoryError::NoStack(_)))));
+    assert_eq!(pc.loadout.count(&id("gold")), 10);
+    round_trip(&RpgCommand::SplitStack { holder, stack: gold, count: 1 });
+}
+
 // ---------------------------------------------------------------- quests, journal, topics
 
 fn draft(text: &str, day: u32) -> EntryDraft {

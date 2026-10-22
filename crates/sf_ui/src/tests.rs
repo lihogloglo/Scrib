@@ -352,12 +352,14 @@ fn list_filters_and_tracks_versions() {
         search: "A".into(),
         search_fields: vec!["name".into()],
         equals: vec![],
+        one_of: vec![],
     });
     assert_eq!(list.view(), [1, 2, 3, 4], "every name has an 'a'");
     list.set_filter(ListFilter {
         search: "a".into(),
         search_fields: vec!["name".into()],
         equals: vec![("category".into(), "weapon".into())],
+        one_of: vec![],
     });
     assert_eq!(list.view(), [1, 4]);
 

@@ -1,0 +1,13 @@
+[package]
+name = "sf_ui_inventory"
+description = "Bevy-free inventory screen logic for superfargoth: item rows, tabs, sort and search, equipped markers, encumbrance, compare-with-equipped, stack split/merge commands, virtualized list"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sf_rpg.workspace = true
+sf_ui.workspace = true
+
+[lints]
+workspace = true

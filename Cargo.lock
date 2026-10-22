@@ -6574,6 +6574,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_ui_inventory"
+version = "0.1.0"
+dependencies = [
+ "sf_rpg",
+ "sf_ui",
+]
+
+[[package]]
 name = "sf_vfs"
 version = "0.1.0"
 dependencies = [
