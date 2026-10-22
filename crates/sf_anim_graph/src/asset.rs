@@ -537,6 +537,51 @@ pub enum BodyFit {
     Fit,
 }
 
+/// Step length by ground grade (`StrideWarp`): walkers take shorter steps
+/// uphill and longer ones downhill at the same speed, the cadence taking
+/// the rest (owner AN-21). `grade` is rise over run along the travel
+/// (positive uphill), filtered from the ground probes. Zero (the default)
+/// turns it off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GradeStride {
+    /// Stride shortening per unit uphill grade (0.45: 26% shorter at 30°).
+    pub up: f32,
+    /// Stride lengthening per unit downhill grade (0.25: 14% longer at 30°).
+    pub down: f32,
+}
+
+impl GradeStride {
+    /// The stride scale at `grade` (1 on flat ground), within 0.5..=1.5.
+    #[must_use]
+    pub fn scale(self, grade: f32) -> f32 {
+        if grade >= 0.0 { (1.0 - self.up * grade).max(0.5) } else { (1.0 - self.down * grade).min(1.5) }
+    }
+}
+
+/// Trunk pitch by ground grade (`Lean`): forward uphill, slightly back
+/// downhill, a few degrees at most. Radians per unit grade (rise over run
+/// along the travel); zero (the default) turns it off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GradeLean {
+    /// Forward pitch per unit uphill grade.
+    pub up: f32,
+    /// Backward pitch per unit downhill grade.
+    pub down: f32,
+    /// Pitch cap either way, radians.
+    pub max: f32,
+}
+
+impl GradeLean {
+    /// The trunk pitch at `grade`, radians (positive forward).
+    #[must_use]
+    pub fn pitch(self, grade: f32) -> f32 {
+        let p = if grade >= 0.0 { self.up * grade } else { self.down * grade };
+        p.clamp(-self.max, self.max)
+    }
+}
+
 fn lod1() -> u8 {
     1
 }
@@ -552,13 +597,20 @@ fn lod2() -> u8 {
 /// A procedural op. `max_lod` is the last animation LOD it runs at.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OpSpec {
-    /// Playback rate of `Match` players = actual speed / clip speed,
-    /// clamped; stride warping takes the rest.
+    /// Playback rate of `Match` players: the speed ratio (actual speed /
+    /// clip speed) raised to `rate_share`, clamped to `min..=max`; stride
+    /// warping takes the rest (`ratio / rate`) while a `StrideWarp` runs.
+    /// `rate_share` 1 plays the whole ratio as rate (steps keep their
+    /// length at any speed); 0.5 splits it evenly between cadence and step
+    /// length, as people slow down (both shrink, about with the square
+    /// root of the speed).
     SpeedMatch {
         #[serde(default = "speed_min")]
         min: f32,
         #[serde(default = "speed_max")]
         max: f32,
+        #[serde(default = "one")]
+        rate_share: f32,
         #[serde(default = "lod2")]
         max_lod: u8,
     },
@@ -572,6 +624,9 @@ pub enum OpSpec {
         min: f32,
         #[serde(default = "stride_max")]
         max: f32,
+        /// Shorter steps uphill, longer downhill (off by default).
+        #[serde(default)]
+        grade: GradeStride,
         #[serde(default = "lod1")]
         max_lod: u8,
     },
@@ -627,13 +682,16 @@ pub enum OpSpec {
         max_lod: u8,
     },
     /// Rolls joints into turns by lateral acceleration (`gain` radians per
-    /// m/s², each joint its share).
+    /// m/s², each joint its share), and pitches them by the ground grade
+    /// (`grade`, off by default; the same shares).
     Lean {
         joints: Vec<(JointRef, f32)>,
         #[serde(default = "lean_gain")]
         gain: f32,
         #[serde(default = "fifteen_degrees")]
         max_angle: f32,
+        #[serde(default)]
+        grade: GradeLean,
         #[serde(default = "tenth")]
         halflife: f32,
         #[serde(default = "lod1")]

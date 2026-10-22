@@ -5846,6 +5846,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_action_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_enhanced_input",
+ "bevy_input",
+ "bevy_math",
+ "bevy_time",
+ "bevy_transform",
+ "sf_action",
+ "sf_controller",
+ "sf_coords",
+]
+
+[[package]]
 name = "sf_anim"
 version = "0.1.0"
 dependencies = [

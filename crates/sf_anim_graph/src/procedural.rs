@@ -27,14 +27,14 @@
 //! - `FullBodyIk`: several effectors at once (XPBD over the rig profile),
 //!   support limbs pinned where the ops before left them.
 
-use glam::{Affine3A, Quat, Vec3};
+use glam::{Affine3A, Quat, Vec2, Vec3};
 use sf_anim::ik::{Aim, AimJoint, Effector, FullBodyScratch, LimbGoal, LimbSolver, aim_chain, clamp_angle, limb_pole, rotate_joint, solve_limb};
 use sf_anim::spring::{critical_spring, damper};
 use sf_anim::{LocalPose, ModelPose, Skeleton, update_subtree};
 
 use crate::asset::BodyFit;
 use crate::compiled::{CompiledGraph, GirdleSeg, Leg, Op};
-use crate::instance::{FootStats, Params, UpdateInputs};
+use crate::instance::{FootStats, GroundSample, Params, UpdateInputs};
 use crate::secondary::{Hit, HitState, SpringState, hit_react, spring_bones};
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -74,6 +74,8 @@ impl Spring {
 pub(crate) enum OpState {
     None,
     Angle(f32),
+    /// Roll and pitch (`Lean`).
+    Angles(f32, f32),
     /// Per girdle: height offset and roll; per leg its lock; the op's
     /// weight (`None` until the first update sets it without blending).
     Feet {
@@ -97,7 +99,8 @@ pub(crate) enum OpState {
 impl OpState {
     pub(crate) fn new(op: &Op) -> Self {
         match op {
-            Op::OrientationWarp { .. } | Op::SpineBend { .. } | Op::Lean { .. } => Self::Angle(0.0),
+            Op::OrientationWarp { .. } | Op::SpineBend { .. } => Self::Angle(0.0),
+            Op::Lean { .. } => Self::Angles(0.0, 0.0),
             Op::FootPlacement { legs, girdles, .. } => {
                 Self::Feet {
                     girdles: vec![(Spring::default(), Spring::default()); girdles.len()],
@@ -122,6 +125,8 @@ pub(crate) struct ProceduralCx<'a> {
     pub dt: f32,
     pub lod: usize,
     pub stride_ratio: f32,
+    /// Filtered ground grade along the travel (rise over run).
+    pub grade: f32,
     pub anim_velocity: Vec3,
     pub curves: &'a [f32],
     /// Guard counts of `FootPlacement` this update.
@@ -143,6 +148,40 @@ fn translate_joint(skeleton: &Skeleton, local: &mut LocalPose, model: &mut Model
 
 fn horizontal(v: Vec3) -> Vec3 {
     Vec3::new(v.x, 0.0, v.z)
+}
+
+/// Weight of each ground normal against the probe points' spread, m²: the
+/// normals rule on a smooth ramp, the points' heights on stairs (whose
+/// treads are flat).
+const NORMAL_WEIGHT: f32 = 0.01;
+
+/// The ground grade along the travel (rise over run, positive uphill; the
+/// facing, +Z, below 0.1 m/s) from the ground samples, character space: a
+/// least-squares line through the points' heights along the travel, each
+/// walkable normal's own slope counted as an observation of weight
+/// [`NORMAL_WEIGHT`]. `None` without a sample; within ±1 (45°).
+pub(crate) fn ground_grade(ground: &[Option<GroundSample>], velocity: Vec3) -> Option<f32> {
+    let v = Vec2::new(velocity.x, velocity.z);
+    let dir = if v.length() > 0.1 { v.normalize() } else { Vec2::Y };
+    let samples = || ground.iter().flatten().filter(|g| g.point.is_finite() && g.normal.is_finite());
+    #[allow(clippy::cast_precision_loss)]
+    let n = samples().count() as f32;
+    if n < 1.0 {
+        return None;
+    }
+    let along = |g: &GroundSample| Vec2::new(g.point.x, g.point.z).dot(dir);
+    let (ms, my) = samples().fold((0.0, 0.0), |(s, y), g| (s + along(g) / n, y + g.point.y / n));
+    let (mut num, mut den) = (0.0f32, 0.0f32);
+    for g in samples() {
+        let ds = along(g) - ms;
+        num += ds * (g.point.y - my);
+        den += ds * ds;
+        if g.normal.y > 0.5 {
+            num -= NORMAL_WEIGHT * Vec2::new(g.normal.x, g.normal.z).dot(dir) / g.normal.y;
+            den += NORMAL_WEIGHT;
+        }
+    }
+    (den > 1e-6).then(|| (num / den).clamp(-1.0, 1.0)).filter(|g| g.is_finite())
 }
 
 /// The pole of a limb now: its animated bend, else its girdle-space axis.
@@ -318,15 +357,17 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                     rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_y(*angle * w));
                 }
             }
-            (Op::Lean { joints, gain, max_angle, halflife }, OpState::Angle(angle)) => {
+            (Op::Lean { joints, gain, max_angle, grade, halflife }, OpState::Angles(roll, pitch)) => {
                 // Lateral acceleration: positive to the left (+X) leans left, into the turn.
                 let goal = (cx.inputs.acceleration.x * gain).clamp(-*max_angle, *max_angle);
-                *angle = damper(*angle, goal, *halflife, cx.dt);
-                if angle.abs() < 1e-5 {
+                *roll = damper(*roll, goal, *halflife, cx.dt);
+                // Ground grade: forward (+Z over +Y, about +X) uphill, back downhill.
+                *pitch = damper(*pitch, grade.pitch(cx.grade), *halflife, cx.dt);
+                if roll.abs() < 1e-5 && pitch.abs() < 1e-5 {
                     continue;
                 }
                 for &(j, w) in joints {
-                    rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_z(-*angle * w));
+                    rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_z(-*roll * w) * Quat::from_rotation_x(*pitch * w));
                 }
             }
             (Op::LimbIk { limb, target, weight, rotation }, _) => {
@@ -635,5 +676,53 @@ fn foot_placement(
         }
         let tilt = normal.map_or(Quat::IDENTITY, |n| clamp_angle(Quat::from_rotation_arc(Vec3::Y, n), *max_foot_angle));
         solve_leg(s, local, model, leg, target, Some(Quat::IDENTITY.slerp(tilt, w) * rot), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod grade_tests {
+    use glam::Vec3;
+
+    use super::ground_grade;
+    use crate::asset::{GradeLean, GradeStride};
+    use crate::instance::GroundSample;
+
+    fn ramp(deg: f32, xs: &[f32]) -> Vec<Option<GroundSample>> {
+        let (s, c) = deg.to_radians().sin_cos();
+        // Rising along +Z: the normal leans back, toward -Z.
+        xs.iter().map(|&z| Some(GroundSample { point: Vec3::new(0.1, z * s / c, z), normal: Vec3::new(0.0, c, -s) })).collect()
+    }
+
+    #[test]
+    fn grade_reads_ramps_stairs_and_flat_along_the_travel() {
+        let forward = Vec3::new(0.0, 0.0, 1.4);
+        assert_eq!(ground_grade(&ramp(0.0, &[-0.3, 0.2, 0.0, 0.4]), forward), Some(0.0));
+        for deg in [10.0f32, 20.0, 30.0] {
+            let g = ground_grade(&ramp(deg, &[-0.3, 0.2, -0.1, 0.4]), forward).unwrap();
+            assert!((g - deg.to_radians().tan()).abs() < 1e-4, "{deg}°: {g}");
+            // Walking down it, and across it.
+            let down = ground_grade(&ramp(deg, &[-0.3, 0.2]), -forward).unwrap();
+            assert!((down + deg.to_radians().tan()).abs() < 1e-4, "{deg}° down: {down}");
+            let across = ground_grade(&ramp(deg, &[-0.3, 0.2]), Vec3::new(1.4, 0.0, 0.0)).unwrap();
+            assert!(across.abs() < 1e-4, "{deg}° across: {across}");
+        }
+        // Stairs (rise 0.15 per 0.3 tread, flat treads): the heights carry the grade, the
+        // flat normals pull it down only a little.
+        let tread = |z: f32| Some(GroundSample { point: Vec3::new(0.0, (z / 0.3).floor() * 0.15, z), normal: Vec3::Y });
+        let g = ground_grade(&[tread(-0.35), tread(0.05), tread(0.4), tread(0.7)], forward).unwrap();
+        assert!((0.4..=0.6).contains(&g), "stairs: {g}");
+        assert_eq!(ground_grade(&[None, None], forward), None);
+    }
+
+    #[test]
+    fn grade_scales_stride_and_pitch_within_caps() {
+        let (stride, lean) = (GradeStride { up: 0.45, down: 0.25 }, GradeLean { up: 0.12, down: 0.06, max: 0.07 });
+        let g30 = 30f32.to_radians().tan();
+        assert!((stride.scale(0.0) - 1.0).abs() < 1e-6 && lean.pitch(0.0).abs() < 1e-6);
+        assert!(stride.scale(g30) < stride.scale(0.1) && stride.scale(0.1) < 1.0);
+        assert!(stride.scale(-g30) > stride.scale(-0.1) && stride.scale(-0.1) > 1.0);
+        assert!(lean.pitch(g30) > 0.0 && lean.pitch(g30) <= 0.07 && lean.pitch(-g30) < 0.0 && lean.pitch(-g30) > -lean.pitch(g30));
+        assert!(lean.pitch(1.0) <= 0.07 + 1e-6 && lean.pitch(-1.0) >= -0.07 - 1e-6);
+        assert!((GradeStride::default().scale(g30) - 1.0).abs() < 1e-6 && GradeLean::default().pitch(g30).abs() < 1e-6);
     }
 }

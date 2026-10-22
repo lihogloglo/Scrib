@@ -62,6 +62,9 @@ pub struct CookParams {
     /// Extra chains shorter than this fraction of the height get no bodies (jaws, ears).
     pub min_extra_chain: f32,
     pub overrides: Vec<BodyOverride>,
+    /// Anatomical swing ranges of limb roots and the neck (AN-20).
+    #[serde(default)]
+    pub ranges: JointRanges,
 }
 
 impl Default for CookParams {
@@ -79,6 +82,7 @@ impl Default for CookParams {
             chain_radius: 0.2,
             min_extra_chain: 0.15,
             overrides: Vec::new(),
+            ranges: JointRanges::default(),
         }
     }
 }
@@ -102,6 +106,11 @@ pub enum RagdollError {
     NoCore,
 }
 
+/// The region name of the spine bodies (pelvis to chest).
+pub const CORE_REGION: &str = "core";
+/// The region name of the neck-and-head body.
+pub const HEAD_REGION: &str = "head";
+
 fn deg(d: f32) -> f32 {
     d * PI / 180.0
 }
@@ -114,7 +123,67 @@ const SPINE_SWING_DEG: f32 = 15.0;
 const SPINE_TWIST_DEG: f32 = 15.0;
 
 fn ball(swing: f32, twist: f32) -> RagJointKind {
-    RagJointKind::Ball { swing: [deg(swing), deg(swing)], twist: [-deg(twist), deg(twist)] }
+    RagJointKind::Ball { swing: [[-deg(swing), deg(swing)]; 2], twist: [-deg(twist), deg(twist)] }
+}
+
+/// An anatomical ball joint's ranges, degrees, from the rest pose: `forward`/`back` swing
+/// the bone toward the character's front or back (flexion, extension), `out`/`inward`
+/// away from or toward the midline (abduction, adduction), `twist` either way.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Swing {
+    pub forward: f32,
+    pub back: f32,
+    pub out: f32,
+    pub inward: f32,
+    pub twist: f32,
+}
+
+/// Knee and elbow hyperextension past straight, degrees. Normal adult range of motion
+/// (AAOS, Greene & Heckman, *Clinical Measurement of Joint Motion*, 1994): elbow 0-10°
+/// hyperextension, knee 0-10° (genu recurvatum past that); a limp body sits at the loose
+/// end. 5° caught a 300 N·s knockdown's elbow 7.6° past it (AN-20).
+pub const HYPEREXTENSION: f32 = 10.0;
+/// Anatomical ranges per joint kind (data-overridable through [`CookParams::ranges`];
+/// a [`BodyOverride::kind`] still replaces one joint). Defaults sit inside human active
+/// ranges (hip flexion ~120°, extension ~20°, abduction ~45°; shoulder flexion ~180°,
+/// extension ~50°): a limp body is looser than a living one only where it is loose.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct JointRanges {
+    /// Arm and wing roots.
+    pub shoulder: Swing,
+    /// Leg roots.
+    pub hip: Swing,
+    /// The neck base (the head body).
+    pub neck: Swing,
+}
+
+impl Default for JointRanges {
+    fn default() -> Self {
+        Self {
+            shoulder: Swing { forward: 90.0, back: 30.0, out: 80.0, inward: 30.0, twist: 45.0 },
+            hip: Swing { forward: 80.0, back: 15.0, out: 35.0, inward: 10.0, twist: 20.0 },
+            neck: Swing { forward: 45.0, back: 30.0, out: 30.0, inward: 30.0, twist: 30.0 },
+        }
+    }
+}
+
+/// An anatomical ball joint for `bone` (model space; the character faces +Z): frame X
+/// along the bone, Z = bone × forward (a positive swing about Z turns the bone forward:
+/// flexion), Y across both (a positive swing about Y turns the bone toward -Z).
+/// `outward` (from the midline) signs abduction; without one the side ranges are symmetric.
+fn anatomical(bone: Vec3, outward: Option<Vec3>, r: &Swing) -> (RagJointKind, Quat) {
+    let b = bone.normalize_or(Vec3::NEG_Y);
+    let forward = if b.dot(Vec3::Z).abs() > 0.95 { Vec3::Y } else { Vec3::Z };
+    let z = b.cross(forward).normalize();
+    let frame = Quat::from_mat3(&Mat3::from_cols(b, z.cross(b), z)).normalize();
+    let flex = [-deg(r.back), deg(r.forward)];
+    let o = outward.map(|o| o - b * b.dot(o)).filter(|o| o.length() > 1e-3);
+    let side = match o {
+        Some(o) if (-z).dot(o) >= 0.0 => [-deg(r.inward), deg(r.out)],
+        Some(_) => [-deg(r.out), deg(r.inward)],
+        None => [-deg(r.out.max(r.inward)), deg(r.out.max(r.inward))],
+    };
+    (RagJointKind::Ball { swing: [side, flex], twist: [-deg(r.twist), deg(r.twist)] }, frame)
 }
 
 /// A body before masses and frames.
@@ -271,7 +340,7 @@ impl Builder<'_> {
         for w in &mut widths {
             w.get_or_insert(fill);
         }
-        let region = self.region("core");
+        let region = self.region(CORE_REGION);
         for (i, &joint) in picks.iter().enumerate() {
             let start = self.pos[usize::from(joint)];
             let end = match (picks.get(i + 1), neck_base) {
@@ -322,8 +391,9 @@ impl Builder<'_> {
         let start = self.pos[usize::from(base)];
         let end = self.pos[head] + dir * head_len;
         let len = start.distance(end).max(1e-3);
-        let region = self.region("head");
-        self.push_bone(base, start, end, (0.4 * head_len / len).min(0.5), region, ball(45.0, 45.0), None);
+        let region = self.region(HEAD_REGION);
+        let (kind, frame) = anatomical(end - start, None, &self.params.ranges.neck);
+        self.push_bone(base, start, end, (0.4 * head_len / len).min(0.5), region, kind, Some(frame));
     }
 
     fn limbs(&mut self, profile: &RigProfile) {
@@ -361,14 +431,21 @@ impl Builder<'_> {
                 };
                 let hinge_kind = matches!(limb.kind, LimbKind::Leg(_) | LimbKind::Arm | LimbKind::Wing);
                 let (kind, frame) = if i == 0 {
-                    let k = match limb.kind {
-                        LimbKind::Arm | LimbKind::Wing => ball(95.0, 60.0),
-                        LimbKind::Leg(_) => ball(70.0, 40.0),
-                        LimbKind::Fin | LimbKind::Tentacle => ball(45.0, 30.0),
-                    };
-                    (k, None)
+                    let outward = start - self.pos[usize::from(profile.girdle_joint(limb))];
+                    let outward = (limb.side != Side::Center).then_some(outward);
+                    match limb.kind {
+                        LimbKind::Arm | LimbKind::Wing => {
+                            let (k, f) = anatomical(bone, outward, &self.params.ranges.shoulder);
+                            (k, Some(f))
+                        }
+                        LimbKind::Leg(_) => {
+                            let (k, f) = anatomical(bone, outward, &self.params.ranges.hip);
+                            (k, Some(f))
+                        }
+                        LimbKind::Fin | LimbKind::Tentacle => (ball(45.0, 30.0), None),
+                    }
                 } else if effector || !hinge_kind {
-                    (ball(50.0, 25.0), None)
+                    (ball(35.0, 15.0), None)
                 } else {
                     // Knee, elbow, hock: bend further the way the rest pose bends,
                     // else knees back, elbows forward, alternating down a leg.
@@ -392,7 +469,7 @@ impl Builder<'_> {
                         (axis, 0.0)
                     };
                     hinges += 1;
-                    let lo = -(bent + deg(5.0));
+                    let lo = -(bent + deg(HYPEREXTENSION));
                     let hi = (deg(150.0) - bent).max(deg(5.0));
                     (RagJointKind::Hinge { range: [lo, hi] }, Some(frame_hinge(axis, bone)))
                 };
@@ -533,6 +610,17 @@ pub fn cook(skeleton: &Skeleton, profile: &RigProfile, params: &CookParams) -> R
         }
     }
     debug_assert_eq!(bodies[0].joint, root_joint);
+    // The core chain (pelvis, spine) carries the limbs: no core body lighter than its heaviest
+    // child. A small pelvis capsule under two heavy thighs was the lightest body of the tree,
+    // and its joints gave way under a hit (AN-18: the torso spun, the spine broke its limits).
+    if let Some(core) = regions.iter().position(|r| r == CORE_REGION) {
+        for i in (1..bodies.len()).rev() {
+            let p = usize::from(bodies[i].parent.expect("non-root"));
+            if usize::from(bodies[p].region) == core {
+                bodies[p].mass = bodies[p].mass.max(bodies[i].mass);
+            }
+        }
+    }
     // Mass balancing down the tree, then the adapter's total.
     for i in 1..bodies.len() {
         let p = usize::from(bodies[i].parent.expect("non-root"));

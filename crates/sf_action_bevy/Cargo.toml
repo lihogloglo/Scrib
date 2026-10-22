@@ -1,0 +1,26 @@
+[package]
+name = "sf_action_bevy"
+description = "Thin Bevy shell for sf_action: per-local-player command sampling from bevy_enhanced_input, the chooser and the batched kinematic mover on the fixed tick, transform interpolation and the render-body correction spring (action.md A2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): the decisions live in `sf_action`, the motion in
+# `sf_controller`. No `sf_controller_bevy` (it pulls the animation crates); the animation feed for
+# action-driven characters joins in A2 slice 2.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+sf_action.workspace = true
+sf_controller.workspace = true
+sf_coords.workspace = true
+
+[dev-dependencies]
+bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
+
+[lints]
+workspace = true

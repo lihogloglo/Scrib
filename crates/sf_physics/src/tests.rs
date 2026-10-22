@@ -101,9 +101,9 @@ pub(crate) fn ragdoll_with(
         let kind = match i {
             5 | 8 => JointKind::Hinge { range: [-150f32.to_radians(), 0.0] },
             11 | 14 => JointKind::Hinge { range: [0.0, 150f32.to_radians()] },
-            6 | 9 | 12 => JointKind::Ball { swing: [0.6, 0.6], twist: [-0.3, 0.3] },
-            4 | 7 | 10 | 13 => JointKind::Ball { swing: [80f32.to_radians(), 60f32.to_radians()], twist: [-0.7, 0.7] },
-            _ => JointKind::Ball { swing: [0.5, 0.5], twist: [-0.5, 0.5] },
+            6 | 9 | 12 => JointKind::Ball { swing: [[-0.6, 0.6]; 2], twist: [-0.3, 0.3] },
+            4 | 7 | 10 | 13 => JointKind::Ball { swing: [[-80f32.to_radians(), 80f32.to_radians()], [-60f32.to_radians(), 60f32.to_radians()]], twist: [-0.7, 0.7] },
+            _ => JointKind::Ball { swing: [[-0.5, 0.5]; 2], twist: [-0.5, 0.5] },
         };
         let desc = JointDesc {
             parent: bodies[p],

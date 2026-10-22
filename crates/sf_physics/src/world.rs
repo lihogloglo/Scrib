@@ -10,6 +10,7 @@ use glam::{IVec3, Quat, Vec3};
 use rapier3d::dynamics::{LockedAxes, RigidBody, RigidBodyActivation, RigidBodyBuilder, RigidBodyHandle, RigidBodySet, RigidBodyType, SoftBodySet, SoftBodyTearEvent};
 use rapier3d::geometry::{ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent, ContactPair};
 use rapier3d::math::Pose;
+use rapier3d::parry::mass_properties::MassProperties;
 use rapier3d::pipeline::{ActiveEvents, ActiveHooks, EventHandler, PairFilterContext, PhysicsHooks, PhysicsWorld as Engine};
 use rapier3d::geometry::SolverFlags;
 use sf_coords::{GRID_CELL, WorldPos, WorldTransform};
@@ -291,7 +292,14 @@ impl PhysicsWorld {
             let mass = desc.mass.unwrap_or_else(|| shape.mass_properties(p.density).mass());
             // Ragdoll bodies keep their cooked mass (a guar's torso is far over the item range).
             let mass = if desc.layer.contains(Layer::RAGDOLL) { mass.max(0.01) } else { mass.clamp(p.mass_range.0, p.mass_range.1) };
-            cb = cb.mass(mass);
+            if desc.min_inertia > 0.0 {
+                let mut mp = shape.mass_properties(1.0);
+                mp.set_mass(mass, true);
+                let inertia = mp.principal_inertia().max(Vec3::splat(desc.min_inertia));
+                cb = cb.mass_properties(MassProperties::with_principal_inertia_frame(mp.local_com, mass, inertia, mp.principal_inertia_local_frame));
+            } else {
+                cb = cb.mass(mass);
+            }
             let aabb = shape.compute_local_aabb();
             if (aabb.maxs - aabb.mins).min_element() < p.thin_extent {
                 cb = cb.contact_skin(p.thin_skin);

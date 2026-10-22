@@ -158,13 +158,13 @@ pub trait CharacterContent: Send + Sync + 'static {
 }
 
 /// How segmented bodies are drawn (smooth-bodies.md; owner decision
-/// 2026-10-12: smooth by default, vanilla as an option).
+/// 2026-10-22: vanilla by default, smooth opt-in until it works; was smooth by default).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SmoothBodies {
     /// Seams welded and weights blended across joints (`sf_character::smooth_outfit`).
-    #[default]
     Smooth,
     /// The parts as authored: rigid pieces, seams open when joints bend.
+    #[default]
     Vanilla,
 }
 

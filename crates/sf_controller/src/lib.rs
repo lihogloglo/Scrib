@@ -30,6 +30,7 @@
 
 mod avoid;
 mod context;
+mod correction;
 mod frame;
 mod intent;
 mod motion;
@@ -45,6 +46,7 @@ mod trajectory;
 
 pub use avoid::{AvoidAgent, AvoidParams, AvoidRole, Avoidance};
 pub use context::{Affordance, ContextHit, ContextParams, ContextProbes, ContextQuery, ContextRequest, Side};
+pub use correction::{CorrectionParams, RenderCorrection};
 pub use frame::CharacterFrame;
 pub use intent::{Gait, GaitSpeeds, LocomotionIntent};
 pub use motion::{MotionState, SpringParams, forward, spring_character, spring_yaw, wrap_angle};

@@ -152,19 +152,16 @@ pub struct ClipMeta {
     pub unbound_joints: Vec<String>,
 }
 
-/// How far the stance feet's speed may differ from the root's before
-/// speed matching uses the feet's ([`ClipMeta::stride_velocity`]).
-pub const STRIDE_TOLERANCE: f32 = 0.20;
-
 impl ClipMeta {
     /// The velocity speed matching plays this clip by: the planted feet's
-    /// ([`ClipMeta::stance_velocity`]) where it differs from the root's by
-    /// more than [`STRIDE_TOLERANCE`] (sidesteps and backpedals whose root
-    /// outruns their feet, so a foot lock would drift), else the root's.
+    /// ([`ClipMeta::stance_velocity`]) where measured, else the root's. A
+    /// foot lock holds a foot against the body moving at this speed, so any
+    /// gap to the feet's own speed drifts the lock (a 10% gap held it
+    /// 15-30 cm off, AN-16); a contact-consistent root track (AN-19) makes
+    /// the stance speed exact.
     #[must_use]
     pub fn stride_velocity(&self) -> Vec3 {
-        let (root, feet) = (self.average_velocity, self.stance_velocity);
-        if feet != Vec3::ZERO && (feet.length() - root.length()).abs() > STRIDE_TOLERANCE * root.length() { feet } else { root }
+        if self.stance_velocity == Vec3::ZERO { self.average_velocity } else { self.stance_velocity }
     }
 }
 

@@ -11,7 +11,7 @@ use sf_anim::ik::FullBody;
 use sf_anim::{JointWeights, LimbSolver, RootMotionMode, SkeletonId};
 use sf_bake::ProductKey;
 
-use crate::asset::{Axis, BodyFit, FootGuards, LayerMode, SyncRole};
+use crate::asset::{Axis, BodyFit, FootGuards, GradeLean, GradeStride, LayerMode, SyncRole};
 
 /// A compiled number: constant or a parameter component.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -413,6 +413,7 @@ pub enum Op {
     SpeedMatch {
         min: f32,
         max: f32,
+        rate_share: f32,
     },
     StrideWarp {
         pelvis: u16,
@@ -420,6 +421,7 @@ pub enum Op {
         girdles: Vec<GirdleSeg>,
         min: f32,
         max: f32,
+        grade: GradeStride,
     },
     OrientationWarp {
         pelvis: u16,
@@ -453,6 +455,7 @@ pub enum Op {
         joints: Vec<(u16, f32)>,
         gain: f32,
         max_angle: f32,
+        grade: GradeLean,
         halflife: f32,
     },
     /// A limb (from the table, or a `HandIk` triple) to an IK target slot.
@@ -587,7 +590,7 @@ pub struct CompiledGraph {
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 5;
+pub const GRAPH_FORMAT: u32 = 6;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]

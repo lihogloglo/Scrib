@@ -415,7 +415,9 @@ fn root_motion_is_extracted() {
     let mut src = walk_source();
     // Turn while walking: 0.5 rad over the clip.
     src.tracks.push(rot("root", |t| Quat::from_rotation_y(0.5 * t)));
-    let rules = ClipRules { looping: Looping::Whole, ..ClipRules::default() };
+    // Extraction alone: the contact-consistent root (AN-19) re-derives a stance root on purpose.
+    let contacts = ContactRules { root_blend: 0.0, ..ContactRules::default() };
+    let rules = ClipRules { looping: Looping::Whole, contacts, ..ClipRules::default() };
     let clip = cook(&s, &src, &rules);
     assert!(clip.meta.max_error <= 1e-4, "error {}", clip.meta.max_error);
     let (p, yaw) = clip.root_at(1.0);
@@ -1446,11 +1448,13 @@ fn skating_keyframed_steps_still_plant_each_foot() {
 }
 
 #[test]
-fn stride_speed_follows_the_feet_only_where_they_differ_from_the_root() {
+fn stride_speed_follows_the_feet_where_measured() {
     let meta = |root: f32, feet: f32| ClipMeta { average_velocity: Vec3::Z * root, stance_velocity: Vec3::Z * feet, ..ClipMeta::default() };
-    // Unmeasured, or within the tolerance (forward gaits): the root's.
+    // Unmeasured: the root's; measured, the feet's, however close (a lock drifts by any gap).
     assert_eq!(meta(1.7, 0.0).stride_velocity(), Vec3::Z * 1.7);
-    assert_eq!(meta(2.2, 1.97).stride_velocity(), Vec3::Z * 2.2);
+    assert_eq!(meta(1.41, 1.45).stride_velocity(), Vec3::Z * 1.45);
+    // A forward walk whose keyframed feet skate 10% (AN-16: the lock drifted 30 cm): the feet's.
+    assert_eq!(meta(2.2, 1.97).stride_velocity(), Vec3::Z * 1.97);
     // A sidestep whose root outruns its planted feet: the feet's.
     assert_eq!(meta(1.72, 0.92).stride_velocity(), Vec3::Z * 0.92);
 }

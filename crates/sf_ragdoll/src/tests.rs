@@ -319,7 +319,7 @@ fn cloth_colliders_below_the_waist() {
 fn spine_segments_allow_only_a_little_bend_and_twist() {
     let (s, d) = human();
     let rest = s.rest_model();
-    let core = d.regions.iter().position(|r| r == "core").expect("core region");
+    let core = d.regions.iter().position(|r| r == crate::CORE_REGION).expect("core region");
     let mut segments = 0;
     let (mut swing_sum, mut twist_sum) = (0.0f32, 0.0f32);
     for j in d.joints.iter().filter(|j| usize::from(d.bodies[usize::from(j.child)].region) == core) {
@@ -334,10 +334,10 @@ fn spine_segments_allow_only_a_little_bend_and_twist() {
             let a = jr * body.local.1 * j.frame_child.1 * across;
             assert!(a.dot(axis).abs() < 1e-3, "{}: swing axis {a} not across {axis}", s.name(usize::from(body.joint)));
         }
-        assert!(swing[0] <= 15f32.to_radians() && swing[1] <= 15f32.to_radians(), "{swing:?}");
+        assert!(swing.iter().flatten().all(|a| a.abs() <= 15f32.to_radians()), "{swing:?}");
         assert!(twist[1] <= 15f32.to_radians() && twist[0] >= -15f32.to_radians(), "{twist:?}");
         segments += 1;
-        swing_sum += swing[0];
+        swing_sum += swing[0][1];
         twist_sum += twist[1];
     }
     assert!(segments >= 1, "no spine joints");

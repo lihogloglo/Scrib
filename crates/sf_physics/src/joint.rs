@@ -24,9 +24,10 @@ pub enum JointSolver {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JointKind {
-    /// Rotation limited by swing half-angles about the frame's Y and Z axes
-    /// and a twist range about X, radians.
-    Ball { swing: [f32; 2], twist: [f32; 2] },
+    /// Rotation limited by swing ranges [min, max] about the frame's Y and Z axes
+    /// (asymmetric for anatomical joints: a hip flexes far, extends little) and a
+    /// twist range about X, radians.
+    Ball { swing: [[f32; 2]; 2], twist: [f32; 2] },
     /// Rotation about the frame's X axis within `range`, radians.
     Hinge { range: [f32; 2] },
     Fixed,
@@ -90,8 +91,8 @@ fn build(desc: &JointDesc) -> GenericJoint {
         JointKind::Ball { swing, twist } => {
             b = b
                 .limits(JointAxis::AngX, twist)
-                .limits(JointAxis::AngY, [-swing[0], swing[0]])
-                .limits(JointAxis::AngZ, [-swing[1], swing[1]]);
+                .limits(JointAxis::AngY, swing[0])
+                .limits(JointAxis::AngZ, swing[1]);
         }
         JointKind::Hinge { range } => b = b.limits(JointAxis::AngX, range),
         JointKind::Fixed | JointKind::Free => {}

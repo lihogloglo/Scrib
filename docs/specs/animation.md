@@ -916,6 +916,11 @@ a few goals.
 - `Lean` and `SpineBend` ops (procedural, from `LocomotionParams`
   acceleration and turn rate): bipeds lean into turns, quadrupeds bend the
   spine with the head leading (Frey, GDC 2016).
+- Grade-aware gait (AN-21, as built): `StrideWarp.grade` and `Lean.grade` read the graph's filtered
+  ground grade (`GraphOutput::grade`, rise over run along the travel, from the probes). Biomechanics:
+  at a fixed speed people shorten their steps and raise the cadence uphill and lean the trunk forward a
+  few degrees (backward slightly downhill); UE/Lyra cover slopes only with foot placement, so the stride
+  and lean terms are ours. Lean joints must sit above the leg branch (biped thighs hang off the spine).
 
 **Verification.** Reachable effectors within 1 cm after 10 iterations;
 unreachable ones clamp without flips; joint limits never exceeded;

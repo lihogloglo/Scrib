@@ -73,3 +73,36 @@ AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the ca
 - **AN-14 Dead stays dead:** fixed AF2-1 (a live knockdown ragdoll ignored the host's replaced death request; it now goes to the controller's terminal Dead). an actor killed while knocked down must not stand up.
 - **AN-15 Creature collision from several primitives** (industry standard, e.g. per-girdle shapes) so
   quadrupeds stand correctly on slopes; replaces the single oversized capsule/cylinder.
+
+## Owner pass 2026-10-22, third (after AN-9): open issues
+
+- **AN-16 Fargoth takes ridiculously long strides:** fixed af3-gait (`SpeedMatch` put the whole speed ratio into play rate, so steps never shortened: the MW male walk, 1.1 m steps made for 2.1 m/s, played at 0.64x at 1.4 m/s; and its feet skate 10% under the root, inside the old 20% `STRIDE_TOLERANCE`, so the lock drifted 30 cm. Now `rate_share` 0.5 splits the ratio between cadence and stride warp, bounded by the warp's limits; tolerance 5%). Awaiting owner. Left: male/beast walk lock drift still ~12 cm mean (clip skate within the stance), not chased.
+- **AN-17 Elone walks stiff, jolting every step:** fixed af3-gait (the female walk's left `contact` dropped for one frame at the loop seam: two plants per step, the lock released mid stance; the cook now closes seam gaps up to `ContactRules::gap` 0.05 s, `anim.cook` v7). Awaiting owner. Lead: the beast walk's left heel-off falls on the seam, so `roll_frames` (wraps the whole clip, not the cycle) gives that foot no toe pin.
+- **AN-19 Per-step jolt on the MW male and beast walks:** fixed af3-skate (awaiting owner). Two clip defects, both
+  turned into lock drift (12-19 cm per stance, released as a whip): the extracted root carried the hips' yaw swing
+  (male ±17°, beast ±13°), so the rootlocal body turned about the capsule and swung the planted foot; and the stance
+  feet moved unevenly against the root. Fix in the cook (`contact_root`, `anim.cook` v8), the root half of footskate
+  cleanup (Kovar, Schreiner & Gleicher 2002, as motion-matching data prep re-derives the root): a travelling loop's
+  heading is its yaw averaged over a cycle, and in stance the planar root moves with the pinned point (heel, toe while
+  rolling) plus one constant `u` that closes the loop, so the planted foot moves back at exactly `u`, which becomes the
+  stance velocity; double support hands over by trapezoid weights (`ContactRules::root_blend` 0.1 s). Chosen over leg
+  IK (Kovar's other half) because the runtime foot lock already does the IK and needed only a consistent root, and
+  over a time warp (would re-time events, curves, markers). `stride_velocity` is now the feet's whenever measured
+  (5% tolerance dropped). Clip-space drift per stance: male 2.4/0.8, beast 2.0/4.5, female 2.9/4.3 cm (was 13-19,
+  16-21, 5); sim lock drift mean 1.2-1.6 cm (was 12), foot peak = authored (no release spike). Left: sim max drift
+  9-12 cm (start transition?), recook at the chosen rate may exceed the 0.1 mm error bound slightly, beast left foot
+  toe pin on the seam (not addressed), strafes not gated.
+- **AN-18 Ragdoll torso spins, limbs too free.** **Fixed AF3 (awaiting owner):** not the drives or the limit axes: the pelvis
+- AN-20 (ragdoll looseness, in progress): AN-18's inertia floor on every body made limbs 3-12x harder to swing (knockdown arms 28° vs 44° with shape inertia, head 11° vs 32°; stagger 3° vs 12°) and the drive gains ignored it. Now: floor on core and end bodies only, mid-limbs keep shape inertia plus a long-axis lift, gains count the floored inertia, 16 limp iterations; anatomical asymmetric hip/shoulder/neck ranges (`CookParams::ranges`, ragdoll.cook v4). Gate `hits_leave_limbs_loose`. Open: 4 tests red (see .sessions anim-fixes-3 af3-stiff).
+  was the lightest body (2.9 kg, inertia ~0.005 kg·m² under two 9.9 kg thighs), so the joint rows were ill-conditioned and
+  limits gave way (spine 25° past its 15° limit at a 120 N·s chest hit, 95° and stuck flipped at 300). Now core bodies weigh
+  at least their heaviest child (cook, `ragdoll.cook` v3) and every body gets an inertia floor `mass · reach²` (inertia
+  conditioning, `RagdollSettings::inertia_floor`, `sf_physics` `BodyDesc::min_inertia`); limb cones tightened (arms 80/45,
+  legs 60/20, hands/feet 35/15, head 40/30). Test `falls_keep_joints_in_limits_and_the_torso_from_spinning`.
+  Open: asymmetric swing ranges with anatomical frames (hip flexion vs extension, shoulder), data-overridable per limb kind.
+- **AN-21 Slope-aware walking (owner: shorter steps uphill, longer down, a subtle lean).** Done af3-slope (awaiting owner):
+  the graph filters the ground grade along the travel from the probes (least squares through the hits' heights plus their
+  normals, half-life 0.25 s; `GraphOutput::grade`); `StrideWarp.grade` (up 0.45, down 0.25) scales the stride, SpeedMatch's
+  cadence takes the rest (`rate_share` untouched); `Lean.grade` pitches chest/neck (0.12/0.06 rad per unit grade, cap 4°).
+  30° male walk: step 1.01 -> 0.75 m up, 1.15 m down; trunk +2.5°/-1.2°; feet within 2 cm. Graph format 6.
+  Left: path/AI speed vs grade (locomotion.md owns no grade hook; Tobler-style factor proposed), stairs (5b).

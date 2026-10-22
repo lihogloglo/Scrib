@@ -135,14 +135,43 @@ pub struct ContactRules {
     /// Heel-off, leg lengths per second: a stance ends where its foot's
     /// last rise faster than this begins (in the stance's second half).
     pub lift: f32,
+    /// Debounce, seconds: a contact gap this short at a loop's seam, between
+    /// two planted runs, is closed (the seam's velocity spike doesn't release
+    /// the foot mid stance).
+    #[serde(default = "default_contact_gap")]
+    pub gap: f32,
+    /// Contact-consistent root motion (footskate cleanup), seconds: a
+    /// travelling loop's planar root track is re-derived so its planted
+    /// feet move against the body at one constant speed (what speed
+    /// matching plays it by), each stance's weight ramping in and out over
+    /// this long. 0 keeps the extracted track.
+    #[serde(default = "default_root_blend")]
+    pub root_blend: f32,
 }
 
 impl Default for ContactRules {
     /// 6% and 35% of the leg to plant, twice that to lift: about 5 cm and
     /// 0.3 m/s (11 cm, 0.63 m/s) on a 0.9 m human leg; heel-off from 5 cm/s up.
     fn default() -> Self {
-        Self { enabled: true, feet: Vec::new(), height: 0.06, speed: 0.35, release: 2.0, lift: 0.06 }
+        Self {
+            enabled: true,
+            feet: Vec::new(),
+            height: 0.06,
+            speed: 0.35,
+            release: 2.0,
+            lift: 0.06,
+            gap: default_contact_gap(),
+            root_blend: default_root_blend(),
+        }
     }
+}
+
+fn default_contact_gap() -> f32 {
+    0.05
+}
+
+fn default_root_blend() -> f32 {
+    0.1
 }
 
 /// Leg length assumed for a contact joint with no leg above it (a bare
@@ -342,8 +371,7 @@ pub fn cook_clip_for(
     if !pass.exact {
         pass.cook(skeleton, &source.name, settings, f32::INFINITY);
     }
-    let Pass { clip, source_frames, .. } = pass;
-    let mut clip = clip.expect("cooked");
+    let mut clip = pass.clip.take().expect("cooked");
     let n = clip.frame_count as usize;
 
     // Curves, events, markers, loop range: shift from source time.
@@ -365,7 +393,29 @@ pub fn cook_clip_for(
         root_meta(&mut clip);
     }
     if rules.contacts.enabled && rules.additive.is_none() && n >= 2 {
-        contacts(skeleton, profile, &source_frames, &mut clip, &rules.contacts);
+        contacts(skeleton, profile, &pass.source_frames, &mut clip, &rules.contacts);
+        let fix = rm_joint.zip(contact_root(skeleton, profile, &pass.source_frames, &clip, &rules.contacts));
+        if let Some((rm, (track, stance))) = fix {
+            // Re-root the cooked frames on the contact-consistent track (the
+            // model poses don't change) and quantize them again.
+            let old = clip.root_motion.as_ref().expect("contact_root needs a track");
+            reroot(skeleton, &mut pass.frames, rm, old, &track);
+            pass.root_motion = Some(RootMotionTrack { frames: track, attitude: old.attitude.clone() });
+            pass.cook(skeleton, &source.name, settings, f32::INFINITY);
+            let mut fresh = pass.clip.take().expect("cooked");
+            fresh.curves = std::mem::take(&mut clip.curves);
+            fresh.events = std::mem::take(&mut clip.events);
+            fresh.markers = std::mem::take(&mut clip.markers);
+            fresh.loop_range = clip.loop_range;
+            let max_error = fresh.meta.max_error;
+            fresh.meta = std::mem::take(&mut clip.meta);
+            fresh.meta.max_error = max_error;
+            if let Some(u) = stance {
+                fresh.meta.stance_velocity = u;
+            }
+            clip = fresh;
+            root_meta(&mut clip);
+        }
     }
     clip.markers.sort_by(|a, b| a.time.total_cmp(&b.time));
     Ok(clip)
@@ -1262,6 +1312,8 @@ fn contacts(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[
                 *p = state;
             }
         }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        fill_seam_gaps(&mut planted, loop_frames, (rules.gap / dt).round() as usize);
         trim_heel_off(&mut planted, rise, lift);
         let toe_v = (toe_positions[i].len() == n).then(|| foot_velocities(&toe_positions[i], dt).0);
         // The heel roll: after heel-off the toe is still down (same trigger
@@ -1338,6 +1390,162 @@ fn stance_velocity(root: Vec3, slide: Vec3, count: u32) -> Vec3 {
     if stance.dot(root) > 0.0 && stance.length() > 0.25 * root.length() { stance } else { Vec3::ZERO }
 }
 
+/// Contact-consistent root motion ([`ContactRules::root_blend`]): the
+/// root half of footskate cleanup (Kovar, Schreiner & Gleicher 2002), as
+/// motion-matching data prep does it. Keyframed walks skate: their planted
+/// feet move over the source's ground, unevenly within a stance, so a body
+/// moving at a constant speed (the capsule) leaves a foot lock up to 20 cm
+/// off its animation by heel-off, and the release whips the foot (AN-19).
+/// Here the planar root velocity during stance becomes the pinned point's
+/// own velocity (the heel while `contact` is up, as the foot lock holds it;
+/// the toe while `roll` is) plus one constant `u`: in the root's frame the
+/// planted foot then moves back at exactly `u`, and the body travels over
+/// it as authored. Double support hands over between the feet by
+/// trapezoid weights ramping over `root_blend`; unpinned frames (a run's
+/// flight) keep the extracted motion, faded in over the same time. `u` closes the loop (the cycle's displacement is
+/// kept) and is returned as the clip's stance velocity (only with stance
+/// over at least a quarter of the cycle). The heading is low-passed too:
+/// see the end. Travelling loops with a root track only.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::too_many_lines)]
+fn contact_root(skeleton: &Skeleton, profile: Option<&RigProfile>, source_frames: &[Trs], clip: &Clip, rules: &ContactRules) -> Option<(Vec<[f32; 4]>, Option<Vec3>)> {
+    let track = clip.root_motion.as_ref()?;
+    let n = clip.frame_count as usize;
+    let (ta, tb) = clip.loop_range?;
+    if rules.root_blend <= 0.0 || clip.rate <= 0.0 || n < 3 || track.frames.len() != n {
+        return None;
+    }
+    let dt = 1.0 / clip.rate;
+    let at = |t: f32| ((t / dt).round() as usize).min(n - 1);
+    let (a, b) = (at(ta), at(tb));
+    if b < a + 2 {
+        return None;
+    }
+    let len = b - a;
+    let joints = skeleton.len();
+    let feet: Vec<usize> = contact_feet(skeleton, profile, rules).into_iter().map(|(f, _)| f).collect();
+    let toes: Vec<usize> = feet.iter().map(|&f| toe_joint(skeleton, profile, f).unwrap_or(f)).collect();
+    let (mut heels, mut tips) = (vec![Vec::with_capacity(n); feet.len()], vec![Vec::with_capacity(n); feet.len()]);
+    let mut model = Vec::new();
+    for f in 0..n {
+        model_of(skeleton, &source_frames[f * joints..(f + 1) * joints], &mut model);
+        for i in 0..feet.len() {
+            heels[i].push(Vec3::from(model[feet[i]].translation));
+            tips[i].push(Vec3::from(model[toes[i]].translation));
+        }
+    }
+    // Per cycle frame: the stance weight and the weighted pinned velocity.
+    let ramp = (rules.root_blend / dt).max(1.0);
+    let (mut weight, mut slide) = (vec![0.0f32; len], vec![Vec3::ZERO; len]);
+    for (i, &foot) in feet.iter().enumerate() {
+        let name = skeleton.name(foot);
+        let curve = |prefix: &str| clip.curves.iter().find(|c| c.name == format!("{prefix}.{name}")).map(|c| &c.values);
+        let Some(contact) = curve("contact") else { continue };
+        let roll = curve("roll");
+        let (hv, tv) = (foot_velocities(&heels[i], dt).0, foot_velocities(&tips[i], dt).0);
+        let pin: Vec<Option<Vec3>> = (a..b)
+            .map(|f| {
+                if contact[f] > 0.5 {
+                    Some(hv[f])
+                } else {
+                    roll.filter(|r| r[f] > 0.5).map(|_| tv[f])
+                }
+            })
+            .collect();
+        for k in 0..len {
+            let Some(v) = pin[k] else { continue };
+            // Frames to the stance's nearer edge (the cycle wraps): a trapezoid.
+            let mut d = 1;
+            while d < len && pin[(k + d) % len].is_some() && pin[(k + len - d) % len].is_some() {
+                d += 1;
+            }
+            let w = (d as f32 / ramp).min(1.0);
+            weight[k] += w;
+            slide[k] += v * w;
+        }
+    }
+    // Held wherever a foot is pinned (the trapezoids only hand over between
+    // feet); fading out over the ramp into unpinned frames (a run's flight).
+    let hold: Vec<f32> = (0..len)
+        .map(|k| {
+            let d = (0..len).find(|&d| weight[(k + d) % len] > 0.0 || weight[(k + len - d) % len] > 0.0).unwrap_or(len);
+            (1.0 - d as f32 / ramp).max(0.0)
+        })
+        .collect();
+    // Per step k (frame a+k to a+k+1): blend weight and pinned velocity.
+    let step = |k: usize| {
+        let mean = |j: usize| {
+            let s = if weight[j] > 0.0 { slide[j] / weight[j] } else { Vec3::ZERO };
+            (hold[j], s)
+        };
+        let ((w0, s0), (w1, s1)) = (mean(k), mean((k + 1) % len));
+        (f32::midpoint(w0, w1), 0.5 * (w0 * s0 + w1 * s1))
+    };
+    let planar = |f: usize| Vec3::new(track.frames[f][0], 0.0, track.frames[f][2]);
+    let distance = planar(b) - planar(a);
+    let (mut stance_time, mut fixed) = (0.0f32, Vec3::ZERO);
+    for k in 0..len {
+        let (w, ws) = step(k);
+        stance_time += w * dt;
+        fixed += ws * dt + (1.0 - w) * (planar(a + k + 1) - planar(a + k));
+    }
+    let span = len as f32 * dt;
+    let root = distance / span;
+    // A travelling loop (as `contacts` tells one from an in-place clip).
+    if distance.length() < 0.1 * span {
+        return None;
+    }
+    let u = (distance - fixed) / stance_time.max(f32::EPSILON);
+    let u = (stance_time >= 0.25 * span && u.dot(root) > 0.0 && u.length() >= 0.25 * root.length()).then_some(u);
+    let mut frames = track.frames.clone();
+    if let Some(u) = u {
+        let mut c = planar(a);
+        for k in 0..len {
+            let (w, ws) = step(k);
+            c += ws * dt + w * u * dt + (1.0 - w) * (planar(a + k + 1) - planar(a + k));
+            frames[a + k + 1][0] = c.x;
+            frames[a + k + 1][2] = c.z;
+        }
+    }
+    // The heading: the hips' yaw swings with every step (±17° on a
+    // keyframed male walk), and a root that carries it turns the whole body
+    // back and forth about the capsule, swinging the planted feet. A loop's
+    // heading is its travel heading: the yaw averaged over one cycle around
+    // each frame (the periodic extension keeps a turning loop's turn rate).
+    let turn = track.frames[b][3] - track.frames[a][3];
+    #[allow(clippy::cast_possible_wrap)]
+    let yaw = |i: isize| track.frames[a + i.rem_euclid(len as isize) as usize][3] + turn * i.div_euclid(len as isize) as f32;
+    #[allow(clippy::cast_possible_wrap)]
+    let heading: Vec<f32> = (0..=len as isize).map(|k| (k - len as isize / 2..k - len as isize / 2 + len as isize).map(yaw).sum::<f32>() / len as f32).collect();
+    for (f, frame) in frames.iter_mut().enumerate() {
+        // Outside the cycle (a lead-in, a tail): shifted as the cycle's nearer end.
+        let k = f.clamp(a, b) - a;
+        frame[3] += heading[k] - track.frames[a + k][3];
+    }
+    Some((frames, u))
+}
+
+/// Moves the root-motion joint `rm` of every frame from root track `old`
+/// to `new` so its model pose (root × local) stays the same.
+fn reroot(skeleton: &Skeleton, frames: &mut [Trs], rm: usize, old: &RootMotionTrack, new: &[[f32; 4]]) {
+    let joints = skeleton.len();
+    let ancestors: Vec<usize> = ancestors(skeleton, rm);
+    let root = |c: &[f32; 4], f: usize| {
+        let mut q = Quat::from_rotation_y(c[3]);
+        if let Some(att) = old.attitude.get(f) {
+            q *= crate::clip::attitude_rotation(glam::Vec2::from(*att));
+        }
+        Affine3A::from_rotation_translation(q, Vec3::new(c[0], c[1], c[2]))
+    };
+    for (f, (o, c)) in old.frames.iter().zip(new).enumerate() {
+        let pose = &mut frames[f * joints..(f + 1) * joints];
+        let parent = ancestors.iter().fold(Affine3A::IDENTITY, |m, &j| m * pose[j].to_affine());
+        let local = parent.inverse() * root(c, f).inverse() * root(o, f) * parent * pose[rm].to_affine();
+        let t = Trs::from_affine(&local);
+        pose[rm].translation = t.translation;
+        pose[rm].rotation = t.rotation;
+    }
+}
+
 /// The toe beside a contact foot: the rig profile's, else the foot's first
 /// child joint (None for a foot with neither).
 fn toe_joint(skeleton: &Skeleton, profile: Option<&RigProfile>, foot: usize) -> Option<usize> {
@@ -1357,6 +1565,38 @@ fn foot_velocities(p: &[Vec3], dt: f32) -> (Vec<Vec3>, Vec<f32>) {
             (Vec3::new(d.x, 0.0, d.z), d.y)
         })
         .unzip()
+}
+
+/// Debounce at a loop's seam: closes a contact gap of at most `max` frames
+/// at the end or start of the cycle `a..b` (frame `b` repeats `a`) between
+/// two planted runs. A velocity spike where the source's last key meets its
+/// first would otherwise release and re-plant the foot mid stance, every
+/// cycle (AN-17). Gaps inside the cycle are the source's own and stay.
+fn fill_seam_gaps(planted: &mut [bool], loop_frames: Option<(usize, usize)>, max: usize) {
+    let n = planted.len();
+    let Some((a, b)) = loop_frames.filter(|&(a, b)| a < b && b < n) else { return };
+    let len = b - a;
+    // Scan from a planted frame, so a run across the seam is one run.
+    let Some(first) = (0..len).find(|&i| planted[a + i]) else { return };
+    let at = |k: usize| a + (first + k) % len;
+    let mut k = 0;
+    while k < len {
+        if planted[at(k)] {
+            k += 1;
+            continue;
+        }
+        let start = k;
+        while k < len && !planted[at(k)] {
+            k += 1;
+        }
+        let seam = (start..k).any(|j| at(j) == a || at(j) == b - 1);
+        if seam && k - start <= max {
+            for j in start..k {
+                planted[at(j)] = true;
+            }
+        }
+    }
+    planted[b] = planted[a];
 }
 
 /// Heel-off: a stance ends where the foot's last rise before lifting

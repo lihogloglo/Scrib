@@ -276,3 +276,75 @@ Planned crate `sf_interaction` (M4), Bevy-free data:
 root frame, eased over the first ~0.5 s → each plays its own root motion → lethal branch onto a
 pose-identical death clip (or the ragdoll victim) → `PairFits` sweep before start; wall pushes
 bypassed while paired. Air and drop kills come after M10's first combat milestone (decision).
+
+## As built (A1): changes against the design
+
+Moved from action.md "As built (A1)" on 2026-10-22 (doc budget).
+
+Changes against the design above:
+- **`step` decides, the shell moves.** Chooser step 9 is not inside `step`: it emits the Sim
+  owner's `LocomotionIntent` plus `launch` (vertical m/s) in `ActionOutput`, and the shell runs
+  one batched `KinematicMover::step_batch` for all characters (the mover batches probes across
+  characters). The mover result is next tick's `Sense` (grounded, vertical and planar speed,
+  yaw, interaction focus). `step` mutates state in place; same inputs, same bytes.
+- **Windows come through `SlotSource`** (slot length + typed windows on the action clock), so
+  A1 needs neither `sf_anim` nor `sf_anim_graph`; B1 implements it over `animgraph.compile`.
+  A slot chain plays each finite slot then the next; a looping or unknown slot holds it; an
+  empty chain is an instant move. Rule field `windows: Category | Unrestricted | Committed` sets
+  the policy when the slot authors no windows (A1 defaults: Landing, Jump, Locomotion,
+  Passover unrestricted; the rest committed until E1 adds combat defaults).
+- **Integer clocks.** `ClockTime` is thousandths of a tick (1 s = 60 000); the clock rate is
+  per mille (hit-stop). Ids on the wire are FNV-1a 32 keys of the content ids (`RuleKey`,
+  `SlotKey`, `TagId`, collisions are load errors).
+- **Requests wait for windows, not predicates.** A latched request that could fire now but that
+  no rule takes is dropped, with the refusal logged ("keep it latched" above made a refused
+  Interact or Jump fire seconds later). Traversal's "can't" feedback hangs off the refusal (B2).
+- **Jump buffer and coyote are ticks stored as ticks:** a Jump pressed in the air up to
+  `jump_buffer_ticks` (6) before the landing tick fires on it, in the settle round after the
+  forced landing; a Jump on the first `coyote_ticks` (6) airborne ticks after walking off an
+  edge is a ground jump (`Phase::Coyote`). A committed (hard) landing lets the buffer lapse,
+  but a press during it latches and fires on its end tick.
+- **Vocabulary in A1:** entry `classes, need_forward (60° cone), modes, states (Grounded,
+  Coyote, AirRising, AirFalling, Landed), speed, vspeed (the impact speed on the Landed tick),
+  auto_in, focus`; exits `End, Touchdown, Airborne` to `Loco` or `Rule(id)`; `launch:
+  JumpHeight | Speed(v)`; `steer` (false stops a Sim move); `redo_ticks`. Validators, probes,
+  targets, plans and the other owners arrive with B1-B3. Unknown fields are load errors.
+- **Candidates:** forced (framework category, no classes) always; requested when a latched
+  class is in `cancel`; automatic (no classes) when the current move is over (ended, exited,
+  or an automatic move whose own entry stopped holding) or `cancel(Move)` is open with the
+  stick active. The current move restarts only once it is over. Mod rules in `Forced`,
+  `Landing` or `AirCatch` are load errors; a later rule with the same id replaces the earlier
+  (field-level patches come from `sf_records` once the shell registers `MoveRule` as a kind).
+- **"Press to use" hook:** the shell passes `Sense.focus` (target id + tag) from its view cone;
+  `ActionOutput.prompt` names the rule a press would start and whether it's accepted now;
+  `interact.use` (instant, `focus: Some([])`) emits `EventKind::Activate(tag)` with the target,
+  a host-validated request in co-op. C1's warped interactions are more `focus` rules.
+- **Net:** `Command`, `ActionState`, `ActionEvent` are serde (postcard round-trip tested; a
+  state snapshot is < 64 bytes). `CommandFeed` orders and de-duplicates a player's commands on
+  the host and repeats stick, view and held buttons (no new presses) for 6 missing ticks.
+
+
+### Category default windows (E1)
+
+Moved from action.md on 2026-10-22 (doc budget); move back when E1 starts.
+
+From R9 §6, changed by the decisions. A moveset sheet line overrides any of them.
+
+| Category | Defaults |
+|---|---|
+| Loops (locomotion, sneak, hang, ladder) | unrestricted |
+| Traversal contact | `accept(all)` from start; no `cancel` until `tail` (last inferred contact end); no steering (decision) |
+| Interaction | as traversal; seated idle unrestricted for `Down`, `Interact`, `Move` (stand up) |
+| Light attack | `accept(all)` from 0.2 of the clip; `cancel(Light, Heavy, Dodge)` at recovery start (after the last hit window); `cancel(Move)` later |
+| Heavy attack | **no cancel windows** (decision: a missed heavy is a full recovery); exits at `End` only. Whether a connected heavy opens a chain is moveset data (default: no) |
+| Dodge | i-frames over a set fraction (moveset row); `cancel(Light)` after i-frames (dodge attack opener); `cancel(Move)` late |
+| Guard | held state; enters at its own `cancel(Guard)`; fires from the buffer only if still held |
+| Reactions | none until the tier's recovery; then `cancel(Dodge)` |
+| Paired | none; the attacker's `cancel(Move)` opens before the victim's clip ends |
+
+### A2 prerequisites (A1 slice 3, 2026-10-21)
+
+A2 prerequisites, fixed 2026-10-21 (slice 3): the shell maps `ActionOutput::launch` to
+`Locomotion::launch(v)` before the batched mover step (no snap while rising, see locomotion.md
+"Launch"); `Locomotion` is serde (postcard round-trip tested); `PlayerId` comes from the new
+serde-only `sf_ids` crate, shared with `sf_rpg` (validated 0-3, rejected on deserialize).

@@ -179,19 +179,8 @@ every class. Locomotion and idle loops need no authoring.
 
 ### Category default windows
 
-From R9 §6, changed by the decisions. A moveset sheet line overrides any of them.
-
-| Category | Defaults |
-|---|---|
-| Loops (locomotion, sneak, hang, ladder) | unrestricted |
-| Traversal contact | `accept(all)` from start; no `cancel` until `tail` (last inferred contact end); no steering (decision) |
-| Interaction | as traversal; seated idle unrestricted for `Down`, `Interact`, `Move` (stand up) |
-| Light attack | `accept(all)` from 0.2 of the clip; `cancel(Light, Heavy, Dodge)` at recovery start (after the last hit window); `cancel(Move)` later |
-| Heavy attack | **no cancel windows** (decision: a missed heavy is a full recovery); exits at `End` only. Whether a connected heavy opens a chain is moveset data (default: no) |
-| Dodge | i-frames over a set fraction (moveset row); `cancel(Light)` after i-frames (dodge attack opener); `cancel(Move)` late |
-| Guard | held state; enters at its own `cancel(Guard)`; fires from the buffer only if still held |
-| Reactions | none until the tier's recovery; then `cancel(Dodge)` |
-| Paired | none; the attacker's `cancel(Move)` opens before the victim's clip ends |
+Per-category defaults from R9 §6 (light, heavy, dodge, guard, ...; a moveset sheet line overrides
+any of them): [archive](action-archive.md#category-default-windows-e1), back here when E1 starts.
 
 ### Mode profiles
 
@@ -337,7 +326,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 | Slice | Steps | Verify |
 |---|---|---|
 | **A1** backbone | done 2026-10-21: see "As built (A1)" | `cargo test -p sf_action` |
-| **A2** fixed tick in Bevy | `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
+| **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
 | **B1** progress + chain warp | `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
 | **B2** mantle and vault | Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
 | **B3** ledge catch and hang | Docked mover mode; ledge catch from jump and fall, hang, shimmy, climb up, drop to hang (`Down`), let go; hand IK latched on the lip | course `ledges`: 2.0/2.5 m boxes and the 3.5 m wall: catch, shimmy to the end, climb up; hands ≤ 1 cm off the lip; jolt test (R2 adopt 3) |
@@ -376,49 +365,33 @@ Reuse: no crate covers a gameplay input buffer or move chooser (`leafwing-input-
 `bevy_enhanced_input` map devices to actions; ggrs/lightyear buffer netcode inputs). The A2
 shell feeds `InputSampler` from `bevy_enhanced_input` actions.
 
-Changes against the design above:
-- **`step` decides, the shell moves.** Chooser step 9 is not inside `step`: it emits the Sim
-  owner's `LocomotionIntent` plus `launch` (vertical m/s) in `ActionOutput`, and the shell runs
-  one batched `KinematicMover::step_batch` for all characters (the mover batches probes across
-  characters). The mover result is next tick's `Sense` (grounded, vertical and planar speed,
-  yaw, interaction focus). `step` mutates state in place; same inputs, same bytes.
-- **Windows come through `SlotSource`** (slot length + typed windows on the action clock), so
-  A1 needs neither `sf_anim` nor `sf_anim_graph`; B1 implements it over `animgraph.compile`.
-  A slot chain plays each finite slot then the next; a looping or unknown slot holds it; an
-  empty chain is an instant move. Rule field `windows: Category | Unrestricted | Committed` sets
-  the policy when the slot authors no windows (A1 defaults: Landing, Jump, Locomotion,
-  Passover unrestricted; the rest committed until E1 adds combat defaults).
-- **Integer clocks.** `ClockTime` is thousandths of a tick (1 s = 60 000); the clock rate is
-  per mille (hit-stop). Ids on the wire are FNV-1a 32 keys of the content ids (`RuleKey`,
-  `SlotKey`, `TagId`, collisions are load errors).
-- **Requests wait for windows, not predicates.** A latched request that could fire now but that
-  no rule takes is dropped, with the refusal logged ("keep it latched" above made a refused
-  Interact or Jump fire seconds later). Traversal's "can't" feedback hangs off the refusal (B2).
-- **Jump buffer and coyote are ticks stored as ticks:** a Jump pressed in the air up to
-  `jump_buffer_ticks` (6) before the landing tick fires on it, in the settle round after the
-  forced landing; a Jump on the first `coyote_ticks` (6) airborne ticks after walking off an
-  edge is a ground jump (`Phase::Coyote`). A committed (hard) landing lets the buffer lapse,
-  but a press during it latches and fires on its end tick.
-- **Vocabulary in A1:** entry `classes, need_forward (60° cone), modes, states (Grounded,
-  Coyote, AirRising, AirFalling, Landed), speed, vspeed (the impact speed on the Landed tick),
-  auto_in, focus`; exits `End, Touchdown, Airborne` to `Loco` or `Rule(id)`; `launch:
-  JumpHeight | Speed(v)`; `steer` (false stops a Sim move); `redo_ticks`. Validators, probes,
-  targets, plans and the other owners arrive with B1-B3. Unknown fields are load errors.
-- **Candidates:** forced (framework category, no classes) always; requested when a latched
-  class is in `cancel`; automatic (no classes) when the current move is over (ended, exited,
-  or an automatic move whose own entry stopped holding) or `cancel(Move)` is open with the
-  stick active. The current move restarts only once it is over. Mod rules in `Forced`,
-  `Landing` or `AirCatch` are load errors; a later rule with the same id replaces the earlier
-  (field-level patches come from `sf_records` once the shell registers `MoveRule` as a kind).
-- **"Press to use" hook:** the shell passes `Sense.focus` (target id + tag) from its view cone;
-  `ActionOutput.prompt` names the rule a press would start and whether it's accepted now;
-  `interact.use` (instant, `focus: Some([])`) emits `EventKind::Activate(tag)` with the target,
-  a host-validated request in co-op. C1's warped interactions are more `focus` rules.
-- **Net:** `Command`, `ActionState`, `ActionEvent` are serde (postcard round-trip tested; a
-  state snapshot is < 64 bytes). `CommandFeed` orders and de-duplicates a player's commands on
-  the host and repeats stick, view and held buttons (no new presses) for 6 missing ticks.
+Changes against the design (`step` decides and the shell moves; windows through `SlotSource`;
+integer clocks and FNV-1a ids; requests wait for windows; jump buffer and coyote in ticks; the A1
+rule vocabulary; candidates; the "press to use" hook; net serde): [archive](action-archive.md#as-built-a1-changes-against-the-design).
 
-A2 prerequisites, fixed 2026-10-21 (slice 3): the shell maps `ActionOutput::launch` to
-`Locomotion::launch(v)` before the batched mover step (no snap while rising, see locomotion.md
-"Launch"); `Locomotion` is serde (postcard round-trip tested); `PlayerId` comes from the new
-serde-only `sf_ids` crate, shared with `sf_rpg` (validated 0-3, rejected on deserialize).
+## As built (A2 slice 1, 2026-10-22): `sf_action_bevy`
+
+Thin shell (Bevy app/ecs/math/time/transform, `bevy_enhanced_input`, `sf_action`, `sf_controller`,
+`sf_coords`; not `sf_controller_bevy`, which pulls the animation crates); schedule in its crate
+docs. `SfActionPlugin<G: GroundProbe>` sets `Time<Fixed>` to `TICK_HZ` (60, the physics rate);
+per tick: `Sample` (advance `ActionTick`, one `Command` per `PlayerInput`) → `Command` (AI,
+scripts, net) → `Step` (`sf_action::step`) → `Move` (launch, one `step_batch` for every
+`ActionBody`). `ActionInputPlugin`: the `PlayerControls` context; every frame before the fixed
+loop its actions (stick + one bool per class, unbound: bindings are the host's) go into the
+player's `InputSampler`. After the loop, `Interpolate` draws `prev.lerp(curr, overstep_fraction)`
+in `WorldPos` plus the correction spring into `Transform` (relative to `frame_origin`).
+`teleport` resets both poses; `reconcile` puts a snap into the spring: Bevy-free
+`sf_controller::RenderCorrection` (critical spring 0.1 s / 0.2 s, step ≤ 0.5 × planar speed,
+floor 0.3 m/s, clamps 0.5 m / 45°), frame rate, never fed back.
+
+Reuse (rule 8): Bevy 0.20 has the fixed schedule, `overstep_fraction`, `RunFixedMainLoopSystems`
+and the `physics_in_fixed_timestep` pattern, no interpolation component: adopted. Not
+`bevy_transform_interpolation` 0.6 (MIT/Apache, Bevy 0.20, maintained): it blends local f32
+`Transform`s (our truth is `WorldPos` on grid cells; the spring writes the same `Transform`),
+pulls the `bevy` umbrella into a library (§8b), and new crates wait for the update batch. Ours is
+the blend `sf_physics_bevy::write_back` already uses.
+
+Tests (headless, manual frame times): a 180-tick command stream gives bit-identical ticks at
+30/60/144 fps; a straight run draws monotonic frame steps at 4.5 m/s ± 2 %, CV < 1 %, at
+30/60/144 fps (fails at 144 with the blend off); a reconcile glides; a mocked stick and Jump launch.
+Slice 2: app wiring, D1 camera, bindings, animation feed, `wk-balmora` timing, owner check.

@@ -338,13 +338,15 @@ fn morph_curves_in_clips_animate_the_body_and_a_player_overrides_them() {
 #[test]
 fn smooth_and_vanilla_bodies_are_separate_outfits_and_the_toggle_never_pops() {
     let mut app = app();
+    assert_eq!(app.world().resource::<CharacterSettings>().bodies, SmoothBodies::Vanilla, "vanilla by default");
+    app.world_mut().resource_mut::<CharacterSettings>().bodies = SmoothBodies::Smooth;
     let a = app.world_mut().spawn(npc(CharacterState::default())).id();
     run_until(&mut app, |w| w.get::<CharacterBody>(a).is_some());
     let (body, smooth_key) = {
         let b = app.world().get::<CharacterBody>(a).unwrap();
         (b.body, b.key.clone())
     };
-    assert_eq!(smooth_key.bodies, SmoothBodies::Smooth, "smooth by default");
+    assert_eq!(smooth_key.bodies, SmoothBodies::Smooth, "smooth when opted in");
     assert_eq!(app.world().resource::<CharacterStats>().smoothed, 1, "the build ran the smooth step");
     for (bodies, cached) in [(SmoothBodies::Vanilla, 2), (SmoothBodies::Smooth, 2)] {
         app.world_mut().resource_mut::<CharacterSettings>().bodies = bodies;

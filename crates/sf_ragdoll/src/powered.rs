@@ -214,7 +214,7 @@ impl RagdollInstance {
         // sees its two bodies, but a joint holds its whole subtree, so the
         // stiffness scales by the subtree's inertia about the joint over the
         // child body's own (subtree-scaled PD gains, Zordan & Hodgins 2002).
-        let sub = Subtrees::new(def, model, self.scale);
+        let sub = Subtrees::new(def, model, self.scale, &self.inertia);
         let mut any = false;
         for ((_, id), j) in self.joints.iter().zip(&def.joints) {
             let region = def.bodies[usize::from(j.child)].region;
@@ -276,14 +276,15 @@ impl RagdollInstance {
         } else if let Some((a, _)) = self.anchor.take() {
             world.remove(a);
         }
-        if any != self.powered {
+        let iterations = if any { params.powered_iterations } else { self.iterations };
+        if any != self.powered || iterations != self.applied_iterations {
             let layer = if any { Layer::POWERED } else { Layer::RAGDOLL };
-            let iterations = if any { params.powered_iterations } else { self.iterations };
             for &b in &self.bodies {
                 world.set_layer(b, layer);
                 world.set_iterations(b, iterations);
             }
             self.powered = any;
+            self.applied_iterations = iterations;
         }
         if any {
             for &b in &self.bodies {
@@ -391,7 +392,7 @@ struct Subtrees {
 
 impl Subtrees {
     #[allow(clippy::many_single_char_names)]
-    fn new(def: &RagdollDef, model: &[Affine3A], scale: f32) -> Self {
+    fn new(def: &RagdollDef, model: &[Affine3A], scale: f32, floor: &[f32]) -> Self {
         let s3 = scale.powi(3);
         let n = def.bodies.len();
         let mut out = Self { mass: vec![0.0; n], moment: vec![Vec3::ZERO; n], second: vec![0.0; n], own: vec![0.0; n], sum_own: vec![0.0; n] };
@@ -400,7 +401,7 @@ impl Subtrees {
             let (r, t) = rigid(&model[usize::from(b.joint)]);
             let p = (t + r * b.local.0) * scale;
             let (radius, length) = (b.shape.radius * scale, 2.0 * (b.shape.half + b.shape.radius) * scale);
-            let inertia = m * (3.0 * radius * radius + length * length) / 12.0;
+            let inertia = (m * (3.0 * radius * radius + length * length) / 12.0).max(floor.get(i).copied().unwrap_or(0.0));
             out.mass[i] = m;
             out.moment[i] = p * m;
             out.second[i] = m * p.length_squared();

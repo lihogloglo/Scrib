@@ -927,10 +927,10 @@ impl Compiler<'_> {
         let weights = |c: &Self, v: &[(JointRef, f32)]| v.iter().map(|(j, w)| Ok((c.joint(j)?, *w))).collect::<R<Vec<_>>>();
         for spec in &specs {
             let (op, max_lod) = match spec {
-                OpSpec::SpeedMatch { min, max, max_lod } => (Op::SpeedMatch { min: *min, max: *max }, *max_lod),
-                OpSpec::StrideWarp { pelvis, legs, min, max, max_lod } => {
+                OpSpec::SpeedMatch { min, max, rate_share, max_lod } => (Op::SpeedMatch { min: *min, max: *max, rate_share: rate_share.clamp(0.0, 1.0) }, *max_lod),
+                OpSpec::StrideWarp { pelvis, legs, min, max, grade, max_lod } => {
                     let (pelvis, legs) = (self.joint(pelvis)?, self.leg_list(legs)?);
-                    (Op::StrideWarp { pelvis, girdles: self.girdles(pelvis, &legs)?, legs, min: *min, max: *max }, *max_lod)
+                    (Op::StrideWarp { pelvis, girdles: self.girdles(pelvis, &legs)?, legs, min: *min, max: *max, grade: *grade }, *max_lod)
                 }
                 OpSpec::OrientationWarp { pelvis, spine, max_angle, halflife, max_lod } => {
                     let spine = weights(self, spine)?;
@@ -963,8 +963,8 @@ impl Compiler<'_> {
                 OpSpec::SpineBend { spine, gain, max_angle, halflife, max_lod } => {
                     (Op::SpineBend { spine: weights(self, spine)?, gain: *gain, max_angle: *max_angle, halflife: *halflife }, *max_lod)
                 }
-                OpSpec::Lean { joints, gain, max_angle, halflife, max_lod } => {
-                    (Op::Lean { joints: weights(self, joints)?, gain: *gain, max_angle: *max_angle, halflife: *halflife }, *max_lod)
+                OpSpec::Lean { joints, gain, max_angle, grade, halflife, max_lod } => {
+                    (Op::Lean { joints: weights(self, joints)?, gain: *gain, max_angle: *max_angle, grade: *grade, halflife: *halflife }, *max_lod)
                 }
                 OpSpec::LimbIk { limb, target, weight, rotation, max_lod } => {
                     let leg = self.out.legs[self.out.leg(limb).ok_or_else(|| format!("unknown limb {limb:?}"))?].clone();

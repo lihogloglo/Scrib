@@ -55,13 +55,17 @@ pub struct BodyDesc {
     pub damping: (f32, f32),
     /// Extra solver iterations for this body's island (ragdolls, held items).
     pub extra_iterations: usize,
+    /// Floor on each principal moment of inertia, kg·m² (0: the shape's own). Inertia
+    /// conditioning for jointed chains: a small hub body (a pelvis) between heavy neighbours
+    /// makes the joint rows ill-conditioned, so limits give way and the hub spins.
+    pub min_inertia: f32,
     /// Owner data (a placement id, an entity): returned by [`crate::PhysicsWorld::user`].
     pub user: u64,
 }
 
 impl BodyDesc {
     pub fn new(kind: BodyKind, pose: WorldTransform, shape: ShapeRef, layer: Layer) -> Self {
-        Self { kind, pose, shape, layer, mass: None, ccd: false, damping: (0.0, 0.05), extra_iterations: 0, user: 0 }
+        Self { kind, pose, shape, layer, mass: None, ccd: false, damping: (0.0, 0.05), extra_iterations: 0, user: 0, min_inertia: 0.0 }
     }
 
     /// A fixed body (static placement, terrain chunk).

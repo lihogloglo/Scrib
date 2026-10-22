@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use glam::{Affine3A, Quat, Vec2, Vec3};
-use sf_anim::spring::critical_spring;
+use sf_anim::spring::{critical_spring, damper};
 use sf_anim::{
     BlendLayer, Clip, EventEdge, FiredEvent, JointMask, JointWeights, LocalPose, ModelPose, RootDelta, RootMotionMode, Skeleton, Trs, apply_additive,
     blend_in_place,
@@ -30,7 +30,7 @@ use crate::compiled::{
     Blend, CompiledGraph, Condition, Machine, NodeKind, Op, ParamId, ParamType, PlayerNode, Value, WarpMode, WarpRotation, WarpWindow,
 };
 use crate::inertial::Inertializer;
-use crate::procedural::{OpState, ProceduralCx, run_ops};
+use crate::procedural::{OpState, ProceduralCx, ground_grade, run_ops};
 use crate::secondary::{ClothBinding, ClothRun, Hit};
 use crate::slot::{
     Montage, MontageClip, MontageId, MontageStatus, NoticeKind, SlotError, SlotId, SlotNotice, SlotRequest, SlotStart, SlotState, clip_of, curve_map,
@@ -40,6 +40,12 @@ use crate::sync::{loop_span, phase, sync_time, wrapped_delta};
 use crate::variety::Variety;
 
 const EPS: f32 = 1e-5;
+/// A running `SpeedMatch`: rate min, max, rate share, and the stride warp's
+/// min, max and grade scale (1, 1, 1 without a warp).
+type SpeedMatchRun = (f32, f32, f32, (f32, f32, f32));
+/// Half-life of the ground grade filter, s: a step's worth, so stairs read as
+/// one slope and a single probe glitch doesn't jolt the stride.
+const GRADE_HALFLIFE: f32 = 0.25;
 
 /// A compiled graph with the skeleton and clips it plays. `clips` is in
 /// the graph's clip-slot order ([`CompiledGraph::clips`]).
@@ -243,6 +249,9 @@ pub struct GraphOutput {
     pub warp: Option<ActiveWarp>,
     /// Montage starts and ends since the previous update.
     pub slot_notices: Vec<SlotNotice>,
+    /// Ground grade along the travel (rise over run, positive uphill),
+    /// filtered from the ground probes: stride and lean by slope (AN-21).
+    pub grade: f32,
     /// What `FootPlacement` corrected this update (guards that fired).
     pub feet: FootStats,
 }
@@ -302,6 +311,7 @@ impl GraphOutput {
             probe_origins: vec![Vec3::ZERO; graph.probe_count()],
             warp: None,
             slot_notices: Vec::new(),
+            grade: 0.0,
             feet: FootStats::default(),
         }
     }
@@ -420,7 +430,10 @@ pub struct GraphInstance {
     identity: LocalPose,
     scratch: Scratch,
     ops: Vec<OpState>,
-    speed_match: Option<(f32, f32)>,
+    /// Rate limits, rate share and the stride warp's limits and grade scale.
+    speed_match: Option<SpeedMatchRun>,
+    /// Filtered ground grade ([`GraphOutput::grade`]).
+    grade: f32,
     stride: (f32, f32),
     anim_velocity: Vec3,
     /// Per limb: the animated effector at the previous posed update (empty
@@ -493,6 +506,7 @@ impl GraphInstance {
             ops: g.ops.iter().map(|o| OpState::new(&o.op)).collect(),
             speed_match: None,
             stride: (0.0, 0.0),
+            grade: 0.0,
             anim_velocity: Vec3::ZERO,
             effectors: Vec::new(),
             slots: vec![SlotState::default(); g.slots.len()],
@@ -784,8 +798,19 @@ impl GraphInstance {
         }
         self.ticks.clear();
         self.request = None;
+        // Ground grade along the travel, filtered (AN-21); no samples (airborne,
+        // a LOD without probes) eases it back to flat.
+        let goal = ground_grade(inputs.ground, inputs.velocity).unwrap_or(0.0);
+        self.grade = damper(self.grade, goal, GRADE_HALFLIFE, dt);
+        out.grade = self.grade;
+        // The stride warp running at this LOD takes a share of the speed ratio
+        // within its limits; the rate takes the rest (all of it with no warp).
+        let warp = g.ops.iter().find_map(|o| match o.op {
+            Op::StrideWarp { min, max, grade, .. } if lod <= usize::from(o.max_lod) => Some((min, max, grade.scale(self.grade))),
+            _ => None,
+        });
         self.speed_match = g.ops.iter().find_map(|o| match o.op {
-            Op::SpeedMatch { min, max } if lod <= usize::from(o.max_lod) => Some((min, max)),
+            Op::SpeedMatch { min, max, rate_share } if lod <= usize::from(o.max_lod) => Some((min, max, if warp.is_some() { rate_share } else { 1.0 }, warp.unwrap_or((1.0, 1.0, 1.0)))),
             _ => None,
         });
         self.stride = (0.0, 0.0);
@@ -904,6 +929,7 @@ impl GraphInstance {
             dt,
             lod,
             stride_ratio,
+            grade: self.grade,
             anim_velocity: self.anim_velocity,
             curves: &out.curves,
             feet: FootStats::default(),
@@ -1401,11 +1427,12 @@ impl GraphInstance {
             // differs from the root's (sidesteps, backpedals), so a foot
             // lock holds; the body direction stays the root's.
             let natural = Vec2::new(stride_vel.x, stride_vel.z).length() * rate;
-            if let Some((min, max)) = speed_match
+            if let Some((min, max, share, (warp_min, warp_max, grade))) = speed_match
                 && natural > 1e-3
             {
                 let speed = Vec2::new(inputs.velocity.x, inputs.velocity.z).length();
-                let m = (speed / natural).clamp(min, max);
+                let ratio = speed / natural;
+                let m = (ratio.powf(share) / grade.max(EPS)).clamp(ratio / warp_max.max(EPS), ratio / warp_min.max(EPS)).clamp(min, max);
                 rate *= m;
                 stride = Some(speed / (natural * m));
             }

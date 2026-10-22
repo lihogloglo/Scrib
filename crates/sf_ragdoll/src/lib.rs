@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use sf_anim::cloth::ClothCollider;
 use sf_anim::{LimbKind, RigProfile, SkeletonId};
 
-pub use cook::{BodyOverride, CookParams, RagdollError, RagdollPolicy, cook};
+pub use cook::{BodyOverride, CORE_REGION, CookParams, JointRanges, RagdollError, RagdollPolicy, Swing, cook};
 pub use instance::{RagdollInstance, RagdollSettings, SpawnPose};
 pub use react::{Curve, DEFAULT_RON as DEFAULT_REACTIONS_RON, ReactionClass, ReactionController, ReactionEvent, ReactionOutput, ReactionRequest, ReactionSet, ReactionState, Region, RegionCurves, Sensed, Timeline};
 pub use powered::{Balance, Dip, Drive, DriveParams, DriveTarget, HitImpulse, StrengthProfile, balance, get_up_root, region_gain, yaw_of};
@@ -64,8 +64,9 @@ pub struct RagBody {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum RagJointKind {
-    /// Swing half-angles about the frame's Y and Z axes, twist range about X (the bone), radians.
-    Ball { swing: [f32; 2], twist: [f32; 2] },
+    /// Swing ranges [min, max] about the frame's Y and Z axes, twist range about X (the
+    /// bone), radians. Limb roots and the head use anatomical frames (cook `Swing`).
+    Ball { swing: [[f32; 2]; 2], twist: [f32; 2] },
     /// Rotation about the frame's X axis within `range`, radians (positive bends the limb).
     Hinge { range: [f32; 2] },
     Fixed,

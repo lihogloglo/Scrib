@@ -301,7 +301,9 @@ impl Step for AnimCookStep {
         // 4: contacts from height and speed over the ground with hysteresis, stance ends at heel-off (walkers3/4).
         // 5: `ClipMeta::stance_velocity` (toe-aware planted-foot speed of travelling loops).
         // 6: `roll.<foot>` heel-roll curves, heel-off to toe-off (AN-9).
-        6
+        // 7: contact gaps up to `ContactRules::gap` at a loop's seam closed (AN-17).
+        // 8: contact-consistent root track of travelling loops, `ContactRules::root_blend` (AN-19).
+        8
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;

@@ -1500,3 +1500,11 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-22 (anim AF2, AN-9): foot locks follow the heel-to-toe roll: the cook writes `roll.<foot>` (heel-off to
   toe-off, toe planted) beside `contact.<foot>`; FootPlacement pins the toe during the roll and releases at toe-off with
   a critically damped offset decay (half-life `release/2`) instead of a linear lerp at heel-off.
+- 2026-10-22 (A2): action-driven characters step on `FixedUpdate` at 60 Hz and are drawn by our own `WorldPos` blend
+  (`overstep_fraction`, Bevy's `physics_in_fixed_timestep` pattern), not `bevy_transform_interpolation` (local f32
+  `Transform`s, `bevy` umbrella dep); the render-body correction spring is `sf_controller::RenderCorrection`.
+- 2026-10-22 (anim-fixes-3, owner): smooth bodies are opt-in (`SmoothBodies` default `Vanilla`) until they work. Walk clips
+  are cleaned in the cook (footskate cleanup, Kovar 2002: travelling loops face their cycle-average yaw, stance root follows
+  the planted foot), not at runtime; SpeedMatch splits a speed change between rate and stride (`rate_share`, MW 0.3).
+- 2026-10-22 (AN-18/20): ragdoll joint limits hold by conditioning, not stiffness: core bodies at least their heaviest
+  child, inertia floors on core and end bodies only, drive gains from the floored inertia; anatomical asymmetric cones.

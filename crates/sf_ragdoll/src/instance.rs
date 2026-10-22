@@ -22,11 +22,47 @@ pub struct RagdollSettings {
     pub solver: JointSolver,
     /// Continuous collision for the bodies (fast falls through thin floors).
     pub ccd: bool,
+    /// Inertia conditioning of the core (spine) bodies: principal moments at least
+    /// `inertia_floor · mass · reach²`, `reach` = the body's farthest joint anchor. Lifts
+    /// a small hub (pelvis) under heavy limbs, where joint limits otherwise give way and
+    /// the torso spins (AN-18). 0 keeps the shapes' own inertia.
+    pub inertia_floor: f32,
+    /// The same reach floor for end bodies on a limb (hands, feet, tail tips): a light end
+    /// whipping on its chain flips through its cone in a hard limp fall otherwise
+    /// (AN-20, 300 N·s: hand 115° past at 0.25, held at 0.4). Mid-limb bodies get no reach
+    /// floor: AN-18's floor of 1 on every body made limbs 3-12x harder to swing than
+    /// their shapes (wooden; AN-20 test `hits_leave_limbs_loose`).
+    pub end_inertia_floor: f32,
+    /// The reach floor for end bodies jointed straight to a core body (a head on the
+    /// chest): looser than the hands and feet (0.4), which whip on a longer chain and
+    /// flip through their cones at 0.3 (AN-20 sweep: head 0.3 flops 0.94 of its shape at
+    /// 120 N·s, hard death holds its limits).
+    pub head_inertia_floor: f32,
+    /// Long-axis conditioning: every principal moment is at least this share of the
+    /// body's own largest (a thin capsule's long-axis moment is near zero), which lifts
+    /// only the twist axis and leaves swing as the shape has it.
+    pub axial_inertia: f32,
 }
+
+/// Default [`RagdollSettings::inertia_floor`] (AN-18 test `falls_keep_joints_in_limits_and_the_torso_from_spinning`).
+pub const INERTIA_FLOOR: f32 = 1.0;
 
 impl Default for RagdollSettings {
     fn default() -> Self {
-        Self { extra_iterations: 8, damping: (0.05, 0.6), layer: Layer::RAGDOLL, user: 0, solver: JointSolver::Impulse, ccd: true }
+        Self {
+            // 16 (was 8): a limp chain of shape-inertia limbs needs them to hold its limits
+            // under a 300 N·s hit (AN-20); only limp ragdolls pay it.
+            extra_iterations: 16,
+            damping: (0.05, 0.6),
+            layer: Layer::RAGDOLL,
+            user: 0,
+            solver: JointSolver::Impulse,
+            ccd: true,
+            inertia_floor: INERTIA_FLOOR,
+            end_inertia_floor: 0.4,
+            head_inertia_floor: 0.3,
+            axial_inertia: 0.5,
+        }
     }
 }
 
@@ -62,6 +98,11 @@ pub struct RagdollInstance {
     /// Extra solver iterations while limp ([`RagdollSettings::extra_iterations`]);
     /// powered bodies use [`crate::powered::DriveParams::powered_iterations`].
     pub iterations: usize,
+    /// The extra iterations the bodies run with now.
+    pub applied_iterations: usize,
+    /// Each body's principal-moment floor as spawned (kg·m²), which the drive gains
+    /// count in (a floored body is heavier to turn than its shape).
+    pub inertia: Vec<f32>,
 }
 
 pub(crate) fn rigid(m: &Affine3A) -> (Quat, Vec3) {
@@ -80,13 +121,52 @@ pub(crate) fn body_world(local: (Vec3, Quat), joint: &Affine3A, root: &WorldTran
     }
 }
 
+/// A capsule's largest principal moment (across its axis), kg·m².
+pub(crate) fn capsule_inertia(mass: f32, radius: f32, half: f32) -> f32 {
+    let length = 2.0 * (half + radius);
+    mass * (3.0 * radius * radius + length * length) / 12.0
+}
+
+/// Each body's principal-moment floor (kg·m², at scale `s`): the reach floor
+/// ([`RagdollSettings::inertia_floor`] on core bodies, `end_inertia_floor` on end bodies)
+/// and the long-axis share of its own largest moment ([`RagdollSettings::axial_inertia`]).
+fn conditioned_inertia(def: &RagdollDef, s: f32, reach: &[f32], settings: &RagdollSettings) -> Vec<f32> {
+    let core = def.regions.iter().position(|r| r == crate::cook::CORE_REGION);
+    def.bodies
+        .iter()
+        .enumerate()
+        .zip(reach)
+        .map(|((i, b), r)| {
+            let m = b.mass * s * s * s;
+            let leaf = !def.joints.iter().any(|j| usize::from(j.parent) == i);
+            let k = if core == Some(usize::from(b.region)) {
+                settings.inertia_floor
+            } else if leaf && def.joints.iter().any(|j| usize::from(j.child) == i && core == Some(usize::from(def.bodies[usize::from(j.parent)].region))) {
+                settings.head_inertia_floor
+            } else if leaf {
+                settings.end_inertia_floor
+            } else {
+                0.0
+            };
+            let own = capsule_inertia(m, b.shape.radius * s, b.shape.half * s);
+            (k * m * r * r).max(settings.axial_inertia * own)
+        })
+        .collect()
+}
+
 impl RagdollInstance {
     /// Inserts the ragdoll's bodies and joints at `pose`.
     pub fn spawn(world: &mut PhysicsWorld, def: &RagdollDef, pose: &SpawnPose<'_>, settings: &RagdollSettings) -> Self {
         let s = pose.scale;
         let mass = def.total_mass * s * s * s;
+        let mut reach = vec![0.0f32; def.bodies.len()];
+        for j in &def.joints {
+            reach[usize::from(j.parent)] = reach[usize::from(j.parent)].max(j.frame_parent.0.length() * s);
+            reach[usize::from(j.child)] = reach[usize::from(j.child)].max(j.frame_child.0.length() * s);
+        }
+        let inertia = conditioned_inertia(def, s, &reach, settings);
         let mut bodies = Vec::with_capacity(def.bodies.len());
-        for b in &def.bodies {
+        for (b, &min_inertia) in def.bodies.iter().zip(&inertia) {
             let j = usize::from(b.joint);
             let world_pose = body_world(b.local, &pose.model[j], &pose.root, s);
             let mut desc = BodyDesc::new(
@@ -96,6 +176,7 @@ impl RagdollInstance {
                 settings.layer,
             );
             desc.mass = Some(b.mass * s * s * s);
+            desc.min_inertia = min_inertia;
             desc.damping = settings.damping;
             desc.extra_iterations = settings.extra_iterations;
             desc.ccd = settings.ccd;
@@ -135,7 +216,7 @@ impl RagdollInstance {
         for &(a, b) in &def.no_collide {
             world.exclude_pair(bodies[usize::from(a)], bodies[usize::from(b)]);
         }
-        Self { bodies, joints, scale: s, mass, anchor: None, dips: Vec::new(), powered: false, iterations: settings.extra_iterations }
+        Self { bodies, joints, scale: s, mass, anchor: None, dips: Vec::new(), powered: false, iterations: settings.extra_iterations, applied_iterations: settings.extra_iterations, inertia }
     }
 
     /// Removes the bodies (and with them the joints).
