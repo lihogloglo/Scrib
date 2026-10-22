@@ -80,7 +80,8 @@ mod cook {
         /// Per particle: the part's original skin where the particle sits
         /// (skeleton joints), so the op can blend the animated target from
         /// riding the girdle (`offsets`) toward following the legs as the
-        /// authored skin does (narrow robes: see physics.md "As built (p10b)").
+        /// authored skin does (narrow robes: see specs/archive/physics-history.md
+        /// "As built (p10b)").
         pub targets: Vec<SkinVertex>,
         /// Attachment line (row 0) and hem (the part's lowest point) heights, model space, m.
         pub top: f32,

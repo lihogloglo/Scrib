@@ -1,5 +1,5 @@
 //! Kinematic secondary motion in the procedural op stack (animation.md
-//! "Next-gen roadmap" layer 4; physics.md P9):
+//! "Next-gen roadmap" layer 4; specs/archive/physics-history.md P9):
 //!
 //! - `HitReact`: a hit queued with [`crate::GraphInstance::hit`] kicks
 //!   critically damped rotation springs (Holden, *Spring-It-On*, 2021, the
