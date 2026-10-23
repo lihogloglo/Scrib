@@ -1,17 +1,60 @@
 [package]
 name = "sf_console_bevy"
-description = "Bevy plugin for sf_console: the console as a resource, submitted lines as messages, variable changes as messages, run conditions"
+description = "Bevy plugin for sf_console: the console as a resource, submitted lines as messages, variable changes as messages, run conditions; optional in-game overlay with click-select and an inspector"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Minimal Bevy (ARCHITECTURE §8b rule 6): no UI here, the front end (sf_devui) comes later.
+[features]
+# The in-game front end (bevy_ui): input line, scrollback, completion popup, click-select with a
+# selection box, inspector panel, commands on the selection. Plugins that only register variables
+# and commands leave it off and compile none of it (ARCHITECTURE §8b rule 6).
+overlay = [
+    "bevy_ecs/bevy_reflect",
+    "dep:bevy_asset",
+    "dep:bevy_camera",
+    "dep:bevy_color",
+    "dep:bevy_gizmos",
+    "dep:bevy_input",
+    "dep:bevy_math",
+    "dep:bevy_mesh",
+    "dep:bevy_picking",
+    "dep:bevy_reflect",
+    "dep:bevy_shape",
+    "dep:bevy_text",
+    "dep:bevy_transform",
+    "dep:bevy_ui",
+    "dep:bevy_window",
+]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
 [dependencies]
 # App, Plugin, PreUpdate.
 bevy_app = { workspace = true, features = ["std"] }
 # Resource, Message, exclusive system, run conditions.
 bevy_ecs = { workspace = true, features = ["std"] }
 sf_console.workspace = true
+# Overlay: the mesh store (pick ray); cameras, Aabb and Visibility; selection box; keys and mouse; cursor ray; mesh ray cast
+# (the picking backend's code, run once per click instead of every frame); inspector reflection;
+# text, panels and the primary window's cursor.
+bevy_asset = { workspace = true, optional = true }
+bevy_camera = { workspace = true, optional = true }
+bevy_color = { workspace = true, optional = true }
+bevy_gizmos = { workspace = true, optional = true }
+bevy_input = { workspace = true, optional = true, features = ["std", "keyboard", "mouse"] }
+bevy_math = { workspace = true, optional = true, features = ["std"] }
+bevy_mesh = { workspace = true, optional = true }
+bevy_picking = { workspace = true, optional = true, features = ["mesh_picking"] }
+bevy_reflect = { workspace = true, optional = true, features = ["std"] }
+bevy_shape = { workspace = true, optional = true }
+bevy_text = { workspace = true, optional = true }
+bevy_transform = { workspace = true, optional = true, features = ["std", "bevy-support"] }
+bevy_ui = { workspace = true, optional = true }
+bevy_window = { workspace = true, optional = true, features = ["std"] }
+
+[dev-dependencies]
+# MinimalPlugins for headless tests.
+bevy = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true
