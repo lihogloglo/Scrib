@@ -1,0 +1,13 @@
+[package]
+name = "sf_save_bevy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy plugin for sf_save: save/load/quicksave/autosave over a section registry, framework sections"
+
+[dependencies]
+sf_save.workspace = true
+
+[lints]
+workspace = true

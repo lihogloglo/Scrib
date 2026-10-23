@@ -6415,6 +6415,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_save"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "lz4_flex",
+ "postcard",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_save_bevy"
+version = "0.1.0"
+dependencies = [
+ "sf_save",
+]
+
+[[package]]
 name = "sf_script"
 version = "0.1.0"
 dependencies = [

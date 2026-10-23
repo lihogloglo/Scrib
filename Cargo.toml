@@ -94,6 +94,8 @@ ron = "0.12"
 # CPU twin of the longest wave cascade (sf_water; water.md "The water query").
 rustfft = "6.4"
 semver = { version = "1", features = ["serde"] }
+# Saved-type shape goldens (save.md "Drift guard"); tests only (sf_save_bevy).
+serde-reflection = { version = "0.6", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = "1"
@@ -156,6 +158,8 @@ sf_console = { path = "crates/sf_console", version = "0.1.0" }
 sf_console_bevy = { path = "crates/sf_console_bevy", version = "0.1.0" }
 sf_ui_inventory = { path = "crates/sf_ui_inventory", version = "0.1.0" }
 sf_rpg_ui = { path = "crates/sf_rpg_ui", version = "0.1.0" }
+sf_save = { path = "crates/sf_save", version = "0.1.0" }
+sf_save_bevy = { path = "crates/sf_save_bevy", version = "0.1.0" }
 
 # big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
 # "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.
