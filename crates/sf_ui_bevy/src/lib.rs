@@ -19,18 +19,33 @@
 //!   last pad's vendor sets [`GamepadFamily`] for glyphs (`sf_ui::glyph`).
 //! - **Profile** ([`profile`]): [`insert_from_profile`] builds registry, settings, strings and
 //!   bindings from an `sf_mods` profile; changes are saved back when the player leaves the menus.
+//!
+//! [`UiTextPlugin`] puts text on screen (ui-text.md):
+//!
+//! - **Measurer** ([`text_measure`]): `sf_ui::TextMeasure` on `bevy_text`'s own layout call,
+//!   with fonts and sizes from [`RichTextTheme`], cached per paragraph.
+//! - **Readers** ([`reader`]): [`RichReader`] draws a paginated `sf_ui::RichDoc` as a book
+//!   (spread or single page) or a scroll, measured from its laid-out page nodes; actions are
+//!   [`ReaderEvent`]s.
+//! - **Notifications** ([`notify`]): modal [`MessageBoxes`] answered as [`MessageBoxAnswer`]
+//!   messages, and timed [`Toasts`].
 
 pub mod actions;
 pub mod device;
 pub mod keybinds;
 pub mod nav;
+pub mod notify;
 pub mod profile;
+pub mod reader;
 pub mod router;
+pub mod text_measure;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_profile;
+#[cfg(test)]
+mod tests_text;
 
 use bevy_app::{App, Last, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
@@ -51,6 +66,19 @@ pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, held_direction};
 pub use profile::{
     BINDINGS_CONTEXT, UiLoadReport, UiLocales, UiProfile, binding_name, insert_from_profile, parse_binding,
     parse_inputs, validate_input,
+};
+pub use notify::{
+    MESSAGE_BOX_Z, MessageBoxAnswer, MessageBoxButton, MessageBoxConfig, MessageBoxView, MessageBoxes,
+    NotifyColors, TOAST_Z, ToastStack, ToastView, Toasts,
+};
+pub use reader::{
+    FragmentCtx, ReaderAction, ReaderBody, ReaderButton, ReaderEvent, ReaderFragment, ReaderLabels,
+    ReaderLayout, ReaderState, RichReader, UiPart, WHEEL_LINE, fragment_paragraph, spawn_page,
+    spawn_paragraph,
+};
+pub use text_measure::{
+    DOC_LINE_BREAK, ImageResolver, MeasureCache, MeasureScale, ParleyMeasure, RichImages,
+    RichTextMeasure, RichTextTheme, image_logical_size, justify,
 };
 pub use router::{
     UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts, UiScreenInput, UiScreenRoot,
@@ -217,6 +245,70 @@ impl Plugin for SfUiPlugin {
                 )
                     .chain()
                     .in_set(UiSystems::Dispatch),
+            );
+    }
+}
+
+/// Ordering of the text widgets' systems in `Update` (after [`UiSystems::Dispatch`]).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UiTextSystems {
+    /// UI actions, buttons and the wheel → reader events and message box answers.
+    Input,
+    /// Pagination, page drawing, notification widgets.
+    Draw,
+}
+
+/// Text on screen: the document measurer, book and scroll readers, message boxes and toasts.
+/// Needs `bevy_text`'s `TextPlugin`, `bevy_ui`'s `UiPlugin` and an asset plugin (all in
+/// `DefaultPlugins`); routes input through [`SfUiPlugin`] when it is added.
+pub struct UiTextPlugin;
+
+impl Plugin for UiTextPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<RichTextTheme>()
+            .init_resource::<MeasureCache>()
+            .init_resource::<RichImages>()
+            .init_resource::<ReaderLabels>()
+            .init_resource::<reader::ThemeTick>()
+            .init_resource::<MessageBoxes>()
+            .init_resource::<MessageBoxConfig>()
+            .init_resource::<NotifyColors>()
+            .init_resource::<Toasts>()
+            .add_message::<ReaderEvent>()
+            .add_message::<MessageBoxAnswer>()
+            .add_message::<UiActionEvent>()
+            .add_message::<bevy_input::mouse::MouseWheel>()
+            .add_observer(reader::on_reader_button)
+            .add_observer(notify::on_message_box_button)
+            .configure_sets(
+                Update,
+                (UiTextSystems::Input, UiTextSystems::Draw)
+                    .chain()
+                    .after(UiSystems::Dispatch),
+            )
+            .add_systems(
+                Update,
+                (
+                    reader::reader_input,
+                    reader::apply_reader_events,
+                    notify::message_box_back,
+                )
+                    .chain()
+                    .in_set(UiTextSystems::Input),
+            )
+            .add_systems(
+                Update,
+                (
+                    reader::spawn_reader_chrome,
+                    reader::bump_theme_tick,
+                    text_measure::invalidate_measure_cache,
+                    reader::layout_readers,
+                    notify::sync_message_box,
+                    notify::tick_toasts,
+                    notify::sync_toasts,
+                )
+                    .chain()
+                    .in_set(UiTextSystems::Draw),
             );
     }
 }
