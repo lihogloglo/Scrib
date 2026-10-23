@@ -9,9 +9,10 @@
 
 use bevy_color::Color;
 use bevy_ecs::prelude::*;
+use bevy_input_focus::InputFocus;
 use bevy_text::{FontSize, TextColor, TextFont};
-use bevy_ui::InteractionDisabled;
 use bevy_ui::prelude::*;
+use bevy_ui::{ComputedNode, InteractionDisabled, ScrollPosition, UiGlobalTransform};
 use bevy_ui_widgets::Button;
 use sf_ui_bevy::{UiFocusable, UiPart};
 use sf_ui_css::UiClass;
@@ -140,6 +141,7 @@ pub fn spawn_button(
             part(name),
             Node {
                 padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                flex_shrink: 0.0,
                 ..Node::default()
             },
             Button,
@@ -286,4 +288,87 @@ pub(crate) fn sync_bars(
             &[("low", ratio < 0.25), ("over", ratio > 1.0)],
         ));
     }
+}
+
+/// The fallback focus ring: an outline on the focused part (themes restyle `:focus`).
+pub(crate) fn focus_ring(
+    mut commands: Commands,
+    focus: Res<InputFocus>,
+    colors: Res<ScreenColors>,
+    parts: Query<(), With<UiPart>>,
+    mut ringed: Local<Option<Entity>>,
+) {
+    let now = focus.get().filter(|e| parts.contains(*e));
+    if now == *ringed {
+        return;
+    }
+    if let Some(old) = ringed.take()
+        && let Ok(mut e) = commands.get_entity(old)
+    {
+        e.try_remove::<Outline>();
+    }
+    if let Some(new) = now {
+        commands
+            .entity(new)
+            .insert(Outline::new(Val::Px(2.0), Val::Px(1.0), colors.new));
+    }
+    *ringed = now;
+}
+
+/// On a scrolling node (`overflow: scroll`): it scrolls to keep the focused descendant in view.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct ScrollFollowsFocus;
+
+/// Scrolls the nearest [`ScrollFollowsFocus`] ancestor of a newly focused part so that the part
+/// is inside its viewport (retried until the part is laid out).
+pub(crate) fn scroll_to_focus(
+    focus: Res<InputFocus>,
+    parents: Query<&ChildOf>,
+    nodes: Query<(&ComputedNode, &UiGlobalTransform)>,
+    mut scrolls: Query<&mut ScrollPosition, With<ScrollFollowsFocus>>,
+    mut done: Local<Option<Entity>>,
+) {
+    let Some(focused) = focus.get() else {
+        *done = None;
+        return;
+    };
+    if *done == Some(focused) {
+        return;
+    }
+    let mut container = None;
+    let mut current = focused;
+    while let Ok(parent) = parents.get(current) {
+        current = parent.parent();
+        if scrolls.contains(current) {
+            container = Some(current);
+            break;
+        }
+    }
+    let Some(container) = container else {
+        *done = Some(focused);
+        return;
+    };
+    let (Ok((node, at)), Ok((view, view_at))) = (nodes.get(focused), nodes.get(container)) else {
+        return;
+    };
+    if node.size().y <= 0.0 || view.size().y <= 0.0 {
+        return; // not laid out yet
+    }
+    let top = at.translation.y - node.size().y / 2.0;
+    let bottom = top + node.size().y;
+    let view_top = view_at.translation.y - view.size().y / 2.0;
+    let view_bottom = view_top + view.size().y;
+    let delta = if top < view_top {
+        top - view_top
+    } else if bottom > view_bottom {
+        bottom - view_bottom
+    } else {
+        0.0
+    };
+    if delta != 0.0
+        && let Ok(mut pos) = scrolls.get_mut(container)
+    {
+        pos.y = (pos.y + delta * view.inverse_scale_factor()).max(0.0);
+    }
+    *done = Some(focused);
 }

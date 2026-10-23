@@ -11,6 +11,7 @@
 use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_input_focus::{FocusCause, InputFocus};
+use bevy_ui::GlobalZIndex;
 use bevy_ui::auto_directional_navigation::AutoDirectionalNavigation;
 use bevy_ui_widgets::Activate;
 use sf_ui::{InputContextId, Layer, ScreenId};
@@ -139,6 +140,43 @@ fn screen_of<'a>(
             return Some((root, &screen.0));
         }
         current = parents.get(current).ok()?.parent();
+    }
+}
+
+/// Global z-index step per layer: screen roots stack by layer (HUD under menus under modals),
+/// then by position in their layer; every value stays below the message boxes and toasts
+/// ([`crate::MESSAGE_BOX_Z`]).
+pub const SCREEN_Z_STEP: i32 = 1 << 12;
+
+/// The global z-index of an open screen's root.
+pub fn screen_z(layer: Layer, position: usize) -> i32 {
+    let layer = i32::try_from(layer.index()).unwrap_or(0) + 1;
+    layer * SCREEN_Z_STEP + i32::try_from(position).unwrap_or(0).min(SCREEN_Z_STEP - 1)
+}
+
+/// Draw order follows the stack: each open screen's root gets [`screen_z`] (a later screen
+/// of a layer above an earlier one, any menu above the HUD).
+pub(crate) fn order_screen_roots(
+    mut commands: Commands,
+    stack: Res<ScreenStackRes>,
+    roots: Query<(Entity, &UiScreenRoot, Option<&GlobalZIndex>)>,
+    added: Query<(), Added<UiScreenRoot>>,
+    mut seen: Local<Option<u64>>,
+) {
+    if *seen == Some(stack.0.version()) && added.is_empty() {
+        return;
+    }
+    *seen = Some(stack.0.version());
+    for (entity, root, z) in &roots {
+        let place = Layer::ALL.iter().find_map(|layer| {
+            let position = stack.0.layer(*layer).iter().position(|s| s.id == root.0)?;
+            Some(screen_z(*layer, position))
+        });
+        if let Some(place) = place
+            && z.is_none_or(|z| z.0 != place)
+        {
+            commands.entity(entity).insert(GlobalZIndex(place));
+        }
     }
 }
 

@@ -78,7 +78,8 @@ pub use reader::{
     spawn_page, spawn_paragraph,
 };
 pub use router::{
-    UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts, UiScreenInput, UiScreenRoot,
+    SCREEN_Z_STEP, UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts,
+    UiScreenInput, UiScreenRoot, screen_z,
 };
 pub use text_measure::{
     DOC_LINE_BREAK, ImageResolver, MeasureCache, MeasureScale, ParleyMeasure, RichImages,
@@ -242,6 +243,7 @@ impl Plugin for SfUiPlugin {
                 Update,
                 (
                     router::sync_navigable,
+                    router::order_screen_roots,
                     router::dispatch_actions.run_if(ui_input_open),
                     nav::navigate.run_if(ui_input_open),
                 )

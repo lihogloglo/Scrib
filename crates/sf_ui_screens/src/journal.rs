@@ -37,7 +37,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, classes, panel, part, part_with, relabel, set_disabled, show, spawn_button,
+    ScreenColors, ScrollFollowsFocus, classes, panel, part, part_with, relabel, set_disabled, show,
+    spawn_button,
 };
 use crate::{ScreenSystems, screen_of};
 
@@ -252,7 +253,6 @@ pub(crate) fn spawn_journal(
                         width: Val::Percent(100.0),
                         height: Val::Percent(100.0),
                         flex_direction: FlexDirection::Column,
-                        overflow: Overflow::clip(),
                         ..Node::default()
                     },
                     JournalPageBody(index),
@@ -307,7 +307,7 @@ pub(crate) fn spawn_journal(
                     "sf-journal-index",
                     Node {
                         flex_direction: FlexDirection::Column,
-                        width: Val::Px(240.0),
+                        width: Val::Px(280.0),
                         row_gap: Val::Px(6.0),
                         ..Node::default()
                     },
@@ -394,6 +394,7 @@ pub(crate) fn spawn_journal(
                     ..Node::default()
                 },
                 ScrollPosition::default(),
+                ScrollFollowsFocus,
                 ChildOf(side),
             ))
             .id();

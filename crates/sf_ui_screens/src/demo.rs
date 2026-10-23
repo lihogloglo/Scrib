@@ -490,11 +490,16 @@ impl DemoInventory {
 
     /// A synced view with the demo tabs.
     pub fn view(&self) -> InventoryView {
+        // Labels are Fluent keys; the demo has no strings, so plain words stand in.
+        let mut all = InventoryTab::all();
+        "All".clone_into(&mut all.label);
+        let mut worn = InventoryTab::equipped();
+        "Worn".clone_into(&mut worn.label);
         let tabs = vec![
-            InventoryTab::all(),
+            all,
             InventoryTab::categories("gear", "Gear", ["weapon", "armor"]),
             InventoryTab::categories("food", "Food", ["food"]),
-            InventoryTab::equipped(),
+            worn,
         ];
         let mut view = InventoryView::new(HOLDER, tabs, 1.0, 1.0);
         view.set_capacity(Some(200.0));

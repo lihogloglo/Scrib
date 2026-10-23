@@ -13,6 +13,7 @@ use bevy_ecs::prelude::*;
 use bevy_input_focus::{FocusCause, InputFocus};
 use bevy_math::CompassOctant;
 use bevy_text::TextColor;
+use bevy_ui::ScrollPosition;
 use bevy_ui::prelude::*;
 use bevy_ui_widgets::Activate;
 use sf_ui::{ActionRef, Device, KeybindRow, PadFamily, RebindEvent, Resolution, SlotRef};
@@ -23,7 +24,7 @@ use sf_ui_bevy::{
 
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
-use crate::widgets::{ScreenColors, button, classes, label, panel, part, show};
+use crate::widgets::{ScreenColors, ScrollFollowsFocus, button, classes, label, panel, part, show};
 use crate::{is_target, screen_of};
 
 /// On a screen root: the keybinds screen for one keymap context (`None`: every action).
@@ -77,6 +78,17 @@ pub enum KeybindCellKind {
 #[derive(Component, Clone, Debug)]
 pub struct KeybindCell(pub KeybindCellKind);
 
+/// Fallback geometry (themes may restyle; columns line up as long as cells share a width).
+const LABEL_WIDTH: f32 = 200.0;
+const CELL_WIDTH: f32 = 140.0;
+const CELL_GAP: f32 = 8.0;
+
+/// Width of `count` cells and the gaps between them.
+#[allow(clippy::cast_precision_loss)] // a handful of columns
+fn columns_width(count: usize) -> f32 {
+    count as f32 * CELL_WIDTH + count.saturating_sub(1) as f32 * CELL_GAP
+}
+
 const CHOICES: [Option<Resolution>; 4] = [
     Some(Resolution::Swap),
     Some(Resolution::Unbind),
@@ -84,14 +96,19 @@ const CHOICES: [Option<Resolution>; 4] = [
     None,
 ];
 
+/// A drawn row: what it shows (row, pad family, column layout) and its cells by column.
+type RowShown = (KeybindRow, PadFamily, [usize; 2], Vec<Option<Entity>>);
+
 /// The screen's parts and what they show.
 #[derive(Component, Debug)]
 pub struct KeybindsParts {
     rows: KeyedChildren<ActionRef>,
     /// What each row shows, and its cells by column (`None`: the row has no such slot).
-    shown: HashMap<ActionRef, (KeybindRow, PadFamily, [usize; 2], Vec<Option<Entity>>)>,
+    shown: HashMap<ActionRef, RowShown>,
     /// Slot columns per device: the most slots any row has, so columns line up.
     columns: [usize; 2],
+    /// Column headings per device, sized to their columns.
+    headings: [Entity; 2],
     order: Vec<ActionRef>,
     reset_all: Entity,
     overlay: Entity,
@@ -181,6 +198,7 @@ impl KeybindsParts {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn spawn_keybinds(
     mut commands: Commands,
     colors: Res<ScreenColors>,
@@ -199,26 +217,45 @@ pub(crate) fn spawn_keybinds(
             },
             &colors,
         ),));
+        let header = commands
+            .spawn((
+                part("sf-keybinds-header"),
+                Node {
+                    column_gap: Val::Px(CELL_GAP),
+                    ..Node::default()
+                },
+                ChildOf(root),
+            ))
+            .id();
         commands.spawn((
-            part("sf-keybinds-header"),
+            part("sf-keybinds-header-label"),
             Node {
-                column_gap: Val::Px(12.0),
+                width: Val::Px(LABEL_WIDTH),
                 ..Node::default()
             },
-            ChildOf(root),
-            children![
-                label("sf-keybinds-heading", labels.kbm.clone(), &colors),
-                label("sf-keybinds-heading", labels.gamepad.clone(), &colors),
-            ],
+            ChildOf(header),
         ));
+        let headings = [labels.kbm.clone(), labels.gamepad.clone()].map(|text| {
+            commands
+                .spawn((
+                    label("sf-keybinds-heading", text, &colors),
+                    Node::default(),
+                    ChildOf(header),
+                ))
+                .id()
+        });
         let rows = commands
             .spawn((
                 part("sf-keybinds-rows"),
                 Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(2.0),
+                    max_height: Val::Vh(70.0),
+                    overflow: Overflow::scroll_y(),
                     ..Node::default()
                 },
+                ScrollPosition::default(),
+                ScrollFollowsFocus,
                 ChildOf(root),
             ))
             .id();
@@ -248,7 +285,7 @@ pub(crate) fn spawn_keybinds(
                     },
                     &colors,
                 ),
-                GlobalZIndex(10),
+                ZIndex(10),
                 ChildOf(root),
             ))
             .id();
@@ -290,6 +327,7 @@ pub(crate) fn spawn_keybinds(
             rows: KeyedChildren::new(rows),
             shown: HashMap::new(),
             columns: [0, 0],
+            headings,
             order: Vec::new(),
             reset_all,
             overlay,
@@ -345,6 +383,11 @@ pub(crate) fn sync_keybinds(
             parts.columns =
                 [0, 1].map(|d| rows.iter().map(|r| r.slots[d].len()).max().unwrap_or(0));
             let columns = parts.columns;
+            for (heading, count) in parts.headings.iter().zip(columns) {
+                if let Ok(mut node) = nodes.get_mut(*heading) {
+                    node.width = Val::Px(columns_width(count));
+                }
+            }
             let colors = &*colors;
             parts
                 .rows
@@ -353,7 +396,7 @@ pub(crate) fn sync_keybinds(
                         .spawn((
                             part("sf-keybinds-row"),
                             Node {
-                                column_gap: Val::Px(8.0),
+                                column_gap: Val::Px(CELL_GAP),
                                 align_items: AlignItems::Center,
                                 ..Node::default()
                             },
@@ -385,7 +428,7 @@ pub(crate) fn sync_keybinds(
                         colors,
                     ),
                     Node {
-                        width: Val::Px(200.0),
+                        width: Val::Px(LABEL_WIDTH),
                         ..Node::default()
                     },
                     ChildOf(entity),
@@ -399,7 +442,7 @@ pub(crate) fn sync_keybinds(
                             commands.spawn((
                                 part("sf-keybinds-spacer"),
                                 Node {
-                                    width: Val::Px(120.0),
+                                    width: Val::Px(CELL_WIDTH),
                                     ..Node::default()
                                 },
                                 ChildOf(entity),
@@ -419,7 +462,7 @@ pub(crate) fn sync_keybinds(
                                 ChildOf(entity),
                             ))
                             .insert(Node {
-                                width: Val::Px(120.0),
+                                width: Val::Px(CELL_WIDTH),
                                 padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                                 ..Node::default()
                             })

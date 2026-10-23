@@ -39,7 +39,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, classes, label, label_in, part, part_with, relabel, set_disabled, spawn_button,
+    ScreenColors, ScrollFollowsFocus, classes, label, label_in, part, part_with, relabel,
+    set_disabled, spawn_button,
 };
 use crate::{is_target, screen_of};
 
@@ -136,6 +137,7 @@ impl DialogueParts {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn spawn_dialogue(
     mut commands: Commands,
     colors: Res<ScreenColors>,
@@ -213,6 +215,7 @@ pub(crate) fn spawn_dialogue(
         let topics = commands
             .spawn((
                 part("sf-dialogue-topics"),
+                ScrollFollowsFocus,
                 Node {
                     flex_direction: FlexDirection::Column,
                     flex_grow: 1.0,
@@ -292,8 +295,8 @@ fn spawn_entry_content(
                     ChildOf(text),
                 ));
                 match &run.link {
-                    Some(link) => {
-                        let state = match link.state {
+                    Some(topic_link) => {
+                        let state = match topic_link.state {
                             LinkState::New => "new",
                             LinkState::Known => "known",
                             LinkState::Unavailable => "unavailable",
@@ -303,7 +306,7 @@ fn spawn_entry_content(
                                 "sf-dialogue-link",
                                 classes("sf-dialogue-link", &[(state, true)]),
                             ),
-                            TextColor(link_color(link.state, colors)),
+                            TextColor(link_color(topic_link.state, colors)),
                             DialogueTarget(DialogueFocus::Link {
                                 entry: entry.id,
                                 run: i,

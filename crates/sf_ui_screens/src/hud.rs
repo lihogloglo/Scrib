@@ -205,14 +205,14 @@ pub(crate) fn spawn_hud(
     }
 }
 
-/// An 8-point compass label and whole degrees (`NE 45°`).
+/// An 8-point compass label and whole degrees (`NE 045`).
 pub fn heading_label(degrees: f32) -> String {
     const POINTS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     let d = degrees.rem_euclid(360.0);
     // In 0..360, so the casts can't truncate or lose sign.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let point = ((d + 22.5) / 45.0) as usize % 8;
-    format!("{} {:.0}°", POINTS[point], d.floor())
+    format!("{} {:03.0}", POINTS[point], d.floor())
 }
 
 /// [`HudView`] (and the prompt glyph's device, pad family and keymap) → the HUD's nodes, only

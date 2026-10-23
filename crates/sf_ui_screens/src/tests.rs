@@ -12,7 +12,7 @@ use bevy::picking::{InteractionPlugin, PickingPlugin};
 use bevy::prelude::*;
 use bevy::text::{TextBackgroundColor, TextPlugin, TextSpan};
 use bevy::time::TimeUpdateStrategy;
-use bevy::ui::ComputedNode;
+use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::ui::UiPlugin;
 use bevy_enhanced_input::prelude::*;
 use bevy_input_focus::InputFocus;
@@ -568,10 +568,24 @@ fn inventory_tooltip_follows_focus_with_comparison() {
     let (screen, parts) = inventory(&ui, root);
     let focused = screen.view.focus().unwrap();
     let tooltip = parts.tooltip();
-    assert_eq!(
-        ui.world().get::<ChildOf>(tooltip).map(ChildOf::parent),
-        parts.cell_of(focused),
-        "the tooltip hangs on the focused cell"
+    // Beside the focused cell: same top, just right of it (or left at the screen's edge).
+    let rect = |e| {
+        let node = ui.world().get::<ComputedNode>(e).unwrap();
+        let at = ui.world().get::<UiGlobalTransform>(e).unwrap();
+        (
+            at.translation - node.size() / 2.0,
+            at.translation + node.size() / 2.0,
+        )
+    };
+    let (cell_min, cell_max) = rect(parts.cell_of(focused).unwrap());
+    let (tip_min, tip_max) = rect(tooltip);
+    assert!(
+        (tip_min.y - cell_min.y).abs() < 1.0,
+        "{tip_min} vs {cell_min}"
+    );
+    assert!(
+        (tip_min.x - cell_max.x - 4.0).abs() < 1.0 || (cell_min.x - tip_max.x - 4.0).abs() < 1.0,
+        "{tip_min}..{tip_max} beside {cell_min}..{cell_max}"
     );
     assert!(screen.compare.is_some());
     let text = ui.text_of(tooltip);
@@ -779,7 +793,9 @@ fn keybinds_capture_conflict_and_grid_focus() {
     let pad_confirm = parts
         .slot_cell(&confirm, sf_ui::Device::Gamepad, 0)
         .unwrap();
-    let lt = sf_ui::glyph("pad:LeftTrigger2", sf_ui::PadFamily::Xbox).unwrap().label;
+    let lt = sf_ui::glyph("pad:LeftTrigger2", sf_ui::PadFamily::Xbox)
+        .unwrap()
+        .label;
     assert_eq!(ui.text_of(pad_confirm), lt);
     assert!(ui.class_of(confirm_row).contains("modified"));
     assert_eq!(
@@ -866,6 +882,6 @@ fn hud_bars_keyed_and_prompt_glyph_follows_the_device() {
     ui.frames(1);
     let prompt = ui.world().get::<HudParts>(root).unwrap().prompt();
     assert!(ui.class_of(prompt).contains("blocked"));
-    assert_eq!(hud::heading_label(48.0), "NE 48°");
-    assert_eq!(hud::heading_label(-90.0), "W 270°");
+    assert_eq!(hud::heading_label(48.0), "NE 048");
+    assert_eq!(hud::heading_label(-90.0), "W 270");
 }

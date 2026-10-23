@@ -16,6 +16,7 @@
 //! scrolls.
 
 use bevy_asset::AssetServer;
+use bevy_color::Alpha;
 use bevy_ecs::prelude::*;
 use bevy_input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy_input_focus::{FocusCause, InputFocus};
@@ -25,14 +26,13 @@ use bevy_picking::events::{
     PointerDrag, PointerDragDrop, PointerDragEnd, PointerDragStart, PointerOver,
 };
 use bevy_text::{TextColor, TextSpan};
-use bevy_ui::ComputedNode;
 use bevy_ui::prelude::*;
+use bevy_ui::{ComputedNode, UiGlobalTransform};
 use bevy_ui_widgets::Activate;
-use bevy_ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
 use sf_rpg::{RecordId, StackId};
 use sf_ui_bevy::{
-    RichImages, ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiNavEvent, UiOwnsFocus,
-    UiScreenRoot, WHEEL_LINE,
+    RichImages, ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiLocalizer, UiNavEvent,
+    UiOwnsFocus, UiScreenRoot, WHEEL_LINE,
 };
 use sf_ui_inventory::{Comparison, InventoryGrid, InventoryView, QuantityPicker, Verdict};
 
@@ -185,7 +185,9 @@ pub struct InventoryParts {
     split_bar: Entity,
     split_ok: Entity,
     ghost: Entity,
-    last_focus: Option<Option<StackId>>,
+    /// The focus last reported as [`InventoryIntent::Focused`].
+    reported: Option<StackId>,
+    reported_once: bool,
 }
 
 impl InventoryParts {
@@ -343,25 +345,12 @@ pub(crate) fn spawn_inventory(
                     },
                     &colors,
                 ),
-                Popover {
-                    positions: vec![
-                        PopoverPlacement {
-                            side: PopoverSide::Right,
-                            align: PopoverAlign::Start,
-                            gap: 4.0,
-                        },
-                        PopoverPlacement {
-                            side: PopoverSide::Left,
-                            align: PopoverAlign::Start,
-                            gap: 4.0,
-                        },
-                    ],
-                    window_margin: 8.0,
-                },
-                GlobalZIndex(20),
+                ZIndex(20),
                 Pickable::IGNORE,
                 ChildOf(root),
             ))
+            // Opaque: it lies over other cells.
+            .insert(BackgroundColor(colors.panel.with_alpha(1.0)))
             .id();
         let tooltip_text = commands
             .spawn((
@@ -389,7 +378,7 @@ pub(crate) fn spawn_inventory(
                     },
                     &colors,
                 ),
-                GlobalZIndex(15),
+                ZIndex(15),
                 ChildOf(root),
             ))
             .id();
@@ -463,7 +452,8 @@ pub(crate) fn spawn_inventory(
                     ..Node::default()
                 },
                 BackgroundColor(colors.cell),
-                GlobalZIndex(30),
+                // A window-level node above every screen, below message boxes.
+                GlobalZIndex(sf_ui_bevy::MESSAGE_BOX_Z - 1),
                 Pickable::IGNORE,
                 children![(Text::new(""), colors.font(0.9), TextColor(colors.text))],
             ))
@@ -487,7 +477,8 @@ pub(crate) fn spawn_inventory(
             split_bar,
             split_ok,
             ghost,
-            last_focus: None,
+            reported: None,
+            reported_once: false,
         });
     }
 }
@@ -612,6 +603,8 @@ pub(crate) fn sync_inventory(
     server: Option<Res<AssetServer>>,
     mut images: Option<ResMut<RichImages>>,
     computed: Query<&ComputedNode>,
+    geometry: Query<(&ComputedNode, &UiGlobalTransform)>,
+    localizer: Option<Res<UiLocalizer>>,
     mut screens: Query<(
         Entity,
         &UiScreenRoot,
@@ -664,7 +657,11 @@ pub(crate) fn sync_inventory(
                     "sf-inventory-tab",
                     &[("selected", selected), ("empty", *count == 0)],
                 ));
-                let name = screen.view.tabs()[i].label.clone();
+                let key = &screen.view.tabs()[i].label;
+                let name = match localizer.as_deref() {
+                    Some(l) if l.0.has(key) => l.0.format(key, None).into_owned(),
+                    _ => key.clone(),
+                };
                 let color = if selected { colors.new } else { colors.text };
                 relabel(&mut commands, tab, format!("{name} ({count})"), color);
             }
@@ -791,8 +788,9 @@ pub(crate) fn sync_inventory(
         }
 
         // Focus changes go to the game (for the comparison).
-        if parts.last_focus != Some(focused) {
-            parts.last_focus = Some(focused);
+        if !parts.reported_once || parts.reported != focused {
+            parts.reported_once = true;
+            parts.reported = focused;
             if screen
                 .compare
                 .as_ref()
@@ -823,12 +821,34 @@ pub(crate) fn sync_inventory(
         });
         if let Ok(mut node) = nodes.get_mut(parts.tooltip) {
             show(&mut node, tip.is_some() && screen.split.is_none());
+            // Beside the cell, inside the screen (right of it, else left).
+            if let Some((cell, ..)) = tip
+                && let (Ok((c, c_at)), Ok((r, r_at)), Ok((t, _))) = (
+                    geometry.get(cell),
+                    geometry.get(root_entity),
+                    geometry.get(parts.tooltip),
+                )
+            {
+                let scale = r.inverse_scale_factor();
+                let cell_min = (c_at.translation - c.size() / 2.0) * scale;
+                let root_min = (r_at.translation - r.size() / 2.0) * scale;
+                let at = cell_min - root_min;
+                let (cell_w, tip_w, root_w) =
+                    (c.size().x * scale, t.size().x * scale, r.size().x * scale);
+                let right = at.x + cell_w + 4.0;
+                let left = if right + tip_w > root_w {
+                    (at.x - tip_w - 4.0).max(0.0)
+                } else {
+                    right
+                };
+                node.left = Val::Px(left);
+                node.top = Val::Px(at.y);
+            }
         }
         if let Some((cell, stack, version)) = tip {
             let compare = screen.compare.clone().filter(|c| c.candidate == stack);
             let key = (cell, stack, version, compare.clone());
             if parts.tooltip_seen.as_ref() != Some(&key) {
-                commands.entity(parts.tooltip).insert(ChildOf(cell));
                 commands
                     .entity(parts.tooltip_text)
                     .despawn_related::<Children>();
@@ -1206,5 +1226,18 @@ pub(crate) fn on_cell_drag_end(
         && let Ok(mut screen) = screens.get_mut(root)
     {
         screen.held = None;
+    }
+}
+
+/// The drag ghost is a window-level node: it goes with its screen.
+pub(crate) fn on_inventory_removed(
+    removed: On<Remove<InventoryParts>>,
+    parts: Query<&InventoryParts>,
+    mut commands: Commands,
+) {
+    if let Ok(parts) = parts.get(removed.entity)
+        && let Ok(mut ghost) = commands.get_entity(parts.ghost)
+    {
+        ghost.despawn();
     }
 }

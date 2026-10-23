@@ -52,7 +52,7 @@ pub use journal::{JournalSeenChanged, JournalSource, JournalUi, JournalUiPlugin}
 pub use keybinds::{KeybindsFocus, KeybindsScreen};
 pub use keyed::{KeyedChildren, KeyedSync};
 pub use labels::ScreenLabels;
-pub use widgets::{ScreenColors, StatBar};
+pub use widgets::{ScreenColors, ScrollFollowsFocus, StatBar};
 
 /// Ordering of the screens' systems in `Update`, after the router's dispatch.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,6 +86,7 @@ impl Plugin for SfScreensPlugin {
             .add_observer(inventory::on_cell_drag)
             .add_observer(inventory::on_cell_drag_end)
             .add_observer(inventory::on_cell_drop)
+            .add_observer(inventory::on_inventory_removed)
             .configure_sets(
                 Update,
                 (
@@ -125,6 +126,8 @@ impl Plugin for SfScreensPlugin {
                     keybinds::sync_keybinds,
                     inventory::sync_inventory,
                     widgets::sync_bars,
+                    widgets::focus_ring,
+                    widgets::scroll_to_focus,
                 )
                     .chain()
                     .in_set(ScreenSystems::Sync),

@@ -284,6 +284,26 @@ fn focus_follows_the_target_and_confirm_activates() {
     assert_eq!(focus(&h), Some(first));
 }
 
+#[test]
+fn screen_roots_draw_in_stack_order() {
+    let mut h = Harness::new();
+    let world = h.app.world_mut();
+    let hud = world.spawn(UiScreenRoot("hud".into())).id();
+    let menu = world.spawn(UiScreenRoot("menu".into())).id();
+    let modal = world.spawn(UiScreenRoot("confirm".into())).id();
+    h.push("confirm");
+    h.push("menu");
+    h.push("hud");
+    h.app.update();
+    let z = |h: &Harness, e| h.app.world().get::<GlobalZIndex>(e).map(|z| z.0);
+    let (hud_z, menu_z, modal_z) = (z(&h, hud), z(&h, menu), z(&h, modal));
+    assert!(
+        hud_z < menu_z && menu_z < modal_z,
+        "{hud_z:?} {menu_z:?} {modal_z:?}"
+    );
+    assert!(modal_z.unwrap() < MESSAGE_BOX_Z);
+}
+
 #[derive(Resource, Default)]
 struct NavSeen(Vec<UiNavEvent>);
 
@@ -293,7 +313,7 @@ fn a_screen_owning_its_focus_gets_directions_instead() {
     h.app.init_resource::<NavSeen>().add_systems(
         Update,
         (|mut r: MessageReader<UiNavEvent>, mut seen: ResMut<NavSeen>| {
-            seen.0.extend(r.read().cloned())
+            seen.0.extend(r.read().cloned());
         })
         .after(UiSystems::Dispatch),
     );
