@@ -29,6 +29,7 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_precip_bevy.workspace = true
 sf_records.workspace = true
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

@@ -32,6 +32,7 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 sf_diag.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

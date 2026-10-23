@@ -26,6 +26,7 @@ sf_controller.workspace = true
 sf_coords.workspace = true
 # Counters (`controller/...`) when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_ecs = { workspace = true, features = ["std", "multi_threaded"] }

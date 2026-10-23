@@ -75,4 +75,11 @@ never revert others' changes.
 cargo test --workspace --all-features
 cargo clippy --workspace --all-features --all-targets
 cargo deny check   # licences, advisories, duplicates (deny.toml; README "Dependency policy")
+cargo hakari generate --diff && cargo hakari manage-deps --dry-run   # workspace-hack is current
 ```
+
+**Adding a crate or a dependency** (`cargo install --locked cargo-hakari`): run
+`cargo hakari generate && cargo hakari manage-deps` and commit `crates/workspace-hack` with the
+manifests. The hack pins one feature set per dependency, so `cargo test -p A` and `-p B` share one
+Bevy build. A Bevy-free crate goes in `final-excludes.workspace-members` of `.config/hakari.toml`
+first: the hack carries Bevy, and cores must build cold in seconds (§8b rule 1).

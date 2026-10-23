@@ -45,6 +45,7 @@ sf_weather.workspace = true
 sf_wind.workspace = true
 sf_world.workspace = true
 sf_script_bevy = { workspace = true, optional = true }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 glam.workspace = true

@@ -27,6 +27,7 @@ sf_action_bevy.workspace = true
 sf_camera.workspace = true
 sf_controller.workspace = true
 sf_coords.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }

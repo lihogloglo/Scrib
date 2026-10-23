@@ -42,6 +42,7 @@ sf_vfs.workspace = true
 sf_world = { workspace = true, optional = true }
 thiserror.workspace = true
 sf_world_bevy = { path = "../sf_world_bevy", version = "0.1.0", optional = true }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d"] }

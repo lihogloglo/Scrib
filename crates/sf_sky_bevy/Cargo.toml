@@ -41,6 +41,7 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 sf_sky.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }

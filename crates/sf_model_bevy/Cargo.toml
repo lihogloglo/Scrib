@@ -21,6 +21,7 @@ serde.workspace = true
 sf_bake.workspace = true
 sf_model.workspace = true
 thiserror.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }

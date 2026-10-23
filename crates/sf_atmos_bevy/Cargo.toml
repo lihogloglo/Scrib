@@ -30,6 +30,7 @@ sf_atmos = { path = "../sf_atmos", version = "0.1.0" }
 # The world weather map (WE4b): `WeatherMap`, the resolve shader `MAP_WGSL`.
 sf_weather = { path = "../sf_weather", version = "0.1.0" }
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

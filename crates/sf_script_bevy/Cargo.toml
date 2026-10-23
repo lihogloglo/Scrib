@@ -19,6 +19,7 @@ semver.workspace = true
 # Counters `script/...` when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true
 sf_script.workspace = true
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

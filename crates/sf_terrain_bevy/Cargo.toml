@@ -36,6 +36,7 @@ log.workspace = true
 sf_coords.workspace = true
 sf_terrain = { workspace = true, features = ["bake"] }
 sf_world.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }
