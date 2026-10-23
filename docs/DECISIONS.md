@@ -1511,3 +1511,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-22 (dev console core, 1.13): own Bevy-free `sf_console` (typed variables + commands, one namespace, completion,
   history, log) + thin `sf_console_bevy` (changes as messages, `console_flag` run condition). `bevy_console`/`bevy_minibuffer`
   rejected: full `bevy` + egui/clap, no typed variables. Variables are local dev state, never replicated (`console.md`).
+- 2026-10-23 (owner, ARCHITECTURE §1b): modern rules are the goal; classic rules are a cheap nice-to-have built last.
+  Content mechanics (MWScript, dialogue, magic effects, levelled lists, crime) are shared and ported from OpenMW in
+  bevyrrowind; feel systems (combat, progression, AI, formulas) keep a seam. Modern AI differs from MW packages.
