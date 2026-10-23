@@ -1,0 +1,24 @@
+// Synthetic test level (docs/specs/test-levels.md) for the save round trip (save.md "Tests"):
+// props to pick up and move, a guard to kill, a chest. Meters, y up, x east, z south.
+(
+    name: "save_yard",
+    description: "save round trip: three crates (pick up, move), a barrel, a chest, a guard, one spawn",
+    cameras: [
+        (name: "overview", eye: (0.0, 10.0, 14.0), target: (0.0, 0.0, 0.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 6.0), yaw: 180.0),
+        (name: "guard", at: (4.0, 0.0, -3.0), yaw: 90.0),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (30.0, 30.0))),
+        (name: "crate-a", shape: Box(size: (0.6, 0.6, 0.6)), at: (-2.0, 0.0, 0.0), material: Orange, dynamic: Some(20.0), interact: Some("pick_up")),
+        (name: "crate-b", shape: Box(size: (0.6, 0.6, 0.6)), at: (-1.0, 0.0, 0.0), material: Orange, dynamic: Some(20.0)),
+        (name: "crate-c", shape: Box(size: (0.6, 0.6, 0.6)), at: (0.0, 0.0, 0.0), material: Orange, dynamic: Some(20.0)),
+        (name: "barrel", shape: Cylinder(radius: 0.35, height: 0.9), at: (2.0, 0.0, 1.0), material: Yellow),
+        (name: "chest", shape: Box(size: (1.0, 0.6, 0.6)), at: (3.0, 0.0, 3.0), material: Blue, interact: Some("open")),
+    ],
+    actors: [
+        (id: "guard", spawn: "guard"),
+    ],
+)

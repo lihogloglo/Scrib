@@ -4,10 +4,55 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Bevy plugin for sf_save: save/load/quicksave/autosave over a section registry, framework sections"
+description = "Bevy plugin for sf_save: save/load/quicksave/autosave over a section registry, and the framework's sections"
 
+[features]
+default = []
+# `<mod id>/script` sections over `sf_script_bevy::Scripts` (pulls the Luau runtime).
+script = ["dep:sf_script_bevy"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): no rendering. The framework's section types come from the
+# Bevy-free cores that own the state; the game wires its resources to them (`sections`).
 [dependencies]
+# App, Plugin, schedules (First, Last).
+bevy_app = { workspace = true, features = ["std"] }
+# Resources, messages, exclusive systems.
+bevy_ecs = { workspace = true, features = ["std"] }
+# Instant for snapshot/encode/write timings.
+bevy_platform = { workspace = true, features = ["std"] }
+# IoTaskPool: encode + write and read + verify + migrate + decode off the main thread.
+bevy_tasks = { workspace = true, features = ["futures-lite"] }
+# Time<Virtual>: play time and the autosave timer.
+bevy_time = { workspace = true, features = ["std"] }
+blake3.workspace = true
+log.workspace = true
+# RON extension bits of untyped record values (`sections::records`).
+ron.workspace = true
+serde.workspace = true
+# Counters `save/...` and `load/...` when the app runs `SfDiagPlugin`.
+sf_diag_bevy.workspace = true
 sf_save.workspace = true
+thiserror.workspace = true
+# Section types (save.md "What is saved"): the character body (ActionState, Locomotion), `GRID_CELL`,
+# records, the placement overlay, RPG state, the sky clock, weather and wind.
+sf_action.workspace = true
+sf_controller.workspace = true
+sf_coords.workspace = true
+sf_records.workspace = true
+sf_rpg.workspace = true
+sf_sky.workspace = true
+sf_weather.workspace = true
+sf_wind.workspace = true
+sf_world.workspace = true
+sf_script_bevy = { workspace = true, optional = true }
+
+[dev-dependencies]
+glam.workspace = true
+serde-reflection.workspace = true
+serde_json.workspace = true
+# The canonical round trip runs in a synthetic test level (test-levels.md).
+sf_level = { path = "../sf_level", version = "0.1.0" }
+tempfile.workspace = true
 
 [lints]
 workspace = true
