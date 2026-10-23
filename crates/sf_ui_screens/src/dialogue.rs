@@ -27,7 +27,7 @@ use bevy_picking::events::{PointerClick, PointerOver};
 use bevy_text::{TextBackgroundColor, TextColor, TextLayout, TextSpan};
 use bevy_ui::prelude::*;
 use bevy_ui::{ComputedNode, ScrollPosition, UiGlobalTransform};
-use bevy_ui_widgets::Activate;
+use bevy_ui_widgets::{Activate, ScrollArea};
 use sf_rpg::RecordId;
 use sf_rpg_ui::{
     DialogueFocus, DialogueNav, DialogueRequest, DialogueView, Entry, EntryId, EntryKind, LinkState,
@@ -39,8 +39,7 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, ScrollFollowsFocus, classes, label, label_in, part, part_with, relabel,
-    set_disabled, spawn_button,
+    ScreenColors, classes, label, label_in, part, part_with, relabel, set_disabled, spawn_button,
 };
 use crate::{is_target, screen_of};
 
@@ -185,7 +184,7 @@ pub(crate) fn spawn_dialogue(
                     overflow: Overflow::scroll_y(),
                     ..Node::default()
                 },
-                ScrollPosition::default(),
+                ScrollArea,
                 ChildOf(main),
             ))
             .id();
@@ -215,7 +214,7 @@ pub(crate) fn spawn_dialogue(
         let topics = commands
             .spawn((
                 part("sf-dialogue-topics"),
-                ScrollFollowsFocus,
+                ScrollArea,
                 Node {
                     flex_direction: FlexDirection::Column,
                     flex_grow: 1.0,

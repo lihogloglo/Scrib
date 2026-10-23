@@ -22,7 +22,7 @@ use bevy_ecs::prelude::*;
 use bevy_text::{TextBackgroundColor, TextColor, TextLayout, TextSpan};
 use bevy_ui::prelude::*;
 use bevy_ui::{ComputedNode, ScrollPosition};
-use bevy_ui_widgets::Activate;
+use bevy_ui_widgets::{Activate, ScrollArea};
 use sf_rpg::{RecordId, WorldRpg};
 use sf_rpg_ui::{
     Block, BlockStyle, BookContent, JournalCtx, JournalLabels, JournalScreen, JournalSeen,
@@ -37,8 +37,7 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, ScrollFollowsFocus, classes, panel, part, part_with, relabel, set_disabled, show,
-    spawn_button,
+    ScreenColors, classes, panel, part, part_with, relabel, set_disabled, show, spawn_button,
 };
 use crate::{ScreenSystems, screen_of};
 
@@ -405,7 +404,7 @@ pub(crate) fn spawn_journal(
                     ..Node::default()
                 },
                 ScrollPosition::default(),
-                ScrollFollowsFocus,
+                ScrollArea,
                 ChildOf(side),
             ))
             .id();

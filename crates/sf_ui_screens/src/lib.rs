@@ -52,7 +52,7 @@ pub use journal::{JournalSeenChanged, JournalSource, JournalUi, JournalUiPlugin}
 pub use keybinds::{KeybindsFocus, KeybindsScreen};
 pub use keyed::{KeyedChildren, KeyedSync};
 pub use labels::ScreenLabels;
-pub use widgets::{ScreenColors, ScrollFollowsFocus, StatBar};
+pub use widgets::{ScreenColors, StatBar};
 
 /// Ordering of the screens' systems in `Update`, after the router's dispatch.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,6 +71,9 @@ pub struct SfScreensPlugin;
 
 impl Plugin for SfScreensPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<bevy_ui_widgets::ScrollAreaPlugin>() {
+            app.add_plugins(bevy_ui_widgets::ScrollAreaPlugin);
+        }
         app.init_resource::<ScreenColors>()
             .init_resource::<ScreenLabels>()
             .init_resource::<InventoryGridStyle>()

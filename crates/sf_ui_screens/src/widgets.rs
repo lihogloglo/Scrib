@@ -12,8 +12,8 @@ use bevy_ecs::prelude::*;
 use bevy_input_focus::InputFocus;
 use bevy_text::{FontSize, TextColor, TextFont};
 use bevy_ui::prelude::*;
-use bevy_ui::{ComputedNode, InteractionDisabled, ScrollPosition, UiGlobalTransform};
-use bevy_ui_widgets::Button;
+use bevy_ui::{ComputedNode, InteractionDisabled};
+use bevy_ui_widgets::{Button, ScrollIntoView};
 use sf_ui_bevy::{UiFocusable, UiPart};
 use sf_ui_css::UiClass;
 
@@ -338,17 +338,12 @@ pub(crate) fn focus_ring(
     *ringed = now;
 }
 
-/// On a scrolling node (`overflow: scroll`): it scrolls to keep the focused descendant in view.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct ScrollFollowsFocus;
-
-/// Scrolls the nearest [`ScrollFollowsFocus`] ancestor of a newly focused part so that the part
-/// is inside its viewport (retried until the part is laid out).
+/// Keeps the focused part in view: a newly focused part that is laid out gets Bevy's
+/// `ScrollIntoView`, which its nearest `ScrollArea` ancestor answers (the minimal scroll).
 pub(crate) fn scroll_to_focus(
+    mut commands: Commands,
     focus: Res<InputFocus>,
-    parents: Query<&ChildOf>,
-    nodes: Query<(&ComputedNode, &UiGlobalTransform)>,
-    mut scrolls: Query<&mut ScrollPosition, With<ScrollFollowsFocus>>,
+    nodes: Query<&ComputedNode, With<UiPart>>,
     mut done: Local<Option<Entity>>,
 ) {
     let Some(focused) = focus.get() else {
@@ -358,40 +353,12 @@ pub(crate) fn scroll_to_focus(
     if *done == Some(focused) {
         return;
     }
-    let mut container = None;
-    let mut current = focused;
-    while let Ok(parent) = parents.get(current) {
-        current = parent.parent();
-        if scrolls.contains(current) {
-            container = Some(current);
-            break;
-        }
-    }
-    let Some(container) = container else {
+    // Not one of ours, or not laid out yet (retried next frame).
+    let Ok(node) = nodes.get(focused) else {
+        return;
+    };
+    if node.size().y > 0.0 {
+        commands.trigger(ScrollIntoView { entity: focused });
         *done = Some(focused);
-        return;
-    };
-    let (Ok((node, at)), Ok((view, view_at))) = (nodes.get(focused), nodes.get(container)) else {
-        return;
-    };
-    if node.size().y <= 0.0 || view.size().y <= 0.0 {
-        return; // not laid out yet
     }
-    let top = at.translation.y - node.size().y / 2.0;
-    let bottom = top + node.size().y;
-    let view_top = view_at.translation.y - view.size().y / 2.0;
-    let view_bottom = view_top + view.size().y;
-    let delta = if top < view_top {
-        top - view_top
-    } else if bottom > view_bottom {
-        bottom - view_bottom
-    } else {
-        0.0
-    };
-    if delta != 0.0
-        && let Ok(mut pos) = scrolls.get_mut(container)
-    {
-        pos.y = (pos.y + delta * view.inverse_scale_factor()).max(0.0);
-    }
-    *done = Some(focused);
 }

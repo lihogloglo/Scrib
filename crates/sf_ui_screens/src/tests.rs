@@ -903,7 +903,7 @@ fn count_touched(touched: Query<(Entity, Option<&Name>), Touch>, mut out: ResMut
     out.0.extend(
         touched
             .iter()
-            .map(|(e, n)| n.map_or_else(|| format!("{e}"), |n| n.to_string())),
+            .map(|(e, n)| n.map_or_else(|| format!("{e}"), ToString::to_string)),
     );
 }
 
@@ -916,7 +916,7 @@ fn idle_screens_touch_nothing() {
     demo::register_gameplay(&mut ui.world_mut().resource_mut::<UiKeymap>().0);
     ui.world_mut().insert_resource(demo::hud());
     ui.open("hud", HudScreen);
-    let mut check = |ui: &mut Ui, what: &str| {
+    let check = |ui: &mut Ui, what: &str| {
         ui.frames(5);
         ui.world_mut().resource_mut::<Touched>().0.clear();
         ui.frames(3);
@@ -947,4 +947,55 @@ fn idle_screens_touch_nothing() {
         .close("journal");
     open_keybinds(&mut ui);
     check(&mut ui, "keybinds");
+}
+
+/// Frame times with an open screen (whole app update: input, UI layout, text, screens), on
+/// whatever machine runs it. `cargo test -p sf_ui_screens -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing report, run on demand"]
+fn timing_screens() {
+    let mut ui = Ui::new();
+    let time = |ui: &mut Ui, frames: u32| {
+        let t = std::time::Instant::now();
+        for _ in 0..frames {
+            ui.app.update();
+        }
+        t.elapsed() / frames
+    };
+    let root = open_inventory(&mut ui, 1000);
+    ui.frames(10);
+    let idle = time(&mut ui, 60);
+    ui.set_button(GamepadButton::DPadDown, true);
+    let scroll = time(&mut ui, 120);
+    ui.set_button(GamepadButton::DPadDown, false);
+    ui.frames(2);
+    let scrolled = ui
+        .world()
+        .get::<InventoryScreen>(root)
+        .unwrap()
+        .grid
+        .scroll();
+    println!(
+        "inventory 1000 stacks: idle frame {idle:?}, held-down scroll frame {scroll:?} (scrolled {scrolled} px)"
+    );
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("inventory");
+    let root = open_journal(&mut ui);
+    ui.frames(5);
+    let idle = time(&mut ui, 60);
+    let t = std::time::Instant::now();
+    ui.tap(GamepadButton::LeftTrigger);
+    let turn = t.elapsed();
+    println!("journal: idle frame {idle:?}, page turn (3 frames) {turn:?}");
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("journal");
+    open_dialogue(&mut ui);
+    let idle = time(&mut ui, 60);
+    println!("dialogue: idle frame {idle:?}");
 }

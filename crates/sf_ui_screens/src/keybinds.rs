@@ -15,7 +15,7 @@ use bevy_math::CompassOctant;
 use bevy_text::TextColor;
 use bevy_ui::ScrollPosition;
 use bevy_ui::prelude::*;
-use bevy_ui_widgets::Activate;
+use bevy_ui_widgets::{Activate, ScrollArea};
 use sf_ui::{ActionRef, Device, KeybindRow, PadFamily, RebindEvent, Resolution, SlotRef};
 use sf_ui_bevy::{
     GamepadFamily, ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiKeymap, UiLocalizer,
@@ -24,7 +24,7 @@ use sf_ui_bevy::{
 
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
-use crate::widgets::{ScreenColors, ScrollFollowsFocus, button, classes, label, panel, part, show};
+use crate::widgets::{ScreenColors, button, classes, label, panel, part, show};
 use crate::{is_target, screen_of};
 
 /// On a screen root: the keybinds screen for one keymap context (`None`: every action).
@@ -256,7 +256,7 @@ pub(crate) fn spawn_keybinds(
                     ..Node::default()
                 },
                 ScrollPosition::default(),
-                ScrollFollowsFocus,
+                ScrollArea,
                 ChildOf(root),
             ))
             .id();
