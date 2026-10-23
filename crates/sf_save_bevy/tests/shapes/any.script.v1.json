@@ -1,0 +1,188 @@
+{
+  "ContextSnapshot": {
+    "STRUCT": [
+      {
+        "context": "STR"
+      },
+      {
+        "version": "STR"
+      },
+      {
+        "api_version": "STR"
+      },
+      {
+        "timer_schema": "U64"
+      },
+      {
+        "sim_time": "F64"
+      },
+      {
+        "rng": {
+          "TYPENAME": "Pcg32"
+        }
+      },
+      {
+        "storage": {
+          "TYPENAME": "StateValue"
+        }
+      },
+      {
+        "timers": {
+          "TYPENAME": "TimerQueue"
+        }
+      },
+      {
+        "entities": {
+          "SEQ": {
+            "TYPENAME": "EntityState"
+          }
+        }
+      }
+    ]
+  },
+  "EntityState": {
+    "STRUCT": [
+      {
+        "handle": {
+          "TYPENAME": "Handle"
+        }
+      },
+      {
+        "script": "STR"
+      },
+      {
+        "state": {
+          "TYPENAME": "StateValue"
+        }
+      }
+    ]
+  },
+  "Handle": {
+    "NEWTYPESTRUCT": "U128"
+  },
+  "Pcg32": {
+    "STRUCT": [
+      {
+        "state": "U64"
+      },
+      {
+        "inc": "U64"
+      }
+    ]
+  },
+  "StateKey": {
+    "ENUM": {
+      "0": {
+        "Bool": {
+          "NEWTYPE": "BOOL"
+        }
+      },
+      "1": {
+        "Int": {
+          "NEWTYPE": "I64"
+        }
+      },
+      "2": {
+        "Str": {
+          "NEWTYPE": {
+            "SEQ": "U8"
+          }
+        }
+      }
+    }
+  },
+  "StateValue": {
+    "ENUM": {
+      "0": {
+        "Nil": "UNIT"
+      },
+      "1": {
+        "Bool": {
+          "NEWTYPE": "BOOL"
+        }
+      },
+      "2": {
+        "Number": {
+          "NEWTYPE": "F64"
+        }
+      },
+      "3": {
+        "Str": {
+          "NEWTYPE": {
+            "SEQ": "U8"
+          }
+        }
+      },
+      "4": {
+        "Vector": {
+          "NEWTYPE": {
+            "TUPLEARRAY": {
+              "CONTENT": "F32",
+              "SIZE": 3
+            }
+          }
+        }
+      },
+      "5": {
+        "Handle": {
+          "NEWTYPE": {
+            "TYPENAME": "Handle"
+          }
+        }
+      },
+      "6": {
+        "Table": {
+          "NEWTYPE": {
+            "SEQ": {
+              "TUPLE": [
+                {
+                  "TYPENAME": "StateKey"
+                },
+                {
+                  "TYPENAME": "StateValue"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "Timer": {
+    "STRUCT": [
+      {
+        "id": "U64"
+      },
+      {
+        "name": "STR"
+      },
+      {
+        "due": "F64"
+      },
+      {
+        "every": {
+          "OPTION": "F64"
+        }
+      },
+      {
+        "payload": {
+          "TYPENAME": "StateValue"
+        }
+      }
+    ]
+  },
+  "TimerQueue": {
+    "STRUCT": [
+      {
+        "timers": {
+          "SEQ": {
+            "TYPENAME": "Timer"
+          }
+        }
+      },
+      {
+        "next_id": "U64"
+      }
+    ]
+  }
+}

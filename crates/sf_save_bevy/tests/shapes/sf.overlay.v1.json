@@ -1,0 +1,17 @@
+{
+  "OverlaySave": {
+    "STRUCT": [
+      {
+        "overlay": "BYTES"
+      },
+      {
+        "blob_versions": {
+          "MAP": {
+            "KEY": "STR",
+            "VALUE": "U32"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -28,6 +28,10 @@ pub mod sections;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_budget;
+#[cfg(test)]
+mod tests_formats;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -718,7 +722,8 @@ fn start_save(world: &mut World, runner: &mut Runner) {
         dormant: world.resource::<DormantSections>().clone(),
         target,
     };
-    runner.saving = Some((Job::start(config.background, move || job.run()), req.reason, t0.elapsed()));
+    let snapshot = t0.elapsed();
+    runner.saving = Some((Job::start(config.background, move || job.run()), req.reason, snapshot));
 }
 
 fn build_meta(world: &World, reason: SaveReason) -> SaveMeta {

@@ -1,0 +1,135 @@
+{
+  "ModRef": {
+    "STRUCT": [
+      {
+        "id": "STR"
+      },
+      {
+        "version": "STR"
+      },
+      {
+        "manifest_hash": {
+          "TUPLEARRAY": {
+            "CONTENT": "U8",
+            "SIZE": 32
+          }
+        }
+      }
+    ]
+  },
+  "PartyMember": {
+    "STRUCT": [
+      {
+        "player_key": "U128"
+      },
+      {
+        "name": "STR"
+      }
+    ]
+  },
+  "SaveMeta": {
+    "STRUCT": [
+      {
+        "world_id": "U128"
+      },
+      {
+        "save_id": "U128"
+      },
+      {
+        "parent": {
+          "OPTION": "U128"
+        }
+      },
+      {
+        "sequence": "U64"
+      },
+      {
+        "reason": {
+          "TYPENAME": "SaveReason"
+        }
+      },
+      {
+        "wall_clock": "I64"
+      },
+      {
+        "game_days": "F64"
+      },
+      {
+        "play_time_ms": "U64"
+      },
+      {
+        "sim_tick": "U64"
+      },
+      {
+        "framework_version": "STR"
+      },
+      {
+        "content_id": "STR"
+      },
+      {
+        "content_version": "STR"
+      },
+      {
+        "build_id": "STR"
+      },
+      {
+        "profile": "STR"
+      },
+      {
+        "load_order": {
+          "SEQ": {
+            "TYPENAME": "ModRef"
+          }
+        }
+      },
+      {
+        "profile_fingerprint": {
+          "TUPLEARRAY": {
+            "CONTENT": "U8",
+            "SIZE": 32
+          }
+        }
+      },
+      {
+        "grid_cell": "F32"
+      },
+      {
+        "party": {
+          "SEQ": {
+            "TYPENAME": "PartyMember"
+          }
+        }
+      },
+      {
+        "character_name": "STR"
+      },
+      {
+        "character_level": {
+          "OPTION": "U32"
+        }
+      },
+      {
+        "location_label": "STR"
+      }
+    ]
+  },
+  "SaveReason": {
+    "ENUM": {
+      "0": {
+        "Manual": "UNIT"
+      },
+      "1": {
+        "Quick": "UNIT"
+      },
+      "2": {
+        "Auto": "UNIT"
+      },
+      "3": {
+        "Exit": "UNIT"
+      },
+      "4": {
+        "GuestLeft": "UNIT"
+      }
+    }
+  }
+}
