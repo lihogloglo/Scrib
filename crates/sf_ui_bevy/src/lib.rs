@@ -14,7 +14,10 @@
 //! - **Navigation** ([`nav`]): Bevy's `AutoDirectionalNavigator`, kept to the input target's
 //!   screen by moving the `AutoDirectionalNavigation` marker onto its [`UiFocusable`]s only
 //!   (Bevy's navigation is layer-agnostic), held directions repeat; confirm triggers
-//!   `bevy_ui_widgets::Activate` on the focused entity.
+//!   `bevy_ui_widgets::Activate` on the focused entity. A screen whose view-model owns focus
+//!   (a virtual grid, text links) marks its root [`UiOwnsFocus`] and gets [`UiNavEvent`]s.
+//! - **Draw order**: open screen roots get a global z-index from their layer and stack position
+//!   ([`screen_z`]), so menus draw over the HUD and modals over menus.
 //! - **Device** ([`device`]): last-used device switches [`InputMode`] the same frame, and the
 //!   last pad's vendor sets [`GamepadFamily`] for glyphs (`sf_ui::glyph`).
 //! - **Profile** ([`profile`]): [`insert_from_profile`] builds registry, settings, strings and
