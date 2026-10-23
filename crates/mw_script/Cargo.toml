@@ -1,6 +1,6 @@
 [package]
 name = "mw_script"
-description = "MWScript front end: lenient lexer and parser with named leniency rules, AST, function table, name resolution (scripting-adapter.md). Luau emitter, coverage report, `mw` runtime skeleton. Bevy-free, no dependencies"
+description = "MWScript front end: lenient lexer and parser with named leniency rules, AST, function table, name resolution (scripting-adapter.md). Native interpreter (dialogue results, W3), Luau emitter, coverage report, `mw` runtime skeleton. Bevy-free, no dependencies"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -133,8 +133,8 @@ Journal                 id,num              void   journal     live     -
 SetJournalIndex         id,num              void   journal     live     -
 GetJournalIndex         id                  int    journal     live     -
 AddTopic                id                  void   journal     live     -
-Choice                  any*                void   dialogue    later    -
-Goodbye                 -                   void   dialogue    later    -
+Choice                  any*                void   dialogue    live     -
+Goodbye                 -                   void   dialogue    live     -
 ForceGreeting           -                   void   dialogue    later    r
 ClearInfoActor          -                   void   dialogue    later    r
 Say                     text,text           void   audio       stub     r
@@ -191,8 +191,8 @@ Mod{$AISTATS}           num                 void   ai          stub     r
 GetLevel                -                   int    stats       stub=1   r
 SetLevel                num                 void   stats       stub     r
 GetDisposition          -                   int    disposition stub=50  r
-SetDisposition          num                 void   disposition stub     r
-ModDisposition          num                 void   disposition stub     r
+SetDisposition          num                 void   disposition live     r
+ModDisposition          num                 void   disposition live     r
 GetReputation           -                   int    disposition stub     r
 SetReputation           num                 void   disposition stub     r
 ModReputation           num                 void   disposition stub     r
@@ -251,7 +251,7 @@ Fall                    -                   void   physics     later    r
 PlayGroup               id,num?             void   anim        live     r
 LoopGroup               id,num,num?         void   anim        live     r
 SkipAnim                -                   void   anim        stub     r
-PlaySound               id                  void   audio       stub     -
+PlaySound               id                  void   audio       live     -
 PlaySoundVP             id,num,num          void   audio       stub     -
 PlaySound3D             id                  void   audio       stub     r
 PlaySound3DVP           id,num,num          void   audio       stub     r

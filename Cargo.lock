@@ -4749,6 +4749,7 @@ version = "0.1.0"
 dependencies = [
  "mw_install",
  "mw_records",
+ "mw_script",
  "mw_vfs",
  "postcard",
  "serde",
