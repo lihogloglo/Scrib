@@ -201,6 +201,8 @@ struct MadeFor {
 
 #[derive(Clone, Debug)]
 struct Chrome {
+    /// The pages row (the document background is drawn on it).
+    pages: Entity,
     /// Page bodies (where fragments go): two for a book, one for a scroll.
     bodies: Vec<Entity>,
     /// The right page (hidden in single view).
@@ -331,6 +333,7 @@ pub(crate) fn spawn_reader_chrome(
         }
         button("sf-reader-close", &labels.close, ReaderAction::Close);
         state.chrome = Some(Chrome {
+            pages,
             bodies,
             right_page,
             viewport,
@@ -483,7 +486,7 @@ pub(crate) fn apply_reader_events(
 
 /// Every image a document draws.
 fn doc_images(doc: &RichDoc) -> impl Iterator<Item = &ImageRef> {
-    doc.blocks.iter().flat_map(|b| -> Box<dyn Iterator<Item = &ImageRef>> {
+    doc.background.iter().chain(doc.blocks.iter().flat_map(|b| -> Box<dyn Iterator<Item = &ImageRef>> {
         match b {
             Block::Paragraph(p) => Box::new(p.inlines.iter().filter_map(|i| match i {
                 Inline::Image(image) => Some(image),
@@ -492,7 +495,7 @@ fn doc_images(doc: &RichDoc) -> impl Iterator<Item = &ImageRef> {
             Block::Image { image, .. } => Box::new(std::iter::once(image)),
             Block::PageBreak => Box::new(std::iter::empty()),
         }
-    })
+    }))
 }
 
 /// Whether every image of `doc` has a known size (loaded, failed, or never
@@ -581,11 +584,7 @@ pub(crate) fn layout_readers(
             state.page_view = page_view;
             state.made_for = Some(made_for);
             state.generation += 1;
-            if let Some(right) = chrome.right_page
-                && let Ok(mut node) = nodes.get_mut(right)
-            {
-                show(&mut node, page_view == PageView::Spread);
-            }
+            dress_chrome(&mut commands, &chrome, &mut nodes, &reader.doc, measure.images(), page_view);
         }
         let Some(pagination) = &state.pagination else {
             continue;
@@ -679,6 +678,27 @@ fn draw_pages(
         if let Some(&body) = chrome.bodies.get(i) {
             spawn_page(commands, body, doc, page, &tails[i], &ctx);
         }
+    }
+}
+
+/// After a pagination: the document background behind the pages, the right
+/// page shown only in a spread.
+fn dress_chrome(
+    commands: &mut Commands,
+    chrome: &Chrome,
+    nodes: &mut Query<&mut Node>,
+    doc: &RichDoc,
+    images: &RichImages,
+    page_view: PageView,
+) {
+    if let Some(background) = &doc.background {
+        let handle = images.get(&background.source).cloned().unwrap_or_default();
+        commands.entity(chrome.pages).insert(ImageNode::new(handle));
+    }
+    if let Some(right) = chrome.right_page
+        && let Ok(mut node) = nodes.get_mut(right)
+    {
+        show(&mut node, page_view == PageView::Spread);
     }
 }
 

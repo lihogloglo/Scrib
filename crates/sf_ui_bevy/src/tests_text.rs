@@ -133,7 +133,10 @@ fn word(rng: &mut Rng, len: usize) -> String {
 /// images, block images and forced breaks.
 fn synthetic_doc(seed: u64) -> RichDoc {
     let mut rng = Rng(seed);
-    let mut doc = RichDoc::default();
+    let mut doc = RichDoc {
+        background: Some(ImageRef::new("parchment")),
+        ..RichDoc::default()
+    };
     let aligns = [Align::Start, Align::Center, Align::End, Align::Justify];
     for i in 0..28 {
         match rng.below(12) {
@@ -383,6 +386,7 @@ fn page_through(app: &mut App, reader: Entity, doc: &RichDoc) {
 fn open_book(app: &mut App, doc: &Arc<RichDoc>, view: PageView) -> Entity {
     add_image(app, "plate", 300, 220);
     add_image(app, "glyph", 24, 30);
+    add_image(app, "parchment", 64, 64);
     let reader = app
         .world_mut()
         .spawn(RichReader::book(doc.clone()).with_view(view))
@@ -456,6 +460,13 @@ fn book_turns_pages_and_keeps_its_place_across_text_scale() {
         .map(|(e, b)| (e, b.action))
         .collect();
     let button = |a: ReaderAction| buttons.iter().find(|b| b.1 == a).unwrap().0;
+    // The document background is drawn behind the pages.
+    let backgrounds = world
+        .query::<(&ImageNode, &Name)>()
+        .iter(world)
+        .filter(|(i, n)| n.as_str() == "sf-reader-pages" && i.image != Handle::default())
+        .count();
+    assert_eq!(backgrounds, 1);
     assert!(app.world().get::<InteractionDisabled>(button(ReaderAction::Prev)).is_some());
     // Next by button, twice; Prev by message.
     for _ in 0..2 {
@@ -515,6 +526,7 @@ fn ui_actions_drive_the_reader_of_their_screen() {
     );
     add_image(&mut app, "plate", 300, 220);
     add_image(&mut app, "glyph", 24, 30);
+    add_image(&mut app, "parchment", 64, 64);
     let doc = Arc::new(synthetic_doc(29));
     let root = app.world_mut().spawn((Node::default(), UiScreenRoot("book".into()))).id();
     let reader = app
@@ -543,6 +555,7 @@ fn scroll_is_one_page_and_scrolls() {
     let mut app = ui_app(1.0);
     add_image(&mut app, "plate", 300, 220);
     add_image(&mut app, "glyph", 24, 30);
+    add_image(&mut app, "parchment", 64, 64);
     let doc = Arc::new(synthetic_doc(41));
     let reader = app.world_mut().spawn(RichReader::scroll(doc.clone())).id();
     settle(&mut app, reader);
