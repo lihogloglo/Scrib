@@ -413,3 +413,143 @@ fn vanilla_corpus_translates_and_runs() {
     assert!(compile_errors.is_empty(), "{} modules failed to compile", compile_errors.len());
     assert!(run_errors.is_empty(), "{} modules failed to run", run_errors.len());
 }
+
+/// Counts what the interpreter asked for; every read is 0 (no world).
+#[derive(Default)]
+struct NeutralHost {
+    builtins: BTreeMap<&'static str, usize>,
+    unhandled: BTreeMap<String, usize>,
+}
+
+impl NeutralHost {
+    fn hit(&mut self, name: &'static str) {
+        *self.builtins.entry(name).or_default() += 1;
+    }
+}
+
+impl mw_script::Host for NeutralHost {
+    fn get(&mut self, _: &mw_script::ast::VarRef) -> f64 {
+        0.0
+    }
+    fn set(&mut self, _: &mw_script::ast::VarRef, _: f64) {}
+    fn journal(&mut self, _: &mw_script::ast::Ident, _: i32) {
+        self.hit("Journal");
+    }
+    fn set_journal_index(&mut self, _: &mw_script::ast::Ident, _: i32) {
+        self.hit("SetJournalIndex");
+    }
+    fn get_journal_index(&mut self, _: &mw_script::ast::Ident) -> i32 {
+        self.hit("GetJournalIndex");
+        0
+    }
+    fn add_topic(&mut self, _: &mw_script::ast::Ident) {
+        self.hit("AddTopic");
+    }
+    fn choice(&mut self, _: Vec<(String, i32)>) {
+        self.hit("Choice");
+    }
+    fn goodbye(&mut self) {
+        self.hit("Goodbye");
+    }
+    fn add_item(&mut self, _: &mw_script::ast::Target, _: &mw_script::ast::Ident, _: i32) {
+        self.hit("AddItem");
+    }
+    fn remove_item(&mut self, _: &mw_script::ast::Target, _: &mw_script::ast::Ident, _: i32) {
+        self.hit("RemoveItem");
+    }
+    fn get_item_count(&mut self, _: &mw_script::ast::Target, _: &mw_script::ast::Ident) -> i32 {
+        self.hit("GetItemCount");
+        0
+    }
+    fn set_disposition(&mut self, _: &mw_script::ast::Target, _: i32) {
+        self.hit("SetDisposition");
+    }
+    fn mod_disposition(&mut self, _: &mw_script::ast::Target, _: i32) {
+        self.hit("ModDisposition");
+    }
+    fn message_box(&mut self, _: String, _: Vec<String>) {
+        self.hit("MessageBox");
+    }
+    fn play_sound(&mut self, _: &mw_script::ast::Ident) {
+        self.hit("PlaySound");
+    }
+    fn unhandled(&mut self, function: &mw_script::functions::Function, _: &mw_script::ast::Call) -> f64 {
+        *self.unhandled.entry(function.name.clone()).or_default() += 1;
+        f64::from(function.status.neutral())
+    }
+}
+
+/// W3: every dialogue result runs once in the native interpreter against a neutral host
+/// (no panic, no runaway loop), and every live script's first tick runs (step-limit hits
+/// printed, not asserted: a neutral world can keep a `While` waiting). Prints call counts
+/// per builtin and the unhandled functions by calls, the slice's to-do list. Counts only.
+#[test]
+fn vanilla_corpus_interprets() {
+    use mw_script::{Interpreter, Locals};
+
+    let Ok((install, _)) = MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let table = FunctionTable::vanilla();
+    let corpus = load(&install);
+    let mut live: BTreeMap<String, &str> = BTreeMap::new();
+    for (_, id, text, _) in &corpus.scripts {
+        live.insert(id.to_lowercase(), text);
+    }
+    let locals = live
+        .iter()
+        .map(|(id, text)| {
+            let p = parse(text, SourceKind::Script, table);
+            let vars = p.script.locals.iter().map(|l| (l.name.key.clone(), l.ty)).collect();
+            (id.clone(), vars)
+        })
+        .collect();
+    let env = CorpusEnv { corpus: &corpus, locals };
+    let interp = Interpreter::new(table);
+    let t0 = Instant::now();
+    let mut results = NeutralHost::default();
+    let (mut ran, mut inert, mut result_errors) = (0, 0, Vec::new());
+    for (file, topic, info, text) in &corpus.results {
+        let p = parse_and_resolve(text, SourceKind::DialogueResult, table, &env);
+        if p.is_inert() {
+            inert += 1;
+            continue;
+        }
+        let mut l = Locals::new(&p.script);
+        match interp.run(&p.script, &mut l, &mut results) {
+            Ok(()) => ran += 1,
+            Err(e) => result_errors.push(format!("{file}/{topic}/{info}: {e}")),
+        }
+    }
+    let results_time = t0.elapsed();
+    let mut scripts = NeutralHost::default();
+    let mut script_errors = Vec::new();
+    for (id, text) in &live {
+        let p = parse_and_resolve(text, SourceKind::Script, table, &env);
+        if p.is_inert() {
+            continue;
+        }
+        let mut l = Locals::new(&p.script);
+        if let Err(e) = interp.run(&p.script, &mut l, &mut scripts) {
+            script_errors.push(format!("{id}: {e}"));
+        }
+    }
+    eprintln!(
+        "interpreted {ran} results ({inert} inert) in {results_time:.2?}, {} live scripts once \
+         ({} stopped at the step limit)",
+        live.len(),
+        script_errors.len()
+    );
+    eprintln!("result builtins: {:?}", results.builtins);
+    let mut unhandled: Vec<_> = results.unhandled.iter().collect();
+    unhandled.sort_by(|a, b| b.1.cmp(a.1));
+    eprintln!("result functions not interpreted yet (calls): {unhandled:?}");
+    for e in script_errors.iter().take(10) {
+        eprintln!("  SCRIPT {e}");
+    }
+    for e in result_errors.iter().take(20) {
+        eprintln!("  RESULT {e}");
+    }
+    assert!(result_errors.is_empty(), "{} results failed", result_errors.len());
+}
