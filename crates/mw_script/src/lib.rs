@@ -1,7 +1,9 @@
 //! `MWScript` front end for the `MWScript` → Luau translator
-//! (`docs/specs/scripting-adapter.md`, M5 W1).
+//! (`docs/specs/scripting-adapter.md`, M5 W1) and the native interpreter.
 //!
-//! Pipeline: [`lexer::lex`] → lenient line parser → [`resolve`]. Every
+//! Pipeline: [`lexer::lex`] → lenient line parser → [`resolve`], then either the Luau
+//! emitter ([`emit`], parked with Luau, owner 2026-10-18) or the native interpreter
+//! ([`interp`], the vertical slice's dialogue results, M5 W3). Every
 //! leniency is a named [`Rule`] with a [`Severity`]; a script with any
 //! [`Severity::Error`] is **inert** ([`Parsed::is_inert`]): it never runs and
 //! never half-runs. The AST ([`ast`]) names every variable by where its
@@ -20,6 +22,7 @@ pub mod coverage;
 pub mod diag;
 pub mod emit;
 pub mod functions;
+pub mod interp;
 pub mod lexer;
 mod parser;
 pub mod resolve;
@@ -29,6 +32,7 @@ pub use diag::{Diagnostic, Diagnostics, Rule, Severity};
 pub use coverage::{CallSites, Coverage, OracleFlags, Origin, oracle_flags};
 pub use emit::{emit_dialogue, emit_script};
 pub use functions::{FnId, FunctionTable, Status};
+pub use interp::{Builtin, Host, Interpreter, Locals, RunError};
 pub use resolve::{Env, MemberLookup, NoEnv};
 
 /// A parsed script and everything reported on the way.
@@ -70,3 +74,6 @@ pub fn parse_and_resolve(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod interp_tests;
