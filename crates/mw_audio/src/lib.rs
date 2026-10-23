@@ -14,6 +14,8 @@
 //! - Footsteps: vanilla picks the sound by the boots' armour weight class ([`Footwear`]).
 //! - Music: `Music/Explore` and `Music/Battle` as playlists, listed through the VFS so mods add
 //!   tracks ([`playlists`]); the battle rule is [`MusicMood`].
+//! - NPC voices ([`voice`]): voice INFOs picked with `mw_rpg`'s filters, greetings and idle
+//!   chatter timing, the lip-sync envelope; every INFO sound is a Voice-bus cue.
 
 use std::collections::HashMap;
 
@@ -21,8 +23,12 @@ use sf_audio::{Attenuation, Bus, CueBank, FootstepMap, SoundBank, SoundFile, Sou
 use sf_records::{RecordDb, RecordId};
 use tes3::esp::{Activator, Door, GameSetting, GameSettingValue, Light, Script, Sound, SoundGen, SoundGenType};
 
+pub mod voice;
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod voice_tests;
 
 /// Metres per Morrowind unit (64 units = 1 yard; `mw_world::convert::UNIT_METERS_F64`).
 pub const UNIT_M: f32 = 0.9144 / 64.0;
@@ -105,6 +111,8 @@ pub struct MwSounds {
     /// Base record id (light, sound activator) -> the cue it loops while loaded.
     pub emitters: HashMap<RecordId, RecordId>,
     pub footsteps: FootstepMap,
+    /// How many INFO sound files became Voice-bus cues ([`voice::add_voices`]).
+    pub voices: usize,
 }
 
 /// Builds the bank and cues from the records. `resolve` maps a raw VFS path to the file the
@@ -135,6 +143,7 @@ pub fn build(db: &RecordDb, resolve: impl Fn(&str) -> Option<String>) -> MwSound
         }
     }
     add_emitters(db, &ranges, &mut out);
+    out.voices = voice::add_voices(db, &resolve, &mut out.bank, &mut out.cues);
     out.footsteps = footstep_map();
     out
 }

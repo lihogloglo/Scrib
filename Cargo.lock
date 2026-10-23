@@ -2160,6 +2160,7 @@ dependencies = [
  "mw_nif",
  "mw_physics",
  "mw_records",
+ "mw_rpg",
  "mw_script",
  "mw_vfs",
  "mw_water",
@@ -2192,6 +2193,7 @@ dependencies = [
  "sf_ragdoll",
  "sf_records",
  "sf_render_order_bevy",
+ "sf_rpg",
  "sf_script",
  "sf_script_bevy",
  "sf_shadow_cache_bevy",
@@ -4616,8 +4618,13 @@ dependencies = [
 name = "mw_audio"
 version = "0.1.0"
 dependencies = [
+ "mw_install",
+ "mw_records",
+ "mw_rpg",
+ "mw_vfs",
  "sf_audio",
  "sf_records",
+ "sf_rpg",
  "sf_vfs",
  "tes3",
 ]

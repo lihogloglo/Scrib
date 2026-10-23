@@ -158,8 +158,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
   layers; positional one-shots/emitters on bevy_audio). Morrowind wiring done 2026-10-21 (`mw_audio`: SOUN/SNDG cues,
   door sounds, loop emitters, vanilla footsteps, VFS music; app `audio.rs`); AU-1 + AU-2 confirmed by owner 2026-10-21.
-  Left: NPC voices (greetings, idle lines), object impact sounds (physics, e.g. the V ball), volume mixer (bus
-  sliders in settings, with 2.2 U6), UI sounds (no menus yet), swinging-door sounds, boots class from equipment,
+  NPC voices, boots class, swinging-door sounds built 2026-10-23 (voices; `mw_audio::voice`, dev builds only),
+  awaiting owner (AU-3..5). Left: object impact sounds (physics, e.g. the V ball), volume mixer (bus sliders in
+  settings, with 2.2 U6), UI sounds (no menus yet), voice line-of-sight + combat/crime barks (Phase 3 hooks),
   modern-preset beds/surfaces.
 
 ## Phase 3: animation, combat, physics
@@ -214,6 +215,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-23 (voices): NPC voice lines (`mw_audio::voice`: Hello/Idle/... INFOs via `mw_rpg` filters, greet GMSTs,
+  idle rate, one line per NPC, RMS lip-sync `LipSync`), boots footsteps, swinging-door sounds; app glue `dev`-only.
 - 2026-10-23 (pr-merge): merged sf #12-15 (camera D1, saves S1+S2, console front end, text/books) and bw #1 (MWScript
   runtime); tests green incl. real-ESM `fargoths_ring`. Owner decision 4: modern first, classic rules later (§1b).
 - 2026-10-22 (anim-fixes-3): owner pass fixes: AN-16 stride (SpeedMatch `rate_share` 0.3), AN-17 loop-seam contact gap, AN-19
