@@ -240,6 +240,11 @@ impl PlayerCamera {
     /// gameplay state.
     pub fn set_view(&mut self, view: ViewChoice) {
         if view != self.settings.view {
+            if view == ViewChoice::ThirdPerson {
+                // First person looks further up and down: bring the aim into the orbit's range.
+                let o = self.params.orbit;
+                self.look.pitch = self.look.pitch.clamp(o.pitch_min, o.pitch_max);
+            }
             self.settings.view = view;
             self.orbit.reset();
             self.arm.reset();
