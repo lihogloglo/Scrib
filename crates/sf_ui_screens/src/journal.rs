@@ -143,6 +143,16 @@ struct MadeFor {
     pages: usize,
 }
 
+/// What the side panel was drawn for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IndexKey {
+    panel: JournalPanel,
+    quests: u64,
+    topics: u64,
+    letter: Option<String>,
+    content: BookContent,
+}
+
 /// The journal's parts.
 #[derive(Component, Debug)]
 pub struct JournalParts {
@@ -157,6 +167,7 @@ pub struct JournalParts {
     rows: KeyedChildren<RecordId>,
     row_shown: HashMap<RecordId, (u64, bool)>,
     rows_for: Option<JournalPanel>,
+    index_seen: Option<IndexKey>,
     made_for: Option<MadeFor>,
     shown: Option<(u64, usize)>,
     generation: u64,
@@ -410,6 +421,7 @@ pub(crate) fn spawn_journal(
             rows: KeyedChildren::new(list),
             row_shown: HashMap::new(),
             rows_for: None,
+            index_seen: None,
             made_for: None,
             shown: None,
             generation: 0,
@@ -528,80 +540,38 @@ pub(crate) fn layout_journal<R: JournalSource>(
             pages,
         };
         let gap = theme.gap(text_scale) * scale.scale_factor;
-        let journal_measure = JournalMeasure {
-            inner: RefCell::new(measure.at(scale)),
-            width: size.x,
-            theme: theme.clone(),
-            scale,
-        };
-        let paginator = LinePaginator::new(
-            journal_measure,
-            PageMetrics {
-                height: size.y,
-                block_gap: gap,
-                ..PageMetrics::default()
-            },
-        );
-        let ctx = JournalCtx {
-            world: source.world(),
-            labels: source.labels(),
-            paginator: &paginator,
-        };
         let fresh = parts.made_for.as_ref() != Some(&made_for);
-        let mut changed = true;
-        if !ui.opened {
-            ui.screen.set_pages_per_spread(pages);
-            ui.screen.open(&ctx, BookContent::Journal);
-            ui.opened = true;
-        } else if fresh || source.is_changed() || theme_changed {
-            ui.screen.set_pages_per_spread(pages);
-            ui.screen.refresh(&ctx);
-        } else {
-            changed = false;
+        // Pagination and intents need the game data and the measure; most frames need neither.
+        let changed =
+            !ui.opened || fresh || source.is_changed() || theme_changed || !ui.intents.is_empty();
+        if changed {
+            let measure = JournalMeasure {
+                inner: RefCell::new(measure.at(scale)),
+                width: size.x,
+                theme: theme.clone(),
+                scale,
+            };
+            let paginator = LinePaginator::new(
+                measure,
+                PageMetrics {
+                    height: size.y,
+                    block_gap: gap,
+                    ..PageMetrics::default()
+                },
+            );
+            let ctx = JournalCtx {
+                world: source.world(),
+                labels: source.labels(),
+                paginator: &paginator,
+            };
+            let refresh = fresh || source.is_changed() || theme_changed;
+            apply_journal(entity, ui, pages, refresh, &ctx, &mut seen_out);
+            parts.made_for = if paginator.measure.incomplete() {
+                None // fonts still loading: measure again next frame
+            } else {
+                Some(made_for)
+            };
         }
-        if paginator.measure.incomplete() {
-            parts.made_for = None; // fonts still loading: measure again next frame
-        } else {
-            parts.made_for = Some(made_for);
-        }
-        let intents = std::mem::take(&mut ui.intents);
-        let seen_before = (!intents.is_empty()).then(|| ui.screen.seen().clone());
-        changed |= !intents.is_empty();
-        for intent in intents {
-            match intent {
-                JournalIntent::Prev | JournalIntent::Next => {
-                    let before = ui.screen.first_visible_page();
-                    ui.screen.mark_visible_seen(&ctx);
-                    ui.screen.go_to_page(before);
-                    if intent == JournalIntent::Next {
-                        ui.screen.next_spread();
-                    } else {
-                        ui.screen.prev_spread();
-                    }
-                }
-                JournalIntent::Open(content) => {
-                    ui.screen.mark_visible_seen(&ctx);
-                    ui.screen.open(&ctx, content);
-                }
-                JournalIntent::Panel(panel) => ui.panel = panel,
-                JournalIntent::QuestFilter(filter) => {
-                    ui.panel = JournalPanel::Quests;
-                    ui.screen.set_quest_filter(filter);
-                }
-                JournalIntent::Letter(letter) => {
-                    ui.panel = JournalPanel::Topics;
-                    ui.screen.set_letter(letter.as_deref());
-                }
-                JournalIntent::MarkAllSeen => ui.screen.mark_all_seen(&ctx),
-            }
-        }
-        if seen_before.is_some_and(|s| s != *ui.screen.seen()) {
-            seen_out.write(JournalSeenChanged {
-                screen: entity,
-                seen: ui.screen.seen().clone(),
-            });
-        }
-        drop(paginator);
 
         // The visible spread, redrawn when the book or the spread changed.
         if changed {
@@ -649,6 +619,62 @@ pub(crate) fn layout_journal<R: JournalSource>(
         }
 
         sync_index(&mut commands, ui, parts, &colors, &mut nodes);
+    }
+}
+
+/// Opens or refreshes the book (first time, new geometry or data) and applies the queued
+/// intents, reporting seen-state changes.
+fn apply_journal(
+    entity: Entity,
+    ui: &mut JournalUi,
+    pages: usize,
+    refresh: bool,
+    ctx: &JournalCtx<'_>,
+    seen_out: &mut MessageWriter<JournalSeenChanged>,
+) {
+    if !ui.opened {
+        ui.screen.set_pages_per_spread(pages);
+        ui.screen.open(ctx, BookContent::Journal);
+        ui.opened = true;
+    } else if refresh {
+        ui.screen.set_pages_per_spread(pages);
+        ui.screen.refresh(ctx);
+    }
+    let intents = std::mem::take(&mut ui.intents);
+    let seen_before = (!intents.is_empty()).then(|| ui.screen.seen().clone());
+    for intent in intents {
+        match intent {
+            JournalIntent::Prev | JournalIntent::Next => {
+                let before = ui.screen.first_visible_page();
+                ui.screen.mark_visible_seen(ctx);
+                ui.screen.go_to_page(before);
+                if intent == JournalIntent::Next {
+                    ui.screen.next_spread();
+                } else {
+                    ui.screen.prev_spread();
+                }
+            }
+            JournalIntent::Open(content) => {
+                ui.screen.mark_visible_seen(ctx);
+                ui.screen.open(ctx, content);
+            }
+            JournalIntent::Panel(panel) => ui.panel = panel,
+            JournalIntent::QuestFilter(filter) => {
+                ui.panel = JournalPanel::Quests;
+                ui.screen.set_quest_filter(filter);
+            }
+            JournalIntent::Letter(letter) => {
+                ui.panel = JournalPanel::Topics;
+                ui.screen.set_letter(letter.as_deref());
+            }
+            JournalIntent::MarkAllSeen => ui.screen.mark_all_seen(ctx),
+        }
+    }
+    if seen_before.is_some_and(|s| s != *ui.screen.seen()) {
+        seen_out.write(JournalSeenChanged {
+            screen: entity,
+            seen: ui.screen.seen().clone(),
+        });
     }
 }
 
@@ -761,6 +787,17 @@ fn sync_index(
     colors: &ScreenColors,
     nodes: &mut Query<&mut Node>,
 ) {
+    let key = IndexKey {
+        panel: ui.panel,
+        quests: ui.screen.quest_model().version(),
+        topics: ui.screen.topic_model().version(),
+        letter: ui.screen.letter().map(str::to_owned),
+        content: ui.screen.content().clone(),
+    };
+    if parts.index_seen.as_ref() == Some(&key) {
+        return;
+    }
+    parts.index_seen = Some(key);
     let topics = ui.panel == JournalPanel::Topics;
     if let Ok(mut node) = nodes.get_mut(parts.filters) {
         show(&mut node, !topics);

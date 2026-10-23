@@ -109,6 +109,7 @@ pub struct KeybindsParts {
     columns: [usize; 2],
     /// Column headings per device, sized to their columns.
     headings: [Entity; 2],
+    overlay_shown: String,
     order: Vec<ActionRef>,
     reset_all: Entity,
     overlay: Entity,
@@ -328,6 +329,7 @@ pub(crate) fn spawn_keybinds(
             shown: HashMap::new(),
             columns: [0, 0],
             headings,
+            overlay_shown: String::new(),
             order: Vec::new(),
             reset_all,
             overlay,
@@ -524,9 +526,12 @@ pub(crate) fn sync_keybinds(
         } else {
             labels.press_input.clone()
         };
-        commands
-            .entity(parts.overlay_text)
-            .insert((Text::new(overlay_text), TextColor(colors.text)));
+        if parts.overlay_shown != overlay_text {
+            parts.overlay_shown.clone_from(&overlay_text);
+            commands
+                .entity(parts.overlay_text)
+                .insert((Text::new(overlay_text), TextColor(colors.text)));
+        }
 
         // Focus: a conflict question takes it; otherwise a cell, clamped to the grid.
         if pending.is_some() {

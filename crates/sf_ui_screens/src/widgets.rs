@@ -191,8 +191,9 @@ pub fn set_disabled(commands: &mut Commands, entity: Entity, disabled: bool) {
     }
 }
 
-/// Shows or hides a node (`display: none` keeps its entity and children).
-pub fn show(node: &mut Node, visible: bool) {
+/// Shows or hides a node (`display: none` keeps its entity and children). Writes (and so
+/// triggers change detection and relayout) only when the value changes.
+pub fn show(node: &mut Mut<Node>, visible: bool) {
     let display = if visible {
         Display::Flex
     } else {
@@ -200,6 +201,28 @@ pub fn show(node: &mut Node, visible: bool) {
     };
     if node.display != display {
         node.display = display;
+    }
+}
+
+/// Sets `node`'s position (`left`, `top`) and size (`width`, `height`) fields that are `Some`,
+/// writing only what changes.
+pub fn place(
+    node: &mut Mut<Node>,
+    left: Option<Val>,
+    top: Option<Val>,
+    width: Option<Val>,
+    height: Option<Val>,
+) {
+    if left.is_some_and(|v| node.left != v)
+        || top.is_some_and(|v| node.top != v)
+        || width.is_some_and(|v| node.width != v)
+        || height.is_some_and(|v| node.height != v)
+    {
+        let node = &mut **node;
+        node.left = left.unwrap_or(node.left);
+        node.top = top.unwrap_or(node.top);
+        node.width = width.unwrap_or(node.width);
+        node.height = height.unwrap_or(node.height);
     }
 }
 

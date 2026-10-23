@@ -39,7 +39,8 @@ use sf_ui_inventory::{Comparison, InventoryGrid, InventoryView, QuantityPicker, 
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, StatBar, classes, label, panel, part, relabel, show, spawn_bar, spawn_button,
+    ScreenColors, StatBar, classes, label, panel, part, place, relabel, show, spawn_bar,
+    spawn_button,
 };
 use crate::{is_target, screen_of};
 
@@ -179,7 +180,7 @@ pub struct InventoryParts {
     tooltip: Entity,
     tooltip_text: Entity,
     tooltip_seen: Option<(Entity, StackId, u64, Option<Comparison>)>,
-    hovered: Option<Entity>,
+    split_shown: Option<(u32, u32)>,
     split: Entity,
     split_text: Entity,
     split_bar: Entity,
@@ -471,7 +472,7 @@ pub(crate) fn spawn_inventory(
             tooltip,
             tooltip_text,
             tooltip_seen: None,
-            hovered: None,
+            split_shown: None,
             split,
             split_text,
             split_bar,
@@ -755,8 +756,8 @@ pub(crate) fn sync_inventory(
         // Scrollbar thumb.
         if let Ok(mut node) = nodes.get_mut(parts.thumb) {
             let (start, length) = frame.thumb.unwrap_or((0.0, 1.0));
-            node.top = Val::Percent(start * 100.0);
-            node.height = Val::Percent(length * 100.0);
+            let (top, height) = (Val::Percent(start * 100.0), Val::Percent(length * 100.0));
+            place(&mut node, None, Some(top), None, Some(height));
         }
 
         // Totals.
@@ -804,12 +805,8 @@ pub(crate) fn sync_inventory(
             });
         }
 
-        // Tooltip: on the hovered cell, else the focused one.
-        let tip_cell = parts
-            .hovered
-            .filter(|h| parts.cells().any(|c| c == *h))
-            .or(focus_cell);
-        let tip = tip_cell.and_then(|cell| {
+        // Tooltip: on the focused cell (hover focuses).
+        let tip = focus_cell.and_then(|cell| {
             let stack = parts
                 .rows
                 .iter()
@@ -841,8 +838,13 @@ pub(crate) fn sync_inventory(
                 } else {
                     right
                 };
-                node.left = Val::Px(left);
-                node.top = Val::Px(at.y);
+                place(
+                    &mut node,
+                    Some(Val::Px(left)),
+                    Some(Val::Px(at.y)),
+                    None,
+                    None,
+                );
             }
         }
         if let Some((cell, stack, version)) = tip {
@@ -914,7 +916,11 @@ pub(crate) fn sync_inventory(
         if let Ok(mut node) = nodes.get_mut(parts.split) {
             show(&mut node, screen.split.is_some());
         }
-        if let Some((_, picker)) = &screen.split {
+        let split_key = screen.split.as_ref().map(|(_, p)| (p.value(), p.max()));
+        if let Some((_, picker)) = &screen.split
+            && parts.split_shown != split_key
+        {
+            parts.split_shown = split_key;
             commands.entity(parts.split_text).insert(Text::new(format!(
                 "{} / {}",
                 picker.value(),
@@ -1103,7 +1109,7 @@ pub(crate) fn on_cell_over(
     over: On<PointerOver>,
     cells: Query<&InventoryCell>,
     parents: Query<&ChildOf>,
-    mut screens: Query<(&mut InventoryScreen, &mut InventoryParts)>,
+    mut screens: Query<&mut InventoryScreen>,
 ) {
     let Ok(InventoryCell(Some(stack))) = cells.get(over.entity) else {
         return;
@@ -1111,13 +1117,11 @@ pub(crate) fn on_cell_over(
     let Some(root) = screen_of(over.entity, &parents, |e| screens.contains(e)) else {
         return;
     };
-    if let Ok((mut screen, mut parts)) = screens.get_mut(root)
+    if let Ok(mut screen) = screens.get_mut(root)
         && screen.split.is_none()
+        && screen.view.focus() != Some(*stack)
     {
-        parts.hovered = Some(over.entity);
-        if screen.view.focus() != Some(*stack) {
-            screen.view.set_focus(Some(*stack));
-        }
+        screen.view.set_focus(Some(*stack));
     }
 }
 

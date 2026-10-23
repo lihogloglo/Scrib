@@ -12,8 +12,8 @@ use bevy::picking::{InteractionPlugin, PickingPlugin};
 use bevy::prelude::*;
 use bevy::text::{TextBackgroundColor, TextPlugin, TextSpan};
 use bevy::time::TimeUpdateStrategy;
-use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::ui::UiPlugin;
+use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy_enhanced_input::prelude::*;
 use bevy_input_focus::InputFocus;
 use bevy_ui_widgets::Activate;
@@ -884,4 +884,67 @@ fn hud_bars_keyed_and_prompt_glyph_follows_the_device() {
     assert!(ui.class_of(prompt).contains("blocked"));
     assert_eq!(hud::heading_label(48.0), "NE 048");
     assert_eq!(hud::heading_label(-90.0), "W 270");
+}
+
+// ---------------------------------------------------------------- idle cost
+
+#[derive(Resource, Default)]
+struct Touched(Vec<String>);
+
+type Touch = Or<(
+    Changed<Node>,
+    Changed<Text>,
+    Changed<TextSpan>,
+    Changed<sf_ui_css::UiClass>,
+    Changed<TextColor>,
+)>;
+
+fn count_touched(touched: Query<(Entity, Option<&Name>), Touch>, mut out: ResMut<Touched>) {
+    out.0.extend(
+        touched
+            .iter()
+            .map(|(e, n)| n.map_or_else(|| format!("{e}"), |n| n.to_string())),
+    );
+}
+
+#[test]
+fn idle_screens_touch_nothing() {
+    let mut ui = Ui::with(|app| {
+        app.init_resource::<Touched>()
+            .add_systems(Last, count_touched);
+    });
+    demo::register_gameplay(&mut ui.world_mut().resource_mut::<UiKeymap>().0);
+    ui.world_mut().insert_resource(demo::hud());
+    ui.open("hud", HudScreen);
+    let mut check = |ui: &mut Ui, what: &str| {
+        ui.frames(5);
+        ui.world_mut().resource_mut::<Touched>().0.clear();
+        ui.frames(3);
+        let touched = std::mem::take(&mut ui.world_mut().resource_mut::<Touched>().0);
+        assert!(touched.is_empty(), "{what} touched {touched:?} while idle");
+    };
+    check(&mut ui, "hud");
+    let root = open_dialogue(&mut ui);
+    check(&mut ui, "dialogue");
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("dialogue");
+    let root = open_inventory(&mut ui, 200);
+    check(&mut ui, "inventory");
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("inventory");
+    let root = open_journal(&mut ui);
+    check(&mut ui, "journal");
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("journal");
+    open_keybinds(&mut ui);
+    check(&mut ui, "keybinds");
 }
