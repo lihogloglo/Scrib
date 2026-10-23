@@ -75,6 +75,9 @@ sf_wind_bevy.workspace = true
 mw_water.workspace = true
 mw_weather.workspace = true
 mw_audio.workspace = true
+# NPC voices (`audio.rs`, dev builds): the INFO tables and conversation contexts.
+mw_rpg.workspace = true
+sf_rpg.workspace = true
 sf_weather.workspace = true
 sf_weather_bevy.workspace = true
 sf_audio.workspace = true
