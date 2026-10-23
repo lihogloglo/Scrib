@@ -6769,6 +6769,7 @@ dependencies = [
  "sf_ui_css",
  "sf_ui_inventory",
  "sf_ui_screens",
+ "workspace-hack",
 ]
 
 [[package]]

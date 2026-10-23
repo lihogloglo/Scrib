@@ -33,6 +33,7 @@ sf_ui_bevy.workspace = true
 sf_ui_css.workspace = true
 sf_ui_inventory.workspace = true
 sf_records = { workspace = true, optional = true }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["ui"] }
