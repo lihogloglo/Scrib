@@ -4,6 +4,53 @@ use std::fmt::Write as _;
 
 use crate::value::{ArgKind, Value};
 
+/// Who set a variable's current value, lowest priority first (UE `ECVF_SetBy*`). A set
+/// from a lower source than the current one is ignored, so a config file read after the
+/// command line can't undo `--off`, and a value typed in the console wins over everything.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SetBy {
+    /// The registered default.
+    #[default]
+    Default,
+    /// A config file read at start.
+    Config,
+    /// The app's command line (`--off ssao`, `+set name value`).
+    CommandLine,
+    /// Game or engine code at run time (a settings menu, a script).
+    Code,
+    /// A line typed in the console.
+    Console,
+}
+
+impl SetBy {
+    pub fn describe(self) -> &'static str {
+        match self {
+            SetBy::Default => "default",
+            SetBy::Config => "config",
+            SetBy::CommandLine => "command line",
+            SetBy::Code => "code",
+            SetBy::Console => "console",
+        }
+    }
+}
+
+/// What a set did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetOutcome {
+    /// The value changed.
+    Changed,
+    /// Same value as before; the source is still recorded.
+    Unchanged,
+    /// Ignored: the current value came from a higher-priority source.
+    Outranked(SetBy),
+}
+
+impl SetOutcome {
+    pub fn changed(self) -> bool {
+        self == SetOutcome::Changed
+    }
+}
+
 /// Handle to a registered variable: index-based, cheap to read every frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarId(u32);
@@ -77,6 +124,7 @@ impl VarSpec {
 pub struct Var {
     spec: VarSpec,
     value: Value,
+    set_by: SetBy,
     generation: u64,
 }
 
@@ -101,18 +149,27 @@ impl Var {
         &self.value
     }
 
+    /// Who set the current value.
+    pub fn set_by(&self) -> SetBy {
+        self.set_by
+    }
+
     /// How many times the value changed.
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// `name = value (default d) [kind]: help`.
+    /// `name = value (default d) [kind] (set by s): help`.
     pub fn describe(&self) -> String {
         let mut s = format!("{} = {}", self.name(), self.value);
         if self.value != self.spec.default {
             let _ = write!(s, " (default {})", self.spec.default);
         }
         let _ = write!(s, " [{}]", self.spec.kind.describe());
+        // The console is the usual setter: only name the others.
+        if !matches!(self.set_by, SetBy::Default | SetBy::Console) {
+            let _ = write!(s, " (set by {})", self.set_by.describe());
+        }
         if !self.spec.help.is_empty() {
             s += ": ";
             s += &self.spec.help;
@@ -147,6 +204,7 @@ impl Vars {
         self.list.push(Var {
             value: spec.default.clone(),
             spec,
+            set_by: SetBy::Default,
             generation: 0,
         });
         self.pending.push(false);
@@ -173,9 +231,30 @@ impl Vars {
         self.get(id).as_bool().unwrap_or(false)
     }
 
-    /// Sets a value from code. Integers widen to float for float variables.
-    /// Returns whether the value changed.
+    /// A float variable's value (integers widen; 0 for any other kind).
+    pub fn float(&self, id: VarId) -> f64 {
+        self.get(id).as_float().unwrap_or(0.0)
+    }
+
+    /// An integer variable's value (0 for any other kind).
+    pub fn int(&self, id: VarId) -> i64 {
+        self.get(id).as_int().unwrap_or(0)
+    }
+
+    /// A text or choice variable's value (`""` for any other kind).
+    pub fn text(&self, id: VarId) -> &str {
+        self.get(id).as_str().unwrap_or_default()
+    }
+
+    /// Sets a value from game code ([`SetBy::Code`]). Integers widen to float for float
+    /// variables. Returns whether the value changed.
     pub fn set(&mut self, id: VarId, value: Value) -> Result<bool, String> {
+        self.set_by(id, value, SetBy::Code).map(SetOutcome::changed)
+    }
+
+    /// Sets a value on behalf of `source`; ignored if the current value came from a
+    /// higher-priority source. Integers widen to float for float variables.
+    pub fn set_by(&mut self, id: VarId, value: Value, source: SetBy) -> Result<SetOutcome, String> {
         let var = &self.list[id.0 as usize];
         let value = match (&var.spec.kind, value) {
             (ArgKind::Float { .. }, v @ Value::Int(_)) => {
@@ -189,26 +268,45 @@ impl Vars {
                 var.spec.kind.describe()
             ));
         }
-        Ok(self.store(id, value))
+        Ok(self.store(id, value, source))
     }
 
-    /// Parses and sets a value typed by a user. Returns whether the value changed.
+    /// Parses and sets a value typed in the console ([`SetBy::Console`]).
+    /// Returns whether the value changed.
     pub fn set_text(&mut self, id: VarId, text: &str) -> Result<bool, String> {
-        let value = self.var(id).spec.kind.parse(text)?;
-        Ok(self.store(id, value))
+        self.set_text_by(id, text, SetBy::Console)
+            .map(SetOutcome::changed)
     }
 
-    /// Back to the default. Returns whether the value changed.
+    /// Parses and sets a value on behalf of `source` (a config or command-line line).
+    pub fn set_text_by(
+        &mut self,
+        id: VarId,
+        text: &str,
+        source: SetBy,
+    ) -> Result<SetOutcome, String> {
+        let value = self.var(id).spec.kind.parse(text)?;
+        Ok(self.store(id, value, source))
+    }
+
+    /// Back to the default, which any source may then set again. Returns whether the
+    /// value changed.
     pub fn reset(&mut self, id: VarId) -> bool {
         let default = self.var(id).spec.default.clone();
-        self.store(id, default)
+        let changed = self.store(id, default, SetBy::Console).changed();
+        self.list[id.0 as usize].set_by = SetBy::Default;
+        changed
     }
 
-    fn store(&mut self, id: VarId, value: Value) -> bool {
+    fn store(&mut self, id: VarId, value: Value, source: SetBy) -> SetOutcome {
         let i = id.0 as usize;
         let var = &mut self.list[i];
+        if source < var.set_by {
+            return SetOutcome::Outranked(var.set_by);
+        }
+        var.set_by = source;
         if var.value == value {
-            return false;
+            return SetOutcome::Unchanged;
         }
         var.value = value;
         var.generation += 1;
@@ -217,7 +315,7 @@ impl Vars {
             self.pending[i] = true;
             self.changed.push(id);
         }
-        true
+        SetOutcome::Changed
     }
 
     /// Total number of changes over all variables (cheap "anything changed?" check).

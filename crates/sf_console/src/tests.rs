@@ -405,7 +405,7 @@ fn log_is_bounded_with_stable_seq() {
 }
 
 #[test]
-fn help_vars_find_echo_clear() {
+fn help_vars_search_echo_clear() {
     let (mut c, ..) = console();
     let ctx = &mut Ctx::default();
     c.exec(ctx, "help spawn").unwrap();
@@ -425,7 +425,13 @@ fn help_vars_find_echo_clear() {
         last_line(&c),
         "5 variable(s): `vars` lists them, `help <name>` describes one"
     );
-    assert!(c.exec(ctx, "help nope").is_err());
+    c.exec(ctx, "help nope").unwrap();
+    assert_eq!(last_line(&c), "nothing matches \"nope\"");
+    c.exec(ctx, "help rendr.water").unwrap();
+    assert_eq!(
+        last_line(&c),
+        "nothing matches \"rendr.water\"; did you mean render.water?"
+    );
 
     c.exec(ctx, "clear; render.water off; clear; vars render")
         .unwrap();
@@ -436,10 +442,10 @@ fn help_vars_find_echo_clear() {
             "3 variable(s)",
             "  render.mode = raster",
             "  render.shadows = on",
-            "* render.water = off"
+            "* render.water = off  (console)"
         ]
     );
-    c.exec(ctx, "cls; find shadow").unwrap();
+    c.exec(ctx, "cls; help shadow").unwrap();
     assert_eq!(last_line(&c), "render.shadows = on [on|off]: Shadow maps");
     c.exec(ctx, "echo  hello   \"world\" ").unwrap();
     assert_eq!(last_line(&c), "hello   \"world\"");
@@ -459,4 +465,125 @@ fn display_round_trips_through_parse() {
         let word = tokens.first().map_or("", |t| t.text.as_str());
         assert_eq!(kind.parse(word), Ok(v));
     }
+}
+
+#[test]
+fn set_by_priority() {
+    let (mut c, shadows, scale, _) = console();
+    let ctx = &mut Ctx::default();
+    // Command line (`--off`) first, then a config file that says otherwise: the switch holds.
+    assert_eq!(
+        c.vars_mut()
+            .set_by(shadows, Value::Bool(false), SetBy::CommandLine),
+        Ok(SetOutcome::Changed)
+    );
+    c.exec_as(ctx, "render.shadows on; time.scale 2", SetBy::Config)
+        .unwrap();
+    assert!(!c.vars().flag(shadows));
+    assert_eq!(
+        c.vars().get(scale),
+        &Value::Float(2.0),
+        "the rest of the config line applies"
+    );
+    let kept = c
+        .log()
+        .lines()
+        .find(|l| l.text.starts_with("render.shadows kept"))
+        .unwrap();
+    assert_eq!(
+        kept.text,
+        "render.shadows kept: set by command line, which outranks config"
+    );
+    assert_eq!(
+        c.vars_mut()
+            .set_by(shadows, Value::Bool(true), SetBy::Config),
+        Ok(SetOutcome::Outranked(SetBy::CommandLine))
+    );
+    // Code outranks the command line; the console outranks code.
+    assert_eq!(c.vars_mut().set(shadows, Value::Bool(true)), Ok(true));
+    c.submit(ctx, "toggle render.shadows").unwrap();
+    assert_eq!(c.vars().var(shadows).set_by(), SetBy::Console);
+    assert_eq!(c.vars_mut().set(shadows, Value::Bool(true)), Ok(false));
+    assert!(!c.vars().flag(shadows));
+    assert_eq!(
+        last_line(&c),
+        "render.shadows = off (default on) [on|off]: Shadow maps"
+    );
+    // Same value from a higher source still takes ownership.
+    assert_eq!(
+        c.vars_mut()
+            .set_by(scale, Value::Float(2.0), SetBy::CommandLine),
+        Ok(SetOutcome::Unchanged)
+    );
+    assert_eq!(c.vars().var(scale).set_by(), SetBy::CommandLine);
+    assert_eq!(
+        c.vars().var(scale).describe(),
+        "time.scale = 2 (default 1) [float 0..=10] (set by command line)"
+    );
+    // `reset` gives the variable back to every source; `list` shows who set what.
+    c.exec(ctx, "reset render.shadows; clear; list time")
+        .unwrap();
+    assert_eq!(c.vars().var(shadows).set_by(), SetBy::Default);
+    assert_eq!(last_line(&c), "* time.scale = 2  (command line)");
+    c.exec_as(ctx, "render.shadows off", SetBy::Config).unwrap();
+    assert!(!c.vars().flag(shadows));
+}
+
+#[test]
+fn prompt_editing_history_and_completion() {
+    let (mut c, ..) = console();
+    let mut p = Prompt::default();
+    let type_text = |p: &mut Prompt, c: &mut Console<Ctx>, t: &str| {
+        p.apply(Edit::Insert(t.into()), c);
+    };
+    type_text(&mut p, &mut c, "rendér.sh");
+    p.apply(Edit::Left, &mut c);
+    p.apply(Edit::Backspace, &mut c);
+    assert_eq!((p.text(), p.cursor()), ("rendér.h", 8));
+    p.apply(Edit::Home, &mut c);
+    p.apply(Edit::Delete, &mut c);
+    p.apply(Edit::Clear, &mut c);
+    // Tab completes the word before the cursor; the popup lists candidates.
+    type_text(&mut p, &mut c, "render.");
+    assert_eq!(
+        p.completion(&c).candidates,
+        ["render.mode", "render.shadows", "render.water"]
+    );
+    type_text(&mut p, &mut c, "s");
+    p.apply(Edit::Complete, &mut c);
+    assert_eq!(p.text(), "render.shadows ");
+    assert_eq!(p.completion(&c).candidates, ["off", "on"]);
+    p.apply(Edit::Complete, &mut c);
+    assert_eq!(p.text(), "render.shadows o", "extends to the common prefix");
+    type_text(&mut p, &mut c, "f");
+    p.apply(Edit::Complete, &mut c);
+    assert_eq!(p.text(), "render.shadows off ");
+    // Completion in the middle of a line keeps the tail.
+    p.set("tog render.water");
+    p.apply(Edit::WordLeft, &mut c);
+    p.apply(Edit::Left, &mut c);
+    p.apply(Edit::Complete, &mut c);
+    assert_eq!((p.text(), p.cursor()), ("toggle  render.water", 7));
+    p.apply(Edit::WordRight, &mut c);
+    assert_eq!(p.cursor(), p.text().len());
+    p.apply(Edit::DeleteWordBack, &mut c);
+    assert_eq!(p.text(), "toggle  ");
+    // Submit hands the line back; history browsing keeps the draft.
+    p.set("echo one");
+    let line = p.apply(Edit::Submit, &mut c).unwrap();
+    c.submit(&mut Ctx::default(), &line).unwrap();
+    assert_eq!(p.text(), "");
+    c.submit(&mut Ctx::default(), "echo two").unwrap();
+    type_text(&mut p, &mut c, "draft");
+    p.apply(Edit::Older, &mut c);
+    assert_eq!(p.text(), "echo two");
+    p.apply(Edit::Older, &mut c);
+    p.apply(Edit::Older, &mut c);
+    assert_eq!(p.text(), "echo one");
+    p.apply(Edit::Newer, &mut c);
+    p.apply(Edit::Newer, &mut c);
+    assert_eq!((p.text(), p.cursor()), ("draft", 5));
+    // Control characters (the toggle key's text, Enter's "\r") never land in the line.
+    type_text(&mut p, &mut c, "\r\t!");
+    assert_eq!(p.text(), "draft!");
 }

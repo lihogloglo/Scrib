@@ -72,6 +72,8 @@ pub enum NameFilter {
     Vars,
     /// Boolean variables only.
     BoolVars,
+    /// A name, or free text that needn't be one (`help <text>` searches); completes like `Any`.
+    Search,
 }
 
 /// The type of an argument or variable.
@@ -126,6 +128,7 @@ impl ArgKind {
             ArgKind::Name(NameFilter::Any) => "name".into(),
             ArgKind::Name(NameFilter::Vars) => "variable".into(),
             ArgKind::Name(NameFilter::BoolVars) => "on/off variable".into(),
+            ArgKind::Name(NameFilter::Search) => "name or text".into(),
         }
     }
 
