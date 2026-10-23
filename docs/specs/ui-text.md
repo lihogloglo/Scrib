@@ -1,8 +1,8 @@
 # Rich text and pagination (books, scrolls, notes)
 
-Status: core built (2026-10-22, ROADMAP 2.3 books, slice 1). Crate: `sf_ui` (Bevy-free). Next: the Bevy
-measurer and book screen in `sf_ui_bevy`; the first content pack's markup parser (bevyrrowind
-`specs/ui-adapter.md` "Books and scrolls").
+Status: built (ROADMAP 2.3): core 2026-10-22 (slice 1, `sf_ui`), measurer, readers and notifications
+2026-10-23 (slice 2, `sf_ui_bevy`). Next: the first content pack's markup parser and MessageBox mapping
+(bevyrrowind `specs/ui-adapter.md` "Books and scrolls", "MWScript UI calls").
 Split from [ui.md](ui.md) (over the spec size budget); ui.md's stack, themes and presets apply.
 
 ## Goal
@@ -74,18 +74,59 @@ Non-goals: an HTML engine, editing, floats, tables, columns, hyphenation.
 - **Reading position** = `DocPos { block, offset }` (ordered). Keep the first page's `start` of the open
   view as the bookmark; after re-pagination `page_of(bookmark)` opens the page that draws it.
 
-## Bevy side (next slice, `sf_ui_bevy`)
+## Bevy side (`sf_ui_bevy`, `UiTextPlugin`)
 
-- `ParleyMeasure`: builds a parley layout per paragraph with the theme's resolved fonts at the current
-  scale, text without the U+FFFC placeholders and an `InlineBox` per image at the mapped index; maps
-  each line's range back to flattened offsets (a line holding an inline box includes its placeholder,
-  found through the line's `PositionedLayoutItem::InlineBox` ids). Line heights from parley's metrics.
-- Book screen: per page, one `Text` per `Lines` fragment (`TextSpan` per run, `InlineBox` + image node
-  per inline image, `TextLayout` justify from `align`), an image node per block image; pages laid out
-  absolutely from `y`. Re-paginate on `UiSettings` scale, theme or font change, keep the bookmark.
-  Spread in the PC preset, single page with shoulder-button page turns in the controller preset.
-- Measure only the open book (books are small: the longest vanilla-style books are tens of KB);
-  cache the `Pagination` per (doc, format, scale).
+- **Measurer** (`text_measure.rs`, `ParleyMeasure` from the `RichTextMeasure` system param): lays a
+  paragraph out with `bevy_text::TextPipeline::update_buffer`, the call `bevy_ui` makes for every `Text`
+  node, with the same `TextFont`s, line height, `LineBreak::WordOrCharacter` (long words break, never
+  overflow) and in-flow `InlineBox`es the reader spawns. Units: **physical pixels** at the page node's
+  scale factor (`1 / ComputedNode::inverse_scale_factor`); nodes are placed at `y / scale`.
+  parley quirks handled: a layout's height is Σ `line_height` (block coordinates overlap); a line of
+  only inline boxes reports an inverted sentinel range; a final hard break (or an overflowing trailing
+  space) adds an empty line, dropped. Images: `ImageRef` size (doc units) or the image's pixels, ×
+  `image_scale` × text scale. `MeasureCache`: exact entries per (paragraph, width, scale), cleared on a
+  theme or font change. Bevy 0.20 has no cosmic-text: parley is the engine.
+- **Theme** (`RichTextTheme` resource): body face, theme font keys → `FontSource`, body size, line
+  height, colour, block gap, image scale. Fonts and sizes live here, not in CSS on the text nodes: the
+  measurer must see what is drawn. CSS (`sf_ui_css`) styles the chrome: every part has a `Name`
+  (`#sf-reader-page`, `#sf-reader-page-body`, `#sf-reader-prev`, `#sf-message-box-button`, `#sf-toast`,
+  …) and a `UiPart` (mapping it to a class is a one-line `sf_ui_css` follow-up).
+- **Readers** (`RichReader { doc, layout: Book | Scroll, view, takeable, bookmark }` on a node): chrome
+  = pages row (doc background) → page → page body; prev/next/(take)/close buttons. It paginates **at
+  the laid-out page body's content size**, like a browser fragmentainer, so a theme sizes pages and
+  text never clips; re-paginates when that size, scale, text scale, theme or view changes (`ReaderState`
+  keeps what it was made for) and reopens the bookmark's view. Images wait for their assets. Book view:
+  `PageView::Single` in the `controller` preset, else a spread (or `view`). Scroll: one page in an
+  `Overflow::scroll_y` viewport, bookmark = first visible item.
+- **Fragments**: one `Text` per `Lines` fragment (`TextSpan` per run, `InlineImage` per image,
+  `justify` from `align`), absolute at `y`, height fixed to the fragment's. A paragraph that goes on
+  draws its **next line, to the end of its word, transparent** (`ReaderTail`): the last glyph keeps its
+  kerning against the next one (else it no longer fits) and greedy breaking sees the whole next word;
+  the page's last line is justified, as in CSS fragmentation. Block images: `ImageNode`, aligned.
+- **Events** (`ReaderEvent { reader, action }`): `Prev`/`Next` turn pages (scroll: 90 % of the
+  viewport), `Scroll(px)`, `Take`/`Close` for the game. From the buttons (`Activate`), the reader's
+  screen's UI actions (`TabPrev`/`TabNext` = shoulders, `Context1` take, `Back` close) and the wheel
+  (input target's scroll readers, 40 px a line). Prev/next get `InteractionDisabled` at the ends.
+
+## Notifications
+
+Research (2026-10-23): Android `Toast` has two lengths (2 s and 3.5 s by framework convention), Material
+snackbars short/long/indefinite (developer.android.com, material-components-android docs); WCAG 2.2.1
+"Timing Adjustable" asks for user-extendable timing; subtitle rules of thumb give ~15-20 characters a
+second. Morrowind's script `MessageBox` is modal with buttons or timed without (ui-adapter.md). Reuse
+(rule 8): Bevy has neither; `bevy_toast` (Bevy 0.6), `bevy-notify` (egui, 2022), `bevy_ui_mod_alerts`
+(pre-0.15 bundles) are stale or egui. So our own, Bevy-free logic in `sf_ui::notify`, drawn by `sf_ui_bevy`.
+
+- **Message boxes** (`MessageBoxQueue`, resource `MessageBoxes`): FIFO, one shown; buttons are
+  localized labels (none → one OK label from `MessageBoxConfig`); `choose(index)` → `MessageBoxChoice
+  { id, index }`, sent as `MessageBoxAnswer`; `cancel` = the box's Back button (optional), `withdraw`.
+  Drawn as a backdrop that is the root of the `sf.message_box` Modal screen (pushed while a box is up
+  when the registry has that record), so the router gives it input and focus starts on button 0.
+- **Toasts** (`ToastQueue`, resource `Toasts`): hold = clamp(1.5 s + 0.06 s × chars, 2.5 s, 10 s) ×
+  `scale`; fade 0.15 s in, 0.5 s out (none with reduce motion); ≤ 4 on screen: when full the oldest is
+  retired (fades out) and the new one shows as its slot frees, so nothing is lost and a burst never
+  covers the screen; ≤ 32 waiting (oldest dropped); a repeat of a visible text restarts it as
+  `text (xN)`. Real time (keeps counting in pause menus). One `#sf-toasts` column, oldest first.
 
 ## Co-op
 
@@ -102,6 +143,9 @@ elsewhere.
 | Reading position independent of page numbers | EPUB CFI | `DocPos` | **match** |
 | Inline images as text attachments | `NSTextAttachment` (U+FFFC), Android `ImageSpan`, UE rich text decorators | U+FFFC in flattened text | **match** |
 | Markup | game-specific (HTML-like subsets in Bethesda games, BBCode-like in others) | adapter per game into `RichDoc` | **match** (no shared markup on purpose) |
+| Fragments measured in the real fragmentainer, shaped in context | browsers (layout in the page box; line fragments keep their paragraph's shaping and justification) | page body's laid-out size; invisible next-line tail | **match** |
+| Toast timing and stacking | Android Toast (fixed lengths, one at a time), Material snackbar (one at a time) | reading-time hold, user scale, ≤ 4 stacked, repeat merge | **beyond** (WCAG-adjustable, bursts stay readable) |
+| Modal message box with a result | Unreal CommonUI modal layer, UE `FMessageDialog` returns the choice | Modal-layer screen, choice as a message | **match** |
 
 ## Verification
 
@@ -112,6 +156,27 @@ and `em` line heights, a too-tall line alone, spreads and single views, bookmark
 and 40 random books × 4 formats checking that fragments rebuild every paragraph exactly, pages start in
 reading order, and only a lone item overflows a page.
 
+Slice 2: `cargo test -p sf_ui` (`tests_notify.rs`: box order, fallback button, cancel, withdraw;
+toast durations, fades, the cap with early retirement, bounded queue, repeat merging, reduce motion) and
+`cargo test -p sf_ui_bevy` (`tests_text.rs`, headless `bevy_ui` with a dummy camera target and
+bevy_text's built-in font): 12 synthetic books (prose in 0.8-1.7 em and bold, all alignments, hard
+breaks, blank paragraphs, 60-letter words, inline-image rows, block images, forced breaks) at UI × text
+scale 100-200 %, checked view by view against `bevy_ui`'s own layout: line count and heights equal
+the pagination, no line wider than the page, the tail starts exactly after the paginated lines, no
+text past the page bottom, fragments tile each paragraph and draw as many glyphs as the paragraph laid
+out alone; the same for 6 books in a proportional font when `DejaVuSans.ttf` is on the system; cache
+reuse; page turns, disabled ends, bookmark across 100 → 150 % text; UI actions routed to the screen's
+reader only; scroll; message box flow through the router; toast timing on real time.
+
 ## As built (slice 1, 2026-10-22)
 
 As above. 13 tests; clippy pedantic clean; no new dependencies.
+
+## As built (slice 2, 2026-10-23)
+
+As above. `sf_ui` 7 tests, `sf_ui_bevy` 8 tests; clippy pedantic clean. New direct dependencies of
+`sf_ui_bevy`, already in the tree through `bevy_ui` (same versions, no compile cost): `bevy_text`,
+`parley` (to read line items), `bevy_asset`, `bevy_image`, `bevy_color`. Before landing, the matching
+check also passed 200 monospace and 100 proportional books. Known limits: complex scripts shape the
+first glyph of a fragment without left context; the right page's chrome is hidden, not removed, in
+single view; the scroll bookmark is paragraph-level; gamepad stick scrolling is the app's binding.

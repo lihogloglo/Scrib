@@ -25,6 +25,9 @@
 //!   rich-text document model that content packs' markup parsers build, cut
 //!   into pages (a two-page spread, or one long scroll page) over a
 //!   [`TextMeasure`] that the text engine implements.
+//! - [`MessageBoxQueue`] and [`ToastQueue`]: notifications (ui-text.md):
+//!   modal message boxes answered by button index, and timed toasts with
+//!   reading-time durations, fades, a visible cap and repeat merging.
 //! - [`Keymap`] and [`Rebinder`]: the keybinds screen (U6). Rebindable actions
 //!   with per-device slots, conflicts per scope, swap/unbind resolution,
 //!   resets, the profile's `[bindings.<context>]` tables; [`glyph`] labels
@@ -36,6 +39,7 @@ mod keymap;
 mod l10n;
 mod list;
 mod mods;
+mod notify;
 mod paginate;
 mod rebind;
 pub mod records;
@@ -55,6 +59,8 @@ mod tests_keymap;
 #[cfg(test)]
 mod tests_mods;
 #[cfg(test)]
+mod tests_notify;
+#[cfg(test)]
 mod tests_text;
 
 pub use ids::{
@@ -71,6 +77,10 @@ pub use l10n::{
 };
 pub use list::{ListFilter, ListModel, SortSpec};
 pub use mods::{L10N_DIR, UiRecordKinds, available_locales, l10n_sources};
+pub use notify::{
+    MessageBox, MessageBoxChoice, MessageBoxId, MessageBoxQueue, Toast, ToastConfig, ToastId, ToastPhase,
+    ToastQueue,
+};
 pub use paginate::{
     DocPos, Fragment, LineMetrics, Page, PageFormat, PageView, Pagination, Placed, Size,
     TextMeasure,
