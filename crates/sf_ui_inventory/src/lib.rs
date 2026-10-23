@@ -12,7 +12,9 @@
 //!   displace;
 //! - stack split and merge as `sf_rpg` commands, with a [`QuantityPicker`];
 //! - the virtualized list (`sf_ui::VirtualList`): a few dozen pooled rows for thousands
-//!   of stacks, keyed focus that survives sorting and filtering.
+//!   of stacks, keyed focus that survives sorting and filtering;
+//! - the icon [grid](InventoryGrid): the same rows `columns` to a grid row, virtualized by
+//!   grid rows with the same pool.
 //!
 //! Game data comes through the [`ItemCatalog`] adapter hook (names, categories, weights,
 //! values, stats) and `sf_rpg`'s `EquipRules`; nothing here knows a game.
@@ -20,6 +22,7 @@
 mod catalog;
 mod command;
 mod compare;
+mod grid;
 mod row;
 mod view;
 
@@ -29,5 +32,6 @@ mod tests;
 pub use catalog::{Better, InventoryTab, ItemCatalog, ItemInfo, StatDef};
 pub use command::{QuantityPicker, StackActions};
 pub use compare::{Comparison, StatDelta, Verdict};
+pub use grid::{GridFrame, GridRow, GridRowBinding, InventoryGrid};
 pub use row::{ItemRow, ROW_FIELDS, STAT_PREFIX};
 pub use view::{Encumbrance, INVENTORY_LIST, InventorySort, InventoryView, SyncReport, Totals};

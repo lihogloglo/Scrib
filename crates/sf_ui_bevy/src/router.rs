@@ -17,7 +17,7 @@ use sf_ui::{InputContextId, Layer, ScreenId};
 
 use crate::ScreenStackRes;
 use crate::actions::{UiAction, UiActionTag, UiBindings, spawn_actions};
-use crate::nav::{UiDefaultFocus, UiFocusable};
+use crate::nav::{UiDefaultFocus, UiFocusable, UiOwnsFocus};
 
 /// Evaluation priority of UI contexts: above any gameplay context.
 pub const UI_CONTEXT_PRIORITY: usize = 1 << 16;
@@ -148,7 +148,7 @@ fn screen_of<'a>(
 pub(crate) struct FocusMemory(Vec<(ScreenId, Entity)>);
 
 /// A focusable or screen root spawned since the last run.
-type NewNavigable = Or<(Added<UiFocusable>, Added<UiScreenRoot>)>;
+type NewNavigable = Or<(Added<UiFocusable>, Added<UiScreenRoot>, Added<UiOwnsFocus>)>;
 
 /// Keeps directional navigation inside the input target: only its
 /// [`UiFocusable`]s carry `AutoDirectionalNavigation` (Bevy's navigation is
@@ -164,11 +164,16 @@ pub(crate) fn sync_navigable(
     added: Query<(), NewNavigable>,
     parents: Query<&ChildOf>,
     roots: Query<(Entity, &UiScreenRoot, Has<UiHandlesBack>)>,
+    owners: Query<&UiScreenRoot, With<UiOwnsFocus>>,
     mut focus: ResMut<InputFocus>,
     mut memory: ResMut<FocusMemory>,
     mut seen: Local<Option<u64>>,
 ) {
     let target = stack.0.input_target().map(|s| s.id.clone());
+    // A screen that owns its focus takes no part in directional navigation.
+    let owned = target
+        .as_ref()
+        .is_some_and(|t| owners.iter().any(|r| r.0 == *t));
     let changed = *seen != Some(stack.0.version()) || !added.is_empty();
     *seen = Some(stack.0.version());
 
@@ -178,11 +183,11 @@ pub(crate) fn sync_navigable(
             screen_of(entity, &parents, &roots).is_some_and(|(_, screen)| screen == t)
         });
         if changed {
-            if in_target && !navigable {
+            if in_target && !owned && !navigable {
                 commands
                     .entity(entity)
                     .insert(AutoDirectionalNavigation::default());
-            } else if !in_target && navigable {
+            } else if (!in_target || owned) && navigable {
                 commands
                     .entity(entity)
                     .remove::<AutoDirectionalNavigation>();
@@ -193,9 +198,17 @@ pub(crate) fn sync_navigable(
         }
     }
 
-    // Focus must be on a focusable of the target screen.
+    // Focus must be on a focusable of the target screen (or anywhere inside a screen that
+    // owns its focus).
     let current = focus.get();
     if current.is_some_and(|f| candidates.iter().any(|(e, _)| *e == f)) {
+        return;
+    }
+    if owned
+        && current.is_some_and(|f| {
+            screen_of(f, &parents, &roots).is_some_and(|(_, s)| Some(s) == target.as_ref())
+        })
+    {
         return;
     }
     if let Some(old) = current
@@ -212,9 +225,13 @@ pub(crate) fn sync_navigable(
             .find(|(s, e)| s == t && candidates.iter().any(|(c, _)| c == e))
             .map(|(_, e)| *e)
     });
-    let next = remembered
-        .or_else(|| candidates.iter().find(|(_, d)| *d).map(|(e, _)| *e))
-        .or_else(|| candidates.first().map(|(e, _)| *e));
+    let next = if owned {
+        None
+    } else {
+        remembered
+            .or_else(|| candidates.iter().find(|(_, d)| *d).map(|(e, _)| *e))
+            .or_else(|| candidates.first().map(|(e, _)| *e))
+    };
     match next {
         Some(entity) => focus.set(entity, FocusCause::Navigated),
         None if current.is_some() => focus.clear(),

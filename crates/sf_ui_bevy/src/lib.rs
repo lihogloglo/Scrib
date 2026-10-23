@@ -49,39 +49,40 @@ mod tests_text;
 
 use bevy_app::{App, Last, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParam;
 use bevy_enhanced_input::prelude::{EnhancedInputSystems, InputContextAppExt};
 use bevy_input_focus::InputFocus;
 use bevy_input_focus::directional_navigation::{
     AutoNavigationConfig, DirectionalNavigationMap, DirectionalNavigationPlugin,
 };
-use bevy_ecs::system::SystemParam;
 use sf_ui::{
-    Layer, Localizer, OpenScreen, PresetId, ScreenStack, SettingsStore, StackError, ThemeId, UiRegistry,
+    Layer, Localizer, OpenScreen, PresetId, ScreenStack, SettingsStore, StackError, ThemeId,
+    UiRegistry,
 };
 
 pub use actions::{HUD_SCOPE, UiAction, UiBindings, UiKeymap, ui_keymap};
 pub use device::{Device, GamepadFamily, Glyph, InputMode, PadFamily, glyph};
 pub use keybinds::{UiRebindEvent, UiRebinder, ui_input_open};
-pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, held_direction};
-pub use profile::{
-    BINDINGS_CONTEXT, UiLoadReport, UiLocales, UiProfile, binding_name, insert_from_profile, parse_binding,
-    parse_inputs, validate_input,
-};
+pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, UiNavEvent, UiOwnsFocus, held_direction};
 pub use notify::{
-    MESSAGE_BOX_Z, MessageBoxAnswer, MessageBoxButton, MessageBoxConfig, MessageBoxView, MessageBoxes,
-    NotifyColors, TOAST_Z, ToastStack, ToastView, Toasts,
+    MESSAGE_BOX_Z, MessageBoxAnswer, MessageBoxButton, MessageBoxConfig, MessageBoxView,
+    MessageBoxes, NotifyColors, TOAST_Z, ToastStack, ToastView, Toasts,
+};
+pub use profile::{
+    BINDINGS_CONTEXT, UiLoadReport, UiLocales, UiProfile, binding_name, insert_from_profile,
+    parse_binding, parse_inputs, validate_input,
 };
 pub use reader::{
     FragmentCtx, ReaderAction, ReaderBody, ReaderButton, ReaderEvent, ReaderFragment, ReaderLabels,
-    ReaderLayout, ReaderState, RichReader, UiPart, ReaderTail, WHEEL_LINE, fragment_tails, spawn_page,
-    spawn_paragraph,
+    ReaderLayout, ReaderState, ReaderTail, RichReader, UiPart, WHEEL_LINE, fragment_tails,
+    spawn_page, spawn_paragraph,
+};
+pub use router::{
+    UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts, UiScreenInput, UiScreenRoot,
 };
 pub use text_measure::{
     DOC_LINE_BREAK, ImageResolver, MeasureCache, MeasureScale, ParleyMeasure, RichImages,
     RichTextMeasure, RichTextTheme, image_logical_size, justify,
-};
-pub use router::{
-    UI_CONTEXT_PRIORITY, UiActionEvent, UiHandlesBack, UiInputContexts, UiScreenInput, UiScreenRoot,
 };
 
 /// The resolved UI registry of the current mod set.
@@ -209,6 +210,7 @@ impl Plugin for SfUiPlugin {
             .init_resource::<AutoNavigationConfig>()
             .add_message::<UiActionEvent>()
             .add_message::<UiRebindEvent>()
+            .add_message::<UiNavEvent>()
             .add_observer(router::record_activation)
             .add_systems(Last, (router::clear_activations, profile::sync_profile))
             .add_input_context::<UiScreenInput>()
