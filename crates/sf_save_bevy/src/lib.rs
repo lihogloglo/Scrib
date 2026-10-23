@@ -329,6 +329,8 @@ pub struct SaveReport {
     pub sections: usize,
     /// Main thread.
     pub snapshot: Duration,
+    /// Main thread, per section family (`sf/overlay`, `*/script`): which provider is slow.
+    pub snapshot_by_family: BTreeMap<String, Duration>,
     /// Off-thread.
     pub encode: Duration,
     pub write: Duration,
@@ -632,8 +634,13 @@ impl LoadJob {
     }
 }
 
-/// A save in flight: the job, its reason and the main-thread snapshot time.
-type Saving = (Job<Result<SaveOutcome, SaveError>>, SaveReason, Duration);
+/// A save in flight, with its main-thread snapshot times.
+struct Saving {
+    job: Job<Result<SaveOutcome, SaveError>>,
+    reason: SaveReason,
+    snapshot: Duration,
+    by_family: BTreeMap<String, Duration>,
+}
 
 /// Queued requests and the job in flight.
 #[derive(Resource, Default)]
@@ -660,7 +667,12 @@ fn drive(world: &mut World, requests: &mut Requests) {
         }
         runner.load = load;
     }
-    runner.saves.extend(saves);
+    for req in saves {
+        // One pending autosave is enough (the gate may hold it longer than the interval).
+        if req.reason != SaveReason::Auto || !runner.saves.iter().any(|r| r.reason == SaveReason::Auto) {
+            runner.saves.push_back(req);
+        }
+    }
     finish_save(world, &mut runner);
     finish_load(world, &mut runner);
     if runner.saving.is_none() && runner.loading.is_none() {
@@ -691,10 +703,14 @@ fn start_save(world: &mut World, runner: &mut Runner) {
         world.resource_mut::<SaveSession>().world_id = fresh_id();
     }
     let mut sections = Vec::new();
+    let mut by_family = BTreeMap::new();
     {
         let providers = world.resource::<SaveSections>();
         for s in &providers.sections {
-            match s.io.snapshot(world) {
+            let t = Instant::now();
+            let snap = s.io.snapshot(world);
+            by_family.insert(s.spec.family().to_string(), t.elapsed());
+            match snap {
                 Ok(list) => sections.extend(list.into_iter().map(|(k, enc)| (k, s.spec.current(), s.flags, enc))),
                 Err(message) => {
                     let section = s.spec.family().to_string();
@@ -723,7 +739,7 @@ fn start_save(world: &mut World, runner: &mut Runner) {
         target,
     };
     let snapshot = t0.elapsed();
-    runner.saving = Some((Job::start(config.background, move || job.run()), req.reason, snapshot));
+    runner.saving = Some(Saving { job: Job::start(config.background, move || job.run()), reason: req.reason, snapshot, by_family });
 }
 
 fn build_meta(world: &World, reason: SaveReason) -> SaveMeta {
@@ -764,10 +780,9 @@ fn ms(d: Duration) -> f64 {
 }
 
 fn finish_save(world: &mut World, runner: &mut Runner) {
-    let Some((job, reason, snapshot)) = &mut runner.saving else { return };
-    let Some(result) = job.poll() else { return };
-    let (reason, snapshot) = (*reason, *snapshot);
-    runner.saving = None;
+    let Some(saving) = &mut runner.saving else { return };
+    let Some(result) = saving.job.poll() else { return };
+    let Saving { reason, snapshot, by_family, .. } = runner.saving.take().expect("polled above");
     let report = result.map(|o| {
         let mut session = world.resource_mut::<SaveSession>();
         session.sequence = o.sequence;
@@ -792,6 +807,7 @@ fn finish_save(world: &mut World, runner: &mut Runner) {
             per_owner: o.per_owner,
             sections: o.sections,
             snapshot,
+            snapshot_by_family: by_family,
             encode: o.encode,
             write: o.write,
             rotated: o.rotated,

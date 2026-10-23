@@ -663,6 +663,47 @@ fn background_jobs_finish_on_the_task_pool() {
 }
 
 #[test]
+fn queued_autosaves_collapse_while_the_gate_is_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, _) = new_game(dir.path());
+    a.world_mut().resource_mut::<SaveGate>().block("door");
+    for _ in 0..3 {
+        a.world_mut().write_message(SaveRequest::slot(SaveReason::Auto));
+        a.update();
+    }
+    a.world_mut().resource_mut::<SaveGate>().unblock("door");
+    let mut done = 0;
+    for _ in 0..3 {
+        a.update();
+        done += drain::<SaveDone>(&mut a).len();
+    }
+    assert_eq!(done, 1);
+}
+
+/// Net-ready (net.md "Saves"): a guest's character file is its own file kind and carries the
+/// host section's exact bytes; a world load refuses it.
+#[test]
+fn character_files_carry_the_host_section_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, y) = new_game(dir.path());
+    play(&mut a, &y);
+    let host = save(&mut a, SaveRequest::slot(SaveReason::Auto));
+    let world = SaveFile::open(std::fs::read(&host.path).unwrap()).unwrap();
+    let key = sections::character_key(HERO);
+    let entry = world.entry(&key).unwrap();
+    let meta = SaveMeta { save_id: host.save_id, ..world.meta().unwrap() };
+    let mut w = SaveWriter::new(FileKind::Character, &meta);
+    w.add_stored(entry, world.stored(&key).unwrap(), entry.flags).unwrap();
+    let path = sf_save::character_path(dir.path(), meta.world_id, HERO.0);
+    write_atomic(&StdFs, &path, &w.finish(), true).unwrap();
+    let file = SaveFile::open(std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(file.kind(), FileKind::Character);
+    assert_eq!(file.entry(&key).unwrap().hash, entry.hash);
+    assert_eq!(file.raw(&key).unwrap(), world.raw(&key).unwrap());
+    assert!(matches!(load(&mut a, LoadRequest::path(&path)), Err(LoadError::NotAWorld(_))));
+}
+
+#[test]
 fn character_sections_are_keyed_by_player() {
     let y = yard();
     let c = new_character(&y);
