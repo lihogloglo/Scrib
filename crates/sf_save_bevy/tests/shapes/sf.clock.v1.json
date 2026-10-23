@@ -1,0 +1,27 @@
+{
+  "ClockSave": {
+    "STRUCT": [
+      {
+        "clock": {
+          "TYPENAME": "SkyClock"
+        }
+      },
+      {
+        "sim_tick": "U64"
+      }
+    ]
+  },
+  "SkyClock": {
+    "STRUCT": [
+      {
+        "days": "F64"
+      },
+      {
+        "time_scale": "F32"
+      },
+      {
+        "paused": "BOOL"
+      }
+    ]
+  }
+}

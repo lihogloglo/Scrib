@@ -1,0 +1,27 @@
+[package]
+name = "sf_save"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free save files for superfargoth: versioned sections, migration, atomic writes, slots, CLI"
+
+# Bevy-free core (ARCHITECTURE §8b rule 1; save.md "Reuse"): the container, the section version
+# registry and migration runner, atomic files and slots. Owners of saved state keep their own
+# types; `sf_save_bevy` wires them to the app.
+[dependencies]
+blake3.workspace = true
+lz4_flex.workspace = true
+postcard.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bin]]
+name = "sf_save"
+path = "src/bin/sf_save.rs"
+
+[lints]
+workspace = true

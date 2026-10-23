@@ -1,9 +1,10 @@
 # Saves: host world save + per-player character save (`sf_save`)
 
-Status: **draft, spec only (Phase 2.5, 2026-10-22).** Nothing built.
-Crates (planned): `sf_save` (Bevy-free: container, versions, migration runner, mod-list diff, atomic
-files, slots), `sf_save_bevy` (thin plugin: requests, tick-boundary snapshot, background write, load
-orchestration, autosave). Owners of saved state keep their own types and migrations.
+Status: **S1 + S2 built (Phase 2.5, 2026-10-23)**: see "As built (S1, S2)" at the end, which wins
+where it differs from the text above. S3 (mod diff, dormancy dialog, `clean`) and S4 (co-op) not built.
+Crates: `sf_save` (Bevy-free: container, versions, migration runner, atomic files, slots, CLI; the
+mod-list diff is S3), `sf_save_bevy` (thin plugin: requests, tick-boundary snapshot, background write,
+load orchestration, autosave; the framework's section types).
 Sources: [net.md](net.md) "Saves" and "Quest model", [rpg.md](rpg.md), [world-coordinates.md](world-coordinates.md),
 [mods.md](mods.md), [streaming.md](streaming.md) "Runtime overlay", [scripting.md](scripting.md) "State,
 timers and saves", [weather.md](weather.md) "State and forecast".
@@ -355,3 +356,68 @@ RUSTSEC-2025-0141; crates.io and READMEs of the crates named in "Reuse".
    question 1.)
 6. **Legacy saves**: should Bevyrrowind ever import Morrowind `.ess` saves (an adapter-side converter
    into these sections), or never?
+
+## As built (S1, S2)
+
+2026-10-23. `sf_save` (Bevy-free, 23 tests) and `sf_save_bevy` (19 tests; `script` feature for
+`<mod>/script`). No serde derive was added to another crate: every saved type already had one.
+
+**Container (S1).** As "File format", plus: the preamble's hash covers the other preamble bytes and the
+TOC (a flipped kind or length byte is caught like a TOC byte); section offsets count from the TOC's end,
+so the TOC sits after the preamble and `read_meta` reads the file's head only; sections must tile the
+area contiguously in key order (`sf/meta` first, raw), so equal state gives equal bytes; an LZ4 section
+whose declared raw length passes 255:1 is refused before allocating; LZ4 only from 128 B and only when
+smaller. Decoding is strict (`sf_save::decode` refuses trailing bytes), so a shape change without a
+version bump fails to load by name instead of loading garbage. `Registry` keys specs by owner (or any
+owner) and **family** (the name before its first `/`: `character`, `script`); a spec refuses gaps in its
+steps. Rotation groups: `Auto` + `GuestLeft` keep 3, `Quick` 2, `Exit` 1, `Manual` never; nothing
+rotates unless the new file's directory sync succeeded. Manual overwrite (`SaveTarget::Path`) keeps
+`.bak`. The read-back check compares the temp file's bytes before the rename, not after.
+
+**Plugin (S2).** One exclusive system in `Last` (the frame's end: after every `FixedUpdate` tick of the
+frame, a tick boundary) polls jobs, applies a finished load, then starts one load or save. Providers are
+`SaveSection`s: `value` (one key), `family` (keys per instance) and `raw_family` (bytes already postcard,
+the script runtime's); `get` clones on the main thread, encoding runs in the job; decoding runs in the
+load job, then per-value `check`s (all before any apply: the overlay refuses blobs newer than
+`BlobVersions`), `on_load_reset` hooks, apply in `sections::order`. A section the save lacks applies
+`Default` (full replace). A load cancels saves queued before it; one autosave at most waits behind a
+closed gate. `SaveConfig::background = false` runs jobs inline (tools, tests).
+
+**Deviations from the text above.**
+- Framework section types, versions and (future) frozen legacy types live in `sf_save_bevy::sections`,
+  not in the owner crates: owners stay save-agnostic, and the shape goldens fail in this crate when an
+  owner changes a saved type. The game wires its resources with closures (`read`/`write` helpers),
+  because the state lives in heavy render crates (`sf_sky_bevy`, `sf_world_bevy`) or in the game.
+- `sf/overlay` = `{ overlay: PlacementOverlay::to_bytes(), blob_versions }`: the blob version table is in
+  the section, not in `sf_world`'s codec. Migrating older blobs needs `sf_world` to iterate blobs
+  (overlay v2), and the non-destructive flush is the game's `get` closure (it returns a copy).
+- `sf/records`: `sf_records` has no runtime overlay yet, so `RecordOverlay` (created records under
+  `save:`, field-path patches, `apply` reporting what it skips) lives here, storing values as
+  `SavedValue`, a frozen mirror of `sf_records::Value`.
+- `<mod>/script`: a saved context the app doesn't run is kept dormant; a running context the save
+  lacks keeps its state (fresh start of added mods is S3).
+- `PlayerKey` stays in `sf_rpg`; `sf/thumbnail` (needs the renderer) and `sf/party` (S4) not built.
+- Drift guard: `serde-reflection` traces each type by deserialization (every enum variant; nested enums
+  listed explicitly) into `tests/shapes/<owner>.<family>.v<version>.json`; the overlay, whose codec
+  needs real bytes, is traced from a sample. Golden save `tests/golden/s2.sfsave` (the played test
+  level) must load to the same state and re-save to the same raw bytes. Bless: `SF_SAVE_BLESS=1`.
+- Fuzz: deterministic in-test fuzz (truncation at every offset, every single-bit flip, 20k random
+  mutations half of them re-signed past the TOC hash) instead of `cargo fuzz` + proptest.
+
+**Budgets** (release, 4-core cloud runner, `cargo test -p sf_save_bevy --release budgets -- --nocapture`;
+synthetic 100-hour world: 30k overlay changes, 2k journal entries, 1k heard lines, 300 stacks, 700
+record changes, 1.5k globals, ~2 MiB script-like state):
+
+| Measure | Budget | Measured |
+|---|---|---|
+| New game save | ≤ 256 KiB | 723 B (no thumbnail) |
+| 100-hour save on disk | ≤ 8 MiB | 2.55 MiB (`sf` sections 1.48 MiB; the overlay is 1.44 MiB raw, ~50 B per change) |
+| Snapshot, main thread, script state excluded | ≤ 5 ms | 3.5-5.6 ms warm (overlay copy 2.6-4.5 ms); a cold first copy of the overlay ~9 ms |
+| Script-like state, 2 MiB | 25-33 ms/MiB (Lua) | 3.0-3.3 ms (a plain clone: not a Lua walk) |
+| Encode + write, off-thread | ≤ 500 ms | 28-31 ms |
+| Load before the streaming burst | ≤ 300 ms | 34-39 ms |
+
+The snapshot is at the budget's edge and over it with a cold allocator: the overlay copy dominates.
+If the owner's laptop confirms, the fix is a copy-on-write overlay in `sf_world` (persistent maps or
+`Arc`'d per-cell buckets), so a snapshot is O(changed buckets).
+

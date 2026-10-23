@@ -1,0 +1,243 @@
+{
+  "DVec2": {
+    "TUPLESTRUCT": [
+      "F64",
+      "F64"
+    ]
+  },
+  "Grid": {
+    "STRUCT": [
+      {
+        "cell": {
+          "TUPLEARRAY": {
+            "CONTENT": "I32",
+            "SIZE": 3
+          }
+        }
+      },
+      {
+        "local": {
+          "TUPLEARRAY": {
+            "CONTENT": "F32",
+            "SIZE": 3
+          }
+        }
+      }
+    ]
+  },
+  "Override": {
+    "ENUM": {
+      "0": {
+        "Force": {
+          "STRUCT": [
+            {
+              "climate": "STR"
+            },
+            {
+              "preset": "STR"
+            },
+            {
+              "start": "F64"
+            },
+            {
+              "transition_hours": {
+                "OPTION": "F32"
+              }
+            },
+            {
+              "until": {
+                "OPTION": "F64"
+              }
+            }
+          ]
+        }
+      },
+      "1": {
+        "Weights": {
+          "STRUCT": [
+            {
+              "climate": "STR"
+            },
+            {
+              "from": "F64"
+            },
+            {
+              "weights": {
+                "SEQ": {
+                  "TUPLE": [
+                    "STR",
+                    "F32"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Vec2": {
+    "TUPLESTRUCT": [
+      "F32",
+      "F32"
+    ]
+  },
+  "Vec3": {
+    "TUPLESTRUCT": [
+      "F32",
+      "F32",
+      "F32"
+    ]
+  },
+  "WeatherSave": {
+    "STRUCT": [
+      {
+        "weather": {
+          "TYPENAME": "WeatherState"
+        }
+      },
+      {
+        "wind": {
+          "OPTION": {
+            "TYPENAME": "WindState"
+          }
+        }
+      }
+    ]
+  },
+  "WeatherState": {
+    "STRUCT": [
+      {
+        "seed": "U64"
+      },
+      {
+        "overrides": {
+          "SEQ": {
+            "TYPENAME": "Override"
+          }
+        }
+      }
+    ]
+  },
+  "Wind": {
+    "STRUCT": [
+      {
+        "velocity": {
+          "TYPENAME": "Vec2"
+        }
+      },
+      {
+        "gustiness": "F32"
+      },
+      {
+        "gust_length": "F32"
+      }
+    ]
+  },
+  "WindSource": {
+    "STRUCT": [
+      {
+        "kind": {
+          "TYPENAME": "WindSourceKind"
+        }
+      },
+      {
+        "center": {
+          "TYPENAME": "Grid"
+        }
+      },
+      {
+        "strength": "F32"
+      },
+      {
+        "inner_radius": "F32"
+      },
+      {
+        "radius": "F32"
+      },
+      {
+        "attack": "F32"
+      },
+      {
+        "duration": {
+          "OPTION": "F32"
+        }
+      },
+      {
+        "release": "F32"
+      }
+    ]
+  },
+  "WindSourceId": {
+    "NEWTYPESTRUCT": "U64"
+  },
+  "WindSourceKind": {
+    "ENUM": {
+      "0": {
+        "Directional": {
+          "STRUCT": [
+            {
+              "direction": {
+                "TYPENAME": "Vec3"
+              }
+            }
+          ]
+        }
+      },
+      "1": {
+        "Radial": "UNIT"
+      },
+      "2": {
+        "Vortex": {
+          "STRUCT": [
+            {
+              "axis": {
+                "TYPENAME": "Vec3"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "WindState": {
+    "STRUCT": [
+      {
+        "wind": {
+          "TYPENAME": "Wind"
+        }
+      },
+      {
+        "time": "F64"
+      },
+      {
+        "drift": {
+          "TUPLEARRAY": {
+            "CONTENT": {
+              "TYPENAME": "DVec2"
+            },
+            "SIZE": 2
+          }
+        }
+      },
+      {
+        "sources": {
+          "SEQ": {
+            "TUPLE": [
+              {
+                "TYPENAME": "WindSourceId"
+              },
+              "F64",
+              {
+                "TYPENAME": "WindSource"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "next_id": "U64"
+      }
+    ]
+  }
+}

@@ -1,0 +1,535 @@
+{
+  "ActionClock": {
+    "STRUCT": [
+      {
+        "elapsed": {
+          "TYPENAME": "ClockTime"
+        }
+      },
+      {
+        "rate": "U16"
+      }
+    ]
+  },
+  "ActionState": {
+    "STRUCT": [
+      {
+        "mov": {
+          "TYPENAME": "RuleKey"
+        }
+      },
+      {
+        "started": {
+          "TYPENAME": "Tick"
+        }
+      },
+      {
+        "clock": {
+          "TYPENAME": "ActionClock"
+        }
+      },
+      {
+        "mode": {
+          "TYPENAME": "ModeState"
+        }
+      },
+      {
+        "buffer": {
+          "TYPENAME": "InputBuffer"
+        }
+      },
+      {
+        "timers": {
+          "TYPENAME": "Timers"
+        }
+      },
+      {
+        "body": {
+          "TYPENAME": "BodyMemory"
+        }
+      }
+    ]
+  },
+  "AttrValue": {
+    "ENUM": {
+      "0": {
+        "Int": {
+          "NEWTYPE": "I64"
+        }
+      },
+      "1": {
+        "Float": {
+          "NEWTYPE": "F32"
+        }
+      },
+      "2": {
+        "Id": {
+          "NEWTYPE": "STR"
+        }
+      }
+    }
+  },
+  "BodyMemory": {
+    "STRUCT": [
+      {
+        "grounded": "BOOL"
+      },
+      {
+        "air_vspeed": "F32"
+      },
+      {
+        "launched": "BOOL"
+      }
+    ]
+  },
+  "CharacterBody": {
+    "STRUCT": [
+      {
+        "action": {
+          "TYPENAME": "ActionState"
+        }
+      },
+      {
+        "locomotion": {
+          "TYPENAME": "Locomotion"
+        }
+      }
+    ]
+  },
+  "CharacterRpg": {
+    "STRUCT": [
+      {
+        "loadout": {
+          "TYPENAME": "Loadout"
+        }
+      }
+    ]
+  },
+  "CharacterSave": {
+    "STRUCT": [
+      {
+        "player": {
+          "TYPENAME": "PlayerKey"
+        }
+      },
+      {
+        "name": "STR"
+      },
+      {
+        "location": {
+          "TYPENAME": "Location"
+        }
+      },
+      {
+        "facing": "F32"
+      },
+      {
+        "body": {
+          "OPTION": {
+            "TYPENAME": "CharacterBody"
+          }
+        }
+      },
+      {
+        "rpg": {
+          "TYPENAME": "CharacterRpg"
+        }
+      },
+      {
+        "ext": {
+          "MAP": {
+            "KEY": "STR",
+            "VALUE": {
+              "TYPENAME": "VersionedBlob"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "ClockTime": {
+    "NEWTYPESTRUCT": "U32"
+  },
+  "Grid": {
+    "STRUCT": [
+      {
+        "cell": {
+          "TUPLEARRAY": {
+            "CONTENT": "I32",
+            "SIZE": 3
+          }
+        }
+      },
+      {
+        "local": {
+          "TUPLEARRAY": {
+            "CONTENT": "F32",
+            "SIZE": 3
+          }
+        }
+      }
+    ]
+  },
+  "GroundHit": {
+    "STRUCT": [
+      {
+        "point": {
+          "TYPENAME": "Grid"
+        }
+      },
+      {
+        "normal": {
+          "TYPENAME": "Vec3"
+        }
+      },
+      {
+        "distance": "F32"
+      },
+      {
+        "surface": {
+          "TYPENAME": "SurfaceId"
+        }
+      }
+    ]
+  },
+  "InputBuffer": {
+    "STRUCT": [
+      {
+        "latched": "U16"
+      }
+    ]
+  },
+  "Inventory": {
+    "STRUCT": [
+      {
+        "stacks": {
+          "SEQ": {
+            "TYPENAME": "ItemStack"
+          }
+        }
+      },
+      {
+        "next_id": "U32"
+      }
+    ]
+  },
+  "ItemStack": {
+    "STRUCT": [
+      {
+        "id": {
+          "TYPENAME": "StackId"
+        }
+      },
+      {
+        "item": "STR"
+      },
+      {
+        "count": "U32"
+      },
+      {
+        "attrs": {
+          "SEQ": {
+            "TUPLE": [
+              "STR",
+              {
+                "TYPENAME": "AttrValue"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "Loadout": {
+    "STRUCT": [
+      {
+        "inventory": {
+          "TYPENAME": "Inventory"
+        }
+      },
+      {
+        "slots": {
+          "MAP": {
+            "KEY": {
+              "TYPENAME": "SlotId"
+            },
+            "VALUE": {
+              "TYPENAME": "StackId"
+            }
+          }
+        }
+      },
+      {
+        "locked": {
+          "SEQ": {
+            "TYPENAME": "StackId"
+          }
+        }
+      }
+    ]
+  },
+  "Location": {
+    "STRUCT": [
+      {
+        "worldspace": "STR"
+      },
+      {
+        "pos": {
+          "TYPENAME": "Grid"
+        }
+      }
+    ]
+  },
+  "Locomotion": {
+    "STRUCT": [
+      {
+        "position": {
+          "TYPENAME": "Grid"
+        }
+      },
+      {
+        "motion": {
+          "TYPENAME": "MotionState"
+        }
+      },
+      {
+        "vertical_speed": "F32"
+      },
+      {
+        "grounded": {
+          "OPTION": {
+            "TYPENAME": "GroundHit"
+          }
+        }
+      },
+      {
+        "trajectory": {
+          "TUPLEARRAY": {
+            "CONTENT": {
+              "TYPENAME": "TrajectoryPoint"
+            },
+            "SIZE": 5
+          }
+        }
+      },
+      {
+        "height_offset": "F32"
+      },
+      {
+        "height_offset_velocity": "F32"
+      },
+      {
+        "moved": {
+          "TYPENAME": "RootDeltaDef"
+        }
+      },
+      {
+        "mode": {
+          "TYPENAME": "MoverMode"
+        }
+      },
+      {
+        "attitude": {
+          "TYPENAME": "Vec2"
+        }
+      },
+      {
+        "traversing": "BOOL"
+      },
+      {
+        "deflect": {
+          "TYPENAME": "Vec3"
+        }
+      },
+      {
+        "slide": {
+          "TYPENAME": "Vec3"
+        }
+      }
+    ]
+  },
+  "Mode": {
+    "ENUM": {
+      "0": {
+        "Normal": "UNIT"
+      },
+      "1": {
+        "Sneak": "UNIT"
+      },
+      "2": {
+        "FreeRun": "UNIT"
+      }
+    }
+  },
+  "ModeState": {
+    "STRUCT": [
+      {
+        "mode": {
+          "TYPENAME": "Mode"
+        }
+      },
+      {
+        "combat": "BOOL"
+      }
+    ]
+  },
+  "MotionState": {
+    "STRUCT": [
+      {
+        "velocity": {
+          "TYPENAME": "Vec3"
+        }
+      },
+      {
+        "acceleration": {
+          "TYPENAME": "Vec3"
+        }
+      },
+      {
+        "yaw": "F32"
+      },
+      {
+        "angular_velocity": "F32"
+      },
+      {
+        "facing_goal": "F32"
+      }
+    ]
+  },
+  "MoverMode": {
+    "ENUM": {
+      "0": {
+        "Ground": "UNIT"
+      },
+      "1": {
+        "Fly": {
+          "STRUCT": [
+            {
+              "hover": {
+                "OPTION": "F32"
+              }
+            }
+          ]
+        }
+      },
+      "2": {
+        "Swim": {
+          "STRUCT": [
+            {
+              "surface": "F32"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "PlayerKey": {
+    "NEWTYPESTRUCT": "U128"
+  },
+  "RootDeltaDef": {
+    "STRUCT": [
+      {
+        "translation": {
+          "TYPENAME": "Vec3"
+        }
+      },
+      {
+        "yaw": "F32"
+      },
+      {
+        "tilt": {
+          "TYPENAME": "Vec2"
+        }
+      }
+    ]
+  },
+  "RuleKey": {
+    "NEWTYPESTRUCT": "U32"
+  },
+  "SlotId": {
+    "NEWTYPESTRUCT": "U8"
+  },
+  "StackId": {
+    "NEWTYPESTRUCT": "U32"
+  },
+  "SurfaceId": {
+    "NEWTYPESTRUCT": "U16"
+  },
+  "Tick": {
+    "NEWTYPESTRUCT": "U32"
+  },
+  "Timers": {
+    "STRUCT": [
+      {
+        "left_ground": {
+          "OPTION": {
+            "TYPENAME": "Tick"
+          }
+        }
+      },
+      {
+        "jump_pressed": {
+          "OPTION": {
+            "TYPENAME": "Tick"
+          }
+        }
+      },
+      {
+        "redo": {
+          "SEQ": {
+            "TUPLE": [
+              {
+                "TYPENAME": "RuleKey"
+              },
+              {
+                "TYPENAME": "Tick"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "TrajectoryPoint": {
+    "STRUCT": [
+      {
+        "offset": {
+          "TYPENAME": "Vec3"
+        }
+      },
+      {
+        "yaw": "F32"
+      },
+      {
+        "velocity": {
+          "TYPENAME": "Vec3"
+        }
+      }
+    ]
+  },
+  "Vec2": {
+    "TUPLESTRUCT": [
+      "F32",
+      "F32"
+    ]
+  },
+  "Vec3": {
+    "TUPLESTRUCT": [
+      "F32",
+      "F32",
+      "F32"
+    ]
+  },
+  "VersionedBlob": {
+    "STRUCT": [
+      {
+        "version": "U32"
+      },
+      {
+        "bytes": {
+          "SEQ": "U8"
+        }
+      }
+    ]
+  }
+}
