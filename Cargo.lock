@@ -4616,8 +4616,13 @@ dependencies = [
 name = "mw_audio"
 version = "0.1.0"
 dependencies = [
+ "mw_install",
+ "mw_records",
+ "mw_rpg",
+ "mw_vfs",
  "sf_audio",
  "sf_records",
+ "sf_rpg",
  "sf_vfs",
  "tes3",
 ]
