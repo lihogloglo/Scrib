@@ -73,7 +73,7 @@ pub use notify::{
 };
 pub use reader::{
     FragmentCtx, ReaderAction, ReaderBody, ReaderButton, ReaderEvent, ReaderFragment, ReaderLabels,
-    ReaderLayout, ReaderState, RichReader, UiPart, WHEEL_LINE, fragment_paragraph, spawn_page,
+    ReaderLayout, ReaderState, RichReader, UiPart, ReaderTail, WHEEL_LINE, fragment_tails, spawn_page,
     spawn_paragraph,
 };
 pub use text_measure::{

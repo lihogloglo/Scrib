@@ -95,7 +95,7 @@ fn toast_lifecycle_fades_in_holds_and_fades_out() {
 #[test]
 fn toasts_stack_up_to_the_cap_then_retire_the_oldest() {
     let mut q = ToastQueue::new(config());
-    let a = q.push("a");
+    let first = q.push("a");
     let b = q.push("b");
     q.tick(0.5);
     let c = q.push("c");
@@ -114,7 +114,7 @@ fn toasts_stack_up_to_the_cap_then_retire_the_oldest() {
     let ids: Vec<_> = q.visible().iter().map(|t| t.id).collect();
     assert_eq!(ids, [c, d]);
     assert_eq!(q.waiting(), 0);
-    assert!(!ids.contains(&a));
+    assert!(!ids.contains(&first));
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn toast_queue_is_bounded_and_repeats_merge() {
     let waiting_repeat = q.push("item 5");
     q.dismiss(gold);
     q.dismiss(q.visible()[0].id);
-    let texts: Vec<_> = q.visible().iter().map(|t| t.label()).collect();
+    let texts: Vec<_> = q.visible().iter().map(crate::Toast::label).collect();
     assert_eq!(texts, ["item 3", "item 4"]);
     assert_eq!(q.waiting(), 1);
     q.dismiss(q.visible()[0].id);

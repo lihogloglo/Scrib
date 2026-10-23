@@ -23,6 +23,7 @@
 use std::sync::Arc;
 
 use bevy_asset::{AssetServer, Assets};
+use bevy_color::Color;
 use bevy_ecs::prelude::*;
 use bevy_image::Image;
 use bevy_input::mouse::{MouseScrollUnit, MouseWheel};
@@ -33,7 +34,7 @@ use bevy_ui::{InteractionDisabled, ScrollPosition};
 use bevy_ui_widgets::{Activate, Button};
 use sf_ui::{
     Block, DocPos, Fragment, ImageRef, Inline, Page, PageFormat, PageView, Pagination, Paragraph,
-    RichDoc, RunStyle,
+    RichDoc, RunStyle, TextMeasure,
 };
 
 use crate::nav::UiFocusable;
@@ -523,7 +524,6 @@ pub(crate) fn layout_readers(
     mut nodes: Query<&mut Node>,
     settings: Option<Res<UiSettings>>,
     mut measure: RichTextMeasure,
-    mut images: ResMut<RichImages>,
     server: Option<Res<AssetServer>>,
     image_assets: Res<Assets<Image>>,
     theme_ticks: Res<ThemeTick>,
@@ -570,19 +570,12 @@ pub(crate) fn layout_readers(
             state.view = p.view_of(reader.bookmark, page_view);
         }
         if state.made_for.as_ref() != Some(&made_for) {
-            if !images_ready(&reader.doc, &mut images, server.as_deref(), &image_assets) {
+            if !images_ready(&reader.doc, measure.images_mut(), server.as_deref(), &image_assets) {
                 continue;
             }
-            let format = match reader.layout {
-                ReaderLayout::Book => PageFormat::page(size.x, size.y),
-                ReaderLayout::Scroll => PageFormat::scroll(size.x),
-            }
-            .with_gap(measure.theme().gap(text_scale) * scale.scale_factor);
-            let mut m = measure.at(scale);
-            let pagination = Pagination::paginate(&reader.doc, &mut m, format);
-            if m.incomplete() {
+            let Some(pagination) = paginate(&reader, size, &mut measure, scale) else {
                 continue; // fonts still loading
-            }
+            };
             state.view = pagination.view_of(reader.bookmark, page_view);
             state.pagination = Some(pagination);
             state.page_view = page_view;
@@ -591,14 +584,7 @@ pub(crate) fn layout_readers(
             if let Some(right) = chrome.right_page
                 && let Ok(mut node) = nodes.get_mut(right)
             {
-                let display = if page_view == PageView::Single {
-                    Display::None
-                } else {
-                    Display::Flex
-                };
-                if node.display != display {
-                    node.display = display;
-                }
+                show(&mut node, page_view == PageView::Spread);
             }
         }
         let Some(pagination) = &state.pagination else {
@@ -611,55 +597,28 @@ pub(crate) fn layout_readers(
             if reader.layout == ReaderLayout::Scroll
                 && let Some(viewport) = chrome.viewport
                 && let Ok(pos) = scrolls.get(viewport)
+                && let Some(at) = scroll_bookmark(&pagination.pages()[0], pos.y * scale.scale_factor)
+                && at != reader.bookmark
             {
-                let y = pos.y * scale.scale_factor;
-                let at = pagination.pages()[0]
-                    .items
-                    .iter()
-                    .find(|p| p.y + p.height > y)
-                    .map(sf_ui::Placed::start);
-                if let Some(at) = at
-                    && at != reader.bookmark
-                {
-                    reader.bookmark = at;
-                    state.own_bookmark = Some(at);
-                }
+                reader.bookmark = at;
+                state.own_bookmark = Some(at);
             }
             continue;
         }
-        // Draw the open view.
         for (fragment, parent) in &fragments {
             if chrome.bodies.contains(&parent.parent()) {
                 commands.entity(fragment).despawn();
             }
         }
-        let ctx = FragmentCtx {
-            theme: measure.theme(),
-            scale,
-            images: &images,
-            image_assets: &image_assets,
-        };
         let pages = pagination.view(state.view, page_view);
-        for (i, page) in pages.iter().enumerate() {
-            if let Some(&body) = chrome.bodies.get(i) {
-                spawn_page(&mut commands, body, &reader.doc, page, &ctx);
-            }
-        }
+        let width = pagination.format().width;
+        draw_pages(&mut commands, &chrome, &reader.doc, pages, width, &mut measure, scale, &image_assets);
         if reader.layout == ReaderLayout::Scroll
             && let Some(viewport) = chrome.viewport
             && let Ok(mut pos) = scrolls.get_mut(viewport)
+            && let Ok(mut body) = nodes.get_mut(chrome.bodies[0])
         {
-            let page = &pagination.pages()[0];
-            let y = page
-                .items
-                .iter()
-                .find(|p| p.start() >= reader.bookmark)
-                .map_or(0.0, |p| p.y);
-            pos.y = y / scale.scale_factor;
-            // The scroll content's height, so the viewport can scroll to the end.
-            if let Ok(mut node) = nodes.get_mut(chrome.bodies[0]) {
-                node.height = Val::Px(page.content_height() / scale.scale_factor);
-            }
+            open_scroll(&pagination.pages()[0], reader.bookmark, scale, &mut pos, &mut body);
         }
         state.shown = Some(shown);
         let bookmark = pages.first().map_or(DocPos::default(), |p| p.start);
@@ -671,6 +630,84 @@ pub(crate) fn layout_readers(
         set_disabled(&mut commands, chrome.prev, reader.layout == ReaderLayout::Book && state.view == 0);
         set_disabled(&mut commands, chrome.next, reader.layout == ReaderLayout::Book && state.view >= last);
     }
+}
+
+/// The reader's document cut for a page body of `size` (physical pixels);
+/// `None` while a font is still loading.
+fn paginate(
+    reader: &RichReader,
+    size: bevy_math::Vec2,
+    measure: &mut RichTextMeasure,
+    scale: MeasureScale,
+) -> Option<Pagination> {
+    let format = match reader.layout {
+        ReaderLayout::Book => PageFormat::page(size.x, size.y),
+        ReaderLayout::Scroll => PageFormat::scroll(size.x),
+    }
+    .with_gap(measure.theme().gap(scale.text_scale) * scale.scale_factor);
+    let mut m = measure.at(scale);
+    let pagination = Pagination::paginate(&reader.doc, &mut m, format);
+    (!m.incomplete()).then_some(pagination)
+}
+
+/// Draws the open view's pages into the reader's page bodies.
+#[allow(clippy::too_many_arguments)]
+fn draw_pages(
+    commands: &mut Commands,
+    chrome: &Chrome,
+    doc: &RichDoc,
+    pages: &[Page],
+    width: f32,
+    measure: &mut RichTextMeasure,
+    scale: MeasureScale,
+    image_assets: &Assets<Image>,
+) {
+    let tails: Vec<_> = {
+        let mut m = measure.at(scale);
+        pages
+            .iter()
+            .map(|page| fragment_tails(doc, page, &mut m, width))
+            .collect()
+    };
+    let ctx = FragmentCtx {
+        theme: measure.theme(),
+        scale,
+        images: measure.images(),
+        image_assets,
+    };
+    for (i, page) in pages.iter().enumerate() {
+        if let Some(&body) = chrome.bodies.get(i) {
+            spawn_page(commands, body, doc, page, &tails[i], &ctx);
+        }
+    }
+}
+
+fn show(node: &mut Node, visible: bool) {
+    let display = if visible { Display::Flex } else { Display::None };
+    if node.display != display {
+        node.display = display;
+    }
+}
+
+/// Where a scroll is read: the first item still visible at scroll offset `y`
+/// (physical pixels).
+fn scroll_bookmark(page: &Page, y: f32) -> Option<DocPos> {
+    page.items
+        .iter()
+        .find(|p| p.y + p.height > y)
+        .map(sf_ui::Placed::start)
+}
+
+/// Scrolls to the item holding `bookmark` and sizes the scroll body to the
+/// text, so the viewport scrolls to its end.
+fn open_scroll(page: &Page, bookmark: DocPos, scale: MeasureScale, pos: &mut ScrollPosition, body: &mut Node) {
+    let y = page
+        .items
+        .iter()
+        .find(|p| p.start() >= bookmark)
+        .map_or(0.0, |p| p.y);
+    pos.y = y / scale.scale_factor;
+    body.height = Val::Px(page.content_height() / scale.scale_factor);
 }
 
 fn set_disabled(commands: &mut Commands, entity: Entity, disabled: bool) {
@@ -710,30 +747,29 @@ impl FragmentCtx<'_> {
     }
 }
 
-/// The paragraph slice a fragment draws: its lines, without the hard break
-/// that ends the last one (parley would add an empty line for it).
-pub fn fragment_paragraph(paragraph: &Paragraph, range: std::ops::Range<usize>) -> Paragraph {
-    let mut slice = paragraph.slice(range);
-    if let Some(Inline::Text { text, .. }) = slice.inlines.last_mut()
-        && text.ends_with('\n')
-    {
-        text.pop();
-        if text.is_empty() {
-            slice.inlines.pop();
-        }
-    }
-    slice
-}
-
 /// Spawns one page's fragments under `body`, placed absolutely in logical
 /// pixels (the pagination is in physical pixels).
-pub fn spawn_page(commands: &mut Commands, body: Entity, doc: &RichDoc, page: &Page, ctx: &FragmentCtx) {
+///
+/// `tails[i]` is where the line after item `i` ends, for a paragraph that
+/// goes on past it ([`fragment_tails`]): that line is drawn too, invisible,
+/// so the fragment shapes and justifies as inside the whole paragraph (the
+/// last glyph keeps its kerning against the next one, the page's last line
+/// is justified). The node keeps the paginated height; the tail, and the
+/// empty line parley adds after a final hard break, hang below it unseen.
+pub fn spawn_page(
+    commands: &mut Commands,
+    body: Entity,
+    doc: &RichDoc,
+    page: &Page,
+    tails: &[Option<usize>],
+    ctx: &FragmentCtx,
+) {
     let s = ctx.scale.scale_factor;
-    for placed in &page.items {
+    for (i, placed) in page.items.iter().enumerate() {
         let top = Val::Px(placed.y / s);
         match (&placed.fragment, &doc.blocks[placed.block]) {
             (Fragment::Lines { range, .. }, Block::Paragraph(p)) => {
-                let slice = fragment_paragraph(p, range.clone());
+                let slice = p.slice(range.clone());
                 if slice.is_empty() {
                     commands.spawn((
                         ReaderFragment {
@@ -750,7 +786,12 @@ pub fn spawn_page(commands: &mut Commands, body: Entity, doc: &RichDoc, page: &P
                     ));
                     continue;
                 }
-                let text = spawn_paragraph(commands, &slice, ctx);
+                let tail = tails
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map(|end| p.slice(range.end..end));
+                let text = spawn_paragraph(commands, &slice, tail.as_ref(), ctx);
                 commands.entity(text).insert((
                     ReaderFragment {
                         block: placed.block,
@@ -759,6 +800,7 @@ pub fn spawn_page(commands: &mut Commands, body: Entity, doc: &RichDoc, page: &P
                         position_type: PositionType::Absolute,
                         top,
                         width: Val::Percent(100.0),
+                        height: Val::Px(placed.height / s),
                         ..Node::default()
                     },
                     ChildOf(body),
@@ -800,10 +842,51 @@ pub fn spawn_page(commands: &mut Commands, body: Entity, doc: &RichDoc, page: &P
     }
 }
 
+/// For each item of `page`: where the line after it ends, when the item is
+/// lines of a paragraph that continues on a later page (see [`spawn_page`]).
+/// A line that ends inside a word (a word longer than a line) extends to the
+/// word's end: whether the line before breaks depends on the whole word.
+pub fn fragment_tails(
+    doc: &RichDoc,
+    page: &Page,
+    measure: &mut impl TextMeasure,
+    width: f32,
+) -> Vec<Option<usize>> {
+    page.items
+        .iter()
+        .map(|placed| match (&placed.fragment, &doc.blocks[placed.block]) {
+            (Fragment::Lines { range, .. }, Block::Paragraph(p)) if range.end < p.len() => {
+                let next = measure
+                    .lines(p, width)
+                    .iter()
+                    .find(|l| l.range.start == range.end)?
+                    .range
+                    .end;
+                let text = p.text();
+                let word_end = text[next..]
+                    .find(char::is_whitespace)
+                    .map_or(text.len(), |i| next + i);
+                Some(word_end)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A drawn but invisible span: the line after a fragment (shaping context).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ReaderTail;
+
 /// Spawns `paragraph` as one `Text` with a `TextSpan` per run and an
 /// `InlineImage` per inline image, styled exactly as the measurer lays it
-/// out. Returns the text entity (no `Node` placement yet).
-pub fn spawn_paragraph(commands: &mut Commands, paragraph: &Paragraph, ctx: &FragmentCtx) -> Entity {
+/// out, then `tail` the same way but transparent ([`ReaderTail`]). Returns
+/// the text entity (no `Node` placement yet).
+pub fn spawn_paragraph(
+    commands: &mut Commands,
+    paragraph: &Paragraph,
+    tail: Option<&Paragraph>,
+    ctx: &FragmentCtx,
+) -> Entity {
     let ts = ctx.scale.text_scale;
     let text = commands
         .spawn((
@@ -817,19 +900,27 @@ pub fn spawn_paragraph(commands: &mut Commands, paragraph: &Paragraph, ctx: &Fra
             TextColor(ctx.theme.color),
         ))
         .id();
-    for inline in &paragraph.inlines {
-        match inline {
+    let shown = paragraph.inlines.iter().map(|i| (i, true));
+    let hidden = tail.into_iter().flat_map(|t| &t.inlines).map(|i| (i, false));
+    for (inline, visible) in shown.chain(hidden) {
+        let mut entity = match inline {
             Inline::Text { text: run, style } => {
+                let color = if visible {
+                    ctx.theme.color(style)
+                } else {
+                    Color::NONE
+                };
                 let mut span = commands.spawn((
                     TextSpan::new(run.clone()),
                     ctx.theme.text_font(style, ts),
                     ctx.theme.line_height(),
-                    TextColor(ctx.theme.color(style)),
+                    TextColor(color),
                     ChildOf(text),
                 ));
-                if style.underline {
+                if style.underline && visible {
                     span.insert(Underline);
                 }
+                span
             }
             Inline::Image(image) => {
                 let size = ctx.image_logical(image);
@@ -839,11 +930,15 @@ pub fn spawn_paragraph(commands: &mut Commands, paragraph: &Paragraph, ctx: &Fra
                         image: handle,
                         width: Some(size.x),
                         height: Some(size.y),
+                        color: if visible { Color::WHITE } else { Color::NONE },
                         ..InlineImage::default()
                     },
                     ChildOf(text),
-                ));
+                ))
             }
+        };
+        if !visible {
+            entity.insert(ReaderTail);
         }
     }
     text

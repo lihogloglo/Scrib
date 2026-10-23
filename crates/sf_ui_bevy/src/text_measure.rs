@@ -1,7 +1,7 @@
 //! `sf_ui::TextMeasure` on Bevy's own text layout (ui-text.md "Bevy side").
 //!
 //! The measurer feeds a paragraph to [`TextPipeline::update_buffer`], the
-//! call bevy_ui's text systems make for every `Text` node, with the same
+//! call `bevy_ui`'s text systems make for every `Text` node, with the same
 //! fonts, sizes, line heights, line-break mode and inline boxes the reader
 //! spawns ([`RichTextTheme`] builds both), at the page node's physical
 //! width and scale factor. Its lines are therefore the lines that are drawn.
@@ -272,7 +272,7 @@ pub struct RichTextMeasure<'w> {
     layout_cx: ResMut<'w, LayoutCx>,
     theme: Res<'w, RichTextTheme>,
     cache: ResMut<'w, MeasureCache>,
-    images: Res<'w, RichImages>,
+    images: ResMut<'w, RichImages>,
     image_assets: Res<'w, Assets<Image>>,
 }
 
@@ -296,6 +296,18 @@ impl RichTextMeasure<'_> {
 
     pub fn theme(&self) -> &RichTextTheme {
         &self.theme
+    }
+
+    pub fn images(&self) -> &RichImages {
+        &self.images
+    }
+
+    pub fn images_mut(&mut self) -> &mut RichImages {
+        &mut self.images
+    }
+
+    pub fn image_assets(&self) -> &Assets<Image> {
+        &self.image_assets
     }
 }
 
@@ -396,29 +408,33 @@ fn flattened_lines(paragraph: &Paragraph, block: &ComputedTextBlock) -> Vec<Line
     let layout = block.buffer();
     let mut lines = Vec::new();
     let mut boxes_before = 0;
-    let mut prev_bottom = 0.0;
+    let mut text_at = 0;
     for line in layout.lines() {
         let boxes = line
             .items()
             .filter(|item| matches!(item, PositionedLayoutItem::InlineBox(_)))
             .count();
-        let text = line.text_range();
-        let metrics = line.metrics();
+        // A line of only inline boxes has no text: parley reports an
+        // inverted sentinel range; it sits where the previous line ended.
+        let mut text = line.text_range();
+        if text.start > text.end {
+            text = text_at..text_at;
+        }
+        text_at = text.end;
         let start = text.start + boxes_before * placeholder;
         boxes_before += boxes;
         let end = text.end + boxes_before * placeholder;
+        // The layout's height is the sum of its line heights (glyphs and
+        // boxes may overhang a line box, as in CSS).
         lines.push(LineMetrics {
             range: start..end,
-            height: metrics.block_max_coord - prev_bottom,
+            height: line.metrics().line_height,
         });
-        prev_bottom = metrics.block_max_coord;
     }
-    // parley ends a paragraph that ends in a hard break with an empty line;
-    // drawn fragments drop that break, so the empty line goes too.
-    if lines.len() > 1
-        && lines.last().is_some_and(|l| l.range.is_empty())
-        && paragraph.text().ends_with('\n')
-    {
+    // parley ends a paragraph with an empty line after a final hard break
+    // or a trailing space that overflows the line. It draws nothing: not a
+    // line of the paragraph.
+    if lines.len() > 1 && lines.last().is_some_and(|l| l.range.is_empty()) {
         lines.pop();
     }
     if let Some(last) = lines.last_mut() {

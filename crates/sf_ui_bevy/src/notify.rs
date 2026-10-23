@@ -22,7 +22,7 @@ use bevy_time::{Real, Time};
 use bevy_ui::prelude::*;
 use bevy_ui_widgets::{Activate, Button};
 use sf_ui::{
-    MessageBoxChoice, MessageBoxId, MessageBoxQueue, RunStyle, ScreenId, ToastConfig, ToastId,
+    MessageBox, MessageBoxChoice, MessageBoxId, MessageBoxQueue, RunStyle, ScreenId, ToastConfig, ToastId,
     ToastQueue,
 };
 
@@ -152,6 +152,17 @@ pub(crate) fn sync_message_box(
         return;
     }
     let font = text_font(&theme, settings.as_deref());
+    spawn_message_box(&mut commands, shown, &config, &colors, &font);
+}
+
+/// Backdrop (the screen root), panel, text and one button per label.
+fn spawn_message_box(
+    commands: &mut Commands,
+    shown: &MessageBox,
+    config: &MessageBoxConfig,
+    colors: &NotifyColors,
+    font: &bevy_text::TextFont,
+) {
     let root = commands
         .spawn((
             part("sf-message-box"),
