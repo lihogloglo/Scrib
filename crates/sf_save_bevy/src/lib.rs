@@ -67,8 +67,10 @@ pub struct SaveConfig {
     pub mode: SaveMode,
     pub rotation: RotationPolicy,
     pub limits: Limits,
-    /// Encode + write and read + decode on the IO task pool (default). `false` runs them inside
-    /// the frame (tools, deterministic tests).
+    /// Encode + write and read + decode on the IO task pool (default; the app needs Bevy's
+    /// `TaskPoolPlugin`, part of `MinimalPlugins` and `DefaultPlugins`). `false` runs them inside
+    /// the frame (tools, deterministic tests). An exit save must see its [`SaveDone`] before the
+    /// app quits.
     pub background: bool,
 }
 
