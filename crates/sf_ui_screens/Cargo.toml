@@ -1,0 +1,51 @@
+[package]
+name = "sf_ui_screens"
+description = "Stock game screens on sf_ui_bevy: dialogue, journal, inventory grid, keybinds and HUD, bound to the Bevy-free view-models (ui.md \"Screens\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Synthetic screens and data (no game content) for the `screens` example and the tests.
+demo = ["dep:sf_records"]
+
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_color.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
+bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
+bevy_input_focus = { workspace = true, features = ["std"] }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_picking.workspace = true
+bevy_text = { workspace = true }
+bevy_ui.workspace = true
+bevy_ui_widgets.workspace = true
+# "press to use" prompts on the HUD (`sf_action::Prompt`).
+sf_action.workspace = true
+sf_rpg.workspace = true
+# Dialogue window and journal view-models.
+sf_rpg_ui.workspace = true
+sf_ui.workspace = true
+sf_ui_bevy.workspace = true
+# `UiClass`, the class list theme sheets select on (flair stays inside sf_ui_css).
+sf_ui_css.workspace = true
+sf_ui_inventory.workspace = true
+sf_records = { workspace = true, optional = true }
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["ui"] }
+# The tests use the demo data.
+sf_ui_screens = { path = ".", features = ["demo"] }
+bevy_enhanced_input.workspace = true
+sf_records.workspace = true
+
+[lints]
+workspace = true
+
+# Opens each screen over synthetic data (keys 1-5, or the pad's shoulder buttons); `--autotest`
+# cycles them and exits non-zero if a screen fails to build its tree.
+[[example]]
+name = "screens"
+required-features = ["demo"]

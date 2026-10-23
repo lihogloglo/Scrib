@@ -729,3 +729,53 @@ fn timing_large_inventory() {
         );
     }
 }
+
+#[test]
+fn grid_chunks_windows_and_moves_focus_in_two_dimensions() {
+    let mut f = Fixture::new();
+    // 10 stacks, 4 columns: rows of 4, 4, 2; one row of 10 units in a 15-unit viewport.
+    let mut grid = crate::InventoryGrid::new(4, 10.0, 15.0);
+    let frame = grid.frame(&mut f.view);
+    assert_eq!(frame.len, 10);
+    let rows: Vec<usize> = frame.rows.iter().map(|r| r.stacks.len()).collect();
+    assert_eq!(rows, [4, 4, 2]);
+    assert!(frame.rows.iter().all(|r| r.rebind));
+    let visible = f.view.visible().to_vec();
+    assert_eq!(frame.rows[1].stacks, visible[4..8]);
+
+    // Right then down: index 1, then 5 (one grid row further).
+    f.view.set_focus(Some(visible[0]));
+    grid.move_focus(&mut f.view, 1, 0);
+    grid.move_focus(&mut f.view, 0, 1);
+    let frame = grid.frame(&mut f.view);
+    assert_eq!(frame.focus, Some((5, visible[5])));
+    // Nothing changed in the cells: kept rows don't rebind.
+    assert!(frame.rows.iter().all(|r| !r.rebind));
+    // Down again reaches the last, short row; the window scrolled to show it.
+    grid.move_focus(&mut f.view, 0, 1);
+    let frame = grid.frame(&mut f.view);
+    assert_eq!(frame.focus.map(|(i, _)| i), Some(9));
+    assert!(frame.scroll > 0.0);
+
+    // A wheel scroll back up doesn't snap back to the focus.
+    grid.scroll_to(0.0);
+    assert!(grid.frame(&mut f.view).scroll.abs() < f32::EPSILON);
+
+    // Three columns re-chunk; focus is the same stack.
+    grid.set_columns(3);
+    let frame = grid.frame(&mut f.view);
+    assert_eq!(frame.rows.iter().map(|r| r.stacks.len()).sum::<usize>(), 10);
+    assert_eq!(frame.focus.map(|(_, k)| k), Some(visible[9]));
+    assert_eq!(frame.rows.last().unwrap().row, 3);
+
+    // A tab that hides the focused stack hands focus to the stack now at its index.
+    f.view.set_tab(2); // food: bread only
+    let frame = grid.frame(&mut f.view);
+    assert_eq!(frame.len, 1);
+    assert_eq!(frame.focus.map(|(i, _)| i), Some(0));
+    assert_eq!(frame.rows.len(), 1);
+
+    // Hit test: cell (1, 0) at 3 columns of 20 units is index 1, out of range here.
+    assert_eq!(grid.index_at(5.0, 5.0, 20.0, frame.len), Some(0));
+    assert_eq!(grid.index_at(25.0, 5.0, 20.0, frame.len), None);
+}

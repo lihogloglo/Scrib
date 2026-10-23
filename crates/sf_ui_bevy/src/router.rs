@@ -11,13 +11,14 @@
 use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_input_focus::{FocusCause, InputFocus};
+use bevy_ui::GlobalZIndex;
 use bevy_ui::auto_directional_navigation::AutoDirectionalNavigation;
 use bevy_ui_widgets::Activate;
 use sf_ui::{InputContextId, Layer, ScreenId};
 
 use crate::ScreenStackRes;
 use crate::actions::{UiAction, UiActionTag, UiBindings, spawn_actions};
-use crate::nav::{UiDefaultFocus, UiFocusable};
+use crate::nav::{UiDefaultFocus, UiFocusable, UiOwnsFocus};
 
 /// Evaluation priority of UI contexts: above any gameplay context.
 pub const UI_CONTEXT_PRIORITY: usize = 1 << 16;
@@ -142,13 +143,50 @@ fn screen_of<'a>(
     }
 }
 
+/// Global z-index step per layer: screen roots stack by layer (HUD under menus under modals),
+/// then by position in their layer; every value stays below the message boxes and toasts
+/// ([`crate::MESSAGE_BOX_Z`]).
+pub const SCREEN_Z_STEP: i32 = 1 << 12;
+
+/// The global z-index of an open screen's root.
+pub fn screen_z(layer: Layer, position: usize) -> i32 {
+    let layer = i32::try_from(layer.index()).unwrap_or(0) + 1;
+    layer * SCREEN_Z_STEP + i32::try_from(position).unwrap_or(0).min(SCREEN_Z_STEP - 1)
+}
+
+/// Draw order follows the stack: each open screen's root gets [`screen_z`] (a later screen
+/// of a layer above an earlier one, any menu above the HUD).
+pub(crate) fn order_screen_roots(
+    mut commands: Commands,
+    stack: Res<ScreenStackRes>,
+    roots: Query<(Entity, &UiScreenRoot, Option<&GlobalZIndex>)>,
+    added: Query<(), Added<UiScreenRoot>>,
+    mut seen: Local<Option<u64>>,
+) {
+    if *seen == Some(stack.0.version()) && added.is_empty() {
+        return;
+    }
+    *seen = Some(stack.0.version());
+    for (entity, root, z) in &roots {
+        let place = Layer::ALL.iter().find_map(|layer| {
+            let position = stack.0.layer(*layer).iter().position(|s| s.id == root.0)?;
+            Some(screen_z(*layer, position))
+        });
+        if let Some(place) = place
+            && z.is_none_or(|z| z.0 != place)
+        {
+            commands.entity(entity).insert(GlobalZIndex(place));
+        }
+    }
+}
+
 /// Focus remembered per screen, restored when the screen is the input target
 /// again (a closed modal returns focus to the menu button that opened it).
 #[derive(Resource, Debug, Default)]
 pub(crate) struct FocusMemory(Vec<(ScreenId, Entity)>);
 
 /// A focusable or screen root spawned since the last run.
-type NewNavigable = Or<(Added<UiFocusable>, Added<UiScreenRoot>)>;
+type NewNavigable = Or<(Added<UiFocusable>, Added<UiScreenRoot>, Added<UiOwnsFocus>)>;
 
 /// Keeps directional navigation inside the input target: only its
 /// [`UiFocusable`]s carry `AutoDirectionalNavigation` (Bevy's navigation is
@@ -164,11 +202,16 @@ pub(crate) fn sync_navigable(
     added: Query<(), NewNavigable>,
     parents: Query<&ChildOf>,
     roots: Query<(Entity, &UiScreenRoot, Has<UiHandlesBack>)>,
+    owners: Query<&UiScreenRoot, With<UiOwnsFocus>>,
     mut focus: ResMut<InputFocus>,
     mut memory: ResMut<FocusMemory>,
     mut seen: Local<Option<u64>>,
 ) {
     let target = stack.0.input_target().map(|s| s.id.clone());
+    // A screen that owns its focus takes no part in directional navigation.
+    let owned = target
+        .as_ref()
+        .is_some_and(|t| owners.iter().any(|r| r.0 == *t));
     let changed = *seen != Some(stack.0.version()) || !added.is_empty();
     *seen = Some(stack.0.version());
 
@@ -178,11 +221,11 @@ pub(crate) fn sync_navigable(
             screen_of(entity, &parents, &roots).is_some_and(|(_, screen)| screen == t)
         });
         if changed {
-            if in_target && !navigable {
+            if in_target && !owned && !navigable {
                 commands
                     .entity(entity)
                     .insert(AutoDirectionalNavigation::default());
-            } else if !in_target && navigable {
+            } else if (!in_target || owned) && navigable {
                 commands
                     .entity(entity)
                     .remove::<AutoDirectionalNavigation>();
@@ -193,9 +236,17 @@ pub(crate) fn sync_navigable(
         }
     }
 
-    // Focus must be on a focusable of the target screen.
+    // Focus must be on a focusable of the target screen (or anywhere inside a screen that
+    // owns its focus).
     let current = focus.get();
     if current.is_some_and(|f| candidates.iter().any(|(e, _)| *e == f)) {
+        return;
+    }
+    if owned
+        && current.is_some_and(|f| {
+            screen_of(f, &parents, &roots).is_some_and(|(_, s)| Some(s) == target.as_ref())
+        })
+    {
         return;
     }
     if let Some(old) = current
@@ -212,9 +263,13 @@ pub(crate) fn sync_navigable(
             .find(|(s, e)| s == t && candidates.iter().any(|(c, _)| c == e))
             .map(|(_, e)| *e)
     });
-    let next = remembered
-        .or_else(|| candidates.iter().find(|(_, d)| *d).map(|(e, _)| *e))
-        .or_else(|| candidates.first().map(|(e, _)| *e));
+    let next = if owned {
+        None
+    } else {
+        remembered
+            .or_else(|| candidates.iter().find(|(_, d)| *d).map(|(e, _)| *e))
+            .or_else(|| candidates.first().map(|(e, _)| *e))
+    };
     match next {
         Some(entity) => focus.set(entity, FocusCause::Navigated),
         None if current.is_some() => focus.clear(),

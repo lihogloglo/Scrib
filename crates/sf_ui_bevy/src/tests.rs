@@ -285,6 +285,91 @@ fn focus_follows_the_target_and_confirm_activates() {
 }
 
 #[test]
+fn screen_roots_draw_in_stack_order() {
+    let mut h = Harness::new();
+    let world = h.app.world_mut();
+    let hud = world.spawn(UiScreenRoot("hud".into())).id();
+    let menu = world.spawn(UiScreenRoot("menu".into())).id();
+    let modal = world.spawn(UiScreenRoot("confirm".into())).id();
+    h.push("confirm");
+    h.push("menu");
+    h.push("hud");
+    h.app.update();
+    let z = |h: &Harness, e| h.app.world().get::<GlobalZIndex>(e).map(|z| z.0);
+    let (hud_z, menu_z, modal_z) = (z(&h, hud), z(&h, menu), z(&h, modal));
+    assert!(
+        hud_z < menu_z && menu_z < modal_z,
+        "{hud_z:?} {menu_z:?} {modal_z:?}"
+    );
+    assert!(modal_z.unwrap() < MESSAGE_BOX_Z);
+}
+
+#[derive(Resource, Default)]
+struct NavSeen(Vec<UiNavEvent>);
+
+#[test]
+fn a_screen_owning_its_focus_gets_directions_instead() {
+    let mut h = Harness::new();
+    h.app.init_resource::<NavSeen>().add_systems(
+        Update,
+        (|mut r: MessageReader<UiNavEvent>, mut seen: ResMut<NavSeen>| {
+            seen.0.extend(r.read().cloned());
+        })
+        .after(UiSystems::Dispatch),
+    );
+    let world = h.app.world_mut();
+    let menu = world.spawn(UiScreenRoot("menu".into())).id();
+    let button = world.spawn((UiFocusable, ChildOf(menu))).id();
+    let modal = world
+        .spawn((UiScreenRoot("confirm".into()), UiOwnsFocus))
+        .id();
+    let cell = world.spawn((UiFocusable, ChildOf(modal))).id();
+    let focus = |h: &Harness| h.app.world().resource::<InputFocus>().get();
+    let navigable = |h: &Harness, e| {
+        h.app
+            .world()
+            .get::<bevy_ui::auto_directional_navigation::AutoDirectionalNavigation>(e)
+            .is_some()
+    };
+
+    h.push("menu");
+    h.app.update();
+    assert_eq!(focus(&h), Some(button));
+    // The owning screen on top: no directional navigation, no focus picked, the menu's cleared.
+    h.push("confirm");
+    h.app.update();
+    assert_eq!(focus(&h), None);
+    assert!(!navigable(&h, cell) && !navigable(&h, button));
+    h.tap(GamepadButton::DPadDown);
+    let seen = std::mem::take(&mut h.app.world_mut().resource_mut::<NavSeen>().0);
+    assert_eq!(
+        seen,
+        [UiNavEvent {
+            direction: CompassOctant::South,
+            screen: "confirm".into()
+        }]
+    );
+    // Focus the screen sets itself stays, and confirm activates it.
+    h.app
+        .world_mut()
+        .resource_mut::<InputFocus>()
+        .set(cell, bevy_input_focus::FocusCause::Navigated);
+    h.app.update();
+    assert_eq!(focus(&h), Some(cell));
+    h.tap(GamepadButton::South);
+    assert_eq!(h.app.world().resource::<Activated>().0, [cell]);
+    // Closed: the menu gets its focus back.
+    h.app
+        .world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("confirm");
+    h.app.update();
+    assert_eq!(focus(&h), Some(button));
+    assert!(navigable(&h, button));
+}
+
+#[test]
 fn held_direction_repeats_after_delay() {
     let mut r = NavRepeat::default();
     let s = Some(CompassOctant::South);

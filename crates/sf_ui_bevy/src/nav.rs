@@ -12,7 +12,9 @@ use bevy_math::CompassOctant;
 use bevy_time::Time;
 use bevy_ui::auto_directional_navigation::AutoDirectionalNavigator;
 
+use crate::ScreenStackRes;
 use crate::actions::{UiAction, UiActionTag};
+use crate::router::UiScreenRoot;
 
 /// A UI entity that can take focus. Navigable while its screen
 /// ([`crate::UiScreenRoot`] ancestor) is the input target.
@@ -23,6 +25,22 @@ pub struct UiFocusable;
 /// and no remembered focus applies.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct UiDefaultFocus;
+
+/// On a screen root: the screen moves focus itself (a view-model owns it: a virtualized grid,
+/// text links that are spans, not nodes). While it is the input target, its focusables are left
+/// out of Bevy's directional navigation, the router doesn't pick a focus for it (focus elsewhere
+/// is cleared), and held directions arrive as [`UiNavEvent`]s, with the same repeat. Confirm
+/// still activates whatever the screen focused.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct UiOwnsFocus;
+
+/// A navigation step for a [`UiOwnsFocus`] screen (the input target): a direction now, then
+/// held-direction repeats.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct UiNavEvent {
+    pub direction: CompassOctant,
+    pub screen: sf_ui::ScreenId,
+}
 
 /// Stick deflection that counts as a direction.
 pub const STICK_THRESHOLD: f32 = 0.5;
@@ -109,6 +127,9 @@ pub(crate) fn navigate(
     time: Res<Time>,
     mut state: ResMut<NavState>,
     actions: Query<(&UiActionTag, &ActionValue)>,
+    screens: Res<ScreenStackRes>,
+    owners: Query<&UiScreenRoot, With<UiOwnsFocus>>,
+    mut events: MessageWriter<UiNavEvent>,
     mut navigator: AutoDirectionalNavigator,
 ) {
     let (mut up, mut down, mut left, mut right) = (false, false, false, false);
@@ -128,7 +149,16 @@ pub(crate) fn navigate(
         i8::from(up) - i8::from(down),
     );
     let held = held_direction(digital, stick);
-    if let Some(direction) = state.repeat.update(held, time.delta_secs()) {
+    let Some(direction) = state.repeat.update(held, time.delta_secs()) else {
+        return;
+    };
+    let target = screens.0.input_target().map(|s| &s.id);
+    if let Some(screen) = target.filter(|t| owners.iter().any(|r| r.0 == **t)) {
+        events.write(UiNavEvent {
+            direction,
+            screen: screen.clone(),
+        });
+    } else {
         // No neighbour that way (an edge) is fine: focus stays.
         let _ = navigator.navigate(direction);
     }
