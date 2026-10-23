@@ -1,5 +1,5 @@
 use bevy_app::{App, Update};
-use sf_console::{ArgKind, CommandSpec, Level, Param, Value, VarSpec};
+use sf_console::{ArgKind, CommandSpec, Level, Param, SetBy, Value, VarSpec};
 
 use super::*;
 
@@ -69,12 +69,12 @@ fn submitted_lines_toggle_systems_and_report_changes() {
         1
     );
 
-    // Changes from code are reported too.
+    // Changes from code are reported too (a plain `set` from code would be outranked by
+    // the value typed in the console; `reset` gives it back).
     app.world_mut()
         .resource_mut::<DevConsole>()
         .vars_mut()
-        .set(shadows, Value::Bool(true))
-        .unwrap();
+        .reset(shadows);
     app.update();
     assert_eq!(app.world().resource::<Frames>().0, 2);
     assert_eq!(app.world().resource::<Seen>().0.len(), 2);
@@ -118,4 +118,67 @@ fn flag_is_false_without_console() {
     );
     app.update();
     assert_eq!(app.world().resource::<Frames>().0, 0);
+}
+
+#[derive(Resource, Default)]
+struct Applied(Vec<bool>);
+
+/// The `--off` wiring the spec shows: register, command line, apply on change in `Update`.
+#[test]
+fn set_by_priority_and_same_frame_apply() {
+    let mut app = App::new();
+    app.add_plugins(ConsolePlugin).init_resource::<Applied>();
+    let ssao = app.add_console_var(VarSpec::bool("render.ssao", true).help("SSAO"));
+    app.set_console_var(ssao, false, SetBy::CommandLine);
+    app.add_systems(
+        Update,
+        (move |console: Res<DevConsole>, mut applied: ResMut<Applied>| {
+            applied.0.push(console.vars().flag(ssao));
+        })
+        .run_if(console_var_changed(ssao)),
+    );
+    let applied = |app: &App| app.world().resource::<Applied>().0.clone();
+
+    app.update();
+    assert_eq!(applied(&app), [false], "the starting value applies once");
+    app.update();
+    assert_eq!(applied(&app), [false], "no change, no run");
+
+    // A config file read later can't undo the command line.
+    app.world_mut()
+        .write_message(ConsoleSubmit::from(SetBy::Config, "render.ssao on"));
+    app.update();
+    assert_eq!(applied(&app), [false]);
+
+    // Typed in the console: applies the same frame.
+    app.world_mut()
+        .write_message(ConsoleSubmit::typed("render.ssao on"));
+    app.update();
+    assert_eq!(applied(&app), [false, true]);
+    let console = app.world().resource::<DevConsole>();
+    assert_eq!(console.vars().var(ssao).set_by(), SetBy::Console);
+
+    // `reset` hands the switch back: now the config file may set it.
+    app.world_mut()
+        .write_message(ConsoleSubmit::exec("reset render.ssao"));
+    app.update();
+    app.world_mut()
+        .write_message(ConsoleSubmit::from(SetBy::Config, "render.ssao off"));
+    app.update();
+    assert_eq!(applied(&app), [false, true, false]);
+}
+
+#[test]
+fn console_closed_without_overlay() {
+    let mut app = App::new();
+    app.add_plugins(ConsolePlugin)
+        .init_resource::<Frames>()
+        .add_systems(
+            Update,
+            (|mut f: ResMut<Frames>| f.0 += 1).run_if(console_closed),
+        );
+    app.update();
+    app.world_mut().resource_mut::<ConsoleOpen>().0 = true;
+    app.update();
+    assert_eq!(app.world().resource::<Frames>().0, 1);
 }

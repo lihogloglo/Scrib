@@ -3,7 +3,7 @@
 //! A left click with the console open casts a ray from the camera through the cursor
 //! ([`ConsolePick`]); the nearest visible mesh it hits selects its nearest [`PickRoot`]
 //! ancestor (the app marks its placed objects), or the mesh itself; a miss deselects.
-//! The ray cast is bevy_picking's [`MeshRayCast`], run once per click: no picking backend
+//! The ray cast is `bevy_picking`'s [`MeshRayCast`], run once per click: no picking backend
 //! raycasting every frame.
 
 use bevy_app::{App, PostUpdate, PreUpdate};
@@ -13,6 +13,7 @@ use bevy_camera::visibility::Visibility;
 use bevy_camera::{Camera, Camera3d};
 use bevy_color::Color;
 use bevy_ecs::prelude::*;
+use bevy_ecs::reflect::ReflectComponent;
 use bevy_gizmos::config::GizmoConfigStore;
 use bevy_gizmos::gizmos::Gizmos;
 use bevy_input::ButtonInput;
@@ -20,6 +21,8 @@ use bevy_input::mouse::MouseButton;
 use bevy_math::Vec3;
 use bevy_mesh::Mesh;
 use bevy_picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
+use bevy_reflect::Reflect;
+use bevy_reflect::prelude::ReflectDefault;
 use bevy_shape::Ray3d;
 use bevy_transform::TransformSystems;
 use bevy_transform::components::{GlobalTransform, Transform};
@@ -35,12 +38,14 @@ use crate::{ConsoleAppExt, ConsoleOpen, ConsoleSystems};
 pub struct ConsoleSelection(pub Option<Entity>);
 
 /// Marks what a click selects: a placed object's root, above its meshes.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Component, Default)]
 pub struct PickRoot;
 
 /// The camera to pick through and move with `moveto`. Without one: the active 3D camera
 /// with the highest order.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Component, Default)]
 pub struct ConsoleCamera;
 
 /// Select what this ray hits first (a miss deselects). Written by a click; tests, gamepad
@@ -58,11 +63,15 @@ pub struct ConsoleMoveTo {
     pub transform: Transform,
 }
 
+/// Most entities `find` lists.
+const FIND_MAX: usize = 50;
 const NOTHING_SELECTED: &str = "nothing selected: click an object, or `prid <name>`";
 const BOX_COLOR: Color = Color::srgb(1.0, 0.85, 0.2);
 
 pub(super) fn build(app: &mut App) {
     app.init_resource::<ConsoleSelection>()
+        .register_type::<PickRoot>()
+        .register_type::<ConsoleCamera>()
         .add_message::<ConsolePick>()
         .add_message::<ConsoleMoveTo>()
         .add_systems(
@@ -345,14 +354,14 @@ fn register_commands(app: &mut App) {
                 .map(|(e, n)| (n.as_str().to_owned(), e))
                 .collect();
             hits.sort();
-            const MAX: usize = 50;
             inv.log
                 .info(&format!("{} entities match {text:?}", hits.len()));
-            for (name, e) in hits.iter().take(MAX) {
+            for (name, e) in hits.iter().take(FIND_MAX) {
                 inv.log.info(&format!("  {name} ({e})"));
             }
-            if hits.len() > MAX {
-                inv.log.info(&format!("  ... {} more", hits.len() - MAX));
+            if hits.len() > FIND_MAX {
+                inv.log
+                    .info(&format!("  ... {} more", hits.len() - FIND_MAX));
             }
             Ok(())
         },

@@ -10,6 +10,7 @@ license.workspace = true
 # selection box, inspector panel, commands on the selection. Plugins that only register variables
 # and commands leave it off and compile none of it (ARCHITECTURE §8b rule 6).
 overlay = [
+    "bevy_app/bevy_reflect",
     "bevy_ecs/bevy_reflect",
     "dep:bevy_asset",
     "dep:bevy_camera",

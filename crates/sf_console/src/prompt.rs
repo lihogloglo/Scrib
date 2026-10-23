@@ -28,7 +28,7 @@ pub enum Edit {
     Newer,
     /// Complete the word before the cursor (Tab).
     Complete,
-    /// Send the line (Enter): [`Prompt::apply`] returns it and empties the prompt.
+    /// Send the line (Enter): [`Prompt::apply`] returns it, trimmed, and empties the prompt.
     Submit,
 }
 
@@ -115,7 +115,8 @@ impl Prompt {
             Edit::Submit => {
                 let line = std::mem::take(&mut self.text);
                 self.cursor = 0;
-                return Some(line);
+                // Completion leaves a trailing space; it means nothing to the parser.
+                return Some(line.trim().to_owned());
             }
         }
         None

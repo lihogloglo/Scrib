@@ -1,4 +1,4 @@
-//! The in-game console front end (feature `overlay`), on bevy_ui.
+//! The in-game console front end (feature `overlay`), on `bevy_ui`.
 //!
 //! - Toggle with [`ConsoleKeys`] (backtick or F1 by default, rebindable). While open,
 //!   [`ConsoleOpen`] is true: game systems gate on [`crate::console_closed`], and the
@@ -10,8 +10,10 @@
 //!   it; commands (`prid`, `getpos`, `setpos`, `moveto`, `disable`, `enable`, `delete`,
 //!   `find`) act on it.
 //!
-//! Systems: input in `PreUpdate` ([`ConsoleInputSystems`], after bevy_input, before the
-//! console runs lines); drawing in `PostUpdate` before bevy_ui lays out.
+//! Systems: input in `PreUpdate` ([`ConsoleInputSystems`], after `bevy_input`, before the
+//! console runs lines); drawing in `PostUpdate` before `bevy_ui` lays out.
+
+use std::fmt::Write as _;
 
 use bevy_app::{App, Plugin, PostUpdate, PreUpdate, Startup};
 use bevy_color::Color;
@@ -40,7 +42,7 @@ pub use inspect::{ConsoleOverlayAppExt, InspectorRows, inspect};
 pub use select::{ConsoleCamera, ConsoleMoveTo, ConsolePick, ConsoleSelection, PickRoot};
 
 /// The console overlay: front end, click-select, inspector, selection commands.
-/// Needs [`crate::ConsolePlugin`]; the app supplies bevy_ui, input, windows and gizmos.
+/// Needs [`crate::ConsolePlugin`]; the app supplies `bevy_ui`, input, windows and gizmos.
 pub struct ConsoleOverlayPlugin;
 
 impl Plugin for ConsoleOverlayPlugin {
@@ -77,8 +79,8 @@ impl Plugin for ConsoleOverlayPlugin {
     }
 }
 
-/// Where the overlay reads keys and mouse clicks, in `PreUpdate` after bevy_input and before
-/// [`ConsoleSystems`]. Order other input readers (e.g. bevy_enhanced_input's update) after it,
+/// Where the overlay reads keys and mouse clicks, in `PreUpdate` after `bevy_input` and before
+/// [`ConsoleSystems`]. Order other input readers (e.g. `bevy_enhanced_input`'s update) after it,
 /// so they see the cleared `ButtonInput` while the console is open.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConsoleInputSystems;
@@ -378,7 +380,7 @@ fn draw_overlay(
     scrollback: Query<&Children, With<Scrollback>>,
     mut spans: Query<(&mut TextSpan, &mut TextColor)>,
     mut input: Query<&mut Text, (With<InputLine>, Without<Popup>)>,
-    mut popup: Query<(&mut Node, &mut Text), (With<Popup>, Without<OverlayRoot>)>,
+    mut popup: Query<PopupItem, (With<Popup>, Without<OverlayRoot>)>,
 ) {
     if open.is_changed() {
         for mut node in &mut roots {
@@ -451,13 +453,15 @@ fn draw_overlay(
                     .collect::<Vec<_>>()
                     .join("\n");
                 if n > style.popup_lines {
-                    s += &format!("\n(+{} more, Tab extends)", n - style.popup_lines);
+                    let _ = write!(s, "\n(+{} more, Tab extends)", n - style.popup_lines);
                 }
                 text.0 = s;
             }
         }
     }
 }
+
+type PopupItem<'a> = (&'a mut Node, &'a mut Text);
 
 fn level_index(level: Level) -> usize {
     match level {

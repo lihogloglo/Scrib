@@ -1,11 +1,15 @@
 //! The inspector: a read-only panel about the selection (Name, id, transform, parent chain,
 //! game rows from [`InspectorRows`] hooks, reflected components).
 
+use std::fmt::Write as _;
+
 use bevy_app::{App, PostUpdate};
 use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
 use bevy_ecs::reflect::{AppTypeRegistry, ReflectComponent};
 use bevy_math::EulerRot;
+use bevy_reflect::enums::VariantType;
+use bevy_reflect::{PartialReflect, ReflectRef};
 use bevy_text::{TextColor, TextSpan};
 use bevy_transform::components::Transform;
 use bevy_ui::widget::Text;
@@ -51,7 +55,7 @@ const REFRESH_FRAMES: u32 = 10;
 const MAX_VALUE: usize = 160;
 
 #[derive(Component)]
-struct InspectorPanel;
+pub(super) struct InspectorPanel;
 
 pub(super) fn build(app: &mut App) {
     app.init_resource::<InspectorRows>()
@@ -138,16 +142,27 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
         .map(|infos| {
             infos
                 .map(|(_, info)| {
-                    let value = info
+                    let registered = info
                         .type_id()
                         .zip(registry.as_ref())
-                        .and_then(|(id, reg)| reg.get_type_data::<ReflectComponent>(id))
+                        .and_then(|(id, reg)| reg.get(id));
+                    // The registry knows the name even without Bevy's `debug` feature.
+                    let name = registered.map_or_else(
+                        || info.name().shortname().to_string(),
+                        |r| r.type_info().type_path_table().short_path().to_owned(),
+                    );
+                    let value = registered
+                        .and_then(|r| r.data::<ReflectComponent>())
                         .and_then(|rc| rc.reflect(entity))
                         .map_or_else(
                             || "(not reflected)".to_owned(),
-                            |r| shorten(&format!("{:?}", r.as_partial_reflect())),
+                            |r| {
+                                let mut out = String::new();
+                                compact(r.as_partial_reflect(), 0, &mut out);
+                                shorten(&out)
+                            },
                         );
-                    (info.name().shortname().to_string(), value)
+                    (name, value)
                 })
                 .collect()
         })
@@ -160,6 +175,119 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
 
 fn fmt3(v: [f32; 3]) -> String {
     format!("{:.3} {:.3} {:.3}", v[0], v[1], v[2])
+}
+
+/// A reflected value on one line: fields by name, numbers and opaque values by `Debug`,
+/// unit structs as their name, collections with their first items.
+// The wildcard arm also covers `ReflectRef::Function`, which exists only with bevy_reflect's
+// `functions` feature (any crate in the app may turn it on).
+#[allow(clippy::too_many_lines, clippy::match_wildcard_for_single_variants)]
+fn compact(value: &dyn PartialReflect, depth: usize, out: &mut String) {
+    const MAX_ITEMS: usize = 6;
+    if depth > 4 {
+        out.push_str("..");
+        return;
+    }
+    if let Some(name) = value.try_downcast_ref::<Name>() {
+        let _ = write!(out, "{:?}", name.as_str());
+        return;
+    }
+    let short = || {
+        value
+            .get_represented_type_info()
+            .map_or("?", |t| t.type_path_table().short_path())
+    };
+    let list = |items: &mut dyn Iterator<Item = (Option<&str>, &dyn PartialReflect)>,
+                out: &mut String| {
+        for (i, (name, v)) in items.enumerate() {
+            if i == MAX_ITEMS {
+                out.push_str(", ..");
+                break;
+            }
+            if i > 0 {
+                out.push_str(", ");
+            }
+            if let Some(name) = name {
+                let _ = write!(out, "{name}: ");
+            }
+            compact(v, depth + 1, out);
+        }
+    };
+    match value.reflect_ref() {
+        ReflectRef::Struct(s) if s.field_len() == 0 => out.push_str(short()),
+        ReflectRef::Struct(s) => {
+            out.push_str("{ ");
+            list(
+                &mut (0..s.field_len()).filter_map(|i| Some((s.name_at(i), s.field_at(i)?))),
+                out,
+            );
+            out.push_str(" }");
+        }
+        ReflectRef::TupleStruct(t) if t.field_len() == 1 => {
+            compact(t.field(0).expect("one field"), depth + 1, out);
+        }
+        ReflectRef::TupleStruct(t) => {
+            out.push('(');
+            list(
+                &mut (0..t.field_len()).filter_map(|i| Some((None, t.field(i)?))),
+                out,
+            );
+            out.push(')');
+        }
+        ReflectRef::Tuple(t) => {
+            out.push('(');
+            list(
+                &mut (0..t.field_len()).filter_map(|i| Some((None, t.field(i)?))),
+                out,
+            );
+            out.push(')');
+        }
+        ReflectRef::List(l) => {
+            let _ = write!(out, "[{}: ", l.len());
+            list(&mut l.iter().map(|v| (None, v)), out);
+            out.push(']');
+        }
+        ReflectRef::Array(a) => {
+            out.push('[');
+            list(&mut a.iter().map(|v| (None, v)), out);
+            out.push(']');
+        }
+        ReflectRef::Set(set) => {
+            let _ = write!(out, "{{{}: ", set.len());
+            list(&mut set.iter().map(|v| (None, v)), out);
+            out.push('}');
+        }
+        ReflectRef::Map(m) => {
+            let _ = write!(out, "{{{} entries}}", m.len());
+        }
+        ReflectRef::Enum(e) => {
+            out.push_str(e.variant_name());
+            match e.variant_type() {
+                VariantType::Unit => {}
+                VariantType::Tuple => {
+                    out.push('(');
+                    list(
+                        &mut (0..e.field_len()).filter_map(|i| Some((None, e.field_at(i)?))),
+                        out,
+                    );
+                    out.push(')');
+                }
+                VariantType::Struct => {
+                    out.push_str(" { ");
+                    list(
+                        &mut (0..e.field_len())
+                            .filter_map(|i| Some((e.name_at(i), e.field_at(i)?))),
+                        out,
+                    );
+                    out.push_str(" }");
+                }
+            }
+        }
+        // Opaque values (and functions).
+        _ => {
+            let _ = write!(out, "{value:?}");
+        }
+    }
 }
 
 /// One line, at most [`MAX_VALUE`] characters.
