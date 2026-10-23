@@ -2,12 +2,14 @@
 //!
 //! - [`Console`]: one namespace of commands and variables (case-insensitive,
 //!   dotted names like `render.shadows`), typed argument binding, built-in
-//!   commands (`help`, `set`, `toggle`, `reset`, `vars`, `find`, `history`,
+//!   commands (`help`, `set`, `toggle`, `reset`, `vars`/`list`, `history`,
 //!   `echo`, `clear`), "did you mean" on unknown names.
 //! - Variables ([`Vars`]): typed values with defaults, validated on every set,
-//!   read by [`VarId`] every frame, with change tracking for the engine side.
-//! - Line editing support: [`Console::complete`], [`History`], and the output
-//!   [`Log`] a front end draws from.
+//!   read by [`VarId`] every frame, with change tracking for the engine side and
+//!   a "set by" priority ([`SetBy`]: default < config < command line < code < console).
+//! - Line editing support: [`Prompt`] (the input line, its history browsing and
+//!   completion popup), [`Console::complete`], [`History`], and the output [`Log`]
+//!   a front end draws from.
 //!
 //! Commands get a caller-chosen context `C` (the Bevy plugin passes its `World`).
 //! Line syntax: words split on whitespace, `"quoted text"` with `\"` and `\\`,
@@ -18,6 +20,7 @@ use std::fmt::Write as _;
 
 mod history;
 mod lex;
+mod prompt;
 mod value;
 mod vars;
 
@@ -26,8 +29,9 @@ mod tests;
 
 pub use history::{History, Level, Line, Log};
 pub use lex::{Segment, Token, split};
+pub use prompt::{Edit, Prompt};
 pub use value::{ArgKind, NameFilter, Value, parse_bool};
-pub use vars::{Var, VarId, VarSpec, Vars};
+pub use vars::{SetBy, SetOutcome, Var, VarId, VarSpec, Vars};
 
 /// Default number of history entries kept.
 pub const HISTORY_CAPACITY: usize = 200;
@@ -292,7 +296,6 @@ enum Builtin {
     Toggle,
     Reset,
     Vars,
-    Find,
     History,
     Echo,
     Clear,
@@ -316,6 +319,8 @@ pub struct Console<C = ()> {
     vars: Vars,
     history: History,
     log: Log,
+    /// Who the line being run speaks for (variable priority).
+    source: SetBy,
 }
 
 impl<C> Default for Console<C> {
@@ -337,14 +342,17 @@ impl<C> Console<C> {
             vars: Vars::default(),
             history: History::new(history),
             log: Log::new(log),
+            source: SetBy::Console,
         };
         let var = |n| Param::new(n, ArgKind::Name(NameFilter::Vars));
         let builtins = [
             (
                 CommandSpec::new("help")
                     .alias("?")
-                    .help("List commands, or describe one command or variable")
-                    .param(Param::new("name", ArgKind::Name(NameFilter::Any)).optional()),
+                    .help(
+                        "List commands, describe one command or variable, or search names and help",
+                    )
+                    .param(Param::new("name", ArgKind::Name(NameFilter::Search)).optional()),
                 Builtin::Help,
             ),
             (
@@ -368,17 +376,12 @@ impl<C> Console<C> {
             ),
             (
                 CommandSpec::new("vars")
+                    .alias("list")
                     .help(
                         "List variables (changed ones marked *), optionally those containing text",
                     )
                     .param(Param::new("filter", ArgKind::Str).optional()),
                 Builtin::Vars,
-            ),
-            (
-                CommandSpec::new("find")
-                    .help("Search command and variable names and help")
-                    .param(Param::new("text", ArgKind::Str)),
-                Builtin::Find,
             ),
             (
                 CommandSpec::new("history").help("List submitted lines"),
@@ -525,24 +528,35 @@ impl<C> Console<C> {
         self.commands.iter().map(|c| &c.spec)
     }
 
-    /// A line typed by the user: recorded in the history, echoed, then run.
+    /// A line typed by the user: recorded in the history, echoed, then run
+    /// with [`SetBy::Console`] priority.
     pub fn submit(&mut self, ctx: &mut C, line: &str) -> Result<(), ExecError> {
         self.history.push(line);
         self.log.push(Level::Echo, line);
         self.exec(ctx, line)
     }
 
-    /// Runs a line (from a user, a config file, the command line or a script) without
-    /// recording it. Commands run left to right; the first error is logged, stops the
-    /// rest of the line, and is returned.
+    /// Runs a line (from a user or a script) without recording it, with
+    /// [`SetBy::Console`] priority. Commands run left to right; the first error is
+    /// logged, stops the rest of the line, and is returned.
     pub fn exec(&mut self, ctx: &mut C, line: &str) -> Result<(), ExecError> {
+        self.exec_as(ctx, line, SetBy::Console)
+    }
+
+    /// Runs a line on behalf of `source`: variables it sets keep a value from a
+    /// higher-priority source (a config file line can't undo a command-line switch).
+    pub fn exec_as(&mut self, ctx: &mut C, line: &str, source: SetBy) -> Result<(), ExecError> {
+        self.source = source;
+        let mut out = Ok(());
         for seg in split(line) {
             if let Err(e) = self.run(ctx, line, &seg) {
                 self.log.error(&e.to_string());
-                return Err(e);
+                out = Err(e);
+                break;
             }
         }
-        Ok(())
+        self.source = SetBy::Console;
+        out
     }
 
     fn run(&mut self, ctx: &mut C, line: &str, seg: &Segment) -> Result<(), ExecError> {
@@ -596,7 +610,7 @@ impl<C> Console<C> {
             Some(&t) if self.passes(t, filter) => Ok(t),
             _ => Err(ExecError::Unknown {
                 what: match filter {
-                    NameFilter::Any => "command or variable",
+                    NameFilter::Any | NameFilter::Search => "command or variable",
                     NameFilter::Vars => "variable",
                     NameFilter::BoolVars => "on/off variable",
                 }
@@ -609,7 +623,7 @@ impl<C> Console<C> {
 
     fn passes(&self, target: Target, filter: NameFilter) -> bool {
         match (filter, target) {
-            (NameFilter::Any, _) => true,
+            (NameFilter::Any | NameFilter::Search, _) => true,
             (NameFilter::Vars, t) => matches!(t, Target::Var(_)),
             (NameFilter::BoolVars, Target::Var(id)) => self.vars.var(id).kind() == &ArgKind::Bool,
             (NameFilter::BoolVars, Target::Command(_)) => false,
@@ -640,14 +654,23 @@ impl<C> Console<C> {
     }
 
     fn set_var(&mut self, name: &str, id: VarId, text: &str) -> Result<(), ExecError> {
-        self.vars
-            .set_text(id, text)
+        let outcome = self
+            .vars
+            .set_text_by(id, text, self.source)
             .map_err(|message| ExecError::BadArg {
                 command: name.to_owned(),
                 param: "value".into(),
                 message,
             })?;
-        self.log.info(&self.vars.var(id).describe());
+        if let SetOutcome::Outranked(by) = outcome {
+            self.log.info(&format!(
+                "{name} kept: set by {}, which outranks {}",
+                by.describe(),
+                self.source.describe()
+            ));
+        } else {
+            self.log.info(&self.vars.var(id).describe());
+        }
         Ok(())
     }
 
@@ -680,7 +703,9 @@ impl<C> Console<C> {
                     param: p.name.clone(),
                     message,
                 })?;
-            if let (ArgKind::Name(filter), Value::Str(n)) = (&p.kind, &value) {
+            if let (ArgKind::Name(filter), Value::Str(n)) = (&p.kind, &value)
+                && *filter != NameFilter::Search
+            {
                 self.lookup(n, *filter)?;
             }
             args.values.push((p.name.clone(), value));
@@ -707,8 +732,8 @@ impl<C> Console<C> {
             Builtin::Toggle => {
                 let id = var(self, "variable").expect("checked");
                 let on = !self.vars.flag(id);
-                self.vars.set(id, Value::Bool(on)).expect("bool variable");
-                self.log.info(&self.vars.var(id).describe());
+                let name = self.vars.var(id).name().to_owned();
+                return self.set_var(&name, id, if on { "on" } else { "off" });
             }
             Builtin::Reset => {
                 if let Some(id) = var(self, "variable") {
@@ -732,41 +757,17 @@ impl<C> Console<C> {
                     })
                     .map(|(_, v)| {
                         let mark = if v.value() == v.default() { ' ' } else { '*' };
-                        format!("{mark} {} = {}", v.name(), v.value())
+                        let by = match v.set_by() {
+                            SetBy::Default => String::new(),
+                            by => format!("  ({})", by.describe()),
+                        };
+                        format!("{mark} {} = {}{by}", v.name(), v.value())
                     })
                     .collect();
                 lines.sort_by(|a, b| a[2..].cmp(&b[2..]));
                 self.log.info(&format!("{} variable(s)", lines.len()));
                 for l in lines {
                     self.log.info(&l);
-                }
-            }
-            Builtin::Find => {
-                let text = args.str("text").expect("required").to_ascii_lowercase();
-                let mut hits: Vec<String> = self
-                    .commands
-                    .iter()
-                    .filter(|c| {
-                        c.spec.name.contains(&text)
-                            || c.spec.help.to_ascii_lowercase().contains(&text)
-                    })
-                    .map(|c| format!("{}: {}", c.spec.usage(), c.spec.help))
-                    .chain(
-                        self.vars
-                            .iter()
-                            .filter(|(_, v)| {
-                                v.name().contains(&text)
-                                    || v.help().to_ascii_lowercase().contains(&text)
-                            })
-                            .map(|(_, v)| v.describe()),
-                    )
-                    .collect();
-                hits.sort();
-                if hits.is_empty() {
-                    self.log.info(&format!("nothing matches {text:?}"));
-                }
-                for h in hits {
-                    self.log.info(&h);
                 }
             }
             Builtin::History => {
@@ -810,7 +811,11 @@ impl<C> Console<C> {
             ));
             return;
         };
-        let text = match self.names[name] {
+        let Some(&target) = self.names.get(name) else {
+            self.search(name);
+            return;
+        };
+        let text = match target {
             Target::Var(id) => self.vars.var(id).describe(),
             Target::Command(i) => {
                 let spec = &self.commands[i].spec;
@@ -826,6 +831,39 @@ impl<C> Console<C> {
             }
         };
         self.log.info(&text);
+    }
+
+    /// `help <text>` for a text that isn't a name: commands and variables whose name or
+    /// help contains it (Creation Kit console `help <text>`, Source `find`).
+    fn search(&mut self, text: &str) {
+        let text = text.to_ascii_lowercase();
+        let mut hits: Vec<String> = self
+            .commands
+            .iter()
+            .filter(|c| {
+                c.spec.name.contains(&text) || c.spec.help.to_ascii_lowercase().contains(&text)
+            })
+            .map(|c| format!("{}: {}", c.spec.usage(), c.spec.help))
+            .chain(
+                self.vars
+                    .iter()
+                    .filter(|(_, v)| {
+                        v.name().contains(&text) || v.help().to_ascii_lowercase().contains(&text)
+                    })
+                    .map(|(_, v)| v.describe()),
+            )
+            .collect();
+        hits.sort();
+        if hits.is_empty() {
+            let suggestions = self.suggest(&text, NameFilter::Any);
+            self.log.info(&format!(
+                "nothing matches {text:?}{}",
+                did_you_mean(&suggestions)
+            ));
+        }
+        for h in hits {
+            self.log.info(&h);
+        }
     }
 
     /// Completes the word at the end of `line` (the cursor is at the end): command and

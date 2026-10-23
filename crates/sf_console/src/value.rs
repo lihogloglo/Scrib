@@ -45,6 +45,37 @@ impl Value {
     }
 }
 
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Bool(b)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(i: i64) -> Self {
+        Value::Int(i)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(x: f64) -> Self {
+        Value::Float(x)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(x: f32) -> Self {
+        Value::Float(f64::from(x))
+    }
+}
+
+/// Text, or a choice (choices are lowercase).
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::Str(s.to_owned())
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -72,6 +103,8 @@ pub enum NameFilter {
     Vars,
     /// Boolean variables only.
     BoolVars,
+    /// A name, or free text that needn't be one (`help <text>` searches); completes like `Any`.
+    Search,
 }
 
 /// The type of an argument or variable.
@@ -126,6 +159,7 @@ impl ArgKind {
             ArgKind::Name(NameFilter::Any) => "name".into(),
             ArgKind::Name(NameFilter::Vars) => "variable".into(),
             ArgKind::Name(NameFilter::BoolVars) => "on/off variable".into(),
+            ArgKind::Name(NameFilter::Search) => "name or text".into(),
         }
     }
 

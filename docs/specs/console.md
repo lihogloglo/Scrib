@@ -1,8 +1,10 @@
 # Dev console
 
-Status: core implemented (2026-10-22), no front end yet; app wiring is a bevyrrowind slice (ROADMAP 1.13)
-Crates: `sf_console` (new, Bevy-free: registry, variables, binding, completion, history, log),
-`sf_console_bevy` (new, thin: resource, messages, run condition, `App` extension)
+Status: core (2026-10-22); front end, set-by priority, click-select and inspector built 2026-10-23
+("As built"); registering the app's switches is a bevyrrowind slice (ROADMAP 1.13)
+Crates: `sf_console` (Bevy-free: registry, variables, binding, completion, history, log, input line),
+`sf_console_bevy` (thin: resource, messages, run conditions, `App` extension; `overlay` feature:
+the bevy_ui front end, click-select, inspector)
 
 ## Goal
 
@@ -12,8 +14,8 @@ restart. First user: every `--off` switch of the Bevyrrowind app becomes a conso
 fog history/jitter/froxels and the rest (owner 2026-10-21; owner checks SH-16 and SH-19 wait on it). Later users: the in-game overlay
 (`sf_devui`), Luau snippets, config files, the command line, test scripts.
 
-Non-goals here: the UI (an egui or bevy_ui overlay comes later and only draws the `Log`, edits a
-line, and calls `complete`/`History`), saving variables, and cheat or network policy (below).
+Non-goals here: saving variables, and cheat or network policy (below). The front end only draws the
+`Log`, edits a `Prompt` and calls `complete`/`History`: another one (egui in `sf_devui`) can reuse all of it.
 
 ## Reuse check (CLAUDE.md rule 8)
 
@@ -65,9 +67,10 @@ left to right and the first error stops the line. Errors name the command, the p
 usage; unknown names get up to three suggestions (edit distance ≤ 1 for names up to 4 characters,
 else ≤ 2, against the whole name or its last dotted part, plus names containing the typed text).
 
-**Built-ins**: `help [name]` (`?`), `set <variable> <value>`, `toggle <on/off variable>`,
-`reset [variable]` (no argument: all), `vars [filter]` (changed ones marked `*`), `find <text>`
-(names and help), `history`, `echo <text...>`, `clear` (`cls`).
+**Built-ins**: `help [name or text]` (`?`; a text that isn't a name searches names and help, as the
+Creation Kit's `help <text>`), `set <variable> <value>`, `toggle <on/off variable>`,
+`reset [variable]` (no argument: all), `vars [filter]` (`list`; changed ones marked `*`, with who
+set them), `history`, `echo <text...>`, `clear` (`cls`). `find` belongs to the overlay (entities).
 
 **Completion** (cursor at the end of the line): first word from command and variable names
 (aliases still run but aren't offered); then by parameter kind: names (filtered: any, variables,
@@ -108,17 +111,75 @@ client once a policy exists (open question 3).
 | Tab completion, per-argument | UE (names + per-command), Source (per-command callback), Quake | **match** for names and typed values; no custom per-command callback (gap P3: add when a command needs one, e.g. record ids) |
 | "Did you mean" | Mudcrab, shells | **match** |
 | Change callbacks / sinks | UE `SetOnChangedCallback`, console variable sinks; Source change callback | **differ**: change *messages* each frame (ECS style, one reader per system) instead of callbacks into engine code |
-| Priority of who set a value ("set by": constructor < config < command line < console) | UE `ECVF_SetBy*` | **gap (P2)**: needed once `--off`, a config file and the console all set one variable; decide with the bevyrrowind wiring slice |
+| Priority of who set a value ("set by") | UE `ECVF_SetBy*` (… < ini < command line < code < console) | **match**: default < config < command line < code < console |
+| Click-select an object, commands on the selection | Morrowind/Bethesda console (`prid`, `getpos`, `setpos`, `disable`) | **match** |
+| Selection highlight | CS/CK selection box; UE editor outline | **partial**: gizmo box, no silhouette (As built) |
+| Entity inspector | UE `displayall`/Details, `bevy-inspector-egui` | **match** read-only; editing is `sf_devui`'s |
 | Flags: cheat, saved to config, replicated, read-only | Source `FCVAR_CHEAT`/`ARCHIVE`/`REPLICATED`, UE `ECVF_Cheat`/`ReadOnly` | **gap (P2)**: open questions 2-3 |
 | Run a file of lines, command-line `+set` | Quake `exec`, `+set`; UE `ConsoleVariables.ini`, `-ExecCmds` | **gap (P2)**: the core has `exec(line)`; files and argv parsing are app wiring |
 | Saved history | UE (saved per project), shells | **partial**: `entries`/`load`; the app writes the file |
 
 ## Open questions
 
-1. Front end: egui (`sf_devui`, ui.md "Dev UI") or a small bevy_ui overlay. Either draws `Log::since`,
-   edits one line, Tab = `complete().apply()`, Up/Down = `History`.
+1. ~~Front end~~: a bevy_ui overlay (2026-10-23, As built); `sf_devui` (egui) can add a second one.
 2. Saved variables (`archive` flag) and a config file read at start.
 3. Cheat and co-op policy: which commands a client may run, and whether gameplay-changing
    commands need a `cheat` flag.
 4. Luau as a command source: a `lua <code...>` command (rest parameter) calling
    `ScriptContext::eval` for a chosen mod context, once a script slot is reachable from `World`.
+
+## As built (2026-10-23)
+
+**Core.** `SetBy` (default < config < command line < code < console): a lower source can't change a
+value a higher one set (`SetOutcome::Outranked`, logged as "kept"); `reset` hands the variable back.
+`Vars::set` is `Code`; typed lines are `Console`; `Console::exec_as(ctx, line, source)` for config
+files and argv. `Prompt` is the input line (cursor, word moves, history, Tab on the word before the
+cursor), driven by key-agnostic `Edit`s, so editing is tested without Bevy.
+
+**Plugin.** `ConsoleSubmit::from(source, line)`; `app.set_console_var(id, value, source)`;
+`console_var_changed(id)` (true on first run, so the starting value applies once) and
+`console_closed` run conditions; `ConsoleOpen` resource. bevyrrowind's `--off` switches:
+
+```rust
+let ssao = app.add_console_var(VarSpec::bool("render.ssao", true).help("Screen-space AO"));
+app.set_console_var(ssao, !off.contains("ssao"), SetBy::CommandLine);
+app.add_systems(Update, apply_ssao.run_if(console_var_changed(ssao))); // reads vars().flag(ssao)
+```
+
+**Input line: own `Prompt`, not Bevy 0.20's `TextInput`** (`bevy_ui_widgets`, over parley's
+`PlainEditor`). That widget applies edits in `PostUpdate` (a typed line would run a frame late),
+takes Up/Down for caret moves (history needs them), and needs focus dispatch, a11y and fonts, so it
+can't run in the headless tests. It has IME, clipboard, selection and a blinking caret: **gap (P3)**,
+use it as the view over `Prompt` when someone needs paste or IME in the console.
+
+**Overlay** (`overlay` feature, `ConsoleOverlayPlugin`; bevy_ui only, no `sf_ui_css`): `ConsoleKeys`
+(Backquote, F1; physical keys), `ConsoleStyle` (font, height, colors). Enter, Tab (+ popup of
+candidates), Up/Down, Ctrl+arrows/Backspace/W/L, PageUp/PageDown and wheel, Escape clears then
+closes. Input runs in `PreUpdate` `ConsoleInputSystems` (after `InputSystems`, before
+`ConsoleSystems`), so a typed switch applies to the same frame's `Update`. While open: `ConsoleOpen`
+is true, `ButtonInput<KeyCode/MouseButton>` and mouse motion/scroll are cleared (systems reading
+`KeyboardInput` messages must gate on `console_closed`; order `bevy_enhanced_input` after
+`ConsoleInputSystems`), and the primary window's cursor is freed and restored on close.
+
+**Pick and inspect.** A left click outside the panels writes `ConsolePick { ray }` from the
+`ConsoleCamera` (else the highest-order active 3D camera); bevy_picking's `MeshRayCast` runs once
+(no backend raycasting every frame), visible meshes only; the hit selects its nearest `PickRoot`
+ancestor (the app marks placed objects) or itself; a miss deselects. Commands: `prid <name>`
+(exact `Name`, `PickRoot` first), `find <text>`, `getpos`, `setpos <x> <y> <z>` (world, parent
+kept; computed from `Transform`s so `setpos …; getpos` agrees on one line), `moveto` (camera
+2.5 radii from the bounds, also `ConsoleMoveTo` for rigs), `disable`/`enable` (`Visibility`),
+`delete`. The inspector panel: name, id, transform (+ world), visibility, parent chain, child count,
+game rows from `app.add_inspector_rows(|world, e, rows| …)`, then the other components through the
+type registry, one line each (compact reflect format, read-only).
+
+**Outline: a gizmo box.** Bevy 0.20 has no silhouette outline (checked: `bevy_pbr` has `Wireframe`,
+needs `POLYGON_MODE_LINE` and draws every triangle; `bevy_gizmos` has per-mesh `ShowAabbGizmo`).
+`bevy_mod_outline` (MIT/Apache) is at 0.13 for Bevy 0.19, no 0.20 branch (2026-10-23). So: one
+gizmo box per selection, in its frame, around all its meshes (the Construction Set's selection box).
+Swap to `bevy_mod_outline` when it supports 0.20.
+
+**Tests** (MinimalPlugins): set-by + same-frame apply; keys through completion, submit, history,
+popup, input blocking; selection commands and inspector rows; pick ray (nearest, hidden skipped,
+root, miss). `examples/console_overlay.rs --autotest` renders under Xvfb + lavapipe and checks a
+scripted session (screenshot checked by eye, 2026-10-23). Limits: one window; no caret blink, paste
+or mouse selection (P3 above); `find`/`prid` match `Name` only (record ids come with the game's hook).
