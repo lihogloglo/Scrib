@@ -6434,6 +6434,7 @@ dependencies = [
  "sf_anim",
  "sf_anim_graph",
  "sf_diag_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6481,6 +6482,7 @@ dependencies = [
  "sf_atmos",
  "sf_render_order_bevy",
  "sf_weather",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6505,6 +6507,7 @@ dependencies = [
  "sf_audio",
  "sf_records",
  "sf_weather_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6560,6 +6563,7 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6594,6 +6598,7 @@ dependencies = [
  "sf_controller",
  "sf_coords",
  "sf_diag_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6628,6 +6633,7 @@ dependencies = [
  "bevy_transform",
  "log",
  "sf_diag",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6695,6 +6701,7 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6727,6 +6734,7 @@ dependencies = [
  "sf_bake",
  "sf_model",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6785,6 +6793,7 @@ dependencies = [
  "sf_terrain_bevy",
  "sf_world",
  "sf_world_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6810,6 +6819,7 @@ dependencies = [
  "glam 0.33.12",
  "sf_render_order_bevy",
  "sf_sky_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6853,6 +6863,7 @@ dependencies = [
  "bevy_math",
  "bevy_render",
  "bevy_shader",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6892,6 +6903,7 @@ dependencies = [
  "semver",
  "sf_diag_bevy",
  "sf_script",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6912,6 +6924,7 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "log",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6949,6 +6962,7 @@ dependencies = [
  "log",
  "sf_render_order_bevy",
  "sf_sky",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6989,6 +7003,7 @@ dependencies = [
  "sf_coords",
  "sf_terrain",
  "sf_world",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7039,6 +7054,7 @@ dependencies = [
  "sf_coords",
  "sf_render_order_bevy",
  "sf_water",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7074,6 +7090,7 @@ dependencies = [
  "sf_weather",
  "sf_wind_bevy",
  "smallvec",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7099,6 +7116,7 @@ dependencies = [
  "bevy_time",
  "sf_coords",
  "sf_wind",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7151,6 +7169,7 @@ dependencies = [
  "sf_model_bevy",
  "sf_vfs",
  "sf_world",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8955,6 +8974,12 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-wlr",
 ]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beffa227304dbaea3ad6a06ac674f9bc83a3dec3b7f63eeb442de37e7cb6bb01"
 
 [[package]]
 name = "writeable"
