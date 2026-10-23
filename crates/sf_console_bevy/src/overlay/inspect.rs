@@ -1,6 +1,7 @@
 //! The inspector: a read-only panel about the selection (Name, id, transform, parent chain,
 //! game rows from [`InspectorRows`] hooks, reflected components).
 
+use std::any::TypeId;
 use std::fmt::Write as _;
 
 use bevy_app::{App, PostUpdate};
@@ -11,11 +12,11 @@ use bevy_math::EulerRot;
 use bevy_reflect::enums::VariantType;
 use bevy_reflect::{PartialReflect, ReflectRef};
 use bevy_text::{TextColor, TextSpan};
-use bevy_transform::components::Transform;
+use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_ui::widget::Text;
 use bevy_ui::{BackgroundColor, Display, Node, Overflow, PositionType, UiRect, UiSystems, Val};
 
-use super::select::{ConsoleSelection, label};
+use super::select::{ConsoleSelection, label, world_transform};
 use super::{BlocksPick, ConsoleStyle};
 use crate::ConsoleOpen;
 
@@ -58,9 +59,18 @@ const MAX_VALUE: usize = 160;
 pub(super) struct InspectorPanel;
 
 pub(super) fn build(app: &mut App) {
-    app.init_resource::<InspectorRows>()
-        .add_systems(PostUpdate, refresh_panel.before(UiSystems::Prepare));
+    app.init_resource::<InspectorRows>().add_systems(
+        PostUpdate,
+        refresh_panel
+            .before(UiSystems::Prepare)
+            // Exclusive: run only while open (and once on closing, to hide the panel).
+            .run_if(|open: Res<ConsoleOpen>| open.0 || open.is_changed()),
+    );
 }
+
+/// The text inside the panel (a node clips its children, not its own text).
+#[derive(Component)]
+struct InspectorText;
 
 pub(super) fn spawn_panel(root: &mut ChildSpawnerCommands, style: &ConsoleStyle, top: Val) {
     root.spawn((
@@ -78,15 +88,21 @@ pub(super) fn spawn_panel(root: &mut ChildSpawnerCommands, style: &ConsoleStyle,
             ..Node::default()
         },
         BackgroundColor(style.background),
-        Text::default(),
-        style.font.clone(),
-        TextColor(style.level_colors[1]),
     ))
-    .with_child((
-        TextSpan::default(),
-        style.font.clone(),
-        TextColor(style.level_colors[0]),
-    ));
+    .with_children(|panel| {
+        panel
+            .spawn((
+                InspectorText,
+                Text::default(),
+                style.font.clone(),
+                TextColor(style.level_colors[0]),
+            ))
+            .with_child((
+                TextSpan::default(),
+                style.font.clone(),
+                TextColor(style.level_colors[1]),
+            ));
+    });
 }
 
 /// Rows for `e`: what the panel shows, also usable by other front ends and tests.
@@ -114,6 +130,10 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
             ),
         );
         row("scale", fmt3(t.scale.to_array()));
+        row(
+            "world",
+            fmt3(world_transform(world, e).translation().to_array()),
+        );
     }
     if let Some(v) = entity.get::<Visibility>() {
         row("visibility", format!("{v:?}"));
@@ -136,12 +156,29 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
             hook(world, e, &mut rows);
         }
     }
+    component_rows(world, entity, &mut rows);
+    rows
+}
+
+/// The components not already shown as rows, by name, with reflected values.
+fn component_rows(world: &World, entity: EntityRef, rows: &mut Vec<(String, String)>) {
     let registry = world.get_resource::<AppTypeRegistry>().map(|r| r.read());
+    // Shown as rows above.
+    let shown = [
+        TypeId::of::<Name>(),
+        TypeId::of::<Transform>(),
+        TypeId::of::<GlobalTransform>(),
+        TypeId::of::<Visibility>(),
+        TypeId::of::<ChildOf>(),
+        TypeId::of::<Children>(),
+    ];
+    let mut unnamed = 0;
     let mut components: Vec<(String, String)> = world
-        .inspect_entity(e)
+        .inspect_entity(entity.id())
         .map(|infos| {
             infos
-                .map(|(_, info)| {
+                .filter(|(_, info)| info.type_id().is_none_or(|id| !shown.contains(&id)))
+                .filter_map(|(_, info)| {
                     let registered = info
                         .type_id()
                         .zip(registry.as_ref())
@@ -151,6 +188,11 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
                         || info.name().shortname().to_string(),
                         |r| r.type_info().type_path_table().short_path().to_owned(),
                     );
+                    // Unregistered, and Bevy's `debug` feature (type names) is off.
+                    if name.starts_with('<') {
+                        unnamed += 1;
+                        return None;
+                    }
                     let value = registered
                         .and_then(|r| r.data::<ReflectComponent>())
                         .and_then(|rc| rc.reflect(entity))
@@ -162,7 +204,13 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
                                 shorten(&out)
                             },
                         );
-                    (name, value)
+                    // A unit struct prints as its own name.
+                    let value = if value == name {
+                        "marker".to_owned()
+                    } else {
+                        value
+                    };
+                    Some((name, value))
                 })
                 .collect()
         })
@@ -170,7 +218,12 @@ pub fn inspect(world: &World, e: Entity) -> Vec<(String, String)> {
     components.sort();
     rows.push(("components".into(), components.len().to_string()));
     rows.extend(components.into_iter().map(|(k, v)| (format!("  {k}"), v)));
-    rows
+    if unnamed > 0 {
+        rows.push((
+            format!("  +{unnamed} unnamed"),
+            "unregistered; Bevy's `debug` feature names them".into(),
+        ));
+    }
 }
 
 fn fmt3(v: [f32; 3]) -> String {
@@ -317,15 +370,17 @@ fn refresh_panel(world: &mut World, mut frames: Local<u32>, mut shown: Local<Opt
         }
         None => (String::new(), String::new()),
     };
-    let mut panels =
-        world.query_filtered::<(&mut Node, &mut Text, &Children), With<InspectorPanel>>();
-    let mut spans = Vec::new();
-    for (mut node, mut text, children) in panels.iter_mut(world) {
+    let mut panels = world.query_filtered::<&mut Node, With<InspectorPanel>>();
+    for mut node in panels.iter_mut(world) {
         node.display = if selection.is_some() {
             Display::Flex
         } else {
             Display::None
         };
+    }
+    let mut texts = world.query_filtered::<(&mut Text, &Children), With<InspectorText>>();
+    let mut spans = Vec::new();
+    for (mut text, children) in texts.iter_mut(world) {
         text.0.clone_from(&title);
         spans.extend(children.iter());
     }

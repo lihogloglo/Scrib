@@ -54,8 +54,14 @@ bevy_ui = { workspace = true, optional = true }
 bevy_window = { workspace = true, optional = true, features = ["std"] }
 
 [dev-dependencies]
-# MinimalPlugins for headless tests.
-bevy = { workspace = true, features = ["std"] }
+# MinimalPlugins for headless tests; a window, 3D and UI for the example.
+bevy = { workspace = true, features = ["3d", "ui", "tonemapping_luts"] }
 
 [lints]
 workspace = true
+
+# The overlay over a few named cubes: toggle with ` or F1, click a cube, try `help`,
+# `demo.spin off`, `prid crate_b`, `moveto`, `setpos 0 2 0`. Owner check (needs a window).
+[[example]]
+name = "console_overlay"
+required-features = ["overlay"]

@@ -102,7 +102,7 @@ fn pick_camera<'a>(
     cameras: impl Iterator<Item = (Entity, &'a Camera, &'a GlobalTransform, bool, bool)>,
 ) -> Option<(Entity, &'a Camera, &'a GlobalTransform)> {
     cameras
-        .filter(|(_, camera, _, _, is_3d)| camera.is_active && *is_3d)
+        .filter(|(_, camera, _, marked, is_3d)| camera.is_active && (*marked || *is_3d))
         .max_by_key(|(_, camera, _, marked, _)| (*marked, camera.order))
         .map(|(e, c, t, ..)| (e, c, t))
 }
@@ -240,7 +240,7 @@ fn local_box<'a>(
 
 /// World transform from the local `Transform`s up the parent chain, so a command sees
 /// the effect of the previous command on the same line (`GlobalTransform` updates later).
-fn world_transform(world: &World, e: Entity) -> GlobalTransform {
+pub(crate) fn world_transform(world: &World, e: Entity) -> GlobalTransform {
     let mut out = GlobalTransform::from(world.get::<Transform>(e).copied().unwrap_or_default());
     let mut at = e;
     while let Some(parent) = world.get::<ChildOf>(at).map(ChildOf::parent) {

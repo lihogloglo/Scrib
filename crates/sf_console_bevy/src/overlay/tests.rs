@@ -284,12 +284,13 @@ fn commands_act_on_the_selection() {
     assert_eq!(get("name"), Some("Guard"));
     assert_eq!(get("entity"), Some(npc.to_string().as_str()));
     assert_eq!(get("translation"), Some("-10.000 0.000 -1.500"));
+    assert_eq!(get("world"), Some("0.000 0.000 -1.500"));
+    assert_eq!(get("  Name"), None, "shown above, not again");
     assert_eq!(get("parents"), Some(format!("Cell ({cell})").as_str()));
     assert_eq!(get("children"), Some("1"));
     assert_eq!(get("record"), Some("npc_guard"));
     // Registered components show their name and value; others say so.
-    assert_eq!(get("  PickRoot"), Some("PickRoot"), "{rows:?}");
-    assert_eq!(get("  Name"), Some("\"Guard\""), "{rows:?}");
+    assert_eq!(get("  PickRoot"), Some("marker"), "{rows:?}");
     assert_eq!(
         get("  Mood"),
         Some("Angry { level: 3, targets: [2: \"player\", \"dog\"] }"),
@@ -301,9 +302,10 @@ fn commands_act_on_the_selection() {
     app.update();
     let mut panel = app
         .world_mut()
-        .query_filtered::<(&Node, &Text), With<inspect::InspectorPanel>>();
-    let (node, title) = panel.single(app.world()).unwrap();
+        .query_filtered::<(&Node, &Children), With<inspect::InspectorPanel>>();
+    let (node, children) = panel.single(app.world()).unwrap();
     assert_eq!(node.display, Display::Flex);
+    let title = app.world().get::<Text>(children[0]).unwrap();
     assert_eq!(title.0, format!("Guard ({npc})\n"));
 
     run(&mut app, "delete");
