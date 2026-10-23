@@ -29,6 +29,49 @@ This continues Godotwind (`D:\Gamedev\Godotwind\godotwind`, Godot 4.6, MIT) and
 keeps its philosophy. What changes is the engine and how strictly the
 framework/Morrowind boundary is enforced.
 
+### 1b. Modern rules first, classic rules later (owner 2026-10-23)
+
+The goal is the modern game ("Morrowind 2026": new combat, new AI, voiced dialogue with lip sync, ...).
+A **classic rules** option (Morrowind's own mechanics on our engine, with our rendering, performance
+and quality-of-life features) is a nice-to-have, kept cheap by design, built last, and only if it stays cheap.
+It is not a reason to slow or bend the modern design.
+
+Mechanics fall into two groups:
+
+1. **Content mechanics: one implementation, shared by both.** What Morrowind's quests, NPCs and items need
+   to work at all: MWScript (every function), dialogue filters and result scripts, magic effect semantics,
+   levelled lists, factions, crime and bounty, journal. The modern game runs Morrowind's content, so it
+   needs these exactly as Morrowind defines them. **Port them from OpenMW** (bevyrrowind only, GPL; cite the
+   OpenMW file and commit in a comment) rather than re-deriving them from UESP: OpenMW already solved the
+   edge cases. Where OpenMW deliberately differs from vanilla (its own fixes and opinions), follow vanilla.
+2. **Feel systems: modern implementation first, classic one later behind the same seam.** Combat
+   resolution (modern: hitboxes, stamina, poise; classic: swing then hit-chance roll), character
+   progression (skill gain, attributes, level-up), AI behaviour (see below), persuasion / barter / spell
+   chance / alchemy formulas, movement tuning, UI flow. Each one ends in a seam the game calls through,
+   e.g. "an attack connected: how much damage?" or "this actor's turn: what does it do?". The modern
+   version implements it; a classic version (`mw_rules`, ported from OpenMW) can be added later without
+   touching callers.
+
+**AI is a feel system, and the modern AI will be very different from Morrowind's packages.** The seam is
+the *intent* content asks for, not Morrowind's package execution: MWScript `AiEscort`/`AiFollow`/
+`AiTravel`/`AiWander`/`StartCombat` become goals ("escort the player to Pelagiad", "stay near here",
+"fight this actor") with completion signals scripts can query (`GetAIPackageDone`). Modern AI fulfils
+them its own way (schedules, perception, navmesh, group tactics); classic AI ports OpenMW's package
+logic onto our navigation and movement. Quests only depend on the goal and its completion, never on how
+it was carried out.
+
+Rules for agents:
+- Designing a feel system: name its seam in the spec, keep it to a trait or a data profile with a test
+  double, and don't wire the modern implementation straight into the app. That is the whole ongoing cost
+  of the classic option (~one trait and one test double per system); don't build the classic side early.
+- Classic means **Morrowind's rules and numbers**, not bug-for-bug parity with OpenMW (an endless race
+  against a mature project; players who want exact parity have OpenMW). Classic reuses our UI screens
+  with the Morrowind theme; no MyGUI-style copies of the old menus.
+- The graphics side is a separate axis: a Classic graphics preset on the `--off` feature ladder
+  (perf.md), usable with either rule set.
+- A new game picks the rule set (profile per system, stored in the save meta); switching mid-save is not
+  a goal.
+
 ## 2. Principles
 
 1. **Framework first; Morrowind is an adapter.** Litmus test (inherited from
@@ -175,7 +218,7 @@ Built so far (M0): `sf_vfs`, `sf_records`, `sf_mods`.
 | `sf_controller` | Player and NPC locomotion on physics: kinematic controller, swimming, climbing hooks. |
 | `sf_interaction` | Activation, grab/carry/throw (Oblivion-style), doors, containers. |
 | `sf_rpg` | *Generic* RPG primitives: attributes, effects, inventory, dialogue (condition-filtered response database + session state, not a graph; `specs/rpg.md`), quests, journal, factions. The **rules** (formulas, leveling, combat math) are supplied by the content pack as a rules plugin, never hardcoded. |
-| `sf_ai` | Navmesh generation per streamed tile, behavior layer (schedules and packages), perception. |
+| `sf_ai` | Navmesh generation per streamed tile, behavior layer (schedules, goals, perception). Takes content goals (escort, follow, travel, wander, fight) through a seam so a classic Morrowind package executor can replace the modern behaviour (§1b). |
 | `sf_ui` | Game UI (spec `ui.md`): bevy_ui + headless `bevy_ui_widgets` with our styled widget kit, CommonUI-style layers and input routing, MVVM view-models, two themes and two layout presets, CSS styling via `bevy_flair` layered by mod load order, extension slots, settings registry; HUD, menus, dialogue, journal, all scriptable. Feathers for dev tools only. Crates: `sf_ui` (Bevy-free), `sf_rpg_ui` (Bevy-free RPG screen view-models over `sf_rpg`: dialogue window, journal), `sf_ui_inventory` (Bevy-free item-list logic: inventory, container, barter), `sf_ui_bevy`, `sf_ui_css`, `sf_ui_screens`, `sf_ui_lua`, `sf_devui`. |
 
 ### 5.4 Tools
@@ -348,7 +391,7 @@ come from the adapter.
 | `mw_records` | **(built)** ESM/ESP → `sf_records` with Morrowind merge rules (cell reference merging, deletions, topic-scoped INFO), load order from masters. Uses `tes3` directly; no wrapper crate. |
 | `mw_assets` | NIF → Bevy scene loader: geometry, materials, skinning, controllers (keyframe/vis/UV/alpha), particles, billboards, switch nodes, collision. DDS/TGA. |
 | `mw_world` | `WorldSource` impl over the loaded records; coordinate mapper (Z-up, ~1.42 cm per unit); LAND → terrain tiles; LTEX → terrain layers and grass rules; doors → transitions. |
-| `mw_rules` | Morrowind formulas: combat, magic, skills, leveling, persuasion, as a rules plugin for `sf_rpg`. |
+| `mw_rules` | Classic rule set (§1b), ported from OpenMW: hit chance and damage, skill gain, leveling, persuasion, barter, spell chance, alchemy; classic AI package execution. Plugs into the feel-system seams; built after the modern versions exist. Content mechanics shared by both rule sets live in `mw_script` / `mw_rpg` / magic effects, not here. |
 | `mw_rpg` | DIAL/INFO filtering semantics, topic links, journal, equipment rules (`rpg-adapter.md`; OpenMW reuse allowed here). |
 | `mw_script` | MWScript compiler → Luau + `mw` compatibility library. |
 | `mw_openmw_lua` | OpenMW-Lua API compatibility (later). |
