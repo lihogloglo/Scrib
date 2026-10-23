@@ -462,7 +462,10 @@ pub(crate) fn apply_reader_events(
             (ReaderLayout::Book, ReaderAction::Next) => {
                 state.view = (state.view + 1).min(state.view_count().saturating_sub(1));
             }
-            (ReaderLayout::Scroll, ReaderAction::Prev | ReaderAction::Next | ReaderAction::Scroll(_)) => {
+            (
+                ReaderLayout::Scroll,
+                ReaderAction::Prev | ReaderAction::Next | ReaderAction::Scroll(_),
+            ) => {
                 let Some(viewport) = state.chrome.as_ref().and_then(|c| c.viewport) else {
                     continue;
                 };
@@ -486,16 +489,18 @@ pub(crate) fn apply_reader_events(
 
 /// Every image a document draws.
 fn doc_images(doc: &RichDoc) -> impl Iterator<Item = &ImageRef> {
-    doc.background.iter().chain(doc.blocks.iter().flat_map(|b| -> Box<dyn Iterator<Item = &ImageRef>> {
-        match b {
-            Block::Paragraph(p) => Box::new(p.inlines.iter().filter_map(|i| match i {
-                Inline::Image(image) => Some(image),
-                Inline::Text { .. } => None,
-            })),
-            Block::Image { image, .. } => Box::new(std::iter::once(image)),
-            Block::PageBreak => Box::new(std::iter::empty()),
-        }
-    }))
+    doc.background.iter().chain(doc.blocks.iter().flat_map(
+        |b| -> Box<dyn Iterator<Item = &ImageRef>> {
+            match b {
+                Block::Paragraph(p) => Box::new(p.inlines.iter().filter_map(|i| match i {
+                    Inline::Image(image) => Some(image),
+                    Inline::Text { .. } => None,
+                })),
+                Block::Image { image, .. } => Box::new(std::iter::once(image)),
+                Block::PageBreak => Box::new(std::iter::empty()),
+            }
+        },
+    ))
 }
 
 /// Whether every image of `doc` has a known size (loaded, failed, or never
@@ -510,14 +515,15 @@ fn images_ready(
         None => true,
         Some(h) => {
             assets.contains(&h)
-                || server.is_none_or(|s| s.load_state(&h).is_failed() || s.get_load_state(&h).is_none())
+                || server
+                    .is_none_or(|s| s.load_state(&h).is_failed() || s.get_load_state(&h).is_none())
         }
     })
 }
 
 /// Re-paginates readers whose page size, scale, theme, view or document
 /// changed, keeping the bookmark, and draws the open view.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn layout_readers(
     mut commands: Commands,
     mut readers: Query<(&mut RichReader, &mut ReaderState)>,
@@ -532,7 +538,10 @@ pub(crate) fn layout_readers(
     theme_ticks: Res<ThemeTick>,
 ) {
     let text_scale = settings.as_ref().map_or(1.0, |s| s.text_scale);
-    let preset_view = if settings.as_ref().is_some_and(|s| s.preset.as_str() == "controller") {
+    let preset_view = if settings
+        .as_ref()
+        .is_some_and(|s| s.preset.as_str() == "controller")
+    {
         PageView::Single
     } else {
         PageView::Spread
@@ -558,7 +567,11 @@ pub(crate) fn layout_readers(
             text_scale,
         };
         // A scroll's body grows with its content: only its width counts.
-        let height = if reader.layout == ReaderLayout::Book { size.y } else { 0.0 };
+        let height = if reader.layout == ReaderLayout::Book {
+            size.y
+        } else {
+            0.0
+        };
         let made_for = MadeFor {
             doc: Arc::as_ptr(&reader.doc) as usize,
             size: (size.x.to_bits(), height.to_bits()),
@@ -573,7 +586,12 @@ pub(crate) fn layout_readers(
             state.view = p.view_of(reader.bookmark, page_view);
         }
         if state.made_for.as_ref() != Some(&made_for) {
-            if !images_ready(&reader.doc, measure.images_mut(), server.as_deref(), &image_assets) {
+            if !images_ready(
+                &reader.doc,
+                measure.images_mut(),
+                server.as_deref(),
+                &image_assets,
+            ) {
                 continue;
             }
             let Some(pagination) = paginate(&reader, size, &mut measure, scale) else {
@@ -584,19 +602,29 @@ pub(crate) fn layout_readers(
             state.page_view = page_view;
             state.made_for = Some(made_for);
             state.generation += 1;
-            dress_chrome(&mut commands, &chrome, &mut nodes, &reader.doc, measure.images(), page_view);
+            dress_chrome(
+                &mut commands,
+                &chrome,
+                &mut nodes,
+                &reader.doc,
+                measure.images(),
+                page_view,
+            );
         }
         let Some(pagination) = &state.pagination else {
             continue;
         };
-        state.view = state.view.min(pagination.view_count(page_view).saturating_sub(1));
+        state.view = state
+            .view
+            .min(pagination.view_count(page_view).saturating_sub(1));
         let shown = (state.generation, state.view);
         if state.shown == Some(shown) {
             // A scroll's bookmark follows its scroll offset.
             if reader.layout == ReaderLayout::Scroll
                 && let Some(viewport) = chrome.viewport
                 && let Ok(pos) = scrolls.get(viewport)
-                && let Some(at) = scroll_bookmark(&pagination.pages()[0], pos.y * scale.scale_factor)
+                && let Some(at) =
+                    scroll_bookmark(&pagination.pages()[0], pos.y * scale.scale_factor)
                 && at != reader.bookmark
             {
                 reader.bookmark = at;
@@ -611,13 +639,28 @@ pub(crate) fn layout_readers(
         }
         let pages = pagination.view(state.view, page_view);
         let width = pagination.format().width;
-        draw_pages(&mut commands, &chrome, &reader.doc, pages, width, &mut measure, scale, &image_assets);
+        draw_pages(
+            &mut commands,
+            &chrome,
+            &reader.doc,
+            pages,
+            width,
+            &mut measure,
+            scale,
+            &image_assets,
+        );
         if reader.layout == ReaderLayout::Scroll
             && let Some(viewport) = chrome.viewport
             && let Ok(mut pos) = scrolls.get_mut(viewport)
             && let Ok(mut body) = nodes.get_mut(chrome.bodies[0])
         {
-            open_scroll(&pagination.pages()[0], reader.bookmark, scale, &mut pos, &mut body);
+            open_scroll(
+                &pagination.pages()[0],
+                reader.bookmark,
+                scale,
+                &mut pos,
+                &mut body,
+            );
         }
         state.shown = Some(shown);
         let bookmark = pages.first().map_or(DocPos::default(), |p| p.start);
@@ -626,8 +669,16 @@ pub(crate) fn layout_readers(
         }
         state.own_bookmark = Some(reader.bookmark);
         let last = pagination.view_count(page_view).saturating_sub(1);
-        set_disabled(&mut commands, chrome.prev, reader.layout == ReaderLayout::Book && state.view == 0);
-        set_disabled(&mut commands, chrome.next, reader.layout == ReaderLayout::Book && state.view >= last);
+        set_disabled(
+            &mut commands,
+            chrome.prev,
+            reader.layout == ReaderLayout::Book && state.view == 0,
+        );
+        set_disabled(
+            &mut commands,
+            chrome.next,
+            reader.layout == ReaderLayout::Book && state.view >= last,
+        );
     }
 }
 
@@ -703,7 +754,11 @@ fn dress_chrome(
 }
 
 fn show(node: &mut Node, visible: bool) {
-    let display = if visible { Display::Flex } else { Display::None };
+    let display = if visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
     if node.display != display {
         node.display = display;
     }
@@ -720,7 +775,13 @@ fn scroll_bookmark(page: &Page, y: f32) -> Option<DocPos> {
 
 /// Scrolls to the item holding `bookmark` and sizes the scroll body to the
 /// text, so the viewport scrolls to its end.
-fn open_scroll(page: &Page, bookmark: DocPos, scale: MeasureScale, pos: &mut ScrollPosition, body: &mut Node) {
+fn open_scroll(
+    page: &Page,
+    bookmark: DocPos,
+    scale: MeasureScale,
+    pos: &mut ScrollPosition,
+    body: &mut Node,
+) {
     let y = page
         .items
         .iter()
@@ -874,22 +935,24 @@ pub fn fragment_tails(
 ) -> Vec<Option<usize>> {
     page.items
         .iter()
-        .map(|placed| match (&placed.fragment, &doc.blocks[placed.block]) {
-            (Fragment::Lines { range, .. }, Block::Paragraph(p)) if range.end < p.len() => {
-                let next = measure
-                    .lines(p, width)
-                    .iter()
-                    .find(|l| l.range.start == range.end)?
-                    .range
-                    .end;
-                let text = p.text();
-                let word_end = text[next..]
-                    .find(char::is_whitespace)
-                    .map_or(text.len(), |i| next + i);
-                Some(word_end)
-            }
-            _ => None,
-        })
+        .map(
+            |placed| match (&placed.fragment, &doc.blocks[placed.block]) {
+                (Fragment::Lines { range, .. }, Block::Paragraph(p)) if range.end < p.len() => {
+                    let next = measure
+                        .lines(p, width)
+                        .iter()
+                        .find(|l| l.range.start == range.end)?
+                        .range
+                        .end;
+                    let text = p.text();
+                    let word_end = text[next..]
+                        .find(char::is_whitespace)
+                        .map_or(text.len(), |i| next + i);
+                    Some(word_end)
+                }
+                _ => None,
+            },
+        )
         .collect()
 }
 
@@ -921,7 +984,10 @@ pub fn spawn_paragraph(
         ))
         .id();
     let shown = paragraph.inlines.iter().map(|i| (i, true));
-    let hidden = tail.into_iter().flat_map(|t| &t.inlines).map(|i| (i, false));
+    let hidden = tail
+        .into_iter()
+        .flat_map(|t| &t.inlines)
+        .map(|i| (i, false));
     for (inline, visible) in shown.chain(hidden) {
         let mut entity = match inline {
             Inline::Text { text: run, style } => {

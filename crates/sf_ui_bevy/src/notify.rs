@@ -22,8 +22,8 @@ use bevy_time::{Real, Time};
 use bevy_ui::prelude::*;
 use bevy_ui_widgets::{Activate, Button};
 use sf_ui::{
-    MessageBox, MessageBoxChoice, MessageBoxId, MessageBoxQueue, RunStyle, ScreenId, ToastConfig, ToastId,
-    ToastQueue,
+    MessageBox, MessageBoxChoice, MessageBoxId, MessageBoxQueue, RunStyle, ScreenId, ToastConfig,
+    ToastId, ToastQueue,
 };
 
 use crate::nav::{UiDefaultFocus, UiFocusable};
@@ -38,7 +38,12 @@ pub struct MessageBoxes(pub MessageBoxQueue);
 
 impl MessageBoxes {
     /// Queues a box (buttons already localized; empty gets the OK label).
-    pub fn show(&mut self, text: impl Into<String>, buttons: Vec<String>, config: &MessageBoxConfig) -> MessageBoxId {
+    pub fn show(
+        &mut self,
+        text: impl Into<String>,
+        buttons: Vec<String>,
+        config: &MessageBoxConfig,
+    ) -> MessageBoxId {
         self.0.show(text, buttons, &config.ok_label)
     }
 }
@@ -227,9 +232,16 @@ fn spawn_message_box(
             },
             Button,
             UiFocusable,
-            MessageBoxButton { id: shown.id, index },
+            MessageBoxButton {
+                id: shown.id,
+                index,
+            },
             ChildOf(row),
-            children![(Text::new(label.clone()), font.clone(), TextColor(colors.text))],
+            children![(
+                Text::new(label.clone()),
+                font.clone(),
+                TextColor(colors.text)
+            )],
         ));
         if index == 0 {
             button.insert(UiDefaultFocus);
@@ -317,7 +329,11 @@ pub struct ToastStack;
 pub struct ToastView(pub ToastId);
 
 /// Advances toasts on real time.
-pub(crate) fn tick_toasts(time: Res<Time<Real>>, settings: Option<Res<UiSettings>>, mut toasts: ResMut<Toasts>) {
+pub(crate) fn tick_toasts(
+    time: Res<Time<Real>>,
+    settings: Option<Res<UiSettings>>,
+    mut toasts: ResMut<Toasts>,
+) {
     let reduce = settings.is_some_and(|s| s.reduce_motion);
     let config = if reduce {
         toasts.config.without_fades()
@@ -391,7 +407,11 @@ pub(crate) fn sync_toasts(
                     padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
                     ..Node::default()
                 },
-                BackgroundColor(colors.toast_background.with_alpha(colors.toast_background.alpha() * opacity)),
+                BackgroundColor(
+                    colors
+                        .toast_background
+                        .with_alpha(colors.toast_background.alpha() * opacity),
+                ),
                 ChildOf(column),
                 children![(
                     Text::new(toast.label()),

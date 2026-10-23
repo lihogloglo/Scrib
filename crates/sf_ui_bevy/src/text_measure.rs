@@ -27,7 +27,10 @@ use bevy_text::{
     TextFont, TextPipeline,
 };
 use parley::PositionedLayoutItem;
-use sf_ui::{Align, ImageRef, Inline, LineMetrics, OBJECT_REPLACEMENT, Paragraph, RunStyle, Size, TextMeasure};
+use sf_ui::{
+    Align, ImageRef, Inline, LineMetrics, OBJECT_REPLACEMENT, Paragraph, RunStyle, Size,
+    TextMeasure,
+};
 
 /// Line breaking for documents: at word boundaries, inside a word only when
 /// it is longer than the line (CSS `overflow-wrap: anywhere`), so long words
@@ -148,7 +151,11 @@ impl RichImages {
     }
 
     /// The handle of `source`, resolving it on first use.
-    pub fn resolve(&mut self, source: &str, assets: Option<&bevy_asset::AssetServer>) -> Option<Handle<Image>> {
+    pub fn resolve(
+        &mut self,
+        source: &str,
+        assets: Option<&bevy_asset::AssetServer>,
+    ) -> Option<Handle<Image>> {
         if let Some(h) = self.handles.get(source) {
             return Some(h.clone());
         }
@@ -244,7 +251,11 @@ fn paragraph_key(p: &Paragraph, width: u32, scale: (u32, u32)) -> u64 {
             }
             Inline::Image(image) => {
                 (1u8, &image.source).hash(&mut h);
-                (image.width.map(f32::to_bits), image.height.map(f32::to_bits)).hash(&mut h);
+                (
+                    image.width.map(f32::to_bits),
+                    image.height.map(f32::to_bits),
+                )
+                    .hash(&mut h);
             }
         }
     }
@@ -445,7 +456,10 @@ fn flattened_lines(paragraph: &Paragraph, block: &ComputedTextBlock) -> Vec<Line
 
 impl TextMeasure for ParleyMeasure<'_> {
     fn lines(&mut self, paragraph: &Paragraph, width: f32) -> Vec<LineMetrics> {
-        let scale = (self.scale.scale_factor.to_bits(), self.scale.text_scale.to_bits());
+        let scale = (
+            self.scale.scale_factor.to_bits(),
+            self.scale.text_scale.to_bits(),
+        );
         let width_bits = width.to_bits();
         // An empty paragraph is a blank line of the body face.
         let blank;

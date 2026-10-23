@@ -38,7 +38,11 @@ fn message_box_withdraw() {
     let b = q.show("b", labels(&["x"]), "OK");
     let v = q.version();
     assert!(q.withdraw(b));
-    assert_eq!(q.version(), v, "a hidden box leaving changes nothing on screen");
+    assert_eq!(
+        q.version(),
+        v,
+        "a hidden box leaving changes nothing on screen"
+    );
     assert!(q.withdraw(a));
     assert_ne!(q.version(), v);
     assert!(!q.withdraw(a));

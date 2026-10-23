@@ -16,6 +16,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::text::{ComputedTextBlock, FontSource, TextLayoutInfo, TextPlugin};
 use bevy::time::TimeUpdateStrategy;
 use bevy::ui::UiPlugin;
+use bevy_input_focus::InputFocus;
 use bevy_ui::InteractionDisabled;
 use bevy_ui_widgets::Activate;
 use sf_records::{RecordDb, RecordFormat, apply_record_file};
@@ -23,7 +24,6 @@ use sf_ui::{
     Align, Block, DocPos, Fragment, ImageRef, PageView, Paragraph, RichDoc, RunStyle, UiRegistry,
     register_kinds,
 };
-use bevy_input_focus::InputFocus;
 
 use crate::*;
 
@@ -50,7 +50,9 @@ fn ui_app_with(scale_factor: f32, extra: impl FnOnce(&mut App)) -> App {
         UiTextPlugin,
     ))
     .init_resource::<UiSettings>()
-    .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+    .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
     extra(&mut app);
     app.world_mut().spawn((
         Camera2d,
@@ -243,6 +245,7 @@ fn visible_glyphs(info: &TextLayoutInfo) -> usize {
 
 /// The drawn page: for each fragment of each body, compare `bevy_ui`'s layout
 /// with the pagination; returns glyphs drawn per block.
+#[allow(clippy::too_many_lines)]
 fn check_view(app: &mut App, reader: Entity, glyphs: &mut [usize]) {
     let world = app.world_mut();
     let state = world.get::<ReaderState>(reader).unwrap();
@@ -286,8 +289,16 @@ fn check_view(app: &mut App, reader: Entity, glyphs: &mut [usize]) {
                     // after them only the invisible tail (the next line, for
                     // shaping context) or the empty line parley adds after a
                     // final hard break.
-                    let heights: Vec<f32> = block.buffer().lines().map(|l| l.metrics().line_height).collect();
-                    assert!(heights.len() >= *lines, "block {} {range:?}: lines drawn", placed.block);
+                    let heights: Vec<f32> = block
+                        .buffer()
+                        .lines()
+                        .map(|l| l.metrics().line_height)
+                        .collect();
+                    assert!(
+                        heights.len() >= *lines,
+                        "block {} {range:?}: lines drawn",
+                        placed.block
+                    );
                     let height: f32 = heights[..*lines].iter().sum();
                     assert!(
                         (height - placed.height).abs() <= 0.01,
@@ -312,7 +323,11 @@ fn check_view(app: &mut App, reader: Entity, glyphs: &mut [usize]) {
                         );
                     }
                     let mut shown = 0;
-                    for g in info.glyphs.iter().filter(|g| g.atlas_info.rect.size().x > 0.0) {
+                    for g in info
+                        .glyphs
+                        .iter()
+                        .filter(|g| g.atlas_info.rect.size().x > 0.0)
+                    {
                         let section = block.entities()[g.section_index as usize].entity;
                         let tail = world.get::<ReaderTail>(section).is_some();
                         assert_eq!(
@@ -333,7 +348,10 @@ fn check_view(app: &mut App, reader: Entity, glyphs: &mut [usize]) {
                         }
                     }
                     if let Some(h) = format.height {
-                        assert!(lone || top + height <= h + 0.01, "text clipped at the page bottom");
+                        assert!(
+                            lone || top + height <= h + 0.01,
+                            "text clipped at the page bottom"
+                        );
                     }
                     glyphs[placed.block] += shown;
                 }
@@ -370,7 +388,8 @@ fn page_through(app: &mut App, reader: Entity, doc: &RichDoc) {
         let Block::Paragraph(p) = block else { continue };
         let mut at = 0;
         for placed in pagination.pages().iter().flat_map(|p| &p.items) {
-            if let (true, Fragment::Lines { range, .. }) = (placed.block == index, &placed.fragment) {
+            if let (true, Fragment::Lines { range, .. }) = (placed.block == index, &placed.fragment)
+            {
                 assert_eq!(range.start, at, "block {index}: fragments are contiguous");
                 at = range.end;
             }
@@ -378,7 +397,10 @@ fn page_through(app: &mut App, reader: Entity, doc: &RichDoc) {
         assert_eq!(at, p.len(), "block {index}: fragments cover the paragraph");
         if !p.is_empty() {
             let expect = reference_glyphs(app, p, width);
-            assert_eq!(glyphs[index], expect, "block {index}: glyphs drawn across pages");
+            assert_eq!(
+                glyphs[index], expect,
+                "block {index}: glyphs drawn across pages"
+            );
         }
     }
 }
@@ -467,7 +489,11 @@ fn book_turns_pages_and_keeps_its_place_across_text_scale() {
         .filter(|(i, n)| n.as_str() == "sf-reader-pages" && i.image != Handle::default())
         .count();
     assert_eq!(backgrounds, 1);
-    assert!(app.world().get::<InteractionDisabled>(button(ReaderAction::Prev)).is_some());
+    assert!(
+        app.world()
+            .get::<InteractionDisabled>(button(ReaderAction::Prev))
+            .is_some()
+    );
     // Next by button, twice; Prev by message.
     for _ in 0..2 {
         app.world_mut().trigger(Activate {
@@ -483,7 +509,11 @@ fn book_turns_pages_and_keeps_its_place_across_text_scale() {
     app.update();
     assert_eq!(reader_state(&app, reader).view(), 1);
     app.update();
-    assert!(app.world().get::<InteractionDisabled>(button(ReaderAction::Prev)).is_none());
+    assert!(
+        app.world()
+            .get::<InteractionDisabled>(button(ReaderAction::Prev))
+            .is_none()
+    );
     let bookmark = app.world().get::<RichReader>(reader).unwrap().bookmark;
     assert!(bookmark > DocPos::default());
     // 150 % text: more pages, the open view still holds the bookmark.
@@ -508,7 +538,11 @@ fn book_turns_pages_and_keeps_its_place_across_text_scale() {
     }
     app.update();
     assert_eq!(reader_state(&app, reader).view(), last);
-    assert!(app.world().get::<InteractionDisabled>(button(ReaderAction::Next)).is_some());
+    assert!(
+        app.world()
+            .get::<InteractionDisabled>(button(ReaderAction::Next))
+            .is_some()
+    );
 }
 
 #[derive(Resource, Default)]
@@ -528,14 +562,25 @@ fn ui_actions_drive_the_reader_of_their_screen() {
     add_image(&mut app, "glyph", 24, 30);
     add_image(&mut app, "parchment", 64, 64);
     let doc = Arc::new(synthetic_doc(29));
-    let root = app.world_mut().spawn((Node::default(), UiScreenRoot("book".into()))).id();
+    let root = app
+        .world_mut()
+        .spawn((Node::default(), UiScreenRoot("book".into())))
+        .id();
     let reader = app
         .world_mut()
         .spawn((RichReader::book(doc).takeable(true), ChildOf(root)))
         .id();
-    let other = app.world_mut().spawn(RichReader::book(Arc::new(synthetic_doc(30)))).id();
+    let other = app
+        .world_mut()
+        .spawn(RichReader::book(Arc::new(synthetic_doc(30))))
+        .id();
     settle(&mut app, reader);
-    for action in [UiAction::TabNext, UiAction::Context1, UiAction::Back, UiAction::Confirm] {
+    for action in [
+        UiAction::TabNext,
+        UiAction::Context1,
+        UiAction::Back,
+        UiAction::Confirm,
+    ] {
         app.world_mut().write_message(UiActionEvent {
             action,
             screen: "book".into(),
@@ -545,7 +590,10 @@ fn ui_actions_drive_the_reader_of_their_screen() {
     let seen = &app.world().resource::<SeenReader>().0;
     let expect = [ReaderAction::Next, ReaderAction::Take, ReaderAction::Close];
     assert_eq!(seen.iter().map(|e| e.action).collect::<Vec<_>>(), expect);
-    assert!(seen.iter().all(|e| e.reader == reader), "only the screen's reader");
+    assert!(
+        seen.iter().all(|e| e.reader == reader),
+        "only the screen's reader"
+    );
     assert_eq!(reader_state(&app, reader).view(), 1);
     assert_eq!(reader_state(&app, other).view(), 0);
 }
@@ -571,7 +619,10 @@ fn scroll_is_one_page_and_scrolls() {
         .find(|(.., b)| b.reader == reader)
         .map(|(e, n, _)| (e, n.size()))
         .unwrap();
-    assert!((body_node.y - content).abs() <= 1.0, "the scroll body is as long as the text");
+    assert!(
+        (body_node.y - content).abs() <= 1.0,
+        "the scroll body is as long as the text"
+    );
     let drawn = world.get::<Children>(body).unwrap().len();
     let items = pagination_items(&app, reader);
     assert_eq!(drawn, items);
@@ -595,22 +646,28 @@ fn scroll_is_one_page_and_scrolls() {
     let y = viewport(&mut app);
     assert!(y > 400.0, "next scrolls most of a viewport (got {y})");
     let bookmark = app.world().get::<RichReader>(reader).unwrap().bookmark;
-    assert!(bookmark > DocPos::default(), "the bookmark follows the scroll");
+    assert!(
+        bookmark > DocPos::default(),
+        "the bookmark follows the scroll"
+    );
     // Wheel: three lines down.
-    app.world_mut().write_message(bevy::input::mouse::MouseWheel {
-        unit: bevy::input::mouse::MouseScrollUnit::Line,
-        x: 0.0,
-        y: -3.0,
-        window: Entity::PLACEHOLDER,
-        phase: bevy::input::touch::TouchPhase::Moved,
-    });
+    app.world_mut()
+        .write_message(bevy::input::mouse::MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y: -3.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
     app.update();
     app.update();
     assert!((viewport(&mut app) - y - 3.0 * WHEEL_LINE).abs() < 1.0);
 }
 
 fn pagination_items(app: &App, reader: Entity) -> usize {
-    reader_state(app, reader).pagination().unwrap().pages()[0].items.len()
+    reader_state(app, reader).pagination().unwrap().pages()[0]
+        .items
+        .len()
 }
 
 const MODAL: &str = r#"
@@ -630,16 +687,19 @@ fn message_app() -> App {
     let outcome = apply_record_file(&mut db, base, MODAL, RecordFormat::Toml).unwrap();
     assert_eq!(outcome.errors, []);
     ui_app_with(1.0, |app| {
-        app.add_plugins((bevy_enhanced_input::prelude::EnhancedInputPlugin, SfUiPlugin))
-            .insert_resource(UiRegistryRes(UiRegistry::build(&db).0))
-            .init_resource::<Answers>()
-            .add_systems(
-                Update,
-                (|mut r: MessageReader<MessageBoxAnswer>, mut seen: ResMut<Answers>| {
-                    seen.0.extend(r.read().copied());
-                })
-                .after(UiTextSystems::Draw),
-            );
+        app.add_plugins((
+            bevy_enhanced_input::prelude::EnhancedInputPlugin,
+            SfUiPlugin,
+        ))
+        .insert_resource(UiRegistryRes(UiRegistry::build(&db).0))
+        .init_resource::<Answers>()
+        .add_systems(
+            Update,
+            (|mut r: MessageReader<MessageBoxAnswer>, mut seen: ResMut<Answers>| {
+                seen.0.extend(r.read().copied());
+            })
+            .after(UiTextSystems::Draw),
+        );
     })
 }
 
@@ -660,7 +720,11 @@ fn message_box_choice_flow() {
     let config = app.world().resource::<MessageBoxConfig>().clone();
     let (a, b) = {
         let mut boxes = app.world_mut().resource_mut::<MessageBoxes>();
-        let a = boxes.show("Rest until healed?", vec!["Yes".into(), "No".into()], &config);
+        let a = boxes.show(
+            "Rest until healed?",
+            vec!["Yes".into(), "No".into()],
+            &config,
+        );
         let b = boxes.show("You cannot rest here.", Vec::new(), &config);
         (a, b)
     };
@@ -693,7 +757,10 @@ fn message_box_choice_flow() {
     app.update();
     assert_eq!(
         app.world().resource::<Answers>().0,
-        [MessageBoxAnswer(sf_ui::MessageBoxChoice { id: a, index: 1 })]
+        [MessageBoxAnswer(sf_ui::MessageBoxChoice {
+            id: a,
+            index: 1
+        })]
     );
     assert_eq!(label(&mut app).as_deref(), Some("You cannot rest here."));
     let buttons = box_buttons(&mut app);
@@ -706,9 +773,17 @@ fn message_box_choice_flow() {
     });
     app.update();
     assert_eq!(app.world().resource::<Answers>().0.len(), 1);
-    assert!(app.world().resource::<ScreenStackRes>().0.is_open("sf.message_box"));
+    assert!(
+        app.world()
+            .resource::<ScreenStackRes>()
+            .0
+            .is_open("sf.message_box")
+    );
     // With one, Back answers it; the queue is empty: screen closed, view gone.
-    app.world_mut().resource_mut::<MessageBoxes>().0.set_cancel(b, Some(0));
+    app.world_mut()
+        .resource_mut::<MessageBoxes>()
+        .0
+        .set_cancel(b, Some(0));
     app.world_mut().write_message(UiActionEvent {
         action: UiAction::Back,
         screen: config.screen.clone(),
@@ -719,7 +794,12 @@ fn message_box_choice_flow() {
         app.world().resource::<Answers>().0[1],
         MessageBoxAnswer(sf_ui::MessageBoxChoice { id: b, index: 0 })
     );
-    assert!(!app.world().resource::<ScreenStackRes>().0.is_open("sf.message_box"));
+    assert!(
+        !app.world()
+            .resource::<ScreenStackRes>()
+            .0
+            .is_open("sf.message_box")
+    );
     let world = app.world_mut();
     assert_eq!(world.query::<&MessageBoxView>().iter(world).count(), 0);
 }
@@ -765,7 +845,10 @@ fn toast_queue_timing() {
     app.update();
     let views = toast_views(&mut app);
     assert_eq!(views.len(), 2, "two slots");
-    let gold = views.iter().find(|(t, _)| t == "You picked up 5 gold. (x2)").unwrap();
+    let gold = views
+        .iter()
+        .find(|(t, _)| t == "You picked up 5 gold. (x2)")
+        .unwrap();
     assert!(gold.1 < full, "fading in");
     // The key toast was retired for the journal toast, which shows once
     // its 0.4 s fade is done.
@@ -782,7 +865,13 @@ fn toast_queue_timing() {
         app.update();
     }
     assert!(toast_views(&mut app).is_empty());
-    assert!(app.world().resource::<Toasts>().queue().visible().is_empty());
+    assert!(
+        app.world()
+            .resource::<Toasts>()
+            .queue()
+            .visible()
+            .is_empty()
+    );
     // Reduce motion: full opacity from the first frame.
     app.world_mut().resource_mut::<UiSettings>().reduce_motion = true;
     app.world_mut().resource_mut::<Toasts>().push("Saved.");
