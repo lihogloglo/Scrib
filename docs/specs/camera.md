@@ -1,8 +1,8 @@
 # Camera: third person, first person, framed moves, comfort
 
 Status: **draft, awaiting owner review (R11b, 2026-10-19).** Rig math built 2026-10-21 (`sf_camera`,
-see "As built (rig math)" at the end, which wins where it differs); no Bevy shell yet (the game has a
-free fly camera only). Crates: `sf_camera` (Bevy-free rig math, new), `sf_camera_bevy` (thin plugin, new).
+see "As built (rig math)" at the end, which wins where it differs); Bevy shell built 2026-10-23
+(`sf_camera_bevy`, "As built (D1 shell)"); the game still has to wire it in place of its fly camera. Crates: `sf_camera` (Bevy-free rig math, new), `sf_camera_bevy` (thin plugin, new).
 Sources: `../research/animation/11-tradeoffs.md` §5-6 and "Decisions"; R2 §5-7, R5 §4, R6 §5, §9,
 R7 §2, R8 §1.4, §2-3. Companion: [action.md](action.md).
 
@@ -127,8 +127,11 @@ presentation: every function takes the frame `dt`; nothing here is saved or repl
   proposes a look the shell writes back.
 - **`ArmCollision::update(probe, pivot, arm, params, dt) -> ArmResult { eye, length, free, fade,
   blocked }`**: one sphere cast (radius + margin) pivot to eye; the length is never above this
-  frame's free length (push-in at once, never inside), and eases out with `out_halflife`; `fade`
-  is a smoothstep of the arm length for the body's dither.
+  frame's free length (push-in at once, never inside). The state is the push-in **depth** (desired
+  minus used length), which eases back out with `out_halflife`, so a desired arm that grows by
+  itself (zoom, mode distance, already eased by the rig) is followed exactly (fix 2026-10-23:
+  easing the length smoothed those twice and made them frame-rate dependent). `fade` is a
+  smoothstep of the arm length for the body's dither.
 - **Lock-on** (target in `sf_action`, math here): `acquire` (cone + range + LOS, score mixes
   angle and distance), `switch_target` (smallest yaw step to a side), `LockTimers` (serde, kept
   with the target: `check` breaks past `break_range` > `acquire_range`, on a lost target, or
@@ -146,3 +149,59 @@ presentation: every function takes the frame `dt`; nothing here is saved or repl
 Next: `sf_camera_bevy` (D1 shell: look from `bevy_enhanced_input`, candidates and LOS from the
 world, dither fade, CAM-1 check); `sf_action` gains the lock target + `LockTimers` + a
 `breaks_lock` rule field (E2); the first-person eye track arrives with D2.
+
+## As built (D1 shell, 2026-10-23)
+
+`crates/sf_camera_bevy` (deps: `bevy_app/ecs/math/time/transform`, `bevy_enhanced_input`,
+`big_space`, `sf_camera`, `sf_action(_bevy)`, `sf_controller`, `sf_coords`; feature `projection`
+adds `bevy_camera` to write the comfort FOV). Tests: `src/tests.rs` (13, headless, `MinimalPlugins`
+parts + the action shell on the camera level's statics).
+- **Entities.** A camera entity carries `PlayerCamera { follow, params: CameraParams, settings:
+  ComfortSettings, frame_origin, look_limits, limits_entry_yaw, ignore_look }`; `follow` is an
+  `ActionBody` (with `PlayerInput`, its commands get the look). `PlayerCamera::pose()` is the pose
+  written last (`CameraPose`: eye, rotation, look, view, mode, arm length, blocked, fade, locked
+  target) for the body's dither, a centre dot or audio.
+- **`SfCameraPlugin<G>`**, `G` the ground probe resource of `SfActionPlugin<G>`: the arm is cast
+  against the mover's own collision (`sf_physics_bevy::Physics`, rapier shape casts, in the game;
+  a level's `StaticWorld` in tests). Not avian: physics is rapier (§10 2026-10-12), so avian
+  colliders would be a second, empty collision world; an avian host plugs in by implementing
+  `GroundProbe` over avian's `SpatialQuery`. No `G` resource: no collision.
+- **`CameraSystems::Look`** (`RunFixedMainLoop`, before the fixed loop, after
+  `ActionSystems::Gather`): reads the `CameraAction`s on the player's `PlayerControls` context
+  (`CameraLook` Vec2 radians this frame, x right, y up, the bindings carry `Scale`/`Negate`/
+  `DeltaScale`; `CameraZoom` steps; `CameraToggleView` and `CameraSwapShoulder` on press). Third
+  person free: `Look::turned` within the orbit pitch limits (+ `recentre_behind` when
+  `auto_camera`); first person: `FirstPersonLook` with the move's limits; locked: input ignored.
+  The look goes to `sampler.set_view`, and the move stick is **resolved against the look's yaw**
+  here (camera-relative movement: `sf_action_bevy`'s gather writes the raw stick, this overwrites
+  it; without a camera the stick stays world XZ).
+- **`CameraSystems::Rig`** (`PostUpdate`, before `TransformSystems::Propagate` and `big_space`'s
+  recentering): body = `frame_origin + Transform` (the interpolated, corrected drawn root);
+  velocity = gameplay velocity (+ vertical speed while airborne); mode from `ActionState.mode`
+  (Normal/Sneak/FreeRun) or `Locked`. Third person: `OrbitRig` with the mode distance times the
+  zoom, then `ArmCollision`. First person: eye = root + `eye_height` + `eye_forward` along the look
+  yaw (D2's baked track replaces it), fade 1. Shake: `CameraShake { trauma }` messages reach every
+  player camera; rotation = `look.rotation() * shake`.
+- **Lock-on**: `LockOn(Entity)` on the follower, written by the lock's owner (E2's action layer, or
+  the host); the target needs `Lockable { aim_height }`. Framing runs in the rig pass on this
+  frame's drawn bodies (`locked_look`, eased by `framing_halflife`), and that look is what the next
+  ticks carry. Third person only (first person is soft aim). Acquisition, switching and breaks stay
+  with the owner (`sf_camera::lockon`).
+- **View toggle** is an instant cut (`OrbitRig`/`ArmCollision` reset) that keeps the aim (pitch
+  clamped into the orbit range on the way back to third person). **Zoom** is a factor
+  (`ZoomParams`: 0.5..1.5, 0.1 per step) on every mode distance, eased by `distance_halflife`.
+- **Placement**: with a `CellCoord` the camera is a high-precision child of a `big_space` grid and
+  its cell and `Transform` are the eye's `WorldPos` exactly (canonical, so `big_space` never
+  recenters it). Without one, `Transform = frame_origin.delta_f32(eye)`.
+- **Positions** of followers and targets: `ActionBody` frame origin + `Transform`; else
+  `CellCoord` + `Transform`; else `Transform` from the world origin.
+- **Measured (tests)**: the eye sphere is never inside the corridor wall, the 2.1 m ceiling or the
+  pillar, from the first frame; recovery is monotonic, ~1 s to 98 %; a walk past the pillar with a
+  lock-on and a shake at 30/60/144 fps keeps the eye within 2.3 mm and the rotation within 0.04° of
+  60 fps over 4 s (gate 5 mm / 0.1°); 1000 km out on a `big_space` grid the camera cell and arm are
+  exact.
+- **Test level** `crates/sf_level/tests/levels/camera.ron`: a 2 m corridor with a 2.1 m ceiling over
+  its north half, a 0.4 m pillar, open floor and a lock-on post; spawns `corridor`, `ceiling`,
+  `pillar`, `open`. The game copies it to its `levels/` for CAM-1.
+- Not built: the near-geometry dither (only `fade` is output), first-person render bodies (D2),
+  framed cameras, lock candidates and LOS casts (the lock's owner, E2).

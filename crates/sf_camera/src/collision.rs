@@ -42,10 +42,12 @@ pub struct ArmResult {
     pub blocked: bool,
 }
 
-/// Frame state of the arm length (presentation only).
+/// Frame state of the arm (presentation only): how far it is pushed in. The push-in depth, not
+/// the length, is what eases, so a desired arm that grows by itself (zoom, mode distance, both
+/// eased by the rig already) is followed exactly and only the recovery from an obstruction eases.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ArmCollision {
-    length: Option<f32>,
+    depth: Option<f32>,
 }
 
 impl ArmCollision {
@@ -54,7 +56,7 @@ impl ArmCollision {
     }
 
     pub fn reset(&mut self) {
-        self.length = None;
+        self.depth = None;
     }
 
     /// Resolve the arm `pivot + arm` against `probe`. The eye never goes past the cast's free
@@ -62,20 +64,22 @@ impl ArmCollision {
     pub fn update(&mut self, probe: &impl GroundProbe, pivot: WorldPos, arm: Vec3, p: &CollisionParams, dt: f32) -> ArmResult {
         let want = arm.length();
         if want <= 1e-4 {
-            self.length = Some(0.0);
+            self.depth = Some(0.0);
             return ArmResult { eye: pivot, length: 0.0, free: 0.0, fade: 1.0, blocked: false };
         }
         let dir = arm / want;
         let reach = want + p.margin;
         let hit = probe.probe_one(ProbeQuery::sphere(pivot, dir, reach, p.radius + p.margin));
         let free = hit.map_or(want, |h| h.distance.min(want));
-        let length = match self.length {
+        let blocked_by = want - free;
+        let depth = match self.depth {
             // Push in at once; never longer than what is free this frame.
-            Some(cur) if free <= cur => free,
-            Some(cur) => (cur + (free - cur) * ease_factor(p.out_halflife, dt)).min(free),
-            None => free,
+            Some(cur) if blocked_by >= cur => blocked_by,
+            Some(cur) => (cur + (blocked_by - cur) * ease_factor(p.out_halflife, dt)).max(blocked_by),
+            None => blocked_by,
         };
-        self.length = Some(length);
+        self.depth = Some(depth);
+        let length = want - depth;
         let span = (p.fade_start - p.fade_end).max(1e-4);
         ArmResult {
             eye: pivot.offset(dir * length),
