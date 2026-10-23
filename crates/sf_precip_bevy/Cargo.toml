@@ -28,6 +28,7 @@ bevy_time = { workspace = true, features = ["std"] }
 
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

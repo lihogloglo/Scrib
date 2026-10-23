@@ -52,6 +52,7 @@ bevy_text = { workspace = true, optional = true }
 bevy_transform = { workspace = true, optional = true, features = ["std", "bevy-support"] }
 bevy_ui = { workspace = true, optional = true }
 bevy_window = { workspace = true, optional = true, features = ["std"] }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 # MinimalPlugins for headless tests; a window, 3D and UI for the example.

@@ -27,6 +27,7 @@ bevy_ui.workspace = true
 bevy_ui_widgets.workspace = true
 sf_mods.workspace = true
 sf_ui.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["ui"] }

@@ -26,6 +26,7 @@ log.workspace = true
 sf_coords = { path = "../sf_coords", version = "0.1.0" }
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 sf_water = { path = "../sf_water", version = "0.1.0" }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }

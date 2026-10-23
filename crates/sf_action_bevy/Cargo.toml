@@ -18,6 +18,7 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_action.workspace = true
 sf_controller.workspace = true
 sf_coords.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }

@@ -21,6 +21,7 @@ bevy_shader.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 log.workspace = true
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

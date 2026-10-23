@@ -5881,6 +5881,7 @@ dependencies = [
  "sf_action",
  "sf_controller",
  "sf_coords",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5920,6 +5921,7 @@ dependencies = [
  "sf_model",
  "sf_model_bevy",
  "tempfile",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5971,6 +5973,7 @@ dependencies = [
  "sf_render_order_bevy",
  "sf_sky_bevy",
  "sf_weather",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6001,6 +6004,7 @@ dependencies = [
  "sf_weather_bevy",
  "sf_world",
  "sf_world_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6046,6 +6050,7 @@ dependencies = [
  "sf_controller",
  "sf_coords",
  "sf_level",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6094,6 +6099,7 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6125,6 +6131,7 @@ dependencies = [
  "bevy_ui",
  "bevy_window",
  "sf_console",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6164,6 +6171,7 @@ dependencies = [
  "sf_controller",
  "sf_coords",
  "sf_diag_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6203,6 +6211,7 @@ dependencies = [
  "serde_json",
  "sf_diag",
  "tempfile",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6280,6 +6289,7 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6315,6 +6325,7 @@ dependencies = [
  "sf_model",
  "tempfile",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6378,6 +6389,7 @@ dependencies = [
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6403,6 +6415,7 @@ dependencies = [
  "glam 0.33.12",
  "sf_render_order_bevy",
  "sf_sky_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6446,6 +6459,7 @@ dependencies = [
  "bevy_math",
  "bevy_render",
  "bevy_shader",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6515,6 +6529,7 @@ dependencies = [
  "sf_world",
  "tempfile",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6541,6 +6556,7 @@ dependencies = [
  "semver",
  "sf_diag_bevy",
  "sf_script",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6561,6 +6577,7 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "log",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6600,6 +6617,7 @@ dependencies = [
  "log",
  "sf_render_order_bevy",
  "sf_sky",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6648,6 +6666,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_terrain",
  "sf_world",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6693,6 +6712,7 @@ dependencies = [
  "sf_ui",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6711,6 +6731,7 @@ dependencies = [
  "sf_ui",
  "sf_ui_bevy",
  "tempfile",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6772,6 +6793,7 @@ dependencies = [
  "sf_coords",
  "sf_render_order_bevy",
  "sf_water",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6813,6 +6835,7 @@ dependencies = [
  "sf_weather",
  "sf_wind_bevy",
  "smallvec",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6841,6 +6864,7 @@ dependencies = [
  "bevy_time",
  "sf_coords",
  "sf_wind",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6899,6 +6923,7 @@ dependencies = [
  "sf_vfs",
  "sf_world",
  "tempfile",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8560,6 +8585,131 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "arrayvec",
+ "async-task",
+ "bevy",
+ "bevy_animation",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_clipboard",
+ "bevy_core_pipeline",
+ "bevy_curve",
+ "bevy_diagnostic",
+ "bevy_ecs",
+ "bevy_gizmos",
+ "bevy_gizmos_render",
+ "bevy_image",
+ "bevy_input",
+ "bevy_input_focus",
+ "bevy_internal",
+ "bevy_light",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_picking",
+ "bevy_platform",
+ "bevy_reflect",
+ "bevy_reflect_derive",
+ "bevy_render",
+ "bevy_shape",
+ "bevy_sprite",
+ "bevy_tasks",
+ "bevy_text",
+ "bevy_time",
+ "bevy_transform",
+ "bevy_ui",
+ "bevy_ui_widgets",
+ "bevy_utils",
+ "bevy_window",
+ "bitflags 2.13.2",
+ "blake3",
+ "bytemuck",
+ "byteorder",
+ "cc",
+ "concurrent-queue",
+ "constant_time_eq",
+ "crossbeam-channel",
+ "crossbeam-utils",
+ "derive_more",
+ "derive_more-impl",
+ "disqualified",
+ "downcast-rs 2.0.2",
+ "either",
+ "erased-serde",
+ "event-listener",
+ "event-listener-strategy",
+ "fastrand",
+ "fixedbitset",
+ "foldhash 0.2.0",
+ "futures-core",
+ "futures-lite",
+ "getrandom 0.4.3",
+ "glam 0.33.12",
+ "glamx",
+ "gltf",
+ "gltf-json",
+ "half",
+ "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
+ "image",
+ "indexmap",
+ "itertools 0.14.0",
+ "libc",
+ "linux-raw-sys 0.12.1",
+ "lock_api",
+ "log",
+ "memchr",
+ "naga-types",
+ "nix",
+ "nonmax",
+ "notify-debouncer-full",
+ "num-complex",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "phf_shared",
+ "proc-macro2",
+ "profiling",
+ "quote",
+ "regex-automata",
+ "regex-syntax",
+ "ron",
+ "rustix 1.1.5",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "slotmap",
+ "smallvec",
+ "smol_str",
+ "stable_deref_trait",
+ "syn 2.0.119",
+ "syn 3.0.7",
+ "thiserror 2.0.21",
+ "tinystr",
+ "toml_datetime 1.1.2+spec-1.1.0",
+ "toml_parser",
+ "tracing",
+ "tracing-core",
+ "twox-hash",
+ "uuid",
+ "wgpu",
+ "wgpu-core",
+ "wgpu-hal",
+ "wgpu-types",
+ "windows",
+ "windows-core",
+ "windows-sys 0.61.2",
+ "winnow 1.0.4",
 ]
 
 [[package]]

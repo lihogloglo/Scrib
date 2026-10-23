@@ -26,6 +26,7 @@ sf_anim.workspace = true
 sf_anim_graph.workspace = true
 # Counters (`anim/...`) when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }

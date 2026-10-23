@@ -44,6 +44,7 @@ sf_terrain_bevy.workspace = true
 sf_world.workspace = true
 # Activation hooks, the scheduler's R0 cells, grid coordinates.
 sf_world_bevy = { path = "../sf_world_bevy", version = "0.1.0", default-features = false }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 # The R0 write-back test: fixture biped, a compiled walk graph.

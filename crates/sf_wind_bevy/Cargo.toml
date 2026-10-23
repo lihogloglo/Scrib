@@ -21,6 +21,7 @@ bevy_shader.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 sf_coords = { path = "../sf_coords", version = "0.1.0" }
 sf_wind = { path = "../sf_wind", version = "0.1.0" }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
