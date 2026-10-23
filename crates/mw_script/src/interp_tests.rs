@@ -363,3 +363,16 @@ fn undeclared_variables_read_zero_and_drop_writes() {
     assert!(host.log.is_empty(), "{:?}", host.log);
     assert_eq!(l.0, [1.0]);
 }
+
+#[test]
+fn every_builtin_is_a_live_table_function() {
+    let t = FunctionTable::vanilla();
+    for b in crate::Builtin::ALL {
+        let f = t.function(t.get(b.name()).unwrap_or_else(|| panic!("{b:?}")));
+        assert_eq!(
+            (f.name.as_str(), f.status),
+            (b.name(), crate::Status::Live),
+            "functions.txt status column"
+        );
+    }
+}
