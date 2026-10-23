@@ -147,8 +147,8 @@ pub struct ConsoleOverlay {
     pub scroll: usize,
     /// The cursor as the game had it before the console opened.
     saved_cursor: Option<(bool, CursorGrabMode)>,
-    /// What the scrollback shows (next log seq, scroll): redraw when it changes.
-    drawn: Option<(u64, usize)>,
+    /// What the scrollback shows (next log seq, lines kept, scroll): redraw when it changes.
+    drawn: Option<(u64, usize, usize)>,
 }
 
 /// Overlay nodes, found by marker.
@@ -317,8 +317,10 @@ fn handle_keys(
         let step = (lines * 3.0) as isize;
         overlay.scroll = overlay.scroll.saturating_add_signed(step);
     }
-    let total = console.log().lines().len();
-    overlay.scroll = overlay.scroll.min(total.saturating_sub(1));
+    let max = console.log().lines().len().saturating_sub(1);
+    if overlay.scroll > max {
+        overlay.scroll = max;
+    }
 }
 
 /// While open, game systems that read `ButtonInput` or mouse motion directly see nothing.
@@ -391,7 +393,8 @@ fn draw_overlay(
         return;
     }
     let log = console.log();
-    let key = (log.next_seq(), overlay.scroll);
+    // The line count catches `clear` (Ctrl+L), which doesn't advance the sequence.
+    let key = (log.next_seq(), log.lines().len(), overlay.scroll);
     if overlay.drawn != Some(key) {
         overlay.drawn = Some(key);
         let lines: Vec<_> = log.lines().collect();

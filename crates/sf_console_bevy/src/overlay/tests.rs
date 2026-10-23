@@ -132,6 +132,23 @@ fn front_end_types_completes_submits_and_browses_history() {
         "{shown}"
     );
 
+    // Ctrl+L clears the scrollback.
+    press(&mut app, KeyCode::ControlLeft, Key::Control);
+    app.world_mut().write_message(KeyboardInput {
+        key_code: KeyCode::ControlLeft,
+        logical_key: Key::Control,
+        state: ButtonState::Pressed,
+        text: None,
+        repeat: false,
+        window: Entity::PLACEHOLDER,
+    });
+    press(&mut app, KeyCode::KeyL, Key::Character("l".into()));
+    app.update();
+    let shown: String = spans.iter(app.world()).map(|s| s.0.as_str()).collect();
+    assert_eq!(shown, "", "nothing left on screen");
+    assert_eq!(prompt(&app), "", "Ctrl+L isn't typed");
+    press(&mut app, KeyCode::ControlLeft, Key::Control);
+
     // Up recalls it; the popup lists completions; Escape clears, then closes.
     press(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     app.update();
