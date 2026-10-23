@@ -6722,6 +6722,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_ui_screens"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_enhanced_input",
+ "bevy_image",
+ "bevy_input",
+ "bevy_input_focus",
+ "bevy_math",
+ "bevy_picking",
+ "bevy_text",
+ "bevy_ui",
+ "bevy_ui_widgets",
+ "sf_action",
+ "sf_records",
+ "sf_rpg",
+ "sf_rpg_ui",
+ "sf_ui",
+ "sf_ui_bevy",
+ "sf_ui_css",
+ "sf_ui_inventory",
+ "sf_ui_screens",
+]
+
+[[package]]
 name = "sf_vfs"
 version = "0.1.0"
 dependencies = [
