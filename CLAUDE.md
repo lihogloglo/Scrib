@@ -61,7 +61,10 @@ working tree**. Protocol:
    repo and never names Morrowind formats, IDs, or conventions. Need
    Morrowind knowledge in the framework? Add an adapter hook.
 2. **No GPL-derived code in superfargoth.** GPL reuse (e.g. OpenMW) is fine
-   *here*, never there.
+   *here*, never there. For Morrowind content mechanics (MWScript, dialogue,
+   magic effects, levelled lists, crime), port OpenMW (cite file + commit)
+   instead of re-deriving; feel systems are modern first
+   (`../superfargoth/docs/ARCHITECTURE.md` §1b).
 3. **Everything is a mod.** Content flows through `sf_vfs` / `sf_records` /
    `sf_mods`. No privileged content paths.
 4. **Industry standard, never kludge.** Name the canonical technique first.

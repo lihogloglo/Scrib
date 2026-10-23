@@ -26,6 +26,13 @@ Decided 2026-10-19:
    then (B) carry Bevy PRs #26149/#26161 as a vendored patch. Torch-bearers cast shadows (within the budget).
    Own shadow atlas (C) only if A+B fall short. First: diagnose the ~0.8 ms GPU per shadowed lamp.
 
+Decided 2026-10-23 (`superfargoth/docs/ARCHITECTURE.md` §1b):
+4. **Modern rules are the goal; classic rules are a cheap nice-to-have, built last.** Content mechanics both need
+   (MWScript, dialogue, magic effects, levelled lists, factions, crime) are ported from OpenMW here (cite file +
+   commit), not re-derived. Feel systems (combat, progression, AI, formulas, movement, UI flow) are modern first,
+   each behind a seam a classic `mw_rules` version can fill later. Modern AI is very different from Morrowind's
+   packages: content goals (escort, follow, travel, wander, fight) are the seam, not package execution.
+
 Still open (low priority): storm spill past region borders (~2 km vs strict); co-op guest imports a single-player
 character (default: create only); cargo-deny in superfargoth; UAL2 clip pack purchase.
 
@@ -173,6 +180,7 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [ ] 3.5 Combat (M10). Owner 2026-10-22: not Morrowind's rules; adopt before building: evaluate
   github.com/Funny-Bones/ELDEN-RING-Playermodel-Rust (MIT code, Bevy 0.19; its timings/clips are extracted ER data,
   not shippable) as the base for action.md E1 (chains, guard, hit-stop, reactions) on our own clips.
+  Keep a hit-resolution seam (ARCHITECTURE §1b) so classic swing + hit-chance can plug in later; don't build it now.
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 
@@ -195,10 +203,10 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [p] Co-op N1–N8 (`specs/net.md`; N1–N5 after this phase, N6–N8 after M7).
 - [p] Lua/Luau beyond L3; mods milestone demo (M5 E1, U7, X1, X2).
 - [p] Crate "update all" pass once `bevy_hanabi` supports Bevy 0.20 (archive Backlog).
-- [p] Vanilla option (owner 2026-10-20, not urgent): players choose classic or modernized. (a) Classic graphics
-  preset: short view distance + fog, no shadows/volumetrics, Morrowind-like simple lighting, original sky; built
-  on the `--off` switches (feature ladder, perf.md). (b) Vanilla rules profile (data-driven, after Phase 3).
-  OpenMW as behaviour reference only, no GPL code in superfargoth.
+- [p] Classic option (owner 2026-10-20/23, nice-to-have, ARCHITECTURE §1b). (a) Classic graphics preset: short
+  view distance + fog, no shadows/volumetrics, Morrowind-like simple lighting, original sky; built on the `--off`
+  switches (feature ladder, perf.md). (b) Classic rules (`mw_rules`, ported from OpenMW) behind the feel-system
+  seams, after each modern version exists. Morrowind's rules and numbers, not bug-for-bug OpenMW parity; our UI.
 - [p] Groundcover (owner 2026-10-20, low priority; replaces archived G0–G2). (a) Procedural grass: evaluate
   `bevy_grass` (github.com/GEMI/bevy-grass: MIT, Bevy 0.20, GPU compute scatter, 3 LODs, wind, trampling, far
   colour; git only, pre-release) before building our own; masks from LTEX, wind from `sf_wind`. (b) Later: load
@@ -206,6 +214,8 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-23 (pr-merge): merged sf #12-15 (camera D1, saves S1+S2, console front end, text/books) and bw #1 (MWScript
+  runtime); tests green incl. real-ESM `fargoths_ring`. Owner decision 4: modern first, classic rules later (§1b).
 - 2026-10-22 (anim-fixes-3): owner pass fixes: AN-16 stride (SpeedMatch `rate_share` 0.3), AN-17 loop-seam contact gap, AN-19
   footskate cleanup in the cook (`anim.cook` v8), AN-21 slope stride + lean (`GRAPH_FORMAT` 6), AN-18/20 ragdoll mass and
   inertia conditioning + anatomical cones (`ragdoll.cook` v5); smooth bodies off by default. All confirmed by the owner.
