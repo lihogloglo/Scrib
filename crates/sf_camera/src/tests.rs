@@ -237,6 +237,24 @@ fn ease_out_is_frame_rate_independent() {
     assert!(lens[0] < 2.9 && lens.iter().all(|l| close(*l, lens[0], 0.01)), "{lens:?}");
 }
 
+/// A desired arm that grows by itself (zoom out, a longer mode distance: the rig eases those) is
+/// followed exactly when nothing blocks it; only recovery from an obstruction eases.
+#[test]
+fn an_unblocked_arm_follows_its_desired_length_exactly() {
+    let cp = CollisionParams::default();
+    let world = StaticWorld::new(WorldPos::ORIGIN);
+    let pivot = WorldPos::ORIGIN.offset(Vec3::Y);
+    let mut arm = ArmCollision::new();
+    arm.update(&world, pivot, Vec3::new(0.0, 0.0, -3.0), &cp, 1.0 / 60.0);
+    let r = arm.update(&world, pivot, Vec3::new(0.0, 0.0, -3.6), &cp, 1.0 / 60.0);
+    assert!(close(r.length, 3.6, 1e-5) && !r.blocked, "{r:?}");
+    // Blocked at 1 m, then the arm both clears and grows: still eased, still never past free.
+    let blocker = world_with_box(Vec3::new(-1.0, 0.0, -1.5), Vec3::new(1.0, 3.0, -1.0));
+    let pushed = arm.update(&blocker, pivot, Vec3::new(0.0, 0.0, -3.6), &cp, 1.0 / 60.0).length;
+    let r = arm.update(&world, pivot, Vec3::new(0.0, 0.0, -4.0), &cp, 1.0 / 60.0);
+    assert!(r.length > pushed && r.length < 2.0, "{pushed} -> {r:?}");
+}
+
 // ---------- Lock-on ----------
 
 fn cand(id: u32, x: f32, z: f32, los: bool) -> Candidate<u32> {

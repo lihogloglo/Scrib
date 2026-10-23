@@ -1,0 +1,37 @@
+[package]
+name = "sf_camera_bevy"
+description = "Thin Bevy shell for sf_camera: the player camera driven each frame from the interpolated body, collision push-in through the ground probe, first/third-person toggle, zoom, lock-on framing and trauma shake, look input from bevy_enhanced_input, big_space grid placement (camera.md D1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Writes the comfort FOV into the camera's `Projection` (pulls bevy_camera: assets, meshes, images).
+projection = ["dep:bevy_camera"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): the rig math lives in `sf_camera`, the body and the
+# input context in `sf_action_bevy`.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_camera = { workspace = true, optional = true }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+# `CellCoord`: a camera on a floating-origin grid gets its cell written exactly.
+big_space.workspace = true
+sf_action.workspace = true
+sf_action_bevy.workspace = true
+sf_camera.workspace = true
+sf_controller.workspace = true
+sf_coords.workspace = true
+
+[dev-dependencies]
+bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
+# Headless tests run on the camera test level's statics (crates/sf_level/tests/levels/camera.ron).
+sf_level = { path = "../sf_level", version = "0.1.0" }
+
+[lints]
+workspace = true
