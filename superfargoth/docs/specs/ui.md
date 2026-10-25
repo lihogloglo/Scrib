@@ -1,13 +1,14 @@
 # Game UI
 
-Status: draft, design complete (2026-10-11); owner decisions recorded below. Built from M5.
-Crates (proposed): `sf_ui` (Bevy-free: records, registry, view-models, Fluent),
-`sf_rpg_ui` (Bevy-free RPG screen view-models: dialogue),
-`sf_ui_bevy` (runtime, widget kit, layers, input router), `sf_ui_css` (bevy_flair
-integration and stylesheet composer, isolated on purpose), `sf_ui_screens` (stock screens),
-`sf_ui_lua` (Luau bindings, part of `sf_script`'s API surface), `sf_devui` (dev tools only).
-Built so far: `sf_ui`, `sf_ui_bevy`, `sf_ui_css` (U1a-U2, "As built: current state" below).
-Research findings, as-built logs and closed questions: [archive/ui-history.md](archive/ui-history.md).
+Status: design complete (2026-10-11), owner decisions below; framework (U1-U2), inventory and keybinds logic
+(U5, U6) and the stock screens built 2026-10-18 to 10-25: "As built" at the end, which wins where it differs.
+Crates: `sf_ui` (Bevy-free: records, registry, view-models, list models, keymap, Fluent), `sf_rpg_ui`
+(Bevy-free RPG screen view-models: dialogue, journal), `sf_ui_inventory` (Bevy-free inventory logic),
+`sf_ui_bevy` (runtime, layers, input router), `sf_ui_css` (bevy_flair integration and stylesheet composer,
+isolated on purpose), `sf_ui_screens` (widget kit and stock screens); not built: `sf_ui_lua` (Luau bindings,
+part of `sf_script`'s API surface), `sf_devui` (dev tools only).
+History (research R1-R5, as-built logs U1a-U2, U5, U6, dialogue view-model detail, industry table, closed
+questions): [archive/ui-history.md](archive/ui-history.md).
 
 ## Goal
 
@@ -56,28 +57,21 @@ controlled pattern), focus from bevy_input_focus.
 
 ## Research findings
 
-Full findings (2026-10-11) in [archive/ui-history.md](archive/ui-history.md#research-findings):
-R1 Bevy 0.20 native (layout, headless widgets, focus and navigation, span-level text picking,
-parley text, AccessKit, BSN), R2 crates, R2b bevy_flair, R3 toolkits outside Bevy, R4 what
-players and modders hated and loved (OpenMW, MWSE, SkyUI, WoW, Factorio), R5 controller-first
-and readability lessons (XAG 101, Starfield, BG3, Elden Ring). What the design keeps from them is
-in the sections below; R2b's limits and fallback plan stay here because they bind the mod contract.
+Full findings (2026-10-11) in [archive/ui-history.md](archive/ui-history.md#research-findings): R1 Bevy
+0.20 native, R2 crates, R2b bevy_flair, R3 toolkits outside Bevy, R4 what players and modders hated and
+loved, R5 controller-first and readability lessons. The design below keeps what they taught.
 
 ### R2b. bevy_flair: licence, limits, fallback
 
-- **Licence**: the crate is `MIT OR Apache-2.0`; its Servo dependencies (`cssparser`, `selectors`,
-  `cssparser-color`, ...) are `MPL-2.0`, allowed unmodified (owner, 2026-10-11) and contained in
-  `sf_ui_css`.
-- **Limits**: one stylesheet per entity and no global stylesheets (we compose one sheet per
-  layer root, below); `!important` ignored; no `var()` fallback; `calc()` can't mix `%` and
-  `px` until Bevy's `Val::Calc` (#25653); media features are fixed (no custom ones), so presets
-  and input mode are root classes/attributes instead.
-- **Fallback plan** (also in ARCHITECTURE §4): (a) until 0.9 publishes, pin `main` by `rev`;
-  (b) if it lags a Bevy release by more than our window, carry a `[patch]` fork (its Bevy
-  surface is bevy_ui/text/picking/asset, so ports are mechanical); (c) if abandoned, the mod
-  contract survives: it is *the CSS subset and property names documented in this spec*, not
-  flair's API, so `sf_ui_css` could be reimplemented on `cssparser` + `selectors` (or
-  `lightningcss`) without touching mod files; (d) never let flair types leak out of `sf_ui_css`.
+Binds the mod contract ([full text](archive/ui-history.md#r2b-bevy_flair-licence-limits-fallback)).
+- **Licence**: `MIT OR Apache-2.0`; its Servo dependencies (`cssparser`, `selectors`, ...) are MPL-2.0,
+  allowed unmodified (owner, 2026-10-11), contained in `sf_ui_css`.
+- **Limits**: one stylesheet per entity, no global sheets (we compose one per layer root); `!important`
+  ignored; no `var()` fallback; no `%` + `px` `calc()` until Bevy's `Val::Calc` (#25653); no custom media
+  features, so presets and input mode are root classes/attributes.
+- **Fallback**: the mod contract is *the CSS subset and property names documented here*, not flair's API;
+  flair types never leave `sf_ui_css`. Lagging flair → a `[patch]` fork; abandoned → `sf_ui_css` on
+  `cssparser` + `selectors` (or `lightningcss`), mod files untouched.
 - **Buttons and states** (uipolish 2026-10-25): every `bevy_ui_widgets::Button` gets the class `sf-button`
   and picking's `Hovered` (required component, `sf_ui_css`), so themes style `:hover`, `:active` (the widget's
   `Pressed`) and `:focus-visible` (`InputFocusVisible`: on for pad and arrow-key navigation, off once the mouse
@@ -146,7 +140,7 @@ All UI content comes through `sf_vfs` / `sf_records` / `sf_mods` (everything is 
 
 ## Interfaces
 
-Sketch for the M5 slice; names are provisional.
+Sketch for the M5 slice, updated to the code where "As built" says so; other names are provisional.
 
 ```rust
 // ---- sf_ui (Bevy-free) ----
@@ -161,13 +155,15 @@ pub struct SlotContribution { pub slot: SlotId, pub mod_id: ModId, pub priority:
 /// Built once per mod set from records, in load order; replacements resolved; conflicts reported.
 pub struct UiRegistry { /* screens, slots, columns, settings, themes, presets */ }
 impl UiRegistry {
-    pub fn build(records: &RecordDb, mods: &LoadOrder) -> (Self, Vec<UiConflict>);
+    pub fn build(records: &RecordDb) -> (Self, Vec<UiConflict>);   // record sources are mods in load order
     pub fn screen(&self, id: &ScreenId) -> Option<&ScreenDef>;
     pub fn slot(&self, id: &SlotId) -> &[SlotContribution];        // already ordered
 }
 
-/// MVVM: a view-model is a Reflect struct with a change tick; lists are keyed.
-pub trait ViewModel: Reflect + Send + Sync + 'static { const KIND: &'static str; }
+/// MVVM; not `Reflect`, so `sf_ui` stays Bevy-free. Lists are keyed.
+pub trait ViewModel: Send + Sync + 'static {
+    const KIND: &'static str; fn fields() -> &'static [&'static str]; fn field(&self, name: &str) -> Option<UiValue>;
+}
 pub struct ListModel<K, T> { /* keyed rows, version, sort + filter descriptors */ }
 
 // ---- sf_ui_bevy ----
@@ -188,21 +184,10 @@ pub struct UiCommands<'w, 's> { /* push/pop/replace screen on its layer, open wi
 // Root classes: preset-*, theme-*, a11y flags; attribute `input=kbm|gamepad`.
 ```
 
-Luau surface (placeholder until `sf_script`'s API rules apply; `api_version`-gated):
-
-```lua
-local ui = require("@sf/ui")   -- require-by-string alias (scripting.md "Modules and require")
-ui.slot("inventory.columns"):add{ id = "value_per_weight", header = "col-value-weight",
-  width = "5rem", sort = "number", value = function(item) return item.value / math.max(item.weight, 0.01) end }
-local compass = ui.create{ layer = "hud", scene = "ui/my_mod/compass.bsn", class = "compass" }
-compass:set("heading", 90)                        -- fine-grained setter on a handle, no tree re-diff
-ui.list(model, "ui/my_mod/row.bsn")               -- virtualized
-ui.settings.page{ id = "my_mod", title = "my-mod-title",
-  { key = "show_compass", type = "bool", default = true } }
-ui.screens.replace("inventory", { lua = "scripts/my_mod/inventory.lua" })
-ui.on("screen_opened", function(id) end)
-local w, h = ui.measure_text("Hello", { class = "body" })   -- synchronous
-```
+Luau surface (`@sf/ui`; placeholder until `sf_script`'s API rules apply, `api_version`-gated; Lua is
+parked): slot contributions and columns (`ui.slot(..):add`), elements from scenes with fine-grained setters
+on their handles (no tree re-diff), virtualized lists, settings pages, screen replacement, UI events and
+synchronous text measuring. Sketch: [archive](archive/ui-history.md#luau-surface-sketch-from-interfaces).
 
 Handles are generational and become invalid when their element dies. A mod mutates only
 elements it created and slots it fills; UI code can't trigger gameplay actions except through
@@ -293,17 +278,16 @@ Headless tests: registry build, screen replacement, slot order, composer output 
 (100 %, 200 % text at 1280×720). An `sf_diag` scenario with the inventory open and scrolling.
 A gamepad-only pass over every stock screen. Hot-reload test: edit a mod's CSS, see it apply.
 
-## As built: current state (U1a-U2, 2026-10-18)
+## As built: current state
 
 What the code does where it differs from the sketches above. Details, tests and measurements:
-[archive/ui-history.md](archive/ui-history.md) ("As built (U1a)" to "As built (U2)").
+[archive/ui-history.md](archive/ui-history.md) ("As built (U1a)" to "As built (U2)", "As built (U5)",
+"As built (U6)", "Dialogue window view-model").
 
 - **Records** `ui.screen`, `ui.slot` (one contribution each), `ui.column`, `ui.theme`, `ui.preset`,
   `ui.setting` are serde record kinds; the owner is the mod whose define a value is based on.
-  `UiRegistry::build(&RecordDb)` takes no `LoadOrder` (record sources are already mods in load order).
 - **Slot and column order: priority, then load order** (not load order, then priority).
-- **`ViewModel` is not `Reflect`** (`KIND`, `fields()`, `field(name) -> UiValue`), so `sf_ui` stays
-  Bevy-free. `ListModel` has per-row versions, stable sort, filter and `window()` for virtualization.
+- `ListModel` has per-row versions, stable sort, filter and `window()` for virtualization.
 - **Router** (`ScreenStack`, Bevy-free; `sf_ui_bevy`): one `bevy_enhanced_input` context entity per
   input context id at `UI_CONTEXT_PRIORITY` (2^16), only the input target's active; every UI action
   consumes its input and requires a reset; HUD contexts carry only `OpenMenu`/`OpenMap`. It runs in
@@ -323,228 +307,70 @@ What the code does where it differs from the sketches above. Details, tests and 
 - **Built-in settings** (2026-10-22): framework settings without records, like the presets (owner `sf`,
   values in `[settings.sf]`): the audio page's volume slider and mute per bus (`AUDIO_BUSES`,
   `audio_volume_key`/`audio_muted_key`; audio.md "Volume mixer"). A record with a built-in's id retunes it.
-- **Not done yet**: the game app doesn't call `insert_from_profile`; `UiSettings` isn't fed from
-  `ui.setting` values; PlayStation/Switch glyph names; widgets (U3) and Lua (parked).
+- **Not done yet**: `UiSettings` isn't fed from `ui.setting` values; Lua (parked). (The game app now calls
+  `insert_from_profile`; U6 added PlayStation/Switch glyph names.)
 
-## Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
+### Stock screens (`sf_ui_screens`, U3-U4, 2026-10-22 to 10-25)
 
-The logic of the stock dialogue screen, Bevy-free, over an `sf_rpg` session (rpg.md "Dialogue"). No rendering:
-`sf_ui_screens` binds it later. Crate `sf_rpg_ui` (deps `sf_rpg`, `sf_ui`, `serde`): a leaf, so `sf_ui` stays
-RPG-agnostic and `sf_rpg` stays presentation-free (net rule 3); journal and inventory view-models go here too.
+Widget kit (parts carry `Name` + `UiPart` + `UiClass`; buttons, panels, value bars, `ScreenColors`,
+`ScreenLabels`) and `KeyedChildren` (keyed reconciliation of view-model rows into child entities). Screens:
+dialogue, journal ([journal-ui.md](journal-ui.md)), inventory (virtual icon grid, drag and drop, split
+dialog, compare tooltips; `InventoryEvent` intents), keybinds, HUD (value bars, compass slot, crosshair, use
+prompt). A game spawns a `UiScreenRoot` with the screen's component and pushes its id; screens whose
+view-model owns focus carry `UiOwnsFocus`. Message boxes and toasts: [ui-text.md](ui-text.md)
+"Notifications". Content packs bring names, icons, themes and host logic.
 
-**Research.** Morrowind: scrollback of answers with the topic as a heading, topic hyperlinks in the text, a sorted topic
-list beside it with Goodbye under it, choices as links at the end of the text, "journal updated" inline. Skyrim, Fallout
-4, The Witcher 3: options already explored are dimmed, unexplored ones bright (our `new`). Disco Elysium and Baldur's
-Gate 3: the log echoes the player's pick; numbered choices for keyboard. Yarn Spinner for Bevy (`bevy_yarnspinner` 0.8,
-2026-03; its `example_dialogue_view` crate) renders a node-graph runner's lines and options through Bevy events: graph
-model, Bevy-coupled, no topic list or links (rpg.md "Reuse"), so not reusable here. No Bevy-free dialogue view-model
-crate exists; ours reuses `sf_ui::ListModel` for the topic list (sort, search, per-row versions).
+### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
 
-**Data flow** (net-ready: the view never touches game state; requests are what a client sends):
-input (`nav(DialogueNav)` or `activate(DialogueFocus)` for a click) → `DialogueRequest { Ask(topic) | Choose(value) |
-Goodbye }` → host `request.apply(&mut session, db, rules)` → `apply_outputs(db, &outputs)` (lines) → result scripts →
-`apply_events(&rpg_events)` (notices) → `refresh(db, state, available, known)` (or `refresh_from(session, ..)` on the
-host).
+Bevy-free logic of the dialogue screen over an `sf_rpg` session (rpg.md "Dialogue"); `sf_rpg_ui` is a leaf,
+so `sf_ui` stays RPG-agnostic and `sf_rpg` presentation-free. Morrowind's scrollback, topic links and topic
+list with Goodbye; new vs explored (Skyrim, Witcher 3); the pick echoed (Disco Elysium, BG3). Net-ready:
+input → `DialogueRequest { Ask | Choose | Goodbye }` → host applies → `refresh`. Scrollback `Entry`s with
+stable ids (cap 256): `Line` (`TextRun`s from `TopicLinker`, `LinkState` `New`/`Known`/`Unavailable`),
+`Chosen`, `JournalUpdated`. Topic list `ListModel<RecordId, TopicRow>`. Modes `Talking`, `Choosing` (Back
+does nothing), `GoodbyeOnly`, `Ended`. Focus has two regions: the topic list and a **link cursor** over
+links in reading order (spans aren't layout nodes, so directional navigation can't reach them). No geometry
+in the view: `take_scroll_request()`, `version()`.
 
-- **Scrollback**: `Entry { id: EntryId, kind }`, ids monotonic and stable when old entries drop (cap
-  `DEFAULT_MAX_ENTRIES` = 256, `with_max_entries`). Kinds: `Line(ViewLine { topic, response, heading, runs })`,
-  `Chosen { label }` (the echo), `JournalUpdated { quests }` (consecutive journal entries of one step share one notice;
-  the screen formats it with Fluent and may also toast it). `heading` = topic name for `Conversation` topics, none for
-  greetings and service replies.
-- **Hyperlinks**: a line's text is split by the db's `TopicLinker` into `TextRun { text, link: Option<TopicLink {
-  topic, state }> }` (one `TextSpan` each). `LinkState`: `New`, `Known`, `Unavailable` (the speaker has nothing on it:
-  styled, not followable). States are restyled on every refresh and ask.
-- **Topic list**: `ListModel<RecordId, TopicRow { name, new, enabled }>` sorted by name (case-insensitive), rows = the
-  session's `available_topics`; `new` = no heard line under the topic in `Topics` and not asked in this conversation;
-  `enabled` only while talking. `set_topic_search` filters by name (PC-dense).
-- **Mode** from the session state: `Talking`, `Choosing` (only choices live), `GoodbyeOnly` (forced goodbye),
-  `Ended` (`is_closed`). `choices()`, `can_goodbye()`, `links_active()`; `DialogueView` is a `ViewModel` (`speaker`,
-  `mode`, `can_goodbye`, `links_active`).
-- **Focus** (`DialogueFocus::{Topic, Link { entry, run }, Choice, Goodbye}`), driven by `DialogueNav::{Prev, Next,
-  PrevRegion, NextRegion, Confirm, Back}`; the stock screen maps up/down/left/right/confirm/back to them. Two regions
-  while talking: the topic list (rows, then Goodbye) and the **link cursor** (followable links in reading order, ui.md
-  "Screens": spans are not layout nodes, so Bevy's directional navigation can't reach them). Prev/Next clamp, no wrap
-  (held-direction repeat). PrevRegion enters the text on the newest line with a live link; NextRegion returns to the
-  remembered row (or the row now at its index). Choosing: choices only, Back does nothing (a choice must be made).
-  Forced goodbye: Goodbye only. Back = goodbye otherwise. A focus the view placed itself follows the best target until
-  the player moves it (the greeting arrives before the topic list); an invalid focus falls back after every change
-  (trimmed line, search, mode change).
-- **Scroll**: `take_scroll_request() -> Option<EntryId>`: the new line (read from its top) or the line under the link
-  cursor; the screen scrolls, the view holds no geometry.
-- `version()` changes on any change (view counter + the topic list's), for cheap rebinding.
+### Inventory logic (U5, 2026-10-22)
 
-Tests (`cargo test -p sf_rpg_ui`, 5): a host test double (response table with conditions, rendered texts, result
-scripts that offer choices, set stages with journal entries and force goodbye) drives a whole conversation by pad input:
-greeting runs and link states, sorted list with new/known, ask, choice lock and echo, merged journal notice, link cursor
-order and follow, goodbye; pointer activation and search; scrollback cap with a trimmed focused link; no linker / no
-greeting.
+`sf_ui_inventory` (Bevy-free), one view per holder (inventory, container, both barter sides); own
+virtualization, as Stack decision 4 planned. `sf_ui` list model: sort chains, `ListFilter::one_of` tabs, word
+search, `reorder`, per-row cached keys; `sf_ui::VirtualList<K>`: fixed row extent, keyed focus surviving sort
+and filter, stable pool slots. `InventoryView::sync` diffs the `Loadout`; rows `ItemRow` (`inventory.item`,
+`stat.<id>`) feed `ui.column` records; adapter hook `ItemCatalog` (`describe`, `stats`, `carried_weight`);
+tabs are content data. A new column sorts text A→Z and numbers high→low (same column flips; ties by name,
+then inventory order). `Encumbrance`, compare against what equipping would displace, split/merge commands.
+1,000 stacks re-sort in 0.30 ms. Not done: equip/drop/transfer commands, variable row heights,
+diacritic-folding search, barter prices.
 
-| Technique | Industry | Ours | Verdict |
-|---|---|---|---|
-| Topic list + hyperlinked keywords | Morrowind (keyword topics, links in text) | same, from `TopicLinker` spans | **match** |
-| Explored vs unexplored options | Skyrim/Fallout 4 dim explored lines; Witcher 3 greys read options | `TopicRow::new`, `LinkState` | **match** |
-| Player line echoed in the log | Disco Elysium, BG3 | `EntryKind::Chosen` | **match** |
-| Numbered choices (1-9 keys) | BG3, Disco Elysium | `activate(Choice(i))`; the key map is the screen's | **match** (screen side) |
-| Gamepad-reachable inline links | Morrowind links are pointer-only (unverified for later ports) | link cursor region | **beyond** |
+### Keybinds (U6, 2026-10-22)
 
-## As built (U5, 2026-10-22): inventory logic
-
-`superfargoth/crates/sf_ui_inventory`, Bevy-free (deps `sf_ui`, `sf_rpg`; no rendering), plus list
-extensions in `sf_ui` and stack commands in `sf_rpg` (rpg.md). 8 tests + 1 timing report, `sf_ui` 6 new,
-`sf_rpg` 2 new; clippy pedantic clean. Serves inventory, container and both barter sides (one view per holder).
-
-**Research.** SkyUI (Nexus 12604/49095 pages): stat columns sortable, equipped/stolen/enchanted shown as
-multi-state columns, sorting by equipped groups worn items but keeps names A→Z inside, full-text search;
-its known bug: the sort resets when a view lacks the column (our tabs filter one list with one column set,
-so the sort survives tab switches). Unity UI Toolkit `ListView` (manual 2022.3): `FixedHeight`
-virtualization is the fast path, rows recycled through `makeItem`/`bindItem`/`unbindItem`; Unreal
-`UListView` pools entry widgets the same way (unverified this session). Compare-with-equipped: R5 (Elden
-Ring / Diablo before/after deltas). **Reuse**: Bevy 0.20 has a scroll area but no virtualization or list
-models (R1); `bevy_scroller` 0.1 is Bevy 0.11-era and not virtual; `virtualizer` (docs.rs, not fetched
-here) is range math only, the ~10 lines we'd save, without keyed focus, slot recycling or model
-integration; `egui_virtual_list`/floem are other toolkits. Own, as Stack decision 4 planned.
-
-- **`sf_ui` list model**: sort *chains* (`set_sort_keys`: column, then name, then insertion order);
-  `ListFilter::one_of` (a tab over several categories) and word search (every whitespace word must appear,
-  any order: "iron sw" finds "Iron Longsword"); `reorder(keys)` moves rows without bumping row versions;
-  sort keys and lowercased search text are **cached per row** until the row, sort or searched fields
-  change (a rebuild after one changed row re-sorts cached keys). `iter()`, `position()`.
-- **`sf_ui::VirtualList<K>`**: fixed row extent, viewport, overscan (2), clamped scroll (wheel, rows,
-  scrollbar thumb fractions), `index_at(y)` hit test; **keyed focus** that survives sort and filter (a row
-  that disappears hands focus to the row now at its index); `move_focus`, `page` (visible rows - 1),
-  `reveal_focus`; `update(&mut ListModel) -> ListFrame` assigns **stable pool slots** (keys that stay in the
-  window keep their widget; `rebind` only for new keys or changed row versions; released slots are reused
-  before the pool grows). Row-extent changes (UI/text scale) scale the scroll so the same rows stay.
-- **`InventoryView`** (holder, tabs, row extent, viewport): `sync(&Loadout, &SlotTable, &dyn ItemCatalog)`
-  diffs the loadout: unchanged stacks keep their row (no `describe`, no rebind), equipment-only changes
-  update markers, rows follow inventory order through `reorder`; `refresh` re-describes all (mod reload,
-  language). Row view-model `ItemRow` (`inventory.item`): `name category count weight total_weight value
-  total_value value_per_weight equipped slots icon` and `stat.<id>`, so `ui.column` records bind them.
-- **Adapter hook `ItemCatalog`**: `describe(&ItemStack) -> ItemInfo { name, category, weight, value, icon,
-  stats }`, `stats() -> &[StatDef { id, label, better: Higher|Lower|Neither }]`, and `carried_weight(stack,
-  info, equipped)` (default: every piece counts, Bethesda's rule). Tabs are `InventoryTab { categories,
-  equipped_only }` data from the content pack; `tab_counts()` ignores the search (badges).
-- **Sort**: `sort_by_column(&ColumnDef)`: a new column sorts text A→Z and numbers high→low (our choice:
-  heaviest, most valuable first), the same column flips; ties go by name, then inventory order; Lua columns
-  refuse until the Lua UI. Optional equipped-first pinning (off by default).
-- **Totals**: `Encumbrance { carried, capacity }` (`ratio`, `is_over`, `remaining`, `after(delta)` for
-  take-all/barter previews; what "over" does is the game's), total value, stacks, pieces.
-- **Compare** (`compare(stack, &Loadout, &dyn EquipRules, &dyn ItemCatalog)`): against what equipping
-  would displace (the placement's slots, exactly what `Loadout::equip` takes off), each stat summed over
-  them (a two-hander against sword + shield), deltas `Better/Worse/Same/Changed` by `StatDef::better`;
-  a worn item compares with itself; unequippable → `None`.
-- **Split/merge**: `QuantityPicker` (split: 1..=count-1, starts at half; `step`, `set_fraction`);
-  `actions()` for the action bar; `split_command` / `merge_command` build `RpgCommand::SplitStack` /
-  `MergeStacks` after the same checks the host runs; `on_event` moves focus to the split-off or merged-into
-  stack and says when to re-sync.
-- **Timing** (`cargo test -p sf_ui_inventory --release -- --ignored --nocapture`, cloud Linux container,
-  not the reference laptop): 1,000 stacks: re-sync 43 µs, one new stack sync + frame 0.11 ms, re-sort
-  0.30 ms, search 0.26 ms, scroll frame 3.4 µs; 5,000: 0.29 / 1.06 / 1.78 / 1.58 ms / 5 µs; 20,000: 1.6 /
-  7.7 / 11 / 7.7 ms. Within the menu budget (≤ 1 ms) at the 1,000-item target; a re-sort at 5,000+ is a
-  one-frame hitch on the click.
-- Not done: the Bevy screen (`sf_ui_screens`, needs the U3 widget kit), equip/unequip/drop/transfer
-  commands (equip needs the adapter's rules on the host), variable row heights, grid (icon) layout,
-  diacritic-folding search, barter price columns (the adapter's formulas).
-
-## As built (U6, 2026-10-22)
-
-Keybinds screen logic: Bevy-free in `sf_ui` (`input.rs`, `keymap.rs`, `rebind.rs`), engine side in
-`sf_ui_bevy` (`actions.rs`, `keybinds.rs`, `profile.rs`). 13 `sf_ui` tests + 2 `sf_ui_bevy` tests, clippy
-pedantic clean. The screen widget itself waits for the widget kit (U3); this is everything under it.
-
-- **Reuse check (rule 8)**: Bevy 0.20 has no rebinding model. `bevy_enhanced_input` 0.27 binds inputs and
-  its `keybinding_menu` example rebinds, but has no slots per device, conflict scopes, required actions or
-  capture flow, and persists through Bevy's `SettingsGroup` (needs its `serialize` feature, U1c). We keep BEI
-  for evaluation and build the keymap over it. `bevy_input_prompts` 0.2 (glyphs, MIT) is on Bevy 0.16 and
-  ties glyphs to the Kenney/Xelu asset packs: not adopted; our glyphs are text plus icon ids a content pack maps.
-- **Open question 4 closed (bypass `SettingsGroup`)**: bindings persist only in the profile
-  (`Profile::bindings`), so profiles stay the single source; the keymap mirrors `SettingsStore`
-  (`load_from(&Profile)` / `save_to(&mut Profile) -> changed`, saved by `sync_profile` on leaving the menus).
-- **Input names are the model.** The keymap stores the U1c text names (`key:Ctrl+KeyS`, `pad:South`, ...) plus
-  new `stick:Left|Right` (a whole stick for 2D actions; the engine side expands it to both axes). `sf_ui` knows
-  only the grammar: device class by prefix, modifiers, canonical spelling, overlap. The engine checks that a
-  name exists through `Keymap::set_validator` (`sf_ui_bevy::validate_input`). `Device` moved to `sf_ui`
-  (re-exported by `sf_ui_bevy`).
-- **Keymap** (`sf_ui::Keymap`): `ActionDef { id: (context, action), label (Fluent id), shape: Button | Stick,
-  slots [kbm, gamepad], defaults, required, scopes }`. Conflicts: two actions collide when a scope meets
-  (equal, or linked with `link_scopes`) and their inputs overlap: the same input, or **partial** (a key
-  without modifiers fires on its chord in BEI, `any_key` on every key, `stick:Left` on `axis:LeftStickX`).
-  `allow_shared` exempts a pair. `propose(slot, input) -> Proposal { previous, conflicts }`, then
-  `apply(proposal, Swap | Unbind | KeepBoth)`; refused when stale or when a required action would lose its
-  last binding on a device. Moving an input between two slots of the same action swaps them. `unbind`,
-  `set` (code/scripts), `reset(action, device?)`, `reset_context`, `reset_all`; `rows(context)` is the
-  screen's view-model (slots per device, `conflicted`, `modified`).
-- **Profile format**: per action, only the devices that differ, `confirm = { kbm = ["key:Space"] }` (an empty
-  list unbinds that device). U1c's flat list still loads (it sets every device). Unregistered actions'
-  entries pass through and apply when the action registers later (a disabled mod's actions keep their keys).
-  Bad names, unknown devices, too many inputs and wrong shapes are reported (`KeymapIssue`) and dropped; a
-  required action left unbound gets that device's defaults back.
-- **Capture** (`sf_ui::Rebinder`): arms only once every input is released (the A/Enter/click that started it
-  is never captured); ignores other devices and shapes; a modifier key waits for a chord and binds alone if
-  released alone; **no cancel input** (every input is bindable, menu open on Esc included), so capture ends on
-  a 5 s timeout or `cancel()`; after a capture UI actions stay blocked until every input is released, so a
-  captured Esc or B doesn't also close the menu. A conflict waits in `pending()` for `resolve`.
-- **Bevy side**: `UiKeymap` (resource, `ui_keymap()` = the UI actions; a game registers its gameplay actions
-  in it and links its scope to `HUD_SCOPE`, where open menu/map live) is the source of truth; `UiBindings` is
-  derived from it (`apply_keymap`, only when different), then respawns contexts as before. `UiRebinder` +
-  `drive_rebind` (`PreUpdate`, first in `UiSystems::Route`) feed keys, mouse buttons, pad buttons and stick
-  crossings as names and emit `UiRebindEvent`s; `dispatch_actions` and `navigate` run only under
-  `ui_input_open`. `GamepadFamily` follows the last-used pad's vendor id (Sony 0x054C, Nintendo 0x057E,
-  else Xbox). `glyph(&UiKeymap, action, device, family) -> Glyph { label, icons }`: Xbox / PlayStation /
-  Switch names (Bevy's pad buttons are positional: `South` is A, Cross or B), key names, chords as
-  `Ctrl+S`; icon ids such as `pad-ps-South` and `mod-Ctrl` for atlases (U3) and `glyph-<id>` Fluent rewording.
-- Tests: input grammar and overlap; glyphs per family; registration checks; conflicts per scope (UI vs
-  gameplay, HUD linked, shared Esc, partial chord); swap / unbind / keep-both, stale and required refusals;
-  slot moves; resets; profile tables (only changed devices, U1c form, issues, pass-through and late
-  registration); capture (arming, device filter, draining, chords, lone modifier, sticks, conflict, timeout,
-  refused swap). Headless Bevy: a pad capture rebinds menu open while the A that started it is ignored, a
-  B capture conflicts with back without closing the menu, the swap drives the engine bindings.
-- Leftovers: keyboard-layout-aware key labels (`KeyQ` reads Q on AZERTY; Bevy 0.20 has no physical → logical
-  lookup outside key events); the screen widget and icon atlases (U3); per-pad bindings for local co-op
-  (BEI `GamepadDevice`); gameplay actions are registered by the game (Bevyrrowind) once it has a gameplay
-  context.
+`sf_ui` (`input`, `keymap`, `rebind`), `sf_ui_bevy` (`actions`, `keybinds`, `profile`), screen in
+`sf_ui_screens`. Over `bevy_enhanced_input` (no per-device slots, scopes or capture there). Bindings live
+only in `Profile::bindings` (not BEI's `SettingsGroup`), per action only the devices that differ
+(`confirm = { kbm = ["key:Space"] }`); unregistered actions' entries pass through. Input names are the model
+(`key:Ctrl+KeyS`, `pad:South`, `stick:Left`), validated by the engine. `sf_ui::Keymap` (`ActionDef` with
+slots, defaults, `required`, scopes): conflicts when scopes meet and inputs overlap (partial included),
+`propose` → `apply(Swap | Unbind | KeepBoth)`, required actions keep a binding per device, resets,
+`rows(context)`. Capture (`Rebinder`) arms after release, has no cancel input (5 s timeout), and blocks UI
+actions until release. `UiKeymap` is the source of truth (games link their scope to `HUD_SCOPE`); glyphs per
+`GamepadFamily`. Leftovers: layout-aware key labels (AZERTY), per-pad bindings for local co-op.
 
 ## Industry comparison
 
-J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`). R3–R5 (archive)
-already compare toolkits and player lessons; this table gives verdicts per technique.
-"Unverified" marks claims from memory not re-read this session.
-
-| Technique | Industry | Ours | Verdict |
-|---|---|---|---|
-| Layered screens, activatable stacks, input routing to the top widget | UE CommonUI (layers, activatable widget stacks, input routing, action bars) | same model (`Layer`, router) | **match** |
-| Data binding | UE5 UMG Viewmodel (MVVM plugin); Unity 6 UI Toolkit runtime data binding; XAML/NoesisGUI; Gameface data binding (unverified detail) | view-models + `Bind`, keyed list models | **match** |
-| Styling as stylesheets | Unity UI Toolkit USS (a CSS subset) + UXML; Coherent Gameface (HTML/CSS, used by many recent PC titles, unverified per title); Bethesda Skyrim/Fallout 4 and RAGE (GTA V) on Scaleform (Flash), now discontinued (Autodesk ended it ~2020, unverified date) | CSS with cascade layers via bevy_flair | **match** (UI Toolkit/Gameface family). Cascade layers for mod load order go beyond them |
-| Moddable built-in screens | SkyUI/MCM on Scaleform swf replacement; WoW open Lua/XML UI; Factorio relative GUI | records + slots + Lua + CSS layers | **match** (designed around their lessons, R4) |
-| Gamepad navigation without a cursor | console practice; CommonUI; Unity UI Toolkit navigation events | bevy_input_focus + directional navigation | **match** |
-| Device-following glyphs, full rebinding | CommonUI input data + platform glyphs; XAG 107 (input remapping) | yes | **match** |
-| Text: shaping, bidi, fallback, crisp at any scale | UE Slate (HarfBuzz/ICU, font atlas per size, unverified detail); Unity TextMeshPro / UI Toolkit (SDF atlases); Gameface (SDF, unverified) | parley + swash, per-size atlases | **match** for screen UI. SDF would matter only for large world-space text and continuous zoom animation; none planned |
-| Virtualized long lists | UE `ListView`/`TileView` (entry widget pooling), Unity UI Toolkit `ListView` (recycling) | virtualized list (~40 live rows) | **match** |
-| Accessibility: text size, contrast, colorblind, screen reader, reduced motion | Xbox Accessibility Guidelines 101 (text), 102 (contrast), 103 (non-color cues), 112 (screen narration), 117 (motion); UE/Unity AccessKit-like screen reader support is partial (UE Slate accessibility, unverified) | yes (AccessKit, token sets, reduce-motion) | **match** |
-| **Subtitles/captions settings** | XAG 104 (subtitle size, background, speaker name, ≤ 2 lines); standard options menu entry in modern RPGs | not in this spec (dialogue text exists; voiced lines have no caption style) | **GAP (P2, small)**: open question 5 |
-| **Safe area** (TV overscan, handheld/notched displays) | UE `SafeZone` widget + `r.DebugSafeZone`; Unity `Screen.safeArea`; console certification (title-safe) | none (layout is full window) | **GAP (P2, small)**: open question 6. The controller preset targets TV, where it matters |
-| Draw batching of icons | sprite/icon atlases (Unity Sprite Atlas, Slate texture atlas for small brushes, unverified) | Bevy 0.20 UI breaks a batch per image change (`bevy_ui_render` `prepare_uinodes`) | **differ, no job**: ~40 visible rows cost ~40–80 small draws; revisit only if the inventory budget fails (a bake-time icon atlas would fix it) |
-
-**Sources** (checked 2026-10-12, beyond those in R1–R5):
-- Xbox Accessibility Guidelines (101 text, 104 subtitles and captions, 112 UI navigation and narration): https://learn.microsoft.com/en-us/gaming/accessibility/guidelines (index; individual pages not re-read)
-- UE CommonUI overview and input guide (cited in Canonical technique); UE UMG Viewmodel: https://dev.epicgames.com/documentation/en-us/unreal-engine/umg-viewmodel-for-unreal-engine (not re-read)
-- Unity UI Toolkit (USS, UXML, runtime binding, ListView): https://docs.unity3d.com/Manual/UIElements.html (not re-read)
-- UE safe zone widget: https://dev.epicgames.com/documentation/en-us/unreal-engine/umg-safe-zones-in-unreal-engine (not re-read; unverified URL)
-- Bevy 0.20 `bevy_ui_render/src/lib.rs` batching (local registry).
-
+J9 (2026-10-12), table in the [archive](archive/ui-history.md#industry-comparison): matches on every
+technique, beyond on cascade layers for load order. Gaps: subtitles and safe area (open questions 5-6);
+unbatched icon draws, no job unless the inventory budget fails (fix: a bake-time icon atlas).
 
 ## Open questions
 
-1. ~~MPL-2.0 dependencies~~ **Closed: allowed unmodified, contained in `sf_ui_css`** (owner,
-   2026-10-11). Full text in the archive.
-2. ~~Hot reload over `sf_vfs`~~ **Closed (U2)**: the `sf_ui_content` source's watcher reloads
-   edited sheets (archive, "As built (U2)").
+1, 2, 4 closed (MPL-2.0 allowed unmodified in `sf_ui_css`; hot reload via the `sf_ui_content` watcher;
+`bevy_enhanced_input` 0.27: its prioritized, consuming input contexts are CommonUI's router rule, glyphs and
+device detection stay ours, bindings live in `Profile::bindings`); full text in the archive.
+
 3. If M5 starts before Bevy 0.21: stock screens start as `bsn!` templates in Rust (same scene
    model, no file loader) and move to `.bsn` files when they land.
-4. ~~`bevy_enhanced_input` vs `leafwing-input-manager`~~ **Closed 2026-10-18 (u1a): `bevy_enhanced_input`
-   0.27**: its input contexts with priority and input consumption are CommonUI's router rule. Device
-   glyphs and last-used-device detection stay ours. Full comparison in the archive.
-   **U6 (2026-10-22): bypass.** Bindings live in `Profile::bindings` through `sf_ui::Keymap` (As built U6).
 5. **Subtitles (J9, P2).** A `subtitles` settings group (on/off, size scale independent of text
    scale, background opacity, speaker name, max two lines, minimum display time) and a
    `Layer::Notification`-level caption widget fed by a `Caption { speaker, text, duration }`

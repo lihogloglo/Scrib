@@ -55,10 +55,21 @@ working tree**. Protocol:
    `git add` new files first), never a bare `git commit` after `git add`.
 5. **Don't revert changes you didn't make.** Files changing under you are
    likely the other session's work; check `../.sessions/` and adapt.
-6. **Small, atomic slices (owner 2026-10-18, 2026-10-25).** A sub-agent slice is one deliverable
-   (1-2 steps), about 60 tool calls and 100k tokens. Orchestrators split bigger work into a queue
-   of slices and chain fresh agents. Agents write their handoff in `../.sessions/<name>.md` as they
-   go, and on reaching the budget stop at a compiling state, finish the handoff and report.
+6. **Small slices, lean context (owner 2026-10-18, 2026-10-25).** Tokens grow with what an agent
+   pulls into its context (every call re-sends it), not with its number of tool calls, so the
+   budget is about scope and reading habits, not a call cap.
+   - **Whoever writes a brief prepares it.** One deliverable plus its test; if it needs "and", it's
+     two slices. Give the exact files, functions and line ranges, the previous handoff, what's
+     already ruled out, and how to verify, so the agent doesn't explore. Research/diagnosis and
+     building are separate slices.
+   - **Read lean.** Grep first, then read only the lines needed; never a whole large file or spec
+     (specs over ~25 KB are split into design + "As built"). Cargo output filtered to
+     errors/warnings (`2>&1 | grep -E "^(error|warning)" -A6`), tests to summary lines, logs with
+     `tail`/`grep`.
+   - **Hand off on context, not on a count.** Write the handoff in `../.sessions/<name>.md` as you go.
+     Once you've read a lot (several large files or long logs) or your context was summarised, stop
+     at a compiling state, finish the handoff and report; a fresh agent continues from the file.
+   - Orchestrators log tool calls and tokens per slice in their session file to see what works.
 
 ## Hard rules
 

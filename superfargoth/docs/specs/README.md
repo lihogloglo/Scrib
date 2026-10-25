@@ -21,7 +21,7 @@ violations are in net.md's audit table.
 **Doc budget**: a spec over ~25 KB keeps decisions, data model and open questions, and moves its
 as-built logs, measurements and superseded options word for word to `archive/<name>-history.md`
 (headings kept, so old references resolve there): [ui](archive/ui-history.md),
-[physics](archive/physics-history.md); action.md's predates this as [action-archive.md](action-archive.md).
+[physics](archive/physics-history.md), [save](archive/save-history.md); action.md's predates this as [action-archive.md](action-archive.md).
 
 Index:
 
