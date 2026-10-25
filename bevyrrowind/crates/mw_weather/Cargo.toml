@@ -4,6 +4,7 @@ description = "Morrowind weather adapter (Bevy-free): REGN regions -> sf_weather
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 mw_install.workspace = true

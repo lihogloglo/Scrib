@@ -19,7 +19,9 @@ sf_ui_bevy.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-bevy = { workspace = true, features = ["ui", "file_watcher"] }
+# No `file_watcher` here: cargo-hakari would unify it into every build (the shipping game would
+# watch its assets). The example asks for it on the command line: `--features bevy/file_watcher`.
+bevy = { workspace = true, features = ["ui"] }
 bevy_enhanced_input.workspace = true
 sf_records.workspace = true
 sf_ui.workspace = true

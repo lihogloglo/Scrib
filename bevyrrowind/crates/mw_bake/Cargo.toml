@@ -4,6 +4,7 @@ description = "Morrowind adapter for the superfargoth bake: NIF importer, VFS an
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 # DDS container parsing for CPU texture decodes (already in the tree via bevy_image).

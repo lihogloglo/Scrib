@@ -4,6 +4,7 @@ description = "MWScript front end: lenient lexer and parser with named leniency 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 

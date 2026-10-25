@@ -4,6 +4,7 @@ description = "Loads Morrowind ESM/ESP content into the superfargoth record data
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 semver.workspace = true

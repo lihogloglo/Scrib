@@ -1,6 +1,6 @@
 # cargo-hakari settings (https://docs.rs/cargo-hakari/latest/cargo_hakari/config): the
 # `workspace-hack` crate pins one feature set per third-party dependency, so `cargo test -p A` and
-# `-p B` reuse the same Bevy build instead of each compiling its own variant. CLAUDE.md "Commands".
+# `-p B` reuse the same Bevy build instead of each compiling its own variant. superfargoth/CLAUDE.md "Commands".
 hakari-package = "workspace-hack"
 dep-format-version = "4"
 resolver = "3"
@@ -8,6 +8,23 @@ resolver = "3"
 platforms = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 # `workspace-hack.workspace = true` lines, like every other dependency here.
 workspace-hack-line-style = "workspace-dotted"
+
+[traversal-excludes]
+# The game app is never simulated: its opt-in features (`dev` = Bevy dynamic linking + file watcher,
+# `dlss`, `solari`, `remote`, `trace`, `tracy`) would otherwise reach every build through the
+# `--all-features` simulation. Excluded from traversal, it gets no hack line either; its build still
+# gets the hack's features through its library dependencies, plus its own.
+workspace-members = ["bevyrrowind"]
+# Game-only TES3 format crates (one git repo), with what they alone turn on (glam 0.30, `half/nightly`):
+# the hack lives in superfargoth, whose crates never pull Morrowind formats (superfargoth/CLAUDE.md
+# hard rule 1). Their users are the Bevy-free mw_* cores, which don't take the hack anyway.
+third-party = [
+    { name = "tes3", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "bytes_io", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "esp", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "esp_macros", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    { name = "nif", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+]
 
 [final-excludes]
 # Bevy-free cores (ARCHITECTURE section 8b rule 1) don't depend on the hack: it carries the whole
@@ -48,6 +65,24 @@ workspace-members = [
     "sf_wind",
     "sf_world",
     "sf_vfs",
+    # Game cores (bevyrrowind/crates): all but `mw_assets` (the Bevy asset loaders) are Bevy-free.
+    "mw_actors",
+    "mw_ai",
+    "mw_anim",
+    "mw_audio",
+    "mw_bake",
+    "mw_graphs",
+    "mw_install",
+    "mw_mods",
+    "mw_nif",
+    "mw_physics",
+    "mw_records",
+    "mw_rpg",
+    "mw_script",
+    "mw_vfs",
+    "mw_water",
+    "mw_weather",
+    "mw_world",
 ]
 # Unified features would be every crate's `--all-features`, so opt-ins that must not leak into
 # default builds stay per crate: DLSS (its build needs the DLSS SDK), the Luau JIT (`sf_script/jit`)

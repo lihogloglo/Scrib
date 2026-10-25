@@ -432,27 +432,29 @@ Compile time is a design constraint, like frame time. The rules:
    where performance allows (e.g. `KindVisitor` instead of generic
    callbacks everywhere).
 
-### Settings (in both repos)
+### Settings (repo root: one Cargo workspace for framework and game)
 
 | Setting | Where | Why |
 |---|---|---|
-| `rust-lld` linker | `.cargo/config.toml` | Linking is the slowest step of an incremental Bevy build; lld is several times faster than `link.exe`. Ships with Rust. |
+| `rust-lld` linker | root `.cargo/config.toml` | Linking is the slowest step of an incremental Bevy build; lld is several times faster than `link.exe`. Ships with Rust. |
 | `bevy/dynamic_linking` | app `dev` feature, `cargo dev` alias | Bevy becomes a shared library, so a relink no longer re-links Bevy. The biggest incremental win. Never in shipped builds. |
 | Deps at `opt-level = 3`, ours at `1` | `[profile.dev]` | Dependencies build once; Bevy at opt-level 0 is too slow to run. |
 | `debug = "line-tables-only"`, deps `debug = false` | `[profile.dev]` | Readable backtraces with far less debug info to generate and link. `--profile debugging` for a full debugger build. |
 | Optimized build scripts and proc macros | `[profile.dev.build-override]` | Derive macros run on every build of their users. |
-| Pinned toolchain | `rust-toolchain.toml` | Same compiler everywhere; a compiler change invalidates every cache. |
-| `profiling` / `dist` profiles | `Cargo.toml` | Release with symbols for Tracy; thin LTO + 1 codegen unit only for shipping. |
+| Pinned toolchain | root `rust-toolchain.toml` | Same compiler everywhere; a compiler change invalidates every cache. |
+| `profiling` / `dist` profiles | root `Cargo.toml` | Release with symbols for Tracy; thin LTO + 1 codegen unit only for shipping. |
+| Feature unification (`cargo hakari`) | root `.config/hakari.toml`, `superfargoth/crates/workspace-hack` | One feature set per dependency, so `cargo test -p A` and `-p B` share one Bevy build. Bevy-free cores (`sf_*` and `mw_*`) and the game app stay out; superfargoth/CLAUDE.md "Commands". |
+| Dependency policy (`cargo deny`) | root `deny.toml` | Licences, advisories, duplicates, sources; superfargoth/README.md "Dependency policy". |
 
 Checked against Bevy 0.20's `.cargo/config_fast_builds.toml` (2026-10-12): its Windows section is
 exactly `rust-lld.exe` + `rustdocflags`, with every other flag nightly-only. rust-lld is not the
 default linker on Windows MSVC (it is on x86_64 Linux), so the config line stays.
 
-A superfargoth crate built from bevyrrowind is a path dependency, not a workspace member, so
-bevyrrowind's `[profile.dev.package."*"]` builds it at opt-level 3 without line tables. Measured
-(health, 2026-10-12): forcing opt-level 1 changed no touch or body-edit time beyond noise, so it
-stays (framework hot paths run fast in `cargo dev`). Side effect: `--profile debugging` from
-bevyrrowind has no debug info for framework crates; debug those from the superfargoth workspace.
+Since the merge into one workspace (2026-10-25), framework crates are workspace members like the
+game's, so `[profile.dev.package."*"]` no longer applies to them: they build at opt-level 1 with
+line tables, and `--profile debugging` covers them. Before, as path dependencies of bevyrrowind,
+they built at opt-level 3; measured then (health, 2026-10-12), forcing opt-level 1 changed no touch
+or body-edit time beyond noise. Not re-measured: framework hot paths may run slower in `cargo dev`.
 
 ### Gates (dev loop)
 
@@ -490,11 +492,6 @@ rule 3 (wide and shallow) and rule 5 (split by change frequency) in mind for `sf
   for Windows and warns that `-Zshare-generics` must stay off (`=n`) with dynamic linking there
   (65k export limit). Cranelift ships for Windows but without panic unwinding (`panic=abort`).
   Where it would help: the app crate's ~2 s of rustc per edit and the clean build's Bevy chain.
-- **Shared `CARGO_TARGET_DIR` across both workspaces**: different feature
-  sets would make them evict each other's artifacts.
-- **workspace-hack crate (`cargo hakari`)**: unifies dependency features
-  so building one package doesn't rebuild deps another package built with
-  different features. Adopt when that rebuild churn shows up.
 
 ## 9. Milestones
 

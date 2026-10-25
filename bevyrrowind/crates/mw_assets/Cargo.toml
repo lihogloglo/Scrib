@@ -4,6 +4,7 @@ description = "Morrowind NIF/DDS assets as Bevy assets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 bevy = { workspace = true, features = ["bevy_pbr", "bevy_world_serialization", "bevy_log", "dds", "tga", "bmp"] }
@@ -16,6 +17,7 @@ sf_sky_bevy.workspace = true
 sf_render_order_bevy.workspace = true
 mw_world.workspace = true
 thiserror.workspace = true
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

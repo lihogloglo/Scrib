@@ -4,6 +4,7 @@ description = "Morrowind on superfargoth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [features]
 # Fast iteration: Bevy as a shared library, so relinking after a change

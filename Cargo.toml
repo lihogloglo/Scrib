@@ -192,11 +192,12 @@ sf_wind = { path = "superfargoth/crates/sf_wind", version = "0.1.0" }
 sf_wind_bevy = { path = "superfargoth/crates/sf_wind_bevy", version = "0.1.0" }
 sf_world = { path = "superfargoth/crates/sf_world", version = "0.1.0" }
 sf_world_bevy = { path = "superfargoth/crates/sf_world_bevy", version = "0.1.0" }
-# Feature unification (cargo hakari, .config/hakari.toml): every framework Bevy crate depends on it. This
-# is hakari's empty crates.io stub (CC0, never has code), patched below to superfargoth/crates/workspace-hack.
+# Feature unification (cargo hakari, .config/hakari.toml): every Bevy library crate, framework and game,
+# depends on it. This is hakari's empty crates.io stub (CC0, never has code), patched below to
+# superfargoth/crates/workspace-hack.
 workspace-hack = "=0.1.0"
 
-# Game crates (bevyrrowind).
+# Game crates (bevyrrowind): `publish = false`, so path dependencies without `version` (cargo-deny).
 mw_actors = { path = "bevyrrowind/crates/mw_actors" }
 mw_ai = { path = "bevyrrowind/crates/mw_ai" }
 mw_anim = { path = "bevyrrowind/crates/mw_anim" }
@@ -279,7 +280,7 @@ debug = true
 inherits = "release"
 debug = "line-tables-only"
 
-# `profiling` plus `--features trace` (per-system CPU spans, docs/perf.md). Its own
+# `profiling` plus `--features trace` (per-system CPU spans, bevyrrowind/docs/perf.md). Its own
 # profile, so switching between the two never rebuilds the other.
 [profile.profiling-trace]
 inherits = "profiling"

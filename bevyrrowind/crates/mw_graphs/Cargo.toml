@@ -4,6 +4,7 @@ description = "Morrowind animation graph assets for sf_anim_graph: humanoid and 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 glam.workspace = true

@@ -4,6 +4,7 @@ description = "Morrowind NPC_/CREA records as sf_character recipes: race skin pa
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 glam.workspace = true

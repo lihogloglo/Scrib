@@ -4,6 +4,7 @@ description = "Morrowind BSA archives and Data Files as superfargoth VFS sources
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 mw_install.workspace = true

@@ -1,7 +1,8 @@
 //! A menu styled by three mod sheets in load order (ROADMAP M5 U2 Verify).
 //!
-//! `cargo run -p sf_ui_css --example ui_css` opens a window. The mods are `base_ui` (look and
-//! tokens), `bright_buttons` (loads later, so its button colour wins) and `broken_mod` (one
+//! `cargo run -p sf_ui_css --example ui_css --features bevy/file_watcher` opens a window (the
+//! feature turns on hot reload; Cargo.toml says why it's on the command line). The mods are
+//! `base_ui` (look and tokens), `bright_buttons` (loads later, so its button colour wins) and `broken_mod` (one
 //! invalid value, reported against it in the HUD). Edit
 //! `crates/sf_ui_css/examples/assets/ui/bright_buttons/style.css` and save: the menu restyles.
 //! Arrows/d-pad move focus; using a gamepad switches the root `input` attribute and the focus ring.

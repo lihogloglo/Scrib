@@ -47,7 +47,7 @@ sf_sky.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
 
 [[example]]
 name = "sky"

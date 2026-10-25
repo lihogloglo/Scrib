@@ -4,6 +4,7 @@ description = "Morrowind sound content for sf_audio: SOUN bank and cues, SNDG cr
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 # Bevy-free (ARCHITECTURE section 8b rule 6): records in, sf_audio data out. The app's audio.rs is the glue.
 [dependencies]

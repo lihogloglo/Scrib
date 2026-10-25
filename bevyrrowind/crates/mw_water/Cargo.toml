@@ -4,6 +4,7 @@ description = "Morrowind water adapter: water bodies, optics by region, Morrowin
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 encoding_rs.workspace = true

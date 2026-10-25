@@ -1,4 +1,5 @@
-# cargo-deny policy for the superfargoth workspace: `cargo deny check` (README.md "Dependency policy").
+# cargo-deny policy for the Scrib workspace (superfargoth + bevyrrowind): `cargo deny check` from the
+# repo root (superfargoth/README.md "Dependency policy").
 # Config reference: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
 
 [graph]
@@ -11,7 +12,17 @@ all-features = true
 version = 2
 unmaintained = "all"
 yanked = "warn"
-ignore = []
+ignore = [
+    # ruzstd 0.8 decompression bomb (OOM on a tiny input). Bevy 0.20 pins 0.8 (bevy_image `zstd_rust`
+    # for KTX2, bevy_anti_alias LUTs); the fix is 0.9.1, so no safe upgrade without a Bevy release.
+    # Inputs are local asset files (game data, installed mods): worst case a crash, not code execution.
+    # Revisit in the crate "update all" batch.
+    { id = "RUSTSEC-2026-0344", reason = "no fix reachable on Bevy 0.20; local asset input only; update batch" },
+    # ttf-parser unmaintained, no upgrade: Bevy's accesskit_winit (bevy_winit) pulls it.
+    { id = "RUSTSEC-2026-0192", reason = "transitive via bevy_winit/accesskit_winit; no maintained alternative upstream" },
+    # paste unmaintained (finished proc macro, no upgrade): pulled by the game's tes3 git dependency.
+    { id = "RUSTSEC-2024-0436", reason = "compile-time proc macro via tes3; no replacement upstream" },
+]
 
 [licenses]
 version = 2
@@ -45,7 +56,21 @@ exceptions = [
     { crate = "cssparser-macros", allow = ["MPL-2.0"] },
     { crate = "dtoa-short", allow = ["MPL-2.0"] },
     { crate = "selectors", allow = ["MPL-2.0"] },
+    # The game (bevyrrowind app): `dirs` (bake cache dir) pulls option-ext through dirs-sys, and the
+    # Bevy `mp3` feature pulls Symphonia's MP3 decoder. Unmodified crates.io deps, same rule as above.
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+    { crate = "symphonia", allow = ["MPL-2.0"] },
+    { crate = "symphonia-bundle-mp3", allow = ["MPL-2.0"] },
+    { crate = "symphonia-core", allow = ["MPL-2.0"] },
+    { crate = "symphonia-metadata", allow = ["MPL-2.0"] },
 ]
+
+# The tes3 root package doesn't inherit its workspace's `license = "MIT OR Apache-2.0"` (its sub-crates
+# do); its LICENSE file is MIT.
+[[licenses.clarify]]
+crate = "tes3"
+expression = "MIT OR Apache-2.0"
+license-files = []
 
 [licenses.private]
 # Our own crates are unpublished workspace members; their licence is the workspace's.
@@ -56,7 +81,9 @@ ignore = true
 # above all; the summary names them. Errors would block on transitive platform crates we don't control.
 multiple-versions = "warn"
 wildcards = "deny"
-# Path dependencies (our workspace and vendor/ patches) are not wildcards.
+# Path dependencies (our workspace and vendor/ patches) are not wildcards. cargo-deny allows them only in
+# unpublished crates: the game's crates are `publish = false` (GPL game, git dependency); framework
+# crates give `version` with each path instead.
 allow-wildcard-paths = true
 highlight = "all"
 
@@ -65,4 +92,8 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = [
+    # TES3 formats (MIT OR Apache-2.0), the game's only git dependency: not on crates.io, pinned to a
+    # commit in the root Cargo.toml (unstable API). Covers its sub-crates (bsa, esp, nif, bytes_io...).
+    "https://github.com/Greatness7/tes3",
+]

@@ -132,7 +132,9 @@ pub(crate) struct Switches<'w> {
     weather: Option<ResMut<'w, sf_weather_bevy::WorldWeather>>,
     weather_records: Option<Res<'w, sf_weather_bevy::WeatherRecords>>,
     climates: Option<Res<'w, sf_weather_bevy::WorldWeatherMap>>,
+    #[cfg_attr(not(feature = "remote"), allow(dead_code, reason = "read by BRP `bevyrrowind/status` only"))]
     site: Option<Res<'w, sf_weather_bevy::WeatherSite>>,
+    #[cfg_attr(not(feature = "remote"), allow(dead_code, reason = "BRP `clouds` only"))]
     weather_overrides: Option<ResMut<'w, sf_weather_bevy::WeatherOverrides>>,
     /// Characters: smooth or vanilla bodies (B, `actors.rs`).
     bodies: Option<Res<'w, sf_character_bevy::CharacterSettings>>,
@@ -296,6 +298,7 @@ pub(crate) fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>,
 }
 
 /// The weather at the camera's climate.
+#[cfg(feature = "remote")]
 pub(crate) fn live_weather(s: &Switches) -> Option<crate::weather::LiveWeather> {
     let now = weather_now(s)?;
     let climate = s.site.as_ref()?.climates.first()?.0;

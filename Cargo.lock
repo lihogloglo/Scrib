@@ -4848,6 +4848,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_vfs",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -9759,13 +9760,13 @@ dependencies = [
  "naga-types",
  "nix",
  "nonmax",
- "notify-debouncer-full",
  "num-complex",
  "num-integer",
  "num-rational",
  "num-traits",
  "once_cell",
  "parking_lot",
+ "petgraph",
  "phf_shared",
  "proc-macro2",
  "profiling",

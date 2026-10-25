@@ -193,6 +193,10 @@ fn viewer(cameras: &Query<(&Camera, &GlobalTransform, Option<&RenderTarget>), Wi
 
 /// Picks the shadowed lights and advances their native shader shadow fades.
 #[allow(clippy::type_complexity)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass: score, pick, then fade the picked lights; splitting it would thread the same query through helpers"
+)]
 fn budget_shadows(
     mut commands: Commands,
     budget: Res<PointShadowBudget>,

@@ -244,6 +244,7 @@ pub(crate) fn force_live(
 }
 
 /// The weather at a climate for `bevyrrowind/status` and the C key's note.
+#[cfg(feature = "remote")]
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "remote", derive(schemars::JsonSchema))]
 pub(crate) struct LiveWeather {
@@ -259,6 +260,7 @@ pub(crate) struct LiveWeather {
     pub next: Option<(String, f64)>,
 }
 
+#[cfg(feature = "remote")]
 pub(crate) fn live_weather(book: &WeatherBook, state: &WeatherState, climate: sf_weather::ClimateIx, now: f64) -> Option<LiveWeather> {
     let name = |p: sf_weather::PresetIx| {
         let id = book.preset_id(p);

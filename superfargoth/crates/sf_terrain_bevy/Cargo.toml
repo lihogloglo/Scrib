@@ -39,7 +39,7 @@ sf_world.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
 glam.workspace = true
 rayon.workspace = true
 sf_bake.workspace = true
