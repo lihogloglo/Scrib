@@ -1,0 +1,12 @@
+# Scrib repository root. Whitelist: only these top-level entries are tracked. Everything else here
+# (sdk/ holds NVIDIA's SDK, which may not be redistributed; shots/, procgen/, cloud-prompts/,
+# .sessions/, .claude/) stays local. Each component keeps its own .gitignore.
+/*
+!/.gitignore
+!/.gitattributes
+!/CLAUDE.md
+!/README.md
+!/LICENSE
+!/LICENSE-EXCEPTION.md
+!/superfargoth/
+!/bevyrrowind/
