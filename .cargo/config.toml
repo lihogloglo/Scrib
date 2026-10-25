@@ -11,5 +11,5 @@ rustdocflags = ["-Clinker=rust-lld.exe"]
 # Iterate with Bevy dynamically linked: `cargo dev view "Balmora, Guild of Mages"`
 dev = "run -p bevyrrowind --features dev --"
 
-# DLSS: the game builds without NVIDIA's SDK (vendor/dlss_wgpu facade). The SDK env for the
+# DLSS: the game builds without NVIDIA's SDK (superfargoth/vendor/dlss_wgpu facade). The SDK env for the
 # separately shipped plugin lives in superfargoth/plugins/sf_dlss/.cargo/config.toml.

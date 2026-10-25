@@ -8,5 +8,12 @@
 !/README.md
 !/LICENSE
 !/LICENSE-EXCEPTION.md
+# The one Cargo workspace (both components): manifest, lock, toolchain, build config, cargo-deny, cargo-hakari.
+!/Cargo.toml
+!/Cargo.lock
+!/rust-toolchain.toml
+!/.cargo/
+!/.config/
+!/deny.toml
 !/superfargoth/
 !/bevyrrowind/
