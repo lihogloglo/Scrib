@@ -369,29 +369,5 @@ Changes against the design (`step` decides and the shell moves; windows through 
 integer clocks and FNV-1a ids; requests wait for windows; jump buffer and coyote in ticks; the A1
 rule vocabulary; candidates; the "press to use" hook; net serde): [archive](archive/action-history.md#as-built-a1-changes-against-the-design).
 
-## As built (A2 slice 1, 2026-10-22): `sf_action_bevy`
+Moved to [history](archive/action-history.md#as-built-a2-slice-1-2026-10-22-sf_action_bevy).
 
-Thin shell (Bevy app/ecs/math/time/transform, `bevy_enhanced_input`, `sf_action`, `sf_controller`,
-`sf_coords`; not `sf_controller_bevy`, which pulls the animation crates); schedule in its crate
-docs. `SfActionPlugin<G: GroundProbe>` sets `Time<Fixed>` to `TICK_HZ` (60, the physics rate);
-per tick: `Sample` (advance `ActionTick`, one `Command` per `PlayerInput`) → `Command` (AI,
-scripts, net) → `Step` (`sf_action::step`) → `Move` (launch, one `step_batch` for every
-`ActionBody`). `ActionInputPlugin`: the `PlayerControls` context; every frame before the fixed
-loop its actions (stick + one bool per class, unbound: bindings are the host's) go into the
-player's `InputSampler`. After the loop, `Interpolate` draws `prev.lerp(curr, overstep_fraction)`
-in `WorldPos` plus the correction spring into `Transform` (relative to `frame_origin`).
-`teleport` resets both poses; `reconcile` puts a snap into the spring: Bevy-free
-`sf_controller::RenderCorrection` (critical spring 0.1 s / 0.2 s, step ≤ 0.5 × planar speed,
-floor 0.3 m/s, clamps 0.5 m / 45°), frame rate, never fed back.
-
-Reuse (rule 8): Bevy 0.20 has the fixed schedule, `overstep_fraction`, `RunFixedMainLoopSystems`
-and the `physics_in_fixed_timestep` pattern, no interpolation component: adopted. Not
-`bevy_transform_interpolation` 0.6 (MIT/Apache, Bevy 0.20, maintained): it blends local f32
-`Transform`s (our truth is `WorldPos` on grid cells; the spring writes the same `Transform`),
-pulls the `bevy` umbrella into a library (§8b), and new crates wait for the update batch. Ours is
-the blend `sf_physics_bevy::write_back` already uses.
-
-Tests (headless, manual frame times): a 180-tick command stream gives bit-identical ticks at
-30/60/144 fps; a straight run draws monotonic frame steps at 4.5 m/s ± 2 %, CV < 1 %, at
-30/60/144 fps (fails at 144 with the blend off); a reconcile glides; a mocked stick and Jump launch.
-Slice 2: app wiring, D1 camera, bindings, animation feed, `wk-balmora` timing, owner check.
