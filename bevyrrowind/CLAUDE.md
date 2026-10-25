@@ -23,8 +23,8 @@ To update the ROADMAP, edit only your task's line (grep for it).
 
 ## End of every session
 
-Update `docs/ROADMAP.md`: your task's status mark and one line under "Recent" (drop the oldest
-past ~10). As-built detail goes in the spec and the commit message, never the roadmap.
+Update `docs/ROADMAP.md`: your task's status mark and one line in `docs/CHANGELOG.md`.
+As-built detail goes in the spec and the commit message, never the roadmap.
 Record decisions with lasting effect as one dated bullet (≤ 3 lines) in
 `../superfargoth/docs/DECISIONS.md`.
 **Doc budget:** ROADMAP ≤ ~250 lines, a spec ≤ ~25 KB (split "As built" history into an archive
