@@ -32,6 +32,12 @@ slices", "Systemic gaps") and [OpenMW research](../research/openmw-physics-2026-
 
 ## Slices (one deliverable + its test each; one physics lane, serial unless marked)
 
+**Status 2026-10-26 (night):** 1-10 done and pushed (88386c8, 44a4d8e, 22d7076, 4543805, 3710655, 54dd9c1,
+0497245, c0e9046, b100b23, 6769771); owner check PH-11. Leftovers: drag slow-down only on the free camera
+(`carry_feedback`); arrival spot over a hole loops with a warning; fade gate_max 1.5 s may show the frozen body
+briefly; overlap deeper than step_up (0.45 m) not recovered; doorless link ends ignore `PlayerMode.paused`;
+Balmora insert ms after slice 7 unmeasured (needs `--bench`). 11 waits for the owner.
+
 1. **G1 collision-ready covers un-activated cells**: `stream.rs` `collision_loading` + `apply_inserts` item gate
    use `covers(ws, pos, margin, Level::Active)` + no pending static under the item; fix stale doc `stream.rs:224`.
 2. **S4-a player arrival gate**: marker in `sf_action_bevy` that `move_bodies` skips, inserted on `TravelArrived`
