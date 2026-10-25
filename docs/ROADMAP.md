@@ -129,9 +129,9 @@ and effects. Every task reports its ms cost per preset.
   travel direction, >= 15 deg, terrain occludes, `--off precipocc`). Owner 2026-10-25, not urgent: lee far too
   long (no ash in Balmora); want shelter only a few metres behind a vertical object: cap the shelter distance (particle
   depth minus occluder depth ≤ N m, one subtraction in the shader) plus a steeper angle; GF-2 Ghostfence look confirmed by owner 2026-10-25 (no change).
-- [~] 1.13 Dev console (owner 2026-10-21): front end built 2026-10-23 (`sf_console_bevy`, `console.md`); left: register
-  the app's switches (bevyrrowind slice). In-game console with live on/off for every `--off` part (SSAO, contact
-  shadows, lamp filter, fog history/jitter/froxels...), so the owner can A/B without relaunching; SH-16/SH-19 wait on it.
+- [~] 1.13 Dev console (owner 2026-10-21): front end built 2026-10-23 (`sf_console_bevy`, `console.md`). Slice 1 built
+  2026-10-25 (`console.rs`): Backquote, live `on|off|flip ssao` + the F-key switches, startup-only parts say so; CO-1
+  awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, tab-complete switch names. Raster GI: none yet (Phase 4).
 - [~] 1.14 Build churn (2026-10-21): built 2026-10-23 (superfargoth `workspace-hack`); left: re-measure. Workspace-hack (`cargo hakari`) so per-`-p` feature sets stop rebuilding Bevy
   (22-32 cached `bevy_render` variants per target); re-measure dev-loop gates.
 
@@ -153,16 +153,20 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   view/level runs, F11 player/free camera, walk/jump identical at 30/60/144 fps; Space jump, E use). Owner 2026-10-25:
   "everything works" (capsule walk). Step 2 (player2): scenes with a camera keep it, `level/walk.rs` retired, doorless
   links picked from the body. Step 3 (player3): focus = physics ray + actor capsules (sphere-pick scaffold deleted),
-  E blocked in menus, interior starts at the door marker or on the floor; PL-1 awaiting owner. Owner notes 2026-10-25 (log only, fix later): too much
+  E blocked in menus, interior starts at the door marker or on the floor; PL-1 prompt confirmed by owner. Owner notes 2026-10-25 (log only, fix later): too much
   inertia (move rules); carrying an object pushes the capsule through the floor, jittery (see 3.3).
-- [~] 2.1b Input (with 2.2 U6): built 2026-10-25 (input, input2; `controls.rs`, tests green), IN-1 awaiting owner. Game actions in `UiKeymap` (kbm + gamepad defaults), F10 keybinds screen, per-action
+  Items 2026-10-25 (`inventory.rs`): E takes loose items (net-ready `TakeRequest`, overlay removal); containers take-all
+  scaffold (Fargoth's ring is in the census barrel); IV-1 awaiting owner. Left: container window, ownership/theft, stack counts.
+- [~] 2.1b Input (with 2.2 U6): built 2026-10-25 (input, input2; `controls.rs`, tests green); owner: menu works. Labels from
+  `l10n/en/bevyrrowind.ftl` (uipolish); F10 keybinds only (clouds Shift+C). Game actions in `UiKeymap` (kbm + gamepad defaults), per-action
   hold/toggle option for sprint/sneak (owner: everything HOLD by default; today sprint holds, sneak toggles).
 - [~] 2.2 UI: widget kit + Morrowind theme (M5 U3), HUD + message box (U4), inventory on minimal `sf_rpg` stacks
   (U5), settings/options + keybinds (U6). `sf_ui`, `sf_ui_bevy`, `sf_ui_css` exist (U1, U2 confirmed); U5/U6 logic and
   stock dialogue/journal/inventory/keybinds/HUD screens (`sf_ui_screens`, `sf_rpg_ui`) built 2026-10-22/23. Left:
   app wiring done (2.4). U3 Morrowind theme 2026-10-25 (mwtheme): builtin-mod `ui.theme` (ini [FontColor] tokens,
-  tx_menubook journal, OpenMW Mystic Cards OFL) over dialogue/journal/message box; screenshots OK (font, colours, book). Next: 8-piece frames, journal layout
-  (page nav outside the book, side panel detached), theme hot reload.
+  tx_menubook journal, OpenMW Mystic Cards OFL) over dialogue/journal/message box. uipolish 2026-10-25: `.sf-button`
+  hover/press, focus ring only for pad/arrows, journal geometry from OpenMW's layout; inventory screen on I / pad Y
+  (`inventory_ui.rs`). Next: Escape menu + options (queued), 8-piece frames, inventory icons (not drawn), theme hot reload.
 - [~] 2.3 Text: fonts, books and scrolls, notifications. Framework slices 1-2 built 2026-10-23 (`ui-text.md`); left:
   the Morrowind markup parser and MessageBox mapping.
 - [~] 2.4 Dialogue + journal + minimal quest store (`specs/rpg.md`, `rpg-adapter.md`; `sf_rpg`, `mw_rpg`), MWScript legacy runtime for the slice (M5 W3;
@@ -172,9 +176,12 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   2026-10-23 (native `mw_script` interpreter). Slice 1 built 2026-10-25 (`dialogue.rs`: `MwView`
   host, content-only disposition seam, stats placeholders, stock dialogue window; Fargoth test through the window
   passes). Step 2 (dialogue2): E talks to NPCs (unhandled `ActivationOutcome`), controls paused in menus, J journal
-  (quest, entries, topic index), placement-keyed actors; DJ-1 awaiting owner. Next: Morrowind theme, HUD.
+  (quest, entries, topic index), placement-keyed actors; owner confirmed the ring flow. dialogue3: windows centred,
+  `skip_chargen` grants the chargen hand-off topics (chargenstate -1). Next: HUD; Sellus "papers" greeting filter.
 - [~] 2.5 Saves (M7 subset): world overlay + player; net-ready per `specs/net.md`. Framework S1+S2 built 2026-10-23
-  (`sf_save`, `sf_save_bevy`, `save.md`); left: game sections + app wiring (after lane `player`).
+  (`sf_save`, `sf_save_bevy`, `save.md`). Part 1 built 2026-10-25 (`saves.rs`): game sections (overlay, rpg, clock, host
+  character, `mw/rpg`) + F5/F9 quicksave/quickload, headless round trip; SV-1 awaiting owner. Left: part 2 (load screen,
+  save list, naming), body state, refresh of resident cells on load.
 - [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
   (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
   layers; positional one-shots/emitters on bevy_audio). Morrowind wiring done 2026-10-21 (`mw_audio`: SOUN/SNDG cues,
@@ -237,6 +244,10 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-25 (console, items, items2, dialogue3, uipolish): dev console with live SSAO; take items + inventory screen;
+  centred windows + chargen topics; button hover, journal layout, keybind labels. Owner confirmed TR-3, PL-1 prompt.
+- 2026-10-25 (saves1): saves part 1: game save sections on `sf_save_bevy` and F5/F9 quicksave/quickload restoring in the
+  running game through the door fade (any worldspace); headless round trip on real ESMs; SV-1 awaiting owner.
 - 2026-10-25 (player, dialogue, terrain-gloss): Phase 2 wiring step 1: third-person player (`player.rs`) and Morrowind
   dialogue window on `mw_rpg` (`dialogue.rs`), both headless-tested, not yet run in game; TR-3 terrain occlusion parity.
 
