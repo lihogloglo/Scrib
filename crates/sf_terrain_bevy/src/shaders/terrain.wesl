@@ -13,7 +13,20 @@ import bevy_pbr::render::{
     mesh_bindings::mesh,
     mesh_view_bindings::view,
     view_transformations::position_world_to_clip,
+    pbr_lighting::perceptualRoughnessToRoughness,
 };
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION)
+import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION)
+import bevy_pbr::ssao::utils::ssao_multibounce;
+
+/// Specular occlusion from an ambient visibility term, as StandardMaterial
+/// does it (bevy_pbr pbr_fragment.wesl): Lagarde and de Rousiers 2014,
+/// "Moving Frostbite to Physically Based Rendering".
+fn specular_occlusion(n_dot_v: f32, visibility: f32, perceptual_roughness: f32) -> f32 {
+    let roughness = perceptualRoughnessToRoughness(perceptual_roughness);
+    return saturate(pow(n_dot_v + visibility, exp2(-16.0 * roughness - 1.0)) - 1.0 + visibility);
+}
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -85,7 +98,6 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     pbr.material.perceptual_roughness = clamp(s.roughness, 0.045, 1.0);
     pbr.material.metallic = 0.0;
     pbr.material.flags = STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
-    pbr.diffuse_occlusion = vec3<f32>(s.ao);
     pbr.frag_coord = in.position;
     pbr.world_position = in.world_position;
     pbr.world_normal = n_geo;
@@ -94,6 +106,20 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     pbr.V = calculate_view(in.world_position, pbr.is_orthographic);
     pbr.flags = mesh[in.instance_index].flags;
     apply_surface_state(&pbr, wxz);
+    // Ambient occlusion as StandardMaterial applies it: the layer AO, SSAO
+    // (multibounce) when the view has it, and specular occlusion from the
+    // combined visibility so the env map's grazing Fresnel is occluded too.
+    // After the surface state, so wetness roughness feeds the specular term.
+    let n_dot_v = max(dot(pbr.N, pbr.V), 1e-4);
+    var visibility = s.ao;
+    var diffuse_occlusion = vec3<f32>(s.ao);
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
+    let ssao = textureLoad(screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy - view.viewport.xy), 0i).r;
+    diffuse_occlusion = min(diffuse_occlusion, ssao_multibounce(ssao, albedo));
+    visibility = min(visibility, ssao);
+}
+    pbr.diffuse_occlusion = diffuse_occlusion;
+    pbr.specular_occlusion = specular_occlusion(n_dot_v, visibility, pbr.material.perceptual_roughness);
     // Terrain shadows past the cascades (Bevy multiplies its CSM term by the
     // factor) and the dithered cascade end (the lighting position).
     let far = far_shadow_term(in.world_position, pbr.N, in.position.xy);
