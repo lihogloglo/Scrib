@@ -3,6 +3,13 @@
 Status: implemented (2026-10-11)
 Crates: `sf_sky` (Bevy-free core), `sf_sky_bevy` (plugin; cargo feature `solari`)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: implemented (2026-10-11); ROADMAP 1.3 (TAA/DLSS), 1.5 (GTAO), 1.7 (night checks SK-2, NS-2..4) in progress. Built: Bevy atmosphere sky, sun and moon from clock/season/latitude, scheduled exposure, night sky, raster or Solari render path with raster fallback, DLSS Ray Reconstruction.
+> Crates / key types: `sf_sky` (Bevy-free: `SkySettings`, `SkyClock`, `SkyState`), `sf_sky_bevy` (`SkyPlugin`, `SkyCamera`, `RenderPath`; feature `solari`).
+> Decisions: own `AtmosphereModel` medium, not Bevy's `ScatteringMedium::earth` ("Canonical technique"); sun 130 000 lux, per-pixel transmittance; EV100 schedule, not `AutoExposure`. Open: Solari sky double attenuation needs a `bevy_solari` patch ("Open questions" 1).
+> Read next: "Interfaces" for plugin use; "Night sky and drawn bodies"; "Data model".
+<!-- /agent-summary -->
+
 ## Goal
 
 A physically based sky that drives scene lighting from a game clock: Bevy's

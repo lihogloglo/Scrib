@@ -5,6 +5,13 @@ Crates: `sf_terrain` (new, Bevy-free: tiles, height stack, CPU queries,
 bake steps, CDLOD selection), `sf_terrain_bevy` (new: clipmap textures,
 material, colliders)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: agreed (2026-10-11); built and in use (Morrowind exterior). Open: ROADMAP 1.8 far-field bugs; TR-3 glossy terrain (1.12). Object-terrain blending was built then removed 2026-10-20 (TB-1..3 rejected, 10-13 ms render thread).
+> Crates / key types: `sf_terrain` (Bevy-free: tiles, height stack, CPU queries, bake steps, CDLOD selection), `sf_terrain_bevy` (clipmap textures, material, colliders); `TerrainSource` adapter trait.
+> Decisions that matter ("Canonical technique", "Decisions made"): CDLOD selection plus toroidal geometry-clipmap height stack; base spacing stays 0.5 m; clipmap storage R32Float; height-based splatting, layer map 1 m; Solari RT proxies sized by VRAM budget per preset.
+> Read next: "Data model" and "Interfaces" for tiles and queries; "Open questions" for hex tiling; world-adapter spec for Morrowind.
+<!-- /agent-summary -->
+
 ## Goal
 
 Render heightfield terrain from any source spacing as one continuous

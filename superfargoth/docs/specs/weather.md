@@ -10,6 +10,12 @@ Touches: `sf_sky`/`sf_sky_bevy` (proposed changes at the end; owned by sky-light
 Adapter: `../../../bevyrrowind/docs/specs/weather-adapter.md`.
 Note: "proposed changes at the end" now lives in [weather/history.md](weather/history.md).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: index over `weather/*.md`; WE1, WE3, WD1, clouds, fog, froxel fog, distant shadows and WE4a-e built; ROADMAP 1.8 (WE-5 ash storm over terrain) and 1.10 open, hard problem H3. Designed, not built: surface wetness/snow (SU1, SU2), tree wind WD2/WD3, splashes (PR2).
+> Crates: `sf_weather`, `sf_wind`, `sf_atmos`, `sf_precip_bevy` (+ `_bevy` plugins); one `WeatherFrame` per frame drives all passes ("Canonical technique"). Decisions: all weather is data presets ("Goal" 1); one wind field for everything (4); WE4 shows regional weather from afar, full map on High/Ultra ("WE4 owner decisions").
+> Read next: `weather/state.md` for state machine and presets; `clouds.md`; `fog.md`; `wind.md`; `precipitation-surface.md`; `distant-shadows.md`; `distant-weather.md` (WE4 design); `history.md` for WE4a-e as built.
+<!-- /agent-summary -->
+
 ## Topic files
 
 | File | Contents |

@@ -13,6 +13,12 @@ Adapter spec (first content pack): `../../../bevyrrowind/docs/specs/water-adapte
 Related: `weather.md` (wind, precipitation, surface state, fog, budgets), `terrain.md` ("Water"),
 `physics.md`, `locomotion.md` ("Swim"), ARCHITECTURE §7.2, WISHLIST §4.
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: draft; W1 `sf_water` core built, `sf_water_bevy` has FFT ocean surface, material, refraction snapshot and motion vectors (ROADMAP water polish item is marked [p]). Designed, not built: W4 reflections, W5 underwater, W6 buoyancy, W7 rivers, water bodies at any height.
+> Crates: `sf_water` (Bevy-free: records, CPU `WaterQuery`, spectrum, bake steps), `sf_water_bevy`; adapter `water-adapter.md`; `mw_water`. Decisions: render order opaque, water, other translucents, precipitation last ("Render order"); water casts no shadow (Open questions 2); buoyancy runs on CPU via `sf_physics` ("Buoyancy"). Hard problem H3 covers draw order.
+> Read next: "The water query" and "Ocean surface" for code; "Water pass, refraction, reflections" for rendering; "Render order" for pass placement.
+<!-- /agent-summary -->
+
 ## Goal
 
 ARCHITECTURE §9 M6 and WISHLIST §4: "ocean (evaluate `bevy-aqua`), water bodies at any height, baked

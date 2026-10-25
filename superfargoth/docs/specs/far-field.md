@@ -12,6 +12,13 @@ capture, light batches, bake steps behind feature `bake`), `sf_lod_bevy`
 (new: plugin, node loader, impostor and light-sprite materials, residency
 fallback, counters)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: implemented and verified on Morrowind (2026-10-11). Open: ROADMAP 1.8 (L2/L3 never selected/tinted FF-2, Ghostfence far copy GF-1), 1.9 (streaming spikes, precombine, hard problem H1).
+> Crates / key types: `sf_lod` (Bevy-free: node tree, clusters, impostor capture, light batches, bake behind feature `bake`), `sf_lod_bevy` (`FarFieldPlugin`, `ProxyMaterial`, `ImpostorMaterial`).
+> Decisions: HLOD hierarchy L0-L3 (128 m cell to 4 km) with REPLACE refinement; octahedral impostors for foliage; `VisibilityRange` crossfades with lead bands, so no holes ("Selection, residency, and crossfade"); only L1 casts shadows; distant light sprites. Vvardenfell (~5 km) never selects L3.
+> Read next: "Selection, residency, and crossfade"; "Bevy 0.20 pitfalls"; "Runtime"; "Bake steps"; `precombine.md` for per-cell merging.
+<!-- /agent-summary -->
+
 ## Goal
 
 Everything static in a worldspace is visible out to the horizon, at a
