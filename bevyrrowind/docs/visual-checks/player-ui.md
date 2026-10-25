@@ -94,3 +94,13 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Owner 2026-10-25: partial. COC works for interiors only (`coc balmora` fails: exterior lookup, console slice 3);
   can't paste; wants Down to select a suggestion and Enter to accept it. No upscaling/DLSS console switch exists yet.
 - Status: partial.
+
+### PM-1: Escape menu and options (`cargo dev view "Seyda Neen"`, player mode)
+- Esc opens the pause menu (Resume, Save, Load, Options, Quit; Save/Load greyed out until the save screens are wired);
+  the world stops (NPCs, sky clock, physics). Esc or Resume closes it and the world continues.
+- Options: Audio page (Master/Music/Sfx/Voice/Ambience/UI volume and mute); left/right change a value and you hear it
+  at once; holding an arrow repeats. "Key bindings" opens the F10 screen on top; Esc returns to options. Leave the
+  menus, quit, restart: the volumes are kept (`profiles/<name>.toml`, `[settings.sf]`).
+- Quit asks Yes/No (No is focused); Yes exits. Not in free camera or while the console is open.
+- Known: frames are flat CSS (no 8-piece textures); screen titles and On/Off are English defaults.
+- Status: awaiting owner.
