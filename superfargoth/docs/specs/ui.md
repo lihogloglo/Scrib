@@ -317,7 +317,11 @@ Widget kit (parts carry `Name` + `UiPart` + `UiClass`; buttons, panels, value ba
 dialogue, journal ([journal-ui.md](journal-ui.md)), inventory (virtual icon grid, drag and drop, split
 dialog, compare tooltips; `InventoryEvent` intents), keybinds, HUD (value bars, compass slot, crosshair, use
 prompt). A game spawns a `UiScreenRoot` with the screen's component and pushes its id; screens whose
-view-model owns focus carry `UiOwnsFocus`. Message boxes and toasts: [ui-text.md](ui-text.md)
+view-model owns focus carry `UiOwnsFocus`. Save/load (2026-10-25): `SaveLoadScreen` over an app-filled
+`SaveLoadModel` (mode, `SaveEntryView` rows: id, order, title, subtitle, reason, thumbnail, damaged; no
+`sf_save` dependency), listed newest first, "New save" on top in save mode with the app's generated name (typed
+names wait for router text capture); focus selects, confirm runs load / save, overwrite and delete ask first
+(cancel focused), Context1 deletes; choices go out as `SaveLoadEvent`, Back closes. Message boxes and toasts: [ui-text.md](ui-text.md)
 "Notifications". Content packs bring names, icons, themes and host logic.
 
 ### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)

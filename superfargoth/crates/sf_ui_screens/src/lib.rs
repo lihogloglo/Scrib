@@ -16,12 +16,15 @@
 //!   [`InventoryEvent`]s.
 //! - [`keybinds`]: the keybinds screen over `sf_ui_bevy::UiKeymap`: capture flow, conflict
 //!   question, glyphs for the last-used pad.
+//! - [`saveload`]: the save/load screen over an app-filled [`SaveLoadModel`]: saves newest
+//!   first, new save, overwrite and delete with a confirmation. Choices go out as
+//!   [`SaveLoadEvent`]s.
 //! - [`hud`]: value bars, the compass slot, crosshair and the "press to use" prompt.
 //!
 //! A game spawns a screen as a `UiScreenRoot` entity carrying the screen's component (for
 //! example `DialogueScreen::new(view)`) and pushes its id on the screen stack; the router
 //! gives it input while it is on top, so gameplay sees none of the inputs it binds. Screens
-//! whose view-model owns focus (dialogue, inventory, keybinds) carry `UiOwnsFocus` and move
+//! whose view-model owns focus (dialogue, inventory, keybinds, save/load) carry `UiOwnsFocus` and move
 //! it themselves; the journal uses Bevy's directional navigation.
 //!
 //! Nothing here names a game: content packs bring names, icons, themes and the host logic.
@@ -33,6 +36,7 @@ pub mod journal;
 pub mod keybinds;
 pub mod keyed;
 pub mod labels;
+pub mod saveload;
 pub mod widgets;
 
 #[cfg(feature = "demo")]
@@ -52,6 +56,10 @@ pub use journal::{JournalSeenChanged, JournalSource, JournalUi, JournalUiPlugin}
 pub use keybinds::{KeybindsFocus, KeybindsScreen};
 pub use keyed::{KeyedChildren, KeyedSync};
 pub use labels::ScreenLabels;
+pub use saveload::{
+    SaveEntryView, SaveLoadChoice, SaveLoadEvent, SaveLoadFocus, SaveLoadMode, SaveLoadModel,
+    SaveLoadRow, SaveLoadScreen,
+};
 pub use widgets::{ScreenColors, StatBar};
 
 /// Ordering of the screens' systems in `Update`, after the router's dispatch.
@@ -79,10 +87,12 @@ impl Plugin for SfScreensPlugin {
             .init_resource::<InventoryGridStyle>()
             .add_message::<DialogueRequestEvent>()
             .add_message::<InventoryEvent>()
+            .add_message::<SaveLoadEvent>()
             .add_observer(dialogue::on_dialogue_button)
             .add_observer(dialogue::on_link_click)
             .add_observer(dialogue::on_dialogue_hover)
             .add_observer(keybinds::on_keybind_cell)
+            .add_observer(saveload::on_saveload_part)
             .add_observer(inventory::on_inventory_button)
             .add_observer(inventory::on_cell_over)
             .add_observer(inventory::on_cell_drag_start)
@@ -108,6 +118,7 @@ impl Plugin for SfScreensPlugin {
                     hud::spawn_hud,
                     keybinds::spawn_keybinds,
                     inventory::spawn_inventory,
+                    saveload::spawn_saveload,
                 )
                     .in_set(ScreenSystems::Spawn),
             )
@@ -117,6 +128,7 @@ impl Plugin for SfScreensPlugin {
                     dialogue::dialogue_input,
                     keybinds::keybinds_input,
                     inventory::inventory_input,
+                    saveload::saveload_input,
                 )
                     .in_set(ScreenSystems::Input),
             )
@@ -128,6 +140,7 @@ impl Plugin for SfScreensPlugin {
                     hud::sync_hud,
                     keybinds::sync_keybinds,
                     inventory::sync_inventory,
+                    saveload::sync_saveload,
                     widgets::sync_bars,
                     widgets::focus_ring,
                     widgets::scroll_to_focus,

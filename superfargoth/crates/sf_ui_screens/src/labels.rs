@@ -44,6 +44,24 @@ pub struct ScreenLabels {
     /// `inventory-weight`, `inventory-value`
     pub weight: String,
     pub value: String,
+    /// `saveload-save-title`, `saveload-load-title`: the save/load screen's heading.
+    pub save_title: String,
+    pub load_title: String,
+    /// `saveload-save`, `saveload-load`, `saveload-delete`, `saveload-back`, `saveload-yes`
+    pub save: String,
+    pub load: String,
+    pub delete: String,
+    pub back: String,
+    pub yes: String,
+    /// `saveload-new`: the new-save row (its generated name follows in brackets).
+    pub new_save: String,
+    /// `saveload-empty`: no saves to list.
+    pub no_saves: String,
+    /// `saveload-damaged`: a save that could not be read.
+    pub damaged: String,
+    /// `saveload-confirm-overwrite`, `saveload-confirm-delete` (`{name}` replaced by the title).
+    pub confirm_overwrite: String,
+    pub confirm_delete: String,
 }
 
 impl Default for ScreenLabels {
@@ -77,6 +95,18 @@ impl Default for ScreenLabels {
             ok: s("OK"),
             weight: s("Weight"),
             value: s("Value"),
+            save_title: s("Save game"),
+            load_title: s("Load game"),
+            save: s("Save"),
+            load: s("Load"),
+            delete: s("Delete"),
+            back: s("Back"),
+            yes: s("Yes"),
+            new_save: s("New save"),
+            no_saves: s("No saves yet."),
+            damaged: s("Unreadable"),
+            confirm_overwrite: s("Overwrite \"{name}\"?"),
+            confirm_delete: s("Delete \"{name}\"? This cannot be undone."),
         }
     }
 }

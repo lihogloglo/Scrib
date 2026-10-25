@@ -44,6 +44,11 @@ value = { layer = "Menu", implementation = { Template = "inventory" } }
 kind = "ui.screen"
 id = "keybinds"
 value = { layer = "Menu", implementation = { Template = "keybinds" } }
+
+[[define]]
+kind = "ui.screen"
+id = "saveload"
+value = { layer = "Menu", implementation = { Template = "saveload" } }
 "#;
 
 /// The registry of [`SCREENS`].

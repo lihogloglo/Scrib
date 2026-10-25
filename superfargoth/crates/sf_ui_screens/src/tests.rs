@@ -861,6 +861,258 @@ fn keybinds_capture_conflict_and_grid_focus() {
     );
 }
 
+// ---------------------------------------------------------------- save/load
+
+#[derive(Resource, Default)]
+struct Choices(Vec<SaveLoadChoice>);
+
+fn collect_choices(mut events: MessageReader<SaveLoadEvent>, mut out: ResMut<Choices>) {
+    out.0.extend(events.read().map(|e| e.choice.clone()));
+}
+
+fn saves_ui() -> Ui {
+    Ui::with(|app| {
+        app.init_resource::<Choices>()
+            .add_systems(Update, collect_choices.after(ScreenSystems::Sync));
+    })
+}
+
+/// Three saves in shuffled order (newest: "b"), the oldest unreadable.
+fn saves(mode: SaveLoadMode) -> SaveLoadModel {
+    let mut old = SaveEntryView::new("000001-manual", 1, "Old");
+    old.damaged = true;
+    let mut quick = SaveEntryView::new("000007-quick", 7, "Harbour");
+    quick.reason_label = "Quicksave".into();
+    quick.subtitle = "Harbour, 2 h 10 min".into();
+    SaveLoadModel {
+        mode,
+        entries: vec![SaveEntryView::new("000004-manual", 4, "Tower"), old, quick],
+        can_delete: true,
+        new_name: "Save 8".into(),
+    }
+}
+
+fn open_saveload(ui: &mut Ui, model: SaveLoadModel) -> Entity {
+    let root = ui.open("saveload", SaveLoadScreen::new(model));
+    ui.frames(2);
+    root
+}
+
+fn saveload(ui: &Ui, root: Entity) -> (&SaveLoadScreen, &saveload::SaveLoadParts) {
+    (
+        ui.world().get::<SaveLoadScreen>(root).unwrap(),
+        ui.world().get::<saveload::SaveLoadParts>(root).unwrap(),
+    )
+}
+
+fn entry(id: &str) -> SaveLoadRow {
+    SaveLoadRow::Entry(id.into())
+}
+
+fn take_choices(ui: &mut Ui) -> Vec<SaveLoadChoice> {
+    std::mem::take(&mut ui.world_mut().resource_mut::<Choices>().0)
+}
+
+fn tap_key(ui: &mut Ui, key: KeyCode) {
+    ui.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(key);
+    ui.app.update();
+    ui.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .release(key);
+    ui.frames(2);
+}
+
+#[test]
+fn saveload_lists_newest_first_and_shows_the_empty_state() {
+    let mut ui = saves_ui();
+    let root = open_saveload(&mut ui, saves(SaveLoadMode::Load));
+    let (screen, parts) = saveload(&ui, root);
+    let order = vec![
+        entry("000007-quick"),
+        entry("000004-manual"),
+        entry("000001-manual"),
+    ];
+    assert_eq!(parts.order(), order.as_slice());
+    let rows: Vec<Entity> = order.iter().map(|k| parts.row(k).unwrap()).collect();
+    let list = ui.world().get::<ChildOf>(rows[0]).unwrap().parent();
+    assert_eq!(
+        ui.world().get::<Children>(list).unwrap().to_vec(),
+        rows,
+        "row entities in list order"
+    );
+    let first = ui.text_of(rows[0]);
+    assert!(first.contains("Harbour") && first.contains("Quicksave"), "{first}");
+    assert!(ui.text_of(rows[2]).contains("Unreadable"));
+    assert_eq!(ui.focus(), Some(rows[0]), "focus starts on the newest save");
+    assert_eq!(screen.selected(), Some(&order[0]));
+    assert!(ui.class_of(rows[0]).contains("selected"));
+    let empty = parts.empty_label();
+    let primary = parts.buttons()[0];
+    assert_eq!(ui.text_of(primary), "Load");
+    assert_eq!(
+        ui.world().get::<Node>(empty).unwrap().display,
+        Display::None
+    );
+
+    // The unreadable save can't be loaded.
+    ui.tap(GamepadButton::DPadDown);
+    ui.tap(GamepadButton::DPadDown);
+    assert_eq!(ui.focus(), Some(rows[2]));
+    assert!(ui.class_of(primary).contains("disabled"));
+    assert!(!ui.class_of(rows[0]).contains("selected"));
+    ui.tap(GamepadButton::South);
+    assert!(take_choices(&mut ui).is_empty());
+
+    // A new listing: rows kept by id, the vanished selection falls back; then none at all.
+    let mut model = saves(SaveLoadMode::Load);
+    model.entries.retain(|e| !e.damaged);
+    ui.world_mut()
+        .get_mut::<SaveLoadScreen>(root)
+        .unwrap()
+        .model = model;
+    ui.frames(2);
+    let (_, parts) = saveload(&ui, root);
+    assert_eq!(parts.row(&order[0]), Some(rows[0]), "row kept");
+    assert_eq!(ui.focus(), Some(rows[1]), "focus on the last row left");
+    ui.world_mut()
+        .get_mut::<SaveLoadScreen>(root)
+        .unwrap()
+        .model
+        .entries
+        .clear();
+    ui.frames(2);
+    let (_, parts) = saveload(&ui, root);
+    assert!(parts.order().is_empty());
+    assert_eq!(
+        ui.world().get::<Node>(empty).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(ui.text_of(empty), "No saves yet.");
+    assert_eq!(ui.focus(), Some(parts.buttons()[2]), "focus on back");
+
+    // Save mode: "New save" with its generated name heads the list.
+    let mut ui = saves_ui();
+    let root = open_saveload(&mut ui, saves(SaveLoadMode::Save));
+    let (_, parts) = saveload(&ui, root);
+    assert_eq!(parts.order()[0], SaveLoadRow::New);
+    assert_eq!(parts.order()[1], order[0]);
+    let new = parts.row(&SaveLoadRow::New).unwrap();
+    assert_eq!(ui.text_of(new), "New save (Save 8)");
+    assert_eq!(ui.text_of(parts.buttons()[0]), "Save");
+}
+
+#[test]
+fn saveload_confirm_loads_saves_and_asks_before_overwriting() {
+    let mut ui = saves_ui();
+    let root = open_saveload(&mut ui, saves(SaveLoadMode::Load));
+    // Down one, confirm: load the second-newest.
+    ui.tap(GamepadButton::DPadDown);
+    ui.tap(GamepadButton::South);
+    assert_eq!(
+        take_choices(&mut ui),
+        vec![SaveLoadChoice::Load("000004-manual".into())]
+    );
+    // Pointer: a click selects, a second click on the selected row loads.
+    let newest = saveload(&ui, root).1.row(&entry("000007-quick")).unwrap();
+    ui.world_mut().trigger(Activate { entity: newest });
+    ui.frames(1);
+    assert!(take_choices(&mut ui).is_empty());
+    assert_eq!(ui.focus(), Some(newest));
+    ui.world_mut().trigger(Activate { entity: newest });
+    ui.frames(1);
+    assert_eq!(
+        take_choices(&mut ui),
+        vec![SaveLoadChoice::Load("000007-quick".into())]
+    );
+
+    // Save mode: confirm on "New save" sends the generated name.
+    let mut ui = saves_ui();
+    let root = open_saveload(&mut ui, saves(SaveLoadMode::Save));
+    ui.tap(GamepadButton::South);
+    assert_eq!(
+        take_choices(&mut ui),
+        vec![SaveLoadChoice::New("Save 8".into())]
+    );
+    // Overwrite asks first, with cancel focused.
+    ui.tap(GamepadButton::DPadDown);
+    ui.tap(GamepadButton::South);
+    assert!(take_choices(&mut ui).is_empty());
+    let (screen, parts) = saveload(&ui, root);
+    assert_eq!(
+        screen.pending(),
+        Some(&SaveLoadChoice::Overwrite("000007-quick".into()))
+    );
+    let [yes, cancel] = parts.confirm_buttons();
+    let overlay = parts.overlay();
+    assert_eq!(ui.focus(), Some(cancel));
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::Flex
+    );
+    assert!(ui.text_of(overlay).contains("Overwrite \"Harbour\"?"));
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(ui.focus(), Some(yes));
+    ui.tap(GamepadButton::South);
+    assert_eq!(
+        take_choices(&mut ui),
+        vec![SaveLoadChoice::Overwrite("000007-quick".into())]
+    );
+    let (screen, parts) = saveload(&ui, root);
+    assert_eq!(screen.pending(), None);
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::None
+    );
+    assert_eq!(ui.focus(), parts.row(&entry("000007-quick")), "focus back");
+}
+
+#[test]
+fn saveload_delete_needs_confirmation_and_esc_backs_out() {
+    let mut ui = saves_ui();
+    let root = open_saveload(&mut ui, saves(SaveLoadMode::Load));
+    // Context1 (pad West) asks; Esc cancels the question, not the screen.
+    ui.tap(GamepadButton::West);
+    assert_eq!(
+        saveload(&ui, root).0.pending(),
+        Some(&SaveLoadChoice::Delete("000007-quick".into()))
+    );
+    tap_key(&mut ui, KeyCode::Escape);
+    assert_eq!(saveload(&ui, root).0.pending(), None);
+    assert!(take_choices(&mut ui).is_empty());
+    assert!(ui.world().resource::<ScreenStackRes>().0.is_open("saveload"));
+
+    // The delete button asks too; "yes" deletes.
+    let [_, delete, _] = saveload(&ui, root).1.buttons();
+    ui.world_mut().trigger(Activate { entity: delete });
+    ui.frames(1);
+    assert!(take_choices(&mut ui).is_empty(), "nothing without confirming");
+    let [yes, _] = saveload(&ui, root).1.confirm_buttons();
+    ui.world_mut().trigger(Activate { entity: yes });
+    ui.frames(1);
+    assert_eq!(
+        take_choices(&mut ui),
+        vec![SaveLoadChoice::Delete("000007-quick".into())]
+    );
+
+    // Without permission to delete, nothing asks.
+    ui.world_mut()
+        .get_mut::<SaveLoadScreen>(root)
+        .unwrap()
+        .model
+        .can_delete = false;
+    ui.frames(1);
+    ui.tap(GamepadButton::West);
+    assert_eq!(saveload(&ui, root).0.pending(), None);
+    assert!(ui.class_of(delete).contains("disabled"));
+
+    // Esc: back, and the screen closes.
+    tap_key(&mut ui, KeyCode::Escape);
+    assert_eq!(take_choices(&mut ui), vec![SaveLoadChoice::Back]);
+    assert!(!ui.world().resource::<ScreenStackRes>().0.is_open("saveload"));
+}
+
 // ---------------------------------------------------------------- HUD
 
 #[test]
