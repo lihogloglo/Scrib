@@ -137,7 +137,7 @@ and effects. Every task reports its ms cost per preset.
   functions (TCL/TGM/TAI/TFOW/TWF/COC...), non-actor selections, `set x to y` (the console's `set` wins today).
   `mwconsole2` (2026-10-25): `TCL`/`ToggleCollision` (sf_action_bevy `NoClip`: fly along the view, no collision) and
   `COC`/`CenterOnCell "<cell>"` (door travel to the first arrival into an interior); exterior names (`coc Balmora`) left.
-- [~] 1.14 Build churn (2026-10-21): built 2026-10-23 (superfargoth `workspace-hack`); left: re-measure. Workspace-hack (`cargo hakari`) so per-`-p` feature sets stop rebuilding Bevy
+- [~] 1.14 Build churn (2026-10-21): built 2026-10-23 (superfargoth `workspace-hack`), covers the merged workspace since 2026-10-25 (game Bevy crates; the app is traversal-excluded); left: re-measure incl. the app. Workspace-hack (`cargo hakari`) so per-`-p` feature sets stop rebuilding Bevy
   (22-32 cached `bevy_render` variants per target); re-measure dev-loop gates.
 
 **Next session, in order (owner 2026-10-20):** (1) 1.6 remove terrain blend (done); (2) lights (done, lights1) then 1.4 shadows (contact shadows SH-14, PCSS consistency, lamp reach SH-13, cube-cache
@@ -234,6 +234,9 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [p] Raster GI & sky occlusion (owner 2026-10-21): Bevy 0.20 `IrradianceVolume` / sky-visibility SH probes baked per cell in `sf_bake` (occludes sky cubemap under overhangs/alleys/interiors + 1-bounce color bleed) + screen-space GI/bent normals over the depth/normal/history prepass.
 - [p] Foliage light transmission (WISHLIST §11).
 - [p] Cloth: capes/banners/tents (robes stay authored skin; PH-3 confirmed).
+- [p] Crowd LOD via vertex animation textures (owner 2026-10-25: adopt `bevy_open_vat`): a tier below anim LOD 3 for
+  creatures, far NPCs, ambient life on looping clips; own bake from NIF clips; spike one creature first
+  (`superfargoth/docs/research/crates-2026-10-25.md`). Groundcover below: owner 2026-10-25 adopts `bevy_grass`.
 - [p] Seamless portals (M9), far-field performance (M8: HLOD, texture streaming, PBR generation).
 - [p] Co-op N1–N8 (`specs/net.md`; N1–N5 after this phase, N6–N8 after M7).
 - [p] Lua/Luau beyond L3; mods milestone demo (M5 E1, U7, X1, X2).
@@ -244,11 +247,13 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   seams, after each modern version exists. Morrowind's rules and numbers, not bug-for-bug OpenMW parity; our UI.
 - [p] Groundcover (owner 2026-10-20, low priority; replaces archived G0–G2). (a) Procedural grass: evaluate
   `bevy_grass` (github.com/GEMI/bevy-grass: MIT, Bevy 0.20, GPU compute scatter, 3 LODs, wind, trampling, far
-  colour; git only, pre-release) before building our own; masks from LTEX, wind from `sf_wind`. (b) Later: load
+  colour; crates.io 0.20.6 since 2026-10-24, young: `superfargoth/docs/research/crates-2026-10-25.md`) before building our own; masks from LTEX, wind from `sf_wind`. (b) Later: load
   existing Morrowind groundcover mods (mesh instances from their plugins; bevy_grass has no custom meshes).
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-25 (merge-ws2): one workspace gated: cargo-hakari over framework + game (opt-ins `dev`/`dlss`/`solari`/`file_watcher`
+  no longer unified into default builds), `cargo deny` green (tes3 git allowed, MPL for dirs/MP3), clippy green (default + all-features); tests pending.
 - 2026-10-25 (dlss-plugin-1/2): DLSS split out of the game: NVIDIA-free `dlss_wgpu` facade + separately shipped
   `dlss/` plugin package; SR/RR verified in game, pass costs as before, 0 NGX strings in the release exe (DL-5 logged).
 - 2026-10-25 (certshots1): `--screenshot` waits on a GPU readiness gate (CPU settled + no pipelines compiling for 10

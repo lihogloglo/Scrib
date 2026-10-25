@@ -1526,3 +1526,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-25 (saves2): **load = full reload of resident cells behind the fade** (`Scheduler::reload_resident`,
   `StartTravel::reload`, discard deactivations skip pose write-back), as Bethesda engines / OpenMW `World::clear`; no
   per-system diff/undo. Moved resident items reach the save via `persist_moved_items`.
+- 2026-10-25 (owner): adopt `bevy_open_vat` (crowd/creature LOD, spike first) and `bevy_grass` (groundcover spike,
+  Phase 4); skip bevy-react and bevy_settings_plus (research/crates-2026-10-25.md). Physics stays Rapier (avian 0.8 has
+  no spherical/generic joint motors; revisit when Phase 3 opens, swap = `sf_physics` only).

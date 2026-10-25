@@ -6,12 +6,18 @@ Morrowind content pack and game binary on the superfargoth framework.
 
 ## Start of every session
 
-1. Read `docs/ROADMAP.md` (short: owner decisions, current phase).
+**Sub-agent with a brief** (most sessions): the brief is your context. Read only what it names, and
+specs by section (`grep -n "^#" <spec>`, then read that heading's lines). Don't read the ROADMAP,
+ARCHITECTURE, DECISIONS, visual-checks or perf.md whole: grep them for your task's ID or system.
+To update the ROADMAP, edit only your task's line (grep for it).
+
+**Orchestrator or a session without a brief:**
+1. Read `docs/ROADMAP.md` (owner decisions, current phase).
 2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~480 lines).
 3. For the system you touch, read its spec in `docs/specs/` (or
    `../superfargoth/docs/specs/`). No spec yet for a major system? Write it first.
-4. **Don't read archives whole.** `docs/archive/` (old roadmap, closed visual checks) and
-   `../superfargoth/docs/DECISIONS.md` are append-only history: grep them for your system.
+4. **Never read whole:** `docs/archive/`, `../superfargoth/docs/DECISIONS.md` (append-only, ~36k
+   tokens), `docs/visual-checks.md` (~24k tokens; append entries, grep for IDs), `docs/perf.md`.
 
 ## End of every session
 
@@ -21,6 +27,8 @@ Record decisions with lasting effect as one dated bullet (≤ 3 lines) in
 `../superfargoth/docs/DECISIONS.md`.
 **Doc budget:** ROADMAP ≤ ~250 lines, a spec ≤ ~25 KB (split "As built" history into an archive
 file next to it), a visual-check entry ≤ ~10 lines. Agents load these files; size is context.
+Doc cleanup slices run `../tools/doccheck.sh snapshot` before and `verify` + `links` after (no lost line or ID),
+and put its final `doccheck: ...` line in the commit message.
 
 ## Parallel sessions
 
@@ -40,14 +48,15 @@ working tree**. Protocol:
    machine (e.g. Ovid, whose cargo lives in `%TEMP%\ovid-build-tools`).
    If another build is running, wait for it, using a background `until` loop rather than
    sleeping. **Run every cargo command through `bash tools/cargo_turn.sh <cargo args>`**
-   (from superfargoth: `bash ../bevyrrowind/tools/cargo_turn.sh ...`): it waits for the
+   (from the repo root: `bash bevyrrowind/tools/cargo_turn.sh ...`; from superfargoth:
+   `bash ../bevyrrowind/tools/cargo_turn.sh ...`; same workspace from anywhere): it waits for the
    slot and runs at BelowNormal priority, so a check and its build can't drift apart.
    Keep the build/test/run cycle short so you don't hold the
    machine for long; spec-only sessions shouldn't need to build at all.
 3. **Shared files.** `docs/ROADMAP.md`: edit only your task's lines plus
-   one "Recent" line. `DECISIONS.md`: append only. Workspace
-   `Cargo.toml` / `Cargo.lock`: change only when your scope needs a new
-   crate or dependency, and note it in your session file.
+   one "Recent" line. `DECISIONS.md`: append only. The workspace
+   `Cargo.toml` / `Cargo.lock` (repo root, shared with superfargoth): change only when your scope
+   needs a new crate or dependency, and note it in your session file.
 4. **Never commit unless the user asks.** If asked, stage explicit paths
    (`git add <your files>`), never `git add -A` or `commit -a`: the other
    session's work is in the same tree. The index is shared too: commit with
@@ -69,6 +78,8 @@ working tree**. Protocol:
    - **Hand off on context, not on a count.** Write the handoff in `../.sessions/<name>.md` as you go.
      Once you've read a lot (several large files or long logs) or your context was summarised, stop
      at a compiling state, finish the handoff and report; a fresh agent continues from the file.
+     Target: done or handed off by ~100k tokens of context (owner 2026-10-25): past that, every
+     step re-sends the whole context, so cost climbs fast. Orchestrators split slices to fit it.
    - Orchestrators log tool calls and tokens per slice in their session file to see what works.
 
 ## Hard rules

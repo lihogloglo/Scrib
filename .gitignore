@@ -6,6 +6,7 @@
 !/.gitattributes
 !/CLAUDE.md
 !/README.md
+!/logo.png
 !/LICENSE
 !/LICENSE-EXCEPTION.md
 # The one Cargo workspace (both components): manifest, lock, toolchain, build config, cargo-deny, cargo-hakari.
@@ -17,3 +18,5 @@
 !/deny.toml
 !/superfargoth/
 !/bevyrrowind/
+# Repo-wide scripts (doccheck.sh: no-loss check for doc cleanup slices).
+!/tools/

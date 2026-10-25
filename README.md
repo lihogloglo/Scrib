@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.png" alt="Scrib" width="256"></p>
+
 # Scrib
 
 A modern open-world action RPG engine on [Bevy](https://bevy.org), and Morrowind running on it.
