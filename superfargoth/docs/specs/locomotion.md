@@ -7,7 +7,7 @@ path follower, `collision.cook`), `sf_controller_bevy` (to build: schedule,
 batching, gizmos, counters in M3; physics controller in M4)
 
 <!-- agent-summary -->
-> **Agent summary (2026-10-26).** Status: `sf_controller` built (2026-10-11; ORCA 2026-10-12; traversal, creature modes and context probes 2026-10-12). Player controller works in game (ROADMAP 2.1, PL-1 confirmed); 3.1 traversal per R11 open.
+> **Agent summary (2026-10-26).** Status: `sf_controller` built (2026-10-11; ORCA 2026-10-12; traversal, creature modes and context probes 2026-10-12). Player controller works in game (ROADMAP 2.1; PL-1 awaiting owner); 3.1 traversal per R11 open.
 > Crates / key types: `sf_controller` (Bevy-free: `GroundProbe`, kinematic mover, ORCA avoidance, path follower, `collision.cook`), `sf_controller_bevy` (`Mover`, `MoveIntent`, `Avoider`).
 > Decisions: spring-damped velocity/facing predicts trajectory ("Canonical technique"); animation follows the capsule except `Drive` actions; kinematic ground snap with foot IK on real steps; ORCA lives in `sf_controller` ("Open questions" 4); action layer decides moves ("Action-layer changes").
 > Read next: "Ground probes"; "Movers"; "Context probes, traversal and creature modes"; `action.md`.
