@@ -55,7 +55,7 @@ use sf_action_bevy::{
 use sf_camera::Look;
 use sf_camera_bevy::{CameraAction, PlayerCamera, SfCameraPlugin, spawn_camera_actions};
 use sf_character_bevy::CharacterPlacement;
-use sf_controller::{Locomotion, MoverParams, ProbeQuery};
+use sf_controller::{GroundHit, GroundProbe, Locomotion, MoverParams, ProbeQuery};
 use sf_controller_bevy::{AvoidObstacle, Mover};
 use sf_coords::{WorldPos, WorldTransform};
 use sf_physics::{BodyId, Layer, PhysicsWorld};
@@ -87,6 +87,19 @@ const ARRIVAL_GROUND_MARGIN_M: f32 = 3.0;
 /// The body moves anyway after waiting this long for its collision, seconds (a cell that never
 /// comes in must not hang the game; the fade's own cap is `FadeTransition::max_hold_secs`).
 const ARRIVAL_WAIT_MAX_SECS: f32 = 10.0;
+/// Ground placement on an arrival release starts this far above the feet, meters (a marker sunk
+/// into the floor still finds its top; `OpenMW` `World::adjustPosition` lifts 20 units).
+const PLACE_ABOVE_M: f32 = 1.0;
+/// ... and looks this far below the feet, meters (further down, the fall guards take over).
+const PLACE_BELOW_M: f32 = 5.0;
+/// Placed feet sit this far above the found ground, meters (`OpenMW` `sGroundOffset`, 1 unit).
+const GROUND_OFFSET_M: f32 = 0.02;
+/// The swept shape's ground stands unless the thin ray's differs by more, meters (`OpenMW`
+/// `MovementSolver::traceDown`: 35 units).
+const SHAPE_RAY_TOLERANCE_M: f32 = 0.5;
+/// A fall this far below an interior's lowest fixed body is a fall into the void: back to the
+/// arrival spot, meters (`OpenMW` `Scene::playerMoved` uses 90 units, ~1.3 m).
+const INTERIOR_VOID_MARGIN_M: f32 = 2.0;
 /// The player's character id on commands (NPCs don't run the action layer yet).
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
@@ -100,6 +113,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .insert_resource(rules())
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
         .init_resource::<RestoreBody>()
+        .init_resource::<ArrivalSpot>()
         .insert_resource(Activation { db, reach_m })
         .insert_resource(start)
         .init_resource::<Focus>()
@@ -108,7 +122,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
             Update,
             (toggle, apply_mode, rebind, arrive, follow_worldspace, guard_fall, obstacle, controls_active, grab_cursor).chain(),
         )
-        .add_systems(Update, await_ground.after(arrive).before(StreamingSystems::Transition))
+        .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, (update_focus.in_set(FocusUpdate), prompt).chain().before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate));
 }
@@ -351,6 +365,7 @@ fn apply_mode(
     mut commands: Commands,
     mut mode: ResMut<PlayerMode>,
     mut start: ResMut<PlayerStart>,
+    mut spot: ResMut<ArrivalSpot>,
     physics: Res<Physics>,
     collision: sf_physics_bevy::CollisionReady,
     settled: Option<Res<crate::exterior::Settled>>,
@@ -387,6 +402,7 @@ fn apply_mode(
             commands.entity(cam).insert(camera);
             mode.body = Some(body);
             mode.last_ground = None;
+            spot.0 = Some((feet, look.yaw));
             free.enabled = false;
             info!("player: spawned at {:.1?} in {}", here.pos.to_f64(), here.worldspace.as_str());
         }
@@ -411,11 +427,18 @@ fn apply_mode(
 #[derive(Resource, Default)]
 pub struct RestoreBody(pub Option<(ActionState, Locomotion)>);
 
+/// The last arrival pose, feet and yaw (door marker, save-load position or first spawn; the
+/// ground placement on release refines it): where the fall guards return the player when no
+/// ground is known ([`guard_fall`]).
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct ArrivalSpot(pub Option<(WorldPos, f32)>);
+
 /// A door moved the camera: the body follows to the arrival marker (a load: the saved body).
 fn arrive(
     mut commands: Commands,
     mut arrived: MessageReader<TravelArrived>,
     mut mode: ResMut<PlayerMode>,
+    mut spot: ResMut<ArrivalSpot>,
     mut cams: Query<&mut PlayerCamera>,
     mut bodies: Query<(&mut ActionBody, Option<&mut ActionCharacter>), With<PlayerBody>>,
     mut restore: ResMut<RestoreBody>,
@@ -439,6 +462,7 @@ fn arrive(
         body.frame_origin = from_grid(&cell, &Transform::IDENTITY);
         camera.set_look(Look::new(look.yaw, 0.0));
         mode.last_ground = None;
+        spot.0 = Some((body.loco.position, body.loco.motion.yaw));
         // The cut re-streams the collision (a load reloads every resident cell): hold the body
         // until the floor under it is in (`await_ground`).
         commands.entity(camera.follow).insert(AwaitingGround);
@@ -447,19 +471,24 @@ fn arrive(
 
 /// Releases the arrived body ([`AwaitingGround`]) once the collision around its feet is in and
 /// the fade's destination is ready; keeps the screen black meanwhile, so the frozen frames
-/// never show. Gives up after [`ARRIVAL_WAIT_MAX_SECS`].
-#[allow(clippy::needless_pass_by_value)] // system parameters
-fn await_ground(
+/// never show. Gives up after [`ARRIVAL_WAIT_MAX_SECS`]. On release the feet go onto the ground
+/// below ([`ground_below`]), which seeds `last_ground` and the [`ArrivalSpot`]; no ground in
+/// reach leaves the body as is (the fall guards catch it).
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // system parameters
+fn await_ground<P: GroundProbe + Resource>(
     mut commands: Commands,
     time: Res<Time<Real>>,
     mut waited: Local<f32>,
     collision: sf_physics_bevy::CollisionReady,
     active: Res<ActiveWorldspace>,
+    probe: Res<P>,
+    mut mode: ResMut<PlayerMode>,
+    mut spot: ResMut<ArrivalSpot>,
     mut fade: ResMut<FadeTransition>,
-    // Only the player body gets the marker here (`arrive`).
-    bodies: Query<(Entity, &ActionBody), With<AwaitingGround>>,
+    // Only the player body gets the marker here (`arrive`, `guard_fall`).
+    mut bodies: Query<(Entity, &mut ActionBody), With<AwaitingGround>>,
 ) {
-    let Some((entity, body)) = bodies.iter().next() else {
+    let Some((entity, mut body)) = bodies.iter_mut().next() else {
         *waited = 0.0;
         return;
     };
@@ -469,13 +498,42 @@ fn await_ground(
     // be known, and an unknown worldspace reads as "collision in".
     let arriving = matches!(fade.phase(), FadePhase::Hold { ready: None, .. });
     let loading = active.0.as_ref().is_some_and(|ws| collision.loading(ws, feet, ARRIVAL_GROUND_MARGIN_M));
-    if !arriving && !loading {
-        commands.entity(entity).remove::<AwaitingGround>();
-    } else if *waited >= ARRIVAL_WAIT_MAX_SECS {
+    if arriving || loading {
+        if *waited < ARRIVAL_WAIT_MAX_SECS {
+            fade.hold();
+            return;
+        }
         warn!("player: no collision at {:.1?} after {ARRIVAL_WAIT_MAX_SECS} s; moving anyway", feet.to_f64());
-        commands.entity(entity).remove::<AwaitingGround>();
-    } else {
-        fade.hold();
+    }
+    commands.entity(entity).remove::<AwaitingGround>();
+    *waited = 0.0;
+    let Some(ground) = ground_below(&*probe, feet, &body.params) else { return };
+    let mut loco = body.loco.clone();
+    loco.position = feet.offset(Vec3::Y * (ground + GROUND_OFFSET_M));
+    loco.vertical_speed = 0.0;
+    mode.last_ground = Some(loco.position);
+    spot.0 = Some((loco.position, loco.motion.yaw));
+    body.restore(loco);
+}
+
+/// The ground height under `feet`, relative to them (meters, up), within
+/// [`PLACE_ABOVE_M`] above and [`PLACE_BELOW_M`] below. Two stages (`OpenMW`
+/// `MovementSolver::traceDown`, `movementsolver.cpp:90`, commit 4e718b50): a sphere of the body's
+/// radius swept down, then a thin ray; the ray wins when the two disagree by more than
+/// [`SHAPE_RAY_TOLERANCE_M`] or the sphere's ground is too steep (door destinations that
+/// intersect other geometry once the body's width counts). A cast that starts inside a solid
+/// counts as no hit.
+pub(crate) fn ground_below(probe: &impl GroundProbe, feet: WorldPos, params: &MoverParams) -> Option<f32> {
+    let from = feet.offset(Vec3::Y * PLACE_ABOVE_M);
+    let max = PLACE_ABOVE_M + PLACE_BELOW_M;
+    let started_out = |h: &GroundHit| h.distance > 1e-3;
+    let shape = probe.probe_one(ProbeQuery::sphere(from, Vec3::NEG_Y, max, params.radius)).filter(started_out);
+    let ray = probe.probe_one(ProbeQuery::down(from, max)).filter(started_out);
+    let height = |h: GroundHit| feet.delta_f32(h.point).y;
+    match (shape, ray) {
+        (Some(s), Some(r)) if (height(s) - height(r)).abs() > SHAPE_RAY_TOLERANCE_M || !s.walkable(params.min_normal_y()) => Some(height(r)),
+        (Some(s), _) => Some(height(s)),
+        (None, r) => r.map(height),
     }
 }
 
@@ -507,21 +565,59 @@ fn regrid(mut bodies: Query<(&mut ActionBody, &mut CellCoord, &mut Transform), W
     }
 }
 
-/// A hole in the streamed collision drops the body: put it back on its last ground.
-fn guard_fall(mut mode: ResMut<PlayerMode>, mut bodies: Query<&mut ActionBody, With<PlayerBody>>) {
+/// A hole in the collision drops the body; three guards put it back and hold it until the
+/// ground there is in ([`AwaitingGround`]): [`FALL_LIMIT_M`] below its last ground (back
+/// there); in an interior, [`INTERIOR_VOID_MARGIN_M`] below the cell's lowest fixed body (back
+/// to the [`ArrivalSpot`]; `OpenMW` `Scene::playerMoved`, `scene.cpp:575`, commit 4e718b50); in
+/// the exterior, under the world's kill height (back to the last ground, else the arrival spot).
+/// A grounded frame costs one check; a falling one a world lookup and a comparison.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn guard_fall(
+    mut commands: Commands,
+    mut mode: ResMut<PlayerMode>,
+    spot: Res<ArrivalSpot>,
+    physics: Res<Physics>,
+    active: Res<ActiveWorldspace>,
+    mut bodies: Query<(&mut ActionBody, Has<AwaitingGround>), With<PlayerBody>>,
+) {
     let Some(entity) = mode.body else { return };
-    let Ok(mut body) = bodies.get_mut(entity) else { return };
+    let Ok((mut body, waiting)) = bodies.get_mut(entity) else { return };
     let here = body.loco.render_position();
     if body.loco.grounded.is_some() {
         mode.last_ground = Some(here);
         return;
     }
-    let Some(ground) = mode.last_ground else { return };
-    if ground.delta_f32(here).y < -FALL_LIMIT_M {
-        warn!("player: fell {FALL_LIMIT_M} m (no collision below?); back to {:.1?}", ground.to_f64());
-        let yaw = body.loco.motion.yaw;
-        body.teleport(ground, yaw);
+    if waiting {
+        return;
     }
+    let yaw = body.loco.motion.yaw;
+    let last = mode.last_ground.map(|g| (g, yaw));
+    let back = if let Some((ground, _)) = last
+        && ground.delta_f32(here).y < -FALL_LIMIT_M
+    {
+        warn!("player: fell {FALL_LIMIT_M} m (no collision below?); back to {:.1?}", ground.to_f64());
+        last
+    } else {
+        let Some((ws, world)) = active.0.as_ref().and_then(|ws| Some((ws, physics.world(ws)?))) else { return };
+        let y = here.to_f64().y;
+        if ws.as_str() == mw_world::ids::EXTERIOR {
+            if !world.kill_height().is_some_and(|kill| y < kill) {
+                return;
+            }
+            warn!("player: fell under the kill height of {}; back to the last ground or arrival", ws.as_str());
+            last.or(spot.0)
+        } else {
+            if !world.lowest_fixed().is_some_and(|low| y < low - f64::from(INTERIOR_VOID_MARGIN_M)) {
+                return;
+            }
+            warn!("player: fell into the void under {}; back to the arrival spot", ws.as_str());
+            spot.0.or(last)
+        }
+    };
+    let Some((feet, yaw)) = back else { return };
+    body.teleport(feet, yaw);
+    body.frame_origin = from_grid(&to_grid(feet).0, &Transform::IDENTITY);
+    commands.entity(entity).insert(AwaitingGround);
 }
 
 /// NPCs steer around the player (ORCA obstacle, `walkers.rs`).

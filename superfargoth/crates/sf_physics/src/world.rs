@@ -209,6 +209,12 @@ impl PhysicsWorld {
         self.params.kill_height.or_else(|| self.floor.map(|f| f - f64::from(self.params.kill_margin)))
     }
 
+    /// Absolute Y of the lowest fixed body inserted so far (the bottom of its bounds; never
+    /// rises, as [`Self::kill_height`]). `None` while the world has no fixed body.
+    pub fn lowest_fixed(&self) -> Option<f64> {
+        self.floor
+    }
+
     /// The anchor: the center of the anchor cell.
     pub fn anchor(&self) -> WorldPos {
         WorldPos { cell: self.anchor, local: Vec3::ZERO }

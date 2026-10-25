@@ -378,7 +378,9 @@ fn arrival_waits_for_the_floor_cell_then_lands() {
         .insert_resource(PhysicsStreaming::default())
         .insert_resource(ActiveWorldspace(Some(ws.clone())))
         .init_resource::<FadeTransition>()
-        .add_systems(Update, await_ground);
+        .insert_resource(PlayerMode { on: true, paused: false, body: Some(player), last_ground: None })
+        .init_resource::<ArrivalSpot>()
+        .add_systems(Update, await_ground::<Statics>);
     let witness = app.world_mut().spawn(ActionBody::new(Locomotion::new(above, 0.0), MoverParams::default(), WorldPos::ORIGIN)).id();
     let character = ActionCharacter::new(CharacterId(2), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
     app.world_mut().entity_mut(witness).insert(character);
@@ -427,4 +429,68 @@ fn arrival_waits_for_the_floor_cell_then_lands() {
     assert!(app.world().get::<AwaitingGround>(player).is_none(), "the body was never released");
     let landed = y(&app, player);
     assert!(landed.is_finite() && landed > floor_y - 0.05 && landed < 0.5, "the released body lands on the floor: {landed}");
+}
+
+/// The arrival gate of [`app`]'s player on `flat-slopes` (`Statics` as its ground), with no
+/// collision streaming (the release waits only for the fade) and `physics` for the fall guards.
+fn gated(physics: Physics) -> (App, Entity) {
+    let (mut app, player) = app(60);
+    app.insert_resource(physics)
+        .insert_resource(ActiveWorldspace(Some(WorldspaceId::new("test"))))
+        .init_resource::<FadeTransition>()
+        .insert_resource(PlayerMode { on: true, paused: false, body: Some(player), last_ground: None })
+        .init_resource::<ArrivalSpot>()
+        .add_systems(Update, (guard_fall, await_ground::<Statics>).chain());
+    app.world_mut().entity_mut(player).insert(PlayerBody);
+    (app, player)
+}
+
+fn feet_y(app: &App, player: Entity) -> f32 {
+    WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(player).unwrap().loco.position).y
+}
+
+/// S4-b (physics-fix-plan.md slice 3): a body released above the floor, or sunk into it, is
+/// put on its top (two-stage ground find) and seeds `last_ground`. Sanity only.
+#[test]
+fn release_places_the_feet_on_the_floor_and_seeds_last_ground() {
+    let start = pos(Level::parse(LEVEL).unwrap().spawn("start").unwrap().at);
+    for dy in [0.4, -0.3] {
+        let (mut app, player) = gated(Physics::default());
+        app.world_mut().get_mut::<ActionBody>(player).unwrap().teleport(start.offset(Vec3::Y * dy), 0.0);
+        app.world_mut().entity_mut(player).insert(AwaitingGround);
+        app.update();
+        assert!(app.world().get::<AwaitingGround>(player).is_none(), "{dy}: released");
+        let y = feet_y(&app, player);
+        assert!(y.is_finite() && (0.0..0.06).contains(&y), "{dy}: feet on the floor top: {y}");
+        let ground = app.world().resource::<PlayerMode>().last_ground.expect("last_ground seeded");
+        assert!(WorldPos::ORIGIN.delta_f32(ground).y.abs() < 0.06, "{dy}: last_ground on the floor");
+        assert!(app.world().resource::<ArrivalSpot>().0.is_some(), "{dy}: arrival spot refined");
+    }
+}
+
+/// S4-b: in an interior, a body over a hole falls; past the cell's lowest fixed body (the
+/// floor's bottom, from the physics world) it goes back to the arrival spot and lands there.
+/// Sanity only: returned, no NaN, on the floor.
+#[test]
+fn fall_into_the_interior_void_returns_to_the_arrival_spot() {
+    let start = pos(Level::parse(LEVEL).unwrap().spawn("start").unwrap().at);
+    // The 80 m floor's bounds: the lowest fixed body is its bottom, y -0.5.
+    let (physics, _) = boxes(&[(Vec3::new(0.0, -0.25, 0.0), Vec3::new(40.0, 0.25, 40.0), Layer::STATIC)]);
+    let (mut app, player) = gated(physics);
+    app.world_mut().resource_mut::<ArrivalSpot>().0 = Some((start, 0.0));
+    // Off the floor's edge: nothing below.
+    app.world_mut().get_mut::<ActionBody>(player).unwrap().teleport(pos(Vec3::new(60.0, 0.5, 0.0)), 0.0);
+    let mut lowest = f32::MAX;
+    let mut returned = false;
+    for _ in 0..frames(60, 4.0) {
+        app.update();
+        let at = WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(player).unwrap().loco.position);
+        assert!(at.is_finite(), "NaN: {at}");
+        lowest = lowest.min(at.y);
+        returned |= at.x.abs() < 1.0;
+    }
+    assert!(lowest < -0.5, "the body over the hole fell: {lowest}");
+    assert!(returned, "returned to the arrival spot");
+    let at = WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(player).unwrap().loco.position);
+    assert!(start.delta_f32(pos(at)).xz().length() < 0.5 && (-0.05..0.5).contains(&at.y), "lands at the arrival spot: {at}");
 }
