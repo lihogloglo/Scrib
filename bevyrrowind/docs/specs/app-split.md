@@ -123,7 +123,8 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 10. [x] `mw_saves_bevy`: done 2026-10-26 (whole module as the lib; app shim `use mw_saves_bevy as saves;`; deps core, boot, controls, player, rpg (no doors: `DoorUser`/`ARRIVAL_EYE_M` are in core); app `mods.rs` shim drops `user_data`; hakari unchanged).
 11. [x] `mw_devtools_bevy`: done 2026-10-26 (console, live_ab, remote, pipeline_watch + `ready.rs` = `view::Loading`, `exterior::Readiness` and `settled`, which exterior now calls; deps core, doors, rpg, environment (no player: `PlayerBody` is in core); features `remote`, `dlss` forwarded; perf/ stays, then perf/mod moved 2026-10-26 (12a: `mw_devtools_bevy::perf`; cli/sweep stay in the app); hakari unchanged after traversal-excluding `bevy_brp_extras`/`bevy_remote`) (breaks cycle 4; unblocks perf/rendering-bug lanes that edit live_ab/remote/console). Can move up
     to slice 4 if the Rpg trait cut above is done first.
-12. `mw_viewers_bevy`, 13. `mw_exterior_bevy`: the app is now ~2.2k lines.
+12. [x] `mw_viewers_bevy`: done 2026-10-26 (12a perf/mod into devtools; 12b four `pub mod`s view, anim_view, skinned_view, character_view; app shim `use mw_viewers_bevy::{character_view, view};`; `bevy` umbrella with `3d` (viewers build `DefaultPlugins` apps) + `bevy_camera_controller` for the free camera; feature `remote` forwarded; hakari unchanged).
+13. `mw_exterior_bevy`: the app is now ~2.2k lines.
 14. Remove shims; update CLAUDE.md module map and ARCHITECTURE §8b (now build-perf.md) crate list; re-measure the §8b gates (touch a leaf
     plugin crate <= 5 s, no-op <= 1 s, clean <= 12 min, since each crate adds a link unit) into `docs/perf.md`; tick ROADMAP 1.11.
 

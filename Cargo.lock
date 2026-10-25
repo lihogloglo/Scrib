@@ -2328,6 +2328,7 @@ dependencies = [
  "mw_script",
  "mw_scripts_bevy",
  "mw_vfs",
+ "mw_viewers_bevy",
  "mw_walkers_bevy",
  "mw_water",
  "mw_weather",
@@ -5470,6 +5471,36 @@ dependencies = [
  "tempfile",
  "tes3",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "mw_viewers_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_camera_controller",
+ "mw_actors",
+ "mw_actors_bevy",
+ "mw_assets",
+ "mw_bake",
+ "mw_devtools_bevy",
+ "mw_environment_bevy",
+ "mw_game_core",
+ "mw_graphs",
+ "mw_physics",
+ "mw_world",
+ "sf_anim_bevy",
+ "sf_bake",
+ "sf_character",
+ "sf_character_bevy",
+ "sf_diag_bevy",
+ "sf_model",
+ "sf_model_bevy",
+ "sf_records",
+ "sf_sky_bevy",
+ "sf_vfs",
+ "tes3",
+ "workspace-hack",
 ]
 
 [[package]]

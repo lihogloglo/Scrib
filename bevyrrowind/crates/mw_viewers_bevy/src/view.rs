@@ -18,7 +18,7 @@ use std::time::Instant;
 use bevy::asset::LoadState;
 use bevy::asset::io::AssetSourceId;
 use bevy::camera::Exposure;
-use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
+use bevy_camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use sf_diag_bevy::{GateStatus, ReadyGate};
@@ -53,9 +53,9 @@ pub struct ViewOptions {
     /// `--skinned`: skinned models load from their cooked product.
     pub skinned: Option<SkinnedView>,
     /// Ray-traced lighting (`--rt`) and DLSS (`--dlss`).
-    pub render: crate::render::RenderSettings,
+    pub render: mw_environment_bevy::render::RenderSettings,
     /// Benchmark, window size and A/B switches.
-    pub perf: crate::perf::Perf,
+    pub perf: mw_devtools_bevy::perf::Perf,
 }
 
 /// `--skinned` (scaffold, see `skinned_view`).
@@ -148,8 +148,8 @@ pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error
     }
     let render = options.render;
     let ray_traced = render.path == RenderPath::RayTraced;
-    crate::render::RenderSettings::init(&mut app);
-    crate::shipped_errors(&mut app);
+    mw_environment_bevy::render::RenderSettings::init(&mut app);
+    mw_game_core::shipped_errors(&mut app);
     let mut perf = options.perf;
     let bench = perf.bench.is_some();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -187,25 +187,25 @@ pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error
         render.apply_options(&mut app.world_mut().resource_mut::<SkyRenderOptions>());
     }
 
-    crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());
+    mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());
     if let Some((_, settings)) = &mut perf.bench {
         let models = if app.world().resource::<Scene>().cooked.is_empty() { "nif" } else { "cooked" };
         settings.meta.insert("models".to_owned(), models.to_owned());
         app.add_systems(Update, hold_until_loaded);
     } else if let Some(path) = options.screenshot {
-        crate::pipeline_watch::add(&mut app);
+        mw_devtools_bevy::pipeline_watch::add(&mut app);
         app.insert_resource(Capture {
             path,
             settle: options.settle,
             taken_at: None,
-            gate: ReadyGate::new(crate::exterior::CAPTURE_STABLE_FRAMES, crate::exterior::CAPTURE_TIMEOUT_SECS),
+            gate: ReadyGate::new(mw_game_core::exterior::CAPTURE_STABLE_FRAMES, mw_game_core::exterior::CAPTURE_TIMEOUT_SECS),
             ready_at: None,
             anyway: options.screenshot_anyway,
             failed: false,
         })
         .add_systems(Update, capture);
     }
-    if perf.off.has(crate::perf::Part::Lights) {
+    if perf.off.has(mw_devtools_bevy::perf::Part::Lights) {
         app.add_systems(Update, despawn_point_lights);
     }
     perf.add_plugins(&mut app)?;
@@ -332,7 +332,7 @@ fn capture(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
     loading: Res<Loading>,
-    gpu: Res<crate::pipeline_watch::PendingDraws>,
+    gpu: Res<mw_devtools_bevy::pipeline_watch::PendingDraws>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if capture.failed {

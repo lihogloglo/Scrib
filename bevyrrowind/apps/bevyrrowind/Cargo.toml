@@ -13,7 +13,7 @@ publish = false
 dev = ["bevy/dynamic_linking", "bevy/dev", "mw_game_core/dev", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "sf_vfs/watch", "remote"]
 # Bevy Remote Protocol on 127.0.0.1 for agents (`bevy_brp_mcp`; `mw_devtools_bevy/src/remote.rs`,
 # CLAUDE.md "Live inspection (BRP)"). Unauthenticated HTTP: dev builds only.
-remote = ["bevy/bevy_remote", "mw_environment_bevy/remote", "mw_devtools_bevy/remote"]
+remote = ["bevy/bevy_remote", "mw_environment_bevy/remote", "mw_devtools_bevy/remote", "mw_viewers_bevy/remote"]
 # Ray-traced lighting (`view --rt`): Bevy Solari. Off by default: it forces
 # the deferred renderer at startup and needs a ray-tracing GPU.
 solari = ["sf_sky_bevy/solari", "bevy/bevy_solari", "mw_environment_bevy/solari"]
@@ -58,6 +58,8 @@ mw_player_bevy.workspace = true
 mw_scripts_bevy.workspace = true
 mw_rpg_bevy.workspace = true
 mw_saves_bevy.workspace = true
+# The `view` and `character` viewers (app-split.md slice 12).
+mw_viewers_bevy.workspace = true
 mw_mods.workspace = true
 mw_records.workspace = true
 mw_script.workspace = true

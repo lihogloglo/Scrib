@@ -1,0 +1,41 @@
+[package]
+name = "mw_viewers_bevy"
+description = "The game's standalone viewers: `view` (one cell, cooked/skinned/animated models), `character` (actor lineup) (app-split.md slice 12)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# `character` interactive runs serve BRP (`mw_devtools_bevy::remote`); the app's `remote` turns it on.
+remote = ["mw_devtools_bevy/remote"]
+
+[dependencies]
+# The umbrella crate: each viewer builds its own `App` with `DefaultPlugins` (as the binary does).
+bevy = { workspace = true, features = ["3d"] }
+bevy_camera_controller = { workspace = true, features = ["free_camera"] }
+mw_actors.workspace = true
+mw_actors_bevy.workspace = true
+mw_assets.workspace = true
+mw_bake.workspace = true
+mw_devtools_bevy.workspace = true
+mw_environment_bevy.workspace = true
+mw_game_core.workspace = true
+mw_graphs.workspace = true
+mw_physics.workspace = true
+mw_world.workspace = true
+sf_anim_bevy = { workspace = true, features = ["debug"] }
+sf_bake.workspace = true
+sf_character.workspace = true
+sf_character_bevy = { workspace = true, features = ["world"] }
+sf_diag_bevy.workspace = true
+sf_model.workspace = true
+sf_model_bevy.workspace = true
+sf_records.workspace = true
+sf_sky_bevy.workspace = true
+sf_vfs = { workspace = true, features = ["bevy"] }
+tes3 = { workspace = true, features = ["esp"] }
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

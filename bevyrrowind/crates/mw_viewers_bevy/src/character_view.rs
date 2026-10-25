@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use bevy::asset::io::AssetSourceId;
 use bevy::camera::Exposure;
-use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
+use bevy_camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use mw_assets::MwAssetsPlugin;
@@ -121,7 +121,7 @@ struct LineupEntry {
 }
 
 pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf_bake::Manifest, options: CharacterViewOptions) {
-    let content = Arc::new(crate::actors::MwCharacters::new(Arc::clone(&db), Arc::clone(&vfs), store, manifest, options.cloth));
+    let content = Arc::new(mw_actors_bevy::actors::MwCharacters::new(Arc::clone(&db), Arc::clone(&vfs), store, manifest, options.cloth));
     let specs: Vec<String> =
         if options.ids.is_empty() { DEFAULT_LINEUP.iter().map(|s| (*s).to_owned()).collect() } else { options.ids.clone() };
     let mut entries = Vec::new();
@@ -138,8 +138,8 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     let mut app = App::new();
     app.register_asset_source(AssetSourceId::Default, sf_vfs::bevy::asset_source(vfs.clone()));
     // DLSS builds: the project id must exist before `DefaultPlugins`.
-    crate::render::RenderSettings::init(&mut app);
-    crate::shipped_errors(&mut app);
+    mw_environment_bevy::render::RenderSettings::init(&mut app);
+    mw_game_core::shipped_errors(&mut app);
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window { title: "Bevyrrowind - characters".into(), ..default() }),
         ..default()
@@ -147,14 +147,14 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     .add_plugins((MwAssetsPlugin { vfs }, FreeCameraPlugin, sf_anim_bevy::SfAnimPlugin))
     // Torch shadows on the stage (the exterior's High budget).
     .add_plugins(sf_sky_bevy::PointShadowPlugin)
-    .insert_resource(crate::render::RenderSettings::default().point_shadow_budget(crate::render::POINT_SHADOWS_DEFAULT))
+    .insert_resource(mw_environment_bevy::render::RenderSettings::default().point_shadow_budget(mw_environment_bevy::render::POINT_SHADOWS_DEFAULT))
     .insert_resource(AnimGizmos { enabled: false })
     .insert_resource(mw_assets::LightCalibration::default().ambient([150, 150, 160]))
     .insert_resource(Lineup(entries.len()))
     .insert_resource(Gait { walk: options.walk, ..Gait::default() })
     .add_systems(Update, (keys, gait, report, night));
-    crate::actors::add_content(&mut app, content);
-    app.insert_resource(crate::held::HeldDarkness::forced(Some(options.night)));
+    mw_actors_bevy::actors::add_content(&mut app, content);
+    app.insert_resource(mw_actors_bevy::held::HeldDarkness::forced(Some(options.night)));
     let drawn = if options.drawn { Readiness::Drawn } else { Readiness::Sheathed };
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     let camera = options.camera;
@@ -166,7 +166,7 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     } else {
         // Interactive: BRP for `brp_extras/send_keys` and screenshots (CLAUDE.md "Live inspection (BRP)").
         #[cfg(feature = "remote")]
-        crate::remote::add(&mut app);
+        mw_devtools_bevy::remote::add(&mut app);
     }
     app.run();
 }
@@ -215,7 +215,7 @@ fn keys(
     mut chars: Query<(&mut Character, &mut LineupEntry, &mut CharacterReadiness)>,
     mut animators: Query<&mut Animator>,
     mut gizmos: ResMut<AnimGizmos>,
-    mut darkness: ResMut<crate::held::HeldDarkness>,
+    mut darkness: ResMut<mw_actors_bevy::held::HeldDarkness>,
     mut fidget: Local<u8>,
     mut dead: Local<bool>,
 ) {
@@ -264,7 +264,7 @@ fn keys(
 
 /// N: the stage at night (moonlight and a dim ambient) or by day.
 fn night(
-    darkness: Res<crate::held::HeldDarkness>,
+    darkness: Res<mw_actors_bevy::held::HeldDarkness>,
     mut shown: Local<Option<bool>>,
     mut sun: Query<&mut DirectionalLight>,
     mut ambient: ResMut<GlobalAmbientLight>,

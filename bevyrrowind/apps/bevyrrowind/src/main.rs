@@ -3,9 +3,8 @@
 //! Today: inspection tools over the user's Morrowind install. Later, running
 //! without a subcommand will launch the game.
 
-use mw_actors_bevy::{actors, held};
-mod anim_view;
-mod character_view;
+use mw_actors_bevy::actors;
+use mw_viewers_bevy::{character_view, view};
 use mw_rpg_bevy::{dialogue, inventory, inventory_ui};
 mod exterior;
 mod level;
@@ -15,14 +14,10 @@ mod perf;
 use mw_walkers_bevy::physics;
 use mw_player_bevy as player;
 use mw_devtools_bevy::{live_ab, pipeline_watch};
-#[cfg(feature = "remote")]
-use mw_devtools_bevy::remote;
 mod scenes;
 use mw_saves_bevy as saves;
 use mw_scripts_bevy as scripts;
-mod skinned_view;
 mod sweep;
-mod view;
 use mw_walkers_bevy::walkers;
 
 use std::path::PathBuf;
