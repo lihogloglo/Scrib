@@ -2,12 +2,12 @@
 
 #![allow(clippy::cast_precision_loss)]
 
-use glam::{IVec3, Vec3};
-use sf_controller::{KinematicMover, Locomotion, LocomotionIntent, MoveInput, MoverParams, RootMotion};
+use glam::{Affine3A, IVec3, Vec3};
+use sf_controller::{CollisionBuilder, KinematicMover, Locomotion, LocomotionIntent, MoveInput, MoverParams, RootMotion, SurfaceId};
 use sf_coords::WorldPos;
 
 use crate::tests::{at, ground};
-use crate::{BodyDesc, BodyId, BodyKind, CharacterShape, Layer, PhysicsEvent, PhysicsParams, PhysicsWorld, PushParams, ShapeRef};
+use crate::{BodyDesc, BodyId, BodyKind, CharacterShape, Layer, MeshShape, PhysicsEvent, PhysicsParams, PhysicsWorld, PushParams, ShapeRef};
 
 const DT: f32 = 1.0 / 60.0;
 
@@ -284,5 +284,75 @@ fn no_tunnelling_at_running_speed() {
         let feet = base.delta_f32(walker.loco.position).z;
         let plank_z = base.delta_f32(w.pose(plank).unwrap().pos).z;
         assert!(feet < plank_z, "tunnelled: feet {feet}, plank {plank_z}");
+    }
+}
+
+/// A 40 m floor whose top is at `base`'s height: the ground box, or a one-sided
+/// trimesh quad facing up (baked collision is one-sided triangles).
+fn floor(w: &mut PhysicsWorld, base: WorldPos, mesh: bool) {
+    if !mesh {
+        ground(w, base);
+        return;
+    }
+    let mut builder = CollisionBuilder::new(1e-3);
+    builder.add(&[[-20.0, 0.0, -20.0], [-20.0, 0.0, 20.0], [20.0, 0.0, 20.0], [20.0, 0.0, -20.0]], &[0, 1, 2, 0, 2, 3], Affine3A::IDENTITY, SurfaceId::DEFAULT);
+    let shape = MeshShape::new(&builder.finish()).expect("a valid mesh");
+    w.insert(&BodyDesc::fixed(at(base), ShapeRef::Mesh(shape), Layer::STATIC));
+}
+
+/// S3-c (physics-fix-plan.md slice 10): a walker whose feet start inside a floor (a save
+/// loaded onto slightly different collision, a teleport, a spawn) recovers onto its top
+/// instead of falling through. The ground cast starts `step_up` above the feet, so a start
+/// overlap shallower than that is a step up; no separate overlap recovery is needed.
+#[test]
+fn a_walker_starting_inside_a_floor_recovers_onto_it() {
+    for mesh in [false, true] {
+        for depth in [0.02, 0.10] {
+            for ground_radius in [0.0, 0.25] {
+                for velocity in [Vec3::ZERO, Vec3::X * 1.5] {
+                    let base = WorldPos::new(IVec3::new(3, 0, -2), Vec3::new(10.0, 4.0, 10.0));
+                    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+                    floor(&mut w, base, mesh);
+                    let mut walker = Walker::new(&mut w, base.offset(Vec3::NEG_Y * depth));
+                    walker.params.ground_radius = ground_radius;
+                    let case = format!("mesh {mesh}, depth {depth}, ground radius {ground_radius}, velocity {velocity}");
+                    for i in 0..60 {
+                        walker.frame(&mut w, velocity);
+                        let y = base.delta_f32(walker.loco.position).y;
+                        assert!(y.is_finite(), "{case}: NaN feet at frame {i}");
+                        assert!(y > -0.005, "{case}: feet {y} below the floor top at frame {i}");
+                        assert!(y < 0.05, "{case}: feet {y} popped above the floor at frame {i}");
+                    }
+                    assert!(walker.loco.grounded.is_some(), "{case}: not grounded");
+                }
+            }
+        }
+    }
+}
+
+/// The other side of S3-c: recovery never teleports through geometry. A walker whose
+/// head is stuck 10 cm up through a thin floor above it (box or one-sided trimesh) falls
+/// to the ground under it and never pops up through the thin floor.
+#[test]
+fn a_walker_under_a_thin_floor_never_pops_up_through_it() {
+    for mesh in [false, true] {
+        let (mut w, base) = world();
+        let slab_top = base.offset(Vec3::Y * 2.2);
+        if mesh {
+            floor(&mut w, slab_top, true);
+        } else {
+            w.insert(&BodyDesc::fixed(at(slab_top.offset(Vec3::NEG_Y * 0.05)), ShapeRef::Box(Vec3::new(20.0, 0.05, 20.0)), Layer::STATIC));
+        }
+        // Height 1.8: the head is at 2.2 + 0.1, through the slab.
+        let start = 0.5;
+        let mut walker = Walker::new(&mut w, base.offset(Vec3::Y * start));
+        for i in 0..90 {
+            walker.frame(&mut w, Vec3::X * 0.5);
+            let y = base.delta_f32(walker.loco.position).y;
+            assert!(y.is_finite(), "mesh {mesh}: NaN feet at frame {i}");
+            assert!(y <= start + 1e-4, "mesh {mesh}: feet rose to {y} at frame {i}");
+        }
+        let y = base.delta_f32(walker.loco.position).y;
+        assert!(y.abs() < 0.01 && walker.loco.grounded.is_some(), "mesh {mesh}: feet {y} not back on the ground");
     }
 }
