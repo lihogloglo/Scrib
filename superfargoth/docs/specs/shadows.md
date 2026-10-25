@@ -184,6 +184,8 @@ frames (a budget of faces per frame; a new light first appears unshadowed and fa
 **Movable casters** are drawn every frame (Low/Medium: 30 Hz) over a copy of the static faces, only on faces whose
 frustum holds one; faces with none sample the static copy directly.
 
+Note 2026-10-26: since reset B1 the cache runs on vendored Bevy PRs #26149/#26161 (see "Reset B1 as built"); the 'no fork' wording below predates that.
+
 **How it plugs into Bevy (no fork):** Bevy keeps sampling (filters, PCSS, clusters). For cached lights the budget
 sets `shadow_maps_enabled` and a system after Bevy's `check_point_light_mesh_visibility` empties the light's
 `CubemapVisibleEntities`, so Bevy's six views draw nothing (a clear only; a `RenderLayers` mask would also hide
@@ -214,10 +216,10 @@ Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-
 |---|---|---|---|
 | Shadowed-light budget + fade | HDRP max shadows + fade distance; UE per-light fade; Clockwork | `PointShadowBudget`, importance, hysteresis, crossfade | **match** |
 | Selection by contribution incl. off-screen lights | Clockwork; HDRP (screen-size based) | `shadow_importance` on shown lights, in view or not | **match** |
-| Static caster caching | Doom 2016, HDRP mixed cached, UE cached shadows, Flax | `sf_shadow_cache_bevy` (auto mobility); Bevy still runs its per-face views | **partial**: slice 2b skips the views |
-| Dynamic casters over cached copy | HDRP, UE, Clockwork (30 Hz) | none | **GAP (P1)**: slice 3 |
+| Static caster caching | Doom 2016, HDRP mixed cached, UE cached shadows, Flax | `sf_shadow_cache_bevy` (auto mobility); Bevy still runs its per-face views | **match** since reset B1: vendored PRs #26149/#26161 skip unchanged views, cache kept (see "Reset B1 as built") |
+| Dynamic casters over cached copy | HDRP, UE, Clockwork (30 Hz) | `sf_shadow_cache_bevy` composites movers over the static copy; #26161 alone redraws whole cubes (see "Reset B1 as built") | **stale, see Reset A1-B2** |
 | Atlas, per-light resolution | Doom, HDRP | one global cube size | **GAP (P2)**: slice 3 |
-| Contact shadows for unshadowed lights | UE | budgeted lights only (cost × lights) | **differ**: cheap stopgap, revisit with measurements |
+| Contact shadows for unshadowed lights | UE | sun and moon only, 0.3 m; lamps none since reset A1 (see "Reset A1 as built") | **differ**: engines use one key light, short ray |
 
 ## Co-op
 

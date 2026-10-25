@@ -1520,3 +1520,4 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-25 (owner): adopt `bevy_open_vat` (crowd/creature LOD, spike first) and `bevy_grass` (groundcover spike,
   Phase 4); skip bevy-react and bevy_settings_plus (research/crates-2026-10-25.md). Physics stays Rapier (avian 0.8 has
   no spherical/generic joint motors; revisit when Phase 3 opens, swap = `sf_physics` only).
+- 2026-10-26 (docs S6b): correction: the lamp cube cache was not deleted in reset A; B1 measured it and kept it (`sf_shadow_cache_bevy`). The 2026-10-21 reset entry's "deleted in A" is superseded by the B1 entry.
