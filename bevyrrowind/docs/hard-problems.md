@@ -86,10 +86,11 @@ Paste the entry plus this:
 
 - **Symptom:** PH-2 rejected (2026-10-19): ragdoll bodies sink into the ground, float, turn around, joints look
   unconstrained. Owner 2026-10-25: carrying an object pushes the capsule through the floor, jittery.
-- **Known:** R0 write-back fixed headless 2026-10-22 (PH-2 awaiting owner again); avian3d has no spherical joint
-  motor (PD torques instead); delirium-physics experiment parked (3.2b).
+- **Known:** R0 write-back fixed headless 2026-10-22 (PH-2 awaiting owner again); the backend is rapier3d 0.36.1 (this line said avian3d before 2026-10-26); ragdoll joint
+  drives use PD torques; delirium-physics experiment parked (3.2b).
 - **Why hard:** physics/animation coupling (write-back order, fixed tick vs render interpolation, collision layers
   between the held body and the player capsule).
+- **Fix plan (2026-10-26):** `bevyrrowind/docs/specs/physics-fix-plan.md` (held-item jitter = slices 8-9).
 - **Start:** `superfargoth/docs/specs/smooth-bodies.md`, `animation.md` ragdoll parts,
   `superfargoth/docs/research/animation/12-delirium-physics.md`, visual checks PH-*.
 - **Done when:** owner confirms PH-2 and a held crate that neither sinks the capsule nor jitters.
