@@ -6,6 +6,12 @@ Crates: `sf_console` (Bevy-free: registry, variables, binding, completion, histo
 `sf_console_bevy` (thin: resource, messages, run conditions, `App` extension; `overlay` feature:
 the bevy_ui front end, click-select, inspector)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: core, bevy_ui overlay, click-select/inspector and MWScript fallback built; ROADMAP 1.13 [~]; CO-1 partial (COC interiors only, no paste, suggestion keys). Left: `set x to y`, exterior `coc`, other `--off` switches as variables. Not built: saved variables/config file, Luau command, cheat policy ("Open questions").
+> Crates: `sf_console` (Bevy-free: registry, vars, `Prompt`, history), `sf_console_bevy` (`overlay` feature). Decisions: one namespace, names lowercase ("Design"); `SetBy` priority, a lower source cannot override ("As built"); own `Prompt`, not Bevy `TextInput`, so paste/IME is gap P3; unclaimed lines go to a fallback (MWScript).
+> Read next: "As built" first (newest); "Design" to register a variable or command; "Open questions" for policy.
+<!-- /agent-summary -->
+
 ## Goal
 
 One place to flip any engine switch live, and to run debug commands, without a rebuild or a

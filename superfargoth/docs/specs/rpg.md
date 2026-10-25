@@ -7,6 +7,12 @@ commands 2026-10-22 for the inventory screen, ui.md U5, 21 tests).
 database with a session state machine, not a graph (Research below). Adapter: Bevyrrowind
 `docs/specs/rpg-adapter.md` (`mw_rpg`). Roadmap: Phase 2.4.
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: spec plus core built (`sf_rpg` modules `ids`, `item`, `equip`, `quest`, `link`, `dialogue`, `state`; stack split/merge). ROADMAP 2.4 [~] (next: HUD). Visual checks: DJ-1 confirmed with follow-up, IV-1 partial. Designed, not built: see "Open questions" (journal snapshot vs re-render).
+> Crates / key types: `sf_rpg` (Bevy-free), `sf_ids` (`PlayerId`), adapter `mw_rpg` (bevyrrowind `docs/specs/rpg-adapter.md`). Decisions that matter: dialogue is a condition-filtered response database, first passing response wins, not a graph ("Dialogue", "Research"); state changes only via `RpgCommand` returning `RpgEvent`s ("Commands and events"); no clock or RNG inside `sf_rpg`, no `Entity` ("Co-op").
+> Read next: "Data model" for types; "Dialogue" for the session machine; "Adapter hooks" for content packs.
+<!-- /agent-summary -->
+
 ## Goal
 
 The generic, Bevy-free data and state machines a content pack needs to run a quest from

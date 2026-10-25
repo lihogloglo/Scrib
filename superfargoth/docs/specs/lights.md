@@ -8,6 +8,14 @@ Problem: the Balmora walk spawns **~290 point lights** (Balmora standing: 210), 
 with `range = 4 × record radius`. The feature ladder (bevyrrowind perf.md) puts them at **+2.0 ms frame, +2.0 ms
 render thread, +1.7 ms GPU** at 1440p. Target: High 1440p ≤ 11 ms, and the CPU frame must fit too.
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: researched and measured (lights1, 2026-10-20); decided: no light budget system now. ROADMAP 1.4 [ ] (shadows) and 1.12 [ ] (LT-4 lamp light cut at cluster edges, a known bug); hard problem H2 (shadow quality) is open.
+> Built: nothing new in this spec; Bevy 0.20 GPU clustering and frustum culling are used as is. Designed, not built: light draw-distance fade per preset on `VisibilityRange`, range-scale knob (4x today vs 1x).
+> Decisions that matter: unshadowed lights cost ~0.5 ms GPU in Balmora, the cost was the lamp shadow ("Measured"); flicker stays per frame; shadowed-light budget lives in shadows.md ("Design").
+> Visual checks: LT-2 partial, LT-3 rejected, LT-4 known bug.
+> Read next: "Measured" for numbers; "Design" before touching light cost; shadows.md for lamp shadows.
+<!-- /agent-summary -->
+
 ## What Bevy 0.20 does (read in `bevy_light-0.20.0`, `bevy_pbr-0.20.0`, `bevy_camera-0.20.0`)
 
 - **GPU clustering is the default on desktop** (new in 0.20, PR #23036): `GlobalClusterSettings::gpu_clustering`

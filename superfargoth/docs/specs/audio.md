@@ -6,6 +6,13 @@ positional one-shots and loop emitters, ambience beds, music player, footstep ho
 (Bevyrrowind records, music folders, footsteps, doors/UI) is slice 2. Earlier: weather sound (M6 WE3),
 interior snapshot (AU-1).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: framework built for ROADMAP 2.6 [~] (sound pass slice 1 plus volume mixer); content wiring is slice 2. Built: buses, cues, positional one-shots and loop emitters, ambience beds, music player, footstep hook, weather feeder, volume mixer with ducking. Designed, not built: DSP (occlusion low-pass, reverb), HRTF, sample-accurate music sync.
+> Crates / key types: `sf_audio` (Bevy-free: `Bus`, `Mixer`, `CueBank`, `Attenuation`), `sf_audio_bevy` (`PlaySound`, `LoopEmitter`, `weather` feature). Visual checks: AU-3, AU-4, AU-5 awaiting owner.
+> Decisions that matter: stay on `bevy_audio`, gaps are ours ("Backend"); attenuation curve is ours via `SpatialScale = 1/max_m`; Bevy `GlobalVolume` unused ("Model"); audio never writes sim state ("Co-op").
+> Read next: "Model" for API; "Backend" for DSP upgrade path (`bevy_seedling`/`bevy_kira_audio`).
+<!-- /agent-summary -->
+
 ## Goal
 
 Play what the simulation and presentation ask for: weather loops and thunder, region one-shots,

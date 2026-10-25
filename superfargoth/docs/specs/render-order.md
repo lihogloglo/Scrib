@@ -12,6 +12,12 @@ spec is the one picture of what draws when, what each draw reads, how it is fogg
 shadowed, and the rules that keep the class from coming back. water.md "Render order" stays the
 detail for the transparent side; this spec supersedes it where they differ.
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: audit + rules built; guard test and band/pass helpers in `sf_render_order_bevy`. ROADMAP 1.8 and 1.12 open; hard problem H3 open. Open: RO-5 (no interior fog), RO-6 (no MVs/reactive mask for translucents, ghost under DLSS), RO-10/11 accepted/deferred; RO-B smoke over sky is a known bug.
+> Crates / key types: `sf_render_order_bevy` (`DrawBand`, `TranslucentFog`, `add_pass`/`PassStage`, `SkyMotion`); `translucent_guard.rs`. Decisions: every translucent is fogged via `TranslucentFog` (Rules, 1); shader-placed translucents need a `DrawBand` (Rules, 2); translucents cast no shadows (Rules, 4); colour/depth reads at named points only (Rules, 5).
+> Read next: "Frame graph" for pass order; "Material inventory" before adding a material; "Violations" for RO-n; "Guard" when adding a translucent class.
+<!-- /agent-summary -->
+
 ## Frame graph (raster path, exterior camera, as built)
 
 Bevy 0.20 runs the camera graph as the `Core3d` schedule in the render world; our passes are

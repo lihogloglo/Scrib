@@ -5,6 +5,13 @@ Crates: `sf_diag` (new, Bevy-free: counters, recorder, stats, gates,
 reports, baselines, camera paths, scenario runner), `sf_diag_bevy` (new:
 plugin, frame sampling, fly-through driver)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: `sf_diag` and `sf_diag_bevy` built and used by the app (`sf_diag` is a dependency of the Bevyrrowind app; capture `ReadyGate` added 2026-10-25). ROADMAP 1.2 [~] (median 11 ms gates), 1.14 [~]; hard problem H1 open (render-thread bound). No visual-check IDs.
+> Built: counters, recorder, stats, gates, reports, baselines, camera paths, scenario runner, frame-pacing counters, `ReadyGate`. Designed, not built: A/B significance, clock locking (J9, P2), GPU total/VRAM ("Open questions").
+> Decisions that matter: not a profiler (Tracy), no overlay; synthetic worlds prove correctness only, gates run on real content ("Goal"); frame work = max(main, render, GPU timed) ("Frame pacing").
+> Read next: "Frame pacing" for counters; "Interfaces" for the API; "As built: capture readiness gate" for screenshots.
+<!-- /agent-summary -->
+
 ## Goal
 
 Answer "how fast is it, and did it get slower?" with numbers a machine can
