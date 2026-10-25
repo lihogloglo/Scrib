@@ -54,15 +54,47 @@ value = { layer = "Menu", implementation = { Template = "saveload" } }
 kind = "ui.screen"
 id = "pause"
 value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "pause" } }
+
+[[define]]
+kind = "ui.screen"
+id = "options"
+value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "options" } }
 "#;
 
-/// The registry of [`SCREENS`].
+/// Settings of the options screen demo, one per kind over two pages (after the framework's
+/// built-in audio page).
+pub const SETTINGS: &str = r#"
+[[define]]
+kind = "ui.setting"
+id = "demo.difficulty"
+value = { label = "set-demo-difficulty", page = "gameplay", kind = { Int = { default = 50, min = 0, max = 100, step = 25 } } }
+
+[[define]]
+kind = "ui.setting"
+id = "demo.subtitles"
+value = { label = "set-demo-subtitles", page = "gameplay", kind = { Bool = { default = true } } }
+
+[[define]]
+kind = "ui.setting"
+id = "demo.quality"
+value = { label = "set-demo-quality", page = "display", kind = { Choice = { default = "medium", options = ["low", "medium", "high"] } } }
+
+[[define]]
+kind = "ui.setting"
+id = "demo.brightness"
+value = { label = "set-demo-brightness", page = "display", kind = { Float = { default = 1.0, min = 0.5, max = 1.5, step = 0.25 } } }
+"#;
+
+/// The registry of [`SCREENS`] and [`SETTINGS`].
 pub fn registry() -> UiRegistry {
     let mut db = RecordDb::new();
     register_kinds(&mut db).expect("UI record kinds register");
     let base = db.add_source("demo", &[]);
     let outcome =
         apply_record_file(&mut db, base, SCREENS, RecordFormat::Toml).expect("demo screens parse");
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    let outcome = apply_record_file(&mut db, base, SETTINGS, RecordFormat::Toml)
+        .expect("demo settings parse");
     assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
     UiRegistry::build(&db).0
 }

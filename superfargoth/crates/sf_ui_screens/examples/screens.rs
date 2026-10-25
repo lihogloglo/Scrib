@@ -2,7 +2,8 @@
 //!
 //! `cargo run -p sf_ui_screens --features demo --example screens` opens a window with the HUD.
 //! F1 dialogue, F2 journal, F3 inventory (1,000 stacks), F4 keybinds, F5 pause menu (Save
-//! disabled, to show a disabled entry); on a pad, Start (Esc)
+//! disabled, to show a disabled entry), F6 options (the demo settings and the audio page;
+//! changes are only shown); on a pad, Start (Esc)
 //! cycles them from the HUD and View (M) opens the inventory. B (Esc) closes a screen.
 //! Hold H to drain the HUD's health bar.
 //!
@@ -24,11 +25,18 @@ use sf_ui_bevy::{
 use sf_ui_screens::demo::{self, DemoInventory, DemoWorld};
 use sf_ui_screens::{
     DialogueScreen, HudScreen, HudView, InventoryScreen, JournalUi, JournalUiPlugin,
-    KeybindsScreen, PauseChoice, PauseMenuModel, PauseMenuScreen, ScreenSystems,
-    SfScreensPlugin,
+    KeybindsScreen, OptionsModel, OptionsScreen, PauseChoice, PauseMenuModel, PauseMenuScreen,
+    ScreenSystems, SfScreensPlugin,
 };
 
-const MENUS: [&str; 5] = ["dialogue", "journal", "inventory", "keybinds", "pause"];
+const MENUS: [&str; 6] = [
+    "dialogue",
+    "journal",
+    "inventory",
+    "keybinds",
+    "pause",
+    "options",
+];
 
 fn main() -> AppExit {
     let args: Vec<String> = std::env::args().collect();
@@ -140,6 +148,10 @@ fn open(
             model.set_enabled(PauseChoice::Save, false);
             commands.entity(root).insert(PauseMenuScreen::new(model));
         }
+        "options" => {
+            let model = OptionsModel::from_settings(&registry.0, None, None);
+            commands.entity(root).insert(OptionsScreen::new(model));
+        }
         _ => {
             commands.entity(root).insert(KeybindsScreen::new(None));
         }
@@ -160,9 +172,16 @@ fn open_screens(
     mut next: Local<usize>,
 ) {
     let mut wanted = None;
-    for (key, id) in [KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4, KeyCode::F5]
-        .into_iter()
-        .zip(MENUS)
+    for (key, id) in [
+        KeyCode::F1,
+        KeyCode::F2,
+        KeyCode::F3,
+        KeyCode::F4,
+        KeyCode::F5,
+        KeyCode::F6,
+    ]
+    .into_iter()
+    .zip(MENUS)
     {
         if keys.just_pressed(key) {
             wanted = Some(id);

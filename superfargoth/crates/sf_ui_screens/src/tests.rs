@@ -1268,6 +1268,228 @@ fn pause_menu_quit_asks_first() {
     assert!(!asking(&ui));
 }
 
+// ---------------------------------------------------------------- options
+
+#[derive(Resource, Default)]
+struct OptionChanges(Vec<OptionsChange>);
+
+fn collect_options(mut events: MessageReader<OptionsEvent>, mut out: ResMut<OptionChanges>) {
+    out.0.extend(events.read().map(|e| e.change.clone()));
+}
+
+fn open_options() -> (Ui, Entity) {
+    let mut ui = Ui::with(|app| {
+        app.init_resource::<OptionChanges>()
+            .add_systems(Update, collect_options.after(ScreenSystems::Sync));
+    });
+    let model = OptionsModel::from_settings(&demo::registry(), None, None);
+    let root = ui.open("options", OptionsScreen::new(model));
+    ui.frames(2);
+    (ui, root)
+}
+
+fn options_parts(ui: &Ui, root: Entity) -> &OptionsParts {
+    ui.world().get::<OptionsParts>(root).unwrap()
+}
+
+fn take_options(ui: &mut Ui) -> Vec<OptionsChange> {
+    std::mem::take(&mut ui.world_mut().resource_mut::<OptionChanges>().0)
+}
+
+fn options_open(ui: &Ui) -> bool {
+    ui.world().resource::<ScreenStackRes>().0.is_open("options")
+}
+
+fn option_value(ui: &Ui, root: Entity, key: &str) -> String {
+    ui.text_of(options_parts(ui, root).value(key).unwrap())
+}
+
+fn set(key: &str, value: sf_ui::SettingValue) -> OptionsChange {
+    OptionsChange::Set(key.into(), value)
+}
+
+#[test]
+fn options_builds_pages_from_records_and_tabs_switch_pages() {
+    let (mut ui, root) = open_options();
+    let screen = ui.world().get::<OptionsScreen>(root).unwrap();
+    let pages: Vec<(&str, &str)> = screen
+        .model
+        .pages
+        .iter()
+        .map(|p| (p.id.as_str(), p.label.as_str()))
+        .collect();
+    assert_eq!(
+        pages,
+        [
+            ("audio", "Audio"),
+            ("gameplay", "Gameplay"),
+            ("display", "Display")
+        ],
+        "built-ins first, then the records in order"
+    );
+    let parts = options_parts(&ui, root);
+    let keys = parts.row_keys();
+    assert_eq!(keys.len(), 2 * sf_ui::AUDIO_BUSES.len());
+    assert_eq!(keys[0], sf_ui::audio_volume_key("master"));
+    let first = parts.row(&keys[0]).unwrap();
+    let tabs = [0, 1, 2].map(|i| parts.tab(i).unwrap());
+    assert_eq!(ui.focus(), Some(first), "focus starts on the first row");
+    assert!(ui.text_of(first).starts_with("Audio master volume"));
+    assert_eq!(option_value(&ui, root, &keys[0]), "100%");
+    assert!(ui.class_of(first).contains("slider"));
+    assert_eq!(ui.text_of(tabs[1]), "Gameplay");
+    assert!(ui.class_of(tabs[0]).contains("active"));
+
+    // Tab next (right trigger): the gameplay page, focus on its first row.
+    ui.tap(GamepadButton::RightTrigger);
+    let parts = options_parts(&ui, root);
+    assert_eq!(parts.row_keys(), ["demo.difficulty", "demo.subtitles"]);
+    let difficulty = parts.row("demo.difficulty").unwrap();
+    let subtitles = parts.row("demo.subtitles").unwrap();
+    let keybinds = parts.keybinds();
+    assert_eq!(ui.focus(), Some(difficulty));
+    assert!(ui.class_of(tabs[1]).contains("active"));
+    assert!(!ui.class_of(tabs[0]).contains("active"));
+    assert_eq!(option_value(&ui, root, "demo.difficulty"), "50");
+    assert_eq!(option_value(&ui, root, "demo.subtitles"), "On");
+    assert!(ui.class_of(subtitles).contains("toggle"));
+
+    // A disabled row is skipped; down ends on Key bindings.
+    ui.world_mut()
+        .get_mut::<OptionsScreen>(root)
+        .unwrap()
+        .model
+        .set_enabled("demo.subtitles", false);
+    ui.frames(1);
+    assert!(ui.class_of(subtitles).contains("disabled"));
+    ui.tap(GamepadButton::DPadDown);
+    assert_eq!(ui.focus(), Some(keybinds));
+    ui.tap(GamepadButton::DPadUp);
+    assert_eq!(ui.focus(), Some(difficulty));
+
+    // Tab prev twice wraps to the last page; a click on a tab switches too.
+    ui.tap(GamepadButton::LeftTrigger);
+    ui.tap(GamepadButton::LeftTrigger);
+    assert_eq!(ui.world().get::<OptionsScreen>(root).unwrap().page(), 2);
+    assert_eq!(
+        options_parts(&ui, root).row_keys(),
+        ["demo.quality", "demo.brightness"]
+    );
+    ui.world_mut().trigger(Activate { entity: tabs[0] });
+    ui.frames(1);
+    assert_eq!(ui.world().get::<OptionsScreen>(root).unwrap().page(), 0);
+    assert!(take_options(&mut ui).is_empty(), "browsing changes nothing");
+}
+
+#[test]
+fn options_left_right_step_values_within_bounds() {
+    use sf_ui::SettingValue::{Bool, Float, Int, Text};
+    let (mut ui, root) = open_options();
+    ui.tap(GamepadButton::RightTrigger);
+
+    // Int slider 0..=100 by 25, from 50.
+    for _ in 0..3 {
+        ui.tap(GamepadButton::DPadRight);
+    }
+    assert_eq!(
+        take_options(&mut ui),
+        [
+            set("demo.difficulty", Int(75)),
+            set("demo.difficulty", Int(100))
+        ],
+        "clamped at the maximum"
+    );
+    assert_eq!(option_value(&ui, root, "demo.difficulty"), "100");
+    for _ in 0..5 {
+        ui.tap(GamepadButton::DPadLeft);
+    }
+    assert_eq!(take_options(&mut ui).len(), 4, "100 down to 0, no further");
+    assert_eq!(option_value(&ui, root, "demo.difficulty"), "0");
+    // An arrow click steps once (the row is not activated with it).
+    let [_, more] = options_parts(&ui, root).arrows("demo.difficulty").unwrap();
+    ui.world_mut().trigger(Activate { entity: more });
+    ui.frames(1);
+    assert_eq!(take_options(&mut ui), [set("demo.difficulty", Int(25))]);
+
+    // Toggle: left or right flips, and so does confirm.
+    ui.tap(GamepadButton::DPadDown);
+    ui.tap(GamepadButton::DPadRight);
+    assert_eq!(option_value(&ui, root, "demo.subtitles"), "Off");
+    ui.tap(GamepadButton::DPadLeft);
+    ui.tap(GamepadButton::South);
+    assert_eq!(
+        take_options(&mut ui),
+        [
+            set("demo.subtitles", Bool(false)),
+            set("demo.subtitles", Bool(true)),
+            set("demo.subtitles", Bool(false)),
+        ]
+    );
+
+    // Choice: cycles, wrapping both ways.
+    ui.tap(GamepadButton::RightTrigger);
+    ui.tap(GamepadButton::DPadRight);
+    ui.tap(GamepadButton::DPadRight);
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(
+        take_options(&mut ui),
+        [
+            set("demo.quality", Text("high".into())),
+            set("demo.quality", Text("low".into())),
+            set("demo.quality", Text("high".into())),
+        ]
+    );
+    assert_eq!(option_value(&ui, root, "demo.quality"), "High");
+
+    // Float slider 0.5..=1.5 by 0.25, from 1.0.
+    ui.tap(GamepadButton::DPadDown);
+    for _ in 0..3 {
+        ui.tap(GamepadButton::DPadRight);
+    }
+    assert_eq!(
+        take_options(&mut ui),
+        [
+            set("demo.brightness", Float(1.25)),
+            set("demo.brightness", Float(1.5))
+        ]
+    );
+    assert_eq!(option_value(&ui, root, "demo.brightness"), "1.50");
+    // Confirm on a slider changes nothing.
+    ui.tap(GamepadButton::South);
+    assert!(take_options(&mut ui).is_empty());
+}
+
+#[test]
+fn options_open_keybinds_and_back_closes() {
+    let (mut ui, root) = open_options();
+    ui.tap(GamepadButton::RightTrigger);
+    for _ in 0..2 {
+        ui.tap(GamepadButton::DPadDown);
+    }
+    let parts = options_parts(&ui, root);
+    let (keybinds, back) = (parts.keybinds(), parts.back());
+    assert_eq!(ui.focus(), Some(keybinds));
+    assert_eq!(ui.text_of(keybinds), "Key bindings");
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_options(&mut ui), [OptionsChange::OpenKeybinds]);
+    assert!(options_open(&ui), "the app opens the keybinds on top");
+    ui.tap(GamepadButton::DPadDown);
+    assert_eq!(ui.focus(), Some(back));
+
+    // Back (pad East): sent, and the screen closes.
+    ui.tap(GamepadButton::East);
+    assert_eq!(take_options(&mut ui), [OptionsChange::Back]);
+    assert!(!options_open(&ui));
+
+    // The back button: the same.
+    let (mut ui, root) = open_options();
+    let back = options_parts(&ui, root).back();
+    ui.world_mut().trigger(Activate { entity: back });
+    ui.frames(1);
+    assert_eq!(take_options(&mut ui), [OptionsChange::Back]);
+    assert!(!options_open(&ui));
+}
+
 // ---------------------------------------------------------------- HUD
 
 #[test]
@@ -1384,6 +1606,13 @@ fn idle_screens_touch_nothing() {
         .close("keybinds");
     ui.open("pause", PauseMenuScreen::new(PauseMenuModel::default()));
     check(&mut ui, "pause");
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("pause");
+    let model = OptionsModel::from_settings(&demo::registry(), None, None);
+    ui.open("options", OptionsScreen::new(model));
+    check(&mut ui, "options");
 }
 
 /// Frame times with an open screen (whole app update: input, UI layout, text, screens), on

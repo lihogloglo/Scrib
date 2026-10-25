@@ -326,7 +326,12 @@ names wait for router text capture); focus selects, confirm runs load / save, ov
 Load, Options, Quit; default all five enabled); focus starts on Resume, navigation skips disabled entries (class
 `disabled`); Quit asks yes/no first (No focused; the question widget is shared with save/load); choices go out as
 `PauseMenuEvent`; Back = Resume, which closes the screen. Its `ui.screen` record declares `pause = "WhileOpen"`, so
-`ScreenStack::pauses_game` drives the app's pause. Message boxes and toasts: [ui-text.md](ui-text.md)
+`ScreenStack::pauses_game` drives the app's pause. Options (2026-10-26): `OptionsScreen` over
+`OptionsModel::from_settings(registry, store, localizer)`: `ui.setting` records grouped by `page` (else the owning
+mod; built-in audio page first) as tabs (tab prev/next), rows toggle / choice (cycles) / int or float slider (record
+step, else range/20; clamped), `Text` settings left out; left/right change, confirm flips or cycles, arrows click;
+a "Key bindings" row and Back. The screen applies nothing: `OptionsEvent` `Set(key, value)`, `OpenKeybinds`, `Back`
+(closes); the app writes `UiSettingsStore` and saves. No record condition yet: the app disables rows. Message boxes and toasts: [ui-text.md](ui-text.md)
 "Notifications". Content packs bring names, icons, themes and host logic.
 
 ### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
