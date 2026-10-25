@@ -56,7 +56,7 @@ const MOONS: [MoonIni; 2] = [
 ];
 
 /// Masser, Secunda, stars and the sun disk on `settings`.
-pub(crate) fn apply(settings: &mut SkySettings) {
+pub fn apply(settings: &mut SkySettings) {
     let cycle = DAYS_PER_PHASE * 8.0;
     settings.moons = MOONS
         .iter()

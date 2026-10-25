@@ -3,7 +3,15 @@
 //! The framework side is `sf_sky_bevy` (`RenderPathSetting`,
 //! `UpscalingSetting`); spec `superfargoth/docs/specs/sky-lighting.md`.
 
-use bevy::prelude::*;
+use bevy_app::{App, Last, Update};
+use bevy_camera::visibility::InheritedVisibility;
+use bevy_camera::{Camera, Camera3d, Exposure};
+use bevy_ecs::prelude::*;
+use bevy_light::PointLight;
+use bevy_log::info;
+use bevy_post_process::auto_exposure::AutoExposure;
+use bevy_render::view::screenshot::Screenshot;
+use bevy_transform::components::GlobalTransform;
 use sf_sky_bevy::sf_sky::{RenderPath, Upscaling};
 use sf_sky_bevy::{PointShadowBudget, SkyRenderOptions, UpscalingSetting};
 
@@ -117,7 +125,7 @@ impl RenderSettings {
     /// runtime (Bevy's DLSS init plugin reads it while creating the device).
     pub fn init(app: &mut App) {
         #[cfg(feature = "dlss")]
-        app.insert_resource(bevy::anti_alias::dlss::DlssProjectId(bevy::asset::uuid::Uuid::from_u128(
+        app.insert_resource(bevy_anti_alias::dlss::DlssProjectId(bevy_asset::uuid::Uuid::from_u128(
             0x6b65_7272_6f77_696e_642d_6276_7972_726f,
         )));
         #[cfg(not(feature = "dlss"))]
@@ -223,8 +231,8 @@ fn movable_characters(add: On<Add<sf_character_bevy::Character>>, mut commands: 
 /// With every screenshot: the exposure and local-light state it was taken
 /// at (lighting job logs: EV100 per camera, the sky's, shadowed lights).
 fn log_lighting_at_screenshot(
-    shots: Query<(), Added<bevy::render::view::screenshot::Screenshot>>,
-    cameras: Query<(&Camera, &bevy::camera::Exposure, Has<bevy::post_process::auto_exposure::AutoExposure>), With<Camera3d>>,
+    shots: Query<(), Added<Screenshot>>,
+    cameras: Query<(&Camera, &Exposure, Has<AutoExposure>), With<Camera3d>>,
     sky: Option<Res<sf_sky_bevy::CurrentSky>>,
     lights: Query<(&PointLight, &InheritedVisibility)>,
     budget: Option<Res<PointShadowBudget>>,

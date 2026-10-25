@@ -13,15 +13,15 @@ publish = false
 dev = ["bevy/dynamic_linking", "bevy/dev", "mw_game_core/dev", "mw_boot_bevy/dev", "sf_vfs/watch", "remote"]
 # Bevy Remote Protocol on 127.0.0.1 for agents (`bevy_brp_mcp`; `src/remote.rs`,
 # CLAUDE.md "Live inspection (BRP)"). Unauthenticated HTTP: dev builds only.
-remote = ["bevy/bevy_remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde_json"]
+remote = ["bevy/bevy_remote", "mw_environment_bevy/remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde_json"]
 # Ray-traced lighting (`view --rt`): Bevy Solari. Off by default: it forces
 # the deferred renderer at startup and needs a ray-tracing GPU.
-solari = ["sf_sky_bevy/solari", "bevy/bevy_solari"]
+solari = ["sf_sky_bevy/solari", "bevy/bevy_solari", "mw_environment_bevy/solari"]
 # NVIDIA DLSS: Super Resolution on the raster path (`view --dlss <quality>`) and,
 # with `solari`, Ray Reconstruction denoising `--rt`. Builds without NVIDIA's SDK; at
 # runtime needs the separate DLSS package in <exe>/dlss/ (../superfargoth/plugins/sf_dlss);
 # build.rs copies a locally built one there (dev only). "Ultra": `--features solari,dlss`.
-dlss = ["bevy/dlss", "sf_sky_bevy/dlss"]
+dlss = ["bevy/dlss", "sf_sky_bevy/dlss", "mw_environment_bevy/dlss"]
 # CPU time per system: Chrome trace (`TRACE_CHROME=<file>`; `perf trace`), or Tracy.
 # Build into its own profile so the plain profiling exe stays: docs/perf.md.
 trace = ["bevy/trace_chrome"]
@@ -40,6 +40,8 @@ mw_bake.workspace = true
 mw_boot_bevy.workspace = true
 # Gameplay keymap actions, use context, keybinds screen (app-split.md slice 3).
 mw_controls_bevy.workspace = true
+# Water, weather, night sky, render settings (app-split.md slice 6).
+mw_environment_bevy.workspace = true
 mw_game_core.workspace = true
 mw_graphs.workspace = true
 mw_install.workspace = true

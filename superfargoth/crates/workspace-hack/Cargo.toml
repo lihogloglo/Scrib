@@ -40,6 +40,7 @@ bevy_mesh = { version = "0.20", features = ["bevy_mikktspace", "morph", "seriali
 bevy_pbr = { path = "../../vendor/bevy_pbr", default-features = false, features = ["bevy_gltf", "dfg_lut", "experimental_pbr_pcss", "pbr_clustered_decals", "pbr_light_textures", "webgl"] }
 bevy_picking = { version = "0.20", default-features = false, features = ["custom_cursor", "mesh_picking"] }
 bevy_platform = { version = "0.20", features = ["bytemuck", "futures-lite", "serialize"] }
+bevy_post_process = { version = "0.20", default-features = false, features = ["webgl"] }
 bevy_reflect = { version = "0.20", features = ["glam", "petgraph", "smol_str", "uuid", "wgpu-types"] }
 bevy_render = { path = "../../vendor/bevy_render", default-features = false, features = ["morph", "multi_threaded", "raw_vulkan_init", "reflect_auto_register", "webgl"] }
 bevy_shape = { version = "0.20", features = ["bevy_reflect"] }
@@ -99,7 +100,7 @@ regex-syntax = { version = "0.8" }
 ron = { version = "0.12" }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { version = "1", features = ["alloc", "raw_value"] }
 slotmap = { version = "1", default-features = false, features = ["std"] }
 smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union"] }
 smol_str = { version = "0.2", features = ["serde"] }

@@ -20,14 +20,12 @@ mod inventory_ui;
 mod level;
 mod live_ab;
 mod mods;
-mod night_sky;
 mod perf;
 mod physics;
 mod player;
 mod pipeline_watch;
 #[cfg(feature = "remote")]
 mod remote;
-mod render;
 mod scenes;
 mod saves;
 mod scripts;
@@ -35,8 +33,6 @@ mod skinned_view;
 mod sweep;
 mod view;
 mod walkers;
-mod water;
-mod weather;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -46,6 +42,7 @@ use clap::{Parser, Subcommand};
 use mw_boot_bevy::{bake, hot_reload, load, mount, ui_theme};
 // Gameplay controls (app-split.md slice 3): `crate::controls::..` resolves through this.
 use mw_controls_bevy as controls;
+use mw_environment_bevy::{night_sky, render, water, weather};
 use mw_install::{MorrowindInstall, Origin};
 use mw_records::KindVisitor;
 use sf_records::{RecordDb, RecordId};

@@ -36,6 +36,8 @@ bevy_core_pipeline = { version = "0.20", default-features = false }
 bevy_light = { version = "0.20", default-features = false }
 bevy_math = { version = "0.20", default-features = false }
 bevy_pbr = { version = "0.20", default-features = false }
+# `AutoExposure` (mw_environment_bevy render.rs screenshot log).
+bevy_post_process = { version = "0.20", default-features = false }
 bevy_render = { version = "0.20", default-features = false }
 bevy_solari = { version = "0.20", default-features = false }
 # Streaming glue (sf_world_bevy). `bevy_gizmos` is optional there (`debug` feature).
@@ -207,6 +209,7 @@ mw_audio = { path = "bevyrrowind/crates/mw_audio" }
 mw_bake = { path = "bevyrrowind/crates/mw_bake" }
 mw_boot_bevy = { path = "bevyrrowind/crates/mw_boot_bevy" }
 mw_controls_bevy = { path = "bevyrrowind/crates/mw_controls_bevy" }
+mw_environment_bevy = { path = "bevyrrowind/crates/mw_environment_bevy" }
 mw_game_core = { path = "bevyrrowind/crates/mw_game_core" }
 mw_graphs = { path = "bevyrrowind/crates/mw_graphs" }
 mw_install = { path = "bevyrrowind/crates/mw_install" }

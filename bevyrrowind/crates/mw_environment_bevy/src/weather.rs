@@ -7,7 +7,7 @@ use mw_weather::{climate_id, weather_type_of};
 use sf_records::RecordId;
 use sf_weather::{WeatherBook, WeatherState};
 
-use crate::Result;
+use mw_boot_bevy::Result;
 
 #[derive(Subcommand)]
 pub enum WeatherCommand {
@@ -39,7 +39,7 @@ pub fn run(install: &MorrowindInstall, command: WeatherCommand) -> Result {
 }
 
 fn forecast(install: &MorrowindInstall, region: &str, days: f64, seed: u64, from: f64) -> Result {
-    let (_, content) = crate::load(install, false)?;
+    let (_, content) = mw_boot_bevy::load(install, false)?;
     let book = WeatherBook::from_db(&content.db);
     let Some(climate) = book.climate(&climate_id(region)) else {
         let known: Vec<String> = content
@@ -218,7 +218,7 @@ const LIVE_HOLD_HOURS: f32 = 1.0e6;
 /// the forecast: each climate glides to the weather its forecast has at
 /// `now` (a force of that weather, released at the climate's next natural
 /// change). Overrides are the save state, so the change replays.
-pub(crate) fn force_live(
+pub fn force_live(
     book: &WeatherBook,
     state: &mut WeatherState,
     climates: &[sf_weather::ClimateIx],
@@ -247,7 +247,7 @@ pub(crate) fn force_live(
 #[cfg(feature = "remote")]
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "remote", derive(schemars::JsonSchema))]
-pub(crate) struct LiveWeather {
+pub struct LiveWeather {
     /// The weather in force or being turned into.
     pub current: String,
     /// How far the current weather has come in, per channel (1: done):
@@ -261,7 +261,7 @@ pub(crate) struct LiveWeather {
 }
 
 #[cfg(feature = "remote")]
-pub(crate) fn live_weather(book: &WeatherBook, state: &WeatherState, climate: sf_weather::ClimateIx, now: f64) -> Option<LiveWeather> {
+pub fn live_weather(book: &WeatherBook, state: &WeatherState, climate: sf_weather::ClimateIx, now: f64) -> Option<LiveWeather> {
     let name = |p: sf_weather::PresetIx| {
         let id = book.preset_id(p);
         weather_type_of(id).map_or_else(|| id.as_str().to_owned(), |t| t.name().to_ascii_lowercase())

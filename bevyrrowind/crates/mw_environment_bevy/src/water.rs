@@ -16,9 +16,15 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use bevy::camera::visibility::RenderLayers;
-use bevy::light::{AmbientLight, GlobalAmbientLight};
-use bevy::prelude::*;
+use bevy_app::{App, FixedUpdate, PostUpdate, Update};
+use bevy_camera::visibility::{RenderLayers, Visibility};
+use bevy_color::ColorToComponents;
+use bevy_ecs::prelude::*;
+use bevy_light::{AmbientLight, DirectionalLight, GlobalAmbientLight};
+use bevy_log::{error, info};
+use bevy_math::{Vec2, Vec3, Vec4};
+use bevy_time::{Fixed, Time, Virtual};
+use bevy_transform::components::Transform;
 use mw_water::{optics, optics_records, MwWaterSource, WaterIni};
 use mw_world::ids;
 use sf_records::RecordDb;
@@ -33,11 +39,11 @@ use sf_world::{Worldspace, WorldspaceId};
 use sf_world_bevy::{ActiveWorldspace, WorldspaceRegistry};
 use tes3::esp::{Cell, Landscape};
 
-use crate::exterior::{ExteriorCamera, Quality};
+use mw_game_core::exterior::{ExteriorCamera, Quality};
 
 /// `--water`: which sea the exterior draws.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum WaterMode {
+pub enum WaterMode {
     /// The FFT ocean (W2).
     #[default]
     On,
@@ -52,13 +58,13 @@ static MODE: AtomicU8 = AtomicU8::new(0);
 static WIND: AtomicU32 = AtomicU32::new(0);
 
 /// Set from the command line before the exterior app is built.
-pub(crate) fn set_mode(mode: WaterMode, wind: Option<f32>) {
+pub fn set_mode(mode: WaterMode, wind: Option<f32>) {
     MODE.store(mode as u8, Ordering::Relaxed);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     WIND.store(wind.map_or(0, |w| (w.clamp(0.0, 60.0) * 1000.0) as u32), Ordering::Relaxed);
 }
 
-pub(crate) fn mode() -> WaterMode {
+pub fn mode() -> WaterMode {
     match MODE.load(Ordering::Relaxed) {
         1 => WaterMode::Scaffold,
         2 => WaterMode::Off,
@@ -74,14 +80,14 @@ const SEED: u32 = 0x5EA0_0001;
 
 /// The CPU water query and its clock.
 #[derive(Resource)]
-pub(crate) struct Water {
+pub struct Water {
     pub world: WaterWorld,
     pub time: f64,
 }
 
 /// What the water needs from the records, gathered while the `RecordDb` is at hand (main.rs).
 #[derive(Default)]
-pub(crate) struct WaterInputs {
+pub struct WaterInputs {
     /// The exterior's wet mask at sea level (the shore bake's input).
     mask: Option<WetMask>,
     /// Optics record index by exterior cell.
@@ -91,7 +97,7 @@ pub(crate) struct WaterInputs {
 impl WaterInputs {
     /// The wet mask from every `LAND` and the region map from the exterior cells (~0.1 s; nothing
     /// unless the FFT ocean is on).
-    pub(crate) fn build(db: &RecordDb) -> Self {
+    pub fn build(db: &RecordDb) -> Self {
         if mode() != WaterMode::On {
             return Self::default();
         }
@@ -132,7 +138,7 @@ fn water_quality(q: Quality) -> WaterQuality {
     }
 }
 
-pub(crate) fn add(app: &mut App, inputs: WaterInputs, quality: Quality, worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
+pub fn add(app: &mut App, inputs: WaterInputs, quality: Quality, worldspaces: &std::collections::BTreeMap<WorldspaceId, Worldspace>) {
     if mode() != WaterMode::On {
         return;
     }
