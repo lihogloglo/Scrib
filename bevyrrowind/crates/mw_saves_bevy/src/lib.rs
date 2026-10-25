@@ -17,7 +17,7 @@
 //!   files"; `<user data>` is the mods user folder, `mw_mods::UserDirs`, also holding
 //!   `profiles/`). Two quicksaves rotate.
 //! - **Keys**: quicksave and quickload are rebindable keymap actions (`controls.rs`,
-//!   [`crate::controls::Control::QuickSave`]): F5 / F9, the modern PC convention (Skyrim,
+//!   [`mw_controls_bevy::Control::QuickSave`]): F5 / F9, the modern PC convention (Skyrim,
 //!   Fallout 4, Oblivion, The Witcher 3; Morrowind had F5 quicksave and F9 quickload too). No
 //!   gamepad default (consoles have none; the save menu is part 2).
 //! - **Quickload** restores in the running game: a full replace of every section (save.md
@@ -36,7 +36,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::PoisonError;
 
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_transform::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use mw_rpg::NpcStates;
 use serde::{Deserialize, Serialize};
@@ -55,9 +59,11 @@ use sf_world::{Location, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{ActiveWorldspace, FadeTransition, StartTravel, WorldOverlay, from_grid};
 
-use crate::controls::{QuickLoadAction, QuickSaveAction};
-use crate::dialogue::{Rpg, RpgState};
-use crate::player::PlayerBody;
+use mw_controls_bevy::{QuickLoadAction, QuickSaveAction};
+use mw_game_core::doors::{ARRIVAL_EYE_M, DoorUser};
+use mw_game_core::player::PlayerBody;
+use mw_player_bevy::RestoreBody;
+use mw_rpg_bevy::dialogue::{Rpg, RpgState};
 
 /// The adapter's section owner.
 pub const OWNER: &str = "mw";
@@ -190,11 +196,11 @@ fn player_pose(world: &World) -> Option<(Location, f32, ViewChoice)> {
         // Body yaw is `Look`'s (0 = +z).
         return Some((Location::new(worldspace, body.0), wrap(body.1 + std::f32::consts::PI), view));
     }
-    let mut cams = world.try_query_filtered::<(&CellCoord, &Transform), With<crate::doors::DoorUser>>()?;
+    let mut cams = world.try_query_filtered::<(&CellCoord, &Transform), With<DoorUser>>()?;
     let (cell, transform) = cams.iter(world).next()?;
     let eye = from_grid(cell, transform);
     let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
-    Some((Location::new(worldspace, eye.offset(Vec3::NEG_Y * crate::doors::ARRIVAL_EYE_M)), wrap(yaw), view))
+    Some((Location::new(worldspace, eye.offset(Vec3::NEG_Y * ARRIVAL_EYE_M)), wrap(yaw), view))
 }
 
 fn wrap(a: f32) -> f32 {
@@ -230,16 +236,16 @@ fn restore_characters(world: &mut World, all: Vec<sections::CharacterSave>) {
     if host.location.worldspace.as_str().is_empty() {
         return;
     }
-    let Some(cam) = world.try_query_filtered::<Entity, With<crate::doors::DoorUser>>().and_then(|mut q| q.iter(world).next()) else { return };
+    let Some(cam) = world.try_query_filtered::<Entity, With<DoorUser>>().and_then(|mut q| q.iter(world).next()) else { return };
     if let (Some(ext), Some(mut camera)) = (ext, world.get_mut::<PlayerCamera>(cam))
         && camera.view() != ext.view
     {
         camera.set_view(ext.view);
     }
-    let to = Location::new(host.location.worldspace, host.location.pos.offset(Vec3::Y * crate::doors::ARRIVAL_EYE_M));
+    let to = Location::new(host.location.worldspace, host.location.pos.offset(Vec3::Y * ARRIVAL_EYE_M));
     info!("load: player to {:.1?} in {}", to.pos.to_f64(), to.worldspace.as_str());
     if let Some(body) = host.body
-        && let Some(mut restore) = world.get_resource_mut::<crate::player::RestoreBody>()
+        && let Some(mut restore) = world.get_resource_mut::<RestoreBody>()
     {
         restore.0 = Some((body.action, body.locomotion));
     }
@@ -251,14 +257,14 @@ fn restore_characters(world: &mut World, all: Vec<sections::CharacterSave>) {
 pub fn add(app: &mut App) {
     let root = save_root();
     info!("saves: {}", root.display());
-    app.add_plugins(SfSavePlugin { config: SaveConfig { root, ..default() } });
+    app.add_plugins(SfSavePlugin { config: SaveConfig { root, ..Default::default() } });
     register(app);
     app.add_systems(Update, (gate_fade, keys, notices).chain());
 }
 
 /// `<user data>` (the mods user folder), else `./userdata`.
 fn save_root() -> PathBuf {
-    crate::mods::user_data().unwrap_or_else(|| PathBuf::from("userdata"))
+    mw_boot_bevy::mods::user_data().unwrap_or_else(|| PathBuf::from("userdata"))
 }
 
 fn gate_fade(fade: Option<Res<FadeTransition>>, mut gate: ResMut<SaveGate>) {
@@ -353,7 +359,7 @@ mod tests {
     //! Save, fresh state, load on real data (skips without a Morrowind install).
     use std::sync::Arc;
 
-    use bevy::ecs::message::Messages;
+    use bevy_ecs::message::Messages;
     use mw_install::MorrowindInstall;
     use sf_rpg::PlayerId;
     use sf_rpg_ui::DialogueRequest;
@@ -367,7 +373,7 @@ mod tests {
 
     fn app(root: PathBuf, rpg: Rpg) -> App {
         let mut app = App::new();
-        app.add_plugins(SfSavePlugin { config: SaveConfig { root, background: false, ..default() } });
+        app.add_plugins(SfSavePlugin { config: SaveConfig { root, background: false, ..Default::default() } });
         register(&mut app);
         app.insert_resource(rpg).insert_resource(WorldOverlay::default()).insert_resource(SkyTime::default());
         app
@@ -388,7 +394,7 @@ mod tests {
 
         // Take the ring barrel, finish Fargoth's quest, take a loose item, move the clock.
         let mut rpg = Rpg::new(db.clone()).unwrap();
-        assert!(!crate::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty());
+        assert!(!mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty());
         assert!(rpg.add_actor(FARGOTH, &RecordId::new("fargoth"), "Seyda Neen"));
         let (mut talk, mut view) = rpg.open(FARGOTH).unwrap();
         rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(RecordId::new("ring")));
@@ -417,7 +423,7 @@ mod tests {
         assert_eq!(rpg.state, before, "the whole RPG state round-trips");
         assert_eq!(rpg.state.world.quests.stage(&quest), 100);
         assert!(rpg.state.world.journal.for_quest(&quest).next().is_some(), "journal entries are back");
-        assert!(crate::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty(), "the barrel stays empty");
+        assert!(mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty(), "the barrel stays empty");
         assert!(app.world().resource::<WorldOverlay>().0.read().unwrap().is_removed(TAKEN));
         assert!((app.world().resource::<SkyTime>().0.days - 3.75).abs() < 1e-9);
         let _ = std::fs::remove_dir_all(&root);

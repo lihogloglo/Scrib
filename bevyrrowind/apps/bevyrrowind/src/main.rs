@@ -20,7 +20,7 @@ mod pipeline_watch;
 #[cfg(feature = "remote")]
 mod remote;
 mod scenes;
-mod saves;
+use mw_saves_bevy as saves;
 use mw_scripts_bevy as scripts;
 mod skinned_view;
 mod sweep;

@@ -2324,6 +2324,7 @@ dependencies = [
  "mw_records",
  "mw_rpg",
  "mw_rpg_bevy",
+ "mw_saves_bevy",
  "mw_script",
  "mw_scripts_bevy",
  "mw_vfs",
@@ -5321,6 +5322,44 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "tes3",
+ "workspace-hack",
+]
+
+[[package]]
+name = "mw_saves_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_enhanced_input",
+ "bevy_log",
+ "bevy_math",
+ "bevy_transform",
+ "mw_boot_bevy",
+ "mw_controls_bevy",
+ "mw_game_core",
+ "mw_install",
+ "mw_player_bevy",
+ "mw_records",
+ "mw_rpg",
+ "mw_rpg_bevy",
+ "mw_vfs",
+ "serde",
+ "sf_action_bevy",
+ "sf_camera",
+ "sf_camera_bevy",
+ "sf_coords",
+ "sf_physics_bevy",
+ "sf_records",
+ "sf_rpg",
+ "sf_rpg_ui",
+ "sf_save_bevy",
+ "sf_sky_bevy",
+ "sf_ui",
+ "sf_ui_bevy",
+ "sf_vfs",
+ "sf_world",
+ "sf_world_bevy",
  "workspace-hack",
 ]
 

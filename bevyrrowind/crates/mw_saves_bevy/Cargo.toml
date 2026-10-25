@@ -1,0 +1,48 @@
+[package]
+name = "mw_saves_bevy"
+description = "The game's save sections over sf_save_bevy: RPG state, the host character, overlay and clock; quicksave/quickload keys and notices (app-split.md slice 10)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+mw_boot_bevy.workspace = true
+mw_controls_bevy.workspace = true
+mw_game_core.workspace = true
+mw_player_bevy.workspace = true
+mw_rpg.workspace = true
+mw_rpg_bevy.workspace = true
+serde.workspace = true
+sf_action_bevy.workspace = true
+sf_camera.workspace = true
+sf_camera_bevy.workspace = true
+sf_coords.workspace = true
+sf_physics_bevy.workspace = true
+sf_records.workspace = true
+sf_rpg.workspace = true
+sf_save_bevy.workspace = true
+sf_sky_bevy.workspace = true
+sf_ui.workspace = true
+sf_ui_bevy.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# The moved test: save, fresh state, load on the installed game's records.
+mw_install.workspace = true
+mw_records.workspace = true
+mw_vfs.workspace = true
+sf_rpg_ui.workspace = true
+sf_vfs.workspace = true
+
+[lints]
+workspace = true

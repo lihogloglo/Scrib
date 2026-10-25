@@ -55,6 +55,7 @@ mw_physics = { path = "../../crates/mw_physics" }
 mw_player_bevy.workspace = true
 mw_scripts_bevy.workspace = true
 mw_rpg_bevy.workspace = true
+mw_saves_bevy.workspace = true
 mw_mods.workspace = true
 mw_records.workspace = true
 mw_script.workspace = true

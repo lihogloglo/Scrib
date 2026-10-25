@@ -6,7 +6,7 @@ use clap::Subcommand;
 use mw_install::MorrowindInstall;
 use sf_mods::ModId;
 
-pub use mw_boot_bevy::mods::{Selection, load, open, select, user_data};
+pub use mw_boot_bevy::mods::{Selection, load, open, select};
 
 use crate::Result;
 
