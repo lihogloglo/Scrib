@@ -5,7 +5,6 @@
 
 mod actors;
 mod anim_view;
-mod audio;
 mod console;
 mod character_view;
 mod dialogue;
@@ -40,6 +39,7 @@ use clap::{Parser, Subcommand};
 // Boot layer (app-split.md slice 2): `crate::bake`, `crate::load`, ... resolve through these.
 use mw_boot_bevy::{bake, hot_reload, load, mount, ui_theme};
 // Gameplay controls (app-split.md slice 3): `crate::controls::..` resolves through this.
+use mw_audio_bevy as audio;
 use mw_controls_bevy as controls;
 use mw_doors_bevy as doors;
 use mw_environment_bevy::{night_sky, render, water, weather};

@@ -116,7 +116,7 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 3. [x] **`mw_doors_bevy` + `mw_controls_bevy`** (833 lines, two small leaves, can be two parallel sessions). 3a controls done 2026-10-26 (`l10n/` strings moved with it; `keymap()`/`reload()` test helpers now always `pub` for the app's player tests); 3b doors done 2026-10-26 (whole module as the lib, app shim `use mw_doors_bevy as doors;`; hakari unchanged; `mw_assets` now a root workspace dep).
 4. `mw_walkers_bevy` (walkers, physics): AI/movement/combat lane.
 5. `mw_actors_bevy` (actors, fx, particles, faces, held): character/animation lane. Parallel with 4.
-6. `mw_environment_bevy` (water, weather, night_sky, render) and `mw_audio_bevy`: rendering, weather and audio lanes. 6 environment done 2026-10-26 (bevy sub-crates; water needs only `mw_game_core` types, no `QualityRender`; hakari +`bevy_post_process`, `serde_json/alloc`); audio pending.
+6. [x] `mw_environment_bevy` (water, weather, night_sky, render) and `mw_audio_bevy`: rendering, weather and audio lanes. 6 environment done 2026-10-26 (bevy sub-crates; water needs only `mw_game_core` types, no `QualityRender`; hakari +`bevy_post_process`, `serde_json/alloc`); 6 audio done 2026-10-26 (whole module as the lib, `voices` inline; its `dev` feature gates voices/boots/swing doors and their deps, forwarded from the app's `dev`; tests use `TaskPoolPlugin` + `TimePlugin` instead of `MinimalPlugins`; hakari unchanged).
 7. `mw_player_bevy`, 8. `mw_scripts_bevy`, 9. `mw_rpg_bevy`, 10. `mw_saves_bevy`: strict order (each depends on the last).
 11. `mw_devtools_bevy` (breaks cycle 4; unblocks perf/rendering-bug lanes that edit live_ab/remote/console). Can move up
     to slice 4 if the Rpg trait cut above is done first.

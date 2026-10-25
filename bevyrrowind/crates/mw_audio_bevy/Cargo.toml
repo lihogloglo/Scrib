@@ -1,0 +1,50 @@
+[package]
+name = "mw_audio_bevy"
+description = "Morrowind audio glue: listener, door sounds, loop emitters, music mood, footsteps, NPC voices (app-split.md slice 6)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# NPC voices, boots-weighted footsteps, swinging-door sounds: dev builds until the owner hears
+# them (visual-checks AU-3..AU-5); the app's `dev` turns it on.
+dev = ["dep:bevy_tasks", "dep:mw_actors", "dep:mw_rpg", "dep:sf_character_bevy", "dep:sf_rpg", "dep:tes3"]
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_audio.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_tasks = { workspace = true, features = ["async_executor"], optional = true }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+mw_actors = { workspace = true, optional = true }
+mw_anim.workspace = true
+mw_audio.workspace = true
+mw_doors_bevy.workspace = true
+mw_rpg = { workspace = true, optional = true }
+mw_world.workspace = true
+sf_anim_bevy.workspace = true
+sf_audio.workspace = true
+sf_audio_bevy.workspace = true
+sf_character_bevy = { workspace = true, optional = true }
+sf_controller_bevy.workspace = true
+sf_records.workspace = true
+sf_rpg = { workspace = true, optional = true }
+sf_script.workspace = true
+sf_script_bevy.workspace = true
+sf_vfs.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+tes3 = { workspace = true, features = ["esp"], optional = true }
+workspace-hack.workspace = true
+
+[dev-dependencies]
+sf_character.workspace = true
+
+[lints]
+workspace = true

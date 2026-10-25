@@ -26,8 +26,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::audio::SpatialListener;
-use bevy::prelude::*;
+use bevy_app::{App, PostStartup, Update};
+use bevy_asset::{AssetServer, UntypedHandle};
+use bevy_audio::SpatialListener;
+use bevy_ecs::prelude::*;
+use bevy_log::info;
+use bevy_math::Vec3;
+use bevy_time::{Real, Time};
+use bevy_transform::components::GlobalTransform;
 use mw_audio::{Footwear, MusicMood};
 use sf_audio::{FootstepMap, Foot, StrideTimer};
 use sf_audio_bevy::{AudioBank, AudioCues, LoopEmitter, Music, PlaySound, SfAudioPlugin, SoundAt, SpatialVoice, Voice};
@@ -130,7 +136,7 @@ pub fn merge_bank(app: &mut App, bank: &sf_audio::SoundBank) {
     }
 }
 
-fn attach_listener(mut commands: Commands, cams: Query<Entity, (With<crate::doors::DoorUser>, Without<SpatialListener>)>) {
+fn attach_listener(mut commands: Commands, cams: Query<Entity, (With<mw_doors_bevy::DoorUser>, Without<SpatialListener>)>) {
     for cam in &cams {
         commands.entity(cam).insert(SpatialListener::new(0.2));
     }
@@ -149,7 +155,7 @@ fn door_sounds(
     placements: Option<Res<sf_script_bevy::ScriptPlacements>>,
     links: Option<Res<DoorLinks>>,
     audio: Res<MwAudio>,
-    cams: Query<(Entity, &GlobalTransform), With<crate::doors::DoorUser>>,
+    cams: Query<(Entity, &GlobalTransform), With<mw_doors_bevy::DoorUser>>,
     mut play: MessageWriter<PlaySound>,
 ) {
     let (Some(placements), Some(links)) = (placements, links) else { return };
@@ -368,7 +374,7 @@ fn swing_door_sounds(
     links: Option<Res<DoorLinks>>,
     audio: Res<MwAudio>,
     mut open: ResMut<SwingDoors>,
-    cams: Query<&GlobalTransform, With<crate::doors::DoorUser>>,
+    cams: Query<&GlobalTransform, With<mw_doors_bevy::DoorUser>>,
     mut play: MessageWriter<PlaySound>,
 ) {
     let (Some(placements), Some(links)) = (placements, links) else { return };
@@ -398,9 +404,15 @@ pub mod voices {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use bevy::audio::{AudioSink, AudioSinkPlayback, AudioSource, Decodable, Source, SpatialAudioSink, SpatialListener};
-    use bevy::prelude::*;
-    use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
+    use bevy_app::{App, Plugin, Update};
+    use bevy_asset::{AssetServer, Assets, Handle};
+    use bevy_audio::{AudioSink, AudioSinkPlayback, AudioSource, Decodable, Source, SpatialAudioSink, SpatialListener};
+    use bevy_ecs::prelude::*;
+    use bevy_log::{debug, info, warn};
+    use bevy_math::Vec3;
+    use bevy_tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
+    use bevy_time::Time;
+    use bevy_transform::components::GlobalTransform;
     use mw_audio::voice::{BarkView, ENVELOPE_HZ, Envelope, VoiceDirector, VoiceRules, VoiceSense, VoiceTopic, ducking, select};
     use mw_rpg::{ActorFacts, GlobalNumber, MwDialogue};
     use sf_audio_bevy::{AudioBank, AudioDucking, AudioSystems, CueInstance, PlaySound, SoundAt};
@@ -675,7 +687,9 @@ pub mod voices {
 mod tests {
     use std::time::Duration;
 
-    use bevy::time::TimeUpdateStrategy;
+    use bevy_app::TaskPoolPlugin;
+    use bevy_time::{TimePlugin, TimeUpdateStrategy};
+    use bevy_transform::components::Transform;
     use mw_audio::voice::VoiceTopic;
     use sf_audio::Bus;
     use sf_audio_bevy::{AudioEvent, AudioMixer, CueInstance};
@@ -736,7 +750,8 @@ mod tests {
     fn app(db: &Arc<RecordDb>) -> App {
         let sounds = mw_audio::build(db, |raw| Some(raw.to_ascii_lowercase()));
         let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
+        // `MinimalPlugins` minus the frame counter and runner (`app.update()` drives it).
+        app.add_plugins((TaskPoolPlugin::default(), TimePlugin))
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
             .add_plugins(SfAudioPlugin { bank: sounds.bank, playback: false })
             .insert_resource(AudioCues(sounds.cues))

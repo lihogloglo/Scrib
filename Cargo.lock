@@ -2307,6 +2307,7 @@ dependencies = [
  "mw_anim",
  "mw_assets",
  "mw_audio",
+ "mw_audio_bevy",
  "mw_bake",
  "mw_boot_bevy",
  "mw_controls_bevy",
@@ -4869,6 +4870,42 @@ dependencies = [
  "sf_rpg",
  "sf_vfs",
  "tes3",
+]
+
+[[package]]
+name = "mw_audio_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_audio",
+ "bevy_ecs",
+ "bevy_log",
+ "bevy_math",
+ "bevy_tasks",
+ "bevy_time",
+ "bevy_transform",
+ "mw_actors",
+ "mw_anim",
+ "mw_audio",
+ "mw_doors_bevy",
+ "mw_rpg",
+ "mw_world",
+ "sf_anim_bevy",
+ "sf_audio",
+ "sf_audio_bevy",
+ "sf_character",
+ "sf_character_bevy",
+ "sf_controller_bevy",
+ "sf_records",
+ "sf_rpg",
+ "sf_script",
+ "sf_script_bevy",
+ "sf_vfs",
+ "sf_world",
+ "sf_world_bevy",
+ "tes3",
+ "workspace-hack",
 ]
 
 [[package]]
