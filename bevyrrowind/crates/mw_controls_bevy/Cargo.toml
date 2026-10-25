@@ -16,12 +16,17 @@ bevy_input = { workspace = true, features = ["keyboard"] }
 bevy_log.workspace = true
 bevy_ui.workspace = true
 mw_boot_bevy.workspace = true
+mw_game_core.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_screens.workspace = true
 workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
+bevy_time = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

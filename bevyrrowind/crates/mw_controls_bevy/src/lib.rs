@@ -16,7 +16,8 @@
 //!   screen's Hold/Toggle cell). Toggle is `bevy_enhanced_input`'s `Toggle` condition on the
 //!   action, so the action layer only ever sees a held state.
 //! - **Use** lives on its own context entity ([`UseControls`]), because activation also works
-//!   in free-camera mode, where there is no player body; `scripts.rs` reads [`use_pressed`].
+//!   in free-camera mode, where there is no player body; `scripts.rs` reads [`use_pressed`];
+//!   crates below this one (doors) read [`UsePressed`], published from it each frame.
 //! - **Inventory** (I as Skyrim, The Witcher 3, Cyberpunk 2077, Baldur's Gate 3; gamepad North, Y /
 //!   Triangle, as Fallout 4's Pip-Boy: Select is the framework's `ui.open_map`, Tab is first/third
 //!   person here) shares the use context,
@@ -30,7 +31,7 @@
 //! - Dev keys outside the keymap: F11 player / free camera (`player::TOGGLE_KEY`), F10 here.
 //!   TODO(input): the journal's `J` (`dialogue.rs`) moves into the keymap in a later slice.
 
-use bevy_app::{App, Startup, Update};
+use bevy_app::{App, PreUpdate, Startup, Update};
 use bevy_camera_controller::free_camera::FreeCamera;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::EntityCommands;
@@ -38,6 +39,7 @@ use bevy_enhanced_input::prelude::*;
 use bevy_input::{ButtonInput, keyboard::KeyCode};
 use bevy_log::warn;
 use bevy_ui::{Node, PositionType, percent};
+pub use mw_game_core::player::UsePressed;
 use sf_ui::{ActionDef, ActionRef, Keymap, L10nSource, LanguageIdentifier, Layer, Localizer, PressMode, UiRegistry};
 use sf_ui_bevy::{
     HUD_SCOPE, ScreenStackRes, UiKeymap, UiLocalizer, UiProfile, UiRegistryRes, UiScreenRoot, keymap_bindings,
@@ -253,9 +255,23 @@ pub fn add(app: &mut App) {
             world.insert_resource(UiProfile { profile, dir: Some(dir), dirty: false, last_error: None });
         }
     }
+    add_use(app);
+    app.add_systems(Update, (free_camera_keys, toggle_keybinds, close_keybinds));
+}
+
+/// The use context (spawned at startup, respawned on a rebind) and [`UsePressed`] from it.
+fn add_use(app: &mut App) {
     app.add_input_context::<UseControls>()
+        .init_resource::<UsePressed>()
         .add_systems(Startup, |mut commands: Commands, keymap: Res<UiKeymap>| spawn_use(&mut commands, &keymap.0))
-        .add_systems(Update, (rebind_use, free_camera_keys, toggle_keybinds, close_keybinds));
+        .add_systems(PreUpdate, publish_use.after(EnhancedInputSystems::Update))
+        .add_systems(Update, rebind_use);
+}
+
+/// [`UsePressed`] for this frame (crates below this one read it: doors).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn publish_use(uses: Query<&ActionEvents, With<Action<UseAction>>>, mut pressed: ResMut<UsePressed>) {
+    pressed.0 = use_pressed(&uses);
 }
 
 /// The builtin mod's UI strings (`l10n/en/bevyrrowind.ftl`: keybind labels
@@ -420,6 +436,41 @@ mod tests {
             .expect("rebind jump");
         app.update();
         assert_eq!(keys(&app), (KeyCode::KeyR, KeyCode::ControlLeft));
+    }
+
+    /// [`UsePressed`] (what opens doors) follows the Use binding: E by default; once Use is
+    /// rebound to F, F does and E doesn't.
+    #[test]
+    fn use_pressed_follows_the_use_binding() {
+        let mut app = App::new();
+        app.add_plugins((bevy_time::TimePlugin, bevy_input::InputPlugin, EnhancedInputPlugin))
+            .insert_resource(UiKeymap(keymap()));
+        add_use(&mut app);
+        // `EnhancedInputPlugin` creates its context registry in `finish` (`App::run` calls it).
+        app.finish();
+        app.cleanup();
+        app.update();
+        let tap = |app: &mut App, key: KeyCode| -> bool {
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+            app.update();
+            let used = app.world().resource::<UsePressed>().0;
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(key);
+            app.update();
+            assert!(!app.world().resource::<UsePressed>().0, "Use stays pressed after {key:?} is released");
+            used
+        };
+        assert!(tap(&mut app, KeyCode::KeyE), "E (default Use) didn't press Use");
+        assert!(!tap(&mut app, KeyCode::KeyF));
+        app.world_mut()
+            .resource_mut::<UiKeymap>()
+            .0
+            .set(&Control::Use.id(), sf_ui::Device::Kbm, &["key:KeyF"])
+            .expect("rebind use");
+        // The use context respawns with the new bindings.
+        app.update();
+        app.update();
+        assert!(!tap(&mut app, KeyCode::KeyE), "E still presses Use after the rebind");
+        assert!(tap(&mut app, KeyCode::KeyF), "the rebound key didn't press Use");
     }
 
     /// Every keybinds row (gameplay and UI actions) has a display name in the builtin strings.

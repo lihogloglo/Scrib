@@ -10,6 +10,12 @@ use sf_coords::WorldPos;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FocusUpdate;
 
+/// The rebindable Use action (`mw_controls_bevy::Control::Use`) started this frame: written in
+/// `PreUpdate` once the input contexts have updated, for readers below the controls crate
+/// (`mw_doors_bevy`'s doorless link ends).
+#[derive(Resource, Debug, Default)]
+pub struct UsePressed(pub bool);
+
 /// Player or free camera.
 #[derive(Resource, Debug)]
 pub struct PlayerMode {

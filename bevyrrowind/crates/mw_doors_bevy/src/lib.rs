@@ -1,5 +1,5 @@
 //! Door links in the streamed view (ROADMAP M2, streaming.md "Worldspaces at
-//! runtime"): E (the use key; Morrowind's was Space) on a door in front of the
+//! runtime"): Use (rebindable; E or gamepad West by default, Morrowind's was Space) on a door in front of the
 //! camera crosses its link with the framework's `FadeTransition`, and each
 //! worldspace gets its own look (an interior has no sky, terrain, clouds or
 //! sea; its ambient light and fog color come from the cell).
@@ -16,7 +16,6 @@ use bevy_camera::{Camera, ClearColorConfig, Exposure};
 use bevy_camera_controller::free_camera::FreeCameraState;
 use bevy_color::Color;
 use bevy_ecs::prelude::*;
-use bevy_input::{ButtonInput, keyboard::KeyCode};
 use bevy_light::{AmbientLight, GlobalAmbientLight};
 use bevy_log::{info, warn};
 use bevy_math::{EulerRot, Quat, Vec3};
@@ -24,7 +23,7 @@ use bevy_transform::components::GlobalTransform;
 use mw_assets::LightCalibration;
 use mw_game_core::exterior::Settled;
 use mw_game_core::perf::{Off, Part};
-use mw_game_core::player::PlayerBody;
+use mw_game_core::player::{PlayerBody, UsePressed};
 use mw_world::CellEnvironment;
 use sf_sky_bevy::SkyCamera;
 use sf_terrain_bevy::{TerrainCamera, TerrainPatch};
@@ -205,13 +204,13 @@ pub fn sync_free_camera(
 /// Opens a door: the default action of the player's activation of a door
 /// placement that no script handled (`ActivationOutcome`, M5 L3; the activate
 /// key and crosshair pick are `scripts.rs`'s). Link ends without a door
-/// object (teleport points) keep the proximity pick on E, from the player body in player mode
+/// object (teleport points) keep the proximity pick on Use ([`UsePressed`]), from the player body in player mode
 /// (the third-person camera sits metres behind it), else the camera. `--use-door`
 /// travels directly, once the start has streamed in.
 #[allow(clippy::too_many_arguments)]
 fn activate(
     mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
+    use_key: Option<Res<UsePressed>>,
     links: Res<DoorLinks>,
     fade: Res<FadeTransition>,
     mut auto: ResMut<AutoDoor>,
@@ -231,7 +230,7 @@ fn activate(
         return;
     }
     let automatic = auto.remaining > 0 && settled.is_some();
-    let manual = keys.just_pressed(KeyCode::KeyE);
+    let manual = use_key.is_some_and(|u| u.0);
     if !automatic && !manual && opened.is_empty() {
         return;
     }
@@ -253,7 +252,7 @@ fn activate(
     let picked = match by_door {
         Some(pair) => Some(pair),
         None if automatic => pick(&links.0, &here, forward, reach),
-        // E on a doorless link end (no placement to activate).
+        // Use on a doorless link end (no placement to activate).
         None if manual => pick(&links.0, &here, forward, reach).filter(|(from, _)| from.door.is_none()),
         None => return,
     };
@@ -426,6 +425,39 @@ mod tests {
         // One-way links only leave from `a`.
         let inn = Location::new(WorldspaceId::new("inn"), WorldPos::from_f64(glam::DVec3::ZERO));
         assert!(pick(&links, &inn, Some(Vec3::NEG_Z), REACH_M).is_none());
+    }
+
+    /// A doorless link end in front opens on the Use action ([`UsePressed`], which follows
+    /// rebinds and the gamepad), never on a raw E press.
+    #[test]
+    fn use_action_opens_a_doorless_link_end_not_raw_e() {
+        use bevy_input::{ButtonInput, keyboard::KeyCode};
+        use sf_world_bevy::WorldspaceRoot;
+        let mut app = App::new();
+        app.add_message::<sf_script_bevy::ActivationOutcome>()
+            .add_message::<StartTravel>()
+            .insert_resource(DoorLinks(vec![DoorLink {
+                a: end("ext", Vec3::new(0.0, 0.0, -2.0)),
+                b: end("hall", Vec3::ZERO),
+                two_way: true,
+            }]))
+            .init_resource::<FadeTransition>()
+            .insert_resource(AutoDoor { remaining: 0 })
+            .init_resource::<UsePressed>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Update, activate);
+        let root = app.world_mut().spawn(WorldspaceRoot { id: WorldspaceId::new("ext"), layer: 0 }).id();
+        let (cell, transform) = sf_world_bevy::to_grid(WorldPos::ORIGIN);
+        app.world_mut().spawn((DoorUser, cell, transform, ChildOf(root), GlobalTransform::IDENTITY));
+        let travels = |app: &mut App| -> Vec<WorldspaceId> {
+            app.update();
+            let sent = app.world().resource::<Messages<StartTravel>>();
+            sent.iter_current_update_messages().map(|t| t.to.worldspace.clone()).collect()
+        };
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyE);
+        assert!(travels(&mut app).is_empty(), "a raw E (Use not pressed) opened the door");
+        app.world_mut().resource_mut::<UsePressed>().0 = true;
+        assert_eq!(travels(&mut app), vec![WorldspaceId::new("hall")]);
     }
 
     /// The facing at a DODT marker (Morrowind angles through `mw_world`'s
