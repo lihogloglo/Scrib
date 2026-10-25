@@ -1,6 +1,6 @@
 # Animation: history and as-built notes
 
-Moved verbatim from [animation.md](animation.md) (doc cleanup S7a, 2026-10-25): as-built notes, audit, optional clips, industry comparison.
+Moved verbatim from [animation.md](../animation.md) (doc cleanup S7a, 2026-10-25): as-built notes, audit, optional clips, industry comparison.
 
 ### As built (animbevy, 2026-10-12)
 
@@ -280,7 +280,7 @@ groups in a `full` slot at priority 100, attacks in a masked `upper` slot.)
 ### Creatures (M3)
 
 Skeleton-agnostic core plus a rig profile per skeleton
-([rig-profile.md](rig-profile.md)): N support limbs, girdles, spine,
+([rig-profile.md](../rig-profile.md)): N support limbs, girdles, spine,
 neck/head, tails, wings. Every op above reads limbs from the profile; the
 humanoid rig is an optional layer for retargeting. The audit of the built
 crates against this is below.

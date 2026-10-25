@@ -2,7 +2,7 @@
 
 Status: **draft, awaiting owner review (R11b, 2026-10-19).** Slice A1 built 2026-10-21 (`sf_action`,
 see "As built (A1)" at the end, which wins where it differs from the design text above).
-History, background and pre-build sketches: [action-archive.md](action-archive.md).
+History, background and pre-build sketches: [archive/action-history.md](archive/action-history.md).
 Crates: `sf_action` (Bevy-free core, new), `sf_action_bevy` (thin plugin, new).
 Sources: the animation study `../research/animation/` (notes R1-R10, cited "R3 §7"), and its decision
 list in `11-tradeoffs.md` "Decisions (owner brainstorm, 2026-10-19)", which this spec implements,
@@ -27,14 +27,14 @@ The owner's R11b decisions (`11-tradeoffs.md` "Decisions"): third person primary
 body in both views; co-op-ready; ledges first; Jump+forward mantles, separate Up/Down intents,
 Sneak never traverses; hold Sprint to free-run; missed heavies fully recover; stats scale
 magnitudes, never timing; packs-only clips. Table of where each lands:
-[archive](action-archive.md#decisions-this-spec-implements-r11b).
+[archive](archive/action-history.md#decisions-this-spec-implements-r11b).
 
 ## Canonical technique
 
 **"The decider decides, the graph plays, clip windows gate"** (FromSoftware's split, R5 §1; UE
 GASP's probes → chooser → warping for traversal, R7 §1.2): data move rules evaluated in Rust on
 the fixed tick with a bounded settle loop; Luau never runs per tick. Background:
-[archive](action-archive.md#canonical-technique-background).
+[archive](archive/action-history.md#canonical-technique-background).
 
 Five motion owners, one per move kind (Holden's "label regions of the data with the displacement
 you want", R8 §1.2):
@@ -81,7 +81,7 @@ from AI or scripts, a remote player's from the network. Nothing else feeds the c
 `view` (yaw, pitch: aim and soft-aim input, never the camera pose), button edges and hold
 ticks per action class, lock request. Presses between ticks accumulate in the shell
 (`InputSampler`); commands are serde/postcard data logged by the flight recorder. Pre-build
-sketch: [archive](action-archive.md#command).
+sketch: [archive](archive/action-history.md#command).
 
 **Action classes** (one vocabulary for buttons, buffers and windows): `Light`, `Heavy`, `Offhand`,
 `Dodge`, `Jump`, `Up`, `Down`, `Guard`, `Interact`, `Item`, `Move`, `Sprint`, `Sneak`.
@@ -180,7 +180,7 @@ every class. Locomotion and idle loops need no authoring.
 ### Category default windows
 
 Per-category defaults from R9 §6 (light, heavy, dodge, guard, ...; a moveset sheet line overrides
-any of them): [archive](action-archive.md#category-default-windows-e1), back here when E1 starts.
+any of them): [archive](archive/action-history.md#category-default-windows-e1), back here when E1 starts.
 
 ### Mode profiles
 
@@ -203,7 +203,7 @@ allowed automatic rules, hit-stop scale. Defaults are tuned, not copied from any
 
 Stats scale **magnitudes inside bands, never timing or latency** (decision): the content pack
 maps stats to channels in 0..1, the framework maps each channel to a band per parameter (jump
-height, run and sprint speed, docked speed). Sketch: [archive](action-archive.md#stat-bands-b5).
+height, run and sprint speed, docked speed). Sketch: [archive](archive/action-history.md#stat-bands-b5).
 
 ## The chooser (fixed tick)
 
@@ -214,7 +214,7 @@ buffer and coyote as ticks); gather candidates (forced, requested, automatic; re
 skip); probe on demand in one batch (B2+); pick by the priority list then validators, logging
 refusals; start (first response this tick); settle at most 4 rounds; write `ActionOutput`.
 Moving the body is the shell's ("As built (A1)"). Step-by-step design and the scripted-input
-test list: [archive](action-archive.md#the-chooser-step-by-step-design-a1-built-it-see-actionmd-as-built-a1).
+test list: [archive](archive/action-history.md#the-chooser-step-by-step-design-a1-built-it-see-actionmd-as-built-a1).
 
 ### Priority list (one list for every character)
 
@@ -260,13 +260,13 @@ Starting any traversal or interaction **breaks lock-on**; camera.md re-acquires 
   victim is a short reaction then a ragdoll (decision), so no paired clip is needed for it.
 
 **Paired moves** (E3, R6 §9): one alignment of the victim onto the attacker's root frame, then
-each plays its own root motion; `PairFits` before start. Sketch: [archive](action-archive.md#paired-moves-e3).
+each plays its own root motion; `PairFits` before start. Sketch: [archive](archive/action-history.md#paired-moves-e3).
 
 ## Interaction points and edges
 
 Planned Bevy-free `sf_interaction` (M4): interaction points (seat, door, lever; claimable approach
 slots) and edges (ledge, ladder; authored or baked from collision per cell). Until the bake,
-ledges come from live `ContextProbes`. Sketch: [archive](action-archive.md#interaction-points-and-edges-b4-c1).
+ledges come from live `ContextProbes`. Sketch: [archive](archive/action-history.md#interaction-points-and-edges-b4-c1).
 
 ## How mods add moves
 
@@ -308,14 +308,14 @@ per local player); stable ids and `WorldPos`, never `Entity`; events are data.
 - **Replicated**: a snapshot per character (position, velocity, facing, move id, start tick, clock
   rate, mode flags, targets by id); peers re-derive presentation from move id and clock.
 
-Full text, items left to the co-op milestone and follow-ups: [archive](action-archive.md#co-op-readiness-full-text).
+Full text, items left to the co-op milestone and follow-ups: [archive](archive/action-history.md#co-op-readiness-full-text).
 
 ## Crate: new `sf_action` (+ `sf_action_bevy`), not a module of `sf_controller`
 
 It changes daily through P11 and M10 and needs compiled windows and baked root tracks, so a module
 in `sf_controller` would rebuild physics on every chooser edit (§8b rules 3 and 5). `sf_action_bevy`
 is a leaf plugin (command sampling from `bevy_enhanced_input`, the fixed-tick schedule, the
-graph feed, gizmos). Rationale: [archive](action-archive.md#crate-choice-architecture-8b).
+graph feed, gizmos). Rationale: [archive](archive/action-history.md#crate-choice-architecture-8b).
 
 ## Build plan (phases)
 
@@ -340,7 +340,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 
 ## Clip gaps and industry comparison
 
-Moved to [action-archive.md](action-archive.md#clip-gaps-packs-only-free-preferred-no-owner-mocap) (clip sources by phase; shipped-practice table, all **match**).
+Moved to [archive/action-history.md](archive/action-history.md#clip-gaps-packs-only-free-preferred-no-owner-mocap) (clip sources by phase; shipped-practice table, all **match**).
 
 ## Owner answers (2026-10-19)
 
@@ -367,7 +367,7 @@ shell feeds `InputSampler` from `bevy_enhanced_input` actions.
 
 Changes against the design (`step` decides and the shell moves; windows through `SlotSource`;
 integer clocks and FNV-1a ids; requests wait for windows; jump buffer and coyote in ticks; the A1
-rule vocabulary; candidates; the "press to use" hook; net serde): [archive](action-archive.md#as-built-a1-changes-against-the-design).
+rule vocabulary; candidates; the "press to use" hook; net serde): [archive](archive/action-history.md#as-built-a1-changes-against-the-design).
 
 ## As built (A2 slice 1, 2026-10-22): `sf_action_bevy`
 

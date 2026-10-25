@@ -495,7 +495,7 @@ rule 3 (wide and shallow) and rule 5 (split by change frequency) in mind for `sf
 
 ## 9. Milestones
 
-Every milestone ends with something visibly running and a benchmark entry.
+Historical scope labels (priority order is now the ROADMAP phases, see the note under the table). Every milestone ends with something visibly running and a benchmark entry.
 
 | # | Slice | Done when |
 |---|---|---|

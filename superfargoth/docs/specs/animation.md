@@ -429,11 +429,11 @@ scenario is our M3 floor, not the ceiling.
   named scaffold until the rig spawn here replaces it; `SkeletonBinding`
   is what `resolve_joints` returns.
 
-Moved to [animation-history.md](animation-history.md#as-built-animbevy-2026-10-12).
+Moved to [archive/animation-history.md](archive/animation-history.md#as-built-animbevy-2026-10-12).
 
-Moved to [animation-history.md](animation-history.md#foot-placement-guards-as-built-animfix-2026-10-12).
+Moved to [archive/animation-history.md](archive/animation-history.md#foot-placement-guards-as-built-animfix-2026-10-12).
 
-Moved to [animation-history.md](animation-history.md#morph-curves-as-built-actorfx-2026-10-12).
+Moved to [archive/animation-history.md](archive/animation-history.md#morph-curves-as-built-actorfx-2026-10-12).
 
 ## Bake steps
 
@@ -654,13 +654,13 @@ shipped (data plan and license table: `bevyrrowind/docs/specs/animation-sources.
 
 Moved to [animation-layers.md](animation-layers.md#next-gen-roadmap-anim-plan-2026-10-11-shape-replaced-by-r11b-2026-10-19).
 
-Moved to [animation-history.md](animation-history.md#optional-clips-m3-for-bring-your-own-sources).
+Moved to [archive/animation-history.md](archive/animation-history.md#optional-clips-m3-for-bring-your-own-sources).
 
-Moved to [animation-history.md](animation-history.md#slots-and-montages-m3-d-as-built-2026-10-12).
+Moved to [archive/animation-history.md](archive/animation-history.md#slots-and-montages-m3-d-as-built-2026-10-12).
 
-Moved to [animation-history.md](animation-history.md#creatures-m3).
+Moved to [archive/animation-history.md](archive/animation-history.md#creatures-m3).
 
-Moved to [animation-history.md](animation-history.md#audit-of-the-built-crates-biped-and-humanoid-assumptions-2026-10-11).
+Moved to [archive/animation-history.md](archive/animation-history.md#audit-of-the-built-crates-biped-and-humanoid-assumptions-2026-10-11).
 
 ## Verification
 
@@ -678,7 +678,7 @@ Moved to [animation-history.md](animation-history.md#audit-of-the-built-crates-b
 
 ## Industry comparison
 
-Moved to [animation-history.md](animation-history.md#industry-comparison).
+Moved to [archive/animation-history.md](archive/animation-history.md#industry-comparison).
 
 ## Open questions
 

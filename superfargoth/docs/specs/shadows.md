@@ -8,11 +8,11 @@ views), A2 (lamp maps captured during the door fade; far map and caster cull del
 Open: ROADMAP 1.4 (lamp-shadow count for High, LM-1, RO-1, SH-11, SH-13) and 1.12 (SH-20); quality is hard problem H2
 (`bevyrrowind/docs/hard-problems.md`). Sun details: [weather/distant-shadows.md](weather/distant-shadows.md);
 diagnosis: [../research/shadows/README.md](../research/shadows/README.md). The v2 design, F6 slices and slice
-write-ups (superseded or built) live in [shadows-history.md](shadows-history.md).
+write-ups (superseded or built) live in [archive/shadows-history.md](archive/shadows-history.md).
 
 ## Shadows v2: one design (2026-10-20)
 
-Superseded by the shadow reset (2026-10-21); moved verbatim to [shadows-history.md](shadows-history.md#shadows-v2-one-design-2026-10-20).
+Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-history.md](archive/shadows-history.md#shadows-v2-one-design-2026-10-20).
 
 ## Reset B2 as built (shadowB2, 2026-10-21)
 
@@ -205,7 +205,7 @@ GPL and a different renderer: behaviour only.
 
 ## Lamp slices (F6, before v2)
 
-Superseded by the shadow reset (2026-10-21); moved verbatim to [shadows-history.md](shadows-history.md#lamp-slices-f6-before-v2).
+Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-history.md](archive/shadows-history.md#lamp-slices-f6-before-v2).
 
 
 ## Industry comparison

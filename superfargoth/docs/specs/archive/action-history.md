@@ -1,6 +1,6 @@
 # Action layer: archive
 
-Moved out of [action.md](action.md) on 2026-10-21 to keep the spec under the doc budget:
+Moved out of [action.md](../action.md) on 2026-10-21 to keep the spec under the doc budget:
 history, background and pre-build sketches. action.md and the `sf_action` code win where
 they differ.
 

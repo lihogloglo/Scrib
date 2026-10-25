@@ -63,7 +63,7 @@ Paste the entry plus this:
   if that falls short (decision 3).
 - **Why hard:** cascade fitting, filtering and stability interact with TAA/DLSS and the cache; fixes must not
   re-break the perf numbers.
-- **Start:** `superfargoth/docs/specs/shadows.md` (+ `shadows-history.md`), `research/shadows/README.md` and
+- **Start:** `superfargoth/docs/specs/shadows.md` (+ `archive/shadows-history.md`), `research/shadows/README.md` and
   `2026-10-21-audit.md`, visual checks SH-11..SH-20 in `docs/visual-checks.md`. Lead: Clockwork's world-unit sun
   PCSS (`lib/light/sunsoft.glsl`: penumbra from sun disc x caster height, the same width in every cascade), its
   lamp cube filter (SH-13) and distant-shadow redraw triggers (SH-11): `clockwork-code-2026-10-25.md` items 1, 6, 7.

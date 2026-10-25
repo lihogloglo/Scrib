@@ -1,8 +1,8 @@
 # Bevyrrowind
 
 Morrowind content pack and game binary on the superfargoth framework.
-**GPL-3.0-or-later** (+ GPU vendor runtime permission, `LICENSE-EXCEPTION.md`). Sibling repo
-`../superfargoth` (also GPL since 2026-10-25) is a path dependency.
+**GPL-3.0-or-later** (+ GPU vendor runtime permission, `LICENSE-EXCEPTION.md`). The framework
+`../superfargoth` is in the same repo and Cargo workspace (merged 2026-10-25).
 
 ## Start of every session
 
@@ -15,7 +15,7 @@ To update the ROADMAP, edit only your task's line (grep for it).
 
 **Orchestrator or a session without a brief:**
 1. Read `docs/ROADMAP.md` (owner decisions, current phase).
-2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~480 lines).
+2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~530 lines).
 3. For the system you touch, read its spec in `docs/specs/` (or
    `../superfargoth/docs/specs/`). No spec yet for a major system? Write it first.
 4. **Never read whole:** `docs/archive/`, `../superfargoth/docs/DECISIONS.md` (append-only, ~36k
@@ -131,7 +131,7 @@ working tree**. Protocol:
 9. **Reuse before building, in this order: Bevy, then crates, then our
    own.** First use what Bevy itself provides (check its docs, examples and
    source for the version we're on). Then maintained crates and tools (GPL
-   is fine in this repo; superfargoth needs MIT/Apache/BSD/zlib). Write our
+   is fine in this repo; superfargoth takes GPL-3.0-compatible crates: MIT, Apache-2.0, BSD, zlib, GPL-3.0, LGPL). Write our
    own only when neither fits, and say in the spec why each earlier step
    didn't.
    **Don't reinvent the wheel: this covers whole projects, not just

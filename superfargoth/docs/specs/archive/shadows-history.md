@@ -1,6 +1,6 @@
 # Shadows: as-built history
 
-Moved out of [shadows.md](shadows.md) on 2026-10-20 (doc budget). Append-only; grep it.
+Moved out of [shadows.md](../shadows.md) on 2026-10-20 (doc budget). Append-only; grep it.
 
 ## Slice 2 as built (shf6b, 2026-10-19): cache works, Bevy's per-view cost remains
 
@@ -142,6 +142,6 @@ Moved out of shadows.md on 2026-10-25 (doc cleanup S6). Superseded by the shadow
 Status: **v2 design (lights1, 2026-10-20, owner: "we need a smarter way to do shadows")**: one design for sun and
 lamps, below; supersedes the F-slices. Lamp slices 1-2 built (`sf_sky_bevy::shadow_budget`, `sf_shadow_cache_bevy`,
 the cache parked since 2026-10-19 and unparked by v2). Sun details (cascades, bias, far tiers) live in
-[weather/distant-shadows.md](weather/distant-shadows.md) ("Distant shadows", "Shadow bias and contact shadows"); diagnosis and Clockwork notes in
-[../research/shadows/README.md](../research/shadows/README.md); as-built history in
+[weather/distant-shadows.md](../weather/distant-shadows.md) ("Distant shadows", "Shadow bias and contact shadows"); diagnosis and Clockwork notes in
+[../research/shadows/README.md](../../research/shadows/README.md); as-built history in
 [shadows-history.md](shadows-history.md).
