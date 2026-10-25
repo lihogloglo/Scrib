@@ -26,8 +26,10 @@
 
 use std::sync::{Arc, PoisonError};
 
-use bevy::ecs::system::SystemState;
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemState;
+use bevy_log::prelude::*;
 use sf_physics_bevy::ItemPivot;
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, PlayerId, RpgCommand};
@@ -40,7 +42,7 @@ use tes3::esp::{
 };
 
 use crate::dialogue::{Rpg, RpgState};
-use crate::scripts::ActivePlacements;
+use mw_scripts_bevy::ActivePlacements;
 
 /// What activating a record takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +154,7 @@ fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'static
 }
 
 /// Removes a loose item's placement from the world now: R0 hooks, overlay, visuals.
-pub(crate) fn take_placement(world: &mut World, id: PlacementId) -> Option<()> {
+pub fn take_placement(world: &mut World, id: PlacementId) -> Option<()> {
     ActivePlacements::deactivate(world, id)?;
     // After the hooks: physics' deactivation writes a moved item to the overlay, the removal wins.
     if let Some(overlay) = world.get_resource::<WorldOverlay>() {

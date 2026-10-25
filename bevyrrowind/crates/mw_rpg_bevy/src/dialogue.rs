@@ -17,8 +17,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use bevy::camera_controller::free_camera::FreeCameraState;
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_camera_controller::free_camera::FreeCameraState;
+use bevy_ecs::prelude::*;
+use bevy_input::prelude::*;
+use bevy_log::prelude::*;
 use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use mw_rpg::{
     ActorFacts, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwView, MwWorld, NpcStates,
@@ -719,7 +722,7 @@ fn registry() -> UiRegistry {
     let mut db = RecordDb::new();
     register_kinds(&mut db).expect("UI record kinds register");
     let base = db.add_source("bevyrrowind", &[]);
-    for (records, what) in [(SCREENS, "game screens"), (crate::ui_theme::THEME_RECORD, "UI theme")] {
+    for (records, what) in [(SCREENS, "game screens"), (mw_boot_bevy::ui_theme::THEME_RECORD, "UI theme")] {
         let outcome = apply_record_file(&mut db, base, records, RecordFormat::Toml).expect(what);
         assert!(outcome.errors.is_empty(), "{what}: {:?}", outcome.errors);
     }
@@ -781,12 +784,12 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
                 .after(ScreenSystems::Input),
         );
     // The Morrowind theme over the stock screens (content: the builtin mod's sheet).
-    crate::ui_theme::add(app);
+    mw_boot_bevy::ui_theme::add(app);
 }
 
 /// An actor's key: its placement id (stable across cell loads, what saves address), else the
 /// entity (characters not spawned from a placement).
-pub(crate) fn key(e: Entity, placement: Option<&CharacterPlacement>) -> ActorKey {
+pub fn key(e: Entity, placement: Option<&CharacterPlacement>) -> ActorKey {
     placement.map_or(ActorKey(u128::from(e.to_bits())), |p| ActorKey(p.0.0))
 }
 
@@ -1058,7 +1061,7 @@ fn free_camera_lock(stack: Res<ScreenStackRes>, mut cameras: Query<&mut FreeCame
 /// The player's controls pause while a menu is open (`PlayerMode::paused`, player.rs's seam).
 /// Only on our own open/close edges, so another pauser isn't overridden every frame.
 #[allow(clippy::needless_pass_by_value)]
-fn pause_player(stack: Res<ScreenStackRes>, mode: Option<ResMut<crate::player::PlayerMode>>, mut was_open: Local<bool>) {
+fn pause_player(stack: Res<ScreenStackRes>, mode: Option<ResMut<mw_game_core::player::PlayerMode>>, mut was_open: Local<bool>) {
     let open = menu_open(&stack);
     if open == *was_open {
         return;

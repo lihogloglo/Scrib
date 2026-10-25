@@ -2323,6 +2323,7 @@ dependencies = [
  "mw_player_bevy",
  "mw_records",
  "mw_rpg",
+ "mw_rpg_bevy",
  "mw_script",
  "mw_scripts_bevy",
  "mw_vfs",
@@ -2330,7 +2331,6 @@ dependencies = [
  "mw_water",
  "mw_weather",
  "mw_world",
- "postcard",
  "ron",
  "schemars",
  "serde",
@@ -5282,6 +5282,46 @@ dependencies = [
  "sf_vfs",
  "tes3",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "mw_rpg_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_camera_controller",
+ "bevy_ecs",
+ "bevy_enhanced_input",
+ "bevy_input",
+ "bevy_log",
+ "bevy_ui",
+ "mw_boot_bevy",
+ "mw_controls_bevy",
+ "mw_game_core",
+ "mw_install",
+ "mw_records",
+ "mw_rpg",
+ "mw_script",
+ "mw_scripts_bevy",
+ "mw_vfs",
+ "mw_world",
+ "postcard",
+ "serde",
+ "sf_character_bevy",
+ "sf_physics_bevy",
+ "sf_records",
+ "sf_rpg",
+ "sf_rpg_ui",
+ "sf_script_bevy",
+ "sf_ui",
+ "sf_ui_bevy",
+ "sf_ui_inventory",
+ "sf_ui_screens",
+ "sf_vfs",
+ "sf_world",
+ "sf_world_bevy",
+ "tes3",
+ "workspace-hack",
 ]
 
 [[package]]

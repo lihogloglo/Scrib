@@ -54,6 +54,7 @@ mw_nif.workspace = true
 mw_physics = { path = "../../crates/mw_physics" }
 mw_player_bevy.workspace = true
 mw_scripts_bevy.workspace = true
+mw_rpg_bevy.workspace = true
 mw_mods.workspace = true
 mw_records.workspace = true
 mw_script.workspace = true
@@ -132,10 +133,6 @@ serde = { version = "1", features = ["derive"] }
 bevy_brp_extras = { version = "0.23", default-features = false, features = ["diagnostics", "ui"], optional = true }
 schemars = { version = "1.2", optional = true }
 serde_json = { version = "1", optional = true }
-
-[dev-dependencies]
-# `dialogue.rs` test: the RPG state round trip.
-postcard.workspace = true
 
 [lints]
 workspace = true

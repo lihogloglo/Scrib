@@ -15,7 +15,10 @@
 //!   drop, weight limit (no capacity: the encumbrance bar shows the carried total only), the
 //!   container window, item tooltips' stats.
 
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
+use bevy_ui::prelude::*;
 use bevy_enhanced_input::prelude::{Action, ActionEvents};
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{Attrs, CharacterRpg, Holder, ItemStack, PlayerId, RpgCommand, SlotTable};
@@ -28,7 +31,7 @@ use tes3::esp::{
     RepairItem, Weapon,
 };
 
-use crate::controls::{InventoryAction, inventory_pressed};
+use mw_controls_bevy::{InventoryAction, inventory_pressed};
 use crate::dialogue::Rpg;
 use crate::inventory::ItemRecords;
 
@@ -251,7 +254,7 @@ fn centre_inventory(mut roots: Query<&mut Node, (With<InventoryScreen>, Changed<
             Val::Px(px) => Val::Px(-px / 2.0),
             _ => Val::Px(0.0),
         };
-        node.margin = UiRect { left: half(node.width), top: half(node.height), ..default() };
+        node.margin = UiRect { left: half(node.width), top: half(node.height), ..Default::default() };
         node.position_type = PositionType::Absolute;
         node.left = percent(50);
         node.top = percent(50);
