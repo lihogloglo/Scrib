@@ -10,7 +10,7 @@ use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_input_focus::InputFocusVisible;
 use bevy_math::CompassOctant;
-use bevy_time::Time;
+use bevy_time::{Real, Time};
 use bevy_ui::auto_directional_navigation::AutoDirectionalNavigator;
 
 use crate::ScreenStackRes;
@@ -126,7 +126,7 @@ pub fn held_direction(digital: (i8, i8), stick: bevy_math::Vec2) -> Option<Compa
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn navigate(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut state: ResMut<NavState>,
     actions: Query<(&UiActionTag, &ActionValue)>,
     screens: Res<ScreenStackRes>,
@@ -152,6 +152,7 @@ pub(crate) fn navigate(
         i8::from(up) - i8::from(down),
     );
     let held = held_direction(digital, stick);
+    // Real time: menus open over a paused game (Time<Virtual> paused) still repeat.
     let Some(direction) = state.repeat.update(held, time.delta_secs()) else {
         return;
     };
