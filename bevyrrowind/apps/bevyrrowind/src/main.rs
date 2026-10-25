@@ -17,7 +17,7 @@ mod mods;
 mod pause_menu;
 mod perf;
 use mw_walkers_bevy::physics;
-mod player;
+use mw_player_bevy as player;
 mod pipeline_watch;
 #[cfg(feature = "remote")]
 mod remote;

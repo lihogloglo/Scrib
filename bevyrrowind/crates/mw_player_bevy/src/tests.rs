@@ -5,14 +5,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::time::TimeUpdateStrategy;
+use bevy_time::TimeUpdateStrategy;
 use sf_controller::{CollisionMesh, GroundHit, GroundProbe, ProbeQuery, StaticShape, StaticWorld, SurfaceId};
 use sf_coords::WorldTransform;
 use sf_level::Level;
 
 use super::*;
 
-const LEVEL: &str = include_str!("../../../../levels/flat-slopes.ron");
+const LEVEL: &str = include_str!("../../../levels/flat-slopes.ron");
 
 #[derive(Resource)]
 struct Statics(StaticWorld);
@@ -46,14 +46,14 @@ fn statics(level: &Level) -> Statics {
 /// The game's player (bindings, rules) at the level's `start` spawn, no camera (the stick is
 /// world XZ).
 fn app(fps: u32) -> (App, Entity) {
-    app_with(fps, &crate::controls::keymap())
+    app_with(fps, &mw_controls_bevy::keymap())
 }
 
 /// [`app`] with the bindings of `keymap`.
 fn app_with(fps: u32, keymap: &sf_ui::Keymap) -> (App, Entity) {
     let level = Level::parse(LEVEL).expect("flat-slopes parses");
     let mut app = App::new();
-    app.add_plugins((TaskPoolPlugin::default(), bevy::time::TimePlugin, bevy::input::InputPlugin, EnhancedInputPlugin))
+    app.add_plugins((TaskPoolPlugin::default(), bevy_time::TimePlugin, bevy_input::InputPlugin, EnhancedInputPlugin))
         .add_plugins((SfActionPlugin::<Statics>::default(), ActionInputPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / f64::from(fps))))
         .insert_resource(statics(&level))
@@ -246,7 +246,7 @@ fn interior_floor_is_under_the_roof() {
 
 /// A keymap with a profile's `[bindings.gameplay]` entries applied (what a restart loads).
 fn keymap_with(gameplay: &str) -> sf_ui::Keymap {
-    let mut keymap = crate::controls::keymap();
+    let mut keymap = mw_controls_bevy::keymap();
     let profile = sf_mods::Profile::from_toml("test", &format!("[bindings.gameplay]\n{gameplay}\n")).expect("profile parses");
     assert!(keymap.load_from(&profile).is_empty());
     keymap
@@ -275,7 +275,7 @@ fn rise_on(app: &mut App, player: Entity, key: KeyCode) -> f32 {
 #[test]
 fn rebound_jump_in_the_keymap_drives_the_jump() {
     let keymap = keymap_with(r#"jump = { kbm = ["key:KeyJ"] }"#);
-    assert_eq!(keymap.bound(&crate::controls::Control::Jump.id(), sf_ui::Device::Kbm), ["key:KeyJ"]);
+    assert_eq!(keymap.bound(&mw_controls_bevy::Control::Jump.id(), sf_ui::Device::Kbm), ["key:KeyJ"]);
     let (mut app, player) = app_with(60, &keymap);
     assert!(rise_on(&mut app, player, KeyCode::Space) < 0.05, "Space no longer jumps");
     let apex = rise_on(&mut app, player, KeyCode::KeyJ);
@@ -311,16 +311,16 @@ fn sneak_modes(keymap: &sf_ui::Keymap, presses: usize) -> Vec<(sf_action::Mode, 
 #[test]
 fn sneak_holds_by_default_and_toggles_when_set() {
     use sf_action::Mode::{Normal, Sneak};
-    assert_eq!(sneak_modes(&crate::controls::keymap(), 1), [(Sneak, Normal)], "hold: sneak while Ctrl is down");
+    assert_eq!(sneak_modes(&mw_controls_bevy::keymap(), 1), [(Sneak, Normal)], "hold: sneak while Ctrl is down");
     let toggle = keymap_with(r#"sneak = { press = "toggle" }"#);
-    assert_eq!(toggle.press_mode(&crate::controls::Control::Sneak.id()), Some(sf_ui::PressMode::Toggle));
+    assert_eq!(toggle.press_mode(&mw_controls_bevy::Control::Sneak.id()), Some(sf_ui::PressMode::Toggle));
     assert_eq!(sneak_modes(&toggle, 2), [(Sneak, Sneak), (Normal, Normal)], "toggle: a press on, the next off");
 }
 
 #[test]
 fn rebinds_and_press_modes_round_trip_through_the_profile_file() {
-    use crate::controls::Control;
-    let mut keymap = crate::controls::keymap();
+    use mw_controls_bevy::Control;
+    let mut keymap = mw_controls_bevy::keymap();
     let jump = sf_ui::SlotRef { action: Control::Jump.id(), device: sf_ui::Device::Kbm, slot: 0 };
     let proposal = keymap.propose(&jump, "key:KeyJ").unwrap();
     keymap.apply(&proposal, sf_ui::Resolution::Swap).unwrap();
@@ -331,8 +331,8 @@ fn rebinds_and_press_modes_round_trip_through_the_profile_file() {
     let dir = std::env::temp_dir().join(format!("bw-keymap-{}", std::process::id()));
     profile.save(&dir).unwrap();
     // A restart: a fresh keymap from the file.
-    let mut restarted = crate::controls::keymap();
-    assert!(restarted.load_from(&crate::controls::reload(&dir, "keymap-test")).is_empty());
+    let mut restarted = mw_controls_bevy::keymap();
+    assert!(restarted.load_from(&mw_controls_bevy::reload(&dir, "keymap-test")).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(restarted.bound(&Control::Jump.id(), sf_ui::Device::Kbm), ["key:KeyJ"]);
     assert_eq!(restarted.bound(&Control::Jump.id(), sf_ui::Device::Gamepad), ["pad:South"], "pad untouched");

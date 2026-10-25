@@ -43,9 +43,23 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::camera_controller::free_camera::FreeCameraState;
-use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_camera::prelude::*;
+use bevy_camera_controller::free_camera::FreeCameraState;
+use bevy_color::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_input::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_mesh::prelude::*;
+use bevy_pbr::prelude::*;
+use bevy_shape::{Capsule3d, Cuboid};
+use bevy_text::prelude::*;
+use bevy_time::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_ui::prelude::*;
+use bevy_window::{CursorGrabMode, CursorOptions, PrimaryWindow, Window};
 use bevy_enhanced_input::prelude::*;
 use sf_action::{ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, RuleKey, RuleSet, SlotInfo, SlotTable};
 use sf_action_bevy::{
@@ -108,7 +122,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         app.add_plugins(EnhancedInputPlugin);
     }
     let reach_m = activate_reach_m(db.as_deref());
-    crate::controls::add(app);
+    mw_controls_bevy::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
         .insert_resource(rules())
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
@@ -170,7 +184,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     commands.insert_resource(PlayerVisual {
         capsule: meshes.add(Capsule3d::new(p.radius, (p.height - 2.0 * p.radius).max(0.01))),
         nose: meshes.add(Cuboid::new(0.12, 0.12, 0.3)),
-        material: materials.add(StandardMaterial { base_color: Color::srgb(0.75, 0.55, 0.3), perceptual_roughness: 0.8, ..default() }),
+        material: materials.add(StandardMaterial { base_color: Color::srgb(0.75, 0.55, 0.3), perceptual_roughness: 0.8, ..Default::default() }),
     });
     commands
         .spawn(Node {
@@ -178,7 +192,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             bottom: percent(22),
             width: percent(100),
             justify_content: JustifyContent::Center,
-            ..default()
+            ..Default::default()
         })
         .with_child((PromptText, Text::new(""), TextFont::from_font_size(20.0), TextColor(Color::srgb(0.95, 0.88, 0.7))));
     commands
@@ -191,7 +205,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
                 width: px(4),
                 height: px(4),
                 margin: UiRect::all(px(-2)),
-                ..default()
+                ..Default::default()
             },
             BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
             Visibility::Hidden,
@@ -214,7 +228,7 @@ fn plain(_: &Binding, _: &mut EntityCommands<'_>) {}
 /// The player's actions on `body` (its `PlayerControls` context), bound from `keymap`
 /// (`controls.rs`).
 fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity) {
-    use crate::controls::{Control, bind};
+    use mw_controls_bevy::{Control, bind};
     for (tag, action) in spawn_player_actions(commands, body) {
         match tag {
             PlayerAction::Stick => {
@@ -331,7 +345,7 @@ pub struct PlayerStart {
 impl PlayerStart {
     /// The arrival markers into `start` when it is an interior (it has a cell environment);
     /// exterior starts keep the drop under the camera.
-    pub fn of(world: &crate::doors::WorldLinks, start: &WorldspaceId) -> Self {
+    pub fn of(world: &mw_doors_bevy::WorldLinks, start: &WorldspaceId) -> Self {
         if !world.environments.contains_key(start) {
             return Self::default();
         }
@@ -353,7 +367,7 @@ impl PlayerStart {
 fn interior_spawn(arrivals: &[WorldTransform], world: Option<&PhysicsWorld>, eye: WorldPos) -> Option<(WorldPos, Option<f32>)> {
     let nearest = arrivals.iter().min_by(|a, b| eye.delta_f32(a.pos).length().total_cmp(&eye.delta_f32(b.pos).length()));
     if let Some(marker) = nearest {
-        let look = Look::from_dir(crate::doors::arrival_rotation(marker.rotation) * Vec3::NEG_Z);
+        let look = Look::from_dir(mw_doors_bevy::arrival_rotation(marker.rotation) * Vec3::NEG_Z);
         return Some((marker.pos, Some(look.yaw)));
     }
     let floor = floor_below(world?, eye, MoverParams::default().height)?;
@@ -368,11 +382,11 @@ fn apply_mode(
     mut spot: ResMut<ArrivalSpot>,
     physics: Res<Physics>,
     collision: sf_physics_bevy::CollisionReady,
-    settled: Option<Res<crate::exterior::Settled>>,
+    settled: Option<Res<mw_game_core::exterior::Settled>>,
     visual: Res<PlayerVisual>,
     keymap: Res<sf_ui_bevy::UiKeymap>,
     positions: WorldPosOf,
-    mut cams: Query<(Entity, &GlobalTransform, &ChildOf, &mut FreeCameraState), With<crate::doors::DoorUser>>,
+    mut cams: Query<(Entity, &GlobalTransform, &ChildOf, &mut FreeCameraState), With<mw_doors_bevy::DoorUser>>,
 ) {
     let Ok((cam, global, parent, mut free)) = cams.single_mut() else { return };
     match (mode.on, mode.body) {
@@ -446,7 +460,7 @@ fn arrive(
     for travel in arrived.read() {
         let Ok(mut camera) = cams.get_mut(travel.traveler) else { continue };
         let Ok((mut body, character)) = bodies.get_mut(camera.follow) else { continue };
-        let feet = travel.to.pos.offset(Vec3::NEG_Y * crate::doors::ARRIVAL_EYE_M);
+        let feet = travel.to.pos.offset(Vec3::NEG_Y * mw_doors_bevy::ARRIVAL_EYE_M);
         let look = Look::from_dir(travel.rotation * Vec3::NEG_Z);
         match restore.0.take() {
             // The saved mover state is at the saved feet (`saves.rs` travels there).
@@ -737,8 +751,8 @@ fn update_focus(
     mode: Res<PlayerMode>,
     physics: Res<Physics>,
     streaming: Option<Res<PhysicsStreaming>>,
-    cams: Query<(Entity, &GlobalTransform, Option<&PlayerCamera>), With<crate::doors::DoorUser>>,
-    actors: Query<(&Mover, &CharacterPlacement, &crate::walkers::ActorSpace), Without<PlayerBody>>,
+    cams: Query<(Entity, &GlobalTransform, Option<&PlayerCamera>), With<mw_doors_bevy::DoorUser>>,
+    actors: Query<(&Mover, &CharacterPlacement, &mw_walkers_bevy::walkers::ActorSpace), Without<PlayerBody>>,
     positions: WorldPosOf,
     mut names: Local<HashMap<String, Option<Activatable>>>,
 ) {

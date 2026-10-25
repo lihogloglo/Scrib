@@ -52,6 +52,7 @@ mw_graphs.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
 mw_physics = { path = "../../crates/mw_physics" }
+mw_player_bevy.workspace = true
 mw_mods.workspace = true
 mw_records.workspace = true
 mw_script.workspace = true

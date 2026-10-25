@@ -220,6 +220,7 @@ mw_install = { path = "bevyrrowind/crates/mw_install" }
 mw_mods = { path = "bevyrrowind/crates/mw_mods" }
 mw_nif = { path = "bevyrrowind/crates/mw_nif" }
 mw_physics = { path = "bevyrrowind/crates/mw_physics" }
+mw_player_bevy = { path = "bevyrrowind/crates/mw_player_bevy" }
 mw_walkers_bevy = { path = "bevyrrowind/crates/mw_walkers_bevy" }
 mw_records = { path = "bevyrrowind/crates/mw_records" }
 mw_rpg = { path = "bevyrrowind/crates/mw_rpg" }
