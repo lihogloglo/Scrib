@@ -44,6 +44,10 @@ slices", "Systemic gaps") and [OpenMW research](../research/openmw-physics-2026-
    still knocks the cup.
 5. **S3-a cell collision census** (`mw_bake/examples/collision_report.rs`): names the Census Office floor model,
    its source (authored / fallback) and error. Diagnosis only. Can run beside 1-4 (bake side).
+   **Result 2026-10-26:** no walkable hole in the office's baked collision (74 authored RootCollisionNode floor/wall
+   modules, 9 LOD0 fallbacks, 52 NC-flagged decor; only unreachable tops and ceiling-height reversed winding). The
+   owner's fall is most likely the runtime arrival/streaming path (fixed by slices 1-3); recheck with the owner.
+   Tool: `SF_COLLISION_CELL="<cell>" cargo run --release -p mw_bake --example collision_report`.
 6. **S3-n NIF collision rules parity** with OpenMW `bulletnifloader.cpp:110-326`: unit tests per rule in `mw_bake`
    / `mw_nif`, fix any rule we break. Bake side, after 5.
 7. **S3-b fallback = full LOD0 triangles** (bump rules version so the bake re-runs); measure Balmora insert ms and
