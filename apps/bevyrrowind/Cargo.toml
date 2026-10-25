@@ -57,6 +57,11 @@ sf_character_bevy = { workspace = true, features = ["world"] }
 # Walkers (`walkers.rs`): terrain heights as a ground probe, the mover stage with gizmos.
 sf_controller = { workspace = true, features = ["terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
+# The player (`player.rs`, ROADMAP 2.1): action layer on the fixed tick, orbit camera, input.
+sf_action.workspace = true
+sf_action_bevy.workspace = true
+sf_camera.workspace = true
+sf_camera_bevy.workspace = true
 sf_physics = { workspace = true }
 # Synthetic test levels (`level.rs`, TS1).
 sf_level.workspace = true
@@ -78,6 +83,12 @@ mw_audio.workspace = true
 # NPC voices (`audio.rs`, dev builds): the INFO tables and conversation contexts.
 mw_rpg.workspace = true
 sf_rpg.workspace = true
+# The dialogue window on mw_rpg (`dialogue.rs`).
+sf_rpg_ui.workspace = true
+sf_ui.workspace = true
+sf_ui_bevy.workspace = true
+sf_ui_screens.workspace = true
+bevy_enhanced_input.workspace = true
 sf_weather.workspace = true
 sf_weather_bevy.workspace = true
 sf_audio.workspace = true
@@ -97,6 +108,10 @@ serde = { version = "1", features = ["derive"] }
 bevy_brp_extras = { version = "0.23", default-features = false, features = ["diagnostics", "ui"], optional = true }
 schemars = { version = "1.2", optional = true }
 serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+# `dialogue.rs` test: the RPG state round trip.
+postcard.workspace = true
 
 [lints]
 workspace = true

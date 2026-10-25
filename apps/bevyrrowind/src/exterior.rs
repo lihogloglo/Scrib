@@ -242,6 +242,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if let Some(level) = options.level {
         crate::level::add(&mut app, level);
     }
+    // ROADMAP 2.4: the dialogue window on mw_rpg (`dialogue.rs`).
+    crate::dialogue::add(&mut app, options.actors.clone());
 
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();
@@ -407,6 +409,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     crate::doors::add(&mut app, options.world, options.use_door);
     crate::pipeline_watch::add(&mut app);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
+    // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).
+    crate::player::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none());
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled);
     crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());

@@ -244,13 +244,16 @@ impl PlacementSpawner for ScriptHandleHook {
     }
 }
 
-/// The player's entry (the activating camera stands in for the player until M7).
+/// The player's entry: the player character (`player.rs`), else the activating camera (free
+/// camera mode).
 fn track_player(
     cams: Query<Entity, With<crate::doors::DoorUser>>,
+    bodies: Query<Entity, With<crate::player::PlayerBody>>,
     positions: WorldPosOf,
     mut placements: ResMut<ScriptPlacements>,
 ) {
-    let Some(here) = cams.single().ok().and_then(|cam| positions.location(cam)) else { return };
+    let who = bodies.single().or_else(|_| cams.single()).ok();
+    let Some(here) = who.and_then(|e| positions.location(e)) else { return };
     let pos = here.pos.to_f64();
     placements.player =
         Some(Placed { record: "player".into(), worldspace: here.worldspace.as_str().to_owned(), position: [pos.x, pos.y, pos.z], radius: 0.0 });
@@ -278,16 +281,25 @@ fn cell_facts(mut loaded: MessageReader<CellLoaded>, mut facts: MessageWriter<Sc
 /// first within reach. Removal path: M4 P11's `sf_interaction` picks with a physics ray cast
 /// (collider → placement) and owns the activate key; this module then only maps its
 /// `Activated` to scripts.
-fn pick(placements: &ScriptPlacements, worldspace: &str, eye: [f64; 3], forward: Vec3) -> Option<(Handle, f32)> {
+/// `reach` is the ray length, meters; `accept` filters candidates before the ray test (the
+/// player's focus skips what can't be activated, `player.rs`).
+pub(crate) fn pick(
+    placements: &ScriptPlacements,
+    worldspace: &str,
+    eye: [f64; 3],
+    forward: Vec3,
+    reach: f32,
+    accept: impl Fn(&Placed) -> bool,
+) -> Option<(Handle, f32)> {
     let mut best: Option<(f32, f32, Handle)> = None;
     for (h, p) in &placements.loaded {
-        if p.worldspace != worldspace {
+        if p.worldspace != worldspace || !accept(p) {
             continue;
         }
         #[allow(clippy::cast_possible_truncation, reason = "nearby offsets")]
         let c = Vec3::new((p.position[0] - eye[0]) as f32, (p.position[1] - eye[1]) as f32, (p.position[2] - eye[2]) as f32);
         let r = p.radius.max(MIN_PICK_M);
-        if c.length() > REACH_M + r {
+        if c.length() > reach + r {
             continue;
         }
         let along = c.dot(forward);
@@ -302,7 +314,7 @@ fn pick(placements: &ScriptPlacements, worldspace: &str, eye: [f64; 3], forward:
             }
             t = 0.0;
         }
-        if t > REACH_M {
+        if t > reach {
             continue;
         }
         if best.is_none_or(|(bt, br, _)| (t, r) < (bt, br)) {
@@ -312,11 +324,14 @@ fn pick(placements: &ScriptPlacements, worldspace: &str, eye: [f64; 3], forward:
     best.map(|(t, _, h)| (h, t))
 }
 
-/// Space activates the crosshair target (`--activate N`: automatically, once a second).
+/// Space activates the player's focus (`player::Focus`: `OpenMW`'s camera ray within
+/// `iMaxActivateDist`, `player.rs`); `--activate N` activates the crosshair target
+/// automatically, once a second.
 fn activate(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut auto: ResMut<AutoActivate>,
+    focus: Res<crate::player::Focus>,
     cams: Query<&GlobalTransform, With<crate::doors::DoorUser>>,
     placements: Res<ScriptPlacements>,
     mut out: MessageWriter<Activated>,
@@ -330,11 +345,17 @@ fn activate(
             auto.timer = Timer::from_seconds(1.0, TimerMode::Once);
         }
     }
-    if !automatic && !keys.just_pressed(KeyCode::Space) {
+    if !automatic {
+        if keys.just_pressed(KeyCode::KeyE)
+            && let Some(f) = &focus.target
+        {
+            info!("activate: {} ({}, {:.1} m, handle {:032x})", f.name, f.record, f.distance, f.handle.0);
+            out.write(Activated { target: f.handle, actor: PLAYER });
+        }
         return;
     }
     let (Ok(global), Some(player)) = (cams.single(), placements.player.as_ref()) else { return };
-    match pick(&placements, &player.worldspace, player.position, global.forward().as_vec3()) {
+    match pick(&placements, &player.worldspace, player.position, global.forward().as_vec3(), REACH_M, |_| true) {
         Some((target, dist)) => {
             let record = placements.loaded.get(&target).map_or("?", |p| p.record.as_str());
             info!("activate: {record} ({dist:.1} m, handle {:032x})", target.0);

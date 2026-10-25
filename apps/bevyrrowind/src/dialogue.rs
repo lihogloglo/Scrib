@@ -1,0 +1,824 @@
+//! Dialogue in the game (ROADMAP 2.4, slice 1): the stock `sf_ui_screens` dialogue window
+//! driven by `mw_rpg` sessions and the result runner.
+//!
+//! - [`Rpg`] (Bevy-free core, a resource): the game's `MwView` + `MwWorld` over the live state
+//!   (actors met, player facts, globals, locals, journal), conversations ([`Talk`]) and the
+//!   effects of result scripts, applied as `OpenMW` does (see [`Rpg::apply`]).
+//! - [`add`]: the app glue (after `DefaultPlugins`). Unthemed (the screens' fallback look); the
+//!   journal, HUD and Morrowind theme are later slices.
+//!
+//! Opening a conversation: dev trigger `U` on the nearest NPC (and `Shift+U` gives the player
+//! Fargoth's ring, scaffold [`DevGiveRing`]) until the `player` lane's activation message lands
+//! (TODO seam in [`dev_talk`]).
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use bevy::camera_controller::free_camera::FreeCameraState;
+use bevy::prelude::*;
+use bevy_enhanced_input::prelude::EnhancedInputPlugin;
+use mw_rpg::{
+    ActorFacts, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwView, MwWorld, NpcStates,
+    ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, rank_name,
+};
+use serde::{Deserialize, Serialize};
+use sf_character_bevy::Character;
+use sf_records::{RecordDb, RecordFormat, RecordId, apply_record_file};
+use sf_rpg::{
+    ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession, GameTime,
+    HeardLine, Holder, JournalEntry, PlayerId, RpgCommand, RpgEvent, TopicKind, WorldRpg,
+};
+use sf_rpg_ui::{DialogueRequest, DialogueView, JournalLabels};
+use sf_ui::{Layer, UiRegistry, register_kinds};
+use sf_ui_bevy::{
+    MessageBoxConfig, MessageBoxes, ScreenStackRes, SfUiPlugin, Toasts, UiRegistryRes,
+    UiScreenRoot, UiTextPlugin,
+};
+use sf_ui_screens::{DialogueRequestEvent, DialogueScreen, ScreenSystems, SfScreensPlugin};
+use tes3::esp::{FilterFunction, GlobalValue, GlobalVariable, Npc, Script};
+use sf_world_bevy::StreamCell;
+
+/// Talk range of the dev trigger, eye to NPC origin (Morrowind's `iMaxActivateDist` is 192
+/// units, 2.7 m; the free camera floats, so a little more).
+const TALK_RANGE_M: f32 = 4.0;
+/// Fargoth's ring (scaffold [`DevGiveRing`]).
+const RING: &str = "ring_keley";
+
+fn id(s: &str) -> RecordId {
+    RecordId::new(s)
+}
+
+// ============================================================ the Bevy-free core
+
+/// The speaker's disposition towards the player. A seam: the derived disposition (race,
+/// personality, faction, crime: `OpenMW` `MechanicsManager::getDerivedDisposition`) is a feel
+/// system (ARCHITECTURE §1b, owner 2026-10-25) and not ported; the slice uses content data only.
+pub trait DispositionModel: Send + Sync {
+    /// `base`: the NPC record's disposition; `modifier`: the sum of `ModDisposition` /
+    /// `SetDisposition` changes from result scripts.
+    fn disposition(&self, speaker: &ActorFacts, base: i32, modifier: i32) -> i32;
+}
+
+/// Content data only: record base plus script changes, clamped to 0..=100 as `OpenMW` clamps
+/// the value the filters see.
+pub struct ContentDisposition;
+
+impl DispositionModel for ContentDisposition {
+    fn disposition(&self, _speaker: &ActorFacts, base: i32, modifier: i32) -> i32 {
+        (base + modifier).clamp(0, 100)
+    }
+}
+
+/// Scaffold `PlayerStatsPlaceholder`: the player's values for the filter functions that read PC
+/// stats (`OpenMW` `apps/openmw/mwdialogue/filter.cpp`, `Filter::getSelectStructInteger`), as a
+/// fresh level-1 character in starting clothes. Removal path: M7 stats (`sf_rpg` stats) replace
+/// the table; every other function stays the rules' neutral 0 (logged by `MwDialogueRules`).
+#[derive(Clone, Debug)]
+pub struct PlayerStatsPlaceholder(pub HashMap<FilterFunction, f32>);
+
+impl Default for PlayerStatsPlaceholder {
+    fn default() -> Self {
+        Self(HashMap::from([
+            // Common shirt, pants and shoes are worth a few drakes.
+            (FilterFunction::PcClothingModifier, 10.0),
+            (FilterFunction::PcHealthPercent, 100.0),
+            (FilterFunction::PcLevel, 1.0),
+        ]))
+    }
+}
+
+/// An actor the player can talk to: its record facts and script locals' declarations.
+#[derive(Clone, Debug)]
+struct Actor {
+    facts: ActorFacts,
+    base_disposition: i32,
+    declared: HashMap<RecordId, VarType>,
+}
+
+/// The saved part of the RPG state (the `saves` lane serializes it; ROADMAP 2.5).
+/// Actor keys are entity bits for now: persistent reference ids arrive with saves.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RpgState {
+    pub world: WorldRpg,
+    pub pc: CharacterRpg,
+    pub npcs: NpcStates,
+    pub inventories: BTreeMap<ActorKey, CharacterRpg>,
+    pub locals: BTreeMap<(ActorKey, RecordId), f32>,
+    pub globals: BTreeMap<RecordId, f32>,
+}
+
+/// Read-only content and per-session facts.
+struct Content {
+    records: Arc<RecordDb>,
+    dialogue: MwDialogue,
+    /// GLOB records: type and initial value (current values are in [`RpgState::globals`]).
+    global_types: HashMap<RecordId, GlobalNumber>,
+    /// Exterior cell names by grid (the `Cell` filter reads the speaker's cell name).
+    exterior_names: HashMap<(i32, i32), String>,
+    actors: HashMap<ActorKey, Actor>,
+    player: ActorFacts,
+    stats: PlayerStatsPlaceholder,
+    disposition: Box<dyn DispositionModel>,
+}
+
+/// One conversation (host side).
+pub struct Talk {
+    pub session: DialogueSession,
+    pub speaker: ActorKey,
+}
+
+/// The game's RPG host: content, state, the result runner.
+#[derive(Resource)]
+pub struct Rpg {
+    content: Content,
+    pub state: RpgState,
+    results: MwResults,
+    /// Message boxes and sounds result scripts asked for (UI and audio events, not saved).
+    events: Vec<ResultEffect>,
+}
+
+/// [`MwView`] + [`MwWorld`] for one speaker.
+struct View<'a> {
+    c: &'a Content,
+    s: &'a RpgState,
+}
+
+impl View<'_> {
+    fn global_value(&self, name: &RecordId) -> Option<GlobalNumber> {
+        let ty = *self.c.global_types.get(name)?;
+        Some(match (ty, self.s.globals.get(name)) {
+            #[allow(clippy::cast_possible_truncation)]
+            (GlobalNumber::Int(_), Some(v)) => GlobalNumber::Int(*v as i32),
+            (GlobalNumber::Float(_), Some(v)) => GlobalNumber::Float(*v),
+            (initial, None) => initial,
+        })
+    }
+
+    /// A declared local of `actor`'s script (`OpenMW`: undeclared reads fail the filter).
+    fn actor_local(&self, actor: ActorKey, name: &RecordId) -> Option<(VarType, f32)> {
+        let ty = *self.c.actors.get(&actor)?.declared.get(name)?;
+        Some((ty, self.s.locals.get(&(actor, name.clone())).copied().unwrap_or(0.0)))
+    }
+
+    /// The actor a result-script target names (`"arrille"->ModDisposition`): the first actor
+    /// met with that base record.
+    fn by_base(&self, base: &RecordId) -> Option<ActorKey> {
+        self.c.actors.iter().find(|(_, a)| a.facts.id == *base).map(|(k, _)| *k)
+    }
+
+    fn target(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
+        match target {
+            Target::Speaker => Some(ctx.speaker),
+            Target::Actor(base) => self.by_base(base),
+            Target::Player => None,
+        }
+    }
+}
+
+impl MwView for View<'_> {
+    fn speaker(&self, ctx: &ConversationCtx) -> Option<&ActorFacts> {
+        self.c.actors.get(&ctx.speaker).map(|a| &a.facts)
+    }
+
+    fn player(&self, _player: PlayerId) -> Option<&ActorFacts> {
+        Some(&self.c.player)
+    }
+
+    /// No factions joined before M7.
+    fn player_rank(&self, _player: PlayerId, _faction: &RecordId) -> Option<i32> {
+        None
+    }
+
+    fn global(&self, id: &RecordId) -> Option<GlobalNumber> {
+        self.global_value(id)
+    }
+
+    fn local(&self, speaker: ActorKey, name: &RecordId) -> Option<f32> {
+        self.actor_local(speaker, name).map(|(_, v)| v)
+    }
+
+    fn quest_stage(&self, quest: &RecordId) -> i32 {
+        self.s.world.quests.stage(quest)
+    }
+
+    fn item_count(&self, _player: PlayerId, item: &RecordId) -> u64 {
+        self.s.pc.loadout.count(item)
+    }
+
+    /// No deaths tracked yet (Phase 3 combat).
+    fn dead_count(&self, _base: &RecordId) -> i32 {
+        0
+    }
+
+    fn disposition(&self, ctx: &ConversationCtx) -> i32 {
+        let Some(actor) = self.c.actors.get(&ctx.speaker) else { return 0 };
+        let modifier = self.s.npcs.modifier(ctx.speaker);
+        self.c.disposition.disposition(&actor.facts, actor.base_disposition, modifier)
+    }
+
+    fn rank_name(&self, faction: &RecordId, rank: i32) -> Option<String> {
+        rank_name(&self.c.records, faction, rank)
+    }
+
+    fn function(&self, _ctx: &ConversationCtx, function: FilterFunction) -> Option<f32> {
+        self.c.stats.0.get(&function).copied()
+    }
+}
+
+impl MwWorld for View<'_> {
+    fn global(&self, name: &RecordId) -> Option<GlobalNumber> {
+        self.global_value(name)
+    }
+
+    fn var(&self, ctx: &ConversationCtx, target: &Target, name: &RecordId) -> Option<ScriptVar> {
+        let (ty, value) = self.actor_local(self.target(ctx, target)?, name)?;
+        Some(ScriptVar { ty, value })
+    }
+
+    fn item_count(&self, ctx: &ConversationCtx, target: &Target, item: &RecordId) -> u64 {
+        match target {
+            Target::Player => self.s.pc.loadout.count(item),
+            other => self
+                .target(ctx, other)
+                .and_then(|k| self.s.inventories.get(&k))
+                .map_or(0, |inv| inv.loadout.count(item)),
+        }
+    }
+}
+
+/// Journal labels: quest names from the journal's name INFO, topic names from DIAL (ready for
+/// the journal slice: `impl JournalSource for Rpg` with `world() = &self.state.world`).
+impl JournalLabels for Content {
+    fn quest_name(&self, quest: &RecordId) -> Option<String> {
+        self.dialogue.journal.quest(quest).and_then(|q| q.name.clone())
+    }
+
+    fn topic_name(&self, topic: &RecordId) -> Option<String> {
+        self.dialogue.db.topic(topic).map(|t| t.name.clone())
+    }
+
+    /// Placeholder until the Morrowind calendar lands with the clock (saves, ROADMAP 2.5).
+    fn day_heading(&self, day: u32) -> String {
+        format!("Day {}", day + 1)
+    }
+
+    fn entry_text(&self, _entry: &JournalEntry) -> Option<String> {
+        None
+    }
+}
+
+/// The script locals a script declares (`short state` ...), from its source text.
+fn declared_locals(text: &str) -> HashMap<RecordId, VarType> {
+    let parsed = mw_script::parse(text, mw_script::SourceKind::Script, mw_script::FunctionTable::vanilla());
+    parsed.script.locals.iter().map(|l| (id(&l.name.key), l.ty)).collect()
+}
+
+impl Rpg {
+    /// Over the loaded records (DIAL/INFO, GLOB, CELL names).
+    pub fn new(records: Arc<RecordDb>) -> Result<Self, String> {
+        let dialogue = MwDialogue::from_records(&records).map_err(|e| e.to_string())?;
+        let global_types = records
+            .iter::<GlobalVariable>()
+            .map(|(gid, g)| {
+                let v = match g.value {
+                    GlobalValue::Float(f) => GlobalNumber::Float(f),
+                    GlobalValue::Long(l) => GlobalNumber::Int(l),
+                    GlobalValue::Short(s) => GlobalNumber::Int(i32::from(s)),
+                };
+                (gid.clone(), v)
+            })
+            .collect();
+        let exterior_names = records
+            .iter::<tes3::esp::Cell>()
+            .filter(|(_, c)| !c.is_interior() && !c.name.is_empty())
+            .map(|(_, c)| (c.data.grid, c.name.clone()))
+            .collect();
+        // Scaffold `PlayerFactsPlaceholder` (no character generation yet): a nameless,
+        // raceless player, so race/sex filters stay neutral. Removal path: chargen (M7).
+        let player = ActorFacts {
+            id: id("player"),
+            name: "Outlander".into(),
+            npc: true,
+            rank: -1,
+            ..ActorFacts::default()
+        };
+        Ok(Self {
+            content: Content {
+                records,
+                dialogue,
+                global_types,
+                exterior_names,
+                actors: HashMap::new(),
+                player,
+                stats: PlayerStatsPlaceholder::default(),
+                disposition: Box::new(ContentDisposition),
+            },
+            state: RpgState::default(),
+            results: MwResults::new(),
+            events: Vec::new(),
+        })
+    }
+
+    /// The exterior cell name at a Morrowind grid (`None`: wilderness).
+    pub fn exterior_name(&self, grid: (i32, i32)) -> Option<&str> {
+        self.content.exterior_names.get(&grid).map(String::as_str)
+    }
+
+    /// Registers an NPC the player may talk to (`false`: not an NPC record).
+    pub fn add_actor(&mut self, key: ActorKey, base: &RecordId, cell: &str) -> bool {
+        let db = &self.content.records;
+        let Some(npc) = db.get::<Npc>(base) else { return false };
+        let declared = db.get::<Script>(&id(&npc.script)).map(|s| declared_locals(&s.text)).unwrap_or_default();
+        let actor =
+            Actor { facts: ActorFacts::from_npc(db, npc, cell), base_disposition: i32::from(npc.data.disposition), declared };
+        self.content.actors.insert(key, actor);
+        true
+    }
+
+    pub fn actor_name(&self, key: ActorKey) -> Option<&str> {
+        self.content.actors.get(&key).map(|a| a.facts.name.as_str())
+    }
+
+    /// Message boxes and sounds since the last call.
+    pub fn take_events(&mut self) -> Vec<ResultEffect> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Opens a conversation with a registered actor: the greeting, fed to a new view.
+    pub fn open(&mut self, speaker: ActorKey) -> Option<(Talk, DialogueView)> {
+        let actor = self.content.actors.get(&speaker)?;
+        let name = actor.facts.name.clone();
+        let ctx = ConversationCtx { player: PlayerId::HOST, speaker, speaker_base: actor.facts.id.clone(), choice: None };
+        let (session, out) = {
+            let view = View { c: &self.content, s: &self.state };
+            let rules = MwDialogueRules::new(&self.content.dialogue, &view);
+            DialogueSession::open(&self.content.dialogue.db, &rules, ctx)
+        };
+        let mut talk = Talk { session, speaker };
+        let mut view = DialogueView::new(name);
+        self.after(&mut talk, &mut view, &out);
+        Some((talk, view))
+    }
+
+    /// Applies a request from the dialogue window and feeds the view.
+    pub fn request(&mut self, talk: &mut Talk, view: &mut DialogueView, request: &DialogueRequest) {
+        let out = {
+            let v = View { c: &self.content, s: &self.state };
+            let rules = MwDialogueRules::new(&self.content.dialogue, &v);
+            request.apply(&mut talk.session, &self.content.dialogue.db, &rules)
+        };
+        match out {
+            Ok(out) => self.after(talk, view, &out),
+            Err(e) => warn!("dialogue: {request:?} refused: {e}"),
+        }
+    }
+
+    /// After a session call (`OpenMW` `DialogueManager::executeTopic` / `addTopicsFromText`):
+    /// learn the linked topics the speaker answers, record heard topic lines for the journal's
+    /// topic index (`Journal::addTopic`), run results in the game's runner and apply their
+    /// effects in call order; then refresh the view.
+    fn after(&mut self, talk: &mut Talk, view: &mut DialogueView, out: &[DialogueOutput]) {
+        let ctx = talk.session.ctx().clone();
+        let dlg = &self.content.dialogue;
+        view.apply_outputs(&dlg.db, out);
+        let mut commands = Vec::new();
+        let mut effects = Vec::new();
+        {
+            let v = View { c: &self.content, s: &self.state };
+            let rules = MwDialogueRules::new(dlg, &v);
+            let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
+            let mut runner = self.results.runner(state);
+            for o in out {
+                match o {
+                    DialogueOutput::Learned(t) if rules.speaker_answers(&ctx, t) => {
+                        commands.push(RpgCommand::AddTopic(t.clone()));
+                    }
+                    DialogueOutput::Line { topic, response, text }
+                        if dlg.db.topic(topic).is_some_and(|t| t.kind == TopicKind::Conversation) =>
+                    {
+                        let line = HeardLine { source: response.clone(), speaker: v.c.actors[&ctx.speaker].facts.name.clone(), text: text.clone() };
+                        commands.push(RpgCommand::HearLine { topic: topic.clone(), line });
+                    }
+                    DialogueOutput::RunResult { topic, response } => {
+                        let Some(info) = dlg.info(response) else { continue };
+                        let call = ResultCall { ctx: &ctx, topic, response, script: &info.script_text };
+                        match runner.run(call) {
+                            Ok(e) => effects.extend(e),
+                            Err(e) => warn!("dialogue: result of {response}: {e}"),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for report in self.results.drain_reports() {
+            debug!("dialogue: {report}");
+        }
+        let mut events = Vec::new();
+        for cmd in commands {
+            events.extend(self.state.world.apply(cmd).unwrap_or_default());
+        }
+        for effect in effects {
+            events.extend(self.apply(talk, &ctx, effect));
+        }
+        view.apply_events(&events);
+        let v = View { c: &self.content, s: &self.state };
+        let rules = MwDialogueRules::new(&self.content.dialogue, &v);
+        view.refresh_from(&talk.session, &self.content.dialogue.db, &rules, &self.state.world.topics);
+    }
+
+    fn character(&mut self, ctx: &ConversationCtx, target: &Target) -> Option<(Holder, &mut CharacterRpg)> {
+        if *target == Target::Player {
+            return Some((Holder::Player(PlayerId::HOST), &mut self.state.pc));
+        }
+        let key = View { c: &self.content, s: &self.state }.target(ctx, target)?;
+        Some((Holder::Actor(key), self.state.inventories.entry(key).or_default()))
+    }
+
+    /// One result-script effect, with `OpenMW`'s semantics (`apps/openmw/mwscript/
+    /// dialogueextensions.cpp`, `containerextensions.cpp`, `statsextensions.cpp` at
+    /// openmw-0.48.0; the `mw_rpg` runner decodes the calls, this applies them to the world).
+    fn apply(&mut self, talk: &mut Talk, ctx: &ConversationCtx, effect: ResultEffect) -> Vec<RpgEvent> {
+        let mut events = Vec::new();
+        let target_key = |rpg: &Self, t: &Target| View { c: &rpg.content, s: &rpg.state }.target(ctx, t);
+        match effect {
+            // `Journal`: adds the stage's entry (text with macros expanded now) and sets the index.
+            ResultEffect::Journal { quest, index } => {
+                let cmd = {
+                    let v = View { c: &self.content, s: &self.state };
+                    let rules = MwDialogueRules::new(&self.content.dialogue, &v);
+                    self.content.dialogue.journal_command(&self.state.world, &quest, index, GameTime::default(), |t| {
+                        rules.expand(ctx, t)
+                    })
+                };
+                if let Some(cmd) = cmd {
+                    events.extend(self.state.world.apply(cmd).unwrap_or_default());
+                }
+            }
+            ResultEffect::SetJournalIndex { quest, index } => {
+                events.extend(self.state.world.apply(MwDialogue::set_journal_index(&quest, index)).unwrap_or_default());
+            }
+            ResultEffect::AddTopic(t) => events.extend(self.state.world.apply(RpgCommand::AddTopic(t)).unwrap_or_default()),
+            ResultEffect::AddItem { target, item, count } => {
+                if let Some((holder, inv)) = self.character(ctx, &target) {
+                    let _ = inv.apply(RpgCommand::AddItem { holder, item, count, attrs: Attrs::new() });
+                }
+            }
+            // `RemoveItem` removes what there is (no error past zero).
+            ResultEffect::RemoveItem { target, item, count } => {
+                if let Some((holder, inv)) = self.character(ctx, &target) {
+                    let count = count.min(u32::try_from(inv.loadout.count(&item)).unwrap_or(u32::MAX));
+                    if count > 0 {
+                        let _ = inv.apply(RpgCommand::RemoveItem { holder, item, count });
+                    }
+                }
+            }
+            ResultEffect::Choices(choices) => {
+                if let Err(e) = talk.session.offer_choices(choices) {
+                    warn!("dialogue: Choice refused: {e}");
+                }
+            }
+            ResultEffect::Goodbye => talk.session.force_goodbye(),
+            ResultEffect::ModDisposition { target, delta } => {
+                if let Some(k) = target_key(self, &target) {
+                    self.state.npcs.modify(k, delta);
+                }
+            }
+            ResultEffect::SetDisposition { target, value } => {
+                if let Some(k) = target_key(self, &target) {
+                    let base = self.content.actors.get(&k).map_or(0, |a| a.base_disposition);
+                    self.state.npcs.set(k, base, value);
+                }
+            }
+            ResultEffect::SetLocal { target, name, value } => {
+                if let Some(k) = target_key(self, &target) {
+                    self.state.locals.insert((k, name), value);
+                }
+            }
+            ResultEffect::SetGlobal { name, value } => {
+                self.state.globals.insert(name, value);
+            }
+            e @ (ResultEffect::MessageBox { .. } | ResultEffect::PlaySound(_)) => self.events.push(e),
+        }
+        events
+    }
+}
+
+// ============================================================ the app glue
+
+/// Screens of the game so far: the dialogue window and message boxes. TODO(journal/HUD slices):
+/// these records belong in the builtin mod's data (everything is a mod) once more screens land.
+const SCREENS: &str = r#"
+[[define]]
+kind = "ui.screen"
+id = "dialogue"
+value = { layer = "Menu", implementation = { Template = "dialogue" } }
+
+[[define]]
+kind = "ui.screen"
+id = "sf.message_box"
+value = { layer = "Modal", input = "modal", implementation = { Template = "message_box" } }
+"#;
+
+fn registry() -> UiRegistry {
+    let mut db = RecordDb::new();
+    register_kinds(&mut db).expect("UI record kinds register");
+    let base = db.add_source("bevyrrowind", &[]);
+    let outcome = apply_record_file(&mut db, base, SCREENS, RecordFormat::Toml).expect("game screens parse");
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    UiRegistry::build(&db).0
+}
+
+/// An actor the player can talk to (registered in [`Rpg`]).
+#[derive(Component)]
+pub struct Talkable;
+
+/// The open conversation and its screen.
+#[derive(Resource)]
+struct ActiveTalk {
+    talk: Talk,
+    screen: Entity,
+}
+
+/// Scaffold `DevGiveRing`: `Shift+U` puts Fargoth's ring in the player's inventory, so the
+/// flow can be played before containers and pickup exist. Removal path: 2.2 U5 inventory
+/// wiring plus item pickup (the ring is in the Census office in the real flow).
+struct DevGiveRing;
+
+/// The dialogue window and its hosting, after `DefaultPlugins`. `db`: the loaded records
+/// (`None`: no actors, no dialogue).
+pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
+    let Some(db) = db else { return };
+    let rpg = match Rpg::new(db) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("dialogue off: {e}");
+            return;
+        }
+    };
+    if !app.is_plugin_added::<EnhancedInputPlugin>() {
+        app.add_plugins(EnhancedInputPlugin);
+    }
+    app.add_plugins((SfUiPlugin, UiTextPlugin, SfScreensPlugin))
+        .insert_resource(UiRegistryRes(registry()))
+        .insert_resource(rpg)
+        .add_systems(Update, (track_actors, dev_talk).chain().before(ScreenSystems::Spawn))
+        .add_systems(Update, (host_dialogue, close_screens, show_events, free_camera_lock).chain().after(ScreenSystems::Input));
+}
+
+fn key(e: Entity) -> ActorKey {
+    ActorKey(u128::from(e.to_bits()))
+}
+
+/// The speaker's cell name for the `Cell` filter: the interior's name, or the exterior cell's
+/// name at the streaming cell's grid (empty in the wilderness).
+fn cell_name(rpg: &Rpg, e: Entity, parents: &Query<&ChildOf>, cells: &Query<&StreamCell>) -> String {
+    let mut current = e;
+    loop {
+        if let Ok(cell) = cells.get(current) {
+            if cell.worldspace == mw_world::ids::exterior() {
+                return rpg.exterior_name((cell.cell.x, cell.cell.y)).unwrap_or_default().to_owned();
+            }
+            return cell.worldspace.as_str().to_owned();
+        }
+        let Ok(parent) = parents.get(current) else { return String::new() };
+        current = parent.parent();
+    }
+}
+
+/// NPCs that appear become talkable.
+#[allow(clippy::needless_pass_by_value)]
+fn track_actors(
+    mut commands: Commands,
+    mut rpg: ResMut<Rpg>,
+    fresh: Query<(Entity, &Character), Added<Character>>,
+    parents: Query<&ChildOf>,
+    cells: Query<&StreamCell>,
+) {
+    for (e, character) in &fresh {
+        let Character::Record { id, .. } = character else { continue };
+        let cell = cell_name(&rpg, e, &parents, &cells);
+        if rpg.add_actor(key(e), id, &cell) {
+            commands.entity(e).try_insert(Talkable);
+        }
+    }
+}
+
+/// A menu (dialogue, journal) is open.
+fn menu_open(stack: &ScreenStackRes) -> bool {
+    stack.0.top(Layer::Menu).is_some()
+}
+
+/// Dev trigger: `U` talks to the nearest NPC in range of the camera, `Shift+U` gives the ring.
+// TODO(player lane): open on the `player` lane's activation message (player.rs, "Activate" on an
+// entity with `Talkable`) and drop the `U` trigger; `open_dialogue` is the seam.
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+fn dev_talk(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut rpg: ResMut<Rpg>,
+    mut stack: ResMut<ScreenStackRes>,
+    registry: Res<UiRegistryRes>,
+    active: Option<Res<ActiveTalk>>,
+    camera: Query<&GlobalTransform, With<crate::exterior::ExteriorCamera>>,
+    npcs: Query<(Entity, &GlobalTransform), With<Talkable>>,
+) {
+    if !keys.just_pressed(KeyCode::KeyU) || active.is_some() || menu_open(&stack) {
+        return;
+    }
+    if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+        let _ = DevGiveRing;
+        let ring = id(RING);
+        let _ = rpg.state.pc.apply(RpgCommand::AddItem {
+            holder: Holder::Player(PlayerId::HOST),
+            item: ring.clone(),
+            count: 1,
+            attrs: Attrs::new(),
+        });
+        info!("dialogue: dev gave {RING} (now {})", rpg.state.pc.loadout.count(&ring));
+        return;
+    }
+    let Some(eye) = camera.iter().next().map(GlobalTransform::translation) else { return };
+    let nearest = npcs
+        .iter()
+        .map(|(e, t)| (e, t.translation().distance(eye)))
+        .filter(|(_, d)| *d < TALK_RANGE_M + 1.6)
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((e, _)) = nearest {
+        open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, key(e));
+    } else {
+        info!("dialogue: nobody within {TALK_RANGE_M} m to talk to");
+    }
+}
+
+/// Opens the dialogue window on `speaker` (the activation seam).
+fn open_dialogue(commands: &mut Commands, rpg: &mut Rpg, stack: &mut ScreenStackRes, registry: &UiRegistryRes, speaker: ActorKey) {
+    let Some((talk, view)) = rpg.open(speaker) else { return };
+    info!("dialogue: talking to {}", rpg.actor_name(talk.speaker).unwrap_or("?"));
+    let screen = commands.spawn((UiScreenRoot("dialogue".into()), centred(), DialogueScreen::new(view))).id();
+    commands.insert_resource(ActiveTalk { talk, screen });
+    if let Err(e) = stack.0.push(&registry.0, "dialogue") {
+        warn!("dialogue: {e:?}");
+    }
+}
+
+fn centred() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        left: Val::Percent(10.0),
+        top: Val::Percent(8.0),
+        width: Val::Percent(80.0),
+        height: Val::Percent(80.0),
+        ..default()
+    }
+}
+
+/// Window requests → the session; a closed conversation closes its window.
+fn host_dialogue(
+    mut requests: MessageReader<DialogueRequestEvent>,
+    mut rpg: ResMut<Rpg>,
+    active: Option<ResMut<ActiveTalk>>,
+    mut screens: Query<&mut DialogueScreen>,
+    mut stack: ResMut<ScreenStackRes>,
+) {
+    let Some(mut active) = active else {
+        requests.clear();
+        return;
+    };
+    let screen = active.screen;
+    let Ok(mut window) = screens.get_mut(screen) else { return };
+    for event in requests.read() {
+        if event.screen == screen {
+            rpg.request(&mut active.talk, &mut window.view, &event.request);
+        }
+    }
+    if window.view.is_closed() {
+        stack.0.close("dialogue");
+    }
+}
+
+/// Menu screens taken off the stack (goodbye, Back) despawn; the conversation ends with its
+/// window.
+fn close_screens(
+    mut commands: Commands,
+    stack: Res<ScreenStackRes>,
+    roots: Query<(Entity, &UiScreenRoot)>,
+    active: Option<Res<ActiveTalk>>,
+) {
+    for (e, root) in &roots {
+        let id = root.0.as_str();
+        if id == "dialogue" && !stack.0.is_open(id) {
+            commands.entity(e).despawn();
+            if active.as_ref().is_some_and(|a| a.screen == e) {
+                commands.remove_resource::<ActiveTalk>();
+            }
+        }
+    }
+}
+
+/// Result-script message boxes: with buttons a modal box, without a timed toast (Morrowind's
+/// button-less boxes time out). Sounds: TODO(audio) route `PlaySound` to `sf_audio_bevy`.
+#[allow(clippy::needless_pass_by_value)]
+fn show_events(
+    mut rpg: ResMut<Rpg>,
+    mut toasts: ResMut<Toasts>,
+    mut boxes: ResMut<MessageBoxes>,
+    config: Option<Res<MessageBoxConfig>>,
+) {
+    for event in rpg.take_events() {
+        match event {
+            ResultEffect::MessageBox { text, buttons } if buttons.is_empty() => {
+                toasts.push(text);
+            }
+            ResultEffect::MessageBox { text, buttons } => {
+                let config = config.as_deref().cloned().unwrap_or_default();
+                boxes.show(text, buttons, &config);
+            }
+            ResultEffect::PlaySound(sound) => debug!("dialogue: sound {sound} (not routed yet)"),
+            _ => {}
+        }
+    }
+}
+
+/// The free camera doesn't look around while a menu is open (the mouse is the pointer).
+fn free_camera_lock(stack: Res<ScreenStackRes>, mut cameras: Query<&mut FreeCameraState>) {
+    let enabled = !menu_open(&stack);
+    for mut state in &mut cameras {
+        if state.enabled != enabled {
+            state.enabled = enabled;
+        }
+    }
+}
+
+// ============================================================ tests
+
+#[cfg(test)]
+mod tests {
+    //! The Fargoth's ring flow through the game host and the dialogue view-model (real data;
+    //! skips when no Morrowind install is detected), as `mw_rpg/tests/fargoth.rs` checks it.
+    use super::*;
+    use mw_install::MorrowindInstall;
+    use sf_rpg_ui::DialogueMode;
+
+    const FARGOTH: ActorKey = ActorKey(1);
+    const ARRILLE: ActorKey = ActorKey(2);
+
+    fn last_text(view: &DialogueView) -> String {
+        view.entries().rev().find_map(|e| match &e.kind { sf_rpg_ui::EntryKind::Line(l) => Some(l.text()), _ => None }).unwrap_or_default()
+    }
+
+    #[test]
+    fn fargoths_ring_through_the_window() {
+        let Ok((install, _)) = MorrowindInstall::detect(None) else {
+            eprintln!("no Morrowind install detected; skipping");
+            return;
+        };
+        let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+        let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+        let mut rpg = Rpg::new(Arc::new(content.db)).unwrap();
+        assert_eq!(rpg.exterior_name((-2, -9)), Some("Seyda Neen"));
+        assert!(rpg.add_actor(FARGOTH, &id("fargoth"), "Seyda Neen"));
+        assert!(rpg.add_actor(ARRILLE, &id("arrille"), "Seyda Neen"));
+        let (mut talk, mut view) = rpg.open(FARGOTH).unwrap();
+        assert_eq!(view.speaker(), "Fargoth");
+        eprintln!("greeting: {}", last_text(&view));
+        let ring = id("ring");
+        assert!(rpg.state.world.topics.knows(&ring));
+        assert!(view.topics().iter().any(|(k, _)| *k == ring), "ring in the topic list");
+
+        let quest = id("ms_fargothring");
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring.clone()));
+        assert_eq!(rpg.state.world.quests.stage(&quest), 10);
+        assert_eq!(view.choices().len(), 2, "{:?}", view.choices());
+        assert_eq!(view.mode(), DialogueMode::Choosing);
+
+        // "Yes, here" without the ring.
+        let yes = view.choices()[1].value;
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes));
+        assert_eq!(rpg.state.npcs.modifier(FARGOTH), -5);
+
+        rpg.state.pc.loadout.add(id(RING), 1, Attrs::new()).unwrap();
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring.clone()));
+        let yes = view.choices()[1].value;
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes));
+        assert_eq!(rpg.state.world.quests.stage(&quest), 100);
+        assert_eq!(rpg.state.pc.loadout.count(&id(RING)), 0);
+        assert_eq!(rpg.state.inventories[&FARGOTH].loadout.count(&id(RING)), 1);
+        assert_eq!(rpg.state.npcs.modifier(FARGOTH), 45);
+        assert_eq!(rpg.state.npcs.modifier(ARRILLE), 40);
+        let entries = rpg.state.world.journal.entries();
+        assert_eq!(entries.iter().map(|e| e.stage).collect::<Vec<_>>(), [Some(10), Some(100)]);
+        assert!(entries.iter().all(|e| !e.text.contains('%')), "{entries:?}");
+        assert_eq!(rpg.content.quest_name(&quest).as_deref(), Some("Fargoth's Ring"));
+        // The journal's topic index has what Fargoth said about his ring.
+        assert!(rpg.state.world.topics.knows(&ring));
+
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring));
+        eprintln!("afterwards: {}", last_text(&view));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Goodbye);
+        assert!(view.is_closed());
+        let bytes = postcard::to_stdvec(&rpg.state).unwrap();
+        let back: RpgState = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, rpg.state);
+    }
+}

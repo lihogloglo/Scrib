@@ -40,7 +40,7 @@ const MIN_FACING: f32 = 0.5;
 /// the camera above the floor where a marker sits low. Removal path: the
 /// character controller (M3) grounds the player and puts the camera at its
 /// eye height.
-const ARRIVAL_EYE_M: f32 = 0.5;
+pub(crate) const ARRIVAL_EYE_M: f32 = 0.5;
 
 /// Every worldspace record, door link and interior environment of the
 /// loaded content.
@@ -229,7 +229,7 @@ fn activate(
         return;
     }
     let automatic = auto.remaining > 0 && settled.is_some();
-    let manual = keys.just_pressed(KeyCode::Space);
+    let manual = keys.just_pressed(KeyCode::KeyE);
     if !automatic && !manual && opened.is_empty() {
         return;
     }

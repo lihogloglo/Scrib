@@ -8,6 +8,7 @@ mod anim_view;
 mod audio;
 mod bake;
 mod character_view;
+mod dialogue;
 mod doors;
 mod exterior;
 mod actor_fx;
@@ -21,6 +22,7 @@ mod mods;
 mod night_sky;
 mod perf;
 mod physics;
+mod player;
 mod pipeline_watch;
 #[cfg(feature = "remote")]
 mod remote;
