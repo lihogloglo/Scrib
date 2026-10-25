@@ -19,14 +19,20 @@ for the vision, design, and milestones.
 ## Rules
 
 - **No game-specific code.** If it names Morrowind, it belongs in an adapter repo.
-- **No GPL-derived code.** Nothing copied or translated from OpenMW, MWSE,
-  `nif.xml`, or other GPL sources. Specs come from public documentation,
-  papers, and observation.
+- **Ported code carries provenance.** Code from other GPL-3.0-compatible
+  projects is welcome with its source, commit and licence recorded in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **No proprietary SDK in the binary.** NVIDIA DLSS is an optional,
+  separately shipped plugin (`plugins/`).
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
-your option.
+[GPL-3.0-or-later](LICENSE), with an additional permission (GPLv3 section 7)
+for linking GPU vendor runtimes such as NVIDIA DLSS: see
+[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md). Vendored crates in `vendor/`
+keep their own licences (Bevy patches stay MIT OR Apache-2.0 for upstream).
+Before 2026-10-25 the framework was MIT OR Apache-2.0; copies taken before
+then keep those terms.
 
 ## Dependency policy
 
@@ -37,9 +43,10 @@ your option.
 cargo deny check
 ```
 
-- **Licences:** MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0, MIT-0, CC0-1.0.
-  MPL-2.0 only for the named, unmodified crates.io crates behind `bevy_flair` (owner decision
-  2026-10-11). Never GPL, LGPL or AGPL; a dual-licensed crate passes through its permissive arm.
+- **Licences:** GPL-3.0-compatible only: MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0,
+  MIT-0, CC0-1.0, GPL-3.0, GPL-2.0-or-later, LGPL-2.1-or-later/3.0. MPL-2.0 only for the named,
+  unmodified crates.io crates behind `bevy_flair` (owner decision 2026-10-11). Never GPL-2.0-only
+  or AGPL.
 - **Advisories:** RustSec vulnerabilities, unsound and unmaintained crates fail; yanked ones warn.
 - **Bans:** duplicate crate versions (Bevy's above all) warn; wildcard versions fail.
 - **Sources:** crates.io only.

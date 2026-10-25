@@ -185,6 +185,10 @@ door links as first-class records, not per-cell teleports.
   ragdoll capsules. Morrowind robes and skirts get proxy meshes at bake time.
 - **Terrain deformation**: transient trails (GPU stamp ring buffer) and
   persistent height edits (sparse deltas in saves), as in ARCHITECTURE §7.4.
+  Look (owner 2026-10-25, RDR2 reference): trail map drives coarse vertex depth (dense CDLOD levels) plus
+  parallax occlusion for crisp prints; a pushed-up lip with its own normals around each print; packed-snow /
+  wet-mud material inside; kick-up particles (snow puffs, ash, mud) on footfalls; prints refill while it snows.
+  Depth per surface type (powder, ash, mud, none on stone).
 
 ## 8. Animation
 

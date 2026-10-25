@@ -1,5 +1,7 @@
 # R10: what to borrow from Mudcrab
 
+> **Licence update 2026-10-25:** superfargoth is GPL-3.0-or-later now, so GPL Mudcrab code is portable into either repo with provenance; "clean-room for superfargoth" below is obsolete. Latest delta: [mudcrab-2026-10-25.md](../mudcrab-2026-10-25.md).
+
 Slice R10 of the animation study (README). Whole-project audit of
 [Mudcrab](https://github.com/Mudcrab-Team/mudcrab) at commit `3129b57` (2026-10-16), read only from a
 shallow clone (`C:\cargo-target\refs\mudcrab`, nothing built or run). Mudcrab converts and renders

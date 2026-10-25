@@ -1,6 +1,7 @@
 # superfargoth
 
-Game-agnostic open-world ARPG framework on Bevy. **MIT OR Apache-2.0.**
+Game-agnostic open-world ARPG framework on Bevy. **GPL-3.0-or-later** with a
+section 7 permission for GPU vendor runtimes (`LICENSE-EXCEPTION.md`; owner 2026-10-25).
 Its first content pack is Bevyrrowind (`../bevyrrowind`, GPL), which drives
 the roadmap: see `../bevyrrowind/docs/ROADMAP.md`.
 
@@ -31,9 +32,14 @@ never revert others' changes.
 1. **No game-specific code.** Nothing here names Morrowind (or any game's)
    formats, IDs, units, or conventions. Litmus test: could another game
    plug in with only a new adapter?
-2. **No GPL-derived code.** Never copy or translate from OpenMW, MWSE,
-   `nif.xml`, or other GPL sources. Specs come from public docs, papers,
-   and observation.
+2. **Ported code needs provenance; proprietary SDKs stay out of the binary.**
+   Code ported from GPL-3.0-compatible projects (GPL-3.0, GPL-2.0-or-later,
+   LGPL, MIT, Apache-2.0, ...) is allowed: cite the source file + commit in the
+   module docs and add a `THIRD_PARTY_NOTICES.md` entry. Never port
+   GPL-2.0-only or non-free code. Game-specific mechanics (e.g. OpenMW's) still
+   belong in the content pack (rule 1). Proprietary vendor SDKs (NVIDIA DLSS)
+   are reached only through a separately shipped plugin (`plugins/`), never
+   linked into the game.
 3. **Clean room for other games** (WISHLIST.md "Reference policy"). In an
    analysis session (REA, game data inspection), write behavior specs only,
    with no code, pseudocode, decompiled names, or raw tables, and commit
@@ -55,15 +61,16 @@ never revert others' changes.
 8. **Reuse before building, in this order: Bevy, then crates, then our
    own.** First use what Bevy itself provides (check its docs, examples and
    source for the version we're on). Then maintained, license-compatible
-   crates and tools (MIT, Apache-2.0, BSD, zlib here; MPL-2.0 only for
-   unmodified dependencies, owner decision 2026-10-11; never GPL). Write our
+   crates and tools (GPL-3.0-compatible: MIT, Apache-2.0, BSD, zlib, GPL-3.0,
+   LGPL; MPL-2.0 only for unmodified dependencies, owner decision 2026-10-11;
+   never GPL-2.0-only or AGPL; `deny.toml`). Write our
    own only when neither fits (wrong license, abandoned, stuck on an old
    Bevy with no fork path, or below our performance or quality bar), and
    say in the spec why each earlier step didn't.
    **Don't reinvent the wheel: this covers whole projects, not just
    crates.** Before starting a system, look for open-source games, engine
    ports and Bevy projects that already built it (e.g. Mudcrab, a Skyrim
-   engine on Bevy, MIT/Apache, with Luau scripting). If one is building
+   engine on Bevy, with Luau scripting). If one is building
    what we need and isn't on our critical path, wait for it and adopt or
    port it instead of racing it.
 9. **Finish before starting.** Drive started tasks to verified and

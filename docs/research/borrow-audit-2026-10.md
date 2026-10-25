@@ -1,5 +1,7 @@
 # Borrow audit, 2026-10: Mudcrab delta, bevy_atmos, Clockwork comparison
 
+> **Licence update 2026-10-25:** superfargoth is GPL-3.0-or-later now, so GPL Mudcrab code is portable into either repo with provenance; "clean-room for superfargoth" below is obsolete. Latest delta: [mudcrab-2026-10-25.md](mudcrab-2026-10-25.md).
+
 Research note, 2026-10-22. Nothing built or run. Sources: Mudcrab
 `origin/main` `805777d` vs the `3129b57` audit ([animation/10-mudcrab-borrow.md](animation/10-mudcrab-borrow.md)),
 bevy_atmos `a435d89` (v0.2.0), and OpenMW `clockwork-alpha` **behaviour only** (the branch's settings docs under

@@ -1520,3 +1520,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-25 (player): the streaming camera stays the door traveller and script "player"; the action body follows it
   across worldspaces. Activation reuses `sf_script_bevy::Activated`/`ActivationOutcome` (no new message); the focus
   ray (OpenMW, `iMaxActivateDist` + arm length) is app-side in bevyrrowind.
+- 2026-10-25 (owner, scrib session): **superfargoth relicensed to GPL-3.0-or-later** (owner is sole author) to reuse
+  GPL projects directly; both repos add a GPLv3 §7 permission for GPU vendor runtimes (`LICENSE-EXCEPTION.md`). It
+  covers only our code, so DLSS leaves the exe: `vendor/dlss_wgpu` facade + separately shipped `plugins/sf_dlss` package.
+- 2026-10-25 (saves2): **load = full reload of resident cells behind the fade** (`Scheduler::reload_resident`,
+  `StartTravel::reload`, discard deactivations skip pose write-back), as Bethesda engines / OpenMW `World::clear`; no
+  per-system diff/undo. Moved resident items reach the save via `persist_moved_items`.

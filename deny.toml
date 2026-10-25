@@ -15,9 +15,15 @@ ignore = []
 
 [licenses]
 version = 2
-# Ours is MIT OR Apache-2.0 (CLAUDE.md hard rule 8): permissive licences only. GPL, LGPL and AGPL
-# are never listed here, so a crate is accepted only through a permissive arm of its expression.
+# Ours is GPL-3.0-or-later (CLAUDE.md hard rule 8, owner 2026-10-25): GPL-3.0-compatible licences
+# only. GPL-2.0-only (incompatible) and AGPL (network clause) are never listed.
 allow = [
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "GPL-2.0-or-later",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
     "MIT",
     "Apache-2.0",
     "BSD-2-Clause",

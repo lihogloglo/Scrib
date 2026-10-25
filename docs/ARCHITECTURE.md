@@ -99,8 +99,8 @@ Two repositories, one-way dependency:
 
 ```
 ┌──────────────────────────────────────┐
-│ superfargoth repo                    │  MIT OR Apache-2.0 (Bevy's license)
-│ generic ARPG engine on Bevy          │  no Morrowind types, no GPL code
+│ superfargoth repo                    │  GPL-3.0-or-later (since 2026-10-25)
+│ generic ARPG engine on Bevy          │  no Morrowind types
 └──────────────────▲───────────────────┘
                    │ depends on (never the reverse)
 ┌──────────────────┴───────────────────┐
@@ -109,17 +109,20 @@ Two repositories, one-way dependency:
 └──────────────────────────────────────┘
 ```
 
-- **Framework repo, MIT/Apache.** Contributors never paste or translate
-  code from OpenMW, MWSE, or `nif.xml` (all GPL). Behavior specs cite UESP,
-  papers, or in-game observation. Godotwind code may be reused only for
-  *generic* systems with clean provenance. Godotwind pieces derived from
-  OpenMW sources (for example the dialogue "4-step filter" and the
-  groundcover design notes that cite OpenMW file:line) stay out.
-- **Bevyrrowind repo, GPL-3.0-or-later**, so OpenMW code can be reused
-  without provenance audits. Making it GPL from day one is deliberate: going
-  from MIT to GPL later is trivial, but GPL code can never go back to MIT.
-- **The shipped game binary is GPL as a whole.** The framework stays MIT for
-  everyone else. MIT and Apache-2.0 dependencies are GPLv3-compatible.
+- **Both GPL-3.0-or-later (owner 2026-10-25).** The framework was MIT/Apache
+  until then; it went GPL so GPL projects (Mudcrab, OpenMW, Skyrim Community
+  Shaders, Rust rewrites) can be reused directly. Ported code keeps provenance
+  (source file + commit, `THIRD_PARTY_NOTICES.md`). Morrowind-specific code,
+  OpenMW ports included, still lives in bevyrrowind (§1b, §2 litmus test):
+  the split is architectural, not a licence wall.
+- **Additional permission (GPLv3 §7) for GPU vendor runtimes**
+  (`LICENSE-EXCEPTION.md`). It covers only our own code: ported third-party
+  GPL code doesn't carry it, so **the game binary never contains NVIDIA
+  code**. DLSS goes through `vendor/dlss_wgpu` (a drop-in facade with no NVIDIA
+  code) and a separately shipped plugin package (`plugins/sf_dlss` + NVIDIA's
+  DLLs) that the player installs; without it the game runs, DLSS unsupported.
+- Vendored Bevy patches stay MIT OR Apache-2.0 with no GPL-derived lines, so
+  they can go upstream. MIT and Apache-2.0 dependencies are GPLv3-compatible.
 - Using OpenMW only as a black-box oracle (run both, compare outcomes)
   involves no code and is fine anywhere.
 - Morrowind's own data is never redistributed; users point the game at their
