@@ -18,6 +18,7 @@ mod inventory_ui;
 mod level;
 mod live_ab;
 mod mods;
+mod pause_menu;
 mod perf;
 mod physics;
 mod player;

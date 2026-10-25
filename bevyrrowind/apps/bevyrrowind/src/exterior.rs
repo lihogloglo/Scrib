@@ -425,6 +425,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
     crate::inventory::add(&mut app, options.actors.clone());
     crate::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(crate::inventory_ui::SCREEN));
+    // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
+    crate::pause_menu::add(&mut app);
     // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).
     crate::saves::add(&mut app);
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).
