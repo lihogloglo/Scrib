@@ -1,7 +1,7 @@
 # Animation layers: warping, IK, probes, physical animation
 
 Moved verbatim from [animation.md](animation.md) "Next-gen roadmap" (doc cleanup S7a, 2026-10-25). Current design for layers 1-4.
-Overlaps `animation-plan.md` (reconcile in S7b).
+Work order, slice status and owner-pass issues (AN-*) live in [animation-plan.md](animation-plan.md) (kept separate: live status log, not design; reconciled S7b).
 
 ## Next-gen roadmap (anim-plan, 2026-10-11; shape replaced by R11b, 2026-10-19)
 

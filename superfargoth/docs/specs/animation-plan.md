@@ -1,7 +1,9 @@
 # Animation plan: slices (anim-refactor lane, 2026-10-22)
 
+Work order and status log only. The design (R11b "Decided shape", layers 1-4) lives in [animation-layers.md](animation-layers.md); the Next-gen roadmap shape there was replaced by R11b (2026-10-19), so read this file for slice order, acceptance and owner-pass issues (AN-*), not for design.
+
 Execution order for ROADMAP Phase 3 items 3.1, 3.2 and 3.4, ordered by "characters look best soonest".
-Design lives in [animation.md](animation.md) ("Decided shape (R11b)", layers 1-4), [action.md](action.md)
+Design lives in [animation-layers.md](animation-layers.md) ("Decided shape (R11b)", layers 1-4), [animation.md](animation.md), [action.md](action.md)
 (phases A-F), [locomotion.md](locomotion.md) and `../research/animation/12-delirium-physics.md` (R0-R9).
 This file only orders the work and states the acceptance tests. Each slice is one fresh agent: 1-2
 steps, about 60 tool calls, headless tests, a `level-anim-*` scene (test level `bevyrrowind/levels/anim-lab.ron`)
