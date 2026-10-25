@@ -6,6 +6,8 @@ Morrowind content pack and game binary on the superfargoth framework.
 
 ## Start of every session
 
+System map: open `docs/SYSTEMS.md`, find your system's row (specs and sections, crates, ROADMAP and visual-check IDs), read only those.
+
 **Sub-agent with a brief** (most sessions): the brief is your context. Read only what it names, and
 specs by section (`grep -n "^#" <spec>`, then read that heading's lines). Don't read the ROADMAP,
 ARCHITECTURE, DECISIONS, visual-checks or perf.md whole: grep them for your task's ID or system.
@@ -107,6 +109,11 @@ working tree**. Protocol:
    "awaiting owner") and move on; the owner confirms in batched passes.
    Test scenes come in two kinds: real game locations (`view` scenes) and
    isolated synthetic scenes (framework examples), as in Godotwind.
+   **Tests for look and feel (owner 2026-10-25):** physics, animation, rendering and UI-look
+   tests assert only sanity (no explosion or NaN, nothing through the floor, comes to rest, no
+   crash); tuned quality numbers (stretch cm, settle time, ms, pixel diffs) are printed by
+   `#[ignore = "measurement: ..."]` tests, never pass/fail limits. Quality is the owner's
+   visual check. Logic and data (saves, quests, scripts, parsers) keep exact assertions.
 6. **Not a 1:1 port.** Prefer modern behavior; keep rules data/adapter-driven.
 7. **Compile time is a constraint** (ARCHITECTURE.md §8b): logic in
    Bevy-free crates, thin Bevy plugin crates, wide shallow crate graph,

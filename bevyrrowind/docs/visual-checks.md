@@ -665,6 +665,8 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
 PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH-2 (first half, P7) and PH-4 (carry) are below.
 
 ### PH-2 (first half, P7): a dead guard ragdolls on the Balmora stairs
+- Note 2026-10-25: `sf_ragdoll` tests `limp_drop` and `settles_on_stairs` fail on their stretch limit (pre-existing).
+  After this check they become sanity guards + printed measurements (CLAUDE.md hard rule 5).
 - Kind: game location. Run: `.\bevyrrowind view "Balmora"` (release, physics on), fly (free camera) to a guard on
   the stone stairs (the High Town steps up to the Council Club / Hlaalu manor), put the crosshair on him and press
   `I`. He plays his death clip for 0.4 s, then goes limp. Then hold LMB on a hand or foot to drag the body (a 75 kg

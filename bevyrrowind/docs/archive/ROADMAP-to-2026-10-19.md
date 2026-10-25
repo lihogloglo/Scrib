@@ -1,7 +1,7 @@
 # Roadmap
 
 Task-level plan and live status. The *why* lives in
-[`../superfargoth/docs/ARCHITECTURE.md`](../../superfargoth/docs/ARCHITECTURE.md)
+[`../superfargoth/docs/ARCHITECTURE.md`](../../../superfargoth/docs/ARCHITECTURE.md)
 (milestones in §9, decisions in §10). This file is the *what's next*.
 
 **Every session:** read this first; when you stop, update the status marks,

@@ -25,3 +25,5 @@ is the old framework cache, deletable.
 
 Parallel sessions register in `.sessions/<name>.md` (scope, status) and run
 one cargo build at a time. Full protocol: `bevyrrowind/CLAUDE.md`, "Parallel sessions".
+
+System map: `docs/SYSTEMS.md` (find your system's row: specs and sections, crates, ROADMAP and visual-check IDs; read only those).
