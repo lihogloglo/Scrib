@@ -364,6 +364,11 @@ pub(crate) fn sync_dialogue(
     mut focus: ResMut<InputFocus>,
 ) {
     for (root_entity, root, mut screen, mut parts) in &mut screens {
+        // A window taken off the stack this frame (goodbye, Back) may be despawned by the game's
+        // commands before ours apply: leave it alone so no command targets a despawned entity.
+        if !stack.0.is_open(root.0.as_str()) {
+            continue;
+        }
         let parts = &mut *parts;
         let view = &mut screen.view;
         if let Some(entry) = view.take_scroll_request() {
