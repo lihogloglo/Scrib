@@ -540,10 +540,10 @@ mod activation_gate {
 mod carry_view {
     use std::time::Duration;
 
-    use bevy_app::{App, PostUpdate};
+    use bevy_app::{App, FixedUpdate, PostUpdate};
     use bevy_ecs::prelude::*;
     use bevy_math::{Quat, Vec3};
-    use bevy_time::{Time, TimeUpdateStrategy, Virtual};
+    use bevy_time::{Fixed, Time, TimeUpdateStrategy, Virtual};
     use bevy_transform::components::Transform;
     use sf_coords::{WorldPos, WorldTransform};
     use sf_physics::{BodyDesc, BodyKind, HolderLimits, Layer, ShapeRef};
@@ -552,7 +552,7 @@ mod carry_view {
     use sf_world_bevy::from_grid;
 
     use super::{app, pos_of};
-    use crate::{CarryInput, HeldPoses, Holder, Physics, PhysicsBody, PhysicsSystems};
+    use crate::{CarryInput, HeldPoses, Holder, Physics, PhysicsBody, PhysicsSystems, TickView};
 
     const EYE: f32 = 1.6;
 
@@ -637,6 +637,196 @@ mod carry_view {
             let (now, _) = carry_spread(true, dts);
             let (stale, _) = carry_spread(false, dts);
             println!("{name}: spread {:.3} mm drawn after the rig, {:.3} mm before it", now * 1e3, stale * 1e3);
+        }
+    }
+
+    // --- S2-b: the hand from the character's tick pose ([`TickView`]) ---
+
+    /// A walking character's eye at time `t` (local to the default cell): an arc along its facing
+    /// at 1.4 m/s turning at 0.8 rad/s after 0.2 s, looking 0.2 rad down. A pure function of time.
+    fn walker_eye(t: f64) -> Transform {
+        const SPEED: f32 = 1.4;
+        const TURN: f32 = 0.8;
+        #[allow(clippy::cast_possible_truncation)]
+        let yaw = TURN * (t - 0.2).max(0.0) as f32;
+        // The facing is rotation_y(yaw) · −Z = (−sin, 0, −cos); its integral at SPEED:
+        let r = SPEED / TURN;
+        let feet = Vec3::new(r * (yaw.cos() - 1.0), 0.0, -r * yaw.sin());
+        Transform::from_translation(feet + Vec3::Y * EYE).with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-0.2))
+    }
+
+    /// The character's simulation: its eye at each fixed step.
+    #[allow(clippy::needless_pass_by_value)]
+    fn tick_walker(time: Res<Time<Fixed>>, mut views: Query<&mut TickView>) {
+        let eye = walker_eye(time.elapsed_secs_f64());
+        for mut v in &mut views {
+            v.0 = Some(WorldTransform { pos: from_grid(&CellCoord::default(), &eye), rotation: eye.rotation, scale: Vec3::ONE });
+        }
+    }
+
+    /// The pre-S2-b holder: a camera at the same eye, moved at frame rate.
+    #[allow(clippy::needless_pass_by_value)]
+    fn camera_walker(time: Res<Time<Virtual>>, mut cams: Query<&mut Transform, (With<Holder>, Without<TickView>)>) {
+        for mut t in &mut cams {
+            *t = walker_eye(time.elapsed_secs_f64());
+        }
+    }
+
+    type Step = (f64, WorldTransform, WorldPos);
+
+    /// Per fixed step: (time, the walker's eye, the carried item's simulated position).
+    #[derive(Resource)]
+    struct Track {
+        ws: WorldspaceId,
+        id: sf_physics::BodyId,
+        steps: Vec<Step>,
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn record(time: Res<Time<Fixed>>, physics: Res<Physics>, mut track: ResMut<Track>) {
+        let Some(item) = physics.world(&track.ws).and_then(|w| w.pose(track.id)) else { return };
+        let eye = walker_eye(time.elapsed_secs_f64());
+        let eye = WorldTransform { pos: from_grid(&CellCoord::default(), &eye), rotation: eye.rotation, scale: Vec3::ONE };
+        track.steps.push((time.elapsed_secs_f64(), eye, item.pos));
+    }
+
+    /// Grabs a box at 60 fps, then walks 2 s at frame times `dts` (cycled). The holder takes its
+    /// view from the tick (`tick_view`) or from a camera moved at frame rate. Returns every step's
+    /// record and every frame's drawn item offset from the latest tick eye.
+    fn walk_carry(tick_view: bool, dts: &[f64]) -> (Vec<Step>, Vec<(WorldTransform, WorldPos)>) {
+        let ws = WorldspaceId::new("carry");
+        let mut app = app(&ws);
+        let holder = if tick_view {
+            app.add_systems(FixedUpdate, tick_walker.before(PhysicsSystems::Hands));
+            app.world_mut().spawn((Holder::new(HolderLimits::default()), TickView::default())).id()
+        } else {
+            app.add_systems(PostUpdate, camera_walker.before(PhysicsSystems::HeldPoses));
+            app.world_mut().spawn((Holder::new(HolderLimits::default()), CellCoord::default(), walker_eye(0.0))).id()
+        };
+        let eye = walker_eye(0.0);
+        let at = Transform::from_translation(eye.translation + eye.forward().as_vec3());
+        let at = WorldTransform { pos: from_grid(&CellCoord::default(), &at), ..WorldTransform::IDENTITY };
+        let mut desc = BodyDesc::new(BodyKind::Dynamic { asleep: false }, at, ShapeRef::Box(Vec3::splat(0.1)), Layer::DEBRIS);
+        desc.mass = Some(2.0);
+        let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &desc);
+        app.world_mut().spawn((PhysicsBody { worldspace: ws.clone(), id }, CellCoord::default(), Transform::default()));
+        app.insert_resource(Track { ws, id, steps: Vec::new() }).add_systems(FixedUpdate, record.after(PhysicsSystems::Step));
+
+        for _ in 0..3 {
+            app.update();
+        }
+        app.world_mut().write_message(CarryInput::Grab(holder));
+        app.update();
+        assert!(app.world().get::<Holder>(holder).unwrap().carrier.held().is_some(), "nothing grabbed");
+        let mut drawn = Vec::new();
+        let mut elapsed = 0.0;
+        for (i, dt) in dts.iter().cycle().enumerate() {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(*dt)));
+            app.update();
+            elapsed += dt;
+            // The first pose needs a step after the grab (none yet in a short frame).
+            let Some(pose) = app.world().resource::<HeldPoses>().0.get(&id).copied() else {
+                assert!(elapsed < 0.1, "frame {i}: let go of the item");
+                continue;
+            };
+            let eye = app.world().resource::<Track>().steps.last().unwrap().1;
+            drawn.push((eye, pose.pos));
+            if elapsed > 2.0 {
+                break;
+            }
+        }
+        (std::mem::take(&mut app.world_mut().resource_mut::<Track>().steps), drawn)
+    }
+
+    /// Distance of `item` ahead of the eye along its horizontal facing, and its lateral offset.
+    fn ahead(eye: &WorldTransform, item: WorldPos) -> (f32, f32) {
+        let d = eye.pos.delta(item).as_vec3();
+        let f = eye.rotation * Vec3::NEG_Z;
+        let f = Vec3::new(f.x, 0.0, f.z).normalize();
+        (d.dot(f), d.dot(Vec3::Y.cross(f)))
+    }
+
+    /// Third person: the hand is in front of the body, not of the camera behind it. The walker
+    /// turns and walks; every step's simulated item and every frame's drawn item stay ahead of
+    /// the character along its facing, within the hold distance.
+    #[test]
+    fn tick_view_carries_in_front_of_the_walking_body() {
+        let (steps, drawn) = walk_carry(true, &FRAME_TIMES);
+        assert!(steps.len() > 100, "{} steps", steps.len());
+        for (t, eye, item) in &steps {
+            let (fwd, side) = ahead(eye, *item);
+            assert!(fwd.is_finite() && side.is_finite(), "t {t}: NaN");
+            assert!((0.3..1.5).contains(&fwd) && side.abs() < 0.5, "t {t}: item {fwd} m ahead, {side} m aside");
+        }
+        for (i, (eye, item)) in drawn.iter().enumerate() {
+            let (fwd, side) = ahead(eye, *item);
+            assert!((0.3..1.5).contains(&fwd) && side.abs() < 0.5, "frame {i}: drawn {fwd} m ahead, {side} m aside");
+        }
+    }
+
+    const FPS_45: [f64; 1] = [1.0 / 45.0];
+    const FPS_144: [f64; 1] = [1.0 / 144.0];
+
+    /// Largest distance between two runs' items at the same fixed steps.
+    fn divergence(a: &[Step], b: &[Step]) -> f32 {
+        let n = a.len().min(b.len());
+        assert!(n > 100, "{n} common steps");
+        a[..n].iter().zip(&b[..n]).map(|(x, y)| {
+            assert!((x.0 - y.0).abs() < 1e-6, "steps out of step: {} vs {}", x.0, y.0);
+            x.2.delta(y.2).as_vec3().length()
+        }).fold(0.0, f32::max)
+    }
+
+    /// Determinism-lite: the hand comes from the simulation, so the held item's simulated path
+    /// is the same at 45 and 144 fps. The camera-fed holder (frame-rate views) is not.
+    #[test]
+    fn tick_view_hand_ignores_the_frame_rate() {
+        let (a, _) = walk_carry(true, &FPS_45);
+        let (b, _) = walk_carry(true, &FPS_144);
+        let tick = divergence(&a, &b);
+        assert!(tick < 1e-4, "tick-view items {tick} m apart at 45 vs 144 fps");
+        // Red without S2-b: views stamped by render frames move the hand differently.
+        let (a, _) = walk_carry(false, &FPS_45);
+        let (b, _) = walk_carry(false, &FPS_144);
+        let camera = divergence(&a, &b);
+        assert!(camera > 1e-4, "the camera-fed hand matched across frame rates: {camera} m");
+    }
+
+    /// A character holder that goes away (player mode off, death) lets go: no orphaned hand,
+    /// the item back on its own layer.
+    #[test]
+    fn despawned_holder_lets_go() {
+        let ws = WorldspaceId::new("carry");
+        let mut app = app(&ws);
+        app.add_systems(FixedUpdate, tick_walker.before(PhysicsSystems::Hands));
+        let holder = app.world_mut().spawn((Holder::new(HolderLimits::default()), TickView::default())).id();
+        let eye = walker_eye(0.0);
+        let at = Transform::from_translation(eye.translation + eye.forward().as_vec3());
+        let at = WorldTransform { pos: from_grid(&CellCoord::default(), &at), ..WorldTransform::IDENTITY };
+        let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &BodyDesc::new(BodyKind::Dynamic { asleep: false }, at, ShapeRef::Box(Vec3::splat(0.1)), Layer::DEBRIS));
+        for _ in 0..3 {
+            app.update();
+        }
+        let bodies = app.world().resource::<Physics>().worlds.body_count();
+        app.world_mut().write_message(CarryInput::Grab(holder));
+        app.update();
+        app.update();
+        assert!(app.world().get::<Holder>(holder).unwrap().carrier.held() == Some(id), "nothing grabbed");
+        assert_ne!(app.world().resource::<Physics>().world(&ws).unwrap().layer(id), Some(Layer::DEBRIS), "held items change layer");
+        app.world_mut().despawn(holder);
+        app.update();
+        let physics = app.world().resource::<Physics>();
+        assert_eq!(physics.world(&ws).unwrap().layer(id), Some(Layer::DEBRIS));
+        assert_eq!(physics.worlds.body_count(), bodies, "the hand body was left behind");
+    }
+
+    #[test]
+    #[ignore = "measurement: held item divergence between 45 and 144 fps, tick view vs camera view"]
+    fn tick_view_divergence_measurement() {
+        for (name, tick) in [("tick view", true), ("camera view", false)] {
+            let (a, _) = walk_carry(tick, &FPS_45);
+            let (b, _) = walk_carry(tick, &FPS_144);
+            println!("{name}: {:.4} mm", divergence(&a, &b) * 1e3);
         }
     }
 }

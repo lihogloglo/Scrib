@@ -1,17 +1,29 @@
 //! Carry, drag and throw for holder entities (physics.md "Carry and throw", P6).
 //!
-//! A [`Holder`] entity's own `CellCoord + Transform` is its view (the eye,
-//! looking along −Z: a camera, or later a character's head). Each frame its
-//! final view of the frame is recorded with that frame's virtual clock;
-//! before each fixed step the carrier's hand moves to the view at the step's
-//! time (extrapolated past the newest view), after it the item's pose is
-//! recorded relative to the hand. A carried item is drawn in holder space
-//! against the same final view ([`HeldPoses`], written to its transform), which
-//! removes the beat between the frame-rate view and the 60 Hz step. Both run
-//! in `PostUpdate`, [`crate::PhysicsSystems::HeldPoses`]: the host orders its
-//! camera rig before that set, or the item lags the view by a frame (S2-a,
-//! the player-mode vibration). Input comes in as
-//! [`CarryInput`] messages, results go out as [`CarryFeedback`].
+//! A holder's view is the eye looking along −Z, from one of two sources:
+//!
+//! - **Camera** (no [`TickView`]): the entity's own `CellCoord + Transform`.
+//!   Each frame its final view of the frame is recorded with that frame's
+//!   virtual clock (below).
+//! - **Tick** ([`TickView`], a character): the host writes the character's
+//!   eye at the tick (tick pose + eye height + the command's look) every
+//!   fixed step, before [`crate::PhysicsSystems::Hands`]; it is recorded with
+//!   the step's time, so the hand follows the simulation, never a render
+//!   frame (deterministic, and in third person in front of the body, not of
+//!   the camera behind it: S2-b). The pick ray and the throw use it too, and
+//!   the item is drawn against the two latest tick views blended by the
+//!   fixed overstep, as the character's body is drawn.
+//!
+//! Before each fixed step the carrier's hand moves to the view at the step's
+//! time (for a camera, extrapolated past the newest view), after it the
+//! item's pose is recorded relative to the hand. A carried item is drawn in
+//! holder space against the view of the frame ([`HeldPoses`], written to its
+//! transform), which removes the beat between the frame-rate view and the
+//! 60 Hz step. Recording camera views and drawing run in `PostUpdate`,
+//! [`crate::PhysicsSystems::HeldPoses`]: the host orders its camera rig
+//! before that set, or the item lags the view by a frame (S2-a). Input comes
+//! in as [`CarryInput`] messages, results go out as [`CarryFeedback`]. A
+//! holder that goes away (a despawned character) lets go of what it held.
 //!
 //! Limits are the host's: it fills [`Holder::carrier`]`.limits` from its
 //! adapter (`HolderLimits` from a strength stat).
@@ -48,6 +60,12 @@ impl Holder {
         self.carrier.speed_scale()
     }
 }
+
+/// A holder's view from the simulation (see the module docs): the eye at the
+/// current fixed step, written by the host every step before
+/// [`crate::PhysicsSystems::Hands`]. `None` until the first step.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct TickView(pub Option<WorldTransform>);
 
 /// What a holder should do.
 #[derive(Message, Clone, Copy, Debug)]
@@ -89,7 +107,8 @@ pub(crate) fn add(app: &mut App) {
     app.add_message::<CarryInput>()
         .add_message::<CarryFeedback>()
         .init_resource::<HeldPoses>()
-        .add_systems(FixedUpdate, (drive_hands.before(PhysicsSystems::Step), after_step.after(PhysicsSystems::Step)))
+        .add_observer(let_go_on_remove)
+        .add_systems(FixedUpdate, (drive_hands.in_set(PhysicsSystems::Hands), after_step.after(PhysicsSystems::Step)))
         .add_systems(Update, apply_inputs.in_set(PhysicsSystems::Carry).after(PhysicsSystems::Stream).before(PhysicsSystems::WriteBack))
         .add_systems(
             PostUpdate,
@@ -102,7 +121,7 @@ fn view_of(cell: &CellCoord, t: &Transform) -> WorldTransform {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn record_views(time: Res<Time<Virtual>>, mut holders: Query<(&mut Holder, &CellCoord, &Transform)>) {
+fn record_views(time: Res<Time<Virtual>>, mut holders: Query<(&mut Holder, &CellCoord, &Transform), Without<TickView>>) {
     let now = time.elapsed_secs_f64();
     for (mut h, cell, t) in &mut holders {
         h.carrier.record_view(now, view_of(cell, t));
@@ -146,10 +165,18 @@ fn apply_inputs(
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn drive_hands(time: Res<Time<Fixed>>, mut holders: Query<(Entity, &mut Holder)>, mut physics: ResMut<Physics>, mut feedback: MessageWriter<CarryFeedback>) {
+fn drive_hands(
+    time: Res<Time<Fixed>>,
+    mut holders: Query<(Entity, &mut Holder, Option<&TickView>)>,
+    mut physics: ResMut<Physics>,
+    mut feedback: MessageWriter<CarryFeedback>,
+) {
     let now = time.elapsed_secs_f64();
     let active = physics.worlds.active().cloned();
-    for (e, mut h) in &mut holders {
+    for (e, mut h, tick) in &mut holders {
+        if let Some(&TickView(Some(view))) = tick {
+            h.carrier.record_view(now, view);
+        }
         let Some(ws) = h.worldspace.clone() else { continue };
         let Some(w) = physics.worlds.get_mut(&ws) else {
             h.worldspace = None;
@@ -169,6 +196,15 @@ fn drive_hands(time: Res<Time<Fixed>>, mut holders: Query<(Entity, &mut Holder)>
     }
 }
 
+/// A holder removed or despawned (a character leaving) lets go: no orphaned hand body or joint.
+fn let_go_on_remove(remove: On<Remove<Holder>>, mut holders: Query<&mut Holder>, physics: Option<ResMut<Physics>>) {
+    let (Ok(mut h), Some(mut physics)) = (holders.get_mut(remove.entity), physics) else { return };
+    let Some(ws) = h.worldspace.take() else { return };
+    if let Some(w) = physics.worlds.get_mut(&ws) {
+        h.carrier.drop(w);
+    }
+}
+
 fn outcome_of(end: CarryEnd) -> CarryOutcome {
     match end {
         CarryEnd::Broke(_) => CarryOutcome::Broke,
@@ -185,15 +221,30 @@ fn after_step(mut holders: Query<(Entity, &mut Holder)>, mut physics: ResMut<Phy
     }
 }
 
+/// A camera holder's view: its grid pose.
+type CameraView = (&'static CellCoord, &'static Transform);
+
 #[allow(clippy::needless_pass_by_value)]
-fn held_poses(time: Res<Time<Fixed>>, holders: Query<(&Holder, &CellCoord, &Transform)>, physics: Res<Physics>, mut poses: ResMut<HeldPoses>) {
+fn held_poses(
+    time: Res<Time<Fixed>>,
+    holders: Query<(&Holder, Option<CameraView>, Has<TickView>)>,
+    physics: Res<Physics>,
+    mut poses: ResMut<HeldPoses>,
+) {
     poses.0.clear();
     let alpha = time.overstep_fraction();
-    for (h, cell, t) in &holders {
+    // A tick view is drawn between the last two steps' views, like the character.
+    let blended = time.elapsed_secs_f64() - time.timestep().as_secs_f64() * f64::from(1.0 - alpha.clamp(0.0, 1.0));
+    for (h, camera, tick) in &holders {
         if h.worldspace.is_none() || h.worldspace.as_ref() != physics.worlds.active() {
             continue;
         }
-        if let Some((body, pose)) = h.carrier.render_pose(&view_of(cell, t), alpha) {
+        let view = match (tick, camera) {
+            (true, _) => h.carrier.view_at(blended),
+            (false, Some((cell, t))) => Some(view_of(cell, t)),
+            (false, None) => None,
+        };
+        if let Some((body, pose)) = view.and_then(|view| h.carrier.render_pose(&view, alpha)) {
             poses.0.insert(body, pose);
         }
     }

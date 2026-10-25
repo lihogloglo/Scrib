@@ -52,9 +52,10 @@ use sf_coords::WorldTransform;
 use sf_physics::steps::{BODY_COOK, Hold, ITEMS_CHECK, ItemChecks, SUPPORT_COOK};
 use sf_physics::{BodyDesc, BodyKind, BodyShape, Layer, ShapeRef};
 use sf_physics_bevy::{
-    CarryFeedback, CarryInput, CharacterStats, Holder, ItemBody, ItemContent, Physics, PhysicsBody, PhysicsBodySource, PhysicsDebug, PhysicsPlugin, PhysicsShapeSource,
+    CarryFeedback, CarryInput, CharacterStats, Holder, TickView, ItemBody, ItemContent, Physics, PhysicsBody, PhysicsBodySource, PhysicsDebug, PhysicsPlugin, PhysicsShapeSource,
     PhysicsSettings, PhysicsStats, PhysicsStreaming, hook_items, hook_physics,
 };
+use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim_bevy::{Animator, Hit};
 use sf_character_bevy::CharacterBody;
 use sf_controller_bevy::Dormant;
@@ -110,6 +111,11 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
                 (attach_holder, carry_keys).chain().before(sf_physics_bevy::PhysicsSystems::Carry),
                 carry_feedback.after(sf_physics_bevy::PhysicsSystems::Carry),
             ),
+        )
+        // The player's hand follows its tick pose (S2-b): after the move, before the hands.
+        .add_systems(
+            FixedUpdate,
+            player_tick_view.after(sf_action_bevy::ActionSystems::Move).before(sf_physics_bevy::PhysicsSystems::Hands),
         )
         .add_systems(Last, cap_fps);
 }
@@ -327,29 +333,68 @@ fn ragdoll_log(stats: Res<RagdollStats>, mut last: Local<(usize, usize)>, mut pe
 
 // --- Carry, drag and throw (P6 debug driver) ---------------------------------------------
 
-/// The dev camera carries (no player yet): hold the left mouse button on an
-/// item under the crosshair to carry it (or drag it when it is heavier than
-/// the carry mass), release to drop; `V` throws what is carried; `[` and `]`
-/// turn it. Limits from Strength [`mw_physics::DEFAULT_STRENGTH`]
-/// (`BEVYRROWIND_STRENGTH` overrides it). PH-4.
-fn attach_holder(mut commands: Commands, cameras: Query<Entity, (With<FreeCamera>, Without<Holder>)>) {
-    for e in &cameras {
+/// The free camera carries, and in player mode the player's body (S2-b): hold
+/// the left mouse button on an item under the crosshair to carry it (or drag
+/// it when it is heavier than the carry mass), release to drop; `V` throws
+/// what is carried; `[` and `]` turn it. Limits from Strength
+/// [`mw_physics::DEFAULT_STRENGTH`] (`BEVYRROWIND_STRENGTH` overrides it). PH-4.
+/// The body's holder sees from its [`TickView`] ([`player_tick_view`]), not
+/// from the camera: in third person the hand is in front of the body.
+fn attach_holder(
+    mut commands: Commands,
+    cameras: Query<Entity, (With<FreeCamera>, Without<Holder>)>,
+    bodies: Query<Entity, (With<crate::player::PlayerBody>, Without<Holder>)>,
+) {
+    let limits = || {
         let strength = std::env::var("BEVYRROWIND_STRENGTH").ok().and_then(|s| s.parse().ok()).unwrap_or(mw_physics::DEFAULT_STRENGTH);
         let limits = mw_physics::holder_limits(strength);
         info!("carry: Strength {strength} -> {limits:?}");
-        commands.entity(e).try_insert(Holder::new(limits));
+        limits
+    };
+    for e in &cameras {
+        commands.entity(e).try_insert(Holder::new(limits()));
+    }
+    for e in &bodies {
+        commands.entity(e).try_insert((Holder::new(limits()), TickView::default()));
     }
 }
 
+/// The player's eye at this tick: the body's tick pose, the first-person eye
+/// height (and its small step ahead) and the tick command's look. Simulation
+/// state only (a remote player's would come from its replicated commands).
+#[allow(clippy::needless_pass_by_value)]
+fn player_tick_view(
+    cameras: Query<&sf_camera_bevy::PlayerCamera>,
+    mut bodies: Query<(&ActionBody, &ActionCharacter, &mut TickView), With<crate::player::PlayerBody>>,
+) {
+    let fp = cameras.iter().next().map(|c| c.params.first_person).unwrap_or_default();
+    for (body, character, mut view) in &mut bodies {
+        let look = sf_camera::Look::new(character.command.view.yaw, character.command.view.pitch);
+        let ahead = Vec3::new(look.yaw.sin(), 0.0, look.yaw.cos()) * fp.eye_forward;
+        let pos = body.poses().1.position.offset(Vec3::Y * fp.eye_height + ahead);
+        view.0 = Some(WorldTransform { pos, rotation: look.rotation(), scale: Vec3::ONE });
+    }
+}
+
+/// Carry keys go to the holder that sees: the player's body in player mode,
+/// else the free camera. One that stops seeing lets go.
 #[allow(clippy::needless_pass_by_value)]
 fn carry_keys(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    holders: Query<(Entity, &Holder)>,
+    mode: Option<Res<crate::player::PlayerMode>>,
+    holders: Query<(Entity, &Holder, Has<TickView>)>,
     mut input: MessageWriter<CarryInput>,
 ) {
     const TURN: f32 = 0.26;
-    for (e, h) in &holders {
+    let player = mode.is_some_and(|m| m.body.is_some());
+    for (e, h, body) in &holders {
+        if body != player {
+            if h.carrier.held().is_some() {
+                input.write(CarryInput::Drop(e));
+            }
+            continue;
+        }
         if mouse.just_pressed(MouseButton::Left) {
             input.write(CarryInput::Grab(e));
         }

@@ -50,7 +50,7 @@ mod tests;
 pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter};
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
-pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder};
+pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder, TickView};
 pub use sf_physics;
 #[cfg(feature = "ragdoll")]
 pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, RagdollGotUp,RagdollLoader, RagdollMode, RagdollSource, RagdollStats, Ragdolls, clip_root_body};
@@ -204,13 +204,16 @@ pub struct PhysicsStats {
 pub enum PhysicsSystems {
     /// `Update`, after `StreamingSystems::Drive`: activation inserts.
     Stream,
+    /// `FixedUpdate`, before `Step`: carry hands move to their holders' views at the
+    /// step's time. A host that writes a [`TickView`] orders it before this set.
+    Hands,
     /// `FixedUpdate`: the step.
     Step,
     /// `Update`, between `Stream` and `WriteBack`: carry input (grab, drop,
     /// throw, rotate).
     Carry,
     /// `PostUpdate`, before transform propagation and `big_space`'s
-    /// recentering: holders' final views of the frame are recorded (stamped
+    /// recentering: camera holders' final views of the frame are recorded (stamped
     /// with the frame's virtual time; the next frame's steps move the hands
     /// toward them) and carried items are drawn in holder space against those
     /// views. Order the host's camera rig (anything that moves a holder)
@@ -241,6 +244,7 @@ impl Plugin for PhysicsPlugin {
                 PostUpdate,
                 PhysicsSystems::HeldPoses.before(bevy_transform::TransformSystems::Propagate).before(BigSpaceSystems::RecenterLargeTransforms),
             )
+            .configure_sets(FixedUpdate, PhysicsSystems::Hands.before(PhysicsSystems::Step))
             .add_systems(First, begin_frame)
             .add_systems(FixedUpdate, step.in_set(PhysicsSystems::Step))
             .add_systems(
