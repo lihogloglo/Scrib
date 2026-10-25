@@ -10,6 +10,13 @@ part of `sf_script`'s API surface), `sf_devui` (dev tools only).
 History (research R1-R5, as-built logs U1a-U2, U5, U6, dialogue view-model detail, industry table, closed
 questions): [archive/ui-history.md](archive/ui-history.md).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: framework (U1-U2), inventory and keybinds logic (U5, U6) and stock screens built; pause menu and options screens wired in the game 2026-10-26; ROADMAP 2.2 open (8-piece frames, inventory icons, theme hot reload). Designed, not built: `sf_ui_lua`, `sf_devui`.
+> Crates / key types: `sf_ui`, `sf_rpg_ui`, `sf_ui_inventory`, `sf_ui_bevy`, `sf_ui_css` (bevy_flair), `sf_ui_screens` (dialogue, journal, inventory, keybinds, HUD, `SaveLoadScreen`, `PauseMenuScreen`, `OptionsScreen`); `UiScreenRoot`, `UiSettings`, `InputMode`.
+> Decisions: two themes and two layout presets over one view-model ("Owner decisions"); modder styling is CSS via bevy_flair; Bevy first, Feathers dev-only ("Stack decision").
+> Read next: "As built: current state" (wins on conflicts); "Stack decision" for crate choices; "Interfaces" for types.
+<!-- /agent-summary -->
+
 ## Goal
 
 A game UI that is good on day one and stays good under mods. Concretely:

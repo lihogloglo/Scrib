@@ -10,6 +10,13 @@ Open: ROADMAP 1.4 (lamp-shadow count for High, LM-1, RO-1, SH-11, SH-13) and 1.1
 diagnosis: [../research/shadows/README.md](../research/shadows/README.md). The v2 design, F6 slices and slice
 write-ups (superseded or built) live in [archive/shadows-history.md](archive/shadows-history.md).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: shadow reset (2026-10-21) built, awaiting owner checks SH-14..SH-19; ROADMAP 1.4 and 1.12 (SH-20) open; quality is hard problem H2. Built: A1 (contact shadows sun/moon, GTAO), A2 (lamp maps captured during door fade; far map and caster cull deleted), B1 (vendored Bevy PRs #26149/#26161), B2 (shadow early-out, 2x2 PCF for lamps), light selection, lamp cache.
+> Crates / key types: `sf_sky_bevy` (`shadow_importance`), `sf_shadow_cache_bevy`; `ShadowMobility::Movable` marks non-static casters.
+> Decisions: stock Bevy plus vendored PRs, no render-world injection (DECISIONS 2026-10-21); static caster depth cached per lamp ("Caching"); lamp slot choice by `shadow_importance` ("Light selection").
+> Read next: the "Current design" header for state; "Reset B2 as built" for the lamp filter; "What Bevy 0.20 gives" for engine limits.
+<!-- /agent-summary -->
+
 ## Shadows v2: one design (2026-10-20)
 
 Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-history.md](archive/shadows-history.md#shadows-v2-one-design-2026-10-20).

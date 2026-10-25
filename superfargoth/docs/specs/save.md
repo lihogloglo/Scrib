@@ -11,6 +11,13 @@ timers and saves", [weather/state.md](weather/state.md) "State and forecast".
 History (2026-10-22 research, crate survey, industry table, S1/S2 log and measurements):
 [archive/save-history.md](archive/save-history.md).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: S1 + S2 built (Phase 2.5), game load correctness 2026-10-25; the save/load screen exists in `sf_ui_screens` (`saveload.rs`) but game wiring (ROADMAP 2.5 part B: load screen, save list, naming) is not done; SV-1 awaiting owner. Not built: S3 (mod diff, dormancy dialog, `clean`), S4 (co-op).
+> Crates / key types: `sf_save` (Bevy-free: container, versions, migration, atomic files, slots), `sf_save_bevy` (plugin, tick-boundary snapshot, background write, autosave).
+> Decisions: host world save plus per-player character save, host wins ("Owner decisions"); load is a full resident-cell reload, not a diff ("As built (game load correctness)"); LZ4 container with strict decode ("As built (S1, S2)").
+> Read next: "What is saved" for sections; "Versioning and migration" for format changes; "As built" at the end (wins on conflicts).
+<!-- /agent-summary -->
+
 ## Goal
 
 Save and resume a game, single-player or co-op, on the same code path: the host writes one **world save**

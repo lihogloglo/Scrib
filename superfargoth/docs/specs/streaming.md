@@ -5,6 +5,13 @@ and `sf_world_bevy` implemented (2026-10-11)
 Crates: `sf_world` (new, Bevy-free: records, index, scheduler),
 `sf_world_bevy` (new: plugin, spawning, big_space glue)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: agreed and implemented (2026-10-11); ROADMAP 1.1 (stability) and 1.9 (streaming and culling levers) open. Built: `sf_world` core with `world.*` bake steps, `sf_world_bevy` plugin; `Scheduler::reload_resident` for save load.
+> Crates / key types: `sf_world` (Bevy-free: records, index, `Scheduler`), `sf_world_bevy` (spawning, big_space glue); `Level::Active`, `covers`.
+> Decisions: worldspaces with door links ("Worldspaces at runtime"); rings decide residency, `VisibilityRange` decides LOD drawn ("Rings"); ring radii scale with quality preset; no colliders outside R0; actors simulate only where cells are Active ("Decided").
+> Read next: "Rings" and "Scheduler and budgets" for tuning; "Interfaces" for `sf_world_bevy` API; "Spikes" for measurements.
+<!-- /agent-summary -->
+
 ## Goal
 
 Stream an arbitrarily large exterior and any number of interiors around the

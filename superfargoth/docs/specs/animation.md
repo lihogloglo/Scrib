@@ -11,6 +11,13 @@ ops, root motion, events and curves, IK solvers, retarget math, bake steps),
 spaces, sync, inertialization, procedural op stack), `sf_anim_bevy` (new:
 plugin, scheduling, LOD and budget, bone write-back, events, debug draw)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: draft; `sf_anim` and `sf_anim_graph` built, `sf_anim_bevy` plugin runs R0 write-back (ROADMAP 3.1/3.2; AN-1..21 fixed, PH-2 awaiting owner). Designed, not built: next-gen layers (warping, full-body IK, context probes, physical animation), pose search, creatures.
+> Crates / key types: `sf_anim` (skeletons, clips, sampling, pose ops, IK), `sf_anim_graph` (graphs, layers, blend spaces, inertialization), `sf_anim_bevy` (plugin, LOD and budget, write-back).
+> Decisions: own pose runtime, not `bevy_animation` ("Why not Bevy's animation system"); everything precomputed is a bake product ("Bake steps"); tiers by projected height ("LOD and budget"); the decider lives in action.md (R11b).
+> Read next: "Evaluation" or "Bevy integration" for runtime work; animation-layers.md "Decided shape (R11b)" for design; animation-plan.md for slice order and AN-* issues.
+<!-- /agent-summary -->
+
 ## Goal
 
 Characters and creatures animate with modern quality and at crowd scale:

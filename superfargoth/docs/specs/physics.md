@@ -8,6 +8,12 @@ get-up), cloth lattice in `sf_anim` (procedural op) + `cloth.cook` in `sf_charac
 `sf_controller` (`PhysicsProbe`, pushes), `sf_anim_graph` (`PoseInput` blend), `sf_world_bevy` (hooks).
 Adapter spec (first content pack): `../../../bevyrrowind/docs/specs/physics-adapter.md`.
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: P1-P10a, R3 built; fix plan slices 1-10 landed 2026-10-26, owner check PH-11 pending; ROADMAP 3.2/3.3 open. Built: rigid bodies, items asleep until disturbed, kinematic controller pushes, carry/throw, ragdolls, collision-ready gate, arrival gate and safety net. Later, not M4: buoyancy (M6), GPU mesh cloth, world cloth.
+> Crates / key types: `sf_physics` (Bevy-free, `BodyId`), `sf_physics_bevy`, `sf_ragdoll`; `PhysicsProbe`. Decisions: `rapier3d` 0.36.1 behind our API ("Backend decision"); fixed step with render interpolation, f32 local frame rebased by cells ("Stepping and the floating origin"); impulse joints (Open questions 1); characters stay kinematic ("Controller").
+> Read next: "Data model" for types; "Carry and throw" or "Ragdolls and the animation blend" for those tasks; `bevyrrowind/docs/specs/physics-fix-plan.md` for current work.
+<!-- /agent-summary -->
+
 ## Goal
 
 ARCHITECTURE §9 M4: "Knock a table's contents over; a dead guard ragdolls; robes move."
