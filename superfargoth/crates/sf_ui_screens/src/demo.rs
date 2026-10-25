@@ -18,7 +18,7 @@ use sf_ui_inventory::{Better, InventoryTab, InventoryView, ItemCatalog, ItemInfo
 use crate::hud::{HudBar, HudView, UsePrompt};
 use crate::journal::JournalSource;
 
-/// Screen records of the demo: the HUD and four menus.
+/// Screen records of the demo: the HUD and the menus (the pause menu pauses the game).
 pub const SCREENS: &str = r#"
 [[define]]
 kind = "ui.screen"
@@ -49,6 +49,11 @@ value = { layer = "Menu", implementation = { Template = "keybinds" } }
 kind = "ui.screen"
 id = "saveload"
 value = { layer = "Menu", implementation = { Template = "saveload" } }
+
+[[define]]
+kind = "ui.screen"
+id = "pause"
+value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "pause" } }
 "#;
 
 /// The registry of [`SCREENS`].

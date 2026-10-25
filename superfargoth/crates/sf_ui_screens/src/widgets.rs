@@ -199,6 +199,90 @@ pub fn centred_window(node: Node) -> (Node, UiTransform) {
     (node, UiTransform::from_translation(Val2::percent(-50.0, -50.0)))
 }
 
+/// A yes/no question modal inside a window: a hidden overlay with the question's text and two
+/// answer buttons (yes, then the cancelling one). The screen sets the text every frame; an
+/// empty text hides it. Used by the save/load screen and the pause menu.
+#[derive(Debug)]
+pub struct Question {
+    pub overlay: Entity,
+    pub text: Entity,
+    /// Yes, then the cancelling answer.
+    pub buttons: [Entity; 2],
+    shown: String,
+}
+
+impl Question {
+    /// Spawns the hidden question under `root`. `names`: the overlay, its text and the row of
+    /// answers; `answers`: each answer's part name, label and marker component.
+    pub fn spawn<B: Bundle>(
+        commands: &mut Commands,
+        root: Entity,
+        names: [&'static str; 3],
+        answers: [(&'static str, String, B); 2],
+        colors: &ScreenColors,
+    ) -> Self {
+        let overlay = commands
+            .spawn((
+                part(names[0]),
+                centred_window(Node {
+                    padding: UiRect::all(Val::Px(16.0)),
+                    row_gap: Val::Px(8.0),
+                    flex_direction: FlexDirection::Column,
+                    display: Display::None,
+                    ..Node::default()
+                }),
+                BackgroundColor(colors.panel),
+                ZIndex(10),
+                ChildOf(root),
+            ))
+            .id();
+        let text = commands
+            .spawn((label(names[1], "", colors), ChildOf(overlay)))
+            .id();
+        let choices = commands
+            .spawn((
+                part(names[2]),
+                Node {
+                    column_gap: Val::Px(8.0),
+                    ..Node::default()
+                },
+                ChildOf(overlay),
+            ))
+            .id();
+        let buttons = answers.map(|(name, text, kind)| {
+            commands
+                .spawn((button(name, text, colors), kind, ChildOf(choices)))
+                .id()
+        });
+        Self {
+            overlay,
+            text,
+            buttons,
+            shown: String::new(),
+        }
+    }
+
+    /// Shows `question` (empty: hidden). Writes only when it changes.
+    pub fn set(
+        &mut self,
+        commands: &mut Commands,
+        nodes: &mut Query<&mut Node>,
+        question: String,
+        colors: &ScreenColors,
+    ) {
+        if self.shown == question {
+            return;
+        }
+        if let Ok(mut node) = nodes.get_mut(self.overlay) {
+            show(&mut node, !question.is_empty());
+        }
+        commands
+            .entity(self.text)
+            .insert((Text::new(question.clone()), TextColor(colors.text)));
+        self.shown = question;
+    }
+}
+
 /// Disabled state: `InteractionDisabled` (headless widgets ignore it) and the `disabled` class.
 pub fn set_disabled(commands: &mut Commands, entity: Entity, disabled: bool) {
     if disabled {

@@ -1,7 +1,8 @@
 //! Every stock screen over synthetic data (`--features demo`), unthemed (the fallback look).
 //!
 //! `cargo run -p sf_ui_screens --features demo --example screens` opens a window with the HUD.
-//! F1 dialogue, F2 journal, F3 inventory (1,000 stacks), F4 keybinds; on a pad, Start (Esc)
+//! F1 dialogue, F2 journal, F3 inventory (1,000 stacks), F4 keybinds, F5 pause menu (Save
+//! disabled, to show a disabled entry); on a pad, Start (Esc)
 //! cycles them from the HUD and View (M) opens the inventory. B (Esc) closes a screen.
 //! Hold H to drain the HUD's health bar.
 //!
@@ -23,10 +24,11 @@ use sf_ui_bevy::{
 use sf_ui_screens::demo::{self, DemoInventory, DemoWorld};
 use sf_ui_screens::{
     DialogueScreen, HudScreen, HudView, InventoryScreen, JournalUi, JournalUiPlugin,
-    KeybindsScreen, ScreenSystems, SfScreensPlugin,
+    KeybindsScreen, PauseChoice, PauseMenuModel, PauseMenuScreen, ScreenSystems,
+    SfScreensPlugin,
 };
 
-const MENUS: [&str; 4] = ["dialogue", "journal", "inventory", "keybinds"];
+const MENUS: [&str; 5] = ["dialogue", "journal", "inventory", "keybinds", "pause"];
 
 fn main() -> AppExit {
     let args: Vec<String> = std::env::args().collect();
@@ -133,6 +135,11 @@ fn open(
                 .entity(root)
                 .insert(InventoryScreen::new(inventory.view()).with_stat_labels(labels));
         }
+        "pause" => {
+            let mut model = PauseMenuModel::default();
+            model.set_enabled(PauseChoice::Save, false);
+            commands.entity(root).insert(PauseMenuScreen::new(model));
+        }
         _ => {
             commands.entity(root).insert(KeybindsScreen::new(None));
         }
@@ -153,7 +160,7 @@ fn open_screens(
     mut next: Local<usize>,
 ) {
     let mut wanted = None;
-    for (key, id) in [KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4]
+    for (key, id) in [KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4, KeyCode::F5]
         .into_iter()
         .zip(MENUS)
     {

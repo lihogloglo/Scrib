@@ -62,6 +62,17 @@ pub struct ScreenLabels {
     /// `saveload-confirm-overwrite`, `saveload-confirm-delete` (`{name}` replaced by the title).
     pub confirm_overwrite: String,
     pub confirm_delete: String,
+    /// `pause-title`: the pause menu's heading.
+    pub pause_title: String,
+    /// `pause-resume`, `pause-save`, `pause-load`, `pause-options`, `pause-quit`: its entries.
+    pub resume: String,
+    pub pause_save: String,
+    pub pause_load: String,
+    pub options: String,
+    pub quit: String,
+    /// `pause-confirm-quit`, `pause-no`: the question before quitting.
+    pub confirm_quit: String,
+    pub no: String,
 }
 
 impl Default for ScreenLabels {
@@ -107,6 +118,14 @@ impl Default for ScreenLabels {
             damaged: s("Unreadable"),
             confirm_overwrite: s("Overwrite \"{name}\"?"),
             confirm_delete: s("Delete \"{name}\"? This cannot be undone."),
+            pause_title: s("Paused"),
+            resume: s("Resume"),
+            pause_save: s("Save game"),
+            pause_load: s("Load game"),
+            options: s("Options"),
+            quit: s("Quit"),
+            confirm_quit: s("Quit the game? Unsaved progress will be lost."),
+            no: s("No"),
         }
     }
 }

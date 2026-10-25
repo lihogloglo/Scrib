@@ -19,12 +19,14 @@
 //! - [`saveload`]: the save/load screen over an app-filled [`SaveLoadModel`]: saves newest
 //!   first, new save, overwrite and delete with a confirmation. Choices go out as
 //!   [`SaveLoadEvent`]s.
+//! - [`pause_menu`]: the pause (escape) menu over an app-filled [`PauseMenuModel`]: resume,
+//!   save, load, options, quit (asks first). Choices go out as [`PauseMenuEvent`]s.
 //! - [`hud`]: value bars, the compass slot, crosshair and the "press to use" prompt.
 //!
 //! A game spawns a screen as a `UiScreenRoot` entity carrying the screen's component (for
 //! example `DialogueScreen::new(view)`) and pushes its id on the screen stack; the router
 //! gives it input while it is on top, so gameplay sees none of the inputs it binds. Screens
-//! whose view-model owns focus (dialogue, inventory, keybinds, save/load) carry `UiOwnsFocus` and move
+//! whose view-model owns focus (dialogue, inventory, keybinds, save/load, pause) carry `UiOwnsFocus` and move
 //! it themselves; the journal uses Bevy's directional navigation.
 //!
 //! Nothing here names a game: content packs bring names, icons, themes and the host logic.
@@ -36,6 +38,7 @@ pub mod journal;
 pub mod keybinds;
 pub mod keyed;
 pub mod labels;
+pub mod pause_menu;
 pub mod saveload;
 pub mod widgets;
 
@@ -56,6 +59,10 @@ pub use journal::{JournalSeenChanged, JournalSource, JournalUi, JournalUiPlugin}
 pub use keybinds::{KeybindsFocus, KeybindsScreen};
 pub use keyed::{KeyedChildren, KeyedSync};
 pub use labels::ScreenLabels;
+pub use pause_menu::{
+    PauseChoice, PauseEntry, PauseMenuEvent, PauseMenuFocus, PauseMenuModel, PauseMenuParts,
+    PauseMenuScreen,
+};
 pub use saveload::{
     SaveEntryView, SaveLoadChoice, SaveLoadEvent, SaveLoadFocus, SaveLoadMode, SaveLoadModel,
     SaveLoadRow, SaveLoadScreen,
@@ -88,11 +95,13 @@ impl Plugin for SfScreensPlugin {
             .add_message::<DialogueRequestEvent>()
             .add_message::<InventoryEvent>()
             .add_message::<SaveLoadEvent>()
+            .add_message::<PauseMenuEvent>()
             .add_observer(dialogue::on_dialogue_button)
             .add_observer(dialogue::on_link_click)
             .add_observer(dialogue::on_dialogue_hover)
             .add_observer(keybinds::on_keybind_cell)
             .add_observer(saveload::on_saveload_part)
+            .add_observer(pause_menu::on_pause_menu_part)
             .add_observer(inventory::on_inventory_button)
             .add_observer(inventory::on_cell_over)
             .add_observer(inventory::on_cell_drag_start)
@@ -119,6 +128,7 @@ impl Plugin for SfScreensPlugin {
                     keybinds::spawn_keybinds,
                     inventory::spawn_inventory,
                     saveload::spawn_saveload,
+                    pause_menu::spawn_pause_menu,
                 )
                     .in_set(ScreenSystems::Spawn),
             )
@@ -129,6 +139,7 @@ impl Plugin for SfScreensPlugin {
                     keybinds::keybinds_input,
                     inventory::inventory_input,
                     saveload::saveload_input,
+                    pause_menu::pause_menu_input,
                 )
                     .in_set(ScreenSystems::Input),
             )
@@ -141,6 +152,7 @@ impl Plugin for SfScreensPlugin {
                     keybinds::sync_keybinds,
                     inventory::sync_inventory,
                     saveload::sync_saveload,
+                    pause_menu::sync_pause_menu,
                     widgets::sync_bars,
                     widgets::focus_ring,
                     widgets::scroll_to_focus,

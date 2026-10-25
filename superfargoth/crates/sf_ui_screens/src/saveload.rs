@@ -18,7 +18,6 @@ use bevy_ecs::prelude::*;
 use bevy_image::Image;
 use bevy_input_focus::{FocusCause, InputFocus};
 use bevy_math::CompassOctant;
-use bevy_text::TextColor;
 use bevy_ui::ScrollPosition;
 use bevy_ui::prelude::*;
 use bevy_ui_widgets::{Activate, ScrollArea};
@@ -29,8 +28,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, button, centred_window, classes, label, label_in, part, relabel, set_disabled,
-    show,
+    Question, ScreenColors, button, centred_window, classes, label, label_in, part, relabel,
+    set_disabled, show,
 };
 use crate::{is_target, screen_of};
 
@@ -257,11 +256,8 @@ pub struct SaveLoadParts {
     /// Primary, delete, back.
     buttons: [Entity; 3],
     disabled: [bool; 2],
-    overlay: Entity,
-    overlay_text: Entity,
-    overlay_shown: String,
-    /// Yes, cancel.
-    confirm: [Entity; 2],
+    /// Overwrite or delete: yes, cancel.
+    question: Question,
 }
 
 impl SaveLoadParts {
@@ -285,12 +281,12 @@ impl SaveLoadParts {
     }
 
     pub fn overlay(&self) -> Entity {
-        self.overlay
+        self.question.overlay
     }
 
     /// Yes, cancel.
     pub fn confirm_buttons(&self) -> [Entity; 2] {
-        self.confirm
+        self.question.buttons
     }
 
     fn target(&self, focus: SaveLoadFocus) -> Option<Entity> {
@@ -298,7 +294,7 @@ impl SaveLoadParts {
             SaveLoadFocus::Start => None,
             SaveLoadFocus::Row(i) => self.rows.get(self.order.get(i)?),
             SaveLoadFocus::Button(i) => self.buttons.get(i).copied(),
-            SaveLoadFocus::Confirm(i) => self.confirm.get(i).copied(),
+            SaveLoadFocus::Confirm(i) => self.question.buttons.get(i).copied(),
         }
     }
 }
@@ -369,43 +365,20 @@ pub(crate) fn spawn_saveload(
                 .spawn((button(name, text.clone(), &colors), kind, ChildOf(footer)))
                 .id()
         });
-        let overlay = commands
-            .spawn((
-                part("sf-saveload-confirm"),
-                centred_window(Node {
-                    padding: UiRect::all(Val::Px(16.0)),
-                    row_gap: Val::Px(8.0),
-                    flex_direction: FlexDirection::Column,
-                    display: Display::None,
-                    ..Node::default()
-                }),
-                BackgroundColor(colors.panel),
-                ZIndex(10),
-                ChildOf(root),
-            ))
-            .id();
-        let overlay_text = commands
-            .spawn((label("sf-saveload-confirm-text", "", &colors), ChildOf(overlay)))
-            .id();
-        let choices = commands
-            .spawn((
-                part("sf-saveload-confirm-choices"),
-                Node {
-                    column_gap: Val::Px(8.0),
-                    ..Node::default()
-                },
-                ChildOf(overlay),
-            ))
-            .id();
-        let confirm = [
-            ("sf-saveload-yes", &labels.yes, SaveLoadPart::Yes),
-            ("sf-saveload-cancel", &labels.cancel, SaveLoadPart::Cancel),
-        ]
-        .map(|(name, text, kind)| {
-            commands
-                .spawn((button(name, text.clone(), &colors), kind, ChildOf(choices)))
-                .id()
-        });
+        let question = Question::spawn(
+            &mut commands,
+            root,
+            [
+                "sf-saveload-confirm",
+                "sf-saveload-confirm-text",
+                "sf-saveload-confirm-choices",
+            ],
+            [
+                ("sf-saveload-yes", labels.yes.clone(), SaveLoadPart::Yes),
+                ("sf-saveload-cancel", labels.cancel.clone(), SaveLoadPart::Cancel),
+            ],
+            &colors,
+        );
         commands.entity(root).insert(SaveLoadParts {
             rows: KeyedChildren::new(list),
             order: Vec::new(),
@@ -415,10 +388,7 @@ pub(crate) fn spawn_saveload(
             empty,
             buttons,
             disabled: [false; 2],
-            overlay,
-            overlay_text,
-            overlay_shown: String::new(),
-            confirm,
+            question,
         });
     }
 }
@@ -665,15 +635,7 @@ pub(crate) fn sync_saveload(
             ),
             _ => String::new(),
         };
-        if parts.overlay_shown != question {
-            if let Ok(mut node) = nodes.get_mut(parts.overlay) {
-                show(&mut node, !question.is_empty());
-            }
-            commands
-                .entity(parts.overlay_text)
-                .insert((Text::new(question.clone()), TextColor(colors.text)));
-            parts.overlay_shown = question;
-        }
+        parts.question.set(&mut commands, &mut nodes, question, colors);
 
         if !is_target(&stack, root) {
             continue;

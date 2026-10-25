@@ -1113,6 +1113,161 @@ fn saveload_delete_needs_confirmation_and_esc_backs_out() {
     assert!(!ui.world().resource::<ScreenStackRes>().0.is_open("saveload"));
 }
 
+// ---------------------------------------------------------------- pause menu
+
+#[derive(Resource, Default)]
+struct PauseChoices(Vec<PauseChoice>);
+
+fn collect_pause(mut events: MessageReader<PauseMenuEvent>, mut out: ResMut<PauseChoices>) {
+    out.0.extend(events.read().map(|e| e.choice));
+}
+
+fn open_pause(model: PauseMenuModel) -> (Ui, Entity) {
+    let mut ui = Ui::with(|app| {
+        app.init_resource::<PauseChoices>()
+            .add_systems(Update, collect_pause.after(ScreenSystems::Sync));
+    });
+    let root = ui.open("pause", PauseMenuScreen::new(model));
+    ui.frames(2);
+    (ui, root)
+}
+
+fn pause_parts(ui: &Ui, root: Entity) -> &PauseMenuParts {
+    ui.world().get::<PauseMenuParts>(root).unwrap()
+}
+
+fn take_pause(ui: &mut Ui) -> Vec<PauseChoice> {
+    std::mem::take(&mut ui.world_mut().resource_mut::<PauseChoices>().0)
+}
+
+fn pause_open(ui: &Ui) -> bool {
+    ui.world().resource::<ScreenStackRes>().0.is_open("pause")
+}
+
+#[test]
+fn pause_menu_opens_on_resume_and_skips_disabled_entries() {
+    let mut model = PauseMenuModel::default();
+    model.set_enabled(PauseChoice::Save, false);
+    let (mut ui, root) = open_pause(model);
+    let parts = pause_parts(&ui, root);
+    assert_eq!(parts.order(), PauseChoice::ALL.as_slice());
+    let entries = PauseChoice::ALL.map(|c| parts.entry(c).unwrap());
+    let texts = entries.map(|e| ui.text_of(e));
+    assert_eq!(
+        texts,
+        ["Resume", "Save game", "Load game", "Options", "Quit"]
+    );
+    assert_eq!(ui.focus(), Some(entries[0]), "focus starts on Resume");
+    assert!(ui.class_of(entries[1]).contains("disabled"));
+    assert!(!ui.class_of(entries[2]).contains("disabled"));
+    assert!(ui.class_of(entries[4]).contains("quit"));
+    assert!(
+        ui.world().resource::<ScreenStackRes>().0.pauses_game(),
+        "the record pauses the game while open"
+    );
+
+    // Down skips the disabled Save; up skips it back.
+    ui.tap(GamepadButton::DPadDown);
+    assert_eq!(ui.focus(), Some(entries[2]));
+    ui.tap(GamepadButton::DPadUp);
+    assert_eq!(ui.focus(), Some(entries[0]));
+    // A click on the disabled entry does nothing.
+    ui.world_mut().trigger(Activate { entity: entries[1] });
+    ui.frames(1);
+    assert!(take_pause(&mut ui).is_empty());
+
+    // Enabled again by the app: the class goes, the same entity stays.
+    ui.world_mut()
+        .get_mut::<PauseMenuScreen>(root)
+        .unwrap()
+        .model
+        .set_enabled(PauseChoice::Save, true);
+    ui.frames(1);
+    assert_eq!(
+        pause_parts(&ui, root).entry(PauseChoice::Save),
+        Some(entries[1])
+    );
+    assert!(!ui.class_of(entries[1]).contains("disabled"));
+    ui.tap(GamepadButton::DPadDown);
+    assert_eq!(ui.focus(), Some(entries[1]));
+}
+
+#[test]
+fn pause_menu_sends_choices_and_back_resumes() {
+    let (mut ui, _) = open_pause(PauseMenuModel::default());
+    for expected in [PauseChoice::Save, PauseChoice::Load, PauseChoice::Options] {
+        ui.tap(GamepadButton::DPadDown);
+        ui.tap(GamepadButton::South);
+        assert_eq!(take_pause(&mut ui), vec![expected]);
+        assert!(pause_open(&ui), "the app decides what {expected:?} does");
+    }
+    // Back (pad East): resume, and the screen closes.
+    ui.tap(GamepadButton::East);
+    assert_eq!(take_pause(&mut ui), vec![PauseChoice::Resume]);
+    assert!(!pause_open(&ui));
+
+    // Resume chosen: the same.
+    let (mut ui, _) = open_pause(PauseMenuModel::default());
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_pause(&mut ui), vec![PauseChoice::Resume]);
+    assert!(!pause_open(&ui));
+}
+
+#[test]
+fn pause_menu_quit_asks_first() {
+    let (mut ui, root) = open_pause(PauseMenuModel::default());
+    let parts = pause_parts(&ui, root);
+    let quit = parts.entry(PauseChoice::Quit).unwrap();
+    let [yes, no] = parts.confirm_buttons();
+    let overlay = parts.overlay();
+    for _ in 0..4 {
+        ui.tap(GamepadButton::DPadDown);
+    }
+    assert_eq!(ui.focus(), Some(quit));
+    let asking = |ui: &Ui| {
+        ui.world()
+            .get::<PauseMenuScreen>(root)
+            .unwrap()
+            .asking_quit()
+    };
+
+    // Quit asks, No focused; No returns to the menu.
+    ui.tap(GamepadButton::South);
+    assert!(take_pause(&mut ui).is_empty());
+    assert!(asking(&ui));
+    assert_eq!(ui.focus(), Some(no));
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::Flex
+    );
+    assert!(ui.text_of(overlay).contains("Quit the game?"));
+    ui.tap(GamepadButton::South);
+    assert!(take_pause(&mut ui).is_empty());
+    assert!(!asking(&ui));
+    assert_eq!(ui.focus(), Some(quit), "back on Quit");
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::None
+    );
+
+    // Esc answers no too, and the menu stays.
+    ui.tap(GamepadButton::South);
+    assert!(asking(&ui));
+    tap_key(&mut ui, KeyCode::Escape);
+    assert!(!asking(&ui));
+    assert!(take_pause(&mut ui).is_empty());
+    assert!(pause_open(&ui));
+    assert_eq!(ui.focus(), Some(quit));
+
+    // Yes quits.
+    ui.tap(GamepadButton::South);
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(ui.focus(), Some(yes));
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_pause(&mut ui), vec![PauseChoice::Quit]);
+    assert!(!asking(&ui));
+}
+
 // ---------------------------------------------------------------- HUD
 
 #[test]
@@ -1220,8 +1375,15 @@ fn idle_screens_touch_nothing() {
         .resource_mut::<ScreenStackRes>()
         .0
         .close("journal");
-    open_keybinds(&mut ui);
+    let root = open_keybinds(&mut ui);
     check(&mut ui, "keybinds");
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("keybinds");
+    ui.open("pause", PauseMenuScreen::new(PauseMenuModel::default()));
+    check(&mut ui, "pause");
 }
 
 /// Frame times with an open screen (whole app update: input, UI layout, text, screens), on

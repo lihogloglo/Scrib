@@ -321,7 +321,12 @@ view-model owns focus carry `UiOwnsFocus`. Save/load (2026-10-25): `SaveLoadScre
 `SaveLoadModel` (mode, `SaveEntryView` rows: id, order, title, subtitle, reason, thumbnail, damaged; no
 `sf_save` dependency), listed newest first, "New save" on top in save mode with the app's generated name (typed
 names wait for router text capture); focus selects, confirm runs load / save, overwrite and delete ask first
-(cancel focused), Context1 deletes; choices go out as `SaveLoadEvent`, Back closes. Message boxes and toasts: [ui-text.md](ui-text.md)
+(cancel focused), Context1 deletes; choices go out as `SaveLoadEvent`, Back closes. Pause menu (2026-10-25):
+`PauseMenuScreen` over an app-filled `PauseMenuModel` (`PauseEntry { choice, enabled }`, `PauseChoice` Resume, Save,
+Load, Options, Quit; default all five enabled); focus starts on Resume, navigation skips disabled entries (class
+`disabled`); Quit asks yes/no first (No focused; the question widget is shared with save/load); choices go out as
+`PauseMenuEvent`; Back = Resume, which closes the screen. Its `ui.screen` record declares `pause = "WhileOpen"`, so
+`ScreenStack::pauses_game` drives the app's pause. Message boxes and toasts: [ui-text.md](ui-text.md)
 "Notifications". Content packs bring names, icons, themes and host logic.
 
 ### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
