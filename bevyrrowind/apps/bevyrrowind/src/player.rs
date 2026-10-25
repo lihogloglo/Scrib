@@ -49,7 +49,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use bevy_enhanced_input::prelude::*;
 use sf_action::{ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, RuleKey, RuleSet, SlotInfo, SlotTable};
 use sf_action_bevy::{
-    ActionBody, ActionCharacter, ActionInputPlugin, ActionRules, ActionSystems, PlayerAction, PlayerControls, PlayerId,
+    ActionBody, ActionCharacter, ActionInputPlugin, ActionRules, ActionSystems, AwaitingGround, PlayerAction, PlayerControls, PlayerId,
     PlayerInput, SfActionPlugin, spawn_player_actions,
 };
 use sf_camera::Look;
@@ -65,7 +65,7 @@ use sf_script::Handle as ScriptHandle;
 use sf_script_bevy::{ScriptPlacements, ScriptSlot};
 use sf_world::{PlacementId, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
-use sf_world_bevy::{FadeTransition, TravelArrived, WorldPosOf, from_grid, to_grid};
+use sf_world_bevy::{ActiveWorldspace, FadePhase, FadeTransition, StreamingSystems, TravelArrived, WorldPosOf, from_grid, to_grid};
 
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
 pub use mw_game_core::player::{FocusUpdate, PlayerBody, PlayerMode};
@@ -81,6 +81,12 @@ const DEFAULT_ACTIVATE_UNITS: f32 = 192.0;
 /// A fall this far below the last ground puts the player back there, meters (a hole in the
 /// streamed collision, not gameplay: Vvardenfell has no drop this deep).
 const FALL_LIMIT_M: f32 = 200.0;
+/// After an arrival the body waits until the collision this close around its feet is in
+/// (half size of the square, meters): the floor under it plus a step in any direction.
+const ARRIVAL_GROUND_MARGIN_M: f32 = 3.0;
+/// The body moves anyway after waiting this long for its collision, seconds (a cell that never
+/// comes in must not hang the game; the fade's own cap is `FadeTransition::max_hold_secs`).
+const ARRIVAL_WAIT_MAX_SECS: f32 = 10.0;
 /// The player's character id on commands (NPCs don't run the action layer yet).
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
@@ -102,6 +108,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
             Update,
             (toggle, apply_mode, rebind, arrive, follow_worldspace, guard_fall, obstacle, controls_active, grab_cursor).chain(),
         )
+        .add_systems(Update, await_ground.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, (update_focus.in_set(FocusUpdate), prompt).chain().before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate));
 }
@@ -406,6 +413,7 @@ pub struct RestoreBody(pub Option<(ActionState, Locomotion)>);
 
 /// A door moved the camera: the body follows to the arrival marker (a load: the saved body).
 fn arrive(
+    mut commands: Commands,
     mut arrived: MessageReader<TravelArrived>,
     mut mode: ResMut<PlayerMode>,
     mut cams: Query<&mut PlayerCamera>,
@@ -431,6 +439,43 @@ fn arrive(
         body.frame_origin = from_grid(&cell, &Transform::IDENTITY);
         camera.set_look(Look::new(look.yaw, 0.0));
         mode.last_ground = None;
+        // The cut re-streams the collision (a load reloads every resident cell): hold the body
+        // until the floor under it is in (`await_ground`).
+        commands.entity(camera.follow).insert(AwaitingGround);
+    }
+}
+
+/// Releases the arrived body ([`AwaitingGround`]) once the collision around its feet is in and
+/// the fade's destination is ready; keeps the screen black meanwhile, so the frozen frames
+/// never show. Gives up after [`ARRIVAL_WAIT_MAX_SECS`].
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn await_ground(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut waited: Local<f32>,
+    collision: sf_physics_bevy::CollisionReady,
+    active: Res<ActiveWorldspace>,
+    mut fade: ResMut<FadeTransition>,
+    // Only the player body gets the marker here (`arrive`).
+    bodies: Query<(Entity, &ActionBody), With<AwaitingGround>>,
+) {
+    let Some((entity, body)) = bodies.iter().next() else {
+        *waited = 0.0;
+        return;
+    };
+    *waited += time.delta_secs();
+    let feet = body.loco.position;
+    // Not before the fade's destination is ready: until then the worldspace's directory may not
+    // be known, and an unknown worldspace reads as "collision in".
+    let arriving = matches!(fade.phase(), FadePhase::Hold { ready: None, .. });
+    let loading = active.0.as_ref().is_some_and(|ws| collision.loading(ws, feet, ARRIVAL_GROUND_MARGIN_M));
+    if !arriving && !loading {
+        commands.entity(entity).remove::<AwaitingGround>();
+    } else if *waited >= ARRIVAL_WAIT_MAX_SECS {
+        warn!("player: no collision at {:.1?} after {ARRIVAL_WAIT_MAX_SECS} s; moving anyway", feet.to_f64());
+        commands.entity(entity).remove::<AwaitingGround>();
+    } else {
+        fade.hold();
     }
 }
 

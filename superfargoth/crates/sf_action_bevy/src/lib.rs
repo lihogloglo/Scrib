@@ -149,6 +149,13 @@ pub struct NoClip {
     pub look: Vec3,
 }
 
+/// The body holds its pose until the host removes this: no gravity, no input motion, no
+/// launch (its saved velocity and mode resume afterwards). The host sets it while the
+/// collision under the body is still streaming in (a door arrival, a save load) and removes it
+/// once the ground there is ready, so the body can't fall through a floor that isn't in yet.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct AwaitingGround;
+
 /// A probe that never hits ([`NoClip`] bodies).
 struct NoHits;
 
@@ -255,8 +262,13 @@ fn move_bodies<G: GroundProbe + Resource>(
     time: Res<Time>,
     ground: Option<Res<G>>,
     mut mover: Local<KinematicMover>,
-    mut characters: Query<(&ActionCharacter, &mut ActionBody, Option<&NoClip>)>,
+    mut characters: Query<(&ActionCharacter, &mut ActionBody, Option<&NoClip>), Without<AwaitingGround>>,
+    mut waiting: Query<&mut ActionBody, With<AwaitingGround>>,
 ) {
+    // Held bodies keep their pose; `prev = curr` so the drawn body doesn't lerp either.
+    for mut body in &mut waiting {
+        body.prev = body.curr;
+    }
     let Some(ground) = ground else { return };
     // In `FixedUpdate` the generic clock is the fixed one.
     let dt = time.delta_secs();

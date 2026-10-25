@@ -340,3 +340,91 @@ fn rebinds_and_press_modes_round_trip_through_the_profile_file() {
     assert_eq!(restarted.press_mode(&Control::Sprint.id()), Some(sf_ui::PressMode::Hold));
     assert!(restarted.conflicts().is_empty(), "defaults conflict: {:?}", restarted.conflicts());
 }
+
+/// S4-a (physics-fix-plan.md slice 2): a body restored 1.5 m above a floor whose cell activates
+/// frames later holds still while gated (a witness without the gate falls through the missing
+/// floor), then lands on it. Sanity only: no NaN, not below the floor top.
+#[test]
+fn arrival_waits_for_the_floor_cell_then_lands() {
+    use sf_world::{
+        Anchor, AnchorId, AnchorRole, IndexParams, Location, ModelInfo, Placement, PlacementClass, PlacementFlags, RecordRef, Scheduler,
+        Stage, StageStep, TickInput, build_directory, build_pages,
+    };
+    use sf_world_bevy::{Streaming, StreamingConfig};
+
+    let ws = WorldspaceId::new("test");
+    let level = Level::parse(LEVEL).expect("flat-slopes parses");
+    let floor_y = 0.0;
+    let (mut app, player) = app(60);
+    let above = pos(level.spawn("start").unwrap().at + Vec3::Y * 1.5);
+    // The floor's cell: a scheduler that knows it, not yet activated; no collision yet.
+    let floor = Placement {
+        id: PlacementId(1),
+        base: RecordRef::new("TEST", "floor"),
+        model: Some(sf_vfs::VfsPath::new("floor.nif").unwrap()),
+        transform: WorldTransform { pos: above, ..WorldTransform::IDENTITY },
+        class: PlacementClass::Static,
+        flags: PlacementFlags::empty(),
+    };
+    let params = IndexParams::default();
+    let models = |_: &sf_vfs::VfsPath| Some(ModelInfo { min: Vec3::splat(-0.5), max: Vec3::splat(0.5), bytes: 1000, lod_distance: 100.0 });
+    let (pages, _) = build_pages(&params, [floor], &models);
+    let mut streaming = Streaming::new(StreamingConfig::default());
+    let mut scheduler = Scheduler::new(StreamingConfig::default().scheduler);
+    assert!(scheduler.add_worldspace(build_directory(ws.clone(), &params, &pages), None));
+    *streaming.scheduler_mut() = scheduler;
+    app.insert_resource(Statics(StaticWorld::new(WorldPos::ORIGIN)))
+        .insert_resource(streaming)
+        .insert_resource(PhysicsStreaming::default())
+        .insert_resource(ActiveWorldspace(Some(ws.clone())))
+        .init_resource::<FadeTransition>()
+        .add_systems(Update, await_ground);
+    let witness = app.world_mut().spawn(ActionBody::new(Locomotion::new(above, 0.0), MoverParams::default(), WorldPos::ORIGIN)).id();
+    let character = ActionCharacter::new(CharacterId(2), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+    app.world_mut().entity_mut(witness).insert(character);
+    app.world_mut().get_mut::<ActionBody>(player).unwrap().teleport(above, 0.0);
+    app.world_mut().entity_mut(player).insert((PlayerBody, AwaitingGround));
+    let y = |app: &App, e: Entity| WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(e).unwrap().loco.position).y;
+
+    for _ in 0..60 {
+        app.update();
+        assert!((y(&app, player) - 1.5).abs() < 1e-4, "the gated body moved: {}", y(&app, player));
+    }
+    assert!(app.world().get::<AwaitingGround>(player).is_some(), "released before the floor's cell activated");
+    assert!(y(&app, witness) < floor_y - 0.5, "witness: an ungated body falls through the missing floor: {}", y(&app, witness));
+
+    // The floor's cell activates and its collision is in.
+    let mut now = 0.0;
+    let mut frames = 0;
+    loop {
+        let mut streaming = app.world_mut().resource_mut::<Streaming>();
+        let s = streaming.scheduler_mut();
+        let cell = s.directory(&ws).unwrap().partition.cell_of(above);
+        if s.level(&ws, cell) >= sf_world::Level::Active {
+            break;
+        }
+        let anchors: Vec<Anchor> =
+            [AnchorRole::Gameplay, AnchorRole::Visual].into_iter().zip(0..).map(|(role, i)| Anchor::new(AnchorId(i), role, Location::new(ws.clone(), above))).collect();
+        let report = s.update(&TickInput { now, anchors: &anchors });
+        for id in report.start {
+            match s.request(id).map(|r| r.stage) {
+                Some(Stage::Fetch) => s.fetched(id, now, 1, 1),
+                Some(Stage::Assets) => s.assets_loaded(id, now),
+                _ => false,
+            };
+        }
+        for stage in [Stage::Deactivate, Stage::Despawn, Stage::Spawn, Stage::Upload, Stage::Activate] {
+            s.run_stage(stage, &mut |_| StageStep { cost: 0.01, done: true });
+        }
+        now += 1.0 / 60.0;
+        frames += 1;
+        assert!(frames < 2000, "the floor's cell never activated");
+    }
+    app.insert_resource(statics(&level));
+    for _ in 0..120 {
+        app.update();
+    }
+    assert!(app.world().get::<AwaitingGround>(player).is_none(), "the body was never released");
+    let landed = y(&app, player);
+    assert!(landed.is_finite() && landed > floor_y - 0.05 && landed < 0.5, "the released body lands on the floor: {landed}");
+}

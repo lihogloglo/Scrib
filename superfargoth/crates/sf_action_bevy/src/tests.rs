@@ -251,3 +251,23 @@ fn no_clip_floats_without_gravity_and_ignores_the_ground() {
     assert!(height(&app, walker) < 0.1, "the walker fell to the plane: {}", height(&app, walker));
     assert!((no_clip_climb(Vec3::new(0.0, 0.0, -3.0), Vec3::new(0.0, -1.0, -1.0)) + 3.0).abs() < 1e-4);
 }
+
+#[test]
+fn a_body_awaiting_ground_holds_its_pose_then_falls_when_released() {
+    let mut app = app(60);
+    let up = WorldPos::ORIGIN.offset(Vec3::Y * 2.0);
+    let body = spawn(&mut app);
+    app.world_mut().get_mut::<ActionBody>(body).unwrap().teleport(up, 0.0);
+    app.world_mut().entity_mut(body).insert(AwaitingGround);
+    let height = |app: &App| WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(body).unwrap().loco.position).y;
+    for _ in 0..30 {
+        app.update();
+        assert!((height(&app) - 2.0).abs() < 1e-4, "held body moved: {}", height(&app));
+    }
+    app.world_mut().entity_mut(body).remove::<AwaitingGround>();
+    for _ in 0..60 {
+        app.update();
+    }
+    let h = height(&app);
+    assert!(h.is_finite() && h < 0.1 && h > -0.1, "released body lands on the plane: {h}");
+}
