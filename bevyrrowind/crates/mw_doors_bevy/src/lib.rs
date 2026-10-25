@@ -10,11 +10,21 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use bevy::camera::{ClearColorConfig, Exposure};
-use bevy::camera_controller::free_camera::FreeCameraState;
-use bevy::light::{AmbientLight, GlobalAmbientLight};
-use bevy::prelude::*;
+use bevy_app::{App, PostUpdate, Update};
+use bevy_camera::visibility::RenderLayers;
+use bevy_camera::{Camera, ClearColorConfig, Exposure};
+use bevy_camera_controller::free_camera::FreeCameraState;
+use bevy_color::Color;
+use bevy_ecs::prelude::*;
+use bevy_input::{ButtonInput, keyboard::KeyCode};
+use bevy_light::{AmbientLight, GlobalAmbientLight};
+use bevy_log::{info, warn};
+use bevy_math::{EulerRot, Quat, Vec3};
+use bevy_transform::components::GlobalTransform;
 use mw_assets::LightCalibration;
+use mw_game_core::exterior::Settled;
+use mw_game_core::perf::{Off, Part};
+use mw_game_core::player::PlayerBody;
 use mw_world::CellEnvironment;
 use sf_sky_bevy::SkyCamera;
 use sf_terrain_bevy::{TerrainCamera, TerrainPatch};
@@ -91,7 +101,7 @@ pub struct AutoDoor {
 
 /// The camera's look in the exterior, restored when it comes back out.
 #[derive(Default)]
-pub(crate) struct ExteriorLook {
+pub struct ExteriorLook {
     ambient: Option<GlobalAmbientLight>,
     exposure: Option<Exposure>,
 }
@@ -174,7 +184,7 @@ pub fn arrival_rotation(rotation: Quat) -> Quat {
 /// back. Resync the cache (as the controller's own init does, Y-X-Z Euler)
 /// and drop the carried velocity when a travel moves the camera. The
 /// temporal resolve (TAA/DLSS) starts over: last frame was the other side.
-pub(crate) fn sync_free_camera(
+pub fn sync_free_camera(
     mut arrived: MessageReader<TravelArrived>,
     mut cams: Query<&mut FreeCameraState>,
     mut history: Option<ResMut<sf_sky_bevy::TemporalHistory>>,
@@ -205,10 +215,10 @@ fn activate(
     links: Res<DoorLinks>,
     fade: Res<FadeTransition>,
     mut auto: ResMut<AutoDoor>,
-    settled: Option<Res<crate::exterior::Settled>>,
+    settled: Option<Res<Settled>>,
     positions: WorldPosOf,
     cams: Query<(Entity, &GlobalTransform), With<DoorUser>>,
-    bodies: Query<&sf_action_bevy::ActionBody, With<crate::player::PlayerBody>>,
+    bodies: Query<&sf_action_bevy::ActionBody, With<PlayerBody>>,
     mut outcomes: MessageReader<sf_script_bevy::ActivationOutcome>,
     mut travel: MessageWriter<StartTravel>,
 ) {
@@ -259,7 +269,7 @@ fn activate(
     if automatic {
         auto.remaining -= 1;
         // The next door waits for this side to stream in.
-        commands.remove_resource::<crate::exterior::Settled>();
+        commands.remove_resource::<Settled>();
     }
     info!(
         "door: {} ({:.1} m away) -> {} at {:.1?}",
@@ -297,20 +307,19 @@ fn report_travel(fade: Res<FadeTransition>, mut last: Local<Option<f32>>) {
 /// color; the exterior (or a cell that behaves like one) gets them back.
 /// The listener is outdoors exactly where the sky shows.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(crate) fn worldspace_look(
+pub fn worldspace_look(
     mut commands: Commands,
     active: Res<ActiveWorldspace>,
     envs: Res<Environments>,
     registry: Res<WorldspaceRegistry>,
     calibration: Res<LightCalibration>,
-    off: Res<crate::perf::Off>,
+    off: Res<Off>,
     mut ambient: ResMut<GlobalAmbientLight>,
     outdoors: Option<ResMut<sf_audio_bevy::ListenerOutdoors>>,
     mut cams: Query<(Entity, &mut Camera, Option<&Exposure>, Has<SkyCamera>, Has<TerrainCamera>), With<DoorUser>>,
     mut seen: Local<Option<WorldspaceId>>,
     mut saved: Local<ExteriorLook>,
 ) {
-    use crate::perf::Part;
     let Some(ws) = active.0.clone() else { return };
     if seen.as_ref() == Some(&ws) {
         return;
@@ -378,17 +387,18 @@ pub(crate) fn worldspace_look(
 fn terrain_layers(
     mut commands: Commands,
     registry: Res<WorldspaceRegistry>,
-    patches: Query<Entity, (Added<TerrainPatch>, Without<bevy::camera::visibility::RenderLayers>)>,
+    patches: Query<Entity, (Added<TerrainPatch>, Without<RenderLayers>)>,
 ) {
     let Some(entry) = registry.get(&mw_world::ids::exterior()) else { return };
     for e in &patches {
-        commands.entity(e).try_insert(bevy::camera::visibility::RenderLayers::layer(entry.layer));
+        commands.entity(e).try_insert(RenderLayers::layer(entry.layer));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy_math::Vec2;
     use sf_coords::{WorldPos, WorldTransform};
 
     fn end(ws: &str, at: Vec3) -> LinkEnd {

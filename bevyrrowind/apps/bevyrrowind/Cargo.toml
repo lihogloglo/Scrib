@@ -40,6 +40,7 @@ mw_bake.workspace = true
 mw_boot_bevy.workspace = true
 # Gameplay keymap actions, use context, keybinds screen (app-split.md slice 3).
 mw_controls_bevy.workspace = true
+mw_doors_bevy.workspace = true
 # Water, weather, night sky, render settings (app-split.md slice 6).
 mw_environment_bevy.workspace = true
 mw_game_core.workspace = true

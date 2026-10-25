@@ -2310,6 +2310,7 @@ dependencies = [
  "mw_bake",
  "mw_boot_bevy",
  "mw_controls_bevy",
+ "mw_doors_bevy",
  "mw_environment_bevy",
  "mw_game_core",
  "mw_graphs",
@@ -4959,6 +4960,37 @@ dependencies = [
  "sf_ui",
  "sf_ui_bevy",
  "sf_ui_screens",
+ "workspace-hack",
+]
+
+[[package]]
+name = "mw_doors_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_camera",
+ "bevy_camera_controller",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_input",
+ "bevy_light",
+ "bevy_log",
+ "bevy_math",
+ "bevy_transform",
+ "glam 0.33.12",
+ "mw_assets",
+ "mw_game_core",
+ "mw_world",
+ "sf_action_bevy",
+ "sf_atmos_bevy",
+ "sf_audio_bevy",
+ "sf_coords",
+ "sf_records",
+ "sf_script_bevy",
+ "sf_sky_bevy",
+ "sf_terrain_bevy",
+ "sf_world",
+ "sf_world_bevy",
  "workspace-hack",
 ]
 
