@@ -1,8 +1,8 @@
 //! Mod scripts in the streamed view (ROADMAP M5 L2; superfargoth `docs/specs/scripting.md`
 //! "Execution model", "Entity handles"): the profile's script contexts run in
-//! `sf_script_bevy`'s slots, placements entering R0 become script handles, and Space (the
-//! activate key) activates the placement under the crosshair. Unhandled activations of a door
-//! open it (`doors.rs`); scripts' spawns and despawns (`WorldCommand`, M5 L3) are applied by the
+//! `sf_script_bevy`'s slots, placements entering R0 become script handles, and E (the
+//! activate key) activates the player's focus (`player::Focus`, a physics ray). Unhandled
+//! activations of a door open it (`doors.rs`); scripts' spawns and despawns (`WorldCommand`, M5 L3) are applied by the
 //! `LiveSpawn` scaffold below; `core.game_time()` follows the sky clock.
 //!
 //! Contexts come from the loaded profile (`mods::script_plans`, one per mod with
@@ -32,14 +32,6 @@ use sf_world_bevy::{
 
 /// Id of the shared legacy context (scripting-adapter.md "Instances").
 pub const LEGACY_CONTEXT: &str = "mw.legacy";
-
-/// How far the crosshair reaches, meters (as door activation, `doors::REACH_M`).
-const REACH_M: f32 = 4.0;
-/// Bounding spheres the eye is inside of and larger than this are skipped (a building around
-/// the camera is not what it looks at).
-const ENCLOSING_M: f32 = 3.0;
-/// Smallest pick sphere, meters (tiny items stay clickable).
-const MIN_PICK_M: f32 = 0.25;
 
 /// Script context configs for the loaded profile, in load order, then `mw.legacy`.
 fn configs() -> Vec<ContextConfig> {
@@ -100,7 +92,7 @@ pub fn add(app: &mut App, vfs: Arc<Vfs>, auto_activate: u32) {
         .init_resource::<SpawnTemplates>()
         .init_resource::<LiveSpawned>()
         .add_systems(PostStartup, hook_placements)
-        .add_systems(Update, (track_player, cell_facts, activate, game_clock).chain().before(ScriptSlot::Update))
+        .add_systems(Update, (track_player, cell_facts, activate.after(crate::player::FocusUpdate), game_clock).chain().before(ScriptSlot::Update))
         .add_systems(Update, (report, apply_world_commands).after(ScriptSlot::Update));
 }
 
@@ -277,65 +269,23 @@ fn cell_facts(mut loaded: MessageReader<CellLoaded>, mut facts: MessageWriter<Sc
     }
 }
 
-/// Scaffold `CrosshairPick`: the loaded placement whose bounding sphere the view ray enters
-/// first within reach. Removal path: M4 P11's `sf_interaction` picks with a physics ray cast
-/// (collider → placement) and owns the activate key; this module then only maps its
-/// `Activated` to scripts.
-/// `reach` is the ray length, meters; `accept` filters candidates before the ray test (the
-/// player's focus skips what can't be activated, `player.rs`).
-pub(crate) fn pick(
-    placements: &ScriptPlacements,
-    worldspace: &str,
-    eye: [f64; 3],
-    forward: Vec3,
-    reach: f32,
-    accept: impl Fn(&Placed) -> bool,
-) -> Option<(Handle, f32)> {
-    let mut best: Option<(f32, f32, Handle)> = None;
-    for (h, p) in &placements.loaded {
-        if p.worldspace != worldspace || !accept(p) {
-            continue;
-        }
-        #[allow(clippy::cast_possible_truncation, reason = "nearby offsets")]
-        let c = Vec3::new((p.position[0] - eye[0]) as f32, (p.position[1] - eye[1]) as f32, (p.position[2] - eye[2]) as f32);
-        let r = p.radius.max(MIN_PICK_M);
-        if c.length() > reach + r {
-            continue;
-        }
-        let along = c.dot(forward);
-        let d2 = c.length_squared() - along * along;
-        if d2 > r * r {
-            continue;
-        }
-        let mut t = along - (r * r - d2).sqrt();
-        if t < 0.0 {
-            if r > ENCLOSING_M || along < 0.0 {
-                continue;
-            }
-            t = 0.0;
-        }
-        if t > reach {
-            continue;
-        }
-        if best.is_none_or(|(bt, br, _)| (t, r) < (bt, br)) {
-            best = Some((t, r, *h));
-        }
-    }
-    best.map(|(t, _, h)| (h, t))
-}
-
-/// Space activates the player's focus (`player::Focus`: `OpenMW`'s camera ray within
-/// `iMaxActivateDist`, `player.rs`); `--activate N` activates the crosshair target
-/// automatically, once a second.
+/// E activates the player's focus (`player::Focus`: `OpenMW`'s camera ray within
+/// `iMaxActivateDist`, on the physics world, `player.rs`); `--activate N` activates it
+/// automatically, once a second. Nothing activates while the player is paused (a menu or
+/// dialogue is open), so a door can't travel under the journal.
+#[allow(clippy::needless_pass_by_value)] // system parameters
 fn activate(
-    keys: Res<ButtonInput<KeyCode>>,
+    uses: Query<&bevy_enhanced_input::prelude::ActionEvents, With<bevy_enhanced_input::prelude::Action<crate::controls::UseAction>>>,
     time: Res<Time>,
     mut auto: ResMut<AutoActivate>,
     focus: Res<crate::player::Focus>,
-    cams: Query<&GlobalTransform, With<crate::doors::DoorUser>>,
+    mode: Res<crate::player::PlayerMode>,
     placements: Res<ScriptPlacements>,
     mut out: MessageWriter<Activated>,
 ) {
+    if mode.paused {
+        return;
+    }
     let mut automatic = false;
     if auto.remaining > 0 && !placements.loaded.is_empty() {
         auto.timer.tick(time.delta());
@@ -345,39 +295,28 @@ fn activate(
             auto.timer = Timer::from_seconds(1.0, TimerMode::Once);
         }
     }
-    if !automatic {
-        if keys.just_pressed(KeyCode::KeyE)
-            && let Some(f) = &focus.target
-        {
-            info!("activate: {} ({}, {:.1} m, handle {:032x})", f.name, f.record, f.distance, f.handle.0);
-            out.write(Activated { target: f.handle, actor: PLAYER });
-        }
+    if !automatic && !crate::controls::use_pressed(&uses) {
         return;
     }
-    let (Ok(global), Some(player)) = (cams.single(), placements.player.as_ref()) else { return };
-    match pick(&placements, &player.worldspace, player.position, global.forward().as_vec3(), REACH_M, |_| true) {
-        Some((target, dist)) => {
-            let record = placements.loaded.get(&target).map_or("?", |p| p.record.as_str());
-            info!("activate: {record} ({dist:.1} m, handle {:032x})", target.0);
-            out.write(Activated { target, actor: PLAYER });
-        }
-        None if automatic => {
-            // Name the nearest placement, for a `--camera` that faces it.
-            let d = |p: &Placed| (0..3).map(|i| (p.position[i] - player.position[i]).powi(2)).sum::<f64>().sqrt();
-            let nearest = placements
-                .loaded
-                .values()
-                .filter(|p| p.worldspace == player.worldspace && p.radius > 0.0)
-                .min_by(|a, b| d(a).total_cmp(&d(b)));
-            warn!(
-                "--activate: nothing under the crosshair within {REACH_M} m of {:.1?} ({} loaded; nearest: {:?})",
-                player.position,
-                placements.loaded.len(),
-                nearest.map(|p| (&p.record, d(p), p.position))
-            );
-        }
-        None => {}
+    if let Some(f) = &focus.target {
+        info!("activate: {} ({}, {:.1} m, handle {:032x})", f.name, f.record, f.distance, f.handle.0);
+        out.write(Activated { target: f.handle, actor: PLAYER });
+        return;
     }
+    let (true, Some(player)) = (automatic, placements.player.as_ref()) else { return };
+    // Name the nearest placement, for a `--camera` that faces it.
+    let d = |p: &Placed| (0..3).map(|i| (p.position[i] - player.position[i]).powi(2)).sum::<f64>().sqrt();
+    let nearest = placements
+        .loaded
+        .values()
+        .filter(|p| p.worldspace == player.worldspace && p.radius > 0.0)
+        .min_by(|a, b| d(a).total_cmp(&d(b)));
+    warn!(
+        "--activate: nothing activatable under the crosshair at {:.1?} ({} loaded; nearest: {:?})",
+        player.position,
+        placements.loaded.len(),
+        nearest.map(|p| (&p.record, d(p), p.position))
+    );
 }
 
 /// Logs each activation's outcome (dev: scripts' `"handled"` replaces the default action).

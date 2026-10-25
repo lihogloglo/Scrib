@@ -2361,6 +2361,7 @@ dependencies = [
  "sf_terrain_bevy",
  "sf_ui",
  "sf_ui_bevy",
+ "sf_ui_css",
  "sf_ui_screens",
  "sf_vfs",
  "sf_water",

@@ -2,7 +2,7 @@
 // owner's animation checks, six areas far enough apart that a camera sees one at a time.
 // Meters, y up, x east, z south; `at` = footprint center at the bottom; ramps and stairs climb
 // toward local -z (north). Yaw 0 faces north (-z), -90 east, 180 south.
-//   start/ledges  origin          player (walk mode U), ledges 0.5/1.0/1.5/2.0 m, a 3 m wall
+//   start/ledges  origin          player start, ledges 0.5/1.0/1.5/2.0 m, a 3 m wall
 //   props         x 14..25, z 2..18   crates, boxes, a table; an NPC brushes the crate row
 //   loop          (0, 45)         a walker (12 m square) and a runner (24 m square)
 //   slopes/stairs x -55..-25, z -33..-12   10/20/30 deg ramps + two staircases, a 2 m plateau, NPCs

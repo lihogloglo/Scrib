@@ -33,7 +33,6 @@ use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
 
 mod actors;
-mod walk;
 
 /// `view level:<name>`.
 pub const PREFIX: &str = "level:";
@@ -185,7 +184,6 @@ pub fn add(app: &mut App, setup: LevelSetup) {
     let base = app.world().resource::<WorldIndexSource>().0.clone();
     let placements = actors::placements(&setup.level, &setup.actors);
     actors::add(app, Arc::clone(&setup.actors));
-    walk::add(app);
     app.insert_resource(WorldIndexSource(Arc::new(LevelIndex::new(&setup.worldspace, base, placements))))
         .insert_resource(ActiveLevel(setup))
         // After Startup's commands: the viewer's `setup` creates the worldspace root.
@@ -291,7 +289,7 @@ fn spawn(
         ));
     }
     info!(
-        "level {}: {} objects ({triangles} triangles), {bodies} static colliders, {props} props, {} actors, spawned in {:.2} ms (U: walk mode)",
+        "level {}: {} objects ({triangles} triangles), {bodies} static colliders, {props} props, {} actors, spawned in {:.2} ms (F11: player)",
         level.name,
         level.objects.len(),
         level.actors.len(),
@@ -443,7 +441,7 @@ mod tests {
         assert_eq!(framework.replace("\r\n", "\n"), ours.replace("\r\n", "\n"), "copy levels/ledges.ron to superfargoth's sf_level/tests/levels/");
     }
 
-    /// Placements: every actor (and the player at `start`) plus markers
+    /// Placements: every actor plus markers
     /// covering the floor's streaming cells.
     #[test]
     fn robe_walk_placements_cover_the_level() {
@@ -453,7 +451,7 @@ mod tests {
             .iter()
             .cloned()
             .enumerate()
-            .map(|(i, def)| actors::ActorSetup { def, kind: "NPC_", placement: sf_world::PlacementId(i as u128), player: false })
+            .map(|(i, def)| actors::ActorSetup { def, kind: "NPC_", placement: sf_world::PlacementId(i as u128) })
             .collect();
         let placements = actors::placements(&level, &setups);
         let actors = placements.iter().filter(|p| p.class == sf_world::PlacementClass::Actor).count();

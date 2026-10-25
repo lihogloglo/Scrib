@@ -58,6 +58,7 @@ sf_rpg = { path = "../superfargoth/crates/sf_rpg" }
 sf_rpg_ui = { path = "../superfargoth/crates/sf_rpg_ui" }
 sf_ui = { path = "../superfargoth/crates/sf_ui" }
 sf_ui_bevy = { path = "../superfargoth/crates/sf_ui_bevy" }
+sf_ui_css = { path = "../superfargoth/crates/sf_ui_css" }
 sf_ui_screens = { path = "../superfargoth/crates/sf_ui_screens" }
 # Same version as superfargoth (sf_ui_bevy's input contexts).
 bevy_enhanced_input = { version = "0.27", default-features = false }

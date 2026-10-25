@@ -1,5 +1,5 @@
 //! Door links in the streamed view (ROADMAP M2, streaming.md "Worldspaces at
-//! runtime"): Space (Morrowind's activate key) on a door in front of the
+//! runtime"): E (the use key; Morrowind's was Space) on a door in front of the
 //! camera crosses its link with the framework's `FadeTransition`, and each
 //! worldspace gets its own look (an interior has no sky, terrain, clouds or
 //! sea; its ambient light and fog color come from the cell).
@@ -205,7 +205,8 @@ pub(crate) fn sync_free_camera(
 /// Opens a door: the default action of the player's activation of a door
 /// placement that no script handled (`ActivationOutcome`, M5 L3; the activate
 /// key and crosshair pick are `scripts.rs`'s). Link ends without a door
-/// object (teleport points) keep the proximity pick on Space. `--use-door`
+/// object (teleport points) keep the proximity pick on E, from the player body in player mode
+/// (the third-person camera sits metres behind it), else the camera. `--use-door`
 /// travels directly, once the start has streamed in.
 #[allow(clippy::too_many_arguments)]
 fn activate(
@@ -217,6 +218,7 @@ fn activate(
     settled: Option<Res<crate::exterior::Settled>>,
     positions: WorldPosOf,
     cams: Query<(Entity, &GlobalTransform), With<DoorUser>>,
+    bodies: Query<&sf_action_bevy::ActionBody, With<crate::player::PlayerBody>>,
     mut outcomes: MessageReader<sf_script_bevy::ActivationOutcome>,
     mut travel: MessageWriter<StartTravel>,
 ) {
@@ -234,7 +236,11 @@ fn activate(
         return;
     }
     let Ok((cam, global)) = cams.single() else { return };
-    let Some(here) = positions.location(cam) else { return };
+    let Some(mut here) = positions.location(cam) else { return };
+    // Player mode: proximity from the body's mid-height (same worldspace: `player::follow_worldspace`).
+    if let Ok(body) = bodies.single() {
+        here.pos = body.loco.render_position().offset(Vec3::Y * (body.params.height / 2.0));
+    }
     // An activated door placement's link end, if any.
     let by_door = links
         .0
@@ -247,7 +253,7 @@ fn activate(
     let picked = match by_door {
         Some(pair) => Some(pair),
         None if automatic => pick(&links.0, &here, forward, reach),
-        // Space on a doorless link end (no placement to activate).
+        // E on a doorless link end (no placement to activate).
         None if manual => pick(&links.0, &here, forward, reach).filter(|(from, _)| from.door.is_none()),
         None => return,
     };

@@ -62,6 +62,14 @@ pub struct SceneDef {
     pub checks: Vec<String>,
 }
 
+impl SceneDef {
+    /// The scene places its own camera (`camera`, or `--camera` in its flags): interactive runs
+    /// keep it instead of starting in player mode (`player.rs`).
+    pub fn fixed_camera(&self) -> bool {
+        self.camera.is_some() || self.flags.iter().any(|f| f == "--camera")
+    }
+}
+
 /// The scene this process runs, for the overlay and screenshot names.
 static ACTIVE: OnceLock<SceneDef> = OnceLock::new();
 
@@ -225,6 +233,19 @@ mod tests {
         assert_eq!(camera_of(level, &["--camera", "course"]).as_deref(), Some("course"));
         let placed = scenes.iter().find(|s| s.camera.is_some()).expect("a scene with its own camera");
         assert_eq!(camera_of(placed, &["--camera", "1,2,3,4,5,6"]).as_deref(), Some("1,2,3,4,5,6"));
+    }
+
+    /// A scene that places its camera keeps it (no player mode at the start).
+    #[test]
+    fn fixed_camera_scenes() {
+        let scenes = parse(BUILT_IN, "built-in").expect("scenes.ron parses");
+        assert!(scenes.iter().find(|s| s.camera.is_some()).expect("a scene with its own camera").fixed_camera());
+        let mut free = scenes[0].clone();
+        free.camera = None;
+        free.flags.clear();
+        assert!(!free.fixed_camera());
+        free.flags = vec!["--camera".to_owned(), "course".to_owned()];
+        assert!(free.fixed_camera());
     }
 
     #[test]

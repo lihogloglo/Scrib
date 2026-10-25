@@ -87,6 +87,7 @@ sf_rpg.workspace = true
 sf_rpg_ui.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
+sf_ui_css.workspace = true
 sf_ui_screens.workspace = true
 bevy_enhanced_input.workspace = true
 sf_weather.workspace = true

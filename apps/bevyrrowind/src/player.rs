@@ -6,9 +6,12 @@
 //!
 //! - **Modes.** F11 switches between the player and the free (fly) camera, which stays for dev
 //!   work. Interactive runs start in player mode once the start has streamed in
-//!   (`exterior::Settled`); `--bench` and `--screenshot` runs keep the free camera, so every
-//!   existing scene and benchmark is unchanged. Turning the player on drops it in under the
-//!   camera; turning it off despawns it and hands the camera back to `FreeCamera`.
+//!   (`exterior::Settled`); `--bench` and `--screenshot` runs, and test scenes that place their
+//!   own camera (`scenes::SceneDef::fixed_camera`), keep the free camera, so every existing
+//!   scene and benchmark is unchanged. Turning the player on drops it in under the
+//!   camera; turning it off despawns it and hands the camera back to `FreeCamera`. The first
+//!   spawn of an interior start ([`PlayerStart`]) goes to a door's arrival marker into the
+//!   cell, else to the floor under the camera ([`floor_below`]), not onto the roof.
 //! - **Entities.** The body ([`PlayerBody`]: `ActionCharacter`, `ActionBody`, `PlayerInput`,
 //!   the `PlayerControls` context with the bindings below) is a `big_space` child of the active
 //!   worldspace grid; after the interpolation [`regrid`] keeps its `CellCoord` canonical and
@@ -18,19 +21,24 @@
 //!   `sf_character_bevy` with the A2 animation feed).
 //! - **Doors.** The camera stays the traveler (`doors.rs`, scripts, sky and streaming key on
 //!   it); on `TravelArrived` the body is teleported to the arrival marker and reparented to the
-//!   new worldspace grid, the look turned to the marker's heading.
+//!   new worldspace grid, the look turned to the marker's heading. Doorless link ends
+//!   (teleport points) are picked from the body, not the camera behind it.
 //! - **Activation.** [`Focus`] is `OpenMW`'s focus ray (`World::getFocusObject`): a camera ray
 //!   through the screen centre, as long as `iMaxActivateDist` plus the camera's arm length, the
 //!   arm subtracted from the hit distance; what has a name is activatable ([`activatable`]).
-//!   `scripts.rs` writes `sf_script_bevy::Activated { target, actor: PLAYER }` for it on E;
+//!   The ray is cast on the physics world ([`focus_ray`]: statics, doors, items, the hit body
+//!   mapped back to its placement) plus the actors' capsules ([`ActorShape`]); the nearest hit
+//!   is the focus. `scripts.rs` writes `sf_script_bevy::Activated { target, actor: PLAYER }` for
+//!   it on E, never while paused;
 //!   unhandled outcomes run the default action (`doors.rs` opens doors; dialogue consumes NPCs).
 //! - **Seam.** [`PlayerMode::paused`] suspends the controls and frees the cursor (menus,
 //!   dialogue). Movement and camera feel are modern (`sf_action` rules); a classic
 //!   `mw_rules` controller would replace the rules and params, not this module.
 //!
-//! Bindings (keyboard and mouse; gamepad later with the keybind settings): WASD move, Shift
-//! sprint, Ctrl sneak, Space jump (modern default; Morrowind used E), Tab first/third person (Morrowind's
-//! default), mouse look, wheel zoom, E use (`scripts.rs`; Morrowind used Space).
+//! Bindings come from the player's keymap (`controls.rs`: defaults, gamepad, hold / toggle,
+//! profile, F10 keybinds screen); a keymap change respawns the body's bindings ([`rebind`]).
+//! Keyboard defaults: WASD move, Shift sprint, Ctrl sneak, Space jump (modern default; Morrowind
+//! used E), Tab first/third person (Morrowind's default), mouse look, wheel zoom, E use.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,13 +54,16 @@ use sf_action_bevy::{
 };
 use sf_camera::Look;
 use sf_camera_bevy::{CameraAction, PlayerCamera, SfCameraPlugin, spawn_camera_actions};
-use sf_controller::{Locomotion, MoverParams};
-use sf_controller_bevy::AvoidObstacle;
-use sf_coords::WorldPos;
-use sf_physics_bevy::Physics;
+use sf_character_bevy::CharacterPlacement;
+use sf_controller::{Locomotion, MoverParams, ProbeQuery};
+use sf_controller_bevy::{AvoidObstacle, Mover};
+use sf_coords::{WorldPos, WorldTransform};
+use sf_physics::{BodyId, Layer, PhysicsWorld};
+use sf_physics_bevy::{Physics, PhysicsStreaming};
 use sf_records::{RecordDb, RecordId};
 use sf_script::Handle as ScriptHandle;
 use sf_script_bevy::{ScriptPlacements, ScriptSlot};
+use sf_world::{PlacementId, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{FadeTransition, TravelArrived, WorldPosOf, from_grid, to_grid};
 
@@ -60,6 +71,8 @@ use sf_world_bevy::{FadeTransition, TravelArrived, WorldPosOf, from_grid, to_gri
 pub const TOGGLE_KEY: KeyCode = KeyCode::F11;
 /// Mouse look, radians per mouse count.
 const LOOK_RAD_PER_COUNT: f32 = 0.0025;
+/// Stick look at full deflection, radians per second (~150 deg/s, a common console default).
+const STICK_LOOK_RAD_PER_S: f32 = 2.6;
 /// `iMaxActivateDist` when the GMST is missing, game units (Morrowind.esm's value).
 const DEFAULT_ACTIVATE_UNITS: f32 = 192.0;
 /// A fall this far below the last ground puts the player back there, meters (a hole in the
@@ -68,24 +81,30 @@ const FALL_LIMIT_M: f32 = 200.0;
 /// The player's character id on commands (NPCs don't run the action layer yet).
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
-pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool) {
+pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: PlayerStart) {
     if !app.is_plugin_added::<EnhancedInputPlugin>() {
         app.add_plugins(EnhancedInputPlugin);
     }
     let reach_m = activate_reach_m(db.as_deref());
+    crate::controls::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
         .insert_resource(rules())
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
         .insert_resource(Activation { db, reach_m })
+        .insert_resource(start)
         .init_resource::<Focus>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (toggle, apply_mode, arrive, follow_worldspace, guard_fall, obstacle, controls_active, grab_cursor).chain(),
+            (toggle, apply_mode, rebind, arrive, follow_worldspace, guard_fall, obstacle, controls_active, grab_cursor).chain(),
         )
-        .add_systems(Update, (update_focus, prompt).chain().before(ScriptSlot::Update))
+        .add_systems(Update, (update_focus.in_set(FocusUpdate), prompt).chain().before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate));
 }
+
+/// Where [`Focus`] is updated: E's activation (`scripts.rs`) runs after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FocusUpdate;
 
 /// `iMaxActivateDist` in meters. `OpenMW` `apps/openmw/mwworld/worldimp.cpp`
 /// `World::getMaxActivationDistance` (commit 4e718b50) reads the GMST as an integer, in game
@@ -175,41 +194,88 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 
 // --- bindings ---------------------------------------------------------------------------------
 
-fn bind(commands: &mut Commands, action: Entity, binding: impl Into<Binding>, modifiers: impl Bundle) {
-    commands.spawn((BindingOf(action), binding.into(), modifiers));
+/// A stick axis binding: a dead zone, and the vertical axis feeds Y.
+fn stick_axis(binding: &Binding, entity: &mut EntityCommands<'_>) {
+    entity.insert(DeadZone::default());
+    if sf_ui_bevy::is_vertical_axis(binding) {
+        entity.insert(SwizzleAxis::YXZ);
+    }
 }
 
-/// The player's actions on `body` (its `PlayerControls` context) with the default bindings.
-fn spawn_controls(commands: &mut Commands, body: Entity) {
+/// No modifiers.
+fn plain(_: &Binding, _: &mut EntityCommands<'_>) {}
+
+/// The player's actions on `body` (its `PlayerControls` context), bound from `keymap`
+/// (`controls.rs`).
+fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity) {
+    use crate::controls::{Control, bind};
     for (tag, action) in spawn_player_actions(commands, body) {
         match tag {
             PlayerAction::Stick => {
-                // `Cardinal` WASD: x right, y forward.
-                bind(commands, action, KeyCode::KeyD, ());
-                bind(commands, action, KeyCode::KeyA, Negate::all());
-                bind(commands, action, KeyCode::KeyW, SwizzleAxis::YXZ);
-                bind(commands, action, KeyCode::KeyS, (Negate::all(), SwizzleAxis::YXZ));
+                // `Cardinal` keys: x right, y forward; the pad stick with a dead zone.
+                bind(commands, keymap, Control::MoveRight, action, plain);
+                bind(commands, keymap, Control::MoveLeft, action, |_, e| {
+                    e.insert(Negate::all());
+                });
+                bind(commands, keymap, Control::MoveForward, action, |_, e| {
+                    e.insert(SwizzleAxis::YXZ);
+                });
+                bind(commands, keymap, Control::MoveBack, action, |_, e| {
+                    e.insert((Negate::all(), SwizzleAxis::YXZ));
+                });
+                bind(commands, keymap, Control::Move, action, stick_axis);
             }
-            PlayerAction::Button(ActionClass::Jump) => bind(commands, action, KeyCode::Space, ()),
-            PlayerAction::Button(ActionClass::Sprint) => bind(commands, action, KeyCode::ShiftLeft, ()),
-            PlayerAction::Button(ActionClass::Sneak) => bind(commands, action, KeyCode::ControlLeft, ()),
+            PlayerAction::Button(ActionClass::Jump) => bind(commands, keymap, Control::Jump, action, plain),
+            PlayerAction::Button(ActionClass::Sprint) => bind(commands, keymap, Control::Sprint, action, plain),
+            PlayerAction::Button(ActionClass::Sneak) => bind(commands, keymap, Control::Sneak, action, plain),
             PlayerAction::Button(_) => {}
         }
     }
     for (tag, action) in spawn_camera_actions(commands, body) {
         match tag {
-            CameraAction::Look => bind(commands, action, Binding::mouse_motion(), (Scale::splat(LOOK_RAD_PER_COUNT), Negate::y())),
-            CameraAction::Zoom => bind(commands, action, Binding::mouse_wheel(), SwizzleAxis::YXZ),
-            CameraAction::ToggleView => bind(commands, action, KeyCode::Tab, ()),
+            // Mouse counts are a per-frame delta already; a stick is a rate (times delta time).
+            CameraAction::Look => bind(commands, keymap, Control::Look, action, |b, e| {
+                if matches!(b, Binding::MouseMotion { .. }) {
+                    e.insert((Scale::splat(LOOK_RAD_PER_COUNT), Negate::y()));
+                } else {
+                    stick_axis(b, e);
+                    e.insert((DeltaScale::default(), Scale::splat(STICK_LOOK_RAD_PER_S)));
+                }
+            }),
+            CameraAction::Zoom => bind(commands, keymap, Control::Zoom, action, |_, e| {
+                e.insert(SwizzleAxis::YXZ);
+            }),
+            CameraAction::ToggleView => bind(commands, keymap, Control::ToggleView, action, plain),
             CameraAction::SwapShoulder => {}
         }
     }
 }
 
+/// A keymap change (rebind, hold / toggle) respawns the body's actions with the new bindings.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn rebind(
+    mut commands: Commands,
+    keymap: Res<sf_ui_bevy::UiKeymap>,
+    mode: Res<PlayerMode>,
+    mut seen: Local<Option<u64>>,
+    actions: Query<&Actions<PlayerControls>>,
+) {
+    let version = keymap.0.version();
+    if seen.replace(version).is_none_or(|v| v == version) {
+        return;
+    }
+    let Some(body) = mode.body else { return };
+    let Ok(existing) = actions.get(body) else { return };
+    for action in existing {
+        commands.entity(action).despawn();
+    }
+    spawn_controls(&mut commands, &keymap.0, body);
+}
+
 // --- mode ---------------------------------------------------------------------------------------
 
 /// The player body bundle at `feet`, facing `yaw` (0 faces +Z), on the worldspace grid `root`.
-fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, feet: WorldPos, yaw: f32, root: Entity) -> Entity {
+fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, keymap: &sf_ui::Keymap, feet: WorldPos, yaw: f32, root: Entity) -> Entity {
     let (cell, transform) = to_grid(feet);
     let params = MoverParams::default();
     let half = params.height / 2.0;
@@ -231,7 +297,7 @@ fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, feet: WorldPos, ya
             ChildOf(root),
         ))
         .id();
-    spawn_controls(commands, id);
+    spawn_controls(commands, keymap, id);
     let material = MeshMaterial3d(visual.material.clone());
     commands.spawn((Mesh3d(visual.capsule.clone()), material.clone(), Transform::from_xyz(0.0, half, 0.0), ChildOf(id)));
     // Facing marker at head height (yaw 0 faces +Z).
@@ -246,12 +312,58 @@ fn toggle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<PlayerMode>) {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)] // system parameters
+/// Where an interior `view` start puts the player: the free camera frames the cell from above
+/// (`main.rs` `interior_view`), so feet at its eye would land on the roof.
+#[derive(Resource, Debug, Default)]
+pub struct PlayerStart {
+    /// The interior the run starts in; cleared once the player has spawned there.
+    worldspace: Option<WorldspaceId>,
+    /// Arrival markers of the doors into it.
+    arrivals: Vec<WorldTransform>,
+}
+
+impl PlayerStart {
+    /// The arrival markers into `start` when it is an interior (it has a cell environment);
+    /// exterior starts keep the drop under the camera.
+    pub fn of(world: &crate::doors::WorldLinks, start: &WorldspaceId) -> Self {
+        if !world.environments.contains_key(start) {
+            return Self::default();
+        }
+        let arrivals = world
+            .links
+            .iter()
+            .flat_map(|l| [l.two_way.then_some(&l.a), Some(&l.b)])
+            .flatten()
+            .filter(|end| &end.worldspace == start)
+            .map(|end| end.arrival)
+            .collect();
+        Self { worldspace: Some(start.clone()), arrivals }
+    }
+}
+
+/// The first player spawn in an interior start: at the arrival marker nearest the camera (feet
+/// on the marker, facing its heading, as door travel: `doors.rs`, [`arrive`]), else on the
+/// floor under the camera ([`floor_below`]), else `None` (the eye).
+fn interior_spawn(arrivals: &[WorldTransform], world: Option<&PhysicsWorld>, eye: WorldPos) -> Option<(WorldPos, Option<f32>)> {
+    let nearest = arrivals.iter().min_by(|a, b| eye.delta_f32(a.pos).length().total_cmp(&eye.delta_f32(b.pos).length()));
+    if let Some(marker) = nearest {
+        let look = Look::from_dir(crate::doors::arrival_rotation(marker.rotation) * Vec3::NEG_Z);
+        return Some((marker.pos, Some(look.yaw)));
+    }
+    let floor = floor_below(world?, eye, MoverParams::default().height)?;
+    Some((floor.offset(Vec3::Y * 0.05), None))
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // system parameters
 fn apply_mode(
     mut commands: Commands,
     mut mode: ResMut<PlayerMode>,
+    mut start: ResMut<PlayerStart>,
+    physics: Res<Physics>,
+    streaming: Option<Res<PhysicsStreaming>>,
     settled: Option<Res<crate::exterior::Settled>>,
     visual: Res<PlayerVisual>,
+    keymap: Res<sf_ui_bevy::UiKeymap>,
     positions: WorldPosOf,
     mut cams: Query<(Entity, &GlobalTransform, &ChildOf, &mut FreeCameraState), With<crate::doors::DoorUser>>,
 ) {
@@ -259,9 +371,25 @@ fn apply_mode(
     match (mode.on, mode.body) {
         (true, None) => {
             let Some(here) = settled.and_then(|_| positions.location(cam)) else { return };
-            let look = Look::from_dir(global.forward().as_vec3());
+            let mut look = Look::from_dir(global.forward().as_vec3());
             // Feet at the eye: the body drops onto whatever is below.
-            let body = spawn_body(&mut commands, &visual, here.pos, look.yaw, parent.parent());
+            let mut feet = here.pos;
+            if start.worldspace.as_ref() == Some(&here.worldspace) {
+                // Wait for the collision under the eye before looking for the floor.
+                if streaming.as_deref().is_some_and(|s| s.collision_loading(&here.worldspace, here.pos, 2.0)) {
+                    return;
+                }
+                start.worldspace = None;
+                if let Some((at, yaw)) = interior_spawn(&start.arrivals, physics.world(&here.worldspace), here.pos) {
+                    feet = at;
+                    if let Some(yaw) = yaw {
+                        look = Look::new(yaw, 0.0);
+                    }
+                } else {
+                    warn!("player: no arrival marker or floor under the camera; spawning at the eye");
+                }
+            }
+            let body = spawn_body(&mut commands, &visual, &keymap.0, feet, look.yaw, parent.parent());
             let mut camera = PlayerCamera::new(body);
             camera.set_look(look);
             commands.entity(cam).insert(camera);
@@ -456,8 +584,9 @@ pub fn activatable(db: &RecordDb, record: &str) -> Option<Activatable> {
 /// `OpenMW`'s focus ray (`World::getFocusObject`, `apps/openmw/mwworld/worldimp.cpp`, commit
 /// 4e718b50): from the camera through the screen centre, `iMaxActivateDist` plus the camera
 /// distance long; the hit distance minus the camera distance must be within `iMaxActivateDist`.
-/// Terrain doesn't block (`OpenMW`'s default `terrain obstructs focus` is off); our pick is the
-/// bounding-sphere scaffold `CrosshairPick` (`scripts.rs`), statics skipped.
+/// The first thing the ray hits is the focus ([`focus_ray`]): a wall or a static in front
+/// blocks, and what it hits shows a prompt only if it is [`activatable`]. Terrain doesn't
+/// block (`OpenMW`'s default `terrain obstructs focus` is off).
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // system parameters
 fn update_focus(
     mut focus: ResMut<Focus>,
@@ -465,7 +594,10 @@ fn update_focus(
     placements: Res<ScriptPlacements>,
     fade: Res<FadeTransition>,
     mode: Res<PlayerMode>,
+    physics: Res<Physics>,
+    streaming: Option<Res<PhysicsStreaming>>,
     cams: Query<(Entity, &GlobalTransform, Option<&PlayerCamera>), With<crate::doors::DoorUser>>,
+    actors: Query<(&Mover, &CharacterPlacement, &crate::walkers::ActorSpace), Without<PlayerBody>>,
     positions: WorldPosOf,
     mut names: Local<HashMap<String, Option<Activatable>>>,
 ) {
@@ -477,22 +609,147 @@ fn update_focus(
     let Ok((cam, global, camera)) = cams.single() else { return };
     let Some(here) = positions.location(cam) else { return };
     let arm = camera.and_then(PlayerCamera::pose).map_or(0.0, |p| p.arm_length);
-    for p in placements.loaded.values() {
-        if !names.contains_key(&p.record) {
-            names.insert(p.record.clone(), activatable(db, &p.record));
-        }
-    }
-    let eye = here.pos.to_f64();
     let reach = activation.reach_m;
-    let accept = |p: &sf_script_bevy::Placed| names.get(&p.record).is_some_and(Option::is_some);
-    let picked = crate::scripts::pick(&placements, here.worldspace.as_str(), [eye.x, eye.y, eye.z], global.forward().as_vec3(), reach + arm, accept);
+    let ws = here.worldspace.as_str();
+    let near = reach + arm + 2.0;
+    let shapes: Vec<ActorShape> = actors
+        .iter()
+        .filter(|(m, _, space)| space.0 == here.worldspace && here.pos.delta_f32(m.loco.render_position()).length() < near)
+        .map(|(m, p, _)| ActorShape {
+            handle: ScriptHandle(p.0.0),
+            feet: m.loco.render_position(),
+            radius: m.params.radius,
+            height: m.params.height,
+        })
+        .collect();
+    // The hit body's placement (statics, doors, items: `PhysicsStreaming` keeps placement -> body).
+    let owner = |body: BodyId| {
+        let s = streaming.as_deref()?;
+        placements
+            .loaded
+            .iter()
+            .find(|(h, p)| p.worldspace == ws && s.body(&here.worldspace, PlacementId(h.0)) == Some(body))
+            .map(|(h, _)| *h)
+    };
+    let world = physics.world(&here.worldspace);
+    let picked = focus_ray(world, here.pos, global.forward().as_vec3(), reach + arm, owner, &shapes);
     let Some((handle, t)) = picked else { return };
     let distance = t - arm;
     let Some(placed) = placements.loaded.get(&handle) else { return };
-    let Some(Some((name, verb))) = names.get(&placed.record) else { return };
+    let cached = names.entry(placed.record.clone()).or_insert_with(|| activatable(db, &placed.record));
+    let Some((name, verb)) = cached else { return };
     if distance <= reach {
         focus.target = Some(FocusTarget { handle, record: placed.record.clone(), name: name.clone(), verb: *verb, distance });
     }
+}
+
+/// What the focus ray hits in the physics world: placed statics, doors and items. Terrain is
+/// left out (see [`update_focus`]), characters are tested as [`ActorShape`]s, and a held item
+/// (`Layer::HELD`) doesn't hide what is behind it.
+const FOCUS_LAYERS: Layer = Layer::STATIC.union(Layer::PROP).union(Layer::DEBRIS);
+
+/// An actor as the focus ray sees it: an upright capsule at the mover's feet. Actors are tested
+/// analytically, not through the physics world: a character's kinematic capsule exists only
+/// while its mover simulates (`sf_physics_bevy` skips `Dormant` movers), a standing NPC out
+/// of processing range must still be talked to, and the player's own capsule must not catch
+/// the third-person ray.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ActorShape {
+    pub handle: ScriptHandle,
+    pub feet: WorldPos,
+    pub radius: f32,
+    pub height: f32,
+}
+
+/// The nearest thing a ray from `origin` along `dir` (normalized) hits within `max` meters:
+/// a physics body of `world` ([`FOCUS_LAYERS`], mapped to its placement by `owner`; a body
+/// with no placement blocks) or an actor. Returns the hit's handle and distance.
+pub(crate) fn focus_ray(
+    world: Option<&PhysicsWorld>,
+    origin: WorldPos,
+    dir: Vec3,
+    max: f32,
+    owner: impl Fn(BodyId) -> Option<ScriptHandle>,
+    actors: &[ActorShape],
+) -> Option<(ScriptHandle, f32)> {
+    let mut best: Option<(Option<ScriptHandle>, f32)> = world
+        .and_then(|w| w.probe(FOCUS_LAYERS).cast(&ProbeQuery::ray(origin, dir, max)))
+        .map(|(body, hit)| (owner(body), hit.distance));
+    for a in actors {
+        let base = origin.delta_f32(a.feet);
+        let r = a.radius.max(0.05);
+        let lo = base + Vec3::Y * r;
+        let hi = base + Vec3::Y * (a.height - r).max(r);
+        if let Some(t) = ray_capsule(dir, lo, hi, r)
+            && t <= max
+            && best.is_none_or(|(_, bt)| t < bt)
+        {
+            best = Some((Some(a.handle), t));
+        }
+    }
+    best.and_then(|(h, t)| Some((h?, t)))
+}
+
+/// Distance along `dir` (normalized, from the origin) to the capsule around the segment
+/// `lo`-`hi` of radius `r`: the cylinder side and the end spheres, nearest first. `None` when
+/// the ray misses or starts inside.
+fn ray_capsule(dir: Vec3, lo: Vec3, hi: Vec3, r: f32) -> Option<f32> {
+    let sphere = |center: Vec3| {
+        let along = center.dot(dir);
+        let disc = along * along - (center.length_squared() - r * r);
+        (disc >= 0.0).then(|| along - disc.sqrt()).filter(|t| *t >= 0.0)
+    };
+    let mut best = sphere(lo).into_iter().chain(sphere(hi)).reduce(f32::min);
+    let len = (hi - lo).length();
+    if len > 1e-4 {
+        // The infinite cylinder around the axis, in the plane perpendicular to it.
+        let axis = (hi - lo) / len;
+        let flat_dir = dir - axis * dir.dot(axis);
+        let flat_origin = -lo + axis * lo.dot(axis);
+        let qa = flat_dir.length_squared();
+        let qb = flat_dir.dot(flat_origin);
+        let disc = qb * qb - qa * (flat_origin.length_squared() - r * r);
+        if qa > 1e-8 && disc >= 0.0 {
+            let t = (-qb - disc.sqrt()) / qa;
+            let along_axis = (dir * t - lo).dot(axis);
+            if t >= 0.0 && (0.0..=len).contains(&along_axis) {
+                best = Some(best.map_or(t, |s| s.min(t)));
+            }
+        }
+    }
+    best
+}
+
+/// How far down [`floor_below`] looks, meters.
+const FLOOR_SEARCH_M: f32 = 200.0;
+/// The highest ceiling over an interior floor, meters (Morrowind's halls stay well under it).
+const CEILING_M: f32 = 60.0;
+
+/// The floor under `eye` in an interior: down from the eye, the first surface with at least
+/// `head_room` free above it and a ceiling within [`CEILING_M`]. A start above the room
+/// (`main.rs` `interior_view` frames the cell from above) passes the roof's top (nothing
+/// above it) and the roof's slab (no head room) on the way down.
+pub(crate) fn floor_below(world: &PhysicsWorld, eye: WorldPos, head_room: f32) -> Option<WorldPos> {
+    const STEP_M: f32 = 0.05;
+    let probe = world.probe(Layer::STATIC);
+    let mut from = eye;
+    let mut fallen = 0.0;
+    for _ in 0..64 {
+        let (_, down) = probe.cast(&ProbeQuery::ray(from, Vec3::NEG_Y, FLOOR_SEARCH_M - fallen))?;
+        if down.distance <= 1e-3 {
+            // Inside a solid primitive: step through it.
+            from = from.offset(Vec3::NEG_Y * (2.0 * STEP_M));
+            fallen += 2.0 * STEP_M;
+            continue;
+        }
+        let up = probe.cast(&ProbeQuery::ray(down.point.offset(Vec3::Y * STEP_M), Vec3::Y, CEILING_M));
+        if up.is_some_and(|(_, h)| h.distance + STEP_M >= head_room) {
+            return Some(down.point);
+        }
+        fallen += down.distance + STEP_M;
+        from = down.point.offset(Vec3::NEG_Y * STEP_M);
+    }
+    None
 }
 
 /// The "press to use" prompt and the centre dot.

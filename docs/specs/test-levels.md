@@ -54,7 +54,7 @@ Dev build, warm file cache (2026-10-18): content (records, VFS, bake manifest) 0
 (13-22 objects, 344-494 triangles, one collider each); **ready 2.1-2.8 s after process start** (window, render
 and pipeline setup dominate; logged as `level <name> ready <s> after start`).
 
-## Actors, walk mode, props (built, ts1b, 2026-10-18)
+## Actors, player, props (built, ts1b, 2026-10-18)
 
 - **Actors** (`level/actors.rs`): each `actors` entry is resolved against
   the records (`NPC_` or `CREA`; unknown ids are skipped with a warning) and
@@ -72,14 +72,10 @@ and pipeline setup dominate; logged as `level <name> ready <s> after start`).
   there parks (the processing range). The level index adds invisible
   `Marker` placements every 64 m over `Level::bounds()`, so every streaming
   cell under the level is in the directory and goes active.
-- **Walk mode** (`level/walk.rs`): the player is a level actor too
-  (Morrowind's `player` record at the `start` spawn, else the first spawn).
-  `U` toggles fly/walk: WASD in the camera's heading frame, Shift runs; the
-  free camera keeps the mouse look and sits 3.5 m behind a 1.6 m pivot.
-  Scaffold: no camera collision, no jump (the player controller is M7).
-  Verified (ts1c, 2026-10-19, BRP): the player spawns dressed at `start`,
-  W walks it 2.6 m in 2 s (1.6 m/s), Shift+W asks 4.5 m/s, the camera follows;
-  the log prints `walk: player starts/stops at ..., wants ..., measured ...`.
+- **Player:** the game's own (`player.rs`, ROADMAP 2.1): F11 drops it under the camera
+  (third person, jump, camera collision). Level scenes with a camera start on the free
+  camera. The `level/walk.rs` U walk mode (a `player` level actor at `start`) is retired
+  (2026-10-25: redundant, and U is the dialogue dev key).
 - **Props:** `dynamic: Some(mass)` boxes are `BodyKind::Dynamic` bodies on
   `Layer::PROP` (box shape about the center, the render mesh shifted to
   match) with `PhysicsBody` for the pose write-back; `LevelProp` keeps the
@@ -105,8 +101,8 @@ and pipeline setup dominate; logged as `level <name> ready <s> after start`).
 | `robe-walk` | the Balmora temple priest (own robe) walks a flat loop and fidgets at its corner; Fargoth (common robe) walks and Elone (extravagant robe) runs back and forth over a 15° ramp, a 1 m plateau and stairs (5 × 0.20/0.32); a table (30 kg) and three stacked crates (15 kg) | `level-robe-walk` (cloth PH-3) |
 | `anim-lab` | animation lab, six areas: ledges 0.5/1/1.5/2 m + 3 m wall (player start); props (crate row an NPC brushes, stack, light/heavy boxes, table); walk loop (12 m walker, 24 m runner); 10/20/30° ramps + 0.15/0.25 m stairs to a 2 m plateau with walkers; 3 m / 6 m drops over a 15° slope (walker steps off, `@impact` knockdown dummy); idles (three races fidgeting, hit and knockdown dummies, guar, mudcrab) | `level-anim-{overview,loop,stairs,ledges,props,drop,idles}` (AL-1..7) |
 
-Leftovers: compound props (a table with legs), camera collision in walk mode,
-a `--walk` start flag (walk mode is a key only; BRP `send_keys` U).
+Leftovers: compound props (a table with legs),
+a start flag for player mode in level scenes (F11 only; BRP `send_keys` F11).
 
 ## Light lab (built, lightlab, 2026-10-21)
 

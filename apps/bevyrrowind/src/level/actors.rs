@@ -1,5 +1,5 @@
 //! Level actors (TS1 part 2, `docs/specs/test-levels.md` "Actors"): the
-//! level's `actors` (plus the walk-mode player) become actor placements in
+//! level's `actors` become actor placements in
 //! the level's streaming index, so the streamed world spawns them like any
 //! cell's NPCs. [`LevelActorSpawner`] dresses them in their outfit and tags
 //! them [`LevelActor`]; `walkers.rs` gives them their `Mover` (and drops the
@@ -26,9 +26,6 @@ use sf_world::{IndexedPlacement, Placement, PlacementClass, PlacementFlags, Plac
 use sf_world_bevy::{PlacementSpawner, PlacementSpawners, SpawnCx};
 use tes3::esp::{Creature, Npc};
 
-/// The record the walk-mode player wears (Morrowind's own `player` NPC).
-pub const PLAYER_RECORD: &str = "player";
-
 /// Streaming cells are 128 m: one marker per 64 m keeps every cell under the
 /// level in the directory (cells without content count as unloaded, and a
 /// mover there would park: walkers' processing range).
@@ -41,18 +38,17 @@ pub struct ActorSetup {
     /// Record kind (`NPC_`, `CREA`) of `def.id`.
     pub kind: &'static str,
     pub placement: PlacementId,
-    /// The walk-mode player (walk.rs drives it, not a path).
-    pub player: bool,
 }
 
-/// The level's actors and the player (at the `start` spawn, else the
-/// first), with their record kinds; unknown ids are skipped with a warning.
+/// The level's actors with their record kinds; unknown ids are skipped with a warning. The
+/// player is the game's own (`player.rs`, F11), not a level actor.
 pub fn resolve(level: &Level, db: &RecordDb) -> Vec<ActorSetup> {
-    let player_spawn = level.spawn("start").or(level.spawns.first());
-    let player = player_spawn.map(|s| sf_level::Actor { id: PLAYER_RECORD.to_owned(), spawn: s.name.clone(), outfit: None, path: None, action: None });
-    let defs = level.actors.iter().cloned().map(|a| (a, false)).chain(player.map(|p| (p, true)));
-    defs.enumerate()
-        .filter_map(|(i, (def, player))| {
+    level
+        .actors
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter_map(|(i, def)| {
             let id = RecordId::new(&def.id);
             let kind = if db.get::<Npc>(&id).is_some() {
                 "NPC_"
@@ -63,7 +59,7 @@ pub fn resolve(level: &Level, db: &RecordDb) -> Vec<ActorSetup> {
                 return None;
             };
             let placement = PlacementId::from_key("level", format!("{}/actor/{i}", level.name).as_bytes());
-            Some(ActorSetup { def, kind, placement, player })
+            Some(ActorSetup { def, kind, placement })
         })
         .collect()
 }
@@ -216,9 +212,6 @@ fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity
         };
         let mut e = commands.entity(entity);
         e.try_remove::<(crate::walkers::Walker, Avoider)>().try_insert(ActorScript { follower, action, fidgets });
-        if setup.player {
-            e.insert(super::walk::WalkPlayer);
-        }
     }
 }
 

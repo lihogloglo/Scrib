@@ -1,15 +1,18 @@
-//! Dialogue in the game (ROADMAP 2.4, slice 1): the stock `sf_ui_screens` dialogue window
-//! driven by `mw_rpg` sessions and the result runner.
+//! Dialogue and the journal in the game (ROADMAP 2.4 / 2.2): the stock `sf_ui_screens` dialogue
+//! window and journal, driven by `mw_rpg` sessions and the result runner.
 //!
 //! - [`Rpg`] (Bevy-free core, a resource): the game's `MwView` + `MwWorld` over the live state
 //!   (actors met, player facts, globals, locals, journal), conversations ([`Talk`]) and the
-//!   effects of result scripts, applied as `OpenMW` does (see [`Rpg::apply`]).
+//!   effects of result scripts, applied as `OpenMW` does (see [`Rpg::apply`]). It is also the
+//!   journal's [`JournalSource`] (`Content` gives the labels).
 //! - [`add`]: the app glue (after `DefaultPlugins`). Unthemed (the screens' fallback look); the
-//!   journal, HUD and Morrowind theme are later slices.
+//!   HUD and Morrowind theme are later slices.
 //!
-//! Opening a conversation: dev trigger `U` on the nearest NPC (and `Shift+U` gives the player
-//! Fargoth's ring, scaffold [`DevGiveRing`]) until the `player` lane's activation message lands
-//! (TODO seam in [`dev_talk`]).
+//! Opening a conversation: the player activates an NPC (E on the focused placement,
+//! `scripts.rs` writes `Activated`); an activation no script handled opens the window
+//! ([`talk_on_activate`]). `J` opens and closes the journal (Back closes it too). While a menu is
+//! open the player's controls are paused (`PlayerMode::paused`). Dev: `Shift+U` gives the player
+//! Fargoth's ring (scaffold [`DevGiveRing`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -22,27 +25,30 @@ use mw_rpg::{
     ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, rank_name,
 };
 use serde::{Deserialize, Serialize};
-use sf_character_bevy::Character;
+use sf_character_bevy::{Character, CharacterPlacement};
 use sf_records::{RecordDb, RecordFormat, RecordId, apply_record_file};
 use sf_rpg::{
     ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession, GameTime,
     HeardLine, Holder, JournalEntry, PlayerId, RpgCommand, RpgEvent, TopicKind, WorldRpg,
 };
-use sf_rpg_ui::{DialogueRequest, DialogueView, JournalLabels};
+use sf_rpg_ui::{Alphabet, DialogueRequest, DialogueView, JournalLabels, JournalScreen, JournalSeen};
+use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements};
 use sf_ui::{Layer, UiRegistry, register_kinds};
 use sf_ui_bevy::{
     MessageBoxConfig, MessageBoxes, ScreenStackRes, SfUiPlugin, Toasts, UiRegistryRes,
     UiScreenRoot, UiTextPlugin,
 };
-use sf_ui_screens::{DialogueRequestEvent, DialogueScreen, ScreenSystems, SfScreensPlugin};
+use sf_ui_screens::{
+    DialogueRequestEvent, DialogueScreen, JournalSeenChanged, JournalSource, JournalUi,
+    JournalUiPlugin, ScreenSystems, SfScreensPlugin,
+};
 use tes3::esp::{FilterFunction, GlobalValue, GlobalVariable, Npc, Script};
 use sf_world_bevy::StreamCell;
 
-/// Talk range of the dev trigger, eye to NPC origin (Morrowind's `iMaxActivateDist` is 192
-/// units, 2.7 m; the free camera floats, so a little more).
-const TALK_RANGE_M: f32 = 4.0;
 /// Fargoth's ring (scaffold [`DevGiveRing`]).
 const RING: &str = "ring_keley";
+/// The journal key (modern default; Morrowind's is also J).
+const JOURNAL_KEY: KeyCode = KeyCode::KeyJ;
 
 fn id(s: &str) -> RecordId {
     RecordId::new(s)
@@ -246,8 +252,18 @@ impl MwWorld for View<'_> {
     }
 }
 
-/// Journal labels: quest names from the journal's name INFO, topic names from DIAL (ready for
-/// the journal slice: `impl JournalSource for Rpg` with `world() = &self.state.world`).
+/// The journal screen reads the host's world state and the content's labels.
+impl JournalSource for Rpg {
+    fn world(&self) -> &WorldRpg {
+        &self.state.world
+    }
+
+    fn labels(&self) -> &dyn JournalLabels {
+        &self.content
+    }
+}
+
+/// Journal labels: quest names from the journal's name INFO, topic names from DIAL.
 impl JournalLabels for Content {
     fn quest_name(&self, quest: &RecordId) -> Option<String> {
         self.dialogue.journal.quest(quest).and_then(|q| q.name.clone())
@@ -337,6 +353,22 @@ impl Rpg {
 
     pub fn actor_name(&self, key: ActorKey) -> Option<&str> {
         self.content.actors.get(&key).map(|a| a.facts.name.as_str())
+    }
+
+    /// `base` is an NPC record (activating one talks). Talking creatures are a later slice.
+    pub fn is_npc(&self, base: &RecordId) -> bool {
+        self.content.records.get::<Npc>(base).is_some()
+    }
+
+    /// Is talking to `key` possible (an NPC registered by [`Rpg::add_actor`])?
+    pub fn knows_actor(&self, key: ActorKey) -> bool {
+        self.content.actors.contains_key(&key)
+    }
+
+    /// Result effects are waiting for [`Rpg::take_events`] (check before taking, so a
+    /// `ResMut<Rpg>` isn't marked changed every frame: the journal re-lays out on changes).
+    pub fn has_events(&self) -> bool {
+        !self.events.is_empty()
     }
 
     /// Message boxes and sounds since the last call.
@@ -506,13 +538,19 @@ impl Rpg {
 
 // ============================================================ the app glue
 
-/// Screens of the game so far: the dialogue window and message boxes. TODO(journal/HUD slices):
-/// these records belong in the builtin mod's data (everything is a mod) once more screens land.
+/// Screens of the game so far: the dialogue window, the journal and message boxes.
+/// TODO(HUD slice): these records belong in the builtin mod's data (everything is a mod) once
+/// more screens land.
 const SCREENS: &str = r#"
 [[define]]
 kind = "ui.screen"
 id = "dialogue"
 value = { layer = "Menu", implementation = { Template = "dialogue" } }
+
+[[define]]
+kind = "ui.screen"
+id = "journal"
+value = { layer = "Menu", implementation = { Template = "journal" } }
 
 [[define]]
 kind = "ui.screen"
@@ -524,8 +562,10 @@ fn registry() -> UiRegistry {
     let mut db = RecordDb::new();
     register_kinds(&mut db).expect("UI record kinds register");
     let base = db.add_source("bevyrrowind", &[]);
-    let outcome = apply_record_file(&mut db, base, SCREENS, RecordFormat::Toml).expect("game screens parse");
-    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    for (records, what) in [(SCREENS, "game screens"), (crate::ui_theme::THEME_RECORD, "UI theme")] {
+        let outcome = apply_record_file(&mut db, base, records, RecordFormat::Toml).expect(what);
+        assert!(outcome.errors.is_empty(), "{what}: {:?}", outcome.errors);
+    }
     UiRegistry::build(&db).0
 }
 
@@ -540,14 +580,20 @@ struct ActiveTalk {
     screen: Entity,
 }
 
+/// The player's journal "new" markers for this session. TODO(saves, ROADMAP 2.5): keep it with
+/// the player's profile (`JournalSeenChanged` is the hook), not in the world save.
+#[derive(Resource, Default)]
+struct JournalSeenStore(JournalSeen);
+
 /// Scaffold `DevGiveRing`: `Shift+U` puts Fargoth's ring in the player's inventory, so the
 /// flow can be played before containers and pickup exist. Removal path: 2.2 U5 inventory
 /// wiring plus item pickup (the ring is in the Census office in the real flow).
 struct DevGiveRing;
 
-/// The dialogue window and its hosting, after `DefaultPlugins`. `db`: the loaded records
-/// (`None`: no actors, no dialogue).
-pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
+/// The dialogue window, the journal and their hosting, after `DefaultPlugins`. `db`: the
+/// loaded records (`None`: no actors, no dialogue). `open_ui`: `--open-ui`, a screen opened at
+/// start for dev screenshots ([`OpenAtStart`]).
+pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
     let Some(db) = db else { return };
     let rpg = match Rpg::new(db) {
         Ok(r) => r,
@@ -559,15 +605,30 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
     if !app.is_plugin_added::<EnhancedInputPlugin>() {
         app.add_plugins(EnhancedInputPlugin);
     }
-    app.add_plugins((SfUiPlugin, UiTextPlugin, SfScreensPlugin))
+    app.add_plugins((SfUiPlugin, UiTextPlugin, SfScreensPlugin, JournalUiPlugin::<Rpg>::default()))
+        .add_message::<ActivationOutcome>()
         .insert_resource(UiRegistryRes(registry()))
         .insert_resource(rpg)
-        .add_systems(Update, (track_actors, dev_talk).chain().before(ScreenSystems::Spawn))
-        .add_systems(Update, (host_dialogue, close_screens, show_events, free_camera_lock).chain().after(ScreenSystems::Input));
+        .init_resource::<JournalSeenStore>()
+        .insert_resource(OpenAtStart(open_ui))
+        .add_systems(
+            Update,
+            (track_actors, dev_give_ring, talk_on_activate, toggle_journal, open_at_start).chain().before(ScreenSystems::Spawn),
+        )
+        .add_systems(
+            Update,
+            (host_dialogue, close_screens, keep_journal_seen, show_events, free_camera_lock, pause_player)
+                .chain()
+                .after(ScreenSystems::Input),
+        );
+    // The Morrowind theme over the stock screens (content: the builtin mod's sheet).
+    crate::ui_theme::add(app);
 }
 
-fn key(e: Entity) -> ActorKey {
-    ActorKey(u128::from(e.to_bits()))
+/// An actor's key: its placement id (stable across cell loads, what saves address), else the
+/// entity (characters not spawned from a placement).
+fn key(e: Entity, placement: Option<&CharacterPlacement>) -> ActorKey {
+    placement.map_or(ActorKey(u128::from(e.to_bits())), |p| ActorKey(p.0.0))
 }
 
 /// The speaker's cell name for the `Cell` filter: the interior's name, or the exterior cell's
@@ -591,14 +652,14 @@ fn cell_name(rpg: &Rpg, e: Entity, parents: &Query<&ChildOf>, cells: &Query<&Str
 fn track_actors(
     mut commands: Commands,
     mut rpg: ResMut<Rpg>,
-    fresh: Query<(Entity, &Character), Added<Character>>,
+    fresh: Query<(Entity, &Character, Option<&CharacterPlacement>), Added<Character>>,
     parents: Query<&ChildOf>,
     cells: Query<&StreamCell>,
 ) {
-    for (e, character) in &fresh {
+    for (e, character, placement) in &fresh {
         let Character::Record { id, .. } = character else { continue };
         let cell = cell_name(&rpg, e, &parents, &cells);
-        if rpg.add_actor(key(e), id, &cell) {
+        if rpg.add_actor(key(e, placement), id, &cell) {
             commands.entity(e).try_insert(Talkable);
         }
     }
@@ -609,49 +670,64 @@ fn menu_open(stack: &ScreenStackRes) -> bool {
     stack.0.top(Layer::Menu).is_some()
 }
 
-/// Dev trigger: `U` talks to the nearest NPC in range of the camera, `Shift+U` gives the ring.
-// TODO(player lane): open on the `player` lane's activation message (player.rs, "Activate" on an
-// entity with `Talkable`) and drop the `U` trigger; `open_dialogue` is the seam.
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
-fn dev_talk(
+fn shift(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
+}
+
+/// Dev: `Shift+U` gives the player Fargoth's ring (scaffold [`DevGiveRing`]).
+#[allow(clippy::needless_pass_by_value)]
+fn dev_give_ring(keys: Res<ButtonInput<KeyCode>>, mut rpg: ResMut<Rpg>) {
+    if !keys.just_pressed(KeyCode::KeyU) || !shift(&keys) {
+        return;
+    }
+    let _ = DevGiveRing;
+    let ring = id(RING);
+    let _ = rpg.state.pc.apply(RpgCommand::AddItem {
+        holder: Holder::Player(PlayerId::HOST),
+        item: ring.clone(),
+        count: 1,
+        attrs: Attrs::new(),
+    });
+    info!("dialogue: dev gave {RING} (now {})", rpg.state.pc.loadout.count(&ring));
+}
+
+/// The default action of activating an NPC: talk. Reads the player's activations no script
+/// handled (`ActivationOutcome`, as doors and sounds do) whose target placement is an NPC
+/// record. `OpenMW` does the same in `MWClass::Npc::activate` (apps/openmw/mwclass/npc.cpp,
+/// 0.49.0: `ActionTalk` for a living, non-hostile NPC); death, combat, sneak-pickpocket and
+/// hostility are not modelled yet, so every registered NPC talks.
+#[allow(clippy::needless_pass_by_value)]
+fn talk_on_activate(
     mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
+    mut outcomes: MessageReader<ActivationOutcome>,
+    placements: Option<Res<ScriptPlacements>>,
     mut rpg: ResMut<Rpg>,
     mut stack: ResMut<ScreenStackRes>,
     registry: Res<UiRegistryRes>,
     active: Option<Res<ActiveTalk>>,
-    camera: Query<&GlobalTransform, With<crate::exterior::ExteriorCamera>>,
-    npcs: Query<(Entity, &GlobalTransform), With<Talkable>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyU) || active.is_some() || menu_open(&stack) {
+    let Some(placements) = placements else {
+        outcomes.clear();
+        return;
+    };
+    let talk_to = outcomes
+        .read()
+        .filter(|o| !o.handled && o.activation.actor == PLAYER)
+        .filter(|o| placements.get(o.activation.target).is_some_and(|p| rpg.is_npc(&id(&p.record))))
+        .map(|o| ActorKey(o.activation.target.0))
+        .last();
+    let Some(speaker) = talk_to else { return };
+    if active.is_some() || menu_open(&stack) {
         return;
     }
-    if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-        let _ = DevGiveRing;
-        let ring = id(RING);
-        let _ = rpg.state.pc.apply(RpgCommand::AddItem {
-            holder: Holder::Player(PlayerId::HOST),
-            item: ring.clone(),
-            count: 1,
-            attrs: Attrs::new(),
-        });
-        info!("dialogue: dev gave {RING} (now {})", rpg.state.pc.loadout.count(&ring));
-        return;
-    }
-    let Some(eye) = camera.iter().next().map(GlobalTransform::translation) else { return };
-    let nearest = npcs
-        .iter()
-        .map(|(e, t)| (e, t.translation().distance(eye)))
-        .filter(|(_, d)| *d < TALK_RANGE_M + 1.6)
-        .min_by(|a, b| a.1.total_cmp(&b.1));
-    if let Some((e, _)) = nearest {
-        open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, key(e));
+    if rpg.knows_actor(speaker) {
+        open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, speaker);
     } else {
-        info!("dialogue: nobody within {TALK_RANGE_M} m to talk to");
+        warn!("dialogue: activated NPC {:032x} was never registered (no character spawned?)", speaker.0);
     }
 }
 
-/// Opens the dialogue window on `speaker` (the activation seam).
+/// Opens the dialogue window on `speaker`.
 fn open_dialogue(commands: &mut Commands, rpg: &mut Rpg, stack: &mut ScreenStackRes, registry: &UiRegistryRes, speaker: ActorKey) {
     let Some((talk, view)) = rpg.open(speaker) else { return };
     info!("dialogue: talking to {}", rpg.actor_name(talk.speaker).unwrap_or("?"));
@@ -659,6 +735,74 @@ fn open_dialogue(commands: &mut Commands, rpg: &mut Rpg, stack: &mut ScreenStack
     commands.insert_resource(ActiveTalk { talk, screen });
     if let Err(e) = stack.0.push(&registry.0, "dialogue") {
         warn!("dialogue: {e:?}");
+    }
+}
+
+/// `J` opens the journal when no other menu is open and closes it when it is (Back closes it
+/// too, through the screen stack). The journal opens at its newest spread.
+#[allow(clippy::needless_pass_by_value)]
+fn toggle_journal(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut stack: ResMut<ScreenStackRes>,
+    registry: Res<UiRegistryRes>,
+    seen: Res<JournalSeenStore>,
+) {
+    if !keys.just_pressed(JOURNAL_KEY) || shift(&keys) {
+        return;
+    }
+    if stack.0.is_open("journal") {
+        stack.0.close("journal");
+        return;
+    }
+    if menu_open(&stack) {
+        return;
+    }
+    let screen = JournalScreen::new(Alphabet::default(), 2, seen.0.clone());
+    commands.spawn((UiScreenRoot("journal".into()), centred(), JournalUi::new(screen)));
+    if let Err(e) = stack.0.push(&registry.0, "journal") {
+        warn!("journal: {e:?}");
+    }
+}
+
+/// Dev scaffold `--open-ui <screen>`: opens `journal`, or a sample `message` box, once at start,
+/// so `--screenshot` runs show the theme without keyboard input. Removal path: the UI test
+/// scenes (`scene ui-*`) once screens get their own synthetic scene.
+#[derive(Resource)]
+struct OpenAtStart(Option<String>);
+
+fn open_at_start(
+    mut commands: Commands,
+    mut open: ResMut<OpenAtStart>,
+    mut stack: ResMut<ScreenStackRes>,
+    mut boxes: ResMut<MessageBoxes>,
+    registry: Res<UiRegistryRes>,
+    seen: Res<JournalSeenStore>,
+    config: Option<Res<MessageBoxConfig>>,
+) {
+    let Some(screen) = open.0.take() else { return };
+    match screen.as_str() {
+        "journal" => {
+            let journal = JournalScreen::new(Alphabet::default(), 2, seen.0.clone());
+            commands.spawn((UiScreenRoot("journal".into()), centred(), JournalUi::new(journal)));
+            if let Err(e) = stack.0.push(&registry.0, "journal") {
+                warn!("--open-ui journal: {e:?}");
+            }
+        }
+        "message" => {
+            let config = config.as_deref().cloned().unwrap_or_default();
+            let text = "You have found Fargoth's ring. Return it to him?".to_owned();
+            boxes.show(text, vec!["Yes".to_owned(), "No".to_owned()], &config);
+        }
+        other => warn!("--open-ui: unknown screen `{other}` (journal, message)"),
+    }
+}
+
+/// The journal's seen state outlives its window (the next opening keeps the "new" markers
+/// cleared).
+fn keep_journal_seen(mut changes: MessageReader<JournalSeenChanged>, mut store: ResMut<JournalSeenStore>) {
+    if let Some(change) = changes.read().last() {
+        store.0 = change.seen.clone();
     }
 }
 
@@ -697,8 +841,8 @@ fn host_dialogue(
     }
 }
 
-/// Menu screens taken off the stack (goodbye, Back) despawn; the conversation ends with its
-/// window.
+/// Menu screens taken off the stack (goodbye, Back, `J`) despawn; the conversation ends with
+/// its window.
 fn close_screens(
     mut commands: Commands,
     stack: Res<ScreenStackRes>,
@@ -707,7 +851,7 @@ fn close_screens(
 ) {
     for (e, root) in &roots {
         let id = root.0.as_str();
-        if id == "dialogue" && !stack.0.is_open(id) {
+        if matches!(id, "dialogue" | "journal") && !stack.0.is_open(id) {
             commands.entity(e).despawn();
             if active.as_ref().is_some_and(|a| a.screen == e) {
                 commands.remove_resource::<ActiveTalk>();
@@ -725,6 +869,9 @@ fn show_events(
     mut boxes: ResMut<MessageBoxes>,
     config: Option<Res<MessageBoxConfig>>,
 ) {
+    if !rpg.has_events() {
+        return;
+    }
     for event in rpg.take_events() {
         match event {
             ResultEffect::MessageBox { text, buttons } if buttons.is_empty() => {
@@ -750,6 +897,20 @@ fn free_camera_lock(stack: Res<ScreenStackRes>, mut cameras: Query<&mut FreeCame
     }
 }
 
+/// The player's controls pause while a menu is open (`PlayerMode::paused`, player.rs's seam).
+/// Only on our own open/close edges, so another pauser isn't overridden every frame.
+#[allow(clippy::needless_pass_by_value)]
+fn pause_player(stack: Res<ScreenStackRes>, mode: Option<ResMut<crate::player::PlayerMode>>, mut was_open: Local<bool>) {
+    let open = menu_open(&stack);
+    if open == *was_open {
+        return;
+    }
+    *was_open = open;
+    if let Some(mut mode) = mode {
+        mode.paused = open;
+    }
+}
+
 // ============================================================ tests
 
 #[cfg(test)]
@@ -765,6 +926,35 @@ mod tests {
 
     fn last_text(view: &DialogueView) -> String {
         view.entries().rev().find_map(|e| match &e.kind { sf_rpg_ui::EntryKind::Line(l) => Some(l.text()), _ => None }).unwrap_or_default()
+    }
+
+    /// The journal screen's view-model over the game's [`JournalSource`] after the ring flow:
+    /// the quest under its name, finished, both entries in the book, the ring topic indexed.
+    fn journal_after_the_ring(rpg: &Rpg, quest: &RecordId, ring: &RecordId) {
+        use sf_rpg_ui::{BookContent, FixedWidthMeasure, JournalCtx, LinePaginator, PageMetrics};
+        let paginator = LinePaginator::new(FixedWidthMeasure { columns: 40 }, PageMetrics::default());
+        let ctx = JournalCtx { world: JournalSource::world(rpg), labels: JournalSource::labels(rpg), paginator: &paginator };
+        let mut screen = JournalScreen::new(Alphabet::default(), 2, JournalSeen::default());
+        screen.open(&ctx, BookContent::Journal);
+        let texts: Vec<_> = screen.blocks().iter().map(|b| b.text.clone()).collect();
+        for entry in rpg.state.world.journal.entries() {
+            assert!(texts.contains(&entry.text), "entry {:?} in the book: {texts:?}", entry.text);
+        }
+        assert!(screen.page_count() >= 1);
+        assert!(screen.quest_list().is_empty(), "the active list hides the finished quest");
+        screen.set_quest_filter(sf_rpg_ui::QuestFilter::Finished);
+        assert_eq!(screen.quest_list(), std::slice::from_ref(quest));
+        let row = screen.quest_model().get(quest).cloned().unwrap();
+        assert_eq!(row.name, "Fargoth's Ring");
+        assert!(row.finished, "{row:?}");
+        assert_eq!((row.stage, row.entries), (100, 2));
+        assert!(row.new, "unseen entries mark the quest new");
+        assert!(screen.topic_list().contains(ring), "ring in the topic index");
+        screen.open(&ctx, BookContent::Quest(quest.clone()));
+        assert!(screen.blocks().iter().any(|b| b.text == "Fargoth's Ring"), "{:?}", screen.blocks());
+        screen.open(&ctx, BookContent::Topic(ring.clone()));
+        eprintln!("journal topic 'ring': {:?}", screen.blocks().iter().map(|b| &b.text).collect::<Vec<_>>());
+        assert!(screen.blocks().len() > 1, "heard lines under the ring topic");
     }
 
     #[test]
@@ -812,6 +1002,7 @@ mod tests {
         assert_eq!(rpg.content.quest_name(&quest).as_deref(), Some("Fargoth's Ring"));
         // The journal's topic index has what Fargoth said about his ring.
         assert!(rpg.state.world.topics.knows(&ring));
+        journal_after_the_ring(&rpg, &quest, &ring);
 
         rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring));
         eprintln!("afterwards: {}", last_text(&view));

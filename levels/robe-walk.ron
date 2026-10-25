@@ -3,7 +3,7 @@
 // driver. Three actors: the Balmora temple priest in his own robe walks a flat loop and
 // fidgets at its corner; Fargoth in a common robe walks back and forth over ramp, plateau and
 // stairs; Elone in an extravagant robe runs the same course beside him. Props: a table and
-// a crate stack (dynamic bodies: throw a ball with V, or walk into them in walk mode, U).
+// a crate stack (dynamic bodies: throw a ball with V, or walk into them as the player, F11).
 // Meters, y up, x east, z south; `at` = footprint center at the bottom.
 (
     name: "robe-walk",

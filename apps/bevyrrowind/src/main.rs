@@ -7,6 +7,7 @@ mod actors;
 mod anim_view;
 mod audio;
 mod bake;
+mod controls;
 mod character_view;
 mod dialogue;
 mod doors;
@@ -31,6 +32,7 @@ mod scenes;
 mod scripts;
 mod skinned_view;
 mod sweep;
+mod ui_theme;
 mod view;
 mod walkers;
 mod water;
@@ -65,6 +67,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant, reason = "parsed once at startup; the view flags are the big variant")]
 enum Command {
     /// Show where detection looks and what it finds.
     Detect,
@@ -301,6 +304,10 @@ struct ViewFlags {
     /// pressing Space; mod scripts receive `activated`, M5 L2).
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     activate: Option<u32>,
+    /// Dev: open a UI screen at start for `--screenshot` checks of the theme (`journal`, or
+    /// `message` for a sample message box). Interactive runs open them with J / scripts.
+    #[arg(long)]
+    open_ui: Option<String>,
     /// Characters: `vanilla` (default, owner 2026-10-22; segmented parts as authored) or `smooth`
     /// (opt-in: seams welded, weights blended across joints). B toggles live.
     #[arg(long, default_value = "vanilla", value_parser = parse_bodies)]
@@ -502,6 +509,7 @@ impl ViewFlags {
             water: water::WaterInputs::build(db),
             use_door: self.use_door.unwrap_or(0),
             activate: self.activate.unwrap_or(0),
+            open_ui: self.open_ui.clone(),
             actors: None,
             level: None,
             bodies: self.bodies,

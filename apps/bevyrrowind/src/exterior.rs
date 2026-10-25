@@ -111,6 +111,8 @@ pub struct ExteriorOptions {
     pub use_door: u32,
     /// `--activate N`: activate the crosshair target N times (`scripts.rs`).
     pub activate: u32,
+    /// `--open-ui`: a screen to open at start (dev screenshots; `dialogue.rs`).
+    pub open_ui: Option<String>,
     /// Loaded records: actor placements spawn as dressed characters
     /// (`sf_character_bevy`; `--off actors` drops them).
     pub actors: Option<Arc<sf_records::RecordDb>>,
@@ -188,6 +190,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // Watched and swappable in dev builds (M5 A4 hot reload).
     let vfs_source = crate::hot_reload::asset_source(&mut app, vfs.clone());
     app.register_asset_source(AssetSourceId::Default, vfs_source);
+    // The UI theme sheets (`ui_theme.rs`) come from the same VFS.
+    crate::ui_theme::add_source(&mut app, vfs.clone());
     let mut extensions = BTreeMap::from([(MeshCookStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned())]);
     extensions.extend(sf_lod_bevy::baked_extensions());
     // The far field (far-field.md) when the bake has it and `--off farfield` doesn't drop it.
@@ -243,7 +247,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         crate::level::add(&mut app, level);
     }
     // ROADMAP 2.4: the dialogue window on mw_rpg (`dialogue.rs`).
-    crate::dialogue::add(&mut app, options.actors.clone());
+    crate::dialogue::add(&mut app, options.actors.clone(), options.open_ui.clone());
 
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();
@@ -275,7 +279,11 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if off_parts.has(Part::EnvSlice) {
         app.insert_resource(sf_sky_bevy::EnvMapRefresh(1));
     }
-    app.add_observer(no_precip_occlusion_terrain).add_observer(no_precip_occlusion_proxy);
+    // Terrain stays in the precipitation occlusion map: hills shelter their lee from a storm (WE-5).
+    app.add_observer(no_precip_occlusion_proxy);
+    if off_parts.has(Part::PrecipOcc) {
+        app.insert_resource(sf_weather_bevy::sf_precip_bevy::PrecipOcclusionConfig(false));
+    }
     // M6 WE3: the weather (`sf_weather_bevy`) drives haze, dust, cloud cover, the clouds, the
     // fog and the wind from the camera's region; `--haze`/`--dust`/`--clouds` pin terms, `--fog`
     // scales the fog. Live: the C key and BRP `bevyrrowind/set weather` (`weather::force_live`).
@@ -365,6 +373,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .insert_resource(TerrainWorld { baked: terrain })
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
 
+    // Before `Start` takes the worldspace: where an interior start puts the player (`player.rs`).
+    let player_start = crate::player::PlayerStart::of(&options.world, &options.worldspace);
     app.insert_resource(Spawners {
         lights: Arc::new(if options.no_lights { HashMap::new() } else { options.lights }),
         lod_tint: options.lod_tint,
@@ -410,7 +420,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     crate::pipeline_watch::add(&mut app);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).
-    crate::player::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none());
+    // A test scene with its own camera keeps it (F11 still turns the player on).
+    let scene_camera = crate::scenes::active().is_some_and(crate::scenes::SceneDef::fixed_camera);
+    crate::player::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start);
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled);
     crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());
@@ -1032,14 +1044,6 @@ fn far_lights_night(sun: Query<&GlobalTransform, With<SunLight>>, mut night: Res
     if (night.0 - value).abs() > 1e-3 {
         night.0 = value;
     }
-}
-
-/// Terrain patches stay out of the rain occlusion map.
-fn no_precip_occlusion_terrain(
-    add: On<Add<MeshMaterial3d<sf_terrain_bevy::TerrainMaterial>>>,
-    mut commands: Commands,
-) {
-    commands.entity(add.entity).try_insert(sf_weather_bevy::sf_precip_bevy::NoPrecipOcclusion);
 }
 
 /// Far proxies stay out of the rain occlusion map.

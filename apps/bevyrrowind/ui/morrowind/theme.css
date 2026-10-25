@@ -1,0 +1,196 @@
+/* Morrowind theme (builtin mod `bevyrrowind`, layer `theme`): the stock sf_ui screens restyled
+   with Morrowind's own palette, menu textures and OpenMW's Mystic Cards font. Served at
+   `ui/themes/morrowind/theme.css`; the `--mw-*` colour tokens above this comment are generated
+   from the install's Morrowind.ini `[FontColor]` (ui_theme.rs). A mod retunes one token with a
+   `:root` rule in its own layer, or replaces this file by VFS override. */
+
+@font-face {
+    font-family: "Mystic Cards";
+    src: url("sf_ui_content://ui/themes/morrowind/MysticCards.ttf");
+}
+
+:root {
+    /* Not ini values: Morrowind draws menus black at menu transparency, framed in bronze. */
+    --mw-panel: rgba(0, 0, 0, 0.78);
+    --mw-frame: rgb(128, 102, 60);
+    --mw-frame-thin: rgb(96, 78, 48);
+    font-family: "Mystic Cards";
+    font-size: 20px;
+    color: var(--mw-normal);
+}
+
+/* ---------------------------------------------------------------- dialogue window */
+
+.sf-dialogue {
+    padding: 14px;
+    border: 4px;
+    border-color: var(--mw-frame);
+    background-color: var(--mw-panel);
+}
+
+.sf-dialogue-speaker {
+    color: var(--mw-header);
+}
+
+.sf-dialogue-log,
+.sf-dialogue-side {
+    padding: 8px;
+    border: 2px;
+    border-color: var(--mw-frame-thin);
+}
+
+.sf-dialogue-heading {
+    color: var(--mw-header);
+}
+
+.sf-dialogue-text,
+.sf-dialogue-chosen {
+    color: var(--mw-normal);
+}
+
+.sf-dialogue-link {
+    color: var(--mw-link);
+}
+
+.sf-dialogue-link.unavailable {
+    color: var(--mw-disabled);
+}
+
+.sf-dialogue-notice {
+    color: var(--mw-notify);
+}
+
+.sf-dialogue-topic {
+    color: var(--mw-normal);
+    background-color: transparent;
+
+    &:hover {
+        color: var(--mw-normal-over);
+    }
+}
+
+.sf-dialogue-choice {
+    color: var(--mw-answer);
+    background-color: transparent;
+
+    &:hover {
+        color: var(--mw-answer-over);
+    }
+}
+
+.sf-dialogue-goodbye {
+    color: var(--mw-normal);
+    border: 2px;
+    border-color: var(--mw-frame);
+    justify-content: center;
+
+    &:hover {
+        color: var(--mw-normal-over);
+    }
+}
+
+/* ---------------------------------------------------------------- journal */
+
+.sf-journal {
+    background-color: transparent;
+}
+
+/* The open book (tx_menubook, 512x256 drawn at Morrowind's 565x390 aspect, x1.5). */
+.sf-journal-book {
+    width: 848px;
+    height: 585px;
+    padding: 36px 52px 24px 48px;
+    background-image: url("sf_ui_content://textures/tx_menubook.dds");
+    -bevy-image-mode: stretch;
+    color: var(--mw-journal-topic);
+}
+
+.sf-reader-pages {
+    column-gap: 52px;
+}
+
+.sf-reader-page {
+    width: 348px;
+    height: 470px;
+    padding: 4px;
+    background-color: transparent;
+    color: var(--mw-journal-topic);
+}
+
+.sf-journal-block.heading {
+    color: var(--mw-answer);
+}
+
+.sf-journal-hit {
+    color: var(--mw-journal-link);
+}
+
+.sf-reader-controls {
+    color: var(--mw-journal-topic);
+}
+
+.sf-reader-prev,
+.sf-reader-next {
+    color: var(--mw-journal-link);
+
+    &:hover {
+        color: var(--mw-journal-link-over);
+    }
+}
+
+.sf-journal-index {
+    padding: 10px;
+    border: 4px;
+    border-color: var(--mw-frame);
+    background-color: var(--mw-panel);
+    color: var(--mw-normal);
+}
+
+.sf-journal-tab,
+.sf-journal-filter,
+.sf-journal-letter,
+.sf-journal-row {
+    color: var(--mw-normal);
+    background-color: transparent;
+
+    &:hover {
+        color: var(--mw-normal-over);
+    }
+}
+
+.sf-journal-tab.selected,
+.sf-journal-filter.selected,
+.sf-journal-row.selected {
+    color: var(--mw-normal-pressed);
+}
+
+.sf-journal-tab.disabled {
+    color: var(--mw-disabled);
+}
+
+/* ---------------------------------------------------------------- message boxes */
+
+#sf-message-box {
+    background-color: transparent;
+}
+
+#sf-message-box-panel {
+    border: 4px;
+    border-color: var(--mw-frame);
+    background-color: var(--mw-panel);
+}
+
+#sf-message-box-text {
+    color: var(--mw-normal);
+}
+
+#sf-message-box-button {
+    border: 2px;
+    border-color: var(--mw-frame);
+    background-color: transparent;
+    color: var(--mw-normal);
+
+    &:hover {
+        color: var(--mw-normal-over);
+    }
+}

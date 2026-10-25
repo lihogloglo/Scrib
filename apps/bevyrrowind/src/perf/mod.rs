@@ -137,10 +137,13 @@ pub enum Part {
     /// (vendored `bevy_pbr::PointSpotShadowsHardware2x2`, shadow reset B2); off, lamps use the camera's
     /// filter as stock Bevy does (an A/B).
     LampFilter,
+    /// The precipitation occlusion map (`sf_precip_bevy`, WE-5): off, drops fall and blow through roofs,
+    /// walls and hills (an A/B).
+    PrecipOcc,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 40] = [
+    const ALL: [(&'static str, Part); 41] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -182,6 +185,7 @@ impl Part {
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
         ("lampfilter", Part::LampFilter),
+        ("precipocc", Part::PrecipOcc),
     ];
 
     fn name(self) -> &'static str {

@@ -637,7 +637,8 @@ fn camera_obstacle(
     }
 }
 
-/// `J` toggles the mover gizmos (capsule ring, velocity, trajectory), `K` foot placement.
+/// `Shift+J` toggles the mover gizmos (capsule ring, velocity, trajectory; `J` is the journal),
+/// `K` foot placement.
 #[allow(clippy::needless_pass_by_value)]
 fn gizmos(
     keys: Res<ButtonInput<KeyCode>>,
@@ -645,7 +646,7 @@ fn gizmos(
     mut settings: ResMut<ControllerSettings>,
     grid: Query<&sf_world_bevy::big_space::prelude::Grid>,
 ) {
-    if keys.just_pressed(KeyCode::KeyJ) {
+    if keys.just_pressed(KeyCode::KeyJ) && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
         g.enabled = !g.enabled;
         info!("walker gizmos {}", if g.enabled { "on" } else { "off" });
     }

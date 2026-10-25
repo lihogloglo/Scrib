@@ -26,6 +26,15 @@ pub struct Selection {
 
 static SELECTION: OnceLock<Selection> = OnceLock::new();
 
+/// The profiles folder and the loaded profile, for the keymap (`controls.rs`), set by [`load`].
+static BINDINGS_PROFILE: OnceLock<(PathBuf, sf_mods::Profile)> = OnceLock::new();
+
+/// The profiles folder and the profile the last [`load`] resolved (`None` before one): the
+/// player's bindings load from it and save back into its file.
+pub fn bindings_profile() -> Option<(PathBuf, sf_mods::Profile)> {
+    BINDINGS_PROFILE.get().cloned()
+}
+
 /// The loaded profile's script contexts (`LoadedProfile::script_contexts`), set by [`load`].
 static SCRIPT_PLANS: OnceLock<Vec<sf_mods::ScriptPlan>> = OnceLock::new();
 
@@ -68,13 +77,18 @@ pub enum ModsCommand {
 }
 
 /// The builtin mod's layers: the shipped animation graphs and the `mw` Luau
-/// runtime (scripting-adapter.md "The `mw` runtime library").
-fn builtin_layers() -> Vec<Arc<dyn VfsSource>> {
+/// runtime (scripting-adapter.md "The `mw` runtime library"), and the Morrowind UI theme
+/// (`ui_theme.rs`, palette from the install's Morrowind.ini).
+fn builtin_layers(install: &MorrowindInstall) -> Vec<Arc<dyn VfsSource>> {
     let table = mw_script::functions::FunctionTable::vanilla();
     let runtime = MemSource::new("builtin:mw_script")
         .with(mw_mods::RUNTIME_PATH, mw_script::emit::RUNTIME)
         .with(mw_mods::RUNTIME_FUNCTIONS_PATH, mw_script::emit::runtime_functions(table));
-    vec![Arc::new(mw_graphs::builtin_source()), Arc::new(runtime)]
+    vec![
+        Arc::new(mw_graphs::builtin_source()),
+        Arc::new(runtime),
+        Arc::new(crate::ui_theme::source(install.ini.as_ref())),
+    ]
 }
 
 /// Scans mods and the install and selects the profile. `records: false`
@@ -82,7 +96,7 @@ fn builtin_layers() -> Vec<Arc<dyn VfsSource>> {
 pub fn open(install: &MorrowindInstall, records: bool) -> Result<Mods> {
     let selection = selection();
     let user = UserDirs::detect(selection.user_data.as_deref()).ok_or("no user data folder; pass --user-data")?;
-    let mut adapter = MwAdapter::new(install.clone(), builtin_layers());
+    let mut adapter = MwAdapter::new(install.clone(), builtin_layers(install));
     if !records {
         adapter = adapter.without_records();
     }
@@ -95,6 +109,9 @@ pub fn load(mods: &Mods) -> LoadedProfile {
     let loaded = mods.load(&sf_script::API_VERSION);
     // Script contexts of this profile, for the streamed view's runtime (`scripts.rs`, M5 L2).
     let _ = SCRIPT_PLANS.set(loaded.script_contexts());
+    if let Some(user) = UserDirs::detect(selection().user_data.as_deref()) {
+        let _ = BINDINGS_PROFILE.set((user.profiles(), loaded.profile.clone()));
+    }
     for warning in mods.adapter.take_mount_warnings() {
         eprintln!("warning: {warning}");
     }
