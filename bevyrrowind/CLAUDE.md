@@ -15,7 +15,7 @@ To update the ROADMAP, edit only your task's line (grep for it).
 
 **Orchestrator or a session without a brief:**
 1. Read `docs/ROADMAP.md` (owner decisions, current phase).
-2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~530 lines).
+2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~380 lines).
 3. For the system you touch, read its spec in `docs/specs/` (or
    `../superfargoth/docs/specs/`). No spec yet for a major system? Write it first.
 4. **Never read whole:** `docs/archive/`, `../superfargoth/docs/DECISIONS.md` (append-only, ~36k tokens; or grep `../superfargoth/docs/DECISIONS-INDEX.md`,
@@ -115,7 +115,7 @@ working tree**. Protocol:
    `#[ignore = "measurement: ..."]` tests, never pass/fail limits. Quality is the owner's
    visual check. Logic and data (saves, quests, scripts, parsers) keep exact assertions.
 6. **Not a 1:1 port.** Prefer modern behavior; keep rules data/adapter-driven.
-7. **Compile time is a constraint** (ARCHITECTURE.md §8b): logic in
+7. **Compile time is a constraint** (ARCHITECTURE.md §8b, now build-perf.md): logic in
    Bevy-free crates, thin Bevy plugin crates, wide shallow crate graph,
    minimal Bevy features per crate.
 8. **Research first, and challenge our docs.** Before designing or building

@@ -122,7 +122,7 @@ Moved: [Shadow reset B2 (shadowB2, 2026-10-21)](archive/perf-log-2026-10.md#shad
 ## Dev loop
 
 Compile and bake times are gated like frame times (owner 2026-10-11: "must be super fast for the dev
-cycle"). Gates and rules: `../superfargoth/docs/ARCHITECTURE.md` §8b. Measure on an idle machine (no other
+cycle"). Gates and rules: `../superfargoth/docs/ARCHITECTURE.md` §8b (now `../superfargoth/docs/build-perf.md`). Measure on an idle machine (no other
 `cargo`/`rustc`/`bevyrrowind` in `tasklist`), Ryzen 7 7435HS 16 threads, target on C: (junction).
 
 | What (2026-10-12, health) | Command | Measured | Gate |
@@ -142,7 +142,7 @@ Where the time goes:
 - Incremental: cargo's freshness check ~0.8 s, the app crate ~2 s of rustc (Bevy metadata and
   monomorphized systems), the link 0.73 s (`-Clink-arg=/time`; `/OPT:NOICF` saves nothing). Each crate
   between the edited one and the app adds 0.5-1 s (`sf_world_bevy` 0.85 s, `sf_lod_bevy` 1.1 s in a
-  `--timings` run). `sf_model` has the widest fan-out (13 dependents): ARCHITECTURE §8b rule 5 applies.
+  `--timings` run). `sf_model` has the widest fan-out (13 dependents): ARCHITECTURE §8b (now build-perf.md) rule 5 applies.
 - Clean: Bevy is the critical path. `bevy_ecs` (103 s) → `bevy_render` (226 s) → `bevy_pbr` (221 s) →
   `bevy_dylib` starts at 493 s of 518 s; all our crates are done by ~470 s. Biggest units by CPU:
   `bevy_render`, `bevy_pbr`, `bevy_ui` 186 s, `bevy_sprite_render` 173 s, `bevy_picking` 142 s,

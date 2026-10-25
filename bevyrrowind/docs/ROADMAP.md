@@ -63,7 +63,7 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5; next A/B `--off clouds|fog|froxels`); Ghostfence far copy missing (GF-1, B5); far-field L2/L3 never selected/tinted (FF-2).
 - [~] 1.9 Streaming and culling levers (archive "Next up" 1, 6, 7): render-thread spikes, `NoCpuCulling` retry (J2), caster rules (J4), warm-up (J7), precombine (J6, `superfargoth/docs/specs/precombine.md`, slices 1-3 built; default on/off is the owner's call); checks ST-2, ST-3, SC-2.
 - [~] 1.10 Volumetric fog black bands (FG-1): not reproduced 2026-10-21; reopen if seen; `--off foghistory` A/B kept.
-- [~] 1.11 Thin binary (ARCHITECTURE §8b rule 4): the app is 13.5k lines and `exterior.rs` is the most-edited
+- [~] 1.11 Thin binary (ARCHITECTURE §8b rule 4, now build-perf.md): the app is 13.5k lines and `exterior.rs` is the most-edited
   file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates). Plan `specs/app-split.md`: slice 1 (`mw_game_core`) done, next `mw_boot_bevy`.
 - [ ] 1.12 Owner pass 2026-10-21 bugs: LT-4 lamp light cut at cluster edges (`lightclusters`); SH-20 choppy character shadows (`charshadows`); RO-B smoke over sky (`smokeorder`); TR-3 glossy terrain (awaiting owner); WE-5 ash occlusion (`--off precipocc`). Owner 2026-10-25, not urgent: cap ash shelter distance (a few m behind a vertical object) + steeper angle.
 - [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` built; CO-1 awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, tab-complete, console functions (TGM/TAI/TFOW/TWF...), `set x to y`, exterior `coc`.

@@ -11,7 +11,7 @@ Sub-agents with a brief: read only what the brief names, specs by section; skip 
 list (`../bevyrrowind/CLAUDE.md` "Start of every session"). Otherwise:
 
 1. Read `../bevyrrowind/docs/ROADMAP.md` (short: owner decisions, current phase).
-2. For structural work, read `docs/ARCHITECTURE.md` (vision, crate plan, build rules §8b);
+2. For structural work, read `docs/ARCHITECTURE.md` (vision, crate plan, build rules §8b, now `docs/build-perf.md`);
    `docs/WISHLIST.md` when you need feature targets or performance numbers.
    `docs/DECISIONS.md` is append-only history: grep it, don't read it whole, or grep `docs/DECISIONS-INDEX.md` (generated: `node tools/decisions-index.mjs`).
 3. For the system you touch, read its spec in `docs/specs/`. No spec yet
@@ -50,7 +50,7 @@ never revert others' changes.
    or analysis notes, only `docs/specs/`. Don't mix the two in one session.
 4. **Everything is a mod**: VFS, records, and mod manifests are the only content paths.
 5. **Industry standard, never kludge**; named scaffolds only.
-6. **Compile time is a constraint** (§8b): Bevy-free cores, thin Bevy plugins.
+6. **Compile time is a constraint** (§8b, now build-perf.md): Bevy-free cores, thin Bevy plugins.
 7. **Research first, and challenge our docs.** Before designing or building
    a system, research how the industry does it today: papers, GDC/SIGGRAPH
    talks, engine docs, and the current crate ecosystem (versions, Bevy
@@ -97,7 +97,7 @@ cargo hakari generate --diff && cargo hakari manage-deps --dry-run   # workspace
 `superfargoth/crates/workspace-hack` with the manifests. The hack pins one feature set per
 dependency, so `cargo test -p A` and `-p B` share one Bevy build. A Bevy-free crate (framework
 `sf_*` core or game `mw_*` core) goes in `final-excludes.workspace-members` of `.config/hakari.toml`
-first: the hack carries Bevy, and cores must build cold in seconds (§8b rule 1). The game app is
+first: the hack carries Bevy, and cores must build cold in seconds (§8b rule 1, now build-perf.md). The game app is
 traversal-excluded so its opt-in features (`dev`, `dlss`, `solari`, ...) never reach other builds;
 for the same reason no dev-dependency asks for an opt-in Bevy feature (`file_watcher`,
 `bevy_solari`): pass it on the command line instead (`--features bevy/file_watcher`).

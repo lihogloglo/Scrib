@@ -95,16 +95,16 @@ Rules for agents:
 
 ## 3. Licensing and repository split
 
-Two repositories, one-way dependency:
+One repository since 2026-10-25 (the `scrib` repo), two parts with a one-way dependency:
 
 ```
 ┌──────────────────────────────────────┐
-│ superfargoth repo                    │  GPL-3.0-or-later (since 2026-10-25)
+│ superfargoth/ (framework)            │  GPL-3.0-or-later (since 2026-10-25)
 │ generic ARPG engine on Bevy          │  no Morrowind types
 └──────────────────▲───────────────────┘
                    │ depends on (never the reverse)
 ┌──────────────────┴───────────────────┐
-│ bevyrrowind repo                     │  GPL-3.0-or-later
+│ bevyrrowind/ (game)                  │  GPL-3.0-or-later
 │ Morrowind adapter + rules + game exe │  may borrow OpenMW code freely
 └──────────────────────────────────────┘
 ```
@@ -129,6 +129,8 @@ Two repositories, one-way dependency:
   install.
 
 ## 4. Technology baseline (checked 2026-10-10)
+
+Snapshot of 2026-10-10; versions may have moved since (see Cargo.toml).
 
 | Need | Choice | Bevy version today | Note |
 |---|---|---|---|
@@ -306,84 +308,23 @@ and writes the same profile files the CLI uses.
 
 ### 7.2 Ocean and water
 
-- **Surface:** Tessendorf FFT with several cascades in WGSL compute
-  (concepts from GodotOceanWaves, which is MIT), on a camera-centered clipmap
-  mesh. Jacobian foam, subsurface scattering, refraction, screen-space
-  reflections.
-- **Shoreline:** a distance field baked from terrain against the water
-  plane drives wave damping, shore waves, foam lines, and wetness (lessons
-  from Godotwind's `shore_overhaul.md` and the ocean audits).
-- **Underwater:** absorption (Beer-Lambert), caustics, and correct handling
-  of a camera split across the waterline.
-- **Buoyancy:** physics needs heights on the CPU. Evaluate the
-  lowest-frequency cascade on the CPU (cheap, deterministic) rather than
-  reading back from the GPU. Bodies sample a few points per hull.
-- **Later:** rivers with flowmaps; lakes at arbitrary heights (Morrowind has
-  only one water plane, the framework won't).
-- **Specified 2026-10-13** in [specs/water.md](specs/water.md) (M6): bevy-aqua
-  evaluated and ported rather than adopted; SSPR instead of SSR for water
-  reflections (the exterior camera has no deferred prepass); rivers as baked
-  flow; pontoon buoyancy (§10 2026-10-13 m6-spec).
+Original sketch moved to [archive](archive/architecture-feature-designs.md#72-ocean-and-water); current design: [water](specs/water.md).
 
 ### 7.3 Rigid-body physics
 
-- **Rapier** (`rapier3d` behind `sf_physics`; was Avian, changed 2026-10-12, §10), on a fixed timestep with transform interpolation (the lesson
-  of Godotwind's "carry vibration" bug).
-- **Static world:** colliders baked from NIF collision nodes when present,
-  otherwise from convex decomposition at bake time. Tile-level heightfields
-  for terrain.
-- **Dynamic world:** loose items (misc, weapons, armor, ingredients) are
-  real rigid bodies once disturbed. They start asleep so placed scenes
-  stay authored. Physics-driven carry and throw.
-- **Ragdolls:** death and knockdown hand off from animation to a physics
-  ragdoll and back via blended get-up.
-- **Streaming:** bodies in unloading cells freeze and serialize their
-  transforms. Nothing simulates outside the active radius.
-- **Buoyancy** via §7.2 queries.
+Original sketch moved to [archive](archive/architecture-feature-designs.md#73-rigid-body-physics); current design: [physics](specs/physics.md).
 
 ### 7.4 Terrain deformation
 
-Two layers, because they have different lifetimes and costs:
-
-1. **Transient surface deformation** (snow, mud, ash, sand trails): GPU
-   stamp render target in a ring buffer around the camera, with time-based
-   recovery. It affects terrain shading and displacement plus grass bending.
-   Render-only, no collision changes. Nearby trails persist briefly in saves.
-   This is the Godotwind RTT design, generalized.
-2. **Persistent height edits** (craters, digging, landslides, construction):
-   sparse per-tile delta heightfields stored in the save overlay. An edit
-   rebuilds that tile's physics heightfield, navmesh tile, grass masks, and
-   GPU heightmap region.
-
-Both live in `sf_terrain` as a deformation stack that every consumer
-(rendering, physics, navigation, foliage) reads, so they never disagree.
+Original sketch moved to [archive](archive/architecture-feature-designs.md#74-terrain-deformation); current design: [terrain](specs/terrain.md).
 
 ### 7.5 Lighting and rendering
 
-- **Solari** is the high-end path; **raster** (clustered forward, cascaded
-  shadows, contact shadows, SSR, volumetric fog) is the required fallback.
-  It covers non-RT GPUs, and Solari is still experimental.
-- **Solari gap:** no point or spot lights yet, and Morrowind interiors are
-  lit almost entirely by point lights. Interim fix: each light gets an
-  emissive proxy mesh, which Solari handles, while raster lights stay for the
-  fallback path. Drop the proxies when Solari ships punctual lights.
-- **Bindless** comes free from Bevy's material system. Material dedup
-  (a big Godotwind win) is natural there.
-- **Missing in Bevy: texture streaming.** Vanilla Morrowind fits in VRAM;
-  HD texture packs won't. Plan a mip-residency system (load low mips, stream
-  higher mips by screen-space demand) once HD packs are being tested.
-- **Old assets:** 2002 diffuse-only textures look flat under PBR. The
-  adapter generates conservative normal and roughness maps at bake time, and
-  HD replacer mods slot in via §6.1.
+Original sketch moved to [archive](archive/architecture-feature-designs.md#75-lighting-and-rendering); current design: [sky-lighting](specs/sky-lighting.md).
 
 ### 7.6 Animation
 
-Morrowind's `.kf` files and text keys convert into Bevy `AnimationClip`s
-plus animation events. On top of that: a locomotion layer (blend spaces), an
-upper-body action layer (masks), additive hit reactions, and an IK pass
-(foot placement on terrain and stairs, look-at, hand IK for doors and
-levers). The framework never assumes Bip01 naming; skeleton conventions
-come from the adapter.
+Original sketch moved to [archive](archive/architecture-feature-designs.md#76-animation); current design: [animation](specs/animation.md).
 
 ## 8. Bevyrrowind repo (Morrowind content pack)
 
@@ -403,95 +344,7 @@ come from the adapter.
 
 ## 8b. Build performance
 
-Compile time is a design constraint, like frame time. The rules:
-
-### Crate graph
-
-1. **Bevy-free cores.** Logic that doesn't need the engine lives in crates
-   that don't depend on Bevy: formats, records, mod resolution, rules,
-   conversion (`sf_records`, `sf_mods`, `mw_install`, `mw_records`, `mw_nif`,
-   `mw_world`). They build in seconds, their tests skip Bevy's link, and
-   most logic changes only touch them.
-2. **Thin Bevy shells.** A Bevy crate is a plugin: components, systems,
-   asset loaders, gluing a core to the engine (`mw_assets` over `mw_nif`,
-   `sf_vfs`'s `bevy` feature over `sf_vfs`). Keep heavy code out of them.
-3. **Wide and shallow, not tall.** Many sibling crates build in parallel;
-   a chain A → B → C → D builds serially. Avoid a "common" crate that
-   everything depends on and that changes often: editing it rebuilds the
-   world. Shared types that change rarely are fine there.
-4. **Thin binary.** `apps/*` only wires plugins together. Gameplay never
-   lives in the binary crate.
-5. **Split by change frequency, not just by topic.** A crate that is
-   edited daily should have few dependents.
-6. **Minimal Bevy features per crate.** Libraries depend on
-   `bevy = { default-features = false, features = [...] }` with only what
-   they use; the app enables the full set. Disabled features are crates
-   that never compile.
-7. **Generics stay local.** Heavily generic code is monomorphized in every
-   crate that uses it. Expose concrete or `dyn` APIs at crate boundaries
-   where performance allows (e.g. `KindVisitor` instead of generic
-   callbacks everywhere).
-
-### Settings (repo root: one Cargo workspace for framework and game)
-
-| Setting | Where | Why |
-|---|---|---|
-| `rust-lld` linker | root `.cargo/config.toml` | Linking is the slowest step of an incremental Bevy build; lld is several times faster than `link.exe`. Ships with Rust. |
-| `bevy/dynamic_linking` | app `dev` feature, `cargo dev` alias | Bevy becomes a shared library, so a relink no longer re-links Bevy. The biggest incremental win. Never in shipped builds. |
-| Deps at `opt-level = 3`, ours at `1` | `[profile.dev]` | Dependencies build once; Bevy at opt-level 0 is too slow to run. |
-| `debug = "line-tables-only"`, deps `debug = false` | `[profile.dev]` | Readable backtraces with far less debug info to generate and link. `--profile debugging` for a full debugger build. |
-| Optimized build scripts and proc macros | `[profile.dev.build-override]` | Derive macros run on every build of their users. |
-| Pinned toolchain | root `rust-toolchain.toml` | Same compiler everywhere; a compiler change invalidates every cache. |
-| `profiling` / `dist` profiles | root `Cargo.toml` | Release with symbols for Tracy; thin LTO + 1 codegen unit only for shipping. |
-| Feature unification (`cargo hakari`) | root `.config/hakari.toml`, `superfargoth/crates/workspace-hack` | One feature set per dependency, so `cargo test -p A` and `-p B` share one Bevy build. Bevy-free cores (`sf_*` and `mw_*`) and the game app stay out; superfargoth/CLAUDE.md "Commands". |
-| Dependency policy (`cargo deny`) | root `deny.toml` | Licences, advisories, duplicates, sources; superfargoth/README.md "Dependency policy". |
-
-Checked against Bevy 0.20's `.cargo/config_fast_builds.toml` (2026-10-12): its Windows section is
-exactly `rust-lld.exe` + `rustdocflags`, with every other flag nightly-only. rust-lld is not the
-default linker on Windows MSVC (it is on x86_64 Linux), so the config line stays.
-
-Since the merge into one workspace (2026-10-25), framework crates are workspace members like the
-game's, so `[profile.dev.package."*"]` no longer applies to them: they build at opt-level 1 with
-line tables, and `--profile debugging` covers them. Before, as path dependencies of bevyrrowind,
-they built at opt-level 3; measured then (health, 2026-10-12), forcing opt-level 1 changed no touch
-or body-edit time beyond noise. Not re-measured: framework hot paths may run slower in `cargo dev`.
-
-### Gates (dev loop)
-
-Measured 2026-10-12 on the reference laptop (Ryzen 7 7435HS, 16 threads), idle, bevyrrowind
-`cargo dev` path; method and breakdown in `bevyrrowind/docs/perf.md` "Dev loop". Re-measure when a
-crate is added to the app's graph or Bevy is upgraded; a gate miss is a bug.
-
-| Gate | Limit | Measured |
-|---|---|---|
-| No-op build | ≤ 1 s | 0.83 s |
-| Touch the app or a leaf plugin crate | ≤ 5 s | 3.3-4.7 s |
-| Touch any hot crate (`sf_world_bevy`, `sf_model_bevy`, `mw_nif`, `sf_model`) | ≤ 8 s | 5.2-8.1 s (`sf_model`: 13 dependents, at the limit) |
-| Edit a function body in a hot crate | ≤ 10 s | 6.2-10.3 s |
-| Clean dev build | ≤ 12 min | 8 min 38 s (M1: 11 min) |
-| Cold bake (Morrowind, fresh store) | ≤ 2 min | 47.7 s |
-| No-op bake | ≤ 2.5 s | 1.75 s |
-
-Incremental time is cargo's freshness check (~0.8 s) + ~0.5-1 s per crate between the edit and
-the app + the app crate (~2 s rustc, 0.73 s link). It grows with chain depth, not crate size: keep
-rule 3 (wide and shallow) and rule 5 (split by change frequency) in mind for `sf_model`.
-
-### Machine setup (Windows)
-
-- **Exclude the `target/` folders (and `~/.cargo`) from Windows Defender
-  real-time scanning.** Scanning every object file and rlib is often the
-  single largest overhead on Windows. Needs admin; do it once.
-- Use a Dev Drive (ReFS) for the repos and cargo home if available.
-
-### Not adopted (yet)
-
-- **Cranelift backend, `-Zshare-generics`, the parallel frontend
-  (`-Zthreads`)**: real wins but nightly-only. Revisit if they reach stable.
-  Owner decision (health, 2026-10-12; not measured, no nightly is installed): a nightly toolchain
-  for dev builds only. Bevy's fast-builds config lists `-Zthreads=0` and `-Zcache-proc-macros`
-  for Windows and warns that `-Zshare-generics` must stay off (`=n`) with dynamic linking there
-  (65k export limit). Cranelift ships for Windows but without panic unwinding (`panic=abort`).
-  Where it would help: the app crate's ~2 s of rustc per edit and the clean build's Bevy chain.
+Moved to [build-perf.md](build-perf.md).
 
 ## 9. Milestones
 
