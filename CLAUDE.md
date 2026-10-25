@@ -54,6 +54,10 @@ working tree**. Protocol:
    `git add` new files first), never a bare `git commit` after `git add`.
 5. **Don't revert changes you didn't make.** Files changing under you are
    likely the other session's work; check `../.sessions/` and adapt.
+6. **Small, atomic slices (owner 2026-10-18, 2026-10-25).** A sub-agent slice is one deliverable
+   (1-2 steps), about 60 tool calls and 100k tokens. Orchestrators split bigger work into a queue
+   of slices and chain fresh agents. Agents write their handoff in `../.sessions/<name>.md` as they
+   go, and on reaching the budget stop at a compiling state, finish the handoff and report.
 
 ## Hard rules
 

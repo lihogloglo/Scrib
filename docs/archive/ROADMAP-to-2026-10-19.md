@@ -1932,3 +1932,9 @@ Newest first. One or two lines each: what changed, what was verified.
 - 2026-10-20 (lights1): 1.6 terrain blend removed (walk 25.9 → 14.7 ms, Balmora 15.9 → 13.1); lights researched
   (`specs/lights.md`: no budget needed), Bevy stale shadow-view leak worked around (walk → 12.7 ms). Then audit:
   big_space patch, env map every 8 frames (perf.md "Audit"); shadows v2 spec; V1 lamp cache built, off (handoff).
+- 2026-10-21 (renderfix1): LM-1: 66 flora textures (Bitter Coast leaves, branches, roobrush, wickwheat...) were
+  rejected as cutouts and stayed blended (no shadows); sparse-atlas rule + `mw_bake` `foliage_report` example.
+- 2026-10-21 (rpg-core): `mw_rpg`: Morrowind dialogue on `sf_rpg` (OpenMW-order INFO filters, macros, journal, equip);
+  Fargoth's ring flow passes headless on the real ESMs (12 + 1 tests); result scripts behind `ResultRunner`.
+- 2026-10-21 (audio-pass): Morrowind sound in game: `mw_audio` (SOUN/SNDG cues, GMST ranges, music playlists), load-door
+  sounds, light/activator loop emitters, stride footsteps, explore music; audio tests no longer build the renderer.

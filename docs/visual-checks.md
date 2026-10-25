@@ -229,19 +229,16 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 
 ### GF-2: Ghostfence energy field look
 - Kind: game location. Run: `.\bevyrrowind scene ghostfence-near`
-- Look for: the field should read as a glowing translucent barrier. Today it
-  is an opaque flat white/blue-white wall (`shots\scenes\ghostfence_near.png`,
-  unchanged in `shots\nifpop\ghostfence_near.png`).
-- Investigated (nifpop): the NIF material maps faithfully (`tx_gg_fence_01/02`,
-  non-additive blend, alpha 0.5, emissive 0.3); three stacked 0.5 planes give
-  87.5 % coverage of a pale texture under an unclamped sun. Candidates, not
-  yet changed (weather.md "Status"): vertex-color alpha replacing material
-  alpha in `AmbientDiffuse` mode, NIF light clamping, env-map specular on
-  blended planes. Owner: say whether the original reads more translucent or
-  more glowing; that picks the fix.
-- A/B: `[`/`]` hour (does it glow at night?), `--off envmap`.
-- Status: known bug, owner 2026-10-21 (bw-owner10): the original reads more translucent than ours, and it emits
-  blue light at night. Fix toward translucency plus a night glow (ROADMAP 1.12).
+- Look for: a translucent blue barrier by day (`--weather clear`), a blue glow at night (`--hour 23`), never white.
+- Diagnosed 2026-10-25 (ghostfence, no code change). Confirmed from the NIF: no vertex colours, no NiVertexColor/Stencil/ZBuffer
+  property, alpha flags 0x00ED (sorted SRC/INV_SRC); each layer is two-faced geometry, so back-face culling is right.
+  Tex alpha (DXT3, mean 0.65) × 0.5 gives 0.325 per layer, 69 % for three (not 87.5 %). The material mapping is faithful.
+  Day 2026-10-25: translucent pale blue, not white. Fence-region mean 124,138,160 vs 167,183,205 in the 10-12 shot, which is stale.
+  Night (confirmed): emissive 0.3 is exposure-weighted, so at the EV 3.5 floor it is ~3.4× "fully lit" with
+  no Morrowind `min(1, …)` clamp. 17 % of the field is brighter than its texel colour, with white cores.
+  Day hypothesis: Morrowind blends in gamma space and we blend in linear HDR, which hides detail behind pale layers (~6×).
+- A/B: `--hour 23` vs 14, `--off envmap` (lowers the field and the terrain alike; not the cause).
+- Status: **confirmed by owner 2026-10-25** ("looks amazing from up close", day and night): no emissive or blend change. Distance pop is GF-1.
 - Source: farfield-exterior / weather-spec / nifpop.
 
 ## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
@@ -902,7 +899,15 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Seen by owner 2026-10-21 (bw-owner10, during AU-2): the terrain reads glossy / not rough, like wet ground.
 - Check: the terrain material's roughness and specular (perceptual roughness near 1, no env-map or sun specular on
   ground), and whether the terrain blend/normal-map path lowers roughness.
-- Status: known bug, unverified (diagnose first; ROADMAP 1.12).
+- Status: fix in, awaiting owner (2026-10-25, lanes `terrain-gloss` diagnosis + `terrain-gloss-fix`; ROADMAP 1.12).
+- Not the cause: roughness 0.85 far / 0.90 near (`surface.wesl:157`), metallic 0, F0 0.04, no wetness.
+- Cause: terrain set only `diffuse_occlusion = s.ao` (Morrowind AO = 1): no SSAO, `specular_occlusion` stuck at 1.0.
+- Fix: `terrain.wesl` now does StandardMaterial's occlusion (SSAO multibounce on diffuse, Lagarde specular occlusion
+  from min(layer AO, SSAO)); the SSAO def reaches the terrain via the mesh view key, no Rust change.
+- Seen by agent (`shots/terrain-gloss/b_on` vs `fix_on`, default 150 m camera): almost no change (mean luma -0.1),
+  only a few creases darker. `--off envmap` (b_off) also drops env *diffuse*, so the "veil" may not be specular at all.
+- Look for: at ground level in a valley, creases/slope feet less milky with SSAO on; A/B `--off ssao`. If open
+  slopes still read wet, next is a roughness clamp (>= 0.95, owner taste call) or a specular-only env A/B.
 
 ## Animation lab (`levels/anim-lab.ron`, test-levels.md; `.sessions/anim-refactor.md`, slice 1)
 
