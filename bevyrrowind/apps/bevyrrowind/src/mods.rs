@@ -1,12 +1,11 @@
 //! `bevyrrowind mods ...`: inspects and edits profiles. The profile loading every command goes
-//! through (`--profile`, `--user-data`) lives in `mw_boot_bevy::mods`; re-exported here so
-//! `crate::mods::..` paths resolve (app-split.md slice 2).
+//! through (`--profile`, `--user-data`) lives in `mw_boot_bevy::mods` (app-split.md slice 2).
 
 use clap::Subcommand;
 use mw_install::MorrowindInstall;
 use sf_mods::ModId;
 
-pub use mw_boot_bevy::mods::{Selection, load, open, select};
+use mw_boot_bevy::mods::{load, open};
 
 use crate::Result;
 
@@ -41,7 +40,7 @@ fn id(raw: &str) -> Result<ModId> {
 
 /// Whether the last bake ran with this profile fingerprint.
 fn bake_status(install: &MorrowindInstall, fingerprint: &[u8; 32]) -> String {
-    let Ok(root) = crate::bake::cache_root(None) else { return "no bake cache".into() };
+    let Ok(root) = mw_boot_bevy::bake::cache_root(None) else { return "no bake cache".into() };
     let Ok(store) = sf_bake::Store::open(&root) else { return "no bake cache".into() };
     match store.profile_fingerprint(&mw_bake::profile_name(install)) {
         Some(stored) if stored.0 == *fingerprint => "up to date".into(),

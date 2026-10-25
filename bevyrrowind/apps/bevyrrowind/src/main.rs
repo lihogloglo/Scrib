@@ -3,8 +3,6 @@
 //! Today: inspection tools over the user's Morrowind install. Later, running
 //! without a subcommand will launch the game.
 
-use mw_viewers_bevy::{character_view, view};
-use mw_exterior_bevy::exterior;
 mod level;
 mod mods;
 mod perf;
@@ -15,12 +13,16 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-// Boot layer (app-split.md slice 2): `crate::bake`, `crate::load`, ... resolve through these.
-use mw_boot_bevy::{bake, load, mount};
-use mw_doors_bevy as doors;
-use mw_environment_bevy::{render, water, weather};
+use mw_boot_bevy::bake::cache_root;
+use mw_boot_bevy::{load, mount};
+use mw_devtools_bevy::perf::{Off, Part, Perf, PerfFlags};
+use mw_environment_bevy::render::{RenderSettings, parse_sun_cascades};
+use mw_environment_bevy::water::{WaterInputs, WaterMode};
+use mw_environment_bevy::weather::{WeatherCommand, WeatherSetup, parse_weather_type};
+use mw_exterior_bevy::exterior::{ExteriorOptions, Quality};
 use mw_install::{MorrowindInstall, Origin};
 use mw_records::KindVisitor;
+use mw_viewers_bevy::view::{Baked, SkinnedView, ViewOptions};
 use sf_records::{RecordDb, RecordId};
 use sf_vfs::{DirEntry, Vfs, VfsPath};
 
@@ -104,7 +106,7 @@ enum Command {
     /// Weather records: forecasts per region (`weather.rs`).
     Weather {
         #[command(subcommand)]
-        command: weather::WeatherCommand,
+        command: WeatherCommand,
     },
     /// Cook every model the records reference (meshes + LODs) into the bake cache.
     Bake {
@@ -209,7 +211,7 @@ struct ViewFlags {
     /// Exteriors: force a Morrowind weather everywhere (clear, cloudy, foggy, overcast, rain,
     /// thunderstorm, ashstorm, blight, snow, blizzard) instead of the regions' forecast
     /// (M6 WE3, `sf_weather_bevy`).
-    #[arg(long, value_parser = weather::parse_weather_type)]
+    #[arg(long, value_parser = parse_weather_type)]
     weather: Option<mw_weather::WeatherType>,
     /// Exteriors: fixed aerosol haze (`sf_sky::Weather::haze`; 1 is a pristine Earth sky)
     /// instead of the weather's, without the morning curve (weather.md N1).
@@ -225,7 +227,7 @@ struct ViewFlags {
     fog: Option<f32>,
     /// Exteriors: the sea (M6 W2): `on` (FFT ocean), `scaffold` (old flat sea, A/B), `off`.
     #[arg(long, value_enum)]
-    water: Option<water::WaterMode>,
+    water: Option<WaterMode>,
     /// Exteriors: 10 m wind speed for the ocean, m/s (scaffold until `sf_wind`; default 7).
     #[arg(long)]
     water_wind: Option<f32>,
@@ -241,7 +243,7 @@ struct ViewFlags {
     /// Exteriors: quality preset: low, medium, high (default), ultra: view-distance bias
     /// (LOD, size culling, far-field handoff) and the size-culling cutoff (env `BEVYRROWIND_QUALITY`).
     #[arg(long, value_parser = parse_quality)]
-    quality: Option<exterior::Quality>,
+    quality: Option<Quality>,
     /// Exteriors: color terrain patches by LOD.
     #[arg(long)]
     terrain_lod: bool,
@@ -350,7 +352,7 @@ struct ViewFlags {
     #[arg(long, requires = "bench")]
     bench_update_baseline: bool,
     #[command(flatten)]
-    perf: Box<perf::PerfFlags>,
+    perf: Box<PerfFlags>,
 }
 
 impl ViewFlags {
@@ -360,22 +362,22 @@ impl ViewFlags {
         title: String,
         placements: Vec<mw_world::Placement>,
         ambient: Option<[u8; 4]>,
-    ) -> Result<view::ViewOptions> {
+    ) -> Result<ViewOptions> {
         let render = self.render()?;
         let baked = if self.no_baked {
             None
         } else {
-            let store = sf_bake::Store::open(bake::cache_root(self.cache)?)?;
+            let store = sf_bake::Store::open(cache_root(self.cache)?)?;
             let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
             if manifest.products.is_empty() {
                 println!("no baked products for this install (run `bevyrrowind bake`); loading NIFs");
             }
-            Some(view::Baked { store, manifest })
+            Some(Baked { store, manifest })
         };
         let meta = std::collections::BTreeMap::from([("cell".to_owned(), title.clone()), ("render".to_owned(), render.label())]);
-        let perf = perf::Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |_| {})?;
-        mw_assets::set_cutout_foliage(!perf.off.has(perf::Part::LeafMask));
-        Ok(view::ViewOptions {
+        let perf = Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |_| {})?;
+        mw_assets::set_cutout_foliage(!perf.off.has(Part::LeafMask));
+        Ok(ViewOptions {
             title,
             placements,
             ambient,
@@ -386,7 +388,7 @@ impl ViewFlags {
             calibration: self.lighting.calibration(),
             baked,
             lod_tint: self.lod_tint,
-            skinned: self.skinned.then(|| view::SkinnedView {
+            skinned: self.skinned.then(|| SkinnedView {
                 skeleton: self.skeleton.as_deref().and_then(mw_world::model_path),
                 animate: self.animate,
             }),
@@ -407,13 +409,13 @@ impl ViewFlags {
         db: &RecordDb,
         title: String,
         start: StreamStart,
-    ) -> Result<exterior::ExteriorOptions> {
-        water::set_mode(self.water.unwrap_or_default(), self.water_wind);
+    ) -> Result<ExteriorOptions> {
+        mw_environment_bevy::water::set_mode(self.water.unwrap_or_default(), self.water_wind);
         if self.no_baked {
             return Err("the exterior streams from bake products; --no-baked is not available".into());
         }
         let render = self.render()?;
-        let store = sf_bake::Store::open(bake::cache_root(self.cache)?)?;
+        let store = sf_bake::Store::open(cache_root(self.cache)?)?;
         let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
         let mut heights = mw_world::terrain::HeightSampler::new(db);
         let interior = matches!(start, StreamStart::Interior { .. });
@@ -442,24 +444,24 @@ impl ViewFlags {
             ("prepass".to_owned(), self.prepass.to_string()),
         ]);
         let bench_ground = self.bench_ground;
-        let mut perf = perf::Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |scenario| {
+        let mut perf = Perf::new(&self.perf, self.bench.as_deref(), self.bench_update_baseline, meta, |scenario| {
             if bench_ground && let sf_diag_bevy::sf_diag::Measure::Path { keyframes, .. } = &mut scenario.measure {
                 for k in keyframes {
                     k.position.y += ground(k.position.x, k.position.z);
                 }
             }
         })?;
-        mw_assets::set_cutout_foliage(!perf.off.has(perf::Part::LeafMask));
+        mw_assets::set_cutout_foliage(!perf.off.has(Part::LeafMask));
         if let Some((_, settings)) = &mut perf.bench {
             // big_space: the app converts the pose to grid coordinates.
             settings.apply_transform = false;
         }
         println!("camera {eye:.1} -> {target:.1}");
-        let weather = weather::WeatherSetup::build(db, eye, self.day * 24.0 + self.hour, self.weather, 0);
+        let weather = WeatherSetup::build(db, eye, self.day * 24.0 + self.hour, self.weather, 0);
         if let Some(t) = weather.start {
             println!("weather {}{}", t.name(), if self.weather.is_some() { " (forced)" } else { "" });
         }
-        Ok(exterior::ExteriorOptions {
+        Ok(ExteriorOptions {
             title,
             eye,
             target,
@@ -475,7 +477,7 @@ impl ViewFlags {
             physics_debug: self.physics_debug,
             near_ring: self.near_ring,
             far_ring: self.far_ring,
-            no_lights: self.no_lights || perf.off.has(perf::Part::Lights),
+            no_lights: self.no_lights || perf.off.has(Part::Lights),
             far_tint: self.far_tint,
             prepass: self.prepass,
             hour: self.hour,
@@ -486,11 +488,11 @@ impl ViewFlags {
             dust: self.dust,
             fog: self.fog,
             weather: Some(weather),
-            quality: exterior::Quality::resolve(self.quality),
+            quality: Quality::resolve(self.quality),
             perf,
             lights: light_infos(db),
-            world: doors::WorldLinks::build(db),
-            water: water::WaterInputs::build(db),
+            world: mw_doors_bevy::WorldLinks::build(db),
+            water: WaterInputs::build(db),
             use_door: self.use_door.unwrap_or(0),
             activate: self.activate.unwrap_or(0),
             open_ui: self.open_ui.clone(),
@@ -505,11 +507,11 @@ impl ViewFlags {
     }
 
     /// `--rt`, `--dlss`, `--off denoiser` and `--off shadowcache`.
-    fn render(&self) -> Result<render::RenderSettings> {
-        let off = perf::Off::from_flags(&self.perf.off)?;
-        let low = exterior::Quality::resolve(self.quality) == exterior::Quality::Low;
-        Ok(render::RenderSettings::new(self.rt, self.dlss, !off.has(perf::Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
-            .with_shadow_cache(!off.has(perf::Part::ShadowCache)))
+    fn render(&self) -> Result<RenderSettings> {
+        let off = Off::from_flags(&self.perf.off)?;
+        let low = Quality::resolve(self.quality) == Quality::Low;
+        Ok(RenderSettings::new(self.rt, self.dlss, !off.has(Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
+            .with_shadow_cache(!off.has(Part::ShadowCache)))
     }
 }
 
@@ -620,7 +622,7 @@ fn main() -> ExitCode {
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn run(cli: Cli) -> Result {
-    mods::select(mods::Selection { user_data: cli.user_data, profile: cli.profile });
+    mw_boot_bevy::mods::select(mw_boot_bevy::mods::Selection { user_data: cli.user_data, profile: cli.profile });
     let command = match cli.command {
         Command::Detect => return detect(cli.morrowind.as_deref()),
         Command::Scene { name, list, file, extra } => {
@@ -633,8 +635,8 @@ fn run(cli: Cli) -> Result {
     match command {
         Command::Detect | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
         Command::Info { conflicts } => info(&install, &origin, conflicts),
-        Command::Bake { cache } => bake::run(&install, cache),
-        Command::Weather { command } => weather::run(&install, command),
+        Command::Bake { cache } => mw_boot_bevy::bake::run(&install, cache),
+        Command::Weather { command } => mw_environment_bevy::weather::run(&install, command),
         Command::Mods { command } => mods::run(&install, command),
         Command::Ls { dir } => {
             let vfs = mount(&install, false)?;
@@ -696,18 +698,18 @@ fn run(cli: Cli) -> Result {
             };
             let options =
                 flags.options(&install, format!("Bevyrrowind - {path}"), vec![placement], Some([160, 160, 160, 255]))?;
-            view::run(std::sync::Arc::new(vfs), options)
+            mw_viewers_bevy::view::run(std::sync::Arc::new(vfs), options)
         }
         Command::View { cell, model: false, flags } => {
             view_cell(&install, &cell, flags)
         }
         Command::Character { ids, screenshot, settle, camera, cache, bodies, cloth, walk, drawn, night } => {
             let (vfs, content) = load(&install, false)?;
-            let store = sf_bake::Store::open(bake::cache_root(cache)?)?;
+            let store = sf_bake::Store::open(cache_root(cache)?)?;
             let manifest = store.load_manifest(&mw_bake::profile_name(&install))?;
             let camera = camera.as_deref().map(parse_camera).transpose()?;
-            let options = character_view::CharacterViewOptions { ids, screenshot, settle, camera, bodies, cloth, walk, drawn, night };
-            character_view::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options);
+            let options = mw_viewers_bevy::character_view::CharacterViewOptions { ids, screenshot, settle, camera, bodies, cloth, walk, drawn, night };
+            mw_viewers_bevy::character_view::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options);
             Ok(())
         }
     }
@@ -717,7 +719,7 @@ fn run(cli: Cli) -> Result {
 /// in the single-cell viewer.
 fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result {
     // Synthetic test levels (TS1): `level:<name>`.
-    if let Some(name) = cell.strip_prefix(level::PREFIX) {
+    if let Some(name) = cell.strip_prefix(mw_exterior_bevy::level::PREFIX) {
         return level::view(install, name, flags);
     }
     let (vfs, content) = load(install, false)?;
@@ -733,7 +735,7 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
             w.load_sounds(&content.db, &vfs);
         }
         options.actors = Some(std::sync::Arc::new(content.db));
-        return exterior::run(std::sync::Arc::new(vfs), options);
+        return mw_exterior_bevy::exterior::run(std::sync::Arc::new(vfs), options);
     }
     let found = interior.ok_or_else(|| format!("no cell {cell:?}"))?;
     let (placements, skipped) = mw_world::cell_placements(&content.db, found);
@@ -748,7 +750,7 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
             w.load_sounds(&content.db, &vfs);
         }
         options.actors = Some(std::sync::Arc::new(content.db));
-        return exterior::run(std::sync::Arc::new(vfs), options);
+        return mw_exterior_bevy::exterior::run(std::sync::Arc::new(vfs), options);
     }
     if !skipped.is_empty() {
         eprintln!("warning: {} references with unknown base records", skipped.len());
@@ -756,7 +758,7 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
     println!("{}: {} placements", found.name, placements.len());
     let ambient = found.atmosphere_data.as_ref().map(|a| a.ambient_color);
     let options = flags.options(install, format!("Bevyrrowind - {}", found.name), placements, ambient)?;
-    view::run(std::sync::Arc::new(vfs), options)
+    mw_viewers_bevy::view::run(std::sync::Arc::new(vfs), options)
 }
 
 fn detect(explicit: Option<&std::path::Path>) -> Result {
@@ -956,7 +958,7 @@ struct Lighting {
     #[arg(long)]
     point_shadows: Option<usize>,
     /// Sun cascades `COUNT:METERS` instead of the preset's (A/B; env `BEVYRROWIND_SUN_CASCADES`).
-    #[arg(long, value_parser = render::parse_sun_cascades)]
+    #[arg(long, value_parser = parse_sun_cascades)]
     sun_cascades: Option<(usize, f32)>,
 }
 
@@ -991,8 +993,8 @@ impl Lighting {
 }
 
 /// `--quality` values.
-fn parse_quality(s: &str) -> std::result::Result<exterior::Quality, String> {
-    exterior::Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: low, medium, high, ultra"))
+fn parse_quality(s: &str) -> std::result::Result<Quality, String> {
+    Quality::parse(s).ok_or_else(|| format!("unknown quality {s:?}: low, medium, high, ultra"))
 }
 
 /// `--clouds` values (the `sf_atmos` cloud genera).

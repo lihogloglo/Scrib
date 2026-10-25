@@ -5,7 +5,7 @@
 //! A scene is a saved `view` command line (cell, camera, hour, flags) plus
 //! what to look for; running one parses that command line and takes the
 //! `view` path unchanged, so scenes need no rendering code of their own.
-//! Runtime A/B keys come from [`crate::live_ab`].
+//! Runtime A/B keys come from [`mw_devtools_bevy::live_ab`].
 //!
 //! The registry is read from, in order: `--file`, `scenes.ron` in the
 //! current folder, `scenes.ron` next to the exe, and the copy built into
@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use mw_game_core::scenes::SceneDef;
 use serde::Deserialize;
 
 /// The registry built into the exe.
@@ -26,9 +27,6 @@ const FILE_NAME: &str = "scenes.ron";
 struct SceneFile {
     scenes: Vec<SceneDef>,
 }
-
-// Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
-pub use mw_game_core::scenes::SceneDef;
 
 /// `bevyrrowind scene [<name>] [--list] [--file f] [view flags...]`.
 pub fn run(
@@ -66,7 +64,7 @@ pub fn run(
 /// The `view` arguments of a scene, then the caller's extra flags (later flags win in clap).
 fn view_args(scene: &SceneDef, extra: Vec<String>) -> Vec<String> {
     let place = match (&scene.level, &scene.cell) {
-        (Some(level), _) => format!("{}{level}", crate::level::PREFIX),
+        (Some(level), _) => format!("{}{level}", mw_exterior_bevy::level::PREFIX),
         (None, Some(cell)) => cell.clone(),
         (None, None) => String::new(),
     };
@@ -165,7 +163,7 @@ mod tests {
             let args = view_args(s, vec![]);
             assert!(crate::Cli::try_parse_from(std::iter::once("bevyrrowind".to_owned()).chain(args)).is_ok(), "scene {} parses", s.name);
             if let Some(level) = &s.level {
-                assert!(crate::level::find(level).is_ok(), "scene {}: level {level} loads", s.name);
+                assert!(mw_exterior_bevy::level::find(level).is_ok(), "scene {}: level {level} loads", s.name);
             }
         }
     }

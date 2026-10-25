@@ -126,7 +126,7 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 12. [x] `mw_viewers_bevy`: done 2026-10-26 (12a perf/mod into devtools; 12b four `pub mod`s view, anim_view, skinned_view, character_view; app shim `use mw_viewers_bevy::{character_view, view};`; `bevy` umbrella with `3d` (viewers build `DefaultPlugins` apps) + `bevy_camera_controller` for the free camera; feature `remote` forwarded; hakari unchanged).
 13. [x] `mw_exterior_bevy`: done 2026-10-26 (exterior, level + level/actors, pause_menu (needs `sf_console_bevy`, `sf_mods`: not in rpg) as `pub mod`s; `view level:` (clap `ViewFlags`) stays in the app `level.rs` (55 lines) over the crate's `find`, `pick_camera`, `STARTED`; app dead shims dropped; `bevy_camera_controller` direct (bevy/free_camera would change hakari); no features to forward; hakari unchanged).
 14. Remove shims; update CLAUDE.md module map and ARCHITECTURE §8b (now build-perf.md) crate list; re-measure the §8b gates (touch a leaf
-    plugin crate <= 5 s, no-op <= 1 s, clean <= 12 min, since each crate adds a link unit) into `docs/perf.md`; tick ROADMAP 1.11.
+    plugin crate <= 5 s, no-op <= 1 s, clean <= 12 min, since each crate adds a link unit) into `docs/perf.md`; tick ROADMAP 1.11. 14a shims + binary deps done 2026-10-26 (55 deps pruned); docs and gates pending.
 
 Parallelism: after slice 2, slices 3, 4, 5 and 6 touch disjoint modules and can run as separate lanes (respect the
 3-build-agent cap); 7-10 are serial; 11 needs 3, 7 and 9 (or the trait cut).

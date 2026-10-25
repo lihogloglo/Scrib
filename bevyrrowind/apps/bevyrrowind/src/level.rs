@@ -4,8 +4,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use mw_exterior_bevy::level::{PREFIX, find};
-use mw_exterior_bevy::level::{LevelSetup, STARTED, actors, pick_camera, worldspace};
+use mw_exterior_bevy::level::{LevelSetup, STARTED, actors, find, pick_camera, worldspace};
 use mw_install::MorrowindInstall;
 use sf_level::Level;
 
@@ -23,7 +22,7 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
         level.objects.len(),
         level.cameras.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
     );
-    let (vfs, content) = crate::load(install, false)?;
+    let (vfs, content) = mw_boot_bevy::load(install, false)?;
     println!("content loaded in {:.2} s", started.elapsed().as_secs_f32());
     let ws = worldspace(&level.name);
     let start = crate::StreamStart::Interior { worldspace: ws.clone(), eye: camera.eye.as_dvec3(), target: camera.target.as_dvec3() };
@@ -31,7 +30,7 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     let actors = actors::resolve(&level, &content.db);
     options.actors = Some(Arc::new(content.db));
     options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into() });
-    crate::exterior::run(Arc::new(vfs), options)
+    mw_exterior_bevy::exterior::run(Arc::new(vfs), options)
 }
 
 /// The light-lab flags (`--lab-lights`, `--lab-ring`, `--lab-radius`, `--lab-orbit`) edit the

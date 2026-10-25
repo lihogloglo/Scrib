@@ -28,23 +28,19 @@ trace = ["bevy/trace_chrome"]
 tracy = ["bevy/trace_tracy"]
 
 [dependencies]
+# Only what `src/` names directly; the game's systems come in through the `mw_*_bevy` crates
+# below (app-split.md slice 14a pruned the rest).
 bevy = { workspace = true, features = ["3d", "ui", "audio", "wav", "mp3", "free_camera", "dds", "tga", "bmp"] }
 clap.workspace = true
 glam.workspace = true
-mw_actors.workspace = true
-# Actors glue: character content, actor effects and particles, faces, held items (app-split.md slice 5).
-mw_actors_bevy.workspace = true
-mw_ai.workspace = true
 mw_anim.workspace = true
 mw_assets = { path = "../../crates/mw_assets" }
-# Audio glue: listener, doors, emitters, music, footsteps, NPC voices (app-split.md slice 6).
+# Not named in `src/`: kept for the `dev` feature forward (`mw_audio_bevy/dev`).
 mw_audio_bevy.workspace = true
 mw_bake.workspace = true
 # Boot layer (app-split.md slice 2): mods lib half, bake, hot reload, UI theme, load/mount.
 mw_boot_bevy.workspace = true
-# Gameplay keymap actions, use context, keybinds screen (app-split.md slice 3).
-mw_controls_bevy.workspace = true
-# Dev tools: live A/B, console wiring, BRP agent tools, pipeline watch, readiness (app-split.md slice 11).
+# Dev tools: live A/B, console wiring, BRP agent tools, perf flags, readiness (app-split.md slices 11, 12a).
 mw_devtools_bevy.workspace = true
 mw_doors_bevy.workspace = true
 # Water, weather, night sky, render settings (app-split.md slice 6).
@@ -52,86 +48,26 @@ mw_environment_bevy.workspace = true
 # The streamed game view, test levels, pause menu (app-split.md slice 13).
 mw_exterior_bevy.workspace = true
 mw_game_core.workspace = true
-mw_graphs.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
 mw_physics = { path = "../../crates/mw_physics" }
-mw_player_bevy.workspace = true
-mw_scripts_bevy.workspace = true
-mw_rpg_bevy.workspace = true
-mw_saves_bevy.workspace = true
 # The `view` and `character` viewers (app-split.md slice 12).
 mw_viewers_bevy.workspace = true
 mw_mods.workspace = true
 mw_records.workspace = true
-mw_script.workspace = true
-mw_vfs.workspace = true
+mw_weather.workspace = true
 mw_world.workspace = true
-# Walkers + physics glue (app-split.md slice 4).
-mw_walkers_bevy.workspace = true
+sf_atmos_bevy.workspace = true
 sf_bake.workspace = true
-sf_coords.workspace = true
-sf_diag_bevy = { workspace = true, features = ["assets", "render"] }
-sf_lod.workspace = true
-sf_lod_bevy.workspace = true
-sf_model.workspace = true
-sf_anim_bevy = { workspace = true, features = ["debug"] }
-sf_anim_graph.workspace = true
-sf_character.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
-# Walkers (`walkers.rs`): terrain heights as a ground probe, the mover stage with gizmos.
-sf_controller = { workspace = true, features = ["terrain"] }
-sf_controller_bevy = { workspace = true, features = ["debug"] }
-# The player (`player.rs`, ROADMAP 2.1): action layer on the fixed tick, orbit camera, input.
-sf_action.workspace = true
-sf_action_bevy.workspace = true
-sf_camera.workspace = true
-sf_camera_bevy.workspace = true
-sf_physics = { workspace = true }
+sf_diag_bevy = { workspace = true, features = ["assets", "render"] }
 # Synthetic test levels (`level.rs`, TS1).
 sf_level.workspace = true
-sf_ragdoll = { workspace = true }
-sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdoll"] }
-sf_model_bevy.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
-sf_script.workspace = true
-sf_script_bevy.workspace = true
-sf_atmos_bevy.workspace = true
-sf_water.workspace = true
-sf_water_bevy.workspace = true
-sf_render_order_bevy.workspace = true
-sf_wind_bevy.workspace = true
-mw_water.workspace = true
-mw_weather.workspace = true
-mw_audio.workspace = true
-# NPC voices (`audio.rs`, dev builds): the INFO tables and conversation contexts.
-mw_rpg.workspace = true
-sf_rpg.workspace = true
-# Quicksave / quickload over the framework's save sections (`saves.rs`).
-sf_save_bevy.workspace = true
-# The dialogue window on mw_rpg (`dialogue.rs`).
-sf_rpg_ui.workspace = true
-sf_ui.workspace = true
-sf_ui_bevy.workspace = true
-sf_ui_css.workspace = true
-sf_ui_screens.workspace = true
-# The inventory screen's catalog and view (`inventory_ui.rs`).
-sf_ui_inventory.workspace = true
-bevy_enhanced_input.workspace = true
-sf_weather.workspace = true
-sf_weather_bevy.workspace = true
-sf_audio.workspace = true
-sf_audio_bevy = { workspace = true, features = ["weather"] }
 sf_sky_bevy = { workspace = true, features = ["pcss"] }
-sf_shadow_cache_bevy.workspace = true
-# Dev console in the interactive viewer (`console.rs`, ROADMAP 1.13).
-sf_console_bevy = { workspace = true, features = ["overlay"] }
-
-sf_terrain_bevy.workspace = true
 sf_vfs.workspace = true
 sf_world = { workspace = true, features = ["bake"] }
-sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 # Test-scene registry (`scenes.ron`, `src/scenes.rs`); both already in the graph through Bevy.
 ron = "0.12"
