@@ -118,7 +118,8 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 5. [x] `mw_actors_bevy` (actors, fx, particles, faces, held): character/animation lane. Done 2026-10-26 (five `pub mod`s; app shim `use mw_actors_bevy::{actors, held};`, the only two the app names; bevy sub-crates, tests use `TaskPoolPlugin` + `TimePlugin`, `bevy_material` dev-dep for `AlphaMode`; hakari unchanged).
 6. [x] `mw_environment_bevy` (water, weather, night_sky, render) and `mw_audio_bevy`: rendering, weather and audio lanes. 6 environment done 2026-10-26 (bevy sub-crates; water needs only `mw_game_core` types, no `QualityRender`; hakari +`bevy_post_process`, `serde_json/alloc`); 6 audio done 2026-10-26 (whole module as the lib, `voices` inline; its `dev` feature gates voices/boots/swing doors and their deps, forwarded from the app's `dev`; tests use `TaskPoolPlugin` + `TimePlugin` instead of `MinimalPlugins`; hakari unchanged).
 7. [x] `mw_player_bevy`: done 2026-10-26 (whole module as the lib, tests as its `tests` module; app shim `use mw_player_bevy as player;`; bevy sub-crates incl. `bevy_shape`, `bevy_ui`/`bevy_text`/`bevy_window`; `sf_character_bevy` needs `world`; hakari unchanged).
-8. `mw_scripts_bevy`, 9. `mw_rpg_bevy`, 10. `mw_saves_bevy`: strict order (each depends on the last).
+8. [x] `mw_scripts_bevy`: done 2026-10-26 (whole module as the lib; app shim `use mw_scripts_bevy as scripts;`; deps core, controls, boot, player, no doors (`DoorUser` is in core); app `mods.rs` shim drops `script_plans`; no tests; hakari unchanged).
+9. `mw_rpg_bevy`, 10. `mw_saves_bevy`: strict order (each depends on the last).
 11. `mw_devtools_bevy` (breaks cycle 4; unblocks perf/rendering-bug lanes that edit live_ab/remote/console). Can move up
     to slice 4 if the Rpg trait cut above is done first.
 12. `mw_viewers_bevy`, 13. `mw_exterior_bevy`: the app is now ~2.2k lines.

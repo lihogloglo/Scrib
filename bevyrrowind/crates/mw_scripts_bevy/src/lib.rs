@@ -13,10 +13,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use bevy::camera::visibility::RenderLayers;
-use bevy::ecs::system::SystemState;
-use bevy::math::DVec3;
-use bevy::prelude::*;
+use bevy_app::{App, PostStartup, Update};
+use bevy_asset::{AssetServer, UntypedHandle};
+use bevy_camera::visibility::{RenderLayers, Visibility};
+use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemState;
+use bevy_log::{info, warn};
+use bevy_math::{DVec3, IVec3, Quat};
+use bevy_time::{Time, Timer, TimerMode};
+use bevy_transform::components::Transform;
+use mw_controls_bevy::{UseAction, use_pressed};
+use mw_game_core::doors::DoorUser;
+use mw_game_core::player::{FocusUpdate, PlayerBody, PlayerMode};
+use mw_player_bevy::Focus;
 use sf_coords::WorldPos;
 use sf_script::{ContextConfig, Handle, Limits, ScriptRuntime, ScriptSource};
 use sf_script_bevy::{
@@ -35,7 +44,7 @@ pub const LEGACY_CONTEXT: &str = "mw.legacy";
 
 /// Script context configs for the loaded profile, in load order, then `mw.legacy`.
 fn configs() -> Vec<ContextConfig> {
-    let mut out: Vec<ContextConfig> = crate::mods::script_plans()
+    let mut out: Vec<ContextConfig> = mw_boot_bevy::mods::script_plans()
         .into_iter()
         .map(|p| {
             let mut limits = Limits::MOD;
@@ -93,7 +102,7 @@ pub fn add(app: &mut App, vfs: Arc<Vfs>, auto_activate: u32) {
         .init_resource::<LiveSpawned>()
         .init_resource::<ActivePlacements>()
         .add_systems(PostStartup, hook_placements)
-        .add_systems(Update, (track_player, cell_facts, activate.after(crate::player::FocusUpdate), game_clock).chain().before(ScriptSlot::Update))
+        .add_systems(Update, (track_player, cell_facts, activate.after(FocusUpdate), game_clock).chain().before(ScriptSlot::Update))
         .add_systems(Update, (report, apply_world_commands).after(ScriptSlot::Update));
 }
 
@@ -280,8 +289,8 @@ impl PlacementSpawner for ScriptHandleHook {
 /// The player's entry: the player character (`player.rs`), else the activating camera (free
 /// camera mode).
 fn track_player(
-    cams: Query<Entity, With<crate::doors::DoorUser>>,
-    bodies: Query<Entity, With<crate::player::PlayerBody>>,
+    cams: Query<Entity, With<DoorUser>>,
+    bodies: Query<Entity, With<PlayerBody>>,
     positions: WorldPosOf,
     mut placements: ResMut<ScriptPlacements>,
 ) {
@@ -316,11 +325,11 @@ fn cell_facts(mut loaded: MessageReader<CellLoaded>, mut facts: MessageWriter<Sc
 /// dialogue is open), so a door can't travel under the journal.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn activate(
-    uses: Query<&bevy_enhanced_input::prelude::ActionEvents, With<bevy_enhanced_input::prelude::Action<crate::controls::UseAction>>>,
+    uses: Query<&bevy_enhanced_input::prelude::ActionEvents, With<bevy_enhanced_input::prelude::Action<UseAction>>>,
     time: Res<Time>,
     mut auto: ResMut<AutoActivate>,
-    focus: Res<crate::player::Focus>,
-    mode: Res<crate::player::PlayerMode>,
+    focus: Res<Focus>,
+    mode: Res<PlayerMode>,
     placements: Res<ScriptPlacements>,
     mut out: MessageWriter<Activated>,
 ) {
@@ -336,7 +345,7 @@ fn activate(
             auto.timer = Timer::from_seconds(1.0, TimerMode::Once);
         }
     }
-    if !automatic && !crate::controls::use_pressed(&uses) {
+    if !automatic && !use_pressed(&uses) {
         return;
     }
     if let Some(f) = &focus.target {

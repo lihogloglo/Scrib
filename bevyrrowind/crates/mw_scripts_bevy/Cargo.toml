@@ -1,0 +1,36 @@
+[package]
+name = "mw_scripts_bevy"
+description = "Mod scripts in the streamed view: script contexts, placement handles, activation, LiveSpawn scaffold (app-split.md slice 8)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+mw_boot_bevy.workspace = true
+mw_controls_bevy.workspace = true
+mw_game_core.workspace = true
+mw_mods.workspace = true
+mw_player_bevy.workspace = true
+mw_world.workspace = true
+sf_coords.workspace = true
+sf_script.workspace = true
+sf_script_bevy.workspace = true
+sf_sky_bevy.workspace = true
+sf_vfs.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

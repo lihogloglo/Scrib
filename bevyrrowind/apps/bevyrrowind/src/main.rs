@@ -23,7 +23,7 @@ mod pipeline_watch;
 mod remote;
 mod scenes;
 mod saves;
-mod scripts;
+use mw_scripts_bevy as scripts;
 mod skinned_view;
 mod sweep;
 mod view;
