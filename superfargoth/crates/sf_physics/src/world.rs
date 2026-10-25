@@ -54,6 +54,9 @@ pub(crate) struct Live {
     pub awake: bool,
     /// Inserted (or recovered) asleep, not yet asleep in the engine: frozen, no events.
     pub settling: bool,
+    /// At rest where it was placed (or last came to rest) and not touched by gameplay since:
+    /// an engine wake with nothing disturbing it puts it back to sleep where it was.
+    pub undisturbed: bool,
     /// The mass a grab decides carry or drag by (a ragdoll limb: the whole ragdoll).
     pub mode_mass: Option<f32>,
     seen: u64,
@@ -346,6 +349,7 @@ impl PhysicsWorld {
             rest: local,
             awake: false,
             settling: false,
+            undisturbed: desc.kind == (BodyKind::Dynamic { asleep: true }),
             mode_mass: None,
             seen: 0,
         });
@@ -366,6 +370,13 @@ impl PhysicsWorld {
         if !self.excluded.is_empty() {
             let gone = self.colliders_of(id);
             self.excluded.retain(|(x, y)| !gone.contains(x) && !gone.contains(y));
+        }
+        // A moving body taken away (picked up, despawned) disturbs what rested on it; a static
+        // unloading with its cell does not.
+        if self.live(id).is_some_and(|l| l.kind != BodyKind::Fixed) {
+            for other in self.touching(id) {
+                self.disturb(other);
+            }
         }
         self.engine.remove_body(live);
         let slot = &mut self.slots[id.index as usize];
@@ -468,7 +479,7 @@ impl PhysicsWorld {
 
     /// Sets a dynamic body's velocities (waking it).
     pub fn set_velocity(&mut self, id: BodyId, linear: Vec3, angular: Vec3) -> bool {
-        self.unsettle(id);
+        self.disturb(id);
         let Some(h) = self.live(id).map(|l| l.handle) else {
             return false;
         };
@@ -500,7 +511,7 @@ impl PhysicsWorld {
     /// A held body is released first.
     pub fn apply_impulse(&mut self, id: BodyId, impulse: Vec3, at: Option<WorldPos>) -> bool {
         self.release(id);
-        self.unsettle(id);
+        self.disturb(id);
         let Some(h) = self.live(id).map(|l| l.handle) else {
             return false;
         };
@@ -515,11 +526,61 @@ impl PhysicsWorld {
         true
     }
 
+    /// Wakes a body; gameplay touched it ([`Self::disturb`]).
     pub fn wake(&mut self, id: BodyId) {
-        self.unsettle(id);
+        self.disturb(id);
         if let Some(h) = self.live(id).map(|l| l.handle) {
             self.engine.wake_up(h, true);
         }
+    }
+
+    /// Gameplay touched this body (grab, push, impulse, script): its engine wakes are real
+    /// from now on, and while it moves it disturbs the resting bodies it touches. Placed items
+    /// start undisturbed and become so again when they fall asleep. The wake, velocity and
+    /// impulse calls disturb their body themselves. physics-fix-plan.md slice 4.
+    pub fn disturb(&mut self, id: BodyId) {
+        if let Some(l) = self.live_mut(id) {
+            l.undisturbed = false;
+        }
+        self.unsettle(id);
+    }
+
+    /// The bodies whose colliders touch `id`'s (an active contact).
+    fn touching(&self, id: BodyId) -> Vec<BodyId> {
+        let np = &self.engine.narrow_phase;
+        self.colliders_of(id)
+            .into_iter()
+            .flat_map(|c| {
+                np.contact_pairs_with(c)
+                    .filter(|p| p.has_any_active_contact())
+                    .map(move |p| if p.collider1 == c { p.collider2 } else { p.collider1 })
+            })
+            .filter_map(|c| self.id_of_collider(c))
+            .filter(|&o| o != id)
+            .collect()
+    }
+
+    /// Whether a body touching a resting one disturbs it: a dynamic body gameplay touched,
+    /// or a kinematic one (a character capsule) moving into it. Statics, held items, resting
+    /// placed items and a standing capsule (one inserted overlapping an item) don't.
+    fn disturbs(&self, id: BodyId) -> bool {
+        /// A kinematic body slower than this (m/s, rad/s) is standing.
+        const STANDING: f32 = 0.05;
+        let Some(l) = self.live(id) else { return false };
+        match l.kind {
+            BodyKind::Fixed | BodyKind::Held => false,
+            BodyKind::Dynamic { .. } => !l.undisturbed,
+            BodyKind::Kinematic => {
+                self.engine.bodies.get(l.handle).is_some_and(|rb| rb.linvel().length() > STANDING || rb.angvel().length() > STANDING)
+            }
+        }
+    }
+
+    /// Jointed bodies (ragdolls) wake through their joints, not contacts: never re-settled.
+    fn jointed(&self, id: BodyId) -> bool {
+        self.handle(id).is_some_and(|h| {
+            self.engine.impulse_joints.attached_joints(h).next().is_some() || self.engine.multibody_joints.attached_bodies(h).next().is_some()
+        })
     }
 
     /// Where a kinematic body should be at the end of the next step.
@@ -739,10 +800,9 @@ impl PhysicsWorld {
         }
     }
 
-    /// Interpolation history, Woke/Slept transitions and fell-out recovery.
+    /// Interpolation history, Woke/Slept transitions, quiet-wake re-settling and fell-out recovery.
     fn track_motion(&mut self) {
         self.epoch += 1;
-        let epoch = self.epoch;
         let active: Vec<(u32, Local)> = self
             .engine
             .active_bodies()
@@ -751,40 +811,94 @@ impl PhysicsWorld {
         let previous = std::mem::take(&mut self.awake);
         let kill = self.kill_height().map(|k| k - self.anchor().to_f64().y);
         let mut fell = Vec::new();
+        let mut quiet = Vec::new();
         for (index, pose) in active {
             let Some(id) = self.id_at(index) else { continue };
             let l = self.slots[index as usize].live.as_mut().expect("id_at checked");
             if l.settling {
                 continue;
             }
-            l.prev = l.curr;
-            l.curr = pose;
-            if !matches!(l.kind, BodyKind::Dynamic { .. }) {
+            if l.undisturbed && !l.awake && matches!(l.kind, BodyKind::Dynamic { .. }) {
+                quiet.push((id, pose));
                 continue;
             }
-            l.seen = epoch;
-            if !l.awake {
-                l.awake = true;
-                self.events.push(PhysicsEvent::Woke(id));
-            }
-            if kill.is_some_and(|k| f64::from(pose.pos.y) < k) {
-                fell.push(id);
-            }
-            self.awake.push(index);
+            self.moved(id, pose, kill, &mut fell);
         }
+        self.settle_quiet_wakes(quiet, kill, &mut fell);
         for index in previous {
             let Some(id) = self.id_at(index) else { continue };
             let l = self.slots[index as usize].live.as_mut().expect("id_at checked");
-            if l.seen != epoch {
-                // Asleep now: its pose didn't change this step.
+            if l.seen != self.epoch {
+                // Asleep now: its pose didn't change this step. At rest, it looks placed again.
                 l.awake = false;
                 l.prev = l.curr;
                 l.rest = l.curr;
+                l.undisturbed = true;
                 self.events.push(PhysicsEvent::Slept(id));
             }
         }
         for id in fell {
             self.recover(id);
+        }
+    }
+
+    /// One active body's new pose (and its `Woke`).
+    fn moved(&mut self, id: BodyId, pose: Local, kill: Option<f64>, fell: &mut Vec<BodyId>) {
+        let epoch = self.epoch;
+        let Some(l) = self.live_mut(id) else { return };
+        l.prev = l.curr;
+        l.curr = pose;
+        if !matches!(l.kind, BodyKind::Dynamic { .. }) {
+            return;
+        }
+        l.seen = epoch;
+        let woke = !std::mem::replace(&mut l.awake, true);
+        if woke {
+            self.events.push(PhysicsEvent::Woke(id));
+        }
+        if kill.is_some_and(|k| f64::from(pose.pos.y) < k) {
+            fell.push(id);
+        }
+        self.awake.push(id.index);
+    }
+
+    /// Undisturbed bodies the engine woke this step (a static, a neighbour or a standing
+    /// capsule inserted against them; physics-diagnosis-2026-10-25.md S1). One touching a
+    /// disturbing body is disturbed too, transitively (a thrown ball knocks the cup, the cup
+    /// its neighbours); the rest go back to sleep exactly where the player last saw them.
+    fn settle_quiet_wakes(&mut self, mut quiet: Vec<(BodyId, Local)>, kill: Option<f64>, fell: &mut Vec<BodyId>) {
+        loop {
+            let before = quiet.len();
+            let mut i = 0;
+            while i < quiet.len() {
+                let id = quiet[i].0;
+                if self.jointed(id) || self.touching(id).into_iter().any(|o| self.disturbs(o)) {
+                    let (id, pose) = quiet.swap_remove(i);
+                    if let Some(l) = self.live_mut(id) {
+                        l.undisturbed = false;
+                    }
+                    self.moved(id, pose, kill, fell);
+                } else {
+                    i += 1;
+                }
+            }
+            if quiet.len() == before {
+                break;
+            }
+        }
+        for (id, _) in quiet {
+            let Some(l) = self.live_mut(id) else { continue };
+            let seen = l.curr;
+            l.prev = seen;
+            let handle = l.handle;
+            if let Some(rb) = self.engine.bodies.get_mut(handle) {
+                rb.set_position(Pose::from_parts(seen.pos, seen.rot), false);
+                rb.set_linvel(Vec3::ZERO, false);
+                rb.set_angvel(Vec3::ZERO, false);
+                self.query_pending.extend_from_slice(rb.colliders());
+                self.queries_dirty = true;
+            }
+            self.begin_settle(id);
         }
     }
 

@@ -231,6 +231,70 @@ fn placed_items_stay_asleep_and_exact() {
     assert_eq!(w.awake_count(), 0);
 }
 
+/// Streaming order is not guaranteed: an item can settle before the table
+/// under it, a neighbour batch or another static arrives. Those new contacts
+/// wake it in the engine; it must go back to sleep where it was placed
+/// (physics-fix-plan.md slice 4, S1-a).
+#[test]
+fn late_static_does_not_wake_placed_items() {
+    let base = WorldPos::new(IVec3::new(1, 0, -3), Vec3::new(5.0, 8.0, 2.0));
+    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+    let place = |w: &mut PhysicsWorld, x: f32, y: f32, z: f32, i: usize| {
+        let shape = if i.is_multiple_of(2) { ShapeRef::Box(Vec3::splat(0.1)) } else { ShapeRef::Sphere(0.1) };
+        w.insert(&BodyDesc::item(at(base.offset(Vec3::new(x, y, z))), shape, Layer::DEBRIS, Some(0.5)))
+    };
+    // Batch 1 settles with nothing under it; some sit 5 mm into the future floor, some hover 2 mm.
+    let mut items: Vec<BodyId> = (0..30)
+        .map(|i| place(&mut w, (i % 10) as f32 * 0.6 - 3.0, 0.1 + [-0.005, 0.0, 0.002][i % 3], (i / 10) as f32 * 0.6, i))
+        .collect();
+    for _ in 0..5 {
+        w.step();
+    }
+    let mut events: Vec<PhysicsEvent> = w.drain_events().collect();
+    // Then the floor, the same floor again (a re-inserted chunk), a wall touching the first row,
+    // and batch 2 stacked on batch 1 (touching, 2 mm into it).
+    ground(&mut w, base);
+    ground(&mut w, base);
+    w.insert(&BodyDesc::fixed(at(base.offset(Vec3::new(0.0, 0.5, -0.195))), ShapeRef::Box(Vec3::new(4.0, 0.5, 0.1)), Layer::STATIC));
+    for i in 0..10 {
+        items.push(place(&mut w, (i % 10) as f32 * 0.6 - 3.0, 0.298 + [-0.005, 0.0, 0.002][i % 3], 0.6, 0));
+    }
+    let before = positions(&w, &items);
+    for _ in 0..600 {
+        w.step();
+        events.extend(w.drain_events());
+    }
+    let moved = positions(&w, &items).iter().zip(&before).map(|(a, b)| a.delta(*b).length()).fold(0.0, f64::max);
+    assert!(moved < 1e-5, "placed items moved {moved} m");
+    assert_eq!(count(&events, |e| matches!(e, PhysicsEvent::Woke(_))), 0, "no item woke");
+    assert_eq!(w.awake_count(), 0);
+}
+
+/// A character capsule inserted overlapping a placed item doesn't launch it;
+/// the same capsule walking into it pushes it (that is a disturbance).
+#[test]
+fn npc_capsule_overlap_does_not_launch_items() {
+    let base = WorldPos::ORIGIN;
+    let mut w = PhysicsWorld::new(base, PhysicsParams::default());
+    ground(&mut w, base);
+    let item = w.insert(&BodyDesc::item(at(base.offset(Vec3::Y * 0.1)), ShapeRef::Box(Vec3::splat(0.1)), Layer::DEBRIS, Some(0.5)));
+    w.step();
+    let before = w.pose(item).unwrap().pos;
+    // Capsule 0.3 m wide, 5 cm into the item.
+    let npc_at = |x: f32| at(base.offset(Vec3::new(x, 0.9, 0.0)));
+    let npc = w.insert(&BodyDesc::new(BodyKind::Kinematic, npc_at(-0.35), ShapeRef::Capsule { r: 0.3, half: 0.6 }, Layer::CHARACTER));
+    for _ in 0..120 {
+        w.step();
+    }
+    assert!(w.pose(item).unwrap().pos.delta(before).length() < 1e-5, "standing capsule left the item alone");
+    assert_eq!(w.is_sleeping(item), Some(true));
+    for i in 1..=60 {
+        w.set_kinematic_target(npc, npc_at(-0.35 + i as f32 * 0.02));
+        w.step();
+    }
+    assert!(w.pose(item).unwrap().pos.delta(before).length() > 0.2, "walking capsule pushed the item");
+}
+
 #[test]
 fn knocked_item_wakes_rests_and_interpolates() {
     let base = WorldPos::ORIGIN;
