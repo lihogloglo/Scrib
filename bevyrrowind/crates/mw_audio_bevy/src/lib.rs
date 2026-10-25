@@ -91,7 +91,8 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
         music.0.set_playlist(tag, tracks);
     }
     let emitters = Arc::new(sounds.emitters);
-    app.add_plugins(SfAudioPlugin { bank: sounds.bank, playback: true })
+    // The volume sliders of the options screen (`sf_ui` audio page) feed the mixer live.
+    app.add_plugins((SfAudioPlugin { bank: sounds.bank, playback: true }, sf_audio_bevy::settings::SettingsAudioPlugin))
         .insert_resource(AudioCues(sounds.cues))
         .insert_resource(music)
         .insert_resource(MwAudio { doors: sounds.doors, footsteps: sounds.footsteps })

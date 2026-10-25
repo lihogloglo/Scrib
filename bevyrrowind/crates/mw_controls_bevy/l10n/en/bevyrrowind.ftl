@@ -37,3 +37,19 @@ keybind-ui-context_3 = Menu Action 3
 keybind-ui-context_4 = Menu Action 4
 keybind-ui-open_menu = Menu
 keybind-ui-open_map = Map
+
+## Options screen (sf_ui settings; pause_menu.rs). Pages `set-page-<page>`; the framework's audio
+## page labels each bus `set-audio-<bus>-volume` / `-muted` (sf_ui `AUDIO_BUSES`).
+set-page-audio = Audio
+set-audio-master-volume = Master Volume
+set-audio-master-muted = Mute All
+set-audio-music-volume = Music Volume
+set-audio-music-muted = Mute Music
+set-audio-sfx-volume = Effects Volume
+set-audio-sfx-muted = Mute Effects
+set-audio-voice-volume = Voice Volume
+set-audio-voice-muted = Mute Voice
+set-audio-ambience-volume = Ambience Volume
+set-audio-ambience-muted = Mute Ambience
+set-audio-ui-volume = Menu Volume
+set-audio-ui-muted = Mute Menus

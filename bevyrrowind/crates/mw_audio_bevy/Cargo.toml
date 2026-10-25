@@ -30,7 +30,7 @@ mw_rpg = { workspace = true, optional = true }
 mw_world.workspace = true
 sf_anim_bevy.workspace = true
 sf_audio.workspace = true
-sf_audio_bevy.workspace = true
+sf_audio_bevy = { workspace = true, features = ["settings"] }
 sf_character_bevy = { workspace = true, optional = true }
 sf_controller_bevy.workspace = true
 sf_records.workspace = true

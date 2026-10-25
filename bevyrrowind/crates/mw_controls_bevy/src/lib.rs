@@ -52,7 +52,7 @@ pub const CONTEXT: &str = "gameplay";
 /// Opens / closes the keybinds screen (dev; outside the keymap).
 pub const KEYBINDS_KEY: KeyCode = KeyCode::F10;
 /// The keybinds screen's id.
-const KEYBINDS_SCREEN: &str = "keybinds";
+pub const KEYBINDS_SCREEN: &str = "keybinds";
 
 /// The keybinds screen record. TODO(HUD slice): with `dialogue.rs`' screens, in the builtin
 /// mod's data once more screens land (everything is a mod).
@@ -383,6 +383,15 @@ fn toggle_keybinds(
         return;
     }
     if stack.0.top(Layer::Menu).is_some() {
+        return;
+    }
+    open_keybinds(&mut commands, &mut stack, &registry);
+}
+
+/// Opens the keybinds screen (every context) on top of the stack: F10 here, the options
+/// screen's "Key bindings" row (`pause_menu.rs`). Its Back closes it, back to what was below.
+pub fn open_keybinds(commands: &mut Commands, stack: &mut ScreenStackRes, registry: &UiRegistryRes) {
+    if stack.0.is_open(KEYBINDS_SCREEN) {
         return;
     }
     let centred = Node {

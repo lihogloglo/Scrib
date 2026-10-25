@@ -15,13 +15,21 @@
 //!   Menu-layer screen).
 //! - **Choices**: Resume (or Back) closes the menu (the screen does); Quit, after its yes/no,
 //!   exits (`AppExit::Success`); Options opens the options screen on top (its Back returns
-//!   here). Save and Load are disabled until the save/load screen is wired. Option changes
-//!   are not applied yet (logged): the options-apply slice.
+//!   here). Save and Load are disabled until the save/load screen is wired.
+//! - **Options**: the settings store (`UiSettingsStore`, every `ui.setting` record, values from
+//!   the player's profile `profiles/<name>.toml` `[settings.<mod>]`, only non-defaults) is
+//!   inserted here at startup; strings come from the builtin mod's Fluent file (`controls.rs`).
+//!   A change is written to the store at once and applies live where a consumer reads the store
+//!   (the framework's audio page: `sf_audio_bevy` `SettingsAudioPlugin` in `mw_audio_bevy`);
+//!   other settings are stored only (logged). The profile file is written when the player
+//!   leaves the menus, or on exit (`sf_ui_bevy` `sync_profile`, console/PC convention: not
+//!   once per slider step). "Key bindings" opens the keybinds screen on top (`controls.rs`);
+//!   its Back returns to the options.
 
 use bevy::prelude::*;
 use sf_console_bevy::ConsoleOpen;
 use sf_records::RecordDb;
-use sf_ui::{Layer, UiRegistry};
+use sf_ui::{Layer, SettingsStore, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiAction, UiActionEvent, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore, UiSystems};
 use sf_ui_screens::{
     OptionsChange, OptionsEvent, OptionsModel, OptionsScreen, PauseChoice, PauseMenuEvent, PauseMenuModel, PauseMenuScreen,
@@ -58,8 +66,14 @@ value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "op
 
 /// After `dialogue::add` (the UI plugins and the game's screen registry).
 pub fn add(app: &mut App) {
-    let Some(mut registry) = app.world_mut().get_resource_mut::<UiRegistryRes>() else { return };
+    let world = app.world_mut();
+    let Some(mut registry) = world.get_resource_mut::<UiRegistryRes>() else { return };
     registry.0.extend_screens(&screens());
+    if !world.contains_resource::<UiSettingsStore>() {
+        let profile = mw_boot_bevy::mods::bindings_profile();
+        let store = settings_store(&world.resource::<UiRegistryRes>().0, profile.as_ref().map(|(_, p)| p));
+        world.insert_resource(store);
+    }
     app.add_systems(
         Update,
         (
@@ -150,13 +164,45 @@ fn host_pause_menu(
     }
 }
 
-/// Option changes. TODO(options-apply slice): store, save the profile, apply.
-fn host_options(mut events: MessageReader<OptionsEvent>) {
+/// The settings store of every `ui.setting` in `registry`, with the values `profile` saved.
+pub(crate) fn settings_store(registry: &UiRegistry, profile: Option<&sf_mods::Profile>) -> UiSettingsStore {
+    let mut store = SettingsStore::new(registry);
+    for issue in profile.map(|p| store.load_from(p)).unwrap_or_default() {
+        warn!("settings: {issue:?}");
+    }
+    UiSettingsStore(store)
+}
+
+/// Settings with a live consumer of the store (the audio mixer reads the volume page).
+fn applies_live(key: &str) -> bool {
+    key.starts_with("sf.audio_")
+}
+
+/// Option changes go to the store (saved into the profile when the menus close, consumers
+/// apply them); Key bindings opens the keybinds screen on top. Back has closed the screen.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn host_options(
+    mut commands: Commands,
+    mut events: MessageReader<OptionsEvent>,
+    mut store: Option<ResMut<UiSettingsStore>>,
+    mut stack: ResMut<ScreenStackRes>,
+    registry: Res<UiRegistryRes>,
+) {
     for event in events.read() {
         match &event.change {
             OptionsChange::Back => {}
-            OptionsChange::Set(key, value) => info!("options: {key} = {value:?} (not applied yet)"),
-            OptionsChange::OpenKeybinds => info!("options: key bindings (not wired yet)"),
+            OptionsChange::Set(key, value) => {
+                let Some(store) = store.as_mut() else {
+                    warn!("options: no settings store, {key} not kept");
+                    continue;
+                };
+                match store.0.set(key, value.clone()) {
+                    Ok(value) if applies_live(key) => info!("options: {key} = {value:?}"),
+                    Ok(value) => info!("options: {key} = {value:?} (stored; nothing applies it live yet)"),
+                    Err(e) => warn!("options: {key}: {e:?}"),
+                }
+            }
+            OptionsChange::OpenKeybinds => crate::controls::open_keybinds(&mut commands, &mut stack, &registry),
         }
     }
 }
@@ -221,8 +267,12 @@ mod tests {
             UiTextPlugin,
             SfScreensPlugin,
         ))
-        .insert_resource(PlayerMode { on: true, paused: false, body: None, last_ground: None });
+        .insert_resource(PlayerMode { on: true, paused: false, body: None, last_ground: None })
+        // A built registry, as `dialogue.rs` inserts (the framework's built-in settings).
+        .insert_resource(UiRegistryRes(UiRegistry::build(&RecordDb::new()).0));
         add(&mut app);
+        // The keybinds screen (Key bindings) and the builtin strings, as `player.rs` adds them.
+        crate::controls::add(&mut app);
         let target = UVec2::new(1600, 1000);
         app.world_mut().spawn((
             Camera2d,
@@ -320,5 +370,67 @@ mod tests {
         tap(&mut app, KeyCode::ArrowLeft);
         tap(&mut app, KeyCode::Enter);
         assert_eq!(app.should_exit(), Some(AppExit::Success));
+    }
+
+    fn master_volume(app: &App) -> Option<f64> {
+        app.world().resource::<UiSettingsStore>().0.get_f64(&sf_ui::audio_volume_key("master"))
+    }
+
+    /// Options -> step the master volume: the store changes at once, the profile file gets it
+    /// once the menus close, and a fresh store from that file has it (a restart). Key bindings
+    /// opens the keybinds screen on top; its Back returns to the options.
+    #[test]
+    fn options_change_the_store_and_persist_in_the_profile() {
+        let dir = std::env::temp_dir().join(format!("bw-options-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp profiles dir");
+        let mut app = app();
+        app.insert_resource(sf_ui_bevy::UiProfile {
+            profile: sf_mods::Profile::new("test", []),
+            dir: Some(dir.clone()),
+            dirty: false,
+            last_error: None,
+        });
+        assert_eq!(master_volume(&app), Some(1.0), "the default");
+
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert!(open(&app, OPTIONS));
+        let mut q = app.world_mut().query::<(Entity, &OptionsScreen)>();
+        let (screen, options) = q.single(app.world()).expect("options screen");
+        assert_eq!(options.model.pages[0].label, "Audio", "page label from the builtin strings");
+        let master = sf_ui::audio_volume_key("master");
+        assert_eq!(options.model.row(&master).expect("master row").label, "Master Volume");
+
+        // The focus starts on the first row (master volume): left steps it down.
+        tap(&mut app, KeyCode::ArrowLeft);
+        let stepped = master_volume(&app).expect("master volume");
+        assert!((stepped - (1.0 - sf_ui::AUDIO_VOLUME_STEP)).abs() < 1e-9, "store follows the slider: {stepped}");
+        let file = sf_mods::Profile::path_in(&dir, "test");
+        assert!(!file.exists(), "not written while the menus are open");
+
+        // Key bindings on top of the options; its Back returns to them.
+        app.world_mut().write_message(OptionsEvent { screen, change: OptionsChange::OpenKeybinds });
+        frames(&mut app, 3);
+        let keybinds = crate::controls::KEYBINDS_SCREEN;
+        assert!(open(&app, keybinds) && open(&app, OPTIONS), "keybinds on top of the options");
+        assert_eq!(roots(&mut app, keybinds), 1);
+        tap(&mut app, KeyCode::Escape);
+        assert!(!open(&app, keybinds) && open(&app, OPTIONS), "Back returns to the options");
+        assert_eq!(roots(&mut app, keybinds), 0);
+
+        // Leave the menus: the profile is saved, with only the changed value.
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::Escape);
+        assert!(!open(&app, OPTIONS) && !open(&app, PAUSE));
+        let text = std::fs::read_to_string(&file).expect("profile written");
+        assert!(text.contains("audio_master_volume") && !text.contains("audio_music_volume"), "{text}");
+
+        // A restart: a fresh store from the saved file has the value.
+        let saved = crate::controls::reload(&dir, "test");
+        let store = settings_store(&app.world().resource::<UiRegistryRes>().0, Some(&saved));
+        assert_eq!(store.0.get_f64(&master), Some(stepped));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
