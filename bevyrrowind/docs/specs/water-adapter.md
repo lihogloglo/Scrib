@@ -174,7 +174,7 @@ The audio system (later) plays them; the adapter only maps ids.
 
 ## What replaces `SeaPlaneScaffold`
 
-Today (`apps/bevyrrowind/src/exterior.rs`): `SeaPlaneScaffold`, a 64 km `Plane3d` with an alpha-blended
+Today (`crates/mw_exterior_bevy/src/exterior.rs`): `SeaPlaneScaffold`, a 64 km `Plane3d` with an alpha-blended
 `StandardMaterial` (base 0.05/0.16/0.2, alpha 0.86, roughness 0.08), spawned in the exterior's render
 layer and moved by `sync_origin` under the camera (snapped to 256 m) at `sea_level = −origin_cell.y ×
 256 m`. Interiors have no water.

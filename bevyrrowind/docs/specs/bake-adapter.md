@@ -3,7 +3,7 @@
 Status: implemented (2026-10-11); world index and terrain products added (2026-10-11)
 Crates: mw_bake (Bevy-free: importer, inputs, model bake, exterior bake,
 texture decoding, report), mw_assets (cooked models as entities),
-apps/bevyrrowind (`bake`, `view`)
+apps/bevyrrowind (CLI `bake`, `view`), mw_boot_bevy (bake), mw_viewers_bevy (view)
 Framework spec: `../../superfargoth/docs/specs/bake.md`
 
 ## Goal

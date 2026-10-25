@@ -217,4 +217,4 @@ interior-room-graph-converter}.md`, `docs/adr/0005,0011`, `crates/engine/src/{pa
 console,render,renderer_init}.rs`, `crates/converter/src/texture_gpu/mod.rs`, `crates/mo2/src/lib.rs`, commits
 `68b5023`, `d16b73c`, `268f988`, `18fa8c5`. Bevy 0.20.0 sources from the local cargo registry.
 Ours: ARCHITECTURE §4-5, specs `far-field`, `streaming`, `diag`, `sky-lighting`, `water`, `terrain`, `mods`,
-`bake`, `physics`, `portals`, `bevyrrowind/apps/bevyrrowind/src/exterior.rs`, ROADMAP M5 note.
+`bake`, `physics`, `portals`, `bevyrrowind/crates/mw_exterior_bevy/src/exterior.rs`, ROADMAP M5 note.

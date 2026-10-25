@@ -33,6 +33,26 @@ Compile time is a design constraint, like frame time. The rules:
    where performance allows (e.g. `KindVisitor` instead of generic
    callbacks everywhere).
 
+Game plugin crates (`bevyrrowind/crates`, app split 2026-10-26; the binary `apps/bevyrrowind` keeps only the CLI; spec `bevyrrowind/docs/specs/app-split.md`):
+
+| Crate | Holds |
+|---|---|
+| `mw_game_core` | Shared types: markers, enums, constants, scene registry, shipped_errors |
+| `mw_boot_bevy` | Mods lib half, bake, hot_reload, ui_theme, load/mount |
+| `mw_controls_bevy` | Keymap, controls, l10n strings |
+| `mw_doors_bevy` | Doors |
+| `mw_environment_bevy` | Water, weather, night_sky, render |
+| `mw_audio_bevy` | Audio and voices |
+| `mw_walkers_bevy` | Walkers, physics |
+| `mw_actors_bevy` | Actors, actor_fx, actor_particles, faces, held |
+| `mw_player_bevy` | Player and its tests |
+| `mw_scripts_bevy` | Script runtime glue |
+| `mw_rpg_bevy` | Dialogue, inventory, inventory_ui |
+| `mw_saves_bevy` | Saves |
+| `mw_devtools_bevy` | Console, live_ab, remote, pipeline_watch, perf, ready (Loading, settled, Readiness) |
+| `mw_viewers_bevy` | view, anim_view, skinned_view, character_view |
+| `mw_exterior_bevy` | Exterior, level (+ level/actors), pause_menu |
+
 ### Settings (repo root: one Cargo workspace for framework and game)
 
 | Setting | Where | Why |

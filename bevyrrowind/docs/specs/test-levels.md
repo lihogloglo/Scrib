@@ -14,7 +14,7 @@ file covers the game side. Owner go 2026-10-18 (ROADMAP "Next up", TS1).
   `scenes.ron` entry with `level: "<name>"` instead of `cell` (`scene
   --list` marks them `[level <name>]`). `--camera <name>` picks one of the
   level's cameras; raw `ex,ey,ez,tx,ty,tz` still works.
-- **One viewer, not a second app** (`apps/bevyrrowind/src/level.rs`): the
+- **One viewer, not a second app** (`apps/bevyrrowind/src/level.rs` CLI entry; viewer in `crates/mw_exterior_bevy/src/level.rs`): the
   level is its own worldspace `level/<name>` in the streamed viewer
   (`exterior.rs`). Its streaming index is an empty `sf_world::MemoryIndex`
   layered over the bake's (`LevelIndex`), so nothing of Vvardenfell streams

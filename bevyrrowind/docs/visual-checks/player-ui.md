@@ -2,7 +2,7 @@
 
 Open visual checks: player, inventory, saves, input, dialogue and journal, console (PL, IV, SV, IN, DJ, CO). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 
-## Player (ROADMAP 2.1; `apps/bevyrrowind/src/player.rs`)
+## Player (ROADMAP 2.1; `crates/mw_player_bevy/src/lib.rs`)
 
 ### PL-1: Third-person walk and the use prompt (`cargo dev view "Seyda Neen"`, 10:00)
 - Starts in player mode (capsule scaffold). WASD, Shift, Space jump, Tab 1st/3rd, wheel zoom; walk to the Census and

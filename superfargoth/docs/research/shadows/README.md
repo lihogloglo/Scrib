@@ -9,7 +9,7 @@ settings documentation and commit titles. Nothing here is code from it (superfar
 
 | Item | Value | Where |
 |---|---|---|
-| Sun cascades | 4; first far bound **10 m**; max **504 m** (`(handoff(1)+band)·1.1+20`, High preset); overlap 0.2 | `bevyrrowind/apps/bevyrrowind/src/exterior.rs` `sun_cascades` |
+| Sun cascades | 4; first far bound **10 m**; max **504 m** (`(handoff(1)+band)·1.1+20`, High preset); overlap 0.2 | `bevyrrowind/crates/mw_exterior_bevy/src/exterior.rs` `sun_cascades` |
 | Cascade splits | Bevy: first bound fixed, the rest geometric → **10 / 36.9 / 136 / 504 m** | `bevy_light-0.20.0/src/cascade.rs` `calculate_cascade_bounds` |
 | Shadow map | **2048²** per cascade (Bevy default; `DirectionalLightShadowMap` never set; 4096² measured +1.4 ms and dropped) | weather/distant-shadows.md "As built" |
 | Fitting | Bevy fits each cascade to a sphere around the frustum slice and snaps it to texels (stable, no shimmer, but square coverage is wasted) | `cascade.rs` `calculate_cascade` |

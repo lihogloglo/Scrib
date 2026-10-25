@@ -164,7 +164,7 @@ Dev builds (`remote` feature, part of `dev`) serve the Bevy Remote Protocol
 on 127.0.0.1 in interactive `view`/`scene` runs, for the `bevy_brp` MCP
 server (`bevy_brp_mcp`, registered for this workspace; owner 2026-10-18).
 Port `BEVYRROWIND_BRP_PORT`, default 15712 (Ovid uses 15702), shown in the
-window title. Code: `apps/bevyrrowind/src/remote.rs`.
+window title. Code: `bevyrrowind/crates/mw_devtools_bevy/src/remote.rs`.
 
 - **Attach only.** Build (`cargo build -p bevyrrowind --features dev`),
   then start it with `powershell -File tools/run_dev.ps1 view "<cell>" > target/run_dev.pid`

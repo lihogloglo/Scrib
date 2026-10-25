@@ -130,3 +130,12 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 
 Parallelism: after slice 2, slices 3, 4, 5 and 6 touch disjoint modules and can run as separate lanes (respect the
 3-build-agent cap); 7-10 are serial; 11 needs 3, 7 and 9 (or the trait cut).
+
+## As built (2026-10-26)
+
+Slices 1-13 landed; the binary `apps/bevyrrowind` keeps only the CLI (main.rs, mods.rs CLI half, perf/{cli,sweep}.rs,
+scenes.rs, sweep.rs, level.rs `view level:` entry). Deviations from the plan, per the slice notes above:
+`mw_devtools_bevy` has no `mw_player_bevy` dep (`PlayerBody` is in core); `mw_scripts_bevy` and `mw_saves_bevy` have no
+`mw_doors_bevy` dep (`DoorUser`, `ARRIVAL_EYE_M` are in core); `pause_menu` lives in `mw_exterior_bevy`; `perf/cli` and
+`perf/sweep` stay in the binary; `level::view` stays in the binary; `mw_viewers_bevy` and `mw_exterior_bevy` use the `bevy`
+umbrella where they build `DefaultPlugins` apps. Slice 14 (shim removal, gate re-measure, ROADMAP 1.11 tick) is open.

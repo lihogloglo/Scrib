@@ -17,7 +17,7 @@ Fix those two doc lines in the plan's doc slice.
   (`stream.rs:539-545`) only see placements that are *already activated and pending*. A static the scheduler has
   not reached yet is invisible to both. The doc comment at `stream.rs:224-226` says "R0 activation is not
   [time-sliced]", which is wrong. Walkers avoid this: they also require `scheduler.covers(ws, pos, margin,
-  Level::Active)` (`apps/bevyrrowind/src/walkers.rs:500-503`). The player and items do not.
+  Level::Active)` (`crates/mw_walkers_bevy/src/walkers.rs:500-503`). The player and items do not.
 - **F2. Rapier wakes the sleeping side of every new contact, including contacts with a newly inserted *fixed*
   collider.** In `rapier3d-0.36.1/src/geometry/narrow_phase/contacts.rs:363-368`, "starts wake unconditionally"
   calls `strong_wake_sleeping_side`. Pairs are recomputed for every *modified* (that is, newly inserted)
@@ -75,7 +75,7 @@ stale Oct-13 `target/release/examples/body_report.exe`: it may write old-format 
 
 ## S2. A held object vibrates, and "carrying pushes the player capsule through the floor" (H4)
 
-**Code path.** `apps/bevyrrowind/src/physics.rs:334-340` puts the `Holder` on the **camera** entity (`With<FreeCamera>`),
+**Code path.** `crates/mw_walkers_bevy/src/physics.rs:334-340` puts the `Holder` on the **camera** entity (`With<FreeCamera>`),
 in player mode too: the camera keeps `FreeCamera`, disabled. The sequence for one frame:
 
 - `record_views` (`sf_physics_bevy/src/carry.rs`, `RunFixedMainLoop` / `BeforeFixedMainLoop`) records the camera's

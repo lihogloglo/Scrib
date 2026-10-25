@@ -199,7 +199,7 @@ Research: `docs/research/shadows/README.md` (F3, owner decision 2026-10-19: drop
    `Cooked::Skipped { .. } => Ok(None)`). So uncooked models have **no far-field representation**.
 3. With a far field, every placement spawns at R1 (520-648 m) and none in R2. So an uncooked object
    exists only while its cell is in R1.
-4. The runtime NIF spawner (`apps/bevyrrowind/src/exterior.rs`, `NifSpawner`, also `LightSpawner` for
+4. The runtime NIF spawner (`bevyrrowind/crates/mw_exterior_bevy/src/exterior.rs`, `NifSpawner`, also `LightSpawner` for
    every light placement) **ignores `SpawnCx::max_distance` and `end_band`**: no `VisibilityRange`, so
    no dither-in. And the NIF loads through the `AssetServer` only when spawned, so it appears some
    frames **after** its cell's group is revealed.

@@ -38,7 +38,7 @@ pelvis-hung lattice, which is why legs went missing.
 **No. But the vanilla path is already in the code, one hook away.**
 
 From the code (no runs):
-- The `H` toggle (`apps/bevyrrowind/src/actors.rs` `toggle_cloth`) only sets `ClothSettings::simulate`. The robe
+- The `H` toggle (`bevyrrowind/crates/mw_actors_bevy/src/actors.rs` `toggle_cloth`) only sets `ClothSettings::simulate`. The robe
   stays cooked and **rebound to the lattice**. In `sf_anim_graph::secondary::ClothRun::update` with `simulate`
   off, the lattice joints sit on their *animated targets*. `ClothBinding::animated` computes each target as
   `ride.lerp(skin, follow)`, with `follow = CLOTH_LEG_FOLLOW (0.7) × row fraction`. So the hem row follows the legs
