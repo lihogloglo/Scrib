@@ -2,23 +2,30 @@
 //! framework's `collision.cook` step (`superfargoth/docs/specs/locomotion.md`,
 //! "Ground probes"; spec: `docs/specs/actors-adapter.md`, "Static collision").
 //!
-//! Per model, in this order (`OpenMW`'s `BulletNifLoader` semantics, except
-//! that the fallback is a simplified render LOD rather than every triangle):
+//! Per model, in this order (`OpenMW`'s `BulletNifLoader` semantics, ported
+//! from `components/nifbullet/bulletnifloader.cpp` at `OpenMW` commit
+//! 4e718b50, lines 110-326; except that the static fallback is a render LOD
+//! rather than every triangle). Which nodes take part is [`select`]:
 //!
 //! 1. Skinned models (actors, body parts): none. Actors collide as
-//!    capsules, not as static geometry.
+//!    capsules, not as static geometry (nor as the `"Bounding Box"` node's
+//!    box, which `OpenMW` keeps for actors only).
 //! 2. An `NC…` string marker on the root (`NCO`, `NCC`): none for actors.
-//! 3. A `RootCollisionNode`: its subtree's triangles, whatever their
-//!    visibility, minus parts that keyframes move. An empty one means
-//!    camera-only collision in the original: none for actors.
-//! 4. Editor marker models (`MRK`) without one: none.
-//! 5. Models `mesh.cook` skips (animated parts): their render geometry in
-//!    the rest pose, minus moving, camera-facing and particle parts.
+//! 3. A root whose last direct-child `RootCollisionNode` is empty:
+//!    camera-only collision in the original, none for actors.
+//! 4. A root with a non-empty one: that subtree's triangles, whatever their
+//!    visibility, minus parts that keyframes move. Other (extra or nested)
+//!    collision nodes are plain geometry.
+//! 5. Models `mesh.cook` skips (animated parts) and editor marker models
+//!    (`MRK`): their NIF geometry in the rest pose, hidden nodes included,
+//!    minus moving, camera-facing and particle parts. `MRK` drops only
+//!    `Tri EditorMarker…` shapes; a model of nothing else gets none.
 //! 6. Everything else: the `mesh.cook` product's LOD1 (the framework
 //!    default, [`CollisionSettings::lod`]).
 //!
-//! Cases 1 to 5 are [`CollisionRules::authored`] results (an empty mesh for
-//! "none"); case 6 returns `None` and the step derives it.
+//! Everywhere, a switch node contributes its first child only. Cases 1 to 5
+//! are [`CollisionRules::authored`] results (an empty mesh for "none");
+//! case 6 returns `None` and the step derives it.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -53,7 +60,8 @@ pub enum NoCollision {
 pub enum Source {
     /// `RootCollisionNode` subtree.
     Authored,
-    /// NIF render geometry in the rest pose (models `mesh.cook` skips).
+    /// NIF geometry in the rest pose (models `mesh.cook` skips, and `MRK`
+    /// models).
     RestPose,
     /// Render LOD of the `mesh.cook` product.
     RenderLod,
@@ -64,7 +72,7 @@ impl Source {
     pub fn label(self) -> &'static str {
         match self {
             Self::Authored => "authored (RootCollisionNode)",
-            Self::RestPose => "rest-pose render geometry (animated)",
+            Self::RestPose => "rest-pose NIF geometry (animated, MRK)",
             Self::RenderLod => "render LOD1 (fallback)",
             Self::None(NoCollision::Actor) => "none: skinned (actor)",
             Self::None(NoCollision::Marker) => "none: NC marker",
@@ -99,6 +107,78 @@ fn inherit(nif: &mw_nif::Model, flags: &mut [bool]) {
     }
 }
 
+/// Which nodes `OpenMW`'s collision walk takes, per [`select`].
+#[derive(Debug)]
+struct Selection {
+    /// Per node: geometry here goes into the physical shape.
+    collides: Vec<bool>,
+    /// Some root picked a non-empty `RootCollisionNode`.
+    authored: bool,
+    /// Some root picked an empty one: the whole shape is camera-only.
+    camera_only: bool,
+}
+
+/// `OpenMW`'s node selection (`bulletnifloader.cpp` (4e718b50): `handleRoot`
+/// 137-180, `handleNode` 185-262; `NiNode::findRootCollisionNode`,
+/// `components/nif/node.cpp:209`). Visibility plays no part: the loader has
+/// no hidden-node check, so hidden nodes collide like any other.
+fn select(nif: &mw_nif::Model) -> Selection {
+    let n = nif.nodes.len();
+    // Per parent (parents precede children, siblings keep their order): its
+    // first child, and its LAST `RootCollisionNode` child, since
+    // `findRootCollisionNode` searches the children in reverse ("yes, this
+    // search needs to be reversed"). Only a root's direct children count
+    // (the recursive search needs an `RCN` string marker, which vanilla
+    // doesn't use and we don't read).
+    let mut first_child = vec![None; n];
+    let mut last_rcn = vec![None; n];
+    let mut root_of = vec![0; n];
+    for (i, node) in nif.nodes.iter().enumerate() {
+        match node.parent {
+            Some(p) => {
+                first_child[p].get_or_insert(i);
+                if node.kind == NodeKind::Collision {
+                    last_rcn[p] = Some(i);
+                }
+                root_of[i] = root_of[p];
+            }
+            None => root_of[i] = i,
+        }
+    }
+    let mut out = Selection { collides: vec![false; n], authored: false, camera_only: false };
+    let mut skipped = vec![false; n];
+    for (i, node) in nif.nodes.iter().enumerate() {
+        let Some(p) = node.parent else {
+            // handleRoot (163-179): no RootCollisionNode => every geometry
+            // collides; an empty one (no children) => render geometry as
+            // camera-only collision; else collision starts at that node.
+            match last_rcn[i] {
+                None => out.collides[i] = true,
+                Some(rcn) if first_child[rcn].is_none() => out.camera_only = true,
+                Some(_) => out.authored = true,
+            }
+            continue;
+        };
+        // handleNode (258-261): a NiSwitchNode (or NiFltAnimationNode) walks
+        // its first child only, whichever child renders.
+        skipped[i] = skipped[p] || (matches!(nif.nodes[p].kind, NodeKind::Switch { .. }) && first_child[p] != Some(i));
+        // handleNode (214-232): the chosen RootCollisionNode turns collision
+        // on for its subtree; extra or nested ones are plain geometry.
+        let chosen = last_rcn[root_of[i]] == Some(i);
+        out.collides[i] = out.collides[p] || chosen;
+    }
+    for (c, s) in out.collides.iter_mut().zip(skipped) {
+        *c &= !s;
+    }
+    out
+}
+
+/// A Morrowind editor marker shape, which `MRK` models don't collide with
+/// (`bulletnifloader.cpp` (4e718b50) line 274: case-insensitive prefix).
+fn is_editor_marker(name: &str) -> bool {
+    name.get(.."tri editormarker".len()).is_some_and(|p| p.eq_ignore_ascii_case("tri editormarker"))
+}
+
 /// The model's collision source, and its mesh unless the step derives it
 /// from the render LOD ([`Source::RenderLod`] gives `None`; "none" sources
 /// give an empty mesh).
@@ -107,17 +187,25 @@ pub fn collision_of(nif: &mw_nif::Model, weld: f32) -> (Source, Option<Collision
     if nif.had_skin {
         return none(NoCollision::Actor);
     }
+    // `NC…` makes the whole shape visual-only (`bulletnifloader.cpp`
+    // (4e718b50) 150-160), RootCollisionNode or not.
     if nif.no_collision {
         return none(NoCollision::Marker);
     }
+    let selection = select(nif);
+    if selection.camera_only {
+        return none(NoCollision::EmptyCollisionNode);
+    }
     let world = mw_nif::world_transforms(nif);
     let moving = moving_nodes(nif);
-    let build = |keep: &dyn Fn(usize, &mw_nif::Mesh) -> bool| {
+    // `MRK` drops only `Tri EditorMarker…` shapes (line 274), everywhere.
+    let keep = |i: usize| selection.collides[i] && !moving[i] && !(nif.marker && is_editor_marker(&nif.nodes[i].name));
+    let build = |extra: &dyn Fn(usize) -> bool| {
         let mut builder = CollisionBuilder::new(weld);
         for (i, node) in nif.nodes.iter().enumerate() {
             if let Some(mesh) = node.mesh.and_then(|m| nif.meshes.get(m))
-                && !moving[i]
-                && keep(i, mesh)
+                && keep(i)
+                && extra(i)
             {
                 let transform = glam::Affine3A::from_cols_array(&world[i].to_cols_array());
                 builder.add(&mesh.positions, &mesh.indices, transform, SurfaceId::DEFAULT);
@@ -126,20 +214,22 @@ pub fn collision_of(nif: &mw_nif::Model, weld: f32) -> (Source, Option<Collision
         builder.finish()
     };
 
-    if nif.nodes.iter().any(|n| n.kind == NodeKind::Collision) {
-        let mesh = build(&|_, mesh| mesh.collision);
+    if selection.authored {
+        let mesh = build(&|_| true);
         return if mesh.is_empty() { none(NoCollision::EmptyCollisionNode) } else { (Source::Authored, Some(mesh)) };
     }
-    if nif.marker {
-        return none(NoCollision::EditorMarker);
-    }
-    if dynamic_parts(nif).is_empty() {
+    // Our render set drops whole `MRK` models, so their render LOD can't
+    // stand in for "all geometry"; they take the NIF path below.
+    if !nif.marker && dynamic_parts(nif).is_empty() {
         return (Source::RenderLod, None);
     }
     let mut facing: Vec<bool> =
         nif.nodes.iter().map(|n| matches!(n.kind, NodeKind::Billboard | NodeKind::Particles)).collect();
     inherit(nif, &mut facing);
-    let mesh = build(&|i, mesh| nif.nodes[i].visible && !mesh.collision && !facing[i]);
+    let mesh = build(&|i| !facing[i]);
+    if nif.marker && mesh.is_empty() {
+        return none(NoCollision::EditorMarker);
+    }
     (Source::RestPose, Some(mesh))
 }
 
@@ -156,8 +246,9 @@ pub struct MwCollisionRules {
 }
 
 impl MwCollisionRules {
-    /// Bump when [`collision_of`]'s output changes.
-    pub const VERSION: u32 = 1;
+    /// Bump when [`collision_of`]'s output changes. 2: `OpenMW` selection
+    /// rules (last `RootCollisionNode`, switch first child, hidden nodes, `MRK`).
+    pub const VERSION: u32 = 2;
 }
 
 impl Default for MwCollisionRules {
@@ -396,6 +487,7 @@ mod tests {
 
         let mut nif = render_only();
         nif.marker = true;
+        nif.nodes[1].name = "Tri EditorMarker".into();
         let (source, mesh) = collision_of(&nif, 1e-3);
         assert_eq!(source, Source::None(NoCollision::EditorMarker));
         assert!(mesh.unwrap().is_empty());
@@ -420,9 +512,178 @@ mod tests {
         let (source, mesh) = collision_of(&nif, 1e-3);
         assert_eq!(source, Source::RestPose);
         let mesh = mesh.unwrap();
-        assert_eq!(mesh.triangles.len(), 2, "only the static render quad");
-        let extent = mesh.positions.iter().map(|p| Vec3::from_array(*p).length()).fold(0.0, f32::max);
-        assert!((extent - 8.0_f32.sqrt()).abs() < 1e-5);
+        // Rule 8: the hidden quad collides (no hidden check in `OpenMW`).
+        assert_eq!(mesh.triangles.len(), 4, "the static render quad and the hidden one");
+        assert!((extent(&mesh) - 18.0_f32.sqrt()).abs() < 1e-5, "the 3 m hidden quad");
+    }
+
+    fn extent(mesh: &CollisionMesh) -> f32 {
+        mesh.positions.iter().map(|p| Vec3::from_array(*p).length()).fold(0.0, f32::max)
+    }
+
+    fn model(nodes: Vec<mw_nif::Node>, meshes: Vec<mw_nif::Mesh>) -> mw_nif::Model {
+        mw_nif::Model { nodes, meshes, materials: vec![mw_nif::Material::default()], ..mw_nif::Model::default() }
+    }
+
+    /// A render quad plus a keyframed one: the NIF (rest-pose) path.
+    fn animated(mut nodes: Vec<mw_nif::Node>, mut meshes: Vec<mw_nif::Mesh>) -> mw_nif::Model {
+        let moving = nodes.len();
+        nodes.push(node("banner", Some(0), NodeKind::Geometry, Some(meshes.len())));
+        meshes.push(quad(9.0, false));
+        let mut nif = model(nodes, meshes);
+        nif.controllers.push(moves(moving));
+        nif
+    }
+
+    // Rules from `OpenMW` `components/nifbullet/bulletnifloader.cpp` (4e718b50).
+
+    #[test]
+    fn rule1_the_last_root_collision_node_wins() {
+        let nif = model(
+            vec![
+                node("root", None, NodeKind::Node, None),
+                node("rcn a", Some(0), NodeKind::Collision, None),
+                node("a", Some(1), NodeKind::Geometry, Some(0)),
+                node("rcn b", Some(0), NodeKind::Collision, None),
+                node("b", Some(3), NodeKind::Geometry, Some(1)),
+            ],
+            vec![quad(3.0, true), quad(1.0, true)],
+        );
+        let (source, mesh) = collision_of(&nif, 1e-3);
+        assert_eq!(source, Source::Authored);
+        let mesh = mesh.unwrap();
+        assert_eq!(mesh.triangles.len(), 2, "only the last collision node");
+        assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5);
+
+        // An empty last one wins too: camera-only.
+        let mut nif = nif;
+        nif.nodes.truncate(4);
+        assert_eq!(collision_of(&nif, 1e-3).0, Source::None(NoCollision::EmptyCollisionNode));
+    }
+
+    #[test]
+    fn rule2_without_a_root_collision_node_everything_collides() {
+        assert_eq!(collision_of(&render_only(), 1e-3), (Source::RenderLod, None));
+        // A collision node below the root's children is plain geometry.
+        let nodes = vec![
+            node("root", None, NodeKind::Node, None),
+            node("render", Some(0), NodeKind::Geometry, Some(0)),
+            node("group", Some(0), NodeKind::Node, None),
+            node("nested rcn", Some(2), NodeKind::Collision, None),
+            node("collider", Some(3), NodeKind::Geometry, Some(1)),
+        ];
+        let meshes = vec![quad(1.0, false), quad(2.0, true)];
+        assert_eq!(collision_of(&model(nodes.clone(), meshes.clone()), 1e-3), (Source::RenderLod, None));
+        let (source, mesh) = collision_of(&animated(nodes, meshes), 1e-3);
+        assert_eq!(source, Source::RestPose);
+        assert_eq!(mesh.unwrap().triangles.len(), 4, "render and nested-collision quads");
+    }
+
+    #[test]
+    fn rule3_an_empty_root_collision_node_is_camera_only() {
+        let mut nif = with_collision_node();
+        nif.nodes.truncate(3);
+        assert_eq!(
+            collision_of(&nif, 1e-3),
+            (Source::None(NoCollision::EmptyCollisionNode), Some(CollisionMesh::default()))
+        );
+    }
+
+    #[test]
+    fn rule4_mrk_drops_only_tri_editor_marker_shapes() {
+        let nodes = vec![
+            node("root", None, NodeKind::Node, None),
+            node("render", Some(0), NodeKind::Geometry, Some(0)),
+            node("Tri EditorMarker 01", Some(0), NodeKind::Geometry, Some(1)),
+        ];
+        let meshes = vec![quad(1.0, false), quad(5.0, false)];
+        let mut nif = model(nodes, meshes);
+        nif.marker = true;
+        let (source, mesh) = collision_of(&nif, 1e-3);
+        assert_eq!(source, Source::RestPose);
+        let mesh = mesh.unwrap();
+        assert_eq!(mesh.triangles.len(), 2);
+        assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5, "the marker shape is gone");
+        // Nothing but marker shapes: no collision.
+        nif.nodes.remove(1);
+        nif.nodes[1].mesh = Some(1);
+        assert_eq!(collision_of(&nif, 1e-3).0, Source::None(NoCollision::EditorMarker));
+
+        // Under a collision node too, and only with `MRK`.
+        let mut nif = with_collision_node();
+        nif.nodes.push(node("tri editormarker", Some(2), NodeKind::Geometry, Some(0)));
+        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 4);
+        nif.marker = true;
+        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 2);
+        assert!(is_editor_marker("TRI EDITORMARKER") && !is_editor_marker("EditorMarker") && !is_editor_marker("tri"));
+    }
+
+    #[test]
+    fn rule5_nc_markers_turn_collision_off() {
+        for value in ["NC", "NCO", "NCC", "nc", "Ncc"] {
+            assert!(mw_nif::no_collision_marker(value), "{value}");
+        }
+        for value in ["MRK", "N", "", "RCN"] {
+            assert!(!mw_nif::no_collision_marker(value), "{value}");
+        }
+        // Even over a collision node.
+        let mut nif = with_collision_node();
+        nif.no_collision = true;
+        assert_eq!(collision_of(&nif, 1e-3), (Source::None(NoCollision::Marker), Some(CollisionMesh::default())));
+    }
+
+    #[test]
+    fn rule6_switch_nodes_collide_with_their_first_child_only() {
+        let switch = |under: usize, at: usize| {
+            vec![
+                node("switch", Some(under), NodeKind::Switch { active: 1 }, None),
+                node("first", Some(at), NodeKind::Geometry, Some(0)),
+                node("active", Some(at), NodeKind::Geometry, Some(1)),
+            ]
+        };
+        let meshes = vec![quad(1.0, true), quad(3.0, true)];
+        let mut nodes = vec![node("root", None, NodeKind::Node, None), node("rcn", Some(0), NodeKind::Collision, None)];
+        nodes.extend(switch(1, 2));
+        let (source, mesh) = collision_of(&model(nodes, meshes.clone()), 1e-3);
+        assert_eq!(source, Source::Authored);
+        assert!((extent(&mesh.unwrap()) - 2.0_f32.sqrt()).abs() < 1e-5, "first child, not the active one");
+
+        let mut nodes = vec![node("root", None, NodeKind::Node, None)];
+        nodes.extend(switch(0, 1));
+        let (source, mesh) = collision_of(&animated(nodes, meshes), 1e-3);
+        assert_eq!(source, Source::RestPose);
+        let mesh = mesh.unwrap();
+        assert_eq!(mesh.triangles.len(), 2);
+        assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn rule7_a_bounding_box_node_is_not_static_collision_data() {
+        // `OpenMW` reads it for the actor box only; its subtree collides as
+        // any other, and skinned (actor) models get no static collision.
+        let mut nif = with_collision_node();
+        nif.nodes.push(node("Bounding Box", Some(2), NodeKind::Node, None));
+        nif.nodes.push(node("inside", Some(4), NodeKind::Geometry, Some(0)));
+        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 4);
+        let mut nif = render_only();
+        nif.nodes.push(node("Bounding Box", Some(0), NodeKind::Node, None));
+        assert_eq!(collision_of(&nif, 1e-3), (Source::RenderLod, None));
+        nif.had_skin = true;
+        assert_eq!(collision_of(&nif, 1e-3).0, Source::None(NoCollision::Actor));
+    }
+
+    #[test]
+    fn rule8_hidden_nodes_collide() {
+        // Hidden authored collider (`with_collision_node` hides it).
+        assert!(!with_collision_node().nodes[3].visible);
+        assert_eq!(collision_of(&with_collision_node(), 1e-3).0, Source::Authored);
+        // Hidden render geometry on the NIF path.
+        let mut nif = animated(
+            vec![node("root", None, NodeKind::Node, None), node("hidden", Some(0), NodeKind::Geometry, Some(0))],
+            vec![quad(1.0, false)],
+        );
+        nif.nodes[1].visible = false;
+        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 2);
     }
 
     #[test]
