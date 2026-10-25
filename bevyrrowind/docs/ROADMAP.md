@@ -63,11 +63,10 @@ and effects. Every task reports its ms cost per preset.
 - [ ] 1.8 Draw-order and far-field bugs: ash/blight storm drawn over terrain and objects (WE-5; next A/B `--off clouds|fog|froxels`); Ghostfence far copy missing (GF-1, B5); far-field L2/L3 never selected/tinted (FF-2).
 - [~] 1.9 Streaming and culling levers (archive "Next up" 1, 6, 7): render-thread spikes, `NoCpuCulling` retry (J2), caster rules (J4), warm-up (J7), precombine (J6, `superfargoth/docs/specs/precombine.md`, slices 1-3 built; default on/off is the owner's call); checks ST-2, ST-3, SC-2.
 - [~] 1.10 Volumetric fog black bands (FG-1): not reproduced 2026-10-21; reopen if seen; `--off foghistory` A/B kept.
-- [~] 1.11 Thin binary (ARCHITECTURE §8b rule 4, now build-perf.md): the app is 13.5k lines and `exterior.rs` is the most-edited
-  file; move systems into plugin crates. Re-measure the dev-loop gates (last measured 10-12, half the crates). Plan `specs/app-split.md`: slice 1 (`mw_game_core`) done, next `mw_boot_bevy`.
+- [x] 1.11 Thin binary (build-perf.md rule 4): done 2026-10-26: app split slices 1-14a, 15 game crates (`mw_*_bevy`), binary 2.3k lines (CLI only); `specs/app-split.md` "As built".
 - [ ] 1.12 Owner pass 2026-10-21 bugs: LT-4 lamp light cut at cluster edges (`lightclusters`); SH-20 choppy character shadows (`charshadows`); RO-B smoke over sky (`smokeorder`); TR-3 glossy terrain (awaiting owner); WE-5 ash occlusion (`--off precipocc`). Owner 2026-10-25, not urgent: cap ash shelter distance (a few m behind a vertical object) + steeper angle.
 - [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` built; CO-1 awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, tab-complete, console functions (TGM/TAI/TFOW/TWF...), `set x to y`, exterior `coc`.
-- [~] 1.14 Build churn: workspace-hack (`cargo hakari`) built, covers the merged workspace; left: re-measure dev-loop gates incl. the app.
+- [~] 1.14 Build churn: workspace-hack (`cargo hakari`) built, covers the merged workspace; gates re-measured 2026-10-26 after the split: no-op 1.2 s, touch app 5.6 s, touch `mw_doors_bevy` 10.7 s miss (perf.md "Dev loop"); clean build not measured; fix needs an owner call.
 
 **Next session order (owner 2026-10-20):** 1.4 shadows, then FG-1 (1.10), then owner checks PA-4, DR-4, AU-1, TA-1; Nsight per pass (UAC).
 

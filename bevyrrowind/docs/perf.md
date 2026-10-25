@@ -133,6 +133,12 @@ cycle"). Gates and rules: `../superfargoth/docs/ARCHITECTURE.md` §8b (now `../s
 | Touch `sf_world_bevy` / `mw_nif` / `sf_model_bevy` | 3 / 6 / 5 crates | 5.2 / 5.7 / 5.8 s | ≤ 8 s |
 | Touch `sf_model` | 13 crates | 7.7-8.1 s | ≤ 8 s (at the limit) |
 | Edit a function body (`sf_world_bevy`, `sf_model`, `mw_nif`) | one `black_box` line | 6.5-8.4 / 8.2-10.3 / 6.2-6.6 s | ≤ 10 s |
+**2026-10-26, after the app split (15 game crates, binary 2.3k lines; idle machine, default jobs):** no-op 1.19-1.29 s
+(gate 1 s: miss); touch the app `main.rs` 5.6-6.8 s (gate 5 s: miss); touch `mw_exterior_bevy` / `mw_viewers_bevy` /
+`mw_audio_bevy` 6.8 / 6.7 / 7.5 s; touch `mw_doors_bevy` 10.4-11.4 s and `mw_game_core` 11.8 s (doors rebuilds player,
+audio, scripts, rpg, devtools, saves, exterior, viewers and the app: a deep chain, not a leaf). Clean build not
+measured (owner's call: ~10 min of full CPU). Logged, not chased: options are fewer link units (merge thin L5-L7 crates)
+or moving doors' widely used types into `mw_game_core` so the chain is shallower.
 | Clean `cargo dev` build | `cargo build -p bevyrrowind --features dev --timings` (fresh `CARGO_TARGET_DIR`) | 8 min 38 s (579 units) | ≤ 12 min |
 | Cold bake (fresh `--cache`) | `target/release/bevyrrowind.exe bake --cache <empty dir>` | 47.7 s | ≤ 2 min |
 | No-op bake (all hits) | `target/release/bevyrrowind.exe bake` | 1.75 s | ≤ 2.5 s |

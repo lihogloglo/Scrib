@@ -4,6 +4,10 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-26 (night, scrib): physics fix plan slices 1-10 (collision-ready gate, arrival gate + safety net, items asleep
+  until disturbed, OpenMW NIF rules + full-triangle fallback, held item on the final camera + tick-view hand; PH-11); app split
+  done (15 `mw_*_bevy` crates, binary 2.3k lines; gates re-measured, 3 misses logged); pause menu + options in game (PM-1);
+  doors on rebindable Use; doc audit S5-S14 (weather/animation splits, history to archive/, DECISIONS index, summaries).
 - 2026-10-25 (merge-ws2): one workspace gated: cargo-hakari over framework + game (opt-ins `dev`/`dlss`/`solari`/`file_watcher`
   no longer unified into default builds), `cargo deny` green (tes3 git allowed, MPL for dirs/MP3), clippy green (default + all-features); tests pending.
 - 2026-10-25 (dlss-plugin-1/2): DLSS split out of the game: NVIDIA-free `dlss_wgpu` facade + separately shipped
