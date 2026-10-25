@@ -1,0 +1,52 @@
+// Synthetic test level (docs/specs/test-levels.md): obstacles for the context probes
+// (superfargoth locomotion.md "Context probes": step / vault / mantle / climb by height
+// and depth, gaps, a beam, a wall). Colours band the heights: green step-ish, yellow
+// vault range, orange mantle range, red high mantle / climb, blue platforms, grey walls.
+// Meters, y up, x east, z south; `at` = footprint center at the bottom.
+(
+    name: "ledges",
+    description: "boxes 0.3-2.5 m (1.5 m deep), thin 0.3 m walls vs deep blocks, 1-4 m gaps between 1 m platforms, a 0.3 m beam, a 3.5 m wall",
+    cameras: [
+        (name: "overview", eye: (0.0, 14.0, 26.0), target: (0.0, 0.0, 0.0)),
+        (name: "heights", eye: (0.0, 2.0, 8.0), target: (0.0, 1.0, 0.0)),
+        (name: "gaps", eye: (-2.0, 4.0, 20.0), target: (-2.0, 1.0, 9.0)),
+        (name: "beam", eye: (24.0, 3.0, 8.0), target: (18.0, 1.0, 0.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 4.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (80.0, 80.0))),
+
+        // Row A (z = 0): heights, 1 m wide, 1.5 m deep, 3 m apart.
+        (name: "h0.30", shape: Box(size: (1.0, 0.3, 1.5)), at: (-9.0, 0.0, 0.0), material: Green),
+        (name: "h0.50", shape: Box(size: (1.0, 0.5, 1.5)), at: (-6.0, 0.0, 0.0), material: Green),
+        (name: "h0.90", shape: Box(size: (1.0, 0.9, 1.5)), at: (-3.0, 0.0, 0.0), material: Yellow),
+        (name: "h1.20", shape: Box(size: (1.0, 1.2, 1.5)), at: (0.0, 0.0, 0.0), material: Yellow),
+        (name: "h1.60", shape: Box(size: (1.0, 1.6, 1.5)), at: (3.0, 0.0, 0.0), material: Orange),
+        (name: "h2.00", shape: Box(size: (1.0, 2.0, 1.5)), at: (6.0, 0.0, 0.0), material: Orange),
+        (name: "h2.50", shape: Box(size: (1.0, 2.5, 1.5)), at: (9.0, 0.0, 0.0), material: Red),
+
+        // Row B (z = -6): depth decides vault vs mantle at the same height.
+        (name: "thin-0.90", shape: Box(size: (2.0, 0.9, 0.3)), at: (-4.0, 0.0, -6.0), material: Yellow),
+        (name: "thin-1.20", shape: Box(size: (2.0, 1.2, 0.3)), at: (0.0, 0.0, -6.0), material: Yellow),
+        (name: "deep-1.20", shape: Box(size: (2.0, 1.2, 3.0)), at: (4.0, 0.0, -6.0), material: Orange),
+
+        // Row C (z = 9): 1 m platforms (3 x 3 m) with 1, 2, 3 and 4 m gaps; a 20° ramp up from the west.
+        (name: "gap-ramp", shape: Ramp(width: 3.0, rise: 1.0, angle: 20.0), at: (-15.374, 0.0, 9.0), yaw: -90.0, material: Green),
+        (name: "plat-0", shape: Box(size: (3.0, 1.0, 3.0)), at: (-12.5, 0.0, 9.0), material: Blue),
+        (name: "plat-1-gap1", shape: Box(size: (3.0, 1.0, 3.0)), at: (-8.5, 0.0, 9.0), material: Blue),
+        (name: "plat-2-gap2", shape: Box(size: (3.0, 1.0, 3.0)), at: (-3.5, 0.0, 9.0), material: Blue),
+        (name: "plat-3-gap3", shape: Box(size: (3.0, 1.0, 3.0)), at: (2.5, 0.0, 9.0), material: Blue),
+        (name: "plat-4-gap4", shape: Box(size: (3.0, 1.0, 3.0)), at: (9.5, 0.0, 9.0), material: Blue),
+
+        // Beam (x = 18): 0.3 m wide, top at 1 m, 8 m long between two platforms.
+        (name: "beam-south", shape: Box(size: (3.0, 1.0, 3.0)), at: (18.0, 0.0, 5.5), material: Blue),
+        (name: "beam", shape: Box(size: (0.3, 0.3, 8.0)), at: (18.0, 0.7, 0.0), material: Purple),
+        (name: "beam-north", shape: Box(size: (3.0, 1.0, 3.0)), at: (18.0, 0.0, -5.5), material: Blue),
+
+        // Wall (x = -14): 3.5 m high, 8 m long (wall run, climb); a 3 m pole.
+        (name: "wall-3.5", shape: Box(size: (0.4, 3.5, 8.0)), at: (-14.0, 0.0, -4.0), material: Grey),
+        (name: "pole", shape: Cylinder(radius: 0.08, height: 3.0), at: (-11.0, 0.0, -8.0), material: White),
+    ],
+)

@@ -1,0 +1,64 @@
+// Fog for translucent materials (render-order.md rule 1; weather.md "Fog", F3
+// step 4). Every translucent shader imports this module
+// (`sf_render_order_bevy::translucent_fog`) and binds `TranslucentFog`: the fog
+// owner's integrated froxel volume (`sf_atmos_bevy::FroxelVolume`: rgb
+// in-scattered light, pre-exposed; a transmittance) with a filtering sampler
+// and its params (near, far, slices, enabled; enabled 0 = no fog). CPU twin of
+// the slice mapping: `sf_atmos::froxel`.
+
+// The integrated fog between the camera and distance `d` through screen `uv`
+// (0,0 top left). Past the froxels' far end the ray's medium carries on as it
+// was over the froxel range (fogfix 2026-10-19): transmittance `T_far^(d/far)`,
+// in-scatter growing with `1 − T` in the colour the froxels saw along this ray.
+// The far-range stand-in for the composite's analytic layers (UE's translucency
+// takes the volumetric fog near and the analytic height fog past it); exact for a
+// level ray through height fog, an over-estimate looking up, under looking down.
+fn froxel_fog_lookup(volume: texture_3d<f32>, samp: sampler, params: vec4<f32>, uv: vec2<f32>, d: f32) -> vec4<f32> {
+    if params.w == 0.0 || d <= 0.0 {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    let near = params.x;
+    let far = params.y;
+    let n = params.z;
+    var c = 0.0;
+    if d > near {
+        c = clamp(log(d / near) / log(far / near), 0.0, 1.0) * n;
+    }
+    let v = textureSampleLevel(volume, samp, vec3(uv, max(c - 0.5, 0.5) / n), 0.0);
+    if d <= far {
+        // Inside the first slice: from nothing at the camera.
+        return mix(vec4(0.0, 0.0, 0.0, 1.0), v, saturate(c));
+    }
+    let k = d / far;
+    let t = pow(max(v.a, 1e-6), k);
+    let lost = 1.0 - v.a;
+    let grow = select(k, (1.0 - t) / max(lost, 1e-6), lost > 1e-4);
+    return vec4(v.rgb * grow, t);
+}
+
+// Blend modes of `froxel_fog_apply`.
+const FOG_BLEND: u32 = 0u;
+const FOG_PREMULTIPLIED: u32 = 1u;
+const FOG_ADD: u32 = 2u;
+const FOG_MULTIPLY: u32 = 3u;
+
+// `color` (lit, pre-exposed, alpha in .a) seen through `fog`: dimmed by the
+// transmittance, plus the in-scatter in front of it as the blend mode lets it
+// count once (additive and multiplicative surfaces only dim, or the fog
+// light would be added again over what is behind them).
+fn froxel_fog_apply(color: vec4<f32>, fog: vec4<f32>, mode: u32) -> vec4<f32> {
+    switch mode {
+        case 1u: {
+            return vec4(color.rgb * fog.a + fog.rgb * color.a, color.a);
+        }
+        case 2u: {
+            return vec4(color.rgb * fog.a, color.a);
+        }
+        case 3u: {
+            return vec4(mix(vec3(1.0), color.rgb, fog.a), color.a);
+        }
+        default: {
+            return vec4(color.rgb * fog.a + fog.rgb, color.a);
+        }
+    }
+}

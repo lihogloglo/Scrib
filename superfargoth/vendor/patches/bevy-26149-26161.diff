@@ -1,0 +1,472 @@
+diff --git a/bevy_core_pipeline/src/core_3d/mod.rs b/bevy_core_pipeline/src/core_3d/mod.rs
+index 8ef930aeb6cd2..b01520466ff72 100644
+--- a/bevy_core_pipeline/src/core_3d/mod.rs
++++ b/bevy_core_pipeline/src/core_3d/mod.rs
+@@ -91,7 +91,7 @@ use crate::{
+         OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey, ViewPrepassTextures,
+         MOTION_VECTOR_PREPASS_FORMAT, NORMAL_PREPASS_FORMAT,
+     },
+-    schedule::Core3d,
++    schedule::{Core3d, Core3dShadows},
+     skybox::SkyboxPlugin,
+     tonemapping::{DebandDither, Tonemapping},
+     Core3dSystems,
+@@ -142,6 +142,7 @@ impl Plugin for Core3dPlugin {
+                 ),
+             )
+             .add_schedule(Core3d::base_schedule())
++            .add_schedule(Core3dShadows::base_schedule())
+             .add_systems(
+                 Core3d,
+                 (
+diff --git a/bevy_core_pipeline/src/lib.rs b/bevy_core_pipeline/src/lib.rs
+index 2faa7548e6ba8..9aa5b2178f555 100644
+--- a/bevy_core_pipeline/src/lib.rs
++++ b/bevy_core_pipeline/src/lib.rs
+@@ -22,7 +22,7 @@ pub mod upscaling;
+ use bevy_ecs::schedule::IntoScheduleConfigs;
+ pub use bevy_light::Skybox;
+ pub use fullscreen_vertex_shader::FullscreenShader;
+-pub use schedule::{Core2d, Core2dSystems, Core3d, Core3dSystems};
++pub use schedule::{Core2d, Core2dSystems, Core3d, Core3dShadows, Core3dSystems};
+ 
+ mod fullscreen_vertex_shader;
+ 
+diff --git a/bevy_core_pipeline/src/schedule.rs b/bevy_core_pipeline/src/schedule.rs
+index e1d889445f63f..5363a4044f425 100644
+--- a/bevy_core_pipeline/src/schedule.rs
++++ b/bevy_core_pipeline/src/schedule.rs
+@@ -72,6 +72,30 @@ impl Core3d {
+     }
+ }
+ 
++/// Schedule label for rendering the shadow maps of point and spot lights.
++///
++/// Point and spot light shadow views aren't associated with a camera, so each of
++/// them runs this schedule, instead of the full [`Core3d`] schedule, through its
++/// [`RootNonCameraView`]. It only contains the systems that such a view needs:
++/// GPU mesh preprocessing and the shadow passes themselves.
++#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash, Default)]
++pub struct Core3dShadows;
++
++impl Core3dShadows {
++    pub fn base_schedule() -> Schedule {
++        use bevy_ecs::schedule::ScheduleBuildSettings;
++
++        let mut schedule = Schedule::new(Self);
++
++        schedule.set_build_settings(ScheduleBuildSettings {
++            auto_insert_apply_deferred: false,
++            ..Default::default()
++        });
++
++        schedule
++    }
++}
++
+ /// Schedule label for the Core 2D rendering pipeline.
+ #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash, Default)]
+ pub struct Core2d;
+@@ -125,6 +149,14 @@ struct CameraWindows(EntityHashSet);
+ #[reflect(from_reflect = false)]
+ pub struct RootNonCameraView(#[reflect(ignore)] pub InternedScheduleLabel);
+ 
++/// A render-world marker for a [`RootNonCameraView`] whose output from the last
++/// frame is still valid, so its schedule doesn't need to run this frame.
++///
++/// For example, a point or spot light shadow map whose light and shadow casters
++/// haven't changed.
++#[derive(Clone, Copy, Component, Debug, Default)]
++pub struct SkipRootViewRendering;
++
+ /// The default entry point for camera driven rendering added to the root [`bevy_render::renderer::RenderGraph`]
+ /// schedule. This system iterates over all cameras in the world, executing their associated
+ /// rendering schedules defined by the [`bevy_render::camera::CameraRenderGraph`] component.
+@@ -222,6 +254,12 @@ pub fn camera_driver(
+                 let Some(root_view) = world.get::<RootNonCameraView>(auxiliary_view_entity) else {
+                     continue;
+                 };
++                if world
++                    .get::<SkipRootViewRendering>(auxiliary_view_entity)
++                    .is_some()
++                {
++                    continue;
++                }
+ 
+                 view_entity = auxiliary_view_entity;
+                 schedule = root_view.0;
+diff --git a/bevy_pbr/src/lib.rs b/bevy_pbr/src/lib.rs
+index 433fd5d14a683..83d42c0aeb440 100644
+--- a/bevy_pbr/src/lib.rs
++++ b/bevy_pbr/src/lib.rs
+@@ -100,7 +100,7 @@ use crate::{deferred::DeferredPbrLightingPlugin, gpu::extract_clusters_for_gpu_c
+ use bevy_app::prelude::*;
+ use bevy_asset::{AssetApp, AssetPath, Assets, Handle, RenderAssetUsages};
+ use bevy_core_pipeline::mip_generation::experimental::depth::early_downsample_depth;
+-use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
++use bevy_core_pipeline::schedule::{Core3d, Core3dShadows, Core3dSystems};
+ use bevy_ecs::prelude::*;
+ use bevy_image::{Image, ImageSampler};
+ use bevy_material::AlphaMode;
+@@ -376,6 +376,7 @@ impl Plugin for PbrPlugin {
+                 ExtractSchedule,
+                 (
+                     extract_lights,
++                    extract_shadow_caster_changes,
+                     extract_ambient_light_resource,
+                     extract_ambient_light,
+                     extract_shadow_filtering_method,
+@@ -389,6 +390,9 @@ impl Plugin for PbrPlugin {
+                     prepare_lights
+                         .in_set(RenderSystems::CreateViews)
+                         .after(sort_cameras),
++                    // Once the shadow phases are queued: what they hold is part of
++                    // what a shadow map was rendered from.
++                    skip_unchanged_shadow_views.in_set(RenderSystems::PrepareResources),
+                     prepare_clusters_for_cpu_clustering
+                         .in_set(RenderSystems::PrepareResources)
+                         .run_if(
+@@ -399,7 +403,8 @@ impl Plugin for PbrPlugin {
+                 ),
+             )
+             .init_gpu_resource::<LightMeta>()
+-            .init_resource::<RenderShadowLodOrigin>();
++            .init_resource::<RenderShadowLodOrigin>()
++            .init_resource::<ShadowCasterChanges>();
+ 
+         render_app
+             .world_mut()
+@@ -419,14 +424,17 @@ impl Plugin for PbrPlugin {
+                     .after(late_prepass_build_indirect_parameters)
+                     .before(main_build_indirect_parameters)
+                     .before(Core3dSystems::MainPass),
++            ),
++        );
++
++        render_app.add_systems(
++            Core3dShadows,
++            (
+                 shared_shadow_pass::<EARLY_SHADOW_PASS>
+                     .after(early_prepass_build_indirect_parameters)
+-                    .before(early_downsample_depth)
+-                    .before(shared_shadow_pass::<LATE_SHADOW_PASS>),
++                    .before(late_gpu_preprocess),
+                 shared_shadow_pass::<LATE_SHADOW_PASS>
+-                    .after(late_prepass_build_indirect_parameters)
+-                    .before(main_build_indirect_parameters)
+-                    .before(Core3dSystems::MainPass),
++                    .after(late_prepass_build_indirect_parameters),
+             ),
+         );
+     }
+diff --git a/bevy_pbr/src/render/gpu_preprocess.rs b/bevy_pbr/src/render/gpu_preprocess.rs
+index 59fbf13b70690..70986d1d137e8 100644
+--- a/bevy_pbr/src/render/gpu_preprocess.rs
++++ b/bevy_pbr/src/render/gpu_preprocess.rs
+@@ -18,7 +18,7 @@ use bevy_core_pipeline::{
+         DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass, PreviousViewData,
+         PreviousViewUniformOffset, PreviousViewUniforms,
+     },
+-    schedule::{Core3d, Core3dSystems},
++    schedule::{Core3d, Core3dShadows, Core3dSystems},
+ };
+ use bevy_derive::{Deref, DerefMut};
+ use bevy_ecs::{
+@@ -576,6 +576,35 @@ impl Plugin for GpuMeshPreprocessPlugin {
+                         .after(late_deferred_prepass)
+                         .before(Core3dSystems::MainPass),
+                 ),
++            )
++            .add_systems(
++                Core3dShadows,
++                (
++                    (
++                        allocate_uniforms,
++                        unpack_bins,
++                        early_gpu_preprocess,
++                        early_prepass_build_indirect_parameters.run_if(any_match_filter::<(
++                            With<PreprocessBindGroups>,
++                            Without<SkipGpuPreprocess>,
++                            Without<NoIndirectDrawing>,
++                            With<ShadowView>,
++                        )>),
++                    )
++                        .chain(),
++                    (
++                        late_gpu_preprocess,
++                        late_prepass_build_indirect_parameters.run_if(any_match_filter::<(
++                            With<PreprocessBindGroups>,
++                            Without<SkipGpuPreprocess>,
++                            Without<NoIndirectDrawing>,
++                            With<ShadowView>,
++                            With<OcclusionCulling>,
++                        )>),
++                    )
++                        .chain()
++                        .after(early_prepass_build_indirect_parameters),
++                ),
+             );
+     }
+ }
+diff --git a/bevy_pbr/src/render/light.rs b/bevy_pbr/src/render/light.rs
+index b806c9280b7b7..4a46bfe7291c0 100644
+--- a/bevy_pbr/src/render/light.rs
++++ b/bevy_pbr/src/render/light.rs
+@@ -10,7 +10,7 @@ use bevy_camera::visibility::{
+ };
+ use bevy_camera::{Camera, Camera3d, RenderTarget, ShadowLodOrigin};
+ use bevy_color::ColorToComponents;
+-use bevy_core_pipeline::schedule::RootNonCameraView;
++use bevy_core_pipeline::schedule::{RootNonCameraView, SkipRootViewRendering};
+ use bevy_derive::{Deref, DerefMut};
+ use bevy_ecs::schedule::ScheduleLabel;
+ use bevy_ecs::system::SystemChangeTick;
+@@ -1048,6 +1048,195 @@ pub enum LightEntity {
+     },
+ }
+ 
++/// For each point and spot light, a hash of the meshes it can see this frame and
++/// whether any of them changed in a way that could change its shadow map.
++#[derive(Resource, Default)]
++pub struct ShadowCasterChanges(pub MainEntityHashMap<ShadowCasterChange>);
++
++/// The shadow casters a point or spot light sees this frame.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct ShadowCasterChange {
++    /// A hash of the visible mesh entities.
++    pub casters: u64,
++    /// Whether any of them moved, changed mesh, or deforms (skinned or morphed).
++    pub changed: bool,
++}
++
++/// Records, for each point and spot light, which meshes it can see and whether
++/// any of them changed since the last extraction, so that shadow maps whose
++/// light and casters are unchanged needn't be rendered again.
++pub fn extract_shadow_caster_changes(
++    mut changes: ResMut<ShadowCasterChanges>,
++    lights: Extract<
++        Query<
++            (
++                Entity,
++                Option<&VisibleMeshEntities>,
++                Option<&CubemapVisibleEntities>,
++            ),
++            Or<(With<PointLight>, With<SpotLight>)>,
++        >,
++    >,
++    casters: Extract<
++        Query<(
++            Ref<GlobalTransform>,
++            Ref<Mesh3d>,
++            Has<bevy_mesh::skinning::SkinnedMesh>,
++            Has<bevy_mesh::morph::MeshMorphWeights>,
++        )>,
++    >,
++    mut mesh_events: Extract<MessageReader<bevy_asset::AssetEvent<bevy_mesh::Mesh>>>,
++) {
++    use core::hash::{BuildHasher, Hasher};
++
++    let modified_meshes: HashSet<bevy_asset::AssetId<bevy_mesh::Mesh>> = mesh_events
++        .read()
++        .filter_map(|event| match event {
++            bevy_asset::AssetEvent::Modified { id }
++            | bevy_asset::AssetEvent::Added { id }
++            | bevy_asset::AssetEvent::LoadedWithDependencies { id } => Some(*id),
++            _ => None,
++        })
++        .collect();
++
++    changes.0.clear();
++    let mut visible: Vec<Entity> = Vec::new();
++    for (light, spot_visible, point_visible) in &lights {
++        visible.clear();
++        if let Some(spot_visible) = spot_visible {
++            visible.extend(spot_visible.entities.iter().copied());
++        }
++        if let Some(point_visible) = point_visible {
++            for face in 0..6 {
++                visible.extend(point_visible.get(face).entities.iter().copied());
++            }
++        }
++        visible.sort_unstable();
++        visible.dedup();
++
++        let mut hasher = FixedHasher.build_hasher();
++        let mut changed = false;
++        for &entity in &visible {
++            hasher.write_u64(entity.to_bits());
++            if let Ok((transform, mesh, skinned, morphed)) = casters.get(entity) {
++                changed |= transform.is_changed()
++                    || mesh.is_changed()
++                    || skinned
++                    || morphed
++                    || modified_meshes.contains(&mesh.id());
++            }
++        }
++        changes.0.insert(
++            MainEntity::from(light),
++            ShadowCasterChange {
++                casters: hasher.finish(),
++                changed,
++            },
++        );
++    }
++}
++
++/// Marks the point and spot light shadow views whose shadow maps are still valid
++/// with [`SkipRootViewRendering`]: the same texture layer, light view and
++/// projection as when last rendered, and the same shadow casters, none of them
++/// changed.
++pub fn skip_unchanged_shadow_views(
++    mut commands: Commands,
++    views: Query<
++        (
++            Entity,
++            &ExtractedView,
++            &ShadowView,
++            &LightEntity,
++            Has<SkipRootViewRendering>,
++        ),
++        With<RootNonCameraView>,
++    >,
++    main_entities: Query<&MainEntity>,
++    bindings: Query<&ViewShadowBindings>,
++    changes: Res<ShadowCasterChanges>,
++    (phases, pipeline_cache): (Res<ViewBinnedRenderPhases<Shadow>>, Res<PipelineCache>),
++    mut rendered: Local<HashMap<RetainedViewEntity, (u64, u64)>>,
++) {
++    use core::hash::{BuildHasher, Hash, Hasher};
++
++    // While pipelines are being compiled, a shadow map may have been rendered
++    // without some of its casters: none is kept until they are all ready.
++    let settled = pipeline_cache.waiting_pipelines().next().is_none();
++
++    // The shadow map textures this frame (shared by all cameras); without them,
++    // nothing can be known to be unchanged.
++    let textures = bindings.iter().next().map(|bindings| {
++        (
++            bindings.point_light_depth_texture.id(),
++            bindings.directional_light_depth_texture.id(),
++        )
++    });
++    let mut live = HashSet::new();
++    for (view_entity, view, shadow_view, light, skipped) in &views {
++        let (light_entity, texture) = match *light {
++            LightEntity::Point { light_entity, .. } => (light_entity, textures.map(|t| t.0)),
++            LightEntity::Spot { light_entity } => (light_entity, textures.map(|t| t.1)),
++            LightEntity::Directional { .. } => continue,
++        };
++        let retained = view.retained_view_entity;
++        live.insert(retained);
++
++        let mut hasher = FixedHasher.build_hasher();
++        // The texture and, by the pass's name, the layer it renders to.
++        texture.hash(&mut hasher);
++        shadow_view.pass_name.hash(&mut hasher);
++        view.viewport.hash(&mut hasher);
++        // The casters queued to draw: one whose mesh, material or pipeline was
++        // not ready is not queued yet.
++        phases
++            .get(&retained)
++            .map(BinnedRenderPhase::entity_count)
++            .hash(&mut hasher);
++        for value in view
++            .world_from_view
++            .to_matrix()
++            .to_cols_array()
++            .into_iter()
++            .chain(view.clip_from_view.to_cols_array())
++        {
++            hasher.write_u32(value.to_bits());
++        }
++        let view_key = hasher.finish();
++
++        let change = main_entities
++            .get(light_entity)
++            .ok()
++            .and_then(|main| changes.0.get(main));
++        let unchanged = settled
++            && texture.is_some()
++            && change.is_some_and(|change| {
++                !change.changed && rendered.get(&retained) == Some(&(view_key, change.casters))
++            });
++
++        if unchanged {
++            if !skipped {
++                commands.entity(view_entity).insert(SkipRootViewRendering);
++            }
++        } else {
++            if skipped {
++                commands
++                    .entity(view_entity)
++                    .remove::<SkipRootViewRendering>();
++            }
++            match change {
++                Some(change) => {
++                    rendered.insert(retained, (view_key, change.casters));
++                }
++                None => {
++                    rendered.remove(&retained);
++                }
++            }
++        }
++    }
++    rendered.retain(|retained, _| live.contains(retained));
++}
++
+ pub fn prepare_lights(
+     mut commands: Commands,
+     mut texture_cache: ResMut<TextureCache>,
+@@ -2245,7 +2434,7 @@ fn create_point_shadow_maps(
+                 face_index,
+             },
+             (*light_render_layers).clone(),
+-            RootNonCameraView(Core3d.intern()),
++            RootNonCameraView(Core3dShadows.intern()),
+         ));
+ 
+         if !matches!(
+@@ -2338,7 +2527,7 @@ fn create_spot_shadow_map(
+             light_entity: *light_entity,
+         },
+         (*light_render_layers).clone(),
+-        RootNonCameraView(Core3d.intern()),
++        RootNonCameraView(Core3dShadows.intern()),
+     ));
+ 
+     if !matches!(
+diff --git a/bevy_render/src/render_phase/mod.rs b/bevy_render/src/render_phase/mod.rs
+index a65bf03fe796f..968816169cc1d 100644
+--- a/bevy_render/src/render_phase/mod.rs
++++ b/bevy_render/src/render_phase/mod.rs
+@@ -1416,6 +1416,30 @@ where
+             && self.non_mesh_items.is_empty()
+     }
+ 
++    /// The number of entities queued in this phase, across all of its bins.
++    pub fn entity_count(&self) -> usize {
++        self.multidrawable_meshes
++            .values()
++            .flat_map(|batch_set| batch_set.bins.iter().flatten())
++            .map(|bin| bin.entity_to_binned_mesh_instance_index.len())
++            .sum::<usize>()
++            + self
++                .batchable_meshes
++                .values()
++                .map(|bin| bin.entities.len())
++                .sum::<usize>()
++            + self
++                .unbatchable_meshes
++                .values()
++                .map(|bin| bin.entities.len())
++                .sum::<usize>()
++            + self
++                .non_mesh_items
++                .values()
++                .map(|items| items.entities.len())
++                .sum::<usize>()
++    }
++
+     pub fn prepare_for_new_frame(&mut self) {
+         self.batch_sets.clear();
+ 

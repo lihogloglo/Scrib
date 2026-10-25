@@ -1,0 +1,11 @@
+# Build settings shared by everyone working in this repo.
+# See superfargoth/docs/ARCHITECTURE.md "Build performance".
+
+# rust-lld ships with the MSVC toolchain and links several times faster
+# than link.exe (Bevy's fast-builds recommendation). Nothing to install.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+rustdocflags = ["-Clinker=rust-lld.exe"]
+
+# DLSS: the game builds without NVIDIA's SDK (vendor/dlss_wgpu facade). The SDK env for the
+# separately shipped plugin lives in superfargoth/plugins/sf_dlss/.cargo/config.toml.

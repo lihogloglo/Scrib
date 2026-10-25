@@ -1,0 +1,39 @@
+// Synthetic test level (docs/specs/test-levels.md) for the third-person camera (camera.md,
+// sf_camera_bevy): collision push-in against corridor walls, under a low ceiling and behind a
+// pillar, recovery as the obstruction clears, lock-on framing in the open. The headless tests in
+// crates/sf_camera_bevy/src/tests.rs run on these statics.
+// Meters, y up, x east, z south; `at` = footprint center at the bottom; spawn yaw 0 = -z.
+(
+    name: "camera",
+    description: "a 2 m wide, 3 m high corridor (16 m) whose north half has a 2.1 m ceiling, a 0.4 m pillar, open floor for lock-on",
+    cameras: [
+        (name: "overview", eye: (12.0, 14.0, 16.0), target: (2.0, 0.0, -4.0)),
+        (name: "corridor", eye: (0.0, 1.8, 6.0), target: (0.0, 1.2, -6.0)),
+        (name: "pillar", eye: (12.0, 3.0, 6.0), target: (8.0, 1.0, 0.0)),
+    ],
+    spawns: [
+        // In the corridor's open-roofed half, facing north along it.
+        (name: "corridor", at: (0.0, 0.0, 0.0)),
+        // Under the low ceiling.
+        (name: "ceiling", at: (0.0, 0.0, -9.0)),
+        // North of the pillar, facing north: the default camera sits behind, through the pillar.
+        (name: "pillar", at: (8.0, 0.0, -2.5)),
+        // Open floor, with the lock-on target 10 m north.
+        (name: "open", at: (-10.0, 0.0, 10.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (60.0, 60.0))),
+
+        // Corridor (x = 0, z = 2 .. -14): inner faces at x = ±1.0.
+        (name: "corridor-west", shape: Box(size: (0.2, 3.0, 16.0)), at: (-1.1, 0.0, -6.0), material: Grey),
+        (name: "corridor-east", shape: Box(size: (0.2, 3.0, 16.0)), at: (1.1, 0.0, -6.0), material: Grey),
+        // Low ceiling over the north half (z = -6 .. -14): underside at 2.1 m.
+        (name: "low-ceiling", shape: Box(size: (2.4, 0.3, 8.0)), at: (0.0, 2.1, -10.0), material: Orange),
+
+        // Pillar: 0.4 m radius, 3 m high.
+        (name: "pillar", shape: Cylinder(radius: 0.4, height: 3.0), at: (8.0, 0.0, 0.0), material: White),
+
+        // Lock-on target marker (no collision): a 1.8 m post 10 m north of the "open" spawn.
+        (name: "target", shape: Box(size: (0.5, 1.8, 0.5)), at: (-10.0, 0.0, 0.0), material: Red, collide: false),
+    ],
+)

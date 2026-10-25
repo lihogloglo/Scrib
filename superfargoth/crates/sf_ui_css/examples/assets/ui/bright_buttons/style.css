@@ -1,0 +1,5 @@
+/* Mod `bright_buttons` (loads after base_ui): its layer wins over base_ui's rules.
+   Edit the colour below and save; the running example restyles (hot reload). */
+.menu-button {
+    background-color: #2e7d32;
+}

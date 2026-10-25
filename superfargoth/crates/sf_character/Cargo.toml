@@ -1,0 +1,33 @@
+[package]
+name = "sf_character"
+description = "Bevy-free character core for superfargoth: humanoid rig, rig maps (auto-map, auto-align), body slots, parts and wearables, outfit resolution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3.workspace = true
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+sf_anim.workspace = true
+# Closest-point queries (BVH) for smooth-body weight transfer and metrics.
+parry3d = { workspace = true, optional = true }
+# Cooked parts for outfit assembly.
+sf_model.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+thiserror.workspace = true
+
+[features]
+# Bake-time smooth bodies (`smooth_body`, `transfer_weights`): closest-point queries on parry3d.
+smooth = ["dep:parry3d"]
+
+[dev-dependencies]
+# The framework's glTF skeleton importer reads the CC0 rig fixtures in tests/data; the BVH importer feeds
+# tests/bvh_retarget.rs.
+sf_anim = { workspace = true, features = ["gltf", "bvh"] }
+ron.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

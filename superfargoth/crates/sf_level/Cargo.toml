@@ -1,0 +1,20 @@
+[package]
+name = "sf_level"
+description = "Bevy-free synthetic test levels for superfargoth: a RON greybox format (boxes, ramps, stairs, cylinders, cameras, spawns), validation and flat-shaded meshes for render and collision (test-levels.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The headless course runner (tests/course.rs): mover and context probes on a level's statics.
+sf_controller.workspace = true
+sf_coords.workspace = true

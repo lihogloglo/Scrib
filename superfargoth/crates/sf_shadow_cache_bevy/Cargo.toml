@@ -1,0 +1,27 @@
+[package]
+name = "sf_shadow_cache_bevy"
+description = "Cached point-light shadow maps for Bevy: static casters drawn once per light, moving casters over a copy each frame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_light.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

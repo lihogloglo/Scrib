@@ -1,0 +1,34 @@
+[package]
+name = "sf_terrain"
+description = "Bevy-free terrain core for superfargoth: canonical tiles, resampling, pyramid, layers, CPU height queries, CDLOD selection, clipmaps, bake steps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Bake steps on sf_bake (terrain.tile, terrain.pyramid, ...) and the store reader.
+bake = ["dep:sf_bake", "dep:rayon"]
+
+[dependencies]
+glam.workspace = true
+postcard.workspace = true
+rayon = { workspace = true, optional = true }
+serde.workspace = true
+sf_bake = { workspace = true, optional = true }
+sf_coords.workspace = true
+sf_records.workspace = true
+sf_world.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rayon.workspace = true
+sf_bake.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[example]]
+name = "bake_synthetic"
+required-features = ["bake"]

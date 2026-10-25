@@ -1,0 +1,19 @@
+[package]
+name = "sf_wind"
+description = "Bevy-free wind field for superfargoth: global wind with a curl-noise gust field, local sources, altitude profile, CPU and WGSL twins (weather.md \"Wind\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+sf_coords.workspace = true
+
+[dev-dependencies]
+# Headless compute run of `src/shaders/sf_wind.wesl` against the CPU twin (tests/wgsl_twin.rs).
+futures-lite.workspace = true
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
+
+[lints]
+workspace = true

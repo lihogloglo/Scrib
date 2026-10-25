@@ -1,0 +1,72 @@
+[package]
+name = "sf_world_bevy"
+description = "Bevy plugin for sf_world: big_space worldspaces, streaming stages, placement spawning, world-origin uniform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["debug"]
+# Ring overlay (gizmos): stream cells colored by level and state.
+debug = ["dep:bevy_gizmos"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). The heavy logic (scheduler, index,
+# level steps, page cache) is Bevy-free in sf_world.
+[dependencies]
+# App, Plugin, schedules.
+bevy_app = { workspace = true, features = ["std"] }
+# AssetServer, Handle: cooked models, materials, textures.
+bevy_asset.workspace = true
+# Visibility, RenderLayers, VisibilityRange, Aabb, Camera.
+bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_gizmos = { workspace = true, optional = true }
+# Image handles for base color textures.
+bevy_image.workspace = true
+# AlphaMode of cooked materials.
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# Mesh3d.
+bevy_mesh.workspace = true
+# StandardMaterial, MeshMaterial3d.
+bevy_pbr.workspace = true
+# Instant for stage timings.
+bevy_platform = { workspace = true, features = ["std"] }
+# TypePath of the CellPrecombine asset.
+bevy_reflect.workspace = true
+# WorldOrigin uniform: extraction, uniform buffer, RenderAssetBytesPerFrame.
+bevy_render.workspace = true
+# The WorldOrigin shader library.
+bevy_shader.workspace = true
+# Aabb3d (ring overlay).
+bevy_shape.workspace = true
+# IoTaskPool for index fetches.
+bevy_tasks = { workspace = true, features = ["futures-lite"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+# The fade (a full-window node, drawn after post-processing).
+bevy_ui.workspace = true
+big_space.workspace = true
+glam.workspace = true
+log.workspace = true
+sf_coords.workspace = true
+sf_diag_bevy.workspace = true
+sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
+sf_model_bevy.workspace = true
+sf_vfs.workspace = true
+sf_world.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+postcard.workspace = true
+sf_bake.workspace = true
+sf_world = { workspace = true, features = ["bake"] }
+tempfile.workspace = true
+
+[[example]]
+name = "stream"
+
+[lints]
+workspace = true

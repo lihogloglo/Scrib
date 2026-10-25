@@ -1,0 +1,34 @@
+[package]
+name = "sf_anim"
+description = "Bevy-free skeletal animation core for superfargoth: skeletons, cooked clips, pose ops, IK, retargeting, bake steps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["gltf"]
+# The framework's glTF / GLB skeleton and clip importer.
+gltf = ["dep:gltf"]
+# The framework's BVH skeleton and clip importer (own parser, no dependencies). Bake only.
+bvh = []
+# The framework's FBX skeleton and clip importer, on ufbx (needs a C compiler). Bake only.
+fbx = ["dep:ufbx"]
+# Synthetic test skeletons (biped, quadruped, hexapod, flyer) and gait clips for other crates' tests.
+fixtures = []
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+gltf = { workspace = true, optional = true }
+postcard.workspace = true
+serde.workspace = true
+sf_bake.workspace = true
+thiserror.workspace = true
+ufbx = { workspace = true, optional = true }
+
+[dev-dependencies]
+rayon.workspace = true
+ron.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

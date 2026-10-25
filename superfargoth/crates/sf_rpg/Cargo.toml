@@ -1,0 +1,23 @@
+[package]
+name = "sf_rpg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free RPG primitives: inventory stacks, equipment, quests, journal, dialogue sessions"
+
+[dependencies]
+aho-corasick.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+smallvec = { workspace = true, features = ["serde"] }
+thiserror.workspace = true
+sf_records.workspace = true
+# `PlayerId` (re-exported from `ids`).
+sf_ids.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true

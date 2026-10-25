@@ -1,0 +1,409 @@
+//! Move rules: data records (RON), compiled into a priority-ordered [`RuleSet`] with load-time
+//! validation that names the mod (action.md "Move rule (data)").
+
+use std::collections::HashMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::command::{ActionClass, ClassSet};
+use crate::ids::{RuleKey, SlotKey, TagId};
+use crate::windows::SlotSource;
+
+/// What a move is (presentation and tooling; the chooser orders by [`Category`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MoveKind {
+    Locomotion,
+    Sneak,
+    Air,
+    Traversal,
+    Docked,
+    Combat,
+    Paired,
+    Interaction,
+    Forced,
+}
+
+/// The priority list, highest first (action.md "Priority list"): declaration order is priority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Category {
+    Forced,
+    Landing,
+    AirCatch,
+    Paired,
+    Dodge,
+    Attack,
+    Guard,
+    Traversal,
+    Jump,
+    Interact,
+    Passover,
+    Locomotion,
+}
+
+impl Category {
+    /// Framework-only categories: a mod rule can't enter above `Paired`.
+    pub fn framework_only(self) -> bool {
+        self < Self::Paired
+    }
+
+    /// The window policy a rule with `windows: Category` gets when its slot authors none.
+    /// A1 knows loops, air and landings (unrestricted); traversal, interaction and forced moves
+    /// commit until they end. Combat defaults (light/heavy/dodge fractions) arrive with E1.
+    pub fn default_policy(self) -> WindowPolicy {
+        match self {
+            Self::Landing | Self::Jump | Self::Locomotion | Self::Passover => WindowPolicy::Unrestricted,
+            _ => WindowPolicy::Committed,
+        }
+    }
+}
+
+/// Who moves the gameplay body (action.md "Motion owners"). A1 builds `Sim`; `Warp`, `Docked`,
+/// `Clip` and `Physics` arrive with B1, B3, E1 and the ragdoll work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Owner {
+    #[default]
+    Sim,
+}
+
+/// Movement profile (action.md "Mode profiles"). `Combat` stance layers over these.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Mode {
+    #[default]
+    Normal,
+    Sneak,
+    FreeRun,
+}
+
+/// Body-state predicates. `Landed` is the touchdown tick (also `Grounded`); `Coyote` is the
+/// grace window after walking off an edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Phase {
+    Grounded,
+    Coyote,
+    AirRising,
+    AirFalling,
+    Landed,
+}
+
+/// Entry predicates: fixed vocabulary, all must pass (empty lists pass).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Entry {
+    /// Request classes that start it; empty = automatic (or forced in framework categories).
+    pub classes: Vec<ActionClass>,
+    /// Needs the stick within 60° of the facing.
+    pub need_forward: bool,
+    pub modes: Vec<Mode>,
+    /// Any of these.
+    pub states: Vec<Phase>,
+    /// Planar speed band, m/s.
+    pub speed: Option<(f32, f32)>,
+    /// Vertical speed band, m/s; on the `Landed` tick this is the impact speed.
+    pub vspeed: Option<(f32, f32)>,
+    /// Modes in which a requested rule also fires with no press (passovers, B5).
+    pub auto_in: Vec<Mode>,
+    /// Needs an interaction focus: `Some([])` any, `Some(tags)` one of these tags.
+    pub focus: Option<Vec<String>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowPolicy {
+    /// The category's default ([`Category::default_policy`]).
+    #[default]
+    Category,
+    /// Accept and cancel every class.
+    Unrestricted,
+    /// Accept every class, cancel none until the move ends (hard landing, heavy whiff).
+    Committed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExitOn {
+    /// The slot chain ended (never for a looping slot).
+    End,
+    /// The body touched down this tick.
+    Touchdown,
+    /// The body is off the ground (walked off an edge, knocked up).
+    Airborne,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExitTo {
+    /// The automatic pick (locomotion, fall).
+    Loco,
+    Rule(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Exit {
+    pub on: ExitOn,
+    pub to: ExitTo,
+}
+
+/// A vertical launch on the move's first tick.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Launch {
+    /// The character's jump height (stat band × mode profile): `v = sqrt(2 g h)`.
+    JumpHeight,
+    /// A fixed vertical speed, m/s.
+    Speed(f32),
+}
+
+/// One move, as data. Patched field-level like other records once the shell registers it as an
+/// `sf_records` kind.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoveRule {
+    pub id: String,
+    pub kind: MoveKind,
+    pub category: Category,
+    /// Order inside the category, higher first; ties by load order.
+    #[serde(default)]
+    pub rank: i32,
+    /// Clip chain; empty = an instant move (zero length).
+    #[serde(default)]
+    pub slots: Vec<String>,
+    #[serde(default)]
+    pub owner: Owner,
+    #[serde(default)]
+    pub entry: Entry,
+    #[serde(default)]
+    pub windows: WindowPolicy,
+    #[serde(default)]
+    pub exits: Vec<Exit>,
+    #[serde(default)]
+    pub launch: Option<Launch>,
+    /// Sim owner: the stick steers during the move. `false` stops the character (hard landing).
+    #[serde(default = "yes")]
+    pub steer: bool,
+    /// Ticks before this rule may start again.
+    #[serde(default)]
+    pub redo_ticks: u16,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Where a rule came from, for reports and the mod category limit.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Origin {
+    Framework,
+    Mod(String),
+}
+
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Framework => f.write_str("framework"),
+            Self::Mod(m) => write!(f, "mod '{m}'"),
+        }
+    }
+}
+
+/// A load or validation problem, naming the mod and rule.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{origin}{}: {message}", .rule.as_ref().map(|r| format!(", rule '{r}'")).unwrap_or_default())]
+pub struct LoadError {
+    pub origin: Origin,
+    pub rule: Option<String>,
+    pub message: String,
+}
+
+/// A rule with its ids hashed and exits resolved.
+#[derive(Clone, Debug)]
+pub struct CompiledRule {
+    pub key: RuleKey,
+    pub rule: MoveRule,
+    pub origin: Origin,
+    pub classes: ClassSet,
+    pub slots: Vec<SlotKey>,
+    pub focus: Option<Vec<TagId>>,
+    /// Exit triggers with their target's index (`None` = `Loco`).
+    pub exits: Vec<(ExitOn, Option<usize>)>,
+    pub policy: WindowPolicy,
+}
+
+impl CompiledRule {
+    pub fn id(&self) -> &str {
+        &self.rule.id
+    }
+}
+
+/// Collects rule files in load order; a later rule with the same id replaces the earlier one.
+#[derive(Default)]
+pub struct RuleSetBuilder {
+    rules: Vec<(Origin, MoveRule)>,
+    errors: Vec<LoadError>,
+}
+
+impl RuleSetBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a RON list of rules (`[ (id: ..), .. ]`).
+    pub fn add_ron(&mut self, origin: &Origin, text: &str) -> &mut Self {
+        match ron::from_str::<Vec<MoveRule>>(text) {
+            Ok(rules) => {
+                for r in rules {
+                    self.add(origin.clone(), r);
+                }
+            }
+            Err(e) => self.errors.push(LoadError { origin: origin.clone(), rule: None, message: e.to_string() }),
+        }
+        self
+    }
+
+    pub fn add(&mut self, origin: Origin, rule: MoveRule) -> &mut Self {
+        if let Some(slot) = self.rules.iter_mut().find(|(_, r)| r.id == rule.id) {
+            *slot = (origin, rule);
+        } else {
+            self.rules.push((origin, rule));
+        }
+        self
+    }
+
+    /// Validates and compiles; every problem is listed.
+    pub fn build(&self) -> Result<RuleSet, Vec<LoadError>> {
+        let mut errors = self.errors.clone();
+        let mut by_key: HashMap<RuleKey, usize> = HashMap::new();
+        let err = |o: &Origin, r: &MoveRule, m: String| LoadError { origin: o.clone(), rule: Some(r.id.clone()), message: m };
+        for (i, (origin, r)) in self.rules.iter().enumerate() {
+            let key = RuleKey::of(&r.id);
+            if let Some(&j) = by_key.get(&key) {
+                errors.push(err(origin, r, format!("id hash collides with rule '{}'; rename one", self.rules[j].1.id)));
+            }
+            by_key.insert(key, i);
+            if r.id.is_empty() {
+                errors.push(err(origin, r, "empty id".into()));
+            }
+            if matches!(origin, Origin::Mod(_)) && r.category.framework_only() {
+                errors.push(err(origin, r, format!("category {:?} is framework-only; mods start at Paired", r.category)));
+            }
+            for (name, band) in [("speed", r.entry.speed), ("vspeed", r.entry.vspeed)] {
+                if band.is_some_and(|(lo, hi)| lo.is_nan() || hi.is_nan() || lo > hi) {
+                    errors.push(err(origin, r, format!("{name} band is empty or NaN")));
+                }
+            }
+            if !r.entry.auto_in.is_empty() && r.entry.classes.is_empty() {
+                errors.push(err(origin, r, "auto_in needs request classes (an automatic rule fires anyway)".into()));
+            }
+            if r.entry.classes.iter().any(|c| !ClassSet::LATCHABLE.contains(*c)) {
+                errors.push(err(origin, r, "Move, Sprint and Sneak are state classes, not requests".into()));
+            }
+            if r.entry.focus.is_some() && !r.entry.classes.contains(&ActionClass::Interact) {
+                errors.push(err(origin, r, "focus needs the Interact class".into()));
+            }
+            if let Some(Launch::Speed(v)) = r.launch
+                && !(v.is_finite() && v > 0.0)
+            {
+                errors.push(err(origin, r, "launch speed must be positive".into()));
+            }
+        }
+        let mut rules = Vec::with_capacity(self.rules.len());
+        for (origin, r) in &self.rules {
+            let mut exits = Vec::with_capacity(r.exits.len());
+            for e in &r.exits {
+                let to = match &e.to {
+                    ExitTo::Loco => None,
+                    ExitTo::Rule(id) => {
+                        let Some(&j) = by_key.get(&RuleKey::of(id)) else {
+                            errors.push(err(origin, r, format!("exit to unknown rule '{id}'")));
+                            continue;
+                        };
+                        Some(j)
+                    }
+                };
+                exits.push((e.on, to));
+            }
+            rules.push(CompiledRule {
+                key: RuleKey::of(&r.id),
+                origin: origin.clone(),
+                classes: ClassSet::of(&r.entry.classes),
+                slots: r.slots.iter().map(|s| SlotKey::of(s)).collect(),
+                focus: r.entry.focus.as_ref().map(|tags| tags.iter().map(|t| TagId::of(t)).collect()),
+                exits,
+                policy: match r.windows {
+                    WindowPolicy::Category => r.category.default_policy(),
+                    p => p,
+                },
+                rule: r.clone(),
+            });
+        }
+        if !rules.iter().any(|r| r.rule.category == Category::Locomotion && r.classes.is_empty()) {
+            errors.push(LoadError {
+                origin: Origin::Framework,
+                rule: None,
+                message: "no automatic Locomotion rule: the priority list needs a fallback".into(),
+            });
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        let mut order: Vec<usize> = (0..rules.len()).collect();
+        order.sort_by_key(|&i| (rules[i].rule.category, std::cmp::Reverse(rules[i].rule.rank), i));
+        let index = rules.iter().enumerate().map(|(i, r)| (r.key, i)).collect();
+        Ok(RuleSet { rules, order, index })
+    }
+}
+
+/// Compiled rules in priority order.
+#[derive(Clone, Debug)]
+pub struct RuleSet {
+    rules: Vec<CompiledRule>,
+    order: Vec<usize>,
+    index: HashMap<RuleKey, usize>,
+}
+
+impl RuleSet {
+    /// One RON source from the framework: a convenience for tests and tools.
+    pub fn from_ron(text: &str) -> Result<Self, Vec<LoadError>> {
+        RuleSetBuilder::new().add_ron(&Origin::Framework, text).build()
+    }
+
+    pub fn get(&self, key: RuleKey) -> Option<&CompiledRule> {
+        self.index.get(&key).map(|&i| &self.rules[i])
+    }
+
+    pub(crate) fn index_of(&self, key: RuleKey) -> Option<usize> {
+        self.index.get(&key).copied()
+    }
+
+    pub(crate) fn at(&self, i: usize) -> &CompiledRule {
+        &self.rules[i]
+    }
+
+    /// Rule indices, highest priority first.
+    pub(crate) fn priority(&self) -> &[usize] {
+        &self.order
+    }
+
+    /// Rules, highest priority first.
+    pub fn iter(&self) -> impl Iterator<Item = &CompiledRule> {
+        self.order.iter().map(|&i| &self.rules[i])
+    }
+
+    pub fn len(&self) -> usize {
+        self.rules.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    /// Slots no source provides: load errors once clips are known (action.md "unknown slots").
+    pub fn check_slots(&self, slots: &dyn SlotSource) -> Vec<LoadError> {
+        let mut out = Vec::new();
+        for r in &self.rules {
+            for (name, key) in r.rule.slots.iter().zip(&r.slots) {
+                if slots.slot(*key).is_none() {
+                    out.push(LoadError { origin: r.origin.clone(), rule: Some(r.rule.id.clone()), message: format!("unknown slot '{name}'") });
+                }
+            }
+        }
+        out
+    }
+}

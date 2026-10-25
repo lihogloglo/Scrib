@@ -1,0 +1,17 @@
+--- a/bevy_pbr/src/render/clustered_forward.wesl
++++ b/bevy_pbr/src/render/clustered_forward.wesl
+@@ -55,7 +55,13 @@
+ }
+ 
+ fn view_fragment_cluster_index(frag_coord: vec2<f32>, view_z: f32, is_orthographic: bool) -> u32 {
+-    let xy = vec2<u32>(floor((frag_coord - bindings::view.viewport.xy) * bindings::lights.cluster_factors.xy));
++    // superfargoth patch (own: cluster main-pass viewport): `cluster_factors.xy` is
++    // `dimensions / viewport size`, but with a `MainPassResolutionOverride` (DLSS) the passes
++    // that shade clustered lights rasterize at `main_pass_viewport` (render resolution), so
++    // rescale or fragments read the clusters of the grid's top-left part. Exactly 1.0 without one.
++    let main_pass_scale = bindings::view.viewport.zw / bindings::view.main_pass_viewport.zw;
++    let xy = vec2<u32>(floor((frag_coord - bindings::view.main_pass_viewport.xy) *
++        bindings::lights.cluster_factors.xy * main_pass_scale));
+     let z_slice = view_z_to_z_slice(
+         bindings::lights.cluster_factors.zw,
+         bindings::lights.cluster_dimensions.z,

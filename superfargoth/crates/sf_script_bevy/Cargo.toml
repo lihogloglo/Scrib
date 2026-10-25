@@ -1,0 +1,25 @@
+[package]
+name = "sf_script_bevy"
+description = "Bevy plugin for sf_script: schedule slots, slot world access, placement handles, activation, diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): no rendering, no input crate. The
+# Luau runtime is `sf_script` (Bevy-free); this crate only schedules it.
+[dependencies]
+# App, Plugin, schedules (PreUpdate, Update, PostUpdate).
+bevy_app = { workspace = true, features = ["std"] }
+# Resource, Message, SystemSet, exclusive systems.
+bevy_ecs = { workspace = true, features = ["std"] }
+# Time (virtual): the `Update` slot's dt.
+bevy_time = { workspace = true, features = ["std"] }
+log.workspace = true
+semver.workspace = true
+# Counters `script/...` when the app runs `SfDiagPlugin`.
+sf_diag_bevy.workspace = true
+sf_script.workspace = true
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

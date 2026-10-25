@@ -1,0 +1,46 @@
+[package]
+name = "sf_audio_bevy"
+description = "Thin Bevy plugin for sf_audio: bus loops (weather and settings bridges behind features), volume mixer and ducking, cue one-shots (2D and positional), physics impacts and slides (physics bridge behind a feature), loop emitters, ambience beds and music through bevy_audio on the mixer buses (audio.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Thin (ARCHITECTURE section 8b rule 6): the logic is Bevy-free (sf_audio). Codecs (wav, mp3) are
+# Bevy features the app turns on. bevy_math/bevy_transform are already in bevy_audio's graph.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_audio.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_log.workspace = true
+bevy_math.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+sf_audio.workspace = true
+sf_records.workspace = true
+# The weather bridge (`weather` feature, module `weather`): off by default so testing audio does
+# not compile the render stack sf_weather_bevy pulls in (ARCHITECTURE section 8b rule 6).
+sf_weather_bevy = { workspace = true, optional = true }
+# The physics bridge (`physics` feature, module `physics`): contact reports -> impact and slide
+# sounds. Off by default for the same reason (rapier, the streaming stack).
+sf_physics_bevy = { workspace = true, optional = true }
+sf_world_bevy = { path = "../sf_world_bevy", version = "0.1.0", default-features = false, optional = true }
+
+# The settings bridge (`settings` feature, module `settings`): volume sliders and mutes from the
+# UI settings store, off by default for the same reason (sf_ui_bevy pulls bevy_ui and input).
+sf_ui = { workspace = true, optional = true }
+sf_ui_bevy = { workspace = true, optional = true }
+workspace-hack.workspace = true
+
+[features]
+weather = ["dep:sf_weather_bevy"]
+physics = ["dep:sf_physics_bevy", "dep:sf_world_bevy"]
+settings = ["dep:sf_ui", "dep:sf_ui_bevy"]
+
+[dev-dependencies]
+# The physics bridge's test builds a world by hand.
+sf_coords.workspace = true
+sf_world.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,34 @@
+[package]
+name = "sf_ui_css"
+description = "CSS styling for sf_ui through bevy_flair: one composed root sheet per mod set with each mod in its own cascade layer (load order), per-mod error attribution, hot reload (ui.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The only crate that links bevy_flair and its MPL-2.0 Servo dependencies (ui.md R2b).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_flair.workspace = true
+bevy_log.workspace = true
+bevy_picking.workspace = true
+bevy_ui_widgets.workspace = true
+sf_mods.workspace = true
+sf_ui_bevy.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["ui", "file_watcher"] }
+bevy_enhanced_input.workspace = true
+sf_records.workspace = true
+sf_ui.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+# A menu styled by three mod sheets in load order; `--autotest [dir]` edits a sheet on disk and
+# checks that the change applies (hot reload), saving before/after screenshots into `dir`.
+[[example]]
+name = "ui_css"

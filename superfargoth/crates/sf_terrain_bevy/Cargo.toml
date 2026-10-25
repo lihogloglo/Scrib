@@ -1,0 +1,51 @@
+[package]
+name = "sf_terrain_bevy"
+description = "Bevy plugin for sf_terrain: height/layer/macro clipmaps, CDLOD patches, PBR terrain material"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+# App, Plugin, PostUpdate.
+bevy_app = { workspace = true, features = ["std"] }
+# Assets, embedded shaders.
+bevy_asset.workspace = true
+# Aabb, NoAutoAabb, visibility sets.
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+# Clipmap and layer array images.
+bevy_image.workspace = true
+# AlphaMode, OpaqueRendererMethod (the ground blend material).
+bevy_material.workspace = true
+# DirectionalLight (the far shadow map follows the shadowed light).
+bevy_light.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# Mesh, Mesh3d, MeshTag.
+bevy_mesh.workspace = true
+# Material, MaterialPlugin, MeshMaterial3d, PBR shader library.
+bevy_pbr.workspace = true
+bevy_reflect = { workspace = true, features = ["std"] }
+# AsBindGroup, ShaderBuffer, render-world texture writes.
+bevy_render.workspace = true
+bevy_shader.workspace = true
+# Tile loads on the async compute pool.
+bevy_tasks = { workspace = true, features = ["futures-lite"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+sf_coords.workspace = true
+sf_terrain = { workspace = true, features = ["bake"] }
+sf_world.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }
+glam.workspace = true
+rayon.workspace = true
+sf_bake.workspace = true
+sf_diag_bevy.workspace = true
+sf_records.workspace = true
+sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
+
+[lints]
+workspace = true

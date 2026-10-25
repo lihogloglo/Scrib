@@ -1,0 +1,221 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# Patched third-party crates (`[patch.crates-io]` below), not ours to lint or test.
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/TODO/superfargoth"
+
+[workspace.dependencies]
+# Bevy sub-crates: libraries take only what they use (ARCHITECTURE §8b rule 6).
+bevy_app = { version = "0.20", default-features = false }
+bevy_asset = { version = "0.20", default-features = false }
+bevy_diagnostic = { version = "0.20", default-features = false }
+bevy_ecs = { version = "0.20", default-features = false }
+bevy_log = { version = "0.20", default-features = false }
+bevy_audio = { version = "0.20", default-features = false }
+bevy_mesh = { version = "0.20", default-features = false }
+bevy_platform = { version = "0.20", default-features = false }
+bevy_reflect = { version = "0.20", default-features = false }
+bevy_time = { version = "0.20", default-features = false }
+bevy_transform = { version = "0.20", default-features = false }
+# Rendering sub-crates (sf_sky_bevy). `bevy_solari` is optional there (`solari` feature).
+# `bevy_anti_alias` is optional there too (`dlss` feature: DLSS Ray Reconstruction).
+bevy_anti_alias = { version = "0.20", default-features = false }
+bevy_camera = { version = "0.20", default-features = false }
+bevy_color = { version = "0.20", default-features = false }
+bevy_core_pipeline = { version = "0.20", default-features = false }
+bevy_light = { version = "0.20", default-features = false }
+bevy_math = { version = "0.20", default-features = false }
+bevy_pbr = { version = "0.20", default-features = false }
+bevy_render = { version = "0.20", default-features = false }
+bevy_solari = { version = "0.20", default-features = false }
+# Streaming glue (sf_world_bevy). `bevy_gizmos` is optional there (`debug` feature).
+bevy_gizmos = { version = "0.20", default-features = false }
+bevy_image = { version = "0.20", default-features = false }
+bevy_material = { version = "0.20", default-features = false }
+bevy_shader = { version = "0.20", default-features = false }
+bevy_shape = { version = "0.20", default-features = false }
+bevy_tasks = { version = "0.20", default-features = false }
+# Game UI glue (sf_ui_bevy): layout, headless widgets' `Activate`, focus and directional navigation.
+bevy_input = { version = "0.20", default-features = false }
+bevy_input_focus = { version = "0.20", default-features = false }
+bevy_ui = { version = "0.20", default-features = false }
+bevy_ui_widgets = { version = "0.20", default-features = false }
+# Dev console overlay (sf_console_bevy `overlay` feature): one-shot mesh ray for click-select, cursor release.
+bevy_picking = { version = "0.20", default-features = false }
+bevy_text = { version = "0.20", default-features = false }
+bevy_window = { version = "0.20", default-features = false }
+# UI input actions and prioritised, input-consuming contexts (ui.md OQ4, chosen 2026-10-18). Allowed ahead
+# of the crate "update all" batch (owner). No `state` feature: we don't drive contexts from bevy_state.
+bevy_enhanced_input = { version = "0.27", default-features = false }
+# UI styling (sf_ui_css only, ui.md R2b): CSS with cascade layers. Pulls Servo's MPL-2.0 `cssparser`/`selectors`,
+# allowed unmodified (owner 2026-10-11); no other crate may depend on it.
+bevy_flair = { version = "0.9", default-features = false }
+# Full engine: examples and tools only (dev-dependency), never a library dependency.
+bevy = { version = "0.20", default-features = false }
+# Floating-origin grids (world-coordinates.md). RC for Bevy 0.20: pinned until 0.14.0 ships.
+big_space = { version = "=0.14.0-rc.0", default-features = false, features = ["std", "i32"] }
+bitflags = "2"
+# blake3 and glam match what Bevy 0.20 uses (bevy_asset, bevy_math): one copy in the tree.
+blake3 = "1.8"
+futures-lite = "2"
+# UI strings (sf_ui, ui.md "Stack decision" 3): Project Fluent's reference crates, Bevy-free.
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+# sf_vfs hot reload (M5 A4): lock-free snapshot swap; the watcher crate and channel Bevy 0.20 uses.
+arc-swap = "1.9"
+async-channel = { version = "2", default-features = false }
+notify-debouncer-full = "0.7"
+# Same version bevy_gltf 0.20 uses. No "import" feature: we never decode images here.
+gltf = { version = "1.4", default-features = false, features = ["utils", "names", "KHR_materials_unlit"] }
+glam = "0.33"
+# Dialogue topic hyperlinks (sf_rpg, rpg.md "Topic links"); already in the lock through regex.
+aho-corasick = "1.1"
+indexmap = "2"
+log = "0.4"
+lz4_flex = "0.14"
+# Same version Bevy 0.20 uses for meshlets (one copy in the tree). Builds meshoptimizer (C++) with cc.
+meshopt = "0.6.2"
+# Luau runtime (scripting.md R1/R2). Only sf_script depends on it; `send` is an sf_script feature (on by
+# default) so the L1 spike can A/B it against `NonSend` storage.
+mlua = { version = "0.12.2", default-features = false, features = ["luau"] }
+# Collision queries (sf_controller's static query world): the library under avian and rapier.
+# Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
+parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }
+# Rigid-body engine behind the Bevy-free sf_physics (physics.md; ARCHITECTURE §10 2026-10-12). Apache-2.0, no Bevy.
+# Same parry3d as above. No `parallel` (rayon) until a measured step needs it; no `enhanced-determinism`.
+rapier3d = { version = "0.36.1", default-features = false, features = ["dim3", "f32", "std"] }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+rayon = "1.12"
+# Same version Bevy 0.20 uses (bevy_asset, bevy_reflect): one copy in the tree. Graph assets (sf_anim_graph).
+ron = "0.12"
+# CPU twin of the longest wave cascade (sf_water; water.md "The water query").
+rustfft = "6.4"
+semver = { version = "1", features = ["serde"] }
+# Saved-type shape goldens (save.md "Drift guard"); tests only (sf_save_bevy).
+serde-reflection = { version = "0.6", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smallvec = "1"
+# Delaunay triangulation of blend-space samples at bake (sf_anim_graph `bake` feature).
+spade = "2.15"
+tempfile = "3"
+thiserror = "2"
+toml = "0.9"
+# FBX import at bake time (sf_anim `fbx` feature): bindings to the single-file ufbx C library, built with `cc`.
+ufbx = "0.11.5"
+# Same version Bevy 0.20 renders with. Dev-dependency only: headless GPU twin tests (sf_wind).
+wgpu = { version = "30", default-features = false }
+
+# Our crates: `version` matches `workspace.package.version` (cargo-deny `wildcards`; crates.io needs it).
+sf_bake = { path = "crates/sf_bake", version = "0.1.0" }
+sf_coords = { path = "crates/sf_coords", version = "0.1.0" }
+sf_diag = { path = "crates/sf_diag", version = "0.1.0" }
+sf_diag_bevy = { path = "crates/sf_diag_bevy", version = "0.1.0" }
+sf_model = { path = "crates/sf_model", version = "0.1.0" }
+sf_model_bevy = { path = "crates/sf_model_bevy", version = "0.1.0" }
+sf_vfs = { path = "crates/sf_vfs", version = "0.1.0" }
+sf_records = { path = "crates/sf_records", version = "0.1.0" }
+sf_audio = { path = "crates/sf_audio", version = "0.1.0" }
+sf_audio_bevy = { path = "crates/sf_audio_bevy", version = "0.1.0" }
+sf_sky = { path = "crates/sf_sky", version = "0.1.0" }
+sf_mods = { path = "crates/sf_mods", version = "0.1.0" }
+sf_world = { path = "crates/sf_world", version = "0.1.0" }
+sf_terrain = { path = "crates/sf_terrain", version = "0.1.0" }
+sf_terrain_bevy = { path = "crates/sf_terrain_bevy", version = "0.1.0" }
+sf_lod = { path = "crates/sf_lod", version = "0.1.0" }
+sf_lod_bevy = { path = "crates/sf_lod_bevy", version = "0.1.0" }
+sf_anim = { path = "crates/sf_anim", version = "0.1.0", default-features = false }
+sf_anim_graph = { path = "crates/sf_anim_graph", version = "0.1.0" }
+sf_controller = { path = "crates/sf_controller", version = "0.1.0" }
+sf_character = { path = "crates/sf_character", version = "0.1.0" }
+sf_anim_bevy = { path = "crates/sf_anim_bevy", version = "0.1.0" }
+sf_character_bevy = { path = "crates/sf_character_bevy", version = "0.1.0" }
+sf_controller_bevy = { path = "crates/sf_controller_bevy", version = "0.1.0" }
+sf_physics = { path = "crates/sf_physics", version = "0.1.0" }
+sf_physics_bevy = { path = "crates/sf_physics_bevy", version = "0.1.0" }
+sf_ragdoll = { path = "crates/sf_ragdoll", version = "0.1.0" }
+sf_script = { path = "crates/sf_script", version = "0.1.0" }
+sf_water = { path = "crates/sf_water", version = "0.1.0" }
+sf_water_bevy = { path = "crates/sf_water_bevy", version = "0.1.0" }
+sf_wind = { path = "crates/sf_wind", version = "0.1.0" }
+sf_atmos = { path = "crates/sf_atmos", version = "0.1.0" }
+sf_weather = { path = "crates/sf_weather", version = "0.1.0" }
+sf_weather_bevy = { path = "crates/sf_weather_bevy", version = "0.1.0" }
+sf_precip_bevy = { path = "crates/sf_precip_bevy", version = "0.1.0" }
+sf_script_bevy = { path = "crates/sf_script_bevy", version = "0.1.0" }
+sf_ui = { path = "crates/sf_ui", version = "0.1.0" }
+sf_ui_bevy = { path = "crates/sf_ui_bevy", version = "0.1.0" }
+sf_ui_css = { path = "crates/sf_ui_css", version = "0.1.0" }
+sf_action = { path = "crates/sf_action", version = "0.1.0" }
+sf_action_bevy = { path = "crates/sf_action_bevy", version = "0.1.0" }
+sf_camera = { path = "crates/sf_camera", version = "0.1.0" }
+sf_camera_bevy = { path = "crates/sf_camera_bevy", version = "0.1.0" }
+sf_rpg = { path = "crates/sf_rpg", version = "0.1.0" }
+sf_ids = { path = "crates/sf_ids", version = "0.1.0" }
+sf_console = { path = "crates/sf_console", version = "0.1.0" }
+sf_console_bevy = { path = "crates/sf_console_bevy", version = "0.1.0" }
+sf_ui_inventory = { path = "crates/sf_ui_inventory", version = "0.1.0" }
+sf_rpg_ui = { path = "crates/sf_rpg_ui", version = "0.1.0" }
+sf_save = { path = "crates/sf_save", version = "0.1.0" }
+sf_save_bevy = { path = "crates/sf_save_bevy", version = "0.1.0" }
+# Feature unification (cargo hakari, .config/hakari.toml): every Bevy crate depends on it. This is
+# hakari's empty crates.io stub (CC0, never has code), patched below to our crates/workspace-hack, so a
+# workspace that path-depends on our crates (bevyrrowind) gets the stub or its own hack, not ours.
+workspace-hack = "=0.1.0"
+
+# big_space with dirty-tree pruning in low-precision propagation (vendor/big_space,
+# "superfargoth patch" comments; research/perf/README.md item 2). Drop once upstream has it.
+[patch.crates-io]
+big_space = { path = "vendor/big_space" }
+# Bevy 0.20.0 with bevyengine/bevy PRs #26149 (`Core3dShadows`: a slim schedule for point/spot shadow
+# views) and #26161 (skip re-rendering unchanged point/spot shadow maps); vendor/README.md. Drop on
+# the Bevy release that ships both.
+bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
+bevy_pbr = { path = "vendor/bevy_pbr" }
+bevy_render = { path = "vendor/bevy_render" }
+# dlss_wgpu 6.0.0 facade with no NVIDIA code: NGX lives in the separately shipped plugin
+# (plugins/sf_dlss), loaded at runtime from <exe>/dlss/; vendor/README.md. Keep while the game is GPL.
+dlss_wgpu = { path = "vendor/dlss_wgpu" }
+# Our feature-unification crate in place of the crates.io stub (`workspace-hack` above).
+workspace-hack = { path = "crates/workspace-hack" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+# Bevy system parameters (`Res<T>`, `Query<..>`) idiomatically elide lifetimes.
+elided_lifetimes_in_paths = "allow"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+# Bevy system parameters (`Res<T>`, `Query<..>`) are taken by value by design.
+needless_pass_by_value = "allow"
+# Trait impls (e.g. Bevy's AssetReader) read best as `async fn` even when synchronous.
+unused_async_trait_impl = "allow"
+
+# Same profiles as bevyrrowind (see docs/ARCHITECTURE.md "Build performance").
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.debugging]
+inherits = "dev"
+debug = true

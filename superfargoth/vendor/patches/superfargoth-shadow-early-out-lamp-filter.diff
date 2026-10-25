@@ -1,0 +1,183 @@
+diff --git a/bevy_pbr/src/lib.rs b/bevy_pbr/src/lib.rs
+index f35f60d..e7ccfa5 100644
+--- a/bevy_pbr/src/lib.rs
++++ b/bevy_pbr/src/lib.rs
+@@ -246,6 +246,8 @@ impl Plugin for PbrPlugin {
+                 ScatteringMediumPlugin,
+                 AtmospherePlugin,
+                 GpuClusteringPlugin,
++                // superfargoth patch (own: lamp shadow filter)
++                bevy_render::extract_component::ExtractComponentPlugin::<PointSpotShadowsHardware2x2>::default(),
+             ));
+ 
+         #[cfg(feature = "bevy_gltf")]
+diff --git a/bevy_pbr/src/render/mesh.rs b/bevy_pbr/src/render/mesh.rs
+index 05c268f..ee3bd39 100644
+--- a/bevy_pbr/src/render/mesh.rs
++++ b/bevy_pbr/src/render/mesh.rs
+@@ -358,6 +358,14 @@ fn mark_all_meshes_for_reextraction(
+ #[derive(Resource, Deref, DerefMut, Default, Debug, Clone)]
+ pub struct ViewKeyCache(HashMap<RetainedViewEntity, MeshPipelineKey>);
+ 
++// superfargoth patch (own: lamp shadow filter)
++/// Add to a camera so point and spot light shadows use the 2x2 hardware filter
++/// ([`ShadowFilteringMethod::Hardware2x2`]) while directional lights keep the camera's
++/// [`ShadowFilteringMethod`]. Forward and prepass pipelines only (not deferred lighting, meshlets).
++#[derive(Component, Clone, Copy, Default, Debug, bevy_render::extract_component::ExtractComponent)]
++#[extract_app(RenderApp)]
++pub struct PointSpotShadowsHardware2x2;
++
+ pub fn check_views_need_specialization(
+     mut view_key_cache: ResMut<ViewKeyCache>,
+     mut dirty_specializations: ResMut<DirtySpecializations>,
+@@ -387,6 +395,7 @@ pub fn check_views_need_specialization(
+             Has<ExtractedAtmosphere>,
+             Has<ScreenSpaceReflectionsUniform>,
+             Has<ContactShadows>,
++            Has<PointSpotShadowsHardware2x2>, // superfargoth patch (own: lamp shadow filter)
+         ),
+     )>,
+     mut seen_views: Local<HashSet<RetainedViewEntity>>,
+@@ -406,7 +415,7 @@ pub fn check_views_need_specialization(
+         projection,
+         distance_fog,
+         (has_environment_maps, has_irradiance_volumes),
+-        (has_oit, has_atmosphere, has_ssr, has_contact_shadows),
++        (has_oit, has_atmosphere, has_ssr, has_contact_shadows, has_point_spot_hw2x2), // superfargoth patch (own: lamp shadow filter)
+     ) in views.iter_mut()
+     {
+         seen_views.insert(view.retained_view_entity);
+@@ -454,6 +463,11 @@ pub fn check_views_need_specialization(
+             view_key |= MeshPipelineKey::ATMOSPHERE;
+         }
+ 
++        // superfargoth patch (own: lamp shadow filter)
++        if has_point_spot_hw2x2 {
++            view_key |= MeshPipelineKey::POINT_SPOT_SHADOWS_HARDWARE_2X2;
++        }
++
+         if has_contact_shadows {
+             view_key |= MeshPipelineKey::CONTACT_SHADOWS;
+         }
+@@ -3128,7 +3142,8 @@ bitflags::bitflags! {
+         const INVERT_CULLING                    = 1 << 22;
+         const PREPASS_READS_MATERIAL            = 1 << 23;
+         const CONTACT_SHADOWS                   = 1 << 24;
+-        const LAST_FLAG                         = Self::CONTACT_SHADOWS.bits();
++        const POINT_SPOT_SHADOWS_HARDWARE_2X2   = 1 << 25; // superfargoth patch (own: lamp shadow filter)
++        const LAST_FLAG                         = Self::POINT_SPOT_SHADOWS_HARDWARE_2X2.bits();
+ 
+         const ALL_PREPASS_BITS                  = Self::DEPTH_PREPASS.bits()
+                                                 | Self::NORMAL_PREPASS.bits()
+@@ -3681,6 +3696,11 @@ impl SpecializedMeshPipeline for MeshPipeline {
+             shader_defs.push("LIGHTMAP_BICUBIC_SAMPLING".into());
+         }
+ 
++        // superfargoth patch (own: lamp shadow filter)
++        if key.contains(MeshPipelineKey::POINT_SPOT_SHADOWS_HARDWARE_2X2) {
++            shader_defs.push("POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2".into());
++        }
++
+         if key.contains(MeshPipelineKey::TEMPORAL_JITTER) {
+             shader_defs.push("TEMPORAL_JITTER".into());
+         }
+diff --git a/bevy_pbr/src/render/pbr_functions.wesl b/bevy_pbr/src/render/pbr_functions.wesl
+index 5065e10..767d99d 100644
+--- a/bevy_pbr/src/render/pbr_functions.wesl
++++ b/bevy_pbr/src/render/pbr_functions.wesl
+@@ -474,21 +474,24 @@ fn apply_pbr_lighting(
+         @else   // LIGHTMAP
+         let enable_diffuse = true;
+ 
++        // superfargoth patch (own: shadow early-out): light first, then fetch the shadow only where
++        // it isn't multiplied by zero (out of range, facing away). Exact: no visible change.
++        let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true);
+         var shadow: f32 = 1.0;
+-        if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
++        let lit = any(light_contrib != vec3(0.0));
++        if (lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
+                 && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
+             shadow = shadows::fetch_point_shadow(light_id, in.world_position, in.world_normal, in.frag_coord.xy);
+         }
+ 
+         @if(CONTACT_SHADOWS && DEPTH_PREPASS)
+-        if contact_shadow_enabled && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 &&
++        if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: shadow early-out): `lit`
+                 (view_bindings::clustered_lights.data[light_id].flags &
+                     mesh_view_types::POINT_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
+             let L = normalize(view_bindings::clustered_lights.data[light_id].position_radius.xyz - in.world_position.xyz);
+             shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
+         }
+ 
+-        let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true);
+         direct_light += light_contrib * shadow;
+ 
+ @if(STANDARD_MATERIAL_DIFFUSE_TRANSMISSION) {
+@@ -528,8 +531,11 @@ fn apply_pbr_lighting(
+         @else   // LIGHTMAP
+         let enable_diffuse = true;
+ 
++        // superfargoth patch (own: shadow early-out): as for point lights (also outside the cone).
++        let light_contrib = lighting::spot_light(light_id, &lighting_input, enable_diffuse);
+         var shadow: f32 = 1.0;
+-        if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
++        let lit = any(light_contrib != vec3(0.0));
++        if (lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
+                 && (view_bindings::clustered_lights.data[light_id].flags &
+                     mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
+             shadow = shadows::fetch_spot_shadow(
+@@ -542,14 +548,13 @@ fn apply_pbr_lighting(
+         }
+ 
+         @if(CONTACT_SHADOWS && DEPTH_PREPASS)
+-        if contact_shadow_enabled && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 &&
++        if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: shadow early-out): `lit`
+                 (view_bindings::clustered_lights.data[light_id].flags &
+                     mesh_view_types::POINT_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
+             let L = normalize(view_bindings::clustered_lights.data[light_id].position_radius.xyz - in.world_position.xyz);
+             shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
+         }
+ 
+-        let light_contrib = lighting::spot_light(light_id, &lighting_input, enable_diffuse);
+         direct_light += light_contrib * shadow;
+ 
+ @if(STANDARD_MATERIAL_DIFFUSE_TRANSMISSION) {
+diff --git a/bevy_pbr/src/render/shadow_sampling.wesl b/bevy_pbr/src/render/shadow_sampling.wesl
+index 224fb0c..bf42f03 100644
+--- a/bevy_pbr/src/render/shadow_sampling.wesl
++++ b/bevy_pbr/src/render/shadow_sampling.wesl
+@@ -513,7 +513,10 @@ fn sample_shadow_cubemap(
+     light_id: u32,
+     frag_coord_xy: vec2<f32>,
+ ) -> f32 {
+-    @if(SHADOW_FILTER_METHOD_GAUSSIAN)
++    // superfargoth patch (own: lamp shadow filter): 2x2 hardware PCF for point lights.
++    @if(POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2)
++    return sample_shadow_cubemap_hardware(light_local, depth, light_id);
++    @elif(SHADOW_FILTER_METHOD_GAUSSIAN)
+     return sample_shadow_cubemap_gaussian(
+         light_local, depth, POINT_SHADOW_SCALE, distance_to_light, light_id);
+     @elif(SHADOW_FILTER_METHOD_TEMPORAL)
+diff --git a/bevy_pbr/src/render/shadows.wesl b/bevy_pbr/src/render/shadows.wesl
+index 51610cd..442a2c9 100644
+--- a/bevy_pbr/src/render/shadows.wesl
++++ b/bevy_pbr/src/render/shadows.wesl
+@@ -3,6 +3,7 @@ import package::render::{
+     mesh_view_bindings as view_bindings,
+     shadow_sampling::{
+         SPOT_SHADOW_TEXEL_SIZE, sample_shadow_cubemap, sample_shadow_cubemap_pcss,
++        sample_shadow_map_hardware, // superfargoth patch (own: lamp shadow filter)
+         sample_shadow_map, sample_shadow_map_pcss,
+     }
+ };
+@@ -122,6 +123,10 @@ fn fetch_spot_shadow(
+         );
+     }
+ 
++    // superfargoth patch (own: lamp shadow filter): 2x2 hardware PCF for spot lights, directional keeps the view's filter.
++    @if(POINT_SPOT_SHADOW_FILTER_HARDWARE_2X2)
++    return sample_shadow_map_hardware(shadow_uv, depth, array_index);
++    @else
+     return sample_shadow_map(
+         shadow_uv,
+         depth,

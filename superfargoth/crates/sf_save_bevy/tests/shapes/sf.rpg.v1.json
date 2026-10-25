@@ -1,0 +1,143 @@
+{
+  "GameTime": {
+    "STRUCT": [
+      {
+        "day": "U32"
+      },
+      {
+        "minute": "U16"
+      }
+    ]
+  },
+  "HeardLine": {
+    "STRUCT": [
+      {
+        "source": "STR"
+      },
+      {
+        "speaker": "STR"
+      },
+      {
+        "text": "STR"
+      }
+    ]
+  },
+  "Journal": {
+    "STRUCT": [
+      {
+        "entries": {
+          "SEQ": {
+            "TYPENAME": "JournalEntry"
+          }
+        }
+      },
+      {
+        "next_seq": "U32"
+      }
+    ]
+  },
+  "JournalEntry": {
+    "STRUCT": [
+      {
+        "seq": "U32"
+      },
+      {
+        "quest": {
+          "OPTION": "STR"
+        }
+      },
+      {
+        "stage": {
+          "OPTION": "I32"
+        }
+      },
+      {
+        "source": {
+          "OPTION": "STR"
+        }
+      },
+      {
+        "text": "STR"
+      },
+      {
+        "time": {
+          "TYPENAME": "GameTime"
+        }
+      }
+    ]
+  },
+  "KnownTopic": {
+    "STRUCT": [
+      {
+        "learned": "U32"
+      },
+      {
+        "heard": {
+          "SEQ": {
+            "TYPENAME": "HeardLine"
+          }
+        }
+      }
+    ]
+  },
+  "QuestLog": {
+    "STRUCT": [
+      {
+        "quests": {
+          "MAP": {
+            "KEY": "STR",
+            "VALUE": {
+              "TYPENAME": "QuestState"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "QuestState": {
+    "STRUCT": [
+      {
+        "stage": "I32"
+      },
+      {
+        "finished": "BOOL"
+      }
+    ]
+  },
+  "Topics": {
+    "STRUCT": [
+      {
+        "known": {
+          "MAP": {
+            "KEY": "STR",
+            "VALUE": {
+              "TYPENAME": "KnownTopic"
+            }
+          }
+        }
+      },
+      {
+        "clock": "U32"
+      }
+    ]
+  },
+  "WorldRpg": {
+    "STRUCT": [
+      {
+        "quests": {
+          "TYPENAME": "QuestLog"
+        }
+      },
+      {
+        "journal": {
+          "TYPENAME": "Journal"
+        }
+      },
+      {
+        "topics": {
+          "TYPENAME": "Topics"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+[package]
+name = "sf_weather"
+description = "Bevy-free weather core for superfargoth: presets and climates as records, deterministic forecast, per-channel lead/lag blending, lightning schedule, WeatherFrame (weather.md \"Weather: state machine and presets as data\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+smallvec.workspace = true
+sf_atmos.workspace = true
+sf_records.workspace = true
+sf_sky.workspace = true
+sf_wind.workspace = true
+
+[dev-dependencies]
+# Headless compute run of `src/map.wgsl` against the CPU twin (tests/map_gpu_twin.rs).
+futures-lite.workspace = true
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
+ron.workspace = true
+sf_coords.workspace = true
+
+[lints]
+workspace = true

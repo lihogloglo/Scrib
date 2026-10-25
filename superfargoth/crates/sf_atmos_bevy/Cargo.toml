@@ -1,0 +1,44 @@
+[package]
+name = "sf_atmos_bevy"
+description = "Bevy render plugin for sf_atmos: quarter-resolution temporal volumetric clouds and the cloud shadow map (weather.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
+bevy_light.workspace = true
+bevy_material.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+# `pbr_light_textures`: cloud shadows through `DirectionalLightTexture`. Bevy only defines
+# LIGHT_TEXTURES when clustered decals are usable too (bevy_pbr mesh.rs), so both are needed:
+# without `pbr_clustered_decals` the light texture is silently ignored (S1, 2026-10-13).
+bevy_pbr = { workspace = true, features = ["pbr_light_textures", "pbr_clustered_decals"] }
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+log.workspace = true
+sf_atmos = { path = "../sf_atmos", version = "0.1.0" }
+# The world weather map (WE4b): `WeatherMap`, the resolve shader `MAP_WGSL`.
+sf_weather = { path = "../sf_weather", version = "0.1.0" }
+sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
+workspace-hack.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
+
+# Synthetic test scene: each cloud genus, the shadow edge, the sun behind cloud.
+[[example]]
+name = "clouds"

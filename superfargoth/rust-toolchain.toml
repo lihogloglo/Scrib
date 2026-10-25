@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned so every machine (and CI) builds with the same compiler and caches stay valid.
+channel = "1.98.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+

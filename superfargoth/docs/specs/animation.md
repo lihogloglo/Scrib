@@ -1,0 +1,1481 @@
+# Animation: clips, pose runtime, graph, IK, LOD
+
+Status: draft (2026-10-11); `sf_anim` and `sf_anim_graph` built; next-gen
+roadmap (warping, full-body IK, context probes, physical animation, pose
+search, creatures) drafted, not built; R11b (2026-10-19): the decider moved to
+[action.md](action.md), see "Next-gen roadmap: Decided shape (R11b)" for what changes here
+Slice plan and execution order (2026-10-22): [animation-plan.md](animation-plan.md).
+Crates: `sf_anim` (new, Bevy-free: skeletons, cooked clips, sampling, pose
+ops, root motion, events and curves, IK solvers, retarget math, bake steps),
+`sf_anim_graph` (new, Bevy-free: graph assets, layers, state machines, blend
+spaces, sync, inertialization, procedural op stack), `sf_anim_bevy` (new:
+plugin, scheduling, LOD and budget, bone write-back, events, debug draw)
+
+## Goal
+
+Characters and creatures animate with modern quality and at crowd scale:
+layered graphs with masks and additive layers, blend spaces, root motion,
+events and curves that gameplay can key off, and a procedural pass (foot
+placement, look-at, hand IK, stride and orientation warping) on top. The
+cost is bounded per frame by animation LOD and a budget. Everything that
+can be precomputed is a bake product, so the runtime never parses a legacy
+format and never resamples a source curve.
+
+Skeleton conventions (bone names, axes, which bone carries root motion)
+come from adapters through data. Nothing here assumes a particular rig;
+humanoid-specific features go through the standard rig (character.md).
+
+Non-goals for M3's first slice, though the design leaves room for them:
+motion matching (below), physics poses (powered ragdolls, hit reactions in
+M4), combat windows (M9 uses the event tracks defined here), and
+procedural cloth and hair (M4). Where each next-gen layer lands (motion
+warping, full-body IK, context probes, physical animation, pose search,
+creatures) is in "Next-gen roadmap" below; limb chains for any skeleton
+are in [rig-profile.md](rig-profile.md).
+
+## Canonical technique
+
+- **Runtime shape: ozz-animation's job model** (Guillaume Blanc, MIT,
+  guillaumeblanc.github.io/ozz-animation). Clips are sampled into
+  contiguous **local-space pose buffers**. Blending, masking and additive
+  ops work on whole buffers, then a local-to-model pass runs. IK runs on
+  the model-space buffer, and the result is written to the engine once.
+  The graph decides *what* to sample and how to mix; the pose code is a
+  handful of tight loops.
+- **Graph: layered blend trees and state machines** (UE5 Animation
+  Blueprints, Unity Mecanim, Esoterica by Bobby Anguelov, MIT). Per-bone
+  **blend masks** with weights (UE "blend profiles"), not on/off bits.
+  **Sync groups** by normalized phase, refined by **sync markers** (UE).
+- **Transitions: inertialization** (David Bollo, *Inertialization:
+  High-Performance Animation Transitions in Gears of War*, GDC 2018). At a
+  switch, the offset between the last output pose and the new source
+  decays over the blend time with a per-bone quintic. Only the new source
+  is evaluated, so a transition costs about one pose, not two. A plain
+  crossfade stays available for layer weights and blend nodes.
+- **Blend spaces**: 1D, and 2D over a Delaunay triangulation of the sample
+  points (barycentric weights, at most 3 clips active; UE's approach).
+  Gradient-band interpolation (Johansen, *Automated Semi-Procedural
+  Animation for Character Locomotion*, 2009, used by Unity's freeform blend
+  trees) is smoother but blends N clips. We take the cheaper one and add
+  gradient bands only if seams show.
+- **Root motion**: the root bone's motion is extracted at bake time into a
+  separate track (UE, Unity). Each clip chooses how it moves the character
+  (see Root motion below).
+- **Locomotion fidelity without a huge clip set**: playback-rate matching
+  plus **stride warping** and **orientation warping** (UE Animation
+  Warping, from Paragon and Fortnite), **foot placement** with pelvis
+  adjustment and foot locking (Bereznyak, *IK Rig: Procedural Pose
+  Animation*, GDC 2016; Johansen 2009), and contact curves detected at bake.
+- **IK solvers**: analytic two-bone with a pole vector (law of cosines;
+  Holden, *Simple Two Joint IK*, 2017), aim/look-at chains with per-joint
+  weights and limits, FABRIK for longer chains (Aristidou & Lasenby,
+  *FABRIK*, Graphical Models 73(5), 2011), CCD as a fallback (Wang & Chen,
+  1991). Targets are smoothed with critically damped springs (Holden,
+  *Spring-It-On*, 2021).
+- **Crowd cost: significance-based LOD and a budget** (UE Animation Budget
+  Allocator and Update Rate Optimization). Throttled characters interpolate
+  between updates; off-screen characters advance clocks only.
+- **Clip storage: uniform sampling with quantized tracks** (the ACL design,
+  Nicholas Frechette, MIT, Unreal's default codec). It needs no key search,
+  so sampling is two frame reads and a lerp. Error is measured on virtual
+  vertices a fixed distance from each bone, as ACL does.
+
+### Why not Bevy's animation system (deviation from ARCHITECTURE §7.6)
+
+Bevy 0.20's `bevy_animation` (checked 2026-10-11) has `AnimationGraph` with
+clip, blend and add nodes, masks as on/off bits over mask groups,
+`AnimationTransitions` crossfades, and `AnimationEvent` observers. The
+0.17–0.20 release notes add nothing to animation itself; 0.19 improved
+skinned-mesh culling (bounds from joints) and morph-target batching. It
+lacks what M3 needs:
+1. **No root motion** extraction or modes.
+2. **No hook between blending and write-back.** IK must run on the blended
+   pose in model space. With Bevy, the graph writes `Transform`s, so IK would
+   have to run after transform propagation and then re-propagate.
+3. **Per-target evaluation.** `animate_targets` walks each bone entity's
+   subgraph (`ThreadedAnimationSubgraph`) and samples dynamically
+   dispatched curves per bone. A pose-buffer runtime samples a whole
+   skeleton in one loop.
+4. No weighted masks, sync groups or markers, inertialization, blend
+   spaces, curve outputs, or animation LOD.
+
+So characters use our runtime. Bevy still renders: GPU skinning, morph
+targets, culling, and bone entities stay Bevy's. `AnimationClip` remains
+fine for UI or glTF props that need nothing above.
+
+**Crates checked (2026-10-11):**
+
+| Crate | Version / Bevy | License | Verdict |
+|---|---|---|---|
+| `bevy_animation_graph` | 0.11.0 (2026-07-11), Bevy 0.19 | MIT/Apache | Closest fit: graph assets, state machines, 2D blend space, two-bone IK, partial ragdolls, visual editor. But it lags a Bevy version, says "young, expect bugs, API churn", ties nodes to Bevy reflection, and doesn't mention root motion. We take ideas and revisit its editor as an authoring tool. |
+| `bevy_mod_inverse_kinematics` | 0.12.0 (2026-09-01), Bevy 0.19 | MIT/Apache | Maintained, so ARCHITECTURE §4's "IK crates are stale" is out of date. It solves on entity `Transform`s after propagation, which is the pattern we avoid. |
+| `bevy_fabrik` 0.2.1 (2026-04), `bevy_skeleton_modifiers` 0.1.1 (2026-10-09, MIT, spring bones + IK) | — | MIT/Apache | Entity-based and new. Spring bones are a candidate for hair and tails before cloth (M4). |
+| `ozz-animation-rs` | 0.11.0 (2025-10) | **MPL-2.0**, nightly-only SIMD | Not usable: license outside our list, and it needs nightly. The design reference is the MIT C++ original. |
+| `bevy_motion_matching` (voxell-tech) | app, not a library | MIT/Apache | Reference only. |
+| ACL (C++) | — | MIT | No Rust binding. We implement the uniform-sampling subset. |
+
+The solvers are textbook and each is under 200 lines on our pose buffers,
+so writing them ourselves is cheaper than adapting entity-based crates.
+
+## Data model
+
+**Skeleton** (bake product `skeleton.cook`, per skeleton source):
+`Skeleton { joints: [name, parent], rest: [Trs], root_motion_joint,
+lod: [JointLodMask; 4], tags }`. Joints are depth-first ordered, so a
+parent always precedes its children and local-to-model is one forward
+loop. `tags` are adapter-provided (foot, toe, hand, head, eye, twist…) and
+humanoid-mapped through the rig (character.md). Joint LOD masks list the
+joints evaluated at each LOD. They are derived at bake from skin-weight
+coverage and chain depth (fingers, face, twist joints drop first), with
+adapter overrides.
+
+**Clip** (bake product `anim.cook`, per (source clip, target skeleton)):
+
+```rust
+pub struct Clip {
+    pub skeleton: SkeletonId,     // fingerprint of the skeleton it is bound to
+    pub duration: f32, pub rate: f32,              // uniform sample rate (≥ 30 Hz)
+    pub tracks: TrackTable,       // per joint: rot/trans/scale = Rest | Constant | Animated(range, offset)
+    pub frames: Bytes,            // frame-major, quantized: rotations 48-bit smallest-three,
+                                  // translations 16-bit per axis over per-track ranges
+    pub root_motion: Option<RootMotionTrack>,      // extracted, see below
+    pub curves: Vec<CurveTrack>,  // named f32 curves (contact.l/r, user curves), and morph weights
+    pub events: Vec<Event>,       // sorted by time
+    pub markers: Vec<SyncMarker>, // e.g. foot-down l/r, at bake from contacts or authored
+    pub loop_range: Option<(f32, f32)>,
+    pub meta: ClipMeta,           // cycle distance, average speed and heading, additive base
+}
+pub struct Event { pub time: f32, pub end: Option<f32>, pub name: EventId, pub payload: SmallStr }
+```
+
+The rate and quantization are chosen per clip at bake, as the coarsest
+that keeps virtual-vertex error under 0.1 mm at 1 m. Additive clips are
+stored as deltas from their declared base pose (first frame, a pose, or a
+reference clip), computed at bake.
+
+**As implemented in `sf_anim` (2026-10-11).** These points differ from the
+sketch above on purpose:
+- Bit widths are per track, not fixed. Each animated rotation, translation
+  or scale track gets the fewest bits (1–24 per component) that meet its
+  share of the error budget, or raw f32. Rotations drop whichever of the
+  four components stays farthest from zero (ACL always drops W), so tracks
+  swinging through 180° still quantize. Frames are bit-packed records,
+  frame-major. Channels that never move live in a per-clip constant pose.
+- The rotation-error metric is `2·atan2(|v|, |w|)` of the relative
+  rotation. The usual `2·acos(|a·b|)` reads every angle below about 3e-4
+  rad as zero in f32, so a quantizer that uses it picks too few bits, and
+  the measured error then stays near 1 mm at any rate.
+- Additive bases are `FirstFrame`, `Rest`, or the clip's own pose at a time.
+  A reference-clip base is left to `animgraph.compile`.
+- Joint LOD masks: three masks (LOD0–2; A3 evaluates none), derived from
+  joint tags (fingers, face, eyes, jaw, twist and end joints drop at LOD1,
+  toes at LOD2) plus an adapter `keep` list. Skin-weight coverage isn't
+  used yet: `sf_model` has no skin data until its M3 item lands.
+- `LocalPose` is SoA four joints wide from the start (open question 2): a
+  pose op is a few 4-wide multiply-adds per joint group.
+
+**Pose** (runtime, per character): `LocalPose { trs: Vec<Trs> }` and
+`ModelPose { mats: Vec<Affine3A> }` from a per-thread pool, plus curve
+values. The character keeps two past output poses for inertialization.
+That's about 5 KB for a 60-joint skeleton.
+
+**Graph asset** (`*.animgraph.ron`, compiled at bake per skeleton by
+`animgraph.compile`):
+- **Parameters**: typed blackboard (`f32`, `bool`, `Vec2`, trigger, event
+  flags), written by gameplay, AI and scripts.
+- **Layers**, evaluated bottom-up: `{ graph, mode: Override | Additive,
+  mask: BlendMask, weight: Param | const }`. `BlendMask` is per-joint
+  weights over the skeleton, authored as rig-relative rules ("spine and
+  above", "left arm") and resolved per skeleton at compile.
+- **Nodes**: `Clip` (rate, loop, start phase), `BlendSpace1D`,
+  `BlendSpace2D` (triangulated at compile), `Blend` (by param or bool),
+  `Additive`, `LayeredPerBone`, `StateMachine` (states, prioritized
+  transitions with conditions on params, events, clip phase or time left,
+  `Inertialize(t)` or `Crossfade(t)`), `Sync` (group id, leader by weight
+  or forced, markers or phase), `Mirror` (by rig left/right map),
+  `RateScale`, `PoseInput` (pose supplied from outside, e.g. a physics
+  ragdoll in M4), `Subgraph`. Nodes are a closed Rust enum, so graphs are
+  data, patchable by mods like records. New node kinds are framework code.
+- **Procedural op stack** after the graph (per graph asset, ordered, each
+  with a LOD cut-off): `SpeedMatch`, `StrideWarp`, `OrientationWarp`,
+  `FootPlacement`, `LookAt`, `HandIk`, `AimOffset`, `SpringBones` (later).
+
+**As implemented in `sf_anim_graph` (2026-10-11).** Authoring types live in
+`asset` (RON, parsed with `IMPLICIT_SOME`, so optional fields need no
+`Some(..)`; numbers or parameter names are interchangeable wherever a value
+is read). `compile` (feature `bake`) produces a `CompiledGraph` (`SFAG`,
+postcard). The runtime is `Binding` (graph + skeleton + clips in slot
+order) plus one `GraphInstance` per character. These points refine or
+change the sketch above:
+- **Node references are instances.** A node named from two places gets two
+  instances (own clock, own state). Nodes are laid out depth-first, so a
+  subtree is an index range: resetting a state on entry, or finding its
+  highest-weighted player for a phase condition, is a slice walk.
+  `Subgraph` inlines another asset at compile; parameters merge by name.
+- **Sync is a property of players, not a `Sync` node** (UE's model). A clip
+  or blend space declares `sync: (group, role)` with roles `CanLead`,
+  `AlwaysLead`, `NeverLead`. The highest-weighted active member leads, and
+  followers are placed, not advanced: by markers when the leader's current
+  marker pair exists in the follower (nearest occurrence to its playhead),
+  else by normalized phase. Blend-space samples are always synced the same
+  way to the space's highest-weighted sample, and the space plays at the
+  weighted length of its samples (UE). Zero-weight branches aren't
+  ticked, so their clocks hold until sync realigns them.
+  A looping clip whose loop range sits inside it (an intro before, an
+  outro after) syncs over its loop only: marker pairs wrap at the loop's
+  end, markers outside the loop are skipped, and a follower always lands
+  inside its loop. (Placed past the loop's end, a lane played out to the
+  clip's end once it led and froze there: walkers5, 2026-10-13.)
+- **Inertialization is a post-process on the graph output**, as Bollo and
+  UE place it: a transition requests it and the shortest pending duration
+  wins. Two corrections to the talk's per-bone scalar quintic (both needed
+  for the continuity test to pass at shrinking dt):
+  the offset's initial velocity is source minus *target* velocity (Holden,
+  *Spring-It-On*, 2021; the talk and UE ignore the target's velocity), the
+  target's velocity coming from one extra evaluation a frame ahead on the
+  switch frame only; and each channel's offset is a 3-vector (translation,
+  scaled-axis rotation, scale) with a quintic per component, because a
+  fixed axis drops the velocity across it. Bollo's guards stay along the
+  offset direction (blend shortened to `-5·x0/v0`, initial acceleration
+  never toward zero). The switch frame outputs the previous output
+  extrapolated by its velocity, so there is no one-frame stall, and an
+  interruption restarts from the last two outputs. Dead blending (Holden
+  2023, in UE 5.3+) is the alternative if large offsets look floaty.
+- **State machines**: one transition per update, first match in list
+  order, `"*"` for any state. `Crossfade(t)` uses smoothstep weights and
+  freezes the current weights when interrupted; re-entering the current
+  state inertializes instead. Triggers are consumed by the transition that
+  reads them and cleared at the end of every update. `Event` conditions
+  see the source state's events from the previous update; `PhaseAtLeast`,
+  `TimeLeft` and `Finished` read its highest-weighted player.
+- **Root motion output** is the weighted delta of `Drive` players only, plus
+  `drive_weight` (their share of the pose): `Match` and `Ignore` players
+  contribute zero, so the mover blends its capsule velocity with the root
+  delta by `drive_weight`. A state's mode is inherited at compile by the
+  players under it that set none. Masked blends scale root motion by the
+  mask weight at the root-motion joint.
+- **Events**: per top-level layer, only the highest-weighted lane fires
+  point events (UE's "highest weighted" mode, scoped per layer so an
+  upper-body attack still fires). Window edges come from lanes at weight ≥
+  0.5. Events carry the clip slot, event index, graph-wide id and weight.
+- **Curves** are blended along the tree like poses (absent where no clip
+  below has them), so `contact.*` drives foot locks correctly in blends.
+- **Procedural ops**: `SpeedMatch` acts on playback rates before the
+  advance (it can't be an after-the-fact op) and leaves the residual ratio
+  to `StrideWarp`. `AimOffset` is not an op: as in UE it is a 2D blend space
+  of additive clips under an `Additive` node or additive layer. Ops take
+  ground samples per leg (character space) and the character's motion
+  since the last update, so foot locks stay planted in the world; the
+  output's `probe_origins` are next update's probe points.
+  `HitReact` and `SpringBones` (M4 P9): see "Next-gen roadmap" layer 4.
+- **`Mirror`** works in model space: joint `j` takes its counterpart's
+  model transform reflected, times a correction computed from the rest pose
+  at compile, so any joint-axis convention mirrors correctly (pairs from
+  the graph or the adapter's rig).
+- **LOD**: levels 0–2 sample only the skeleton's LOD joint mask; 3 and up
+  run state machines, clocks, events, root motion and curves but evaluate
+  no pose, and drop the pose history (the next switch cuts).
+- Not done yet: reference-clip additive bases (needs a derived clip
+  product), per-joint inertialization blend profiles, and a graph-level
+  event mode switch (all events vs highest weighted).
+- **Measured** (`a0_update_timing`, release, battery power): one A0 update of
+  a 2-layer + additive graph with a synced blend space under a state
+  machine and all ops is 4.4 µs on the 17-joint test rig (5.0 µs on
+  2026-10-12 after the creature ops, with another session active;
+  the 31-joint quadruped with `Fit` foot placement 5.4 µs). Re-measure on a
+  real ~60-joint skeleton against the 25 µs gate in `sf_anim_bevy`.
+
+**Crates checked for the graph (2026-10-11).** `bevy_animation_graph` (above)
+ties nodes to Bevy reflection. `animgraph` 0.1.0 (MIT/Apache, hierarchical
+state machines) has had no release since 2023-05. Nothing on crates.io
+implements inertialization or blend-space triangulation as a library. Used:
+`spade` 2.15 (MIT/Apache, maintained) for the Delaunay triangulation at
+bake, and `ron` 0.12, the version Bevy 0.20 already pulls in. Both are behind
+the `bake` feature, so the runtime depends on neither.
+
+## Evaluation (per character, per update)
+
+1. **Advance**: the state machines tick, clocks advance, and sync groups
+   align followers to the leader's phase or marker interval.
+2. **Sample and blend**: the tree is evaluated depth-first into pooled local
+   poses. Masked layers lerp/slerp per joint by mask weight, and additive
+   layers apply `q = slerp(I, Δq, w) · q`. Inertialization offsets are
+   added. Only joints in the current LOD mask are touched.
+3. **Root motion**: the weighted blend of the active clips' root deltas.
+4. **Model space**, then the **procedural ops** (below), then a final
+   local pose.
+5. **Outputs**: final local pose, root delta, fired events (with source
+   weight), curve values, and bounds (for culling and probes).
+
+The whole step is a pure function of (graph instance, params, dt, probe
+results), so it runs in parallel per character and is deterministic.
+
+**Events.** A point event fires when the playhead crosses its time in the
+play direction, including across a loop wrap, at most once per crossing. A
+window event (`end` set) reports enter and exit and is "active" while its
+clip's weight is at least 0.5. In a blend or sync group, only the
+highest-weighted clip fires point events by default (no double footsteps
+from a 50/50 walk blend), as UE's "highest weighted animation" mode does.
+Clips fading out under inertialization fire nothing.
+
+**Root motion modes**, per clip or state:
+- `Drive`: the delta moves the character (attacks, rolls, climbs,
+  interactions). The mover (locomotion.md) consumes it on its next update:
+  the kinematic mover in M3, the physics controller's fixed step from M4.
+  That is one frame of latency, the industry norm.
+- `Match` (locomotion default): the character is capsule-driven. The clip's
+  baked speed sets playback rate = actual speed / clip speed, clamped to
+  [0.75, 1.3]. Stride warping covers the rest, so feet don't slide.
+- `Ignore`: in-place.
+
+## Procedural pass and IK
+
+Inputs come from a batched **ground probe** stage that runs before
+evaluation (the `GroundProbe` trait, locomotion.md). It probes down from
+last frame's foot positions moved by this frame's root delta.
+
+- **Stride warping**: scales foot targets along the velocity about the
+  pelvis's ground projection, and lowers the pelvis so legs stay
+  reachable. **Orientation warping**: turns the lower body toward the
+  velocity, up to about 60°, and counter-rotates the spine so the torso
+  keeps facing the aim direction. Four-way locomotion sets then cover all
+  directions.
+- **Foot placement**: per foot, the target is the animated foot height
+  above its ground hit, with the foot rotated to the hit normal (clamped to
+  30°). While the baked contact curve is above 0.5 the world position is
+  locked, and it is released over 0.1 s. The pelvis drops by the largest
+  amount any foot needs, spring-smoothed. Legs solve with two-bone IK,
+  using the animated knee direction as pole. Toes bend to the ground if
+  tagged.
+- **Look-at**: the target is distributed over spine, neck, head and eyes by
+  weights, each joint clamped to limits and the total to ±80° yaw, with a
+  smoothed target and weight.
+- **Hand IK**: two-bone to an attachment or interaction target (door
+  handle, lever, off-hand on a two-handed grip), weighted by a curve or
+  parameter.
+
+## LOD and budget
+
+Tiers are chosen by projected height in pixels (as `mesh.cook` LODs are,
+bake.md), times a significance factor (player target, in dialogue, in
+combat ×2).
+
+| Tier | Projected height (1440p, 70°) | Update | Graph | Procedural | Joints |
+|---|---|---|---|---|---|
+| A0 | ≥ 120 px (≈ ≤ 15 m) | every frame | full | all ops | all |
+| A1 | ≥ 50 px (≈ ≤ 37 m) | every frame | full | speed match, stride, feet | LOD1 mask |
+| A2 | ≥ 20 px (≈ ≤ 90 m) | 1/2 to 1/4 rate, interpolated | full | speed match | LOD2 mask |
+| A3 | < 20 px, or off-screen | clocks, events, root motion only | state machines only | none | none (pose frozen) |
+
+- Off-screen characters that cast shadows into a view count as A2.
+- Events still fire at A3 within audible range, so footsteps work behind
+  the camera.
+- The **budget allocator** demotes the least significant characters one
+  tier at a time until the predicted cost (an EMA per tier) fits the
+  budget, and promotes back with hysteresis.
+- Characters in streaming ring R1 (visual-only, streaming.md) never exceed
+  A2 and play ambient idles. Crowds beyond that (vertex-animation-texture
+  crowds, as in UE's City Sample) are a later tier.
+
+**Targets** (reference machine, raster path; these become `sf_diag` gates):
+
+| Measure | Target |
+|---|---|
+| Animation stage, wall time, "crowd street" scenario (150 NPCs, 40 at A0) | ≤ 1.0 ms |
+| One A0 character (graph with 2 layers + 2D blend space + all IK), single thread | ≤ 25 µs |
+| GPU skinning, all passes, same scenario | ≤ 0.5 ms |
+| Foot slide during contact | ≤ 2 cm/s mean |
+| Foot penetration or float | ≤ 2 cm, 95th percentile |
+| `anim.cook` for a whole content pack | ≤ 5 s of the 2 min bake |
+| Foot slide and penetration on creatures (every support limb) | same as above |
+| Worst-case A0 character with `FullBodyIk` and warping | ≤ 35 µs |
+| Warp target error at window end (static target) | ≤ 2 cm, ≤ 2° |
+
+A city needs this many: dense modern cities run tens of fully simulated
+NPCs and hundreds of high-detail ones (Assassin's Creed Unity: 40 real AIs,
+120 high-resolution models, about 10,000 crowd NPCs; Cournoyer, *Massive
+Crowd on Assassin's Creed Unity: AI Recycling*, GDC 2015). The 150-NPC
+scenario is our M3 floor, not the ceiling.
+
+## Bevy integration (`sf_anim_bevy`)
+
+- Components: `Animator { graph, instance, params }` on the character root,
+  `SkeletonBinding { joints: Vec<Entity> }` (skeleton index → bone entity),
+  `AnimLod`. The `AnimEvent { entity, name, payload, weight }` message and
+  entity-event observers carry events. `AnimCurves` holds curve values for
+  gameplay.
+- Schedule (PostUpdate, before transform propagation): `Probe` (batched
+  ground queries) → `Evaluate` (`par_iter` over characters due this frame,
+  pure) → `Apply` (root delta stored for the mover, bone `Transform`s
+  written only for joints in the LOD mask, events sent). The mover runs
+  earlier, in `Update` (locomotion.md). Bevy then propagates
+  transforms and skins on the GPU.
+- Bone entities stay, because Bevy's `SkinnedMesh` reads their
+  `GlobalTransform`. If profiling shows propagation or skin extraction
+  dominating, the fallback is writing bone `GlobalTransform`s directly
+  after propagation (we already have the model-space pose), without
+  touching Bevy's renderer.
+- Debug: skeleton and IK gizmos, pose and graph state overlay, an LOD tint.
+  `sf_diag` counters for characters per tier, µs per tier, and events per
+  frame.
+- **Mesh side, as built (skinloader, 2026-10-12)** in `sf_model_bevy`
+  (bake.md "Bevy mapping"): `spawn_skinned` gives each mesh `SkinnedMesh`
+  (joints resolved by name, `resolve_joints`) and `DynamicSkinnedMeshBounds`
+  (Bevy refits the `Aabb` from joint transforms each frame, as `bevy_gltf`
+  does by default). Morph curves write the model-wide `ModelMorphWeights`
+  on the root; `sync_morph_weights` gathers each mesh's own targets into
+  `MeshMorphWeights::Value`. So `Apply` writes bone `Transform`s and
+  `ModelMorphWeights`, nothing renderer-specific. `spawn_rest_skeleton` is a
+  named scaffold until the rig spawn here replaces it; `SkeletonBinding`
+  is what `resolve_joints` returns.
+
+### As built (animbevy, 2026-10-12)
+
+**Industry check (Bevy 0.20 source, read 2026-10-12).**
+- `bevy_animation::animate_targets` is a `par_iter_mut` over *bone*
+  entities (`AnimationTargetId` + `AnimatedBy(player)`): each bone looks up
+  its player and graph and samples its own curves, then writes `Transform`
+  through `AnimationEntityMut`, every frame. We keep the parallel per-bone
+  write-back shape (it is the only parallel, `unsafe`-free way to write many
+  entities' `Transform`s from ECS), but the pose is computed once per
+  skeleton in `Evaluate`, so a bone only copies a `Trs`. We also compare
+  before writing: unchanged and frozen (A3) bones don't trip change
+  detection.
+- `bevy_gltf` names node entities `Name::new(node name)` and builds
+  `AnimationTargetId::from_names(path)` from the root; it binds skins by
+  node index. Our rig spawn names bones by skeleton joint and skins bind
+  by name (`SkeletonBinding::find`: exact, then ASCII case-insensitive).
+- Transform propagation (0.20): `StaticTransformOptimizations` (on by
+  default) marks dirty subtrees from `Changed<Transform>` up to the root
+  (`mark_dirty_trees`), and `propagate_parent_transforms` skips clean
+  subtrees, in parallel. Animated skeletons are dirty every frame by
+  nature; the write-if-changed rule keeps A3 and idle-but-unchanged bones
+  out of it. The "write `GlobalTransform` directly" fallback above stays
+  unneeded until a profile says otherwise.
+- UE (docs: "Animation Optimization", Animation Budget Allocator plugin):
+  URO skips evaluation by screen size and interpolates the skipped frames;
+  the Budget Allocator takes a fixed ms budget, a per-component
+  significance, and throttles the least significant first (tick rate, then
+  interpolation off, then no evaluation), learning cost per component. Our
+  tiers are URO's screen-size rule; the allocator is the same "least
+  significant first, measured cost" loop with per-tier EMA cost.
+
+**Crate.** `sf_anim_bevy` (deps: bevy_app/ecs/transform/math/time/camera,
+`sf_diag_bevy` for counters; `debug` adds bevy_gizmos/bevy_color).
+- `AnimAsset` (skeleton + compiled graph + clips, validated by
+  `Binding::new`, shared `Arc`), `Animator { asset, instance, output,
+  drive: AnimDrive, time_scale }` with `set_float/bool/vec2/fire` by name,
+  `AnimLod`, `SkeletonBinding`, `AnimJoint { character, joint }` on bones,
+  `AnimRootMotion { delta, drive_weight, apply }` (store for the mover, or
+  apply to the root `Transform` when there is no mover).
+  `AnimDrive::moved` is composed by the host each frame (`RootDelta::then`)
+  and reset by Evaluate per update, so A2 updates get every frame's motion
+  (R3-1). `AnimEvent`/`AnimNotify` carry the clip event's `payload`.
+- `spawn_rig(commands, character, &Skeleton)`: one entity per joint with
+  `Name`, rest `Transform`, `AnimJoint`, parented by the skeleton. It
+  replaces `sf_model_bevy::spawn_rest_skeleton` for animated characters
+  (the scaffold stays for the bind-pose `skinned` example).
+- `PostUpdate` sets chained before `TransformSystems::Propagate`:
+  `AnimSystems::{Lod, Probe, Evaluate, Apply}`. `Probe` is empty here: the
+  host fills `Animator::drive` (ground samples, IK/warp targets).
+- Events: `AnimEvent` message (`MessageReader`) and `AnimNotify` entity
+  event (`On<AnimNotify>` observers) per graph event, names shared as
+  `Arc<str>`.
+- LOD: tier from projected height normalised to the 1440 px reference
+  (resolution-independent), × significance, with 15 % promotion
+  hysteresis; outside the view cone (padded by the character's height) →
+  A3. A2 updates every 2nd frame, staggered by entity, with the skipped
+  time handed to the next update. Budget (`AnimLodSettings::budget_us`,
+  off by default): `lod::allocate` demotes least significant first, one
+  tier per round, cost per tier = EMA of measured µs. Forced tiers bypass it.
+- Counters (when `DiagCounters` exists): `anim/evaluate/ms` (wall),
+  `anim/evaluate_cpu/ms` (summed), `anim/apply/ms`, `anim/characters/count`,
+  `anim/evaluated/count`, `anim/a0..a3/count`, `anim/events/count`,
+  `anim/bones_written/count`; `AnimStats` holds the same for overlays.
+- Gizmos (`debug`, `AnimGizmos { enabled }`): a line per bone, tinted by tier.
+- Left: A2 interpolation between updates (now: the pose holds), shadow
+  casters off-screen as A2 (host can force), morph curves →
+  `ModelMorphWeights`, LOD joint masks on write-back (the runtime keeps
+  joints outside the mask at their last value; the compare skips them),
+  the Probe stage's batched ground queries (`sf_controller_bevy`), timings
+  on the crowd bench.
+
+### Foot placement guards (as built, animfix 2026-10-12)
+
+**Root cause of the walkers' blow-ups** (legs far behind the body, pelvis on the ground, sliding
+like that): a planted foot's lock is held in the world while the contact curve is above 0.5. When
+the character travels faster than its cycle (playback clamped by `SpeedMatch`, avoidance pushes,
+a walker sliding at < 0.15 m/s while its idle — contact 1 on both feet — never releases), the
+lock drifts behind the hip. Once it is beyond the leg's reach, `rise_cap` (target height − hip
+height, with no horizontal term left) pulled the pelvis down to the lock's height: ~a leg length.
+Reproduced headless (`foot_placement_guards_stop_lock_drift_teleports_and_bad_samples`, guards
+disabled: drop > 0.5 leg at 6 m/s on a 1.2 m/s cycle). No probe faults were needed for it; in
+Balmora the guard counters show none (0 rejected samples, 0 teleports, 0 non-finite in 150 s).
+
+`FootPlacement(guards: FootGuards)` (UE Foot Placement / Leg IK practice; lengths are fractions
+of each leg's reach, so they hold for any rig and race scale):
+
+| guard | default | does |
+|---|---|---|
+| `max_step` | 0.5 | a ground sample further above/below the animated foot is rejected (roof, ledge, stale hit) |
+| `max_drop` / `max_rise` | 0.4 / 0.5 | girdle offset limits (the pelvis never drops further; `Fit` raises the uphill girdle) |
+| `unplant` | 0.3 | a lock drifting this far (horizontally) from the animated foot releases over `release`, then re-plants (UE's unplant radius) |
+| `max_speed` | 8 m/s | above it the op blends out |
+| `blend_halflife` | 0.1 s | the op's weight is a critical spring: 0 while no leg has a ground sample (probes off, dormant, airborne, in-place lineup) or the character is fast; blends in after a LOD return or wake |
+| `foot_halflife` | 0.04 s | per-foot height offset smoothing (a lock plants on the raw ground height, not the smoothed one) |
+
+Always on: a `moved` longer than a leg's reach or non-finite resets the locks (teleports, door
+crossings); every target is clamped to its leg's reach from the hip after the body fit; any
+non-finite offset or target skips the op and resets its state. `GraphOutput::feet: FootStats`
+counts what fired per update; `AnimStats::{feet, feet_total}` sums them, and the Bevyrrowind
+walkers report logs the totals (Balmora 150 s, ~40 walking: 65 unplants, 0 pelvis clamps;
+stairs: 91 rejected samples, 166 pelvis clamps, all bounded). Graph format 5.
+
+The humanoid template now runs `SpeedMatch(0.5–1.5)`, `StrideWarp`, `FootPlacement` (see
+locomotion.md "Measured feed").
+
+### Morph curves (as built, actorfx 2026-10-12)
+
+Clip curves named like a character's morph targets drive them
+(`sf_character_bevy::morph`, character.md "Morph playback"): `Evaluate` already
+blends curves; `drive_character_morphs` maps `GraphOutput::curves` to
+`MeshMorphWeights` by name after `Apply`, plus an externally timed
+`MorphCurvePlayer` for faces. `AnimImporter::companion`/`import_with` let an
+importer read curves keyed in a sibling file (legacy models key morphs in the
+model, bones in the animation file). Facial LOD: morph targets only on outfit
+LOD 0-1; skipped while the animator is frozen or culled (j9m3's "morphs only
+near the camera").
+
+## Bake steps
+
+| Step | Subject | Inputs | Output |
+|---|---|---|---|
+| `skeleton.cook` | skeleton source | model file, adapter rig data | `Skeleton` + joint LOD masks |
+| `anim.cook` | (clip source, skeleton) | source clip, skeleton, adapter clip rules (split, loop, root joint) | `Clip` with root motion, contacts, markers, meta |
+| `anim.retarget` | (clip, target skeleton) | cooked clip, both rig maps (character.md) | `Clip` on the target skeleton |
+| `animgraph.compile` | (graph, skeleton) | graph asset, skeleton, clips it names | compiled graph: resolved clips and masks, triangulated blend spaces |
+| `rig.profile` (planned, M3) | skeleton | cooked skeleton, adapter `RigHints` | `RigProfile` (rig-profile.md) |
+| `ragdoll.cook` (planned, M4) | skeleton | skeleton, rig profile, skin extents | ragdoll bodies, joints, limits, masses |
+| `posesearch.cook` (planned, later) | (graph, skeleton) | clips of a pose-search database | normalized feature matrix + acceleration boxes |
+
+**BVH and FBX importers (built 2026-10-12, `sf_anim` features `bvh` and
+`fbx`, bake only, both in `AnimImporters::framework()` when enabled).**
+Bevy has no BVH or FBX loader (bevy_gltf only), so rule 8 goes to crates:
+
+- **BVH: our own parser** (`bvh_import.rs`, ~250 lines, no
+  dependencies). `bvh_anim` 0.4.0 (MIT) is from 2019 on `bstr` 0.1,
+  `lexical` 2 and `smallvec` 0.6 (old, advisories); `bvh_anim_parser`
+  1.0.1 (MIT, 2024) has `cargo` 0.78, `regex` and `cgmath` as *runtime*
+  dependencies. The grammar fits on a page. Joints from `ROOT`/`JOINT`
+  (the name is the rest of the line, so `Bip01 Pelvis` works), rest =
+  `OFFSET` with identity rotation, each `End Site` a leaf `<parent>_End`
+  (lengths for auto-map/auto-align). One clip per file named after the
+  file stem, keyed at every frame at `1 / Frame Time` (30/60/120 fps kept
+  exactly: `BoundSource::native_rate` sees it). Rotation channels compose
+  in listed order (`Zrotation Xrotation Yrotation` = Rz·Rx·Ry), degrees;
+  position channels replace the offset on any joint; a truncated take keeps
+  its complete frames.
+- **FBX: `ufbx` 0.11.5** (MIT OR Unlicense, 2026; Rust bindings to the
+  maintained single-file ufbx C library, built by `cc`: the bake needs a C
+  compiler, MSVC here, ~20 s once). It resolves the FBX transform chain
+  (pre/post rotation, pivots, inherit modes) and converts any file to
+  meters, Y up, right-handed with `SpaceConversion::AdjustTransforms`, so
+  evaluated local transforms are already in our space (unit scale folded
+  into translations: verified, rest scales stay 1). Skeleton = bone nodes
+  plus ancestors except ufbx's scene root (an `Armature` node is kept, as in
+  glTF); without bones, the null nodes. Clips: one per animation stack,
+  sampled with `ufbx::evaluate_transform` at the scene's
+  `frames_per_second` (30 if unset) from the stack's start, channels that
+  never leave rest dropped. Mixamo's `mixamorig:` prefix is kept (auto-map
+  handles namespaces). `fbxcel`/`fbxcel-dom` (MIT/Apache) are stale since
+  2022–23 and low-level; `russimp` has a non-standard license and a C++
+  dependency.
+- **Units and axes: `SourceSpace`** (`import.rs`: `unit_scale`, `up`,
+  `forward` as signed `Axis`, `right_handed`). The change of basis `C`
+  (rows: the source's left, up, forward) conjugates every local transform:
+  translation `s·C·t`, rotation `C·R·Cᵀ` (one quaternion even for a
+  left-handed, mirrored source, since `C·R·Cᵀ = P·R·Pᵀ` with `P = −C`), so
+  model positions become `s·C·p` exactly. BVH carries no unit metadata:
+  `BvhAnimImporter` defaults to centimeters, Y up, facing +Z and takes
+  path-prefix overrides (`byo/cmu/` in inches, …); the space's postcard
+  bytes join the bake key through the new `AnimImporter::settings_key`
+  (empty by default, so glTF keys are unchanged). A forward axis other than
+  +Z is also fixed later by auto-align's facing correction; the space is
+  what makes root motion point the right way.
+- **Root-motion joint detection** (`detect_root_motion_joint`, every
+  importer fills `AnimSource::root_motion`): a `root`-named joint (after a
+  `ns:`/`a|b` prefix) whose translation moves, else the shallowest moving
+  joint (a BVH `ROOT`, Mixamo `Hips`, an armature object carrying the
+  travel), else a `root`-named joint. `skeleton.cook` uses it when the
+  adapter's `SkeletonRules` name no joint and set `detect_root_motion`
+  (default off, so existing bakes don't change); `anim.cook` then projects
+  that joint to the ground as before.
+- **Tests**: BVH fixtures written in the tests (hierarchy, channel order,
+  rate, malformed files, spaces vs hand-computed model positions); a 129 KB
+  CC0 FBX made by us with Blender (`sf_anim/tests/data`, generator script
+  included: Z up, facing −Y source → hips at 1.0 m Y up, left +X, travel
+  +Z, 24 fps); and `sf_character/tests/bvh_retarget.rs`: a mocap-named
+  BVH (cm, Y up, 60 fps) → auto-map + auto-align → retarget onto a
+  `Bip01`-named Biped skeleton (Z up facing −Y, meters, arbitrary joint
+  frames): worst 0.000 cm and 0.034° over 31 frames, 21 joints (gate
+  1 cm / 1°). Real 100STYLE and Quaternius FBX files are checked when the
+  BYO bake runs (bevyrrowind animation-sources.md).
+
+Contacts come from foot height and speed thresholds on the source clip
+(with adapter overrides). Sync markers come from contact onsets.
+As in motion-matching data pipelines, a foot is planted while it is low
+(height over its lowest point in the clip, `ContactRules::height`, in leg
+lengths) *and* still over the ground (`speed`, leg lengths per second),
+with hysteresis: it plants under the thresholds and lifts only above
+`release` times them (2×), so a rolling heel or a slow lift doesn't
+flicker. Speed over the ground is the foot's velocity in clip space plus
+the ground velocity: zero for travelling clips (the root carries the
+ground), and for in-place clips the velocity the planted feet slide back
+at (component median of the low feet, refined by the mean of those moving
+with it; it also becomes the clip's `average_velocity`). Keyframed sources skate, so each foot is measured against the per-frame
+stance reference (the slowest low foot). A stance ends at heel-off: the
+foot's last rise faster than `lift` (leg lengths per second) before it
+leaves, trimmed within the stance's second half, so the runtime lock
+releases the heel as the authored foot peels off (a heel held into
+heel-off overreaches uphill: 25° ramps slid 2.6 cm/s). Before cook v4
+in-place clips used height alone and Morrowind's sidesteps planted on
+0–6 of 81 frames (walkers3).
+
+Curves have a joint (UE's curve "linked bones",
+`CompiledGraph::curve_joints`): a leg's contact curve belongs to its
+effector. A masked override layer or masked slot blends a linked curve by
+its joint's mask weight, so an upper-body or arm overlay never replaces
+the legs' contacts (it used to: the torch arm and the crossbow/spell
+stance idles froze the walk's contacts at their idle's values).
+
+**Implementation (`sf_anim::steps`).** The three `sf_anim` steps share one
+`AnimBake`: importers by extension (`AnimImporter`; glTF, BVH, FBX by feature), the
+adapter's `AnimRules`, and the `CookSettings`. Subjects:
+`skeleton.cook` takes the skeleton source path; `anim.cook` takes
+`<skeleton>|<clip file>|<clip>`; `anim.retarget` takes
+`<target skeleton>|<anim.cook subject>`. `AnimRules` returns the
+`SkeletonRules` (root-motion joint, tags, LOD rules), a `ClipSpec` per clip
+(the source clip name, so one take can be split into several clips, plus
+`ClipRules`), and a `RetargetRig` per skeleton. That data isn't a file, so
+its postcard bytes are step parameters, part of the bake key.
+
+The glTF importer (the `gltf` crate, as in `sf_model`) builds the skeleton
+from every skin joint and animated node plus their ancestors, so an
+`Armature` node's transform is kept. Each animation becomes a source clip
+with step, linear and cubic-spline channels as authored. Morph-weight
+channels become curves named `<node>.morph<k>`. glTF has no events.
+
+**`animgraph.compile` (`sf_anim_graph::steps`, feature `bake`).** Subject
+`<graph file>|<skeleton>` (a `skeleton.cook` subject). Planned inputs: the
+graph file and the skeleton product. Clip products and subgraph files are
+read during the run, so they are dynamic inputs and re-cooking a clip
+recompiles the graphs that play it. Clip references default to
+`<file>#<clip>` → `anim.cook` on the graph's skeleton; the adapter's
+`GraphRules` can map them elsewhere (e.g. to `anim.retarget`) and supplies
+rig bone names and mirror pairs, whose postcard bytes are a parameter.
+
+**Adapters whose clip rules depend on file contents (as built, animbake
+2026-10-12).** Bake keys are fixed at plan time, so rules computed from a
+source's markers (sub-action ranges, loop tails, which layered file holds a
+clip) can't be read during planning. The first adapter bakes in two phases:
+a group-table product per source file (an adapter step) plus
+`skeleton.cook`, then builds its `AnimRules` and `GraphRules` from those
+products and bakes `anim.cook` and `animgraph.compile`. Warm, phase 1 is
+all hits. `GraphRules::clip_files` should list every file of a layered set
+(and candidates that may appear), so layering changes recompile. `AnimBake`
+memoizes imports per session by (path, content digest): legacy files hold
+~100 clips each, and every `anim.cook` used to re-import its file;
+`AnimBake::clear_imports` frees the memo after a phase.
+
+**Measured (Morrowind, animbake 2026-10-12).** 96 skeletons, 3,987 clips,
+96 graphs: cold 13.5 s wall (`anim.cook` 131 s CPU, 33 ms per clip), warm
+0.31 s. The 5 s `anim.cook` gate is missed: 1,150 clips never reach the
+0.1 mm bound (errors up to 3.6 cm at 120 Hz, so the cause is source
+discontinuities or quantization, not the rate) and run all three rate
+passes, more than half the cook time.
+
+**Rate search, as built (animcook 2026-10-12, `anim.cook` version 3).**
+Each candidate rate first measures its *resampling error*: the unquantized
+frames, interpolated as the runtime does (root motion and additive base
+re-applied), against the source at every midpoint. Quantization adds at
+most half the bound (its budget), so a rate whose resampling error exceeds
+1.5x the bound can't pass and is neither quantized nor measured. Otherwise
+the cooked clip is measured at every frame and midpoint as before, but the
+measurement stops at the first sample over the bound, reuses the sampled
+frames (frame times) and the resampling check's source poses (midpoints)
+instead of sampling the source again, and computes each virtual vertex from
+the column and translation differences of the two model matrices. When no
+rate passes, the rate with the lowest resampling error is kept (the coarser
+within 10%) and only it gets a full measurement. Bit search starts from the
+rounding-bound estimate (`log2(half-diagonal / tolerance + 1)`) and walks,
+about two tests per channel instead of six. Survey (`mw_bake` test
+`anim_cook_survey`, 3,307 group clips, 16 threads, cook only, no store):
+35.9 s CPU / 3.9 s wall before, 24.1 s / 2.3 s after (quantize 15.7 → 5.8 s,
+measure 14.6 → 12.3 s incl. the resampling checks). Quality: 2,559 clips
+identical, 416 lower error, 332 higher but all still under the bound (bit
+choices at the tolerance edge, up to +34% of a sub-bound error); the 788
+clips over the bound: 5 better, 5 worse by at most 0.19%, none newly over.
+Real-install bake (`anim_real_install`, indicative only: run at below-normal
+priority while the owner tested the game): `anim.cook` 131 → 54.6 s summed
+run time (3,987 clips; ≈3.4 s at 16 threads, under the 5 s gate), cold
+13.5 → 9.0 s, warm 0.22 s, 1 vs N threads byte-identical (693 products).
+A dedicated 16-thread timing run on a quiet machine is still owed. The
+summed run time includes waits on the shared import (`AnimBake` memo) and
+on dependencies, so it overstates CPU. Two hangs seen in ~6 runs (one
+`sf_anim` `bake_steps_cook_retarget_and_cache`, one real-install bake),
+idle CPU, not reproducible on rerun: blocking `OnceLock` slots (`sf_bake`
+products, `AnimBake` imports) initialized inside rayon tasks can deadlock
+when a waiting thread steals work that needs the same slot. Pre-existing;
+needs an `sf_bake` fix (no blocking inside the pool, or `rayon`-aware
+waits).
+
+**Why ~20% of the Morrowind clips can't reach 0.1 mm** (survey
+`SURVEY_DIAG=1`, worst channel per clip): (1) *linear quaternion keys at
+off-grid times* (NIF quaternion keys, and the Euler tracks `mw_anim`
+samples at 60 Hz into linear keys): each key is a kink, so uniform
+resampling error only halves per doubling and fast rotations stay above
+0.1 mm at 120 Hz (~500 clips); (2) *fast cubic translations* (weapon bones,
+creature root bones; error falls 4x per doubling but needs 240–480 Hz;
+~150 clips; several segments have Hermite tangents 8–16x their chord,
+worth checking against the NIF tangent convention in `mw_anim`); (3) the
+rest are not resampling at all (whole-pose resampling error well under the
+cooked error): root-motion extraction (yaw as the Y twist of the root,
+interpolated separately from the residual, which is ill-conditioned when
+the root pitches far, e.g. deaths) and source discontinuities (error that
+doesn't fall with the rate). The bound is stricter than the industry's (see
+"Industry comparison", clip compression), not wrong; these clips cook at
+the best rate and record their error.
+
+## Motion matching: later, not in M3 (WISHLIST §8 kept)
+
+Motion matching (Clavet, *Motion Matching and The Road to Next-Gen
+Animation*, GDC 2016; Mach & Zhuravlov, *Motion Matching in The Last of Us
+Part II*, GDC 2021; production-ready in UE 5.4) needs a large, consistent
+mocap library. Learned motion matching (Holden et al., SIGGRAPH 2020) cuts
+its memory. Legacy content is a few hand-keyed cycles, where MM gains
+nothing. M3 builds what it needs, so it arrives as one more node type: the
+inertialization, the trajectory model (locomotion.md), and bake-time
+feature extraction. Candidate data is the 100STYLE dataset (CC BY 4.0, BVH,
+60 fps) and Quaternius' Universal Animation Library (CC0, glTF). LAFAN1
+(CC BY-NC-ND 4.0) and the Bandai Namco sets (CC BY-NC 4.0) are usable only
+as bring-your-own sources baked privately on the user's machine, never
+shipped (data plan and license table: `bevyrrowind/docs/specs/animation-sources.md`).
+
+## Next-gen roadmap (anim-plan, 2026-10-11; shape replaced by R11b, 2026-10-19)
+
+The target, in the owner's words: next-gen like Assassin's Creed or Elden
+Ring / Dark Souls 3; IK is mandatory; characters react to their
+environment; the system works for creatures. Each layer below names its
+canonical technique, its interface against the crates as built, its
+milestone, and measurable criteria.
+
+### Decided shape (R11b, 2026-10-19)
+
+The generic "authored backbone" shape written here from READMEs (2026-10-11) is replaced by the
+animation study (`../research/animation/`, notes R1-R10) and the owner's decisions
+(`11-tradeoffs.md` "Decisions"). **Read [action.md](action.md) and [camera.md](camera.md) first.**
+In one line: a Rust **action layer** (`sf_action`) decides every move from data rules on the fixed
+tick; the graph only plays and blends; typed clip windows gate when a choice is allowed (the
+FromSoftware split, R5 §1). Gameplay reads baked clip data on the action clock, never the evaluated
+pose, so the graph, IK, first-person bodies and camera are presentation (net-ready for co-op).
+Motion matching stays an optional locomotion node ("Later" below).
+
+What changes in this spec (each is built in the action.md phase named):
+
+1. **`Progress` root mode** (phase B1; R2 adopt 1). A fourth mode beside `Drive`, `Match`,
+   `Ignore`: the player's playhead is set each update from a parameter (seconds or normalised,
+   either direction), as UE's sequence evaluator; its root output is not applied to the character.
+   Every move the action layer starts plays this way, from `ActionOutput`'s playhead, so the graph
+   never drifts from the gameplay clock. `Drive` stays for hosts without an action layer (viewers,
+   scripted one-offs).
+2. **Chain warping** (phase B1; R3 §5, §11). Layer 1 below is single-clip. Added: a warp across a
+   chain of clips (the correction carried by the clip with the most root motion), correction
+   profiles `Linear` and `Late` (cubic: rise first, over the lip late), a **refusal ratio** (correction
+   / root distance) the action layer checks before starting, variant mixing before warping, an
+   `arc` mode (ballistic flight with a clip-given arrival time, R5 adopt 8), and `mode=scale` with
+   min/max clamps and a stand-off for attack lunges (exempt from the 2 cm check; R6 adapt). The warp
+   function stays Bevy-free in `sf_anim_graph` and is called by both the graph (presentation) and
+   `sf_action` (gameplay root).
+3. **Typed windows and window-gated interruption** (phases B2, E1; R5 adopt 1, R6 adopt 2).
+   `animgraph.compile` parses clip `Event` windows into the typed vocabulary of action.md
+   "Windows" (accept, cancel per action class, tail, turn, lunge, contact, i-frames, hit, camera...).
+   Slot/montage requests carry an action class; an interrupt is allowed only inside a `cancel`
+   window for that class or on an unrestricted clip (today: priority only). Priority stays the
+   tie-break.
+4. **Gap-sized inertial blends and pose-matched entry** (phase B2; R4 adopt 1-2). Transitions get
+   `duration: Auto`: the inertialization length from the largest hand/foot gap between the current
+   pose and the new source's entry frame, clamped ~0.05-0.3 s; combat cancels default to ~0.1 s.
+   A `Player` start mode picks the entry frame (cycle phase and leading foot) by leg-joint match.
+   Root impulses due on a clip's first frame apply on the start tick (R8 §1.1).
+5. **`clip.annotate` bake step** (phase B2 minimal, E1 full; R9 §6). On the retargeted clip it
+   writes: reconstructed root motion for in-place one-shots, foot **and hand** contacts, markers,
+   leading foot, phase, turn windows, flight phases, end pose and effector spacing, a
+   contact-bounded warp window, the weapon/hand socket track (root space), the **virtual camera
+   track** (camera.md), IK weight hints, reach and first-contact proposals. Category defaults come
+   from the clip's slot; a moveset RON sidecar per moveset holds the design numbers (about one line
+   per attack slot). It replaces `ClipRules::events` as the authoring point. Lints: unconfirmed hit
+   windows, warp residual over the refusal ratio, missing hand contacts on traversal slots,
+   reconstructed roots, seam/jolt checks, tempo outliers.
+6. **First-person render bodies** (phase D2; R7 §2.1, R8 §3). One gameplay body; a first-person
+   render body (arms, legs when looking down, own FOV and scale, head hidden) plus the world body
+   for shadows. Per action: arms layer (a content pack's own first-person clips allowed as
+   presentation on the shared clock) or full body with the baked camera track. Hits always come
+   from the world body's baked socket tracks. character.md's "view-model arms plus shadow body"
+   section is superseded by this model and is rewritten in D2.
+
+Also from the study, smaller: IK policy as data (ramps, gating, latching, proximity weights;
+R3 adopt 5, R4 adopt 4), `ArmClearance` and reach assist (R4 adopt 5, 8), hit-stop as a
+per-character clock scale shrinking with crowd size (R6 adopt 4, R8 adopt 5), large-turn
+inertialization (R4 adopt 3). Each lands with the phase that first needs it.
+
+**Kept: our ozz-model core and `sf_anim_graph`.** Re-checked 2026-10-11:
+`ozz-animation-rs` 0.11.0 (2025-10) is MPL-2.0 and nightly-only, and would
+duplicate `sf_anim` (unchanged on 2026-10-18; see "Prior art" under Layer 3). `bevy_animation_graph` 0.11 is still on Bevy 0.19.
+NVIDIA **MotionBricks** (in `NVlabs/GR00T-WholeBodyControl`, "preview
+release"): code is Apache-2.0 and weights are under the NVIDIA Open Model
+License, but the released checkpoints drive a Unitree G1 robot from SMPL
+references, inside a robotics stack. Watch item only: at most an offline
+generator of coverage clips, retargeted G1 → humanoid at bake, if a human
+checkpoint appears.
+
+### Layer 1: motion warping (M3)
+
+**Technique.** Witkin & Popović, *Motion Warping*, SIGGRAPH 1995, as UE5
+productized it (Motion Warping plugin): a clip carries **warp windows**
+(UE notify states) naming a **warp target**; during the window the
+remaining authored root motion is transformed so the character arrives
+at the target's position and facing at the window's end. Modes: **skew
+warp** (translation of the remaining path skewed onto the target, the UE
+default), **scale** (uniform scale of root translation), and rotation
+`Default` (match the target's facing) or `Facing` (face the target), with
+a rotation time multiplier. Uses: attacks that track and snap to an enemy
+(DS3-style tracking limited by a turn rate), vaults, mantles, ledge
+grabs, sitting, door and lever interactions.
+
+**Interface.**
+- Graph asset: `warp_targets: ["enemy", "ledge", "seat"]`, slots like
+  `ik_targets`. Windows are clip events named `warp` (an `Event` window,
+  `payload` = `"<target>;<mode>[;key=value]"`, keys `rot=default|facing|none`,
+  `y=ignore|warp`, `rot_time=0.5`, `max_dist=1.5`, `max_turn=360`
+  (deg/s), `point=root|<joint>`), authored in the adapter's
+  `ClipRules::events` or the animation-sources manifest.
+  `animgraph.compile` parses them into `WarpWindow`s per (clip slot,
+  event) and precomputes the window's authored root delta and the warp
+  point (root, or a joint's position at the window end: UE's "warp point
+  anim provider: bone").
+- Runtime: `UpdateInputs` gains `warp_targets: &[Option<WarpTarget>]` with
+  `WarpTarget { position: Vec3, yaw: f32 }` in character space, refreshed
+  every update (moving targets are tracked). After the root delta is
+  blended (`GraphOutput::root`), the highest-weighted `Drive` player with
+  an open window and a set target has its delta replaced by
+  `warp(delta, clip.root_delta(t, end), target)`; `GraphOutput` gains
+  `warp: Option<ActiveWarp { target, remaining, error }>` for gameplay.
+- Mover: today vertical root motion is dropped while grounded
+  (`sf_controller/src/mover.rs:251`). A window with `y=warp` sets a
+  `Traversal` flag on `MoveInput` that suspends ground snap and gravity for
+  its duration (UE puts the character in flying mode during a mantle
+  montage), then re-grounds with the normal probe.
+
+**Verification.** Static target, unobstructed: position error at the
+window end ≤ 2 cm and facing error ≤ 2° (`ActiveWarp::error`); a target
+moving at 3 m/s: ≤ 5 cm. No root speed jump > 20% between the frames
+around the window's start. Cost ≤ 0.5 µs per warping character.
+
+### Layer 2: IK, from limbs to full body (M3)
+
+**Technique.** We have two-bone (analytic), aim chains, FABRIK and CCD
+(`sf_anim::ik`). Missing for "react to the environment": solving several
+effectors at once while the pelvis and spine give way (a hand on a ledge
+while the feet stay planted; four feet and a head on a quadruped). UE5's
+**Full Body IK** is a position-based solver (`PBIK`): one particle per
+joint, bone-length and joint-limit constraints, weighted effectors with
+per-joint stiffness and a root that pre-pulls toward the effectors, 20
+iterations by default, rotations recovered from the solved positions.
+Our solver is the same shape with **XPBD compliance** (Macklin, Müller,
+Chentanez, *XPBD*, MIG 2016; Müller et al., *Position Based Dynamics*,
+2007), so stiffness doesn't depend on the iteration count; survey:
+Aristidou et al., *Inverse Kinematics Techniques in Computer Graphics*,
+CGF 2018. Bereznyak's *IK Rig* (GDC 2016) is the model for driving it from
+a few goals.
+
+**Interface.**
+- `sf_anim::ik::FullBody` (Bevy-free): built once per (skeleton, profile)
+  from the rig profile: particles for the girdles, spine, neck, head and
+  limb joints; distance constraints; hinge limits for knees and elbows,
+  cone-twist for hips and shoulders. `solve(&mut LocalPose, &mut ModelPose,
+  effectors: &[Effector], iterations)` with `Effector { joint, position,
+  rotation: Option<Quat>, weight, pull }`. Twist is preserved by
+  reapplying the animated twist about each solved bone.
+- New ops: `LimbIk` (replaces `HandIk`: any limb or chain, position plus
+  optional rotation target, solver picked by the limb), `ChainIk` (FABRIK
+  or CCD over a named chain: tails, necks, tentacles), `FullBodyIk`
+  (effectors from IK target slots and from `FootPlacement`'s foot targets,
+  when it runs after it). `ik_targets` become `Option<IkTarget { position,
+  rotation: Option<Quat> }>` (rotation is needed for hands on ledges and
+  handles).
+- `Lean` and `SpineBend` ops (procedural, from `LocomotionParams`
+  acceleration and turn rate): bipeds lean into turns, quadrupeds bend the
+  spine with the head leading (Frey, GDC 2016).
+- Grade-aware gait (AN-21, as built): `StrideWarp.grade` and `Lean.grade` read the graph's filtered
+  ground grade (`GraphOutput::grade`, rise over run along the travel, from the probes). Biomechanics:
+  at a fixed speed people shorten their steps and raise the cadence uphill and lean the trunk forward a
+  few degrees (backward slightly downhill); UE/Lyra cover slopes only with foot placement, so the stride
+  and lean terms are ours. Lean joints must sit above the leg branch (biped thighs hang off the spine).
+
+**Verification.** Reachable effectors within 1 cm after 10 iterations;
+unreachable ones clamp without flips; joint limits never exceeded;
+identical results on 1 and 8 threads. `FullBodyIk` ≤ 8 µs on a 30-joint
+profile at 10 iterations (A0 only; the budget allocator counts it), so a
+worst-case A0 character stays ≤ 35 µs against the 25 µs typical gate.
+
+### Layer 3: context probes and interaction points (M3 probes, M4 actions)
+
+**Technique.** Environment-aware animation runs on a few cheap scene
+queries per character, classified into affordances, as GASP's traversal
+does (forward traces, obstacle height and depth classified into
+vault/hurdle/mantle, a chooser picks the clip, motion warping aligns it)
+and as AC III's navigation rework did with procedural adjustment (Ubisoft
+Montreal, *AI Postmortems: Assassin's Creed III…*, GDC 2013). Authored
+**interaction points** (UE Smart Objects: slots with a transform, an
+animation tag and a claim) cover benches, doors, levers and counters.
+
+**Interface** (`sf_controller`, locomotion.md "Context probes"):
+batched queries on the same `GroundProbe`/`StaticWorld` path as ground
+probes: obstacle ahead along the trajectory (height, depth, top point,
+normal), ledge (edge point, normal, clearance above), drop ahead, wall
+beside (for a hand on the wall), ceiling (crouch). Results become graph
+parameters (`obstacle_height`…) and warp or IK targets. Interaction points
+are `sf_interaction` data (M4). Look-at targets come from a cheap
+"points of interest" scan (nearest characters and interaction points in a
+cone) until `sf_ai` perception (M10) provides them.
+
+**Verification.** Batched results equal single queries; classification
+table tests on boxes 0.3–2.5 m high; probes stay inside the 0.2 ms probe
+budget for the 150-NPC scenario (context probes only at A0, at most 4 per
+character per update, and only when the trajectory is blocked).
+
+**As built** (probes, 2026-10-12): `sf_controller::ContextProbes` answers all five queries in ≤ 4
+batched probe stages and returns `ContextHit` data (affordance, lip, face normal, height, depth,
+clearance, landing) with `warp_target`/`hang_point` for warp windows; vault/mantle actions stay M4.
+Classification and timing: locomotion.md "Context probes as built" (150 all-blocked: 0.79 ms
+single-thread, inside the budget only with the gating above).
+
+#### Prior art: open Rust/Bevy game reimplementations (owner, 2026-10-18; superseded 2026-10-19)
+
+**Superseded by the animation study.** These projects were read in detail in
+`../research/animation/` (faith-runner R1-R2, AC1-rs R3-R4, sekiro-rs R5, ELDEN-RING-Combat-Rewrite
+and sekiro-rs combat R6, Mudcrab R10), which also corrects claims the old summary made (R2: faith-runner
+has wall-arm IK; R3: jump targets are nearest-first except hangs, and AC1's chooser is code +
+tables; R4: AC1's IK policy is worth adopting; R5: sekiro-rs is the best open description of the
+FromSoftware split). The traversal layer is now [action.md](action.md); the clip question is
+answered there ("Clip gaps") and in R9. The README-level summary that stood here was removed (git history
+before 2026-10-19). Still true from it: ozz-animation (C++, MIT) and `ozz-animation-rs` 0.11 (MPL-2.0,
+nightly SIMD) are not adopted; they would duplicate `sf_anim` and have no graphs or traversal.
+
+### Layer 4: physical animation (M4)
+
+**Technique.** A **powered ragdoll** follows the animated pose through
+per-body drives, and gameplay lowers the drive strength per body region
+to react: hit reactions, stumbles, knockdowns, death, then a get-up blend
+back to animation. Industry: NaturalMotion Euphoria (GTA IV, Red Dead),
+Havok's "powered ragdoll", Frostbite (Sachania, *Physics Driven Ragdolls
+and Animation at EA: From Sports to Star Wars*, GDC 2018), UE5's Physical
+Animation Component and its successor the Physics Control Component
+(GASP 5.8 examples). Drives are **stable PD controllers** (Tan, Liu, Turk,
+*Stable Proportional-Derivative Controllers*, IEEE CG&A 2011), so high
+gains don't explode at our fixed step. Learned physics controllers
+(DReCon, Bergamin et al., SIGGRAPH Asia 2019; SuperTrack, Fussell et al.,
+2021; both Ubisoft La Forge) are the research frontier, not a plan.
+
+**Interface.**
+- `ragdoll.cook` (bake): bodies and joints from the rig profile (capsules
+  sized from bone length and skin-weight extents, masses by volume,
+  limits by limb kind); adapter or mod override files.
+- `sf_ragdoll` (Bevy-free core, M4): drive targets from the graph's model
+  pose; per-region strength profiles (`Kinematic`, `Powered(strength)`,
+  `Limp`); hit impulse + strength dip + recovery curve; balance check
+  (center of mass against the support polygon of `support` limbs) that
+  triggers stumble steps or a fall; get-up selection (face up/down from the
+  pelvis axis) and the hand-back: the ragdoll pose enters the graph through
+  the existing `PoseInput` node and inertializes into the get-up clip.
+- Drives are applied as torques/forces from the PD law each physics step,
+  which works on either engine: avian3d 0.7 has motors only on revolute
+  and prismatic joints (no spherical motor), Rapier has per-axis motors on
+  generic joints. Decided 2026-10-12: rapier3d, whose implicit joint motors are used directly (physics.md "Ragdolls and the animation blend").
+- Kinematic hit reactions before physics (M3/M4): additive directional hit
+  clips (the graph's additive layer) plus a `HitReact` op that kicks
+  critically damped springs on the hit region's joints (`sf_anim::spring`).
+- Secondary motion: `SpringBones` (Verlet chains with spring constraints)
+  for tails, ears, antennae and hair; cloth stays WISHLIST §7.
+
+**As built (P9, 2026-10-13; `sf_anim_graph::secondary`).** Reuse check
+(rule 8): Bevy 0.20 has no spring bones; `bevy_skeleton_modifiers` 0.1.1
+works on entities after Bevy's animation, outside our pose-buffer op stack
+(no op order with foot placement, no LOD, no graph state), and nothing else
+current fits; the technique is small (the Unity Dynamic Bone / VRM
+`springBone` / UE `AnimDynamics` family), so both ops are ours.
+- `HitReact { joints, depth 3, falloff 0.5, gain 0.35 rad, max_angle 30°,
+  halflife 0.12 s }`: `GraphInstance::hit(Hit { point, direction, strength,
+  joint })` (character space) queues a hit; at the next update the hit joint
+  (or the reactive joint nearest the point) and up to `depth − 1` reactive
+  ancestors get an angular-velocity kick about `lever × direction`, sized so
+  the hit joint peaks at `gain · strength` after `halflife / (2 ln 2)`
+  (x(t) = v0·t·e^(−yt)). The springs are Holden's closed form, so the curve
+  is the same at any frame rate (tested against the analytic curve at 30,
+  60 and 144 fps) and the pose returns exactly to the animation. Default
+  joints: the rig profile's spine (without the root girdle, which would
+  swing the support legs), neck, head and non-support limbs. Runs after
+  foot placement (feet stay planted). Additive directional hit clips stay
+  possible on the graph's additive layer.
+- `SpringBones { chains, explicit, frequency 3 Hz, damping 0.6, gravity 0,
+  inertia 0.5, max_angle 60° }`: each chain joint's child is a Verlet
+  particle pulled toward its animated offset from the simulated parent (a
+  damped spring, ω² pull and 2ζω drag, as frequency and damping ratio, not
+  per-step factors), kept at bone length and within `max_angle` of the
+  animated direction; joints are then aimed at their particles root first.
+  Particles live in character space; the character's motion since the last
+  update (`UpdateInputs::moved`) moves them back by `inertia` (1: they stay
+  put in the world). Fixed 1/120 s substeps accumulated across updates (at
+  most 12 per update) make it frame-rate independent: a strafing guar's
+  tail trails, swings and settles the same at 30, 60 and 144 fps (7 fps:
+  the same rest), with no drift; gravity sag is equal at every rate.
+  `chains` names rig-profile chains (empty: every tail). An LOD cut resets
+  both ops (springs to zero, particles re-seeded from the animation). The
+  Morrowind graphs (humanoid, creature) carry both ops with defaults.
+  `ClothLattice` (P10) extends the particle solver with lattice constraints.
+
+**Verification.** Powered at full strength, standing and walking: tracking
+error ≤ 5 cm RMS at the effectors and ≤ 5° per joint. Get-up: joint
+angular velocity continuous across the hand-back (inertialization test at
+shrinking dt, as for transitions). Cost: ≤ 0.05 ms physics per powered
+character, budget of 8 powered characters at once (others go limp or stay
+kinematic). Visual: knock a guard down a staircase, he gets up on the
+stairs with feet placed.
+
+### Later: pose search node (after M4, once a library is baked)
+
+**Technique.** Motion matching (Clavet, GDC 2016; Zadziuk, *Motion
+Matching, The Future of Games Animation… Today*, GDC 2016; Mach &
+Zhuravlov, GDC 2021; UE5 Pose Search, production-ready in 5.4; Holden et
+al., *Learned Motion Matching*, SIGGRAPH 2020, for memory; Holden's
+*Dead Blending*, 2023, for transitions).
+
+**Interface.** `NodeKind::PoseSearch { database: u16, interval, bias }`:
+a `posesearch.cook` bake product per (graph, skeleton) with normalized
+features (trajectory positions and facings at +0.33/0.67/1.0 s from
+`sf_controller`'s trajectory, which gains history samples; foot positions
+and velocities; hip velocity), searched with Holden's bounding-box
+acceleration every 0.1 s or when the trajectory changes; switching uses
+the existing inertialization. It sits in a state machine like any node, so
+combat and creatures keep authored states.
+
+**Verification.** ≤ 15 µs per search over 100k frames (≤ 3 µs per frame
+amortized), foot slide ≤ 2 cm/s with the database's own contact curves,
+trajectory tracking error ≤ 15 cm at +1 s.
+
+### Optional clips (M3, for bring-your-own sources)
+
+Modern clip sets come from libraries the user supplies (the content pack's
+data plan), so a graph must compile when some are missing. A clip
+reference may be `optional` with a `fallback` (another clip reference, or
+`drop`): a missing blend-space sample is dropped and the space
+re-triangulated, a missing state clip falls back, a transition into a
+state whose clips all dropped is removed. `animgraph.compile` reports
+which slots resolved to which source (provenance kept in the compiled
+graph for the license check of the content pack's export). Clip
+references already route through `GraphRules`, which is where an adapter
+picks the best available source per slot.
+
+**Optional clips as built (optclips, 2026-10-12).** General engines meet
+a missing animation at load or play time (a null motion that plays the
+reference pose or nothing). We resolve at bake instead, so the runtime
+never sees a hole and the substitution is recorded.
+
+```ron
+clips: {
+    "walk_kf": "xbase_anim.kf#WalkForward",                     // required
+    "walk": (source: "byo/ual2.glb#Walk_Loop", optional: true, fallback: Clip("walk_kf")),
+    "run":  (source: "byo/100style.bvh#Run", optional: true),   // fallback defaults to Drop
+    "getup_back": (source: "byo/lafan1.bvh#getup", optional: true, fallback: Drop),
+},
+```
+
+- **Syntax** (`asset::ClipRef`): a plain string is required. A struct
+  needs `source`; `fallback` is `Clip(<clip name or raw reference>)` or
+  `Drop` (the default) and requires `optional: true`; unknown fields are
+  errors. A fallback name is resolved like any clip name, so chains work
+  (`walk → walk_mocap → walk_kf`); cycles are errors; a raw reference or
+  an undeclared name at the end of a chain is required.
+- **Compile** (`compile::Compiler::clip_slot`): a required clip loads
+  directly, so a missing one fails the compile with the source's error
+  (`(required fallback of "<name>")` appended inside a chain). An optional
+  clip asks `CompileSource::available` first; when it is missing, its
+  fallback is tried. A drop is structural: a blend-space sample leaves the
+  space (re-normalized and re-triangulated over the rest; with none left
+  the space drops); `Clip`, `RateScale`, `Mirror`, `Subgraph` and a
+  `LayeredPerBone` base drop with their input; a `Blend` with one side left
+  and an `Additive` with its additive side gone become a pass-through to
+  the remaining input; a dropped state leaves its machine with every
+  transition from or to it (a transition to an *unknown* state is still an
+  error); a dropped layer leaves its list. Errors: the initial state
+  dropped, or the base layer dropped ("nothing to play"). Dropped
+  subtrees are truncated from the depth-first node table, so ranges stay
+  valid.
+- **Bake step**: `GraphRules::clip_files(graph, skeleton, reference)`
+  (default: the `<file>` of `<file>#<clip>`) lists the source files; the
+  step checks each with `RunCx::file_exists`, which records the
+  fingerprint even when it is missing, so adding (or removing) a source
+  recompiles exactly the graphs that asked for it. An adapter
+  `clip_product` returning `None` also counts as missing. Step version 3,
+  `SFAG` format 3.
+- **Provenance**: every `ClipSlot` carries `Provenance { source, license,
+  redistributable }` from `GraphRules::provenance` (default: own content,
+  shareable; the framework names no libraries or licenses).
+  `CompiledGraph::resolutions` lists, per clip name in first-use order
+  (`<subgraph>:<name>` inside subgraphs), the references found missing
+  and the slot it resolved to (`None` = dropped): that is the "which slot
+  came from where" report. `CompiledGraph::non_redistributable()` is what
+  an export guard refuses.
+- **Tests** (`sf_anim_graph/src/tests/optional.rs`): missing optional
+  clips fall back or drop (sample, state + 2 transitions, layer), the
+  node layout stays valid and the graph plays; all sources present keeps
+  everything; provenance flags the private clip and survives the
+  round-trip; diagnostics (missing required, required fallback, cycle,
+  fallback without `optional`, unknown field, nothing to play, initial
+  state dropped, unknown state still an error, blend pass-through); the
+  bake step falls back, stays warm, recompiles onto a source when its file
+  appears, and falls back again when it is removed.
+
+### Slots and montages (M3-d, as built 2026-10-12)
+
+Gameplay, AI and scripts play one-shot clips without an authored state per
+clip: UE's Animation Montages through Slot nodes (gap G4, industry-audit.md).
+Code: `sf_anim_graph::slot`, `GraphInstance::play_slot` / `stop_slot` /
+`montage`; tests in `src/tests/slot.rs`.
+
+- **Graph side.** `Slot(slot: "upper", input: "locomotion", group: "default",
+  mask: "upper")` passes its input through until a montage plays in the
+  slot, then shows the montage, over the whole body or through the mask
+  (then the input still shows elsewhere and keeps playing; a full-body
+  montage hides the input, whose clocks hold, UE's default without "always
+  update source pose"). Several nodes may name one slot (they show the same
+  montage). Slot groups as UE's: starting a montage in one slot of a group
+  ends the montages of its other slots. The mask lives on the node so an
+  upper-body slot doesn't need a cached pose (we have no cached-pose node;
+  node references are instances).
+- **Which clips.** By id from the binding: the graph's `slot_clips: [...]`
+  list puts named clips into the compiled graph's clip table without a
+  node playing them (`CompiledGraph::slot_clip(name)`; optional clips that
+  are missing are not offered), and any other clip slot of the binding
+  plays too. Late-bound: `LateClip::new(graph, skeleton, Arc<Clip>)` maps
+  any cooked clip on the skeleton onto the graph at runtime (events and
+  curves by name, `warp` windows parsed by the same `parse_warp_window` the
+  compiler uses, against the graph's warp targets); built once per (graph,
+  clip) and shared. Late events report `clip == LATE_CLIP`.
+- **Request.** `SlotRequest { clip, start: Interrupt | Queue, rate, from,
+  loops, blend_in, blend_out, end_early, root_motion, priority }`.
+  `from` starts mid-clip (an adapter's "start at the loop start");
+  `loops` repeats the clip's loop range that many times before playing out
+  to the end (`LOOP_FOREVER`); `end_early` is UE's blend-out trigger time
+  (the montage ends that many seconds before the clip end; 0 plays it out).
+  Defaults: interrupt, rate 1, 0.2 s blends, `Drive`.
+- **Interrupt and queue.** `Interrupt` ends the playing montage
+  (interrupted) and drops the slot's queue, unless the playing one has a
+  higher `priority` (then `SlotError::Busy`). `Queue` waits behind the
+  playing and queued montages and starts at once in a free slot; the next
+  queued montage starts on the update after the previous one showed its end
+  frame, with no frame of the input between them. `stop_slot` ends the
+  montage and the queue.
+- **Blending: inertialization only.** Into a montage, between montages and
+  back to the input, the slot asks the graph's post-process inertializer
+  for one blend (`blend_in` of the new montage on start or interrupt, as UE
+  uses the interrupter's blend-in; `blend_out` when it ends or is stopped),
+  only when the slot is evaluated this update. One pose is evaluated per
+  slot, never two. UE's montages crossfade by default and offer
+  inertialization per montage (`BlendModeIn/Out`); we only inertialize,
+  like our state machines' default.
+- **Clock, events, root motion.** The montage clock runs every update, even
+  when no evaluated branch reaches its slot (UE ticks montages on the
+  instance), so script timing never depends on the graph state. Its events
+  all fire, once per crossing (`Clip::advance` per pass), outside the
+  per-layer highest-weight selection, tagged `GraphEvent::montage`; an
+  interrupted or stopped montage closes the windows it is inside with
+  `Exit` events at the next update (UE ends notify states on
+  interruption). Root motion follows the request's mode: a `Drive` montage
+  outputs exactly a `Drive` player's root delta (tested per update), through
+  the mask's root weight on a masked slot; its `warp` windows warp like a
+  player's where the slot is evaluated.
+- **Notices.** `GraphOutput::slot_notices`: `Started` and
+  `Ended { interrupted }` per montage id (UE's OnMontageStarted / OnBlendOut /
+  OnMontageEnded collapse to these two, since an inertialized blend-out has
+  no overlap to report).
+- **Not done.** Montage sections and branching points (UE sections with
+  next-section links): no legacy need yet, a clip plus `from`/`loops`/
+  `end_early` covers the group ranges; additive montages (rejected); a
+  per-slot "always update source pose" option; per-request blend profiles.
+
+**Adapter hook for scripted "play this group" requests.** The framework
+knows only `SlotRequest`. An adapter maps its script verbs onto it, e.g.
+the Bevyrrowind side for PlayGroup / LoopGroup (UESP docs: flag 0 lets the
+current animation finish its cycle, then the group starts from its first
+frame; 1 starts it at once from its first frame; 2 at once from its loop
+start; LoopGroup's count is how many times it plays, and the original plays
+exactly that many, which OpenMW issue 7641 reports OpenMW overshooting by
+one): `Queue` for flag 0, `Interrupt` for 1 and 2, `from` = the loop start
+for 2, `loops` = count − 1. Which slot a script group plays in, and
+whether flag 0 waits for the base locomotion cycle (the framework's
+`Queue` starts at once in a free slot), are adapter rules. OpenMW's Lua
+`playQueued` / `playBlended` (loops, speed, start/stop keys, priorities,
+bone-group masks) cover the same ground; its "Scripted" priority pausing
+all other animations is what a full-body slot with a high `priority` does.
+(Built 2026-10-12 on the Bevyrrowind side, `mw_graphs::script`, with its graph templates: scripted
+groups in a `full` slot at priority 100, attacks in a masked `upper` slot.)
+
+### Creatures (M3)
+
+Skeleton-agnostic core plus a rig profile per skeleton
+([rig-profile.md](rig-profile.md)): N support limbs, girdles, spine,
+neck/head, tails, wings. Every op above reads limbs from the profile; the
+humanoid rig is an optional layer for retargeting. The audit of the built
+crates against this is below.
+
+### Audit of the built crates: biped and humanoid assumptions (2026-10-11)
+
+| # | Where | Assumption | Fix |
+|---|---|---|---|
+| 1 | `sf_anim_graph/src/compiled.rs:164`, `asset.rs:353` | `Leg` is exactly hip, knee, foot | `Limb` from the rig profile: N joints, solver kind, pole hint, girdle |
+| 2 | `sf_anim_graph/src/procedural.rs:160-209` (`FootPlacement`) | one `pelvis` drops by the largest need (`:198`, `:203`) | one offset per girdle; body pitch and roll fitted from the girdle offsets and spread over the spine |
+| 3 | `procedural.rs:86-93` (`solve_leg`) | two-bone only; straight legs fall back to a +Z pole (`:90`), wrong for backward-bending hind legs | solver by limb (`TwoBoneAnkle`, FABRIK); `PoleHint::Axis` from the profile |
+| 4 | `procedural.rs:111-143` (`StrideWarp`) | scales about one pelvis; drop along −Y of the single pelvis (`:138`) | per girdle center |
+| 5 | `procedural.rs:144-159` (`OrientationWarp`) | biped lower-body/torso split | biped template only; add `SpineBend` for quadrupeds |
+| 6 | `procedural.rs:230-242`, `compiled.rs:181` (`HandIk`) | three joints, position only (`instance.rs:141` targets are `Vec3`) | `LimbIk` with optional rotation; `IkTarget { position, rotation }` |
+| 7 | `sf_anim_graph` ops | FABRIK/CCD exist in `sf_anim::ik` but no op exposes them | `ChainIk` op |
+| 8 | `sf_anim/src/cook.rs:854` | contacts only on joints tagged `foot` | support-limb effectors from the profile |
+| 9 | `sf_anim/src/cook.rs:114` | contact height 5 cm and speed 0.3 m/s absolute | fractions of leg length from `Measures` |
+| 10 | `sf_anim/src/skeleton.rs:124-139, 144-185` | tags and name guesses are humanoid only | add `tail`, `wing`, `claw`/`hoof` tags; limbs come from `rig.profile`, not names |
+| 11 | `sf_anim/src/retarget.rs:43-44` | retarget IK fix-up needs exactly three joints | solver by limb kind; per-limb scale for IK goals |
+| 12 | `sf_anim/src/clip.rs:89-93` (`RootDelta`) | root motion is translation + yaw only | flyers and swimmers: optional pitch/roll (`RootMotionRules::full_rotation`), ground creatures unchanged |
+| 13 | `sf_controller/src/intent.rs:19`, `mover.rs:251` | horizontal intent; vertical root motion dropped while grounded | `Fly`/`Swim` mover modes with 3D intent; `Traversal` flag for warped vertical motion |
+| 14 | `sf_controller/src/mover.rs:69-79`, `probe.rs:17-18` | upright capsule only | M3: half-body-length capsule for long creatures; M4: horizontal capsule shape |
+| 15 | `sf_anim_graph/src/procedural.rs:102` | `probe_origins` are per leg (already N) | none: works for N legs; keep |
+| 16 | `sf_character/src/records.rs:128` | `CharacterRecipe::rig` is a required `RigMapRef` (humanoid) | `RigRef = Humanoid(..) \| Profile(..)`; `RigMap` also produces a `RigProfile` (rig-profile.md, proposed character.md changes) |
+| 17 | `sf_character/src/rig.rs:189-194` (`retarget_rig`) | leg chains are exactly upper leg, lower leg, foot, skipping any joint between (digitigrade metatarsal) | chain = the joint path from upper leg to foot, solver `TwoBoneAnkle` when it has four joints |
+
+**Status of the audit (anim-rig, 2026-10-12).** Fixed: 1, 2, 3, 4, 6,
+7, 8, 9, 10, 11, 12, 16, 17 (and 5 partly: `SpineBend` and `Lean` added,
+`OrientationWarp` unchanged). 13 and 14 fixed by anim-creatures
+(2026-10-12): `RootMotion::traversal`, `MoverMode { Ground, Fly { hover },
+Swim { surface } }` with 3D intent, `Locomotion::attitude` from root tilt,
+`MoverParams::from_profile` (locomotion.md "As implemented"). Details in
+rig-profile.md "As implemented".
+
+**Full-body IK as built (`sf_anim::ik::FullBody`, `FullBodyIk` op, 2026-10-12).**
+Research (rule 8/9): UE5 FBIK (PBIK: particles, per-bone stiffness, `PrePull` root,
+20 iterations), XPBD (Macklin et al. 2016), FABRIK's multi-end-effector
+extension (Aristidou & Lasenby 2011; sub-bases, no stiffness or limit model),
+Final IK's `FullBodyBipedIK` (body solved as a few weighted nodes, then each
+limb by analytic two-bone IK; biped only) and `VRIK` (three-point humanoid
+heuristic). Crates: `lux-ik` (Jacobian DLS, proof of concept, unmaintained
+since 2023), `skelly` (FABRIK, 2021), `k` (robot-arm Jacobian IK on
+nalgebra), Rapier's multibody IK (Jacobian, physics-engine bodies),
+`bevy_mod_inverse_kinematics` (single chain, Bevy-bound): none solves a
+rig-profile body with stiffness, limits and determinism, so we wrote ours on
+our pose types. Shape: one particle per body joint (girdles, spine, neck,
+head, limb joints, closed to their common ancestor = root). Per iteration:
+soft root anchor; joint stiffness (each bone keeps its animated direction in its parent's
+frame turned by the parent bone's swing; compliance-weighted PBD steps
+under-relaxed by 0.5, no Lagrange multipliers: measured, XPBD's multipliers
+at these compliances need ~150 iterations to reach their equilibrium and a
+full step makes the stiff torso and the hard constraints trade the same
+error every iteration, a period-2 oscillation of 10-17 cm on the biped);
+torso limits in the solve (a capped joint hands the bend to its neighbours);
+**limb ends constrain their limb root to a sphere of comfortable reach**
+(`settings.reach`, 0.95 of full reach) around the goal, reaching limbs first,
+planted (`pull` 0) limbs last; hard bone lengths swept down then up the tree.
+Then rotations are recovered top-down (swing to the solved child, best-fit
+rotation over several children by Müller et al. 2016, the animated twist
+kept), each joint's local change clamped to its limit; joints on the path to a pinned non-limb
+effector (a head) turn to that child exactly; the body translates by the
+mean residual of those effectors (the recovery's loss is mostly radial,
+which rotations cannot remove); planted limbs move the root back within
+reach; one CCD sweep up each chain to the root's child brings a head to its
+goal and a reaching limb's root within comfortable reach (stopping at 1 mm); finally each limb end is solved exactly by its limb's
+own solver (two-bone, two-bone-ankle, FABRIK), the knee toward its animated
+side turned with the limb (the Final IK step), limits re-clamped. Defaults by
+role (`BodyRole`; tune per joint with `FullBody::joint_mut`): limits are
+deviations from the animated pose (the profile has no authored ranges):
+root 45°, spine 30°, neck 50°, clavicle/scapula 30°, hip/shoulder 120°,
+knee/elbow 150°; knees and elbows never pass straight (two-bone hinge).
+Deviation from the plan above: no particle hinge or cone-twist constraints;
+the limb pass makes them redundant and its pole is flip-free. Op:
+`FullBodyIk(effectors: [(limb | joint, target, weight, pull, rotation)],
+pin_support: true, pin: [..], iterations: 10, max_lod: 0)`; support limbs
+are pinned where the ops before left them (after `FootPlacement`: the placed
+feet, with their tilt). Tests (`sf_anim/src/fbik_tests.rs`, `creature_tests`
+`full_body_ik_reaches_with_the_body_and_keeps_placed_feet`): a biped hand
+0.84 m from the shoulder (arm 0.53 m) lands within 2 cm with feet ≤ 5 mm
+from their pins, chest +10 cm forward, spine > 5°; reachable goals ≤ 1 cm at
+10 iterations; unreachable goals clamp (arm toward the goal, no knee flip);
+limits hold on every body joint; a moving goal moves no joint more than 3×
+the goal's step per frame and repeats bit for bit; 1 and 8 threads give
+identical poses; a quadruped head reach beyond the neck lands ≤ 1 cm at 10 and 20 iterations
+(measured < 0.001 mm) with four feet planted, the chest lowered, no knee
+or hock flip, the tail following the pelvis rigidly. Release timing
+(`cargo test --release -p sf_anim --all-features -- --ignored --nocapture
+full_body_timing`, reference laptop, 2026-10-12, fbik2): biped 17 joints,
+2 feet + 1 hand, 5.0 µs (was 7.3); quadruped 31 joints, 4 feet + head,
+7.5 µs (was 13.3); Quaternius humanoid 66 joints, 2 feet + 1 hand, 8.7 µs
+(was 11.3; gate 8 µs still missed by 0.7 µs). Profile (humanoid): particle
+loop 3.4 µs (latency-bound sqrt chains: one length sweep per iteration, a
+square-root-free cone test, per-solve link table), recovery + full refresh
+1.7, limb passes 2.0, reach polish 1.0. Next: refresh each subtree once
+(recovery, polish and the limb passes each refresh the arm and finger
+joints again) and read animated model rotations once. A worst-case A0
+character (5.0 µs graph + 9 µs FBIK + 0.1 µs warp) stays inside the 35 µs
+gate.
+
+**Motion warping as built (`sf_anim_graph`, 2026-10-12).** Windows are
+clip events named `warp` with payload `<target>;<skew|scale>[;key=value]`,
+keys `rot=default|facing|none`, `y=ignore|warp`, `rot_time`, `max_dist`
+(m), `max_turn` (deg/s), `ease` (fraction of the window, default 0.25),
+`point=root|<joint>`; `animgraph.compile` parses them per clip slot
+(`CompiledGraph::warp_windows`, `warp_targets`; graph format 2) and
+precomputes a joint warp point in the root frame at the window end.
+Runtime: `UpdateInputs::warp_targets: &[Option<WarpTarget { position,
+yaw, velocity }>]` (character space; `velocity` extrapolates a moving
+target to the end of the update, removing that update's latency);
+after root blending, the highest-weighted `Drive` lane whose playhead
+interval overlaps an open window with a set target has the in-window part
+of its delta warped: translation by the rank-one skew `δ' = δ + (D −
+R)(R·δ)/|R|²` (R = remaining authored path, D = vector to the target,
+`y=ignore` keeps R's height; scale mode `δ·|D|/|R|`; linear fallback when
+R ≈ 0), eased in by smoothstep over `ease`; rotation by the remaining turn
+spread until `rot_time`, clamped by `max_turn`. Recomputed every update, so
+the last update lands exactly. `GraphOutput::warp: Option<ActiveWarp {
+target, remaining, error, yaw_error, vertical }>`; `vertical` is what the
+controller glue passes to the mover as `RootMotion::traversal`. Measured: static
+target end error 0.0 mm / 0.000°, root-speed jump at the window start
+13% (target 30% farther: ≤ 20%), target moving 3 m/s: ≤ 5 cm (with
+`velocity`), vault onto a 1.1 m ledge 0.0 mm, joint warp point within
+2 cm. Cost: `cargo test --release -p sf_anim_graph --all-features --
+--ignored --nocapture warp_and_creature_timing`: 0.10–0.12 µs per
+warping update (gate 0.5 µs; release, reference laptop, 2026-10-12,
+another session active). Through the controller glue, a warped mantle
+onto a 1.2 m box (`sf_controller` `tests/graph_drive.rs`) ends within
+1 mm of the target, grounded, the capsule never inside the box.
+
+Generic already: the pose runtime, graph, sync, inertialization, `Mirror`
+(any axis), `LookAt` (chain + aim axis), joint LOD masks, retargeting by
+chain name, ground probes.
+
+## Verification
+
+- Unit tests (`sf_anim`, `sf_anim_graph`): the cook round-trips within the
+  error bound, sampling matches the source curves, and additive bases
+  cancel. Masks, sync phase alignment, and inertialization are continuous
+  in position and velocity at the switch. Events fire exactly once across
+  wraps and in reverse. Two-bone IK reaches reachable targets and clamps
+  unreachable ones without flipping. Root-motion blending is correct, and
+  evaluation is identical across thread counts.
+- Viewer: `anim` mode with skeleton gizmos, a graph state overlay, and
+  parameter sliders. Screenshot sequences of a walk on stairs and a slope.
+- `sf_diag` scenario "crowd street" with the gates above, plus foot-slide
+  and penetration metrics computed from contact curves and ground probes.
+
+## Industry comparison
+
+J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9m3.md`).
+The Bevy 0.20 rows were read from `bevy_pbr-0.20.0` and `bevy_mesh-0.20.0`
+source in the local registry (`render/skin.rs`, `skinning.wesl`,
+`morph.wesl`, `mesh.wesl`, `prepass/prepass.wesl`, `morph.rs`).
+
+| Technique | What shipped engines do | Us | Verdict |
+|---|---|---|---|
+| Graph shape | UE5 Animation Blueprints: state machines, blend spaces, layered blend per bone with blend profiles, sync groups and markers, cached poses, slots. Unity Mecanim: state machines, layers with avatar masks, 1D/2D and freeform blend trees. Creation Engine: Havok Behavior graphs (`.hkx`), state machines driven by named events, clip annotations as events. OpenMW: text-key driven animation groups, no graph; since 0.49 optional per-file `blending_rules` (from/to, easing, duration) behind "smooth animation transitions" | layered graph, weighted masks, sync groups and markers, blend spaces, state machines (Canonical technique) | **match** UE's model; Havok's event-driven state machines map onto our trigger params and event tracks |
+| Transitions | UE inertialization node (Bollo, Gears of War); Unity and OpenMW crossfade or eased blends | inertialization, crossfade kept for layers | **match** |
+| Runtime and threading | UE evaluates anim graphs on worker threads; ozz's job model (sample into buffers, blend, local-to-model) | ozz model, `par_iter` per character | **match** |
+| Clip compression | ACL (UE's default codec) | ACL's uniform-sampling subset | **match** |
+| Clip sample rate (animcook 2026-10-12) | ACL compresses raw tracks the caller has already sampled uniformly (`sample_rate` given) and measures its error against those raw samples; no rate search. UE resamples at FBX import (`Use Default Sample Rate` 30 fps, or `Custom Sample Rate`, 0 = derived from the file) and its codecs (ACL plugin included) compress against that raw data; per-bone virtual-vertex distances (3 cm default, larger for socketed bones). Unity keeps curves and reduces keys against angle/position/scale tolerances. None measures between-sample fidelity against the authored curves | rate searched per clip (30/60/120 Hz) against the continuous source, frames and midpoints, 0.1 mm at 1 m | **stricter than industry** (and ~2x more cook work); cheap fix done (resampling-error skip, early-out, reuse). **Proposal (P3)**: ACL-style split: pick the rate once from the source's key density (native rate, else the min rate; 60 Hz for dense keys), measure quantization against those frames only, and report the resampling error as a separate per-clip meta (`resample_error`) for review instead of searching rates. A Rust port of ACL doesn't exist (C++ only, MIT); an FFI binding is possible but our encoder already matches its uniform-sampling, per-track-bit-rate design |
+| Root motion | UE: root motion from montages for actions, in-place + capsule for locomotion (Lyra); Unity `applyRootMotion` per animator | `Drive` / `Match` / `Ignore` per clip or state | **match** |
+| Motion warping | UE Motion Warping: notify-state windows, skew warp (`SimpleWarp` deprecated for `SkewWarp`), warp point from a transform or a bone, "ignore Z" | Layer 1, same windows, modes and warp points | **match** |
+| Stride / orientation warping | UE Animation Warping (Paragon, Fortnite, Lyra) | `StrideWarp`, `OrientationWarp` ops | **match**; OpenMW's "turn to movement direction" (lower body turns, head follows the view) is the same idea |
+| **Distance matching** | UE Animation Locomotion Library (Lyra): starts, stops and pivots play by *distance* (a baked distance curve, `DistanceMatchToTarget` against the predicted stop or pivot point), not time, so stops land without sliding. The docs note it ignores the previous cycle's phase | none: starts and stops are time-driven states; `SpeedMatch` covers cycles only | **GAP (P2)**: legacy sets have no start/stop clips, so M3 loses nothing; library clips (animation-sources) do. Needs a distance curve at `anim.cook` and a stop/pivot prediction from the trajectory springs (locomotion.md). Open question 5 |
+| Foot IK conventions | UE Foot Placement node: per-foot plant from root-motion speed or a per-foot curve, lock types, heel lift before pelvis drop (`heel lift ratio`), pelvis height modes `AllLegs`, `AllPlantedFeet`, `FrontPlantedFeetUphill_FrontFeetDownhill`, pelvis max offset. Unity: Mecanim humanoid foot IK, Animation Rigging Two Bone IK. OpenMW: no foot IK (observation) | contact-curve lock and release, pelvis drops by the largest need, two-bone with the animated knee as pole, per-girdle offsets planned (rig-profile.md) | **match** in technique; **differ**: our pelvis rule is UE's `AllLegs`; planted-feet-only and heel-lift are cheap refinements (open question 6) |
+| Runtime rigging | UE Control Rig + Full Body IK (PBIK); Unity Animation Rigging (constraints on the Animation Jobs API: Two Bone IK, Multi-Aim, Twist Chain, Damped Transform) | procedural op stack + XPBD full-body IK (Layer 2) | **match** in capability; **differ**: ops are a closed enum, not a user rig graph, so graphs stay patchable data |
+| **Gameplay-driven one-shot clips** | UE montages played into named **slots** of the anim graph (attack, interaction, emote: any clip, blend in/out, root motion, notifies, without a state per clip); Unity Playables / `Animator.CrossFade` by state name; Havok Behavior events; OpenMW plays any animation group on request (scripts) | `Slot` nodes with slot groups; `play_slot` takes a binding clip (`slot_clips`) or a late-bound `LateClip`, interrupt or queue with priority, loops, start time, early end, inertialized blend in/out, root-motion mode, events and warp windows ("Slots and montages") | **match** (G4 resolved 2026-10-12, M3-d). **Differ**: inertialization only (UE crossfades by default, inertialization per montage); no montage sections or branching points yet; a queue (OpenMW `playQueued`, Morrowind PlayGroup flag 0) that UE leaves to gameplay code |
+| Motion matching | UE Pose Search (production-ready 5.4; GASP hybrid with Chooser); Ubisoft (Büttner, nucl.ai 2015; Clavet, *For Honor*, 2016); Naughty Dog (TLOU2); Unity Kinematica (preview only, last release 0.8.0-preview, 2020-07). Decima: no public source found that Guerrilla uses MM (Oud's GDC 2022 Horizon talk abstract doesn't say) | later node, data plan in place | **differ, justified**: legacy content is a few hand-keyed cycles |
+| Physical animation | RAGE + Euphoria (GTA IV onward, evolved for RDR2; NaturalMotion stopped licensing it in 2017); Havok powered ragdolls; UE Physics Control | M4 Layer 4 | **match** (planned) |
+| Update-rate LOD | UE URO: per-LOD frame skip (`LODToFrameSkipMap`), a non-rendered update rate, interpolation over skipped frames. Unity `cullingMode`: `AlwaysAnimate`, `CullUpdateTransforms` (no retarget/IK/write while invisible), `CullCompletely`. Creation Engine process levels High / Middle-high / Middle-low / Low (high = every frame; lower levels much less often; documented for Oblivion and Fallout 3). OpenMW: "actors processing range" (default 7168 units, min 3584): AI, animation and physics stop beyond it, with a fade at the edge | A0–A3 by projected size × significance, A2 at 1/2–1/4 rate interpolated, A3 clocks + events only | **match** |
+| Budget allocator | UE Animation Budget Allocator: `a.Budget.BudgetMs` 1.0 ms game thread by default (scaled per quality level up to 2.5), tick rate up to `MaxTickRate` 10, interpolation capped (`MaxInterpolatedComponents` 16), `MaxTickedOffscreen` 4, `AlwaysTick` with a falloff, significance per component (`bNeverSkip`, `bTickEvenIfNotRendered`, `bForceInterpolate`) | allocator demotes by tier until an EMA cost fits, hysteresis | **match**; worth borrowing UE's caps (max interpolated, max off-screen ticked) as allocator parameters |
+| **Crowd pose sharing** | UE Animation Sharing plugin: crowd actors are grouped into animation-state buckets; one leader evaluates each bucket and every member copies its pose (leader pose), with per-member blends and randomized start offsets for variety. UE's Leader Pose Component (one evaluation drives several meshes) is the per-character version | every character evaluates its own graph; tiers only lower the rate | **GAP (P2)**: for A2 ambient NPCs playing the same idle or walk cycle, bucket by (skeleton, clip, quantized phase) and copy. Open question 8 |
+| **Distant crowd tier** | Vertex or bone animation textures, instanced: UE AnimToTexture (VAT, or bone mode with bone position/rotation textures; secondhand: used for City Sample's medium- and far-distance pedestrians), Unity's Animation Instancing (2018, root motion, attachments and events, no transitions or layers), GPU Gems 3 ch. 2 (bone matrices in a texture). AC Unity: 40 real AIs, 120 high-resolution models, ~10,000 crowd NPCs, swapping low- and high-res NPCs unnoticed | "later tier" in LOD and budget | **GAP (P2)**, already named; now a job (industry-audit.md, M3 follow-ups) so R1 NPCs can move instead of freezing |
+| Skinning path | UE: vertex-factory GPU skinning by default, plus the compute **Skin Cache** (skin once, reuse in every pass; mandatory for hardware ray tracing; per-world memory cap; per-LOD opt-in). Unity: GPU (compute) skinning option | Bevy 0.20 as is: skinning in the vertex shader of **every pass** (depth prepass, main, each shadow cascade; with motion vectors the prepass also skins with the previous joints). Joint palettes are copied **per `SkinnedMesh` entity** (`SkinUniforms` keyed by entity), allocated only while visible, and only joints whose `GlobalTransform` changed are rewritten | **differ** (open question 3); **GAP (P1)** in measurement: the "GPU skinning ≤ 0.5 ms all passes" gate has no per-pass breakdown, and nothing keeps characters out of far cascades. UE has a per-component `bCastFarShadow` (render into far directional cascades only when set; we found no source for its default). Job M3-c |
+| Morph targets | UE: GPU morph targets ("Use GPU for computing morph targets"), per-LOD "Remap Morph Targets" and a morph position error tolerance for compression; UE's skeletal mesh **merge drops morph targets** (Epic's modular character chart) | Bevy 0.20: dense `MorphAttributes` (48 bytes per vertex per target, storage buffer), a loop over every target per vertex in every pass that skips zero weights, `MAX_MORPH_WEIGHTS` 256 | **GAP (P1)**: see character.md "Industry comparison" (morphed parts must not be merged) |
+| Events | UE anim notifies and notify states; Havok clip annotations; OpenMW text keys | point and window events, highest-weighted clip fires | **match** |
+
+Sources (checked 2026-10-12):
+- UE Animation Budget Allocator: https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-budget-allocator-in-unreal-engine
+- UE `USkinnedMeshComponent` (URO: `bEnableUpdateRateOptimizations`, `AnimUpdateRateParams`): https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/USkinnedMeshComponent ; `LODToFrameSkipMap` usage: https://forums.unrealengine.com/t/animation-frameskip-skeletalmesh/432638
+- UE Animation Sharing plugin: https://dev.epicgames.com/documentation/unreal-engine/animation-sharing-plugin-in-unreal-engine (read via the ja/zh pages) ; API: https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/AnimationSharing/UAnimationSharingManager
+- UE Distance Matching: https://dev.epicgames.com/documentation/en-us/unreal-engine/distance-matching-in-unreal-engine ; `DistanceMatchToTarget`: https://dev.epicgames.com/documentation/unreal-engine/BlueprintAPI/DistanceMatching/DistanceMatchtoTarget
+- UE Motion Warping: https://dev.epicgames.com/documentation/en-us/unreal-engine/motion-warping-in-unreal-engine
+- UE Foot Placement node: https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/AnimationWarpingRuntime/FAnimNode_FootPlacement ; pelvis modes: https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/AnimationWarpingRuntime/EPelvisHeightMode
+- UE skeletal mesh rendering paths (Skin Cache): https://dev.epicgames.com/documentation/en-us/unreal-engine/skeletal-mesh-rendering-paths-in-unreal-engine ; `cast_far_shadow`: https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/SkinnedMeshComponent
+- UE modular characters (leader pose / copy pose / merge chart): https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-modular-characters-in-unreal-engine
+- UE AnimToTexture: https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/AnimToTextureEditor/UAnimToTextureBPLibrary
+- Unity `AnimatorCullingMode`: https://docs.unity3d.com/ScriptReference/AnimatorCullingMode.html ; Animation Rigging constraints: https://docs.unity3d.com/Packages/com.unity.animation.rigging@1.2/manual/ConstraintComponents.html ; Kinematica changelog: https://docs.unity3d.com/Packages/com.unity.kinematica@0.8/changelog/CHANGELOG.html ; Animation Instancing: https://blog.unity.com/engine-platform/animation-instancing-for-skinnedmeshrenderer
+- GPU Gems 3 ch. 2, *Animated Crowd Rendering*: https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch02.html
+- Cournoyer, *Massive Crowd on Assassin's Creed Unity: AI Recycling*, GDC 2015: https://gdcvault.com/play/1022141/Massive-Crowd-on-Assassin-s
+- Clavet / Büttner motion matching history: https://gamedeveloper.com/programming/most-inspiring-game-animation-tech-talks-of-2016
+- Oud, *Evolving the Horizon Series*, GDC 2022 (abstract): https://gdcvault.com/play/1027894/Evolving-the-Horizon-Series-Animating
+- Euphoria: https://en.wikipedia.org/wiki/Euphoria_(software) ; RDR2 interview: https://wccftech.com/rockstar-euphoria-evolved-rdr2/amp/
+- Creation Engine process levels: https://cs.uesp.net/wiki/GetProcessLevel ; https://geck.uesp.net/wiki/GetActorProcessingLevel ; Skyrim behavior files (community tooling): https://github.com/Monitor221hz/Pandora-Behaviour-Engine-Plus
+- UE montages (sections, slots, blend in/out, blend-out trigger time, interruption uses the new montage's blend-in): https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-montage-editor-in-unreal-engine ; `UAnimMontage` (`blend_mode_in/out`, group from the first slot): https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/AnimMontage
+- Morrowind PlayGroup / LoopGroup flags: https://en.uesp.net/wiki/Morrowind_Mod:PlayGroup ; https://en.uesp.net/wiki/Morrowind_Mod:LoopGroup ; OpenMW LoopGroup count issue: https://gitlab.com/OpenMW/openmw/-/issues/7641 ; OpenMW Lua `playQueued` / `playBlended`: https://openmw-trav.readthedocs.io/en/latest/reference/lua-scripting/openmw_animation.html
+- Animancer layer `Play` (fade in the state, fade out the layer's others): https://kybernetik.com.au/animancer/api/Animancer/AnimancerLayer/A27E17D4
+- OpenMW game settings: https://openmw.readthedocs.io/en/latest/reference/modding/settings/game.html ; animation blending: https://openmw-trav.readthedocs.io/en/latest/reference/modding/animation-blending.html ; 0.49 release: https://openmw.org/2025/openmw-0-49-0-released/
+
+**Unverified** (from memory or secondhand, check before quoting details):
+City Sample's use of AnimToTexture for mid/far pedestrians (a secondhand blog,
+https://teletype.in/@hardway/anim2texture); UE5 Pose Search production-ready
+in 5.4 and GASP 5.8's Chooser (carried from "Next-gen roadmap"); Skyrim foot
+IK inside Havok Behavior; `bCastFarShadow`'s default value.
+
+## Open questions
+
+1. Whether the procedural op stack belongs per graph asset or per
+   character archetype (shared by several graphs). Per graph asset for
+   now (`sf_anim_graph`); subgraphs share node logic but not ops.
+2. SoA (4-wide) pose math as in ozz: adopted in `sf_anim` from the start
+   (see Data model). Measure against the A0 target once the graph exists.
+3. A compute "skin cache" (skin once per frame, reuse in every pass, feed
+   ray-tracing BLAS refits) like UE's: needed for Solari, whose
+   `RaytracingMesh3d` takes no joint attributes, so skinned characters
+   cast no ray-traced shadows or GI today. Measure in M3, decide by M7.
+4. Authoring: RON first, an in-viewer graph inspector next. A full editor
+   (or `bevy_animation_graph`'s, if it converges) later.
+5. Distance matching (gap, Industry comparison): a `distance` curve per
+   start/stop/pivot clip at `anim.cook` (root translation along the path,
+   negative before the stop), a `Player` mode that seeks by remaining
+   distance, and a stop/pivot point predicted from the trajectory springs
+   (locomotion.md open question 4). Worth it once library start/stop clips
+   are baked; nothing to gain on cycle-only legacy sets.
+6. Foot placement pelvis modes (UE's `AllPlantedFeet` and uphill/downhill
+   variants) and a heel-lift ratio before the pelvis drops: fold into the
+   per-girdle `FootPlacement` rewrite (audit row 2) and pick by visual check.
+7. ~~Montage-style `Slot` node~~ **Resolved 2026-10-12 (M3-d)**: both the
+   binding's clips (`slot_clips`) and late-bound clips (`LateClip`, mapped at
+   runtime); interrupt with priority or queue; see "Slots and montages".
+   Still open: montage sections / branching points, and whether a late-bound
+   set should be resolved by `GraphRules` at spawn rather than per request.
+8. Crowd pose sharing (gap, P2): A2 characters on the same skeleton and
+   clip, bucketed by quantized phase, copy one evaluated pose (UE Animation
+   Sharing). Still open. **Variety half built 2026-10-22 (animation-plan
+   slice 3):** `sf_anim_graph::variety`: `Variety::from_seed(seed, 0.05)` (splitmix64
+   hash of a stable id; `AnimSeed::from_id(placement id)` in `sf_character_bevy`, else spawn
+   position) gives a start phase in [0,1) and a rate in 1±5 %. `GraphInstance::set_variety`
+   applies the phase at every looping player (re)start and the rate to looping players that are
+   not root-motion `Drive` (locomotion's speed match divides it back out: no foot slide).
+   `FidgetPicker`: weighted, min/max gap, never the same fidget twice in a row (a sole
+   candidate may repeat). Off via `AnimVarietySettings.enabled`. Content: AI idle rolls skip the
+   last fidget (`mw_ai`), level `@fidget` action (lab crowd, `level-anim-crowd`).

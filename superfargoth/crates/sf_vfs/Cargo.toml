@@ -1,0 +1,28 @@
+[package]
+name = "sf_vfs"
+description = "Layered virtual filesystem for superfargoth mods and content packs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Exposes the VFS as a Bevy `AssetSource`.
+bevy = ["dep:bevy_asset", "dep:futures-lite", "dep:async-channel"]
+# Hot reload (dev builds): a debounced watcher over every `DirSource` root
+# that rebuilds and swaps the shared snapshot (mods.md "Hot reload").
+watch = ["dep:notify-debouncer-full"]
+
+[dependencies]
+arc-swap.workspace = true
+async-channel = { workspace = true, optional = true }
+bevy_asset = { workspace = true, optional = true }
+futures-lite = { workspace = true, optional = true }
+notify-debouncer-full = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

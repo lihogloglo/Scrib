@@ -1,0 +1,229 @@
+{
+  "CreatedRecord": {
+    "STRUCT": [
+      {
+        "kind": "STR"
+      },
+      {
+        "id": "STR"
+      },
+      {
+        "value": {
+          "TYPENAME": "SavedValue"
+        }
+      }
+    ]
+  },
+  "RecordOverlay": {
+    "STRUCT": [
+      {
+        "created": {
+          "SEQ": {
+            "TYPENAME": "CreatedRecord"
+          }
+        }
+      },
+      {
+        "patches": {
+          "SEQ": {
+            "TYPENAME": "RecordPatch"
+          }
+        }
+      },
+      {
+        "next_id": "U64"
+      }
+    ]
+  },
+  "RecordPatch": {
+    "STRUCT": [
+      {
+        "kind": "STR"
+      },
+      {
+        "id": "STR"
+      },
+      {
+        "ops": {
+          "SEQ": {
+            "TYPENAME": "SavedOp"
+          }
+        }
+      }
+    ]
+  },
+  "SavedOp": {
+    "ENUM": {
+      "0": {
+        "Set": {
+          "STRUCT": [
+            {
+              "path": "STR"
+            },
+            {
+              "value": {
+                "TYPENAME": "SavedValue"
+              }
+            }
+          ]
+        }
+      },
+      "1": {
+        "Merge": {
+          "STRUCT": [
+            {
+              "path": "STR"
+            },
+            {
+              "value": {
+                "TYPENAME": "SavedValue"
+              }
+            }
+          ]
+        }
+      },
+      "2": {
+        "Remove": {
+          "STRUCT": [
+            {
+              "path": "STR"
+            }
+          ]
+        }
+      },
+      "3": {
+        "Append": {
+          "STRUCT": [
+            {
+              "path": "STR"
+            },
+            {
+              "value": {
+                "TYPENAME": "SavedValue"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "SavedValue": {
+    "ENUM": {
+      "0": {
+        "Unit": "UNIT"
+      },
+      "1": {
+        "Bool": {
+          "NEWTYPE": "BOOL"
+        }
+      },
+      "2": {
+        "I64": {
+          "NEWTYPE": "I64"
+        }
+      },
+      "3": {
+        "U64": {
+          "NEWTYPE": "U64"
+        }
+      },
+      "4": {
+        "F64": {
+          "NEWTYPE": "F64"
+        }
+      },
+      "5": {
+        "Char": {
+          "NEWTYPE": "CHAR"
+        }
+      },
+      "6": {
+        "String": {
+          "NEWTYPE": "STR"
+        }
+      },
+      "7": {
+        "Bytes": {
+          "NEWTYPE": {
+            "SEQ": "U8"
+          }
+        }
+      },
+      "8": {
+        "None": "UNIT"
+      },
+      "9": {
+        "Some": {
+          "NEWTYPE": {
+            "TYPENAME": "SavedValue"
+          }
+        }
+      },
+      "10": {
+        "Seq": {
+          "NEWTYPE": {
+            "SEQ": {
+              "TYPENAME": "SavedValue"
+            }
+          }
+        }
+      },
+      "11": {
+        "Map": {
+          "NEWTYPE": {
+            "SEQ": {
+              "TUPLEARRAY": {
+                "CONTENT": {
+                  "TYPENAME": "SavedValue"
+                },
+                "SIZE": 2
+              }
+            }
+          }
+        }
+      },
+      "12": {
+        "Struct": {
+          "NEWTYPE": {
+            "SEQ": {
+              "TUPLE": [
+                "STR",
+                {
+                  "TYPENAME": "SavedValue"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "13": {
+        "Enum": {
+          "STRUCT": [
+            {
+              "variant": "STR"
+            },
+            {
+              "payload": {
+                "OPTION": {
+                  "TYPENAME": "SavedValue"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "14": {
+        "Ron": {
+          "STRUCT": [
+            {
+              "text": "STR"
+            },
+            {
+              "extensions": "U64"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

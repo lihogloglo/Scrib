@@ -1,0 +1,56 @@
+// Framework base move rules, slice A1 (docs/specs/action.md): locomotion, air, landing bands,
+// and plain "press to use" activation. Content packs patch or add rules by id; mods can't add
+// rules above the Paired category. Numbers are starting points tuned on test courses.
+[
+    (
+        id: "loco",
+        kind: Locomotion,
+        category: Locomotion,
+        slots: ["loco.move"],
+        entry: (states: [Grounded]),
+    ),
+    (
+        id: "air.fall",
+        kind: Air,
+        category: Locomotion,
+        slots: ["air.fall"],
+        entry: (states: [AirRising, AirFalling]),
+        exits: [(on: Touchdown, to: Loco)],
+    ),
+    (
+        id: "air.jump",
+        kind: Air,
+        category: Jump,
+        slots: ["air.jump", "air.fall"],
+        entry: (classes: [Jump], states: [Grounded, Coyote]),
+        launch: Some(JumpHeight),
+        exits: [(on: Touchdown, to: Loco)],
+    ),
+    (
+        id: "land.hard",
+        kind: Air,
+        category: Landing,
+        rank: 10,
+        slots: ["air.land.hard"],
+        entry: (states: [Landed], vspeed: Some((-1000.0, -9.0))),
+        windows: Committed,
+        steer: false,
+        exits: [(on: End, to: Loco)],
+    ),
+    (
+        id: "land.normal",
+        kind: Air,
+        category: Landing,
+        slots: ["air.land.normal"],
+        entry: (states: [Landed], vspeed: Some((-9.0, -4.0))),
+        exits: [(on: End, to: Loco)],
+    ),
+    (
+        id: "interact.use",
+        kind: Interaction,
+        category: Interact,
+        slots: [],
+        entry: (classes: [Interact], states: [Grounded], focus: Some([])),
+        exits: [(on: End, to: Loco)],
+    ),
+]

@@ -1,0 +1,45 @@
+[package]
+name = "sf_ui_bevy"
+description = "Thin Bevy plugin for sf_ui: screen-stack input router over bevy_enhanced_input contexts, rebindable UI actions over the sf_ui keymap, keybind capture, layer-aware directional navigation, last-used device and glyphs (ui.md); text measurement on bevy_text, book and scroll readers, message boxes and toasts (ui-text.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6). `bevy_enhanced_input` itself pulls the `bevy` umbrella with only
+# its input features (mouse, keyboard, gamepad, touch, bevy_scene, bevy_log).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_color.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_image.workspace = true
+bevy_input = { workspace = true, features = ["std", "bevy_reflect", "gamepad", "keyboard", "mouse"] }
+bevy_input_focus = { workspace = true, features = ["std", "gamepad", "keyboard", "mouse"] }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+# Text layout for the document measurer (ui-text.md): already in the tree through bevy_ui, same versions
+# (bevy_text 0.20 lays out with parley 0.11; `parley` only to read its line items).
+bevy_text = { version = "0.20", default-features = false }
+parley = { version = "0.11", default-features = false, features = ["std"] }
+bevy_ui.workspace = true
+bevy_ui_widgets.workspace = true
+sf_mods.workspace = true
+sf_ui.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["ui"] }
+sf_records.workspace = true
+semver.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
+
+# Gamepad-only navigation across a HUD, a menu and a modal (ROADMAP M5 U1 Verify). `--autotest` drives it
+# with synthetic gamepad input and exits non-zero on a routing failure.
+[[example]]
+name = "ui_nav"

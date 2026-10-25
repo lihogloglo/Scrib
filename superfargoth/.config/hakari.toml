@@ -1,0 +1,63 @@
+# cargo-hakari settings (https://docs.rs/cargo-hakari/latest/cargo_hakari/config): the
+# `workspace-hack` crate pins one feature set per third-party dependency, so `cargo test -p A` and
+# `-p B` reuse the same Bevy build instead of each compiling its own variant. CLAUDE.md "Commands".
+hakari-package = "workspace-hack"
+dep-format-version = "4"
+resolver = "3"
+# The owner's laptop and the cloud sessions.
+platforms = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+# `workspace-hack.workspace = true` lines, like every other dependency here.
+workspace-hack-line-style = "workspace-dotted"
+
+[final-excludes]
+# Bevy-free cores (ARCHITECTURE section 8b rule 1) don't depend on the hack: it carries the whole
+# Bevy stack, and a core must still build cold in seconds. Their feature needs still count toward
+# the hack. A new crate whose graph has no Bevy, even with `--all-features`, goes here; `sf_vfs` is
+# here too (Bevy only behind its `bevy` feature).
+workspace-members = [
+    "sf_action",
+    "sf_anim",
+    "sf_anim_graph",
+    "sf_atmos",
+    "sf_audio",
+    "sf_bake",
+    "sf_camera",
+    "sf_character",
+    "sf_console",
+    "sf_controller",
+    "sf_coords",
+    "sf_diag",
+    "sf_ids",
+    "sf_level",
+    "sf_lod",
+    "sf_model",
+    "sf_mods",
+    "sf_physics",
+    "sf_ragdoll",
+    "sf_records",
+    "sf_rpg",
+    "sf_rpg_ui",
+    "sf_save",
+    "sf_script",
+    "sf_sky",
+    "sf_terrain",
+    "sf_ui",
+    "sf_ui_inventory",
+    "sf_water",
+    "sf_weather",
+    "sf_wind",
+    "sf_world",
+    "sf_vfs",
+]
+# Unified features would be every crate's `--all-features`, so opt-ins that must not leak into
+# default builds stay per crate: DLSS (its build needs the DLSS SDK), the Luau JIT (`sf_script/jit`)
+# and rayon-parallel physics (`sf_physics/parallel`: off by spec, physics.md "Determinism"). Cost:
+# Bevy crates that don't use physics build their own nalgebra/glamx (one extra variant, no Bevy).
+third-party = [
+    { name = "bevy_anti_alias" },
+    { name = "bevy_solari" },
+    { name = "mlua" },
+    { name = "mlua-sys" },
+    { name = "parry3d" },
+    { name = "rapier3d" },
+]

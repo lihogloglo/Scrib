@@ -1,0 +1,57 @@
+[package]
+name = "sf_sky_bevy"
+description = "Bevy plugin for sf_sky: atmosphere, sun and moon lights, exposure, raster/Solari render path, point-light proxies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Soft contact-hardening sun shadows (Bevy PCSS, `experimental_pbr_pcss`; shadows F5).
+pcss = ["bevy_light/experimental_pbr_pcss", "bevy_pbr/experimental_pbr_pcss"]
+# Ray-traced lighting path (Bevy Solari). Without it the render path is always raster.
+solari = ["dep:bevy_solari"]
+# DLSS (NVIDIA RTX): Super Resolution on the raster path (`UpscalingSetting`) and,
+# with `solari`, Ray Reconstruction denoising the ray-traced path.
+# Builds need no NVIDIA SDK: `dlss_wgpu` is the vendor facade, DLSS runs from the separately
+# shipped plugin package (`docs/specs/sky-lighting.md`, "DLSS plugin package").
+dlss = ["bevy_anti_alias/dlss", "bevy_solari?/dlss", "dep:dlss_wgpu"]
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6).
+[dependencies]
+# TAA (`Upscaling::Taa`) and, with `dlss`, DLSS.
+bevy_anti_alias.workspace = true
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_core_pipeline.workspace = true
+bevy_image.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_light.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_reflect = { workspace = true, features = ["std"] }
+bevy_render.workspace = true
+bevy_shader.workspace = true
+bevy_shape.workspace = true
+bevy_solari = { workspace = true, optional = true }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+# `plugin_available` for the "DLSS unavailable" warning (already in the graph via bevy_anti_alias/dlss).
+dlss_wgpu = { version = "6.0.0", optional = true }
+log.workspace = true
+sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
+sf_sky.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "bevy_solari", "png", "tonemapping_luts"] }
+
+[[example]]
+name = "sky"
+required-features = ["solari"]
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+[package]
+name = "sf_controller"
+description = "Bevy-free locomotion core for superfargoth: intent, spring velocity and facing, trajectory prediction, ground probes over terrain and a static query world, kinematic mover, path follower, collision.cook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# The `collision.cook` bake step (reads `mesh.cook` products through sf_model).
+bake = ["dep:sf_model"]
+# `HeightSurface` for `sf_terrain::TerrainHeights`, so `TerrainProbe` runs on real terrain.
+terrain = ["dep:sf_terrain"]
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+parry3d.workspace = true
+postcard.workspace = true
+serde.workspace = true
+# Root-motion deltas and the critically damped springs.
+sf_anim.workspace = true
+sf_bake.workspace = true
+sf_coords.workspace = true
+sf_model = { path = "../sf_model", version = "0.1.0", optional = true, default-features = false }
+sf_terrain = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+rayon.workspace = true
+# Rig-profile fixtures for `MoverParams::from_profile`.
+sf_anim = { workspace = true, features = ["fixtures"] }
+# The integration test drives a real graph from the controller (bake: compile from RON).
+sf_anim_graph = { workspace = true, features = ["bake"] }
+sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
+tempfile.workspace = true
+
+[lints]
+workspace = true

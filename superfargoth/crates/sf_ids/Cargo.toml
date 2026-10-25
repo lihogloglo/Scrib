@@ -1,0 +1,18 @@
+[package]
+name = "sf_ids"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free shared ids for superfargoth: the session PlayerId (serde only)"
+
+# The one home of ids that several Bevy-free cores share (`sf_action` commands, `sf_rpg`
+# contexts), so neither depends on the other. Kept to serde: `sf_net` (N2) re-exports from here.
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true
