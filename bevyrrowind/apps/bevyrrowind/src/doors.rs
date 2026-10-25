@@ -24,6 +24,9 @@ use sf_world_bevy::{
     WorldspaceRecords, WorldspaceRegistry,
 };
 
+// Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
+pub use mw_game_core::doors::{ARRIVAL_EYE_M, DoorUser};
+
 /// How far in front of the camera a door can be activated, meters
 /// (Morrowind's activation reach is about 2.7 m from the eye; the free
 /// camera floats, so a little more).
@@ -32,15 +35,6 @@ pub const REACH_M: f32 = 4.0;
 const NEAR_M: f32 = 1.5;
 /// Facing: the door must lie within ~60° of the view direction.
 const MIN_FACING: f32 = 0.5;
-/// Scaffold `ARRIVAL_EYE_M`: the free camera arrives this far above the
-/// marker. A marker is where the traveler's feet go before the engine drops
-/// them to the floor; vanilla markers float about 1.2 m above the door sill
-/// (`.sessions/doorpairs.md`, world-adapter.md "Portal frames:
-/// feasibility"), so this gives a ~1.7 m eye in the common case and keeps
-/// the camera above the floor where a marker sits low. Removal path: the
-/// character controller (M3) grounds the player and puts the camera at its
-/// eye height.
-pub(crate) const ARRIVAL_EYE_M: f32 = 0.5;
 
 /// Every worldspace record, door link and interior environment of the
 /// loaded content.
@@ -94,10 +88,6 @@ pub struct AutoDoor {
     /// Doors still to walk through.
     pub remaining: u32,
 }
-
-/// The camera that travels (and activates doors).
-#[derive(Component)]
-pub struct DoorUser;
 
 /// The camera's look in the exterior, restored when it comes back out.
 #[derive(Default)]

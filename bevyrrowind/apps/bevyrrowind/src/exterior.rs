@@ -50,6 +50,10 @@ use sf_world::bake::BakedIndex;
 use sf_world::{IndexedPlacement, PlacementClass};
 
 use crate::perf::{Off, Part};
+// Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
+pub use mw_game_core::exterior::{
+    CAPTURE_STABLE_FRAMES, CAPTURE_TIMEOUT_SECS, CLOUD_WORLD_SCALE, ExteriorCamera, Quality, Settled, pinned_clouds,
+};
 use sf_world_bevy::big_space::prelude::{CellCoord, FloatingOrigin, Grid};
 use sf_world_bevy::{
     ActiveWorldspace, FadeTransition, LoadedModel, ModelMaterials, ModelTemplate, PlacementSpawner, PlacementSpawners, SpawnCx,
@@ -159,22 +163,8 @@ struct Capture {
     failed: bool,
 }
 
-/// Consecutive frames the capture gate must see CPU settled and no pipeline compiling.
-pub(crate) const CAPTURE_STABLE_FRAMES: u32 = 10;
-/// Seconds after start before a capture gate gives up.
-pub(crate) const CAPTURE_TIMEOUT_SECS: f32 = 120.0;
-
 #[derive(Resource)]
 struct Started(Instant);
-
-/// Inserted once the start has fully streamed in (`--use-door` and
-/// `BEVYRROWIND_AUTO` wait for it; `--use-door` removes it for each trip).
-#[derive(Resource)]
-pub struct Settled;
-
-/// The streaming camera (visual anchor, floating origin).
-#[derive(Component)]
-pub(crate) struct ExteriorCamera;
 
 /// The gameplay anchor (R0), following the camera.
 #[derive(Component)]
@@ -1152,7 +1142,7 @@ fn streaming_config(mut config: StreamingConfig, near: Option<f32>, far: Option<
 }
 
 /// The sun's shadow cascades (shadows F3, weather.md "Distant shadows"): a
-/// practical split to ~250 m per preset ([`Quality::sun_cascades`]), 2× sharper
+/// practical split to ~250 m per preset ([`QualityRender::sun_cascades`]), 2× sharper
 /// at mid range than the A1 layout; past them the terrain shadows itself
 /// (`sf_terrain_bevy`'s far shadow). `fixed` (`--sun-cascades`) replaces the
 /// preset's count and last bound.
@@ -1162,10 +1152,10 @@ fn sun_cascades(quality: Quality, fixed: Option<(usize, f32)>) -> CascadeShadowC
     sf_sky_bevy::CascadeSplits { num_cascades, maximum_distance, ..preset }.build()
 }
 
-/// PCSS light size in cascade texels (see [`Quality::soft_shadow_size`]); tuned by eye.
+/// PCSS light size in cascade texels (see [`QualityRender::soft_shadow_size`]); tuned by eye.
 const SOFT_SHADOW_SIZE: f32 = 10.0;
 
-/// Contact-shadow ray length, meters (Bevy's default; [`Quality::contact_shadows`]).
+/// Contact-shadow ray length, meters (Bevy's default; [`QualityRender::contact_shadows`]).
 const CONTACT_LENGTH: f32 = 0.3;
 
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
@@ -1182,10 +1172,6 @@ const SUN_DEPTH_BIAS: f32 = 0.02;
 const SUN_NORMAL_BIAS: f32 = 0.8;
 
 // -- clouds ------------------------------------------------------------------------
-
-/// Morrowind's world is compressed, so cloud altitudes **and sizes** are
-/// halved together (weather.md open question 8; `mw_weather::visual`).
-pub(crate) const CLOUD_WORLD_SCALE: f32 = mw_weather::visual::CLOUD_WORLD_SCALE;
 
 use sf_atmos_bevy::sf_atmos::CloudPreset;
 
@@ -1250,12 +1236,6 @@ pub(crate) fn cloud_settings() -> sf_atmos_bevy::sf_atmos::CloudSettings {
     settings
 }
 
-/// A genus pinned over the weather's clouds (`--clouds`, BRP `clouds`), at
-/// Morrowind's halved altitudes; its wind stays the weather's.
-pub(crate) fn pinned_clouds(genus: CloudPreset) -> sf_atmos_bevy::sf_atmos::CloudWeather {
-    sf_atmos_bevy::sf_atmos::CloudWeather::preset(genus).scaled_heights(CLOUD_WORLD_SCALE)
-}
-
 
 /// The sun receives the cloud shadow map.
 fn cloud_shadow_light(mut commands: Commands, suns: Query<Entity, (With<SunLight>, Without<sf_atmos_bevy::CloudShadowLight>)>) {
@@ -1264,40 +1244,22 @@ fn cloud_shadow_light(mut commands: Commands, suns: Query<Entity, (With<SunLight
     }
 }
 
-/// Quality presets (industry-audit.md J1, ROADMAP Next up 4): one view-distance
-/// `bias` scales LOD selection, size culling and the far-field handoff `d1`
-/// (the baked 400 m × bias, so the rings follow), plus the size-culling cutoff
-/// in reference pixels and its floor. High matches the small-feature cutoff of `OpenMW`
-/// (2 px), Ultra our 1 px LOD budget.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Quality {
-    Low,
-    Medium,
-    #[default]
-    High,
-    Ultra,
+/// The quality presets' render settings: `Quality` itself moved to `mw_game_core` (app-split.md
+/// slice 1); these name renderer types the core crate doesn't depend on, so they stay here.
+pub(crate) trait QualityRender: Copy {
+    /// `(bias, min_pixels, min_draw_distance)`.
+    fn params(self) -> (f32, f32, f32);
+    fn point_shadows(self) -> (usize, usize);
+    fn contact_shadows(self) -> Option<ContactShadows>;
+    fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel>;
+    fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits;
+    fn soft_shadow_size(self) -> Option<f32>;
+    fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod;
+    fn screen(self, size_cull: bool) -> sf_model::LodScreen;
 }
 
-impl Quality {
-    pub const ENV: &'static str = "BEVYRROWIND_QUALITY";
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "low" => Some(Self::Low),
-            "medium" => Some(Self::Medium),
-            "high" => Some(Self::High),
-            "ultra" => Some(Self::Ultra),
-            _ => None,
-        }
-    }
-
-    /// `--quality`, else `BEVYRROWIND_QUALITY`, else High.
-    pub fn resolve(flag: Option<Self>) -> Self {
-        flag.or_else(|| std::env::var(Self::ENV).ok().and_then(|v| Self::parse(&v))).unwrap_or_default()
-    }
-
-    /// `(bias, min_pixels, min_draw_distance)`.
-    const fn params(self) -> (f32, f32, f32) {
+impl QualityRender for Quality {
+    fn params(self) -> (f32, f32, f32) {
         match self {
             Self::Low => (0.75, 4.0, 16.0),
             Self::Medium => (0.875, 3.0, 20.0),
@@ -1306,20 +1268,13 @@ impl Quality {
         }
     }
 
-    /// Whether the clouds read the world weather map's layer per density
-    /// sample (High/Ultra) or per ray, 3 fetches lerped (Medium/Low;
-    /// `sf_atmos::CloudQuality::map_per_sample`, weather.md, distant weather as built).
-    pub const fn cloud_map_per_sample(self) -> bool {
-        matches!(self, Self::High | Self::Ultra)
-    }
-
     /// Point lights with shadow maps and their cube face size
     /// (`sf_sky_bevy::PointShadowBudget`, ranked by `shadow_importance`).
     /// High: 8 cached lamps (`sf_shadow_cache_bevy`: static casters drawn once,
     /// movers over the copy; perf.md "Shadows v2"). Before the cache (shf6, census,
     /// 720p): 4.8 ms with none, 6.6 / 12.2 / 21.7 ms with 1 / 4 / 8, render-thread
     /// bound. Medium/Low: none (the main pass samples every shadowed lamp per pixel).
-    pub const fn point_shadows(self) -> (usize, usize) {
+    fn point_shadows(self) -> (usize, usize) {
         match self {
             Self::Low => (0, 512),
             Self::Medium => (6, 512),
@@ -1334,7 +1289,7 @@ impl Quality {
     /// (it costs the depth + motion-vector prepass). Sun and moon only since shadow reset A1
     /// (lamps: `BEVYRROWIND_LAMP_CONTACT=1`); length 0.3 m = Bevy's default (was 0.5: the
     /// long view-dependent bands at object edges, SH-14).
-    pub const fn contact_shadows(self) -> Option<ContactShadows> {
+    fn contact_shadows(self) -> Option<ContactShadows> {
         match self {
             Self::Low => None,
             Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: CONTACT_LENGTH }),
@@ -1345,7 +1300,7 @@ impl Quality {
     /// Bevy GTAO quality (ROADMAP 1.5, shadows.md "Reset A1 as built"): off on Low (MSAA,
     /// no prepass), slices x samples 1x2 / 2x2 / 3x3 on Medium / High / Ultra, temporal
     /// noise under TAA or DLSS.
-    pub const fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel> {
+    fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel> {
         match self {
             Self::Low => None,
             Self::Medium => Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
@@ -1359,7 +1314,7 @@ impl Quality {
     /// 16:9, 2048² the texels are 1.4 / 3.8 / 11 / 35 cm on High (A1: 1.4 / 5.2 / 19 /
     /// 70 cm, `sf_sky_bevy` test `practical_split_cascades_and_texel_sizes`). Low
     /// drops a cascade (one less caster pass) and ends at 200 m.
-    pub const fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
+    fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
         let (num_cascades, maximum_distance, lambda, overlap_proportion) = match self {
             Self::Low => (3, 150.0, 0.85, 0.15),
             Self::Medium | Self::High => (3, 180.0, 0.85, 0.15),
@@ -1372,7 +1327,7 @@ impl Quality {
     /// texels (`DirectionalLight::soft_shadow_size`; penumbra = blocker gap x size, so it
     /// is crisp at contact and widens with distance). High and Ultra only; Medium keeps
     /// the Gaussian PCF, Low the 2x2 tap.
-    pub const fn soft_shadow_size(self) -> Option<f32> {
+    fn soft_shadow_size(self) -> Option<f32> {
         match self {
             Self::Low | Self::Medium => None,
             Self::High | Self::Ultra => Some(SOFT_SHADOW_SIZE),
@@ -1386,7 +1341,7 @@ impl Quality {
     /// pattern: the blocky, half-transparent, swimming penumbra at object edges under
     /// grazing light (SH-12; Bevy's own note in `shadow_sampling.wesl` calls the
     /// non-temporal PCSS "rather noisy").
-    pub const fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod {
+    fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod {
         match (self, temporal) {
             (Self::Low, _) => ShadowFilteringMethod::Hardware2x2,
             (_, true) => ShadowFilteringMethod::Temporal,
@@ -1396,7 +1351,7 @@ impl Quality {
 
     /// The streaming screen of this preset; `size_cull: false` keeps every
     /// object to its ring or handoff (`--off sizecull`).
-    pub fn screen(self, size_cull: bool) -> sf_model::LodScreen {
+    fn screen(self, size_cull: bool) -> sf_model::LodScreen {
         let (bias, min_pixels, min_draw_distance) = self.params();
         sf_model::LodScreen { bias, min_pixels: if size_cull { min_pixels } else { 0.0 }, min_draw_distance, ..sf_model::LodScreen::default() }
     }

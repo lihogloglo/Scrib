@@ -633,22 +633,8 @@ fn parse_camera(raw: &str) -> std::result::Result<(bevy::math::Vec3, bevy::math:
     }
 }
 
-/// Shipped builds log a failed command or a system's returned error instead
-/// of panicking (Bevy's default): a command on an entity that streaming
-/// despawned the same frame (DR-4) must not end the game. Real panics keep
-/// unwinding. Dev builds keep Bevy's default so these bugs stay loud.
-pub(crate) fn shipped_errors(app: &mut bevy::app::App) {
-    #[cfg(not(feature = "dev"))]
-    app.insert_resource(bevy::ecs::error::FallbackErrorHandler(|mut err, ctx| {
-        use bevy::ecs::error::{Severity, error, match_severity};
-        if let Some(payload) = err.take_payload() {
-            std::panic::resume_unwind(payload);
-        }
-        if err.severity() == Severity::Panic { error(err, ctx) } else { match_severity(err, ctx) }
-    }));
-    #[cfg(feature = "dev")]
-    let _ = app;
-}
+// Moved to `mw_game_core` (app-split.md slice 1; its `dev` feature follows ours); the old path keeps working.
+pub(crate) use mw_game_core::shipped_errors;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();

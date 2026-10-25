@@ -67,6 +67,9 @@ use sf_world::{PlacementId, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{FadeTransition, TravelArrived, WorldPosOf, from_grid, to_grid};
 
+// Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
+pub use mw_game_core::player::{FocusUpdate, PlayerBody, PlayerMode};
+
 /// Switches between the player and the free camera.
 pub const TOGGLE_KEY: KeyCode = KeyCode::F11;
 /// Mouse look, radians per mouse count.
@@ -103,10 +106,6 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate));
 }
 
-/// Where [`Focus`] is updated: E's activation (`scripts.rs`) runs after it.
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FocusUpdate;
-
 /// `iMaxActivateDist` in meters. `OpenMW` `apps/openmw/mwworld/worldimp.cpp`
 /// `World::getMaxActivationDistance` (commit 4e718b50) reads the GMST as an integer, in game
 /// units.
@@ -128,21 +127,6 @@ fn rules() -> ActionRules {
         .with("air.land.hard", SlotInfo::once(0.5));
     ActionRules { rules: RuleSet::from_ron(BASE_RULES).expect("framework base rules parse"), slots: Box::new(slots) }
 }
-
-/// Player or free camera.
-#[derive(Resource, Debug)]
-pub struct PlayerMode {
-    /// The player is wanted (it spawns once the start has streamed in).
-    pub on: bool,
-    /// Controls suspended and the cursor free (menus, dialogue): the body stands.
-    pub paused: bool,
-    body: Option<Entity>,
-    last_ground: Option<WorldPos>,
-}
-
-/// The player character's body.
-#[derive(Component, Debug)]
-pub struct PlayerBody;
 
 /// Scaffold `PlayerCapsule`: the stand-in mesh (see the module docs).
 #[derive(Resource)]

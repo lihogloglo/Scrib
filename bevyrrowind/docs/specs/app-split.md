@@ -109,7 +109,7 @@ Per slice: move the module(s) into the crate, widen `pub(crate)` to `pub`, add t
 `cargo check -p <new> -p bevyrrowind` and `cargo test -p <new>`, one `cargo dev` smoke (`view --screenshot`), note the
 touch-build time. One extraction per session; the lane owning a module edits it elsewhere only after its move lands.
 
-1. **`mw_game_core`**: types only, no systems move. Breaks cycles 1, 2, 6. Lowest risk. Needed by every later slice.
+1. [x] **`mw_game_core`** (done 2026-10-25; `Focus` stays in the app, `Quality` render settings stay as `exterior::QualityRender`): types only, no systems move. Breaks cycles 1, 2, 6. Lowest risk. Needed by every later slice.
    (If `Quality` carries a clap `ValueEnum` derive, keep the parse wrapper in the binary.)
 2. **`mw_boot_bevy`** (mods lib, bake, hot_reload, ui_theme, load/mount). Breaks cycles 3 and the `crate::load` part of 5.
    Unblocks the content/mods/bake lane and controls/environment.

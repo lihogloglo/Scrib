@@ -203,6 +203,7 @@ mw_ai = { path = "bevyrrowind/crates/mw_ai" }
 mw_anim = { path = "bevyrrowind/crates/mw_anim" }
 mw_audio = { path = "bevyrrowind/crates/mw_audio" }
 mw_bake = { path = "bevyrrowind/crates/mw_bake" }
+mw_game_core = { path = "bevyrrowind/crates/mw_game_core" }
 mw_graphs = { path = "bevyrrowind/crates/mw_graphs" }
 mw_install = { path = "bevyrrowind/crates/mw_install" }
 mw_mods = { path = "bevyrrowind/crates/mw_mods" }

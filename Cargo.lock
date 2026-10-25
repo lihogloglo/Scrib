@@ -2308,6 +2308,7 @@ dependencies = [
  "mw_assets",
  "mw_audio",
  "mw_bake",
+ "mw_game_core",
  "mw_graphs",
  "mw_install",
  "mw_mods",
@@ -4904,6 +4905,19 @@ dependencies = [
  "tempfile",
  "tes3",
  "texpresso",
+]
+
+[[package]]
+name = "mw_game_core"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "mw_weather",
+ "serde",
+ "sf_atmos",
+ "sf_coords",
+ "workspace-hack",
 ]
 
 [[package]]

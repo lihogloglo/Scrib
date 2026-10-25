@@ -1,0 +1,24 @@
+[package]
+name = "mw_game_core"
+description = "The game's shared markers, enums and constants (types only, no systems; app-split.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# The app's `dev` build: `shipped_errors` keeps Bevy's panicking error handler.
+dev = []
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+mw_weather.workspace = true
+serde.workspace = true
+sf_atmos.workspace = true
+sf_coords.workspace = true
+workspace-hack.workspace = true
+
+[lints]
+workspace = true
