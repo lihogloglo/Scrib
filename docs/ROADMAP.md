@@ -132,6 +132,11 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.13 Dev console (owner 2026-10-21): front end built 2026-10-23 (`sf_console_bevy`, `console.md`). Slice 1 built
   2026-10-25 (`console.rs`): Backquote, live `on|off|flip ssao` + the F-key switches, startup-only parts say so; CO-1
   awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, tab-complete switch names. Raster GI: none yet (Phase 4).
+  MWScript lines (2026-10-25, `mwconsole1`): unclaimed lines run through the result runner on the selected actor or the
+  player (`player->AddItem gold_001 5`), completion offers the 13 runnable functions + short forms. Next: console
+  functions (TCL/TGM/TAI/TFOW/TWF/COC...), non-actor selections, `set x to y` (the console's `set` wins today).
+  `mwconsole2` (2026-10-25): `TCL`/`ToggleCollision` (sf_action_bevy `NoClip`: fly along the view, no collision) and
+  `COC`/`CenterOnCell "<cell>"` (door travel to the first arrival into an interior); exterior names (`coc Balmora`) left.
 - [~] 1.14 Build churn (2026-10-21): built 2026-10-23 (superfargoth `workspace-hack`); left: re-measure. Workspace-hack (`cargo hakari`) so per-`-p` feature sets stop rebuilding Bevy
   (22-32 cached `bevy_render` variants per target); re-measure dev-loop gates.
 
@@ -177,11 +182,11 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   host, content-only disposition seam, stats placeholders, stock dialogue window; Fargoth test through the window
   passes). Step 2 (dialogue2): E talks to NPCs (unhandled `ActivationOutcome`), controls paused in menus, J journal
   (quest, entries, topic index), placement-keyed actors; owner confirmed the ring flow. dialogue3: windows centred,
-  `skip_chargen` grants the chargen hand-off topics (chargenstate -1). Next: HUD; Sellus "papers" greeting filter.
+  `skip_chargen` grants the chargen hand-off topics (chargenstate -1) and Sellus's papers local (`state` -1: no "papers" greeting). Next: HUD.
 - [~] 2.5 Saves (M7 subset): world overlay + player; net-ready per `specs/net.md`. Framework S1+S2 built 2026-10-23
   (`sf_save`, `sf_save_bevy`, `save.md`). Part 1 built 2026-10-25 (`saves.rs`): game sections (overlay, rpg, clock, host
   character, `mw/rpg`) + F5/F9 quicksave/quickload, headless round trip; SV-1 awaiting owner. Left: part 2 (load screen,
-  save list, naming), body state, refresh of resident cells on load.
+  save list, naming). Load correctness 2026-10-25: resident cells reload behind the fade, menus close, body saved.
 - [~] 2.6 Sound pass: footsteps from animation text keys, UI sounds, music, interior/exterior ambience
   (`sf_audio`, `sf_audio_bevy`). Framework done 2026-10-21 (cues, attenuation, music moods, footstep hook, ambience
   layers; positional one-shots/emitters on bevy_audio). Morrowind wiring done 2026-10-21 (`mw_audio`: SOUN/SNDG cues,
@@ -244,8 +249,15 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-25 (dlss-plugin-1/2): DLSS split out of the game: NVIDIA-free `dlss_wgpu` facade + separately shipped
+  `dlss/` plugin package; SR/RR verified in game, pass costs as before, 0 NGX strings in the release exe (DL-5 logged).
+- 2026-10-25 (certshots1): `--screenshot` waits on a GPU readiness gate (CPU settled + no pipelines compiling for 10
+  frames, `sf_diag_bevy::ReadyGate`); a 120 s timeout now logs what was pending and exits 1 (`--screenshot-anyway` forces).
 - 2026-10-25 (console, items, items2, dialogue3, uipolish): dev console with live SSAO; take items + inventory screen;
   centred windows + chargen topics; button hover, journal layout, keybind labels. Owner confirmed TR-3, PL-1 prompt.
+- 2026-10-25 (sellus): skipped chargen leaves Sellus Gravius's papers local, so he no longer asks for papers.
+- 2026-10-25 (saves2): load correctness: resident cells reload from the loaded overlay at the fade cut (`reload_resident`,
+  discard deactivations), moved physics items flushed into saves, menus closed on load, player body saved/restored.
 - 2026-10-25 (saves1): saves part 1: game save sections on `sf_save_bevy` and F5/F9 quicksave/quickload restoring in the
   running game through the door fade (any worldspace); headless round trip on real ESMs; SV-1 awaiting owner.
 - 2026-10-25 (player, dialogue, terrain-gloss): Phase 2 wiring step 1: third-person player (`player.rs`) and Morrowind

@@ -90,6 +90,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
         .insert_resource(rules())
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
+        .init_resource::<RestoreBody>()
         .insert_resource(Activation { db, reach_m })
         .insert_resource(start)
         .init_resource::<Focus>()
@@ -414,19 +415,34 @@ fn apply_mode(
     }
 }
 
-/// A door moved the camera: the body follows to the arrival marker.
+/// A saved body (action and mover state) for the next arrival: a save load puts it back
+/// after its travel (`saves.rs`).
+#[derive(Resource, Default)]
+pub struct RestoreBody(pub Option<(ActionState, Locomotion)>);
+
+/// A door moved the camera: the body follows to the arrival marker (a load: the saved body).
 fn arrive(
     mut arrived: MessageReader<TravelArrived>,
     mut mode: ResMut<PlayerMode>,
     mut cams: Query<&mut PlayerCamera>,
-    mut bodies: Query<&mut ActionBody, With<PlayerBody>>,
+    mut bodies: Query<(&mut ActionBody, Option<&mut ActionCharacter>), With<PlayerBody>>,
+    mut restore: ResMut<RestoreBody>,
 ) {
     for travel in arrived.read() {
         let Ok(mut camera) = cams.get_mut(travel.traveler) else { continue };
-        let Ok(mut body) = bodies.get_mut(camera.follow) else { continue };
+        let Ok((mut body, character)) = bodies.get_mut(camera.follow) else { continue };
         let feet = travel.to.pos.offset(Vec3::NEG_Y * crate::doors::ARRIVAL_EYE_M);
         let look = Look::from_dir(travel.rotation * Vec3::NEG_Z);
-        body.teleport(feet, look.yaw);
+        match restore.0.take() {
+            // The saved mover state is at the saved feet (`saves.rs` travels there).
+            Some((state, loco)) => {
+                body.restore(loco);
+                if let Some(mut character) = character {
+                    character.state = state;
+                }
+            }
+            None => body.teleport(feet, look.yaw),
+        }
         let (cell, _) = to_grid(feet);
         body.frame_origin = from_grid(&cell, &Transform::IDENTITY);
         camera.set_look(Look::new(look.yaw, 0.0));

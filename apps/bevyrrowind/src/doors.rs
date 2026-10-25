@@ -282,6 +282,7 @@ fn activate(
         traveler: cam,
         to: Location::new(to.worldspace.clone(), to.arrival.pos.offset(Vec3::Y * ARRIVAL_EYE_M)),
         rotation: arrival_rotation(to.arrival.rotation),
+        reload: false,
     });
 }
 

@@ -271,6 +271,19 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
 - Status: known bug, owner 2026-10-19 (round 14): black bands at the edges of rugs, and also a table, a bench and a chair. Cause not investigated. Suspects: objects touching or interpenetrating the floor (contact gaps fully occluded, ray-origin offset too small), double-sided or flipped faces, then bad normals. First test: same camera in raster; if the bands are RT-only, it's the RT scene, not the meshes. Phase 1.10.
 - Source: dlss.
 
+### DL-5: Interior `--rt` without Ray Reconstruction quits (wgpu validation)
+- Kind: game location. Run: `view "Seyda Neen, Census and Excise Office" --rt --off denoiser` (or `--rt` with no
+  DLSS plugin package, which falls back to TAA).
+- Look for: the app quits at the first frame: `Device::create_bind_group 'sky_motion'`: the view depth texture has
+  `COPY_SRC | RENDER_ATTACHMENT`, no `TEXTURE_BINDING`. With RR on it runs (the RR path makes depth bindable).
+- Status: known bug, found by dlss-plugin-2 2026-10-25; not caused by the DLSS plugin split (same with the plugin
+  absent). Suspect: superfargoth `sf_render_order_bevy/src/sky_motion.rs` `prepare` binds depth on any single-sampled
+  view with motion vectors; interiors have no atmosphere/water camera to add `TEXTURE_BINDING`. Fix candidates: skip
+  views whose depth texture lacks the usage, or add the usage like `sf_water_bevy::depth_usages`. Not fixed (owner:
+  log bugs, don't chase); blocks the DL-3 noisy A/B. Also: the RR Census shot needs `--settle 6` (2 s = black frame,
+  RT warm-up).
+- Source: dlss-plugin-2.
+
 ## Sky (superfargoth `sky-lighting.md`)
 
 ### SK-2: Night and moon
@@ -1119,8 +1132,10 @@ synthetic and app tests cover selection, timing and routing (`mw_audio` voice te
   "Loaded"; I lists the ring; the barrel gives nothing more; the first bottle stays gone.
 - Go outside (door), F9: fade back into the office at the saved spot (cross-worldspace load).
 - Quit, start again, F9 straight away: same spot and inventory (newest quicksave of any world).
-- Known: an item taken after the save reappears only after its cell reloads; F5/F9 rebind on F10 (gameplay rows), no
-  gamepad default. Dev keys moved: far tint Shift+F6, copy camera Shift+F12.
+- Load correctness: F5, take a bottle and knock a crate or basket across the floor, open the inventory (or talk to
+  someone), F9: the menu closes, the bottle is back once (no double), the crate lies where it was at the save; you can
+  walk and look right away. Jump, F5 mid-air, F9: you land as from the jump.
+- Known: F5/F9 rebind on F10 (gameplay rows), no gamepad default. Dev keys moved: far tint Shift+F6, copy camera Shift+F12.
 
 ### IN-1: Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
 - F10 opens the keybinds screen (UI + gameplay rows). Rebind Jump (keyboard slot) to J, close with F10 or Esc; J jumps,
@@ -1150,7 +1165,8 @@ synthetic and app tests cover selection, timing and routing (`mw_audio` voice te
   on the covers or past the bottom), `< 1/2 >` centred on the book's bottom edge, index panel beside the book.
 - dialogue3 (awaiting owner): dialogue window and journal open centred. In the Census office (new game, no chargen):
   the guard lists latest rumors/little advice/little secret, Sellus Gravius Caius Cosades + my trade; Socucius only
-  imperial legion once a greeting named it (his only topics in the data). Shot: `--open-ui dialogue`.
+  imperial legion once a greeting named it (his only topics in the data). Shot: `--open-ui dialogue`. sellus:
+  Sellus Gravius greets "I am Sellus Gravius. My background is not important...", not "Where are your papers?".
 - Known gaps: frames are flat CSS borders, not the 8-piece menu textures; no HUD; day headings placeholders;
   seen markers not saved.
 - Status: flow confirmed by owner 2026-10-25 (E talk, Shift+U ring, journal updates); journal layout, button

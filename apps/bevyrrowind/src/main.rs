@@ -217,6 +217,10 @@ struct ViewFlags {
     /// Save a screenshot here once loaded, then exit.
     #[arg(long)]
     screenshot: Option<PathBuf>,
+    /// Take the screenshot even if the readiness gate times out (CPU loading or
+    /// GPU pipelines still pending); by default a timeout logs an error and exits 1.
+    #[arg(long)]
+    screenshot_anyway: bool,
     /// Seconds to render after loading before the screenshot.
     #[arg(long, default_value_t = 2.0)]
     settle: f32,
@@ -403,6 +407,7 @@ impl ViewFlags {
             placements,
             ambient,
             screenshot: self.screenshot,
+            screenshot_anyway: self.screenshot_anyway,
             settle: self.settle,
             camera: self.camera.as_deref().map(parse_camera).transpose()?,
             calibration: self.lighting.calibration(),
@@ -486,6 +491,7 @@ impl ViewFlags {
             eye,
             target,
             screenshot: self.screenshot,
+            screenshot_anyway: self.screenshot_anyway,
             settle: self.settle,
             store,
             manifest,

@@ -29,6 +29,7 @@ use bevy::light::{CascadeShadowConfig, ShadowFilteringMethod};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use sf_diag_bevy::{GateStatus, ReadyGate};
 use bevy::transform::TransformPlugin;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use glam::DVec3;
@@ -64,6 +65,8 @@ pub struct ExteriorOptions {
     pub eye: DVec3,
     pub target: DVec3,
     pub screenshot: Option<PathBuf>,
+    /// `--screenshot-anyway`: shoot even if the readiness gate times out.
+    pub screenshot_anyway: bool,
     pub settle: f32,
     pub store: Store,
     pub manifest: Manifest,
@@ -148,7 +151,18 @@ struct Start {
 struct Capture {
     path: PathBuf,
     settle: f32,
+    /// CPU settled and GPU pipelines compiled ([`sf_diag_bevy::ReadyGate`]).
+    gate: ReadyGate,
+    /// `--screenshot-anyway`: shoot on a gate timeout instead of failing.
+    anyway: bool,
+    /// The gate timed out; the run is exiting with an error.
+    failed: bool,
 }
+
+/// Consecutive frames the capture gate must see CPU settled and no pipeline compiling.
+pub(crate) const CAPTURE_STABLE_FRAMES: u32 = 10;
+/// Seconds after start before a capture gate gives up.
+pub(crate) const CAPTURE_TIMEOUT_SECS: f32 = 120.0;
 
 #[derive(Resource)]
 struct Started(Instant);
@@ -433,7 +447,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if bench {
         app.add_systems(Update, (hold_warmup, counters)).add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());
     } else if let Some(path) = options.screenshot {
-        app.insert_resource(Capture { path, settle: options.settle })
+        app.insert_resource(Capture {
+            path,
+            settle: options.settle,
+            gate: ReadyGate::new(CAPTURE_STABLE_FRAMES, CAPTURE_TIMEOUT_SECS),
+            anyway: options.screenshot_anyway,
+            failed: false,
+        })
             .add_systems(Update, capture)
             .add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());
     }
@@ -951,7 +971,8 @@ impl Readiness<'_, '_> {
 #[allow(clippy::too_many_arguments)]
 fn capture(
     mut commands: Commands,
-    capture: Res<Capture>,
+    mut capture: ResMut<Capture>,
+    gpu: Res<crate::pipeline_watch::PendingDraws>,
     streaming: Res<Streaming>,
     terrain: Res<TerrainStats>,
     server: Res<AssetServer>,
@@ -977,13 +998,46 @@ fn capture(
     // `--use-door`: the shot is of the other side.
     if door.0.remaining > 0 || door.1.is_active() {
         *ready_at = None;
+        capture.gate.reset();
         return;
     }
-    let ok = settled(&streaming, &terrain, &server, &nifs, &materials, &off, &door.2) || now > 120.0;
+    if capture.failed {
+        return;
+    }
+    let cpu = settled(&streaming, &terrain, &server, &nifs, &materials, &off, &door.2);
     let Some(at) = *ready_at else {
-        if ok {
+        let receipt = match capture.gate.step(now, cpu, gpu.gpu()) {
+            GateStatus::Waiting => return,
+            GateStatus::Ready(r) => r,
+            GateStatus::TimedOut(r) => {
+                let s = streaming.stats();
+                error!(
+                    "capture gate: timed out after {now:.1} s ({} frames): CPU settled {}, {} pipelines compiling, {} visible draws waiting (at first CPU-settled frame: {:?}); {} cells, {} models, {} terrain patches{}",
+                    r.frames_waited,
+                    r.cpu_ready,
+                    r.last_pending.pipelines,
+                    r.last_pending.draws,
+                    r.first_pending,
+                    s.resident_cells,
+                    s.models_loaded,
+                    terrain.patches,
+                    if capture.anyway { "; --screenshot-anyway: taking it" } else { "; no screenshot (pass --screenshot-anyway to force)" }
+                );
+                if !capture.anyway {
+                    capture.failed = true;
+                    exit.write(AppExit::from_code(1));
+                    return;
+                }
+                r
+            }
+        };
+        {
             *ready_at = Some(now);
             let s = streaming.stats();
+            info!(
+                "capture gate: ready after {} frames ({} since CPU settled), GPU pending at first check: {:?}",
+                receipt.frames_waited, receipt.frames_after_cpu, receipt.first_pending
+            );
             info!(
                 "settled {now:.1} s after start: {} cells, {} placements, {} models, {} uncooked, {} size-culled, {} preloaded NIFs, {} entities, {} terrain patches",
                 s.resident_cells,

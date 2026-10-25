@@ -51,14 +51,13 @@ use sf_save_bevy::{
     SfSavePlugin, sections,
 };
 use sf_sky_bevy::SkyTime;
-use sf_world::{Location, PlacementId, WorldspaceId};
+use sf_world::{Location, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{ActiveWorldspace, FadeTransition, StartTravel, WorldOverlay, from_grid};
 
 use crate::controls::{QuickLoadAction, QuickSaveAction};
 use crate::dialogue::{Rpg, RpgState};
 use crate::player::PlayerBody;
-use crate::scripts::ActivePlacements;
 
 /// The adapter's section owner.
 pub const OWNER: &str = "mw";
@@ -113,8 +112,9 @@ impl MwRpgSave {
 
 /// Registers the game's sections (after `SfSavePlugin`; the app and the headless test).
 pub fn register(app: &mut App) {
+    app.on_load_reset(close_menus);
     app.add_save_section(sections::overlay(
-        |w| w.get_resource::<WorldOverlay>().map(|o| o.0.read().unwrap_or_else(PoisonError::into_inner).clone()),
+        snapshot_overlay,
         set_overlay,
     ))
     .add_save_section(sections::rpg(
@@ -146,17 +146,38 @@ pub fn register(app: &mut App) {
     ));
 }
 
-/// The loaded overlay replaces the live one; resident placements it removes leave now.
+/// A copy of the live overlay with the resident items physics moved written in, as their
+/// deactivation would (save.md "One path for unload and save"): a crate knocked over and
+/// still resident saves where it lies.
+fn snapshot_overlay(world: &World) -> Option<sf_world::PlacementOverlay> {
+    let mut copy = world.get_resource::<WorldOverlay>()?.0.read().unwrap_or_else(PoisonError::into_inner).clone();
+    sf_physics_bevy::stream::persist_moved_items(world, &mut copy);
+    Some(copy)
+}
+
+/// The loaded overlay replaces the live one. The resident cells respawn from it at the
+/// travel's cut (`StartTravel::reload`, `Streaming::reload_resident`): taken items come back,
+/// moved ones go back, removed ones stay out.
 fn set_overlay(world: &mut World, overlay: sf_world::PlacementOverlay) {
     let Some(live) = world.get_resource::<WorldOverlay>() else { return };
     *live.0.write().unwrap_or_else(PoisonError::into_inner) = overlay;
-    let removed: Vec<PlacementId> = {
-        let o = live.0.read().unwrap_or_else(PoisonError::into_inner);
-        world.get_resource::<ActivePlacements>().map(|a| a.0.keys().copied().filter(|id| o.is_removed(*id)).collect()).unwrap_or_default()
-    };
-    for id in removed {
-        crate::inventory::take_placement(world, id);
+}
+
+/// Load is a full replace (save.md "Loading"): every menu and modal closes (dialogue,
+/// journal, inventory, keybinds, message boxes), so the controls and the camera resume when
+/// the fade ends (`dialogue.rs` pauses them only while a menu is open).
+fn close_menus(world: &mut World) {
+    if let Some(mut stack) = world.get_resource_mut::<sf_ui_bevy::ScreenStackRes>() {
+        stack.0.clear(sf_ui::Layer::Modal);
+        stack.0.clear(sf_ui::Layer::Menu);
     }
+}
+
+/// The player's gameplay body: the action state and the mover state.
+fn player_body(world: &World) -> Option<sections::CharacterBody> {
+    let mut q = world.try_query_filtered::<(&sf_action_bevy::ActionCharacter, &sf_action_bevy::ActionBody), With<PlayerBody>>()?;
+    let (character, body) = q.iter(world).next()?;
+    Some(sections::CharacterBody { action: character.state.clone(), locomotion: body.loco.clone() })
 }
 
 /// Where the player stands: the body's feet and facing, else the free camera's eye lowered to
@@ -193,7 +214,7 @@ fn host_character(world: &World) -> Vec<sections::CharacterSave> {
         name: "Player".to_owned(),
         location,
         facing,
-        body: None,
+        body: player_body(world),
         rpg: rpg.state.pc.clone(),
         ext,
     }]
@@ -217,7 +238,13 @@ fn restore_characters(world: &mut World, all: Vec<sections::CharacterSave>) {
     }
     let to = Location::new(host.location.worldspace, host.location.pos.offset(Vec3::Y * crate::doors::ARRIVAL_EYE_M));
     info!("load: player to {:.1?} in {}", to.pos.to_f64(), to.worldspace.as_str());
-    world.write_message(StartTravel { traveler: cam, to, rotation: Quat::from_rotation_y(host.facing) });
+    if let Some(body) = host.body
+        && let Some(mut restore) = world.get_resource_mut::<crate::player::RestoreBody>()
+    {
+        restore.0 = Some((body.action, body.locomotion));
+    }
+    // `reload`: the resident cells respawn from the loaded overlay at the cut (save.md "Loading").
+    world.write_message(StartTravel { traveler: cam, to, rotation: Quat::from_rotation_y(host.facing), reload: true });
 }
 
 /// The app: the plugin with the user-data folder, the sections, keys, notices and the gate.
@@ -330,6 +357,7 @@ mod tests {
     use mw_install::MorrowindInstall;
     use sf_rpg::PlayerId;
     use sf_rpg_ui::DialogueRequest;
+    use sf_world::PlacementId;
 
     use super::*;
 

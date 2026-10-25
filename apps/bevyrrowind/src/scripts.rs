@@ -220,7 +220,7 @@ impl ActivePlacements {
         let active = world.get_resource_mut::<ActivePlacements>()?.0.remove(&id)?;
         let spawner = world.get_resource::<PlacementSpawners>().and_then(|s| s.for_class(active.placement.placement.class).cloned());
         if let Some(spawner) = spawner {
-            let cx = ActivateCx { worldspace: &active.worldspace, cell: active.cell, cell_entity: active.cell_entity };
+            let cx = ActivateCx { worldspace: &active.worldspace, cell: active.cell, cell_entity: active.cell_entity, discard: false };
             spawner.deactivate(world, &cx, &active.placement);
         }
         Some(active)

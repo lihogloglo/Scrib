@@ -21,6 +21,7 @@ use bevy::camera::Exposure;
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use sf_diag_bevy::{GateStatus, ReadyGate};
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use mw_assets::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpawned, MwAssetsPlugin};
 use mw_world::{BaseKind, Placement};
@@ -37,6 +38,8 @@ pub struct ViewOptions {
     pub placements: Vec<Placement>,
     pub ambient: Option<[u8; 4]>,
     pub screenshot: Option<PathBuf>,
+    /// `--screenshot-anyway`: shoot even if the readiness gate times out.
+    pub screenshot_anyway: bool,
     /// Seconds to keep rendering after everything loaded, before capturing.
     pub settle: f32,
     /// Overrides the automatic camera: eye position and look-at target (meters).
@@ -95,6 +98,12 @@ struct Capture {
     path: PathBuf,
     settle: f32,
     taken_at: Option<f32>,
+    /// Loaded and GPU pipelines compiled ([`sf_diag_bevy::ReadyGate`]); `ready_at` is when it passed.
+    gate: ReadyGate,
+    ready_at: Option<f32>,
+    /// `--screenshot-anyway`: shoot on a gate timeout instead of failing.
+    anyway: bool,
+    failed: bool,
 }
 
 /// When everything (models, textures, cooked spawns) finished loading.
@@ -102,6 +111,8 @@ struct Capture {
 pub(crate) struct Loading {
     started: Instant,
     ready_at: Option<f32>,
+    /// Assets still pending when `ready_at` was set (non-zero: the wait gave up).
+    pending: usize,
 }
 
 #[cfg(feature = "remote")]
@@ -175,7 +186,7 @@ pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error
         ray_tracing_lod: ray_traced.then_some(RAY_TRACING_LOD),
         managed: render.managed(),
     })
-    .insert_resource(Loading { started, ready_at: None })
+    .insert_resource(Loading { started, ready_at: None, pending: 0 })
     .add_plugins(crate::skinned_view::SkinnedViewPlugin)
     .add_plugins(crate::anim_view::AnimViewPlugin)
     .add_systems(Startup, spawn)
@@ -198,7 +209,17 @@ pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error
         settings.meta.insert("models".to_owned(), models.to_owned());
         app.add_systems(Update, hold_until_loaded);
     } else if let Some(path) = options.screenshot {
-        app.insert_resource(Capture { path, settle: options.settle, taken_at: None }).add_systems(Update, capture);
+        crate::pipeline_watch::add(&mut app);
+        app.insert_resource(Capture {
+            path,
+            settle: options.settle,
+            taken_at: None,
+            gate: ReadyGate::new(crate::exterior::CAPTURE_STABLE_FRAMES, crate::exterior::CAPTURE_TIMEOUT_SECS),
+            ready_at: None,
+            anyway: options.screenshot_anyway,
+            failed: false,
+        })
+        .add_systems(Update, capture);
     }
     if perf.off.has(crate::perf::Part::Lights) {
         app.add_systems(Update, despawn_point_lights);
@@ -313,6 +334,7 @@ fn track_loading(
     if pending == 0 || elapsed > 60.0 {
         info!("assets ready {elapsed:.2}s after start ({pending} still pending)");
         loading.ready_at = Some(elapsed);
+        loading.pending = pending;
     }
 }
 
@@ -326,10 +348,42 @@ fn capture(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
     loading: Res<Loading>,
+    gpu: Res<crate::pipeline_watch::PendingDraws>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(loaded_at) = loading.ready_at else { return };
+    if capture.failed {
+        return;
+    }
     let now = loading.started.elapsed().as_secs_f32();
+    if capture.ready_at.is_none() {
+        let cpu = loading.ready_at.is_some() && loading.pending == 0;
+        match capture.gate.step(now, cpu, gpu.gpu()) {
+            GateStatus::Waiting => return,
+            GateStatus::Ready(r) => info!(
+                "capture gate: ready after {} frames ({} since assets loaded), GPU pending at first check: {:?}",
+                r.frames_waited, r.frames_after_cpu, r.first_pending
+            ),
+            GateStatus::TimedOut(r) => {
+                error!(
+                    "capture gate: timed out after {now:.1} s ({} frames): assets loaded {} ({} still pending), {} pipelines compiling, {} visible draws waiting (at first loaded frame: {:?}){}",
+                    r.frames_waited,
+                    loading.ready_at.is_some(),
+                    loading.pending,
+                    r.last_pending.pipelines,
+                    r.last_pending.draws,
+                    r.first_pending,
+                    if capture.anyway { "; --screenshot-anyway: taking it" } else { "; no screenshot (pass --screenshot-anyway to force)" }
+                );
+                if !capture.anyway {
+                    capture.failed = true;
+                    exit.write(AppExit::from_code(1));
+                    return;
+                }
+            }
+        }
+        capture.ready_at = Some(now);
+    }
+    let Some(loaded_at) = capture.ready_at else { return };
     match capture.taken_at {
         None if now - loaded_at >= capture.settle => {
             commands.spawn(Screenshot::primary_window()).observe(save_to_disk(capture.path.clone()));

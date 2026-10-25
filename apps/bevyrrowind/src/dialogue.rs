@@ -42,7 +42,7 @@ use sf_ui_screens::{
     DialogueRequestEvent, DialogueScreen, JournalSeenChanged, JournalSource, JournalUi,
     JournalUiPlugin, ScreenSystems, SfScreensPlugin,
 };
-use tes3::esp::{FilterFunction, GlobalValue, GlobalVariable, Npc, Script};
+use tes3::esp::{FilterComparison, FilterFunction, FilterType, FilterValue, GlobalValue, GlobalVariable, Npc, Script};
 use sf_world_bevy::StreamCell;
 
 /// Fargoth's ring (scaffold [`DevGiveRing`]).
@@ -124,6 +124,9 @@ struct Content {
     actors: HashMap<ActorKey, Actor>,
     player: ActorFacts,
     stats: PlayerStatsPlaceholder,
+    /// Script locals the skipped chargen left on NPCs, by base id (scaffold `SkipChargen`):
+    /// the initial value [`Rpg::add_actor`] gives a local the actor has no value for yet.
+    chargen_locals: HashMap<RecordId, Vec<(RecordId, f32)>>,
     disposition: Box<dyn DispositionModel>,
 }
 
@@ -327,6 +330,7 @@ impl Rpg {
                 actors: HashMap::new(),
                 player,
                 stats: PlayerStatsPlaceholder::default(),
+                chargen_locals: HashMap::new(),
                 disposition: Box::new(ContentDisposition),
             },
             state: RpgState::default(),
@@ -338,42 +342,64 @@ impl Rpg {
     /// New game without character generation (scaffold `SkipChargen`; removal path: chargen,
     /// M7): the state the end of chargen leaves that dialogue reads. As `OpenMW`'s bypassed new
     /// game (`apps/openmw/mwworld/worldimp.cpp` `World::startNewGame`, 0.49.0), `chargenstate`
-    /// is -1 (chargen over: chargen-only lines stop matching). The topics chargen's hand-off
-    /// grants are learned: the `AddTopic`s of Sellus Gravius's "duties" result (the package for
-    /// Caius; "latest rumors", "little advice", ...), run in the result runner and read off its
-    /// effects, so the list is the data's and a mod's edit of that line counts. Its other effects
-    /// (journal, package, gold) start the main quest and stay out. Returns the topics learned.
+    /// is -1 (chargen over: chargen-only lines stop matching). Beyond `OpenMW` (whose bypass
+    /// leaves Sellus Gravius asking for papers), the chargen captain's hand-off lines run in the
+    /// result runner as if chargen had reached them, and two kinds of effect are kept, so what
+    /// is granted is the data's and a mod's edit of those lines counts:
+    /// - `AddTopic`s of his "duties" result (the package for Caius; "latest rumors", "little
+    ///   advice", ...): the topics are learned.
+    /// - his own `set <local>`s from the greeting that takes the release papers
+    ///   (`chargen statssheet`; `set state to -1`): his post-chargen greeting. Applied when he is
+    ///   registered ([`Rpg::add_actor`]), since his actor key exists only once his cell loads.
+    ///
+    /// Their other effects (journal, package, gold, the papers' removal) start the main quest
+    /// and stay out. Returns the topics learned.
     pub fn skip_chargen(&mut self) -> Vec<RecordId> {
         const HANDOFF_TOPIC: &str = "duties";
         const HANDOFF_SPEAKER: &str = "chargen captain";
+        const PAPERS: &str = "chargen statssheet";
         const SPEAKER: ActorKey = ActorKey(u128::MAX);
         self.state.globals.insert(id("chargenstate"), -1.0);
-        let handoff: Vec<(RecordId, String)> = self
+        // The papers hand-in: a greeting that needs the player to hold the papers.
+        let takes_papers = |f: &tes3::esp::Filter| {
+            f.filter_type == FilterType::Item
+                && f.id.eq_ignore_ascii_case(PAPERS)
+                && f.comparison == FilterComparison::GreaterEqual
+                && f.value == FilterValue::Integer(1)
+        };
+        let handoff: Vec<(RecordId, RecordId, String)> = self
             .content
             .records
             .iter::<tes3::esp::DialogueInfo>()
-            .filter(|(key, info)| {
-                info.speaker_id.eq_ignore_ascii_case(HANDOFF_SPEAKER)
-                    && mw_records::keys::split_info(key).is_some_and(|(t, _)| t == HANDOFF_TOPIC)
+            .filter(|(_, info)| info.speaker_id.eq_ignore_ascii_case(HANDOFF_SPEAKER))
+            .filter_map(|(key, info)| {
+                let (topic, _) = mw_records::keys::split_info(key)?;
+                let handoff = topic == HANDOFF_TOPIC
+                    || (topic.starts_with("greeting") && info.filters.iter().any(takes_papers));
+                handoff.then(|| (id(topic), key.clone(), info.script_text.clone()))
             })
-            .map(|(key, info)| (key.clone(), info.script_text.clone()))
             .collect();
         if handoff.is_empty() || !self.add_actor(SPEAKER, &id(HANDOFF_SPEAKER), "") {
             return Vec::new();
         }
         let ctx = ConversationCtx { player: PlayerId::HOST, speaker: SPEAKER, speaker_base: id(HANDOFF_SPEAKER), choice: None };
-        let topic = id(HANDOFF_TOPIC);
         let mut topics = Vec::new();
+        let mut locals = Vec::new();
         {
             let v = View { c: &self.content, s: &self.state };
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let mut runner = self.results.runner(state);
-            for (response, script) in &handoff {
-                match runner.run(ResultCall { ctx: &ctx, topic: &topic, response, script }) {
-                    Ok(effects) => topics.extend(effects.into_iter().filter_map(|e| match e {
-                        ResultEffect::AddTopic(t) => Some(t),
-                        _ => None,
-                    })),
+            for (topic, response, script) in &handoff {
+                match runner.run(ResultCall { ctx: &ctx, topic, response, script }) {
+                    Ok(effects) => {
+                        for e in effects {
+                            match e {
+                                ResultEffect::AddTopic(t) if topic.as_str() == HANDOFF_TOPIC => topics.push(t),
+                                ResultEffect::SetLocal { target: Target::Speaker, name, value } => locals.push((name, value)),
+                                _ => {}
+                            }
+                        }
+                    }
                     Err(e) => warn!("new game: chargen hand-off {response}: {e}"),
                 }
             }
@@ -382,6 +408,9 @@ impl Rpg {
             debug!("new game: {report}");
         }
         self.content.actors.remove(&SPEAKER);
+        if !locals.is_empty() {
+            self.content.chargen_locals.insert(id(HANDOFF_SPEAKER), locals);
+        }
         for t in &topics {
             let _ = self.state.world.apply(RpgCommand::AddTopic(t.clone()));
         }
@@ -393,7 +422,8 @@ impl Rpg {
         self.content.exterior_names.get(&grid).map(String::as_str)
     }
 
-    /// Registers an NPC the player may talk to (`false`: not an NPC record).
+    /// Registers an NPC the player may talk to (`false`: not an NPC record). Locals the skipped
+    /// chargen left on its base record start at their value unless the actor already has one.
     pub fn add_actor(&mut self, key: ActorKey, base: &RecordId, cell: &str) -> bool {
         let db = &self.content.records;
         let Some(npc) = db.get::<Npc>(base) else { return false };
@@ -401,6 +431,9 @@ impl Rpg {
         let actor =
             Actor { facts: ActorFacts::from_npc(db, npc, cell), base_disposition: i32::from(npc.data.disposition), declared };
         self.content.actors.insert(key, actor);
+        for (name, value) in self.content.chargen_locals.get(base).into_iter().flatten() {
+            self.state.locals.entry((key, name.clone())).or_insert(*value);
+        }
         true
     }
 
@@ -427,6 +460,68 @@ impl Rpg {
     /// Message boxes and sounds since the last call.
     pub fn take_events(&mut self) -> Vec<ResultEffect> {
         std::mem::take(&mut self.events)
+    }
+
+    /// One dev-console `MWScript` line (vanilla's console, ROADMAP 1.13), run by the result
+    /// runner: `selected` (the console's selection, a registered actor) is the implicit target,
+    /// else the player. A line that doesn't compile, or calls a function the interpreter doesn't
+    /// run yet, fails whole before any effect applies. Returns notes and what it did.
+    pub fn run_console(&mut self, text: &str, selected: Option<ActorKey>) -> Result<Vec<String>, String> {
+        use mw_script::Severity;
+        /// The implicit target without a selection (never a registered actor).
+        const NO_SELECTION: ActorKey = ActorKey(u128::MAX - 1);
+        let speaker_base = match selected {
+            Some(key) => self.content.actors.get(&key).map(|a| a.facts.id.clone()).ok_or(
+                "the selection is no actor the scripts know yet (NPCs only); deselect to target the player",
+            )?,
+            None => id("player"),
+        };
+        let mut out = Vec::new();
+        let parsed = mw_script::parse(text, mw_script::SourceKind::DialogueResult, mw_script::FunctionTable::vanilla());
+        for d in parsed.diagnostics.iter() {
+            match d.severity() {
+                Severity::Error => return Err(d.to_string()),
+                Severity::Repaired | Severity::Warning => out.push(format!("note: {d}")),
+                Severity::Accepted => {}
+            }
+        }
+        let ctx = ConversationCtx { player: PlayerId::HOST, speaker: selected.unwrap_or(NO_SELECTION), speaker_base, choice: None };
+        // Its own runtime: the dialogue's parse cache and report-once log stay the dialogue's.
+        let mut results = MwResults::new();
+        let response = id("console");
+        let effects = {
+            let v = View { c: &self.content, s: &self.state };
+            let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
+            let call = ResultCall { ctx: &ctx, topic: &response, response: &response, script: text };
+            results.runner(state).run(call).map_err(|e| e.to_string())?
+        };
+        for report in results.drain_reports() {
+            match report {
+                mw_rpg::ResultReport::Unhandled(name) => return Err(format!("{name}: not runnable from the console yet")),
+                mw_rpg::ResultReport::Inert { reason, .. } => return Err(reason),
+                mw_rpg::ResultReport::UnknownVariable(name) => out.push(format!("note: unknown variable {name}")),
+            }
+        }
+        for mut effect in effects {
+            if selected.is_none()
+                && let ResultEffect::AddItem { target, .. }
+                | ResultEffect::RemoveItem { target, .. }
+                | ResultEffect::ModDisposition { target, .. }
+                | ResultEffect::SetDisposition { target, .. }
+                | ResultEffect::SetLocal { target, .. } = &mut effect
+                && *target == Target::Speaker
+            {
+                *target = Target::Player;
+            }
+            out.push(match &effect {
+                ResultEffect::AddItem { target, item, count } => format!("added {count} {item} to {target:?}"),
+                ResultEffect::RemoveItem { target, item, count } => format!("removed up to {count} {item} from {target:?}"),
+                e => format!("{e:?}"),
+            });
+            // Journal/topic events reach the journal on its next change check.
+            let _ = self.apply(None, &ctx, effect);
+        }
+        Ok(out)
     }
 
     /// Opens a conversation with a registered actor: the greeting, fed to a new view.
@@ -504,7 +599,7 @@ impl Rpg {
             events.extend(self.state.world.apply(cmd).unwrap_or_default());
         }
         for effect in effects {
-            events.extend(self.apply(talk, &ctx, effect));
+            events.extend(self.apply(Some(&mut *talk), &ctx, effect));
         }
         view.apply_events(&events);
         let v = View { c: &self.content, s: &self.state };
@@ -523,7 +618,8 @@ impl Rpg {
     /// One result-script effect, with `OpenMW`'s semantics (`apps/openmw/mwscript/
     /// dialogueextensions.cpp`, `containerextensions.cpp`, `statsextensions.cpp` at
     /// openmw-0.48.0; the `mw_rpg` runner decodes the calls, this applies them to the world).
-    fn apply(&mut self, talk: &mut Talk, ctx: &ConversationCtx, effect: ResultEffect) -> Vec<RpgEvent> {
+    /// `talk`: the conversation (`None`: a console line, where `Choice` and `Goodbye` do nothing).
+    fn apply(&mut self, talk: Option<&mut Talk>, ctx: &ConversationCtx, effect: ResultEffect) -> Vec<RpgEvent> {
         let mut events = Vec::new();
         let target_key = |rpg: &Self, t: &Target| View { c: &rpg.content, s: &rpg.state }.target(ctx, t);
         match effect {
@@ -559,11 +655,19 @@ impl Rpg {
                 }
             }
             ResultEffect::Choices(choices) => {
+                let Some(talk) = talk else {
+                    warn!("console: Choice needs a conversation");
+                    return events;
+                };
                 if let Err(e) = talk.session.offer_choices(choices) {
                     warn!("dialogue: Choice refused: {e}");
                 }
             }
-            ResultEffect::Goodbye => talk.session.force_goodbye(),
+            ResultEffect::Goodbye => {
+                if let Some(talk) = talk {
+                    talk.session.force_goodbye();
+                }
+            }
             ResultEffect::ModDisposition { target, delta } => {
                 if let Some(k) = target_key(self, &target) {
                     self.state.npcs.modify(k, delta);
@@ -682,7 +786,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
 
 /// An actor's key: its placement id (stable across cell loads, what saves address), else the
 /// entity (characters not spawned from a placement).
-fn key(e: Entity, placement: Option<&CharacterPlacement>) -> ActorKey {
+pub(crate) fn key(e: Entity, placement: Option<&CharacterPlacement>) -> ActorKey {
     placement.map_or(ActorKey(u128::from(e.to_bits())), |p| ActorKey(p.0.0))
 }
 
@@ -1109,5 +1213,45 @@ mod tests {
         assert!(has(&topics_of(&mut rpg, "chargen door guard"), &basics), "guard");
         assert!(has(&topics_of(&mut rpg, "chargen captain"), &["my trade", "caius cosades"]), "Sellus Gravius");
         assert!(has(&topics_of(&mut rpg, "chargen class"), &["imperial legion"]), "Socucius Ergalla");
+    }
+
+    /// Owner report 2026-10-25: after a skipped chargen Sellus Gravius greeted "Who are you?
+    /// Where are your papers?". That greeting needs no `chargen statssheet` on the player and
+    /// his local `state` != -1; chargen's papers hand-in sets it to -1. `skip_chargen` leaves
+    /// that local, so he gives his post-chargen greeting.
+    #[test]
+    fn sellus_greets_after_skipped_chargen() {
+        let Ok((install, _)) = MorrowindInstall::detect(None) else {
+            eprintln!("no Morrowind install detected; skipping");
+            return;
+        };
+        let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+        let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+        let db = Arc::new(content.db);
+        let cell = "Seyda Neen, Census and Excise Office";
+        let (sellus, state) = (ActorKey(7), id("state"));
+        let greeting = |rpg: &mut Rpg| {
+            assert!(rpg.add_actor(sellus, &id("chargen captain"), cell));
+            let (_, view) = rpg.open(sellus).unwrap();
+            last_text(&view)
+        };
+        let papers = "Where are your papers?";
+
+        // The report, reproduced on a game that never ran the hand-off.
+        let mut before = Rpg::new(db.clone()).unwrap();
+        assert!(greeting(&mut before).contains(papers));
+
+        let mut rpg = Rpg::new(db).unwrap();
+        rpg.skip_chargen();
+        let text = greeting(&mut rpg);
+        eprintln!("Sellus Gravius: {text}");
+        assert!(!text.contains(papers), "{text}");
+        assert!(text.contains("Sellus Gravius"), "the post-chargen greeting names him: {text}");
+        assert_eq!(rpg.state.locals.get(&(sellus, state.clone())), Some(&-1.0));
+        assert_eq!(rpg.state.pc.loadout.count(&id("chargen statssheet")), 0, "no papers granted");
+        // A value he already has (a later `set state`, a loaded save) is kept on re-registering.
+        rpg.state.locals.insert((sellus, state.clone()), 3.0);
+        assert!(rpg.add_actor(sellus, &id("chargen captain"), cell));
+        assert_eq!(rpg.state.locals.get(&(sellus, state)), Some(&3.0));
     }
 }

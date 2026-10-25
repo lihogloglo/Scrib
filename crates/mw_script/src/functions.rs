@@ -133,6 +133,11 @@ impl FunctionTable {
         self.by_name.get(&name.to_lowercase()).copied()
     }
 
+    /// Every lowercase name and alias (`tcl`, `togglecollision`, ...) with its function.
+    pub fn names(&self) -> impl Iterator<Item = (&str, FnId)> + '_ {
+        self.by_name.iter().map(|(name, &id)| (name.as_str(), id))
+    }
+
     /// Looks up an already-lowercase name.
     pub fn get_lower(&self, key: &str) -> Option<FnId> {
         self.by_name.get(key).copied()

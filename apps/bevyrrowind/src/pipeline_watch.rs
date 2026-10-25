@@ -26,12 +26,22 @@ use std::time::Instant;
 /// Meshes visible to a camera whose main-pass pipeline is still compiling
 /// (Bevy skips their draws until it is ready). Written in the render world,
 /// read in the main world (one frame late, which the fade's hold absorbs).
+/// Also carries `PipelineCache::waiting_pipelines` (queued or compiling)
+/// for the screenshot readiness gate ([`sf_diag_bevy::ReadyGate`]).
 #[derive(Resource, Clone, Default)]
-pub struct PendingDraws(Arc<AtomicUsize>);
+pub struct PendingDraws {
+    draws: Arc<AtomicUsize>,
+    pipelines: Arc<AtomicUsize>,
+}
 
 impl PendingDraws {
     pub fn get(&self) -> usize {
-        self.0.load(Ordering::Relaxed)
+        self.draws.load(Ordering::Relaxed)
+    }
+
+    /// Pipelines still compiling and the visible draws they hold back.
+    pub fn gpu(&self) -> sf_diag_bevy::GpuPending {
+        sf_diag_bevy::GpuPending { pipelines: self.pipelines.load(Ordering::Relaxed), draws: self.get() }
     }
 }
 
@@ -62,7 +72,8 @@ pub fn add(app: &mut App) {
 }
 
 /// Holds the door fade at black while the arrival's visible meshes wait for pipelines.
-fn pipelines_at_black(mut fade: ResMut<sf_world_bevy::FadeTransition>, pending: Res<PendingDraws>) {
+fn pipelines_at_black(fade: Option<ResMut<sf_world_bevy::FadeTransition>>, pending: Res<PendingDraws>) {
+    let Some(mut fade) = fade else { return };
     if fade.is_holding() && pending.get() > 0 {
         fade.hold();
     }
@@ -90,7 +101,8 @@ fn count_pending(
                 .count();
         }
     }
-    pending.0.store(n, Ordering::Relaxed);
+    pending.draws.store(n, Ordering::Relaxed);
+    pending.pipelines.store(cache.waiting_pipelines().count(), Ordering::Relaxed);
 }
 
 impl Watch {
