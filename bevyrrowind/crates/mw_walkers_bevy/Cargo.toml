@@ -1,0 +1,53 @@
+[package]
+name = "mw_walkers_bevy"
+description = "Morrowind walkers (NPC movement, wander, colliders) and rigid-body physics glue: items, carry, ragdolls (app-split.md slice 4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_camera_controller = { workspace = true, features = ["free_camera"] }
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_input = { workspace = true, features = ["keyboard", "mouse"] }
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_render.workspace = true
+bevy_shape.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+mw_actors.workspace = true
+mw_ai.workspace = true
+mw_game_core.workspace = true
+mw_graphs.workspace = true
+mw_physics.workspace = true
+mw_world.workspace = true
+sf_action_bevy.workspace = true
+sf_anim_bevy.workspace = true
+sf_bake.workspace = true
+sf_camera.workspace = true
+sf_camera_bevy.workspace = true
+sf_character_bevy.workspace = true
+sf_controller = { workspace = true, features = ["bake", "terrain"] }
+sf_controller_bevy = { workspace = true, features = ["debug"] }
+sf_coords.workspace = true
+sf_diag_bevy.workspace = true
+sf_physics = { workspace = true, features = ["bake"] }
+sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdoll"] }
+sf_ragdoll.workspace = true
+sf_records.workspace = true
+sf_terrain_bevy.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

@@ -55,6 +55,8 @@ mw_records.workspace = true
 mw_script.workspace = true
 mw_vfs.workspace = true
 mw_world.workspace = true
+# Walkers + physics glue (app-split.md slice 4).
+mw_walkers_bevy.workspace = true
 sf_bake.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy = { workspace = true, features = ["assets", "render"] }

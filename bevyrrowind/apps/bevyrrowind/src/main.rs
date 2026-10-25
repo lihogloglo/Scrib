@@ -20,7 +20,7 @@ mod live_ab;
 mod mods;
 mod pause_menu;
 mod perf;
-mod physics;
+use mw_walkers_bevy::physics;
 mod player;
 mod pipeline_watch;
 #[cfg(feature = "remote")]
@@ -31,7 +31,7 @@ mod scripts;
 mod skinned_view;
 mod sweep;
 mod view;
-mod walkers;
+use mw_walkers_bevy::walkers;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

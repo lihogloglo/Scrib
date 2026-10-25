@@ -24,7 +24,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_input::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_time::prelude::*;
+use bevy_transform::prelude::*;
 use mw_ai::{CellKey, PathGrids, PathWalkScaffold, Wander, WanderPlanner, gmst_float, walk_speed};
 use mw_graphs::build::params as gp;
 use sf_anim_bevy::{AnimLod, AnimStats, Animator};
@@ -117,7 +124,7 @@ impl GroundProbe for MwGround {
 struct GroundOnPhysics(bool);
 
 /// The ground the mover uses, for the scaffold's own probes and stats.
-#[derive(bevy::ecs::system::SystemParam)]
+#[derive(bevy_ecs::system::SystemParam)]
 struct Ground<'w> {
     mw: Res<'w, MwGround>,
     physics: Option<Res<'w, sf_physics_bevy::Physics>>,
@@ -518,7 +525,7 @@ fn processing_range(
 }
 
 /// The collision-ready gate's inputs (see [`processing_range`]).
-#[derive(bevy::ecs::system::SystemParam)]
+#[derive(bevy_ecs::system::SystemParam)]
 struct GroundReady<'w> {
     ground: Ground<'w>,
     collision: sf_physics_bevy::CollisionReady<'w>,
@@ -611,7 +618,7 @@ fn camera_obstacle(
     mut commands: Commands,
     time: Res<Time>,
     pos_of: WorldPosOf,
-    mut cams: Query<(Entity, Option<&mut AvoidObstacle>), With<crate::exterior::ExteriorCamera>>,
+    mut cams: Query<(Entity, Option<&mut AvoidObstacle>), With<mw_game_core::exterior::ExteriorCamera>>,
 ) {
     let dt = time.delta_secs().max(1e-4);
     for (entity, existing) in &mut cams {

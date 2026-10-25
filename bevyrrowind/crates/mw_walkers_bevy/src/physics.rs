@@ -40,10 +40,22 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 
-use bevy::camera::visibility::RenderLayers;
-use bevy::camera_controller::free_camera::FreeCamera;
-use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy_camera::visibility::RenderLayers;
+use bevy_camera_controller::free_camera::FreeCamera;
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_camera::prelude::*;
+use bevy_color::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_input::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_shape::Sphere;
+use bevy_mesh::prelude::*;
+use bevy_pbr::prelude::*;
+use bevy_time::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_render::view::screenshot::{Screenshot, save_to_disk};
 use mw_physics::ItemRecords;
 use sf_bake::{Manifest, Store};
 use sf_controller::steps::COLLISION_COOK;
@@ -343,7 +355,7 @@ fn ragdoll_log(stats: Res<RagdollStats>, mut last: Local<(usize, usize)>, mut pe
 fn attach_holder(
     mut commands: Commands,
     cameras: Query<Entity, (With<FreeCamera>, Without<Holder>)>,
-    bodies: Query<Entity, (With<crate::player::PlayerBody>, Without<Holder>)>,
+    bodies: Query<Entity, (With<mw_game_core::player::PlayerBody>, Without<Holder>)>,
 ) {
     let limits = || {
         let strength = std::env::var("BEVYRROWIND_STRENGTH").ok().and_then(|s| s.parse().ok()).unwrap_or(mw_physics::DEFAULT_STRENGTH);
@@ -365,7 +377,7 @@ fn attach_holder(
 #[allow(clippy::needless_pass_by_value)]
 fn player_tick_view(
     cameras: Query<&sf_camera_bevy::PlayerCamera>,
-    mut bodies: Query<(&ActionBody, &ActionCharacter, &mut TickView), With<crate::player::PlayerBody>>,
+    mut bodies: Query<(&ActionBody, &ActionCharacter, &mut TickView), With<mw_game_core::player::PlayerBody>>,
 ) {
     let fp = cameras.iter().next().map(|c| c.params.first_person).unwrap_or_default();
     for (body, character, mut view) in &mut bodies {
@@ -382,7 +394,7 @@ fn player_tick_view(
 fn carry_keys(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    mode: Option<Res<crate::player::PlayerMode>>,
+    mode: Option<Res<mw_game_core::player::PlayerMode>>,
     holders: Query<(Entity, &Holder, Has<TickView>)>,
     mut input: MessageWriter<CarryInput>,
 ) {
@@ -579,7 +591,7 @@ fn throw_ball(
     let (mesh, material) = balls
         .look
         .get_or_insert_with(|| {
-            let material = StandardMaterial { base_color: Color::srgb(0.9, 0.25, 0.1), perceptual_roughness: 0.6, ..default() };
+            let material = StandardMaterial { base_color: Color::srgb(0.9, 0.25, 0.1), perceptual_roughness: 0.6, ..Default::default() };
             (meshes.add(Sphere::new(BALL_RADIUS)), materials.add(material))
         })
         .clone();
@@ -757,7 +769,7 @@ impl Auto {
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn auto(
     time: Res<Time<Real>>,
-    settled: Option<Res<crate::exterior::Settled>>,
+    settled: Option<Res<mw_game_core::exterior::Settled>>,
     mut auto: ResMut<Auto>,
     // Read-only: `WorldPosOf` reads every Transform; the framed pose is written back through `commands`.
     cameras: Query<(Entity, &Transform), With<FreeCamera>>,
