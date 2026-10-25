@@ -1,6 +1,6 @@
 # Benchmark and diagnostics harness
 
-Status: implemented (2026-10-11), core and plugin; not yet wired into an app
+Status: implemented (2026-10-11), core and plugin; used by the Bevyrrowind app (`ReadyGate` for `--screenshot`, see "As built")
 Crates: `sf_diag` (new, Bevy-free: counters, recorder, stats, gates,
 reports, baselines, camera paths, scenario runner), `sf_diag_bevy` (new:
 plugin, frame sampling, fly-through driver)

@@ -1,7 +1,7 @@
 # Characters: assembly, equipment, standard rig, retargeting, views
 Segmented legacy bodies and rigid armor bending apart at joints: see   smooth-bodies.md (seam weld + weight blending per outfit, on by default; smoothbody 2026-10-12).
 
-Status: draft (2026-10-11); `sf_character` core built (2026-10-11, see "As implemented")
+Status: draft (2026-10-11); `sf_character` core built (2026-10-11, see "As implemented"); runtime assembly `sf_character_bevy` built (2026-10-12, archive/character-history.md "As built")
 Crates: `sf_character` (new, Bevy-free: humanoid rig schema, rig maps,
 slot resolution, recipes, retarget poses), `sf_character_bevy` (new:
 spawning, part merging, attachments, faces, first and third person),

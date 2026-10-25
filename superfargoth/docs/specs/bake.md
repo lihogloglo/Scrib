@@ -1,6 +1,6 @@
 # Bake pipeline
 
-Status: agreed (2026-10-11)
+Status: agreed (2026-10-11); built (M2)
 Crates: `sf_bake` (new, Bevy-free: step graph, cache, CLI helpers),
 `sf_model` (new, Bevy-free: neutral model and the `.sfmesh` container),
 `sf_model_bevy` (new: `.sfmesh` asset loader and the `baked://` asset source)

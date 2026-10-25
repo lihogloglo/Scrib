@@ -7,7 +7,7 @@ spawn/despawn and entity scripts, `on_load`, generated `.d.luau`) done 2026-10-1
 verified in the game app 2026-10-18 (spawn/despawn, entity script state and tick, `handled` blocks the
 default action, unhandled door activation still travels). `@sf/records`, `@sf/input`, `@sf/anim`,
 `@sf/physics` and MS-2: parked (owner 2026-10-18, Lua parked after L3).
-Crates (proposed): `sf_script` (Bevy-free: runtime, sandbox, API registry, state, timers, events),
+Crates (built, parked after L3 per owner 2026-10-18): `sf_script` (Bevy-free: runtime, sandbox, API registry, state, timers, events),
 `sf_script_bevy` (plugin: schedule slots, world access, entity handles, hot reload, diagnostics),
 API modules next to the systems they expose (`sf_ui_lua` per ui.md; small modules may live in
 `sf_script_bevy` behind features). Mod pipeline: [mods.md](mods.md). First adapter:

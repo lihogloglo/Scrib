@@ -65,7 +65,7 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.10 Volumetric fog black bands (FG-1): not reproduced 2026-10-21; reopen if seen; `--off foghistory` A/B kept.
 - [x] 1.11 Thin binary (build-perf.md rule 4): done 2026-10-26: app split slices 1-14a, 15 game crates (`mw_*_bevy`), binary 2.3k lines (CLI only); `specs/app-split.md` "As built".
 - [ ] 1.12 Owner pass 2026-10-21 bugs: LT-4 lamp light cut at cluster edges (`lightclusters`); SH-20 choppy character shadows (`charshadows`); RO-B smoke over sky (`smokeorder`); TR-3 glossy terrain (awaiting owner); WE-5 ash occlusion (`--off precipocc`). Owner 2026-10-25, not urgent: cap ash shelter distance (a few m behind a vertical object) + steeper angle.
-- [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` built; CO-1 awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, tab-complete, console functions (TGM/TAI/TFOW/TWF...), `set x to y`, exterior `coc`.
+- [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` built; CO-1 awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, Down/Enter select a suggestion, paste (CO-1 2026-10-25), console functions (TGM/TAI/TFOW/TWF...), `set x to y`, exterior `coc`.
 - [~] 1.14 Build churn: workspace-hack (`cargo hakari`) built, covers the merged workspace; gates re-measured 2026-10-26 after the split: no-op 1.2 s, touch app 5.6 s, touch `mw_doors_bevy` 10.7 s miss (perf.md "Dev loop"); clean build not measured; fix needs an owner call.
 
 **Next session order (owner 2026-10-20):** 1.4 shadows, then FG-1 (1.10), then owner checks PA-4, DR-4, AU-1, TA-1; Nsight per pass (UAC).
@@ -82,7 +82,7 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
   the Morrowind markup parser and MessageBox mapping.
 - [~] 2.4 Dialogue + journal + quest store (`specs/rpg.md`, `rpg-adapter.md`; `sf_rpg`, `mw_rpg`, `dialogue.rs`), MWScript runtime (W3). Fargoth ring flow confirmed by owner. Next: HUD.
 - [~] 2.5 Saves (`sf_save*`, `saves.rs`, `save.md`; net-ready `specs/net.md`): F5/F9 quicksave/load works headless; SV-1 awaiting owner. Left: part 2 (load screen, save list, naming).
-- [~] 2.6 Sound (`sf_audio*`, `mw_audio`, `audio.rs`): cues, ambience, music, footsteps, voices built; AU-1/2 confirmed, AU-3..5 awaiting owner. Left: impact sounds, volume mixer (with U6), UI sounds, voice LOS + barks (Phase 3), modern-preset beds.
+- [~] 2.6 Sound (`sf_audio*`, `mw_audio`, `audio.rs`): cues, ambience, music, footsteps, voices built; impact sounds and the volume mixer (options screen drives the 12 volume/mute settings live, 2026-10-26) built; AU-1/2 confirmed, AU-3..5 awaiting owner. Left: UI sounds, voice LOS + barks (Phase 3), modern-preset beds.
 
 ## Phase 3: animation, combat, physics
 

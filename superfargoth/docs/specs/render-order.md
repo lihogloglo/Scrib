@@ -1,6 +1,6 @@
 # Render order: the frame graph, its rules and its guard
 
-Status: audit + rules (renderorder, 2026-10-19); RO-1, RO-2, RO-3 fixed (rofix1, 2026-10-19). Crates: every `*_bevy` crate that draws;
+Status: audit + rules (renderorder, 2026-10-19); RO-1, RO-2, RO-3 fixed (rofix1, 2026-10-19); RO-4, RO-7, RO-8, RO-9 fixed or gone (see "Violations"); RO-5, RO-6 open. Crates: every `*_bevy` crate that draws;
 `sf_render_order_bevy` owns the transparent-band policy and the guard test.
 
 **Why this spec.** On 2026-10-19 the owner found four render-order bugs, each fixed on its own:
