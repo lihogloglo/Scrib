@@ -13,7 +13,7 @@ list (`../bevyrrowind/CLAUDE.md` "Start of every session"). Otherwise:
 1. Read `../bevyrrowind/docs/ROADMAP.md` (short: owner decisions, current phase).
 2. For structural work, read `docs/ARCHITECTURE.md` (vision, crate plan, build rules §8b);
    `docs/WISHLIST.md` when you need feature targets or performance numbers.
-   `docs/DECISIONS.md` is append-only history: grep it, don't read it whole.
+   `docs/DECISIONS.md` is append-only history: grep it, don't read it whole, or grep `docs/DECISIONS-INDEX.md` (generated: `node tools/decisions-index.mjs`).
 3. For the system you touch, read its spec in `docs/specs/`. No spec yet
    for a major system? Write it first.
 

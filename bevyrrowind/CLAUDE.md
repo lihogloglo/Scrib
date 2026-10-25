@@ -18,8 +18,8 @@ To update the ROADMAP, edit only your task's line (grep for it).
 2. For structural work, read `../superfargoth/docs/ARCHITECTURE.md` (~530 lines).
 3. For the system you touch, read its spec in `docs/specs/` (or
    `../superfargoth/docs/specs/`). No spec yet for a major system? Write it first.
-4. **Never read whole:** `docs/archive/`, `../superfargoth/docs/DECISIONS.md` (append-only, ~36k
-   tokens), `docs/visual-checks.md` (index, ~3k tokens; add an entry to the right `docs/visual-checks/<system>.md` and its index line, grep for IDs), `docs/perf.md`.
+4. **Never read whole:** `docs/archive/`, `../superfargoth/docs/DECISIONS.md` (append-only, ~36k tokens; or grep `../superfargoth/docs/DECISIONS-INDEX.md`,
+   generated: `node tools/decisions-index.mjs`), `docs/visual-checks.md` (index, ~3k tokens; add an entry to the right `docs/visual-checks/<system>.md` and its index line, grep for IDs), `docs/perf.md`.
 
 ## End of every session
 
