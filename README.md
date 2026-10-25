@@ -50,5 +50,8 @@ cargo run -p bevyrrowind -- view "Seyda Neen, Census and Excise Office" --screen
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). This repo may reuse GPL code (e.g. from
-OpenMW). The superfargoth framework it builds on stays MIT/Apache.
+[GPL-3.0-or-later](LICENSE), with an additional permission (GPLv3 section 7)
+for GPU vendor runtimes such as NVIDIA DLSS ([LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md)).
+This repo may reuse GPL code (e.g. from OpenMW). The superfargoth framework is
+GPL-3.0-or-later too since 2026-10-25. DLSS is an optional plugin package the
+player installs separately; the game binary contains no NVIDIA code.

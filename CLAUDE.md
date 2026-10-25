@@ -1,7 +1,8 @@
 # Bevyrrowind
 
 Morrowind content pack and game binary on the superfargoth framework.
-**GPL-3.0-or-later.** Sibling repo `../superfargoth` (MIT/Apache) is a path dependency.
+**GPL-3.0-or-later** (+ GPU vendor runtime permission, `LICENSE-EXCEPTION.md`). Sibling repo
+`../superfargoth` (also GPL since 2026-10-25) is a path dependency.
 
 ## Start of every session
 
@@ -64,8 +65,10 @@ working tree**. Protocol:
 1. **Dependency direction is one-way.** superfargoth never depends on this
    repo and never names Morrowind formats, IDs, or conventions. Need
    Morrowind knowledge in the framework? Add an adapter hook.
-2. **No GPL-derived code in superfargoth.** GPL reuse (e.g. OpenMW) is fine
-   *here*, never there. For Morrowind content mechanics (MWScript, dialogue,
+2. **Morrowind-specific ports live here.** Both repos are GPL; OpenMW ports
+   belong here because they are Morrowind-specific, not for licence reasons.
+   Cite file + commit. No NVIDIA/proprietary SDK code in the game binary
+   (DLSS is a separate plugin package). For Morrowind content mechanics (MWScript, dialogue,
    magic effects, levelled lists, crime), port OpenMW (cite file + commit)
    instead of re-deriving; feel systems are modern first
    (`../superfargoth/docs/ARCHITECTURE.md` §1b).
