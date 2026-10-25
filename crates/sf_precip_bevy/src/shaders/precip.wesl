@@ -35,20 +35,23 @@ struct PrecipParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var fog_volume: texture_3d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var fog_sampler: sampler;
 
-// Top-down occlusion map (reverse Z, 1 at the top): clip_from_world,
-// (valid, depth range m, 0, 0), the depth texture.
+// Occlusion map along the drops' travel (reverse Z, 1 at the upstream plane;
+// top-down for falling rain): clip_from_world, (valid, depth range m, 0, 0),
+// the depth texture.
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var<uniform> occ_clip: mat4x4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var<uniform> occ_params: vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(6) var occ_map: texture_depth_2d;
 
-// True when something in the map is above `p` (under a roof or a tree).
+// True when something in the map is upstream of `p` (under a roof or a
+// tree, in the lee of a wall or a hill).
 fn occluded(p: vec3<f32>) -> bool {
     if occ_params.x < 0.5 {
         return false;
     }
     let c = occ_clip * vec4<f32>(p, 1.0);
     let uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
-    if any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+    // Outside the map's square or depth range: not covered, never killed.
+    if any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) || c.z <= 0.0 || c.z > 1.0 {
         return false;
     }
     let dims = vec2<f32>(textureDimensions(occ_map));

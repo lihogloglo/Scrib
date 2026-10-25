@@ -13,9 +13,10 @@
 //! ([`PrecipSlot`], they crossfade by intensity), the wind, the brightness.
 //! The draw follows whatever camera renders it (`view.world_position`).
 //!
-//! Not built: the occlusion map (roofs and trees don't block yet: hosts
-//! switch [`Precip::enabled`] off indoors), splashes, textures (procedural
-//! shapes). The streaks fog themselves from [`TranslucentFog`] (render-order.md
+//! The occlusion map (`occlusion.rs`) kills drops with a caster upstream of
+//! them along their travel (roofs, walls, hills); hosts switch
+//! [`Precip::enabled`] off indoors. Not built: splashes, textures
+//! (procedural shapes). The streaks fog themselves from [`TranslucentFog`] (render-order.md
 //! rule 1, RO-3): dimmed by the transmittance to their distance plus the
 //! in-scatter in front of them.
 
