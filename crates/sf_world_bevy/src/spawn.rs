@@ -83,6 +83,11 @@ pub struct ActivateCx<'a> {
     pub cell: IVec3,
     /// The cell's entity (high precision, parent of the level groups).
     pub cell_entity: Entity,
+    /// A deactivation that discards the cell's live state: the resident
+    /// cells are being reloaded after a save load (`Streaming::reload_resident`),
+    /// so hooks clean up but write nothing back (the overlay is the loaded
+    /// one). Always false on activation.
+    pub discard: bool,
 }
 
 /// Spawns (and activates) placements of one class.

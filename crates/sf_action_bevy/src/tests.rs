@@ -232,3 +232,22 @@ fn enhanced_input_actions_reach_the_command_and_jump() {
     assert!(c.command.stick.y > 0.99, "{:?}", c.command.stick);
     assert!(jumped, "the mocked Jump never launched");
 }
+
+#[test]
+fn no_clip_floats_without_gravity_and_ignores_the_ground() {
+    let mut app = app(60);
+    let up = WorldPos::ORIGIN.offset(Vec3::Y * 2.0);
+    let ghost = spawn(&mut app);
+    let walker = spawn(&mut app);
+    for e in [ghost, walker] {
+        app.world_mut().get_mut::<ActionBody>(e).unwrap().teleport(up, 0.0);
+    }
+    app.world_mut().entity_mut(ghost).insert(NoClip { look: Vec3::NEG_Z });
+    for _ in 0..60 {
+        app.update();
+    }
+    let height = |app: &App, e| WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(e).unwrap().loco.position).y;
+    assert!((height(&app, ghost) - 2.0).abs() < 1e-3, "no-clip floats: {}", height(&app, ghost));
+    assert!(height(&app, walker) < 0.1, "the walker fell to the plane: {}", height(&app, walker));
+    assert!((no_clip_climb(Vec3::new(0.0, 0.0, -3.0), Vec3::new(0.0, -1.0, -1.0)) + 3.0).abs() < 1e-4);
+}

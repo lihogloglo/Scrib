@@ -182,6 +182,28 @@ pub struct Invocation<'a, C> {
 /// A command's code. `Err(message)` fails the call (and stops a `;` chain).
 pub type Handler<C> = Box<dyn FnMut(Invocation<'_, C>) -> Result<(), String> + Send + Sync>;
 
+/// What the fallback gets: a command whose first word no command or variable claims
+/// ([`Console::set_fallback`]; a game's script language, as Bethesda consoles run script lines).
+pub struct Unclaimed<'a, C> {
+    pub ctx: &'a mut C,
+    /// The command as typed: its first word to its `;` or the line end, quotes kept.
+    pub text: &'a str,
+    pub vars: &'a mut Vars,
+    /// Output; a returned `Err` is logged as an error line, prefixed with the fallback's label.
+    pub log: &'a mut Log,
+}
+
+/// The fallback's code.
+pub type FallbackHandler<C> = Box<dyn FnMut(Unclaimed<'_, C>) -> Result<(), String> + Send + Sync>;
+/// Completions the fallback adds for a line's first word (given in lowercase).
+pub type FallbackCompleter = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
+struct Fallback<C> {
+    label: String,
+    run: FallbackHandler<C>,
+    complete: Option<FallbackCompleter>,
+}
+
 /// Why a line didn't run. Also written to the log as an error line.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum ExecError {
@@ -321,6 +343,8 @@ pub struct Console<C = ()> {
     log: Log,
     /// Who the line being run speaks for (variable priority).
     source: SetBy,
+    /// Runs commands nobody claims (`None`: they are "unknown command or variable").
+    fallback: Option<Fallback<C>>,
 }
 
 impl<C> Default for Console<C> {
@@ -343,6 +367,7 @@ impl<C> Console<C> {
             history: History::new(history),
             log: Log::new(log),
             source: SetBy::Console,
+            fallback: None,
         };
         let var = |n| Param::new(n, ArgKind::Name(NameFilter::Vars));
         let builtins = [
@@ -528,6 +553,31 @@ impl<C> Console<C> {
         self.commands.iter().map(|c| &c.spec)
     }
 
+    /// Runs every command whose first word is no command or variable (registered names always
+    /// win), instead of failing it as unknown. `label` names it in errors (`label: message`).
+    pub fn set_fallback(
+        &mut self,
+        label: &str,
+        run: impl FnMut(Unclaimed<'_, C>) -> Result<(), String> + Send + Sync + 'static,
+    ) {
+        let complete = self.fallback.take().and_then(|f| f.complete);
+        self.fallback = Some(Fallback {
+            label: label.to_owned(),
+            run: Box::new(run),
+            complete,
+        });
+    }
+
+    /// Extra first-word completions from the fallback (needs [`Console::set_fallback`] first).
+    pub fn set_fallback_completion(
+        &mut self,
+        complete: impl Fn(&str) -> Vec<String> + Send + Sync + 'static,
+    ) {
+        if let Some(f) = self.fallback.as_mut() {
+            f.complete = Some(Box::new(complete));
+        }
+    }
+
     /// A line typed by the user: recorded in the history, echoed, then run
     /// with [`SetBy::Console`] priority.
     pub fn submit(&mut self, ctx: &mut C, line: &str) -> Result<(), ExecError> {
@@ -567,7 +617,26 @@ impl<C> Console<C> {
             return Err(ExecError::UnterminatedQuote);
         }
         let name = first.text.to_ascii_lowercase();
-        match self.lookup(&name, NameFilter::Any)? {
+        let target = match self.lookup(&name, NameFilter::Any) {
+            Ok(t) => t,
+            Err(unknown) => {
+                let Some(fallback) = self.fallback.as_mut() else {
+                    return Err(unknown);
+                };
+                let text = line[first.start..seg.end].trim_end();
+                let unclaimed = Unclaimed {
+                    ctx,
+                    text,
+                    vars: &mut self.vars,
+                    log: &mut self.log,
+                };
+                return (fallback.run)(unclaimed).map_err(|message| ExecError::Failed {
+                    command: fallback.label.clone(),
+                    message,
+                });
+            }
+        };
+        match target {
             Target::Var(id) => match &seg.tokens[1..] {
                 [] => {
                     self.log.info(&self.vars.var(id).describe());
@@ -904,7 +973,11 @@ impl<C> Console<C> {
             k => k.value_candidates(),
         };
         let all = if index == 0 {
-            names(NameFilter::Any)
+            let mut all = names(NameFilter::Any);
+            if let Some(complete) = self.fallback.as_ref().and_then(|f| f.complete.as_ref()) {
+                all.extend(complete(&prefix));
+            }
+            all
         } else {
             let head = tokens[0].text.to_ascii_lowercase();
             match self.names.get(&head) {

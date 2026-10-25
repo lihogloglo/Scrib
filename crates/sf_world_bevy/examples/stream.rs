@@ -817,7 +817,7 @@ fn door_travel(
             if d.x.hypot(d.z) < 2.5 && d.y.abs() < 3.0 {
                 near_any = true;
                 if armed.unwrap_or(true) {
-                    travel.write(StartTravel { traveler: cam, to: sf_world::Location::new(to.worldspace.clone(), to.arrival.pos), rotation: to.arrival.rotation });
+                    travel.write(StartTravel { traveler: cam, to: sf_world::Location::new(to.worldspace.clone(), to.arrival.pos), rotation: to.arrival.rotation, reload: false });
                     *armed = Some(false);
                 }
             }

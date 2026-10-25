@@ -285,6 +285,11 @@ struct Runtime {
     stats: StreamStats,
     /// The far-field hook, refreshed every frame from [`FarProxies`].
     far: FarProxies,
+    /// Cells a reload is unloading this frame (their deactivations discard).
+    reloading: HashSet<(WorldspaceId, IVec3)>,
+    /// Models held while a reload runs, so the cells come back from memory
+    /// instead of reloading their assets (dropped once streaming is idle).
+    pinned: Vec<Handle<CookedModelAsset>>,
 }
 
 /// The streaming runtime (one per app).
@@ -329,6 +334,8 @@ impl Streaming {
                 materials: HashMap::new(),
                 stats: StreamStats::default(),
                 far: FarProxies::default(),
+                reloading: HashSet::new(),
+                pinned: Vec::new(),
             },
             fetches: HashMap::new(),
             directories: HashMap::new(),
@@ -364,7 +371,7 @@ impl Streaming {
 
     /// Nothing pending: no request, no directory load.
     pub fn is_idle(&self) -> bool {
-        self.scheduler.requests().next().is_none() && self.directories.is_empty()
+        self.scheduler.requests().next().is_none() && self.directories.is_empty() && !self.scheduler.reloading()
     }
 
     pub fn stats(&self) -> StreamStats {
@@ -379,6 +386,19 @@ impl Streaming {
     /// Whether a worldspace's directory is loaded.
     pub fn has_directory(&self, ws: &WorldspaceId) -> bool {
         self.scheduler.directory(ws).is_some()
+    }
+
+    /// Reloads every resident cell behind a fade (a save load: save.md
+    /// "Loading", the full replace). Each cell unloads through the normal
+    /// stages (spawner hooks run, with [`crate::ActivateCx::discard`] set)
+    /// and streams back with the current [`WorldOverlay`], so taken items
+    /// return, moved items go back to their saved pose and nothing is
+    /// doubled. Models stay pinned meanwhile; burst mode runs until done.
+    /// [`crate::StartTravel::reload`] calls it at the fade's cut.
+    pub fn reload_resident(&mut self) {
+        self.rt.pinned.extend(self.rt.models.values().filter_map(|s| s.handle.clone()));
+        self.scheduler.reload_resident();
+        self.scheduler.begin_burst();
     }
 
     /// The entity of a resident streaming cell.
@@ -481,6 +501,18 @@ impl Streaming {
             }
         } else {
             self.guarded = 0;
+            self.rt.reloading.clear();
+            if self.scheduler.reloading() {
+                let scheduler = &self.scheduler;
+                self.rt.reloading.extend(
+                    scheduler
+                        .requests()
+                        .filter(|r| r.kind == RequestKind::Unload && scheduler.is_reloading(&r.worldspace, r.cell))
+                        .map(|r| (r.worldspace.clone(), r.cell)),
+                );
+            } else if !self.rt.pinned.is_empty() && self.is_idle() {
+                self.rt.pinned.clear();
+            }
             for stage in [Stage::Despawn, Stage::Deactivate, Stage::Spawn, Stage::Upload, Stage::Activate] {
                 self.run_stage(world, stage, spawners, counters);
             }
@@ -1182,7 +1214,8 @@ impl Runtime {
         }
         let Some(work) = self.work.get_mut(&request.id) else { return true };
         let end = (work.next + self.config.placements_per_item).min(work.placements.len());
-        let cx = ActivateCx { worldspace: &request.worldspace, cell: request.cell, cell_entity };
+        let discard = !on && self.reloading.contains(&key);
+        let cx = ActivateCx { worldspace: &request.worldspace, cell: request.cell, cell_entity, discard };
         for p in &work.placements[work.next..end] {
             if let Some(s) = spawners.for_class(p.placement.class) {
                 if on {

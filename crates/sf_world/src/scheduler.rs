@@ -357,6 +357,9 @@ struct WorldStream {
     visited: Vec<u32>,
     /// Cells resident or with a request.
     live: BTreeSet<u32>,
+    /// Cells being reloaded ([`Scheduler::reload_resident`]): held at
+    /// `Unloaded` until they get there, then streamed back normally.
+    stale: BTreeSet<u32>,
     prefetched: bool,
 }
 
@@ -468,6 +471,7 @@ impl Scheduler {
             scratch: vec![Want::NONE; n],
             visited: Vec::new(),
             live: BTreeSet::new(),
+            stale: BTreeSet::new(),
             prefetched: false,
             directory,
         };
@@ -566,10 +570,36 @@ impl Scheduler {
             dir.find(cell).is_none() || self.level(ws, cell) >= Level::Near
         });
         spawned
+            && self.worlds.get(ws).is_some_and(|w| w.stale.is_empty())
             && !self.requests.values().any(|r| r.kind == RequestKind::Load && r.target >= Level::Near && r.worldspace == *ws)
     }
 
     /// Resident cells of a worldspace with their levels, in index order.
+    /// Reloads every resident cell of every worldspace (a save load, behind a
+    /// fade: save.md "Loading"): each live cell unloads all the way (pending
+    /// loads cancel, so no fetch made with an older overlay survives), then
+    /// loads again with the overlay as it is by then. Engines tell their
+    /// deactivation hooks these unloads are discards ([`Self::is_reloading`]):
+    /// live state must not be written back over the loaded overlay.
+    pub fn reload_resident(&mut self) {
+        for w in self.worlds.values_mut() {
+            w.stale.extend(w.live.iter().copied());
+        }
+    }
+
+    /// A reload ([`Self::reload_resident`]) is still unloading cells.
+    pub fn reloading(&self) -> bool {
+        self.worlds.values().any(|w| !w.stale.is_empty())
+    }
+
+    /// Whether `cell` is being unloaded by a reload.
+    pub fn is_reloading(&self, ws: &WorldspaceId, cell: IVec3) -> bool {
+        self.worlds
+            .get(ws)
+            .and_then(|w| w.directory.find(cell).and_then(|i| u32::try_from(i).ok()).map(|i| w.stale.contains(&i)))
+            .unwrap_or(false)
+    }
+
     pub fn resident(&self, ws: &WorldspaceId) -> impl Iterator<Item = (IVec3, Level)> + '_ {
         self.worlds.get(ws).into_iter().flat_map(|w| {
             w.live.iter().filter_map(|&i| {
@@ -674,6 +704,7 @@ impl Scheduler {
         // none is set), not for loads a lingering one still finishes.
         let active = self.active.as_ref();
         if self.burst
+            && !self.reloading()
             && !self.requests.values().any(|r| {
                 r.kind == RequestKind::Load && r.target >= Level::Near && active.is_none_or(|a| *a == r.worldspace)
             })
@@ -985,6 +1016,9 @@ fn decide(
     let mut order = std::mem::take(&mut w.visited);
     let visited = order.len();
     order.extend(w.live.iter().copied().filter(|&i| w.scratch[i as usize].tick != tick));
+    // Reloaded cells that reached `Unloaded` (no longer live): the tick after, they
+    // leave `stale` here and stream back if wanted (so a reload never looks idle between).
+    order.extend(w.stale.iter().copied().filter(|&i| !w.live.contains(&i) && w.scratch[i as usize].tick != tick));
 
     for &ci in &order {
         let i = ci as usize;
@@ -997,7 +1031,12 @@ fn decide(
             Some(r) if r.kind == RequestKind::Load => r.to,
             _ => state.level,
         };
-        let target = want.load.max(committed.min(want.keep));
+        // A reloading cell goes all the way down first (`reload_resident`).
+        let going_down = w.stale.contains(&ci) && !(state.level == Level::Unloaded && state.request.is_none());
+        if !going_down {
+            w.stale.remove(&ci);
+        }
+        let target = if going_down { Level::Unloaded } else { want.load.max(committed.min(want.keep)) };
 
         if let Some(id) = state.request {
             let r = requests.get_mut(&id).expect("cell request exists");

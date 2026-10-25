@@ -139,7 +139,7 @@ mod items {
         let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
         let cell_entity = app.world_mut().spawn_empty().id();
         let activate = |app: &mut App, hook: &PhysicsHook| {
-            let cx = ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity };
+            let cx = ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity, discard: false };
             hook.activate(app.world_mut(), &cx, &placement);
             for _ in 0..500 {
                 app.update();
@@ -164,7 +164,7 @@ mod items {
         let rested = app.world().resource::<Physics>().world(&ws).unwrap().pose(id).unwrap();
         assert!(placement.placement.transform.pos.delta(rested.pos).length() > 0.3, "knocked item moved");
         // Leave: the overlay records it; return with the stale placement: it is where it rested.
-        let cx = ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity };
+        let cx = ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity, discard: false };
         hook.deactivate(app.world_mut(), &cx, &placement);
         {
             let overlay = app.world().resource::<WorldOverlay>().0.read().unwrap();
@@ -229,12 +229,13 @@ mod streamed_ground {
     }
 
     /// Activates the floor and steps until its body is in the world.
+    #[cfg(feature = "controller")]
     fn stream_floor(app: &mut App, ws: &WorldspaceId) {
         let shape = floor();
         app.insert_resource(PhysicsShapeSource(Arc::new(move |_: &str| Some(shape.clone()))));
         let cell_entity = app.world_mut().spawn_empty().id();
         let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
-        hook.activate(app.world_mut(), &ActivateCx { worldspace: ws, cell: IVec3::ZERO, cell_entity }, &floor_placement());
+        hook.activate(app.world_mut(), &ActivateCx { worldspace: ws, cell: IVec3::ZERO, cell_entity, discard: false }, &floor_placement());
         for _ in 0..500 {
             app.update();
             if app.world().resource::<PhysicsStreaming>().body(ws, PlacementId(3)).is_some() {
@@ -259,7 +260,7 @@ mod streamed_ground {
         assert!(!s(&app, &ws, Vec3::ZERO), "nothing activated");
         let cell_entity = app.world_mut().spawn_empty().id();
         let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
-        hook.activate(app.world_mut(), &ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity }, &floor_placement());
+        hook.activate(app.world_mut(), &ActivateCx { worldspace: &ws, cell: IVec3::ZERO, cell_entity, discard: false }, &floor_placement());
         assert!(s(&app, &ws, Vec3::new(1.0, 1.0, -2.0)), "on the floor");
         assert!(s(&app, &ws, Vec3::new(10.0, 0.0, 0.0)), "within its bounds + the margin");
         assert!(!s(&app, &ws, Vec3::new(30.0, 0.0, 0.0)), "far away");

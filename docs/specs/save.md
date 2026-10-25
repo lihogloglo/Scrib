@@ -421,3 +421,20 @@ The snapshot is at the budget's edge and over it with a cold allocator: the over
 If the owner's laptop confirms, the fix is a copy-on-write overlay in `sf_world` (persistent maps or
 `Arc`'d per-cell buckets), so a snapshot is O(changed buckets).
 
+
+## As built (game load correctness, 2026-10-25)
+
+- **Resident cells on load: full reload, not a diff.** Bethesda's engines and OpenMW (`World::clear`, then the
+  player's cell loads) tear the world down on load and stream it back from the saved state; diffing the live cells
+  against the loaded overlay would need every system's inverse (respawn taken items, un-move bodies, undo scripts).
+  `sf_world::Scheduler::reload_resident` marks every live cell stale: it unloads all the way through the normal
+  stages (pending loads cancel, so no fetch made with the old overlay survives), then streams back with the loaded
+  overlay; `arrival_ready`, burst mode and `Streaming::is_idle` wait for it. `Streaming::reload_resident` also pins
+  the loaded models until idle (cells come back from memory). `StartTravel::reload` calls it at the fade's cut, so
+  the teardown is never seen. Deactivation hooks get `ActivateCx::discard`: physics skips its write-back (the live
+  pose would overwrite the loaded one).
+- **Save flush:** `sf_physics_bevy::stream::persist_moved_items` writes resident moved items into the snapshot's
+  overlay copy (the deactivation write, non-destructive), so a crate knocked over and still resident saves moved.
+- **Game:** menus and modals close in an `on_load_reset` hook; the body (`CharacterBody`: `ActionState` +
+  `Locomotion`) is saved and put back on arrival (`ActionBody::restore`). Test:
+  `sf_world_bevy` `reload_resident_respawns_cells_from_the_loaded_overlay`.

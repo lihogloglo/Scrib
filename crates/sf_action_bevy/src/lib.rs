@@ -28,12 +28,12 @@ use std::marker::PhantomData;
 
 use bevy_app::{App, FixedUpdate, Plugin, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy_ecs::prelude::*;
-use bevy_math::{Quat, Vec3};
+use bevy_math::{Quat, Vec2, Vec3};
 use bevy_time::{Fixed, Time, Virtual};
 use bevy_transform::components::Transform;
 use sf_action::{ActionOutput, ActionState, CharacterId, CharacterParams, Command, Focus, RuleSet, Sense, SlotSource, StepCtx, Tick};
 pub use sf_action::{PlayerId, TICK_HZ};
-use sf_controller::{CorrectionParams, GroundProbe, KinematicMover, Locomotion, MoveInput, MoverParams, RenderCorrection, RootMotion};
+use sf_controller::{CorrectionParams, GroundProbe, KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RenderCorrection, RootMotion};
 use sf_coords::WorldPos;
 
 pub use input::{ActionInputPlugin, PlayerAction, PlayerControls, PlayerInput, spawn_player_actions};
@@ -139,6 +139,36 @@ impl TickPose {
     }
 }
 
+/// No-clip (a dev cheat: Bethesda's `ToggleCollision`, Unreal's `ghost`): the body flies
+/// (`MoverMode::Fly`, no gravity) and steps against no collision at all. The intent's
+/// planar speed climbs or dives along `look` (the host's view direction), so walking
+/// forward goes where the camera points. Removing it leaves the body in `Fly`: the host
+/// puts it back in `Ground`.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct NoClip {
+    pub look: Vec3,
+}
+
+/// A probe that never hits ([`NoClip`] bodies).
+struct NoHits;
+
+impl GroundProbe for NoHits {
+    fn probe(&self, _: &[sf_controller::ProbeQuery], out: &mut [Option<sf_controller::GroundHit>]) {
+        out.fill(None);
+    }
+}
+
+/// The vertical speed that moves a planar `velocity` along `look` (zero for a flat or
+/// vertical look).
+fn no_clip_climb(velocity: Vec3, look: Vec3) -> f32 {
+    let flat = Vec2::new(look.x, look.z);
+    let len = flat.length();
+    if len < 1e-3 {
+        return 0.0;
+    }
+    Vec2::new(velocity.x, velocity.z).dot(flat / len) * look.y / len
+}
+
 /// The motion half of a character: the gameplay capsule (truth) and how it is drawn.
 #[derive(Component, Clone, Debug)]
 pub struct ActionBody {
@@ -172,7 +202,13 @@ impl ActionBody {
 
     /// Moves the body without drawing the way there (spawn, load, a scripted teleport).
     pub fn teleport(&mut self, position: WorldPos, yaw: f32) {
-        self.loco = Locomotion::new(position, yaw);
+        self.restore(Locomotion::new(position, yaw));
+    }
+
+    /// Puts back a saved mover state (save load: velocity, stance, airborne state with the
+    /// pose), without drawing the way there.
+    pub fn restore(&mut self, loco: Locomotion) {
+        self.loco = loco;
         self.correction = RenderCorrection::default();
         self.curr = TickPose::of(&self.loco);
         self.prev = self.curr;
@@ -219,24 +255,36 @@ fn move_bodies<G: GroundProbe + Resource>(
     time: Res<Time>,
     ground: Option<Res<G>>,
     mut mover: Local<KinematicMover>,
-    mut characters: Query<(&ActionCharacter, &mut ActionBody)>,
+    mut characters: Query<(&ActionCharacter, &mut ActionBody, Option<&NoClip>)>,
 ) {
     let Some(ground) = ground else { return };
     // In `FixedUpdate` the generic clock is the fixed one.
     let dt = time.delta_secs();
     let mut bodies: Vec<_> = characters.iter_mut().collect();
     let mut items: Vec<MoveInput<'_>> = Vec::with_capacity(bodies.len());
-    for (c, body) in &mut bodies {
+    let mut ghosts: Vec<MoveInput<'_>> = Vec::new();
+    for (c, body, no_clip) in &mut bodies {
         let body = &mut **body;
         body.prev = body.curr;
         if let Some(v) = c.output.launch {
             body.loco.launch(v);
         }
-        items.push(MoveInput { loco: &mut body.loco, intent: c.output.intent, params: &body.params, root: body.root });
+        let mut intent = c.output.intent;
+        if let Some(no_clip) = no_clip {
+            body.loco.mode = MoverMode::Fly { hover: None };
+            intent.desired_velocity.y = no_clip_climb(intent.desired_velocity, no_clip.look);
+            ghosts.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root: body.root });
+        } else {
+            items.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root: body.root });
+        }
     }
     mover.step_batch(&mut items, &*ground, dt);
+    if !ghosts.is_empty() {
+        mover.step_batch(&mut ghosts, &NoHits, dt);
+    }
     drop(items);
-    for (_, body) in &mut bodies {
+    drop(ghosts);
+    for (_, body, _) in &mut bodies {
         body.curr = TickPose::of(&body.loco);
     }
 }

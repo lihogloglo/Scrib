@@ -17,7 +17,7 @@ use sf_model::{CookSettings, Material as ModelMaterial, MeshData, Model, Node, c
 use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_vfs::VfsPath;
 use sf_world::{
-    IndexParams, Level, MemoryIndex, ModelInfo, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef,
+    IndexParams, IndexedPlacement, Level, Location, MemoryIndex, ModelInfo, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef,
     WorldspaceId,
 };
 
@@ -51,7 +51,7 @@ fn entities_a_millimeter_apart_a_thousand_km_out_stay_a_millimeter_apart() {
     assert!(ga.length() < 300.0, "origin-relative, not absolute: {ga}");
 }
 
-/// The patched big_space (`vendor/big_space`) skips unchanged low-precision
+/// The patched `big_space` (`vendor/big_space`) skips unchanged low-precision
 /// subtrees: a moved grandchild, a moved middle node and a reparented leaf
 /// must still update, and untouched siblings keep their transforms.
 #[test]
@@ -84,7 +84,7 @@ fn low_precision_propagation_follows_changes_deep_in_a_still_tree() {
     // Reparent the leaf under `other`.
     app.world_mut().entity_mut(leaf).insert(ChildOf(other));
     app.update();
-    assert_eq!(x(&app, leaf), 18.0);
+    assert!((x(&app, leaf) - 18.0).abs() < 1e-6);
 }
 
 #[test]
@@ -168,6 +168,16 @@ fn placements() -> Vec<Placement> {
                 flags: PlacementFlags::empty(),
             });
         }
+    }
+    for (key, x) in [("item", 5.0), ("crate", 15.0)] {
+        out.push(Placement {
+            id: PlacementId::from_key("test", key.as_bytes()),
+            base: RecordRef::new("thing", key),
+            model: Some(VfsPath::new("plate.mdl").unwrap()),
+            transform: WorldTransform::from_pos(WorldPos::from_f64(DVec3::new(x, 0.0, 5.0))),
+            class: PlacementClass::Dynamic,
+            flags: PlacementFlags::empty(),
+        });
     }
     out
 }
@@ -275,6 +285,92 @@ fn streams_in_around_an_anchor_and_out_when_it_leaves() {
     assert_eq!(stats.resident_cells, 0);
 }
 
+/// A dynamic placement as spawned: its id and the pose the fetch gave it.
+#[derive(Component)]
+struct Tagged(PlacementId, WorldPos);
+
+#[derive(Resource, Default)]
+struct Discards(u32);
+
+/// Tags dynamic placements and counts discarding deactivations.
+struct TagSpawner;
+
+impl PlacementSpawner for TagSpawner {
+    fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, p: &IndexedPlacement) -> u32 {
+        world.spawn((Tagged(p.placement.id, p.placement.transform.pos), cx.local, ChildOf(cx.parent)));
+        1
+    }
+    fn needs_model(&self, _: &IndexedPlacement) -> bool {
+        false
+    }
+    fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, _: &IndexedPlacement) {
+        if cx.discard {
+            world.resource_mut::<Discards>().0 += 1;
+        }
+    }
+}
+
+fn tagged(app: &mut App, id: PlacementId) -> Vec<WorldPos> {
+    app.world_mut().query::<&Tagged>().iter(app.world()).filter(|t| t.0 == id).map(|t| t.1).collect()
+}
+
+/// Save load (save.md "Loading"): the loaded overlay replaces the live one and
+/// `reload_resident` respawns the resident cells from it: an item taken after
+/// the save is back exactly once, an item moved after it is at its saved pose,
+/// and the deactivations of the reload are discards (nothing written back).
+#[test]
+fn reload_resident_respawns_cells_from_the_loaded_overlay() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = streaming_app(dir.path());
+    let mut spawners = PlacementSpawners::default();
+    spawners.set(PlacementClass::Dynamic, Arc::new(TagSpawner));
+    app.insert_resource(spawners).insert_resource(WorldOverlay::default()).init_resource::<Discards>();
+    let root = WorldspaceRegistry::ensure_in(app.world_mut(), &ws()).root;
+    let (cell, transform) = to_grid(WorldPos::from_f64(DVec3::new(0.0, 2.0, 0.0)));
+    app.world_mut().spawn((cell, transform, StreamingAnchor::visual(), FloatingOrigin, ChildOf(root)));
+    app.world_mut().spawn((to_grid(WorldPos::ORIGIN).0, Transform::IDENTITY, StreamingAnchor::gameplay(), ChildOf(root)));
+    app.world_mut().resource_mut::<Streaming>().begin_burst();
+    settle(&mut app);
+    let (item, crate_) = (PlacementId::from_key("test", b"item"), PlacementId::from_key("test", b"crate"));
+    let home = WorldPos::from_f64(DVec3::new(15.0, 0.0, 5.0));
+    assert_eq!(tagged(&mut app, item).len(), 1);
+    assert_eq!(tagged(&mut app, crate_), vec![home]);
+    let cells = app.world().resource::<Streaming>().stats().resident_cells;
+
+    // Save, then take the item (overlay + its entity, as the game does) and move the crate.
+    let saved = app.world().resource::<WorldOverlay>().0.read().unwrap().clone();
+    {
+        let overlay = app.world().resource::<WorldOverlay>().0.clone();
+        let mut o = overlay.write().unwrap();
+        o.remove(item);
+        let original = placements().into_iter().find(|p| p.id == crate_).unwrap();
+        o.move_to(&original, &Location::new(ws(), home.offset(Vec3::X * 3.0)), Quat::IDENTITY);
+    }
+    let taken: Vec<Entity> =
+        app.world_mut().query::<(Entity, &Tagged)>().iter(app.world()).filter(|(_, t)| t.0 == item).map(|(e, _)| e).collect();
+    for e in taken {
+        app.world_mut().entity_mut(e).despawn();
+    }
+    // A cell reloads normally: the crate is where it was moved to (the live overlay).
+    app.world_mut().resource_mut::<Streaming>().reload_resident();
+    settle(&mut app);
+    assert!(tagged(&mut app, item).is_empty());
+    assert_eq!(tagged(&mut app, crate_), vec![home.offset(Vec3::X * 3.0)]);
+
+    // Load: the saved overlay back, every resident cell reloaded from it.
+    *app.world().resource::<WorldOverlay>().0.write().unwrap() = saved;
+    app.world_mut().resource_mut::<Discards>().0 = 0;
+    app.world_mut().resource_mut::<Streaming>().reload_resident();
+    assert!(app.world().resource::<Streaming>().scheduler().reloading());
+    settle(&mut app);
+    let streaming = app.world().resource::<Streaming>();
+    assert!(!streaming.scheduler().reloading());
+    assert_eq!(streaming.stats().resident_cells, cells, "every cell came back");
+    assert!(app.world().resource::<Discards>().0 > 0, "the reload's deactivations discard");
+    assert_eq!(tagged(&mut app, item).len(), 1, "the taken item is back exactly once");
+    assert_eq!(tagged(&mut app, crate_), vec![home], "the moved crate is at its saved pose");
+}
+
 /// Meshes spawned later under a `SubtreeRange` root (a runtime-imported
 /// model's scene) get the placement's range, pushed out by their offset.
 #[test]
@@ -303,7 +399,7 @@ fn subtree_ranges_reach_late_meshes() {
 #[test]
 fn size_culling_shortens_small_placements_only() {
     let lod = sf_model::LodScreen::default(); // High: 2 px, 24 m floor.
-    let at = |class, flags, radius| sf_world::IndexedPlacement {
+    let at = |class, flags, radius| IndexedPlacement {
         placement: Placement {
             id: PlacementId::from_key("test", b"p"),
             base: RecordRef::new("thing", "p"),

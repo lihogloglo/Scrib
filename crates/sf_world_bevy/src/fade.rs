@@ -45,6 +45,10 @@ pub struct StartTravel {
     pub traveler: Entity,
     pub to: Location,
     pub rotation: Quat,
+    /// At the cut (full black), reload every resident cell
+    /// ([`Streaming::reload_resident`]): a save load, whose overlay replaced
+    /// the live one. The hold waits for the reload. False for doors.
+    pub reload: bool,
 }
 
 /// Written the frame the fade moves the traveler (at full black, before
@@ -235,6 +239,9 @@ pub(crate) fn run_fade(
             }
             active.0 = Some(travel.to.worldspace.clone());
             streaming.begin_burst();
+            if travel.reload {
+                streaming.reload_resident();
+            }
             let (traveler, to) = (travel.traveler, travel.to.clone());
             arrived.write(TravelArrived { traveler: travel.traveler, to: travel.to, rotation: travel.rotation });
             FadePhase::Hold { waited: 0.0, frames: 0, traveler, to, ready: None }

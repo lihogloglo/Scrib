@@ -39,7 +39,7 @@ use sf_coords::{WorldPos, WorldTransform};
 use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef, SurfaceId};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::{TerrainHeights, WorldRect};
-use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, WorldspaceId};
+use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, PlacementOverlay, WorldspaceId};
 use sf_world_bevy::{ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, Streaming, WorldOverlay};
 
 use crate::{Physics, PhysicsSettings, PhysicsStats};
@@ -316,22 +316,32 @@ impl PlacementSpawner for PhysicsHook {
     fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
         self.inner.deactivate(world, cx, placement);
         let key = (cx.worldspace.clone(), placement.placement.id);
-        persist_item(world, &key, &placement.placement);
+        // A reload after a save load discards live poses: the overlay is the loaded one.
+        if !cx.discard {
+            persist_item(world, &key, &placement.placement);
+        }
         remove_placed(world, &key);
     }
 }
 
 /// Writes an item that moved since it went in to the overlay (physics.md
 /// "Deactivation"): `move_to` its current pose and a `physics` state blob.
-/// Saves serialize the overlay; until they exist this lasts the session.
 fn persist_item(world: &mut World, key: &Key, placement: &Placement) {
-    let Some(s) = world.get_resource::<PhysicsStreaming>() else { return };
-    let (Some(&inserted), Some(&id)) = (s.items.get(key), s.placed.get(key)) else { return };
-    let Some(w) = world.get_resource::<Physics>().and_then(|p| p.worlds.get(&key.0)) else { return };
-    let Some(pose) = w.pose(id) else { return };
+    let Some(moved) = moved_item(world, key) else { return };
+    let Some(overlay) = world.get_resource::<WorldOverlay>() else { return };
+    let mut overlay = overlay.0.write().expect("overlay lock");
+    write_moved(&mut overlay, placement, key, moved);
+}
+
+/// The pose and `physics` blob of an item that moved since it went in.
+fn moved_item(world: &World, key: &Key) -> Option<(WorldTransform, Vec<u8>)> {
+    let s = world.get_resource::<PhysicsStreaming>()?;
+    let (Some(&inserted), Some(&id)) = (s.items.get(key), s.placed.get(key)) else { return None };
+    let w = world.get_resource::<Physics>().and_then(|p| p.worlds.get(&key.0))?;
+    let pose = w.pose(id)?;
     let moved = inserted.pos.delta(pose.pos).length() > 1e-3 || inserted.rotation.angle_between(pose.rotation) > 1e-3;
     if !moved {
-        return;
+        return None;
     }
     let asleep = w.is_sleeping(id).unwrap_or(true);
     let (v, a) = w.velocity(id).unwrap_or_default();
@@ -339,10 +349,24 @@ fn persist_item(world: &mut World, key: &Key, placement: &Placement) {
     for x in v.to_array().into_iter().chain(a.to_array()) {
         blob.extend_from_slice(&x.to_le_bytes());
     }
-    let Some(overlay) = world.get_resource::<WorldOverlay>() else { return };
-    let mut overlay = overlay.0.write().expect("overlay lock");
+    Some((pose, blob))
+}
+
+fn write_moved(overlay: &mut PlacementOverlay, placement: &Placement, key: &Key, (pose, blob): (WorldTransform, Vec<u8>)) {
     overlay.move_to(placement, &Location { worldspace: key.0.clone(), pos: pose.pos }, pose.rotation);
     overlay.set_state(placement.id, STATE_OWNER, blob);
+}
+
+/// Saving (save.md "One path for unload and save"): writes every resident item that moved
+/// into `overlay` (a copy of the live one, for the snapshot), as its deactivation would,
+/// without removing anything.
+pub fn persist_moved_items(world: &World, overlay: &mut PlacementOverlay) {
+    let Some(s) = world.get_resource::<PhysicsStreaming>() else { return };
+    for (key, placement) in &s.item_placements {
+        if let Some(moved) = moved_item(world, key) {
+            write_moved(overlay, placement, key, moved);
+        }
+    }
 }
 
 /// Coverage check period (physics.md "Coverage": 4 Hz) and the margin around

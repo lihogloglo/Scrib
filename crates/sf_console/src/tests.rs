@@ -587,3 +587,38 @@ fn prompt_editing_history_and_completion() {
     type_text(&mut p, &mut c, "\r\t!");
     assert_eq!(p.text(), "draft!");
 }
+
+#[test]
+fn fallback_runs_unclaimed_commands_and_completes() {
+    let mut c: Console<Vec<String>> = Console::new();
+    let mut seen = Vec::new();
+    // Without a fallback an unknown word is an error.
+    assert!(matches!(
+        c.exec(&mut seen, "player->additem x 1"),
+        Err(ExecError::Unknown { .. })
+    ));
+    c.set_fallback("script", |u| {
+        if u.text.contains("bad") {
+            return Err(format!("no {}", u.text));
+        }
+        u.ctx.push(u.text.to_owned());
+        Ok(())
+    });
+    c.set_fallback_completion(|p| {
+        ["player->additem", "additem"]
+            .iter()
+            .filter(|n| n.starts_with(p))
+            .map(|n| (*n).to_owned())
+            .collect()
+    });
+    c.exec(&mut seen, r#"player->AddItem "gold_001" 5 ; echo hi"#)
+        .unwrap();
+    assert_eq!(seen, [r#"player->AddItem "gold_001" 5"#]);
+    // A registered command still wins.
+    c.exec(&mut seen, "echo additem").unwrap();
+    assert_eq!(seen.len(), 1);
+    let err = c.exec(&mut seen, "bad thing").unwrap_err();
+    assert_eq!(err.to_string(), "script: no bad thing");
+    assert_eq!(c.complete("player->ad").candidates, ["player->additem"]);
+    assert!(c.complete("add").candidates.contains(&"additem".to_owned()));
+}

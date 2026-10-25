@@ -136,6 +136,11 @@ value a higher one set (`SetOutcome::Outranked`, logged as "kept"); `reset` hand
 files and argv. `Prompt` is the input line (cursor, word moves, history, Tab on the word before the
 cursor), driven by key-agnostic `Edit`s, so editing is tested without Bevy.
 
+**Fallback (2026-10-25).** `Console::set_fallback(label, |Unclaimed { ctx, text, vars, log }| ..)` runs a
+command whose first word no command or variable claims (registered names always win; errors log as
+`label: message`); `set_fallback_completion(|first_word| ..)` adds first-word completions. Bevyrrowind
+runs MWScript through it, as Bethesda consoles run script lines (`player->AddItem gold_001 5`).
+
 **Plugin.** `ConsoleSubmit::from(source, line)`; `app.set_console_var(id, value, source)`;
 `console_var_changed(id)` (true on first run, so the starting value applies once) and
 `console_closed` run conditions; `ConsoleOpen` resource. bevyrrowind's `--off` switches:
@@ -183,3 +188,6 @@ popup, input blocking; selection commands and inspector rows; pick ray (nearest,
 root, miss). `examples/console_overlay.rs --autotest` renders under Xvfb + lavapipe and checks a
 scripted session (screenshot checked by eye, 2026-10-23). Limits: one window; no caret blink, paste
 or mouse selection (P3 above); `find`/`prid` match `Name` only (record ids come with the game's hook).
+
+**No-clip (2026-10-25, `sf_action_bevy::NoClip`):** a body with it steps in `MoverMode::Fly` against a never-hitting probe,
+climbing along the host-fed `look`; the game wires it to `TCL` / `ToggleCollision` and `COC` / `CenterOnCell` (door travel).

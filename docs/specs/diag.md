@@ -264,6 +264,14 @@ atomic add per call). `DiagScenario::hold` delays the end of warm-up.
 - First real use: the M1 Census Office baseline (interior, 144 fps target),
   then the M2 fly-throughs (streaming.md) and the bake budget (bake.md).
 
+## As built: capture readiness gate (2026-10-25, certshots1)
+
+`sf_diag_bevy::ReadyGate` (`ready.rs`, pure, unit-tested): a capture passes only after the CPU verdict
+and `GpuPending` (pipelines queued/compiling + visible draws skipped for them) held clear for N frames;
+past the timeout it returns `TimedOut` with a `GateReceipt` instead of passing silently. The game's
+`--screenshot` runs (exterior + interior `view`) use N = 10, 120 s, counts from `PipelineCache::waiting_pipelines`
+in the render world (app `pipeline_watch.rs`); a timeout logs what was pending and exits 1 unless `--screenshot-anyway`.
+
 ## Open questions
 
 1. **Worst frame vs noise.** WISHLIST §0 gates the single worst frame. One

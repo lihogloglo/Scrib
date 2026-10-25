@@ -38,6 +38,9 @@ pub use churn::{ChurnPlugin, ENTITIES, ENTITIES_DELTA, short_type_name};
 mod phases;
 pub use phases::FramePhasePlugin;
 
+pub mod ready;
+pub use ready::{GateReceipt, GateStatus, GpuPending, ReadyGate};
+
 #[cfg(test)]
 mod tests;
 
