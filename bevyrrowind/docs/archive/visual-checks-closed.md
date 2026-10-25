@@ -1379,3 +1379,120 @@ smoke and ghosts must still look translucent (if one became a hard-edged cutout,
   composited by `sf_atmos_bevy` (FG-1 lane), e.g. sky-pixel fog/cloud on terrain silhouettes or depth mismatch. Next experiment: owner's view (F9 copy) with
   `--weather ashstorm`, A/B in one sitting `--off clouds`, `--off fog`, `--off froxels`; whichever removes the overdraw owns it.
 
+## Moved from visual-checks.md on 2026-10-25 (vchecks-split)
+
+## Distant shadows (superfargoth `weather.md`, "Near-term visual fixes", bug A)
+
+### SH-12: Grazing-light edge shimmer (owner report, repeated)
+- Kind: game location, any exterior with low sun (also Next up 6a "Grazing-light artefact", 2026-10-13).
+- Seen by owner 2026-10-19 (round 2, again): object edges under grazing light shimmer and don't look solid.
+  Suspects: no temporal AA on the raster path (aliasing of shadow terminators and alpha edges), normal-offset
+  bias, dithered cascade end.
+- Cause (owner A/B 2026-10-19, round 15, Balmora 17:30 toward the sun): **the clouds** (gone with `--off clouds`;
+  still there with `--off softshadows` and `--off godrays`). The half/quarter-res checkerboarded cloud trace and its
+  temporal resolve leak bright forward-scattered sky onto silhouettes (blocky fringe inside the meshes). A first
+  depth-aware resolve/composite (uncommitted) removed the inner fringe but drew a stippled halo in the sky outside
+  silhouettes, and the sky seems to wobble as the camera moves (owner: `Desktop/outline.jpg`). Research under way:
+  `superfargoth/docs/research/clouds-upsampling.md`. (The Temporal shadow filter with TAA/DLSS stays: right pairing.)
+- Fixed (superfargoth c31e397): trace marches to the furthest depth of a 6x6 window and stores the cut depth;
+  resolve and composite match taps by population (open sky vs cut at the same depth); jittered history matrix.
+- Status: **confirmed by owner 2026-10-19** (round 15: fringe, halo and sky wobble gone).
+
+## Ghostfence (superfargoth `weather.md`, bug B)
+
+### GF-2: Ghostfence energy field look
+- Kind: game location. Run: `.\bevyrrowind scene ghostfence-near`
+- Look for: a translucent blue barrier by day (`--weather clear`), a blue glow at night (`--hour 23`), never white.
+- Diagnosed 2026-10-25 (ghostfence, no code change). Confirmed from the NIF: no vertex colours, no NiVertexColor/Stencil/ZBuffer
+  property, alpha flags 0x00ED (sorted SRC/INV_SRC); each layer is two-faced geometry, so back-face culling is right.
+  Tex alpha (DXT3, mean 0.65) × 0.5 gives 0.325 per layer, 69 % for three (not 87.5 %). The material mapping is faithful.
+  Day 2026-10-25: translucent pale blue, not white. Fence-region mean 124,138,160 vs 167,183,205 in the 10-12 shot, which is stale.
+  Night (confirmed): emissive 0.3 is exposure-weighted, so at the EV 3.5 floor it is ~3.4× "fully lit" with
+  no Morrowind `min(1, …)` clamp. 17 % of the field is brighter than its texel colour, with white cores.
+  Day hypothesis: Morrowind blends in gamma space and we blend in linear HDR, which hides detail behind pale layers (~6×).
+- A/B: `--hour 23` vs 14, `--off envmap` (lowers the field and the terrain alike; not the cause).
+- Status: **confirmed by owner 2026-10-25** ("looks amazing from up close", day and night): no emissive or blend change. Distance pop is GF-1.
+- Source: farfield-exterior / weather-spec / nifpop.
+
+## Physics (superfargoth `physics.md`, bevyrrowind `physics-adapter.md`; `.sessions/physics-p2.md`)
+
+### PH-3 (P10): Robes and skirts drawn as authored (legs always covered)
+
+Status: **confirmed by owner 2026-10-19** (Morrowind-style robes fine; rewritten p10s, 2026-10-19). V1 (simulated lattice on the girdle) FAILED, owner
+2026-10-18: legs went missing when a foot stepped past the robe, and the robe didn't follow the legs. Owner decision
+2026-10-19: full robe simulation is overkill, so robes and skirts now use their **authored thigh/calf skin** by
+default, as in vanilla (physics-adapter.md "Cloth"; research `../superfargoth/docs/research/cloth/long-robes.md`).
+The V1 simulation is the opt-in `--cloth robes` (then **H** toggles simulated ↔ kinematic as before).
+Agent sanity run (p10s, BRP, dev build): both robes covered the legs at walk and at run, no `cloth:` log line.
+- Kind: synthetic level. `.\bevyrrowind scene level-robe-walk` (TS-2: the temple priest's loop, Fargoth walking and
+  Elone running over a ramp and stairs; cameras `priest`, `course`).
+- Kind: lineup (no scene: `character` isn't a `view`). `.\bevyrrowind character "fargoth+common_robe_01" "@dark
+  elf,,f+common_robe_02" --walk` (dev: `tools/run_dev.ps1 character ...`). Keys: **1** walk on/off, **2** run (again:
+  walk), B smooth bodies. Optional A/B: add `--cloth robes` for the V1 simulated robes.
+- Kind: game location. `.\bevyrrowind scene ph3-balmora-temple` (the priests in their own robes; fly down to them).
+- Look for: **legs always covered**: no missing or floating leg at a walk, a run, on the ramp and stairs, from the
+  side and behind; **the robe follows the stride** (its lower part moves with the thighs and calves, like the original
+  game); no seam or gap at the waist; nothing stretched or inside-out. No hem swing is expected (that is S2, parked).
+- Source: p10s (V1: p10c, p10d; shots `shots/p10d/`).
+
+## Terrain (superfargoth `terrain.md`)
+
+### TR-3: Terrain looks glossy, not rough enough (owner report)
+- Kind: game location. Run: any outdoor view in sun, e.g. `.\bevyrrowind scene balmora` at 11:00, look at bare ground
+  and grass at a grazing sun angle; A/B `--off envmap`.
+- Seen by owner 2026-10-21 (bw-owner10, during AU-2): the terrain reads glossy / not rough, like wet ground.
+- Check: the terrain material's roughness and specular (perceptual roughness near 1, no env-map or sun specular on
+  ground), and whether the terrain blend/normal-map path lowers roughness.
+- Status: confirmed by owner 2026-10-25 ("terrain is ok"; lanes `terrain-gloss` + `terrain-gloss-fix`; ROADMAP 1.12).
+- Not the cause: roughness 0.85 far / 0.90 near (`surface.wesl:157`), metallic 0, F0 0.04, no wetness.
+- Cause: terrain set only `diffuse_occlusion = s.ao` (Morrowind AO = 1): no SSAO, `specular_occlusion` stuck at 1.0.
+- Fix: `terrain.wesl` now does StandardMaterial's occlusion (SSAO multibounce on diffuse, Lagarde specular occlusion
+  from min(layer AO, SSAO)); the SSAO def reaches the terrain via the mesh view key, no Rust change.
+- Seen by agent (`shots/terrain-gloss/b_on` vs `fix_on`, default 150 m camera): almost no change (mean luma -0.1),
+  only a few creases darker. `--off envmap` (b_off) also drops env *diffuse*, so the "veil" may not be specular at all.
+- Look for: at ground level in a valley, creases/slope feet less milky with SSAO on; A/B `--off ssao`. If open
+  slopes still read wet, next is a roughness clamp (>= 0.95, owner taste call) or a specular-only env A/B.
+
+## Animation lab (`levels/anim-lab.ron`, test-levels.md; `.sessions/anim-refactor.md`, slice 1)
+
+### AN-19 Fargoth's walk has no per-step jolt (owner OK 2026-10-22, with rate_share 0.3)
+Scene `level-anim-loop`, camera `loop-close` (Fargoth on the 12 m square, 1.4 m/s). Needs re-bake (`anim.cook` v8).
+Look for: each planted foot stays put until it rolls off and lifts smoothly, no little snap forward as it leaves the
+ground; the hips no longer swivel the whole body left/right each step; the body may surge a touch per step (as authored).
+Compare a beast walker (Ajira) and Elone. Was: the male clip's root carried the hips' ±17° yaw and its feet skated
+unevenly, so the lock let go of 12-19 cm each stance. Headless: `slope_walk walk_clip_stance_feet_keep_pace_with_the_body`.
+
+### AN-21 Walkers shorten their steps uphill and lean into the slope (owner OK 2026-10-22 after "stronger": lean gains doubled, 30 deg +5/-2.4 deg)
+Scene `level-anim-stairs`, camera `stairs` (lab ramps 10/20/30° and stairs). Needs re-bake (graph RON, graph format 6).
+Look for: uphill, shorter quicker steps (about a quarter shorter at 30°); downhill, slightly longer ones (about +14%);
+the upper body tipped a few degrees forward going up, a touch back going down, easing in over ~0.3 s, never a jolt;
+feet still flat on the ramp. Flat ground looks exactly as before. Too much or too little: knobs in `mw_graphs`
+build.rs (`StrideWarp grade up/down`, `Lean grade up/down/max`). Headless: `slope_walk walkers_shorten_their_steps_uphill_and_lean_into_the_slope`.
+
+### AN-18 Ragdoll torso doesn't spin (confirmed by owner 2026-10-22 with AN-20; supersedes AN-11)
+Scene `level-anim-idles` (camera `idles-close`): throw balls (`V`) at several dummies, then press `I` on one to kill it. Look for:
+the torso stays one piece through the fall (no pelvis whirling, no back twisted round or folded past ~45 degrees over the whole
+spine), the body comes to rest without a twisted waist, and arms, legs, hands, feet and head swing less loosely than before.
+Re-bake first (ragdoll.cook v3). Known: limb cones are still symmetric (no separate forward/back hip or shoulder range yet).
+
+### AN-11 Ragdoll spine bends like a spine (superseded by AN-18, confirmed 2026-10-22)
+Scene `level-anim-idles` (camera `idles-close`): throw balls (`V`) at several dummies and press `I` on one to kill it. Look for:
+a falling or dead body keeps a believable back (a gentle curve, 15 degrees of bend and twist per spine segment) and no longer
+folds in half or corkscrews. Re-bake first (ragdoll.cook v2). Known trade-off: a hard tumble down stairs stretches a joint
+up to 1.8 cm for a moment (gate relaxed from 1 to 2.5 cm).
+
+### AN-16 Walkers take human-length steps at 1.4 m/s (owner OK 2026-10-22: "much better", then rate_share 0.5 -> 0.3)
+Scene `level-anim-loop`, camera `loop-close` (Fargoth on the 12 m square, 1.4 m/s). Needs re-bake (`anim.cook` v7, graph RON).
+Look for: a brisk cadence (about 1.1-1.2 s per two steps) with moderate steps, not slow lunging strides; legs not locked
+straight behind the body. Was: the MW male walk (made for 2.1 m/s) played at 0.64x, 1.1 m steps, 76 steps/min.
+Headless: `slope_walk walkers_keep_a_human_stride_and_plant_once_per_step` (male 1.66, Fargoth 1.77 leg lengths/cycle, was 2.21).
+
+### AN-17 Elone's walk is smooth, no jolt per step (confirmed by owner 2026-10-22: "perfect")
+Scene `level-anim-props`, camera `props-close` (Elone by the orange boxes, 1.4 m/s). Needs re-bake (`anim.cook` v7).
+Look for: each foot plants once and stays until it rolls off; no twitch or snap of the left foot mid stance. Was: the
+female walk's left contact dropped for one frame at the loop seam, so the lock released and re-planted every left step.
+
+### AN-20: hit bodies loose, joints still in limits (confirmed by owner 2026-10-22: "good"; ragdoll.cook v5; limp_drop/stairs stretch gates 0.4-0.03 cm over, logged)
+Scene `level-anim-idles`, camera `idles-close`. Knock an NPC down with the ball, then kill one limp. Check: arms and
+head swing and flop as they fall (no wooden plank, no frozen arms), hips fold forward far but barely backward, shoulders
+reach forward more than back, no elbow/knee bending backward, no spinning torso. Compare a stagger: brief give, quick recovery.

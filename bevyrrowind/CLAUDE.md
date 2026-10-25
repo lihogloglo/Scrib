@@ -19,7 +19,7 @@ To update the ROADMAP, edit only your task's line (grep for it).
 3. For the system you touch, read its spec in `docs/specs/` (or
    `../superfargoth/docs/specs/`). No spec yet for a major system? Write it first.
 4. **Never read whole:** `docs/archive/`, `../superfargoth/docs/DECISIONS.md` (append-only, ~36k
-   tokens), `docs/visual-checks.md` (~24k tokens; append entries, grep for IDs), `docs/perf.md`.
+   tokens), `docs/visual-checks.md` (index, ~3k tokens; add an entry to the right `docs/visual-checks/<system>.md` and its index line, grep for IDs), `docs/perf.md`.
 
 ## End of every session
 
@@ -105,7 +105,7 @@ working tree**. Protocol:
    (`cargo dev view "<cell>" --screenshot <png>`, then look at the PNG),
    but at most ~3 screenshot iterations per issue: no long screenshot-debug
    loops. Then add a test scene that isolates the behavior (named camera,
-   time, flags, "what to look for") to `docs/visual-checks.md` (status
+   time, flags, "what to look for") to the right `docs/visual-checks/<system>.md` plus its index line in `docs/visual-checks.md` (status
    "awaiting owner") and move on; the owner confirms in batched passes.
    Test scenes come in two kinds: real game locations (`view` scenes) and
    isolated synthetic scenes (framework examples), as in Godotwind.

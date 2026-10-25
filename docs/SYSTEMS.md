@@ -2,7 +2,7 @@
 
 One row per system: spec sections, adapter, crates, ROADMAP IDs, visual-check prefixes, research, hard problems. Phase order and status: [ROADMAP](../bevyrrowind/docs/ROADMAP.md).
 Start here: find your system's row, read only those sections (`grep -n "^#" <spec>`, then that heading's lines). Never read a whole spec, the ROADMAP or visual-checks.
-Lookups: `grep -n "^- \[.\] 1.4" bevyrrowind/docs/ROADMAP.md`; `grep -n "^### SH-" bevyrrowind/docs/visual-checks.md`; hard problems H1-H4 in [hard-problems](../bevyrrowind/docs/hard-problems.md). Old index text with long descriptions: [framework](../superfargoth/docs/specs/index-2026-10-25.md), [game](../bevyrrowind/docs/specs/index-2026-10-25.md).
+Lookups: `grep -n "^- \[.\] 1.4" bevyrrowind/docs/ROADMAP.md`; `grep -n "^### SH-" bevyrrowind/docs/visual-checks/*.md` (index: bevyrrowind/docs/visual-checks.md); hard problems H1-H4 in [hard-problems](../bevyrrowind/docs/hard-problems.md). Old index text with long descriptions: [framework](../superfargoth/docs/specs/index-2026-10-25.md), [game](../bevyrrowind/docs/specs/index-2026-10-25.md).
 
 | System | Main spec (key sections) | Adapter | Crates | ROADMAP | Visual checks | Research | Hard |
 |---|---|---|---|---|---|---|---|
