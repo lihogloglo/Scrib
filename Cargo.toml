@@ -203,6 +203,7 @@ workspace-hack = "=0.1.0"
 
 # Game crates (bevyrrowind): `publish = false`, so path dependencies without `version` (cargo-deny).
 mw_actors = { path = "bevyrrowind/crates/mw_actors" }
+mw_actors_bevy = { path = "bevyrrowind/crates/mw_actors_bevy" }
 mw_ai = { path = "bevyrrowind/crates/mw_ai" }
 mw_anim = { path = "bevyrrowind/crates/mw_anim" }
 mw_assets = { path = "bevyrrowind/crates/mw_assets" }

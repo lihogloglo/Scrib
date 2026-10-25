@@ -1,0 +1,48 @@
+[package]
+name = "mw_actors_bevy"
+description = "Morrowind actors glue: character content, actor effects and particles, faces, held items and lights (app-split.md slice 5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_input = { workspace = true, features = ["keyboard"] }
+bevy_light.workspace = true
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_pbr.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+mw_actors.workspace = true
+mw_anim.workspace = true
+mw_assets.workspace = true
+mw_bake.workspace = true
+mw_graphs.workspace = true
+mw_nif.workspace = true
+mw_physics.workspace = true
+mw_world.workspace = true
+sf_anim_bevy.workspace = true
+sf_bake.workspace = true
+sf_character.workspace = true
+sf_character_bevy.workspace = true
+sf_model.workspace = true
+sf_ragdoll.workspace = true
+sf_records.workspace = true
+sf_sky_bevy.workspace = true
+sf_vfs.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# `AlphaMode` in held.rs tests.
+bevy_material.workspace = true
+
+[lints]
+workspace = true

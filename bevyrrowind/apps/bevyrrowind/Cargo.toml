@@ -32,6 +32,8 @@ bevy = { workspace = true, features = ["3d", "ui", "audio", "wav", "mp3", "free_
 clap.workspace = true
 glam.workspace = true
 mw_actors.workspace = true
+# Actors glue: character content, actor effects and particles, faces, held items (app-split.md slice 5).
+mw_actors_bevy.workspace = true
 mw_ai.workspace = true
 mw_anim.workspace = true
 mw_assets = { path = "../../crates/mw_assets" }

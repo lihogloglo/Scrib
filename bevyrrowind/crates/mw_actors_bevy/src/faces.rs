@@ -17,7 +17,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_input::prelude::*;
+use bevy_log::prelude::*;
+use bevy_time::prelude::*;
 use mw_anim::Animation;
 use sf_character_bevy::{Character, CharacterMorphs, Characters, MorphCurvePlayer, MorphTrack, MorphTracks};
 use sf_vfs::{Vfs, VfsPath};

@@ -2303,6 +2303,7 @@ dependencies = [
  "clap",
  "glam 0.33.12",
  "mw_actors",
+ "mw_actors_bevy",
  "mw_ai",
  "mw_anim",
  "mw_assets",
@@ -4806,6 +4807,44 @@ dependencies = [
  "sf_records",
  "sf_vfs",
  "tes3",
+]
+
+[[package]]
+name = "mw_actors_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_input",
+ "bevy_light",
+ "bevy_log",
+ "bevy_material",
+ "bevy_math",
+ "bevy_pbr",
+ "bevy_time",
+ "bevy_transform",
+ "mw_actors",
+ "mw_anim",
+ "mw_assets",
+ "mw_bake",
+ "mw_graphs",
+ "mw_nif",
+ "mw_physics",
+ "mw_world",
+ "sf_anim_bevy",
+ "sf_bake",
+ "sf_character",
+ "sf_character_bevy",
+ "sf_model",
+ "sf_ragdoll",
+ "sf_records",
+ "sf_sky_bevy",
+ "sf_vfs",
+ "tes3",
+ "workspace-hack",
 ]
 
 [[package]]

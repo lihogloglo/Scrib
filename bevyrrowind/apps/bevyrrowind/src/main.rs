@@ -3,16 +3,12 @@
 //! Today: inspection tools over the user's Morrowind install. Later, running
 //! without a subcommand will launch the game.
 
-mod actors;
+use mw_actors_bevy::{actors, held};
 mod anim_view;
 mod console;
 mod character_view;
 mod dialogue;
 mod exterior;
-mod actor_fx;
-mod actor_particles;
-mod faces;
-mod held;
 mod inventory;
 mod inventory_ui;
 mod level;

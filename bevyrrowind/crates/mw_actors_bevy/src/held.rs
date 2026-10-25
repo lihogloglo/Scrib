@@ -17,11 +17,17 @@
 
 use std::sync::Arc;
 
-use bevy::prelude::*;
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_camera::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_math::prelude::*;
+use bevy_pbr::prelude::*;
+use bevy_transform::prelude::*;
 use mw_actors::held::{DayCycle, HeldContext, exterior_dark};
 use mw_assets::LightCalibration;
 use mw_assets::lights::AnimatedLight;
-use bevy::light::NotShadowCaster;
+use bevy_light::NotShadowCaster;
 use sf_sky_bevy::BudgetedShadow;
 use mw_graphs::Stance;
 use mw_world::LightAnimation;
@@ -363,6 +369,8 @@ fn carries_light(item: &sf_character::HeldItem, readiness: Readiness) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy_color::Color;
+    use bevy_material::AlphaMode;
 
     #[test]
     fn torch_slots_light_with_the_record_or_the_slot() {

@@ -8,8 +8,15 @@
 
 use std::sync::Arc;
 
-use bevy::math::Affine3A;
-use bevy::prelude::*;
+use bevy_math::Affine3A;
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_input::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_pbr::prelude::*;
+use bevy_time::prelude::*;
 use mw_actors::MwActors;
 use mw_bake::anim::AnimLibrary;
 use sf_anim_bevy::AnimAsset;

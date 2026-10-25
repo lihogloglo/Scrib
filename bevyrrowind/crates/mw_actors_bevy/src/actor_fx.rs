@@ -24,9 +24,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::math::Affine2;
-use bevy::prelude::*;
-use bevy::transform::TransformSystems;
+use bevy_math::Affine2;
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_camera::prelude::*;
+use bevy_color::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_pbr::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_transform::TransformSystems;
 use mw_anim::effects::{Channel, Effect};
 use sf_anim_bevy::{AnimSystems, Animator, SkeletonBinding};
 use sf_character_bevy::{CharacterBody, CharacterSystems};
@@ -260,6 +268,8 @@ pub fn apply_material(m: &mut StandardMaterial, values: impl Iterator<Item = (Ch
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy_app::TaskPoolPlugin;
+    use bevy_time::TimePlugin;
 
     #[test]
     fn material_channels_drive_alpha_color_and_uv() {
@@ -275,7 +285,7 @@ mod tests {
     #[test]
     fn effects_follow_curves_and_billboards_face_the_camera_while_the_rig_moves() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin))
+        app.add_plugins((TaskPoolPlugin::default(), TimePlugin, AssetPlugin::default(), TransformPlugin))
             .init_asset::<StandardMaterial>()
             .add_systems(PostUpdate, apply_fx.before(TransformSystems::Propagate));
         let camera_rotation = Quat::from_rotation_y(0.6) * Quat::from_rotation_x(-0.2);

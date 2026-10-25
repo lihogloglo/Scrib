@@ -23,9 +23,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::math::Affine3A;
-use bevy::prelude::*;
-use bevy::transform::TransformSystems;
+use bevy_math::Affine3A;
+use bevy_app::prelude::*;
+use bevy_asset::prelude::*;
+use bevy_camera::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_transform::TransformSystems;
 use mw_anim::effects::Effect;
 use mw_assets::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifAnimation, ParticleEmitter, ParticleRange};
 use sf_anim_bevy::{AnimSystems, Animator, SkeletonBinding};
@@ -374,7 +380,9 @@ fn gate_particles(roots: Query<&BodyParticles>, animators: Query<&Animator>, mut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::math::Vec3A;
+    use bevy_app::TaskPoolPlugin;
+    use bevy_time::TimePlugin;
+    use bevy_math::Vec3A;
     use mw_nif::coords::Trs;
     use mw_nif::{Node, NodeKind};
 
@@ -476,7 +484,7 @@ mod tests {
     #[test]
     fn emitter_follows_its_joint() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, TransformPlugin));
+        app.add_plugins((TaskPoolPlugin::default(), TimePlugin, TransformPlugin));
         let joint = app.world_mut().spawn((Transform::from_xyz(1.0, 2.0, 3.0), Visibility::Inherited)).id();
         let anchor = ParticleAnchor {
             joint: Some("Bip01 Head".into()),
