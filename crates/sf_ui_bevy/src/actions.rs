@@ -10,7 +10,7 @@ use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_input::gamepad::GamepadAxis;
 use bevy_math::Vec2;
-use sf_ui::{ActionDef, ActionRef, Keymap};
+use sf_ui::{ActionDef, ActionRef, Keymap, PressMode};
 
 use crate::profile::{BINDINGS_CONTEXT, parse_inputs, validate_input};
 use crate::router::{UiInputContexts, UiScreenInput};
@@ -166,6 +166,33 @@ impl UiKeymap {
     }
 }
 
+/// Engine bindings of any keymap action (a game's gameplay actions too),
+/// keyboard/mouse first. A stick becomes its two axes: feed the vertical one
+/// to Y ([`is_vertical_axis`]).
+pub fn keymap_bindings(keymap: &Keymap, action: &ActionRef) -> Vec<Binding> {
+    keymap
+        .bound_all(action)
+        .filter_map(|name| parse_inputs(name).ok())
+        .flatten()
+        .collect()
+}
+
+/// A stick's vertical axis (it feeds the Y of a 2D action: `SwizzleAxis::YXZ`).
+pub fn is_vertical_axis(binding: &Binding) -> bool {
+    matches!(
+        binding,
+        Binding::GamepadAxis(GamepadAxis::LeftStickY | GamepadAxis::RightStickY)
+    )
+}
+
+/// The input condition for an action's hold / toggle mode
+/// ([`sf_ui::PressMode`]): toggle is `bevy_enhanced_input`'s [`Toggle`] on
+/// the action entity (a press switches it on, the next one off); hold, or no
+/// choice, is the plain input state (`None`).
+pub fn press_condition(keymap: &Keymap, action: &ActionRef) -> Option<Toggle> {
+    (keymap.press_mode(action) == Some(PressMode::Toggle)).then(Toggle::default)
+}
+
 /// Tags each spawned action entity with its [`UiAction`], so one query reads
 /// every UI action in its dynamically typed form.
 #[derive(Component, Clone, Copy, Debug)]
@@ -212,14 +239,7 @@ impl UiBindings {
         Self(
             UiAction::ALL
                 .into_iter()
-                .map(|action| {
-                    let bindings = keymap
-                        .bound_all(&action.id())
-                        .filter_map(|name| parse_inputs(name).ok())
-                        .flatten()
-                        .collect();
-                    (action, bindings)
-                })
+                .map(|action| (action, keymap_bindings(keymap, &action.id())))
                 .collect(),
         )
     }
@@ -296,10 +316,7 @@ pub(crate) fn spawn_actions(
         for binding in bindings.get(action) {
             let mut b = commands.spawn((*binding, BindingOf(action_entity)));
             // A vertical axis feeds the Y of a 2D action.
-            if matches!(
-                binding,
-                Binding::GamepadAxis(GamepadAxis::LeftStickY | GamepadAxis::RightStickY)
-            ) {
+            if is_vertical_axis(binding) {
                 b.insert(SwizzleAxis::YXZ);
             }
         }

@@ -576,3 +576,41 @@ fn rebinder_conflicts_timeouts_and_refusals() {
     );
     assert_eq!(k.bound(&ui("open_menu"), Device::Gamepad), ["pad:Start"]);
 }
+
+#[test]
+fn press_modes_save_load_reset_and_refuse_without_choice() {
+    let mut k = keymap();
+    let crouch = game("crouch");
+    k.register(ActionDef::button("gameplay", "crouch", ["key:KeyC"]).press(PressMode::Hold))
+        .unwrap();
+    assert_eq!(k.press_mode(&crouch), Some(PressMode::Hold));
+    assert_eq!(k.press_mode(&game("jump")), None);
+    assert_eq!(
+        k.set_press_mode(&game("jump"), PressMode::Toggle),
+        Err(KeymapError::NoPressMode(game("jump")))
+    );
+    assert!(k.to_tables().is_empty(), "defaults save nothing");
+    assert_eq!(k.set_press_mode(&crouch, PressMode::Toggle), Ok(true));
+    assert_eq!(k.set_press_mode(&crouch, PressMode::Toggle), Ok(false));
+    let row = k.rows(Some("gameplay")).into_iter().find(|r| r.action == crouch).unwrap();
+    assert!(row.modified && row.press == Some(PressMode::Toggle));
+    let tables = k.to_tables();
+    assert_eq!(tables["gameplay"]["crouch"].to_string(), r#"{ press = "toggle" }"#);
+    // Loads back; a bad value and a press on an action without the choice are reported.
+    let mut fresh = keymap();
+    fresh
+        .register(ActionDef::button("gameplay", "crouch", ["key:KeyC"]).press(PressMode::Hold))
+        .unwrap();
+    assert!(fresh.load_tables(&tables).is_empty());
+    assert_eq!(fresh.press_mode(&crouch), Some(PressMode::Toggle));
+    let bad: BTreeMap<String, toml::Table> =
+        toml::from_str("[gameplay]\njump = { press = \"toggle\" }\ncrouch = { press = \"tap\" }\n")
+            .unwrap();
+    assert_eq!(fresh.load_tables(&bad).len(), 2);
+    assert_eq!(fresh.press_mode(&crouch), Some(PressMode::Hold));
+    // Reset of every device restores the mode; a one-device reset keeps it.
+    fresh.set_press_mode(&crouch, PressMode::Toggle).unwrap();
+    assert!(!fresh.reset(&crouch, Some(Device::Kbm)));
+    assert!(fresh.reset(&crouch, None));
+    assert_eq!(fresh.press_mode(&crouch), Some(PressMode::Hold));
+}

@@ -63,7 +63,10 @@ use sf_ui::{
     UiRegistry,
 };
 
-pub use actions::{HUD_SCOPE, UiAction, UiBindings, UiKeymap, ui_keymap};
+pub use actions::{
+    HUD_SCOPE, UiAction, UiBindings, UiKeymap, is_vertical_axis, keymap_bindings, press_condition,
+    ui_keymap,
+};
 pub use device::{Device, GamepadFamily, Glyph, InputMode, PadFamily, glyph};
 pub use keybinds::{UiRebindEvent, UiRebinder, ui_input_open};
 pub use nav::{NavRepeat, UiDefaultFocus, UiFocusable, UiNavEvent, UiOwnsFocus, held_direction};

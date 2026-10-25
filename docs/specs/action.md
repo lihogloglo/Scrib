@@ -188,7 +188,7 @@ One world scale; modes are multipliers in data (R7 §3, DL2's approach), tuned o
 
 | Profile | Entered by | Changes |
 |---|---|---|
-| `Sneak` | Sneak toggle | slow gait, quiet noise; no traversal rule fires (all traversal rules exclude Sneak), no automatic moves, stops instantly |
+| `Sneak` | Sneak held (hold or toggle is the player's keymap setting, applied by the input layer: `sf_ui::PressMode`) | slow gait, quiet noise; no traversal rule fires (all traversal rules exclude Sneak), no automatic moves, stops instantly |
 | `Normal` | default | Jump at an obstacle with forward input vaults or mantles; Up and Down explicit; no automatic passovers |
 | `FreeRun` | **hold Sprint** (decision) | momentum mover mode, longer jumps by height, automatic passovers (`auto_in: [FreeRun]`), ledge catch from runs and jumps, loud noise |
 | `Combat` (stance) | weapon drawn | combat rules on; lock-on allowed; traversal still allowed (a drawn weapon doesn't block it); hit-stop on |

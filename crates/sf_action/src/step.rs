@@ -337,18 +337,16 @@ fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, fact
     }
 }
 
-/// Sprint held with the stick is free-run and cancels sneak; a Sneak press toggles sneak.
+/// Sprint held with the stick is free-run and overrides sneak; Sneak held is sneak (a toggle
+/// preference is the input layer's: [`ActionClass::Sneak`]).
 fn update_mode(mode: &mut Mode, cmd: &Command, stick_active: bool) {
-    if cmd.held(ActionClass::Sprint) && stick_active {
-        *mode = Mode::FreeRun;
-        return;
-    }
-    if *mode == Mode::FreeRun {
-        *mode = Mode::Normal;
-    }
-    if cmd.pressed(ActionClass::Sneak) {
-        *mode = if *mode == Mode::Sneak { Mode::Normal } else { Mode::Sneak };
-    }
+    *mode = if cmd.held(ActionClass::Sprint) && stick_active {
+        Mode::FreeRun
+    } else if cmd.held(ActionClass::Sneak) {
+        Mode::Sneak
+    } else {
+        Mode::Normal
+    };
 }
 
 /// Body edges and air timers: returns (landed this tick, vertical speed for bands — the impact

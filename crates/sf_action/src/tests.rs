@@ -388,22 +388,30 @@ fn hit_stop_rate_slows_the_window_clock() {
 }
 
 #[test]
-fn modes_sneak_toggle_sprint_free_run_and_mode_gated_rules() {
+fn modes_sneak_held_sprint_free_run_and_mode_gated_rules() {
     let mut sim = combat();
-    sim.press(ActionClass::Sneak);
+    let mut crouch = cmd_press(ActionClass::Sneak);
+    sim.run(crouch);
     assert_eq!(sim.state.mode.mode, Mode::Sneak);
-    let walk = Command { stick: Vec2::new(0.0, 1.0), ..Command::default() };
-    assert_eq!(sim.run(walk).intent.gait, sf_controller::Gait::Sneak);
+    crouch.buttons.pressed = ClassSet::EMPTY;
+    let mut sneak_walk = Command { stick: Vec2::new(0.0, 1.0), ..crouch };
+    assert_eq!(sim.run(sneak_walk).intent.gait, sf_controller::Gait::Sneak);
     // Sneak never triggers traversal: `jump.vault` is refused, the plain `air.jump` wins.
-    let out = sim.press(ActionClass::Jump).clone();
+    let mut jump = cmd_press(ActionClass::Jump);
+    jump.buttons.held.insert(ActionClass::Sneak);
+    let out = sim.run(jump).clone();
     assert!(out.refusals.contains(&Refusal { rule: RuleKey::of("jump.vault"), reason: Refused::Mode }));
     assert!(started(&out, "air.jump"));
-    // Sprint held with the stick: free-run, cancels sneak, drops back to Normal on release.
-    let mut sprint = walk;
+    // Sprint held with the stick: free-run over sneak; back to sneak while it is still held,
+    // Normal once it is released too.
+    let mut sprint = sneak_walk;
     sprint.buttons.held.insert(ActionClass::Sprint);
     assert_eq!(sim.run(sprint).intent.gait, sf_controller::Gait::Sprint);
     assert_eq!(sim.state.mode.mode, Mode::FreeRun);
-    assert_eq!(sim.run(walk).intent.gait, sf_controller::Gait::Run);
+    sim.run(sneak_walk);
+    assert_eq!(sim.state.mode.mode, Mode::Sneak);
+    sneak_walk.buttons.held = ClassSet::EMPTY;
+    assert_eq!(sim.run(sneak_walk).intent.gait, sf_controller::Gait::Run);
     assert_eq!(sim.state.mode.mode, Mode::Normal);
 }
 

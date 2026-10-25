@@ -73,6 +73,42 @@ impl ActionShape {
     }
 }
 
+/// How a button action's input maps to its state, for actions that offer
+/// the choice ([`ActionDef::press`]): held while the input is down, or
+/// switched on and off by presses (accessibility and comfort: XAG 107).
+/// The engine applies it (`sf_ui_bevy`: a toggle condition on the action).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PressMode {
+    #[default]
+    Hold,
+    Toggle,
+}
+
+impl PressMode {
+    pub const ALL: [PressMode; 2] = [PressMode::Hold, PressMode::Toggle];
+
+    /// Stable name: profile entries (`press = "toggle"`).
+    pub fn name(self) -> &'static str {
+        match self {
+            PressMode::Hold => "hold",
+            PressMode::Toggle => "toggle",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The other mode.
+    #[must_use]
+    pub fn flipped(self) -> Self {
+        match self {
+            PressMode::Hold => PressMode::Toggle,
+            PressMode::Toggle => PressMode::Hold,
+        }
+    }
+}
+
 /// A rebindable action.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActionDef {
@@ -92,6 +128,9 @@ pub struct ActionDef {
     /// actions sharing a scope (or linked scopes, [`Keymap::link_scopes`]).
     /// Defaults to the context.
     pub scopes: Vec<String>,
+    /// Offers hold or toggle (a state button such as sneak), with this
+    /// default; `None`: the plain input state.
+    pub press: Option<PressMode>,
 }
 
 impl ActionDef {
@@ -110,6 +149,7 @@ impl ActionDef {
             defaults: defaults.into_iter().map(str::to_owned).collect(),
             required: false,
             scopes: vec![context.to_owned()],
+            press: None,
         }
     }
 
@@ -141,6 +181,13 @@ impl ActionDef {
     #[must_use]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
+        self
+    }
+
+    /// Offers the hold / toggle choice, `default` first.
+    #[must_use]
+    pub fn press(mut self, default: PressMode) -> Self {
+        self.press = Some(default);
         self
     }
 
@@ -231,6 +278,8 @@ pub enum KeymapError {
     Required { action: ActionRef, device: Device },
     #[error("the keymap changed since the proposal was made")]
     Stale,
+    #[error("`{0}` has no hold / toggle choice")]
+    NoPressMode(ActionRef),
 }
 
 /// A profile entry that couldn't be applied as written.
@@ -262,8 +311,10 @@ pub struct KeybindRow {
     pub slots: [Vec<Option<String>>; 2],
     /// Some binding of this action collides with another action.
     pub conflicted: bool,
-    /// Differs from the defaults.
+    /// Differs from the defaults (bindings or press mode).
     pub modified: bool,
+    /// The hold / toggle choice, when the action offers it.
+    pub press: Option<PressMode>,
 }
 
 #[derive(Clone, Debug)]
@@ -271,6 +322,7 @@ struct Entry {
     def: ActionDef,
     defaults: [Vec<String>; 2],
     bound: [Vec<String>; 2],
+    press: Option<PressMode>,
 }
 
 /// Every rebindable action and its current bindings.
@@ -329,6 +381,7 @@ impl Keymap {
         self.entries.insert(
             id.clone(),
             Entry {
+                press: def.press,
                 def,
                 bound: defaults.clone(),
                 defaults,
@@ -412,7 +465,8 @@ impl Keymap {
                         .collect()
                 }),
                 conflicted: conflicts.iter().any(|c| c.action == e.def.id),
-                modified: e.bound != e.defaults,
+                modified: e.bound != e.defaults || e.press != e.def.press,
+                press: e.press,
             })
             .collect()
     }
@@ -603,8 +657,28 @@ impl Keymap {
         Ok(())
     }
 
-    /// Restores an action's defaults (`None`: every device). Returns whether
-    /// anything changed.
+    /// The action's hold / toggle mode (`None`: it offers no choice).
+    pub fn press_mode(&self, action: &ActionRef) -> Option<PressMode> {
+        self.entries.get(action).and_then(|e| e.press)
+    }
+
+    /// Sets the hold / toggle mode of an action that offers the choice.
+    /// Returns whether it changed.
+    pub fn set_press_mode(&mut self, action: &ActionRef, mode: PressMode) -> Result<bool, KeymapError> {
+        let entry = self.entries.get_mut(action).ok_or_else(|| KeymapError::UnknownAction(action.clone()))?;
+        if entry.press.is_none() {
+            return Err(KeymapError::NoPressMode(action.clone()));
+        }
+        if entry.press == Some(mode) {
+            return Ok(false);
+        }
+        entry.press = Some(mode);
+        self.version += 1;
+        Ok(true)
+    }
+
+    /// Restores an action's defaults (`None`: every device; the press mode
+    /// resets with every device only). Returns whether anything changed.
     pub fn reset(&mut self, action: &ActionRef, device: Option<Device>) -> bool {
         let Some(entry) = self.entries.get_mut(action) else {
             return false;
@@ -661,6 +735,7 @@ impl Keymap {
     pub fn load_tables(&mut self, tables: &BTreeMap<String, toml::Table>) -> Vec<KeymapIssue> {
         for entry in self.entries.values_mut() {
             entry.bound = entry.defaults.clone();
+            entry.press = entry.def.press;
         }
         self.stored.clear();
         self.version += 1;
@@ -697,6 +772,9 @@ impl Keymap {
                     );
                 }
             }
+            if let Some(mode) = entry.press.filter(|_| entry.press != entry.def.press) {
+                devices.insert(PRESS_KEY.to_owned(), toml::Value::String(mode.name().to_owned()));
+            }
             if !devices.is_empty() {
                 out.entry(entry.def.id.context.clone())
                     .or_default()
@@ -731,6 +809,14 @@ impl Keymap {
             }
             toml::Value::Table(devices) => {
                 for (name, items) in devices {
+                    if name == PRESS_KEY {
+                        match items.as_str().and_then(PressMode::from_name) {
+                            Some(mode) if def.press.is_some() => self.entries[id].press = Some(mode),
+                            Some(_) => issue("has no hold / toggle choice; `press` ignored".to_owned()),
+                            None => issue(format!("`press` must be \"hold\" or \"toggle\", not {items}")),
+                        }
+                        continue;
+                    }
                     let Some(device) = Device::from_name(name) else {
                         issue(format!("unknown device `{name}` (kbm, gamepad)"));
                         continue;
@@ -863,8 +949,15 @@ impl Keymap {
     }
 }
 
+/// The press mode's key in a profile entry, beside the device lists.
+const PRESS_KEY: &str = "press";
+
 fn reset_entry(entry: &mut Entry, device: Option<Device>) -> bool {
     let mut changed = false;
+    if device.is_none() && entry.press != entry.def.press {
+        entry.press = entry.def.press;
+        changed = true;
+    }
     for d in Device::ALL {
         if device.is_none_or(|x| x == d) && entry.bound[d.index()] != entry.defaults[d.index()] {
             entry.bound[d.index()].clone_from(&entry.defaults[d.index()]);

@@ -70,7 +70,7 @@ pub use ids::{
 pub use input::{Device, Glyph, Input, InputKind, Mods, Overlap, PadFamily, glyph, overlap};
 pub use keymap::{
     ActionDef, ActionRef, ActionShape, Conflict, InputValidator, KeybindRow, Keymap, KeymapError,
-    KeymapIssue, Proposal, Resolution, SlotRef,
+    KeymapIssue, PressMode, Proposal, Resolution, SlotRef,
 };
 pub use l10n::{
     FluentArgs, FluentValue, L10nIssue, L10nSource, LanguageIdentifier, Localizer, negotiate,

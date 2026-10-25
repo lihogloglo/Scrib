@@ -30,7 +30,8 @@ pub enum ActionClass {
     Move,
     /// Held: free-run (action.md "Mode profiles"). Never latched.
     Sprint,
-    /// Pressed: toggles sneak. Never latched.
+    /// Held: sneak. Hold or toggle is the player's input setting, applied before the command
+    /// (`sf_ui::PressMode`), so the action layer only sees the state. Never latched.
     Sneak,
 }
 

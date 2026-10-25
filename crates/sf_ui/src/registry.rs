@@ -272,6 +272,14 @@ impl UiRegistry {
         self.screens.values()
     }
 
+    /// Adds `other`'s screens as a later source (same id: `other` wins). For hosts that
+    /// assemble screens from several record sets before content-driven screens land.
+    pub fn extend_screens(&mut self, other: &UiRegistry) {
+        for (id, def) in &other.screens {
+            self.screens.insert(id.clone(), def.clone());
+        }
+    }
+
     /// Contributions to a slot, ordered by priority, then load order.
     pub fn slot(&self, id: &str) -> &[Def<String, SlotContribution>] {
         self.slots.get(id).map_or(&[], Vec::as_slice)

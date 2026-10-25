@@ -30,6 +30,9 @@ pub struct ScreenLabels {
     pub cancel: String,
     pub reset: String,
     pub reset_all: String,
+    /// The hold / toggle cell of an action that offers the choice.
+    pub hold: String,
+    pub toggle: String,
     /// `keybinds-unbound`: an empty slot.
     pub unbound: String,
     /// `keybinds-kbm`, `keybinds-gamepad`: column headings.
@@ -65,6 +68,8 @@ impl Default for ScreenLabels {
             cancel: s("Cancel"),
             reset: s("Reset"),
             reset_all: s("Reset all"),
+            hold: s("Hold"),
+            toggle: s("Toggle"),
             unbound: s("-"),
             kbm: s("Keyboard / mouse"),
             gamepad: s("Gamepad"),

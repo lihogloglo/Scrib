@@ -4,7 +4,8 @@
 //! A row per action of the context (label, one cell per keyboard/mouse slot, one per gamepad
 //! slot, reset), keyed by action; a footer with "reset all". Confirm on a slot captures the
 //! next input (overlay); a conflict asks swap / unbind / keep both / cancel; Context1 clears a
-//! slot. Glyphs follow the last-used pad family. Focus is the screen's own (a grid of
+//! slot. An action offering hold / toggle (`sf_ui::PressMode`) gets a cell before reset that
+//! switches it. Glyphs follow the last-used pad family. Focus is the screen's own (a grid of
 //! cells), so it moves predictably by row and column with the d-pad, stick or arrows.
 
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use bevy_text::TextColor;
 use bevy_ui::ScrollPosition;
 use bevy_ui::prelude::*;
 use bevy_ui_widgets::{Activate, ScrollArea};
-use sf_ui::{ActionRef, Device, KeybindRow, PadFamily, RebindEvent, Resolution, SlotRef};
+use sf_ui::{ActionRef, Device, KeybindRow, PadFamily, PressMode, RebindEvent, Resolution, SlotRef};
 use sf_ui_bevy::{
     GamepadFamily, ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiKeymap, UiLocalizer,
     UiNavEvent, UiOwnsFocus, UiRebindEvent, UiRebinder, UiScreenRoot,
@@ -69,6 +70,8 @@ pub enum KeybindsFocus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeybindCellKind {
     Slot(SlotRef),
+    /// Switches the action between hold and toggle.
+    Press(ActionRef),
     Reset(ActionRef),
     ResetAll,
     Choice(Option<Resolution>),
@@ -385,6 +388,7 @@ pub(crate) fn sync_keybinds(
             parts.columns =
                 [0, 1].map(|d| rows.iter().map(|r| r.slots[d].len()).max().unwrap_or(0));
             let columns = parts.columns;
+            let press_column = rows.iter().any(|r| r.press.is_some());
             for (heading, count) in parts.headings.iter().zip(columns) {
                 if let Ok(mut node) = nodes.get_mut(*heading) {
                     node.width = Val::Px(columns_width(count));
@@ -476,6 +480,33 @@ pub(crate) fn sync_keybinds(
                         cells.push(Some(cell));
                     }
                 }
+                if press_column {
+                    let cell = row.press.map(|mode| {
+                        let text = match mode {
+                            PressMode::Hold => &labels.hold,
+                            PressMode::Toggle => &labels.toggle,
+                        };
+                        commands
+                            .spawn((
+                                button("sf-keybinds-press", text.clone(), colors),
+                                KeybindCell(KeybindCellKind::Press(row.action.clone())),
+                                ChildOf(entity),
+                            ))
+                            .insert(classes("sf-keybinds-press", &[(mode.name(), true)]))
+                            .id()
+                    });
+                    if cell.is_none() {
+                        commands.spawn((
+                            part("sf-keybinds-spacer"),
+                            Node {
+                                width: Val::Px(CELL_WIDTH),
+                                ..Node::default()
+                            },
+                            ChildOf(entity),
+                        ));
+                    }
+                    cells.push(cell);
+                }
                 cells.push(Some(
                     commands
                         .spawn((
@@ -515,6 +546,7 @@ pub(crate) fn sync_keybinds(
                         slots: [Vec::new(), Vec::new()],
                         conflicted: false,
                         modified: false,
+                        press: None,
                     };
                     action_label(&row, localizer.as_deref())
                 })
@@ -689,6 +721,11 @@ pub(crate) fn on_keybind_cell(
     match kind {
         KeybindCellKind::Slot(slot) => {
             let _ = rebinder.start(&keymap, slot.clone());
+        }
+        KeybindCellKind::Press(action) => {
+            if let Some(mode) = keymap.0.press_mode(action) {
+                let _ = keymap.0.set_press_mode(action, mode.flipped());
+            }
         }
         KeybindCellKind::Reset(action) => {
             keymap.0.reset(action, None);
