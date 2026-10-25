@@ -119,6 +119,15 @@ pub fn add(app: &mut App) {
     let mut settings = app.world().get_resource::<UiSettings>().cloned().unwrap_or_default();
     settings.theme = ThemeId::from(THEME_ID);
     app.insert_resource(settings);
+    app.add_systems(Startup, no_focus_ring);
+}
+
+/// The sheet shows focus Morrowind's way (`.sf-button:focus-visible` takes the "over" colour),
+/// so the framework's fallback outline goes.
+fn no_focus_ring(colors: Option<ResMut<sf_ui_screens::ScreenColors>>) {
+    if let Some(mut colors) = colors {
+        colors.focus_ring = None;
+    }
 }
 
 #[cfg(test)]

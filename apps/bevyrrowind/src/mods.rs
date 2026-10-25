@@ -35,6 +35,12 @@ pub fn bindings_profile() -> Option<(PathBuf, sf_mods::Profile)> {
     BINDINGS_PROFILE.get().cloned()
 }
 
+/// The user data folder (`--user-data`, `BEVYRROWIND_USER_DATA`, else the platform's local data
+/// folder): `profiles/` and `saves/` (`saves.rs`) live in it.
+pub fn user_data() -> Option<PathBuf> {
+    UserDirs::detect(selection().user_data.as_deref()).map(|u| u.root)
+}
+
 /// The loaded profile's script contexts (`LoadedProfile::script_contexts`), set by [`load`].
 static SCRIPT_PLANS: OnceLock<Vec<sf_mods::ScriptPlan>> = OnceLock::new();
 

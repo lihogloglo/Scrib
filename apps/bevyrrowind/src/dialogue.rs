@@ -335,6 +335,59 @@ impl Rpg {
         })
     }
 
+    /// New game without character generation (scaffold `SkipChargen`; removal path: chargen,
+    /// M7): the state the end of chargen leaves that dialogue reads. As `OpenMW`'s bypassed new
+    /// game (`apps/openmw/mwworld/worldimp.cpp` `World::startNewGame`, 0.49.0), `chargenstate`
+    /// is -1 (chargen over: chargen-only lines stop matching). The topics chargen's hand-off
+    /// grants are learned: the `AddTopic`s of Sellus Gravius's "duties" result (the package for
+    /// Caius; "latest rumors", "little advice", ...), run in the result runner and read off its
+    /// effects, so the list is the data's and a mod's edit of that line counts. Its other effects
+    /// (journal, package, gold) start the main quest and stay out. Returns the topics learned.
+    pub fn skip_chargen(&mut self) -> Vec<RecordId> {
+        const HANDOFF_TOPIC: &str = "duties";
+        const HANDOFF_SPEAKER: &str = "chargen captain";
+        const SPEAKER: ActorKey = ActorKey(u128::MAX);
+        self.state.globals.insert(id("chargenstate"), -1.0);
+        let handoff: Vec<(RecordId, String)> = self
+            .content
+            .records
+            .iter::<tes3::esp::DialogueInfo>()
+            .filter(|(key, info)| {
+                info.speaker_id.eq_ignore_ascii_case(HANDOFF_SPEAKER)
+                    && mw_records::keys::split_info(key).is_some_and(|(t, _)| t == HANDOFF_TOPIC)
+            })
+            .map(|(key, info)| (key.clone(), info.script_text.clone()))
+            .collect();
+        if handoff.is_empty() || !self.add_actor(SPEAKER, &id(HANDOFF_SPEAKER), "") {
+            return Vec::new();
+        }
+        let ctx = ConversationCtx { player: PlayerId::HOST, speaker: SPEAKER, speaker_base: id(HANDOFF_SPEAKER), choice: None };
+        let topic = id(HANDOFF_TOPIC);
+        let mut topics = Vec::new();
+        {
+            let v = View { c: &self.content, s: &self.state };
+            let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
+            let mut runner = self.results.runner(state);
+            for (response, script) in &handoff {
+                match runner.run(ResultCall { ctx: &ctx, topic: &topic, response, script }) {
+                    Ok(effects) => topics.extend(effects.into_iter().filter_map(|e| match e {
+                        ResultEffect::AddTopic(t) => Some(t),
+                        _ => None,
+                    })),
+                    Err(e) => warn!("new game: chargen hand-off {response}: {e}"),
+                }
+            }
+        }
+        for report in self.results.drain_reports() {
+            debug!("new game: {report}");
+        }
+        self.content.actors.remove(&SPEAKER);
+        for t in &topics {
+            let _ = self.state.world.apply(RpgCommand::AddTopic(t.clone()));
+        }
+        topics
+    }
+
     /// The exterior cell name at a Morrowind grid (`None`: wilderness).
     pub fn exterior_name(&self, grid: (i32, i32)) -> Option<&str> {
         self.content.exterior_names.get(&grid).map(String::as_str)
@@ -595,13 +648,15 @@ struct DevGiveRing;
 /// start for dev screenshots ([`OpenAtStart`]).
 pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
     let Some(db) = db else { return };
-    let rpg = match Rpg::new(db) {
+    let mut rpg = match Rpg::new(db) {
         Ok(r) => r,
         Err(e) => {
             warn!("dialogue off: {e}");
             return;
         }
     };
+    let granted = rpg.skip_chargen();
+    info!("new game without chargen: {} topics from the chargen hand-off", granted.len());
     if !app.is_plugin_added::<EnhancedInputPlugin>() {
         app.add_plugins(EnhancedInputPlugin);
     }
@@ -731,7 +786,7 @@ fn talk_on_activate(
 fn open_dialogue(commands: &mut Commands, rpg: &mut Rpg, stack: &mut ScreenStackRes, registry: &UiRegistryRes, speaker: ActorKey) {
     let Some((talk, view)) = rpg.open(speaker) else { return };
     info!("dialogue: talking to {}", rpg.actor_name(talk.speaker).unwrap_or("?"));
-    let screen = commands.spawn((UiScreenRoot("dialogue".into()), centred(), DialogueScreen::new(view))).id();
+    let screen = commands.spawn((UiScreenRoot("dialogue".into()), DialogueScreen::new(view))).id();
     commands.insert_resource(ActiveTalk { talk, screen });
     if let Err(e) = stack.0.push(&registry.0, "dialogue") {
         warn!("dialogue: {e:?}");
@@ -759,18 +814,20 @@ fn toggle_journal(
         return;
     }
     let screen = JournalScreen::new(Alphabet::default(), 2, seen.0.clone());
-    commands.spawn((UiScreenRoot("journal".into()), centred(), JournalUi::new(screen)));
+    commands.spawn((UiScreenRoot("journal".into()), JournalUi::new(screen)));
     if let Err(e) = stack.0.push(&registry.0, "journal") {
         warn!("journal: {e:?}");
     }
 }
 
-/// Dev scaffold `--open-ui <screen>`: opens `journal`, or a sample `message` box, once at start,
+/// Dev scaffold `--open-ui <screen>`: opens `journal`, `dialogue` (with the first NPC tracked, once
+/// the cell's characters are in) or a sample `message` box, once at start,
 /// so `--screenshot` runs show the theme without keyboard input. Removal path: the UI test
 /// scenes (`scene ui-*`) once screens get their own synthetic scene.
 #[derive(Resource)]
 struct OpenAtStart(Option<String>);
 
+#[allow(clippy::too_many_arguments)] // Bevy system params
 fn open_at_start(
     mut commands: Commands,
     mut open: ResMut<OpenAtStart>,
@@ -779,12 +836,13 @@ fn open_at_start(
     registry: Res<UiRegistryRes>,
     seen: Res<JournalSeenStore>,
     config: Option<Res<MessageBoxConfig>>,
+    mut rpg: ResMut<Rpg>,
 ) {
     let Some(screen) = open.0.take() else { return };
     match screen.as_str() {
         "journal" => {
             let journal = JournalScreen::new(Alphabet::default(), 2, seen.0.clone());
-            commands.spawn((UiScreenRoot("journal".into()), centred(), JournalUi::new(journal)));
+            commands.spawn((UiScreenRoot("journal".into()), JournalUi::new(journal)));
             if let Err(e) = stack.0.push(&registry.0, "journal") {
                 warn!("--open-ui journal: {e:?}");
             }
@@ -794,7 +852,14 @@ fn open_at_start(
             let text = "You have found Fargoth's ring. Return it to him?".to_owned();
             boxes.show(text, vec!["Yes".to_owned(), "No".to_owned()], &config);
         }
-        other => warn!("--open-ui: unknown screen `{other}` (journal, message)"),
+        "dialogue" => {
+            let Some(speaker) = rpg.content.actors.keys().min().copied() else {
+                open.0 = Some("dialogue".to_owned());
+                return;
+            };
+            open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, speaker);
+        }
+        other => warn!("--open-ui: unknown screen `{other}` (journal, dialogue, message)"),
     }
 }
 
@@ -803,17 +868,6 @@ fn open_at_start(
 fn keep_journal_seen(mut changes: MessageReader<JournalSeenChanged>, mut store: ResMut<JournalSeenStore>) {
     if let Some(change) = changes.read().last() {
         store.0 = change.seen.clone();
-    }
-}
-
-fn centred() -> Node {
-    Node {
-        position_type: PositionType::Absolute,
-        left: Val::Percent(10.0),
-        top: Val::Percent(8.0),
-        width: Val::Percent(80.0),
-        height: Val::Percent(80.0),
-        ..default()
     }
 }
 
@@ -1011,5 +1065,49 @@ mod tests {
         let bytes = postcard::to_stdvec(&rpg.state).unwrap();
         let back: RpgState = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back, rpg.state);
+    }
+
+    /// Owner report 2026-10-25: the Census and Excise Office NPCs showed no topics. The basic
+    /// topics come from the end of chargen (Sellus Gravius's "duties" result), which a new game
+    /// without chargen never ran; `skip_chargen` grants them from that data.
+    #[test]
+    fn census_topics_after_skipped_chargen() {
+        let Ok((install, _)) = MorrowindInstall::detect(None) else {
+            eprintln!("no Morrowind install detected; skipping");
+            return;
+        };
+        let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+        let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+        let db = Arc::new(content.db);
+        let cell = "Seyda Neen, Census and Excise Office";
+        let topics_of = |rpg: &mut Rpg, base: &str| -> Vec<RecordId> {
+            let key = ActorKey(7);
+            assert!(rpg.add_actor(key, &id(base), cell));
+            let (_, view) = rpg.open(key).unwrap();
+            let topics: Vec<RecordId> = view.topics().iter().map(|(k, _)| k.clone()).collect();
+            eprintln!("{base}: {:?} {topics:?}", last_text(&view));
+            topics
+        };
+        let has = |topics: &[RecordId], names: &[&str]| names.iter().all(|n| topics.contains(&id(n)));
+        let basics = ["latest rumors", "little advice", "little secret"];
+
+        // The report: before the grant the door guard lists only what his greeting named.
+        let mut before = Rpg::new(db.clone()).unwrap();
+        assert!(!has(&topics_of(&mut before, "chargen door guard"), &basics[..1]));
+
+        let mut rpg = Rpg::new(db).unwrap();
+        let granted = rpg.skip_chargen();
+        eprintln!("granted: {granted:?}");
+        assert_eq!(rpg.state.globals.get(&id("chargenstate")), Some(&-1.0));
+        assert!(!rpg.content.actors.contains_key(&ActorKey(u128::MAX)), "the hand-off speaker is not left registered");
+        for t in basics.iter().chain(&["my trade", "specific place", "someone in particular", "caius cosades"]) {
+            assert!(granted.contains(&id(t)) && rpg.state.world.topics.knows(&id(t)), "{t} granted");
+        }
+        // The guard (greeting names "Imperial Legion"), Sellus Gravius, then Socucius Ergalla,
+        // whose only topics in the data (imperial legion, law in morrowind, morrowind,
+        // solstheim) aren't chargen grants: he lists the one the guard taught.
+        assert!(has(&topics_of(&mut rpg, "chargen door guard"), &basics), "guard");
+        assert!(has(&topics_of(&mut rpg, "chargen captain"), &["my trade", "caius cosades"]), "Sellus Gravius");
+        assert!(has(&topics_of(&mut rpg, "chargen class"), &["imperial legion"]), "Socucius Ergalla");
     }
 }

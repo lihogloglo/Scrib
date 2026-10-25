@@ -2337,6 +2337,7 @@ dependencies = [
  "sf_camera_bevy",
  "sf_character",
  "sf_character_bevy",
+ "sf_console_bevy",
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
@@ -2354,6 +2355,7 @@ dependencies = [
  "sf_render_order_bevy",
  "sf_rpg",
  "sf_rpg_ui",
+ "sf_save_bevy",
  "sf_script",
  "sf_script_bevy",
  "sf_shadow_cache_bevy",
@@ -2362,6 +2364,7 @@ dependencies = [
  "sf_ui",
  "sf_ui_bevy",
  "sf_ui_css",
+ "sf_ui_inventory",
  "sf_ui_screens",
  "sf_vfs",
  "sf_water",
@@ -6995,6 +6998,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_console"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_console_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_gizmos",
+ "bevy_input",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_picking",
+ "bevy_reflect",
+ "bevy_shape",
+ "bevy_text",
+ "bevy_transform",
+ "bevy_ui",
+ "bevy_window",
+ "sf_console",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_controller"
 version = "0.1.0"
 dependencies = [
@@ -7317,6 +7351,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_save"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "lz4_flex",
+ "postcard",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_save_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_platform",
+ "bevy_tasks",
+ "bevy_time",
+ "blake3",
+ "log",
+ "ron",
+ "serde",
+ "sf_action",
+ "sf_controller",
+ "sf_coords",
+ "sf_diag_bevy",
+ "sf_records",
+ "sf_rpg",
+ "sf_save",
+ "sf_sky",
+ "sf_weather",
+ "sf_wind",
+ "sf_world",
+ "thiserror 2.0.21",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_script"
 version = "0.1.0"
 dependencies = [
@@ -7491,6 +7564,8 @@ dependencies = [
  "bevy_ecs",
  "bevy_flair",
  "bevy_log",
+ "bevy_picking",
+ "bevy_ui_widgets",
  "sf_mods",
  "sf_ui_bevy",
  "workspace-hack",

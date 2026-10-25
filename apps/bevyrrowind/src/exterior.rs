@@ -419,6 +419,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     crate::doors::add(&mut app, options.world, options.use_door);
     crate::pipeline_watch::add(&mut app);
     crate::scripts::add(&mut app, vfs.clone(), options.activate);
+    crate::inventory::add(&mut app, options.actors.clone());
+    crate::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(crate::inventory_ui::SCREEN));
+    // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).
+    crate::saves::add(&mut app);
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).
     // A test scene with its own camera keeps it (F11 still turns the player on).
     let scene_camera = crate::scenes::active().is_some_and(crate::scenes::SceneDef::fixed_camera);

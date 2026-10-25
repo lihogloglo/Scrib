@@ -17,6 +17,13 @@
 //!   action, so the action layer only ever sees a held state.
 //! - **Use** lives on its own context entity ([`UseControls`]), because activation also works
 //!   in free-camera mode, where there is no player body; `scripts.rs` reads [`use_pressed`].
+//! - **Inventory** (I as Skyrim, The Witcher 3, Cyberpunk 2077, Baldur's Gate 3; gamepad North, Y /
+//!   Triangle, as Fallout 4's Pip-Boy: Select is the framework's `ui.open_map`, Tab is first/third
+//!   person here) shares the use context,
+//!   which stays live while a menu pauses the player, so the same key closes the screen;
+//!   `inventory_ui.rs` reads [`inventory_pressed`].
+//! - **Quicksave / quickload** (F5 / F9, no gamepad default) share the use context too; `saves.rs`
+//!   reads [`QuickSaveAction`] / [`QuickLoadAction`].
 //! - **Keybinds screen** (dev): F10 opens the stock `sf_ui_screens` keybinds screen (every
 //!   context) and closes it; Back closes it too. Bindings save into the selected mod profile
 //!   (`profiles/<name>.toml`) when the menu closes (`sf_ui_bevy` `sync_profile`).
@@ -25,9 +32,10 @@
 
 use bevy::prelude::*;
 use bevy_enhanced_input::prelude::*;
-use sf_ui::{ActionDef, ActionRef, Keymap, Layer, PressMode, UiRegistry};
+use sf_ui::{ActionDef, ActionRef, Keymap, L10nSource, LanguageIdentifier, Layer, Localizer, PressMode, UiRegistry};
 use sf_ui_bevy::{
-    HUD_SCOPE, ScreenStackRes, UiKeymap, UiProfile, UiRegistryRes, UiScreenRoot, keymap_bindings, press_condition,
+    HUD_SCOPE, ScreenStackRes, UiKeymap, UiLocalizer, UiProfile, UiRegistryRes, UiScreenRoot, keymap_bindings,
+    press_condition,
 };
 use sf_ui_screens::KeybindsScreen;
 
@@ -64,10 +72,14 @@ pub enum Control {
     Sneak,
     Use,
     ToggleView,
+    Inventory,
+    /// Save / load the quick slot (`saves.rs`).
+    QuickSave,
+    QuickLoad,
 }
 
 impl Control {
-    pub const ALL: [Control; 12] = [
+    pub const ALL: [Control; 15] = [
         Control::MoveForward,
         Control::MoveBack,
         Control::MoveLeft,
@@ -80,6 +92,9 @@ impl Control {
         Control::Sneak,
         Control::Use,
         Control::ToggleView,
+        Control::Inventory,
+        Control::QuickSave,
+        Control::QuickLoad,
     ];
 
     pub fn name(self) -> &'static str {
@@ -96,6 +111,9 @@ impl Control {
             Control::Sneak => "sneak",
             Control::Use => "use",
             Control::ToggleView => "toggle_view",
+            Control::Inventory => "inventory",
+            Control::QuickSave => "quicksave",
+            Control::QuickLoad => "quickload",
         }
     }
 
@@ -121,6 +139,10 @@ impl Control {
             Control::Sneak => button(&["key:ControlLeft", "pad:East"]).press(PressMode::Hold),
             Control::Use => button(&["key:KeyE", "pad:West"]),
             Control::ToggleView => button(&["key:Tab", "pad:RightThumb"]),
+            Control::Inventory => button(&["key:KeyI", "pad:North"]),
+            // F5 / F9 as Skyrim, Fallout 4, The Witcher 3 (and Morrowind); no gamepad default.
+            Control::QuickSave => button(&["key:F5"]),
+            Control::QuickLoad => button(&["key:F9"]),
         }
     }
 }
@@ -177,6 +199,26 @@ pub fn use_pressed(actions: &Query<&ActionEvents, With<Action<UseAction>>>) -> b
     actions.iter().any(|e| e.contains(ActionEvents::START))
 }
 
+/// Open / close the inventory (on the use context: live while a menu is open).
+#[derive(InputAction)]
+#[action_output(bool)]
+pub struct InventoryAction;
+
+/// The inventory action started this frame.
+pub fn inventory_pressed(actions: &Query<&ActionEvents, With<Action<InventoryAction>>>) -> bool {
+    actions.iter().any(|e| e.contains(ActionEvents::START))
+}
+
+/// Quicksave (`saves.rs`; on the use context).
+#[derive(InputAction)]
+#[action_output(bool)]
+pub struct QuickSaveAction;
+
+/// Quickload (`saves.rs`; on the use context).
+#[derive(InputAction)]
+#[action_output(bool)]
+pub struct QuickLoadAction;
+
 /// After `dialogue::add` (it adds `SfUiPlugin` when the run has records): the gameplay actions
 /// in the keymap (inserted here when there is no UI), the profile's bindings, the use context,
 /// rebinding, and F10 for the keybinds screen.
@@ -185,6 +227,9 @@ pub fn add(app: &mut App) {
         app.add_plugins(EnhancedInputPlugin);
     }
     app.init_resource::<UiKeymap>();
+    if !app.world().contains_resource::<UiLocalizer>() {
+        app.insert_resource(strings());
+    }
     let profile = crate::mods::bindings_profile();
     let world = app.world_mut();
     let mut keymap = world.resource_mut::<UiKeymap>();
@@ -207,6 +252,24 @@ pub fn add(app: &mut App) {
         .add_systems(Update, (rebind_use, toggle_keybinds, close_keybinds));
 }
 
+/// The builtin mod's UI strings (`l10n/en/bevyrrowind.ftl`: keybind labels
+/// `keybind-<context>-<action>`). TODO(l10n): from every mod's `l10n/<locale>/<mod>.ftl` through
+/// `sf_ui_bevy::insert_from_profile` once the app builds its UI state from the loaded profile.
+fn strings() -> UiLocalizer {
+    let en: LanguageIdentifier = "en".parse().expect("valid locale");
+    let source = L10nSource {
+        mod_id: "bevyrrowind".into(),
+        locale: en.clone(),
+        path: "l10n/en/bevyrrowind.ftl".into(),
+        text: include_str!("../l10n/en/bevyrrowind.ftl").into(),
+    };
+    let (localizer, issues) = Localizer::build(&[en], &[source], false);
+    for issue in issues {
+        warn!("ui strings: {}: {}", issue.path, issue.message);
+    }
+    UiLocalizer(localizer)
+}
+
 fn screens() -> UiRegistry {
     let mut db = sf_records::RecordDb::new();
     sf_ui::register_kinds(&mut db).expect("UI record kinds register");
@@ -220,6 +283,12 @@ fn spawn_use(commands: &mut Commands, keymap: &Keymap) {
     let context = commands.spawn((Name::new("use controls"), UseControls)).id();
     let action = commands.spawn((ActionOf::<UseControls>::new(context), Action::<UseAction>::new())).id();
     bind(commands, keymap, Control::Use, action, |_, _| {});
+    let inventory = commands.spawn((ActionOf::<UseControls>::new(context), Action::<InventoryAction>::new())).id();
+    bind(commands, keymap, Control::Inventory, inventory, |_, _| {});
+    let quicksave = commands.spawn((ActionOf::<UseControls>::new(context), Action::<QuickSaveAction>::new())).id();
+    bind(commands, keymap, Control::QuickSave, quicksave, |_, _| {});
+    let quickload = commands.spawn((ActionOf::<UseControls>::new(context), Action::<QuickLoadAction>::new())).id();
+    bind(commands, keymap, Control::QuickLoad, quickload, |_, _| {});
 }
 
 /// A keymap change respawns the use context with the new bindings.
@@ -285,4 +354,23 @@ fn close_keybinds(mut commands: Commands, stack: Option<Res<ScreenStackRes>>, ro
 #[cfg(test)]
 pub fn reload(dir: &std::path::Path, name: &str) -> sf_mods::Profile {
     sf_mods::Profile::load(sf_mods::Profile::path_in(dir, name)).expect("profile reloads")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every keybinds row (gameplay and UI actions) has a display name in the builtin strings.
+    #[test]
+    fn every_action_has_a_label() {
+        let strings = strings();
+        let keymap = keymap();
+        let rows = keymap.rows(None);
+        assert!(!rows.is_empty());
+        for row in rows {
+            assert!(strings.0.has(&row.label), "no string for {}", row.label);
+        }
+        assert_eq!(strings.0.format("keybind-gameplay-move_forward", None), "Move Forward");
+        assert_eq!(strings.0.format("keybind-gameplay-use", None), "Activate");
+    }
 }

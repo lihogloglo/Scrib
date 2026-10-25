@@ -7,6 +7,7 @@ mod actors;
 mod anim_view;
 mod audio;
 mod bake;
+mod console;
 mod controls;
 mod character_view;
 mod dialogue;
@@ -17,6 +18,8 @@ mod actor_particles;
 mod faces;
 mod held;
 mod hot_reload;
+mod inventory;
+mod inventory_ui;
 mod level;
 mod live_ab;
 mod mods;
@@ -29,6 +32,7 @@ mod pipeline_watch;
 mod remote;
 mod render;
 mod scenes;
+mod saves;
 mod scripts;
 mod skinned_view;
 mod sweep;
@@ -305,7 +309,8 @@ struct ViewFlags {
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     activate: Option<u32>,
     /// Dev: open a UI screen at start for `--screenshot` checks of the theme (`journal`, or
-    /// `message` for a sample message box). Interactive runs open them with J / scripts.
+    /// `message` for a sample message box, `inventory` with a few dev sample items). Interactive
+    /// runs open them with J / I / scripts.
     #[arg(long)]
     open_ui: Option<String>,
     /// Characters: `vanilla` (default, owner 2026-10-22; segmented parts as authored) or `smooth`

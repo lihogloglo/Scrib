@@ -251,7 +251,7 @@
             hour: 18.5,
             flags: ["--clouds", "fair"],
             description: "Fair-weather cumulus over Red Mountain at sunset (perf camera red_mountain)",
-            look_for: "cloud undersides warm/red from the low sun, tops brighter; clouds fade into the haze toward the horizon; the mountain cuts cleanly into clouds behind it (F10 off/on)",
+            look_for: "cloud undersides warm/red from the low sun, tops brighter; clouds fade into the haze toward the horizon; the mountain cuts cleanly into clouds behind it (Shift+C off/on)",
             checks: ["CL-1", "CL-2"],
         ),
         (

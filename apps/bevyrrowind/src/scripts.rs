@@ -91,6 +91,7 @@ pub fn add(app: &mut App, vfs: Arc<Vfs>, auto_activate: u32) {
         .insert_resource(AutoActivate { remaining: auto_activate, timer: Timer::from_seconds(3.0, TimerMode::Once) })
         .init_resource::<SpawnTemplates>()
         .init_resource::<LiveSpawned>()
+        .init_resource::<ActivePlacements>()
         .add_systems(PostStartup, hook_placements)
         .add_systems(Update, (track_player, cell_facts, activate.after(crate::player::FocusUpdate), game_clock).chain().before(ScriptSlot::Update))
         .add_systems(Update, (report, apply_world_commands).after(ScriptSlot::Update));
@@ -189,14 +190,45 @@ fn live_spawn(world: &mut World, handle: Handle, record: &str, ws: &WorldspaceId
 /// Wraps the placement spawners so R0 activation registers the placement as a script handle.
 fn hook_placements(spawners: Option<ResMut<PlacementSpawners>>) {
     let Some(mut spawners) = spawners else { return };
-    for class in [PlacementClass::Static, PlacementClass::Dynamic, PlacementClass::Door, PlacementClass::Light, PlacementClass::Actor] {
+    let classes = [PlacementClass::Static, PlacementClass::Dynamic, PlacementClass::Door, PlacementClass::Light, PlacementClass::Actor, mw_world::source::CONTAINER];
+    for class in classes {
         if let Some(inner) = spawners.for_class(class).cloned() {
             spawners.set(class, Arc::new(ScriptHandleHook(inner)));
         }
     }
 }
 
-/// Registers placements entering R0 in [`ScriptPlacements`] and removes them on leaving.
+/// An R0 placement that can leave the world through gameplay (an item taken): what its
+/// spawner chain needs to deactivate it early (`inventory.rs`).
+#[derive(Clone)]
+pub struct ActivePlacement {
+    pub placement: IndexedPlacement,
+    pub worldspace: WorldspaceId,
+    pub cell: IVec3,
+    pub cell_entity: Entity,
+}
+
+/// R0 items and lights (the classes the player can take), by placement id.
+#[derive(Resource, Default)]
+pub struct ActivePlacements(pub HashMap<PlacementId, ActivePlacement>);
+
+impl ActivePlacements {
+    /// Runs `placement`'s deactivation hooks now (physics body, script handle, sounds), as if
+    /// its cell had left R0, and forgets it. The caller removes it from the overlay and
+    /// despawns its visuals.
+    pub fn deactivate(world: &mut World, id: PlacementId) -> Option<ActivePlacement> {
+        let active = world.get_resource_mut::<ActivePlacements>()?.0.remove(&id)?;
+        let spawner = world.get_resource::<PlacementSpawners>().and_then(|s| s.for_class(active.placement.placement.class).cloned());
+        if let Some(spawner) = spawner {
+            let cx = ActivateCx { worldspace: &active.worldspace, cell: active.cell, cell_entity: active.cell_entity };
+            spawner.deactivate(world, &cx, &active.placement);
+        }
+        Some(active)
+    }
+}
+
+/// Registers placements entering R0 in [`ScriptPlacements`] (items and lights also in
+/// [`ActivePlacements`]) and removes them on leaving.
 struct ScriptHandleHook(Arc<dyn PlacementSpawner>);
 
 impl PlacementSpawner for ScriptHandleHook {
@@ -227,11 +259,20 @@ impl PlacementSpawner for ScriptHandleHook {
                 },
             );
         }
+        if matches!(p.class, PlacementClass::Dynamic | PlacementClass::Light)
+            && let Some(mut active) = world.get_resource_mut::<ActivePlacements>()
+        {
+            let entry = ActivePlacement { placement: placement.clone(), worldspace: cx.worldspace.clone(), cell: cx.cell, cell_entity: cx.cell_entity };
+            active.0.insert(p.id, entry);
+        }
     }
     fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
         self.0.deactivate(world, cx, placement);
         if let Some(mut placements) = world.get_resource_mut::<ScriptPlacements>() {
             placements.loaded.remove(&Handle(placement.placement.id.0));
+        }
+        if let Some(mut active) = world.get_resource_mut::<ActivePlacements>() {
+            active.0.remove(&placement.placement.id);
         }
     }
 }

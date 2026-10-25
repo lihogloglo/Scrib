@@ -8,12 +8,14 @@
 //! startup: use the `--off`/`--lod-tint` flags and compare two runs.
 //!
 //! Keys: F1 help, F2 sun shadows, F3 terrain far shadows, F4 DLSS mode,
-//! F5 far-field tint, F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
+//! Shift+F6 far-field tint (F5 / F9 are quicksave / quickload, `saves.rs`), F6 terrain LOD colors, F7 wireframe (terrain and skinned meshes; G shows the physics colliders, ragdoll capsules and joints, `physics.rs`),
 //! F8 streaming rings, `[` / `]` hour -/+ 0.5 (Shift: 0.1), P pause clock,
-//! T clock speed (x1, x4, x20), F9 copy camera (`--camera` string), F10 clouds on/off,
+//! T clock speed (x1, x4, x20), Shift+F12 copy camera (`--camera` string), Shift+C clouds on/off (also console
+//! `flip clouds`; F10 is the keybinds screen, `controls.rs`),
 //! C next weather (forced everywhere with its transition), F12 screenshot,
 //! B smooth ↔ vanilla character bodies (handled in `actors.rs`).
-//! Agents reach the same switches over BRP ([`crate::remote`], `remote` feature).
+//! Agents reach the same switches over BRP ([`crate::remote`], `remote` feature), the
+//! dev console (backquote) as `on`/`off`/`flip <name>` ([`crate::console`]).
 
 use std::fmt::Write as _;
 
@@ -32,7 +34,7 @@ use sf_world_bevy::big_space::prelude::CellCoord;
 /// Adds the keys and overlay (and BRP, with the `remote` feature) when the run is interactive.
 pub fn add(app: &mut App, interactive: bool) {
     if interactive {
-        app.add_plugins(LiveAbPlugin);
+        app.add_plugins((LiveAbPlugin, crate::console::ConsoleWiring));
         #[cfg(feature = "remote")]
         crate::remote::add(app);
     }
@@ -148,8 +150,7 @@ pub(crate) enum Switch {
     Rings,
 }
 
-/// Names for BRP ([`crate::remote`]).
-#[cfg(feature = "remote")]
+/// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
     pub(crate) const ALL: [Self; 7] = [
         Self::SunShadows,
@@ -180,9 +181,7 @@ impl Switch {
     pub(crate) fn names() -> String {
         Self::ALL.map(Self::name).join(", ")
     }
-}
 
-impl Switch {
     const fn label(self) -> &'static str {
         match self {
             Self::SunShadows => "sun shadows",
@@ -332,12 +331,10 @@ fn on_off(v: bool) -> &'static str {
     if v { "on" } else { "off" }
 }
 
-/// Keys that toggle a [`Switch`].
-const SWITCH_KEYS: [(KeyCode, Switch); 7] = [
+/// Keys that toggle a [`Switch`] (Shift+F6: far-field tint, in [`keys`]).
+const SWITCH_KEYS: [(KeyCode, Switch); 5] = [
     (KeyCode::F2, Switch::SunShadows),
     (KeyCode::F3, Switch::TerrainFarShadows),
-    (KeyCode::F10, Switch::Clouds),
-    (KeyCode::F5, Switch::FarTint),
     (KeyCode::F6, Switch::TerrainLodColors),
     (KeyCode::F7, Switch::Wireframe),
     (KeyCode::F8, Switch::Rings),
@@ -355,11 +352,16 @@ fn keys(
     mut cloud_preset: Local<usize>,
 ) {
     let now = real.elapsed_secs();
+    let shifted = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     for (key, switch) in SWITCH_KEYS {
-        if input.just_pressed(key) {
+        if input.just_pressed(key) && !(shifted && key == KeyCode::F6) {
             let text = switch.set(&mut state, &mut s, None);
             state.note(text, now);
         }
+    }
+    if shifted && input.just_pressed(KeyCode::F6) {
+        let text = Switch::FarTint.set(&mut state, &mut s, None);
+        state.note(text, now);
     }
     if input.just_pressed(KeyCode::F4) {
         let text = if let Some(u) = s.upscaling.as_mut() {
@@ -372,7 +374,11 @@ fn keys(
         };
         state.note(text, now);
     }
-    if input.just_pressed(KeyCode::KeyC) && s.weather.is_some() {
+    let shift = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    if input.just_pressed(KeyCode::KeyC) && shift {
+        let text = Switch::Clouds.set(&mut state, &mut s, None);
+        state.note(text, now);
+    } else if input.just_pressed(KeyCode::KeyC) && s.weather.is_some() {
         // The Morrowind weathers in `REGN` order, each over the climate's transition.
         *cloud_preset = (*cloud_preset + 1) % mw_weather::WeatherType::ALL.len();
         let text = set_weather(&mut s, Some(mw_weather::WeatherType::ALL[*cloud_preset]), None, None);
@@ -404,7 +410,7 @@ fn keys(
             state.note(format!("clock x{} (game time x{})", time.0.time_scale / TIME_SCALES[0], time.0.time_scale), now);
         }
     }
-    if input.just_pressed(KeyCode::F9)
+    if shifted && input.just_pressed(KeyCode::F12)
         && let Ok((global, local, cell)) = camera.single()
     {
         let raw = camera_string(global, local, cell);
@@ -416,7 +422,7 @@ fn keys(
         let copied = clipboard.and_then(|mut c| c.set_text(line.clone()).ok()).is_some();
         state.note(format!("{line}{}", if copied { "  (copied)" } else { "" }), now);
     }
-    if input.just_pressed(KeyCode::F12) {
+    if !shifted && input.just_pressed(KeyCode::F12) {
         let name = crate::scenes::active().map_or("view", |s| s.name.as_str());
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let path = std::path::PathBuf::from("shots").join(format!("{name}-{secs}.png"));
@@ -495,10 +501,10 @@ fn overlay(
         let _ = write!(
             out,
             "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
-             F5 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
+             Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
              G physics colliders (ragdoll capsules, joints) {colliders}\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift sprint, Ctrl sneak, Tab 1st/3rd person, wheel zoom)\n\
-             F10 clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  F9 copy camera  F12 screenshot  B bodies {bodies}  |  --off {flags_off}",
+             Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),

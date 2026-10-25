@@ -35,6 +35,7 @@ sf_script_bevy = { path = "../superfargoth/crates/sf_script_bevy" }
 sf_atmos_bevy = { path = "../superfargoth/crates/sf_atmos_bevy" }
 sf_sky_bevy = { path = "../superfargoth/crates/sf_sky_bevy" }
 sf_shadow_cache_bevy = { path = "../superfargoth/crates/sf_shadow_cache_bevy" }
+sf_console_bevy = { path = "../superfargoth/crates/sf_console_bevy" }
 
 sf_terrain = { path = "../superfargoth/crates/sf_terrain" }
 sf_terrain_bevy = { path = "../superfargoth/crates/sf_terrain_bevy" }
@@ -54,12 +55,15 @@ sf_camera = { path = "../superfargoth/crates/sf_camera" }
 sf_action_bevy = { path = "../superfargoth/crates/sf_action_bevy" }
 sf_camera_bevy = { path = "../superfargoth/crates/sf_camera_bevy" }
 sf_rpg = { path = "../superfargoth/crates/sf_rpg" }
+# Saves (`saves.rs`, ROADMAP 2.5).
+sf_save_bevy = { path = "../superfargoth/crates/sf_save_bevy" }
 # Dialogue, journal and HUD screens in the app (lane dialogue, ROADMAP 2.2/2.4).
 sf_rpg_ui = { path = "../superfargoth/crates/sf_rpg_ui" }
 sf_ui = { path = "../superfargoth/crates/sf_ui" }
 sf_ui_bevy = { path = "../superfargoth/crates/sf_ui_bevy" }
 sf_ui_css = { path = "../superfargoth/crates/sf_ui_css" }
 sf_ui_screens = { path = "../superfargoth/crates/sf_ui_screens" }
+sf_ui_inventory = { path = "../superfargoth/crates/sf_ui_inventory" }
 # Same version as superfargoth (sf_ui_bevy's input contexts).
 bevy_enhanced_input = { version = "0.27", default-features = false }
 

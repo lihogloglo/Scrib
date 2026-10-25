@@ -83,12 +83,16 @@ mw_audio.workspace = true
 # NPC voices (`audio.rs`, dev builds): the INFO tables and conversation contexts.
 mw_rpg.workspace = true
 sf_rpg.workspace = true
+# Quicksave / quickload over the framework's save sections (`saves.rs`).
+sf_save_bevy.workspace = true
 # The dialogue window on mw_rpg (`dialogue.rs`).
 sf_rpg_ui.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_css.workspace = true
 sf_ui_screens.workspace = true
+# The inventory screen's catalog and view (`inventory_ui.rs`).
+sf_ui_inventory.workspace = true
 bevy_enhanced_input.workspace = true
 sf_weather.workspace = true
 sf_weather_bevy.workspace = true
@@ -96,6 +100,8 @@ sf_audio.workspace = true
 sf_audio_bevy = { workspace = true, features = ["weather"] }
 sf_sky_bevy = { workspace = true, features = ["pcss"] }
 sf_shadow_cache_bevy.workspace = true
+# Dev console in the interactive viewer (`console.rs`, ROADMAP 1.13).
+sf_console_bevy = { workspace = true, features = ["overlay"] }
 
 sf_terrain_bevy.workspace = true
 sf_vfs.workspace = true
