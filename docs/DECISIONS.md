@@ -1514,3 +1514,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-23 (owner, ARCHITECTURE §1b): modern rules are the goal; classic rules are a cheap nice-to-have built last.
   Content mechanics (MWScript, dialogue, magic effects, levelled lists, crime) are shared and ported from OpenMW in
   bevyrrowind; feel systems (combat, progression, AI, formulas) keep a seam. Modern AI differs from MW packages.
+- 2026-10-25 (owner, refines §1b): OpenMW is borrowed only for Morrowind-specific mechanics, in bevyrrowind `mw_*`.
+  Framework systems (saves, dialogue, quests, journal, UI screens) stay format-agnostic: Morrowind's format works
+  natively through its adapter; Skyrim-style or generic dialogue/quest formats must plug in the same way.
+- 2026-10-25 (player): the streaming camera stays the door traveller and script "player"; the action body follows it
+  across worldspaces. Activation reuses `sf_script_bevy::Activated`/`ActivationOutcome` (no new message); the focus
+  ray (OpenMW, `iMaxActivateDist` + arm length) is app-side in bevyrrowind.
