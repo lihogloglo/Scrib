@@ -345,14 +345,24 @@ pub(crate) fn spawn_keybinds(
     }
 }
 
-/// An action's display name: its Fluent label, else the action name.
+/// An action's display name: its Fluent label (the game's strings), else the action name made
+/// readable (`move_forward` reads "Move forward") so a missing string still shows something.
 fn action_label(row: &KeybindRow, localizer: Option<&UiLocalizer>) -> String {
     match localizer {
         Some(l) if !row.label.is_empty() && l.0.has(&row.label) => {
             l.0.format(&row.label, None).into_owned()
         }
-        _ => row.action.action.clone(),
+        _ => readable(&row.action.action),
     }
+}
+
+/// `move_forward` / `move-forward` as "Move forward".
+fn readable(id: &str) -> String {
+    let spaced = id.replace(['_', '-'], " ");
+    let mut chars = spaced.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// What a slot shows: the input's glyph label, or the unbound mark.

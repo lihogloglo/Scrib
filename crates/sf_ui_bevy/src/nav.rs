@@ -8,6 +8,7 @@
 
 use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
+use bevy_input_focus::InputFocusVisible;
 use bevy_math::CompassOctant;
 use bevy_time::Time;
 use bevy_ui::auto_directional_navigation::AutoDirectionalNavigator;
@@ -123,6 +124,7 @@ pub fn held_direction(digital: (i8, i8), stick: bevy_math::Vec2) -> Option<Compa
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn navigate(
     time: Res<Time>,
     mut state: ResMut<NavState>,
@@ -131,6 +133,7 @@ pub(crate) fn navigate(
     owners: Query<&UiScreenRoot, With<UiOwnsFocus>>,
     mut events: MessageWriter<UiNavEvent>,
     mut navigator: AutoDirectionalNavigator,
+    focus_visible: Option<ResMut<InputFocusVisible>>,
 ) {
     let (mut up, mut down, mut left, mut right) = (false, false, false, false);
     let mut stick = bevy_math::Vec2::ZERO;
@@ -152,6 +155,12 @@ pub(crate) fn navigate(
     let Some(direction) = state.repeat.update(held, time.delta_secs()) else {
         return;
     };
+    // Navigating by keys or pad shows where focus is (`:focus-visible`, the fallback ring).
+    if let Some(mut visible) = focus_visible
+        && !visible.0
+    {
+        visible.0 = true;
+    }
     let target = screens.0.input_target().map(|s| &s.id);
     if let Some(screen) = target.filter(|t| owners.iter().any(|r| r.0 == **t)) {
         events.write(UiNavEvent {

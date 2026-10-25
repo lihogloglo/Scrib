@@ -6,6 +6,7 @@ use bevy_input::ButtonState;
 use bevy_input::gamepad::{Gamepad, GamepadButton};
 use bevy_input::keyboard::KeyboardInput;
 use bevy_input::mouse::{MouseButtonInput, MouseMotion, MouseWheel};
+use bevy_input_focus::InputFocusVisible;
 pub use sf_ui::{Device, Glyph, PadFamily};
 
 use crate::actions::{UiAction, UiKeymap};
@@ -44,10 +45,10 @@ pub(crate) fn track_input_mode(
     mut wheel: MessageReader<MouseWheel>,
     gamepads: Query<(Entity, &Gamepad)>,
     mut edges: Local<PadEdges>,
+    focus_visible: Option<ResMut<InputFocusVisible>>,
 ) {
     // `|`, not `||`: every reader is drained each frame.
-    let kbm = keys.read().any(|k| k.state == ButtonState::Pressed)
-        | buttons.read().any(|b| b.state == ButtonState::Pressed)
+    let mouse = buttons.read().any(|b| b.state == ButtonState::Pressed)
         | (motion
             .read()
             .map(|m| m.delta)
@@ -55,6 +56,7 @@ pub(crate) fn track_input_mode(
             .length()
             > MOUSE_USE)
         | (wheel.read().count() > 0);
+    let kbm = keys.read().any(|k| k.state == ButtonState::Pressed) | mouse;
     let mut pad = false;
     let mut pressed = Vec::new();
     let mut deflected = Vec::new();
@@ -74,6 +76,14 @@ pub(crate) fn track_input_mode(
         pad |= used;
     }
     *edges = PadEdges { pressed, deflected };
+    // Focus visuals (`:focus-visible`, the fallback ring) follow the device: shown for the pad
+    // and for keyboard navigation (`nav::navigate`), hidden once the mouse is used, as browsers do.
+    if let Some(mut visible) = focus_visible
+        && (pad || mouse)
+        && visible.0 != pad
+    {
+        visible.0 = pad;
+    }
     // Both in one frame: the gamepad wins (mouse jitter is common, a stray
     // pad press is not).
     let device = if pad {

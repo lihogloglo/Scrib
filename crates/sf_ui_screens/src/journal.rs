@@ -37,7 +37,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, classes, panel, part, part_with, relabel, set_disabled, show, spawn_button,
+    ScreenColors, centred_window, classes, panel, part, part_with, relabel, set_disabled, show,
+    spawn_button,
 };
 use crate::{ScreenSystems, screen_of};
 
@@ -209,11 +210,11 @@ pub(crate) fn spawn_journal(
     for root in &roots {
         commands.entity(root).insert((
             part("sf-journal"),
-            Node {
+            centred_window(Node {
                 column_gap: Val::Px(16.0),
                 padding: UiRect::all(Val::Px(12.0)),
                 ..Node::default()
-            },
+            }),
             BackgroundColor(colors.panel),
         ));
         let book = commands

@@ -78,6 +78,11 @@ in the sections below; R2b's limits and fallback plan stay here because they bin
   contract survives: it is *the CSS subset and property names documented in this spec*, not
   flair's API, so `sf_ui_css` could be reimplemented on `cssparser` + `selectors` (or
   `lightningcss`) without touching mod files; (d) never let flair types leak out of `sf_ui_css`.
+- **Buttons and states** (uipolish 2026-10-25): every `bevy_ui_widgets::Button` gets the class `sf-button`
+  and picking's `Hovered` (required component, `sf_ui_css`), so themes style `:hover`, `:active` (the widget's
+  `Pressed`) and `:focus-visible` (`InputFocusVisible`: on for pad and arrow-key navigation, off once the mouse
+  is used, `sf_ui_bevy` device/nav). The code focus ring (`ScreenColors::focus_ring`) follows the same rule;
+  a theme that shows focus itself sets it to `None`.
 
 ## Stack decision
 

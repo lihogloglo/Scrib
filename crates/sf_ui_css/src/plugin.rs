@@ -14,6 +14,8 @@ use bevy_flair::parser::{CssStyleLoaderErrorMode, CssStyleLoaderSetting};
 use bevy_flair::style::components::{AttributeList, ClassList, Styled};
 use bevy_flair::style::{FlairStylePlugin, StyleSheet};
 use bevy_log::warn;
+use bevy_picking::hover::Hovered;
+use bevy_ui_widgets::Button;
 use sf_ui_bevy::{Device, InputMode, UiRegistryRes, UiScreenRoot, UiSettings};
 
 use crate::compose::{ComposedSheet, Composition, LayerKind, asset_url};
@@ -89,6 +91,10 @@ impl Plugin for UiCssPlugin {
         if !app.is_plugin_added::<FlairStylePlugin>() {
             app.add_plugins(FlairPlugin);
         }
+        // flair's `:hover` reads picking's `Hovered`, which picking only tracks on entities that
+        // have one: every button gets it, so themes can style `:hover` (`:active` reads the
+        // widget's `Pressed`, `:focus` / `:focus-visible` the input focus). Err: already required.
+        let _ = app.try_register_required_components::<Button, Hovered>();
         app.init_resource::<UiCssSheets>()
             .init_resource::<UiCssReport>()
             .init_resource::<UiCssState>()
@@ -156,6 +162,11 @@ impl UiCssReport {
             .filter(move |i| i.mod_id.as_deref() == Some(mod_id))
     }
 }
+
+/// Class every `bevy_ui_widgets::Button` gets on top of its own `UiClass`, so a theme styles all
+/// buttons with one rule set (`.sf-button`, `:hover`, `:active`, `:focus-visible`) and a screen's
+/// part class only for what differs.
+pub const BUTTON_CLASS: &str = "sf-button";
 
 /// Classes for a styled node (`.class` selectors), space separated. `sf_ui_css` owns flair's
 /// class list; screen roots also get the managed root classes.
@@ -384,8 +395,8 @@ fn apply_classes(
     mode: Res<InputMode>,
     mut state: ResMut<UiCssState>,
     changed: Query<
-        (Entity, Option<&UiClass>, Has<UiScreenRoot>),
-        Or<(Changed<UiClass>, Added<UiScreenRoot>)>,
+        (Entity, Option<&UiClass>, Has<UiScreenRoot>, Has<Button>),
+        Or<(Changed<UiClass>, Added<UiScreenRoot>, Added<Button>)>,
     >,
     roots: Query<(Entity, Option<&UiClass>), With<UiScreenRoot>>,
 ) {
@@ -395,8 +406,11 @@ fn apply_classes(
         state.roots_dirty = false;
         state.input = input;
     }
-    let class_list = |class: Option<&UiClass>, root: bool| {
+    let class_list = |class: Option<&UiClass>, root: bool, button: bool| {
         let mut list = ClassList::new(class.map_or("", |c| c.0.as_str()));
+        if button {
+            list.add(BUTTON_CLASS);
+        }
         if root {
             for c in &state.root_classes {
                 list.add(c.clone());
@@ -404,9 +418,9 @@ fn apply_classes(
         }
         list
     };
-    let mut apply = |entity: Entity, class: Option<&UiClass>, root: bool| {
+    let mut apply = |entity: Entity, class: Option<&UiClass>, root: bool, button: bool| {
         let mut e = commands.entity(entity);
-        e.insert(class_list(class, root));
+        e.insert(class_list(class, root, button));
         if root {
             let mut attributes = AttributeList::new();
             attributes.set_attribute("input", input);
@@ -415,12 +429,12 @@ fn apply_classes(
     };
     if roots_changed {
         for (entity, class) in &roots {
-            apply(entity, class, true);
+            apply(entity, class, true, false);
         }
     }
-    for (entity, class, root) in &changed {
+    for (entity, class, root, button) in &changed {
         if !(root && roots_changed) {
-            apply(entity, class, root);
+            apply(entity, class, root, button);
         }
     }
 }

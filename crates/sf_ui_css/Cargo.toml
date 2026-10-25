@@ -12,6 +12,8 @@ bevy_asset.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_flair.workspace = true
 bevy_log.workspace = true
+bevy_picking.workspace = true
+bevy_ui_widgets.workspace = true
 sf_mods.workspace = true
 sf_ui_bevy.workspace = true
 workspace-hack.workspace = true

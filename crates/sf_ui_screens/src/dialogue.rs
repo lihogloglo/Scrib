@@ -39,7 +39,8 @@ use sf_ui_bevy::{
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
 use crate::widgets::{
-    ScreenColors, classes, label, label_in, part, part_with, relabel, set_disabled, spawn_button,
+    ScreenColors, centred_window, classes, label, label_in, part, part_with, relabel, set_disabled,
+    spawn_button,
 };
 use crate::{is_target, screen_of};
 
@@ -146,14 +147,16 @@ pub(crate) fn spawn_dialogue(
     for (root, screen) in &roots {
         commands.entity(root).insert((
             part("sf-dialogue"),
-            Node {
+            centred_window(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(12.0),
                 padding: UiRect::all(Val::Px(12.0)),
                 width: Val::Px(900.0),
                 height: Val::Px(560.0),
+                max_width: Val::Percent(100.0),
+                max_height: Val::Percent(100.0),
                 ..Node::default()
-            },
+            }),
             BackgroundColor(colors.panel),
         ));
         let main = commands

@@ -9,7 +9,7 @@
 
 use bevy_color::Color;
 use bevy_ecs::prelude::*;
-use bevy_input_focus::InputFocus;
+use bevy_input_focus::{InputFocus, InputFocusVisible};
 use bevy_text::{FontSize, TextColor, TextFont};
 use bevy_ui::prelude::*;
 use bevy_ui::{ComputedNode, InteractionDisabled};
@@ -57,6 +57,9 @@ pub struct ScreenColors {
     pub cell: Color,
     pub bar_track: Color,
     pub bar_fill: Color,
+    /// Outline of the focused part while focus is visible; `None` for a theme that shows focus
+    /// itself (`:focus-visible`).
+    pub focus_ring: Option<Color>,
     pub font_size: f32,
 }
 
@@ -73,6 +76,7 @@ impl Default for ScreenColors {
             cell: Color::srgba(0.2, 0.18, 0.15, 0.9),
             bar_track: Color::srgba(0.0, 0.0, 0.0, 0.6),
             bar_fill: Color::srgb(0.75, 0.2, 0.15),
+            focus_ring: Some(Color::srgb(0.98, 0.82, 0.45)),
             font_size: 18.0,
         }
     }
@@ -180,6 +184,19 @@ pub fn relabel(commands: &mut Commands, entity: Entity, text: String, color: Col
 /// A panel part: `node` with the fallback background.
 pub fn panel(name: &'static str, node: Node, colors: &ScreenColors) -> impl Bundle {
     (part(name), node, BackgroundColor(colors.panel))
+}
+
+/// The default place of a window screen root: centred on the screen whatever its size (the CSS
+/// `left: 50%; top: 50%; transform: translate(-50%, -50%)` idiom; the translation is a
+/// fraction of the node's own size). A theme may still size or move it.
+pub fn centred_window(node: Node) -> (Node, UiTransform) {
+    let node = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Percent(50.0),
+        top: Val::Percent(50.0),
+        ..node
+    };
+    (node, UiTransform::from_translation(Val2::percent(-50.0, -50.0)))
 }
 
 /// Disabled state: `InteractionDisabled` (headless widgets ignore it) and the `disabled` class.
@@ -313,15 +330,21 @@ pub(crate) fn sync_bars(
     }
 }
 
-/// The fallback focus ring: an outline on the focused part (themes restyle `:focus`).
+/// The fallback focus ring: an outline on the focused part while focus is visible (pad or key
+/// navigation, never after the mouse: `InputFocusVisible`). Themes restyle `:focus-visible`;
+/// [`ScreenColors::focus_ring`] `None` turns the outline off for a theme that does.
 pub(crate) fn focus_ring(
     mut commands: Commands,
     focus: Res<InputFocus>,
+    visible: Option<Res<InputFocusVisible>>,
     colors: Res<ScreenColors>,
     parts: Query<(), With<UiPart>>,
     mut ringed: Local<Option<Entity>>,
 ) {
-    let now = focus.get().filter(|e| parts.contains(*e));
+    let shown = colors.focus_ring.is_some() && visible.is_some_and(|v| v.0);
+    let now = focus
+        .get()
+        .filter(|e| shown && parts.contains(*e));
     if now == *ringed {
         return;
     }
@@ -330,10 +353,12 @@ pub(crate) fn focus_ring(
     {
         e.try_remove::<Outline>();
     }
-    if let Some(new) = now {
+    if let Some(new) = now
+        && let Some(ring) = colors.focus_ring
+    {
         commands
             .entity(new)
-            .insert(Outline::new(Val::Px(2.0), Val::Px(1.0), colors.new));
+            .insert(Outline::new(Val::Px(2.0), Val::Px(1.0), ring));
     }
     *ringed = now;
 }

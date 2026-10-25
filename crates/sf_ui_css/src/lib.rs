@@ -22,7 +22,7 @@ mod plugin;
 
 pub use compose::{ComposedSheet, Composition, LayerKind, SheetSource, asset_url, mod_layer_name};
 pub use plugin::{
-    CONTENT_SOURCE, CssIssue, HIGH_CONTRAST_VARIANT, ROOT_SHEET, ROOT_SOURCE, UiClass, UiCssPlugin,
+    BUTTON_CLASS, CONTENT_SOURCE, CssIssue, HIGH_CONTRAST_VARIANT, ROOT_SHEET, ROOT_SOURCE, UiClass, UiCssPlugin,
     UiCssReport, UiCssRootDir, UiCssSheets, UiCssSourcePlugin, UiCssState, UiCssSystems,
     mods_from_profile,
 };

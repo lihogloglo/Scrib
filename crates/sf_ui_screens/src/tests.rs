@@ -248,6 +248,29 @@ fn dialogue(ui: &Ui, root: Entity) -> (&DialogueScreen, &DialogueParts) {
     )
 }
 
+/// A window root's laid-out centre (`UiGlobalTransform` includes its `UiTransform`).
+fn centre_of(ui: &Ui, root: Entity) -> (Vec2, Vec2) {
+    let at = ui.world().get::<UiGlobalTransform>(root).unwrap();
+    let size = ui.world().get::<ComputedNode>(root).unwrap().size();
+    (at.translation, size)
+}
+
+#[test]
+fn dialogue_and_journal_open_centred_on_screen() {
+    let mut ui = Ui::new();
+    let root = open_dialogue(&mut ui);
+    ui.frames(2);
+    let (centre, size) = centre_of(&ui, root);
+    assert_eq!(size, Vec2::new(900.0, 560.0));
+    assert!((centre - TARGET.as_vec2() / 2.0).length() < 1.0, "dialogue centre {centre}");
+
+    let mut ui = Ui::new();
+    let root = open_journal(&mut ui);
+    let (centre, size) = centre_of(&ui, root);
+    assert!(size.x > 100.0 && size.y > 100.0, "journal size {size}");
+    assert!((centre - TARGET.as_vec2() / 2.0).length() < 1.0, "journal centre {centre}");
+}
+
 #[test]
 fn dialogue_syncs_entries_topics_and_choices_by_key() {
     let mut ui = Ui::new();
@@ -820,7 +843,7 @@ fn keybinds_capture_conflict_and_grid_focus() {
     assert_eq!(ui.focus(), Some(choices[0]), "swap focused");
     assert!(
         ui.text_of(parts.overlay())
-            .contains("is also bound to back")
+            .contains("is also bound to Back")
     );
     // Right x3: cancel; confirm (on LT now) answers. The binding stays LT, focus returns to
     // the cell.
