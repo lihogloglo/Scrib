@@ -2,12 +2,15 @@
 //!
 //! A [`Holder`] entity's own `CellCoord + Transform` is its view (the eye,
 //! looking along −Z: a camera, or later a character's head). Each frame its
-//! view is recorded with the virtual clock; before each fixed step the
-//! carrier's hand moves to the view at the step's time, after it the item's
-//! pose is recorded relative to the hand (views are recorded in
-//! `RunFixedMainLoop` before the steps, [`crate::PhysicsSystems::Views`]); a carried item is drawn in holder
-//! space ([`HeldPoses`], read by the write-back), which removes the beat
-//! between the frame-rate view and the 60 Hz step. Input comes in as
+//! final view of the frame is recorded with that frame's virtual clock;
+//! before each fixed step the carrier's hand moves to the view at the step's
+//! time (extrapolated past the newest view), after it the item's pose is
+//! recorded relative to the hand. A carried item is drawn in holder space
+//! against the same final view ([`HeldPoses`], written to its transform), which
+//! removes the beat between the frame-rate view and the 60 Hz step. Both run
+//! in `PostUpdate`, [`crate::PhysicsSystems::HeldPoses`]: the host orders its
+//! camera rig before that set, or the item lags the view by a frame (S2-a,
+//! the player-mode vibration). Input comes in as
 //! [`CarryInput`] messages, results go out as [`CarryFeedback`].
 //!
 //! Limits are the host's: it fills [`Holder::carrier`]`.limits` from its
@@ -15,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use bevy_app::{App, FixedUpdate, RunFixedMainLoop, RunFixedMainLoopSystems, Update};
+use bevy_app::{App, FixedUpdate, PostUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_time::{Fixed, Time, Virtual};
 use bevy_transform::components::Transform;
@@ -87,10 +90,10 @@ pub(crate) fn add(app: &mut App) {
         .add_message::<CarryFeedback>()
         .init_resource::<HeldPoses>()
         .add_systems(FixedUpdate, (drive_hands.before(PhysicsSystems::Step), after_step.after(PhysicsSystems::Step)))
-        .add_systems(RunFixedMainLoop, record_views.in_set(PhysicsSystems::Views).in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop))
+        .add_systems(Update, apply_inputs.in_set(PhysicsSystems::Carry).after(PhysicsSystems::Stream).before(PhysicsSystems::WriteBack))
         .add_systems(
-            Update,
-            (apply_inputs, held_poses).chain().in_set(PhysicsSystems::Carry).after(PhysicsSystems::Stream).before(PhysicsSystems::WriteBack),
+            PostUpdate,
+            (record_views, held_poses, crate::write_held, crate::stream::follow_held).chain().in_set(PhysicsSystems::HeldPoses),
         );
 }
 

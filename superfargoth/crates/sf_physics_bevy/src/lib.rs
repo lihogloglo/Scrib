@@ -20,7 +20,7 @@
 
 use std::time::Instant;
 
-use bevy_app::{App, First, FixedUpdate, Plugin, Update};
+use bevy_app::{App, First, FixedUpdate, Plugin, PostUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
@@ -32,7 +32,7 @@ use sf_physics::{BodyDesc, BodyId, Layer, PhysicsEvent, PhysicsParams, PhysicsWo
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::TerrainHeights;
 use sf_world::WorldspaceId;
-use sf_world_bevy::big_space::prelude::CellCoord;
+use sf_world_bevy::big_space::prelude::{BigSpaceSystems, CellCoord};
 use sf_world_bevy::{ActiveWorldspace, StreamingAnchor, StreamingSystems, from_grid, transform_to_grid};
 
 pub mod carry;
@@ -206,14 +206,16 @@ pub enum PhysicsSystems {
     Stream,
     /// `FixedUpdate`: the step.
     Step,
-    /// `Update`, between `Stream` and `WriteBack`: holders' views, carry input,
-    /// held items' holder-space poses. Order the holder's view (camera)
-    /// before it.
+    /// `Update`, between `Stream` and `WriteBack`: carry input (grab, drop,
+    /// throw, rotate).
     Carry,
-    /// `RunFixedMainLoop`, before the fixed steps: holders' views (the steps
-    /// move the hands toward them). Order camera controllers that run there
-    /// before it.
-    Views,
+    /// `PostUpdate`, before transform propagation and `big_space`'s
+    /// recentering: holders' final views of the frame are recorded (stamped
+    /// with the frame's virtual time; the next frame's steps move the hands
+    /// toward them) and carried items are drawn in holder space against those
+    /// views. Order the host's camera rig (anything that moves a holder)
+    /// before it, or carried items lag the view by a frame.
+    HeldPoses,
     /// `Update`, after `Stream`: interpolated poses to transforms.
     WriteBack,
 }
@@ -235,6 +237,10 @@ impl Plugin for PhysicsPlugin {
             .init_resource::<PhysicsStreaming>()
             .init_resource::<BodyEntities>()
             .init_resource::<PhysicsEvents>()
+            .configure_sets(
+                PostUpdate,
+                PhysicsSystems::HeldPoses.before(bevy_transform::TransformSystems::Propagate).before(BigSpaceSystems::RecenterLargeTransforms),
+            )
             .add_systems(First, begin_frame)
             .add_systems(FixedUpdate, step.in_set(PhysicsSystems::Step))
             .add_systems(
@@ -360,7 +366,6 @@ fn track_bodies(
 fn write_back(
     physics: Res<Physics>,
     time: Res<Time<Fixed>>,
-    held: Res<HeldPoses>,
     mut bodies: Query<(&PhysicsBody, &mut CellCoord, &mut Transform)>,
 ) {
     let alpha = time.overstep_fraction();
@@ -369,14 +374,34 @@ fn write_back(
         if w.is_sleeping(b.id) != Some(false) {
             continue;
         }
-        let carried = held.0.get(&b.id).filter(|_| physics.worlds.active() == Some(&b.worldspace));
-        let Some(pose) = carried.copied().or_else(|| w.pose_at(b.id, alpha)) else { continue };
-        let (c, nt) = transform_to_grid(&pose);
-        if *cell != c {
-            *cell = c;
+        // Carried bodies are redrawn in holder space in `PostUpdate` (`HeldPoses`).
+        let Some(pose) = w.pose_at(b.id, alpha) else { continue };
+        set_grid_pose(&pose, &mut cell, &mut t);
+    }
+}
+
+fn set_grid_pose(pose: &sf_coords::WorldTransform, cell: &mut Mut<CellCoord>, t: &mut Mut<Transform>) {
+    let (c, nt) = transform_to_grid(pose);
+    if **cell != c {
+        **cell = c;
+    }
+    t.translation = nt.translation;
+    t.rotation = nt.rotation;
+}
+
+/// Carried bodies' holder-space poses (this frame's [`HeldPoses`]) → grid transforms.
+#[allow(clippy::needless_pass_by_value)]
+fn write_held(physics: Res<Physics>, held: Res<HeldPoses>, mut bodies: Query<(&PhysicsBody, &mut CellCoord, &mut Transform)>) {
+    if held.0.is_empty() {
+        return;
+    }
+    for (b, mut cell, mut t) in &mut bodies {
+        if physics.worlds.active() != Some(&b.worldspace) {
+            continue;
         }
-        t.translation = nt.translation;
-        t.rotation = nt.rotation;
+        if let Some(pose) = held.0.get(&b.id) {
+            set_grid_pose(pose, &mut cell, &mut t);
+        }
     }
 }
 

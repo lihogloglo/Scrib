@@ -725,7 +725,6 @@ pub(crate) fn follow_items(
     physics: Res<Physics>,
     streaming: Res<PhysicsStreaming>,
     time: Res<Time<Fixed>>,
-    held: Res<crate::HeldPoses>,
     mut pivots: Query<(&ItemPivot, &mut Transform)>,
 ) {
     if streaming.items.is_empty() {
@@ -738,13 +737,39 @@ pub(crate) fn follow_items(
         if !streaming.items.contains_key(&key) {
             continue;
         }
-        let carried = held.0.get(id).filter(|_| physics.worlds.active() == Some(&pivot.worldspace));
-        let Some(pose) = carried.copied().or_else(|| w.pose_at(*id, alpha)) else { continue };
-        let translation = pivot.origin.delta_f32(pose.pos);
-        if t.translation != translation || t.rotation != pose.rotation {
-            t.translation = translation;
-            t.rotation = pose.rotation;
+        // Carried items are redrawn in holder space in `PostUpdate` (`follow_held`).
+        let Some(pose) = w.pose_at(*id, alpha) else { continue };
+        set_pivot(pivot, &pose, &mut t);
+    }
+}
+
+fn set_pivot(pivot: &ItemPivot, pose: &WorldTransform, t: &mut Mut<Transform>) {
+    let translation = pivot.origin.delta_f32(pose.pos);
+    if t.translation != translation || t.rotation != pose.rotation {
+        t.translation = translation;
+        t.rotation = pose.rotation;
+    }
+}
+
+/// Carried items' visuals follow their holder-space poses (this frame's
+/// [`crate::HeldPoses`], `PostUpdate` after the camera).
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn follow_held(
+    physics: Res<Physics>,
+    streaming: Res<PhysicsStreaming>,
+    held: Res<crate::HeldPoses>,
+    mut pivots: Query<(&ItemPivot, &mut Transform)>,
+) {
+    if held.0.is_empty() || streaming.items.is_empty() {
+        return;
+    }
+    for (pivot, mut t) in &mut pivots {
+        if physics.worlds.active() != Some(&pivot.worldspace) {
+            continue;
         }
+        let key = (pivot.worldspace.clone(), pivot.id);
+        let Some(pose) = streaming.placed.get(&key).and_then(|id| held.0.get(id)) else { continue };
+        set_pivot(pivot, pose, &mut t);
     }
 }
 

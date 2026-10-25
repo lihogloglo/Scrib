@@ -534,3 +534,109 @@ mod activation_gate {
         assert_eq!(w.is_sleeping(id), Some(true), "the item is asleep on the floor");
     }
 }
+
+/// S2-a: a carried item is drawn against the camera's final pose of the frame
+/// (`PhysicsSystems::HeldPoses` after the host's rig in `PostUpdate`).
+mod carry_view {
+    use std::time::Duration;
+
+    use bevy_app::{App, PostUpdate};
+    use bevy_ecs::prelude::*;
+    use bevy_math::{Quat, Vec3};
+    use bevy_time::{Time, TimeUpdateStrategy, Virtual};
+    use bevy_transform::components::Transform;
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_physics::{BodyDesc, BodyKind, HolderLimits, Layer, ShapeRef};
+    use sf_world::WorldspaceId;
+    use sf_world_bevy::big_space::prelude::CellCoord;
+    use sf_world_bevy::from_grid;
+
+    use super::{app, pos_of};
+    use crate::{CarryInput, HeldPoses, Holder, Physics, PhysicsBody, PhysicsSystems};
+
+    const EYE: f32 = 1.6;
+
+    /// A camera rig like `sf_camera_bevy`'s: walks along +X at 1.4 m/s and turns at 2 rad/s after 0.2 s.
+    #[allow(clippy::needless_pass_by_value)]
+    fn rig(time: Res<Time<Virtual>>, mut cams: Query<&mut Transform, With<Holder>>) {
+        let t = (time.elapsed_secs() - 0.2).max(0.0);
+        for mut tr in &mut cams {
+            tr.translation = Vec3::new(1.4 * t, EYE, 0.0);
+            tr.rotation = Quat::from_rotation_y(2.0 * t);
+        }
+    }
+
+    fn pose(app: &mut App, e: Entity) -> (WorldPos, Quat) {
+        let r = app.world_mut().query::<&Transform>().get(app.world(), e).unwrap().rotation;
+        (pos_of(app, e), r)
+    }
+
+    /// Carries a box while the rig moves the camera at frame times `dts` (cycled) for 2 s; returns the
+    /// spread (m) of the drawn item's camera-space position over the last second, and every offset seen.
+    fn carry_spread(rig_before_draw: bool, dts: &[f64]) -> (f32, Vec<Vec3>) {
+        let ws = WorldspaceId::new("carry");
+        let mut app = app(&ws);
+        if rig_before_draw {
+            app.add_systems(PostUpdate, rig.before(PhysicsSystems::HeldPoses));
+        } else {
+            app.add_systems(PostUpdate, rig.after(PhysicsSystems::HeldPoses));
+        }
+        let cam = app.world_mut().spawn((Holder::new(HolderLimits::default()), CellCoord::default(), Transform::from_xyz(0.0, EYE, 0.0))).id();
+        let at = WorldTransform { pos: from_grid(&CellCoord::default(), &Transform::from_xyz(0.0, EYE, -1.0)), ..WorldTransform::IDENTITY };
+        let mut desc = BodyDesc::new(BodyKind::Dynamic { asleep: false }, at, ShapeRef::Box(Vec3::splat(0.1)), Layer::DEBRIS);
+        desc.mass = Some(2.0);
+        let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &desc);
+        let item = app.world_mut().spawn((PhysicsBody { worldspace: ws.clone(), id }, CellCoord::default(), Transform::default())).id();
+
+        // A few 60 Hz frames: the first view is recorded and the item is in the query pipeline.
+        for _ in 0..3 {
+            app.update();
+        }
+        app.world_mut().write_message(CarryInput::Grab(cam));
+        let (mut lo, mut hi, mut seen) = (Vec3::MAX, Vec3::MIN, Vec::new());
+        let mut elapsed = 0.0;
+        for (i, dt) in dts.iter().cycle().enumerate() {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(*dt)));
+            app.update();
+            elapsed += dt;
+            if elapsed > 0.1 {
+                assert!(app.world().resource::<HeldPoses>().0.contains_key(&id), "frame {i}: let go of the item");
+            }
+            let ((cp, cr), (ip, _)) = (pose(&mut app, cam), pose(&mut app, item));
+            let p = cr.inverse() * cp.delta(ip).as_vec3();
+            assert!(p.is_finite(), "frame {i}: {p}");
+            if elapsed > 1.0 {
+                (lo, hi) = (lo.min(p), hi.max(p));
+                seen.push(p);
+            }
+            if elapsed > 2.0 {
+                break;
+            }
+        }
+        ((hi - lo).max_element(), seen)
+    }
+
+    const FRAME_TIMES: [f64; 4] = [1.0 / 60.0, 1.0 / 45.0, 1.0 / 100.0, 1.0 / 72.0];
+
+    /// Sanity: no one-frame lag behind the camera (that would be centimetres of shake at varying frame times).
+    #[test]
+    fn carried_item_follows_the_final_camera() {
+        let (spread, seen) = carry_spread(true, &FRAME_TIMES);
+        assert!(spread < 5e-3, "camera-space spread {spread} m");
+        // Held up in front of the view.
+        assert!(seen.iter().all(|p| p.z < -0.3), "{:?}", seen.first());
+        // The test sees the lag when the rig runs after the draw (the pre-S2-a order).
+        let (stale, _) = carry_spread(false, &FRAME_TIMES);
+        assert!(stale > 5e-3, "a one-frame lag went unnoticed: {stale} m");
+    }
+
+    #[test]
+    #[ignore = "measurement: carried item's camera-space jitter, rig before vs after the draw"]
+    fn carried_item_jitter_measurement() {
+        for (name, dts) in [("60 fps", &[1.0 / 60.0][..]), ("144 fps", &[1.0 / 144.0][..]), ("mixed 45-100 fps", &FRAME_TIMES[..])] {
+            let (now, _) = carry_spread(true, dts);
+            let (stale, _) = carry_spread(false, dts);
+            println!("{name}: spread {:.3} mm drawn after the rig, {:.3} mm before it", now * 1e3, stale * 1e3);
+        }
+    }
+}

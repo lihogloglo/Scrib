@@ -41,7 +41,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera_controller::free_camera::{FreeCamera, run_freecamera_controller};
+use bevy::camera_controller::free_camera::FreeCamera;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use mw_physics::ItemRecords;
@@ -97,7 +97,8 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
         .insert_resource(Auto::from_env())
         .add_systems(PostStartup, hook)
         .init_resource::<FpsCap>()
-        .configure_sets(RunFixedMainLoop, sf_physics_bevy::PhysicsSystems::Views.after(run_freecamera_controller))
+        // Carried items are drawn against the camera's final pose of the frame (S2-a).
+        .configure_sets(PostUpdate, sf_physics_bevy::PhysicsSystems::HeldPoses.after(sf_camera_bevy::CameraSystems::Rig))
         .add_systems(
             Update,
             (
