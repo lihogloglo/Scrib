@@ -124,3 +124,14 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
   touches what it holds.
 - Status: deferred 2026-10-19 (phase0): characters/animation/physics rework in Phase 3; recheck there.
 - Source: physics-p6.
+
+### PH-11: Physics fix plan, night 2026-10-26 (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode)
+- Fixes: collision-ready gate (slice 1), arrival gate + safety net (2-3), clutter asleep until touched (4), OpenMW NIF
+  collision rules + full-triangle fallback (6-7, one collision rebake on first run), carried item drawn on the final
+  camera (8) and from the body's tick pose (9). Plan: `specs/physics-fix-plan.md`.
+- Look for: (a) F5, walk, F9 several times, also from outside: you never fall through the floor; the fade may hold a
+  moment longer. (b) Enter the office and Balmora interiors: bottles, plates, books don't move or roll on entry; NPCs
+  standing in clutter don't launch it. (c) Pick up a bottle (first and third person), walk and turn: no vibration;
+  in third person it stays in front of the body. (d) The spot where you fell through the Census Office floor: solid now?
+  If you still fall: note the F1 overlay coordinates. Also a thrown item still knocks clutter over.
+- Status: awaiting owner.

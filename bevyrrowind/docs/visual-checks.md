@@ -80,9 +80,10 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (24)
+### Awaiting owner (25)
 
 PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
+PH-11 | awaiting owner | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
 WE-5 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
 AL-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Animation lab overview
 AL-2 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Walk loop, turns
