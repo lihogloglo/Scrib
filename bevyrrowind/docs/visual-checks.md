@@ -80,7 +80,7 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (28)
+### Awaiting owner (24)
 
 PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
 WE-5 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
@@ -105,13 +105,9 @@ AU-3 | awaiting owner | [audio](visual-checks/audio.md) | NPC greetings, idle ch
 AU-4 | awaiting owner | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds
 PL-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Third-person walk and the use prompt
-IV-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Take items and Fargoth's ring (cargo dev view "Seyda...
-SV-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload, save, quit, load (cargo dev v...
 IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
-DJ-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Talk to Fargoth on E, ring flow, journal on J
-CO-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Live SSAO and A/B switches from the console
 
-### Partial (8)
+### Partial (10)
 
 FF-2 | partial | [rendering](visual-checks/rendering.md) | Far-field levels
 SH-15 | partial | [shadows](visual-checks/shadows.md) | 8 cached lamp shadows
@@ -121,12 +117,16 @@ LT-2 | partial | [lights](visual-checks/lights.md) | Dark interior keeps its lig
 PH-7 | partial | [physics](visual-checks/physics.md) | Item body shapes
 PH-9 | partial | [physics](visual-checks/physics.md) | knockdown and get-up
 WA-1 | partial | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
+IV-1 | partial | [player-ui](visual-checks/player-ui.md) | Take items and Fargoth's ring; inventory layout, hover, drop, paper doll missing
+CO-1 | partial | [player-ui](visual-checks/player-ui.md) | Console: COC interiors only, no paste, suggestion keys
 
-### Confirmed with follow-up (3)
+### Confirmed with follow-up (5)
 
 DL-3 | confirmed with follow-up | [rendering](visual-checks/rendering.md) | Ray-traced Census Office with Ray Reconstruction
 WA-2 | confirmed with follow-up | [terrain-water](visual-checks/terrain-water.md) | Shore and region optics, W3
 RO-A | confirmed with follow-up | [rendering](visual-checks/rendering.md) | Translucents cast no shadows; distant lights and rai...
+DJ-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Talk to Fargoth, Sellus greeting; resizable window wished
+SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
 ### Known bug (10)
 

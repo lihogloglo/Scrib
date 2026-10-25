@@ -16,7 +16,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   (was: on the roof, grey void). E does nothing while the journal or dialogue is open.
 - Status: awaiting owner.
 
-### IV-1: Take items and Fargoth's ring (`cargo dev view "Seyda Neen, Census and Excise Office"`) (awaiting owner)
+### IV-1: Take items and Fargoth's ring (`cargo dev view "Seyda Neen, Census and Excise Office"`) (partial)
 - E on a loose item (bottle, plate, book): it vanishes at once and stays gone after leaving and re-entering the
   office (overlay removal); log line `take: <id> (now N)`. Doors, NPCs and statics are unchanged.
 - E on the barrel by the desk (`chargen barrel fatigue`): log `take all from ... [(ring_keley, 1), ...]`; the barrel is
@@ -26,8 +26,10 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - I (pad Y / Triangle, rebindable on F10's gameplay rows) opens the inventory: record names, counts, DDS icons, tabs All/Weapon/
   Apparel/Magic/Misc; after the barrel it lists Fargoth's Ring. I or Esc closes; you can't walk or press E while open.
   Look for: icons drawn (not blank squares). Read-only: no equip/drop yet. Shot: `--open-ui inventory` (dev sample items).
+- Owner 2026-10-25: partial. Inventory opens; layout looks off, hover works poorly, no paper-doll view, no
+  drag-to-floor drop. Queued after the physics work (layout, hover, drop, then paper doll).
 
-### SV-1: Quicksave / quickload, save, quit, load (`cargo dev view "Seyda Neen, Census and Excise Office"`) (awaiting owner)
+### SV-1: Quicksave / quickload, save, quit, load (`cargo dev view "Seyda Neen, Census and Excise Office"`) (confirmed with follow-up)
 - In player mode take the barrel by the desk (ring) and a loose bottle, step into the middle of the room, Tab to first
   person, F5: toast "Quicksaved" (log `saved ...\saves\single\<world>\000001-quick.sfsave`).
 - Walk elsewhere, take another item, F9: fade, you stand where you saved facing the same way, first person, toast
@@ -38,6 +40,8 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   someone), F9: the menu closes, the bottle is back once (no double), the crate lies where it was at the save; you can
   walk and look right away. Jump, F5 mid-air, F9: you land as from the jump.
 - Known: F5/F9 rebind on F10 (gameplay rows), no gamepad default. Dev keys moved: far tint Shift+F6, copy camera Shift+F12.
+- Owner 2026-10-25: save/load works. BUG: on load the player sometimes spawns too low and falls through the floor
+  into the void. Also seen: an invisible hole in the Census Office floor. Both in the physics fix plan (2026-10-26).
 
 ### IN-1: Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
 - F10 opens the keybinds screen (UI + gameplay rows). Rebind Jump (keyboard slot) to J, close with F10 or Esc; J jumps,
@@ -71,8 +75,9 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   Sellus Gravius greets "I am Sellus Gravius. My background is not important...", not "Where are your papers?".
 - Known gaps: frames are flat CSS borders, not the 8-piece menu textures; no HUD; day headings placeholders;
   seen markers not saved.
-- Status: flow confirmed by owner 2026-10-25 (E talk, Shift+U ring, journal updates); journal layout, button
-  outlines and hover fixed by uipolish, awaiting owner.
+- Status: flow confirmed by owner 2026-10-25 (E talk, Shift+U ring, journal updates); Sellus greeting confirmed
+  2026-10-25 ~23:40. No barter/persuasion yet (expected). Wish (later): resizable dialogue window; check OpenMW's
+  recent UI refactor first. Journal layout, outlines and hover (uipolish) not reported yet.
 
 ## Dev console (superfargoth `console.md`; ROADMAP 1.13; `.sessions/console.md`)
 
@@ -86,4 +91,6 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   relaunch with --off froxels". `help on` lists the live names; Tab completes command and variable names. Keys don't reach the game while open.
 - Scope: GI dropped (owner 2026-10-25: raster GI not built yet, Phase 4). SSAO off keeps the prepasses (image A/B,
   not cost; cost = a `--off ssao` run). Unblocks SH-16 (AO) re-check.
-- Status: awaiting owner.
+- Owner 2026-10-25: partial. COC works for interiors only (`coc balmora` fails: exterior lookup, console slice 3);
+  can't paste; wants Down to select a suggestion and Enter to accept it. No upscaling/DLSS console switch exists yet.
+- Status: partial.
