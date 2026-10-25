@@ -1391,13 +1391,7 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   static shadow map** (objects only; terrain stays on the horizon march + SHM; `min` of both past `s_max`), our own
   pass (Bevy 0.20 has no shadow caching or extra shadow-view API); designed, not built yet. Until it lands, L0
   objects at 250-440 m cast no object shadows (`--off shadowsplits` restores the 504 m layout).
-- 2026-10-19 (shf6): local-light shadows (spec `specs/shadows.md`): the shadowed set is chosen by
-  `sf_sky_bevy::shadow_importance` (strength at the viewer from `range`, not the flickering intensity, × screen
-  coverage × priority, off-screen lights included, hysteresis), replacing nearest-first. Bevy 0.20 redraws every
-  point shadow every frame and is render-thread bound (~1.9 ms per light in the census office), so more shadowed
-  lights need our own cache: static casters cached per light in a persistent cube array, movable casters drawn over
-  a copy, the result copied into Bevy's cube array while Bevy's own views for those lights are emptied (Bevy keeps
-  sampling and filtering; upstream if it stays small).
+- (Superseded entries on shadows moved to [DECISIONS-superseded.md](DECISIONS-superseded.md).)
 
 - **2026-10-19, audio (audio.md):** playback is Bevy's `bevy_audio` (rodio) behind a thin `sf_audio_bevy`, with a Bevy-free `sf_audio` for bus gains, fades and one-shot draws. `bevy_kira_audio` 0.27 (Bevy 0.20) and `bevy_seedling` 0.8 (Bevy 0.19 only) are the upgrade paths when music/DSP needs them; the Mixer/SoundBank layer stays. No new external crate; the app enables `wav`/`mp3`.
 
@@ -1426,9 +1420,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-21 (render-audit, owner): shadows reset. Stock Bevy shadow path first (A), then upstream PRs #26149/#26161
   carried as a vendored `bevy_pbr` patch (B); no more injection into Bevy's private render-world state. The lamp cube
   cache (`sf_shadow_cache_bevy`, 947efc5) is deleted in A: #26161 replaces it. Torch-bearers cast shadows by budget.
-- 2026-10-21 (render-audit, after lampcost): the lamp cube cache stays through slice A and is deleted only when slice B's
-  patch (#26149/#26161) measures equal or better: stock Bevy costs ~+12 ms render thread for 8 lamps (perf.md
-  "Per-lamp GPU cost"). The ~0.8 ms GPU per lamp was Bevy contact shadows (0.68/lamp), not the cube maps.
 - 2026-10-21 (doorwalls): the game camera is HDR in every worldspace (an interior start was LDR until the sky's
   atmosphere required HDR, doubling main-pass pipeline variants), and the door fade also holds, within its gate cap,
   while the arrival camera's visible meshes wait for main-pass pipelines (bevyrrowind `pipeline_watch.rs`).
