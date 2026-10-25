@@ -532,7 +532,7 @@ rocks) follow the same rig and graph as skinned bodies.
 
 `sf_controller_bevy` (ORCA avoidance → kinematic mover → animation feed) on the characters
 `sf_character_bevy` spawns, driven by `mw_ai`'s `PathWalkScaffold` (app `walkers.rs`). Keys in
-the streamed view: J mover gizmos, K foot placement on/off. `--off walkers` turns it all off
+the streamed view: Shift+J mover gizmos, K foot placement on/off. `--off walkers` turns it all off
 (CH-3 then shows everyone standing).
 
 ## Synthetic scenes (framework examples)
@@ -885,11 +885,13 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   objects: it draws over them. Also the ash storm should blow from Red Mountain (Morrowind storms have a source;
   we2b already derives the summit storm source from LAND), which it doesn't seem to.
 - Also (owner 2026-10-19, round 6): in some weathers the clouds extend very high into the sky (deck base/thickness, WE4b local heights?).
-- Status: known bug, fix queued (ROADMAP 1.12). Cause found by owner 2026-10-21 (bw-owner10): ash/blight particles
-  travel horizontally/diagonally from the volcano, but precipitation occlusion only tests what is above a particle
-  (top-down map), not between the particle and the storm source, so upwind terrain and buildings don't block it.
-  renderfix1's "precip ruled out" checked depth, not the occlusion mask. Fix: occlusion map oriented along the
-  storm's travel direction (tilted ortho depth view). Storm direction from Red Mountain: Phase 4.
+- Status: occlusion part fixed, awaiting owner (storm-occlusion 2026-10-25). Cause (owner 2026-10-21, confirmed in code):
+  the map always looked straight down and terrain was opted out, so nothing upwind sheltered near-flat ash (fall 1 m/s).
+  Fix (`sf_precip_bevy` occlusion.rs): the map looks along the strongest kind's travel direction (never flatter than
+  15°, lee ≈ 3.7 obstacle heights), eye 100 m upwind; terrain is an occluder again; rain stays ~top-down.
+  Check: `.\bevyrrowind scene wk-balmora --weather ashstorm` (A/B `--off precipocc`): street in the lee of houses
+  and hills shows little/no ash, open ground and the `fg-redmtn-ashstorm` hillside (70 m up) still streak. Rain under
+  roofs unchanged (`--weather rain`). Storm direction from Red Mountain: Phase 4; tall clouds: open.
 
 ## Terrain (superfargoth `terrain.md`)
 
@@ -939,12 +941,12 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   float up to ~0.6 m; needs shorter steps, not IK). Status: awaiting owner.
 
 ### AL-4: Traversal heights (future vault / mantle / climb)
-- `scene level-anim-ledges` (cameras `ledges`, `ledges-close`); `U` for walk mode, walk into each box and the 3 m wall.
+- `scene level-anim-ledges` (cameras `ledges`, `ledges-close`); F11 for the player, walk into each box and the 3 m wall.
 - Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
   baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
 
 ### AL-5: Props push (PH-1, physics-adapter.md)
-- `scene level-anim-props` (cameras `props`, `props-close`); `U`, walk about 14 m east of the start, push crates, boxes and the table; `V` throws.
+- `scene level-anim-props` (cameras `props`, `props-close`); F11 (player under the camera), push crates, boxes and the table; `V` throws.
 - Look for: the NPC brushing the crate row without sliding through it, light boxes shoved with a lean or step (not a stuck walk cycle), the
   300 kg block unmoved, crates not jittering. Status: awaiting owner.
 
@@ -1083,4 +1085,42 @@ synthetic and app tests cover selection, timing and routing (`mw_audio` voice te
 ### AU-5: Swinging-door sounds (`cargo dev view "Seyda Neen, Census and Excise Office"`, any inner door)
 - Activate a non-load door: its open sound at the door; again: its close sound. The door itself does not move
   yet (the swing is a doors.rs follow-up), so the open/close order is the only state.
+- Status: awaiting owner.
+
+## Player (ROADMAP 2.1; `apps/bevyrrowind/src/player.rs`)
+
+### PL-1: Third-person walk and the use prompt (`cargo dev view "Seyda Neen"`, 10:00)
+- Starts in player mode (capsule scaffold). WASD, Shift, Space jump, Tab 1st/3rd, wheel zoom; walk to the Census and
+  Excise Office door, then to an NPC (Fargoth by the lighthouse path).
+- Look for: smooth walk and camera (no jitter, camera pushes in against walls); under the centre dot the prompt reads
+  `[E] Open  <door>` / `[E] Talk  <npc>` / `[E] Take  <item>`, it clears when you look away or step past ~2.7 m;
+  E on the door travels, the body arrives at the marker facing out.
+- Fixed 2026-10-25 (player3), check: focus is now a physics ray plus actor capsules, so in the Census and Excise Office
+  the dot on an NPC's chest reads `[E] Talk  <npc>` (was `Take  Broom`); walls block items behind them.
+  `cargo dev view "Seyda Neen, Census and Excise Office"` starts on the floor at the door's arrival marker, facing in
+  (was: on the roof, grey void). E does nothing while the journal or dialogue is open.
+- Status: awaiting owner.
+
+### IN-1: Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
+- F10 opens the keybinds screen (UI + gameplay rows). Rebind Jump (keyboard slot) to J, close with F10 or Esc; J jumps,
+  Space doesn't. Quit, start again: J still jumps (saved in `profiles/<profile>.toml`, `[bindings.gameplay]`).
+- Gamepad (Xbox layout): left stick walks (dead zone, no drift), right stick looks at a steady rate, A jumps, X uses
+  (door / NPC prompt), L3 sprints (held), B sneaks while held, R3 switches first/third person.
+- Ctrl / B: sneak only while held (default). On the Sneak row press the Hold cell (reads Toggle): one press sneaks,
+  the next stands; restart keeps Toggle. Sprint row works the same. Look for: no stuck sneak after closing the menu.
+- Status: awaiting owner.
+
+## Dialogue and journal (superfargoth `journal-ui.md`, `ui.md`; ROADMAP 2.4 / 2.2; `.sessions/dialogue2.md`)
+
+### DJ-1: Talk to Fargoth on E, ring flow, journal on J (`cargo dev view "Seyda Neen"`)
+- Walk (third person) to Fargoth outside the Census office; face him: E opens the dialogue window;
+  WASD and mouse look stop while it is open. Ask "ring", answer yes: no ring, disposition drops.
+- Shift+U (dev: gives the ring), ask "ring" again, yes: he thanks you; Goodbye or Esc closes; controls return.
+- J: the journal opens at the newest spread with both Fargoth's Ring entries (Day 1 headings); quest list (Finished tab) shows
+  "Fargoth's Ring" (finished, new marker); topic index R tab has "ring" with his lines. J or Esc closes it.
+- Theme (U3 mwtheme): Mystic Cards font, ini palette: speaker/headings pale gold, text tan, links blue, answers
+  dark red (hover lighter), topics tan; black translucent panels in bronze borders. Journal on the tx_menubook
+  parchment, black text, index panel beside it. Message boxes (`--open-ui message`): framed, no dimmed backdrop.
+- Known gaps: frames are flat CSS borders, not the 8-piece menu textures; no HUD; day headings placeholders;
+  seen markers not saved.
 - Status: awaiting owner.
