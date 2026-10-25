@@ -11,10 +11,5 @@ rustdocflags = ["-Clinker=rust-lld.exe"]
 # Iterate with Bevy dynamically linked: `cargo dev view "Balmora, Guild of Mages"`
 dev = "run -p bevyrrowind --features dev --"
 
-# DLSS builds (`--features dlss`): the SDK subset, Vulkan headers and
-# libclang live in ../sdk (not in any repo; `bash ../sdk/fetch.sh`).
-# Real environment variables win over these.
-[env]
-DLSS_SDK = { value = "../sdk/dlss", relative = true }
-VULKAN_SDK = { value = "../sdk/vulkan", relative = true }
-LIBCLANG_PATH = { value = "../sdk/libclang", relative = true }
+# DLSS: the game builds without NVIDIA's SDK (vendor/dlss_wgpu facade). The SDK env for the
+# separately shipped plugin lives in superfargoth/plugins/sf_dlss/.cargo/config.toml.

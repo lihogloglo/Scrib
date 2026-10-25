@@ -13,9 +13,10 @@ cargo build --release -p bevyrrowind                # same codegen, no symbols -
 cargo build --release -p bevyrrowind --features solari,dlss   # ray tracing + DLSS ("ultra")
 ```
 
-`dlss` builds need the SDK subset in `../sdk` (`sdk/fetch.sh`; `.cargo/config.toml` `[env]` points
-at it); `build.rs` copies the two NVIDIA DLLs next to the executable. `dlss` alone (without
-`solari`) is enough for Super Resolution on raster.
+`dlss` builds need no NVIDIA SDK (since 2026-10-25): DLSS runs from the separately built plugin
+package (`bash ../superfargoth/plugins/sf_dlss/build-package.sh`, needs `../sdk`), which `build.rs`
+copies to `target/<profile>/dlss/` (superfargoth `sky-lighting.md`, "DLSS plugin package"). `dlss`
+alone (without `solari`) is enough for Super Resolution on raster.
 
 ## Frame budget (ROADMAP 1.2)
 
@@ -466,6 +467,13 @@ Reference (2026-10-12, RTX 4060 Laptop on AC, release `solari,dlss`, Balmora 256
 11.9 ms, DLSS quality 8.9 (SR pass 2.1 ms), performance 9.2 (SR 2.8 ms), DLAA 11.7. Census Office 1440p:
 raster 3.5, `--rt` + RR auto 8.4, `--rt --off denoiser` 15.4, RR quality 12.9, RR native 26.5.
 Reports in `target/perf/dlss/`.
+
+DLSS plugin package parity (2026-10-25, dlss-plugin-2; release `solari,dlss`, the facade + `dlss/` package, driver
+617.42, GPU 2.58 GHz 66-68 °C, 3 interleaved runs, `target/perf/dlss2/`): Balmora 1440p median native (`--dlss off`)
+13.4-14.2 ms, DLSS quality 10.6-10.8 (GPU 9.0-9.2; SR pass 2.24-2.30 ms); Census Office 1440p `--rt` RR auto 8.8-9.2
+(RR pass 5.45-5.60 ms). Pass costs vs the crates.io build (SR 2.1, RR 5.2) are +0.15 / +0.3 ms across sessions and
+a driver update, with identical NGX parameters; the FFI call is CPU-side. No same-session A/B (needs a crates.io
+build). Balmora frame times moved with the scene since 10-12 (native was 11.9).
 
 ## GPU per pass (Nsight Systems, elevated)
 

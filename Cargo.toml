@@ -121,6 +121,8 @@ big_space = { path = "../superfargoth/vendor/big_space" }
 bevy_core_pipeline = { path = "../superfargoth/vendor/bevy_core_pipeline" }
 bevy_pbr = { path = "../superfargoth/vendor/bevy_pbr" }
 bevy_render = { path = "../superfargoth/vendor/bevy_render" }
+# Same NVIDIA-free dlss_wgpu facade (DLSS via the separately shipped ../superfargoth/plugins/sf_dlss).
+dlss_wgpu = { path = "../superfargoth/vendor/dlss_wgpu" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

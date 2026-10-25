@@ -1,55 +1,51 @@
-//! DLSS builds (`--features dlss`): copies NVIDIA's runtime DLLs next to the
-//! executable, where NVIDIA's loader looks for them (the DLSS SDK may not be
-//! redistributed, so they come from the local SDK in `../sdk`, see
-//! `.cargo/config.toml` and `superfargoth/docs/specs/sky-lighting.md`).
-//! `cargo run` would also find them through `DLSS_SDK`; the copy makes the
-//! exe start on its own (perf suite, shortcuts). Other builds: nothing.
+//! DEV CONVENIENCE ONLY (`--features dlss`): copies a locally built DLSS package into
+//! `target/<profile>/dlss/`, where the `dlss_wgpu` facade looks for it at runtime.
+//!
+//! The game exe contains no NVIDIA code and builds without NVIDIA's SDK; DLSS comes from the
+//! separately distributed package (`sf_dlss.dll` + NVIDIA's `nvngx_dlss(d).dll` + licence),
+//! built by `../superfargoth/plugins/sf_dlss/build-package.sh`. This copy only saves a manual
+//! step in dev; the `dlss/` folder must never go into a game release. No package: a warning,
+//! and the game reports DLSS unsupported. Other builds: nothing.
 
 use std::path::{Path, PathBuf};
 
-const DLLS: [&str; 2] = [
-    "nvngx_dlss.dll",  // Super Resolution
-    "nvngx_dlssd.dll", // Ray Reconstruction
-];
+/// Where `build-package.sh` assembles the package (relative to this crate).
+const PACKAGE: &str = "../../../superfargoth/target/sf_dlss/package/dlss";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=DLSS_SDK");
     if std::env::var_os("CARGO_FEATURE_DLSS").is_none() {
         return;
     }
-    let Some(sdk) = std::env::var_os("DLSS_SDK").map(PathBuf::from) else {
-        println!("cargo:warning=DLSS_SDK is not set; copy nvngx_dlss(d).dll next to the executable yourself");
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+    let package = manifest.join(PACKAGE);
+    println!("cargo:rerun-if-changed={}", package.display());
+    let Ok(entries) = std::fs::read_dir(&package) else {
+        println!(
+            "cargo:warning=no local DLSS package at {} (bash ../superfargoth/plugins/sf_dlss/build-package.sh); DLSS will be unavailable",
+            package.display()
+        );
         return;
     };
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    if target_os != "windows" {
-        // Linux loads libnvidia-ngx-dlss*.so the same way; not set up here.
-        return;
-    }
-    let source = sdk.join("lib").join(format!("Windows_{target_arch}")).join("rel");
     // OUT_DIR is <target>/<profile>/build/<pkg>-<hash>/out; the exe lands in <target>/<profile>.
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     let Some(exe_dir) = out_dir.ancestors().nth(3) else { return };
-    for dll in DLLS {
-        let from = source.join(dll);
-        println!("cargo:rerun-if-changed={}", from.display());
-        copy_if_newer(&from, &exe_dir.join(dll));
-        // Examples and tests run from deps/ and examples/.
-        for sub in ["deps", "examples"] {
-            if exe_dir.join(sub).is_dir() {
-                copy_if_newer(&from, &exe_dir.join(sub).join(dll));
-            }
+    let dest = exe_dir.join("dlss");
+    if let Err(e) = std::fs::create_dir_all(&dest) {
+        println!("cargo:warning=could not create {}: {e}", dest.display());
+        return;
+    }
+    for entry in entries.flatten() {
+        let from = entry.path();
+        if from.is_file() {
+            println!("cargo:rerun-if-changed={}", from.display());
+            copy_if_newer(&from, &dest.join(entry.file_name()));
         }
     }
 }
 
 fn copy_if_newer(from: &Path, to: &Path) {
-    let Ok(meta) = std::fs::metadata(from) else {
-        println!("cargo:warning=DLSS runtime {} missing (bash ../sdk/fetch.sh); DLSS will be unavailable", from.display());
-        return;
-    };
+    let Ok(meta) = std::fs::metadata(from) else { return };
     let same = std::fs::metadata(to).is_ok_and(|m| m.len() == meta.len() && m.modified().ok() >= meta.modified().ok());
     if !same && let Err(e) = std::fs::copy(from, to) {
         // A running exe keeps its DLLs locked; the old copy stays usable.
