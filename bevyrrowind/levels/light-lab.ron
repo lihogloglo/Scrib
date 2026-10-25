@@ -1,0 +1,58 @@
+// Synthetic test level (docs/specs/test-levels.md, "light-lab"): the light-cost lab. A closed
+// 20 x 20 x 5 m room (walls and a ceiling; `interior` = no sky, sun or moon, a dim ambient, as
+// a Morrowind interior cell) with a grid of pillars and boxes as shadow casters, two NPCs
+// walking a loop (movers; `--off actors` drops them), and parametric point lights spawned
+// through the game's lamp path (budget, contact shadows, shadow cache as for lamps).
+// The `--lab-lights N`, `--lab-ring D`, `--lab-radius R`, `--lab-orbit DEG_S` view flags edit
+// the rig; `perf sweep` steps one variable per run (docs/perf.md "Light lab").
+// Meters, y up, x east, z south; `at` = footprint center at the bottom.
+(
+    name: "light-lab",
+    description: "closed 20 x 20 x 5 m room, pillar and box casters, two walkers, parametric point lights (light-cost lab)",
+    cameras: [
+        (name: "wide", eye: (0.0, 1.7, 9.0), target: (0.0, 1.2, 0.0)),
+        (name: "close", eye: (1.5, 1.6, 2.5), target: (-2.0, 1.0, -2.0)),
+        (name: "top", eye: (-9.0, 4.6, 9.0), target: (0.0, 0.0, 0.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 9.8)),   // the walk-mode player, behind the `wide` camera
+        (name: "walker-a", at: (-8.0, 0.0, 8.0)),
+        (name: "walker-b", at: (8.0, 0.0, -8.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (21.0, 21.0))),
+        (name: "ceiling", shape: Box(size: (21.0, 0.3, 21.0)), at: (0.0, 5.0, 0.0), material: Grey),
+        (name: "wall-n", shape: Box(size: (21.0, 5.0, 0.3)), at: (0.0, 0.0, -10.35), material: Grey),
+        (name: "wall-s", shape: Box(size: (21.0, 5.0, 0.3)), at: (0.0, 0.0, 10.35), material: Grey),
+        (name: "wall-w", shape: Box(size: (0.3, 5.0, 21.0)), at: (-10.35, 0.0, 0.0), material: Grey),
+        (name: "wall-e", shape: Box(size: (0.3, 5.0, 21.0)), at: (10.35, 0.0, 0.0), material: Grey),
+
+        // Casters: a 4 x 4 grid, pillars and boxes alternating (4 m apart, clear of the 8 m walker loop).
+        (name: "p-1", shape: Cylinder(radius: 0.3, height: 2.5), at: (-6.0, 0.0, -6.0), material: White),
+        (name: "b-2", shape: Box(size: (1.0, 1.2, 1.0)), at: (-2.0, 0.0, -6.0), material: Orange),
+        (name: "p-3", shape: Cylinder(radius: 0.3, height: 2.5), at: (2.0, 0.0, -6.0), material: White),
+        (name: "b-4", shape: Box(size: (1.0, 1.2, 1.0)), at: (6.0, 0.0, -6.0), material: Orange),
+        (name: "b-5", shape: Box(size: (1.0, 1.2, 1.0)), at: (-6.0, 0.0, -2.0), material: Blue),
+        (name: "p-6", shape: Cylinder(radius: 0.3, height: 2.5), at: (-2.0, 0.0, -2.0), material: White),
+        (name: "b-7", shape: Box(size: (1.0, 1.2, 1.0)), at: (2.0, 0.0, -2.0), material: Blue),
+        (name: "p-8", shape: Cylinder(radius: 0.3, height: 2.5), at: (6.0, 0.0, -2.0), material: White),
+        (name: "p-9", shape: Cylinder(radius: 0.3, height: 2.5), at: (-6.0, 0.0, 2.0), material: White),
+        (name: "b-10", shape: Box(size: (1.0, 1.2, 1.0)), at: (-2.0, 0.0, 2.0), material: Green),
+        (name: "p-11", shape: Cylinder(radius: 0.3, height: 2.5), at: (2.0, 0.0, 2.0), material: White),
+        (name: "b-12", shape: Box(size: (1.0, 1.2, 1.0)), at: (6.0, 0.0, 2.0), material: Green),
+        (name: "b-13", shape: Box(size: (1.0, 1.2, 1.0)), at: (-6.0, 0.0, 6.0), material: Red),
+        (name: "p-14", shape: Cylinder(radius: 0.3, height: 2.5), at: (-2.0, 0.0, 6.0), material: White),
+        (name: "b-15", shape: Box(size: (1.0, 1.2, 1.0)), at: (2.0, 0.0, 6.0), material: Red),
+        (name: "p-16", shape: Cylinder(radius: 0.3, height: 2.5), at: (6.0, 0.0, 6.0), material: White),
+    ],
+    actors: [
+        (id: "fargoth", spawn: "walker-a",
+         path: Some((points: [(-8.0, 0.0, 8.0), (8.0, 0.0, 8.0), (8.0, 0.0, -8.0), (-8.0, 0.0, -8.0)], speed: 1.4))),
+        (id: "elone", spawn: "walker-b",
+         path: Some((points: [(8.0, 0.0, -8.0), (-8.0, 0.0, -8.0), (-8.0, 0.0, 8.0), (8.0, 0.0, 8.0)], speed: 1.4))),
+    ],
+    // 8 lamps 4 m apart at 3.5 m, radius 3 m (range 12 m at the default range_scale 4: like a
+    // Morrowind lamp, each covers most of the room).
+    lights: Some((count: 8, layout: Grid(spacing: 4.0), at: (0.0, 3.5, 0.0), radius: 3.0)),
+    interior: Some((ambient: (0.12, 0.11, 0.10))),
+)

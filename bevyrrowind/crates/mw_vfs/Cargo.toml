@@ -1,0 +1,18 @@
+[package]
+name = "mw_vfs"
+description = "Morrowind BSA archives and Data Files as superfargoth VFS sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mw_install.workspace = true
+sf_vfs.workspace = true
+tes3 = { workspace = true, features = ["bsa"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

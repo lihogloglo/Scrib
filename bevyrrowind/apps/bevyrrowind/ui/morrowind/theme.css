@@ -1,0 +1,228 @@
+/* Morrowind theme (builtin mod `bevyrrowind`, layer `theme`): the stock sf_ui screens restyled
+   with Morrowind's own palette, menu textures and OpenMW's Mystic Cards font. Served at
+   `ui/themes/morrowind/theme.css`; the `--mw-*` colour tokens above this comment are generated
+   from the install's Morrowind.ini `[FontColor]` (ui_theme.rs). A mod retunes one token with a
+   `:root` rule in its own layer, or replaces this file by VFS override. */
+
+@font-face {
+    font-family: "Mystic Cards";
+    src: url("sf_ui_content://ui/themes/morrowind/MysticCards.ttf");
+}
+
+:root {
+    /* Not ini values: Morrowind draws menus black at menu transparency, framed in bronze. */
+    --mw-panel: rgba(0, 0, 0, 0.78);
+    --mw-frame: rgb(128, 102, 60);
+    --mw-frame-thin: rgb(96, 78, 48);
+    font-family: "Mystic Cards";
+    font-size: 20px;
+    color: var(--mw-normal);
+}
+
+/* ---------------------------------------------------------------- buttons
+   Every button gets `.sf-button` (sf_ui_css), so these rules are the one button look; reuse
+   them for new screens and style a part class only where it differs. Morrowind's buttons are
+   text that changes colour, ini [FontColor] normal / over / pressed: `:hover` and the pad or
+   keyboard focus (`:focus-visible`) take "over", the press (`:active`) takes "pressed".
+   `.sf-button` alone is the bare text button (topics, tabs, rows); a framed one (Goodbye, OK,
+   menu entries) adds the thin bronze frame of the part rules below (vanilla draws those with
+   the eight `menu_button_frame_*` pieces). */
+
+.sf-button {
+    color: var(--mw-normal);
+    background-color: transparent;
+    border: 0px;
+
+    &:hover {
+        color: var(--mw-normal-over);
+    }
+
+    &:focus-visible {
+        color: var(--mw-normal-over);
+    }
+
+    &:active {
+        color: var(--mw-normal-pressed);
+    }
+}
+
+/* ---------------------------------------------------------------- dialogue window */
+
+.sf-dialogue {
+    padding: 14px;
+    border: 4px;
+    border-color: var(--mw-frame);
+    background-color: var(--mw-panel);
+}
+
+.sf-dialogue-speaker {
+    color: var(--mw-header);
+}
+
+.sf-dialogue-log,
+.sf-dialogue-side {
+    padding: 8px;
+    border: 2px;
+    border-color: var(--mw-frame-thin);
+}
+
+.sf-dialogue-heading {
+    color: var(--mw-header);
+}
+
+.sf-dialogue-text,
+.sf-dialogue-chosen {
+    color: var(--mw-normal);
+}
+
+.sf-dialogue-link {
+    color: var(--mw-link);
+}
+
+.sf-dialogue-link.unavailable {
+    color: var(--mw-disabled);
+}
+
+.sf-dialogue-notice {
+    color: var(--mw-notify);
+}
+
+.sf-dialogue-choice {
+    color: var(--mw-answer);
+
+    &:hover {
+        color: var(--mw-answer-over);
+    }
+
+    &:focus-visible {
+        color: var(--mw-answer-over);
+    }
+
+    &:active {
+        color: var(--mw-answer-pressed);
+    }
+}
+
+.sf-dialogue-goodbye {
+    border: 2px;
+    border-color: var(--mw-frame-thin);
+    justify-content: center;
+}
+
+/* ---------------------------------------------------------------- journal
+   Geometry from OpenMW's `files/data/mygui/openmw_journal.layout` (commit c47a48e2), in its
+   565x390 book units, drawn here at x1.5: tx_menubook stretched over 705x390 at x = -70 (the
+   art's side margins hang outside the book), pages 240x320 at (30, 22) and (295, 22), the
+   prev / next row at y = 350. So: image 1057.5x585 with -105 px side margins (the book takes
+   847.5 px in the row), pages 360x480 at (150, 33) and (547.5, 33), 37.5 px apart, nav row
+   48 px high from y = 525, centred under the spread. The window gets its full size (an absolute
+   box at left: 50% would otherwise shrink to the half screen) and nothing in it shrinks. */
+
+.sf-journal {
+    background-color: transparent;
+    align-items: center;
+    width: 1167.5px;
+    height: 609px;
+}
+
+.sf-journal-book {
+    width: 1057.5px;
+    height: 585px;
+    flex-shrink: 0;
+    margin: 0px -105px;
+    padding: 33px 150px 12px 150px;
+    row-gap: 12px;
+    background-image: url("sf_ui_content://textures/tx_menubook.dds");
+    -bevy-image-mode: stretch;
+    /* Bevy draws a node image in its content box by default: the art spans the whole box. */
+    -bevy-image-visual-box: border-box;
+    color: var(--mw-journal-topic);
+}
+
+.sf-reader-pages {
+    column-gap: 37.5px;
+}
+
+.sf-reader-page {
+    width: 360px;
+    height: 480px;
+    flex-shrink: 0;
+    padding: 0px;
+    background-color: transparent;
+    color: var(--mw-journal-topic);
+}
+
+.sf-journal-block.heading {
+    color: var(--mw-answer);
+}
+
+.sf-journal-hit {
+    color: var(--mw-journal-link);
+}
+
+.sf-reader-controls {
+    height: 48px;
+    justify-content: center;
+    column-gap: 48px;
+    color: var(--mw-journal-topic);
+}
+
+.sf-reader-prev,
+.sf-reader-next {
+    color: var(--mw-journal-link);
+
+    &:hover {
+        color: var(--mw-journal-link-over);
+    }
+
+    &:focus-visible {
+        color: var(--mw-journal-link-over);
+    }
+
+    &:active {
+        color: var(--mw-journal-link-pressed);
+    }
+}
+
+/* The index / quest panel beside the book, as tall as the spread and its nav row. */
+.sf-journal-index {
+    width: 280px;
+    height: 525px;
+    flex-shrink: 0;
+    padding: 10px;
+    border: 4px;
+    border-color: var(--mw-frame);
+    background-color: var(--mw-panel);
+    color: var(--mw-normal);
+}
+
+.sf-journal-tab.selected,
+.sf-journal-filter.selected,
+.sf-journal-row.selected {
+    color: var(--mw-normal-pressed);
+}
+
+.sf-journal-tab.disabled {
+    color: var(--mw-disabled);
+}
+
+/* ---------------------------------------------------------------- message boxes */
+
+#sf-message-box {
+    background-color: transparent;
+}
+
+#sf-message-box-panel {
+    border: 4px;
+    border-color: var(--mw-frame);
+    background-color: var(--mw-panel);
+}
+
+#sf-message-box-text {
+    color: var(--mw-normal);
+}
+
+#sf-message-box-button {
+    border: 2px;
+    border-color: var(--mw-frame-thin);
+}

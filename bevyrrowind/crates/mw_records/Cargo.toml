@@ -1,0 +1,18 @@
+[package]
+name = "mw_records"
+description = "Loads Morrowind ESM/ESP content into the superfargoth record database"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+semver.workspace = true
+sf_mods.workspace = true
+sf_records.workspace = true
+sf_vfs.workspace = true
+# `serde`: TES3 records are serde kinds (native RON patches over vanilla records, fingerprints).
+tes3 = { workspace = true, features = ["esp", "serde"] }
+thiserror.workspace = true
+
+[lints]
+workspace = true

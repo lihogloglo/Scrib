@@ -1,0 +1,27 @@
+[package]
+name = "mw_ai"
+description = "Morrowind NPC life before sf_ai: PGRD path graphs in engine space, A*, the AI_W wander planner, and the PathWalkScaffold driver for sf_controller"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fastrand.workspace = true
+glam.workspace = true
+mw_records.workspace = true
+# Unit and axis conversion (`convert`), shared with placements.
+mw_world.workspace = true
+petgraph.workspace = true
+sf_controller.workspace = true
+sf_coords.workspace = true
+sf_records.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+mw_install.workspace = true
+mw_vfs.workspace = true
+sf_vfs.workspace = true
+
+[lints]
+workspace = true

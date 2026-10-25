@@ -1,0 +1,58 @@
+[package]
+name = "mw_bake"
+description = "Morrowind adapter for the superfargoth bake: NIF importer, VFS and record inputs, model, world index and terrain bake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# DDS container parsing for CPU texture decodes (already in the tree via bevy_image).
+ddsfile = "0.6"
+dirs.workspace = true
+glam.workspace = true
+# TGA/BMP/PNG decoding (already in the tree via bevy_image).
+image = { version = "0.25", default-features = false, features = ["tga", "bmp", "png"] }
+# `anim`: actor animation sets (recipes), KF/NIF import, graph templates.
+mw_actors.workspace = true
+mw_anim.workspace = true
+mw_graphs.workspace = true
+mw_install.workspace = true
+mw_nif.workspace = true
+# Item rules and mass (`body.cook` report, `items.check` rules).
+mw_physics.workspace = true
+mw_records.workspace = true
+# `mwscript.translate` + `mwscript.coverage` (scripting-adapter.md, M5 W2).
+mw_script.workspace = true
+mw_world.workspace = true
+# `mw.anim.groups` products.
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+rayon.workspace = true
+serde = { version = "1", features = ["derive"] }
+sf_anim.workspace = true
+sf_anim_graph = { workspace = true, features = ["bake"] }
+sf_bake.workspace = true
+sf_character.workspace = true
+# `collision.cook`: static collision for `StaticProbe` (actors-adapter.md).
+sf_controller = { workspace = true, features = ["bake"] }
+sf_lod = { workspace = true, features = ["bake"] }
+sf_model.workspace = true
+# `body.cook` and `items.check` (physics-adapter.md "Items").
+sf_physics = { workspace = true, features = ["bake"] }
+# `ragdoll.cook` (physics-adapter.md "Ragdolls").
+sf_ragdoll = { workspace = true, features = ["bake"] }
+sf_records.workspace = true
+# Luau `Compiler` for translated scripts (re-exported mlua).
+sf_script.workspace = true
+sf_terrain = { workspace = true, features = ["bake"] }
+sf_vfs.workspace = true
+sf_world = { workspace = true, features = ["bake"] }
+tes3 = { workspace = true, features = ["esp"] }
+# BC1-BC3 block decoding for DDS land textures (pure Rust, MIT).
+texpresso = "2"
+
+[dev-dependencies]
+mw_vfs.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "mw_script"
+description = "MWScript front end: lenient lexer and parser with named leniency rules, AST, function table, name resolution (scripting-adapter.md). Native interpreter (dialogue results, W3), Luau emitter, coverage report, `mw` runtime skeleton. Bevy-free, no dependencies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+mw_install.workspace = true
+# Loading generated modules in a real sandboxed context (tests only; the crate stays dependency-free).
+sf_script.workspace = true
+sf_vfs.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[lints]
+workspace = true

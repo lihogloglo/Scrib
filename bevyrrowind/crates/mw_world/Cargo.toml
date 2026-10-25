@@ -1,0 +1,25 @@
+[package]
+name = "mw_world"
+description = "Morrowind cells as engine-neutral placements, worldspaces, door links, and terrain sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+mw_nif.workspace = true
+mw_records.workspace = true
+sf_coords.workspace = true
+sf_records.workspace = true
+sf_terrain.workspace = true
+sf_vfs.workspace = true
+sf_world.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+
+[dev-dependencies]
+mw_install.workspace = true
+mw_vfs.workspace = true
+rayon.workspace = true
+
+[lints]
+workspace = true

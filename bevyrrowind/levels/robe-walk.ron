@@ -1,0 +1,50 @@
+// Synthetic test level (docs/specs/test-levels.md): robed NPCs walking and running on flat
+// ground, a 15° ramp and stairs, for cloth (PH-3, physics-adapter.md) and the actor path
+// driver. Three actors: the Balmora temple priest in his own robe walks a flat loop and
+// fidgets at its corner; Fargoth in a common robe walks back and forth over ramp, plateau and
+// stairs; Elone in an extravagant robe runs the same course beside him. Props: a table and
+// a crate stack (dynamic bodies: throw a ball with V, or walk into them as the player, F11).
+// Meters, y up, x east, z south; `at` = footprint center at the bottom.
+(
+    name: "robe-walk",
+    description: "robed NPCs walking and running a flat loop and a ramp-plateau-stairs course; a table and crates as dynamic props",
+    cameras: [
+        (name: "overview", eye: (0.0, 10.0, 24.0), target: (0.0, 0.0, 0.0)),
+        (name: "course", eye: (14.0, 2.5, 3.0), target: (4.0, 1.0, 2.0)),
+        (name: "priest", eye: (-8.0, 2.2, 9.0), target: (-8.0, 1.0, 0.0)),
+        (name: "props", eye: (-10.0, 2.5, 12.0), target: (-14.0, 0.6, 6.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 12.0)),
+        (name: "priest", at: (-11.0, 0.0, 4.0), yaw: -90.0),
+        (name: "walker", at: (2.5, 0.0, 10.0)),
+        (name: "runner", at: (5.5, 0.0, 10.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (80.0, 80.0))),
+
+        // The course (x = 1..7): a 15° ramp up to a 1 m plateau, stairs (5 × 0.20 / 0.32) down the far side.
+        (name: "ramp-15", shape: Ramp(width: 6.0, rise: 1.0, angle: 15.0), at: (4.0, 0.0, 4.866), material: Green),
+        (name: "plateau", shape: Box(size: (6.0, 1.0, 4.0)), at: (4.0, 0.0, 1.0), material: Blue),
+        (name: "stairs", shape: Stairs(width: 6.0, steps: 5, rise: 0.2, run: 0.32), at: (4.0, 0.0, -1.8), yaw: 180.0, material: Yellow),
+
+        // Flat loop corners (markers for the eye).
+        (name: "loop-ne", shape: Cylinder(radius: 0.05, height: 0.3), at: (-4.5, 0.0, -4.5), material: White, collide: false),
+        (name: "loop-sw", shape: Cylinder(radius: 0.05, height: 0.3), at: (-11.5, 0.0, 4.5), material: White, collide: false),
+
+        // Props (PH-1 style): a table and a stack of three crates.
+        (name: "table", shape: Box(size: (1.6, 0.8, 0.9)), at: (-14.0, 0.0, 8.0), material: Orange, dynamic: Some(30.0), interact: Some("table")),
+        (name: "crate-1", shape: Box(size: (0.6, 0.6, 0.6)), at: (-14.0, 0.0, 4.0), material: Orange, dynamic: Some(15.0), interact: Some("open")),
+        (name: "crate-2", shape: Box(size: (0.6, 0.6, 0.6)), at: (-14.0, 0.6, 4.0), yaw: 20.0, material: Orange, dynamic: Some(15.0)),
+        (name: "crate-3", shape: Box(size: (0.6, 0.6, 0.6)), at: (-14.0, 1.2, 4.0), yaw: -15.0, material: Orange, dynamic: Some(15.0)),
+    ],
+    actors: [
+        (id: "llathyno hlaalu", spawn: "priest",
+         path: Some((points: [(-11.0, 0.0, 4.0), (-5.0, 0.0, 4.0), (-5.0, 0.0, -4.0), (-11.0, 0.0, -4.0)], speed: 1.3, wait: 3.0)),
+         action: Some((trigger: "fidget", every: 1.5, params: [("idle_variant", 3.0)]))),
+        (id: "fargoth", spawn: "walker", outfit: Some(["common_robe_01", "common_shoes_01"]),
+         path: Some((points: [(2.5, 0.0, 10.0), (2.5, 0.0, -6.0)], mode: PingPong, speed: 1.4, wait: 1.5))),
+        (id: "elone", spawn: "runner", outfit: Some(["extravagant_robe_01", "common_shoes_01"]),
+         path: Some((points: [(5.5, 0.0, 10.0), (5.5, 0.0, -6.0)], mode: PingPong, speed: 4.0, run: true, wait: 1.0))),
+    ],
+)

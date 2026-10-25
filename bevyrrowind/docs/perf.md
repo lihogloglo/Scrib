@@ -1,0 +1,499 @@
+# Performance measurement
+
+Measure, don't guess. Framework side (reports, hitch table, counters, suite helpers):
+`../superfargoth/docs/specs/diag.md`. Adapted from the Ovid project's proven workflow, without Python.
+
+## Build
+
+Measure a release-optimized build, never `cargo dev` (dynamic linking, dev profile):
+
+```sh
+cargo build --profile profiling -p bevyrrowind      # release + line tables -> target/profiling/
+cargo build --release -p bevyrrowind                # same codegen, no symbols -> target/release/
+cargo build --release -p bevyrrowind --features solari,dlss   # ray tracing + DLSS ("ultra")
+```
+
+`dlss` builds need no NVIDIA SDK (since 2026-10-25): DLSS runs from the separately built plugin
+package (`bash ../superfargoth/plugins/sf_dlss/build-package.sh`, needs `../sdk`), which `build.rs`
+copies to `target/<profile>/dlss/` (superfargoth `sky-lighting.md`, "DLSS plugin package"). `dlss`
+alone (without `solari`) is enough for Super Resolution on raster.
+
+## Frame budget (ROADMAP 1.2)
+
+Target (owner decision 1): High, 2560x1440 output + DLSS Quality (1707x960 internal) on the RTX 4060
+Laptop: **median <= 11 ms** in every exterior benchmark (`max_frame_stat` median gate in
+`benchmarks/exterior_*.json`; the gates assume this setup: `perf suite <tag> --resolution 2560x1440
+--env BEVYRROWIND_DLSS=quality` with a `dlss` build). Bevy pipelines the main thread, the render thread
+and the GPU, so a frame costs about the slowest of the three: each gets the whole 11 ms minus ~1.5 ms
+headroom for spikes and thermal clocks.
+
+| lane (High, 1440p DLSS Q) | budget ms | Balmora | Seyda Neen | Red Mountain | flight |
+|---|---:|---:|---:|---:|---:|
+| frame (median) | 11.0 | 14.3 | 17.7 | 17.2 | 19.3 |
+| render thread busy | 9.5 | 12.9 | 15.9 | 15.5 | 16.7 |
+| - of it graph encoding | 4.0 | 5.0 | 6.1 | 5.8 | 5.9 |
+| main thread busy | 9.5 | 8.8 | 10.0 | 10.5 | 13.7 |
+| GPU (Bevy-timed) | 9.5 | 8.4 | 8.7 | 7.9 | 7.7 |
+| - opaque + prepass | 3.5 | 2.6 | 2.1 | 2.0 | 2.0 |
+| - DLSS SR | 2.1 | 2.1 | 2.1 | 2.0 | 2.0 |
+| - sky, clouds, fog, light probes | 1.5 | 1.6 | 1.6 | 1.7 | 1.7 |
+
+Measured 2026-10-19 (phase1, `target/perf/p1-dlssq`, profiling `dlss` build, 2 runs each, quiet machine,
+GPU 2.58 GHz, 65 °C): **the render thread is the bottleneck everywhere** (GPU 53-78 % busy), at
+44-52 k meshes and 65-88 k entities. Next: a per-system trace of the render thread (extract, prepare,
+queue, batching per view and shadow cascade), then cut what is over. Medium and Low get their own rows
+once High meets its budget.
+
+What costs what (Balmora, same session, warm machine: baseline 15.3 ms; A/B runs vary +-0.4 ms, so only
+differences above ~0.5 ms count):
+
+| `--off` | frame | render | main | GPU | reading |
+|---|---:|---:|---:|---:|---|
+| (none) | 15.3 | 13.7 | 9.2 | 8.5 | reference |
+| shadows | 10.5 | 9.1 | 8.5 | 7.9 | **sun cascades: -4.8 ms**, all CPU (12.6 k caster entries over 4 cascades) |
+| actors | 12.4 | 11.2 | 5.8 | 8.6 | **actors: -3 ms main** (anim, skinning, skinned AABBs), -2 ms render |
+| farshadows, particles, lights | 15.1-15.3 | 13.4-13.6 | 9.0-9.2 | 8.3-8.4 | nothing measurable |
+| shadowcache (old build) | 14.8 | 13.3 | 9.0 | 8.6 | -0.5 ms: the parked cube cache's tracking; its plugin is gone now |
+| castercull (on vs off, 3 pairs each) | 14.7 / 15.0 | 13.1 / 13.4 | | | caster size rule removes 8 % of entries: ~-0.3 ms, at the noise floor; off again (shadows popped with view) |
+| farfield | 37.3 | 34.7 | 24.5 | 10.5 | the far field is what makes towns affordable |
+
+Trace (`perf trace`, profiling-trace build): the main thread waits ~4.5 ms per frame in `RenderExtractApp` for the
+render thread (Bevy's pipelined extract), confirming the render thread as the critical path. Its biggest
+spans: `prepare_preprocess_bind_groups` 2.3 ms, `queue_submit` 2.4 ms (33 submits), shadow
+`write_binned_instance_buffers` 1.4 ms + shadow pass encoding 1.2 ms, skins 1.2 ms. Main thread:
+big_space low-precision propagation 2.5 ms (task time), visibility 2-4 ms (x16 views), animation 1.5 ms.
+Cuts to make (they belong to 1.4 shadows, 1.9 culling levers and 3.x animation): fewer or cheaper caster
+draws per cascade (static cascade caching or a far cascade at half rate), actor animation LOD, and
+fewer views (check what the 16 visibility passes are).
+
+**The gameplay view: `balmora_walk`** (eye height on Balmora's path grid, 4 m/s, 254 m; added 2026-10-19).
+It is the worst case: **25.8-26.0 ms** median, render 23.9-24.3, main 12.1, GPU 8.9. Whole-system A/B on it:
+
+| `--off` | frame | render | main | reading |
+|---|---:|---:|---:|---|
+| statics (= near) | **7.5** | 4.7 | 3.5 | **the near-ring statics are the cost**: everything else is small |
+| sky (no sun, so no sun shadows) | 17.1 | 15.2 | 9.7 | mostly the shadows below |
+| shadows | 18.3 | 16.4 | 9.4 | -7.7 ms walking (-4.8 standing): cascades re-cull as they follow the camera |
+| actors | 21.2 | 19.8 | 7.4 | -4.8 ms main, -4.1 render |
+| physics, fog, terrain, walkers | 25.0-25.7 | | | -0.3 to -1 ms each |
+| clouds, froxels, envmap, godrays, far | 25.5-26.3 | | | nothing |
+
+Tried and dropped: Bevy 0.20 `NoCpuCulling` on static opaque/masked parts (the research's top item): **81 ms**
+on the walk (render 81, GPU 22): with no CPU culling every part is queued for every view (cascades, point-light
+faces, the water snapshot) and every LOD level, and the GPU path doesn't make up for it in our setup.
+**Lead (not yet tested):** Bevy runs the GPU frustum + `VisibilityRange` test only in views with GPU culling; a view
+with `NoIndirectDrawing` (`PreprocessingOnly`, e.g. our extra sun views in `sf_sky_bevy` `sun_view.rs`) culls a
+`NoCpuCulling` mesh nowhere, so every part at every LOD draws there. Retry once every view supports GPU culling. Reverted the same day: the animation budget (1 ms; it "saved" ~1 ms by freezing poses: characters slid) and the
+caster size rule (its cascades refit with the view, so small casters lost and regained shadows as the camera turned).
+So the lever is the number of static mesh entities in the near ring and the views they're queued in: merge statics
+per cell at bake time (OpenMW active-grid paging, MGE XE: a cell in one or two draws;
+`docs/research/perf-morrowind-engines.md`) and cut shadow views; the big_space propagation patch and skinned
+bounds next (`superfargoth/docs/research/perf/README.md`).
+
+**Bare baseline and precombine (2026-10-20, precombine3; profiling build without `dlss`, native 1440p TAA, 1 run each,
+`target/perf/{bare-pre,full-pre,pc-on,pc-off,bare-pc}`).** "Bare" = terrain + models only (`--off sky,envmap,shadows,
+farshadows,lights,particles,clouds,fog,froxels,actors,walkers,physics,terrainblend`; `terrainblend` is gone since 2026-10-20):
+
+| run | bare | bare + precombine | full, `--off precombine` | full + precombine | meshes full (off → on) |
+|---|---:|---:|---:|---:|---:|
+| balmora | 7.1 (GPU 98 %) | 7.0 | 15.3 | 15.7 | 46.1 k → 25.1 k |
+| balmora_walk | 6.1 | 5.9 | 24.4 | 25.0 | 55.1 k → 32.4 k |
+| seyda_neen | 7.3 (GPU 97 %) | 7.2 | 16.3 | 17.7 | 46.2 k → 23.3 k |
+| CPU floor 960x600 | 4.8-5.4 | 4.7-5.6 | | | |
+
+Reading: models + terrain alone are GPU-bound at 1440p native and far under budget. Precombine halves the mesh
+entities but **does not move the frame** (walk render thread 22.6 → 23.3 ms, main 11.2 → 9.9): the render-thread
+cost does not scale with static mesh entities, so the `--off statics` 7.5 ms above came from something else that
+switch also removes (it drops every near placement: ~290 point lights, NIF-path objects, items, doors). Next:
+per-system render-thread trace of the walk and `--off lights` on the walk.
+
+**Feature ladder (2026-10-20, precombine3; same build, 1 run each, other processes ~27 % CPU throughout,
+`target/perf/ladder-NN-*`).** Each step turns one system back on, cumulatively. `balmora_walk`, frame median ms (Δ):
+
+| step | 1440p | Δ | render Δ | GPU Δ | 1707x960 | Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| bare (terrain + models) | 6.5 | | | | 6.1 | |
+| + sky | 6.4 | 0 | 0 | +0.1 | 6.3 | +0.2 |
+| + envmap | 7.1 | +0.7 | +0.7 | +1.2 | 6.5 | +0.2 |
+| + shadows | 8.0 | +0.8 | +0.9 | 0 | 7.2 | +0.7 |
+| + farshadows | 8.4 | +0.4 | +0.4 | +0.3 | 7.8 | +0.6 |
+| + lights | 10.4 | +2.0 | +2.0 | +1.7 | 9.9 | +2.2 |
+| + fog, froxels | 11.1 | +0.7 | +0.6 | +0.7 | 10.2 | +0.3 |
+| + clouds | 11.7 | +0.7 | +0.7 | +0.6 | 10.3 | +0.1 |
+| + particles | 11.6 | 0 | 0 | 0 | 11.1 | +0.9 |
+| + actors | 14.8 | +3.2 | +2.9 (main +2.2) | 0 | 14.3 | +3.2 |
+| + walkers, physics | 15.0 | +0.2 | +0.2 (main +1.7) | 0 | 14.9 | +0.5 |
+| + terrainblend (= full) | 25.9 | **+10.9** | +10.5 | +2.0 | 27.9 | **+13.0** |
+
+Standing (`balmora`) 1440p: bare 7.1, envmap +1.5, shadows +1.2, lights +1.3, fog +0.8, terrainblend +2.5,
+full 15.9. Reading: the walk is render-thread bound (full: GPU 10.9 vs frame 25.9), so lower internal
+resolution doesn't help; terrain blend (non-batched `GroundBlendMaterial` per part) was the walk's main cost
+and is removed (owner 2026-10-20). Next: lights, then shadows.
+
+**Terrain blend removed (2026-10-20, lights1; ROADMAP 1.6; profiling build, `lod.near` v3 re-baked, 1 run each,
+CPU ~26 % background, `target/perf/tb-removed` vs `ladder-12-terrainblend`).** Frame median ms, render thread busy
+in brackets:
+
+| run | before | after | Δ |
+|---|---:|---:|---:|
+| balmora 1440p | 15.9 (13.5) | **13.1** (8.2, GPU 98 %) | -2.8 |
+| balmora 960p | 14.6 (12.9) | **9.5** (7.7) | -5.1 |
+| balmora_walk 1440p | 25.9 (23.8) | **14.7** (13.0) | -11.2 |
+| balmora_walk 960p | 27.9 (26.5) | **14.6** (12.8) | -13.3 |
+
+Standing Balmora at 1440p is now GPU bound; the walk is still render-thread bound (13 ms busy: lights, shadows,
+actors next). Meshes 25.1 k → 24.6 k (precombine buckets no longer split by band).
+
+**Lights (2026-10-20, lights1; superfargoth `specs/lights.md`; same setup, 1 run each).** Frame median ms
+(render thread busy; GPU timed):
+
+| run (1440p / 960p) | today | stale views fixed | `--point-shadows 0` | `--off lights` |
+|---|---:|---:|---:|---:|
+| balmora | 13.1 / 9.5 | 13.5 / 9.2 | 13.0 / 9.2 | 12.4 / 9.5 (GPU 10.1 vs 10.7) |
+| balmora_walk | 14.7 / 14.6 (13.0; 8.7) | **12.7 / 12.4** (10.7; 8.1) | 11.2 / 11.0 (9.3; 7.5) | 11.5 / 11.6 (9.6; 7.4) |
+
+Reading: the ~290 unshadowed lights cost ~0.5 ms GPU standing and nothing measurable on the walk (Bevy 0.20 GPU
+clustering). The walk's light cost was High's **one shadowed lamp**, plus a Bevy 0.20 leak: a lamp that loses its
+shadow keeps its 6 cube-face views, each running the whole `Core3d` schedule (trace: 15.7 `Core3d` runs/frame for
+a budget of 1). `sf_sky_bevy` now despawns them (shadows.md "Stale cube-face views"): walk -2.0 ms. The one lamp
+still costs ~1.5 ms frame / 1.4 ms render thread on the walk (`staleviews` vs `ps0`). Traces: `trl-on`/`trl-off`
+(deleted, summaries only). Note the walk's frame (12.7) sits above every lane (render 10.7, main 9.4, GPU 8.1):
+most likely extraction (`RenderExtractApp` ~2 ms inclusive), which runs between the main and render threads.
+
+**Audit (2026-10-20, lights1): Nsight + A/B traces, walk and Balmora.** Nsight (`target/perf/nsys/walk1-passes.md`,
+walk 1440p, GPU sum 10.2 ms): main opaque 3.16, `atmosphere_luts` 0.69 (every frame), cascade 3 0.59, env-map
+filtering 0.54 + 0.29 (every frame), indirect parameters 0.51, TAA 0.43, prepass 0.39; the one lamp's six faces
+0.17 in all (its cost is CPU). Fixes and leads (1 run each, `target/perf/audit1*`):
+
+| item | finding | change | measured |
+|---|---|---|---|
+| big_space low-precision propagation | walked every static mesh every frame (no dirty-tree pruning) | vendored patch (`superfargoth/vendor/big_space`) | trace 2.7 + 0.7 → 0.44 + 0.27 ms main-thread tasks; walk main busy 9.45 → 8.78 |
+| sky env map | re-filtered every frame | `EnvMapRefresh` every 8 frames, `--off envslice` | Balmora 1440p 13.3 → 12.4, 960p 9.5 → 8.9 |
+| NIF particles | CPU quads rewritten into `Mesh` assets every frame: Bevy rescans all `Mesh3d` (0.74 ms), re-allocates and re-prepares meshes | **done** (particles1): vertex pulling, see below | `--off particles`: walk 1440p 12.7 → 11.7 (render -1.0, main -0.9) |
+| `atmosphere_luts` | Bevy recomputes all LUTs each frame | open (upstream) | 0.69 ms GPU |
+
+**GPU particles (2026-10-20, particles1).** CPU simulation kept; each emitter writes its slot of one `ShaderBuffer`,
+its `MeshTag` is the slot, the vertex shader turns static shared quads to the view (`mw_assets` particles.rs,
+Bevy 0.20's `storage_buffer` pattern). Mesh modifications on the walk 17.9/frame → 0. Profiling build, 1 run each,
+background CPU ~26 % (`target/perf/p1-base`, `p1-base-off`, `p1-gpu`); frame median ms (render / main busy):
+
+| run | before | `--off particles` | after |
+|---|---:|---:|---:|
+| balmora 1440p | 12.89 (9.9 / 8.2) | 12.34 (8.6 / 7.2) | **12.49** (7.7 / 6.1) |
+| balmora 960p | 9.94 (8.4 / 7.4) | 9.05 (7.6 / 6.8) | **9.00** (7.4 / 6.9) |
+| balmora_walk 1440p | 12.29 (10.6 / 8.6) | 12.29 (10.4 / 8.2) | 12.66 (10.8 / 8.4) |
+| balmora_walk 960p | 12.31 (10.6 / 8.6) | 12.23 (10.6 / 8.3) | 12.32 (10.5 / 8.4) |
+
+Reading: standing Balmora now costs what no particles cost (-0.9 ms at 960p, render thread -1 to -2 ms). On the
+walk, particles no longer cost anything measurable even before the change (the audit's -1.0 ms didn't reproduce
+after the big_space patch); the walk's 12.3 ms is elsewhere.
+
+**Night (22:00, clear; new scenarios `balmora_night`, `balmora_walk_night`).** Single runs, before / `--off
+particles` / after: Balmora 1440p 12.44 / 12.40 / 12.48, 960p 8.98 / 8.99 / 9.35; walk 1440p 11.41 / 11.43 /
+12.55, 960p 11.65 / 11.82 / 12.21. The walk's +1.1 ms didn't survive repeats (×3, 1440p): before 11.86, 12.20
+(render 10.25, 10.49; a third run lost the device, old exe, driver error), after 12.12, 11.98, 11.97 (render 10.33,
+10.24, 10.24): equal. Night costs no more than day (lamps are on at every hour; ~306 vs 293 point lights on the
+walk). Lesson: single runs here vary ±0.5 ms; repeat 3 before calling a delta under ~1 ms.
+
+Anti-aliasing at native 1440p, Balmora (ROADMAP 1.3): MSAA 18.5 ms (GPU 14.3), **TAA 15.4 ms (GPU 12.1, TAA
+pass 0.39)**, DLSS Quality 14.8 (GPU 8.6). TAA is cheaper than the 4x MSAA it replaces.
+
+**Shadows v2 (shadows2, 2026-10-20; `target/perf/s2final-0`, `-8`; profiling exe, no DLSS, single runs).**
+0 vs 8 cached lamps, median (p95): walk 960p 11.36 (12.8) / 12.18 (**19.8**); walk 1440p 11.08 / 12.61 (20.4);
+walk night 1440p 11.17 / 12.18 (19.9); census 1440p 4.28 / 9.63 (timed GPU 3.50 / **9.97**); census 960p 4.07 /
+5.67; Balmora 1440p 12.28 / 12.49. Reading: 8 lamps cost ~+1 ms median on the walk but p95 nearly doubles
+(capture/recapture spikes, unconfirmed); indoors the cost is **GPU** (~0.8 ms/lamp in the main pass at 1440p,
+not yet diagnosed). `s2final-off` (`--off shadowcache`) was never completed.
+
+**Per-lamp GPU cost (lampcost, 2026-10-21; `target/perf/lc-*`; census 1440p, profiling exe, no DLSS, x2-3 runs).**
+Cause: Bevy **contact shadows**, not the cube maps. High gives every budgeted lamp `contact_shadows_enabled` and the camera
+16 linear steps; Bevy's point loop (`pbr_functions.wesl` ~463) ray-marches the depth prepass per pixel per shadowed lamp in
+the cluster, before range/NdotL (no early out), and lamp range = MW radius x 4 (`range_scale`) puts the whole room in every
+lamp's clusters. Main opaque pass, ms (frame median in brackets):
+
+| case | p0 | p1 | p8 |
+|---|---:|---:|---:|
+| High (Temporal, contact 16) | 2.78 (4.3) | 3.90 (5.5) | 8.20-8.66 (10.4) |
+| `--off contactshadows` | 1.93 (4.5) | | 2.93-2.97 (8.4-9.2, render-thread bound) |
+| `BEVYRROWIND_SHADOW_FILTER=hardware` (+ contact off) | | | 7.6 (9.7) / 2.07 (5.9-6.9) |
+| `--range 1` / `--range 2` | 1.69 / 2.10 | | 3.37 (5.3) / 6.10 (7.5) |
+| `--off shadowcache` (stock Bevy cubes) | | | 6.85 (**16.9**; aux GPU 3.2, render/busy 15.2) |
+
+Split for 8 lamps: contact march ~5.4 ms (0.68/lamp), 8-tap cube PCF ~0.9 ms (0.11/lamp; 1-tap 0.02), cached cube faces
+(`auxiliary_views`) 1.0-1.3 ms GPU, render thread +4.4 ms (3.3 -> 7.7 busy; 48 face views). 960p p8: opaque 4.0 vs 1.31.
+Surprise: with **no** shadowed lamp, contact still costs 0.85 ms (16 steps) / 0.56 (Medium, 8 steps) per frame indoors: it
+scales with steps, so it is a real march, most likely the sky's sun (`contact_shadows_enabled`) leaking into the interior
+view through shared layer 0 (camera `[0, interior]`, sun `[0, exterior]`, exterior.rs ~582/746). Verify whether it also
+*lights* interiors. Not causes: fade twins (hidden outside fades), cache restores (0.013 ms), shader variant, froxel fog
+(samples only the sun's CSM). Fixes, slice A (stock Bevy): lamp contact shadows off (or nearest 1-2) -5.4 ms GPU; keep
+sun/moon off interior views (-0.85 ms); range_scale 4 -> 2 for shadowed lamps (-2.3 ms with contact, cube culling -0.5 GPU,
+-2 ms render thread; visual call); budget <= 4 lamps, since stock cubes without the cache cost ~12 ms of render thread for 8.
+Slice B (vendored patch): shadow/contact fetch only when range x NdotL > 0; per-light filter (Hardware2x2 for lamps, -0.9 ms).
+
+**Light lab cost model (lightlab, 2026-10-21; `target/perf/ll-*/sweep.md`).** Level `light-lab` (closed 20 x 20 x 5 m
+interior, 16 casters, two walkers, 8 lamps radius 3 m = range 12 m covering the room; test-levels.md "Light lab"),
+fixed `wide` camera, 1440p, High, profiling exe, 3 interleaved repeats per value, quiet machine. Run a sweep:
+`target/profiling/bevyrrowind.exe perf sweep <tag> light_lab --var point-shadows --values 0,1,2,4,8 --repeat 3 --resolution 2560x1440`
+(`--var` = any view flag, `off` (`none`, `a+b`), `resolution`, `env:KEY`; suite flags `--off`/`--env` fix the rest).
+Per lamp, slope of the medians (ms), every lamp lighting the whole screen:
+
+| per lamp | main opaque GPU | shadow views GPU | render thread (busy) | frame |
+|---|---:|---:|---:|---:|
+| unshadowed (0..32 lamps) | 0.10-0.12 | 0 | ~0 | GPU-bound past ~8 lamps (3.3 → 5.5 ms at 32) |
+| shadowed, contact off (cube + 8-tap PCF) | 0.14 | 0.16 | 0.46 | 0.49 (render-thread bound) |
+| shadowed, High (+ contact march) | 0.95 | 0.18 | 0.64 | 1.15 (3.3 → 12.5 ms for 8) |
+
+Contact march per shadowed lamp 0.80 ms; with **no** shadowed lamp contact still costs 0.79 ms (opaque 2.19 vs 1.40,
+8 lamps): lampcost's sun-into-interior leak reproduces in a pure interior. Coverage (`--range` 1/2/4/8 = 3/6/12/24 m,
+4 shadowed): opaque 2.14/4.61/6.66/6.67, shadow views 0/0.18/0.73/0.83: cost tracks screen coverage and stops once a
+lamp covers the room (at 3 m the walkers likely stay out of every lamp, so the cache re-renders nothing). Agrees with
+lampcost's census split (contact 0.68, PCF 0.11, aux 0.13-0.16 per lamp, render thread +0.5 per cached lamp); the lab
+runs ~15% higher because every lamp covers the full screen. Not swept yet: `--off shadowcache`, 960p, filter, orbit.
+
+**Shadow reset A1 (shadowA1, 2026-10-21; `target/perf/a1-*`; 1440p, High, profiling exe, x3; the lock screen kept
+idle-clock GPU load at 25-40 %, so runs went with `--max-wait-min 0.3`).** Lamp contact off, sun/moon out of interior
+views, GTAO. Lab `point-shadows` 0/2/4/8 (`--off ssao`): frame 3.30/5.59/8.09/12.50 → **3.15/4.39/5.26/6.93**, opaque
+2.19/4.24/6.29/9.75 → 1.34/1.63/1.94/2.49 (= the old `--off contactshadows` sweep, minus the leak). GTAO (Bevy
+`ScreenSpaceAmbientOcclusion`, needs the normal prepass): timed GPU lab 4.64 → Low 5.24 / **Medium 5.45** / High 6.05;
+census +0.92, walk +0.93 (SSAO pass 0.75 + normal prepass 0.07-0.15); frame medians +0.3 (CPU/render-thread bound).
+High = Medium level (`Quality::ssao`); ~half under DLSS Quality. Real scenes vs `s2final-8` (8 lamps, x1): census
+median 9.63 → 8.71 (p95 16.7 → 11.0, timed GPU 9.97 → 5.90; 8.37/4.98 `--off ssao`); walk 12.61 → 13.26 (GPU 8.50 →
+9.66; 12.94/8.73 `--off ssao`): the walk is not GPU-bound, so GTAO and the reset barely move its median.
+
+**Shadow reset A2 (shadowA2, 2026-10-21; `target/perf/a2-*`; 1440p, High, profiling exe, x3; no lock-screen wait with
+the idle-clock rule).** Lamp maps captured during the door fade, far static map / caster cull / legacy cascade layouts
+deleted. Lab `point-shadows` 0/8 (`--off ssao`): 3.14/6.83 ms (A1 3.15/6.93), timed GPU 2.07/4.67. Census median of
+medians 8.06 (runs 8.06/6.50/8.44; A1 8.71 x1), walk 13.16 (13.16/13.82/12.82; A1 13.26): no regression. Door
+census gate (dev build): +0.35 s black, 8 lamps captured before the fade-in; first exterior visit hits the 1.5 s cap.
+
+**Shadow reset B1 (shadowB1, 2026-10-21; `target/perf/b1-*`; 1440p, High, profiling exe, x3, medians of runs).** Bevy
+PRs #26149 (`Core3dShadows`) + #26161 (skip unchanged point/spot maps) vendored (superfargoth `vendor/README.md`).
+(a) stock `--off shadowcache`, (b) cache (A2 state), (c) patch `--off shadowcache`, (d) patch + cache (shipped).
+Lab: 16 lamps, `--var point-shadows+lab-lights`, `--off ssao`; frame median ms (render busy ms):
+
+| shadowed lamps | 0 | 2 | 4 | 8 | 16 |
+|---|---:|---:|---:|---:|---:|
+| (a) stock | 3.58 (2.47) | 6.00 (5.04) | 8.58 (7.53) | 13.34 (12.20) | 23.14 (21.95) |
+| (b) cache | 3.58 (2.49) | 4.65 (3.65) | 5.45 (4.49) | 7.16 (6.14) | 11.11 (10.02) |
+| (c) patch | 3.57 (2.43) | 5.36 (4.40) | 7.31 (6.28) | 11.54 (10.43) | 20.11 (18.94) |
+| (d) patch + cache | | | | | 10.60 (9.51) |
+
+Shadow views GPU 2/4 lamps: (a) 0.86/1.72, (b) 0.44/0.63, (c) 0.86/1.73 (8+ lamps: timestamps read "?" in a, c).
+Lab 8 lamps (default): walkers (b) 6.90 / (c) 11.40 / (d) 6.83; `--off actors` 3.77 / 4.38 / 3.76 (shadow views 0
+in all; the patch's skipped views still cost +0.13 ms render per lamp in prepare/queue, the cache's 0.05); orbit
+30°/s (moving lights) (b) 11.53 = (c) 11.51. #26161 redraws a light's whole cube whenever any caster it sees moves or
+is skinned, so the lab's walkers, and the census NPCs, defeat it; only #26149's slim schedule (-13%) remains.
+Real scenes, median / p95 / shadow views GPU / main opaque / render busy:
+
+| scene | (b) cache | (c) patch | (d) patch + cache |
+|---|---|---|---|
+| census | 9.00 / 11.40 / 1.23 / 2.97 / 7.88 | 15.03 / 17.09 / 3.30 / 2.57 / 13.46 | **6.54 / 10.85** / 0.91 / 2.94 / 6.42 |
+| balmora_walk | 13.29 / 21.02 / 0.83 / 3.17 / 12.35 | 13.02 / 20.84 / 0.82 / 3.15 / 12.25 | **12.95 / 19.78** / 0.62 / 3.14 / 11.61 |
+| balmora_walk_night | 12.85 / 20.59 / 0.81 / 2.77 / 12.30 | 12.65 / 20.89 / 0.84 / 2.78 / 12.19 | **12.35 / 18.93** / 0.61 / 2.73 / 11.59 |
+
+Decision rule (c >= b) failed: the cache stays, and the patch ships under it ((d), the cache's faces keep its own
+schedule). (d)'s census gain (-1.5 ms render busy) is not attributed yet. (b) census 9.00 vs A2's 8.06: doorwalls'
+always-HDR camera, unmeasured. Door round trip at 22:00: both builds hit the 1.5 s gate cap (pipelines), same image.
+
+**Shadow reset B2 (shadowB2, 2026-10-21; `target/perf/b2-*`; 1440p, High, profiling exe, x3, medians of runs, quiet
+machine every run).** Own `bevy_pbr` hunks (superfargoth `vendor/README.md`): (1) **early-out**: Bevy fetched the
+point/spot shadow (and lamp contact) before evaluating the light, with no range, N·L or cone test; now the light is
+evaluated first and the fetch runs only where its contribution is non-zero (exact). (2) **lamp filter**: camera
+marker `PointSpotShadowsHardware2x2`, lamps on 1-tap 2x2 hardware PCF, the sun keeps the preset's filter (`--off
+lampfilter` = stock). Exes `profiling/b2-base.exe` (B1 state), `b2-patch.exe` (eo = `--off lampfilter`, f = both).
+Lab (`--var point-shadows+lab-lights`, `--off ssao`), frame median / main opaque GPU ms:
+
+| shadowed+lamps | 0+8 | 2+8 | 4+8 | 8+8 | 16+16 |
+|---|---:|---:|---:|---:|---:|
+| base | 3.20 / 1.28 | 4.26 / 1.58 | 5.30 / 1.87 | 6.82 / 2.43 | 10.64 / 4.83 |
+| early-out | 3.15 / 1.39 | 4.29 / 1.64 | 5.28 / 1.88 | 6.84 / 2.29 | 10.73 / 4.35 |
+| early-out + lamp filter | 3.16 / 1.36 | 4.29 / 1.42 | 5.26 / 1.47 | 6.77 / **1.57** | 10.58 / **2.72** |
+
+Lab p95 and render busy unchanged (8+8: 7.59/7.61/7.49 p95, busy 5.81/5.82/5.75); timed GPU 8+8 4.75/4.59/3.81,
+16+16 8.19/7.66/6.70. Real scenes, median / p95 / timed GPU / main opaque / render busy:
+
+| scene | base | early-out | early-out + lamp filter |
+|---|---|---|---|
+| census | 6.52 / 10.86 / 5.64 / 2.94 / 6.32 | 7.77 / 10.82 / 5.40 / 2.58 / 6.64 | **6.41 / 10.77 / 4.96 / 2.08** / 6.33 |
+| balmora_walk | 13.22 / 19.93 / 9.44 / 3.18 / 11.68 | 12.95 / 20.03 / 9.48 / 3.15 / 11.74 | 12.80 / 19.90 / 9.37 / 3.12 / 11.59 |
+| balmora_walk_night | 12.59 / 19.68 / 8.87 / 2.73 / 11.78 | 12.55 / 19.73 / 8.83 / 2.72 / 11.75 | 12.46 / 19.48 / 8.81 / 2.68 / 11.64 |
+
+Reading: the filter is the win, ~0.09-0.10 ms main-pass GPU per shadowed lamp (lab 8 lamps -0.72, 16 -1.63, census
+-0.50); the early-out only pays where lamps light few pixels (census -0.36 opaque, lab 16 lamps -0.48, lab 0-4 noise
+to +0.1: the lab's lamps face every wall). Frame medians barely move: the lab and the walks are render-thread
+bound, and census frame medians are bimodal run to run (6.2 vs 7.8-8.6 ms in all three builds; eo's 7.77 is that).
+
+## Dev loop
+
+Compile and bake times are gated like frame times (owner 2026-10-11: "must be super fast for the dev
+cycle"). Gates and rules: `../superfargoth/docs/ARCHITECTURE.md` §8b. Measure on an idle machine (no other
+`cargo`/`rustc`/`bevyrrowind` in `tasklist`), Ryzen 7 7435HS 16 threads, target on C: (junction).
+
+| What (2026-10-12, health) | Command | Measured | Gate |
+|---|---|---|---|
+| No-op `cargo dev` build | `cargo build -p bevyrrowind --features dev` | 0.83 s | ≤ 1 s |
+| Touch the app (rustc ~2 s + rust-lld 0.73 s) | `touch apps/bevyrrowind/src/main.rs` | 3.3-3.6 s | ≤ 5 s |
+| Touch a leaf plugin crate (`mw_assets`, `sf_terrain_bevy`, `sf_lod_bevy`) | 2 crates rebuild | 4.5-4.7 s | ≤ 5 s |
+| Touch `sf_world_bevy` / `mw_nif` / `sf_model_bevy` | 3 / 6 / 5 crates | 5.2 / 5.7 / 5.8 s | ≤ 8 s |
+| Touch `sf_model` | 13 crates | 7.7-8.1 s | ≤ 8 s (at the limit) |
+| Edit a function body (`sf_world_bevy`, `sf_model`, `mw_nif`) | one `black_box` line | 6.5-8.4 / 8.2-10.3 / 6.2-6.6 s | ≤ 10 s |
+| Clean `cargo dev` build | `cargo build -p bevyrrowind --features dev --timings` (fresh `CARGO_TARGET_DIR`) | 8 min 38 s (579 units) | ≤ 12 min |
+| Cold bake (fresh `--cache`) | `target/release/bevyrrowind.exe bake --cache <empty dir>` | 47.7 s | ≤ 2 min |
+| No-op bake (all hits) | `target/release/bevyrrowind.exe bake` | 1.75 s | ≤ 2.5 s |
+
+Where the time goes:
+
+- Incremental: cargo's freshness check ~0.8 s, the app crate ~2 s of rustc (Bevy metadata and
+  monomorphized systems), the link 0.73 s (`-Clink-arg=/time`; `/OPT:NOICF` saves nothing). Each crate
+  between the edited one and the app adds 0.5-1 s (`sf_world_bevy` 0.85 s, `sf_lod_bevy` 1.1 s in a
+  `--timings` run). `sf_model` has the widest fan-out (13 dependents): ARCHITECTURE §8b rule 5 applies.
+- Clean: Bevy is the critical path. `bevy_ecs` (103 s) → `bevy_render` (226 s) → `bevy_pbr` (221 s) →
+  `bevy_dylib` starts at 493 s of 518 s; all our crates are done by ~470 s. Biggest units by CPU:
+  `bevy_render`, `bevy_pbr`, `bevy_ui` 186 s, `bevy_sprite_render` 173 s, `bevy_picking` 142 s,
+  `bevy_dev_tools` 131 s, `wesl` 123 s (a hard dependency of `bevy_shader`), `bevy_gltf` 99 s,
+  `bevy_animation` 99 s (the app's `3d`/`ui` feature profiles pull gltf, picking and UI widgets).
+  Report: `C:/cargo-target/health-timings/clean-dev-2026-10-12.html` (outside the repos;
+  the 4.1 GB scratch target it came from was deleted).
+- Bake: per-step numbers in `docs/specs/bake-adapter.md` ("Dev-loop health check").
+
+Tried and not adopted (no measurable gain): superfargoth crates at opt-level 1 in this workspace
+(they are path dependencies, so `[profile.dev.package."*"]` builds them at opt-level 3 without line
+tables; touch and body-edit times were within noise either way, and O3 keeps framework hot paths fast in
+`cargo dev`), and the app crate at opt-level 0 (3.34 vs 3.37 s).
+
+Benchmark scripts (re-runnable): touch each hot crate twice and time `cargo build -p bevyrrowind
+--features dev`; for body edits insert `std::hint::black_box(N);` as the first line of a hot function and
+restore the file afterwards.
+
+## Quiet machine
+
+Numbers from a busy machine are noise. The suite waits, before every run, until no `cargo`, `rustc`,
+`bevyrrowind` or `ovid` process runs (other agents build here), GPU load <= 15 % and CPU load <= 20 %
+(`--wait-for name,...` adds names; `--max-wait-min`, `--no-wait`). GPU samples below 600 MHz graphics clock
+count as idle: the lock screen and compositor show 25-40 % at ~210 MHz, any 3D load clocks past 1 GHz (shadowA2;
+unattended runs used to wait out `--max-wait-min`). During the run it compares system and
+process CPU (Bevy's `SystemInformationDiagnosticsPlugin`): other processes above 25 % mark the run busy and it
+is retried (`--retries`, default 2). Busy runs are flagged in the report and the summary.
+
+## Suite runner
+
+Run from the repo root:
+
+```sh
+target/profiling/bevyrrowind.exe perf list                       # named scenarios and their arguments
+target/profiling/bevyrrowind.exe perf suite <tag> [scenario...] --repeat 3 \
+    --resolution 2560x1440 --resolution 1280x720 --floor [--off terrain] [--hitch-ms 25] \
+    [--save benchmarks/runs/<tag>]
+```
+
+Scenarios: `balmora` (standing), `seyda_neen` (docks, standing), `red_mountain` (horizon view), `run`
+(7 m/s), `flight` (60 m/s), `census` (interior). `--floor` adds a 960x600 run of each: the GPU drops out,
+what remains is the CPU floor. Output in `target/perf/<tag>/`: per run `<scenario>.md` (frame stats,
+gates, Bevy-timed GPU passes, per-frame stage costs, gauges incl. entities/meshes/lights, churn, hitch
+table, nvidia-smi load/clock/power/temperature over the measured window), `.json`, per-frame `.csv`,
+`.warmup.csv`, `gpu.csv`, `log.txt`; and `summary.md` (median of runs: median, p95, p99, 1 % low, worst,
+hitches, GPU load, timed GPU passes, entity/mesh counts). `--save` copies md + json into the repo.
+
+A single benchmark without the runner: `view <cell> --bench benchmarks/<file>.json [--resolution WxH]
+[--bench-out dir] [--bench-baseline path|none] [--bench-seconds N] [--hitch-ms N] [--off ...]`.
+
+## Frame pacing (measurement setup)
+
+Streaming benchmarks are judged on presented *stutters* (frames over 1.5x the moving median of the
+previous 60, per minute), not on worst/median (superfargoth `diag.md` "Frame pacing": counters, PresentMon
+mapping, the setup matrix and why). The app adds `sf_diag_bevy::FramePhasePlugin`
+in perf runs, so every CSV has `main/busy/ms`, `render/{thread,acquire,graph,present,busy}/ms`,
+`gpu/timed/ms` and `frame/work/ms`. `benchmarks/exterior_run.json` and `exterior_flight.json` gate on
+`max_stutters` (presented, <= 1 per minute) and presented frames <= 33 ms. Run them uncapped
+(default `auto-novsync`) in a borderless window at the display's resolution: that is where render-thread
+spikes show (2026-10-12: flight 21-27, run 3-9 stutters/min at 1080p; at 1440p the GPU-bound waits hide most
+of them, and fifo at 60 Hz hides all of them).
+
+Env switches (A/B, pass with `perf suite ... --env NAME=value`):
+
+- `BEVYRROWIND_WINDOW=borderless`: borderless fullscreen on the primary monitor at its resolution. Use
+  it for pacing runs. A window larger than the display (2560x1440 on a 1080p panel) measured the same as
+  a fitting window rendering 2560x1440 offscreen (2026-10-12): its problem is the pixel count (GPU-bound
+  waits hide render-thread spikes), not the window path. The OS may also shrink an oversized window (one
+  spikes3 run got 1920x1009 and was invalid).
+- `BEVYRROWIND_RENDER_SIZE=WxH`: render the exterior camera into an offscreen WxH image shown scaled
+  in the window (a `Camera2d` + full-window `ImageNode`), so pixel count and window path vary
+  independently (e.g. borderless 1080p window, 1440p pixels).
+- `BEVYRROWIND_PRESENT=immediate|mailbox|fifo` (default `auto-novsync`).
+- `BEVYRROWIND_LOADING_MESHES=<n>`: `StreamingConfig::max_loading_meshes` (default 64, 0 = unpaced).
+
+Classify a run's spikes: `gawk -F, -v verbose=1 -f tools/pacing.awk target/perf/<tag>/<run>/exterior_flight.csv`
+(per spike frame: present, acquire, render thread, work, main/render busy, meshes added, spawns, origin
+shifts -> shift / stream / present / other; then frame and work stutters per minute and p99.9). Sample
+the GPU's temperature and clock next to every batch (`nvidia-smi --query-gpu=temperature.gpu,clocks.gr,
+power.draw --format=csv -l 5`): a laptop GPU throttling from ~2.6 to ~2.3 GHz moves the median by about 1 ms.
+
+## Hitch table
+
+Every frame over the threshold (`--hitch-ms` / `BEVYRROWIND_HITCH_MS`; default 2.5 x median, >= 25 ms),
+warm-up (loading) included, with what changed in that frame and the one before: entities
+(`ecs/entities_delta`), asset events per type (`assets/<Type>/added|modified|removed`), pipelines created
+(`pipelines/created`), streaming stage items and times (`stream/*`), terrain, origin shifts
+(`world/origin_shifts`), big_space propagation.
+
+## A/B switches
+
+`view ... --off a,b` (env `BEVYRROWIND_OFF`): `terrain` (no terrain camera: no selection, no draw),
+`near`/`statics` (R1 placements not spawned), `far` (R2 placements), `farfield`/`lod` (no far-field
+proxies), `sky` (no atmosphere: also the sun and its shadows), `envmap` (sky environment light only),
+`shadows`, `lights`, `particles`, `nif` (models on the runtime NIF path), `denoiser` (DLSS Ray
+Reconstruction off on `--rt`). `farshadows` (terrain/proxy/impostor far shadow and the dithered cascade
+end off; `shadowtune`/`shadowsplits`, the legacy cascade layouts, were deleted in shadow reset A2, 2026-10-21),
+`sizecull` (no size-based draw distance: every object drawn to its ring or the far-field handoff), `precombine` (near
+cells spawn one entity per static again instead of their merged `lod.near` buckets; no rebake), `lampfilter` (lamp
+shadows back on the camera's filter instead of 2x2 hardware PCF, shadow reset B2). Compare against a run without.
+
+Render options (not `--off` parts):
+
+- `--quality <low|medium|high|ultra>` (env `BEVYRROWIND_QUALITY`, default high): one view-distance bias
+  (0.75 / 0.875 / 1 / 1) for LOD selection, size culling and the far-field handoff (400 m × bias, rings
+  follow), plus the size-culling cutoff (4 / 3 / 2 / 1 reference px, floor 16 / 20 / 24 / 32 m).
+- `--dlss <off|auto|native|quality|balanced|performance|ultra-performance>` (env `BEVYRROWIND_DLSS`,
+  default **auto** in `dlss` builds since 2026-10-12, off otherwise; `native` = DLAA): Super Resolution on
+  raster, the Ray Reconstruction quality with `--rt`.
+  Needs a `dlss` build and an NVIDIA RTX GPU (native elsewhere). Baselines comparable with older runs need
+  `--env BEVYRROWIND_DLSS=off` (or `--dlss off`); DLSS runs use their own tag, e.g. `perf suite dlssq ... --env
+  BEVYRROWIND_DLSS=quality`.
+- `--prepass` (exteriors): depth + motion-vector prepass with occlusion culling, an A/B experiment.
+  Measured slower in Balmora (13.9 vs 11.9 ms at 1440p: prepass 0.96 ms + depth downsample 0.72 ms).
+  `--dlss` adds the same prepass on its own.
+
+Reference (2026-10-12, RTX 4060 Laptop on AC, release `solari,dlss`, Balmora 2560x1440 median): native
+11.9 ms, DLSS quality 8.9 (SR pass 2.1 ms), performance 9.2 (SR 2.8 ms), DLAA 11.7. Census Office 1440p:
+raster 3.5, `--rt` + RR auto 8.4, `--rt --off denoiser` 15.4, RR quality 12.9, RR native 26.5.
+Reports in `target/perf/dlss/`.
+
+DLSS plugin package parity (2026-10-25, dlss-plugin-2; release `solari,dlss`, the facade + `dlss/` package, driver
+617.42, GPU 2.58 GHz 66-68 °C, 3 interleaved runs, `target/perf/dlss2/`): Balmora 1440p median native (`--dlss off`)
+13.4-14.2 ms, DLSS quality 10.6-10.8 (GPU 9.0-9.2; SR pass 2.24-2.30 ms); Census Office 1440p `--rt` RR auto 8.8-9.2
+(RR pass 5.45-5.60 ms). Pass costs vs the crates.io build (SR 2.1, RR 5.2) are +0.15 / +0.3 ms across sessions and
+a driver update, with identical NGX parameters; the FFI call is CPU-side. No same-session A/B (needs a crates.io
+build). Balmora frame times moved with the scene since 10-12 (native was 11.9).
+
+## GPU per pass (Nsight Systems, elevated)
+
+Bevy's `RenderDiagnosticsPlugin` times only some passes. Nsight times every wgpu pass label:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/perf_nsys.ps1 -Name balmora1 [-Scenario balmora] [-Resolution 2560x1440] [-Delay 35] [-Duration 8] [-Off shadows] [-DryRun]
+```
+
+One UAC prompt (nsys registers its Vulkan layer); someone must be at the machine. Writes
+`target/perf/nsys/<Name>-passes.md` (per-frame GPU ms per pass), the CSV, the `.nsys-rep`, and the run's
+own sf_diag report. `bevyrrowind perf nsys <csv>` re-summarizes any `vulkan_gpu_marker_sum` CSV.
+
+## CPU per system (trace)
+
+```sh
+cargo build --profile profiling-trace -p bevyrrowind --features trace   # own target dir
+target/profiling-trace/bevyrrowind.exe perf suite trace1 balmora --trace   # TRACE_CHROME per run
+target/profiling-trace/bevyrrowind.exe perf trace target/perf/trace1/<run>/trace.json   # measured window by default
+target/profiling-trace/bevyrrowind.exe perf spikes <trace.json> --min-ms 3
+```
+
+Delete the multi-GB traces afterwards. `--features tracy` is the GUI alternative (Tracy).

@@ -1,0 +1,20 @@
+{
+  "name": "census_office",
+  "warmup": { "seconds": 3.0, "frames": 120 },
+  "measure": {
+    "kind": "path",
+    "speed": 2.0,
+    "keyframes": [
+      { "position": [1.0, 4.2, 5.5] },
+      { "position": [1.0, 4.2, 0.0] },
+      { "position": [2.7, 4.2, -4.0] },
+      { "position": [2.7, 4.2, -9.0] },
+      { "position": [6.5, 4.2, -11.0] },
+      { "position": [10.0, 4.2, -11.0] }
+    ]
+  },
+  "gates": [
+    { "gate": "min_fps", "stat": "median", "fps": 144.0 },
+    { "gate": "max_frame_ms", "ms": 33.0 }
+  ]
+}

@@ -1,0 +1,16 @@
+[package]
+name = "mw_water"
+description = "Morrowind water adapter: water bodies, optics by region, Morrowind.ini [Water] mapping"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+encoding_rs.workspace = true
+glam.workspace = true
+sf_coords.workspace = true
+sf_water.workspace = true
+sf_world.workspace = true
+
+[lints]
+workspace = true

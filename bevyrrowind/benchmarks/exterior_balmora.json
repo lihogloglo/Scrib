@@ -1,0 +1,9 @@
+{
+  "name": "exterior_balmora",
+  "warmup": { "seconds": 3.0, "frames": 120 },
+  "measure": { "kind": "duration", "seconds": 15.0 },
+  "gates": [
+    { "gate": "max_frame_stat", "stat": "median", "ms": 11.0 },
+    { "gate": "max_frame_ms", "ms": 33.0 }
+  ]
+}

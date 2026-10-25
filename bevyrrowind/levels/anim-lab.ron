@@ -1,0 +1,164 @@
+// Animation test level (docs/specs/test-levels.md, visual-checks.md AL-*): one greybox for the
+// owner's animation checks, six areas far enough apart that a camera sees one at a time.
+// Meters, y up, x east, z south; `at` = footprint center at the bottom; ramps and stairs climb
+// toward local -z (north). Yaw 0 faces north (-z), -90 east, 180 south.
+//   start/ledges  origin          player start, ledges 0.5/1.0/1.5/2.0 m, a 3 m wall
+//   props         x 14..25, z 2..18   crates, boxes, a table; an NPC brushes the crate row
+//   loop          (0, 45)         a walker (12 m square) and a runner (24 m square)
+//   slopes/stairs x -55..-25, z -33..-12   10/20/30 deg ramps + two staircases, a 2 m plateau, NPCs
+//   drop          x 23..49, z -57..-26     3 m and 6 m platforms with ramps up, a slope below
+//   idles         z 45, x -47..-26   fidget / hit / knockdown dummies, other races, creatures; z 36 a crowd of four
+// Action trigger "@impact" (level/actors.rs) hits the actor like a thrown body: knockdown and get-up.
+// Action trigger "@fidget" (level/actors.rs): params max (s), idle2..idle9 (AI idle chances) pick a fidget, never twice in a row.
+(
+    name: "anim-lab",
+    description: "animation lab: walk loops, ramps and stairs with walkers, ledges and a wall, props, 3 m / 6 m drops, idle / hit / knockdown dummies of several races",
+    cameras: [
+        (name: "overview", eye: (-3.0, 60.0, 62.0), target: (-3.0, 0.0, -4.0)),
+        (name: "loop", eye: (0.0, 14.0, 72.0), target: (0.0, 0.0, 45.0)),
+        (name: "loop-close", eye: (11.0, 2.2, 34.0), target: (6.0, 1.0, 39.0)),
+        (name: "slopes", eye: (-60.0, 1.8, -22.0), target: (-47.0, 1.0, -22.0)),
+        (name: "stairs", eye: (-40.0, 7.0, -2.0), target: (-40.0, 1.0, -26.0)),
+        (name: "stairs-close", eye: (-23.0, 2.0, -17.0), target: (-30.0, 1.0, -25.0)),
+        (name: "ledges", eye: (0.0, 2.5, 13.0), target: (0.0, 1.2, -2.0)),
+        (name: "ledges-close", eye: (-7.0, 2.0, 3.0), target: (0.0, 1.0, 0.0)),
+        (name: "props", eye: (20.0, 3.5, 24.0), target: (20.0, 0.6, 9.0)),
+        (name: "props-close", eye: (17.5, 2.2, 13.0), target: (14.8, 0.6, 8.0)),
+        (name: "drop", eye: (38.0, 10.0, -16.0), target: (38.0, 2.0, -45.0)),
+        (name: "drop-side", eye: (10.0, 4.0, -44.0), target: (30.0, 2.0, -44.0)),
+        (name: "drop-close", eye: (38.0, 2.2, -35.0), target: (38.0, 1.0, -45.0)),
+        (name: "idles", eye: (-36.5, 2.4, 55.0), target: (-36.5, 1.0, 45.0)),
+        (name: "idles-close", eye: (-42.0, 2.0, 50.0), target: (-40.0, 1.0, 45.0)),
+        (name: "idles-crowd", eye: (-39.25, 1.7, 41.5), target: (-39.25, 1.2, 36.0)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 8.0)),
+        // loop
+        (name: "loop-walker", at: (-6.0, 0.0, 39.0), yaw: -90.0),
+        (name: "loop-runner", at: (-12.0, 0.0, 33.0), yaw: -90.0),
+        // slopes and stairs (all face north)
+        (name: "s10", at: (-50.0, 0.0, -12.0)),
+        (name: "s20", at: (-44.0, 0.0, -12.0)),
+        (name: "s30", at: (-38.0, 0.0, -12.0)),
+        (name: "stair-comfy", at: (-32.0, 0.0, -12.0)),
+        (name: "stair-steep", at: (-28.0, 0.0, -12.0)),
+        // props, drop
+        (name: "props-walker", at: (14.0, 0.0, 18.0)),
+        (name: "drop-walker", at: (30.0, 0.0, -26.0)),
+        (name: "drop-dummy", at: (38.0, 0.0, -44.5)),
+        // idles (face south, to the camera)
+        (name: "idle-1", at: (-47.0, 0.0, 45.0), yaw: 180.0),
+        (name: "idle-2", at: (-43.5, 0.0, 45.0), yaw: 180.0),
+        (name: "idle-3", at: (-40.0, 0.0, 45.0), yaw: 180.0),
+        (name: "idle-4", at: (-36.5, 0.0, 45.0), yaw: 180.0),
+        (name: "idle-5", at: (-33.0, 0.0, 45.0), yaw: 180.0),
+        (name: "idle-6", at: (-29.5, 0.0, 45.0), yaw: 180.0),
+        (name: "idle-7", at: (-26.0, 0.0, 45.0), yaw: 180.0),
+        // a crowd: four identical NPCs in a row (CH-1, CH-3), seen from the north by "idles-crowd"
+        (name: "crowd-1", at: (-44.5, 0.0, 36.0), yaw: 180.0),
+        (name: "crowd-2", at: (-41.0, 0.0, 36.0), yaw: 180.0),
+        (name: "crowd-3", at: (-37.5, 0.0, 36.0), yaw: 180.0),
+        (name: "crowd-4", at: (-34.0, 0.0, 36.0), yaw: 180.0),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (140.0, 140.0))),
+
+        // ---- ledges (origin): 2 m wide, 1.5 m deep, 3 m apart; a 3 m wall behind ----
+        (name: "h0.50", shape: Box(size: (2.0, 0.5, 1.5)), at: (-4.5, 0.0, 0.0), material: Green),
+        (name: "h1.00", shape: Box(size: (2.0, 1.0, 1.5)), at: (-1.5, 0.0, 0.0), material: Yellow),
+        (name: "h1.50", shape: Box(size: (2.0, 1.5, 1.5)), at: (1.5, 0.0, 0.0), material: Orange),
+        (name: "h2.00", shape: Box(size: (2.0, 2.0, 1.5)), at: (4.5, 0.0, 0.0), material: Red),
+        (name: "wall-3.0", shape: Box(size: (14.0, 3.0, 0.4)), at: (0.0, 0.0, -7.0), material: Grey),
+
+        // ---- loop (0, 45): corner markers ----
+        (name: "loop-w-nw", shape: Cylinder(radius: 0.05, height: 0.3), at: (-6.0, 0.0, 39.0), material: White, collide: false),
+        (name: "loop-w-ne", shape: Cylinder(radius: 0.05, height: 0.3), at: (6.0, 0.0, 39.0), material: White, collide: false),
+        (name: "loop-w-se", shape: Cylinder(radius: 0.05, height: 0.3), at: (6.0, 0.0, 51.0), material: White, collide: false),
+        (name: "loop-w-sw", shape: Cylinder(radius: 0.05, height: 0.3), at: (-6.0, 0.0, 51.0), material: White, collide: false),
+        (name: "loop-r-nw", shape: Cylinder(radius: 0.05, height: 0.3), at: (-12.0, 0.0, 33.0), material: Yellow, collide: false),
+        (name: "loop-r-ne", shape: Cylinder(radius: 0.05, height: 0.3), at: (12.0, 0.0, 33.0), material: Yellow, collide: false),
+        (name: "loop-r-se", shape: Cylinder(radius: 0.05, height: 0.3), at: (12.0, 0.0, 57.0), material: Yellow, collide: false),
+        (name: "loop-r-sw", shape: Cylinder(radius: 0.05, height: 0.3), at: (-12.0, 0.0, 57.0), material: Yellow, collide: false),
+
+        // ---- slopes and stairs (x -55..-25): ramps rise 2 m (run = 2 / tan a) to a plateau; stairs 0.15 x 12 and 0.25 x 8 ----
+        (name: "plateau", shape: Box(size: (17.0, 2.0, 6.0)), at: (-44.5, 0.0, -30.0), material: Grey),
+        (name: "slope-10", shape: Ramp(width: 4.0, rise: 2.0, angle: 10.0), at: (-50.0, 0.0, -21.329), material: Green),
+        (name: "slope-20", shape: Ramp(width: 4.0, rise: 2.0, angle: 20.0), at: (-44.0, 0.0, -24.253), material: Yellow),
+        (name: "slope-30", shape: Ramp(width: 4.0, rise: 2.0, angle: 30.0), at: (-38.0, 0.0, -25.268), material: Orange),
+        (name: "stairs-comfy", shape: Stairs(width: 3.0, steps: 12, rise: 0.15, run: 0.30), at: (-32.0, 0.0, -25.2), material: Blue),
+        (name: "landing-comfy", shape: Box(size: (3.0, 1.8, 5.0)), at: (-32.0, 0.0, -29.5), material: Grey),
+        (name: "stairs-steep", shape: Stairs(width: 3.0, steps: 8, rise: 0.25, run: 0.22), at: (-28.0, 0.0, -26.12), material: Red),
+        (name: "landing-steep", shape: Box(size: (3.0, 2.0, 5.0)), at: (-28.0, 0.0, -29.5), material: Grey),
+
+        // ---- props (x 14..25): a crate row for the NPC to brush, loose boxes, a stack, a table, a 300 kg block ----
+        (name: "row-1", shape: Box(size: (0.6, 0.6, 0.6)), at: (14.8, 0.0, 14.0), material: Orange, dynamic: Some(15.0)),
+        (name: "row-2", shape: Box(size: (0.6, 0.6, 0.6)), at: (14.8, 0.0, 10.0), yaw: 10.0, material: Orange, dynamic: Some(15.0)),
+        (name: "row-3", shape: Box(size: (0.6, 0.6, 0.6)), at: (14.8, 0.0, 6.0), yaw: -10.0, material: Orange, dynamic: Some(15.0)),
+        (name: "box-60kg", shape: Box(size: (1.0, 1.0, 1.0)), at: (20.0, 0.0, 6.0), material: Yellow, dynamic: Some(60.0)),
+        (name: "box-4kg", shape: Box(size: (0.5, 0.5, 0.5)), at: (18.0, 0.0, 9.0), material: Green, dynamic: Some(4.0)),
+        (name: "stack-1", shape: Box(size: (0.6, 0.6, 0.6)), at: (20.0, 0.0, 12.0), material: Orange, dynamic: Some(15.0)),
+        (name: "stack-2", shape: Box(size: (0.6, 0.6, 0.6)), at: (20.0, 0.6, 12.0), yaw: 20.0, material: Orange, dynamic: Some(15.0)),
+        (name: "stack-3", shape: Box(size: (0.6, 0.6, 0.6)), at: (20.0, 1.2, 12.0), yaw: -15.0, material: Orange, dynamic: Some(15.0)),
+        (name: "table", shape: Box(size: (1.6, 0.8, 0.9)), at: (24.0, 0.0, 10.0), material: Purple, dynamic: Some(30.0), interact: Some("table")),
+        (name: "block-300kg", shape: Box(size: (1.2, 1.2, 1.2)), at: (24.0, 0.0, 4.0), material: Red, dynamic: Some(300.0)),
+        (name: "small-1", shape: Box(size: (0.4, 0.4, 0.4)), at: (19.0, 0.0, 16.0), material: Green, dynamic: Some(3.0)),
+        (name: "small-2", shape: Box(size: (0.4, 0.4, 0.4)), at: (20.0, 0.0, 16.0), material: Green, dynamic: Some(3.0)),
+        (name: "small-3", shape: Box(size: (0.4, 0.4, 0.4)), at: (21.0, 0.0, 16.0), material: Green, dynamic: Some(3.0)),
+
+        // ---- drop (x 23..49): 3 m platform (ramp 20 deg), 6 m platform (ramp 25 deg), a 15 deg slope below ----
+        (name: "platform-3m", shape: Box(size: (6.0, 3.0, 6.0)), at: (30.0, 0.0, -40.0), material: Blue),
+        (name: "ramp-to-3m", shape: Ramp(width: 3.0, rise: 3.0, angle: 20.0), at: (30.0, 0.0, -32.879), material: Green),
+        (name: "platform-6m", shape: Box(size: (6.0, 6.0, 6.0)), at: (46.0, 0.0, -40.0), material: Purple),
+        (name: "ramp-to-6m", shape: Ramp(width: 3.0, rise: 6.0, angle: 25.0), at: (46.0, 0.0, -30.567), material: Yellow),
+        (name: "slope-below", shape: Ramp(width: 22.0, rise: 3.0, angle: 15.0), at: (38.0, 0.0, -51.598), material: Orange),
+    ],
+    actors: [
+        // loop: a walker and a runner (turns at the corners)
+        (id: "fargoth", spawn: "loop-walker",
+         path: Some((points: [(-6.0, 0.0, 39.0), (6.0, 0.0, 39.0), (6.0, 0.0, 51.0), (-6.0, 0.0, 51.0)], speed: 1.4))),
+        (id: "elone", spawn: "loop-runner",
+         path: Some((points: [(-12.0, 0.0, 33.0), (12.0, 0.0, 33.0), (12.0, 0.0, 57.0), (-12.0, 0.0, 57.0)], speed: 4.0, run: true))),
+
+        // ramps and stairs: one walker per ramp and staircase (a runner on the 10 deg ramp)
+        (id: "elone", spawn: "s10",
+         path: Some((points: [(-50.0, 0.0, -12.0), (-50.0, 2.0, -31.0)], mode: PingPong, speed: 3.5, run: true, wait: 1.0))),
+        (id: "fargoth", spawn: "s20",
+         path: Some((points: [(-44.0, 0.0, -12.0), (-44.0, 2.0, -31.0)], mode: PingPong, speed: 1.4, wait: 1.0))),
+        (id: "llathyno hlaalu", spawn: "s30",
+         path: Some((points: [(-38.0, 0.0, -12.0), (-38.0, 2.0, -31.0)], mode: PingPong, speed: 1.4, wait: 1.0))),
+        (id: "ajira", spawn: "stair-comfy",
+         path: Some((points: [(-32.0, 0.0, -12.0), (-32.0, 1.8, -31.0)], mode: PingPong, speed: 1.4, wait: 1.0))),
+        (id: "huleeya", spawn: "stair-steep",
+         path: Some((points: [(-28.0, 0.0, -12.0), (-28.0, 2.0, -31.0)], mode: PingPong, speed: 1.4, wait: 1.0))),
+
+        // props: brushes the crate row at x = 14.8
+        (id: "elone", spawn: "props-walker",
+         path: Some((points: [(14.0, 0.0, 18.0), (14.0, 0.0, 2.0)], mode: PingPong, speed: 1.4, wait: 1.5))),
+
+        // drop: up the ramp, off the 3 m platform's north edge (a fall), round the side and back
+        (id: "fargoth", spawn: "drop-walker",
+         path: Some((points: [(30.0, 0.0, -26.0), (30.0, 3.0, -40.0), (30.0, 0.0, -46.0), (23.0, 0.0, -46.0), (23.0, 0.0, -26.0)], speed: 1.4))),
+        // knocked down every 10 s (25 N·s from the south) and gets up
+        (id: "llathyno hlaalu", spawn: "drop-dummy",
+         action: Some((trigger: "@impact", every: 10.0, params: [("impulse", 25.0), ("dir", 0.0)]))),
+
+        // idles (left to right): fidget variants, a Khajiit, an Argonian, hit reactions, a knockdown, a guar, a mudcrab
+        (id: "fargoth", spawn: "idle-1",
+         action: Some((trigger: "fidget", every: 3.0, params: [("idle_variant", 2.0)]))),
+        (id: "ajira", spawn: "idle-2",
+         action: Some((trigger: "fidget", every: 3.5, params: [("idle_variant", 3.0)]))),
+        (id: "huleeya", spawn: "idle-3",
+         action: Some((trigger: "fidget", every: 4.0, params: [("idle_variant", 4.0)]))),
+        (id: "elone", spawn: "idle-4",
+         action: Some((trigger: "hit", every: 4.0, params: [("hit_variant", 1.0)]))),
+        (id: "llathyno hlaalu", spawn: "idle-5",
+         action: Some((trigger: "@impact", every: 12.0, params: [("impulse", 25.0), ("dir", 0.0)]))),
+        (id: "guar", spawn: "idle-6"),
+        (id: "mudcrab", spawn: "idle-7"),
+        // the crowd: one record, one idle clip, one fidget set; only the per-character seed differs
+        (id: "fargoth", spawn: "crowd-1", action: Some((trigger: "@fidget", every: 3.0, params: [("max", 8.0), ("idle2", 50.0), ("idle3", 30.0), ("idle4", 20.0)]))),
+        (id: "fargoth", spawn: "crowd-2", action: Some((trigger: "@fidget", every: 3.0, params: [("max", 8.0), ("idle2", 50.0), ("idle3", 30.0), ("idle4", 20.0)]))),
+        (id: "fargoth", spawn: "crowd-3", action: Some((trigger: "@fidget", every: 3.0, params: [("max", 8.0), ("idle2", 50.0), ("idle3", 30.0), ("idle4", 20.0)]))),
+        (id: "fargoth", spawn: "crowd-4", action: Some((trigger: "@fidget", every: 3.0, params: [("max", 8.0), ("idle2", 50.0), ("idle3", 30.0), ("idle4", 20.0)]))),
+    ],
+)
