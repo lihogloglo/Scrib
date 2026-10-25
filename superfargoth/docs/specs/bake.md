@@ -5,6 +5,12 @@ Crates: `sf_bake` (new, Bevy-free: step graph, cache, CLI helpers),
 `sf_model` (new, Bevy-free: neutral model and the `.sfmesh` container),
 `sf_model_bevy` (new: `.sfmesh` asset loader and the `baked://` asset source)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: agreed 2026-10-11 and built (M2). Built: step graph, content-addressed cache with traces, planner on rayon, CLI helpers, `.sfmesh`, `baked://` source. Budget: first full bake <= 2 min (ceiling 5), then nothing at start; a mod change rebakes only what it touches.
+> Crates / key types: `sf_bake` (Bevy-free), `sf_model`, `sf_model_bevy`; `BakeStep` (`ID`, `VERSION`, `plan`, `run`). Decisions: constructive-trace build system over a blake3 object store, LZ4 objects ("Canonical technique", "Decisions made"); Bevy `AssetProcessor` is not the engine, Bevy only loads products; one file per trace; meshopt for LODs.
+> Read next: "Data model" for keys and traces; "Execution" for scheduling and the concurrency rule; "M2 steps" for the step list; `mesh.cook` details moved to `bake-mesh-cook.md`; "Open questions" (small-file I/O).
+<!-- /agent-summary -->
+
 ## Goal
 
 One pipeline for every expensive derived asset, with content-hash caching

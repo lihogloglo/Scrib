@@ -8,6 +8,12 @@ spawning, part merging, attachments, faces, first and third person),
 `sf_model` (extended: skin data in `Model` and `.sfmesh`), `sf_anim`
 (retarget math, animation.md)
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: `sf_character` core and `sf_anim::retarget` built 2026-10-11 ("As implemented"); ROADMAP 3.4 [~] holds deferred checks (CH-1/3 and SB-5 awaiting owner; SN-2/3, CH-4, SB-1/2/3, AP-2/3 deferred). Designed, not built: character creation UI, body sliders, runtime cloth (M4).
+> Crates / key types: `sf_character` (Bevy-free; `HumanoidBone`, `BoneSet`, `auto_map`, `RigMap`), `sf_character_bevy`, `sf_model`, `sf_anim`. Decisions: one skinned mesh per material merged at spawn; slot equipment with coverage; VRM 1.0 humanoid as retarget hub, one rig map per skeleton; auto-map lets hierarchy decide the bone ("Canonical technique").
+> Read next: "Data model" for types; "Assembly at runtime" for spawn/merge; "Retargeting" for clips; "Open questions" 4 (twist joints) and 6 (morph parts).
+<!-- /agent-summary -->
+
 ## Goal
 
 Build a character from parts (body, head, hair, equipment, held items)

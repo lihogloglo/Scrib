@@ -8,6 +8,12 @@ Sources: the R12 co-op research (`../research/coop/README.md`, crate survey, pri
 decisions (2026-10-19)"), [action.md](action.md) "Co-op readiness" (R11b), [camera.md](camera.md),
 ARCHITECTURE.md §10.
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: spec only (N0); nothing built, `sf_net` does not exist. Timing: N1-N5 after the current phase, N6-N8 after M7 (ROADMAP "[p] Co-op N1-N8"); design-only until after Phase 3. Net-ready rules bind every spec.
+> Planned: `sf_net` (session, handshake, replication rules, prediction glue) on lightyear, or replicon plus a transport plus our own one-entity rollback, picked in the N1 spike. Decisions: 2-4 players, host-authoritative with client prediction, no lockstep; shared world, own characters; direct IP/LAN first, Steam later as opt-in ("Owner decisions", "Topology and transport", "Quest model").
+> Read next: "Net-ready rules" before writing any system spec; "Ownership per system" and "Replication model" for state; "Prediction" for own character; "Crate decision (N1 spike)"; "Open questions (owner)".
+<!-- /agent-summary -->
+
 ## Goal
 
 Two to four friends play one world together: walk Balmora side by side, fight the same NPCs, split

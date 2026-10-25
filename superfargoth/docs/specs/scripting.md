@@ -13,6 +13,12 @@ API modules next to the systems they expose (`sf_ui_lua` per ui.md; small module
 `sf_script_bevy` behind features). Mod pipeline: [mods.md](mods.md). First adapter:
 `bevyrrowind/docs/specs/scripting-adapter.md` (legacy script translation).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: PARKED after L3 (owner 2026-10-18). Built: L1 `sf_script` core (Luau, spike), L2 `sf_script_bevy`, L3 API v0.1 (core, events, timers, interfaces, world spawn/despawn, entity scripts, `on_load`, `.d.luau`), verified in game 2026-10-18. Parked: `@sf/records`, `@sf/input`, `@sf/anim`, `@sf/physics`, MS-2.
+> Crates / key types: `sf_script`, `sf_script_bevy`, `ScriptContext`, `ScriptSlot`. Decisions: one sandboxed VM state per mod, adapters may share a context ("Canonical technique"); handlers and named timers, no saved coroutines; state is plain data; scripts run in exclusive systems at fixed slots, synchronous API ("Execution model"); watchdog interrupt ("Error isolation and limits").
+> Read next: "Contexts" and "Curated API and versioning" for API work; "Hot reload"; "Open questions" (all open items are minor).
+<!-- /agent-summary -->
+
 ## Goal
 
 Mods add mechanics, UI and content logic in **Luau**, through a **curated, versioned API**, with

@@ -10,6 +10,12 @@ and the net-ready rules of the R12 co-op research (`../research/coop/README.md` 
 Companions: [camera.md](camera.md) (new), [animation.md](animation.md) "Next-gen roadmap: decided
 shape (R11b)", [locomotion.md](locomotion.md) "Action-layer changes (R11b)", [test-levels.md](test-levels.md).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: A1 (`sf_action` backbone) and A2 slice 1 (`sf_action_bevy` fixed tick) built; ROADMAP 2.1 [~] (PL-1 awaiting owner), 3.1 [ ] open (B1-F). Designed, not built: warp mantle/vault, ledges, ladders, free-run, interactions, combat, co-op.
+> Crates / key types: `sf_action` (Bevy-free: `Command`, `InputSampler`, `MoveRule`/`RuleSet`, `ActionState`, `step`, `BASE_RULES`), `sf_action_bevy`. Decisions: rules decide on the fixed tick, Luau never per tick; five motion owners Sim/Warp/Docked/Clip/Physics ("Canonical technique"); gameplay reads baked data, never the pose; Up = Jump, Down = Sneak at an edge ("Owner answers"); net-ready ("Co-op readiness").
+> Read next: "As built (A1)" first (wins over design text); "Build plan" for slices; "The chooser" for rule changes. Header still says "awaiting owner review" though "Owner answers" are recorded.
+<!-- /agent-summary -->
+
 ## Goal
 
 One system picks what every character does next, for the player and NPCs alike: sneak behind a

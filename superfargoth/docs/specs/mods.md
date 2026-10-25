@@ -7,6 +7,12 @@ patch files and field-level conflicts), `sf_bake` (profile fingerprint), `sf_scr
 ([scripting.md](scripting.md)), `sf_ui_css` / `sf_ui` ([ui.md](ui.md)). Adapter side
 (Bevyrrowind): legacy content as synthesized mods (`mw_records`, `mw_vfs`, `mw_install`).
 
+<!-- agent-summary -->
+> **Agent summary (2026-10-26).** Status: A1-A4 built 2026-10-13 (m5): repository, profiles, `ContentAdapter`, `load_profile`, kind registry, native RON/TOML records, field patches and conflicts, Bevyrrowind adapter and builtin mod, `mods` CLI, profile fingerprint, VFS watcher with snapshot swap and hot-reload routing. Open: native archive format, cell respawn on record reload, field-level ESP merge in `mw_records`.
+> Crates: `sf_mods`, `sf_vfs`, `sf_records`, `sf_bake` (fingerprint), `sf_script`, `sf_ui_css`/`sf_ui`; game side `mw_records`, `mw_vfs`, `mw_install`. Decisions ("Canonical technique"): everything is a mod; manifest plus load order plus layered VFS plus layered records with provenance; field-level patches built in; bake keyed by fingerprints; one mod is one record source, VFS group and script context.
+> Read next: "Pipeline (startup)" for load order; "Validation and conflict reports"; "Hot reload"; "Bake cache interaction"; "As built (A1)".
+<!-- /agent-summary -->
+
 ## Goal
 
 ARCHITECTURE §6: **everything is a mod**, freely combining asset overrides, record patches, Luau
