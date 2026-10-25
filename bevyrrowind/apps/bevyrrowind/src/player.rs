@@ -345,7 +345,7 @@ fn apply_mode(
     mut mode: ResMut<PlayerMode>,
     mut start: ResMut<PlayerStart>,
     physics: Res<Physics>,
-    streaming: Option<Res<PhysicsStreaming>>,
+    collision: sf_physics_bevy::CollisionReady,
     settled: Option<Res<crate::exterior::Settled>>,
     visual: Res<PlayerVisual>,
     keymap: Res<sf_ui_bevy::UiKeymap>,
@@ -361,7 +361,7 @@ fn apply_mode(
             let mut feet = here.pos;
             if start.worldspace.as_ref() == Some(&here.worldspace) {
                 // Wait for the collision under the eye before looking for the floor.
-                if streaming.as_deref().is_some_and(|s| s.collision_loading(&here.worldspace, here.pos, 2.0)) {
+                if collision.loading(&here.worldspace, here.pos, 2.0) {
                     return;
                 }
                 start.worldspace = None;

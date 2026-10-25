@@ -521,16 +521,16 @@ fn processing_range(
 #[derive(bevy::ecs::system::SystemParam)]
 struct GroundReady<'w> {
     ground: Ground<'w>,
-    physics: Option<Res<'w, sf_physics_bevy::PhysicsStreaming>>,
+    collision: sf_physics_bevy::CollisionReady<'w>,
     heights: Option<Res<'w, TerrainHeightsMap>>,
 }
 
 impl GroundReady<'_> {
     /// Whether the ground around `pos` in `ws` is still streaming in: a
-    /// static queued for physics, or terrain heights not resident.
+    /// cell not activated or a static queued for physics (`CollisionReady`),
+    /// or terrain heights not resident.
     fn loading(&self, ws: &WorldspaceId, pos: WorldPos) -> bool {
-        let statics = self.physics.as_deref().filter(|_| self.ground.on_physics());
-        statics.is_some_and(|s| s.collision_loading(ws, pos, PROCESS_MARGIN))
+        (self.ground.on_physics() && self.collision.loading(ws, pos, PROCESS_MARGIN))
             || self.heights.as_deref().is_some_and(|h| terrain_missing(h, ws, pos))
     }
 }

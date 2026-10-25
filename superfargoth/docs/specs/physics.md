@@ -230,9 +230,11 @@ the robe census: [archive](archive/physics-history.md#cloth-lattice).
 - **Fell out.** A body below the world's kill height returns to its last resting pose and sleeps. The
   kill height is `PhysicsParams::kill_height`, else `kill_margin` (10 m) below the lowest fixed body
   inserted so far (never rises), so every world gets recovery without the host knowing its depth.
-- **Collision-ready gate** (characters, fallfix 2026-10-18): while a queued static's bounds reach the
-  square around a mover (`PhysicsStreaming::collision_loading`), the host keeps it `Dormant`, as
-  engines hold actors until streamed collision is in. Safety net: a `Ground` mover more than 2 m under
+- **Collision-ready gate** (characters, fallfix 2026-10-18; G1 2026-10-26): while a content cell the
+  square around a mover touches is not activated yet (activation is time-sliced) or a queued static's
+  bounds reach it (`PhysicsStreaming::collision_loading`, systems: `CollisionReady`), the host keeps it
+  `Dormant`, as engines hold actors until streamed collision is in. Items wait the same way, each over
+  its own bounds. Safety net: a `Ground` mover more than 2 m under
   resident terrain (else the kill height) returns to its last walkable ground (UE `KillZ`).
 - **Hold until grabbed**: `Hold::Unsupported` placements go in `Held` and become dynamic only when
   grabbed or impulsed (a lantern on a hook never drops because an NPC brushed it). **Authored

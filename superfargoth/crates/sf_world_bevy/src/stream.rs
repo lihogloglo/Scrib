@@ -355,6 +355,14 @@ impl Streaming {
         &self.scheduler
     }
 
+    /// The scheduler, for tests that drive it by hand without the streaming
+    /// systems (cell levels for gates downstream, e.g. physics' collision-ready
+    /// check). A running game never needs it: the streaming systems drive it.
+    #[doc(hidden)]
+    pub fn scheduler_mut(&mut self) -> &mut Scheduler {
+        &mut self.scheduler
+    }
+
     pub fn config(&self) -> &StreamingConfig {
         &self.rt.config
     }

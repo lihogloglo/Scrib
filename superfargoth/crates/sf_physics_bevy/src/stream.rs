@@ -39,7 +39,7 @@ use sf_coords::{WorldPos, WorldTransform};
 use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef, SurfaceId};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::{TerrainHeights, WorldRect};
-use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, PlacementOverlay, WorldspaceId};
+use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, PlacementOverlay, Scheduler, WorldspaceId};
 use sf_world_bevy::{ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, Streaming, WorldOverlay};
 
 use crate::{Physics, PhysicsSettings, PhysicsStats};
@@ -216,24 +216,65 @@ impl PhysicsStreaming {
         self.placed.get(&(worldspace.clone(), id)).copied()
     }
 
-    /// Whether static collision around `pos` is still streaming in: a
-    /// non-item placement of `worldspace` whose bounds reach the horizontal
-    /// square of half size `margin` around `pos` was activated but its body
-    /// is not in the world yet (shape loading, or waiting for insert budget).
+    /// Whether static collision around `pos` is still streaming in (the
+    /// collision-ready gate, physics.md "Streaming"): a streaming cell with
+    /// content that the horizontal square of half size `margin` around `pos`
+    /// touches is not activated (R0) yet in `scheduler`, or a non-item
+    /// placement of `worldspace` whose bounds reach that square was
+    /// activated but its body is not in the world yet (shape loading, or
+    /// waiting for insert budget).
     ///
-    /// The collision-ready gate (physics.md "Streaming"): a character must
-    /// not simulate where this holds, or it falls through a floor that
-    /// arrives a few frames later (inserts are time-sliced, R0 activation is
-    /// not). Items wait the same way, per worldspace, before they go in.
-    pub fn collision_loading(&self, worldspace: &WorldspaceId, pos: WorldPos, margin: f32) -> bool {
-        self.pending.iter().any(|((ws, _), p)| {
-            if p.item || ws != worldspace {
-                return false;
-            }
-            let d = pos.delta_f32(p.placement.transform.pos);
-            let reach = margin.max(0.0) + p.radius;
-            d.x.abs() <= reach && d.z.abs() <= reach
-        })
+    /// Both halves are time-sliced: the scheduler activates a cell's
+    /// placements a few per frame and marks the cell active after the last
+    /// one, and inserts run under a frame budget. A character must not
+    /// simulate where this holds, or it falls through a floor that arrives
+    /// a few frames later; items wait the same way, each over its own bounds,
+    /// before they go in. Without a scheduler (tests, synthetic worlds) only
+    /// the queued statics count. [`CollisionReady`] reads it from systems.
+    pub fn collision_loading(&self, scheduler: Option<&Scheduler>, worldspace: &WorldspaceId, pos: WorldPos, margin: f32) -> bool {
+        scheduler.is_some_and(|s| !cells_activated(s, worldspace, pos, margin))
+            || self.pending.iter().any(|((ws, _), p)| !p.item && ws == worldspace && reaches(p, pos, margin))
+    }
+}
+
+/// Whether queued static `p`'s bounds reach the horizontal square of half
+/// size `margin` around `pos`.
+fn reaches(p: &Pending, pos: WorldPos, margin: f32) -> bool {
+    let d = pos.delta_f32(p.placement.transform.pos);
+    let reach = margin.max(0.0) + p.radius;
+    d.x.abs() <= reach && d.z.abs() <= reach
+}
+
+/// Whether every streaming cell with content that the horizontal square of
+/// half size `margin` around `pos` touches is activated (R0) in `ws`. Unlike
+/// [`Scheduler::covers`], cells without content don't hold it up (nothing
+/// there to collide with), and a worldspace the scheduler doesn't know
+/// (tests, synthetic worlds) counts as activated. One cell lookup per
+/// corner: cheap enough per queued item per frame.
+fn cells_activated(scheduler: &Scheduler, ws: &WorldspaceId, pos: WorldPos, margin: f32) -> bool {
+    let Some(dir) = scheduler.directory(ws) else { return true };
+    let m = margin.max(0.0);
+    [(-m, -m), (m, -m), (-m, m), (m, m)].into_iter().all(|(dx, dz)| {
+        let cell = dir.partition.cell_of(pos.offset(Vec3::new(dx, 0.0, dz)));
+        dir.find(cell).is_none() || scheduler.level(ws, cell) >= Level::Active
+    })
+}
+
+/// The collision-ready gate for systems: [`PhysicsStreaming::collision_loading`]
+/// with the world scheduler of [`Streaming`].
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct CollisionReady<'w> {
+    physics: Option<Res<'w, PhysicsStreaming>>,
+    streaming: Option<Res<'w, Streaming>>,
+}
+
+impl CollisionReady<'_> {
+    /// Whether static collision around `pos` in `worldspace` is still
+    /// streaming in (see [`PhysicsStreaming::collision_loading`]). False
+    /// without physics streaming (nothing would ever come in).
+    pub fn loading(&self, worldspace: &WorldspaceId, pos: WorldPos, margin: f32) -> bool {
+        let scheduler = self.streaming.as_deref().map(Streaming::scheduler);
+        self.physics.as_deref().is_some_and(|s| s.collision_loading(scheduler, worldspace, pos, margin))
     }
 }
 
@@ -475,7 +516,9 @@ pub(crate) fn apply_inserts(
     bodies: Option<Res<PhysicsBodySource>>,
     settings: Res<PhysicsSettings>,
     mut stats: ResMut<PhysicsStats>,
+    world_streaming: Option<Res<Streaming>>,
 ) {
+    let scheduler = world_streaming.as_deref().map(Streaming::scheduler);
     let s = &mut *streaming;
     // Finished shape builds put their placements back at the front of the queue.
     for (model, state) in &mut s.shapes {
@@ -535,12 +578,21 @@ pub(crate) fn apply_inserts(
                 batch = 0;
             }
             items_phase = true;
-            // Items go in only once their worldspace has no static left to
-            // insert: one woken before the counter or floor under it exists
-            // falls through the world (the streamed level's collision is
-            // complete before its dynamic bodies, as engines attach a cell).
-            let loading: HashSet<&WorldspaceId> = s.pending.iter().filter(|(_, p)| !p.item).map(|(k, _)| &k.0).collect();
-            let (wait, go): (VecDeque<Key>, VecDeque<Key>) = deferred.drain(..).partition(|k| loading.contains(&k.0));
+            // Each item goes in only once the collision under it is complete:
+            // every content cell its bounds touch is activated and no static
+            // reaching them is left to insert (`collision_loading`). One put
+            // in before the counter or floor under it exists falls through
+            // the world, or wakes when that static arrives (the streamed
+            // level's collision is complete before its dynamic bodies, as
+            // engines attach a cell). Items wait one by one; the rest go in.
+            let statics: Vec<(&WorldspaceId, &Pending)> = s.pending.iter().filter(|(_, p)| !p.item).map(|(k, p)| (&k.0, p)).collect();
+            let waits = |k: &Key| {
+                let Some(item) = s.pending.get(k) else { return false };
+                let (pos, r) = (item.placement.transform.pos, item.radius);
+                scheduler.is_some_and(|sc| !cells_activated(sc, &k.0, pos, r))
+                    || statics.iter().any(|(ws, p)| *ws == &k.0 && reaches(p, pos, r))
+            };
+            let (wait, go): (VecDeque<Key>, VecDeque<Key>) = deferred.drain(..).partition(|k| waits(k));
             deferred = go;
             held.extend(wait);
             continue;

@@ -91,7 +91,7 @@ mod items {
         }
     }
 
-    struct Items;
+    pub(super) struct Items;
     impl ItemContent for Items {
         fn is_item(&self, p: &Placement) -> bool {
             p.class == PlacementClass::Dynamic
@@ -101,7 +101,7 @@ mod items {
         }
     }
 
-    fn cube() -> Arc<sf_physics::BodyShape> {
+    pub(super) fn cube() -> Arc<sf_physics::BodyShape> {
         let h = 0.1;
         let p: Vec<Vec3> = (0..8)
             .map(|i| Vec3::new(if i & 1 == 0 { -h } else { h }, if i & 2 == 0 { -h } else { h }, if i & 4 == 0 { -h } else { h }))
@@ -203,7 +203,7 @@ mod streamed_ground {
     }
 
     /// A one-sided 10 m floor slab at y = 0 (model space), facing up.
-    fn floor() -> Arc<StaticShape> {
+    pub(super) fn floor() -> Arc<StaticShape> {
         let mut b = CollisionBuilder::new(1e-3);
         let p = [[-5.0, 0.0, -5.0], [5.0, 0.0, -5.0], [5.0, 0.0, 5.0], [-5.0, 0.0, 5.0]];
         b.add(&p, &[0, 2, 1, 0, 3, 2], Affine3A::IDENTITY, SurfaceId::DEFAULT);
@@ -256,7 +256,7 @@ mod streamed_ground {
         let mut app = app(&ws);
         let shape = floor();
         app.insert_resource(PhysicsShapeSource(Arc::new(move |_: &str| Some(shape.clone()))));
-        let s = |app: &App, ws: &WorldspaceId, at: Vec3| app.world().resource::<PhysicsStreaming>().collision_loading(ws, base().offset(at), 4.0);
+        let s = |app: &App, ws: &WorldspaceId, at: Vec3| app.world().resource::<PhysicsStreaming>().collision_loading(None, ws, base().offset(at), 4.0);
         assert!(!s(&app, &ws, Vec3::ZERO), "nothing activated");
         let cell_entity = app.world_mut().spawn_empty().id();
         let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
@@ -363,5 +363,174 @@ mod streamed_ground {
         let (lo, hi) = offsets.iter().fold((f32::MAX, f32::MIN), |(l, h), &o| (l.min(o), h.max(o)));
         assert!(lo < -0.01, "interpolation draws a step behind: {lo}");
         assert!(hi - lo < 0.002, "the capsule shakes {:.1} mm against the mover ({lo:.4}..{hi:.4} m)", (hi - lo) * 1000.0);
+    }
+}
+
+/// G1 (physics-fix-plan.md slice 1): the scheduler activates cells a few
+/// placements per frame, so an item's cell can be active while the cell
+/// holding the floor under it is not. The item must wait for that floor.
+mod activation_gate {
+    use std::sync::Arc;
+
+    use bevy_app::App;
+    use bevy_ecs::prelude::*;
+    use bevy_math::{DVec3, IVec3, Vec3};
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_world::{
+        Anchor, AnchorId, AnchorRole, IndexParams, IndexedPlacement, Level, Location, ModelInfo, Placement, PlacementClass, PlacementFlags,
+        PlacementId, RecordRef, Scheduler, Stage, StageStep, TickInput, WorldspaceId, build_directory, build_pages,
+    };
+    use sf_world_bevy::{ActivateCx, PlacementSpawner, SpawnCx, Streaming, StreamingConfig};
+
+    use super::app;
+    use super::items::{Items, cube};
+    use super::streamed_ground::floor;
+    use crate::{Physics, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming};
+
+    struct Nothing;
+    impl PlacementSpawner for Nothing {
+        fn spawn(&self, _: &mut World, _: &SpawnCx<'_>, _: &IndexedPlacement) -> u32 {
+            0
+        }
+    }
+
+    /// The item stands 5 cm left of the 128 m cell boundary at x = 256; the
+    /// floor's origin is in the next cell, its 10 m slab under both.
+    fn item_pos() -> WorldPos {
+        WorldPos::from_f64(DVec3::new(255.95, 0.1, 64.0))
+    }
+
+    fn floor_pos() -> WorldPos {
+        WorldPos::from_f64(DVec3::new(258.0, 0.0, 64.0))
+    }
+
+    fn placement(id: u128, pos: WorldPos, model: &str, class: PlacementClass, radius: f32) -> IndexedPlacement {
+        IndexedPlacement {
+            placement: Placement {
+                id: PlacementId(id),
+                base: RecordRef::new("TEST", model),
+                model: Some(sf_vfs::VfsPath::new(model).unwrap()),
+                transform: WorldTransform { pos, ..WorldTransform::IDENTITY },
+                class,
+                flags: PlacementFlags::empty(),
+            },
+            radius,
+        }
+    }
+
+    /// A scheduler that knows the two cells (content: the item, the floor).
+    fn scheduler(ws: &WorldspaceId, item: &IndexedPlacement, floor: &IndexedPlacement) -> Scheduler {
+        let params = IndexParams::default();
+        let models = |_: &sf_vfs::VfsPath| Some(ModelInfo { min: Vec3::splat(-0.5), max: Vec3::splat(0.5), bytes: 1000, lod_distance: 100.0 });
+        let (pages, _) = build_pages(&params, [item.placement.clone(), floor.placement.clone()], &models);
+        let mut s = Scheduler::new(StreamingConfig::default().scheduler);
+        assert!(s.add_worldspace(build_directory(ws.clone(), &params, &pages), None));
+        s
+    }
+
+    /// One scheduler frame, every stage finishing at once except the
+    /// activation of `hold` (time-sliced activation still running there).
+    fn drive(app: &mut App, ws: &WorldspaceId, now: &mut f64, hold: Option<IVec3>) {
+        let mut streaming = app.world_mut().resource_mut::<Streaming>();
+        let s = streaming.scheduler_mut();
+        let anchors: Vec<Anchor> = [AnchorRole::Gameplay, AnchorRole::Visual]
+            .into_iter()
+            .zip(0..)
+            .map(|(role, i)| Anchor::new(AnchorId(i), role, Location::new(ws.clone(), item_pos())))
+            .collect();
+        let report = s.update(&TickInput { now: *now, anchors: &anchors });
+        for id in report.start {
+            match s.request(id).map(|r| r.stage) {
+                Some(Stage::Fetch) => s.fetched(id, *now, 1, 1),
+                Some(Stage::Assets) => s.assets_loaded(id, *now),
+                _ => false,
+            };
+        }
+        for stage in [Stage::Deactivate, Stage::Despawn, Stage::Spawn, Stage::Upload, Stage::Activate] {
+            s.run_stage(stage, &mut |r| StageStep { cost: 0.01, done: !(stage == Stage::Activate && Some(r.cell) == hold) });
+        }
+        *now += 1.0 / 60.0;
+    }
+
+    fn level(app: &App, ws: &WorldspaceId, pos: WorldPos) -> Level {
+        let s = app.world().resource::<Streaming>().scheduler();
+        s.level(ws, s.directory(ws).unwrap().partition.cell_of(pos))
+    }
+
+    fn body(app: &App, ws: &WorldspaceId, id: u128) -> Option<sf_physics::BodyId> {
+        app.world().resource::<PhysicsStreaming>().body(ws, PlacementId(id))
+    }
+
+    /// Red on the old gate (it only saw activated statics): the item went in
+    /// on an empty world and fell, or woke when the floor arrived.
+    #[test]
+    fn item_waits_for_the_floor_of_a_later_cell() {
+        let ws = WorldspaceId::new("test");
+        bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
+        let mut app = app(&ws);
+        let item = placement(7, item_pos(), "cube.nif", PlacementClass::Dynamic, 0.2);
+        let slab = placement(3, floor_pos(), "floor.nif", PlacementClass::Static, 7.1);
+        let (body_shape, static_shape) = (cube(), floor());
+        let mut streaming = Streaming::new(StreamingConfig::default());
+        *streaming.scheduler_mut() = scheduler(&ws, &item, &slab);
+        app.insert_resource(PhysicsBodySource { loader: Arc::new(move |_: &str| Some(body_shape.clone())), items: Arc::new(Items), supports: None })
+            .insert_resource(PhysicsShapeSource(Arc::new(move |_: &str| Some(static_shape.clone()))))
+            .insert_resource(streaming);
+        let cell_of = |app: &App, pos| app.world().resource::<Streaming>().scheduler().directory(&ws).unwrap().partition.cell_of(pos);
+        let (item_cell, floor_cell) = (cell_of(&app, item_pos()), cell_of(&app, floor_pos()));
+        assert_ne!(item_cell, floor_cell);
+
+        // The item's cell activates; the floor's is still activating.
+        let mut now = 0.0;
+        let mut frames = 0;
+        while level(&app, &ws, item_pos()) < Level::Active {
+            drive(&mut app, &ws, &mut now, Some(floor_cell));
+            frames += 1;
+            assert!(frames < 2000, "the item's cell never activated");
+        }
+        assert!(level(&app, &ws, floor_pos()) < Level::Active);
+        let hook = PhysicsHook { inner: Arc::new(Nothing), statics: true };
+        let cell_entity = app.world_mut().spawn_empty().id();
+        hook.activate(app.world_mut(), &ActivateCx { worldspace: &ws, cell: item_cell, cell_entity, discard: false }, &item);
+        for _ in 0..60 {
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(body(&app, &ws, 7).is_none(), "the item went in before the floor's cell was active");
+        let loading = |app: &App| {
+            let (p, s) = (app.world().resource::<PhysicsStreaming>(), app.world().resource::<Streaming>());
+            p.collision_loading(Some(s.scheduler()), &ws, item_pos(), 0.2)
+        };
+        assert!(loading(&app), "collision under the item reads as loading");
+
+        // The floor's cell activates (its static is queued), then the item follows it in.
+        hook.activate(app.world_mut(), &ActivateCx { worldspace: &ws, cell: floor_cell, cell_entity, discard: false }, &slab);
+        while level(&app, &ws, floor_pos()) < Level::Active {
+            drive(&mut app, &ws, &mut now, None);
+            frames += 1;
+            assert!(frames < 4000, "the floor's cell never activated");
+        }
+        let mut waited = 0;
+        while body(&app, &ws, 7).is_none() {
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            waited += 1;
+            assert!(waited < 500, "item never inserted");
+            if body(&app, &ws, 7).is_some() {
+                assert!(body(&app, &ws, 3).is_some(), "the item went in before the floor's body");
+            }
+        }
+        assert!(!loading(&app));
+        for _ in 0..240 {
+            app.update();
+        }
+        let id = body(&app, &ws, 7).unwrap();
+        let w = app.world().resource::<Physics>().world(&ws).unwrap();
+        let rest = w.pose(id).unwrap().pos;
+        let d = floor_pos().delta(rest);
+        assert!(d.is_finite(), "NaN pose");
+        assert!(d.y > -0.05, "the item fell through the floor: {d:?}");
+        assert!(item_pos().delta(rest).length() < 0.05, "the item moved from its spot: {:?}", item_pos().delta(rest));
+        assert_eq!(w.is_sleeping(id), Some(true), "the item is asleep on the floor");
     }
 }

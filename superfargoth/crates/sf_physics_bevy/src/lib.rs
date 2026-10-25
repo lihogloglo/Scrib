@@ -57,7 +57,7 @@ pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, Ragd
 #[cfg(feature = "ragdoll")]
 pub use sf_ragdoll;
 pub use stream::{
-    BodyLoader, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
+    BodyLoader, CollisionReady, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
     STATE_VERSION, ShapeLoader, hook_items, hook_physics,
 };
 
