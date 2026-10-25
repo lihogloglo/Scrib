@@ -2,7 +2,7 @@
 
 Open visual checks: sun, lamp and contact shadows (SH-*). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 
-## Distant shadows (superfargoth `weather.md`, "Near-term visual fixes", bug A)
+## Distant shadows (superfargoth `weather/distant-shadows.md`, "Near-term visual fixes", bug A)
 
 The shadows session (2026-10-12) moved the sun's cascades to 504 m (2048² after shadows2; 4096² cost +1.4 ms)
 and added a terrain far shadow past them. Screenshots: `shots\shadows\`

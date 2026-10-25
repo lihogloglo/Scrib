@@ -319,7 +319,7 @@ pub trait FarSource: Send + Sync {
 | `lod.l3` | `<ws>/<x>,<y>,<z>` (node) | `world.dir`; *dynamic*: its L2 blobs | L3 node blob |
 | `lod.dir` | worldspace | `world.dir`; *dynamic*: every node's header | node directory (keys, centers, bounds, errors, bytes, impostor models) |
 
-**Animated models in the far field (weather.md bug B2, 2026-10-12).** A
+**Animated models in the far field (weather/distant-shadows.md bug B2, 2026-10-12).** A
 model `mesh.cook` skips because something animates (material/UV
 controllers, auto-play keyframes, particles, billboards, switches) enters
 the far field through its rest pose, `mesh.rest` (`sf_model::cook_rest`:
@@ -365,7 +365,7 @@ lights. Runtime: "Measured on Morrowind" below.
   L3) in the worldspace's `BigSpace`, with explicit `Aabb`s.
 - Proxy materials: `ProxyMaterial = ExtendedMaterial<StandardMaterial, FarShadowExt>` (2026-10-12):
   Bevy's material with vertex colors, extended only by the terrain far shadow map (`proxy.wesl`,
-  forward; weather.md "Distant shadows"), one per level. Impostors bind the same map. Shadows: L1
+  forward; weather/distant-shadows.md "Distant shadows"), one per level. Impostors bind the same map. Shadows: L1
   casts into the cascades (to 504 m, fading out by the dithered cascade end); L2+ don't.
   Each level's material carries the proxy depth offset (`depth_bias`,
   "Lead bands" evidence).

@@ -43,7 +43,7 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
   within 2x the nearest lamp's distance) shadows; `--point-shadows 4` shows the lamps' railings and crates too.
 - Status: rejected by owner 2026-10-19 (round 5, Balmora lamps at 22:00): see SH-13.
 
-## Haze and dust (superfargoth `weather.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
+## Haze and dust (superfargoth `weather/distant-shadows.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
 
 The `--clouds` weather now also sets the atmosphere's aerosol haze and an absorbing dust/ash term (table in
 `weather-adapter.md` "Haze and dust"); `--haze <x>` and `--dust <x>` fix them for A/B. The C key's genera use the

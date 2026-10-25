@@ -11,13 +11,13 @@ settings documentation and commit titles. Nothing here is code from it (superfar
 |---|---|---|
 | Sun cascades | 4; first far bound **10 m**; max **504 m** (`(handoff(1)+band)·1.1+20`, High preset); overlap 0.2 | `bevyrrowind/apps/bevyrrowind/src/exterior.rs` `sun_cascades` |
 | Cascade splits | Bevy: first bound fixed, the rest geometric → **10 / 36.9 / 136 / 504 m** | `bevy_light-0.20.0/src/cascade.rs` `calculate_cascade_bounds` |
-| Shadow map | **2048²** per cascade (Bevy default; `DirectionalLightShadowMap` never set; 4096² measured +1.4 ms and dropped) | weather.md "As built" |
+| Shadow map | **2048²** per cascade (Bevy default; `DirectionalLightShadowMap` never set; 4096² measured +1.4 ms and dropped) | weather/distant-shadows.md "As built" |
 | Fitting | Bevy fits each cascade to a sphere around the frustum slice and snaps it to texels (stable, no shimmer, but square coverage is wasted) | `cascade.rs` `calculate_cascade` |
 | Bias | Bevy defaults: depth 0.02 m along the light, **normal 1.8 × cascade texel size** | `bevy_light` `DirectionalLight`, `shadows.wesl` |
 | Filtering | `ShadowFilteringMethod::Gaussian` (default; never set). No TAA on raster, so `Temporal` and PCSS aren't usable as is | `bevy_light/src/lib.rs` |
 | Contact shadows | **Off.** Bevy 0.20 has them (`ContactShadows` camera component + `contact_shadows_enabled` on lights); the exterior camera already has a `DepthPrepass` | `bevy_pbr-0.20.0/src/contact_shadows.rs` |
 | AO | **None** (no SSAO/GTAO anywhere) | grep |
-| Far shadows | Tier 2: terrain horizon march to 700 m + CPU shadow-height map (9.2 km); proxies/impostors read it; dithered cascade end 428-504 m via `directional_shadow_factor` | weather.md "Distant shadows" |
+| Far shadows | Tier 2: terrain horizon march to 700 m + CPU shadow-height map (9.2 km); proxies/impostors read it; dithered cascade end 428-504 m via `directional_shadow_factor` | weather/distant-shadows.md "Distant shadows" |
 | Point lights | `PointShadowBudget`: Low/Medium **0**, High **1** (1024² cube faces), Ultra 4; faded out over **15-25 m**. No caching: each shadowed light re-renders 6 faces every frame (+0.8 ms for 1, +3.9 ms for 2) | `sf_sky_bevy/src/shadow_budget.rs`, `exterior.rs` `point_shadows` |
 | Excluded casters | far-field proxies/impostors (`NotShadowCaster` unless `l1_shadows`), sea, precipitation, held item; small objects culled by `LodScreen.min_pixels` also leave the shadow pass (Bevy culls casters by the main view's `VisibilityRange`) | `sf_lod_bevy/src/runtime.rs` |
 | Blended foliage | Bevy 0.20 *does* draw blended materials into the shadow pass, discarding below alpha **0.05**, so leaves cast fat blobs, not dapples | `bevy_pbr` `pbr_prepass_functions.wesl` |
@@ -40,7 +40,7 @@ settings documentation and commit titles. Nothing here is code from it (superfar
    exactly the "objects float, shadows only right next to you" look. Industry engines never ship CSM alone for this:
    contact shadows (UE, Days Gone) and AO fill the gap.
 2. **The far half of the screen sits in a 70 cm-texel cascade.** The 504 m maximum is tied to the far-field handoff
-   (weather.md tier 1, so no L0 object crosses the cascade end). That's correct for popping, but cascade 3's
+   (weather/distant-shadows.md tier 1, so no L0 object crosses the cascade end). That's correct for popping, but cascade 3's
    texel size depends only on that maximum. With a ±1.4 m filter and a 1.3 m normal offset, anything under ~2-3 m
    across (NPCs, fences, carts, crates, most trees' trunks) casts nothing visible past ~110 m, and only a smudge
    past ~35 m. The first bound (10 m) is fine. The problem is that one camera-centred CSM is asked to cover 504 m.
@@ -152,7 +152,7 @@ Try `DirectionalLightShadowMap` 3072² on Ultra only. A/B: the existing `--off s
 **F3. Shorter CSM plus a cached far static-object map** (2 slices; the structural fix, Clockwork's and UE's scheme).
 - (a) Cascades to ~250 m (bounds ≈ 8 / 25 / 79 / 250 m) give texels 1.1 / 3.5 / 11 / **35 cm**: 2× sharper at mid
   range, and fewer casters in the last cascade (est. −0.2 ms).
-- (b) To keep weather.md's no-pop rule for L0 objects out to 504 m, add one **cached 4096² orthographic sun depth map**
+- (b) To keep weather/distant-shadows.md's no-pop rule for L0 objects out to 504 m, add one **cached 4096² orthographic sun depth map**
   of static L0 and L1 casters, from ~200 m to ~2-4 km. It is redrawn in slices over several frames when the sun turns
   past a threshold or the camera moves 1/16 of its reach. It is read through the existing `directional_shadow_factor`
   hook with a dithered handoff, as SHM is today, and it also gives far-field proxies real shadows (T2's open item).
@@ -160,7 +160,7 @@ Try `DirectionalLightShadowMap` 3072² on Ultra only. A/B: the existing `--off s
   found).
 - Cost est. +0.05-0.2 ms amortized, 64 MB VRAM.
 - Verify: SH-1/SH-6 re-run (no pop), SH-11, and fly from 700 m to 50 m at a Balmora building.
-- Supersedes A1's "s_max ≥ d1 + w" (weather.md and ARCHITECTURE §10 update when built).
+- Supersedes A1's "s_max ≥ d1 + w" (weather/distant-shadows.md and ARCHITECTURE §10 update when built).
 
 **F4. Foliage and grass shadows after leafmask** (1 slice). Check that masked leaves cast at the 0.5 cutoff with
 coverage-preserving mips in every cascade, and that wind sway runs in the shadow pass (sf_wind's shared function).
@@ -191,7 +191,7 @@ a shadow, but it's half of the "grounded" look. Log it, don't bundle it.
 
 1. **Soft vs crisp:** do you want Clockwork-style contact-hardening soft sun shadows (F5, +0.3-1 ms, best with
    DLSS/TAA), or crisp shadows plus contact shadows only (F1-F3)?
-2. **Far object shadows:** OK to drop the "one long 504 m CSM" rule (weather.md A1) in favour of a 250 m CSM plus a
+2. **Far object shadows:** OK to drop the "one long 504 m CSM" rule (weather/distant-shadows.md A1) in favour of a 250 m CSM plus a
    cached far map (F3)? It's sharper near and mid, but it's a new bespoke pass.
 3. **Interiors:** go for the cached point-light shadow atlas (F6, multi-slice, our own pass), or live with contact
    shadows plus 1-4 shadowed lights for now?
@@ -208,4 +208,4 @@ a shadow, but it's half of the "grounded" look. Log it, don't bundle it.
 
 - **F3 step a built (shf3, 2026-10-19):** practical-split cascades to 250 m (Low 3 / 200 m), texels 1.4 / 3.8 / 10.5 /
   35 cm; GPU ≈ 0 at Seyda Neen. Step b (cached far static map) built off by default, then deleted in shadow reset A2
-  (2026-10-21); weather.md "Sun cascades". Owner check SH-8.
+  (2026-10-21); weather/distant-shadows.md "Sun cascades". Owner check SH-8.

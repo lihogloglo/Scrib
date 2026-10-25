@@ -7,7 +7,7 @@ mod-list diff is S3), `sf_save_bevy` (thin plugin: requests, tick-boundary snaps
 load orchestration, autosave; the framework's section types).
 Sources: [net.md](net.md) "Saves" and "Quest model", [rpg.md](rpg.md), [world-coordinates.md](world-coordinates.md),
 [mods.md](mods.md), [streaming.md](streaming.md) "Runtime overlay", [scripting.md](scripting.md) "State,
-timers and saves", [weather.md](weather.md) "State and forecast".
+timers and saves", [weather/state.md](weather/state.md) "State and forecast".
 History (2026-10-22 research, crate survey, industry table, S1/S2 log and measurements):
 [archive/save-history.md](archive/save-history.md).
 

@@ -2,7 +2,7 @@
 
 Open visual checks: weather, fog, clouds, sky, night sky, haze (WE, FG, SK, NS). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 
-## Distant shadows (superfargoth `weather.md`, "Near-term visual fixes", bug A)
+## Distant shadows (superfargoth `weather/distant-shadows.md`, "Near-term visual fixes", bug A)
 
 The shadows session (2026-10-12) moved the sun's cascades to 504 m (2048² after shadows2; 4096² cost +1.4 ms)
 and added a terrain far shadow past them. Screenshots: `shots\shadows\`
@@ -26,7 +26,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: deferred 2026-10-19 (phase0): recheck after the Phase 1 night brightness fix (LT-1 rejected).
 - Source: sky-lighting.
 
-## Clouds (superfargoth `weather.md`, "Clouds"; `.sessions/clouds.md`, `.sessions/clouds2.md`)
+## Clouds (superfargoth `weather/clouds.md`, "Clouds"; `.sessions/clouds.md`, `.sessions/clouds2.md`)
 
 Volumetric clouds are on by default in exteriors. `--clouds <name>` picks a genus (clear,
 fair, cumulus, stratocumulus, altocumulus, altostratus, cirrus, overcast, storm) or a
@@ -74,7 +74,7 @@ silently disabled), and the sun is fully hidden behind thick cloud.
   objectionable (fix: moonlit cirrus fill, or fading the high layer at night).
 - Source: nightsky.
 
-## Haze and dust (superfargoth `weather.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
+## Haze and dust (superfargoth `weather/distant-shadows.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
 
 The `--clouds` weather now also sets the atmosphere's aerosol haze and an absorbing dust/ash term (table in
 `weather-adapter.md` "Haze and dust"); `--haze <x>` and `--dust <x>` fix them for A/B. The C key's genera use the

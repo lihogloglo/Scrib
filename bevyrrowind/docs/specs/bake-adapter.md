@@ -121,7 +121,7 @@ on the same baker, so one manifest names every product.
   with `VisibilityRange` bands from `sf_model::lod_ranges` (error × placement
   scale, reference screen 1440p/70°/1 px, last level ends at 2 km). A model
   that turns out skipped or fails to load falls back to its NIF.
-- **Rest pose for the far field** (superfargoth weather.md bug B2,
+- **Rest pose for the far field** (superfargoth weather/distant-shadows.md bug B2,
   2026-10-12): `model_baker` also registers `mesh.rest` (`MeshRestStep`,
   `sf_model::cook_rest`): the NIF importer's model with its `animated`
   flags ignored, i.e. the rest transforms; particle nodes have no mesh,
@@ -134,7 +134,7 @@ on the same baker, so one manifest names every product.
   range on the NIF (`SubtreeRange`) and preload it before the cell
   reveals (`PlacementSpawner::prepare`). The Ghostfence segments are
   `ACTI` placements (not far-eligible) made only of blended parts, so they
-  get no proxy yet (weather.md B5).
+  get no proxy yet (weather/distant-shadows.md B5).
 - Materials go through the same `Surface → StandardMaterial` mapping as the
   NIF loader, so both paths look the same. `--lod-tint` colors levels
   (green, yellow, orange, red, magenta).

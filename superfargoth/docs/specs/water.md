@@ -245,7 +245,7 @@ pub trait WaterQuery {
 ## Ocean surface
 
 **Spectrum.** JONSWAP with fetch + TMA depth correction + Donelan-Banner spreading + optional swell
-(Horvath 2015), from `WindState` (weather.md) speed and direction and a per-body fetch. Cascades are
+(Horvath 2015), from `WindState` (weather/wind.md) speed and direction and a per-body fetch. Cascades are
 square tiles with **power-of-two sizes in metres** (default 4: 256, 64, 16, 4 m; 256² High, 128² Low),
 each band-limited so they don't double-count energy (boundary at the wavelength `size(i+1)/2`, W1). **Weather changes**: the FFT is linear, so a
 weather transition blends `h0 = mix(h0_a, h0_b, w)` (two spectra, re-uploaded when `w` moves 2 %); the
@@ -324,9 +324,9 @@ displacement height) gives the green-blue backlit look.
    lights, reflection = SSPR hit → local light probe (where content has one) → environment map, with
    Fresnel; refraction = snapshot colour at `uv + normal.xz·strength·saturate(depth_behind)`, rejected
    (falls back to the unrefracted uv) when the sampled depth is in front of the water; depth colour;
-   foam; rain ripple normals (weather.md's ripple atlas × rain intensity); dynamic ripple normals;
+   foam; rain ripple normals (weather/precipitation-surface.md's ripple atlas × rain intensity); dynamic ripple normals;
    flow-advected normals (rivers). Then fog: aerial perspective from Bevy's aerial-view LUT and the
-   froxel fog through `sf_atmos::fog` (weather.md "Fog", step 4), so far water fades like terrain.
+   froxel fog through `sf_atmos::fog` (weather/fog.md "Fog", step 4), so far water fades like terrain.
 4. **Velocity**: the water mesh is drawn again into the motion-vector texture (displacement now vs the
    previous frame's, kept one frame), depth-tested, colour off. Without it DLSS/TAA would smear waves
    with the bed's motion. Foam and sparkle also write the reactive/bias mask once weather.md open
@@ -513,7 +513,7 @@ the surface from the query; wading speed scales by immersion (adapter curve).
 ## Wading, wetness and interaction hooks
 
 - `WaterQuery::immersion(capsule)` gives depth, submerged fraction and the surface point for actors.
-- **Character wetness** (weather.md "Surface state", `sf_surface`): wet line = the highest immersion
+- **Character wetness** (weather/precipitation-surface.md "Surface state", `sf_surface`): wet line = the highest immersion
   over the last minutes, drying per hour; the character material darkens and smooths below it.
 - **Dynamic ripples** (iWave/Crest dynamic waves): a 256² wave-equation grid at 0.125 m (32 m) around
   the camera, toroidal, on the GPU; actors' feet and legs, floating bodies, thrown items and raindrops

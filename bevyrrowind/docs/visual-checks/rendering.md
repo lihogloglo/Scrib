@@ -15,7 +15,7 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
 - Status: partial, owner 2026-10-19 (rounds 1 and 3, Balmora and the summit): F5 shows only L1 green past ~400 m, never L2 blue or L3 purple. The run log says L2/L3 exist and are resident (1623 L1, 25 L2, 4 L3 nodes, 79.7 MiB), so either the tint misses L2/L3 materials or L2/L3 are never selected inside the view distance. Phase 1.
 - Source: farfield-lod.
 
-## Ghostfence (superfargoth `weather.md`, bug B)
+## Ghostfence (superfargoth `weather/distant-shadows.md`, bug B)
 
 ### GF-1: Ghostfence appears complete, never late
 - Kind: game location. Run: `.\bevyrrowind scene ghostfence-far` and fly
@@ -24,13 +24,13 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
   loaded: no frames where the pylons stand without the field after a cell
   group reveals (B3 preload). Not fixed yet: the field is still invisible
   past the ring and appears there without a fade. Its segments are
-  activators made only of blended parts, so they have no far copy (weather.md
+  activators made only of blended parts, so they have no far copy (weather/distant-shadows.md
   B5: blended far proxies + scriptless activators).
 - A/B: F5 (pylons tint green at L1; fence segments stay untinted). Compare
   `play\` before this session's exe if kept: there the field showed up a few
   frames after its cell.
 - Also (owner 2026-10-19, round 6, from the summit at night): round light spots sit inside the fence "wall": they are the far-distance light sprites of the fence's blue lights, drawn while the field itself has no far copy. Not vanilla-looking.
-- Status: known bug, seen by owner 2026-10-19 (round 2): the fence field disappears entirely at a distance and pops back in close. Cause known: blended-only activators have no far copy (weather.md B5); Phase 1 or later.
+- Status: known bug, seen by owner 2026-10-19 (round 2): the fence field disappears entirely at a distance and pops back in close. Cause known: blended-only activators have no far copy (weather/distant-shadows.md B5); Phase 1 or later.
 - Source: weather-spec / farfield / nifpop.
 
 ## DLSS (superfargoth `sky-lighting.md`; `.sessions/dlss.md`)
@@ -82,7 +82,7 @@ Run from `D:\Gamedev\Bevyrrowind\superfargoth`; they bake their data on
 first run (cached afterwards). Each isolates one system on generated
 content, so a bug seen here isn't Morrowind content.
 
-## Haze and dust (superfargoth `weather.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
+## Haze and dust (superfargoth `weather/distant-shadows.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
 
 The `--clouds` weather now also sets the atmosphere's aerosol haze and an absorbing dust/ash term (table in
 `weather-adapter.md` "Haze and dust"); `--haze <x>` and `--dust <x>` fix them for A/B. The C key's genera use the

@@ -437,7 +437,7 @@ J9 (superfargoth `industry-audit.md`), 2026-10-12, docs only (`.sessions/j9rest.
 | Technique | Industry | Ours | Verdict |
 |---|---|---|---|
 | Keyframed controllers as sampled curves | universal (Gamebryo/NetImmerse controllers, OpenMW's controller port, UE/Unity curves) | Hermite/TCB/slerp normalized at load | **match** (OpenMW semantics) |
-| Small emitters on the CPU | UE Niagara CPU sim recommended for low counts; Unity Shuriken (CPU) next to VFX Graph (GPU); OpenMW CPU (OSG port of NiParticleSystem) | CPU, Bevy-free, per-instance mesh | **match**; GPU sim only for dense weather (weather.md precipitation is closed-form anyway) |
+| Small emitters on the CPU | UE Niagara CPU sim recommended for low counts; Unity Shuriken (CPU) next to VFX Graph (GPU); OpenMW CPU (OSG port of NiParticleSystem) | CPU, Bevy-free, per-instance mesh | **match**; GPU sim only for dense weather (weather/precipitation-surface.md precipitation is closed-form anyway) |
 | **Soft particles** (fade by scene depth near intersections) | UE "Depth Fade", Unity soft particles, OpenMW soft particles (shader setting, 0.47+, unverified version) | none: flames and smoke cut hard lines into floors and walls | **GAP (P2)**: needs the scene depth (depth prepass, blocked by the dither pitfall until audit job J5). Open question below |
 | Transparents under DLSS/TAA | reactive/transparency masks (superfargoth weather.md open question 9) | none | shared gap, tracked there |
 | Fixed-function → PBR mapping | remasters (Oblivion Remastered on UE5 re-authors materials; RTX Remix replaces them, unverified detail); OpenMW keeps fixed-function lighting | emissive scaled to exposure, PBR lit | **differ**: physically lit by design (sky-lighting.md); PBR texture generation is M7 |

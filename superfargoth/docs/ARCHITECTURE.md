@@ -153,7 +153,7 @@ milestone). For 0.19, the main crates ported within about two weeks
 | `bevy_3d_tiles` | far-field evaluation (M2) | no | 0.5.1 / 0.19 |
 | `avian3d` | physics fallback (M4; rapier3d chosen, §10 2026-10-12) | no | 0.7 / 0.19; main 0.8.0-dev still on 0.19, PR #1070 (0.20 port) still open (2026-10-18) |
 | `bevy_tnua` | not adopted (own kinematic mover, §10 2026-10-12) | yes | 0.33.0 / 0.20 (2026-10-15) |
-| `bevy_hanabi` | GPU VFX: splashes, magic (M5–M6); rain/snow/ash don't need it (weather.md) | git only | 0.19 / 0.19; main migrated to 0.20 + WESL shaders 2026-10-15 (#576), no release yet |
+| `bevy_hanabi` | GPU VFX: splashes, magic (M5–M6); rain/snow/ash don't need it (weather/precipitation-surface.md) | git only | 0.19 / 0.19; main migrated to 0.20 + WESL shaders 2026-10-15 (#576), no release yet |
 | `bevy-aqua` | water reference (M6) | no | 0.1.3 / 0.19 |
 | `bevy_fast_clouds`, `bevy_weather` | clouds/weather **references only** (M6, weather.md) | no | 0.19.0 / 0.19, 0.2.0 / 0.19.1 |
 | `bevy-volumetric-clouds` | rejected (skybox clouds, ignores depth) | no | 0.2.0 / 0.18 |

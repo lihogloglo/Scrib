@@ -211,7 +211,7 @@ level (small). Requests go through the streaming scheduler's budgets.
   fog, and atmosphere match objects. It includes the surface-state WGSL hook
   from day one (a no-op until M6; §10 decision). Terrain draws in the depth
   prepass, where it's the main occluder for `OcclusionCulling`.
-- **Far shadows** (weather.md "Distant shadows", as built 2026-10-12): past the sun's cascades
+- **Far shadows** (weather/distant-shadows.md "Distant shadows", as built 2026-10-12): past the sun's cascades
   (504 m in the app, derived from the far-field handoff) the material sets Bevy's
   `PbrInput::directional_shadow_factor` to the terrain's own shadow: a horizon march over the height
   clipmap toward the shadowed light out to 700 m view distance (`shaders/far_shadow.wesl`), then the
@@ -310,7 +310,7 @@ J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`).
 | Anti-tiling | macro variation and distance UV scale (universal); **stochastic / hex tiling** (Heitz & Neyret 2018 by-example noise; Mikkelsen 2022 "Practical Real-Time Hex-Tiling", Unity Labs; UE material-node ports) | macro variation + distance UV scale + tint | **GAP (P2)**: hex tiling is cheap (3 taps per layer, or only on the nearest layers) and kills the grid pattern on large uniform layers. Open question 1 |
 | **Object-terrain blending** | UE RVT "blend with meshes", CryEngine 5 terrain layer blending, Skyrim SE terrain-blending mods | none | **removed** 2026-10-20 (first attempt rejected by the owner, +10-13 ms render thread on the walk); redo is WISHLIST §13 |
 | Holes | UE landscape visibility mask, Unity terrain holes, Bethesda/OpenMW none (caves are meshes) | 1 bit per 0.5 m quad | **match** |
-| Self-shadowing far away | UE distance field shadows / far shadows (unverified for landscape), Bethesda LOD shadows | horizon march + CPU shadow-height map (weather.md) | **match** |
+| Self-shadowing far away | UE distance field shadows / far shadows (unverified for landscape), Bethesda LOD shadows | horizon march + CPU shadow-height map (weather/distant-shadows.md) | **match** |
 | Horizon/terrain occlusion of objects | common in terrain engines | none | gap already listed (audit row 16, P2) |
 | Height editing at runtime | UE Landscape edit layers (editor), Ghost of Tsushima/Horizon deformation as transient render targets | height stack with edits (M10) + transient ring buffer (M6) | **match** (design) |
 

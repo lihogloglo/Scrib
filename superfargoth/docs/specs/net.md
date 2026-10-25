@@ -227,7 +227,7 @@ simulates ahead and the host corrects. "Local" = each machine computes its own, 
 ## Time, pause and rest
 
 - The host owns the game clock (`SkyClock`: days, time scale) and replicates it. Weather, wind, sky
-  and water waves are pure functions of (seed, clock, region, overrides) and run locally (weather.md,
+  and water waves are pure functions of (seed, clock, region, overrides) and run locally (weather/state.md,
   water.md); only overrides (`ChangeWeather`, forced presets) are sent. Real-second ambience timers
   are local presentation.
 - **No world pause in co-op** (Elden Ring, Valheim). Menus are per player; a player in a menu stays
@@ -373,7 +373,7 @@ locomotion.md ("Action-layer changes (R11b)", "Fixed tick") are resolved by N0's
 drop them when those specs are next touched.
 
 **Already compliant** (designed against the rules or presentation-only): action.md, camera.md,
-world-coordinates.md (`WorldPos`), weather.md core (pure function of seed, clock, region, overrides),
+world-coordinates.md (`WorldPos`), weather/state.md core (pure function of seed, clock, region, overrides),
 character.md (assembly and equipment are data; equipment changes become host requests with the
 inventory in N6), terrain.md, far-field.md, portals.md (per local view), sky-lighting.md apart from
 the clock, smooth-bodies.md, rig-profile.md, diag.md (adds net counters in N2), test-levels.md (both

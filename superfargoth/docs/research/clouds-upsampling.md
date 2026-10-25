@@ -166,7 +166,7 @@ Per bilinear tap i:
   unchanged: the current rays are already jittered, and the composite samples the half-res buffer in the same
   jittered grid, which is what DLSS/TAA expect.
 - Allocate `DIST` as `Rgba32Float` and update the trace and resolve target formats (`render.rs:435-436`).
-- Spec: update weather.md "Clouds", Rendering 4-5 and the "Passes" paragraph. The march stops at the
+- Spec: update weather/clouds.md "Clouds", Rendering 4-5 and the "Passes" paragraph. The march stops at the
   footprint's furthest depth, not "at the main depth buffer".
 
 ### What this keeps and drops from the uncommitted patch

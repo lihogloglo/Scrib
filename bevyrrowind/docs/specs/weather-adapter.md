@@ -2,7 +2,7 @@
 
 Status: draft (2026-10-11), spec only
 Crates: `mw_weather` (new, Bevy-free adapter: records → presets/climates, hooks), app wiring in
-`apps/bevyrrowind`; near-term fixes touch `mw_assets`, `mw_bake` and the app (weather.md
+`apps/bevyrrowind`; near-term fixes touch `mw_assets`, `mw_bake` and the app (weather/distant-shadows.md
 "Near-term visual fixes")
 Framework spec: `../../../superfargoth/docs/specs/weather.md`
 
@@ -103,7 +103,7 @@ Each `REGN` record becomes `Climate mw_region/<id>`:
 `ClimateSource::climate_at(ws, pos)`: the exterior cell's region name (`CELL` region field). Cells
 without a region use the worldspace default (Clear only). Interiors return none. Interiors with the
 "behave like exterior" flag (Mournhold's plaza, Tribunal) get the region their `CELL` names, or Clear.
-`weather.climate` rasterizes this per cell (8192 units ≈ 117 m), so the border band (weather.md,
+`weather.climate` rasterizes this per cell (8192 units ≈ 117 m), so the border band (weather/state.md,
 256 m) blends over about two cells.
 
 ### Ash and blight storms, blizzards
@@ -117,7 +117,7 @@ without a region use the worldspace default (Clear only). Interiors return none.
 - **Red Mountain region**: its `REGN` weights decide the mix (ash and blight dominate in vanilla data).
   After the main quest, scripts change the region's weights (`ModRegion`, below), and the climate follows
   through the runtime overlay. The plume over the summit is a coverage anchor in the weather map
-  (weather.md "Driving from weather"), strongest during ash and blight weather.
+  (weather/clouds.md "Driving from weather"), strongest during ash and blight weather.
 - **Ash accumulation**: ash presets have `surface.ash_rate > 0`. Ash settles on up-facing surfaces in
   exposed areas and blows off at high wind. Ashlands terrain layers already look ashy. The surface
   channel adds fresh grey dust on rooftops and rocks during and after storms.
@@ -155,7 +155,7 @@ variant when the surface wetness under the foot exceeds a threshold (`sf_surface
 
 `Tx_Sky_*.dds` cloud textures and `tx_sun_*` are not rendered by default (the moons' `tx_masser_*`/`tx_secunda_*` phase textures are, see `[Moons]`; `tx_stars_*` dome textures are not: the framework star field replaces them). Uses:
 - calibration: the original cloud texture per weather tells which cloud type to default to;
-- a "classic sky" mod can map them onto the high 2D cirrus layer (weather.md "Geometry"), which takes
+- a "classic sky" mod can map them onto the high 2D cirrus layer (weather/clouds.md "Geometry"), which takes
   a texture.
 Replacer mods for these textures therefore have no effect unless that mod is enabled. The mod report
 says so.
@@ -179,7 +179,7 @@ exist (M8). Underwater cells and the "has water" interiors keep their water fog 
   overcast 32, rain 48, thunderstorm 48, foggy 60, snow 48, blizzard 80; ash storm haze 24 + dust 4 (grey-brown);
   blight the same with dust absorption tint (0.6, 1.4, 1.9) (rusty red). Haze follows a morning curve (×1.5 at 6:30,
   ramps 4:00-6:30 and 6:30-10:00); dust does not. `--haze`/`--dust` fix them. Ashlands-region dust on non-storm days
-  and Bitter Coast mornings by region wait for climates (WE2). Calibrated for 1-5 km views (weather.md N1 "As built").
+  and Bitter Coast mornings by region wait for climates (WE2). Calibrated for 1-5 km views (weather/fog.md N1 "As built").
 - **Fog** (M6 F2, as built; same scaffold table, `SkyLook::fog` = `FogLook`, until `mw_weather` reads `Land Fog Day/Night
   Depth` through Koschmieder): height-fog visibility at sea level / falloff height per weather: clear 40 km / 100 m and fair
   30 km / 120 m (F3: a thin valley haze so dawn sun shafts have a medium), the other cloud genera none; overcast 8 km / 300 m; rain 3 km / 250 m (+ banks 0.25); thunderstorm 2 km / 250 m (+ banks 0.3);

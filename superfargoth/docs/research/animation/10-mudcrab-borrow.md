@@ -67,7 +67,7 @@ console**. Nothing is worth taking as a dependency; four small things are worth 
 | Terrain | per-cell meshes, splat shader, baked LOD albedo | CDLOD/clipmap GPU heightfield, one height source for render/physics/nav (`terrain.md`) | we're ahead |
 | Streaming | cell grid, R-tree, 1 commit/frame, hysteresis, generation-guarded stale discard | rings, budgets, velocity lookahead, burst mode, `big_space` (`streaming.md`) | level; learn metrics |
 | Colour pipeline | one HDR composition, single TonyMcMapface pass, EV100 pinned; GPU probe proving sky/fog/water/unlit agree within 2/255, with a negative control | scheduled EV100, Atmosphere, Solari option (`sky-lighting.md`) | level; learn the probe |
-| Sky | custom sky shader, fixed clear-day palette, distance fog | Bevy `Atmosphere`, sun/moon/season, clouds (`weather.md`) | we're ahead |
+| Sky | custom sky shader, fixed clear-day palette, distance fog | Bevy `Atmosphere`, sun/moon/season, clouds (`weather/clouds.md`) | we're ahead |
 | Water | planar reflection camera with near-plane clip | SSPR + env/probe fallback, FFT (`water.md`) | we're ahead |
 | Point lights | 64 nearest enabled, re-chosen on 256-unit move or light-set change | Bevy clustered forward + Solari | we're ahead; one detail to learn |
 | Reference shots | `--shots file.json`: many exact poses per run, waits for N quiet frames, fails on new errors, timeout reports what's pending | one `--screenshot` after `settled()` (`exterior.rs`), F12 manual | **they're ahead; port** |

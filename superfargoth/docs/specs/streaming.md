@@ -452,7 +452,7 @@ app.register_asset_source(BAKED_SOURCE, baked_source(store, manifest, exts)) // 
   that fails to load or was skipped by `mesh.cook` is *uncooked*: the
   `PlacementSpawners` uncooked hook (the content pack's runtime importer)
   spawns it; without one it is counted and skipped.
-- **Prepared assets** (weather.md bug B3, 2026-10-12): once a load's
+- **Prepared assets** (weather/distant-shadows.md bug B3, 2026-10-12): once a load's
   models resolve, the assets stage asks each placement's spawner
   (`PlacementSpawners::spawner_for`: uncooked hook or class hook) for
   `PlacementSpawner::prepare(&AssetServer, placement, model)`, an asset the

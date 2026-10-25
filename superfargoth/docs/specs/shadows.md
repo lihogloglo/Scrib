@@ -3,7 +3,7 @@
 Status: **v2 design (lights1, 2026-10-20, owner: "we need a smarter way to do shadows")**: one design for sun and
 lamps, below; supersedes the F-slices. Lamp slices 1-2 built (`sf_sky_bevy::shadow_budget`, `sf_shadow_cache_bevy`,
 the cache parked since 2026-10-19 and unparked by v2). Sun details (cascades, bias, far tiers) live in
-[weather.md](weather.md) ("Distant shadows", "Shadow bias and contact shadows"); diagnosis and Clockwork notes in
+[weather/distant-shadows.md](weather/distant-shadows.md) ("Distant shadows", "Shadow bias and contact shadows"); diagnosis and Clockwork notes in
 [../research/shadows/README.md](../research/shadows/README.md); as-built history in
 [shadows-history.md](shadows-history.md).
 

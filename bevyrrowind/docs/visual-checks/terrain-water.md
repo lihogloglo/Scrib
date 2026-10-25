@@ -2,7 +2,7 @@
 
 Open visual checks: terrain and water (TR-*, WA-*). Index and how-to: [`../visual-checks.md`](../visual-checks.md).
 
-## Haze and dust (superfargoth `weather.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
+## Haze and dust (superfargoth `weather/distant-shadows.md` "Aerial perspective and haze" N1/N2; ROADMAP M6 F1; `.sessions/m6-f1.md`)
 
 The `--clouds` weather now also sets the atmosphere's aerosol haze and an absorbing dust/ash term (table in
 `weather-adapter.md` "Haze and dust"); `--haze <x>` and `--dust <x>` fix them for A/B. The C key's genera use the

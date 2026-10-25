@@ -39,7 +39,7 @@ our specs (1440p, 4060 Laptop). "Est." = my scaling, unmeasured. Effort S <0.5 d
 
 | # | Source | What it does | Licence / fit | How Clockwork does it | Cost | Effort | ROADMAP | Rec. |
 |---|---|---|---|---|---|---|---|---|
-| 1 | bevy_atmos `wet.wgsl` | Wet material: soaked albedo x0.55, roughness to 0.18, puddles from domain-warped 4-octave gradient noise on up-facing pixels (`n > 0.65`, soft edge by `fwidth`), puddle roughness 0.03, flat normal, F0 up | MIT/Apache, 109 lines; our own `WorldMaterial` ext in weather.md | `surface weather` (0-2, default 1): wets outdoor surfaces in rain, darkened reflective ground, puddles, streaks on walls; interiors untouched; zero "compiles nothing" | ALU only; noise is ~6 gradient-noise calls per pixel (use a tiled texture instead). Clockwork: not stated | M | Phase 4 SU1/SU2 | **Borrow technique** (see puddles section) |
+| 1 | bevy_atmos `wet.wgsl` | Wet material: soaked albedo x0.55, roughness to 0.18, puddles from domain-warped 4-octave gradient noise on up-facing pixels (`n > 0.65`, soft edge by `fwidth`), puddle roughness 0.03, flat normal, F0 up | MIT/Apache, 109 lines; our own `WorldMaterial` ext in weather/precipitation-surface.md | `surface weather` (0-2, default 1): wets outdoor surfaces in rain, darkened reflective ground, puddles, streaks on walls; interiors untouched; zero "compiles nothing" | ALU only; noise is ~6 gradient-noise calls per pixel (use a tiled texture instead). Clockwork: not stated | M | Phase 4 SU1/SU2 | **Borrow technique** (see puddles section) |
 | 2 | bevy_atmos `shelter.rs` | Top-down depth capture, 512x512 at 0.5 m, redone every 64 m; merges water heights; PNG debug dump | MIT/Apache; we have the same (`sf_precip_bevy/occlusion.rs`) | `weather particle occlusion`: extra pass, default **off**, "experimental" | Nothing between recaptures (ours too) | S | Phase 4 PR2 | **Skip**; steal the PNG dump and "merge water" |
 | 3 | bevy_atmos `ssr.rs` | Forward SSR: copy lit colour after transparents, march depth prepass, 1 frame old, sky/probe fallback | MIT/Apache; needs a depth prepass, which our exterior camera lacks (far-field pitfall 2) | `puddle reflections` = `sky` (default) or `screen` (traces each puddle through depth+colour, copies opaque colour while ground is wet) | atmos: ~1.2 ms of the +1.5 ms for a river filling the view at 720p; est. >3 ms at 1440p. Clockwork: not stated | L | water.md, SU2 | **Skip** now; reopen only if a depth prepass lands for other reasons |
 | 4 | bevy_atmos clouds (`clouds.wgsl`) | Per-pixel raymarch of a shell over a round earth, Perlin-Worley + curl, Beer/powder/2-lobe phase, 1/4 of pixels per frame + reprojection; **also draws the same clouds into a 256-px cube, one face per frame, for reflections and ambient** | MIT/Apache; same family as ours (Nubis) | Cloud *shading* is part of `upgrades`; lightning lights clouds near the bolt top and holds ~1.5 s glow (`lightning strength`). Mechanism undocumented | atmos 0.36-0.48 ms Medium, scaling with pixels; est. 2-4 ms at 1440p. Ours: +0.6-1.0 ms measured | S to check | SH-12 | **Skip** the march; **check** whether our probe/env map shows clouds (cube-per-frame trick) |
@@ -82,25 +82,25 @@ threshold** on up-facing pixels (`world_normal.y > 0.85`), growing with wetness,
 shelter map keeps rain out from under roofs. No terrain height.
 
 **What we have.** `WeatherFrame.surface` carries `wet, puddle, snow, ash, drying` (`sf_weather/src/frame.rs:341`) and
-the occlusion map exists. Not built: `sf_surface`, `surface_state.wesl`, `WorldMaterial`. weather.md's design
+the occlusion map exists. Not built: `sf_surface`, `surface_state.wesl`, `WorldMaterial`. weather/precipitation-surface.md's design
 (two-level clipmap, 32 m persistent grid in saves, SSR) is the heavy end; Clockwork and bevy_atmos ship without it.
 
-**Cheap approach for slice 1 (proposal, needs owner go; it narrows weather.md "Surface state").**
+**Cheap approach for slice 1 (proposal, needs owner go; it narrows weather/precipitation-surface.md "Surface state").**
 
 1. **State = two scalars on the CPU**, not a clipmap: `wet` and `puddle` in `WeatherFrame.surface`, with rise and
    drying rates in game minutes (default drying 120 game min as a starting point; Morrowind's timescale is
    configurable, so keep it in game time). **Do not persist it** (Clockwork doesn't; a save loads dry or at the
-   region's current weather). Drop weather.md's coarse persistent grid and clipmap from slice 1; they stay as an
+   region's current weather). Drop weather/precipitation-surface.md's coarse persistent grid and clipmap from slice 1; they stay as an
    upgrade if per-place wetness (under a bridge for hours) is wanted later.
 2. **Exposure = the occlusion map we already have.** Per pixel: `exposed = world_y >= occlusion_depth - eps`
    (open sky) fetched once; interiors skip it with a cell flag. One texture fetch, no new pass.
 3. **Shader (WESL, in the `surface_state` hook on `WorldMaterial`)**:
    - soaked: `albedo *= mix(1, 0.55, wet*porosity*exposed)`, `roughness = mix(r, 0.18, ...)` (values from bevy_atmos,
-     Lagarde-consistent with weather.md);
+     Lagarde-consistent with weather/precipitation-surface.md);
    - puddle: `up = N.y > 0.85`; `field` from one **tiled noise texture** (two taps, warped), not 6 hashed
      gradient-noise calls; threshold moves with `puddle`; edge width from `fwidth`; inside it albedo x0.6, roughness
      0.03, flat normal, F0 up to 0.04-ish, ripple normals scaled by rain intensity;
-   - **terrain**: keep weather.md's "puddle level above layer height" rule (no noise), since it already has the
+   - **terrain**: keep weather/precipitation-surface.md's "puddle level above layer height" rule (no noise), since it already has the
      height channel;
    - **far field**: wet darkening only (as spec'd).
 4. **Reflections: sky and probe only** (Clockwork's default, free). Our environment map and light probes already
