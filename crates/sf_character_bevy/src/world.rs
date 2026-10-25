@@ -3,10 +3,15 @@
 use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
 use sf_character::CharacterState;
-use sf_world::{IndexedPlacement, Level, PlacementFlags};
+use sf_world::{IndexedPlacement, Level, PlacementFlags, PlacementId};
 use sf_world_bevy::{PlacementSpawner, SpawnCx};
 
 use crate::{Character, Characters};
+
+/// On a character spawned from a placement: the placement it stands for, the stable id that
+/// activation, scripts and saves address it by (the entity is per session).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CharacterPlacement(pub PlacementId);
 
 /// The `PlacementSpawner` for actor placements (register it for
 /// `PlacementClass::Actor`): each placement becomes a [`Character`] of its
@@ -28,7 +33,15 @@ impl PlacementSpawner for CharacterSpawner {
         let mut local = cx.local;
         local.rotation *= turn;
         let character = Character::Record { kind: p.base.kind.clone(), id: p.base.id.clone(), state: CharacterState::default() };
-        world.spawn((character, local, Visibility::Inherited, ChildOf(cx.parent), cx.layers.clone(), crate::AnimSeed::from_id(p.id.0)));
+        world.spawn((
+            character,
+            CharacterPlacement(p.id),
+            local,
+            Visibility::Inherited,
+            ChildOf(cx.parent),
+            cx.layers.clone(),
+            crate::AnimSeed::from_id(p.id.0),
+        ));
         1
     }
 

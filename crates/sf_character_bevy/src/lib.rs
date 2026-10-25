@@ -57,7 +57,7 @@ pub use sf_anim::cloth::ClothCollider;
 pub use held::{CharacterReadiness, HeldLightSlot, HeldModelAssets, HeldModelCache, HeldProp, HeldProps, HeldSkinAssets};
 pub use mesh::{OutfitMeshError, assembled_mesh_to_mesh, outfit_inverse_bindposes};
 #[cfg(feature = "world")]
-pub use world::CharacterSpawner;
+pub use world::{CharacterPlacement, CharacterSpawner};
 pub use morph::{CharacterMorphs, MorphCurvePlayer, MorphTrack, MorphTracks, drive_character_morphs};
 
 use std::collections::{HashMap, HashSet};
