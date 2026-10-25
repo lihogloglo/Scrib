@@ -53,6 +53,7 @@ bevy_ui = { version = "0.20", features = ["bevy_picking"] }
 bevy_ui_widgets = { version = "0.20" }
 bevy_utils = { version = "0.20", features = ["std"] }
 bevy_window = { version = "0.20", features = ["custom_cursor"] }
+bevy_winit = { version = "0.20", default-features = false, features = ["custom_cursor", "wayland", "x11"] }
 bitflags = { version = "2", default-features = false, features = ["bytemuck", "serde", "std"] }
 blake3 = { version = "1" }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "min_const_generics", "must_cast", "wasm_simd"] }
@@ -115,6 +116,7 @@ twox-hash = { version = "2", default-features = false, features = ["xxhash32", "
 uuid = { version = "1", features = ["serde", "v4"] }
 wgpu = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "std", "vulkan", "webgl", "wgsl"] }
 wgpu-types = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "serde", "web"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-csd-adwaita", "x11"] }
 winnow = { version = "1" }
 
 [build-dependencies]
@@ -160,9 +162,11 @@ libc = { version = "0.2", features = ["extra_traits"] }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 nix = { version = "0.31", default-features = false, features = ["event", "ioctl", "signal"] }
 num-rational = { version = "0.4" }
-rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "pipe", "process", "shm", "system", "thread"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "portable-atomic", "renderdoc", "vulkan"] }
+xkbcommon-dl = { version = "0.4", default-features = false, features = ["x11"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 libc = { version = "0.2", features = ["extra_traits"] }

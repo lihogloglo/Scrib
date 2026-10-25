@@ -48,6 +48,7 @@ bevy_world_serialization = { version = "0.20", default-features = false }
 # Streaming glue (sf_world_bevy). `bevy_gizmos` is optional there (`debug` feature).
 bevy_gizmos = { version = "0.20", default-features = false }
 bevy_image = { version = "0.20", default-features = false }
+bevy_winit = { version = "0.20", default-features = false }
 bevy_material = { version = "0.20", default-features = false }
 bevy_shader = { version = "0.20", default-features = false }
 bevy_shape = { version = "0.20", default-features = false }

@@ -21,8 +21,11 @@ bevy_clipboard.workspace = true
 bevy_camera_controller = { workspace = true, features = ["free_camera"] }
 bevy_color = { workspace = true, features = ["std"] }
 bevy_core_pipeline.workspace = true
+# perf.rs: the benchmark plugins.
+bevy_diagnostic = { workspace = true, features = ["std", "sysinfo_plugin"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_enhanced_input.workspace = true
+bevy_image.workspace = true
 bevy_input = { workspace = true, features = ["keyboard"] }
 bevy_light.workspace = true
 bevy_log.workspace = true
@@ -36,9 +39,12 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 bevy_ui.workspace = true
 bevy_window = { workspace = true, features = ["std"] }
+bevy_winit.workspace = true
 bevy_world_serialization.workspace = true
 # `remote` only. Extras without gamepad; screenshots need Bevy `png`, which extras turns on.
 bevy_brp_extras = { version = "0.23", default-features = false, features = ["diagnostics", "ui"], optional = true }
+clap.workspace = true
+mw_assets.workspace = true
 mw_doors_bevy.workspace = true
 mw_environment_bevy.workspace = true
 mw_game_core.workspace = true
@@ -55,7 +61,7 @@ sf_character_bevy = { workspace = true, features = ["world"] }
 sf_console_bevy = { workspace = true, features = ["overlay"] }
 sf_controller.workspace = true
 sf_coords.workspace = true
-sf_diag_bevy.workspace = true
+sf_diag_bevy = { workspace = true, features = ["assets"] }
 sf_lod_bevy.workspace = true
 sf_physics_bevy = { workspace = true, features = ["debug"] }
 sf_sky_bevy.workspace = true
