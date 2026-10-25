@@ -54,6 +54,8 @@ bevy_ui_widgets = { version = "0.20", default-features = false }
 bevy_picking = { version = "0.20", default-features = false }
 bevy_text = { version = "0.20", default-features = false }
 bevy_window = { version = "0.20", default-features = false }
+# The free camera (`mw_controls_bevy` follows its fly keys to the Jump / Sneak bindings).
+bevy_camera_controller = { version = "0.20", default-features = false }
 # UI input actions and prioritised, input-consuming contexts (ui.md OQ4, chosen 2026-10-18). Allowed ahead
 # of the crate "update all" batch (owner). No `state` feature: we don't drive contexts from bevy_state.
 bevy_enhanced_input = { version = "0.27", default-features = false }
@@ -204,6 +206,7 @@ mw_anim = { path = "bevyrrowind/crates/mw_anim" }
 mw_audio = { path = "bevyrrowind/crates/mw_audio" }
 mw_bake = { path = "bevyrrowind/crates/mw_bake" }
 mw_boot_bevy = { path = "bevyrrowind/crates/mw_boot_bevy" }
+mw_controls_bevy = { path = "bevyrrowind/crates/mw_controls_bevy" }
 mw_game_core = { path = "bevyrrowind/crates/mw_game_core" }
 mw_graphs = { path = "bevyrrowind/crates/mw_graphs" }
 mw_install = { path = "bevyrrowind/crates/mw_install" }

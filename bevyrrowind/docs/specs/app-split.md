@@ -113,7 +113,7 @@ touch-build time. One extraction per session; the lane owning a module edits it 
    (If `Quality` carries a clap `ValueEnum` derive, keep the parse wrapper in the binary.)
 2. [x] **`mw_boot_bevy`** (done 2026-10-26; mods lib half incl. `open`, which `load_content` needs; UI theme assets moved with it; no `mw_game_core` dep needed) (mods lib, bake, hot_reload, ui_theme, load/mount). Breaks cycles 3 and the `crate::load` part of 5.
    Unblocks the content/mods/bake lane and controls/environment.
-3. **`mw_doors_bevy` + `mw_controls_bevy`** (833 lines, two small leaves, can be two parallel sessions).
+3. **`mw_doors_bevy` + `mw_controls_bevy`** (833 lines, two small leaves, can be two parallel sessions). 3a controls done 2026-10-26 (`l10n/` strings moved with it; `keymap()`/`reload()` test helpers now always `pub` for the app's player tests); doors pending.
 4. `mw_walkers_bevy` (walkers, physics): AI/movement/combat lane.
 5. `mw_actors_bevy` (actors, fx, particles, faces, held): character/animation lane. Parallel with 4.
 6. `mw_environment_bevy` (water, weather, night_sky, render) and `mw_audio_bevy`: rendering, weather and audio lanes.

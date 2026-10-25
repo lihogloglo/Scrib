@@ -7,7 +7,6 @@ mod actors;
 mod anim_view;
 mod audio;
 mod console;
-mod controls;
 mod character_view;
 mod dialogue;
 mod doors;
@@ -45,6 +44,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 // Boot layer (app-split.md slice 2): `crate::bake`, `crate::load`, ... resolve through these.
 use mw_boot_bevy::{bake, hot_reload, load, mount, ui_theme};
+// Gameplay controls (app-split.md slice 3): `crate::controls::..` resolves through this.
+use mw_controls_bevy as controls;
 use mw_install::{MorrowindInstall, Origin};
 use mw_records::KindVisitor;
 use sf_records::{RecordDb, RecordId};

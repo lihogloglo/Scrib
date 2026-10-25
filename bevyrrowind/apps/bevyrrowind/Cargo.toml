@@ -38,6 +38,8 @@ mw_assets = { path = "../../crates/mw_assets" }
 mw_bake.workspace = true
 # Boot layer (app-split.md slice 2): mods lib half, bake, hot reload, UI theme, load/mount.
 mw_boot_bevy.workspace = true
+# Gameplay keymap actions, use context, keybinds screen (app-split.md slice 3).
+mw_controls_bevy.workspace = true
 mw_game_core.workspace = true
 mw_graphs.workspace = true
 mw_install.workspace = true

@@ -2309,6 +2309,7 @@ dependencies = [
  "mw_audio",
  "mw_bake",
  "mw_boot_bevy",
+ "mw_controls_bevy",
  "mw_game_core",
  "mw_graphs",
  "mw_install",
@@ -4937,6 +4938,26 @@ dependencies = [
  "sf_ui_screens",
  "sf_vfs",
  "tes3",
+ "workspace-hack",
+]
+
+[[package]]
+name = "mw_controls_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_camera_controller",
+ "bevy_ecs",
+ "bevy_enhanced_input",
+ "bevy_input",
+ "bevy_log",
+ "bevy_ui",
+ "mw_boot_bevy",
+ "sf_mods",
+ "sf_records",
+ "sf_ui",
+ "sf_ui_bevy",
+ "sf_ui_screens",
  "workspace-hack",
 ]
 

@@ -30,9 +30,14 @@
 //! - Dev keys outside the keymap: F11 player / free camera (`player::TOGGLE_KEY`), F10 here.
 //!   TODO(input): the journal's `J` (`dialogue.rs`) moves into the keymap in a later slice.
 
-use bevy::camera_controller::free_camera::FreeCamera;
-use bevy::prelude::*;
+use bevy_app::{App, Startup, Update};
+use bevy_camera_controller::free_camera::FreeCamera;
+use bevy_ecs::prelude::*;
+use bevy_ecs::system::EntityCommands;
 use bevy_enhanced_input::prelude::*;
+use bevy_input::{ButtonInput, keyboard::KeyCode};
+use bevy_log::warn;
+use bevy_ui::{Node, PositionType, percent};
 use sf_ui::{ActionDef, ActionRef, Keymap, L10nSource, LanguageIdentifier, Layer, Localizer, PressMode, UiRegistry};
 use sf_ui_bevy::{
     HUD_SCOPE, ScreenStackRes, UiKeymap, UiLocalizer, UiProfile, UiRegistryRes, UiScreenRoot, keymap_bindings,
@@ -158,8 +163,8 @@ pub fn register(keymap: &mut Keymap) {
     keymap.link_scopes(CONTEXT, HUD_SCOPE);
 }
 
-/// The UI actions plus the gameplay actions at their defaults (tests; the app registers into `UiKeymap`).
-#[cfg(test)]
+/// The UI actions plus the gameplay actions at their defaults (tests, here and in the app; the app
+/// registers into `UiKeymap`).
 pub fn keymap() -> Keymap {
     let mut keymap = sf_ui_bevy::ui_keymap();
     register(&mut keymap);
@@ -231,7 +236,7 @@ pub fn add(app: &mut App) {
     if !app.world().contains_resource::<UiLocalizer>() {
         app.insert_resource(strings());
     }
-    let profile = crate::mods::bindings_profile();
+    let profile = mw_boot_bevy::mods::bindings_profile();
     let world = app.world_mut();
     let mut keymap = world.resource_mut::<UiKeymap>();
     register(&mut keymap.0);
@@ -368,7 +373,7 @@ fn toggle_keybinds(
         position_type: PositionType::Absolute,
         left: percent(15),
         top: percent(8),
-        ..default()
+        ..Node::default()
     };
     commands.spawn((UiScreenRoot(KEYBINDS_SCREEN.into()), centred, KeybindsScreen::new(None)));
     if let Err(e) = stack.0.push(&registry.0, KEYBINDS_SCREEN) {
@@ -387,8 +392,7 @@ fn close_keybinds(mut commands: Commands, stack: Option<Res<ScreenStackRes>>, ro
     }
 }
 
-/// The profile file the bindings save into, reloaded (tests: a restart).
-#[cfg(test)]
+/// The profile file the bindings save into, reloaded (the app's tests: a restart).
 pub fn reload(dir: &std::path::Path, name: &str) -> sf_mods::Profile {
     sf_mods::Profile::load(sf_mods::Profile::path_in(dir, name)).expect("profile reloads")
 }
