@@ -686,7 +686,14 @@ fn setup(
         camera.insert((ScreenSpaceAmbientOcclusion { quality_level, ..default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
     }
     if !start.bench {
-        camera.insert(FreeCamera { walk_speed: 12.0, run_speed: 80.0, ..FreeCamera::default() });
+        // Up / down follow the Jump / Sneak bindings (`controls::free_camera_keys`); E is Use.
+        camera.insert(FreeCamera {
+            walk_speed: 12.0,
+            run_speed: 80.0,
+            key_up: crate::controls::FREE_CAMERA_UP,
+            key_down: crate::controls::FREE_CAMERA_DOWN,
+            ..FreeCamera::default()
+        });
     }
     // Benchmark A/B (perf.md "Frame pacing"): render at a fixed size offscreen
     // and show it scaled to the window, so pixel count and window size vary

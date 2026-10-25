@@ -30,6 +30,7 @@
 //! - Dev keys outside the keymap: F11 player / free camera (`player::TOGGLE_KEY`), F10 here.
 //!   TODO(input): the journal's `J` (`dialogue.rs`) moves into the keymap in a later slice.
 
+use bevy::camera_controller::free_camera::FreeCamera;
 use bevy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use sf_ui::{ActionDef, ActionRef, Keymap, L10nSource, LanguageIdentifier, Layer, Localizer, PressMode, UiRegistry};
@@ -249,7 +250,7 @@ pub fn add(app: &mut App) {
     }
     app.add_input_context::<UseControls>()
         .add_systems(Startup, |mut commands: Commands, keymap: Res<UiKeymap>| spawn_use(&mut commands, &keymap.0))
-        .add_systems(Update, (rebind_use, toggle_keybinds, close_keybinds));
+        .add_systems(Update, (rebind_use, free_camera_keys, toggle_keybinds, close_keybinds));
 }
 
 /// The builtin mod's UI strings (`l10n/en/bevyrrowind.ftl`: keybind labels
@@ -308,6 +309,42 @@ fn rebind_use(
     spawn_use(&mut commands, &keymap.0);
 }
 
+/// Free-camera fly-up key when Jump has no keyboard binding (the default Jump key).
+pub const FREE_CAMERA_UP: KeyCode = KeyCode::Space;
+/// Free-camera fly-down key when Sneak has no keyboard binding (the default Sneak key).
+pub const FREE_CAMERA_DOWN: KeyCode = KeyCode::ControlLeft;
+
+/// The first keyboard key bound to `control`, or `fallback`.
+fn first_key(keymap: &Keymap, control: Control, fallback: KeyCode) -> KeyCode {
+    keymap_bindings(keymap, &control.id())
+        .into_iter()
+        .find_map(|binding| match binding {
+            Binding::Keyboard { key, .. } => Some(key),
+            _ => None,
+        })
+        .unwrap_or(fallback)
+}
+
+/// Bevy's free camera flies up / down on the Jump / Sneak keys (its own defaults, E / Q, clash
+/// with Use), following rebinds; set when the keymap changes or a free camera appears.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn free_camera_keys(keymap: Res<UiKeymap>, mut cams: Query<&mut FreeCamera>) {
+    let changed = keymap.is_changed();
+    let mut keys = None;
+    for mut cam in &mut cams {
+        if !changed && !cam.is_added() {
+            continue;
+        }
+        let (up, down) = *keys.get_or_insert_with(|| {
+            (first_key(&keymap.0, Control::Jump, FREE_CAMERA_UP), first_key(&keymap.0, Control::Sneak, FREE_CAMERA_DOWN))
+        });
+        if cam.key_up != up || cam.key_down != down {
+            cam.key_up = up;
+            cam.key_down = down;
+        }
+    }
+}
+
 /// F10 opens the keybinds screen when no other menu is open and closes it when it is.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn toggle_keybinds(
@@ -359,6 +396,27 @@ pub fn reload(dir: &std::path::Path, name: &str) -> sf_mods::Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The free camera flies up / down on the Jump / Sneak keys (not E / Q) and follows a rebind.
+    #[test]
+    fn free_camera_follows_jump_and_sneak() {
+        let mut app = App::new();
+        app.insert_resource(UiKeymap(keymap())).add_systems(Update, free_camera_keys);
+        let cam = app.world_mut().spawn(FreeCamera::default()).id();
+        app.update();
+        let keys = |app: &App| {
+            let cam = app.world().get::<FreeCamera>(cam).expect("free camera");
+            (cam.key_up, cam.key_down)
+        };
+        assert_eq!(keys(&app), (KeyCode::Space, KeyCode::ControlLeft));
+        app.world_mut()
+            .resource_mut::<UiKeymap>()
+            .0
+            .set(&Control::Jump.id(), sf_ui::Device::Kbm, &["key:KeyR"])
+            .expect("rebind jump");
+        app.update();
+        assert_eq!(keys(&app), (KeyCode::KeyR, KeyCode::ControlLeft));
+    }
 
     /// Every keybinds row (gameplay and UI actions) has a display name in the builtin strings.
     #[test]
