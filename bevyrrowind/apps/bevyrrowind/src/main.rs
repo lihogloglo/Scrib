@@ -6,7 +6,6 @@
 mod actors;
 mod anim_view;
 mod audio;
-mod bake;
 mod console;
 mod controls;
 mod character_view;
@@ -17,7 +16,6 @@ mod actor_fx;
 mod actor_particles;
 mod faces;
 mod held;
-mod hot_reload;
 mod inventory;
 mod inventory_ui;
 mod level;
@@ -36,7 +34,6 @@ mod saves;
 mod scripts;
 mod skinned_view;
 mod sweep;
-mod ui_theme;
 mod view;
 mod walkers;
 mod water;
@@ -46,8 +43,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+// Boot layer (app-split.md slice 2): `crate::bake`, `crate::load`, ... resolve through these.
+use mw_boot_bevy::{bake, hot_reload, load, mount, ui_theme};
 use mw_install::{MorrowindInstall, Origin};
-use mw_records::{KindVisitor, LoadedContent};
+use mw_records::KindVisitor;
 use sf_records::{RecordDb, RecordId};
 use sf_vfs::{DirEntry, Vfs, VfsPath};
 
@@ -806,27 +805,6 @@ fn detect(explicit: Option<&std::path::Path>) -> Result {
         }
         Err(error) => Err(error.into()),
     }
-}
-
-/// The selected mod profile's VFS (`mods.rs`): builtin graphs and runtime,
-/// then archives, loose `Data Files`, and enabled mods, in load order.
-fn mount(install: &MorrowindInstall, verbose: bool) -> Result<Vfs> {
-    mods::mount(install, verbose)
-}
-
-/// The selected mod profile's VFS and records (`mods.rs`).
-fn load(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, LoadedContent)> {
-    let (vfs, content, _) = mods::load_content(install, verbose)?;
-    let mut counts = std::collections::BTreeMap::<String, usize>::new();
-    for warning in &content.warnings {
-        let name = format!("{warning:?}");
-        let variant = name.split([' ', '{', '(']).next().unwrap_or_default().to_owned();
-        *counts.entry(variant).or_default() += 1;
-    }
-    for (variant, count) in counts {
-        eprintln!("warning: {count} x {variant}");
-    }
-    Ok((vfs, content))
 }
 
 fn info(install: &MorrowindInstall, origin: &Origin, conflicts: usize) -> Result {

@@ -2308,6 +2308,7 @@ dependencies = [
  "mw_assets",
  "mw_audio",
  "mw_bake",
+ "mw_boot_bevy",
  "mw_game_core",
  "mw_graphs",
  "mw_install",
@@ -4905,6 +4906,38 @@ dependencies = [
  "tempfile",
  "tes3",
  "texpresso",
+]
+
+[[package]]
+name = "mw_boot_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_log",
+ "mw_bake",
+ "mw_graphs",
+ "mw_install",
+ "mw_mods",
+ "mw_records",
+ "mw_script",
+ "mw_world",
+ "sf_bake",
+ "sf_model",
+ "sf_mods",
+ "sf_ragdoll",
+ "sf_records",
+ "sf_script",
+ "sf_script_bevy",
+ "sf_ui",
+ "sf_ui_bevy",
+ "sf_ui_css",
+ "sf_ui_screens",
+ "sf_vfs",
+ "tes3",
+ "workspace-hack",
 ]
 
 [[package]]

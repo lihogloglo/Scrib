@@ -13,8 +13,9 @@
 
 use std::sync::Arc;
 
-use bevy::asset::io::AssetSourceBuilder;
-use bevy::prelude::*;
+use bevy_app::App;
+use bevy_asset::io::AssetSourceBuilder;
+use bevy_ecs::prelude::*;
 use sf_vfs::Vfs;
 
 /// The default asset source over `vfs`: watched and swappable with the `dev` feature.
@@ -32,12 +33,10 @@ pub fn asset_source(app: &mut App, vfs: Arc<Vfs>) -> AssetSourceBuilder {
 
 /// The record DB after the last record hot reload (dev builds); consumers that opt in read it
 /// on [`RecordsChanged`].
-#[allow(dead_code, reason = "read by record consumers that opt in (none yet); built only in dev")]
 #[derive(Resource, Clone)]
 pub struct LiveRecords(pub Arc<sf_records::RecordDb>);
 
 /// Record files changed and [`LiveRecords`] holds the rebuilt DB.
-#[allow(dead_code, reason = "read by record consumers that opt in (none yet); built only in dev")]
 #[derive(Message, Clone, Debug)]
 pub struct RecordsChanged {
     /// The changed record files (VFS paths).
@@ -55,7 +54,11 @@ mod dev {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Mutex, OnceLock, PoisonError};
 
-    use bevy::asset::UntypedAssetId;
+    use bevy_app::Update;
+    use bevy_asset::{AssetEvent, AssetServer, UntypedAssetId};
+    use bevy_ecs::prelude::*;
+    use bevy_image::Image;
+    use bevy_log::{info, warn};
     use sf_script::ScriptSource;
     use sf_script_bevy::Scripts;
     use sf_vfs::SharedVfs;
@@ -63,7 +66,6 @@ mod dev {
     use sf_vfs::watch::{DEFAULT_DEBOUNCE, VfsUpdate, VfsWatcher, WatchEvent};
 
     use super::{App, Arc, AssetSourceBuilder, LiveRecords, RecordsChanged, Vfs};
-    use bevy::prelude::*;
 
     /// The loaded profile kept by `mods::load_content` for record reloads.
     pub static PROFILE: OnceLock<Mutex<(mw_mods::Mods, sf_mods::LoadedProfile)>> = OnceLock::new();
@@ -114,7 +116,7 @@ mod dev {
             let profile = PROFILE.get().map(|p| p.lock().unwrap_or_else(PoisonError::into_inner));
             let plan = match &profile {
                 Some(guard) => guard.1.route(&update.changes),
-                None => sf_mods::HotReloadPlan { assets: update.changes.clone(), ..default() },
+                None => sf_mods::HotReloadPlan { assets: update.changes.clone(), ..Default::default() },
             };
             drop(profile);
 

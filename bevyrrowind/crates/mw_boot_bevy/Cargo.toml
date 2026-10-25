@@ -1,0 +1,43 @@
+[package]
+name = "mw_boot_bevy"
+description = "The game's boot layer: mod profile loading, bake command, hot reload, UI theme (app-split.md slice 2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# The app's `dev` build: watched, swappable VFS snapshot and record hot reload (`hot_reload.rs`).
+dev = ["sf_vfs/watch"]
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_image.workspace = true
+bevy_log.workspace = true
+mw_bake.workspace = true
+mw_graphs.workspace = true
+mw_install.workspace = true
+mw_mods.workspace = true
+mw_records.workspace = true
+mw_script.workspace = true
+mw_world.workspace = true
+sf_bake.workspace = true
+sf_model.workspace = true
+sf_mods.workspace = true
+sf_ragdoll.workspace = true
+sf_records.workspace = true
+sf_script.workspace = true
+sf_script_bevy.workspace = true
+sf_ui.workspace = true
+sf_ui_bevy.workspace = true
+sf_ui_css.workspace = true
+sf_ui_screens.workspace = true
+sf_vfs = { workspace = true, features = ["bevy"] }
+tes3 = { workspace = true, features = ["esp"] }
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

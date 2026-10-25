@@ -15,7 +15,9 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use bevy::prelude::*;
+use bevy_app::{App, Startup};
+use bevy_ecs::prelude::*;
+use bevy_log::warn;
 use mw_install::MorrowindIni;
 use sf_ui::ThemeId;
 use sf_ui_bevy::UiSettings;

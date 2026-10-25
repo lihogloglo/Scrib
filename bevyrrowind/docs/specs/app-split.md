@@ -1,6 +1,6 @@
 # App split: plugin crates out of `apps/bevyrrowind` (ROADMAP 1.11)
 
-Plan only (2026-10-25, lane `appsplit-plan`). Rules: ARCHITECTURE §8b 3 (wide, shallow), 4 (thin binary), 5 (split by
+Plan only (2026-10-25, lane `appsplit-plan`). Rules: ARCHITECTURE §8b (now build-perf.md) 3 (wide, shallow), 4 (thin binary), 5 (split by
 change frequency), 6 (minimal Bevy features per crate). Coupling measured by `crate::` greps over
 `apps/bevyrrowind/src` (18.3k lines, 40 modules).
 
@@ -98,7 +98,7 @@ config, capture) only if it stays the most-edited file.
 ## What the workspace merge changes
 
 One workspace at the repo root (`merge-ws1`): new crates are plain `crates/mw_*_bevy` members using `workspace = true`
-deps, no `path = "../../crates/..."` entries, one `Cargo.lock`, one hakari run, one target dir. §8b's "path dependency
+deps, no `path = "../../crates/..."` entries, one `Cargo.lock`, one hakari run, one target dir. §8b (now build-perf.md)'s "path dependency
 built from bevyrrowind gets `[profile.dev.package."*"]` opt-level 3" stops applying: re-check profile overrides so the
 new game crates build at the game's opt-level 1 (not 3), or every edit in them rebuilds optimised. Do not start slice 1
 until `merge-ws1` has landed the root `Cargo.toml`; crates created in the old layout would be redone.
@@ -111,7 +111,7 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 
 1. [x] **`mw_game_core`** (done 2026-10-25; `Focus` stays in the app, `Quality` render settings stay as `exterior::QualityRender`): types only, no systems move. Breaks cycles 1, 2, 6. Lowest risk. Needed by every later slice.
    (If `Quality` carries a clap `ValueEnum` derive, keep the parse wrapper in the binary.)
-2. **`mw_boot_bevy`** (mods lib, bake, hot_reload, ui_theme, load/mount). Breaks cycles 3 and the `crate::load` part of 5.
+2. [x] **`mw_boot_bevy`** (done 2026-10-26; mods lib half incl. `open`, which `load_content` needs; UI theme assets moved with it; no `mw_game_core` dep needed) (mods lib, bake, hot_reload, ui_theme, load/mount). Breaks cycles 3 and the `crate::load` part of 5.
    Unblocks the content/mods/bake lane and controls/environment.
 3. **`mw_doors_bevy` + `mw_controls_bevy`** (833 lines, two small leaves, can be two parallel sessions).
 4. `mw_walkers_bevy` (walkers, physics): AI/movement/combat lane.
@@ -121,7 +121,7 @@ touch-build time. One extraction per session; the lane owning a module edits it 
 11. `mw_devtools_bevy` (breaks cycle 4; unblocks perf/rendering-bug lanes that edit live_ab/remote/console). Can move up
     to slice 4 if the Rpg trait cut above is done first.
 12. `mw_viewers_bevy`, 13. `mw_exterior_bevy`: the app is now ~2.2k lines.
-14. Remove shims; update CLAUDE.md module map and ARCHITECTURE §8b crate list; re-measure the §8b gates (touch a leaf
+14. Remove shims; update CLAUDE.md module map and ARCHITECTURE §8b (now build-perf.md) crate list; re-measure the §8b gates (touch a leaf
     plugin crate <= 5 s, no-op <= 1 s, clean <= 12 min, since each crate adds a link unit) into `docs/perf.md`; tick ROADMAP 1.11.
 
 Parallelism: after slice 2, slices 3, 4, 5 and 6 touch disjoint modules and can run as separate lanes (respect the
