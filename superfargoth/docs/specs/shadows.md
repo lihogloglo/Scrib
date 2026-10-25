@@ -1,54 +1,18 @@
 # Shadows
 
-Status: **v2 design (lights1, 2026-10-20, owner: "we need a smarter way to do shadows")**: one design for sun and
-lamps, below; supersedes the F-slices. Lamp slices 1-2 built (`sf_sky_bevy::shadow_budget`, `sf_shadow_cache_bevy`,
-the cache parked since 2026-10-19 and unparked by v2). Sun details (cascades, bias, far tiers) live in
-[weather/distant-shadows.md](weather/distant-shadows.md) ("Distant shadows", "Shadow bias and contact shadows"); diagnosis and Clockwork notes in
-[../research/shadows/README.md](../research/shadows/README.md); as-built history in
-[shadows-history.md](shadows-history.md).
+**Current design (shadow reset, 2026-10-21).** Stock Bevy shadows plus vendored Bevy PRs (rule "patch Bevy, don't
+inject", DECISIONS 2026-10-21); the far static sun map and the other injected layers are deleted (Reset A2).
+Built and awaiting owner checks (SH-14..SH-19): A1 (contact shadows sun/moon only 0.3 m, GTAO, sun/moon off interior
+views), A2 (lamp maps captured during the door fade; far map and caster cull deleted), B1 (PRs #26149/#26161 in
+`vendor/`; the lamp cache `sf_shadow_cache_bevy` stays, "Caching" below), B2 (shadow early-out, 2x2 PCF for lamps).
+Open: ROADMAP 1.4 (lamp-shadow count for High, LM-1, RO-1, SH-11, SH-13) and 1.12 (SH-20); quality is hard problem H2
+(`bevyrrowind/docs/hard-problems.md`). Sun details: [weather/distant-shadows.md](weather/distant-shadows.md);
+diagnosis: [../research/shadows/README.md](../research/shadows/README.md). The v2 design, F6 slices and slice
+write-ups (superseded or built) live in [shadows-history.md](shadows-history.md).
 
 ## Shadows v2: one design (2026-10-20)
 
-**Why.** Bevy 0.20 redraws every shadow view from scratch every frame, and each lamp cube face is a root view that
-runs the whole `Core3d` schedule (~0.35 ms render thread per face, below). Our answers so far were layers on top of
-that (budget of 1 lamp, far map off, cache without the view skip), and the look still fails (shadows "only when
-super close", SH-11/13/14). Industry engines and Clockwork cache what doesn't move and redraw only what changed.
-
-**Budget (High, 1440p, the walk):** all shadows ≤ 2 ms render thread and ≤ 1.5 ms GPU; 8 shadowed lamps; sun
-shadows visible to the far-field handoff (~500 m).
-
-| Tier | What | Redrawn | Bevy pieces | Ours |
-|---|---|---|---|---|
-| Sun near | CSM, **3 cascades** to ~150 m (Clockwork: 3 to 230 m), practical split | every frame | cascades, PCF/PCSS | splits (`CascadeSplits`); caster size cull deleted in shadow reset A2 (2026-10-21) |
-| Sun far | **one cached static map** over the view distance (Clockwork, UE cached shadows), statics only; terrain horizon march past it | on sun move > 0.25°, camera move > 1/16 reach, new cells; spread over frames | an extra shadow view on redraw frames only | none: the far static map (F3b-d, never on) was deleted in shadow reset A2 (2026-10-21); terrain far shadow only |
-| Lamps | **cached static cube faces** (Doom 2016, HDRP mixed cached, Clockwork 8-61 lamps); movers drawn over the copy, per face | statics on change; movers per frame (30 Hz Low/Medium), only faces holding one | cube array + sampling | `sf_shadow_cache_bevy` + **2b: no Bevy views for cached faces** |
-| Contact | screen-space, sun + shadowed lamps, **short** (SH-14) | every frame | `ContactShadows` (0.19) | lengths per preset |
-| Grounding | GTAO | every frame | SSAO (XeGTAO) | ROADMAP 1.5 |
-
-**What goes away:** High's one-uncached-lamp budget (replaced by 8 cached), the 504 m four-cascade CSM (3 short
-cascades), cascade-texel PCSS sizes (world-size penumbra, V3). Kept: importance selection, crossfade,
-terrain far shadow, rain occlusion (vertical, already redrawn only on demand: Nsight 0.04/frame).
-
-**Slices (each measured with the perf suite + Nsight; owner checks per slice):**
-- **V0** Measure today's shadow costs: `--off shadows`, 3 vs 4 cascades, Nsight per cascade, census 8 lamps.
-- **V1 Lamps 2b** (biggest CPU win): cached lights keep Bevy's cube-array layer but their six face views lose
-  `RootNonCameraView`/`ExtractedView` after `prepare_lights` (Bevy runs nothing for them); one node per frame
-  restores cached faces into Bevy's layers (slice 2's depth copy); faces whose frustum holds a mover keep a Bevy
-  view that loads (not clears) the restored depth. Raise High to 8 lamps at 512², fade 40 m. Gate: 8 lamps ≤ 1 ms
-  render thread (census, walk); no flicker when the set changes. **Built (shadows2, 2026-10-20), gate not met on
-  the walk**: see "V1 as built" below.
-- **V2 Sun**: 3 cascades on High/Ultra to ~150 m (the far static map was deleted in shadow reset A2, 2026-10-21).
-  Gate: render -1 ms, shadows present 0-500 m (owner check).
-- **V3 Soft shadows by world size**: Bevy's directional PCSS size is in cascade texels (penumbra jumps between
-  cascades); scale it per cascade so the penumbra is the sun's angular size × blocker distance (Clockwork). Needs a
-  small `bevy_pbr` shader patch (vendored like `big_space`, upstream PR). Plus SH-14 contact length.
-- **V4 Cascade update scheduling** (only if V2 leaves cascades > 0.5 ms): far cascade at half rate with its matrix
-  held between redraws (CryEngine `r_ShadowsCache`, Unity HDRP cached cascades).
-- **V5 Correctness**: LM-1 leaf shadows, RO-1 translucent casters, SH-11 distant flashes, SH-13 lamp grain.
-
-Goal: interiors lit by 20-30 point lights where every light that matters on screen casts a shadow (8-16 on High,
-more on Ultra), at well under 1 ms, with no visible popping when the shadowed set changes. Today High shadows
-**one** light, faded out over 15-25 m, because every shadowed light re-renders six cube faces every frame.
+Superseded by the shadow reset (2026-10-21); moved verbatim to [shadows-history.md](shadows-history.md#shadows-v2-one-design-2026-10-20).
 
 ## Reset B2 as built (shadowB2, 2026-10-21)
 
@@ -241,9 +205,8 @@ GPL and a different renderer: behaviour only.
 
 ## Lamp slices (F6, before v2)
 
-1. **(done)** Spec; importance selection. 2. **(done, parked 2026-10-19, unparked by v2)** cache, static only
-(shadows-history.md). 3. Movers over the static copy, 8-16 lamps: now v2's V1. 4. Upstream to Bevy if small;
-Clockwork extras (fixture self-shadowing, per-actor shadows) later.
+Superseded by the shadow reset (2026-10-21); moved verbatim to [shadows-history.md](shadows-history.md#lamp-slices-f6-before-v2).
+
 
 ## Industry comparison
 
