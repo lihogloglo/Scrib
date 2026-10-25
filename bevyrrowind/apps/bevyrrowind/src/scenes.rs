@@ -28,7 +28,7 @@ struct SceneFile {
 }
 
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
-pub use mw_game_core::scenes::{SceneDef, active};
+pub use mw_game_core::scenes::SceneDef;
 
 /// `bevyrrowind scene [<name>] [--list] [--file f] [view flags...]`.
 pub fn run(

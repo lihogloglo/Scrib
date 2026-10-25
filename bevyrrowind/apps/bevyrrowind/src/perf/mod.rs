@@ -5,4 +5,4 @@
 pub mod cli;
 mod sweep;
 
-pub use mw_devtools_bevy::perf::{Off, Part, Perf, PerfFlags, apply_off, render_size};
+pub use mw_devtools_bevy::perf::{Off, Part, Perf, PerfFlags};

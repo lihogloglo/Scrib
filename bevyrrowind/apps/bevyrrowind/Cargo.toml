@@ -49,6 +49,8 @@ mw_devtools_bevy.workspace = true
 mw_doors_bevy.workspace = true
 # Water, weather, night sky, render settings (app-split.md slice 6).
 mw_environment_bevy.workspace = true
+# The streamed game view, test levels, pause menu (app-split.md slice 13).
+mw_exterior_bevy.workspace = true
 mw_game_core.workspace = true
 mw_graphs.workspace = true
 mw_install.workspace = true

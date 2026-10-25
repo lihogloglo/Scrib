@@ -1,0 +1,70 @@
+[package]
+name = "mw_exterior_bevy"
+description = "The streamed game view: composes every game plugin into the App (`exterior::run`), synthetic test levels, the pause menu (app-split.md slice 13)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The umbrella crate: `exterior::run` builds the game `App` with `DefaultPlugins` (as the binary did).
+bevy = { workspace = true, features = ["3d", "ui"] }
+bevy_camera_controller = { workspace = true, features = ["free_camera"] }
+bevy_enhanced_input.workspace = true
+glam.workspace = true
+mw_actors_bevy.workspace = true
+mw_assets.workspace = true
+mw_audio_bevy.workspace = true
+mw_bake.workspace = true
+mw_boot_bevy.workspace = true
+mw_controls_bevy.workspace = true
+mw_devtools_bevy.workspace = true
+mw_doors_bevy.workspace = true
+mw_environment_bevy.workspace = true
+mw_game_core.workspace = true
+mw_graphs.workspace = true
+mw_physics.workspace = true
+mw_player_bevy.workspace = true
+mw_rpg_bevy.workspace = true
+mw_saves_bevy.workspace = true
+mw_scripts_bevy.workspace = true
+mw_walkers_bevy.workspace = true
+mw_world.workspace = true
+sf_anim_bevy.workspace = true
+sf_anim_graph.workspace = true
+sf_atmos_bevy.workspace = true
+sf_audio_bevy = { workspace = true, features = ["weather"] }
+sf_bake.workspace = true
+sf_character.workspace = true
+sf_character_bevy = { workspace = true, features = ["world"] }
+sf_console_bevy.workspace = true
+sf_controller.workspace = true
+sf_controller_bevy.workspace = true
+sf_coords.workspace = true
+sf_diag_bevy.workspace = true
+sf_level.workspace = true
+sf_lod.workspace = true
+sf_lod_bevy.workspace = true
+sf_model.workspace = true
+sf_model_bevy.workspace = true
+sf_mods.workspace = true
+sf_physics.workspace = true
+sf_physics_bevy.workspace = true
+sf_records.workspace = true
+sf_render_order_bevy.workspace = true
+sf_shadow_cache_bevy.workspace = true
+sf_sky_bevy.workspace = true
+sf_terrain_bevy.workspace = true
+sf_ui.workspace = true
+sf_ui_bevy.workspace = true
+sf_ui_screens.workspace = true
+sf_vfs.workspace = true
+sf_weather_bevy.workspace = true
+sf_wind_bevy.workspace = true
+sf_world = { workspace = true, features = ["bake"] }
+sf_world_bevy.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

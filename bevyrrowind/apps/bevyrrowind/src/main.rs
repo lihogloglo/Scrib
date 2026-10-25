@@ -3,34 +3,22 @@
 //! Today: inspection tools over the user's Morrowind install. Later, running
 //! without a subcommand will launch the game.
 
-use mw_actors_bevy::actors;
 use mw_viewers_bevy::{character_view, view};
-use mw_rpg_bevy::{dialogue, inventory, inventory_ui};
-mod exterior;
+use mw_exterior_bevy::exterior;
 mod level;
 mod mods;
-mod pause_menu;
 mod perf;
-use mw_walkers_bevy::physics;
-use mw_player_bevy as player;
-use mw_devtools_bevy::{live_ab, pipeline_watch};
 mod scenes;
-use mw_saves_bevy as saves;
-use mw_scripts_bevy as scripts;
 mod sweep;
-use mw_walkers_bevy::walkers;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 // Boot layer (app-split.md slice 2): `crate::bake`, `crate::load`, ... resolve through these.
-use mw_boot_bevy::{bake, hot_reload, load, mount, ui_theme};
-// Gameplay controls (app-split.md slice 3): `crate::controls::..` resolves through this.
-use mw_audio_bevy as audio;
-use mw_controls_bevy as controls;
+use mw_boot_bevy::{bake, load, mount};
 use mw_doors_bevy as doors;
-use mw_environment_bevy::{night_sky, render, water, weather};
+use mw_environment_bevy::{render, water, weather};
 use mw_install::{MorrowindInstall, Origin};
 use mw_records::KindVisitor;
 use sf_records::{RecordDb, RecordId};
@@ -617,9 +605,6 @@ fn parse_camera(raw: &str) -> std::result::Result<(bevy::math::Vec3, bevy::math:
         _ => Err("expected six comma-separated numbers".into()),
     }
 }
-
-// Moved to `mw_game_core` (app-split.md slice 1; its `dev` feature follows ours); the old path keeps working.
-pub(crate) use mw_game_core::shipped_errors;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();

@@ -221,6 +221,7 @@ mw_audio_bevy = { path = "bevyrrowind/crates/mw_audio_bevy" }
 mw_devtools_bevy = { path = "bevyrrowind/crates/mw_devtools_bevy" }
 mw_doors_bevy = { path = "bevyrrowind/crates/mw_doors_bevy" }
 mw_environment_bevy = { path = "bevyrrowind/crates/mw_environment_bevy" }
+mw_exterior_bevy = { path = "bevyrrowind/crates/mw_exterior_bevy" }
 mw_game_core = { path = "bevyrrowind/crates/mw_game_core" }
 mw_graphs = { path = "bevyrrowind/crates/mw_graphs" }
 mw_install = { path = "bevyrrowind/crates/mw_install" }

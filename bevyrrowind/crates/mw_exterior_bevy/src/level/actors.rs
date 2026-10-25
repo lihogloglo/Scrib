@@ -211,7 +211,7 @@ fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity
             a => (a.map(|a| (a, 0.0)), None),
         };
         let mut e = commands.entity(entity);
-        e.try_remove::<(crate::walkers::Walker, Avoider)>().try_insert(ActorScript { follower, action, fidgets });
+        e.try_remove::<(mw_walkers_bevy::walkers::Walker, Avoider)>().try_insert(ActorScript { follower, action, fidgets });
     }
 }
 

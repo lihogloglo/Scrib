@@ -36,7 +36,7 @@ use sf_ui_screens::{
     ScreenSystems,
 };
 
-use crate::player::PlayerMode;
+use mw_player_bevy::PlayerMode;
 
 /// The HUD screen: the input target of play (carries the open-menu action).
 pub const HUD: &str = "hud";
@@ -202,7 +202,7 @@ fn host_options(
                     Err(e) => warn!("options: {key}: {e:?}"),
                 }
             }
-            OptionsChange::OpenKeybinds => crate::controls::open_keybinds(&mut commands, &mut stack, &registry),
+            OptionsChange::OpenKeybinds => mw_controls_bevy::open_keybinds(&mut commands, &mut stack, &registry),
         }
     }
 }
@@ -272,7 +272,7 @@ mod tests {
         .insert_resource(UiRegistryRes(UiRegistry::build(&RecordDb::new()).0));
         add(&mut app);
         // The keybinds screen (Key bindings) and the builtin strings, as `player.rs` adds them.
-        crate::controls::add(&mut app);
+        mw_controls_bevy::add(&mut app);
         let target = UVec2::new(1600, 1000);
         app.world_mut().spawn((
             Camera2d,
@@ -413,7 +413,7 @@ mod tests {
         // Key bindings on top of the options; its Back returns to them.
         app.world_mut().write_message(OptionsEvent { screen, change: OptionsChange::OpenKeybinds });
         frames(&mut app, 3);
-        let keybinds = crate::controls::KEYBINDS_SCREEN;
+        let keybinds = mw_controls_bevy::KEYBINDS_SCREEN;
         assert!(open(&app, keybinds) && open(&app, OPTIONS), "keybinds on top of the options");
         assert_eq!(roots(&mut app, keybinds), 1);
         tap(&mut app, KeyCode::Escape);
@@ -428,7 +428,7 @@ mod tests {
         assert!(text.contains("audio_master_volume") && !text.contains("audio_music_volume"), "{text}");
 
         // A restart: a fresh store from the saved file has the value.
-        let saved = crate::controls::reload(&dir, "test");
+        let saved = mw_controls_bevy::reload(&dir, "test");
         let store = settings_store(&app.world().resource::<UiRegistryRes>().0, Some(&saved));
         assert_eq!(store.0.get_f64(&master), Some(stepped));
         let _ = std::fs::remove_dir_all(&dir);

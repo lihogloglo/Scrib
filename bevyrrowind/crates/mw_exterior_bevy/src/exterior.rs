@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use bevy::asset::io::AssetSourceId;
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
+use bevy_camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::light::{CascadeShadowConfig, ShadowFilteringMethod};
@@ -48,7 +48,7 @@ use sf_vfs::Vfs;
 use sf_world::bake::BakedIndex;
 use sf_world::{IndexedPlacement, PlacementClass};
 
-use crate::perf::{Off, Part};
+use mw_devtools_bevy::perf::{Off, Part};
 use mw_devtools_bevy::ready::settled;
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
 pub use mw_game_core::exterior::{
@@ -102,18 +102,18 @@ pub struct ExteriorOptions {
     /// Fog multiplier (`--fog`) on the weather's fog (weather.md "Fog", F2).
     pub fog: Option<f32>,
     /// The live weather (M6 WE3): records, state and the grid's climates.
-    pub weather: Option<crate::weather::WeatherSetup>,
+    pub weather: Option<mw_environment_bevy::weather::WeatherSetup>,
     /// Quality preset (`--quality`): view-distance bias and size culling.
     pub quality: Quality,
     /// Benchmark, window size and A/B switches.
-    pub perf: crate::perf::Perf,
+    pub perf: mw_devtools_bevy::perf::Perf,
     /// Light parameters of every `LIGH` record (lowercase id).
     pub lights: HashMap<String, LightInfo>,
     pub calibration: LightCalibration,
     /// Ray-traced lighting (`--rt`) and DLSS (`--dlss`).
-    pub render: crate::render::RenderSettings,
+    pub render: mw_environment_bevy::render::RenderSettings,
     /// Worldspaces, door links and interior environments (door travel).
-    pub world: crate::doors::WorldLinks,
+    pub world: mw_doors_bevy::WorldLinks,
     /// `--use-door`: cross the nearest door once the start has settled.
     pub use_door: u32,
     /// `--activate N`: activate the crosshair target N times (`scripts.rs`).
@@ -130,7 +130,7 @@ pub struct ExteriorOptions {
     /// The worldspace the camera starts in (the exterior, or an interior).
     pub worldspace: sf_world::WorldspaceId,
     /// The water's shore and region inputs (`water.rs`, W3).
-    pub water: crate::water::WaterInputs,
+    pub water: mw_environment_bevy::water::WaterInputs,
     /// A synthetic test level (`level.rs`, TS1): `worldspace` is its own.
     pub level: Option<crate::level::LevelSetup>,
 }
@@ -189,13 +189,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
 
     let mut app = App::new();
     let render = options.render;
-    crate::render::RenderSettings::init(&mut app);
-    crate::shipped_errors(&mut app);
+    mw_environment_bevy::render::RenderSettings::init(&mut app);
+    mw_game_core::shipped_errors(&mut app);
     // Watched and swappable in dev builds (M5 A4 hot reload).
-    let vfs_source = crate::hot_reload::asset_source(&mut app, vfs.clone());
+    let vfs_source = mw_boot_bevy::hot_reload::asset_source(&mut app, vfs.clone());
     app.register_asset_source(AssetSourceId::Default, vfs_source);
     // The UI theme sheets (`ui_theme.rs`) come from the same VFS.
-    crate::ui_theme::add_source(&mut app, vfs.clone());
+    mw_boot_bevy::ui_theme::add_source(&mut app, vfs.clone());
     let mut extensions = BTreeMap::from([(MeshCookStep::ID.to_owned(), mw_bake::SFMESH_EXT.to_owned())]);
     extensions.extend(sf_lod_bevy::baked_extensions());
     // The far field (far-field.md) when the bake has it and `--off farfield` doesn't drop it.
@@ -206,15 +206,15 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     );
     let perf = options.perf;
     let bench = perf.bench.is_some();
-    crate::actors::add_world(&mut app, options.actors.clone(), perf.off.has(Part::Actors), &vfs, &options.store, &manifest, options.cloth);
+    mw_actors_bevy::actors::add_world(&mut app, options.actors.clone(), perf.off.has(Part::Actors), &vfs, &options.store, &manifest, options.cloth);
     // ROADMAP 2.6 (audio.md): sounds, music, listener, doors, emitters, footsteps.
-    crate::audio::add(&mut app, options.actors.clone(), &vfs);
+    mw_audio_bevy::add(&mut app, options.actors.clone(), &vfs);
     app.insert_resource(sf_character_bevy::CharacterSettings { bodies: options.bodies });
     if let (Some(db), false) = (options.actors.clone(), perf.off.has(Part::Actors) || perf.off.has(Part::Walkers)) {
-        crate::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
+        mw_walkers_bevy::walkers::add(&mut app, db, options.store.clone(), (*manifest).clone(), !perf.off.has(Part::Physics));
     }
     if !perf.off.has(Part::Physics) {
-        crate::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
+        mw_walkers_bevy::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
     }
     // The quality preset scales LOD selection, size culling and the
     // far-field handoff with one bias (`--off sizecull`: no size culling).
@@ -251,7 +251,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         crate::level::add(&mut app, level);
     }
     // ROADMAP 2.4: the dialogue window on mw_rpg (`dialogue.rs`).
-    crate::dialogue::add(&mut app, options.actors.clone(), options.open_ui.clone());
+    mw_rpg_bevy::dialogue::add(&mut app, options.actors.clone(), options.open_ui.clone());
 
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();
@@ -260,7 +260,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // The night exposure floor and ambient (LightCalibration, owner option A).
     let mut settings = SkySettings::default();
     options.calibration.apply_sky(&mut settings);
-    crate::night_sky::apply(&mut settings);
+    mw_environment_bevy::night_sky::apply(&mut settings);
     if let Some(degrees) = options.sun_size {
         settings.sun_disk.angular_size = degrees.to_radians();
     }
@@ -306,7 +306,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .insert_resource(overrides);
         // AU-1: weather loops and region one-shots into the audio plugin (`crate::audio`).
         app.add_plugins(sf_audio_bevy::weather::WeatherAudioPlugin);
-        crate::audio::merge_bank(&mut app, &weather.sounds);
+        mw_audio_bevy::merge_bank(&mut app, &weather.sounds);
         if let Some(raster) = raster {
             app.insert_resource(sf_weather_bevy::WorldWeatherMap::new(raster))
                 .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
@@ -378,7 +378,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         .insert_resource(TerrainDebug { lod_colors: options.terrain_lod, wireframe: options.wireframe, no_far_shadows: perf.off.has(Part::FarShadows), ..TerrainDebug::default() });
 
     // Before `Start` takes the worldspace: where an interior start puts the player (`player.rs`).
-    let player_start = crate::player::PlayerStart::of(&options.world, &options.worldspace);
+    let player_start = mw_player_bevy::PlayerStart::of(&options.world, &options.worldspace);
     app.insert_resource(Spawners {
         lights: Arc::new(if options.no_lights { HashMap::new() } else { options.lights }),
         lod_tint: options.lod_tint,
@@ -419,23 +419,23 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 .before(sf_shadow_cache_bevy::ShadowCacheSystems),
         );
 
-    crate::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
-    crate::doors::add(&mut app, options.world, options.use_door);
-    crate::pipeline_watch::add(&mut app);
-    crate::scripts::add(&mut app, vfs.clone(), options.activate);
-    crate::inventory::add(&mut app, options.actors.clone());
-    crate::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(crate::inventory_ui::SCREEN));
+    mw_environment_bevy::water::add(&mut app, options.water, options.quality, &options.world.worldspaces);
+    mw_doors_bevy::add(&mut app, options.world, options.use_door);
+    mw_devtools_bevy::pipeline_watch::add(&mut app);
+    mw_scripts_bevy::add(&mut app, vfs.clone(), options.activate);
+    mw_rpg_bevy::inventory::add(&mut app, options.actors.clone());
+    mw_rpg_bevy::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(mw_rpg_bevy::inventory_ui::SCREEN));
     // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
     crate::pause_menu::add(&mut app);
     // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).
-    crate::saves::add(&mut app);
+    mw_saves_bevy::add(&mut app);
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).
     // A test scene with its own camera keeps it (F11 still turns the player on).
-    let scene_camera = crate::scenes::active().is_some_and(crate::scenes::SceneDef::fixed_camera);
-    crate::player::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start);
+    let scene_camera = mw_game_core::scenes::active().is_some_and(mw_game_core::scenes::SceneDef::fixed_camera);
+    mw_player_bevy::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start);
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled);
-    crate::live_ab::add(&mut app, !bench && options.screenshot.is_none());
+    mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());
     if bench {
         app.add_systems(Update, (hold_warmup, counters)).add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());
     } else if let Some(path) = options.screenshot {
@@ -575,7 +575,7 @@ fn setup_spawners(
     off: Res<Off>,
     mut registry: ResMut<WorldspaceRegistry>,
     characters: Option<Res<sf_character_bevy::Characters>>,
-    walkers: Option<Res<crate::walkers::MwGround>>,
+    walkers: Option<Res<mw_walkers_bevy::walkers::MwGround>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Reserves the exterior root (see the chain in `run`).
@@ -601,9 +601,9 @@ fn setup_spawners(
         }
         spawners.set_default(Some(tint));
     }
-    crate::perf::apply_off(&mut spawners, &off);
+    mw_devtools_bevy::perf::apply_off(&mut spawners, &off);
     if walkers.is_some() {
-        crate::walkers::hook_colliders(&mut spawners);
+        mw_walkers_bevy::walkers::hook_colliders(&mut spawners);
     }
     commands.insert_resource(spawners);
 }
@@ -650,7 +650,7 @@ fn setup(
         transform,
         FloatingOrigin,
         ExteriorCamera,
-        crate::doors::DoorUser,
+        mw_doors_bevy::DoorUser,
         StreamingAnchor::visual(),
         layers.clone(),
         ChildOf(entry.root),
@@ -692,15 +692,15 @@ fn setup(
         camera.insert(FreeCamera {
             walk_speed: 12.0,
             run_speed: 80.0,
-            key_up: crate::controls::FREE_CAMERA_UP,
-            key_down: crate::controls::FREE_CAMERA_DOWN,
+            key_up: mw_controls_bevy::FREE_CAMERA_UP,
+            key_down: mw_controls_bevy::FREE_CAMERA_DOWN,
             ..FreeCamera::default()
         });
     }
     // Benchmark A/B (perf.md "Frame pacing"): render at a fixed size offscreen
     // and show it scaled to the window, so pixel count and window size vary
     // independently.
-    if let Some((w, h)) = crate::perf::render_size() {
+    if let Some((w, h)) = mw_devtools_bevy::perf::render_size() {
         use bevy::camera::RenderTarget;
         use bevy::render::render_resource::TextureFormat;
         use bevy::ui::IsDefaultUiCamera;
@@ -719,7 +719,7 @@ fn setup(
     // replaces the scaffold. No shadow caster: nothing lies under it.
     let exterior_layer = registry.ensure(&mut commands, &ids::exterior()).layer;
     // W2: only behind `--water scaffold` (A/B until WA-1 passes; water.rs draws the ocean).
-    if crate::water::mode() != crate::water::WaterMode::Scaffold {
+    if mw_environment_bevy::water::mode() != mw_environment_bevy::water::WaterMode::Scaffold {
         return;
     }
     commands.spawn((
@@ -819,7 +819,7 @@ fn light_layers(
     mut commands: Commands,
     registry: Res<WorldspaceRegistry>,
     active: Res<ActiveWorldspace>,
-    envs: Option<Res<crate::doors::Environments>>,
+    envs: Option<Res<mw_doors_bevy::Environments>>,
     lights: Query<(Entity, Option<&RenderLayers>), SkyLights>,
 ) {
     let ws = active.0.clone().unwrap_or_else(ids::exterior);
@@ -919,7 +919,7 @@ fn status(
 fn capture(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
-    gpu: Res<crate::pipeline_watch::PendingDraws>,
+    gpu: Res<mw_devtools_bevy::pipeline_watch::PendingDraws>,
     streaming: Res<Streaming>,
     terrain: Res<TerrainStats>,
     server: Res<AssetServer>,
@@ -931,7 +931,7 @@ fn capture(
     mut ready_at: Local<Option<f32>>,
     mut taken: Local<Option<u32>>,
     shots: Query<(), With<Screenshot>>,
-    door: (Res<crate::doors::AutoDoor>, Res<FadeTransition>, Res<ActiveWorldspace>),
+    door: (Res<mw_doors_bevy::AutoDoor>, Res<FadeTransition>, Res<ActiveWorldspace>),
     mut exit: MessageWriter<AppExit>,
 ) {
     let now = started.0.elapsed().as_secs_f32();
@@ -1235,7 +1235,7 @@ impl QualityRender for Quality {
         match self {
             Self::Low => (0, 512),
             Self::Medium => (6, 512),
-            Self::High => crate::render::POINT_SHADOWS_DEFAULT,
+            Self::High => mw_environment_bevy::render::POINT_SHADOWS_DEFAULT,
             Self::Ultra => (12, 1024),
         }
     }
