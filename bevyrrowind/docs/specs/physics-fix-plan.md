@@ -53,6 +53,9 @@ slices", "Systemic gaps") and [OpenMW research](../research/openmw-physics-2026-
 7. **S3-b fallback = full LOD0 triangles** (bump rules version so the bake re-runs); measure Balmora insert ms and
    memory (expect ~373k -> ~750k triangles, +9 MiB). Middle path if too costly: collision-only simplification,
    locked borders, no sloppy pass, ~1 cm error cap.
+   **Result 2026-10-26:** full triangles shipped (`Source::AllGeometry`, rules version 3; `.glb` fallback LOD0).
+   Whole install: fallback 326,579 -> 475,411 triangles (2,334 models), all collision 9.1 -> 10.8 MiB; Balmora
+   (-3,-2) cell 19.0k -> 21.0k collision triangles. Insert ms not measured (needs the windowed bench).
 8. **S2-a held item drawn after the camera rig** (`PhysicsSystems::HeldPoses` in PostUpdate after the rig).
 9. **S2-b hand from the character's tick pose**, holder on the player body.
 10. **S3-c sweep starting inside a floor recovers** (test first; overlap recovery only if red).

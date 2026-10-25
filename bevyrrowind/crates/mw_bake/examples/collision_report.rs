@@ -158,8 +158,8 @@ fn model_data(path: &str, store: &Store, manifest: &Manifest, inputs: &dyn Input
     let bytes = inputs.read_file(path).map_err(|e| e.to_string())?;
     let nif = mw_nif::load(&bytes).map_err(|e| e.to_string())?;
     let source = match collision::collision_of(&nif, MwCollisionRules::default().weld).0 {
-        Source::RenderLod if lods <= 1 => "fallback LOD0 (1 LOD)".to_owned(),
-        Source::RenderLod => "fallback LOD1".to_owned(),
+        Source::AllGeometry => "fallback all geometry".to_owned(),
+        Source::RenderLod => "render LOD0 (non-NIF)".to_owned(),
         Source::Authored => "authored RCN".to_owned(),
         Source::RestPose => "rest pose (animated)".to_owned(),
         other @ Source::None(_) => other.label().to_owned(),
@@ -515,6 +515,19 @@ fn print_census(name: &str, rows: &[Row], cell_tris: usize) {
         *sources.entry(r.source.as_str()).or_default() += 1;
     }
     println!("summary: placements by source {sources:?}");
+    // Per source over placements: collision triangles, open-edge meters,
+    // visible floor away from any collision and holes (m2).
+    let mut totals: BTreeMap<&str, (usize, f32, f32, f32)> = BTreeMap::new();
+    for r in rows {
+        let t = totals.entry(r.source.as_str()).or_default();
+        t.0 += r.collision_tris;
+        t.1 += r.open;
+        t.2 += r.cell_missing;
+        t.3 += r.hole;
+    }
+    for (source, (tris, open, missing, hole)) in &totals {
+        println!("  totals {source:<26} tris {tris:7} open {open:8.1} m  cmiss {missing:6.2} m2  hole {hole:6.2} m2");
+    }
     let none: Vec<&str> = rows.iter().filter(|r| r.collision_tris == 0).map(|r| r.base.as_str()).collect();
     println!("  no collision ({}): {}", none.len(), none.join(", "));
     for r in rows.iter().filter(|r| r.hole > 0.01) {

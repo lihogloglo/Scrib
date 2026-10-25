@@ -15,7 +15,7 @@ fn vanilla_models_take_the_expected_collision_source() {
     let vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
     let cases = [
         ("meshes/i/in_cave_plant10.nif", Source::Authored),
-        ("meshes/x/ex_t_menhir_l_01.nif", Source::RenderLod),
+        ("meshes/x/ex_t_menhir_l_01.nif", Source::AllGeometry),
         ("meshes/l/light_com_candle_13.nif", Source::RestPose),
         ("meshes/f/flora_kelp_02.nif", Source::None(NoCollision::Marker)),
         ("meshes/editormarker.nif", Source::None(NoCollision::EditorMarker)),
@@ -26,9 +26,8 @@ fn vanilla_models_take_the_expected_collision_source() {
         let (source, mesh) = collision_of(&mw_nif::load(&bytes).unwrap(), 1e-3);
         assert_eq!(source, expected, "{path}");
         match source {
-            Source::RenderLod => assert!(mesh.is_none(), "{path}"),
-            Source::None(_) => assert!(mesh.is_some_and(|m| m.is_empty()), "{path}"),
-            Source::Authored | Source::RestPose => assert!(mesh.is_some_and(|m| !m.is_empty()), "{path}"),
+            Source::None(_) => assert!(mesh.is_empty(), "{path}"),
+            _ => assert!(!mesh.is_empty(), "{path}"),
         }
     }
 }

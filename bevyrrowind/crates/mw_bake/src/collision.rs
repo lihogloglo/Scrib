@@ -4,8 +4,7 @@
 //!
 //! Per model, in this order (`OpenMW`'s `BulletNifLoader` semantics, ported
 //! from `components/nifbullet/bulletnifloader.cpp` at `OpenMW` commit
-//! 4e718b50, lines 110-326; except that the static fallback is a render LOD
-//! rather than every triangle). Which nodes take part is [`select`]:
+//! 4e718b50, lines 110-326). Which nodes take part is [`select`]:
 //!
 //! 1. Skinned models (actors, body parts): none. Actors collide as
 //!    capsules, not as static geometry (nor as the `"Bounding Box"` node's
@@ -20,12 +19,15 @@
 //!    (`MRK`): their NIF geometry in the rest pose, hidden nodes included,
 //!    minus moving, camera-facing and particle parts. `MRK` drops only
 //!    `Tri EditorMarker…` shapes; a model of nothing else gets none.
-//! 6. Everything else: the `mesh.cook` product's LOD1 (the framework
-//!    default, [`CollisionSettings::lod`]).
+//! 6. Everything else (static, no `RootCollisionNode`): every NIF triangle,
+//!    hidden nodes included, as `OpenMW` does. Not a render LOD: `mesh.cook`
+//!    drops hidden nodes, and its simplified LOD1 moved borders and dropped
+//!    triangles (holes; physics-fix-plan.md slice 7). Same build as case 5.
 //!
-//! Everywhere, a switch node contributes its first child only. Cases 1 to 5
-//! are [`CollisionRules::authored`] results (an empty mesh for "none");
-//! case 6 returns `None` and the step derives it.
+//! Everywhere, a switch node contributes its first child only. All cases are
+//! [`CollisionRules::authored`] results (an empty mesh for "none"); other
+//! model formats (`.glb`) return `None` and the step derives collision from
+//! the render LOD0 ([`register`]).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -63,7 +65,9 @@ pub enum Source {
     /// NIF geometry in the rest pose (models `mesh.cook` skips, and `MRK`
     /// models).
     RestPose,
-    /// Render LOD of the `mesh.cook` product.
+    /// Every NIF triangle of a static model without a `RootCollisionNode`.
+    AllGeometry,
+    /// Render LOD of the `mesh.cook` product (non-NIF models).
     RenderLod,
     None(NoCollision),
 }
@@ -73,7 +77,8 @@ impl Source {
         match self {
             Self::Authored => "authored (RootCollisionNode)",
             Self::RestPose => "rest-pose NIF geometry (animated, MRK)",
-            Self::RenderLod => "render LOD1 (fallback)",
+            Self::AllGeometry => "all NIF geometry (fallback)",
+            Self::RenderLod => "render LOD0 (non-NIF)",
             Self::None(NoCollision::Actor) => "none: skinned (actor)",
             Self::None(NoCollision::Marker) => "none: NC marker",
             Self::None(NoCollision::EmptyCollisionNode) => "none: empty RootCollisionNode",
@@ -179,11 +184,10 @@ fn is_editor_marker(name: &str) -> bool {
     name.get(.."tri editormarker".len()).is_some_and(|p| p.eq_ignore_ascii_case("tri editormarker"))
 }
 
-/// The model's collision source, and its mesh unless the step derives it
-/// from the render LOD ([`Source::RenderLod`] gives `None`; "none" sources
-/// give an empty mesh).
-pub fn collision_of(nif: &mw_nif::Model, weld: f32) -> (Source, Option<CollisionMesh>) {
-    let none = |why| (Source::None(why), Some(CollisionMesh::default()));
+/// The model's collision source and mesh ("none" sources give an empty
+/// mesh).
+pub fn collision_of(nif: &mw_nif::Model, weld: f32) -> (Source, CollisionMesh) {
+    let none = |why| (Source::None(why), CollisionMesh::default());
     if nif.had_skin {
         return none(NoCollision::Actor);
     }
@@ -216,13 +220,10 @@ pub fn collision_of(nif: &mw_nif::Model, weld: f32) -> (Source, Option<Collision
 
     if selection.authored {
         let mesh = build(&|_| true);
-        return if mesh.is_empty() { none(NoCollision::EmptyCollisionNode) } else { (Source::Authored, Some(mesh)) };
+        return if mesh.is_empty() { none(NoCollision::EmptyCollisionNode) } else { (Source::Authored, mesh) };
     }
-    // Our render set drops whole `MRK` models, so their render LOD can't
-    // stand in for "all geometry"; they take the NIF path below.
-    if !nif.marker && dynamic_parts(nif).is_empty() {
-        return (Source::RenderLod, None);
-    }
+    // No `RootCollisionNode`: every triangle, hidden or not (a static model
+    // has no moving or facing parts, so the filters below are no-ops there).
     let mut facing: Vec<bool> =
         nif.nodes.iter().map(|n| matches!(n.kind, NodeKind::Billboard | NodeKind::Particles)).collect();
     inherit(nif, &mut facing);
@@ -230,7 +231,8 @@ pub fn collision_of(nif: &mw_nif::Model, weld: f32) -> (Source, Option<Collision
     if nif.marker && mesh.is_empty() {
         return none(NoCollision::EditorMarker);
     }
-    (Source::RestPose, Some(mesh))
+    let source = if nif.marker || !dynamic_parts(nif).is_empty() { Source::RestPose } else { Source::AllGeometry };
+    (source, mesh)
 }
 
 fn is_nif(subject: &str) -> bool {
@@ -248,7 +250,8 @@ pub struct MwCollisionRules {
 impl MwCollisionRules {
     /// Bump when [`collision_of`]'s output changes. 2: `OpenMW` selection
     /// rules (last `RootCollisionNode`, switch first child, hidden nodes, `MRK`).
-    pub const VERSION: u32 = 2;
+    /// 3: the static fallback is every NIF triangle, not the render LOD1.
+    pub const VERSION: u32 = 3;
 }
 
 impl Default for MwCollisionRules {
@@ -270,7 +273,7 @@ impl CollisionRules for MwCollisionRules {
         }
         let bytes = cx.read_file(subject)?;
         let nif = mw_nif::load(&bytes).map_err(|e| BakeError::step(&ProductKey::new(COLLISION_COOK, subject), e))?;
-        Ok(collision_of(&nif, self.weld).1)
+        Ok(Some(collision_of(&nif, self.weld).1))
     }
 
     fn version(&self) -> u32 {
@@ -278,10 +281,11 @@ impl CollisionRules for MwCollisionRules {
     }
 }
 
-/// Registers `collision.cook` with the Morrowind rules.
+/// Registers `collision.cook` with the Morrowind rules. Models the rules
+/// don't cover (`.glb`) collide with their full render LOD0 too.
 pub fn register(baker: &mut Baker) {
     let rules = MwCollisionRules::default();
-    let settings = CollisionSettings { weld: rules.weld, ..CollisionSettings::default() };
+    let settings = CollisionSettings { lod: 0, weld: rules.weld };
     CollisionCookStep::register(Arc::new(rules), settings, baker);
 }
 
@@ -456,7 +460,6 @@ mod tests {
     fn collision_nodes_win_over_render_geometry() {
         let (source, mesh) = collision_of(&with_collision_node(), 1e-3);
         assert_eq!(source, Source::Authored);
-        let mesh = mesh.unwrap();
         assert_eq!(mesh.triangles.len(), 2);
         let max_y = mesh.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
         assert!((max_y - 6.0).abs() < 1e-5, "collision node transform applied: {max_y}");
@@ -471,7 +474,7 @@ mod tests {
     fn no_collision_cases() {
         let mut nif = with_collision_node();
         nif.no_collision = true;
-        assert_eq!(collision_of(&nif, 1e-3), (Source::None(NoCollision::Marker), Some(CollisionMesh::default())));
+        assert_eq!(collision_of(&nif, 1e-3), (Source::None(NoCollision::Marker), CollisionMesh::default()));
 
         let mut nif = with_collision_node();
         nif.had_skin = true;
@@ -490,12 +493,47 @@ mod tests {
         nif.nodes[1].name = "Tri EditorMarker".into();
         let (source, mesh) = collision_of(&nif, 1e-3);
         assert_eq!(source, Source::None(NoCollision::EditorMarker));
-        assert!(mesh.unwrap().is_empty());
+        assert!(mesh.is_empty());
+    }
+
+    /// A `cells`×`cells` floor of 1 m quads, gently bumped (what a render
+    /// simplifier would merge).
+    fn floor(cells: u16) -> mw_nif::Mesh {
+        let positions = (0..=cells)
+            .flat_map(|z| (0..=cells).map(move |x| (f32::from(x), f32::from(z))))
+            .map(|(x, z)| [x, 0.01 * (x * 1.3 + z * 0.7).sin(), z])
+            .collect();
+        let (cells, side) = (u32::from(cells), u32::from(cells) + 1);
+        let mut indices = Vec::new();
+        for z in 0..cells {
+            for x in 0..cells {
+                let i = z * side + x;
+                indices.extend([i, i + side, i + 1, i + 1, i + side, i + side + 1]);
+            }
+        }
+        mw_nif::Mesh { positions, indices, ..mw_nif::Mesh::default() }
     }
 
     #[test]
-    fn static_models_fall_back_to_the_render_lod() {
-        assert_eq!(collision_of(&render_only(), 1e-3), (Source::RenderLod, None));
+    fn static_models_without_a_collision_node_keep_every_triangle() {
+        // Slice 7: no render LOD; every LOD0 floor triangle, hidden nodes too.
+        let mut nif = model(
+            vec![
+                node("root", None, NodeKind::Node, None),
+                node("floor", Some(0), NodeKind::Geometry, Some(0)),
+                node("hidden", Some(0), NodeKind::Geometry, Some(1)),
+            ],
+            vec![floor(8), quad(1.0, false)],
+        );
+        nif.nodes[2].transform.translation = [0.0, 3.0, 0.0];
+        nif.nodes[2].visible = false;
+        let render: usize = nif.nodes.iter().filter_map(|n| n.mesh).map(|m| nif.meshes[m].indices.len() / 3).sum();
+        assert_eq!(render, 8 * 8 * 2 + 2);
+        let (source, mesh) = collision_of(&nif, 1e-3);
+        assert_eq!(source, Source::AllGeometry);
+        assert_eq!(mesh.triangles.len(), render, "every floor triangle plus the hidden quad");
+        let top = mesh.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+        assert!((top - 4.0).abs() < 1e-5, "the hidden (upright, 3 m up) quad collides: {top}");
     }
 
     #[test]
@@ -511,7 +549,6 @@ mod tests {
         nif.controllers.push(moves(2));
         let (source, mesh) = collision_of(&nif, 1e-3);
         assert_eq!(source, Source::RestPose);
-        let mesh = mesh.unwrap();
         // Rule 8: the hidden quad collides (no hidden check in `OpenMW`).
         assert_eq!(mesh.triangles.len(), 4, "the static render quad and the hidden one");
         assert!((extent(&mesh) - 18.0_f32.sqrt()).abs() < 1e-5, "the 3 m hidden quad");
@@ -551,7 +588,6 @@ mod tests {
         );
         let (source, mesh) = collision_of(&nif, 1e-3);
         assert_eq!(source, Source::Authored);
-        let mesh = mesh.unwrap();
         assert_eq!(mesh.triangles.len(), 2, "only the last collision node");
         assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5);
 
@@ -563,7 +599,7 @@ mod tests {
 
     #[test]
     fn rule2_without_a_root_collision_node_everything_collides() {
-        assert_eq!(collision_of(&render_only(), 1e-3), (Source::RenderLod, None));
+        assert_eq!(collision_of(&render_only(), 1e-3).0, Source::AllGeometry);
         // A collision node below the root's children is plain geometry.
         let nodes = vec![
             node("root", None, NodeKind::Node, None),
@@ -573,10 +609,12 @@ mod tests {
             node("collider", Some(3), NodeKind::Geometry, Some(1)),
         ];
         let meshes = vec![quad(1.0, false), quad(2.0, true)];
-        assert_eq!(collision_of(&model(nodes.clone(), meshes.clone()), 1e-3), (Source::RenderLod, None));
+        let (source, mesh) = collision_of(&model(nodes.clone(), meshes.clone()), 1e-3);
+        assert_eq!(source, Source::AllGeometry);
+        assert_eq!(mesh.triangles.len(), 4, "render and nested-collision quads");
         let (source, mesh) = collision_of(&animated(nodes, meshes), 1e-3);
         assert_eq!(source, Source::RestPose);
-        assert_eq!(mesh.unwrap().triangles.len(), 4, "render and nested-collision quads");
+        assert_eq!(mesh.triangles.len(), 4, "render and nested-collision quads");
     }
 
     #[test]
@@ -585,7 +623,7 @@ mod tests {
         nif.nodes.truncate(3);
         assert_eq!(
             collision_of(&nif, 1e-3),
-            (Source::None(NoCollision::EmptyCollisionNode), Some(CollisionMesh::default()))
+            (Source::None(NoCollision::EmptyCollisionNode), CollisionMesh::default())
         );
     }
 
@@ -601,7 +639,6 @@ mod tests {
         nif.marker = true;
         let (source, mesh) = collision_of(&nif, 1e-3);
         assert_eq!(source, Source::RestPose);
-        let mesh = mesh.unwrap();
         assert_eq!(mesh.triangles.len(), 2);
         assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5, "the marker shape is gone");
         // Nothing but marker shapes: no collision.
@@ -612,9 +649,9 @@ mod tests {
         // Under a collision node too, and only with `MRK`.
         let mut nif = with_collision_node();
         nif.nodes.push(node("tri editormarker", Some(2), NodeKind::Geometry, Some(0)));
-        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 4);
+        assert_eq!(collision_of(&nif, 1e-3).1.triangles.len(), 4);
         nif.marker = true;
-        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 2);
+        assert_eq!(collision_of(&nif, 1e-3).1.triangles.len(), 2);
         assert!(is_editor_marker("TRI EDITORMARKER") && !is_editor_marker("EditorMarker") && !is_editor_marker("tri"));
     }
 
@@ -629,7 +666,7 @@ mod tests {
         // Even over a collision node.
         let mut nif = with_collision_node();
         nif.no_collision = true;
-        assert_eq!(collision_of(&nif, 1e-3), (Source::None(NoCollision::Marker), Some(CollisionMesh::default())));
+        assert_eq!(collision_of(&nif, 1e-3), (Source::None(NoCollision::Marker), CollisionMesh::default()));
     }
 
     #[test]
@@ -646,13 +683,12 @@ mod tests {
         nodes.extend(switch(1, 2));
         let (source, mesh) = collision_of(&model(nodes, meshes.clone()), 1e-3);
         assert_eq!(source, Source::Authored);
-        assert!((extent(&mesh.unwrap()) - 2.0_f32.sqrt()).abs() < 1e-5, "first child, not the active one");
+        assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5, "first child, not the active one");
 
         let mut nodes = vec![node("root", None, NodeKind::Node, None)];
         nodes.extend(switch(0, 1));
         let (source, mesh) = collision_of(&animated(nodes, meshes), 1e-3);
         assert_eq!(source, Source::RestPose);
-        let mesh = mesh.unwrap();
         assert_eq!(mesh.triangles.len(), 2);
         assert!((extent(&mesh) - 2.0_f32.sqrt()).abs() < 1e-5);
     }
@@ -664,10 +700,10 @@ mod tests {
         let mut nif = with_collision_node();
         nif.nodes.push(node("Bounding Box", Some(2), NodeKind::Node, None));
         nif.nodes.push(node("inside", Some(4), NodeKind::Geometry, Some(0)));
-        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 4);
+        assert_eq!(collision_of(&nif, 1e-3).1.triangles.len(), 4);
         let mut nif = render_only();
         nif.nodes.push(node("Bounding Box", Some(0), NodeKind::Node, None));
-        assert_eq!(collision_of(&nif, 1e-3), (Source::RenderLod, None));
+        assert_eq!(collision_of(&nif, 1e-3).0, Source::AllGeometry);
         nif.had_skin = true;
         assert_eq!(collision_of(&nif, 1e-3).0, Source::None(NoCollision::Actor));
     }
@@ -683,7 +719,7 @@ mod tests {
             vec![quad(1.0, false)],
         );
         nif.nodes[1].visible = false;
-        assert_eq!(collision_of(&nif, 1e-3).1.unwrap().triangles.len(), 2);
+        assert_eq!(collision_of(&nif, 1e-3).1.triangles.len(), 2);
     }
 
     #[test]
