@@ -19,9 +19,13 @@
 //! Everything else the A/B keys do is reachable with `brp_extras/send_keys`.
 //! Workflow and rules: CLAUDE.md "Live inspection (BRP)".
 
-use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraState};
-use bevy::prelude::*;
-use bevy::remote::{BrpError, BrpResult, RemotePlugin, error_codes};
+use bevy_camera_controller::free_camera::{FreeCamera, FreeCameraState};
+use bevy_app::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_math::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_time::prelude::*;
+use bevy_remote::{BrpError, BrpResult, RemotePlugin, error_codes};
 use bevy_brp_extras::{AgentTool, AppAgentToolExt, BrpExtrasPlugin, PortDisplay};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -84,7 +88,7 @@ struct Status {
     ready: Option<bool>,
     /// The weather at the camera's climate: current, how far it has come in
     /// (clouds lead, fog follows), forced or not, the next change.
-    weather: Option<crate::weather::LiveWeather>,
+    weather: Option<mw_environment_bevy::weather::LiveWeather>,
 }
 
 /// `bevyrrowind/set`'s parameters; absent fields stay as they are.
@@ -124,8 +128,8 @@ fn status(
     state: Res<LiveAb>,
     s: Switches,
     camera: CameraQuery,
-    ready: crate::exterior::Readiness,
-    interior: Option<Res<crate::view::Loading>>,
+    ready: crate::ready::Readiness,
+    interior: Option<Res<crate::ready::Loading>>,
 ) -> BrpResult {
     to_value(&report(&state, &s, &camera, &ready, interior.as_deref()))
 }
@@ -137,8 +141,8 @@ fn set(
     mut state: ResMut<LiveAb>,
     mut s: Switches,
     mut camera: CameraQuery,
-    ready: crate::exterior::Readiness,
-    interior: Option<Res<crate::view::Loading>>,
+    ready: crate::ready::Readiness,
+    interior: Option<Res<crate::ready::Loading>>,
 ) -> BrpResult {
     let now = real.elapsed_secs();
     let params: Set = serde_json::from_value(params.unwrap_or(Value::Null)).map_err(invalid)?;
@@ -159,7 +163,7 @@ fn set(
     let weather = params
         .weather
         .as_deref()
-        .map(|name| if name.eq_ignore_ascii_case("auto") { Ok(None) } else { crate::weather::parse_weather_type(name).map(Some).map_err(invalid) })
+        .map(|name| if name.eq_ignore_ascii_case("auto") { Ok(None) } else { mw_environment_bevy::weather::parse_weather_type(name).map(Some).map_err(invalid) })
         .transpose()?;
     if params.transition_hours.is_some_and(|h| h.is_nan() || h < 0.0) {
         return Err(invalid("transition_hours: want >= 0"));
@@ -234,10 +238,10 @@ fn report(
     state: &LiveAb,
     s: &Switches,
     camera: &CameraQuery,
-    ready: &crate::exterior::Readiness,
-    interior: Option<&crate::view::Loading>,
+    ready: &crate::ready::Readiness,
+    interior: Option<&crate::ready::Loading>,
 ) -> Status {
-    let scene = crate::scenes::active();
+    let scene = mw_game_core::scenes::active();
     let (hour, clock) = match (s.time.as_ref(), s.config.as_ref()) {
         (Some(t), Some(c)) => (Some(t.0.hour(&c.0.calendar)), Some(crate::live_ab::clock_label(&t.0))),
         _ => (None, None),
@@ -251,14 +255,14 @@ fn report(
         clock,
         switches,
         camera,
-        ready: ready.settled().or_else(|| interior.map(crate::view::Loading::ready)),
+        ready: ready.settled().or_else(|| interior.map(crate::ready::Loading::ready)),
         weather: crate::live_ab::live_weather(s),
     }
 }
 
-fn parse_camera(s: &str) -> Option<(bevy::math::DVec3, bevy::math::DVec3)> {
+fn parse_camera(s: &str) -> Option<(bevy_math::DVec3, bevy_math::DVec3)> {
     let v: Vec<f64> = s.split(',').map(|p| p.trim().parse().ok()).collect::<Option<_>>()?;
-    (v.len() == 6).then(|| (bevy::math::DVec3::from_slice(&v[..3]), bevy::math::DVec3::from_slice(&v[3..])))
+    (v.len() == 6).then(|| (bevy_math::DVec3::from_slice(&v[..3]), bevy_math::DVec3::from_slice(&v[3..])))
 }
 
 fn to_value(v: &impl Serialize) -> BrpResult {

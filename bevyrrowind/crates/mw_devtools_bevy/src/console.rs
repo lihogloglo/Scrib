@@ -12,17 +12,23 @@
 //!   on the selected actor (click-select) or else the player; completion offers the
 //!   functions the interpreter runs, with their short forms.
 
-use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
-use bevy::ecs::system::SystemState;
-use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
-use bevy::prelude::*;
+use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
+use bevy_ecs::system::SystemState;
+use bevy_pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy_app::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_math::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_time::prelude::*;
+use bevy_input::prelude::*;
+use bevy_render::prelude::*;
 use bevy_enhanced_input::EnhancedInputSystems;
 use sf_character_bevy::CharacterPlacement;
 use sf_console_bevy::overlay::{ConsoleInputSystems, ConsoleKeys, ConsoleOverlayPlugin, ConsoleSelection};
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param, VarId, VarSpec, Vars};
 use sf_console_bevy::{ConsoleAppExt, ConsolePlugin, DevConsole, SetBy};
 
-use crate::exterior::ExteriorCamera;
+use mw_game_core::exterior::ExteriorCamera;
 use crate::live_ab::{LiveAb, Switch, Switches};
 
 /// Name of the SSAO variable.
@@ -81,7 +87,7 @@ fn register_cheats(app: &mut App) {
 /// Flips [`sf_action_bevy::NoClip`] on the player body; off puts the body back on its feet.
 fn toggle_collision(world: &mut World) -> Result<&'static str, String> {
     let body = world
-        .query_filtered::<Entity, With<crate::player::PlayerBody>>()
+        .query_filtered::<Entity, With<mw_game_core::player::PlayerBody>>()
         .iter(world)
         .next()
         .ok_or("no player body (free camera: F11 for the player)")?;
@@ -98,7 +104,7 @@ fn toggle_collision(world: &mut World) -> Result<&'static str, String> {
 }
 
 /// No-clip climbs along the view camera's forward.
-fn feed_no_clip_look(cams: Query<&GlobalTransform, With<crate::doors::DoorUser>>, mut bodies: Query<&mut sf_action_bevy::NoClip>) {
+fn feed_no_clip_look(cams: Query<&GlobalTransform, With<mw_game_core::doors::DoorUser>>, mut bodies: Query<&mut sf_action_bevy::NoClip>) {
     let Some(cam) = cams.iter().next() else { return };
     for mut no_clip in &mut bodies {
         no_clip.look = cam.forward().as_vec3();
@@ -124,13 +130,13 @@ fn center_on_cell(world: &mut World, cell: &str) -> Result<String, String> {
     })?;
     let travel = sf_world_bevy::StartTravel {
         traveler: Entity::PLACEHOLDER,
-        to: sf_world::Location::new(to.worldspace.clone(), to.arrival.pos.offset(Vec3::Y * crate::doors::ARRIVAL_EYE_M)),
-        rotation: crate::doors::arrival_rotation(to.arrival.rotation),
+        to: sf_world::Location::new(to.worldspace.clone(), to.arrival.pos.offset(Vec3::Y * mw_game_core::doors::ARRIVAL_EYE_M)),
+        rotation: mw_doors_bevy::arrival_rotation(to.arrival.rotation),
         reload: false,
     };
     let text = format!("travel to {} at {:.1?}", to.worldspace.as_str(), to.arrival.pos.to_f64());
     let cam = world
-        .query_filtered::<Entity, With<crate::doors::DoorUser>>()
+        .query_filtered::<Entity, With<mw_game_core::doors::DoorUser>>()
         .iter(world)
         .next()
         .ok_or("no traveler camera in this run")?;
@@ -139,14 +145,14 @@ fn center_on_cell(world: &mut World, cell: &str) -> Result<String, String> {
 }
 
 /// Lines no command or variable claims run as `MWScript` through the dialogue's result runner
-/// ([`crate::dialogue::Rpg::run_console`]); console commands always win.
+/// ([`mw_rpg_bevy::dialogue::Rpg::run_console`]); console commands always win.
 fn register_mwscript(app: &mut App) {
     let names = mwscript_names();
     let mut console = app.world_mut().resource_mut::<DevConsole>();
     console.set_fallback("mwscript", |u| {
         let selected = u.ctx.get_resource::<ConsoleSelection>().and_then(|s| s.0);
-        let key = selected.map(|e| crate::dialogue::key(e, u.ctx.get::<CharacterPlacement>(e)));
-        let mut rpg = u.ctx.get_resource_mut::<crate::dialogue::Rpg>().ok_or("no game records in this run")?;
+        let key = selected.map(|e| mw_rpg_bevy::dialogue::key(e, u.ctx.get::<CharacterPlacement>(e)));
+        let mut rpg = u.ctx.get_resource_mut::<mw_rpg_bevy::dialogue::Rpg>().ok_or("no game records in this run")?;
         for line in rpg.run_console(u.text, key)? {
             u.log.info(&line);
         }
@@ -243,7 +249,7 @@ fn apply_ssao(
                 let quality_level = state.level.unwrap_or_default();
                 commands
                     .entity(camera)
-                    .insert((ScreenSpaceAmbientOcclusion { quality_level, ..default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
+                    .insert((ScreenSpaceAmbientOcclusion { quality_level, ..Default::default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
             }
             (false, true) => {
                 commands.entity(camera).remove::<ScreenSpaceAmbientOcclusion>();
@@ -271,7 +277,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, ssao: VarId, name: &str, on: O
         state.apply(world);
         return Ok(text);
     }
-    match crate::perf::Off::from_flags(&[name.to_owned()]) {
+    match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
         Err(unknown) => Err(format!("{unknown}; live: ssao, {}", Switch::names())),
     }
@@ -284,7 +290,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new();
-        app.add_plugins(MinimalPlugins).add_plugins(ConsolePlugin).init_resource::<LiveAb>();
+        app.add_plugins((TaskPoolPlugin::default(), bevy_time::TimePlugin)).add_plugins(ConsolePlugin).init_resource::<LiveAb>();
         // No overlay: it needs a window.
         register(&mut app);
         register_mwscript(&mut app);
@@ -298,8 +304,8 @@ mod tests {
         let mut app = app();
         run(&mut app, "tcl");
         assert!(log(&app).iter().any(|l| l.contains("no player body")), "{:?}", log(&app));
-        let body = ActionBody::new(sf_controller::Locomotion::new(sf_coords::WorldPos::ORIGIN, 0.0), default(), sf_coords::WorldPos::ORIGIN);
-        let e = app.world_mut().spawn((crate::player::PlayerBody, body)).id();
+        let body = ActionBody::new(sf_controller::Locomotion::new(sf_coords::WorldPos::ORIGIN, 0.0), sf_controller::MoverParams::default(), sf_coords::WorldPos::ORIGIN);
+        let e = app.world_mut().spawn((mw_game_core::player::PlayerBody, body)).id();
         run(&mut app, "TCL");
         assert!(app.world().get::<NoClip>(e).is_some(), "{:?}", log(&app));
         run(&mut app, "ToggleCollision");
@@ -323,7 +329,7 @@ mod tests {
         };
         let link = DoorLink { a: end("", 0.0), b: end("Seyda Neen, Census and Excise Office", 3.0), two_way: true };
         app.insert_resource(sf_world_bevy::DoorLinks(vec![link]));
-        let cam = app.world_mut().spawn(crate::doors::DoorUser).id();
+        let cam = app.world_mut().spawn(mw_game_core::doors::DoorUser).id();
         run(&mut app, "coc \"No Such Place\"");
         assert!(log(&app).iter().any(|l| l.contains("No Such Place: no interior cell")), "{:?}", log(&app));
         run(&mut app, "COC \"seyda neen, census and excise office\"");
@@ -344,11 +350,11 @@ mod tests {
     fn mwscript_lines_run_on_the_player_and_commands_still_win() {
         use sf_records::{RecordDb, RecordId};
         let mut app = app();
-        app.insert_resource(crate::dialogue::Rpg::new(std::sync::Arc::new(RecordDb::new())).unwrap());
+        app.insert_resource(mw_rpg_bevy::dialogue::Rpg::new(std::sync::Arc::new(RecordDb::new())).unwrap());
         run(&mut app, "player->AddItem gold_001 5");
         run(&mut app, "AddItem \"gold_001\" 2");
         let gold = RecordId::new("gold_001");
-        assert_eq!(app.world().resource::<crate::dialogue::Rpg>().state.pc.loadout.count(&gold), 7, "{:?}", log(&app));
+        assert_eq!(app.world().resource::<mw_rpg_bevy::dialogue::Rpg>().state.pc.loadout.count(&gold), 7, "{:?}", log(&app));
         run(&mut app, "FooBar 1");
         // `off` is a console command: it wins over MWScript.
         run(&mut app, "off froxels");
@@ -370,7 +376,7 @@ mod tests {
         let mut app = app();
         let camera = app
             .world_mut()
-            .spawn((ExteriorCamera, ScreenSpaceAmbientOcclusion { quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low, ..default() }))
+            .spawn((ExteriorCamera, ScreenSpaceAmbientOcclusion { quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low, ..Default::default() }))
             .id();
         app.update();
         app.update();

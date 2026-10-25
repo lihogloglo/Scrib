@@ -5,20 +5,18 @@
 
 use mw_actors_bevy::{actors, held};
 mod anim_view;
-mod console;
 mod character_view;
 use mw_rpg_bevy::{dialogue, inventory, inventory_ui};
 mod exterior;
 mod level;
-mod live_ab;
 mod mods;
 mod pause_menu;
 mod perf;
 use mw_walkers_bevy::physics;
 use mw_player_bevy as player;
-mod pipeline_watch;
+use mw_devtools_bevy::{live_ab, pipeline_watch};
 #[cfg(feature = "remote")]
-mod remote;
+use mw_devtools_bevy::remote;
 mod scenes;
 use mw_saves_bevy as saves;
 use mw_scripts_bevy as scripts;

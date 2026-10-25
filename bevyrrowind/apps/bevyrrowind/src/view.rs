@@ -32,6 +32,7 @@ use sf_model_bevy::{BAKED_SOURCE, BakedManifest, baked_source};
 use sf_sky_bevy::sf_sky::RenderPath;
 use sf_sky_bevy::{RenderPathCamera, SkyPlugin, SkyRenderOptions};
 use sf_vfs::Vfs;
+use mw_devtools_bevy::ready::Loading;
 
 pub struct ViewOptions {
     pub title: String,
@@ -104,23 +105,6 @@ struct Capture {
     /// `--screenshot-anyway`: shoot on a gate timeout instead of failing.
     anyway: bool,
     failed: bool,
-}
-
-/// When everything (models, textures, cooked spawns) finished loading.
-#[derive(Resource)]
-pub(crate) struct Loading {
-    started: Instant,
-    ready_at: Option<f32>,
-    /// Assets still pending when `ready_at` was set (non-zero: the wait gave up).
-    pending: usize,
-}
-
-#[cfg(feature = "remote")]
-impl Loading {
-    /// Everything loaded (or the wait gave up).
-    pub(crate) const fn ready(&self) -> bool {
-        self.ready_at.is_some()
-    }
 }
 
 pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error::Error>> {

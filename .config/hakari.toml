@@ -24,6 +24,10 @@ third-party = [
     { name = "esp", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
     { name = "esp_macros", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
     { name = "nif", git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0" },
+    # BRP for agents (`mw_devtools_bevy` `remote`, on only through the app's `remote`/`dev`): same reason as the
+    # app above; simulated, its HTTP server and `bevy/serialize` would reach every build.
+    { name = "bevy_brp_extras" },
+    { name = "bevy_remote" },
 ]
 
 [final-excludes]

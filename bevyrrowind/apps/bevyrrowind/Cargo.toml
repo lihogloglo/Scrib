@@ -11,9 +11,9 @@ publish = false
 # skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
 # `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
 dev = ["bevy/dynamic_linking", "bevy/dev", "mw_game_core/dev", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "sf_vfs/watch", "remote"]
-# Bevy Remote Protocol on 127.0.0.1 for agents (`bevy_brp_mcp`; `src/remote.rs`,
+# Bevy Remote Protocol on 127.0.0.1 for agents (`bevy_brp_mcp`; `mw_devtools_bevy/src/remote.rs`,
 # CLAUDE.md "Live inspection (BRP)"). Unauthenticated HTTP: dev builds only.
-remote = ["bevy/bevy_remote", "mw_environment_bevy/remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde_json"]
+remote = ["bevy/bevy_remote", "mw_environment_bevy/remote", "mw_devtools_bevy/remote"]
 # Ray-traced lighting (`view --rt`): Bevy Solari. Off by default: it forces
 # the deferred renderer at startup and needs a ray-tracing GPU.
 solari = ["sf_sky_bevy/solari", "bevy/bevy_solari", "mw_environment_bevy/solari"]
@@ -21,7 +21,7 @@ solari = ["sf_sky_bevy/solari", "bevy/bevy_solari", "mw_environment_bevy/solari"
 # with `solari`, Ray Reconstruction denoising `--rt`. Builds without NVIDIA's SDK; at
 # runtime needs the separate DLSS package in <exe>/dlss/ (../superfargoth/plugins/sf_dlss);
 # build.rs copies a locally built one there (dev only). "Ultra": `--features solari,dlss`.
-dlss = ["bevy/dlss", "sf_sky_bevy/dlss", "mw_environment_bevy/dlss"]
+dlss = ["bevy/dlss", "sf_sky_bevy/dlss", "mw_environment_bevy/dlss", "mw_devtools_bevy/dlss"]
 # CPU time per system: Chrome trace (`TRACE_CHROME=<file>`; `perf trace`), or Tracy.
 # Build into its own profile so the plain profiling exe stays: docs/perf.md.
 trace = ["bevy/trace_chrome"]
@@ -44,6 +44,8 @@ mw_bake.workspace = true
 mw_boot_bevy.workspace = true
 # Gameplay keymap actions, use context, keybinds screen (app-split.md slice 3).
 mw_controls_bevy.workspace = true
+# Dev tools: live A/B, console wiring, BRP agent tools, pipeline watch, readiness (app-split.md slice 11).
+mw_devtools_bevy.workspace = true
 mw_doors_bevy.workspace = true
 # Water, weather, night sky, render settings (app-split.md slice 6).
 mw_environment_bevy.workspace = true
@@ -130,10 +132,6 @@ tes3 = { workspace = true, features = ["esp"] }
 # Test-scene registry (`scenes.ron`, `src/scenes.rs`); both already in the graph through Bevy.
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
-# `remote` only. Extras without gamepad; screenshots need Bevy `png`, which extras turns on.
-bevy_brp_extras = { version = "0.23", default-features = false, features = ["diagnostics", "ui"], optional = true }
-schemars = { version = "1.2", optional = true }
-serde_json = { version = "1", optional = true }
 
 [lints]
 workspace = true

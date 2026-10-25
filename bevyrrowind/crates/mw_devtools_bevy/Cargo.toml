@@ -1,0 +1,73 @@
+[package]
+name = "mw_devtools_bevy"
+description = "The game's dev tools: live A/B switches, the dev console wiring, BRP agent tools, GPU pipeline watch, readiness (app-split.md slice 11)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Bevy Remote Protocol agent tools (`remote.rs`, `ready::Readiness`); the app's `remote` turns it on.
+# `live_ab` notes when F4 asks for DLSS in an exe built without it; the app's `dlss` turns it on.
+dlss = []
+remote = ["dep:bevy_remote", "dep:bevy_brp_extras", "dep:schemars", "dep:serde", "dep:serde_json", "mw_environment_bevy/remote"]
+
+[dependencies]
+# Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
+bevy_app = { workspace = true, features = ["std"] }
+bevy_asset.workspace = true
+bevy_camera.workspace = true
+bevy_clipboard.workspace = true
+bevy_camera_controller = { workspace = true, features = ["free_camera"] }
+bevy_color = { workspace = true, features = ["std"] }
+bevy_core_pipeline.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
+bevy_input = { workspace = true, features = ["keyboard"] }
+bevy_light.workspace = true
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_mesh.workspace = true
+bevy_pbr.workspace = true
+bevy_remote = { workspace = true, optional = true }
+bevy_render.workspace = true
+bevy_text.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+bevy_ui.workspace = true
+bevy_window = { workspace = true, features = ["std"] }
+bevy_world_serialization.workspace = true
+# `remote` only. Extras without gamepad; screenshots need Bevy `png`, which extras turns on.
+bevy_brp_extras = { version = "0.23", default-features = false, features = ["diagnostics", "ui"], optional = true }
+mw_doors_bevy.workspace = true
+mw_environment_bevy.workspace = true
+mw_game_core.workspace = true
+mw_rpg_bevy.workspace = true
+mw_script.workspace = true
+mw_weather.workspace = true
+mw_world.workspace = true
+schemars = { version = "1.2", optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sf_action_bevy.workspace = true
+sf_atmos_bevy.workspace = true
+sf_character_bevy = { workspace = true, features = ["world"] }
+sf_console_bevy = { workspace = true, features = ["overlay"] }
+sf_controller.workspace = true
+sf_coords.workspace = true
+sf_diag_bevy.workspace = true
+sf_lod_bevy.workspace = true
+sf_physics_bevy = { workspace = true, features = ["debug"] }
+sf_sky_bevy.workspace = true
+sf_terrain_bevy.workspace = true
+sf_weather_bevy.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# console.rs tests: the RPG resource over an empty record db.
+sf_records.workspace = true
+
+[lints]
+workspace = true

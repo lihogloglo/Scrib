@@ -19,13 +19,22 @@
 
 use std::fmt::Write as _;
 
-use bevy::camera_controller::free_camera::FreeCamera;
-use bevy::light::DirectionalLight;
-use bevy::mesh::morph::MeshMorphWeights;
-use bevy::mesh::skinning::SkinnedMesh;
-use bevy::pbr::wireframe::{Wireframe, WireframeColor, WireframePlugin};
-use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy_camera_controller::free_camera::FreeCamera;
+use bevy_light::DirectionalLight;
+use bevy_mesh::morph::MeshMorphWeights;
+use bevy_mesh::skinning::SkinnedMesh;
+use bevy_pbr::wireframe::{Wireframe, WireframeColor, WireframePlugin};
+use bevy_app::prelude::*;
+use bevy_clipboard::prelude::*;
+use bevy_ui::prelude::*;
+use bevy_text::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_math::prelude::*;
+use bevy_transform::prelude::*;
+use bevy_time::prelude::*;
+use bevy_input::prelude::*;
+use bevy_color::prelude::*;
+use bevy_render::view::screenshot::{Screenshot, save_to_disk};
 use sf_coords::WorldPos;
 use sf_sky_bevy::sf_sky::{SkyClock, UpscaleQuality, Upscaling};
 use sf_sky_bevy::{ActiveUpscaling, SkyConfig, SkyTime, UpscalingSetting};
@@ -57,7 +66,7 @@ impl Plugin for LiveAbPlugin {
 
 /// Switch state that has no framework resource of its own.
 #[derive(Resource)]
-pub(crate) struct LiveAb {
+pub struct LiveAb {
     help: bool,
     sun_shadows: bool,
     /// F7: wireframe over the skinned meshes (the terrain has its own flag).
@@ -74,7 +83,7 @@ impl Default for LiveAb {
 
 impl LiveAb {
     /// Logs an action and shows it in the overlay for a few seconds.
-    pub(crate) fn note(&mut self, text: String, now: f32) {
+    pub fn note(&mut self, text: String, now: f32) {
         println!("[A/B] {text}");
         self.note = Some((text, now));
     }
@@ -112,14 +121,14 @@ fn spawn_overlay(mut commands: Commands) {
 
 /// A scene is checked at its hour: its clock starts paused (P resumes).
 fn pause_scene_clock(time: Option<ResMut<SkyTime>>) {
-    if let (Some(mut time), Some(_)) = (time, crate::scenes::active()) {
+    if let (Some(mut time), Some(_)) = (time, mw_game_core::scenes::active()) {
         time.0.paused = true;
     }
 }
 
 /// The debug resources the keys flip (each optional: interiors have fewer).
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct Switches<'w> {
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct Switches<'w> {
     terrain: Option<ResMut<'w, sf_terrain_bevy::TerrainDebug>>,
     far: Option<ResMut<'w, sf_lod_bevy::FarFieldDebug>>,
     rings: Option<ResMut<'w, sf_world_bevy::StreamingDebug>>,
@@ -142,7 +151,7 @@ pub(crate) struct Switches<'w> {
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Switch {
+pub enum Switch {
     SunShadows,
     TerrainFarShadows,
     Clouds,
@@ -154,7 +163,7 @@ pub(crate) enum Switch {
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub(crate) const ALL: [Self; 7] = [
+    pub const ALL: [Self; 7] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -164,7 +173,7 @@ impl Switch {
         Self::Rings,
     ];
 
-    pub(crate) const fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::SunShadows => "sun_shadows",
             Self::TerrainFarShadows => "terrain_far_shadows",
@@ -176,11 +185,11 @@ impl Switch {
         }
     }
 
-    pub(crate) fn from_name(name: &str) -> Option<Self> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.name() == name)
     }
 
-    pub(crate) fn names() -> String {
+    pub fn names() -> String {
         Self::ALL.map(Self::name).join(", ")
     }
 
@@ -198,7 +207,7 @@ impl Switch {
 
 
     /// On or off; `None` when this run has nothing for it to act on.
-    pub(crate) fn get(self, state: &LiveAb, s: &Switches) -> Option<bool> {
+    pub fn get(self, state: &LiveAb, s: &Switches) -> Option<bool> {
         let terrain = s.terrain.as_ref();
         match self {
             Self::SunShadows => Some(state.sun_shadows),
@@ -212,7 +221,7 @@ impl Switch {
     }
 
     /// Sets it (`None`: toggles) and says what happened.
-    pub(crate) fn set(self, state: &mut LiveAb, s: &mut Switches, on: Option<bool>) -> String {
+    pub fn set(self, state: &mut LiveAb, s: &mut Switches, on: Option<bool>) -> String {
         let Some(current) = self.get(state, s) else {
             let why = match self {
                 Self::Clouds => "not in this run (interior or --off clouds)",
@@ -261,11 +270,11 @@ impl Switch {
 
 /// Pins a cloud genus over the weather's clouds (`None`: the weather's).
 #[cfg(feature = "remote")]
-pub(crate) fn set_clouds(s: &mut Switches, genus: Option<sf_atmos_bevy::sf_atmos::CloudPreset>) -> String {
+pub fn set_clouds(s: &mut Switches, genus: Option<sf_atmos_bevy::sf_atmos::CloudPreset>) -> String {
     let Some(o) = s.weather_overrides.as_mut() else {
         return "clouds: no weather in this run (interior)".to_owned();
     };
-    o.clouds = genus.map(crate::exterior::pinned_clouds);
+    o.clouds = genus.map(mw_game_core::exterior::pinned_clouds);
     genus.map_or_else(|| "clouds follow the weather".to_owned(), |g| format!("clouds pinned {}", g.name()))
 }
 
@@ -278,7 +287,7 @@ fn weather_now(s: &Switches) -> Option<f64> {
 /// Forces a weather from now over `transition_hours` (`None`: the climate's;
 /// 0 skips), or with `None` glides back to the forecast: every climate, or
 /// only `region`'s (a `REGN` id or name, e.g. "Ashlands Region"), for distant weather.
-pub(crate) fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transition_hours: Option<f32>, region: Option<&str>) -> String {
+pub fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>, transition_hours: Option<f32>, region: Option<&str>) -> String {
     let Some(now) = weather_now(s) else {
         return "weather: no clock in this run".to_owned();
     };
@@ -292,24 +301,24 @@ pub(crate) fn set_weather(s: &mut Switches, ty: Option<mw_weather::WeatherType>,
             None => return format!("weather: unknown region {r:?}"),
         },
     };
-    crate::weather::force_live(&records.0, &mut world.0, &climates, ty, now, transition_hours);
+    mw_environment_bevy::weather::force_live(&records.0, &mut world.0, &climates, ty, now, transition_hours);
     let name = ty.map_or("auto (forecast)", mw_weather::WeatherType::name);
     region.map_or_else(|| format!("weather -> {name}"), |r| format!("weather -> {name} in {r}"))
 }
 
 /// The weather at the camera's climate.
 #[cfg(feature = "remote")]
-pub(crate) fn live_weather(s: &Switches) -> Option<crate::weather::LiveWeather> {
+pub fn live_weather(s: &Switches) -> Option<mw_environment_bevy::weather::LiveWeather> {
     let now = weather_now(s)?;
     let climate = s.site.as_ref()?.climates.first()?.0;
-    crate::weather::live_weather(&s.weather_records.as_ref()?.0, &s.weather.as_ref()?.0, climate, now)
+    mw_environment_bevy::weather::live_weather(&s.weather_records.as_ref()?.0, &s.weather.as_ref()?.0, climate, now)
 }
 
 /// The T key's clock speeds: normal (Morrowind's 30x), x4 (a weather
 /// transition in ~10-25 s), x20 (a day in ~2.4 min).
-pub(crate) const TIME_SCALES: [f32; 3] = [30.0, 120.0, 600.0];
+pub const TIME_SCALES: [f32; 3] = [30.0, 120.0, 600.0];
 
-pub(crate) fn clock_label(clock: &SkyClock) -> &'static str {
+pub fn clock_label(clock: &SkyClock) -> &'static str {
     if clock.paused {
         "paused"
     } else if clock.time_scale > 100.0 {
@@ -320,7 +329,7 @@ pub(crate) fn clock_label(clock: &SkyClock) -> &'static str {
 }
 
 /// The camera as a `--camera` string: eye and a target 50 m ahead, world meters.
-pub(crate) fn camera_string(global: &GlobalTransform, local: &Transform, cell: Option<&CellCoord>) -> String {
+pub fn camera_string(global: &GlobalTransform, local: &Transform, cell: Option<&CellCoord>) -> String {
     // Exteriors: grid cell + local offset to world meters; interiors: plain transform.
     let eye = match cell {
         Some(c) => WorldPos::new(IVec3::new(c.x, c.y, c.z), local.translation).to_f64(),
@@ -426,7 +435,7 @@ fn keys(
         state.note(format!("{line}{}", if copied { "  (copied)" } else { "" }), now);
     }
     if !shifted && input.just_pressed(KeyCode::F12) {
-        let name = crate::scenes::active().map_or("view", |s| s.name.as_str());
+        let name = mw_game_core::scenes::active().map_or("view", |s| s.name.as_str());
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let path = std::path::PathBuf::from("shots").join(format!("{name}-{secs}.png"));
         let _ = std::fs::create_dir_all("shots");
@@ -479,13 +488,13 @@ fn overlay(
     state: Res<LiveAb>,
     s: Switches,
     active: Option<Res<ActiveUpscaling>>,
-    off: Option<Res<crate::perf::Off>>,
+    off: Option<Res<mw_game_core::perf::Off>>,
     colliders: Option<Res<sf_physics_bevy::PhysicsDebug>>,
     mut text: Query<&mut Text, With<OverlayText>>,
     mut last: Local<String>,
 ) {
     let Ok(mut text) = text.single_mut() else { return };
-    let scene = crate::scenes::active();
+    let scene = mw_game_core::scenes::active();
     let title = scene.map_or_else(|| "view".to_owned(), |s| format!("scene {}", s.name));
     let mut out = format!("{title}  |  F1 {}", if state.help { "hide" } else { "help" });
     if let (Some(t), Some(c)) = (s.time.as_ref(), s.config.as_ref()) {

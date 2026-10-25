@@ -19,7 +19,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use bevy::asset::LoadState;
 use bevy::asset::io::AssetSourceId;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
@@ -50,6 +49,7 @@ use sf_world::bake::BakedIndex;
 use sf_world::{IndexedPlacement, PlacementClass};
 
 use crate::perf::{Off, Part};
+use mw_devtools_bevy::ready::settled;
 // Moved to `mw_game_core` (app-split.md slice 1); the old paths keep working.
 pub use mw_game_core::exterior::{
     CAPTURE_STABLE_FRAMES, CAPTURE_TIMEOUT_SECS, CLOUD_WORLD_SCALE, ExteriorCamera, Quality, Settled, pinned_clouds,
@@ -914,58 +914,6 @@ fn status(
 }
 
 // -- readiness, screenshots, benchmarks ---------------------------------------------
-
-/// Whether streaming, terrain (in the exterior), NIF models and textures
-/// have all settled.
-fn settled(
-    streaming: &Streaming,
-    terrain: &TerrainStats,
-    server: &AssetServer,
-    nifs: &Query<&WorldAssetRoot>,
-    materials: &Assets<StandardMaterial>,
-    off: &Off,
-    active: &ActiveWorldspace,
-) -> bool {
-    let loading = |id: bevy::asset::UntypedAssetId| matches!(server.get_load_state(id), Some(LoadState::Loading));
-    let terrain_ok = off.has(Part::Terrain)
-        || active.0.as_ref() != Some(&ids::exterior())
-        || (terrain.height_levels == 10 && terrain.loads_in_flight == 0 && terrain.upload_bytes == 0);
-    // The start's own index must be in (before it, nothing is requested yet).
-    let directory = active.0.as_ref().is_some_and(|w| streaming.has_directory(w));
-    directory
-        && streaming.is_idle()
-        && terrain_ok
-        && nifs.iter().all(|r| {
-            server.is_loaded_with_dependencies(&r.0) || matches!(server.get_load_state(&r.0), Some(LoadState::Failed(_)))
-        })
-        && materials.iter().all(|(_, m)| {
-            [&m.base_color_texture, &m.emissive_texture].into_iter().flatten().all(|h| !loading(h.id().untyped()))
-        })
-}
-
-/// [`settled`] as a system parameter, for runs that ask on demand ([`crate::remote`]).
-#[cfg(feature = "remote")]
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct Readiness<'w, 's> {
-    streaming: Option<Res<'w, Streaming>>,
-    terrain: Option<Res<'w, TerrainStats>>,
-    server: Res<'w, AssetServer>,
-    nifs: Query<'w, 's, &'static WorldAssetRoot>,
-    materials: Res<'w, Assets<StandardMaterial>>,
-    off: Option<Res<'w, Off>>,
-    active: Option<Res<'w, ActiveWorldspace>>,
-}
-
-#[cfg(feature = "remote")]
-impl Readiness<'_, '_> {
-    /// `None` outside the exterior viewer.
-    pub(crate) fn settled(&self) -> Option<bool> {
-        let (Some(streaming), Some(terrain), Some(off), Some(active)) = (&self.streaming, &self.terrain, &self.off, &self.active) else {
-            return None;
-        };
-        Some(settled(streaming, terrain, &self.server, &self.nifs, &self.materials, off, active))
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 fn capture(

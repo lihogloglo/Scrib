@@ -12,12 +12,15 @@
 //! example waits on the same cache; Unreal's PSO precaching hides such
 //! primitives instead).
 
-use bevy::pbr::SpecializedMaterialPipelineCache;
-use bevy::prelude::*;
-use bevy::render::camera::ExtractedCamera;
-use bevy::render::render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor};
-use bevy::render::view::{ExtractedView, RenderVisibleEntities};
-use bevy::render::{Render, RenderApp, RenderSystems};
+use bevy_pbr::SpecializedMaterialPipelineCache;
+use bevy_app::prelude::*;
+use bevy_mesh::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
+use bevy_render::camera::ExtractedCamera;
+use bevy_render::render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor};
+use bevy_render::view::{ExtractedView, RenderVisibleEntities};
+use bevy_render::{Render, RenderApp, RenderSystems};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
