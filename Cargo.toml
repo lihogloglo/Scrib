@@ -8,7 +8,7 @@ exclude = ["vendor"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/TODO/superfargoth"
 
 [workspace.dependencies]
@@ -180,6 +180,9 @@ big_space = { path = "vendor/big_space" }
 bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
 bevy_pbr = { path = "vendor/bevy_pbr" }
 bevy_render = { path = "vendor/bevy_render" }
+# dlss_wgpu 6.0.0 facade with no NVIDIA code: NGX lives in the separately shipped plugin
+# (plugins/sf_dlss), loaded at runtime from <exe>/dlss/; vendor/README.md. Keep while the game is GPL.
+dlss_wgpu = { path = "vendor/dlss_wgpu" }
 # Our feature-unification crate in place of the crates.io stub (`workspace-hack` above).
 workspace-hack = { path = "crates/workspace-hack" }
 

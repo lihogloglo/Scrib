@@ -13,8 +13,9 @@ pcss = ["bevy_light/experimental_pbr_pcss", "bevy_pbr/experimental_pbr_pcss"]
 solari = ["dep:bevy_solari"]
 # DLSS (NVIDIA RTX): Super Resolution on the raster path (`UpscalingSetting`) and,
 # with `solari`, Ray Reconstruction denoising the ray-traced path.
-# Builds need the DLSS SDK (see `docs/specs/sky-lighting.md`, "Denoising").
-dlss = ["bevy_anti_alias/dlss", "bevy_solari?/dlss"]
+# Builds need no NVIDIA SDK: `dlss_wgpu` is the vendor facade, DLSS runs from the separately
+# shipped plugin package (`docs/specs/sky-lighting.md`, "DLSS plugin package").
+dlss = ["bevy_anti_alias/dlss", "bevy_solari?/dlss", "dep:dlss_wgpu"]
 
 # Minimal Bevy (ARCHITECTURE §8b rule 6).
 [dependencies]
@@ -38,6 +39,8 @@ bevy_shape.workspace = true
 bevy_solari = { workspace = true, optional = true }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+# `plugin_available` for the "DLSS unavailable" warning (already in the graph via bevy_anti_alias/dlss).
+dlss_wgpu = { version = "6.0.0", optional = true }
 log.workspace = true
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 sf_sky.workspace = true

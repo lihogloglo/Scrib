@@ -7,11 +7,5 @@
 linker = "rust-lld.exe"
 rustdocflags = ["-Clinker=rust-lld.exe"]
 
-
-# DLSS builds (`sf_sky_bevy` feature `dlss`): NVIDIA's SDK subset, Vulkan
-# headers and libclang live outside the repo in ../sdk (`bash ../sdk/fetch.sh`;
-# the SDK may not be redistributed). Real environment variables win.
-[env]
-DLSS_SDK = { value = "../sdk/dlss", relative = true }
-VULKAN_SDK = { value = "../sdk/vulkan", relative = true }
-LIBCLANG_PATH = { value = "../sdk/libclang", relative = true }
+# DLSS: the game builds without NVIDIA's SDK (vendor/dlss_wgpu facade). The SDK env for the
+# separately shipped plugin lives in superfargoth/plugins/sf_dlss/.cargo/config.toml.

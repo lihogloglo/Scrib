@@ -261,13 +261,24 @@ transmittance and multiscattering though the medium rarely changes; an upstream 
   `SkyRenderOptions::ray_tracing_restir: Option<bool>`: `None` = on without
   a denoiser, off under Ray Reconstruction (Bevy's advice; same image,
   1.4 vs 3.5 ms of lighting in the Census Office at 1440p).
-- Builds with `dlss` need `DLSS_SDK`, `VULKAN_SDK` and `LIBCLANG_PATH`;
-  both repos' `.cargo/config.toml` point them at `../sdk` (outside the
-  repos: the SDK may not be redistributed; `bash ../sdk/fetch.sh` fetches
-  the ~140 MB subset with size checks). The game ships `nvngx_dlss.dll`
-  (SR) and `nvngx_dlssd.dll` (RR) next to the executable (Bevyrrowind's
-  `build.rs` copies them) plus NVIDIA's license notice (DLSS Programming
-  Guide §9.5) in a distribution.
+- **DLSS plugin package** (dlss-plugin-1/2, 2026-10-25). Why: both repos are
+  GPL-3.0-or-later and the §7 permission (`LICENSE-EXCEPTION.md`) covers only
+  our code, so the game binary holds no NVIDIA code. `dlss_wgpu` is replaced
+  (`[patch.crates-io]` in both workspaces) by `vendor/dlss_wgpu`, a facade
+  with the 6.0.0 API and no NVIDIA headers or libraries, so `dlss` builds
+  need no SDK env. It loads `sf_dlss.dll` (`plugins/sf_dlss`, own workspace,
+  links NGX; versioned C ABI in `vendor/dlss_wgpu/src/abi.rs`) at runtime from
+  `$SF_DLSS_PLUGIN_DIR`, else `<exe dir>/dlss/`. Package layout: `dlss/` =
+  `sf_dlss.dll`, `nvngx_dlss.dll` (SR), `nvngx_dlssd.dll` (RR),
+  `NVIDIA-DLSS-LICENSE.txt`, `README.txt`; shipped separately, never in a
+  game release. Build it with `bash plugins/sf_dlss/build-package.sh`
+  (needs `../sdk`: `bash ../sdk/fetch.sh`, the ~140 MB non-redistributable
+  subset; output `target/sf_dlss/package/dlss/`); Bevyrrowind's `build.rs`
+  copies it to `target/<profile>/dlss/` for dev runs. Fallback: no package
+  or ABI mismatch logs one info line, `UpscalingSupport` is all false and
+  `upscale.rs` warns "DLSS plugin package missing" and runs TAA;
+  `dlss_wgpu::plugin_available()` tells that apart from an unsupported GPU.
+  Parity (2026-10-25): see Verification.
 - Systems run in `Update` in `SkySystems::{Clock, RenderPath, Apply}`.
   `SkyRenderOptions::sea_level` is the hook for the floating origin
   (`sf_world_bevy` sets it when the origin cell moves vertically).
@@ -292,6 +303,12 @@ transmittance and multiscattering though the medium rarely changes; an upstream 
   in `D:/Gamedev/Bevyrrowind/shots/dlss/`. Balmora 1440p medians: native
   11.9 ms, DLSS quality 8.9 (SR pass 2.1 ms), performance 9.2 (SR 2.8 ms),
   DLAA 11.7, depth+MV prepass with occlusion culling 13.9.
+- DLSS plugin package (2026-10-25, dlss-plugin-2, release `solari,dlss`, driver 617.42, 1440p, 3
+  interleaved runs): SR quality pass 2.24-2.30 ms (Balmora; 2.1 on 10-12/10-19), RR auto pass
+  5.45-5.60 ms (Census Office `--rt`; 5.2 on 10-12); the facade passes the same NGX create/eval
+  parameters, the extra FFI call is CPU-side (pass CPU 0.20 / 0.24 ms). Release exe: 0
+  `NVSDK_NGX`/`nvsdk_ngx` strings. Screenshots `shots/dlss2/`. `--rt --off denoiser` in interiors
+  quits on a `sky_motion` validation error (Bevyrrowind visual check DL-5; not the plugin).
 
 ## Open questions
 

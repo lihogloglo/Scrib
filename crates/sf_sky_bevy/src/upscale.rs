@@ -75,7 +75,15 @@ pub(crate) fn finish(app: &mut App) {
     let support = *app.world().resource::<UpscalingSupport>();
     let requested = app.world().resource::<UpscalingSetting>().0;
     if requested.resolve(support.dlss_super_resolution) != requested {
-        log::warn!("DLSS unavailable on this GPU or build; TAA instead");
+        #[cfg(feature = "dlss")]
+        let reason = if dlss_wgpu::plugin_available() {
+            "on this GPU or driver"
+        } else {
+            "(DLSS plugin package missing: `dlss/` next to the executable or $SF_DLSS_PLUGIN_DIR)"
+        };
+        #[cfg(not(feature = "dlss"))]
+        let reason = "in this build (no `dlss` feature)";
+        log::warn!("DLSS unavailable {reason}; TAA instead");
     }
 }
 

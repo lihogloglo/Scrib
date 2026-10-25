@@ -1,0 +1,11 @@
+# sf_dlss plugin build (its own workspace). NVIDIA's DLSS SDK subset, Vulkan headers and
+# libclang live outside the repos in Bevyrrowind/sdk (`bash ../sdk/fetch.sh`; the SDK may not
+# be redistributed). Real environment variables win. The game builds need none of this.
+[env]
+DLSS_SDK = { value = "../../../sdk/dlss", relative = true }
+VULKAN_SDK = { value = "../../../sdk/vulkan", relative = true }
+LIBCLANG_PATH = { value = "../../../sdk/libclang", relative = true }
+
+[build]
+# superfargoth/target is a junction to C: (D: is nearly full).
+target-dir = "../../target/sf_dlss"
