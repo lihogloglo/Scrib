@@ -10,8 +10,18 @@
 //!   0.49.0): the placement leaves the world through the overlay (`PlacementOverlay::remove`,
 //!   keyed by `PlacementId`: saves serialize it, a cell reload never brings it back), its R0
 //!   hooks run now (physics body, script handle: [`ActivePlacements::deactivate`]), its visuals
-//!   (the physics `ItemPivot`) despawn, and one item goes into the player's `sf_rpg` loadout,
-//!   so dialogue `Item` filters and `MWScript` `GetItemCount` see it (the `Rpg` host reads it).
+//!   (the physics `ItemPivot`) despawn, and the reference's stack goes into the player's `sf_rpg`
+//!   loadout, so dialogue `Item` filters and `MWScript` `GetItemCount` see it (the `Rpg` host
+//!   reads it).
+//! - **Stack counts** ([`RefCounts`]): a CELL reference's `NAM9` count (`tes3` `object_count`,
+//!   absent = 1) is the stack the take gives. `OpenMW` `ActionTake::executeImp`
+//!   (apps/openmw/mwworld/actiontake.cpp, tag openmw-0.49.0 = commit 675146bd) adds
+//!   `getCellRef().getCount()`, which is `std::abs(mCount)` (apps/openmw/mwworld/cellref.hpp,
+//!   `getCount(absolute = true)`). A negative count is the restocking marker of container
+//!   inventories, not of references, so the take uses its magnitude ([`ref_count`], as the
+//!   container seeding below does). The counts are a game-side lookup by placement id, built
+//!   once from the cells (`sf_world` placements don't carry them); script-spawned placements
+//!   count 1.
 //! - **Containers** (CONT): scaffold `TakeAllContainer`. Activating one moves its whole content
 //!   to the player (vanilla opens the container window; "Take All" is its button). The content
 //!   lives in `RpgState::inventories` under the container's placement id (saved with the RPG
@@ -21,9 +31,10 @@
 //!   Excise Office, so this is the ring's path.
 //! - Not yet (leftovers): weight and encumbrance, drop, equip, ownership and theft (the Census
 //!   office items are owned: vanilla counts the take as stealing), item scripts' `OnActivate`
-//!   (the ring's `CharGen_ring_keley` shows the magic menu), stack counts on references, books
-//!   opening to read.
+//!   (the ring's `CharGen_ring_keley` shows the magic menu), books opening to read, gold piles
+//!   (`OpenMW`'s `ActionTake` multiplies a `Gold_*` reference's count by its value).
 
+use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
 use bevy_app::prelude::*;
@@ -37,8 +48,8 @@ use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements, ScriptSlot};
 use sf_world::PlacementId;
 use sf_world_bevy::WorldOverlay;
 use tes3::esp::{
-    Alchemy, Apparatus, Armor, Book, Clothing, Container, Ingredient, LeveledItem, Light, LightFlags, Lockpick, MiscItem,
-    Probe, RepairItem, Weapon,
+    Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, Ingredient, LeveledItem, Light, LightFlags, Lockpick,
+    MiscItem, Probe, Reference, RepairItem, Weapon,
 };
 
 use crate::dialogue::{Rpg, RpgState};
@@ -86,6 +97,40 @@ pub fn take_kind(db: &RecordDb, record: &RecordId) -> Option<TakeKind> {
     }
 }
 
+/// Stack counts of the CELL references whose count isn't 1, by placement id (module docs).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RefCounts(pub HashMap<PlacementId, u32>);
+
+impl RefCounts {
+    /// The counts of every cell reference in `db` (the merged references: the last plugin wins).
+    pub fn from_records(db: &RecordDb) -> Self {
+        let mut out = HashMap::new();
+        for (_, cell) in db.iter::<Cell>() {
+            for (&(source, refr_index), reference) in &cell.references {
+                let count = ref_count(reference);
+                if count != 1 {
+                    let file = &db.source(sf_records::SourceId(source)).name;
+                    out.insert(mw_world::ids::placement_id(file, refr_index), count);
+                }
+            }
+        }
+        Self(out)
+    }
+
+    /// The stack a take of placement `id` gives (1 without a count).
+    pub fn get(&self, id: PlacementId) -> u32 {
+        self.0.get(&id).copied().unwrap_or(1)
+    }
+}
+
+/// A reference's stack count. `NAM9` is a signed int in the file (`OpenMW` `ESM::CellRef::mCount`)
+/// that `tes3` reads as `u32`: reinterpret it and take the magnitude (absent = 1). A 0 count
+/// (the Construction Set doesn't write one) reads as 1, so a take never gives nothing.
+pub fn ref_count(reference: &Reference) -> u32 {
+    #[allow(clippy::cast_possible_wrap)] // reinterprets the file's signed int
+    reference.object_count.map_or(1, |c| (c as i32).unsigned_abs().max(1))
+}
+
 /// A player asks to take what a placement holds (net rule 2: an intent, validated by the host).
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct TakeRequest {
@@ -98,7 +143,8 @@ pub struct TakeRequest {
 /// After `dialogue::add` (the `Rpg` host) and `scripts::add` (activations).
 pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
     let Some(db) = db else { return };
-    app.insert_resource(ItemRecords(db))
+    app.insert_resource(RefCounts::from_records(&db))
+        .insert_resource(ItemRecords(db))
         .add_message::<TakeRequest>()
         .add_systems(Update, (request_takes, apply_takes).chain().after(ScriptSlot::Update));
 }
@@ -139,9 +185,10 @@ fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'static
                     warn!("take {}: placement {:032x} is not in the world", request.record, request.target.0);
                     continue;
                 }
+                let count = world.get_resource::<RefCounts>().map_or(1, |c| c.get(request.target));
                 let mut rpg = world.resource_mut::<Rpg>();
-                give(&mut rpg.state, request.player, &request.record, 1);
-                info!("take: {} (now {})", request.record, rpg.state.pc.loadout.count(&request.record));
+                give(&mut rpg.state, request.player, &request.record, count);
+                info!("take: {count} {} (now {})", request.record, rpg.state.pc.loadout.count(&request.record));
             }
             TakeKind::Container => {
                 let db = world.resource::<ItemRecords>().0.clone();
@@ -208,6 +255,43 @@ mod tests {
 
     const FARGOTH: ActorKey = ActorKey(1);
     const BARREL: ActorKey = ActorKey(7);
+
+    /// Synthetic `Master.esm`: one cell with a pile of 5 arrows (`NAM9`), a single arrow (no
+    /// count) and a restocking-style negative count.
+    #[test]
+    fn a_reference_take_gives_its_stack_count() {
+        use tes3::esp::{FileType, Header, Plugin, TES3Object};
+        let arrow = "iron arrow";
+        let reference = |refr_index, object_count| Reference {
+            refr_index,
+            id: arrow.into(),
+            object_count,
+            ..Reference::default()
+        };
+        let mut cell = Cell { name: "Room".into(), ..Cell::default() };
+        cell.data.flags = tes3::esp::CellFlags::IS_INTERIOR;
+        for r in [reference(1, Some(5)), reference(2, None), reference(3, Some((-3i32).cast_unsigned()))] {
+            cell.references.insert((r.mast_index, r.refr_index), r);
+        }
+        let objects: Vec<TES3Object> = vec![
+            Header { file_type: FileType::Esm, ..Header::default() }.into(),
+            MiscItem { id: arrow.into(), ..MiscItem::default() }.into(),
+            cell.into(),
+        ];
+        let bytes = Plugin { objects }.save_bytes().unwrap();
+        let vfs = sf_vfs::Vfs::builder().mount(sf_vfs::MemSource::new("data").with("Master.esm", bytes)).build();
+        let db = mw_records::load(&vfs, &["Master.esm".to_owned()]).unwrap().db;
+        let counts = RefCounts::from_records(&db);
+        let id = |i| mw_world::ids::placement_id("Master.esm", i);
+        assert_eq!((counts.get(id(1)), counts.get(id(2)), counts.get(id(3))), (5, 1, 3));
+
+        let item = RecordId::new(arrow);
+        let mut state = RpgState::default();
+        give(&mut state, PlayerId::HOST, &item, counts.get(id(1)));
+        assert_eq!(state.pc.loadout.count(&item), 5);
+        give(&mut state, PlayerId::HOST, &item, counts.get(id(2)));
+        assert_eq!(state.pc.loadout.count(&item), 6, "a reference without a count gives 1");
+    }
 
     #[test]
     fn take_kinds_and_the_ring_barrel_finish_fargoths_ring() {
