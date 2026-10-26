@@ -21,10 +21,8 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_mesh.workspace = true
 bevy_pbr.workspace = true
 bevy_shape.workspace = true
-bevy_text.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
-bevy_ui.workspace = true
 bevy_window = { workspace = true, features = ["std"] }
 mw_ai.workspace = true
 mw_controls_bevy.workspace = true

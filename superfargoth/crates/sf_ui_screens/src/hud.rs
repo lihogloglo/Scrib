@@ -177,10 +177,13 @@ pub(crate) fn spawn_hud(
         let prompt = commands
             .spawn((
                 part("sf-hud-prompt"),
+                // A full-width row centred under the crosshair, whatever the text's width.
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
                     top: Val::Percent(56.0),
+                    justify_content: JustifyContent::Center,
                     column_gap: Val::Px(8.0),
                     display: Display::None,
                     ..Node::default()

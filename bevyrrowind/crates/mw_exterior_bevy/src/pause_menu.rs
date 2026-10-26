@@ -6,8 +6,7 @@
 //!   game keeps a HUD-layer screen ("hud") open as the target of play: with no menu open, Esc
 //!   is that screen's open-menu action; with a menu (dialogue, journal, inventory, keybinds)
 //!   open, Esc is the menu's Back and closes it first. The console blocks the keys while open.
-//!   Scaffold: the "hud" screen has no root yet (no HUD drawn); the HUD slice spawns its
-//!   `HudScreen` on the same record.
+//!   `mw_player_bevy::hud` spawns the `HudScreen` root on the same record and draws the HUD.
 //! - **Pause**: the "pause" and "options" records declare `pause = "WhileOpen"`; while
 //!   `ScreenStack::pauses_game` holds, Bevy's virtual clock is paused (`Time<Virtual>`, the
 //!   engine's pause), so the fixed-step physics, animation, the sky clock and NPCs stop. The
@@ -41,13 +40,13 @@ use mw_player_bevy::PlayerMode;
 use mw_saves_bevy::OpenSaveLoad;
 
 /// The HUD screen: the input target of play (carries the open-menu action).
-pub const HUD: &str = "hud";
+pub const HUD: &str = mw_player_bevy::hud::HUD_SCREEN;
 /// The pause menu's screen id.
 pub const PAUSE: &str = "pause";
 /// The options screen's id.
 pub const OPTIONS: &str = "options";
 
-/// The game's records of these screens. TODO(HUD slice): with the other screens, in the
+/// The game's records of these screens. TODO(ui data): with the other screens, in the
 /// builtin mod's data.
 const SCREENS: &str = r#"
 [[define]]
