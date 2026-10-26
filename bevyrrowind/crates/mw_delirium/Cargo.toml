@@ -1,0 +1,26 @@
+[package]
+name = "mw_delirium"
+description = "Delirium active ragdoll characters built from Morrowind's humanoid skeleton: the body, the bone table, a headless harness"
+version.workspace = true
+edition.workspace = true
+# Links delirium-physics (GPL-3.0-only) and ports code from skyrim-delirium (GPL-3.0-only).
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+delirium.workspace = true
+delirium-sdk.workspace = true
+glam.workspace = true
+mw_anim.workspace = true
+serde_json.workspace = true
+sf_anim.workspace = true
+sf_character.workspace = true
+
+[dev-dependencies]
+mw_install.workspace = true
+mw_nif.workspace = true
+mw_vfs.workspace = true
+sf_vfs.workspace = true
+
+[lints]
+workspace = true

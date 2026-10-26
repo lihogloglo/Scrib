@@ -100,4 +100,6 @@ allow-git = [
     # TES3 formats (MIT OR Apache-2.0), the game's only git dependency: not on crates.io, pinned to a
     # commit in the root Cargo.toml (unstable API). Covers its sub-crates (bsa, esp, nif, bytes_io...).
     "https://github.com/Greatness7/tes3",
+    # Delirium active ragdoll (GPL-3.0-only), `mw_delirium` only; pinned to a commit in the root Cargo.toml (owner 2026-10-26).
+    "https://github.com/PVCPC/delirium-physics",
 ]

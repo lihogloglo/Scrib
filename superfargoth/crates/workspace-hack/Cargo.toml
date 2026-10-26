@@ -86,6 +86,7 @@ itertools = { version = "0.14" }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
+miniz_oxide = { version = "0.8", features = ["simd"] }
 naga-types = { version = "30", default-features = false, features = ["deserialize", "serialize", "std"] }
 nonmax = { version = "0.5" }
 num-complex = { version = "0.4" }

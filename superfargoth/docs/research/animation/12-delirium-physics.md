@@ -333,3 +333,24 @@ given its provenance) becomes worth more than framework reuse. (A) only as the R
    (vanilla option) use clips only?
 5. Clips: are face-down get-up and stumble-exit clips from free packs acceptable (R6)?
 6. Is the existing DLSS-in-a-GPL-binary distribution question already settled?
+
+## As built (Delirium in game, slice 1, 2026-10-26)
+
+Supersedes R9 above: Delirium entered the game as ROADMAP 3.2b, not as the FOLLOW-mode spike.
+- `bevyrrowind/crates/mw_delirium` (Bevy-free, GPL-3.0-only; git dep delirium-physics @ 91ee246, `delirium` +
+  `delirium-sdk`). `character_from_skeleton(&Skeleton, &Options)` builds the `nm-character-1` asset and its build
+  from `base_anim.nif`'s `Bip01` bones (humanoid rig map; Spine3 halfway chest bone to neck), porting
+  skyrim-delirium's generator (`make_character.rs` @ e44cb38): pelvis frame a = up / b = left / c = back, zero pose
+  arms 55 deg out and legs straight, trunk-low Winter masses (80 kg), mirrored right side with the flips, gains 12/9/8.
+- `PartTable` + `pose_to_bones` / `bones_to_parts`: each part owns one bone (Spine2 reads `Bip01 Spine2`, Spine3
+  writes it); other bones keep the clip pose; children keep clip translations. `sim`: headless harness (floor, push).
+- Spaces: model (Y up, +Z facing) -> authoring (Z up, +Y facing, = NIF axes, metres) -> sim (translation only).
+- Results (`tests/real_install.rs`): stands 60 s (pelvis 99 %, still from 0.6 s); push sweep 8 dir x 20/45/80 Ns:
+  8 stayed, 16 stepped, 0 fell, **24/24 come to rest** (median 2.6 s, max 10.7 s); catchFall hands before head
+  10/10; scaled x1.1 stands; pose round trips exact (bones), 8 mm (simulated parts, via the read-only Spine2).
+  0.41-0.57 ms/step (release, shared CPU).
+- What mattered vs our d1b spike: the whole port, not one knob. Ablations (one process each, env vars in the test):
+  arms down (0 deg) 24/24 rest; even trunk mass 22/24; spawning in the zero pose or `Agent::set_zero` on the spawn
+  pose keep it fidgeting while standing (still only at 37.6 / 53 s). Keep: bind-pose spawn, asset zero pose.
+- Slice 2 needs: Bevy plugin (takeover from the clip with part velocities, per-actor `Build::scaled`, actor
+  transform as `model_from_sim`), click-to-push, copy-back before skinning, hand-back once balanced, get-up clips.

@@ -75,6 +75,7 @@ workspace-members = [
     "mw_anim",
     "mw_audio",
     "mw_bake",
+    "mw_delirium",
     "mw_graphs",
     "mw_install",
     "mw_mods",

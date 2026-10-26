@@ -1,7 +1,7 @@
 # Third-party notices
 
-Code ported into superfargoth from other projects, with their licences. Dependencies pulled through
-Cargo carry their own licence files and are not listed here.
+Code ported into superfargoth (and, where marked, into the game under `bevyrrowind/`) from other projects,
+with their licences. Dependencies pulled through Cargo carry their own licence files and are not listed here.
 
 ## bevy-aqua
 
@@ -34,3 +34,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## skyrim-delirium (game only)
+
+- Source: https://github.com/YoucefNabil/skyrim-delirium, commit `e44cb38d54bd79d8f2b54cc863a0df36df7e0542`:
+  `fit-test/examples/make_character.rs` (character generator) and `tools/skel_joints.py` (the Spine3 joint rule).
+- Licence: GPL-3.0-only (the full text is the repository's `LICENSE`, identical to the GNU GPL v3 at
+  https://www.gnu.org/licenses/gpl-3.0.txt). No copyright line upstream; the holder is recorded as
+  "skyrim-delirium contributors" (maintainer: YoucefNabil).
+- Ported into: `bevyrrowind/crates/mw_delirium/src/body.rs` (the game, not the framework; the crate is
+  GPL-3.0-only), with the changes listed in that file's header. The crate also links delirium-physics
+  (github.com/PVCPC/delirium-physics, GPL-3.0-only) as a Cargo git dependency.

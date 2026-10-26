@@ -133,6 +133,10 @@ wgpu = { version = "30", default-features = false }
 # TES3 formats (MIT/Apache). Unstable API: pinned to a commit.
 tes3 = { git = "https://github.com/Greatness7/tes3", rev = "e61ad140b51d889ae5aa30914ba2a20fd51bf2e0", default-features = false }
 clap = { version = "4", features = ["derive"] }
+# Euphoria-style active ragdoll (GPL-3.0-only; owner 2026-10-26, ROADMAP 3.2b). Game crates only (`mw_delirium`):
+# GPL-3.0-only code stays out of the framework. No releases: pinned to a commit.
+delirium = { git = "https://github.com/PVCPC/delirium-physics", rev = "91ee2468820d434e123d4c09e89760ce38d165f5", default-features = false }
+delirium-sdk = { git = "https://github.com/PVCPC/delirium-physics", rev = "91ee2468820d434e123d4c09e89760ce38d165f5" }
 # Platform data directories: the bake cache lives in the local data dir.
 dirs = "6"
 encoding_rs = "0.8"
@@ -217,6 +221,7 @@ mw_audio = { path = "bevyrrowind/crates/mw_audio" }
 mw_bake = { path = "bevyrrowind/crates/mw_bake" }
 mw_boot_bevy = { path = "bevyrrowind/crates/mw_boot_bevy" }
 mw_controls_bevy = { path = "bevyrrowind/crates/mw_controls_bevy" }
+mw_delirium = { path = "bevyrrowind/crates/mw_delirium" }
 mw_audio_bevy = { path = "bevyrrowind/crates/mw_audio_bevy" }
 mw_devtools_bevy = { path = "bevyrrowind/crates/mw_devtools_bevy" }
 mw_doors_bevy = { path = "bevyrrowind/crates/mw_doors_bevy" }
