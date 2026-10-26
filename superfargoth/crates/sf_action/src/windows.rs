@@ -3,8 +3,10 @@
 //! (tests, the shell's scaffold) fill a [`SlotTable`] by hand.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sf_anim::RootPath;
 
 use crate::command::ClassSet;
 use crate::ids::{ClockTime, SlotKey};
@@ -63,11 +65,26 @@ impl SlotInfo {
 /// Where slot timing comes from (compiled graph, or a hand table).
 pub trait SlotSource {
     fn slot(&self, key: SlotKey) -> Option<&SlotInfo>;
+
+    /// The slot clip's baked root track (Warp owners plan over it). `None`: the slot has no root
+    /// motion, so a Warp rule using it is refused.
+    fn root(&self, _key: SlotKey) -> Option<&dyn RootPath> {
+        None
+    }
 }
 
-/// A plain map of slots.
-#[derive(Clone, Debug, Default)]
-pub struct SlotTable(pub HashMap<SlotKey, SlotInfo>);
+/// A plain map of slots, with optional root paths.
+#[derive(Clone, Default)]
+pub struct SlotTable {
+    pub slots: HashMap<SlotKey, SlotInfo>,
+    pub roots: HashMap<SlotKey, Arc<dyn RootPath + Send + Sync>>,
+}
+
+impl std::fmt::Debug for SlotTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SlotTable").field("slots", &self.slots).field("roots", &self.roots.keys().collect::<Vec<_>>()).finish()
+    }
+}
 
 impl SlotTable {
     pub fn new() -> Self {
@@ -76,14 +93,25 @@ impl SlotTable {
 
     #[must_use]
     pub fn with(mut self, name: &str, info: SlotInfo) -> Self {
-        self.0.insert(SlotKey::of(name), info);
+        self.slots.insert(SlotKey::of(name), info);
+        self
+    }
+
+    /// Gives slot `name` a root path (its clip's root track).
+    #[must_use]
+    pub fn with_root(mut self, name: &str, root: Arc<dyn RootPath + Send + Sync>) -> Self {
+        self.roots.insert(SlotKey::of(name), root);
         self
     }
 }
 
 impl SlotSource for SlotTable {
     fn slot(&self, key: SlotKey) -> Option<&SlotInfo> {
-        self.0.get(&key)
+        self.slots.get(&key)
+    }
+
+    fn root(&self, key: SlotKey) -> Option<&dyn RootPath> {
+        self.roots.get(&key).map(|r| &**r as &dyn RootPath)
     }
 }
 

@@ -262,13 +262,15 @@ mod tests {
         assert_eq!(ual1.license, License::CC0);
         assert!(ual1.redistributable());
         assert_eq!(ual1.files[0].sha256.len(), 64);
+        assert_eq!(m.sources["quaternius_ual2"].license, License::CC0);
         let slot = &m.slots["traverse.mantle.waist"];
-        assert_eq!(slot.candidates[0].reference(), "quaternius_ual1:ClimbLedge_RM");
+        assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m_RM");
+        assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge_RM");
         let rules = slot.rules(&slot.candidates[0]);
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);
         assert!(rules.root_motion.vertical && rules.root_motion.extract);
         let (clips, slots) = m.graph_clips("humanoid");
-        assert_eq!(slots, ["traverse.mantle.waist"]);
+        assert_eq!(slots, ["traverse.climb.up", "traverse.mantle.waist"]);
         assert_eq!(clips[0].1.fallback, Some(ClipFallback::Drop));
     }
 

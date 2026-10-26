@@ -18,12 +18,34 @@
       unit_scale: 1.0,
       up: Y,
     ),
+    "quaternius_ual2": (
+      title: "Quaternius Universal Animation Library 2 (Standard)",
+      license: CC0,
+      page: "https://quaternius.itch.io/universal-animation-library-2",
+      files: [
+        (name: "Universal Animation Library 2 [Standard]/Unreal-Godot/UAL2_Standard.glb", sha256: "0815dd05531cae9bc313fc9c0ba81330bc72f8e19ec45f73738e74ddc5796a43"),
+      ],
+      // Same glTF rig family as UAL1 (meters, +Y up, facing +Z).
+      unit_scale: 1.0,
+      up: Y,
+    ),
   },
   slots: {
-    // Waist-high mantle (action.md B2): one clip, warped onto the ledge by
+    // Waist-high mantle (action.md B2a): one clip, warped onto the ledge by
     // the action clock (`Progress`), so its baked root track (the `_RM`
-    // variant) keeps the climb's rise and travel.
+    // variant) keeps the climb's rise and forward travel.
     "traverse.mantle.waist": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "ClimbUp_1m_RM"),
+      ],
+      root: Progress,
+      vertical: true,
+      fallback: Drop,
+    ),
+    // Climb up from a hang (B3; unused until then): a top-out that rises
+    // ~2.5 m straight up with no forward travel.
+    "traverse.climb.up": (
       graph: "humanoid",
       candidates: [
         (source: "quaternius_ual1", clip: "ClimbLedge_RM"),

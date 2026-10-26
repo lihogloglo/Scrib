@@ -252,6 +252,9 @@ fn step_actions(rules: Option<Res<ActionRules>>, mut characters: Query<(&mut Act
             planar_speed: Vec3::new(v.x, 0.0, v.z).length(),
             yaw: body.loco.motion.yaw,
             focus: c.focus,
+            // B2a shell step (next): the context probe (`sf_controller::ContextProbes`, ObstacleAhead along
+            // the stick) fills this; until then no traversal rule can fire.
+            obstacle: None,
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
     }

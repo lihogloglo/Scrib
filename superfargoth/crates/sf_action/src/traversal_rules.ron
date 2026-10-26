@@ -1,0 +1,27 @@
+// Framework traversal rules (docs/specs/action.md slice B2a). Hosts add them after the base rules
+// when their slot source provides the slots' root paths and their shell senses obstacles.
+// Numbers are starting points tuned on test courses (anim-lab ledges, `ledges`).
+[
+    (
+        // Waist-high mantle: Jump (or Up) with forward input at a ledge whose top is in the band
+        // (character heights: ~0.55-1.5 m for a 1.8 m capsule). The clip's root track is warped
+        // onto the top, `inset` m past the lip; too large a correction refuses (plain jump).
+        id: "traverse.mantle.waist",
+        kind: Traversal,
+        category: Traversal,
+        rank: 200,
+        slots: ["traverse.mantle.waist"],
+        owner: Warp(target: LedgeTop(inset: 1.0), profile: Late, refuse_ratio: 0.35, steer: false),
+        entry: (
+            classes: [Jump, Up],
+            need_forward: true,
+            modes: [Normal, FreeRun],
+            states: [Grounded, Coyote],
+            speed: Some((0.0, 12.0)),
+            probe: Some(Obstacle(classes: [Mantle], height: (0.3, 0.85))),
+        ),
+        exits: [(on: End, to: Loco)],
+        steer: false,
+        redo_ticks: 12,
+    ),
+]

@@ -7273,6 +7273,7 @@ dependencies = [
  "postcard",
  "ron",
  "serde",
+ "sf_anim",
  "sf_controller",
  "sf_coords",
  "sf_ids",

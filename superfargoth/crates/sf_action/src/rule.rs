@@ -58,12 +58,41 @@ impl Category {
     }
 }
 
-/// Who moves the gameplay body (action.md "Motion owners"). A1 builds `Sim`; `Warp`, `Docked`,
-/// `Clip` and `Physics` arrive with B1, B3, E1 and the ragdoll work.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Who moves the gameplay body (action.md "Motion owners"). A1 built `Sim`, B2a `Warp`;
+/// `Docked`, `Clip` and `Physics` arrive with B3, E1 and the ragdoll work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Owner {
     #[default]
     Sim,
+    /// The slot chain's baked root track, corrected onto `target` by a [`sf_anim::WarpPlan`] fixed
+    /// at start; refused (next candidate) when the correction is over `refuse_ratio` of the
+    /// chain's root distance (`MaxCorrection`). No gravity, no steering while it plays.
+    Warp { target: WarpTarget, profile: sf_anim::WarpProfile, refuse_ratio: f32, steer: bool },
+}
+
+/// Where a Warp owner's plan lands.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WarpTarget {
+    /// On top of the sensed obstacle, `inset` m past the lip (less if the top is shallower),
+    /// facing into its face.
+    LedgeTop { inset: f32 },
+}
+
+/// Obstacle classes the shell's context probe reports (`sf_controller::Affordance`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ObstacleClass {
+    Step,
+    Vault,
+    Mantle,
+    Climb,
+}
+
+/// A world query a rule needs to pass (action.md "Move rule": `probe`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ProbeNeed {
+    /// An obstacle ahead of one of these classes whose top is within `height`, in character
+    /// heights ([`crate::CharacterParams::height`]).
+    Obstacle { classes: Vec<ObstacleClass>, height: (f32, f32) },
 }
 
 /// Movement profile (action.md "Mode profiles"). `Combat` stance layers over these.
@@ -105,6 +134,8 @@ pub struct Entry {
     pub auto_in: Vec<Mode>,
     /// Needs an interaction focus: `Some([])` any, `Some(tags)` one of these tags.
     pub focus: Option<Vec<String>>,
+    /// Needs a sensed obstacle (B2a: ledges for mantles).
+    pub probe: Option<ProbeNeed>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +327,19 @@ impl RuleSetBuilder {
             }
             if r.entry.focus.is_some() && !r.entry.classes.contains(&ActionClass::Interact) {
                 errors.push(err(origin, r, "focus needs the Interact class".into()));
+            }
+            if let Owner::Warp { refuse_ratio, target: WarpTarget::LedgeTop { inset }, .. } = r.owner {
+                if !(refuse_ratio.is_finite() && refuse_ratio >= 0.0 && inset.is_finite()) {
+                    errors.push(err(origin, r, "warp refuse_ratio and inset must be finite, ratio ≥ 0".into()));
+                }
+                if r.slots.is_empty() || r.launch.is_some() {
+                    errors.push(err(origin, r, "a Warp owner needs slots (its root path) and no launch".into()));
+                }
+            }
+            if let Some(ProbeNeed::Obstacle { height: (lo, hi), .. }) = r.entry.probe
+                && (lo.is_nan() || hi.is_nan() || lo > hi)
+            {
+                errors.push(err(origin, r, "probe height band is empty or NaN".into()));
             }
             if let Some(Launch::Speed(v)) = r.launch
                 && !(v.is_finite() && v > 0.0)

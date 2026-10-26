@@ -1,5 +1,5 @@
-//! Library clips through the bake (animation-sources.md): Quaternius UAL1's
-//! `ClimbLedge_RM` cooked on the library's skeleton and retargeted onto the
+//! Library clips through the bake (animation-sources.md): Quaternius UAL2's
+//! `ClimbUp_1m_RM` cooked on the library's skeleton and retargeted onto the
 //! humanoid skeletons, the humanoid graph's `traverse.mantle.waist` slot
 //! resolving to it with CC0 provenance. Sanity only (rule 5); the numbers
 //! come from the ignored measurement test (`-- --ignored --nocapture`).
@@ -25,7 +25,9 @@ use sf_character::{HumanoidBone as B, RigMap};
 use sf_vfs::Vfs;
 
 const SLOT: &str = "traverse.mantle.waist";
-const REFERENCE: &str = "quaternius_ual1:ClimbLedge_RM";
+const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m_RM";
+/// Every slot in the shipped manifest (`traverse.climb.up` = UAL1 `ClimbLedge_RM`, for B3).
+const SLOTS: usize = 2;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
@@ -120,7 +122,7 @@ fn retargeted(s: &Setup, target: &str) -> ProductKey {
 }
 
 #[test]
-fn ual1_mantle_retargets_onto_the_humanoid_skeletons() {
+fn mantle_clip_retargets_onto_the_humanoid_skeletons() {
     let Some(s) = setup() else { return };
     let dir = tempfile::tempdir().unwrap();
     let (report, baker) = bake(&s, dir.path(), &s.sources);
@@ -129,8 +131,8 @@ fn ual1_mantle_retargets_onto_the_humanoid_skeletons() {
     }
     assert!(report.failures.is_empty());
     println!("slots: {:?}; {} library clips", report.slots, report.library_clips);
-    assert_eq!(report.slots, [format!("{SLOT}: {REFERENCE}")]);
-    assert_eq!(report.library_clips, TARGETS);
+    assert!(report.slots.contains(&format!("{SLOT}: {REFERENCE}")), "{:?}", report.slots);
+    assert_eq!(report.library_clips, SLOTS * TARGETS);
 
     for set in &HUMANOID_SETS[..TARGETS] {
         let target = skeleton(&baker, set.skeleton);
@@ -161,7 +163,7 @@ fn ual1_mantle_retargets_onto_the_humanoid_skeletons() {
         let (_, slot) = graph.slot_clips.iter().find(|(n, _)| n == SLOT).unwrap_or_else(|| panic!("{}: no {SLOT} slot clip", set.skeleton));
         let used = &graph.clips[usize::from(*slot)];
         assert_eq!(used.product, retargeted(&s, set.skeleton));
-        assert_eq!((used.provenance.source.as_str(), used.provenance.license.as_str(), used.provenance.redistributable), ("quaternius_ual1", "CC0-1.0", true));
+        assert_eq!((used.provenance.source.as_str(), used.provenance.license.as_str(), used.provenance.redistributable), ("quaternius_ual2", "CC0-1.0", true));
         assert_eq!(graph.non_redistributable().count(), 0);
     }
 }
@@ -177,7 +179,7 @@ fn missing_library_drops_the_slot() {
     let (report, baker) = bake(&s, dir.path(), &sources);
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(report.library_clips, 0);
-    assert!(report.slots[0].starts_with(&format!("{SLOT}: fallback Drop")), "{:?}", report.slots);
+    assert!(report.slots.iter().any(|s| s.starts_with(&format!("{SLOT}: fallback Drop"))), "{:?}", report.slots);
     let key = ProductKey::new(ANIMGRAPH_COMPILE, graph_subject(Template::Humanoid.path(), HUMANOID_SETS[0].skeleton));
     let graph = CompiledGraph::from_bytes(&bytes(&baker, &key)).unwrap();
     assert!(!graph.slot_clips.iter().any(|(n, _)| n == SLOT));
@@ -185,8 +187,8 @@ fn missing_library_drops_the_slot() {
 }
 
 #[test]
-#[ignore = "measurement: mantle clip numbers, source vs retargeted"]
-fn measure_ual1_mantle() {
+#[ignore = "measurement: waist mantle clip numbers, source vs retargeted, contact timing"]
+fn measure_mantle_waist() {
     let Some(s) = setup() else { return };
     let dir = tempfile::tempdir().unwrap();
     let (_, baker) = bake(&s, dir.path(), &s.sources);
@@ -209,7 +211,7 @@ fn measure_ual1_mantle() {
             (b.1 - a.1).to_degrees()
         );
     };
-    describe("source (UAL1 rig)", &source_clip);
+    describe("source (UAL2 rig)", &source_clip);
     let limbs: [(&str, &[B]); 3] = [
         ("leg", &LEG),
         ("arm", &[B::LeftUpperArm, B::LeftLowerArm, B::LeftHand]),
@@ -229,5 +231,19 @@ fn measure_ual1_mantle() {
         let start = clip.root_at(0.0).0;
         let feet: Vec<f32> = [B::LeftFoot, B::RightFoot].iter().map(|f| pos(&target, &model, &map, *f).y + start.y).collect();
         println!("  frame 0 ankle heights {:.3} / {:.3} m", feet[0], feet[1]);
+        // Timeline in the clip's start frame (root at t added; yaw ignored):
+        // where the hands and feet are, to read contact timing by eye.
+        println!("  t s | root y z | hand L y z | hand R y z | ankle L y | ankle R y");
+        for i in 0..=12u8 {
+            let t = clip.duration * f32::from(i) / 12.0;
+            let model = model_at(&target, &clip, t);
+            let root = clip.root_at(t).0;
+            let at = |b: B| pos(&target, &model, &map, b) + root;
+            let (hl, hr, fl, fr) = (at(B::LeftHand), at(B::RightHand), at(B::LeftFoot), at(B::RightFoot));
+            println!(
+                "  {t:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} | {:.2}",
+                root.y, root.z, hl.y, hl.z, hr.y, hr.z, fl.y, fr.y
+            );
+        }
     }
 }

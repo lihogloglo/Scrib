@@ -13,6 +13,11 @@
 //!   [`Prompt`] / [`EventKind::Activate`] hook.
 //! - [`ActionState`]: plain serde, integer clocks, stable ids, no singleton player
 //!   (net.md rules 1-8).
+//!
+//! Slice B2a: the Warp owner ([`Owner::Warp`]): a rule with a ledge probe ([`ProbeNeed`]) plans an
+//! [`sf_anim::WarpPlan`] over its slot chain's root path ([`SlotSource::root`]) at start, keeps it
+//! in [`ActionState::warp`] and writes the root pose and chain progress each tick
+//! ([`ActionOutput::warp`]); [`TRAVERSAL_RULES`] holds `traverse.mantle.waist`.
 
 mod command;
 mod ids;
@@ -23,6 +28,8 @@ mod windows;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_warp;
 
 pub use command::{
     ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS,
@@ -30,15 +37,19 @@ pub use command::{
 };
 pub use ids::{CharacterId, ClockTime, PlayerId, RuleKey, SlotKey, TICK_HZ, TagId, TargetId, Tick, fnv1a32};
 pub use rule::{
-    Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, Mode, MoveKind, MoveRule, Origin, Owner, Phase, RuleSet,
-    RuleSetBuilder, WindowPolicy,
+    Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, Mode, MoveKind, MoveRule, ObstacleClass, Origin, Owner, Phase,
+    ProbeNeed, RuleSet, RuleSetBuilder, WarpTarget, WindowPolicy,
 };
 pub use state::{
-    ActionClock, ActionState, BodyMemory, CharacterParams, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers,
+    ActionClock, ActionState, BodyMemory, CharacterParams, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers, WarpState,
 };
-pub use step::{ActionEvent, ActionOutput, EventKind, Focus, MAX_SETTLE, Prompt, Refusal, Refused, Sense, StepCtx, step};
+pub use step::{ActionEvent, ActionOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, Sense, StepCtx, WarpOutput, step};
 pub use windows::{Gates, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, gates, locate};
 
 /// The framework's base move rules (A1: locomotion, air, landing bands, activation), loaded as
 /// [`Origin::Framework`] before content packs.
 pub const BASE_RULES: &str = include_str!("base_rules.ron");
+
+/// The framework's traversal rules (B2a: the waist-high mantle), added after [`BASE_RULES`] by hosts
+/// whose slot source has the traversal slots and whose shell senses obstacles ([`Sense::obstacle`]).
+pub const TRAVERSAL_RULES: &str = include_str!("traversal_rules.ron");

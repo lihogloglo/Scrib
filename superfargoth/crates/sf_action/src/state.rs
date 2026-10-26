@@ -79,6 +79,19 @@ pub struct ActionState {
     pub buffer: InputBuffer,
     pub timers: Timers,
     pub body: BodyMemory,
+    /// The Warp owner's plan while a Warp move plays (B2a); `None` otherwise. Not serialized yet:
+    /// the save section's postcard shape is versioned (`sf_save_bevy` `CHARACTER_VERSION`), and a
+    /// save mid-mantle (under a second) loads with no plan, so the shell treats the move as Sim
+    /// until it ends. Serialize it with a version bump when co-op (F) replicates moves.
+    #[serde(skip)]
+    pub warp: Option<WarpState>,
+}
+
+/// A Warp move's plan, fixed at start. Positions are relative to the feet on the start tick (the
+/// shell keeps that world anchor), axes are world axes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WarpState {
+    pub plan: sf_anim::WarpPlan,
 }
 
 impl ActionState {
@@ -92,6 +105,7 @@ impl ActionState {
             buffer: InputBuffer::default(),
             timers: Timers::default(),
             body: BodyMemory { grounded: true, ..BodyMemory::default() },
+            warp: None,
         }
     }
 }
@@ -155,6 +169,10 @@ pub struct CharacterParams {
     pub deadzone: f32,
     /// Stick length from which the gait is Run (below: Walk, scaled).
     pub run_threshold: f32,
+    /// Capsule height, m: probe height bands are in character heights.
+    pub height: f32,
+    /// Capsule radius, m: a ledge-top warp target stays this far inside the far edge.
+    pub radius: f32,
     pub gaits: GaitTable,
     pub normal: ModeProfile,
     pub sneak: ModeProfile,
@@ -170,6 +188,8 @@ impl Default for CharacterParams {
             jump_buffer_ticks: 6,
             deadzone: 0.15,
             run_threshold: 0.6,
+            height: 1.8,
+            radius: 0.3,
             gaits: GaitTable::default(),
             normal: ModeProfile::default(),
             sneak: ModeProfile::default(),

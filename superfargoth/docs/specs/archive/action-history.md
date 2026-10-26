@@ -435,3 +435,29 @@ build the `RootChain`), keep the `WarpPlan` in `ActionState`, refuse with `MaxCo
 the gameplay body to `plan.root_at(chain, clock)`. The shell can evaluate the same plan at render-rate
 progress for interpolation. Open: `from`/`end_early` on chain parts (the chain path assumes 0/0),
 vertical-only vs full 3D correction (all three axes now), multi-window plans, `steer`.
+
+## As built (B2a part 1, 2026-10-26): Warp owner and the waist mantle clip
+
+**Clip.** `sources.ron` source `quaternius_ual2` (CC0, `Universal Animation Library 2
+[Standard]/Unreal-Godot/UAL2_Standard.glb`, auto-maps clean like UAL1); `traverse.mantle.waist` =
+`ClimbUp_1m_RM`; UAL1 `ClimbLedge_RM` (a hang top-out: 2.47 m straight up) moved to
+`traverse.climb.up` for B3. Retargeted onto `base_anim.nif` (`measure_mantle_waist`): 0.667 s,
+21 frames at 30 Hz, root rises 1.19 m and travels 2.00 m forward on a straight line (source 1.00 /
+1.68 m; the legs scale 1.2). Frame 0 is mid-stride (one ankle 0.6 m up); the hands reach the lip
+zone (~1.2-1.3 m up, ~0.9 m ahead) at 0.11-0.22 s, the lead foot is on top from ~0.28 s.
+
+**Rule numbers.** `inset` 1.0 m and `refuse_ratio` 0.35 against that root (|chain| 2.33 m): from
+the face (0.3 m) the correction is ~0.73 m at a 1.0 m top (ratio 0.31), ~0.77 m at 1.5 m;
+height band 0.3-0.85 h (0.54-1.53 m at h = 1.8; the probe's own `Mantle` class reaches 1.5 h).
+
+**Choices.** The target comes from the probe hit (lip, normal, height, depth) rather than
+`ContextHit::warp_target`, so the inset stays rule data. The output root is the pose at the end of
+the tick (clock + one tick), so the last tick lands on the target. `ActionState::warp` is
+`serde(skip)`: the save section is strict postcard (`CHARACTER_VERSION` 1); a save mid-mantle
+loads with no plan. Bump the version and serialize it when co-op replicates moves.
+
+**Tests** (`sf_action` `tests_warp`): Jump+forward at a 1.0 m lip starts the mantle (no launch, no
+steering), the plan ends ≤ 2 cm from the top, progress rises to the clip end each tick and the
+body ends on the top, then `loco`; `Up` also mantles; no forward input, Sneak (`Mode`), 2.5 m /
+0.3 m tops or a vault-class obstacle (`Probe`), a far lip (`MaxCorrection`) and a slot without a
+root path (`NoRootPath`) each refuse into `air.jump`; a shallow top keeps the target a radius inside.

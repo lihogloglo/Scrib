@@ -10,9 +10,11 @@ use serde::{Deserialize, Serialize};
 use sf_controller::{Gait, LocomotionIntent};
 
 use crate::command::{ActionClass, ClassSet, Command};
-use crate::ids::{CharacterId, RuleKey, SlotKey, TagId, TargetId, Tick};
-use crate::rule::{CompiledRule, ExitOn, Launch, Mode, Phase, RuleSet};
-use crate::state::{ActionClock, ActionState, CharacterParams};
+use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
+
+use crate::ids::{CharacterId, ClockTime, RuleKey, SlotKey, TagId, TargetId, Tick};
+use crate::rule::{CompiledRule, ExitOn, Launch, Mode, ObstacleClass, Owner, Phase, ProbeNeed, RuleSet, WarpTarget};
+use crate::state::{ActionClock, ActionState, CharacterParams, WarpState};
 use crate::windows::{Gates, SlotSource, gates, locate};
 
 /// Extra choose rounds when a move ends or exits on its first tick (bounded settle).
@@ -40,6 +42,25 @@ pub struct Sense {
     /// Facing, radians (yaw 0 faces +Z).
     pub yaw: f32,
     pub focus: Option<Focus>,
+    /// The context probe's obstacle ahead (the shell asks along the stick when it could matter).
+    pub obstacle: Option<Obstacle>,
+}
+
+/// An obstacle ahead, classified by the shell's context probe. Positions are relative to the
+/// feet, world axes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Obstacle {
+    pub class: ObstacleClass,
+    /// The lip (front top edge), from the feet.
+    pub lip: Vec3,
+    /// The face normal, toward the character.
+    pub normal: Vec3,
+    /// Top above the feet, m.
+    pub height: f32,
+    /// Depth from the lip along the probe direction, m (`f32::INFINITY`: deeper than the scan).
+    pub depth: f32,
+    /// Room above the top, m.
+    pub clearance: f32,
 }
 
 /// Shared, read-only inputs of a step.
@@ -82,6 +103,12 @@ pub enum Refused {
     Speed,
     VSpeed,
     Focus,
+    /// No obstacle of the rule's classes and height band.
+    Probe,
+    /// A Warp rule's slots have no root path.
+    NoRootPath,
+    /// The warp correction is over the rule's `refuse_ratio`.
+    MaxCorrection,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,8 +145,19 @@ pub struct ActionOutput {
     /// Vertical speed to set before the mover step, m/s.
     pub launch: Option<f32>,
     pub prompt: Option<Prompt>,
+    /// Warp owner: where the body is at the end of this tick and the chain progress the graph plays.
+    pub warp: Option<WarpOutput>,
     pub events: Vec<ActionEvent>,
     pub refusals: Vec<Refusal>,
+}
+
+/// A Warp move's pose at the end of a tick.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WarpOutput {
+    /// Feet position and yaw relative to the feet on the move's start tick (world axes).
+    pub root: RootPose,
+    /// Seconds into the slot chain (`GraphInstance::set_slot_progress`).
+    pub progress: f32,
 }
 
 impl ActionOutput {
@@ -128,6 +166,7 @@ impl ActionOutput {
         self.started = false;
         self.launch = None;
         self.prompt = None;
+        self.warp = None;
         self.events.clear();
         self.refusals.clear();
     }
@@ -144,6 +183,8 @@ struct Facts {
     forward: bool,
     mode: Mode,
     focus: Option<Focus>,
+    obstacle: Option<Obstacle>,
+    body_height: f32,
 }
 
 impl Facts {
@@ -179,6 +220,13 @@ impl Facts {
             match self.focus {
                 Some(f) if tags.is_empty() || tags.contains(&f.tag) => {}
                 _ => return Err(Refused::Focus),
+            }
+        }
+        if let Some(ProbeNeed::Obstacle { classes, height: (lo, hi) }) = &e.probe {
+            let h = self.body_height.max(1e-3);
+            match self.obstacle {
+                Some(o) if classes.contains(&o.class) && (lo * h..=hi * h).contains(&o.height) => {}
+                _ => return Err(Refused::Probe),
             }
         }
         Ok(())
@@ -238,6 +286,8 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         forward: stick_active && stick.normalize_or_zero().dot(facing) >= FORWARD_COS,
         mode: state.mode.mode,
         focus: sense.focus,
+        obstacle: sense.obstacle,
+        body_height: p.height,
     };
 
     // 4-8. Candidates, pick, start; settle while the new move ends or exits at once.
@@ -282,16 +332,16 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
             if !candidate {
                 continue;
             }
-            match facts.entry(r) {
-                Ok(()) => {
-                    winner = Some(i);
+            match facts.entry(r).and_then(|()| plan_warp(ctx, r, sense)) {
+                Ok(plan) => {
+                    winner = Some((i, plan));
                     break;
                 }
                 Err(reason) if requested => out.refusals.push(Refusal { rule: r.key, reason }),
                 Err(_) => {}
             }
         }
-        let Some(i) = winner else {
+        let Some((i, plan)) = winner else {
             // Requests wait for windows, not for predicates: one that could fire now but no
             // rule took is dropped (its refusal is logged), so a stale press never fires later.
             state.buffer.latched = state.buffer.latched.intersection(ClassSet(!firing.0));
@@ -303,20 +353,72 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         if let Some(old) = cur {
             out.events.push(event(None, EventKind::MoveEnd(rules.at(old).key)));
         }
-        start(ctx, rules.at(i), state, sense, facts.mode, out);
+        start(ctx, rules.at(i), state, sense, facts.mode, plan, out);
         started[round] = i;
         cur = Some(i);
     }
 
     // 9. Move (Sim owner): the mover's intent.
-    let steer = cur.is_none_or(|i| rules.at(i).rule.steer);
-    out.intent = if steer && stick_active { intent(p, facts.mode, stick, sense.yaw) } else { LocomotionIntent::IDLE };
+    out.intent = if stick_active && cur.is_none_or(|i| steers(rules.at(i))) { intent(p, facts.mode, stick, sense.yaw) } else { LocomotionIntent::IDLE };
 
     write_output(ctx, state, cur, &facts, out);
 }
 
+/// The stick steers the Sim owner unless the rule says no; never a Warp owner.
+fn steers(r: &CompiledRule) -> bool {
+    r.rule.steer && !matches!(r.rule.owner, Owner::Warp { .. })
+}
+
+/// Warp owner: the planned root at the end of this tick (the clock one tick on, clamped to the
+/// chain), so the last tick of the move lands on the target.
+fn write_warp(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, out: &mut ActionOutput) {
+    let (Some(r), Some(w)) = (cur.map(|i| ctx.rules.at(i)), state.warp) else { return };
+    if !matches!(r.rule.owner, Owner::Warp { .. }) {
+        return;
+    }
+    let t = ClockTime(state.clock.elapsed.0.saturating_add(u32::from(state.clock.rate))).secs();
+    out.warp = with_root_path(r, ctx.slots, |path| {
+        let t = t.min(path.duration());
+        WarpOutput { root: w.plan.root_at(path, t), progress: t }
+    });
+}
+
+/// Runs `f` on the rule's slot chain root path (one slot: its path; several: a [`RootChain`]).
+/// `None` if a slot has no root path.
+fn with_root_path<R>(r: &CompiledRule, slots: &dyn SlotSource, f: impl FnOnce(&dyn RootPath) -> R) -> Option<R> {
+    if let [one] = r.slots.as_slice() {
+        return slots.root(*one).map(f);
+    }
+    let parts = r.slots.iter().map(|k| slots.root(*k)).collect::<Option<Vec<_>>>()?;
+    Some(f(&RootChain::new(parts)))
+}
+
+/// A Warp rule's plan (validators `EndPoseFree` via the probe's room check, `MaxCorrection`):
+/// start at the feet facing into the face, target on top `inset` past the lip (kept a radius
+/// inside a shallower top). Other owners plan nothing.
+fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense) -> Result<Option<WarpState>, Refused> {
+    let Owner::Warp { target: WarpTarget::LedgeTop { inset }, profile, refuse_ratio, .. } = r.rule.owner else {
+        return Ok(None);
+    };
+    let o = sense.obstacle.ok_or(Refused::Probe)?;
+    let into = Vec3::new(-o.normal.x, 0.0, -o.normal.z).normalize_or_zero();
+    if into == Vec3::ZERO {
+        return Err(Refused::Probe);
+    }
+    let yaw = into.x.atan2(into.z);
+    let room = if o.depth.is_finite() { (o.depth - ctx.params.radius).max(0.0) } else { inset };
+    let top = Vec3::new(o.lip.x, o.height, o.lip.z) + into * inset.min(room);
+    let plan = with_root_path(r, ctx.slots, |path| {
+        WarpPlan::try_new(path, RootPose::new(Vec3::ZERO, yaw), RootPose::new(top, yaw), profile, refuse_ratio)
+    })
+    .ok_or(Refused::NoRootPath)?
+    .map_err(|_| Refused::MaxCorrection)?;
+    Ok(Some(WarpState { plan }))
+}
+
 /// 10. Output: move, slot chain, playhead, and the "press to use" prompt.
 fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, facts: &Facts, out: &mut ActionOutput) {
+    write_warp(ctx, state, cur, out);
     let rules = ctx.rules;
     out.rule = state.mov;
     let Some(r) = cur.map(|i| rules.at(i)) else {
@@ -373,13 +475,23 @@ fn body_edges(state: &mut ActionState, sense: &Sense, p: &CharacterParams, tick:
 }
 
 /// 7. Start: set the move, clear the buffer, apply first-tick launches, emit the first response.
-fn start(ctx: &StepCtx<'_>, r: &CompiledRule, state: &mut ActionState, sense: &Sense, mode: Mode, out: &mut ActionOutput) {
+#[allow(clippy::too_many_arguments)]
+fn start(
+    ctx: &StepCtx<'_>,
+    r: &CompiledRule,
+    state: &mut ActionState,
+    sense: &Sense,
+    mode: Mode,
+    warp: Option<WarpState>,
+    out: &mut ActionOutput,
+) {
     let (p, tick) = (ctx.params, out.tick);
     let event = |target, kind| ActionEvent { tick, source: ctx.source, target, kind };
     state.mov = r.key;
     state.started = tick;
     state.clock = ActionClock::default();
     state.buffer.latched = ClassSet::EMPTY;
+    state.warp = warp;
     if r.classes.contains(ActionClass::Jump) {
         state.timers.jump_pressed = None;
     }
