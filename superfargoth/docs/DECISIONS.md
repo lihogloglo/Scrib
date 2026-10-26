@@ -1523,3 +1523,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-26 (docs S6b): correction: the lamp cube cache was not deleted in reset A; B1 measured it and kept it (`sf_shadow_cache_bevy`). The 2026-10-21 reset entry's "deleted in A" is superseded by the B1 entry.
 - 2026-10-26 (owner): BSL-1.0 allowed per crate for `clipboard-win` and `error-code` only (Bevy `system_clipboard`, console
   paste; `deny.toml` exceptions). `cargo_turn.sh`: a `cargo run`/`cargo dev` that only keeps a program open no longer holds the build slot.
+- 2026-10-26 (owner): dev runs (`view`, `scene`, `cargo dev`) always skip the main menu and character creation; only the release
+  start path shows them. Swimming + underwater and buoyancy move from Phase 4 water polish to Phase 3 (ROADMAP 3.6, 3.7).

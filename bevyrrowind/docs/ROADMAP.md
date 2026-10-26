@@ -68,14 +68,16 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` (interior, exterior name/region/grid), Down/Enter on suggestions, paste built; CO-1 awaiting owner (2026-10-26). Left: contact shadows live (SH-16), other `--off` parts, console functions (TGM/TAI/TFOW/TWF/COE...), `set x to y`.
 - [~] 1.14 Build churn: workspace-hack (`cargo hakari`) built, covers the merged workspace; gates re-measured 2026-10-26 after the split: no-op 1.2 s, touch app 5.6 s, touch `mw_doors_bevy` 10.7 s miss (perf.md "Dev loop"); clean build not measured; fix needs an owner call.
 
-**Next session order (owner 2026-10-26): keep building Phase 2, one big debug pass later.** Slices in order (one deliverable each): main menu screen (framework), new game into Seyda Neen, load from the main menu; inventory stack counts, container window (framework), looting containers; HUD leftovers (`.sessions/_archive/hud-2026-10-26.md`). Then the Phase 2 done test end to end.
+**Next session order (owner 2026-10-26): keep building Phase 2, one big debug pass later.** Slices in order (one deliverable each): main menu screen (framework), new game into Seyda Neen, load from the main menu; inventory stack counts, container window (framework), looting containers. Then the Phase 2 done test end to end.
 
 ## Phase 2: a playable vertical slice (the basics)
 
 Done when: new game in Seyda Neen → walk in third person → talk to Fargoth → get his ring back → journal entry →
 save, quit, load. Break it down (and write the missing specs: dialogue, journal, saves) before building.
+Dev mode (owner 2026-10-26): dev runs (`view`, `scene`, `cargo dev`) always skip the main menu and character creation and start
+in the world; only the release start path (or a session working on the menu) shows them. Character creation is not in Phase 2.
 
-- [~] 2.1 Player: third-person controller + camera + use prompt (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`, `player.rs`); works in game (owner 2026-10-25), PL-1 confirmed. Items: E takes loose items (`inventory.rs`), IV-1 awaiting owner. Owner notes (log only): too much inertia; carried object sinks the capsule (3.3). Left: container window, ownership/theft, stack counts.
+- [~] 2.1 Player: third-person controller + camera + use prompt (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`, `player.rs`); works in game (owner 2026-10-25), PL-1 confirmed. Items: E takes loose items with their reference stack count (`inventory.rs`), IV-1 awaiting owner. Owner notes (log only): too much inertia; carried object sinks the capsule (3.3). Left: container window, ownership/theft, gold piles (count x value).
 - [~] 2.1b Input (with 2.2 U6): `controls.rs` built, menu works; labels in `l10n/en/bevyrrowind.ftl`. Owner: everything HOLD by default (sprint holds, sneak toggles today): per-action hold/toggle option.
 - [~] 2.2 UI (`sf_ui*`, `sf_rpg_ui`): kit, Morrowind theme, HUD/message box, dialogue/journal/inventory screens built. Escape menu + options built 2026-10-26 (PM-1 awaiting owner; Save/Load open the save screen, 2.5). Minimal HUD in game 2026-10-26 (bars from the `player` record, compass heading, crosshair, use prompt; HD-1 awaiting owner). Next: 8-piece frames, inventory icons, theme hot reload.
 - [~] 2.3 Text: fonts, books and scrolls, notifications. Framework slices 1-2 built 2026-10-23 (`ui-text.md`); left:
@@ -95,12 +97,14 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [~] 3.3 Physics follow-ups. Fix plan (`specs/physics-fix-plan.md`) slices 1-10 built 2026-10-26 (no falls on load, items asleep until disturbed, OpenMW NIF collision, steady carry); PH-11 awaiting owner; slice 11 (player physics capsule) waits for the owner; leftovers in the plan's status. Older: hold/drag/throw (PH-4), shapeless items (PH-7), immovable candles (PH-1), ball through walls (archive 6a). Owner 2026-10-25: props jump on entering a room (spawn settling); held object vs capsule.
 - [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10 (CH-1/3, SB-5 awaiting owner); next stairs 5b, powered falls R3 (`animation-plan.md`).
 - [ ] 3.5 Combat (M10). Owner 2026-10-22: not Morrowind's rules; evaluate Funny-Bones/ELDEN-RING-Playermodel-Rust (MIT code, clips not shippable) as base for action.md E1; keep a hit-resolution seam (ARCHITECTURE §1b), classic swing later.
+- [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later.
+- [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 
 - [p] Weather polish: storm from Red Mountain (WE-5), tall clouds, ash, splashes (PR2), wetness/snow (SU1, SU2), tree wind (WD2, WD3). Owner 2026-10-21/22: cheap rain puddles + wet objects, persisted in saves, SSR reflections first (`research/borrow-audit-2026-10.md`).
 - [p] Water polish (WA-1 notes, WISHLIST §12): shore swash + gradual wavelets, textured foam, whitecaps,
-  weather-driven wave height (verify), crest SSS; W4 reflections, W5 underwater, W6 buoyancy, W7 rivers.
+  weather-driven wave height (verify), crest SSS; W4 reflections, caustics, W7 rivers (W5 underwater, W6 buoyancy are 3.6/3.7).
 - [p] RT as the Ultra tier (decision 2): exterior RT content, Solari sunset patch, `--rt` in the streamed view, characters in the RT scene, DL-4 contact bands, DL-2 open (needs a `solari,dlss` build).
 - [p] Raster GI & sky occlusion (owner 2026-10-21): Bevy 0.20 `IrradianceVolume`/sky-visibility probes baked per cell in `sf_bake` plus screen-space GI/bent normals.
 - [p] Foliage light transmission (WISHLIST §11).
