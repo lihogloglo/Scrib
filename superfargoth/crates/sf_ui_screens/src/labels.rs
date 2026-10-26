@@ -44,6 +44,11 @@ pub struct ScreenLabels {
     /// `inventory-weight`, `inventory-value`
     pub weight: String,
     pub value: String,
+    /// `container-take-all`, `container-take-count`, `container-inventory`: the container
+    /// screen's take-all button, its "how many?" dialog and the player pane's heading.
+    pub take_all: String,
+    pub take_count: String,
+    pub inventory: String,
     /// `saveload-save-title`, `saveload-load-title`: the save/load screen's heading.
     pub save_title: String,
     pub load_title: String,
@@ -115,6 +120,9 @@ impl Default for ScreenLabels {
             ok: s("OK"),
             weight: s("Weight"),
             value: s("Value"),
+            take_all: s("Take all"),
+            take_count: s("How many?"),
+            inventory: s("Inventory"),
             save_title: s("Save game"),
             load_title: s("Load game"),
             save: s("Save"),

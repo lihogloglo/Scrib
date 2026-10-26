@@ -4,7 +4,7 @@
 //! F1 dialogue, F2 journal, F3 inventory (1,000 stacks), F4 keybinds, F5 pause menu (Save
 //! disabled, to show a disabled entry), F6 options (the demo settings and the audio page;
 //! changes are only shown), F7 main menu (Continue disabled; choices are logged, Quit or
-//! Esc asks, then closes it); on a pad, Start (Esc)
+//! Esc asks, then closes it), F8 a container (a chest to loot); on a pad, Start (Esc)
 //! cycles them from the HUD and View (M) opens the inventory. B (Esc) closes a screen.
 //! Hold H to drain the HUD's health bar.
 //!
@@ -23,14 +23,14 @@ use sf_ui_bevy::{
     ScreenStackRes, SfUiPlugin, UiAction, UiActionEvent, UiKeymap, UiRegistryRes, UiScreenRoot,
     UiTextPlugin,
 };
-use sf_ui_screens::demo::{self, DemoInventory, DemoWorld};
+use sf_ui_screens::demo::{self, DemoContainer, DemoInventory, DemoWorld};
 use sf_ui_screens::{
     DialogueScreen, HudScreen, HudView, InventoryScreen, JournalUi, JournalUiPlugin,
     KeybindsScreen, MainMenuEvent, MainMenuScreen, OptionsModel, OptionsScreen, PauseChoice,
     PauseMenuModel, PauseMenuScreen, ScreenSystems, SfScreensPlugin,
 };
 
-const MENUS: [&str; 7] = [
+const MENUS: [&str; 8] = [
     "dialogue",
     "journal",
     "inventory",
@@ -38,6 +38,7 @@ const MENUS: [&str; 7] = [
     "pause",
     "options",
     "main_menu",
+    "container",
 ];
 
 fn main() -> AppExit {
@@ -73,11 +74,17 @@ fn main() -> AppExit {
     .insert_resource(InputFocusVisible(true))
     .insert_resource(demo::world(24, 40))
     .insert_resource(DemoInventory::new(1000))
+    .insert_resource(DemoContainer::default())
     .insert_resource(demo::hud())
     .add_systems(Startup, setup)
     .add_systems(
         Update,
-        (demo::host_dialogue, demo::host_inventory).after(ScreenSystems::Input),
+        (
+            demo::host_dialogue,
+            demo::host_inventory,
+            demo::host_container,
+        )
+            .after(ScreenSystems::Input),
     )
     .add_systems(
         Update,
@@ -124,7 +131,7 @@ fn open(
     registry: &UiRegistryRes,
     roots: &Query<(Entity, &UiScreenRoot)>,
     world: &mut DemoWorld,
-    inventory: &DemoInventory,
+    (inventory, chest): (&DemoInventory, &DemoContainer),
 ) {
     for (entity, root) in roots {
         if root.0.as_str() == id {
@@ -150,6 +157,9 @@ fn open(
             commands
                 .entity(root)
                 .insert(InventoryScreen::new(inventory.view()).with_stat_labels(labels));
+        }
+        "container" => {
+            commands.entity(root).insert(chest.screen(inventory));
         }
         "pause" => {
             let mut model = PauseMenuModel::default();
@@ -181,6 +191,7 @@ fn open_screens(
     roots: Query<(Entity, &UiScreenRoot)>,
     mut world: ResMut<DemoWorld>,
     inventory: Res<DemoInventory>,
+    chest: Res<DemoContainer>,
     mut next: Local<usize>,
 ) {
     let mut wanted = None;
@@ -192,6 +203,7 @@ fn open_screens(
         KeyCode::F5,
         KeyCode::F6,
         KeyCode::F7,
+        KeyCode::F8,
     ]
     .into_iter()
     .zip(MENUS)
@@ -225,7 +237,7 @@ fn open_screens(
             &registry,
             &roots,
             &mut world,
-            &inventory,
+            (&inventory, &chest),
         );
     }
 }
@@ -284,6 +296,7 @@ fn drive_autotest(
     focus: Res<InputFocus>,
     mut world: ResMut<DemoWorld>,
     inventory: Res<DemoInventory>,
+    chest: Res<DemoContainer>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Some(pad) = test.pad else {
@@ -313,7 +326,7 @@ fn drive_autotest(
                 &registry,
                 &roots,
                 &mut world,
-                &inventory,
+                (&inventory, &chest),
             );
         }
         10 | 20 => press(&mut gamepad, GamepadButton::DPadDown, true),

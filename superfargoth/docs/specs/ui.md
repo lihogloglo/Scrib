@@ -350,6 +350,10 @@ Main menu (2026-10-26, framework only): `MainMenuScreen` over `MainMenuModel` (a
 label (localized), enabled }`, optional `quit` id that asks Yes/No first, optional `back` id Back chooses (else Back
 does nothing), `title_image` / `background` image slots, `title_text`). Sends `MainMenuEvent { screen, id }`; never
 closes itself. Parts `sf-main-menu-*`, each entry classed by its id.
+Container (2026-10-26, framework only): `ContainerScreen` over two `InventoryView`s (container left, player right) on
+the inventory's shared grid/tooltip/count-dialog parts. A or click moves a stack whole, X asks how many (>1), Y or
+"Take all" takes all, drag onto the other pane moves, LB/RB or the side edge switch panes; `owned` classes the pane.
+Sends `ContainerEvent` (`Move { from, to, stack, count }`, `TakeAll { from, to }`); the app applies and re-syncs.
 
 ### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
 

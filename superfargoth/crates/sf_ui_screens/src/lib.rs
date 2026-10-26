@@ -14,6 +14,9 @@
 //! - [`inventory`]: the inventory over `sf_ui_inventory`: virtual icon grid, drag and drop,
 //!   the split dialog and tooltips with compare-with-equipped. Intents go out as
 //!   [`InventoryEvent`]s.
+//! - [`container`]: the container (loot) window: the container's and the player's views side
+//!   by side on the inventory's grid parts; move a stack (whole, or how many), take all.
+//!   Intents go out as [`ContainerEvent`]s.
 //! - [`keybinds`]: the keybinds screen over `sf_ui_bevy::UiKeymap`: capture flow, conflict
 //!   question, glyphs for the last-used pad.
 //! - [`saveload`]: the save/load screen over an app-filled [`SaveLoadModel`]: saves newest
@@ -37,6 +40,7 @@
 //!
 //! Nothing here names a game: content packs bring names, icons, themes and the host logic.
 
+pub mod container;
 pub mod dialogue;
 pub mod hud;
 pub mod inventory;
@@ -60,6 +64,10 @@ use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
 use sf_ui_bevy::{ScreenStackRes, UiScreenRoot, UiSystems, UiTextSystems};
 
+pub use container::{
+    ContainerButton, ContainerEvent, ContainerIntent, ContainerPane, ContainerParts,
+    ContainerScreen, ContainerSide,
+};
 pub use dialogue::{DialogueRequestEvent, DialogueScreen};
 pub use hud::{HudBar, HudScreen, HudSlot, HudView, PromptLabels, UsePrompt};
 pub use inventory::{InventoryEvent, InventoryGridStyle, InventoryIntent, InventoryScreen};
@@ -110,6 +118,7 @@ impl Plugin for SfScreensPlugin {
             .init_resource::<InventoryGridStyle>()
             .add_message::<DialogueRequestEvent>()
             .add_message::<InventoryEvent>()
+            .add_message::<ContainerEvent>()
             .add_message::<SaveLoadEvent>()
             .add_message::<PauseMenuEvent>()
             .add_message::<MainMenuEvent>()
@@ -129,6 +138,13 @@ impl Plugin for SfScreensPlugin {
             .add_observer(inventory::on_cell_drag_end)
             .add_observer(inventory::on_cell_drop)
             .add_observer(inventory::on_inventory_removed)
+            .add_observer(container::on_container_button)
+            .add_observer(container::on_container_cell_over)
+            .add_observer(container::on_container_drag_start)
+            .add_observer(container::on_container_drag)
+            .add_observer(container::on_container_drag_end)
+            .add_observer(container::on_container_drop)
+            .add_observer(container::on_container_removed)
             .configure_sets(
                 Update,
                 (
@@ -147,6 +163,7 @@ impl Plugin for SfScreensPlugin {
                     hud::spawn_hud,
                     keybinds::spawn_keybinds,
                     inventory::spawn_inventory,
+                    container::spawn_container,
                     saveload::spawn_saveload,
                     pause_menu::spawn_pause_menu,
                     main_menu::spawn_main_menu,
@@ -160,6 +177,7 @@ impl Plugin for SfScreensPlugin {
                     dialogue::dialogue_input,
                     keybinds::keybinds_input,
                     inventory::inventory_input,
+                    container::container_input,
                     saveload::saveload_input,
                     pause_menu::pause_menu_input,
                     main_menu::main_menu_input,
@@ -175,6 +193,7 @@ impl Plugin for SfScreensPlugin {
                     hud::sync_hud,
                     keybinds::sync_keybinds,
                     inventory::sync_inventory,
+                    container::sync_container,
                     saveload::sync_saveload,
                     pause_menu::sync_pause_menu,
                     main_menu::sync_main_menu,

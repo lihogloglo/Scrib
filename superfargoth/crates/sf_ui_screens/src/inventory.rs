@@ -34,7 +34,9 @@ use sf_ui_bevy::{
     RichImages, ScreenStackRes, UiAction, UiActionEvent, UiHandlesBack, UiLocalizer, UiNavEvent,
     UiOwnsFocus, UiScreenRoot, WHEEL_LINE,
 };
-use sf_ui_inventory::{Comparison, InventoryGrid, InventoryView, QuantityPicker, Verdict};
+use sf_ui_inventory::{
+    Comparison, Encumbrance, GridFrame, InventoryGrid, InventoryView, QuantityPicker, Verdict,
+};
 
 use crate::keyed::KeyedChildren;
 use crate::labels::ScreenLabels;
@@ -170,21 +172,13 @@ struct RowSlot {
 pub struct InventoryParts {
     tabs: KeyedChildren<usize>,
     tabs_seen: Option<(u64, usize)>,
-    viewport: Entity,
-    rows: Vec<RowSlot>,
-    thumb: Entity,
+    grid: GridPane,
     weight_bar: Entity,
     weight_text: Entity,
     value_text: Entity,
     totals_seen: Option<(u64, u64)>,
-    tooltip: Entity,
-    tooltip_text: Entity,
-    tooltip_seen: Option<(Entity, StackId, u64, Option<Comparison>)>,
-    split_shown: Option<(u32, u32)>,
-    split: Entity,
-    split_text: Entity,
-    split_bar: Entity,
-    split_ok: Entity,
+    tooltip: Tooltip,
+    split: SplitDialog,
     ghost: Entity,
     /// The focus last reported as [`InventoryIntent::Focused`].
     reported: Option<StackId>,
@@ -194,23 +188,17 @@ pub struct InventoryParts {
 impl InventoryParts {
     /// Row widgets in the pool (spawned so far).
     pub fn pool_len(&self) -> usize {
-        self.rows.len()
+        self.grid.pool_len()
     }
 
     /// Every cell widget in the pool.
     pub fn cells(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.rows
-            .iter()
-            .flat_map(|r| r.cells.iter().map(|c| c.entity))
+        self.grid.cells()
     }
 
     /// The cell showing `stack`, if it is in the window.
     pub fn cell_of(&self, stack: StackId) -> Option<Entity> {
-        self.rows
-            .iter()
-            .flat_map(|r| &r.cells)
-            .find(|c| c.bound.is_some_and(|b| b.0 == stack))
-            .map(|c| c.entity)
+        self.grid.cell_of(stack)
     }
 
     pub fn tab(&self, index: usize) -> Option<Entity> {
@@ -218,15 +206,549 @@ impl InventoryParts {
     }
 
     pub fn tooltip(&self) -> Entity {
-        self.tooltip
+        self.tooltip.root
     }
 
     pub fn split_dialog(&self) -> Entity {
-        self.split
+        self.split.root
     }
 
     pub fn viewport(&self) -> Entity {
-        self.viewport
+        self.grid.viewport
+    }
+}
+
+// ---------------------------------------------------------------- shared parts
+// The icon grid, tooltip, quantity dialog and drag ghost, shared with the container screen.
+
+/// A virtual icon grid over one [`InventoryView`]: the clipped viewport, its scrollbar and the
+/// pooled row widgets (one on the inventory screen, two on the container screen).
+#[derive(Debug)]
+pub(crate) struct GridPane {
+    pub(crate) viewport: Entity,
+    thumb: Entity,
+    rows: Vec<RowSlot>,
+}
+
+impl GridPane {
+    /// Spawns the viewport and its scrollbar under `body` (a row node).
+    pub(crate) fn spawn(commands: &mut Commands, body: Entity, colors: &ScreenColors) -> Self {
+        let viewport = commands
+            .spawn((
+                part("sf-inventory-grid"),
+                Node {
+                    flex_grow: 1.0,
+                    overflow: Overflow::clip(),
+                    ..Node::default()
+                },
+                ChildOf(body),
+            ))
+            .id();
+        let track = commands
+            .spawn((
+                part("sf-inventory-scrollbar"),
+                Node {
+                    width: Val::Px(6.0),
+                    ..Node::default()
+                },
+                BackgroundColor(colors.bar_track),
+                ChildOf(body),
+            ))
+            .id();
+        let thumb = commands
+            .spawn((
+                part("sf-inventory-scrollbar-thumb"),
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    ..Node::default()
+                },
+                BackgroundColor(colors.text),
+                ChildOf(track),
+            ))
+            .id();
+        Self {
+            viewport,
+            thumb,
+            rows: Vec::new(),
+        }
+    }
+
+    pub(crate) fn pool_len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub(crate) fn cells(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.rows
+            .iter()
+            .flat_map(|r| r.cells.iter().map(|c| c.entity))
+    }
+
+    pub(crate) fn cell_of(&self, stack: StackId) -> Option<Entity> {
+        self.rows
+            .iter()
+            .flat_map(|r| &r.cells)
+            .find(|c| c.bound.is_some_and(|b| b.0 == stack))
+            .map(|c| c.entity)
+    }
+
+    /// The stack `cell` shows now.
+    pub(crate) fn stack_of(&self, cell: Entity) -> Option<StackId> {
+        self.rows
+            .iter()
+            .flat_map(|r| &r.cells)
+            .find(|c| c.entity == cell)?
+            .bound
+            .map(|b| b.0)
+    }
+
+    /// Columns and viewport extent from the laid-out viewport (logical pixels).
+    pub(crate) fn fit(
+        &self,
+        grid: &mut InventoryGrid,
+        computed: &Query<&ComputedNode>,
+        style: &InventoryGridStyle,
+    ) {
+        let Ok(node) = computed.get(self.viewport) else {
+            return;
+        };
+        let size = node.size() * node.inverse_scale_factor();
+        if size.x > 0.0 && size.y > 0.0 {
+            let pitch = style.cell + Vec2::splat(style.gap);
+            // Whole cells that fit; at least one.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let columns = (((size.x + style.gap) / pitch.x).floor() as usize).max(1);
+            grid.set_columns(columns);
+            grid.set_viewport(size.y);
+            if (grid.cell_extent() - pitch.y).abs() > f32::EPSILON {
+                grid.set_cell_extent(pitch.y);
+            }
+        }
+    }
+
+    /// Binds the grid window `frame` of `view` to the pooled cells (rebinding only changed
+    /// cells) and places the scrollbar thumb. Returns the focused stack's cell.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn bind(
+        &mut self,
+        commands: &mut Commands,
+        nodes: &mut Query<&mut Node>,
+        mut images: Option<&mut RichImages>,
+        server: Option<&AssetServer>,
+        style: &InventoryGridStyle,
+        colors: &ScreenColors,
+        frame: &GridFrame,
+        view: &InventoryView,
+        held: Option<StackId>,
+    ) -> Option<Entity> {
+        for slot in &frame.released {
+            if let Some(row) = self.rows.get(*slot)
+                && let Ok(mut node) = nodes.get_mut(row.entity)
+            {
+                show(&mut node, false);
+            }
+        }
+        let focused = frame.focus.map(|(_, k)| k);
+        let mut focus_cell = None;
+        for binding in &frame.rows {
+            while self.rows.len() <= binding.slot {
+                let row = spawn_row(commands, self.viewport, frame.columns, style, colors);
+                self.rows.push(row);
+            }
+            let row = &mut self.rows[binding.slot];
+            if row.cells.len() != frame.columns {
+                fit_cells(commands, row, frame.columns, style, colors);
+            }
+            if let Ok(mut node) = nodes.get_mut(row.entity) {
+                show(&mut node, true);
+                let top = Val::Px(binding.offset);
+                if node.top != top {
+                    node.top = top;
+                }
+            }
+            for (i, cell) in row.cells.iter_mut().enumerate() {
+                let stack = binding.stacks.get(i).copied();
+                let state = stack.and_then(|s| {
+                    let version = view.rows().row_version(&s)?;
+                    Some((s, version, Some(s) == focused, Some(s) == held))
+                });
+                if focused.is_some() && stack == focused {
+                    focus_cell = Some(cell.entity);
+                }
+                if cell.bound == state {
+                    continue;
+                }
+                cell.bound = state;
+                commands.entity(cell.entity).insert(InventoryCell(stack));
+                // Only the last grid row has empty cells: hiding them shifts nothing.
+                if let Ok(mut node) = nodes.get_mut(cell.entity) {
+                    show(&mut node, state.is_some());
+                }
+                let Some((s, _, is_focused, is_held)) = state else {
+                    continue;
+                };
+                let Some(row_data) = view.row(s) else {
+                    continue;
+                };
+                commands.entity(cell.entity).insert(classes(
+                    "sf-inventory-cell",
+                    &[
+                        ("equipped", row_data.is_equipped()),
+                        ("focused", is_focused),
+                        ("held", is_held),
+                    ],
+                ));
+                let handle = row_data.info.icon.as_ref().and_then(|icon| {
+                    images
+                        .as_deref_mut()
+                        .and_then(|images| images.resolve(icon, server))
+                });
+                if let Ok(mut node) = nodes.get_mut(cell.icon) {
+                    show(&mut node, handle.is_some());
+                }
+                if let Some(handle) = handle {
+                    commands.entity(cell.icon).insert(ImageNode::new(handle));
+                }
+                commands
+                    .entity(cell.name)
+                    .insert(Text::new(row_data.info.name.clone()));
+                let count = row_data.stack.count;
+                commands.entity(cell.count).insert(Text::new(if count > 1 {
+                    count.to_string()
+                } else {
+                    String::new()
+                }));
+            }
+        }
+        if let Ok(mut node) = nodes.get_mut(self.thumb) {
+            let (start, length) = frame.thumb.unwrap_or((0.0, 1.0));
+            let (top, height) = (Val::Percent(start * 100.0), Val::Percent(length * 100.0));
+            place(&mut node, None, Some(top), None, Some(height));
+        }
+        focus_cell
+    }
+}
+
+/// The item tooltip: name, weight and value, stats (with deltas when compared), placed beside
+/// its cell inside the screen.
+#[derive(Debug)]
+pub(crate) struct Tooltip {
+    pub(crate) root: Entity,
+    text: Entity,
+    seen: Option<(Entity, StackId, u64, Option<Comparison>)>,
+}
+
+impl Tooltip {
+    pub(crate) fn spawn(commands: &mut Commands, screen: Entity, colors: &ScreenColors) -> Self {
+        let root = commands
+            .spawn((
+                panel(
+                    "sf-tooltip",
+                    Node {
+                        position_type: PositionType::Absolute,
+                        display: Display::None,
+                        min_width: Val::Px(180.0),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        ..Node::default()
+                    },
+                    colors,
+                ),
+                ZIndex(20),
+                Pickable::IGNORE,
+                ChildOf(screen),
+            ))
+            // Opaque: it lies over other cells.
+            .insert(BackgroundColor(colors.panel.with_alpha(1.0)))
+            .id();
+        let text = commands
+            .spawn((
+                part("sf-tooltip-text"),
+                Text::new(""),
+                colors.font(0.9),
+                TextColor(colors.text),
+                ChildOf(root),
+            ))
+            .id();
+        Self {
+            root,
+            text,
+            seen: None,
+        }
+    }
+
+    /// Shows the tip for `(cell, stack)` of `view` (hidden for `None`) beside the cell, right
+    /// of it or else left, inside `screen`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn sync(
+        &mut self,
+        commands: &mut Commands,
+        nodes: &mut Query<&mut Node>,
+        geometry: &Query<(&ComputedNode, &UiGlobalTransform)>,
+        screen: Entity,
+        tip: Option<(Entity, StackId)>,
+        view: &InventoryView,
+        compare: Option<&Comparison>,
+        stat_labels: &[(RecordId, String)],
+        labels: &ScreenLabels,
+        colors: &ScreenColors,
+    ) {
+        let tip =
+            tip.and_then(|(cell, stack)| Some((cell, stack, view.rows().row_version(&stack)?)));
+        if let Ok(mut node) = nodes.get_mut(self.root) {
+            show(&mut node, tip.is_some());
+            if let Some((cell, ..)) = tip
+                && let (Ok((c, c_at)), Ok((r, r_at)), Ok((t, _))) = (
+                    geometry.get(cell),
+                    geometry.get(screen),
+                    geometry.get(self.root),
+                )
+            {
+                let scale = r.inverse_scale_factor();
+                let cell_min = (c_at.translation - c.size() / 2.0) * scale;
+                let root_min = (r_at.translation - r.size() / 2.0) * scale;
+                let at = cell_min - root_min;
+                let (cell_w, tip_w, root_w) =
+                    (c.size().x * scale, t.size().x * scale, r.size().x * scale);
+                let right = at.x + cell_w + 4.0;
+                let left = if right + tip_w > root_w {
+                    (at.x - tip_w - 4.0).max(0.0)
+                } else {
+                    right
+                };
+                place(
+                    &mut node,
+                    Some(Val::Px(left)),
+                    Some(Val::Px(at.y)),
+                    None,
+                    None,
+                );
+            }
+        }
+        let Some((cell, stack, version)) = tip else {
+            self.seen = None;
+            return;
+        };
+        let compare = compare.filter(|c| c.candidate == stack).cloned();
+        let key = (cell, stack, version, compare.clone());
+        if self.seen.as_ref() == Some(&key) {
+            return;
+        }
+        commands.entity(self.text).despawn_related::<Children>();
+        if let Some(row) = view.row(stack) {
+            let mut lines: Vec<(String, Option<Verdict>)> = vec![(row.info.name.clone(), None)];
+            lines.push((
+                format!(
+                    "{} {:.1}  {} {}",
+                    labels.weight, row.info.weight, labels.value, row.info.value
+                ),
+                None,
+            ));
+            let stat_name = |id: &RecordId| {
+                stat_labels
+                    .iter()
+                    .find(|(s, _)| s == id)
+                    .map_or_else(|| id.as_str().to_owned(), |(_, l)| l.clone())
+            };
+            match &compare {
+                Some(c) => {
+                    for d in &c.stats {
+                        let value = d.candidate.unwrap_or(0.0);
+                        let text = if d.verdict == Verdict::Same {
+                            format!("{} {value}", stat_name(&d.stat))
+                        } else {
+                            format!("{} {value} ({:+})", stat_name(&d.stat), d.delta)
+                        };
+                        lines.push((text, Some(d.verdict)));
+                    }
+                }
+                None => {
+                    for (id, value) in &row.info.stats {
+                        lines.push((format!("{} {value}", stat_name(id)), None));
+                    }
+                }
+            }
+            for (i, (text, verdict)) in lines.into_iter().enumerate() {
+                let text = if i == 0 { text } else { format!("\n{text}") };
+                let (class, color) = match verdict {
+                    Some(Verdict::Better) => ("better", colors.link),
+                    Some(Verdict::Worse) => ("worse", colors.bar_fill),
+                    Some(Verdict::Changed) => ("changed", colors.new),
+                    Some(Verdict::Same) | None => ("", colors.text),
+                };
+                commands.spawn((
+                    TextSpan::new(text),
+                    colors.font(0.9),
+                    TextColor(color),
+                    classes("sf-tooltip-line", &[(class, !class.is_empty())]),
+                    ChildOf(self.text),
+                ));
+            }
+        }
+        self.seen = Some(key);
+    }
+}
+
+/// The quantity dialog (split a stack, move part of one): a title, "value / total", a bar and
+/// less / more / OK / cancel buttons tagged with the screen's button components.
+#[derive(Debug)]
+pub(crate) struct SplitDialog {
+    pub(crate) root: Entity,
+    text: Entity,
+    bar: Entity,
+    pub(crate) ok: Entity,
+    shown: Option<(u32, u32)>,
+}
+
+impl SplitDialog {
+    /// `buttons`: less, more, OK, cancel.
+    pub(crate) fn spawn<B: Component + Copy>(
+        commands: &mut Commands,
+        screen: Entity,
+        title: String,
+        buttons: [B; 4],
+        labels: &ScreenLabels,
+        colors: &ScreenColors,
+    ) -> Self {
+        let root = commands
+            .spawn((
+                panel(
+                    "sf-inventory-split",
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent(25.0),
+                        top: Val::Percent(35.0),
+                        width: Val::Percent(50.0),
+                        padding: UiRect::all(Val::Px(12.0)),
+                        row_gap: Val::Px(8.0),
+                        flex_direction: FlexDirection::Column,
+                        display: Display::None,
+                        ..Node::default()
+                    },
+                    colors,
+                ),
+                ZIndex(15),
+                ChildOf(screen),
+            ))
+            .id();
+        commands.spawn((
+            label("sf-inventory-split-title", title, colors),
+            ChildOf(root),
+        ));
+        let text = commands
+            .spawn((label("sf-inventory-split-count", "", colors), ChildOf(root)))
+            .id();
+        let bar = spawn_bar(
+            commands,
+            root,
+            "sf-inventory-split-bar",
+            StatBar {
+                current: 0.0,
+                max: 1.0,
+                kind: String::new(),
+            },
+            colors,
+        );
+        let row = commands
+            .spawn((
+                part("sf-inventory-split-buttons"),
+                Node {
+                    column_gap: Val::Px(6.0),
+                    ..Node::default()
+                },
+                ChildOf(root),
+            ))
+            .id();
+        let mut ok = Entity::PLACEHOLDER;
+        let names = [
+            ("sf-inventory-split-less", "-".to_owned()),
+            ("sf-inventory-split-more", "+".to_owned()),
+            ("sf-inventory-split-ok", labels.ok.clone()),
+            ("sf-inventory-split-cancel", labels.cancel.clone()),
+        ];
+        for (i, ((name, text), b)) in names.into_iter().zip(buttons).enumerate() {
+            let (e, _) = spawn_button(commands, Some(row), name, text, colors);
+            commands.entity(e).insert(b);
+            if i == 2 {
+                ok = e;
+            }
+        }
+        Self {
+            root,
+            text,
+            bar,
+            ok,
+            shown: None,
+        }
+    }
+
+    /// Shows `(picker, total)` as "value / total" (hidden for `None`).
+    pub(crate) fn sync(
+        &mut self,
+        commands: &mut Commands,
+        nodes: &mut Query<&mut Node>,
+        bars: &mut Query<&mut StatBar>,
+        picker: Option<(&QuantityPicker, u32)>,
+    ) {
+        if let Ok(mut node) = nodes.get_mut(self.root) {
+            show(&mut node, picker.is_some());
+        }
+        let key = picker.map(|(p, total)| (p.value(), total));
+        if let Some((picker, total)) = picker
+            && self.shown != key
+        {
+            self.shown = key;
+            commands
+                .entity(self.text)
+                .insert(Text::new(format!("{} / {total}", picker.value())));
+            if let Ok(mut bar) = bars.get_mut(self.bar) {
+                bar.set_if_neq(StatBar {
+                    current: picker.fraction(),
+                    max: 1.0,
+                    kind: String::new(),
+                });
+            }
+        }
+    }
+}
+
+/// The drag ghost: a window-level node above every screen, below message boxes (its screen
+/// despawns it with its parts).
+pub(crate) fn spawn_ghost(commands: &mut Commands, colors: &ScreenColors) -> Entity {
+    commands
+        .spawn((
+            part("sf-inventory-drag"),
+            Node {
+                position_type: PositionType::Absolute,
+                display: Display::None,
+                padding: UiRect::all(Val::Px(4.0)),
+                ..Node::default()
+            },
+            BackgroundColor(colors.cell),
+            GlobalZIndex(sf_ui_bevy::MESSAGE_BOX_Z - 1),
+            Pickable::IGNORE,
+            children![(Text::new(""), colors.font(0.9), TextColor(colors.text))],
+        ))
+        .id()
+}
+
+/// Shows the ghost by the pointer at `at`, with `name` (`None`: keeps its text).
+pub(crate) fn move_ghost(
+    commands: &mut Commands,
+    nodes: &mut Query<&mut Node>,
+    children: &Query<&Children>,
+    ghost: Entity,
+    at: Vec2,
+    name: Option<String>,
+) {
+    if let Ok(mut node) = nodes.get_mut(ghost) {
+        show(&mut node, true);
+        node.left = Val::Px(at.x + 8.0);
+        node.top = Val::Px(at.y + 8.0);
+    }
+    if let Some(name) = name
+        && let Some(text) = children.get(ghost).ok().and_then(|c| c.first().copied())
+    {
+        commands.entity(text).insert(Text::new(name));
     }
 }
 
@@ -271,40 +793,7 @@ pub(crate) fn spawn_inventory(
                 ChildOf(root),
             ))
             .id();
-        let viewport = commands
-            .spawn((
-                part("sf-inventory-grid"),
-                Node {
-                    flex_grow: 1.0,
-                    overflow: Overflow::clip(),
-                    ..Node::default()
-                },
-                ChildOf(body),
-            ))
-            .id();
-        let track = commands
-            .spawn((
-                part("sf-inventory-scrollbar"),
-                Node {
-                    width: Val::Px(6.0),
-                    ..Node::default()
-                },
-                BackgroundColor(colors.bar_track),
-                ChildOf(body),
-            ))
-            .id();
-        let thumb = commands
-            .spawn((
-                part("sf-inventory-scrollbar-thumb"),
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    ..Node::default()
-                },
-                BackgroundColor(colors.text),
-                ChildOf(track),
-            ))
-            .id();
+        let grid = GridPane::spawn(&mut commands, body, &colors);
         let footer = commands
             .spawn((
                 part("sf-inventory-footer"),
@@ -333,150 +822,31 @@ pub(crate) fn spawn_inventory(
         let value_text = commands
             .spawn((label("sf-inventory-value", "", &colors), ChildOf(footer)))
             .id();
-        let tooltip = commands
-            .spawn((
-                panel(
-                    "sf-tooltip",
-                    Node {
-                        position_type: PositionType::Absolute,
-                        display: Display::None,
-                        min_width: Val::Px(180.0),
-                        padding: UiRect::all(Val::Px(8.0)),
-                        ..Node::default()
-                    },
-                    &colors,
-                ),
-                ZIndex(20),
-                Pickable::IGNORE,
-                ChildOf(root),
-            ))
-            // Opaque: it lies over other cells.
-            .insert(BackgroundColor(colors.panel.with_alpha(1.0)))
-            .id();
-        let tooltip_text = commands
-            .spawn((
-                part("sf-tooltip-text"),
-                Text::new(""),
-                colors.font(0.9),
-                TextColor(colors.text),
-                ChildOf(tooltip),
-            ))
-            .id();
-        let split = commands
-            .spawn((
-                panel(
-                    "sf-inventory-split",
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Percent(25.0),
-                        top: Val::Percent(35.0),
-                        width: Val::Percent(50.0),
-                        padding: UiRect::all(Val::Px(12.0)),
-                        row_gap: Val::Px(8.0),
-                        flex_direction: FlexDirection::Column,
-                        display: Display::None,
-                        ..Node::default()
-                    },
-                    &colors,
-                ),
-                ZIndex(15),
-                ChildOf(root),
-            ))
-            .id();
-        commands.spawn((
-            label("sf-inventory-split-title", labels.split.clone(), &colors),
-            ChildOf(split),
-        ));
-        let split_text = commands
-            .spawn((
-                label("sf-inventory-split-count", "", &colors),
-                ChildOf(split),
-            ))
-            .id();
-        let split_bar = spawn_bar(
+        let tooltip = Tooltip::spawn(&mut commands, root, &colors);
+        let split = SplitDialog::spawn(
             &mut commands,
-            split,
-            "sf-inventory-split-bar",
-            StatBar {
-                current: 0.0,
-                max: 1.0,
-                kind: String::new(),
-            },
+            root,
+            labels.split.clone(),
+            [
+                InventoryButton::SplitLess,
+                InventoryButton::SplitMore,
+                InventoryButton::SplitOk,
+                InventoryButton::SplitCancel,
+            ],
+            &labels,
             &colors,
         );
-        let buttons = commands
-            .spawn((
-                part("sf-inventory-split-buttons"),
-                Node {
-                    column_gap: Val::Px(6.0),
-                    ..Node::default()
-                },
-                ChildOf(split),
-            ))
-            .id();
-        let mut split_ok = Entity::PLACEHOLDER;
-        for (name, text, b) in [
-            (
-                "sf-inventory-split-less",
-                "-".to_owned(),
-                InventoryButton::SplitLess,
-            ),
-            (
-                "sf-inventory-split-more",
-                "+".to_owned(),
-                InventoryButton::SplitMore,
-            ),
-            (
-                "sf-inventory-split-ok",
-                labels.ok.clone(),
-                InventoryButton::SplitOk,
-            ),
-            (
-                "sf-inventory-split-cancel",
-                labels.cancel.clone(),
-                InventoryButton::SplitCancel,
-            ),
-        ] {
-            let (e, _) = spawn_button(&mut commands, Some(buttons), name, text, &colors);
-            commands.entity(e).insert(b);
-            if b == InventoryButton::SplitOk {
-                split_ok = e;
-            }
-        }
-        let ghost = commands
-            .spawn((
-                part("sf-inventory-drag"),
-                Node {
-                    position_type: PositionType::Absolute,
-                    display: Display::None,
-                    padding: UiRect::all(Val::Px(4.0)),
-                    ..Node::default()
-                },
-                BackgroundColor(colors.cell),
-                // A window-level node above every screen, below message boxes.
-                GlobalZIndex(sf_ui_bevy::MESSAGE_BOX_Z - 1),
-                Pickable::IGNORE,
-                children![(Text::new(""), colors.font(0.9), TextColor(colors.text))],
-            ))
-            .id();
+        let ghost = spawn_ghost(&mut commands, &colors);
         commands.entity(root).insert(InventoryParts {
             tabs: KeyedChildren::new(tabs),
             tabs_seen: None,
-            viewport,
-            rows: Vec::new(),
-            thumb,
+            grid,
             weight_bar,
             weight_text,
             value_text,
             totals_seen: None,
             tooltip,
-            tooltip_text,
-            tooltip_seen: None,
-            split_shown: None,
             split,
-            split_text,
-            split_bar,
-            split_ok,
             ghost,
             reported: None,
             reported_once: false,
@@ -621,21 +991,7 @@ pub(crate) fn sync_inventory(
     for (root_entity, root, mut screen, mut parts) in &mut screens {
         let screen = &mut *screen;
         let parts = &mut *parts;
-        // Geometry from the laid-out viewport (logical pixels).
-        if let Ok(node) = computed.get(parts.viewport) {
-            let size = node.size() * node.inverse_scale_factor();
-            if size.x > 0.0 && size.y > 0.0 {
-                let pitch = style.cell + Vec2::splat(style.gap);
-                // Whole cells that fit; at least one.
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let columns = (((size.x + style.gap) / pitch.x).floor() as usize).max(1);
-                screen.grid.set_columns(columns);
-                screen.grid.set_viewport(size.y);
-                if (screen.grid.cell_extent() - pitch.y).abs() > f32::EPSILON {
-                    screen.grid.set_cell_extent(pitch.y);
-                }
-            }
-        }
+        parts.grid.fit(&mut screen.grid, &computed, &style);
 
         // Tabs with counts (badges), on list or tab changes only.
         let tabs_key = (screen.view.rows().version(), screen.view.tab());
@@ -673,92 +1029,18 @@ pub(crate) fn sync_inventory(
             screen.view.move_focus(0);
         }
         let frame = screen.grid.frame(&mut screen.view);
-        for slot in &frame.released {
-            if let Some(row) = parts.rows.get(*slot)
-                && let Ok(mut node) = nodes.get_mut(row.entity)
-            {
-                show(&mut node, false);
-            }
-        }
         let focused = frame.focus.map(|(_, k)| k);
-        let mut focus_cell = None;
-        for binding in &frame.rows {
-            while parts.rows.len() <= binding.slot {
-                let row = spawn_row(&mut commands, parts.viewport, frame.columns, &style, colors);
-                parts.rows.push(row);
-            }
-            let row = &mut parts.rows[binding.slot];
-            if row.cells.len() != frame.columns {
-                fit_cells(&mut commands, row, frame.columns, &style, colors);
-            }
-            if let Ok(mut node) = nodes.get_mut(row.entity) {
-                show(&mut node, true);
-                let top = Val::Px(binding.offset);
-                if node.top != top {
-                    node.top = top;
-                }
-            }
-            for (i, cell) in row.cells.iter_mut().enumerate() {
-                let stack = binding.stacks.get(i).copied();
-                let state = stack.and_then(|s| {
-                    let version = screen.view.rows().row_version(&s)?;
-                    Some((s, version, Some(s) == focused, Some(s) == screen.held))
-                });
-                if focused.is_some() && stack == focused {
-                    focus_cell = Some(cell.entity);
-                }
-                if cell.bound == state {
-                    continue;
-                }
-                cell.bound = state;
-                commands.entity(cell.entity).insert(InventoryCell(stack));
-                // Only the last grid row has empty cells: hiding them shifts nothing.
-                if let Ok(mut node) = nodes.get_mut(cell.entity) {
-                    show(&mut node, state.is_some());
-                }
-                let Some((s, _, is_focused, is_held)) = state else {
-                    continue;
-                };
-                let Some(row_data) = screen.view.row(s) else {
-                    continue;
-                };
-                commands.entity(cell.entity).insert(classes(
-                    "sf-inventory-cell",
-                    &[
-                        ("equipped", row_data.is_equipped()),
-                        ("focused", is_focused),
-                        ("held", is_held),
-                    ],
-                ));
-                let handle = row_data.info.icon.as_ref().and_then(|icon| {
-                    images
-                        .as_mut()
-                        .and_then(|images| images.resolve(icon, server.as_deref()))
-                });
-                if let Ok(mut node) = nodes.get_mut(cell.icon) {
-                    show(&mut node, handle.is_some());
-                }
-                if let Some(handle) = handle {
-                    commands.entity(cell.icon).insert(ImageNode::new(handle));
-                }
-                commands
-                    .entity(cell.name)
-                    .insert(Text::new(row_data.info.name.clone()));
-                let count = row_data.stack.count;
-                commands.entity(cell.count).insert(Text::new(if count > 1 {
-                    count.to_string()
-                } else {
-                    String::new()
-                }));
-            }
-        }
-
-        // Scrollbar thumb.
-        if let Ok(mut node) = nodes.get_mut(parts.thumb) {
-            let (start, length) = frame.thumb.unwrap_or((0.0, 1.0));
-            let (top, height) = (Val::Percent(start * 100.0), Val::Percent(length * 100.0));
-            place(&mut node, None, Some(top), None, Some(height));
-        }
+        let focus_cell = parts.grid.bind(
+            &mut commands,
+            &mut nodes,
+            images.as_deref_mut(),
+            server.as_deref(),
+            &style,
+            colors,
+            &frame,
+            &screen.view,
+            screen.held,
+        );
 
         // Totals.
         let totals = screen.view.totals();
@@ -769,11 +1051,9 @@ pub(crate) fn sync_inventory(
         );
         if parts.totals_seen != Some(totals_key) {
             parts.totals_seen = Some(totals_key);
-            let weight = match enc.capacity {
-                Some(cap) => format!("{} {:.0}/{cap:.0}", labels.weight, enc.carried),
-                None => format!("{} {:.0}", labels.weight, enc.carried),
-            };
-            commands.entity(parts.weight_text).insert(Text::new(weight));
+            commands
+                .entity(parts.weight_text)
+                .insert(Text::new(weight_text(&labels, enc)));
             commands
                 .entity(parts.value_text)
                 .insert(Text::new(format!("{} {}", labels.value, totals.value)));
@@ -805,135 +1085,30 @@ pub(crate) fn sync_inventory(
             });
         }
 
-        // Tooltip: on the focused cell (hover focuses).
-        let tip = focus_cell.and_then(|cell| {
-            let stack = parts
-                .rows
-                .iter()
-                .flat_map(|r| &r.cells)
-                .find(|c| c.entity == cell)?
-                .bound?
-                .0;
-            Some((cell, stack, screen.view.rows().row_version(&stack)?))
-        });
-        if let Ok(mut node) = nodes.get_mut(parts.tooltip) {
-            show(&mut node, tip.is_some() && screen.split.is_none());
-            // Beside the cell, inside the screen (right of it, else left).
-            if let Some((cell, ..)) = tip
-                && let (Ok((c, c_at)), Ok((r, r_at)), Ok((t, _))) = (
-                    geometry.get(cell),
-                    geometry.get(root_entity),
-                    geometry.get(parts.tooltip),
-                )
-            {
-                let scale = r.inverse_scale_factor();
-                let cell_min = (c_at.translation - c.size() / 2.0) * scale;
-                let root_min = (r_at.translation - r.size() / 2.0) * scale;
-                let at = cell_min - root_min;
-                let (cell_w, tip_w, root_w) =
-                    (c.size().x * scale, t.size().x * scale, r.size().x * scale);
-                let right = at.x + cell_w + 4.0;
-                let left = if right + tip_w > root_w {
-                    (at.x - tip_w - 4.0).max(0.0)
-                } else {
-                    right
-                };
-                place(
-                    &mut node,
-                    Some(Val::Px(left)),
-                    Some(Val::Px(at.y)),
-                    None,
-                    None,
-                );
-            }
-        }
-        if let Some((cell, stack, version)) = tip {
-            let compare = screen.compare.clone().filter(|c| c.candidate == stack);
-            let key = (cell, stack, version, compare.clone());
-            if parts.tooltip_seen.as_ref() != Some(&key) {
-                commands
-                    .entity(parts.tooltip_text)
-                    .despawn_related::<Children>();
-                if let Some(row) = screen.view.row(stack) {
-                    let mut lines: Vec<(String, Option<Verdict>)> =
-                        vec![(row.info.name.clone(), None)];
-                    lines.push((
-                        format!(
-                            "{} {:.1}  {} {}",
-                            labels.weight, row.info.weight, labels.value, row.info.value
-                        ),
-                        None,
-                    ));
-                    let stat_name = |id: &RecordId| {
-                        screen
-                            .stat_labels
-                            .iter()
-                            .find(|(s, _)| s == id)
-                            .map_or_else(|| id.as_str().to_owned(), |(_, l)| l.clone())
-                    };
-                    match &compare {
-                        Some(c) => {
-                            for d in &c.stats {
-                                let value = d.candidate.unwrap_or(0.0);
-                                let text = if d.verdict == Verdict::Same {
-                                    format!("{} {value}", stat_name(&d.stat))
-                                } else {
-                                    format!("{} {value} ({:+})", stat_name(&d.stat), d.delta)
-                                };
-                                lines.push((text, Some(d.verdict)));
-                            }
-                        }
-                        None => {
-                            for (id, value) in &row.info.stats {
-                                lines.push((format!("{} {value}", stat_name(id)), None));
-                            }
-                        }
-                    }
-                    for (i, (text, verdict)) in lines.into_iter().enumerate() {
-                        let text = if i == 0 { text } else { format!("\n{text}") };
-                        let (class, color) = match verdict {
-                            Some(Verdict::Better) => ("better", colors.link),
-                            Some(Verdict::Worse) => ("worse", colors.bar_fill),
-                            Some(Verdict::Changed) => ("changed", colors.new),
-                            Some(Verdict::Same) | None => ("", colors.text),
-                        };
-                        commands.spawn((
-                            TextSpan::new(text),
-                            colors.font(0.9),
-                            TextColor(color),
-                            classes("sf-tooltip-line", &[(class, !class.is_empty())]),
-                            ChildOf(parts.tooltip_text),
-                        ));
-                    }
-                }
-                parts.tooltip_seen = Some(key);
-            }
-        } else {
-            parts.tooltip_seen = None;
-        }
+        // Tooltip: on the focused cell (hover focuses), not over the split dialog.
+        let tip = focus_cell
+            .filter(|_| screen.split.is_none())
+            .and_then(|cell| Some((cell, parts.grid.stack_of(cell)?)));
+        parts.tooltip.sync(
+            &mut commands,
+            &mut nodes,
+            &geometry,
+            root_entity,
+            tip,
+            &screen.view,
+            screen.compare.as_ref(),
+            &screen.stat_labels,
+            &labels,
+            colors,
+        );
 
-        // Split dialog.
-        if let Ok(mut node) = nodes.get_mut(parts.split) {
-            show(&mut node, screen.split.is_some());
-        }
-        let split_key = screen.split.as_ref().map(|(_, p)| (p.value(), p.max()));
-        if let Some((_, picker)) = &screen.split
-            && parts.split_shown != split_key
-        {
-            parts.split_shown = split_key;
-            commands.entity(parts.split_text).insert(Text::new(format!(
-                "{} / {}",
-                picker.value(),
-                picker.max() + 1
-            )));
-            if let Ok(mut bar) = bars.get_mut(parts.split_bar) {
-                bar.set_if_neq(StatBar {
-                    current: picker.fraction(),
-                    max: 1.0,
-                    kind: String::new(),
-                });
-            }
-        }
+        // Split dialog ("value / count": the picker's max is count - 1).
+        parts.split.sync(
+            &mut commands,
+            &mut nodes,
+            &mut bars,
+            screen.split.as_ref().map(|(_, p)| (p, p.max() + 1)),
+        );
 
         // Ghost follows the drag (see the observers); hidden when nothing is dragged.
         if screen.held.is_none()
@@ -944,7 +1119,7 @@ pub(crate) fn sync_inventory(
 
         if is_target(&stack, root) {
             let wanted = if screen.split.is_some() {
-                Some(parts.split_ok)
+                Some(parts.split.ok)
             } else {
                 focus_cell
             };
@@ -954,6 +1129,14 @@ pub(crate) fn sync_inventory(
                 focus.set(wanted, FocusCause::Navigated);
             }
         }
+    }
+}
+
+/// "Weight carried/capacity" (or just carried).
+pub(crate) fn weight_text(labels: &ScreenLabels, enc: Encumbrance) -> String {
+    match enc.capacity {
+        Some(cap) => format!("{} {:.0}/{cap:.0}", labels.weight, enc.carried),
+        None => format!("{} {:.0}", labels.weight, enc.carried),
     }
 }
 
@@ -1145,23 +1328,19 @@ pub(crate) fn on_cell_drag_start(
         return;
     };
     screen.held = Some(*stack);
-    if let Ok(mut node) = nodes.get_mut(parts.ghost) {
-        show(&mut node, true);
-        node.left = Val::Px(start.pointer.position.x + 8.0);
-        node.top = Val::Px(start.pointer.position.y + 8.0);
-    }
     let name = screen
         .view
         .row(*stack)
         .map(|r| r.info.name.clone())
         .unwrap_or_default();
-    if let Some(text) = children
-        .get(parts.ghost)
-        .ok()
-        .and_then(|c| c.first().copied())
-    {
-        commands.entity(text).insert(Text::new(name));
-    }
+    move_ghost(
+        &mut commands,
+        &mut nodes,
+        &children,
+        parts.ghost,
+        start.pointer.position,
+        Some(name),
+    );
 }
 
 /// The ghost follows the pointer.

@@ -8,7 +8,7 @@ use sf_records::{RecordDb, RecordFormat, apply_record_file};
 use sf_rpg::{
     ActorKey, AttrValue, Attrs, Choice, ConversationCtx, DialogueDb, DialogueOutput, DialogueRules,
     DialogueSession, EntryDraft, EquipPlacement, EquipRules, GameTime, HeardLine, Holder,
-    ItemStack, LinkRules, Loadout, PlayerId, RecordId, RpgCommand, SlotTable, StageFlags,
+    ItemStack, LinkRules, Loadout, PlayerId, RecordId, RpgCommand, SlotTable, StackId, StageFlags,
     TopicEntry, TopicKind, WorldRpg,
 };
 use sf_rpg_ui::{DialogueRequest, DialogueView, JournalLabels};
@@ -50,6 +50,11 @@ value = { layer = "Menu", implementation = { Template = "keybinds" } }
 kind = "ui.screen"
 id = "saveload"
 value = { layer = "Menu", implementation = { Template = "saveload" } }
+
+[[define]]
+kind = "ui.screen"
+id = "container"
+value = { layer = "Menu", implementation = { Template = "container" } }
 
 [[define]]
 kind = "ui.screen"
@@ -572,6 +577,59 @@ impl DemoInventory {
     }
 }
 
+// ---------------------------------------------------------------- container
+
+/// The demo chest's holder (an actor key: the framework has no container holder of its own).
+pub const CHEST: Holder = Holder::Actor(ActorKey(1));
+
+/// A chest to loot: bread (5), a blade, trinkets (3 and 1), a helm.
+#[derive(Resource)]
+pub struct DemoContainer {
+    pub loadout: Loadout,
+}
+
+impl Default for DemoContainer {
+    fn default() -> Self {
+        let mut loadout = Loadout::new();
+        for (item, count) in [
+            ("bread", 5),
+            ("blade_901", 1),
+            ("trinket_902", 3),
+            ("helm_903", 1),
+            ("trinket_904", 1),
+        ] {
+            loadout
+                .add(id(item), count, Attrs::new())
+                .expect("demo item adds");
+        }
+        Self { loadout }
+    }
+}
+
+impl DemoContainer {
+    /// The chest's view (one tab, no carry limit), described by `inventory`'s catalog.
+    pub fn view(&self, inventory: &DemoInventory) -> InventoryView {
+        let mut all = InventoryTab::all();
+        "All".clone_into(&mut all.label);
+        let mut view = InventoryView::new(CHEST, vec![all], 1.0, 1.0);
+        view.sync(&self.loadout, &inventory.equip.table, &inventory.catalog);
+        view
+    }
+
+    /// The container screen over this chest and `inventory`.
+    pub fn screen(&self, inventory: &DemoInventory) -> crate::ContainerScreen {
+        crate::ContainerScreen::new(self.view(inventory), inventory.view()).with_title("Old chest")
+    }
+}
+
+/// Moves `count` of `stack` between two loadouts (whole stacks keep their instance data).
+fn transfer(from: &mut Loadout, to: &mut Loadout, stack: StackId, count: u32) -> bool {
+    let Ok(taken) = from.take(stack, count) else {
+        return false;
+    };
+    to.add(taken.item, taken.count, taken.attrs).is_ok()
+}
+
 // ---------------------------------------------------------------- HUD and keymap
 
 /// The game's activate action in the demo keymap (context `gameplay`).
@@ -698,5 +756,54 @@ pub fn host_inventory(
             crate::inventory::InventoryIntent::Focused(None)
             | crate::inventory::InventoryIntent::Use(_) => {}
         }
+    }
+}
+
+/// Host side of the demo container: moves stacks between [`DemoContainer`] and
+/// [`DemoInventory`], then re-syncs both views.
+pub fn host_container(
+    mut events: MessageReader<crate::ContainerEvent>,
+    inventory: Option<ResMut<DemoInventory>>,
+    container: Option<ResMut<DemoContainer>>,
+    mut screens: Query<&mut crate::ContainerScreen>,
+) {
+    let (Some(mut inventory), Some(mut container)) = (inventory, container) else {
+        events.clear();
+        return;
+    };
+    for event in events.read() {
+        let Ok(mut screen) = screens.get_mut(event.screen) else {
+            continue;
+        };
+        let (inv, chest) = (&mut *inventory, &mut *container);
+        let (crate::ContainerIntent::Move { from: holder, .. }
+        | crate::ContainerIntent::TakeAll { from: holder, .. }) = &event.intent;
+        let (from, to) = if *holder == HOLDER {
+            (&mut inv.loadout, &mut chest.loadout)
+        } else {
+            (&mut chest.loadout, &mut inv.loadout)
+        };
+        match &event.intent {
+            crate::ContainerIntent::Move { stack, count, .. } => {
+                transfer(from, to, *stack, *count);
+            }
+            crate::ContainerIntent::TakeAll { .. } => {
+                let stacks: Vec<(StackId, u32)> = from
+                    .inventory()
+                    .stacks()
+                    .iter()
+                    .map(|s| (s.id, s.count))
+                    .collect();
+                for (stack, count) in stacks {
+                    transfer(from, to, stack, count);
+                }
+            }
+        }
+        screen
+            .container
+            .sync(&chest.loadout, &inv.equip.table, &inv.catalog);
+        screen
+            .player
+            .sync(&inv.loadout, &inv.equip.table, &inv.catalog);
     }
 }

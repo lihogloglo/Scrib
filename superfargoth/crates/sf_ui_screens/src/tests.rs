@@ -66,7 +66,12 @@ impl Ui {
         )))
         .add_systems(
             Update,
-            (demo::host_dialogue, demo::host_inventory).after(ScreenSystems::Input),
+            (
+                demo::host_dialogue,
+                demo::host_inventory,
+                demo::host_container,
+            )
+                .after(ScreenSystems::Input),
         );
         extra(&mut app);
         app.world_mut().spawn((
@@ -262,13 +267,19 @@ fn dialogue_and_journal_open_centred_on_screen() {
     ui.frames(2);
     let (centre, size) = centre_of(&ui, root);
     assert_eq!(size, Vec2::new(900.0, 560.0));
-    assert!((centre - TARGET.as_vec2() / 2.0).length() < 1.0, "dialogue centre {centre}");
+    assert!(
+        (centre - TARGET.as_vec2() / 2.0).length() < 1.0,
+        "dialogue centre {centre}"
+    );
 
     let mut ui = Ui::new();
     let root = open_journal(&mut ui);
     let (centre, size) = centre_of(&ui, root);
     assert!(size.x > 100.0 && size.y > 100.0, "journal size {size}");
-    assert!((centre - TARGET.as_vec2() / 2.0).length() < 1.0, "journal centre {centre}");
+    assert!(
+        (centre - TARGET.as_vec2() / 2.0).length() < 1.0,
+        "journal centre {centre}"
+    );
 }
 
 #[test]
@@ -621,6 +632,239 @@ fn visible(ui: &mut Ui, root: Entity) -> Vec<sf_rpg::StackId> {
     screen.view.visible().to_vec()
 }
 
+// ---------------------------------------------------------------- container
+
+#[derive(Resource, Default)]
+struct ContainerIntents(Vec<ContainerIntent>);
+
+fn collect_container(mut events: MessageReader<ContainerEvent>, mut out: ResMut<ContainerIntents>) {
+    out.0.extend(events.read().map(|e| e.intent.clone()));
+}
+
+fn open_container() -> (Ui, Entity) {
+    let mut ui = Ui::with(|app| {
+        app.init_resource::<ContainerIntents>()
+            .add_systems(Update, collect_container.after(ScreenSystems::Sync));
+    });
+    let inventory = DemoInventory::new(12);
+    let chest = demo::DemoContainer::default();
+    let screen = chest.screen(&inventory);
+    ui.world_mut().insert_resource(inventory);
+    ui.world_mut().insert_resource(chest);
+    let root = ui.open("container", screen);
+    ui.frames(3);
+    (ui, root)
+}
+
+fn container(ui: &Ui, root: Entity) -> (&ContainerScreen, &ContainerParts) {
+    (
+        ui.world().get::<ContainerScreen>(root).unwrap(),
+        ui.world().get::<ContainerParts>(root).unwrap(),
+    )
+}
+
+fn take_container(ui: &mut Ui) -> Vec<ContainerIntent> {
+    std::mem::take(&mut ui.world_mut().resource_mut::<ContainerIntents>().0)
+}
+
+/// The stack named `name` on `side`.
+fn stack_named(ui: &Ui, root: Entity, side: ContainerSide, name: &str) -> sf_rpg::StackId {
+    let (screen, _) = container(ui, root);
+    screen
+        .view(side)
+        .rows()
+        .iter()
+        .find(|(_, r)| r.info.name == name)
+        .map_or_else(|| panic!("no {name} on {side:?}"), |(k, _)| *k)
+}
+
+#[test]
+fn container_lists_both_panes_and_moves_whole_stacks() {
+    let (mut ui, root) = open_container();
+    let (screen, parts) = container(&ui, root);
+    assert_eq!(screen.container.rows().len(), 5);
+    assert_eq!(screen.player.rows().len(), 12);
+    // Every chest stack has a cell in the left pane, the player's first ones in the right.
+    for (stack, row) in screen.container.rows().iter() {
+        let cell = parts
+            .cell_of(ContainerSide::Container, *stack)
+            .unwrap_or_else(|| panic!("{} has no cell", row.info.name));
+        assert!(ui.text_of(cell).contains(&row.info.name));
+        assert_eq!(
+            parts.cells(ContainerSide::Player).find(|c| *c == cell),
+            None
+        );
+    }
+    let first_player = screen.player.rows().iter().next().map(|(k, _)| *k).unwrap();
+    assert!(parts.cell_of(ContainerSide::Player, first_player).is_some());
+    // The pad starts in the chest, on its first stack (bread, 5).
+    assert_eq!(screen.active(), ContainerSide::Container);
+    let bread = stack_named(&ui, root, ContainerSide::Container, "bread");
+    let (screen, parts) = container(&ui, root);
+    assert_eq!(screen.container.focus(), Some(bread));
+    assert_eq!(ui.focus(), parts.cell_of(ContainerSide::Container, bread));
+    assert!(
+        ui.class_of(parts.pane(ContainerSide::Container))
+            .contains("active")
+    );
+
+    // A: the whole stack moves to the player.
+    ui.tap(GamepadButton::South);
+    assert_eq!(
+        take_container(&mut ui),
+        vec![ContainerIntent::Move {
+            from: demo::CHEST,
+            to: demo::HOLDER,
+            stack: bread,
+            count: 5,
+        }]
+    );
+    let (screen, _) = container(&ui, root);
+    assert_eq!(screen.container.rows().len(), 4);
+    assert_eq!(screen.player.rows().len(), 13);
+
+    // RB: the player pane; a click on one of its cells moves that stack into the chest.
+    ui.tap(GamepadButton::RightTrigger);
+    let (screen, parts) = container(&ui, root);
+    assert_eq!(screen.active(), ContainerSide::Player);
+    let focused = screen.player.focus().unwrap();
+    assert_eq!(ui.focus(), parts.cell_of(ContainerSide::Player, focused));
+    let cell = parts.cell_of(ContainerSide::Player, first_player).unwrap();
+    ui.world_mut().trigger(Activate { entity: cell });
+    ui.frames(2);
+    let count = match take_container(&mut ui).as_slice() {
+        [
+            ContainerIntent::Move {
+                from,
+                to,
+                stack,
+                count,
+            },
+        ] => {
+            assert_eq!(
+                (*from, *to, *stack),
+                (demo::HOLDER, demo::CHEST, first_player)
+            );
+            *count
+        }
+        other => panic!("{other:?}"),
+    };
+    assert!(count >= 1);
+    assert_eq!(container(&ui, root).0.container.rows().len(), 5);
+
+    // B closes.
+    ui.tap(GamepadButton::East);
+    assert!(
+        !ui.world()
+            .resource::<ScreenStackRes>()
+            .0
+            .is_open("container")
+    );
+}
+
+#[test]
+fn container_asks_how_many_and_takes_all() {
+    let (mut ui, root) = open_container();
+    let trinket = stack_named(&ui, root, ContainerSide::Container, "trinket 902");
+    ui.world_mut()
+        .get_mut::<ContainerScreen>(root)
+        .unwrap()
+        .container
+        .set_focus(Some(trinket));
+    ui.frames(2);
+    // X on a stack of 3: the count dialog, starting at all of it; left takes one off; A confirms.
+    ui.tap(GamepadButton::West);
+    let (screen, parts) = container(&ui, root);
+    let (side, stack, picker) = *screen.count_dialog().expect("count dialog open");
+    assert_eq!(
+        (side, stack, picker.value()),
+        (ContainerSide::Container, trinket, 3)
+    );
+    let dialog = parts.count_dialog();
+    assert_eq!(
+        ui.world().get::<Node>(dialog).unwrap().display,
+        Display::Flex
+    );
+    assert!(
+        take_container(&mut ui).is_empty(),
+        "nothing moves before the count"
+    );
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(container(&ui, root).0.count_dialog().unwrap().2.value(), 2);
+    ui.tap(GamepadButton::South);
+    assert_eq!(
+        take_container(&mut ui),
+        vec![ContainerIntent::Move {
+            from: demo::CHEST,
+            to: demo::HOLDER,
+            stack: trinket,
+            count: 2,
+        }]
+    );
+    let (screen, parts) = container(&ui, root);
+    assert!(screen.count_dialog().is_none());
+    assert_eq!(screen.container.row(trinket).unwrap().stack.count, 1);
+    assert_eq!(
+        ui.world()
+            .get::<Node>(parts.count_dialog())
+            .unwrap()
+            .display,
+        Display::None
+    );
+
+    // X on a single piece moves it at once.
+    let helm = stack_named(&ui, root, ContainerSide::Container, "helm 903");
+    ui.world_mut()
+        .get_mut::<ContainerScreen>(root)
+        .unwrap()
+        .container
+        .set_focus(Some(helm));
+    ui.frames(2);
+    ui.tap(GamepadButton::West);
+    assert!(container(&ui, root).0.count_dialog().is_none());
+    assert_eq!(
+        take_container(&mut ui),
+        vec![ContainerIntent::Move {
+            from: demo::CHEST,
+            to: demo::HOLDER,
+            stack: helm,
+            count: 1,
+        }]
+    );
+
+    // Y: one take-all intent; the emptied chest hands the pad to the player pane.
+    ui.tap(GamepadButton::North);
+    assert_eq!(
+        take_container(&mut ui),
+        vec![ContainerIntent::TakeAll {
+            from: demo::CHEST,
+            to: demo::HOLDER,
+        }]
+    );
+    ui.frames(1);
+    let (screen, parts) = container(&ui, root);
+    assert!(screen.container.rows().is_empty());
+    assert_eq!(screen.player.rows().len(), 12 + 5);
+    assert_eq!(screen.active(), ContainerSide::Player);
+    // Its grid rows are all hidden.
+    let shown = |e: Entity| {
+        ui.world()
+            .get::<Node>(e)
+            .is_some_and(|n| n.display != Display::None)
+    };
+    let row_of = |cell: Entity| ui.world().get::<ChildOf>(cell).unwrap().parent();
+    assert!(
+        parts
+            .cells(ContainerSide::Container)
+            .all(|c| !shown(row_of(c)) || !shown(c))
+    );
+    // The take-all button does nothing on an empty chest.
+    let take_all = parts.take_all();
+    ui.world_mut().trigger(Activate { entity: take_all });
+    ui.frames(1);
+    assert!(take_container(&mut ui).is_empty());
+}
+
 // ---------------------------------------------------------------- journal
 
 fn open_journal(ui: &mut Ui) -> Entity {
@@ -943,7 +1187,10 @@ fn saveload_lists_newest_first_and_shows_the_empty_state() {
         "row entities in list order"
     );
     let first = ui.text_of(rows[0]);
-    assert!(first.contains("Harbour") && first.contains("Quicksave"), "{first}");
+    assert!(
+        first.contains("Harbour") && first.contains("Quicksave"),
+        "{first}"
+    );
     assert!(ui.text_of(rows[2]).contains("Unreadable"));
     assert_eq!(ui.focus(), Some(rows[0]), "focus starts on the newest save");
     assert_eq!(screen.selected(), Some(&order[0]));
@@ -1081,13 +1328,21 @@ fn saveload_delete_needs_confirmation_and_esc_backs_out() {
     tap_key(&mut ui, KeyCode::Escape);
     assert_eq!(saveload(&ui, root).0.pending(), None);
     assert!(take_choices(&mut ui).is_empty());
-    assert!(ui.world().resource::<ScreenStackRes>().0.is_open("saveload"));
+    assert!(
+        ui.world()
+            .resource::<ScreenStackRes>()
+            .0
+            .is_open("saveload")
+    );
 
     // The delete button asks too; "yes" deletes.
     let [_, delete, _] = saveload(&ui, root).1.buttons();
     ui.world_mut().trigger(Activate { entity: delete });
     ui.frames(1);
-    assert!(take_choices(&mut ui).is_empty(), "nothing without confirming");
+    assert!(
+        take_choices(&mut ui).is_empty(),
+        "nothing without confirming"
+    );
     let [yes, _] = saveload(&ui, root).1.confirm_buttons();
     ui.world_mut().trigger(Activate { entity: yes });
     ui.frames(1);
@@ -1110,7 +1365,12 @@ fn saveload_delete_needs_confirmation_and_esc_backs_out() {
     // Esc: back, and the screen closes.
     tap_key(&mut ui, KeyCode::Escape);
     assert_eq!(take_choices(&mut ui), vec![SaveLoadChoice::Back]);
-    assert!(!ui.world().resource::<ScreenStackRes>().0.is_open("saveload"));
+    assert!(
+        !ui.world()
+            .resource::<ScreenStackRes>()
+            .0
+            .is_open("saveload")
+    );
 }
 
 // ---------------------------------------------------------------- pause menu
