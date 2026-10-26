@@ -940,8 +940,8 @@
             camera: "ledges",
             hour: 10.0,
             description: "Animation lab, traversal: ledges 0.5 / 1.0 / 1.5 / 2.0 m and a 3 m wall (F11: player; cameras ledges, ledges-close)",
-            look_for: "walking into each ledge (no vault, mantle or climb yet): the capsule stops, the character does not clip into the box; heights read against the 1 m grid",
-            checks: ["AL-4"],
+            look_for: "walking into each ledge (W+Space mantles the 1 m box, AL-8; no vault or climb yet): the capsule stops, the character does not clip into the box; heights read against the 1 m grid",
+            checks: ["AL-4", "AL-8"],
         ),
         (
             name: "level-anim-props",

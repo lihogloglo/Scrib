@@ -14,7 +14,7 @@ use sf_coords::WorldPos;
 use crate::*;
 
 /// Flat ground at y = 0.
-struct Plane;
+pub(crate) struct Plane;
 
 impl HeightSurface for Plane {
     fn height(&self, _p: WorldPos) -> Option<f32> {

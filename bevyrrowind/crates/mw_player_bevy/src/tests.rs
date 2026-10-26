@@ -57,7 +57,7 @@ fn app_with(fps: u32, keymap: &sf_ui::Keymap) -> (App, Entity) {
         .add_plugins((SfActionPlugin::<Statics>::default(), ActionInputPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / f64::from(fps))))
         .insert_resource(statics(&level))
-        .insert_resource(rules());
+        .insert_resource(rules(Vec::new()));
     // `EnhancedInputPlugin` creates its context registry in `finish` (`App::run` calls it).
     app.finish();
     app.cleanup();

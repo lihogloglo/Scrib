@@ -461,3 +461,29 @@ steering), the plan ends ≤ 2 cm from the top, progress rises to the clip end e
 body ends on the top, then `loco`; `Up` also mantles; no forward input, Sneak (`Mode`), 2.5 m /
 0.3 m tops or a vault-class obstacle (`Probe`), a far lip (`MaxCorrection`) and a slot without a
 root path (`NoRootPath`) each refuse into `air.jump`; a shallow top keeps the target a radius inside.
+
+## As built (B2a part 2, 2026-10-26): shell and game glue
+
+**Sense.** `sf_action_bevy` `step_actions::<G>` runs `sf_controller::ContextProbes`
+(`ObstacleAhead`, 1.5 m, along the stick, else the facing; `ContextParams::from_mover`) only on
+ticks with Jump or Up pressed or held, and maps Step/Vault/Mantle/Climb hits to `Sense::obstacle`
+(lip from the feet). `Sense::grounded` is also true while `Locomotion::traversing`, so a warped body
+is not a fall.
+
+**Move.** A character with `ActionOutput::warp` skips `step_batch`: `place_warped` sets the feet to
+the start-tick anchor (`ActionBody::warp_anchor`, reset on `started`, cleared on restore) plus the
+warp root, yaw from the root, planar velocity = this tick's delta / dt (exit momentum; no climb
+speed), not grounded, `traversing` (the next mover step re-grounds with the step-down probe). No
+collision while warped, as UE/ALS mantles move the capsule: the probe checked room on top.
+
+**Game.** `mw_player_bevy::add(.., traversal)`: rules = `BASE_RULES` + `TRAVERSAL_RULES`; each
+`TraversalClip` (slot, length, `Arc<dyn RootPath>`) becomes `SlotInfo::once` + `with_root`;
+`CharacterParams` height/radius from `MoverParams`. `mw_exterior_bevy` `player_traversal` loads the
+`TRAVERSAL_SLOTS` clips from the baked male humanoid graph (`slot_clip` -> `clips[i].product`); log
+line "player traversal: N of 1 slot clips baked" (0 = old bake or no library: the mantle refuses into
+a jump). `sf_action` re-exports `RootPath`.
+
+**Verified** (anim-lab ledges, capsule player): 1 m mantles onto the top 1.0 m past the lip and walks
+on; 2 m is a plain jump; 1.5 m from a stand at the face refuses (`MaxCorrection`, ratio ~0.36 with the
+2 m-forward clip). Tests (`sf_action_bevy` `tests_mantle`, synthetic box): 1 m mantles and hands back
+to `loco`, 2 m refuses, Sneak never mantles, Sneak pressed mid-mantle leaves the body on top.

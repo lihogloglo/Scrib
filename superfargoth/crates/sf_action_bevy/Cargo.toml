@@ -22,6 +22,8 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
+# The mantle test: a straight root path for the slot (`sf_anim::RootPath`).
+sf_anim.workspace = true
 
 [lints]
 workspace = true

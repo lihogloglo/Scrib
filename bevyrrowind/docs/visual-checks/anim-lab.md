@@ -36,6 +36,14 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
   baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
 
+### AL-8: Waist mantle, capsule player (action.md B2a)
+- Needs a bake after 2026-10-26 with the UAL2 library (log: "player traversal: 1 of 1 slot clips baked").
+- `scene level-anim-ledges`, F11; walk W into the yellow 1 m box, then W+Space (or Space while walking).
+- Look for: the capsule rises and slides onto the top (~1 m past the lip) in ~0.7 s, then walks on and drops off the
+  back normally; red 2 m box: a plain jump; Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a
+  stand at the face (correction too large for the 1 m clip; feel/tuning is the owner's call).
+- The capsule only: the climb animation on the body comes with the animated player body slice. Status: awaiting owner.
+
 ### AL-5: Props push (PH-1, physics-adapter.md)
 - `scene level-anim-props` (cameras `props`, `props-close`); F11 (player under the camera), push crates, boxes and the table; `V` throws.
 - Look for: the NPC brushing the crate row without sliding through it, light boxes shoved with a lean or step (not a stuck walk cycle), the

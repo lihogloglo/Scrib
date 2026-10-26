@@ -12,9 +12,10 @@
 //!    player's action values go into its [`sf_action::InputSampler`] at frame rate.
 //! 3. `FixedUpdate` at [`TICK_HZ`], zero or more times: [`ActionSystems::Sample`] (one
 //!    [`Command`] per local player and tick), [`ActionSystems::Command`] (AI, scripts and the
-//!    net layer write theirs), [`ActionSystems::Step`] (`sf_action::step` per character),
-//!    [`ActionSystems::Move`] (launch, then one batched `KinematicMover::step_batch` for every
-//!    character against the ground resource `G`).
+//!    net layer write theirs), [`ActionSystems::Step`] (`sf_action::step` per character; on a
+//!    Jump or Up press the context probe's `ObstacleAhead` fills `Sense::obstacle`),
+//!    [`ActionSystems::Move`] (a Warp move's body is placed on its warped root path; the others
+//!    launch, then one batched `KinematicMover::step_batch` against the ground resource `G`).
 //! 4. `RunFixedMainLoop`, [`ActionSystems::Interpolate`] (after the fixed loop): the drawn
 //!    root is the previous and current tick poses blended by `Time<Fixed>::overstep_fraction`,
 //!    in `WorldPos` space, plus the correction spring's offset, written to the `Transform`
@@ -23,6 +24,8 @@
 mod input;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_mantle;
 
 use std::marker::PhantomData;
 
@@ -31,9 +34,15 @@ use bevy_ecs::prelude::*;
 use bevy_math::{Quat, Vec2, Vec3};
 use bevy_time::{Fixed, Time, Virtual};
 use bevy_transform::components::Transform;
-use sf_action::{ActionOutput, ActionState, CharacterId, CharacterParams, Command, Focus, RuleSet, Sense, SlotSource, StepCtx, Tick};
+use sf_action::{
+    ActionClass, ActionOutput, ActionState, CharacterId, CharacterParams, Command, Focus, Obstacle, ObstacleClass, RuleSet, Sense, SlotSource,
+    StepCtx, Tick, WarpOutput,
+};
 pub use sf_action::{PlayerId, TICK_HZ};
-use sf_controller::{CorrectionParams, GroundProbe, KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RenderCorrection, RootMotion};
+use sf_controller::{
+    Affordance, ContextHit, ContextParams, ContextProbes, ContextQuery, ContextRequest, CorrectionParams, GroundProbe, KinematicMover, Locomotion,
+    MoveInput, MoverMode, MoverParams, RenderCorrection, RootMotion,
+};
 use sf_coords::WorldPos;
 
 pub use input::{ActionInputPlugin, PlayerAction, PlayerControls, PlayerInput, spawn_player_actions};
@@ -78,7 +87,7 @@ impl<G: GroundProbe + Resource> Plugin for SfActionPlugin<G> {
             )
             .configure_sets(RunFixedMainLoop, ActionSystems::Gather.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop))
             .configure_sets(RunFixedMainLoop, ActionSystems::Interpolate.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
-            .add_systems(FixedUpdate, (input::sample.in_set(ActionSystems::Sample), step_actions.in_set(ActionSystems::Step)))
+            .add_systems(FixedUpdate, (input::sample.in_set(ActionSystems::Sample), step_actions::<G>.in_set(ActionSystems::Step)))
             .add_systems(FixedUpdate, move_bodies::<G>.in_set(ActionSystems::Move))
             .add_systems(RunFixedMainLoop, interpolate.in_set(ActionSystems::Interpolate));
     }
@@ -190,6 +199,8 @@ pub struct ActionBody {
     pub correction_params: CorrectionParams,
     prev: TickPose,
     curr: TickPose,
+    /// A Warp move's start-tick feet: its root poses are relative to them.
+    warp_anchor: Option<WorldPos>,
 }
 
 impl ActionBody {
@@ -204,6 +215,7 @@ impl ActionBody {
             correction_params: CorrectionParams::default(),
             prev: pose,
             curr: pose,
+            warp_anchor: None,
         }
     }
 
@@ -217,6 +229,7 @@ impl ActionBody {
     pub fn restore(&mut self, loco: Locomotion) {
         self.loco = loco;
         self.correction = RenderCorrection::default();
+        self.warp_anchor = None;
         self.curr = TickPose::of(&self.loco);
         self.prev = self.curr;
     }
@@ -240,24 +253,92 @@ impl ActionBody {
     }
 }
 
-fn step_actions(rules: Option<Res<ActionRules>>, mut characters: Query<(&mut ActionCharacter, &ActionBody)>) {
+/// How far ahead the ledge probe looks, m (the context probe's `ObstacleAhead` range).
+const OBSTACLE_RANGE_M: f32 = 1.5;
+
+#[allow(clippy::needless_pass_by_value)]
+fn step_actions<G: GroundProbe + Resource>(
+    rules: Option<Res<ActionRules>>,
+    ground: Option<Res<G>>,
+    mut probes: Local<ContextProbes>,
+    mut characters: Query<(&mut ActionCharacter, &ActionBody)>,
+) {
     let Some(rules) = rules else { return };
     for (mut c, body) in &mut characters {
         let c = &mut *c;
         let ctx = StepCtx { rules: &rules.rules, slots: &*rules.slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
+        // Only a jump or up press can start a traversal: probe then, not every tick.
+        let wants = [ActionClass::Jump, ActionClass::Up].into_iter().any(|a| c.command.pressed(a) || c.command.held(a));
+        let obstacle = match &ground {
+            Some(ground) if wants => sense_obstacle(&mut probes, &**ground, body, c.command.stick),
+            _ => None,
+        };
         let sense = Sense {
-            grounded: body.loco.grounded.is_some(),
+            // A warped traversal holds the body off the ground on purpose: not a fall.
+            grounded: body.loco.grounded.is_some() || body.loco.traversing,
             vertical_speed: body.loco.vertical_speed,
             planar_speed: Vec3::new(v.x, 0.0, v.z).length(),
             yaw: body.loco.motion.yaw,
             focus: c.focus,
-            // B2a shell step (next): the context probe (`sf_controller::ContextProbes`, ObstacleAhead along
-            // the stick) fills this; until then no traversal rule can fire.
-            obstacle: None,
+            obstacle,
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
     }
+}
+
+/// The context probe's obstacle ahead along the stick (else the facing), as the chooser reads it.
+fn sense_obstacle(probes: &mut ContextProbes, ground: &dyn GroundProbe, body: &ActionBody, stick: Vec2) -> Option<Obstacle> {
+    let dir = if stick.length_squared() > 1e-4 {
+        Vec3::new(stick.x, 0.0, stick.y).normalize()
+    } else {
+        sf_controller::forward(body.loco.motion.yaw)
+    };
+    let params = ContextParams::from_mover(&body.params);
+    let query = ContextQuery::ObstacleAhead { range: OBSTACLE_RANGE_M };
+    let mut out = [None];
+    probes.run(&[ContextRequest { feet: body.loco.position, dir, params: &params, query }], ground, &mut out);
+    out[0].and_then(|hit| obstacle(body.loco.position, &hit))
+}
+
+/// A context hit as an [`Obstacle`] (positions from `feet`); `None` for kinds no traversal class
+/// covers.
+fn obstacle(feet: WorldPos, hit: &ContextHit) -> Option<Obstacle> {
+    let class = match hit.kind {
+        Affordance::Step => ObstacleClass::Step,
+        Affordance::Vault => ObstacleClass::Vault,
+        Affordance::Mantle => ObstacleClass::Mantle,
+        Affordance::Climb => ObstacleClass::Climb,
+        _ => return None,
+    };
+    Some(Obstacle { class, lip: feet.delta_f32(hit.point), normal: hit.normal, height: hit.height, depth: hit.depth, clearance: hit.clearance })
+}
+
+/// Puts a Warp move's body where the move says, outside the mover: no gravity, steering or
+/// collision (the probe checked the end has room; UE's and ALS's mantles move the capsule the
+/// same way). The body stays marked `traversing`, so the first mover step after the move
+/// re-grounds it with the step-down probe.
+fn place_warped(body: &mut ActionBody, warp: &WarpOutput, started: bool, dt: f32) {
+    let anchor = match body.warp_anchor {
+        Some(a) if !started => a,
+        _ => *body.warp_anchor.insert(body.loco.position),
+    };
+    let feet = anchor.offset(warp.root.position);
+    let loco = &mut body.loco;
+    let moved = loco.position.delta_f32(feet);
+    let v = if dt > 0.0 { moved / dt } else { Vec3::ZERO };
+    loco.position = feet;
+    // Planar momentum carries out of the move; the climb does not.
+    loco.motion.velocity = Vec3::new(v.x, 0.0, v.z);
+    loco.motion.acceleration = Vec3::ZERO;
+    loco.motion.yaw = warp.root.yaw;
+    loco.motion.facing_goal = warp.root.yaw;
+    loco.motion.angular_velocity = 0.0;
+    loco.vertical_speed = 0.0;
+    loco.grounded = None;
+    loco.traversing = true;
+    loco.height_offset = 0.0;
+    loco.height_offset_velocity = 0.0;
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -281,6 +362,11 @@ fn move_bodies<G: GroundProbe + Resource>(
     for (c, body, no_clip) in &mut bodies {
         let body = &mut **body;
         body.prev = body.curr;
+        if let Some(warp) = &c.output.warp {
+            place_warped(body, warp, c.output.started, dt);
+            continue;
+        }
+        body.warp_anchor = None;
         if let Some(v) = c.output.launch {
             body.loco.launch(v);
         }

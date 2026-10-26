@@ -44,6 +44,8 @@ pub use state::{
     ActionClock, ActionState, BodyMemory, CharacterParams, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers, WarpState,
 };
 pub use step::{ActionEvent, ActionOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, Sense, StepCtx, WarpOutput, step};
+/// The root-path trait a [`SlotSource`] hands Warp moves (hosts implement or box it).
+pub use sf_anim::RootPath;
 pub use windows::{Gates, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, gates, locate};
 
 /// The framework's base move rules (A1: locomotion, air, landing bands, activation), loaded as

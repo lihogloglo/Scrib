@@ -92,6 +92,7 @@ AL-4 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Traversal height
 AL-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Props push
 AL-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
+AL-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, capsule player
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
 AN-3 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Footsteps on the feet

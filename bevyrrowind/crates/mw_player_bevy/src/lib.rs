@@ -61,7 +61,10 @@ use bevy_time::prelude::*;
 use bevy_transform::prelude::*;
 use bevy_window::{CursorGrabMode, CursorOptions, PrimaryWindow, Window};
 use bevy_enhanced_input::prelude::*;
-use sf_action::{ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, RuleKey, RuleSet, SlotInfo, SlotTable};
+use sf_action::{
+    ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, Origin, RootPath, RuleKey, RuleSetBuilder, SlotInfo, SlotTable,
+    TRAVERSAL_RULES,
+};
 use sf_action_bevy::{
     ActionBody, ActionCharacter, ActionInputPlugin, ActionRules, ActionSystems, AwaitingGround, PlayerAction, PlayerControls, PlayerId,
     PlayerInput, SfActionPlugin, spawn_player_actions,
@@ -117,7 +120,20 @@ const INTERIOR_VOID_MARGIN_M: f32 = 2.0;
 /// The player's character id on commands (NPCs don't run the action layer yet).
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
-pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: PlayerStart) {
+/// The traversal slots the player's rules use (`sf_action::TRAVERSAL_RULES`): the host loads
+/// their clips from the baked humanoid graph.
+pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist"];
+
+/// A traversal slot's clip: its length and root track (action.md B2a). A slot without one
+/// refuses its move (`Refused::NoRootPath`: the mantle falls back to a plain jump).
+pub struct TraversalClip {
+    pub slot: &'static str,
+    pub duration: f32,
+    pub root: Arc<dyn RootPath + Send + Sync>,
+}
+
+/// `traversal`: the clips of [`TRAVERSAL_SLOTS`] the host could load.
+pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: PlayerStart, traversal: Vec<TraversalClip>) {
     if !app.is_plugin_added::<EnhancedInputPlugin>() {
         app.add_plugins(EnhancedInputPlugin);
     }
@@ -125,7 +141,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
     let app_db = db.clone();
     mw_controls_bevy::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
-        .insert_resource(rules())
+        .insert_resource(rules(traversal))
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
         .init_resource::<RestoreBody>()
         .init_resource::<ArrivalSpot>()
@@ -153,16 +169,22 @@ fn activate_reach_m(db: Option<&RecordDb>) -> f32 {
     m
 }
 
-/// The base move rules and the slot table the chooser times windows with. Scaffold
-/// `PlayerSlots`: fixed clip lengths until B1's animation feed reports the real ones.
-fn rules() -> ActionRules {
-    let slots = SlotTable::new()
+/// The base and traversal move rules and the slot table the chooser times windows with. Scaffold
+/// `PlayerSlots`: fixed clip lengths until B1's animation feed reports the real ones; the
+/// traversal slots take their baked clips' lengths and root tracks.
+fn rules(traversal: Vec<TraversalClip>) -> ActionRules {
+    let mut slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
         .with("air.fall", SlotInfo::looping())
         .with("air.jump", SlotInfo::once(0.3))
         .with("air.land.normal", SlotInfo::once(0.25))
         .with("air.land.hard", SlotInfo::once(0.5));
-    ActionRules { rules: RuleSet::from_ron(BASE_RULES).expect("framework base rules parse"), slots: Box::new(slots) }
+    for clip in traversal {
+        slots = slots.with(clip.slot, SlotInfo::once(clip.duration)).with_root(clip.slot, clip.root);
+    }
+    let mut rules = RuleSetBuilder::new();
+    rules.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES);
+    ActionRules { rules: rules.build().expect("framework base and traversal rules parse"), slots: Box::new(slots) }
 }
 
 /// Scaffold `PlayerCapsule`: the stand-in mesh (see the module docs).
@@ -269,7 +291,8 @@ fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, keymap: &sf_ui::Ke
     let (cell, transform) = to_grid(feet);
     let params = MoverParams::default();
     let half = params.height / 2.0;
-    let character = ActionCharacter::new(PLAYER_CHARACTER, ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+    let measures = CharacterParams { height: params.height, radius: params.radius, ..CharacterParams::default() };
+    let character = ActionCharacter::new(PLAYER_CHARACTER, ActionState::new(RuleKey::of("loco")), measures);
     let body = ActionBody::new(Locomotion::new(feet, yaw), params, from_grid(&cell, &Transform::IDENTITY));
     let player = PlayerId::new(0).expect("player 0 is valid");
     let id = commands

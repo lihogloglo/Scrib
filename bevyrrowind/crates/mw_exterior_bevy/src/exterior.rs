@@ -437,7 +437,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).
     // A test scene with its own camera keeps it (F11 still turns the player on).
     let scene_camera = mw_game_core::scenes::active().is_some_and(mw_game_core::scenes::SceneDef::fixed_camera);
-    mw_player_bevy::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start);
+    let traversal = player_traversal(&options.store, &manifest);
+    mw_player_bevy::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start, traversal);
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled);
     mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());
@@ -1317,6 +1318,30 @@ impl QualityRender for Quality {
         let (bias, min_pixels, min_draw_distance) = self.params();
         sf_model::LodScreen { bias, min_pixels: if size_cull { min_pixels } else { 0.0 }, min_draw_distance, ..sf_model::LodScreen::default() }
     }
+}
+
+/// The player's traversal slot clips from the baked male humanoid graph (action.md B2a): their
+/// lengths and root tracks. Slots whose clip isn't baked (no clip-sources library) are left
+/// out, and their moves refuse (the mantle falls back to a plain jump).
+fn player_traversal(store: &Store, manifest: &Manifest) -> Vec<mw_player_bevy::TraversalClip> {
+    let library = mw_bake::anim::AnimLibrary::new(store.clone(), manifest.clone());
+    let graph = match library.graph(mw_graphs::Template::Humanoid.path(), mw_graphs::HUMANOID_SETS[0].skeleton) {
+        Ok(graph) => graph,
+        Err(e) => {
+            warn!("player traversal: no humanoid graph ({e}); traversals refuse");
+            return Vec::new();
+        }
+    };
+    let clips: Vec<_> = mw_player_bevy::TRAVERSAL_SLOTS
+        .iter()
+        .filter_map(|&slot| {
+            let product = &graph.clips.get(usize::from(graph.slot_clip(slot)?))?.product;
+            let clip = library.clip(product).inspect_err(|e| warn!("player traversal {slot}: {e}")).ok()?;
+            Some(mw_player_bevy::TraversalClip { slot, duration: clip.duration, root: Arc::new(clip) })
+        })
+        .collect();
+    info!("player traversal: {} of {} slot clips baked", clips.len(), mw_player_bevy::TRAVERSAL_SLOTS.len());
+    clips
 }
 
 /// The worldspaces with a baked far field (the exterior): prefetched
