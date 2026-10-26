@@ -53,7 +53,7 @@ pub use debug::PhysicsDebug;
 pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder, TickView};
 pub use sf_physics;
 #[cfg(feature = "ragdoll")]
-pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, RagdollGotUp,RagdollLoader, RagdollMode, RagdollSource, RagdollStats, Ragdolls, clip_root_body};
+pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, RagdollGotUp,RagdollLoader, RagdollMode, RagdollSource, RagdollStats, Ragdolls, clip_root_body, FrameQuery, move_frame, world_frame};
 #[cfg(feature = "ragdoll")]
 pub use sf_ragdoll;
 pub use stream::{

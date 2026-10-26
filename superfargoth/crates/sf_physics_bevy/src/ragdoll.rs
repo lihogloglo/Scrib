@@ -226,11 +226,12 @@ pub(crate) fn add(app: &mut App) {
         .add_systems(Update, (handoff, read_back, get_up).chain().after(PhysicsSystems::WriteBack));
 }
 
-type FrameQuery<'w, 's> = Query<'w, 's, (Option<&'static CellCoord>, &'static Transform, &'static ChildOf)>;
+/// What [`world_frame`] reads: each entity's cell, local transform and parent.
+pub type FrameQuery<'w, 's> = Query<'w, 's, (Option<&'static CellCoord>, &'static Transform, &'static ChildOf)>;
 
 /// The entity's frame in its worldspace: composed `Transform`s up to the
 /// nearest high-precision (`CellCoord`) ancestor. Scale: its Y (uniform).
-fn world_frame(entity: Entity, spatial: &FrameQuery<'_, '_>, roots: &Query<&WorldspaceRoot>) -> Option<(WorldspaceId, WorldTransform, f32)> {
+pub fn world_frame(entity: Entity, spatial: &FrameQuery<'_, '_>, roots: &Query<&WorldspaceRoot>) -> Option<(WorldspaceId, WorldTransform, f32)> {
     let mut local = Transform::IDENTITY;
     let mut current = entity;
     for _ in 0..64 {
@@ -249,7 +250,7 @@ fn world_frame(entity: Entity, spatial: &FrameQuery<'_, '_>, roots: &Query<&Worl
 
 /// Moves an entity whose world frame is `current` (scale `scale`, its local
 /// `transform`) to the world frame `to` by editing its local transform.
-fn move_frame(transform: &mut Transform, current: &WorldTransform, scale: f32, to: &WorldTransform) {
+pub fn move_frame(transform: &mut Transform, current: &WorldTransform, scale: f32, to: &WorldTransform) {
     let parent_rot = current.rotation * transform.rotation.inverse();
     let parent_scale = if transform.scale.y.abs() > 1e-6 { scale / transform.scale.y } else { 1.0 };
     let delta = current.pos.delta_f32(to.pos);

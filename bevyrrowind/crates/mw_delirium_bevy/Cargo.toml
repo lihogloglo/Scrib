@@ -1,0 +1,34 @@
+[package]
+name = "mw_delirium_bevy"
+description = "Delirium active ragdoll on animated Morrowind characters in Bevy: takeover from the pose, copy-back through the physics pose, hand-back, dev click-to-push"
+version.workspace = true
+edition.workspace = true
+# Links mw_delirium (delirium-physics, GPL-3.0-only).
+license = "GPL-3.0-only"
+publish = false
+
+# Thin plugin (build-perf rules): the logic is in `mw_delirium`; minimal Bevy sub-crates.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_camera.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_input = { workspace = true, features = ["keyboard", "mouse"] }
+bevy_log.workspace = true
+bevy_math = { workspace = true, features = ["std"] }
+bevy_time = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+bevy_window.workspace = true
+mw_delirium.workspace = true
+sf_anim.workspace = true
+sf_anim_bevy.workspace = true
+sf_character_bevy.workspace = true
+sf_controller_bevy.workspace = true
+sf_coords.workspace = true
+sf_physics_bevy = { workspace = true, features = ["ragdoll"] }
+sf_ragdoll.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+workspace-hack.workspace = true
+
+[lints]
+workspace = true

@@ -354,3 +354,19 @@ Supersedes R9 above: Delirium entered the game as ROADMAP 3.2b, not as the FOLLO
   pose keep it fidgeting while standing (still only at 37.6 / 53 s). Keep: bind-pose spawn, asset zero pose.
 - Slice 2 needs: Bevy plugin (takeover from the clip with part velocities, per-actor `Build::scaled`, actor
   transform as `model_from_sim`), click-to-push, copy-back before skinning, hand-back once balanced, get-up clips.
+
+## As built (slice 2a, 2026-10-26): takeover of an animated NPC
+- `mw_delirium::takeover` (Bevy-free): `Takeover::start` from part frames (+ per-part velocities from the previous pose,
+  `Ragdoll::set_body`), `Build::scaled` from the actor's scale, floor at the feet; `bodyBalance` (or `catchFall` when the
+  pelvis sinks > 1 m/s). `step` returns `HandBack::{Balanced, Timeout, Fallen, Exploded}` (`Rules`: still = CoM < 0.05 m/s
+  for 0.5 s; down = `agent.fallen` or pelvis < 50 %, then 1.5-4 s). `pick`: ray vs part capsules. Tests (real install):
+  rest-pose takeover hands back Balanced at 1.0 s; 80 N s at scale 1.05 Balanced at 2.9 s; a falling pose starts
+  catchFall, Fallen at 2.7 s; picks hit the aimed part; 0.42 ms/step.
+- `mw_delirium_bevy` (app feature `delirium`, in `dev`): request `DeliriumReaction` on the root; two posed frames, then
+  takeover, root `Dormant`; FixedUpdate step; copy-back as `PhysicsPose` weight 1 (the ragdoll path: ops skip, no root
+  motion), parts interpolated by the fixed overstep; body frame on the floor under the pelvis (heading from the hips),
+  uniform scale until hand-back. Hand-back: `inertialize_from` 0.3 s; fallen: `knocked_out` set while down, frame to
+  `get_up_root` on the `Knockout@tail` first pelvis pose, flag cleared; root takes the body's move (walkers' glue).
+  Dev click (left; Ctrl 20 / 45 / Shift 80 N s). Human skeletons only (beasts logged). Live: balanced hand-backs seen.
+- Next: fall + get-up live check (BRP clicks were unreliable), Rapier statics into Delirium's world, non-uniform scale
+  pelvis anchor at hand-back (as `anchor_pelvis`), a BRP agent tool for scripted pushes.

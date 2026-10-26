@@ -18,6 +18,8 @@ mw_audio_bevy.workspace = true
 mw_bake.workspace = true
 mw_boot_bevy.workspace = true
 mw_controls_bevy.workspace = true
+# Feature `delirium`: Delirium takeovers + the dev click-to-push (GPL-3.0-only code: a build with it is GPL-3.0-only).
+mw_delirium_bevy = { workspace = true, optional = true }
 mw_devtools_bevy.workspace = true
 mw_doors_bevy.workspace = true
 mw_environment_bevy.workspace = true
@@ -66,6 +68,11 @@ sf_world = { workspace = true, features = ["bake"] }
 sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
+
+[features]
+# Delirium active ragdoll takeovers on human NPCs, dev click-to-push (ROADMAP 3.2b; `mw_delirium_bevy`).
+# Links delirium-physics, GPL-3.0-only: a build with this feature is GPL-3.0-only.
+delirium = ["dep:mw_delirium_bevy"]
 
 [lints]
 workspace = true

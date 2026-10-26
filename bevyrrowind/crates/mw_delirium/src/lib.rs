@@ -4,7 +4,9 @@
 //! - [`character_from_skeleton`]: the Delirium character (asset + build, `nm-character-1`) from the `Bip01` bones.
 //! - [`pose_to_bones`] / [`bones_to_parts`]: Delirium part frames to the bones each part owns and back, through the
 //!   [`PartTable`] the character comes with.
-//! - [`sim`]: a headless harness (floor world, one agent, pushes), used by the tests and by slice 2.
+//! - [`sim`]: a headless harness (floor world, one agent, pushes), used by the tests.
+//! - [`takeover`]: an animated character taken over from its pose, and when to hand it back (slice 2a);
+//!   [`takeover::pick`] finds the part under a ray.
 //!
 //! Spaces. *Model*: the skeleton's model space (`sf_anim`: Y up, facing +Z, metres). *Authoring*: Z up, facing +Y,
 //! metres (Morrowind's own NIF axes), where the character is built ([`authoring_point`]). *Sim*: Delirium's world (Z
@@ -17,11 +19,13 @@
 pub mod body;
 pub mod pose;
 pub mod sim;
+pub mod takeover;
 
 pub use body::{Body, Options, character_from_skeleton};
 pub use delirium;
 pub use delirium_physics as sdk;
 pub use pose::{PartBone, PartTable, bones_to_parts, pose_to_bones};
+pub use takeover::{HandBack, Rules, Takeover};
 
 use glam::{Affine3A, Mat3, Quat, Vec3};
 

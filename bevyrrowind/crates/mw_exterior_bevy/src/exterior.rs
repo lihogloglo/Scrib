@@ -219,6 +219,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     if !perf.off.has(Part::Physics) {
         mw_walkers_bevy::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
     }
+    // ROADMAP 3.2b: Delirium takeovers of human NPCs, left click pushes one (dev tool; GPL-3.0-only code).
+    #[cfg(feature = "delirium")]
+    app.add_plugins(mw_delirium_bevy::DeliriumPlugin { click: !bench });
     // The quality preset scales LOD selection, size culling and the
     // far-field handoff with one bias (`--off sizecull`: no size culling).
     let screen = options.quality.screen(!perf.off.has(Part::SizeCull));
