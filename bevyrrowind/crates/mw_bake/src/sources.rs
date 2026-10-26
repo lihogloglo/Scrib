@@ -179,8 +179,9 @@ mod tests {
         assert!(sources.real_path("animsrc/quaternius_ual1/other.glb").is_none(), "only manifest files");
         assert!(sources.real_path("animsrc/nope/AnimationLibrary_Godot.glb").is_none());
         let check = sources.check();
-        let mantle = check.slots.iter().find(|s| s.slot == "traverse.mantle.waist").unwrap();
-        assert_eq!(mantle.from.as_deref(), Some("quaternius_ual1:ClimbLedge_RM"));
+        let climb = check.slots.iter().find(|s| s.slot == "traverse.climb.up").unwrap();
+        assert_eq!(climb.from.as_deref(), Some("quaternius_ual1:ClimbLedge_RM"));
+        assert!(check.slots.iter().find(|s| s.slot == "traverse.mantle.waist").unwrap().from.is_none(), "UAL1 serves no mantle");
         assert!(default_dir().ends_with("animation packs") && default_dir().parent().unwrap().join("bevyrrowind").is_dir());
         assert!(check.to_string().contains("present  quaternius_ual1"));
     }

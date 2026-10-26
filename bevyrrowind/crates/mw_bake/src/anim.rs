@@ -46,7 +46,7 @@ use sf_anim::steps::{
     ANIM_COOK, ANIM_RETARGET, AnimBake, AnimImporters, AnimRules, ClipSpec, RIG_PROFILE, SKELETON_COOK, anim_subject, parse_anim_subject,
     retarget_subject,
 };
-use sf_anim::{Clip, ClipRules, CookSettings, Looping, RetargetRig, RigHints, RigProfile, Skeleton, SkeletonRules};
+use sf_anim::{Clip, ClipRules, CookSettings, Looping, RetargetRig, RigHints, RigProfile, RootMotionRules, Skeleton, SkeletonRules};
 use sf_anim_graph::{CompiledGraph, Provenance};
 use sf_anim_graph::steps::{ANIMGRAPH_COMPILE, AnimGraphCompileStep, GraphRig, GraphRules, graph_subject};
 use sf_bake::{BakeError, Baker, Digest, Manifest, PlanCx, ProductKey, RunCx, Step, Store};
@@ -64,9 +64,24 @@ pub const ANIM_GROUPS: &str = "mw.anim.groups";
 pub const SOURCE_CLIPS: &str = "mw.anim.source_clips";
 
 /// The animation importers of the bake: `.kf` and `.nif` (skeletons and
-/// model keyframes), glTF/GLB (the user's clip libraries, [`crate::sources`]).
+/// model keyframes), glTF/GLB and BVH (the user's clip libraries,
+/// [`crate::sources`]). BVH files take their source's `unit_scale` and `up`
+/// from the shipped manifest (Z up: facing -Y, the Blender / 3ds Max layout).
 pub fn anim_importers() -> AnimImporters {
-    AnimImporters::new().with(Arc::new(KfAnimImporter)).with(Arc::new(NifAnimImporter)).with(Arc::new(sf_anim::GltfAnimImporter))
+    let mut bvh = sf_anim::BvhAnimImporter::default();
+    for (name, source) in &mw_graphs::sources::SourcesManifest::builtin().sources {
+        let (up, forward) = match source.up {
+            mw_graphs::sources::Axis::Y => (sf_anim::Axis::PosY, sf_anim::Axis::PosZ),
+            mw_graphs::sources::Axis::Z => (sf_anim::Axis::PosZ, sf_anim::Axis::NegY),
+        };
+        let space = sf_anim::SourceSpace { unit_scale: source.unit_scale, up, forward, right_handed: true };
+        bvh = bvh.with_override(AnimSources::virtual_path(name, ""), space);
+    }
+    AnimImporters::new()
+        .with(Arc::new(KfAnimImporter))
+        .with(Arc::new(NifAnimImporter))
+        .with(Arc::new(sf_anim::GltfAnimImporter))
+        .with(Arc::new(bvh))
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +400,8 @@ struct LibraryRef {
     /// Virtual path of the library file (the source skeleton too).
     file: String,
     spec: ClipSpec,
+    /// Root motion generated on the target (`AnimRules::retarget_root`).
+    retarget_root: Option<RootMotionRules>,
     provenance: Provenance,
     /// `None`: the file is missing (the graph compile checks it and drops
     /// the clip); `Some(false)`: present but unusable (no such clip, or
@@ -449,7 +466,7 @@ impl MwAnimRules {
             let source = &sources.manifest.sources[&r.source];
             let provenance = Provenance { source: r.source.clone(), license: source.license.tag().to_owned(), redistributable: source.redistributable() };
             let spec = ClipSpec { source: r.clip.clone(), rules: r.rules.clone() };
-            self.library.insert(r.reference.clone(), LibraryRef { file, spec, provenance, usable: None });
+            self.library.insert(r.reference.clone(), LibraryRef { file, spec, retarget_root: r.retarget_root.clone(), provenance, usable: None });
         }
     }
 
@@ -539,6 +556,10 @@ impl AnimRules for MwAnimRules {
     }
     fn rig(&self, path: &str) -> Option<RetargetRig> {
         self.skeletons.get(path).and_then(|s| s.retarget.clone())
+    }
+    /// Library sources without a root bone (`root_from_pelvis`).
+    fn retarget_root(&self, file: &str, clip: &str, _skeleton: &str) -> Option<RootMotionRules> {
+        self.library.get(clip).filter(|r| r.file == file).and_then(|r| r.retarget_root.clone())
     }
 }
 

@@ -1,7 +1,7 @@
 # Animation sources: bring-your-own libraries, licenses, import, creatures
 
 Status: first slice built (2026-10-26): manifest, library folder, retarget
-bake, one slot (UAL1 `ClimbLedge_RM` → `traverse.mantle.waist`); see "As built".
+bake, slots `traverse.mantle.waist` (LAFAN1 mocap, then UAL2) and `traverse.climb.up` (UAL1); see "As built".
 Licenses checked 2026-10-11
 Crates: `mw_bake` (source manifest, clip selection, `GraphRules`), on top of
 superfargoth `sf_anim` (importers, `anim.cook`, `anim.retarget`,
@@ -157,6 +157,14 @@ as opaque strings).
 - Report: `bevyrrowind bake` prints a line per slot (source, or fallback and why); `bevyrrowind anim-sources` prints the
   folder, files present/missing and per-slot choice. Tests: `mw_bake/tests/anim_sources_real_install.rs`.
 - UAL1 `ClimbLedge_RM` is a 0.63 s top-out: root straight up 2.47 m (2.94 m on `base_anim`), no forward travel.
+- LAFAN1 (2026-10-26): BVH importer in `anim_importers()` (per-source `unit_scale`/`up` from the manifest as path
+  overrides); source flag `root_from_pelvis` → `SourceRef::retarget_root` → `AnimRules::retarget_root`: cooked without
+  extraction, root motion generated on the target hips (framework animation.md "Bake steps"). `lafan1` is
+  CC-BY-NC-ND-4.0, `private_only` (graph provenance non-redistributable). `traverse.mantle.waist` candidates:
+  `obstacles3_subject4` 123.83–127.17 s, then UAL2 `ClimbUp_1m_RM`. On `base_anim` (measured): 3.34 s, root rises
+  1.30 m, forward 2.50 m, side 0.57 m; frame 0 hips over the root (2.6 cm), thighs face 2.3°, toes 5°/−9°; but the
+  root yaw turns 0 → 84° by the obstacle and ends at 120° (the actor turns side-on to knee over it, then turns away).
+  Tests: `lafan1_mantle_starts_over_its_root_facing_forward`, `measure_mantle_waist_lafan1` (ignored).
 
 ## Morrowind creature mapping notes
 

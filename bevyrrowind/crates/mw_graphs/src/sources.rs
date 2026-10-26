@@ -94,6 +94,13 @@ pub struct Source {
     pub unit_scale: f32,
     #[serde(default)]
     pub up: Axis,
+    /// The library has no root-motion bone (mocap takes: the hips are the
+    /// root and the take wanders the capture volume): root motion is
+    /// generated from the target pelvis after retargeting
+    /// (`sf_anim::Retargeter::frames_with_root`), so every clip starts over
+    /// its root facing forward.
+    #[serde(default)]
+    pub root_from_pelvis: bool,
 }
 
 fn one() -> f32 {
@@ -189,6 +196,10 @@ pub struct SourceRef {
     pub file: String,
     pub clip: String,
     pub rules: ClipRules,
+    /// The source's [`Source::root_from_pelvis`]: the root-motion rules
+    /// applied on the target after retargeting (`rules` then cooks the
+    /// source with its motion left in the pose).
+    pub retarget_root: Option<RootMotionRules>,
 }
 
 /// The manifest.
@@ -223,7 +234,9 @@ impl SourcesManifest {
                     Some(f) => source.files.iter().find(|x| &x.name == f).ok_or_else(|| format!("slot {name}: {} has no file {f:?}", c.source))?,
                     None => source.files.first().ok_or_else(|| format!("source {}: no files", c.source))?,
                 };
-                let r = SourceRef { reference: c.reference(), source: c.source.clone(), file: file.name.clone(), clip: c.clip.clone(), rules: slot.rules(c) };
+                let rules = slot.rules(c);
+                let retarget_root = source.root_from_pelvis.then(|| rules.root_motion.clone());
+                let r = SourceRef { reference: c.reference(), source: c.source.clone(), file: file.name.clone(), clip: c.clip.clone(), rules, retarget_root };
                 match out.iter().find(|x| x.reference == r.reference) {
                     Some(x) if *x != r => return Err(format!("slot {name}: {} is used with other cook rules elsewhere", r.reference)),
                     Some(_) => {}
@@ -263,8 +276,17 @@ mod tests {
         assert!(ual1.redistributable());
         assert_eq!(ual1.files[0].sha256.len(), 64);
         assert_eq!(m.sources["quaternius_ual2"].license, License::CC0);
+        let lafan1 = &m.sources["lafan1"];
+        assert_eq!(lafan1.license, License::CC_BY_NC_ND_4_0);
+        assert!(lafan1.private_only && !lafan1.redistributable() && lafan1.root_from_pelvis);
+        assert!(lafan1.files.iter().all(|f| f.sha256.len() == 64));
         let slot = &m.slots["traverse.mantle.waist"];
-        assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m_RM");
+        assert_eq!(slot.candidates[0].reference(), "lafan1:bvh/obstacles3_subject4.bvh:obstacles3_subject4@123.83-127.17");
+        assert_eq!(slot.candidates[1].reference(), "quaternius_ual2:ClimbUp_1m_RM");
+        let refs = m.references().unwrap();
+        let root = refs.iter().find(|r| r.source == "lafan1").and_then(|r| r.retarget_root.clone()).unwrap();
+        assert!(root.vertical && root.extract && root.mode == RootMotionMode::Progress);
+        assert!(refs.iter().filter(|r| r.source != "lafan1").all(|r| r.retarget_root.is_none()));
         assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge_RM");
         let rules = slot.rules(&slot.candidates[0]);
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);

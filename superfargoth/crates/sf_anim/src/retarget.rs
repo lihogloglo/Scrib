@@ -23,6 +23,15 @@
 //!    motion) and vertically by the limb-length ratio, weighted by the
 //!    source's `contact.<end>` curve when the clip has
 //!    one, so planted feet stay planted on a rig with other proportions.
+//! 4. Optional root motion from the target pelvis
+//!    ([`Retargeter::frames_with_root`], UE 5.4's "Root Motion: generate
+//!    from target pelvis"), for sources with no usable root bone (mocap
+//!    takes): the source keeps its motion in the pose, every frame is
+//!    retargeted in the take's space, the clip is re-based so the target
+//!    hips stand over their retarget-pose ground point facing +Z at frame 0
+//!    (heading measured on the target hips against their retarget pose,
+//!    never against the source's rest), then root motion is extracted from
+//!    the target hips with the clip's [`RootMotionRules`].
 //!
 //! Joint local axes may differ between rigs (Blender's +Y bones against
 //! 3ds Max's +X bones): only model-space deltas cross over.
@@ -30,10 +39,10 @@
 use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::cook::model_of;
+use crate::cook::{ancestors, extract_root_motion, model_of, root_meta};
 use crate::ik::{LimbGoal, LimbSolver, limb_pole, solve_limb};
-use crate::math::{affine_rotation, nlerp};
-use crate::{Clip, CookError, CookSettings, FrameClip, LocalPose, ModelPose, Skeleton, Trs, cook_frames};
+use crate::math::{affine_rotation, nlerp, twist_angle};
+use crate::{Clip, CookError, CookSettings, FrameClip, LocalPose, ModelPose, RootMotionRules, Skeleton, Trs, cook_frames};
 
 /// One named joint chain of a rig, root first.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -96,6 +105,10 @@ pub enum RetargetError {
     Additive,
     #[error("frame data size mismatch")]
     BadFrames,
+    #[error("root motion from the target pelvis needs a hips joint on both rigs")]
+    NoHips,
+    #[error("root motion from the target pelvis needs a source cooked without root-motion extraction")]
+    SourceRootMotion,
     #[error("cooking the retargeted clip: {0}")]
     Cook(#[from] CookError),
 }
@@ -403,6 +416,60 @@ impl Retargeter {
         out.meta.stance_velocity *= s;
         out.meta.cycle_distance *= s;
         out.meta.unbound_joints.clear();
+        Ok(out)
+    }
+
+    /// [`Self::frames`] with root motion generated from the target pelvis
+    /// (module docs, step 4). The clip must carry no root motion (its
+    /// source cooked with [`RootMotionRules::extract`] off): its motion is
+    /// in the pose, in the take's space. With `rules.extract` off (or no
+    /// axis kept) the clip is only re-based.
+    pub fn frames_with_root(&self, clip: &FrameClip, rules: &RootMotionRules) -> Result<FrameClip, RetargetError> {
+        let Some((_, ht, _, pt)) = self.hips else {
+            return Err(RetargetError::NoHips);
+        };
+        if clip.root_motion.is_some() {
+            return Err(RetargetError::SourceRootMotion);
+        }
+        let mut out = self.frames(clip)?;
+        let (n_t, n) = (self.target.len(), out.frame_count);
+        out.meta.root_motion_mode = rules.mode;
+        if n == 0 {
+            return Ok(out);
+        }
+        // Frame 0's hips ground frame: ground position less the retarget
+        // pose's ground offset, heading against the retarget-pose rotation.
+        let up = ancestors(&self.target, ht);
+        let parent_of = |pose: &[Trs]| up.iter().fold(Affine3A::IDENTITY, |m, &j| m * pose[j].to_affine());
+        let m0 = parent_of(&out.frames[..n_t]) * out.frames[ht].to_affine();
+        let heading = Quat::from_rotation_y(twist_angle(affine_rotation(&m0) * self.target_rot[ht].inverse(), Vec3::Y));
+        let ground = |p: Vec3| Vec3::new(p.x, 0.0, p.z);
+        let origin = ground(Vec3::from(m0.translation)) - heading * ground(pt);
+        let anchor = Affine3A::from_rotation_translation(heading, origin).inverse();
+        for pose in out.frames.chunks_exact_mut(n_t) {
+            let parent = parent_of(pose);
+            let t = Trs::from_affine(&(parent.inverse() * anchor * parent * pose[ht].to_affine()));
+            pose[ht].translation = t.translation;
+            pose[ht].rotation = t.rotation;
+        }
+        if rules.extract && (rules.horizontal || rules.vertical || rules.yaw || rules.attitude) {
+            out.root_motion = Some(extract_root_motion(&self.target, &mut out.frames, n, ht, rules));
+        }
+        Ok(out)
+    }
+
+    /// [`Self::clip`] with root motion generated from the target pelvis
+    /// ([`Self::frames_with_root`]); the root meta (velocity, turn rate,
+    /// distance) is measured on the new track.
+    pub fn clip_with_root(&self, clip: &Clip, rules: &RootMotionRules, settings: &CookSettings) -> Result<Clip, RetargetError> {
+        if clip.skeleton != self.source.id() {
+            return Err(RetargetError::SkeletonMismatch);
+        }
+        let frames = self.frames_with_root(&FrameClip::from_clip(clip), rules)?;
+        let mut out = cook_frames(&self.target, &frames, settings)?;
+        if out.root_motion.is_some() {
+            root_meta(&mut out);
+        }
         Ok(out)
     }
 

@@ -29,14 +29,35 @@
       unit_scale: 1.0,
       up: Y,
     ),
+    // Ubisoft La Forge Animation Dataset (LAFAN1), 77 BVH mocap takes. Private use only:
+    // CC BY-NC-ND 4.0, so cooked clips are never shared. Downloaded as lafan1.zip
+    // (SHA-256 ea918082b500a5d158e9d3aa39039df04cd42e25f5c02fe8f7e88e8e9365a977), unzipped
+    // into `<library>/lafan1/` (files below under `lafan1/bvh/`).
+    "lafan1": (
+      title: "Ubisoft La Forge Animation Dataset (LAFAN1)",
+      license: CC_BY_NC_ND_4_0,
+      page: "https://github.com/ubisoft/ubisoft-laforge-animation-dataset",
+      attribution: Some("LAFAN1, Ubisoft La Forge (Harvey et al., Robust Motion In-betweening, SIGGRAPH 2020)"),
+      private_only: true,
+      files: [
+        (name: "bvh/obstacles3_subject4.bvh", sha256: "52084d594a7105fea643dcfb49dcaceee5ff7d25fb9c3a6711e888a174efe263"),
+      ],
+      // BVH: centimeters, +Y up. No root bone (the hips wander the capture
+      // volume): root motion comes from the target pelvis after retargeting.
+      unit_scale: 0.01,
+      up: Y,
+      root_from_pelvis: true,
+    ),
   },
   slots: {
     // Waist-high mantle (action.md B2a): one clip, warped onto the ledge by
-    // the action clock (`Progress`), so its baked root track (the `_RM`
-    // variant) keeps the climb's rise and forward travel.
+    // the action clock (`Progress`), so its root track keeps the climb's rise
+    // and forward travel. First LAFAN1's walk-in knee mantle onto a 1.02 m
+    // obstacle (frames 3715-3815 at 30 Hz), then UAL2's baked `_RM` track.
     "traverse.mantle.waist": (
       graph: "humanoid",
       candidates: [
+        (source: "lafan1", file: Some("bvh/obstacles3_subject4.bvh"), clip: "obstacles3_subject4", range: Some((123.83, 127.17))),
         (source: "quaternius_ual2", clip: "ClimbUp_1m_RM"),
       ],
       root: Progress,

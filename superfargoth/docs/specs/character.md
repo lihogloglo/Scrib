@@ -184,11 +184,9 @@ part of resolution. The first-person view resolves the same way from the
   built as fix (a); rigs with a real foot (Quaternius, Morrowind, the test
   rigs: 60°+ off the shin) are unchanged. Test
   `auto_align_points_a_collinear_foot_forward`. Not built yet: (b) a
-  per-source retarget pose taken from a clip frame, and root motion for
-  sources whose rest hips sit off the origin (see the LaFAN1 handoff:
-  `Retargeter::pose` moves the target hips by the source's offset from its
-  retarget-pose hips, so a meaningless rest hips position shifts the body
-  off its root).
+  per-source retarget pose taken from a clip frame. Sources whose rest hips
+  sit off the origin (no root bone) take root motion from the target pelvis
+  (built 2026-10-26: animation.md "Bake steps").
 - **`RigMap::retarget_rig`** builds `sf_anim`'s `RetargetRig`: chains
   `hips`, `spine` (every joint from spine to the highest torso bone, unmapped
   ones included, so 5 and 3 spine joints pair by arc length), `neck` (neck

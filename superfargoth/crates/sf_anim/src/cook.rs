@@ -530,7 +530,7 @@ pub(crate) fn model_of(skeleton: &Skeleton, local: &[Trs], out: &mut Vec<Affine3
 /// Removes the root motion from `frames` (in place) and returns the track.
 ///
 /// The ancestors of `joint`, root first.
-fn ancestors(skeleton: &Skeleton, joint: usize) -> Vec<usize> {
+pub(crate) fn ancestors(skeleton: &Skeleton, joint: usize) -> Vec<usize> {
     let mut out = Vec::new();
     let mut a = skeleton.parent(joint);
     while let Some(p) = a {
@@ -562,7 +562,7 @@ fn end_anchor(skeleton: &Skeleton, bound: &BoundSource<'_>, end: f32, rm: usize)
 /// `c_f = h(p_f) − R_y(yaw_f)·h(p_0)`, where `p` is the root-motion joint's
 /// model position and `h` keeps the extracted axes. In the root's frame the
 /// joint then keeps its frame-0 ground position and heading.
-fn extract_root_motion(skeleton: &Skeleton, frames: &mut [Trs], n: usize, rm: usize, rules: &RootMotionRules) -> RootMotionTrack {
+pub(crate) fn extract_root_motion(skeleton: &Skeleton, frames: &mut [Trs], n: usize, rm: usize, rules: &RootMotionRules) -> RootMotionTrack {
     let joints = skeleton.len();
     let mut ancestors = Vec::new();
     let mut a = skeleton.parent(rm);
@@ -1193,7 +1193,7 @@ fn shift_markers<'a>(markers: impl Iterator<Item = &'a SyncMarker>, start: f32, 
         .collect()
 }
 
-fn root_meta(clip: &mut Clip) {
+pub(crate) fn root_meta(clip: &mut Clip) {
     let (a, b) = clip.loop_range.unwrap_or((0.0, clip.duration));
     let span = b - a;
     if span <= 0.0 {

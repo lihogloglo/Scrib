@@ -1015,6 +1015,123 @@ fn retarget_scales_translation_root_motion_and_renames_contacts() {
     assert_eq!(Retargeter::new(&s, &rig_s, &t, &short_ik).unwrap_err(), RetargetError::IkChain("hips".into()));
 }
 
+/// A mocap-like source for root motion from the target pelvis: the hips
+/// are the take's root, resting off the origin and lying along +X (the
+/// retarget pose stands them up), and each frame puts them at `at(f)`
+/// facing `heading(f)` in the take's space.
+fn take_source(frames: usize, at: impl Fn(usize) -> Vec3, heading: impl Fn(usize) -> f32) -> (Skeleton, RetargetRig, FrameClip) {
+    let mut joints = biped_joints();
+    joints[1].rest = Trs::new(Vec3::new(1.52, 1.0, -0.72), Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2), Vec3::ONE);
+    let s = Skeleton::new(&joints).unwrap().0;
+    let mut rig = biped_rig("", true, false);
+    rig.retarget_pose.push(("hips".into(), Quat::IDENTITY));
+    let hips = idx(&s, "hips");
+    let mut out = Vec::new();
+    for f in 0..frames {
+        let mut pose = s.rest().to_vec();
+        pose[hips].translation = at(f);
+        pose[hips].rotation = Quat::from_rotation_y(heading(f));
+        out.extend(pose);
+    }
+    let clip = FrameClip {
+        name: "take".into(),
+        rate: 4.0,
+        duration: (frames - 1) as f32 / 4.0,
+        frame_count: frames,
+        frames: out,
+        root_motion: None,
+        curves: Vec::new(),
+        events: Vec::new(),
+        markers: Vec::new(),
+        loop_range: None,
+        meta: ClipMeta::default(),
+    };
+    (s, rig, clip)
+}
+
+/// Target hips (model) and their heading against the retarget pose.
+fn hips_frame(r: &Retargeter, t: &Skeleton, pose: &[Trs]) -> (Vec3, f32) {
+    let m = model_trs(t, pose);
+    let rest = model_trs(t, r.target_retarget_pose());
+    let h = idx(t, "T_hips");
+    (Vec3::from(m[h].translation), twist_angle(affine_rotation(&m[h]) * affine_rotation(&rest[h]).inverse(), Vec3::Y))
+}
+
+#[test]
+fn root_from_target_pelvis_starts_at_the_origin_facing_forward() {
+    use std::f32::consts::FRAC_PI_2;
+    // Facing +X at frame 0 (90° off), walking forward 0.3 m and up 5 cm a frame.
+    let (s, rig_s, take) = take_source(5, |f| Vec3::new(3.0 + 0.3 * f as f32, 1.0 + 0.05 * f as f32, 2.0), |_| FRAC_PI_2);
+    let t = Skeleton::new(&reframed(&biped(), &biped_rig("", true, false), "T_", 1.25, other_axes)).unwrap().0;
+    let r = Retargeter::new(&s, &rig_s, &t, &biped_rig("T_", false, false)).unwrap();
+    assert!((r.scale() - 1.25).abs() < 1e-5);
+    let rules = RootMotionRules { mode: RootMotionMode::Progress, vertical: true, ..RootMotionRules::default() };
+    let out = r.frames_with_root(&take, &rules).unwrap();
+    assert_eq!(out.meta.root_motion_mode, RootMotionMode::Progress);
+    let n = t.len();
+    let (p0, yaw0) = hips_frame(&r, &t, &out.frames[..n]);
+    assert!(Vec3::new(p0.x, 0.0, p0.z).length() < 1e-3, "frame-0 hips off the origin: {p0}");
+    assert!(yaw0.abs() < 0.5f32.to_radians(), "frame-0 heading {}°", yaw0.to_degrees());
+    assert!((p0.y - 1.25).abs() < 1e-3, "hips height {}", p0.y);
+    let track = &out.root_motion.as_ref().unwrap().frames;
+    assert!(track[0].iter().all(|v| v.abs() < 1e-5));
+    // Forward is +Z now, scaled by 1.25: 1.2 m forward, 0.2 m up.
+    let last = track[4];
+    assert!(Vec3::new(last[0], last[1], last[2]).distance(Vec3::new(0.0, 0.25, 1.5)) < 1e-3, "{last:?}");
+    assert!(last[3].abs() < 1e-4);
+    for f in 0..5 {
+        let (p, _) = hips_frame(&r, &t, &out.frames[f * n..(f + 1) * n]);
+        assert!(p.distance(p0) < 1e-3, "hips leave the root at frame {f}: {p}");
+    }
+
+    // Cooked: the same, through the source and target cooks.
+    let source = cook_frames(&s, &take, &CookSettings::default()).unwrap();
+    let on_t = r.clip_with_root(&source, &rules, &CookSettings::default()).unwrap();
+    let (c, yaw) = on_t.root_at(on_t.duration);
+    assert!(c.distance(Vec3::new(0.0, 0.25, 1.5)) < 1e-3 && yaw.abs() < 1e-3, "{c} {yaw}");
+    assert!(on_t.meta.average_velocity.distance(Vec3::new(0.0, 0.25, 1.5)) < 1e-3, "{}", on_t.meta.average_velocity);
+    let mut pose = LocalPose::new(t.len());
+    on_t.sample(0.0, &mut pose, None);
+    let (p, yaw) = hips_frame(&r, &t, &pose.to_vec());
+    assert!(Vec3::new(p.x, 0.0, p.z).length() < 1e-3 && yaw.abs() < 0.5f32.to_radians(), "{p} {yaw}");
+
+    // Errors.
+    let with_root = FrameClip { root_motion: Some(RootMotionTrack { frames: vec![[0.0; 4]; 5], attitude: Vec::new() }), ..take.clone() };
+    assert_eq!(r.frames_with_root(&with_root, &rules).unwrap_err(), RetargetError::SourceRootMotion);
+    let no_hips = RetargetRig { hips: None, ..biped_rig("T_", false, false) };
+    let r = Retargeter::new(&s, &rig_s, &t, &no_hips).unwrap();
+    assert_eq!(r.frames_with_root(&take, &rules).unwrap_err(), RetargetError::NoHips);
+}
+
+#[test]
+fn root_from_target_pelvis_keeps_a_turning_body_over_its_root() {
+    use std::f32::consts::FRAC_PI_2;
+    let at = |f: usize| Vec3::new(3.0 + (f as f32 * 0.5).sin(), 1.0, 2.0 + 0.4 * f as f32);
+    let heading = |f: usize| FRAC_PI_2 + f as f32 * 30f32.to_radians();
+    let (s, rig_s, take) = take_source(7, at, heading);
+    let t = Skeleton::new(&reframed(&biped(), &biped_rig("", true, false), "T_", 1.25, other_axes)).unwrap().0;
+    let r = Retargeter::new(&s, &rig_s, &t, &biped_rig("T_", false, false)).unwrap();
+    let out = r.frames_with_root(&take, &RootMotionRules::default()).unwrap();
+    let track = &out.root_motion.as_ref().unwrap().frames;
+    let n = t.len();
+    let (p0, _) = hips_frame(&r, &t, &out.frames[..n]);
+    // The take re-based: frame 0's heading (90°) turned back to +Z.
+    let rebase = Quat::from_rotation_y(-FRAC_PI_2);
+    for (f, &[x, y, z, yaw]) in track.iter().enumerate() {
+        let (p, _) = hips_frame(&r, &t, &out.frames[f * n..(f + 1) * n]);
+        assert!(Vec3::new(p.x - p0.x, 0.0, p.z - p0.z).length() < 1e-3, "body leaves its root at frame {f}: {p}");
+        assert!(wrap_yaw(yaw - (heading(f) - heading(0))).abs() < 1e-3, "yaw at {f}: {yaw}");
+        let world = Affine3A::from_rotation_translation(Quat::from_rotation_y(yaw), Vec3::new(x, y, z)).transform_point3(p);
+        let want = rebase * (at(f) - at(0)) * 1.25;
+        let got = world - p0;
+        assert!(Vec3::new(got.x - want.x, 0.0, got.z - want.z).length() < 1e-3, "world hips at {f}: {got} vs {want}");
+    }
+}
+
+fn wrap_yaw(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(TAU) - std::f32::consts::PI
+}
+
 #[test]
 fn retarget_matches_chains_of_different_lengths_by_arc_length() {
     let s = biped();
@@ -1296,8 +1413,12 @@ mod gltf {
         fn clip(&self, _file: &str, clip: &str, _skeleton: &str) -> ClipSpec {
             match clip {
                 "walk_loop" => ClipSpec { source: "walk".into(), rules: ClipRules { looping: Looping::Whole, ..ClipRules::default() } },
+                "walk_pelvis" => ClipSpec::named("walk"),
                 _ => ClipSpec::named(clip),
             }
+        }
+        fn retarget_root(&self, _file: &str, clip: &str, _skeleton: &str) -> Option<RootMotionRules> {
+            (clip == "walk_pelvis").then(RootMotionRules::default)
         }
         fn rig(&self, path: &str) -> Option<RetargetRig> {
             let p = prefix(path);
@@ -1387,6 +1508,38 @@ mod gltf {
         assert!(again.product(&ProductKey::new(steps::ANIM_COOK, "no separators")).is_err());
         assert!(again.product(&ProductKey::new(steps::SKELETON_COOK, "chars/missing.glb")).is_err());
         assert!(again.product(&ProductKey::new(steps::SKELETON_COOK, "chars/a.fbx")).is_err());
+    }
+
+    /// `AnimRules::retarget_root`: the source cooks with its motion in the
+    /// pose and the retarget extracts it on the target hips, matching the
+    /// root track of the usual path (root motion on the hips, same shapes).
+    #[test]
+    fn bake_steps_generate_root_motion_from_the_target_pelvis() {
+        let files = Arc::new(Files::default());
+        files.0.write().unwrap().insert("chars/a.glb".into(), character_glb("a_"));
+        files.0.write().unwrap().insert("chars/b.glb".into(), character_glb("b_"));
+        let dir = tempfile::tempdir().unwrap();
+        let bake = AnimBake::new(AnimImporters::framework(), Arc::new(TestRules), CookSettings::default());
+        let mut baker = Baker::new(Store::open(dir.path()).unwrap(), files);
+        bake.register(&mut baker);
+        let (a, b) = ("chars/a.glb", "chars/b.glb");
+        let (walk, pelvis) = (steps::anim_subject(a, a, "walk"), steps::anim_subject(a, a, "walk_pelvis"));
+        let keys = [
+            ProductKey::new(steps::ANIM_COOK, pelvis.clone()),
+            ProductKey::new(steps::ANIM_RETARGET, steps::retarget_subject(b, &pelvis)),
+            ProductKey::new(steps::ANIM_RETARGET, steps::retarget_subject(b, &walk)),
+        ];
+        let report = baker.bake(&keys);
+        assert_eq!(report.failures().count(), 0, "{:?}", report.failures().collect::<Vec<_>>());
+        let get = |k: &ProductKey| Clip::from_bytes(&baker.store().get(&baker.product(k).unwrap()).unwrap()).unwrap();
+        assert!(get(&keys[0]).root_motion.is_none(), "the source keeps its motion in the pose");
+        let (generated, usual) = (get(&keys[1]), get(&keys[2]));
+        assert!(generated.root_motion.is_some());
+        for time in [0.0, 0.5, 1.0] {
+            let (g, u) = (generated.root_at(time), usual.root_at(time));
+            assert!(g.0.distance(u.0) < 1e-3 && (g.1 - u.1).abs() < 1e-3, "root at {time}: {g:?} vs {u:?}");
+        }
+        assert!(generated.meta.average_velocity.distance(usual.meta.average_velocity) < 1e-3);
     }
 }
 

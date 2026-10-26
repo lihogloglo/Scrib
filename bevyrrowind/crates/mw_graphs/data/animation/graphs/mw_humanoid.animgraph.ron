@@ -176,7 +176,8 @@
     "WeaponTwoWide@thrust": (source: "WeaponTwoWide@thrust", optional: true, fallback: Some(Drop)),
     "WeaponTwoWide@unequip": (source: "WeaponTwoWide@unequip", optional: true, fallback: Some(Drop)),
     "traverse.climb.up": (source: "quaternius_ual1:ClimbLedge_RM", optional: true, fallback: Some(Drop)),
-    "traverse.mantle.waist": (source: "quaternius_ual2:ClimbUp_1m_RM", optional: true, fallback: Some(Drop)),
+    "traverse.mantle.waist": (source: "lafan1:bvh/obstacles3_subject4.bvh:obstacles3_subject4@123.83-127.17", optional: true, fallback: Some(Clip("traverse.mantle.waist.alt1"))),
+    "traverse.mantle.waist.alt1": (source: "quaternius_ual2:ClimbUp_1m_RM", optional: true, fallback: Some(Drop)),
   },
   masks: {
     "left_arm": (default: 0.0, rules: [(joint: Rig("leftShoulder"), weight: 1.0, subtree: true)]),

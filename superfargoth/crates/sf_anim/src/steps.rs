@@ -23,7 +23,7 @@ use sf_bake::{BakeError, Baker, Digest, PlanCx, ProductKey, RunCx, Step};
 
 use crate::{
     AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints, RigProfile,
-    SKELETON_FORMAT, Skeleton, SkeletonRules, cook_clip_for, detect_profile,
+    RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, cook_clip_for, detect_profile,
 };
 
 pub const SKELETON_COOK: &str = "skeleton.cook";
@@ -115,6 +115,17 @@ pub trait AnimRules: Send + Sync {
     }
     /// The retarget rig of the skeleton from `path`.
     fn rig(&self, _path: &str) -> Option<RetargetRig> {
+        None
+    }
+    /// Root motion generated on the target after retargeting (UE 5.4's
+    /// "root motion from target pelvis"; retarget.rs step 4) for clip `clip`
+    /// of `file` cooked on `skeleton`, for sources with no usable root bone
+    /// (mocap takes). `Some(rules)`: `anim.cook` keeps the motion in the pose
+    /// (no extraction, no end anchor) and `anim.retarget` re-bases the target
+    /// hips to the origin facing +Z at frame 0, then extracts with `rules`.
+    /// `None` (default): the source cook's root motion carries over. Enters
+    /// the bake keys only when `Some`.
+    fn retarget_root(&self, _file: &str, _clip: &str, _skeleton: &str) -> Option<RootMotionRules> {
         None
     }
 }
@@ -310,6 +321,9 @@ impl Step for AnimCookStep {
         self.0.importers.plan(file, cx);
         cx.product(SKELETON_COOK, skeleton).product(RIG_PROFILE, skeleton);
         cx.param("rules", bytes_of(&self.0.rules.clip(file, clip, skeleton)));
+        if let Some(root) = self.0.rules.retarget_root(file, clip, skeleton) {
+            cx.param("retarget_root", bytes_of(&root));
+        }
         cx.param("settings", self.0.settings.key_bytes());
         cx.param("format", CLIP_FORMAT.to_le_bytes().to_vec());
         Ok(())
@@ -320,7 +334,12 @@ impl Step for AnimCookStep {
         let skeleton = read_skeleton(&key, skeleton_path, cx)?;
         let profile = read_profile(&key, skeleton_path, cx)?;
         let source = self.0.import(&key, file, cx)?;
-        let spec = self.0.rules.clip(file, clip, skeleton_path);
+        let mut spec = self.0.rules.clip(file, clip, skeleton_path);
+        if self.0.rules.retarget_root(file, clip, skeleton_path).is_some() {
+            // The motion stays in the pose: `anim.retarget` extracts it on the target.
+            spec.rules.root_motion.extract = false;
+            spec.rules.root_motion.anchor_end = false;
+        }
         let src = source
             .clips
             .iter()
@@ -347,6 +366,12 @@ impl AnimRetargetStep {
     fn rig(&self, key: &ProductKey, path: &str) -> Result<RetargetRig, BakeError> {
         self.0.rules.rig(path).ok_or_else(|| BakeError::step(key, format!("skeleton {path:?} has no retarget rig")))
     }
+
+    /// [`AnimRules::retarget_root`] of the `anim.cook` subject `anim`.
+    fn root(&self, anim: &str) -> Option<RootMotionRules> {
+        let (skeleton, file, clip) = parse_anim_subject(anim)?;
+        self.0.rules.retarget_root(file, clip, skeleton)
+    }
 }
 
 impl Step for AnimRetargetStep {
@@ -361,6 +386,9 @@ impl Step for AnimRetargetStep {
         cx.product(ANIM_COOK, anim).product(SKELETON_COOK, source).product(SKELETON_COOK, target);
         cx.param("source_rig", bytes_of(&self.0.rules.rig(source)));
         cx.param("target_rig", bytes_of(&self.0.rules.rig(target)));
+        if let Some(root) = self.root(anim) {
+            cx.param("retarget_root", bytes_of(&root));
+        }
         cx.param("settings", self.0.settings.key_bytes());
         cx.param("format", CLIP_FORMAT.to_le_bytes().to_vec());
         Ok(())
@@ -374,7 +402,11 @@ impl Step for AnimRetargetStep {
         let target = read_skeleton(&key, target_path, cx)?;
         let (source_rig, target_rig) = (self.rig(&key, source_path)?, self.rig(&key, target_path)?);
         let retargeter = Retargeter::new(&source, &source_rig, &target, &target_rig).map_err(|e| BakeError::step(&key, e))?;
-        let cooked = retargeter.clip(&clip, &self.0.settings).map_err(|e| BakeError::step(&key, e))?;
+        let cooked = match self.root(anim) {
+            Some(root) => retargeter.clip_with_root(&clip, &root, &self.0.settings),
+            None => retargeter.clip(&clip, &self.0.settings),
+        }
+        .map_err(|e| BakeError::step(&key, e))?;
         Ok(cooked.to_bytes())
     }
 }

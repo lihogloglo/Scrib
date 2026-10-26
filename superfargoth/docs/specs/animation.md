@@ -555,6 +555,20 @@ adapter's `AnimRules`, and the `CookSettings`. Subjects:
 `ClipRules`), and a `RetargetRig` per skeleton. That data isn't a file, so
 its postcard bytes are step parameters, part of the bake key.
 
+**As built (2026-10-26): root motion from the target pelvis** (UE 5.4 IK
+Retargeter "Root Motion: generate from target pelvis"), for sources with no
+usable root bone (mocap takes whose hips wander the capture volume and rest
+off the origin). `AnimRules::retarget_root(file, clip, skeleton)` returns the
+`RootMotionRules` (default `None`, a step parameter only when `Some`, so other
+keys are unchanged): `anim.cook` then cooks without extraction or end anchor,
+and `anim.retarget` calls `Retargeter::clip_with_root`: retarget every frame in
+the take's space, re-base the target hips onto their retarget-pose ground point
+facing +Z at frame 0 (heading = twist about Y of the target hips against their
+retarget pose, never the source rest), then `extract_root_motion` on the target
+hips; root meta re-measured. Tests: `root_from_target_pelvis_*` (off-origin
+lying rest hips, 90° start: ≤ 1 mm / 0.5°; a turning take stays over its root),
+`bake_steps_generate_root_motion_from_the_target_pelvis`.
+
 The glTF importer (the `gltf` crate, as in `sf_model`) builds the skeleton
 from every skin joint and animated node plus their ancestors, so an
 `Armature` node's transform is kept. Each animation becomes a source clip

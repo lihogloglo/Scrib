@@ -1,8 +1,10 @@
 //! Library clips through the bake (animation-sources.md): Quaternius UAL2's
 //! `ClimbUp_1m_RM` cooked on the library's skeleton and retargeted onto the
 //! humanoid skeletons, the humanoid graph's `traverse.mantle.waist` slot
-//! resolving to it with CC0 provenance. Sanity only (rule 5); the numbers
-//! come from the ignored measurement test (`-- --ignored --nocapture`).
+//! resolving to it with CC0 provenance; LAFAN1's mocap mantle (the shipped
+//! first candidate) with root motion from the target pelvis, private only.
+//! Sanity only (rule 5); the numbers come from the ignored measurement tests
+//! (`-- --ignored --nocapture`).
 //! Skips (passes) without a Morrowind install or the library file
 //! (`BEVYRROWIND_ANIM_SOURCES`, default `<repo>/animation packs`).
 
@@ -26,6 +28,8 @@ use sf_vfs::Vfs;
 
 const SLOT: &str = "traverse.mantle.waist";
 const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m_RM";
+/// The shipped first candidate: LAFAN1's walk-in knee mantle (private only).
+const LAFAN1: &str = "lafan1:bvh/obstacles3_subject4.bvh:obstacles3_subject4@123.83-127.17";
 /// Every slot in the shipped manifest (`traverse.climb.up` = UAL1 `ClimbLedge_RM`, for B3).
 const SLOTS: usize = 2;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
@@ -36,21 +40,37 @@ struct Setup {
     vfs: Arc<Vfs>,
     sources: Arc<AnimSources>,
     file: String,
+    reference: &'static str,
 }
 
+/// UAL2's mantle: the shipped manifest less its LAFAN1 candidates, so the
+/// slot resolves to UAL2 whether or not LAFAN1 is in the folder.
 fn setup() -> Option<Setup> {
+    setup_with(REFERENCE, true)
+}
+
+fn setup_with(reference: &'static str, without_lafan1: bool) -> Option<Setup> {
     let Ok((install, _)) = MorrowindInstall::detect(None) else {
         eprintln!("no Morrowind install detected; skipping");
         return None;
     };
-    let sources = Arc::new(AnimSources::local());
-    let (file, _) = sources.references().into_iter().find(|(_, r)| r.reference == REFERENCE).expect("the manifest names the mantle clip");
+    let local = AnimSources::local();
+    let sources = if without_lafan1 {
+        let mut manifest = local.manifest.clone();
+        for slot in manifest.slots.values_mut() {
+            slot.candidates.retain(|c| c.source != "lafan1");
+        }
+        Arc::new(AnimSources::new(manifest, local.dir.clone()))
+    } else {
+        Arc::new(local)
+    };
+    let (file, _) = sources.references().into_iter().find(|(_, r)| r.reference == reference).expect("the manifest names the mantle clip");
     if sources.real_path(&file).is_none() {
         eprintln!("{file} not in {}; skipping", sources.dir.display());
         return None;
     }
     let vfs = mw_vfs::mount_install(&install, Vfs::builder().mount(mw_graphs::builtin_source())).unwrap().vfs;
-    Some(Setup { install, vfs: Arc::new(vfs), sources, file })
+    Some(Setup { install, vfs: Arc::new(vfs), sources, file, reference })
 }
 
 fn sets() -> ActorSets {
@@ -118,7 +138,7 @@ fn target_map(skeleton: &Skeleton) -> RigMap {
 }
 
 fn retargeted(s: &Setup, target: &str) -> ProductKey {
-    ProductKey::new(ANIM_RETARGET, retarget_subject(target, &anim_subject(&s.file, &s.file, REFERENCE)))
+    ProductKey::new(ANIM_RETARGET, retarget_subject(target, &anim_subject(&s.file, &s.file, s.reference)))
 }
 
 #[test]
@@ -245,5 +265,150 @@ fn measure_mantle_waist() {
                 root.y, root.z, hl.y, hl.z, hr.y, hr.z, fl.y, fr.y
             );
         }
+    }
+}
+
+// --- LAFAN1: root motion from the target pelvis ---------------------------------------------
+
+/// Heading of a left-right pair (`left - right` on the ground, turned to
+/// forward: left is +X, forward +Z), radians from +Z.
+fn heading_of(left: Vec3, right: Vec3) -> f32 {
+    let f = Vec3::new(left.x - right.x, 0.0, left.z - right.z).cross(Vec3::Y);
+    f.x.atan2(f.z)
+}
+
+/// The toe joint's position: the mapped toe bone, else the foot's first
+/// child (Morrowind's `Bip01 L Toe0` stays unmapped).
+fn toe_pos(target: &Skeleton, model: &[Affine3A], map: &RigMap, foot: B, toe: B) -> Vec3 {
+    let j = map.joint(toe).and_then(|n| target.find(n)).unwrap_or_else(|| {
+        let f = target.find(map.joint(foot).expect("mapped foot")).unwrap();
+        (0..target.len()).find(|&j| target.parent(j) == Some(f)).expect("a joint under the foot")
+    });
+    Vec3::from(model[j].translation)
+}
+
+/// Angle of `toe - ankle` on the ground from +Z, degrees.
+fn toe_angle(model: &[Affine3A], target: &Skeleton, map: &RigMap, ankle: B, toe: B) -> f32 {
+    let d = toe_pos(target, model, map, ankle, toe) - pos(target, model, map, ankle);
+    d.x.atan2(d.z).to_degrees()
+}
+
+fn lafan1_bake() -> Option<(Setup, tempfile::TempDir, Baker)> {
+    let s = setup_with(LAFAN1, false)?;
+    let dir = tempfile::tempdir().unwrap();
+    let (report, baker) = bake(&s, dir.path(), &s.sources);
+    for (key, e) in &report.failures {
+        eprintln!("failed: {key}: {e}");
+    }
+    assert!(report.failures.is_empty());
+    assert!(report.slots.contains(&format!("{SLOT}: {LAFAN1}")), "{:?}", report.slots);
+    Some((s, dir, baker))
+}
+
+/// LAFAN1's mocap take (no root bone, hips wandering the capture volume)
+/// retargets onto `base_anim` with root motion from the target pelvis: the
+/// clip starts over its root facing +Z, rises onto the obstacle, feet
+/// pointing forward and never under the start floor; the compiled graph
+/// marks it non-redistributable.
+#[test]
+fn lafan1_mantle_starts_over_its_root_facing_forward() {
+    let Some((s, _dir, baker)) = lafan1_bake() else { return };
+    let set = &HUMANOID_SETS[0];
+    let target = skeleton(&baker, set.skeleton);
+    let clip = Clip::from_bytes(&bytes(&baker, &retargeted(&s, set.skeleton))).unwrap();
+    let map = target_map(&target);
+    let tolerance = 0.05 * chain(&target, &map, &LEG);
+    #[allow(clippy::cast_precision_loss)]
+    let times: Vec<f32> = (0..=30).map(|i| clip.duration * i as f32 / 30.0).collect();
+    let start = clip.root_at(0.0).0;
+    for &t in &times {
+        let model = model_at(&target, &clip, t);
+        assert!(model.iter().all(Affine3A::is_finite), "non-finite pose at {t}");
+        let root = clip.root_at(t).0;
+        for foot in [B::LeftFoot, B::RightFoot] {
+            let y = pos(&target, &model, &map, foot).y + root.y - start.y;
+            assert!(y > -tolerance, "{foot:?} {y} m under the start floor at {t}");
+        }
+    }
+    assert!(clip.root_motion.is_some(), "no root motion");
+    let model = model_at(&target, &clip, 0.0);
+    let hips = pos(&target, &model, &map, B::Hips);
+    assert!(Vec3::new(hips.x, 0.0, hips.z).length() < 0.05, "frame-0 hips {hips} off the root");
+    let heading = heading_of(pos(&target, &model, &map, B::LeftUpperLeg), pos(&target, &model, &map, B::RightUpperLeg));
+    assert!(heading.abs() < 10f32.to_radians(), "frame-0 hips face {}° off +Z", heading.to_degrees());
+    let rise = clip.root_at(clip.duration).0.y - start.y;
+    assert!((0.6..1.4).contains(&rise), "root rises {rise} m");
+    for (ankle, toe) in [(B::LeftFoot, B::LeftToes), (B::RightFoot, B::RightToes)] {
+        let ahead = (toe_pos(&target, &model, &map, ankle, toe) - pos(&target, &model, &map, ankle)).z;
+        assert!(ahead > 0.0, "{toe:?} behind its ankle at frame 0 ({ahead} m)");
+    }
+
+    let key = ProductKey::new(ANIMGRAPH_COMPILE, graph_subject(Template::Humanoid.path(), set.skeleton));
+    let graph = CompiledGraph::from_bytes(&bytes(&baker, &key)).unwrap();
+    let (_, slot) = graph.slot_clips.iter().find(|(n, _)| n == SLOT).expect("the mantle slot");
+    let used = &graph.clips[usize::from(*slot)];
+    assert_eq!(used.product, retargeted(&s, set.skeleton));
+    assert_eq!((used.provenance.source.as_str(), used.provenance.license.as_str(), used.provenance.redistributable), ("lafan1", "CC-BY-NC-ND-4.0", false));
+    assert!(graph.non_redistributable().count() > 0);
+}
+
+#[test]
+#[ignore = "measurement: LAFAN1 waist mantle on base_anim (root from the target pelvis)"]
+fn measure_mantle_waist_lafan1() {
+    let Some((s, _dir, baker)) = lafan1_bake() else { return };
+    for set in &HUMANOID_SETS[..TARGETS] {
+        let target = skeleton(&baker, set.skeleton);
+        let map = target_map(&target);
+        let clip = Clip::from_bytes(&bytes(&baker, &retargeted(&s, set.skeleton))).unwrap();
+        let (first, last) = (clip.root_at(0.0), clip.root_at(clip.duration));
+        let travel = last.0 - first.0;
+        println!(
+            "{}: {:.3} s, {} frames at {:.0} Hz; root rise {:.3} m, forward {:.3} m, side {:.3} m, yaw {:.1}°; max error {:.5} m",
+            set.skeleton,
+            clip.duration,
+            clip.frame_count,
+            clip.rate,
+            travel.y,
+            travel.z,
+            travel.x,
+            (last.1 - first.1).to_degrees(),
+            clip.meta.max_error
+        );
+        let model = model_at(&target, &clip, 0.0);
+        let hips_heading = heading_of(pos(&target, &model, &map, B::LeftUpperLeg), pos(&target, &model, &map, B::RightUpperLeg));
+        let shoulders = heading_of(pos(&target, &model, &map, B::LeftUpperArm), pos(&target, &model, &map, B::RightUpperArm));
+        println!(
+            "  frame 0: thighs face {:.1}°, shoulders {:.1}°; toe angle L {:.1}° R {:.1}°",
+            hips_heading.to_degrees(),
+            shoulders.to_degrees(),
+            toe_angle(&model, &target, &map, B::LeftFoot, B::LeftToes),
+            toe_angle(&model, &target, &map, B::RightFoot, B::RightToes)
+        );
+        println!("  t s | root x y z yaw° | hips-root x z | ankle L y | ankle R y | toe L° R°");
+        let mut min_yaw = f32::INFINITY;
+        let mut max_yaw = f32::NEG_INFINITY;
+        for i in 0..=12u8 {
+            let t = clip.duration * f32::from(i) / 12.0;
+            let model = model_at(&target, &clip, t);
+            let (root, yaw) = clip.root_at(t);
+            min_yaw = min_yaw.min(yaw);
+            max_yaw = max_yaw.max(yaw);
+            let hips = pos(&target, &model, &map, B::Hips);
+            let ankle = |foot: B| pos(&target, &model, &map, foot).y + root.y - first.0.y;
+            println!(
+                "  {t:.2} | {:.2} {:.2} {:.2} {:.1} | {:.3} {:.3} | {:.2} | {:.2} | {:.0} {:.0}",
+                root.x,
+                root.y,
+                root.z,
+                yaw.to_degrees(),
+                hips.x,
+                hips.z,
+                ankle(B::LeftFoot),
+                ankle(B::RightFoot),
+                toe_angle(&model, &target, &map, B::LeftFoot, B::LeftToes),
+                toe_angle(&model, &target, &map, B::RightFoot, B::RightToes)
+            );
+        }
+        println!("  root yaw range {:.1}° .. {:.1}°", min_yaw.to_degrees(), max_yaw.to_degrees());
     }
 }

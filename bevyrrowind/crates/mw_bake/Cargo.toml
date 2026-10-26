@@ -30,7 +30,7 @@ postcard = { version = "1", default-features = false, features = ["use-std"] }
 rayon.workspace = true
 serde = { version = "1", features = ["derive"] }
 # `gltf`: the user's clip libraries (GLB) in the animation bake (`sources`).
-sf_anim = { workspace = true, features = ["gltf"] }
+sf_anim = { workspace = true, features = ["gltf", "bvh"] }
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_bake.workspace = true
 sf_character.workspace = true
