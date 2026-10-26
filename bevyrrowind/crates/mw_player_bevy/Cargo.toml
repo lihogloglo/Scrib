@@ -28,10 +28,14 @@ mw_ai.workspace = true
 mw_controls_bevy.workspace = true
 mw_doors_bevy.workspace = true
 mw_game_core.workspace = true
+mw_graphs.workspace = true
 mw_walkers_bevy.workspace = true
 mw_world.workspace = true
 sf_action.workspace = true
 sf_action_bevy.workspace = true
+sf_anim.workspace = true
+sf_anim_bevy.workspace = true
+sf_anim_graph.workspace = true
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
@@ -60,6 +64,9 @@ bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", 
 sf_level.workspace = true
 sf_mods.workspace = true
 sf_vfs.workspace = true
+# The avatar feed test: a tiny graph from the fixture skeleton.
+sf_anim = { workspace = true, features = ["fixtures"] }
+sf_bake.workspace = true
 
 [lints]
 workspace = true

@@ -402,13 +402,14 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
     }
 }
 
-/// Gives dressed characters their mover (and wanderers their walker).
+/// Gives dressed characters their mover (and wanderers their walker); not the player's avatar
+/// (the action layer moves it).
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn attach(
     mut commands: Commands,
     content: Res<WalkerContent>,
     pos_of: WorldPosOf,
-    fresh: Query<(Entity, &Character, &CharacterBody, &Transform, &ChildOf), Without<Mover>>,
+    fresh: Query<(Entity, &Character, &CharacterBody, &Transform, &ChildOf), (Without<Mover>, Without<mw_game_core::player::PlayerAvatar>)>,
     bodies: Query<&Transform>,
 ) {
     for (entity, character, body, transform, parent) in &fresh {

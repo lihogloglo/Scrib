@@ -5,7 +5,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 ## Player (ROADMAP 2.1; `crates/mw_player_bevy/src/lib.rs`)
 
 ### PL-1: Third-person walk and the use prompt (`cargo dev view "Seyda Neen"`, 10:00)
-- Starts in player mode (capsule scaffold). WASD, Shift, Space jump, Tab 1st/3rd, wheel zoom; walk to the Census and
+- Starts in player mode (the dressed `player` body, PL-2; the capsule is drawn only with characters off). WASD, Shift, Space jump, Tab 1st/3rd, wheel zoom; walk to the Census and
   Excise Office door, then to an NPC (Fargoth by the lighthouse path).
 - Look for: smooth walk and camera (no jitter, camera pushes in against walls); under the centre dot the prompt reads
   `[E] Open  <door>` / `[E] Talk  <npc>` / `[E] Take  <item>`, it clears when you look away or step past ~2.7 m;
@@ -14,6 +14,14 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   the dot on an NPC's chest reads `[E] Talk  <npc>` (was `Take  Broom`); walls block items behind them.
   `cargo dev view "Seyda Neen, Census and Excise Office"` starts on the floor at the door's arrival marker, facing in
   (was: on the roof, grey void). E does nothing while the journal or dialogue is open.
+- Status: awaiting owner.
+
+### PL-2: Animated player body (action.md A2 slice 2; `cargo dev view "Seyda Neen"`, 10:00)
+- Starts in player mode; Tab to third person. Walk (W, stick), run (Shift sprint), Ctrl sneak, Space jump, turn on the spot.
+- Look for: the `player` record's character (race, sex, head, hair, clothes) in place of the capsule; walk, run, sneak
+  cycles matching the ground speed (no skating), jump/fall clip off the ground and landing back into locomotion, no
+  jitter at any frame rate (the body follows the fixed-tick capsule, interpolated, through the correction
+  spring). Tab to first person hides the body (no arms yet). Shot: `shots/player-body-3-walk.png` (indoors, 3rd person).
 - Status: awaiting owner.
 
 ### IV-1: Take items and Fargoth's ring (`cargo dev view "Seyda Neen, Census and Excise Office"`) (partial)

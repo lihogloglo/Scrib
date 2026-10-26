@@ -40,7 +40,7 @@ use crate::{Focus, PlayerMode};
 /// The HUD's screen id (its `ui.screen` record is `mw_exterior_bevy::pause_menu`'s).
 pub const HUD_SCREEN: &str = "hud";
 /// The player's NPC record (Morrowind.esm).
-const PLAYER_RECORD: &str = "player";
+pub(crate) const PLAYER_RECORD: &str = "player";
 /// Bar ids (`.sf-hud-bar.<id>` in the theme sheet, `hud-bar-<id>` in the Fluent file), in
 /// Morrowind's order, top to bottom.
 pub const BAR_IDS: [&str; 3] = ["health", "magicka", "fatigue"];

@@ -11,7 +11,7 @@ Companions: [camera.md](camera.md) (new), [animation.md](animation.md) "Next-gen
 shape (R11b)", [locomotion.md](locomotion.md) "Action-layer changes (R11b)", [test-levels.md](test-levels.md).
 
 <!-- agent-summary -->
-> **Agent summary (2026-10-26).** Status: A1 (`sf_action` backbone) and A2 slice 1 (`sf_action_bevy` fixed tick) built; ROADMAP 2.1 [~] (PL-1 awaiting owner), 3.1 [ ] open (B1-F). Designed, not built: warp mantle/vault, ledges, ladders, free-run, interactions, combat, co-op.
+> **Agent summary (2026-10-26).** Status: A1 (`sf_action` backbone) and A2 slice 1 (`sf_action_bevy` fixed tick) and slice 2 (animated player body) built; ROADMAP 2.1 [~] (PL-1 awaiting owner), 3.1 [ ] open (B1-F). Designed, not built: warp mantle/vault, ledges, ladders, free-run, interactions, combat, co-op.
 > Crates / key types: `sf_action` (Bevy-free: `Command`, `InputSampler`, `MoveRule`/`RuleSet`, `ActionState`, `step`, `BASE_RULES`), `sf_action_bevy`. Decisions: rules decide on the fixed tick, Luau never per tick; five motion owners Sim/Warp/Docked/Clip/Physics ("Canonical technique"); gameplay reads baked data, never the pose; Up = Jump, Down = Sneak at an edge ("Owner answers"); net-ready ("Co-op readiness").
 > Read next: "As built (A1)" first (wins over design text); "Build plan" for slices; "The chooser" for rule changes.
 <!-- /agent-summary -->
@@ -332,7 +332,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 | Slice | Steps | Verify |
 |---|---|---|
 | **A1** backbone | done 2026-10-21: see "As built (A1)" | `cargo test -p sf_action` |
-| **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
+| **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); slice 2 (animated player body) built 2026-10-26, PL-2 awaiting owner; `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
 | **B1** progress + chain warp | done 2026-10-26 (see "As built (B1)"; `sf_action` call site left for B2): `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
 | **B2** mantle and vault | B2a (waist mantle, player) done 2026-10-26 on the capsule player (see "As built (B2a)"); the clip on the body comes with the animated player body (A2 slice 2). Next B2b. Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
 | **B3** ledge catch and hang | Docked mover mode; ledge catch from jump and fall, hang, shimmy, climb up, drop to hang (`Down`), let go; hand IK latched on the lip | course `ledges`: 2.0/2.5 m boxes and the 3.5 m wall: catch, shimmy to the end, climb up; hands ≤ 1 cm off the lip; jolt test (R2 adopt 3) |
@@ -404,3 +404,7 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
 `set_slot_progress`. Rule `traverse.mantle.waist` in `TRAVERSAL_RULES`. Slot clip: UAL2
 `ClimbUp_1m_RM`. Part 2: the shell probes `ObstacleAhead` on Jump/Up and places Warp bodies directly; the game loads the slot clip (history).
 [history](archive/action-history.md#as-built-b2a-part-1-2026-10-26-warp-owner-and-the-waist-mantle-clip)
+
+## As built (A2 slice 2, 2026-10-26)
+Animated player body: the dressed `player` record under the body, fed from the drawn (interpolated, spring-corrected)
+root; the Warp's chain progress drives the traversal slot clip (`Progress`). [history](archive/action-history.md#as-built-a2-slice-2-2026-10-26-animated-player-body)

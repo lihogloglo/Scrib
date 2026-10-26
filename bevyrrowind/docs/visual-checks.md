@@ -92,7 +92,7 @@ AL-4 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Traversal height
 AL-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Props push
 AL-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
-AL-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, capsule player
+AL-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
 AN-3 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Footsteps on the feet
@@ -103,10 +103,12 @@ AN-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-up ends on t
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
 AN-10, AN-13, AN-14 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-ups
+DE-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, hand-back, fall + get-up
 AU-3 | awaiting owner | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | awaiting owner | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds
 PL-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Third-person walk and the use prompt
+PL-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Animated player body (dressed `player` record, humanoid graph)
 IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
 PM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
 SV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)

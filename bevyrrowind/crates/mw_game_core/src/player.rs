@@ -32,3 +32,9 @@ pub struct PlayerMode {
 /// The player character's body.
 #[derive(Component, Debug)]
 pub struct PlayerBody;
+
+/// The player's dressed, animated character (a child of [`PlayerBody`]; action.md A2 slice 2).
+/// NPC systems that pick up every new `Character` (walker movers, dialogue actors) skip it: the
+/// action layer moves the player.
+#[derive(Component, Debug)]
+pub struct PlayerAvatar;

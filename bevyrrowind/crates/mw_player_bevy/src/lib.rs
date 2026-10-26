@@ -16,9 +16,9 @@
 //!   the `PlayerControls` context with the bindings below) is a `big_space` child of the active
 //!   worldspace grid; after the interpolation [`regrid`] keeps its `CellCoord` canonical and
 //!   `frame_origin` on its cell. The view camera (the streaming camera, `doors::DoorUser`) gets
-//!   a `PlayerCamera` following it. A capsule with a facing marker stands in for the body
-//!   (scaffold `PlayerCapsule`: removal path, the dressed player character from
-//!   `sf_character_bevy` with the A2 animation feed).
+//!   a `PlayerCamera` following it. The capsule is the invisible gameplay shape; the visible
+//!   body is the dressed `player` record playing the humanoid graph ([`avatar`]: locomotion
+//!   feed, traversal slot, first-person hide). Without characters a capsule mesh is drawn.
 //! - **Doors.** The camera stays the traveler (`doors.rs`, scripts, sky and streaming key on
 //!   it); on `TravelArrived` the body is teleported to the arrival marker and reparented to the
 //!   new worldspace grid, the look turned to the marker's heading. Doorless link ends
@@ -40,6 +40,7 @@
 //! Keyboard defaults: WASD move, Shift sprint, Ctrl sneak, Space jump (modern default; Morrowind
 //! used E), Tab first/third person (Morrowind's default), mouse look, wheel zoom, E use.
 
+pub mod avatar;
 pub mod hud;
 
 use std::collections::HashMap;
@@ -155,7 +156,9 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         )
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
-        .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate));
+        .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
+        .add_systems(PostUpdate, (avatar::link, avatar::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
+        .add_systems(PostUpdate, avatar::first_person);
     hud::add(app, app_db.as_ref());
 }
 
@@ -187,7 +190,8 @@ fn rules(traversal: Vec<TraversalClip>) -> ActionRules {
     ActionRules { rules: rules.build().expect("framework base and traversal rules parse"), slots: Box::new(slots) }
 }
 
-/// Scaffold `PlayerCapsule`: the stand-in mesh (see the module docs).
+/// The capsule mesh with a facing marker, drawn only when the app runs without dressed characters
+/// (no `sf_character_bevy::Characters`: headless tests, runs with characters off): the dressed body is [`avatar`].
 #[derive(Resource)]
 struct PlayerVisual {
     capsule: Handle<Mesh>,
@@ -287,7 +291,15 @@ fn rebind(
 // --- mode ---------------------------------------------------------------------------------------
 
 /// The player body bundle at `feet`, facing `yaw` (0 faces +Z), on the worldspace grid `root`.
-fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, keymap: &sf_ui::Keymap, feet: WorldPos, yaw: f32, root: Entity) -> Entity {
+/// `dressed`: the `player` record's character is drawn ([`avatar`]), else the capsule mesh.
+fn spawn_body(
+    commands: &mut Commands,
+    visual: &PlayerVisual,
+    keymap: &sf_ui::Keymap,
+    (feet, yaw): (WorldPos, f32),
+    root: Entity,
+    dressed: bool,
+) -> Entity {
     let (cell, transform) = to_grid(feet);
     let params = MoverParams::default();
     let half = params.height / 2.0;
@@ -304,6 +316,7 @@ fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, keymap: &sf_ui::Ke
             PlayerControls,
             PlayerInput::new(player),
             AvoidObstacle { position: feet, velocity: Vec3::ZERO, radius: params.radius },
+            avatar::PlayerFeed::default(),
             cell,
             transform,
             Visibility::default(),
@@ -311,6 +324,10 @@ fn spawn_body(commands: &mut Commands, visual: &PlayerVisual, keymap: &sf_ui::Ke
         ))
         .id();
     spawn_controls(commands, keymap, id);
+    if dressed {
+        commands.spawn((avatar::avatar_bundle(), ChildOf(id)));
+        return id;
+    }
     let material = MeshMaterial3d(visual.material.clone());
     commands.spawn((Mesh3d(visual.capsule.clone()), material.clone(), Transform::from_xyz(0.0, half, 0.0), ChildOf(id)));
     // Facing marker at head height (yaw 0 faces +Z).
@@ -377,6 +394,7 @@ fn apply_mode(
     collision: sf_physics_bevy::CollisionReady,
     settled: Option<Res<mw_game_core::exterior::Settled>>,
     visual: Res<PlayerVisual>,
+    characters: Option<Res<sf_character_bevy::Characters>>,
     keymap: Res<sf_ui_bevy::UiKeymap>,
     positions: WorldPosOf,
     mut cams: Query<(Entity, &GlobalTransform, &ChildOf, &mut FreeCameraState), With<mw_doors_bevy::DoorUser>>,
@@ -403,7 +421,7 @@ fn apply_mode(
                     warn!("player: no arrival marker or floor under the camera; spawning at the eye");
                 }
             }
-            let body = spawn_body(&mut commands, &visual, &keymap.0, feet, look.yaw, parent.parent());
+            let body = spawn_body(&mut commands, &visual, &keymap.0, (feet, look.yaw), parent.parent(), characters.is_some());
             let mut camera = PlayerCamera::new(body);
             camera.set_look(look);
             commands.entity(cam).insert(camera);
@@ -902,3 +920,5 @@ pub(crate) fn floor_below(world: &PhysicsWorld, eye: WorldPos, head_room: f32) -
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_avatar;

@@ -5098,6 +5098,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_delirium_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_camera",
+ "bevy_ecs",
+ "bevy_input",
+ "bevy_log",
+ "bevy_math",
+ "bevy_time",
+ "bevy_transform",
+ "bevy_window",
+ "mw_delirium",
+ "sf_anim",
+ "sf_anim_bevy",
+ "sf_character_bevy",
+ "sf_controller_bevy",
+ "sf_coords",
+ "sf_physics_bevy",
+ "sf_ragdoll",
+ "sf_world",
+ "sf_world_bevy",
+ "workspace-hack",
+]
+
+[[package]]
 name = "mw_devtools_bevy"
 version = "0.1.0"
 dependencies = [
@@ -5251,6 +5277,7 @@ dependencies = [
  "mw_bake",
  "mw_boot_bevy",
  "mw_controls_bevy",
+ "mw_delirium_bevy",
  "mw_devtools_bevy",
  "mw_doors_bevy",
  "mw_environment_bevy",
@@ -5409,10 +5436,15 @@ dependencies = [
  "mw_controls_bevy",
  "mw_doors_bevy",
  "mw_game_core",
+ "mw_graphs",
  "mw_walkers_bevy",
  "mw_world",
  "sf_action",
  "sf_action_bevy",
+ "sf_anim",
+ "sf_anim_bevy",
+ "sf_anim_graph",
+ "sf_bake",
  "sf_camera",
  "sf_camera_bevy",
  "sf_character_bevy",

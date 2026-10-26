@@ -45,7 +45,7 @@ fn statics(level: &Level) -> Statics {
 
 /// The game's player (bindings, rules) at the level's `start` spawn, no camera (the stick is
 /// world XZ).
-fn app(fps: u32) -> (App, Entity) {
+pub(crate) fn app(fps: u32) -> (App, Entity) {
     app_with(fps, &mw_controls_bevy::keymap())
 }
 
@@ -73,12 +73,12 @@ fn app_with(fps: u32, keymap: &sf_ui::Keymap) -> (App, Entity) {
     (app, player)
 }
 
-fn action(app: &mut App, tag: PlayerAction) -> Entity {
+pub(crate) fn action(app: &mut App, tag: PlayerAction) -> Entity {
     let mut q = app.world_mut().query::<(Entity, &PlayerAction)>();
     q.iter(app.world()).find(|(_, t)| **t == tag).expect("player action").0
 }
 
-fn mock<T: Into<ActionValue>>(app: &mut App, e: Entity, value: T) {
+pub(crate) fn mock<T: Into<ActionValue>>(app: &mut App, e: Entity, value: T) {
     app.world_mut().entity_mut(e).insert(ActionMock::new(TriggerState::Fired, value, MockSpan::Manual));
 }
 

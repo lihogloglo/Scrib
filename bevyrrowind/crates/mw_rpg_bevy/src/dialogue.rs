@@ -815,11 +815,11 @@ fn cell_name(rpg: &Rpg, e: Entity, parents: &Query<&ChildOf>, cells: &Query<&Str
 }
 
 /// NPCs that appear become talkable.
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn track_actors(
     mut commands: Commands,
     mut rpg: ResMut<Rpg>,
-    fresh: Query<(Entity, &Character, Option<&CharacterPlacement>), Added<Character>>,
+    fresh: Query<(Entity, &Character, Option<&CharacterPlacement>), (Added<Character>, Without<mw_game_core::player::PlayerAvatar>)>,
     parents: Query<&ChildOf>,
     cells: Query<&StreamCell>,
 ) {

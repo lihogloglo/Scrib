@@ -487,3 +487,22 @@ a jump). `sf_action` re-exports `RootPath`.
 on; 2 m is a plain jump; 1.5 m from a stand at the face refuses (`MaxCorrection`, ratio ~0.36 with the
 2 m-forward clip). Tests (`sf_action_bevy` `tests_mantle`, synthetic box): 1 m mantles and hands back
 to `loco`, 2 m refuses, Sneak never mantles, Sneak pressed mid-mantle leaves the body on top.
+
+## As built (A2 slice 2, 2026-10-26): animated player body
+- `mw_player_bevy::avatar`: the body entity gets a child `Character::record("NPC_", "player")` tagged
+  `mw_game_core::player::PlayerAvatar` (walker movers and dialogue actors skip it). The capsule mesh and facing marker
+  are drawn only without `sf_character_bevy::Characters` (headless tests). The avatar inherits the body `Transform`,
+  i.e. the fixed-tick pose interpolated by `overstep_fraction` plus the A2 slice 1 `RenderCorrection` spring, so no
+  new spring was needed: the spring already sits between capsule and drawn root.
+- Feed (`PostUpdate`, `AnimSystems::Probe`): the drawn root frame to frame (`CharacterFrame::delta_to`, teleports over
+  3 m dropped) gives `drive.moved` and a measured velocity/turn smoothed with `MEASURE_HALFLIFE`; the moving/running
+  hysteresis is the walkers' (`FeedValues::measured`, new, shared with `FeedValues::of`; thresholds from the
+  `ControllerSettings` resource). Plus `on_ground` (grounded or traversing) and `sneaking` (intent gait). Tier pinned
+  to A0. Foot probes not fed yet (foot placement holds the animated pose).
+- Traversal: when `ActionOutput::warp` and `slot` are set, the slot's graph clip (`slot_clip(name)`) plays in the
+  `full` montage slot with `RootMotionMode::Progress` (blend in 0.12 s, out 0.25 s, priority 1); each frame
+  `set_slot_progress` gets the progress interpolated between the last two ticks by the same alpha as the body. Warp
+  gone: `stop_slot`, inertialized back to locomotion.
+- First person: hidden while `CameraPose::fade > 0.5`.
+- Tests (`mw_player_bevy` `tests_avatar`): dressed spawn puts the record under the body with no capsule mesh; walking
+  feeds a forward `drive.velocity`; mantle progress sets the montage playhead each tick and the slot ends after.

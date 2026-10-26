@@ -36,13 +36,13 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
   baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
 
-### AL-8: Waist mantle, capsule player (action.md B2a)
+### AL-8: Waist mantle, player (action.md B2a; body: A2 slice 2)
 - Needs a bake after 2026-10-26 with the UAL2 library (log: "player traversal: 1 of 1 slot clips baked").
 - `scene level-anim-ledges`, F11; walk W into the yellow 1 m box, then W+Space (or Space while walking).
-- Look for: the capsule rises and slides onto the top (~1 m past the lip) in ~0.7 s, then walks on and drops off the
-  back normally; red 2 m box: a plain jump; Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a
-  stand at the face (correction too large for the 1 m clip; feel/tuning is the owner's call).
-- The capsule only: the climb animation on the body comes with the animated player body slice. Status: awaiting owner.
+- Look for: the body rises onto the top (~1 m past the lip) in ~0.7 s playing the climb clip in step with the move
+  (playhead = the warp's progress), then blends back into walk and drops off the back normally; red 2 m box: a plain
+  jump; Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a stand at the face (feel/tuning is
+  the owner's call). Hands on the lip and feet on top are not IK-fitted yet (B2b). Status: awaiting owner.
 
 ### AL-5: Props push (PH-1, physics-adapter.md)
 - `scene level-anim-props` (cameras `props`, `props-close`); F11 (player under the camera), push crates, boxes and the table; `V` throws.
@@ -120,3 +120,13 @@ without the roll curves). Strafes not gated (lead: walk right 7/15 cm, likely sw
 Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the guar: it falls, gets up once and stands
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
+
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slice 2a; awaiting owner)
+Dev build (feature `delirium`, part of `dev`): `cargo build -p bevyrrowind --features dev`, then
+`powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`). Left-click a human NPC (Fargoth far left,
+Elone centre; not the knockdown dummy, the Khajiit or the Argonian): plain 45, Ctrl 20, Shift 80 N s at the clicked part along the
+view ray; clicking again while it reacts pushes that part. Look for: the push lands where you clicked (head, chest, hips), the body
+reacts and takes catch steps instead of popping, no stretched or sunk limbs, the frame (shadow, culling) stays with it, and once it
+stands still (~1-7 s) a smooth blend back into the idle where it stands. Shift-click the head a few times to make one fall: it lies
+for 1.5-4 s, then the get-up clip starts from the lying pose (log: `delirium: ... fell`, `handed back (Fallen)`). Live run
+2026-10-26: Elone 45 N s on Spine0, balanced in 2.7 s; on the hips, 6.5 s. Fall + get-up not yet seen live.

@@ -527,10 +527,30 @@ impl FeedValues {
     /// From the mover's measured motion ([`Mover::measured`]), with the
     /// moving and running thresholds' hysteresis against `last`.
     pub fn of(mover: &Mover, settings: &ControllerSettings, last: FeedGait) -> Self {
-        let velocity = mover.measured;
+        let braking = mover.applied.desired_velocity.length_squared() < 1e-6;
+        Self::measured(
+            mover.measured,
+            mover.measured_turn,
+            braking,
+            mover.applied.gait,
+            settings,
+            last,
+        )
+    }
+
+    /// From a measured character-space `velocity` and `turn` rate of any
+    /// host (an action-layer body measures its drawn root): `braking` when
+    /// the intent asks for no motion, `gait` the applied one.
+    pub fn measured(
+        velocity: Vec3,
+        turn: f32,
+        braking: bool,
+        gait: Gait,
+        settings: &ControllerSettings,
+        last: FeedGait,
+    ) -> Self {
         let flat = Vec2::new(-velocity.x, velocity.z);
         let speed = flat.length();
-        let braking = mover.applied.desired_velocity.length_squared() < 1e-6;
         let moving = speed
             > match (last.moving, braking) {
                 (false, _) => settings.moving_speed,
@@ -547,7 +567,7 @@ impl FeedValues {
                         settings.run_speed
                     }
             } else {
-                matches!(mover.applied.gait, Gait::Run | Gait::Sprint)
+                matches!(gait, Gait::Run | Gait::Sprint)
             };
         Self {
             velocity,
@@ -555,7 +575,7 @@ impl FeedValues {
             moving,
             direction,
             running,
-            turn: mover.measured_turn,
+            turn,
         }
     }
 
