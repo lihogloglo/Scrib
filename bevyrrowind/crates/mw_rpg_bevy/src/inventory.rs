@@ -32,19 +32,31 @@
 //!   apps/openmw/mwworld/containerstore.cpp: adding 1 `Gold_100` = 1 `Gold_001`; vanilla
 //!   inventories only hold `Gold_001`), so [`give`] converts on both paths, the take and the
 //!   container seeding. Same tag/commit as above.
-//! - **Containers** (CONT): scaffold `TakeAllContainer`. Activating one moves its whole content
-//!   to the player (vanilla opens the container window; "Take All" is its button). The content
-//!   lives in `RpgState::inventories` under the container's placement id (saved with the RPG
-//!   state), seeded from the record's item list the first time. Levelled entries are skipped.
-//!   Removal path: the container screen (2.2 U5 follow-up) takes per stack from the same state.
-//!   Fargoth's ring (`ring_keley`) is in the `chargen barrel fatigue` barrel in the Census and
-//!   Excise Office, so this is the ring's path.
-//! - Not yet (leftovers): weight and encumbrance, drop, equip, ownership and theft (the Census
-//!   office items are owned: vanilla counts the take as stealing), item scripts' `OnActivate`
+//! - **Containers** (CONT): activating one opens the container window (`inventory_ui.rs`, the
+//!   stock `sf_ui_screens` container screen). `OpenMW` `ActionOpen::executeImp`
+//!   (apps/openmw/mwworld/actionopen.cpp, same tag/commit): only the player opens one (our
+//!   [`TakeRequest`]s are the player's). The content lives in `RpgState::inventories` under the
+//!   container's placement id (saved with the RPG state) and is `Holder::Actor(ActorKey(id))`,
+//!   the store NPC inventories use, so `sf_rpg`'s `Holder` needs no container variant. It is
+//!   seeded from the record's item list the first time ([`container_store`]; levelled entries
+//!   are skipped). The host validates an open ([`ContainerOpened`]) and applies the window's
+//!   intents: [`move_stack`] takes pieces off one stack (`Loadout::take`, instance data kept)
+//!   and adds them to the other holder (merging into an identical stack), gold converting as
+//!   in [`give`]; [`take_all`] moves every stack in container order, then the window closes
+//!   (`ContainerWindow::onTakeAllButtonClicked`, apps/openmw/mwgui/container.cpp). An organic
+//!   container (plants: CONT flag `ORGANIC`) refuses items put in
+//!   (`ContainerItemModel::onDropItem`, apps/openmw/mwgui/containeritemmodel.cpp,
+//!   `sContentsMessage2`). The title is the record name (`ContainerWindow::setPtr`); "owned" is
+//!   whether the reference has an owner or a faction owner ([`RefOwners`]), a flag only.
+//!   Fargoth's ring (`ring_keley`) is in the `chargen barrel fatigue` barrel outside the Census
+//!   and Excise Office (exterior Seyda Neen, cell -2,-9), so this is the ring's path.
+//! - Not yet (leftovers): weight and encumbrance (container capacity: `sContentsMessage3`),
+//!   drop, equip, theft (the Census office items are owned: vanilla counts the take as
+//!   stealing), locked or trapped containers, corpses and pickpocketing, item scripts' `OnActivate`
 //!   (the ring's `CharGen_ring_keley` shows the magic menu), books opening to read, dropping
 //!   gold back as a pile (`OpenMW` `createGold` picks the pile size for the amount).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, PoisonError};
 
 use bevy_app::prelude::*;
@@ -53,24 +65,24 @@ use bevy_ecs::system::SystemState;
 use bevy_log::prelude::*;
 use sf_physics_bevy::ItemPivot;
 use sf_records::{RecordDb, RecordId};
-use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, PlayerId, RpgCommand};
+use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, PlayerId, RpgCommand, StackId};
 use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements, ScriptSlot};
 use sf_world::PlacementId;
 use sf_world_bevy::WorldOverlay;
 use tes3::esp::{
-    Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, Ingredient, LeveledItem, Light, LightFlags, Lockpick,
+    Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, ContainerFlags, Ingredient, LeveledItem, Light, LightFlags, Lockpick,
     MiscItem, Probe, Reference, RepairItem, Weapon,
 };
 
 use crate::dialogue::{Rpg, RpgState};
 use mw_scripts_bevy::ActivePlacements;
 
-/// What activating a record takes.
+/// What activating a record does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TakeKind {
-    /// A loose item: the placement itself.
+    /// A loose item: takes the placement itself.
     Item,
-    /// A container: everything in it (scaffold `TakeAllContainer`).
+    /// A container: opens its window.
     Container,
 }
 
@@ -141,6 +153,28 @@ pub fn ref_count(reference: &Reference) -> u32 {
     reference.object_count.map_or(1, |c| (c as i32).unsigned_abs().max(1))
 }
 
+/// The CELL references with an owner (an NPC, `CNAM`, or a faction, `ANAM`), by placement id
+/// (module docs: the container window's "owned" flag; theft rules come with crime).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RefOwners(pub HashSet<PlacementId>);
+
+impl RefOwners {
+    /// The owned references of every cell in `db` (the merged references: the last plugin wins).
+    pub fn from_records(db: &RecordDb) -> Self {
+        let named = |s: &Option<String>| s.as_deref().is_some_and(|s| !s.trim().trim_matches('\0').is_empty());
+        let mut out = HashSet::new();
+        for (_, cell) in db.iter::<Cell>() {
+            for (&(source, refr_index), reference) in &cell.references {
+                if named(&reference.owner) || named(&reference.owner_faction) {
+                    let file = &db.source(sf_records::SourceId(source)).name;
+                    out.insert(mw_world::ids::placement_id(file, refr_index));
+                }
+            }
+        }
+        Self(out)
+    }
+}
+
 /// The gold pile records (`OpenMW` `Miscellaneous::isGold`; ids are folded lowercase).
 pub const GOLD_PILES: [&str; 5] = ["gold_001", "gold_005", "gold_010", "gold_025", "gold_100"];
 
@@ -171,12 +205,26 @@ pub struct TakeRequest {
     pub kind: TakeKind,
 }
 
+/// The host opened a container for a player (validated, its store seeded): the container
+/// window shows it (`inventory_ui.rs`). A co-op client would get this back from the host.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct ContainerOpened {
+    pub player: PlayerId,
+    /// The container's placement id (its store: `Holder::Actor(ActorKey(target.0))`).
+    pub target: PlacementId,
+    pub record: RecordId,
+    /// The reference has an owner ([`RefOwners`]).
+    pub owned: bool,
+}
+
 /// After `dialogue::add` (the `Rpg` host) and `scripts::add` (activations).
 pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
     let Some(db) = db else { return };
     app.insert_resource(RefCounts::from_records(&db))
+        .insert_resource(RefOwners::from_records(&db))
         .insert_resource(ItemRecords(db))
         .add_message::<TakeRequest>()
+        .add_message::<ContainerOpened>()
         .add_systems(Update, (request_takes, apply_takes).chain().after(ScriptSlot::Update));
 }
 
@@ -202,8 +250,9 @@ fn request_takes(
 }
 
 /// Host side of [`TakeRequest`]: a loose item leaves the world (overlay, hooks, visuals) and
-/// goes into the player's loadout; a container's content moves to the player.
-fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'static, 'static, TakeRequest>>) {
+/// goes into the player's loadout; a container's store is seeded and it opens
+/// ([`ContainerOpened`]).
+pub fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'static, 'static, TakeRequest>>) {
     let requests: Vec<TakeRequest> = reader.get_mut(world).map(|mut r| r.read().cloned().collect()).unwrap_or_default();
     for request in requests {
         if !world.contains_resource::<Rpg>() {
@@ -223,10 +272,17 @@ fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'static
                 info!("take: {count} {item} from {} (now {})", request.record, rpg.state.pc.loadout.count(&item));
             }
             TakeKind::Container => {
+                let removed = world.get_resource::<WorldOverlay>().is_some_and(|o| o.0.read().unwrap_or_else(PoisonError::into_inner).is_removed(request.target));
+                if removed || world.resource::<ItemRecords>().kind(&request.record) != Some(TakeKind::Container) {
+                    warn!("open {}: placement {:032x} is not a container in the world", request.record, request.target.0);
+                    continue;
+                }
                 let db = world.resource::<ItemRecords>().0.clone();
                 let mut rpg = world.resource_mut::<Rpg>();
-                let taken = take_all(&mut rpg.state, &db, request.player, ActorKey(request.target.0), &request.record);
-                info!("take all from {}: {taken:?}", request.record);
+                let stacks = container_store(&mut rpg.state, &db, ActorKey(request.target.0), &request.record).loadout.inventory().stacks().len();
+                let owned = world.get_resource::<RefOwners>().is_some_and(|o| o.0.contains(&request.target));
+                info!("open {}: {stacks} stacks{}", request.record, if owned { ", owned" } else { "" });
+                world.write_message(ContainerOpened { player: request.player, target: request.target, record: request.record, owned });
             }
         }
     }
@@ -249,7 +305,7 @@ pub fn take_placement(world: &mut World, id: PlacementId) -> Option<()> {
 /// Adds `count` of `item` to `player`'s loadout (one player character until co-op N slices); a
 /// gold pile goes in as [`GOLD`] (module docs). Returns the id it added.
 fn give(state: &mut RpgState, player: PlayerId, item: &RecordId, count: u32) -> RecordId {
-    let item = if is_gold(item) { RecordId::new(GOLD) } else { item.clone() };
+    let item = gold_as_001(item);
     let command = RpgCommand::AddItem { holder: Holder::Player(player), item: item.clone(), count, attrs: Attrs::new() };
     if let Err(e) = state.pc.apply(command) {
         warn!("take {item}: {e:?}");
@@ -257,39 +313,85 @@ fn give(state: &mut RpgState, player: PlayerId, item: &RecordId, count: u32) -> 
     item
 }
 
-/// Scaffold `TakeAllContainer`: moves everything in `container` (seeded from the `record`'s
-/// item list on first access) to `player`. Returns what moved.
-pub fn take_all(state: &mut RpgState, db: &RecordDb, player: PlayerId, container: ActorKey, record: &RecordId) -> Vec<(RecordId, u32)> {
-    let slot = state.inventories.entry(container).or_insert_with(|| {
+/// `item`, or [`GOLD`] for a gold pile (`ContainerStore::addImp`, module docs).
+fn gold_as_001(item: &RecordId) -> RecordId {
+    if is_gold(item) { RecordId::new(GOLD) } else { item.clone() }
+}
+
+/// The store of `container` (a placement of CONT `record`), seeded from the record's item list
+/// on first access (levelled entries skipped; negative restocking counts by magnitude).
+pub fn container_store<'a>(state: &'a mut RpgState, db: &RecordDb, container: ActorKey, record: &RecordId) -> &'a mut CharacterRpg {
+    state.inventories.entry(container).or_insert_with(|| {
         let mut seeded = CharacterRpg::default();
         for (count, item) in db.get::<Container>(record).map(|c| c.inventory.as_slice()).unwrap_or_default() {
             let item = RecordId::new(item.as_str());
             if db.get::<LeveledItem>(&item).is_some() {
-                info!("take all from {record}: levelled list {item} skipped (no levelled items yet)");
+                info!("open {record}: levelled list {item} skipped (no levelled items yet)");
                 continue;
             }
             let _ = seeded.loadout.add(item, count.unsigned_abs(), Attrs::new());
         }
         seeded
-    });
-    let held = std::mem::take(slot);
-    let taken: Vec<(RecordId, u32)> = held.loadout.inventory().stacks().iter().map(|s| (s.item.clone(), s.count)).collect();
-    for (item, count) in &taken {
-        give(state, player, item, *count);
+    })
+}
+
+/// Whether CONT `record` is organic (plants): it refuses items put in (module docs).
+pub fn is_organic(db: &RecordDb, record: &RecordId) -> bool {
+    db.get::<Container>(record).is_some_and(|c| c.container_flags.contains(ContainerFlags::ORGANIC))
+}
+
+/// The character behind `holder`: the player, or an existing store in `RpgState::inventories`
+/// (a container the host opened, an NPC). One player character until co-op N slices.
+fn holder_mut(state: &mut RpgState, holder: Holder) -> Option<&mut CharacterRpg> {
+    match holder {
+        Holder::Player(PlayerId::HOST) => Some(&mut state.pc),
+        Holder::Player(_) => None,
+        Holder::Actor(key) => state.inventories.get_mut(&key),
     }
-    taken
+}
+
+/// Moves `count` pieces of `stack` from `from` to `to` (the container window's Move): they
+/// leave the stack (`Loadout::take`, attributes kept) and join an identical stack of `to` or
+/// start one; gold enters as [`GOLD`]. An unknown holder or stack changes nothing; a failed
+/// add (count overflow) gives the pieces back to `from`. Returns the item and count that moved.
+pub fn move_stack(state: &mut RpgState, from: Holder, to: Holder, stack: StackId, count: u32) -> Option<(RecordId, u32)> {
+    if from == to || holder_mut(state, to).is_none() {
+        return None;
+    }
+    let taken = holder_mut(state, from)?.loadout.take(stack, count).ok()?;
+    let item = gold_as_001(&taken.item);
+    let command = RpgCommand::AddItem { holder: to, item, count: taken.count, attrs: taken.attrs.clone() };
+    let target = holder_mut(state, to).expect("checked above");
+    if let Err(e) = target.apply(command) {
+        warn!("move {}: {e:?}", taken.item);
+        // Put it back as it was (the source had it a moment ago).
+        let source = holder_mut(state, from).expect("taken from above");
+        let _ = source.loadout.add(taken.item, taken.count, taken.attrs);
+        return None;
+    }
+    Some((taken.item, taken.count))
+}
+
+/// The container window's Take all: moves every stack of `container` (seeded from `record` on
+/// first access) to `player`, in container order. Returns what moved.
+pub fn take_all(state: &mut RpgState, db: &RecordDb, player: PlayerId, container: ActorKey, record: &RecordId) -> Vec<(RecordId, u32)> {
+    let stacks: Vec<(StackId, u32)> = container_store(state, db, container, record).loadout.inventory().stacks().iter().map(|s| (s.id, s.count)).collect();
+    stacks
+        .into_iter()
+        .filter_map(|(stack, count)| move_stack(state, Holder::Actor(container), Holder::Player(player), stack, count))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     //! The ring path on real data (skips without a Morrowind install): the Census office barrel
-    //! holds Fargoth's ring, taking it lets Fargoth's ring dialogue finish the quest.
+    //! holds Fargoth's ring, taking it through the container window lets Fargoth's ring dialogue
+    //! finish the quest.
     use super::*;
     use mw_install::MorrowindInstall;
     use sf_rpg_ui::DialogueRequest;
 
     const FARGOTH: ActorKey = ActorKey(1);
-    const BARREL: ActorKey = ActorKey(7);
 
     /// Synthetic `Master.esm`: one cell with a pile of 5 arrows (`NAM9`), a single arrow (no
     /// count) and a restocking-style negative count.
@@ -378,6 +480,89 @@ mod tests {
         assert_eq!(state.pc.loadout.count(&RecordId::new("gold_100")), 0);
     }
 
+    /// The ring barrel's placement id (the real reference, so its owner is read).
+    fn barrel_placement(db: &RecordDb) -> PlacementId {
+        let found = db.iter::<Cell>().find_map(|(_, c)| {
+            let (&k, r) = c.references.iter().find(|(_, r)| r.id.eq_ignore_ascii_case("chargen barrel fatigue"))?;
+            Some((format!("{:?} grid {:?} at {:?}", c.name, c.data.grid, r.translation), k))
+        });
+        let (cell, (source, refr_index)) = found.expect("the ring barrel is placed");
+        eprintln!("ring barrel in {cell}");
+        mw_world::ids::placement_id(&db.source(sf_records::SourceId(source)).name, refr_index)
+    }
+
+    /// Headless container window: activating the barrel (a [`TakeRequest`]) opens the window
+    /// with its stacks; moving the ring puts it in the player's loadout and takes it out of the
+    /// barrel, moving it back reverses that; Take all empties the barrel and closes the window.
+    /// Returns the RPG host after and the barrel's store key.
+    fn ring_through_the_window(db: &Arc<RecordDb>) -> (Rpg, ActorKey) {
+        use crate::inventory_ui::{
+            CONTAINER_SCREEN, OpenContainer, PcSlots, close_inventory, host_containers, open_containers, screens, sync_open,
+        };
+        use sf_ui_bevy::{ScreenStackRes, UiRegistryRes};
+        use sf_ui_screens::{ContainerEvent, ContainerIntent, ContainerScreen};
+
+        let target = barrel_placement(db);
+        let (barrel, ring) = (RecordId::new("chargen barrel fatigue"), RecordId::new("ring_keley"));
+        let mut app = App::new();
+        app.add_message::<TakeRequest>()
+            .add_message::<ContainerOpened>()
+            .add_message::<ContainerEvent>()
+            .insert_resource(Rpg::new(db.clone()).unwrap())
+            .insert_resource(ItemRecords(db.clone()))
+            .insert_resource(RefOwners::from_records(db))
+            .insert_resource(UiRegistryRes(screens()))
+            .init_resource::<ScreenStackRes>()
+            .init_resource::<PcSlots>()
+            .add_systems(Update, (apply_takes, open_containers, host_containers, sync_open, close_inventory).chain());
+        app.world_mut().write_message(TakeRequest { player: PlayerId::HOST, target, record: barrel.clone(), kind: TakeKind::Container });
+        app.update();
+
+        let rows = |view: &sf_ui_inventory::InventoryView| -> Vec<(StackId, RecordId, u32)> {
+            view.rows().iter().map(|(_, r)| (r.stack.id, r.stack.item.clone(), r.stack.count)).collect()
+        };
+        let window = |app: &mut App| {
+            let mut q = app.world_mut().query::<(Entity, &ContainerScreen, &OpenContainer)>();
+            q.iter(app.world()).map(|(e, s, o)| (e, rows(&s.container), rows(&s.player), (s.container.holder(), s.player.holder()), s.title.clone(), s.owned, o.clone())).next()
+        };
+        let ring_row = |rows: &[(StackId, RecordId, u32)]| rows.iter().find(|(_, item, _)| *item == ring).map(|&(id, _, n)| (id, n));
+        let (screen, container, player, (from, to), title, owned, open) = window(&mut app).expect("the container window opened");
+        assert!(app.world().resource::<ScreenStackRes>().0.is_open(CONTAINER_SCREEN));
+        assert_eq!((open.key, open.record.clone(), open.organic), (ActorKey(target.0), barrel.clone(), false));
+        assert_eq!((from, to), (Holder::Actor(open.key), Holder::Player(PlayerId::HOST)));
+        assert_eq!(title, crate::inventory_ui::container_title(db, &barrel));
+        eprintln!("barrel {title:?}, owned {owned}, {} stacks", container.len());
+        assert_ne!(title, barrel.as_str(), "the record's name, not its id");
+        let (stack, count) = ring_row(&container).expect("the barrel lists Fargoth's ring");
+        assert_eq!(count, 1);
+        assert!(ring_row(&player).is_none());
+
+        // Barrel -> player.
+        app.world_mut().write_message(ContainerEvent { screen, intent: ContainerIntent::Move { from, to, stack, count } });
+        app.update();
+        let (_, container, player, ..) = window(&mut app).expect("still open after a move");
+        assert!(ring_row(&container).is_none(), "the ring left the barrel's pane");
+        let (stack, n) = ring_row(&player).expect("the ring is in the player's pane");
+        assert_eq!(n, 1);
+        let rpg = app.world().resource::<Rpg>();
+        assert_eq!(rpg.state.pc.loadout.count(&ring), 1);
+        assert_eq!(rpg.state.inventories[&open.key].loadout.count(&ring), 0);
+
+        // Player -> barrel (the barrel isn't organic), then Take all.
+        app.world_mut().write_message(ContainerEvent { screen, intent: ContainerIntent::Move { from: to, to: from, stack, count: 1 } });
+        app.update();
+        let rpg = app.world().resource::<Rpg>();
+        assert_eq!((rpg.state.pc.loadout.count(&ring), rpg.state.inventories[&open.key].loadout.count(&ring)), (0, 1), "put back");
+        app.world_mut().write_message(ContainerEvent { screen, intent: ContainerIntent::TakeAll { from, to } });
+        app.update();
+        let rpg = app.world().resource::<Rpg>();
+        assert!(rpg.state.inventories[&open.key].loadout.inventory().stacks().is_empty(), "Take all empties the barrel");
+        assert_eq!(rpg.state.pc.loadout.count(&ring), 1);
+        assert!(!app.world().resource::<ScreenStackRes>().0.is_open(CONTAINER_SCREEN), "Take all closes the window");
+        assert!(window(&mut app).is_none(), "the window's root despawned");
+        (app.world_mut().remove_resource::<Rpg>().unwrap(), open.key)
+    }
+
     #[test]
     fn take_kinds_and_the_ring_barrel_finish_fargoths_ring() {
         let Ok((install, _)) = MorrowindInstall::detect(None) else {
@@ -394,11 +579,8 @@ mod tests {
         assert_eq!(take_kind(&db, &RecordId::new("fargoth")), None);
         assert_eq!(take_kind(&db, &RecordId::new("ex_common_house_tall_02")), None);
 
-        let mut rpg = Rpg::new(db.clone()).unwrap();
-        let taken = take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel);
-        assert!(taken.contains(&(ring.clone(), 1)), "{taken:?}");
-        assert_eq!(rpg.state.pc.loadout.count(&ring), 1);
-        assert!(take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty(), "the barrel stays empty");
+        let (mut rpg, store) = ring_through_the_window(&db);
+        assert!(take_all(&mut rpg.state, &db, PlayerId::HOST, store, &barrel).is_empty(), "the barrel stays empty");
 
         assert!(rpg.add_actor(FARGOTH, &RecordId::new("fargoth"), "Seyda Neen"));
         let (mut talk, mut view) = rpg.open(FARGOTH).unwrap();

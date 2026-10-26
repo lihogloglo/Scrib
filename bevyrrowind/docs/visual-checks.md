@@ -123,6 +123,7 @@ PH-7 | partial | [physics](visual-checks/physics.md) | Item body shapes
 PH-9 | partial | [physics](visual-checks/physics.md) | knockdown and get-up
 WA-1 | partial | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
 IV-1 | partial | [player-ui](visual-checks/player-ui.md) | Take items and Fargoth's ring; inventory layout, hover, drop, paper doll missing
+IV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Container window: the ring barrel outside the Census office (ring), move both ways, Take all closes
 CO-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Console: exterior COC, paste, Down/Enter on suggestions (2026-10-26)
 
 ### Confirmed with follow-up (5)

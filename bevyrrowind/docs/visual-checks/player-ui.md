@@ -19,15 +19,24 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 ### IV-1: Take items and Fargoth's ring (`cargo dev view "Seyda Neen, Census and Excise Office"`) (partial)
 - E on a loose item (bottle, plate, book): it vanishes at once and stays gone after leaving and re-entering the
   office (overlay removal); log line `take: <id> (now N)`. Doors, NPCs and statics are unchanged.
-- E on the barrel by the desk (`chargen barrel fatigue`): log `take all from ... [(ring_keley, 1), ...]`; the barrel is
+- E on the ring barrel (`chargen barrel fatigue`, IV-2): the container window; take the ring. The barrel is
   now solid (containers got collision). Then talk to Fargoth outside, topic `ring`, "Yes": quest Fargoth's Ring
   finishes (J shows it), the ring leaves your inventory. Shift+U (dev ring) still works.
-- Known: no container window yet (the barrel gives everything), no theft for owned items, no weight.
+- Known: no theft for owned items, no weight. The barrel now opens the container window (IV-2).
 - I (pad Y / Triangle, rebindable on F10's gameplay rows) opens the inventory: record names, counts, DDS icons, tabs All/Weapon/
   Apparel/Magic/Misc; after the barrel it lists Fargoth's Ring. I or Esc closes; you can't walk or press E while open.
   Look for: icons drawn (not blank squares). Read-only: no equip/drop yet. Shot: `--open-ui inventory` (dev sample items).
 - Owner 2026-10-25: partial. Inventory opens; layout looks off, hover works poorly, no paper-doll view, no
   drag-to-floor drop. Queued after the physics work (layout, hover, drop, then paper doll).
+
+### IV-2: Container window: the ring barrel outside the Census office (`cargo dev view "Seyda Neen, Census and Excise Office"`) (awaiting owner)
+- The ring barrel (`chargen barrel fatigue`) is outside the office, not in it (exterior Seyda Neen
+  -2,-9, near the office). E on it opens the container window titled "Barrel": its stacks left (Fargoth's ring), yours right.
+- Click the ring (or A / drag it across): it moves to your pane; click it there: it goes back. X on a stack of more
+  than one asks how many. Take all (Y) moves everything and closes the window; E again shows it empty.
+- Look for: both grids drawn with icons, the window centred, Esc / B / Close shut it, no walking while open; I then
+  lists the ring. Owned containers in the office show the owned heading colour (flag only: no theft yet).
+- Known: no weight limit, no locks or traps, levelled entries skipped, organic containers refuse puts silently.
 
 ### SV-1: Quicksave / quickload, save, quit, load (`cargo dev view "Seyda Neen, Census and Excise Office"`) (confirmed with follow-up)
 - In player mode take the barrel by the desk (ring) and a loose bottle, step into the middle of the room, Tab to first
@@ -136,4 +145,5 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Options opens the options screen on top, Esc returns. Quit asks Yes/No (No focused); Yes exits.
 - New Game closes the menu: HUD appears, the player stands at the office door and can walk; Esc now opens the pause menu.
 - Dev runs (`cargo dev view ...`, `scene`) never show it. Known: no title image or background art yet.
+- 2026-10-26 (M3): with a save on disk, Continue (focused) and Load Game are live: Continue loads the newest save (any kind) and play resumes there; Load Game opens the save list, Esc returns to the main menu.
 - Status: awaiting owner.

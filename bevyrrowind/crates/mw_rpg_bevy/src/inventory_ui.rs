@@ -11,9 +11,14 @@
 //!   apps/openmw/mwclass, 0.49.0); icons are the BSA's `icons/<path>.dds` (the record names a
 //!   `.tga`, the shipped file is a DDS, as `Misc::ResourceHelpers::correctIconPath` maps it).
 //!   Tabs are Morrowind's (All, Weapon, Apparel, Magic, Misc) with the GMST labels.
+//! - **Container window** ([`CONTAINER_SCREEN`]): the stock container screen over a container's
+//!   store and the player's loadout, opened by `inventory.rs`' [`ContainerOpened`] (activating a
+//!   container). [`host_containers`] applies its Move / Take all intents to the RPG state
+//!   (`inventory::move_stack`); both panes re-sync from the state; Take all closes it
+//!   (vanilla). Module docs of `inventory.rs` hold the `OpenMW` behaviour.
 //! - Read-only for now: the screen's use / split / merge intents are ignored. Not yet: equip,
-//!   drop, weight limit (no capacity: the encumbrance bar shows the carried total only), the
-//!   container window, item tooltips' stats.
+//!   drop, weight limit (no capacity: the encumbrance bar shows the carried total only),
+//!   item tooltips' stats.
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -21,30 +26,50 @@ use bevy_log::prelude::*;
 use bevy_ui::prelude::*;
 use bevy_enhanced_input::prelude::{Action, ActionEvents};
 use sf_records::{RecordDb, RecordId};
-use sf_rpg::{Attrs, CharacterRpg, Holder, ItemStack, PlayerId, RpgCommand, SlotTable};
+use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, ItemStack, PlayerId, RpgCommand, SlotTable};
 use sf_ui::{Layer, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiRegistryRes, UiScreenRoot};
 use sf_ui_inventory::{InventoryTab, InventoryView, ItemCatalog, ItemInfo, StatDef};
-use sf_ui_screens::{InventoryScreen, ScreenSystems};
+use sf_ui_screens::{ContainerEvent, ContainerIntent, ContainerScreen, InventoryScreen, ScreenSystems};
 use tes3::esp::{
-    Alchemy, Apparatus, Armor, Book, Clothing, GameSetting, GameSettingValue, Ingredient, Light, Lockpick, MiscItem, Probe,
-    RepairItem, Weapon,
+    Alchemy, Apparatus, Armor, Book, Clothing, Container, GameSetting, GameSettingValue, Ingredient, Light, Lockpick,
+    MiscItem, Probe, RepairItem, Weapon,
 };
 
 use mw_controls_bevy::{InventoryAction, inventory_pressed};
 use crate::dialogue::Rpg;
-use crate::inventory::ItemRecords;
+use crate::inventory::{ContainerOpened, ItemRecords, is_organic, move_stack, take_all};
 
 /// The screen's id.
 pub const SCREEN: &str = "inventory";
 
-/// The inventory screen record. TODO(HUD slice): with the other screens, in the builtin mod's data.
+/// The container window's id.
+pub const CONTAINER_SCREEN: &str = "container";
+
+/// The inventory and container screen records. TODO(HUD slice): with the other screens, in the
+/// builtin mod's data.
 const SCREENS: &str = r#"
 [[define]]
 kind = "ui.screen"
 id = "inventory"
 value = { layer = "Menu", implementation = { Template = "inventory" } }
+
+[[define]]
+kind = "ui.screen"
+id = "container"
+value = { layer = "Menu", implementation = { Template = "container" } }
 "#;
+
+/// On a container window's root: whose store its left pane shows.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct OpenContainer {
+    /// The container's store (`RpgState::inventories`), its placement id.
+    pub key: ActorKey,
+    /// Its CONT record.
+    pub record: RecordId,
+    /// Organic containers (plants) refuse items put in (`inventory.rs` module docs).
+    pub organic: bool,
+}
 
 /// The player's equipment slots. Empty until equip lands (2.2 follow-up): nothing shows as worn.
 #[derive(Resource)]
@@ -83,11 +108,15 @@ pub fn add(app: &mut App, open_at_start: bool) {
     }
     app.init_resource::<PcSlots>().add_systems(
         Update,
-        ((open_at_start_once, toggle_inventory).chain().before(ScreenSystems::Spawn), (centre_inventory.after(ScreenSystems::Spawn), sync_open, close_inventory)),
+        (
+            (open_at_start_once, toggle_inventory, open_containers).chain().before(ScreenSystems::Spawn),
+            (host_containers, sync_open).chain(),
+            (centre_inventory.after(ScreenSystems::Spawn), close_inventory),
+        ),
     );
 }
 
-fn screens() -> UiRegistry {
+pub(crate) fn screens() -> UiRegistry {
     let mut db = RecordDb::new();
     sf_ui::register_kinds(&mut db).expect("UI record kinds register");
     let base = db.add_source("bevyrrowind", &[]);
@@ -180,6 +209,20 @@ pub fn player_view(records: &ItemRecords, slots: &SlotTable, pc: &CharacterRpg) 
     view
 }
 
+/// A container's view (the same tabs, no carry limit), synced with its `store`.
+pub fn container_view(records: &ItemRecords, slots: &SlotTable, key: ActorKey, store: &CharacterRpg) -> InventoryView {
+    let mut view = InventoryView::new(Holder::Actor(key), tabs(&records.0), 1.0, 1.0);
+    view.sync(&store.loadout, slots, records);
+    view
+}
+
+/// The container window's title: the CONT record's name (`OpenMW` `ContainerWindow::setPtr`:
+/// `getClass().getName`), the id when it has none.
+pub fn container_title(db: &RecordDb, record: &RecordId) -> String {
+    let name = db.get::<Container>(record).map(|c| c.name.trim().trim_matches('\0').to_owned()).unwrap_or_default();
+    if name.is_empty() { record.as_str().to_owned() } else { name }
+}
+
 // ============================================================ the app glue
 
 fn open(commands: &mut Commands, stack: &mut ScreenStackRes, registry: &UiRegistryRes, view: InventoryView) {
@@ -232,20 +275,36 @@ fn open_at_start_once(
     open(&mut commands, &mut stack, &registry, player_view(&records, &slots.0, &rpg.state.pc));
 }
 
-/// An open screen follows the loadout (a dialogue result, a take): unchanged stacks keep their rows.
+/// Open screens follow the RPG state (a dialogue result, a take, a container move): the
+/// inventory and both container panes; unchanged stacks keep their rows.
 #[allow(clippy::needless_pass_by_value)] // system parameters
-fn sync_open(rpg: Res<Rpg>, records: Res<ItemRecords>, slots: Res<PcSlots>, mut screens: Query<&mut InventoryScreen>) {
+pub fn sync_open(
+    rpg: Res<Rpg>,
+    records: Res<ItemRecords>,
+    slots: Res<PcSlots>,
+    mut screens: Query<&mut InventoryScreen>,
+    mut containers: Query<(&mut ContainerScreen, &OpenContainer)>,
+) {
     if !rpg.is_changed() {
         return;
     }
     for mut screen in &mut screens {
         screen.view.sync(&rpg.state.pc.loadout, &slots.0, &*records);
     }
+    for (mut screen, open) in &mut containers {
+        screen.player.sync(&rpg.state.pc.loadout, &slots.0, &*records);
+        if let Some(store) = rpg.state.inventories.get(&open.key) {
+            screen.container.sync(&store.loadout, &slots.0, &*records);
+        }
+    }
 }
+
+/// The windows [`centre_inventory`] centres.
+type CentredWindow = Or<(With<InventoryScreen>, With<ContainerScreen>)>;
 
 /// Centres the window once the stock screen gave its root the panel `Node` (it replaces the
 /// spawn's): absolute at the middle, offset by half the panel's fixed size.
-fn centre_inventory(mut roots: Query<&mut Node, (With<InventoryScreen>, Changed<Node>)>) {
+fn centre_inventory(mut roots: Query<&mut Node, (CentredWindow, Changed<Node>)>) {
     for mut node in &mut roots {
         if node.position_type == PositionType::Absolute {
             continue;
@@ -261,12 +320,85 @@ fn centre_inventory(mut roots: Query<&mut Node, (With<InventoryScreen>, Changed<
     }
 }
 
-/// The screen's root despawns once it is off the stack (the action, Esc / Back).
+/// The inventory's or the container window's root despawns once it is off the stack (the
+/// action, Esc / Back, the Close button, Take all).
 #[allow(clippy::needless_pass_by_value)] // system parameters
-fn close_inventory(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Query<(Entity, &UiScreenRoot)>) {
+pub(crate) fn close_inventory(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Query<(Entity, &UiScreenRoot)>) {
     for (e, root) in &roots {
-        if root.0.as_str() == SCREEN && !stack.0.is_open(SCREEN) {
+        let id = root.0.as_str();
+        if (id == SCREEN || id == CONTAINER_SCREEN) && !stack.0.is_open(id) {
             commands.entity(e).despawn();
+        }
+    }
+}
+
+/// The host opened a container for this player ([`ContainerOpened`]): the container window
+/// over its store and the player's loadout, when no other menu is open.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub(crate) fn open_containers(
+    mut commands: Commands,
+    mut opened: MessageReader<ContainerOpened>,
+    mut stack: ResMut<ScreenStackRes>,
+    registry: Res<UiRegistryRes>,
+    records: Res<ItemRecords>,
+    slots: Res<PcSlots>,
+    rpg: Res<Rpg>,
+) {
+    for o in opened.read().filter(|o| o.player == PlayerId::HOST) {
+        if stack.0.top(Layer::Menu).is_some() {
+            info!("open {}: another menu is open", o.record);
+            continue;
+        }
+        let key = ActorKey(o.target.0);
+        let Some(store) = rpg.state.inventories.get(&key) else {
+            warn!("open {}: no store {:032x}", o.record, key.0);
+            continue;
+        };
+        let screen = ContainerScreen::new(container_view(&records, &slots.0, key, store), player_view(&records, &slots.0, &rpg.state.pc))
+            .with_title(container_title(&records.0, &o.record))
+            .with_owned(o.owned);
+        let open = OpenContainer { key, record: o.record.clone(), organic: is_organic(&records.0, &o.record) };
+        commands.spawn((UiScreenRoot(CONTAINER_SCREEN.into()), screen, open));
+        if let Err(e) = stack.0.push(&registry.0, CONTAINER_SCREEN) {
+            warn!("container: {e:?}");
+        }
+    }
+}
+
+/// Host side of the container window: applies its Move / Take all intents to the RPG state
+/// (holders checked against the window's container and the player); [`sync_open`] re-syncs
+/// both panes. Take all closes the window (`OpenMW` `ContainerWindow::onTakeAllButtonClicked`).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub fn host_containers(
+    mut events: MessageReader<ContainerEvent>,
+    windows: Query<&OpenContainer>,
+    records: Res<ItemRecords>,
+    mut rpg: ResMut<Rpg>,
+    mut screens: ResMut<ScreenStackRes>,
+) {
+    for event in events.read() {
+        let Ok(open) = windows.get(event.screen) else { continue };
+        let (store, pc) = (Holder::Actor(open.key), Holder::Player(PlayerId::HOST));
+        match event.intent {
+            ContainerIntent::Move { from, to, stack, count } => {
+                if (from, to) != (store, pc) && (from, to) != (pc, store) {
+                    warn!("container {}: move between {from:?} and {to:?} refused", open.record);
+                } else if to == store && open.organic {
+                    // `sContentsMessage2` (a message box: with notifications).
+                    info!("container {}: organic, refuses items", open.record);
+                } else if let Some((item, n)) = move_stack(&mut rpg.state, from, to, stack, count) {
+                    info!("container {}: moved {n} {item} to {to:?}", open.record);
+                }
+            }
+            ContainerIntent::TakeAll { from, to } => {
+                if (from, to) != (store, pc) {
+                    warn!("container {}: take all from {from:?} to {to:?} refused", open.record);
+                    continue;
+                }
+                let taken = take_all(&mut rpg.state, &records.0, PlayerId::HOST, open.key, &open.record);
+                info!("container {}: took all {taken:?}", open.record);
+                screens.0.close(CONTAINER_SCREEN);
+            }
         }
     }
 }
