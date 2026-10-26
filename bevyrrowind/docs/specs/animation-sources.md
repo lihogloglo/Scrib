@@ -160,10 +160,12 @@ as opaque strings).
 - LAFAN1 (2026-10-26): BVH importer in `anim_importers()` (per-source `unit_scale`/`up` from the manifest as path
   overrides); source flag `root_from_pelvis` → `SourceRef::retarget_root` → `AnimRules::retarget_root`: cooked without
   extraction, root motion generated on the target hips (framework animation.md "Bake steps"). `lafan1` is
-  CC-BY-NC-ND-4.0, `private_only` (graph provenance non-redistributable). `traverse.mantle.waist` candidates:
-  `obstacles3_subject4` 123.83–127.17 s, then UAL2 `ClimbUp_1m_RM`. On `base_anim` (measured): 3.34 s, root rises
-  1.30 m, forward 2.50 m, side 0.57 m; frame 0 hips over the root (2.6 cm), thighs face 2.3°, toes 5°/−9°; but the
-  root yaw turns 0 → 84° by the obstacle and ends at 120° (the actor turns side-on to knee over it, then turns away).
+  CC-BY-NC-ND-4.0, `private_only` (graph provenance non-redistributable). `traverse.mantle.waist` candidates
+  (2026-10-26 range pick): UAL2 `ClimbUp_1m_RM` first, then LAFAN1 `obstacles4_subject3` 199.40–201.20 s (run-in
+  step-up onto 1.05 m). No LAFAN1 waist mantle is a clean forward one: the root yaw is the pelvis twist, and every
+  walk-in knee mantle swings it 45–130° (the first pick, `obstacles3_subject4` 123.83–127.17 s, ended at 120°); the one
+  straight take (`obstacles5_subject3` 232.87–234.87 s, yaw 6°) ends crouched, so its pelvis root rises 0.58 m on a
+  1.05 m box. Measured on `base_anim`: 1.80 s, rise 0.97 m, forward 1.86 m, side −0.73 m, end yaw 19.7° (−46° mid-clip).
   Tests: `lafan1_mantle_starts_over_its_root_facing_forward`, `measure_mantle_waist_lafan1` (ignored).
 
 ## Morrowind creature mapping notes

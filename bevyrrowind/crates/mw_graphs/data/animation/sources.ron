@@ -40,7 +40,7 @@
       attribution: Some("LAFAN1, Ubisoft La Forge (Harvey et al., Robust Motion In-betweening, SIGGRAPH 2020)"),
       private_only: true,
       files: [
-        (name: "bvh/obstacles3_subject4.bvh", sha256: "52084d594a7105fea643dcfb49dcaceee5ff7d25fb9c3a6711e888a174efe263"),
+        (name: "bvh/obstacles4_subject3.bvh", sha256: "971cb091da5e74c3ec7b5fdbabb9e56fe50e06f71175a44092b39bb67cbd5e64"),
       ],
       // BVH: centimeters, +Y up. No root bone (the hips wander the capture
       // volume): root motion comes from the target pelvis after retargeting.
@@ -52,13 +52,16 @@
   slots: {
     // Waist-high mantle (action.md B2a): one clip, warped onto the ledge by
     // the action clock (`Progress`), so its root track keeps the climb's rise
-    // and forward travel. First LAFAN1's walk-in knee mantle onto a 1.02 m
-    // obstacle (frames 3715-3815 at 30 Hz), then UAL2's baked `_RM` track.
+    // and forward travel. First UAL2's baked `_RM` track, then LAFAN1's
+    // run-in step-up onto a 1.05 m box (frames 5982-6036 at 30 Hz). No LAFAN1
+    // waist mantle is a clean forward one: every walk-in knee mantle turns the
+    // pelvis 45-130 degrees, and the one straight take (obstacles5_subject3
+    // 6986-7046) ends crouched, so its pelvis root rises only half the box.
     "traverse.mantle.waist": (
       graph: "humanoid",
       candidates: [
-        (source: "lafan1", file: Some("bvh/obstacles3_subject4.bvh"), clip: "obstacles3_subject4", range: Some((123.83, 127.17))),
         (source: "quaternius_ual2", clip: "ClimbUp_1m_RM"),
+        (source: "lafan1", file: Some("bvh/obstacles4_subject3.bvh"), clip: "obstacles4_subject3", range: Some((199.40, 201.20))),
       ],
       root: Progress,
       vertical: true,

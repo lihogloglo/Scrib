@@ -28,8 +28,9 @@ use sf_vfs::Vfs;
 
 const SLOT: &str = "traverse.mantle.waist";
 const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m_RM";
-/// The shipped first candidate: LAFAN1's walk-in knee mantle (private only).
-const LAFAN1: &str = "lafan1:bvh/obstacles3_subject4.bvh:obstacles3_subject4@123.83-127.17";
+/// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
+/// step-up onto a 1.05 m box. Its tests resolve it explicitly.
+const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
 /// Every slot in the shipped manifest (`traverse.climb.up` = UAL1 `ClimbLedge_RM`, for B3).
 const SLOTS: usize = 2;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
@@ -46,24 +47,24 @@ struct Setup {
 /// UAL2's mantle: the shipped manifest less its LAFAN1 candidates, so the
 /// slot resolves to UAL2 whether or not LAFAN1 is in the folder.
 fn setup() -> Option<Setup> {
-    setup_with(REFERENCE, true)
+    setup_with(REFERENCE, false)
 }
 
-fn setup_with(reference: &'static str, without_lafan1: bool) -> Option<Setup> {
+/// `only_lafan1`: keep only the mantle slot's LAFAN1 candidates (it resolves
+/// to LAFAN1 whatever the slot order); otherwise drop LAFAN1 from every slot.
+fn setup_with(reference: &'static str, only_lafan1: bool) -> Option<Setup> {
     let Ok((install, _)) = MorrowindInstall::detect(None) else {
         eprintln!("no Morrowind install detected; skipping");
         return None;
     };
     let local = AnimSources::local();
-    let sources = if without_lafan1 {
-        let mut manifest = local.manifest.clone();
-        for slot in manifest.slots.values_mut() {
-            slot.candidates.retain(|c| c.source != "lafan1");
+    let mut manifest = local.manifest.clone();
+    for (name, slot) in &mut manifest.slots {
+        if !only_lafan1 || name == SLOT {
+            slot.candidates.retain(|c| (c.source == "lafan1") == only_lafan1);
         }
-        Arc::new(AnimSources::new(manifest, local.dir.clone()))
-    } else {
-        Arc::new(local)
-    };
+    }
+    let sources = Arc::new(AnimSources::new(manifest, local.dir.clone()));
     let (file, _) = sources.references().into_iter().find(|(_, r)| r.reference == reference).expect("the manifest names the mantle clip");
     if sources.real_path(&file).is_none() {
         eprintln!("{file} not in {}; skipping", sources.dir.display());
@@ -294,7 +295,7 @@ fn toe_angle(model: &[Affine3A], target: &Skeleton, map: &RigMap, ankle: B, toe:
 }
 
 fn lafan1_bake() -> Option<(Setup, tempfile::TempDir, Baker)> {
-    let s = setup_with(LAFAN1, false)?;
+    let s = setup_with(LAFAN1, true)?;
     let dir = tempfile::tempdir().unwrap();
     let (report, baker) = bake(&s, dir.path(), &s.sources);
     for (key, e) in &report.failures {

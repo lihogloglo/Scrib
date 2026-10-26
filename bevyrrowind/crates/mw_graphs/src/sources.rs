@@ -281,8 +281,8 @@ mod tests {
         assert!(lafan1.private_only && !lafan1.redistributable() && lafan1.root_from_pelvis);
         assert!(lafan1.files.iter().all(|f| f.sha256.len() == 64));
         let slot = &m.slots["traverse.mantle.waist"];
-        assert_eq!(slot.candidates[0].reference(), "lafan1:bvh/obstacles3_subject4.bvh:obstacles3_subject4@123.83-127.17");
-        assert_eq!(slot.candidates[1].reference(), "quaternius_ual2:ClimbUp_1m_RM");
+        assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m_RM");
+        assert_eq!(slot.candidates[1].reference(), "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2");
         let refs = m.references().unwrap();
         let root = refs.iter().find(|r| r.source == "lafan1").and_then(|r| r.retarget_root.clone()).unwrap();
         assert!(root.vertical && root.extract && root.mode == RootMotionMode::Progress);
