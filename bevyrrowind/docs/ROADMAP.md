@@ -69,7 +69,7 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.14 Build churn: workspace-hack (`cargo hakari`) built, covers the merged workspace; gates re-measured 2026-10-26 after the split: no-op 1.2 s, touch app 5.6 s, touch `mw_doors_bevy` 10.7 s miss (perf.md "Dev loop"); clean build not measured; fix needs an owner call.
 - [ ] 1.15 Godotwind borrow pass (owner 2026-10-26, a dedicated pass, not part of other slices): `research/godotwind-borrow.md` lists the code to take with exact Godotwind pointers; first entry the FFT-to-analytic shore waves.
 
-**Next session order (owner 2026-10-26): keep building Phase 2, one big debug pass later.** Slices in order (one deliverable each): main menu screen (framework), new game into Seyda Neen, load from the main menu; inventory stack counts, container window (framework), looting containers. Then the Phase 2 done test end to end.
+**Next session order (owner 2026-10-26):** the Phase 2 build queue is done (main menu, new game, Continue/Load, stack counts, gold, container window, looting). Next: the owner's big debug pass (visual checks incl. SV-2, HD-1, CO-1, PM-1, PH-11, MM-1, IV-2; Phase 2 done test end to end), then Phase 1 perf, then Phase 3 (combat first; 3.6/3.7 water). Godotwind borrow pass (1.15) is its own pass.
 
 ## Phase 2: a playable vertical slice (the basics)
 

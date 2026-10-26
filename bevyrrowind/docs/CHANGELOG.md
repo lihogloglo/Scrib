@@ -7,6 +7,8 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 - 2026-10-26 (day, scrib): save/load screen from the pause menu (save, overwrite, load, delete; OpenMW fields; SV-2);
   minimal HUD (bars from the `player` record, compass, crosshair, use prompt; HD-1); console Down/Enter on suggestions,
   OS paste, exterior `coc` (OpenMW port; CO-1 re-check); BSL-1.0 for two clipboard crates; `cargo_turn.sh` ignores `cargo run`.
+  Later: framework main menu + release start (no subcommand: menu over Seyda Neen; New game, Continue, Load), reference stack
+  counts and gold piles (OpenMW), framework container window + game looting (IV-2), Godotwind audit + borrow index (1.15), ROADMAP 3.6/3.7.
 
 - 2026-10-26 (night, scrib): physics fix plan slices 1-10 (collision-ready gate, arrival gate + safety net, items asleep
   until disturbed, OpenMW NIF rules + full-triangle fallback, held item on the final camera + tick-view hand; PH-11); app split
