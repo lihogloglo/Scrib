@@ -17,6 +17,7 @@ use sf_ui_inventory::{Better, InventoryTab, InventoryView, ItemCatalog, ItemInfo
 
 use crate::hud::{HudBar, HudView, UsePrompt};
 use crate::journal::JournalSource;
+use crate::main_menu::{MainMenuEntry, MainMenuModel};
 
 /// Screen records of the demo: the HUD and the menus (the pause menu pauses the game).
 pub const SCREENS: &str = r#"
@@ -59,6 +60,11 @@ value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "pa
 kind = "ui.screen"
 id = "options"
 value = { layer = "Menu", pause = "WhileOpen", implementation = { Template = "options" } }
+
+[[define]]
+kind = "ui.screen"
+id = "main_menu"
+value = { layer = "Menu", implementation = { Template = "main_menu" } }
 "#;
 
 /// Settings of the options screen demo, one per kind over two pages (after the framework's
@@ -606,6 +612,24 @@ pub fn hud() -> HudView {
             action: Some(activate_action()),
         }),
     }
+}
+
+// ---------------------------------------------------------------- main menu
+
+/// A main menu with invented entries: Continue disabled (no save), Quit asks first, a text
+/// title (no logo, no background).
+pub fn main_menu() -> MainMenuModel {
+    let mut model = MainMenuModel::new([
+        MainMenuEntry::new("continue", "Continue").enabled(false),
+        MainMenuEntry::new("new", "New game"),
+        MainMenuEntry::new("load", "Load game"),
+        MainMenuEntry::new("options", "Options"),
+        MainMenuEntry::new("credits", "Credits"),
+        MainMenuEntry::new("quit", "Quit"),
+    ])
+    .with_quit("quit");
+    model.title_text = "Demo Game".into();
+    model
 }
 
 // ---------------------------------------------------------------- host systems

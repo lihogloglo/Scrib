@@ -3,7 +3,8 @@
 //! `cargo run -p sf_ui_screens --features demo --example screens` opens a window with the HUD.
 //! F1 dialogue, F2 journal, F3 inventory (1,000 stacks), F4 keybinds, F5 pause menu (Save
 //! disabled, to show a disabled entry), F6 options (the demo settings and the audio page;
-//! changes are only shown); on a pad, Start (Esc)
+//! changes are only shown), F7 main menu (Continue disabled; choices are logged, Quit or
+//! Esc asks, then closes it); on a pad, Start (Esc)
 //! cycles them from the HUD and View (M) opens the inventory. B (Esc) closes a screen.
 //! Hold H to drain the HUD's health bar.
 //!
@@ -25,17 +26,18 @@ use sf_ui_bevy::{
 use sf_ui_screens::demo::{self, DemoInventory, DemoWorld};
 use sf_ui_screens::{
     DialogueScreen, HudScreen, HudView, InventoryScreen, JournalUi, JournalUiPlugin,
-    KeybindsScreen, OptionsModel, OptionsScreen, PauseChoice, PauseMenuModel, PauseMenuScreen,
-    ScreenSystems, SfScreensPlugin,
+    KeybindsScreen, MainMenuEvent, MainMenuScreen, OptionsModel, OptionsScreen, PauseChoice,
+    PauseMenuModel, PauseMenuScreen, ScreenSystems, SfScreensPlugin,
 };
 
-const MENUS: [&str; 6] = [
+const MENUS: [&str; 7] = [
     "dialogue",
     "journal",
     "inventory",
     "keybinds",
     "pause",
     "options",
+    "main_menu",
 ];
 
 fn main() -> AppExit {
@@ -79,7 +81,13 @@ fn main() -> AppExit {
     )
     .add_systems(
         Update,
-        (open_screens, show_open_screens, drain_health).chain(),
+        (
+            open_screens,
+            host_main_menu,
+            show_open_screens,
+            drain_health,
+        )
+            .chain(),
     );
     if let Some(shots) = autotest {
         app.insert_resource(Autotest { shots, ..default() })
@@ -152,6 +160,10 @@ fn open(
             let model = OptionsModel::from_settings(&registry.0, None, None);
             commands.entity(root).insert(OptionsScreen::new(model));
         }
+        "main_menu" => {
+            let model = demo::main_menu().with_back("quit");
+            commands.entity(root).insert(MainMenuScreen::new(model));
+        }
         _ => {
             commands.entity(root).insert(KeybindsScreen::new(None));
         }
@@ -179,6 +191,7 @@ fn open_screens(
         KeyCode::F4,
         KeyCode::F5,
         KeyCode::F6,
+        KeyCode::F7,
     ]
     .into_iter()
     .zip(MENUS)
@@ -214,6 +227,16 @@ fn open_screens(
             &mut world,
             &inventory,
         );
+    }
+}
+
+/// The app's side of the main menu: logs each choice; quit closes the menu (a game would exit).
+fn host_main_menu(mut events: MessageReader<MainMenuEvent>, mut stack: ResMut<ScreenStackRes>) {
+    for event in events.read() {
+        info!("main menu: {}", event.id);
+        if event.id == "quit" {
+            stack.0.close("main_menu");
+        }
     }
 }
 

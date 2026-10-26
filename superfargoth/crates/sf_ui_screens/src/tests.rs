@@ -1268,6 +1268,196 @@ fn pause_menu_quit_asks_first() {
     assert!(!asking(&ui));
 }
 
+// ---------------------------------------------------------------- main menu
+
+#[derive(Resource, Default)]
+struct MainMenuChoices(Vec<String>);
+
+fn collect_main_menu(mut events: MessageReader<MainMenuEvent>, mut out: ResMut<MainMenuChoices>) {
+    out.0.extend(events.read().map(|e| e.id.clone()));
+}
+
+fn open_main_menu(model: MainMenuModel) -> (Ui, Entity) {
+    let mut ui = Ui::with(|app| {
+        app.init_resource::<MainMenuChoices>()
+            .add_systems(Update, collect_main_menu.after(ScreenSystems::Sync));
+    });
+    let root = ui.open("main_menu", MainMenuScreen::new(model));
+    ui.frames(2);
+    (ui, root)
+}
+
+fn main_menu_parts(ui: &Ui, root: Entity) -> &MainMenuParts {
+    ui.world().get::<MainMenuParts>(root).unwrap()
+}
+
+fn take_main_menu(ui: &mut Ui) -> Vec<String> {
+    std::mem::take(&mut ui.world_mut().resource_mut::<MainMenuChoices>().0)
+}
+
+fn main_menu_open(ui: &Ui) -> bool {
+    ui.world()
+        .resource::<ScreenStackRes>()
+        .0
+        .is_open("main_menu")
+}
+
+const MAIN_IDS: [&str; 6] = ["continue", "new", "load", "options", "credits", "quit"];
+
+#[test]
+fn main_menu_lists_app_entries_in_order_and_skips_disabled() {
+    let (mut ui, root) = open_main_menu(demo::main_menu());
+    let parts = main_menu_parts(&ui, root);
+    assert_eq!(parts.order(), MAIN_IDS.map(String::from).as_slice());
+    let entries = MAIN_IDS.map(|id| parts.entry(id).unwrap());
+    let texts = entries.map(|e| ui.text_of(e));
+    let labels = [
+        "Continue",
+        "New game",
+        "Load game",
+        "Options",
+        "Credits",
+        "Quit",
+    ];
+    assert_eq!(texts, labels);
+    let title = parts.title();
+    let images = [parts.title_image(), parts.background()];
+    assert_eq!(ui.text_of(title), "Demo Game");
+    let display = |ui: &Ui, e: Entity| ui.world().get::<Node>(e).unwrap().display;
+    assert_eq!(display(&ui, title), Display::Flex);
+    for image in images {
+        assert_eq!(display(&ui, image), Display::None, "no logo or background");
+    }
+    assert!(ui.class_of(entries[0]).contains("disabled"));
+    assert!(ui.class_of(entries[5]).contains("quit"));
+    assert_eq!(
+        ui.focus(),
+        Some(entries[1]),
+        "focus starts on the first enabled entry"
+    );
+    assert!(!ui.world().resource::<ScreenStackRes>().0.pauses_game());
+
+    // Up is clamped (Continue is disabled); down to the end and clamped there.
+    ui.tap(GamepadButton::DPadUp);
+    assert_eq!(ui.focus(), Some(entries[1]));
+    for _ in 0..6 {
+        ui.tap(GamepadButton::DPadDown);
+    }
+    assert_eq!(ui.focus(), Some(entries[5]));
+    // A click on the disabled entry does nothing.
+    ui.world_mut().trigger(Activate { entity: entries[0] });
+    ui.frames(1);
+    assert!(take_main_menu(&mut ui).is_empty());
+
+    // Enabled and relabelled by the app: same entity, new text, the class goes.
+    {
+        let world = ui.world_mut();
+        let mut screen = world.get_mut::<MainMenuScreen>(root).unwrap();
+        screen.model.set_enabled("continue", true);
+        screen.model.entries[0].label = "Continue (day 3)".into();
+    }
+    ui.frames(1);
+    let entry = main_menu_parts(&ui, root).entry("continue");
+    assert_eq!(entry, Some(entries[0]));
+    assert!(!ui.class_of(entries[0]).contains("disabled"));
+    assert_eq!(ui.text_of(entries[0]), "Continue (day 3)");
+    for _ in 0..6 {
+        ui.tap(GamepadButton::DPadUp);
+    }
+    assert_eq!(ui.focus(), Some(entries[0]));
+
+    // A logo from the app: the slot shows it.
+    ui.world_mut()
+        .get_mut::<MainMenuScreen>(root)
+        .unwrap()
+        .model
+        .title_image = Some(Handle::default());
+    ui.frames(1);
+    assert_eq!(display(&ui, images[0]), Display::Flex);
+    assert!(ui.world().get::<ImageNode>(images[0]).is_some());
+    assert_eq!(display(&ui, images[1]), Display::None);
+}
+
+#[test]
+fn main_menu_sends_ids_and_ignores_back() {
+    let (mut ui, _) = open_main_menu(demo::main_menu());
+    // Confirm on the first enabled entry, then each one below (Quit aside).
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_main_menu(&mut ui), vec!["new".to_owned()]);
+    for expected in ["load", "options", "credits"] {
+        ui.tap(GamepadButton::DPadDown);
+        ui.tap(GamepadButton::South);
+        assert_eq!(take_main_menu(&mut ui), vec![expected.to_owned()]);
+        assert!(main_menu_open(&ui), "the app decides what {expected} does");
+    }
+    // Back (pad East, Esc): the top level, nothing happens.
+    ui.tap(GamepadButton::East);
+    tap_key(&mut ui, KeyCode::Escape);
+    assert!(take_main_menu(&mut ui).is_empty());
+    assert!(main_menu_open(&ui));
+
+    // A back entry named by the model: Back chooses it.
+    let (mut ui, _) = open_main_menu(demo::main_menu().with_back("credits"));
+    ui.tap(GamepadButton::East);
+    assert_eq!(take_main_menu(&mut ui), vec!["credits".to_owned()]);
+    assert!(main_menu_open(&ui));
+}
+
+#[test]
+fn main_menu_quit_asks_first() {
+    let (mut ui, root) = open_main_menu(demo::main_menu().with_back("quit"));
+    let parts = main_menu_parts(&ui, root);
+    let quit = parts.entry("quit").unwrap();
+    let [yes, no] = parts.confirm_buttons();
+    let overlay = parts.overlay();
+    for _ in 0..4 {
+        ui.tap(GamepadButton::DPadDown);
+    }
+    assert_eq!(ui.focus(), Some(quit));
+    let asking = |ui: &Ui| {
+        ui.world()
+            .get::<MainMenuScreen>(root)
+            .unwrap()
+            .asking_quit()
+    };
+
+    // Quit asks, No focused; No returns to the menu.
+    ui.tap(GamepadButton::South);
+    assert!(take_main_menu(&mut ui).is_empty());
+    assert!(asking(&ui));
+    assert_eq!(ui.focus(), Some(no));
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::Flex
+    );
+    assert!(ui.text_of(overlay).contains("Quit the game?"));
+    ui.tap(GamepadButton::South);
+    assert!(take_main_menu(&mut ui).is_empty());
+    assert!(!asking(&ui));
+    assert_eq!(ui.focus(), Some(quit), "back on Quit");
+
+    // Esc (the back entry is Quit) asks; Esc again answers no.
+    tap_key(&mut ui, KeyCode::Escape);
+    assert!(asking(&ui));
+    tap_key(&mut ui, KeyCode::Escape);
+    assert!(!asking(&ui));
+    assert!(take_main_menu(&mut ui).is_empty());
+    assert_eq!(ui.focus(), Some(quit));
+
+    // Yes sends the quit id; the screen stays for the app to close.
+    ui.tap(GamepadButton::South);
+    ui.tap(GamepadButton::DPadLeft);
+    assert_eq!(ui.focus(), Some(yes));
+    ui.tap(GamepadButton::South);
+    assert_eq!(take_main_menu(&mut ui), vec!["quit".to_owned()]);
+    assert!(!asking(&ui));
+    assert!(main_menu_open(&ui));
+    assert_eq!(
+        ui.world().get::<Node>(overlay).unwrap().display,
+        Display::None
+    );
+}
+
 // ---------------------------------------------------------------- options
 
 #[derive(Resource, Default)]
@@ -1611,8 +1801,15 @@ fn idle_screens_touch_nothing() {
         .0
         .close("pause");
     let model = OptionsModel::from_settings(&demo::registry(), None, None);
-    ui.open("options", OptionsScreen::new(model));
+    let root = ui.open("options", OptionsScreen::new(model));
     check(&mut ui, "options");
+    ui.world_mut().despawn(root);
+    ui.world_mut()
+        .resource_mut::<ScreenStackRes>()
+        .0
+        .close("options");
+    ui.open("main_menu", MainMenuScreen::new(demo::main_menu()));
+    check(&mut ui, "main menu");
 }
 
 /// Frame times with an open screen (whole app update: input, UI layout, text, screens), on

@@ -346,6 +346,11 @@ the player (`mw_player_bevy/src/hud.rs`: static bars from the player record, cam
 prompt from its own focus ray) and hides the root while a Menu/Modal screen or the console is open (the framework
 doesn't hide lower layers). `UsePrompt::action` is optional: `None` is a name-only prompt, no glyph.
 
+Main menu (2026-10-26, framework only): `MainMenuScreen` over `MainMenuModel` (app-ordered `MainMenuEntry { id,
+label (localized), enabled }`, optional `quit` id that asks Yes/No first, optional `back` id Back chooses (else Back
+does nothing), `title_image` / `background` image slots, `title_text`). Sends `MainMenuEvent { screen, id }`; never
+closes itself. Parts `sf-main-menu-*`, each entry classed by its id.
+
 ### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
 
 Bevy-free logic of the dialogue screen over an `sf_rpg` session (rpg.md "Dialogue"); `sf_rpg_ui` is a leaf,

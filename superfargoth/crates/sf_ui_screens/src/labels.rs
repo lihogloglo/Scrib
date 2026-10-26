@@ -73,6 +73,9 @@ pub struct ScreenLabels {
     /// `pause-confirm-quit`, `pause-no`: the question before quitting.
     pub confirm_quit: String,
     pub no: String,
+    /// `main-confirm-quit`: the main menu's question before quitting (answers `saveload-yes`,
+    /// `pause-no`).
+    pub main_confirm_quit: String,
     /// `options-keybinds`: the options screen's row that opens the keybinds screen (its title
     /// is `pause-options`, its back button `saveload-back`, its arrows `book-prev`/`-next`).
     pub keybinds: String,
@@ -132,6 +135,7 @@ impl Default for ScreenLabels {
             quit: s("Quit"),
             confirm_quit: s("Quit the game? Unsaved progress will be lost."),
             no: s("No"),
+            main_confirm_quit: s("Quit the game?"),
             keybinds: s("Key bindings"),
             on: s("On"),
             off: s("Off"),
