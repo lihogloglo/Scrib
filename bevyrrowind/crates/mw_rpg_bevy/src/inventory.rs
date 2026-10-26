@@ -22,6 +22,16 @@
 //!   container seeding below does). The counts are a game-side lookup by placement id, built
 //!   once from the cells (`sf_world` placements don't carry them); script-spawned placements
 //!   count 1.
+//! - **Gold piles** ([`is_gold`], [`take_count`]): `Gold_001`, `_005`, `_010`, `_025`, `_100`
+//!   (`OpenMW` `Miscellaneous::isGold`, apps/openmw/mwclass/misc.cpp). A take multiplies the
+//!   reference's count by the pile's value (`ActionTake::executeImp`), and that value is the MISC
+//!   record's `data.value` only for a count of 1: a counted pile is worth 1 a coin
+//!   (`Miscellaneous::getValue`; `createGold` writes dropped gold as a pile with count = the
+//!   amount). So a `Gold_025` reference gives 25 coins, one with count 40 gives 40. Gold entering
+//!   an inventory becomes `Gold_001` with the same count (`ContainerStore::addImp`,
+//!   apps/openmw/mwworld/containerstore.cpp: adding 1 `Gold_100` = 1 `Gold_001`; vanilla
+//!   inventories only hold `Gold_001`), so [`give`] converts on both paths, the take and the
+//!   container seeding. Same tag/commit as above.
 //! - **Containers** (CONT): scaffold `TakeAllContainer`. Activating one moves its whole content
 //!   to the player (vanilla opens the container window; "Take All" is its button). The content
 //!   lives in `RpgState::inventories` under the container's placement id (saved with the RPG
@@ -31,8 +41,8 @@
 //!   Excise Office, so this is the ring's path.
 //! - Not yet (leftovers): weight and encumbrance, drop, equip, ownership and theft (the Census
 //!   office items are owned: vanilla counts the take as stealing), item scripts' `OnActivate`
-//!   (the ring's `CharGen_ring_keley` shows the magic menu), books opening to read, gold piles
-//!   (`OpenMW`'s `ActionTake` multiplies a `Gold_*` reference's count by its value).
+//!   (the ring's `CharGen_ring_keley` shows the magic menu), books opening to read, dropping
+//!   gold back as a pile (`OpenMW` `createGold` picks the pile size for the amount).
 
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
@@ -131,6 +141,27 @@ pub fn ref_count(reference: &Reference) -> u32 {
     reference.object_count.map_or(1, |c| (c as i32).unsigned_abs().max(1))
 }
 
+/// The gold pile records (`OpenMW` `Miscellaneous::isGold`; ids are folded lowercase).
+pub const GOLD_PILES: [&str; 5] = ["gold_001", "gold_005", "gold_010", "gold_025", "gold_100"];
+
+/// The gold every inventory holds (`OpenMW` `ContainerStore::sGoldId`).
+pub const GOLD: &str = "gold_001";
+
+/// Whether `item` is a gold pile (module docs).
+pub fn is_gold(item: &RecordId) -> bool {
+    GOLD_PILES.contains(&item.as_str())
+}
+
+/// What a take of a reference of `item` with stack `count` gives: `count`, or for a gold pile
+/// `count` x its value, where the value is the MISC record's for a count of 1 and 1 otherwise
+/// (module docs; `OpenMW` `ActionTake::executeImp`, `Miscellaneous::getValue`).
+pub fn take_count(db: &RecordDb, item: &RecordId, count: u32) -> u32 {
+    if count != 1 || !is_gold(item) {
+        return count;
+    }
+    db.get::<MiscItem>(item).map_or(1, |m| u32::try_from(i64::from(m.data.value)).map_or(1, |v| v.max(1)))
+}
+
 /// A player asks to take what a placement holds (net rule 2: an intent, validated by the host).
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct TakeRequest {
@@ -186,9 +217,10 @@ fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'static
                     continue;
                 }
                 let count = world.get_resource::<RefCounts>().map_or(1, |c| c.get(request.target));
+                let count = take_count(&world.resource::<ItemRecords>().0, &request.record, count);
                 let mut rpg = world.resource_mut::<Rpg>();
-                give(&mut rpg.state, request.player, &request.record, count);
-                info!("take: {count} {} (now {})", request.record, rpg.state.pc.loadout.count(&request.record));
+                let item = give(&mut rpg.state, request.player, &request.record, count);
+                info!("take: {count} {item} from {} (now {})", request.record, rpg.state.pc.loadout.count(&item));
             }
             TakeKind::Container => {
                 let db = world.resource::<ItemRecords>().0.clone();
@@ -214,12 +246,15 @@ pub fn take_placement(world: &mut World, id: PlacementId) -> Option<()> {
     Some(())
 }
 
-/// Adds `count` of `item` to `player`'s loadout (one player character until co-op N slices).
-fn give(state: &mut RpgState, player: PlayerId, item: &RecordId, count: u32) {
+/// Adds `count` of `item` to `player`'s loadout (one player character until co-op N slices); a
+/// gold pile goes in as [`GOLD`] (module docs). Returns the id it added.
+fn give(state: &mut RpgState, player: PlayerId, item: &RecordId, count: u32) -> RecordId {
+    let item = if is_gold(item) { RecordId::new(GOLD) } else { item.clone() };
     let command = RpgCommand::AddItem { holder: Holder::Player(player), item: item.clone(), count, attrs: Attrs::new() };
     if let Err(e) = state.pc.apply(command) {
         warn!("take {item}: {e:?}");
     }
+    item
 }
 
 /// Scaffold `TakeAllContainer`: moves everything in `container` (seeded from the `record`'s
@@ -291,6 +326,56 @@ mod tests {
         assert_eq!(state.pc.loadout.count(&item), 5);
         give(&mut state, PlayerId::HOST, &item, counts.get(id(2)));
         assert_eq!(state.pc.loadout.count(&item), 6, "a reference without a count gives 1");
+    }
+
+    /// Synthetic `Master.esm`: gold pile references (`Gold_025` without a count and with 2,
+    /// `Gold_001` with 7) and a `Gold_100` from a container list.
+    #[test]
+    fn gold_piles_become_gold_001() {
+        use tes3::esp::{FileType, Header, Plugin, TES3Object};
+        let reference = |refr_index, id: &str, object_count| Reference {
+            refr_index,
+            id: id.into(),
+            object_count,
+            ..Reference::default()
+        };
+        let mut cell = Cell { name: "Room".into(), ..Cell::default() };
+        cell.data.flags = tes3::esp::CellFlags::IS_INTERIOR;
+        for r in [reference(1, "Gold_025", None), reference(2, "Gold_025", Some(2)), reference(3, "Gold_001", Some(7))] {
+            cell.references.insert((r.mast_index, r.refr_index), r);
+        }
+        let pile = |id: &str, value| {
+            let mut m = MiscItem { id: id.into(), ..MiscItem::default() };
+            m.data.value = value;
+            TES3Object::from(m)
+        };
+        let objects: Vec<TES3Object> = vec![
+            Header { file_type: FileType::Esm, ..Header::default() }.into(),
+            pile("Gold_001", 1),
+            pile("Gold_025", 25),
+            pile("Gold_100", 100),
+            cell.into(),
+        ];
+        let bytes = Plugin { objects }.save_bytes().unwrap();
+        let vfs = sf_vfs::Vfs::builder().mount(sf_vfs::MemSource::new("data").with("Master.esm", bytes)).build();
+        let db = mw_records::load(&vfs, &["Master.esm".to_owned()]).unwrap().db;
+        let counts = RefCounts::from_records(&db);
+        let id = |i| mw_world::ids::placement_id("Master.esm", i);
+        let (gold, gold_25) = (RecordId::new("Gold_001"), RecordId::new("Gold_025"));
+        assert!(is_gold(&gold_25) && !is_gold(&RecordId::new("iron arrow")));
+
+        let mut state = RpgState::default();
+        let take = |state: &mut RpgState, i, item: &RecordId| give(state, PlayerId::HOST, item, take_count(&db, item, counts.get(id(i))));
+        assert_eq!(take(&mut state, 1, &gold_25), gold);
+        assert_eq!(state.pc.loadout.count(&gold), 25, "a single pile is worth its value");
+        take(&mut state, 2, &gold_25);
+        assert_eq!(state.pc.loadout.count(&gold), 27, "a counted pile is worth 1 a coin (OpenMW getValue)");
+        take(&mut state, 3, &gold);
+        assert_eq!(state.pc.loadout.count(&gold), 34);
+        give(&mut state, PlayerId::HOST, &RecordId::new("Gold_100"), 1);
+        assert_eq!(state.pc.loadout.count(&gold), 35, "container gold converts by id only (OpenMW addImp)");
+        assert_eq!(state.pc.loadout.count(&gold_25), 0);
+        assert_eq!(state.pc.loadout.count(&RecordId::new("gold_100")), 0);
     }
 
     #[test]
