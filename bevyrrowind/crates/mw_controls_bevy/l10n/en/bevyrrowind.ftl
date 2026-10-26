@@ -98,3 +98,11 @@ hud-use-open = Open
 hud-use-use = Use
 hud-use-read = Read
 hud-use-take = Take
+
+## Main menu (mw_exterior_bevy main_menu.rs): entries `main-menu-<id>`, in Morrowind's order
+## (OpenMW mwgui/mainmenu.cpp).
+main-menu-continue = Continue
+main-menu-new = New Game
+main-menu-load = Load Game
+main-menu-options = Options
+main-menu-quit = Quit

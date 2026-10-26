@@ -152,15 +152,9 @@ fn host_pause_menu(
                 info!("pause menu: quit");
                 exit.write(AppExit::Success);
             }
-            PauseChoice::Options if !stack.0.is_open(OPTIONS) => {
-                let model = OptionsModel::from_settings(&registry.0, store.as_deref().map(|s| &s.0), localizer.as_deref().map(|l| &l.0));
-                commands.spawn((UiScreenRoot(OPTIONS.into()), OptionsScreen::new(model)));
-                if let Err(e) = stack.0.push(&registry.0, OPTIONS) {
-                    warn!("options: {e:?}");
-                }
-            }
-            // Resume: the screen has closed itself. Options: already open.
-            PauseChoice::Resume | PauseChoice::Options => {}
+            PauseChoice::Options => open_options(&mut commands, &mut stack, &registry, store.as_deref(), localizer.as_deref()),
+            // Resume: the screen has closed itself.
+            PauseChoice::Resume => {}
             PauseChoice::Save => {
                 open_saves.write(OpenSaveLoad(SaveLoadMode::Save));
             }
@@ -168,6 +162,25 @@ fn host_pause_menu(
                 open_saves.write(OpenSaveLoad(SaveLoadMode::Load));
             }
         }
+    }
+}
+
+/// Opens the options screen on top (its Back returns to the menu under it), unless it is open.
+/// The pause menu and the main menu (`main_menu.rs`) both open it here.
+pub(crate) fn open_options(
+    commands: &mut Commands,
+    stack: &mut ScreenStackRes,
+    registry: &UiRegistryRes,
+    store: Option<&UiSettingsStore>,
+    localizer: Option<&UiLocalizer>,
+) {
+    if stack.0.is_open(OPTIONS) {
+        return;
+    }
+    let model = OptionsModel::from_settings(&registry.0, store.map(|s| &s.0), localizer.map(|l| &l.0));
+    commands.spawn((UiScreenRoot(OPTIONS.into()), OptionsScreen::new(model)));
+    if let Err(e) = stack.0.push(&registry.0, OPTIONS) {
+        warn!("options: {e:?}");
     }
 }
 
@@ -228,7 +241,7 @@ fn close_screens(mut commands: Commands, stack: Res<ScreenStackRes>, roots: Quer
 /// The virtual clock pauses while a pausing screen is open. Only on the stack's edges, so a
 /// pause set elsewhere isn't overridden every frame.
 #[allow(clippy::needless_pass_by_value)] // system parameters
-fn pause_time(stack: Res<ScreenStackRes>, mut time: ResMut<Time<Virtual>>, mut was: Local<bool>) {
+pub(crate) fn pause_time(stack: Res<ScreenStackRes>, mut time: ResMut<Time<Virtual>>, mut was: Local<bool>) {
     let pauses = stack.0.pauses_game();
     if pauses == *was {
         return;
@@ -242,7 +255,7 @@ fn pause_time(stack: Res<ScreenStackRes>, mut time: ResMut<Time<Virtual>>, mut w
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     //! Headless: UI layout and text without a window (a camera with a fixed target), Esc and
     //! the arrows through `ButtonInput`, as `sf_ui_screens`'s screen tests drive them.
     use bevy::camera::{ComputedCameraValues, RenderTargetInfo, Viewport};
@@ -261,7 +274,7 @@ mod tests {
     }
 
     /// The test app, `extra` added before it finishes.
-    fn app_with(extra: impl FnOnce(&mut App)) -> App {
+    pub(crate) fn app_with(extra: impl FnOnce(&mut App)) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -303,28 +316,28 @@ mod tests {
         app
     }
 
-    fn frames(app: &mut App, n: usize) {
+    pub(crate) fn frames(app: &mut App, n: usize) {
         for _ in 0..n {
             app.update();
         }
     }
 
-    fn tap(app: &mut App, key: KeyCode) {
+    pub(crate) fn tap(app: &mut App, key: KeyCode) {
         app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
         app.update();
         app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(key);
         frames(app, 3);
     }
 
-    fn open(app: &App, id: &str) -> bool {
+    pub(crate) fn open(app: &App, id: &str) -> bool {
         app.world().resource::<ScreenStackRes>().0.is_open(id)
     }
 
-    fn paused(app: &App) -> bool {
+    pub(crate) fn paused(app: &App) -> bool {
         app.world().resource::<Time<Virtual>>().is_paused()
     }
 
-    fn roots(app: &mut App, id: &str) -> usize {
+    pub(crate) fn roots(app: &mut App, id: &str) -> usize {
         let mut q = app.world_mut().query::<&UiScreenRoot>();
         q.iter(app.world()).filter(|r| r.0.as_str() == id).count()
     }

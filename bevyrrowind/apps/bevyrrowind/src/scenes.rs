@@ -175,7 +175,7 @@ mod tests {
         let camera_of = |s: &SceneDef, extra: &[&str]| {
             let args = view_args(s, extra.iter().map(|&a| a.to_owned()).collect());
             match crate::Cli::try_parse_from(std::iter::once("bevyrrowind".to_owned()).chain(args)).expect("parses").command {
-                crate::Command::View { flags, .. } => flags.camera,
+                Some(crate::Command::View { flags, .. }) => flags.camera,
                 _ => panic!("a scene runs `view`"),
             }
         };

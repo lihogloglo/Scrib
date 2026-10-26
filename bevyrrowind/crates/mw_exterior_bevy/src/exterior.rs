@@ -133,6 +133,9 @@ pub struct ExteriorOptions {
     pub water: mw_environment_bevy::water::WaterInputs,
     /// A synthetic test level (`level.rs`, TS1): `worldspace` is its own.
     pub level: Option<crate::level::LevelSetup>,
+    /// The release start (no subcommand): open the main menu over the world, paused, until New
+    /// game (`main_menu.rs`). Dev runs (`view`, `scene`) leave it off.
+    pub start_in_main_menu: bool,
 }
 
 #[derive(Resource)]
@@ -427,6 +430,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_rpg_bevy::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(mw_rpg_bevy::inventory_ui::SCREEN));
     // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
     crate::pause_menu::add(&mut app);
+    // The release start's main menu (`main_menu.rs`; after the pause menu, whose clock it shares).
+    crate::main_menu::add(&mut app, options.start_in_main_menu);
     // ROADMAP 2.5: quicksave / quickload (`saves.rs`; after the RPG host, the overlay and the keymap).
     mw_saves_bevy::add(&mut app);
     // ROADMAP 2.1: the player character, orbit camera and activation focus (`player.rs`).

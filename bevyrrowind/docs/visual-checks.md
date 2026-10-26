@@ -110,6 +110,7 @@ IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap control
 PM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
 SV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
 HD-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
+MM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
 
 ### Partial (10)
 

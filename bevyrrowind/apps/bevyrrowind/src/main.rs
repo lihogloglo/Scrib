@@ -1,7 +1,8 @@
 //! Bevyrrowind command line.
 //!
-//! Today: inspection tools over the user's Morrowind install. Later, running
-//! without a subcommand will launch the game.
+//! Running with no subcommand launches the game: the world at the new-game start (Seyda Neen,
+//! outside the Census and Excise Office) under the main menu ([`play`]). The subcommands are
+//! dev and inspection tools over the user's Morrowind install (`view`, `scene`, `info`, ...).
 
 mod level;
 mod mods;
@@ -41,8 +42,9 @@ struct Cli {
     /// `BEVYRROWIND_USER_DATA` environment variable, else `<local data dir>/bevyrrowind`).
     #[arg(long, global = true)]
     user_data: Option<PathBuf>,
+    /// None: launch the game ([`play`]).
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -498,6 +500,7 @@ impl ViewFlags {
             open_ui: self.open_ui.clone(),
             actors: None,
             level: None,
+            start_in_main_menu: false,
             bodies: self.bodies,
             cloth: self.cloth,
             worldspace,
@@ -623,7 +626,11 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn run(cli: Cli) -> Result {
     mw_boot_bevy::mods::select(mw_boot_bevy::mods::Selection { user_data: cli.user_data, profile: cli.profile });
-    let command = match cli.command {
+    let Some(command) = cli.command else {
+        let (install, _) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
+        return play(&install);
+    };
+    let command = match command {
         Command::Detect => return detect(cli.morrowind.as_deref()),
         Command::Scene { name, list, file, extra } => {
             return scenes::run(cli.morrowind, name.as_deref(), list, file.as_deref(), extra);
@@ -713,6 +720,57 @@ fn run(cli: Cli) -> Result {
             Ok(())
         }
     }
+}
+
+/// The cell whose door out is the new-game start: vanilla character generation hands control to
+/// the player as they leave it into Seyda Neen.
+const START_CELL: &str = "Seyda Neen, Census and Excise Office";
+/// The office's door that vanilla character generation sends the player out through (its
+/// destination marker is the start).
+const START_DOOR: &str = "CharGen Exit Door";
+
+/// The view flags' defaults (the release start takes no flags).
+#[derive(Parser)]
+struct DefaultFlags {
+    #[command(flatten)]
+    flags: ViewFlags,
+}
+
+/// No subcommand: the game. The streamed exterior in player mode at the new-game start, the
+/// arrival marker of [`START_CELL`]'s door into the exterior (feet on it, facing its heading),
+/// under the main menu (`mw_exterior_bevy::main_menu`) until New game.
+fn play(install: &MorrowindInstall) -> Result {
+    let (vfs, content) = load(install, false)?;
+    let office = mw_world::find_cell(&content.db, START_CELL)
+        .filter(|c| c.is_interior())
+        .map(mw_world::ids::worldspace_of)
+        .ok_or_else(|| format!("no interior {START_CELL:?}"))?;
+    let (_, center) = exterior_place(&content.db, "Seyda Neen").ok_or("no exterior place \"Seyda Neen\"")?;
+    let flags = DefaultFlags::parse_from(["bevyrrowind"]).flags;
+    let mut options = flags.exterior_options(install, &content.db, "Bevyrrowind".to_owned(), StreamStart::Exterior(center))?;
+    // The office's doors into the exterior: their destination markers (DODT) are the arrivals.
+    let exterior = mw_world::ids::exterior();
+    let (ends, _) = mw_world::worldspaces::door_ends(&content.db);
+    let outs: Vec<_> = ends.iter().filter(|e| e.worldspace == office && e.destination == exterior).collect();
+    // The office has four: two ex_nord_door_01 and two chargen doors; character generation ends
+    // through START_DOOR. Any door out if a mod renames it.
+    let arrival = &outs
+        .iter()
+        .find(|e| e.base.eq_ignore_ascii_case(START_DOOR))
+        .or(outs.first())
+        .ok_or_else(|| format!("no door from {START_CELL:?} into the exterior"))?
+        .arrival;
+    let facing = (mw_doors_bevy::arrival_rotation(arrival.rotation) * bevy::math::Vec3::NEG_Z).as_dvec3();
+    // The player drops in under the camera: the eye just above the marker, looking its way.
+    options.eye = arrival.pos.to_f64() + glam::DVec3::Y * 0.1;
+    options.target = options.eye + facing * 10.0;
+    println!("new game: outside {START_CELL} ({} door(s) out), at {:.1} facing {facing:.2}", outs.len(), options.eye);
+    options.start_in_main_menu = true;
+    if let Some(w) = &mut options.weather {
+        w.load_sounds(&content.db, &vfs);
+    }
+    options.actors = Some(std::sync::Arc::new(content.db));
+    mw_exterior_bevy::exterior::run(std::sync::Arc::new(vfs), options)
 }
 
 /// `view <cell>`: an exterior place or an interior, streamed; or an interior

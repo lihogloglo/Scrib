@@ -127,3 +127,13 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Esc (pause), talk (dialogue), J (journal), inventory, the console: the HUD hides; it returns on close. F11 (free camera) hides it.
 - Known: bars are static (no damage or regeneration yet); the compass is a heading label, no local map.
 - Status: awaiting owner.
+
+### MM-1: Release start: main menu over Seyda Neen, New game (`bevyrrowind` with no arguments, release build)
+- Build `cargo build --release -p bevyrrowind`, run `target/release/bevyrrowind` (no subcommand). The world streams in at
+  Seyda Neen, just outside the Census and Excise Office (the `CharGen Exit Door` marker), with the main menu over it.
+- Entries: Continue (greyed), New Game (focused), Load Game (greyed), Options, Quit. No HUD; NPCs, sky and physics
+  stand still; Esc does nothing (no pause menu under it).
+- Options opens the options screen on top, Esc returns. Quit asks Yes/No (No focused); Yes exits.
+- New Game closes the menu: HUD appears, the player stands at the office door and can walk; Esc now opens the pause menu.
+- Dev runs (`cargo dev view ...`, `scene`) never show it. Known: no title image or background art yet.
+- Status: awaiting owner.
