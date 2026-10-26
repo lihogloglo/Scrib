@@ -366,3 +366,11 @@ Full log and measurements: [archive](archive/save-history.md#as-built-s1-s2).
 - **Game:** menus and modals close in an `on_load_reset` hook; `CharacterBody` (`ActionState` +
   `Locomotion`) is saved and put back on arrival (`ActionBody::restore`). Test: `sf_world_bevy`
   `reload_resident_respawns_cells_from_the_loaded_overlay`.
+
+## As built (save/load screen, 2026-10-26)
+
+- Game side `mw_saves_bevy::menu` lists the world folder (`SlotDir::list`) into `sf_ui_screens` `SaveLoadModel` (a
+  fresh run's Load lists every world) and maps its choices to `SaveRequest` (`Slot` Manual / `Path`) and `LoadRequest`;
+  delete removes the file and its `.bak`; a closed `SaveGate` refuses with a notice. Fields and the default name port
+  OpenMW `savegamedialog.cpp`. No name field in `sf/meta` (v2 + a v1 decoder + request plumbing): a save is titled
+  by `location_label`, which the game now fills (`SaveDisplay`). Test: `mw_exterior_bevy` pause_menu tests.

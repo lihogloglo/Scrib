@@ -192,8 +192,14 @@ Swap to `bevy_mod_outline` when it supports 0.20.
 **Tests** (MinimalPlugins): set-by + same-frame apply; keys through completion, submit, history,
 popup, input blocking; selection commands and inspector rows; pick ray (nearest, hidden skipped,
 root, miss). `examples/console_overlay.rs --autotest` renders under Xvfb + lavapipe and checks a
-scripted session (screenshot checked by eye, 2026-10-23). Limits: one window; no caret blink, paste
+scripted session (screenshot checked by eye, 2026-10-23). Limits: one window; no caret blink, IME
 or mouse selection (P3 above); `find`/`prid` match `Name` only (record ids come with the game's hook).
 
 **No-clip (2026-10-25, `sf_action_bevy::NoClip`):** a body with it steps in `MoverMode::Fly` against a never-hitting probe,
 climbing along the host-fed `look`; the game wires it to `TCL` / `ToggleCollision` and `COC` / `CenterOnCell` (door travel).
+
+**Popup keys and paste (2026-10-26, slice 3).** `Prompt::popup` owns when the popup shows (after a text edit; history
+recall, Escape and Enter close it), `Prompt::selected` the highlight: Up/Down (`Older`/`Newer`) move it while shown, Enter
+accepts it as Tab does a single match, `Edit::Cancel` (Escape) closes the popup before clearing. `Edit::Paste`: line breaks
+become `; ` (a pasted block runs line by line after one Enter; nothing runs on paste). Overlay: Ctrl+V, Shift+Insert from
+Bevy's `bevy_clipboard::Clipboard` (feature `system_clipboard`, arboard: the OS clipboard); no resource, no paste.

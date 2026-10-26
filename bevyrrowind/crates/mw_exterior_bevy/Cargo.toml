@@ -66,5 +66,9 @@ sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 
+[dev-dependencies]
+# The pause menu's save/load test: a save plugin on a temp folder.
+sf_save_bevy.workspace = true
+
 [lints]
 workspace = true

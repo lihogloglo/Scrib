@@ -341,6 +341,11 @@ a "Key bindings" row and Back. The screen applies nothing: `OptionsEvent` `Set(k
 (closes); the app writes `UiSettingsStore` and saves. No record condition yet: the app disables rows. Message boxes and toasts: [ui-text.md](ui-text.md)
 "Notifications". Content packs bring names, icons, themes and host logic.
 
+HUD in the game (2026-10-26): Bevyrrowind spawns the `HudScreen` root on its "hud" record and writes `HudView` from
+the player (`mw_player_bevy/src/hud.rs`: static bars from the player record, camera heading, crosshair, the use
+prompt from its own focus ray) and hides the root while a Menu/Modal screen or the console is open (the framework
+doesn't hide lower layers). `UsePrompt::action` is optional: `None` is a name-only prompt, no glyph.
+
 ### Dialogue window view-model (`sf_rpg_ui`, 2026-10-22)
 
 Bevy-free logic of the dialogue screen over an `sf_rpg` session (rpg.md "Dialogue"); `sf_rpg_ui` is a leaf,

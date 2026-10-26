@@ -149,7 +149,7 @@ fn front_end_types_completes_submits_and_browses_history() {
     assert_eq!(prompt(&app), "", "Ctrl+L isn't typed");
     press(&mut app, KeyCode::ControlLeft, Key::Control);
 
-    // Up recalls it; the popup lists completions; Escape clears, then closes.
+    // Up recalls it; the popup lists completions; Escape closes the popup, clears, closes.
     press(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     app.update();
     assert_eq!(prompt(&app), "toggle test.flag");
@@ -161,7 +161,11 @@ fn front_end_types_completes_submits_and_browses_history() {
         .query_filtered::<(&Node, &Text), With<Popup>>();
     let (node, text) = popup.single(app.world()).unwrap();
     assert_eq!(node.display, Display::Flex);
-    assert_eq!(text.0, "reset");
+    assert_eq!(text.0, "  reset");
+    press(&mut app, KeyCode::Escape, Key::Escape);
+    app.update();
+    let (node, _) = popup.single(app.world()).unwrap();
+    assert_eq!((node.display, prompt(&app).as_str()), (Display::None, "re"));
     press(&mut app, KeyCode::Escape, Key::Escape);
     press(&mut app, KeyCode::Escape, Key::Escape);
     app.update();
@@ -182,6 +186,40 @@ fn front_end_types_completes_submits_and_browses_history() {
             .resource::<ButtonInput<KeyCode>>()
             .pressed(KeyCode::KeyW)
     );
+}
+
+#[test]
+fn down_highlights_a_candidate_and_enter_accepts_it() {
+    let mut app = app();
+    app.add_console_var(VarSpec::bool("test.other", false));
+    press(&mut app, KeyCode::Backquote, Key::Character("`".into()));
+    type_text(&mut app, "test.");
+    press(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    press(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    app.update();
+    let mut popup = app
+        .world_mut()
+        .query_filtered::<(&Node, &Text), With<Popup>>();
+    let (node, text) = popup.single(app.world()).unwrap();
+    assert_eq!(node.display, Display::Flex);
+    assert_eq!(text.0, "  test.flag\n> test.other");
+    assert_eq!(prompt(&app), "test.", "Down doesn't browse history while the popup is up");
+    // Enter accepts the highlight and sends nothing; a second Enter sends the line.
+    press(&mut app, KeyCode::Enter, Key::Enter);
+    app.update();
+    assert_eq!(prompt(&app), "test.other ");
+    assert_eq!(console(&app).history().entries().count(), 0);
+    press(&mut app, KeyCode::Enter, Key::Enter);
+    app.update();
+    assert_eq!(last_line(&app), "test.other = off [on|off]");
+}
+
+#[test]
+fn popup_window_keeps_the_highlight_in_view() {
+    let names: Vec<String> = (0..5).map(|i| format!("c{i}")).collect();
+    let more = "  (+3 more: Down, or Tab extends)";
+    assert_eq!(popup_text(&names, None, 2), format!("  c0\n  c1\n{more}"));
+    assert_eq!(popup_text(&names, Some(3), 2), format!("  c2\n> c3\n{more}"));
 }
 
 /// A reflected game component, to check the inspector's formatting.

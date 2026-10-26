@@ -4,8 +4,10 @@
 //!   [`ConsoleOpen`] is true: game systems gate on [`crate::console_closed`], and the
 //!   overlay clears `ButtonInput` and mouse motion so ungated systems see nothing.
 //! - Input line ([`Prompt`]): editing, Up/Down history, Tab completion with a popup of the
-//!   candidates, Enter submits as a typed [`ConsoleSubmit`] (runs the same frame),
-//!   PageUp/PageDown or the wheel scroll the output, Escape clears the line then closes.
+//!   candidates (Down/Up highlight one, Enter accepts it), Ctrl+V or Shift+Insert paste
+//!   (`bevy_clipboard`'s [`Clipboard`]: the OS clipboard), Enter submits as a typed
+//!   [`ConsoleSubmit`] (runs the same frame), PageUp/PageDown or the wheel scroll the
+//!   output, Escape closes the popup, then clears the line, then closes.
 //! - Click an object to select it ([`select`]), boxed by gizmos; the [`inspect`] panel shows
 //!   it; commands (`prid`, `getpos`, `setpos`, `moveto`, `disable`, `enable`, `delete`,
 //!   `find`) act on it.
@@ -16,6 +18,7 @@
 use std::fmt::Write as _;
 
 use bevy_app::{App, Plugin, PostUpdate, PreUpdate, Startup};
+use bevy_clipboard::Clipboard;
 use bevy_color::Color;
 use bevy_ecs::prelude::*;
 use bevy_input::keyboard::{Key, KeyCode, KeyboardInput};
@@ -242,15 +245,19 @@ fn handle_keys(
     mut overlay: ResMut<ConsoleOverlay>,
     mut console: ResMut<DevConsole>,
     mut submit: MessageWriter<ConsoleSubmit>,
-    mut ctrl: Local<[bool; 2]>,
+    mut clipboard: Option<ResMut<Clipboard>>,
+    // Ctrl left/right, Shift left/right.
+    mut mods: Local<[bool; 4]>,
 ) {
     let overlay = &mut *overlay;
     for key in keys.read() {
         let pressed = key.state == ButtonState::Pressed;
         // Tracked here: `ButtonInput` is cleared while the console is open.
         match key.key_code {
-            KeyCode::ControlLeft => ctrl[0] = pressed,
-            KeyCode::ControlRight => ctrl[1] = pressed,
+            KeyCode::ControlLeft => mods[0] = pressed,
+            KeyCode::ControlRight => mods[1] = pressed,
+            KeyCode::ShiftLeft => mods[2] = pressed,
+            KeyCode::ShiftRight => mods[3] = pressed,
             _ => {}
         }
         if !pressed {
@@ -265,7 +272,8 @@ fn handle_keys(
         if !open.0 {
             continue;
         }
-        let ctrl = ctrl[0] || ctrl[1];
+        let ctrl = mods[0] || mods[1];
+        let shift = mods[2] || mods[3];
         let page = style.lines.saturating_sub(2).max(1);
         let edit = match (&key.logical_key, key.key_code) {
             (Key::Enter, _) => Edit::Submit,
@@ -282,6 +290,8 @@ fn handle_keys(
             (Key::Backspace, _) => Edit::Backspace,
             (Key::Delete, _) => Edit::Delete,
             (_, KeyCode::KeyW) if ctrl => Edit::DeleteWordBack,
+            (_, KeyCode::KeyV) if ctrl => paste(clipboard.as_deref_mut()),
+            (Key::Insert, _) if shift => paste(clipboard.as_deref_mut()),
             (_, KeyCode::KeyL) if ctrl => {
                 console.log_mut().clear();
                 continue;
@@ -290,7 +300,7 @@ fn handle_keys(
                 open.0 = false;
                 continue;
             }
-            (Key::Escape, _) => Edit::Clear,
+            (Key::Escape, _) => Edit::Cancel,
             (Key::PageUp, _) => {
                 overlay.scroll += page;
                 continue;
@@ -321,6 +331,15 @@ fn handle_keys(
     if overlay.scroll > max {
         overlay.scroll = max;
     }
+}
+
+/// The clipboard's text as a paste (nothing without a clipboard or text in it).
+fn paste(clipboard: Option<&mut Clipboard>) -> Edit {
+    let text = clipboard
+        .and_then(|c| c.fetch_text().poll_result())
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    Edit::Paste(text)
 }
 
 /// While open, game systems that read `ButtonInput` or mouse motion directly see nothing.
@@ -436,32 +455,38 @@ fn draw_overlay(
                 text.0.clone_from(&line);
             }
         }
-        let completion = prompt.completion(&console.0);
-        let typed = &prompt.text()[completion.start.min(prompt.cursor())..prompt.cursor()];
-        let show = !prompt.text().is_empty()
-            && match completion.candidates.as_slice() {
-                [] => false,
-                [only] => only != typed,
-                _ => true,
-            };
+        let shown = prompt.popup(&console.0);
         for (mut node, mut text) in &mut popup {
-            node.display = if show { Display::Flex } else { Display::None };
-            if show {
-                let n = completion.candidates.len();
-                let mut s = completion
-                    .candidates
-                    .iter()
-                    .take(style.popup_lines)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if n > style.popup_lines {
-                    let _ = write!(s, "\n(+{} more, Tab extends)", n - style.popup_lines);
-                }
-                text.0 = s;
+            node.display = if shown.is_some() {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            if let Some(completion) = &shown {
+                text.0 = popup_text(&completion.candidates, prompt.selected(), style.popup_lines);
             }
         }
     }
+}
+
+/// The popup's lines: a window of `rows` candidates that keeps the highlighted one (marked
+/// `>`) in view, then how many the window leaves out.
+pub(crate) fn popup_text(candidates: &[String], selected: Option<usize>, rows: usize) -> String {
+    let rows = rows.max(1);
+    let first = selected.map_or(0, |i| (i + 1).saturating_sub(rows));
+    let mut s = String::new();
+    for (i, c) in candidates.iter().enumerate().skip(first).take(rows) {
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        let mark = if Some(i) == selected { "> " } else { "  " };
+        let _ = write!(s, "{mark}{c}");
+    }
+    let hidden = candidates.len().saturating_sub(rows);
+    if hidden > 0 {
+        let _ = write!(s, "\n  (+{hidden} more: Down, or Tab extends)");
+    }
+    s
 }
 
 type PopupItem<'a> = (&'a mut Node, &'a mut Text);

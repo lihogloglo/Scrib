@@ -14,6 +14,7 @@ overlay = [
     "bevy_ecs/bevy_reflect",
     "dep:bevy_asset",
     "dep:bevy_camera",
+    "dep:bevy_clipboard",
     "dep:bevy_color",
     "dep:bevy_gizmos",
     "dep:bevy_input",
@@ -40,6 +41,8 @@ sf_console.workspace = true
 # text, panels and the primary window's cursor.
 bevy_asset = { workspace = true, optional = true }
 bevy_camera = { workspace = true, optional = true }
+# Overlay: paste (Ctrl+V, Shift+Insert) from the OS clipboard (arboard).
+bevy_clipboard = { workspace = true, optional = true, features = ["system_clipboard"] }
 bevy_color = { workspace = true, optional = true }
 bevy_gizmos = { workspace = true, optional = true }
 bevy_input = { workspace = true, optional = true, features = ["std", "keyboard", "mouse"] }

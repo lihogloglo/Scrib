@@ -420,6 +420,11 @@ impl Rpg {
         topics
     }
 
+    /// The loaded records (the console's `CenterOnCell` reads CELL, REGN, LAND and GMST).
+    pub fn records(&self) -> &RecordDb {
+        &self.content.records
+    }
+
     /// The exterior cell name at a Morrowind grid (`None`: wilderness).
     pub fn exterior_name(&self, grid: (i32, i32)) -> Option<&str> {
         self.content.exterior_names.get(&grid).map(String::as_str)

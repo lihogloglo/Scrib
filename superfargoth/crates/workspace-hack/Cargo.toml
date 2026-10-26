@@ -23,7 +23,7 @@ bevy_animation = { version = "0.20", default-features = false, features = ["bevy
 bevy_app = { version = "0.20", features = ["reflect_auto_register"] }
 bevy_asset = { version = "0.20", default-features = false, features = ["multi_threaded"] }
 bevy_camera = { version = "0.20" }
-bevy_clipboard = { version = "0.20", default-features = false, features = ["wayland"] }
+bevy_clipboard = { version = "0.20", default-features = false, features = ["system_clipboard", "wayland"] }
 bevy_core_pipeline = { path = "../../vendor/bevy_core_pipeline", default-features = false, features = ["tonemapping_luts", "webgl"] }
 bevy_curve = { version = "0.20", features = ["bevy_reflect", "serialize"] }
 bevy_diagnostic = { version = "0.20", features = ["sysinfo_plugin"] }
@@ -144,6 +144,7 @@ toml_parser = { version = "1" }
 winnow = { version = "1" }
 
 [target.x86_64-pc-windows-msvc.dependencies]
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 getrandom = { version = "0.4", default-features = false, features = ["std"] }
 glamx = { version = "0.3", default-features = false, features = ["approx", "i32", "nalgebra", "nostd-libm", "std"] }
 num-rational = { version = "0.4" }
@@ -151,12 +152,14 @@ wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "portable-atomic", "renderdoc", "vulkan"] }
 windows = { version = "0.62", features = ["Devices_Power", "Foundation_Collections", "Gaming_Input_ForceFeedback", "System_Power", "Wdk_System_SystemInformation", "Wdk_System_SystemServices", "Wdk_System_Threading", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Display", "Win32_Devices_Properties", "Win32_Globalization", "Win32_Graphics_Direct3D12", "Win32_Graphics_Direct3D_Dxc", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_Security_Authorization", "Win32_System_Com_StructuredStorage", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 windows-core = { version = "0.62" }
-windows-sys = { version = "0.61", features = ["Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
+windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 getrandom = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 glamx = { version = "0.3", default-features = false, features = ["approx", "i32", "nalgebra", "nostd-libm", "std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -166,6 +169,8 @@ rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["ev
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "portable-atomic", "renderdoc", "vulkan"] }
+x11rb = { version = "0.13", default-features = false, features = ["dl-libxcb", "randr", "resource_manager", "xinput", "xkb"] }
+x11rb-protocol = { version = "0.13", default-features = false, features = ["randr", "resource_manager", "xinput", "xkb"] }
 xkbcommon-dl = { version = "0.4", default-features = false, features = ["x11"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]

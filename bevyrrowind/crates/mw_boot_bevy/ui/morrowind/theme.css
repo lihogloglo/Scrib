@@ -226,3 +226,39 @@
     border: 2px;
     border-color: var(--mw-frame-thin);
 }
+
+/* ---------------------------------------------------------------- HUD
+   Vanilla's corner: three thin framed bars bottom left (health, magicka, fatigue, the ini
+   `color_health/magic/fatigue`), no labels (the labels stay in the tree for other themes). */
+
+.sf-hud-bar-label {
+    display: none;
+}
+
+.sf-hud-bar {
+    width: 96px;
+    height: 8px;
+    border: 1px;
+    border-color: var(--mw-frame-thin);
+}
+
+.sf-hud-bar.health .sf-bar-fill {
+    background-color: var(--mw-health);
+}
+
+.sf-hud-bar.magicka .sf-bar-fill {
+    background-color: var(--mw-magic);
+}
+
+.sf-hud-bar.fatigue .sf-bar-fill {
+    background-color: var(--mw-fatigue);
+}
+
+#sf-hud-compass-heading,
+#sf-hud-prompt-text {
+    color: var(--mw-normal);
+}
+
+#sf-hud-crosshair {
+    background-color: var(--mw-normal-over);
+}

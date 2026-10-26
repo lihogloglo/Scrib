@@ -44,7 +44,7 @@ character (default: create only); cargo-deny in superfargoth; UAL2 clip pack pur
   notes, 50 retired as stale, 23 deferred to the phase that reworks them, 4 left for the next pass.
 - [~] 0.3 Doc diet: ROADMAP (this file) and ARCHITECTURE (§10/§11 → `superfargoth/docs/DECISIONS.md`) done;
   visual-checks.md → open checks only (closed ones to `archive/`); start-of-session reading in both CLAUDE.md files.
-- [ ] 0.4 Specs over ~25 KB split into design + short "As built"; history to `archive/` next to them. Do each when its phase starts (weather, animation, physics, water, locomotion, character, streaming, ui, scripting).
+- [~] 0.4 Specs over ~25 KB split into design + short "As built"; history to `archive/` next to them. Doc audit S5-S14 (2026-10-26) did weather, locomotion, bake, mods and trimmed others; still over 25 KB: streaming, animation, physics, water, industry-audit, character, scripting, ui, action, net, sky-lighting, save. Do each when its phase starts.
 - [x] 0.5 `portal_spike.rs` + its shader, `--portals` flags and the 9 `portal-*` scenes deleted (owner go 2026-10-19;
   git history keeps them, design and results in `superfargoth/docs/specs/portals.md`; `mw_world::portal` stays).
 
@@ -65,10 +65,10 @@ and effects. Every task reports its ms cost per preset.
 - [~] 1.10 Volumetric fog black bands (FG-1): not reproduced 2026-10-21; reopen if seen; `--off foghistory` A/B kept.
 - [x] 1.11 Thin binary (build-perf.md rule 4): done 2026-10-26: app split slices 1-14a, 15 game crates (`mw_*_bevy`), binary 2.3k lines (CLI only); `specs/app-split.md` "As built".
 - [ ] 1.12 Owner pass 2026-10-21 bugs: LT-4 lamp light cut at cluster edges (`lightclusters`); SH-20 choppy character shadows (`charshadows`); RO-B smoke over sky (`smokeorder`); TR-3 glossy terrain (awaiting owner); WE-5 ash occlusion (`--off precipocc`). Owner 2026-10-25, not urgent: cap ash shelter distance (a few m behind a vertical object) + steeper angle.
-- [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` built; CO-1 awaiting owner. Left: contact shadows live (SH-16), other `--off` parts, Down/Enter select a suggestion, paste (CO-1 2026-10-25), console functions (TGM/TAI/TFOW/TWF...), `set x to y`, exterior `coc`.
+- [~] 1.13 Dev console (`sf_console_bevy`, `console.md`): Backquote, live `ssao`, MWScript lines, `TCL`, `COC` (interior, exterior name/region/grid), Down/Enter on suggestions, paste built; CO-1 awaiting owner (2026-10-26). Left: contact shadows live (SH-16), other `--off` parts, console functions (TGM/TAI/TFOW/TWF/COE...), `set x to y`.
 - [~] 1.14 Build churn: workspace-hack (`cargo hakari`) built, covers the merged workspace; gates re-measured 2026-10-26 after the split: no-op 1.2 s, touch app 5.6 s, touch `mw_doors_bevy` 10.7 s miss (perf.md "Dev loop"); clean build not measured; fix needs an owner call.
 
-**Next session order (owner 2026-10-20):** 1.4 shadows, then FG-1 (1.10), then owner checks PA-4, DR-4, AU-1, TA-1; Nsight per pass (UAC).
+**Next session order (owner 2026-10-26): keep building Phase 2, one big debug pass later.** Slices in order (one deliverable each): main menu screen (framework), new game into Seyda Neen, load from the main menu; inventory stack counts, container window (framework), looting containers; HUD leftovers (`.sessions/_archive/hud-2026-10-26.md`). Then the Phase 2 done test end to end.
 
 ## Phase 2: a playable vertical slice (the basics)
 
@@ -77,11 +77,11 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 
 - [~] 2.1 Player: third-person controller + camera + use prompt (`specs/action.md`, `camera.md`; `sf_action`, `sf_camera`, `player.rs`); works in game (owner 2026-10-25), PL-1 confirmed. Items: E takes loose items (`inventory.rs`), IV-1 awaiting owner. Owner notes (log only): too much inertia; carried object sinks the capsule (3.3). Left: container window, ownership/theft, stack counts.
 - [~] 2.1b Input (with 2.2 U6): `controls.rs` built, menu works; labels in `l10n/en/bevyrrowind.ftl`. Owner: everything HOLD by default (sprint holds, sneak toggles today): per-action hold/toggle option.
-- [~] 2.2 UI (`sf_ui*`, `sf_rpg_ui`): kit, Morrowind theme, HUD/message box, dialogue/journal/inventory screens built. Next: Escape menu + options (queued), 8-piece frames, inventory icons, theme hot reload.
+- [~] 2.2 UI (`sf_ui*`, `sf_rpg_ui`): kit, Morrowind theme, HUD/message box, dialogue/journal/inventory screens built. Escape menu + options built 2026-10-26 (PM-1 awaiting owner; Save/Load open the save screen, 2.5). Minimal HUD in game 2026-10-26 (bars from the `player` record, compass heading, crosshair, use prompt; HD-1 awaiting owner). Next: 8-piece frames, inventory icons, theme hot reload.
 - [~] 2.3 Text: fonts, books and scrolls, notifications. Framework slices 1-2 built 2026-10-23 (`ui-text.md`); left:
   the Morrowind markup parser and MessageBox mapping.
 - [~] 2.4 Dialogue + journal + quest store (`specs/rpg.md`, `rpg-adapter.md`; `sf_rpg`, `mw_rpg`, `dialogue.rs`), MWScript runtime (W3). Fargoth ring flow confirmed by owner. Next: HUD.
-- [~] 2.5 Saves (`sf_save*`, `saves.rs`, `save.md`; net-ready `specs/net.md`): F5/F9 quicksave/load works headless; SV-1 awaiting owner. Left: part 2 (load screen, save list, naming).
+- [~] 2.5 Saves (`sf_save*`, `mw_saves_bevy`, `save.md`; net-ready `specs/net.md`): F5/F9 quicksave/load (SV-1); part 2 built 2026-10-26: save/load screen from the pause menu (save, overwrite, load, delete; OpenMW fields), SV-2 awaiting owner. Left: typed names (router text entry; sf/meta name field), thumbnails, exterior place label (region/town), local-time dates.
 - [~] 2.6 Sound (`sf_audio*`, `mw_audio`, `audio.rs`): cues, ambience, music, footsteps, voices built; impact sounds and the volume mixer (options screen drives the 12 volume/mute settings live, 2026-10-26) built; AU-1/2 confirmed, AU-3..5 awaiting owner. Left: UI sounds, voice LOS + barks (Phase 3), modern-preset beds.
 
 ## Phase 3: animation, combat, physics
@@ -92,7 +92,7 @@ save, quit, load. Break it down (and write the missing specs: dialogue, journal,
 - [~] 3.2 Ragdolls: R0 fixed, AN-1..21 fixed, PH-2 awaiting owner (`level-anim-drop`). Left: limp_drop/stairs stretch gates, beast toe pin, powered falls (PH-9). Order `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
 - [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
   `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
-- [ ] 3.3 Physics follow-ups: hold/drag/throw (PH-4), shapeless items (PH-7), immovable candles (PH-1), ball through walls (archive 6a). Owner 2026-10-25: props jump on entering a room (spawn settling); held object vs capsule.
+- [~] 3.3 Physics follow-ups. Fix plan (`specs/physics-fix-plan.md`) slices 1-10 built 2026-10-26 (no falls on load, items asleep until disturbed, OpenMW NIF collision, steady carry); PH-11 awaiting owner; slice 11 (player physics capsule) waits for the owner; leftovers in the plan's status. Older: hold/drag/throw (PH-4), shapeless items (PH-7), immovable candles (PH-1), ball through walls (archive 6a). Owner 2026-10-25: props jump on entering a room (spawn settling); held object vs capsule.
 - [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10 (CH-1/3, SB-5 awaiting owner); next stairs 5b, powered falls R3 (`animation-plan.md`).
 - [ ] 3.5 Combat (M10). Owner 2026-10-22: not Morrowind's rules; evaluate Funny-Bones/ELDEN-RING-Playermodel-Rust (MIT code, clips not shippable) as base for action.md E1; keep a hit-resolution seam (ARCHITECTURE §1b), classic swing later.
 

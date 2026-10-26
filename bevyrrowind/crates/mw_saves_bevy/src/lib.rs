@@ -26,11 +26,11 @@
 //!   loaded overlay removes are taken out now (`inventory::take_placement`). With no save made or
 //!   loaded in this run (a fresh start), quickload takes the newest quicksave of any world, so
 //!   "save, quit, start, F9" resumes.
-//! - **Notices**: "Quicksaved" / "Loaded" toasts (`sf_ui_bevy::Toasts`, when the UI runs), else log.
+//! - **Save/load screen** (part 2): [`menu`], from the pause menu.
+//! - **Notices**: "Quicksaved" / "Saved" / "Loaded" toasts (`sf_ui_bevy::Toasts`, when the UI runs), else log.
 //! - Not yet (leftovers): items taken after the save reappear only when their cell reloads (no
-//!   streaming refresh of resident cells), the body's motion state, a save during dialogue or
-//!   with a menu open, the host's profile `PlayerKey` (a constant for now), load screen, save
-//!   list and naming (saves part 2).
+//!   streaming refresh of resident cells), the body's motion state, a save during dialogue,
+//!   the host's profile `PlayerKey` (a constant for now), localized notices.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -64,6 +64,9 @@ use mw_game_core::doors::{ARRIVAL_EYE_M, DoorUser};
 use mw_game_core::player::PlayerBody;
 use mw_player_bevy::RestoreBody;
 use mw_rpg_bevy::dialogue::{Rpg, RpgState};
+
+pub mod menu;
+pub use menu::{OpenSaveLoad, SAVELOAD};
 
 /// The adapter's section owner.
 pub const OWNER: &str = "mw";
@@ -260,6 +263,7 @@ pub fn add(app: &mut App) {
     app.add_plugins(SfSavePlugin { config: SaveConfig { root, ..Default::default() } });
     register(app);
     app.add_systems(Update, (gate_fade, keys, notices).chain());
+    menu::add(app);
 }
 
 /// `<user data>` (the mods user folder), else `./userdata`.
@@ -329,8 +333,10 @@ fn notices(mut saved: MessageReader<SaveDone>, mut loaded: MessageReader<LoadDon
         match &done.0 {
             Ok(r) => {
                 info!("saved {} ({} B, {} sections)", r.path.display(), r.bytes, r.sections);
-                if r.reason == SaveReason::Quick {
-                    notice(toasts.as_deref_mut(), "Quicksaved");
+                match r.reason {
+                    SaveReason::Quick => notice(toasts.as_deref_mut(), "Quicksaved"),
+                    SaveReason::Manual => notice(toasts.as_deref_mut(), "Saved"),
+                    _ => {}
                 }
             }
             Err(e) => notice(toasts.as_deref_mut(), &format!("Save failed: {e}")),

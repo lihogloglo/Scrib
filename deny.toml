@@ -63,6 +63,10 @@ exceptions = [
     { crate = "symphonia-bundle-mp3", allow = ["MPL-2.0"] },
     { crate = "symphonia-core", allow = ["MPL-2.0"] },
     { crate = "symphonia-metadata", allow = ["MPL-2.0"] },
+    # BSL-1.0 (Boost, GPL-compatible) for these two only (owner 2026-10-26): Bevy's `system_clipboard`
+    # (arboard, console paste) pulls them on Windows.
+    { crate = "clipboard-win", allow = ["BSL-1.0"] },
+    { crate = "error-code", allow = ["BSL-1.0"] },
 ]
 
 # The tes3 root package doesn't inherit its workspace's `license = "MIT OR Apache-2.0"` (its sub-crates

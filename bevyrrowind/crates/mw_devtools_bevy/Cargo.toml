@@ -46,6 +46,8 @@ bevy_brp_extras = { version = "0.23", default-features = false, features = ["dia
 clap.workspace = true
 mw_assets.workspace = true
 mw_doors_bevy.workspace = true
+# console.rs `coc`: exterior cell lookup (CELL, REGN, LAND, GMST).
+mw_records.workspace = true
 mw_environment_bevy.workspace = true
 mw_game_core.workspace = true
 mw_rpg_bevy.workspace = true
@@ -64,16 +66,14 @@ sf_coords.workspace = true
 sf_diag_bevy = { workspace = true, features = ["assets"] }
 sf_lod_bevy.workspace = true
 sf_physics_bevy = { workspace = true, features = ["debug"] }
+sf_records.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
 sf_weather_bevy.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
+tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
-
-[dev-dependencies]
-# console.rs tests: the RPG resource over an empty record db.
-sf_records.workspace = true
 
 [lints]
 workspace = true

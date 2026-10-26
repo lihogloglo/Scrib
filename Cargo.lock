@@ -5026,6 +5026,7 @@ dependencies = [
  "mw_doors_bevy",
  "mw_environment_bevy",
  "mw_game_core",
+ "mw_records",
  "mw_rpg_bevy",
  "mw_script",
  "mw_weather",
@@ -5048,6 +5049,7 @@ dependencies = [
  "sf_weather_bevy",
  "sf_world",
  "sf_world_bevy",
+ "tes3",
  "workspace-hack",
 ]
 
@@ -5176,6 +5178,7 @@ dependencies = [
  "sf_physics_bevy",
  "sf_records",
  "sf_render_order_bevy",
+ "sf_save_bevy",
  "sf_shadow_cache_bevy",
  "sf_sky_bevy",
  "sf_terrain_bevy",
@@ -5277,6 +5280,7 @@ dependencies = [
 name = "mw_player_bevy"
 version = "0.1.0"
 dependencies = [
+ "bevy",
  "bevy_app",
  "bevy_asset",
  "bevy_camera",
@@ -5306,6 +5310,7 @@ dependencies = [
  "sf_camera",
  "sf_camera_bevy",
  "sf_character_bevy",
+ "sf_console_bevy",
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
@@ -5318,6 +5323,7 @@ dependencies = [
  "sf_script_bevy",
  "sf_ui",
  "sf_ui_bevy",
+ "sf_ui_screens",
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",
@@ -5413,6 +5419,7 @@ dependencies = [
  "mw_rpg",
  "mw_rpg_bevy",
  "mw_vfs",
+ "mw_world",
  "serde",
  "sf_action_bevy",
  "sf_camera",
@@ -5426,6 +5433,7 @@ dependencies = [
  "sf_sky_bevy",
  "sf_ui",
  "sf_ui_bevy",
+ "sf_ui_screens",
  "sf_vfs",
  "sf_world",
  "sf_world_bevy",
@@ -7522,6 +7530,7 @@ dependencies = [
  "bevy_app",
  "bevy_asset",
  "bevy_camera",
+ "bevy_clipboard",
  "bevy_color",
  "bevy_ecs",
  "bevy_gizmos",
@@ -10215,6 +10224,7 @@ name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arboard",
  "arrayvec",
  "async-task",
  "bevy",
@@ -10334,9 +10344,12 @@ dependencies = [
  "wgpu-types",
  "windows",
  "windows-core",
+ "windows-sys 0.60.2",
  "windows-sys 0.61.2",
  "winit",
  "winnow 1.0.4",
+ "x11rb",
+ "x11rb-protocol",
  "xkbcommon-dl",
 ]
 

@@ -15,7 +15,8 @@
 //!   Menu-layer screen).
 //! - **Choices**: Resume (or Back) closes the menu (the screen does); Quit, after its yes/no,
 //!   exits (`AppExit::Success`); Options opens the options screen on top (its Back returns
-//!   here). Save and Load are disabled until the save/load screen is wired.
+//!   here); Save and Load open the save/load screen on top (`mw_saves_bevy::menu`, which lists
+//!   the save folder and carries the choices out; its Back returns here).
 //! - **Options**: the settings store (`UiSettingsStore`, every `ui.setting` record, values from
 //!   the player's profile `profiles/<name>.toml` `[settings.<mod>]`, only non-defaults) is
 //!   inserted here at startup; strings come from the builtin mod's Fluent file (`controls.rs`).
@@ -32,11 +33,12 @@ use sf_records::RecordDb;
 use sf_ui::{Layer, SettingsStore, UiRegistry};
 use sf_ui_bevy::{ScreenStackRes, UiAction, UiActionEvent, UiLocalizer, UiRegistryRes, UiScreenRoot, UiSettingsStore, UiSystems};
 use sf_ui_screens::{
-    OptionsChange, OptionsEvent, OptionsModel, OptionsScreen, PauseChoice, PauseMenuEvent, PauseMenuModel, PauseMenuScreen,
+    OptionsChange, OptionsEvent, OptionsModel, OptionsScreen, PauseChoice, PauseMenuEvent, PauseMenuModel, PauseMenuScreen, SaveLoadMode,
     ScreenSystems,
 };
 
 use mw_player_bevy::PlayerMode;
+use mw_saves_bevy::OpenSaveLoad;
 
 /// The HUD screen: the input target of play (carries the open-menu action).
 pub const HUD: &str = "hud";
@@ -81,6 +83,8 @@ pub fn add(app: &mut App) {
             (host_pause_menu, host_options, close_screens, pause_time).chain().after(ScreenSystems::Input),
         ),
     );
+    // The save/load screen's request (`mw_saves_bevy::menu` hosts it and registers it too).
+    app.add_message::<OpenSaveLoad>();
 }
 
 fn screens() -> UiRegistry {
@@ -92,11 +96,9 @@ fn screens() -> UiRegistry {
     UiRegistry::build(&db).0
 }
 
-/// The pause menu's model: Save and Load disabled until the save/load screen is wired.
+/// The pause menu's model: every entry.
 fn model() -> PauseMenuModel {
-    let mut model = PauseMenuModel::default();
-    model.set_enabled(PauseChoice::Save, false).set_enabled(PauseChoice::Load, false);
-    model
+    PauseMenuModel::default()
 }
 
 /// Keeps the HUD screen open (a load clears only the Menu and Modal layers).
@@ -134,7 +136,7 @@ fn open_pause_menu(
 }
 
 /// The menu's choices. Resume has already closed the screen.
-#[allow(clippy::needless_pass_by_value)] // system parameters
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // system parameters
 fn host_pause_menu(
     mut commands: Commands,
     mut choices: MessageReader<PauseMenuEvent>,
@@ -143,6 +145,7 @@ fn host_pause_menu(
     store: Option<Res<UiSettingsStore>>,
     localizer: Option<Res<UiLocalizer>>,
     mut exit: MessageWriter<AppExit>,
+    mut open_saves: MessageWriter<OpenSaveLoad>,
 ) {
     for event in choices.read() {
         match event.choice {
@@ -159,7 +162,12 @@ fn host_pause_menu(
             }
             // Resume: the screen has closed itself. Options: already open.
             PauseChoice::Resume | PauseChoice::Options => {}
-            PauseChoice::Save | PauseChoice::Load => warn!("pause menu: {:?} is not wired yet", event.choice),
+            PauseChoice::Save => {
+                open_saves.write(OpenSaveLoad(SaveLoadMode::Save));
+            }
+            PauseChoice::Load => {
+                open_saves.write(OpenSaveLoad(SaveLoadMode::Load));
+            }
         }
     }
 }
@@ -245,11 +253,16 @@ mod tests {
     use bevy::ui::UiPlugin;
     use bevy_enhanced_input::prelude::EnhancedInputPlugin;
     use sf_ui_bevy::{SfUiPlugin, UiTextPlugin};
-    use sf_ui_screens::SfScreensPlugin;
+    use sf_ui_screens::{SaveLoadChoice, SaveLoadEvent, SaveLoadModel, SaveLoadScreen, SfScreensPlugin};
 
     use super::*;
 
     fn app() -> App {
+        app_with(|_| {})
+    }
+
+    /// The test app, `extra` added before it finishes.
+    fn app_with(extra: impl FnOnce(&mut App)) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -273,6 +286,7 @@ mod tests {
         add(&mut app);
         // The keybinds screen (Key bindings) and the builtin strings, as `player.rs` adds them.
         mw_controls_bevy::add(&mut app);
+        extra(&mut app);
         let target = UVec2::new(1600, 1000);
         app.world_mut().spawn((
             Camera2d,
@@ -327,8 +341,7 @@ mod tests {
         assert!(paused(&app), "the game pauses while it is open");
         let mut q = app.world_mut().query::<&PauseMenuScreen>();
         let screen = q.single(app.world()).unwrap();
-        assert!(!screen.model.is_enabled(PauseChoice::Save) && !screen.model.is_enabled(PauseChoice::Load));
-        assert!(screen.model.is_enabled(PauseChoice::Resume) && screen.model.is_enabled(PauseChoice::Quit));
+        assert!(PauseChoice::ALL.iter().all(|c| screen.model.is_enabled(*c)), "every entry, Save and Load too");
 
         // Esc again is the menu's Back: resume.
         tap(&mut app, KeyCode::Escape);
@@ -350,8 +363,10 @@ mod tests {
     fn options_opens_on_top_and_quit_exits_after_yes() {
         let mut app = app();
         tap(&mut app, KeyCode::Escape);
-        // Resume -> Options (Save and Load are skipped).
-        tap(&mut app, KeyCode::ArrowDown);
+        // Resume -> Save -> Load -> Options.
+        for _ in 0..3 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
         tap(&mut app, KeyCode::Enter);
         assert!(open(&app, OPTIONS) && open(&app, PAUSE), "options on top of the menu");
         assert_eq!(roots(&mut app, OPTIONS), 1);
@@ -394,7 +409,9 @@ mod tests {
         assert_eq!(master_volume(&app), Some(1.0), "the default");
 
         tap(&mut app, KeyCode::Escape);
-        tap(&mut app, KeyCode::ArrowDown);
+        for _ in 0..3 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
         tap(&mut app, KeyCode::Enter);
         assert!(open(&app, OPTIONS));
         let mut q = app.world_mut().query::<(Entity, &OptionsScreen)>();
@@ -432,5 +449,95 @@ mod tests {
         let store = settings_store(&app.world().resource::<UiRegistryRes>().0, Some(&saved));
         assert_eq!(store.0.get_f64(&master), Some(stepped));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The open save/load screen.
+    fn saveload(app: &mut App) -> (Entity, SaveLoadModel) {
+        let mut q = app.world_mut().query::<(Entity, &SaveLoadScreen)>();
+        let (e, screen) = q.single(app.world()).expect("save/load screen");
+        (e, screen.model.clone())
+    }
+
+    fn choose(app: &mut App, choice: SaveLoadChoice) {
+        let (screen, _) = saveload(app);
+        app.world_mut().write_message(SaveLoadEvent { screen, choice });
+    }
+
+    /// Pause menu -> Save -> New: a manual save in the world's folder, listed; Back, Load lists it;
+    /// Load -> that entry loads it and closes the menus; Delete removes the file and the row.
+    #[test]
+    fn save_new_load_and_delete_from_the_pause_menu() {
+        use bevy::ecs::message::Messages;
+        use mw_saves_bevy::SAVELOAD;
+        use sf_save_bevy::{LoadDone, SaveConfig, SfSavePlugin};
+
+        let root = std::env::temp_dir().join(format!("bw-saveload-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let config = SaveConfig { root: root.clone(), background: false, ..default() };
+        let mut app = app_with(|app| {
+            app.add_plugins(SfSavePlugin { config })
+                .insert_resource(sf_world_bevy::WorldOverlay::default())
+                .insert_resource(sf_sky_bevy::SkyTime::default())
+                .insert_resource(sf_world_bevy::ActiveWorldspace(Some(sf_world::WorldspaceId::new("Seyda Neen, Census and Excise Office"))));
+            mw_saves_bevy::register(app);
+            mw_saves_bevy::menu::add(app);
+        });
+        app.world_mut().resource_mut::<sf_sky_bevy::SkyTime>().0.days = 2.75;
+
+        // Esc -> Save: the screen on top of the menu, nothing saved yet.
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert!(open(&app, SAVELOAD) && open(&app, PAUSE) && paused(&app));
+        let (_, model) = saveload(&mut app);
+        assert_eq!(model.mode, SaveLoadMode::Save);
+        assert!(model.entries.is_empty());
+        assert_eq!(model.new_name, "Day 3 - 18 Last Seed 6 p.m.", "OpenMW's default name");
+
+        // New: one manual save, listed again with its place and in-game date.
+        choose(&mut app, SaveLoadChoice::New(model.new_name.clone()));
+        frames(&mut app, 3);
+        let (_, model) = saveload(&mut app);
+        assert_eq!(model.entries.len(), 1, "{:?}", model.entries);
+        let entry = &model.entries[0];
+        assert_eq!((entry.id.as_str(), entry.order), ("000001-manual.sfsave", 1));
+        assert_eq!(entry.title, "seyda neen, census and excise office", "the place (the worldspace id without records)");
+        assert!(entry.subtitle.starts_with("Day 3 - 18 Last Seed 6 p.m. · "), "{}", entry.subtitle);
+        assert!(entry.reason_label.is_empty() && !entry.damaged);
+        let world_id = app.world().resource::<sf_save_bevy::SaveSession>().world_id;
+        let file = sf_save_bevy::sf_save::SlotDir::world(&root, sf_save_bevy::sf_save::SaveMode::Single, world_id).dir().join("000001-manual.sfsave");
+        assert!(file.is_file(), "{}", file.display());
+
+        // Back to the menu; Load lists the save.
+        tap(&mut app, KeyCode::Escape);
+        assert!(!open(&app, SAVELOAD) && open(&app, PAUSE));
+        assert_eq!(roots(&mut app, SAVELOAD), 0);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        let (_, model) = saveload(&mut app);
+        assert_eq!(model.mode, SaveLoadMode::Load);
+        assert_eq!(model.entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["000001-manual.sfsave"]);
+
+        // Load it: done, the menus close and the game runs.
+        choose(&mut app, SaveLoadChoice::Load("000001-manual.sfsave".into()));
+        app.update();
+        let loaded: Vec<_> = app.world_mut().resource_mut::<Messages<LoadDone>>().drain().collect();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].0.as_ref().expect("loaded").path, file);
+        frames(&mut app, 3);
+        assert!(!open(&app, SAVELOAD) && !open(&app, PAUSE) && !paused(&app));
+        assert_eq!(roots(&mut app, SAVELOAD), 0);
+
+        // Esc -> Load -> Delete: the file is gone and the list is empty.
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(saveload(&mut app).1.entries.len(), 1);
+        choose(&mut app, SaveLoadChoice::Delete("000001-manual.sfsave".into()));
+        frames(&mut app, 2);
+        assert!(!file.exists());
+        assert!(saveload(&mut app).1.entries.is_empty(), "listed again");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

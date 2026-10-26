@@ -4,6 +4,10 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-26 (day, scrib): save/load screen from the pause menu (save, overwrite, load, delete; OpenMW fields; SV-2);
+  minimal HUD (bars from the `player` record, compass, crosshair, use prompt; HD-1); console Down/Enter on suggestions,
+  OS paste, exterior `coc` (OpenMW port; CO-1 re-check); BSL-1.0 for two clipboard crates; `cargo_turn.sh` ignores `cargo run`.
+
 - 2026-10-26 (night, scrib): physics fix plan slices 1-10 (collision-ready gate, arrival gate + safety net, items asleep
   until disturbed, OpenMW NIF rules + full-triangle fallback, held item on the final camera + tick-view hand; PH-11); app split
   done (15 `mw_*_bevy` crates, binary 2.3k lines; gates re-measured, 3 misses logged); pause menu + options in game (PM-1);

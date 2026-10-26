@@ -1,6 +1,6 @@
 [package]
 name = "mw_saves_bevy"
-description = "The game's save sections over sf_save_bevy: RPG state, the host character, overlay and clock; quicksave/quickload keys and notices (app-split.md slice 10)"
+description = "The game's save sections over sf_save_bevy: RPG state, the host character, overlay and clock; quicksave/quickload keys and notices (app-split.md slice 10); the save/load screen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,6 +20,7 @@ mw_game_core.workspace = true
 mw_player_bevy.workspace = true
 mw_rpg.workspace = true
 mw_rpg_bevy.workspace = true
+mw_world.workspace = true
 serde.workspace = true
 sf_action_bevy.workspace = true
 sf_camera.workspace = true
@@ -32,6 +33,7 @@ sf_save_bevy.workspace = true
 sf_sky_bevy.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
+sf_ui_screens.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 workspace-hack.workspace = true

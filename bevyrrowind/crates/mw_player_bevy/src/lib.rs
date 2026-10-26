@@ -2,7 +2,7 @@
 //! A2 slice 2, `camera.md` D1): `sf_action_bevy` moves it on the fixed tick (interpolated,
 //! correction spring), `sf_camera_bevy` orbits the view camera around it (collision push-in
 //! against the physics world, first/third-person toggle, zoom), and the focus ray picks what
-//! E activates, with a "press to use" prompt.
+//! E activates, with the HUD's "press to use" prompt ([`hud`]: bars, compass, crosshair).
 //!
 //! - **Modes.** F11 switches between the player and the free (fly) camera, which stays for dev
 //!   work. Interactive runs start in player mode once the start has streamed in
@@ -40,6 +40,8 @@
 //! Keyboard defaults: WASD move, Shift sprint, Ctrl sneak, Space jump (modern default; Morrowind
 //! used E), Tab first/third person (Morrowind's default), mouse look, wheel zoom, E use.
 
+pub mod hud;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -55,10 +57,8 @@ use bevy_math::prelude::*;
 use bevy_mesh::prelude::*;
 use bevy_pbr::prelude::*;
 use bevy_shape::{Capsule3d, Cuboid};
-use bevy_text::prelude::*;
 use bevy_time::prelude::*;
 use bevy_transform::prelude::*;
-use bevy_ui::prelude::*;
 use bevy_window::{CursorGrabMode, CursorOptions, PrimaryWindow, Window};
 use bevy_enhanced_input::prelude::*;
 use sf_action::{ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, RuleKey, RuleSet, SlotInfo, SlotTable};
@@ -122,6 +122,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         app.add_plugins(EnhancedInputPlugin);
     }
     let reach_m = activate_reach_m(db.as_deref());
+    let app_db = db.clone();
     mw_controls_bevy::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
         .insert_resource(rules())
@@ -137,8 +138,9 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
             (toggle, apply_mode, rebind, arrive, follow_worldspace, guard_fall, obstacle, controls_active, grab_cursor).chain(),
         )
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
-        .add_systems(Update, (update_focus.in_set(FocusUpdate), prompt).chain().before(ScriptSlot::Update))
+        .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate));
+    hud::add(app, app_db.as_ref());
 }
 
 /// `iMaxActivateDist` in meters. `OpenMW` `apps/openmw/mwworld/worldimp.cpp`
@@ -171,14 +173,6 @@ struct PlayerVisual {
     material: Handle<StandardMaterial>,
 }
 
-/// The prompt's text node.
-#[derive(Component)]
-struct PromptText;
-
-/// The centre dot (player mode).
-#[derive(Component)]
-struct Crosshair;
-
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let p = MoverParams::default();
     commands.insert_resource(PlayerVisual {
@@ -186,30 +180,6 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         nose: meshes.add(Cuboid::new(0.12, 0.12, 0.3)),
         material: materials.add(StandardMaterial { base_color: Color::srgb(0.75, 0.55, 0.3), perceptual_roughness: 0.8, ..Default::default() }),
     });
-    commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: percent(22),
-            width: percent(100),
-            justify_content: JustifyContent::Center,
-            ..Default::default()
-        })
-        .with_child((PromptText, Text::new(""), TextFont::from_font_size(20.0), TextColor(Color::srgb(0.95, 0.88, 0.7))));
-    commands
-        .spawn((
-            Crosshair,
-            Node {
-                position_type: PositionType::Absolute,
-                left: percent(50),
-                top: percent(50),
-                width: px(4),
-                height: px(4),
-                margin: UiRect::all(px(-2)),
-                ..Default::default()
-            },
-            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
-            Visibility::Hidden,
-        ));
 }
 
 // --- bindings ---------------------------------------------------------------------------------
@@ -905,29 +875,6 @@ pub(crate) fn floor_below(world: &PhysicsWorld, eye: WorldPos, head_room: f32) -
         from = down.point.offset(Vec3::NEG_Y * STEP_M);
     }
     None
-}
-
-/// The "press to use" prompt and the centre dot.
-fn prompt(
-    focus: Res<Focus>,
-    mode: Res<PlayerMode>,
-    mut texts: Query<&mut Text, With<PromptText>>,
-    mut dots: Query<&mut Visibility, With<Crosshair>>,
-) {
-    if let Ok(mut text) = texts.single_mut() {
-        let want = match &focus.target {
-            Some(FocusTarget { name, verb: Some(verb), .. }) => format!("[E] {verb}  {name}"),
-            Some(FocusTarget { name, verb: None, .. }) => name.clone(),
-            None => String::new(),
-        };
-        if text.0 != want {
-            text.0 = want;
-        }
-    }
-    if let Ok(mut v) = dots.single_mut() {
-        let want = if mode.body.is_some() && !mode.paused { Visibility::Inherited } else { Visibility::Hidden };
-        v.set_if_neq(want);
-    }
 }
 
 #[cfg(test)]

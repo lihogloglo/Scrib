@@ -589,6 +589,56 @@ fn prompt_editing_history_and_completion() {
 }
 
 #[test]
+fn prompt_popup_highlight_accept_and_paste() {
+    let (mut c, ..) = console();
+    let mut p = Prompt::default();
+    assert_eq!(p.popup(&c), None, "empty line: no popup");
+    p.apply(Edit::Insert("render.".into()), &mut c);
+    let popup = p.popup(&c).unwrap();
+    assert_eq!(popup.candidates, ["render.mode", "render.shadows", "render.water"]);
+    // Down from none highlights the first, Up wraps; the line is untouched.
+    p.apply(Edit::Newer, &mut c);
+    assert_eq!(p.selected(), Some(0));
+    p.apply(Edit::Older, &mut c);
+    assert_eq!(p.selected(), Some(2));
+    p.apply(Edit::Older, &mut c);
+    assert_eq!((p.text(), p.selected()), ("render.", Some(1)));
+    // Enter accepts the highlight (as Tab with one match) and sends nothing.
+    assert_eq!(p.apply(Edit::Submit, &mut c), None);
+    assert_eq!((p.text(), p.selected()), ("render.shadows ", None));
+    // The next word's candidates; typing drops a highlight.
+    assert_eq!(p.popup(&c).unwrap().candidates, ["off", "on"]);
+    p.apply(Edit::Newer, &mut c);
+    p.apply(Edit::Insert("o".into()), &mut c);
+    assert_eq!(p.selected(), None);
+    // Escape closes the popup first (the line stays), then clears.
+    p.apply(Edit::Cancel, &mut c);
+    assert_eq!((p.text(), p.popup(&c)), ("render.shadows o", None));
+    p.apply(Edit::Cancel, &mut c);
+    assert_eq!(p.text(), "");
+    // Enter with nothing highlighted sends the line; history recall shows no popup, so
+    // Up/Down keep browsing.
+    p.set("");
+    p.apply(Edit::Insert("render.w".into()), &mut c);
+    assert!(p.popup(&c).is_some());
+    let line = p.apply(Edit::Submit, &mut c).unwrap();
+    assert_eq!(line, "render.w");
+    c.submit(&mut Ctx::default(), "render.").ok();
+    c.submit(&mut Ctx::default(), "echo two").unwrap();
+    p.apply(Edit::Older, &mut c);
+    p.apply(Edit::Older, &mut c);
+    assert_eq!((p.text(), p.popup(&c)), ("render.", None));
+    p.apply(Edit::Newer, &mut c);
+    assert_eq!(p.text(), "echo two");
+    // Paste inserts at the cursor; line breaks become the command separator.
+    p.set("echo  end");
+    p.apply(Edit::WordLeft, &mut c);
+    p.apply(Edit::Left, &mut c);
+    p.apply(Edit::Paste("a\tb\r\n\r\nc  \n".into()), &mut c);
+    assert_eq!((p.text(), p.cursor()), ("echo a b; c end", 11));
+}
+
+#[test]
 fn fallback_runs_unclaimed_commands_and_completes() {
     let mut c: Console<Vec<String>> = Console::new();
     let mut seen = Vec::new();

@@ -73,7 +73,10 @@ fn register_cheats(app: &mut App) {
     app.add_console_command(
         CommandSpec::new("centeroncell")
             .alias("coc")
-            .help("Travels to an interior cell by name (CenterOnCell), at its first door's arrival marker")
+            .help(
+                "Travels to a cell (CenterOnCell): an interior by name (its first door's arrival marker), \
+                 an exterior by cell or region name, or grid `x y` (the square's centre, on the ground)",
+            )
             .param(Param::rest("cell")),
         |inv| {
             let cell = inv.args.str("cell").unwrap_or_default().trim().trim_matches('"').trim().to_owned();
@@ -116,25 +119,83 @@ fn cell_arrival<'a>(links: &'a [sf_world::DoorLink], cell: &str) -> Option<&'a s
     links.iter().flat_map(sf_world::DoorLink::exits).map(|(_, to)| to).find(|to| to.worldspace.as_str().eq_ignore_ascii_case(cell))
 }
 
-/// `CenterOnCell`: the door travel (`StartTravel`, fade) to `cell`'s first door arrival.
+/// The vanilla `sDefaultCellname` (nameless exterior cells without a region), when the GMST is missing.
+const DEFAULT_CELL_NAME: &str = "Wilderness";
+
+/// The exterior grid square `coc <name>` goes to. Port of `OpenMW` `WorldModel::findCell(std::string_view)`
+/// (`apps/openmw/mwworld/worldmodel.cpp:312`) and `World::findExteriorPosition`
+/// (`apps/openmw/mwworld/worldimp.cpp:2683`), commit 4e718b50: the first exterior CELL in load order
+/// whose name matches (case-insensitive); a nameless cell answers to its region's name (the region
+/// id when that is empty), else to `sDefaultCellname`. Then grid coordinates: `x,y` as `OpenMW`,
+/// also `x y` here. The caller has already tried interiors (`OpenMW` tries them first too).
+fn exterior_grid(db: &sf_records::RecordDb, name: &str) -> Option<(i32, i32)> {
+    use sf_records::RecordId;
+    use tes3::esp::{Cell, GameSetting, GameSettingValue, Region};
+    let default_name = match db.get::<GameSetting>(&RecordId::new("sDefaultCellname")).map(|g| &g.value) {
+        Some(GameSettingValue::String(s)) => s.as_str(),
+        _ => DEFAULT_CELL_NAME,
+    };
+    let resolved = |cell: &Cell| -> String {
+        if !cell.name.is_empty() {
+            return cell.name.clone();
+        }
+        match cell.region.as_deref().and_then(|id| db.get::<Region>(&RecordId::new(id)).map(|r| (id, r))) {
+            Some((id, region)) if region.name.is_empty() => id.to_owned(),
+            Some((_, region)) => region.name.clone(),
+            None => default_name.to_owned(),
+        }
+    };
+    let named = db.iter::<Cell>().find(|(_, c)| !c.is_interior() && resolved(c).eq_ignore_ascii_case(name)).map(|(_, c)| c.data.grid);
+    named.or_else(|| {
+        let mut parts = name.split(|c: char| c == ',' || c.is_whitespace()).filter(|p| !p.is_empty());
+        match (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()) {
+            (x, y, None) => Some((x, y)),
+            _ => None,
+        }
+    })
+}
+
+/// Where the player arrives in exterior square `grid`, Morrowind units: the centre
+/// (`ESM::indexToPosition(.., centre = true)`), at the land's height or the water level (0),
+/// whichever is higher (`World::adjustPosition`, `worldimp.cpp:1237`, commit 4e718b50). The arrival
+/// gate (`mw_player_bevy::await_ground`) then puts the feet on what's there once collision is in.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // half a cell; small grid indices
+fn exterior_arrival(db: &sf_records::RecordDb, grid: (i32, i32)) -> [f32; 3] {
+    let half = (mw_world::convert::CELL_UNITS / 2.0) as f32;
+    let land = db.get::<tes3::esp::Landscape>(&mw_records::keys::exterior(grid)).map(mw_world::terrain::LandData::decode);
+    let ground = land.map_or(0.0, |l| l.height_at(half, half)).max(0.0);
+    let corner = |i: i32| i as f32 * half * 2.0;
+    [corner(grid.0) + half, corner(grid.1) + half, ground]
+}
+
+/// `CenterOnCell`: the door travel (`StartTravel`, fade) to `cell`'s first door arrival, or to an
+/// exterior square ([`exterior_grid`], [`exterior_arrival`]).
 fn center_on_cell(world: &mut World, cell: &str) -> Result<String, String> {
     if cell.is_empty() {
-        return Err("usage: coc \"<cell id>\"".to_owned());
+        return Err("usage: coc \"<cell name>\" or coc <x> <y>".to_owned());
     }
     if world.get_resource::<sf_world_bevy::FadeTransition>().is_some_and(sf_world_bevy::FadeTransition::is_active) {
         return Err("a travel is already under way".to_owned());
     }
-    let links = world.get_resource::<sf_world_bevy::DoorLinks>().ok_or("no door links in this run")?;
-    let to = cell_arrival(&links.0, cell).ok_or_else(|| {
-        format!("{cell}: no interior cell by that name with a door into it (exterior names: not yet)")
-    })?;
-    let travel = sf_world_bevy::StartTravel {
-        traveler: Entity::PLACEHOLDER,
-        to: sf_world::Location::new(to.worldspace.clone(), to.arrival.pos.offset(Vec3::Y * mw_game_core::doors::ARRIVAL_EYE_M)),
-        rotation: mw_doors_bevy::arrival_rotation(to.arrival.rotation),
-        reload: false,
+    let eye = Vec3::Y * mw_game_core::doors::ARRIVAL_EYE_M;
+    let interior = world.get_resource::<sf_world_bevy::DoorLinks>().and_then(|links| {
+        let to = cell_arrival(&links.0, cell)?;
+        let text = format!("travel to {} at {:.1?}", to.worldspace.as_str(), to.arrival.pos.to_f64());
+        let at = sf_world::Location::new(to.worldspace.clone(), to.arrival.pos.offset(eye));
+        Some((at, mw_doors_bevy::arrival_rotation(to.arrival.rotation), text))
+    });
+    let exterior = || {
+        let db = world.get_resource::<mw_rpg_bevy::dialogue::Rpg>()?.records();
+        let grid = exterior_grid(db, cell)?;
+        let feet = exterior_arrival(db, grid);
+        let text = format!("travel to exterior {},{} at {:.0?} (units)", grid.0, grid.1, feet);
+        // Rotation zero faces north, as `OpenMW`'s.
+        Some((sf_world::Location::new(mw_world::ids::exterior(), mw_world::convert::world_pos(feet).offset(eye)), Quat::IDENTITY, text))
     };
-    let text = format!("travel to {} at {:.1?}", to.worldspace.as_str(), to.arrival.pos.to_f64());
+    let (to, rotation, text) = interior.or_else(exterior).ok_or_else(|| {
+        format!("{cell}: no cell by that name (an interior with a door into it, an exterior cell or region, or grid x y)")
+    })?;
+    let travel = sf_world_bevy::StartTravel { traveler: Entity::PLACEHOLDER, to, rotation, reload: false };
     let cam = world
         .query_filtered::<Entity, With<mw_game_core::doors::DoorUser>>()
         .iter(world)
@@ -331,7 +392,7 @@ mod tests {
         app.insert_resource(sf_world_bevy::DoorLinks(vec![link]));
         let cam = app.world_mut().spawn(mw_game_core::doors::DoorUser).id();
         run(&mut app, "coc \"No Such Place\"");
-        assert!(log(&app).iter().any(|l| l.contains("No Such Place: no interior cell")), "{:?}", log(&app));
+        assert!(log(&app).iter().any(|l| l.contains("No Such Place: no cell by that name")), "{:?}", log(&app));
         run(&mut app, "COC \"seyda neen, census and excise office\"");
         let travels = app.world().resource::<Messages<sf_world_bevy::StartTravel>>();
         let mut cursor = travels.get_cursor();
@@ -340,6 +401,52 @@ mod tests {
         assert_eq!(sent[0].traveler, cam);
         assert_eq!(sent[0].to.worldspace.as_str(), WorldspaceId::new("Seyda Neen, Census and Excise Office").as_str());
         assert!(sent[0].to.pos.delta_f32(WorldPos::ORIGIN).y < -3.0, "eye height above the arrival");
+    }
+
+    #[test]
+    fn coc_finds_exterior_cells_by_name_region_and_grid() {
+        use sf_records::{RecordDb, RecordId};
+        use tes3::esp::{Cell, Region};
+        let mut db = RecordDb::new();
+        db.register::<Cell>("CELL").unwrap();
+        db.register::<Region>("REGN").unwrap();
+        let esm = db.add_source("Test.esm", &[]);
+        let region = Region { id: "Bitter Coast Region".into(), name: "Bitter Coast Region".into(), ..Region::default() };
+        db.define(esm, RecordId::new("Bitter Coast Region"), region).unwrap();
+        let ext = |name: &str, region: Option<&str>, grid: (i32, i32)| Cell {
+            name: name.into(),
+            region: region.map(Into::into),
+            data: tes3::esp::CellData { grid, ..Default::default() },
+            ..Cell::default()
+        };
+        for c in [ext("Balmora", None, (-3, -2)), ext("Balmora", None, (-4, -2)), ext("", Some("Bitter Coast Region"), (-5, -6)), ext("", None, (7, 7))] {
+            db.define(esm, mw_records::keys::cell(&c), c).unwrap();
+        }
+        assert_eq!(exterior_grid(&db, "balmora"), Some((-3, -2)), "the first in load order");
+        assert_eq!(exterior_grid(&db, "bitter coast region"), Some((-5, -6)), "a nameless cell answers to its region");
+        assert_eq!(exterior_grid(&db, "Wilderness"), Some((7, 7)), "no region: sDefaultCellname");
+        assert_eq!(exterior_grid(&db, "-2 -9"), Some((-2, -9)));
+        assert_eq!(exterior_grid(&db, "-2,-9"), Some((-2, -9)), "OpenMW's form");
+        assert_eq!(exterior_grid(&db, "nowhere"), None);
+        assert_eq!(exterior_grid(&db, "1 2 3"), None);
+
+        // Through the console: an exterior travel to the square's centre, eye above the ground.
+        let mut app = app();
+        app.add_message::<sf_world_bevy::StartTravel>();
+        app.insert_resource(mw_rpg_bevy::dialogue::Rpg::new(std::sync::Arc::new(db)).unwrap());
+        let cam = app.world_mut().spawn(mw_game_core::doors::DoorUser).id();
+        let travel = |app: &mut App, line: &str| {
+            run(app, line);
+            let travels = app.world().resource::<Messages<sf_world_bevy::StartTravel>>();
+            travels.get_cursor().read(travels).last().cloned().unwrap_or_else(|| panic!("{line}: {:?}", log(app)))
+        };
+        for (line, (x, y)) in [("coc balmora", (-3.0, -2.0)), ("COC -2 -9", (-2.0, -9.0))] {
+            let sent = travel(&mut app, line);
+            assert_eq!((sent.traveler, sent.to.worldspace.as_str()), (cam, mw_world::ids::EXTERIOR), "{line}");
+            let centre = mw_world::convert::world_pos([x * 8192.0 + 4096.0, y * 8192.0 + 4096.0, 0.0]);
+            let eye = centre.delta_f32(sent.to.pos);
+            assert!(eye.xz().length() < 1e-2 && (eye.y - mw_game_core::doors::ARRIVAL_EYE_M).abs() < 1e-2, "{line}: {eye:?}");
+        }
     }
 
     fn log(app: &App) -> Vec<String> {

@@ -603,7 +603,7 @@ pub fn hud() -> HudView {
             verb: "Open".into(),
             target: Some("Door".into()),
             ready: true,
-            action: activate_action(),
+            action: Some(activate_action()),
         }),
     }
 }

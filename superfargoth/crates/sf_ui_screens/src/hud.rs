@@ -36,8 +36,9 @@ pub struct UsePrompt {
     pub target: Option<String>,
     /// A press now is accepted (else the prompt shows greyed: the current move blocks it).
     pub ready: bool,
-    /// The keymap action whose glyph the prompt shows (the game's activate action).
-    pub action: ActionRef,
+    /// The keymap action whose glyph the prompt shows (the game's activate action); `None` is a
+    /// name-only prompt with no glyph (a target that can be looked at, not used).
+    pub action: Option<ActionRef>,
 }
 
 /// Names for prompts (the content pack's: what a tag is called, what a target is).
@@ -53,7 +54,7 @@ impl UsePrompt {
             verb: labels.verb(prompt.tag),
             target: labels.target_name(prompt.target),
             ready: prompt.ready,
-            action,
+            action: Some(action),
         }
     }
 }
@@ -235,7 +236,7 @@ pub(crate) fn sync_hud(
         let keymap = keymap.as_ref()?;
         let device = mode.as_ref().map(|m| m.0).unwrap_or_default();
         let family = family.as_ref().map(|f| f.0).unwrap_or_default();
-        keymap.0.glyph(&p.action, device, family)
+        keymap.0.glyph(p.action.as_ref()?, device, family)
     });
     let glyph_label = glyph.as_ref().map(|g| g.label.clone());
     for mut hud in &mut huds {
@@ -294,6 +295,9 @@ pub(crate) fn sync_hud(
         // Prompt: glyph, verb and target; greyed when not ready.
         if let Ok(mut node) = nodes.get_mut(hud.prompt) {
             show(&mut node, view.prompt.is_some());
+        }
+        if let Ok(mut node) = nodes.get_mut(hud.prompt_glyph) {
+            show(&mut node, glyph.is_some());
         }
         if let Some(prompt) = &view.prompt {
             let text = match &prompt.target {

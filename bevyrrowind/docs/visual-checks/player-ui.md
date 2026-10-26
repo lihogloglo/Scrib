@@ -43,6 +43,15 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Owner 2026-10-25: save/load works. BUG: on load the player sometimes spawns too low and falls through the floor
   into the void. Also seen: an invisible hole in the Census Office floor. Both in the physics fix plan (2026-10-26).
 
+### SV-2: Save/load screens from the pause menu (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode) (awaiting owner)
+- Esc, Save: the save screen over the paused game, "New save" on top. Confirm it (select, confirm again): toast
+  "Saved"; the list gets a row titled "Seyda Neen, Census and Excise Office", subtitle "Day N - 16 Last Seed 9 a.m. ·
+  Played ... · Saved <date> UTC" (OpenMW's fields).
+- Select that row, confirm, Yes: overwritten (a `.bak` next to it). F5 once: a "Quicksave" row.
+- Back: the pause menu. Load: the same saves, newest first; pick one: fade, the menus close, you stand at the save.
+- Load screen, a save selected, Delete (or Context1), Yes: the row goes away.
+- Known: no typed names (generated, not stored: sf/meta has no name field), no thumbnails, UTC dates.
+
 ### IN-1: Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
 - F10 opens the keybinds screen (UI + gameplay rows). Rebind Jump (keyboard slot) to J, close with F10 or Esc; J jumps,
   Space doesn't. Quit, start again: J still jumps (saved in `profiles/<profile>.toml`, `[bindings.gameplay]`).
@@ -93,7 +102,11 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   not cost; cost = a `--off ssao` run). Unblocks SH-16 (AO) re-check.
 - Owner 2026-10-25: partial. COC works for interiors only (`coc balmora` fails: exterior lookup, console slice 3);
   can't paste; wants Down to select a suggestion and Enter to accept it. No upscaling/DLSS console switch exists yet.
-- Status: partial.
+- 2026-10-26 (console slice 3), re-check: `coc balmora`, `coc "seyda neen"`, `coc "bitter coast region"`, `coc -2 -9`
+  fade to the exterior square's centre on the ground (no fall); `coc "seyda neen, census and excise office"` still
+  goes inside. Type `re`: Down/Up move the `>` mark, Enter puts the candidate in the line (a second Enter runs it),
+  Escape closes the popup first. Ctrl+V and Shift+Insert paste at the cursor (several lines join with `; `).
+- Status: awaiting owner.
 
 ### PM-1: Escape menu and options (`cargo dev view "Seyda Neen"`, player mode)
 - Esc opens the pause menu (Resume, Save, Load, Options, Quit; Save/Load greyed out until the save screens are wired);
@@ -103,4 +116,14 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   menus, quit, restart: the volumes are kept (`profiles/<name>.toml`, `[settings.sf]`).
 - Quit asks Yes/No (No is focused); Yes exits. Not in free camera or while the console is open.
 - Known: frames are flat CSS (no 8-piece textures); screen titles and On/Off are English defaults.
+- Status: awaiting owner.
+
+### HD-1: Minimal HUD: bars, compass, crosshair, use prompt (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode)
+- Bottom left: three thin framed bars, red health, blue magicka, green fatigue (full: the `player` record's 35/50/200),
+  no labels, Morrowind-sized. Bottom right: heading (`N 000` ... `NW 315`) follows the mouse look; north matches the map.
+- A small dot at the screen centre, in first and third person (Tab): what it covers is what E uses.
+- Look at a door or NPC: `E Open <name>` / `E Talk <name>` under the dot; rebind Use (F10) and the glyph follows;
+  a creature shows its name only, no key.
+- Esc (pause), talk (dialogue), J (journal), inventory, the console: the HUD hides; it returns on close. F11 (free camera) hides it.
+- Known: bars are static (no damage or regeneration yet); the compass is a heading label, no local map.
 - Status: awaiting owner.

@@ -1,6 +1,6 @@
 [package]
 name = "mw_player_bevy"
-description = "Morrowind player character: body, controls, camera, arrival gate, focus ray and prompt (app-split.md slice 7)"
+description = "Morrowind player character: body, controls, camera, arrival gate, focus ray and the HUD driver (app-split.md slice 7)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -37,6 +37,7 @@ sf_action_bevy.workspace = true
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
+sf_console_bevy.workspace = true
 sf_controller.workspace = true
 sf_controller_bevy.workspace = true
 sf_coords.workspace = true
@@ -47,12 +48,15 @@ sf_script.workspace = true
 sf_script_bevy.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
+sf_ui_screens.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The HUD test: the UI, text and picking plugins the stock screens run on.
+bevy = { workspace = true, features = ["ui"] }
 # The moved player tests: input plugins, a level as the ground, a keymap profile, VFS paths.
 bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
 sf_level.workspace = true

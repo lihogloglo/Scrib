@@ -1521,3 +1521,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   Phase 4); skip bevy-react and bevy_settings_plus (research/crates-2026-10-25.md). Physics stays Rapier (avian 0.8 has
   no spherical/generic joint motors; revisit when Phase 3 opens, swap = `sf_physics` only).
 - 2026-10-26 (docs S6b): correction: the lamp cube cache was not deleted in reset A; B1 measured it and kept it (`sf_shadow_cache_bevy`). The 2026-10-21 reset entry's "deleted in A" is superseded by the B1 entry.
+- 2026-10-26 (owner): BSL-1.0 allowed per crate for `clipboard-win` and `error-code` only (Bevy `system_clipboard`, console
+  paste; `deny.toml` exceptions). `cargo_turn.sh`: a `cargo run`/`cargo dev` that only keeps a program open no longer holds the build slot.

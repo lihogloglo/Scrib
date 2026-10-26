@@ -53,3 +53,48 @@ set-audio-ambience-volume = Ambience Volume
 set-audio-ambience-muted = Mute Ambience
 set-audio-ui-volume = Menu Volume
 set-audio-ui-muted = Mute Menus
+
+## Save/load screen (mw_saves_bevy menu.rs; fields after OpenMW's savegame dialog). The default
+## name is OpenMW's "Day 24 - 16 Last Seed 7 p.m."; reasons `saves-reason-<SaveReason token>`.
+saves-reason-quick = Quicksave
+saves-reason-auto = Autosave
+saves-reason-exit = Exit save
+saves-reason-guestleft = Guest left
+saves-untitled = Save { $n }
+saves-damaged = Damaged save
+saves-default-name = Day { $day } - { $date } { $month } { $hour } { $half }
+saves-am = a.m.
+saves-pm = p.m.
+saves-level = Level { $level }
+saves-played = Played { $time }
+saves-stamp = Saved { $date } UTC
+saves-duration-hour = { $n } h
+saves-duration-minute = { $n } min
+saves-duration-second = { $n } s
+saves-place-exterior = Vvardenfell
+saves-cant-save = Can't save now
+saves-cant-load = Can't load during a transition
+saves-delete-failed = Delete failed: { $error }
+mw-month-0 = Morning Star
+mw-month-1 = Sun's Dawn
+mw-month-2 = First Seed
+mw-month-3 = Rain's Hand
+mw-month-4 = Second Seed
+mw-month-5 = Midyear
+mw-month-6 = Sun's Height
+mw-month-7 = Last Seed
+mw-month-8 = Hearthfire
+mw-month-9 = Frostfall
+mw-month-10 = Sun's Dusk
+mw-month-11 = Evening Star
+
+## HUD (mw_player_bevy hud.rs): bar labels `hud-bar-<id>` (Morrowind's own names), use prompt
+## verbs `hud-use-<verb>`.
+hud-bar-health = Health
+hud-bar-magicka = Magicka
+hud-bar-fatigue = Fatigue
+hud-use-talk = Talk
+hud-use-open = Open
+hud-use-use = Use
+hud-use-read = Read
+hud-use-take = Take
