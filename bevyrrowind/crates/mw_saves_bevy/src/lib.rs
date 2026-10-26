@@ -26,7 +26,8 @@
 //!   loaded overlay removes are taken out now (`inventory::take_placement`). With no save made or
 //!   loaded in this run (a fresh start), quickload takes the newest quicksave of any world, so
 //!   "save, quit, start, F9" resumes.
-//! - **Save/load screen** (part 2): [`menu`], from the pause menu.
+//! - **Save/load screen** (part 2): [`menu`], from the pause menu and the main menu.
+//! - **Continue** (the main menu): [`newest_save`] of any reason, quickload's search.
 //! - **Notices**: "Quicksaved" / "Saved" / "Loaded" toasts (`sf_ui_bevy::Toasts`, when the UI runs), else log.
 //! - Not yet (leftovers): items taken after the save reappear only when their cell reloads (no
 //!   streaming refresh of resident cells), the body's motion state, a save during dialogue,
@@ -310,17 +311,26 @@ fn keys(
         return;
     }
     // A fresh run: the newest quicksave of any world.
-    let newest = list_worlds(&*storage.0, &config.root, SaveMode::Single)
-        .into_iter()
-        .filter_map(|(_, dir): (u128, SlotDir)| dir.latest(&*storage.0, Some(SaveReason::Quick)))
-        .filter_map(|e| e.meta.as_ref().ok().map(|m| (m.wall_clock, e.path.clone())))
-        .max_by_key(|(t, _)| *t);
-    match newest {
-        Some((_, path)) => {
+    match newest_save(&storage, &config, Some(SaveReason::Quick)) {
+        Some(path) => {
             loads.write(LoadRequest::path(path));
         }
         None => notice(toasts.as_deref_mut(), "No quicksave"),
     }
+}
+
+/// The newest single-player save of any world, by the wall clock it was written at (then its
+/// sequence), of `reason` only when given: quickload's fresh-run target (`Quick`) and the main
+/// menu's Continue (`None`: any reason, as `OpenMW` `apps/openmw/mwgui/mainmenu.cpp` at 675146bd,
+/// "return" loads the newest save). Saves whose meta can't be read are skipped.
+pub fn newest_save(storage: &SaveStorage, config: &SaveConfig, reason: Option<SaveReason>) -> Option<PathBuf> {
+    let fs = &*storage.0;
+    list_worlds(fs, &config.root, SaveMode::Single)
+        .into_iter()
+        .filter_map(|(_, dir): (u128, SlotDir)| dir.latest(fs, reason))
+        .filter_map(|e| e.meta.as_ref().ok().map(|m| ((m.wall_clock, e.sequence), e.path.clone())))
+        .max_by_key(|(t, _)| *t)
+        .map(|(_, path)| path)
 }
 
 /// `A` started this frame.

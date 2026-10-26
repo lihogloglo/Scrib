@@ -52,6 +52,7 @@ sf_physics.workspace = true
 sf_physics_bevy.workspace = true
 sf_records.workspace = true
 sf_render_order_bevy.workspace = true
+sf_save_bevy.workspace = true
 sf_shadow_cache_bevy.workspace = true
 sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
@@ -65,10 +66,6 @@ sf_world = { workspace = true, features = ["bake"] }
 sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
-
-[dev-dependencies]
-# The pause menu's save/load test: a save plugin on a temp folder.
-sf_save_bevy.workspace = true
 
 [lints]
 workspace = true

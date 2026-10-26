@@ -39,7 +39,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Known: no weight limit, no locks or traps, levelled entries skipped, organic containers refuse puts silently.
 
 ### SV-1: Quicksave / quickload, save, quit, load (`cargo dev view "Seyda Neen, Census and Excise Office"`) (confirmed with follow-up)
-- In player mode take the barrel by the desk (ring) and a loose bottle, step into the middle of the room, Tab to first
+- In player mode take a loose bottle (the ring barrel is outside the office, IV-2), step into the middle of the room, Tab to first
   person, F5: toast "Quicksaved" (log `saved ...\saves\single\<world>\000001-quick.sfsave`).
 - Walk elsewhere, take another item, F9: fade, you stand where you saved facing the same way, first person, toast
   "Loaded"; I lists the ring; the barrel gives nothing more; the first bottle stays gone.

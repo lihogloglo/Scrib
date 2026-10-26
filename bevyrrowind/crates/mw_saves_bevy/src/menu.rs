@@ -1,8 +1,9 @@
 //! Saves, part 2 (ROADMAP 2.5): the framework's save/load screen (`sf_ui_screens::saveload`)
 //! over the current world's save folder.
 //!
-//! - **Open**: [`OpenSaveLoad`] (the pause menu's Save and Load entries). The screen ("saveload",
-//!   Menu layer, pauses) goes on top of the pause menu; its Back returns there.
+//! - **Open**: [`OpenSaveLoad`] (the pause menu's Save and Load entries, the main menu's Load).
+//!   The screen ("saveload", Menu layer, pauses) goes on top of the menu that opened it; its Back
+//!   pops it off the screen stack, so that menu (pause or main) is the top again.
 //! - **Listing**: one [`SaveEntryView`] per file of the world's folder (`SlotDir::list`, meta-only
 //!   reads): id = file name, order = sequence, title = the place (`sf/meta` `location_label`),
 //!   subtitle = in-game date, level, time played and the date saved, reason label for quick and
@@ -15,7 +16,7 @@
 //! - **Choices**: New → a manual save in the slot folder; Overwrite → that file
 //!   (`SaveTarget::Path`, keeps `.bak`); Load → that file (the load's reset closes the menus, the
 //!   clock runs again, as quickload); Delete → the file and its `.bak`, then the list again;
-//!   Back → the pause menu. A save while the `SaveGate` is closed (a load, a door fade) is not
+//!   Back → the menu under it. A save while the `SaveGate` is closed (a load, a door fade) is not
 //!   queued: a notice says so.
 //! - **Place label**: [`SaveDisplay`] is kept current here: an interior's cell name (records)
 //!   or "Vvardenfell" outside (until the region or town under the player), and the clock.
@@ -370,7 +371,7 @@ fn host(
                 }
                 refill(&folder, &mut list, &mut screens);
             }
-            // The screen has closed; the pause menu is under it.
+            // The screen has closed; the menu that opened it (pause or main) is under it.
             SaveLoadChoice::Back => {}
         }
     }
