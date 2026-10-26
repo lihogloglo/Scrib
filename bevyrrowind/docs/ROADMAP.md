@@ -116,6 +116,7 @@ in the world; only the release start path (or a session working on the menu) sho
 - [p] Lua/Luau beyond L3; mods milestone demo (M5 E1, U7, X1, X2).
 - [p] Crate "update all" pass once `bevy_hanabi` supports Bevy 0.20 (archive Backlog).
 - [p] Classic option (owner 2026-10-20/23, ARCHITECTURE §1b): (a) Classic graphics preset on the `--off` switches; (b) classic rules (`mw_rules`, from OpenMW) behind the feel-system seams, after each modern version exists.
+- [p] Setup screen (owner 2026-10-26, `specs/setup.md`): first-run setup in the game binary: Morrowind path, mod list import, bring-your-own downloads (DLSS, animation libraries; one click where licences allow, guided download + hash check otherwise), bake queue with progress. After the Phase 3 animation lanes.
 - [p] Groundcover (owner 2026-10-20, low priority; 2026-10-25 adopts `bevy_grass`): masks from LTEX, wind from `sf_wind`; later load Morrowind groundcover mods (`research/crates-2026-10-25.md`).
 
 ## Recent
