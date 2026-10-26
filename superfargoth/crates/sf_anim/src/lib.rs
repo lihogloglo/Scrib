@@ -36,6 +36,7 @@ mod skeleton;
 mod source;
 pub mod spring;
 pub mod steps;
+mod warp;
 
 #[cfg(feature = "bvh")]
 pub use bvh_import::BvhAnimImporter;
@@ -65,6 +66,7 @@ pub use rig::{
 pub use skeleton::{
     JointMask, LodRules, NO_PARENT, SKELETON_FORMAT, Skeleton, SkeletonError, SkeletonId, SkeletonRules, SourceJoint, guess_tag, tag,
 };
+pub use warp::{RootChain, RootPath, RootPose, WarpPlan, WarpProfile, WarpRefused};
 pub use source::{AnimSource, BoundSource, Curve, CurveValue, Interpolation, SourceClip, SourceCurve, SourceTrack};
 
 /// A cooked file that can't be read.

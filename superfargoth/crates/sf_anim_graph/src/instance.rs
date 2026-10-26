@@ -708,7 +708,20 @@ impl GraphInstance {
     /// What plays in a slot.
     pub fn montage(&self, slot: SlotId) -> Option<MontageStatus> {
         let st = self.slots.get(usize::from(slot.0))?;
-        st.playing.as_ref().map(|m| MontageStatus { id: m.id, time: m.time, loops_left: m.loops_left, queued: st.queue.len() })
+        st.playing.as_ref().map(|m| MontageStatus { id: m.id, time: m.time, loops_left: m.loops_left, queued: st.queue.len(), chain_time: m.chain_time() })
+    }
+
+    /// Sets the playhead of the slot's `Progress` montages for the next update (action.md B1):
+    /// `chain_secs` is the time since the chain's first montage started (the action clock),
+    /// and the montages queued behind it play back to back, each from its `from` to its end.
+    /// The update ignores `dt` for them: when `chain_secs` passes a montage's end and the next
+    /// queued request is `Progress` too, that one starts on the same update at the remaining
+    /// time (events of both fire); past the last one's end, the montage ends. Reverse progress
+    /// stays inside the playing montage. Without a call, a `Progress` montage holds.
+    pub fn set_slot_progress(&mut self, slot: SlotId, chain_secs: f32) {
+        if let Some(st) = self.slots.get_mut(usize::from(slot.0)) {
+            st.progress = Some(chain_secs.max(0.0));
+        }
     }
 
     /// Ends what plays in slot `s` and its queue (interrupted, unless it
@@ -767,18 +780,65 @@ impl GraphInstance {
     /// starts, and the playing ones advance.
     fn tick_slots(&mut self, b: &Binding<'_>, dt: f32) {
         for s in 0..self.slots.len() {
-            self.slots[s].weight = 0.0;
+            let weight = std::mem::take(&mut self.slots[s].weight);
+            let progress = self.slots[s].progress.take();
             if self.slots[s].playing.as_ref().is_some_and(|m| m.ended) {
-                let blend_out = self.slots[s].playing.as_ref().map_or(0.0, |m| m.req.blend_out);
+                let (blend_out, offset) =
+                    self.slots[s].playing.as_ref().map_or((0.0, 0.0), |m| (m.req.blend_out, m.chain_end(clip_of(b.clips, &m.req.clip))));
                 let next = self.slots[s].queue.pop_front();
                 self.end_slot(b.graph, b.clips, s, blend_out);
                 if let Some((id, req)) = next {
                     self.start_montage(b, s, id, req);
+                    if let Some(m) = &mut self.slots[s].playing {
+                        m.offset = offset;
+                    }
                 }
             }
-            if let Some(m) = &mut self.slots[s].playing {
+            if self.slots[s].playing.as_ref().is_some_and(|m| m.req.root_motion == RootMotionMode::Progress) {
+                self.tick_progress(b, s, progress, weight, dt);
+            } else if let Some(m) = &mut self.slots[s].playing {
                 let c = m.req.clip.clone();
                 m.advance(clip_of(b.clips, &c), dt);
+            }
+        }
+    }
+
+    /// A `Progress` montage's playhead from the chain time (B1): crossing its end with a
+    /// `Progress` request queued hands over on this update, the finished montage's last events
+    /// reported with this update's (as an interrupted montage's window exits are).
+    fn tick_progress(&mut self, b: &Binding<'_>, s: usize, progress: Option<f32>, weight: f32, dt: f32) {
+        let Some(p) = progress else {
+            if let Some(m) = &mut self.slots[s].playing {
+                m.hold();
+            }
+            return;
+        };
+        let slot = SlotId(u16::try_from(s).unwrap_or(u16::MAX));
+        // Bounded: a hitch can skip short montages, never loop forever.
+        for _ in 0..64 {
+            let st = &mut self.slots[s];
+            let Some(m) = &mut st.playing else { return };
+            let c = m.req.clip.clone();
+            let clip = clip_of(b.clips, &c);
+            let local = m.req.from + (p - m.offset);
+            let next_progress = st.queue.front().is_some_and(|(_, r)| r.root_motion == RootMotionMode::Progress);
+            m.seek(clip, local, dt);
+            // A boundary belongs to the next montage (as `sf_anim::RootChain::locate`).
+            if !(m.ended && next_progress) {
+                return;
+            }
+            // Hand over: the finished montage's events go out with this update.
+            let offset = m.chain_end(clip);
+            for e in &m.events {
+                let (clip, id) = event_ids(b.graph, &c, e.event);
+                st.exits.push(GraphEvent { clip, event: e.event, id, edge: e.edge, weight, layer: st.layer, montage: Some(m.id) });
+            }
+            st.notices.push(SlotNotice { slot, montage: m.id, kind: NoticeKind::Ended { interrupted: false } });
+            st.playing = None;
+            let Some((id, req)) = st.queue.pop_front() else { return };
+            self.start_montage(b, s, id, req);
+            if let Some(m) = &mut self.slots[s].playing {
+                m.offset = offset;
             }
         }
     }

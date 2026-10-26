@@ -1183,6 +1183,7 @@ fn variety_offsets_looping_phase_and_jitters_rate_except_root_motion_drive() {
 }
 
 mod optional;
+mod progress;
 mod slot;
 
 /// A masked override layer blends a leg's contact curve by the mask weight

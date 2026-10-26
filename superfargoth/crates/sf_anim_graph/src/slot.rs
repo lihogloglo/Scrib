@@ -193,6 +193,9 @@ pub struct MontageStatus {
     pub loops_left: u32,
     /// Requests waiting behind it.
     pub queued: usize,
+    /// Seconds since the chain started (montages queued back to back, each played from `from`
+    /// to its end): the progress a `Progress` montage was set to (B1).
+    pub chain_time: f32,
 }
 
 // --- Runtime ---------------------------------------------------------------------------
@@ -203,6 +206,9 @@ pub(crate) struct Montage {
     pub req: SlotRequest,
     pub time: f32,
     pub prev: f32,
+    /// Chain time at which this montage's `from` plays (0 for a montage that starts a chain;
+    /// a queued one continues where the previous one ended).
+    pub offset: f32,
     /// Clip seconds per second over the last advance.
     pub speed: f32,
     pub root: RootDelta,
@@ -227,6 +233,9 @@ pub(crate) struct SlotState {
     pub notices: Vec<SlotNotice>,
     /// Window exits of an interrupted montage, for the next update's events.
     pub exits: Vec<crate::GraphEvent>,
+    /// Chain time for the next update's `Progress` montages
+    /// ([`crate::GraphInstance::set_slot_progress`]).
+    pub progress: Option<f32>,
 }
 
 pub(crate) fn clip_of<'a>(clips: &'a [Arc<Clip>], c: &'a MontageClip) -> &'a Clip {
@@ -267,6 +276,7 @@ impl Montage {
             req,
             time,
             prev: time,
+            offset: 0.0,
             speed: 0.0,
             root: RootDelta::ZERO,
             loops_left,
@@ -278,8 +288,46 @@ impl Montage {
     }
 
     /// Where the montage ends on its last pass.
-    fn end(&self, clip: &Clip) -> f32 {
+    pub fn end(&self, clip: &Clip) -> f32 {
         (clip.duration - self.req.end_early.max(0.0)).max(0.0)
+    }
+
+    /// Chain time at which a montage queued behind this one starts.
+    pub fn chain_end(&self, clip: &Clip) -> f32 {
+        self.offset + (self.end(clip) - self.req.from).max(0.0)
+    }
+
+    /// Chain time of the playhead.
+    pub fn chain_time(&self) -> f32 {
+        self.offset + (self.time - self.req.from)
+    }
+
+    /// `Progress` playback: moves the playhead to `to` (clip seconds, clamped to the montage;
+    /// either direction), firing the events crossed. Reaching the end ends the montage.
+    pub fn seek(&mut self, clip: &Clip, to: f32, dt: f32) {
+        let end = self.end(clip);
+        let to = to.clamp(0.0, end);
+        self.events.clear();
+        self.prev = self.time;
+        self.wrapped = false;
+        let adv = clip.advance(self.time, to - self.time, false, self.fresh, Some(&mut self.events));
+        // The clip's advance clamps to its duration, not `end`; land on `to` exactly.
+        self.time = to;
+        self.root = adv.root;
+        if dt > 0.0 {
+            self.speed = (self.time - self.prev) / dt;
+        }
+        self.ended = to >= end;
+        self.fresh = false;
+    }
+
+    /// `Progress` playback without a progress this update: the playhead holds.
+    pub fn hold(&mut self) {
+        self.events.clear();
+        self.prev = self.time;
+        self.root = RootDelta::ZERO;
+        self.speed = 0.0;
+        self.wrapped = false;
     }
 
     fn loop_range(&self, clip: &Clip, t: f32) -> Option<(f32, f32)> {

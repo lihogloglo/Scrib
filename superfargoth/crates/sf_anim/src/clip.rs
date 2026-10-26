@@ -40,6 +40,12 @@ pub enum RootMotionMode {
     Match,
     /// In place.
     Ignore,
+    /// The playhead is set from outside each update (the action clock: action.md "Motion
+    /// owners", animation-layers.md R11b item 2) and the root output is not applied: the
+    /// gameplay root comes from a [`crate::WarpPlan`] (or the clip's root at that progress).
+    /// Montage slots only (`sf_anim_graph::GraphInstance::set_slot_progress`); a graph player
+    /// node treats it as `Ignore`.
+    Progress,
 }
 
 /// A point event (`end == None`) or a window `[time, end]`.

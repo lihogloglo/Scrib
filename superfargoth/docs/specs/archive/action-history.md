@@ -375,3 +375,63 @@ Tests (headless, manual frame times): a 180-tick command stream gives bit-identi
 30/60/144 fps; a straight run draws monotonic frame steps at 4.5 m/s ± 2 %, CV < 1 %, at
 30/60/144 fps (fails at 144 with the blend off); a reconcile glides; a mocked stick and Jump launch.
 Slice 2: app wiring, D1 camera, bindings, animation feed, `wk-balmora` timing, owner check.
+
+## As built (B1, 2026-10-26): chain warp and `Progress` montages
+
+**What existed.** Layer 1 (animation-layers.md) already warps `Drive` players and montages: clip
+`warp` event windows (`WarpWindow`, payload `target;skew|scale;rot=..;y=..;point=..`) compiled per
+clip, and `apply_warp` re-skews each update's root delta onto a per-update `WarpTarget` (UE's skew
+warp, moving targets, `max_dist`/`max_turn` clamps). It is incremental and dt-driven, single clip,
+no profiles, no refusal. B1 reuses its windows as the contact-bounded warp window and leaves
+`apply_warp` for attack tracking; the fixed-target closed form is new.
+
+**Added in `sf_anim` (`src/warp.rs`)**, re-exported by `sf_anim_graph`:
+- `RootPose { position, yaw }`; `RootPath` trait (`duration`, `root_at(t) -> RootPose`,
+  `warp_window() -> Option<(f32, f32)>`), implemented for `Clip` (first `warp` event window),
+  `&T`, `Arc<T>`.
+- `RootChain<P: RootPath>::new(parts)`: clips back to back, each continuing from the previous
+  end; `locate(t) -> (part, local)` (a boundary belongs to the next part), `carrier()` (most root
+  displacement among windowed parts, else all), `warp_window()` = the carrier's window (else its
+  span) in chain time.
+- `WarpProfile::{Linear, Late}` (`u`, `u³`); `WarpPlan::new(path, start, target, profile)`,
+  `try_new(.., refuse_ratio) -> Result<WarpPlan, WarpRefused>`, `ratio()` (|correction| / |chain
+  displacement|; a still chain: 0 if no correction, else ∞), `check`, `weight(t)`,
+  `root_at(path, t) -> RootPose` = `start ⊕ baked(t) + correction × profile(u)`, yaw alike.
+  Plain serde data: gameplay can keep the plan in `ActionState`; clips are passed per call.
+- `RootMotionMode::Progress` (a fourth mode). In montage slots: `GraphInstance::set_slot_progress(
+  slot, chain_secs)` sets the playhead before `update`, `dt` is ignored; queued `Progress` requests
+  play back to back (each from `from` to its end; `Montage::offset`), handing over on the same
+  update with the finished montage's last events reported; reverse progress stays inside the
+  playing montage; no call = hold; past the last end the montage ends as usual. Root output is not
+  applied (not `Drive`). `MontageStatus::chain_time`. A graph player node treats `Progress` as
+  `Ignore` (a param-driven player is not built).
+
+**Why `sf_anim`, not `sf_anim_graph`** (R11b item 2 said the graph crate): `sf_action` already
+reaches `sf_anim` through `sf_controller`, so the edge adds no crate to its build; `sf_anim_graph`
+would. **No `sf_action` call site yet**: the edge needs `sf_anim.workspace = true` in
+`sf_action/Cargo.toml` and a `Cargo.lock` line, both left for B2 (another session held the lock).
+
+**Industry.** UE Motion Warping's Skew Warp recomputes the remaining root motion every frame
+(our Layer 1); its Adjustment Blend Warp adds the target-minus-end difference over the window as an
+additive, which is B1's shape (AC1's `start + root(t) + correction × k`, R3 §5). Unity's
+`Animator.MatchTarget` lerps the correction linearly over a normalised window. GASP traversal uses
+several targets per montage (front ledge, back ledge, floor); B1 has one target per plan, so a vault
+over and down chains two plans (one per window) in B2. Differences on purpose: fixed target at start
+(net-ready, same root on the fixed tick and every frame), profiles, refusal before starting.
+
+**Tests.** `sf_anim` `warp::tests` (chain composition and carrier, profiles land on target, Late
+0.125 at mid-window, refusal); `sf_anim_graph` `tests::progress`: a cooked two-clip chain (enter
+turning 0.3 rad, pull-up with a `warp` window) as late-bound `Progress` montages at 30/60/144 Hz
+with the clock at 0.75× frame time: chain time and clip time equal the supplied progress each
+update (≤ 1e-5), each clip's contact event fires once, notices Started/Ended in order; hold and
+reverse; Linear and Late end ≤ 2 cm / 2° (exact to float), no correction before the window, Late
+≤ 0.15 at mid-window; zero correction equals the baked root bit for bit; ratio 0.30 accepted and 0.40
+refused at 0.35.
+
+**For B2.** Add the `sf_anim` dep and `Owner::Warp(target, profile, refuse_ratio, steer)`; plan at
+move start from the slot chain's clips (give `SlotSource` a root path per slot, or let the shell
+build the `RootChain`), keep the `WarpPlan` in `ActionState`, refuse with `MaxCorrection` through
+`WarpPlan::check`, write `ActionOutput` playhead as chain seconds into `set_slot_progress`, and move
+the gameplay body to `plan.root_at(chain, clock)`. The shell can evaluate the same plan at render-rate
+progress for interpolation. Open: `from`/`end_early` on chain parts (the chain path assumes 0/0),
+vertical-only vs full 3D correction (all three axes now), multi-window plans, `steer`.

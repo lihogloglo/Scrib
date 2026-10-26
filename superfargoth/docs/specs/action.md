@@ -333,7 +333,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 |---|---|---|
 | **A1** backbone | done 2026-10-21: see "As built (A1)" | `cargo test -p sf_action` |
 | **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
-| **B1** progress + chain warp | `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
+| **B1** progress + chain warp | done 2026-10-26 (see "As built (B1)"; `sf_action` call site left for B2): `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
 | **B2** mantle and vault | Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
 | **B3** ledge catch and hang | Docked mover mode; ledge catch from jump and fall, hang, shimmy, climb up, drop to hang (`Down`), let go; hand IK latched on the lip | course `ledges`: 2.0/2.5 m boxes and the 3.5 m wall: catch, shimmy to the end, climb up; hands ≤ 1 cm off the lip; jolt test (R2 adopt 3) |
 | **B4** edge index + ladders | `sf_interaction` edges baked from collision per cell; ladders as edges with rung IK, enter/exit top and bottom | new level `ladders` (2 ladders, one to a roof); rungs ≤ 1 cm; edge census over Balmora rooftops (count, bake time ≤ 5 % of the cold bake) |
@@ -376,4 +376,17 @@ integer clocks and FNV-1a ids; requests wait for windows; jump buffer and coyote
 rule vocabulary; candidates; the "press to use" hook; net serde): [archive](archive/action-history.md#as-built-a1-changes-against-the-design).
 
 Moved to [history](archive/action-history.md#as-built-a2-slice-1-2026-10-22-sf_action_bevy).
+
+## As built (B1, 2026-10-26)
+
+The warp function is `sf_anim::WarpPlan` (re-exported by `sf_anim_graph`; in `sf_anim` because
+`sf_action` already reaches it through `sf_controller`): `WarpPlan::try_new(&RootChain, start,
+target, Linear | Late, refuse_ratio)` fixes the correction at start, `root_at(&chain, t)` gives
+`start ⊕ baked(t) + correction × profile(t)` inside the carrier clip's Layer 1 `warp` window (else
+its span). `RootMotionMode::Progress` montages take their playhead from
+`GraphInstance::set_slot_progress(slot, chain_secs)`, queued ones back to back. Layer 1's per-update
+skew warp stays for `Drive` (attack tracking). Our form is UE's Adjustment Blend Warp / AC1's
+additive correction, one target per plan (GASP uses several; B2 chains plans). No `sf_action` call
+site yet (needs the `sf_anim` dep and a lock line). API, tests, B2 notes:
+[history](archive/action-history.md#as-built-b1-2026-10-26-chain-warp-and-progress-montages).
 

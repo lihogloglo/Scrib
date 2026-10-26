@@ -37,7 +37,10 @@ What changes in this spec (each is built in the action.md phase named):
    `arc` mode (ballistic flight with a clip-given arrival time, R5 adopt 8), and `mode=scale` with
    min/max clamps and a stand-off for attack lunges (exempt from the 2 cm check; R6 adapt). The warp
    function stays Bevy-free in `sf_anim_graph` and is called by both the graph (presentation) and
-   `sf_action` (gameplay root).
+   `sf_action` (gameplay root). **Built (B1, 2026-10-26)** as `sf_anim::WarpPlan` / `RootChain`
+   (moved to `sf_anim` so `sf_action` needs no `sf_anim_graph` edge) with `Linear`/`Late` and the
+   refusal ratio; items 1 and 2 as built: action.md "As built (B1)". Not yet: variant mixing,
+   `arc`, `mode=scale` lunges.
 3. **Typed windows and window-gated interruption** (phases B2, E1; R5 adopt 1, R6 adopt 2).
    `animgraph.compile` parses clip `Event` windows into the typed vocabulary of action.md
    "Windows" (accept, cancel per action class, tail, turn, lunge, contact, i-frames, hit, camera...).
