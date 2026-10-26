@@ -479,6 +479,31 @@ fn assert_t_pose(skeleton: &Skeleton, map: &RigMap) {
 }
 
 #[test]
+fn auto_align_points_a_collinear_foot_forward() {
+    // A mocap zero pose's leg (LaFAN1-style BVH): the toes continue the shin's
+    // line, straight down or folded back up it. The foot's rest direction is
+    // then meaningless, so it points forward (+Z, flat) after the align.
+    for sign in [1.0, -1.0] {
+        let mut spec = vrm_names();
+        let at = |spec: &RigSpec, n: &str| spec.joints.iter().find(|j| j.0 == n).unwrap().2;
+        for s in ["Left", "Right"] {
+            let (knee, ankle) = (at(&spec, &format!("{s}LowerLeg")), at(&spec, &format!("{s}Foot")));
+            let toe = ankle + (ankle - knee).normalize() * 0.12 * sign;
+            spec.joints.iter_mut().find(|j| j.0 == format!("{s}Toes")).unwrap().2 = toe;
+        }
+        let skeleton = spec.build(false, false);
+        let (mut map, _) = auto_map(&skeleton);
+        let report = map.auto_align(&skeleton);
+        assert!(report.max_residual_deg < 0.05, "{report:?}");
+        for (foot, toes) in [(B::LeftFoot, B::LeftToes), (B::RightFoot, B::RightToes)] {
+            let d = dir(&skeleton, &map, foot, toes);
+            assert!(d.angle_between(Vec3::Z).to_degrees() < 0.05, "{foot:?} → toes {d} (sign {sign})");
+        }
+        assert_t_pose(&skeleton, &map);
+    }
+}
+
+#[test]
 fn auto_align_reaches_the_canonical_t_pose() {
     // A-pose, facing −Z, scrambled joint axes.
     let skeleton = biped().build(true, true);

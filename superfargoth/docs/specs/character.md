@@ -177,6 +177,18 @@ part of resolution. The first-person view resolves the same way from the
   `A_TPose` clip: arms within 1°, legs 0.4–4.6°, spine 7° (we straighten
   the spine, Quaternius keeps its curve; both rigs of a pair are aligned
   the same way, so deltas stay consistent; adapters may override).
+  **As built (2026-10-26), degenerate feet:** a foot whose rest direction to
+  the toes lies within 30° of the shin's line (parallel or folded back: a
+  mocap zero pose such as LaFAN1's, every bone along one axis) points
+  forward (+Z, flat) instead of keeping it. Detectable and deterministic, so
+  built as fix (a); rigs with a real foot (Quaternius, Morrowind, the test
+  rigs: 60°+ off the shin) are unchanged. Test
+  `auto_align_points_a_collinear_foot_forward`. Not built yet: (b) a
+  per-source retarget pose taken from a clip frame, and root motion for
+  sources whose rest hips sit off the origin (see the LaFAN1 handoff:
+  `Retargeter::pose` moves the target hips by the source's offset from its
+  retarget-pose hips, so a meaningless rest hips position shifts the body
+  off its root).
 - **`RigMap::retarget_rig`** builds `sf_anim`'s `RetargetRig`: chains
   `hips`, `spine` (every joint from spine to the highest torso bone, unmapped
   ones included, so 5 and 3 spine joints pair by arc length), `neck` (neck

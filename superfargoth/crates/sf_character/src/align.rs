@@ -10,7 +10,10 @@
 //! 2. **Swing alignment**, parents first, by the shortest rotation that
 //!    points the bone at its child: hips, spine and neck joints up (+Y);
 //!    upper and lower legs down (−Y); feet keep their original (facing
-//!    corrected) direction to the toes, so they stay flat; upper arms,
+//!    corrected) direction to the toes, so they stay flat, unless that
+//!    direction is degenerate (within 30° of the bone above's line, as in
+//!    a mocap zero pose with every bone in one line), when they point
+//!    forward (+Z, flat) instead; upper arms,
 //!    lower arms and hands along ±X; non-thumb finger segments along ±X.
 //!    Shoulders, thumbs, head, eyes and jaw keep their rest rotation.
 //!
@@ -44,9 +47,14 @@ struct Target {
 
 enum Dir {
     Fixed(Vec3),
-    /// Keep the facing-corrected rest direction.
-    Rest,
+    /// Keep the facing-corrected rest direction, or this one when the rest
+    /// direction is degenerate (collinear with the parent bone, either way).
+    Rest(Vec3),
 }
+
+/// A chain end whose rest direction lies within 30° of its parent bone's
+/// line (parallel or opposite) has no usable rest direction.
+const DEGENERATE_COS: f32 = 0.866;
 
 fn rotation_of(m: &Affine3A) -> Quat {
     m.to_scale_rotation_translation().1.normalize()
@@ -157,7 +165,7 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
         let out = Vec3::X * s.sign();
         push(limb(Limb::UpperLeg), limb(Limb::LowerLeg), Dir::Fixed(Vec3::NEG_Y));
         push(limb(Limb::LowerLeg), limb(Limb::Foot), Dir::Fixed(Vec3::NEG_Y));
-        push(limb(Limb::Foot), limb(Limb::Toes), Dir::Rest);
+        push(limb(Limb::Foot), limb(Limb::Toes), Dir::Rest(Vec3::Z));
         push(limb(Limb::UpperArm), limb(Limb::LowerArm), Dir::Fixed(out));
         push(limb(Limb::LowerArm), limb(Limb::Hand), Dir::Fixed(out));
         let finger = |f: Finger, k: usize| HumanoidBone::finger(s, f, k).and_then(joint);
@@ -178,12 +186,17 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
     targets.sort_by_key(|t| t.joint);
     targets.dedup_by_key(|t| t.joint);
 
-    let rest_dir = |t: &Target| (pos(&rest_model, t.child) - pos(&rest_model, t.joint)).normalize_or_zero();
+    let goal_of = |t: &Target| match t.dir {
+        Dir::Fixed(v) => v,
+        Dir::Rest(fallback) => {
+            let d = (pos(&rest_model, t.child) - pos(&rest_model, t.joint)).normalize_or_zero();
+            let above =
+                skeleton.parent(t.joint).map_or(Vec3::ZERO, |p| (pos(&rest_model, t.joint) - pos(&rest_model, p)).normalize_or_zero());
+            if d.dot(above).abs() > DEGENERATE_COS { fallback } else { d }
+        }
+    };
     for t in &targets {
-        let goal = match t.dir {
-            Dir::Fixed(v) => v,
-            Dir::Rest => rest_dir(t),
-        };
+        let goal = goal_of(t);
         let d = (pos(&model, t.child) - pos(&model, t.joint)).normalize_or_zero();
         if d == Vec3::ZERO || goal == Vec3::ZERO {
             continue;
@@ -200,10 +213,7 @@ pub fn auto_align(skeleton: &Skeleton, map: &RigMap) -> (Vec<(JointName, Quat)>,
 
     // Residuals and the changed joints.
     for t in &targets {
-        let goal = match t.dir {
-            Dir::Fixed(v) => v,
-            Dir::Rest => rest_dir(t),
-        };
+        let goal = goal_of(t);
         let d = (pos(&model, t.child) - pos(&model, t.joint)).normalize_or_zero();
         if d != Vec3::ZERO && goal != Vec3::ZERO {
             report.max_residual_deg = report.max_residual_deg.max(d.angle_between(goal).to_degrees());
