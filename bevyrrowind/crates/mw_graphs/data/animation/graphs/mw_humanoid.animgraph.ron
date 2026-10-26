@@ -175,6 +175,7 @@
     "WeaponTwoWide@slash": (source: "WeaponTwoWide@slash", optional: true, fallback: Some(Drop)),
     "WeaponTwoWide@thrust": (source: "WeaponTwoWide@thrust", optional: true, fallback: Some(Drop)),
     "WeaponTwoWide@unequip": (source: "WeaponTwoWide@unequip", optional: true, fallback: Some(Drop)),
+    "traverse.mantle.waist": (source: "quaternius_ual1:ClimbLedge_RM", optional: true, fallback: Some(Drop)),
   },
   masks: {
     "left_arm": (default: 0.0, rules: [(joint: Rig("leftShoulder"), weight: 1.0, subtree: true)]),
@@ -348,5 +349,6 @@
     "SpellCast@target",
     "SpellCast@unequip",
     "Shield@block",
+    "traverse.mantle.waist",
   ],
 )

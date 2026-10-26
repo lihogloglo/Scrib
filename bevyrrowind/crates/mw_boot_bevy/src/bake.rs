@@ -44,8 +44,11 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let terrain = Arc::new(MwTerrainSource::new(db.clone()));
     let layers = Arc::new(world::MwLayers::new(&db, &vfs));
     let extra: Vec<_> = world::source_tile_fingerprints(&terrain).into_iter().chain(layers.fingerprints()).collect();
+    // The user's animation libraries (animation-sources.md): optional, BYO.
+    let anim_sources = Arc::new(mw_bake::sources::AnimSources::local());
     let inputs = Arc::new(
         VfsInputs::new(vfs.clone(), install, root.join("filehash.memo"))
+            .with_anim_sources(anim_sources.clone())
             .with_records(db.clone())
             .with_extra_records(extra),
     );
@@ -60,7 +63,7 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     // Far field (far-field.md): L1-L3 proxies and impostors over the exterior.
     let far = mw_bake::far::bake_far(&mut baker, &db, &[world::exterior()]);
     // Animation (bake-adapter.md "Animation"): skeletons, clips and graphs of every actor.
-    let anim = bake_actors(&mut baker, &db, &vfs);
+    let anim = bake_actors(&mut baker, &db, &vfs, &anim_sources);
     // Item bodies and the settle test of placed items (physics-adapter.md "Items").
     let bodies = mw_bake::body::bake_bodies(&baker, &db, &paths);
     let items = mw_bake::body::check_items(&mut baker, &db);
@@ -180,9 +183,14 @@ fn print_rest_cooks(manifest: &sf_bake::Manifest, store: &Store, models: &std::c
 /// The animation bake's line (bake-adapter.md "Animation") and its first failures.
 /// Actor animation, then creature bodies cooked for their rig (`mesh.rig`,
 /// character.md "Node-animated creatures"; failures named).
-fn bake_actors(baker: &mut sf_bake::Baker, db: &Arc<sf_records::RecordDb>, vfs: &Arc<sf_vfs::Vfs>) -> mw_bake::anim::AnimBakeReport {
+fn bake_actors(
+    baker: &mut sf_bake::Baker,
+    db: &Arc<sf_records::RecordDb>,
+    vfs: &Arc<sf_vfs::Vfs>,
+    anim_sources: &mw_bake::sources::AnimSources,
+) -> mw_bake::anim::AnimBakeReport {
     let sets = mw_bake::anim::actor_sets(db, vfs);
-    let anim = mw_bake::anim::bake_animation(baker, &sets);
+    let anim = mw_bake::anim::bake_animation(baker, &sets, anim_sources);
     let mut keys = sets.body_rig_keys();
     keys.extend(held_rest_keys(db, vfs));
     let report = baker.bake(&keys);
@@ -238,6 +246,11 @@ fn print_animation(anim: &mw_bake::anim::AnimBakeReport) {
         "animation: {} actor sets, {} files, {} group clips, {} graphs; phase 1 {:.2?}, phase 2 {:.2?}",
         anim.sets, anim.files, anim.group_clips, anim.graphs, anim.phase1, anim.phase2
     );
+    // Library slots (animation-sources.md): source used, or the fallback and why.
+    println!("animation sources: {} library clips retargeted", anim.library_clips);
+    for line in &anim.slots {
+        println!("  slot {line}");
+    }
     for (key, error) in anim.failures.iter().take(10) {
         eprintln!("  failed: {key}: {error}");
     }

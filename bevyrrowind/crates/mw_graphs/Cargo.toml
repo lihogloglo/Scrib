@@ -11,6 +11,8 @@ glam.workspace = true
 mw_anim.workspace = true
 mw_nif.workspace = true
 ron.workspace = true
+# `sources`: the animation-sources manifest types.
+serde.workspace = true
 sf_anim.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }
 sf_bake.workspace = true

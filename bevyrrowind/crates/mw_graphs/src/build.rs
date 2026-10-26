@@ -56,6 +56,15 @@ impl Template {
         }
     }
 
+    /// The template's name in the animation-sources manifest (`Slot::graph`).
+    pub fn sources_name(self) -> &'static str {
+        match self {
+            Self::Humanoid => "humanoid",
+            Self::FirstPerson => "first_person",
+            Self::Creature => "creature",
+        }
+    }
+
     fn stances(self) -> &'static [Stance] {
         match self {
             Self::Humanoid | Self::FirstPerson => &Stance::ALL,
@@ -646,6 +655,13 @@ impl Builder {
                 slot_clips.push(self.clip(&format!("Attack{n}"), true, None));
             }
         }
+        // Clip slots of the animation-sources manifest (libraries the user
+        // brings): optional chains, dropped when no library is present.
+        let (clips, slots) = crate::sources::SourcesManifest::builtin().graph_clips(self.t.sources_name());
+        for (name, clip) in clips {
+            self.a.clips.entry(name).or_insert(clip);
+        }
+        slot_clips.extend(slots);
         self.a.slot_clips = slot_clips;
         // Playback follows the measured speed over the cycle's authored root
         // speed (animfix 2026-10-12: walk 2.2 m/s, run 3.2 m/s; NPC walkers

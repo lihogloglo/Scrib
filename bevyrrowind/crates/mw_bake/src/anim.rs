@@ -18,6 +18,12 @@
 //!   section and loop tail; rig hints) and `GraphRules` (graph reference
 //!   `Group`, `Group@section`, `Group@tail` → `anim.cook` product on the
 //!   actor's skeleton, with layering).
+//! - Library clips ([`crate::sources`], animation-sources.md): a graph
+//!   reference `source:clip` cooks on the library file's own skeleton
+//!   (`skeleton.cook` of `animsrc/<source>/<file>`, auto-mapped humanoid rig)
+//!   and `anim.retarget`s onto the actor's humanoid skeleton, with the
+//!   source's license as provenance; a missing file drops the clip
+//!   ([`SourceClipsStep`] lists a present file's clips first).
 //! - [`AnimLibrary`]: the Bevy-free loading API: an actor's cooked
 //!   skeleton, rig profile, compiled graph and clips from the store.
 //!
@@ -36,23 +42,31 @@ use mw_actors::{CREATURE_KIND, MwActors, NPC_KIND};
 use mw_anim::{Animation, KfAnimImporter, NifAnimImporter};
 use mw_graphs::{HUMANOID_SETS, HumanoidSet};
 use serde::{Deserialize, Serialize};
-use sf_anim::steps::{ANIM_COOK, AnimBake, AnimImporters, AnimRules, ClipSpec, RIG_PROFILE, SKELETON_COOK, anim_subject, parse_anim_subject};
-use sf_anim::{Clip, ClipRules, CookSettings, Looping, RigHints, RigProfile, Skeleton, SkeletonRules};
-use sf_anim_graph::CompiledGraph;
+use sf_anim::steps::{
+    ANIM_COOK, ANIM_RETARGET, AnimBake, AnimImporters, AnimRules, ClipSpec, RIG_PROFILE, SKELETON_COOK, anim_subject, parse_anim_subject,
+    retarget_subject,
+};
+use sf_anim::{Clip, ClipRules, CookSettings, Looping, RetargetRig, RigHints, RigProfile, Skeleton, SkeletonRules};
+use sf_anim_graph::{CompiledGraph, Provenance};
 use sf_anim_graph::steps::{ANIMGRAPH_COMPILE, AnimGraphCompileStep, GraphRig, GraphRules, graph_subject};
 use sf_bake::{BakeError, Baker, Digest, Manifest, PlanCx, ProductKey, RunCx, Step, Store};
-use sf_character::{CharacterRecipe, CharacterSource, CharacterState, HumanoidBone};
+use sf_character::{CharacterRecipe, CharacterSource, CharacterState, HumanoidBone, RetargetOptions};
 use sf_records::{RecordDb, RecordId};
 use sf_vfs::{Vfs, VfsPath};
 use tes3::esp::{Creature, Npc, NpcFlags, Race, RaceFlags};
 
+use crate::sources::AnimSources;
+
 /// The `mw.anim.groups` step id.
 pub const ANIM_GROUPS: &str = "mw.anim.groups";
 
+/// The `mw.anim.source_clips` step id.
+pub const SOURCE_CLIPS: &str = "mw.anim.source_clips";
+
 /// The animation importers of the bake: `.kf` and `.nif` (skeletons and
-/// model keyframes).
+/// model keyframes), glTF/GLB (the user's clip libraries, [`crate::sources`]).
 pub fn anim_importers() -> AnimImporters {
-    AnimImporters::new().with(Arc::new(KfAnimImporter)).with(Arc::new(NifAnimImporter))
+    AnimImporters::new().with(Arc::new(KfAnimImporter)).with(Arc::new(NifAnimImporter)).with(Arc::new(sf_anim::GltfAnimImporter))
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +140,42 @@ impl Step for AnimGroupsStep {
             Animation::from_file(subject, &bytes).map_err(|e| BakeError::step(&ProductKey::new(ANIM_GROUPS, subject), e.to_string()))?;
         let groups: Vec<GroupInfo> = animation.groups().iter().map(GroupInfo::of).collect();
         Ok(postcard::to_stdvec(&groups).expect("in-memory serialization"))
+    }
+}
+
+/// `mw.anim.source_clips`: the clip names a library file holds (postcard
+/// `Vec<String>`), so a slot whose clip the user's version of the file lacks
+/// falls back instead of failing its graph.
+pub struct SourceClipsStep;
+
+impl SourceClipsStep {
+    pub fn decode(bytes: &[u8]) -> Result<Vec<String>, postcard::Error> {
+        postcard::from_bytes(bytes)
+    }
+}
+
+impl Step for SourceClipsStep {
+    fn id(&self) -> &'static str {
+        SOURCE_CLIPS
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
+        cx.file(subject);
+        Ok(())
+    }
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        let key = ProductKey::new(SOURCE_CLIPS, subject);
+        let bytes = cx.read_file(subject)?;
+        let gltf = std::path::Path::new(subject).extension().is_some_and(|e| e.eq_ignore_ascii_case("glb") || e.eq_ignore_ascii_case("gltf"));
+        let names = if gltf {
+            sf_anim::list_gltf_clips(subject, &bytes).map_err(|e| BakeError::step(&key, e.to_string()))?
+        } else {
+            let importer = anim_importers().for_path(subject).cloned().ok_or_else(|| BakeError::step(&key, "no animation importer"))?;
+            importer.import(subject, &bytes).map_err(|e| BakeError::step(&key, e.to_string()))?.clips.into_iter().map(|c| c.name).collect()
+        };
+        Ok(postcard::to_stdvec(&names).expect("in-memory serialization"))
     }
 }
 
@@ -324,7 +374,26 @@ struct SkeletonData {
     watch: Vec<String>,
     hints: RigHints,
     rig: GraphRig,
+    /// The humanoid retarget rig (`anim.retarget` source or target).
+    retarget: Option<RetargetRig>,
 }
+
+/// A library clip reference (`quaternius_ual1:ClimbLedge_RM`) as the rules
+/// resolve it.
+#[derive(Clone, Debug)]
+struct LibraryRef {
+    /// Virtual path of the library file (the source skeleton too).
+    file: String,
+    spec: ClipSpec,
+    provenance: Provenance,
+    /// `None`: the file is missing (the graph compile checks it and drops
+    /// the clip); `Some(false)`: present but unusable (no such clip, or
+    /// its skeleton didn't map), so the reference doesn't resolve.
+    usable: Option<bool>,
+}
+
+/// Base of [`GraphRules::version`].
+const GRAPH_RULES_VERSION: u32 = 2;
 
 /// The adapter's `AnimRules` and `GraphRules`, built from the group tables
 /// and cooked skeletons of [`bake_animation`]'s first phase. Deterministic
@@ -333,6 +402,8 @@ struct SkeletonData {
 pub struct MwAnimRules {
     groups: HashMap<String, Vec<GroupInfo>>,
     skeletons: HashMap<String, SkeletonData>,
+    /// Library clip references ([`crate::sources`]) by reference.
+    library: BTreeMap<String, LibraryRef>,
 }
 
 impl MwAnimRules {
@@ -362,11 +433,60 @@ impl MwAnimRules {
                 data.hints.profile = rig.map.profile(skeleton).ok();
                 data.rig.joints =
                     HumanoidBone::ALL.iter().filter_map(|b| rig.map.joint(*b).map(|j| (b.name().to_owned(), j.to_owned()))).collect();
+                // Target of library clips: legs keep the source's contacts by IK.
+                data.retarget = rig.map.retarget_rig(skeleton, RetargetOptions::default()).ok();
             }
         } else {
             data.hints = mw_anim::rig::creature_hints(&set.skeleton);
         }
         self.skeletons.insert(set.skeleton.clone(), data);
+    }
+
+    /// Adds every library clip reference of `sources` (unresolved until
+    /// [`Self::add_library_file`] sees its file).
+    pub fn add_library(&mut self, sources: &AnimSources) {
+        for (file, r) in sources.references() {
+            let source = &sources.manifest.sources[&r.source];
+            let provenance = Provenance { source: r.source.clone(), license: source.license.tag().to_owned(), redistributable: source.redistributable() };
+            let spec = ClipSpec { source: r.clip.clone(), rules: r.rules.clone() };
+            self.library.insert(r.reference.clone(), LibraryRef { file, spec, provenance, usable: None });
+        }
+    }
+
+    /// A present library file: its cooked skeleton (auto-mapped humanoid
+    /// rig, the retarget source) and the clip names it holds. Returns the
+    /// references it can't serve, with why.
+    pub fn add_library_file(&mut self, file: &str, skeleton: Option<&Skeleton>, clips: &[String]) -> Vec<(String, String)> {
+        let rig = skeleton.and_then(|s| {
+            let (mut map, _) = sf_character::auto_map(s);
+            map.auto_align(s);
+            let retarget = map.retarget_rig(s, RetargetOptions { ik_legs: false }).ok()?;
+            Some((s, map, retarget))
+        });
+        let mapped = rig.is_some();
+        if let Some((s, map, retarget)) = rig {
+            let hints = RigHints { profile: map.profile(s).ok(), ..RigHints::default() };
+            self.skeletons.insert(file.to_owned(), SkeletonData { hints, retarget: Some(retarget), ..SkeletonData::default() });
+        }
+        let mut refused = Vec::new();
+        for (reference, r) in self.library.iter_mut().filter(|(_, r)| r.file == file) {
+            let has_clip = clips.contains(&r.spec.source);
+            r.usable = Some(mapped && has_clip);
+            if !mapped {
+                refused.push((reference.clone(), "its skeleton has no humanoid retarget rig".to_owned()));
+            } else if !has_clip {
+                refused.push((reference.clone(), format!("the file has no clip {:?} (another version?)", r.spec.source)));
+            }
+        }
+        refused
+    }
+
+    /// The `anim.retarget` product of a usable (or not yet checked) library
+    /// reference on a humanoid target skeleton.
+    fn library_product(&self, skeleton: &str, reference: &str) -> Option<ProductKey> {
+        let r = self.library.get(reference).filter(|r| r.usable != Some(false))?;
+        self.skeletons.get(skeleton)?.retarget.as_ref()?;
+        Some(ProductKey::new(ANIM_RETARGET, retarget_subject(skeleton, &anim_subject(&r.file, &r.file, reference))))
     }
 
     fn file_group(&self, file: &str, group: &str) -> Option<&GroupInfo> {
@@ -404,7 +524,11 @@ impl AnimRules for MwAnimRules {
         Self::skeleton_rules()
     }
     /// The subject pins the file, so only that file's group table counts.
+    /// Library references carry the manifest's clip and cook rules.
     fn clip(&self, file: &str, clip: &str, _skeleton: &str) -> ClipSpec {
+        if let Some(r) = self.library.get(clip).filter(|r| r.file == file) {
+            return r.spec.clone();
+        }
         let (group, part) = split_reference(clip);
         self.file_group(file, group)
             .and_then(|g| Some(ClipSpec { source: g.name.clone(), rules: g.rules(part)? }))
@@ -413,23 +537,51 @@ impl AnimRules for MwAnimRules {
     fn rig_hints(&self, path: &str) -> RigHints {
         self.skeletons.get(path).map(|s| s.hints.clone()).unwrap_or_default()
     }
+    fn rig(&self, path: &str) -> Option<RetargetRig> {
+        self.skeletons.get(path).and_then(|s| s.retarget.clone())
+    }
 }
 
 impl GraphRules for MwAnimRules {
+    /// Morrowind references cook on the actor's skeleton; library
+    /// references (`source:clip`) cook on the library's skeleton and
+    /// retarget onto the actor's.
     fn clip_product(&self, _graph: &str, skeleton: &str, reference: &str) -> Option<ProductKey> {
+        if self.library.contains_key(reference) {
+            return self.library_product(skeleton, reference);
+        }
         let (file, _) = self.resolve(skeleton, reference)?;
         Some(ProductKey::new(ANIM_COOK, anim_subject(skeleton, file, reference)))
     }
     /// Every file of the set and its candidates: a group added to a
     /// higher-priority file (or a new `x<model>.kf`) recompiles the graph.
-    fn clip_files(&self, _graph: &str, skeleton: &str, _reference: &str) -> Vec<String> {
+    /// A library reference needs its library file: dropping the file into
+    /// the folder recompiles the graphs that asked for it.
+    fn clip_files(&self, _graph: &str, skeleton: &str, reference: &str) -> Vec<String> {
+        if let Some(r) = self.library.get(reference) {
+            return vec![r.file.clone()];
+        }
         self.skeletons.get(skeleton).map(|s| s.watch.clone()).unwrap_or_default()
+    }
+    /// Library clips carry their source and license; Morrowind's own clips
+    /// keep the default.
+    fn provenance(&self, _graph: &str, reference: &str, _product: &ProductKey) -> Provenance {
+        self.library.get(reference).map(|r| r.provenance.clone()).unwrap_or_default()
     }
     fn rig(&self, skeleton: &str) -> GraphRig {
         self.skeletons.get(skeleton).map(|s| s.rig.clone()).unwrap_or_default()
     }
+    /// 2: library references. A present library file that can't serve a
+    /// reference changes the answer without changing any recorded input
+    /// (the reference no longer resolves, so its file isn't checked), so
+    /// those references are folded in: fixing the file recompiles.
     fn version(&self) -> u32 {
-        1
+        let refused: Vec<&str> = self.library.iter().filter(|(_, r)| r.usable == Some(false)).map(|(k, _)| k.as_str()).collect();
+        if refused.is_empty() {
+            return GRAPH_RULES_VERSION;
+        }
+        let d = Digest::of(refused.join("\n").as_bytes());
+        GRAPH_RULES_VERSION ^ (u32::from_le_bytes([d.0[0], d.0[1], d.0[2], d.0[3]]) | 1 << 31)
     }
 }
 
@@ -449,6 +601,47 @@ pub struct AnimBakeReport {
     pub phase1: Duration,
     pub phase2: Duration,
     pub failures: Vec<(ProductKey, String)>,
+    /// Library clips retargeted (`anim.retarget` products requested).
+    pub library_clips: usize,
+    /// Per manifest slot: where it came from or why it fell back
+    /// (`traverse.mantle.waist: quaternius_ual1:ClimbLedge_RM`).
+    pub slots: Vec<String>,
+}
+
+/// Per manifest slot, its first usable candidate's `anim.retarget` keys onto
+/// every set whose graphs include the slot's template (as the graph compile
+/// will pick it), and the report line: the reference, or the fallback with
+/// why each candidate was passed over.
+fn library_keys(rules: &MwAnimRules, sets: &ActorSets, sources: &AnimSources, refused: &[(String, String)], keys: &mut Vec<ProductKey>) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (name, slot) in &sources.manifest.slots {
+        let graph = mw_graphs::Template::ALL.into_iter().find(|t| t.sources_name() == slot.graph).map(mw_graphs::Template::path);
+        let mut why = Vec::new();
+        let mut from = None;
+        for c in &slot.candidates {
+            let reference = c.reference();
+            let Some(r) = rules.library.get(&reference) else { continue };
+            match r.usable {
+                Some(true) => {
+                    for set in sets.sets.values().filter(|s| graph.is_some_and(|g| s.graphs.contains(g))) {
+                        keys.extend(rules.library_product(&set.skeleton, &reference));
+                    }
+                    from = Some(reference);
+                    break;
+                }
+                Some(false) => {
+                    let reason = refused.iter().find(|(x, _)| *x == reference).map_or("unusable", |(_, w)| w.as_str());
+                    why.push(format!("{reference}: {reason}"));
+                }
+                None => why.push(format!("{reference}: {} not in the library folder", r.file)),
+            }
+        }
+        lines.push(match from {
+            Some(r) => format!("{name}: {r}"),
+            None => format!("{name}: fallback {:?} ({})", slot.fallback, why.join("; ")),
+        });
+    }
+    lines
 }
 
 fn product_bytes(baker: &Baker, key: &ProductKey) -> Result<Vec<u8>, String> {
@@ -457,22 +650,32 @@ fn product_bytes(baker: &Baker, key: &ProductKey) -> Result<Vec<u8>, String> {
 }
 
 /// Registers the animation steps on `baker` and bakes every set: phase 1
-/// `skeleton.cook` and `mw.anim.groups`; phase 2 every layered group's
-/// `anim.cook` and every `(graph, skeleton)` pair's `animgraph.compile`
-/// with [`MwAnimRules`]. Leaves the phase-2 steps registered.
-pub fn bake_animation(baker: &mut Baker, sets: &ActorSets) -> AnimBakeReport {
+/// `skeleton.cook` and `mw.anim.groups` (and, for each library file of
+/// `sources` that is present, its skeleton and clip names); phase 2 every
+/// layered group's `anim.cook`, every usable library clip's `anim.retarget`
+/// onto the humanoid skeletons whose graph has its slot, and every
+/// `(graph, skeleton)` pair's `animgraph.compile` with [`MwAnimRules`].
+/// Leaves the phase-2 steps registered. The baker's inputs must serve the
+/// library paths ([`crate::VfsInputs::with_anim_sources`]).
+pub fn bake_animation(baker: &mut Baker, sets: &ActorSets, sources: &AnimSources) -> AnimBakeReport {
     let start = Instant::now();
     let mut report = AnimBakeReport { sets: sets.sets.len(), ..AnimBakeReport::default() };
     let files = sets.files();
     report.files = files.len();
+    let library_files: BTreeSet<String> =
+        sources.references().into_iter().map(|(file, _)| file).filter(|f| sources.real_path(f).is_some()).collect();
 
     // Phase 1: the skeleton rules don't depend on phase-1 products, so the
     // skeleton keys equal phase 2's.
     let phase1 = AnimBake::new(anim_importers(), Arc::new(MwAnimRules::default()), CookSettings::default());
     phase1.register(baker);
     baker.register(AnimGroupsStep);
+    baker.register(SourceClipsStep);
     let mut keys: Vec<ProductKey> = files.iter().map(|f| ProductKey::new(ANIM_GROUPS, *f)).collect();
     keys.extend(sets.sets.keys().map(|s| ProductKey::new(SKELETON_COOK, s.as_str())));
+    for file in &library_files {
+        keys.extend([ProductKey::new(SKELETON_COOK, file.as_str()), ProductKey::new(SOURCE_CLIPS, file.as_str())]);
+    }
     let first = baker.bake(&keys);
     phase1.clear_imports();
     report.failures.extend(first.failures().map(|(k, e)| (k.clone(), e.to_string())));
@@ -490,6 +693,16 @@ pub fn bake_animation(baker: &mut Baker, sets: &ActorSets) -> AnimBakeReport {
             rules.add_skeleton(set, &skeleton);
         }
     }
+    rules.add_library(sources);
+    let mut refused = Vec::new();
+    for file in &library_files {
+        let skeleton = product_bytes(baker, &ProductKey::new(SKELETON_COOK, file.as_str())).ok().and_then(|b| Skeleton::from_bytes(&b).ok());
+        let clips = product_bytes(baker, &ProductKey::new(SOURCE_CLIPS, file.as_str()))
+            .ok()
+            .and_then(|b| SourceClipsStep::decode(&b).ok())
+            .unwrap_or_default();
+        refused.extend(rules.add_library_file(file, skeleton.as_ref(), &clips));
+    }
     report.phase1 = start.elapsed();
 
     // Phase 2.
@@ -503,6 +716,8 @@ pub fn bake_animation(baker: &mut Baker, sets: &ActorSets) -> AnimBakeReport {
         report.group_clips += groups.len();
         keys.extend(groups.into_iter().map(|(file, group)| ProductKey::new(ANIM_COOK, anim_subject(&set.skeleton, file, group))));
     }
+    report.slots = library_keys(&rules, sets, sources, &refused, &mut keys);
+    report.library_clips = keys.iter().filter(|k| k.step == ANIM_RETARGET).count();
     let graphs: Vec<ProductKey> =
         sets.graph_pairs().filter(|(_, s)| rules.skeletons.contains_key(*s)).map(|(g, s)| ProductKey::new(ANIMGRAPH_COMPILE, graph_subject(g, s))).collect();
     report.graphs = graphs.len();
@@ -685,5 +900,35 @@ mod tests {
         let key = GraphRules::clip_product(&rules, "g", "s.nif", "WeaponOneHand@chop").unwrap();
         assert_eq!(key.subject, "s.nif|lo.kf|WeaponOneHand@chop");
         assert_eq!(AnimRules::clip(&rules, "lo.kf", "WeaponOneHand@chop", "s.nif").rules.range, Some((0.2, 0.8)));
+    }
+
+    #[test]
+    fn library_references_retarget_and_drop() {
+        const R: &str = "quaternius_ual1:ClimbLedge_RM";
+        const FILE: &str = "animsrc/quaternius_ual1/AnimationLibrary_Godot.glb";
+        let mut rules = MwAnimRules::default();
+        rules.add_library(&AnimSources::none());
+        assert!(rules.library.is_empty());
+        rules.add_library(&AnimSources::new(mw_graphs::sources::SourcesManifest::builtin().clone(), ""));
+        rules.skeletons.insert("t.nif".into(), SkeletonData { retarget: Some(RetargetRig::default()), ..SkeletonData::default() });
+        rules.skeletons.insert("creature.nif".into(), SkeletonData::default());
+
+        // File not seen yet: the product is named, the compile checks the file.
+        let key = GraphRules::clip_product(&rules, "g", "t.nif", R).unwrap();
+        assert_eq!((key.step.as_str(), key.subject.as_str()), (ANIM_RETARGET, format!("t.nif|{FILE}|{FILE}|{R}").as_str()));
+        assert!(GraphRules::clip_product(&rules, "g", "creature.nif", R).is_none(), "no humanoid rig");
+        assert_eq!(GraphRules::clip_files(&rules, "g", "t.nif", R), [FILE]);
+        let p = GraphRules::provenance(&rules, "g", R, &key);
+        assert_eq!((p.source.as_str(), p.license.as_str(), p.redistributable), ("quaternius_ual1", "CC0-1.0", true));
+        let spec = AnimRules::clip(&rules, FILE, R, FILE);
+        assert_eq!(spec.source, "ClimbLedge_RM");
+        assert_eq!(spec.rules.root_motion.mode, sf_anim::RootMotionMode::Progress);
+        assert_eq!(GraphRules::version(&rules), GRAPH_RULES_VERSION);
+
+        // Present without the clip (or a rig): unresolvable, and the rules' version moves.
+        let refused = rules.add_library_file(FILE, None, &["Idle_Loop".to_owned()]);
+        assert_eq!(refused.len(), 1);
+        assert!(GraphRules::clip_product(&rules, "g", "t.nif", R).is_none());
+        assert_ne!(GraphRules::version(&rules), GRAPH_RULES_VERSION);
     }
 }

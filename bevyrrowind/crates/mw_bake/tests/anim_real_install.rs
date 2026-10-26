@@ -42,7 +42,7 @@ fn bake(c: &Content, dir: &Path, sets: &ActorSets) -> (AnimBakeReport, Manifest,
     let store = Store::open(dir.join("store")).unwrap();
     let inputs = Arc::new(VfsInputs::new(c.vfs.clone(), &c.install, dir.join("filehash.memo")).with_records(c.db.clone()));
     let mut baker = Baker::new(store, inputs.clone());
-    let report = anim::bake_animation(&mut baker, sets);
+    let report = anim::bake_animation(&mut baker, sets, &mw_bake::sources::AnimSources::none());
     inputs.save().unwrap();
     let manifest = baker.manifest();
     (report, manifest, baker)

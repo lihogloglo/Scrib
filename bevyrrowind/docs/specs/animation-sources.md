@@ -1,6 +1,8 @@
 # Animation sources: bring-your-own libraries, licenses, import, creatures
 
-Status: draft (2026-10-11), design only; licenses checked 2026-10-11
+Status: first slice built (2026-10-26): manifest, library folder, retarget
+bake, one slot (UAL1 `ClimbLedge_RM` → `traverse.mantle.waist`); see "As built".
+Licenses checked 2026-10-11
 Crates: `mw_bake` (source manifest, clip selection, `GraphRules`), on top of
 superfargoth `sf_anim` (importers, `anim.cook`, `anim.retarget`,
 `rig.profile`), `sf_character` (rig auto-map), `sf_anim_graph` (optional
@@ -137,6 +139,24 @@ Morrowind KF). The compiled graph's `resolutions` table is the data of
 `non_redistributable()` is non-empty. The `source:file@frames` reference
 form above is a proposal for `mw_bake` (the framework treats references
 as opaque strings).
+
+## As built (2026-10-26)
+
+- Manifest: `mw_graphs/data/animation/sources.ron` (next to the graphs; types `mw_graphs::sources`). Candidates are
+  `(source, clip, file?, range? in seconds)`; slot cook rules `looping`, `root` (mode, default `Drive`), `vertical`,
+  `fallback`. Files carry `sha256` (recorded, not verified: no SHA-256 crate in the tree; `sha2` in the crate batch).
+- Graph: the builder chains a slot's candidates as optional clips `slot` → `slot.alt<i>` → fallback (reference
+  `source:clip`) and lists the slot in `slot_clips`; no move plays it yet. User-side source priority: not built.
+- Folder: `BEVYRROWIND_ANIM_SOURCES`, else `<repo>/animation packs` (compile-time default); `<dir>/<file>` or
+  `<dir>/<source>/<file>`. The bake names files `animsrc/<source>/<file>` (`VfsInputs::with_anim_sources`, stat-keyed).
+- `mw_bake`: phase 1 cooks a present file's skeleton and lists its clips (`mw.anim.source_clips`); source rig =
+  `sf_character::auto_map` + auto-align (UAL1: 52 bones, clean); targets use the humanoid map, legs IK. `GraphRules` v2:
+  `source:clip` → `anim.retarget` of an `anim.cook` on the library skeleton, `clip_files` = the library file,
+  `provenance` = source id, SPDX tag, redistributable. Missing file → drop; present file without the clip → drop
+  (folded into the rules version). `base_anim`, `base_anim_female`, `base_animkna` share the path (no beast-leg fix).
+- Report: `bevyrrowind bake` prints a line per slot (source, or fallback and why); `bevyrrowind anim-sources` prints the
+  folder, files present/missing and per-slot choice. Tests: `mw_bake/tests/anim_sources_real_install.rs`.
+- UAL1 `ClimbLedge_RM` is a 0.63 s top-out: root straight up 2.47 m (2.94 m on `base_anim`), no forward travel.
 
 ## Morrowind creature mapping notes
 

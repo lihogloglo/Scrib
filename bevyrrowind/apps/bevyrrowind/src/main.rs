@@ -52,6 +52,10 @@ struct Cli {
 enum Command {
     /// Show where detection looks and what it finds.
     Detect,
+    /// The animation libraries the bake can use (animation-sources.md):
+    /// the library folder, which manifest files are present, and per clip
+    /// slot the source it would take or its fallback. Needs no install.
+    AnimSources,
     /// Mount the VFS, load all content, and print a summary.
     Info {
         /// Conflicts to list per record kind.
@@ -632,6 +636,10 @@ fn run(cli: Cli) -> Result {
     };
     let command = match command {
         Command::Detect => return detect(cli.morrowind.as_deref()),
+        Command::AnimSources => {
+            print!("{}", mw_bake::sources::AnimSources::local().check());
+            return Ok(());
+        }
         Command::Scene { name, list, file, extra } => {
             return scenes::run(cli.morrowind, name.as_deref(), list, file.as_deref(), extra);
         }
@@ -640,7 +648,7 @@ fn run(cli: Cli) -> Result {
     };
     let (install, origin) = MorrowindInstall::detect(cli.morrowind.as_deref())?;
     match command {
-        Command::Detect | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
+        Command::Detect | Command::AnimSources | Command::Perf { .. } | Command::Scene { .. } => unreachable!(),
         Command::Info { conflicts } => info(&install, &origin, conflicts),
         Command::Bake { cache } => mw_boot_bevy::bake::run(&install, cache),
         Command::Weather { command } => mw_environment_bevy::weather::run(&install, command),

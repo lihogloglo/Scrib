@@ -1,0 +1,36 @@
+// Animation sources (bevyrrowind/docs/specs/animation-sources.md "Import profile").
+// Bring your own: the bake reads these files from the user's library folder
+// (BEVYRROWIND_ANIM_SOURCES, default `<repo>/animation packs`); nothing here
+// is downloaded, and no third-party clip is in the repo or a release.
+// A slot's candidates are tried in order (first whose file is present and
+// holds the clip), then its fallback. Slot names: superfargoth action.md
+// "Move taxonomy" (`kind.family.variant`).
+(
+  sources: {
+    "quaternius_ual1": (
+      title: "Quaternius Universal Animation Library (full, 126 clips)",
+      license: CC0,
+      page: "https://quaternius.itch.io/universal-animation-library",
+      files: [
+        (name: "AnimationLibrary_Godot.glb", sha256: "f0a1bb22ae29c22a2eb91e2e4641251f9bfbc4470c2153da5666c76c3adf8cef"),
+      ],
+      // glTF: meters, +Y up, facing +Z (the importer's own space).
+      unit_scale: 1.0,
+      up: Y,
+    ),
+  },
+  slots: {
+    // Waist-high mantle (action.md B2): one clip, warped onto the ledge by
+    // the action clock (`Progress`), so its baked root track (the `_RM`
+    // variant) keeps the climb's rise and travel.
+    "traverse.mantle.waist": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "ClimbLedge_RM"),
+      ],
+      root: Progress,
+      vertical: true,
+      fallback: Drop,
+    ),
+  },
+)

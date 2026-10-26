@@ -5,7 +5,8 @@
 //! - [`VfsInputs`]: `sf_bake` inputs over the mounted VFS and the records.
 //! - [`anim`]: actor animation (`skeleton.cook`, `anim.cook`,
 //!   `animgraph.compile` with Morrowind rules) and [`anim::AnimLibrary`],
-//!   the Bevy-free loading API.
+//!   the Bevy-free loading API; [`sources`]: the user's animation libraries
+//!   (manifest + local folder), retargeted onto the actors by [`anim`].
 //! - [`collision`]: the `collision.cook` rules (static collision for
 //!   `StaticProbe`), registered by [`model_baker`].
 //! - [`referenced_models`] and [`bake_models`]: what `bevyrrowind bake`
@@ -21,6 +22,7 @@ mod inputs;
 mod summary;
 pub mod far;
 pub mod script;
+pub mod sources;
 pub mod ragdoll;
 pub mod textures;
 pub mod world;

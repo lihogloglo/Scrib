@@ -5218,6 +5218,7 @@ dependencies = [
  "mw_nif",
  "mw_vfs",
  "ron",
+ "serde",
  "sf_anim",
  "sf_anim_graph",
  "sf_bake",

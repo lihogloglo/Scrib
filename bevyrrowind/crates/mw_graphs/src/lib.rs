@@ -12,12 +12,15 @@
 //! - [`sim::Sim`]: headless simulation (parameter scripts → states, clips,
 //!   events), for tests and tools.
 //! - [`script`]: `PlayGroup` / `LoopGroup` → montage slot requests.
+//! - [`sources`]: the animation-sources manifest (third-party libraries the
+//!   user brings, per clip slot); the builder adds its slots to the graphs.
 //!
 //! Spec: `docs/specs/actors-adapter.md` "Graph assets as built".
 
 pub mod build;
 pub mod script;
 pub mod sim;
+pub mod sources;
 mod source;
 
 use std::fmt::Write as _;

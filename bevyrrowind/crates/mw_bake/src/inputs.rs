@@ -11,6 +11,8 @@ use sf_bake::{BakeError, Digest, FileHashMemo, Inputs, StatKey};
 use sf_records::{RecordDb, RecordError, RecordId};
 use sf_vfs::{Vfs, VfsPath};
 
+use crate::sources::{AnimSources, VIRTUAL_ROOT};
+
 /// [`Inputs`] for Morrowind content.
 ///
 /// Files are fingerprinted by their winning VFS source, through a
@@ -33,6 +35,8 @@ pub struct VfsInputs {
     /// Archive stats, read once per session.
     archive_stats: Mutex<HashMap<String, (u64, u128)>>,
     memo: FileHashMemo,
+    /// The user's animation libraries: `animsrc/<source>/<file>` paths.
+    anim_sources: Option<Arc<AnimSources>>,
 }
 
 impl VfsInputs {
@@ -40,7 +44,7 @@ impl VfsInputs {
     pub fn new(vfs: Arc<Vfs>, install: &MorrowindInstall, memo_file: impl Into<PathBuf>) -> Self {
         let archives =
             install.archives().into_iter().filter_map(|name| install.data_file(&name).map(|path| (name, path))).collect();
-        Self { vfs, records: None, extra: HashMap::new(), archives, archive_stats: Mutex::default(), memo: FileHashMemo::load(memo_file) }
+        Self { vfs, records: None, extra: HashMap::new(), archives, archive_stats: Mutex::default(), memo: FileHashMemo::load(memo_file), anim_sources: None }
     }
 
     /// Makes records available as bake inputs.
@@ -56,6 +60,20 @@ impl VfsInputs {
     pub fn with_extra_records(mut self, records: impl IntoIterator<Item = ((String, String), Digest)>) -> Self {
         self.extra.extend(records);
         self
+    }
+
+    /// Serves the animation libraries' virtual paths (`animsrc/...`,
+    /// [`AnimSources::virtual_path`]) from the user's folder: fingerprinted
+    /// by stat like loose files; a missing file is a missing input.
+    #[must_use]
+    pub fn with_anim_sources(mut self, sources: Arc<AnimSources>) -> Self {
+        self.anim_sources = Some(sources);
+        self
+    }
+
+    /// The library file behind a virtual library path (`None`: missing).
+    fn library_file(&self, path: &str) -> Option<PathBuf> {
+        self.anim_sources.as_ref().and_then(|s| s.real_path(path))
     }
 
     pub fn vfs(&self) -> &Arc<Vfs> {
@@ -85,6 +103,11 @@ fn vfs_path(path: &str) -> Result<VfsPath, BakeError> {
 
 impl Inputs for VfsInputs {
     fn file_fingerprint(&self, path: &str) -> Result<Option<Digest>, BakeError> {
+        if path.starts_with(VIRTUAL_ROOT) {
+            let Some(real) = self.library_file(path) else { return Ok(None) };
+            let key = FileHashMemo::stat_file("library", &real.to_string_lossy(), &real)?;
+            return Ok(Some(self.memo.fingerprint(key, || fs::read(&real))?));
+        }
         let Ok(vpath) = VfsPath::new(path) else { return Ok(None) };
         let Some(index) = self.vfs.resolve(&vpath) else { return Ok(None) };
         let source = self.vfs.source(index);
@@ -106,6 +129,10 @@ impl Inputs for VfsInputs {
     }
 
     fn read_file(&self, path: &str) -> Result<Vec<u8>, BakeError> {
+        if path.starts_with(VIRTUAL_ROOT) {
+            let real = self.library_file(path).ok_or_else(|| BakeError::Other(format!("{path}: library file missing")))?;
+            return Ok(fs::read(&real)?);
+        }
         Ok(self.vfs.read(&vfs_path(path)?)?)
     }
 
