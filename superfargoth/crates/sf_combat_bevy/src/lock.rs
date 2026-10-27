@@ -12,8 +12,10 @@
 //!   target to `Sense::lock_target` (Clip `Turn` windows aim at it), `LockOn` on the owner mirrors
 //!   it for the camera's framing (third person only), and a press with nothing to lock recentres
 //!   the camera that follows the owner.
-//! - Not yet: locked locomotion facing and strafe (C1c-2), locked rolls (C1c-3), switching by a
-//!   stick flick (C4; `LockRequest::Next` already switches).
+//! - Locked locomotion faces the target and strafes (C1c-2, `sf_action`'s step through
+//!   `LockAim`); the dot on the target is [`crate::marker`].
+//! - Not yet: locked rolls (C1c-3), switching by a stick flick (C4; `LockRequest::Next` already
+//!   switches).
 
 use std::marker::PhantomData;
 

@@ -15,7 +15,7 @@
 //! - **Lock-on.** `sf_combat_bevy::SfLockOnPlugin` (line of sight through the physics probe): the
 //!   player body is a `LockOwner`, the lock key ([`spawn_lock`], `Control::LockOn`: Q, middle
 //!   mouse, R3) locks the best `Lockable` (the training dummies) and the third-person camera frames
-//!   it.
+//!   it; `LockMarkerPlugin` draws a dot on the target's chest (both views).
 //! - **Rules.** [`ModernRules`]: `sf_combat::StandardRules` as a resource (the classic rules
 //!   would replace it, combat-adapter.md "Rules").
 
@@ -28,7 +28,7 @@ use sf_action_bevy::{ActionCharacter, ActionSystems};
 use sf_combat::{
     CombatRules, CompiledSheet, Contact, Fighter, Outcome, PoolDelta, RegenState, SocketTracks, StandardRules, Swing, SwingPlan,
 };
-use sf_combat_bevy::{CombatData, CombatSystems, Combatant, LockOwner, SfCombatPlugin, SfLockOnPlugin};
+use sf_combat_bevy::{CombatData, CombatSystems, Combatant, LockMarkerPlugin, LockOwner, SfCombatPlugin, SfLockOnPlugin};
 use sf_physics_bevy::Physics;
 
 use crate::hud::PlayerVitals;
@@ -119,6 +119,9 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
     }
     if !app.is_plugin_added::<SfLockOnPlugin<Physics>>() {
         app.add_plugins(SfLockOnPlugin::<Physics>::default());
+    }
+    if !app.is_plugin_added::<LockMarkerPlugin>() {
+        app.add_plugins(LockMarkerPlugin);
     }
     app.init_resource::<ModernRules>();
     if let Some(sheet) = &sheet {

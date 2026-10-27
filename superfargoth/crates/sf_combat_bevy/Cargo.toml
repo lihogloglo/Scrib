@@ -8,17 +8,21 @@ license.workspace = true
 [features]
 default = []
 # Weapon and hurt gizmos (`CombatGizmos`). Needs the app to add Bevy's gizmo plugin.
-debug = ["dep:bevy_gizmos", "dep:bevy_color"]
+debug = ["dep:bevy_gizmos"]
 
 # Minimal Bevy (build-perf.md): the decisions live in `sf_combat`, scheduling beside `sf_action_bevy`.
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
-bevy_color = { workspace = true, features = ["std"], optional = true }
+# The lock-on marker (`marker`): one Bevy UI node placed through the player camera (both already in
+# the workspace-hack, so no extra build).
+bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_enhanced_input.workspace = true
 bevy_gizmos = { workspace = true, optional = true }
 bevy_math = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+bevy_ui.workspace = true
 sf_action.workspace = true
 sf_action_bevy.workspace = true
 sf_anim.workspace = true

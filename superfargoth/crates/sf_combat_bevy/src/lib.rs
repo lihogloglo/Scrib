@@ -22,7 +22,8 @@
 //! their rules and slots to `ActionRules`. Gizmos (feature `debug`): [`CombatGizmos`].
 //!
 //! Lock-on ([`lock`], C1c): [`SfLockOnPlugin`] keeps each [`LockOwner`]'s `ActionState::lock`
-//! before the step and mirrors it to the camera's `LockOn`.
+//! before the step and mirrors it to the camera's `LockOn`; [`LockMarkerPlugin`] ([`marker`])
+//! draws the screen-space dot on the locked target.
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -36,12 +37,16 @@ use sf_combat::{Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, FightSt
 use sf_coords::WorldPos;
 
 pub mod lock;
+pub mod marker;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_lock;
+#[cfg(test)]
+mod tests_marker;
 
 pub use lock::{LockConfig, LockOnAction, LockOwner, SfLockOnPlugin, spawn_lock_action};
+pub use marker::{LockMarker, LockMarkerPlugin};
 
 /// The combat sets in `FixedUpdate` (see the crate docs).
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
