@@ -1,0 +1,26 @@
+// Synthetic test level (docs/specs/test-levels.md): the combat arena (combat-adapter.md "Level
+// `arena`", visual check CB-1). Meters, y up, x east, z south; spawn yaw in degrees, 0 faces -z.
+// The player drops under the first camera (`behind`), 3 m in front of `dummy`; spawns named
+// `dummy*` are training dummies (scaffold `TrainingDummy`, mw_player_bevy `dummy.rs`).
+// Open with `bevyrrowind scene level-arena`.
+(
+    name: "arena",
+    description: "40 m floor; a training dummy 3 m ahead of the start, a second 10 m off, a 1 m ledge",
+    weather: Some("clear"),
+    cameras: [
+        (name: "behind", eye: (0.0, 2.2, 4.0), target: (0.0, 1.0, 0.0)),
+        (name: "chain", eye: (5.5, 1.6, 2.5), target: (0.0, 1.0, 2.5)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 4.0)),
+        (name: "dummy", at: (0.0, 0.0, 1.0), yaw: 180.0),
+        (name: "dummy2", at: (-8.0, 0.0, -2.0), yaw: 120.0),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (40.0, 40.0))),
+        // A 1 m ledge (C1c: a mantle breaks the lock).
+        (name: "ledge-1m", shape: Box(size: (4.0, 1.0, 2.0)), at: (7.0, 0.0, -4.0), material: Yellow),
+        // A 2 m scale post beside the dummy.
+        (name: "post-2m", shape: Cylinder(radius: 0.1, height: 2.0), at: (1.5, 0.0, 1.0), material: White),
+    ],
+)

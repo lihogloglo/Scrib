@@ -4,6 +4,10 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-27 (combat-c1b): combat C1b, player vs training dummy: `sf_combat_bevy`, `mw_combat` sword sheet on 14 UAL slots, F stance,
+  LMB light chain, Shift tap roll / hold sprint, HUD stamina, scaffold `TrainingDummy`, `levels/arena.ron` (`scene level-arena`), O combat
+  gizmos; CB-1 awaiting owner.
+
 - 2026-10-27 (combat-c1a): combat C1a, Bevy-free core: new `sf_combat` (sheet, vitals, sweeps, contact order,
   `StandardRules`, hit-stop), `sf_action` Clip owner + combat vocabulary, `sf_anim::SocketTrack`; 26 headless tests
   (`sf_combat/tests/combat.rs`, `test_sword.ron`) found and fixed clip-rate root motion, chain ranks, `End` parsing, hit-stop hold.

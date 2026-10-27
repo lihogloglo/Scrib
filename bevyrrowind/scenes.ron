@@ -892,6 +892,14 @@
             checks: ["TS-1"],
         ),
         (
+            name: "level-arena",
+            level: "arena",
+            hour: 10.0,
+            description: "Greybox combat arena: the player 3 m from a training dummy, a second dummy 10 m off, a 1 m ledge (cameras: behind, chain; F ready, LMB attack, Shift tap roll / hold sprint, O combat gizmos)",
+            look_for: "F draws; LMB x3 runs the light chain and the dummy reacts as the blade arrives; hit-stop reads as impact; stamina drains per swing and refills; a Shift tap rolls with no slide at the end; O draws hurt capsules and the blade",
+            checks: ["CB-1"],
+        ),
+        (
             name: "level-robe-walk",
             level: "robe-walk",
             hour: 10.0,

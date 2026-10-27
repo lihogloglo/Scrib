@@ -80,8 +80,9 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (27)
+### Awaiting owner (28)
 
+CB-1 | awaiting owner | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
 PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
 PH-11 | awaiting owner | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
 WE-5 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
@@ -104,7 +105,7 @@ AN-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-up ends on t
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
 AN-10, AN-13, AN-14 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-ups
-DE-1 | awaiting owner (2026-10-27: LaFAN1 get-ups by how the body lies, up sooner, relaxed while lying) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
+DE-1 | awaiting owner (2026-10-27: LaFAN1 retarget fixed; get-ups Morrowind + UAL + LaFAN1 by pose; no walk-off) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
 AU-3 | awaiting owner | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | awaiting owner | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds

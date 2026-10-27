@@ -13,11 +13,13 @@ keybind-gameplay-move = Move
 keybind-gameplay-look = Look
 keybind-gameplay-zoom = Camera Zoom
 keybind-gameplay-jump = Jump
-keybind-gameplay-sprint = Run
+keybind-gameplay-sprint = Dodge / Sprint
 keybind-gameplay-sneak = Sneak
 keybind-gameplay-use = Activate
 keybind-gameplay-toggle_view = Toggle POV
 keybind-gameplay-inventory = Inventory
+keybind-gameplay-attack = Attack
+keybind-gameplay-ready_weapon = Ready Weapon
 keybind-gameplay-quicksave = Quicksave
 keybind-gameplay-quickload = Quickload
 

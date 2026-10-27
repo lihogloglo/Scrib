@@ -37,10 +37,13 @@
 //!
 //! Bindings come from the player's keymap (`controls.rs`: defaults, gamepad, hold / toggle,
 //! profile, F10 keybinds screen); a keymap change respawns the body's bindings ([`rebind`]).
-//! Keyboard defaults: WASD move, Shift sprint, Ctrl sneak, Space jump (modern default; Morrowind
-//! used E), Tab first/third person (Morrowind's default), mouse look, wheel zoom, E use.
+//! Keyboard defaults: WASD move, Shift dodge / sprint (tap rolls, hold sprints), Ctrl sneak, Space
+//! jump (modern default; Morrowind used E), Tab first/third person (Morrowind's default), mouse
+//! look, wheel zoom, E use, left mouse attack, F ready weapon ([`combat`]).
 
 pub mod avatar;
+pub mod combat;
+pub mod dummy;
 pub mod feel;
 pub mod hud;
 
@@ -71,9 +74,11 @@ use sf_action_bevy::{
     ActionBody, ActionCharacter, ActionInputPlugin, ActionRules, ActionSystems, AwaitingGround, PlayerAction, PlayerControls, PlayerId,
     PlayerInput, SfActionPlugin, spawn_player_actions,
 };
+use sf_anim::{Clip, Skeleton};
 use sf_camera::Look;
 use sf_camera_bevy::{CameraAction, PlayerCamera, SfCameraPlugin, spawn_camera_actions};
 use sf_character_bevy::CharacterPlacement;
+use sf_combat::CompiledSheet;
 use sf_controller::{GroundHit, GroundProbe, Locomotion, MoverParams, ProbeQuery};
 use sf_controller_bevy::{AvoidObstacle, Mover};
 use sf_coords::{WorldPos, WorldTransform};
@@ -122,28 +127,45 @@ const INTERIOR_VOID_MARGIN_M: f32 = 2.0;
 /// The player's character id on commands (NPCs don't run the action layer yet).
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
-/// The traversal slots the player's rules use (`sf_action::TRAVERSAL_RULES`): the host loads
-/// their clips from the baked humanoid graph.
+/// The traversal slots the player's rules use (`sf_action::TRAVERSAL_RULES`).
 pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist"];
 
-/// A traversal slot's clip: its length and root track (action.md B2a). A slot without one
-/// refuses its move (`Refused::NoRootPath`: the mantle falls back to a plain jump).
-pub struct TraversalClip {
-    pub slot: &'static str,
-    pub duration: f32,
-    pub root: Arc<dyn RootPath + Send + Sync>,
+/// Every slot the player's rules play a baked clip in: [`TRAVERSAL_SLOTS`] and the combat
+/// sheet's ([`mw_combat::sheet_slots`]). The host loads their clips from the baked humanoid graph.
+#[must_use]
+pub fn player_slots() -> Vec<String> {
+    let combat = mw_combat::sheet_slots(mw_combat::SWORD_1H).unwrap_or_default();
+    TRAVERSAL_SLOTS.iter().map(|s| (*s).to_owned()).chain(combat).collect()
 }
 
-/// `traversal`: the clips of [`TRAVERSAL_SLOTS`] the host could load.
-pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: PlayerStart, traversal: Vec<TraversalClip>) {
+/// A baked slot clip: its length and root track (action.md B2a; a cooked clip is a `RootPath`).
+/// A traversal slot without one refuses its move (`Refused::NoRootPath`: the mantle falls back to
+/// a plain jump); a combat slot without one is dropped by the sheet.
+pub struct SlotClip {
+    pub slot: String,
+    pub clip: Arc<Clip>,
+}
+
+/// The clips of [`player_slots`] the host could load, and the skeleton they were cooked for
+/// (the weapon socket tracks are sampled on it).
+#[derive(Default)]
+pub struct PlayerClips {
+    pub slots: Vec<SlotClip>,
+    pub skeleton: Option<Arc<Skeleton>>,
+}
+
+/// `clips`: the player's baked slot clips ([`PlayerClips`]).
+pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: PlayerStart, clips: PlayerClips) {
     if !app.is_plugin_added::<EnhancedInputPlugin>() {
         app.add_plugins(EnhancedInputPlugin);
     }
     let reach_m = activate_reach_m(db.as_deref());
     let app_db = db.clone();
+    let sheet = combat::load_sheet(&clips);
     mw_controls_bevy::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
-        .insert_resource(rules(traversal))
+        .insert_resource(rules(&clips.slots, sheet.as_ref()))
+        .insert_resource(avatar::AvatarSlots::new(player_slots(), clips.slots.iter().map(|c| (c.slot.clone(), c.clip.duration))))
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
         .init_resource::<RestoreBody>()
         .init_resource::<ArrivalSpot>()
@@ -161,6 +183,8 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(PostUpdate, (avatar::link, avatar::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
         .add_systems(PostUpdate, avatar::first_person);
     hud::add(app, app_db.as_ref());
+    combat::add(app, sheet, &clips);
+    dummy::add(app);
 }
 
 /// `iMaxActivateDist` in meters. `OpenMW` `apps/openmw/mwworld/worldimp.cpp`
@@ -173,21 +197,32 @@ fn activate_reach_m(db: Option<&RecordDb>) -> f32 {
     m
 }
 
-/// The base and traversal move rules and the slot table the chooser times windows with. Scaffold
-/// `PlayerSlots`: fixed clip lengths until B1's animation feed reports the real ones; the
-/// traversal slots take their baked clips' lengths and root tracks.
-fn rules(traversal: Vec<TraversalClip>) -> ActionRules {
+/// The base, traversal and combat move rules and the slot table the chooser times windows with.
+/// Scaffold `PlayerSlots`: fixed clip lengths until B1's animation feed reports the real ones; the
+/// traversal slots take their baked clips' lengths, the `sheet`'s slots its timings, and every
+/// baked slot its root track.
+fn rules(clips: &[SlotClip], sheet: Option<&CompiledSheet>) -> ActionRules {
     let mut slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
         .with("air.fall", SlotInfo::looping())
         .with("air.jump", SlotInfo::once(0.3))
         .with("air.land.normal", SlotInfo::once(0.25))
         .with("air.land.hard", SlotInfo::once(0.5));
-    for clip in traversal {
-        slots = slots.with(clip.slot, SlotInfo::once(clip.duration)).with_root(clip.slot, clip.root);
+    if let Some(sheet) = sheet {
+        slots = sheet.fill(slots);
+    }
+    for c in clips {
+        if TRAVERSAL_SLOTS.contains(&c.slot.as_str()) {
+            slots = slots.with(&c.slot, SlotInfo::once(c.clip.duration));
+        }
+        let root: Arc<dyn RootPath + Send + Sync> = c.clip.clone();
+        slots = slots.with_root(&c.slot, root);
     }
     let mut rules = RuleSetBuilder::new();
     rules.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES);
+    if let Some(sheet) = sheet {
+        sheet.add_rules(&mut rules, &Origin::Mod("bevyrrowind".into()));
+    }
     ActionRules { rules: rules.build().expect("framework base and traversal rules parse"), slots: Box::new(slots) }
 }
 
@@ -243,12 +278,16 @@ fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity)
                 bind(commands, keymap, Control::Move, action, stick_axis);
             }
             PlayerAction::Button(ActionClass::Jump) => bind(commands, keymap, Control::Jump, action, plain),
-            PlayerAction::Button(ActionClass::Sprint) => bind(commands, keymap, Control::Sprint, action, plain),
             PlayerAction::Button(ActionClass::Sneak) => bind(commands, keymap, Control::Sneak, action, plain),
-            // TODO(combat C1b part 2): bind Control::Sprint here (tap = roll, hold = sprint) instead of Button(Sprint).
-            PlayerAction::Button(_) | PlayerAction::DodgeSprint => {}
+            PlayerAction::Button(ActionClass::Light) => bind(commands, keymap, Control::Attack, action, plain),
+            // One button: tap rolls on release, hold sprints (the separate Sprint and Dodge buttons
+            // stay unbound).
+            PlayerAction::DodgeSprint => bind(commands, keymap, Control::Sprint, action, plain),
+            PlayerAction::Button(_) => {}
         }
     }
+    let ready = commands.spawn((ActionOf::<PlayerControls>::new(body), Action::<combat::ReadyWeaponAction>::new())).id();
+    bind(commands, keymap, Control::ReadyWeapon, ready, plain);
     for (tag, action) in spawn_camera_actions(commands, body) {
         match tag {
             // Mouse counts are a per-frame delta already; a stick is a rate (times delta time).
@@ -502,7 +541,7 @@ fn arrive(
 /// never show. Gives up after [`ARRIVAL_WAIT_MAX_SECS`]. On release the feet go onto the ground
 /// below ([`ground_below`]), which seeds `last_ground` and the [`ArrivalSpot`]; no ground in
 /// reach leaves the body as is (the fall guards catch it).
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // system parameters
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::type_complexity)] // system parameters
 fn await_ground<P: GroundProbe + Resource>(
     mut commands: Commands,
     time: Res<Time<Real>>,
@@ -513,8 +552,8 @@ fn await_ground<P: GroundProbe + Resource>(
     mut mode: ResMut<PlayerMode>,
     mut spot: ResMut<ArrivalSpot>,
     mut fade: ResMut<FadeTransition>,
-    // Only the player body gets the marker here (`arrive`, `guard_fall`).
-    mut bodies: Query<(Entity, &mut ActionBody), With<AwaitingGround>>,
+    // The player body (`arrive`, `guard_fall`); a training dummy waits on its own (`dummy.rs`).
+    mut bodies: Query<(Entity, &mut ActionBody), (With<AwaitingGround>, With<PlayerBody>)>,
 ) {
     let Some((entity, mut body)) = bodies.iter_mut().next() else {
         *waited = 0.0;
@@ -927,3 +966,5 @@ mod tests;
 mod tests_avatar;
 #[cfg(test)]
 mod tests_feel;
+#[cfg(test)]
+mod tests_combat;

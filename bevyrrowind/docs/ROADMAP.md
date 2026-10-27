@@ -102,7 +102,8 @@ in the world; only the release start path (or a session working on the menu) sho
 - [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10 (CH-1/3, SB-5 awaiting owner); next stairs 5b, powered falls R3 (`animation-plan.md`). 2026-10-26: IK/pelvis/jump audit fixes built (CHANGELOG); AL-9, PL-3 awaiting owner; left: sprint cycle, run-strafe skate (clips).
 - [ ] 3.5 Combat (M10): Elden Ring feel, classic rules behind a seam (owner 2026-10-27). Spec written 2026-10-27:
   `superfargoth/docs/specs/combat.md` (new `sf_combat(_bevy)`, slices C1a-C7) + `specs/combat-adapter.md`. C1a (Bevy-free
-  core) done 2026-10-27 (uncommitted). Next: C1b (player vs dummy) after `player-feel` lands, then C1c. Visual checks CB-.
+  core) done 2026-10-27; C1b (player vs training dummy, scene `level-arena`, CB-1 awaiting owner) done 2026-10-27
+  (uncommitted). Next: C1c (lock-on). Visual checks CB-.
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later.
 - [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
 

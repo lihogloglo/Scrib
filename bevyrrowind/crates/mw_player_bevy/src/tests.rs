@@ -15,7 +15,7 @@ use super::*;
 const LEVEL: &str = include_str!("../../../levels/flat-slopes.ron");
 
 #[derive(Resource)]
-struct Statics(StaticWorld);
+pub(crate) struct Statics(StaticWorld);
 
 impl GroundProbe for Statics {
     fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
@@ -51,13 +51,19 @@ pub(crate) fn app(fps: u32) -> (App, Entity) {
 
 /// [`app`] with the bindings of `keymap`.
 fn app_with(fps: u32, keymap: &sf_ui::Keymap) -> (App, Entity) {
+    app_setup(fps, keymap, |_| {})
+}
+
+/// [`app_with`], `setup` adding plugins before the app finishes.
+pub(crate) fn app_setup(fps: u32, keymap: &sf_ui::Keymap, setup: impl FnOnce(&mut App)) -> (App, Entity) {
     let level = Level::parse(LEVEL).expect("flat-slopes parses");
     let mut app = App::new();
     app.add_plugins((TaskPoolPlugin::default(), bevy_time::TimePlugin, bevy_input::InputPlugin, EnhancedInputPlugin))
         .add_plugins((SfActionPlugin::<Statics>::default(), ActionInputPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / f64::from(fps))))
         .insert_resource(statics(&level))
-        .insert_resource(rules(Vec::new()));
+        .insert_resource(rules(&[], None));
+    setup(&mut app);
     // `EnhancedInputPlugin` creates its context registry in `finish` (`App::run` calls it).
     app.finish();
     app.cleanup();

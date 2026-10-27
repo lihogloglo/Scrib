@@ -343,6 +343,17 @@ a slot boundary samples through `MoveSpec::slot_at`; the host order is `gate` ->
   in-place attacks still move their root bone (A 0.82 m, C 1.56 m): keep it as the step-in, check it after the cook.
 - Reaction slots, the training dummy, weapon draw and bindings: game side, `combat-adapter.md` "C1b".
 
+**As built (C1b, 2026-10-27).** Framework: `SfCombatPlugin<R>` sets `Gate` / `Stats` / `Step` / `Apply` (one `Step` set runs the
+core's vitals, sweep and resolve); `Combatant { fighter, fight, withheld }` requires `ActionGate` (-> `Sense::refused`); messages
+`HitLanded` / `StaminaFlash` / `CombatantDied`; `socket_tracks` at 60 Hz; feature `debug`: `CombatGizmos`. Core additions:
+`FightState::winded` (Sprint gated until 15 % stamina), reach prefilter (`SocketTracks` max reach). `sf_action_bevy`: Clip moves
+drive the mover through `RootMotion`, `warp_progress` covers Clip chains, `PlayerAction::DodgeSprint` (tap roll, hold sprint).
+Game (`mw_combat` Bevy-free sheet `sword_1h.ron`; `mw_player_bevy` `combat.rs`, `dummy.rs`): 14 slots on UAL1/UAL2 clips
+(`sources.ron`), `ModernRules(StandardRules)`, F stance (attacks withheld sheathed; an attack press draws), avatar plays Warp and
+Clip slots, HUD stamina from the `Combatant`; scaffold `TrainingDummy` (full action body, own ground wait, refills at 0) from
+`dummy*` spawns of `levels/arena.ron`. Gaps: capsules don't collide (root motion walks into the dummy), no weapon mesh, medium
+and large reactions share one clip at full travel. Check CB-1 (`visual-checks/combat.md`).
+
 ### C1c: lock-on
 
 `sf_combat_bevy::lock` (candidates, `acquire`, `LockTimers`, `LockOn` mirror), `Sense::lock_target`, locked

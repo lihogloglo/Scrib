@@ -313,6 +313,11 @@ struct WalkerContent {
     max_walk: f32,
 }
 
+/// A dressed character another layer moves (e.g. `mw_player_bevy`'s training dummy, under an
+/// action body): [`attach`] gives it no mover, like the player's avatar.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct ActionDriven;
+
 /// A wandering character's scaffold driver (`mw_ai`, named scaffold).
 #[derive(Component)]
 pub struct Walker {
@@ -409,7 +414,10 @@ fn attach(
     mut commands: Commands,
     content: Res<WalkerContent>,
     pos_of: WorldPosOf,
-    fresh: Query<(Entity, &Character, &CharacterBody, &Transform, &ChildOf), (Without<Mover>, Without<mw_game_core::player::PlayerAvatar>)>,
+    fresh: Query<
+        (Entity, &Character, &CharacterBody, &Transform, &ChildOf),
+        (Without<Mover>, Without<mw_game_core::player::PlayerAvatar>, Without<ActionDriven>),
+    >,
     bodies: Query<&Transform>,
 ) {
     for (entity, character, body, transform, parent) in &fresh {

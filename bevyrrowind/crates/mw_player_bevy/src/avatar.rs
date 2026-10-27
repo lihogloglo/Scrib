@@ -16,10 +16,11 @@
 //!   the air or below [`FALL_SPEED`], so step-down misses on rocks and stairs don't flicker the
 //!   fall pose (UE keeps Walking within the step height; Lyra/ALS gate the fall on air time).
 //!   Foot probes are not fed yet: foot placement holds the animated pose.
-//! - **Traversal** (action.md B2a): while the action layer's Warp owner moves the body, the
-//!   move's slot clip (`traverse.mantle.waist`) plays in the graph's `full` montage slot with
-//!   `RootMotionMode::Progress`; its playhead is the warp's chain progress, interpolated between
-//!   the last two ticks like the body. When the warp ends the slot stops and the graph
+//! - **Traversal and combat moves** (action.md B2a, combat.md C1b): while the action layer's Warp
+//!   or Clip owner moves the body, the move's slot clip (`traverse.mantle.waist`, an attack, a roll,
+//!   a hit reaction; [`AvatarSlots`]) plays in the graph's `full` montage slot with
+//!   `RootMotionMode::Progress`; its playhead is the move's chain progress, interpolated between
+//!   the last two ticks like the body. When the move ends the slot stops and the graph
 //!   inertializes back to locomotion.
 //! - **First person**: the camera fades the followed body (`CameraPose::fade`); the avatar is
 //!   hidden while it is mostly faded (no first-person arms yet).
@@ -30,7 +31,9 @@ use bevy_math::prelude::*;
 use bevy_time::prelude::*;
 use bevy_time::Fixed;
 use bevy_transform::prelude::*;
-use sf_action::{SlotKey, WarpOutput};
+use std::collections::HashMap;
+
+use sf_action::{RuleKey, SlotKey};
 use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim::{RootDelta, RootMotionMode};
 use sf_anim_bevy::{AnimLod, AnimTier, Animator};
@@ -41,6 +44,8 @@ use sf_controller::{CharacterFrame, Gait};
 use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, Mover};
 
 use mw_game_core::player::{PlayerAvatar, PlayerBody};
+
+use crate::dummy::{DummyAvatar, TrainingDummy};
 use mw_graphs::build::params as gp;
 
 /// The montage slot traversal clips play in.
@@ -48,6 +53,8 @@ const TRAVERSAL_SLOT: &str = mw_graphs::build::slots::FULL;
 /// Inertialization into a traversal clip and back to locomotion, seconds.
 const TRAVERSAL_BLEND_IN: f32 = 0.12;
 const TRAVERSAL_BLEND_OUT: f32 = 0.25;
+/// Inertialization into a combat clip (sheet `defaults.blend_in`, combat.md "C1b"), seconds.
+const CLIP_BLEND_IN: f32 = 0.10;
 /// A drawn root that moved further than this in a frame was teleported (door, load): the feed
 /// restarts instead of reporting the jump as motion, meters.
 const TELEPORT_M: f32 = 3.0;
@@ -99,11 +106,48 @@ pub struct PlayerFeed {
     air: AirDebounce,
 }
 
-/// A traversal clip playing in the montage slot.
+/// A move's slot clip playing in the montage slot (traversal or combat).
 #[derive(Clone, Copy, Debug)]
 struct Traversal {
     key: SlotKey,
     slot: SlotId,
+    /// The move and its chain index the clip belongs to.
+    rule: RuleKey,
+    chain: u8,
+    /// Clip seconds of the move's earlier chain slots (subtracted from its chain progress).
+    offset: f32,
+}
+
+/// The action slots the avatar plays from a Warp or Clip move: their graph slot names and
+/// clip lengths (clip seconds; a chain's next slot starts after them). Default: every player
+/// slot ([`crate::player_slots`]) with no lengths.
+#[derive(Resource, Clone, Debug)]
+pub struct AvatarSlots {
+    names: HashMap<SlotKey, String>,
+    durations: HashMap<SlotKey, f32>,
+}
+
+impl Default for AvatarSlots {
+    fn default() -> Self {
+        Self::new(crate::player_slots(), [])
+    }
+}
+
+impl AvatarSlots {
+    pub fn new(names: impl IntoIterator<Item = String>, durations: impl IntoIterator<Item = (String, f32)>) -> Self {
+        Self {
+            names: names.into_iter().map(|n| (SlotKey::of(&n), n)).collect(),
+            durations: durations.into_iter().map(|(n, d)| (SlotKey::of(&n), d)).collect(),
+        }
+    }
+
+    fn name(&self, key: SlotKey) -> Option<&str> {
+        self.names.get(&key).map(String::as_str)
+    }
+
+    fn duration(&self, key: SlotKey) -> f32 {
+        self.durations.get(&key).copied().unwrap_or(0.0)
+    }
 }
 
 impl PlayerFeed {
@@ -128,7 +172,7 @@ pub(crate) fn avatar_bundle() -> impl Bundle {
 /// outfit swap), and pins the player's animation tier to every-frame updates.
 #[allow(clippy::type_complexity)]
 pub(crate) fn link(
-    avatars: Query<(&ChildOf, &CharacterBody), (With<PlayerAvatar>, Changed<CharacterBody>)>,
+    avatars: Query<(&ChildOf, &CharacterBody), (Or<(With<PlayerAvatar>, With<DummyAvatar>)>, Changed<CharacterBody>)>,
     mut feeds: Query<&mut PlayerFeed>,
     mut lods: Query<&mut AnimLod>,
 ) {
@@ -143,14 +187,17 @@ pub(crate) fn link(
 }
 
 /// The graph parameters, drive and traversal slot from the body (see the module docs).
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 pub(crate) fn feed(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     settings: Option<Res<ControllerSettings>>,
-    mut players: Query<(&ActionBody, &ActionCharacter, &Transform, &mut PlayerFeed), With<PlayerBody>>,
+    mut players: Query<(&ActionBody, &ActionCharacter, &Transform, &mut PlayerFeed), Or<(With<PlayerBody>, With<TrainingDummy>)>>,
+    slots: Option<Res<AvatarSlots>>,
+    builtin: Local<AvatarSlots>,
     mut animators: Query<(&mut Animator, Option<&Transform>)>,
 ) {
+    let slots = slots.as_deref().unwrap_or(&builtin);
     let fallback = ControllerSettings::default();
     let settings = settings.as_deref().unwrap_or(&fallback);
     let dt = time.delta_secs();
@@ -206,39 +253,54 @@ pub(crate) fn feed(
         // The flag clears on the tick after touchdown: report it with the ground, not after.
         a.set_bool(gp::JUMPING, launched && !on_ground);
         a.drive.ground.fill(None);
-        traversal(feed, a, character, body.warp_progress(), alpha);
+        traversal(feed, a, character, slots, body.warp_progress(), alpha);
     }
 }
 
-/// Starts, advances or ends the traversal clip from the action output's warp. `ticks` is the
-/// body's warp progress at its previous and current tick (`ActionBody::warp_progress`): lerped
-/// by the same `alpha` as the drawn body, the clip stays on it however many ticks ran.
+/// Starts, advances or ends the slot clip of the current Warp or Clip move. `ticks` is the
+/// body's move progress at its previous and current tick (`ActionBody::warp_progress`): lerped
+/// by the same `alpha` as the drawn body, the clip stays on it however many ticks ran. A Clip
+/// move's progress runs over its whole slot chain (attack, then recovery): each slot plays from
+/// the chain progress minus the clips before it (`slots`' durations).
 pub(crate) fn traversal(
     feed: &mut PlayerFeed,
     a: &mut Animator,
     character: &ActionCharacter,
+    slots: &AvatarSlots,
     ticks: Option<(f32, f32)>,
     alpha: f32,
 ) {
     let out = &character.output;
-    let warp = out.warp.zip(out.slot);
-    let progress = |w: WarpOutput| {
-        let (prev, curr) = ticks.unwrap_or((w.progress, w.progress));
-        prev + (curr - prev) * alpha
+    let (moving, blend_in) = match (out.warp, out.clip) {
+        (Some(w), _) => (Some(w.progress), TRAVERSAL_BLEND_IN),
+        (None, Some(c)) => (Some(c.progress), CLIP_BLEND_IN),
+        (None, None) => (None, CLIP_BLEND_IN),
     };
-    match (warp, feed.traversal.as_mut()) {
-        (Some((w, key)), Some(t)) if t.key == key => {
-            a.instance.set_slot_progress(t.slot, progress(w));
+    let progress = |fallback: f32, offset: f32| {
+        let (prev, curr) = ticks.unwrap_or((fallback, fallback));
+        (prev + (curr - prev) * alpha - offset).max(0.0)
+    };
+    match (moving.zip(out.slot), feed.traversal.as_mut()) {
+        (Some((p, key)), Some(t)) if t.key == key && t.rule == out.rule => {
+            a.instance.set_slot_progress(t.slot, progress(p, t.offset));
         }
-        (Some((w, key)), current) => {
-            if let Some(t) = current {
-                let slot = t.slot;
+        (Some((p, key)), current) => {
+            let current = current.map(|t| *t);
+            // The next slot of the same move's chain starts where the previous clip ended.
+            let offset = match current {
+                Some(t) if t.rule == out.rule && !out.started && out.chain > t.chain => t.offset + slots.duration(t.key),
+                _ => 0.0,
+            };
+            let previous = current.map(|t| t.slot);
+            feed.traversal = start(a, slots, key, blend_in).map(|slot| {
+                a.instance.set_slot_progress(slot, progress(p, offset));
+                Traversal { key, slot, rule: out.rule, chain: out.chain, offset }
+            });
+            if feed.traversal.is_none()
+                && let Some(slot) = previous
+            {
                 stop(a, slot);
             }
-            feed.traversal = start(a, key).map(|slot| {
-                a.instance.set_slot_progress(slot, progress(w));
-                Traversal { key, slot }
-            });
         }
         (None, Some(t)) => {
             let slot = t.slot;
@@ -249,10 +311,11 @@ pub(crate) fn traversal(
     }
 }
 
-/// Plays the graph's clip for action slot `key` (one of [`crate::TRAVERSAL_SLOTS`]) in the
-/// traversal montage slot, driven by progress.
-fn start(a: &mut Animator, key: SlotKey) -> Option<SlotId> {
-    let name = crate::TRAVERSAL_SLOTS.iter().find(|n| SlotKey::of(n) == key)?;
+/// Plays the graph's clip for action slot `key` (one of [`AvatarSlots`]) in the full-body
+/// montage slot, driven by progress. A new clip in the same montage slot inertializes from the
+/// one playing.
+fn start(a: &mut Animator, slots: &AvatarSlots, key: SlotKey, blend_in: f32) -> Option<SlotId> {
+    let name = slots.name(key)?;
     let asset = a.asset.clone();
     let graph = &asset.graph;
     let (Some(slot), Some(clip)) = (graph.slot(TRAVERSAL_SLOT), graph.slot_clip(name)) else {
@@ -261,7 +324,7 @@ fn start(a: &mut Animator, key: SlotKey) -> Option<SlotId> {
     };
     let req = SlotRequest {
         root_motion: RootMotionMode::Progress,
-        blend_in: TRAVERSAL_BLEND_IN,
+        blend_in,
         blend_out: TRAVERSAL_BLEND_OUT,
         priority: 1,
         ..SlotRequest::new(MontageClip::Bound(clip))

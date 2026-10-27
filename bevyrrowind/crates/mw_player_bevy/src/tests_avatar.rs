@@ -12,14 +12,14 @@ use sf_anim_graph::{CompileSource, compile_str};
 use sf_bake::ProductKey;
 
 use super::*;
-use crate::avatar::{AirDebounce, PlayerFeed};
+use crate::avatar::{AirDebounce, AvatarSlots, PlayerFeed};
 use crate::tests::{action, app, mock};
 
 /// Every clip reference cooks the same short walk cycle.
-struct Clips(sf_anim::Clip);
+struct Clips(Clip);
 
 impl CompileSource for Clips {
-    fn clip(&mut self, reference: &str) -> Result<(ProductKey, sf_anim::Clip), String> {
+    fn clip(&mut self, reference: &str) -> Result<(ProductKey, Clip), String> {
         Ok((ProductKey::new("anim.cook", reference), self.0.clone()))
     }
     fn subgraph(&mut self, _: &str) -> Result<sf_anim_graph::asset::GraphAsset, String> {
@@ -35,10 +35,11 @@ fn asset() -> Arc<AnimAsset> {
     let clip = cook_clip(&skeleton, &src, &rules, &CookSettings::default()).unwrap();
     let ron = r#"(
         params: [(name: "moving", kind: Bool(false)), (name: "on_ground", kind: Bool(true)), (name: "jumping", kind: Bool(false))],
-        clips: {"walk": (source: "walk"), "traverse.mantle.waist": (source: "climb")},
+        clips: {"walk": (source: "walk"), "traverse.mantle.waist": (source: "climb"),
+                "attack.sword_1h.light1": (source: "a1"), "attack.sword_1h.light1_rec": (source: "a1r")},
         nodes: {"walk": Clip(clip: "walk"), "full_slot": Slot(slot: "full", input: "walk", group: None, mask: None)},
         layers: [(node: "full_slot")],
-        slot_clips: ["traverse.mantle.waist"],
+        slot_clips: ["traverse.mantle.waist", "attack.sword_1h.light1", "attack.sword_1h.light1_rec"],
     )"#;
     let graph = compile_str("avatar", ron, &skeleton, &mut Clips(clip.clone())).unwrap();
     let clips = graph.clips.iter().map(|_| Arc::new(clip.clone())).collect();
@@ -99,14 +100,14 @@ fn mantle_progress_plays_the_slot_then_hands_back() {
         character.output.tick = Tick(tick);
         character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress });
         let ticks = Some(((progress - 1.0 / 60.0).max(0.0), progress));
-        avatar::traversal(&mut feed, &mut animator, &character, ticks, 1.0);
+        avatar::traversal(&mut feed, &mut animator, &character, &AvatarSlots::default(), ticks, 1.0);
         animator.update(1.0 / 60.0, AnimTier::A0);
         let time = animator.instance.montage(slot).expect("the mantle plays").time;
         assert!((time - progress).abs() < 1e-3, "playhead {time} follows progress {progress}");
     }
     assert!(feed.traversal().is_some());
     character.output.warp = None;
-    avatar::traversal(&mut feed, &mut animator, &character, None, 1.0);
+    avatar::traversal(&mut feed, &mut animator, &character, &AvatarSlots::default(), None, 1.0);
     animator.update(1.0 / 60.0, AnimTier::A0);
     assert!(feed.traversal().is_none());
     assert!(animator.instance.montage(slot).is_none(), "back to locomotion");
@@ -233,4 +234,39 @@ fn a_jump_flags_jumping_with_the_launch_and_clears_on_touchdown() {
     println!("jump: launch frame {launch}, touchdown frame {land}");
     assert!(frames[launch..land].iter().all(|f| f.jumping && !f.on_ground), "JUMP, never FALL, in the air");
     assert!(frames[land..].iter().all(|f| f.on_ground && !f.jumping), "grounded after touchdown");
+}
+
+/// A Clip move's chain (attack, then recovery): each slot plays from the chain progress minus
+/// the clips before it, and the montage hands back when the move ends.
+#[test]
+fn a_clip_chain_plays_each_slot_from_its_own_start() {
+    use sf_action::ClipOutput;
+    let mut animator = Animator::new(asset());
+    let slot = animator.asset.graph.slot("full").expect("full slot");
+    let slots = AvatarSlots::new(
+        ["attack.sword_1h.light1".to_owned(), "attack.sword_1h.light1_rec".to_owned()],
+        [("attack.sword_1h.light1".to_owned(), 0.1)],
+    );
+    let mut feed = PlayerFeed::default();
+    let mut character = ActionCharacter::new(PLAYER_CHARACTER, ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+    character.output.rule = RuleKey::of("sword_1h.light1");
+    for tick in 0..12u32 {
+        #[allow(clippy::cast_precision_loss, reason = "small")]
+        let progress = tick as f32 / 60.0;
+        let (key, chain, local) =
+            if progress < 0.1 { ("attack.sword_1h.light1", 0, progress) } else { ("attack.sword_1h.light1_rec", 1, progress - 0.1) };
+        character.output.tick = Tick(tick);
+        character.output.slot = Some(SlotKey::of(key));
+        character.output.chain = chain;
+        character.output.clip = Some(ClipOutput { delta: Vec3::ZERO, yaw: 0.0, progress });
+        avatar::traversal(&mut feed, &mut animator, &character, &slots, Some((progress, progress)), 1.0);
+        animator.update(1.0 / 60.0, AnimTier::A0);
+        let time = animator.instance.montage(slot).expect("the attack plays").time;
+        assert!((time - local).abs() < 1e-3, "{key}: playhead {time} vs {local}");
+        assert_eq!(feed.traversal(), Some(SlotKey::of(key)));
+    }
+    character.output.clip = None;
+    avatar::traversal(&mut feed, &mut animator, &character, &slots, None, 1.0);
+    animator.update(1.0 / 60.0, AnimTier::A0);
+    assert!(feed.traversal().is_none());
 }

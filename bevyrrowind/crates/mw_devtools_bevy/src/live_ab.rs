@@ -514,8 +514,8 @@ fn overlay(
             out,
             "\nF2 sun shadows {}  F3 terrain far shadows {}  F4 DLSS {dlss}\n\
              Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
-             G physics colliders (ragdoll capsules, joints) {colliders}\n\
-             F11 player / free camera (player: WASD, Space jump, E use, Shift sprint, Ctrl sneak, Tab 1st/3rd person, wheel zoom)\n\
+             G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
+             F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
              Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),

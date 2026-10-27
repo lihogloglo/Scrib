@@ -6,11 +6,12 @@
 //! respawn them when it changes (a rebind applies at once).
 //!
 //! - **Keyboard and mouse** (the owner's modern defaults): WASD move, mouse look, wheel zoom,
-//!   Space jump, Left Shift sprint, Left Ctrl sneak, E use, Tab first/third person.
-//! - **Gamepad** (modern action-RPG convention): left stick move, right stick look, South (A /
-//!   Cross) jump, West (X / Square) use, left-stick click sprint (Skyrim SE, ESO, Cyberpunk 2077),
-//!   East (B / Circle) sneak (Cyberpunk 2077, The Last of Us), right-stick click first/third person
-//!   (Skyrim, Fallout 4). No pad zoom yet (the d-pad is kept for quick slots).
+//!   Space jump, Left Shift dodge / sprint (tap rolls, hold sprints), Left Ctrl sneak, E use, Tab
+//!   first/third person, left mouse attack, F ready weapon (Morrowind's).
+//! - **Gamepad** (modern action-RPG convention; combat C1b, owner 2026-10-27): left stick move, right
+//!   stick look, South (A / Cross) jump, West (X / Square) use, East (B / Circle) dodge / sprint
+//!   (Dark Souls, Elden Ring), right bumper attack, left-stick click sneak, d-pad up first/third
+//!   person (right-stick click is kept for the C1c lock-on). No pad zoom or ready-weapon default yet.
 //! - **Hold or toggle.** Sprint and sneak hold by default (owner rule: everything holds); each can
 //!   switch to toggle per action (`sf_ui::PressMode`, profile `press = "toggle"`, the keybinds
 //!   screen's Hold/Toggle cell). Toggle is `bevy_enhanced_input`'s `Toggle` condition on the
@@ -76,18 +77,24 @@ pub enum Control {
     Look,
     Zoom,
     Jump,
+    /// Dodge / Sprint on one button (combat-adapter.md "C1b"): tap rolls on release, hold sprints
+    /// (`sf_action_bevy::PlayerAction::DodgeSprint`). Keeps the `sprint` name (saved profiles).
     Sprint,
     Sneak,
     Use,
     ToggleView,
     Inventory,
+    /// Light attack (`ActionClass::Light`); while the weapon is sheathed it draws instead.
+    Attack,
+    /// Ready / sheathe the weapon (Morrowind's F).
+    ReadyWeapon,
     /// Save / load the quick slot (`saves.rs`).
     QuickSave,
     QuickLoad,
 }
 
 impl Control {
-    pub const ALL: [Control; 15] = [
+    pub const ALL: [Control; 17] = [
         Control::MoveForward,
         Control::MoveBack,
         Control::MoveLeft,
@@ -101,6 +108,8 @@ impl Control {
         Control::Use,
         Control::ToggleView,
         Control::Inventory,
+        Control::Attack,
+        Control::ReadyWeapon,
         Control::QuickSave,
         Control::QuickLoad,
     ];
@@ -120,6 +129,8 @@ impl Control {
             Control::Use => "use",
             Control::ToggleView => "toggle_view",
             Control::Inventory => "inventory",
+            Control::Attack => "attack",
+            Control::ReadyWeapon => "ready_weapon",
             Control::QuickSave => "quicksave",
             Control::QuickLoad => "quickload",
         }
@@ -143,11 +154,14 @@ impl Control {
             Control::Look => ActionDef::stick(CONTEXT, name, ["mouse_motion", "stick:Right"]).slots(1, 1),
             Control::Zoom => button(&["mouse_wheel"]).slots(1, 0),
             Control::Jump => button(&["key:Space", "pad:South"]),
-            Control::Sprint => button(&["key:ShiftLeft", "pad:LeftThumb"]).press(PressMode::Hold),
-            Control::Sneak => button(&["key:ControlLeft", "pad:East"]).press(PressMode::Hold),
+            Control::Sprint => button(&["key:ShiftLeft", "pad:East"]).press(PressMode::Hold),
+            Control::Sneak => button(&["key:ControlLeft", "pad:LeftThumb"]).press(PressMode::Hold),
             Control::Use => button(&["key:KeyE", "pad:West"]),
-            Control::ToggleView => button(&["key:Tab", "pad:RightThumb"]),
+            Control::ToggleView => button(&["key:Tab", "pad:DPadUp"]),
             Control::Inventory => button(&["key:KeyI", "pad:North"]),
+            // Left mouse; the right bumper (souls-likes' R1 light attack).
+            Control::Attack => button(&["mouse:Left", "pad:RightTrigger"]),
+            Control::ReadyWeapon => keys("key:KeyF"),
             // F5 / F9 as Skyrim, Fallout 4, The Witcher 3 (and Morrowind); no gamepad default.
             Control::QuickSave => button(&["key:F5"]),
             Control::QuickLoad => button(&["key:F9"]),

@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# Combat gizmos (hurt capsules, blade segments; O toggles them, `combat.rs`); the app's `dev` turns it on.
+debug = ["sf_combat_bevy/debug", "bevy_input/keyboard"]
+
 [dependencies]
 # Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
 bevy_app = { workspace = true, features = ["std"] }
@@ -25,6 +29,7 @@ bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 bevy_window = { workspace = true, features = ["std"] }
 mw_ai.workspace = true
+mw_combat.workspace = true
 mw_controls_bevy.workspace = true
 mw_doors_bevy.workspace = true
 mw_game_core.workspace = true
@@ -39,6 +44,8 @@ sf_anim_graph.workspace = true
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
+sf_combat.workspace = true
+sf_combat_bevy.workspace = true
 sf_console_bevy.workspace = true
 sf_controller.workspace = true
 sf_controller_bevy.workspace = true

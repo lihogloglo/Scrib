@@ -6,7 +6,8 @@
 //!   input target of play). The root is shown only in player mode with a body, and hidden while
 //!   a Menu or Modal screen (pause, options, dialogue, journal, inventory, keybinds, save/load) or
 //!   the console is open (ui.md layers: Hud < Menu < Modal).
-//! - **Bars**: health, magicka, fatigue from [`PlayerVitals`], in Morrowind's order and place
+//! - **Bars**: health, magicka, fatigue from [`PlayerVitals`] (health and the fatigue bar follow the
+//!   player's combat health and stamina, `sf_combat_bevy::Combatant`), in Morrowind's order and place
 //!   (bottom left, stacked; `OpenMW` `files/data/mygui/openmw_hud.layout` keeps the vanilla
 //!   layout). Colours are the Morrowind.ini `[FontColor]` `color_health/magic/fatigue` tokens,
 //!   in the theme sheet. Labels are localized (`hud-bar-<id>`), hidden by the Morrowind theme as
@@ -35,7 +36,9 @@ use sf_ui::Layer;
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiScreenRoot};
 use sf_ui_screens::{HudBar, HudScreen, HudView, ScreenSystems, UsePrompt};
 
-use crate::{Focus, PlayerMode};
+use sf_combat_bevy::Combatant;
+
+use crate::{Focus, PlayerBody, PlayerMode};
 
 /// The HUD's screen id (its `ui.screen` record is `mw_exterior_bevy::pause_menu`'s).
 pub const HUD_SCREEN: &str = "hud";
@@ -113,6 +116,7 @@ pub fn add(app: &mut App, db: Option<&Arc<RecordDb>>) {
     app.insert_resource(vitals)
         .init_resource::<HudView>()
         .add_systems(Startup, spawn_root)
+        .add_systems(Update, sync_vitals.before(drive_hud))
         .add_systems(Update, (drive_hud.after(crate::FocusUpdate), show_hud).before(ScreenSystems::Sync));
 }
 
@@ -132,6 +136,18 @@ fn localized(localizer: Option<&UiLocalizer>, key: &str, fallback: &str) -> Stri
         Some(l) if l.0.has(key) => l.0.format(key, None).into_owned(),
         _ => fallback.to_owned(),
     }
+}
+
+/// The player's combat vitals into [`PlayerVitals`]: health, and stamina on the fatigue bar
+/// (combat.md "C1b"), whole numbers (the HUD resyncs only on a change). Magicka stays static.
+pub(crate) fn sync_vitals(bodies: Query<&Combatant, With<PlayerBody>>, mut vitals: ResMut<PlayerVitals>) {
+    let Some(c) = bodies.iter().next() else { return };
+    let v = &c.fighter.vitals;
+    let whole = |cur: f32, max: f32| Vital { current: cur.round().clamp(0.0, max), max };
+    let mut want = *vitals;
+    want.health = whole(v.health.cur, v.health.max);
+    want.fatigue = whole(v.stamina.cur, v.stamina.max);
+    vitals.set_if_neq(want);
 }
 
 /// Player state → [`HudView`] (written only on a change, so the HUD resyncs only then).

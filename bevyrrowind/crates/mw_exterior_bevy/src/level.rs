@@ -43,6 +43,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("robe-walk", include_str!("../../../levels/robe-walk.ron")),
     ("light-lab", include_str!("../../../levels/light-lab.ron")),
     ("anim-lab", include_str!("../../../levels/anim-lab.ron")),
+    ("arena", include_str!("../../../levels/arena.ron")),
 ];
 
 /// When `view level:` started: the load time is measured from here.
@@ -241,6 +242,17 @@ fn spawn(
             RenderLayers::layer(entry.layer),
             ChildOf(entry.root),
         ));
+    }
+    // `dummy*` spawns: training dummies (scaffold `TrainingDummy`, combat C1b, `levels/arena.ron`).
+    let mut dummies = 0;
+    for s in level.spawns.iter().filter(|s| s.name.to_ascii_lowercase().starts_with("dummy")) {
+        // Level yaw: degrees, 0 faces -z; the mover's 0 faces +z.
+        let yaw = s.yaw.to_radians() + std::f32::consts::PI;
+        mw_player_bevy::dummy::spawn(&mut commands, dummies, (WorldPos::from_f64(s.at.as_dvec3()), yaw), entry.root);
+        dummies += 1;
+    }
+    if dummies > 0 {
+        info!("level {}: {dummies} training dummies", level.name);
     }
     info!(
         "level {}: {} objects ({triangles} triangles), {bodies} static colliders, {props} props, {} actors, spawned in {:.2} ms (F11: player)",
