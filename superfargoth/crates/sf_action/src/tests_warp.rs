@@ -12,6 +12,8 @@ const MANTLE: &str = "traverse.mantle.waist";
 /// The retargeted UAL2 `ClimbUp_1m_RM` on the Morrowind skeleton (measured: 0.667 s, root rises
 /// 1.19 m and travels 2.0 m forward, linearly).
 const CLIP_SECS: f32 = 0.667;
+/// Where the waist rule's move ends (its `stand`: both feet on top), clip seconds.
+const WAIST_STAND: f32 = 0.55;
 
 /// A straight-line root track like the measured clip's.
 struct Line;
@@ -138,26 +140,29 @@ fn jump_forward_at_a_waist_ledge_mantles_onto_the_top() {
     assert_eq!(r.out.launch, None);
     assert_eq!(r.out.intent.desired_velocity, Vec3::ZERO, "no steering while warping");
     let plan = r.state.warp.expect("plan kept in the state").plan;
-    assert!(plan.ratio() <= 0.35);
-    // The plan's end is on top, the inset past the lip.
-    let end = plan.root_at(&Line, CLIP_SECS);
-    assert!((end.position - Vec3::new(0.0, 1.0, 1.3)).length() < 0.02, "{end:?}");
-    // Played tick by tick: progress follows the clock, the body ends on the top, then walks.
+    println!("waist plan ratio {:.3}", plan.ratio());
+    assert!(plan.ratio() <= 0.6, "under the rule's refusal limit");
+    // The plan lands on top, the inset (0.4) past the lip (at 0.3), at the rule's stand time.
+    let end = plan.root_at(&Line, WAIST_STAND);
+    assert!((end.position - Vec3::new(0.0, 1.0, 0.7)).length() < 0.02, "{end:?}");
+    // Played tick by tick: progress follows the clock up to the stand time, where the body is on
+    // the top and the move ends (the clip's step past it never plays).
     let mut last = -1.0;
     for _ in 0..60 {
         if r.state.mov != RuleKey::of(MANTLE) {
             break;
         }
         if let Some(w) = r.out.warp {
-            assert!(w.progress > last && w.progress <= CLIP_SECS + 1e-6);
+            assert!(w.progress > last && w.progress <= WAIST_STAND + 1e-6);
+            assert_eq!(w.settle, w.progress >= WAIST_STAND, "lands standing only at the stand time");
             last = w.progress;
         }
         r.step(Command::default(), None);
     }
     assert_eq!(r.state.mov, RuleKey::of("loco"));
     assert!(r.state.warp.is_none());
-    assert!((last - CLIP_SECS).abs() < 1e-4, "last progress {last}");
-    assert!((r.feet.y - 1.0).abs() < 0.02 && (r.feet.z - 1.3).abs() < 0.02, "feet {:?}", r.feet);
+    assert!((last - WAIST_STAND).abs() < 1e-4, "last progress {last}");
+    assert!((r.feet.y - 1.0).abs() < 0.02 && (r.feet.z - 0.7).abs() < 0.02, "feet {:?}", r.feet);
 }
 
 #[test]
@@ -219,11 +224,11 @@ fn a_slot_without_root_motion_refuses_into_a_jump() {
 #[test]
 fn shallow_tops_keep_the_target_a_radius_inside() {
     let mut r = Run::new(true);
-    let o = Obstacle { depth: 1.2, ..ledge(0.6, 1.0, ObstacleClass::Mantle) };
+    let o = Obstacle { depth: 0.6, ..ledge(0.6, 1.0, ObstacleClass::Mantle) };
     r.step(jump_forward(false), Some(o));
-    let end = r.state.warp.expect("planned").plan.root_at(&Line, CLIP_SECS);
-    // 1.2 deep minus the 0.3 radius: 0.9 past the lip (at 0.6).
-    assert!((end.position.z - 1.5).abs() < 1e-4, "{end:?}");
+    let end = r.state.warp.expect("planned").plan.root_at(&Line, WAIST_STAND);
+    // 0.6 deep minus the 0.3 radius: 0.3 past the lip (at 0.6), under the 0.4 inset.
+    assert!((end.position.z - 0.9).abs() < 1e-4, "{end:?}");
 }
 
 #[test]
@@ -233,7 +238,8 @@ fn jump_forward_at_a_high_ledge_mantles_onto_the_top_with_the_high_clip() {
     assert!(r.started(HIGH), "events {:?}, refusals {:?}", r.out.events, r.out.refusals);
     assert_eq!(r.refused(MANTLE), Some(Refused::Probe), "above the waist band");
     let plan = r.state.warp.expect("plan kept in the state").plan;
-    assert!(plan.ratio() <= 0.35);
+    println!("high plan ratio {:.3}", plan.ratio());
+    assert!(plan.ratio() <= 0.5, "under the rule's refusal limit");
     for _ in 0..120 {
         if r.state.mov != RuleKey::of(HIGH) {
             break;
@@ -241,8 +247,8 @@ fn jump_forward_at_a_high_ledge_mantles_onto_the_top_with_the_high_clip() {
         r.step(Command::default(), None);
     }
     assert_eq!(r.state.mov, RuleKey::of("loco"));
-    // On top, the 1.2 m inset past the lip (at 0.3), the 1.5 m deep top less a radius allows it.
-    assert!((r.feet.y - 2.0).abs() < 0.02 && (r.feet.z - 1.5).abs() < 0.02, "feet {:?}", r.feet);
+    // On top, the 0.4 m inset past the lip (at 0.3).
+    assert!((r.feet.y - 2.0).abs() < 0.02 && (r.feet.z - 0.7).abs() < 0.02, "feet {:?}", r.feet);
 }
 
 #[test]

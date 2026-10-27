@@ -373,8 +373,8 @@ fn place_warped(body: &mut ActionBody, warp: &WarpOutput, started: bool, dt: f32
     let moved = loco.position.delta_f32(feet);
     let v = if dt > 0.0 { moved / dt } else { Vec3::ZERO };
     loco.position = feet;
-    // Planar momentum carries out of the move; the climb does not.
-    loco.motion.velocity = Vec3::new(v.x, 0.0, v.z);
+    // Planar momentum carries out of the move, unless it lands standing; the climb never does.
+    loco.motion.velocity = if warp.settle { Vec3::ZERO } else { Vec3::new(v.x, 0.0, v.z) };
     loco.motion.acceleration = Vec3::ZERO;
     loco.motion.yaw = warp.root.yaw;
     loco.motion.facing_goal = warp.root.yaw;

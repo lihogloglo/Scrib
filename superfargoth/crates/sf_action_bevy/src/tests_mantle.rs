@@ -477,3 +477,137 @@ fn faces_above_the_bands_refuse_at_an_angle() {
         assert!(o.pressed && o.mantle.is_none(), "no mantle on a {height} m face");
     }
 }
+
+// Mantle end (owner 2026-10-27: "the character should stop as soon as he climbed"): where the feet
+// end past the lip and whether the body drifts on after the move.
+
+/// What the stick does after the Jump press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum After {
+    /// Released on the tick after the press.
+    Release,
+    /// Kept pushed forward.
+    Push,
+}
+
+#[derive(Resource)]
+struct EndDrive {
+    after: After,
+    press: u32,
+}
+
+fn end_drive(tick: Res<ActionTick>, d: Res<EndDrive>, mut characters: Query<&mut ActionCharacter>) {
+    for mut c in &mut characters {
+        let t = tick.0.0;
+        let mut cmd = Command::empty(tick.0);
+        cmd.stick = if t <= d.press || d.after == After::Push { Vec2::Y } else { Vec2::ZERO };
+        if t == d.press {
+            cmd.buttons.pressed.insert(ActionClass::Jump);
+            cmd.buttons.held.insert(ActionClass::Jump);
+        }
+        c.command = cmd;
+    }
+}
+
+/// One tick of a mantle run: the move and the feet.
+struct EndTrace {
+    /// (move, feet) per tick from the press on.
+    ticks: Vec<(RuleKey, Vec3)>,
+}
+
+impl EndTrace {
+    /// The first tick after the mantle (`None`: it never ran or never ended).
+    fn end(&self) -> Option<usize> {
+        let mantles = [RuleKey::of("traverse.mantle.waist"), RuleKey::of("traverse.mantle.high")];
+        let first = self.ticks.iter().position(|(m, _)| mantles.contains(m))?;
+        self.ticks[first..].iter().position(|(m, _)| !mantles.contains(m)).map(|i| first + i)
+    }
+}
+
+/// A Jump press at the box `height` m tall after walking at it, then `after`, for `ticks` ticks.
+fn run_end(height: f32, after: After, ticks: usize) -> EndTrace {
+    let press = 10;
+    let mut app = App::new();
+    app.add_plugins((TimePlugin, SfActionPlugin::<Course>::default()))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
+        .insert_resource(course(height))
+        .insert_resource(rules())
+        .insert_resource(EndDrive { after, press })
+        .add_systems(FixedUpdate, end_drive.in_set(ActionSystems::Command));
+    let character = ActionCharacter::new(CharacterId(1), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+    let body = ActionBody::new(Locomotion::new(WorldPos::ORIGIN.offset(Vec3::Z * 1.0), 0.0), MoverParams::default(), WorldPos::ORIGIN);
+    let e = app.world_mut().spawn((character, body, Transform::default())).id();
+    let mut trace = EndTrace { ticks: Vec::new() };
+    for _ in 0..ticks {
+        app.update();
+        let tick = app.world().resource::<ActionTick>().0.0;
+        let c = app.world().get::<ActionCharacter>(e).unwrap();
+        let p = WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(e).unwrap().loco.position);
+        assert!(p.is_finite() && p.y > -0.05, "never through the floor: {p}");
+        if tick >= press {
+            trace.ticks.push((c.state.mov, p));
+        }
+    }
+    trace
+}
+
+#[test]
+#[ignore = "measurement: mantle end past the lip, drift after the move with the stick released or pushed"]
+fn measure_mantle_end() {
+    for height in [1.0, 2.0] {
+        for after in [After::Release, After::Push] {
+            let tr = run_end(height, after, 180);
+            let Some(end) = tr.end() else {
+                println!("{height} m {after:?}: no mantle end");
+                continue;
+            };
+            let at_end = tr.ticks[end].1;
+            // Settled: the first tick from which the feet move under 1 mm per tick.
+            let settle = (end..tr.ticks.len()).find(|&i| tr.ticks[i..].windows(2).all(|w| w[0].1.distance(w[1].1) < 1e-3));
+            let last = tr.ticks.last().unwrap().1;
+            let zs: Vec<String> = (end.saturating_sub(4)..(end + 40).min(tr.ticks.len())).step_by(2).map(|i| format!("{:.3}", tr.ticks[i].1.z - FACE_Z)).collect();
+            println!("  z past lip around the end: {}", zs.join(" "));
+            println!(
+                "{height} m {after:?}: move ends {:.3} s after the press, feet {:.3} m past the lip (y {:.3}); \
+                 settles {} later, at {:.3} m past the lip; last {:.3} m past",
+                secs(end),
+                at_end.z - FACE_Z,
+                at_end.y,
+                settle.map_or("never".into(), |s| format!("{:.3} s", secs(s - end))),
+                settle.map_or(f32::NAN, |s| tr.ticks[s].1.z - FACE_Z),
+                last.z - FACE_Z,
+            );
+        }
+    }
+}
+
+#[test]
+fn both_mantles_end_standing_just_past_the_lip_and_stay_there_without_input() {
+    for height in [1.0, 2.0] {
+        let tr = run_end(height, After::Release, 150);
+        let end = tr.end().expect("the mantle ran and ended");
+        let feet = tr.ticks[end].1;
+        println!("{height} m, released: move ends {:.3} s after the press, feet {feet}", secs(end));
+        assert!((feet.y - height).abs() < 0.05, "on top: {feet}");
+        assert!(feet.z > FACE_Z && feet.z - FACE_Z <= 0.45, "just past the lip: {:.3} m", feet.z - FACE_Z);
+        let (later, last) = (tr.ticks[end + 12].1, tr.ticks.last().unwrap().1);
+        assert!(later.distance(last) < 0.01 && feet.distance(last) < 0.05, "at rest after the move: {feet} -> {later} -> {last}");
+    }
+}
+
+#[test]
+fn pushing_forward_walks_on_after_a_mantle() {
+    for height in [1.0, 2.0] {
+        let tr = run_end(height, After::Push, 150);
+        let end = tr.end().expect("the mantle ran and ended");
+        let (feet, later) = (tr.ticks[end].1, tr.ticks[end + 60].1);
+        println!("{height} m, pushed: feet {feet} at the end, {later} 1 s later");
+        assert!(later.z - feet.z > 1.0 && (later.y - height).abs() < 0.05, "walks on along the top: {feet} -> {later}");
+    }
+}
+
+/// `ticks` 60 Hz ticks in seconds.
+#[allow(clippy::cast_precision_loss, reason = "a few hundred ticks")]
+fn secs(ticks: usize) -> f32 {
+    ticks as f32 / 60.0
+}

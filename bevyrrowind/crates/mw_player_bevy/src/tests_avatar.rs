@@ -98,7 +98,7 @@ fn mantle_progress_plays_the_slot_then_hands_back() {
         #[allow(clippy::cast_precision_loss, reason = "small")]
         let progress = tick as f32 / 60.0;
         character.output.tick = Tick(tick);
-        character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress });
+        character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress, settle: false });
         let ticks = Some(((progress - 1.0 / 60.0).max(0.0), progress));
         avatar::traversal(&mut feed, &mut animator, &character, &AvatarSlots::default(), ticks, 1.0);
         animator.update(1.0 / 60.0, AnimTier::A0);

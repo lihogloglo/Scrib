@@ -5,13 +5,19 @@
     (
         // Waist-high mantle: Jump (or Up) with forward input at a ledge whose top is in the band
         // (character heights: ~0.55-1.5 m for a 1.8 m capsule). The clip's root track is warped
-        // onto the top, `inset` m past the lip; too large a correction refuses (plain jump).
+        // onto the top, `inset` m past the lip (a capsule radius plus 0.1 m: standing just over the
+        // edge); too large a correction refuses (plain jump). The move ends at `stand`, where the
+        // UAL2 `ClimbUp_1m` has both feet on top (right foot planted 0.22-0.50 s, the left lands
+        // ~0.6 s; after it the clip steps on), so the clip's walk-on never plays. The clip starts
+        // ~0.9 m from the face and travels 1.65 m by then: at the face the warp compresses that
+        // to ~0.7 m (ratio up to ~0.57 at the band ends), hence the Linear profile (Late would
+        // overshoot the target and pull back).
         id: "traverse.mantle.waist",
         kind: Traversal,
         category: Traversal,
         rank: 200,
         slots: ["traverse.mantle.waist"],
-        owner: Warp(target: LedgeTop(inset: 1.0), profile: Late, refuse_ratio: 0.35, steer: false),
+        owner: Warp(target: LedgeTop(inset: 0.4), profile: Linear, refuse_ratio: 0.6, steer: false, stand: Some(0.55)),
         entry: (
             classes: [Jump, Up],
             need_forward: true,
@@ -26,16 +32,18 @@
     ),
     (
         // High mantle: the band above the waist one (~1.53-2.25 m for a 1.8 m capsule), same
-        // entry. The 2 m climb-up's root rises ~2.4 m and ends ~1.2 m past where its hands
-        // grab (~2 m up), so every ledge in the band compresses the rise (ratio <= ~0.32 at
-        // the bottom with the capsule at the face). Ranked below the waist mantle: the shared
-        // band edge takes the waist clip. Taller faces (2.5 m, the 3.5 m wall) jump.
+        // entry. The 2 m climb-up's root rises ~2.4 m and travels 2.0 m over 1.3 s; both feet
+        // are on top at ~1.17 s (then the right foot steps on), where the move ends (`stand`):
+        // root 2.14 m up and 1.8 m on. Every ledge in the band compresses the rise and the
+        // forward travel (ratio <= ~0.45 with the capsule at the face). Ranked below the waist
+        // mantle: the shared band edge takes the waist clip. Taller faces (2.5 m, the 3.5 m wall)
+        // jump.
         id: "traverse.mantle.high",
         kind: Traversal,
         category: Traversal,
         rank: 190,
         slots: ["traverse.mantle.high"],
-        owner: Warp(target: LedgeTop(inset: 1.2), profile: Late, refuse_ratio: 0.35, steer: false),
+        owner: Warp(target: LedgeTop(inset: 0.4), profile: Linear, refuse_ratio: 0.5, steer: false, stand: Some(1.17)),
         entry: (
             classes: [Jump, Up],
             need_forward: true,

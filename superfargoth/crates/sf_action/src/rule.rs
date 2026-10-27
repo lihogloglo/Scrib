@@ -66,8 +66,18 @@ pub enum Owner {
     Sim,
     /// The slot chain's baked root track, corrected onto `target` by a [`sf_anim::WarpPlan`] fixed
     /// at start; refused (next candidate) when the correction is over `refuse_ratio` of the
-    /// chain's root distance (`MaxCorrection`). No gravity, no steering while it plays.
-    Warp { target: WarpTarget, profile: sf_anim::WarpProfile, refuse_ratio: f32, steer: bool },
+    /// chain's root distance up to `stand` (`MaxCorrection`). No gravity, no steering while it plays.
+    /// `stand`: chain seconds where the feet are planted on top. The warp lands on the target there
+    /// and the move ends standing (no momentum carries out; the stick walks on from rest), so the
+    /// clip's step past it never plays (UE Motion Warping / ALS mantles). `None`: the chain's end.
+    Warp {
+        target: WarpTarget,
+        profile: sf_anim::WarpProfile,
+        refuse_ratio: f32,
+        steer: bool,
+        #[serde(default)]
+        stand: Option<f32>,
+    },
     /// The slot chain's baked root track at the action clock, yaw separate from translation
     /// (action.md "Motion owners": Clip): translation is the root delta over the tick x
     /// `root_scale`, rotated by the gameplay yaw; yaw turns at the open `Turn` window's rate toward
@@ -420,9 +430,10 @@ impl RuleSetBuilder {
             if r.entry.focus.is_some() && !r.entry.classes.contains(&ActionClass::Interact) {
                 errors.push(err(origin, r, "focus needs the Interact class".into()));
             }
-            if let Owner::Warp { refuse_ratio, target: WarpTarget::LedgeTop { inset }, .. } = r.owner {
-                if !(refuse_ratio.is_finite() && refuse_ratio >= 0.0 && inset.is_finite()) {
-                    errors.push(err(origin, r, "warp refuse_ratio and inset must be finite, ratio ≥ 0".into()));
+            if let Owner::Warp { refuse_ratio, target: WarpTarget::LedgeTop { inset }, stand, .. } = r.owner {
+                let stand_ok = stand.is_none_or(|s| s.is_finite() && s > 0.0);
+                if !(refuse_ratio.is_finite() && refuse_ratio >= 0.0 && inset.is_finite() && stand_ok) {
+                    errors.push(err(origin, r, "warp refuse_ratio, inset and stand must be finite, ratio ≥ 0, stand > 0".into()));
                 }
                 if r.slots.is_empty() || r.launch.is_some() {
                     errors.push(err(origin, r, "a Warp owner needs slots (its root path) and no launch".into()));

@@ -183,6 +183,9 @@ pub struct WarpOutput {
     pub root: RootPose,
     /// Seconds into the slot chain (`GraphInstance::set_slot_progress`).
     pub progress: f32,
+    /// The move lands standing on this tick (its rule's `stand` reached): no planar momentum
+    /// carries out of it.
+    pub settle: bool,
 }
 
 /// A Clip move's motion this tick.
@@ -332,7 +335,10 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     state.clock.advance();
     let mut cur = rules.index_of(state.mov);
     let gates_of = |cur: Option<usize>, state: &ActionState| {
-        cur.map_or(Gates { ended: true, ..Gates::OPEN }, |i| gates(rules.at(i), ctx.slots, state.clock.elapsed))
+        cur.map_or(Gates { ended: true, ..Gates::OPEN }, |i| {
+            let r = rules.at(i);
+            if stood(r, state.clock.elapsed) { Gates { ended: true, ..Gates::OPEN } } else { gates(r, ctx.slots, state.clock.elapsed) }
+        })
     };
 
     // 3. Buffer: latch inside accept; an airborne Jump goes to the jump buffer instead.
@@ -539,20 +545,60 @@ fn write_warp(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, out: &
         return;
     }
     let t = ClockTime(state.clock.elapsed.0.saturating_add(u32::from(state.clock.rate))).secs();
+    let stands = matches!(r.rule.owner, Owner::Warp { stand: Some(_), .. });
     out.warp = with_root_path(r, ctx.slots, |path| {
         let t = t.min(path.duration());
-        WarpOutput { root: w.plan.root_at(path, t), progress: t }
+        WarpOutput { root: w.plan.root_at(path, t), progress: t, settle: stands && t >= path.duration() }
     });
 }
 
-/// Runs `f` on the rule's slot chain root path (one slot: its path; several: a [`RootChain`]).
-/// `None` if a slot has no root path.
+/// A Warp rule whose `stand` time the clock has reached: the move is over (feet planted on top).
+fn stood(r: &CompiledRule, t: ClockTime) -> bool {
+    matches!(r.rule.owner, Owner::Warp { stand: Some(s), .. } if t.secs() >= s)
+}
+
+/// Runs `f` on the rule's slot chain root path (one slot: its path; several: a [`RootChain`]),
+/// cut at a Warp rule's `stand` time. `None` if a slot has no root path.
 fn with_root_path<R>(r: &CompiledRule, slots: &dyn SlotSource, f: impl FnOnce(&dyn RootPath) -> R) -> Option<R> {
+    let stand = match r.rule.owner {
+        Owner::Warp { stand, .. } => stand,
+        _ => None,
+    };
+    let f = |path: &dyn RootPath| match stand {
+        Some(end) => f(&StandAt { path, end }),
+        None => f(path),
+    };
     if let [one] = r.slots.as_slice() {
         return slots.root(*one).map(f);
     }
     let parts = r.slots.iter().map(|k| slots.root(*k)).collect::<Option<Vec<_>>>()?;
     Some(f(&RootChain::new(parts)))
+}
+
+/// A root path cut at `end` (a Warp rule's `stand`): its root holds there, the warp window is
+/// clamped into it (a window starting past it spans the whole cut path), contacts pass through.
+struct StandAt<'a> {
+    path: &'a dyn RootPath,
+    end: f32,
+}
+
+impl RootPath for StandAt<'_> {
+    fn duration(&self) -> f32 {
+        self.end.min(self.path.duration())
+    }
+
+    fn root_at(&self, t: f32) -> RootPose {
+        self.path.root_at(t.min(self.duration()))
+    }
+
+    fn warp_window(&self) -> Option<(f32, f32)> {
+        let d = self.duration();
+        self.path.warp_window().filter(|&(a, _)| a < d).map(|(a, b)| (a, b.min(d)))
+    }
+
+    fn contacts(&self) -> &[sf_anim::Contact] {
+        self.path.contacts()
+    }
 }
 
 /// A Warp rule's plan (validators `EndPoseFree` via the probe's room check, `MaxCorrection`):
