@@ -21,4 +21,7 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   into or past it and later swings whiff; medium and large reactions share the knockback clip at full travel (no per-tier root scale yet);
   no pad default for ready weapon; the dummy is talkable (dialogue picks up every NPC character).
 - Agent live check (2026-10-27): dummies stand on the floor, light1 lands Small front hits (100 -> 90 -> 80), light3's second hit lands
-  Medium; gizmos draw capsules and the blade at the hand. Roll and sprint not confirmed live (BRP input). Status: awaiting owner.
+  Medium; gizmos draw capsules and the blade at the hand. Roll and sprint not confirmed live (BRP input).
+- Owner 2026-10-27: animations work well. Bugs: (1) holding Shift never sprints, every press rolls; (2) the chain walks the player
+  forward too far (UAL2 attacks carry 0.8-1.6 m root; ER steps ~0.3-0.5 m: root scale per move + capsule collision); (3) mouse
+  not captured in 3rd person (windowed: cursor shows, a click lands in another window). Status: open.

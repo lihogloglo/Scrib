@@ -146,3 +146,5 @@ walks off after standing, Morrowind clip never used; vibration nearly gone. Fixe
 UAL2 `LayToIdle` (back), UAL1 `Crawl_Exit` (front), LaFAN1 side_right (trimmed to planted feet); LaFAN1 side_left
 dropped (walks 2.5 m). Look for: varied get-ups, no twisted limbs, ends standing in place. Log: `gets up with <slot>`
 plus the gaps. Headless 8 falls: Knockout 5, LayToIdle 1, Crawl_Exit 1, side_right 1; push-to-standing 4.1-4.3 s.
+Owner 2026-10-27 (after the re-bake): animations work well, "nice". Nitpick: the body sometimes slides a bit on the
+ground before getting up, which delays the get-up (lying `still` check waits on it). Status: confirmed with follow-up.

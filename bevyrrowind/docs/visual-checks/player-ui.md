@@ -24,6 +24,8 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   spring). Tab to first person hides the body (no arms yet). Shot: `shots/player-body-3-walk.png` (indoors, 3rd person).
 - Status: confirmed with follow-up. Owner 2026-10-27 (after the IK audit fixes): much better, pelvis and jump fixed. Open:
   movement feel has too much inertia ("like driving a car"); never designed on purpose. Follow-up: PL-4.
+- Owner 2026-10-27 (arena): switching third -> first person can leave the view separated from the capsule (bug, open);
+  first-person arms not built yet (known).
 
 ### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
 - Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s

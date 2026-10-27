@@ -82,7 +82,7 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 ### Awaiting owner (28)
 
-CB-1 | awaiting owner | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
+CB-1 | open (2026-10-27: hold-Shift sprint broken; chain steps too far; mouse not captured) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
 PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
 PH-11 | awaiting owner | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
 WE-5 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
@@ -105,12 +105,12 @@ AN-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-up ends on t
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
 AN-10, AN-13, AN-14 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-ups
-DE-1 | awaiting owner (2026-10-27: LaFAN1 retarget fixed; get-ups Morrowind + UAL + LaFAN1 by pose; no walk-off) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
+DE-1 | confirmed with follow-up (2026-10-27: get-ups work; body slides on the floor before getting up) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
 AU-3 | awaiting owner | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | awaiting owner | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds
 PL-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Third-person walk and the use prompt
-PL-2 | confirmed with follow-up (2026-10-27: movement has too much inertia; see PL-4) | [player-ui](visual-checks/player-ui.md) | Animated player body (dressed `player` record, humanoid graph)
+PL-2 | confirmed with follow-up (2026-10-27: 3rd->1st person switch can separate the view from the capsule) | [player-ui](visual-checks/player-ui.md) | Animated player body (dressed `player` record, humanoid graph)
 PL-3 | confirmed | [player-ui](visual-checks/player-ui.md) | Jump: take-off held in the air, landing on touchdown (graph B2)
 PL-4 | confirmed (2026-10-27: "about right"; jump fixed with gravity 18) | [player-ui](visual-checks/player-ui.md) | Movement feel: starts, stops, reversals (player feel tuning)
 IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
