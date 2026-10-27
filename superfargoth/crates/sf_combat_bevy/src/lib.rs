@@ -46,7 +46,7 @@ mod tests_lock;
 mod tests_marker;
 
 pub use lock::{LockConfig, LockOnAction, LockOwner, SfLockOnPlugin, spawn_lock_action};
-pub use marker::{LockMarker, LockMarkerPlugin};
+pub use marker::{LockMarker, LockMarkerPlugin, LockMarkerShown, LockMarkerStyle, LockMarkerTemplate};
 
 /// The combat sets in `FixedUpdate` (see the crate docs).
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

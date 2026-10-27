@@ -7,11 +7,12 @@ use bevy_camera::{Camera, CameraProjection, ComputedCameraValues, PerspectivePro
 use bevy_ecs::prelude::*;
 use bevy_math::{Mat4, UVec2, Vec2, Vec3};
 use bevy_transform::components::{GlobalTransform, Transform};
-use bevy_ui::{Node, UiTargetCamera, Val};
+use bevy_color::Color;
+use bevy_ui::{BackgroundColor, Node, UiTargetCamera, Val};
 use sf_camera_bevy::PlayerCamera;
 
 use crate::lock::{LockOn, Lockable};
-use crate::marker::{LockMarker, LockMarkerPlugin, MARKER_SIZE, project_marker};
+use crate::marker::{LockMarker, LockMarkerPlugin, LockMarkerShown, LockMarkerStyle, LockMarkerTemplate, MARKER_SIZE, project_marker};
 
 const VIEW: Vec2 = Vec2::new(1280.0, 720.0);
 
@@ -69,11 +70,13 @@ fn marker_follows_the_locked_target_and_hides_otherwise() {
     let Scene { mut app, camera, player, target } = scene();
     app.update();
     assert_eq!(marker(&mut app).0, Visibility::Hidden, "no lock: hidden");
+    assert!(!app.world().resource::<LockMarkerShown>().0);
 
     app.world_mut().entity_mut(player).insert(LockOn(target));
     app.update();
     let (visibility, left, top, on) = marker(&mut app);
     assert_eq!(visibility, Visibility::Inherited, "locked: shown");
+    assert!(app.world().resource::<LockMarkerShown>().0, "shown, for the host HUD");
     assert_eq!((left, top), (Val::Px(640.0 - MARKER_SIZE / 2.0), Val::Px(360.0 - MARKER_SIZE / 2.0)), "centred on the aim point");
     assert_eq!(on, Some(camera), "drawn in the player camera's view");
 
@@ -94,4 +97,21 @@ fn marker_follows_the_locked_target_and_hides_otherwise() {
     app.world_mut().entity_mut(player).remove::<LockOn>();
     app.update();
     assert_eq!(marker(&mut app).0, Visibility::Hidden, "released: hidden");
+    assert!(!app.world().resource::<LockMarkerShown>().0);
+}
+
+#[test]
+fn marker_wears_the_template_nodes_look_and_centres_by_it() {
+    let Scene { mut app, player, target, .. } = scene();
+    let fill = Color::srgb(0.87, 0.79, 0.62);
+    let template = Node { width: Val::Px(4.0), height: Val::Px(4.0), ..Node::default() };
+    app.world_mut().spawn((LockMarkerTemplate, template, BackgroundColor(fill)));
+    app.world_mut().entity_mut(player).insert(LockOn(target));
+    app.update();
+    let style = *app.world().resource::<LockMarkerStyle>();
+    assert_eq!((style.size, style.fill, style.rim), (4.0, fill, 0.0), "the template's look");
+    let mut q = app.world_mut().query_filtered::<(&Node, &BackgroundColor), With<LockMarker>>();
+    let (node, marker_fill) = q.single(app.world()).expect("one marker");
+    assert_eq!((node.width, node.height, marker_fill.0), (Val::Px(4.0), Val::Px(4.0), fill));
+    assert_eq!((node.left, node.top), (Val::Px(638.0), Val::Px(358.0)), "centred by the template's size");
 }

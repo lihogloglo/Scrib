@@ -15,7 +15,9 @@
 //! - **Lock-on.** `sf_combat_bevy::SfLockOnPlugin` (line of sight through the physics probe): the
 //!   player body is a `LockOwner`, the lock key ([`spawn_lock`], `Control::LockOn`: Q, middle
 //!   mouse, R3) locks the best `Lockable` (the training dummies) and the third-person camera frames
-//!   it; `LockMarkerPlugin` draws a dot on the target's chest (both views).
+//!   it; `LockMarkerPlugin` draws the aim cursor on the target's chest (both views): the HUD
+//!   crosshair is its template ([`tag_crosshair`]: same look, as themed) and hides meanwhile
+//!   (`crate::hud`), so one cursor shows.
 //! - **Rules.** [`ModernRules`]: `sf_combat::StandardRules` as a resource (the classic rules
 //!   would replace it, combat-adapter.md "Rules").
 
@@ -28,7 +30,9 @@ use sf_action_bevy::{ActionCharacter, ActionSystems};
 use sf_combat::{
     CombatRules, CompiledSheet, Contact, Fighter, Outcome, PoolDelta, RegenState, SocketTracks, StandardRules, Swing, SwingPlan,
 };
-use sf_combat_bevy::{CombatData, CombatSystems, Combatant, LockMarkerPlugin, LockOwner, SfCombatPlugin, SfLockOnPlugin};
+use sf_combat_bevy::{
+    CombatData, CombatSystems, Combatant, LockMarkerPlugin, LockMarkerTemplate, LockOwner, SfCombatPlugin, SfLockOnPlugin,
+};
 use sf_physics_bevy::Physics;
 
 use crate::hud::PlayerVitals;
@@ -134,10 +138,17 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
     // The HUD's record vitals, before it starts showing the combat ones.
     let record = app.world().get_resource::<PlayerVitals>().map_or(PlayerVitals::PLACEHOLDER, |v| [v.health.max, v.magicka.max, v.fatigue.max]);
     app.insert_resource(PlayerCombat { sheet, health: record[0], fatigue: record[2] })
-        .add_systems(Update, (arm, ready_weapon).chain().after(crate::apply_mode))
+        .add_systems(Update, ((arm, ready_weapon).chain().after(crate::apply_mode), tag_crosshair))
         .add_systems(FixedUpdate, draw_on_attack.after(ActionSystems::Step).before(CombatSystems::Stats));
     #[cfg(feature = "debug")]
     app.add_systems(Update, toggle_gizmos);
+}
+
+/// The HUD crosshair, once built, is the lock marker's template (the marker copies its look).
+pub(crate) fn tag_crosshair(mut commands: Commands, huds: Query<&sf_ui_screens::hud::HudParts, Added<sf_ui_screens::hud::HudParts>>) {
+    for parts in &huds {
+        commands.entity(parts.crosshair()).insert(LockMarkerTemplate);
+    }
 }
 
 /// Dev key for the combat gizmos (`sf_combat_bevy::CombatGizmos`; G is the physics colliders).

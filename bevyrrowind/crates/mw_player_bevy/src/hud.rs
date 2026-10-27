@@ -16,7 +16,9 @@
 //!   where vanilla draws its minimap. Scaffold until the local map lands.
 //! - **Crosshair**: shown whenever the HUD is, first and third person alike: the focus ray goes
 //!   through the screen centre in both views (`OpenMW` `World::getFocusObject`, see
-//!   [`crate::Focus`]), so the centre dot is where Use acts.
+//!   [`crate::Focus`]), so the centre dot is where Use acts. Hidden while the lock-on marker is on
+//!   screen (`sf_combat_bevy::LockMarkerShown`): the marker is the same dot moved onto the target
+//!   (`crate::combat`).
 //! - **Use prompt**: from [`crate::Focus`] (the game's `OpenMW` focus ray; the action layer's own
 //!   focus, `sf_action::Prompt`, isn't fed by the game yet). The glyph is the Use binding's,
 //!   following rebinds and the device; a target with no verb (a creature, a fixed light) shows
@@ -36,7 +38,7 @@ use sf_ui::Layer;
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiScreenRoot};
 use sf_ui_screens::{HudBar, HudScreen, HudView, ScreenSystems, UsePrompt};
 
-use sf_combat_bevy::Combatant;
+use sf_combat_bevy::{Combatant, LockMarkerShown};
 
 use crate::{Focus, PlayerBody, PlayerMode};
 
@@ -157,6 +159,7 @@ fn drive_hud(
     focus: Res<Focus>,
     vitals: Res<PlayerVitals>,
     localizer: Option<Res<UiLocalizer>>,
+    lock_shown: Option<Res<LockMarkerShown>>,
     cams: Query<&GlobalTransform, With<PlayerCamera>>,
     mut view: ResMut<HudView>,
 ) {
@@ -182,7 +185,9 @@ fn drive_hud(
         },
         None => UsePrompt { verb: t.name.clone(), target: None, ready: true, action: None },
     });
-    let want = HudView { bars, heading, crosshair: mode.body.is_some(), prompt };
+    // While the lock marker is on screen it is the cursor: one reticle, not two.
+    let locked = lock_shown.is_some_and(|s| s.0);
+    let want = HudView { bars, heading, crosshair: mode.body.is_some() && !locked, prompt };
     view.set_if_neq(want);
 }
 
@@ -268,6 +273,7 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         .init_resource::<Focus>();
         mw_controls_bevy::add(&mut app);
         add(&mut app, None);
+        app.add_plugins(sf_combat_bevy::LockMarkerPlugin).add_systems(Update, crate::combat::tag_crosshair);
         let target = UVec2::new(1600, 1000);
         app.world_mut().spawn((
             Camera2d,
@@ -363,6 +369,64 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         app.world_mut().resource_mut::<PlayerMode>().on = false;
         frames(&mut app, 1);
         assert_eq!(hud_root(&mut app).1, Visibility::Hidden, "hidden on the free camera");
+    }
+
+    /// One reticle: while the lock marker is on the target the centre crosshair hides, and the
+    /// marker wears the crosshair's (themed) look; released, the crosshair is back.
+    #[test]
+    fn the_lock_marker_replaces_the_crosshair_and_wears_its_look() {
+        use bevy::camera::{CameraProjection, PerspectiveProjection};
+        use sf_camera_bevy::{LockOn, Lockable};
+        use sf_combat_bevy::{LockMarker, LockMarkerShown, LockMarkerStyle};
+
+        let mut app = app();
+        let (root, _) = hud_root(&mut app);
+        let crosshair = app.world().get::<HudParts>(root).expect("parts").crosshair();
+        let shown = |app: &App, e: Entity| app.world().get::<Node>(e).is_some_and(|n| n.display != Display::None);
+        let marker = |app: &mut App| {
+            let mut q = app.world_mut().query_filtered::<&Visibility, With<LockMarker>>();
+            *q.single(app.world()).expect("one marker")
+        };
+        assert!(shown(&app, crosshair), "no lock: the crosshair");
+        assert_eq!(marker(&mut app), Visibility::Hidden);
+
+        // The marker copied the crosshair's look (4 px square, no rim; colour as themed).
+        let style = *app.world().resource::<LockMarkerStyle>();
+        let fill = app.world().get::<BackgroundColor>(crosshair).expect("crosshair fill").0;
+        let node = app.world().get::<Node>(crosshair).expect("crosshair node").clone();
+        assert_eq!((Val::Px(style.size), style.fill, style.radius, style.rim), (node.width, fill, node.border_radius, 0.0));
+        let mut q = app.world_mut().query_filtered::<(&Node, &BackgroundColor), With<LockMarker>>();
+        let (marker_node, marker_fill) = q.single(app.world()).expect("one marker");
+        assert_eq!((marker_node.width, marker_fill.0), (node.width, fill), "marker styled");
+
+        // The player camera renders, and the body locks a target 5 m ahead (east, eye level).
+        let size = UVec2::new(1600, 1000);
+        let clip = PerspectiveProjection { aspect_ratio: 1.6, ..default() }.get_clip_from_view();
+        let camera = Camera {
+            order: -1,
+            computed: ComputedCameraValues {
+                clip_from_view: clip,
+                target_info: Some(RenderTargetInfo { physical_size: size, scale_factor: 1.0 }),
+                ..default()
+            },
+            ..default()
+        };
+        let mut cams = app.world_mut().query_filtered::<Entity, With<PlayerCamera>>();
+        let cam = cams.single(app.world()).expect("player camera");
+        app.world_mut().entity_mut(cam).insert(camera);
+        let target = app.world_mut().spawn((Transform::from_xyz(5.0, -1.0, 0.0), Lockable { aim_height: 1.0 })).id();
+        let body = app.world().resource::<PlayerMode>().body.expect("body");
+        app.world_mut().entity_mut(body).insert(LockOn(target));
+        frames(&mut app, 3);
+        assert!(app.world().resource::<LockMarkerShown>().0);
+        assert_eq!(marker(&mut app), Visibility::Inherited, "locked: the marker");
+        assert!(!shown(&app, crosshair), "locked: no centre crosshair");
+        assert!(!app.world().resource::<HudView>().crosshair);
+
+        app.world_mut().entity_mut(body).remove::<LockOn>();
+        frames(&mut app, 3);
+        assert_eq!(marker(&mut app), Visibility::Hidden, "released: no marker");
+        assert!(shown(&app, crosshair), "released: the crosshair is back");
     }
 
     #[test]
