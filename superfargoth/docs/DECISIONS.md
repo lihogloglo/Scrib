@@ -1525,3 +1525,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   paste; `deny.toml` exceptions). `cargo_turn.sh`: a `cargo run`/`cargo dev` that only keeps a program open no longer holds the build slot.
 - 2026-10-26 (owner): dev runs (`view`, `scene`, `cargo dev`) always skip the main menu and character creation; only the release
   start path shows them. Swimming + underwater and buoyancy move from Phase 4 water polish to Phase 3 (ROADMAP 3.6, 3.7).
+- 2026-10-27 (owner): combat targets an Elden Ring feel in third person (reference: Funny-Bones/ELDEN-RING-Combat-Rewrite, MIT), generic, with classic
+  OpenMW rules behind a seam. First cuts: one button for roll (tap) and sprint (hold), guard only (parry later), every unguarded hit staggers (poise later).
+  Clips: free packs + Morrowind's own animations as the baseline; LaFAN1 is an optional "extended movement" layer, so combat must work without it.
+- 2026-10-27 (combat-spec): combat lives in new Bevy-free `sf_combat` + thin `sf_combat_bevy` (leaf off `sf_action`, which only gains the
+  generic window kinds, `Clip` owner, forced moves, start gate, tap/hold). Rules seam `CombatRules` (begin_swing, resolve_contact,
+  can_start, cost, regen); stats stay the implementor's, keyed by `CharacterId`. Spec `specs/combat.md`.

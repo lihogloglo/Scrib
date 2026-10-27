@@ -342,6 +342,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 | **D1** camera | `sf_camera` third-person rig, first-person eye from the baked camera track, per-move look limits, comfort switches (camera.md) | camera.md tests; visual checks CAM-1/CAM-2 |
 | **D2** first-person bodies | first-person render body + world shadow body; optional first-person arms clips on the shared clock | same command stream gives identical gameplay ticks in both views; visual check |
 | **E1-E3** combat (M10) | E1 windows + moveset sheet + light/heavy/dodge/guard; E2 lock-on and soft aim; E3 stealth takedown with ragdoll victim | scripted-input combat tests (R6 adopt 7); heavy whiff has no cancel; takedown `PairFits` at walls |
+| | E1-E3 now live in [combat.md](combat.md) "Build plan" (2026-10-27): E1 = combat C1-C3, E2 = C1c + C4, E3 = C6. | |
 | **F** co-op (after M4-M6) | R12 research, then snapshots, then prediction and reconciliation | R12 defines |
 
 ## Clip gaps and industry comparison
