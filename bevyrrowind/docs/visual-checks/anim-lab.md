@@ -130,18 +130,13 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slice 2b; confirmed with follow-up 2026-10-27: recovery works; fallen get-up does an unnatural flip)
-Dev build (feature `delirium`, part of `dev`): `cargo build -p bevyrrowind --features dev`, then
-`powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`). Left-click a human NPC (Fargoth far left,
-Elone centre; not the knockdown dummy, the Khajiit or the Argonian): plain 45, Ctrl 20, Shift 80 N s at the clicked part along the
-view ray; clicking again while it reacts pushes that part. Look for: the push lands where you clicked (head, chest, hips), the body
-reacts and takes catch steps instead of popping, no stretched or sunk limbs, the frame (shadow, culling) stays with it. Shift-click
-the head a few times to make one fall: it lies for 1.5-4 s, then the get-up clip starts from the lying pose (log: `delirium: ...
-fell`, `handed back (Fallen)`). Owner 2026-10-27: recovered actors stood in Delirium's own stance, then eased into the idle
-seconds later. Slice 2b: once the catch steps end and the body is slow (no step, centre of mass < 0.25 m/s for 0.15 s),
-Delirium's share fades 1 -> 0 over 0.5 s with the idle showing through, the body staying where it stands; then the graph just
-carries on (no second ease). A click during the fade brings the physics back. Look for: no "arms out" stance after the steps,
-one continuous blend into the idle, no pop or foot slide at the end. Log: `recovered, blending out ...`, then `handed back
-(Balanced) after X s`. Headless (`recovery_to_idle`): at the idle 2.6-3.1 s -> 1.0-1.9 s after the push; time in the stance
-after the last step 1.7-2.0 s -> 0.2-0.4 s. Live 2026-10-27: Elone 45 N s on the hips, blend from 0.5-1.0 s, handed back at
-1.0-1.5 s, standing in the idle. Fall not seen live.
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; confirmed with follow-up 2026-10-27: get-up convincing, but too much vibration and lies too long as if stunned; LaFAN1 fallAndGetUp clips next)
+`cargo build -p bevyrrowind --features dev`, `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`).
+Left-click a human NPC (Fargoth far left, Elone centre): plain 45, Ctrl 20, Shift 80 N s at the clicked part. Recovery
+(confirmed 2026-10-27): catch steps, then Delirium fades into the idle (log `recovered, blending out`, `handed back (Balanced)`).
+Fall (owner 2026-10-27: "unnatural flip to stand up"): the get-up clip `Knockout@tail` starts on its side, not its back, and
+the yaw-only get-up frame left the tilt difference to the 0.3 s blend (plus a wrong 180 deg roll for face-down bodies).
+Now the body lies 1.5-4 s, rolls over physically to the clip's side (0.3-1.3 s), then the get-up starts from that pose.
+Shift-click the head a few times; look for: a visible roll onto the side, then a get-up with no whole-body spin. Log:
+`fell`, `gets up (rolled over X s, Y deg left to the blend)`. Headless `get_up_blend_rotation`: blend turn 55-165 deg -> 12-20
+deg over 8 falls. Live: clicks via BRP did not register reliably, fall not seen live.

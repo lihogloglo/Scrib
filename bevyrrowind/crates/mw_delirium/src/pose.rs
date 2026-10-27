@@ -91,3 +91,9 @@ pub fn bones_to_parts(table: &PartTable, skeleton: &Skeleton, local: &[Trs], sim
         })
         .collect()
 }
+
+/// The get-up tilt of a clip pose (`local`, e.g. the get-up clip's first frame): sim up in its pelvis part's frame
+/// ([`crate::takeover::tilt_of`]), for [`crate::Takeover::set_get_up`].
+pub fn clip_tilt(table: &PartTable, skeleton: &Skeleton, local: &[Trs]) -> Vec3 {
+    crate::takeover::tilt_of(bones_to_parts(table, skeleton, local, &crate::authoring_from_model())[0].rotation)
+}

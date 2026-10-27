@@ -240,3 +240,82 @@ fn ramp_takeover_floor_at_the_ground_root_takes_the_height() {
     assert!(t.frames().iter().all(|p| p.translation.is_finite() && p.translation.z > t.floor - 0.05), "through the floor");
     assert!(settled.z > t.floor, "pelvis under the floor");
 }
+
+/// The get-up clip's first frame, local pose: `Knockout@tail` (the `Knockout` group at its `Loop Stop`), cooked in
+/// place like the graph's (no root-motion extraction).
+fn get_up_pose(f: &Fixture) -> Vec<sf_anim::Trs> {
+    let (install, _) = MorrowindInstall::detect(None).unwrap();
+    let vfs: Vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
+    let anim = mw_anim::Animation::from_kf(&vfs.read(&VfsPath::new("meshes/xbase_anim.kf").unwrap()).unwrap()).unwrap();
+    let group = anim.groups().into_iter().find(|g| g.name.eq_ignore_ascii_case("Knockout")).expect("Knockout");
+    let (_, tail) = group.loop_range.expect("Knockout loops");
+    let rules = sf_anim::ClipRules {
+        looping: sf_anim::Looping::Once,
+        root_motion: sf_anim::RootMotionRules { extract: false, ..Default::default() },
+        ..Default::default()
+    };
+    let clip = sf_anim::cook_clip(&f.skeleton, &anim.source_clip(&group), &rules, &sf_anim::CookSettings::default()).unwrap();
+    let mut local = sf_anim::LocalPose::rest(&f.skeleton);
+    clip.sample(tail, &mut local, None);
+    local.to_vec()
+}
+
+/// Heading about sim +Z (the twist of `q`): the yaw-only get-up frame.
+fn yaw_z(q: Quat) -> Quat {
+    let t = Quat::from_xyzw(0.0, 0.0, q.z, q.w);
+    if t.length_squared() > 1e-6 { t.normalize() } else { Quat::IDENTITY }
+}
+
+/// DE-1 "magic flip": the whole-body (pelvis) rotation the hand-back's 0.3 s blend sweeps at a fallen get-up, i.e. the
+/// angle between the lying pelvis and the get-up clip's first pelvis pose in the yaw-only get-up frame. Before: the
+/// `ROLL_TO_BACK` scaffold (a face-down body taken as rolled 180 deg about its spine, for a face-up clip); no roll: the
+/// best yaw alone (the tilt difference); after: Delirium rolls the body to the clip's tilt first (`set_get_up`).
+#[test]
+#[ignore = "measurement: whole-body rotation in the fallen get-up blend, face up / face down / sides, before vs after"]
+fn get_up_blend_rotation() {
+    let Some(f) = fixture() else { return };
+    let clip_pose = get_up_pose(f);
+    let clip_part = bones_to_parts(&f.body.table, &f.skeleton, &clip_pose, &authoring_from_model())[0].rotation;
+    let clip = mw_delirium::clip_tilt(&f.body.table, &f.skeleton, &clip_pose);
+    let (rest, prev) = rest_parts(f, Vec3::ZERO);
+    let (spine, belly) = (rest[0].rotation.inverse() * Vec3::Z, rest[0].rotation.inverse() * Vec3::Y);
+    println!("get-up clip pelvis tilt: up in its part frame {clip:.2}; degrees the blend sweeps (and roll s, fall to get-up s)");
+    // The body faces sim +Y: a push toward -Y is from the front.
+    let dirs = [("front", -Vec3::Y), ("behind", Vec3::Y), ("left", Vec3::X), ("right", -Vec3::X)];
+    for (part, at) in [(10usize, "chest"), (12, "head"), (0, "pelvis")] {
+        for (name, dir) in dirs {
+            let mut row = Vec::new();
+            for roll in [false, true] {
+                let mut t = Takeover::start(&f.body, &rest, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+                if roll {
+                    t.set_get_up(clip);
+                }
+                let point = t.frames()[part].translation;
+                t.push(part, point, dir * 200.0);
+                let out = run(&mut t, 30.0);
+                let frames = t.frames();
+                assert!(out.is_some_and(|o| o.0 != HandBack::Exploded), "{at} {name}: {out:?}");
+                assert!(frames.iter().all(|p| p.translation.is_finite() && p.translation.z > t.floor - 0.05), "through the floor");
+                if out.map(|o| o.0) != Some(HandBack::Fallen) {
+                    row.push(format!("{:?}", out.map(|o| o.0)));
+                    continue;
+                }
+                let body = frames[0].rotation;
+                let sweep = |yaw: Quat| (yaw * clip_part).angle_between(body).to_degrees();
+                let best = sweep(yaw_z(body * clip_part.inverse()));
+                assert!(best.is_finite());
+                assert!((best - mw_delirium::get_up_tilt(body, clip).to_degrees()).abs() < 0.5, "the best yaw leaves the tilt");
+                let down_for = t.down.unwrap_or(0.0);
+                if roll {
+                    row.push(format!("after {best:5.1} (rolled {:.2} s, down {down_for:.1} s)", t.rolling.unwrap_or(0.0)));
+                } else {
+                    let face = (body * belly).z;
+                    let rolled = if face < 0.0 { body * Quat::from_axis_angle(spine, std::f32::consts::PI) } else { body };
+                    let before = sweep(yaw_z(rolled * clip_part.inverse()));
+                    row.push(format!("before {before:5.1} (belly up {face:+.2}), no roll {best:5.1} (down {down_for:.1} s)"));
+                }
+            }
+            println!("  {at:6} from the {name:6} 200 N s: {}", row.join("; "));
+        }
+    }
+}

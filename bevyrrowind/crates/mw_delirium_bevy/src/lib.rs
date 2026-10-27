@@ -16,9 +16,10 @@
 //!   the physics-pose weight follows `Takeover::weight` from 1 to 0, the graph's pose (the idle, kept alive under
 //!   `Held`) shows through, the frame stays where the blend started; at 0 the graph simply carries on (no
 //!   inertialization). A push during it brings the physics back. Timeout (or a blow-up) → the graph inertializes from
-//!   the shown pose (`inertialize_from`). Down →the graph's `knocked_out` flag is set while it lies there; once still (or after a
-//!   few seconds) the frame moves under the `Knockout@tail` get-up clip's first pelvis pose (`get_up_root`, as the
-//!   knockdown ragdoll) and the get-up plays out of the lying pose. The root takes the body's move (the walkers'
+//!   the shown pose (`inertialize_from`). Down → the graph's `knocked_out` flag is set while it lies there; once still
+//!   (or after a few seconds) Delirium rolls the body over to the tilt of the `Knockout@tail` get-up clip's first pose
+//!   (it starts on its side; `Takeover::set_get_up`, DE-1), then the frame moves under that pose's pelvis (yaw and
+//!   translation only, `get_up_root` without its roll) and the get-up plays out of the lying pose. The root takes the body's move (the walkers'
 //!   knockdown glue) and wakes; [`DeliriumHandedBack`] tells the host.
 //! - **World**: one flat floor at the ground under the pelvis (one ray down through the walkers' [`Physics`] ground
 //!   probe; no physics or no hit: the mover's render height), lowered to the lowest part when the pose starts below it
@@ -331,6 +332,10 @@ fn start(
             .and_then(|g| g.probe_one(ProbeQuery::down(sim.world_point(parts[0].translation), GROUND_RAY)))
             .map_or(0.0, |hit| sim.sim_point(hit.point).z);
         let mut takeover = Takeover::start(&rig.body, &parts, Some((&before, prev.secs.max(1e-3))), Some((scale, weight)), ground_z, seed, Rules::default());
+        // Down, it rolls over to the get-up clip's first pose before the get-up (DE-1: no turn left to the blend).
+        if let Some(clip) = get_up_pose(animator) {
+            takeover.set_get_up(mw_delirium::clip_tilt(&rig.body.table, skeleton, &clip.to_vec()));
+        }
         let hit = prev.hit.map(|h| {
             let at = sim.sim_point(h.point);
             let part = h.part.unwrap_or_else(|| nearest_part(&parts, at));
@@ -419,24 +424,30 @@ fn shown_pose(l: &Live, skeleton: &sf_anim::Skeleton, parts: &[Part], frame: &Wo
     pose
 }
 
+/// The get-up clip's first frame (local pose), when the graph has the clip.
+fn get_up_pose(animator: &Animator) -> Option<sf_anim::LocalPose> {
+    let slot = animator.asset.graph.clips.iter().position(|c| c.reference == GET_UP_CLIP)?;
+    let clip = animator.asset.clips.get(slot)?;
+    let mut local = sf_anim::LocalPose::rest(&animator.asset.skeleton);
+    clip.sample(0.0, &mut local, None);
+    Some(local)
+}
+
 /// The get-up frame for a body lying in `pose` at `frame`: the get-up clip's first pelvis pose on the lying pelvis
-/// (yaw and translation only), on the floor.
+/// (yaw and translation only), on the floor. Delirium rolled the body to the clip's tilt first
+/// (`Takeover::set_get_up`), so the yaw alone leaves the hand-back's blend no whole-body turn (DE-1); no
+/// `ROLL_TO_BACK` (the clip starts on its side, not on its back).
 fn get_up_frame(l: &Live, animator: &Animator, pose: &[Trs], frame: &WorldTransform) -> Option<WorldTransform> {
     let skeleton = &animator.asset.skeleton;
     let joint = l.rig.body.table.parts[0].joint;
-    let slot = animator.asset.graph.clips.iter().position(|c| c.reference == GET_UP_CLIP)?;
-    let clip = animator.asset.clips.get(slot)?;
-    let mut local = sf_anim::LocalPose::rest(skeleton);
-    clip.sample(0.0, &mut local, None);
+    let local = get_up_pose(animator)?;
     let mut model = sf_anim::ModelPose::new(skeleton.len());
     sf_anim::local_to_model(skeleton, &local, &mut model, &Affine3A::IDENTITY);
     let (_, clip_rot, clip_pos) = model.mats[joint].to_scale_rotation_translation();
     let (_, rot, pos) = mw_delirium::pose::model_pose(skeleton, pose)[joint].to_scale_rotation_translation();
     let body = WorldTransform { pos: frame.pos.offset(frame.rotation * (pos * l.scale)), rotation: frame.rotation * rot, scale: Vec3::ONE };
     let (_, rest, _) = skeleton.rest_model()[joint].to_scale_rotation_translation();
-    let spine = rest.inverse() * Vec3::Y;
-    let face_down = (body.rotation * (rest.inverse() * Vec3::Z)).y < 0.0;
-    let to = get_up_root(&body, (clip_rot, clip_pos), spine, l.scale, face_down);
+    let to = get_up_root(&body, (clip_rot, clip_pos), rest.inverse() * Vec3::Y, l.scale, false);
     let floor = l.sim.anchor.offset(Vec3::Y * l.takeover.floor);
     Some(WorldTransform { pos: to.pos.offset(Vec3::Y * to.pos.delta_f32(floor).y), ..to })
 }
@@ -506,7 +517,10 @@ fn read_back(
         };
         // Hand back: the graph inertializes out of the shown pose, read in the frame it goes on in.
         let previous = l.last_pose.take().unwrap_or_else(|| pose.clone());
-        let get_up = if how == HandBack::Fallen { get_up_frame(l, &animator, &pose, &frame) } else { None };        if let Some(up) = get_up {
+        let get_up = if how == HandBack::Fallen { get_up_frame(l, &animator, &pose, &frame) } else { None };
+        if let Some(up) = get_up {
+            let left = l.takeover.get_up_left().unwrap_or(0.0).to_degrees();
+            info!("delirium: {root} gets up (rolled over {:.2} s, {left:.0} deg left to the blend)", l.takeover.rolling.unwrap_or(0.0));
             if let Ok(mut t) = frames.p1().get_mut(l.body) {
                 move_frame(&mut t, &frame, l.scale, &up);
             }

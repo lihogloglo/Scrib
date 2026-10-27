@@ -7,6 +7,11 @@
 //! (its physics-pose weight), so the balancer's own stance (the asset's zero pose, arms out) never stands on its own.
 //! A push or a new catch step brings the physics back.
 //!
+//! Roll-over before the get-up (DE-1): a yaw-only get-up frame leaves the tilt difference between the lying pelvis and
+//! the get-up clip's first pose for the hand-back's blend to sweep (up to 165 deg: the "magic flip"). With the clip's
+//! tilt set ([`Takeover::set_get_up`]), a body down and ready first rolls over to it (a velocity servo on the torso, the
+//! Euphoria-style roll before a get-up); measured by `takeover_real_install::get_up_blend_rotation`.
+//!
 //! Bevy-free. The host turns the animated pose into part frames ([`crate::bones_to_parts`], sim space: Z up, metres,
 //! the actor's own authoring frame at the takeover), steps [`Takeover::step`] at a fixed rate and copies the parts back
 //! ([`crate::pose_to_bones`]) every frame. [`pick`] finds the part under a ray (the dev click tool).
@@ -48,6 +53,15 @@ pub struct Rules {
     pub blend_out: f32,
     /// A push or a new catch step during the blend-out: back to 1 over this, s.
     pub blend_in: f32,
+    /// Roll-over before the get-up ([`Takeover::set_get_up`]): down and ready, the body rolls until its pelvis tilt is
+    /// within this of the get-up clip's first pose, rad (the hand-back's blend sweeps only what is left) ...
+    pub roll_tolerance: f32,
+    /// ... at most this fast about the roll axis, rad/s (slowing near the target, [`Self::roll_gain`]) ...
+    pub roll_speed: f32,
+    /// ... the roll rate asked per radian left, 1/s ...
+    pub roll_gain: f32,
+    /// ... for at most this long, s (then the get-up anyway).
+    pub roll_secs: f32,
 }
 
 impl Default for Rules {
@@ -65,6 +79,10 @@ impl Default for Rules {
             recover_secs: 0.15,
             blend_out: 0.5,
             blend_in: 0.1,
+            roll_tolerance: 20f32.to_radians(),
+            roll_speed: 2.5,
+            roll_gain: 4.0,
+            roll_secs: 3.0,
         }
     }
 }
@@ -100,9 +118,28 @@ pub struct Takeover {
     pub behaviour: &'static str,
     /// The physics share of the shown pose (1: Delirium's pose, 0: the animation's), the host's physics-pose weight.
     pub weight: f32,
+    /// Seconds rolling over before the get-up (`Some` once the roll started).
+    pub rolling: Option<f32>,
     still: f32,
     calm: f32,
     blending: bool,
+    /// The get-up clip's first pose: sim up (+Z) in its pelvis part's frame ([`get_up_tilt`]).
+    get_up: Option<Vec3>,
+}
+
+/// The torso parts the roll-over turns (Buttocks, Spine0-3); the limbs follow through the joints.
+const TORSO: [usize; 5] = [0, 7, 8, 9, 10];
+
+/// Up (sim +Z) in the frame of a part at `rotation` (sim space): the part's tilt, free of its heading. Two poses whose
+/// pelvis parts have the same tilt differ by a turn about the vertical only, which a yaw-only get-up frame takes up.
+pub fn tilt_of(rotation: Quat) -> Vec3 {
+    rotation.inverse() * Vec3::Z
+}
+
+/// The whole-body rotation a yaw-only get-up frame leaves to the hand-back's blend: the angle between the lying pelvis
+/// part's tilt (`rotation`, sim space) and the get-up clip's (`clip`, [`tilt_of`]), rad.
+pub fn get_up_tilt(rotation: Quat, clip: Vec3) -> f32 {
+    tilt_of(rotation).angle_between(clip)
 }
 
 /// Linear and angular velocity between two frames of a part.
@@ -165,9 +202,11 @@ impl Takeover {
             down: None,
             behaviour,
             weight: 1.0,
+            rolling: None,
             still: 0.0,
             calm: 0.0,
             blending: false,
+            get_up: None,
         };
         t.send(behaviour, &[("start", Value::Bool(true))]);
         t
@@ -214,6 +253,51 @@ impl Takeover {
         self.agent.doll.com()
     }
 
+    /// The get-up clip's first pose as its pelvis part's tilt ([`tilt_of`] of the part's rotation in the clip's model
+    /// frame, sim axes). Down and ready, the body then rolls over to it before the [`HandBack::Fallen`] hand-back (the
+    /// Euphoria-style roll before a get-up: the get-up clip lies on one side, the blend only takes up what is left).
+    pub fn set_get_up(&mut self, clip: Vec3) {
+        self.get_up = clip.try_normalize();
+    }
+
+    /// The pelvis tilt left to the get-up clip's, rad (`None`: no get-up clip set).
+    pub fn get_up_left(&self) -> Option<f32> {
+        Some(get_up_tilt(self.agent.doll.frames().next()?.rotation, self.get_up?))
+    }
+
+    /// One roll-over step; `true` once done (within [`Rules::roll_tolerance`] and slow, out of time, or no clip).
+    /// A velocity servo about the shortest arc from the clip's up (as the body carries it) to the vertical: couples on
+    /// the torso parts, sized for a part of radius `ROLL_RADIUS`; the joints drag the limbs along.
+    fn roll_over(&mut self, dt: f32) -> bool {
+        const ROLL_RADIUS: f32 = 0.25;
+        const SETTLED: f32 = 1.0;
+        let Some(clip) = self.get_up else { return true };
+        let rolled = self.rolling.get_or_insert(0.0);
+        *rolled += dt;
+        let out_of_time = *rolled >= self.rules.roll_secs;
+        let frames = self.frames();
+        let left = get_up_tilt(frames[0].rotation, clip);
+        let spine = (frames[10].translation - frames[0].translation).normalize_or(Vec3::X);
+        let axis = (frames[0].rotation * clip).cross(Vec3::Z).try_normalize().unwrap_or(spine);
+        let mass: f32 = TORSO.iter().map(|&k| self.agent.doll.part_mass(k)).sum();
+        let spin = TORSO.iter().map(|&k| self.agent.doll.part_mass(k) * self.agent.doll.vel(k).1.dot(axis)).sum::<f32>() / mass;
+        if out_of_time || (left < self.rules.roll_tolerance && spin.abs() < SETTLED) {
+            return true;
+        }
+        let want = (self.rules.roll_gain * left).min(self.rules.roll_speed);
+        let side = axis.any_orthonormal_vector();
+        for k in TORSO {
+            let (m, w) = (self.agent.doll.part_mass(k), self.agent.doll.vel(k).1);
+            let angular = m * ROLL_RADIUS * ROLL_RADIUS * (want - w.dot(axis));
+            // A couple: +f at +r, -f at -r (r = 0.1 side, f along axis x side) is an angular impulse of 0.2 f about axis.
+            let at = frames[k].translation;
+            let f = axis.cross(side) * (angular / 0.2);
+            self.agent.doll.impulse(k, at + side * 0.1, f);
+            self.agent.doll.impulse(k, at - side * 0.1, -f);
+        }
+        false
+    }
+
     /// Whether it is down (fell this takeover).
     pub fn fell(&self) -> bool {
         self.down.is_some()
@@ -253,7 +337,8 @@ impl Takeover {
             Some(down) => {
                 *down += dt;
                 let (min, max) = self.rules.down_secs;
-                ((still && *down >= min) || *down >= max).then_some(HandBack::Fallen)
+                let ready = self.rolling.is_some() || (still && *down >= min) || *down >= max;
+                (ready && self.roll_over(dt)).then_some(HandBack::Fallen)
             }
             None if self.blending && self.weight <= 0.0 => Some(HandBack::Balanced),
             None if !self.blending && self.time >= self.rules.max_secs => Some(HandBack::Timeout),

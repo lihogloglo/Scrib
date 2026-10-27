@@ -24,8 +24,8 @@ pub mod takeover;
 pub use body::{Body, Options, character_from_skeleton};
 pub use delirium;
 pub use delirium_physics as sdk;
-pub use pose::{PartBone, PartTable, bones_to_parts, pose_to_bones};
-pub use takeover::{HandBack, Rules, Takeover};
+pub use pose::{PartBone, PartTable, bones_to_parts, clip_tilt, pose_to_bones};
+pub use takeover::{HandBack, Rules, Takeover, get_up_tilt, tilt_of};
 
 use glam::{Affine3A, Mat3, Quat, Vec3};
 
