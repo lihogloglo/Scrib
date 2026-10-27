@@ -135,13 +135,14 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; awaiting owner 2026-10-27: LaFAN1 get-ups, shorter lying, relaxed on the floor)
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; awaiting owner 2026-10-27: retarget fix, get-up picking)
 `cargo build -p bevyrrowind --features dev`, `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`).
 Left-click a human NPC (Fargoth far left, Elone centre): plain 45, Ctrl 20, Shift 80 N s at the clicked part. Recovery
 confirmed 2026-10-27 (catch steps, fade into the idle). Fall: once down and slowing the body goes limp holding its pose
 (`bodyRelax`: no balancer fidgeting; worst part speed lying still 0.66 -> 0.42 m/s, 6.9 -> 2.2 rad/s), gets up after
-0.3 s at rest (down 0.8-2.6 s, was 2.5-4.3 s). With LAFAN1 in `animation packs/lafan1/` it picks the get-up nearest the
-way it lies (face up / face down / left / right side), rolling only past 20 deg; without it, the roll to `Knockout@tail`.
-Shift-click the head a few times; look for: no jitter while lying, a quick start, a mocap get-up with no whole-body spin.
-Log: `gets up with getup.side_left (down X s, rolled over Y s, Z deg left to the blend)`. Headless `get_up_blend_rotation`:
-push-to-standing MW 5.4 -> 4.1 s, LAFAN1 5.6 s (clips 3-5 s). Live not run (BRP Shift-click unreliable last pass).
+0.3 s at rest (down 0.8-2.6 s, was 2.5-4.3 s). Owner 2026-10-27 (first live LaFAN1 look): arms twisted, feet flipped,
+walks off after standing, Morrowind clip never used; vibration nearly gone. Fixed: LaFAN1 retargets from its frame-0 T-pose
+(twist error 121 -> 3-4 deg); candidates by how it lies: `Knockout@tail` (side, wins within 20 deg of the best),
+UAL2 `LayToIdle` (back), UAL1 `Crawl_Exit` (front), LaFAN1 side_right (trimmed to planted feet); LaFAN1 side_left
+dropped (walks 2.5 m). Look for: varied get-ups, no twisted limbs, ends standing in place. Log: `gets up with <slot>`
+plus the gaps. Headless 8 falls: Knockout 5, LayToIdle 1, Crawl_Exit 1, side_right 1; push-to-standing 4.1-4.3 s.

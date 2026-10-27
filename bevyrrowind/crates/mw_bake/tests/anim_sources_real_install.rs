@@ -31,8 +31,9 @@ const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m_RM";
 /// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
-/// Every slot in the shipped manifest with a non-LAFAN1 candidate (`traverse.climb.up` = UAL1 `ClimbLedge_RM`, for B3).
-const SLOTS: usize = 2;
+/// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 2 traversal slots (`traverse.climb.up` = UAL1
+/// `ClimbLedge_RM`, for B3), the 14 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
+const SLOTS: usize = 18;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
@@ -341,7 +342,10 @@ fn lafan1_mantle_starts_over_its_root_facing_forward() {
     assert!((0.6..1.4).contains(&rise), "root rises {rise} m");
     for (ankle, toe) in [(B::LeftFoot, B::LeftToes), (B::RightFoot, B::RightToes)] {
         let ahead = (toe_pos(&target, &model, &map, ankle, toe) - pos(&target, &model, &map, ankle)).z;
-        assert!(ahead > 0.0, "{toe:?} behind its ankle at frame 0 ({ahead} m)");
+        // A flipped foot (the degenerate-rest bug) puts the toe a foot length (~0.15 m) behind the ankle. Since the
+        // T-pose rest frame (2026-10-27) the foot keeps the actor's own direction: mid-step at frame 0, the toe can sit
+        // a few cm behind the ankle, which is no flip.
+        assert!(ahead > -0.06, "{toe:?} behind its ankle at frame 0 ({ahead} m): flipped foot?");
     }
 
     let key = ProductKey::new(ANIMGRAPH_COMPILE, graph_subject(Template::Humanoid.path(), set.skeleton));

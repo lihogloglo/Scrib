@@ -10,6 +10,8 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+use glam::{Affine3A, Vec2};
+
 use mw_delirium::delirium::prelude::*;
 use mw_delirium::sim::DT;
 use mw_delirium::takeover::pick;
@@ -250,8 +252,8 @@ fn ramp_takeover_floor_at_the_ground_root_takes_the_height() {
 }
 
 /// The get-up clip's first frame, local pose: `Knockout@tail` (the `Knockout` group at its `Loop Stop`), cooked in
-/// place like the graph's (no root-motion extraction).
-fn get_up_pose(f: &Fixture) -> (Vec<sf_anim::Trs>, f32) {
+/// place like the graph's (no root-motion extraction, anchored on the last frame: `mw_anim::root_motion_rules`).
+fn get_up_pose(f: &Fixture) -> (Vec<sf_anim::Trs>, f32, sf_anim::Clip, f32) {
     let (install, _) = MorrowindInstall::detect(None).unwrap();
     let vfs: Vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
     let anim = mw_anim::Animation::from_kf(&vfs.read(&VfsPath::new("meshes/xbase_anim.kf").unwrap()).unwrap()).unwrap();
@@ -259,30 +261,42 @@ fn get_up_pose(f: &Fixture) -> (Vec<sf_anim::Trs>, f32) {
     let (_, tail) = group.loop_range.expect("Knockout loops");
     let rules = sf_anim::ClipRules {
         looping: sf_anim::Looping::Once,
-        root_motion: sf_anim::RootMotionRules { extract: false, ..Default::default() },
+        root_motion: sf_anim::RootMotionRules { extract: false, anchor_end: true, ..Default::default() },
         ..Default::default()
     };
     let clip = sf_anim::cook_clip(&f.skeleton, &anim.source_clip(&group), &rules, &sf_anim::CookSettings::default()).unwrap();
     let mut local = sf_anim::LocalPose::rest(&f.skeleton);
     clip.sample(tail, &mut local, None);
-    (local.to_vec(), clip.duration - tail)
+    (local.to_vec(), clip.duration - tail, clip, tail)
 }
 
-/// LAFAN1's get-ups on `base_anim` (the sources manifest's `getup.*` slots, retargeted by the animation bake as the
-/// game's graph gets them): (slot, first frame, duration s). `None` without the pack in the clip library folder.
-fn lafan1_get_ups(f: &Fixture) -> Option<Vec<(&'static str, Vec<sf_anim::Trs>, f32)>> {
+/// A pack get-up: slot, first frame, duration s, clip.
+type PackGetUp = (&'static str, Vec<sf_anim::Trs>, f32, sf_anim::Clip);
+
+/// The packs' get-ups on `base_anim` (the sources manifest's `getup.*` slots, retargeted by the animation bake as the
+/// game's graph gets them): (slot, first frame, duration s, clip); slots the manifest does not list are skipped.
+/// Each slot takes its first candidate in the library (Quaternius, then LAFAN1). `None` without any.
+fn pack_get_ups(f: &Fixture) -> Option<Vec<PackGetUp>> {
     let (install, _) = MorrowindInstall::detect(None).ok()?;
     let sources = Arc::new(AnimSources::local());
     let refs = sources.references();
     let mut wanted = Vec::new();
     for (_, slot) in GET_UPS {
-        let reference = sources.manifest.slots.get(slot)?.candidates.first()?.reference();
-        let (file, _) = refs.iter().find(|(_, r)| r.reference == reference)?.clone();
-        if sources.real_path(&file).is_none() {
-            eprintln!("{file} not in {}: no LAFAN1 get-ups", sources.dir.display());
-            return None;
-        }
+        // The slot's first candidate whose file is in the library, as the bake picks it.
+        let candidates = sources.manifest.slots.get(slot).map(|s| s.candidates.iter().map(mw_graphs::sources::Candidate::reference).collect::<Vec<_>>());
+        let found = candidates.unwrap_or_default().into_iter().find_map(|reference| {
+            let (file, _) = refs.iter().find(|(_, r)| r.reference == reference)?.clone();
+            sources.real_path(&file).map(|_| (file, reference))
+        });
+        let Some((file, reference)) = found else {
+            eprintln!("{slot}: no candidate file in {}", sources.dir.display());
+            continue;
+        };
+        println!("{slot}: {reference}");
         wanted.push((slot, file, reference));
+    }
+    if wanted.is_empty() {
+        return None;
     }
     let vfs = Arc::new(mw_vfs::mount_install(&install, Vfs::builder().mount(mw_graphs::builtin_source())).unwrap().vfs);
     let dir = tempfile::tempdir().unwrap();
@@ -309,15 +323,16 @@ fn lafan1_get_ups(f: &Fixture) -> Option<Vec<(&'static str, Vec<sf_anim::Trs>, f
             let clip = sf_anim::Clip::from_bytes(&baker.store().get(&digest).unwrap()).unwrap();
             let mut local = sf_anim::LocalPose::rest(&f.skeleton);
             clip.sample(0.0, &mut local, None);
-            (slot, local.to_vec(), clip.duration)
+            (slot, local.to_vec(), clip.duration, clip)
         })
         .collect();
     Some(out)
 }
 
 /// One fall: 200 N s on `part` along `dir`, then the takeover runs to its hand-back: (hand-back, seconds after the
-/// push, down s, rolled s, the picked get-up, the blend's whole-body sweep in deg).
-type Fall = (Option<HandBack>, f32, f32, f32, Option<usize>, f32);
+/// push, down s, rolled s, the picked get-up, the blend's whole-body sweep in deg, each clip's tilt angle at the pick
+/// in deg).
+type Fall = (Option<HandBack>, f32, f32, f32, Option<usize>, f32, Vec<f32>);
 
 fn fall(f: &Fixture, rules: Rules, tilts: &[Vec3], part: usize, dir: Vec3) -> Fall {
     let (rest, prev) = rest_parts(f, Vec3::ZERO);
@@ -331,7 +346,8 @@ fn fall(f: &Fixture, rules: Rules, tilts: &[Vec3], part: usize, dir: Vec3) -> Fa
     assert!(frames.iter().all(|p| p.translation.is_finite() && p.translation.z > t.floor - 0.05), "through the floor");
     let sweep = t.get_up_left().unwrap_or(0.0).to_degrees();
     assert!(sweep.is_finite());
-    (out.map(|o| o.0), out.map_or(0.0, |o| o.1), t.down.unwrap_or(0.0), t.rolling.unwrap_or(0.0), t.get_up(), sweep)
+    let angles = t.get_up_angles().iter().map(|a| a.to_degrees()).collect();
+    (out.map(|o| o.0), out.map_or(0.0, |o| o.1), t.down.unwrap_or(0.0), t.rolling.unwrap_or(0.0), t.get_up(), sweep, angles)
 }
 
 /// The rules before DE-1's get-up pass (2026-10-27): down 1.5..4 s, the balancer running on the floor.
@@ -339,61 +355,114 @@ fn rules_before() -> Rules {
     Rules { down_secs: (1.5, 4.0), rest: (0.05, 0.5), down_relax: None, ..Rules::default() }
 }
 
-/// DE-1 "magic flip" and "lies too long": the whole-body (pelvis) rotation the hand-back's 0.3 s blend sweeps at a
-/// fallen get-up (the tilt left between the lying pelvis and the picked clip's first pose after the yaw-only get-up
-/// frame), and push-to-standing (the hand-back plus the clip). Morrowind's `Knockout@tail` (one clip on its side: the
-/// body rolls over to it) before (down 1.5..4 s, no relax) and after (down 0.5..2.5 s, relaxed); then LAFAN1's four
-/// get-ups (face up, face down, sides) when the pack is present: the nearest is picked, rolling only past 20 deg.
+/// The pelvis (Delirium's pelvis part joint) of `clip` at `t`, model space, m.
+fn pelvis_at(f: &Fixture, clip: &sf_anim::Clip, t: f32) -> Vec3 {
+    let mut local = sf_anim::LocalPose::rest(&f.skeleton);
+    clip.sample(t, &mut local, None);
+    let mut model = sf_anim::ModelPose::new(f.skeleton.len());
+    sf_anim::local_to_model(&f.skeleton, &local, &mut model, &Affine3A::IDENTITY);
+    Vec3::from(model.mats[f.body.table.parts[0].joint].translation)
+}
+
+/// DE-1 "starts walking after standing up": the get-up after the hand-back, played from `start` to its end in place
+/// (the root moves only by the clip's root motion), then the idle at the frame's origin. Once up (the pelvis first at
+/// 90% of its final height): how long the clip runs on, the pelvis' horizontal travel and peak speed then (steps after
+/// standing read as walking); how far it ends off the frame (the idle's pop or slide) and the root's drift over the
+/// clip: (up s before the end, travel m, peak m/s, off m, root m).
+fn after_get_up(f: &Fixture, clip: &sf_anim::Clip, start: f32) -> [f32; 5] {
+    const RATE: f32 = 30.0;
+    let end = clip.duration;
+    let n = ((end - start) * RATE).ceil().max(1.0) as u32;
+    let dt = (end - start) / n as f32;
+    let pelvis: Vec<Vec3> = (0..=n).map(|i| pelvis_at(f, clip, start + dt * i as f32)).collect();
+    let height = pelvis[n as usize].y;
+    let up = pelvis.iter().position(|p| p.y >= 0.9 * height).unwrap_or(n as usize);
+    let ground = |p: Vec3| Vec2::new(p.x, p.z);
+    let steps = pelvis[up..].windows(2).map(|w| ground(w[1]).distance(ground(w[0])));
+    let (travel, peak) = steps.fold((0.0f32, 0.0f32), |(t, p), d| (t + d, p.max(d / dt.max(1e-4))));
+    let out = [(n as usize - up) as f32 * dt, travel, peak, ground(pelvis[n as usize]).length(), clip.root_delta(start, end).translation.length()];
+    assert!(out.iter().all(|v| v.is_finite() && *v < 20.0), "get-up blew up: {out:?}");
+    out
+}
+
+/// DE-1 "magic flip", "lies too long", "Morrowind's get-up unused" and "walks after standing up": the whole-body
+/// (pelvis) rotation the hand-back's 0.3 s blend sweeps at a fallen get-up (the tilt left between the lying pelvis and
+/// the picked clip's first pose after the yaw-only get-up frame), and push-to-standing (the hand-back plus the clip).
+/// Morrowind's `Knockout@tail` alone (one clip on its side: the body rolls over to it) before (down 1.5..4 s, no relax)
+/// and after (down 0.5..2.5 s, relaxed); then, with the LAFAN1 pack, the game's set (`Knockout@tail` first, the
+/// baseline within `Rules::baseline_margin`, then LAFAN1's get-ups) with the pick and its gaps, and LAFAN1 alone.
+/// Each clip's tail: what the body does in its last 2 s once up.
 #[test]
-#[ignore = "measurement: get-up blend rotation and push-to-standing, Knockout@tail before/after vs LAFAN1 get-ups"]
+#[ignore = "measurement: get-up blend rotation, push-to-standing, the pick, and drift after the get-up"]
 fn get_up_blend_rotation() {
     let Some(f) = fixture() else { return };
-    let (clip_pose, tail) = get_up_pose(f);
+    let (clip_pose, tail, tail_clip, tail_start) = get_up_pose(f);
     let mw = [mw_delirium::clip_tilt(&f.body.table, &f.skeleton, &clip_pose)];
-    let lafan = lafan1_get_ups(f);
-    let lafan_tilts: Vec<Vec3> = lafan.iter().flatten().map(|(_, pose, _)| mw_delirium::clip_tilt(&f.body.table, &f.skeleton, pose)).collect();
-    println!("Knockout@tail: {tail:.2} s, pelvis tilt {:.2}", mw[0]);
-    for ((slot, _, secs), tilt) in lafan.iter().flatten().zip(&lafan_tilts) {
-        println!("{slot}: {secs:.2} s, pelvis tilt {tilt:.2}");
+    let lafan = pack_get_ups(f);
+    let lafan_tilts: Vec<Vec3> = lafan.iter().flatten().map(|(_, pose, _, _)| mw_delirium::clip_tilt(&f.body.table, &f.skeleton, pose)).collect();
+    let both: Vec<Vec3> = mw.iter().chain(&lafan_tilts).copied().collect();
+    let names: Vec<&str> = std::iter::once("Knockout@tail").chain(lafan.iter().flatten().map(|l| l.0)).collect();
+    let drift = |[up, travel, peak, off, root]: [f32; 5]| {
+        format!("up {up:.2} s before the end, then pelvis travel {travel:.2} m, peak {peak:.2} m/s; ends {off:.2} m off the frame; root drift {root:.2} m")
+    };
+    println!("Knockout@tail: {tail:.2} s, pelvis tilt {:.2}; {}", mw[0], drift(after_get_up(f, &tail_clip, tail_start)));
+    for ((slot, _, secs, clip), tilt) in lafan.iter().flatten().zip(&lafan_tilts) {
+        let from_tail = tilt.angle_between(mw[0]).to_degrees();
+        println!("{slot}: {secs:.2} s, pelvis tilt {tilt:.2}, {from_tail:.0} deg from Knockout@tail; {}", drift(after_get_up(f, clip, 0.0)));
     }
-    println!("per push: sweep deg | push-to-standing s (hand-back + clip; down s, rolled s)");
+    println!("per push: sweep deg | push-to-standing s (hand-back + clip; down s, rolled s; the pick at its tilt deg, the others' gaps deg)");
     // The body faces sim +Y: a push toward -Y is from the front.
     let dirs = [("front", -Vec3::Y), ("behind", Vec3::Y), ("left", Vec3::X), ("right", -Vec3::X)];
     let mut totals = [0.0f32; 4];
     let mut n = [0.0f32; 4];
+    let mut wins = vec![0u32; names.len()];
     for (part, at) in [(10usize, "chest"), (12, "head"), (0, "pelvis")] {
         for (name, dir) in dirs {
             let mut row = Vec::new();
-            let no_roll = Rules { roll_secs: 0.0, ..Rules::default() };
             let cases: [(&str, Rules, &[Vec3]); 4] = [
                 ("MW before", rules_before(), &mw),
                 ("MW after", Rules::default(), &mw),
-                ("LAFAN1", Rules::default(), &lafan_tilts),
-                ("LAFAN1 no roll", no_roll, &lafan_tilts),
+                ("MW+packs", Rules::default(), if lafan.is_some() { &both } else { &[] }),
+                ("packs", Rules::default(), &lafan_tilts),
             ];
             for (k, (label, rules, tilts)) in cases.into_iter().enumerate() {
                 if tilts.is_empty() {
                     continue;
                 }
-                let (how, secs, down, rolled, pick, sweep) = fall(f, rules, tilts, part, dir);
+                let (how, secs, down, rolled, pick, sweep, angles) = fall(f, rules, tilts, part, dir);
                 if how != Some(HandBack::Fallen) {
                     row.push(format!("{label}: {how:?}"));
                     continue;
                 }
-                let (clip, clip_secs) = match &lafan {
-                    Some(l) if k >= 2 => (l[pick.unwrap_or(0)].0, l[pick.unwrap_or(0)].2),
-                    _ => ("tail", tail),
+                let i = pick.unwrap_or(0);
+                // The pick's name and duration: `names` indexes the game's set; LAFAN1 alone has no Knockout@tail.
+                let (clip, clip_secs) = match (k, &lafan) {
+                    (2, Some(l)) if i > 0 => (names[i], l[i - 1].2),
+                    (3, Some(l)) => (l[i].0, l[i].2),
+                    _ => ("Knockout@tail", tail),
                 };
                 totals[k] += secs + clip_secs;
                 n[k] += 1.0;
-                let picked = if k >= 2 { format!(", {clip}") } else { String::new() };
+                let picked = match k {
+                    2 => {
+                        wins[i] += 1;
+                        let won = angles.get(i).copied().unwrap_or(0.0);
+                        let gaps: Vec<String> =
+                            angles.iter().enumerate().filter(|&(j, _)| j != i).map(|(j, a)| format!("{} {:+.0}", names[j], a - won)).collect();
+                        format!("; {clip} at {won:.0}: {}", gaps.join(" "))
+                    }
+                    3 => format!("; {clip}"),
+                    _ => String::new(),
+                };
                 row.push(format!("{label}: {sweep:5.1} | {:4.1} (down {down:.1}, rolled {rolled:.2}{picked})", secs + clip_secs));
             }
             println!("  {at:6} {name:6}: {}", row.join("; "));
         }
     }
     let mean = |k: usize| if n[k] > 0.0 { totals[k] / n[k] } else { f32::NAN };
-    println!("mean push-to-standing s: MW before {:.1}, MW after {:.1}, LAFAN1 {:.1}, LAFAN1 no roll {:.1}", mean(0), mean(1), mean(2), mean(3));
+    println!("mean push-to-standing s: MW before {:.1}, MW after {:.1}, MW+packs {:.1}, packs {:.1}", mean(0), mean(1), mean(2), mean(3));
+    let tally: Vec<String> = names.iter().zip(&wins).map(|(c, w)| format!("{c} {w}")).collect();
+    println!("MW+packs picks (of {}): {}", n[2], tally.join(", "));
 }
 
 /// DE-1 "a bit too much vibration": the fastest part (m/s) and the fastest-turning part (rad/s) while the body lies

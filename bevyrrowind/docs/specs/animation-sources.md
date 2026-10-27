@@ -237,3 +237,10 @@ user). No gap.
    manual, private only).
 3. Exact Morrowind creature skeletons and root-motion joints (with
    actors-adapter.md's open question on `Bip01` vs `Bip01 NonAccum`).
+- LAFAN1 retarget (2026-10-27): the BVH zero pose is degenerate (every bone along +X, legs folded up the spine), so
+  auto-align left each limb's twist arbitrary (arms twisted, feet flipped on the body). Every take starts in the actor's
+  T-pose at frame 0: manifest `Source.rest_frame: Some(0)` → `sf_anim::BvhAnimImporter::with_rest_frame` makes that frame
+  the skeleton rest (clips unchanged). 4 get-ups on `base_anim`: mean twist error 121-125 → 3-4 deg, wrong-side
+  knee/elbow bends 0, soles up at the end; UAL2 unchanged (0.8 deg). Measurements: `mw_bake/tests/lafan1_retarget_real_install.rs`.
+  Get-up slots: `getup.supine` UAL2 `LayToIdle`, `getup.prone` UAL1 `Crawl_Exit` (LaFAN1 second), `getup.side_right`
+  LaFAN1 trimmed to planted feet; `getup.side_left` dropped (walks 2.5 m once up).

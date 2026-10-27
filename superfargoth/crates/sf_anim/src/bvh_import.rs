@@ -4,7 +4,14 @@
 //! `regex` as runtime dependencies; the format is a page of grammar).
 //!
 //! - **Skeleton**: one joint per `ROOT` / `JOINT`, rest translation =
-//!   `OFFSET`, rest rotation identity (BVH's zero pose). Each `End Site`
+//!   `OFFSET`, rest rotation identity (BVH's zero pose), or, for files with a
+//!   reference frame ([`BvhAnimImporter::with_rest_frame`]), that frame's
+//!   pose: mocap takes start in the actor's T-pose, while their zero pose
+//!   can be degenerate (LAFAN1: every bone along +X, legs folded up the
+//!   spine), which leaves auto-align no twist reference. `MotionBuilder`
+//!   characterizes on the T-pose frame and UE's IK Retargeter can take a
+//!   retarget pose from an animation frame; this is the same. Clips don't
+//!   change: tracks hold absolute local transforms. Each `End Site`
 //!   becomes a leaf joint `<parent>_End` with no track: it gives the
 //!   head, hands and toes a length for auto-map and auto-align. Names are
 //!   the rest of the `ROOT`/`JOINT` line, so 3ds Max's `Bip01 Pelvis`
@@ -36,17 +43,33 @@ pub struct BvhAnimImporter {
     /// importer serves sources in different units (`byo/cmu/` in inches,
     /// `byo/100style/` in centimeters).
     pub overrides: Vec<(String, SourceSpace)>,
+    /// `(path prefix, frame)`: files whose skeleton rest is that frame's
+    /// pose (longest prefix wins; a frame past the end keeps the zero pose).
+    pub rest_frames: Vec<(String, usize)>,
 }
 
 impl Default for BvhAnimImporter {
     fn default() -> Self {
-        Self { space: SourceSpace::centimeters(), overrides: Vec::new() }
+        Self::new(SourceSpace::centimeters())
     }
 }
 
 impl BvhAnimImporter {
     pub fn new(space: SourceSpace) -> Self {
-        Self { space, overrides: Vec::new() }
+        Self { space, overrides: Vec::new(), rest_frames: Vec::new() }
+    }
+
+    /// Per-prefix reference frame: the skeleton's rest is that frame's pose
+    /// (a mocap take's T-pose), not the zero pose.
+    #[must_use]
+    pub fn with_rest_frame(mut self, prefix: impl Into<String>, frame: usize) -> Self {
+        self.rest_frames.push((prefix.into(), frame));
+        self
+    }
+
+    /// The reference frame of `path`, if any.
+    pub fn rest_frame_for(&self, path: &str) -> Option<usize> {
+        self.rest_frames.iter().filter(|(p, _)| path.starts_with(p.as_str())).max_by_key(|(p, _)| p.len()).map(|(_, f)| *f)
     }
 
     /// Adds a per-prefix space.
@@ -72,7 +95,12 @@ impl AnimImporter for BvhAnimImporter {
     }
 
     fn settings_key(&self, path: &str) -> Vec<u8> {
-        postcard::to_allocvec(&self.space_for(path)).expect("a space serializes")
+        // Files without a reference frame keep their key.
+        match self.rest_frame_for(path) {
+            None => postcard::to_allocvec(&self.space_for(path)),
+            Some(f) => postcard::to_allocvec(&(self.space_for(path), f as u64)),
+        }
+        .expect("a space serializes")
     }
 
     fn import(&self, path: &str, bytes: &[u8]) -> Result<AnimSource, ImportError> {
@@ -80,7 +108,7 @@ impl AnimImporter for BvhAnimImporter {
         let text = std::str::from_utf8(bytes).map_err(|e| err(format!("not UTF-8 text: {e}")))?;
         let stem = path.rsplit(['/', '\\']).next().unwrap_or(path);
         let name = stem.rsplit_once('.').map_or(stem, |(s, _)| s);
-        parse(text, name, self.space_for(path)).map_err(err)
+        parse(text, name, self.space_for(path), self.rest_frame_for(path)).map_err(err)
     }
 }
 
@@ -133,7 +161,7 @@ fn tokens(hierarchy: &str) -> Vec<&str> {
     out
 }
 
-fn parse(text: &str, clip_name: &str, space: SourceSpace) -> Result<AnimSource, String> {
+fn parse(text: &str, clip_name: &str, space: SourceSpace, rest_frame: Option<usize>) -> Result<AnimSource, String> {
     let conv = space.converter().ok_or("the source space's up and forward axes are parallel")?;
     let motion_at = text.find("MOTION").ok_or("no MOTION section")?;
     let (hierarchy, motion) = text.split_at(motion_at);
@@ -151,7 +179,7 @@ fn parse(text: &str, clip_name: &str, space: SourceSpace) -> Result<AnimSource, 
     let stride: usize = joints.iter().map(|j| j.channels.len()).sum();
     let frames = values.len().checked_div(stride).map_or(0, |n| declared.min(n));
     let names = unique_names(&joints);
-    let skeleton: Vec<SourceJoint> = joints
+    let mut skeleton: Vec<SourceJoint> = joints
         .iter()
         .zip(&names)
         .map(|(j, name)| SourceJoint { name: name.clone(), parent: j.parent, rest: conv.trs(Trs::from_translation(j.offset)) })
@@ -162,7 +190,7 @@ fn parse(text: &str, clip_name: &str, space: SourceSpace) -> Result<AnimSource, 
         let times: Vec<f32> = (0..frames).map(|f| (f as f64 * frame_time) as f32).collect();
         let mut tracks = Vec::new();
         let mut base = 0;
-        for (j, name) in joints.iter().zip(&names) {
+        for (index, (j, name)) in joints.iter().zip(&names).enumerate() {
             let has_pos = j.channels.iter().any(|c| matches!(c, Channel::Position(_)));
             let has_rot = j.channels.iter().any(|c| matches!(c, Channel::Rotation(_)));
             if !has_pos && !has_rot {
@@ -181,6 +209,15 @@ fn parse(text: &str, clip_name: &str, space: SourceSpace) -> Result<AnimSource, 
                 let r = conv.rotation(r);
                 rs.push(rs.last().map_or(r, |&prev| math::align_hemisphere(r, prev)));
                 ts.push(conv.translation(t));
+            }
+            if let Some(f) = rest_frame.filter(|&f| f < frames) {
+                let rest = &mut skeleton[index].rest;
+                if has_pos {
+                    rest.translation = ts[f];
+                }
+                if has_rot {
+                    rest.rotation = rs[f];
+                }
             }
             tracks.push(SourceTrack {
                 joint: name.clone(),

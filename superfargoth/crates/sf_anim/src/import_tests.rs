@@ -134,6 +134,28 @@ Frame Time: 0.00833333
         assert!(p.distance(Vec3::new(0.0, 0.0, 0.03)) < 1e-4 && yaw.abs() < 1e-4, "{p} {yaw}");
     }
 
+    /// A reference frame makes that frame's pose the skeleton's rest (its
+    /// rotations and position channels); the clip and other paths don't change.
+    #[test]
+    fn bvh_rest_frame_takes_the_rest_pose_from_a_frame() {
+        let plain = BvhAnimImporter::default();
+        let importer = BvhAnimImporter::default().with_rest_frame("byo/mocap/", 1).with_rest_frame("byo/mocap/far/", 99);
+        assert_eq!(importer.rest_frame_for("byo/walk.bvh"), None);
+        assert_eq!(importer.settings_key("byo/walk.bvh"), plain.settings_key("byo/walk.bvh"), "other files keep their key");
+        assert_ne!(importer.settings_key("byo/mocap/walk.bvh"), plain.settings_key("byo/mocap/walk.bvh"));
+        let zero = plain.import("byo/mocap/walk.bvh", BVH.as_bytes()).unwrap();
+        let src = importer.import("byo/mocap/walk.bvh", BVH.as_bytes()).unwrap();
+        let joints = src.skeleton.as_ref().unwrap();
+        let want = Quat::from_rotation_z(90f32.to_radians()) * Quat::from_rotation_x(90f32.to_radians());
+        assert!(joints[1].rest.rotation.dot(want).abs() > 1.0 - 1e-6, "Spine rests at frame 1");
+        assert!(joints[0].rest.translation.distance(Vec3::new(0.0, 0.9, 0.01)) < 1e-6, "Hips position channels");
+        assert_eq!(joints[1].rest.translation, zero.skeleton.as_ref().unwrap()[1].rest.translation, "rotation-only joints keep their offset");
+        assert_eq!(joints[3].rest, zero.skeleton.as_ref().unwrap()[3].rest, "end sites keep theirs");
+        assert_eq!(src.clips, zero.clips);
+        let far = importer.import("byo/mocap/far/walk.bvh", BVH.as_bytes()).unwrap();
+        assert_eq!(far.skeleton, zero.skeleton, "a frame past the end keeps the zero pose");
+    }
+
     #[test]
     fn bvh_spaces_convert_model_positions_and_follow_path_overrides() {
         let zup = SourceSpace { unit_scale: 0.0254, up: Axis::PosZ, forward: Axis::NegY, right_handed: true };

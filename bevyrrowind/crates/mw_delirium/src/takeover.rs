@@ -11,8 +11,9 @@
 //! the get-up clip's first pose for the hand-back's blend to sweep (up to 165 deg: the "magic flip"). With the clip's
 //! tilt set ([`Takeover::set_get_up`]), a body down and ready first rolls over to it (a velocity servo on the torso, the
 //! Euphoria-style roll before a get-up); measured by `takeover_real_install::get_up_blend_rotation`. With several
-//! clips ([`Takeover::set_get_ups`]: face up, face down, sides) it picks the one nearest the way the body lies and
-//! rolls only past [`Rules::roll_tolerance`]. Once down and slowing it goes limp holding its pose
+//! clips ([`Takeover::set_get_ups`]: Morrowind's own first, then face up, face down, sides) it picks the one nearest
+//! the way the body lies, the first (the baseline) when within [`Rules::baseline_margin`] of the nearest, and rolls
+//! only past [`Rules::roll_tolerance`]. Once down and slowing it goes limp holding its pose
 //! ([`Rules::down_relax`], `bodyRelax`): no balancer fidgeting on the floor.
 //!
 //! Bevy-free. The host turns the animated pose into part frames ([`crate::bones_to_parts`], sim space: Z up, metres,
@@ -75,6 +76,9 @@ pub struct Rules {
     pub roll_gain: f32,
     /// ... for at most this long, s (then the get-up anyway).
     pub roll_secs: f32,
+    /// The get-up pick ([`Takeover::set_get_ups`]): the first clip (the baseline: Morrowind's own `Knockout@tail`)
+    /// wins when its tilt is within this of the nearest clip's, rad (DE-1: Morrowind's look is the default).
+    pub baseline_margin: f32,
 }
 
 impl Default for Rules {
@@ -99,6 +103,7 @@ impl Default for Rules {
             roll_speed: 2.5,
             roll_gain: 4.0,
             roll_secs: 3.0,
+            baseline_margin: 20f32.to_radians(),
         }
     }
 }
@@ -144,6 +149,8 @@ pub struct Takeover {
     get_ups: Vec<Vec3>,
     /// The get-up picked once down and ready: the index into the clips set ([`Takeover::get_up`]).
     chosen: Option<usize>,
+    /// Each clip's tilt angle from the body's at the pick, rad ([`Takeover::get_up_angles`]).
+    picked_at: Vec<f32>,
     /// Whether the body relaxed on the floor ([`Rules::down_relax`]).
     pub relaxed: bool,
 }
@@ -161,6 +168,16 @@ pub fn tilt_of(rotation: Quat) -> Vec3 {
 /// part's tilt (`rotation`, sim space) and the get-up clip's (`clip`, [`tilt_of`]), rad.
 pub fn get_up_tilt(rotation: Quat, clip: Vec3) -> f32 {
     tilt_of(rotation).angle_between(clip)
+}
+
+/// The get-up pick from each clip's tilt angle to the body's, rad: the nearest, or the first (the baseline) when
+/// within `margin` of it; `None` when no angle is finite. Returns (index, angle).
+pub fn pick_get_up(angles: &[f32], margin: f32) -> Option<(usize, f32)> {
+    let nearest = angles.iter().copied().enumerate().filter(|a| a.1.is_finite()).min_by(|a, b| a.1.total_cmp(&b.1))?;
+    match angles.first() {
+        Some(&base) if base.is_finite() && base <= nearest.1 + margin => Some((0, base)),
+        _ => Some(nearest),
+    }
 }
 
 /// Linear and angular velocity between two frames of a part.
@@ -230,6 +247,7 @@ impl Takeover {
             blending: false,
             get_ups: Vec::new(),
             chosen: None,
+            picked_at: Vec::new(),
             relaxed: false,
         };
         t.send(behaviour, &[("start", Value::Bool(true))]);
@@ -297,12 +315,14 @@ impl Takeover {
         self.set_get_ups(&[clip]);
     }
 
-    /// Several get-up clips (one per way the body lies: face up, face down, sides; DE-1): down and ready, the body
-    /// takes the one whose first pose's tilt is nearest its own ([`Self::get_up`]) and rolls over only what is left
-    /// past [`Rules::roll_tolerance`].
+    /// Several get-up clips (the baseline first, Morrowind's own; then one per way the body lies: face up, face
+    /// down, sides; DE-1): down and ready, the body takes the one whose first pose's tilt is nearest its own, the
+    /// baseline when within [`Rules::baseline_margin`] of it ([`Self::get_up`]), and rolls over only what is left past
+    /// [`Rules::roll_tolerance`]. A clip with no tilt (zero) is never picked; indices follow `clips`.
     pub fn set_get_ups(&mut self, clips: &[Vec3]) {
-        self.get_ups = clips.iter().filter_map(|c| c.try_normalize()).collect();
+        self.get_ups = clips.iter().map(|c| c.normalize_or_zero()).collect();
         self.chosen = None;
+        self.picked_at.clear();
     }
 
     /// The get-up picked (index into the clips set), once down and ready.
@@ -310,10 +330,20 @@ impl Takeover {
         self.chosen
     }
 
-    /// The get-up clip nearest the body's pelvis tilt now, and the angle left to it, rad.
+    /// Each get-up clip's tilt angle from the body's pelvis now, rad (infinite for a clip with no tilt).
+    pub fn get_up_angles_now(&self) -> Vec<f32> {
+        let Some(pelvis) = self.agent.doll.frames().next().map(|f| f.rotation) else { return Vec::new() };
+        self.get_ups.iter().map(|&c| if c == Vec3::ZERO { f32::INFINITY } else { get_up_tilt(pelvis, c) }).collect()
+    }
+
+    /// The get-up clip [`pick_get_up`] takes for the body's pelvis tilt now, and the angle left to it, rad.
     pub fn nearest_get_up(&self) -> Option<(usize, f32)> {
-        let pelvis = self.agent.doll.frames().next()?.rotation;
-        self.get_ups.iter().map(|&c| get_up_tilt(pelvis, c)).enumerate().min_by(|a, b| a.1.total_cmp(&b.1))
+        pick_get_up(&self.get_up_angles_now(), self.rules.baseline_margin)
+    }
+
+    /// Each clip's tilt angle from the body's when the get-up was picked, rad (empty before the pick): the log's gaps.
+    pub fn get_up_angles(&self) -> &[f32] {
+        &self.picked_at
     }
 
     /// The pelvis tilt left to the picked get-up clip's (or the nearest one's before the pick), rad (`None`: no
@@ -332,7 +362,8 @@ impl Takeover {
         const ROLL_RADIUS: f32 = 0.25;
         const SETTLED: f32 = 1.0;
         if self.chosen.is_none() {
-            self.chosen = self.nearest_get_up().map(|n| n.0);
+            self.picked_at = self.get_up_angles_now();
+            self.chosen = pick_get_up(&self.picked_at, self.rules.baseline_margin).map(|n| n.0);
         }
         let Some(clip) = self.chosen.map(|i| self.get_ups[i]) else { return true };
         let rolled = self.rolling.get_or_insert(0.0);
@@ -476,4 +507,23 @@ pub fn ray_capsule(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, radius: f32) -> Op
         }
     }
     best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_get_up;
+
+    #[test]
+    fn get_up_pick_prefers_the_baseline_within_the_margin() {
+        let m = 0.3;
+        // Nearest wins past the margin; the baseline (first) within it.
+        assert_eq!(pick_get_up(&[1.0, 0.5, 0.2], m), Some((2, 0.2)));
+        assert_eq!(pick_get_up(&[0.45, 0.5, 0.2], m), Some((0, 0.45)));
+        assert_eq!(pick_get_up(&[0.1, 0.5, 0.2], m), Some((0, 0.1)));
+        // No baseline (infinite: no clip), or the baseline alone.
+        assert_eq!(pick_get_up(&[f32::INFINITY, 0.5, 0.2], m), Some((2, 0.2)));
+        assert_eq!(pick_get_up(&[2.0], m), Some((0, 2.0)));
+        assert_eq!(pick_get_up(&[], m), None);
+        assert_eq!(pick_get_up(&[f32::INFINITY], m), None);
+    }
 }

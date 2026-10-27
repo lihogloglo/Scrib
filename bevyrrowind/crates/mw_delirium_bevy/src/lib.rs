@@ -17,9 +17,9 @@
 //!   `Held`) shows through, the frame stays where the blend started; at 0 the graph simply carries on (no
 //!   inertialization). A push during it brings the physics back. Timeout (or a blow-up) → the graph inertializes from
 //!   the shown pose (`inertialize_from`). Down → the graph's `knocked_out` flag is set while it lies there; once still
-//!   (or after a few seconds) Delirium picks the get-up nearest the way the body lies (the graph's [`GET_UP_SLOTS`],
-//!   LAFAN1 face up / face down / sides, chosen by the `get_up` param; without them `Knockout@tail`, which starts on
-//!   its side) and rolls the body over to its first pose's tilt only past the tolerance (`Takeover::set_get_ups`,
+//!   (or after a few seconds) Delirium picks the get-up nearest the way the body lies: Morrowind's `Knockout@tail`
+//!   (on its side; the baseline, kept within `Rules::baseline_margin` of the nearest) or the graph's [`GET_UP_SLOTS`]
+//!   (optional LAFAN1 face up / face down / sides), chosen by the `get_up` param, and rolls the body over to its first pose's tilt only past the tolerance (`Takeover::set_get_ups`,
 //!   DE-1); lying, the body is relaxed (`bodyRelax`). Then the frame moves under that pose's pelvis (yaw and
 //!   translation only, `get_up_root` without its roll) and the get-up plays out of the lying pose. The root takes the body's move (the walkers'
 //!   knockdown glue) and wakes; [`DeliriumHandedBack`] tells the host.
@@ -436,17 +436,22 @@ fn shown_pose(l: &Live, skeleton: &sf_anim::Skeleton, parts: &[Part], frame: &Wo
     pose
 }
 
-/// The graph's get-ups as (`get_up` value, clip slot): the [`GET_UP_SLOTS`] clips the graph resolved (a clip library
-/// such as LAFAN1 present), else `Knockout@tail` (value 0), else none.
+/// The graph's get-ups as (`get_up` value, clip slot): `Knockout@tail` first (value 0, the pick's baseline:
+/// `Rules::baseline_margin`), then the [`GET_UP_SLOTS`] clips the graph resolved (a clip library such as LAFAN1
+/// present; optional).
 fn get_up_clips(animator: &Animator) -> Vec<(f32, usize)> {
     let graph = &animator.asset.graph;
+    let tail = graph.clips.iter().position(|c| c.reference == GET_UP_CLIP).map(|c| (0.0, c));
     #[allow(clippy::cast_precision_loss)]
-    let slots: Vec<(f32, usize)> =
-        GET_UP_SLOTS.iter().enumerate().filter_map(|(i, s)| graph.slot_clip(s).map(|c| ((i + 1) as f32, usize::from(c)))).collect();
-    if !slots.is_empty() {
-        return slots;
-    }
-    graph.clips.iter().position(|c| c.reference == GET_UP_CLIP).map(|c| (0.0, c)).into_iter().collect()
+    let slots = GET_UP_SLOTS.iter().enumerate().filter_map(|(i, s)| graph.slot_clip(s).map(|c| ((i + 1) as f32, usize::from(c))));
+    tail.into_iter().chain(slots).collect()
+}
+
+/// A get-up's name by its `get_up` value: [`GET_UP_CLIP`] (0) or its [`GET_UP_SLOTS`] slot.
+fn get_up_name(value: f32) -> &'static str {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let slot = (value as usize).checked_sub(1).and_then(|i| GET_UP_SLOTS.get(i));
+    slot.copied().unwrap_or(GET_UP_CLIP)
 }
 
 /// A clip's first frame (local pose).
@@ -546,14 +551,27 @@ fn read_back(
         let get_up = if how == HandBack::Fallen { get_up_frame(l, &animator, &pose, &frame) } else { None };
         if let Some(up) = get_up {
             let left = l.takeover.get_up_left().unwrap_or(0.0).to_degrees();
-            let (value, _) = l.takeover.get_up().and_then(|i| l.get_ups.get(i).copied()).unwrap_or((0.0, 0));
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let name = if value > 0.0 { GET_UP_SLOTS[value as usize - 1] } else { GET_UP_CLIP };
+            let picked = l.takeover.get_up();
+            let (value, _) = picked.and_then(|i| l.get_ups.get(i).copied()).unwrap_or((0.0, 0));
+            let name = get_up_name(value);
             animator.set_float(GET_UP_PARAM, value);
+            // The pick and its gaps: each candidate's tilt from the body's when picked, deg.
+            let angles = l.takeover.get_up_angles();
+            let won = picked.and_then(|i| angles.get(i)).copied().unwrap_or(0.0);
+            let others: Vec<String> = l
+                .get_ups
+                .iter()
+                .zip(angles)
+                .enumerate()
+                .filter(|&(i, _)| Some(i) != picked)
+                .map(|(_, (&(v, _), a))| format!("{} {:+.0}", get_up_name(v), (a - won).to_degrees()))
+                .collect();
             info!(
-                "delirium: {root} gets up with {name} (down {:.1} s, rolled over {:.2} s, {left:.0} deg left to the blend)",
+                "delirium: {root} gets up with {name} (down {:.1} s, rolled over {:.2} s, {left:.0} deg left to the blend; picked at {:.0} deg, others {})",
                 l.takeover.down.unwrap_or(0.0),
-                l.takeover.rolling.unwrap_or(0.0)
+                l.takeover.rolling.unwrap_or(0.0),
+                won.to_degrees(),
+                if others.is_empty() { "none".to_owned() } else { others.join(", ") }
             );
             if let Ok(mut t) = frames.p1().get_mut(l.body) {
                 move_frame(&mut t, &frame, l.scale, &up);

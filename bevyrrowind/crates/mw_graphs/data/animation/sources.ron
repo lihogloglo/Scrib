@@ -51,6 +51,9 @@
       unit_scale: 0.01,
       up: Y,
       root_from_pelvis: true,
+      // The zero pose has every bone along +X (no twist reference); every
+      // take opens on the actor's T-pose, so frame 0 is the retarget rest.
+      rest_frame: Some(0),
     ),
   },
   slots: {
@@ -84,43 +87,165 @@
     ),
     // Get-ups for Delirium's fallen hand-back (mw_delirium_bevy), one per way the body
     // lies: in place, re-based on the last frame (ends standing over the frame).
-    // LAFAN1 takes, lying still to standing still (frames at 30 Hz; DE-1). Without
-    // them, Delirium rolls the body over to Morrowind's `Knockout@tail` (side).
-    // Face up: propped on the elbows, rolls to the left side, kneels, stands (2062-2152).
+    // Quaternius first (CC0, the baseline packs), then LAFAN1 takes, lying still to
+    // standing still (frames at 30 Hz; DE-1), cut where the
+    // feet are planted once up (no steps after standing: the idle carries on in place).
+    // Morrowind's `Knockout@tail` (on the left side) is always a candidate, the
+    // baseline, and the only one without them. No left-side slot: the one LAFAN1 take
+    // (fallAndGetUp3_subject1 2472-2572) walks 1 m once up with no still stance to cut at.
+    // Face up: UAL2 LayToIdle; LAFAN1 propped on the elbows, rolls to the left side, kneels, stands (2062-2152).
     "getup.supine": (
       graph: "humanoid",
       candidates: [
+        (source: "quaternius_ual2", clip: "LayToIdle"),
         (source: "lafan1", file: Some("bvh/fallAndGetUp2_subject3.bvh"), clip: "fallAndGetUp2_subject3", range: Some((68.73, 71.73))),
       ],
       in_place: true,
       fallback: Drop,
     ),
-    // Face down: on the elbows, pushes up to a kneel, stands (2508-2614).
+    // Face down: UAL1 Crawl_Exit (on all fours to standing); LAFAN1 on the elbows, pushes up to a kneel, stands (2508-2614).
     "getup.prone": (
       graph: "humanoid",
       candidates: [
+        (source: "quaternius_ual1", clip: "Crawl_Exit"),
         (source: "lafan1", file: Some("bvh/fallAndGetUp1_subject5.bvh"), clip: "fallAndGetUp1_subject5", range: Some((83.60, 87.13))),
       ],
       in_place: true,
       fallback: Drop,
     ),
-    // On the left side: quick push-up to standing, then a few steps (2472-2572).
-    "getup.side_left": (
+    // On the right side: sits up, turns onto the knees, stands, feet planted (3674-3787;
+    // the take's two settle steps after, 0.6 m, are cut).
+    "getup.side_right": (
       graph: "humanoid",
       candidates: [
-        (source: "lafan1", file: Some("bvh/fallAndGetUp3_subject1.bvh"), clip: "fallAndGetUp3_subject1", range: Some((82.40, 85.73))),
+        (source: "lafan1", file: Some("bvh/fallAndGetUp1_subject4.bvh"), clip: "fallAndGetUp1_subject4", range: Some((122.47, 126.23))),
       ],
       in_place: true,
       fallback: Drop,
     ),
-    // On the right side: sits up, turns onto the knees, stands (3674-3822).
-    "getup.side_right": (
+    // Combat C1b (combat-adapter.md "C1b: game items"; names = mw_combat::sheet_slots(SWORD_1H)).
+    // Clip moves on the action clock (`Progress`); the sheet's windows are authored against
+    // each slot's first candidate. Light chain: UAL2's sword combo, then UAL1's single swing,
+    // then Morrowind's one-hand slash.
+    "attack.sword_1h.light1": (
       graph: "humanoid",
       candidates: [
-        (source: "lafan1", file: Some("bvh/fallAndGetUp1_subject4.bvh"), clip: "fallAndGetUp1_subject4", range: Some((122.47, 127.40))),
+        (source: "quaternius_ual2", clip: "Sword_Regular_A"),
+        (source: "quaternius_ual1", clip: "Sword_Attack"),
       ],
-      in_place: true,
+      root: Progress,
+      fallback: Clip("WeaponOneHand@slash"),
+    ),
+    "attack.sword_1h.light2": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Regular_B"),
+        (source: "quaternius_ual1", clip: "Sword_Attack"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@slash"),
+    ),
+    "attack.sword_1h.light3": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Regular_C"),
+        (source: "quaternius_ual1", clip: "Sword_Attack"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@slash"),
+    ),
+    // Recoveries when the chain stops (no Morrowind equivalent).
+    "attack.sword_1h.light1_rec": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Regular_A_Rec"),
+      ],
+      root: Progress,
       fallback: Drop,
+    ),
+    "attack.sword_1h.light2_rec": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Regular_B_Rec"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    // Rolls: Morrowind has none, so no fallback (a roll without a clip refuses the move).
+    "dodge.roll.fwd": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Roll_RM"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    "dodge.roll.left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Dodge_Left_RM"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    "dodge.roll.right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Dodge_Right_RM"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    // Hit reactions (forced Clip moves by tier and side), Morrowind's Hit1-5 behind.
+    "react.small.front": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Hit_Chest"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit1"),
+    ),
+    "react.small.left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Hit_Shoulder_L"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit2"),
+    ),
+    "react.small.right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Hit_Shoulder_R"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit3"),
+    ),
+    "react.small.back": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Hit_Stomach"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit4"),
+    ),
+    // Medium and Large share the knockback (spec: root x0.25 / x0.6 once the manifest
+    // carries a root scale; full travel until then).
+    "react.medium.front": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Hit_Knockback_RM"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit5"),
+    ),
+    "react.large.front": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Hit_Knockback_RM"),
+      ],
+      root: Progress,
+      fallback: Clip("Hit5"),
     ),
   },
 )

@@ -101,6 +101,12 @@ pub struct Source {
     /// its root facing forward.
     #[serde(default)]
     pub root_from_pelvis: bool,
+    /// BVH takes whose zero pose is no usable reference (LAFAN1: every bone
+    /// along one line): this frame of each take is its skeleton's rest, the
+    /// pose auto-align and the retargeter start from (mocap takes open on the
+    /// actor's T-pose: frame 0). `None`: the zero pose.
+    #[serde(default)]
+    pub rest_frame: Option<u32>,
 }
 
 fn one() -> f32 {
@@ -290,6 +296,7 @@ mod tests {
         let lafan1 = &m.sources["lafan1"];
         assert_eq!(lafan1.license, License::CC_BY_NC_ND_4_0);
         assert!(lafan1.private_only && !lafan1.redistributable() && lafan1.root_from_pelvis);
+        assert_eq!(lafan1.rest_frame, Some(0), "LAFAN1 takes open on the actor's T-pose");
         assert!(lafan1.files.iter().all(|f| f.sha256.len() == 64));
         let slot = &m.slots["traverse.mantle.waist"];
         assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m_RM");
@@ -306,8 +313,39 @@ mod tests {
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);
         assert!(rules.root_motion.vertical && rules.root_motion.extract);
         let (clips, slots) = m.graph_clips("humanoid");
-        assert_eq!(slots, ["getup.prone", "getup.side_left", "getup.side_right", "getup.supine", "traverse.climb.up", "traverse.mantle.waist"]);
-        assert_eq!(clips[0].1.fallback, Some(ClipFallback::Drop));
+        assert_eq!(
+            slots,
+            [
+                "attack.sword_1h.light1",
+                "attack.sword_1h.light1_rec",
+                "attack.sword_1h.light2",
+                "attack.sword_1h.light2_rec",
+                "attack.sword_1h.light3",
+                "dodge.roll.fwd",
+                "dodge.roll.left",
+                "dodge.roll.right",
+                "getup.prone",
+                "getup.side_right",
+                "getup.supine",
+                "react.large.front",
+                "react.medium.front",
+                "react.small.back",
+                "react.small.front",
+                "react.small.left",
+                "react.small.right",
+                "traverse.climb.up",
+                "traverse.mantle.waist"
+            ]
+        );
+        // Combat slots fall back to Morrowind's groups (rolls drop).
+        assert_eq!(m.slots["react.small.front"].fallback, ClipFallback::Clip("Hit1".into()));
+        assert_eq!(m.slots["dodge.roll.fwd"].fallback, ClipFallback::Drop);
+        // Get-ups: the UAL clip first, LaFAN1 as its alternative.
+        assert_eq!(
+            clips.iter().find(|(n, _)| n == "getup.prone").unwrap().1.fallback,
+            Some(ClipFallback::Clip("getup.prone.alt1".into()))
+        );
+        assert_eq!(clips[0].1.fallback, Some(ClipFallback::Clip("attack.sword_1h.light1.alt1".into())));
     }
 
     #[test]

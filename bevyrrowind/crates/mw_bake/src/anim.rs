@@ -50,7 +50,7 @@ use sf_anim::{Clip, ClipRules, CookSettings, Looping, RetargetRig, RigHints, Rig
 use sf_anim_graph::{CompiledGraph, Provenance};
 use sf_anim_graph::steps::{ANIMGRAPH_COMPILE, AnimGraphCompileStep, GraphRig, GraphRules, graph_subject};
 use sf_bake::{BakeError, Baker, Digest, Manifest, PlanCx, ProductKey, RunCx, Step, Store};
-use sf_character::{CharacterRecipe, CharacterSource, CharacterState, HumanoidBone, RetargetOptions};
+use sf_character::{CharacterRecipe, CharacterSource, CharacterState, HumanoidBone, RetargetOptions, RigMap};
 use sf_records::{RecordDb, RecordId};
 use sf_vfs::{Vfs, VfsPath};
 use tes3::esp::{Creature, Npc, NpcFlags, Race, RaceFlags};
@@ -65,7 +65,7 @@ pub const SOURCE_CLIPS: &str = "mw.anim.source_clips";
 
 /// The animation importers of the bake: `.kf` and `.nif` (skeletons and
 /// model keyframes), glTF/GLB and BVH (the user's clip libraries,
-/// [`crate::sources`]). BVH files take their source's `unit_scale` and `up`
+/// [`crate::sources`]). BVH files take their source's `unit_scale`, `up` and `rest_frame`
 /// from the shipped manifest (Z up: facing -Y, the Blender / 3ds Max layout).
 pub fn anim_importers() -> AnimImporters {
     let mut bvh = sf_anim::BvhAnimImporter::default();
@@ -76,12 +76,25 @@ pub fn anim_importers() -> AnimImporters {
         };
         let space = sf_anim::SourceSpace { unit_scale: source.unit_scale, up, forward, right_handed: true };
         bvh = bvh.with_override(AnimSources::virtual_path(name, ""), space);
+        if let Some(frame) = source.rest_frame {
+            bvh = bvh.with_rest_frame(AnimSources::virtual_path(name, ""), frame as usize);
+        }
     }
     AnimImporters::new()
         .with(Arc::new(KfAnimImporter))
         .with(Arc::new(NifAnimImporter))
         .with(Arc::new(sf_anim::GltfAnimImporter))
         .with(Arc::new(bvh))
+}
+
+/// The retarget source rig of a library file's cooked skeleton: auto-mapped,
+/// auto-aligned from its rest pose (a BVH take's stance frame when its source
+/// sets `rest_frame`), no leg IK. `None` when it has no humanoid map.
+pub fn library_rig(skeleton: &Skeleton) -> Option<(RigMap, RetargetRig)> {
+    let (mut map, _) = sf_character::auto_map(skeleton);
+    map.auto_align(skeleton);
+    let retarget = map.retarget_rig(skeleton, RetargetOptions { ik_legs: false }).ok()?;
+    Some((map, retarget))
 }
 
 // ---------------------------------------------------------------------------
@@ -477,12 +490,7 @@ impl MwAnimRules {
     /// rig, the retarget source) and the clip names it holds. Returns the
     /// references it can't serve, with why.
     pub fn add_library_file(&mut self, file: &str, skeleton: Option<&Skeleton>, clips: &[String]) -> Vec<(String, String)> {
-        let rig = skeleton.and_then(|s| {
-            let (mut map, _) = sf_character::auto_map(s);
-            map.auto_align(s);
-            let retarget = map.retarget_rig(s, RetargetOptions { ik_legs: false }).ok()?;
-            Some((s, map, retarget))
-        });
+        let rig = skeleton.and_then(|s| library_rig(s).map(|(map, retarget)| (s, map, retarget)));
         let mapped = rig.is_some();
         if let Some((s, map, retarget)) = rig {
             let hints = RigHints { profile: map.profile(s).ok(), ..RigHints::default() };
@@ -956,7 +964,10 @@ mod tests {
 
         // Present without the clip (or a rig): unresolvable, and the rules' version moves.
         let refused = rules.add_library_file(FILE, None, &["Idle_Loop".to_owned()]);
-        assert_eq!(refused.len(), 1);
+        // Every reference to the file is refused (the manifest's UAL1 slots: traversal, rolls, attacks, get-ups).
+        let expected = rules.library.values().filter(|r| r.file == FILE).count();
+        assert_eq!(refused.len(), expected);
+        assert!(refused.iter().any(|(reference, _)| reference == R));
         assert!(GraphRules::clip_product(&rules, "g", "t.nif", R).is_none());
         assert_ne!(GraphRules::version(&rules), GRAPH_RULES_VERSION);
     }
