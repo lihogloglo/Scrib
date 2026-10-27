@@ -299,7 +299,7 @@ impl FrameClip {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn frame_time(f: usize, n: usize, duration: f32) -> f32 {
+pub(crate) fn frame_time(f: usize, n: usize, duration: f32) -> f32 {
     if n < 2 { 0.0 } else { duration * f as f32 / (n - 1) as f32 }
 }
 
@@ -421,6 +421,9 @@ pub fn cook_clip_for(
         }
     }
     clip.markers.sort_by(|a, b| a.time.total_cmp(&b.time));
+    if let Some(p) = profile.filter(|_| rules.contacts.enabled && rules.additive.is_none()) {
+        crate::annotate_contacts(skeleton, p, &mut clip);
+    }
     Ok(clip)
 }
 

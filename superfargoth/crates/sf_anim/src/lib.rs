@@ -13,6 +13,7 @@
 // Pose and IK math reads best with its textbook names (a, b, c, q, t, u, w).
 #![allow(clippy::many_single_char_names)]
 
+mod annotate;
 #[cfg(feature = "bvh")]
 mod bvh_import;
 mod clip;
@@ -39,6 +40,7 @@ pub mod spring;
 pub mod steps;
 mod warp;
 
+pub use annotate::{CONTACT_RELEASE, CONTACT_SPEED, Contact, ContactKind, HAND_BRACE, MIN_CONTACT, annotate_contacts};
 #[cfg(feature = "bvh")]
 pub use bvh_import::BvhAnimImporter;
 pub use clip::{
@@ -129,6 +131,8 @@ pub trait AnimImporter: Send + Sync {
     }
 }
 
+#[cfg(test)]
+mod annotate_tests;
 #[cfg(test)]
 mod fbik_tests;
 #[cfg(test)]

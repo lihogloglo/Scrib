@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::{FormatError, JointMask, LocalPose, SkeletonId, SoaTrs, Trs, math};
+use crate::{Contact, ContactKind, FormatError, JointMask, LocalPose, SkeletonId, SoaTrs, Trs, math};
 
 /// How a clip's root motion moves the character (animation.md).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +156,8 @@ pub struct ClipMeta {
     pub cycle_distance: f32,
     /// Source tracks naming joints the skeleton lacks.
     pub unbound_joints: Vec<String>,
+    /// Hand and foot contacts by start time ([`crate::annotate_contacts`]).
+    pub contacts: Vec<Contact>,
 }
 
 impl ClipMeta {
@@ -168,6 +170,18 @@ impl ClipMeta {
     #[must_use]
     pub fn stride_velocity(&self) -> Vec3 {
         if self.stance_velocity == Vec3::ZERO { self.average_velocity } else { self.stance_velocity }
+    }
+
+    /// The contacts of one kind, by start time.
+    pub fn contacts_of(&self, kind: ContactKind) -> impl Iterator<Item = &Contact> {
+        self.contacts.iter().filter(move |c| c.kind == kind)
+    }
+
+    /// From the first plant to the last release of one kind, clip time (the hands on a lip: a
+    /// traversal move's contact-bounded warp window); `None` without one.
+    #[must_use]
+    pub fn contact_span(&self, kind: ContactKind) -> Option<(f32, f32)> {
+        self.contacts_of(kind).fold(None, |span, c| Some(span.map_or((c.start, c.end), |(a, b): (f32, f32)| (a.min(c.start), b.max(c.end)))))
     }
 }
 
@@ -269,8 +283,8 @@ pub struct Advance {
 }
 
 const MAGIC: &[u8; 4] = b"SFAN";
-/// Version of the cooked clip format.
-pub const CLIP_FORMAT: u32 = 3;
+/// Version of the cooked clip format (4: `ClipMeta::contacts`).
+pub const CLIP_FORMAT: u32 = 4;
 
 impl Clip {
     #[allow(clippy::too_many_arguments)]

@@ -23,7 +23,7 @@ use sf_bake::{BakeError, Baker, Digest, PlanCx, ProductKey, RunCx, Step};
 
 use crate::{
     AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints, RigProfile,
-    RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, cook_clip_for, detect_profile,
+    RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, annotate_contacts, cook_clip_for, detect_profile,
 };
 
 pub const SKELETON_COOK: &str = "skeleton.cook";
@@ -316,7 +316,8 @@ impl Step for AnimCookStep {
         // 8: contact-consistent root track of travelling loops, `ContactRules::root_blend` (AN-19).
         // 9: horizontal extraction starts the root-motion joint over its rest ground position
         //    (`cook::start_anchor`: split-take clips no longer draw the body off its capsule).
-        9
+        // 10: hand and foot contacts, `ClipMeta::contacts` (`annotate_contacts`, action.md B2b).
+        10
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;
@@ -354,7 +355,7 @@ impl Step for AnimCookStep {
 }
 
 /// `anim.retarget`: a cooked clip carried onto another skeleton through
-/// both skeletons' [`RetargetRig`]s, then cooked for it.
+/// both skeletons' [`RetargetRig`]s, then cooked and contact-annotated for it.
 pub struct AnimRetargetStep(pub Arc<AnimBake>);
 
 impl AnimRetargetStep {
@@ -381,11 +382,12 @@ impl Step for AnimRetargetStep {
         ANIM_RETARGET
     }
     fn version(&self) -> u32 {
-        1
+        // 2: the target's hand and foot contacts, from its `rig.profile` (`annotate_contacts`).
+        2
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (target, anim, source) = Self::parse(subject)?;
-        cx.product(ANIM_COOK, anim).product(SKELETON_COOK, source).product(SKELETON_COOK, target);
+        cx.product(ANIM_COOK, anim).product(SKELETON_COOK, source).product(SKELETON_COOK, target).product(RIG_PROFILE, target);
         cx.param("source_rig", bytes_of(&self.0.rules.rig(source)));
         cx.param("target_rig", bytes_of(&self.0.rules.rig(target)));
         if let Some(root) = self.root(anim) {
@@ -404,11 +406,13 @@ impl Step for AnimRetargetStep {
         let target = read_skeleton(&key, target_path, cx)?;
         let (source_rig, target_rig) = (self.rig(&key, source_path)?, self.rig(&key, target_path)?);
         let retargeter = Retargeter::new(&source, &source_rig, &target, &target_rig).map_err(|e| BakeError::step(&key, e))?;
-        let cooked = match self.root(anim) {
+        let mut cooked = match self.root(anim) {
             Some(root) => retargeter.clip_with_root(&clip, &root, &self.0.settings),
             None => retargeter.clip(&clip, &self.0.settings),
         }
         .map_err(|e| BakeError::step(&key, e))?;
+        let profile = read_profile(&key, target_path, cx)?;
+        annotate_contacts(&target, &profile, &mut cooked);
         Ok(cooked.to_bytes())
     }
 }

@@ -416,6 +416,8 @@ impl Retargeter {
         out.meta.stance_velocity *= s;
         out.meta.cycle_distance *= s;
         out.meta.unbound_joints.clear();
+        // Source joints and positions: `anim.retarget` annotates the target's own.
+        out.meta.contacts.clear();
         Ok(out)
     }
 
