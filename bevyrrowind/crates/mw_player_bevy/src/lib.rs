@@ -45,6 +45,7 @@ pub mod avatar;
 pub mod combat;
 pub mod dummy;
 pub mod feel;
+pub mod grip;
 pub mod hud;
 
 use std::collections::HashMap;
@@ -181,7 +182,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
         .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
-        .add_systems(PostUpdate, (avatar::link, avatar::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
+        .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
         .add_systems(PostUpdate, avatar::first_person);
     hud::add(app, app_db.as_ref());
     combat::add(app, sheet, &clips);

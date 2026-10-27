@@ -108,6 +108,8 @@ pub struct Forced {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WarpState {
     pub plan: sf_anim::WarpPlan,
+    /// Hands on the lip (B2b): `None` when the slot clip has no hand contacts.
+    pub grip: Option<crate::LedgeGrip>,
 }
 
 impl ActionState {

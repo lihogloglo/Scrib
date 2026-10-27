@@ -275,6 +275,12 @@ impl ActionBody {
         self.warp_progress
     }
 
+    /// A Warp move's start-tick feet in the world, `None` off a Warp move: its plan's positions
+    /// ([`sf_action::WarpState`], root poses, grip targets) are offsets from it, world axes.
+    pub fn warp_anchor(&self) -> Option<WorldPos> {
+        self.warp_anchor
+    }
+
     /// A Warp move's destination feet in the world (`state` is this body's character state),
     /// `None` off a Warp move. The camera leads its pivot to it (camera.md).
     pub fn warp_target(&self, state: &ActionState) -> Option<WorldPos> {

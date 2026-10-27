@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sf_controller::{Gait, LocomotionIntent};
 
 use crate::command::{ActionClass, ClassSet, Command};
+use crate::grip::LedgeGrip;
 use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
 
 use crate::ids::{CharacterId, ClockTime, MovesetKey, RuleKey, SlotKey, TagId, TargetId, Tick, TICK_HZ};
@@ -568,13 +569,16 @@ fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense) -> Result<Optio
     }
     let yaw = into.x.atan2(into.z);
     let room = if o.depth.is_finite() { (o.depth - ctx.params.radius).max(0.0) } else { inset };
-    let top = Vec3::new(o.lip.x, o.height, o.lip.z) + into * inset.min(room);
+    let lip = Vec3::new(o.lip.x, o.height, o.lip.z);
+    let top = lip + into * inset.min(room);
     let plan = with_root_path(r, ctx.slots, |path| {
         WarpPlan::try_new(path, RootPose::new(Vec3::ZERO, yaw), RootPose::new(top, yaw), profile, refuse_ratio)
     })
     .ok_or(Refused::NoRootPath)?
     .map_err(|_| Refused::MaxCorrection)?;
-    Ok(Some(WarpState { plan }))
+    // Hands on the lip (B2b), from the slot clip's baked hand contacts.
+    let grip = with_root_path(r, ctx.slots, |path| LedgeGrip::plan(path, &plan, lip, into)).flatten();
+    Ok(Some(WarpState { plan, grip }))
 }
 
 /// 10. Output: move, slot chain, playhead, and the "press to use" prompt.

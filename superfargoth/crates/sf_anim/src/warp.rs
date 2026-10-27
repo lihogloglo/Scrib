@@ -23,8 +23,8 @@ use std::sync::Arc;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::Clip;
 use crate::math::wrap_angle;
+use crate::{Clip, Contact};
 
 /// A root position and heading (radians about +Y, 0 faces +Z).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -80,6 +80,11 @@ pub trait RootPath {
     fn warp_window(&self) -> Option<(f32, f32)> {
         None
     }
+    /// Baked hand and foot contacts ([`crate::ClipMeta::contacts`]), path seconds (empty: none
+    /// known; a [`RootChain`] reports none, its parts' times being their own).
+    fn contacts(&self) -> &[Contact] {
+        &[]
+    }
 }
 
 impl RootPath for Clip {
@@ -96,6 +101,10 @@ impl RootPath for Clip {
     fn warp_window(&self) -> Option<(f32, f32)> {
         self.events.iter().find(|e| e.name == "warp").and_then(|e| Some((e.time, e.end?)))
     }
+
+    fn contacts(&self) -> &[Contact] {
+        &self.meta.contacts
+    }
 }
 
 impl<T: RootPath + ?Sized> RootPath for &T {
@@ -110,6 +119,10 @@ impl<T: RootPath + ?Sized> RootPath for &T {
     fn warp_window(&self) -> Option<(f32, f32)> {
         (**self).warp_window()
     }
+
+    fn contacts(&self) -> &[Contact] {
+        (**self).contacts()
+    }
 }
 
 impl<T: RootPath + ?Sized> RootPath for Arc<T> {
@@ -123,6 +136,10 @@ impl<T: RootPath + ?Sized> RootPath for Arc<T> {
 
     fn warp_window(&self) -> Option<(f32, f32)> {
         (**self).warp_window()
+    }
+
+    fn contacts(&self) -> &[Contact] {
+        (**self).contacts()
     }
 }
 
