@@ -20,7 +20,7 @@ use mw_bake::sources::AnimSources;
 use mw_graphs::{HUMANOID_SETS, Template};
 use mw_install::MorrowindInstall;
 use sf_anim::steps::{ANIM_COOK, ANIM_RETARGET, SKELETON_COOK, anim_subject, retarget_subject};
-use sf_anim::{Clip, LocalPose, Skeleton};
+use sf_anim::{Clip, ContactKind, LocalPose, Skeleton};
 use sf_anim_graph::CompiledGraph;
 use sf_anim_graph::steps::{ANIMGRAPH_COMPILE, graph_subject};
 use sf_bake::{Baker, ProductKey, Store};
@@ -29,12 +29,15 @@ use sf_vfs::Vfs;
 
 const SLOT: &str = "traverse.mantle.waist";
 const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m";
+/// The high mantle: UAL2's 2 m climb-up.
+const HIGH_SLOT: &str = "traverse.mantle.high";
+const HIGH: &str = "quaternius_ual2:ClimbUp_2m";
 /// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
-/// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 2 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge`, for B3), the 16 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
-const SLOTS: usize = 20;
+/// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 3 traversal slots (`traverse.climb.up` = UAL1
+/// `ClimbLedge`, for B3; the two mantles), the 16 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
+const SLOTS: usize = 21;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
@@ -155,6 +158,7 @@ fn mantle_clip_retargets_onto_the_humanoid_skeletons() {
     assert!(report.failures.is_empty());
     println!("slots: {:?}; {} library clips", report.slots, report.library_clips);
     assert!(report.slots.contains(&format!("{SLOT}: {REFERENCE}")), "{:?}", report.slots);
+    assert!(report.slots.contains(&format!("{HIGH_SLOT}: {HIGH}")), "{:?}", report.slots);
     assert_eq!(report.library_clips, SLOTS * TARGETS);
 
     for set in &HUMANOID_SETS[..TARGETS] {
@@ -213,13 +217,26 @@ fn missing_library_drops_the_slot() {
 #[ignore = "measurement: waist mantle clip numbers, source vs retargeted, contact timing"]
 fn measure_mantle_waist() {
     let Some(s) = setup() else { return };
+    measure_mantle(&s);
+}
+
+/// The high mantle's `ClimbUp_2m`: its rise sets the rule's height band (`traverse.mantle.high`).
+#[test]
+#[ignore = "measurement: high mantle clip numbers, source vs retargeted, contact timing"]
+fn measure_mantle_high() {
+    let Some(s) = setup_with(HIGH, false) else { return };
+    measure_mantle(&s);
+}
+
+/// Root rise, forward travel and a hand/foot timeline of `s.reference`, source and retargeted.
+fn measure_mantle(s: &Setup) {
     let dir = tempfile::tempdir().unwrap();
-    let (_, baker) = bake(&s, dir.path(), &s.sources);
+    let (_, baker) = bake(s, dir.path(), &s.sources);
     let source = skeleton(&baker, &s.file);
     let (mut source_map, map_report) = sf_character::auto_map(&source);
     source_map.auto_align(&source);
     println!("source rig: {} bones mapped, clean {}", source_map.bones.len(), map_report.is_clean());
-    let source_clip = Clip::from_bytes(&bytes(&baker, &ProductKey::new(ANIM_COOK, anim_subject(&s.file, &s.file, REFERENCE)))).unwrap();
+    let source_clip = Clip::from_bytes(&bytes(&baker, &ProductKey::new(ANIM_COOK, anim_subject(&s.file, &s.file, s.reference)))).unwrap();
     let describe = |name: &str, clip: &Clip| {
         let (a, b) = (clip.root_at(0.0), clip.root_at(clip.duration));
         let d = b.0 - a.0;
@@ -235,6 +252,7 @@ fn measure_mantle_waist() {
         );
     };
     describe("source (UAL2 rig)", &source_clip);
+    hands(&source_clip);
     let limbs: [(&str, &[B]); 3] = [
         ("leg", &LEG),
         ("arm", &[B::LeftUpperArm, B::LeftLowerArm, B::LeftHand]),
@@ -243,8 +261,9 @@ fn measure_mantle_waist() {
     for set in &HUMANOID_SETS[..TARGETS] {
         let target = skeleton(&baker, set.skeleton);
         let map = target_map(&target);
-        let clip = Clip::from_bytes(&bytes(&baker, &retargeted(&s, set.skeleton))).unwrap();
+        let clip = Clip::from_bytes(&bytes(&baker, &retargeted(s, set.skeleton))).unwrap();
         describe(set.skeleton, &clip);
+        hands(&clip);
         for (name, bones) in limbs {
             let present = |m: &RigMap| bones.iter().filter(|b| m.joint(**b).is_some()).copied().collect::<Vec<_>>();
             let (sl, tl) = (chain(&source, &source_map, &present(&source_map)), chain(&target, &map, &present(&map)));
@@ -416,5 +435,18 @@ fn measure_mantle_waist_lafan1() {
             );
         }
         println!("  root yaw range {:.1}° .. {:.1}°", min_yaw.to_degrees(), max_yaw.to_degrees());
+    }
+}
+
+/// The clip's baked hand contacts (B2b: the hands on the lip), for the hand IK slice.
+fn hands(clip: &Clip) {
+    let span = clip.meta.contact_span(ContactKind::Hand);
+    let feet = clip.meta.contacts_of(ContactKind::Foot).count();
+    println!("  hand contacts (span {span:?}; {feet} foot contacts):");
+    for c in clip.meta.contacts_of(ContactKind::Hand) {
+        println!(
+            "    {:?} {} ({}): {:.3}-{:.3} s, at {:.3} {:.3} {:.3} (clip), {:.3} {:.3} {:.3} (root frame)",
+            c.side, c.limb, c.joint, c.start, c.end, c.position.x, c.position.y, c.position.z, c.local.x, c.local.y, c.local.z
+        );
     }
 }

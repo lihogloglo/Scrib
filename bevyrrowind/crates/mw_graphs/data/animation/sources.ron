@@ -80,6 +80,18 @@
       vertical: true,
       fallback: Drop,
     ),
+    // High mantle (action.md B2): the band above the waist mantle (~1.6-2.2 m
+    // ledges), UAL2's 2 m root-motion climb-up, warped onto the ledge like the
+    // waist one. No fallback clip: without it the move refuses into a jump.
+    "traverse.mantle.high": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "ClimbUp_2m"),
+      ],
+      root: Progress,
+      vertical: true,
+      fallback: Drop,
+    ),
     // Climb up from a hang (B3; unused until then): a top-out that rises
     // ~2.5 m straight up with no forward travel.
     "traverse.climb.up": (

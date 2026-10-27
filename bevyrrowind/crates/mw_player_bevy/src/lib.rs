@@ -129,7 +129,7 @@ const INTERIOR_VOID_MARGIN_M: f32 = 2.0;
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
 /// The traversal slots the player's rules use (`sf_action::TRAVERSAL_RULES`).
-pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist"];
+pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist", "traverse.mantle.high"];
 
 /// Every slot the player's rules play a baked clip in: [`TRAVERSAL_SLOTS`] and the combat
 /// sheet's ([`mw_combat::sheet_slots`]). The host loads their clips from the baked humanoid graph.

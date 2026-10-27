@@ -310,6 +310,7 @@ mod tests {
         assert!(!getup.extract && getup.anchor_end);
         assert!(refs.iter().filter(|r| r.source != "lafan1").all(|r| r.retarget_root.is_none()));
         assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge");
+        assert_eq!(m.slots["traverse.mantle.high"].candidates[0].reference(), "quaternius_ual2:ClimbUp_2m");
         let rules = slot.rules(&slot.candidates[0]);
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);
         assert!(rules.root_motion.vertical && rules.root_motion.extract);
@@ -337,6 +338,7 @@ mod tests {
                 "react.small.left",
                 "react.small.right",
                 "traverse.climb.up",
+                "traverse.mantle.high",
                 "traverse.mantle.waist"
             ]
         );

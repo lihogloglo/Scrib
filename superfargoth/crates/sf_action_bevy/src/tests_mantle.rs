@@ -1,5 +1,6 @@
 //! Headless mantle (action.md B2a): the shell's context probe senses a box ledge on a Jump press
-//! and the Warp move places the body on top; too high a ledge refuses into a plain jump.
+//! and the Warp move places the body on top (waist and high clips); too high a wall refuses into a
+//! plain jump.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,6 +75,19 @@ impl RootPath for Climb {
     }
 }
 
+/// The high clip's stand-in: up 2.38 m and forward 2 m in 1.3 s (the retargeted UAL2
+/// `ClimbUp_2m_RM` measures that).
+struct HighClimb;
+
+impl RootPath for HighClimb {
+    fn duration(&self) -> f32 {
+        1.3
+    }
+    fn root_at(&self, t: f32) -> RootPose {
+        RootPose::new(Vec3::new(0.0, 2.38, 2.0) * (t / 1.3).clamp(0.0, 1.0), 0.0)
+    }
+}
+
 fn rules() -> ActionRules {
     let slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
@@ -82,7 +96,9 @@ fn rules() -> ActionRules {
         .with("air.land.normal", SlotInfo::once(0.25))
         .with("air.land.hard", SlotInfo::once(0.5))
         .with("traverse.mantle.waist", SlotInfo::once(Climb.duration()))
-        .with_root("traverse.mantle.waist", Arc::new(Climb));
+        .with_root("traverse.mantle.waist", Arc::new(Climb))
+        .with("traverse.mantle.high", SlotInfo::once(HighClimb.duration()))
+        .with_root("traverse.mantle.high", Arc::new(HighClimb));
     let mut b = RuleSetBuilder::new();
     b.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES);
     ActionRules { rules: b.build().expect("base + traversal rules"), slots: Box::new(slots) }
@@ -150,10 +166,21 @@ fn a_waist_high_ledge_is_mantled_and_the_body_walks_on_from_its_top() {
 }
 
 #[test]
-fn a_ledge_above_the_band_refuses_into_a_plain_jump() {
-    let (feet, seen) = run(2.0, 150);
+fn a_high_ledge_is_mantled_with_the_high_clip() {
+    let (waist, high) = (RuleKey::of("traverse.mantle.waist"), RuleKey::of("traverse.mantle.high"));
+    let (feet, seen) = run(2.0, 200);
     println!("2 m ledge: feet {feet}, moves {seen:?}");
-    assert!(!seen.contains(&RuleKey::of("traverse.mantle.waist")), "no mantle: {seen:?}");
+    assert!(seen.contains(&high) && !seen.contains(&waist), "the high mantle fired: {seen:?}");
+    assert!((feet.y - 2.0).abs() < 0.05 && feet.z > 2.0, "ends on top: {feet}");
+    assert_eq!(seen.last(), Some(&RuleKey::of("loco")), "hands back to walking");
+}
+
+#[test]
+fn a_wall_above_the_bands_refuses_into_a_plain_jump() {
+    let (feet, seen) = run(3.5, 150);
+    println!("3.5 m wall: feet {feet}, moves {seen:?}");
+    let mantles = [RuleKey::of("traverse.mantle.waist"), RuleKey::of("traverse.mantle.high")];
+    assert!(!seen.iter().any(|m| mantles.contains(m)), "no mantle: {seen:?}");
     assert!(feet.y.abs() < 0.05 && feet.z < 2.0, "stays below, against the face: {feet}");
 }
 

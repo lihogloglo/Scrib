@@ -27,6 +27,24 @@ impl RootPath for Line {
     }
 }
 
+const HIGH: &str = "traverse.mantle.high";
+/// The retargeted UAL2 `ClimbUp_2m_RM` (measured: 1.3 s, root rises 2.38 m and travels 2.0 m
+/// forward; a straight line stands in for it).
+const HIGH_SECS: f32 = 1.3;
+
+struct HighLine;
+
+impl RootPath for HighLine {
+    fn duration(&self) -> f32 {
+        HIGH_SECS
+    }
+
+    fn root_at(&self, t: f32) -> RootPose {
+        let u = (t / HIGH_SECS).clamp(0.0, 1.0);
+        RootPose::new(Vec3::new(0.0, 2.38, 2.0) * u, 0.0)
+    }
+}
+
 fn rules() -> RuleSet {
     let mut b = RuleSetBuilder::new();
     b.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES);
@@ -40,8 +58,9 @@ fn slots(root: bool) -> SlotTable {
         .with("air.jump", SlotInfo::once(0.3))
         .with("air.land.normal", SlotInfo::once(0.25))
         .with("air.land.hard", SlotInfo::once(0.5))
-        .with(MANTLE, SlotInfo::once(CLIP_SECS));
-    if root { t.with_root(MANTLE, Arc::new(Line)) } else { t }
+        .with(MANTLE, SlotInfo::once(CLIP_SECS))
+        .with(HIGH, SlotInfo::once(HIGH_SECS));
+    if root { t.with_root(MANTLE, Arc::new(Line)).with_root(HIGH, Arc::new(HighLine)) } else { t }
 }
 
 /// A box ledge whose face is `dist` m ahead (+Z) of the feet, `height` m tall, 1.5 m deep.
@@ -205,4 +224,46 @@ fn shallow_tops_keep_the_target_a_radius_inside() {
     let end = r.state.warp.expect("planned").plan.root_at(&Line, CLIP_SECS);
     // 1.2 deep minus the 0.3 radius: 0.9 past the lip (at 0.6).
     assert!((end.position.z - 1.5).abs() < 1e-4, "{end:?}");
+}
+
+#[test]
+fn jump_forward_at_a_high_ledge_mantles_onto_the_top_with_the_high_clip() {
+    let mut r = Run::new(true);
+    r.step(jump_forward(false), Some(ledge(0.3, 2.0, ObstacleClass::Mantle)));
+    assert!(r.started(HIGH), "events {:?}, refusals {:?}", r.out.events, r.out.refusals);
+    assert_eq!(r.refused(MANTLE), Some(Refused::Probe), "above the waist band");
+    let plan = r.state.warp.expect("plan kept in the state").plan;
+    assert!(plan.ratio() <= 0.35);
+    for _ in 0..120 {
+        if r.state.mov != RuleKey::of(HIGH) {
+            break;
+        }
+        r.step(Command::default(), None);
+    }
+    assert_eq!(r.state.mov, RuleKey::of("loco"));
+    // On top, the 1.2 m inset past the lip (at 0.3), the 1.5 m deep top less a radius allows it.
+    assert!((r.feet.y - 2.0).abs() < 0.02 && (r.feet.z - 1.5).abs() < 0.02, "feet {:?}", r.feet);
+}
+
+#[test]
+fn the_high_band_starts_where_the_waist_band_ends_and_stops_below_a_climb() {
+    // (height, the rule that fires; None: a plain jump). The shared edge (0.85 heights) is the waist's.
+    let h = CharacterParams::default().height;
+    let cases = [(1.5, Some(MANTLE)), (0.85 * h, Some(MANTLE)), (0.86 * h, Some(HIGH)), (1.6, Some(HIGH)), (2.2, Some(HIGH)), (2.5, None)];
+    for (height, fires) in cases {
+        for (dist, up) in [(0.3, false), (0.3, true), (0.8, false)] {
+            let mut r = Run::new(true);
+            let mut cmd = jump_forward(false);
+            if up {
+                cmd = Command { stick: Vec2::new(0.0, 1.0), ..Command::default() };
+                cmd.buttons.pressed.insert(ActionClass::Up);
+            }
+            r.step(cmd, Some(ledge(dist, height, ObstacleClass::Mantle)));
+            let fired = [MANTLE, HIGH].into_iter().find(|id| r.started(id));
+            assert_eq!(fired, fires, "{height} m at {dist} m (up {up}): refusals {:?}", r.out.refusals);
+            if fires.is_none() {
+                assert_eq!(r.refused(HIGH), Some(Refused::Probe));
+            }
+        }
+    }
 }

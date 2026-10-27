@@ -24,4 +24,28 @@
         steer: false,
         redo_ticks: 12,
     ),
+    (
+        // High mantle: the band above the waist one (~1.53-2.25 m for a 1.8 m capsule), same
+        // entry. The 2 m climb-up's root rises ~2.4 m and ends ~1.2 m past where its hands
+        // grab (~2 m up), so every ledge in the band compresses the rise (ratio <= ~0.32 at
+        // the bottom with the capsule at the face). Ranked below the waist mantle: the shared
+        // band edge takes the waist clip. Taller faces (2.5 m, the 3.5 m wall) jump.
+        id: "traverse.mantle.high",
+        kind: Traversal,
+        category: Traversal,
+        rank: 190,
+        slots: ["traverse.mantle.high"],
+        owner: Warp(target: LedgeTop(inset: 1.2), profile: Late, refuse_ratio: 0.35, steer: false),
+        entry: (
+            classes: [Jump, Up],
+            need_forward: true,
+            modes: [Normal, FreeRun],
+            states: [Grounded, Coyote],
+            speed: Some((0.0, 12.0)),
+            probe: Some(Obstacle(classes: [Mantle], height: (0.85, 1.25))),
+        ),
+        exits: [(on: End, to: Loco)],
+        steer: false,
+        redo_ticks: 12,
+    ),
 ]
