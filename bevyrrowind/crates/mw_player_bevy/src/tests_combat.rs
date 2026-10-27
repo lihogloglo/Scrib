@@ -88,3 +88,33 @@ fn a_training_dummy_lands_on_the_floor_armed_and_refills_when_down() {
     let health = app.world().get::<Combatant>(d).unwrap().fighter.vitals.health;
     assert!((health.cur - health.max).abs() < 1e-3, "refilled: {health:?}");
 }
+
+/// CB-1 (owner 2026-10-27): the player walking into a standing training dummy stops against it,
+/// capsules never overlapping, and doesn't shove it (sanity: actor-vs-actor blocking).
+#[test]
+fn the_player_stops_against_a_training_dummy_without_shoving_it() {
+    let (mut app, player) = armed();
+    dummy::systems::<Statics>(&mut app);
+    let root = app.world_mut().spawn_empty().id();
+    // The start spawn is at z 10 on the flat floor; the dummy stands 3 m ahead along -Z.
+    let d = dummy::spawn(&mut app.world_mut().commands(), 0, (WorldPos::ORIGIN.offset(Vec3::new(0.0, 0.0, 7.0)), 0.0), root);
+    app.world_mut().flush();
+    for _ in 0..30 {
+        app.update();
+    }
+    let feet = |app: &App, e: Entity| app.world().get::<ActionBody>(e).unwrap().loco.position;
+    let flat = |v: Vec3| Vec2::new(v.x, v.z).length();
+    let reach = app.world().get::<ActionBody>(player).unwrap().params.radius + app.world().get::<ActionBody>(d).unwrap().params.radius;
+    let dummy_at = feet(&app, d);
+    let stick = action(&mut app, PlayerAction::Stick);
+    mock(&mut app, stick, Vec2::NEG_Y);
+    let mut closest = f32::INFINITY;
+    for _ in 0..180 {
+        app.update();
+        closest = closest.min(flat(feet(&app, player).delta_f32(feet(&app, d))));
+    }
+    assert!(closest.is_finite() && closest >= reach - 0.01, "capsules overlap: {closest:.3} m apart, reach {reach:.3} m");
+    assert!(closest < reach + 0.1, "the player reached the dummy: {closest:.3} m");
+    let shoved = flat(dummy_at.delta_f32(feet(&app, d)));
+    assert!(shoved < 0.01, "the dummy was shoved {shoved:.3} m");
+}

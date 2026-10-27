@@ -44,13 +44,13 @@ pub struct Rules {
     /// comes to rest).
     pub down_secs: (f32, f32),
     /// Down, at rest: the centre of mass slower than this, m/s, for this long, s (the get-up waits for it, up to
-    /// [`Self::down_secs`]'s max).
+    /// [`Self::down_secs`]'s max). Its speed is its measured travel per step, not the solver's velocity: lying still,
+    /// that keeps part of a step's gravity (0.05..0.2 m/s down) and held the get-up back (DE-1).
     pub rest: (f32, f32),
     /// Down and slower than this (centre of mass, m/s): Delirium stops its behaviours and relaxes the body
     /// (`bodyRelax`, holding the pose), Euphoria's lying state: no balancer fidgeting on the floor (DE-1).
     /// `None`: the takeover's behaviour runs on.
-    pub down_relax: Option<f32>,
-    /// `bodyRelax` relaxation (0 stiff .. 100 limp) and damping (a multiplier of the muscle damping).
+    pub down_relax: Option<f32>,    /// `bodyRelax` relaxation (0 stiff .. 100 limp) and damping (a multiplier of the muscle damping).
     pub relax: (f32, f32),
     /// Balancing this long without coming to rest: hand back anyway, s.
     pub max_secs: f32,
@@ -74,8 +74,11 @@ pub struct Rules {
     pub roll_speed: f32,
     /// ... the roll rate asked per radian left, 1/s ...
     pub roll_gain: f32,
-    /// ... for at most this long, s (then the get-up anyway).
+    /// ... for at most this long, s (then the get-up anyway) ...
     pub roll_secs: f32,
+    /// ... and no longer once the tilt left has not shrunk by this much (rad) for this long (s): a stalled roll (an
+    /// arm under the body, a few degrees short of the tolerance) only pushes the body along the floor (DE-1).
+    pub roll_stall: (f32, f32),
     /// The get-up pick ([`Takeover::set_get_ups`]): the first clip (the baseline: Morrowind's own `Knockout@tail`)
     /// wins when its tilt is within this of the nearest clip's, rad (DE-1: Morrowind's look is the default).
     pub baseline_margin: f32,
@@ -103,6 +106,7 @@ impl Default for Rules {
             roll_speed: 2.5,
             roll_gain: 4.0,
             roll_secs: 3.0,
+            roll_stall: (2f32.to_radians(), 0.4),
             baseline_margin: 20f32.to_radians(),
         }
     }
@@ -145,6 +149,9 @@ pub struct Takeover {
     resting: f32,
     calm: f32,
     blending: bool,
+    /// The centre of mass a step ago ([`Rules::rest`] measures its travel).
+    last_com: Vec3,
+    roll_progress: RollProgress,
     /// The get-up clips' first poses: sim up (+Z) in their pelvis part's frame ([`get_up_tilt`]).
     get_ups: Vec<Vec3>,
     /// The get-up picked once down and ready: the index into the clips set ([`Takeover::get_up`]).
@@ -177,6 +184,37 @@ pub fn pick_get_up(angles: &[f32], margin: f32) -> Option<(usize, f32)> {
     match angles.first() {
         Some(&base) if base.is_finite() && base <= nearest.1 + margin => Some((0, base)),
         _ => Some(nearest),
+    }
+}
+
+/// Down `down` s, at rest for `resting` s: whether the get-up may start ([`Rules::down_secs`], [`Rules::rest`]).
+pub fn get_up_ready(rules: &Rules, down: f32, resting: f32) -> bool {
+    let (min, max) = rules.down_secs;
+    (resting >= rules.rest.1 && down >= min) || down >= max
+}
+
+/// The roll-over's progress ([`Rules::roll_stall`]): the least tilt left so far and the seconds since it last shrank.
+#[derive(Clone, Copy, Debug)]
+pub struct RollProgress {
+    best: f32,
+    since: f32,
+}
+
+impl Default for RollProgress {
+    fn default() -> Self {
+        Self { best: f32::INFINITY, since: 0.0 }
+    }
+}
+
+impl RollProgress {
+    /// One roll step of `dt` with `left` rad to go; `true` once it has not shrunk by `stall.0` for `stall.1` s.
+    pub fn stalled(&mut self, left: f32, dt: f32, stall: (f32, f32)) -> bool {
+        if left < self.best - stall.0 {
+            (self.best, self.since) = (left, 0.0);
+        } else {
+            self.since += dt;
+        }
+        self.since >= stall.1
     }
 }
 
@@ -245,11 +283,14 @@ impl Takeover {
             resting: 0.0,
             calm: 0.0,
             blending: false,
+            last_com: Vec3::ZERO,
+            roll_progress: RollProgress::default(),
             get_ups: Vec::new(),
             chosen: None,
             picked_at: Vec::new(),
             relaxed: false,
         };
+        t.last_com = t.com().0;
         t.send(behaviour, &[("start", Value::Bool(true))]);
         t
     }
@@ -371,6 +412,9 @@ impl Takeover {
         let out_of_time = *rolled >= self.rules.roll_secs;
         let frames = self.frames();
         let left = get_up_tilt(frames[0].rotation, clip);
+        if self.roll_progress.stalled(left, dt, self.rules.roll_stall) {
+            return true;
+        }
         let spine = (frames[10].translation - frames[0].translation).normalize_or(Vec3::X);
         let axis = (frames[0].rotation * clip).cross(Vec3::Z).try_normalize().unwrap_or(spine);
         let mass: f32 = TORSO.iter().map(|&k| self.agent.doll.part_mass(k)).sum();
@@ -406,10 +450,11 @@ impl Takeover {
         if runaway || !frames.iter().all(|f| f.translation.is_finite() && f.rotation.is_finite()) {
             return Some(HandBack::Exploded);
         }
-        let velocity = self.com().1;
+        let (com, velocity) = self.com();
+        let travel = (com - std::mem::replace(&mut self.last_com, com)).length() / dt;
         self.still = if velocity.length() < self.rules.still_speed { self.still + dt } else { 0.0 };
         let still = self.still >= self.rules.still_secs;
-        self.resting = if velocity.length() < self.rules.rest.0 { self.resting + dt } else { 0.0 };
+        self.resting = if travel < self.rules.rest.0 { self.resting + dt } else { 0.0 };
         let stepping = self.stepping();
         let calm = stepping == Some(false) && velocity.truncate().length() < self.rules.recover_speed;
         self.calm = if calm { self.calm + dt } else { 0.0 };
@@ -437,8 +482,7 @@ impl Takeover {
                 if !self.relaxed && self.rules.down_relax.is_some_and(|v| velocity.length() < v) {
                     self.relax();
                 }
-                let (min, max) = self.rules.down_secs;
-                let ready = self.rolling.is_some() || (self.resting >= self.rules.rest.1 && down >= min) || down >= max;
+                let ready = self.rolling.is_some() || get_up_ready(&self.rules, down, self.resting);
                 (ready && self.roll_over(dt)).then_some(HandBack::Fallen)
             }
             None if self.blending && self.weight <= 0.0 => Some(HandBack::Balanced),
@@ -511,7 +555,31 @@ pub fn ray_capsule(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, radius: f32) -> Op
 
 #[cfg(test)]
 mod tests {
-    use super::pick_get_up;
+    use super::{RollProgress, Rules, get_up_ready, pick_get_up};
+
+    #[test]
+    fn get_up_waits_for_rest_or_the_max() {
+        let r = Rules { down_secs: (0.5, 2.5), rest: (0.1, 0.3), ..Rules::default() };
+        // At rest long enough, past the minimum down time.
+        assert!(get_up_ready(&r, 0.6, 0.3));
+        // At rest, but not down long enough; down, not at rest long enough.
+        assert!(!get_up_ready(&r, 0.4, 0.4));
+        assert!(!get_up_ready(&r, 1.0, 0.2));
+        // Never at rest: the max down time.
+        assert!(get_up_ready(&r, 2.5, 0.0));
+    }
+
+    #[test]
+    fn roll_ends_once_it_stops_progressing() {
+        let (dt, stall) = (1.0 / 60.0, (0.03, 0.4));
+        // Progressing: never stalled.
+        let mut p = RollProgress::default();
+        assert!((0..120u8).all(|k| !p.stalled(1.0 - f32::from(k) * 0.005, dt, stall)));
+        // Stuck (creeping under the threshold): stalled after `stall.1`.
+        let mut p = RollProgress::default();
+        let first = (0..60u8).find(|&k| p.stalled(0.4 - f32::from(k) * 1e-4, dt, stall)).expect("stalls");
+        assert!((f32::from(first) * dt - stall.1).abs() < 2.0 * dt, "stalled at {first}");
+    }
 
     #[test]
     fn get_up_pick_prefers_the_baseline_within_the_margin() {

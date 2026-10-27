@@ -795,6 +795,14 @@ fn rise(params: &MoverParams, h: &GroundHit) -> f32 {
 /// more than 1.5 m apart vertically (different floors) don't interact.
 /// Sort-and-sweep along X, so a crowd costs about n log n.
 pub fn separate(positions: &[WorldPos], radii: &[f32], out: &mut [Vec3]) {
+    separate_moved(positions, radii, &vec![Vec3::ZERO; positions.len()], out);
+}
+
+/// [`separate`] for characters that moved by `moved[i]` this tick: each overlap is resolved by
+/// the characters that walked into it, in proportion to how far each moved toward the other, so
+/// a standing character blocks without being shoved (UE's and Unity's kinematic capsules block
+/// the same way). Neither moving toward the other (spawned overlapping) splits it half per side.
+pub fn separate_moved(positions: &[WorldPos], radii: &[f32], moved: &[Vec3], out: &mut [Vec3]) {
     out.fill(Vec3::ZERO);
     let Some(&anchor) = positions.first() else {
         return;
@@ -817,9 +825,11 @@ pub fn separate(positions: &[WorldPos], radii: &[f32], out: &mut [Vec3]) {
             }
             // Coincident characters split along X by index, deterministically.
             let dir = if dist > 1e-5 { flat / dist } else { Vec3::X };
-            let push = dir * ((reach - dist) * 0.5);
-            out[i] -= push;
-            out[j] += push;
+            let (toward_i, toward_j) = (moved[i].dot(dir).max(0.0), (-moved[j].dot(dir)).max(0.0));
+            let share_i = if toward_i + toward_j > 1e-6 { toward_i / (toward_i + toward_j) } else { 0.5 };
+            let push = dir * (reach - dist);
+            out[i] -= push * share_i;
+            out[j] += push * (1.0 - share_i);
         }
     }
 }

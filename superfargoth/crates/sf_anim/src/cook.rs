@@ -343,7 +343,8 @@ pub fn cook_clip_for(
     let anchor = skeleton
         .root_motion_joint()
         .filter(|_| rules.root_motion.anchor_end && rm_joint.is_none() && rules.additive.is_none())
-        .map(|rm| (rm, end_anchor(skeleton, &bound, start + duration, rm)));
+        .map(|rm| (rm, end_anchor(skeleton, &bound, start + duration, rm)))
+        .or_else(|| rm_joint.filter(|_| rules.root_motion.horizontal).map(|rm| (rm, start_anchor(skeleton, &bound, start, rm))));
     let truth = Truth { skeleton, bound: &bound, start, duration, anchor };
     // Rates go coarsest first and the first that passes wins. A pass whose
     // resampling error alone exceeds 1.5x the bound can't pass
@@ -558,6 +559,22 @@ fn end_anchor(skeleton: &Skeleton, bound: &BoundSource<'_>, end: f32, rm: usize)
     let heading = Quat::from_rotation_y(yaw);
     let origin = ground(&model[rm]) - heading * ground(&rest[rm]);
     Affine3A::from_rotation_translation(heading, origin).inverse()
+}
+
+/// Horizontal extraction: the shift that puts the root-motion joint's ground position at source
+/// time `start` over its rest ground position (its heading is kept). A clip cut from a longer
+/// take (a combo's recovery or next swing, a move group in a long timeline) can start with the
+/// joint far from the take's origin; extraction keeps the frame-0 offset in the pose, so the
+/// drawn body would stand that far off the capsule its root motion moves (UE's root bone, Unity's
+/// "Root Transform Position (XZ)": the in-place pose stands over the character's root).
+fn start_anchor(skeleton: &Skeleton, bound: &BoundSource<'_>, start: f32, rm: usize) -> Affine3A {
+    let mut pose = skeleton.rest().to_vec();
+    bound.sample(start, skeleton.rest(), &mut pose);
+    let mut model = Vec::new();
+    model_of(skeleton, &pose, &mut model);
+    let rest = skeleton.rest_model();
+    let ground = |m: &Affine3A| Vec3::new(m.translation.x, 0.0, m.translation.z);
+    Affine3A::from_translation(ground(&rest[rm]) - ground(&model[rm]))
 }
 
 /// The character root at frame `f` is `C_f = (c_f, yaw_f)` with
@@ -946,8 +963,9 @@ struct Truth<'a> {
     bound: &'a BoundSource<'a>,
     start: f32,
     duration: f32,
-    /// [`RootMotionRules::anchor_end`]: the root-motion joint and the inverse
-    /// of its ground frame at the last frame, applied to every sample.
+    /// The root-motion joint and a model-space shift applied to every sample:
+    /// [`RootMotionRules::anchor_end`]'s inverse of its ground frame at the
+    /// last frame, or horizontal extraction's [`start_anchor`].
     anchor: Option<(usize, Affine3A)>,
 }
 

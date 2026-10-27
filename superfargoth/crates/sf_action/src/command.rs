@@ -250,7 +250,12 @@ impl InputSampler {
         self.held.insert(c);
     }
 
+    /// Releases `c`, unless a shared button still down holds it (the host releases every idle
+    /// separate button each frame, e.g. an unbound Sprint beside the shared Dodge/Sprint: CB-1).
     pub fn release(&mut self, c: ActionClass) {
+        if self.shared.iter().any(|b| b.down && b.hold == c && b.ticks >= b.threshold) {
+            return;
+        }
         if self.held.contains(c) {
             self.released.insert(c);
             self.held.remove(c);

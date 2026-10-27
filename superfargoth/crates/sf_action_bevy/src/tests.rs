@@ -271,3 +271,66 @@ fn a_body_awaiting_ground_holds_its_pose_then_falls_when_released() {
     let h = height(&app);
     assert!(h.is_finite() && h < 0.1 && h > -0.1, "released body lands on the plane: {h}");
 }
+
+/// Every sampled tick's (Dodge pressed, Sprint held).
+#[derive(Resource, Default)]
+struct Shared(Vec<(bool, bool)>);
+
+fn record_shared(mut seen: ResMut<Shared>, characters: Query<&ActionCharacter>) {
+    for c in &characters {
+        seen.0.push((c.command.pressed(ActionClass::Dodge), c.command.held(ActionClass::Sprint)));
+    }
+}
+
+/// The shared Dodge/Sprint button through a real key binding, held across frames (CB-1: Shift
+/// held never sprinted).
+fn shared_button_ticks(fps: u32, held_frames: usize) -> Vec<(bool, bool)> {
+    use bevy_enhanced_input::prelude::*;
+    use bevy_input::{ButtonInput, keyboard::KeyCode};
+    let mut app = app(fps);
+    app.add_plugins((bevy_input::InputPlugin, EnhancedInputPlugin, ActionInputPlugin))
+        .init_resource::<Shared>()
+        .add_systems(FixedUpdate, record_shared.after(ActionSystems::Sample).before(ActionSystems::Step));
+    app.finish();
+    app.cleanup();
+    let e = spawn(&mut app);
+    app.world_mut().entity_mut(e).insert((PlayerControls, PlayerInput::new(PlayerId::new(0).unwrap())));
+    let actions = {
+        let mut commands = app.world_mut().commands();
+        spawn_player_actions(&mut commands, e)
+    };
+    let shared = actions.iter().find(|(t, _)| *t == PlayerAction::DodgeSprint).unwrap().1;
+    app.world_mut().spawn((BindingOf(shared), Binding::from(KeyCode::ShiftLeft)));
+    app.world_mut().flush();
+    for _ in 0..5 {
+        app.update();
+    }
+    app.world_mut().resource_mut::<Shared>().0.clear();
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ShiftLeft);
+    for _ in 0..held_frames {
+        app.update();
+    }
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::ShiftLeft);
+    for _ in 0..10 {
+        app.update();
+    }
+    std::mem::take(&mut app.world_mut().resource_mut::<Shared>().0)
+}
+
+#[test]
+fn a_held_dodge_sprint_key_sprints_and_a_tap_rolls() {
+    for fps in [30, 60, 144] {
+        // Held one second: Sprint, never a Dodge.
+        let held = shared_button_ticks(fps, fps as usize);
+        assert!(held.iter().all(|&(dodge, _)| !dodge), "{fps} fps: held key rolled: {held:?}");
+        // Sprint stays down from the 18th tick until release (1 s = 60 ticks): one run, not a blip.
+        let sprint_ticks = held.iter().filter(|&&(_, sprint)| sprint).count();
+        let first = held.iter().position(|&(_, sprint)| sprint);
+        let run = first.map_or(0, |i| held[i..].iter().take_while(|&&(_, sprint)| sprint).count());
+        assert!(sprint_ticks >= 30 && run == sprint_ticks, "{fps} fps: held key didn't keep sprinting: {held:?}");
+        // Tapped (~0.1 s): one Dodge, no Sprint.
+        let tap = shared_button_ticks(fps, (fps as usize / 10).max(1));
+        assert_eq!(tap.iter().filter(|&&(dodge, _)| dodge).count(), 1, "{fps} fps: tap: {tap:?}");
+        assert!(tap.iter().all(|&(_, sprint)| !sprint), "{fps} fps: tap sprinted: {tap:?}");
+    }
+}

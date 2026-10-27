@@ -314,7 +314,9 @@ impl Step for AnimCookStep {
         // 6: `roll.<foot>` heel-roll curves, heel-off to toe-off (AN-9).
         // 7: contact gaps up to `ContactRules::gap` at a loop's seam closed (AN-17).
         // 8: contact-consistent root track of travelling loops, `ContactRules::root_blend` (AN-19).
-        8
+        // 9: horizontal extraction starts the root-motion joint over its rest ground position
+        //    (`cook::start_anchor`: split-take clips no longer draw the body off its capsule).
+        9
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;

@@ -89,6 +89,32 @@ mod tests {
         assert!(slots.iter().all(|s| first_candidates(s).is_some()), "{slots:?}");
     }
 
+    /// Horizontal root travel of each attack slot's first candidate, m: the retargeted UAL2 clips
+    /// in the bake, largest over the humanoid skeletons (measured 2026-10-27).
+    fn root_travel(slot: &str) -> f32 {
+        match slot {
+            "attack.sword_1h.light1" => 0.98,
+            "attack.sword_1h.light1_rec" => 0.37,
+            "attack.sword_1h.light2" => 0.06,
+            "attack.sword_1h.light2_rec" => 0.44,
+            "attack.sword_1h.light3" => 1.85,
+            _ => panic!("no travel for {slot}"),
+        }
+    }
+
+    /// CB-1: a light attack played out (swing + recovery) steps a short way, not a stride.
+    #[test]
+    fn light_attacks_step_less_than_a_stride() {
+        let ron = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let def: SheetDef = ron.from_str(SWORD_1H).unwrap();
+        for name in ["light1", "light2", "light3"] {
+            let m = &def.moves[name];
+            let travel = m.slots.iter().map(|s| root_travel(s)).sum::<f32>() * m.root_scale;
+            eprintln!("{name}: root_scale {} -> {travel:.2} m", m.root_scale);
+            assert!((0.2..=0.6).contains(&travel), "{name} steps {travel:.2} m");
+        }
+    }
+
     #[test]
     fn a_sheet_without_roll_clips_still_loads_its_attacks() {
         let sheet = sf_combat::load(SWORD_1H, &|s| if s.starts_with("dodge.") { None } else { first_candidates(s) }).expect("loads");

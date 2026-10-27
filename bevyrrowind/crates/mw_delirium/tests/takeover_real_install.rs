@@ -506,3 +506,56 @@ fn lying_vibration() {
         println!("{label}: {}; worst {:.3} m/s {:.2} rad/s", row.join(", "), worst.0, worst.1);
     }
 }
+
+/// DE-1 "slides on the floor before getting up": per push, the seconds down before the get-up is ready (the roll
+/// starts), the centre of mass speed over that wait, and the pelvis' floor travel while waiting and while rolling.
+#[test]
+#[ignore = "measurement: the wait down before the get-up, centre of mass speed and floor travel"]
+fn lying_slide() {
+    let Some(f) = fixture() else { return };
+    let (clip_pose, ..) = get_up_pose(f);
+    let mw = [mw_delirium::clip_tilt(&f.body.table, &f.skeleton, &clip_pose)];
+    let dirs = [("front", -Vec3::Y), ("behind", Vec3::Y), ("left", Vec3::X), ("right", -Vec3::X)];
+    let mut waits = Vec::new();
+    for (part, at) in [(10usize, "chest"), (12, "head")] {
+        for (name, dir) in dirs {
+            let (rest, prev) = rest_parts(f, Vec3::ZERO);
+            let mut t = Takeover::start(&f.body, &rest, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+            t.set_get_ups(&mw);
+            let point = t.frames()[part].translation;
+            t.push(part, point, dir * 200.0);
+            let (mut wait, mut peak, mut travel, mut rolled) = (None, 0.0f32, 0.0f32, 0.0f32);
+            let mut last = t.frames()[0].translation.truncate();
+            let mut how = None;
+            for _ in 0..(30.0 / DT) as u32 {
+                how = t.step(DT);
+                let pelvis = t.frames()[0].translation.truncate();
+                let moved = pelvis.distance(last);
+                last = pelvis;
+                if let Some(down) = t.down {
+                    if t.rolling.is_none() && how.is_none() {
+                        let v = t.com().1.length();
+                        peak = peak.max(v);
+                        travel += moved;
+                    } else {
+                        wait.get_or_insert(down);
+                        rolled += moved;
+                    }
+                }
+                if how.is_some() {
+                    break;
+                }
+            }
+            assert_ne!(how, Some(HandBack::Exploded));
+            let w = wait.unwrap_or(f32::NAN);
+            waits.push(w);
+            println!(
+                "  {at:5} {name:6}: {how:?}, ready {w:.2} s down (relaxed {}), com peak {peak:.2} m/s; pelvis travel {travel:.2} m waiting, {rolled:.2} m rolling ({:.2} s)",
+                t.relaxed,
+                t.rolling.unwrap_or(0.0),
+            );
+        }
+    }
+    let n = waits.iter().filter(|w| w.is_finite()).count() as f32;
+    println!("mean wait down {:.2} s", waits.iter().filter(|w| w.is_finite()).sum::<f32>() / n);
+}

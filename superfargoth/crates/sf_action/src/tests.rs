@@ -469,6 +469,31 @@ fn shared_button_taps_dodge_on_release_and_holds_sprint() {
     assert!(c.released(ActionClass::Sprint) && !c.pressed(ActionClass::Dodge) && c.hold_ticks[ActionClass::Sprint.index()] == 0);
 }
 
+/// CB-1: the input glue releases every idle separate button each frame, including an unbound
+/// Sprint beside the shared Dodge/Sprint button; that must not end a held shared sprint.
+#[test]
+fn a_held_shared_sprint_survives_releases_of_the_separate_button() {
+    let mut s = InputSampler::new();
+    let b = s.bind(TapHold::DODGE_SPRINT);
+    s.press_shared(b);
+    let mut sprinting = 0;
+    for t in 1..=60 {
+        s.press_shared(b);
+        s.release(ActionClass::Sprint);
+        let c = s.sample(Tick(t), None);
+        assert!(!c.released(ActionClass::Sprint), "tick {t}: Sprint released while the button is down");
+        if t >= 18 {
+            assert!(c.held(ActionClass::Sprint), "tick {t}: not sprinting");
+            sprinting += 1;
+        }
+    }
+    assert_eq!(sprinting, 43);
+    s.release_shared(b);
+    s.release(ActionClass::Sprint);
+    let c = s.sample(Tick(61), None);
+    assert!(c.released(ActionClass::Sprint) && !c.held(ActionClass::Sprint) && !c.pressed(ActionClass::Dodge));
+}
+
 #[test]
 fn a_press_and_release_between_ticks_still_counts() {
     let mut s = InputSampler::new();

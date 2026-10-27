@@ -409,6 +409,27 @@ fn cook_is_deterministic_and_round_trips() {
     assert!(Clip::from_bytes(&one[0][..20]).is_err());
 }
 
+/// R1 (combat body off its capsule): a clip cut from a longer take starts with the root ~1 m from
+/// the take's origin (UAL2 `Sword_Regular_A_Rec` starts 0.95 m ahead); the in-place pose stands
+/// over the root (its rest ground position) from the first frame, and the track still starts at 0.
+#[test]
+fn a_split_take_clip_stands_over_its_root_from_the_first_frame() {
+    let s = biped();
+    let mut src = walk_source();
+    src.tracks[0] = trans("root", |t| Vec3::new(0.3, 0.0, 0.95 + 0.4 * t));
+    let contacts = ContactRules { root_blend: 0.0, ..ContactRules::default() };
+    let clip = cook(&s, &src, &ClipRules { contacts, ..ClipRules::default() });
+    assert!(clip.meta.max_error <= 1e-4, "error {}", clip.meta.max_error);
+    assert!(clip.root_at(0.0).0.length() < 1e-5);
+    assert!(clip.root_at(1.0).0.distance(Vec3::new(0.0, 0.0, 0.4)) < 1e-4, "{}", clip.root_at(1.0).0);
+    let mut pose = LocalPose::new(s.len());
+    for t in [0.0, 0.5, 1.0] {
+        clip.sample(t, &mut pose, None);
+        let root = pose.get(idx(&s, "root")).translation;
+        assert!(root.with_y(0.0).length() < 1e-4, "t={t}: {root}");
+    }
+}
+
 #[test]
 fn root_motion_is_extracted() {
     let s = biped();

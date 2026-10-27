@@ -2,6 +2,8 @@
 // items"). Times are move seconds (after `rate`), authored against each slot's first candidate
 // clip (UAL2 Sword_Regular_A/B/C, UAL1 Roll_RM / Dodge_*_RM). Tune at CB-1
 // (docs/visual-checks/combat.md). Weapon segment: in the "Weapon Bone" socket's space, m.
+// Light `root_scale`: each swing steps ~0.4 m (Elden Ring 0.3-0.5). Retargeted UAL2 root travel,
+// m: A 0.98 + A_Rec 0.37, B 0.06 + B_Rec 0.44, C 1.85 (mw_combat test `light_attacks_step_...`).
 (
     id: "sword_1h",
     rig: "humanoid",
@@ -10,7 +12,7 @@
     moves: {
         "light1": (
             category: Attack, classes: [Light], from: [Any], rank: 10,
-            slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"],
+            slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"], root_scale: 0.35,
             windows: [
                 Accept([Light, Heavy, Dodge], 0.10, End),
                 Cancel([Dodge], 0.35, End), Cancel([Light, Heavy], 0.45, End), Cancel([Move], 0.80, End),
@@ -21,7 +23,7 @@
         ),
         "light2": (
             category: Attack, classes: [Light],
-            slots: ["attack.sword_1h.light2", "attack.sword_1h.light2_rec"],
+            slots: ["attack.sword_1h.light2", "attack.sword_1h.light2_rec"], root_scale: 0.85,
             windows: [
                 Accept([Light, Heavy, Dodge], 0.10, End),
                 Cancel([Dodge], 0.38, End), Cancel([Light, Heavy], 0.55, End), Cancel([Move], 0.95, End),
@@ -32,7 +34,7 @@
         ),
         "light3": (
             category: Attack, classes: [Light],
-            slots: ["attack.sword_1h.light3"],
+            slots: ["attack.sword_1h.light3"], root_scale: 0.22,
             windows: [
                 Accept([Light, Heavy, Dodge], 0.10, End),
                 Cancel([Dodge], 0.80, End), Cancel([Light, Heavy], 1.10, End), Cancel([Move], 1.30, End),

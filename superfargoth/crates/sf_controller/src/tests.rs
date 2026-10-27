@@ -452,6 +452,16 @@ fn separation_pushes_overlapping_characters_apart() {
     assert_eq!(out[3], Vec3::ZERO, "a floor above");
 }
 
+#[test]
+fn separation_moves_only_the_character_that_walked_in() {
+    let positions = [p(0.0, 0.0, 0.0), p(0.4, 0.0, 0.0)];
+    let mut out = [Vec3::ZERO; 2];
+    // The first walked +X into the second, which stood still: the first backs out, the second stays.
+    separate_moved(&positions, &[0.3; 2], &[Vec3::new(0.1, 0.0, 0.0), Vec3::ZERO], &mut out);
+    assert!((out[0] - Vec3::new(-0.2, 0.0, 0.0)).length() < 1e-5, "{:?}", out[0]);
+    assert_eq!(out[1], Vec3::ZERO, "not shoved");
+}
+
 // --- Probes and the static world ---------------------------------------------------------
 
 #[test]

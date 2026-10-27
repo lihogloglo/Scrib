@@ -403,7 +403,9 @@ fn move_bodies<G: GroundProbe + Resource>(
     let mut bodies: Vec<_> = characters.iter_mut().collect();
     let mut items: Vec<MoveInput<'_>> = Vec::with_capacity(bodies.len());
     let mut ghosts: Vec<MoveInput<'_>> = Vec::new();
-    for (c, body, no_clip) in &mut bodies {
+    // The colliding bodies (index into `bodies`, feet before the step) for actor separation.
+    let mut solid: Vec<(usize, WorldPos)> = Vec::with_capacity(bodies.len());
+    for (index, (c, body, no_clip)) in bodies.iter_mut().enumerate() {
         let body = &mut **body;
         body.prev = body.curr;
         if let Some(warp) = &c.output.warp {
@@ -425,6 +427,7 @@ fn move_bodies<G: GroundProbe + Resource>(
             intent.desired_velocity.y = no_clip_climb(intent.desired_velocity, no_clip.look);
             ghosts.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root });
         } else {
+            solid.push((index, body.loco.position));
             items.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root });
         }
     }
@@ -434,8 +437,35 @@ fn move_bodies<G: GroundProbe + Resource>(
     }
     drop(items);
     drop(ghosts);
+    block_actors(&mut bodies, &solid);
     for (_, body, _) in &mut bodies {
         body.curr = TickPose::of(&body.loco);
+    }
+}
+
+/// Actor-vs-actor blocking after the mover step (physics.md "Controller": characters aren't in
+/// the world casts, `sf_physics_bevy::GROUND_LAYERS`): overlapping capsules are separated by
+/// whoever walked or root-moved into the other ([`sf_controller::separate_moved`]), and the
+/// corrected body loses its velocity into the other, as the mover's wall slide does. Warped and
+/// no-clip bodies don't take part.
+fn block_actors(bodies: &mut [(&ActionCharacter, Mut<'_, ActionBody>, Option<&NoClip>)], solid: &[(usize, WorldPos)]) {
+    if solid.len() < 2 {
+        return;
+    }
+    let positions: Vec<WorldPos> = solid.iter().map(|&(i, _)| bodies[i].1.loco.position).collect();
+    let radii: Vec<f32> = solid.iter().map(|&(i, _)| bodies[i].1.params.radius).collect();
+    let moved: Vec<Vec3> = solid.iter().zip(&positions).map(|(&(_, before), &after)| before.delta_f32(after)).collect();
+    let mut out = vec![Vec3::ZERO; solid.len()];
+    sf_controller::separate_moved(&positions, &radii, &moved, &mut out);
+    for (&(i, _), fix) in solid.iter().zip(out) {
+        let len = fix.length();
+        if len < 1e-6 {
+            continue;
+        }
+        let loco = &mut bodies[i].1.loco;
+        let n = fix / len;
+        loco.position = loco.position.offset(fix);
+        loco.motion.velocity -= n * loco.motion.velocity.dot(n).min(0.0);
     }
 }
 
