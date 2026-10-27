@@ -135,9 +135,9 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; awaiting owner 2026-10-27: retarget fix, get-up picking)
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; confirmed 2026-10-27)
 `cargo build -p bevyrrowind --features dev`, `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`).
-Left-click a human NPC (Fargoth far left, Elone centre): plain 45, Ctrl 20, Shift 80 N s at the clicked part. Recovery
+Press F11 (free camera) first, then left-click a human NPC (Fargoth far left, Elone centre; no push in player mode): plain 45, Ctrl 20, Shift 80 N s at the clicked part. Recovery
 confirmed 2026-10-27 (catch steps, fade into the idle). Fall: once down and slowing the body goes limp holding its pose
 (`bodyRelax`: no balancer fidgeting; worst part speed lying still 0.66 -> 0.42 m/s, 6.9 -> 2.2 rad/s), gets up after
 0.3 s at rest (down 0.8-2.6 s, was 2.5-4.3 s). Owner 2026-10-27 (first live LaFAN1 look): arms twisted, feet flipped,
@@ -147,4 +147,7 @@ UAL2 `LayToIdle` (back), UAL1 `Crawl_Exit` (front), LaFAN1 side_right (trimmed t
 dropped (walks 2.5 m). Look for: varied get-ups, no twisted limbs, ends standing in place. Log: `gets up with <slot>`
 plus the gaps. Headless 8 falls: Knockout 5, LayToIdle 1, Crawl_Exit 1, side_right 1; push-to-standing 4.1-4.3 s.
 Owner 2026-10-27 (after the re-bake): animations work well, "nice". Nitpick: the body sometimes slides a bit on the
-ground before getting up, which delays the get-up (lying `still` check waits on it). Status: confirmed with follow-up.
+ground before getting up, which delays the get-up (lying `still` check waits on it). Fixed 2026-10-27 (afternoon): rest
+check on COM displacement + `roll_stall` timeout (head-right roll 3.0 -> 0.6 s); click-to-push F11 only, never on action
+characters (player, dummy). Owner confirmed live: no floor slide, capsule back under the body after the get-up (hidden
+while stumbling by design: Dormant). Status: confirmed. Open (later): a body landing crouched sinks/slides ~1.5 s first.

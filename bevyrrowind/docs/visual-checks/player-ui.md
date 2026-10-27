@@ -26,6 +26,9 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   movement feel has too much inertia ("like driving a car"); never designed on purpose. Follow-up: PL-4.
 - Owner 2026-10-27 (arena): switching third -> first person can leave the view separated from the capsule (bug, open);
   first-person arms not built yet (known).
+- Fixed 2026-10-27 (afternoon): the split was the body leaving its capsule, not the camera: Delirium click-to-push hit the
+  player's own body on a left-click attack (now F11 only, never action characters) plus the UAL2 split-take clip offset
+  (cook `start_anchor`). Owner confirmed the view switch live. Status: confirmed (first-person arms still not built).
 
 ### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
 - Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s
