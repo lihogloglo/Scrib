@@ -7,7 +7,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::relationship::RelationshipTarget;
 use bevy_enhanced_input::prelude::*;
 use bevy_math::Vec2;
-use sf_action::{ActionClass, InputSampler, PlayerId};
+use sf_action::{ActionClass, InputSampler, PlayerId, TapHold};
 
 use crate::{ActionCharacter, ActionSystems, ActionTick};
 
@@ -21,11 +21,16 @@ pub struct PlayerControls;
 pub struct PlayerInput {
     pub player: PlayerId,
     pub sampler: InputSampler,
+    /// The sampler's shared Dodge/Sprint button (`TapHold::DODGE_SPRINT`: tap = roll on release, hold
+    /// = sprint), fed by [`PlayerAction::DodgeSprint`].
+    pub dodge_sprint: usize,
 }
 
 impl PlayerInput {
     pub fn new(player: PlayerId) -> Self {
-        Self { player, sampler: InputSampler::new() }
+        let mut sampler = InputSampler::new();
+        let dodge_sprint = sampler.bind(TapHold::DODGE_SPRINT);
+        Self { player, sampler, dodge_sprint }
     }
 }
 
@@ -36,6 +41,9 @@ pub enum PlayerAction {
     Stick,
     /// A button class (never [`ActionClass::Move`]: that is the stick).
     Button(ActionClass),
+    /// One button for Dodge and Sprint ([`PlayerInput::dodge_sprint`]): tap rolls on release, hold
+    /// sprints. A host binds either this or the separate Dodge and Sprint buttons.
+    DodgeSprint,
 }
 
 macro_rules! player_actions {
@@ -70,6 +78,11 @@ player_actions! {
     PlayerSneak => Sneak;
 }
 
+/// The shared Dodge/Sprint button.
+#[derive(InputAction)]
+#[action_output(bool)]
+pub struct PlayerDodgeSprint;
+
 /// The move stick action.
 #[derive(InputAction)]
 #[action_output(Vec2)]
@@ -89,6 +102,8 @@ pub fn spawn_player_actions(commands: &mut Commands, context: Entity) -> Vec<(Pl
         insert_button(&mut entity, class);
         out.push((PlayerAction::Button(class), entity.id()));
     }
+    let shared = commands.spawn((ActionOf::<PlayerControls>::new(context), PlayerAction::DodgeSprint, Action::<PlayerDodgeSprint>::new())).id();
+    out.push((PlayerAction::DodgeSprint, shared));
     out
 }
 
@@ -111,6 +126,14 @@ fn gather(mut players: Query<(&mut PlayerInput, &Actions<PlayerControls>)>, acti
                 PlayerAction::Stick => input.sampler.set_stick(value.as_axis2d()),
                 PlayerAction::Button(class) if *state == TriggerState::Fired => input.sampler.press(class),
                 PlayerAction::Button(class) => input.sampler.release(class),
+                PlayerAction::DodgeSprint if *state == TriggerState::Fired => {
+                    let b = input.dodge_sprint;
+                    input.sampler.press_shared(b);
+                }
+                PlayerAction::DodgeSprint => {
+                    let b = input.dodge_sprint;
+                    input.sampler.release_shared(b);
+                }
             }
         }
     }

@@ -78,7 +78,7 @@ pub struct OrbitParams {
     /// Horizontal and vertical pivot spring (vertical longer: stairs, step-ups, landings).
     pub pivot_halflife_xz: f32,
     pub pivot_halflife_y: f32,
-    /// Lag beyond this snaps (teleports, cell loads), metres.
+    /// A body jump in one frame beyond this snaps (teleports, cell loads), metres.
     pub max_lag: f32,
     /// Shoulder swap time.
     pub swap_halflife: f32,
@@ -117,11 +117,14 @@ pub struct OrbitRig {
     /// Smoothed pivot minus the body's pivot, and its velocity relative to the body.
     lag: Vec3,
     lag_vel: Vec3,
-    last: Option<(WorldPos, Vec3)>,
+    /// Last pivot target, body velocity and lead.
+    last: Option<(WorldPos, Vec3, f32)>,
     shoulder: Shoulder,
     side: f32,
     side_vel: f32,
     distance: Option<f32>,
+    /// Extra pivot height (a traversal's destination, [`Self::set_lead`]).
+    lead: f32,
 }
 
 impl OrbitRig {
@@ -146,6 +149,15 @@ impl OrbitRig {
         self.lag
     }
 
+    /// Raise the pivot's target `height` m above the body from the next update on (0 = none).
+    /// For a warped traversal (mantle, climb): the shell passes how far the move's destination
+    /// is above the drawn root, so the pivot leads to where the body will stand instead of
+    /// riding the root through the ledge it climbs (camera.md "As built (traversal pivot)").
+    /// A change eases in through the vertical spring and never counts as a teleport.
+    pub fn set_lead(&mut self, height: f32) {
+        self.lead = height.max(0.0);
+    }
+
     /// Forget the smoothing (teleport, view switch): the next update starts on the body.
     pub fn reset(&mut self) {
         *self = Self { shoulder: self.shoulder, side: self.shoulder.sign(), ..Self::default() };
@@ -155,8 +167,8 @@ impl OrbitRig {
     /// smooth one, not the frame delta, so snaps such as step-ups are filtered while steady motion
     /// is tracked with no lag); `look` is the player's look (its pitch is clamped here).
     pub fn update(&mut self, p: &OrbitParams, body: WorldPos, body_vel: Vec3, look: Look, mode: RigMode, dt: f32) -> OrbitPose {
-        let target = body.offset(Vec3::Y * p.pivot_height);
-        if let Some((prev, prev_vel)) = self.last {
+        let target = body.offset(Vec3::Y * (p.pivot_height + self.lead));
+        if let Some((prev, prev_vel, prev_lead)) = self.last {
             // Spring in the body's frame: motion the velocity explains moves the pivot with the
             // body; the rest (snaps, velocity changes) becomes lag the spring removes. Exact for
             // a body at constant velocity, at any dt. The spring runs first and this frame's
@@ -168,15 +180,17 @@ impl OrbitRig {
             critical_spring(&mut y, &mut y_vel, 0.0, p.pivot_halflife_y, dt);
             self.lag = Vec3::new(xz.x, y, xz.y);
             self.lag_vel = Vec3::new(xz_vel.x, y_vel, xz_vel.y);
-            let moved = prev.delta_f32(target);
-            self.lag -= moved - body_vel * dt;
+            let snap = prev.delta_f32(target) - body_vel * dt;
+            self.lag -= snap;
             self.lag_vel -= body_vel - prev_vel;
-            if self.lag.length() > p.max_lag {
+            // A teleport: a jump in one frame that neither the velocity nor a lead change
+            // explains (a lead change, e.g. a climb's destination 2.5 m up, eases in).
+            if (snap - Vec3::Y * (self.lead - prev_lead)).length() > p.max_lag {
                 self.lag = Vec3::ZERO;
                 self.lag_vel = Vec3::ZERO;
             }
         }
-        self.last = Some((target, body_vel));
+        self.last = Some((target, body_vel, self.lead));
 
         critical_spring(&mut self.side, &mut self.side_vel, self.shoulder.sign(), p.swap_halflife, dt);
         let goal = p.distance.get(mode);

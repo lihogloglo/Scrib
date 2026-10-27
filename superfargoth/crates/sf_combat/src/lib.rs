@@ -31,4 +31,4 @@ pub use sheet::{
     At, CompiledSheet, Costs, Defaults, HitDef, HitMask, HitRow, HitStopDef, MaskDef, MoveDef, MoveSpec, MoveTable, Movesets, SheetDef, SheetError,
     SlotSpan, WeaponDef, WindowDef, compile, load,
 };
-pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, HOSTILE_RANGE, SocketSource, Unit, gate, step};
+pub use step::{Body, CombatCtx, CombatEvent, CombatOutput, HOSTILE_RANGE, SocketSource, SocketTracks, Unit, gate, step};

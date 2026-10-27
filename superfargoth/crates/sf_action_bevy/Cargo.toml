@@ -16,14 +16,14 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_action.workspace = true
+# `RootDelta` for the Clip owner's root motion (Bevy-free, already under `sf_action`).
+sf_anim.workspace = true
 sf_controller.workspace = true
 sf_coords.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
-# The mantle test: a straight root path for the slot (`sf_anim::RootPath`).
-sf_anim.workspace = true
 
 [lints]
 workspace = true

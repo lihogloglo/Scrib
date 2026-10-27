@@ -20,6 +20,8 @@
 mod input;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_mantle;
 
 use std::marker::PhantomData;
 
@@ -445,10 +447,14 @@ fn update_rig<G: GroundProbe + Resource>(
         let loco = &body.loco;
         let airborne = if loco.grounded.is_none() { loco.vertical_speed } else { 0.0 };
         let velocity = loco.motion.velocity + Vec3::Y * airborne;
-        let mode = match (cam.locked, characters.get(cam.follow).map(|c| c.state.mode.mode)) {
+        let character = characters.get(cam.follow).ok();
+        // A warped traversal: the pivot leads to the destination's height (the drawn root rides
+        // the climb through the ledge's corner; a pivot on it would graze the lip).
+        let lead = character.and_then(|c| body.warp_target(&c.state)).map_or(0.0, |t| root.delta_f32(t).y);
+        let mode = match (cam.locked, character.map(|c| c.state.mode.mode)) {
             (Some(_), _) => RigMode::Locked,
-            (None, Ok(Mode::Sneak)) => RigMode::Sneak,
-            (None, Ok(Mode::FreeRun)) => RigMode::FreeRun,
+            (None, Some(Mode::Sneak)) => RigMode::Sneak,
+            (None, Some(Mode::FreeRun)) => RigMode::FreeRun,
             (None, _) => RigMode::Normal,
         };
 
@@ -459,6 +465,7 @@ fn update_rig<G: GroundProbe + Resource>(
                 {
                     *d *= cam.zoom;
                 }
+                cam.orbit.set_lead(lead);
                 let pose = cam.orbit.update(&orbit, root, velocity, cam.look, mode, dt);
                 let arm = cam.arm.update(&probe, pose.pivot, pose.arm, &p.collision, dt);
                 (arm.eye, pose.look, arm.length, arm.blocked, arm.fade)

@@ -1,0 +1,77 @@
+// The one-handed sword sheet (combat.md "C1b" first sheet values; combat-adapter.md "C1b: game
+// items"). Times are move seconds (after `rate`), authored against each slot's first candidate
+// clip (UAL2 Sword_Regular_A/B/C, UAL1 Roll_RM / Dodge_*_RM). Tune at CB-1
+// (docs/visual-checks/combat.md). Weapon segment: in the "Weapon Bone" socket's space, m.
+(
+    id: "sword_1h",
+    rig: "humanoid",
+    defaults: (turn: 360.0, hit_stop: (hold: 0.06, ease: 0.10), blend_in: 0.10),
+    weapon: (socket: "weapon", segment: ((0.0, 0.08, 0.0), (0.0, 0.95, 0.0)), radius: 0.08),
+    moves: {
+        "light1": (
+            category: Attack, classes: [Light], from: [Any], rank: 10,
+            slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"],
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.35, End), Cancel([Light, Heavy], 0.45, End), Cancel([Move], 0.80, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
+            ],
+            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            next: { Light: "light2" },
+        ),
+        "light2": (
+            category: Attack, classes: [Light],
+            slots: ["attack.sword_1h.light2", "attack.sword_1h.light2_rec"],
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.38, End), Cancel([Light, Heavy], 0.55, End), Cancel([Move], 0.95, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.34),
+            ],
+            hits: [(window: (0.20, 0.34), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            next: { Light: "light3" },
+        ),
+        "light3": (
+            category: Attack, classes: [Light],
+            slots: ["attack.sword_1h.light3"],
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.80, End), Cancel([Light, Heavy], 1.10, End), Cancel([Move], 1.30, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.72),
+            ],
+            hits: [
+                (window: (0.18, 0.32), mv: 0.8, stamina: 8.0, kind: "slash", tier: Small, stop: 0.05),
+                (window: (0.58, 0.72), mv: 1.1, stamina: 8.0, kind: "slash", tier: Medium, stop: 0.07),
+            ],
+            next: { Light: "light1" },
+        ),
+        "roll": (
+            category: Dodge, classes: [Dodge], from: [Any], rank: 10,
+            slots: ["dodge.roll.fwd"], rate: 1.25, root_scale: 0.75, square_up: Stick,
+            cost: 12.0, iframes: [(0.02, 0.40, All)],
+            windows: [Cancel([Light, Heavy], 0.75, End), Cancel([Dodge], 0.80, End), Cancel([Move], 0.95, End), NoTurn(0.0, End)],
+            locked: { Left: "roll_left", Right: "roll_right" },
+        ),
+        // Reached only through `locked` (lock-on, C1c).
+        "roll_left": (
+            category: Dodge, classes: [Dodge],
+            slots: ["dodge.roll.left"], rate: 1.25, square_up: Stick,
+            cost: 12.0, iframes: [(0.02, 0.36, All)],
+            windows: [Cancel([Light, Heavy], 0.65, End), Cancel([Dodge], 0.70, End), Cancel([Move], 0.85, End), NoTurn(0.0, End)],
+        ),
+        "roll_right": (
+            category: Dodge, classes: [Dodge],
+            slots: ["dodge.roll.right"], rate: 1.25, square_up: Stick,
+            cost: 12.0, iframes: [(0.02, 0.36, All)],
+            windows: [Cancel([Light, Heavy], 0.65, End), Cancel([Dodge], 0.70, End), Cancel([Move], 0.85, End), NoTurn(0.0, End)],
+        ),
+    },
+    reactions: {
+        (Small, Front): "react.small.front",
+        (Small, Left): "react.small.left",
+        (Small, Right): "react.small.right",
+        (Small, Back): "react.small.back",
+        (Medium, Front): "react.medium.front",
+        (Large, Front): "react.large.front",
+    },
+    costs: (jump: 10.0, sprint_per_s: 11.0),
+)

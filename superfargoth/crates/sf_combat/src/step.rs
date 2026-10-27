@@ -15,18 +15,72 @@ use crate::fighter::{FightState, Fighter, SwingState};
 use crate::hitstop::HitStop;
 use crate::react::{Side, Tier};
 use crate::rules::{CombatRules, Contact, DefenderState, RegenState, Swing};
-use crate::shape::SWEEP_STEPS;
-use crate::sheet::{HitRow, Movesets};
+use crate::shape::{HurtShape, SWEEP_STEPS, WeaponShape};
+use crate::sheet::{HitRow, MoveSpec, Movesets};
 
 /// Baked socket tracks by slot (`sf_anim::sample_socket_track` at load).
 pub trait SocketSource {
     fn socket(&self, slot: SlotKey) -> Option<&SocketTrack>;
+
+    /// The socket's furthest horizontal distance from the root over the slot's clip, m: the sweep's
+    /// reach prefilter. `None` (the default) tests every defender.
+    fn reach(&self, _slot: SlotKey) -> Option<f32> {
+        None
+    }
 }
 
 impl<S: std::hash::BuildHasher> SocketSource for HashMap<SlotKey, SocketTrack, S> {
     fn socket(&self, slot: SlotKey) -> Option<&SocketTrack> {
         self.get(&slot)
     }
+}
+
+/// Socket tracks with their reach bound, computed once when a track is added (at load).
+#[derive(Clone, Debug, Default)]
+pub struct SocketTracks {
+    tracks: HashMap<SlotKey, (SocketTrack, f32)>,
+}
+
+impl SocketTracks {
+    pub fn insert(&mut self, slot: SlotKey, track: SocketTrack) {
+        let reach = track.frames.iter().map(|f| Vec3::new(f.translation.x, 0.0, f.translation.z).length()).fold(0.0, f32::max);
+        self.tracks.insert(slot, (track, reach));
+    }
+
+    pub fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tracks.is_empty()
+    }
+}
+
+impl SocketSource for SocketTracks {
+    fn socket(&self, slot: SlotKey) -> Option<&SocketTrack> {
+        self.tracks.get(&slot).map(|(t, _)| t)
+    }
+
+    fn reach(&self, slot: SlotKey) -> Option<f32> {
+        self.tracks.get(&slot).map(|&(_, r)| r)
+    }
+}
+
+/// How far a move's blade can reach from the attacker's root this tick (horizontal, m): the
+/// furthest socket over the move's slots, the blade's length and radius, and the root's travel
+/// this tick. `None` when a slot has no bound.
+fn reach_bound(sockets: &dyn SocketSource, spec: &MoveSpec, w: WeaponShape, body: &Body) -> Option<f32> {
+    let mut socket = 0.0f32;
+    for s in &spec.slots {
+        socket = socket.max(sockets.reach(s.key)?);
+    }
+    Some(socket + w.a.length().max(w.b.length()) + w.radius + body.pos.distance(body.prev_pos))
+}
+
+/// A hurt shape's horizontal extent around its root, plus the root's travel this tick (m).
+fn hurt_bound(hurt: &HurtShape, body: &Body) -> f32 {
+    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).length();
+    (flat(hurt.bottom).max(flat(hurt.top)) + hurt.radius).max(flat(hurt.head) + hurt.head_radius) + body.pos.distance(body.prev_pos)
 }
 
 /// Shared, read-only inputs.
@@ -85,14 +139,18 @@ pub struct CombatOutput {
     pub events: Vec<CombatEvent>,
 }
 
-/// The start gate (pipeline item 1): classes `who` may not start now, for `Sense::refused`.
-pub fn gate<R: CombatRules + ?Sized>(rules: &R, who: &Fighter) -> ClassSet {
+/// The start gate (pipeline item 1): classes `who` may not start now, for `Sense::refused`. A
+/// winded fighter (`FightState::winded`) may not sprint either.
+pub fn gate<R: CombatRules + ?Sized>(rules: &R, who: &Fighter, fight: &FightState) -> ClassSet {
     if who.dead() {
         return ClassSet::LATCHABLE;
     }
     let mut s = ClassSet::EMPTY;
     for c in ClassSet::LATCHABLE.iter().filter(|&c| !rules.can_start(who, c)) {
         s.insert(c);
+    }
+    if fight.winded {
+        s.insert(sf_action::ActionClass::Sprint);
     }
     s
 }
@@ -191,6 +249,7 @@ fn vitals<R: CombatRules + ?Sized>(ctx: &CombatCtx<'_>, u: &mut Unit<'_>, rules:
         let d = rules.regen(u.fighter, RegenState::Open);
         u.fighter.vitals.apply(d);
     }
+    u.fight.update_winded(u.fighter.vitals.stamina);
 }
 
 /// Within this range of a living hostile fighter, sprinting and jumping cost stamina (m).
@@ -218,6 +277,20 @@ fn sweep(ctx: &CombatCtx<'_>, units: &[Unit<'_>]) -> Vec<Pending> {
             continue;
         }
         let w = a.fighter.weapon;
+        // Reach prefilter: defenders whose hurt shape can't meet the blade this tick are skipped.
+        let reach = reach_bound(ctx.sockets, spec, w, &a.body);
+        let in_reach: Vec<bool> = units
+            .iter()
+            .map(|d| {
+                reach.is_none_or(|r| {
+                    let gap = Vec3::new(d.body.pos.x - a.body.pos.x, 0.0, d.body.pos.z - a.body.pos.z).length();
+                    gap <= r + hurt_bound(&d.fighter.hurt, &d.body)
+                })
+            })
+            .collect();
+        if !in_reach.iter().enumerate().any(|(di, &ok)| ok && di != ai) {
+            continue;
+        }
         for (n, row) in spec.hits.iter().enumerate() {
             let (lo, hi) = (t0.0.max(row.start.0), t1.0.min(row.end.0));
             if t1 < row.start || t0 >= row.end || lo > hi {
@@ -238,7 +311,7 @@ fn sweep(ctx: &CombatCtx<'_>, units: &[Unit<'_>]) -> Vec<Pending> {
                 let rot = Quat::from_rotation_y(yaw);
                 let (p, q) = (pos + rot * track.point(clip_t, w.a), pos + rot * track.point(clip_t, w.b));
                 for (di, d) in units.iter().enumerate() {
-                    if di == ai || found.contains(&di) || d.fighter.dead() || sw.landed.iter().any(|&(h, id)| h == hit && id == d.fighter.id) {
+                    if di == ai || !in_reach[di] || found.contains(&di) || d.fighter.dead() || sw.landed.iter().any(|&(h, id)| h == hit && id == d.fighter.id) {
                         continue;
                     }
                     let (dpos, dyaw) = d.body.lerp(f);

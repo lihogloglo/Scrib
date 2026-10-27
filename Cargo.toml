@@ -162,6 +162,7 @@ sf_camera_bevy = { path = "superfargoth/crates/sf_camera_bevy", version = "0.1.0
 sf_character = { path = "superfargoth/crates/sf_character", version = "0.1.0" }
 sf_character_bevy = { path = "superfargoth/crates/sf_character_bevy", version = "0.1.0" }
 sf_combat = { path = "superfargoth/crates/sf_combat", version = "0.1.0" }
+sf_combat_bevy = { path = "superfargoth/crates/sf_combat_bevy", version = "0.1.0" }
 sf_console = { path = "superfargoth/crates/sf_console", version = "0.1.0" }
 sf_console_bevy = { path = "superfargoth/crates/sf_console_bevy", version = "0.1.0" }
 sf_controller = { path = "superfargoth/crates/sf_controller", version = "0.1.0" }
@@ -216,6 +217,7 @@ workspace-hack = "=0.1.0"
 mw_actors = { path = "bevyrrowind/crates/mw_actors" }
 mw_actors_bevy = { path = "bevyrrowind/crates/mw_actors_bevy" }
 mw_ai = { path = "bevyrrowind/crates/mw_ai" }
+mw_combat = { path = "bevyrrowind/crates/mw_combat" }
 mw_anim = { path = "bevyrrowind/crates/mw_anim" }
 mw_assets = { path = "bevyrrowind/crates/mw_assets" }
 mw_audio = { path = "bevyrrowind/crates/mw_audio" }

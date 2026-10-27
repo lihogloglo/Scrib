@@ -35,17 +35,18 @@ use bevy_math::{Quat, Vec2, Vec3};
 use bevy_time::{Fixed, Time, Virtual};
 use bevy_transform::components::Transform;
 use sf_action::{
-    ActionClass, ActionOutput, ActionState, CharacterId, CharacterParams, Command, Focus, Obstacle, ObstacleClass, RuleSet, Sense, SlotSource,
-    StepCtx, Tick, WarpOutput,
+    ActionClass, ActionOutput, ActionState, CharacterId, CharacterParams, ClassSet, ClipOutput, Command, Focus, Obstacle, ObstacleClass, RuleSet,
+    Sense, SlotSource, StepCtx, Tick, WarpOutput,
 };
 pub use sf_action::{PlayerId, TICK_HZ};
 use sf_controller::{
     Affordance, ContextHit, ContextParams, ContextProbes, ContextQuery, ContextRequest, CorrectionParams, GroundProbe, KinematicMover, Locomotion,
     MoveInput, MoverMode, MoverParams, RenderCorrection, RootMotion,
 };
+use sf_anim::RootDelta;
 use sf_coords::WorldPos;
 
-pub use input::{ActionInputPlugin, PlayerAction, PlayerControls, PlayerInput, spawn_player_actions};
+pub use input::{ActionInputPlugin, PlayerAction, PlayerControls, PlayerDodgeSprint, PlayerInput, spawn_player_actions};
 
 /// The shell's sets, chained in their schedules (see the crate docs).
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -165,6 +166,11 @@ pub struct NoClip {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct AwaitingGround;
 
+/// Request classes the start gate refuses for this character this tick ([`Sense::refused`]):
+/// written before [`ActionSystems::Step`] by a gate (combat: `sf_combat::gate`, no stamina).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActionGate(pub ClassSet);
+
 /// A probe that never hits ([`NoClip`] bodies).
 struct NoHits;
 
@@ -201,7 +207,7 @@ pub struct ActionBody {
     curr: TickPose,
     /// A Warp move's start-tick feet: its root poses are relative to them.
     warp_anchor: Option<WorldPos>,
-    /// A Warp move's chain progress at the previous and current tick, beside `prev`/`curr`.
+    /// A Warp or Clip move's chain progress at the previous and current tick, beside `prev`/`curr`.
     warp_progress: Option<(f32, f32)>,
 }
 
@@ -256,12 +262,18 @@ impl ActionBody {
         (self.prev, self.curr)
     }
 
-    /// A Warp move's chain progress (`WarpOutput::progress`) at the same two ticks as
-    /// [`Self::poses`], `None` off a Warp move. A clip played by it and lerped by the same
+    /// A Warp or Clip move's chain progress (`WarpOutput::progress`, `ClipOutput::progress`) at the
+    /// same two ticks as [`Self::poses`], `None` off those moves. A clip played by it and lerped by the same
     /// `overstep_fraction` stays on the drawn body however many ticks ran this frame. On the
     /// move's first tick the previous one is 0 (its clock's start, where the previous pose is).
     pub fn warp_progress(&self) -> Option<(f32, f32)> {
         self.warp_progress
+    }
+
+    /// A Warp move's destination feet in the world (`state` is this body's character state),
+    /// `None` off a Warp move. The camera leads its pivot to it (camera.md).
+    pub fn warp_target(&self, state: &ActionState) -> Option<WorldPos> {
+        Some(self.warp_anchor?.offset(state.warp?.plan.target.position))
     }
 }
 
@@ -273,10 +285,10 @@ fn step_actions<G: GroundProbe + Resource>(
     rules: Option<Res<ActionRules>>,
     ground: Option<Res<G>>,
     mut probes: Local<ContextProbes>,
-    mut characters: Query<(&mut ActionCharacter, &ActionBody)>,
+    mut characters: Query<(&mut ActionCharacter, &ActionBody, Option<&ActionGate>)>,
 ) {
     let Some(rules) = rules else { return };
-    for (mut c, body) in &mut characters {
+    for (mut c, body, gate) in &mut characters {
         let c = &mut *c;
         let ctx = StepCtx { rules: &rules.rules, slots: &*rules.slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
@@ -294,6 +306,7 @@ fn step_actions<G: GroundProbe + Resource>(
             yaw: body.loco.motion.yaw,
             focus: c.focus,
             obstacle,
+            refused: gate.map_or(ClassSet::EMPTY, |g| g.0),
             ..Sense::default()
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
@@ -361,6 +374,16 @@ fn place_warped(body: &mut ActionBody, warp: &WarpOutput, started: bool, dt: f32
     loco.height_offset_velocity = 0.0;
 }
 
+/// A Clip move's tick as fully driven root motion (combat.md pipeline item 3): the planar delta
+/// and the turn to the move's yaw, in the body's frame before the step, through the mover's
+/// collide-and-slide with ground snap and gravity on.
+fn clip_root(loco: &Locomotion, clip: &ClipOutput) -> RootMotion {
+    let yaw0 = loco.motion.yaw;
+    let translation = Quat::from_rotation_y(-yaw0) * Vec3::new(clip.delta.x, 0.0, clip.delta.z);
+    let yaw = sf_controller::wrap_angle(clip.yaw - yaw0);
+    RootMotion { delta: RootDelta { translation, yaw, tilt: Vec2::ZERO }, drive_weight: 1.0, traversal: false }
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn move_bodies<G: GroundProbe + Resource>(
     time: Res<Time>,
@@ -388,17 +411,21 @@ fn move_bodies<G: GroundProbe + Resource>(
             continue;
         }
         body.warp_anchor = None;
-        body.warp_progress = None;
+        body.warp_progress = c.output.clip.map(|clip| match body.warp_progress {
+            Some((_, curr)) if !c.output.started => (curr, clip.progress),
+            _ => (0.0, clip.progress),
+        });
         if let Some(v) = c.output.launch {
             body.loco.launch(v);
         }
         let mut intent = c.output.intent;
+        let root = c.output.clip.map_or(body.root, |clip| clip_root(&body.loco, &clip));
         if let Some(no_clip) = no_clip {
             body.loco.mode = MoverMode::Fly { hover: None };
             intent.desired_velocity.y = no_clip_climb(intent.desired_velocity, no_clip.look);
-            ghosts.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root: body.root });
+            ghosts.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root });
         } else {
-            items.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root: body.root });
+            items.push(MoveInput { loco: &mut body.loco, intent, params: &body.params, root });
         }
     }
     mover.step_batch(&mut items, &*ground, dt);

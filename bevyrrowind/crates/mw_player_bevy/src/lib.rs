@@ -245,7 +245,8 @@ fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity)
             PlayerAction::Button(ActionClass::Jump) => bind(commands, keymap, Control::Jump, action, plain),
             PlayerAction::Button(ActionClass::Sprint) => bind(commands, keymap, Control::Sprint, action, plain),
             PlayerAction::Button(ActionClass::Sneak) => bind(commands, keymap, Control::Sneak, action, plain),
-            PlayerAction::Button(_) => {}
+            // TODO(combat C1b part 2): bind Control::Sprint here (tap = roll, hold = sprint) instead of Button(Sprint).
+            PlayerAction::Button(_) | PlayerAction::DodgeSprint => {}
         }
     }
     for (tag, action) in spawn_camera_actions(commands, body) {

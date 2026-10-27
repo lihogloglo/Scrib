@@ -5059,6 +5059,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_combat"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "sf_action",
+ "sf_combat",
+]
+
+[[package]]
 name = "mw_controls_bevy"
 version = "0.1.0"
 dependencies = [
@@ -5088,13 +5097,17 @@ dependencies = [
  "delirium-sdk",
  "glam 0.33.12",
  "mw_anim",
+ "mw_bake",
+ "mw_graphs",
  "mw_install",
  "mw_nif",
  "mw_vfs",
  "serde_json",
  "sf_anim",
+ "sf_bake",
  "sf_character",
  "sf_vfs",
+ "tempfile",
 ]
 
 [[package]]
@@ -7600,6 +7613,7 @@ dependencies = [
  "big_space",
  "sf_action",
  "sf_action_bevy",
+ "sf_anim",
  "sf_camera",
  "sf_controller",
  "sf_coords",
@@ -7668,6 +7682,26 @@ dependencies = [
  "sf_anim",
  "smallvec",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sf_combat_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_gizmos",
+ "bevy_math",
+ "bevy_time",
+ "bevy_transform",
+ "sf_action",
+ "sf_action_bevy",
+ "sf_anim",
+ "sf_combat",
+ "sf_controller",
+ "sf_coords",
+ "workspace-hack",
 ]
 
 [[package]]

@@ -103,4 +103,21 @@ pub struct FightState {
     pub hit_stop: Option<HitStop>,
     /// Regeneration ran this tick.
     pub regen_open: bool,
+    /// Stamina ran out: sprint is refused until it refills to [`FightState::SPRINT_RESUME`] of
+    /// its maximum (hysteresis, so an empty pool doesn't flicker sprint on and off each tick).
+    pub winded: bool,
+}
+
+impl FightState {
+    /// Share of the stamina maximum at which a winded fighter may sprint again.
+    pub const SPRINT_RESUME: f32 = 0.15;
+
+    /// Updates [`Self::winded`] from the pool after this tick's vitals.
+    pub fn update_winded(&mut self, stamina: Pool) {
+        if stamina.cur <= 0.0 {
+            self.winded = true;
+        } else if stamina.cur >= stamina.max * Self::SPRINT_RESUME {
+            self.winded = false;
+        }
+    }
 }

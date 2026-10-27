@@ -31,6 +31,8 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_input = { workspace = true, features = ["std", "bevy_reflect", "keyboard", "mouse", "gamepad"] }
+# `RootPose` for the mantle test's climb root (sf_camera depends on it already).
+sf_anim.workspace = true
 # Headless tests run on the camera test level's statics (crates/sf_level/tests/levels/camera.ron).
 sf_level = { path = "../sf_level", version = "0.1.0" }
 

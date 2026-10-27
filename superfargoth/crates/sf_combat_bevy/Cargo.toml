@@ -1,0 +1,33 @@
+[package]
+name = "sf_combat_bevy"
+description = "Thin Bevy shell for sf_combat: combatants, the gate and the combat step on the fixed tick after the mover, socket tracks at load, hit/stamina/death messages, dev gizmos (combat.md C1b)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Weapon and hurt gizmos (`CombatGizmos`). Needs the app to add Bevy's gizmo plugin.
+debug = ["dep:bevy_gizmos", "dep:bevy_color"]
+
+# Minimal Bevy (build-perf.md): the decisions live in `sf_combat`, scheduling beside `sf_action_bevy`.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_color = { workspace = true, features = ["std"], optional = true }
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_gizmos = { workspace = true, optional = true }
+bevy_math = { workspace = true, features = ["std"] }
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
+sf_action.workspace = true
+sf_action_bevy.workspace = true
+sf_anim.workspace = true
+sf_combat.workspace = true
+sf_coords.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+bevy_time = { workspace = true, features = ["std"] }
+sf_controller.workspace = true
+
+[lints]
+workspace = true

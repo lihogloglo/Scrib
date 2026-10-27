@@ -21,7 +21,8 @@ use sf_action::{
 use sf_anim::{RootPose, SocketTrack, Trs};
 use sf_combat::{
     At, Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, CompiledSheet, Contact, Defense, FightState, Fighter, HitStop, HurtShape,
-    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate, load,
+    Movesets, Offense, Outcome, Pool, PoolDelta, RegenState, Side, SocketSource, SocketTracks, StandardRules, Swing, SwingPlan, Tier, Unit, Vitals, gate,
+    load,
 };
 
 const SHEET: &str = include_str!("data/test_sword.ron");
@@ -126,7 +127,7 @@ struct World {
     sheet: CompiledSheet,
     rules: RuleSet,
     movesets: Movesets,
-    sockets: HashMap<SlotKey, SocketTrack>,
+    sockets: Box<dyn SocketSource>,
     params: CharacterParams,
     combat: Box<dyn CombatRules>,
     actors: Vec<Actor>,
@@ -145,7 +146,7 @@ impl World {
         let rules = rule_set(&sheet);
         let mut movesets = Movesets::default();
         movesets.insert(sheet.clone());
-        Self { sheet, rules, movesets, sockets: sockets(), params: CharacterParams::default(), combat, actors: Vec::new(), tick: Tick(0), log: Vec::new() }
+        Self { sheet, rules, movesets, sockets: Box::new(sockets()), params: CharacterParams::default(), combat, actors: Vec::new(), tick: Tick(0), log: Vec::new() }
     }
 
     fn standard() -> Self {
@@ -210,7 +211,7 @@ impl World {
         for (i, a) in self.actors.iter_mut().enumerate() {
             let mut cmd = cmds.get(i).copied().unwrap_or_default();
             cmd.tick = tick;
-            let sense = Sense { grounded: true, yaw: a.body.yaw, refused: gate(&*self.combat, &a.fighter), ..Sense::default() };
+            let sense = Sense { grounded: true, yaw: a.body.yaw, refused: gate(&*self.combat, &a.fighter, &a.fight), ..Sense::default() };
             let ctx = StepCtx { rules: &self.rules, slots: &a.slots, params: &self.params, source: a.fighter.id };
             sf_action::step(&ctx, &mut a.state, &cmd, &sense, &mut a.out);
             a.events.extend(a.out.events.iter().copied());
@@ -222,7 +223,7 @@ impl World {
                 a.body.yaw = c.yaw;
             }
         }
-        let ctx = CombatCtx { tick, movesets: &self.movesets, sockets: &self.sockets };
+        let ctx = CombatCtx { tick, movesets: &self.movesets, sockets: &*self.sockets };
         let mut units: Vec<Unit<'_>> = self
             .actors
             .iter_mut()
@@ -560,7 +561,7 @@ fn a_dead_defender_is_skipped_and_refuses_everything() {
     assert_eq!(w.landings().len(), 1, "no contact after death: {:?}", w.log);
     assert_eq!(w.log.len(), 2);
     assert_eq!(w.actors[1].fighter.vitals.health.cur, 0.0);
-    assert_eq!(gate(&StandardRules::default(), &w.actors[1].fighter), sf_action::ClassSet::LATCHABLE);
+    assert_eq!(gate(&StandardRules::default(), &w.actors[1].fighter, &w.actors[1].fight), sf_action::ClassSet::LATCHABLE);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -644,6 +645,62 @@ fn sprint_and_jump_cost_only_near_a_hostile() {
         let want = if near { 50.0 - 10.0 + regen } else { 50.0 + regen };
         assert_eq!(w.actors[0].fighter.vitals.stamina.cur, want, "jump at {dist} m");
     }
+}
+
+#[test]
+fn sprint_stops_when_winded_and_resumes_after_refilling() {
+    let mut w = World::duel(5.0);
+    w.actors[0].fighter.vitals.stamina.cur = 0.3;
+    let mut held = sf_action::ClassSet::EMPTY;
+    held.insert(ActionClass::Sprint);
+    let sprint = Command { stick: Vec2::new(0.0, -1.0), buttons: sf_action::ButtonEdges { held, ..Default::default() }, ..Command::default() };
+    let mut modes = Vec::new();
+    for _ in 0..120 {
+        w.run(&[sprint]);
+        modes.push((w.actors[0].state.mode.mode, w.actors[0].fight.winded, w.actors[0].fighter.vitals.stamina.cur));
+    }
+    let first_winded = modes.iter().position(|m| m.1).expect("sprinting drains the pool");
+    // Winded (from the next tick's gate): no sprint until the pool is back to the resume share,
+    // then sprint again.
+    let back = modes[first_winded..].iter().position(|m| !m.1).expect("refills") + first_winded;
+    for &(mode, _, cur) in &modes[first_winded + 1..back] {
+        assert_ne!(mode, sf_action::Mode::FreeRun, "sprinting while winded at {cur}");
+    }
+    assert!(modes[back].2 >= 100.0 * FightState::SPRINT_RESUME);
+    assert!(modes[back + 1..].iter().any(|m| m.0 == sf_action::Mode::FreeRun));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reach prefilter
+
+fn tracks() -> SocketTracks {
+    let mut t = SocketTracks::default();
+    for (slot, track) in sockets() {
+        t.insert(slot, track);
+    }
+    t
+}
+
+#[test]
+fn reach_prefilter_keeps_every_landing_and_bounds_the_track() {
+    let t = tracks();
+    // Blade sockets sit at x in [-1, 1], z = 0.3: the furthest is sqrt(1 + 0.09).
+    let r = t.reach(SlotKey::of("attack.test.light1")).unwrap();
+    assert!((r - (1.0f32 + BLADE_Z * BLADE_Z).sqrt()).abs() < 1e-4, "{r}");
+    let run = |prefilter: bool, dist: f32| {
+        let mut w = World::duel(dist);
+        if prefilter {
+            w.sockets = Box::new(tracks());
+        }
+        for _ in 0..300 {
+            w.press(ActionClass::Light);
+        }
+        w.landings()
+    };
+    for dist in [1.0, 1.6, 3.0] {
+        assert_eq!(run(true, dist), run(false, dist), "at {dist} m");
+    }
+    assert!(!run(true, 1.0).is_empty());
 }
 
 // ---------------------------------------------------------------------------------------------

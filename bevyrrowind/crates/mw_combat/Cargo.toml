@@ -1,0 +1,15 @@
+[package]
+name = "mw_combat"
+description = "Morrowind combat content (Bevy-free): moveset sheets, record stats to sf_combat fighters (combat-adapter.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ron.workspace = true
+sf_action.workspace = true
+sf_combat.workspace = true
+
+[lints]
+workspace = true

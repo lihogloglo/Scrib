@@ -298,7 +298,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
 
     // 1. Command: modes.
     let stick_active = cmd.stick.length() > p.deadzone;
-    update_mode(&mut state.mode.mode, cmd, stick_active);
+    update_mode(&mut state.mode.mode, cmd, stick_active, sense.refused);
 
     // 2. Clock.
     state.clock.advance();
@@ -558,10 +558,11 @@ fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, fact
     }
 }
 
-/// Sprint held with the stick is free-run and overrides sneak; Sneak held is sneak (a toggle
-/// preference is the input layer's: [`ActionClass::Sneak`]).
-fn update_mode(mode: &mut Mode, cmd: &Command, stick_active: bool) {
-    *mode = if cmd.held(ActionClass::Sprint) && stick_active {
+/// Sprint held with the stick is free-run and overrides sneak, unless the gate refuses Sprint
+/// (combat: winded); Sneak held is sneak (a toggle preference is the input layer's:
+/// [`ActionClass::Sneak`]).
+fn update_mode(mode: &mut Mode, cmd: &Command, stick_active: bool, refused: ClassSet) {
+    *mode = if cmd.held(ActionClass::Sprint) && stick_active && !refused.contains(ActionClass::Sprint) {
         Mode::FreeRun
     } else if cmd.held(ActionClass::Sneak) {
         Mode::Sneak

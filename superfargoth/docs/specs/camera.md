@@ -205,3 +205,16 @@ parts + the action shell on the camera level's statics).
   `pillar`, `open`. The game copies it to its `levels/` for CAM-1.
 - Not built: the near-geometry dither (only `fade` is output), first-person render bodies (D2),
   framed cameras, lock candidates and LOS casts (the lock's owner, E2).
+
+## As built (traversal pivot, 2026-10-27)
+
+AL-8: through a Warp (mantle) the drawn root rides a straight line through the ledge's corner and has no vertical
+speed, so the pivot sat on the lip (lagging 0.3-0.5 m) and the arm's sphere cast started in contact: the arm collapsed
+to 0 m on the 1.5 m box jumped from close. Fix (Souls/Uncharted-style anticipation of the traversal's destination):
+`OrbitRig::set_lead(h)` raises the pivot target `h` m; the shell passes how far `ActionBody::warp_target` (new getter)
+is above the drawn root, so the target sits at the top's height for the whole climb and the vertical spring eases the
+rise. The teleport check is now the frame's unexplained jump (minus any lead change), not the accumulated lag, so a
+2.5 m climb lead eases in. Collision is unchanged (walls still push in at once). Tests: `sf_camera`
+`a_traversal_lead_eases_in_and_never_teleports`; `sf_camera_bevy` `tests_mantle` (box ledge + Warp + camera:
+arm > 1 m through 1 m / 1.5 m mantles at level and downward looks; measurements `camera_mantle_sweep`: before 0.00 m
+min arm on 1.5 m from <= 0.85 m out, after 3.23 m; steep upward looks 2.14 m once the lip is between, as when standing).

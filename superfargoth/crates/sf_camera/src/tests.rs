@@ -92,6 +92,30 @@ fn teleport_snaps_instead_of_flying() {
 }
 
 #[test]
+fn a_traversal_lead_eases_in_and_never_teleports() {
+    let p = OrbitParams::default();
+    let dt = 1.0 / 60.0;
+    let mut rig = OrbitRig::new(Shoulder::Right);
+    rig.update(&p, WorldPos::ORIGIN, Vec3::ZERO, Look::default(), RigMode::Normal, dt);
+    // A climb's destination 2.5 m up (past `max_lag`): the pivot rises toward it, no cut.
+    rig.set_lead(2.5);
+    let first = rig.update(&p, WorldPos::ORIGIN, Vec3::ZERO, Look::default(), RigMode::Normal, dt).pivot;
+    let rise = WorldPos::ORIGIN.delta_f32(first).y - p.pivot_height;
+    assert!(rise > -1e-4 && rise < 0.1, "first frame rises a little, not at once: {rise}");
+    let mut last = first;
+    for _ in 0..60 {
+        last = rig.update(&p, WorldPos::ORIGIN, Vec3::ZERO, Look::default(), RigMode::Normal, dt).pivot;
+    }
+    let settled = WorldPos::ORIGIN.delta_f32(last).y - p.pivot_height;
+    assert!(close(settled, 2.5, 0.01), "{settled}");
+    // A real teleport still cuts.
+    let far = WorldPos::ORIGIN.offset(Vec3::new(500.0, 0.0, 0.0));
+    rig.set_lead(0.0);
+    let pose = rig.update(&p, far, Vec3::ZERO, Look::default(), RigMode::Normal, dt);
+    assert!(far.offset(Vec3::Y * p.pivot_height).delta_f32(pose.pivot).length() < 1e-3);
+}
+
+#[test]
 fn orbit_pitch_limits_mode_distance_and_shoulder_swap() {
     let p = OrbitParams::default();
     let mut rig = OrbitRig::new(Shoulder::Right);
