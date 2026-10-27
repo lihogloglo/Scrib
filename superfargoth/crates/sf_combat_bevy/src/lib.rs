@@ -20,6 +20,9 @@
 //! Socket tracks are built at load ([`socket_tracks`]) from the content's cooked clips and
 //! skeleton into [`CombatData`]; the content also inserts its compiled sheets there and adds
 //! their rules and slots to `ActionRules`. Gizmos (feature `debug`): [`CombatGizmos`].
+//!
+//! Lock-on ([`lock`], C1c): [`SfLockOnPlugin`] keeps each [`LockOwner`]'s `ActionState::lock`
+//! before the step and mirrors it to the camera's `LockOn`.
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -32,12 +35,19 @@ use sf_anim::{Clip, Skeleton};
 use sf_combat::{Body, CombatCtx, CombatEvent, CombatOutput, CombatRules, FightState, Fighter, Movesets, Side, SocketTracks, Tier, Unit};
 use sf_coords::WorldPos;
 
+pub mod lock;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_lock;
+
+pub use lock::{LockConfig, LockOnAction, LockOwner, SfLockOnPlugin, spawn_lock_action};
 
 /// The combat sets in `FixedUpdate` (see the crate docs).
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombatSystems {
+    /// Before `ActionSystems::Step`: the lock-on ([`lock`], with [`SfLockOnPlugin`]).
+    Lock,
     /// Before `ActionSystems::Step`: the start gate.
     Gate,
     /// After `ActionSystems::Move`: the content's stat refresh.

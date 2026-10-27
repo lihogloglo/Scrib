@@ -20,6 +20,7 @@ keybind-gameplay-toggle_view = Toggle POV
 keybind-gameplay-inventory = Inventory
 keybind-gameplay-attack = Attack
 keybind-gameplay-ready_weapon = Ready Weapon
+keybind-gameplay-lock_on = Lock On
 keybind-gameplay-quicksave = Quicksave
 keybind-gameplay-quickload = Quickload
 

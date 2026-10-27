@@ -1053,9 +1053,17 @@ fn show_events(
     }
 }
 
-/// The free camera doesn't look around while a menu is open (the mouse is the pointer).
-fn free_camera_lock(stack: Res<ScreenStackRes>, mut cameras: Query<&mut FreeCameraState>) {
-    let enabled = !menu_open(&stack);
+/// The free camera doesn't look around while a menu is open (the mouse is the pointer), nor while the player's body is
+/// driven (`mw_player_bevy::apply_mode` turns it off then; turned back on here, it flew the camera on WASD and its right
+/// button grab freed and showed the cursor on the release, owner 2026-10-27).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn free_camera_lock(
+    stack: Res<ScreenStackRes>,
+    mode: Option<Res<mw_game_core::player::PlayerMode>>,
+    mut cameras: Query<&mut FreeCameraState>,
+) {
+    let driven = mode.is_some_and(|m| m.body.is_some());
+    let enabled = !menu_open(&stack) && !driven;
     for mut state in &mut cameras {
         if state.enabled != enabled {
             state.enabled = enabled;

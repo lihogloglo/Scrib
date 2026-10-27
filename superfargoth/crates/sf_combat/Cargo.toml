@@ -12,6 +12,9 @@ description = "Bevy-free melee combat core: moveset sheets, fighters and vitals,
 glam = { workspace = true, features = ["serde"] }
 ron.workspace = true
 serde.workspace = true
+# Lock-on math (`sf_camera::lockon`: acquire, switch, break timers); Bevy-free like this crate.
+sf_camera.workspace = true
+sf_coords.workspace = true
 sf_action.workspace = true
 sf_anim.workspace = true
 smallvec = { workspace = true, features = ["serde"] }

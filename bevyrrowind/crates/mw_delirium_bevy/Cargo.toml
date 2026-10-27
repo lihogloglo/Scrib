@@ -11,14 +11,18 @@ publish = false
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
 bevy_camera.workspace = true
+bevy_color = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_input = { workspace = true, features = ["keyboard", "mouse"] }
 bevy_log.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
-bevy_window.workspace = true
+# The free camera's click aim: a centre dot.
+bevy_ui.workspace = true
 mw_delirium.workspace = true
+# `PlayerMode` (types only): click-to-push only in the free camera.
+mw_game_core.workspace = true
 sf_anim.workspace = true
 sf_anim_bevy.workspace = true
 sf_character_bevy.workspace = true

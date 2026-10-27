@@ -16,6 +16,7 @@
 
 mod fighter;
 mod hitstop;
+mod lock;
 mod react;
 mod rules;
 mod shape;
@@ -24,6 +25,7 @@ mod step;
 
 pub use fighter::{Defense, FightState, Fighter, Offense, Pool, SwingState, Vitals};
 pub use hitstop::{HitStop, ticks};
+pub use lock::{LockEvent, LockInput, lock_key, update_lock};
 pub use react::{ReactionTable, Side, Tier};
 pub use rules::{CombatRules, Contact, DefenderState, Outcome, PoolDelta, RegenState, StandardRules, Swing, SwingPlan, roll};
 pub use shape::{HurtShape, SWEEP_STEPS, WeaponShape, closest_on_segment, closest_points, segment_distance};

@@ -7,7 +7,7 @@
 //! - **Ground.** It spawns [`AwaitingGround`] (frozen) and is released onto the floor below once
 //!   the collision around its feet is in; no floor found keeps it waiting (never through it).
 //! - **Combat.** A hostile [`Combatant`] on the player's sheet, health [`DUMMY_HEALTH`]; at 0 it
-//!   refills (the hit already played the largest reaction).
+//!   refills (the hit already played the largest reaction). `Lockable`: the lock-on's target.
 //! - **Look.** A dressed `NPC_` record ([`DUMMY_RECORD`]) tagged [`DummyAvatar`] (not
 //!   `PlayerAvatar`: first person would hide it).
 //! - **Spawn.** The level host calls [`spawn`] for its `dummy*` spawn points (`levels/arena.ron`).
@@ -76,6 +76,8 @@ pub fn spawn(commands: &mut Commands, index: u32, (feet, yaw): (WorldPos, f32), 
         .spawn((
             Name::new(format!("training dummy {index}")),
             TrainingDummy,
+            // The lock-on's target (`combat.rs`), aimed at the chest.
+            sf_combat_bevy::lock::Lockable::default(),
             character,
             body,
             AwaitingGround,

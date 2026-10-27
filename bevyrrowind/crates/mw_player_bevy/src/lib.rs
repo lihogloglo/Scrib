@@ -79,6 +79,7 @@ use sf_camera::Look;
 use sf_camera_bevy::{CameraAction, PlayerCamera, SfCameraPlugin, spawn_camera_actions};
 use sf_character_bevy::CharacterPlacement;
 use sf_combat::CompiledSheet;
+use sf_console_bevy::ConsoleOpen;
 use sf_controller::{GroundHit, GroundProbe, Locomotion, MoverParams, ProbeQuery};
 use sf_controller_bevy::{AvoidObstacle, Mover};
 use sf_coords::{WorldPos, WorldTransform};
@@ -288,6 +289,7 @@ fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity)
     }
     let ready = commands.spawn((ActionOf::<PlayerControls>::new(body), Action::<combat::ReadyWeaponAction>::new())).id();
     bind(commands, keymap, Control::ReadyWeapon, ready, plain);
+    combat::spawn_lock(commands, keymap, body);
     for (tag, action) in spawn_camera_actions(commands, body) {
         match tag {
             // Mouse counts are a per-frame delta already; a stick is a rate (times delta time).
@@ -705,16 +707,47 @@ fn controls_active(mode: Res<PlayerMode>, mut commands: Commands, bodies: Query<
     }
 }
 
-/// The cursor is locked and hidden while the player is driven (mouse look).
-fn grab_cursor(mode: Res<PlayerMode>, mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>, mut grabbed: Local<bool>) {
+/// The cursor is grabbed and hidden while gameplay owns the mouse ([`wants_grab`]): the player's
+/// views and the free camera (F11) alike. While wanted the grab is held every frame, not only set
+/// on the edge: other writers drop it, notably Bevy's free camera controller, whose right button
+/// grab ends with the cursor freed and shown on the release (`run_freecamera_controller`, before
+/// `Update`). Freeing happens once, on the edge, so whoever freed it (a menu, the console's
+/// click-select) keeps it.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn grab_cursor(
+    mode: Res<PlayerMode>,
+    console: Option<Res<ConsoleOpen>>,
+    mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    mut grabbed: Local<bool>,
+) {
     let Ok((window, mut cursor)) = windows.single_mut() else { return };
-    let want = mode.body.is_some() && !mode.paused && window.focused;
-    if want != *grabbed {
-        *grabbed = want;
-        cursor.grab_mode = if want { CursorGrabMode::Locked } else { CursorGrabMode::None };
-        cursor.visible = !want;
+    let want = wants_grab(&mode, window.focused, console.is_some_and(|c| c.0));
+    if want {
+        if cursor.grab_mode != GAMEPLAY_GRAB || cursor.visible {
+            cursor.grab_mode = GAMEPLAY_GRAB;
+            cursor.visible = false;
+        }
+    } else if *grabbed {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
     }
+    *grabbed = want;
 }
+
+/// Gameplay owns the mouse: a body is driven or the free camera flies (F11: the player is off),
+/// nothing paused it (menus, dialogue), the console is closed, the window has focus. Not while the
+/// player is wanted but has no body yet (the spawn waits for the world).
+fn wants_grab(mode: &PlayerMode, focused: bool, console: bool) -> bool {
+    (mode.body.is_some() || !mode.on) && !mode.paused && !console && focused
+}
+
+/// How gameplay grabs the cursor. On Windows, winit's `Locked` clips the cursor to one pixel at
+/// wherever it is when the grab lands, which is outside the window when focus came from elsewhere
+/// (taskbar, terminal): the cursor stays there, visible, and clicks go to the window behind.
+/// `Confined` with the cursor hidden clips it to the window's centre instead (winit
+/// `refresh_os_cursor`). Elsewhere `Locked` is right (macOS has no `Confined`; X11 falls back to it).
+/// Mouse look reads raw motion, so neither mode affects it.
+const GAMEPLAY_GRAB: CursorGrabMode = if cfg!(target_os = "windows") { CursorGrabMode::Confined } else { CursorGrabMode::Locked };
 
 // --- activation ---------------------------------------------------------------------------------
 

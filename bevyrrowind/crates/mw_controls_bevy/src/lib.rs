@@ -7,11 +7,12 @@
 //!
 //! - **Keyboard and mouse** (the owner's modern defaults): WASD move, mouse look, wheel zoom,
 //!   Space jump, Left Shift dodge / sprint (tap rolls, hold sprints), Left Ctrl sneak, E use, Tab
-//!   first/third person, left mouse attack, F ready weapon (Morrowind's).
+//!   first/third person, left mouse attack, F ready weapon (Morrowind's), Q or the middle mouse
+//!   button lock-on (Elden Ring, Dark Souls III on PC).
 //! - **Gamepad** (modern action-RPG convention; combat C1b, owner 2026-10-27): left stick move, right
 //!   stick look, South (A / Cross) jump, West (X / Square) use, East (B / Circle) dodge / sprint
 //!   (Dark Souls, Elden Ring), right bumper attack, left-stick click sneak, d-pad up first/third
-//!   person (right-stick click is kept for the C1c lock-on). No pad zoom or ready-weapon default yet.
+//!   person, right-stick click lock-on (Elden Ring's R3). No pad zoom or ready-weapon default yet.
 //! - **Hold or toggle.** Sprint and sneak hold by default (owner rule: everything holds); each can
 //!   switch to toggle per action (`sf_ui::PressMode`, profile `press = "toggle"`, the keybinds
 //!   screen's Hold/Toggle cell). Toggle is `bevy_enhanced_input`'s `Toggle` condition on the
@@ -88,13 +89,15 @@ pub enum Control {
     Attack,
     /// Ready / sheathe the weapon (Morrowind's F).
     ReadyWeapon,
+    /// Lock on to the best target, or release it (combat.md "Lock-on and camera").
+    LockOn,
     /// Save / load the quick slot (`saves.rs`).
     QuickSave,
     QuickLoad,
 }
 
 impl Control {
-    pub const ALL: [Control; 17] = [
+    pub const ALL: [Control; 18] = [
         Control::MoveForward,
         Control::MoveBack,
         Control::MoveLeft,
@@ -110,6 +113,7 @@ impl Control {
         Control::Inventory,
         Control::Attack,
         Control::ReadyWeapon,
+        Control::LockOn,
         Control::QuickSave,
         Control::QuickLoad,
     ];
@@ -131,6 +135,7 @@ impl Control {
             Control::Inventory => "inventory",
             Control::Attack => "attack",
             Control::ReadyWeapon => "ready_weapon",
+            Control::LockOn => "lock_on",
             Control::QuickSave => "quicksave",
             Control::QuickLoad => "quickload",
         }
@@ -162,6 +167,8 @@ impl Control {
             // Left mouse; the right bumper (souls-likes' R1 light attack).
             Control::Attack => button(&["mouse:Left", "pad:RightTrigger"]),
             Control::ReadyWeapon => keys("key:KeyF"),
+            // Q and the wheel click (Elden Ring, Dark Souls III on PC); R3 on a pad.
+            Control::LockOn => button(&["key:KeyQ", "mouse:Middle", "pad:RightThumb"]),
             // F5 / F9 as Skyrim, Fallout 4, The Witcher 3 (and Morrowind); no gamepad default.
             Control::QuickSave => button(&["key:F5"]),
             Control::QuickLoad => button(&["key:F9"]),

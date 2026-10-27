@@ -1,5 +1,6 @@
 //! Combat glue (combat.md "C1b"): the player body is armed with the sword sheet, F and an attack
-//! press draw the weapon (the press itself doesn't attack), and the HUD shows the stamina.
+//! press draw the weapon (the press itself doesn't attack), and the HUD shows the stamina; C1c: the
+//! lock key locks the dummy.
 
 use sf_action_bevy::PlayerAction;
 use sf_combat_bevy::Combatant;
@@ -117,4 +118,40 @@ fn the_player_stops_against_a_training_dummy_without_shoving_it() {
     assert!(closest < reach + 0.1, "the player reached the dummy: {closest:.3} m");
     let shoved = flat(dummy_at.delta_f32(feet(&app, d)));
     assert!(shoved < 0.01, "the dummy was shoved {shoved:.3} m");
+}
+
+/// C1c: the lock key locks the training dummy ahead (the camera's `LockOn` mirrors it) and a
+/// second press releases it.
+#[test]
+fn the_lock_key_locks_the_training_dummy_and_a_second_press_releases_it() {
+    let (mut app, player) = armed();
+    dummy::systems::<Statics>(&mut app);
+    let root = app.world_mut().spawn_empty().id();
+    // The start spawn is at z 10 looking down +Z (no camera: view yaw 0); the dummy 3 m ahead.
+    let d = dummy::spawn(&mut app.world_mut().commands(), 0, (WorldPos::ORIGIN.offset(Vec3::new(0.0, 0.0, 13.0)), 0.0), root);
+    app.world_mut().flush();
+    for _ in 0..30 {
+        app.update();
+    }
+    let mut q = app.world_mut().query_filtered::<Entity, With<Action<sf_combat_bevy::LockOnAction>>>();
+    let lock = q.single(app.world()).expect("one lock action");
+    let press = |app: &mut App| {
+        mock(app, lock, true);
+        for _ in 0..3 {
+            app.update();
+        }
+        app.world_mut().entity_mut(lock).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+        for _ in 0..3 {
+            app.update();
+        }
+    };
+    let target = sf_action::TargetId(app.world().get::<ActionCharacter>(d).unwrap().id.0);
+    let locked = |app: &App| app.world().get::<ActionCharacter>(player).unwrap().state.lock;
+    assert_eq!(locked(&app), None);
+    press(&mut app);
+    assert_eq!(locked(&app), Some(target));
+    assert_eq!(app.world().get::<sf_camera_bevy::LockOn>(player), Some(&sf_camera_bevy::LockOn(d)));
+    press(&mut app);
+    assert_eq!(locked(&app), None);
+    assert!(app.world().get::<sf_camera_bevy::LockOn>(player).is_none());
 }

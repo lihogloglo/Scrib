@@ -12,6 +12,10 @@
 //! - **Stance.** [`Stance`]: the ready-weapon key (F) draws and sheathes; while sheathed the
 //!   attacks are withheld (`Combatant::withheld`), and an attack press draws instead (the press
 //!   itself is refused that tick). Gameplay only: no weapon mesh is drawn yet.
+//! - **Lock-on.** `sf_combat_bevy::SfLockOnPlugin` (line of sight through the physics probe): the
+//!   player body is a `LockOwner`, the lock key ([`spawn_lock`], `Control::LockOn`: Q, middle
+//!   mouse, R3) locks the best `Lockable` (the training dummies) and the third-person camera frames
+//!   it.
 //! - **Rules.** [`ModernRules`]: `sf_combat::StandardRules` as a resource (the classic rules
 //!   would replace it, combat-adapter.md "Rules").
 
@@ -24,7 +28,8 @@ use sf_action_bevy::{ActionCharacter, ActionSystems};
 use sf_combat::{
     CombatRules, CompiledSheet, Contact, Fighter, Outcome, PoolDelta, RegenState, SocketTracks, StandardRules, Swing, SwingPlan,
 };
-use sf_combat_bevy::{CombatData, CombatSystems, Combatant, SfCombatPlugin};
+use sf_combat_bevy::{CombatData, CombatSystems, Combatant, LockOwner, SfCombatPlugin, SfLockOnPlugin};
+use sf_physics_bevy::Physics;
 
 use crate::hud::PlayerVitals;
 use crate::{PLAYER_CHARACTER, PlayerBody, PlayerClips};
@@ -112,6 +117,9 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
     if !app.is_plugin_added::<SfCombatPlugin<ModernRules>>() {
         app.add_plugins(SfCombatPlugin::<ModernRules>::default());
     }
+    if !app.is_plugin_added::<SfLockOnPlugin<Physics>>() {
+        app.add_plugins(SfLockOnPlugin::<Physics>::default());
+    }
     app.init_resource::<ModernRules>();
     if let Some(sheet) = &sheet {
         let tracks = sockets(clips, sheet);
@@ -164,8 +172,15 @@ fn arm(
         let fighter = mw_combat::fighter(PLAYER_CHARACTER, sheet, combat.health, combat.fatigue, (p.radius, p.height), true);
         let mut combatant = Combatant::new(fighter);
         combatant.withheld = ATTACKS;
-        commands.entity(entity).insert((combatant, Stance::Sheathed));
+        commands.entity(entity).insert((combatant, Stance::Sheathed, LockOwner::default()));
     }
+}
+
+/// The lock-on action on the player's `PlayerControls` context `body`, bound from `keymap`
+/// (`Control::LockOn`; called with the other bindings, so a rebind respawns it too).
+pub(crate) fn spawn_lock(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity) {
+    let lock = sf_combat_bevy::spawn_lock_action(commands, body);
+    mw_controls_bevy::bind(commands, keymap, mw_controls_bevy::Control::LockOn, lock, |_, _| {});
 }
 
 /// Withholds the attacks while sheathed.

@@ -171,6 +171,11 @@ pub struct AwaitingGround;
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ActionGate(pub ClassSet);
 
+/// The locked target's aim point relative to the feet, world axes ([`Sense::lock_target`]):
+/// written before [`ActionSystems::Step`] by the lock owner (`sf_combat_bevy::lock`).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct LockAim(pub Option<Vec3>);
+
 /// A probe that never hits ([`NoClip`] bodies).
 struct NoHits;
 
@@ -285,10 +290,10 @@ fn step_actions<G: GroundProbe + Resource>(
     rules: Option<Res<ActionRules>>,
     ground: Option<Res<G>>,
     mut probes: Local<ContextProbes>,
-    mut characters: Query<(&mut ActionCharacter, &ActionBody, Option<&ActionGate>)>,
+    mut characters: Query<(&mut ActionCharacter, &ActionBody, Option<&ActionGate>, Option<&LockAim>)>,
 ) {
     let Some(rules) = rules else { return };
-    for (mut c, body, gate) in &mut characters {
+    for (mut c, body, gate, lock) in &mut characters {
         let c = &mut *c;
         let ctx = StepCtx { rules: &rules.rules, slots: &*rules.slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
@@ -307,7 +312,7 @@ fn step_actions<G: GroundProbe + Resource>(
             focus: c.focus,
             obstacle,
             refused: gate.map_or(ClassSet::EMPTY, |g| g.0),
-            ..Sense::default()
+            lock_target: lock.and_then(|l| l.0),
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
     }

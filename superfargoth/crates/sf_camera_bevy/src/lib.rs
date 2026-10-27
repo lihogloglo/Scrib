@@ -93,8 +93,9 @@ pub struct CameraShake {
     pub trauma: f32,
 }
 
-/// The locked target of a character (on the follower, e.g. the player). Its owner writes it:
-/// the action layer once it keeps the lock (E2), or the host. The target needs [`Lockable`].
+/// The locked target of a character (on the follower, e.g. the player). Its owner writes it: the
+/// combat shell's lock-on (`sf_combat_bevy::lock`, mirroring `ActionState::lock`), or the host.
+/// The target needs [`Lockable`].
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LockOn(pub Entity);
 
@@ -195,6 +196,8 @@ pub struct PlayerCamera {
     idle_look: f32,
     zoom: f32,
     locked: Option<Entity>,
+    /// A lock press found no target: ease behind the character ([`Self::recentre`]).
+    recentring: bool,
     orbit: OrbitRig,
     arm: ArmCollision,
     first_person: FirstPersonLook,
@@ -216,6 +219,7 @@ impl PlayerCamera {
             idle_look: 0.0,
             zoom: 1.0,
             locked: None,
+            recentring: false,
             orbit: OrbitRig::new(Shoulder::Right),
             arm: ArmCollision::new(),
             first_person: FirstPersonLook::new(),
@@ -236,6 +240,12 @@ impl PlayerCamera {
 
     pub fn view(&self) -> ViewChoice {
         self.settings.view
+    }
+
+    /// Eases the third-person look behind the followed character at the lock framing's pace (a
+    /// lock press with nothing to lock, souls-likes' recentre); look input cancels it.
+    pub fn recentre(&mut self) {
+        self.recentring = self.settings.view == ViewChoice::ThirdPerson;
     }
 
     /// Switches first/third person: an instant cut, the rig starts again on the body. Changes no
@@ -389,7 +399,13 @@ fn update_look(
             (ViewChoice::ThirdPerson, None) => {
                 cam.first_person.set_limits(None, 0.0);
                 let look = cam.look.turned(delta, p.orbit.pitch_min, p.orbit.pitch_max);
-                if cam.settings.auto_camera {
+                cam.recentring &= delta == Look::default();
+                if cam.recentring {
+                    let goal = Look { yaw: body.loco.motion.yaw, pitch: p.lock.pitch_bias };
+                    let eased = look.eased(goal, p.lock.framing_halflife, dt);
+                    cam.recentring = sf_camera::wrap_angle(goal.yaw - eased.yaw).abs() > 1f32.to_radians();
+                    eased
+                } else if cam.settings.auto_camera {
                     recentre_behind(look, body.loco.motion.velocity, cam.idle_look, &p.recentre, dt)
                 } else {
                     look

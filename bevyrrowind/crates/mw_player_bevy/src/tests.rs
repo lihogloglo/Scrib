@@ -500,3 +500,75 @@ fn fall_into_the_interior_void_returns_to_the_arrival_spot() {
     let at = WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(player).unwrap().loco.position);
     assert!(start.delta_f32(pos(at)).xz().length() < 0.5 && (-0.05..0.5).contains(&at.y), "lands at the arrival spot: {at}");
 }
+
+/// Gameplay grabs the cursor in either view while a body is driven, and in the free camera (F11);
+/// pausing (menus, dialogue), the console, losing focus or waiting for the body frees it.
+#[test]
+fn cursor_grab_follows_gameplay() {
+    let body = Some(Entity::from_raw_u32(1).unwrap());
+    let mode = |on, body, paused| PlayerMode { on, paused, body, last_ground: None };
+    assert!(wants_grab(&mode(true, body, false), true, false));
+    assert!(wants_grab(&mode(false, None, false), true, false), "free camera (F11)");
+    assert!(!wants_grab(&mode(true, body, true), true, false), "paused");
+    assert!(!wants_grab(&mode(false, None, true), true, false), "a menu over the free camera");
+    assert!(!wants_grab(&mode(true, body, false), true, true), "console open");
+    assert!(!wants_grab(&mode(true, body, false), false, false), "unfocused");
+    assert!(!wants_grab(&mode(true, None, false), true, false), "no body yet");
+    // Windows' `Locked` pins the cursor wherever it is, possibly outside the window.
+    assert_eq!(GAMEPLAY_GRAB == CursorGrabMode::Confined, cfg!(target_os = "windows"));
+}
+
+/// Owner 2026-10-27: a click showed the cursor again. Bevy's free camera controller frees and shows
+/// it on its grab button's release; while gameplay wants the grab, the next frame takes it back.
+/// A menu frees it once and leaves it to the menu.
+#[test]
+fn a_click_that_frees_the_cursor_is_grabbed_back() {
+    let mut app = App::new();
+    app.insert_resource(PlayerMode { on: false, paused: false, body: None, last_ground: None })
+        .add_systems(Update, grab_cursor);
+    let window = app.world_mut().spawn((Window { focused: true, ..Window::default() }, CursorOptions::default(), PrimaryWindow)).id();
+    let cursor = |app: &App| {
+        let c = app.world().get::<CursorOptions>(window).unwrap();
+        (c.visible, c.grab_mode)
+    };
+    app.update();
+    assert_eq!(cursor(&app), (false, GAMEPLAY_GRAB), "the free camera grabs");
+    // As `run_freecamera_controller` on the right button's release.
+    let mut c = app.world_mut().get_mut::<CursorOptions>(window).unwrap();
+    c.visible = true;
+    c.grab_mode = CursorGrabMode::None;
+    app.update();
+    assert_eq!(cursor(&app), (false, GAMEPLAY_GRAB), "grabbed back");
+    app.world_mut().resource_mut::<PlayerMode>().paused = true;
+    app.update();
+    assert_eq!(cursor(&app), (true, CursorGrabMode::None), "a menu frees it");
+    let mut c = app.world_mut().get_mut::<CursorOptions>(window).unwrap();
+    c.grab_mode = CursorGrabMode::Confined;
+    app.update();
+    assert_eq!(cursor(&app).1, CursorGrabMode::Confined, "freed once, then left alone");
+}
+
+/// CB-1: Shift is the shared Dodge / Sprint button; held with W for a second it sprints and
+/// never rolls (each tick's mode and whether the sampled command pressed Dodge).
+#[test]
+fn held_shift_sprints_and_never_dodges() {
+    let (mut app, player) = app_with(60, &mw_controls_bevy::keymap());
+    for _ in 0..10 {
+        app.update();
+    }
+    hold_key(&mut app, KeyCode::KeyW, true);
+    for _ in 0..10 {
+        app.update();
+    }
+    hold_key(&mut app, KeyCode::ShiftLeft, true);
+    let mut seen = Vec::new();
+    for _ in 0..60 {
+        app.update();
+        let c = app.world().get::<ActionCharacter>(player).unwrap();
+        seen.push((c.state.mode.mode, c.command.pressed(ActionClass::Dodge), c.command.held(ActionClass::Sprint)));
+    }
+    assert!(seen.iter().all(|&(_, dodge, _)| !dodge), "held Shift rolled: {seen:?}");
+    // From the 18th held tick on, every tick sprints (CB-1: it sprinted one tick, then dropped).
+    let free_run = seen.iter().filter(|&&(m, _, _)| m == sf_action::Mode::FreeRun).count();
+    assert!(free_run >= 30, "held Shift didn't keep sprinting ({free_run} ticks): {seen:?}");
+}

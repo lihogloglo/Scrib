@@ -15,19 +15,24 @@ debug = ["dep:bevy_gizmos", "dep:bevy_color"]
 bevy_app = { workspace = true, features = ["std"] }
 bevy_color = { workspace = true, features = ["std"], optional = true }
 bevy_ecs = { workspace = true, features = ["std"] }
+bevy_enhanced_input.workspace = true
 bevy_gizmos = { workspace = true, optional = true }
 bevy_math = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_action.workspace = true
 sf_action_bevy.workspace = true
 sf_anim.workspace = true
+# Lock-on (`lock`): the `sf_camera::lockon` types, the camera's `LockOn` / `Lockable` and recentre, and the
+# ground probe for line of sight.
+sf_camera.workspace = true
+sf_camera_bevy.workspace = true
 sf_combat.workspace = true
+sf_controller.workspace = true
 sf_coords.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy_time = { workspace = true, features = ["std"] }
-sf_controller.workspace = true
 
 [lints]
 workspace = true

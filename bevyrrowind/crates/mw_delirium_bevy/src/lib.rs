@@ -26,19 +26,25 @@
 //! - **World**: one flat floor at the ground under the pelvis (one ray down through the walkers' [`Physics`] ground
 //!   probe; no physics or no hit: the mover's render height), lowered to the lowest part when the pose starts below it
 //!   (on a slope, the downhill foot). Next: copy the Rapier statics around the actor.
-//! - **Click-to-push** ([`DeliriumPlugin::click`], dev builds): left click on a human NPC picks the Delirium part under
-//!   the cursor (capsules) and takes it over with an impulse there along the view ray (Ctrl 20, plain 45, Shift
-//!   80 N s); on a taken-over one it pushes that part.
+//! - **Click-to-push** ([`DeliriumPlugin::click`], dev builds): in the free camera only (F11; `PlayerMode` off: in the
+//!   player's views the left click is the attack), left click on a human NPC picks the Delirium part under the screen
+//!   centre (capsules; the cursor is grabbed there, a dot marks it) and takes it over with an impulse there along the view ray (Ctrl 20, plain 45, Shift 80 N s); on a
+//!   taken-over one it pushes that part.
 //!
 //! Human skeletons only ([`HUMAN_SKELETONS`]): Delirium's asset is one humanoid per process; beast races are refused
-//! and logged.
+//! and logged. Mover-driven characters only (walkers: the [`Mover`] on the `CharacterBody` entity, which holds still
+//! under `Held` and takes the body's move at the hand-back). An action character (the player, the training dummy:
+//! the `CharacterBody` on an avatar under an `sf_action_bevy` body) is refused: `Held` doesn't stop its body and the
+//! hand-back's move would land in the avatar's local transform, leaving the body beside its capsule for good.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use bevy_app::{App, FixedUpdate, Plugin, Update};
+use bevy_app::{App, FixedUpdate, Plugin, Startup, Update};
+use bevy_camera::visibility::Visibility;
 use bevy_camera::{Camera, Camera3d};
+use bevy_color::Color;
 use bevy_ecs::prelude::*;
 use bevy_input::ButtonInput;
 use bevy_input::keyboard::KeyCode;
@@ -47,11 +53,12 @@ use bevy_log::{info, warn};
 use bevy_math::{Affine3A, Quat, Vec3};
 use bevy_time::{Fixed, Time};
 use bevy_transform::components::{GlobalTransform, Transform};
-use bevy_window::{PrimaryWindow, Window};
+use bevy_ui::{BackgroundColor, BorderRadius, Node, PositionType, UiRect, percent, px};
 use mw_delirium::delirium::prelude::Transform as Part;
 use mw_delirium::delirium::ragdoll::Build;
 use mw_delirium::takeover::pick;
 use mw_delirium::{Body, HandBack, Options, Rules, Takeover, authoring_from_model, bones_to_parts, character_from_skeleton, pose_to_bones};
+use mw_game_core::player::PlayerMode;
 use sf_anim::Trs;
 use sf_anim_bevy::{Animator, PhysicsPose};
 use sf_character_bevy::CharacterBody;
@@ -104,7 +111,7 @@ impl Plugin for DeliriumPlugin {
             // After the controller step: a root move (hand-back) is never a frame behind.
             .add_systems(Update, (start, read_back.after(ControllerSystems::Step)).chain());
         if self.click {
-            app.add_systems(Update, click.before(start));
+            app.add_systems(Startup, spawn_click_dot).add_systems(Update, (click.before(start), show_click_dot));
         }
     }
 }
@@ -269,7 +276,7 @@ fn start(
     time: Res<Time>,
     mut takeovers: ResMut<Takeovers>,
     mut stats: ResMut<DeliriumStats>,
-    requests: Query<(Entity, &CharacterBody, &DeliriumReaction)>,
+    requests: Query<(Entity, &CharacterBody, &DeliriumReaction, Has<Mover>)>,
     animators: Query<(&Animator, Has<Ragdoll>)>,
     mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     roots: Query<&WorldspaceRoot>,
@@ -283,7 +290,14 @@ fn start(
         p.secs += dt;
     }
     let mut ready = Vec::new();
-    for (root, cb, request) in &requests {
+    for (root, cb, request, mover) in &requests {
+        if !mover {
+            // An action character (module docs): its body would end beside its capsule.
+            info!("delirium: refused {root} ({}): no mover on it (an action character)", cb.skeleton);
+            stats.refused += 1;
+            commands.entity(root).try_remove::<DeliriumReaction>();
+            continue;
+        }
         if let Some(l) = live.get_mut(&root) {
             if let Some(hit) = request.hit {
                 let at = l.sim.sim_point(hit.point);
@@ -625,30 +639,75 @@ fn read_back(
     stats.live = live.len();
 }
 
-/// Dev click-to-push: left click picks the Delirium part under the cursor on a human NPC (Ctrl 20, plain 45,
-/// Shift 80 N s along the view ray).
+/// Click-to-push runs in the free camera (F11: `PlayerMode` off) or with no player layer at all, never while the
+/// player is wanted (third or first person).
+fn click_allowed(mode: Option<&PlayerMode>) -> bool {
+    mode.is_none_or(|m| !m.on)
+}
+
+/// The click aims now: allowed ([`click_allowed`]) and no menu over the game (`PlayerMode::paused`: the click is the
+/// menu's).
+fn click_aims(mode: Option<&PlayerMode>) -> bool {
+    click_allowed(mode) && mode.is_none_or(|m| !m.paused)
+}
+
+/// The click's aim: a small dot at the screen centre (the free camera hides and grabs the cursor,
+/// `mw_player_bevy::grab_cursor`), shown while the click aims.
+#[derive(Component)]
+struct ClickDot;
+
+fn spawn_click_dot(mut commands: Commands) {
+    const SIZE: f32 = 4.0;
+    commands.spawn((
+        ClickDot,
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(50),
+            top: percent(50),
+            width: px(SIZE),
+            height: px(SIZE),
+            margin: UiRect { left: px(-SIZE / 2.0), top: px(-SIZE / 2.0), ..UiRect::DEFAULT },
+            border_radius: BorderRadius::MAX,
+            ..Node::default()
+        },
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+        Visibility::Hidden,
+    ));
+}
+
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn show_click_dot(mode: Option<Res<PlayerMode>>, mut dots: Query<&mut Visibility, With<ClickDot>>) {
+    let want = if click_aims(mode.as_deref()) { Visibility::Inherited } else { Visibility::Hidden };
+    for mut visibility in &mut dots {
+        visibility.set_if_neq(want);
+    }
+}
+
+/// Dev click-to-push: left click picks the Delirium part under the screen centre ([`ClickDot`]) on a human NPC
+/// (Ctrl 20, plain 45, Shift 80 N s along the view ray).
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn click(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(Entity, &Camera, &GlobalTransform), With<Camera3d>>,
     pos_of: WorldPosOf,
     mut takeovers: ResMut<Takeovers>,
-    characters: Query<(Entity, &CharacterBody)>,
+    mode: Option<Res<PlayerMode>>,
+    characters: Query<(Entity, &CharacterBody), With<Mover>>,
     animators: Query<&Animator>,
     frames: FrameQuery,
     roots: Query<&WorldspaceRoot>,
     mut commands: Commands,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) {
+    // The free camera only: in the player's views the left click is the attack (and the player's own body is under
+    // the cursor). Action characters (no mover) are never picked (module docs).
+    if !mouse.just_pressed(MouseButton::Left) || !click_aims(mode.as_deref()) {
         return;
     }
-    let Some(cursor) = windows.iter().next().and_then(Window::cursor_position) else { return };
-    let Some((cam, camera, view)) = cameras.iter().filter(|(_, c, _)| c.is_active).max_by_key(|(_, c, _)| c.order) else { return };
-    let (Ok(ray), Some(eye)) = (camera.viewport_to_world(view, cursor), pos_of.get(cam)) else { return };
-    let origin = eye.offset(ray.origin - view.translation());
-    let dir = *ray.direction;
+    // The screen centre's ray is the camera's forward from the eye.
+    let Some((cam, _, view)) = cameras.iter().filter(|(_, c, _)| c.is_active).max_by_key(|(_, c, _)| c.order) else { return };
+    let Some(origin) = pos_of.get(cam) else { return };
+    let dir = *view.forward();
     let strength = if keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]) {
         CLICK_IMPULSE[0]
     } else if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
@@ -690,4 +749,47 @@ fn click(
     let Some((_, root, part, point)) = best else { return };
     info!("delirium: click on {root}, {} ({strength:.0} N s)", mw_delirium::body::NAMES[part]);
     commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part) }) });
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy_app::{App, Startup, Update};
+    use bevy_camera::visibility::Visibility;
+    use bevy_ecs::prelude::*;
+    use mw_game_core::player::PlayerMode;
+
+    use super::{ClickDot, click_allowed, show_click_dot, spawn_click_dot};
+
+    fn mode(on: bool) -> PlayerMode {
+        PlayerMode { on, paused: false, body: None, last_ground: None }
+    }
+
+    /// Owner 2026-10-27: the attack's left click also pushed the player's own body (and the dummy) with Delirium,
+    /// which then stood beside its capsule. Click-to-push is a free-camera tool only.
+    #[test]
+    fn click_to_push_only_in_the_free_camera() {
+        assert!(!click_allowed(Some(&mode(true))), "player views: the left click is the attack");
+        assert!(click_allowed(Some(&mode(false))), "free camera (F11)");
+        assert!(click_allowed(None), "no player layer");
+    }
+
+    /// Owner 2026-10-27: the free camera hides and grabs the cursor, so the click aims at the screen centre and a
+    /// dot marks it, only while the click aims (not in the player's views, not under a menu).
+    #[test]
+    fn the_centre_dot_shows_while_the_click_aims() {
+        let mut app = App::new();
+        app.insert_resource(mode(false)).add_systems(Startup, spawn_click_dot).add_systems(Update, show_click_dot);
+        let shown = |app: &mut App| {
+            app.update();
+            let mut dots = app.world_mut().query_filtered::<&Visibility, With<ClickDot>>();
+            let v: Vec<_> = dots.iter(app.world()).copied().collect();
+            assert_eq!(v.len(), 1, "one dot");
+            v[0] == Visibility::Inherited
+        };
+        assert!(shown(&mut app), "free camera (F11)");
+        app.world_mut().resource_mut::<PlayerMode>().paused = true;
+        assert!(!shown(&mut app), "a menu over the free camera: the click is the menu's");
+        *app.world_mut().resource_mut::<PlayerMode>() = mode(true);
+        assert!(!shown(&mut app), "player views: the HUD's crosshair");
+    }
 }
