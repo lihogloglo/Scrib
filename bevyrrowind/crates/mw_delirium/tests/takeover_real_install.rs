@@ -127,6 +127,82 @@ fn takeover_step_time() {
     println!("takeover step: {:.3} ms/step over {n} steps", t0.elapsed().as_secs_f64() * 1000.0 / f64::from(n));
 }
 
+/// One pushed takeover's recovery: `(hand-back, s; shown at the idle, s; stance dwell, s; stance exposure, m s;
+/// largest part off the idle at the blend start, m)`. The idle is the rest pose (arms down, as Morrowind's idle); "off the
+/// idle" is the largest part distance from it, pelvis-relative. Dwell: from the last catch step's end (or the push)
+/// to the blend start. Exposure: the shown share of that distance (`weight` x distance) integrated after the last step.
+/// `inertialization`: the host's hand-back blend after an instant hand-back (counted as half the distance over it).
+fn recovery(f: &Fixture, rules: Rules, inertialization: f32, dir: Vec3, impulse: f32) -> (Option<HandBack>, [f32; 5]) {
+    let (parts, prev) = rest_parts(f, Vec3::ZERO);
+    let rel = |p: &[Transform], k: usize| p[0].rotation.inverse() * (p[k].translation - p[0].translation);
+    let off = |p: &[Transform]| (1..p.len()).map(|k| (rel(p, k) - rel(&parts, k)).length()).fold(0.0, f32::max);
+    let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, rules);
+    let chest = t.frames()[10].translation;
+    t.push(10, chest, dir * impulse);
+    let (mut last_step, mut blend, mut exposure, mut tail, mut off_at_blend) = (0.0, None, 0.0, Vec::new(), 0.0);
+    let mut how = None;
+    for _ in 0..(25.0 / DT) as u32 {
+        how = t.step(DT);
+        let d = off(&t.frames());
+        if t.stepping() == Some(true) {
+            last_step = t.time;
+            tail.clear();
+        }
+        tail.push(t.weight.min(1.0) * d * DT);
+        if blend.is_none() && t.weight < 1.0 {
+            blend = Some(t.time);
+            off_at_blend = d;
+        }
+        if how.is_some() {
+            exposure = tail.iter().sum::<f32>() + 0.5 * inertialization * d;
+            break;
+        }
+    }
+    let end = t.time;
+    let dwell = blend.unwrap_or(end) - last_step;
+    (how, [end, end + inertialization, dwell, exposure, off_at_blend])
+}
+
+#[test]
+#[ignore = "measurement: recovery to the idle after a push, before (still, instant + 0.3 s) vs after (blend-out)"]
+fn recovery_to_idle() {
+    let Some(f) = fixture() else { return };
+    let before = Rules { recover_secs: f32::INFINITY, blend_out: 0.0, ..Rules::default() };
+    let after = Rules::default();
+    println!("recovery after a chest push, 8 directions; Balanced runs: median / max of [hand-back s, at the idle s, stance dwell s, exposure m s, largest part off the idle at the blend start m]");
+    for (name, rules, inert) in [("before", before, 0.3), ("after", after, 0.0)] {
+        for impulse in [20.0, 45.0, 80.0] {
+            let mut rows: Vec<[f32; 5]> = Vec::new();
+            let mut other = Vec::new();
+            for k in 0..8 {
+                let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                let (how, row) = recovery(f, rules, inert, Vec3::new(a.sin(), a.cos(), 0.0), impulse);
+                assert!(how.is_some_and(|h| h != HandBack::Exploded), "{name} {impulse} N s dir {k}: {how:?}");
+                assert!(row.iter().all(|v| v.is_finite()));
+                if how == Some(HandBack::Balanced) {
+                    rows.push(row);
+                } else {
+                    other.push(how);
+                }
+            }
+            let stat = |i: usize| {
+                let mut v: Vec<f32> = rows.iter().map(|r| r[i]).collect();
+                v.sort_by(f32::total_cmp);
+                v.get(v.len() / 2).map_or(String::from("-"), |m| format!("{m:.2}/{:.2}", v[v.len() - 1]))
+            };
+            println!(
+                "  {name:6} {impulse:>2.0} N s: {} balanced, other {other:?}; hand-back {}, idle {}, dwell {}, exposure {}, off {}",
+                rows.len(),
+                stat(0),
+                stat(1),
+                stat(2),
+                stat(3),
+                stat(4)
+            );
+        }
+    }
+}
+
 /// Audit F5: on a 15 deg ramp (rising across the stance, +X), taken over 0.1 m above the ground under the pelvis (the
 /// mover's render height lagging a step down). The host's floor is the ground under the pelvis (one ray), lowered to
 /// the lowest part; the frame sits on it, so at the hand-back the root takes the floor height and the pelvis only

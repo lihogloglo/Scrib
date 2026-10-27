@@ -12,8 +12,11 @@
 //!   motion is off. The body's frame follows the pelvis (heading from the hips, on the floor) as in the knockdown
 //!   mode, at the uniform height scale (restored at the hand-back). On the floor, not at the mover's render height: the
 //!   root (its mover too, `height_offset` zeroed) takes the settled height at the hand-back, not the pelvis.
-//! - **Hand-back**: balanced and still (`mw_delirium::Rules`) → the graph inertializes from the shown pose
-//!   (`inertialize_from`). Down → the graph's `knocked_out` flag is set while it lies there; once still (or after a
+//! - **Hand-back**: recovered (`mw_delirium::Rules`: no catch step, centre of mass slow) → the blend-out (slice 2b):
+//!   the physics-pose weight follows `Takeover::weight` from 1 to 0, the graph's pose (the idle, kept alive under
+//!   `Held`) shows through, the frame stays where the blend started; at 0 the graph simply carries on (no
+//!   inertialization). A push during it brings the physics back. Timeout (or a blow-up) → the graph inertializes from
+//!   the shown pose (`inertialize_from`). Down →the graph's `knocked_out` flag is set while it lies there; once still (or after a
 //!   few seconds) the frame moves under the `Knockout@tail` get-up clip's first pelvis pose (`get_up_root`, as the
 //!   knockdown ragdoll) and the get-up plays out of the lying pose. The root takes the body's move (the walkers'
 //!   knockdown glue) and wakes; [`DeliriumHandedBack`] tells the host.
@@ -65,8 +68,11 @@ pub const KNOCKED_OUT: &str = "knocked_out";
 /// The get-up clip (`mw_graphs` `knockout_end`).
 pub const GET_UP_CLIP: &str = "Knockout@tail";
 
-/// Hand-back inertialization, s.
+/// Hand-back inertialization, s (timeouts, blow-ups, the get-up).
 pub const HAND_BACK_BLEND: f32 = 0.3;
+
+/// A physics weight under this at the hand-back counts as blended out (no inertialization).
+pub const BLENDED_OUT: f32 = 0.1;
 
 /// The takeover's ground ray: from the pelvis straight down this far, m.
 pub const GROUND_RAY: f32 = 4.0;
@@ -192,6 +198,10 @@ struct Live {
     yaw: Quat,
     /// The last two steps' part frames (interpolated by the fixed overstep).
     frames: [Vec<Part>; 2],
+    /// The last two steps' physics weights (`Takeover::weight`, the blend-out).
+    weights: [f32; 2],
+    /// The weight shown last frame.
+    shown_weight: f32,
     pushes: Vec<(usize, Vec3, Vec3)>,
     hand_back: Option<HandBack>,
     flagged: bool,
@@ -343,6 +353,8 @@ fn start(
                 body,
                 rig,
                 frames: [parts.clone(), parts],
+                weights: [1.0; 2],
+                shown_weight: 1.0,
                 takeover,
                 sim,
                 frozen: pose,
@@ -365,16 +377,21 @@ fn start(
 fn step(fixed: Res<Time<Fixed>>, mut takeovers: ResMut<Takeovers>, mut stats: ResMut<DeliriumStats>) {
     let dt = fixed.delta_secs();
     let t0 = Instant::now();
-    for l in takeovers.live.values_mut() {
+    for (root, l) in &mut takeovers.live {
         if l.hand_back.is_some() {
             continue;
         }
         for (part, at, impulse) in l.pushes.drain(..) {
             l.takeover.push(part, at, impulse);
         }
+        let was = l.takeover.blending();
         l.hand_back = l.takeover.step(dt);
+        if !was && l.takeover.blending() {
+            info!("delirium: {root} recovered, blending out to the animation ({:.1} s after the takeover)", l.takeover.time);
+        }
         let now = l.takeover.frames();
         l.frames = [std::mem::replace(&mut l.frames[1], now.clone()), now];
+        l.weights = [l.weights[1], l.takeover.weight];
     }
     stats.step_us = t0.elapsed().as_secs_f32() * 1e6;
     stats.peak_step_us = stats.peak_step_us.max(stats.step_us);
@@ -448,14 +465,19 @@ fn read_back(
         let Ok((mut animator, physics)) = animators.get_mut(l.body) else { continue };
         let Some((_, mut frame, _)) = world_frame(l.body, &frames.p0(), &roots) else { continue };
         let parts = lerp_parts(&l.frames[0], &l.frames[1], alpha);
+        let weight = l.weights[0] + (l.weights[1] - l.weights[0]) * alpha;
         let asset = animator.asset.clone();
         let skeleton = &asset.skeleton;
         let finite = parts.iter().all(|p| p.translation.is_finite() && p.rotation.is_finite());
         let pose = if finite {
-            let to = follow_frame(l, &parts);
-            if let Ok(mut t) = frames.p1().get_mut(l.body) {
-                move_frame(&mut t, &frame, l.scale, &to);
-                frame = to;
+            // The frame follows the pelvis under full physics; during the blend-out it stays put: the graph's pose
+            // stands in it (no slide), and the physics pose is read in whichever frame it is.
+            if weight >= 1.0 {
+                let to = follow_frame(l, &parts);
+                if let Ok(mut t) = frames.p1().get_mut(l.body) {
+                    move_frame(&mut t, &frame, l.scale, &to);
+                    frame = to;
+                }
             }
             shown_pose(l, skeleton, &parts, &frame)
         } else {
@@ -471,13 +493,14 @@ fn read_back(
             match physics {
                 Some(mut p) => {
                     p.pose.clone_from(&pose);
-                    p.weight = 1.0;
+                    p.weight = weight;
                     p.weights.clear();
                 }
                 None => {
-                    commands.entity(l.body).try_insert(PhysicsPose { pose: pose.clone(), weight: 1.0, weights: Vec::new() });
+                    commands.entity(l.body).try_insert(PhysicsPose { pose: pose.clone(), weight, weights: Vec::new() });
                 }
             }
+            l.shown_weight = weight;
             l.last_pose = Some(pose);
             continue;
         };
@@ -492,6 +515,8 @@ fn read_back(
         } else if how == HandBack::Exploded {
             warn!("delirium: {root} blew up: handed back from its last good pose");
             animator.instance.inertialize_from(&previous, &previous, dt, HAND_BACK_BLEND);
+        } else if how == HandBack::Balanced && l.shown_weight < BLENDED_OUT {
+            // Blended out: the graph's pose is the one shown already; it carries on.
         } else {
             if how == HandBack::Fallen {
                 info!("delirium: {root} has no {GET_UP_CLIP} clip: handed back lying, the graph blends it up");

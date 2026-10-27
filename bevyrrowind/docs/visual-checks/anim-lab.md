@@ -130,15 +130,18 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slice 2a; open: owner 2026-10-26: takeovers, catch steps and falls work, but the pelvis bobs and the reaction seems to fight the IK; audit in progress)
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slice 2b; confirmed with follow-up 2026-10-27: recovery works; fallen get-up does an unnatural flip)
 Dev build (feature `delirium`, part of `dev`): `cargo build -p bevyrrowind --features dev`, then
 `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`). Left-click a human NPC (Fargoth far left,
 Elone centre; not the knockdown dummy, the Khajiit or the Argonian): plain 45, Ctrl 20, Shift 80 N s at the clicked part along the
 view ray; clicking again while it reacts pushes that part. Look for: the push lands where you clicked (head, chest, hips), the body
-reacts and takes catch steps instead of popping, no stretched or sunk limbs, the frame (shadow, culling) stays with it, and once it
-stands still (~1-7 s) a smooth blend back into the idle where it stands. Shift-click the head a few times to make one fall: it lies
-for 1.5-4 s, then the get-up clip starts from the lying pose (log: `delirium: ... fell`, `handed back (Fallen)`). Live run
-2026-10-26: Elone 45 N s on Spine0, balanced in 2.7 s; on the hips, 6.5 s. Fall + get-up not yet seen live.
-Owner 2026-10-27 (after the IK fixes): after recovering they stand in Delirium's own stance, not the Morrowind idle, then ease
-into the idle a few seconds later (looks weird). Cause: bodyBalance holds its zero pose until still (0.5 s at < 5 cm/s), then a
-0.3 s hand-back; the balance target should be the graph's idle pose. Still no fall from 4 Shift-clicks (all Balanced).
+reacts and takes catch steps instead of popping, no stretched or sunk limbs, the frame (shadow, culling) stays with it. Shift-click
+the head a few times to make one fall: it lies for 1.5-4 s, then the get-up clip starts from the lying pose (log: `delirium: ...
+fell`, `handed back (Fallen)`). Owner 2026-10-27: recovered actors stood in Delirium's own stance, then eased into the idle
+seconds later. Slice 2b: once the catch steps end and the body is slow (no step, centre of mass < 0.25 m/s for 0.15 s),
+Delirium's share fades 1 -> 0 over 0.5 s with the idle showing through, the body staying where it stands; then the graph just
+carries on (no second ease). A click during the fade brings the physics back. Look for: no "arms out" stance after the steps,
+one continuous blend into the idle, no pop or foot slide at the end. Log: `recovered, blending out ...`, then `handed back
+(Balanced) after X s`. Headless (`recovery_to_idle`): at the idle 2.6-3.1 s -> 1.0-1.9 s after the push; time in the stance
+after the last step 1.7-2.0 s -> 0.2-0.4 s. Live 2026-10-27: Elone 45 N s on the hips, blend from 0.5-1.0 s, handed back at
+1.0-1.5 s, standing in the idle. Fall not seen live.

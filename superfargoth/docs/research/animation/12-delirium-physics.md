@@ -373,3 +373,13 @@ Supersedes R9 above: Delirium entered the game as ROADMAP 3.2b, not as the FOLLO
   Dev click (left; Ctrl 20 / 45 / Shift 80 N s). Human skeletons only (beasts logged). Live: balanced hand-backs seen.
 - Next: fall + get-up live check (BRP clicks were unreliable), Rapier statics into Delirium's world, non-uniform scale
   pelvis anchor at hand-back (as `anchor_pelvis`), a BRP agent tool for scripted pushes.
+
+## As built (slice 2b, 2026-10-27): blend-out to the idle
+Owner (DE-1): recovered actors stood in bodyBalance's zero-pose stance until "still" (0.5 s under 5 cm/s), then a 0.3 s
+hand-back. Now the powered-ragdoll blend-out to animation (UE physical-animation blend weight, Euphoria blend-out):
+`Takeover` is "recovered" once `Agent::balance_steps` shows no step and the CoM is under 0.25 m/s horizontally for 0.15 s
+(Delirium's own `settled` uses 0.25 m/s for 0.4 s), then `Takeover::weight` ramps 1 -> 0 over 0.5 s (a push or new step
+ramps it back over 0.1 s), and `Balanced` fires at 0. The host feeds it as the `PhysicsPose` weight (the graph blends per
+joint after its ops, which fade in with it) and freezes the frame during the fade; no inertialization at the end.
+`recovery_to_idle` (8 dirs x 20/45/80 N s, median/max): at the idle 2.6-3.1 / 3.7 s -> 1.0-1.9 / 2.05 s; time in the
+stance after the last step 1.7-2.0 / 2.75 s -> 0.2-0.4 / 0.5 s. Not done: a step-to-idle foot fix-up (feet may slide).
