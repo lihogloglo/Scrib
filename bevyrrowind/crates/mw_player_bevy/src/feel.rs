@@ -31,6 +31,11 @@ pub const FACING_HALFLIFE: f32 = 0.1;
 /// `sf_controller_bevy::MEASURE_HALFLIFE`, 0.05). Shorter: the legs catch up sooner on
 /// starts and stops; longer hides step-up spikes.
 pub const MEASURE_HALFLIFE: f32 = 0.025;
+/// The player's gravity, m/s² (owner 2026-10-27: 9.81 made the jump "floaty"). The jump
+/// height stays `CharacterParams::jump_height` (1.0 m), so this only shortens the arc:
+/// air time 2·sqrt(2h/g) = 0.90 s at 9.81, 0.67 s at 18. Reference: ELDEN RING Combat
+/// Rewrite `src/sim/data.rs` `GRAVITY` 18 (an estimate there). Falls get faster too.
+pub const GRAVITY: f32 = 18.0;
 
 /// The player's motion springs.
 pub fn springs() -> SpringParams {
@@ -47,7 +52,7 @@ pub fn springs() -> SpringParams {
     }
 }
 
-/// The player's mover: the generic human shape with [`springs`].
+/// The player's mover: the generic human shape with [`springs`] and [`GRAVITY`].
 pub fn mover_params() -> MoverParams {
-    MoverParams { springs: springs(), ..MoverParams::default() }
+    MoverParams { springs: springs(), gravity: GRAVITY, ..MoverParams::default() }
 }

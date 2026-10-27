@@ -36,6 +36,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Tweak: `crates/mw_player_bevy/src/feel.rs` (half-lives, turn rates, feed smoothing); gait blends `mw_graphs` build.rs
   `GAIT_BLEND` 0.15 s / `DIRECTION_SMOOTHING` 0.05 s (shared with NPCs, re-bless). Status: confirmed with follow-up
   (owner 2026-10-27: "much much better, about right"; jump air time is long and floaty). Wanted later: run + Ctrl slide.
+  Jump fix 2026-10-27: player gravity 9.81 -> 18 m/s² (`feel.rs` `GRAVITY`; height still 1 m): air 0.90 -> 0.67 s. Awaiting owner.
 
 ### PL-3: Jump take-off held in the air, landing on touchdown (`cargo dev scene level-anim-ledges`, F11 player)
 - Humanoid graph B2: `jump` plays `Jump@head` and holds it while airborne; touchdown plays `Jump@tail` (`land`), then

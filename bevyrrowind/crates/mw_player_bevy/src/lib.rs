@@ -304,7 +304,8 @@ fn spawn_body(
     let (cell, transform) = to_grid(feet);
     let params = feel::mover_params();
     let half = params.height / 2.0;
-    let measures = CharacterParams { height: params.height, radius: params.radius, ..CharacterParams::default() };
+    let measures =
+        CharacterParams { gravity: params.gravity, height: params.height, radius: params.radius, ..CharacterParams::default() };
     let character = ActionCharacter::new(PLAYER_CHARACTER, ActionState::new(RuleKey::of("loco")), measures);
     let body = ActionBody::new(Locomotion::new(feet, yaw), params, from_grid(&cell, &Transform::IDENTITY));
     let player = PlayerId::new(0).expect("player 0 is valid");

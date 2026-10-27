@@ -88,8 +88,9 @@ fn player_motion_is_sane() {
         assert!(t > 0.0 && t < 2.0, "never arrived: {t}");
     }
     assert!(f.stop_d > 0.0 && f.stop_d < 3.0);
-    // Only the springs differ from the generic shape.
-    assert_eq!(MoverParams { springs: SpringParams::default(), ..feel::mover_params() }, MoverParams::default());
+    // Only the springs and gravity differ from the generic shape.
+    let generic = MoverParams::default();
+    assert_eq!(MoverParams { springs: generic.springs, gravity: generic.gravity, ..feel::mover_params() }, generic);
 }
 
 #[test]
