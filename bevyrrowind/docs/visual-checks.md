@@ -92,7 +92,7 @@ AL-4 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Traversal height
 AL-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Props push
 AL-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
-AL-8 | awaiting owner (camera fix 2026-10-27; body clipping into the box stays logged: clip, B2b IK) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
+AL-8 | confirmed with follow-up (2026-10-27: camera solved; hands on the lip + clipping: B2b next) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
 AL-9 | confirmed | [anim-lab](visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
@@ -111,7 +111,7 @@ AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds
 PL-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Third-person walk and the use prompt
 PL-2 | confirmed with follow-up (2026-10-27: movement has too much inertia; see PL-4) | [player-ui](visual-checks/player-ui.md) | Animated player body (dressed `player` record, humanoid graph)
 PL-3 | confirmed | [player-ui](visual-checks/player-ui.md) | Jump: take-off held in the air, landing on touchdown (graph B2)
-PL-4 | confirmed with follow-up (2026-10-27: "about right"; jump air time floaty) | [player-ui](visual-checks/player-ui.md) | Movement feel: starts, stops, reversals (player feel tuning)
+PL-4 | confirmed (2026-10-27: "about right"; jump fixed with gravity 18) | [player-ui](visual-checks/player-ui.md) | Movement feel: starts, stops, reversals (player feel tuning)
 IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
 PM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
 SV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)

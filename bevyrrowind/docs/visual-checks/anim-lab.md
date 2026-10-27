@@ -47,7 +47,8 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Camera fix 2026-10-27 (camera.md "As built (traversal pivot)"): the pivot rode the climb root through the lip, so on the
   1.5 m box jumped from close the arm collapsed into the chest; now the pivot leads up to the top's height. Look for:
   walk-jump onto the orange box from close and from ~1.5 m out: the camera rises smoothly ahead of the body, keeps its
-  distance, no pop in. Walls still pull it in. Status: camera awaiting owner.
+  distance, no pop in. Walls still pull it in. Status: camera confirmed (owner 2026-10-27: "solved"); hands on the lip
+  and the body clipping: B2b (next).
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.

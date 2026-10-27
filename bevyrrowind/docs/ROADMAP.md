@@ -93,6 +93,8 @@ in the world; only the release start path (or a session working on the menu) sho
   old P11. Clip sources: packs only (free first).
   Potential (owner 2026-10-22): evaluate MotionBricks as an animation source (licence, rig fit, quality vs packs).
   Wanted later (owner 2026-10-27, not urgent): run + Ctrl slide.
+  Next (owner 2026-10-27): B2b hands on the lip (hand IK, clip contacts; fixes most mantle clipping), then B2c wall
+  brace (free hand plants on a wall when running into it; busy hands skipped). After combat C1b, alongside C1c.
 - [~] 3.2 Ragdolls: R0 fixed, AN-1..21 fixed, PH-2 awaiting owner (`level-anim-drop`). Left: limp_drop/stairs stretch gates, beast toe pin, powered falls (PH-9). Order `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
 - [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
   `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
