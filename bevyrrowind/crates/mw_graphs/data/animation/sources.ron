@@ -1,31 +1,37 @@
 // Animation sources (bevyrrowind/docs/specs/animation-sources.md "Import profile").
-// Bring your own: the bake reads these files from the user's library folder
-// (BEVYRROWIND_ANIM_SOURCES, default `<repo>/animation packs`); nothing here
-// is downloaded, and no third-party clip is in the repo or a release.
+// The bake reads these files from the user's library folder (BEVYRROWIND_ANIM_SOURCES,
+// default `<repo>/animation packs`), then the repo's bundled folder
+// (`bevyrrowind/assets/animation/quaternius`, Git LFS): the CC0 Quaternius packs ship
+// in the repo (owner 2026-10-27); the others are bring-your-own, never downloaded.
 // A slot's candidates are tried in order (first whose file is present and
 // holds the clip), then its fallback. Slot names: superfargoth action.md
 // "Move taxonomy" (`kind.family.variant`).
 (
   sources: {
     "quaternius_ual1": (
-      title: "Quaternius Universal Animation Library (full, 126 clips)",
+      title: "Quaternius Universal Animation Library (full, 120 clips, root motion export)",
       license: CC0,
       page: "https://quaternius.itch.io/universal-animation-library",
+      attribution: Some("Universal Animation Library by Quaternius (CC0)"),
+      // Bundled (bevyrrowind/assets/animation/quaternius/PROVENANCE.md). The `_RM` export:
+      // every clip keeps its root-bone travel (the plain UAL1.glb holds the root still).
       files: [
-        (name: "AnimationLibrary_Godot.glb", sha256: "f0a1bb22ae29c22a2eb91e2e4641251f9bfbc4470c2153da5666c76c3adf8cef"),
+        (name: "UAL1_RM.glb", sha256: "9caacb49bc1bf22457d9152288f2e5c37ff52e6546706bdf7755102108c55a53"),
       ],
       // glTF: meters, +Y up, facing +Z (the importer's own space).
       unit_scale: 1.0,
       up: Y,
     ),
     "quaternius_ual2": (
-      title: "Quaternius Universal Animation Library 2 (Standard)",
+      title: "Quaternius Universal Animation Library 2 (full, 134 clips, root motion export)",
       license: CC0,
       page: "https://quaternius.itch.io/universal-animation-library-2",
+      attribution: Some("Universal Animation Library 2 by Quaternius (CC0)"),
+      // Bundled, like UAL1 (the `_RM` export).
       files: [
-        (name: "Universal Animation Library 2 [Standard]/Unreal-Godot/UAL2_Standard.glb", sha256: "0815dd05531cae9bc313fc9c0ba81330bc72f8e19ec45f73738e74ddc5796a43"),
+        (name: "UAL2_RM.glb", sha256: "fecf2e0bf90808b51d12957d179c0cc6587c58d270a7b5b5c29cc2bae0e34332"),
       ],
-      // Same glTF rig family as UAL1 (meters, +Y up, facing +Z).
+      // The same rig as UAL1 (meters, +Y up, facing +Z).
       unit_scale: 1.0,
       up: Y,
     ),
@@ -59,7 +65,7 @@
   slots: {
     // Waist-high mantle (action.md B2a): one clip, warped onto the ledge by
     // the action clock (`Progress`), so its root track keeps the climb's rise
-    // and forward travel. First UAL2's baked `_RM` track, then LAFAN1's
+    // and forward travel. First UAL2's root-motion take, then LAFAN1's
     // run-in step-up onto a 1.05 m box (frames 5982-6036 at 30 Hz). No LAFAN1
     // waist mantle is a clean forward one: every walk-in knee mantle turns the
     // pelvis 45-130 degrees, and the one straight take (obstacles5_subject3
@@ -67,7 +73,7 @@
     "traverse.mantle.waist": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "ClimbUp_1m_RM"),
+        (source: "quaternius_ual2", clip: "ClimbUp_1m"),
         (source: "lafan1", file: Some("bvh/obstacles4_subject3.bvh"), clip: "obstacles4_subject3", range: Some((199.40, 201.20))),
       ],
       root: Progress,
@@ -79,7 +85,7 @@
     "traverse.climb.up": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual1", clip: "ClimbLedge_RM"),
+        (source: "quaternius_ual1", clip: "ClimbLedge"),
       ],
       root: Progress,
       vertical: true,
@@ -125,8 +131,8 @@
     ),
     // Combat C1b (combat-adapter.md "C1b: game items"; names = mw_combat::sheet_slots(SWORD_1H)).
     // Clip moves on the action clock (`Progress`); the sheet's windows are authored against
-    // each slot's first candidate. Light chain: UAL2's sword combo, then UAL1's single swing,
-    // then Morrowind's one-hand slash.
+    // each slot's first candidate. Light chain: UAL2's sword combo, then UAL1's single swing
+    // (its root-motion take steps 1.5 m; only without UAL2), then Morrowind's one-hand slash.
     "attack.sword_1h.light1": (
       graph: "humanoid",
       candidates: [
@@ -175,7 +181,7 @@
     "dodge.roll.fwd": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual1", clip: "Roll_RM"),
+        (source: "quaternius_ual1", clip: "Roll"),
       ],
       root: Progress,
       fallback: Drop,
@@ -183,7 +189,7 @@
     "dodge.roll.left": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual1", clip: "Dodge_Left_RM"),
+        (source: "quaternius_ual1", clip: "Dodge_Left"),
       ],
       root: Progress,
       fallback: Drop,
@@ -191,7 +197,7 @@
     "dodge.roll.right": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual1", clip: "Dodge_Right_RM"),
+        (source: "quaternius_ual1", clip: "Dodge_Right"),
       ],
       root: Progress,
       fallback: Drop,
@@ -234,7 +240,7 @@
     "react.medium.front": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Hit_Knockback_RM"),
+        (source: "quaternius_ual2", clip: "Hit_Knockback"),
       ],
       root: Progress,
       fallback: Clip("Hit5"),
@@ -242,7 +248,7 @@
     "react.large.front": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Hit_Knockback_RM"),
+        (source: "quaternius_ual2", clip: "Hit_Knockback"),
       ],
       root: Progress,
       fallback: Clip("Hit5"),

@@ -1531,3 +1531,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-27 (combat-spec): combat lives in new Bevy-free `sf_combat` + thin `sf_combat_bevy` (leaf off `sf_action`, which only gains the
   generic window kinds, `Clip` owner, forced moves, start gate, tap/hold). Rules seam `CombatRules` (begin_swing, resolve_contact,
   can_start, cost, regen); stats stay the implementor's, keyed by `CharacterId`. Spec `specs/combat.md`.
+- 2026-10-27 (quaternius-full): the full CC0 Quaternius UAL1 + UAL2 ship in the repo (owner), Git LFS, `bevyrrowind/assets/animation/quaternius/`:
+  only `UAL1_RM.glb` + `UAL2_RM.glb` (+ License/README/PROVENANCE; the plain exports differ only by a still root bone). `mw_bake`
+  searches the user library (`BEVYRROWIND_ANIM_SOURCES`, else `animation packs`) first, then that bundled folder; LaFAN1 stays BYO.

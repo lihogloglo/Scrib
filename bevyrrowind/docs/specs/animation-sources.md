@@ -56,7 +56,8 @@ before M4 (the pose-search database uses the same sources later).
 The project is non-commercial, so the NC sources are usable for the
 user's own bake. Whether the project ever ships CC0/CC BY-derived cooked
 clips (allowed by their licenses, with an attribution file) is an owner
-decision; until then everything is BYO for one uniform flow.
+decision; until then everything is BYO for one uniform flow. Owner 2026-10-27: the CC0 Quaternius packs ship in
+the repo (bundled folder, "As built"); the rest stays BYO.
 
 ## Import profile
 
@@ -148,7 +149,8 @@ as opaque strings).
 - Graph: the builder chains a slot's candidates as optional clips `slot` → `slot.alt<i>` → fallback (reference
   `source:clip`) and lists the slot in `slot_clips`; no move plays it yet. User-side source priority: not built.
 - Folder: `BEVYRROWIND_ANIM_SOURCES`, else `<repo>/animation packs` (compile-time default); `<dir>/<file>` or
-  `<dir>/<source>/<file>`. The bake names files `animsrc/<source>/<file>` (`VfsInputs::with_anim_sources`, stat-keyed).
+  `<dir>/<source>/<file>`, then the bundled `bevyrrowind/assets/animation/quaternius/<file>` (2026-10-27: the full CC0
+  UAL1 + UAL2 `_RM` exports, `UAL1_RM.glb`/`UAL2_RM.glb`, Git LFS; clip names lose the old `_RM` suffix). The bake names files `animsrc/<source>/<file>` (`VfsInputs::with_anim_sources`, stat-keyed).
 - `mw_bake`: phase 1 cooks a present file's skeleton and lists its clips (`mw.anim.source_clips`); source rig =
   `sf_character::auto_map` + auto-align (UAL1: 52 bones, clean); targets use the humanoid map, legs IK. `GraphRules` v2:
   `source:clip` → `anim.retarget` of an `anim.cook` on the library skeleton, `clip_files` = the library file,

@@ -3,7 +3,8 @@
 //! of their clips fill which clip slot of which graph.
 //!
 //! The manifest is ours (GPL) and ships in `data/animation/sources.ron`;
-//! the libraries never do. The graph builder turns every slot into a chain
+//! of the libraries, only the CC0 Quaternius packs ship (Git LFS,
+//! `bevyrrowind/assets/animation/quaternius`); the others are the user's. The graph builder turns every slot into a chain
 //! of optional graph clips (`slot` → `slot.alt1` → … → the slot's
 //! fallback), each sourced by a candidate reference `source:clip` (see
 //! [`Candidate::reference`]); `mw_bake` resolves those references to
@@ -299,7 +300,7 @@ mod tests {
         assert_eq!(lafan1.rest_frame, Some(0), "LAFAN1 takes open on the actor's T-pose");
         assert!(lafan1.files.iter().all(|f| f.sha256.len() == 64));
         let slot = &m.slots["traverse.mantle.waist"];
-        assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m_RM");
+        assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m");
         assert_eq!(slot.candidates[1].reference(), "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2");
         let refs = m.references().unwrap();
         let root = refs.iter().find(|r| r.reference.contains("obstacles4")).and_then(|r| r.retarget_root.clone()).unwrap();
@@ -308,7 +309,7 @@ mod tests {
         let getup = refs.iter().find(|r| r.reference.contains("fallAndGetUp2_subject3")).and_then(|r| r.retarget_root.clone()).unwrap();
         assert!(!getup.extract && getup.anchor_end);
         assert!(refs.iter().filter(|r| r.source != "lafan1").all(|r| r.retarget_root.is_none()));
-        assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge_RM");
+        assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge");
         let rules = slot.rules(&slot.candidates[0]);
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);
         assert!(rules.root_motion.vertical && rules.root_motion.extract);

@@ -10,7 +10,9 @@
 //!
 //! The folder: `BEVYRROWIND_ANIM_SOURCES` ([`LIBRARY_ENV`]), else
 //! `<repo>/animation packs` (gitignored), as the install path is an env
-//! override over a default.
+//! override over a default. After it, the bundled folder
+//! ([`bundled_dir`]: the CC0 Quaternius packs, tracked with Git LFS), so
+//! those resolve with no library at all and a library copy wins.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,13 @@ pub fn default_dir() -> PathBuf {
     crate_dir.ancestors().nth(3).unwrap_or(crate_dir).join("animation packs")
 }
 
+/// The repo's bundled library files: `<repo>/bevyrrowind/assets/animation/quaternius`
+/// (`PROVENANCE.md` there).
+pub fn bundled_dir() -> PathBuf {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    crate_dir.ancestors().nth(2).unwrap_or(crate_dir).join("assets").join("animation").join("quaternius")
+}
+
 /// Where the folder setting came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DirOrigin {
@@ -43,21 +52,24 @@ pub struct AnimSources {
     pub manifest: SourcesManifest,
     pub dir: PathBuf,
     pub origin: DirOrigin,
+    /// Searched after [`Self::dir`] ([`bundled_dir`] for [`Self::local`]).
+    pub bundled: Option<PathBuf>,
 }
 
 impl AnimSources {
     /// The shipped manifest over the local folder ([`LIBRARY_ENV`], else
-    /// [`default_dir`]).
+    /// [`default_dir`]), then the bundled one.
     pub fn local() -> Self {
-        match std::env::var_os(LIBRARY_ENV) {
-            Some(dir) => Self { manifest: SourcesManifest::builtin().clone(), dir: PathBuf::from(dir), origin: DirOrigin::Env },
-            None => Self { manifest: SourcesManifest::builtin().clone(), dir: default_dir(), origin: DirOrigin::Default },
-        }
+        let (dir, origin) = match std::env::var_os(LIBRARY_ENV) {
+            Some(dir) => (PathBuf::from(dir), DirOrigin::Env),
+            None => (default_dir(), DirOrigin::Default),
+        };
+        Self { manifest: SourcesManifest::builtin().clone(), dir, origin, bundled: Some(bundled_dir()) }
     }
 
-    /// A manifest over an explicit folder (tests, tools).
+    /// A manifest over an explicit folder (tests, tools), no bundled folder.
     pub fn new(manifest: SourcesManifest, dir: impl Into<PathBuf>) -> Self {
-        Self { manifest, dir: dir.into(), origin: DirOrigin::Explicit }
+        Self { manifest, dir: dir.into(), origin: DirOrigin::Explicit, bundled: None }
     }
 
     /// No libraries: every slot takes its fallback.
@@ -75,7 +87,10 @@ impl AnimSources {
     pub fn real_path(&self, path: &str) -> Option<PathBuf> {
         let (source, file) = path.strip_prefix(VIRTUAL_ROOT)?.split_once('/')?;
         self.manifest.sources.get(source)?.files.iter().find(|f| f.name == file)?;
-        [self.dir.join(file), self.dir.join(source).join(file)].into_iter().find(|p| p.is_file())
+        [Some(self.dir.join(file)), Some(self.dir.join(source).join(file)), self.bundled.as_ref().map(|b| b.join(file))]
+            .into_iter()
+            .flatten()
+            .find(|p| p.is_file())
     }
 
     /// Every candidate reference with its virtual file path.
@@ -104,7 +119,7 @@ impl AnimSources {
             let from = slot.candidates.iter().find(|c| present(c)).map(mw_graphs::sources::Candidate::reference);
             slots.push(SlotCheck { slot: name.clone(), graph: slot.graph.clone(), from, fallback: format!("{:?}", slot.fallback) });
         }
-        SourcesCheck { dir: self.dir.clone(), origin: self.origin, files, slots }
+        SourcesCheck { dir: self.dir.clone(), origin: self.origin, bundled: self.bundled.clone(), files, slots }
     }
 }
 
@@ -132,6 +147,7 @@ pub struct SlotCheck {
 pub struct SourcesCheck {
     pub dir: PathBuf,
     pub origin: DirOrigin,
+    pub bundled: Option<PathBuf>,
     pub files: Vec<FileCheck>,
     pub slots: Vec<SlotCheck>,
 }
@@ -144,6 +160,9 @@ impl fmt::Display for SourcesCheck {
             DirOrigin::Explicit => "explicit".to_owned(),
         };
         writeln!(f, "library folder: {} ({origin})", self.dir.display())?;
+        if let Some(b) = &self.bundled {
+            writeln!(f, "bundled folder: {}", b.display())?;
+        }
         for file in &self.files {
             match (&file.path, file.size) {
                 (Some(p), size) => writeln!(f, "  present  {} {} ({}, {} bytes) {}", file.source, file.name, file.license, size.unwrap_or(0), p.display())?,
@@ -168,21 +187,32 @@ mod tests {
     fn virtual_paths_map_into_the_folder() {
         let dir = tempfile::tempdir().unwrap();
         let sources = AnimSources::new(SourcesManifest::builtin().clone(), dir.path());
-        let v = AnimSources::virtual_path("quaternius_ual1", "AnimationLibrary_Godot.glb");
-        assert_eq!(v, "animsrc/quaternius_ual1/AnimationLibrary_Godot.glb");
+        let v = AnimSources::virtual_path("quaternius_ual1", "UAL1_RM.glb");
+        assert_eq!(v, "animsrc/quaternius_ual1/UAL1_RM.glb");
         assert!(sources.real_path(&v).is_none());
         assert!(sources.check().slots.iter().all(|s| s.from.is_none()));
 
         std::fs::create_dir(dir.path().join("quaternius_ual1")).unwrap();
-        std::fs::write(dir.path().join("quaternius_ual1/AnimationLibrary_Godot.glb"), b"x").unwrap();
+        std::fs::write(dir.path().join("quaternius_ual1/UAL1_RM.glb"), b"x").unwrap();
         assert!(sources.real_path(&v).is_some(), "a per-source subfolder works too");
         assert!(sources.real_path("animsrc/quaternius_ual1/other.glb").is_none(), "only manifest files");
-        assert!(sources.real_path("animsrc/nope/AnimationLibrary_Godot.glb").is_none());
+        assert!(sources.real_path("animsrc/nope/UAL1_RM.glb").is_none());
         let check = sources.check();
         let climb = check.slots.iter().find(|s| s.slot == "traverse.climb.up").unwrap();
-        assert_eq!(climb.from.as_deref(), Some("quaternius_ual1:ClimbLedge_RM"));
+        assert_eq!(climb.from.as_deref(), Some("quaternius_ual1:ClimbLedge"));
         assert!(check.slots.iter().find(|s| s.slot == "traverse.mantle.waist").unwrap().from.is_none(), "UAL1 serves no mantle");
         assert!(default_dir().ends_with("animation packs") && default_dir().parent().unwrap().join("bevyrrowind").is_dir());
         assert!(check.to_string().contains("present  quaternius_ual1"));
+
+        // The bundled folder comes after the library: a library copy wins.
+        let bundled = tempfile::tempdir().unwrap();
+        std::fs::write(bundled.path().join("UAL1_RM.glb"), b"y").unwrap();
+        let both = AnimSources { bundled: Some(bundled.path().to_owned()), ..sources.clone() };
+        assert_eq!(both.real_path(&v), sources.real_path(&v));
+        let only = AnimSources { bundled: Some(bundled.path().to_owned()), ..AnimSources::new(sources.manifest.clone(), "") };
+        assert_eq!(only.real_path(&v), Some(bundled.path().join("UAL1_RM.glb")));
+        assert!(only.real_path(&AnimSources::virtual_path("quaternius_ual2", "UAL2_RM.glb")).is_none());
+        assert!(bundled_dir().ends_with("bevyrrowind/assets/animation/quaternius"));
+        assert_eq!(AnimSources::local().bundled, Some(bundled_dir()));
     }
 }

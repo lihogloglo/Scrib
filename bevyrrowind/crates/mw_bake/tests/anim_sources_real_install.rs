@@ -1,12 +1,13 @@
 //! Library clips through the bake (animation-sources.md): Quaternius UAL2's
-//! `ClimbUp_1m_RM` cooked on the library's skeleton and retargeted onto the
+//! `ClimbUp_1m` cooked on the library's skeleton and retargeted onto the
 //! humanoid skeletons, the humanoid graph's `traverse.mantle.waist` slot
 //! resolving to it with CC0 provenance; LAFAN1's mocap mantle (the shipped
 //! first candidate) with root motion from the target pelvis, private only.
 //! Sanity only (rule 5); the numbers come from the ignored measurement tests
 //! (`-- --ignored --nocapture`).
 //! Skips (passes) without a Morrowind install or the library file
-//! (`BEVYRROWIND_ANIM_SOURCES`, default `<repo>/animation packs`).
+//! (`BEVYRROWIND_ANIM_SOURCES`, default `<repo>/animation packs`, then the bundled
+//! `bevyrrowind/assets/animation/quaternius`).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -27,12 +28,12 @@ use sf_character::{HumanoidBone as B, RigMap};
 use sf_vfs::Vfs;
 
 const SLOT: &str = "traverse.mantle.waist";
-const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m_RM";
+const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m";
 /// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
 /// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 2 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge_RM`, for B3), the 14 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
+/// `ClimbLedge`, for B3), the 14 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
 const SLOTS: usize = 18;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
@@ -65,7 +66,7 @@ fn setup_with(reference: &'static str, only_lafan1: bool) -> Option<Setup> {
             slot.candidates.retain(|c| (c.source == "lafan1") == only_lafan1);
         }
     }
-    let sources = Arc::new(AnimSources::new(manifest, local.dir.clone()));
+    let sources = Arc::new(AnimSources { manifest, ..local });
     let (file, _) = sources.references().into_iter().find(|(_, r)| r.reference == reference).expect("the manifest names the mantle clip");
     if sources.real_path(&file).is_none() {
         eprintln!("{file} not in {}; skipping", sources.dir.display());

@@ -16,7 +16,8 @@ Morrowind's data is not included: point the game at your own install.
 [GPL-3.0-or-later](LICENSE), with an additional permission (GPLv3 section 7) for GPU vendor runtimes such as
 NVIDIA DLSS ([LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md)). The game binary contains no NVIDIA code: DLSS is an
 optional plugin package (`superfargoth/plugins/sf_dlss`) installed separately. Vendored crates under
-`superfargoth/vendor/` keep their own licences.
+`superfargoth/vendor/` keep their own licences. Bundled third-party assets: the Quaternius Universal Animation
+Library 1 and 2 (CC0 1.0, by Quaternius; Git LFS) in `bevyrrowind/assets/animation/quaternius/` (`PROVENANCE.md`).
 
 Until 2026-10-25 the framework and the game were two repositories (`superfargoth`, MIT OR Apache-2.0 then, and
 `bevyrrowind`); both histories are merged here.

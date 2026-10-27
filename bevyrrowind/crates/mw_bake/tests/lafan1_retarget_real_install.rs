@@ -28,7 +28,7 @@ use sf_vfs::{Vfs, VfsPath};
 const TARGET: &str = "meshes/base_anim.nif";
 const GET_UPS: [&str; 4] = ["getup.supine", "getup.prone", "getup.side_left", "getup.side_right"];
 /// UAL2 (rest = a real T-pose): the regression reference.
-const UAL2: (&str, &str) = ("quaternius_ual2", "ClimbUp_1m_RM");
+const UAL2: (&str, &str) = ("quaternius_ual2", "ClimbUp_1m");
 
 /// A bone shown and measured: its humanoid bone, the next bone (its
 /// direction), its canonical T-pose direction and "up" (flat face / kneecap).
@@ -380,7 +380,7 @@ fn measure_lafan1_retarget_twist() {
 /// UAL2 (a T-pose rest): the same numbers with the source's rest as its
 /// reference, so a change to the BVH path can be checked against it.
 #[test]
-#[ignore = "measurement: UAL2 ClimbUp_1m_RM on base_anim, same metrics (regression reference)"]
+#[ignore = "measurement: UAL2 ClimbUp_1m on base_anim, same metrics (regression reference)"]
 fn measure_ual2_retarget_twist() {
     let Some(vfs) = install() else { return };
     let sources = AnimSources::local();
@@ -394,6 +394,6 @@ fn measure_ual2_retarget_twist() {
     let s_ref: Vec<Quat> = model_of(&rig.source.skeleton, rig.source.skeleton.rest()).iter().map(rot).collect();
     let range = (0.0, clip.duration);
     println!("{}", rig.report);
-    print_stats("ual2 ClimbUp_1m_RM", &measure(&rig, &s_ref, &bound, range));
+    print_stats("ual2 ClimbUp_1m", &measure(&rig, &s_ref, &bound, range));
     dump(&rig, &s_ref, &bound, range, "ual2_climb");
 }

@@ -409,7 +409,7 @@ struct SkeletonData {
     retarget: Option<RetargetRig>,
 }
 
-/// A library clip reference (`quaternius_ual1:ClimbLedge_RM`) as the rules
+/// A library clip reference (`quaternius_ual1:ClimbLedge`) as the rules
 /// resolve it.
 #[derive(Clone, Debug)]
 struct LibraryRef {
@@ -636,7 +636,7 @@ pub struct AnimBakeReport {
     /// Library clips retargeted (`anim.retarget` products requested).
     pub library_clips: usize,
     /// Per manifest slot: where it came from or why it fell back
-    /// (`traverse.mantle.waist: quaternius_ual1:ClimbLedge_RM`).
+    /// (`traverse.mantle.waist: quaternius_ual1:ClimbLedge`).
     pub slots: Vec<String>,
 }
 
@@ -941,8 +941,8 @@ mod tests {
 
     #[test]
     fn library_references_retarget_and_drop() {
-        const R: &str = "quaternius_ual1:ClimbLedge_RM";
-        const FILE: &str = "animsrc/quaternius_ual1/AnimationLibrary_Godot.glb";
+        const R: &str = "quaternius_ual1:ClimbLedge";
+        const FILE: &str = "animsrc/quaternius_ual1/UAL1_RM.glb";
         let mut rules = MwAnimRules::default();
         rules.add_library(&AnimSources::none());
         assert!(rules.library.is_empty());
@@ -958,7 +958,7 @@ mod tests {
         let p = GraphRules::provenance(&rules, "g", R, &key);
         assert_eq!((p.source.as_str(), p.license.as_str(), p.redistributable), ("quaternius_ual1", "CC0-1.0", true));
         let spec = AnimRules::clip(&rules, FILE, R, FILE);
-        assert_eq!(spec.source, "ClimbLedge_RM");
+        assert_eq!(spec.source, "ClimbLedge");
         assert_eq!(spec.rules.root_motion.mode, sf_anim::RootMotionMode::Progress);
         assert_eq!(GraphRules::version(&rules), GRAPH_RULES_VERSION);
 
