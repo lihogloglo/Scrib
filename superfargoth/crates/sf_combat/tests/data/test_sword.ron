@@ -55,6 +55,14 @@
             slots: ["dodge.test.roll"], rate: 1.25, root_scale: 0.75, square_up: Stick,
             cost: 12.0, iframes: [(0.02, 0.40, All)],
             windows: [Cancel([Light, Heavy], 0.60, End), Cancel([Dodge], 0.65, End), Cancel([Move], 0.70, End), NoTurn(0.0, End)],
+            locked: { Left: "roll_left" },
+        ),
+        // Locked on with the stick left of the target: faces it, the root track goes left (+X).
+        "roll_left": (
+            category: Dodge, classes: [Dodge],
+            slots: ["dodge.test.roll.left"], rate: 1.25, root_scale: 0.75, square_up: Lock,
+            cost: 12.0, iframes: [(0.02, 0.36, All)],
+            windows: [Cancel([Light, Heavy], 0.60, End), Cancel([Dodge], 0.65, End), Cancel([Move], 0.70, End), NoTurn(0.0, End)],
         ),
     },
     reactions: { (Small, Front): "react.test.small.front", (Medium, Front): "react.test.medium.front" },

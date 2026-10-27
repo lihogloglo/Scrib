@@ -64,21 +64,28 @@
             category: Dodge, classes: [Dodge], from: [Any], rank: 10,
             slots: ["dodge.roll.fwd"], rate: 1.25, root_scale: 0.75, square_up: Stick,
             cost: 12.0, iframes: [(0.02, 0.40, All)],
-            windows: [Cancel([Light, Heavy], 0.75, End), Cancel([Dodge], 0.80, End), Cancel([Move], 0.95, End), NoTurn(0.0, End)],
+            // Cancels open as the motion ends (Roll: 99% of its travel by clip 0.87 s = move 0.69 s), no settle tail.
+            windows: [Cancel([Light, Heavy], 0.70, End), Cancel([Dodge], 0.72, End), Cancel([Move], 0.74, End), NoTurn(0.0, End)],
+            // Locked on (C1c), the stick's side of the target picks the roll. Front and back keep
+            // this roll squared up to the stick: no back-roll or backstep clip yet, so a back
+            // input turns away and rolls clear (the ER back roll's travel, not its look).
             locked: { Left: "roll_left", Right: "roll_right" },
         ),
-        // Reached only through `locked` (lock-on, C1c).
+        // Reached only through `locked`: the body faces the target, the clip carries it sideways.
+        // UAL1_RM Dodge_Left/Right: 1.30 s clip, root travel 2.01 m (glb units) done by clip 0.47 s
+        // (99%; Roll: 4.99 m by 0.87 s). Rate 1.4 puts the end of motion at move 0.33 s; the cancels
+        // open right after it so the clip's settle tail never holds the player.
         "roll_left": (
             category: Dodge, classes: [Dodge],
-            slots: ["dodge.roll.left"], rate: 1.25, square_up: Stick,
-            cost: 12.0, iframes: [(0.02, 0.36, All)],
-            windows: [Cancel([Light, Heavy], 0.65, End), Cancel([Dodge], 0.70, End), Cancel([Move], 0.85, End), NoTurn(0.0, End)],
+            slots: ["dodge.roll.left"], rate: 1.4, square_up: Lock,
+            cost: 12.0, iframes: [(0.02, 0.30, All)],
+            windows: [Cancel([Dodge], 0.34, End), Cancel([Light, Heavy], 0.36, End), Cancel([Move], 0.38, End), NoTurn(0.0, End)],
         ),
         "roll_right": (
             category: Dodge, classes: [Dodge],
-            slots: ["dodge.roll.right"], rate: 1.25, square_up: Stick,
-            cost: 12.0, iframes: [(0.02, 0.36, All)],
-            windows: [Cancel([Light, Heavy], 0.65, End), Cancel([Dodge], 0.70, End), Cancel([Move], 0.85, End), NoTurn(0.0, End)],
+            slots: ["dodge.roll.right"], rate: 1.4, square_up: Lock,
+            cost: 12.0, iframes: [(0.02, 0.30, All)],
+            windows: [Cancel([Dodge], 0.34, End), Cancel([Light, Heavy], 0.36, End), Cancel([Move], 0.38, End), NoTurn(0.0, End)],
         ),
     },
     reactions: {

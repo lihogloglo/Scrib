@@ -40,7 +40,7 @@ pub use command::{
 pub use ids::{CharacterId, ClockTime, MovesetKey, PlayerId, RuleKey, SlotKey, TICK_HZ, TagId, TargetId, Tick, fnv1a32};
 pub use rule::{
     Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, Mode, MoveKind, MoveRule, ObstacleClass, Origin, Owner, Phase,
-    Prev, PrevKey, ProbeNeed, RuleSet, RuleSetBuilder, SquareUp, WarpTarget, WindowPolicy,
+    Prev, PrevKey, ProbeNeed, RuleSet, RuleSetBuilder, SquareUp, StickSide, WarpTarget, WindowPolicy,
 };
 pub use state::{
     ActionClock, ActionState, BodyMemory, CharacterParams, Forced, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers, WarpState,

@@ -93,6 +93,36 @@ pub enum SquareUp {
     Keep,
     /// Snap to the stick when it is active (unlocked rolls).
     Stick,
+    /// Face the lock target ([`crate::Sense::lock_target`]; locked side rolls, whose clip carries
+    /// the body sideways); [`SquareUp::Stick`] when not locked on.
+    Lock,
+}
+
+/// Where the active stick points relative to the lock target's direction ([`Entry::lock`]):
+/// front and back within +-45 deg, as `sf_combat::Side` classifies hits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum StickSide {
+    Front,
+    Back,
+    Left,
+    Right,
+}
+
+impl StickSide {
+    /// The side of `toward` (planar: world x, z) that `stick` points at; `None` when either is zero.
+    pub fn of(toward: glam::Vec2, stick: glam::Vec2) -> Option<Self> {
+        let fwd = toward.try_normalize()?;
+        let stick = stick.try_normalize()?;
+        // Right of a facing (sin y, cos y) is (-cos y, sin y): (x, z) -> (-z, x).
+        let (f, r) = (stick.dot(fwd), stick.dot(glam::Vec2::new(-fwd.y, fwd.x)));
+        Some(if f.abs() >= r.abs() {
+            if f >= 0.0 { Self::Front } else { Self::Back }
+        } else if r >= 0.0 {
+            Self::Right
+        } else {
+            Self::Left
+        })
+    }
 }
 
 /// Where a Warp owner's plan lands.
@@ -165,6 +195,9 @@ pub struct Entry {
     pub moveset: Option<String>,
     /// The move it may start from (any of these; empty = any): combo chains and openers.
     pub from: Vec<Prev>,
+    /// Needs a lock-on target with the active stick on this side of it ([`StickSide::of`]; C1c
+    /// locked rolls).
+    pub lock: Option<StickSide>,
 }
 
 /// A move a rule may start from ([`Entry::from`]). Not `From`, which would shadow the std trait.

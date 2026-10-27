@@ -13,7 +13,7 @@ use crate::command::{ActionClass, ClassSet, Command};
 use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
 
 use crate::ids::{CharacterId, ClockTime, MovesetKey, RuleKey, SlotKey, TagId, TargetId, Tick, TICK_HZ};
-use crate::rule::{Category, CompiledRule, ExitOn, Launch, Mode, ObstacleClass, Owner, Phase, PrevKey, ProbeNeed, RuleSet, SquareUp, WarpTarget};
+use crate::rule::{Category, CompiledRule, ExitOn, Launch, StickSide, Mode, ObstacleClass, Owner, Phase, PrevKey, ProbeNeed, RuleSet, SquareUp, WarpTarget};
 use crate::state::{ActionClock, ActionState, CharacterParams, RATE_ONE, WarpState};
 use crate::windows::{Gates, SlotSource, WindowKind, gates, locate, open_windows};
 
@@ -120,6 +120,8 @@ pub enum Refused {
     Moveset,
     /// The current move isn't one the rule starts from ([`crate::Entry::from`]).
     Prev,
+    /// Not locked on, or the stick is on another side of the target ([`crate::Entry::lock`]).
+    Lock,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +218,8 @@ struct Facts {
     obstacle: Option<Obstacle>,
     body_height: f32,
     moveset: Option<MovesetKey>,
+    /// The stick's side of the lock target (locked and the stick active).
+    lock_side: Option<StickSide>,
 }
 
 impl Facts {
@@ -243,6 +247,9 @@ impl Facts {
         }
         if e.need_forward && !self.forward {
             return Err(Refused::Forward);
+        }
+        if e.lock.is_some() && e.lock != self.lock_side {
+            return Err(Refused::Lock);
         }
         if !within(e.speed, self.speed) {
             return Err(Refused::Speed);
@@ -334,6 +341,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         obstacle: sense.obstacle,
         body_height: p.height,
         moveset: state.mode.moveset,
+        lock_side: lock_dir(sense).filter(|_| stick_active).and_then(|d| StickSide::of(d, stick)),
     };
 
     // 4-8. Candidates, pick, start; settle while the new move ends or exits at once. A forced
@@ -451,8 +459,15 @@ fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sens
     let (t0, t1) = out.clock;
     let stick = (cmd.stick.length() > ctx.params.deadzone).then_some(cmd.stick);
     let mut yaw = sense.yaw;
-    if fresh && square_up == SquareUp::Stick && let Some(s) = stick {
-        yaw = s.x.atan2(s.y);
+    if fresh {
+        let lock = (square_up == SquareUp::Lock).then(|| lock_dir(sense)).flatten();
+        let to = match square_up {
+            SquareUp::Keep => None,
+            SquareUp::Stick | SquareUp::Lock => lock.or(stick),
+        };
+        if let Some(d) = to {
+            yaw = d.x.atan2(d.y);
+        }
     }
     let (mut turn, mut no_turn) = (None, false);
     for w in open_windows(r, ctx.slots, t0) {

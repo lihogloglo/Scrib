@@ -12,7 +12,7 @@ use glam::Vec3;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use sf_action::{
-    ActionClass, Category, ClassSet, ClockTime, Entry, MoveKind, MoveRule, MovesetKey, Origin, Owner, Prev, RuleKey, RuleSetBuilder, SlotInfo, SlotKey,
+    ActionClass, Category, ClassSet, ClockTime, Entry, StickSide, MoveKind, MoveRule, MovesetKey, Origin, Owner, Prev, RuleKey, RuleSetBuilder, SlotInfo, SlotKey,
     SlotTable, SquareUp, TagId, Window, WindowKind, WindowPolicy,
 };
 
@@ -371,6 +371,16 @@ fn chain_ranks<'a>(def: &'a SheetDef, chained: &BTreeMap<&'a str, Vec<(&'a str, 
     ranks
 }
 
+/// A sheet `locked` side as the chooser's [`StickSide`].
+const fn lock_side(s: Side) -> StickSide {
+    match s {
+        Side::Front => StickSide::Front,
+        Side::Back => StickSide::Back,
+        Side::Left => StickSide::Left,
+        Side::Right => StickSide::Right,
+    }
+}
+
 fn secs(a: At, end: ClockTime) -> ClockTime {
     match a {
         At::Secs(s) => ClockTime::from_secs(s),
@@ -399,7 +409,30 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             }
         }
     }
-    let ranks = chain_ranks(def, &chained);
+    // Lock-on variants (`locked`): a variant starts where its base starts, ranked above it, only
+    // while locked on with the stick on its side ([`Entry::lock`]); other sides keep the base.
+    let mut variants: BTreeMap<&str, (&str, StickSide)> = BTreeMap::new();
+    for (name, m) in &def.moves {
+        for (side, target) in &m.locked {
+            match def.moves.get(target) {
+                None => errors.push(err(Some(name), format!("locked {side:?} names unknown move '{target}'"))),
+                Some(_) if target == name => errors.push(err(Some(name), format!("locked {side:?} names the move itself"))),
+                Some(t) if !m.classes.iter().all(|c| t.classes.contains(c)) => {
+                    errors.push(err(Some(name), format!("locked {side:?}: '{target}' doesn't take every class of this move")));
+                }
+                Some(_) => {
+                    if variants.insert(target.as_str(), (name.as_str(), lock_side(*side))).is_some() {
+                        errors.push(err(Some(name), format!("locked {side:?}: '{target}' is already another lock-on variant")));
+                    }
+                }
+            }
+        }
+    }
+    let mut ranks = chain_ranks(def, &chained);
+    for (&v, &(base, _)) in &variants {
+        let above = ranks[base] + 1;
+        ranks.entry(v).and_modify(|r| *r = (*r).max(above));
+    }
     let mut rules = Vec::new();
     let mut slots = Vec::new();
     let mut moves = MoveTable::default();
@@ -494,18 +527,23 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             .map(|w| w.start)
             .min()
             .unwrap_or(length);
-        // `from`: authored (sheet names prefixed) plus chain sources.
-        let mut from: Vec<Prev> = m
-            .from
-            .iter()
-            .map(|p| match p {
+        // `from`: authored (sheet names prefixed) plus chain sources; a lock-on variant with none
+        // authored takes its base's.
+        let variant = variants.get(name.as_str()).copied();
+        let mut origins = vec![(name.as_str(), m)];
+        if let Some((base, _)) = variant.filter(|_| m.from.is_empty()) {
+            origins.push((base, &def.moves[base]));
+        }
+        let mut from: Vec<Prev> = Vec::new();
+        for (o, om) in origins {
+            from.extend(om.from.iter().map(|p| match p {
                 Prev::Rule(id) if def.moves.contains_key(id) => Prev::Rule(full(id)),
                 p => p.clone(),
-            })
-            .collect();
-        let sources = chained.get(name.as_str()).map(Vec::as_slice).unwrap_or_default();
+            }));
+            let sources = chained.get(o).map(Vec::as_slice).unwrap_or_default();
+            from.extend(sources.iter().map(|(src, _)| Prev::Rule(full(src))));
+        }
         let rank = ranks.get(name.as_str()).copied().unwrap_or(m.rank);
-        from.extend(sources.iter().map(|(src, _)| Prev::Rule(full(src))));
         let id = full(name);
         rules.push(MoveRule {
             id: id.clone(),
@@ -514,7 +552,7 @@ pub fn compile(def: &SheetDef, clip_len: &dyn Fn(&str) -> Option<f32>) -> Result
             rank,
             slots: present,
             owner: Owner::Clip { root_scale: m.root_scale, square_up: m.square_up, rate: m.rate },
-            entry: Entry { classes: m.classes.clone(), moveset: Some(def.id.clone()), from, ..Entry::default() },
+            entry: Entry { classes: m.classes.clone(), moveset: Some(def.id.clone()), from, lock: variant.map(|(_, s)| s), ..Entry::default() },
             windows: WindowPolicy::Committed,
             exits: Vec::new(),
             launch: None,

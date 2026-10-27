@@ -38,6 +38,7 @@ const CLIPS: &[(&str, f32)] = &[
     ("attack.test.light3", 1.0),
     ("attack.test.thrust", 0.8),
     ("dodge.test.roll", 1.0),
+    ("dodge.test.roll.left", 1.0),
     ("react.test.small.front", 0.4),
     ("react.test.medium.front", 0.6),
 ];
@@ -53,10 +54,10 @@ fn sheet() -> CompiledSheet {
     load(SHEET, &clip_len).expect("test sheet loads")
 }
 
-/// A straight line along +Z (the clip's forward) over `len` seconds.
+/// A straight line from the origin to `to` (clip axes: +Z forward, +X left) over `len` seconds.
 struct Line {
     len: f32,
-    dist: f32,
+    to: Vec3,
 }
 
 impl RootPath for Line {
@@ -65,7 +66,7 @@ impl RootPath for Line {
     }
 
     fn root_at(&self, t: f32) -> RootPose {
-        RootPose::new(Vec3::new(0.0, 0.0, self.dist * (t / self.len).clamp(0.0, 1.0)), 0.0)
+        RootPose::new(self.to * (t / self.len).clamp(0.0, 1.0), 0.0)
     }
 }
 
@@ -102,7 +103,12 @@ fn slot_table(sheet: &CompiledSheet, roll_root: bool) -> SlotTable {
         .with("air.land.normal", SlotInfo::once(0.25))
         .with("air.land.hard", SlotInfo::once(0.5));
     let t = sheet.fill(base);
-    if roll_root { t.with_root("dodge.test.roll", Arc::new(Line { len: 1.0, dist: ROLL_CLIP_DIST })) } else { t }
+    if roll_root {
+        t.with_root("dodge.test.roll", Arc::new(Line { len: 1.0, to: Vec3::Z * ROLL_CLIP_DIST }))
+            .with_root("dodge.test.roll.left", Arc::new(Line { len: 1.0, to: Vec3::X * ROLL_CLIP_DIST }))
+    } else {
+        t
+    }
 }
 
 fn rule_set(sheet: &CompiledSheet) -> RuleSet {
@@ -119,6 +125,8 @@ struct Actor {
     out: ActionOutput,
     body: Body,
     slots: SlotTable,
+    /// Lock-on target (actor index): its position goes out as `Sense::lock_target`.
+    lock: Option<usize>,
     /// (tick, event) of every action event.
     events: Vec<ActionEvent>,
 }
@@ -176,6 +184,7 @@ impl World {
             out: ActionOutput::default(),
             body: Body::at(pos, yaw),
             slots: slot_table(&self.sheet, true),
+            lock: None,
             events: Vec::new(),
         });
         i
@@ -208,10 +217,12 @@ impl World {
     fn run(&mut self, cmds: &[Command]) -> CombatOutput {
         self.tick = self.tick.next();
         let tick = self.tick;
+        let locks: Vec<Option<Vec3>> = self.actors.iter().map(|a| a.lock.map(|j| self.actors[j].body.pos - a.body.pos)).collect();
         for (i, a) in self.actors.iter_mut().enumerate() {
             let mut cmd = cmds.get(i).copied().unwrap_or_default();
             cmd.tick = tick;
-            let sense = Sense { grounded: true, yaw: a.body.yaw, refused: gate(&*self.combat, &a.fighter, &a.fight), ..Sense::default() };
+            let refused = gate(&*self.combat, &a.fighter, &a.fight);
+            let sense = Sense { grounded: true, yaw: a.body.yaw, refused, lock_target: locks[i], ..Sense::default() };
             let ctx = StepCtx { rules: &self.rules, slots: &a.slots, params: &self.params, source: a.fighter.id };
             sf_action::step(&ctx, &mut a.state, &cmd, &sense, &mut a.out);
             a.events.extend(a.out.events.iter().copied());
@@ -297,8 +308,8 @@ fn at_parses_seconds_integers_and_end() {
 fn sheet_compiles_rules_slots_and_table() {
     let s = sheet();
     assert!(s.warnings.is_empty(), "{:?}", s.warnings);
-    // Five moves and two reactions.
-    assert_eq!(s.rules.len(), 7);
+    // Six moves and two reactions.
+    assert_eq!(s.rules.len(), 8);
     let rank = |m: &str| s.rules.iter().find(|r| r.id == format!("test_sword.{m}")).unwrap().rank;
     // Chain targets outrank the opener that could also take the press (light1, from Any).
     assert!(rank("light2") > rank("light1"));
@@ -395,6 +406,62 @@ fn dodge_starts_on_the_press_tick_from_loco() {
     let mut w = World::duel(10.0);
     w.press(ActionClass::Dodge);
     assert!(w.started(0, w.key("roll")));
+}
+
+/// Rolls toward `stick` (world x, z) from the duel start, locked on the dummy or not; returns the
+/// started move, then the body's position and yaw once back in Loco.
+fn roll_with(locked: bool, stick: Vec2) -> (RuleKey, Vec3, f32) {
+    let mut w = World::duel(10.0);
+    w.actors[0].lock = locked.then_some(1);
+    let mut cmd = press(ActionClass::Dodge);
+    cmd.stick = stick;
+    w.run(&[cmd]);
+    assert!(w.actors[0].out.started);
+    let mov = w.actors[0].state.mov;
+    w.until_loco(0, 120);
+    (mov, w.actors[0].body.pos, w.actors[0].body.yaw)
+}
+
+#[test]
+fn locked_side_stick_rolls_around_the_target_facing_it() {
+    use std::f32::consts::PI;
+    // The dummy is 10 m ahead (+Z); the attacker's left is +X. Root travel: 3 m clip x 0.75.
+    let w = World::duel(10.0);
+    let (mov, pos, yaw) = roll_with(true, Vec2::X);
+    assert_eq!(mov, w.key("roll_left"));
+    assert!((pos.x - 2.25).abs() < 0.05 && pos.z.abs() < 0.05, "tangential: {pos}");
+    assert!(yaw.abs() < 1e-3, "faces the target: {yaw}");
+    // No `Right` variant in the test sheet: the plain roll, squared up to the stick.
+    let (mov, pos, _) = roll_with(true, -Vec2::X);
+    assert_eq!(mov, w.key("roll"));
+    assert!((pos.x + 2.25).abs() < 0.05, "{pos}");
+    // Back stick: the plain roll turned away from the target (no back-roll clip).
+    let (mov, pos, yaw) = roll_with(true, -Vec2::Y);
+    assert_eq!(mov, w.key("roll"));
+    assert!((pos.z + 2.25).abs() < 0.05, "{pos}");
+    assert!((yaw.abs() - PI).abs() < 1e-3, "{yaw}");
+}
+
+#[test]
+fn unlocked_side_stick_keeps_the_plain_roll_toward_the_stick() {
+    let w = World::duel(10.0);
+    let (mov, pos, yaw) = roll_with(false, Vec2::X);
+    assert_eq!(mov, w.key("roll"));
+    assert!((pos.x - 2.25).abs() < 0.05 && pos.z.abs() < 0.05, "{pos}");
+    assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-3, "{yaw}");
+}
+
+#[test]
+fn locked_variants_rank_above_their_base_and_need_the_lock() {
+    let s = sheet();
+    let rule = |m: &str| s.rules.iter().find(|r| r.id == format!("test_sword.{m}")).unwrap();
+    assert!(rule("roll_left").rank > rule("roll").rank);
+    assert_eq!(rule("roll_left").entry.lock, Some(sf_action::StickSide::Left));
+    assert_eq!(rule("roll_left").entry.from, rule("roll").entry.from);
+    assert_eq!(rule("roll").entry.lock, None);
+    let bad = SHEET.replace(r#"locked: { Left: "roll_left" }"#, r#"locked: { Left: "roll_up" }"#);
+    let errs = load(&bad, &clip_len).unwrap_err();
+    assert!(errs.iter().any(|e| e.message.contains("unknown move 'roll_up'")), "{errs:?}");
 }
 
 #[test]

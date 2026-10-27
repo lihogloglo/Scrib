@@ -199,3 +199,16 @@ fn unlocking_restores_free_facing() {
     assert!(wrap_angle(sim.yaw() - FRAC_PI_2).abs() < 0.05, "faces the stick (+X) again: {}", sim.yaw());
     assert!((intent.desired_velocity.length() - sim.params.gaits.run.forward).abs() < 0.05, "forward speed: {intent:?}");
 }
+
+#[test]
+fn lock_side_classifies_the_stick_against_the_target() {
+    // Target ahead along +Z: right of a +Z facing is -X (Side::of's convention).
+    let ahead = Vec2::new(0.0, 5.0);
+    assert_eq!(StickSide::of(ahead, Vec2::new(0.0, 1.0)), Some(StickSide::Front));
+    assert_eq!(StickSide::of(ahead, Vec2::new(0.0, -1.0)), Some(StickSide::Back));
+    assert_eq!(StickSide::of(ahead, Vec2::new(1.0, 0.0)), Some(StickSide::Left));
+    assert_eq!(StickSide::of(ahead, Vec2::new(-1.0, 0.2)), Some(StickSide::Right));
+    // Relative to the target, not the world: target to the +X side, stick +Z is its right.
+    assert_eq!(StickSide::of(Vec2::new(3.0, 0.0), Vec2::new(0.0, 1.0)), Some(StickSide::Right));
+    assert_eq!(StickSide::of(ahead, Vec2::ZERO), None);
+}
