@@ -7,7 +7,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::command::{ActionClass, ClassSet};
-use crate::ids::{RuleKey, SlotKey, TagId};
+use crate::ids::{MovesetKey, RuleKey, SlotKey, TagId};
 use crate::windows::SlotSource;
 
 /// What a move is (presentation and tooling; the chooser orders by [`Category`]).
@@ -68,6 +68,31 @@ pub enum Owner {
     /// at start; refused (next candidate) when the correction is over `refuse_ratio` of the
     /// chain's root distance (`MaxCorrection`). No gravity, no steering while it plays.
     Warp { target: WarpTarget, profile: sf_anim::WarpProfile, refuse_ratio: f32, steer: bool },
+    /// The slot chain's baked root track at the action clock, yaw separate from translation
+    /// (action.md "Motion owners": Clip): translation is the root delta over the tick x
+    /// `root_scale`, rotated by the gameplay yaw; yaw turns at the open `Turn` window's rate toward
+    /// the lock target, else the stick, never inside `NoTurn`. Gravity stays on (the shell's mover).
+    /// `rate`: clip seconds per move second (slot lengths are move time; root tracks clip time).
+    Clip {
+        root_scale: f32,
+        square_up: SquareUp,
+        #[serde(default = "one")]
+        rate: f32,
+    },
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+/// A Clip move's facing on its first tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SquareUp {
+    /// Keep the current facing.
+    #[default]
+    Keep,
+    /// Snap to the stick when it is active (unlocked rolls).
+    Stick,
 }
 
 /// Where a Warp owner's plan lands.
@@ -136,6 +161,28 @@ pub struct Entry {
     pub focus: Option<Vec<String>>,
     /// Needs a sensed obstacle (B2a: ledges for mantles).
     pub probe: Option<ProbeNeed>,
+    /// Starts only while the character's moveset ([`crate::ModeState::moveset`]) is this one.
+    pub moveset: Option<String>,
+    /// The move it may start from (any of these; empty = any): combo chains and openers.
+    pub from: Vec<Prev>,
+}
+
+/// A move a rule may start from ([`Entry::from`]). Not `From`, which would shadow the std trait.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Prev {
+    Any,
+    /// An automatic Locomotion move (or none).
+    Loco,
+    /// This rule (id).
+    Rule(String),
+}
+
+/// [`Prev`], compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrevKey {
+    Any,
+    Loco,
+    Rule(RuleKey),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +302,16 @@ pub struct CompiledRule {
     /// Exit triggers with their target's index (`None` = `Loco`).
     pub exits: Vec<(ExitOn, Option<usize>)>,
     pub policy: WindowPolicy,
+    pub moveset: Option<MovesetKey>,
+    /// Empty = from any move.
+    pub from: Vec<PrevKey>,
+}
+
+impl CompiledRule {
+    /// Started only through [`crate::ActionState::forced`] (reactions): `kind: Forced`.
+    pub fn force_only(&self) -> bool {
+        self.rule.kind == MoveKind::Forced
+    }
 }
 
 impl CompiledRule {
@@ -298,6 +355,7 @@ impl RuleSetBuilder {
     }
 
     /// Validates and compiles; every problem is listed.
+    #[allow(clippy::too_many_lines)]
     pub fn build(&self) -> Result<RuleSet, Vec<LoadError>> {
         let mut errors = self.errors.clone();
         let mut by_key: HashMap<RuleKey, usize> = HashMap::new();
@@ -311,7 +369,7 @@ impl RuleSetBuilder {
             if r.id.is_empty() {
                 errors.push(err(origin, r, "empty id".into()));
             }
-            if matches!(origin, Origin::Mod(_)) && r.category.framework_only() {
+            if matches!(origin, Origin::Mod(_)) && r.category.framework_only() && r.kind != MoveKind::Forced {
                 errors.push(err(origin, r, format!("category {:?} is framework-only; mods start at Paired", r.category)));
             }
             for (name, band) in [("speed", r.entry.speed), ("vspeed", r.entry.vspeed)] {
@@ -335,6 +393,17 @@ impl RuleSetBuilder {
                 if r.slots.is_empty() || r.launch.is_some() {
                     errors.push(err(origin, r, "a Warp owner needs slots (its root path) and no launch".into()));
                 }
+            }
+            if let Owner::Clip { root_scale, rate, .. } = r.owner
+                && !(root_scale.is_finite() && root_scale >= 0.0 && rate.is_finite() && rate > 0.0)
+            {
+                errors.push(err(origin, r, "clip root_scale must be finite and >= 0, rate finite and > 0".into()));
+            }
+            if r.kind == MoveKind::Forced && !r.entry.classes.is_empty() {
+                errors.push(err(origin, r, "a Forced-kind move starts only when forced: no request classes".into()));
+            }
+            if r.entry.moveset.as_deref() == Some("") {
+                errors.push(err(origin, r, "empty moveset".into()));
             }
             if let Some(ProbeNeed::Obstacle { height: (lo, hi), .. }) = r.entry.probe
                 && (lo.is_nan() || hi.is_nan() || lo > hi)
@@ -374,6 +443,17 @@ impl RuleSetBuilder {
                     WindowPolicy::Category => r.category.default_policy(),
                     p => p,
                 },
+                moveset: r.entry.moveset.as_deref().map(MovesetKey::of),
+                from: r
+                    .entry
+                    .from
+                    .iter()
+                    .map(|p| match p {
+                        Prev::Any => PrevKey::Any,
+                        Prev::Loco => PrevKey::Loco,
+                        Prev::Rule(id) => PrevKey::Rule(RuleKey::of(id)),
+                    })
+                    .collect(),
                 rule: r.clone(),
             });
         }

@@ -44,6 +44,7 @@ workspace-members = [
     "sf_bake",
     "sf_camera",
     "sf_character",
+    "sf_combat",
     "sf_console",
     "sf_controller",
     "sf_coords",

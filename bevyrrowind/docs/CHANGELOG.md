@@ -4,6 +4,11 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-27 (combat-c1a): combat C1a, Bevy-free core: new `sf_combat` (sheet, vitals, sweeps, contact order,
+  `StandardRules`, hit-stop), `sf_action` Clip owner + combat vocabulary, `sf_anim::SocketTrack`; 26 headless tests
+  (`sf_combat/tests/combat.rs`, `test_sword.ron`) found and fixed clip-rate root motion, chain ranks, `End` parsing, hit-stop hold.
+- 2026-10-27 (combat-spec): combat spec written (`superfargoth/docs/specs/combat.md`, `specs/combat-adapter.md`): new
+  `sf_combat(_bevy)`, `CombatRules` seam, `sword_1h` sheet on UAL clips, slices C1a-C7; SYSTEMS row, ROADMAP 3.5; docs only.
 - 2026-10-26 (evening, ik-fixes): the two anim audits' fixes. Pose: pelvis-bob harness, ground-plane foot locks, StrideWarp
   drop through a spring + limit, foot IK gates (`gate` param, physics share, no locks during hand-back), physics blend after
   the ops, stride ratio/alpha spring + LOD fade, probes at the lock / post-warp, humanoid data (stride 1.2, rate share 0.5;

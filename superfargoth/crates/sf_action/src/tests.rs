@@ -60,7 +60,7 @@ impl Body {
     }
 
     fn sense(&self) -> Sense {
-        Sense { grounded: self.grounded, vertical_speed: self.vy, planar_speed: 0.0, yaw: 0.0, focus: None, obstacle: None }
+        Sense { grounded: self.grounded, vertical_speed: self.vy, planar_speed: 0.0, yaw: 0.0, focus: None, obstacle: None, ..Sense::default() }
     }
 }
 

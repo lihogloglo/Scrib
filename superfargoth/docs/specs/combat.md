@@ -307,6 +307,19 @@ lookup), `hitstop.rs` (curve to `ActionClock::rate`), `step.rs` (`pub fn step(ct
 pipeline items 4-8), `tests/` with `data/test_sword.ron` on synthetic slots (`SlotTable` + straight-line socket tracks).
 Register in hakari `final-excludes`. `sf_anim`: `SocketTrack` type and `sample_socket_track(skeleton, clip, bone, hz)`.
 
+**As built (C1a, 2026-10-27).** Built as above; tests in `sf_combat/tests/combat.rs` (26 + 4 measurements). Deviations:
+`Refused::{Prev, Moveset}` beside `Gate` (gate checked after entry and `from`); `CombatEvent::{Evaded, Missed}`; reactions
+are `kind: Forced` rules (`CompiledRule::force_only`) started only through `ActionState::forced`; `ActionOutput::clock` is
+(start, end) of the tick (end-of-tick convention like Warp); `start()` keeps the clock rate so a hit-stop spans the forced
+reaction; `Owner::Clip` gained `rate` (clip s per move s: root tracks and `ClipOutput::progress` are clip time); chain
+targets rank above their sources and every `Any`/`Loco` opener of the class, transitively; `At` reads bare `End` through an
+untagged repr (RON drops a bare identifier's name in `deserialize_any`) and sheets load with RON `implicit_some`
+(`stop: 0.05`); hit-stop ease ticks sit at `(e+1)/(ease+1)` (hold is exactly `hold` ticks); jump (a launch start) and sprint
+(FreeRun with intent, outside combat moves) cost the sheet `costs` only within `HOSTILE_RANGE` 20 m of a living hostile, and
+a draining tick doesn't regenerate. No `sf_ids` dep. **C1b must know:** no reach prefilter yet (every unit is tested at
+every sub-step: add a per-track bound when tracks are built at load); stamina 0 doesn't stop a sprint yet; a sweep crossing
+a slot boundary samples through `MoveSpec::slot_at`; the host order is `gate` -> `sf_action::step` -> mover -> `step`.
+
 ### C1b: player vs training dummy (Bevy + game)
 
 - `sf_combat_bevy`: `SfCombatPlugin<R>`, `Combatant(Fighter)`, `CombatSystems::{Gate, Stats, Vitals, Sweep, Resolve, Apply}`,

@@ -161,6 +161,7 @@ sf_camera = { path = "superfargoth/crates/sf_camera", version = "0.1.0" }
 sf_camera_bevy = { path = "superfargoth/crates/sf_camera_bevy", version = "0.1.0" }
 sf_character = { path = "superfargoth/crates/sf_character", version = "0.1.0" }
 sf_character_bevy = { path = "superfargoth/crates/sf_character_bevy", version = "0.1.0" }
+sf_combat = { path = "superfargoth/crates/sf_combat", version = "0.1.0" }
 sf_console = { path = "superfargoth/crates/sf_console", version = "0.1.0" }
 sf_console_bevy = { path = "superfargoth/crates/sf_console_bevy", version = "0.1.0" }
 sf_controller = { path = "superfargoth/crates/sf_controller", version = "0.1.0" }

@@ -72,6 +72,11 @@ hashed_key!(
     /// An interaction tag (`"door"`, `"item"`) as a key.
     TagId
 );
+hashed_key!(
+    /// A moveset's id (a combat sheet, `"sword_1h"`) as a key: rules with `entry.moveset` start
+    /// only while [`crate::ModeState::moveset`] names it.
+    MovesetKey
+);
 
 /// Action-clock time in thousandths of a tick (1 s = 60 000). Integer, so clocks scaled by
 /// hit-stop advance identically on every peer.

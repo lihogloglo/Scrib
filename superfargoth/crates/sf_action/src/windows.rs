@@ -12,6 +12,22 @@ use crate::command::ClassSet;
 use crate::ids::{ClockTime, SlotKey};
 use crate::rule::{CompiledRule, WindowPolicy};
 
+/// Which hit kinds a defence window covers (content flags; bit 0 = every plain hit). C1 uses
+/// [`HitMask::ALL`]; typed i-frames (C3) name bits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HitMask(pub u8);
+
+impl HitMask {
+    pub const NONE: Self = Self(0);
+    pub const ALL: Self = Self(u8::MAX);
+
+    /// Covers any of `flags` (a hit row with no flags is covered by any non-empty mask).
+    pub const fn covers(self, flags: Self) -> bool {
+        if flags.0 == 0 { self.0 != 0 } else { self.0 & flags.0 != 0 }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowKind {
     /// A press of these classes is latched from here (earlier presses are dropped).
@@ -20,6 +36,23 @@ pub enum WindowKind {
     Cancel(ClassSet),
     /// Traversal: the last contact ended; cancels `Move`, `Jump`, `Dodge`, `Down`.
     Tail,
+    /// Clip owner: the gameplay yaw turns toward the lock target, else the stick, at this rate
+    /// (deg/s on the action clock).
+    Turn(u16),
+    /// Clip owner: no turning (wins over an overlapping `Turn`).
+    NoTurn,
+    /// Hit `n` of the move's combat table is active (the combat layer sweeps it).
+    Hit(u8),
+    /// Hits of these kinds don't land (they stay unspent: action.md "Windows").
+    IFrames(HitMask),
+}
+
+impl WindowKind {
+    /// Accept, cancel and tail windows: the ones the chooser gates on (the restricted rule
+    /// counts only these).
+    pub const fn gates(self) -> bool {
+        matches!(self, Self::Accept(_) | Self::Cancel(_) | Self::Tail)
+    }
 }
 
 /// A window `[start, end)` on the slot's local clock.
@@ -127,26 +160,35 @@ pub struct Located<'a> {
     pub ended: bool,
 }
 
-/// Finds the current slot: each finite slot plays for its length, then the next; a looping or
-/// unknown slot holds the chain.
+/// Finds the current slot: each finite slot plays for its length, then the next; a looping slot
+/// holds the chain. A slot the source doesn't have (dropped: no clip candidate present) is
+/// skipped, unless the source has none of the chain's slots: then the first holds the chain as
+/// before (a rule set checked with [`crate::RuleSet::check_slots`] never gets there).
 pub fn locate<'a>(rule: &CompiledRule, slots: &'a dyn SlotSource, t: ClockTime) -> Located<'a> {
+    let any = rule.slots.iter().any(|&k| slots.slot(k).is_some());
     let mut start = 0u32;
+    let mut last = None;
     for (i, &key) in rule.slots.iter().enumerate() {
         let info = slots.slot(key);
+        if info.is_none() && any {
+            continue;
+        }
         let chain = u8::try_from(i).unwrap_or(u8::MAX);
+        last = Some((chain, key, info));
         match info.and_then(|s| s.length) {
             Some(len) if t.0 >= start + len.0 => start += len.0,
             _ => return Located { chain, slot: Some(key), info, local: ClockTime(t.0 - start), ended: false },
         }
     }
-    let last = rule.slots.len().saturating_sub(1);
-    Located {
-        chain: u8::try_from(last).unwrap_or(u8::MAX),
-        slot: rule.slots.last().copied(),
-        info: rule.slots.last().and_then(|&k| slots.slot(k)),
-        local: ClockTime(t.0 - start),
-        ended: true,
-    }
+    let (chain, slot, info) = last.map_or((0, None, None), |(c, k, i)| (c, Some(k), i));
+    Located { chain, slot, info, local: ClockTime(t.0 - start), ended: true }
+}
+
+/// The windows of `rule`'s current slot open at clock `t` (`start <= local < end`), every kind.
+pub fn open_windows<'a>(rule: &CompiledRule, slots: &'a dyn SlotSource, t: ClockTime) -> impl Iterator<Item = &'a Window> + 'a {
+    let at = locate(rule, slots, t);
+    let windows = if at.ended { &[][..] } else { at.info.map(|s| s.windows.as_slice()).unwrap_or_default() };
+    windows.iter().filter(move |w| w.start <= at.local && at.local < w.end)
 }
 
 /// What the current move allows now.
@@ -170,7 +212,7 @@ pub fn gates(rule: &CompiledRule, slots: &dyn SlotSource, t: ClockTime) -> Gates
         return Gates { ended: true, ..Gates::OPEN };
     }
     let authored = at.info.map(|s| s.windows.as_slice()).unwrap_or_default();
-    if authored.is_empty() {
+    if !authored.iter().any(|w| w.kind.gates()) {
         return match rule.policy {
             WindowPolicy::Committed => Gates { accept: ClassSet::ALL, cancel: ClassSet::EMPTY, unrestricted: false, ended: false },
             WindowPolicy::Unrestricted | WindowPolicy::Category => Gates::OPEN,
@@ -182,6 +224,7 @@ pub fn gates(rule: &CompiledRule, slots: &dyn SlotSource, t: ClockTime) -> Gates
             WindowKind::Accept(c) => g.accept = g.accept.union(c),
             WindowKind::Cancel(c) => g.cancel = g.cancel.union(c),
             WindowKind::Tail => g.cancel = g.cancel.union(ClassSet::TAIL),
+            WindowKind::Turn(_) | WindowKind::NoTurn | WindowKind::Hit(_) | WindowKind::IFrames(_) => {}
         }
     }
     g

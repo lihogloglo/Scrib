@@ -1,0 +1,62 @@
+// A synthetic one-handed sword sheet for the headless combat tests (tests/combat.rs). Slot clips
+// are synthetic: the test's `clip_len` gives their lengths, straight-line socket tracks the blade,
+// a straight-line root track the roll. Times are move time (after `rate`), s.
+(
+    id: "test_sword",
+    rig: "test",
+    defaults: (turn: 360.0, hit_stop: (hold: 0.06, ease: 0.10), blend_in: 0.10),
+    weapon: (socket: "weapon", segment: ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)), radius: 0.05),
+    moves: {
+        "light1": (
+            category: Attack, classes: [Light], from: [Any], rank: 10,
+            slots: ["attack.test.light1", "attack.test.light1_rec"],
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.35, End), Cancel([Light, Heavy], 0.45, End), Cancel([Move], 0.80, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
+            ],
+            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            next: { Light: "light2" },
+        ),
+        "light2": (
+            category: Attack, classes: [Light],
+            slots: ["attack.test.light2"],
+            windows: [
+                // An early Dodge cancel (a feint), before the hit window: the no-cost test.
+                Accept([Light, Heavy, Dodge], 0.05, End),
+                Cancel([Dodge], 0.10, End), Cancel([Light, Heavy], 0.45, End), Cancel([Move], 0.75, End),
+                NoTurn(0.15, 0.34),
+            ],
+            hits: [(window: (0.20, 0.34), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            next: { Light: "light3" },
+        ),
+        "light3": (
+            category: Attack, classes: [Light],
+            slots: ["attack.test.light3"],
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.55, End), Cancel([Light, Heavy], 0.65, End), Cancel([Move], 0.85, End),
+                NoTurn(0.15, 0.52),
+            ],
+            hits: [
+                (window: (0.18, 0.30), mv: 0.8, stamina: 10.0, kind: "slash", tier: Small, stop: 0.05),
+                (window: (0.40, 0.52), mv: 1.2, stamina: 10.0, kind: "slash", tier: Medium),
+            ],
+            next: { Light: "light1" },
+        ),
+        "thrust": (
+            category: Attack, classes: [Heavy], from: [Any], rank: 10,
+            slots: ["attack.test.thrust"],
+            windows: [Accept([Light, Heavy, Dodge], 0.10, End), Cancel([Dodge], 0.65, End), Cancel([Move], 0.70, End), NoTurn(0.0, End)],
+            hits: [(window: (0.10, 0.60), mv: 1.5, stamina: 20.0, kind: "pierce", tier: Medium)],
+        ),
+        "roll": (
+            category: Dodge, classes: [Dodge], from: [Any], rank: 10,
+            slots: ["dodge.test.roll"], rate: 1.25, root_scale: 0.75, square_up: Stick,
+            cost: 12.0, iframes: [(0.02, 0.40, All)],
+            windows: [Cancel([Light, Heavy], 0.60, End), Cancel([Dodge], 0.65, End), Cancel([Move], 0.70, End), NoTurn(0.0, End)],
+        ),
+    },
+    reactions: { (Small, Front): "react.test.small.front", (Medium, Front): "react.test.medium.front" },
+    costs: (jump: 10.0, sprint_per_s: 11.0),
+)

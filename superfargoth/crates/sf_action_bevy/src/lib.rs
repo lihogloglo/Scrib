@@ -294,6 +294,7 @@ fn step_actions<G: GroundProbe + Resource>(
             yaw: body.loco.motion.yaw,
             focus: c.focus,
             obstacle,
+            ..Sense::default()
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
     }

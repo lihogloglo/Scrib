@@ -12,10 +12,10 @@ use sf_controller::{Gait, LocomotionIntent};
 use crate::command::{ActionClass, ClassSet, Command};
 use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
 
-use crate::ids::{CharacterId, ClockTime, RuleKey, SlotKey, TagId, TargetId, Tick};
-use crate::rule::{CompiledRule, ExitOn, Launch, Mode, ObstacleClass, Owner, Phase, ProbeNeed, RuleSet, WarpTarget};
-use crate::state::{ActionClock, ActionState, CharacterParams, WarpState};
-use crate::windows::{Gates, SlotSource, gates, locate};
+use crate::ids::{CharacterId, ClockTime, MovesetKey, RuleKey, SlotKey, TagId, TargetId, Tick, TICK_HZ};
+use crate::rule::{Category, CompiledRule, ExitOn, Launch, Mode, ObstacleClass, Owner, Phase, PrevKey, ProbeNeed, RuleSet, SquareUp, WarpTarget};
+use crate::state::{ActionClock, ActionState, CharacterParams, RATE_ONE, WarpState};
+use crate::windows::{Gates, SlotSource, WindowKind, gates, locate, open_windows};
 
 /// Extra choose rounds when a move ends or exits on its first tick (bounded settle).
 pub const MAX_SETTLE: usize = 4;
@@ -44,6 +44,11 @@ pub struct Sense {
     pub focus: Option<Focus>,
     /// The context probe's obstacle ahead (the shell asks along the stick when it could matter).
     pub obstacle: Option<Obstacle>,
+    /// Request classes the start gate refuses now (combat: `CombatRules::can_start` false). A press
+    /// of one that would start a move is dropped with [`Refused::Gate`].
+    pub refused: ClassSet,
+    /// The lock-on target's position relative to the feet (world axes): Clip `Turn` windows aim at it.
+    pub lock_target: Option<Vec3>,
 }
 
 /// An obstacle ahead, classified by the shell's context probe. Positions are relative to the
@@ -109,6 +114,12 @@ pub enum Refused {
     NoRootPath,
     /// The warp correction is over the rule's `refuse_ratio`.
     MaxCorrection,
+    /// The start gate refused the class ([`Sense::refused`]: no stamina).
+    Gate,
+    /// Another moveset is equipped.
+    Moveset,
+    /// The current move isn't one the rule starts from ([`crate::Entry::from`]).
+    Prev,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +158,11 @@ pub struct ActionOutput {
     pub prompt: Option<Prompt>,
     /// Warp owner: where the body is at the end of this tick and the chain progress the graph plays.
     pub warp: Option<WarpOutput>,
+    /// Clip owner: this tick's root motion and yaw.
+    pub clip: Option<ClipOutput>,
+    /// The action-clock interval this tick plays, `(t0, t1]` (equal under a full hit-stop). Chain
+    /// time of the current move; windows, root motion and sweeps use it.
+    pub clock: (ClockTime, ClockTime),
     pub events: Vec<ActionEvent>,
     pub refusals: Vec<Refusal>,
 }
@@ -160,6 +176,19 @@ pub struct WarpOutput {
     pub progress: f32,
 }
 
+/// A Clip move's motion this tick.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClipOutput {
+    /// Planar root translation this tick, world axes, m (the slot root track's delta x
+    /// `root_scale`, rotated by the gameplay yaw). The shell moves the capsule by it, gravity on.
+    pub delta: Vec3,
+    /// The gameplay yaw at the end of the tick, radians.
+    pub yaw: f32,
+    /// Clip seconds into the slot chain at the end of the tick (move time x `rate`;
+    /// `GraphInstance::set_slot_progress`).
+    pub progress: f32,
+}
+
 impl ActionOutput {
     fn reset(&mut self, tick: Tick) {
         self.tick = tick;
@@ -167,6 +196,7 @@ impl ActionOutput {
         self.launch = None;
         self.prompt = None;
         self.warp = None;
+        self.clip = None;
         self.events.clear();
         self.refusals.clear();
     }
@@ -185,6 +215,7 @@ struct Facts {
     focus: Option<Focus>,
     obstacle: Option<Obstacle>,
     body_height: f32,
+    moveset: Option<MovesetKey>,
 }
 
 impl Facts {
@@ -201,6 +232,9 @@ impl Facts {
     fn entry(&self, r: &CompiledRule) -> Result<(), Refused> {
         let e = &r.rule.entry;
         let within = |band: Option<(f32, f32)>, v: f32| band.is_none_or(|(lo, hi)| (lo..=hi).contains(&v));
+        if r.moveset.is_some() && r.moveset != self.moveset {
+            return Err(Refused::Moveset);
+        }
         if !e.modes.is_empty() && !e.modes.contains(&self.mode) {
             return Err(Refused::Mode);
         }
@@ -234,15 +268,26 @@ impl Facts {
 }
 
 fn forced(r: &CompiledRule) -> bool {
-    r.rule.category.framework_only() && r.classes.is_empty()
+    r.rule.category.framework_only() && r.classes.is_empty() && !r.force_only()
 }
 
 fn automatic(r: &CompiledRule) -> bool {
-    r.classes.is_empty() && !forced(r)
+    r.classes.is_empty() && !forced(r) && !r.force_only()
+}
+
+/// `r` may start from the current move `cur` ([`crate::Entry::from`]).
+fn prev_ok(r: &CompiledRule, cur: Option<&CompiledRule>) -> bool {
+    r.from.is_empty()
+        || r.from.iter().any(|p| match p {
+            PrevKey::Any => true,
+            PrevKey::Loco => cur.is_none_or(|c| c.rule.category == Category::Locomotion && automatic(c)),
+            PrevKey::Rule(k) => cur.is_some_and(|c| c.key == *k),
+        })
 }
 
 /// Advances one character by one fixed tick: command → clock → buffer → candidates → pick →
 /// start (+ bounded settle) → Sim intent → output.
+#[allow(clippy::too_many_lines)]
 pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &Sense, out: &mut ActionOutput) {
     let (rules, p, tick) = (ctx.rules, ctx.params, cmd.tick);
     out.reset(tick);
@@ -288,10 +333,20 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         focus: sense.focus,
         obstacle: sense.obstacle,
         body_height: p.height,
+        moveset: state.mode.moveset,
     };
 
-    // 4-8. Candidates, pick, start; settle while the new move ends or exits at once.
-    let mut started = [usize::MAX; MAX_SETTLE + 1];
+    // 4-8. Candidates, pick, start; settle while the new move ends or exits at once. A forced
+    // reaction goes first, whatever the windows say.
+    let mut started = [usize::MAX; MAX_SETTLE + 2];
+    if let Some(i) = state.forced.take().and_then(|f| rules.index_of(f.rule)) {
+        if let Some(old) = cur {
+            out.events.push(event(None, EventKind::MoveEnd(rules.at(old).key)));
+        }
+        start(ctx, rules.at(i), state, sense, facts.mode, None, out);
+        started[MAX_SETTLE + 1] = i;
+        cur = Some(i);
+    }
     for round in 0..=MAX_SETTLE {
         let g = gates_of(cur, state);
         let (exit, open) = match cur {
@@ -324,15 +379,20 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
             if (Some(i) == cur && !open) || started.contains(&i) || state.timers.redo.iter().any(|&(k, _)| k == r.key) {
                 continue;
             }
-            let requested = !r.classes.intersection(firing).is_empty();
-            let candidate = forced(r)
-                || requested
-                || exit_target == Some(i)
-                || (auto_ok && (automatic(r) || r.rule.entry.auto_in.contains(&facts.mode)));
-            if !candidate {
+            let by = r.classes.intersection(firing);
+            let requested = !by.is_empty();
+            let other = forced(r) || exit_target == Some(i) || (auto_ok && (automatic(r) || r.rule.entry.auto_in.contains(&facts.mode)));
+            if !(requested || other) {
                 continue;
             }
-            match facts.entry(r).and_then(|()| plan_warp(ctx, r, sense)) {
+            let cur_rule = cur.map(|c| rules.at(c));
+            let gated = requested && !other && by.intersection(sense.refused) == by;
+            let checked = facts
+                .entry(r)
+                .and(if prev_ok(r, cur_rule) { Ok(()) } else { Err(Refused::Prev) })
+                .and(if gated { Err(Refused::Gate) } else { Ok(()) })
+                .and_then(|()| plan_warp(ctx, r, sense));
+            match checked {
                 Ok(plan) => {
                     winner = Some((i, plan));
                     break;
@@ -358,15 +418,74 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         cur = Some(i);
     }
 
-    // 9. Move (Sim owner): the mover's intent.
+    // 9. Move (Sim owner): the mover's intent, slowed with the clock under hit-stop.
     out.intent = if stick_active && cur.is_none_or(|i| steers(rules.at(i))) { intent(p, facts.mode, stick, sense.yaw) } else { LocomotionIntent::IDLE };
+    if state.clock.rate < RATE_ONE {
+        out.intent.desired_velocity *= f32::from(state.clock.rate) / f32::from(RATE_ONE);
+    }
+    let t0 = state.clock.elapsed;
+    out.clock = (t0, ClockTime(t0.0.saturating_add(u32::from(state.clock.rate))));
+    let fresh = out.started;
+    write_clip(ctx, cur, cmd, sense, fresh, out);
 
     write_output(ctx, state, cur, &facts, out);
 }
 
-/// The stick steers the Sim owner unless the rule says no; never a Warp owner.
+/// The stick steers the Sim owner unless the rule says no; never a Warp or Clip owner.
 fn steers(r: &CompiledRule) -> bool {
-    r.rule.steer && !matches!(r.rule.owner, Owner::Warp { .. })
+    r.rule.steer && matches!(r.rule.owner, Owner::Sim)
+}
+
+/// Clip owner: yaw (square-up on the first tick, then `Turn` toward the lock target or the stick
+/// unless `NoTurn` is open, plus the clip's own root yaw) and the planar root delta over the
+/// tick's clock interval x `root_scale`.
+fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sense, fresh: bool, out: &mut ActionOutput) {
+    let Some(r) = cur.map(|i| ctx.rules.at(i)) else { return };
+    let Owner::Clip { root_scale, square_up, rate } = r.rule.owner else { return };
+    let (t0, t1) = out.clock;
+    let stick = (cmd.stick.length() > ctx.params.deadzone).then_some(cmd.stick);
+    let mut yaw = sense.yaw;
+    if fresh && square_up == SquareUp::Stick && let Some(s) = stick {
+        yaw = s.x.atan2(s.y);
+    }
+    let (mut turn, mut no_turn) = (None, false);
+    for w in open_windows(r, ctx.slots, t0) {
+        match w.kind {
+            WindowKind::Turn(rate) => turn = Some(turn.map_or(rate, |t: u16| t.max(rate))),
+            WindowKind::NoTurn => no_turn = true,
+            _ => {}
+        }
+    }
+    let aim = sense.lock_target.map(|v| Vec2::new(v.x, v.z)).filter(|v| v.length_squared() > 1e-6).or(stick);
+    if let (Some(rate), Some(aim), false) = (turn, aim, no_turn) {
+        #[allow(clippy::cast_precision_loss)]
+        let max = f32::from(rate).to_radians() * (t1.0 - t0.0) as f32 / (1000.0 * TICK_HZ as f32);
+        let want = aim.x.atan2(aim.y);
+        let diff = (want - yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        yaw += diff.clamp(-max, max);
+    }
+    // Root tracks and slot progress run in clip time: move time x `rate`.
+    let (c0, c1) = (t0.secs() * rate, t1.secs() * rate);
+    let (local, dyaw) = clip_root(r, ctx.slots, |path| {
+        let (a, b) = (path.root_at(c0), path.root_at(c1));
+        (glam::Quat::from_rotation_y(-a.yaw) * (b.position - a.position), b.yaw - a.yaw)
+    })
+    .unwrap_or((Vec3::ZERO, 0.0));
+    yaw += dyaw;
+    let delta = glam::Quat::from_rotation_y(yaw) * Vec3::new(local.x, 0.0, local.z) * root_scale;
+    let duration = clip_root(r, ctx.slots, |p| p.duration()).unwrap_or(f32::INFINITY);
+    out.clip = Some(ClipOutput { delta, yaw, progress: c1.min(duration) });
+}
+
+/// Runs `f` on the root path of the rule's present slots (dropped slots skipped); `None` when a
+/// present slot has no root track or no slot is present.
+fn clip_root<R>(r: &CompiledRule, slots: &dyn SlotSource, f: impl FnOnce(&dyn RootPath) -> R) -> Option<R> {
+    let parts = r.slots.iter().filter(|k| slots.slot(**k).is_some()).map(|k| slots.root(*k)).collect::<Option<Vec<_>>>()?;
+    match parts.as_slice() {
+        [] => None,
+        [one] => Some(f(*one)),
+        _ => Some(f(&RootChain::new(parts))),
+    }
 }
 
 /// Warp owner: the planned root at the end of this tick (the clock one tick on, clamped to the
@@ -489,7 +608,8 @@ fn start(
     let event = |target, kind| ActionEvent { tick, source: ctx.source, target, kind };
     state.mov = r.key;
     state.started = tick;
-    state.clock = ActionClock::default();
+    // A new move restarts the clock but keeps its rate: a running hit-stop spans the change.
+    state.clock = ActionClock { rate: state.clock.rate, ..ActionClock::default() };
     state.buffer.latched = ClassSet::EMPTY;
     state.warp = warp;
     if r.classes.contains(ActionClass::Jump) {
@@ -517,7 +637,11 @@ fn start(
 }
 
 /// Gait from mode and stick length; walking scales with the stick up to the run threshold.
+/// With no `desired_facing` the body turns to face the stick, so the gait's forward speed
+/// applies whatever the current facing (a reversal keeps its speed instead of asking for
+/// the back speed while the body turns round).
 fn intent(p: &CharacterParams, mode: Mode, stick: Vec2, yaw: f32) -> LocomotionIntent {
+    let yaw = if stick.length_squared() > 1e-12 { stick.x.atan2(stick.y) } else { yaw };
     let len = stick.length();
     let gait = match mode {
         Mode::Sneak => Gait::Sneak,

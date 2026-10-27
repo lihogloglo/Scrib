@@ -185,10 +185,24 @@ impl Command {
     }
 }
 
-/// One physical button bound to two classes: a tap fires `tap` on release, holding past
-/// `threshold` ticks holds `hold` (Dodge on tap, Sprint on hold: action.md "The chooser" 3).
+/// One physical button bound to two classes (action.md "The chooser" 3): released before `ticks`
+/// samples of holding, it is a `tap` press edge on the release tick; held for `ticks` samples, `hold`
+/// goes down on that sample and stays down until release, with no `tap`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TapHold {
+    pub tap: ActionClass,
+    pub hold: ActionClass,
+    pub ticks: u16,
+}
+
+impl TapHold {
+    /// Dodge on tap, Sprint from the 18th held tick (0.3 s at 60 Hz; ER's 10 frames at 30 fps).
+    pub const DODGE_SPRINT: Self = Self { tap: ActionClass::Dodge, hold: ActionClass::Sprint, ticks: 18 };
+}
+
+/// A bound [`TapHold`] button's live state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TapHold {
+struct SharedButton {
     tap: ActionClass,
     hold: ActionClass,
     threshold: u16,
@@ -210,7 +224,7 @@ pub struct InputSampler {
     released: ClassSet,
     hold_ticks: [u16; CLASSES],
     lock: LockRequest,
-    shared: Vec<TapHold>,
+    shared: Vec<SharedButton>,
 }
 
 impl InputSampler {
@@ -220,7 +234,12 @@ impl InputSampler {
 
     /// Binds a shared tap/hold button; returns its index for [`Self::press_shared`].
     pub fn bind_tap_hold(&mut self, tap: ActionClass, hold: ActionClass, threshold_ticks: u16) -> usize {
-        self.shared.push(TapHold { tap, hold, threshold: threshold_ticks.max(1), down: false, released: false, ticks: 0 });
+        self.bind(TapHold { tap, hold, ticks: threshold_ticks })
+    }
+
+    /// Binds a shared tap/hold button; returns its index for [`Self::press_shared`].
+    pub fn bind(&mut self, b: TapHold) -> usize {
+        self.shared.push(SharedButton { tap: b.tap, hold: b.hold, threshold: b.ticks.max(1), down: false, released: false, ticks: 0 });
         self.shared.len() - 1
     }
 

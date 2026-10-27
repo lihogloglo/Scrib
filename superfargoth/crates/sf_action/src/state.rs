@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sf_controller::{Gait, GaitSpeeds};
 
 use crate::command::ClassSet;
-use crate::ids::{ClockTime, RuleKey, Tick};
+use crate::ids::{ClockTime, MovesetKey, RuleKey, TargetId, Tick};
 use crate::rule::Mode;
 
 /// Clock rate 1, in thousandths.
@@ -37,6 +37,9 @@ pub struct ModeState {
     pub mode: Mode,
     /// Weapon drawn (set by the shell from equipment; combat rules arrive with E1).
     pub combat: bool,
+    /// The equipped moveset (combat sheet): rules with `entry.moveset` need it. Set by the shell
+    /// from equipment.
+    pub moveset: Option<MovesetKey>,
 }
 
 /// Latched requests (two-stage, Sekiro model): no timer; starting any move clears them.
@@ -85,6 +88,19 @@ pub struct ActionState {
     /// until it ends. Serialize it with a version bump when co-op (F) replicates moves.
     #[serde(skip)]
     pub warp: Option<WarpState>,
+    /// A reaction the combat layer (or physics) forces: the next step starts it before anything
+    /// else, whatever the windows say, then clears it.
+    pub forced: Option<Forced>,
+    /// The lock-on target (stable id); the shell senses its position ([`crate::Sense::lock_target`]).
+    pub lock: Option<TargetId>,
+}
+
+/// A forced move request ([`ActionState::forced`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Forced {
+    pub rule: RuleKey,
+    /// The side it came from (content-defined index, e.g. front, back, left, right).
+    pub side: u8,
 }
 
 /// A Warp move's plan, fixed at start. Positions are relative to the feet on the start tick (the
@@ -106,6 +122,8 @@ impl ActionState {
             timers: Timers::default(),
             body: BodyMemory { grounded: true, ..BodyMemory::default() },
             warp: None,
+            forced: None,
+            lock: None,
         }
     }
 }

@@ -32,21 +32,21 @@ mod tests;
 mod tests_warp;
 
 pub use command::{
-    ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS,
+    ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS, TapHold,
     ViewDir,
 };
-pub use ids::{CharacterId, ClockTime, PlayerId, RuleKey, SlotKey, TICK_HZ, TagId, TargetId, Tick, fnv1a32};
+pub use ids::{CharacterId, ClockTime, MovesetKey, PlayerId, RuleKey, SlotKey, TICK_HZ, TagId, TargetId, Tick, fnv1a32};
 pub use rule::{
     Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, Mode, MoveKind, MoveRule, ObstacleClass, Origin, Owner, Phase,
-    ProbeNeed, RuleSet, RuleSetBuilder, WarpTarget, WindowPolicy,
+    Prev, PrevKey, ProbeNeed, RuleSet, RuleSetBuilder, SquareUp, WarpTarget, WindowPolicy,
 };
 pub use state::{
-    ActionClock, ActionState, BodyMemory, CharacterParams, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers, WarpState,
+    ActionClock, ActionState, BodyMemory, CharacterParams, Forced, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers, WarpState,
 };
-pub use step::{ActionEvent, ActionOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, Sense, StepCtx, WarpOutput, step};
+pub use step::{ActionEvent, ActionOutput, ClipOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, Sense, StepCtx, WarpOutput, step};
 /// The root-path trait a [`SlotSource`] hands Warp moves (hosts implement or box it).
 pub use sf_anim::RootPath;
-pub use windows::{Gates, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, gates, locate};
+pub use windows::{Gates, HitMask, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, gates, locate, open_windows};
 
 /// The framework's base move rules (A1: locomotion, air, landing bands, activation), loaded as
 /// [`Origin::Framework`] before content packs.

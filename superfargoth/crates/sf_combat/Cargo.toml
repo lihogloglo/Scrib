@@ -1,0 +1,24 @@
+[package]
+name = "sf_combat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-free melee combat core: moveset sheets, fighters and vitals, weapon sweeps, contact order, the rules seam, hit-stop"
+
+# A leaf off `sf_action` (combat.md "Crates"): combat edits rebuild only this crate, its shell and
+# the game crates that fight. Bevy-free, in hakari's `final-excludes`.
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+ron.workspace = true
+serde.workspace = true
+sf_action.workspace = true
+sf_anim.workspace = true
+smallvec = { workspace = true, features = ["serde"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true

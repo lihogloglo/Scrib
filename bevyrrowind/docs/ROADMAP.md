@@ -92,12 +92,15 @@ in the world; only the release start path (or a session working on the menu) sho
 - [ ] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
   old P11. Clip sources: packs only (free first).
   Potential (owner 2026-10-22): evaluate MotionBricks as an animation source (licence, rig fit, quality vs packs).
+  Wanted later (owner 2026-10-27, not urgent): run + Ctrl slide.
 - [~] 3.2 Ragdolls: R0 fixed, AN-1..21 fixed, PH-2 awaiting owner (`level-anim-drop`). Left: limp_drop/stairs stretch gates, beast toe pin, powered falls (PH-9). Order `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
 - [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
   `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
 - [~] 3.3 Physics follow-ups. Fix plan (`specs/physics-fix-plan.md`) slices 1-10 built 2026-10-26 (no falls on load, items asleep until disturbed, OpenMW NIF collision, steady carry); PH-11 awaiting owner; slice 11 (player physics capsule) waits for the owner; leftovers in the plan's status. Older: hold/drag/throw (PH-4), shapeless items (PH-7), immovable candles (PH-1), ball through walls (archive 6a). Owner 2026-10-25: props jump on entering a room (spawn settling); held object vs capsule.
 - [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10 (CH-1/3, SB-5 awaiting owner); next stairs 5b, powered falls R3 (`animation-plan.md`). 2026-10-26: IK/pelvis/jump audit fixes built (CHANGELOG); AL-9, PL-3 awaiting owner; left: sprint cycle, run-strafe skate (clips).
-- [ ] 3.5 Combat (M10). Owner 2026-10-22: not Morrowind's rules; evaluate Funny-Bones/ELDEN-RING-Playermodel-Rust (MIT code, clips not shippable) as base for action.md E1; keep a hit-resolution seam (ARCHITECTURE §1b), classic swing later.
+- [ ] 3.5 Combat (M10): Elden Ring feel, classic rules behind a seam (owner 2026-10-27). Spec written 2026-10-27:
+  `superfargoth/docs/specs/combat.md` (new `sf_combat(_bevy)`, slices C1a-C7) + `specs/combat-adapter.md`. C1a (Bevy-free
+  core) done 2026-10-27 (uncommitted). Next: C1b (player vs dummy) after `player-feel` lands, then C1c. Visual checks CB-.
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later.
 - [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
 
