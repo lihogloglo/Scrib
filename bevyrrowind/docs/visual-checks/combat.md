@@ -11,7 +11,7 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
 
 ### CB-1: Light chain and roll on the dummy (C1b)
 - `.\bevyrrowind scene level-arena` (or `scene level-arena --camera chain`). Keys: F readies / sheathes the weapon (an attack press while
-  sheathed draws instead); LMB or pad right bumper attacks (three presses = the light chain); Shift or pad East: tap rolls (on release), hold
+  sheathed draws instead); LMB or pad right bumper attacks (four presses = the light chain); Shift or pad East: tap rolls (on release), hold
   sprints; O toggles the combat gizmos (hurt capsules green, cyan in i-frames; blade yellow, red while a hit window is open).
 - Look for: hits land when the blade arrives at the dummy (not before); hit-stop reads as impact, not a stall; the dummy's reaction matches the
   side; the stamina (green) bar drains per swing and refills after; the roll moves ~2 m with no slide at its end; sprint stops when winded.
@@ -28,4 +28,15 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   `InputSampler::release`); cursor confined on Windows; light chain ~0.4 m per swing (per-move `root_scale` in `sword_1h.ron`); body stays
   on the capsule through the chain (`sf_anim` cook `start_anchor`: UAL2 split-take clips kept a ~0.95 m pelvis offset); player vs dummy
   collision (`separate_moved`: the mover stops/slides, the dummy is never shoved). Owner confirmed all live (copy c, arena).
-- Status: confirmed. Open nitpick M1: a left click shows the cursor again; in F11 the cursor should stay hidden too (being fixed).
+- Status: confirmed. Owner 2026-10-27 evening (copy d): the 4-hit chain (UAL2 `Sword_Light_A-D`, combat.md "C1b" table) and M1 (cursor
+  stays hidden on a left click and in F11) confirmed.
+
+### CB-2: Lock-on, locked facing and side rolls (C1c parts 1-4)
+- `.\bevyrrowind scene level-arena`. Q (or middle mouse, pad R3): lock the dummy in front; Q again releases; Q with nothing in the
+  15 m / 35 deg cone recentres the camera. Then walk away past 20 m (breaks), mantle the 1 m ledge (breaks, re-offered 1 s after landing).
+- Look for: the camera frames the target; a small white dot (dark rim) sits on the locked dummy's chest, gone when unlocked or off screen;
+  locked, the body keeps facing the dummy: A/D circle it, S backs away facing it, standing still turns to it, sprint faces its run;
+  locked Shift tap + A/D = a side dodge (~2 m around it, no pause at its end); W/S + tap = the forward roll squared to the stick.
+- Known gaps: locomotion still plays the forward cycles (strafe clips C1c-2b); no back roll / backstep clip; no target switching (C4).
+- Owner 2026-10-27 (copy d): lock, release, recentre and locked facing confirmed ("main logic solid"); asked for the marker and faster
+  side rolls (both built after, e914521, 3f0e82b). Status: lock + facing confirmed; marker and side rolls awaiting owner.

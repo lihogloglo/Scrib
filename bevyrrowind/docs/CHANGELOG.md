@@ -4,6 +4,9 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-27 (evening, feel-coord): 4-hit light chain (UAL2 Sword_Light_A-D), lock-on C1c parts 1-4 (Q / MMB / R3, facing and
+  strafe, locked side rolls, marker; CB-2), high mantle on ClimbUp_2m (AL-10), clip hand/foot contacts (B2b 1, 2a); combat.md C1 briefs
+  archived. Owner: chain, M1, lock + facing confirmed; mantle hands aim at the box centre (B2b-2), hard to trigger (B2-T).
 - 2026-10-27 (afternoon, feel-coord bug pass): hold sprint (`InputSampler::release` vs shared buttons), cursor confined on Windows,
   light chain ~0.4 m (`root_scale`), cook `start_anchor` (UAL2 split-take pelvis offset), player vs dummy collision (`separate_moved`),
   Delirium push F11 only and never on action characters, get-up rest check + `roll_stall`; full UAL1/UAL2 bundled (Git LFS).

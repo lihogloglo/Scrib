@@ -41,7 +41,7 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - `scene level-anim-ledges`, F11; walk W into the yellow 1 m box, then W+Space (or Space while walking).
 - Look for: the body rises onto the top (~1 m past the lip) in ~0.7 s playing the climb clip in step with the move
   (playhead = the warp's progress), then blends back into walk and drops off the back normally; red 2 m box: a plain
-  jump; Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a stand at the face (feel/tuning is
+  jump (now the high mantle: AL-10); Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a stand at the face (feel/tuning is
   the owner's call). Hands on the lip and feet on top are not IK-fitted yet (B2b). Owner 2026-10-27: mantle alright;
   body clipping into the box (clip, B2b IK: stays logged); camera too close on the bigger box.
 - Camera fix 2026-10-27 (camera.md "As built (traversal pivot)"): the pivot rode the climb root through the lip, so on the
@@ -49,6 +49,14 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   walk-jump onto the orange box from close and from ~1.5 m out: the camera rises smoothly ahead of the body, keeps its
   distance, no pop in. Walls still pull it in. Status: camera confirmed (owner 2026-10-27: "solved"); hands on the lip
   and the body clipping: B2b (next).
+
+### AL-10: High mantle, player (action.md B2 high mantle)
+- Needs a bake after 2026-10-27 (`traverse.mantle.high` on UAL2 `ClimbUp_2m`). `scene level-anim-ledges`, F11; walk W into a box, W+Space.
+- Look for: the orange h1.60 and h2.00 boxes play the high climb (hands above the head, body over the lip onto the top); the yellow
+  h1.20 box keeps the waist mantle; the red h2.50 box and the 3.5 m wall refuse into a plain jump; Ctrl + Space never mantles.
+- Owner 2026-10-27 (copy d): works, hands go above the head. Issues: the hands aim at the box centre, not the lip (B2b-2 hand IK, after
+  the B2b-2a contacts); hard to trigger: the body slides along the face and doesn't face it (B2-T approach tolerance + yaw align, in
+  progress). Status: confirmed with follow-up (B2b-2, B2-T).
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.

@@ -89,14 +89,15 @@ in the world; only the release start path (or a session working on the menu) sho
 
 ## Phase 3: animation, combat, physics
 
-- [ ] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
+- [~] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
   old P11. Clip sources: packs only (free first).
   Potential (owner 2026-10-22): evaluate MotionBricks as an animation source (licence, rig fit, quality vs packs).
   Wanted later (owner 2026-10-27, not urgent): run + Ctrl slide.
-  Next (owner 2026-10-27): B2b hands on the lip (hand IK, clip contacts; fixes most mantle clipping), then B2c wall
-  brace (free hand plants on a wall when running into it; busy hands skipped). After combat C1b, alongside C1c.
+  High mantle built 2026-10-27 (1.53-2.25 m, UAL2 ClimbUp_2m; AL-10 confirmed with follow-up); B2b clip contacts built (parts 1,
+  2a). In progress: B2-T (high mantle hard to trigger), then B2b-2 hand IK (hands aim at the box centre), then B2c wall
+  brace (free hand plants on a wall when running into it; busy hands skipped).
   Clips (2026-10-27): full Quaternius UAL1/UAL2 now bundled (`assets/animation/quaternius/`); unmapped UAL2 clips ready for
-  slots: Sword_Light_A-D (+Rec, Combo), Sword_Heavy_*, ClimbUp_2m, KipUp, StepUp, SafetyVault, Walk_Fwd/Bwd/L/R, Turn180,
+  slots (Sword_Light_A-D and ClimbUp_2m mapped since): Sword_Light_Combo, Sword_Heavy_*, KipUp, StepUp, SafetyVault, Walk_Fwd/Bwd/L/R, Turn180,
   LiftAir_* (knock-up). The UAL1 Sword_Attack alt1 light backup now carries 1.5 m root travel (unused; scale it if mapped).
 - [~] 3.2 Ragdolls: R0 fixed, AN-1..21 fixed, PH-2 awaiting owner (`level-anim-drop`). Left: limp_drop/stairs stretch gates, beast toe pin, powered falls (PH-9). Order `superfargoth/docs/specs/animation-plan.md`; test level `anim-lab`.
 - [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
@@ -106,10 +107,12 @@ in the world; only the release start path (or a session working on the menu) sho
   (collision-check it later).
 - [~] 3.3 Physics follow-ups. Fix plan (`specs/physics-fix-plan.md`) slices 1-10 built 2026-10-26 (no falls on load, items asleep until disturbed, OpenMW NIF collision, steady carry); PH-11 awaiting owner; slice 11 (player physics capsule) waits for the owner; leftovers in the plan's status. Older: hold/drag/throw (PH-4), shapeless items (PH-7), immovable candles (PH-1), ball through walls (archive 6a). Owner 2026-10-25: props jump on entering a room (spawn settling); held object vs capsule.
 - [~] 3.4 Deferred character checks: SN-2/3, CH-1/3/4, SB-1/2/3/5, HI-3, AP-2/3, PH-10 (CH-1/3, SB-5 awaiting owner); next stairs 5b, powered falls R3 (`animation-plan.md`). 2026-10-26: IK/pelvis/jump audit fixes built (CHANGELOG); AL-9, PL-3 awaiting owner; left: sprint cycle, run-strafe skate (clips).
-- [ ] 3.5 Combat (M10): Elden Ring feel, classic rules behind a seam (owner 2026-10-27). Spec written 2026-10-27:
+- [~] 3.5 Combat (M10): Elden Ring feel, classic rules behind a seam (owner 2026-10-27). Spec written 2026-10-27:
   `superfargoth/docs/specs/combat.md` (new `sf_combat(_bevy)`, slices C1a-C7) + `specs/combat-adapter.md`. C1a (Bevy-free
   core) done 2026-10-27; C1b (player vs training dummy, scene `level-arena`) done 2026-10-27, CB-1 confirmed after the
-  afternoon bug pass (nitpick M1 cursor on left click, in progress). Next: C1c (lock-on). Visual checks CB-.
+  afternoon bug pass; 4-hit light chain (UAL2 Sword_Light_A-D) and M1 confirmed that evening. C1c lock-on built 2026-10-27
+  (parts 1-4: lock/break/re-offer + camera, locked facing/strafe, locked side rolls, marker; CB-2). Next: C1c-2b strafe
+  clips, then C2. Visual checks CB-.
   Logged 2026-10-27: actor separation (`separate_moved`) has no wall sweep; NPC walkers (ORCA) don't block the player;
   dummies have `CellCoord` but no big_space regrid.
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later.

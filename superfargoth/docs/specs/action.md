@@ -334,7 +334,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 | **A1** backbone | done 2026-10-21: see "As built (A1)" | `cargo test -p sf_action` |
 | **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); slice 2 (animated player body) built 2026-10-26, PL-2 awaiting owner; `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
 | **B1** progress + chain warp | done 2026-10-26 (see "As built (B1)"; `sf_action` call site left for B2): `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
-| **B2** mantle and vault | B2a (waist mantle, player) done 2026-10-26 on the capsule player (see "As built (B2a)"); the clip on the body comes with the animated player body (A2 slice 2). Next B2b. Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
+| **B2** mantle and vault | B2a (waist mantle, player) done 2026-10-26 on the capsule player (see "As built (B2a)"); the clip on the body comes with the animated player body (A2 slice 2). High mantle and B2b parts 1 and 2a (clip contacts) built 2026-10-27 (see "As built (B2 high mantle, B2b contacts)"); in progress: B2-T approach tolerance, then B2b-2 hand IK. Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
 | **B2c** wall brace (owner 2026-10-27) | Procedural `WallBrace` op after B2b's hand IK: probe ahead/beside (animation-layers.md "wall beside"); a free hand plants on a wall within arm's reach, arm slightly bent, weight by approach speed and distance (firm when running in, light when walking past, trailing hand along side walls); busy hands skipped (weapon, torch, carried item: off-hand only with a one-hand weapon). Refs: R2 "wall-braced arm", R4 "arms out of walls" | course `ledges`/`anim-lab` walls: run into the 3 m wall, palm ≤ 2 cm off the surface, no arm through the wall; walk past: light trail; sword drawn: off-hand only |
 | **B3** ledge catch and hang | Docked mover mode; ledge catch from jump and fall, hang, shimmy, climb up, drop to hang (`Down`), let go; hand IK latched on the lip | course `ledges`: 2.0/2.5 m boxes and the 3.5 m wall: catch, shimmy to the end, climb up; hands ≤ 1 cm off the lip; jolt test (R2 adopt 3) |
 | **B4** edge index + ladders | `sf_interaction` edges baked from collision per cell; ladders as edges with rung IK, enter/exit top and bottom | new level `ladders` (2 ladders, one to a roof); rungs ≤ 1 cm; edge census over Balmora rooftops (count, bake time ≤ 5 % of the cold bake) |
@@ -381,17 +381,8 @@ Moved to [history](archive/action-history.md#as-built-a2-slice-1-2026-10-22-sf_a
 
 ## As built (B1, 2026-10-26)
 
-The warp function is `sf_anim::WarpPlan` (re-exported by `sf_anim_graph`; in `sf_anim` because
-`sf_action` already reaches it through `sf_controller`): `WarpPlan::try_new(&RootChain, start,
-target, Linear | Late, refuse_ratio)` fixes the correction at start, `root_at(&chain, t)` gives
-`start ⊕ baked(t) + correction × profile(t)` inside the carrier clip's Layer 1 `warp` window (else
-its span). `RootMotionMode::Progress` montages take their playhead from
-`GraphInstance::set_slot_progress(slot, chain_secs)`, queued ones back to back. Layer 1's per-update
-skew warp stays for `Drive` (attack tracking). Our form is UE's Adjustment Blend Warp / AC1's
-additive correction, one target per plan (GASP uses several; B2 chains plans). No `sf_action` call
-site yet (needs the `sf_anim` dep and a lock line). API, tests, B2 notes:
+`sf_anim::WarpPlan` chain warp and `Progress` montages: summary and full text in
 [history](archive/action-history.md#as-built-b1-2026-10-26-chain-warp-and-progress-montages).
-
 
 ## As built (B2a part 1, 2026-10-26)
 
@@ -406,6 +397,22 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
 `set_slot_progress`. Rule `traverse.mantle.waist` in `TRAVERSAL_RULES`. Slot clip: UAL2
 `ClimbUp_1m_RM`. Part 2: the shell probes `ObstacleAhead` on Jump/Up and places Warp bodies directly; the game loads the slot clip (history).
 [history](archive/action-history.md#as-built-b2a-part-1-2026-10-26-warp-owner-and-the-waist-mantle-clip)
+
+## As built (B2 high mantle, B2b contacts, 2026-10-27)
+
+- **High mantle** (4b3ffe4): rule `traverse.mantle.high`, obstacle band 0.85-1.25 x character height (1.53-2.25 m), inset
+  1.2 m, rank 190 (below the waist rule); Jump+forward or `Up`, never Sneak; the 2.5 m box and 3.5 m wall still refuse into a
+  plain jump. Slot UAL2_RM `ClimbUp_2m` (rise 2.38 m, forward 2.0 m on the base rig; the warp only compresses), in the player's
+  `TRAVERSAL_SLOTS`. `measure_mantle_high` prints the clip timeline. Check AL-10.
+- **B2b part 1, contacts** (e648a60): `ClipMeta::contacts` (kind, side, limb, joint, start/end, clip-space and root-local
+  position), `contacts_of` / `contact_span`; effector speed under 0.35 limb lengths/s (release at 2x), spans >= 0.1 s, hands
+  only when the shoulder moves >= 0.1 limb lengths against them; at cook and on retarget targets (`CLIP_FORMAT` 4). The real
+  mantle clips reported no hand contacts (the hands keep moving in clip space).
+- **B2b-2a** (46e38aa): a hand also plants as a pivot (under 2.0 limb lengths/s and 0.5 x the girdle's speed past it); retarget
+  copies the source's contacts. `ClimbUp_2m`: both hands (R 0.33-0.67 s, L 0.47-0.90 s); `ClimbUp_1m`: left hand 0.17-0.33 s.
+- Owner 2026-10-27 (ledges): the high mantle works; the hands aim at the box centre, not the lip (B2b-2 hand IK fixes it); hard
+  to trigger: the body slides along the face without facing it (B2-T: input-direction gating, contact probe, jump buffer,
+  yaw auto-align during the warp).
 
 ## As built (A2 slice 2, 2026-10-26)
 Animated player body: the dressed `player` record under the body, fed from the drawn (interpolated, spring-corrected)

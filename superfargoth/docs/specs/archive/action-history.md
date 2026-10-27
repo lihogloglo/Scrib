@@ -506,3 +506,16 @@ to `loco`, 2 m refuses, Sneak never mantles, Sneak pressed mid-mantle leaves the
 - First person: hidden while `CameraPose::fade > 0.5`.
 - Tests (`mw_player_bevy` `tests_avatar`): dressed spawn puts the record under the body with no capsule mesh; walking
   feeds a forward `drive.velocity`; mantle progress sets the montage playhead each tick and the slot ends after.
+
+## As built (B1): summary (moved from action.md 2026-10-27)
+
+The warp function is `sf_anim::WarpPlan` (re-exported by `sf_anim_graph`; in `sf_anim` because
+`sf_action` already reaches it through `sf_controller`): `WarpPlan::try_new(&RootChain, start,
+target, Linear | Late, refuse_ratio)` fixes the correction at start, `root_at(&chain, t)` gives
+`start ⊕ baked(t) + correction × profile(t)` inside the carrier clip's Layer 1 `warp` window (else
+its span). `RootMotionMode::Progress` montages take their playhead from
+`GraphInstance::set_slot_progress(slot, chain_secs)`, queued ones back to back. Layer 1's per-update
+skew warp stays for `Drive` (attack tracking). Our form is UE's Adjustment Blend Warp / AC1's
+additive correction, one target per plan (GASP uses several; B2 chains plans). No `sf_action` call
+site yet (needs the `sf_anim` dep and a lock line). API, tests, B2 notes:
+[full text](#as-built-b1-2026-10-26-chain-warp-and-progress-montages).

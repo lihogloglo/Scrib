@@ -80,9 +80,10 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (28)
+### Awaiting owner (30)
 
-CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; nitpick M1: a left click shows the cursor) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
+CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
+CB-2 | awaiting owner (2026-10-27: lock, release, recentre, locked facing confirmed "main logic solid"; marker + side rolls awaiting) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
 PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
 PH-11 | awaiting owner | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
 WE-5 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
@@ -94,6 +95,7 @@ AL-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Props push
 AL-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
 AL-8 | confirmed with follow-up (2026-10-27: camera solved; hands on the lip + clipping: B2b next) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
+AL-10 | confirmed with follow-up (2026-10-27: works; hands aim at the box centre B2b-2, hard to trigger B2-T) | [anim-lab](visual-checks/anim-lab.md) | High mantle, player (ClimbUp_2m on the 1.6/2.0 m boxes)
 AL-9 | confirmed | [anim-lab](visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
