@@ -23,7 +23,7 @@ use sf_bake::{BakeError, Baker, Digest, PlanCx, ProductKey, RunCx, Step};
 
 use crate::{
     AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints, RigProfile,
-    RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, annotate_contacts, cook_clip_for, detect_profile,
+    RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, cook_clip_for, detect_profile, transfer_contacts,
 };
 
 pub const SKELETON_COOK: &str = "skeleton.cook";
@@ -317,7 +317,8 @@ impl Step for AnimCookStep {
         // 9: horizontal extraction starts the root-motion joint over its rest ground position
         //    (`cook::start_anchor`: split-take clips no longer draw the body off its capsule).
         // 10: hand and foot contacts, `ClipMeta::contacts` (`annotate_contacts`, action.md B2b).
-        10
+        // 11: contact speeds per frame step; hands also plant as pivots (`HAND_SPEED`, `HAND_PIVOT`): mantle grips.
+        11
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (skeleton, file, clip) = Self::parse(subject)?;
@@ -383,7 +384,8 @@ impl Step for AnimRetargetStep {
     }
     fn version(&self) -> u32 {
         // 2: the target's hand and foot contacts, from its `rig.profile` (`annotate_contacts`).
-        2
+        // 3: the source clip's contacts carried over (`transfer_contacts`): times from the source, positions the target's.
+        3
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (target, anim, source) = Self::parse(subject)?;
@@ -412,7 +414,7 @@ impl Step for AnimRetargetStep {
         }
         .map_err(|e| BakeError::step(&key, e))?;
         let profile = read_profile(&key, target_path, cx)?;
-        annotate_contacts(&target, &profile, &mut cooked);
+        transfer_contacts(&clip.meta.contacts, &target, &profile, &mut cooked);
         Ok(cooked.to_bytes())
     }
 }

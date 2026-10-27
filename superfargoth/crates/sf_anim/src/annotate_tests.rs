@@ -157,3 +157,52 @@ fn annotation_needs_a_profile_and_enabled_contacts() {
     let off = ClipRules { contacts: ContactRules { enabled: false, ..ContactRules::default() }, ..climb_rules() };
     assert!(cook_clip_for(&s, Some(&profile), &climb(), &off, &settings).unwrap().meta.contacts.is_empty());
 }
+
+#[test]
+fn a_hand_sliding_up_the_face_as_the_body_climbs_past_it_gets_one_contact() {
+    // A waist mantle as keyframed: the hand lands at 0.2 s, its palm slides up the face at
+    // 0.7 m/s (over the still speed) while the shoulder rises past it at 3 m/s, and leaves at 0.4 s.
+    let lip = Vec3::new(0.2, 1.0, 0.8);
+    let hand = track(0.8, |t| {
+        if t < 0.2 {
+            lip - Vec3::new(0.0, 0.3, 1.0).normalize() * 4.0 * (0.2 - t)
+        } else if t <= 0.4 {
+            lip + Vec3::Y * 0.7 * (t - 0.2)
+        } else {
+            lip + Vec3::Y * (0.14 + 4.0 * (t - 0.4))
+        }
+    });
+    let shoulder = track(0.8, |t| Vec3::new(0.2, 0.6 + 3.0 * t, 0.5));
+    let spans = times(&planted_spans(&hand, Some(&shoulder), ARM, DT));
+    assert_eq!(spans.len(), 1, "{spans:?}");
+    assert!(near(spans[0].0, 0.2) && near(spans[0].1, 0.4), "{spans:?}");
+}
+
+#[test]
+fn a_hand_carried_by_the_climbing_body_has_no_contact() {
+    // The arm locked to the body: slow or fast, the shoulder never moves past the hand.
+    for rate in [0.15, 0.7] {
+        let shoulder = track(1.0, |t| Vec3::new(0.15, 1.4 + rate * t, 0.3 * t));
+        let hand: Vec<Vec3> = shoulder.iter().map(|s| *s + Vec3::new(0.3, -0.4, 0.2)).collect();
+        assert_eq!(planted_spans(&hand, Some(&shoulder), ARM, DT), [], "rising {rate} m/s");
+    }
+}
+
+#[test]
+fn a_retargeted_clip_inherits_its_source_contacts() {
+    let s = biped();
+    let profile = detect_profile(&s, &RigHints::default()).unwrap();
+    let source = cook_clip_for(&s, Some(&profile), &climb(), &climb_rules(), &CookSettings::default()).unwrap();
+    let mut clip = source.clone();
+    clip.meta.contacts.clear();
+    transfer_contacts(&source.meta.contacts, &s, &profile, &mut clip);
+    assert_eq!(clip.meta.contacts.len(), source.meta.contacts.len());
+    for (got, want) in clip.meta.contacts.iter().zip(&source.meta.contacts) {
+        assert_eq!((got.kind, got.side, &got.limb, &got.joint, got.start, got.end), (want.kind, want.side, &want.limb, &want.joint, want.start, want.end));
+        assert!(got.position.distance(want.position) < 1e-4 && got.local.distance(want.local) < 1e-4, "{got:?} {want:?}");
+    }
+    // A target without arms keeps no hand contact.
+    let legs_only = RigProfile { limbs: profile.limbs.iter().filter(|l| l.kind != LimbKind::Arm).cloned().collect(), ..profile.clone() };
+    transfer_contacts(&source.meta.contacts, &s, &legs_only, &mut clip);
+    assert_eq!(clip.meta.contacts_of(ContactKind::Hand).count(), 0);
+}

@@ -253,6 +253,7 @@ fn measure_mantle(s: &Setup) {
     };
     describe("source (UAL2 rig)", &source_clip);
     hands(&source_clip);
+    hand_frames(&source, &source_map, &source_clip);
     let limbs: [(&str, &[B]); 3] = [
         ("leg", &LEG),
         ("arm", &[B::LeftUpperArm, B::LeftLowerArm, B::LeftHand]),
@@ -264,6 +265,7 @@ fn measure_mantle(s: &Setup) {
         let clip = Clip::from_bytes(&bytes(&baker, &retargeted(s, set.skeleton))).unwrap();
         describe(set.skeleton, &clip);
         hands(&clip);
+        hand_frames(&target, &map, &clip);
         for (name, bones) in limbs {
             let present = |m: &RigMap| bones.iter().filter(|b| m.joint(**b).is_some()).copied().collect::<Vec<_>>();
             let (sl, tl) = (chain(&source, &source_map, &present(&source_map)), chain(&target, &map, &present(&map)));
@@ -448,5 +450,35 @@ fn hands(clip: &Clip) {
             "    {:?} {} ({}): {:.3}-{:.3} s, at {:.3} {:.3} {:.3} (clip), {:.3} {:.3} {:.3} (root frame)",
             c.side, c.limb, c.joint, c.start, c.end, c.position.x, c.position.y, c.position.z, c.local.x, c.local.y, c.local.z
         );
+    }
+}
+
+/// Per frame, in clip space: each hand's height and forward position, its speed, and the shoulder's speed against it
+/// (m/s): the hand-contact rule's inputs, to read grab and release by eye.
+fn hand_frames(skeleton: &Skeleton, map: &RigMap, clip: &Clip) {
+    use std::fmt::Write as _;
+    let n = clip.frame_count as usize;
+    #[allow(clippy::cast_precision_loss)]
+    let time = |f: usize| clip.duration * f as f32 / (n - 1).max(1) as f32;
+    let at = |f: usize, b: B| {
+        let t = time(f);
+        let (root, yaw) = clip.root_at(t);
+        let model = model_at(skeleton, clip, t);
+        glam::Quat::from_rotation_y(yaw) * pos(skeleton, &model, map, b) + root
+    };
+    let pairs = [(B::LeftHand, B::LeftUpperArm), (B::RightHand, B::RightUpperArm)];
+    let tracks: Vec<(Vec<Vec3>, Vec<Vec3>)> =
+        pairs.iter().map(|&(h, s)| ((0..n).map(|f| at(f, h)).collect(), (0..n).map(|f| at(f, s)).collect())).collect();
+    println!("  frame t | hand L y z v | shoulder-L v | hand R y z v | shoulder-R v");
+    for f in 0..n {
+        let (a, b) = (f.saturating_sub(1), (f + 1).min(n - 1));
+        let dt = time(b) - time(a);
+        let mut line = format!("  {f:3} {:.3}", time(f));
+        for (hand, shoulder) in &tracks {
+            let v = hand[b].distance(hand[a]) / dt;
+            let rel = (shoulder[b] - hand[b]).distance(shoulder[a] - hand[a]) / dt;
+            let _ = write!(line, " | {:.2} {:.2} {:.2} | {:.2}", hand[f].y, hand[f].z, v, rel);
+        }
+        println!("{line}");
     }
 }

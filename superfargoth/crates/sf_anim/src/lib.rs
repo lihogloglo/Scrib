@@ -40,7 +40,10 @@ pub mod spring;
 pub mod steps;
 mod warp;
 
-pub use annotate::{CONTACT_RELEASE, CONTACT_SPEED, Contact, ContactKind, HAND_BRACE, MIN_CONTACT, annotate_contacts};
+pub use annotate::{
+    CONTACT_RELEASE, CONTACT_SPEED, Contact, ContactKind, HAND_BRACE, HAND_PIVOT, HAND_PIVOT_RELEASE, HAND_SPEED, MIN_CONTACT, annotate_contacts,
+    transfer_contacts,
+};
 #[cfg(feature = "bvh")]
 pub use bvh_import::BvhAnimImporter;
 pub use clip::{
