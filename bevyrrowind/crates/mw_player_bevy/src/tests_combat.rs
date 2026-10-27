@@ -155,3 +155,43 @@ fn the_lock_key_locks_the_training_dummy_and_a_second_press_releases_it() {
     assert_eq!(locked(&app), None);
     assert!(app.world().get::<sf_camera_bevy::LockOn>(player).is_none());
 }
+
+/// C1c part 2a: locked on, a sideways stick circles the training dummy while the body keeps
+/// facing it (strafe locomotion; the strafe clips are C1c-2b).
+#[test]
+fn locked_on_a_sideways_stick_strafes_round_the_dummy_facing_it() {
+    let (mut app, player) = armed();
+    // The game player's mover (rate-capped turns), not the harness's generic springs.
+    app.world_mut().get_mut::<ActionBody>(player).unwrap().params = feel::mover_params();
+    dummy::systems::<Statics>(&mut app);
+    let root = app.world_mut().spawn_empty().id();
+    let d = dummy::spawn(&mut app.world_mut().commands(), 0, (WorldPos::ORIGIN.offset(Vec3::new(0.0, 0.0, 13.0)), 0.0), root);
+    app.world_mut().flush();
+    for _ in 0..30 {
+        app.update();
+    }
+    let mut q = app.world_mut().query_filtered::<Entity, With<Action<sf_combat_bevy::LockOnAction>>>();
+    let lock = q.single(app.world()).expect("one lock action");
+    mock(&mut app, lock, true);
+    for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut().entity_mut(lock).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+    app.update();
+    assert!(app.world().get::<ActionCharacter>(player).unwrap().state.lock.is_some(), "locked");
+    let feet = |app: &App, e: Entity| app.world().get::<ActionBody>(e).unwrap().loco.position;
+    let start = feet(&app, player);
+    let stick = action(&mut app, PlayerAction::Stick);
+    mock(&mut app, stick, Vec2::X);
+    for _ in 0..60 {
+        app.update();
+    }
+    assert!(app.world().get::<ActionCharacter>(player).unwrap().state.lock.is_some(), "still locked");
+    let to = feet(&app, player).delta_f32(feet(&app, d));
+    let bearing = to.x.atan2(to.z);
+    let yaw = app.world().get::<ActionBody>(player).unwrap().loco.motion.yaw;
+    assert!(sf_controller::wrap_angle(yaw - bearing).abs() < 0.15, "faces the dummy: yaw {yaw:.3}, bearing {bearing:.3}");
+    let moved = start.delta_f32(feet(&app, player));
+    let r = Vec2::new(to.x, to.z).length();
+    assert!(moved.x.abs() > 1.0 && (2.0..4.5).contains(&r), "strafed round it: moved {moved}, {r:.2} m away");
+}

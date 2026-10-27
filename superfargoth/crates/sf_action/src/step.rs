@@ -418,8 +418,14 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         cur = Some(i);
     }
 
-    // 9. Move (Sim owner): the mover's intent, slowed with the clock under hit-stop.
-    out.intent = if stick_active && cur.is_none_or(|i| steers(rules.at(i))) { intent(p, facts.mode, stick, sense.yaw) } else { LocomotionIntent::IDLE };
+    // 9. Move (Sim owner): the mover's intent, slowed with the clock under hit-stop. Locked on,
+    // the body faces the target, standing still too.
+    let lock = lock_facing(sense, facts.mode);
+    out.intent = match (stick_active, cur.is_none_or(|i| steers(rules.at(i)))) {
+        (true, true) => intent(p, facts.mode, stick, sense.yaw, lock),
+        (false, true) => LocomotionIntent { desired_facing: lock, ..LocomotionIntent::IDLE },
+        (_, false) => LocomotionIntent::IDLE,
+    };
     if state.clock.rate < RATE_ONE {
         out.intent.desired_velocity *= f32::from(state.clock.rate) / f32::from(RATE_ONE);
     }
@@ -456,7 +462,7 @@ fn write_clip(ctx: &StepCtx<'_>, cur: Option<usize>, cmd: &Command, sense: &Sens
             _ => {}
         }
     }
-    let aim = sense.lock_target.map(|v| Vec2::new(v.x, v.z)).filter(|v| v.length_squared() > 1e-6).or(stick);
+    let aim = lock_dir(sense).or(stick);
     if let (Some(rate), Some(aim), false) = (turn, aim, no_turn) {
         #[allow(clippy::cast_precision_loss)]
         let max = f32::from(rate).to_radians() * (t1.0 - t0.0) as f32 / (1000.0 * TICK_HZ as f32);
@@ -637,12 +643,29 @@ fn start(
     out.started = true;
 }
 
+/// The lock target's planar direction from the feet (world XZ as x, y), unless standing on it.
+fn lock_dir(sense: &Sense) -> Option<Vec2> {
+    sense.lock_target.map(|v| Vec2::new(v.x, v.z)).filter(|v| v.length_squared() > 1e-6)
+}
+
+/// Locked-on facing (combat.md "Lock-on and camera"): the yaw toward the target, except in a
+/// free-run sprint, which faces its run (Elden Ring); it returns when the sprint ends.
+fn lock_facing(sense: &Sense, mode: Mode) -> Option<f32> {
+    lock_dir(sense).filter(|_| mode != Mode::FreeRun).map(|d| d.x.atan2(d.y))
+}
+
 /// Gait from mode and stick length; walking scales with the stick up to the run threshold.
 /// With no `desired_facing` the body turns to face the stick, so the gait's forward speed
 /// applies whatever the current facing (a reversal keeps its speed instead of asking for
-/// the back speed while the body turns round).
-fn intent(p: &CharacterParams, mode: Mode, stick: Vec2, yaw: f32) -> LocomotionIntent {
-    let yaw = if stick.length_squared() > 1e-12 { stick.x.atan2(stick.y) } else { yaw };
+/// the back speed while the body turns round). With one (`lock`: locked on) the body turns
+/// to it at the mover's own turn rates and the stick strafes, the side and back speeds
+/// measured against that facing.
+fn intent(p: &CharacterParams, mode: Mode, stick: Vec2, yaw: f32, lock: Option<f32>) -> LocomotionIntent {
+    let yaw = match lock {
+        Some(l) => l,
+        None if stick.length_squared() > 1e-12 => stick.x.atan2(stick.y),
+        None => yaw,
+    };
     let len = stick.length();
     let gait = match mode {
         Mode::Sneak => Gait::Sneak,
@@ -656,5 +679,5 @@ fn intent(p: &CharacterParams, mode: Mode, stick: Vec2, yaw: f32) -> LocomotionI
         Gait::Walk | Gait::Sneak => (dir / p.run_threshold.max(1e-3)).clamp_length_max(1.0),
     };
     let v = p.gaits.get(gait).velocity(input, yaw) * p.profile(mode).speed_scale;
-    LocomotionIntent { desired_velocity: v, desired_facing: None, gait }
+    LocomotionIntent { desired_velocity: v, desired_facing: lock, gait }
 }

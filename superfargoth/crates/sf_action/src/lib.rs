@@ -17,7 +17,7 @@
 //! Slice B2a: the Warp owner ([`Owner::Warp`]): a rule with a ledge probe ([`ProbeNeed`]) plans an
 //! [`sf_anim::WarpPlan`] over its slot chain's root path ([`SlotSource::root`]) at start, keeps it
 //! in [`ActionState::warp`] and writes the root pose and chain progress each tick
-//! ([`ActionOutput::warp`]); [`TRAVERSAL_RULES`] holds `traverse.mantle.waist`.
+//! ([`ActionOutput::warp`]); [`TRAVERSAL_RULES`] holds `traverse.mantle.waist` and `traverse.mantle.high`.
 
 mod command;
 mod ids;
@@ -28,6 +28,8 @@ mod windows;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_lock;
 #[cfg(test)]
 mod tests_warp;
 
@@ -52,6 +54,6 @@ pub use windows::{Gates, HitMask, Located, SlotInfo, SlotSource, SlotTable, Wind
 /// [`Origin::Framework`] before content packs.
 pub const BASE_RULES: &str = include_str!("base_rules.ron");
 
-/// The framework's traversal rules (B2a: the waist-high mantle), added after [`BASE_RULES`] by hosts
+/// The framework's traversal rules (B2: the waist and high mantles), added after [`BASE_RULES`] by hosts
 /// whose slot source has the traversal slots and whose shell senses obstacles ([`Sense::obstacle`]).
 pub const TRAVERSAL_RULES: &str = include_str!("traversal_rules.ron");
