@@ -280,6 +280,14 @@ fn with_suffix(base: &str, suffix: &str) -> String {
     base.split_once('@').map_or_else(|| format!("{base}{suffix}"), |(g, part)| format!("{g}{suffix}@{part}"))
 }
 
+/// Inertialization between ground and swim gaits (idle, walk, run, turns, sneak), seconds.
+/// Short so the body keeps up with a responsive mover (the player: locomotion.md
+/// "Player feel"); not under ~0.12 s, where idle-to-run starts pop at the feet.
+const GAIT_BLEND: f32 = 0.15;
+
+/// Smoothing of the directional blend spaces' move direction, seconds.
+const DIRECTION_SMOOTHING: f32 = 0.05;
+
 fn inert(t: f32) -> BlendMode {
     BlendMode::Inertialize(t)
 }
@@ -420,7 +428,7 @@ impl Builder {
                 y: ValueSpec::Param(format!("{mv}.y")),
                 samples,
                 rate: ValueSpec::default(),
-                smoothing: 0.08,
+                smoothing: DIRECTION_SMOOTHING,
                 looping: None,
                 sync: None,
                 root_motion: None,
@@ -704,7 +712,8 @@ impl Builder {
                 states::FALL => move_names.iter().copied().filter(|&f| f != states::JUMP).collect(),
                 _ => move_names.clone(),
             };
-            go(&from, m.state, m.when.clone(), inert(0.2));
+            let blend = if matches!(m.state, states::JUMP | states::FALL) { 0.2 } else { GAIT_BLEND };
+            go(&from, m.state, m.when.clone(), inert(blend));
             let once: Vec<&str> = [&hit_names[..], &knock_once].concat();
             go(&once, m.state, [&[C::Finished][..], &m.when].concat(), inert(0.25));
             // Knockout's exit when it has no `Knockout@tail` (a dropped

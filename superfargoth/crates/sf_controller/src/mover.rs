@@ -14,7 +14,7 @@ use sf_anim::{RigProfile, RigTemplate, RootDelta, attitude_rotation};
 use sf_coords::WorldPos;
 
 use crate::frame::CharacterFrame;
-use crate::intent::LocomotionIntent;
+use crate::intent::{Gait, LocomotionIntent};
 use crate::motion::{MotionState, SpringParams, wrap_angle};
 use crate::path::ArrivalParams;
 use crate::probe::{GroundHit, GroundProbe, ProbeQuery};
@@ -318,6 +318,7 @@ struct Pending {
     free: Option<Free>,
     v_goal: Vec3,
     yaw_goal: f32,
+    gait: Gait,
     /// Ground probe origin height above the feet, and the probe's reach.
     probe: Option<ProbeQuery>,
     /// A surface turned this step aside (sets [`Locomotion::deflect`]).
@@ -461,7 +462,7 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
         }
     }
     let vy0 = loco.motion.velocity.y;
-    let mut d = loco.motion.advance(v_goal, yaw_goal, &it.params.springs, dt);
+    let mut d = loco.motion.advance(v_goal, yaw_goal, it.intent.gait, &it.params.springs, dt);
     let w = it.root.drive_weight.clamp(0.0, 1.0);
     if w > 0.0 && dt > 0.0 {
         // `Drive` root motion (animation.md "Root motion modes"): one frame
@@ -500,7 +501,7 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     }
     let dy = d.y;
     d.y = 0.0;
-    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, probe: None, deflected: false }
+    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, gait: it.intent.gait, probe: None, deflected: false }
 }
 
 fn horizontal(v: Vec3) -> Vec3 {
@@ -705,7 +706,7 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
     }
     loco.position = feet;
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);
-    loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, &params.springs);
+    loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, p.gait, &params.springs);
     loco.moved = p.frame.delta_to(&loco.frame());
 }
 
@@ -762,7 +763,7 @@ fn finish_free(it: &mut MoveInput<'_>, p: &Pending, free: Free, cast: Cast, prob
     loco.grounded = None;
     loco.traversing = free == Free::Traversal;
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);
-    loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, &params.springs);
+    loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, p.gait, &params.springs);
     loco.moved = p.frame.delta_to(&loco.frame());
 }
 

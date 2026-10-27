@@ -121,6 +121,20 @@ framework provides the follower: path polyline, arrival radius, wait at
 nodes with an idle-variant parameter for the graph. Adapters provide the
 paths.
 
+**Player feel (2026-10-27, owner: the 0.27 s springs "drive like a car").** Design: a player wants
+a fast speed ramp, a faster stop, and rate-capped turning where the motion follows the facing
+(ELDEN RING Combat Rewrite, MIT: run speed in ~0.15 s, 1080 deg/s running, 480 sprinting; a
+reversal turns at speed instead of braking through zero). As built, two opt-in `SpringParams`
+fields (defaults keep Holden's springs, so NPCs are unchanged): `halflife_brake` (the velocity
+half-life while the goal speed is below the current one) and `turn: Option<TurnRates>` (rad/s per
+`Gait`). With `turn`, `MotionState::advance` turns the facing toward its goal at the gait's rate
+and holds the horizontal velocity as a speed (1D spring, accel or brake half-life) along a
+heading that turns toward the goal direction at the same rate; from rest the heading starts on
+the facing when the facing goal is the travel direction (no `desired_facing`). Prediction then
+sub-steps at 60 Hz (no closed form). A 0 half-life and an infinite rate snap (a future classic
+preset). `sf_action` asks for the gait's forward speed whatever the current facing (the body
+turns to face the stick). Player numbers: `mw_player_bevy::feel` (visual check PL-4).
+
 ## Verification
 
 - Unit tests: spring convergence and no overshoot; trajectory prediction

@@ -23,7 +23,19 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   jitter at any frame rate (the body follows the fixed-tick capsule, interpolated, through the correction
   spring). Tab to first person hides the body (no arms yet). Shot: `shots/player-body-3-walk.png` (indoors, 3rd person).
 - Status: confirmed with follow-up. Owner 2026-10-27 (after the IK audit fixes): much better, pelvis and jump fixed. Open:
-  movement feel has too much inertia ("like driving a car"); never designed on purpose, research in progress.
+  movement feel has too much inertia ("like driving a car"); never designed on purpose. Follow-up: PL-4.
+
+### PL-4: Movement feel: starts, stops, reversals (`cargo dev scene level-anim-overview`, F11 player, Tab 3rd person)
+- Player-only motion tuning (Elden-Ring-style): fast speed ramp, faster brake, facing capped at 720/1080/480 deg/s
+  (walk/run/sprint) with the motion following the facing, so a reversal turns at speed. NPCs keep their 0.27 s springs.
+- Try: run (W), release (stop), W then S (reversal), W then D (90 deg), Shift sprint turns (heavier), tap a direction
+  from standing. Look for: responsive, no car-like slide; feet not skating at starts/stops; no pop entering run.
+- Numbers (`cargo test -p mw_player_bevy measure_player_feel -- --ignored --nocapture`), before -> after: 90 % speed
+  0.77 -> 0.20 s; stop from run 1.12 s / 1.73 m -> 0.22 s / 0.32 m; 180 reversal 1.08 s (speed dips to 0.16 m/s) ->
+  0.17 s (keeps 4.5 m/s); 90 deg turn 0.90 -> 0.08 s.
+- Tweak: `crates/mw_player_bevy/src/feel.rs` (half-lives, turn rates, feed smoothing); gait blends `mw_graphs` build.rs
+  `GAIT_BLEND` 0.15 s / `DIRECTION_SMOOTHING` 0.05 s (shared with NPCs, re-bless). Status: confirmed with follow-up
+  (owner 2026-10-27: "much much better, about right"; jump air time is long and floaty). Wanted later: run + Ctrl slide.
 
 ### PL-3: Jump take-off held in the air, landing on touchdown (`cargo dev scene level-anim-ledges`, F11 player)
 - Humanoid graph B2: `jump` plays `Jump@head` and holds it while airborne; touchdown plays `Jump@tail` (`land`), then

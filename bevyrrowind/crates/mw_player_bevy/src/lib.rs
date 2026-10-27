@@ -41,6 +41,7 @@
 //! used E), Tab first/third person (Morrowind's default), mouse look, wheel zoom, E use.
 
 pub mod avatar;
+pub mod feel;
 pub mod hud;
 
 use std::collections::HashMap;
@@ -200,7 +201,7 @@ struct PlayerVisual {
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let p = MoverParams::default();
+    let p = feel::mover_params();
     commands.insert_resource(PlayerVisual {
         capsule: meshes.add(Capsule3d::new(p.radius, (p.height - 2.0 * p.radius).max(0.01))),
         nose: meshes.add(Cuboid::new(0.12, 0.12, 0.3)),
@@ -301,7 +302,7 @@ fn spawn_body(
     dressed: bool,
 ) -> Entity {
     let (cell, transform) = to_grid(feet);
-    let params = MoverParams::default();
+    let params = feel::mover_params();
     let half = params.height / 2.0;
     let measures = CharacterParams { height: params.height, radius: params.radius, ..CharacterParams::default() };
     let character = ActionCharacter::new(PLAYER_CHARACTER, ActionState::new(RuleKey::of("loco")), measures);
@@ -922,3 +923,5 @@ pub(crate) fn floor_below(world: &PhysicsWorld, eye: WorldPos, head_room: f32) -
 mod tests;
 #[cfg(test)]
 mod tests_avatar;
+#[cfg(test)]
+mod tests_feel;

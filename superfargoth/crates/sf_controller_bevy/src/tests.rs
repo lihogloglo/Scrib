@@ -249,7 +249,7 @@ fn stopping_walkers_hand_over_to_idle_promptly() {
         let intent = path.update(m.loco.position, dt).intent;
         m.applied = intent;
         let (v_goal, yaw_goal) = m.loco.motion.goals(&intent);
-        let d = m.loco.motion.advance(v_goal, yaw_goal, &springs, dt);
+        let d = m.loco.motion.advance(v_goal, yaw_goal, intent.gait, &springs, dt);
         m.loco.position = m.loco.position.offset(d);
         m.measured = m.loco.motion.velocity;
         let v = crate::FeedValues::of(&m, &settings, m.gait);

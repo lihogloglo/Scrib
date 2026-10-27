@@ -125,7 +125,7 @@ fn springs_converge_without_overshoot() {
     let goal = Vec3::new(2.0, 0.0, 0.0);
     let mut last = 0.0;
     for _ in 0..180 {
-        m.advance(goal, 0.0, &springs, DT);
+        m.advance(goal, 0.0, Gait::Walk, &springs, DT);
         let s = m.velocity.x;
         assert!(s >= last - 1e-6 && s <= 2.0 + 1e-5, "speed {s} after {last}");
         last = s;
@@ -137,7 +137,7 @@ fn springs_converge_without_overshoot() {
     let target = 170f32.to_radians();
     let mut last = 0.0;
     for _ in 0..180 {
-        m.advance(Vec3::ZERO, target, &springs, DT);
+        m.advance(Vec3::ZERO, target, Gait::Walk, &springs, DT);
         assert!(m.yaw >= last - 1e-6 && m.yaw <= target + 1e-5, "yaw {} after {last}", m.yaw);
         last = m.yaw;
     }
@@ -146,7 +146,7 @@ fn springs_converge_without_overshoot() {
     // The short way round: from 170° to -170° is a 20° turn through 180°.
     let mut m = MotionState::facing(target);
     for _ in 0..180 {
-        m.advance(Vec3::ZERO, -target, &springs, DT);
+        m.advance(Vec3::ZERO, -target, Gait::Walk, &springs, DT);
         assert!(wrap_angle(m.yaw - target) >= -1e-5, "turned the long way: {}", m.yaw);
     }
     assert!(wrap_angle(m.yaw + target).abs() < 1e-3);
@@ -159,7 +159,7 @@ fn springs_are_frame_rate_independent() {
         let mut m = MotionState::facing(0.3);
         let mut x = Vec3::ZERO;
         for _ in 0..hz {
-            x += m.advance(Vec3::new(-1.0, 0.0, 3.0), 2.5, &springs, 1.0 / hz as f32);
+            x += m.advance(Vec3::new(-1.0, 0.0, 3.0), 2.5, Gait::Walk, &springs, 1.0 / hz as f32);
         }
         (x, m)
     };
@@ -1068,6 +1068,7 @@ mod context;
 
 mod avoid;
 mod launch;
+mod steer;
 
 #[test]
 fn mover_shapes_come_from_bind_pose_bounds() {

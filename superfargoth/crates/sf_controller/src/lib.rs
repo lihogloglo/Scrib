@@ -49,7 +49,7 @@ pub use context::{Affordance, ContextHit, ContextParams, ContextProbes, ContextQ
 pub use correction::{CorrectionParams, RenderCorrection};
 pub use frame::CharacterFrame;
 pub use intent::{Gait, GaitSpeeds, LocomotionIntent};
-pub use motion::{MotionState, SpringParams, forward, spring_character, spring_yaw, wrap_angle};
+pub use motion::{MotionState, SpringParams, TurnRates, forward, spring_character, spring_yaw, turn_toward, wrap_angle};
 pub use mover::{KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RootMotion, separate};
 pub use path::{ArrivalParams, PathFollower, PathMode, PathNode, PathOutput};
 pub use probe::{GroundHit, GroundProbe, HeightSurface, Nearest, ProbeQuery, SurfaceId, TerrainProbe};

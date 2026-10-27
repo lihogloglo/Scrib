@@ -38,7 +38,7 @@ use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
 use sf_camera_bevy::PlayerCamera;
 use sf_character_bevy::CharacterBody;
 use sf_controller::{CharacterFrame, Gait};
-use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, MEASURE_HALFLIFE, Mover};
+use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, Mover};
 
 use mw_game_core::player::{PlayerAvatar, PlayerBody};
 use mw_graphs::build::params as gp;
@@ -174,7 +174,7 @@ pub(crate) fn feed(
         if dt > 0.0 {
             let raw = (Quat::from_rotation_y(-moved.yaw) * moved.translation / dt).with_y(0.0);
             let turn = moved.yaw / dt;
-            let keep = 0.5f32.powf(dt / MEASURE_HALFLIFE);
+            let keep = 0.5f32.powf(dt / crate::feel::MEASURE_HALFLIFE);
             if raw.is_finite() && turn.is_finite() {
                 feed.measured = raw.lerp(feed.measured, keep);
                 feed.turn = turn + (feed.turn - turn) * keep;
