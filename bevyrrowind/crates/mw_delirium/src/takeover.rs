@@ -103,7 +103,7 @@ fn lowest(p: &PartDef, f: &Transform) -> f32 {
 impl Takeover {
     /// Takes the character over at `parts` (sim space), moving from `previous` (`dt` earlier) when known.
     /// `scale`: Delirium's per-actor size (`Build::scaled`: segment lengths times `height`, mass factor `weight`),
-    /// `None` for the authored size. `floor`: the ground under the feet (sim z); a body already sunk into it lowers
+    /// `None` for the authored size. `floor`: the ground under the pelvis (sim z); a body already sunk into it lowers
     /// it to its lowest point. Starts `bodyBalance`, or `catchFall` when the pelvis is already falling.
     ///
     /// # Panics

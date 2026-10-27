@@ -12,7 +12,7 @@ use sf_controller::{GroundHit, GroundProbe, ProbeQuery, SurfaceId};
 use sf_coords::WorldPos;
 
 use crate::{
-    AvoidObstacle, Avoider, ControllerSettings, ControllerStats, Dormant, MoveIntent, Mover,
+    AvoidObstacle, Avoider, ControllerSettings, ControllerStats, Dormant, Held, MoveIntent, Mover,
     MoverParams, SfControllerPlugin,
 };
 
@@ -306,6 +306,43 @@ fn dormant_movers_never_move_and_resume_when_woken() {
         parked.delta_f32(pos_of(&app)).length() > 0.3,
         "woken mover resumed walking"
     );
+}
+
+/// [`Held`]: an outside owner parks the mover (it brings [`Dormant`]): no
+/// step, zero motion and no ground samples in the feed; removing both
+/// resumes it.
+#[test]
+fn held_movers_are_dormant_and_unfed_until_released() {
+    use sf_anim_bevy::{AnimLod, AnimTier, Animator};
+
+    let mut app = app();
+    app.add_plugins(sf_anim_bevy::SfAnimPlugin);
+    let e = walker(&mut app, 0.0, Vec3::Z * 1.4);
+    let anim = app
+        .world_mut()
+        .spawn((Animator::new(walk_asset()), AnimLod::forced(AnimTier::A0)))
+        .id();
+    app.world_mut().get_mut::<Mover>(e).unwrap().animator = Some(anim);
+    for _ in 0..30 {
+        app.update();
+    }
+    app.world_mut().entity_mut(e).insert(Held);
+    app.update();
+    assert!(app.world().get::<Dormant>(e).is_some(), "Held brings Dormant");
+    let pos_of = |app: &App| app.world().get::<Mover>(e).unwrap().loco.position;
+    let parked = pos_of(&app);
+    for _ in 0..30 {
+        app.update();
+        assert_eq!(pos_of(&app), parked, "a held mover moved");
+        let a = app.world().get::<Animator>(anim).unwrap();
+        assert_eq!(a.drive.velocity, Vec3::ZERO, "a held mover fed motion");
+        assert!(a.drive.ground.iter().all(Option::is_none), "a held mover fed ground samples");
+    }
+    app.world_mut().entity_mut(e).remove::<(Held, Dormant)>();
+    for _ in 0..60 {
+        app.update();
+    }
+    assert!(parked.delta_f32(pos_of(&app)).length() > 0.3, "released mover resumed walking");
 }
 
 /// The synthetic biped walk of `sf_anim`'s fixtures as a one-clip graph.

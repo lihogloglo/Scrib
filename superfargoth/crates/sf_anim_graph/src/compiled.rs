@@ -422,6 +422,13 @@ pub enum Op {
         min: f32,
         max: f32,
         grade: GradeStride,
+        pelvis_halflife: f32,
+        hold: f32,
+        max_drop: f32,
+        /// Half-life of the weight and of the followed stride ratio.
+        blend_halflife: f32,
+        /// The weight gate parameter (`Bool` or `Float`).
+        gate: Option<u16>,
     },
     OrientationWarp {
         pelvis: u16,
@@ -438,6 +445,8 @@ pub enum Op {
         body: BodyFit,
         roll: f32,
         guards: FootGuards,
+        /// The weight gate parameter (`Bool` or `Float`).
+        gate: Option<u16>,
     },
     LookAt {
         chain: Vec<(u16, f32, f32)>,
@@ -590,7 +599,7 @@ pub struct CompiledGraph {
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 6;
+pub const GRAPH_FORMAT: u32 = 9;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]

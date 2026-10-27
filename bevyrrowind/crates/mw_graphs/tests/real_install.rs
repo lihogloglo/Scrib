@@ -159,14 +159,18 @@ fn humanoid_simulation_drives_every_state() {
     expect(&mut s, 0.6, states::SNEAK, "SneakForward");
     s.set(p::SNEAKING, 0.0);
     s.set(p::MOVING, 0.0);
-    // Jump: airborne plays Jump; its land key fires.
+    // Jump: airborne holds the take-off; touchdown lands and its land key fires.
+    s.set(p::JUMPING, 1.0);
     s.set(p::ON_GROUND, 0.0);
     let t0 = s.time;
-    expect(&mut s, 0.3, states::JUMP, "Jump");
+    expect(&mut s, 0.3, states::JUMP, "Jump@head");
     s.run(0.7, DT);
-    assert_eq!(count(&s, "land", "", t0), 1, "{:?}", s.fired("land", t0));
+    assert_eq!(count(&s, "land", "", t0), 0, "landed mid-air: {:?}", s.fired("land", t0));
     s.set(p::ON_GROUND, 1.0);
-    expect(&mut s, 0.5, states::IDLE, "Idle");
+    s.set(p::JUMPING, 0.0);
+    expect(&mut s, 0.1, states::LAND, "Jump@tail");
+    expect(&mut s, 0.8, states::IDLE, "Idle");
+    assert_eq!(count(&s, "land", "", t0), 1, "{:?}", s.fired("land", t0));
     // Swim.
     s.set(p::SWIMMING, 1.0);
     expect(&mut s, 0.6, states::SWIM_IDLE, "IdleSwim");
@@ -467,4 +471,130 @@ fn get_up_clip_ends_standing_over_its_origin() {
     let ground = Vec2::new(end.x, end.z).length();
     assert!(ground < 0.1, "the get-up ends {ground:.2} m from its origin (root at {end:.2})");
     assert!(track.is_none_or(|f| glam::Vec3::new(f[0], f[1], f[2]).length() < 1e-3 && f[3].abs() < 1e-3), "root track {track:?}");
+}
+
+/// `Jump`'s loop is one key time (a hold point): the group splits into
+/// `Jump@head` (take-off, start .. loop point) and `Jump@tail` (landing,
+/// loop point .. stop, with the land sound), both cooking on every humanoid
+/// skeleton that has `Jump`. The whole `Jump` group still plays once.
+#[test]
+fn jump_splits_into_head_and_tail() {
+    let Some((_, vfs)) = install() else { return };
+    for hs in &HUMANOID_SETS {
+        let mut set = humanoid(&vfs, hs);
+        let Some((loop_range, duration)) = set.group("Jump").map(|g| (g.loop_range, g.duration())) else {
+            assert!(hs.first_person, "{}: no Jump", hs.name);
+            continue;
+        };
+        let (a, b) = loop_range.unwrap_or_else(|| panic!("{}: Jump loop point dropped", hs.name));
+        assert!((b - a).abs() < 1e-4, "{}: Jump loop is a point, got {a}..{b}", hs.name);
+        let head = set.cooked("Jump@head").unwrap_or_else(|e| panic!("{}: {e}", hs.name));
+        let tail = set.cooked("Jump@tail").unwrap_or_else(|e| panic!("{}: {e}", hs.name));
+        let whole = set.cooked("Jump").unwrap();
+        eprintln!(
+            "{}: Jump {:.3} s (loop point {a:.3}), head {:.3} s, tail {:.3} s, tail events {:?}",
+            hs.name,
+            whole.duration,
+            head.duration,
+            tail.duration,
+            tail.events.iter().map(|e| (e.name.as_str(), e.time)).collect::<Vec<_>>()
+        );
+        assert!((head.duration - a).abs() < 0.02 && (tail.duration - (duration - b)).abs() < 0.02, "{}", hs.name);
+        assert!(head.loop_range.is_none() && tail.loop_range.is_none() && whole.loop_range.is_none(), "{}: played once", hs.name);
+        assert!(tail.events.iter().any(|e| e.name == mw_anim::events::LAND), "{}: land sound in the tail", hs.name);
+    }
+}
+
+/// B2: the humanoid jump plays `Jump@head` (take-off) and holds its last
+/// pose while airborne, then `Jump@tail` (landing) on touchdown, then
+/// locomotion; a run cuts the landing. Before, the whole `Jump` played once
+/// from take-off, so the landing ran mid-air and touchdown had none. Prints
+/// the feet-over-pelvis height through a 0.9 s flight (one rise expected).
+/// B3a: with `jumping` false (a fall), FALL holds the head's last pose, no take-off.
+#[test]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn jump_holds_in_the_air_and_lands_on_touchdown() {
+    let Some((_, vfs)) = install() else { return };
+    let mut set = humanoid(&vfs, &HUMANOID_SETS[0]);
+    let head = set.cooked("Jump@head").unwrap().duration;
+    let tail = set.cooked("Jump@tail").unwrap().duration;
+    let mut s = sim(&mut set, Template::Humanoid);
+    let joint = |n: &str| s.skeleton.find(n).unwrap_or_else(|| panic!("no {n}"));
+    let (pelvis, feet) = (joint("Bip01 Pelvis"), [joint("Bip01 L Foot"), joint("Bip01 R Foot")]);
+    let lift = |s: &Sim| {
+        let y = |j: usize| s.out.model.mats[j].translation.y;
+        f32::midpoint(y(feet[0]), y(feet[1])) - y(pelvis)
+    };
+    let loco = |s: &Sim| s.state(mw_graphs::build::LOCOMOTION).unwrap_or("?").to_owned();
+    settle(&mut s, 0.5);
+    let mut curve = vec![lift(&s)];
+    s.set(p::JUMPING, 1.0);
+    s.set(p::ON_GROUND, 0.0);
+    for _ in 0..27 {
+        s.run(DT, DT);
+        assert_eq!(loco(&s), states::JUMP, "t={:.2}: playing {:?}", s.time, s.playing());
+        let t = s.clip_time("Jump@head").unwrap_or_else(|| panic!("t={:.2}: Jump@head not playing: {:?}", s.time, s.playing()));
+        assert!(t <= head + 1e-4, "Jump@head at {t:.3} s past its end {head:.3} s");
+        assert!(!s.plays("Jump@tail", 1e-3), "t={:.2}: landing mid-air", s.time);
+        curve.push(lift(&s));
+    }
+    let air = curve.len();
+    s.set(p::ON_GROUND, 1.0);
+    s.set(p::JUMPING, 0.0);
+    s.run(DT, DT);
+    assert_eq!(loco(&s), states::LAND, "one update after touchdown: playing {:?}", s.playing());
+    assert!(s.plays("Jump@tail", 0.5), "{:?}", s.playing());
+    let steps = (tail / DT).ceil() as usize + 6;
+    for _ in 0..steps {
+        curve.push(lift(&s));
+        s.run(DT, DT);
+    }
+    assert_eq!(loco(&s), states::IDLE, "after the landing: playing {:?}", s.playing());
+    assert!(curve.iter().all(|h| h.is_finite()));
+    // One rise expected in the air: count the local maxima.
+    let flight = &curve[..air];
+    let peaks = (1..flight.len() - 1).filter(|&i| flight[i] > flight[i - 1] && flight[i] >= flight[i + 1]).count();
+    let fmt = |c: &[f32]| c.iter().map(|h| format!("{:.0}", h * 100.0)).collect::<Vec<_>>().join(" ");
+    eprintln!("feet over pelvis, cm (head {head:.3} s, tail {tail:.3} s): air [{}] land [{}]; {peaks} local max in the air", fmt(flight), fmt(&curve[air..]));
+
+    // Running: touchdown cuts the landing into the run.
+    s.set(p::MOVING, 1.0);
+    s.set(p::RUNNING, 1.0);
+    s.set_vec2(p::MOVE, Vec2::new(0.0, 1.0));
+    s.velocity = glam::Vec3::new(0.0, 0.0, 4.0);
+    settle(&mut s, 0.5);
+    s.set(p::JUMPING, 1.0);
+    s.set(p::ON_GROUND, 0.0);
+    settle(&mut s, 0.5);
+    assert_eq!(loco(&s), states::JUMP);
+    s.set(p::ON_GROUND, 1.0);
+    s.set(p::JUMPING, 0.0);
+    s.run(DT, DT);
+    s.run(DT, DT);
+    assert_eq!(loco(&s), states::RUN, "a run cuts the landing: playing {:?}", s.playing());
+
+    // A fall without a launch (walked off a ledge): FALL holds the head's last
+    // pose, no take-off; touchdown lands as from a jump.
+    s.set(p::MOVING, 0.0);
+    s.set(p::RUNNING, 0.0);
+    s.velocity = glam::Vec3::ZERO;
+    settle(&mut s, 1.0);
+    let before = lift(&s);
+    s.set(p::ON_GROUND, 0.0);
+    let mut fall = Vec::new();
+    for _ in 0..18 {
+        s.run(DT, DT);
+        assert_eq!(loco(&s), states::FALL, "t={:.2}: playing {:?}", s.time, s.playing());
+        let t = s.clip_time("Jump@head").unwrap_or_else(|| panic!("t={:.2}: Jump@head not held: {:?}", s.time, s.playing()));
+        assert!(t >= head - 1e-3, "t={:.2}: take-off played in a fall (Jump@head at {t:.3} s of {head:.3} s)", s.time);
+        fall.push(lift(&s));
+    }
+    s.set(p::ON_GROUND, 1.0);
+    s.run(DT, DT);
+    assert_eq!(loco(&s), states::LAND, "touchdown from a fall: playing {:?}", s.playing());
+    assert!(s.plays("Jump@tail", 0.5), "{:?}", s.playing());
+    settle(&mut s, tail + 0.4);
+    assert_eq!(loco(&s), states::IDLE, "after the fall's landing: playing {:?}", s.playing());
+    assert!(fall.iter().all(|h| h.is_finite()));
+    eprintln!("fall: feet over pelvis, cm: stand {:.0}, air [{}]", before * 100.0, fmt(&fall));
 }

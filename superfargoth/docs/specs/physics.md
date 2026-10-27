@@ -348,9 +348,9 @@ Per character with a ragdoll, `sf_ragdoll` owns a `RagdollInstance` (bodies, joi
    anchor, six-axis motors, ω 12, both gains scaled by the composite load, plus gravity compensation)
    holds powered characters up; it is off for `Limp`. Driven bodies sit on `Layer::POWERED`.
 3. Physics steps (fixed). Bodies read back interpolated → joint local rotations → the graph's
-   **physics stage** (`GraphInstance::set_physics`, per-joint weights from `def.owner`, after
-   inertialization and before history and ops; 0 = animation, 1 = physics). Procedural ops run only
-   where the physics weight is 0.
+   **physics stage** (`GraphInstance::set_physics`, per-joint weights from `def.owner`; 0 = animation,
+   1 = physics), the graph's last stage as UE's RigidBody blend: after the procedural ops, which (like
+   the pose history) see only the animated pose, so a fading ragdoll never drives foot placement.
 
 Behaviours (`sf_physics_bevy` feature `ragdoll`, `RagdollMode`; strengths in `sf_ragdoll::react`'s RON
 `ReactionSet`, default `data/reactions.ron`, driven by a `ReactionController` per ragdoll):

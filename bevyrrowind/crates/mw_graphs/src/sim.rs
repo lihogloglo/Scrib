@@ -150,6 +150,22 @@ impl Sim {
         self.playing().iter().any(|(c, w)| c == clip && *w >= min)
     }
 
+    /// Clip time of the heaviest lane playing `clip` in the last update.
+    pub fn clip_time(&self, clip: &str) -> Option<f32> {
+        let mut best: Option<(f32, f32)> = None;
+        for (i, n) in self.graph.nodes.iter().enumerate() {
+            let NodeKind::Player(p) = &n.kind else { continue };
+            let Some((lanes, w)) = self.instance.player(u32::try_from(i).expect("node index")) else { continue };
+            for (k, (time, lw)) in lanes.iter().enumerate() {
+                let weight = w * if lanes.len() == 1 { 1.0 } else { *lw };
+                if weight > 1e-3 && self.graph.clips[usize::from(p.lanes[k])].reference == clip && best.is_none_or(|(_, b)| weight > b) {
+                    best = Some((*time, weight));
+                }
+            }
+        }
+        best.map(|(t, _)| t)
+    }
+
     /// Plays a clip slot of the graph in a montage slot.
     pub fn play_slot(&mut self, slot: &str, req: SlotRequest) -> Result<MontageId, SlotError> {
         let id = self.graph.slot(slot).ok_or(SlotError::NoSlot)?;

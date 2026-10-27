@@ -6,7 +6,7 @@
 //!   patch them like any graph asset.
 //! - [`AnimSet`]: one skeleton with its KF/NIF animation groups, the
 //!   `CompileSource` that resolves the templates' clip references
-//!   (`Group`, `Group@section`, `Group@tail`) and cooks them.
+//!   (`Group`, `Group@section`, `Group@head`, `Group@tail`) and cooks them.
 //! - [`validate`]: compile a template for a skeleton and report how every
 //!   clip resolved; [`coverage`]: which groups each creature model has.
 //! - [`sim::Sim`]: headless simulation (parameter scripts → states, clips,

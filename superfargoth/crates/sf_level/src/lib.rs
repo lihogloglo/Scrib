@@ -54,6 +54,12 @@ pub struct Level {
     /// Enclosed: no sky, this ambient (see [`Interior`]).
     #[serde(default)]
     pub interior: Option<Interior>,
+    /// Time of day in hours the host starts the level at, unless told otherwise.
+    #[serde(default)]
+    pub hour: Option<f64>,
+    /// The host's weather name (e.g. "clear") it pins, unless told otherwise; opaque here.
+    #[serde(default)]
+    pub weather: Option<String>,
 }
 
 /// A character at a spawn point. `id`, `outfit` and the action's names are

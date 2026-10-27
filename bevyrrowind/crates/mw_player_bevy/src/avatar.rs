@@ -9,8 +9,13 @@
 //! - **Feed** ([`feed`], `PostUpdate` in `AnimSystems::Probe`): the same locomotion parameters
 //!   the NPC walkers' feed writes (`sf_controller_bevy::FeedValues`, the walkers'
 //!   `ControllerSettings` thresholds), measured from the **drawn** root frame to frame (so the
-//!   graph sees smooth motion between fixed ticks), plus `on_ground` (jump and fall) and
-//!   `sneaking`. Foot probes are not fed yet: foot placement holds the animated pose.
+//!   graph sees smooth motion between fixed ticks), plus `sneaking` and the air pair:
+//!   `jumping` is the action layer's launch flag (`ActionState::body.launched`, set on the
+//!   launch tick, cleared at touchdown), and `on_ground` is the mover's ground **debounced**
+//!   ([`AirDebounce`]): a launch leaves the ground at once, a fall only after [`AIR_GRACE`] in
+//!   the air or below [`FALL_SPEED`], so step-down misses on rocks and stairs don't flicker the
+//!   fall pose (UE keeps Walking within the step height; Lyra/ALS gate the fall on air time).
+//!   Foot probes are not fed yet: foot placement holds the animated pose.
 //! - **Traversal** (action.md B2a): while the action layer's Warp owner moves the body, the
 //!   move's slot clip (`traverse.mantle.waist`) plays in the graph's `full` montage slot with
 //!   `RootMotionMode::Progress`; its playhead is the warp's chain progress, interpolated between
@@ -25,7 +30,7 @@ use bevy_math::prelude::*;
 use bevy_time::prelude::*;
 use bevy_time::Fixed;
 use bevy_transform::prelude::*;
-use sf_action::{SlotKey, Tick};
+use sf_action::{SlotKey, WarpOutput};
 use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim::{RootDelta, RootMotionMode};
 use sf_anim_bevy::{AnimLod, AnimTier, Animator};
@@ -50,6 +55,36 @@ const TELEPORT_M: f32 = 3.0;
 const NPC_KIND: &str = "NPC_";
 /// The avatar hides while the camera fades the body more than this (first person).
 const HIDE_FADE: f32 = 0.5;
+/// Unlaunched air time the animation ignores (a step-down miss), seconds.
+pub const AIR_GRACE: f32 = 0.1;
+/// A vertical speed below this is a real fall even within [`AIR_GRACE`], m/s.
+pub const FALL_SPEED: f32 = -2.0;
+
+/// The animation's view of the ground: the mover's fixed-tick ground with the short airtimes of
+/// a step-down miss filtered out. Counted in frame time, so frame-rate independent.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AirDebounce {
+    /// Seconds airborne since the mover last stood.
+    air: f32,
+    /// Reported airborne; holds until touchdown.
+    airborne: bool,
+}
+
+impl AirDebounce {
+    /// `on_ground` for the graph this frame. `grounded`: the mover stands (or a traversal holds
+    /// it); `launched`: this airtime began with a launch; `vertical_speed`, m/s; `dt`, seconds.
+    /// Touchdown reports grounded at once, a launch airborne at once; any other airtime reports
+    /// airborne once longer than [`AIR_GRACE`] or faster down than [`FALL_SPEED`].
+    pub fn on_ground(&mut self, grounded: bool, launched: bool, vertical_speed: f32, dt: f32) -> bool {
+        if grounded {
+            *self = Self::default();
+            return true;
+        }
+        self.air += dt.max(0.0);
+        self.airborne |= launched || self.air > AIR_GRACE || vertical_speed < FALL_SPEED;
+        !self.airborne
+    }
+}
 
 /// On the player body: its animator and the feed's state between frames.
 #[derive(Component, Debug, Default)]
@@ -61,6 +96,7 @@ pub struct PlayerFeed {
     turn: f32,
     gait: FeedGait,
     traversal: Option<Traversal>,
+    air: AirDebounce,
 }
 
 /// A traversal clip playing in the montage slot.
@@ -68,9 +104,6 @@ pub struct PlayerFeed {
 struct Traversal {
     key: SlotKey,
     slot: SlotId,
-    /// The chain progress at the last two ticks (previous, current) and the current tick.
-    progress: (f32, f32),
-    tick: Tick,
 }
 
 impl PlayerFeed {
@@ -166,24 +199,36 @@ pub(crate) fn feed(
         a.set_float(gp::TURN, v.turn);
         a.set_bool(gp::SNEAKING, intent.gait == Gait::Sneak);
         // A warped traversal holds the body off the ground on purpose: not a jump.
-        a.set_bool(gp::ON_GROUND, body.loco.grounded.is_some() || body.loco.traversing);
+        let loco = &body.loco;
+        let launched = character.state.body.launched;
+        let on_ground = feed.air.on_ground(loco.grounded.is_some() || loco.traversing, launched, loco.vertical_speed, dt);
+        a.set_bool(gp::ON_GROUND, on_ground);
+        // The flag clears on the tick after touchdown: report it with the ground, not after.
+        a.set_bool(gp::JUMPING, launched && !on_ground);
         a.drive.ground.fill(None);
-        traversal(feed, a, character, alpha);
+        traversal(feed, a, character, body.warp_progress(), alpha);
     }
 }
 
-/// Starts, advances or ends the traversal clip from the action output's warp.
-pub(crate) fn traversal(feed: &mut PlayerFeed, a: &mut Animator, character: &ActionCharacter, alpha: f32) {
+/// Starts, advances or ends the traversal clip from the action output's warp. `ticks` is the
+/// body's warp progress at its previous and current tick (`ActionBody::warp_progress`): lerped
+/// by the same `alpha` as the drawn body, the clip stays on it however many ticks ran.
+pub(crate) fn traversal(
+    feed: &mut PlayerFeed,
+    a: &mut Animator,
+    character: &ActionCharacter,
+    ticks: Option<(f32, f32)>,
+    alpha: f32,
+) {
     let out = &character.output;
     let warp = out.warp.zip(out.slot);
+    let progress = |w: WarpOutput| {
+        let (prev, curr) = ticks.unwrap_or((w.progress, w.progress));
+        prev + (curr - prev) * alpha
+    };
     match (warp, feed.traversal.as_mut()) {
         (Some((w, key)), Some(t)) if t.key == key => {
-            if out.tick != t.tick {
-                t.progress = (t.progress.1, w.progress);
-                t.tick = out.tick;
-            }
-            let (prev, curr) = t.progress;
-            a.instance.set_slot_progress(t.slot, prev + (curr - prev) * alpha);
+            a.instance.set_slot_progress(t.slot, progress(w));
         }
         (Some((w, key)), current) => {
             if let Some(t) = current {
@@ -191,8 +236,8 @@ pub(crate) fn traversal(feed: &mut PlayerFeed, a: &mut Animator, character: &Act
                 stop(a, slot);
             }
             feed.traversal = start(a, key).map(|slot| {
-                a.instance.set_slot_progress(slot, w.progress);
-                Traversal { key, slot, progress: (w.progress, w.progress), tick: out.tick }
+                a.instance.set_slot_progress(slot, progress(w));
+                Traversal { key, slot }
             });
         }
         (None, Some(t)) => {

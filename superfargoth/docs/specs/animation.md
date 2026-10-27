@@ -338,20 +338,33 @@ Clips fading out under inertialization fire nothing.
 ## Procedural pass and IK
 
 Inputs come from a batched **ground probe** stage that runs before
-evaluation (the `GroundProbe` trait, locomotion.md). It probes down from
-last frame's foot positions moved by this frame's root delta.
+evaluation (the `GroundProbe` trait, locomotion.md). It probes down, in the
+moved frame, at the last update's `probe_origins`: where the ops targeted each foot (UE order:
+stride warp before the foot traces, traces at the planted foot): a locked foot's lock carried
+one root delta on, else the animated foot led one update and warped as `StrideWarp` warped it
+(plus any release offset); toes move with their foot. One update of lag: origins come from the
+last update's warp ratio and locks. A lock's height is the live sample there, else the plant-time ground.
 
 - **Stride warping**: scales foot targets along the velocity about the
   pelvis's ground projection, and lowers the pelvis so legs stay
-  reachable. **Orientation warping**: turns the lower body toward the
+  reachable: one owner per op and girdle, the need held (recent peak,
+  decay `hold`) as the goal of a critical spring (`pelvis_halflife`) within
+  `max_drop` (UE `PelvisAdjustmentInterp`); a leg still short straightens.
+  Foot placement's girdle spring keeps reach in its goal and as a bound
+  on the spring's state (no pop when it lifts). The ratio follows its target (1 with no `Match`
+  player ticking, e.g. a jump, or standing) by a critical spring and applies at the op's weight
+  (`blend_halflife` 0.1 s; goal × optional `gate` param × (1 − legs' physics share); UE's alpha
+  plus ratio interpolation). Past `max_lod` both foot ops fade their weight to ~0 before
+  resetting (a few half-lives of cost), and fade in from 0 back in range. **Orientation warping**: turns the lower body toward the
   velocity, up to about 60°, and counter-rotates the spine so the torso
   keeps facing the aim direction. Four-way locomotion sets then cover all
   directions.
 - **Foot placement**: per foot, the target is the animated foot height
   above its ground hit, with the foot rotated to the hit normal (clamped to
-  30°). While the baked contact curve is above 0.5 the world position is
-  locked, and it is released over 0.1 s. The pelvis drops by the largest
-  amount any foot needs, spring-smoothed. Legs solve with two-bone IK,
+  30°). While the baked contact curve is above 0.5 the ground-plane position
+  is locked; its height is the animated foot's over the ground under the
+  lock each update (heel-off stays animated); released over 0.1 s. The
+  pelvis drops by the largest amount any foot needs, spring-smoothed. Legs solve with two-bone IK,
   using the animated knee direction as pole. Toes bend to the ground if
   tagged.
 - **Look-at**: the target is distributed over spine, neck, head and eyes by

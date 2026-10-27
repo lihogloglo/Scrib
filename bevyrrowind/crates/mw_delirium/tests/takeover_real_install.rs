@@ -126,3 +126,41 @@ fn takeover_step_time() {
     }
     println!("takeover step: {:.3} ms/step over {n} steps", t0.elapsed().as_secs_f64() * 1000.0 / f64::from(n));
 }
+
+/// Audit F5: on a 15 deg ramp (rising across the stance, +X), taken over 0.1 m above the ground under the pelvis (the
+/// mover's render height lagging a step down). The host's floor is the ground under the pelvis (one ray), lowered to
+/// the lowest part; the frame sits on it, so at the hand-back the root takes the floor height and the pelvis only
+/// blends from its settled height in the frame to the graph's (the rest pose's).
+#[test]
+fn ramp_takeover_floor_at_the_ground_root_takes_the_height() {
+    let Some(f) = fixture() else { return };
+    let (parts, prev) = rest_parts(f, Vec3::ZERO);
+    let (slope, lag) = (15f32.to_radians().tan(), 0.1);
+    let ground = |p: Vec3| slope * p.x - lag;
+    let pelvis = parts[0].translation;
+    let probed = ground(pelvis);
+    let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, probed, 0.3, Rules::default());
+    let out = run(&mut t, 20.0);
+    let settled = t.frames()[0].translation;
+    // Foot_Left, Foot_Right: their height and the ramp's under them.
+    let feet: Vec<(f32, f32)> = [3usize, 6].iter().map(|&k| t.frames()[k].translation).map(|p| (p.z, ground(p))).collect();
+    println!(
+        "15 deg ramp, 0.1 m lag: {out:?}; ground under the pelvis {probed:+.3}, floor {:+.3}; pelvis in the frame (on the \
+         floor): {:.3} at the takeover, {:.3} settled, {:.3} 0.3 s after the hand-back (graph); in the takeover's render \
+         frame (before F5): {:.3} settled; root moves {:+.3}; feet z (ramp under them) {:+.3} ({:+.3}), {:+.3} ({:+.3})",
+        t.floor,
+        pelvis.z - t.floor,
+        settled.z - t.floor,
+        pelvis.z,
+        settled.z,
+        t.floor,
+        feet[0].0,
+        feet[0].1,
+        feet[1].0,
+        feet[1].1,
+    );
+    assert!(out.is_some_and(|o| o.0 != HandBack::Exploded), "{out:?}");
+    assert!(t.floor <= probed && t.floor.is_finite());
+    assert!(t.frames().iter().all(|p| p.translation.is_finite() && p.translation.z > t.floor - 0.05), "through the floor");
+    assert!(settled.z > t.floor, "pelvis under the floor");
+}

@@ -64,7 +64,8 @@ pub fn creature_animations(model: &str, biped: bool, exists: impl Fn(&str) -> bo
 type Resolved<'a> = (usize, &'a Group, Option<(f32, f32)>);
 
 /// One skeleton with its animation groups: resolves the graph templates'
-/// clip references (`Group`, `Group@section`, `Group@tail`) and cooks them.
+/// clip references (`Group`, `Group@section`, `Group@head`, `Group@tail`)
+/// and cooks them.
 pub struct AnimSet {
     pub name: String,
     pub skeleton: Skeleton,
@@ -116,10 +117,7 @@ impl AnimSet {
         let (file, g) = self.groups.iter().find(|(_, g)| g.name.eq_ignore_ascii_case(group)).ok_or_else(|| format!("no group {group:?}"))?;
         let range = match part {
             None => None,
-            Some("tail") => {
-                let (_, stop) = g.loop_range.ok_or_else(|| format!("{group} has no loop"))?;
-                Some((stop, g.duration()))
-            }
+            Some(p @ ("head" | "tail")) => Some(g.loop_part(p).ok_or_else(|| format!("{group} has no loop {p}"))?),
             Some(s) => {
                 let sec = g.section(s).ok_or_else(|| format!("{group} has no {s:?} section"))?;
                 Some((sec.start, sec.stop))

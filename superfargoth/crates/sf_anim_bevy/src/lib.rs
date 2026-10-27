@@ -609,9 +609,9 @@ fn write_bones(
 /// local pose, written by the physics layer every frame it moves; `weight`
 /// 0 = animation, 1 = physics (bones then follow it even when the graph
 /// doesn't pose this frame). Evaluate hands it to the graph
-/// (`GraphInstance::set_physics`, P8), which blends it per joint after
-/// inertialization and before the procedural ops, so a get-up inertializes
-/// out of it (`GraphInstance::inertialize_from`).
+/// (`GraphInstance::set_physics`, P8), which blends it per joint as its last
+/// stage, after the procedural ops; a get-up inertializes out of it
+/// (`GraphInstance::inertialize_from`).
 #[derive(Component, Clone, Debug, Default)]
 pub struct PhysicsPose {
     pub pose: Vec<Trs>,

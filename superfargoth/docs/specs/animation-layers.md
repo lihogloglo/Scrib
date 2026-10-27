@@ -72,6 +72,11 @@ Also from the study, smaller: IK policy as data (ramps, gating, latching, proxim
 R3 adopt 5, R4 adopt 4), `ArmClearance` and reach assist (R4 adopt 5, 8), hit-stop as a
 per-character clock scale shrinking with crowd size (R6 adopt 4, R8 adopt 5), large-turn
 inertialization (R4 adopt 3). Each lands with the phase that first needs it.
+Gating, foot part, built 2026-10-26: `FootPlacement(gate: "<Bool or Float param>")` scales its
+weight goal (hosts bind a grounded flag or their own IK switch); the weight also fades by
+`1 - w` of the physics weight over its legs and the op resets while physics owns them (w = 1;
+`StrideWarp` resets too), and no new foot lock is planted while a hand-back
+(`inertialize_from`) still inertializes. Ramps, latching and proximity weights remain.
 
 **Kept: our ozz-model core and `sf_anim_graph`.** Re-checked 2026-10-11:
 `ozz-animation-rs` 0.11.0 (2025-10) is MPL-2.0 and nightly-only, and would

@@ -201,6 +201,8 @@ pub struct ActionBody {
     curr: TickPose,
     /// A Warp move's start-tick feet: its root poses are relative to them.
     warp_anchor: Option<WorldPos>,
+    /// A Warp move's chain progress at the previous and current tick, beside `prev`/`curr`.
+    warp_progress: Option<(f32, f32)>,
 }
 
 impl ActionBody {
@@ -216,6 +218,7 @@ impl ActionBody {
             prev: pose,
             curr: pose,
             warp_anchor: None,
+            warp_progress: None,
         }
     }
 
@@ -230,6 +233,7 @@ impl ActionBody {
         self.loco = loco;
         self.correction = RenderCorrection::default();
         self.warp_anchor = None;
+        self.warp_progress = None;
         self.curr = TickPose::of(&self.loco);
         self.prev = self.curr;
     }
@@ -250,6 +254,14 @@ impl ActionBody {
     /// The previous and current tick poses the interpolation blends.
     pub fn poses(&self) -> (TickPose, TickPose) {
         (self.prev, self.curr)
+    }
+
+    /// A Warp move's chain progress (`WarpOutput::progress`) at the same two ticks as
+    /// [`Self::poses`], `None` off a Warp move. A clip played by it and lerped by the same
+    /// `overstep_fraction` stays on the drawn body however many ticks ran this frame. On the
+    /// move's first tick the previous one is 0 (its clock's start, where the previous pose is).
+    pub fn warp_progress(&self) -> Option<(f32, f32)> {
+        self.warp_progress
     }
 }
 
@@ -323,6 +335,13 @@ fn place_warped(body: &mut ActionBody, warp: &WarpOutput, started: bool, dt: f32
         Some(a) if !started => a,
         _ => *body.warp_anchor.insert(body.loco.position),
     };
+    // The move's clock starts at 0 on its first tick, where the previous tick pose is the anchor
+    // (root path at 0): the drawn body and the clip leave it together.
+    body.warp_progress = Some(match body.warp_progress {
+        _ if started => (0.0, warp.progress),
+        Some((_, curr)) => (curr, warp.progress),
+        None => (warp.progress, warp.progress),
+    });
     let feet = anchor.offset(warp.root.position);
     let loco = &mut body.loco;
     let moved = loco.position.delta_f32(feet);
@@ -352,6 +371,7 @@ fn move_bodies<G: GroundProbe + Resource>(
     // Held bodies keep their pose; `prev = curr` so the drawn body doesn't lerp either.
     for mut body in &mut waiting {
         body.prev = body.curr;
+        body.warp_progress = body.warp_progress.map(|(_, curr)| (curr, curr));
     }
     let Some(ground) = ground else { return };
     // In `FixedUpdate` the generic clock is the fixed one.
@@ -367,6 +387,7 @@ fn move_bodies<G: GroundProbe + Resource>(
             continue;
         }
         body.warp_anchor = None;
+        body.warp_progress = None;
         if let Some(v) = c.output.launch {
             body.loco.launch(v);
         }

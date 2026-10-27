@@ -8,10 +8,12 @@
 //! - `SpeedMatch` acts earlier, on playback rates (see the evaluator); it
 //!   leaves the residual stride ratio for `StrideWarp`.
 //! - `StrideWarp`: foot targets scaled along the velocity about each leg's
-//!   girdle, girdles lowered so legs reach (UE Stride Warping, per girdle).
+//!   girdle, girdles lowered so legs reach: a goal per girdle, spring-smoothed
+//!   and limited (UE Stride Warping's pelvis adjustment, per girdle); the
+//!   ratio spring-followed and applied at a weight (UE's alpha).
 //! - `OrientationWarp`: pelvis turned toward the velocity, spine
 //!   counter-rotated so the torso keeps its heading (UE Orientation Warping).
-//! - `FootPlacement`: foot height and tilt from ground samples, world
+//! - `FootPlacement`: foot height and tilt from ground samples, ground-plane
 //!   locks while the contact curve is above 0.5 (then the toe, while the
 //!   `roll.<effector>` curve says the heel rolls), released into a decaying
 //!   offset of half-life `release` / 2 (the swing takes the correction);
@@ -33,20 +35,26 @@ use sf_anim::spring::{critical_spring, damper};
 use sf_anim::{LocalPose, ModelPose, Skeleton, update_subtree};
 
 use crate::asset::BodyFit;
-use crate::compiled::{CompiledGraph, GirdleSeg, Leg, Op};
+use crate::compiled::{CompiledGraph, GirdleSeg, Leg, Op, Value};
 use crate::instance::{FootStats, GroundSample, Params, UpdateInputs};
 use crate::secondary::{Hit, HitState, SpringState, hit_react, spring_bones};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LegState {
-    /// The planted effector's (ankle's) character-space position.
+    /// The planted effector's (ankle's) lock in the ground plane: `x`, `z`
+    /// its character-space position, `y` the ground lift under it sampled
+    /// at plant (carried with the world; the fallback when the live sample
+    /// at the lock is missing). Only the plane position locks; the target's
+    /// height is the animated foot's plus the ground under it every update,
+    /// as for a free foot (UE5 Foot Placement, ALS), so heel-off and clip
+    /// float stay as animated instead of pulling the pelvis.
     lock: Option<Vec3>,
-    /// The toe's, pinned while the heel rolls (the contact curve is down,
-    /// the roll curve up): the foot pivots on it.
+    /// The toe's (same convention), pinned while the heel rolls (the
+    /// contact curve is down, the roll curve up): the foot pivots on it.
     toe_lock: Option<Vec3>,
-    /// The release: the locked target's offset from the animated one, and
-    /// its velocity, a critical spring decaying to zero (the correction
-    /// goes into the swing).
+    /// The release: the locked target's horizontal offset from the animated
+    /// one, and its velocity, a critical spring decaying to zero (the
+    /// correction goes into the swing; the height spring takes the vertical).
     offset: Vec3,
     offset_velocity: Vec3,
     /// The lock drifted past the unplant distance: it releases and does
@@ -83,6 +91,16 @@ pub(crate) enum OpState {
         legs: Vec<LegState>,
         weight: Option<Spring>,
     },
+    /// `StrideWarp`: per girdle its drop and the need it holds; the op's
+    /// weight (`None` until the first update sets it, and the ratio,
+    /// without blending), the followed stride ratio and the last travel
+    /// direction (a stop eases the warp out along it).
+    Stride {
+        drops: Vec<(Spring, f32)>,
+        weight: Option<Spring>,
+        ratio: Spring,
+        dir: Vec3,
+    },
     Look {
         target: Vec3,
         velocity: Vec3,
@@ -108,11 +126,22 @@ impl OpState {
                     weight: None,
                 }
             }
+            Op::StrideWarp { girdles, .. } => {
+                Self::Stride { drops: vec![(Spring::default(), 0.0); girdles.len()], weight: None, ratio: Spring { value: 1.0, velocity: 0.0 }, dir: Vec3::ZERO }
+            }
             Op::FullBodyIk { .. } => Self::Body(Box::default()),
             Op::HitReact(op) => Self::Hit(HitState::new(op)),
             Op::SpringBones(_) => Self::Springs(SpringState::default()),
             Op::LookAt { .. } => Self::Look { target: Vec3::ZERO, velocity: Vec3::ZERO, weight: 0.0, weight_velocity: 0.0, init: false },
             _ => Self::None,
+        }
+    }
+
+    /// The weight a fading-out op still shows (0 for ops without one).
+    fn fade_weight(&self) -> f32 {
+        match self {
+            Self::Feet { weight: Some(w), .. } | Self::Stride { weight: Some(w), .. } => w.value,
+            _ => 0.0,
         }
     }
 }
@@ -133,7 +162,58 @@ pub(crate) struct ProceduralCx<'a> {
     pub feet: FootStats,
     /// Hits queued since the last update (`HitReact`).
     pub hits: &'a [Hit],
+    /// Per-joint physics weights blended after the ops (empty: none). The
+    /// foot ops fade out under the share physics takes of their legs and
+    /// reset while it owns them (UE fades leg IK under a ragdoll).
+    pub physics: &'a [f32],
+    /// A hand-back from physics is still inertializing: `FootPlacement`
+    /// plants no new lock (the blending foot is still in the ragdoll's stance).
+    pub handing_back: bool,
+    /// The probe origins for the next update ([`GraphOutput::probe_origins`](crate::GraphOutput::probe_origins)),
+    /// in: the animated feet led one update; the foot ops move each to
+    /// where they target its foot (`StrideWarp` by its warp, `FootPlacement`
+    /// to the lock carried one update on, or by the release offset).
+    pub probes: &'a mut [Vec3],
 }
+
+/// Moves a leg's probe origin and its toe's by `d`.
+fn shift_probes(probes: &mut [Vec3], leg: &Leg, li: u16, d: Vec3) {
+    if let Some(o) = probes.get_mut(usize::from(li)) {
+        *o += d;
+    }
+    if let Some((_, slot, _)) = leg.toe
+        && let Some(o) = probes.get_mut(usize::from(slot))
+    {
+        *o += d;
+    }
+}
+
+/// The largest physics weight over the op's legs (chains and girdles), 0-1.
+fn legs_physics(cx: &ProceduralCx<'_>, legs: &[u16]) -> f32 {
+    if cx.physics.is_empty() {
+        return 0.0;
+    }
+    let w = |j: u16| cx.physics.get(usize::from(j)).copied().filter(|w| w.is_finite()).unwrap_or(0.0);
+    legs.iter()
+        .map(|&li| &cx.graph.legs[usize::from(li)])
+        .flat_map(|leg| leg.joints.iter().copied().chain([leg.girdle]))
+        .fold(0.0f32, |m, j| m.max(w(j)))
+        .clamp(0.0, 1.0)
+}
+
+/// A gate parameter's value, 0-1 (non-finite: 0; no gate: 1).
+fn gate_value(cx: &ProceduralCx<'_>, gate: Option<u16>) -> f32 {
+    gate.map_or(1.0, |p| {
+        let v = cx.params.value(Value::Param(p, 0));
+        if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
+    })
+}
+
+/// Past its LOD cut-off a weighted foot op keeps running with its weight
+/// goal at 0 (UE fades IK alpha out before culling the node) and resets only
+/// below this weight: the cut-off costs a few blend half-lives of the op,
+/// never a one-update jump.
+const FADE_CUT: f32 = 5e-3;
 
 const ROOT: Affine3A = Affine3A::IDENTITY;
 
@@ -257,20 +337,34 @@ fn fit_body(s: &Skeleton, local: &mut LocalPose, model: &mut ModelPose, girdles:
     }
 }
 
-/// Runs every op whose LOD cut-off admits `cx.lod`.
+/// Runs every op whose LOD cut-off admits `cx.lod`; past it the weighted foot
+/// ops fade out first (`FADE_CUT`). The foot ops skip while physics fully
+/// owns one of their legs.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: &mut LocalPose, model: &mut ModelPose) {
     let g = cx.graph;
     let s = cx.skeleton;
     for (entry, state) in g.ops.iter().zip(states.iter_mut()) {
-        if cx.lod > usize::from(entry.max_lod) {
-            if let OpState::Feet { legs, girdles, weight } = state {
-                // Back in range, the op blends in from the animated pose.
-                legs.fill(LegState::default());
-                girdles.fill((Spring::default(), Spring::default()));
-                *weight = Some(Spring::default());
-            }
+        let owned = match &entry.op {
+            Op::FootPlacement { legs, .. } | Op::StrideWarp { legs, .. } => legs_physics(cx, legs) >= 1.0,
+            _ => false,
+        };
+        let beyond = cx.lod > usize::from(entry.max_lod);
+        let fading = beyond && !owned && state.fade_weight() > FADE_CUT;
+        if owned || (beyond && !fading) {
             match state {
+                OpState::Feet { legs, girdles, weight } => {
+                    // Back in range (or handed back from physics), the op
+                    // blends in from the animated pose with no stale lock.
+                    legs.fill(LegState::default());
+                    girdles.fill((Spring::default(), Spring::default()));
+                    *weight = Some(Spring::default());
+                }
+                OpState::Stride { drops, weight, ratio, .. } => {
+                    drops.fill((Spring::default(), 0.0));
+                    *weight = Some(Spring::default());
+                    *ratio = Spring { value: 1.0, velocity: 0.0 };
+                }
                 OpState::Hit(h) => h.clear(),
                 OpState::Springs(sp) => sp.reset(),
                 _ => {}
@@ -278,39 +372,91 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
             continue;
         }
         match (&entry.op, state) {
-            (Op::StrideWarp { legs, girdles, min, max, .. }, _) => {
-                let ratio = cx.stride_ratio.clamp(*min, *max);
+            (
+                Op::StrideWarp { legs, girdles, min, max, pelvis_halflife, hold, max_drop, blend_halflife, gate, .. },
+                OpState::Stride { drops: springs, weight, ratio: followed, dir: last_dir },
+            ) => {
+                // The stride ratio is followed by a critical spring (1 when
+                // no `Match` player ticked, as in a jump, or standing) and
+                // applied at the op's weight (UE Stride Warping's alpha):
+                // a state switch or a stop eases the strides back instead of
+                // dropping their displacement in one update, which the
+                // inertializer (run before the ops) can't hide.
                 let v = horizontal(cx.inputs.velocity);
-                if (ratio - 1.0).abs() < 1e-3 || v.length() < 1e-3 {
-                    continue;
+                if v.length() >= 1e-3 {
+                    *last_dir = v.normalize();
                 }
-                let dir = v.normalize();
+                let target = if v.length() >= 1e-3 && cx.stride_ratio.is_finite() { cx.stride_ratio.clamp(*min, *max) } else { 1.0 };
+                let goal = if fading { 0.0 } else { gate_value(cx, *gate) * (1.0 - legs_physics(cx, legs)) };
+                if weight.is_none() {
+                    *followed = Spring { value: target, velocity: 0.0 };
+                }
+                let alpha = weight.get_or_insert(Spring { value: goal, velocity: 0.0 }).update(goal, *blend_halflife, cx.dt).clamp(0.0, 1.0);
+                let followed = followed.update(target, *blend_halflife, cx.dt);
+                let ratio = 1.0 + alpha * (followed - 1.0);
+                let ratio = if ratio.is_finite() { ratio } else { 1.0 };
+                let warping = (ratio - 1.0).abs() >= 1e-3 && *last_dir != Vec3::ZERO;
+                let (dir, scale) = if warping { (*last_dir, ratio - 1.0) } else { (Vec3::ZERO, 0.0) };
                 let mut targets = Vec::with_capacity(legs.len());
-                let mut drops = vec![0.0f32; girdles.len()];
-                for (gi, gs) in girdles.iter().enumerate() {
+                // Per girdle: the drop that lets its legs reach (the goal)
+                // and the limit, from its shortest leg.
+                let mut goals = vec![(0.0f32, f32::INFINITY); girdles.len()];
+                for (gs, (goal, limit)) in girdles.iter().zip(&mut goals) {
                     for &k in &gs.legs {
-                        let leg = &g.legs[usize::from(legs[usize::from(k)])];
+                        let li = legs[usize::from(k)];
+                        let leg = &g.legs[usize::from(li)];
                         let center = horizontal(model.translation(usize::from(leg.girdle)));
                         let f = model.translation(usize::from(leg.effector()));
                         let along = (horizontal(f) - center).dot(dir);
-                        let target = f + dir * along * (ratio - 1.0);
+                        let target = f + dir * along * scale;
+                        // The next probe: the led foot, warped the same way.
+                        if let Some(&o) = cx.probes.get(usize::from(li)) {
+                            shift_probes(cx.probes, leg, li, dir * (horizontal(o) - center).dot(dir) * scale);
+                        }
                         let hip = model.translation(usize::from(leg.solved()[0]));
                         let reach = reach(model, leg);
                         let rel = target - hip;
-                        let r = horizontal(rel).length();
-                        let height = -rel.y;
-                        if r < reach && r * r + height * height > reach * reach {
-                            drops[gi] = drops[gi].max(height - (reach * reach - r * r).sqrt());
-                        }
+                        // Beyond reach horizontally the hip would have to come
+                        // down to the target's height: the goal stays
+                        // continuous, the limit bounds it, the leg straightens.
+                        let r = horizontal(rel).length().min(reach);
+                        *goal = goal.max(-rel.y - (reach * reach - r * r).sqrt());
+                        *limit = limit.min(max_drop.max(0.0) * reach);
                         targets.push((leg, target, model.rotation(usize::from(leg.effector()))));
                     }
                 }
-                if drops.iter().any(|&d| d > 0.0) {
+                // Per girdle, the need held (its recent peak, decaying at
+                // half-life `hold`) and limited is the goal of one critical
+                // spring (UE Stride Warping's pelvis adjustment): the girdle
+                // settles low through a long stride rather than bobbing at
+                // each step, and rises back after the warp ends.
+                let drops: Vec<f32> = springs
+                    .iter_mut()
+                    .zip(&goals)
+                    .map(|((spring, held), &(goal, limit))| {
+                        let limit = if limit.is_finite() { limit } else { 0.0 };
+                        *held = damper(*held, 0.0, *hold, cx.dt).max(goal).min(limit);
+                        // At the op's weight: the LOD cut-off resets the
+                        // drop only once that is ~0.
+                        let d = spring.update(*held, *pelvis_halflife, cx.dt).clamp(0.0, limit) * alpha;
+                        if d.is_finite() {
+                            d
+                        } else {
+                            (*spring, *held) = (Spring::default(), 0.0);
+                            0.0
+                        }
+                    })
+                    .collect();
+                cx.feet.stride_drop_max = drops.iter().fold(cx.feet.stride_drop_max, |m, &d| m.max(d));
+                let dropped = drops.iter().any(|&d| d > 1e-6);
+                if dropped {
                     let offsets: Vec<f32> = drops.iter().map(|d| -d).collect();
                     fit_body(s, local, model, girdles, &offsets, &vec![0.0; girdles.len()]);
                 }
-                for (leg, target, rot) in targets {
-                    solve_leg(s, local, model, leg, target, Some(rot), 1.0);
+                if warping || dropped {
+                    for (leg, target, rot) in targets {
+                        solve_leg(s, local, model, leg, target, Some(rot), 1.0);
+                    }
                 }
             }
             (Op::OrientationWarp { pelvis, spine, max_angle, halflife }, OpState::Angle(angle)) => {
@@ -326,7 +472,7 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                 }
             }
             (Op::FootPlacement { .. }, OpState::Feet { girdles: springs, legs: ls, weight }) => {
-                foot_placement(cx, &entry.op, (springs, ls, weight), local, model);
+                foot_placement(cx, &entry.op, (springs, ls, weight), fading, local, model);
             }
             (Op::LookAt { chain, forward, total_limit, halflife }, OpState::Look { target, velocity, weight, weight_velocity, init }) => {
                 let goal = if cx.inputs.look_target.is_some() { 1.0 } else { 0.0 };
@@ -442,16 +588,19 @@ type FootTarget<'a> = (&'a Leg, usize, Vec3, Option<Vec3>, Quat);
 /// re-plant), a jump in `moved` resets them, girdle offsets stay within the
 /// drop and rise limits, every target stays within its leg's reach of the
 /// hip, and the whole op blends out (critically damped) while no leg has a
-/// ground sample or the character is fast. Non-finite results skip the op.
+/// ground sample, the character is fast, the `gate` parameter is off or
+/// physics takes the legs; no lock is planted while a hand-back from physics
+/// inertializes. Non-finite results skip the op.
 #[allow(clippy::too_many_lines)]
 fn foot_placement(
     cx: &mut ProceduralCx<'_>,
     op: &Op,
     (springs, ls, weight): (&mut [(Spring, Spring)], &mut [LegState], &mut Option<Spring>),
+    fading: bool,
     local: &mut LocalPose,
     model: &mut ModelPose,
 ) {
-    let Op::FootPlacement { legs, girdles, max_foot_angle, release, pelvis_halflife, body, roll, guards } = op else { return };
+    let Op::FootPlacement { legs, girdles, max_foot_angle, release, pelvis_halflife, body, roll, guards, gate } = op else { return };
     let (g, s, dt) = (cx.graph, cx.skeleton, cx.dt);
     if legs.is_empty() {
         return;
@@ -469,18 +618,57 @@ fn foot_placement(
     }
 
     // The op's weight: on while ground samples arrive and the character is
-    // slower than `max_speed`; the first update starts where it should be.
+    // slower than `max_speed`, scaled by the gate parameter and by the share
+    // physics leaves the legs (UE binds Leg IK alpha to grounded flags and
+    // fades it under physics; 0 past the LOD cut-off); the first update
+    // starts where it should be.
     let sampled = legs.iter().any(|&li| matches!(cx.inputs.ground.get(usize::from(li)), Some(Some(_))));
     let speed = horizontal(cx.inputs.velocity).length();
-    let goal = if sampled && speed < guards.max_speed { 1.0 } else { 0.0 };
+    let gated = if fading { 0.0 } else { gate_value(cx, *gate) };
+    let goal = if sampled && speed < guards.max_speed { gated * (1.0 - legs_physics(cx, legs)) } else { 0.0 };
     let fresh = weight.is_none();
     let w = weight.get_or_insert(Spring { value: goal, velocity: 0.0 }).update(goal, guards.blend_halflife, dt).clamp(0.0, 1.0);
+    cx.feet.weight_max = cx.feet.weight_max.max(w);
     if w < 1e-3 {
         ls.fill(LegState::default());
         springs.fill((Spring::default(), Spring::default()));
         return;
     }
 
+    // The ground lift under a foot at `f` (its tip at `t`) from the leg's
+    // samples, and the ground normal: `None` without a sample, `Some(None)`
+    // past the step limit (rejected).
+    let ground = cx.inputs.ground;
+    let lift_at = |leg: &Leg, li: u16, f: Vec3, t: Option<Vec3>, reach: f32| -> Option<Option<(f32, Vec3)>> {
+        let Some(Some(gs)) = ground.get(usize::from(li)) else { return None };
+        let n = gs.normal.normalize_or(Vec3::Y);
+        let at = gs.point.y - (n.x * (f.x - gs.point.x) + n.z * (f.z - gs.point.z)) / n.y;
+        if !(n.y > 0.1 && at.is_finite() && at.abs() <= guards.max_step * reach) {
+            return Some(None);
+        }
+        // The sole keeps its clearance along the normal of the
+        // ground it tilts to (vertically `sole / cos tilt`).
+        let tilt = n.y.clamp(-1.0, 1.0).acos().min(*max_foot_angle);
+        // Only rigid feet (a tip beyond the effector); point contacts keep theirs.
+        let sole = if leg.toe.is_some() { clearance(leg.sole, reach) } else { 0.0 };
+        let mut lift = at + sole * (1.0 / tilt.cos() - 1.0);
+        // Step-aware: a tip over higher ground than the heel's plane
+        // (a riser between them) lifts the foot until the tip clears
+        // that step at its animated height, so toes never sink into
+        // the next tread; the heel then hangs over the nosing.
+        if let (Some((_, slot, rest)), Some(t)) = (leg.toe, t)
+            && let Some(Some(ts)) = ground.get(usize::from(slot))
+        {
+            let tn = ts.normal.normalize_or(Vec3::Y);
+            let at_toe = ts.point.y - (tn.x * (t.x - ts.point.x) + tn.z * (t.z - ts.point.z)) / tn.y;
+            let plane = gs.point.y - (n.x * (t.x - gs.point.x) + n.z * (t.z - gs.point.z)) / n.y;
+            let need = at_toe - (t.y - clearance(rest, reach));
+            if tn.y > 0.1 && at_toe - plane > STEP_EDGE && need > lift && need.abs() <= guards.max_step * reach {
+                lift = need;
+            }
+        }
+        Some(Some((lift, n)))
+    };
     let unmove = Quat::from_rotation_y(-moved.yaw);
     let mut targets: Vec<FootTarget<'_>> = Vec::with_capacity(legs.len());
     for (k, &li) in legs.iter().enumerate() {
@@ -496,38 +684,12 @@ fn foot_placement(
         }
         let foot = usize::from(leg.effector());
         let f = model.translation(foot);
-        let mut lift = 0.0;
-        let mut normal = None;
-        if let Some(Some(gs)) = cx.inputs.ground.get(usize::from(li)) {
-            let n = gs.normal.normalize_or(Vec3::Y);
-            let ground = gs.point.y - (n.x * (f.x - gs.point.x) + n.z * (f.z - gs.point.z)) / n.y;
-            if n.y > 0.1 && ground.is_finite() && ground.abs() <= guards.max_step * reaches[k] {
-                // The sole keeps its clearance along the normal of the
-                // ground it tilts to (vertically `sole / cos tilt`).
-                let tilt = n.y.clamp(-1.0, 1.0).acos().min(*max_foot_angle);
-                // Only rigid feet (a tip beyond the effector); point contacts keep theirs.
-                let sole = if leg.toe.is_some() { clearance(leg.sole, reaches[k]) } else { 0.0 };
-                lift = ground + sole * (1.0 / tilt.cos() - 1.0);
-                normal = Some(n);
-                // Step-aware: a tip over higher ground than the heel's plane
-                // (a riser between them) lifts the foot until the tip clears
-                // that step at its animated height, so toes never sink into
-                // the next tread; the heel then hangs over the nosing.
-                if let Some((toe, slot, rest)) = leg.toe
-                    && let Some(Some(ts)) = cx.inputs.ground.get(usize::from(slot))
-                {
-                    let t = model.translation(usize::from(toe));
-                    let tn = ts.normal.normalize_or(Vec3::Y);
-                    let at_toe = ts.point.y - (tn.x * (t.x - ts.point.x) + tn.z * (t.z - ts.point.z)) / tn.y;
-                    let plane = gs.point.y - (n.x * (t.x - gs.point.x) + n.z * (t.z - gs.point.z)) / n.y;
-                    let need = at_toe - (t.y - clearance(rest, reaches[k]));
-                    if tn.y > 0.1 && at_toe - plane > STEP_EDGE && need > lift && need.abs() <= guards.max_step * reaches[k] {
-                        lift = need;
-                    }
-                }
-            } else {
-                cx.feet.rejected += 1;
-            }
+        let toe = leg.toe.map(|(j, _, _)| model.translation(usize::from(j)));
+        let (mut lift, mut normal) = (0.0, None);
+        match lift_at(leg, li, f, toe, reaches[k]) {
+            Some(Some((l, n))) => (lift, normal) = (l, Some(n)),
+            Some(None) => cx.feet.rejected += 1,
+            None => {}
         }
         if fresh {
             st.height = Spring { value: lift, velocity: 0.0 };
@@ -537,20 +699,19 @@ fn foot_placement(
         let contact = curve(leg.contact);
         // Heel roll: the contact is over (heel-off) but the toe is still
         // down: the toe pins, the ankle rises and turns about it as animated.
-        let toe = leg.toe.map(|(j, _, _)| model.translation(usize::from(j)));
         let rolling = contact <= 0.5 && curve(leg.roll) > 0.5 && !st.unplanting;
         if let (true, Some(l), Some(t)) = (rolling, st.lock, toe) {
-            // The toe under the locked foot (lifted as the foot is).
-            st.toe_lock.get_or_insert(l + (t - f));
+            // The toe under the locked foot, on the foot's ground.
+            st.toe_lock.get_or_insert(l + horizontal(t - f));
         } else if contact > 0.5 {
             st.toe_lock = None;
         }
-        // The locked target: the ankle's lock, or the animated foot moved
-        // onto the pinned toe.
-        let toe_pin = st.toe_lock.zip(toe).map(|(l, t)| l + (f - t));
+        // The locked position (ground plane, `y` its ground): the ankle's
+        // lock, or the animated foot moved onto the pinned toe.
+        let toe_pin = st.toe_lock.zip(toe).map(|(l, t)| l + horizontal(f - t));
         let pin = if contact > 0.5 { st.lock } else if rolling { toe_pin } else { None };
         if let Some(p) = pin {
-            let drift = horizontal(p - target).length();
+            let drift = horizontal(p - f).length();
             cx.feet.drift_max = cx.feet.drift_max.max(drift);
             cx.feet.drift_sum += drift;
             cx.feet.drift_count += 1;
@@ -559,23 +720,43 @@ fn foot_placement(
                 cx.feet.unplanted += 1;
             }
         }
-        if contact > 0.5 && !st.unplanting && st.lock.is_none() {
+        // A locked target: the lock's plane position at the animated foot's
+        // height over the ground under it. The height spring holds that
+        // ground so a release continues from it.
+        let locked = |p: Vec3, ground: f32, height: &mut Spring| {
+            *height = Spring { value: ground, velocity: 0.0 };
+            Vec3::new(p.x, f.y + ground, p.z)
+        };
+        let mut planted = None;
+        if contact > 0.5 && !st.unplanting && st.lock.is_none() && !cx.handing_back {
             // A foot plants on the ground it touches, not on the smoothed
             // height still catching up (stair edges); where it is, with what
-            // is left of a release.
-            st.height = Spring { value: lift, velocity: 0.0 };
-            let l = f + Vec3::Y * lift + st.offset;
+            // is left of a release (the sampled plane carried under it).
+            let o = st.offset;
+            let ground = lift - normal.map_or(0.0, |n| (n.x * o.x + n.z * o.z) / n.y);
+            let l = Vec3::new(f.x + o.x, ground, f.z + o.z);
             (st.lock, st.offset, st.offset_velocity) = (Some(l), Vec3::ZERO, Vec3::ZERO);
-            target = l;
+            target = locked(l, l.y, &mut st.height);
+            planted = Some(l);
         } else if let (Some(p), false) = (pin, st.unplanting) {
-            target = p;
+            // The ground under the lock, live: from the update after the
+            // plant the leg's probes go out at the lock (`probes` below), so
+            // a riser the animated foot slid past doesn't move it. Without a
+            // usable sample, the ground sampled at plant.
+            let at = Vec3::new(p.x, f.y, p.z);
+            let ground = match lift_at(leg, li, at, toe.map(|t| t + horizontal(p - f)), reaches[k]) {
+                Some(Some((l, _))) => l,
+                _ => p.y,
+            };
+            target = locked(p, ground, &mut st.height);
+            planted = Some(p);
         } else {
             // Released (toe-off, no roll curve, unplanting): the locked
             // target's offset from the animation decays in a critical spring
             // of half-life `release / 2`, so the swing takes the correction
             // rather than the foot sliding at weight transfer.
             if let Some(l) = st.lock.take() {
-                st.offset = toe_pin.unwrap_or(l) - target;
+                st.offset = horizontal(toe_pin.unwrap_or(l) - f);
                 st.offset_velocity = Vec3::ZERO;
                 st.toe_lock = None;
             }
@@ -586,12 +767,26 @@ fn foot_placement(
                 target += st.offset;
             }
         }
+        // The next update's probe for this leg goes where its foot is
+        // targeted: a lock carried one more update by this update's root
+        // delta (the controller casts after the mover moved), else the
+        // (warped, led) animated foot plus the release offset; at the op's
+        // weight. The toe probe moves with it.
+        if let Some(&o) = cx.probes.get(usize::from(li)) {
+            let to = match planted {
+                Some(p) if finite_moved => unmove * (p - moved.translation),
+                Some(p) => p,
+                None => o + st.offset,
+            };
+            shift_probes(cx.probes, leg, li, horizontal(to - o) * w);
+        }
         targets.push((leg, k, f.lerp(target, w), normal, model.rotation(foot)));
     }
     // Per girdle: the offset goal from its legs, and the side-slope roll.
     let mut offsets = Vec::with_capacity(girdles.len());
     let mut rolls = Vec::with_capacity(girdles.len());
     let mut lows = Vec::with_capacity(girdles.len());
+    cx.feet.locks += u32::try_from(ls.iter().filter(|st| st.lock.is_some()).count()).unwrap_or(u32::MAX);
     for (gi, gs) in girdles.iter().enumerate() {
         let mut lowest = 0.0f32;
         let (mut sum, mut cap, mut girdle_reach) = (0.0f32, f32::INFINITY, f32::INFINITY);
@@ -634,9 +829,18 @@ fn foot_placement(
             0.0
         };
         let (o, r) = &mut springs[gi];
-        // The spring smooths; reach and the drop limit bound its output
-        // (the drop limit wins: a leg that still can't reach is clamped below).
-        offsets.push(o.update(clamped, *pelvis_halflife, dt).min(cap).clamp(lo, hi));
+        // One owner of the girdle: reach is in the goal, the spring smooths
+        // it, the drop and rise limits bound it (UE Foot Placement's pelvis
+        // spring and max offset). Reach also bounds the spring itself: a
+        // girdle lagging above its legs' reach is set on the bound at rest
+        // (the state, not just the output, so nothing pops when it lifts).
+        let mut sprung = o.update(clamped, *pelvis_halflife, dt);
+        if sprung > cap + 1e-4 {
+            cx.feet.cap_bound += 1;
+            *o = Spring { value: cap.max(lo), velocity: 0.0 };
+            sprung = cap;
+        }
+        offsets.push(sprung.clamp(lo, hi));
         rolls.push(r.update(roll_goal, *pelvis_halflife, dt));
         lows.push(lo);
     }
@@ -655,7 +859,9 @@ fn foot_placement(
         // shortfall, within the drop limit). A pure translation moves each
         // hip by exactly that much, so one pass is exact and the fitted
         // pitch is kept; lowering only the short girdle re-pitched the
-        // spine, over-pitched downhill and converged slowly.
+        // spine, over-pitched downhill and converged slowly. Like the reach
+        // bound on the girdle springs it is a hard, stateless constraint:
+        // continuous in the pose, so nothing to smooth and nothing to pop.
         let floor = offsets.iter().zip(&lows).map(|(o, lo)| lo - o).fold(f32::NEG_INFINITY, f32::max).min(0.0);
         let excess = targets.iter().map(|&(leg, _, target, _, _)| rise_cap(model, leg, target)).fold(0.0f32, f32::min).max(floor);
         if excess < -1e-4 {

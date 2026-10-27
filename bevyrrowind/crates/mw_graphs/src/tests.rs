@@ -47,11 +47,11 @@ fn holds(c: &ConditionSpec, v: &HashMap<&str, f32>) -> bool {
 fn movement_conditions_are_exclusive_and_complete() {
     for t in Template::ALL {
         let moves = build::movement_conditions(t);
-        for bits in 0..32u32 {
+        for bits in 0..64u32 {
             for turn in [-1.0, 0.0, 1.0] {
                 let b = |i: u32| if bits & (1 << i) != 0 { 1.0 } else { 0.0 };
                 let v: HashMap<&str, f32> =
-                    [(p::MOVING, b(0)), (p::RUNNING, b(1)), (p::SNEAKING, b(2)), (p::SWIMMING, b(3)), (p::ON_GROUND, b(4)), (p::TURN, turn)].into();
+                    [(p::MOVING, b(0)), (p::RUNNING, b(1)), (p::SNEAKING, b(2)), (p::SWIMMING, b(3)), (p::ON_GROUND, b(4)), (p::JUMPING, b(5)), (p::TURN, turn)].into();
                 let hits: Vec<&str> = moves.iter().filter(|(_, when)| when.iter().all(|c| holds(c, &v))).map(|(s, _)| *s).collect();
                 assert_eq!(hits.len(), 1, "{t:?} {v:?}: {hits:?}");
             }

@@ -42,7 +42,16 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Look for: the body rises onto the top (~1 m past the lip) in ~0.7 s playing the climb clip in step with the move
   (playhead = the warp's progress), then blends back into walk and drops off the back normally; red 2 m box: a plain
   jump; Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a stand at the face (feel/tuning is
-  the owner's call). Hands on the lip and feet on top are not IK-fitted yet (B2b). Status: awaiting owner.
+  the owner's call). Hands on the lip and feet on top are not IK-fitted yet (B2b). Status: confirmed with follow-up (owner 2026-10-27, after the IK audit fixes): mantle alright; some body clipping
+  into the box (clip, B2b IK), and the camera does something odd when the body clips on the bigger box.
+
+### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
+- Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
+- `scene level-anim-loop`: NPCs walk on flat ground. Then `scene level-anim-overview`, F11: player walk, run and sprint.
+- Look for: pelvis steady, no bob at step frequency; no deep crouch when running or sprinting (was ~95 mm at 4.5-7 m/s, now
+  under 1 mm headless); feet don't slide; feet let go of the ground in a jump. Sprint plays the run cycle at 2.2x
+  (4.75 steps/s): if it looks frantic, a sprint cycle is the fix, not a longer stride. Run strafes still skate (clip issue).
+  Numbers: `cargo test -p mw_graphs --test slope_walk gait_bands -- --ignored --nocapture`. Status: confirmed (owner 2026-10-27: "so much better"; movement feel follow-up under PL-2).
 
 ### AL-5: Props push (PH-1, physics-adapter.md)
 - `scene level-anim-props` (cameras `props`, `props-close`); F11 (player under the camera), push crates, boxes and the table; `V` throws.
@@ -121,7 +130,7 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slice 2a; awaiting owner)
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slice 2a; open: owner 2026-10-26: takeovers, catch steps and falls work, but the pelvis bobs and the reaction seems to fight the IK; audit in progress)
 Dev build (feature `delirium`, part of `dev`): `cargo build -p bevyrrowind --features dev`, then
 `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`). Left-click a human NPC (Fargoth far left,
 Elone centre; not the knockdown dummy, the Khajiit or the Argonian): plain 45, Ctrl 20, Shift 80 N s at the clicked part along the
@@ -130,3 +139,6 @@ reacts and takes catch steps instead of popping, no stretched or sunk limbs, the
 stands still (~1-7 s) a smooth blend back into the idle where it stands. Shift-click the head a few times to make one fall: it lies
 for 1.5-4 s, then the get-up clip starts from the lying pose (log: `delirium: ... fell`, `handed back (Fallen)`). Live run
 2026-10-26: Elone 45 N s on Spine0, balanced in 2.7 s; on the hips, 6.5 s. Fall + get-up not yet seen live.
+Owner 2026-10-27 (after the IK fixes): after recovering they stand in Delirium's own stance, not the Morrowind idle, then ease
+into the idle a few seconds later (looks weird). Cause: bodyBalance holds its zero pose until still (0.5 s at < 5 cm/s), then a
+0.3 s hand-back; the balance target should be the graph's idle pose. Still no fall from 4 Shift-clicks (all Balanced).

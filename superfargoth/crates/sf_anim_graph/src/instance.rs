@@ -242,8 +242,8 @@ pub struct GraphOutput {
     pub events: Vec<GraphEvent>,
     /// Per graph curve; 0 where no playing clip has it.
     pub curves: Vec<f32>,
-    /// Per limb: where to probe for ground before the next update (the
-    /// animated effector, character space).
+    /// Per probe (each leg, then each leg toe): where to probe for ground before the next update
+    /// (where the foot ops target that foot, led one update; character space; see `probe_origins`).
     pub probe_origins: Vec<Vec3>,
     /// The motion warp applied this update, if any.
     pub warp: Option<ActiveWarp>,
@@ -281,6 +281,16 @@ pub struct FootStats {
     pub teleports: u32,
     /// Non-finite results caught (the op was skipped and its state reset).
     pub non_finite: u32,
+    /// Girdle updates where the reach cap bound the pelvis spring (its state
+    /// set on the cap at rest, by more than 0.1 mm).
+    pub cap_bound: u32,
+    /// Largest girdle drop `StrideWarp` applied (m; 0 when it didn't drop).
+    pub stride_drop_max: f32,
+    /// Largest `FootPlacement` weight (0-1; its gates: ground samples, speed,
+    /// the gate parameter, physics).
+    pub weight_max: f32,
+    /// Foot locks held after the update (summed over updates by `+=`).
+    pub locks: u32,
 }
 
 impl std::ops::AddAssign for FootStats {
@@ -294,6 +304,10 @@ impl std::ops::AddAssign for FootStats {
         self.unplanted += o.unplanted;
         self.teleports += o.teleports;
         self.non_finite += o.non_finite;
+        self.cap_bound += o.cap_bound;
+        self.stride_drop_max = self.stride_drop_max.max(o.stride_drop_max);
+        self.weight_max = self.weight_max.max(o.weight_max);
+        self.locks += o.locks;
     }
 }
 
@@ -447,6 +461,9 @@ pub struct GraphInstance {
     physics: Option<PhysicsInput>,
     /// A hand-back blend requested by [`GraphInstance::inertialize_from`].
     handback: Option<f32>,
+    /// The running inertialization is a hand-back (cleared when it ends):
+    /// `FootPlacement` plants no new lock meanwhile.
+    handing_back: bool,
     /// Hits for the `HitReact` ops, queued by [`GraphInstance::hit`].
     hits: Vec<Hit>,
     /// Bound cloth parts ([`GraphInstance::set_cloth`]).
@@ -501,6 +518,7 @@ impl GraphInstance {
             scratch: Scratch { frames: Vec::new(), curve_w: vec![0.0; g.curves.len()], model: ModelPose::new(n), model2: ModelPose::new(n) },
             physics: None,
             handback: None,
+            handing_back: false,
             hits: Vec::new(),
             cloth: Vec::new(),
             ops: g.ops.iter().map(|o| OpState::new(&o.op)).collect(),
@@ -556,11 +574,11 @@ impl GraphInstance {
 
     /// The physics input (physics.md "Ragdolls and the animation blend"): a
     /// local pose blended over the graph's output per joint by `weights`
-    /// (0 = animation, 1 = physics), after inertialization and before the
-    /// pose history and the procedural ops, so a later
-    /// [`inertialize_from`](Self::inertialize_from) or state switch blends
-    /// out of the shown pose and the ops (foot placement, look-at) act only
-    /// on the animated share. `None`, or a pose of the wrong length, clears
+    /// (0 = animation, 1 = physics) as the graph's last stage, after the
+    /// procedural ops (foot placement, look-at), which act on the animated
+    /// pose alone. The pose history keeps the animated pose too, so a state
+    /// switch under a partial blend stays continuous; the hand-back brings
+    /// its own ([`inertialize_from`](Self::inertialize_from)). `None`, or a pose of the wrong length, clears
     /// it. This is the graph's built-in physics stage: graphs need no
     /// authored `PoseInput` node for a ragdoll (their `PoseInput` slots stay
     /// for other external poses).
@@ -899,6 +917,7 @@ impl GraphInstance {
         // its shorter blend snapped the lying pose onto the clip (AN-5).
         if let Some(d) = self.handback.take() {
             self.request = Some(d);
+            self.handing_back = true;
         }
         self.collect_events(g, out);
         self.params.clear_triggers();
@@ -953,23 +972,13 @@ impl GraphInstance {
             }
         }
         self.inertial.apply(&mut out.pose);
-        if let Some(p) = &self.physics {
-            for (j, (&w, &t)) in p.weights.iter().zip(&p.pose).enumerate() {
-                if w >= 1.0 {
-                    out.pose.set(j, t);
-                } else if w > 0.0 {
-                    let a = out.pose.get(j);
-                    out.pose.set(
-                        j,
-                        Trs {
-                            translation: a.translation.lerp(t.translation, w),
-                            rotation: a.rotation.slerp(t.rotation, w).normalize(),
-                            scale: a.scale.lerp(t.scale, w),
-                        },
-                    );
-                }
-            }
-        }
+        self.handing_back &= self.inertial.is_active();
+        // The history and the probe origins see the animated pose, without the
+        // physics share: inertialization runs before the physics blend, so a
+        // state switch under a partial ragdoll starts from the animated pose and
+        // the shown pose stays continuous (from the blended pose it would jump by
+        // w(1-w)(physics - animated)). The hand-back from physics brings its own
+        // history (`inertialize_from`).
         if dt > 0.0 {
             std::mem::swap(&mut self.prev, &mut self.prev2);
             self.prev.copy_from(&out.pose);
@@ -994,19 +1003,37 @@ impl GraphInstance {
             curves: &out.curves,
             feet: FootStats::default(),
             hits: &self.hits,
+            physics: self.physics.as_ref().map_or(&[], |p| &p.weights),
+            handing_back: self.handing_back,
+            probes: &mut out.probe_origins,
         };
         run_ops(&mut pcx, &mut self.ops, &mut out.pose, &mut out.model);
-        // Ops (foot placement, look-at, hit springs) leave the joints physics
-        // fully owns alone (R0: feet planted on the slope under a ragdoll).
+        // The physics stage, last (as UE's RigidBody / physical-animation blend
+        // at the end of the graph, after IK): per joint in local space over the
+        // animated pose with its ops, so the ops never solve against a ragdoll's
+        // limbs (pose audit F4) and joints physics fully owns show its pose
+        // exactly (R0: no foot planted on the slope under a ragdoll).
         if let Some(p) = &self.physics {
-            let mut owned = false;
+            let mut blended = false;
             for (j, (&w, &t)) in p.weights.iter().zip(&p.pose).enumerate() {
                 if w >= 1.0 {
                     out.pose.set(j, t);
-                    owned = true;
+                } else if w > 0.0 {
+                    let a = out.pose.get(j);
+                    out.pose.set(
+                        j,
+                        Trs {
+                            translation: a.translation.lerp(t.translation, w),
+                            rotation: a.rotation.slerp(t.rotation, w).normalize(),
+                            scale: a.scale.lerp(t.scale, w),
+                        },
+                    );
+                } else {
+                    continue;
                 }
+                blended = true;
             }
-            if owned {
+            if blended {
                 local_to_model(b.skeleton, &out.pose, &mut out.model, &Affine3A::IDENTITY);
             }
         }
@@ -1026,7 +1053,13 @@ impl GraphInstance {
     /// samples the step it lands on, not the one it left a frame earlier
     /// (the footprint prediction of Johansen 2009, to first order). The
     /// lead is capped at a quarter of the limb's root-to-effector distance
-    /// so a pose snap can't throw a probe far away.
+    /// so a pose snap can't throw a probe far away. The foot ops then move
+    /// each origin to where they target that foot (`ProceduralCx::probes`:
+    /// `StrideWarp` warps it, `FootPlacement` puts a locked leg's at its
+    /// lock carried by this update's root delta), as UE runs stride warping
+    /// before its foot traces and traces at the planted foot. One update of
+    /// lag: the origins come from this update's op state (warp ratio,
+    /// locks), the samples serve the next update.
     fn probe_origins(&mut self, g: &CompiledGraph, dt: f32, out: &mut GraphOutput) {
         out.probe_origins.clear();
         let history = self.effectors.len() == g.legs.len();

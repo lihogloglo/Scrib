@@ -70,7 +70,7 @@ use sf_physics_bevy::{
 use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim_bevy::{Animator, Hit};
 use sf_character_bevy::CharacterBody;
-use sf_controller_bevy::Dormant;
+use sf_controller_bevy::{Dormant, Held};
 use sf_controller_bevy::Mover;
 use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollFailed, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats, clip_root_body};
 use sf_ragdoll::{RAGDOLL_COOK, RagdollDef, RagdollPolicy};
@@ -138,8 +138,9 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
 /// clip, then the powered crumple: `ReactionSet::death`, P8b).
 pub const DEATH_HANDOFF: f32 = 0.4;
 
-/// A character killed by [`kill_key`]: its mover stays [`Dormant`].
+/// A character killed by [`kill_key`]: its mover stays [`Held`] (so [`Dormant`]).
 #[derive(Component)]
+#[require(Held)]
 pub struct Dead;
 
 /// `ragdoll.cook` products by skeleton subject (cached); skeletons whose
@@ -159,6 +160,10 @@ fn ragdoll_source(store: Store, manifest: Manifest) -> RagdollSource {
     }))
 }
 
+/// Who the `I` key can kill: alive and not held by another physics layer (Delirium); a
+/// knocked-down character can still be killed.
+type Killable = (Without<Dead>, Or<(Without<Held>, With<KnockedDown>)>);
+
 /// `I`: kills the character nearest the crosshair (within 40 m and 1 m of
 /// the view ray): the graph's `dead` flag starts the death clip, the mover
 /// parks, and [`Ragdoll`] hands the body to physics after [`DEATH_HANDOFF`].
@@ -167,7 +172,7 @@ fn kill_key(
     keys: Res<ButtonInput<KeyCode>>,
     cameras: Query<(Entity, &Transform), With<FreeCamera>>,
     pos_of: WorldPosOf,
-    characters: Query<(Entity, &CharacterBody), Without<Dead>>,
+    characters: Query<(Entity, &CharacterBody), Killable>,
     mut animators: Query<&mut Animator>,
     mut commands: Commands,
 ) {
@@ -200,7 +205,7 @@ fn kill(root: Entity, body: &CharacterBody, animators: &mut Query<&mut Animator>
     if let Ok(mut animator) = animators.get_mut(body.body) {
         animator.set_bool("dead", true);
     }
-    commands.entity(root).try_insert((Dead, Dormant));
+    commands.entity(root).try_insert(Dead);
     commands.entity(body.body).try_insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF, mode: RagdollMode::Death { crumple: true } });
     info!("ragdoll: killed {root} ({})", body.skeleton);
 }
@@ -225,19 +230,21 @@ const KNOCKED_OUT: &str = "knocked_out";
 /// the character's root at the get-up ([`RagdollMode::Knockdown`] `get_up`).
 const GET_UP_CLIP: &str = "Knockout@tail";
 
-/// A knocked-down character: its mover stays [`Dormant`] until it gets up;
+/// A knocked-down character: its mover stays [`Held`] (so [`Dormant`]) until it gets up;
 /// `body_local` is its body's local transform before the ragdoll moved it.
 #[derive(Component)]
+#[require(Held)]
 pub struct KnockedDown {
     body_local: Transform,
 }
 
 /// Hard impacts on a living character's capsule knock it down (PH-9);
-/// lighter ones kick the graph's `HitReact` springs (P9, PH-10).
+/// lighter ones kick the graph's `HitReact` springs (P9, PH-10). Not while
+/// something else owns the body ([`Held`]: dead, down, a Delirium takeover).
 #[allow(clippy::needless_pass_by_value)]
 fn knockdown(
     mut impacts: MessageReader<ImpactOnCharacter>,
-    characters: Query<&CharacterBody, (Without<Dead>, Without<KnockedDown>)>,
+    characters: Query<&CharacterBody, Without<Held>>,
     mut bodies: Query<(&mut Animator, &Transform, &GlobalTransform)>,
     pos_of: WorldPosOf,
     source: Res<RagdollSource>,
@@ -263,7 +270,7 @@ fn knockdown(
             continue;
         }
         animator.set_bool(KNOCKED_OUT, true);
-        commands.entity(hit.entity).try_insert((KnockedDown { body_local: *local }, Dormant));
+        commands.entity(hit.entity).try_insert(KnockedDown { body_local: *local });
         let get_up = get_up_body(&source, &body.skeleton, &animator);
         if get_up.is_none() {
             info!("ragdoll: {} has no {GET_UP_CLIP} clip: LYING_REST_GET_UP scaffold", body.skeleton);
@@ -303,13 +310,13 @@ fn got_up(
                 a.set_bool(KNOCKED_OUT, false);
             }
         }
-        commands.entity(root).try_remove::<(KnockedDown, Dormant)>();
+        commands.entity(root).try_remove::<(KnockedDown, Held, Dormant)>();
         info!("ragdoll: {root} has no ragdoll: knockdown cancelled, back on its feet");
     }
     for e in events.read() {
         let Some((root, _, down, mut t, mover)) = roots.iter_mut().find(|(_, b, ..)| b.body == e.entity) else { continue };
         let Ok((mut local, _)) = locals.get_mut(e.entity) else {
-            commands.entity(root).try_remove::<(KnockedDown, Dormant)>();
+            commands.entity(root).try_remove::<(KnockedDown, Held, Dormant)>();
             continue;
         };
         let l0 = down.body_local;
@@ -325,7 +332,7 @@ fn got_up(
             m.loco.motion.angular_velocity = 0.0;
         }
         *local = l0;
-        commands.entity(root).try_remove::<(KnockedDown, Dormant)>();
+        commands.entity(root).try_remove::<(KnockedDown, Held, Dormant)>();
         info!("ragdoll: {root} got up (heading {:.0}°)", yaw.to_degrees());
     }
 }

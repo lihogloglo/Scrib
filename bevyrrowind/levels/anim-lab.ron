@@ -13,6 +13,9 @@
 (
     name: "anim-lab",
     description: "animation lab: walk loops, ramps and stairs with walkers, ledges and a wall, props, 3 m / 6 m drops, idle / hit / knockdown dummies of several races",
+    // Clear noon, so every check reads the same light (the command line still overrides).
+    hour: Some(12.0),
+    weather: Some("clear"),
     cameras: [
         (name: "overview", eye: (-3.0, 60.0, 62.0), target: (-3.0, 0.0, -4.0)),
         (name: "loop", eye: (0.0, 14.0, 72.0), target: (0.0, 0.0, 45.0)),

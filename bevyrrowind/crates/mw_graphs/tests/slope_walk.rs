@@ -200,6 +200,9 @@ struct Report {
     /// pitch (chest to head, forward positive, radians) in character space (AN-21).
     grades: Vec<f32>,
     trunk: Vec<f32>,
+    /// Per measured frame: the heaviest clip and its playback rate (clip seconds
+    /// per second, from its clip time; wraps skipped).
+    rates: Vec<(String, f32)>,
 }
 
 /// Per leg (graph order): the foot joint's height over flat ground with
@@ -281,6 +284,7 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
     let toe_joints = toes(sim);
     let mut toe_meters: Vec<Option<FootMeter>> = toe_joints.iter().map(|t| t.map(|(_, sole)| FootMeter::new(MeterRules { sole, ..MeterRules::default() }))).collect();
     let mut last: Vec<Option<(Vec3, f32)>> = vec![None; legs.len()];
+    let mut prev_clip: Option<(String, f32)> = None;
     let mut prev_body: Option<Vec3> = None;
     let frames = (seconds / DT).round() as usize;
     for frame in 0..frames + 60 {
@@ -349,6 +353,17 @@ fn walk_at(sim: &mut Sim, world: &World, (start, velocity, facing): (Vec3, Vec3,
         r.idle_frames += u32::from(!moving);
         r.min_measured = r.min_measured.min(flat.length());
         r.stats += sim.out.feet;
+        if let Some((top, _)) = sim.playing().into_iter().next()
+            && let Some(t) = sim.clip_time(&top)
+        {
+            if let Some((c, pt)) = &prev_clip
+                && *c == top
+                && t > *pt
+            {
+                r.rates.push((top.clone(), (t - pt) / DT));
+            }
+            prev_clip = Some((top, t));
+        }
         r.grades.push(sim.out.grade);
         if let (Some(pelvis), Some(neck)) = (sim.skeleton.find("Bip01 Spine1"), sim.skeleton.find("Bip01 Head")) {
             let t = sim.out.model.translation(neck) - sim.out.model.translation(pelvis);
@@ -942,4 +957,85 @@ fn walkers_shorten_their_steps_uphill_and_lean_into_the_slope() {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Pose audit S3 / feed audit F4: the gait bands. The player moves at 1.6 (walk),
+/// 4.5 (run) and 7.0 m/s (sprint, the run cycle) against cycles authored at about
+/// 2.2 and 3.2 m/s; NPCs walk at about 2.2. Per gait and op data: the state, top
+/// clip, playback rate, cadence, the stride ratio left to `StrideWarp` (after its
+/// clamp), its largest pelvis drop, and the feet's slide and lock drift. Data rows:
+/// "shipped" (the builder's) and candidate overrides of the `StrideWarp` max,
+/// the `SpeedMatch` rate share and rate max.
+#[test]
+#[ignore = "measurement: gait bands"]
+fn gait_bands() {
+    use std::f32::consts::FRAC_PI_2;
+    use sf_anim_graph::Op;
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let flat = World::new();
+    let variants = [
+        ("shipped", None),
+        ("old 1.6/0.3/2.2", Some((1.6, 0.3, 2.2))),
+        ("1.15/0.5/2.2", Some((1.15, 0.5, 2.2))),
+        ("1.15/0.3/2.2", Some((1.15, 0.3, 2.2))),
+        ("1.25/0.5/2.2", Some((1.25, 0.5, 2.2))),
+    ];
+    for (label, data) in variants {
+        eprintln!("--- {label} (StrideWarp max / rate_share / rate max)");
+        // Body moves +X; the facing offset picks the gait (strafes: the run clips plant at a quarter of the speed).
+        for (gait, speed, running, offset) in [
+            ("player walk", 1.6, false, 0.0),
+            ("npc walk", 2.2, false, 0.0),
+            ("player run", 4.5, true, 0.0),
+            ("player sprint", 7.0, true, 0.0),
+            ("npc run left", 3.7, true, -FRAC_PI_2),
+            ("npc run right", 3.7, true, FRAC_PI_2),
+            ("player run lt", 4.5, true, -FRAC_PI_2),
+        ] {
+            let mut sim = humanoid_sim().unwrap();
+            let mut warp = (0.0, 0.0);
+            for o in &mut sim.graph.ops {
+                match &mut o.op {
+                    Op::StrideWarp { min, max, .. } => {
+                        if let Some((m, _, _)) = data {
+                            *max = m;
+                        }
+                        warp = (*min, *max);
+                    }
+                    Op::SpeedMatch { max, rate_share, .. } => {
+                        if let Some((_, s, r)) = data {
+                            *rate_share = s;
+                            *max = r;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            sim.set(p::RUNNING, if running { 1.0 } else { 0.0 });
+            let r = walk_at(&mut sim, &flat, (Vec3::new(-4.0, 0.0, 0.0), Vec3::X * speed, Some(FRAC_PI_2 + offset)), 5.0, (-99.0, 999.0), false);
+            let state = sim.state(mw_graphs::build::LOCOMOTION).unwrap_or("?").to_owned();
+            let mut rates: Vec<f32> = r.rates.iter().map(|(_, x)| *x).collect();
+            rates.sort_by(f32::total_cmp);
+            let rate = rates.get(rates.len() / 2).copied().unwrap_or(0.0);
+            let top = r.rates.last().map(|(c, _)| c.clone()).unwrap_or_default();
+            let natural = sim.graph.clips.iter().position(|c| c.reference == top).map_or(0.0, |i| {
+                let v = sim.clips[i].meta.stride_velocity();
+                Vec2::new(v.x, v.z).length()
+            });
+            let actual = r.travel / r.seconds.max(1e-3);
+            let ratio = actual / (natural * rate).max(1e-3);
+            let cadence = r.plants.iter().sum::<u32>() as f32 / r.seconds.max(1e-3);
+            let slide = r.feet.iter().map(FootMetrics::slide_per_stance).fold(0.0, f32::max) * 100.0;
+            eprintln!(
+                "{gait:13} {actual:4.2} m/s [{state}] {top} @ {natural:4.2} m/s | rate {rate:4.2} | cadence {cadence:4.2} steps/s | stride {ratio:4.2} (warp {:4.2}) | pelvis drop {:5.1} mm, clamped {} | slide {slide:4.1} cm/st, lock drift max {:4.1} cm, unplanted {}",
+                ratio.clamp(warp.0, warp.1),
+                r.stats.stride_drop_max * 1000.0,
+                r.stats.pelvis_clamped,
+                r.stats.drift_max * 100.0,
+                r.stats.unplanted,
+            );
+        }
+    }
 }

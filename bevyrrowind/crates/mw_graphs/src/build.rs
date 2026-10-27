@@ -22,8 +22,10 @@
 //!   ranks above weapon actions and below scripted groups.
 //!
 //! Clip references are animation-group names (`WalkForward1h`), a group's
-//! sub-action (`WeaponOneHand@chop`), or the part after its loop
-//! (`Knockout@tail`); [`crate::AnimSet`] resolves them per skeleton.
+//! sub-action (`WeaponOneHand@chop`), the part before its loop
+//! (`Jump@head`) or after it (`Knockout@tail`, `Jump@tail`; `Jump`'s loop is
+//! one key time, a hold point); [`crate::AnimSet`] resolves them per
+//! skeleton.
 
 use std::collections::BTreeMap;
 
@@ -85,6 +87,10 @@ pub mod params {
     pub const SWIMMING: &str = "swimming";
     /// False while airborne (jump state). Fliers keep it set.
     pub const ON_GROUND: &str = "on_ground";
+    /// Airborne from a launch (a jump): the take-off plays. False, a plain
+    /// fall (walked off a ledge) holds the airborne pose. Read on leaving the
+    /// ground: set it with the launch, clear it on touchdown.
+    pub const JUMPING: &str = "jumping";
     /// Turn rate in place, rad/s, positive to the left.
     pub const TURN: &str = "turn";
     /// [`super::Stance`] as a number.
@@ -123,7 +129,16 @@ pub mod states {
     pub const SNEAK_IDLE: &str = "sneak_idle";
     pub const TURN_LEFT: &str = "turn_left";
     pub const TURN_RIGHT: &str = "turn_right";
+    /// Airborne: `Jump@head` (take-off), holding its last pose until
+    /// touchdown; the whole `Jump` where the group has no loop point.
     pub const JUMP: &str = "jump";
+    /// Airborne without a launch: `Jump@head`'s last pose (its loop point)
+    /// held, no take-off (Lyra's `FallLoop`, UE `IsFalling`). Dropped where the
+    /// group has no loop point; a fall then enters JUMP as a jump does.
+    pub const FALL: &str = "fall";
+    /// Touchdown: `Jump@tail` once (knees absorb), then locomotion. Dropped
+    /// with its transitions where the group has no loop point.
+    pub const LAND: &str = "land";
     pub const SWIM_IDLE: &str = "swim_idle";
     pub const SWIM_WALK: &str = "swim_walk";
     pub const SWIM_RUN: &str = "swim_run";
@@ -260,6 +275,11 @@ fn range(param: &str, v: f32) -> [C; 2] {
     [C::Greater(param.into(), v - 0.5), C::Less(param.into(), v + 0.5)]
 }
 
+/// `Jump@head` → `Jump1h@head`, `Walk` → `Walk1h`: the suffix on the group.
+fn with_suffix(base: &str, suffix: &str) -> String {
+    base.split_once('@').map_or_else(|| format!("{base}{suffix}"), |(g, part)| format!("{g}{suffix}@{part}"))
+}
+
 fn inert(t: f32) -> BlendMode {
     BlendMode::Inertialize(t)
 }
@@ -272,7 +292,7 @@ struct Movement {
 }
 
 fn movements(t: Template) -> Vec<Movement> {
-    use params::{MOVING, ON_GROUND, RUNNING, SNEAKING, SWIMMING, TURN};
+    use params::{JUMPING, MOVING, ON_GROUND, RUNNING, SNEAKING, SWIMMING, TURN};
     let is = |p: &str| C::IsTrue(p.into());
     let not = |p: &str| C::IsFalse(p.into());
     let left = C::Greater(TURN.into(), TURN_THRESHOLD);
@@ -295,7 +315,8 @@ fn movements(t: Template) -> Vec<Movement> {
         out.push(Movement { state: states::SNEAK_IDLE, when: land(&[is(SNEAKING), not(MOVING)]) });
     }
     out.extend([
-        Movement { state: states::JUMP, when: vec![not(SWIMMING), not(ON_GROUND)] },
+        Movement { state: states::JUMP, when: vec![not(SWIMMING), not(ON_GROUND), is(JUMPING)] },
+        Movement { state: states::FALL, when: vec![not(SWIMMING), not(ON_GROUND), not(JUMPING)] },
         Movement { state: states::SWIM_IDLE, when: swim(&still) },
         Movement { state: states::SWIM_WALK, when: swim(&[is(MOVING), not(RUNNING)]) },
         Movement { state: states::SWIM_RUN, when: swim(&[is(MOVING), is(RUNNING)]) },
@@ -330,18 +351,42 @@ impl Builder {
         reference.into()
     }
 
-    /// A stance-specific group, falling back to the base set's.
+    /// A stance-specific group, falling back to the base set's. A part
+    /// reference takes the suffix on its group (`Jump@head` → `Jump1h@head`).
     fn stance_clip(&mut self, base: &str, suffix: &str) -> String {
         let base_ref = self.base_clip(base);
-        if suffix.is_empty() { base_ref } else { self.clip(&format!("{base}{suffix}"), true, Some(&base_ref)) }
+        if suffix.is_empty() {
+            return base_ref;
+        }
+        self.clip(&with_suffix(base, suffix), true, Some(&base_ref))
+    }
+
+    /// The clip `hold:<reference>` for a held pose: the stance's part, then
+    /// the base set's, then dropped (no fallback to the whole group, whose
+    /// end is not the held pose). Own names, so the chain differs from the
+    /// plain reference's; the source loads once.
+    fn hold_clip(&mut self, base: &str, suffix: &str) -> String {
+        let mut entry = |source: &str, fallback: ClipFallback| {
+            let name = format!("hold:{source}");
+            self.a.clips.entry(name.clone()).or_insert(ClipRef { source: source.into(), optional: true, fallback: Some(fallback) });
+            name
+        };
+        let base_ref = entry(base, ClipFallback::Drop);
+        if suffix.is_empty() {
+            return base_ref;
+        }
+        entry(&with_suffix(base, suffix), ClipFallback::Clip(base_ref))
     }
 
     /// A base-set group with its fallback chain: `Run<Dir>` → `Walk<Dir>`,
     /// `SwimRun<Dir>` → `SwimWalk<Dir>` → `Walk<Dir>` (creatures that swim
-    /// or fly with their walk cycle).
+    /// or fly with their walk cycle), `<Group>@head` → `<Group>` (a group
+    /// without a loop point plays whole).
     fn base_clip(&mut self, base: &str) -> String {
         let fallback = if let Some(dir) = base.strip_prefix("SwimRun") {
             Some(format!("SwimWalk{dir}"))
+        } else if let Some(group) = base.strip_suffix("@head") {
+            Some(group.to_string())
         } else {
             base.strip_prefix("SwimWalk").or_else(|| base.strip_prefix("Run")).map(|dir| format!("Walk{dir}"))
         };
@@ -471,6 +516,23 @@ impl Builder {
         })
     }
 
+    /// One held frame per stance: the last of `part` (`Jump@head`, its loop
+    /// point), as a clip started at its end that doesn't loop (clamped).
+    fn hold(&mut self, name: &str, part: &str) -> String {
+        self.by_stance(name, |b, s, n| {
+            let clip = b.hold_clip(part, s.suffix());
+            let held = |b: &mut Self, n: &str| {
+                b.node(n, NodeSpec::Clip { clip: clip.clone(), rate: ValueSpec::default(), looping: Some(false), start: 1.0, sync: None, root_motion: None })
+            };
+            if let Some(idle) = s.overlay() {
+                let base = held(b, &format!("{n}.lower"));
+                b.overlay(n, base, idle)
+            } else {
+                held(b, n)
+            }
+        })
+    }
+
     fn plain(&mut self, name: &str, group: &str, fallback: Option<&str>, looping: Option<bool>) -> String {
         let c = self.clip(group, true, fallback);
         self.play(name, &c, looping)
@@ -486,6 +548,7 @@ impl Builder {
             (p::SNEAKING, ParamKind::Bool(false)),
             (p::SWIMMING, ParamKind::Bool(false)),
             (p::ON_GROUND, ParamKind::Bool(true)),
+            (p::JUMPING, ParamKind::Bool(false)),
             (p::TURN, ParamKind::Float(0.0)),
             (p::STANCE, ParamKind::Float(0.0)),
             (p::FIDGET, ParamKind::Trigger),
@@ -533,8 +596,15 @@ impl Builder {
             let si = self.plain("sneak_idle", "IdleSneak", Some("Idle"), Some(true));
             state(states::SNEAK_IDLE, si, None);
         }
-        let jump = self.single("jump", "Jump", None, Some(false));
+        // Jump split at its hold point (OpenMW; UE Lyra's JumpStart/Land):
+        // the take-off held while airborne, the landing on touchdown.
+        let jump = self.single("jump", "Jump@head", None, Some(false));
         state(states::JUMP, jump, Some(RootMotionMode::Ignore));
+        // A fall without a launch holds the airborne pose, no take-off.
+        let fall = self.hold("fall", "Jump@head");
+        state(states::FALL, fall, Some(RootMotionMode::Ignore));
+        let land = self.single("land", "Jump@tail", None, Some(false));
+        state(states::LAND, land, Some(RootMotionMode::Ignore));
         let si = self.plain("swim_idle", "IdleSwim", Some("Idle"), Some(true));
         state(states::SWIM_IDLE, si, None);
         let sw = self.directional("swim_walk", "SwimWalk", "");
@@ -582,7 +652,9 @@ impl Builder {
         let death_names: Vec<&str> = [deaths.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), vec![states::SWIM_DEATH]].concat();
         let knock_once = [states::KNOCKDOWN, states::SWIM_KNOCKDOWN, states::KNOCKOUT_END];
         let knock_loop = [states::KNOCKOUT, states::SWIM_KNOCKOUT];
-        let living: Vec<&str> = [&move_names[..], &hit_names, &knock_once, &knock_loop].concat();
+        // Movement states plus the landing, which leaves on its own terms.
+        let afoot: Vec<&str> = [&move_names[..], &[states::LAND]].concat();
+        let living: Vec<&str> = [&afoot[..], &hit_names, &knock_once, &knock_loop].concat();
         let mut tr = Vec::new();
         let mut go = |from: &[&str], to: &str, when: Vec<C>, blend: BlendMode| {
             // A hit re-hits itself (restarts); other states never self-transition.
@@ -600,20 +672,39 @@ impl Builder {
         }
         go(&living, "death1", vec![is(p::DEAD), not(p::SWIMMING)], inert(0.15));
         // Knockout (held), knockdown (once), hits (once, by variant).
-        let up: Vec<&str> = [&move_names[..], &hit_names, &knock_once].concat();
+        let up: Vec<&str> = [&afoot[..], &hit_names, &knock_once].concat();
         go(&up, states::SWIM_KNOCKOUT, vec![is(p::KNOCKED_OUT), is(p::SWIMMING)], inert(0.2));
         go(&up, states::KNOCKOUT, vec![is(p::KNOCKED_OUT), not(p::SWIMMING)], inert(0.2));
         go(&[states::KNOCKOUT], states::KNOCKOUT_END, vec![not(p::KNOCKED_OUT)], inert(0.1));
-        let standing: Vec<&str> = [&move_names[..], &hit_names].concat();
+        let standing: Vec<&str> = [&afoot[..], &hit_names].concat();
         go(&standing, states::SWIM_KNOCKDOWN, vec![C::Trigger(p::KNOCKDOWN.into()), is(p::SWIMMING)], inert(0.15));
         go(&standing, states::KNOCKDOWN, vec![C::Trigger(p::KNOCKDOWN.into()), not(p::SWIMMING)], inert(0.15));
         for (name, v) in &hits {
             // A new hit restarts the reaction, even the same one.
             go(&standing, name, [&range(p::HIT_VARIANT, *v)[..], &[C::Trigger(p::HIT.into())]].concat(), inert(0.1));
         }
+        // Landing: touchdown from the jump; airborne again jumps; a run cuts it
+        // (Lyra lets locomotion interrupt a land at speed); else it ends below.
+        let when_of = |s: &str| moves.iter().find(|m| m.state == s).map(|m| m.when.clone()).unwrap_or_default();
+        go(&[states::JUMP, states::FALL], states::LAND, vec![not(p::SWIMMING), is(p::ON_GROUND)], inert(0.1));
+        go(&[states::LAND], states::JUMP, when_of(states::JUMP), inert(0.1));
+        go(&[states::LAND], states::FALL, when_of(states::FALL), inert(0.1));
+        // Without FALL (no loop point: dropped with its transitions), a fall jumps.
+        let airborne = vec![not(p::SWIMMING), not(p::ON_GROUND)];
+        go(&[states::LAND], states::JUMP, airborne.clone(), inert(0.1));
+        if let Some(run) = moves.iter().find(|m| m.state == states::RUN) {
+            go(&[states::LAND], states::RUN, run.when.clone(), inert(0.2));
+        }
         // Movement: exclusive targets; reactions return when they end.
         for m in &moves {
-            go(&move_names, m.state, m.when.clone(), inert(0.2));
+            go(&[states::LAND], m.state, [&[C::Finished][..], &m.when].concat(), inert(0.2));
+            // JUMP and FALL don't swap in the air: `jumping` counts on leaving the ground.
+            let from: Vec<&str> = match m.state {
+                states::JUMP => move_names.iter().copied().filter(|&f| f != states::FALL).collect(),
+                states::FALL => move_names.iter().copied().filter(|&f| f != states::JUMP).collect(),
+                _ => move_names.clone(),
+            };
+            go(&from, m.state, m.when.clone(), inert(0.2));
             let once: Vec<&str> = [&hit_names[..], &knock_once].concat();
             go(&once, m.state, [&[C::Finished][..], &m.when].concat(), inert(0.25));
             // Knockout's exit when it has no `Knockout@tail` (a dropped
@@ -622,6 +713,9 @@ impl Builder {
             go(&knock_loop, m.state, [&[not(p::KNOCKED_OUT)][..], &m.when].concat(), inert(0.25));
             go(&death_names, m.state, [&[not(p::DEAD)][..], &m.when].concat(), inert(0.3));
         }
+        // FALL's stand-in where it dropped, below its own entry (never fires beside it).
+        let grounded: Vec<&str> = move_names.iter().copied().filter(|&f| f != states::FALL).collect();
+        go(&grounded, states::JUMP, airborne, inert(0.2));
         self.a.nodes.insert(LOCOMOTION.into(), NodeSpec::StateMachine { initial: Some(states::IDLE.into()), states: st, transitions: tr });
 
         // Slots: upper (masked) then full body, as UE's slot order.
@@ -673,8 +767,13 @@ impl Builder {
         self.a.procedural = vec![OpSpec::SpeedMatch {
             min: 0.5,
             max: if matches!(self.t, Template::Humanoid) { 2.2 } else { 1.5 },
-            // Humanoids shorten their steps as they slow down (AN-16; owner 0.3, 2026-10-22).
-            rate_share: if matches!(self.t, Template::Humanoid) { 0.3 } else { 1.0 },
+            // Humanoids shorten their steps as they slow down (AN-16; owner 0.3, 2026-10-22),
+            // cadence and step length about evenly (0.5, gait bands 2026-10-26: an NPC at
+            // 2.2 m/s on the 1.9 m/s walk drops the pelvis 21 mm, 32 at 0.3). Speed-ups past
+            // the stride warp's 1.2 go to the rate: the player's 7 m/s sprint plays the
+            // 2.67 m/s run at 2.2 (4.75 steps/s; a sprint cycle would calm it). Run strafes
+            // plant at 0.75-0.9 m/s and outrun any rate (`gait_bands` in tests/slope_walk.rs).
+            rate_share: if matches!(self.t, Template::Humanoid) { 0.5 } else { 1.0 },
             max_lod: 2,
         }];
         if matches!(self.t, Template::Humanoid) {
@@ -683,9 +782,14 @@ impl Builder {
             // bone; the host probes the ground at the graph's `probe_origins`.
             self.a.profile_limbs = sf_anim_graph::asset::ProfileLimbs::Support;
             // Slopes (AN-21): shorter steps uphill (26% at 30°), longer downhill
-            // (14%), the cadence taking the rest; the stride warp's 0.6-1.6 bounds it.
-            self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"), grade: (up: 0.45, down: 0.25))").expect("StrideWarp defaults"));
-            self.a.procedural.push(ron::from_str("FootPlacement(pelvis: Rig(\"hips\"))").expect("FootPlacement defaults"));
+            // (14%), the cadence taking the rest. Steps shorten freely (0.6) but lengthen
+            // by 20% at most (Lyra/GASP: ~1.1-1.15): longer steps need a pelvis drop (95 mm
+            // at the old 1.6 cap, player run 4.5 m/s: a crouch; under 1 mm at 1.2, 26 at 1.3).
+            // 1.15 let NPC run strafes skate (3.6 cm per stance).
+            self.a.procedural.push(ron::from_str("StrideWarp(pelvis: Rig(\"hips\"), max: 1.2, grade: (up: 0.45, down: 0.25))").expect("StrideWarp defaults"));
+            // Foot IK fades out in the air: the player feeds a debounced `on_ground`
+            // (NPCs leave it at its default, true).
+            self.a.procedural.push(ron::from_str("FootPlacement(pelvis: Rig(\"hips\"), gate: Some(\"on_ground\"))").expect("FootPlacement defaults"));
             // A subtle trunk lean into the slope (AN-21): 4° forward at 30° uphill,
             // 2° back downhill, over the chest and neck: the thighs hang off `Bip01 Spine`
             // (biped rigs), so leaning it would swing the placed legs.

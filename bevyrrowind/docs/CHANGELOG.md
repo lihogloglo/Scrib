@@ -4,6 +4,12 @@ One line per finished session, newest first (moved verbatim from the ROADMAP "Re
 
 ## Recent (last ~10 entries; older ones drop into the archive)
 
+- 2026-10-26 (evening, ik-fixes): the two anim audits' fixes. Pose: pelvis-bob harness, ground-plane foot locks, StrideWarp
+  drop through a spring + limit, foot IK gates (`gate` param, physics share, no locks during hand-back), physics blend after
+  the ops, stride ratio/alpha spring + LOD fade, probes at the lock / post-warp, humanoid data (stride 1.2, rate share 0.5;
+  AL-9). Jump: `Jump@head`/`@tail`, JUMP/FALL/LAND + `jumping`, player air debounce (PL-3). Delirium: `Held` marker, floor at
+  the probed ground. Mantle progress per tick. anim-lab starts clear at noon (level `hour`/`weather`). Left: sprint cycle, strafe skate.
+
 - 2026-10-26 (day, scrib): save/load screen from the pause menu (save, overwrite, load, delete; OpenMW fields; SV-2);
   minimal HUD (bars from the `player` record, compass, crosshair, use prompt; HD-1); console Down/Enter on suggestions,
   OS paste, exterior `coc` (OpenMW port; CO-1 re-check); BSL-1.0 for two clipboard crates; `cargo_turn.sh` ignores `cargo run`.

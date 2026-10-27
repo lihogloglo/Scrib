@@ -22,7 +22,17 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   cycles matching the ground speed (no skating), jump/fall clip off the ground and landing back into locomotion, no
   jitter at any frame rate (the body follows the fixed-tick capsule, interpolated, through the correction
   spring). Tab to first person hides the body (no arms yet). Shot: `shots/player-body-3-walk.png` (indoors, 3rd person).
-- Status: awaiting owner.
+- Status: confirmed with follow-up. Owner 2026-10-27 (after the IK audit fixes): much better, pelvis and jump fixed. Open:
+  movement feel has too much inertia ("like driving a car"); never designed on purpose, research in progress.
+
+### PL-3: Jump take-off held in the air, landing on touchdown (`cargo dev scene level-anim-ledges`, F11 player)
+- Humanoid graph B2: `jump` plays `Jump@head` and holds it while airborne; touchdown plays `Jump@tail` (`land`), then
+  locomotion; running cuts the landing into the run.
+- Jump in place, then running. Look for: one tuck at take-off, held in the air, knees absorb on touchdown (land
+  sound with it); no second leg lift mid-air.
+- B3b feed: walking off a ledge (here or in anim-lab) shows the fall hold (no take-off tuck) after ~0.1 s, then lands;
+  running down stairs or over small steps shows no fall pose at all.
+- Status: confirmed (owner 2026-10-27: jump feels correct).
 
 ### IV-1: Take items and Fargoth's ring (`cargo dev view "Seyda Neen, Census and Excise Office"`) (partial)
 - E on a loose item (bottle, plate, book): it vanishes at once and stays gone after leaving and re-entering the

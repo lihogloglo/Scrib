@@ -44,7 +44,7 @@ use sf_controller::{
 };
 use sf_controller_bevy::{
     AnimParamNames, AvoidObstacle, Avoider, ControllerGizmos, ControllerSettings,
-    ControllerSystems, Dormant, MoveIntent, Mover, MoverMode, MoverParams, SfControllerPlugin,
+    ControllerSystems, Dormant, Held, MoveIntent, Mover, MoverMode, MoverParams, SfControllerPlugin,
 };
 use sf_coords::{WorldPos, WorldTransform};
 use sf_records::{RecordDb, RecordId};
@@ -478,8 +478,9 @@ fn attach(
     }
 }
 
-/// Dead and knocked-down movers stay parked (physics.rs).
-type Unprocessed = (Without<crate::physics::Dead>, Without<crate::physics::KnockedDown>);
+/// Movers an outside system owns ([`Held`]: dead, knocked down, a physics
+/// takeover) stay parked until it lets go.
+type Unprocessed = Without<Held>;
 
 /// The processing range (streaming.md / locomotion.md "Processing range"):
 /// a mover simulates only in the active worldspace and only while every
@@ -1126,5 +1127,43 @@ fn log_fell_out(mut fell: MessageReader<sf_physics_bevy::CharacterFellOut>, name
             f.from.to_f64(),
             f.to.to_f64()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy_app::{App, Update};
+    use sf_controller_bevy::{Dormant, Held, Mover, MoverParams};
+    use sf_coords::WorldPos;
+    use sf_world::WorldspaceId;
+    use sf_world_bevy::{ActiveWorldspace, Streaming, StreamingConfig};
+
+    use super::{ActorSpace, GroundOnPhysics, MwGround, processing_range};
+
+    /// The processing range never touches a [`Held`] mover (a Delirium
+    /// takeover, a ragdoll): out of range it doesn't park it, so in range it
+    /// can't wake it either; the same filter. Lowest level: `processing_range`
+    /// alone (an in-range cell needs a driven streaming scheduler), so the held
+    /// mover's `Dormant` is taken off by hand to see the range leave it be.
+    #[test]
+    fn processing_range_leaves_held_movers_alone() {
+        let ws = WorldspaceId::new("test");
+        let mut app = App::new();
+        app.insert_resource(Streaming::new(StreamingConfig::default()))
+            .insert_resource(ActiveWorldspace(None))
+            .init_resource::<MwGround>()
+            .insert_resource(GroundOnPhysics(false))
+            .add_systems(Update, processing_range);
+        let mover = || Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
+        let free = app.world_mut().spawn((mover(), ActorSpace(ws.clone()))).id();
+        let held = app.world_mut().spawn((mover(), ActorSpace(ws), Held)).id();
+        assert!(app.world().get::<Dormant>(held).is_some(), "Held brings Dormant");
+        app.world_mut().entity_mut(held).remove::<Dormant>();
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(app.world().get::<Dormant>(free).is_some(), "out of range: parked");
+        assert!(app.world().get::<Dormant>(held).is_none(), "the range touched a held mover");
+        assert!(app.world().get::<Held>(held).is_some());
     }
 }

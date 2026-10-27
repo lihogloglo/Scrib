@@ -22,6 +22,7 @@ mw_delirium.workspace = true
 sf_anim.workspace = true
 sf_anim_bevy.workspace = true
 sf_character_bevy.workspace = true
+sf_controller.workspace = true
 sf_controller_bevy.workspace = true
 sf_coords.workspace = true
 sf_physics_bevy = { workspace = true, features = ["ragdoll"] }

@@ -136,3 +136,5 @@ probes see it unchanged), the sky and lighting, and what spawns do.
   (meters; the host maps it to range and power as for its own lights); `orbit` (deg/s) turns every light about `at`
   (`LightRig::positions(t)`). Validation: count <= 1024, sizes > 0, all finite.
 - `interior`: an enclosed level, no sky, sun or moon; the host shows it with this ambient (sRGB 0..=1).
+- `hour`, `weather` (2026-10-26): the level's start time and a weather the host pins (its own name, e.g.
+  `"clear"`), unless the command line gives one. anim-lab: clear, 12:00.

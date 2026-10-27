@@ -855,11 +855,14 @@ fn foot_placement_follows_ground_and_locks_contacts() {
         pinst.update(&pb, dt, 0, &UpdateInputs::default(), &mut pout);
         let (l, r) = (out.model.translation(fl), out.model.translation(fr));
         // While the contact curve holds (first 0.32 s), the left foot stays put
-        // in the world: in character space it slides back by the motion.
+        // in the ground plane: in character space it slides back by the
+        // motion. Its height stays the animated one (flat ground at 0).
         let contact = out.curves[rig.graph.curve("contact.foot_l").unwrap()];
         if contact > 0.5 {
             let at = locked.get_or_insert(l);
-            assert!(l.distance(*at) < 2e-3, "frame {k}: {l} vs lock {at}");
+            let pl = pout.model.translation(fl);
+            assert!(Vec2::new(l.x - at.x, l.z - at.z).length() < 2e-3, "frame {k}: {l} vs lock {at}");
+            assert!((l.y - pl.y).abs() < 2e-3, "frame {k}: locked height {} vs animated {}", l.y, pl.y);
             *at -= Vec3::new(0.0, 0.0, 0.02);
         }
         if k > 15 {
@@ -962,7 +965,7 @@ fn look_at_and_hand_ik_reach_targets() {
 #[test]
 fn stride_and_orientation_warping() {
     let rig = proc_rig(
-        r#"SpeedMatch(), StrideWarp(pelvis: Joint("hips"), legs: ["l", "r"]),
+        r#"SpeedMatch(), StrideWarp(pelvis: Joint("hips"), legs: ["l", "r"], pelvis_halflife: 0.0, hold: 0.0, max_drop: 1.0),
            OrientationWarp(pelvis: Joint("hips"), spine: [(Joint("spine"), 0.5), (Joint("chest"), 0.5)], halflife: 0.001)"#,
     );
     let plain = proc_rig("SpeedMatch()");
@@ -986,6 +989,22 @@ fn stride_and_orientation_warping() {
         assert!(o1.model.translation(f).distance(target) < 2e-3, "{} vs {target}", o1.model.translation(f));
     }
     assert!(o1.model.translation(hips).y < o2.model.translation(hips).y);
+
+    // With the default spring the drop eases in (no one-update jump) and
+    // then holds the girdle low.
+    let sprung = proc_rig(r#"SpeedMatch(), StrideWarp(pelvis: Joint("hips"), legs: ["l", "r"])"#);
+    let sb = sprung.binding();
+    let drop_after = |bind: &Binding<'_>, graph: &CompiledGraph, n: usize| {
+        let (mut i, mut o, mut ip, mut op) = (GraphInstance::new(bind), GraphOutput::new(graph), GraphInstance::new(&pb), GraphOutput::new(&plain.graph));
+        for _ in 0..n {
+            i.update(bind, 1.0 / 60.0, 0, &fast, &mut o);
+            ip.update(&pb, 1.0 / 60.0, 0, &fast, &mut op);
+        }
+        op.model.translation(hips).y - o.model.translation(hips).y
+    };
+    let (instant, eased, settled) = (drop_after(&b, &rig.graph, 1), drop_after(&sb, &sprung.graph, 1), drop_after(&sb, &sprung.graph, 60));
+    println!("stride drop after one update: instant {instant:.4} m, sprung {eased:.4} m; sprung after 1 s {settled:.4} m");
+    assert!(instant > 1e-3 && eased < 0.5 * instant && settled > eased);
 
     // Moving diagonally: the hips turn toward the velocity, the chest keeps facing +Z.
     let diag = UpdateInputs { velocity: Vec3::new(1.2, 0.0, 1.2) / 2f32.sqrt(), ..UpdateInputs::default() };
@@ -1182,9 +1201,13 @@ fn variety_offsets_looping_phase_and_jitters_rate_except_root_motion_drive() {
     assert!(t > 0.0 && t <= 0.1 + 1e-5, "attack time {t}");
 }
 
+mod gates;
 mod optional;
+mod pelvis;
+mod physics;
 mod progress;
 mod slot;
+mod stride;
 
 /// A masked override layer blends a leg's contact curve by the mask weight
 /// of the leg's foot (curve "linked bones"): an upper-body overlay keeps

@@ -81,7 +81,10 @@ pub struct Group {
     /// Absolute key times of `Start` and `Stop` (seconds).
     pub start: f32,
     pub stop: f32,
-    /// `Loop Start` .. `Loop Stop`, seconds from `start`.
+    /// `Loop Start` .. `Loop Stop`, seconds from `start`. May be zero-length
+    /// (`Jump`: both keys at one time, a hold point: the original engine holds
+    /// that frame while airborne); [`Self::looping`] loops only a real range,
+    /// and the point still splits the group into `@head` and `@tail`.
     pub loop_range: Option<(f32, f32)>,
     pub sections: Vec<Section>,
     /// Sorted by time; seconds from `start`.
@@ -97,16 +100,37 @@ impl Group {
     /// the whole clip for idle and movement groups (the original engine
     /// loops those), else once.
     pub fn looping(&self) -> Looping {
-        if let Some((a, b)) = self.loop_range {
+        if let Some((a, b)) = self.loop_range.filter(|(a, b)| b > a) {
             return Looping::Range(a, b);
         }
         if loops_whole(&self.name) { Looping::Whole } else { Looping::Once }
+    }
+
+    /// The range of `@head` / `@tail` (see [`loop_part`]).
+    pub fn loop_part(&self, part: &str) -> Option<(f32, f32)> {
+        loop_part(self.loop_range, self.duration(), part)
     }
 
     /// The section named `name` (lowercase action word).
     pub fn section(&self, name: &str) -> Option<&Section> {
         self.sections.iter().find(|s| s.name == name)
     }
+}
+
+/// The clip range, seconds from the group start, of a loop-split part of a
+/// group with `loop_range` and `duration`: `"head"` = start .. `Loop Start`
+/// (the lead-in), `"tail"` = `Loop Stop` .. stop (the wind-down). The original
+/// engine splits a zero-length loop (`Jump`) the same way: head on take-off,
+/// hold the loop point while airborne, tail on landing. `None` for another
+/// part, a group without loop keys, or an empty part.
+pub fn loop_part(loop_range: Option<(f32, f32)>, duration: f32, part: &str) -> Option<(f32, f32)> {
+    let (a, b) = loop_range?;
+    let range = match part {
+        "head" => (0.0, a),
+        "tail" => (b, duration),
+        _ => return None,
+    };
+    (range.1 > range.0).then_some(range)
 }
 
 /// Idle and movement groups loop as a whole when they have no loop keys.
@@ -174,7 +198,8 @@ pub fn groups(keys: &[(f32, String)]) -> Vec<Group> {
             continue;
         }
         let at = |what: &str| same.iter().find(|k| k.kind() == what && (start..=stop).contains(&k.time)).map(|k| k.time - start);
-        let loop_range = at("loop start").zip(at("loop stop")).filter(|(a, b)| b > a);
+        // A zero-length loop (`Jump`) is kept as the hold point.
+        let loop_range = at("loop start").zip(at("loop stop")).filter(|(a, b)| b >= a);
         let name = named.map_or(key.prefix, |k| k.prefix);
         let inside: Vec<Key<'_>> = keys.iter().filter(|k| (start..=stop).contains(&k.time)).copied().collect();
         let (sections, events) = group_contents(key.prefix, start, &inside);

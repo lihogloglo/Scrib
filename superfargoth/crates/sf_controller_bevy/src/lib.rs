@@ -217,6 +217,16 @@ impl Default for Avoider {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Dormant;
 
+/// An outside system owns this body (a ragdoll, a physics takeover, death):
+/// [`Dormant`] comes with it (required), so no step and no motion or ground
+/// samples in the feed, and the host's processing range must leave the mover
+/// alone (never wake it, never touch its significance) until the owner
+/// removes both. One concept for every owner (UE `DisableMovement` while
+/// ragdolled; `PuppetMaster` disables the controller while unpinned).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[require(Dormant)]
+pub struct Held;
+
 /// A non-reactive avoidance participant the host updates every frame (the
 /// player, a camera): the others avoid it, it never yields.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]

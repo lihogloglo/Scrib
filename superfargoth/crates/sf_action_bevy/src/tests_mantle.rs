@@ -7,7 +7,7 @@ use std::time::Duration;
 use bevy_app::{App, FixedUpdate};
 use bevy_ecs::prelude::*;
 use bevy_math::{Affine3A, Vec2, Vec3};
-use bevy_time::{TimePlugin, TimeUpdateStrategy};
+use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 use bevy_transform::components::Transform;
 use sf_action::{
     ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, Command, Origin, RuleKey, RuleSetBuilder, SlotInfo, SlotTable,
@@ -171,4 +171,63 @@ fn sneak_pressed_during_a_mantle_does_not_leave_the_body_in_the_box() {
     println!("sneak mid-mantle: feet {feet}, moves {seen:?}");
     let inside = feet.y < 0.95 && feet.z > 2.0 - 0.29;
     assert!(!inside, "the capsule is not left inside the ledge: {feet}");
+}
+
+/// Each fixed tick's warp progress (current) and drawn root position (current).
+#[derive(Resource, Default)]
+struct TickLog(Vec<(Option<f32>, Vec3)>);
+
+fn log_ticks(mut log: ResMut<TickLog>, bodies: Query<&ActionBody>) {
+    for body in &bodies {
+        log.0.push((body.warp_progress().map(|p| p.1), WorldPos::ORIGIN.delta_f32(body.poses().1.position)));
+    }
+}
+
+/// The root position the warp put the body at for chain progress `p`: piecewise linear over the
+/// ticks' (progress, position) samples, from the anchor at progress 0 (the tick before the warp).
+fn root_at_progress(log: &[(Option<f32>, Vec3)], p: f32) -> Option<Vec3> {
+    let first = log.iter().position(|s| s.0.is_some())?;
+    let mut samples = vec![(0.0, log.get(first.checked_sub(1)?)?.1)];
+    samples.extend(log[first..].iter().map_while(|&(q, x)| q.map(|q| (q, x))));
+    samples.windows(2).find(|w| w[0].0 <= p && p <= w[1].0 && w[1].0 > w[0].0).map(|w| {
+        let t = (p - w[0].0) / (w[1].0 - w[0].0);
+        w[0].1.lerp(w[1].1, t)
+    })
+}
+
+#[test]
+fn mantle_progress_interpolates_from_the_same_ticks_as_the_drawn_body() {
+    // 60 Hz ticks under a slow frame clock: 2 ticks per frame at 30 Hz, 2 or 3 at 25 Hz.
+    for (frame_hz, frame_count) in [(30.0, 60), (25.0, 50)] {
+        let mut app = App::new();
+        app.add_plugins((TimePlugin, SfActionPlugin::<Course>::default()))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / frame_hz)))
+            .insert_resource(course(1.0))
+            .insert_resource(rules())
+            .insert_resource(SneakFrom(None))
+            .init_resource::<TickLog>()
+            .add_systems(FixedUpdate, forward_and_jump.in_set(ActionSystems::Command))
+            .add_systems(FixedUpdate, log_ticks.after(ActionSystems::Move));
+        let character = ActionCharacter::new(CharacterId(1), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+        let body = ActionBody::new(Locomotion::new(WorldPos::ORIGIN.offset(Vec3::Z), 0.0), MoverParams::default(), WorldPos::ORIGIN);
+        let e = app.world_mut().spawn((character, body, Transform::default())).id();
+        let (mut frames, mut worst) = (0, 0.0_f32);
+        for _ in 0..frame_count {
+            app.update();
+            let body = app.world().get::<ActionBody>(e).unwrap();
+            let Some((prev, curr)) = body.warp_progress() else { continue };
+            let alpha = app.world().resource::<Time<Fixed>>().overstep_fraction().clamp(0.0, 1.0);
+            let progress = prev + (curr - prev) * alpha;
+            let (a, b) = body.poses();
+            let drawn = WorldPos::ORIGIN.delta_f32(a.lerp(b, alpha).position);
+            let log = &app.world().resource::<TickLog>().0;
+            let expected = root_at_progress(log, progress).expect("progress within the warp's ticks");
+            assert!(progress.is_finite() && drawn.is_finite());
+            worst = worst.max(expected.distance(drawn));
+            frames += 1;
+        }
+        println!("{frame_hz} Hz frames: {frames} mantle frames, worst clip/body gap {worst} m");
+        assert!(frames > 2, "the mantle ran over several frames");
+        assert!(worst < 1e-3, "the clip's progress stays on the drawn body: {worst} m");
+    }
 }

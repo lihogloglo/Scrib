@@ -928,16 +928,20 @@ impl Compiler<'_> {
         for spec in &specs {
             let (op, max_lod) = match spec {
                 OpSpec::SpeedMatch { min, max, rate_share, max_lod } => (Op::SpeedMatch { min: *min, max: *max, rate_share: rate_share.clamp(0.0, 1.0) }, *max_lod),
-                OpSpec::StrideWarp { pelvis, legs, min, max, grade, max_lod } => {
+                OpSpec::StrideWarp { pelvis, legs, min, max, grade, pelvis_halflife, hold, max_drop, blend_halflife, gate, max_lod } => {
                     let (pelvis, legs) = (self.joint(pelvis)?, self.leg_list(legs)?);
-                    (Op::StrideWarp { pelvis, girdles: self.girdles(pelvis, &legs)?, legs, min: *min, max: *max, grade: *grade }, *max_lod)
+                    let (girdles, pelvis_halflife, hold, max_drop) = (self.girdles(pelvis, &legs)?, *pelvis_halflife, *hold, *max_drop);
+                    let gate = gate.as_deref().map(|n| self.param_of_type(n, &[ParamType::Bool, ParamType::Float])).transpose()?;
+                    let blend_halflife = blend_halflife.max(0.0);
+                    (Op::StrideWarp { pelvis, girdles, legs, min: *min, max: *max, grade: *grade, pelvis_halflife, hold, max_drop, blend_halflife, gate }, *max_lod)
                 }
                 OpSpec::OrientationWarp { pelvis, spine, max_angle, halflife, max_lod } => {
                     let spine = weights(self, spine)?;
                     (Op::OrientationWarp { pelvis: self.joint(pelvis)?, spine, max_angle: *max_angle, halflife: *halflife }, *max_lod)
                 }
-                OpSpec::FootPlacement { pelvis, legs, max_foot_angle, release, pelvis_halflife, body, roll, guards, max_lod } => {
+                OpSpec::FootPlacement { pelvis, legs, max_foot_angle, release, pelvis_halflife, body, roll, guards, gate, max_lod } => {
                     let (pelvis, legs) = (self.joint(pelvis)?, self.leg_list(legs)?);
+                    let gate = gate.as_deref().map(|n| self.param_of_type(n, &[ParamType::Bool, ParamType::Float])).transpose()?;
                     (
                         Op::FootPlacement {
                             girdles: self.girdles(pelvis, &legs)?,
@@ -948,6 +952,7 @@ impl Compiler<'_> {
                             body: *body,
                             roll: roll.clamp(0.0, 1.0),
                             guards: *guards,
+                            gate,
                         },
                         *max_lod,
                     )

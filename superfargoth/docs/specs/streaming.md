@@ -692,6 +692,9 @@ unverified live that the cap was the owner's trigger (warning not hit in a 5-spo
   the same ring by construction. Outside, actors are dormant (`sf_controller_bevy::Dormant`:
   parked, driver paused, low animation tier) and resume in place when covered again. Spec:
   locomotion.md "Processing range". Empty cells (not in the directory) count as unloaded.
+  As built (2026-10-26): a body an outside system owns carries `sf_controller_bevy::Held` (requires
+  `Dormant`; dead, knocked down, a physics takeover such as Delirium's): the range never wakes or
+  parks it; the owner removes `Held` and `Dormant` when it hands back.
 
 ## Portal crossing (M8)
 

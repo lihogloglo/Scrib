@@ -407,4 +407,6 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
 
 ## As built (A2 slice 2, 2026-10-26)
 Animated player body: the dressed `player` record under the body, fed from the drawn (interpolated, spring-corrected)
-root; the Warp's chain progress drives the traversal slot clip (`Progress`). [history](archive/action-history.md#as-built-a2-slice-2-2026-10-26-animated-player-body)
+root; the Warp's chain progress drives the traversal slot clip (`Progress`). The clip's playhead is lerped by the
+same `overstep_fraction` from the same two ticks as the body (`ActionBody::warp_progress` beside `poses`; 0 before the
+move's first tick), so it stays on the drawn body with several ticks per frame (audit F6, 2026-10-26). [history](archive/action-history.md#as-built-a2-slice-2-2026-10-26-animated-player-body)

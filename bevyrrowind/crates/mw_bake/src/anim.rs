@@ -15,8 +15,8 @@
 //!   skeletons and group tables first (cheap, warm after the first bake),
 //!   then clips and graphs with [`MwAnimRules`] built from those products.
 //! - [`MwAnimRules`]: the adapter's `AnimRules` (cook rules per group,
-//!   section and loop tail; rig hints) and `GraphRules` (graph reference
-//!   `Group`, `Group@section`, `Group@tail` → `anim.cook` product on the
+//!   section and loop head/tail; rig hints) and `GraphRules` (graph reference
+//!   `Group`, `Group@section`, `Group@head`, `Group@tail` → `anim.cook` product on the
 //!   actor's skeleton, with layering).
 //! - Library clips ([`crate::sources`], animation-sources.md): a graph
 //!   reference `source:clip` cooks on the library file's own skeleton
@@ -111,13 +111,14 @@ impl GroupInfo {
         }
     }
 
-    /// The cook rules of the whole group (`None`), its loop tail
-    /// (`"tail"`) or a section (`"chop"`): as `mw_graphs::AnimSet::cooked`.
+    /// The cook rules of the whole group (`None`), its loop head or tail
+    /// (`"head"`, `"tail"`: [`mw_anim::loop_part`]) or a section (`"chop"`):
+    /// as `mw_graphs::AnimSet::cooked`.
     pub fn rules(&self, part: Option<&str>) -> Option<ClipRules> {
         let once = |range| ClipRules { range: Some(range), looping: Looping::Once, root_motion: mw_anim::root_motion_rules(&self.name, part), ..ClipRules::default() };
         match part {
             None => Some(ClipRules { looping: self.looping, ..ClipRules::default() }),
-            Some("tail") => self.loop_range.map(|(_, stop)| once((stop, self.duration))),
+            Some(p @ ("head" | "tail")) => mw_anim::loop_part(self.loop_range, self.duration, p).map(once),
             Some(s) => self.sections.iter().find(|(n, ..)| n == s).map(|(_, a, b)| once((*a, *b))),
         }
     }
@@ -142,8 +143,10 @@ impl Step for AnimGroupsStep {
     fn id(&self) -> &'static str {
         ANIM_GROUPS
     }
+    /// 2: a zero-length loop (`Jump`) is kept as `loop_range` (its hold
+    /// point), so `Group@head` / `Group@tail` resolve.
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         cx.file(subject);
@@ -903,7 +906,12 @@ mod tests {
         assert_eq!(g.rules(None).unwrap().range, None);
         assert_eq!(g.rules(Some("chop")).unwrap().range, Some((0.2, 0.8)));
         assert_eq!(g.rules(Some("tail")).unwrap().range, Some((1.0, 3.0)));
+        assert_eq!(g.rules(Some("head")).unwrap().range, Some((0.0, 0.5)));
         assert!(g.rules(Some("slash")).is_none());
+        // A zero-length loop (`Jump`) splits the group at its hold point.
+        let jump = GroupInfo { name: "Jump".into(), duration: 0.667, loop_range: Some((0.267, 0.267)), sections: vec![], ..g };
+        assert_eq!(jump.rules(Some("head")).unwrap().range, Some((0.0, 0.267)));
+        assert_eq!(jump.rules(Some("tail")).unwrap().range, Some((0.267, 0.667)));
     }
 
     #[test]

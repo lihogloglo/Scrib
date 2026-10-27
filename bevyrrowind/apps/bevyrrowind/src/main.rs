@@ -237,9 +237,9 @@ struct ViewFlags {
     /// Exteriors: 10 m wind speed for the ocean, m/s (scaffold until `sf_wind`; default 7).
     #[arg(long)]
     water_wind: Option<f32>,
-    /// Exteriors: time of day in hours.
-    #[arg(long, default_value_t = 10.0)]
-    hour: f64,
+    /// Exteriors: time of day in hours (default 10; a level may set its own).
+    #[arg(long)]
+    hour: Option<f64>,
     /// Exteriors: game day (days since the sky's epoch; moon phases advance one step every 3 days).
     #[arg(long, default_value_t = 172.0)]
     day: f64,
@@ -362,6 +362,11 @@ struct ViewFlags {
 }
 
 impl ViewFlags {
+    /// `--hour`, else 10.
+    fn hour(&self) -> f64 {
+        self.hour.unwrap_or(10.0)
+    }
+
     fn options(
         self,
         install: &MorrowindInstall,
@@ -416,6 +421,7 @@ impl ViewFlags {
         title: String,
         start: StreamStart,
     ) -> Result<ExteriorOptions> {
+        let hour = self.hour();
         mw_environment_bevy::water::set_mode(self.water.unwrap_or_default(), self.water_wind);
         if self.no_baked {
             return Err("the exterior streams from bake products; --no-baked is not available".into());
@@ -463,7 +469,7 @@ impl ViewFlags {
             settings.apply_transform = false;
         }
         println!("camera {eye:.1} -> {target:.1}");
-        let weather = WeatherSetup::build(db, eye, self.day * 24.0 + self.hour, self.weather, 0);
+        let weather = WeatherSetup::build(db, eye, self.day * 24.0 + hour, self.weather, 0);
         if let Some(t) = weather.start {
             println!("weather {}{}", t.name(), if self.weather.is_some() { " (forced)" } else { "" });
         }
@@ -486,7 +492,7 @@ impl ViewFlags {
             no_lights: self.no_lights || perf.off.has(Part::Lights),
             far_tint: self.far_tint,
             prepass: self.prepass,
-            hour: self.hour,
+            hour,
             day: self.day,
             sun_size: self.sun_size,
             clouds: self.clouds,

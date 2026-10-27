@@ -114,10 +114,13 @@ fn stairs(rise: f32, run: f32) -> impl Fn(f32, f32) -> (f32, Vec3) {
 
 #[derive(Debug)]
 struct Walked {
-    /// Per support limb: mean foot speed during contact, m/s.
+    /// Per support limb: mean horizontal foot speed during contact, m/s (the
+    /// lock holds the ground-plane position; the height follows the animation).
     slide: Vec<f32>,
     /// 95th percentile of |foot height − (ground + sole)| during contact.
     height_p95: f32,
+    /// The largest of those.
+    height_max: f32,
     /// Mean change of the pelvis → chest pitch against the flat-ground walk, radians.
     pitch: Option<f32>,
 }
@@ -175,7 +178,7 @@ fn walk(rig: &Rig, ground: &Ground, speed: f32, frames: usize, pitch: Option<(&s
             let contact = leg.contact.map_or(0.0, |c| out.curves[usize::from(c)]);
             if contact > 0.5 {
                 if let (Some(p), true) = (prev[n], warm) {
-                    slide[n] += f.distance(p) / dt;
+                    slide[n] += Vec3::new(f.x - p.x, 0.0, f.z - p.z).length() / dt;
                     count[n] += 1;
                 }
                 if warm {
@@ -200,6 +203,7 @@ fn walk(rig: &Rig, ground: &Ground, speed: f32, frames: usize, pitch: Option<(&s
     Walked {
         slide: slide.iter().zip(&count).map(|(s, &c)| if c > 0 { s / c as f32 } else { 0.0 }).collect(),
         height_p95: p95,
+        height_max: heights.last().copied().unwrap_or(0.0),
         pitch: (pitch_n > 0).then(|| pitch_sum / pitch_n as f32),
     }
 }
@@ -314,6 +318,40 @@ fn hexapod_and_biped_feet_stay_planted() {
         let w = walk(&rig, ground.as_ref(), speed, 240, None);
         println!("biped {what}: {w:?}");
         assert_planted(&format!("biped {what}"), &w);
+    }
+}
+
+/// A biped warped to 1.4× its stride (`SpeedMatch` leaves all of the speed to `StrideWarp`)
+/// on 0.15 m stairs: the warped feet land up to ~10 cm past the animated ones, so the probes
+/// go where the ops target each foot (the warped foot, a lock) or a foot lands on the tread
+/// its animated twin is over. Sanity bound only; the error is printed.
+#[test]
+fn biped_stride_warped_on_stairs_meets_the_treads() {
+    let s = biped();
+    let ron = r#"(
+        nodes: {"w": Clip(clip: "walk")},
+        layers: [(node: "w")],
+        legs: [
+            (name: "l", hip: Joint("thigh_l"), knee: Joint("shin_l"), foot: Joint("foot_l"), contact: "contact.foot_l"),
+            (name: "r", hip: Joint("thigh_r"), knee: Joint("shin_r"), foot: Joint("foot_r"), contact: "contact.foot_r"),
+        ],
+        procedural: [
+            SpeedMatch(max: 1.0),
+            StrideWarp(pelvis: Joint("hips"), legs: ["l", "r"], max: 1.6),
+            FootPlacement(pelvis: Joint("hips")),
+        ],
+    )"#;
+    let (clip, speed) = walk_clip(&s);
+    let rig = Rig::new(s.clone(), vec![clip], ron);
+    for (what, ground) in [("flat", Box::new(slope(0.0)) as Box<Ground>), ("stairs 0.15/0.3", Box::new(stairs(0.15, 0.3)))] {
+        let w = walk(&rig, ground.as_ref(), 1.4 * speed, 360, None);
+        println!(
+            "biped stride 1.4 {what}: contact foot height error p95 {:.1} mm, max {:.1} mm; slide {:.4?} m/s",
+            w.height_p95 * 1e3,
+            w.height_max * 1e3,
+            w.slide
+        );
+        assert!(w.height_max < 0.1, "{what}: foot height error {:.3} m at contact", w.height_max);
     }
 }
 

@@ -2,20 +2,24 @@
 //!
 //! - **Takeover**: a [`DeliriumReaction`] on a character's root (the entity with `CharacterBody`). Two posed frames
 //!   later (the second gives part velocities) its evaluated pose becomes Delirium parts (`bones_to_parts`), the agent
-//!   spawns at the actor's size (`Build::scaled` from its scale) on a floor at its feet and starts `bodyBalance`
-//!   (`catchFall` when already falling). The root goes `Dormant` (no mover, no scripts).
+//!   spawns at the actor's size (`Build::scaled` from its scale) on a floor at the ground and starts `bodyBalance`
+//!   (`catchFall` when already falling). The root goes `Held` (so `Dormant`: no step, no motion or ground
+//!   feed, the processing range leaves it alone) until the hand-back.
 //! - **Step**: `FixedUpdate`, one Delirium step per fixed tick.
 //! - **Copy-back**: every frame the parts (interpolated between the last two steps) go into the takeover pose
 //!   (`pose_to_bones`; bones without a part keep the takeover pose) and to the animator as a [`PhysicsPose`] at
 //!   weight 1, the death/knockdown ragdoll's path (`sf_physics_bevy` read-back): the graph shows it, ops skip it, root
 //!   motion is off. The body's frame follows the pelvis (heading from the hips, on the floor) as in the knockdown
-//!   mode, at the uniform height scale (restored at the hand-back).
+//!   mode, at the uniform height scale (restored at the hand-back). On the floor, not at the mover's render height: the
+//!   root (its mover too, `height_offset` zeroed) takes the settled height at the hand-back, not the pelvis.
 //! - **Hand-back**: balanced and still (`mw_delirium::Rules`) → the graph inertializes from the shown pose
 //!   (`inertialize_from`). Down → the graph's `knocked_out` flag is set while it lies there; once still (or after a
 //!   few seconds) the frame moves under the `Knockout@tail` get-up clip's first pelvis pose (`get_up_root`, as the
 //!   knockdown ragdoll) and the get-up plays out of the lying pose. The root takes the body's move (the walkers'
 //!   knockdown glue) and wakes; [`DeliriumHandedBack`] tells the host.
-//! - **World**: a flat floor at the feet only (next: copy the Rapier statics around the actor).
+//! - **World**: one flat floor at the ground under the pelvis (one ray down through the walkers' [`Physics`] ground
+//!   probe; no physics or no hit: the mover's render height), lowered to the lowest part when the pose starts below it
+//!   (on a slope, the downhill foot). Next: copy the Rapier statics around the actor.
 //! - **Click-to-push** ([`DeliriumPlugin::click`], dev builds): left click on a human NPC picks the Delirium part under
 //!   the cursor (capsules) and takes it over with an impulse there along the view ray (Ctrl 20, plain 45, Shift
 //!   80 N s); on a taken-over one it pushes that part.
@@ -45,10 +49,11 @@ use mw_delirium::{Body, HandBack, Options, Rules, Takeover, authoring_from_model
 use sf_anim::Trs;
 use sf_anim_bevy::{Animator, PhysicsPose};
 use sf_character_bevy::CharacterBody;
-use sf_controller_bevy::{Dormant, Mover};
+use sf_controller::ProbeQuery;
+use sf_controller_bevy::{ControllerSystems, Dormant, GroundProbe, Held, Mover};
 use sf_coords::{WorldPos, WorldTransform};
 use sf_physics_bevy::sf_ragdoll::{get_up_root, yaw_of};
-use sf_physics_bevy::{FrameQuery, Ragdoll, move_frame, world_frame};
+use sf_physics_bevy::{FrameQuery, Physics, Ragdoll, move_frame, world_frame};
 use sf_world_bevy::{WorldPosOf, WorldspaceRoot};
 
 /// The skeletons Delirium's humanoid asset fits (male and female Morrowind humans).
@@ -62,6 +67,9 @@ pub const GET_UP_CLIP: &str = "Knockout@tail";
 
 /// Hand-back inertialization, s.
 pub const HAND_BACK_BLEND: f32 = 0.3;
+
+/// The takeover's ground ray: from the pelvis straight down this far, m.
+pub const GROUND_RAY: f32 = 4.0;
 
 /// Click impulses, N s: Ctrl, plain, Shift.
 pub const CLICK_IMPULSE: [f32; 3] = [20.0, 45.0, 80.0];
@@ -78,7 +86,8 @@ impl Plugin for DeliriumPlugin {
             .init_resource::<DeliriumStats>()
             .add_message::<DeliriumHandedBack>()
             .add_systems(FixedUpdate, step)
-            .add_systems(Update, (start, read_back).chain());
+            // After the controller step: a root move (hand-back) is never a frame behind.
+            .add_systems(Update, (start, read_back.after(ControllerSystems::Step)).chain());
         if self.click {
             app.add_systems(Update, click.before(start));
         }
@@ -243,6 +252,7 @@ fn start(
     animators: Query<(&Animator, Has<Ragdoll>)>,
     mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     roots: Query<&WorldspaceRoot>,
+    ground: Option<Res<Physics>>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
@@ -304,7 +314,13 @@ fn start(
         let weight = scale.powi(3) * (own.x * own.z) / (own.y * own.y).max(1e-6);
         #[allow(clippy::cast_precision_loss)]
         let seed = (root.to_bits() % 1000) as f32 / 1000.0;
-        let mut takeover = Takeover::start(&rig.body, &parts, Some((&before, prev.secs.max(1e-3))), Some((scale, weight)), 0.0, seed, Rules::default());
+        // The floor at the ground under the pelvis (`Takeover::start` lowers it to the lowest part); no hit: at the
+        // frame (the mover's render height).
+        let ground_z = ground
+            .as_deref()
+            .and_then(|g| g.probe_one(ProbeQuery::down(sim.world_point(parts[0].translation), GROUND_RAY)))
+            .map_or(0.0, |hit| sim.sim_point(hit.point).z);
+        let mut takeover = Takeover::start(&rig.body, &parts, Some((&before, prev.secs.max(1e-3))), Some((scale, weight)), ground_z, seed, Rules::default());
         let hit = prev.hit.map(|h| {
             let at = sim.sim_point(h.point);
             let part = h.part.unwrap_or_else(|| nearest_part(&parts, at));
@@ -314,11 +330,12 @@ fn start(
         let model = mw_delirium::pose::model_pose(skeleton, &pose);
         let pelvis = Vec3::from(model[rig.body.table.parts[0].joint].translation);
         info!(
-            "delirium: took over {root} ({subject}, scale {scale:.2}) with {}{}",
+            "delirium: took over {root} ({subject}, scale {scale:.2}) with {}, floor {:+.2} m (ground {ground_z:+.2}){}",
             takeover.behaviour,
+            takeover.floor,
             hit.map_or(String::new(), |(p, i)| format!(", {i:.0} N s on {}", mw_delirium::body::NAMES[p]))
         );
-        commands.entity(root).try_insert(Dormant);
+        commands.entity(root).try_insert(Held);
         stats.started += 1;
         takeovers.live.insert(
             root,
@@ -364,14 +381,16 @@ fn step(fixed: Res<Time<Fixed>>, mut takeovers: ResMut<Takeovers>, mut stats: Re
 }
 
 /// Where the body's frame goes while Delirium has it: on the floor under the pelvis (keeping the pelvis' horizontal
-/// offset in the model), heading from the hips (kept while they are near vertical).
+/// offset in the model), heading from the hips (kept while they are near vertical). On the floor, not at the
+/// takeover's render height: the hand-back's root move then carries the settled height.
 fn follow_frame(l: &mut Live, parts: &[Part]) -> WorldTransform {
     let left = l.sim.world_from_sim.transform_vector3(parts[1].translation - parts[4].translation).with_y(0.0);
     if left.length() > 0.05 {
         let facing = left.normalize().cross(Vec3::Y);
         l.yaw = Quat::from_rotation_y(facing.x.atan2(facing.z));
     }
-    let pelvis = l.sim.world_from_sim.transform_point3(parts[0].translation).with_y(0.0);
+    // Sim Z is world Y: the floor's sim height is its height over the anchor.
+    let pelvis = l.sim.world_from_sim.transform_point3(parts[0].translation).with_y(l.takeover.floor);
     let offset = l.yaw * (Vec3::new(l.pelvis.x, 0.0, l.pelvis.z) * l.scale);
     WorldTransform { pos: l.sim.anchor.offset(pelvis - offset), rotation: l.yaw, scale: Vec3::ONE }
 }
@@ -401,7 +420,8 @@ fn get_up_frame(l: &Live, animator: &Animator, pose: &[Trs], frame: &WorldTransf
     let spine = rest.inverse() * Vec3::Y;
     let face_down = (body.rotation * (rest.inverse() * Vec3::Z)).y < 0.0;
     let to = get_up_root(&body, (clip_rot, clip_pos), spine, l.scale, face_down);
-    Some(WorldTransform { pos: to.pos.offset(Vec3::Y * to.pos.delta_f32(l.sim.anchor).y), ..to })
+    let floor = l.sim.anchor.offset(Vec3::Y * l.takeover.floor);
+    Some(WorldTransform { pos: to.pos.offset(Vec3::Y * to.pos.delta_f32(floor).y), ..to })
 }
 
 /// Copy-back every frame (the parts as a physics pose at weight 1, the frame on the pelvis) and the hand-backs.
@@ -484,6 +504,8 @@ fn read_back(
         done.push((root, l.body, l.body_local, how, l.takeover.time));
     }
     // The root takes the body's move (heading included, its mover too), and the body its own local transform back.
+    // The move carries the floor's height under the takeover's render height: the mover goes to its new render
+    // position with `height_offset` zeroed, so the controller doesn't smooth the same height a second time.
     for (root, body, l0, how, secs) in done {
         live.remove(&root);
         let mut transforms = frames.p1();
@@ -495,14 +517,16 @@ fn read_back(
             t.translation += shift;
             *local = l0;
             if let Ok(mut m) = movers.get_mut(root) {
-                m.loco.position = m.loco.position.offset(shift);
+                m.loco.position = m.loco.render_position().offset(shift);
+                m.loco.height_offset = 0.0;
+                m.loco.height_offset_velocity = 0.0;
                 m.loco.motion.yaw = yaw;
                 m.loco.motion.facing_goal = yaw;
                 m.loco.motion.angular_velocity = 0.0;
             }
         }
         commands.entity(body).try_remove::<PhysicsPose>();
-        commands.entity(root).try_remove::<Dormant>();
+        commands.entity(root).try_remove::<(Held, Dormant)>();
         stats.handed_back += 1;
         handed.write(DeliriumHandedBack { root, how });
         info!("delirium: {root} handed back ({how:?}) after {secs:.1} s");

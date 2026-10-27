@@ -5114,6 +5114,7 @@ dependencies = [
  "sf_anim",
  "sf_anim_bevy",
  "sf_character_bevy",
+ "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
  "sf_physics_bevy",

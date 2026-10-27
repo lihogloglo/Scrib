@@ -27,7 +27,7 @@ use mw_nif::{Model, ModelError};
 use sf_anim::{AnimImporter, AnimSource, ClipRules, ImportError, RootMotionRules, SourceClip};
 
 pub use report::{ReportOptions, report};
-pub use text_keys::{Group, Section, events, groups};
+pub use text_keys::{Group, Section, events, groups, loop_part};
 
 /// Bone keyframes and text keys of one animation file.
 #[derive(Clone, Debug, Default)]

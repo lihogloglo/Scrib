@@ -411,7 +411,12 @@ the builder (`MW_GRAPHS_BLESS=1 cargo test -p mw_graphs --lib` rewrites them).
   variant missing falls to `death1`), swim variants; reactions are `Drive` (the original
   accumulates `Bip01` travel in them). Idle fidgets: `fidget` trigger + `idle_variant` 2-9 plays
   `Idle<n>` once; the number comes from the AI_W idle roll (`mw_ai`), so the graph stays
-  deterministic.
+  deterministic. Jump (B2, 2026-10-26; OpenMW, Lyra JumpStart → Land): `jump` plays `Jump@head` once,
+  holding its last pose while airborne; touchdown → `land` (`Jump@tail`, land key; inert 0.1 s) → movement
+  when it finishes, `run` cuts it, airborne again re-jumps; a `Jump` without loop point plays whole (`land` drops).
+  Fall (B3a; Lyra FallLoop, UE `IsJumping`/`IsFalling`): bool `jumping` picks `jump` vs `fall` on leaving the ground;
+  `fall` holds `Jump@head`'s last frame (clip `start: 1.0`, not looping; `hold:` clip names, dropped without a loop
+  point, then a fall enters `jump`), inert 0.2 s in, → `land` on touchdown; no jump ↔ fall in the air.
 - **Weapon stance** (`stance` = `mw_graphs::Stance`): each movement state is a nested machine over
   none / hh / 1h / 2c / 2w / crossbow / spell. The first five play their own movement set; crossbow
   plays `1h` movement under `IdleCrossbow` and spell the base set under `IdleSpell` on the `upper`

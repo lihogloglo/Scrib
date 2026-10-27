@@ -88,6 +88,36 @@ fn group_names_and_keys_ignore_case() {
     assert_eq!(groups[0].events[0].name, events::LAND);
 }
 
+/// `Jump` (`base_anim.kf`): `Loop Start` = `Loop Stop`, a hold point. It is
+/// kept, splits the group into `@head` (take-off) and `@tail` (landing),
+/// and doesn't make the group loop.
+#[test]
+fn zero_length_loop_is_a_hold_point() {
+    let jump = groups(&keys(&[
+        (235.800, "Jump: Start"),
+        (236.067, "Jump: Loop Start"),
+        (236.067, "Jump: Loop Stop"),
+        (236.200, "SoundGen: Land"),
+        (236.467, "Jump: Stop"),
+    ]));
+    let jump = &jump[0];
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    let (a, b) = jump.loop_range.expect("zero-length loop kept");
+    assert!(near(a, 0.267) && a.to_bits() == b.to_bits(), "{:?}", jump.loop_range);
+    assert_eq!(jump.looping(), Looping::Once, "a hold point doesn't loop");
+    let head = jump.loop_part("head").unwrap();
+    assert!(near(head.0, 0.0) && near(head.1, 0.267), "{head:?}");
+    let tail = jump.loop_part("tail").unwrap();
+    assert!(near(tail.0, 0.267) && near(tail.1, 0.667), "{tail:?}");
+    let land = find(&jump.events, events::LAND, "").unwrap();
+    assert!(land.time > tail.0 && land.time < tail.1, "land inside the tail: {}", land.time);
+    assert!(jump.loop_part("chop").is_none());
+    // Without loop keys there is no head or tail.
+    let idle = groups(&keys(&[(0.0, "Idle: Start"), (1.0, "Idle: Stop")]));
+    let idle = &idle[0];
+    assert!(idle.loop_part("head").is_none() && idle.loop_part("tail").is_none());
+}
+
 /// A cut Hermite curve is the same cubic as the uncut one.
 #[test]
 fn cut_curves_match_the_source() {

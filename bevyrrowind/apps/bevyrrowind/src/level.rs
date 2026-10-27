@@ -26,6 +26,13 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     println!("content loaded in {:.2} s", started.elapsed().as_secs_f32());
     let ws = worldspace(&level.name);
     let start = crate::StreamStart::Interior { worldspace: ws.clone(), eye: camera.eye.as_dvec3(), target: camera.target.as_dvec3() };
+    // The level's own hour and weather (anim-lab: clear noon) unless the command line sets them.
+    flags.hour = flags.hour.or(level.hour);
+    if flags.weather.is_none()
+        && let Some(w) = &level.weather
+    {
+        flags.weather = Some(mw_environment_bevy::weather::parse_weather_type(w)?);
+    }
     let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - level {}", level.name), start)?;
     let actors = actors::resolve(&level, &content.db);
     options.actors = Some(Arc::new(content.db));

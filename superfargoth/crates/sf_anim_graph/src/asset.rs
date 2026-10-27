@@ -615,7 +615,10 @@ pub enum OpSpec {
         max_lod: u8,
     },
     /// Scales foot targets along the velocity about each leg's girdle and
-    /// lowers the girdles so the legs reach. `legs` empty: every support limb.
+    /// lowers the girdles so the legs reach: each girdle's drop is a goal
+    /// followed by a critical spring and limited (UE Stride Warping's pelvis
+    /// adjustment); a leg still short straightens toward its target.
+    /// `legs` empty: every support limb.
     StrideWarp {
         pelvis: JointRef,
         #[serde(default)]
@@ -627,6 +630,27 @@ pub enum OpSpec {
         /// Shorter steps uphill, longer downhill (off by default).
         #[serde(default)]
         grade: GradeStride,
+        /// Half-life of each girdle's drop spring, seconds.
+        #[serde(default = "pelvis_halflife")]
+        pelvis_halflife: f32,
+        /// Half-life of the held need, seconds: the goal is the largest recent
+        /// drop the legs needed, decaying at this rate, so the girdle stays
+        /// low through the stride instead of bobbing per step (0: the need).
+        #[serde(default = "stride_hold")]
+        hold: f32,
+        /// Largest girdle drop, a fraction of the girdle's shortest leg reach.
+        #[serde(default = "stride_max_drop")]
+        max_drop: f32,
+        /// Half-life of the op's weight and of the stride ratio it follows,
+        /// seconds (UE Stride Warping's alpha and its own interpolation): a
+        /// state without a `Match` player, the gate, physics or the LOD
+        /// cut-off ease the warp out instead of cutting it.
+        #[serde(default = "tenth", skip_serializing_if = "is_tenth")]
+        blend_halflife: f32,
+        /// A `Bool` or `Float` graph parameter scaling the op's weight goal,
+        /// as `FootPlacement`'s `gate`. `None`: always on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate: Option<String>,
         #[serde(default = "lod1")]
         max_lod: u8,
     },
@@ -664,6 +688,12 @@ pub enum OpSpec {
         roll: f32,
         #[serde(default)]
         guards: FootGuards,
+        /// A `Bool` or `Float` graph parameter scaling the op's weight goal
+        /// (clamped 0-1; a bool is 0 or 1), so a host gates the feet on its
+        /// grounded flag or its own IK switch; the weight follows it over
+        /// `guards.blend_halflife`. `None`: always on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate: Option<String>,
         #[serde(default = "lod1")]
         max_lod: u8,
     },
@@ -838,6 +868,12 @@ fn speed_max() -> f32 {
 fn stride_min() -> f32 {
     0.6
 }
+fn stride_hold() -> f32 {
+    1.0
+}
+fn stride_max_drop() -> f32 {
+    0.1
+}
 fn stride_max() -> f32 {
     1.6
 }
@@ -864,6 +900,10 @@ fn eighty_degrees() -> f32 {
 }
 fn tenth() -> f32 {
     0.1
+}
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's `skip_serializing_if` passes a reference
+fn is_tenth(v: &f32) -> bool {
+    v.to_bits() == tenth().to_bits()
 }
 fn pelvis_halflife() -> f32 {
     0.08
