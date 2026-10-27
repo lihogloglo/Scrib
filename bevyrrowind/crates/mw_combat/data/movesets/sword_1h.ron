@@ -7,6 +7,9 @@
 // where its pose is the next strike's first frame. Light `root_scale`: each swing steps ~0.4 m
 // (Elden Ring 0.3-0.5). Retargeted UAL2 root travel, m: A 0.37 + A_Rec 0, B 0.43 + B_Rec 0,
 // C 1.69 + C_Rec 0, D 2.03 (mw_combat test `light_attacks_step_less_than_a_stride`).
+// Heavy chain = UAL2's four-hit heavy combo (Sword_Heavy_A-D + _Rec). Heavy `root_scale`: each
+// swing steps ~0.6 m. Root travel, m: A 1.65 + A_Rec 0.41, B 0.89 + B_Rec 0.14, C 2.03 + C_Rec 0,
+// D 1.68 (test `heavy_attacks_step_further_than_light_ones`).
 (
     id: "sword_1h",
     rig: "humanoid",
@@ -59,6 +62,55 @@
             ],
             hits: [(window: (0.23, 0.37), mv: 1.2, stamina: 14.0, kind: "slash", tier: Medium, stop: 0.07)],
             next: { Light: "light1" },
+        ),
+        // Heavy chain (Elden Ring's R2): slower, a bigger hit (mv, tier, hit-stop) for more stamina.
+        // Heavy windows: right hand's speed peak (A 0.38, B 0.40, C 0.50, D 0.54 s) -0.06/+0.08, as
+        // the light ones. heavy1-3 Cancel(Light, Heavy) at the strike clip's end (the combo's next
+        // take starts there); a Light there starts light1, a Heavy the next heavy (and back).
+        "heavy1": (
+            category: Attack, classes: [Heavy], from: [Any], rank: 10,
+            slots: ["attack.sword_1h.heavy1", "attack.sword_1h.heavy1_rec"], root_scale: 0.3,
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.15, End),
+                Cancel([Dodge], 0.50, End), Cancel([Light, Heavy], 0.73, End), Cancel([Move], 1.10, End),
+                Turn(360.0, 0.0, 0.28), NoTurn(0.28, 0.46),
+            ],
+            hits: [(window: (0.32, 0.46), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            next: { Heavy: "heavy2" },
+        ),
+        "heavy2": (
+            category: Attack, classes: [Heavy],
+            slots: ["attack.sword_1h.heavy2", "attack.sword_1h.heavy2_rec"], root_scale: 0.6,
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.15, End),
+                Cancel([Dodge], 0.50, End), Cancel([Light, Heavy], 0.50, End), Cancel([Move], 0.80, End),
+                Turn(360.0, 0.0, 0.30), NoTurn(0.30, 0.48),
+            ],
+            hits: [(window: (0.34, 0.48), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            next: { Heavy: "heavy3" },
+        ),
+        "heavy3": (
+            category: Attack, classes: [Heavy],
+            slots: ["attack.sword_1h.heavy3", "attack.sword_1h.heavy3_rec"], root_scale: 0.3,
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.15, End),
+                Cancel([Dodge], 0.60, End), Cancel([Light, Heavy], 0.70, End), Cancel([Move], 1.00, End),
+                Turn(360.0, 0.0, 0.40), NoTurn(0.40, 0.57),
+            ],
+            hits: [(window: (0.43, 0.57), mv: 1.5, stamina: 20.0, kind: "slash", tier: Medium, stop: 0.08)],
+            next: { Heavy: "heavy4" },
+        ),
+        // The heavy finisher: the hit at 0.54, then it steps into stance inside the same take (2.33 s).
+        "heavy4": (
+            category: Attack, classes: [Heavy],
+            slots: ["attack.sword_1h.heavy4"], root_scale: 0.38,
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.15, End),
+                Cancel([Dodge], 0.75, End), Cancel([Light, Heavy], 1.45, End), Cancel([Move], 1.70, End),
+                Turn(360.0, 0.0, 0.42), NoTurn(0.42, 0.62),
+            ],
+            hits: [(window: (0.48, 0.62), mv: 1.8, stamina: 24.0, kind: "slash", tier: Large, stop: 0.10)],
+            next: { Heavy: "heavy1" },
         ),
         "roll": (
             category: Dodge, classes: [Dodge], from: [Any], rank: 10,

@@ -64,45 +64,66 @@ mod tests {
     use super::*;
 
     /// First-candidate clip lengths (combat.md "C1b" table), clip seconds.
+    const CLIP_LENGTHS: [(&str, f32); 17] = [
+        ("attack.sword_1h.light1", 0.37),
+        ("attack.sword_1h.light1_rec", 0.50),
+        ("attack.sword_1h.light2", 0.43),
+        ("attack.sword_1h.light2_rec", 0.57),
+        ("attack.sword_1h.light3", 0.87),
+        ("attack.sword_1h.light3_rec", 0.70),
+        ("attack.sword_1h.light4", 1.67),
+        ("attack.sword_1h.heavy1", 0.73),
+        ("attack.sword_1h.heavy1_rec", 1.00),
+        ("attack.sword_1h.heavy2", 0.50),
+        ("attack.sword_1h.heavy2_rec", 0.77),
+        ("attack.sword_1h.heavy3", 0.70),
+        ("attack.sword_1h.heavy3_rec", 0.57),
+        ("attack.sword_1h.heavy4", 2.33),
+        ("dodge.roll.fwd", 1.47),
+        ("dodge.roll.left", 1.30),
+        ("dodge.roll.right", 1.30),
+    ];
+
     fn first_candidates(slot: &str) -> Option<f32> {
-        Some(match slot {
-            "attack.sword_1h.light1" => 0.37,
-            "attack.sword_1h.light1_rec" => 0.50,
-            "attack.sword_1h.light2" => 0.43,
-            "attack.sword_1h.light2_rec" => 0.57,
-            "attack.sword_1h.light3" => 0.87,
-            "attack.sword_1h.light3_rec" => 0.70,
-            "attack.sword_1h.light4" => 1.67,
-            "dodge.roll.fwd" => 1.47,
-            "dodge.roll.left" | "dodge.roll.right" => 1.30,
-            s if s.starts_with("react.") => 0.6,
-            _ => return None,
-        })
+        if slot.starts_with("react.") {
+            return Some(0.6);
+        }
+        CLIP_LENGTHS.iter().find(|(n, _)| *n == slot).map(|(_, l)| *l)
     }
 
     #[test]
     fn the_sword_sheet_compiles_with_every_move_and_reaction() {
         let sheet = sf_combat::load(SWORD_1H, &first_candidates).expect("sword_1h compiles");
-        for mov in ["light1", "light2", "light3", "light4", "roll", "roll_left", "roll_right"] {
+        for mov in ["light1", "light2", "light3", "light4", "heavy1", "heavy2", "heavy3", "heavy4", "roll", "roll_left", "roll_right"] {
             assert!(sheet.moves.moves.contains_key(&sheet.rule_key(mov)), "move {mov}");
         }
         let slots = sheet_slots(SWORD_1H).unwrap();
-        assert_eq!(slots.len(), 16, "{slots:?}");
+        assert_eq!(slots.len(), 23, "{slots:?}");
         assert!(slots.iter().all(|s| first_candidates(s).is_some()), "{slots:?}");
     }
 
     /// Horizontal root travel of each attack slot's first candidate, m: the retargeted UAL2 clips
-    /// in the bake, largest over the humanoid skeletons (measured 2026-10-27).
+    /// in the bake, largest over the humanoid skeletons (measured 2026-10-27). The light
+    /// recoveries and `Sword_Heavy_C_Rec` stand on their back foot: no root travel.
+    const ROOT_TRAVEL: [(&str, f32); 14] = [
+        ("attack.sword_1h.light1", 0.37),
+        ("attack.sword_1h.light2", 0.43),
+        ("attack.sword_1h.light3", 1.69),
+        ("attack.sword_1h.light4", 2.03),
+        ("attack.sword_1h.light1_rec", 0.0),
+        ("attack.sword_1h.light2_rec", 0.0),
+        ("attack.sword_1h.light3_rec", 0.0),
+        ("attack.sword_1h.heavy1", 1.65),
+        ("attack.sword_1h.heavy1_rec", 0.41),
+        ("attack.sword_1h.heavy2", 0.89),
+        ("attack.sword_1h.heavy2_rec", 0.14),
+        ("attack.sword_1h.heavy3", 2.03),
+        ("attack.sword_1h.heavy3_rec", 0.0),
+        ("attack.sword_1h.heavy4", 1.68),
+    ];
+
     fn root_travel(slot: &str) -> f32 {
-        match slot {
-            "attack.sword_1h.light1" => 0.37,
-            "attack.sword_1h.light2" => 0.43,
-            "attack.sword_1h.light3" => 1.69,
-            "attack.sword_1h.light4" => 2.03,
-            // The recoveries stand on their back foot: no root travel.
-            "attack.sword_1h.light1_rec" | "attack.sword_1h.light2_rec" | "attack.sword_1h.light3_rec" => 0.0,
-            _ => panic!("no travel for {slot}"),
-        }
+        ROOT_TRAVEL.iter().find(|(n, _)| *n == slot).unwrap_or_else(|| panic!("no travel for {slot}")).1
     }
 
     /// CB-1: a light attack played out (swing + recovery) steps a short way, not a stride.
@@ -115,6 +136,44 @@ mod tests {
             let travel = m.slots.iter().map(|s| root_travel(s)).sum::<f32>() * m.root_scale;
             eprintln!("{name}: root_scale {} -> {travel:.2} m", m.root_scale);
             assert!((0.2..=0.6).contains(&travel), "{name} steps {travel:.2} m");
+        }
+    }
+
+    /// A heavy attack played out steps further than a light one, still short of a lunge (sanity
+    /// range; the per-move numbers are printed).
+    #[test]
+    fn heavy_attacks_step_further_than_light_ones() {
+        let ron = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let def: SheetDef = ron.from_str(SWORD_1H).unwrap();
+        for name in ["heavy1", "heavy2", "heavy3", "heavy4"] {
+            let m = &def.moves[name];
+            let travel = m.slots.iter().map(|s| root_travel(s)).sum::<f32>() * m.root_scale;
+            eprintln!("{name}: root_scale {} -> {travel:.2} m", m.root_scale);
+            assert!((0.4..=0.9).contains(&travel), "{name} steps {travel:.2} m");
+        }
+    }
+
+    /// Heavies chain among themselves; a light or a heavy cancels into the other class (light1 /
+    /// heavy1 open from any state), and each heavy hits harder and costs more than any light (its
+    /// stagger tier and hit-stop at least as big).
+    #[test]
+    fn heavies_chain_and_outweigh_lights() {
+        use sf_action::ActionClass;
+        use sf_combat::WindowDef;
+        let ron = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let def: SheetDef = ron.from_str(SWORD_1H).unwrap();
+        let hit = |n: &str| def.moves[n].hits[0].clone();
+        let lights = ["light1", "light2", "light3", "light4"].map(hit);
+        for (name, next) in [("heavy1", "heavy2"), ("heavy2", "heavy3"), ("heavy3", "heavy4"), ("heavy4", "heavy1")] {
+            assert_eq!(def.moves[name].next.get(&ActionClass::Heavy).map(String::as_str), Some(next));
+            let h = hit(name);
+            assert!(lights.iter().all(|l| h.mv > l.mv && h.stamina > l.stamina && h.tier >= l.tier && h.stop >= l.stop), "{name}");
+        }
+        assert_eq!((def.moves["heavy1"].from.clone(), def.moves["heavy1"].rank), (def.moves["light1"].from.clone(), def.moves["light1"].rank));
+        // Every attack cancels into both classes.
+        for (name, m) in def.moves.iter().filter(|(n, _)| n.starts_with("light") || n.starts_with("heavy")) {
+            let both = m.windows.iter().any(|w| matches!(w, WindowDef::Cancel(c, _, _) if c.contains(&ActionClass::Light) && c.contains(&ActionClass::Heavy)));
+            assert!(both, "{name}");
         }
     }
 

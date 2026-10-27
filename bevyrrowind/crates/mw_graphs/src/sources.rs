@@ -318,6 +318,13 @@ mod tests {
         assert_eq!(
             slots,
             [
+                "attack.sword_1h.heavy1",
+                "attack.sword_1h.heavy1_rec",
+                "attack.sword_1h.heavy2",
+                "attack.sword_1h.heavy2_rec",
+                "attack.sword_1h.heavy3",
+                "attack.sword_1h.heavy3_rec",
+                "attack.sword_1h.heavy4",
                 "attack.sword_1h.light1",
                 "attack.sword_1h.light1_rec",
                 "attack.sword_1h.light2",
@@ -366,7 +373,10 @@ mod tests {
             clips.iter().find(|(n, _)| n == "getup.prone").unwrap().1.fallback,
             Some(ClipFallback::Clip("getup.prone.alt1".into()))
         );
-        assert_eq!(clips[0].1.fallback, Some(ClipFallback::Clip("attack.sword_1h.light1.alt1".into())));
+        let fallback = |slot: &str| clips.iter().find(|(n, _)| n == slot).unwrap().1.fallback.clone();
+        assert_eq!(fallback("attack.sword_1h.light1"), Some(ClipFallback::Clip("attack.sword_1h.light1.alt1".into())));
+        // The heavy chain: UAL2 only, then Morrowind's one-hand chop.
+        assert_eq!(fallback("attack.sword_1h.heavy1"), Some(ClipFallback::Clip("WeaponOneHand@chop".into())));
     }
 
     /// The lock-on strafe sets: eight looping, speed-matched loops each, from the bundled

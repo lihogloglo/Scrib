@@ -356,6 +356,65 @@
       root: Progress,
       fallback: Drop,
     ),
+    // Heavy chain: UAL2's four-hit heavy sword combo (Sword_Heavy_A-D, the takes of
+    // Sword_Heavy_Combo), then Morrowind's one-hand chop.
+    "attack.sword_1h.heavy1": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_A"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@chop"),
+    ),
+    "attack.sword_1h.heavy2": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_B"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@chop"),
+    ),
+    "attack.sword_1h.heavy3": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_C"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@chop"),
+    ),
+    // The finisher: its take ends in its own recovery (no `_rec` slot).
+    "attack.sword_1h.heavy4": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_D"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@chop"),
+    ),
+    "attack.sword_1h.heavy1_rec": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_A_Rec"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    "attack.sword_1h.heavy2_rec": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_B_Rec"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    "attack.sword_1h.heavy3_rec": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Heavy_C_Rec"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
     // Rolls: Morrowind has none, so no fallback (a roll without a clip refuses the move).
     "dodge.roll.fwd": (
       graph: "humanoid",
