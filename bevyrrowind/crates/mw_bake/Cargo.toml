@@ -55,6 +55,8 @@ texpresso = "2"
 [dev-dependencies]
 mw_vfs.workspace = true
 tempfile.workspace = true
+# The mantle grip end-to-end test plans its warps with the shipped rules.
+sf_action.workspace = true
 
 [lints]
 workspace = true

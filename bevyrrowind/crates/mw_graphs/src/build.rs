@@ -19,7 +19,9 @@
 //!   `strafe_run` states take over from walk and run, an 8-way blend space of
 //!   those loops (the stance idle on the upper body for a drawn weapon); its
 //!   lanes stay in step by their foot-down markers, so a direction change
-//!   keeps the stride's phase. Free movement keeps the Morrowind sets.
+//!   keeps the stride's phase. Free movement keeps the Morrowind sets. The
+//!   shipped manifest has no such slots (owner 2026-10-27: the UAL loops felt
+//!   unnatural), so locked-on movement plays the Morrowind sets too.
 //! - **Slots**: `upper` (masked: attacks, casts, equip, block) and `full`
 //!   (scripted `PlayGroup`, `LoopGroup`) for humanoids; `full` for creatures.
 //! - **Torch arm** (humanoids): the `Torch` group loops on the left arm
@@ -123,6 +125,19 @@ pub mod params {
     /// Humanoids with the strafe slots: the body faces something other than its
     /// travel (locked on), so walk and run play the 8-way strafe loops.
     pub const STRAFING: &str = "strafing";
+    /// Humanoids, 0..1: left / right hand IK onto the [`super::ik::HAND_L`] /
+    /// [`super::ik::HAND_R`] targets (a mantle's grip on the lip, action.md B2b). 0 leaves the
+    /// arm animated.
+    pub const HAND_IK_L: &str = "hand_ik_l";
+    pub const HAND_IK_R: &str = "hand_ik_r";
+}
+
+/// IK target slots (character space).
+pub mod ik {
+    /// Humanoids: the left / right hand's target, weighted by [`super::params::HAND_IK_L`] /
+    /// [`super::params::HAND_IK_R`].
+    pub const HAND_L: &str = "hand_l";
+    pub const HAND_R: &str = "hand_r";
 }
 
 /// Slot names.
@@ -937,6 +952,20 @@ impl Builder {
             self.a.procedural.push(
                 ron::from_str("Lean(joints: [(Rig(\"chest\"), 0.7), (Rig(\"neck\"), 0.3)], gain: 0.0, grade: (up: 0.4, down: 0.12, max: 0.21), halflife: 0.3)").expect("Lean defaults"),
             );
+            // Hands on the lip (B2b): two-bone arm IK onto the host's grip targets, after the
+            // trunk lean (it moves the shoulders) and before the springs. At weight 0 (every
+            // state but a gripping mantle) the op is skipped: the arms stay as animated.
+            for (side, target, weight) in [("left", ik::HAND_L, params::HAND_IK_L), ("right", ik::HAND_R, params::HAND_IK_R)] {
+                self.param(weight, ParamKind::Float(0.0));
+                self.a.procedural.push(OpSpec::HandIk {
+                    upper: JointRef::Rig(format!("{side}UpperArm")),
+                    lower: JointRef::Rig(format!("{side}LowerArm")),
+                    hand: JointRef::Rig(format!("{side}Hand")),
+                    target: target.into(),
+                    weight: ValueSpec::Param(weight.into()),
+                    max_lod: 0,
+                });
+            }
         }
         // Secondary motion (M4 P9), after the feet: hits kick springs on the
         // spine, neck and arms (the rig profile's; physics.rs sends impacts

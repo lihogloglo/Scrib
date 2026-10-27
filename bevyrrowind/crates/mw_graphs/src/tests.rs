@@ -147,54 +147,26 @@ fn torch_arm_layers_over_weapon_actions_and_under_scripted_groups() {
     assert!(!creature.nodes.contains_key("torch_layer") && !creature.params.iter().any(|q| q.name == p::TORCH));
 }
 
-/// Lock-on strafe (combat.md CB-2): humanoid walk and run hand over on `strafing` to the
-/// manifest's 8-way `loco.walk.*` / `loco.jog.*` loops on the unit circle (the stance idle
-/// over a drawn weapon's upper body); free movement keeps the Morrowind sets. The loops play
-/// in the strafe states, never as montage slot clips. First person and creatures have none.
+/// Lock-on strafe (combat.md CB-2): locked on, walk and run keep Morrowind's 4-way
+/// directional sets (owner, live 2026-10-27: the UAL strafe loops leaned back and felt slow).
+/// The shipped manifest has no `loco.*` strafe slots, so no template gets the `strafing`
+/// parameter or the strafe states.
 #[test]
-fn humanoid_walk_and_run_switch_to_the_eight_way_strafe_loops() {
-    use sf_anim_graph::asset::{NodeSpec, StateSpec};
+fn locked_strafing_plays_the_morrowind_directional_sets() {
+    use sf_anim_graph::asset::NodeSpec;
     let a = build::asset(Template::Humanoid);
-    assert!(a.params.iter().any(|q| q.name == p::STRAFING));
-    let NodeSpec::StateMachine { states, .. } = &a.nodes[build::LOCOMOTION] else { panic!("locomotion") };
-    let node_of = |state: &str| &states.iter().find(|s: &&StateSpec| s.name == state).unwrap().node;
-    for (state, set, morrowind) in [("walk", "walk", "WalkForward"), ("run", "jog", "RunForward")] {
-        let strafe_state = format!("strafe_{state}");
-        assert_eq!(node_of(state), state, "{state}: the free set");
-        assert_eq!(node_of(&strafe_state), &format!("{state}.locked"), "{state}: the strafe set");
-        let moves = build::movement_conditions(Template::Humanoid);
-        let when = |s: &str| &moves.iter().find(|(n, _)| *n == s).unwrap().1;
-        assert!(when(state).contains(&ConditionSpec::IsFalse(p::STRAFING.into())), "{state}");
-        assert!(when(&strafe_state).contains(&ConditionSpec::IsTrue(p::STRAFING.into())), "{strafe_state}");
-        // Free: the Morrowind directional set, unarmed.
-        let NodeSpec::BlendSpace2D { samples, .. } = &a.nodes[&format!("{state}.none")] else { panic!("{state}: free set") };
-        assert_eq!(samples[0].clip, morrowind);
-        // Locked, unarmed: eight loops a unit from the centre, 45 degrees apart.
-        let NodeSpec::BlendSpace2D { samples, x, y, .. } = &a.nodes[&format!("{state}.locked.none")] else { panic!("{state}: strafe set") };
-        assert_eq!((x, y), (&sf_anim_graph::asset::ValueSpec::Param("move.x".into()), &sf_anim_graph::asset::ValueSpec::Param("move.y".into())));
-        assert_eq!(samples.len(), 8, "{state}");
-        let mut angles: Vec<f32> = samples.iter().map(|s| s.at.0.atan2(s.at.1).to_degrees().rem_euclid(360.0)).collect();
-        for s in samples {
-            assert!(s.clip.starts_with(&format!("loco.{set}.")), "{state}: {}", s.clip);
-            assert!((glam::Vec2::new(s.at.0, s.at.1).length() - 1.0).abs() < 1e-5, "{state}: {}", s.clip);
-            assert!(a.clips[&s.clip].optional, "{}", s.clip);
-            assert!(!a.slot_clips.contains(&s.clip), "{} is no montage clip", s.clip);
-        }
-        angles.sort_by(f32::total_cmp);
-        for (ang, k) in angles.iter().zip(0u8..) {
-            assert!((ang - 45.0 * f32::from(k)).abs() < 1e-3, "{state}: {angles:?}");
-        }
-        let left = samples.iter().find(|s| s.at == (-1.0, 0.0)).unwrap();
-        assert_eq!(left.clip, format!("loco.{set}.left"));
-        // Locked, one-handed: the strafe set on the lower body under the stance idle.
-        let NodeSpec::LayeredPerBone { base, layers } = &a.nodes[&format!("{state}.locked.1h")] else { panic!("{state}: 1h strafe") };
-        assert_eq!(base, &format!("{state}.locked.1h.lower"));
-        let NodeSpec::Clip { clip, .. } = &a.nodes[&layers[0].node] else { panic!() };
-        assert_eq!((clip.as_str(), layers[0].mask.as_deref()), ("Idle1h", Some("upper")));
+    for (state, base) in [("walk", "Walk"), ("run", "Run")] {
+        let NodeSpec::BlendSpace2D { samples, .. } = &a.nodes[&format!("{state}.none")] else { panic!("{state}: Morrowind set") };
+        let mut clips: Vec<String> = samples.iter().map(|s| s.clip.clone()).collect();
+        clips.sort_unstable();
+        let mut want = ["Back", "Forward", "Left", "Right"].map(|d| format!("{base}{d}"));
+        want.sort_unstable();
+        assert_eq!(clips, want, "{state}");
     }
-    for t in [Template::FirstPerson, Template::Creature] {
+    for t in [Template::Humanoid, Template::FirstPerson, Template::Creature] {
         let a = build::asset(t);
         assert!(!a.params.iter().any(|q| q.name == p::STRAFING), "{t:?}");
         assert!(!a.nodes.keys().any(|n| n.contains(".locked")), "{t:?}");
+        assert!(!a.clips.keys().any(|c| c.starts_with("loco.")), "{t:?}");
     }
 }

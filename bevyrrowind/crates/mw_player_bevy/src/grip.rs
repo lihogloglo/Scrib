@@ -30,13 +30,13 @@ use crate::avatar::PlayerFeed;
 use crate::dummy::TrainingDummy;
 
 /// The graph's left-hand IK target slot.
-pub const HAND_L: &str = "hand_l";
+pub const HAND_L: &str = mw_graphs::build::ik::HAND_L;
 /// The graph's right-hand IK target slot.
-pub const HAND_R: &str = "hand_r";
+pub const HAND_R: &str = mw_graphs::build::ik::HAND_R;
 /// The left-hand IK weight parameter (float, 0-1).
-pub const HAND_IK_L: &str = "hand_ik_l";
+pub const HAND_IK_L: &str = mw_graphs::build::params::HAND_IK_L;
 /// The right-hand IK weight parameter (float, 0-1).
-pub const HAND_IK_R: &str = "hand_ik_r";
+pub const HAND_IK_R: &str = mw_graphs::build::params::HAND_IK_R;
 
 /// Feeds each body's grip targets and weights to its animator (after [`crate::avatar::feed`]).
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]

@@ -17,7 +17,6 @@ use glam::{Affine3A, Vec3};
 use mw_bake::VfsInputs;
 use mw_bake::anim::{self, ActorAnimSet, ActorSets, AnimBakeReport};
 use mw_bake::sources::AnimSources;
-use mw_graphs::build::{params as p, states};
 use mw_graphs::{HUMANOID_SETS, Template};
 use mw_install::MorrowindInstall;
 use sf_anim::steps::{ANIM_COOK, ANIM_RETARGET, SKELETON_COOK, anim_subject, retarget_subject};
@@ -37,9 +36,9 @@ const HIGH: &str = "quaternius_ual2:ClimbUp_2m";
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
 /// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 3 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge`, for B3; the two mantles), the 23 combat slots (7 of them the heavy chain), the 2 Quaternius get-ups
-/// (`getup.supine`, `getup.prone`) and the 16 lock-on strafe loops (`loco.walk.*`, `loco.jog.*`).
-const SLOTS: usize = 44;
+/// `ClimbLedge`, for B3; the two mantles), the 21 combat slots (7 of them the heavy chain) and the 2 Quaternius get-ups
+/// (`getup.supine`, `getup.prone`).
+const SLOTS: usize = 26;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
@@ -195,53 +194,6 @@ fn mantle_clip_retargets_onto_the_humanoid_skeletons() {
         assert_eq!((used.provenance.source.as_str(), used.provenance.license.as_str(), used.provenance.redistributable), ("quaternius_ual2", "CC0-1.0", true));
         assert_eq!(graph.non_redistributable().count(), 0);
     }
-}
-
-/// The lock-on strafe loops resolve to their UAL clips in the baked humanoid graph, loop, and
-/// carry both feet's `down.*` markers, which keep the 8-way blend's lanes in step (sanity:
-/// finite, a loop, two feet; the look is the owner's check).
-#[test]
-fn strafe_loops_bake_looping_with_foot_markers() {
-    let Some(s) = setup() else { return };
-    let dir = tempfile::tempdir().unwrap();
-    let (report, baker) = bake(&s, dir.path(), &s.sources);
-    assert!(report.failures.is_empty(), "{:?}", report.failures);
-    let key = ProductKey::new(ANIMGRAPH_COMPILE, graph_subject(Template::Humanoid.path(), HUMANOID_SETS[0].skeleton));
-    let graph = CompiledGraph::from_bytes(&bytes(&baker, &key)).unwrap();
-    let mut seen = 0;
-    for r in graph.resolutions.iter().filter(|r| r.name.starts_with("loco.")) {
-        let slot = &graph.clips[usize::from(r.slot.unwrap_or_else(|| panic!("{} dropped: {:?}", r.name, r.missing)))];
-        assert!(slot.reference.starts_with("quaternius_ual") && slot.reference.ends_with("_Loop"), "{}: {}", r.name, slot.reference);
-        let clip = Clip::from_bytes(&bytes(&baker, &slot.product)).unwrap();
-        let downs: Vec<&str> = clip.markers.iter().map(|m| m.name.as_str()).filter(|n| n.starts_with("down.")).collect();
-        println!("{}: {} {:.3} s, loop {:?}, markers {downs:?}", r.name, slot.reference, clip.duration, clip.loop_range);
-        assert!(clip.duration.is_finite() && clip.duration > 0.2, "{}", r.name);
-        assert!(clip.loop_range.is_some(), "{} loops", r.name);
-        let mut feet = downs.clone();
-        feet.sort_unstable();
-        feet.dedup();
-        assert_eq!(feet.len(), 2, "{}: both feet put down: {downs:?}", r.name);
-        seen += 1;
-    }
-    assert_eq!(seen, 16, "eight walk and eight jog loops");
-
-    // The baked graph: locked on, a run to the left plays the left jog; free, the Morrowind run.
-    let clips: Vec<Arc<Clip>> = graph.clips.iter().map(|c| Arc::new(Clip::from_bytes(&bytes(&baker, &c.product)).unwrap())).collect();
-    let mut sim = mw_graphs::sim::Sim::new(graph, skeleton(&baker, HUMANOID_SETS[0].skeleton), clips).unwrap();
-    sim.set(p::MOVING, 1.0);
-    sim.set(p::RUNNING, 1.0);
-    sim.set(p::STRAFING, 1.0);
-    sim.set_vec2(p::MOVE, glam::Vec2::new(-1.0, 0.0));
-    sim.velocity = Vec3::new(3.5, 0.0, 0.0);
-    sim.run(1.0, 1.0 / 60.0);
-    assert_eq!(sim.state(mw_graphs::build::LOCOMOTION), Some(states::STRAFE_RUN));
-    assert!(sim.plays("quaternius_ual1:Jog_Left_Loop", 0.9), "{:?}", sim.playing());
-    sim.set(p::STRAFING, 0.0);
-    sim.set_vec2(p::MOVE, glam::Vec2::Y);
-    sim.velocity = Vec3::new(0.0, 0.0, 3.5);
-    sim.run(1.0, 1.0 / 60.0);
-    assert_eq!(sim.state(mw_graphs::build::LOCOMOTION), Some(states::RUN));
-    assert!(sim.plays("RunForward", 0.9), "{:?}", sim.playing());
 }
 
 /// Without the library the slot drops: no error, no retarget, the graph

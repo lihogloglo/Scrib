@@ -64,7 +64,7 @@ mod tests {
     use super::*;
 
     /// First-candidate clip lengths (combat.md "C1b" table), clip seconds.
-    const CLIP_LENGTHS: [(&str, f32); 17] = [
+    const CLIP_LENGTHS: [(&str, f32); 15] = [
         ("attack.sword_1h.light1", 0.37),
         ("attack.sword_1h.light1_rec", 0.50),
         ("attack.sword_1h.light2", 0.43),
@@ -80,8 +80,6 @@ mod tests {
         ("attack.sword_1h.heavy3_rec", 0.57),
         ("attack.sword_1h.heavy4", 2.33),
         ("dodge.roll.fwd", 1.47),
-        ("dodge.roll.left", 1.30),
-        ("dodge.roll.right", 1.30),
     ];
 
     fn first_candidates(slot: &str) -> Option<f32> {
@@ -94,11 +92,11 @@ mod tests {
     #[test]
     fn the_sword_sheet_compiles_with_every_move_and_reaction() {
         let sheet = sf_combat::load(SWORD_1H, &first_candidates).expect("sword_1h compiles");
-        for mov in ["light1", "light2", "light3", "light4", "heavy1", "heavy2", "heavy3", "heavy4", "roll", "roll_left", "roll_right"] {
+        for mov in ["light1", "light2", "light3", "light4", "heavy1", "heavy2", "heavy3", "heavy4", "roll"] {
             assert!(sheet.moves.moves.contains_key(&sheet.rule_key(mov)), "move {mov}");
         }
         let slots = sheet_slots(SWORD_1H).unwrap();
-        assert_eq!(slots.len(), 23, "{slots:?}");
+        assert_eq!(slots.len(), 21, "{slots:?}");
         assert!(slots.iter().all(|s| first_candidates(s).is_some()), "{slots:?}");
     }
 

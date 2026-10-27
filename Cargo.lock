@@ -5008,6 +5008,7 @@ dependencies = [
  "postcard",
  "rayon",
  "serde",
+ "sf_action",
  "sf_anim",
  "sf_anim_graph",
  "sf_bake",

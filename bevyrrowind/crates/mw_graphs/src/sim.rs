@@ -84,6 +84,12 @@ impl Sim {
         self.instance.params.set_vec2(id, v);
     }
 
+    /// Sets (or clears) the IK target slot `name` (character space).
+    pub fn set_ik(&mut self, name: &str, target: Option<IkTarget>) {
+        let k = self.graph.ik_target(name).unwrap_or_else(|| panic!("no IK target {name:?}"));
+        self.ik[k] = target;
+    }
+
     /// Runs `seconds` at `dt`, collecting events.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn run(&mut self, seconds: f32, dt: f32) {
