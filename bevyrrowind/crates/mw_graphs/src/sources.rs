@@ -331,6 +331,22 @@ mod tests {
                 "getup.prone",
                 "getup.side_right",
                 "getup.supine",
+                "loco.jog.back",
+                "loco.jog.back_left",
+                "loco.jog.back_right",
+                "loco.jog.fwd",
+                "loco.jog.fwd_left",
+                "loco.jog.fwd_right",
+                "loco.jog.left",
+                "loco.jog.right",
+                "loco.walk.back",
+                "loco.walk.back_left",
+                "loco.walk.back_right",
+                "loco.walk.fwd",
+                "loco.walk.fwd_left",
+                "loco.walk.fwd_right",
+                "loco.walk.left",
+                "loco.walk.right",
                 "react.large.front",
                 "react.medium.front",
                 "react.small.back",
@@ -351,6 +367,33 @@ mod tests {
             Some(ClipFallback::Clip("getup.prone.alt1".into()))
         );
         assert_eq!(clips[0].1.fallback, Some(ClipFallback::Clip("attack.sword_1h.light1.alt1".into())));
+    }
+
+    /// The lock-on strafe sets: eight looping, speed-matched loops each, from the bundled
+    /// UAL files (walk UAL2, jog UAL1); cardinals fall back to Morrowind's directional groups.
+    #[test]
+    fn strafe_slots_loop_speed_matched_from_the_bundled_packs() {
+        let m = SourcesManifest::builtin();
+        for (set, source, morrowind) in [("walk", "quaternius_ual2", "Walk"), ("jog", "quaternius_ual1", "Run")] {
+            for dir in ["fwd", "fwd_right", "right", "back_right", "back", "back_left", "left", "fwd_left"] {
+                let name = format!("loco.{set}.{dir}");
+                let slot = &m.slots[&name];
+                assert_eq!(slot.graph, "humanoid", "{name}");
+                assert_eq!((slot.looping, slot.root), (Looping::Whole, RootMotionMode::Match), "{name}");
+                assert!(!slot.vertical && !slot.in_place, "{name}");
+                let [c] = slot.candidates.as_slice() else { panic!("{name}: one candidate") };
+                assert_eq!(c.source, source, "{name}");
+                assert!(c.clip.ends_with("_Loop") && c.file.is_none() && c.range.is_none(), "{name}: {}", c.clip);
+                let fallback = match dir {
+                    "fwd" => ClipFallback::Clip(format!("{morrowind}Forward")),
+                    "back" => ClipFallback::Clip(format!("{morrowind}Back")),
+                    "left" => ClipFallback::Clip(format!("{morrowind}Left")),
+                    "right" => ClipFallback::Clip(format!("{morrowind}Right")),
+                    _ => ClipFallback::Drop,
+                };
+                assert_eq!(slot.fallback, fallback, "{name}");
+            }
+        }
     }
 
     #[test]

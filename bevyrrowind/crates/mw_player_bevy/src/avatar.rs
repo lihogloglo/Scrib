@@ -15,7 +15,8 @@
 //!   ([`AirDebounce`]): a launch leaves the ground at once, a fall only after [`AIR_GRACE`] in
 //!   the air or below [`FALL_SPEED`], so step-down misses on rocks and stairs don't flicker the
 //!   fall pose (UE keeps Walking within the step height; Lyra/ALS gate the fall on air time).
-//!   Foot probes are not fed yet: foot placement holds the animated pose.
+//!   Foot probes are not fed yet: foot placement holds the animated pose. `strafing` is set
+//!   while the intent holds a facing (locked on): walk and run play the 8-way strafe loops.
 //! - **Traversal and combat moves** (action.md B2a, combat.md C1b): while the action layer's Warp
 //!   or Clip owner moves the body, the move's slot clip (`traverse.mantle.waist`, an attack, a roll,
 //!   a hit reaction; [`AvatarSlots`]) plays in the graph's `full` montage slot with
@@ -245,6 +246,9 @@ pub(crate) fn feed(
         a.set_bool(gp::RUNNING, v.running);
         a.set_float(gp::TURN, v.turn);
         a.set_bool(gp::SNEAKING, intent.gait == Gait::Sneak);
+        // Locked on (not sprinting): the body holds a facing apart from its travel, so the
+        // graph plays the strafe loops on the measured direction (`move`).
+        a.set_bool(gp::STRAFING, intent.desired_facing.is_some());
         // A warped traversal holds the body off the ground on purpose: not a jump.
         let loco = &body.loco;
         let launched = character.state.body.launched;

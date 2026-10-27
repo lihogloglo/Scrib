@@ -402,6 +402,91 @@ fn blend_spaces_triangulate_and_weight() {
     assert_eq!(edges, vec![[0, 2], [2, 1]]);
 }
 
+/// A directional strafe set (lock-on locomotion): eight loops on the unit circle, of
+/// different lengths, each with its feet down at the same fractions. A unit move direction
+/// plays its own loop alone, or the two neighbours between them; turning the direction
+/// hands the lead to another loop without moving the stride's phase (the lanes stay in step
+/// on their markers, so a direction change never pops the feet).
+#[test]
+fn eight_way_direction_space_blends_neighbours_and_keeps_the_stride_phase() {
+    let d = std::f32::consts::FRAC_1_SQRT_2;
+    let dirs = [
+        ("fwd", (0.0, 1.0)),
+        ("fwd_right", (d, d)),
+        ("right", (1.0, 0.0)),
+        ("back_right", (d, -d)),
+        ("back", (0.0, -1.0)),
+        ("back_left", (-d, -d)),
+        ("left", (-1.0, 0.0)),
+        ("fwd_left", (-d, d)),
+    ];
+    let skeleton = biped();
+    let mut src = Source::default();
+    for (k, (name, _)) in dirs.iter().enumerate() {
+        let len = 0.8 + 0.05 * k as f32;
+        src.clips.insert((*name).into(), cycle(&skeleton, name, len, 2.0, 0.6, len * 0.5));
+    }
+    let samples: Vec<String> = dirs.iter().map(|(n, (x, y))| format!("(clip: \"{n}\", at: ({x}, {y}))")).collect();
+    let ron = format!(
+        r#"(params: [(name: "move", kind: Vec2(0.0, 1.0))],
+            nodes: {{"strafe": BlendSpace2D(x: "move.x", y: "move.y", samples: [{}])}},
+            layers: [(node: "strafe")])"#,
+        samples.join(", ")
+    );
+    let graph = compile_str("strafe", &ron, &skeleton, &mut src).unwrap();
+    let clips: Vec<Arc<Clip>> = graph.clips.iter().map(|c| Arc::new(src.clips[&c.reference].clone())).collect();
+    let b = Binding::new(&graph, &skeleton, &clips).unwrap();
+    let mut inst = GraphInstance::new(&b);
+    let mut out = GraphOutput::new(&graph);
+    let node = graph.node("strafe").unwrap();
+    let mv = graph.param("move").unwrap();
+    let len = |i: usize| 0.8 + 0.05 * i as f32;
+    let lanes = |inst: &GraphInstance| inst.player(node).unwrap().0;
+    let phase = |lanes: &[(f32, f32)], i: usize| (lanes[i].0 / len(i)).rem_euclid(1.0);
+    let leader = |lanes: &[(f32, f32)]| (0..lanes.len()).max_by(|&a, &c| lanes[a].1.total_cmp(&lanes[c].1)).unwrap();
+    let dt = 1.0 / 60.0;
+    let run = |inst: &mut GraphInstance, out: &mut GraphOutput, dir: Vec2, frames: usize| {
+        inst.params.set_vec2(mv, dir);
+        for _ in 0..frames {
+            inst.update(&b, dt, 0, &UpdateInputs::default(), out);
+        }
+    };
+
+    // Strafing left: the left loop alone.
+    run(&mut inst, &mut out, Vec2::new(-1.0, 0.0), 30);
+    let l = lanes(&inst);
+    assert!(l[6].1 > 0.99, "left plays alone: {l:?}");
+    // Between forward and forward-right (30 degrees right of forward): those two only.
+    let a = 30f32.to_radians();
+    run(&mut inst, &mut out, Vec2::new(a.sin(), a.cos()), 30);
+    let l = lanes(&inst);
+    let on: Vec<usize> = (0..8).filter(|&i| l[i].1 > 1e-3).collect();
+    assert_eq!(on, vec![0, 1], "the two neighbours: {l:?}");
+    assert!(l[1].1 > l[0].1, "nearer forward-right: {l:?}");
+    assert!((l[0].1 + l[1].1 - 1.0).abs() < 1e-4);
+
+    // Every lane sits at the leader's phase, and a sweep to backwards (the lead passing
+    // through right) never jumps the phase beyond its own advance.
+    let mut last = phase(&l, leader(&l));
+    for k in 0..=15 {
+        let a = (30.0 + 10.0 * k as f32).to_radians();
+        run(&mut inst, &mut out, Vec2::new(a.sin(), a.cos()), 2);
+        let l = lanes(&inst);
+        let lead = leader(&l);
+        let p = phase(&l, lead);
+        for i in 0..8 {
+            let gap = (phase(&l, i) - p).rem_euclid(1.0);
+            assert!(gap.min(1.0 - gap) < 1e-3, "frame {k}: lane {i} phase {} vs leader {lead} {p}", phase(&l, i));
+        }
+        let step = (p - last).rem_euclid(1.0);
+        // Two frames at 60 Hz of a 0.8-1.15 s loop: at most ~0.05 of a cycle.
+        assert!(step < 0.06, "frame {k}: phase jumped {last} -> {p} (leader {lead})");
+        last = p;
+    }
+    let l = lanes(&inst);
+    assert!(l[4].1 > 0.99, "ends on back: {l:?}");
+}
+
 // --- Evaluation --------------------------------------------------------------------------
 
 #[test]

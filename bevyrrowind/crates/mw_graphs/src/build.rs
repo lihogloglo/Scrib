@@ -14,6 +14,12 @@
 //!   spell) play the base set on the lower body with the stance idle on the
 //!   upper body through the `upper` mask, as the original engine does (UE:
 //!   Lyra's linked anim layers per weapon over one locomotion machine).
+//! - **Lock-on strafe** (humanoids with the manifest's `loco.walk.*` /
+//!   `loco.jog.*` slots): while [`params::STRAFING`], the `strafe_walk` and
+//!   `strafe_run` states take over from walk and run, an 8-way blend space of
+//!   those loops (the stance idle on the upper body for a drawn weapon); its
+//!   lanes stay in step by their foot-down markers, so a direction change
+//!   keeps the stride's phase. Free movement keeps the Morrowind sets.
 //! - **Slots**: `upper` (masked: attacks, casts, equip, block) and `full`
 //!   (scripted `PlayGroup`, `LoopGroup`) for humanoids; `full` for creatures.
 //! - **Torch arm** (humanoids): the `Torch` group loops on the left arm
@@ -114,6 +120,9 @@ pub mod params {
     /// Humanoids, 0..1: a lit light is carried in the left hand (and shown).
     /// Weights the torch arm layer (the `Torch` group on the left arm).
     pub const TORCH: &str = "torch";
+    /// Humanoids with the strafe slots: the body faces something other than its
+    /// travel (locked on), so walk and run play the 8-way strafe loops.
+    pub const STRAFING: &str = "strafing";
 }
 
 /// Slot names.
@@ -129,6 +138,9 @@ pub mod states {
     pub const IDLE: &str = "idle";
     pub const WALK: &str = "walk";
     pub const RUN: &str = "run";
+    /// Locked on (humanoids with the strafe sets): the 8-way walk and jog loops.
+    pub const STRAFE_WALK: &str = "strafe_walk";
+    pub const STRAFE_RUN: &str = "strafe_run";
     pub const SNEAK: &str = "sneak";
     pub const SNEAK_IDLE: &str = "sneak_idle";
     pub const TURN_LEFT: &str = "turn_left";
@@ -284,6 +296,32 @@ pub const GET_UPS: [(&str, &str); 4] = [
 
 const DIRECTIONS: [(&str, (f32, f32)); 4] =[("Forward", (0.0, 1.0)), ("Back", (0.0, -1.0)), ("Left", (-1.0, 0.0)), ("Right", (1.0, 0.0))];
 
+const DIAG: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// The lock-on strafe sets' directions: the manifest's `loco.<set>.<dir>`
+/// slots on the unit circle, `x` right, `y` forward. A unit move direction
+/// lies on the octagon's hull, so it blends the two neighbouring loops.
+const STRAFE_DIRECTIONS: [(&str, (f32, f32)); 8] = [
+    ("fwd", (0.0, 1.0)),
+    ("fwd_right", (DIAG, DIAG)),
+    ("right", (1.0, 0.0)),
+    ("back_right", (DIAG, -DIAG)),
+    ("back", (0.0, -1.0)),
+    ("back_left", (-DIAG, -DIAG)),
+    ("left", (-1.0, 0.0)),
+    ("fwd_left", (-DIAG, DIAG)),
+];
+
+/// Whether the manifest has the template's strafe sets (`loco.walk.*` and
+/// `loco.jog.*`): humanoids only.
+fn has_strafe(t: Template) -> bool {
+    let slots = &crate::sources::SourcesManifest::builtin().slots;
+    t == Template::Humanoid
+        && ["walk", "jog"].into_iter().all(|set| {
+            STRAFE_DIRECTIONS.iter().any(|(dir, _)| slots.get(&format!("loco.{set}.{dir}")).is_some_and(|s| s.graph == t.sources_name() && !s.candidates.is_empty()))
+        })
+}
+
 fn range(param: &str, v: f32) -> [C; 2] {
     [C::Greater(param.into(), v - 0.5), C::Less(param.into(), v + 0.5)]
 }
@@ -313,7 +351,7 @@ struct Movement {
 }
 
 fn movements(t: Template) -> Vec<Movement> {
-    use params::{JUMPING, MOVING, ON_GROUND, RUNNING, SNEAKING, SWIMMING, TURN};
+    use params::{JUMPING, MOVING, ON_GROUND, RUNNING, SNEAKING, STRAFING, SWIMMING, TURN};
     let is = |p: &str| C::IsTrue(p.into());
     let not = |p: &str| C::IsFalse(p.into());
     let left = C::Greater(TURN.into(), TURN_THRESHOLD);
@@ -324,13 +362,20 @@ fn movements(t: Template) -> Vec<Movement> {
     // Sneaking is a humanoid mode; creatures ignore the flag.
     let sneak = t != Template::Creature;
     let walk_mode = |extra: &[C]| if sneak { land(&[&[not(SNEAKING)][..], extra].concat()) } else { land(extra) };
+    // Locked on: walk and run hand over to the strafe states.
+    let strafe = has_strafe(t);
+    let free = |extra: &[C]| if strafe { walk_mode(&[extra, &[not(STRAFING)][..]].concat()) } else { walk_mode(extra) };
     let mut out = vec![
         Movement { state: states::IDLE, when: walk_mode(&still) },
-        Movement { state: states::WALK, when: walk_mode(&[is(MOVING), not(RUNNING)]) },
-        Movement { state: states::RUN, when: walk_mode(&[is(MOVING), is(RUNNING)]) },
+        Movement { state: states::WALK, when: free(&[is(MOVING), not(RUNNING)]) },
+        Movement { state: states::RUN, when: free(&[is(MOVING), is(RUNNING)]) },
         Movement { state: states::TURN_LEFT, when: walk_mode(&[not(MOVING), left.clone()]) },
         Movement { state: states::TURN_RIGHT, when: walk_mode(&[not(MOVING), right.clone()]) },
     ];
+    if strafe {
+        out.push(Movement { state: states::STRAFE_WALK, when: walk_mode(&[is(MOVING), not(RUNNING), is(STRAFING)]) });
+        out.push(Movement { state: states::STRAFE_RUN, when: walk_mode(&[is(MOVING), is(RUNNING), is(STRAFING)]) });
+    }
     if sneak {
         out.push(Movement { state: states::SNEAK, when: land(&[is(SNEAKING), is(MOVING)]) });
         out.push(Movement { state: states::SNEAK_IDLE, when: land(&[is(SNEAKING), not(MOVING)]) });
@@ -508,6 +553,46 @@ impl Builder {
         })
     }
 
+    /// A strafe state's node (`strafe_walk`, `strafe_run`): the set's 8-way
+    /// blend space per stance, a drawn weapon's stance idle over the upper
+    /// body. Its own locomotion state, not a mode of `walk`/`run`: on a
+    /// skeleton without the Morrowind set (golden saints) walk drops alone
+    /// and the strafe state, never asked for by NPCs, changes nothing.
+    fn strafing(&mut self, name: &str, set: &str) -> String {
+        self.by_stance(name, |b, s, n| {
+            if s == Stance::None {
+                return b.strafe(n, set);
+            }
+            let base = b.strafe(&format!("{n}.lower"), set);
+            b.overlay(n, base, s.overlay().unwrap_or(s.idle()))
+        })
+    }
+
+    /// The strafe set's 8-way blend space over `move`; its lanes sync by
+    /// their foot-down markers (phase otherwise), as every blend space's.
+    fn strafe(&mut self, name: &str, set: &str) -> String {
+        let samples = STRAFE_DIRECTIONS
+            .iter()
+            .map(|(dir, at)| (format!("loco.{set}.{dir}"), *at))
+            .filter(|(clip, _)| self.a.clips.contains_key(clip))
+            .map(|(clip, at)| Sample2D { clip, at, rate: 1.0 })
+            .collect();
+        let mv = params::MOVE;
+        self.node(
+            name,
+            NodeSpec::BlendSpace2D {
+                x: ValueSpec::Param(format!("{mv}.x")),
+                y: ValueSpec::Param(format!("{mv}.y")),
+                samples,
+                rate: ValueSpec::default(),
+                smoothing: DIRECTION_SMOOTHING,
+                looping: None,
+                sync: None,
+                root_motion: None,
+            },
+        )
+    }
+
     /// Walk, run or sneak: directional per stance.
     fn moving(&mut self, name: &str, prefix: &str) -> String {
         self.by_stance(name, |b, s, n| match s.overlay() {
@@ -598,6 +683,18 @@ impl Builder {
             self.param(params::TORCH, ParamKind::Float(0.0));
         }
 
+        // Clip slots of the animation-sources manifest (libraries the user
+        // brings): optional chains, dropped when no library is present.
+        // Registered first: the strafe sets and the get-ups build on them.
+        let (source_clips, source_slots) = crate::sources::SourcesManifest::builtin().graph_clips(self.t.sources_name());
+        for (name, clip) in source_clips {
+            self.a.clips.entry(name).or_insert(clip);
+        }
+        let strafe = has_strafe(self.t);
+        if strafe {
+            self.param(params::STRAFING, ParamKind::Bool(false));
+        }
+
         // Movement states.
         let mut st: Vec<StateSpec> = Vec::new();
         let mut state = |name: &str, node: String, rm: Option<RootMotionMode>| st.push(StateSpec { name: name.into(), node, root_motion: rm });
@@ -607,6 +704,12 @@ impl Builder {
         state(states::WALK, walk, None);
         let run = self.moving("run", "Run");
         state(states::RUN, run, None);
+        if strafe {
+            let sw = self.strafing("walk.locked", "walk");
+            state(states::STRAFE_WALK, sw, None);
+            let sr = self.strafing("run.locked", "jog");
+            state(states::STRAFE_RUN, sr, None);
+        }
         let tl = self.single("turn_left", "TurnLeft", Some("SpellTurnLeft"), Some(true));
         state(states::TURN_LEFT, tl, None);
         let tr = self.single("turn_right", "TurnRight", Some("SpellTurnRight"), Some(true));
@@ -654,12 +757,6 @@ impl Builder {
         state(states::KNOCKOUT, ko, drive);
         let koe = self.plain("knockout_end", "Knockout@tail", None, Some(false));
         state(states::KNOCKOUT_END, koe, drive);
-        // Clip slots of the animation-sources manifest (libraries the user
-        // brings): optional chains, dropped when no library is present.
-        let (source_clips, source_slots) = crate::sources::SourcesManifest::builtin().graph_clips(self.t.sources_name());
-        for (name, clip) in source_clips {
-            self.a.clips.entry(name).or_insert(clip);
-        }
         // Get-ups by how the body lies (Delirium's fallen hand-back sets
         // `get_up`), on the template's get-up slots; each state drops with
         // its clip (no library: `knockout_end` only).
@@ -738,8 +835,8 @@ impl Builder {
         // Without FALL (no loop point: dropped with its transitions), a fall jumps.
         let airborne = vec![not(p::SWIMMING), not(p::ON_GROUND)];
         go(&[states::LAND], states::JUMP, airborne.clone(), inert(0.1));
-        if let Some(run) = moves.iter().find(|m| m.state == states::RUN) {
-            go(&[states::LAND], states::RUN, run.when.clone(), inert(0.2));
+        for run in moves.iter().filter(|m| m.state == states::RUN || m.state == states::STRAFE_RUN) {
+            go(&[states::LAND], run.state, run.when.clone(), inert(0.2));
         }
         // Movement: exclusive targets; reactions return when they end.
         for m in &moves {
@@ -797,7 +894,8 @@ impl Builder {
             }
         }
         // The animation-sources slots (clips registered with the get-ups).
-        slot_clips.extend(source_slots);
+        // Locomotion loops play in the movement states, not in a montage slot.
+        slot_clips.extend(source_slots.into_iter().filter(|s| !s.starts_with("loco.")));
         self.a.slot_clips = slot_clips;
         // Playback follows the measured speed over the cycle's authored root
         // speed (animfix 2026-10-12: walk 2.2 m/s, run 3.2 m/s; NPC walkers

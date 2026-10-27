@@ -63,6 +63,154 @@
     ),
   },
   slots: {
+    // Lock-on strafe loops (combat.md CB-2): 8-way walk (UAL2) and jog (UAL1) sets, played by
+    // walk and run while `strafing` (mw_graphs build.rs "Lock-on strafe"). Speed-matched like
+    // the gaits; the lanes stay in step on their foot-down markers. Cardinals fall back to
+    // Morrowind's directional groups, diagonals drop (the space blends the cardinals).
+    "loco.walk.fwd": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_Fwd_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("WalkForward"),
+    ),
+    "loco.walk.back": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_Bwd_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("WalkBack"),
+    ),
+    "loco.walk.left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_L_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("WalkLeft"),
+    ),
+    "loco.walk.right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_R_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("WalkRight"),
+    ),
+    "loco.walk.fwd_left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_Fwd_L_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.walk.fwd_right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_Fwd_R_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.walk.back_left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_Bwd_L_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.walk.back_right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Walk_Bwd_R_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.jog.fwd": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Fwd_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("RunForward"),
+    ),
+    "loco.jog.back": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Bwd_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("RunBack"),
+    ),
+    "loco.jog.left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Left_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("RunLeft"),
+    ),
+    "loco.jog.right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Right_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Clip("RunRight"),
+    ),
+    "loco.jog.fwd_left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Fwd_L_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.jog.fwd_right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Fwd_R_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.jog.back_left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Bwd_L_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
+    "loco.jog.back_right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual1", clip: "Jog_Bwd_R_Loop"),
+      ],
+      looping: Whole,
+      root: Match,
+      fallback: Drop,
+    ),
     // Waist-high mantle (action.md B2a): one clip, warped onto the ledge by
     // the action clock (`Progress`), so its root track keeps the climb's rise
     // and forward travel. First UAL2's root-motion take, then LAFAN1's
