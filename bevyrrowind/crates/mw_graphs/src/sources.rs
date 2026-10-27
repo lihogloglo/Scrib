@@ -322,6 +322,8 @@ mod tests {
                 "attack.sword_1h.light2",
                 "attack.sword_1h.light2_rec",
                 "attack.sword_1h.light3",
+                "attack.sword_1h.light3_rec",
+                "attack.sword_1h.light4",
                 "dodge.roll.fwd",
                 "dodge.roll.left",
                 "dodge.roll.right",

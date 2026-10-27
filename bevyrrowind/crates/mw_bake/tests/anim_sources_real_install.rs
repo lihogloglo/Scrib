@@ -33,8 +33,8 @@ const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m";
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
 /// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 2 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge`, for B3), the 14 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
-const SLOTS: usize = 18;
+/// `ClimbLedge`, for B3), the 16 combat slots and the 2 Quaternius get-ups (`getup.supine`, `getup.prone`).
+const SLOTS: usize = 20;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 

@@ -131,12 +131,13 @@
     ),
     // Combat C1b (combat-adapter.md "C1b: game items"; names = mw_combat::sheet_slots(SWORD_1H)).
     // Clip moves on the action clock (`Progress`); the sheet's windows are authored against
-    // each slot's first candidate. Light chain: UAL2's sword combo, then UAL1's single swing
-    // (its root-motion take steps 1.5 m; only without UAL2), then Morrowind's one-hand slash.
+    // each slot's first candidate. Light chain: UAL2's four-hit light sword combo (Sword_Light_A-D,
+    // the takes of Sword_Light_Combo), then UAL1's single swing (its root-motion take steps 1.5 m;
+    // only without UAL2), then Morrowind's one-hand slash.
     "attack.sword_1h.light1": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Sword_Regular_A"),
+        (source: "quaternius_ual2", clip: "Sword_Light_A"),
         (source: "quaternius_ual1", clip: "Sword_Attack"),
       ],
       root: Progress,
@@ -145,7 +146,7 @@
     "attack.sword_1h.light2": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Sword_Regular_B"),
+        (source: "quaternius_ual2", clip: "Sword_Light_B"),
         (source: "quaternius_ual1", clip: "Sword_Attack"),
       ],
       root: Progress,
@@ -154,7 +155,17 @@
     "attack.sword_1h.light3": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Sword_Regular_C"),
+        (source: "quaternius_ual2", clip: "Sword_Light_C"),
+        (source: "quaternius_ual1", clip: "Sword_Attack"),
+      ],
+      root: Progress,
+      fallback: Clip("WeaponOneHand@slash"),
+    ),
+    // The finisher: its take ends in its own recovery (no `_rec` slot).
+    "attack.sword_1h.light4": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "Sword_Light_D"),
         (source: "quaternius_ual1", clip: "Sword_Attack"),
       ],
       root: Progress,
@@ -164,7 +175,7 @@
     "attack.sword_1h.light1_rec": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Sword_Regular_A_Rec"),
+        (source: "quaternius_ual2", clip: "Sword_Light_A_Rec"),
       ],
       root: Progress,
       fallback: Drop,
@@ -172,7 +183,15 @@
     "attack.sword_1h.light2_rec": (
       graph: "humanoid",
       candidates: [
-        (source: "quaternius_ual2", clip: "Sword_Regular_B_Rec"),
+        (source: "quaternius_ual2", clip: "Sword_Light_B_Rec"),
+      ],
+      root: Progress,
+      fallback: Drop,
+    ),
+    "attack.sword_1h.light3_rec": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "SwordLight_C_Rec"),
       ],
       root: Progress,
       fallback: Drop,

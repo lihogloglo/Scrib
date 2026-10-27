@@ -1,9 +1,12 @@
 // The one-handed sword sheet (combat.md "C1b" first sheet values; combat-adapter.md "C1b: game
 // items"). Times are move seconds (after `rate`), authored against each slot's first candidate
-// clip (UAL2 Sword_Regular_A/B/C, UAL1 Roll_RM / Dodge_*_RM). Tune at CB-1
+// clip (UAL2 Sword_Light_A/B/C/D + their _Rec, UAL1 Roll_RM / Dodge_*_RM). Tune at CB-1
 // (docs/visual-checks/combat.md). Weapon segment: in the "Weapon Bone" socket's space, m.
-// Light `root_scale`: each swing steps ~0.4 m (Elden Ring 0.3-0.5). Retargeted UAL2 root travel,
-// m: A 0.98 + A_Rec 0.37, B 0.06 + B_Rec 0.44, C 1.85 (mw_combat test `light_attacks_step_...`).
+// Light chain = UAL2's four-hit light combo. Hit windows sit on the right hand's speed peak
+// (A 0.20, B 0.25, C 0.45, D 0.30 s, +-0.07); light1/light2 Cancel(Light) at the strike clip's end,
+// where its pose is the next strike's first frame. Light `root_scale`: each swing steps ~0.4 m
+// (Elden Ring 0.3-0.5). Retargeted UAL2 root travel, m: A 0.37 + A_Rec 0, B 0.43 + B_Rec 0,
+// C 1.69 + C_Rec 0, D 2.03 (mw_combat test `light_attacks_step_less_than_a_stride`).
 (
     id: "sword_1h",
     rig: "humanoid",
@@ -12,38 +15,49 @@
     moves: {
         "light1": (
             category: Attack, classes: [Light], from: [Any], rank: 10,
-            slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"], root_scale: 0.35,
+            slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"], root_scale: 1.0,
             windows: [
                 Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.35, End), Cancel([Light, Heavy], 0.45, End), Cancel([Move], 0.80, End),
-                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
+                Cancel([Dodge], 0.31, End), Cancel([Light, Heavy], 0.37, End), Cancel([Move], 0.57, End),
+                Turn(360.0, 0.0, 0.11), NoTurn(0.11, 0.28),
             ],
-            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            hits: [(window: (0.14, 0.28), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
             next: { Light: "light2" },
         ),
         "light2": (
             category: Attack, classes: [Light],
-            slots: ["attack.sword_1h.light2", "attack.sword_1h.light2_rec"], root_scale: 0.85,
+            slots: ["attack.sword_1h.light2", "attack.sword_1h.light2_rec"], root_scale: 1.0,
             windows: [
                 Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.38, End), Cancel([Light, Heavy], 0.55, End), Cancel([Move], 0.95, End),
-                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.34),
+                Cancel([Dodge], 0.36, End), Cancel([Light, Heavy], 0.43, End), Cancel([Move], 0.66, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
             ],
-            hits: [(window: (0.20, 0.34), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
             next: { Light: "light3" },
         ),
+        // A dash-in strike; its recovery starts from a lunge, so the chain cancels before the clip's end.
         "light3": (
             category: Attack, classes: [Light],
-            slots: ["attack.sword_1h.light3"], root_scale: 0.22,
+            slots: ["attack.sword_1h.light3", "attack.sword_1h.light3_rec"], root_scale: 0.25,
             windows: [
                 Accept([Light, Heavy, Dodge], 0.10, End),
-                Cancel([Dodge], 0.80, End), Cancel([Light, Heavy], 1.10, End), Cancel([Move], 1.30, End),
-                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.72),
+                Cancel([Dodge], 0.56, End), Cancel([Light, Heavy], 0.70, End), Cancel([Move], 1.15, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.52),
             ],
-            hits: [
-                (window: (0.18, 0.32), mv: 0.8, stamina: 8.0, kind: "slash", tier: Small, stop: 0.05),
-                (window: (0.58, 0.72), mv: 1.1, stamina: 8.0, kind: "slash", tier: Medium, stop: 0.07),
+            hits: [(window: (0.38, 0.52), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            next: { Light: "light4" },
+        ),
+        // The finisher: a lunge (hit at 0.30), a held follow-through (0.42-1.02), then it steps forward
+        // into stance inside the same take.
+        "light4": (
+            category: Attack, classes: [Light],
+            slots: ["attack.sword_1h.light4"], root_scale: 0.22,
+            windows: [
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.50, End), Cancel([Light, Heavy], 1.05, End), Cancel([Move], 1.25, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.38),
             ],
+            hits: [(window: (0.23, 0.37), mv: 1.2, stamina: 14.0, kind: "slash", tier: Medium, stop: 0.07)],
             next: { Light: "light1" },
         ),
         "roll": (

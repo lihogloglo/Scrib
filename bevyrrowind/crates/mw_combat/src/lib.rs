@@ -66,11 +66,13 @@ mod tests {
     /// First-candidate clip lengths (combat.md "C1b" table), clip seconds.
     fn first_candidates(slot: &str) -> Option<f32> {
         Some(match slot {
-            "attack.sword_1h.light1" => 0.43,
-            "attack.sword_1h.light1_rec" => 0.97,
-            "attack.sword_1h.light2" => 0.53,
-            "attack.sword_1h.light2_rec" => 1.03,
-            "attack.sword_1h.light3" => 2.00,
+            "attack.sword_1h.light1" => 0.37,
+            "attack.sword_1h.light1_rec" => 0.50,
+            "attack.sword_1h.light2" => 0.43,
+            "attack.sword_1h.light2_rec" => 0.57,
+            "attack.sword_1h.light3" => 0.87,
+            "attack.sword_1h.light3_rec" => 0.70,
+            "attack.sword_1h.light4" => 1.67,
             "dodge.roll.fwd" => 1.47,
             "dodge.roll.left" | "dodge.roll.right" => 1.30,
             s if s.starts_with("react.") => 0.6,
@@ -81,11 +83,11 @@ mod tests {
     #[test]
     fn the_sword_sheet_compiles_with_every_move_and_reaction() {
         let sheet = sf_combat::load(SWORD_1H, &first_candidates).expect("sword_1h compiles");
-        for mov in ["light1", "light2", "light3", "roll", "roll_left", "roll_right"] {
+        for mov in ["light1", "light2", "light3", "light4", "roll", "roll_left", "roll_right"] {
             assert!(sheet.moves.moves.contains_key(&sheet.rule_key(mov)), "move {mov}");
         }
         let slots = sheet_slots(SWORD_1H).unwrap();
-        assert_eq!(slots.len(), 14, "{slots:?}");
+        assert_eq!(slots.len(), 16, "{slots:?}");
         assert!(slots.iter().all(|s| first_candidates(s).is_some()), "{slots:?}");
     }
 
@@ -93,11 +95,12 @@ mod tests {
     /// in the bake, largest over the humanoid skeletons (measured 2026-10-27).
     fn root_travel(slot: &str) -> f32 {
         match slot {
-            "attack.sword_1h.light1" => 0.98,
-            "attack.sword_1h.light1_rec" => 0.37,
-            "attack.sword_1h.light2" => 0.06,
-            "attack.sword_1h.light2_rec" => 0.44,
-            "attack.sword_1h.light3" => 1.85,
+            "attack.sword_1h.light1" => 0.37,
+            "attack.sword_1h.light2" => 0.43,
+            "attack.sword_1h.light3" => 1.69,
+            "attack.sword_1h.light4" => 2.03,
+            // The recoveries stand on their back foot: no root travel.
+            "attack.sword_1h.light1_rec" | "attack.sword_1h.light2_rec" | "attack.sword_1h.light3_rec" => 0.0,
             _ => panic!("no travel for {slot}"),
         }
     }
@@ -107,7 +110,7 @@ mod tests {
     fn light_attacks_step_less_than_a_stride() {
         let ron = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let def: SheetDef = ron.from_str(SWORD_1H).unwrap();
-        for name in ["light1", "light2", "light3"] {
+        for name in ["light1", "light2", "light3", "light4"] {
             let m = &def.moves[name];
             let travel = m.slots.iter().map(|s| root_travel(s)).sum::<f32>() * m.root_scale;
             eprintln!("{name}: root_scale {} -> {travel:.2} m", m.root_scale);
