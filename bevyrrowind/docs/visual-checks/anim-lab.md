@@ -42,8 +42,12 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Look for: the body rises onto the top (~1 m past the lip) in ~0.7 s playing the climb clip in step with the move
   (playhead = the warp's progress), then blends back into walk and drops off the back normally; red 2 m box: a plain
   jump; Ctrl (sneak) + Space: never a mantle. The orange 1.5 m box refuses from a stand at the face (feel/tuning is
-  the owner's call). Hands on the lip and feet on top are not IK-fitted yet (B2b). Status: confirmed with follow-up (owner 2026-10-27, after the IK audit fixes): mantle alright; some body clipping
-  into the box (clip, B2b IK), and the camera does something odd when the body clips on the bigger box.
+  the owner's call). Hands on the lip and feet on top are not IK-fitted yet (B2b). Owner 2026-10-27: mantle alright;
+  body clipping into the box (clip, B2b IK: stays logged); camera too close on the bigger box.
+- Camera fix 2026-10-27 (camera.md "As built (traversal pivot)"): the pivot rode the climb root through the lip, so on the
+  1.5 m box jumped from close the arm collapsed into the chest; now the pivot leads up to the top's height. Look for:
+  walk-jump onto the orange box from close and from ~1.5 m out: the camera rises smoothly ahead of the body, keeps its
+  distance, no pop in. Walls still pull it in. Status: camera awaiting owner.
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
@@ -130,13 +134,13 @@ Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
 
-### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; confirmed with follow-up 2026-10-27: get-up convincing, but too much vibration and lies too long as if stunned; LaFAN1 fallAndGetUp clips next)
+### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; awaiting owner 2026-10-27: LaFAN1 get-ups, shorter lying, relaxed on the floor)
 `cargo build -p bevyrrowind --features dev`, `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`).
 Left-click a human NPC (Fargoth far left, Elone centre): plain 45, Ctrl 20, Shift 80 N s at the clicked part. Recovery
-(confirmed 2026-10-27): catch steps, then Delirium fades into the idle (log `recovered, blending out`, `handed back (Balanced)`).
-Fall (owner 2026-10-27: "unnatural flip to stand up"): the get-up clip `Knockout@tail` starts on its side, not its back, and
-the yaw-only get-up frame left the tilt difference to the 0.3 s blend (plus a wrong 180 deg roll for face-down bodies).
-Now the body lies 1.5-4 s, rolls over physically to the clip's side (0.3-1.3 s), then the get-up starts from that pose.
-Shift-click the head a few times; look for: a visible roll onto the side, then a get-up with no whole-body spin. Log:
-`fell`, `gets up (rolled over X s, Y deg left to the blend)`. Headless `get_up_blend_rotation`: blend turn 55-165 deg -> 12-20
-deg over 8 falls. Live: clicks via BRP did not register reliably, fall not seen live.
+confirmed 2026-10-27 (catch steps, fade into the idle). Fall: once down and slowing the body goes limp holding its pose
+(`bodyRelax`: no balancer fidgeting; worst part speed lying still 0.66 -> 0.42 m/s, 6.9 -> 2.2 rad/s), gets up after
+0.3 s at rest (down 0.8-2.6 s, was 2.5-4.3 s). With LAFAN1 in `animation packs/lafan1/` it picks the get-up nearest the
+way it lies (face up / face down / left / right side), rolling only past 20 deg; without it, the roll to `Knockout@tail`.
+Shift-click the head a few times; look for: no jitter while lying, a quick start, a mocap get-up with no whole-body spin.
+Log: `gets up with getup.side_left (down X s, rolled over Y s, Z deg left to the blend)`. Headless `get_up_blend_rotation`:
+push-to-standing MW 5.4 -> 4.1 s, LAFAN1 5.6 s (clips 3-5 s). Live not run (BRP Shift-click unreliable last pass).

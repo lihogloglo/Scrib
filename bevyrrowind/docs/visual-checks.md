@@ -92,7 +92,7 @@ AL-4 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Traversal height
 AL-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Props push
 AL-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
-AL-8 | confirmed with follow-up (2026-10-27: clipping into the box, camera odd on the bigger box) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
+AL-8 | awaiting owner (camera fix 2026-10-27; body clipping into the box stays logged: clip, B2b IK) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
 AL-9 | confirmed | [anim-lab](visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
@@ -104,7 +104,7 @@ AN-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-up ends on t
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
 AN-10, AN-13, AN-14 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-ups
-DE-1 | confirmed with follow-up (2026-10-27: roll-over get-up convincing; too much vibration, lies too long; LaFAN1 get-ups next) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
+DE-1 | awaiting owner (2026-10-27: LaFAN1 get-ups by how the body lies, up sooner, relaxed while lying) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
 AU-3 | awaiting owner | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | awaiting owner | [audio](visual-checks/audio.md) | Footsteps by boots
 AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds

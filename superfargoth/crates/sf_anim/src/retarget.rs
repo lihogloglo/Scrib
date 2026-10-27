@@ -437,11 +437,14 @@ impl Retargeter {
         if n == 0 {
             return Ok(out);
         }
-        // Frame 0's hips ground frame: ground position less the retarget
-        // pose's ground offset, heading against the retarget-pose rotation.
+        // Frame 0's hips ground frame (the last frame's for an in-place
+        // `anchor_end` clip: a get-up ends standing over its origin): ground
+        // position less the retarget pose's ground offset, heading against
+        // the retarget-pose rotation.
         let up = ancestors(&self.target, ht);
         let parent_of = |pose: &[Trs]| up.iter().fold(Affine3A::IDENTITY, |m, &j| m * pose[j].to_affine());
-        let m0 = parent_of(&out.frames[..n_t]) * out.frames[ht].to_affine();
+        let at = if !rules.extract && rules.anchor_end { (n - 1) * n_t } else { 0 };
+        let m0 = parent_of(&out.frames[at..at + n_t]) * out.frames[at + ht].to_affine();
         let heading = Quat::from_rotation_y(twist_angle(affine_rotation(&m0) * self.target_rot[ht].inverse(), Vec3::Y));
         let ground = |p: Vec3| Vec3::new(p.x, 0.0, p.z);
         let origin = ground(Vec3::from(m0.translation)) - heading * ground(pt);

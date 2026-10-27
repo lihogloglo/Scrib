@@ -41,6 +41,10 @@
       private_only: true,
       files: [
         (name: "bvh/obstacles4_subject3.bvh", sha256: "971cb091da5e74c3ec7b5fdbabb9e56fe50e06f71175a44092b39bb67cbd5e64"),
+        (name: "bvh/fallAndGetUp2_subject3.bvh", sha256: "e66fd460eeff103885dbf2ed54482d43761ba1fd8916a41baa6804e5da58725e"),
+        (name: "bvh/fallAndGetUp1_subject5.bvh", sha256: "28b6583d317462d6884fccde7e0958fa867bd8386987d91e0a706b3255771fa2"),
+        (name: "bvh/fallAndGetUp3_subject1.bvh", sha256: "4a67afdd0ae0aaa1034a59b327fe558a6c8381939a7ac4afca324f4913ba0128"),
+        (name: "bvh/fallAndGetUp1_subject4.bvh", sha256: "d0cbd401a8abc5c0e5ac5892ffcc77eff6f19bc2725d4a51c8cb880f423fc53b"),
       ],
       // BVH: centimeters, +Y up. No root bone (the hips wander the capture
       // volume): root motion comes from the target pelvis after retargeting.
@@ -76,6 +80,46 @@
       ],
       root: Progress,
       vertical: true,
+      fallback: Drop,
+    ),
+    // Get-ups for Delirium's fallen hand-back (mw_delirium_bevy), one per way the body
+    // lies: in place, re-based on the last frame (ends standing over the frame).
+    // LAFAN1 takes, lying still to standing still (frames at 30 Hz; DE-1). Without
+    // them, Delirium rolls the body over to Morrowind's `Knockout@tail` (side).
+    // Face up: propped on the elbows, rolls to the left side, kneels, stands (2062-2152).
+    "getup.supine": (
+      graph: "humanoid",
+      candidates: [
+        (source: "lafan1", file: Some("bvh/fallAndGetUp2_subject3.bvh"), clip: "fallAndGetUp2_subject3", range: Some((68.73, 71.73))),
+      ],
+      in_place: true,
+      fallback: Drop,
+    ),
+    // Face down: on the elbows, pushes up to a kneel, stands (2508-2614).
+    "getup.prone": (
+      graph: "humanoid",
+      candidates: [
+        (source: "lafan1", file: Some("bvh/fallAndGetUp1_subject5.bvh"), clip: "fallAndGetUp1_subject5", range: Some((83.60, 87.13))),
+      ],
+      in_place: true,
+      fallback: Drop,
+    ),
+    // On the left side: quick push-up to standing, then a few steps (2472-2572).
+    "getup.side_left": (
+      graph: "humanoid",
+      candidates: [
+        (source: "lafan1", file: Some("bvh/fallAndGetUp3_subject1.bvh"), clip: "fallAndGetUp3_subject1", range: Some((82.40, 85.73))),
+      ],
+      in_place: true,
+      fallback: Drop,
+    ),
+    // On the right side: sits up, turns onto the knees, stands (3674-3822).
+    "getup.side_right": (
+      graph: "humanoid",
+      candidates: [
+        (source: "lafan1", file: Some("bvh/fallAndGetUp1_subject4.bvh"), clip: "fallAndGetUp1_subject4", range: Some((122.47, 127.40))),
+      ],
+      in_place: true,
       fallback: Drop,
     ),
   },

@@ -93,6 +93,8 @@ pub struct RootMotionRules {
     /// rotation). For in-place parts cut from a longer take that end standing
     /// away from the take's origin (a get-up tail): the character then ends
     /// over its frame, so a capsule placed at the frame needs no slide.
+    /// Root motion from the target pelvis (`Retargeter::frames_with_root`)
+    /// anchors the target hips the same way.
     #[serde(default)]
     pub anchor_end: bool,
 }

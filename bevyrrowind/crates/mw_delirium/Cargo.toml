@@ -17,6 +17,10 @@ sf_anim.workspace = true
 sf_character.workspace = true
 
 [dev-dependencies]
+mw_bake.workspace = true
+mw_graphs.workspace = true
+sf_bake.workspace = true
+tempfile.workspace = true
 mw_install.workspace = true
 mw_nif.workspace = true
 mw_vfs.workspace = true

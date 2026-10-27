@@ -198,6 +198,15 @@ chain names of rig-profile.md.
 
 ## Verification
 
+- LAFAN1 get-ups (2026-10-27, DE-1): slots `getup.supine` / `getup.prone` / `getup.side_left` / `getup.side_right`
+  (`in_place: true`: no root track, re-based on the LAST frame, `RootMotionRules::anchor_end`, which
+  `Retargeter::frames_with_root` now honours), humanoid graph states `get_up_*` picked by the Float param `get_up`
+  (Delirium's fallen hand-back; dropped with their clip, then `Knockout@tail`). Ranges, lying still to standing still
+  (s at 30 Hz): supine `fallAndGetUp2_subject3` 68.73-71.73 (on the elbows, rolls to the side, kneels), prone
+  `fallAndGetUp1_subject5` 83.60-87.13 (on the elbows), left side `fallAndGetUp3_subject1` 82.40-85.73 (quick, then
+  steps), right side `fallAndGetUp1_subject4` 122.47-127.40 (sits up first). Rejected: flat prone `fallAndGetUp2_subject2`
+  29.0-34.6 (pauses on hands and knees, 5.6 s), pop-up-and-run takes, a kip-up. Picked with scan scripts (lying = hips
+  under 0.3 m, belly/side from the hip and spine axes, still = every joint under 0.3 m/s).
 - `bevyrrowind anim-sources check` on a folder with Quaternius UAL1 free,
   100STYLE and nothing else: reports present/missing per source and per
   slot; the bake succeeds; missing slots resolve to Morrowind clips.

@@ -383,3 +383,14 @@ ramps it back over 0.1 s), and `Balanced` fires at 0. The host feeds it as the `
 joint after its ops, which fade in with it) and freezes the frame during the fade; no inertialization at the end.
 `recovery_to_idle` (8 dirs x 20/45/80 N s, median/max): at the idle 2.6-3.1 / 3.7 s -> 1.0-1.9 / 2.05 s; time in the
 stance after the last step 1.7-2.0 / 2.75 s -> 0.2-0.4 / 0.5 s. Not done: a step-to-idle foot fix-up (feet may slide).
+
+**As built (2026-10-27, DE-1 get-up pass).** Lying: once down and its centre of mass under 0.5 m/s, the takeover
+sends `stopAllBehaviours` + `bodyRelax` (holdPose, relaxation 50, damping 3; `Rules::down_relax`/`relax`), the
+Euphoria lying state, instead of leaving `bodyBalance`/`catchFall` fighting the floor: worst part speed lying still
+0.66 -> 0.42 m/s, 6.9 -> 2.2 rad/s (`lying_vibration`, 4 pushes). Up sooner: ready after 0.3 s under 0.1 m/s
+(`Rules::rest`), down 0.5..2.5 s (was 0.5 s under 0.05 m/s, 1.5..4 s). Get-ups: `Takeover::set_get_ups` takes one
+pelvis tilt per clip (the host: LAFAN1 `getup.*` slots the graph resolved, else `Knockout@tail`), picks the nearest
+once ready and rolls only past `roll_tolerance` (20 deg); the host sets the graph's `get_up` param. Measured
+(`get_up_blend_rotation`, 8 falls): blend sweep <= 20 deg (23 after a timed-out roll); push-to-standing MW 5.4 -> 4.1 s, LAFAN1 5.6 s
+(clips 3.0-4.9 s); without the roll the nearest LAFAN1 start leaves 6-59 deg, so the roll stays (0-1.3 s, one 3 s
+timeout). Leftovers: the roll sometimes times out on a relaxed body (3 s); LAFAN1 clips could play faster (rate 1.2).

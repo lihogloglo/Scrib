@@ -105,6 +105,10 @@ pub mod params {
     pub const KNOCKDOWN: &str = "knockdown";
     /// Unconscious: loops `Knockout` until cleared, then gets up.
     pub const KNOCKED_OUT: &str = "knocked_out";
+    /// Humanoids: the get-up `knockout` leaves to when `knocked_out` clears:
+    /// 0 `Knockout@tail`, `i + 1` the state of [`super::GET_UPS`]`[i]` (when
+    /// its clip resolved). Set by Delirium's fallen hand-back.
+    pub const GET_UP: &str = "get_up";
     pub const DEAD: &str = "dead";
     pub const DEATH_VARIANT: &str = "death_variant";
     /// Humanoids, 0..1: a lit light is carried in the left hand (and shown).
@@ -269,7 +273,16 @@ pub const WEAPON_SECTIONS: &[(&str, &[&str])] = &[
     ("Shield", &["block"]),
 ];
 
-const DIRECTIONS: [(&str, (f32, f32)); 4] = [("Forward", (0.0, 1.0)), ("Back", (0.0, -1.0)), ("Left", (-1.0, 0.0)), ("Right", (1.0, 0.0))];
+/// The get-ups by how a fallen body lies: `(state, clip slot)`, the
+/// [`params::GET_UP`] value is the index + 1 (sources.ron `getup.*`).
+pub const GET_UPS: [(&str, &str); 4] = [
+    ("get_up_supine", "getup.supine"),
+    ("get_up_prone", "getup.prone"),
+    ("get_up_side_left", "getup.side_left"),
+    ("get_up_side_right", "getup.side_right"),
+];
+
+const DIRECTIONS: [(&str, (f32, f32)); 4] =[("Forward", (0.0, 1.0)), ("Back", (0.0, -1.0)), ("Left", (-1.0, 0.0)), ("Right", (1.0, 0.0))];
 
 fn range(param: &str, v: f32) -> [C; 2] {
     [C::Greater(param.into(), v - 0.5), C::Less(param.into(), v + 0.5)]
@@ -641,6 +654,26 @@ impl Builder {
         state(states::KNOCKOUT, ko, drive);
         let koe = self.plain("knockout_end", "Knockout@tail", None, Some(false));
         state(states::KNOCKOUT_END, koe, drive);
+        // Clip slots of the animation-sources manifest (libraries the user
+        // brings): optional chains, dropped when no library is present.
+        let (source_clips, source_slots) = crate::sources::SourcesManifest::builtin().graph_clips(self.t.sources_name());
+        for (name, clip) in source_clips {
+            self.a.clips.entry(name).or_insert(clip);
+        }
+        // Get-ups by how the body lies (Delirium's fallen hand-back sets
+        // `get_up`), on the template's get-up slots; each state drops with
+        // its clip (no library: `knockout_end` only).
+        let mut get_ups = Vec::new();
+        for (v, (name, slot)) in GET_UPS.iter().enumerate() {
+            if self.a.clips.contains_key(*slot) {
+                let node = self.play(name, slot, Some(false));
+                state(name, node, None);
+                get_ups.push((*name, v + 1));
+            }
+        }
+        if !get_ups.is_empty() {
+            self.param(p::GET_UP, ParamKind::Float(0.0));
+        }
         let sko = self.plain("swim_knockout", "SwimKnockout", Some("Knockout"), Some(true));
         state(states::SWIM_KNOCKOUT, sko, drive);
         let mut deaths = Vec::new();
@@ -658,7 +691,7 @@ impl Builder {
         let move_names: Vec<&str> = moves.iter().map(|m| m.state).collect();
         let hit_names: Vec<&str> = hits.iter().map(|(n, _)| n.as_str()).collect();
         let death_names: Vec<&str> = [deaths.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), vec![states::SWIM_DEATH]].concat();
-        let knock_once = [states::KNOCKDOWN, states::SWIM_KNOCKDOWN, states::KNOCKOUT_END];
+        let knock_once: Vec<&str> = [states::KNOCKDOWN, states::SWIM_KNOCKDOWN, states::KNOCKOUT_END].into_iter().chain(get_ups.iter().map(|g| g.0)).collect();
         let knock_loop = [states::KNOCKOUT, states::SWIM_KNOCKOUT];
         // Movement states plus the landing, which leaves on its own terms.
         let afoot: Vec<&str> = [&move_names[..], &[states::LAND]].concat();
@@ -683,6 +716,11 @@ impl Builder {
         let up: Vec<&str> = [&afoot[..], &hit_names, &knock_once].concat();
         go(&up, states::SWIM_KNOCKOUT, vec![is(p::KNOCKED_OUT), is(p::SWIMMING)], inert(0.2));
         go(&up, states::KNOCKOUT, vec![is(p::KNOCKED_OUT), not(p::SWIMMING)], inert(0.2));
+        for (name, v) in &get_ups {
+            #[allow(clippy::cast_precision_loss)]
+            let when = [&[not(p::KNOCKED_OUT)][..], &range(p::GET_UP, *v as f32)].concat();
+            go(&[states::KNOCKOUT], name, when, inert(0.1));
+        }
         go(&[states::KNOCKOUT], states::KNOCKOUT_END, vec![not(p::KNOCKED_OUT)], inert(0.1));
         let standing: Vec<&str> = [&afoot[..], &hit_names].concat();
         go(&standing, states::SWIM_KNOCKDOWN, vec![C::Trigger(p::KNOCKDOWN.into()), is(p::SWIMMING)], inert(0.15));
@@ -758,13 +796,8 @@ impl Builder {
                 slot_clips.push(self.clip(&format!("Attack{n}"), true, None));
             }
         }
-        // Clip slots of the animation-sources manifest (libraries the user
-        // brings): optional chains, dropped when no library is present.
-        let (clips, slots) = crate::sources::SourcesManifest::builtin().graph_clips(self.t.sources_name());
-        for (name, clip) in clips {
-            self.a.clips.entry(name).or_insert(clip);
-        }
-        slot_clips.extend(slots);
+        // The animation-sources slots (clips registered with the get-ups).
+        slot_clips.extend(source_slots);
         self.a.slot_clips = slot_clips;
         // Playback follows the measured speed over the cycle's authored root
         // speed (animfix 2026-10-12: walk 2.2 m/s, run 3.2 m/s; NPC walkers

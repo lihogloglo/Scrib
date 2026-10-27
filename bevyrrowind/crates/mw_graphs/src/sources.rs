@@ -157,6 +157,11 @@ pub struct Slot {
     /// Keep the root's vertical travel (climbs, mantles).
     #[serde(default)]
     pub vertical: bool,
+    /// No root motion: the clip plays in place, re-based on its last frame
+    /// (`RootMotionRules::anchor_end`): get-ups, which start lying wherever
+    /// the body fell and end standing over the character's frame.
+    #[serde(default)]
+    pub in_place: bool,
     /// After the last candidate: another graph clip (a Morrowind group) or drop.
     #[serde(default = "drop")]
     pub fallback: ClipFallback,
@@ -176,7 +181,13 @@ impl Slot {
         ClipRules {
             range: candidate.range,
             looping: self.looping,
-            root_motion: RootMotionRules { mode: self.root, vertical: self.vertical, ..RootMotionRules::default() },
+            root_motion: RootMotionRules {
+                mode: self.root,
+                vertical: self.vertical,
+                extract: !self.in_place,
+                anchor_end: self.in_place,
+                ..RootMotionRules::default()
+            },
             ..ClipRules::default()
         }
     }
@@ -284,15 +295,18 @@ mod tests {
         assert_eq!(slot.candidates[0].reference(), "quaternius_ual2:ClimbUp_1m_RM");
         assert_eq!(slot.candidates[1].reference(), "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2");
         let refs = m.references().unwrap();
-        let root = refs.iter().find(|r| r.source == "lafan1").and_then(|r| r.retarget_root.clone()).unwrap();
+        let root = refs.iter().find(|r| r.reference.contains("obstacles4")).and_then(|r| r.retarget_root.clone()).unwrap();
         assert!(root.vertical && root.extract && root.mode == RootMotionMode::Progress);
+        // Get-ups: in place, re-based on the last frame (no root track).
+        let getup = refs.iter().find(|r| r.reference.contains("fallAndGetUp2_subject3")).and_then(|r| r.retarget_root.clone()).unwrap();
+        assert!(!getup.extract && getup.anchor_end);
         assert!(refs.iter().filter(|r| r.source != "lafan1").all(|r| r.retarget_root.is_none()));
         assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge_RM");
         let rules = slot.rules(&slot.candidates[0]);
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);
         assert!(rules.root_motion.vertical && rules.root_motion.extract);
         let (clips, slots) = m.graph_clips("humanoid");
-        assert_eq!(slots, ["traverse.climb.up", "traverse.mantle.waist"]);
+        assert_eq!(slots, ["getup.prone", "getup.side_left", "getup.side_right", "getup.supine", "traverse.climb.up", "traverse.mantle.waist"]);
         assert_eq!(clips[0].1.fallback, Some(ClipFallback::Drop));
     }
 

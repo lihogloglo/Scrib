@@ -17,8 +17,10 @@
 //!   `Held`) shows through, the frame stays where the blend started; at 0 the graph simply carries on (no
 //!   inertialization). A push during it brings the physics back. Timeout (or a blow-up) → the graph inertializes from
 //!   the shown pose (`inertialize_from`). Down → the graph's `knocked_out` flag is set while it lies there; once still
-//!   (or after a few seconds) Delirium rolls the body over to the tilt of the `Knockout@tail` get-up clip's first pose
-//!   (it starts on its side; `Takeover::set_get_up`, DE-1), then the frame moves under that pose's pelvis (yaw and
+//!   (or after a few seconds) Delirium picks the get-up nearest the way the body lies (the graph's [`GET_UP_SLOTS`],
+//!   LAFAN1 face up / face down / sides, chosen by the `get_up` param; without them `Knockout@tail`, which starts on
+//!   its side) and rolls the body over to its first pose's tilt only past the tolerance (`Takeover::set_get_ups`,
+//!   DE-1); lying, the body is relaxed (`bodyRelax`). Then the frame moves under that pose's pelvis (yaw and
 //!   translation only, `get_up_root` without its roll) and the get-up plays out of the lying pose. The root takes the body's move (the walkers'
 //!   knockdown glue) and wakes; [`DeliriumHandedBack`] tells the host.
 //! - **World**: one flat floor at the ground under the pelvis (one ray down through the walkers' [`Physics`] ground
@@ -66,8 +68,14 @@ pub const HUMAN_SKELETONS: [&str; 2] = ["meshes/base_anim.nif", "meshes/base_ani
 /// The graph flag the fallen hand-back sets while it lies there and clears for the get-up (`mw_graphs` `knocked_out`).
 pub const KNOCKED_OUT: &str = "knocked_out";
 
-/// The get-up clip (`mw_graphs` `knockout_end`).
+/// The get-up clip (`mw_graphs` `knockout_end`) when the graph has none of [`GET_UP_SLOTS`].
 pub const GET_UP_CLIP: &str = "Knockout@tail";
+
+/// The graph's get-up choice (`mw_graphs::build::params::GET_UP`): 0 `Knockout@tail`, `i + 1` [`GET_UP_SLOTS`]`[i]`.
+pub const GET_UP_PARAM: &str = "get_up";
+
+/// The get-up clip slots by how the body lies (`mw_graphs::build::GET_UPS`, sources.ron `getup.*`: LAFAN1 takes).
+pub const GET_UP_SLOTS: [&str; 4] = ["getup.supine", "getup.prone", "getup.side_left", "getup.side_right"];
 
 /// Hand-back inertialization, s (timeouts, blow-ups, the get-up).
 pub const HAND_BACK_BLEND: f32 = 0.3;
@@ -207,6 +215,8 @@ struct Live {
     hand_back: Option<HandBack>,
     flagged: bool,
     last_pose: Option<Vec<Trs>>,
+    /// The graph's get-ups, in the takeover's `set_get_ups` order: (`get_up` value, clip slot).
+    get_ups: Vec<(f32, usize)>,
 }
 
 #[derive(Resource, Default)]
@@ -332,10 +342,11 @@ fn start(
             .and_then(|g| g.probe_one(ProbeQuery::down(sim.world_point(parts[0].translation), GROUND_RAY)))
             .map_or(0.0, |hit| sim.sim_point(hit.point).z);
         let mut takeover = Takeover::start(&rig.body, &parts, Some((&before, prev.secs.max(1e-3))), Some((scale, weight)), ground_z, seed, Rules::default());
-        // Down, it rolls over to the get-up clip's first pose before the get-up (DE-1: no turn left to the blend).
-        if let Some(clip) = get_up_pose(animator) {
-            takeover.set_get_up(mw_delirium::clip_tilt(&rig.body.table, skeleton, &clip.to_vec()));
-        }
+        // Down, it takes the get-up nearest the way it lies, rolling over to its first pose only past the tolerance
+        // (DE-1: no turn left to the blend).
+        let get_ups = get_up_clips(animator);
+        let tilts: Vec<Vec3> = get_ups.iter().map(|&(_, c)| mw_delirium::clip_tilt(&rig.body.table, skeleton, &first_pose(animator, c).to_vec())).collect();
+        takeover.set_get_ups(&tilts);
         let hit = prev.hit.map(|h| {
             let at = sim.sim_point(h.point);
             let part = h.part.unwrap_or_else(|| nearest_part(&parts, at));
@@ -371,6 +382,7 @@ fn start(
                 hand_back: None,
                 flagged: false,
                 last_pose: None,
+                get_ups,
             },
         );
     }
@@ -424,23 +436,36 @@ fn shown_pose(l: &Live, skeleton: &sf_anim::Skeleton, parts: &[Part], frame: &Wo
     pose
 }
 
-/// The get-up clip's first frame (local pose), when the graph has the clip.
-fn get_up_pose(animator: &Animator) -> Option<sf_anim::LocalPose> {
-    let slot = animator.asset.graph.clips.iter().position(|c| c.reference == GET_UP_CLIP)?;
-    let clip = animator.asset.clips.get(slot)?;
-    let mut local = sf_anim::LocalPose::rest(&animator.asset.skeleton);
-    clip.sample(0.0, &mut local, None);
-    Some(local)
+/// The graph's get-ups as (`get_up` value, clip slot): the [`GET_UP_SLOTS`] clips the graph resolved (a clip library
+/// such as LAFAN1 present), else `Knockout@tail` (value 0), else none.
+fn get_up_clips(animator: &Animator) -> Vec<(f32, usize)> {
+    let graph = &animator.asset.graph;
+    #[allow(clippy::cast_precision_loss)]
+    let slots: Vec<(f32, usize)> =
+        GET_UP_SLOTS.iter().enumerate().filter_map(|(i, s)| graph.slot_clip(s).map(|c| ((i + 1) as f32, usize::from(c)))).collect();
+    if !slots.is_empty() {
+        return slots;
+    }
+    graph.clips.iter().position(|c| c.reference == GET_UP_CLIP).map(|c| (0.0, c)).into_iter().collect()
 }
 
-/// The get-up frame for a body lying in `pose` at `frame`: the get-up clip's first pelvis pose on the lying pelvis
-/// (yaw and translation only), on the floor. Delirium rolled the body to the clip's tilt first
-/// (`Takeover::set_get_up`), so the yaw alone leaves the hand-back's blend no whole-body turn (DE-1); no
-/// `ROLL_TO_BACK` (the clip starts on its side, not on its back).
+/// A clip's first frame (local pose).
+fn first_pose(animator: &Animator, clip: usize) -> sf_anim::LocalPose {
+    let mut local = sf_anim::LocalPose::rest(&animator.asset.skeleton);
+    if let Some(clip) = animator.asset.clips.get(clip) {
+        clip.sample(0.0, &mut local, None);
+    }
+    local
+}
+
+/// The get-up frame for a body lying in `pose` at `frame`: the picked get-up clip's first pelvis pose on the lying
+/// pelvis (yaw and translation only), on the floor. Delirium picked the clip nearest the way the body lies and rolled
+/// it to the clip's tilt first (`Takeover::set_get_ups`), so the yaw alone leaves the hand-back's blend little
+/// whole-body turn (DE-1); no `ROLL_TO_BACK`.
 fn get_up_frame(l: &Live, animator: &Animator, pose: &[Trs], frame: &WorldTransform) -> Option<WorldTransform> {
     let skeleton = &animator.asset.skeleton;
     let joint = l.rig.body.table.parts[0].joint;
-    let local = get_up_pose(animator)?;
+    let local = first_pose(animator, l.get_ups.get(l.takeover.get_up()?)?.1);
     let mut model = sf_anim::ModelPose::new(skeleton.len());
     sf_anim::local_to_model(skeleton, &local, &mut model, &Affine3A::IDENTITY);
     let (_, clip_rot, clip_pos) = model.mats[joint].to_scale_rotation_translation();
@@ -498,6 +523,7 @@ fn read_back(
         if l.takeover.fell() && !l.flagged {
             l.flagged = true;
             animator.set_bool(KNOCKED_OUT, true);
+            animator.set_float(GET_UP_PARAM, 0.0);
             info!("delirium: {root} fell ({:.1} s after the takeover)", l.takeover.time);
         }
         let Some(how) = l.hand_back else {
@@ -520,7 +546,15 @@ fn read_back(
         let get_up = if how == HandBack::Fallen { get_up_frame(l, &animator, &pose, &frame) } else { None };
         if let Some(up) = get_up {
             let left = l.takeover.get_up_left().unwrap_or(0.0).to_degrees();
-            info!("delirium: {root} gets up (rolled over {:.2} s, {left:.0} deg left to the blend)", l.takeover.rolling.unwrap_or(0.0));
+            let (value, _) = l.takeover.get_up().and_then(|i| l.get_ups.get(i).copied()).unwrap_or((0.0, 0));
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let name = if value > 0.0 { GET_UP_SLOTS[value as usize - 1] } else { GET_UP_CLIP };
+            animator.set_float(GET_UP_PARAM, value);
+            info!(
+                "delirium: {root} gets up with {name} (down {:.1} s, rolled over {:.2} s, {left:.0} deg left to the blend)",
+                l.takeover.down.unwrap_or(0.0),
+                l.takeover.rolling.unwrap_or(0.0)
+            );
             if let Ok(mut t) = frames.p1().get_mut(l.body) {
                 move_frame(&mut t, &frame, l.scale, &up);
             }

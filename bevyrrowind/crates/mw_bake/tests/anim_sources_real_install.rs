@@ -31,7 +31,7 @@ const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m_RM";
 /// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
-/// Every slot in the shipped manifest (`traverse.climb.up` = UAL1 `ClimbLedge_RM`, for B3).
+/// Every slot in the shipped manifest with a non-LAFAN1 candidate (`traverse.climb.up` = UAL1 `ClimbLedge_RM`, for B3).
 const SLOTS: usize = 2;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;

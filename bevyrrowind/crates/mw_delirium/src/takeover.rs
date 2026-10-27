@@ -10,7 +10,10 @@
 //! Roll-over before the get-up (DE-1): a yaw-only get-up frame leaves the tilt difference between the lying pelvis and
 //! the get-up clip's first pose for the hand-back's blend to sweep (up to 165 deg: the "magic flip"). With the clip's
 //! tilt set ([`Takeover::set_get_up`]), a body down and ready first rolls over to it (a velocity servo on the torso, the
-//! Euphoria-style roll before a get-up); measured by `takeover_real_install::get_up_blend_rotation`.
+//! Euphoria-style roll before a get-up); measured by `takeover_real_install::get_up_blend_rotation`. With several
+//! clips ([`Takeover::set_get_ups`]: face up, face down, sides) it picks the one nearest the way the body lies and
+//! rolls only past [`Rules::roll_tolerance`]. Once down and slowing it goes limp holding its pose
+//! ([`Rules::down_relax`], `bodyRelax`): no balancer fidgeting on the floor.
 //!
 //! Bevy-free. The host turns the animated pose into part frames ([`crate::bones_to_parts`], sim space: Z up, metres,
 //! the actor's own authoring frame at the takeover), steps [`Takeover::step`] at a fixed rate and copies the parts back
@@ -36,8 +39,18 @@ pub struct Rules {
     pub min_secs: f32,
     /// Down: pelvis under this share of its standing height (or Delirium's own `fallen`).
     pub fallen_ratio: f32,
-    /// Down this long at least before the get-up, s; at most this long even if not still.
+    /// Down this long at least before the get-up, s; at most this long even if not still (DE-1: up soon after it
+    /// comes to rest).
     pub down_secs: (f32, f32),
+    /// Down, at rest: the centre of mass slower than this, m/s, for this long, s (the get-up waits for it, up to
+    /// [`Self::down_secs`]'s max).
+    pub rest: (f32, f32),
+    /// Down and slower than this (centre of mass, m/s): Delirium stops its behaviours and relaxes the body
+    /// (`bodyRelax`, holding the pose), Euphoria's lying state: no balancer fidgeting on the floor (DE-1).
+    /// `None`: the takeover's behaviour runs on.
+    pub down_relax: Option<f32>,
+    /// `bodyRelax` relaxation (0 stiff .. 100 limp) and damping (a multiplier of the muscle damping).
+    pub relax: (f32, f32),
     /// Balancing this long without coming to rest: hand back anyway, s.
     pub max_secs: f32,
     /// Pelvis sinking faster than this at the takeover: start with `catchFall` instead of `bodyBalance`, m/s.
@@ -71,7 +84,10 @@ impl Default for Rules {
             still_secs: 0.5,
             min_secs: 0.5,
             fallen_ratio: 0.5,
-            down_secs: (1.5, 4.0),
+            down_secs: (0.5, 2.5),
+            rest: (0.1, 0.3),
+            down_relax: Some(0.5),
+            relax: (50.0, 3.0),
             max_secs: 15.0,
             falling_speed: 1.0,
             max_velocity: (8.0, 15.0),
@@ -121,10 +137,15 @@ pub struct Takeover {
     /// Seconds rolling over before the get-up (`Some` once the roll started).
     pub rolling: Option<f32>,
     still: f32,
+    resting: f32,
     calm: f32,
     blending: bool,
-    /// The get-up clip's first pose: sim up (+Z) in its pelvis part's frame ([`get_up_tilt`]).
-    get_up: Option<Vec3>,
+    /// The get-up clips' first poses: sim up (+Z) in their pelvis part's frame ([`get_up_tilt`]).
+    get_ups: Vec<Vec3>,
+    /// The get-up picked once down and ready: the index into the clips set ([`Takeover::get_up`]).
+    chosen: Option<usize>,
+    /// Whether the body relaxed on the floor ([`Rules::down_relax`]).
+    pub relaxed: bool,
 }
 
 /// The torso parts the roll-over turns (Buttocks, Spine0-3); the limbs follow through the joints.
@@ -204,9 +225,12 @@ impl Takeover {
             weight: 1.0,
             rolling: None,
             still: 0.0,
+            resting: 0.0,
             calm: 0.0,
             blending: false,
-            get_up: None,
+            get_ups: Vec::new(),
+            chosen: None,
+            relaxed: false,
         };
         t.send(behaviour, &[("start", Value::Bool(true))]);
         t
@@ -231,7 +255,20 @@ impl Takeover {
         self.agent.doll.impulse(part, at, impulse);
         self.still = 0.0;
         self.calm = 0.0;
+        self.resting = 0.0;
         self.blending = false;
+    }
+
+    /// Lying on the floor: stops the behaviours (the balancer, `catchFall`) and relaxes the body holding its pose
+    /// ([`Rules::relax`]), as Euphoria's `bodyRelax` once down. The roll-over before the get-up pushes it.
+    fn relax(&mut self) {
+        self.relaxed = true;
+        let (relaxation, damping) = self.rules.relax;
+        self.send("stopAllBehaviours", &[]);
+        self.send(
+            "bodyRelax",
+            &[("start", Value::Bool(true)), ("holdPose", Value::Bool(true)), ("relaxation", Value::Float(relaxation)), ("damping", Value::Float(damping))],
+        );
     }
 
     /// Whether the blend-out to the animation runs.
@@ -257,12 +294,35 @@ impl Takeover {
     /// frame, sim axes). Down and ready, the body then rolls over to it before the [`HandBack::Fallen`] hand-back (the
     /// Euphoria-style roll before a get-up: the get-up clip lies on one side, the blend only takes up what is left).
     pub fn set_get_up(&mut self, clip: Vec3) {
-        self.get_up = clip.try_normalize();
+        self.set_get_ups(&[clip]);
     }
 
-    /// The pelvis tilt left to the get-up clip's, rad (`None`: no get-up clip set).
+    /// Several get-up clips (one per way the body lies: face up, face down, sides; DE-1): down and ready, the body
+    /// takes the one whose first pose's tilt is nearest its own ([`Self::get_up`]) and rolls over only what is left
+    /// past [`Rules::roll_tolerance`].
+    pub fn set_get_ups(&mut self, clips: &[Vec3]) {
+        self.get_ups = clips.iter().filter_map(|c| c.try_normalize()).collect();
+        self.chosen = None;
+    }
+
+    /// The get-up picked (index into the clips set), once down and ready.
+    pub fn get_up(&self) -> Option<usize> {
+        self.chosen
+    }
+
+    /// The get-up clip nearest the body's pelvis tilt now, and the angle left to it, rad.
+    pub fn nearest_get_up(&self) -> Option<(usize, f32)> {
+        let pelvis = self.agent.doll.frames().next()?.rotation;
+        self.get_ups.iter().map(|&c| get_up_tilt(pelvis, c)).enumerate().min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// The pelvis tilt left to the picked get-up clip's (or the nearest one's before the pick), rad (`None`: no
+    /// get-up clip set).
     pub fn get_up_left(&self) -> Option<f32> {
-        Some(get_up_tilt(self.agent.doll.frames().next()?.rotation, self.get_up?))
+        match self.chosen {
+            Some(i) => Some(get_up_tilt(self.agent.doll.frames().next()?.rotation, self.get_ups[i])),
+            None => self.nearest_get_up().map(|n| n.1),
+        }
     }
 
     /// One roll-over step; `true` once done (within [`Rules::roll_tolerance`] and slow, out of time, or no clip).
@@ -271,7 +331,10 @@ impl Takeover {
     fn roll_over(&mut self, dt: f32) -> bool {
         const ROLL_RADIUS: f32 = 0.25;
         const SETTLED: f32 = 1.0;
-        let Some(clip) = self.get_up else { return true };
+        if self.chosen.is_none() {
+            self.chosen = self.nearest_get_up().map(|n| n.0);
+        }
+        let Some(clip) = self.chosen.map(|i| self.get_ups[i]) else { return true };
         let rolled = self.rolling.get_or_insert(0.0);
         *rolled += dt;
         let out_of_time = *rolled >= self.rules.roll_secs;
@@ -315,6 +378,7 @@ impl Takeover {
         let velocity = self.com().1;
         self.still = if velocity.length() < self.rules.still_speed { self.still + dt } else { 0.0 };
         let still = self.still >= self.rules.still_secs;
+        self.resting = if velocity.length() < self.rules.rest.0 { self.resting + dt } else { 0.0 };
         let stepping = self.stepping();
         let calm = stepping == Some(false) && velocity.truncate().length() < self.rules.recover_speed;
         self.calm = if calm { self.calm + dt } else { 0.0 };
@@ -333,11 +397,17 @@ impl Takeover {
         } else {
             (self.weight + rate(self.rules.blend_in)).min(1.0)
         };
-        match &mut self.down {
+        if let Some(down) = &mut self.down {
+            *down += dt;
+        }
+        match self.down {
             Some(down) => {
-                *down += dt;
+                // On the floor and slowing: limp, holding the pose (no balancer fidgeting while it lies there).
+                if !self.relaxed && self.rules.down_relax.is_some_and(|v| velocity.length() < v) {
+                    self.relax();
+                }
                 let (min, max) = self.rules.down_secs;
-                let ready = self.rolling.is_some() || (still && *down >= min) || *down >= max;
+                let ready = self.rolling.is_some() || (self.resting >= self.rules.rest.1 && down >= min) || down >= max;
                 (ready && self.roll_over(dt)).then_some(HandBack::Fallen)
             }
             None if self.blending && self.weight <= 0.0 => Some(HandBack::Balanced),
