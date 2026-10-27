@@ -337,8 +337,13 @@ fn push(r: &ContextRequest<'_>, phase: &Phase, q: &mut Vec<ProbeQuery>) {
             // Room on top, where the character would stand.
             q.push(ProbeQuery::ray(at(lip + into * p.radius.min(0.5 * p.vault_depth) + Vec3::Y * 0.02), Vec3::Y, p.height + NUDGE));
             // The face's middle: a miss means nothing stands under the lip.
+            // Its length reaches the face's plane along `d` (a slanted approach meets it farther
+            // than the sweep's contact point is; that length missed and read a box as an overhang).
             if let Some(mid) = mid_height(c, top, p) {
-                q.push(ProbeQuery::ray(at(Vec3::Y * mid), d, Vec3::new(c.x, 0.0, c.z).length() + NUDGE));
+                let flat = Vec3::new(c.x, 0.0, c.z);
+                let slant = d.dot(normal);
+                let reach = if slant < -0.05 { flat.dot(normal) / slant } else { flat.length() };
+                q.push(ProbeQuery::ray(at(Vec3::Y * mid), d, reach.max(flat.length()) + NUDGE));
             }
             // The far face, back from the first sample off the top.
             if let Some(k) = off {

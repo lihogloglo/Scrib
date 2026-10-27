@@ -319,6 +319,7 @@ fn step_actions<G: GroundProbe + Resource>(
 }
 
 /// The context probe's obstacle ahead along the stick (else the facing), as the chooser reads it.
+/// The chooser gates the stick's angle to the face it finds (`sf_action` traversal input cone).
 fn sense_obstacle(probes: &mut ContextProbes, ground: &dyn GroundProbe, body: &ActionBody, stick: Vec2) -> Option<Obstacle> {
     let dir = if stick.length_squared() > 1e-4 {
         Vec3::new(stick.x, 0.0, stick.y).normalize()

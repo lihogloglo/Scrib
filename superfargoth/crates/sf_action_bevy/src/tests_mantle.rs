@@ -39,7 +39,11 @@ impl GroundProbe for Course {
 
 /// A box ledge `height` m tall whose face is 1 m ahead of the start (+Z), 4 m deep.
 fn course(height: f32) -> Course {
-    let (min, max) = (Vec3::new(-3.0, 0.0, 2.0), Vec3::new(3.0, height, 6.0));
+    course_box(Vec3::new(-3.0, 0.0, 2.0), Vec3::new(3.0, height, 6.0))
+}
+
+/// One box from `min` to `max` on the plane.
+fn course_box(min: Vec3, max: Vec3) -> Course {
     let h = (max - min) / 2.0;
     let c = |x: f32, y: f32, z: f32| [x * h.x, y * h.y, z * h.z];
     let corners = [
@@ -256,5 +260,220 @@ fn mantle_progress_interpolates_from_the_same_ticks_as_the_drawn_body() {
         println!("{frame_hz} Hz frames: {frames} mantle frames, worst clip/body gap {worst} m");
         assert!(frames > 2, "the mantle ran over several frames");
         assert!(worst < 1e-3, "the clip's progress stays on the drawn body: {worst} m");
+    }
+}
+
+// Approach sweep: the press timing, angle and gait a mantle triggers from (owner 2026-10-27:
+// "it's quite hard to get the high mantling to work").
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gait {
+    Walk,
+    Run,
+    Sprint,
+}
+
+/// When the press comes: 0.5 m of travel before the capsule touches the face, on the touching
+/// tick, or after 0.3 s of pushing (sliding) along it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum When {
+    Early,
+    Contact,
+    Slide,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Approach {
+    height: f32,
+    /// The stick's angle off the face's inward normal (+Z), degrees.
+    angle: f32,
+    gait: Gait,
+    when: When,
+    class: ActionClass,
+    sneak: bool,
+}
+
+/// What an approach did: the mantle that ran (and the facing it ended with, degrees off the
+/// face's inward normal) and the press tick's refusals.
+#[derive(Debug, Default)]
+struct Outcome {
+    mantle: Option<(RuleKey, f32)>,
+    refusals: Vec<sf_action::Refusal>,
+    pressed: bool,
+    /// The press tick's raw context hit along the stick (kind, height, depth) and the obstacle the
+    /// chooser senses.
+    hit: Option<(Affordance, f32, f32)>,
+    sensed: Option<(ObstacleClass, f32)>,
+}
+
+/// The box faces the start at this z (its front face).
+const FACE_Z: f32 = 2.0;
+
+#[derive(Resource)]
+struct Drive {
+    a: Approach,
+    dir: Vec2,
+    contact: Option<u32>,
+    press: Option<u32>,
+    out: Outcome,
+}
+
+fn drive(tick: Res<ActionTick>, course: Res<Course>, mut d: ResMut<Drive>, mut q: Query<(&mut ActionCharacter, &ActionBody)>) {
+    let t = tick.0.0;
+    for (mut c, body) in &mut q {
+        let p = WorldPos::ORIGIN.delta_f32(body.loco.position);
+        let gap = FACE_Z - c.params.radius - p.z;
+        if d.contact.is_none() && gap <= 0.03 {
+            d.contact = Some(t);
+        }
+        let due = match d.a.when {
+            When::Early => gap <= 0.5 * d.a.angle.to_radians().cos(),
+            When::Contact => d.contact.is_some(),
+            When::Slide => d.contact.is_some_and(|c0| t >= c0 + 18),
+        };
+        if due && d.press.is_none() {
+            d.press = Some(t);
+            let params = ContextParams::from_mover(&body.params);
+            let dir = Vec3::new(d.dir.x, 0.0, d.dir.y);
+            let mut out = [None];
+            let request = ContextRequest { feet: body.loco.position, dir, params: &params, query: ContextQuery::ObstacleAhead { range: OBSTACLE_RANGE_M } };
+            ContextProbes::default().run(&[request], &*course, &mut out);
+            d.out.hit = out[0].map(|h| (h.kind, h.height, h.depth));
+            d.out.sensed = sense_obstacle(&mut ContextProbes::default(), &*course, body, d.dir).map(|o| (o.class, o.height));
+        }
+        let mut cmd = Command::empty(tick.0);
+        cmd.stick = d.dir * if d.a.gait == Gait::Walk { 0.4 } else { 1.0 };
+        if let Some(t0) = d.press.filter(|&t0| t < t0 + 6) {
+            if t == t0 {
+                cmd.buttons.pressed.insert(d.a.class);
+            }
+            cmd.buttons.held.insert(d.a.class);
+        }
+        if d.a.gait == Gait::Sprint {
+            cmd.buttons.held.insert(ActionClass::Sprint);
+        }
+        if d.a.sneak {
+            cmd.buttons.held.insert(ActionClass::Sneak);
+        }
+        c.command = cmd;
+    }
+}
+
+fn watch(tick: Res<ActionTick>, mut d: ResMut<Drive>, q: Query<(&ActionCharacter, &ActionBody)>) {
+    let mantles = [RuleKey::of("traverse.mantle.waist"), RuleKey::of("traverse.mantle.high")];
+    for (c, body) in &q {
+        if d.press == Some(tick.0.0) {
+            d.out.pressed = true;
+            d.out.refusals.clone_from(&c.output.refusals);
+        }
+        if mantles.contains(&c.state.mov) {
+            d.out.mantle = Some((c.state.mov, sf_controller::wrap_angle(body.loco.motion.yaw).to_degrees()));
+        }
+    }
+}
+
+/// Runs one approach at a 16 m wide box `height` m tall: the stick held at `angle` toward the
+/// face from 6 m back, aimed to touch it at x = 0.
+fn approach(a: Approach) -> Outcome {
+    let dir = Vec2::new(a.angle.to_radians().sin(), a.angle.to_radians().cos());
+    let radius = CharacterParams::default().radius;
+    let touch = Vec3::new(0.0, 0.0, FACE_Z - radius);
+    let start = touch - Vec3::new(dir.x, 0.0, dir.y) * 6.0;
+    let mut app = App::new();
+    app.add_plugins((TimePlugin, SfActionPlugin::<Course>::default()))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
+        .insert_resource(course_box(Vec3::new(-8.0, 0.0, FACE_Z), Vec3::new(8.0, a.height, FACE_Z + 4.0)))
+        .insert_resource(rules())
+        .insert_resource(Drive { a, dir, contact: None, press: None, out: Outcome::default() })
+        .add_systems(FixedUpdate, drive.in_set(ActionSystems::Command))
+        .add_systems(FixedUpdate, watch.after(ActionSystems::Move));
+    let character = ActionCharacter::new(CharacterId(1), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+    let body = ActionBody::new(Locomotion::new(WorldPos::ORIGIN.offset(start), dir.x.atan2(dir.y)), MoverParams::default(), WorldPos::ORIGIN);
+    app.world_mut().spawn((character, body, Transform::default()));
+    for _ in 0..900 {
+        app.update();
+        let d = app.world().resource::<Drive>();
+        if d.press.is_some_and(|p| app.world().resource::<ActionTick>().0.0 > p + 120) {
+            break;
+        }
+    }
+    std::mem::take(&mut app.world_mut().resource_mut::<Drive>().out)
+}
+
+fn describe(a: &Approach, o: &Outcome) -> String {
+    let what = match o.mantle {
+        _ if !o.pressed => "NO PRESS (never reached the face)".to_string(),
+        Some((k, yaw)) if k == RuleKey::of("traverse.mantle.waist") => format!("WAIST  yaw {yaw:+5.1}"),
+        Some((_, yaw)) => format!("HIGH   yaw {yaw:+5.1}"),
+        None => "refuse".to_string(),
+    };
+    let refusals = o.refusals.iter().map(|r| format!("{:?}:{:?}", r.rule, r.reason)).collect::<Vec<_>>().join(" ");
+    let hit = o.hit.map_or("no hit".to_string(), |(k, h, dep)| format!("{k:?} h{h:.2} d{dep:.2}"));
+    let refusals = format!("{hit} | sensed {:?} | {refusals}", o.sensed);
+    format!("h{:.1} {:>2}deg {:<6} {:<7} {:<4} -> {what:<24} {refusals}", a.height, a.angle, format!("{:?}", a.gait), format!("{:?}", a.when), format!("{:?}", a.class))
+}
+
+#[test]
+#[ignore = "measurement: mantle approach sweep (angle x gait x press timing), prints accept/refuse per case"]
+fn mantle_approach_sweep() {
+    let (mut ok, mut all) = (0, 0);
+    for height in [1.2, 2.0] {
+        for angle in [0.0, 20.0, 40.0, 60.0, 75.0] {
+            for gait in [Gait::Walk, Gait::Run, Gait::Sprint] {
+                let presses = [(When::Early, ActionClass::Jump), (When::Contact, ActionClass::Jump), (When::Slide, ActionClass::Jump), (When::Contact, ActionClass::Up)];
+                for (when, class) in presses {
+                    let a = Approach { height, angle, gait, when, class, sneak: false };
+                    let o = approach(a);
+                    all += 1;
+                    ok += usize::from(o.mantle.is_some());
+                    println!("{}", describe(&a, &o));
+                }
+            }
+        }
+    }
+    println!("mantled {ok}/{all}");
+}
+
+#[test]
+fn a_40_degree_run_with_jump_at_contact_mantles_both_heights_facing_the_face() {
+    for (height, rule) in [(1.2, "traverse.mantle.waist"), (2.0, "traverse.mantle.high")] {
+        let a = Approach { height, angle: 40.0, gait: Gait::Run, when: When::Contact, class: ActionClass::Jump, sneak: false };
+        let o = approach(a);
+        println!("{}", describe(&a, &o));
+        let (k, yaw) = o.mantle.expect("mantled");
+        assert_eq!(k, RuleKey::of(rule), "the band's mantle");
+        assert!(yaw.abs() < 3.0, "ends facing the face's inward normal: {yaw} deg");
+    }
+}
+
+#[test]
+fn a_glancing_pass_along_a_face_never_mantles() {
+    for height in [1.2, 2.0] {
+        for when in [When::Contact, When::Slide] {
+            let a = Approach { height, angle: 75.0, gait: Gait::Run, when, class: ActionClass::Jump, sneak: false };
+            let o = approach(a);
+            println!("{}", describe(&a, &o));
+            assert!(o.pressed && o.mantle.is_none(), "no mantle at 75 deg");
+        }
+    }
+}
+
+#[test]
+fn sneaking_at_an_angle_never_mantles() {
+    for height in [1.2, 2.0] {
+        let a = Approach { height, angle: 40.0, gait: Gait::Run, when: When::Contact, class: ActionClass::Jump, sneak: true };
+        let o = approach(a);
+        println!("{}", describe(&a, &o));
+        assert!(o.pressed && o.mantle.is_none(), "no mantle while sneaking");
+    }
+}
+
+#[test]
+fn faces_above_the_bands_refuse_at_an_angle() {
+    for height in [2.5, 3.5] {
+        let a = Approach { height, angle: 40.0, gait: Gait::Run, when: When::Contact, class: ActionClass::Jump, sneak: false };
+        let o = approach(a);
+        println!("{}", describe(&a, &o));
+        assert!(o.pressed && o.mantle.is_none(), "no mantle on a {height} m face");
     }
 }

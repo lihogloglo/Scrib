@@ -23,6 +23,12 @@ pub const MAX_SETTLE: usize = 4;
 /// Cosine of the `need_forward` cone (60°).
 const FORWARD_COS: f32 = 0.5;
 
+/// Cosine of the traversal input cone (65°): a `need_forward` rule with an obstacle probe needs the
+/// stick within this of the face's inward normal, whatever the body faces (Uncharted, TLOU, ALS gate
+/// a mantle on the input toward the wall, not the facing). 60° approaches mantle; a 70°+ glancing
+/// run along a face does not.
+const TRAVERSE_INPUT_COS: f32 = 0.422_618_27;
+
 /// What the interaction query found in front of the character (the shell's cone or ray from
 /// `Command.view`; `sf_interaction` points from C1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +219,8 @@ struct Facts {
     vspeed: f32,
     speed: f32,
     forward: bool,
+    /// The stick's direction, unit (active only).
+    stick: Option<Vec2>,
     mode: Mode,
     focus: Option<Focus>,
     obstacle: Option<Obstacle>,
@@ -233,6 +241,18 @@ impl Facts {
         }
     }
 
+    /// `need_forward`: the stick toward the sensed face for an obstacle rule (the traversal input
+    /// cone), else within the forward cone of the facing.
+    fn forward_ok(&self, e: &crate::Entry) -> bool {
+        match (&e.probe, self.obstacle, self.stick) {
+            (Some(ProbeNeed::Obstacle { .. }), Some(o), Some(stick)) => {
+                let into = Vec2::new(-o.normal.x, -o.normal.z).normalize_or_zero();
+                into != Vec2::ZERO && stick.dot(into) >= TRAVERSE_INPUT_COS
+            }
+            _ => self.forward,
+        }
+    }
+
     fn entry(&self, r: &CompiledRule) -> Result<(), Refused> {
         let e = &r.rule.entry;
         let within = |band: Option<(f32, f32)>, v: f32| band.is_none_or(|(lo, hi)| (lo..=hi).contains(&v));
@@ -245,7 +265,7 @@ impl Facts {
         if !e.states.is_empty() && !e.states.iter().any(|&s| self.has(s)) {
             return Err(Refused::State);
         }
-        if e.need_forward && !self.forward {
+        if e.need_forward && !self.forward_ok(e) {
             return Err(Refused::Forward);
         }
         if e.lock.is_some() && e.lock != self.lock_side {
@@ -336,6 +356,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         vspeed: impact,
         speed: sense.planar_speed,
         forward: stick_active && stick.normalize_or_zero().dot(facing) >= FORWARD_COS,
+        stick: stick_active.then(|| stick.normalize_or_zero()),
         mode: state.mode.mode,
         focus: sense.focus,
         obstacle: sense.obstacle,

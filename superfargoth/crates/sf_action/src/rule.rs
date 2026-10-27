@@ -176,7 +176,8 @@ pub enum Phase {
 pub struct Entry {
     /// Request classes that start it; empty = automatic (or forced in framework categories).
     pub classes: Vec<ActionClass>,
-    /// Needs the stick within 60° of the facing.
+    /// Needs the stick within 60° of the facing; with an obstacle probe, within 65° of the sensed
+    /// face's inward normal instead (the traversal input cone: the body may face anywhere).
     pub need_forward: bool,
     pub modes: Vec<Mode>,
     /// Any of these.
