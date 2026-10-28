@@ -30,7 +30,7 @@ pub use runtime::{FarMaterials, LEVEL_TINT, node_center};
 
 use std::sync::Arc;
 
-use bevy_app::{App, Plugin, Startup, Update};
+use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{AssetApp, embedded_asset};
 use bevy_ecs::prelude::*;
 use bevy_pbr::MaterialPlugin;
@@ -145,6 +145,15 @@ pub fn far_streaming_config(mut config: StreamingConfig, levels: &FarLevels) -> 
     config
 }
 
+/// System sets of [`FarFieldPlugin`].
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FarFieldSystems {
+    /// `PostUpdate`: applies [`FarShadowInput`] to proxy and impostor materials
+    /// after floating-origin and terrain updates so distant shadows never jump
+    /// by a cell on origin-shift frames (SH-11).
+    FarShadow,
+}
+
 /// The far field. Add after `WorldStreamingPlugin`.
 #[derive(Default)]
 pub struct FarFieldPlugin {
@@ -203,11 +212,11 @@ impl Plugin for FarFieldPlugin {
                     runtime::spawn_upper_nodes,
                     runtime::residency_pass,
                     runtime::update_materials,
-                    runtime::update_far_shadow,
                 )
                     .chain()
                     .after(StreamingSystems::Drive),
-            );
+            )
+            .add_systems(PostUpdate, runtime::update_far_shadow.in_set(FarFieldSystems::FarShadow));
     }
 }
 

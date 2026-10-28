@@ -25,6 +25,19 @@ use crate::{UNIT_METERS, WeatherType};
 /// genus layers come down with it (the app's `CLOUD_WORLD_SCALE`).
 pub const CLOUD_WORLD_SCALE: f32 = 0.5;
 
+/// Deepest cloud layer thickness on Morrowind's compressed island (~4.5 km across,
+/// Red Mountain ~271 m): Earth-scale cumulonimbus halved (`4 000 m`) still towers
+/// into the stratosphere and stretches the `WE4b` raymarch envelope shell (WE-5).
+pub const MAX_CLOUD_THICKNESS_M: f32 = 1_600.0;
+
+/// Genus preset scaled to Morrowind's world heights and storm ceiling.
+#[must_use]
+pub fn mw_clouds(genus: CloudPreset) -> CloudWeather {
+    let mut w = CloudWeather::preset(genus).scaled_heights(CLOUD_WORLD_SCALE);
+    w.thickness = w.thickness.min(MAX_CLOUD_THICKNESS_M);
+    w
+}
+
 /// Cloud-altitude wind per unit of `Cloud Speed`, m/s (the app's
 /// `CLOUD_SPEED_MPS`): real-world speeds read frozen beside a 30x clock.
 pub const CLOUD_SPEED_MPS: f32 = 10.0;
@@ -181,9 +194,7 @@ pub(crate) fn apply(ty: WeatherType, p: &mut WeatherPreset, w: &mut WeatherIni<'
         .unwrap_or(1.5);
     p.clouds = CloudTerms {
         speed: cloud_speed * CLOUD_SPEED_MPS,
-        ..CloudTerms::from_weather(
-            &CloudWeather::preset(look.genus).scaled_heights(CLOUD_WORLD_SCALE),
-        )
+        ..CloudTerms::from_weather(&mw_clouds(look.genus))
     };
 
     p.sky = SkyTerms {

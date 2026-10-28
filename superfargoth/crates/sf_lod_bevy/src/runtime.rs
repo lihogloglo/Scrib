@@ -87,9 +87,11 @@ pub(crate) fn create_materials(
     commands.insert_resource(FarMaterials { proxy, lights });
 }
 
-/// An impostor model set ready to draw: one material, a layer per model.
+/// An impostor model set ready to draw: one material per far-field level
+/// (sharing the two texture arrays; separate handles allow per-level F5 tint, FF-2),
+/// and a texture-array layer per model.
 struct ImpostorSet {
-    material: Handle<ImpostorMaterial>,
+    materials: [Handle<ImpostorMaterial>; 3],
     layers: HashMap<String, u32>,
 }
 
@@ -245,8 +247,8 @@ impl CellProxies for FarHook {
         }
         let local = Transform::from_translation(cx.cell_origin.delta_f32(node.header.center()));
         let range = visibility(&levels.node_range(1, node.header.lead, false));
-        let impostors = w.impostors.as_ref().map(|s| (s.material.clone(), s.layers.clone()));
-        let parts = spawn_parts(world, cx.parent, local, &node, 1, &range, cx.layers, &materials, impostors.as_ref(), &settings);
+        let impostors = w.impostors.as_ref().map(|s| (s.materials[0].clone(), s.layers.clone()));
+        let parts = spawn_parts(world, cx.parent, local, &node, 1, &range, cx.layers, &materials, impostors.as_ref().map(|(m, l)| (m, l)), &settings);
         let n = u32::try_from(parts.len()).unwrap_or(u32::MAX);
         if let Some(slot) = w.l1.get_mut(&cx.cell) {
             slot.parts = parts;
@@ -317,7 +319,7 @@ fn spawn_parts(
     range: &VisibilityRange,
     layers: &RenderLayers,
     materials: &FarMaterials,
-    impostors: Option<&(Handle<ImpostorMaterial>, HashMap<String, u32>)>,
+    impostors: Option<(&Handle<ImpostorMaterial>, &HashMap<String, u32>)>,
     settings: &FarFieldSettings,
 ) -> Vec<Entity> {
     let h = &node.header;
@@ -494,14 +496,16 @@ pub(crate) fn build_impostor_arrays(
         let n = same.len();
         let albedo = images.add(atlas_array(px, mips, n, TextureFormat::Rgba8UnormSrgb, albedo));
         let normal_depth = images.add(atlas_array(px, mips, n, TextureFormat::Rgba8Unorm, normal_depth));
-        let tint = if debug.level_tint { Vec4::from((Vec3::from_array(LEVEL_TINT[0]), 0.5)) } else { Vec4::new(1.0, 1.0, 1.0, 0.5) };
-        let material = materials.add(ImpostorMaterial {
-            params: ImpostorParams { grid: UVec4::new(s.frames, u32::from(s.mode == OctaMode::Full), s.frame_px, 0), tint, far: Vec4::ZERO },
-            albedo,
-            normal_depth,
-            far_map: Handle::default(),
+        let materials = [0usize, 1, 2].map(|i| {
+            let tint = if debug.level_tint { Vec4::from((Vec3::from_array(LEVEL_TINT[i]), 0.5)) } else { Vec4::new(1.0, 1.0, 1.0, 0.5) };
+            materials.add(ImpostorMaterial {
+                params: ImpostorParams { grid: UVec4::new(s.frames, u32::from(s.mode == OctaMode::Full), s.frame_px, 0), tint, far: Vec4::ZERO },
+                albedo: albedo.clone(),
+                normal_depth: normal_depth.clone(),
+                far_map: Handle::default(),
+            })
         });
-        w.impostors = Some(ImpostorSet { material, layers });
+        w.impostors = Some(ImpostorSet { materials, layers });
     }
 }
 
@@ -533,7 +537,7 @@ pub(crate) fn spawn_upper_nodes(world: &mut World) {
         let Some(layer) = world.resource::<WorldspaceRegistry>().get(ws).map(|e| e.layer) else { continue };
         let layers = RenderLayers::layer(layer);
         let levels = levels_for(&settings, w.dir.as_deref());
-        let impostors = w.impostors.as_ref().map(|s| (s.material.clone(), s.layers.clone()));
+        let impostors = w.impostors.as_ref().map(|s| (s.materials.clone(), s.layers.clone()));
         let impostors_settled = w.impostors.is_some() || w.impostors_failed;
         for node in w.upper.values_mut() {
             if !node.parts.is_empty() {
@@ -547,9 +551,10 @@ pub(crate) fn spawn_upper_nodes(world: &mut World) {
             if !copy.impostors.is_empty() && !impostors_settled {
                 continue;
             }
-            let range = visibility(&levels.node_range(copy.header.key.level, node.lead, node.forced));
-            node.parts =
-                spawn_parts(world, node.entity, Transform::IDENTITY, &copy, copy.header.key.level, &range, &layers, &materials, impostors.as_ref(), &settings);
+            let level = copy.header.key.level;
+            let range = visibility(&levels.node_range(level, node.lead, node.forced));
+            let imp = impostors.as_ref().map(|(mats, map)| (&mats[usize::from(level.clamp(1, 3) - 1)], map));
+            node.parts = spawn_parts(world, node.entity, Transform::IDENTITY, &copy, level, &range, &layers, &materials, imp, &settings);
             if node.parts.is_empty() {
                 // Nothing drawable: mark with the node entity itself so it
                 // isn't retried.
@@ -668,7 +673,7 @@ pub(crate) fn update_materials(
     mut sprites: ResMut<Assets<LightSpriteMaterial>>,
     night: Res<crate::FarLightsNight>,
     fog: Res<sf_render_order_bevy::TranslucentFog>,
-    mut applied: Local<Option<(bool, f32)>>,
+    mut applied: Local<Option<(bool, f32, usize)>>,
 ) {
     let Some(far) = far else { return };
     if sprites.get(&far.lights).is_some_and(|m| m.fog_params != fog.params || m.fog_volume != fog.volume)
@@ -677,23 +682,30 @@ pub(crate) fn update_materials(
         m.fog_params = fog.params;
         m.fog_volume.clone_from(&fog.volume);
     }
-    let wanted = (debug.level_tint, (night.0 * 100.0).round() / 100.0);
+    let state = shared.lock();
+    let imp_sets: Vec<[Handle<ImpostorMaterial>; 3]> =
+        state.worlds.values().filter_map(|w| w.impostors.as_ref().map(|s| s.materials.clone())).collect();
+    drop(state);
+    let wanted = (debug.level_tint, (night.0 * 100.0).round() / 100.0, imp_sets.len());
     if *applied == Some(wanted) {
         return;
     }
     *applied = Some(wanted);
     for (i, h) in far.proxy.iter().enumerate() {
         if let Some(mut m) = proxies.get_mut(h) {
-            m.base.base_color = if debug.level_tint { Color::from(LinearRgba::rgb(LEVEL_TINT[i][0], LEVEL_TINT[i][1], LEVEL_TINT[i][2])) } else { Color::WHITE };
+            let [r, g, b] = LEVEL_TINT[i];
+            m.base.base_color = if debug.level_tint { Color::from(LinearRgba::rgb(r, g, b)) } else { Color::WHITE };
+            // Modest self-glow in debug tint mode so dark basalt/stone L2/L3 proxies read
+            // unmistakably as green / blue / purple through aerial haze (FF-2).
+            m.base.emissive = if debug.level_tint { LinearRgba::rgb(r * 0.22, g * 0.22, b * 0.22) } else { LinearRgba::BLACK };
         }
     }
-    let state = shared.lock();
-    for w in state.worlds.values() {
-        if let Some(set) = &w.impostors
-            && let Some(mut m) = impostors.get_mut(&set.material)
-        {
-            let rgb = if debug.level_tint { Vec3::from_array(LEVEL_TINT[0]) } else { Vec3::ONE };
-            m.params.tint = Vec4::from((rgb, m.params.tint.w));
+    for mats in &imp_sets {
+        for (i, h) in mats.iter().enumerate() {
+            if let Some(mut m) = impostors.get_mut(h) {
+                let rgb = if debug.level_tint { Vec3::from_array(LEVEL_TINT[i]) } else { Vec3::ONE };
+                m.params.tint = Vec4::from((rgb, m.params.tint.w));
+            }
         }
     }
     if let Some(mut m) = sprites.get_mut(&far.lights) {
@@ -719,7 +731,8 @@ pub(crate) fn update_far_shadow(
 ) {
     let Some(far) = far else { return };
     let state = shared.lock();
-    let sets: Vec<Handle<ImpostorMaterial>> = state.worlds.values().filter_map(|w| w.impostors.as_ref().map(|s| s.material.clone())).collect();
+    let sets: Vec<Handle<ImpostorMaterial>> =
+        state.worlds.values().filter_map(|w| w.impostors.as_ref()).flat_map(|s| s.materials.iter().cloned()).collect();
     drop(state);
     if applied.as_ref().is_some_and(|(i, n)| i == &*input && *n == sets.len()) {
         return;

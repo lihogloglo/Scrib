@@ -26,7 +26,7 @@ pub const CLOUD_WORLD_SCALE: f32 = mw_weather::visual::CLOUD_WORLD_SCALE;
 /// A genus pinned over the weather's clouds (`--clouds`, BRP `clouds`), at
 /// Morrowind's halved altitudes; its wind stays the weather's.
 pub fn pinned_clouds(genus: CloudPreset) -> CloudWeather {
-    CloudWeather::preset(genus).scaled_heights(CLOUD_WORLD_SCALE)
+    mw_weather::visual::mw_clouds(genus)
 }
 
 /// Quality presets (industry-audit.md J1, ROADMAP Next up 4): one view-distance

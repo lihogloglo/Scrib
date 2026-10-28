@@ -678,11 +678,12 @@ fn drive(
             }
         }
         let shown = if ocean && surface.is_none() { frame.enabled } else { inherited.get() };
-        if shown {
-            any = true;
-            if primary.is_none() || (ocean && surface.is_none()) {
-                primary = Some(p);
-            }
+        if !shown {
+            continue;
+        }
+        any = true;
+        if primary.is_none() || (ocean && surface.is_none()) {
+            primary = Some(p);
         }
         let stale = materials.get(&handle.0).is_some_and(|m| {
             let e = &m.extension;

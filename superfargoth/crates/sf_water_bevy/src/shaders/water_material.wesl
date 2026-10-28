@@ -144,10 +144,11 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     let V = to_camera / max(d, 1e-4);
 
     // Wave normal from the cascades' slopes at the Lagrangian point, mip-filtered by the pixel's
-    // footprint on the surface (geometric mean of its two axes); the slope variance the mips
-    // average away widens the highlight instead of aliasing (Bruneton 2010, simplified).
+    // major-axis footprint on the surface (grazing rays span `1 / |V.y|` more wave crests along the
+    // view axis, WA-1); the slope variance the mips average away widens the highlight instead of
+    // aliasing (Bruneton 2010, simplified).
     let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
-    let footprint = d * pixel / sqrt(max(abs(V.y), 0.05));
+    let footprint = d * pixel / max(abs(V.y), 0.06);
     var s = vec4(0.0);
     var whitecap = 0.0;
     var lost = 0.0;
@@ -164,13 +165,13 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
         // (The displacement has no mips: foam fades out once it would alias.)
         whitecap += f32(c < 2u) * textureSampleLevel(displacement, wave_sampler, uv, i32(c), 0.0).w * scales.x * (1.0 - smoothstep(2.0, 5.0, lod));
     }
-    let far = smoothstep(water.misc.z * 2.0, water.misc.z * 20.0, d);
+    let far = smoothstep(water.misc.z * 2.0, water.misc.z * 16.0, d);
     var N = normalize(vec3(-s.x / max(1.0 + s.z, 0.2), 1.0, -s.y / max(1.0 + s.w, 0.2)));
-    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), far * 0.7));
+    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), far));
     if !is_front {
         N = -N;
     }
-    let roughness = clamp(look.roughness + 0.05 * lost + 0.15 * far, 0.02, 0.6);
+    let roughness = clamp(look.roughness + 0.06 * lost + 0.22 * far, 0.02, 0.65);
 
     // The scene behind the water (snapshot after sky, clouds and fog).
     let px = vec2<i32>(in.position.xy);

@@ -226,7 +226,9 @@ impl Plugin for TerrainPlugin {
             .add_systems(bevy_app::Startup, far_map::setup_far_map)
             .add_systems(
                 PostUpdate,
-                (setup_terrain, update_terrain, far_map::update_far_map).chain().in_set(TerrainSystems::Update),
+                // `update_far_map` runs before `update_terrain` so `FarShadowMap::params`
+                // tracks any `TerrainOrigin` shift before `update_terrain` writes `P_FAR` (SH-11).
+                (setup_terrain, far_map::update_far_map, update_terrain).chain().in_set(TerrainSystems::Update),
             );
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {

@@ -358,7 +358,12 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             }
         }
         if !perf.off.has(Part::FarShadows) {
-            app.add_systems(Update, fog_shadow_heights);
+            app.add_systems(
+                PostUpdate,
+                fog_shadow_heights
+                    .after(TerrainSystems::Update)
+                    .before(sf_atmos_bevy::CloudSystems::Drive),
+            );
         }
         // Blended and additive NIF surfaces draw after the fog composite: they
         // fog themselves from the froxels (`--off transfog` is the A/B).
@@ -375,7 +380,12 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // weather.md tier 2: the terrain's far shadow map shadows proxies and
         // impostors too (`--off farshadows`: neither gets it).
         if !perf.off.has(Part::FarShadows) {
-            app.add_systems(Update, far_shadow_input);
+            app.add_systems(
+                PostUpdate,
+                far_shadow_input
+                    .after(TerrainSystems::Update)
+                    .before(sf_lod_bevy::FarFieldSystems::FarShadow),
+            );
         }
     }
 
@@ -1282,9 +1292,10 @@ impl QualityRender for Quality {
     /// drops a cascade (one less caster pass) and ends at 200 m.
     fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
         let (num_cascades, maximum_distance, lambda, overlap_proportion) = match self {
-            Self::Low => (3, 150.0, 0.85, 0.15),
-            Self::Medium | Self::High => (3, 180.0, 0.85, 0.15),
-            Self::Ultra => (4, 250.0, 0.9, 0.2),
+            Self::Low => (3, 160.0, 0.82, 0.15),
+            Self::Medium => (3, 200.0, 0.80, 0.15),
+            Self::High => (3, 230.0, 0.78, 0.18),
+            Self::Ultra => (4, 280.0, 0.85, 0.2),
         };
         sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion }
     }

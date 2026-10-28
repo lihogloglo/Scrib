@@ -330,9 +330,9 @@ const APP_TABLE: [AppRow; 10] = [
     (WeatherType::Blizzard, CloudPreset::Overcast, 7.5, 80.0, 0.0, 300.0, 400.0, 0.0, 0.0),
 ];
 
-use crate::visual::{BANK_DENSITY, BANK_FALLOFF, ground_fog, morning_haze};
+use crate::visual::{BANK_DENSITY, BANK_FALLOFF, ground_fog, morning_haze, mw_clouds};
 use sf_weather::sf_atmos::fog::extinction_for_visibility;
-use sf_weather::sf_atmos::{CloudPreset, CloudSettings};
+use sf_weather::sf_atmos::CloudPreset;
 use sf_weather::sf_sky::KeyCurve;
 
 fn by_hour(c: &KeyCurve, h: f32) -> f32 {
@@ -357,8 +357,8 @@ fn presets_match_the_app_tables() {
     for (ty, genus, speed, haze, dust, vis, height, banks, banks_day) in APP_TABLE {
         let p = preset_of(&w, ty);
         let name = ty.name();
-        // Clouds: the app's `cloud_settings` (genus, halved heights, speed × 10).
-        let mut app = CloudSettings::preset(genus).weather.scaled_heights(0.5);
+        // Clouds: the app's `cloud_settings` (genus, Morrowind-scaled heights, speed × 10).
+        let mut app = mw_clouds(genus);
         app.wind = app.wind.normalize_or(glam::Vec2::X) * speed * 10.0;
         let dir = app.wind.normalize_or(glam::Vec2::X);
         let mut got = p.clouds.to_weather(dir);
