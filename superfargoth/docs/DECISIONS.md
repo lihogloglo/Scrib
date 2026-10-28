@@ -1537,3 +1537,10 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-28 (ambient-anim-audit): ambient-life clips come from offline generators (NVIDIA Kimodo for activities, MotionBricks
   for links) run by `bevyrrowind/tools/motiongen`, never in the game or the bake; output is SOMA BVH, source `generated`,
   local only (`private_only`) until the licence check. Owner reviews in-game with `clip-preview --browse`, not an HTML page.
+- 2026-10-28 (render-opt, H2): directional PCSS computes blocker height and penumbra radius in world meters across cascade
+  splits (`clip_from_world` Z-row + analytic receiver slope, adapted from OpenMW Clockwork `sunsoft.glsl` @ `c5e5a9a6`, GPL-3.0,
+  `THIRD_PARTY_NOTICES.md`) with a 4-tap sunlit precheck and far-cascade (`>= 0.15 m/texel`) rotated PCF fast path.
+- 2026-10-28 (render-opt, H1): outfit and held skinned meshes spawn with conservative static `Aabb + NoAutoAabb` from
+  `OutfitAssets::bind_bounds` (`DynamicSkinnedMeshBounds` added only while `PhysicsPose` is active); `AnimLod::idle_skip_a3`
+  skips graph ticks for `Dormant` `A3` actors (`mw_walkers_bevy` wakes exterior AI within 110 m / sleeps at 122 m); vendored
+  `extract_visibility_ranges` updates incrementally (`O(changed + removed)`) and `AtmosphereStaticLutCache` caches static LUTs.

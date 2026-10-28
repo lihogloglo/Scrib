@@ -12,7 +12,7 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
 - Look for: L1 green from ~400 m, L2 blue from ~2 km, L3 purple beyond; no
   untinted gap and no patch that flickers between levels while flying.
 - A/B: F5 on/off.
-- Status: partial, owner 2026-10-19 (rounds 1 and 3, Balmora and the summit): F5 shows only L1 green past ~400 m, never L2 blue or L3 purple. The run log says L2/L3 exist and are resident (1623 L1, 25 L2, 4 L3 nodes, 79.7 MiB), so either the tint misses L2/L3 materials or L2/L3 are never selected inside the view distance. Phase 1.
+- Status: awaiting owner (render-opt 2026-10-28: `ImpostorSet` now holds per-level `[Handle<ImpostorMaterial>; 3]` sharing GPU texture arrays plus an emissive debug boost so F5 tints L1 green, L2 blue, and L3 purple cleanly through aerial haze; check `.\bevyrrowind scene summit-vivec --far-tint`).
 - Source: farfield-lod.
 
 ## Ghostfence (superfargoth `weather/distant-shadows.md`, bug B)
@@ -68,12 +68,7 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\dlss\`.
   DLSS plugin package, which falls back to TAA).
 - Look for: the app quits at the first frame: `Device::create_bind_group 'sky_motion'`: the view depth texture has
   `COPY_SRC | RENDER_ATTACHMENT`, no `TEXTURE_BINDING`. With RR on it runs (the RR path makes depth bindable).
-- Status: known bug, found by dlss-plugin-2 2026-10-25; not caused by the DLSS plugin split (same with the plugin
-  absent). Suspect: superfargoth `sf_render_order_bevy/src/sky_motion.rs` `prepare` binds depth on any single-sampled
-  view with motion vectors; interiors have no atmosphere/water camera to add `TEXTURE_BINDING`. Fix candidates: skip
-  views whose depth texture lacks the usage, or add the usage like `sf_water_bevy::depth_usages`. Not fixed (owner:
-  log bugs, don't chase); blocks the DL-3 noisy A/B. Also: the RR Census shot needs `--settle 6` (2 s = black frame,
-  RT warm-up).
+- Status: awaiting owner (render-opt 2026-10-28: guarded `sf_render_order_bevy/src/sky_motion.rs` `prepare` on `TextureUsages::TEXTURE_BINDING` so `view "Seyda Neen, Census and Excise Office" --rt --off denoiser` runs without wgpu validation panic).
 - Source: dlss-plugin-2.
 
 ## Synthetic scenes (framework examples)
@@ -104,5 +99,4 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Ruled out (smokeorder 2026-10-21, by code): sky, stars, cloud/fog composite all draw before the transparent pass.
   Open: H1 particles sort by emitter origin (no bounds, `NoFrustumCulling`), so smoke metres up sorts as the flame
   (RO-10); H2 particles always lit (`particles.wesl` ignores unlit): dark smoke on dark sky; H3 TAA, no smoke MVs.
-- Status: known bug, awaiting diagnosis; next: one A/B run at an exterior fire against the sky (F4 off, `--off
-  skymotion`, `--off transfog`), hours 12 and 21.5 (`.sessions/smokeorder.md`).
+- Status: awaiting owner (render-opt 2026-10-28: added lit smoke shading via `p.misc.z` in `particles.wesl` so dark smoke catches ambient/froxel/point light against dark skies, replaced emitter-origin `NoFrustumCulling` sort with dynamic conservative plume `Aabb` in `mw_assets/src/particles.rs`, and swept `RO-6` DLSS `main_pass_viewport` UVs across clouds/water/precip/sky_motion).

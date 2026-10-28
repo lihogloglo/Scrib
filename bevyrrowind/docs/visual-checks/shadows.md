@@ -29,9 +29,8 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 ### SH-11: Distant flashes while moving (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene balmora`, fly around.
 - Seen by owner 2026-10-19 (round 1): brief flashes in the distance whenever the camera moves; they look like shadows.
-  Suspects (unverified): cascade refit / texel snap at the 250 m end, the terrain far shadow map swapping on its
-  async refresh, the dithered cascade end.
-- Status: known bug: Phase 1 shadow pass.
+- Fix (render-opt 2026-10-28): ordered `far_map::update_far_map` before `update_terrain` and moved `fog_shadow_heights`, `far_shadow_input`, and `FarFieldSystems::FarShadow` to `PostUpdate` after `TerrainSystems::Update` so shifted terrain origins never render 1 stale frame; also replaced Bevy cascade-NDC PCSS with world-unit directional PCSS (OpenMW Clockwork adaptation).
+- Status: awaiting owner (2026-10-28).
 
 ### SH-13: Point-light (lamp) shadows (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora, 22:00).
@@ -97,6 +96,5 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   rule in vendored `bevy_pbr` light.rs hashes a skinned caster by its root on a ≥ 20 cm grid (joints ignored) and
   refreshes ≤ 2 faces/frame, so a walker's lamp shadow redraws ~5-8 Hz and an idler's never animates. Not the cube
   cache (`POINT_SHADOW_CACHE` off since B3, so `--off shadowcache` is a no-op) nor the anim budget.
-- Fix parked, unbuilt: `superfargoth/vendor/parked/SH-20-*.diff` (redraw a face when its casters move/deform,
-  outside the budget; `--off movershadows`). Needs build, A/B, perf (census, balmora_walk_night ≤ 11 ms).
-- Status: known bug, on the rendering-bugs list (ROADMAP 1.12).
+- Fix (render-opt 2026-10-28): `ShadowMoverRefresh` in vendored `bevy_pbr/src/render/light.rs` redraws close-up animated character shadow faces (within 16 m of active camera, up to 4 mover faces/frame) on the same frame outside the LRU budget; A/B `--off movershadows`.
+- Status: awaiting owner (2026-10-28).

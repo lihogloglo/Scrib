@@ -92,4 +92,4 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   15°, lee ≈ 3.7 obstacle heights), eye 100 m upwind; terrain is an occluder again; rain stays ~top-down.
   Check: `.\bevyrrowind scene wk-balmora --weather ashstorm` (A/B `--off precipocc`): street in the lee of houses
   and hills shows little/no ash, open ground and the `fg-redmtn-ashstorm` hillside (70 m up) still streak. Rain under
-  roofs unchanged (`--weather rain`). Storm direction from Red Mountain: Phase 4; tall clouds: open.
+  roofs unchanged (`--weather rain`). Tall clouds fixed 2026-10-28 (render-opt: Morrowind storm cloud deck thickness capped to 1.6 km in `mw_weather/src/visual.rs`, plus dry-weather `PrecipOcclusion` skip), awaiting owner. Storm direction from Red Mountain: Phase 4.

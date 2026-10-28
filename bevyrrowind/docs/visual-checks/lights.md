@@ -27,9 +27,8 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
 - Cause (lightclusters 2026-10-21, confirmed by source + release A/B shots `shots/lightclusters/`): Bevy 0.20 bug.
   `clustered_forward.wesl` `view_fragment_cluster_index` multiplies a render-res `frag_coord` by `cluster_factors`
   sized for the output viewport, so under `MainPassResolutionOverride` (DLSS) pixels read the grid's top-left part.
-- Fix parked, unbuilt: `superfargoth/vendor/parked/LT-4-cluster-main-pass-viewport.diff` (rescale by
-  `viewport / main_pass_viewport`, exactly 1.0 without DLSS). File an upstream Bevy issue.
-- Status: known bug, on the rendering-bugs list (ROADMAP 1.12).
+- Fix (render-opt 2026-10-28): applied upstream `bevy#26236` (`#26235`, `#26237`) in vendored `bevy_pbr` / `bevy_core_pipeline` so `clustered_forward.wesl`, `transmission.wesl`, and OIT normalize by `view.main_pass_viewport.zw` under DLSS.
+- Status: awaiting owner (2026-10-28).
 
 ### LT-3: Point-light shadows, torch-bearers (`scene lt-torch-shadows`; stage: `character "imperial guard" --night`)
 - Kind: game location + game models.
@@ -55,4 +54,5 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   is still-Blend leaves on the forward FroxelFog path.
 - 4 textures could not be decoded, so they are never promoted to cutouts: `poxyclouds2`, `tx_banner_temple_04`,
   `tx_eggmine_banner*`, `tx_rope_net_01`.
-- Status: known bug, logged by renderfix1 2026-10-21; not scheduled.
+- Fix (render-opt 2026-10-28): propagated NetImmerse `NiVertexColorProperty::LightingMode` (`Emissive` vs `EmissiveAmbientDiffuse`) and `NiTexturingProperty::ClampMode` through `mw_nif`, `sf_model`, `mw_bake`, and `mw_assets`, and added 16-bit `A1R5G5B5`/`A4R4G4B4`/`B5G6R5` DDS decoding in `mw_bake/src/textures.rs` for cutout promotion. Re-bake `mesh.cook` / `tex.meta` if using an older bake store; check `view Balmora --hour 22`.
+- Status: awaiting owner (2026-10-28).

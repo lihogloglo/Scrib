@@ -80,8 +80,15 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (30)
+### Awaiting owner (37)
 
+SH-11 | awaiting owner | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
+SH-20 | awaiting owner | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
+LT-4 | awaiting owner | [lights](visual-checks/lights.md) | Lamp light cluster lookup under DLSS (`bevy#26236`)
+LM-2 | awaiting owner | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
+FF-2 | awaiting owner | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
+DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash
+RO-B | awaiting owner | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
 CB-2 | awaiting owner (2026-10-27: lock, release, recentre, locked facing confirmed "main logic solid"; marker + side rolls awaiting) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
 PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
@@ -121,16 +128,15 @@ SV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Save/load scre
 HD-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
 MM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
 
-### Partial (10)
+### Partial (9)
 
-FF-2 | partial | [rendering](visual-checks/rendering.md) | Far-field levels
 SH-15 | partial | [shadows](visual-checks/shadows.md) | 8 cached lamp shadows
 DR-1 | partial | [streaming](visual-checks/streaming.md) | Through a door into an interior
 DR-2 | partial | [streaming](visual-checks/streaming.md) | Back out
 LT-2 | partial | [lights](visual-checks/lights.md) | Dark interior keeps its lights
 PH-7 | partial | [physics](visual-checks/physics.md) | Item body shapes
 PH-9 | partial | [physics](visual-checks/physics.md) | knockdown and get-up
-WA-1 | partial | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
+WA-1 | partial (distant moiré awaiting owner; shore/whitecaps Phase 4) | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
 IV-1 | partial | [player-ui](visual-checks/player-ui.md) | Take items and Fargoth's ring; inventory layout, hover, drop, paper doll missing
 IV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Container window: the ring barrel outside the Census office (ring), move both ways, Take all closes
 CO-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Console: exterior COC, paste, Down/Enter on suggestions (2026-10-26)
@@ -143,18 +149,12 @@ RO-A | confirmed with follow-up | [rendering](visual-checks/rendering.md) | Tran
 DJ-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Talk to Fargoth, Sellus greeting; resizable window wished
 SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
-### Known bug (10)
+### Known bug (4)
 
-SH-11 | known bug | [shadows](visual-checks/shadows.md) | Distant flashes while moving
 SH-13 | known bug | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
 SH-14 | known bug | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
-SH-20 | known bug | [shadows](visual-checks/shadows.md) | Character shadows update very infrequently
 GF-1 | known bug | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
-DL-5 | known bug | [rendering](visual-checks/rendering.md) | Interior --rt without Ray Reconstruction quits
-LT-4 | known bug | [lights](visual-checks/lights.md) | Lamp light cut along block edges, view-dependent
-RO-B | known bug | [rendering](visual-checks/rendering.md) | Fire/torch smoke not drawn in front of the sky, or n...
-LM-2 | known bug | [lights](visual-checks/lights.md) | Leaf side findings
 
 ### Rejected (2)
 
