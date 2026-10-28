@@ -4,7 +4,7 @@ import package::render::{
     shadow_sampling::{
         SPOT_SHADOW_TEXEL_SIZE, sample_shadow_cubemap, sample_shadow_cubemap_pcss,
         sample_shadow_map_hardware, // superfargoth patch (own: lamp shadow filter)
-        sample_shadow_map, sample_shadow_map_pcss,
+        sample_shadow_map, sample_shadow_map_pcss, sample_shadow_map_directional_pcss,
     }
 };
 
@@ -211,15 +211,17 @@ fn sample_directional_cascade(
     let array_index = i32((*light).depth_texture_base_index + cascade_index);
     let texel_size = (*cascade).texel_size;
 
-    // If soft shadows are enabled, use the PCSS path.
+    // If soft shadows are enabled, use the world-unit directional PCSS path (superfargoth patch, H2).
     if ((*light).soft_shadow_size > 0.0) {
-        return sample_shadow_map_pcss(
+        return sample_shadow_map_directional_pcss(
             light_local.xy,
             light_local.z,
             array_index,
             frag_coord_xy,
             texel_size,
             (*light).soft_shadow_size,
+            (*cascade).clip_from_world,
+            surface_normal,
         );
     }
 

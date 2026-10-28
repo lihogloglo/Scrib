@@ -25,6 +25,14 @@ pub fn bindless_slot_count<B: AsBindGroup, E: AsBindGroup>() -> Option<BindlessS
     ))
 }
 
+// superfargoth patch (bevyengine/bevy#26321)
+/// Combines [`AsBindGroup::bindless_supported`] implementations from base `B` and extension `E`
+pub fn bindless_supported<B: AsBindGroup, E: AsBindGroup>(render_device: &RenderDevice) -> bool {
+    bindless_slot_count::<B, E>().is_some()
+        && B::bindless_supported(render_device)
+        && E::bindless_supported(render_device)
+}
+
 /// Combines two [`BindlessSlabResourceLimit`]s, choosing the smallest limit
 fn combine_bindless_slot_count(
     base: BindlessSlabResourceLimit,
@@ -66,7 +74,7 @@ pub fn build_bind_group<B: AsBindGroup, E: AsBindGroup>(
     mut force_no_bindless: bool,
     output: &mut BindGroupBuilder,
 ) -> Result<(), AsBindGroupError> {
-    force_no_bindless = force_no_bindless || bindless_slot_count::<B, E>().is_none();
+    force_no_bindless = force_no_bindless || !bindless_supported::<B, E>(render_device);
 
     B::build_bind_group(
         base,
@@ -93,7 +101,7 @@ pub fn bind_group_layout_entries<B: AsBindGroup, E: AsBindGroup>(
     render_device: &RenderDevice,
     mut force_no_bindless: bool,
 ) -> Vec<BindGroupLayoutEntry> {
-    force_no_bindless = force_no_bindless || bindless_slot_count::<B, E>().is_none();
+    force_no_bindless = force_no_bindless || !bindless_supported::<B, E>(render_device);
 
     let base_entries = B::bind_group_layout_entries(render_device, force_no_bindless);
     let extension_entries = E::bind_group_layout_entries(render_device, force_no_bindless);

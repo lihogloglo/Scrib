@@ -277,7 +277,145 @@ fn sample_shadow_map(
     return 0.0;
 }
 
-/// Samples the shadow map for a directional light when percentage-closer soft
+/// Samples raw shadow-map depth at `light_local` for directional PCSS blocker search,
+/// or returns `-1.0` when PCSS samplers are unavailable.
+fn sample_directional_shadow_depth(light_local: vec2<f32>, array_index: i32) -> f32 {
+    @if(WEBGL2) {
+    return -1.0;
+    } @else {
+    @if(PCSS_SAMPLERS_AVAILABLE) {
+    @if(NO_ARRAY_TEXTURES_SUPPORT)
+    return textureSampleLevel(
+        view_bindings::directional_shadow_textures,
+        view_bindings::directional_shadow_textures_linear_sampler,
+        light_local,
+        0u,
+    );
+    @else
+    return textureSampleLevel(
+        view_bindings::directional_shadow_textures,
+        view_bindings::directional_shadow_textures_linear_sampler,
+        light_local,
+        array_index,
+        0u,
+    );
+    } @else {
+    return -1.0;
+    }
+    }
+}
+
+/// World-unit directional PCSS (superfargoth patch, H2; adapted from OpenMW Clockwork
+/// `files/shaders/lib/light/sunsoft.glsl` @ `c5e5a9a6`, GPL-3.0, Thomas Portal, plus
+/// rotated blocker kernel from bevyengine/bevy#22272).
+///
+/// Stock Bevy computes `(z_blocker - depth) * light_size / depth` in orthographic cascade
+/// NDC, which makes penumbra width depend on each cascade's Z-box span and receiver NDC Z,
+/// jumping visibly across cascade splits. Converting blocker height into world meters via
+/// `clip_from_world`'s Z row keeps penumbra width invariant in meters across all cascades.
+fn sample_shadow_map_directional_pcss(
+    light_local: vec2<f32>,
+    depth: f32,
+    array_index: i32,
+    frag_coord_xy: vec2<f32>,
+    texel_size: f32,
+    light_size: f32,
+    clip_from_world: mat4x4<f32>,
+    surface_normal: vec3<f32>,
+) -> f32 {
+    @if(SHADOW_FILTER_METHOD_TEMPORAL)
+    let temporal = true;
+    @else
+    let temporal = false;
+
+    let shadow_map_size = vec2<f32>(textureDimensions(view_bindings::directional_shadow_textures));
+    let cascade_world_size = max(texel_size * shadow_map_size, vec2<f32>(1e-4));
+
+    // Orthographic cascade axes and world-to-NDC Z scale (`per_z` = NDC Z units per meter).
+    let row_x = vec3<f32>(clip_from_world[0].x, clip_from_world[1].x, clip_from_world[2].x);
+    let row_y = vec3<f32>(clip_from_world[0].y, clip_from_world[1].y, clip_from_world[2].y);
+    let row_z = vec3<f32>(clip_from_world[0].z, clip_from_world[1].z, clip_from_world[2].z);
+    let per_z = max(length(row_z), 1e-6);
+
+    // Analytic receiver-plane depth slope per UV offset (avoids screen-space derivatives
+    // inside non-uniform cascade branches and prevents self-blocking on sloped terrain/roofs).
+    let len_u = max(0.5 * length(row_x), 1e-6);
+    let len_v = max(0.5 * length(row_y), 1e-6);
+    let e_u = row_x / (2.0 * len_u);
+    let e_v = -row_y / (2.0 * len_v);
+    let e_z = row_z / per_z;
+    let n_dot_l = dot(surface_normal, e_z);
+    var plane_slope_uv = vec2<f32>(0.0);
+    if (n_dot_l > 0.05) {
+        let slope_m = clamp(
+            -vec2<f32>(dot(surface_normal, e_u), dot(surface_normal, e_v)) / max(n_dot_l, 0.25),
+            vec2<f32>(-4.0),
+            vec2<f32>(4.0),
+        );
+        plane_slope_uv = slope_m * vec2<f32>(per_z / len_u, per_z / len_v);
+    }
+
+    // Angular penumbra spread in meters per meter of caster height (`light_size = 10` -> 0.025).
+    let spread = light_size * 0.0025;
+    let max_penumbra_m = 24.0 * spread;
+    let search_m = clamp(max_penumbra_m, 2.0 * texel_size, 8.0 * texel_size);
+    let search_uv_scale = search_m / cascade_world_size;
+    let search_rot = random_rotation_matrix(frag_coord_xy + vec2<f32>(17.23), temporal);
+    let margin_dz = 1.5 * texel_size * per_z;
+
+    var blockers = 0.0;
+    var weights = 0.0;
+    var weighted_heights = 0.0;
+    for (var i: u32 = 0u; i < 8u; i = i + 1u) {
+        let offset = (search_rot * D3D_SAMPLE_POINT_POSITIONS[i]) * search_uv_scale;
+        let sampled_z = sample_directional_shadow_depth(light_local + offset, array_index);
+        if (sampled_z < 0.0) {
+            continue;
+        }
+        let ref_z = clamp(depth + dot(plane_slope_uv, offset), 0.0, 1.0);
+        let above = sampled_z - ref_z;
+        if (above > margin_dz) {
+            let h = min(above / per_z, 30.0);
+            let w = h * h;
+            blockers += 1.0;
+            weights += w;
+            weighted_heights += w * h;
+        }
+    }
+
+    // Open sunlit surface: skip the 8-tap spiral and take a single hardware 2x2 PCF tap.
+    if (blockers == 0.0) {
+        return sample_shadow_map_hardware(light_local, depth, array_index);
+    }
+
+    let avg_height_m = weighted_heights / max(weights, 1e-12);
+    let penumbra_m = clamp(avg_height_m * spread, 1.25 * texel_size, max_penumbra_m);
+    let uv_offset_scale = penumbra_m / cascade_world_size;
+    let rotation_matrix = random_rotation_matrix(frag_coord_xy, temporal);
+    let filtered_plane = 0.5 * plane_slope_uv;
+
+    let sample_offset0 = (rotation_matrix * utils::SPIRAL_OFFSET_0_) * uv_offset_scale;
+    let sample_offset1 = (rotation_matrix * utils::SPIRAL_OFFSET_1_) * uv_offset_scale;
+    let sample_offset2 = (rotation_matrix * utils::SPIRAL_OFFSET_2_) * uv_offset_scale;
+    let sample_offset3 = (rotation_matrix * utils::SPIRAL_OFFSET_3_) * uv_offset_scale;
+    let sample_offset4 = (rotation_matrix * utils::SPIRAL_OFFSET_4_) * uv_offset_scale;
+    let sample_offset5 = (rotation_matrix * utils::SPIRAL_OFFSET_5_) * uv_offset_scale;
+    let sample_offset6 = (rotation_matrix * utils::SPIRAL_OFFSET_6_) * uv_offset_scale;
+    let sample_offset7 = (rotation_matrix * utils::SPIRAL_OFFSET_7_) * uv_offset_scale;
+
+    var sum = 0.0;
+    sum += sample_shadow_map_hardware(light_local + sample_offset0, clamp(depth + dot(filtered_plane, sample_offset0), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset1, clamp(depth + dot(filtered_plane, sample_offset1), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset2, clamp(depth + dot(filtered_plane, sample_offset2), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset3, clamp(depth + dot(filtered_plane, sample_offset3), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset4, clamp(depth + dot(filtered_plane, sample_offset4), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset5, clamp(depth + dot(filtered_plane, sample_offset5), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset6, clamp(depth + dot(filtered_plane, sample_offset6), 0.0, 1.0), array_index);
+    sum += sample_shadow_map_hardware(light_local + sample_offset7, clamp(depth + dot(filtered_plane, sample_offset7), 0.0, 1.0), array_index);
+    return sum / 8.0;
+}
+
+/// Samples the shadow map for a spot light when percentage-closer soft
 /// shadows are being used.
 ///
 /// We first search for a *blocker*, which is the average depth value of any

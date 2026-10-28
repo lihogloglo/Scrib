@@ -5249,6 +5249,7 @@ dependencies = [
  "bevy_light",
  "bevy_log",
  "bevy_math",
+ "bevy_pbr",
  "bevy_post_process",
  "bevy_render",
  "bevy_time",

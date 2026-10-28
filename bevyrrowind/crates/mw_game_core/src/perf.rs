@@ -74,10 +74,14 @@ pub enum Part {
     /// The precipitation occlusion map (`sf_precip_bevy`, WE-5): off, drops fall and blow through roofs,
     /// walls and hills (an A/B).
     PrecipOcc,
+    /// Lamp shadow faces redraw the frame their casters move or deform (vendored
+    /// `bevy_pbr::ShadowMoverRefresh`, SH-20); off, the B3 rule: skinned casters by root on a coarse
+    /// grid, at most 2 dirty faces per frame (animated shadows step; an A/B).
+    MoverShadows,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 41] = [
+    const ALL: [(&'static str, Part); 42] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -119,6 +123,7 @@ impl Part {
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
         ("lampfilter", Part::LampFilter),
+        ("movershadows", Part::MoverShadows),
         ("precipocc", Part::PrecipOcc),
     ];
 

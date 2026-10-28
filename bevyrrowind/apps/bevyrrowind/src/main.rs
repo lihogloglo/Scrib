@@ -590,12 +590,13 @@ impl ViewFlags {
         })
     }
 
-    /// `--rt`, `--dlss`, `--off denoiser` and `--off shadowcache`.
+    /// `--rt`, `--dlss`, `--off denoiser`, `--off shadowcache` and `--off movershadows`.
     fn render(&self) -> Result<RenderSettings> {
         let off = Off::from_flags(&self.perf.off)?;
         let low = Quality::resolve(self.quality) == Quality::Low;
         Ok(RenderSettings::new(self.rt, self.dlss, !off.has(Part::Denoiser), low)?.with_point_shadows(self.lighting.point_shadows).with_sun_cascades(self.lighting.sun_cascades)
-            .with_shadow_cache(!off.has(Part::ShadowCache)))
+            .with_shadow_cache(!off.has(Part::ShadowCache))
+            .with_mover_shadows(!off.has(Part::MoverShadows)))
     }
 }
 

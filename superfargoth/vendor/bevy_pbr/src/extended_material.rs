@@ -178,8 +178,9 @@ impl<B: Material, E: MaterialExtension> AsBindGroup for ExtendedMaterial<B, E> {
         cbg::bindless_slot_count::<B, E>()
     }
 
+    // superfargoth patch (bevyengine/bevy#26321)
     fn bindless_supported(render_device: &RenderDevice) -> bool {
-        B::bindless_supported(render_device) && E::bindless_supported(render_device)
+        cbg::bindless_supported::<B, E>(render_device)
     }
 
     fn label() -> &'static str {

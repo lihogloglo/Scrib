@@ -45,3 +45,10 @@ SOFTWARE.
 - Ported into: `bevyrrowind/crates/mw_delirium/src/body.rs` (the game, not the framework; the crate is
   GPL-3.0-only), with the changes listed in that file's header. The crate also links delirium-physics
   (github.com/PVCPC/delirium-physics, GPL-3.0-only) as a Cargo git dependency.
+
+## OpenMW Clockwork (sunsoft directional PCSS)
+
+- Source: https://github.com/OursCodeur/openmw branch `clockwork-alpha`, commit `c5e5a9a6362c35512823884753d2d5284af204fa`:
+  `files/shaders/lib/light/sunsoft.glsl` (author: Thomas Portal).
+- Licence: GPL-3.0-or-later (the full text is identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt).
+- Ported into: `superfargoth/vendor/bevy_pbr/src/render/shadow_sampling.wesl` (`sample_shadow_map_directional_pcss`, H2 world-unit sun PCSS with analytic receiver slope and world-meter penumbra scale across cascades), combined with the rotated blocker search kernel from `bevyengine/bevy#22272`.

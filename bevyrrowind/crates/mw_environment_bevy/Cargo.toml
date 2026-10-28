@@ -25,6 +25,7 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_light.workspace = true
 bevy_log.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
+bevy_pbr.workspace = true
 bevy_post_process.workspace = true
 bevy_render.workspace = true
 bevy_time = { workspace = true, features = ["std"] }

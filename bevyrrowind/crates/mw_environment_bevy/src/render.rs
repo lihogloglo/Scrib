@@ -63,6 +63,9 @@ pub struct RenderSettings {
     pub point_shadows: Option<usize>,
     /// Cached point-light shadow maps (`--off shadowcache` turns them off).
     pub shadow_cache: bool,
+    /// Lamp shadow faces redraw the same frame their casters move or deform (SH-20;
+    /// `--off movershadows`: the B3 grid + 2-faces-per-frame rule).
+    pub mover_shadows: bool,
     /// Sun cascades `(count, last bound m)` instead of the preset's
     /// (`--sun-cascades`, else `BEVYRROWIND_SUN_CASCADES`).
     pub sun_cascades: Option<(usize, f32)>,
@@ -99,7 +102,7 @@ impl RenderSettings {
         let path = if ray_traced { RenderPath::RayTraced } else { RenderPath::Raster };
         let point_shadows = std::env::var(ENV_POINT_SHADOWS).ok().and_then(|v| v.trim().parse().ok());
         let sun_cascades = std::env::var(ENV_SUN_CASCADES).ok().and_then(|v| parse_sun_cascades(&v).ok());
-        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true, sun_cascades })
+        Ok(Self { path, upscaling, denoiser, point_shadows, shadow_cache: true, mover_shadows: true, sun_cascades })
     }
 
     /// Whether the view needs the sky plugin's render-path management.
@@ -155,6 +158,13 @@ impl RenderSettings {
         self
     }
 
+    /// `--off movershadows` (SH-20 A/B): `bevy_pbr::ShadowMoverRefresh`.
+    #[must_use]
+    pub fn with_mover_shadows(mut self, on: bool) -> Self {
+        self.mover_shadows = on;
+        self
+    }
+
     /// The point-light shadow budget: the override's count, else the
     /// preset's `(count, face size)`.
     pub fn point_shadow_budget(self, preset: (usize, usize)) -> PointShadowBudget {
@@ -166,6 +176,7 @@ impl RenderSettings {
     pub fn insert(self, app: &mut App) {
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
+        app.insert_resource(bevy_pbr::ShadowMoverRefresh { per_frame: self.mover_shadows });
         // Shadows F6 slice 2: static casters cached per light, movers drawn over the copy.
         if POINT_SHADOW_CACHE && self.shadow_cache {
             app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
