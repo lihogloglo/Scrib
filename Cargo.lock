@@ -5667,6 +5667,7 @@ dependencies = [
  "mw_graphs",
  "mw_physics",
  "mw_world",
+ "serde_json",
  "sf_anim",
  "sf_anim_bevy",
  "sf_anim_graph",

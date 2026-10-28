@@ -199,7 +199,8 @@ enum Command {
         night: bool,
     },
     /// Dev: render animation clips on a real NPC (flat floor, noon) into one MP4 per clip,
-    /// cooked and retargeted in process (motion-generation.md MG5). Exits when done.
+    /// cooked and retargeted in process (motion-generation.md MG5). Exits when done; `--browse`
+    /// instead opens a live window over a folder of clips.
     #[cfg(feature = "dev")]
     ClipPreview(ClipPreviewArgs),
 }
@@ -208,7 +209,7 @@ enum Command {
 #[derive(clap::Args)]
 struct ClipPreviewArgs {
     /// glTF/GLB or BVH file: a path, or a file name in the animation sources folder.
-    #[arg(long, required_unless_present = "batch")]
+    #[arg(long, required_unless_present_any = ["batch", "browse"])]
     clip: Option<String>,
     /// Clip name in the file (GLB packs hold many; default: the file's only clip).
     #[arg(long)]
@@ -219,6 +220,11 @@ struct ClipPreviewArgs {
     /// Clips to render in one process, one per line: `path[|name[|source]]` (`#` comments).
     #[arg(long)]
     batch: Option<PathBuf>,
+    /// Browse every `.bvh` under this folder in a live window instead of capturing (MG10a):
+    /// Left/Right clip, Up/Down activity (first folder under it), drag orbits, wheel zooms.
+    /// Clips cook with `--source` (default `generated`).
+    #[arg(long, conflicts_with_all = ["clip", "batch"])]
+    browse: Option<PathBuf>,
     /// NPC_ record id.
     #[arg(long, default_value = mw_viewers_bevy::clip_preview::DEFAULT_NPC)]
     npc: String,
@@ -819,8 +825,9 @@ fn run(cli: Cli) -> Result {
 /// `clip-preview`: the jobs from `--clip` and `--batch`, then the capture run.
 #[cfg(feature = "dev")]
 fn clip_preview(install: &MorrowindInstall, args: ClipPreviewArgs) -> Result {
-    use mw_viewers_bevy::clip_preview::{ClipPreviewOptions, cook::ClipJob};
-    let ClipPreviewArgs { clip, name, source, batch, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset, cache } = args;
+    use mw_viewers_bevy::clip_preview::{BrowseOptions, ClipPreviewOptions, cook::ClipJob};
+    let ClipPreviewArgs { clip, name, source, batch, browse, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset, cache } = args;
+    let browse = browse.map(|dir| BrowseOptions { dir, source: source.clone().unwrap_or_else(|| "generated".into()) });
     let defaults = ClipJob { file: clip.clone().unwrap_or_default(), name, source };
     let mut jobs = Vec::new();
     if clip.is_some() {
@@ -833,7 +840,7 @@ fn clip_preview(install: &MorrowindInstall, args: ClipPreviewArgs) -> Result {
     let (vfs, content) = load(install, false)?;
     let store = sf_bake::Store::open(cache_root(cache)?)?;
     let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
-    let options = ClipPreviewOptions { jobs, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset };
+    let options = ClipPreviewOptions { jobs, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset, browse };
     if mw_viewers_bevy::clip_preview::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options) {
         Ok(())
     } else {

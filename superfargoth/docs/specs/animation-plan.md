@@ -108,3 +108,10 @@ AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the ca
   cadence takes the rest (`rate_share` untouched); `Lean.grade` pitches chest/neck (0.12/0.06 rad per unit grade, cap 4°).
   30° male walk: step 1.01 -> 0.75 m up, 1.15 m down; trunk +2.5°/-1.2°; feet within 2 cm. Graph format 6.
   Left: path/AI speed vs grade (locomotion.md owns no grade hook; Tobler-style factor proposed), stairs (5b).
+
+## Owner pass 2026-10-28 (clip-preview, generated + UAL clips): logged, not fixed yet
+
+- **AN-22 Leg snap.** Owner: "sometimes a leg will have a weird movement (like a sudden snap rotation)"; also seen
+  before in anim-lab, so likely not the generated clips. Suspects to diagnose first: two-bone IK pole flip near full
+  extension (knee pole from the animated knee), foot lock release/re-plant, or retarget twist on the thigh. Repro:
+  `clip-preview` MP4s (`bevyrrowind/shots/clip-preview/`), step frame by frame and note the frame; then anim-lab.

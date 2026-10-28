@@ -146,6 +146,7 @@ Constraint vocabulary (mapped to Kimodo constraints by the planner): `pelvis_hei
 | MG7 | props table + hand attach + second-hand IK in preview | MG5 | MG7a done (one prop, hand attach); MG7b grip table + IK todo |
 | MG8 | MotionBricks link worker | MG1 | todo |
 | MG9 | verdicts → sources.ron candidates + review.html | MG5 | later |
+| MG10a | interactive browse: `clip-preview --browse <dir>` (keys, loop, orbit, prov overlay) | MG5 | done |
 
 Order: MG1, MG3, MG5 in parallel (Python / bake / app), then MG4, MG2, MG6, MG7, MG8.
 
@@ -243,3 +244,14 @@ furniture is irregular and we have no animators.
 - Tankard: `--prop-offset 0,0,0,90,0,0` (Weapon Bone's +Z is the blade axis, the mug's up; +90 about X stands it in the fist;
   owner to judge). Verified: `--clip UAL1_RM.glb --name Drink --prop misc_com_tankard_01 --prop-offset 0,0,0,90,0,0 --camera side`
   -> `shots/clip-preview/UAL1_RM.Drink.mp4`. Tests: `cook.rs` `prop_parses_id_and_bone`, `prop_offset_parses_meters_and_degrees`.
+
+## As built (MG10a, 2026-10-28)
+
+- Command (dev builds): `bevyrrowind clip-preview --browse <dir> [--source generated] [--npc ...] [--size WxH]` (exclusive with
+  `--clip`/`--batch`; `--furniture`/`--prop` stay global). Real time (no `TimeUpdateStrategy`), vsync, resizable window, no capture.
+- Keys: Left/Right step clips within the activity, Up/Down step activities (first folder under `<dir>`; `_`/`.` folders skipped),
+  both wrap; any mouse button drag orbits, the wheel zooms. Overlay + window title: activity, clip path, `.prov.json` band and prompt.
+- Switch: the clip is cooked on demand by the capture's own path (`cook::resolve` + `cook::cook`, 15-20 ms per tier1 clip), then
+  `play_full` (shared with capture) puts the actor back on the origin facing +Z, root motion on, and plays it in slot `full`; the
+  loop replays it the same way at its end. A cook error shows in the overlay and stops the slot (graph idle).
+- Code: Bevy-free list `clip_preview/browse.rs` (`BrowseList`, `Prov`; 5 tests), systems `clip_preview/live.rs`.

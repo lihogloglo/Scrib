@@ -10,7 +10,7 @@ publish = false
 # `character` interactive runs serve BRP (`mw_devtools_bevy::remote`); the app's `remote` turns it on.
 remote = ["mw_devtools_bevy/remote"]
 # `clip-preview` (dev builds; motion-generation.md MG5): clips cooked + retargeted in process, captured to MP4.
-clip_preview = ["dep:mw_anim", "dep:sf_anim", "dep:sf_anim_graph"]
+clip_preview = ["dep:mw_anim", "dep:sf_anim", "dep:sf_anim_graph", "dep:serde_json"]
 
 [dependencies]
 # The umbrella crate: each viewer builds its own `App` with `DefaultPlugins` (as the binary does).
@@ -27,6 +27,7 @@ mw_game_core.workspace = true
 mw_graphs.workspace = true
 mw_physics.workspace = true
 mw_world.workspace = true
+serde_json = { workspace = true, optional = true }
 sf_anim = { workspace = true, optional = true }
 sf_anim_bevy = { workspace = true, features = ["debug"] }
 sf_anim_graph = { workspace = true, optional = true }

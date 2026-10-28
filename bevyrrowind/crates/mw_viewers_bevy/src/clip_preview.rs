@@ -15,7 +15,9 @@
 //! - `ffmpeg` encodes each clip's frames (H.264, yuv420p); the frames are removed unless
 //!   `keep_frames`. The run fails if a clip's PNG count isn't its frame count.
 
+pub mod browse;
 pub mod cook;
+mod live;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -89,6 +91,14 @@ pub struct ClipPreviewOptions {
     pub prop: Option<PropSpec>,
     /// The prop under its bone (bone frame: meters, degrees).
     pub prop_offset: PropOffset,
+    /// Browse this folder's clips in a live window (no capture) instead of `jobs`.
+    pub browse: Option<BrowseOptions>,
+}
+
+/// `--browse <dir>` (MG10a): every `.bvh` under `dir`, cooked on demand with `source`'s rules.
+pub struct BrowseOptions {
+    pub dir: PathBuf,
+    pub source: String,
 }
 
 /// Bones tried for a prop with no `@<bone>`: the game's right-hand attach bone (held weapons,
@@ -131,6 +141,8 @@ enum Phase {
     Clip { index: usize, frame: u32 },
     /// Waiting for the last screenshots to be written.
     Saving { frames_waited: u32 },
+    /// The live browser ([`live::browse_step`]) drives the actor; nothing is captured.
+    Browse,
 }
 
 #[derive(Resource)]
@@ -150,6 +162,8 @@ struct Preview {
     furniture: Option<Handle<WorldAsset>>,
     /// The held prop, waited for while loading.
     prop: Option<Prop>,
+    /// The browse state; `None` in capture runs.
+    browse: Option<live::Browse>,
 }
 
 /// Screenshots written so far (both `save_to_disk` and this counter observe the capture).
@@ -177,7 +191,14 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
             }
         }
     }
-    if items.is_empty() {
+    let browse = match options.browse.as_ref().map(|b| browse::BrowseList::scan(&b.dir).map(|list| live::Browse::new(list, b.source.clone()))).transpose() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    if items.is_empty() && browse.is_none() {
         return false;
     }
     let npc = RecordId::new(options.npc.as_str());
@@ -211,19 +232,9 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
     app.register_asset_source(AssetSourceId::Default, sf_vfs::bevy::asset_source(vfs.clone()));
     mw_environment_bevy::render::RenderSettings::init(&mut app);
     mw_game_core::shipped_errors(&mut app);
-    let (w, h) = options.size;
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Bevyrrowind - clip preview".into(),
-            resolution: WindowResolution::new(w, h).with_scale_factor_override(1.0),
-            resizable: false,
-            present_mode: PresentMode::AutoNoVsync,
-            ..default()
-        }),
-        ..default()
-    }))
+    let browsing = browse.is_some();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window(options.size, browsing)), ..default() }))
     .add_plugins((MwAssetsPlugin { vfs }, sf_anim_bevy::SfAnimPlugin))
-    .insert_resource(TimeUpdateStrategy::ManualDuration(step))
     .insert_resource(mw_assets::LightCalibration::default().ambient([150, 150, 160]))
     .insert_resource(sf_character_bevy::CharacterSettings { bodies: sf_character_bevy::SmoothBodies::default() })
     .insert_resource(Preview {
@@ -240,6 +251,7 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
         failed,
         furniture: None,
         prop: None,
+        browse,
     })
     .init_resource::<Saved>()
     .add_systems(
@@ -255,14 +267,39 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
             }
         },
     )
-    .add_systems(Update, drive)
-    .add_systems(PostUpdate, follow.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate))
-    .add_systems(Last, shoot);
+    .add_systems(Update, drive);
+    add_mode(&mut app, browsing, step);
     mw_actors_bevy::actors::add_content(&mut app, content);
     app.insert_resource(mw_actors_bevy::held::HeldDarkness::forced(Some(false)));
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     let exit = app.run();
     exit.is_success()
+}
+
+/// Capture frames keep one size and don't wait for vsync; the browser is a normal window.
+fn window((w, h): (u32, u32), browsing: bool) -> Window {
+    Window {
+        title: "Bevyrrowind - clip preview".into(),
+        resolution: WindowResolution::new(w, h).with_scale_factor_override(1.0),
+        resizable: browsing,
+        present_mode: if browsing { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync },
+        ..default()
+    }
+}
+
+/// Capture: one fixed step per update, the follow camera, a screenshot per frame. Browse
+/// (MG10a): real time, the orbit camera, the overlay, keys and on-demand cooks.
+fn add_mode(app: &mut App, browsing: bool, step: Duration) {
+    if browsing {
+        app.init_resource::<live::OrbitCam>()
+            .add_systems(Startup, live::spawn_overlay)
+            .add_systems(Update, live::browse_step.after(drive))
+            .add_systems(PostUpdate, live::orbit.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate));
+    } else {
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(step))
+            .add_systems(PostUpdate, follow.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate))
+            .add_systems(Last, shoot);
+    }
 }
 
 /// A floor of 1 m checker tiles (foot sliding and root travel read against it), the noon sun
@@ -448,6 +485,18 @@ fn drive(
             lod.forced = Some(AnimTier::A0);
             println!("loaded in {} frames ({:.1} s wall)", p.loading_frames, p.launched.elapsed().as_secs_f32());
             let asset = Arc::clone(&animator.asset);
+            if let Some(browse) = p.browse.as_mut() {
+                // MG10a: clips are cooked one at a time, on demand, from here on.
+                match HumanoidTarget::new((*asset.skeleton).clone()) {
+                    Ok(target) => browse.target = Some(target),
+                    Err(e) => {
+                        eprintln!("error: the NPC's skeleton is not humanoid ({e})");
+                        exit.write(AppExit::error());
+                    }
+                }
+                p.phase = Phase::Browse;
+                return;
+            }
             if let Err(e) = cook_all(p, &asset) {
                 eprintln!("error: {e}");
                 exit.write(AppExit::error());
@@ -457,7 +506,7 @@ fn drive(
             // its frame 0 at the end of it.
             p.phase = next_clip(&p.items, 0);
         }
-        Phase::Clip { .. } | Phase::Saving { .. } => {}
+        Phase::Clip { .. } | Phase::Saving { .. } | Phase::Browse => {}
     }
     let Phase::Clip { index, frame } = p.phase else { return };
     let Some((mut animator, _, mut transform, root)) = actors.iter_mut().next() else { return };
@@ -476,27 +525,27 @@ fn drive(
     }
     item.capture = Duration::ZERO;
     p.started = Some(Instant::now());
-    // Back on the mark, then the clip from its first pose.
+    if let Err(e) = play_full(&mut animator, &mut transform, root, late) {
+        eprintln!("error: {}: {e}", item.job.id);
+        exit.write(AppExit::error());
+        return;
+    }
+    animator.time_scale = 0.0;
+}
+
+/// The actor back on the mark (origin, facing +Z) with root motion applied, and `late` from its
+/// first pose in the graph's full-body slot (no blend in). Capture and browse both start clips here.
+fn play_full(animator: &mut Animator, transform: &mut Transform, root: Option<Mut<AnimRootMotion>>, late: Arc<LateClip>) -> Result<(), String> {
     transform.translation = Vec3::ZERO;
     transform.rotation = Quat::IDENTITY;
     if let Some(mut root) = root {
         root.apply = true;
     }
-    let a = &mut *animator;
-    let asset = Arc::clone(&a.asset);
-    a.instance.set_variety(&asset.binding(), Variety::default());
-    let Some(slot) = asset.graph.slot(mw_graphs::build::slots::FULL) else {
-        eprintln!("error: the actor's graph has no {:?} slot", mw_graphs::build::slots::FULL);
-        exit.write(AppExit::error());
-        return;
-    };
+    let asset = Arc::clone(&animator.asset);
+    animator.instance.set_variety(&asset.binding(), Variety::default());
+    let slot = asset.graph.slot(mw_graphs::build::slots::FULL).ok_or_else(|| format!("the actor's graph has no {:?} slot", mw_graphs::build::slots::FULL))?;
     let req = SlotRequest { blend_in: 0.0, priority: 9, ..SlotRequest::new(MontageClip::Late(late)) };
-    if let Err(e) = a.instance.play_slot(&asset.binding(), slot, req) {
-        eprintln!("error: {}: the slot refused the clip ({e:?})", item.job.id);
-        exit.write(AppExit::error());
-        return;
-    }
-    a.time_scale = 0.0;
+    animator.instance.play_slot(&asset.binding(), slot, req).map(|_| ()).map_err(|e| format!("the slot refused the clip ({e:?})"))
 }
 
 /// Every clip cooked onto the dressed actor's skeleton (Bevy-free, [`cook::cook`]) and bound
@@ -579,7 +628,7 @@ fn shoot(mut commands: Commands, mut preview: ResMut<Preview>, saved: Res<Saved>
             let ok = encode(p);
             exit.write(if ok { AppExit::Success } else { AppExit::error() });
         }
-        Phase::Loading { .. } => {}
+        Phase::Loading { .. } | Phase::Browse => {}
     }
 }
 
