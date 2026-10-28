@@ -120,6 +120,10 @@ pub struct AnimLod {
     pub height: f32,
     /// Last projected height, reference pixels, before significance.
     pub pixels: f32,
+    /// When true, parked (`Dormant`) characters at `A3` skip graph evaluation
+    /// completely because `A3` never poses and a parked mover consumes no root
+    /// motion.
+    pub idle_skip_a3: bool,
     /// Seconds not yet given to the graph (A2 frames between updates).
     pub(crate) pending: f32,
     /// Frame offset for staggered A2 updates.

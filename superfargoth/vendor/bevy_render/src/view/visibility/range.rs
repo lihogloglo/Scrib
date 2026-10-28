@@ -103,17 +103,6 @@ impl Default for RenderVisibilityRanges {
 }
 
 impl RenderVisibilityRanges {
-    /// Clears the per-frame entity table in preparation for a new frame.
-    ///
-    /// `range_to_index` and `buffer` are deliberately *not* cleared: the
-    /// GPU-driven path bakes a range's buffer index into the mesh's
-    /// `MeshInputUniform` at extraction and only refreshes it on re-extraction,
-    /// so a range must keep the same index for the lifetime of the app or
-    /// still-visible meshes would end up pointing at the wrong slot.
-    fn clear(&mut self) {
-        self.entities.clear();
-    }
-
     /// Inserts a new entity into the [`RenderVisibilityRanges`].
     fn insert(&mut self, entity: MainEntity, visibility_range: &VisibilityRange) {
         // Reuse this range's slot, or append a new one. Indices are never
@@ -198,23 +187,29 @@ impl RenderVisibilityRanges {
     }
 }
 
-/// Extracts all [`VisibilityRange`] components from the main world to the
-/// render world and inserts them into [`RenderVisibilityRanges`].
+// superfargoth patch (own): incremental VisibilityRange extraction (O(changed + removed)
+// instead of clearing and re-hashing all ~28k VisibilityRange entities on ExtractSchedule).
+/// Extracts changed and removed [`VisibilityRange`] components from the main
+/// world to the render world and updates [`RenderVisibilityRanges`] incrementally.
 pub fn extract_visibility_ranges(
     mut render_visibility_ranges: ResMut<RenderVisibilityRanges>,
-    visibility_ranges_query: Extract<Query<(Entity, &VisibilityRange)>>,
-    changed_ranges_query: Extract<Query<Entity, Changed<VisibilityRange>>>,
+    changed_ranges_query: Extract<Query<(Entity, &VisibilityRange), Changed<VisibilityRange>>>,
     mut removed_visibility_ranges: Extract<RemovedComponents<VisibilityRange>>,
 ) {
-    if changed_ranges_query.is_empty() && removed_visibility_ranges.read().next().is_none() {
-        return;
+    for entity in removed_visibility_ranges.read() {
+        render_visibility_ranges
+            .entities
+            .remove(&MainEntity::from(entity));
     }
 
-    render_visibility_ranges.clear();
-    for (entity, visibility_range) in visibility_ranges_query.iter() {
+    let mut any_changed = false;
+    for (entity, visibility_range) in changed_ranges_query.iter() {
         render_visibility_ranges.insert(entity.into(), visibility_range);
+        any_changed = true;
     }
-    render_visibility_ranges.rebuild_buffer_if_dirty();
+    if any_changed {
+        render_visibility_ranges.rebuild_buffer_if_dirty();
+    }
 }
 
 /// Writes the [`RenderVisibilityRanges`] table to the GPU.

@@ -68,6 +68,25 @@ const FLY_HOVER: f32 = 1.5;
 const PROCESS_MARGIN: f32 = 4.0;
 /// Animation significance of dormant movers (the budget drops them to a low tier).
 const DORMANT_SIGNIFICANCE: f32 = 0.25;
+/// Exterior AI processing wake radius around [`mw_game_core::exterior::ExteriorCamera`], m
+/// (vanilla Morrowind's AI processing range is 7168 units = 102.4 m; 110 m covers a full
+/// cell sightline while parking unseen 3-px movers 122–480 m away). Override with
+/// `BEVYRROWIND_AI_RADIUS` (`0` disables the distance cap).
+const AI_WAKE_RADIUS_M: f32 = 110.0;
+/// Exterior AI processing sleep radius (hysteresis margin past [`AI_WAKE_RADIUS_M`]), m.
+const AI_SLEEP_RADIUS_M: f32 = 122.0;
+
+fn ai_radius_m() -> Option<(f32, f32)> {
+    static RADIUS: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
+    *RADIUS.get_or_init(|| {
+        if let Some(val) = std::env::var_os("BEVYRROWIND_AI_RADIUS")
+            && let Some(r) = val.to_str().and_then(|s| s.parse::<f32>().ok())
+        {
+            return (r > 0.0).then_some((r, r * (AI_SLEEP_RADIUS_M / AI_WAKE_RADIUS_M)));
+        }
+        Some((AI_WAKE_RADIUS_M, AI_SLEEP_RADIUS_M))
+    })
+}
 
 // --- Ground ---------------------------------------------------------------------------------
 
@@ -503,19 +522,36 @@ type Unprocessed = Without<Held>;
 /// `PhysicsStreaming::collision_loading`): woken earlier, it fell through
 /// the floor that arrived a few frames later (fallfix, 2026-10-18). Exterior
 /// movers also wait for the terrain heights around them.
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::type_complexity)]
 fn processing_range(
     mut commands: Commands,
     streaming: Res<Streaming>,
     active: Res<ActiveWorldspace>,
     ready: GroundReady,
+    pos_of: WorldPosOf,
+    cams: Query<Entity, With<mw_game_core::exterior::ExteriorCamera>>,
     movers: Query<(Entity, Ref<Mover>, &ActorSpace, Has<Dormant>), Unprocessed>,
     mut lods: Query<&mut AnimLod>,
 ) {
     let scheduler = streaming.scheduler();
+    let exterior_ws = mw_world::ids::exterior();
+    let ai_anchor = ai_radius_m().and_then(|(wake, sleep)| {
+        let eye = cams.iter().find_map(|e| pos_of.get(e))?;
+        Some((eye, wake * wake, sleep * sleep))
+    });
     for (entity, mover, space, dormant) in &movers {
         let pos = mover.loco.position;
+        let in_ai_range = if space.0 == exterior_ws
+            && let Some((anchor, wake_sq, sleep_sq)) = ai_anchor
+        {
+            let d = anchor.delta_f32(pos);
+            let dist_sq = d.x * d.x + d.z * d.z;
+            dist_sq <= if dormant { wake_sq } else { sleep_sq }
+        } else {
+            true
+        };
         let awake = active.0.as_ref() == Some(&space.0)
+            && in_ai_range
             && scheduler.covers(&space.0, pos, PROCESS_MARGIN, Level::Active)
             && !(dormant && ready.loading(&space.0, pos));
         // A fresh mover starts dormant (`attach`): it still gets its significance.
@@ -530,6 +566,7 @@ fn processing_range(
         }
         if let Some(mut lod) = mover.animator.and_then(|a| lods.get_mut(a).ok()) {
             lod.significance = if awake { 1.0 } else { DORMANT_SIGNIFICANCE };
+            lod.idle_skip_a3 = !awake;
         }
     }
 }

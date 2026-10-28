@@ -1293,8 +1293,8 @@ impl QualityRender for Quality {
     fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits {
         let (num_cascades, maximum_distance, lambda, overlap_proportion) = match self {
             Self::Low => (3, 160.0, 0.82, 0.15),
-            Self::Medium => (3, 200.0, 0.80, 0.15),
-            Self::High => (3, 230.0, 0.78, 0.18),
+            Self::Medium => (3, 190.0, 0.80, 0.15),
+            Self::High => (3, 205.0, 0.80, 0.16),
             Self::Ultra => (4, 280.0, 0.85, 0.2),
         };
         sf_sky_bevy::CascadeSplits { num_cascades, minimum_distance: 0.1, split_near: 1.0, maximum_distance, lambda, overlap_proportion }

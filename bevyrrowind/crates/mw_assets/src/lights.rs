@@ -152,9 +152,18 @@ pub(crate) fn attach_lights(
     }
 }
 
-pub(crate) fn animate_lights(time: Res<Time>, mut lights: Query<(&AnimatedLight, &mut PointLight)>) {
+pub(crate) fn animate_lights(
+    time: Res<Time>,
+    mut lights: Query<(&AnimatedLight, &mut PointLight, Option<&InheritedVisibility>)>,
+) {
     let now = time.elapsed_secs();
-    for (animated, mut light) in &mut lights {
-        light.intensity = animated.intensity * animated.animation.brightness(now, animated.seed);
+    for (animated, mut light, vis) in &mut lights {
+        if vis.is_some_and(|v| !v.get()) {
+            continue;
+        }
+        let next = animated.intensity * animated.animation.brightness(now, animated.seed);
+        if (light.intensity - next).abs() > animated.intensity * 0.015 {
+            light.intensity = next;
+        }
     }
 }

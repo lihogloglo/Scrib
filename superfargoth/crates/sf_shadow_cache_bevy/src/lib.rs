@@ -34,13 +34,14 @@
 
 mod render;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_asset::embedded_asset;
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::{CubemapVisibleEntities, InheritedVisibility, ViewVisibility, VisibilitySystems};
+use bevy_ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy_ecs::prelude::*;
 use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap, SimulationLightSystems};
 use bevy_math::{Affine3A, Vec3, Vec3A};
@@ -239,15 +240,15 @@ struct Caster {
 
 #[derive(Resource, Default)]
 struct Casters {
-    map: HashMap<Entity, Caster>,
-    moving: HashSet<Entity>,
+    map: EntityHashMap<Caster>,
+    moving: EntityHashSet,
     /// Spheres whose baked depth changed this frame.
     dirty: Vec<(Sphere, Entity)>,
     /// Dirty events since start: removed, moved after bake, static changed, settled.
     kinds: [u64; 4],
 }
 
-type CasterItem<'a> = (Entity, &'a GlobalTransform, Option<&'a Aabb>, Option<&'a ShadowMobility>, Has<SkinnedMesh>, &'a InheritedVisibility);
+type CasterItem<'a> = (Entity, &'a GlobalTransform, Option<Ref<'a, Aabb>>, Option<&'a ShadowMobility>, Has<SkinnedMesh>, &'a InheritedVisibility);
 type CasterChanged = (With<Mesh3d>, Without<NotShadowCaster>, Or<(Changed<GlobalTransform>, Changed<InheritedVisibility>, Changed<Aabb>)>);
 
 /// Classifies casters (moving or baked) and collects the spheres whose baked
@@ -281,8 +282,16 @@ fn track_casters(
         }
     }
     for (entity, transform, aabb, mobility, skinned, visibility) in &changed {
-        let sphere = Sphere::of(transform, aabb);
         let (at, visible) = (transform.affine(), visibility.get());
+        let aabb_changed = aabb.as_ref().is_some_and(DetectChanges::is_changed);
+        if !aabb_changed
+            && c.map
+                .get(&entity)
+                .is_some_and(|k| k.visible == visible && k.at.abs_diff_eq(at, 1e-3))
+        {
+            continue;
+        }
+        let sphere = Sphere::of(transform, aabb.as_deref());
         // Change detection fires on writes, not moves (animation and propagation rewrite
         // unchanged transforms every frame): only a real change counts.
         if c.map.get(&entity).is_some_and(|k| k.visible == visible && (k.sphere.radius - sphere.radius).abs() < 1e-4 && k.at.abs_diff_eq(at, 1e-3)) {

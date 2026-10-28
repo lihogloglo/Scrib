@@ -31,7 +31,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy_asset::{AssetServer, Assets, Handle, RenderAssetUsages};
-use bevy_camera::visibility::{DynamicSkinnedMeshBounds, RenderLayers, Visibility};
+use bevy_camera::primitives::Aabb;
+use bevy_camera::visibility::{NoAutoAabb, RenderLayers, Visibility};
 use bevy_ecs::prelude::*;
 use bevy_math::{Mat4, Vec3};
 use bevy_mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
@@ -349,7 +350,11 @@ pub(crate) fn sync_held(
             for (mesh, material) in &assets.meshes {
                 let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
                 if let Some(skinned) = &skinned {
-                    e.insert((skinned.clone(), DynamicSkinnedMeshBounds));
+                    e.insert((
+                        skinned.clone(),
+                        Aabb::from_min_max(Vec3::splat(-1.5), Vec3::splat(1.5)),
+                        NoAutoAabb,
+                    ));
                 }
                 if let Some(layers) = layers {
                     e.insert(layers.clone());

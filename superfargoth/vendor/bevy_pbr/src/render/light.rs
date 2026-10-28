@@ -1188,8 +1188,9 @@ pub fn extract_shadow_caster_changes(
             Option<Ref<bevy_mesh::morph::MeshMorphWeights>>,
         )>,
     >,
-    // superfargoth patch (own, SH-20): joint poses and the A/B switch.
+    // superfargoth patch (own, SH-20): joint poses, active cameras, and the A/B switch.
     joints: Extract<Query<Ref<GlobalTransform>>>,
+    cameras: Extract<Query<(&Camera, &GlobalTransform), With<Camera3d>>>,
     refresh: Extract<Option<Res<ShadowMoverRefresh>>>,
     mut frame: Local<u32>,
 ) {
@@ -1200,6 +1201,15 @@ pub fn extract_shadow_caster_changes(
     let per_frame = refresh.as_ref().is_none_or(|r| r.per_frame);
     changes.per_frame_movers = per_frame;
     *frame = frame.wrapping_add(1);
+    let cam_positions: Vec<Vec3> = if per_frame {
+        cameras
+            .iter()
+            .filter(|(c, _)| c.is_active)
+            .map(|(_, gt)| gt.translation())
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut visible: Vec<Entity> = Vec::new();
     for (light, light_transform, point_light, spot_light, spot_visible, point_visible) in &lights {
@@ -1247,19 +1257,26 @@ pub fn extract_shadow_caster_changes(
                     let is_skinned = skin.is_some();
 
                     let affine = caster_transform.affine();
-                    let rel = Vec3::from(affine.translation) - light_pos;
-                    // superfargoth patch (own, SH-20): a skinned or morphed mesh whose pose
-                    // changed this frame (an animation wrote a joint, or its weights) is
-                    // drawn again this frame. A pose an animation LOD holds still doesn't
-                    // write its joints, so it doesn't redraw the face.
-                    let deformed = morph.is_some_and(|m| m.is_changed())
-                        || skin.is_some_and(|s| {
-                            s.joints
+                    let caster_pos = Vec3::from(affine.translation);
+                    let rel = caster_pos - light_pos;
+                    // superfargoth patch (own, SH-20): only close-up characters (within 16 m
+                    // of an active camera) need unbudgeted per-frame pose shadow updates;
+                    // distant street walkers use the coarse root grid + LRU refresh so they
+                    // never re-render town streetlamp cubemaps every frame from 30-100 m away.
+                    let close_mover = per_frame
+                        && (is_skinned || morph.is_some())
+                        && (cam_positions.is_empty()
+                            || cam_positions
                                 .iter()
-                                .any(|j| joints.get(*j).is_ok_and(|t| t.is_changed()))
-                        });
-                    if per_frame && (is_skinned || morph.is_some()) {
-                        let rel_pos = (rel * 1000.0).round().as_ivec3();
+                                .any(|&c| caster_pos.distance_squared(c) <= 16.0 * 16.0));
+                    if close_mover {
+                        let deformed = morph.is_some_and(|m| m.is_changed())
+                            || skin.is_some_and(|s| {
+                                s.joints
+                                    .iter()
+                                    .any(|j| joints.get(*j).is_ok_and(|t| t.is_changed()))
+                            });
+                        let rel_pos = (rel * 200.0).round().as_ivec3();
                         rel_pos.hash(&mut motion_hasher);
                         if deformed {
                             motion_hasher.write_u32(*frame);
@@ -1339,6 +1356,8 @@ pub fn skip_unchanged_shadow_views(
     });
     let mut live = HashSet::new();
     let mut mandatory_renders = 0usize;
+    let mut mover_renders = 0usize;
+    const MAX_MOVER_FACE_REFRESHES_PER_FRAME: usize = 4;
     let mut refresh_candidates: Vec<(u32, Entity, RetainedViewEntity, u64, (u64, u64), bool)> =
         Vec::new();
 
@@ -1425,10 +1444,11 @@ pub fn skip_unchanged_shadow_views(
                 }
             }
             // superfargoth patch (own, SH-20): the same casters moved or deformed (an
-            // animated character): drawn this frame, outside the budget, or its shadow
-            // steps. The budget is for set changes (streaming, LOD swaps).
+            // animated character): drawn this frame (up to 4 faces/frame so multiple
+            // lamps never spike a frame), outside the set-change budget.
             Some((prev_view_key, prev_members, _, _))
                 if changes.per_frame_movers
+                    && mover_renders < MAX_MOVER_FACE_REFRESHES_PER_FRAME
                     && prev_view_key == view_key
                     && prev_members == members_key =>
             {
@@ -1437,6 +1457,7 @@ pub fn skip_unchanged_shadow_views(
                         .entity(view_entity)
                         .remove::<SkipRootViewRendering>();
                 }
+                mover_renders += 1;
                 rendered.insert(retained, (view_key, members_key, motion_key, current_frame));
             }
             Some((prev_view_key, _, _, last_frame)) if prev_view_key == view_key => {

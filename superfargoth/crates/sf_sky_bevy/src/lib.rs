@@ -529,7 +529,11 @@ fn setup_sky_cameras(
         // LUT's coarse march and the aerial-view LUT disagreed at the sea
         // horizon (a thin purple/white band at noon, m6-f1). Cost: the LUT is
         // 400×200, so a few µs.
-        e.insert(AtmosphereSettings { sky_view_lut_samples: 32, ..AtmosphereSettings::default() });
+        e.insert(AtmosphereSettings {
+            sky_view_lut_samples: 32,
+            aerial_view_lut_samples: 6,
+            ..AtmosphereSettings::default()
+        });
         if sky_camera.exposure {
             e.insert(Exposure { ev100: sky.0.ev100 });
         } else {

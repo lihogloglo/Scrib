@@ -358,6 +358,27 @@ fn sample_shadow_map_directional_pcss(
     // Angular penumbra spread in meters per meter of caster height (`light_size = 10` -> 0.025).
     let spread = light_size * 0.0025;
     let max_penumbra_m = 24.0 * spread;
+
+    // Far cascades (`texel_size >= 0.15` m, ~50+ m from the camera): `1.25 * texel_size`
+    // already spans ~0.20–0.40 m (the penumbra of a 8–16 m wall), so an 8-tap raw depth
+    // blocker search would clamp almost everywhere anyway. Use a 4-tap temporally rotated
+    // PCF kernel matched to the cascade's world-meter filter width.
+    if (texel_size >= 0.15) {
+        let far_uv_scale = (1.30 * texel_size) / cascade_world_size;
+        let far_rot = random_rotation_matrix(frag_coord_xy, temporal);
+        let far_plane = 0.5 * plane_slope_uv;
+        let fo0 = (far_rot * utils::SPIRAL_OFFSET_0_) * far_uv_scale;
+        let fo1 = (far_rot * utils::SPIRAL_OFFSET_2_) * far_uv_scale;
+        let fo2 = (far_rot * utils::SPIRAL_OFFSET_5_) * far_uv_scale;
+        let fo3 = (far_rot * utils::SPIRAL_OFFSET_7_) * far_uv_scale;
+        var far_sum = 0.0;
+        far_sum += sample_shadow_map_hardware(light_local + fo0, clamp(depth + dot(far_plane, fo0), 0.0, 1.0), array_index);
+        far_sum += sample_shadow_map_hardware(light_local + fo1, clamp(depth + dot(far_plane, fo1), 0.0, 1.0), array_index);
+        far_sum += sample_shadow_map_hardware(light_local + fo2, clamp(depth + dot(far_plane, fo2), 0.0, 1.0), array_index);
+        far_sum += sample_shadow_map_hardware(light_local + fo3, clamp(depth + dot(far_plane, fo3), 0.0, 1.0), array_index);
+        return far_sum * 0.25;
+    }
+
     let search_m = clamp(max_penumbra_m, 2.0 * texel_size, 8.0 * texel_size);
     let search_uv_scale = search_m / cascade_world_size;
     let search_rot = random_rotation_matrix(frag_coord_xy + vec2<f32>(17.23), temporal);
@@ -366,7 +387,8 @@ fn sample_shadow_map_directional_pcss(
     var blockers = 0.0;
     var weights = 0.0;
     var weighted_heights = 0.0;
-    for (var i: u32 = 0u; i < 8u; i = i + 1u) {
+    // First 4-tap pass: exits early on open sunlit surfaces with half the blocker fetches.
+    for (var i: u32 = 0u; i < 4u; i = i + 1u) {
         let offset = (search_rot * D3D_SAMPLE_POINT_POSITIONS[i]) * search_uv_scale;
         let sampled_z = sample_directional_shadow_depth(light_local + offset, array_index);
         if (sampled_z < 0.0) {
@@ -383,9 +405,26 @@ fn sample_shadow_map_directional_pcss(
         }
     }
 
-    // Open sunlit surface: skip the 8-tap spiral and take a single hardware 2x2 PCF tap.
+    // Open sunlit surface: skip the remaining blocker taps and 8-tap spiral.
     if (blockers == 0.0) {
         return sample_shadow_map_hardware(light_local, depth, array_index);
+    }
+
+    for (var i: u32 = 4u; i < 8u; i = i + 1u) {
+        let offset = (search_rot * D3D_SAMPLE_POINT_POSITIONS[i]) * search_uv_scale;
+        let sampled_z = sample_directional_shadow_depth(light_local + offset, array_index);
+        if (sampled_z < 0.0) {
+            continue;
+        }
+        let ref_z = clamp(depth + dot(plane_slope_uv, offset), 0.0, 1.0);
+        let above = sampled_z - ref_z;
+        if (above > margin_dz) {
+            let h = min(above / per_z, 30.0);
+            let w = h * h;
+            blockers += 1.0;
+            weights += w;
+            weighted_heights += w * h;
+        }
     }
 
     let avg_height_m = weighted_heights / max(weights, 1e-12);

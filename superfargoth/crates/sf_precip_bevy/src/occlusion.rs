@@ -180,8 +180,16 @@ fn update(
     let Some(mut out) = out else { return };
     if !config.0 {
         out.params = Vec4::ZERO;
+        *last = None;
+        *last_dir = None;
         return;
     }
+    let Some(dir) = travel(&precip) else {
+        out.params = Vec4::ZERO;
+        *last = None;
+        *last_dir = None;
+        return;
+    };
     let light = lights.iter().filter(|(_, l)| l.shadow_maps_enabled).max_by(|a, b| a.1.illuminance.total_cmp(&b.1.illuminance));
     let cam = cameras.iter().filter(|(_, c, _)| c.is_active).min_by_key(|(_, c, _)| c.order);
     let (Some((light, _)), Some((camera, _, camera_tf))) = (light, cam) else {
@@ -192,8 +200,6 @@ fn update(
     let pos = camera_tf.translation();
     let moved = last.is_none_or(|l| (l - pos).with_y(0.0).length() > RECENTER_M || (l.y - pos.y).abs() > RECENTER_Y_M);
     let streamed = since.0 && since.1 >= REFRESH_FRAMES;
-    // No falling slot: keep the last direction (nothing to redraw for).
-    let dir = travel(&precip).or(*last_dir).unwrap_or(Vec3::NEG_Y);
     let turned = since.1 >= REDIRECT_FRAMES && last_dir.is_none_or(|l| l.dot(dir) < REDIRECT_DEG.to_radians().cos());
     if !moved && !streamed && !turned {
         return;

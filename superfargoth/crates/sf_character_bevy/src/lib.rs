@@ -65,7 +65,8 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use bevy_app::{App, Plugin, PostUpdate, Update};
 use bevy_asset::{AssetServer, Assets, Handle, RenderAssetUsages};
-use bevy_camera::visibility::{DynamicSkinnedMeshBounds, RenderLayers, Visibility};
+use bevy_camera::primitives::Aabb;
+use bevy_camera::visibility::{DynamicSkinnedMeshBounds, NoAutoAabb, RenderLayers, Visibility};
 use bevy_ecs::prelude::*;
 use bevy_math::{Affine3A, Mat4, Quat, Vec3};
 use bevy_mesh::morph::MeshMorphWeights;
@@ -277,6 +278,20 @@ pub struct OutfitAssets {
     ready_frame: u32,
 }
 
+impl OutfitAssets {
+    /// Conservative model-space bounds covering standing, walking, and combat
+    /// reaches without per-frame joint refitting (`update_skinned_mesh_bounds`).
+    #[must_use]
+    pub fn conservative_aabb(&self) -> Aabb {
+        if let Some((lo, hi)) = self.bind_bounds {
+            let pad = Vec3::new(0.85, 0.45, 0.85).max((hi - lo) * 0.25);
+            Aabb::from_min_max(lo - pad, hi + pad)
+        } else {
+            Aabb::from_min_max(Vec3::new(-1.5, -0.5, -1.5), Vec3::new(1.5, 2.5, 1.5))
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct OutfitMesh {
     pub mesh: Handle<Mesh>,
@@ -417,7 +432,12 @@ impl Plugin for SfCharacterPlugin {
             .init_resource::<HeldModelCache>()
             .init_resource::<ClothSettings>()
             .init_resource::<ClothStats>()
-            .add_systems(PostUpdate, (cloth::apply_cloth_settings, cloth::attach_cloth).chain().before(AnimSystems::Evaluate))
+            .add_systems(
+                PostUpdate,
+                (cloth::apply_cloth_settings, cloth::attach_cloth, sync_ragdoll_bounds)
+                    .chain()
+                    .before(AnimSystems::Evaluate),
+            )
             .add_systems(PostUpdate, cloth::write_cloth_joints.in_set(AnimSystems::Apply))
             .add_systems(
                 Update,
@@ -699,6 +719,7 @@ fn finish_builds(
     mut roots: Query<(Option<&mut CharacterBody>, Option<&RenderLayers>, Option<&AnimSeed>, &Transform)>,
     variety: Res<AnimVarietySettings>,
     bindings: Query<&SkeletonBinding>,
+    ragdolls: Query<(), With<sf_anim_bevy::PhysicsPose>>,
 ) {
     frame.0 = frame.0.wrapping_add(1);
     let Some(characters) = characters else { return };
@@ -814,6 +835,8 @@ fn finish_builds(
             })
             .collect();
         commands.entity(body_entity).try_insert(cloth::ClothPending(assets.cloth.clone()));
+        let bounds = assets.conservative_aabb();
+        let has_ragdoll = ragdolls.contains(body_entity);
         let mesh_entities: Vec<Entity> = assets
             .meshes
             .iter()
@@ -822,11 +845,15 @@ fn finish_builds(
                     Mesh3d(m.mesh.clone()),
                     MeshMaterial3d(m.material.clone()),
                     SkinnedMesh { inverse_bindposes: assets.inverse_bindposes.clone(), joints: joints.clone() },
-                    DynamicSkinnedMeshBounds,
+                    bounds,
+                    NoAutoAabb,
                     Transform::IDENTITY,
                     Visibility::default(),
                     ChildOf(body_entity),
                 ));
+                if has_ragdoll {
+                    e.insert(DynamicSkinnedMeshBounds);
+                }
                 if !m.morph_weights.is_empty() {
                     e.insert(MeshMorphWeights::Value { weights: m.morph_weights.clone() });
                 }
@@ -862,6 +889,31 @@ fn finish_builds(
         }
     }
     evict(&mut cache, shared);
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn sync_ragdoll_bounds(
+    mut commands: Commands,
+    added: Query<Entity, Added<sf_anim_bevy::PhysicsPose>>,
+    mut removed: RemovedComponents<sf_anim_bevy::PhysicsPose>,
+    characters: Query<&CharacterBody>,
+) {
+    if added.is_empty() && removed.is_empty() {
+        return;
+    }
+    let stopped: HashSet<Entity> = removed.read().collect();
+    for cb in &characters {
+        if added.contains(cb.body) {
+            for &m in &cb.meshes {
+                commands.entity(m).try_insert(DynamicSkinnedMeshBounds);
+            }
+        } else if stopped.contains(&cb.body) {
+            let bounds = cb.outfit.conservative_aabb();
+            for &m in &cb.meshes {
+                commands.entity(m).try_remove::<DynamicSkinnedMeshBounds>().try_insert(bounds);
+            }
+        }
+    }
 }
 
 impl Built {

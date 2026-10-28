@@ -1,5 +1,5 @@
 use bevy_camera::{MainPassResolutionOverride, Viewport};
-use bevy_ecs::system::Res;
+use bevy_ecs::system::{Res, ResMut};
 use bevy_math::{UVec2, Vec3Swizzles};
 use bevy_render::{
     camera::ExtractedCamera,
@@ -14,8 +14,8 @@ use crate::{resources::GpuAtmosphere, ViewLightsUniformOffset};
 
 use super::{
     resources::{
-        AtmosphereBindGroups, AtmosphereLutPipelines, AtmosphereTransformsOffset,
-        RenderSkyPipelineId,
+        AtmosphereBindGroups, AtmosphereLutPipelines, AtmosphereStaticLutCache,
+        AtmosphereTransformsOffset, RenderSkyPipelineId,
     },
     GpuAtmosphereSettings,
 };
@@ -32,6 +32,7 @@ pub fn atmosphere_luts(
     )>,
     pipelines: Res<AtmosphereLutPipelines>,
     pipeline_cache: Res<PipelineCache>,
+    mut static_cache: ResMut<AtmosphereStaticLutCache>,
     mut ctx: RenderContext,
 ) {
     let (
@@ -59,6 +60,9 @@ pub fn atmosphere_luts(
         return;
     };
 
+    let need_static_luts =
+        static_cache.0.get(&bind_groups.static_lut_textures) != Some(&bind_groups.static_lut_key);
+
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
 
@@ -77,37 +81,38 @@ pub fn atmosphere_luts(
         compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
     }
 
-    // Transmittance LUT
+    if need_static_luts {
+        // Transmittance LUT
+        luts_pass.set_pipeline(transmittance_lut_pipeline);
+        luts_pass.set_bind_group(
+            0,
+            &bind_groups.transmittance_lut,
+            &[
+                atmosphere_uniforms_offset.index(),
+                settings_uniforms_offset.index(),
+            ],
+        );
+        dispatch_2d(&mut luts_pass, settings.transmittance_lut_size);
 
-    luts_pass.set_pipeline(transmittance_lut_pipeline);
-    luts_pass.set_bind_group(
-        0,
-        &bind_groups.transmittance_lut,
-        &[
-            atmosphere_uniforms_offset.index(),
-            settings_uniforms_offset.index(),
-        ],
-    );
-
-    dispatch_2d(&mut luts_pass, settings.transmittance_lut_size);
-
-    // Multiscattering LUT
-
-    luts_pass.set_pipeline(multiscattering_lut_pipeline);
-    luts_pass.set_bind_group(
-        0,
-        &bind_groups.multiscattering_lut,
-        &[
-            atmosphere_uniforms_offset.index(),
-            settings_uniforms_offset.index(),
-        ],
-    );
-
-    luts_pass.dispatch_workgroups(
-        settings.multiscattering_lut_size.x,
-        settings.multiscattering_lut_size.y,
-        1,
-    );
+        // Multiscattering LUT
+        luts_pass.set_pipeline(multiscattering_lut_pipeline);
+        luts_pass.set_bind_group(
+            0,
+            &bind_groups.multiscattering_lut,
+            &[
+                atmosphere_uniforms_offset.index(),
+                settings_uniforms_offset.index(),
+            ],
+        );
+        luts_pass.dispatch_workgroups(
+            settings.multiscattering_lut_size.x,
+            settings.multiscattering_lut_size.y,
+            1,
+        );
+        static_cache
+            .0
+            .insert(bind_groups.static_lut_textures, bind_groups.static_lut_key);
+    }
 
     // Sky View LUT
 

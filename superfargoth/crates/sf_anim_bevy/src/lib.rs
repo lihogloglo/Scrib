@@ -397,13 +397,14 @@ pub fn spawn_rig(
 
 // --- Systems --------------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 fn select_tiers(
     settings: Res<AnimLodSettings>,
     mut budget: ResMut<AnimBudget>,
     time: Res<Time>,
     mut frame: ResMut<AnimFrame>,
     cameras: Query<(&Camera, &GlobalTransform, &Projection)>,
-    mut chars: Query<(Entity, Option<&GlobalTransform>, &mut AnimLod), With<Animator>>,
+    mut chars: Query<(Entity, Option<&GlobalTransform>, &mut AnimLod, Has<PhysicsPose>), With<Animator>>,
 ) {
     frame.0 = frame.0.wrapping_add(1);
     let dt = time.delta_secs();
@@ -415,7 +416,7 @@ fn select_tiers(
             Projection::Perspective(p) => Some((t.affine().inverse(), p.fov, p.aspect_ratio)),
             _ => None,
         });
-    for (entity, at, mut lod) in &mut chars {
+    for (entity, at, mut lod, _) in &mut chars {
         let current = lod.tier;
         let tier = if let Some(t) = lod.forced {
             t
@@ -451,7 +452,7 @@ fn select_tiers(
     if let Some(limit) = settings.budget_us {
         let mut picks: Vec<(f32, AnimTier)> = Vec::new();
         let mut who = Vec::new();
-        for (entity, _, lod) in &chars {
+        for (entity, _, lod, _) in &chars {
             if lod.forced.is_none() {
                 picks.push((lod.pixels * lod.significance, lod.tier));
                 who.push(entity);
@@ -461,12 +462,17 @@ fn select_tiers(
         budget.predicted_us = predicted;
         budget.demoted = demoted;
         for (e, (_, t)) in who.into_iter().zip(picks) {
-            if let Ok((_, _, mut lod)) = chars.get_mut(e) {
+            if let Ok((_, _, mut lod, _)) = chars.get_mut(e) {
                 lod.tier = t;
             }
         }
     }
-    for (_, _, mut lod) in &mut chars {
+    for (_, _, mut lod, has_physics) in &mut chars {
+        if lod.idle_skip_a3 && lod.tier == AnimTier::A3 && !has_physics {
+            lod.due = false;
+            lod.pending = 0.0;
+            continue;
+        }
         lod.pending += dt;
         let interval = lod.tier.interval();
         lod.due = (frame.0 + lod.phase).is_multiple_of(interval);

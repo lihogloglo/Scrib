@@ -593,6 +593,16 @@ pub(super) fn prepare_atmosphere_transforms(
     }
 }
 
+/// superfargoth patch (own, H1): `transmittance_lut` and `multiscattering_lut`
+/// depend solely on planet radii, ground albedo, `ScatteringMedium`, and LUT
+/// dimensions/sample counts (Hillaire EGSR 2020 §4). Caching their key per GPU
+/// texture pair skips ~2.6M redundant raymarch steps every frame while keeping
+/// bit-identical output and instant invalidation on weather/medium changes.
+#[derive(Resource, Default)]
+pub(crate) struct AtmosphereStaticLutCache(
+    pub bevy_platform::collections::HashMap<(TextureId, TextureId), u64>,
+);
+
 #[derive(Component)]
 pub(crate) struct AtmosphereBindGroups {
     pub transmittance_lut: BindGroup,
@@ -600,6 +610,8 @@ pub(crate) struct AtmosphereBindGroups {
     pub sky_view_lut: BindGroup,
     pub aerial_view_lut: BindGroup,
     pub render_sky: BindGroup,
+    pub static_lut_textures: (TextureId, TextureId),
+    pub static_lut_key: u64,
 }
 
 #[derive(Copy, Clone, Debug, thiserror::Error)]
@@ -623,6 +635,7 @@ pub(super) fn prepare_atmosphere_bind_groups(
         (
             Entity,
             &ExtractedAtmosphere,
+            &GpuAtmosphereSettings,
             &AtmosphereTextures,
             &ViewDepthStencilTexture,
             &Msaa,
@@ -643,6 +656,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
     pipeline_cache: Res<PipelineCache>,
     mut commands: Commands,
 ) -> Result<(), BevyError> {
+    use core::hash::{BuildHasher, Hash, Hasher};
+
     if views.iter().len() == 0 {
         return Ok(());
     }
@@ -670,7 +685,7 @@ pub(super) fn prepare_atmosphere_bind_groups(
         .binding()
         .ok_or(AtmosphereBindGroupError::LightUniforms)?;
 
-    for (entity, atmosphere, textures, view_depth_texture, msaa) in &views {
+    for (entity, atmosphere, lut_settings, textures, view_depth_texture, msaa) in &views {
         let Some(depth_view) = view_depth_texture
             .attachment
             .depth_stencil_views()
@@ -681,6 +696,25 @@ pub(super) fn prepare_atmosphere_bind_groups(
         let gpu_medium = gpu_media
             .get(atmosphere.medium)
             .ok_or(ScatteringMediumMissingError(atmosphere.medium))?;
+
+        let mut key_hasher = bevy_platform::hash::FixedHasher.build_hasher();
+        atmosphere.inner_radius.to_bits().hash(&mut key_hasher);
+        atmosphere.outer_radius.to_bits().hash(&mut key_hasher);
+        for c in atmosphere.ground_albedo.to_array() {
+            c.to_bits().hash(&mut key_hasher);
+        }
+        gpu_medium.density_lut.id().hash(&mut key_hasher);
+        gpu_medium.scattering_lut.id().hash(&mut key_hasher);
+        lut_settings.transmittance_lut_size.hash(&mut key_hasher);
+        lut_settings.transmittance_lut_samples.hash(&mut key_hasher);
+        lut_settings.multiscattering_lut_size.hash(&mut key_hasher);
+        lut_settings.multiscattering_lut_dirs.hash(&mut key_hasher);
+        lut_settings.multiscattering_lut_samples.hash(&mut key_hasher);
+        let static_lut_key = key_hasher.finish();
+        let static_lut_textures = (
+            textures.transmittance_lut.texture.id(),
+            textures.multiscattering_lut.texture.id(),
+        );
 
         let transmittance_lut = render_device.create_bind_group(
             "transmittance_lut_bind_group",
@@ -797,6 +831,8 @@ pub(super) fn prepare_atmosphere_bind_groups(
             sky_view_lut,
             aerial_view_lut,
             render_sky,
+            static_lut_textures,
+            static_lut_key,
         });
     }
 
