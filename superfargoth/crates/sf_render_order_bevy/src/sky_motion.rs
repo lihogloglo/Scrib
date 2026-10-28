@@ -13,16 +13,18 @@ use std::collections::HashMap;
 
 use bevy_app::{App, Plugin};
 use bevy_asset::{AssetServer, Handle, load_embedded_asset};
+use bevy_camera::{MainPassResolutionOverride, Viewport};
 use bevy_core_pipeline::FullscreenShader;
 use bevy_core_pipeline::core_3d::main_transparent_pass_3d;
 use bevy_core_pipeline::prepass::ViewPrepassTextures;
 use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
 use bevy_ecs::prelude::*;
 use bevy_math::{Mat4, Vec4};
+use bevy_render::camera::ExtractedCamera;
 use bevy_render::render_resource::binding_types::{texture_depth_2d, uniform_buffer};
 use bevy_render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState,
-    PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, ShaderType, TextureFormat, UniformBuffer,
+    PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, ShaderType, TextureFormat, TextureUsages, UniformBuffer,
 };
 use bevy_render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy_render::view::{ExtractedView, Msaa, ViewDepthStencilTexture};
@@ -43,6 +45,7 @@ impl Default for SkyMotion {
 struct SkyMotionUniform {
     inv_clip_from_dir: Mat4,
     prev_clip_from_dir: Mat4,
+    viewport: Vec4,
 }
 
 #[derive(Resource)]
@@ -94,7 +97,7 @@ fn rotation_clip(view: &ExtractedView) -> Mat4 {
     view.clip_from_view * view_from_world
 }
 
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_arguments, clippy::cast_precision_loss)]
 fn prepare(
     mut commands: Commands,
     mut pipeline: ResMut<SkyMotionPipeline>,
@@ -103,7 +106,15 @@ fn prepare(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     switch: Res<SkyMotion>,
-    views: Query<(Entity, &ExtractedView, &ViewDepthStencilTexture, &Msaa, Option<&ViewPrepassTextures>)>,
+    views: Query<(
+        Entity,
+        &ExtractedView,
+        &ExtractedCamera,
+        &ViewDepthStencilTexture,
+        &Msaa,
+        Option<&MainPassResolutionOverride>,
+        Option<&ViewPrepassTextures>,
+    )>,
 ) {
     if !switch.0 {
         prev.0.clear();
@@ -123,9 +134,16 @@ fn prepare(
         };
         pipeline.id = Some(cache.queue_render_pipeline(descriptor));
     }
-    for (entity, view, depth, msaa, prepass) in &views {
+    for (entity, view, camera, depth, msaa, resolution, prepass) in &views {
         let has_mv = prepass.is_some_and(|p| p.motion_vectors.is_some());
-        let Some(depth_view) = depth.attachment.depth_stencil_views().depth_only_view() else { continue };
+        // DL-5: interiors (`--rt --off denoiser`) have no water/atmosphere camera
+        // adding `TEXTURE_BINDING` to the view depth texture, and no sky at infinity.
+        let bindable = depth.texture().usage().contains(TextureUsages::TEXTURE_BINDING);
+        let Some(depth_view) = bindable.then(|| depth.attachment.depth_stencil_views().depth_only_view()).flatten() else {
+            commands.entity(entity).remove::<SkyMotionBindings>();
+            prev.0.remove(&entity);
+            continue;
+        };
         if msaa.samples() != 1 || !has_mv {
             // Render views are retained: bindings from a frame when this view
             // was single-sampled would run the 1-sample pipeline against MSAA
@@ -135,9 +153,13 @@ fn prepare(
             prev.0.remove(&entity);
             continue;
         }
+        let vp = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution).map_or_else(
+            || Vec4::new(view.viewport.x as f32, view.viewport.y as f32, view.viewport.z.max(1) as f32, view.viewport.w.max(1) as f32),
+            |v| Vec4::new(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x.max(1) as f32, v.physical_size.y.max(1) as f32),
+        );
         let now = rotation_clip(view);
         let before = prev.0.insert(entity, now).unwrap_or(now);
-        let mut uniform = UniformBuffer::from(SkyMotionUniform { inv_clip_from_dir: now.inverse(), prev_clip_from_dir: before });
+        let mut uniform = UniformBuffer::from(SkyMotionUniform { inv_clip_from_dir: now.inverse(), prev_clip_from_dir: before, viewport: vp });
         uniform.write_buffer(&device, &queue);
         let Some(binding) = uniform.binding() else { continue };
         let group = device.create_bind_group("sky_motion", &cache.get_bind_group_layout(&pipeline.layout), &BindGroupEntries::sequential((binding, depth_view)));
@@ -145,9 +167,9 @@ fn prepare(
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::cast_precision_loss)]
 fn sky_motion_pass(
-    view: ViewQuery<(&SkyMotionBindings, &ViewPrepassTextures, &Msaa)>,
+    view: ViewQuery<(&SkyMotionBindings, &ExtractedCamera, Option<&MainPassResolutionOverride>, &ViewPrepassTextures, &Msaa)>,
     pipeline: Res<SkyMotionPipeline>,
     switch: Res<SkyMotion>,
     cache: Res<PipelineCache>,
@@ -156,7 +178,7 @@ fn sky_motion_pass(
     if !switch.0 {
         return;
     }
-    let (bindings, prepass, msaa) = view.into_inner();
+    let (bindings, camera, resolution, prepass, msaa) = view.into_inner();
     if msaa.samples() != 1 {
         return;
     }
@@ -170,6 +192,9 @@ fn sky_motion_pass(
         occlusion_query_set: None,
         multiview_mask: None,
     });
+    if let Some(v) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution) {
+        pass.set_viewport(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x as f32, v.physical_size.y as f32, v.depth.start, v.depth.end);
+    }
     pass.set_pipeline(render_pipeline);
     pass.set_bind_group(0, &bindings.0, &[]);
     pass.draw(0..3, 0..1);

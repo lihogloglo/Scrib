@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use bevy_app::App;
 use bevy_asset::{load_embedded_asset, AssetId, Handle};
+use bevy_camera::{MainPassResolutionOverride, Viewport};
 use bevy_core_pipeline::core_3d::main_transparent_pass_3d;
 use bevy_core_pipeline::prepass::ViewPrepassTextures;
 use bevy_core_pipeline::schedule::{Core3d, Core3dSystems};
@@ -15,6 +16,7 @@ use bevy_ecs::schedule::IntoSystemSet;
 use bevy_image::Image;
 use bevy_math::{Mat4, Vec4};
 use bevy_pbr::resources::AtmosphereTextures;
+use bevy_render::camera::ExtractedCamera;
 use bevy_render::diagnostic::RecordDiagnostics;
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_resource::binding_types::{
@@ -495,14 +497,14 @@ fn fft_pass(_view: ViewQuery<&WaterView>, gpu: Res<WaterGpu>, state: Res<WaterRe
 }
 
 fn snapshot_pass(
-    view: ViewQuery<&WaterViewBindings>,
+    view: ViewQuery<(&WaterViewBindings, &ExtractedCamera, Option<&MainPassResolutionOverride>)>,
     state: Res<WaterRender>,
     ids: Res<WaterPipelineIds>,
     cache: Res<PipelineCache>,
     images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let bindings = view.into_inner();
+    let (bindings, camera, resolution) = view.into_inner();
     let Some(image_ids) = state.images else { return };
     let (Some(color), Some(depth)) = (images.get(image_ids.snapshot_color), images.get(image_ids.snapshot_depth)) else { return };
     let Some(pipeline) = ids.snapshot.get(&bindings.samples).and_then(|id| cache.get_render_pipeline(*id)) else { return };
@@ -514,7 +516,13 @@ fn snapshot_pass(
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(size[0].div_ceil(4), size[1].div_ceil(4), size[2].div_ceil(4));
     }
-    let attach = |view| Some(RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: Operations { load: LoadOp::Load, store: StoreOp::Store } });
+    #[allow(clippy::default_trait_access)]
+    let load = if camera.viewport.is_none() {
+        LoadOp::Clear(Default::default())
+    } else {
+        LoadOp::Load
+    };
+    let attach = |view| Some(RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: Operations { load, store: StoreOp::Store } });
     let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
         label: Some("water_snapshot"),
         color_attachments: &[attach(&color.texture_view), attach(&depth.texture_view)],
@@ -524,14 +532,24 @@ fn snapshot_pass(
         multiview_mask: None,
     });
     let span = diagnostics.pass_span(&mut pass, "water_snapshot");
+    if let Some(v) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution) {
+        #[allow(clippy::cast_precision_loss)]
+        pass.set_viewport(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x as f32, v.physical_size.y as f32, v.depth.start, v.depth.end);
+    }
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &bindings.snapshot, &[]);
     pass.draw(0..3, 0..1);
     span.end(&mut pass);
 }
 
-fn velocity_pass(view: ViewQuery<(&WaterViewBindings, Option<&ViewPrepassTextures>)>, state: Res<WaterRender>, ids: Res<WaterPipelineIds>, cache: Res<PipelineCache>, mut ctx: RenderContext) {
-    let (bindings, prepass) = view.into_inner();
+fn velocity_pass(
+    view: ViewQuery<(&WaterViewBindings, &ExtractedCamera, Option<&MainPassResolutionOverride>, Option<&ViewPrepassTextures>)>,
+    state: Res<WaterRender>,
+    ids: Res<WaterPipelineIds>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    let (bindings, camera, resolution, prepass) = view.into_inner();
     let Some(motion) = prepass.and_then(|p| p.motion_vectors.as_ref()) else { return };
     let Some(pipeline) = ids.velocity.get(&bindings.samples).and_then(|id| cache.get_render_pipeline(*id)) else { return };
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -547,6 +565,10 @@ fn velocity_pass(view: ViewQuery<(&WaterViewBindings, Option<&ViewPrepassTexture
         multiview_mask: None,
     });
     let span = diagnostics.pass_span(&mut pass, "water_velocity");
+    if let Some(v) = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution) {
+        #[allow(clippy::cast_precision_loss)]
+        pass.set_viewport(v.physical_position.x as f32, v.physical_position.y as f32, v.physical_size.x as f32, v.physical_size.y as f32, v.depth.start, v.depth.end);
+    }
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &bindings.velocity, &[]);
     pass.draw(0..quads * quads * 6, 0..rings);

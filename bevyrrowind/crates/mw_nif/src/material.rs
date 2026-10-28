@@ -1,8 +1,8 @@
 use std::hash::{Hash, Hasher};
 
 use tes3::nif::{
-    NiAlphaProperty, NiMaterialProperty, NiStencilProperty, NiStream, NiTexturingProperty, NiVertexColorProperty,
-    NiZBufferProperty, SourceVertexMode, TextureMap, TextureSource,
+    ClampMode, LightingMode, NiAlphaProperty, NiMaterialProperty, NiStencilProperty, NiStream, NiTexturingProperty,
+    NiVertexColorProperty, NiZBufferProperty, SourceVertexMode, TextureMap, TextureSource,
 };
 use tes3::nif::{AlphaBlendFunction, AlphaTestFunction, DrawMode, NiKey};
 
@@ -40,6 +40,7 @@ pub enum VertexColorMode {
 /// VFS paths (see [`texture_path`]); resolving the actual file (e.g. `.dds`
 /// replacing `.tga`) is the asset layer's job.
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Material {
     pub base_texture: Option<String>,
     pub dark_texture: Option<String>,
@@ -55,6 +56,11 @@ pub struct Material {
     /// Whether `alpha_mode` is (or may become) a cutout drawn from an authored blend.
     pub cutout: Cutout,
     pub vertex_colors: VertexColorMode,
+    /// `NiVertexColorProperty::lighting_mode == LightingMode::Emissive` (fixed-function
+    /// diffuse/ambient disabled: only emissive/vertex-emissive light shows).
+    pub unlit_lighting: bool,
+    /// `(clamp_s, clamp_t)` of the base texture slot (`NiTexturingProperty::ClampMode`).
+    pub base_clamp: [bool; 2],
     pub double_sided: bool,
     pub depth_test: bool,
     pub depth_write: bool,
@@ -76,6 +82,8 @@ impl Default for Material {
             alpha_mode: AlphaMode::Opaque,
             cutout: Cutout::No,
             vertex_colors: VertexColorMode::AmbientDiffuse,
+            unlit_lighting: false,
+            base_clamp: [false; 2],
             double_sided: false,
             depth_test: true,
             depth_write: true,
@@ -84,8 +92,15 @@ impl Default for Material {
 }
 
 /// The non-float fields of a [`Material`], for equality and hashing.
-type FlagKey<'a> =
-    (&'a Option<String>, &'a Option<String>, &'a Option<String>, &'a Option<String>, VertexColorMode, [bool; 3], Cutout);
+type FlagKey<'a> = (
+    &'a Option<String>,
+    &'a Option<String>,
+    &'a Option<String>,
+    &'a Option<String>,
+    VertexColorMode,
+    [bool; 6],
+    Cutout,
+);
 
 impl Material {
     /// Every float as raw bits, for exact equality and hashing.
@@ -112,7 +127,15 @@ impl Material {
             &self.detail_texture,
             &self.glow_texture,
             self.vertex_colors,
-            [self.double_sided, self.depth_test, self.depth_write], self.cutout,
+            [
+                self.double_sided,
+                self.depth_test,
+                self.depth_write,
+                self.unlit_lighting,
+                self.base_clamp[0],
+                self.base_clamp[1],
+            ],
+            self.cutout,
         )
     }
 }
@@ -223,11 +246,15 @@ where
     stream.objects.get(key?).and_then(|o| <&T>::try_from(o).ok())
 }
 
+fn slot_map(texturing: &NiTexturingProperty, slot: usize) -> Option<&tes3::nif::Map> {
+    match texturing.texture_maps.get(slot)?.as_ref()? {
+        TextureMap::Map(map) => Some(map),
+        TextureMap::BumpMap(bump) => Some(&bump.base),
+    }
+}
+
 fn slot_texture(stream: &NiStream, texturing: &NiTexturingProperty, slot: usize) -> Option<String> {
-    let map = match texturing.texture_maps.get(slot)?.as_ref()? {
-        TextureMap::Map(map) => map,
-        TextureMap::BumpMap(bump) => &bump.base,
-    };
+    let map = slot_map(texturing, slot)?;
     let source = stream.get(map.texture)?;
     match &source.source {
         TextureSource::External(name) if !name.trim().is_empty() => Some(texture_path(name)),
@@ -241,6 +268,14 @@ pub(crate) fn from_properties(stream: &NiStream, inherited: &Inherited) -> Mater
 
     if let Some(texturing) = get::<NiTexturingProperty>(stream, inherited.texturing) {
         material.base_texture = slot_texture(stream, texturing, BASE);
+        if let Some(base) = slot_map(texturing, BASE) {
+            material.base_clamp = match base.clamp_mode {
+                ClampMode::ClampSClampT => [true, true],
+                ClampMode::ClampSWrapT => [true, false],
+                ClampMode::WrapSClampT => [false, true],
+                ClampMode::WrapSWrapT => [false, false],
+            };
+        }
         material.dark_texture = slot_texture(stream, texturing, DARK);
         material.detail_texture = slot_texture(stream, texturing, DETAIL);
         material.glow_texture = slot_texture(stream, texturing, GLOW);
@@ -272,6 +307,7 @@ pub(crate) fn from_properties(stream: &NiStream, inherited: &Inherited) -> Mater
             SourceVertexMode::Emissive => VertexColorMode::Emissive,
             SourceVertexMode::AmbientDiffuse => VertexColorMode::AmbientDiffuse,
         };
+        material.unlit_lighting = vertex.lighting_mode == LightingMode::Emissive;
     }
 
     if let Some(stencil) = get::<NiStencilProperty>(stream, inherited.stencil) {

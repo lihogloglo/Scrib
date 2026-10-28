@@ -59,7 +59,7 @@ fn vertex(v: Vertex) -> VertexOutput {
     let right = normalize(cross(up_ref, f));
     let up = cross(f, right);
     // World size of one pixel at this distance.
-    let pixel = dist * 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
+    let pixel = dist * 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
     let size = max(v.data.x * sprite.p.z, sprite.p.y * pixel);
     // Sub-pixel-limited sprites keep their energy: dim as they shrink below
     // their natural size, so the minimum size doesn't brighten far lights.
@@ -91,7 +91,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // A bright core and a soft halo.
     let glow = exp(-r2 * 12.0) * 2.0 + exp(-r2 * 3.0) * 0.4;
     // Bevy's additive mode is premultiplied blending: alpha 0 adds.
-    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     let transmittance = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, in.dist).a;
     return vec4<f32>(in.color.rgb * (in.color.a * glow * transmittance), 0.0);
 }

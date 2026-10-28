@@ -58,7 +58,7 @@ fn vertex(v: WaterVertex) -> WaterVarying {
 
 // World position of the scene at pixel `px` with reverse-Z `depth`.
 fn scene_point(px: vec2<f32>, depth: f32) -> vec3<f32> {
-    let uv = (px - view.viewport.xy) / view.viewport.zw;
+    let uv = (px - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     let ndc = vec3(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
     let w = view.world_from_clip * vec4(ndc, 1.0);
     return w.xyz / w.w;
@@ -146,7 +146,7 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     // Wave normal from the cascades' slopes at the Lagrangian point, mip-filtered by the pixel's
     // footprint on the surface (geometric mean of its two axes); the slope variance the mips
     // average away widens the highlight instead of aliasing (Bruneton 2010, simplified).
-    let pixel = 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
+    let pixel = 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
     let footprint = d * pixel / sqrt(max(abs(V.y), 0.05));
     var s = vec4(0.0);
     var whitecap = 0.0;
@@ -174,8 +174,9 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
 
     // The scene behind the water (snapshot after sky, clouds and fog).
     let px = vec2<i32>(in.position.xy);
-    let dims = vec2<i32>(textureDimensions(snapshot_depth));
-    let valid = water.misc.w > 0.5 && all(px < dims);
+    let vp_min = vec2<i32>(view.main_pass_viewport.xy);
+    let dims = min(vec2<i32>(textureDimensions(snapshot_depth)), vp_min + vec2<i32>(view.main_pass_viewport.zw));
+    let valid = water.misc.w > 0.5 && all(px >= vp_min) && all(px < dims);
     var behind = vec3(0.0);
     var path = 1e6;
     if valid {
@@ -185,9 +186,9 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
             path0 = distance(scene_point(in.position.xy, depth0), in.world_position.xyz);
         }
         // Refraction: offset by the normal, projected; none at contact (no smear on shores).
-        let scale = water.foam.z * view.clip_from_view[1][1] * 0.5 * view.viewport.w / max(d, 1.0);
+        let scale = water.foam.z * view.clip_from_view[1][1] * 0.5 * view.main_pass_viewport.w / max(d, 1.0);
         let offset = N.xz * scale * saturate(path0 / 2.0);
-        var rpx = clamp(vec2<i32>(in.position.xy + offset), vec2<i32>(0), dims - 1);
+        var rpx = clamp(vec2<i32>(in.position.xy + offset), vp_min, dims - 1);
         var depth = textureLoad(snapshot_depth, rpx, 0).r;
         // Reject: the refracted sample lies in front of the water (reverse Z: larger is nearer).
         if depth > in.position.z {
@@ -246,7 +247,7 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     // Fog in front of the water: aerial perspective (as Bevy's render_sky applies to opaque
     // geometry), then the froxels (as `sf_atmos_bevy`'s transparent fog), or without froxels the
     // analytic height fog (the Low/Medium path, as the `sf_atmos` composite fogs the land).
-    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     if water.aerial.w > 0.0 {
         let slices = f32(textureDimensions(aerial).z);
         let lut = textureSampleLevel(aerial, aerial_sampler, vec3(uv, saturate(d / water.aerial.w - 0.5 / slices)), 0.0);

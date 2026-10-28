@@ -60,7 +60,49 @@ fn decode_dds(bytes: &[u8]) -> Result<Rgba8, String> {
         format.decompress(&data[..need], wu, hu, &mut rgba);
         return Ok(Rgba8 { width: w, height: h, rgba });
     }
-    // Uncompressed: (bytes per pixel, byte offsets of r, g, b, a).
+    // 16-bit uncompressed DDS formats used by Morrowind cutout banners/nets/clouds.
+    #[allow(clippy::cast_possible_truncation, clippy::chunks_exact_to_as_chunks)]
+    if let Some(d3d) = dds.get_d3d_format() {
+        let expand5 = |v: u16| ((v * 527 + 23) >> 6) as u8;
+        let expand6 = |v: u16| ((v * 259 + 33) >> 6) as u8;
+        let expand4 = |v: u16| (v * 17) as u8;
+        match d3d {
+            D3DFormat::A1R5G5B5 | D3DFormat::X1R5G5B5 => {
+                if data.len() < wu * hu * 2 {
+                    return Err("truncated DDS".into());
+                }
+                let has_alpha = d3d == D3DFormat::A1R5G5B5;
+                for (px, out) in data.chunks_exact(2).zip(rgba.as_chunks_mut::<4>().0) {
+                    let w = u16::from_le_bytes([px[0], px[1]]);
+                    let a = if !has_alpha || (w & 0x8000) != 0 { 255 } else { 0 };
+                    *out = [expand5((w >> 10) & 0x1f), expand5((w >> 5) & 0x1f), expand5(w & 0x1f), a];
+                }
+                return Ok(Rgba8 { width: w, height: h, rgba });
+            }
+            D3DFormat::A4R4G4B4 => {
+                if data.len() < wu * hu * 2 {
+                    return Err("truncated DDS".into());
+                }
+                for (px, out) in data.chunks_exact(2).zip(rgba.as_chunks_mut::<4>().0) {
+                    let w = u16::from_le_bytes([px[0], px[1]]);
+                    *out = [expand4((w >> 8) & 0xf), expand4((w >> 4) & 0xf), expand4(w & 0xf), expand4((w >> 12) & 0xf)];
+                }
+                return Ok(Rgba8 { width: w, height: h, rgba });
+            }
+            D3DFormat::R5G6B5 => {
+                if data.len() < wu * hu * 2 {
+                    return Err("truncated DDS".into());
+                }
+                for (px, out) in data.chunks_exact(2).zip(rgba.as_chunks_mut::<4>().0) {
+                    let w = u16::from_le_bytes([px[0], px[1]]);
+                    *out = [expand5((w >> 11) & 0x1f), expand6((w >> 5) & 0x3f), expand5(w & 0x1f), 255];
+                }
+                return Ok(Rgba8 { width: w, height: h, rgba });
+            }
+            _ => {}
+        }
+    }
+    // Uncompressed 24/32-bit: (bytes per pixel, byte offsets of r, g, b, a).
     let layout: (usize, [usize; 3], Option<usize>) = match dds.get_d3d_format() {
         Some(D3DFormat::A8R8G8B8) => (4, [2, 1, 0], Some(3)),
         Some(D3DFormat::X8R8G8B8) => (4, [2, 1, 0], None),
@@ -134,6 +176,21 @@ mod tests {
         let img = decode_rgba("textures/a.dds", &bytes).unwrap();
         assert_eq!((img.width, img.height), (2, 2));
         assert_eq!(&img.rgba[..4], &[30, 20, 10, 40]);
+    }
+
+    #[test]
+    fn decodes_16bit_cutout_dds_formats() {
+        // A1R5G5B5: pixel 0 = opaque red (0xFC00), pixel 1 = transparent hole (0x0000).
+        let a1r5g5b5 = [0x00, 0xFC, 0x00, 0x00];
+        let img = decode_rgba("tx_banner_temple_04.dds", &dds(D3DFormat::A1R5G5B5, &a1r5g5b5, 2, 1)).unwrap();
+        assert_eq!(&img.rgba[..8], &[255, 0, 0, 255, 0, 0, 0, 0]);
+        assert!(alpha_is_cutout(&img));
+
+        // A4R4G4B4: pixel 0 = opaque green (0xF0F0), pixel 1 = transparent hole (0x0000).
+        let a4r4g4b4 = [0xF0, 0xF0, 0x00, 0x00];
+        let img4 = decode_rgba("tx_rope_net_01.dds", &dds(D3DFormat::A4R4G4B4, &a4r4g4b4, 2, 1)).unwrap();
+        assert_eq!(&img4.rgba[..8], &[0, 255, 0, 255, 0, 0, 0, 0]);
+        assert!(alpha_is_cutout(&img4));
     }
 
     #[test]

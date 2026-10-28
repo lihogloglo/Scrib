@@ -56,6 +56,8 @@ pub mod extras {
     pub const DEPTH_WRITE: &str = "nif.depth_write";
     /// `"false"` when the surface ignores depth.
     pub const DEPTH_TEST: &str = "nif.depth_test";
+    /// `"st"`, `"s"`, or `"t"` when the base texture clamps on S and/or T.
+    pub const BASE_CLAMP: &str = "nif.base_clamp";
 }
 
 /// Imports `.nif` files.
@@ -326,7 +328,15 @@ fn srgb_to_linear(c: f32) -> f32 {
 }
 
 fn material(m: &mw_nif::Material, index: usize) -> Material {
-    let [r, g, b] = m.diffuse.map(srgb_to_linear);
+    let vtx_emissive_unlit = m.vertex_colors == VertexColorMode::Emissive
+        && (m.unlit_lighting || m.diffuse == [0.0, 0.0, 0.0]);
+    let [r, g, b] = if vtx_emissive_unlit {
+        [1.0, 1.0, 1.0]
+    } else if m.unlit_lighting {
+        [0.0, 0.0, 0.0]
+    } else {
+        m.diffuse.map(srgb_to_linear)
+    };
     let mut out = Material {
         name: m.base_texture.as_deref().map_or_else(
             || format!("material{index}"),
@@ -341,7 +351,7 @@ fn material(m: &mw_nif::Material, index: usize) -> Material {
             NifAlpha::Blend { .. } => AlphaMode::Blend,
         },
         double_sided: m.double_sided,
-        unlit: false,
+        unlit: vtx_emissive_unlit,
         extras: std::collections::BTreeMap::new(),
     };
     let vertex_colors = match m.vertex_colors {
@@ -365,6 +375,18 @@ fn material(m: &mw_nif::Material, index: usize) -> Material {
     }
     if !m.depth_test {
         out.extras.insert(extras::DEPTH_TEST.into(), "false".into());
+    }
+    match m.base_clamp {
+        [true, true] => {
+            out.extras.insert(extras::BASE_CLAMP.into(), "st".into());
+        }
+        [true, false] => {
+            out.extras.insert(extras::BASE_CLAMP.into(), "s".into());
+        }
+        [false, true] => {
+            out.extras.insert(extras::BASE_CLAMP.into(), "t".into());
+        }
+        [false, false] => {}
     }
     out
 }

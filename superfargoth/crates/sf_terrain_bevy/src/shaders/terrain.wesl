@@ -114,7 +114,7 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     var visibility = s.ao;
     var diffuse_occlusion = vec3<f32>(s.ao);
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
-    let ssao = textureLoad(screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy - view.viewport.xy), 0i).r;
+    let ssao = textureLoad(screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy - view.main_pass_viewport.xy), 0i).r;
     diffuse_occlusion = min(diffuse_occlusion, ssao_multibounce(ssao, albedo));
     visibility = min(visibility, ssao);
 }

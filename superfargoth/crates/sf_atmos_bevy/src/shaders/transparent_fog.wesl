@@ -7,11 +7,12 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::pbr_types::{
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED,
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ADD, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MULTIPLY,
+    STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
 };
 
 // (near, far, slices, enabled) of the volume.
@@ -21,12 +22,19 @@ import bevy_pbr::render::{
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+@if(VISIBILITY_RANGE_DITHER) {
+    visibility_range_dither(in.position, in.visibility_range_dither);
+}
     var pbr = pbr_input_from_standard_material(in, is_front);
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr);
+    if (pbr.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
+        out.color = apply_pbr_lighting(pbr);
+    } else {
+        out.color = pbr.material.base_color;
+    }
 
-    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     let fog = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, distance(in.world_position.xyz, view.world_position));
     let bits = pbr.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
     var mode = FOG_BLEND;

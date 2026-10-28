@@ -11,13 +11,14 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::pbr_types::{
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED,
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ADD, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MULTIPLY,
+    STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
 import bevy_pbr::render::{
     mesh_functions,
     forward_io::{Vertex, VertexOutput, FragmentOutput},
     view_transformations::position_world_to_clip,
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
 };
 
 // One particle (`particles.rs` `GpuParticle`): node-space center and radius
@@ -54,24 +55,35 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
     out.world_position = vec4<f32>(world, 1.0);
     out.position = position_world_to_clip(world);
-    out.world_normal = normalize(view.world_from_view[2].xyz);
+    // Volumetric puffs scatter from above (sky/sun) and below (fire via `diffuse_transmission`);
+    // a camera-facing horizontal normal got zero direct light from a torch underneath (RO-B).
+    out.world_normal = vec3<f32>(0.0, 1.0, 0.0);
     out.uv = vertex.uv;
     out.color = p.color;
-@if(VERTEX_OUTPUT_INSTANCE_INDEX)
+@if(VERTEX_OUTPUT_INSTANCE_INDEX) {
     out.instance_index = vertex.instance_index;
-@if(VISIBILITY_RANGE_DITHER)
+}
+@if(VISIBILITY_RANGE_DITHER) {
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, world_from_local[3]);
+}
     return out;
 }
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+@if(VISIBILITY_RANGE_DITHER) {
+    visibility_range_dither(in.position, in.visibility_range_dither);
+}
     var pbr = pbr_input_from_standard_material(in, is_front);
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr);
+    if (pbr.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
+        out.color = apply_pbr_lighting(pbr);
+    } else {
+        out.color = pbr.material.base_color;
+    }
 
-    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     let fog = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, distance(in.world_position.xyz, view.world_position));
     let bits = pbr.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
     var mode = FOG_BLEND;

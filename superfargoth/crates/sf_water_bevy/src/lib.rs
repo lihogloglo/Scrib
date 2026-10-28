@@ -24,7 +24,7 @@ use std::sync::Arc;
 use bevy_app::{App, Plugin, PostUpdate, PreStartup};
 use bevy_asset::{embedded_asset, Assets, Handle, RenderAssetUsages};
 use bevy_camera::visibility::{NoFrustumCulling, Visibility};
-use bevy_camera::Camera;
+use bevy_camera::{Camera, MainPassResolutionOverride, Viewport};
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy_light::NotShadowCaster;
@@ -513,11 +513,20 @@ fn upload_bakes(shore: Res<WaterShoreInput>, regions: Res<WaterRegionsInput>, im
     }
 }
 
-/// Keeps the snapshot targets at the water camera's size and the aerial copy at its LUT size.
-fn size_targets(cameras: Query<(&Camera, Option<&AtmosphereSettings>), With<WaterCamera>>, images: Option<ResMut<WaterImages>>, mut assets: ResMut<Assets<Image>>) {
+/// Keeps the snapshot targets at the active main-pass size (matching DLSS sub-viewports)
+/// and the aerial copy at its LUT size.
+#[allow(clippy::type_complexity)]
+fn size_targets(
+    cameras: Query<(&Camera, Option<&MainPassResolutionOverride>, Option<&AtmosphereSettings>), With<WaterCamera>>,
+    images: Option<ResMut<WaterImages>>,
+    mut assets: ResMut<Assets<Image>>,
+) {
     let Some(mut images) = images else { return };
-    let Some((camera, atmosphere)) = cameras.iter().next() else { return };
-    let size = camera.physical_target_size().unwrap_or(UVec2::ONE).max(UVec2::ONE);
+    let Some((camera, resolution, atmosphere)) = cameras.iter().next() else { return };
+    let target_size = camera.physical_target_size().unwrap_or(UVec2::ONE);
+    let size = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution)
+        .map_or(target_size, |v| (v.physical_position + v.physical_size).min(target_size))
+        .max(UVec2::ONE);
     if size != images.snapshot_size {
         images.snapshot_color = assets.add(snapshot_image(size, TextureFormat::Rgba16Float));
         images.snapshot_depth = assets.add(snapshot_image(size, TextureFormat::R32Float));

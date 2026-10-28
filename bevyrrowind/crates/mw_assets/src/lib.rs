@@ -298,11 +298,20 @@ fn bevy_mesh(mesh: &mw_nif::Mesh, with_colors: bool) -> Mesh {
 }
 
 fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadContext<'_>) -> StandardMaterial {
-    let [r, g, b] = m.diffuse;
+    let vtx_emissive_unlit = m.vertex_colors == VertexColorMode::Emissive
+        && (m.unlit_lighting || m.diffuse == [0.0, 0.0, 0.0]);
+    let [r, g, b] = if vtx_emissive_unlit {
+        [1.0, 1.0, 1.0]
+    } else if m.unlit_lighting {
+        [0.0, 0.0, 0.0]
+    } else {
+        m.diffuse
+    };
     let [er, eg, eb] = m.emissive;
     let surface = Surface {
         base_color: Color::srgba(r, g, b, m.alpha),
         base_texture: m.base_texture.as_deref(),
+        base_clamp: m.base_clamp,
         glow_texture: m.glow_texture.as_deref(),
         emissive: Color::srgb(er, eg, eb).to_linear(),
         alpha_mode: match m.alpha_mode {
@@ -316,11 +325,12 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
             NifAlpha::Blend { additive: false } => AlphaMode::Blend,
         },
         double_sided: m.double_sided,
+        unlit: vtx_emissive_unlit,
     };
     let source = load_context.path().to_string();
-    surface.to_material(|path| {
+    surface.to_material(|path, clamp| {
         let resolved = resolve_texture(path, vfs, &source)?;
-        Some(load_context.load_builder().with_settings(image_settings).load(resolved))
+        Some(load_context.load_builder().with_settings(move |s| image_settings_clamped(s, clamp)).load(resolved))
     })
 }
 
@@ -366,19 +376,21 @@ pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
 pub(crate) struct Surface<'a> {
     pub base_color: Color,
     pub base_texture: Option<&'a str>,
+    pub base_clamp: [bool; 2],
     pub glow_texture: Option<&'a str>,
     /// Linear emissive color (before exposure scaling).
     pub emissive: LinearRgba,
     pub alpha_mode: AlphaMode,
     pub double_sided: bool,
+    pub unlit: bool,
 }
 
 impl Surface<'_> {
-    /// `texture` resolves a VFS texture reference and starts loading it.
-    pub fn to_material(&self, mut texture: impl FnMut(&str) -> Option<Handle<Image>>) -> StandardMaterial {
+    /// `texture` resolves a VFS texture reference (with `(clamp_s, clamp_t)`) and starts loading it.
+    pub fn to_material(&self, mut texture: impl FnMut(&str, [bool; 2]) -> Option<Handle<Image>>) -> StandardMaterial {
         let mut material = StandardMaterial {
             base_color: self.base_color,
-            base_color_texture: self.base_texture.and_then(&mut texture),
+            base_color_texture: self.base_texture.and_then(|p| texture(p, self.base_clamp)),
             // 2002 assets carry no PBR data: matte, low reflectance until
             // generated or replacement maps exist.
             perceptual_roughness: 0.85,
@@ -386,6 +398,7 @@ impl Surface<'_> {
             double_sided: self.double_sided,
             cull_mode: if self.double_sided { None } else { Some(bevy::render::render_resource::Face::Back) },
             alpha_mode: self.alpha_mode,
+            unlit: self.unlit,
             ..StandardMaterial::default()
         };
 
@@ -394,14 +407,16 @@ impl Surface<'_> {
         // `emissive * emissive_texture` in nits, scaled by camera exposure
         // ([`set_emissive`]), so the base texture becomes the emissive texture
         // and the color is scaled to read as "fully lit" at the scene
-        // exposure. A glow map replaces both.
-        let emissive = self.emissive;
-        if let Some(glow) = self.glow_texture.and_then(&mut texture) {
-            material.emissive_texture = Some(glow);
-            set_emissive(&mut material, LinearRgba::WHITE);
-        } else if emissive.red + emissive.green + emissive.blue > 0.0 {
-            material.emissive_texture.clone_from(&material.base_color_texture);
-            set_emissive(&mut material, emissive);
+        // exposure. A glow map replaces both. Unlit surfaces bypass PBR lighting.
+        if !self.unlit {
+            let emissive = self.emissive;
+            if let Some(glow) = self.glow_texture.and_then(|p| texture(p, [false, false])) {
+                material.emissive_texture = Some(glow);
+                set_emissive(&mut material, LinearRgba::WHITE);
+            } else if emissive.red + emissive.green + emissive.blue > 0.0 {
+                material.emissive_texture.clone_from(&material.base_color_texture);
+                set_emissive(&mut material, emissive);
+            }
         }
         material
     }
@@ -417,12 +432,19 @@ pub(crate) fn resolve_texture(path: &str, vfs: &Vfs, model: &str) -> Option<Stri
     Some(resolved.as_str().to_owned())
 }
 
-/// Loader settings for model textures: sRGB, repeating, linear filtering.
-pub(crate) fn image_settings(settings: &mut ImageLoaderSettings) {
+/// Loader settings for model textures: sRGB, linear filtering, optional S/T clamp.
+pub(crate) fn image_settings_clamped(settings: &mut ImageLoaderSettings, clamp: [bool; 2]) {
+    let mode = |clamped: bool| {
+        if clamped {
+            ImageAddressMode::ClampToEdge
+        } else {
+            ImageAddressMode::Repeat
+        }
+    };
     settings.is_srgb = true;
     settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
+        address_mode_u: mode(clamp[0]),
+        address_mode_v: mode(clamp[1]),
         ..ImageSamplerDescriptor::linear()
     });
 }

@@ -21,7 +21,7 @@ use sf_model::steps::MeshCookStep;
 use sf_model_bevy::{CookedModelAsset, SfMeshLoaderSettings};
 use sf_sky_bevy::{NoRayTracing, RayTracingMesh};
 
-use crate::{SharedVfs, Surface, image_settings, resolve_texture};
+use crate::{SharedVfs, Surface, image_settings_clamped, resolve_texture};
 
 /// Starts loading the cooked product of `model` (a VFS model path) from
 /// the `baked://` source: Bevy vertex compression on, GPU-only meshes, and
@@ -81,12 +81,30 @@ const LEVEL_TINTS: [Color; 5] = [
 /// A cooked model and the LOD level its materials are tinted for (debug view).
 type MaterialKey = (AssetId<CookedModelAsset>, Option<usize>);
 
-/// Materials made for cooked models, shared by every instance, and the
-/// textures they load.
+/// Canonical identity of a resolved cooked surface, so identical materials
+/// across thousands of static models share a single `StandardMaterial` asset
+/// and bindless slab slot (`H1`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SurfaceKey {
+    base_color: [u32; 4],
+    base_texture: Option<String>,
+    base_clamp: [bool; 2],
+    glow_texture: Option<String>,
+    emissive: [u32; 3],
+    alpha: (u8, u32),
+    double_sided: bool,
+    unlit: bool,
+    tint: Option<usize>,
+}
+
+/// Materials made for cooked models, shared globally across identical surfaces,
+/// and the unique textures they load.
 #[derive(Resource, Default)]
 pub struct CookedMaterials {
     /// (model, tinted level or `None`) -> one material per model material.
     by_model: HashMap<MaterialKey, Vec<Handle<StandardMaterial>>>,
+    by_surface: HashMap<SurfaceKey, Handle<StandardMaterial>>,
+    texture_cache: HashMap<(String, [bool; 2]), Handle<Image>>,
     textures: Vec<Handle<Image>>,
 }
 
@@ -111,9 +129,16 @@ fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs) -> Surface<'a> {
     let cutout = m.extras.get(extras::BLEND).map(String::as_str);
     let blended = !crate::cutout_foliage() && cutout == Some("cutout");
     let candidate = cutout == Some("cutout_candidate") && crate::texture_is_cutout(vfs, m.base_color_texture.as_deref());
+    let base_clamp = match m.extras.get(extras::BASE_CLAMP).map(String::as_str) {
+        Some("st") => [true, true],
+        Some("s") => [true, false],
+        Some("t") => [false, true],
+        _ => [false, false],
+    };
     Surface {
         base_color: Color::linear_rgba(red, green, blue, alpha),
         base_texture: m.base_color_texture.as_deref(),
+        base_clamp,
         glow_texture: m.extras.get(extras::GLOW_TEXTURE).map(String::as_str),
         emissive: LinearRgba::rgb(emissive_r, emissive_g, emissive_b),
         alpha_mode: match m.alpha {
@@ -125,6 +150,7 @@ fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs) -> Surface<'a> {
             SfAlpha::Blend => AlphaMode::Blend,
         },
         double_sided: m.double_sided,
+        unlit: m.unlit,
     }
 }
 
@@ -163,7 +189,7 @@ pub(crate) fn spawn_cooked(
             let tint = settings.tint_levels.then_some(level);
             let key = (root.model.id(), tint);
             if !cache.by_model.contains_key(&key) {
-                let made = make_materials(model, tint, &server, &vfs, &root.source, &mut cache.textures, &mut materials);
+                let made = make_materials(model, tint, &server, &vfs, &root.source, &mut cache, &mut materials);
                 cache.by_model.insert(key, made);
             }
             let level_materials = &cache.by_model[&key];
@@ -210,10 +236,34 @@ fn fallback(commands: &mut Commands, server: &AssetServer, entity: Entity, root:
 /// mapper for streamed statics (`sf_world_bevy::ModelMaterials`). Textures
 /// resolve through `vfs` and load from the default asset source.
 pub fn cooked_material(m: &sf_model::Material, vfs: &sf_vfs::Vfs, server: &AssetServer) -> StandardMaterial {
-    surface(m, vfs).to_material(|path| {
+    surface(m, vfs).to_material(|path, clamp| {
         let resolved = resolve_texture(path, vfs, "cooked model")?;
-        Some(server.load_builder().with_settings(image_settings).load(resolved))
+        Some(server.load_builder().with_settings(move |s| image_settings_clamped(s, clamp)).load(resolved))
     })
+}
+
+fn surface_key(s: &Surface<'_>, base_resolved: Option<String>, glow_resolved: Option<String>, tint: Option<usize>) -> SurfaceKey {
+    let bc = s.base_color.to_linear();
+    let alpha = match s.alpha_mode {
+        AlphaMode::Opaque => (0, 0),
+        AlphaMode::Mask(c) => (1, c.to_bits()),
+        AlphaMode::Blend => (2, 0),
+        AlphaMode::Add => (3, 0),
+        AlphaMode::Premultiplied => (4, 0),
+        AlphaMode::Multiply => (5, 0),
+        AlphaMode::AlphaToCoverage => (6, 0),
+    };
+    SurfaceKey {
+        base_color: [bc.red.to_bits(), bc.green.to_bits(), bc.blue.to_bits(), bc.alpha.to_bits()],
+        base_texture: base_resolved,
+        base_clamp: s.base_clamp,
+        glow_texture: glow_resolved,
+        emissive: [s.emissive.red.to_bits(), s.emissive.green.to_bits(), s.emissive.blue.to_bits()],
+        alpha,
+        double_sided: s.double_sided,
+        unlit: s.unlit,
+        tint,
+    }
 }
 
 fn make_materials(
@@ -222,17 +272,31 @@ fn make_materials(
     server: &AssetServer,
     vfs: &SharedVfs,
     source: &str,
-    textures: &mut Vec<Handle<Image>>,
+    cache: &mut CookedMaterials,
     materials: &mut Assets<StandardMaterial>,
 ) -> Vec<Handle<StandardMaterial>> {
     model
         .materials
         .iter()
         .map(|m| {
-            let mut material = surface(m, &vfs.0).to_material(|path| {
+            let s = surface(m, &vfs.0);
+            let base_resolved = s.base_texture.and_then(|p| resolve_texture(p, &vfs.0, source));
+            let glow_resolved = s.glow_texture.and_then(|p| resolve_texture(p, &vfs.0, source));
+            let key = surface_key(&s, base_resolved, glow_resolved, tint);
+            if let Some(existing) = cache.by_surface.get(&key) {
+                return existing.clone();
+            }
+            let mut material = s.to_material(|path, clamp| {
                 let resolved = resolve_texture(path, &vfs.0, source)?;
-                let handle: Handle<Image> = server.load_builder().with_settings(image_settings).load(resolved);
-                textures.push(handle.clone());
+                if let Some(h) = cache.texture_cache.get(&(resolved.clone(), clamp)) {
+                    return Some(h.clone());
+                }
+                let handle: Handle<Image> = server
+                    .load_builder()
+                    .with_settings(move |st| image_settings_clamped(st, clamp))
+                    .load(resolved.clone());
+                cache.texture_cache.insert((resolved, clamp), handle.clone());
+                cache.textures.push(handle.clone());
                 Some(handle)
             });
             if let Some(level) = tint {
@@ -242,7 +306,9 @@ fn make_materials(
                 material.unlit = true;
                 material.emissive = LinearRgba::BLACK;
             }
-            materials.add(material)
+            let handle = materials.add(material);
+            cache.by_surface.insert(key, handle.clone());
+            handle
         })
         .collect()
 }

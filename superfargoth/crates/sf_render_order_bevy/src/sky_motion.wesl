@@ -10,6 +10,8 @@ struct SkyMotionView {
     // Unjittered clip_from_world of this frame (inverse) and last frame, view translation zeroed.
     inv_clip_from_dir: mat4x4<f32>,
     prev_clip_from_dir: mat4x4<f32>,
+    // Active main-pass viewport `(x, y, width, height)` in pixels (matches DLSS internal res).
+    viewport: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> view: SkyMotionView;
@@ -21,9 +23,9 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     if textureLoad(scene_depth, p, 0) > 0.0 {
         discard;
     }
-    let size = vec2<f32>(textureDimensions(scene_depth));
-    // Pixel centre in NDC, unjittered (the matrices are unjittered too).
-    let ndc = (in.position.xy / size) * vec2(2.0, -2.0) + vec2(-1.0, 1.0);
+    // Pixel centre in NDC within the active main-pass viewport, unjittered.
+    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let ndc = uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0);
     let dir = view.inv_clip_from_dir * vec4(ndc, 1.0, 1.0);
     let prev = view.prev_clip_from_dir * vec4(dir.xyz / dir.w, 1.0);
     let prev_ndc = prev.xy / prev.w;

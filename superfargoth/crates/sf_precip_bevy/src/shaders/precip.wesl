@@ -112,7 +112,7 @@ fn vertex(v: Vertex) -> VertexOutput {
     let dist = length(to_cam);
     fade *= smoothstep(0.3, 1.0, dist);
     let f = to_cam / max(dist, 1e-3);
-    let pixel = dist * 2.0 / (view.clip_from_view[1][1] * view.viewport.w);
+    let pixel = dist * 2.0 / (view.clip_from_view[1][1] * view.main_pass_viewport.w);
     let width0 = mix(precip.look.x, precip.look.y, v.drop.y);
     let width = max(width0, precip.look.w * pixel);
     let energy = mix(0.35, 1.0, clamp(width0 / width, 0.0, 1.0));
@@ -154,7 +154,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
     // Fogged like any translucent (RO-3): streaks fade into the fog with distance.
-    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
     let fog = froxel_fog_lookup(fog_volume, fog_sampler, fog_params, uv, in.dist);
     return froxel_fog_apply(vec4<f32>(precip.color.rgb, alpha), fog, FOG_BLEND);
 }

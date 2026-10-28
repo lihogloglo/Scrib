@@ -20,8 +20,8 @@
 use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::primitives::{Frustum, Sphere};
-use bevy::camera::visibility::NoFrustumCulling;
+use bevy::camera::primitives::{Aabb, Frustum, Sphere};
+use bevy::camera::visibility::NoAutoAabb;
 use bevy::math::Vec3A;
 use bevy::mesh::{Indices, MeshTag, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
@@ -195,7 +195,36 @@ fn particle_base(source: &StandardMaterial) -> StandardMaterial {
     if matches!(base.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)) {
         base.alpha_mode = AlphaMode::Blend;
     }
+    if !base.unlit {
+        // Volumetric puffs scatter light from fires underneath (`-N`) as well
+        // as sky/sun above (`+N`), without flat-cardboard specular glints.
+        base.diffuse_transmission = 0.5;
+        base.reflectance = 0.0;
+        base.double_sided = true;
+        base.cull_mode = None;
+    }
     base
+}
+
+/// Live local-space bounds of `particles` (for frustum culling and
+/// `Transparent3d` plume-centroid sorting: RO-10, RO-B).
+fn particle_aabb(particles: &[mw_nif::particles::Particle]) -> Aabb {
+    let Some(first) = particles.first() else {
+        return Aabb::default();
+    };
+    let mut min = Vec3A::splat(f32::INFINITY);
+    let mut max = Vec3A::splat(f32::NEG_INFINITY);
+    for p in particles {
+        let pos = Vec3A::from_array(p.position.to_array());
+        let r = Vec3A::splat(p.size.max(0.01));
+        min = min.min(pos - r);
+        max = max.max(pos + r);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        let pos = Vec3A::from_array(first.position.to_array());
+        return Aabb { center: pos, half_extents: Vec3A::splat(first.size.max(0.05)) };
+    }
+    Aabb::from_min_max(Vec3::from(min), Vec3::from(max))
 }
 
 /// `size` quads for the shader to place: four vertices each, the corner in
@@ -447,6 +476,7 @@ pub(crate) fn start_particles(
             let mut simulation = Simulation::new(u64::from(index) ^ entity.to_bits());
             let emitting = gate.and_then(|g| g.emits(index));
             simulation.prewarm(system, time.elapsed_secs() + phase, emitting);
+            let aabb = particle_aabb(&simulation.particles);
             let slot = buffers.allocate(system.max_particles);
             let mesh = buffers.mesh(slot.size, &mut meshes);
             commands.spawn((
@@ -467,11 +497,13 @@ pub(crate) fn start_particles(
                 Mesh3d(mesh),
                 MeshMaterial3d(material),
                 MeshTag::new(slot.first),
-                // The quads' bounds are a point (the shader places them).
-                NoFrustumCulling,
+                // Live bounds from simulated particles (`simulate_particles`) so
+                // plumes sort by their actual cloud centre instead of `(0,0,0)`.
+                aabb,
+                NoAutoAabb,
                 // The material casts none either; without the marker every shadowed
-                // light's faces list the emitter (unculled), and the lamp cache
-                // counts it as a mover that never settles (shadows2).
+                // light's faces list the emitter, and the lamp cache counts its
+                // changing bounds as a mover that never settles (shadows2).
                 bevy::light::NotShadowCaster,
                 Transform::IDENTITY,
                 Visibility::Inherited,
@@ -513,15 +545,13 @@ pub(crate) fn live_nodes(model: &mw_nif::Model) -> Vec<usize> {
 /// step.
 const PARTICLE_REACH_M: f32 = 12.0;
 
-/// Steps every emitter the camera can see and writes its particles into its
-/// buffer slot. Emitters outside the view frustum or their visibility range
-/// (`ViewVisibility`: particles opt out of frustum culling, so it only carries
-/// the range) pause.
+/// Steps every emitter within reach of the camera frustum and writes its
+/// particles into its buffer slot, updating its [`Aabb`] for translucent sorting.
 pub(crate) fn simulate_particles(
     time: Res<Time>,
     animations: Res<Assets<NifAnimation>>,
     camera: Query<(&GlobalTransform, Option<&Frustum>), With<Camera3d>>,
-    mut instances: Query<(&mut ParticleInstance, &ChildOf, &GlobalTransform, &InheritedVisibility, &ViewVisibility, &mut Visibility)>,
+    mut instances: Query<(&mut ParticleInstance, &mut Aabb, &ChildOf, &GlobalTransform, &InheritedVisibility, &mut Visibility)>,
     actor_gates: Query<&ActorEmitter>,
     nodes: Query<&GlobalTransform>,
     mut buffers: ResMut<ParticleBuffers>,
@@ -531,7 +561,7 @@ pub(crate) fn simulate_particles(
     };
     let dt = time.delta_secs().min(0.1);
     let now = time.elapsed_secs();
-    for (mut instance, parent, global, visible, in_view, mut visibility) in &mut instances {
+    for (mut instance, mut aabb, parent, global, visible, mut visibility) in &mut instances {
         if let Some(range) = instance.range {
             let far = global.translation().distance_squared(camera.translation()) > range * range;
             visibility.set_if_neq(if far { Visibility::Hidden } else { Visibility::Inherited });
@@ -541,7 +571,7 @@ pub(crate) fn simulate_particles(
             }
         }
         let reach = Sphere { center: Vec3A::from(global.translation()), radius: PARTICLE_REACH_M };
-        if !visible.get() || !in_view.get() || frustum.is_some_and(|f| !f.intersects_sphere(&reach, true)) {
+        if !visible.get() || frustum.is_some_and(|f| !f.intersects_sphere(&reach, true)) {
             instance.last = None;
             continue;
         }
@@ -585,6 +615,8 @@ pub(crate) fn simulate_particles(
             particles.sort_by(|a, b| distance(&b.position).total_cmp(&distance(&a.position)));
         }
         buffers.write(instance.slot, particles, &mut instance.written);
+        let next_aabb = particle_aabb(particles);
+        aabb.set_if_neq(next_aabb);
     }
 }
 
@@ -670,5 +702,22 @@ mod tests {
         assert_eq!(live.targets.len(), 1);
         assert!(live.targets[0].0.is_none(), "untagged target: rest pose");
         assert_eq!(live.targets[0].1.map(|l| l.node), Some(parent));
+    }
+
+    #[test]
+    fn plume_aabb_tracks_live_particle_centroid_and_radius() {
+        assert_eq!(particle_aabb(&[]), Aabb::default());
+        let puff = |y: f32, size: f32| Particle {
+            position: nif_glam::Vec3::new(0.0, y, 0.0),
+            velocity: nif_glam::Vec3::ZERO,
+            age: 0.0,
+            lifetime: 1.0,
+            size,
+            color: nif_glam::Vec4::ONE,
+            angle: 0.0,
+        };
+        let bounds = particle_aabb(&[puff(1.0, 0.5), puff(5.0, 1.5)]);
+        assert!((Vec3::from(bounds.center) - Vec3::new(0.0, 3.5, 0.0)).length() < 1e-5);
+        assert!((Vec3::from(bounds.half_extents) - Vec3::new(1.5, 3.0, 1.5)).length() < 1e-5);
     }
 }
