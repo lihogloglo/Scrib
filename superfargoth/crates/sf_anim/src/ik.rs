@@ -70,6 +70,16 @@ impl Default for TwoBone {
     }
 }
 
+/// How much a two-bone chain bent by an angle of sine `sin` (upper ×
+/// lower bone over their lengths) owns a bend plane: 0 when nearly
+/// straight (under ~2°, its plane is noise), 1 past ~12°, smoothstep
+/// between, so a solver blends into a stable axis instead of switching.
+pub(crate) fn bend_weight(sin: f32) -> f32 {
+    const STRAIGHT: (f32, f32) = (0.03, 0.2);
+    let t = ((sin - STRAIGHT.0) / (STRAIGHT.1 - STRAIGHT.0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Model-space rotation deltas for a two-bone chain `a → b → c` (hip,
 /// knee, ankle). Apply `root` to `a` about `a`, then `mid` to `b` about its
 /// new position.
@@ -79,7 +89,8 @@ impl Default for TwoBone {
 /// continuous as long as the pole is not on the line to the target.
 /// Unreachable targets are clamped to the chain's reach along the target
 /// direction. The upper bone keeps its hinge plane aligned with the knee's
-/// bend plane, and the lower bone rotates about the hinge axis only.
+/// bend plane (a nearly straight chain has none: the upper bone then only
+/// swings), and the lower bone rotates about the hinge axis only.
 pub fn two_bone(a: Vec3, b: Vec3, c: Vec3, target: Vec3, pole: Vec3, max_extension: f32) -> (Quat, Quat) {
     let lab = a.distance(b);
     let lbc = b.distance(c);
@@ -109,7 +120,12 @@ pub fn two_bone(a: Vec3, b: Vec3, c: Vec3, target: Vec3, pole: Vec3, max_extensi
     // Bend-plane normals: (b - a) × (c - b) before and after.
     let n_new = v.cross(u);
     let n_old = (b - a).cross(c - b);
-    let n_old = if n_old.length_squared() > 1e-12 * lab * lab * lbc * lbc { n_old } else { n_new };
+    // A nearly straight chain has no bend plane of its own: its normal is
+    // noise there, and aligning to it flipped the upper bone's twist
+    // (AN-22). Blend it into the new plane as the old bend vanishes, so the
+    // upper bone only swings then.
+    let w = bend_weight(n_old.length() / (lab * lbc));
+    let n_old = (n_new * (1.0 - w) + n_old.normalize_or_zero() * w).normalize_or(n_new);
     let root = rotation_between_frames(b - a, n_old, b_new - a, n_new);
     let c_moved = a + root * (c - a);
     let mid = Quat::from_rotation_arc((c_moved - b_new).normalize(), (c_new - b_new).normalize());

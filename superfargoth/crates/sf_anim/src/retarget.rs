@@ -23,6 +23,9 @@
 //!    motion) and vertically by the limb-length ratio, weighted by the
 //!    source's `contact.<end>` curve when the clip has
 //!    one, so planted feet stay planted on a rig with other proportions.
+//!    The contact weight eases in and out around each change (no IK pop);
+//!    the knee pole lies in the source's bend plane, blended into the
+//!    source thigh's hinge axis as the leg straightens (AN-22).
 //! 4. Optional root motion from the target pelvis
 //!    ([`Retargeter::frames_with_root`], UE 5.4's "Root Motion: generate
 //!    from target pelvis"), for sources with no usable root bone (mocap
@@ -40,7 +43,7 @@ use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::cook::{ancestors, extract_root_motion, model_of, root_meta};
-use crate::ik::{LimbGoal, LimbSolver, limb_pole, solve_limb};
+use crate::ik::{LimbGoal, LimbSolver, bend_weight, solve_limb};
 use crate::math::{affine_rotation, nlerp, twist_angle};
 use crate::{Clip, CookError, CookSettings, FrameClip, LocalPose, ModelPose, RootMotionRules, Skeleton, Trs, cook_frames};
 
@@ -119,8 +122,47 @@ struct IkChain {
     target: Vec<usize>,
     solver: LimbSolver,
     source_end: usize,
+    /// The source's upper joint, plus its knee and the joint after it when
+    /// the chain has three joints or more (the knee pole's source,
+    /// [`knee_normal`]).
+    source_limb: (usize, Option<(usize, usize)>),
     /// Target over source chain length (vertical goal offsets).
     limb_scale: f32,
+}
+
+/// The source limb's bend-plane normal in model space (shared by both
+/// rigs, which stand in one retarget pose): upper bone × lower bone, which
+/// the FK pass copies onto the target whatever its proportions (unlike the
+/// knee's offset from the hip-ankle line). As the limb straightens and that
+/// normal turns to noise, it blends into `hinge`, the upper joint's
+/// retarget-pose +X carried by its rotation (a knee bending forward in the
+/// +Z-facing T-pose), so the knee plane stays put (AN-22).
+fn knee_normal(hip: Vec3, knee: Vec3, ankle: Vec3, hinge: Vec3) -> Vec3 {
+    let (upper, lower) = (knee - hip, ankle - knee);
+    let n = upper.cross(lower);
+    let t = bend_weight(n.length() / (upper.length() * lower.length()).max(1e-12));
+    (hinge * (1.0 - t) + n.normalize_or_zero() * t).normalize_or(hinge)
+}
+
+/// How long (s) a leg's IK weight takes to ease in or out around a change
+/// of its contact curve (each side of the change).
+const CONTACT_BLEND: f32 = 0.15;
+
+/// A contact curve (one value per frame at `rate`) as IK weights: each
+/// frame the mean over a window of `CONTACT_BLEND` either side, smoothstepped,
+/// so a 0/1 step becomes an S-curve over twice `CONTACT_BLEND`.
+fn eased_weights(values: &[f32], rate: f32) -> Vec<f32> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let r = (CONTACT_BLEND * rate).round().max(0.0) as usize;
+    let n = values.len();
+    (0..n)
+        .map(|f| {
+            let window = &values[f.saturating_sub(r)..(f + r + 1).min(n)];
+            #[allow(clippy::cast_precision_loss)]
+            let t = (window.iter().sum::<f32>() / window.len() as f32).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        })
+        .collect()
 }
 
 /// A compiled (source, target) pair of rigs.
@@ -218,6 +260,7 @@ impl Retargeter {
                     solver: t_chain.solver.unwrap_or_else(|| LimbSolver::for_len(t_joints.len())),
                     target: t_joints.clone(),
                     source_end: s_end,
+                    source_limb: (s_joints[0], (s_joints.len() >= 3).then(|| (s_joints[1], s_joints[2]))),
                     limb_scale: if ls > 1e-4 { lt / ls } else { 1.0 },
                 });
             }
@@ -343,7 +386,21 @@ impl Retargeter {
             let d = Vec3::from(s_model[s].translation) - Vec3::from(self.source_model[s].translation);
             let goal = Vec3::from(self.target_model[c].translation) + Vec3::new(d.x * self.scale, d.y * chain.limb_scale, d.z * self.scale);
             let span = chain.solver.span(chain.target.len());
-            let pole = limb_pole(&mp, &chain.target[chain.target.len() - span..], None);
+            // Knee pole from the source's own bend plane (AN-22: the target's
+            // FK knee offset vanishes on a straight leg and its plane flipped):
+            // in that plane, perpendicular to the reach line.
+            let solved = &chain.target[chain.target.len() - span..];
+            let (s_hip, s_knee) = chain.source_limb;
+            let hinge = (delta(s_hip) * Vec3::X).normalize_or(Vec3::X);
+            let normal = s_knee.map_or(hinge, |(k, a)| {
+                let at = |j: usize| Vec3::from(s_model[j].translation);
+                knee_normal(at(s_hip), at(k), at(a), hinge)
+            });
+            let length = solved.windows(2).map(|w| mp.translation(w[0]).distance(mp.translation(w[1]))).sum::<f32>().max(0.1);
+            let pole = solved.first().map_or(Vec3::ZERO, |&h| {
+                let hip = mp.translation(h);
+                hip + (goal - hip).normalize_or_zero().cross(normal) * length
+            });
             let goal = LimbGoal { position: goal, rotation: None, pole, weight: w };
             solve_limb(&self.target, &mut lp, &mut mp, &Affine3A::IDENTITY, &chain.target, chain.solver, &goal);
         }
@@ -362,19 +419,24 @@ impl Retargeter {
         if clip.meta.additive {
             return Err(RetargetError::Additive);
         }
-        let contact: Vec<Option<usize>> = self
+        // IK weights: the source's contact curves, eased in and out over
+        // `CONTACT_BLEND` around each change, so the leg glides between FK and
+        // IK instead of popping (AN-22). A stateless pass over the whole clip.
+        let contact: Vec<Option<Vec<f32>>> = self
             .ik
             .iter()
             .map(|c| {
                 let name = format!("contact.{}", self.source.name(c.source_end));
-                clip.curves.iter().position(|k| k.name == name)
+                let curve = clip.curves.iter().find(|k| k.name == name)?;
+                let values: Vec<f32> = (0..clip.frame_count).map(|f| curve.values.get(f).copied().unwrap_or(0.0)).collect();
+                Some(eased_weights(&values, clip.rate))
             })
             .collect();
         let mut frames = vec![Trs::IDENTITY; clip.frame_count * n_t];
         let mut weights = vec![1.0; self.ik.len()];
         for f in 0..clip.frame_count {
             for (w, c) in weights.iter_mut().zip(&contact) {
-                *w = c.map_or(1.0, |c| clip.curves[c].values.get(f).copied().unwrap_or(0.0));
+                *w = c.as_ref().map_or(1.0, |c| c[f]);
             }
             self.pose(&clip.frames[f * n_s..(f + 1) * n_s], &weights, &mut frames[f * n_t..(f + 1) * n_t]);
         }
