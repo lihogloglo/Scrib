@@ -284,6 +284,47 @@ fn vrm_names() -> RigSpec {
     r
 }
 
+/// NVIDIA SOMA-77 naming (Kimodo and `MotionBricks` BVH): a static `Root` wrapper
+/// above the hips, `Spine1`, `Spine2`, `Chest`, two neck joints, `LeftLeg` =
+/// the thigh and `LeftShin` the lower leg, four-joint fingers whose first
+/// joint is the metacarpal, and `*End` leaf joints (Kimodo writes no End Site).
+fn soma77() -> RigSpec {
+    let mut r = RigSpec::new();
+    r.add("Root", None, Vec3::ZERO)
+        .add("Hips", Some("Root"), body("hips", 0.0))
+        .add("Spine1", Some("Hips"), body("spine0.2", 0.0))
+        .add("Spine2", Some("Spine1"), body("spine0.5", 0.0))
+        .add("Chest", Some("Spine2"), body("spine0.8", 0.0))
+        .add("Neck1", Some("Chest"), body("neck", 0.0))
+        .add("Neck2", Some("Neck1"), body("neck2", 0.0))
+        .add("Head", Some("Neck2"), body("head", 0.0))
+        .add("HeadEnd", Some("Head"), body("head_end", 0.0))
+        .add("Jaw", Some("Head"), body("jaw", 0.0));
+    for (s, side) in [("Left", 1.0), ("Right", -1.0)] {
+        let n = |x: &str| format!("{s}{x}");
+        r.add(&n("Eye"), Some("Head"), body("eye", side))
+            .add(&n("Shoulder"), Some("Chest"), body("clavicle", side))
+            .add(&n("Arm"), Some(&n("Shoulder")), body("upper_arm", side))
+            .add(&n("ForeArm"), Some(&n("Arm")), body("lower_arm", side))
+            .add(&n("Hand"), Some(&n("ForeArm")), body("hand", side));
+        for (f, word) in ["Thumb", "Index", "Middle", "Ring", "Pinky"].iter().enumerate() {
+            let segs: &[&str] = if f == 0 { &["1", "2", "3", "End"] } else { &["1", "2", "3", "4", "End"] };
+            let mut parent = n("Hand");
+            for (k, seg) in segs.iter().enumerate() {
+                let name = n(&format!("Hand{word}{seg}"));
+                r.add(&name, Some(&parent), body(&format!("finger{f}{k}"), side));
+                parent = name;
+            }
+        }
+        r.add(&n("Leg"), Some("Hips"), body("thigh", side))
+            .add(&n("Shin"), Some(&n("Leg")), body("calf", side))
+            .add(&n("Foot"), Some(&n("Shin")), body("foot", side))
+            .add(&n("ToeBase"), Some(&n("Foot")), body("toe", side))
+            .add(&n("ToeEnd"), Some(&n("ToeBase")), body("toe_end", side));
+    }
+    r
+}
+
 fn assert_maps(map: &RigMap, expected: &[(HumanoidBone, &str)]) {
     for (bone, joint) in expected {
         assert_eq!(map.joint(*bone), Some(*joint), "{bone:?}");
@@ -424,6 +465,46 @@ fn auto_maps_vrm_naming_completely() {
 }
 
 #[test]
+fn auto_maps_soma77_naming() {
+    let skeleton = soma77().build(false, false);
+    let (mut map, report) = auto_map(&skeleton);
+    assert_maps(
+        &map,
+        &[
+            (B::Hips, "Hips"),
+            (B::Spine, "Spine1"),
+            (B::Chest, "Spine2"),
+            (B::UpperChest, "Chest"),
+            (B::Neck, "Neck1"),
+            (B::Head, "Head"),
+            (B::Jaw, "Jaw"),
+            (B::LeftEye, "LeftEye"),
+            (B::LeftUpperLeg, "LeftLeg"),
+            (B::LeftLowerLeg, "LeftShin"),
+            (B::RightUpperLeg, "RightLeg"),
+            (B::RightLowerLeg, "RightShin"),
+            (B::LeftFoot, "LeftFoot"),
+            (B::LeftToes, "LeftToeBase"),
+            (B::LeftShoulder, "LeftShoulder"),
+            (B::LeftUpperArm, "LeftArm"),
+            (B::LeftLowerArm, "LeftForeArm"),
+            (B::RightHand, "RightHand"),
+            (B::LeftThumbMetacarpal, "LeftHandThumb1"),
+            (B::LeftThumbDistal, "LeftHandThumb3"),
+            (B::LeftIndexProximal, "LeftHandIndex2"),
+            (B::LeftIndexDistal, "LeftHandIndex4"),
+            (B::RightLittleProximal, "RightHandPinky2"),
+        ],
+    );
+    assert_eq!(finger_count(&map), 30);
+    assert_eq!(map.root_motion, "Root");
+    assert!(report.is_clean(), "{report:#?}");
+    assert!(map.extra_chains.is_empty(), "{:?}", map.extra_chains);
+    map.auto_align(&skeleton);
+    assert_t_pose(&skeleton, &map);
+}
+
+#[test]
 fn reports_what_it_cannot_map() {
     let mut r = RigSpec::new();
     r.add("Hips", None, body("hips", 0.0)).add("Thing", Some("Hips"), body("spine0.5", 0.0));
@@ -514,7 +595,7 @@ fn auto_align_reaches_the_canonical_t_pose() {
     assert!(map.retarget_pose.iter().any(|(j, _)| j == "Bip01"), "the facing turn sits on the topmost joint");
     assert_t_pose(&skeleton, &map);
 
-    for (spec, a_pose) in [(mixamo(), true), (ue5(), true), (vrm_names(), false)] {
+    for (spec, a_pose) in [(mixamo(), true), (ue5(), true), (vrm_names(), false), (soma77(), false)] {
         let skeleton = spec.build(a_pose, false);
         let (mut map, _) = auto_map(&skeleton);
         let report = map.auto_align(&skeleton);

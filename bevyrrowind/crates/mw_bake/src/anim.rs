@@ -35,6 +35,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,86 @@ pub fn library_rig(skeleton: &Skeleton) -> Option<(RigMap, RetargetRig)> {
     map.auto_align(skeleton);
     let retarget = map.retarget_rig(skeleton, RetargetOptions { ik_legs: false }).ok()?;
     Some((map, retarget))
+}
+
+/// A humanoid skeleton as a library clip's retarget target, built the way
+/// the bake builds it ([`MwAnimRules::add_skeleton`] and the `rig.profile`
+/// step): the humanoid map, its retarget rig (leg IK on) and rig profile.
+/// Build once per skeleton and reuse for many clips.
+#[derive(Clone, Debug)]
+pub struct HumanoidTarget {
+    pub skeleton: Skeleton,
+    pub map: RigMap,
+    pub rig: RetargetRig,
+    pub profile: RigProfile,
+}
+
+impl HumanoidTarget {
+    /// `skeleton` as `skeleton.cook` makes it: [`mw_anim::rig::skeleton`] of
+    /// the model (`meshes/base_anim.nif`, `base_anim_female.nif`, `base_animkna.nif`).
+    pub fn new(skeleton: Skeleton) -> Result<Self, String> {
+        let map = mw_anim::rig::humanoid(&skeleton).map_err(|e| e.to_string())?.map;
+        let rig = map.retarget_rig(&skeleton, RetargetOptions::default()).map_err(|e| e.to_string())?;
+        let hints = RigHints { profile: map.profile(&skeleton).ok(), ..RigHints::default() };
+        let profile = sf_anim::detect_profile(&skeleton, &hints).map_err(|e| e.to_string())?;
+        Ok(Self { skeleton, map, rig, profile })
+    }
+}
+
+/// One clip of a library file (any file of source `source`, listed in the
+/// manifest or not) cooked on the file's skeleton and retargeted onto
+/// `target`, in process: the same calls, rules and settings as the bake's
+/// `skeleton.cook`, `rig.profile`, `anim.cook` and `anim.retarget` steps
+/// (`sf_anim` steps.rs) with [`MwAnimRules`], so the result equals the baked
+/// `anim.retarget` product (`generated_real_install.rs` checks it). The
+/// source gives the space (`unit_scale`, `up`), `rest_frame` and
+/// `root_from_pelvis` ([`anim_importers`]). `clip`: `None` is the file's
+/// first clip (a BVH has one, named after the file stem). `rules` as a
+/// slot's ([`mw_graphs::sources::Slot::rules`]). For review tools
+/// (`clip-preview`, motion-generation.md MG5); the bake itself goes through
+/// the steps.
+pub fn cook_library_clip(source: &str, path: &Path, clip: Option<&str>, rules: &ClipRules, target: &HumanoidTarget) -> Result<Clip, String> {
+    let manifest = mw_graphs::sources::SourcesManifest::builtin();
+    let library = manifest.sources.get(source).ok_or_else(|| format!("no animation source {source:?}"))?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: no file name", path.display()))?;
+    let virtual_path = AnimSources::virtual_path(source, name);
+    let importers = anim_importers();
+    let importer = importers.for_path(&virtual_path).ok_or_else(|| format!("no animation importer for {name:?}"))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let anim_source = importer.import(&virtual_path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    // skeleton.cook
+    let joints = anim_source.skeleton.as_ref().ok_or_else(|| format!("{name}: the file has no skeleton"))?;
+    let mut skeleton_rules = MwAnimRules::skeleton_rules();
+    skeleton_rules.root_motion_joint.clone_from(&anim_source.root_motion);
+    let (skeleton, _) = Skeleton::with_rules(joints, &skeleton_rules).map_err(|e| e.to_string())?;
+    // rig.profile, with the hints `MwAnimRules::add_library_file` gives.
+    let (map, source_rig) = library_rig(&skeleton).ok_or_else(|| format!("{name}: its skeleton has no humanoid retarget rig"))?;
+    let hints = RigHints { profile: map.profile(&skeleton).ok(), ..RigHints::default() };
+    let profile = sf_anim::detect_profile(&skeleton, &hints).map_err(|e| e.to_string())?;
+    // anim.cook
+    let retarget_root = library.root_from_pelvis.then(|| rules.root_motion.clone());
+    let mut cook_rules = rules.clone();
+    if retarget_root.is_some() {
+        cook_rules.root_motion.extract = false;
+        cook_rules.root_motion.anchor_end = false;
+    }
+    let src = match clip {
+        Some(c) => anim_source.clips.iter().find(|x| x.name == c),
+        None => anim_source.clips.first(),
+    }
+    .ok_or_else(|| format!("{name}: no clip {}", clip.unwrap_or("(the file has none)")))?;
+    let settings = CookSettings::default();
+    let cooked = sf_anim::cook_clip_for(&skeleton, Some(&profile), src, &cook_rules, &settings).map_err(|e| e.to_string())?;
+    // anim.retarget
+    let retargeter = sf_anim::Retargeter::new(&skeleton, &source_rig, &target.skeleton, &target.rig).map_err(|e| e.to_string())?;
+    let mut out = match &retarget_root {
+        Some(root) => retargeter.clip_with_root(&cooked, root, &settings),
+        None => retargeter.clip(&cooked, &settings),
+    }
+    .map_err(|e| e.to_string())?;
+    sf_anim::transfer_contacts(&cooked.meta.contacts, &target.skeleton, &target.profile, &mut out);
+    out.name.clone_from(&src.name);
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +280,7 @@ impl Step for SourceClipsStep {
     fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
         let key = ProductKey::new(SOURCE_CLIPS, subject);
         let bytes = cx.read_file(subject)?;
-        let gltf = std::path::Path::new(subject).extension().is_some_and(|e| e.eq_ignore_ascii_case("glb") || e.eq_ignore_ascii_case("gltf"));
+        let gltf = Path::new(subject).extension().is_some_and(|e| e.eq_ignore_ascii_case("glb") || e.eq_ignore_ascii_case("gltf"));
         let names = if gltf {
             sf_anim::list_gltf_clips(subject, &bytes).map_err(|e| BakeError::step(&key, e.to_string()))?
         } else {

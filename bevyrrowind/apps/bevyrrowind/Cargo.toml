@@ -10,7 +10,7 @@ publish = false
 # Fast iteration: Bevy as a shared library, so relinking after a change
 # skips Bevy entirely, plus Bevy's dev tools and asset hot reloading.
 # `cargo dev ...` (alias in .cargo/config.toml) turns it on. Never ship it.
-dev = ["bevy/dynamic_linking", "bevy/dev", "mw_game_core/dev", "mw_player_bevy/debug", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "sf_vfs/watch", "remote", "delirium"]
+dev = ["bevy/dynamic_linking", "bevy/dev", "mw_viewers_bevy/clip_preview", "mw_game_core/dev", "mw_player_bevy/debug", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "sf_vfs/watch", "remote", "delirium"]
 # Delirium active ragdoll takeovers + click-to-push on human NPCs (ROADMAP 3.2b, `mw_delirium_bevy`). Links
 # delirium-physics, which is GPL-3.0-only: a build with this feature (so every `dev` build) is GPL-3.0-only.
 delirium = ["mw_exterior_bevy/delirium"]

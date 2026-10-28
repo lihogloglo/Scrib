@@ -52,6 +52,7 @@ before M4 (the pose-search database uses the same sources later).
 | Bandai Namco Research Motiondataset 1 and 2 | 1: 17 contents × 15 styles (daily, combat, dance); 2: locomotion and hand actions × 7 styles | BVH | CC BY-NC 4.0 (both datasets' `LICENSE` files) | yes | non-commercially with attribution | BYO; styled locomotion and combat |
 | UE Game Animation Sample (Epic) | 500+ AAA clips | uasset | Fab/UE content license: Unreal-only | **no** | no | excluded |
 | NVIDIA MotionBricks | generated motion | model | code Apache-2.0, weights NVIDIA Open Model License; Unitree G1 robot checkpoints | n/a | n/a | watch item (animation.md) |
+| Generated (Kimodo / MotionBricks, `generated` source, MG3 2026-10-28) | clips made by our `motiongen` tools from NVIDIA models | SOMA-77 BVH (cm, +Y up, standard T-pose rest) | outputs unclaimed by NVIDIA (Open Model Agreement); training-data terms unverified | yes | not yet: local only until the licence check (`private_only`) | ambient life (`motion-generation.md`) |
 
 The project is non-commercial, so the NC sources are usable for the
 user's own bake. Whether the project ever ships CC0/CC BY-derived cooked

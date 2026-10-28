@@ -61,6 +61,27 @@
       // take opens on the actor's T-pose, so frame 0 is the retarget rest.
       rest_frame: Some(0),
     ),
+    // Clips we generate offline (motion-generation.md, MG): NVIDIA Kimodo
+    // (text + constraints) and MotionBricks (links), SOMA-77 BVH written to
+    // `<library>/generated/<activity>/<phase>/<id>.bvh` with a `.prov.json`
+    // sidecar. Local only until the owner's licence check. No files listed
+    // yet: no slot uses them (the review tool `clip-preview` cooks any file
+    // in process: `mw_bake::anim::cook_library_clip`).
+    "generated": (
+      title: "Generated clips (NVIDIA Kimodo / MotionBricks, SOMA-77)",
+      license: GeneratedNvidiaOpenModel,
+      page: "https://github.com/nv-tlabs/kimodo",
+      attribution: Some("Generated with NVIDIA Kimodo (NVIDIA Open Model License)"),
+      private_only: true,
+      files: [],
+      // Kimodo's BVH: centimeters, +Y up, facing +Z, written with
+      // `--bvh_standard_tpose` (the zero pose is a T-pose: auto-align's
+      // reference; the default BONES-SEED rest has every bone along +X).
+      // `Root` is a static wrapper: root motion from the target pelvis.
+      unit_scale: 0.01,
+      up: Y,
+      root_from_pelvis: true,
+    ),
   },
   slots: {
     // Waist-high mantle (action.md B2a): one clip, warped onto the ledge by

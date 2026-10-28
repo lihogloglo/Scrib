@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-10-28 (ambient-anim-audit): ambient-life audit + 140-activity catalog; MotionBricks/Kimodo tested on the 4060 (5.4 ms per link; ~2 s per 6 s Kimodo clip); spec motion-generation.md (3.8); MG1 motiongen batch tool, MG3 SOMA BVH onto base_anim (generated source), MG5 clip-preview (compiles, first run pending).
 
 - 2026-10-27 (evening, feel-coord): 4-hit light chain (UAL2 Sword_Light_A-D), lock-on C1c parts 1-4 (Q / MMB / R3, facing and
   strafe, locked side rolls, marker; CB-2), high mantle on ClimbUp_2m (AL-10), clip hand/foot contacts (B2b 1, 2a); combat.md C1 briefs

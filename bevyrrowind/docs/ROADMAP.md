@@ -91,7 +91,8 @@ in the world; only the release start path (or a session working on the menu) sho
 
 - [~] 3.1 Traversal/action per R11 decisions (`research/animation/11-tradeoffs.md`, `specs/action.md` phases);
   old P11. Clip sources: packs only (free first).
-  Potential (owner 2026-10-22): evaluate MotionBricks as an animation source (licence, rig fit, quality vs packs).
+  Potential (owner 2026-10-22): evaluate MotionBricks as an animation source. Audit 2026-10-28 (with Kimodo, SEED, ambient
+  NPC life readiness): `research/ambient-life-2026-10-28.md`; live tests pending owner OK.
   Wanted later (owner 2026-10-27, not urgent): run + Ctrl slide.
   High mantle built 2026-10-27 (1.53-2.25 m, UAL2 ClimbUp_2m; AL-10 confirmed with follow-up); B2b clip contacts built (parts 1,
   2a). In progress: B2-T (high mantle hard to trigger), then B2b-2 hand IK (hands aim at the box centre), then B2c wall
@@ -117,6 +118,7 @@ in the world; only the release start path (or a session working on the menu) sho
   dummies have `CellCoord` but no big_space regrid.
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later.
 - [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
+- [~] 3.8 Ambient life clip factory (owner 2026-10-28): Kimodo + MotionBricks offline generation, SOMA BVH onto `base_anim`, review on a real NPC with furniture and props (`specs/motion-generation.md`, slices MG1-MG9). Runtime activity system (interaction points, AI) separate.
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 

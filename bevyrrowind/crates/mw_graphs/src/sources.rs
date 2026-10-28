@@ -36,6 +36,9 @@ pub enum License {
     MixamoTerms,
     /// CMU mocap: inside a product, never as a data pack.
     CmuTerms,
+    /// Output of an NVIDIA Open Model License model (Kimodo, `MotionBricks`):
+    /// local only until the owner's licence check (motion-generation.md).
+    GeneratedNvidiaOpenModel,
 }
 
 impl License {
@@ -48,6 +51,7 @@ impl License {
             Self::CC_BY_NC_ND_4_0 => "CC-BY-NC-ND-4.0",
             Self::MixamoTerms => "LicenseRef-Mixamo",
             Self::CmuTerms => "LicenseRef-CMU-Mocap",
+            Self::GeneratedNvidiaOpenModel => "LicenseRef-generated-nvidia-open-model",
         }
     }
 

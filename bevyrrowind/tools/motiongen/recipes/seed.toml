@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Seed recipes for MG1 (format: bevyrrowind/docs/specs/motion-generation.md, "Recipes (MG1)").
+# Heights in meters; "band.seat+0.10" = the seat band's height plus 0.10 m (hip joint above the seat surface).
+
+[[activity]]
+id = "sit.chair.idle"
+point = "seat"
+phases = ["loop"]
+variants = 4
+duration = 6.0
+prompt = "A person sitting on a chair rests idly, shifting their weight and looking around."
+constraints.loop = { pelvis_height = "band.seat+0.10", root = "fixed" }
+
+[[activity]]
+id = "sweep.broom"
+point = "ground"
+props = ["broom"]
+phases = ["loop"]
+variants = 4
+duration = 6.0
+prompt = "A person sweeps the floor with a broom held in both hands."
+constraints.loop = { root = "fixed_xz" }
+
+[[activity]]
+id = "lean.wall.arms_crossed"
+point = "wall"
+phases = ["enter", "loop"]
+variants = 4
+duration = { enter = 3.0, loop = 6.0 }
+prompt.enter = "A person walks backward one step and leans their back against a wall, crossing their arms."
+prompt.loop = "A person leans with their back against a wall with arms crossed, idly shifting weight."
+constraints.loop = { root = "fixed" }

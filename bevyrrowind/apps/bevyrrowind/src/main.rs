@@ -190,6 +190,48 @@ enum Command {
         #[arg(long)]
         night: bool,
     },
+    /// Dev: render animation clips on a real NPC (flat floor, noon) into one MP4 per clip,
+    /// cooked and retargeted in process (motion-generation.md MG5). Exits when done.
+    #[cfg(feature = "dev")]
+    ClipPreview(ClipPreviewArgs),
+}
+
+#[cfg(feature = "dev")]
+#[derive(clap::Args)]
+struct ClipPreviewArgs {
+    /// glTF/GLB or BVH file: a path, or a file name in the animation sources folder.
+    #[arg(long, required_unless_present = "batch")]
+    clip: Option<String>,
+    /// Clip name in the file (GLB packs hold many; default: the file's only clip).
+    #[arg(long)]
+    name: Option<String>,
+    /// `sources.ron` source id (unit, up, root rules); default: the source listing the file.
+    #[arg(long)]
+    source: Option<String>,
+    /// Clips to render in one process, one per line: `path[|name[|source]]` (`#` comments).
+    #[arg(long)]
+    batch: Option<PathBuf>,
+    /// NPC_ record id.
+    #[arg(long, default_value = mw_viewers_bevy::clip_preview::DEFAULT_NPC)]
+    npc: String,
+    /// `front`, `side` or `orbit`.
+    #[arg(long, default_value = "front")]
+    camera: mw_viewers_bevy::clip_preview::PreviewCamera,
+    /// Output folder: `<out>/<clip id>.mp4`.
+    #[arg(long, default_value = "shots/clip-preview")]
+    out: PathBuf,
+    #[arg(long, default_value_t = 30)]
+    fps: u32,
+    /// Frame size, `WxH` (even numbers: H.264 yuv420p).
+    #[arg(long, default_value = "960x540", value_parser = parse_size)]
+    size: (u32, u32),
+    #[arg(long, default_value = "ffmpeg")]
+    ffmpeg: PathBuf,
+    /// Keep the PNG frames (`<out>/<clip id>/frames/`).
+    #[arg(long)]
+    keep_frames: bool,
+    #[arg(long)]
+    cache: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -634,6 +676,7 @@ fn main() -> ExitCode {
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[allow(clippy::too_many_lines, reason = "the subcommand dispatch: one short arm per command")]
 fn run(cli: Cli) -> Result {
     mw_boot_bevy::mods::select(mw_boot_bevy::mods::Selection { user_data: cli.user_data, profile: cli.profile });
     let Some(command) = cli.command else {
@@ -733,7 +776,44 @@ fn run(cli: Cli) -> Result {
             mw_viewers_bevy::character_view::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options);
             Ok(())
         }
+        #[cfg(feature = "dev")]
+        Command::ClipPreview(args) => clip_preview(&install, args),
     }
+}
+
+/// `clip-preview`: the jobs from `--clip` and `--batch`, then the capture run.
+#[cfg(feature = "dev")]
+fn clip_preview(install: &MorrowindInstall, args: ClipPreviewArgs) -> Result {
+    use mw_viewers_bevy::clip_preview::{ClipPreviewOptions, cook::ClipJob};
+    let ClipPreviewArgs { clip, name, source, batch, npc, camera, out, fps, size, ffmpeg, keep_frames, cache } = args;
+    let defaults = ClipJob { file: clip.clone().unwrap_or_default(), name, source };
+    let mut jobs = Vec::new();
+    if clip.is_some() {
+        jobs.push(defaults.clone());
+    }
+    if let Some(batch) = batch {
+        let text = std::fs::read_to_string(&batch).map_err(|e| format!("{}: {e}", batch.display()))?;
+        jobs.extend(text.lines().filter_map(|l| ClipJob::parse_line(l, &defaults)));
+    }
+    let (vfs, content) = load(install, false)?;
+    let store = sf_bake::Store::open(cache_root(cache)?)?;
+    let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
+    let options = ClipPreviewOptions { jobs, npc, camera, out, fps, size, ffmpeg, keep_frames };
+    if mw_viewers_bevy::clip_preview::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options) {
+        Ok(())
+    } else {
+        Err("clip-preview: a clip failed (see above)".into())
+    }
+}
+
+#[cfg(feature = "dev")]
+fn parse_size(s: &str) -> std::result::Result<(u32, u32), String> {
+    let (w, h) = s.split_once('x').ok_or_else(|| format!("size {s:?}: WxH"))?;
+    let (w, h): (u32, u32) = (w.trim().parse().map_err(|e| format!("width: {e}"))?, h.trim().parse().map_err(|e| format!("height: {e}"))?);
+    if w < 16 || h < 16 || w % 2 == 1 || h % 2 == 1 {
+        return Err(format!("size {s:?}: even numbers, at least 16"));
+    }
+    Ok((w, h))
 }
 
 /// The cell whose door out is the new-game start: vanilla character generation hands control to

@@ -1,0 +1,12 @@
+{
+  "placeholder": true,
+  "note": "PLACEHOLDER heights (meters, game space) until the MG4 furniture census writes animation packs/generated/bands.json. reference_height_m null = no SOMA/race scaling.",
+  "reference_height_m": null,
+  "points": {
+    "seat": [{ "id": "seat45", "height": 0.45 }],
+    "table": [{ "id": "table75", "height": 0.75 }],
+    "counter": [{ "id": "counter100", "height": 1.0 }],
+    "bed": [{ "id": "bed50", "height": 0.5 }],
+    "ground": [{ "id": "ground0", "height": 0.0 }]
+  }
+}

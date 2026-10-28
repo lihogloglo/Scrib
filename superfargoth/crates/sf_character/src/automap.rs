@@ -20,8 +20,10 @@
 //!    leg), 3ds Max's `Calf` and Rigify's `shin` all land right, and an
 //!    extra digitigrade joint stays unmapped.
 //! 5. **Fingers** grouped by name (thumb…little, or 3ds-Max-style
-//!    `Finger<f><segment>`), segments by depth; non-thumb metacarpals and
-//!    end sites are skipped.
+//!    `Finger<f><segment>`), segments by depth; non-thumb metacarpals (by
+//!    name, or the base of a four-joint finger: SOMA) and end sites are
+//!    skipped. SOMA's `LeftLeg` is the thigh: no `UpLeg` above it, so the
+//!    hierarchy (step 4) makes it the upper leg and `LeftShin` the lower.
 //! 6. Eyes and jaw below the head; root motion on the hips' nearest
 //!    ancestor named root, else the hips; mirror pairs by side-neutral
 //!    name; leftover linear chains (tails) become extra chains.
@@ -374,6 +376,16 @@ fn map_fingers(cx: &mut Ctx<'_>, hand: usize, s: Side, bones: &mut Vec<(usize, H
         }
         if f != Finger::Thumb {
             chain.retain(|&j| !is_metacarpal(&cx.info[j]));
+            // More than three joints left: a childless last one is an end
+            // marker (Mixamo's `LeftHandIndex4`), and what is still over
+            // three sits at the base, a metacarpal (SOMA's `LeftHandIndex1`,
+            // before `Index2..4` and the `IndexEnd` leaf).
+            if chain.len() > 3 && chain.last().is_some_and(|&j| !(0..skeleton.len()).any(|k| skeleton.parent(k) == Some(j))) {
+                chain.pop();
+            }
+            if chain.len() > 3 {
+                chain.drain(..chain.len() - 3);
+            }
         }
         let segments: &[usize] = match (f, chain.len()) {
             (_, 0) => &[],
