@@ -16,6 +16,7 @@
 
 pub mod anim;
 pub mod body;
+pub mod census;
 pub mod collision;
 mod importer;
 mod inputs;

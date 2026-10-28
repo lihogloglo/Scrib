@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-10-28 (ambient-anim-audit, later): MG5b clip-preview fixed (first clip never started); MG4 furniture census (Morrowind furniture 15-30% taller than real); MG6 real furniture and MG7a held prop in clip-preview; MG2 tier1 recipes (15 activities), first batch 268 clips in 15 min.
 - 2026-10-28 (ambient-anim-audit): ambient-life audit + 140-activity catalog; MotionBricks/Kimodo tested on the 4060 (5.4 ms per link; ~2 s per 6 s Kimodo clip); spec motion-generation.md (3.8); MG1 motiongen batch tool, MG3 SOMA BVH onto base_anim (generated source), MG5 clip-preview (compiles, first run pending).
 
 - 2026-10-27 (evening, feel-coord): 4-hit light chain (UAL2 Sword_Light_A-D), lock-on C1c parts 1-4 (Q / MMB / R3, facing and

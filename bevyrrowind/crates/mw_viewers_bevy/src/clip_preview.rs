@@ -28,16 +28,17 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::{PresentMode, WindowResolution};
+use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use mw_assets::MwAssetsPlugin;
 use mw_bake::anim::HumanoidTarget;
-use sf_anim_bevy::{AnimLod, AnimRootMotion, AnimTier, Animator};
+use sf_anim_bevy::{AnimLod, AnimRootMotion, AnimTier, Animator, SkeletonBinding};
 use sf_anim_graph::{LateClip, MontageClip, SlotRequest, Variety};
 use sf_character::{CharacterState, Readiness};
 use sf_character_bevy::{Character, CharacterReadiness, CharacterStats};
 use sf_records::{RecordDb, RecordId};
 use sf_vfs::Vfs;
 
-use cook::{ClipJob, Resolved};
+use cook::{At, ClipJob, PropOffset, PropSpec, Resolved};
 
 /// A plain Dunmer commoner of Morrowind.esm (Seyda Neen; common shirt, pants, shoes).
 pub const DEFAULT_NPC: &str = "draren thiralas";
@@ -79,6 +80,30 @@ pub struct ClipPreviewOptions {
     /// The ffmpeg executable (`ffmpeg` on PATH by default).
     pub ffmpeg: PathBuf,
     pub keep_frames: bool,
+    /// MG6: a placeable record (`STAT`, `ACTI`, `CONT`, ...) whose model stands in the scene,
+    /// e.g. a chair for a seated clip.
+    pub furniture: Option<String>,
+    /// Where the furniture stands (scene frame: meters, degrees).
+    pub at: At,
+    /// An item record whose model the actor holds, on a hand bone.
+    pub prop: Option<PropSpec>,
+    /// The prop under its bone (bone frame: meters, degrees).
+    pub prop_offset: PropOffset,
+}
+
+/// Bones tried for a prop with no `@<bone>`: the game's right-hand attach bone (held weapons,
+/// `mw_actors::held::bone::WEAPON`), then the hand joint itself (as `mw_combat::WEAPON_BONES`).
+const DEFAULT_PROP_BONES: [&str; 2] = [mw_actors::held::bone::WEAPON, "Bip01 R Hand"];
+
+/// The held prop (MG7a): its model loads from `Startup`, it is attached once the actor's rig is
+/// bound, and the clip waits for both.
+struct Prop {
+    id: String,
+    model: String,
+    handle: Handle<WorldAsset>,
+    bone: Option<String>,
+    offset: Transform,
+    attached: bool,
 }
 
 /// One clip through the run.
@@ -121,6 +146,10 @@ struct Preview {
     launched: Instant,
     loading_frames: u32,
     failed: bool,
+    /// The furniture's model, waited for while loading (MG6).
+    furniture: Option<Handle<WorldAsset>>,
+    /// The held prop, waited for while loading.
+    prop: Option<Prop>,
 }
 
 /// Screenshots written so far (both `save_to_disk` and this counter observe the capture).
@@ -156,6 +185,25 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
         eprintln!("error: no NPC_ record {:?}", options.npc);
         return false;
     }
+    let furniture = match options.furniture.as_deref().map(|id| placeable_model(&db, id, "--furniture")).transpose() {
+        Ok(f) => f.map(|(id, model)| (id, model, options.at)),
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let prop = match options.prop.as_ref().map(|p| placeable_model(&db, &p.id, "--prop").map(|(id, model)| (id, model, p.bone.clone()))).transpose() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let prop_offset = {
+        let o = options.prop_offset;
+        let [rx, ry, rz] = o.rotation_deg.map(f32::to_radians);
+        Transform::from_translation(Vec3::from_array(o.translation)).with_rotation(Quat::from_euler(EulerRot::XYZ, rx, ry, rz))
+    };
     let content = Arc::new(mw_actors_bevy::actors::MwCharacters::new(Arc::clone(&db), Arc::clone(&vfs), store, manifest, mw_physics::ClothMode::Authored));
     let step = Duration::from_secs_f64(1.0 / f64::from(options.fps.max(1)));
 
@@ -190,11 +238,23 @@ pub fn run(vfs: Arc<Vfs>, db: Arc<RecordDb>, store: sf_bake::Store, manifest: sf
         launched: Instant::now(),
         loading_frames: 0,
         failed,
+        furniture: None,
+        prop: None,
     })
     .init_resource::<Saved>()
-    .add_systems(Startup, move |mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>| {
-        stage(&mut commands, &mut meshes, &mut materials, npc.clone());
-    })
+    .add_systems(
+        Startup,
+        move |mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, assets: Res<AssetServer>, mut preview: ResMut<Preview>| {
+            stage(&mut commands, &mut meshes, &mut materials, npc.clone());
+            if let Some((id, model, at)) = &furniture {
+                preview.furniture = Some(place_furniture(&mut commands, &assets, id, model, *at));
+            }
+            if let Some((id, model, bone)) = &prop {
+                let handle = assets.load(model.clone());
+                preview.prop = Some(Prop { id: id.clone(), model: model.clone(), handle, bone: bone.clone(), offset: prop_offset, attached: false });
+            }
+        },
+    )
     .add_systems(Update, drive)
     .add_systems(PostUpdate, follow.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate))
     .add_systems(Last, shoot);
@@ -229,14 +289,109 @@ fn stage(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Ass
     commands.spawn((Camera3d::default(), Exposure { ev100: mw_assets::SCENE_EV100 }, Transform::from_xyz(0.0, 1.3, 3.6).looking_at(Vec3::new(0.0, 0.95, 0.0), Vec3::Y)));
 }
 
+/// The model of a placeable record (`mw_world::resolve_base`: every kind a cell reference can
+/// place, except actors), or an error naming the closest ids; `arg` names the option.
+fn placeable_model(db: &RecordDb, id: &str, arg: &str) -> Result<(String, String), String> {
+    use tes3::esp::{Activator, Container, Door, Light, MiscItem, Static};
+    match mw_world::resolve_base(db, id) {
+        Some((mw_world::BaseKind::Actor, ..)) => Err(format!("{arg} {id:?} is an actor, not a placeable object")),
+        Some((_, Some(model), _)) => Ok((id.to_owned(), model)),
+        Some((_, None, _)) => Err(format!("{arg} {id:?} has no model")),
+        None => {
+            let ids = db
+                .iter::<Static>()
+                .map(|(k, _)| k)
+                .chain(db.iter::<Activator>().map(|(k, _)| k))
+                .chain(db.iter::<Container>().map(|(k, _)| k))
+                .chain(db.iter::<Door>().map(|(k, _)| k))
+                .chain(db.iter::<Light>().map(|(k, _)| k))
+                .chain(db.iter::<MiscItem>().map(|(k, _)| k))
+                .map(RecordId::as_str);
+            let near = cook::near_matches(id, ids, 8);
+            Err(format!("{arg} {id:?}: no placeable record; closest: {}", near.join(", ")))
+        }
+    }
+}
+
+/// The furniture's model (the runtime NIF path, as the `view` viewer spawns an uncooked
+/// reference) at `at`.
+fn place_furniture(commands: &mut Commands, assets: &AssetServer, id: &str, model: &str, at: At) -> Handle<WorldAsset> {
+    let handle: Handle<WorldAsset> = assets.load(model.to_owned());
+    let transform = Transform::from_xyz(at.x, at.y, at.z).with_rotation(Quat::from_rotation_y(at.yaw_deg.to_radians()));
+    commands.spawn((WorldAssetRoot(handle.clone()), transform, Visibility::Inherited, Name::new(id.to_owned())));
+    println!("furniture {id} ({model}) at {:.2} {:.2} {:.2}, yaw {:.0}", at.x, at.y, at.z, at.yaw_deg);
+    handle
+}
+
+/// The prop while loading: attaches it under its bone once the actor's rig is bound (`rig`:
+/// its skeleton, body entity and joint entities). `Ok(true)` once attached and its model is
+/// loaded; an error if the model failed or the skeleton lacks the bone.
+fn prop_step(
+    commands: &mut Commands,
+    prop: &mut Prop,
+    server: &AssetServer,
+    rig: Option<(&sf_anim::Skeleton, Entity, &SkeletonBinding)>,
+    joints: &Query<(Option<&ChildOf>, Has<Visibility>)>,
+) -> Result<bool, String> {
+    let loaded = match server.get_recursive_dependency_load_state(prop.handle.id()) {
+        Some(bevy::asset::RecursiveDependencyLoadState::Failed(e)) => return Err(format!("the prop model failed to load: {e}")),
+        load => matches!(load, Some(bevy::asset::RecursiveDependencyLoadState::Loaded)),
+    };
+    if !prop.attached
+        && let Some((skeleton, body, binding)) = rig
+        && !binding.joints.is_empty()
+    {
+        let names: Vec<&str> = prop.bone.as_deref().map_or_else(|| DEFAULT_PROP_BONES.to_vec(), |b| vec![b]);
+        let Some((bone, joint)) = names.iter().find_map(|n| binding.find(skeleton, n).map(|j| (*n, j))) else {
+            let hands: Vec<&str> = skeleton.names().iter().map(String::as_str).filter(|n| n.contains("Hand") || n.contains("Bone")).collect();
+            return Err(format!("--prop bone {names:?} is not in the NPC's skeleton; hand bones: {}", hands.join(", ")));
+        };
+        visible_chain(commands, joints, joint, body);
+        commands.spawn((WorldAssetRoot(prop.handle.clone()), prop.offset, Visibility::Inherited, Name::new(prop.id.clone()), ChildOf(joint)));
+        let (t, (rx, ry, rz)) = (prop.offset.translation, prop.offset.rotation.to_euler(EulerRot::XYZ));
+        println!(
+            "prop {} ({}) on {bone:?}, offset {:.3} {:.3} {:.3} m, {:.0} {:.0} {:.0} deg",
+            prop.id,
+            prop.model,
+            t.x,
+            t.y,
+            t.z,
+            rx.to_degrees(),
+            ry.to_degrees(),
+            rz.to_degrees()
+        );
+        prop.attached = true;
+    }
+    Ok(loaded && prop.attached)
+}
+
+/// Gives the joints from `joint` up to `body` visibility components, so the prop under them
+/// inherits the actor's visibility (rig joints carry none; as `sf_character_bevy`'s held props).
+fn visible_chain(commands: &mut Commands, joints: &Query<(Option<&ChildOf>, Has<Visibility>)>, joint: Entity, body: Entity) {
+    let mut at = joint;
+    while at != body {
+        let Ok((parent, has)) = joints.get(at) else { return };
+        if !has {
+            commands.entity(at).try_insert(Visibility::Inherited);
+        }
+        let Some(parent) = parent else { return };
+        at = parent.parent();
+    }
+}
+
 type ActorQuery<'a> = (&'a mut Animator, &'a mut AnimLod, &'a mut Transform, Option<&'a mut AnimRootMotion>);
 
 /// The run's state machine, before the animation update: wait for the actor, then start each
 /// clip on its frame 0 (time scale 0: the pose at clip time 0), then advance at rate 1.
+/// `shoot` (in `Last`) moves to the next clip, so each clip starts on the update whose frame 0
+/// it then shoots.
 #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn drive(
+    mut commands: Commands,
     mut preview: ResMut<Preview>,
     mut actors: Query<ActorQuery>,
+    rigs: Query<(Entity, &SkeletonBinding), With<Animator>>,
+    joints: Query<(Option<&ChildOf>, Has<Visibility>)>,
     stats: Res<CharacterStats>,
     pending: Res<mw_devtools_bevy::pipeline_watch::PendingDraws>,
     server: Res<AssetServer>,
@@ -252,12 +407,33 @@ fn drive(
                 !matches!(server.get_load_state(t.id()), Some(bevy::asset::LoadState::Loaded | bevy::asset::LoadState::Failed(_)) | None)
             });
             let actor = actors.iter().next().is_some();
+            let furniture_ready = match &p.furniture {
+                None => true,
+                Some(h) => match server.get_recursive_dependency_load_state(h.id()) {
+                    Some(bevy::asset::RecursiveDependencyLoadState::Failed(e)) => {
+                        eprintln!("error: the furniture model failed to load: {e}");
+                        exit.write(AppExit::error());
+                        return;
+                    }
+                    load => matches!(load, Some(bevy::asset::RecursiveDependencyLoadState::Loaded)),
+                },
+            };
             if stats.failed > 0 {
                 eprintln!("error: the NPC failed to build (see the log)");
                 exit.write(AppExit::error());
                 return;
             }
-            let ready = actor && stats.spawned > 0 && !textures_pending && pending.gpu().pipelines == 0 && pending.get() == 0;
+            let rig = (stats.spawned > 0).then(|| actors.iter().next().zip(rigs.iter().next())).flatten();
+            let prop_ready = match p.prop.as_mut().map(|prop| prop_step(&mut commands, prop, &server, rig.map(|((a, ..), (body, b))| (&*a.asset.skeleton, body, b)), &joints)) {
+                None => true,
+                Some(Ok(ready)) => ready,
+                Some(Err(e)) => {
+                    eprintln!("error: {e}");
+                    exit.write(AppExit::error());
+                    return;
+                }
+            };
+            let ready = actor && furniture_ready && prop_ready && stats.spawned > 0 && !textures_pending && pending.gpu().pipelines == 0 && pending.get() == 0;
             if p.loading_frames > LOAD_LIMIT_FRAMES {
                 eprintln!("error: the NPC is still loading after {LOAD_LIMIT_FRAMES} frames");
                 exit.write(AppExit::error());
@@ -277,49 +453,50 @@ fn drive(
                 exit.write(AppExit::error());
                 return;
             }
+            // Falls through: the first clip starts on this same update, because `shoot` takes
+            // its frame 0 at the end of it.
             p.phase = next_clip(&p.items, 0);
         }
-        Phase::Clip { index, frame } => {
-            let Some((mut animator, _, mut transform, root)) = actors.iter_mut().next() else { return };
-            if frame > 0 {
-                animator.time_scale = 1.0;
-                return;
-            }
-            let item = &mut p.items[index];
-            let Some(late) = item.late.clone() else { return };
-            let dir = item.frames_dir(&p.out);
-            let _ = std::fs::remove_dir_all(&dir);
-            if let Err(e) = std::fs::create_dir_all(&dir) {
-                eprintln!("error: {}: {e}", dir.display());
-                exit.write(AppExit::error());
-                return;
-            }
-            item.capture = Duration::ZERO;
-            p.started = Some(Instant::now());
-            // Back on the mark, then the clip from its first pose.
-            transform.translation = Vec3::ZERO;
-            transform.rotation = Quat::IDENTITY;
-            if let Some(mut root) = root {
-                root.apply = true;
-            }
-            let a = &mut *animator;
-            let asset = Arc::clone(&a.asset);
-            a.instance.set_variety(&asset.binding(), Variety::default());
-            let Some(slot) = asset.graph.slot(mw_graphs::build::slots::FULL) else {
-                eprintln!("error: the actor's graph has no {:?} slot", mw_graphs::build::slots::FULL);
-                exit.write(AppExit::error());
-                return;
-            };
-            let req = SlotRequest { blend_in: 0.0, priority: 9, ..SlotRequest::new(MontageClip::Late(late)) };
-            if let Err(e) = a.instance.play_slot(&asset.binding(), slot, req) {
-                eprintln!("error: {}: the slot refused the clip ({e:?})", item.job.id);
-                exit.write(AppExit::error());
-                return;
-            }
-            a.time_scale = 0.0;
-        }
-        Phase::Saving { .. } => {}
+        Phase::Clip { .. } | Phase::Saving { .. } => {}
     }
+    let Phase::Clip { index, frame } = p.phase else { return };
+    let Some((mut animator, _, mut transform, root)) = actors.iter_mut().next() else { return };
+    if frame > 0 {
+        animator.time_scale = 1.0;
+        return;
+    }
+    let item = &mut p.items[index];
+    let Some(late) = item.late.clone() else { return };
+    let dir = item.frames_dir(&p.out);
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("error: {}: {e}", dir.display());
+        exit.write(AppExit::error());
+        return;
+    }
+    item.capture = Duration::ZERO;
+    p.started = Some(Instant::now());
+    // Back on the mark, then the clip from its first pose.
+    transform.translation = Vec3::ZERO;
+    transform.rotation = Quat::IDENTITY;
+    if let Some(mut root) = root {
+        root.apply = true;
+    }
+    let a = &mut *animator;
+    let asset = Arc::clone(&a.asset);
+    a.instance.set_variety(&asset.binding(), Variety::default());
+    let Some(slot) = asset.graph.slot(mw_graphs::build::slots::FULL) else {
+        eprintln!("error: the actor's graph has no {:?} slot", mw_graphs::build::slots::FULL);
+        exit.write(AppExit::error());
+        return;
+    };
+    let req = SlotRequest { blend_in: 0.0, priority: 9, ..SlotRequest::new(MontageClip::Late(late)) };
+    if let Err(e) = a.instance.play_slot(&asset.binding(), slot, req) {
+        eprintln!("error: {}: the slot refused the clip ({e:?})", item.job.id);
+        exit.write(AppExit::error());
+        return;
+    }
+    a.time_scale = 0.0;
 }
 
 /// Every clip cooked onto the dressed actor's skeleton (Bevy-free, [`cook::cook`]) and bound

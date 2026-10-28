@@ -1,0 +1,201 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Tier 1-2 ambient activities (MG2), rows from bevyrrowind/docs/research/ambient-catalog-2026-10-28.md, section 3.
+# Format: bevyrrowind/docs/specs/motion-generation.md, "Recipes (MG1)". Heights in meters (SOMA space for offsets);
+# "band.seat+0.10" = seat band height plus 0.10 m (hip joint above the seat surface).
+# Canonical space: actor starts at XZ (0, 0) facing +Z; furniture/wall sits behind (-Z) unless the prompt says otherwise.
+# Each loop prompt starts in the end pose of its enter prompt; each exit prompt starts in the loop pose.
+# Ids must not collide with seed.toml (sit.chair.idle, sweep.broom, lean.wall.arms_crossed).
+
+# --- Seated: chair -------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "sit.chair.rest"
+point = "seat"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 3.0, loop = 8.0, exit = 3.0 }
+prompt.enter = "A person standing with their back to a chair bends their knees and sits down on it, resting their hands on their thighs."
+prompt.loop = "A person sitting on a chair with hands on their thighs rests idly, shifting their weight, glancing around and scratching their arm."
+prompt.exit = "A person sitting on a chair leans forward, pushes on their thighs and stands up."
+constraints.enter = { pelvis_height = { height = "band.seat+0.10", at = "end" }, root = "fixed_xz" }
+constraints.loop = { pelvis_height = "band.seat+0.10", root = "fixed" }
+constraints.exit = { pelvis_height = { height = "band.seat+0.10", at = "start" }, root = "fixed_xz" }
+
+[[activity]]
+id = "sit.chair.talk"
+point = "seat"
+props = []
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person sitting on a chair talks to someone in front of them, nodding and gesturing with one hand."
+constraints.loop = { pelvis_height = "band.seat+0.10", root = "fixed" }
+
+[[activity]]
+id = "sit.chair.drink"
+point = "seat"
+props = ["tankard"]
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person sitting on a chair raises a mug in their right hand, drinks from it, then lowers it to rest on their knee."
+constraints.loop = { pelvis_height = "band.seat+0.10", root = "fixed" }
+
+[[activity]]
+id = "sit.chair.read"
+point = "seat"
+props = ["book"]
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person sitting on a chair holds an open book in both hands on their lap, reads it and slowly turns a page."
+constraints.loop = { pelvis_height = "band.seat+0.10", root = "fixed" }
+
+# --- Seated: bench and ground --------------------------------------------------------------------------------------
+
+[[activity]]
+id = "sit.bench.idle"
+point = "seat"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 3.0, loop = 8.0, exit = 3.0 }
+prompt.enter = "A person standing with their back to a low bench sits down on it and leans forward, resting their forearms on their knees."
+prompt.loop = "A person sitting on a bench leaning forward with forearms on their knees looks around slowly and rubs their hands together."
+prompt.exit = "A person sitting on a bench leaning forward straightens up and stands."
+constraints.enter = { pelvis_height = { height = "band.seat+0.10", at = "end" }, root = "fixed_xz" }
+constraints.loop = { pelvis_height = "band.seat+0.10", root = "fixed" }
+constraints.exit = { pelvis_height = { height = "band.seat+0.10", at = "start" }, root = "fixed_xz" }
+
+[[activity]]
+id = "sit.ground.fire"
+point = "fire"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 4.0, loop = 8.0, exit = 4.0 }
+prompt.enter = "A person standing lowers themselves to the ground and sits cross-legged, resting their hands on their knees."
+prompt.loop = "A person sitting cross-legged on the ground holds both hands out in front of them to warm them, then rests them on their knees."
+prompt.exit = "A person sitting cross-legged on the ground puts one hand down, pushes up and stands."
+constraints.enter = { pelvis_height = { height = "band.ground+0.15", at = "end" }, root = "fixed_xz" }
+constraints.loop = { pelvis_height = "band.ground+0.15", root = "fixed" }
+constraints.exit = { pelvis_height = { height = "band.ground+0.15", at = "start" }, root = "fixed_xz" }
+
+# --- Bed -----------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "sleep.bed.back"
+point = "bed"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 5.0, loop = 10.0, exit = 5.0 }
+prompt.enter = "A person standing beside a bed sits on its edge, swings their legs up and lies down on their back."
+prompt.loop = "A person lying on their back sleeps, breathing slowly, and turns their head and shifts an arm."
+prompt.exit = "A person lying on their back sits up, swings their legs off the side and stands up."
+constraints.enter = { pelvis_height = { height = "band.bed+0.12", at = "end" } }
+constraints.loop = { pelvis_height = "band.bed+0.12", root = "fixed" }
+constraints.exit = { pelvis_height = { height = "band.bed+0.12", at = "start" } }
+
+# --- Leaning -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "lean.wall.relaxed"
+point = "wall"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 3.0, loop = 8.0, exit = 2.5 }
+prompt.enter = "A person steps back and leans their back and shoulders against a wall, hands in front of their hips."
+prompt.loop = "A person leaning back against a wall rests one foot flat against it, looks around and shifts their weight."
+prompt.exit = "A person leaning back against a wall pushes off it with their shoulders and stands upright."
+constraints.loop = { root = "fixed" }
+
+[[activity]]
+id = "lean.counter.idle"
+point = "counter"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 3.0, loop = 8.0, exit = 2.5 }
+prompt.enter = "A person standing in front of a counter leans forward and places both hands flat on its top."
+prompt.loop = "A person leaning forward with both hands on a counter waits, tapping their fingers and looking left and right."
+prompt.exit = "A person leaning on a counter pushes back with their hands and stands upright."
+constraints.enter = { hand_l = { height = "band.counter", forward = 0.4, side = 0.25, at = "end" }, hand_r = { height = "band.counter", forward = 0.4, side = 0.25, at = "end" } }
+constraints.loop = { root = "fixed", hand_l = { height = "band.counter", forward = 0.4, side = 0.25 }, hand_r = { height = "band.counter", forward = 0.4, side = 0.25 } }
+constraints.exit = { hand_l = { height = "band.counter", forward = 0.4, side = 0.25, at = "start" }, hand_r = { height = "band.counter", forward = 0.4, side = 0.25, at = "start" } }
+
+# --- Work ----------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "sweep.broom.walk"
+point = "ground"
+props = ["broom"]
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person walks slowly forward sweeping the floor from side to side with a broom held low in both hands."
+constraints.loop = { root = "path:0,0;0,0.6;0,1.2;0,1.8" }
+
+[[activity]]
+id = "carry.sack.shoulder"
+point = "ground"
+props = ["sack"]
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 3.5, loop = 6.0, exit = 3.0 }
+prompt.enter = "A person bends down, lifts a heavy sack from the ground with both hands and heaves it onto their right shoulder."
+prompt.loop = "A person walks forward steadily carrying a heavy sack on their right shoulder, holding it with both hands."
+prompt.exit = "A person standing with a heavy sack on their right shoulder bends forward and lowers it to the ground in front of them."
+constraints.enter = { root = "fixed_xz" }
+constraints.loop = { root = "path:0,0;0,2;0,4;0,6" }
+constraints.exit = { root = "fixed_xz" }
+
+[[activity]]
+id = "farm.hoe.till"
+point = "field"
+props = ["hoe"]
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person holding a hoe in both hands raises it and chops it down into the soil in front of them, pulling it back again and again."
+constraints.loop = { root = "fixed_xz" }
+
+# --- Shrine --------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "pray.shrine.kneel"
+point = "shrine"
+props = []
+phases = ["enter", "loop", "exit"]
+variants = 4
+duration = { enter = 3.0, loop = 8.0, exit = 3.0 }
+prompt.enter = "A person standing kneels down on both knees, keeping their upper body upright, and bows their head."
+prompt.loop = "A person kneeling upright on both knees prays with hands clasped in front of their chest, bowing their head and lifting it again."
+prompt.exit = "A person kneeling on both knees puts one foot forward and stands up."
+constraints.enter = { pelvis_height = { height = 0.5, at = "end" }, root = "fixed" }
+constraints.loop = { pelvis_height = 0.5, root = "fixed" }
+constraints.exit = { pelvis_height = { height = 0.5, at = "start" }, root = "fixed_xz" }
+
+# --- Standing ------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "guard.stand.ease"
+point = "post"
+props = []
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person stands at ease with feet apart and hands clasped behind their back, slowly turning their head to scan around."
+constraints.loop = { root = "fixed" }
+
+[[activity]]
+id = "talk.stand.gesture"
+point = "ground"
+props = []
+phases = ["loop"]
+variants = 4
+duration = 8.0
+prompt = "A person stands and talks to someone in front of them, gesturing with both hands, shrugging and nodding."
+constraints.loop = { root = "fixed" }

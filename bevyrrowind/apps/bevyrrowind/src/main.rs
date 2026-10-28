@@ -73,6 +73,14 @@ enum Command {
     },
     /// List a VFS directory.
     Ls { dir: Option<String> },
+    /// Furniture and race census (motion-generation.md, MG4): seat, table,
+    /// counter, bed and shelf heights from collision, weighted by placements,
+    /// clustered into bands; writes the planner's `bands.json`.
+    FurnitureCensus {
+        /// Output (default: `<animation packs>/generated/bands.json`).
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
     /// List cells that place a base record (most uses first).
     Uses {
         id: String,
@@ -230,6 +238,21 @@ struct ClipPreviewArgs {
     /// Keep the PNG frames (`<out>/<clip id>/frames/`).
     #[arg(long)]
     keep_frames: bool,
+    /// A placeable record (STAT, ACTI, CONT, ...) to stand in the scene with its real model,
+    /// e.g. `furn_de_p_chair_01` for a seated clip (MG6).
+    #[arg(long)]
+    furniture: Option<String>,
+    /// Where `--furniture` stands: `x,y,z[,yaw]`, meters and degrees in the scene frame (Y up,
+    /// the NPC at the origin facing +Z).
+    #[arg(long, default_value = "0,0,0,0", allow_hyphen_values = true)]
+    at: mw_viewers_bevy::clip_preview::cook::At,
+    /// An item the NPC holds, `<record id>[@<bone>]`, e.g. `misc_com_tankard_01`; default
+    /// bone: the right hand's attach bone (`Weapon Bone`, else `Bip01 R Hand`).
+    #[arg(long)]
+    prop: Option<mw_viewers_bevy::clip_preview::cook::PropSpec>,
+    /// The prop under its bone: `x,y,z[,rx,ry,rz]`, meters and degrees in the bone's frame.
+    #[arg(long, default_value = "0,0,0", allow_hyphen_values = true)]
+    prop_offset: mw_viewers_bevy::clip_preview::cook::PropOffset,
     #[arg(long)]
     cache: Option<PathBuf>,
 }
@@ -707,6 +730,18 @@ fn run(cli: Cli) -> Result {
             ls(&vfs, dir.as_deref().unwrap_or(""));
             Ok(())
         }
+        Command::FurnitureCensus { json } => {
+            let (vfs, content) = load(&install, false)?;
+            let census = mw_bake::census::run(&content.db, &vfs);
+            print!("{census}");
+            let path = json.unwrap_or_else(|| mw_bake::sources::AnimSources::local().dir.join("generated").join("bands.json"));
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&path, census.bands_json())?;
+            println!("wrote {}", path.display());
+            Ok(())
+        }
         Command::Uses { id, limit } => {
             let (_, content) = load(&install, false)?;
             for (cell, count) in mw_world::cells_using(&content.db, &id).into_iter().take(limit) {
@@ -785,7 +820,7 @@ fn run(cli: Cli) -> Result {
 #[cfg(feature = "dev")]
 fn clip_preview(install: &MorrowindInstall, args: ClipPreviewArgs) -> Result {
     use mw_viewers_bevy::clip_preview::{ClipPreviewOptions, cook::ClipJob};
-    let ClipPreviewArgs { clip, name, source, batch, npc, camera, out, fps, size, ffmpeg, keep_frames, cache } = args;
+    let ClipPreviewArgs { clip, name, source, batch, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset, cache } = args;
     let defaults = ClipJob { file: clip.clone().unwrap_or_default(), name, source };
     let mut jobs = Vec::new();
     if clip.is_some() {
@@ -798,7 +833,7 @@ fn clip_preview(install: &MorrowindInstall, args: ClipPreviewArgs) -> Result {
     let (vfs, content) = load(install, false)?;
     let store = sf_bake::Store::open(cache_root(cache)?)?;
     let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
-    let options = ClipPreviewOptions { jobs, npc, camera, out, fps, size, ffmpeg, keep_frames };
+    let options = ClipPreviewOptions { jobs, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset };
     if mw_viewers_bevy::clip_preview::run(std::sync::Arc::new(vfs), std::sync::Arc::new(content.db), store, manifest, options) {
         Ok(())
     } else {
