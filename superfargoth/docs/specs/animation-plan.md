@@ -115,3 +115,9 @@ AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the ca
   before in anim-lab, so likely not the generated clips. Suspects to diagnose first: two-bone IK pole flip near full
   extension (knee pole from the animated knee), foot lock release/re-plant, or retarget twist on the thigh. Repro:
   `clip-preview` MP4s (`bevyrrowind/shots/clip-preview/`), step frame by frame and note the frame; then anim-lab.
+  **Measured** (2026-10-28, `mw_bake` test `leg_snap::measure_leg_snaps`, 522 takes on `base_anim`, 30 Hz): 3123 flags in
+  49% of takes. Source 2712 (Quaternius 2410: fast kicks/jumps, real motion), seam 70 (53 already in the source),
+  cook 0, retarget FK 2, **retarget leg IK 339 in 118 takes** (282 in generated sit/kneel/bed enter/exit; 91% swing, not
+  twist; the thigh mostly). So the snaps we cause are the retarget's leg IK (`Retargeter::pose` IK pass, pole from
+  `ik::limb_pole`), not a twist flip. Worst: `sit.ground.fire.exit.any.02` RightUpperLeg frame 34 (133°, source 4°),
+  `sit.ground.fire.enter.any.00` LeftUpperLeg f59 (69°), `sit.bench.idle.enter.seat14.03` LeftUpperLeg f44 (60°).
