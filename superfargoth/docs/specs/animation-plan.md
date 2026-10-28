@@ -121,6 +121,6 @@ AN-4 (freeze, lost capsule) confirmed fixed by the owner. Same rule: find the ca
   twist; the thigh mostly). So the snaps we cause are the retarget's leg IK (`Retargeter::pose` IK pass, pole from
   `ik::limb_pole`), not a twist flip. Worst: `sit.ground.fire.exit.any.02` RightUpperLeg frame 34 (133°, source 4°),
   `sit.ground.fire.enter.any.00` LeftUpperLeg f59 (69°), `sit.bench.idle.enter.seat14.03` LeftUpperLeg f44 (60°).
-  **Fixed (2026-10-28):** the snaps were the 0/1 contact weight popping IK on and off (deep folds, IK far from FK):
+  **Fixed (2026-10-28), owner confirmed in `clip-preview --browse` ("that fixed it"):** the snaps were the 0/1 contact weight popping IK on and off (deep folds, IK far from FK):
   `Retargeter::frames` eases it over 0.15 s each side; knee pole now in the source bend plane, blended into the thigh
   hinge when straight (`two_bone` likewise). Retarget leg IK flags 339 in 118 takes -> 25 in 17; foot error unchanged.

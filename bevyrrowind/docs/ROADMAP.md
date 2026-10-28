@@ -118,7 +118,7 @@ in the world; only the release start path (or a session working on the menu) sho
   dummies have `CellCoord` but no big_space regrid.
 - [ ] 3.6 Swimming + underwater (owner 2026-10-26; was W5 under Phase 4): player swims (`MoverMode::Swim`, `locomotion.md`), camera medium + underwater fog/medium, waterline split, surface from below, `underwater` audio cue (`water.md` "Underwater"). Caustics and breath/drowning later.
 - [ ] 3.7 Buoyancy (owner 2026-10-26; was W6): pontoon bodies in `sf_physics`, wood floats / iron sinks, flow drag (`water.md` "Buoyancy"); thrown and dropped items, corpses. Boats' hull method later.
-- [~] 3.8 Ambient life clip factory (owner 2026-10-28): Kimodo + MotionBricks offline generation, SOMA BVH onto `base_anim`, review on a real NPC with furniture and props (`specs/motion-generation.md`, slices MG1-MG9). Runtime activity system (interaction points, AI) separate.
+- [~] 3.8 Ambient life clip factory (owner 2026-10-28): Kimodo + MotionBricks offline generation, SOMA BVH onto `base_anim`, review on a real NPC (`specs/motion-generation.md`). Done: MG1-MG6, MG7a, MG10a (`clip-preview --browse`); tier1 batch 268 clips. Next: MG10b per-clip furniture/props + calibration + verdict keys, MG7b grip table, MG1b chaining/contact constraints, MG8 loops/links. Runtime activity system (interaction points, AI) separate.
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 

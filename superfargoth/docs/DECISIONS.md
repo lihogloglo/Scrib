@@ -1534,3 +1534,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-10-27 (quaternius-full): the full CC0 Quaternius UAL1 + UAL2 ship in the repo (owner), Git LFS, `bevyrrowind/assets/animation/quaternius/`:
   only `UAL1_RM.glb` + `UAL2_RM.glb` (+ License/README/PROVENANCE; the plain exports differ only by a still root bone). `mw_bake`
   searches the user library (`BEVYRROWIND_ANIM_SOURCES`, else `animation packs`) first, then that bundled folder; LaFAN1 stays BYO.
+- 2026-10-28 (ambient-anim-audit): ambient-life clips come from offline generators (NVIDIA Kimodo for activities, MotionBricks
+  for links) run by `bevyrrowind/tools/motiongen`, never in the game or the bake; output is SOMA BVH, source `generated`,
+  local only (`private_only`) until the licence check. Owner reviews in-game with `clip-preview --browse`, not an HTML page.
