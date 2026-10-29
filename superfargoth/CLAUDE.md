@@ -51,33 +51,12 @@ never revert others' changes.
 4. **Everything is a mod**: VFS, records, and mod manifests are the only content paths.
 5. **Industry standard, never kludge**; named scaffolds only.
 6. **Compile time is a constraint** (§8b, now build-perf.md): Bevy-free cores, thin Bevy plugins.
-7. **Research first, and challenge our docs.** Before designing or building
-   a system, research how the industry does it today: papers, GDC/SIGGRAPH
-   talks, engine docs, and the current crate ecosystem (versions, Bevy
-   compatibility, maintenance). Our specs and ARCHITECTURE.md are not
-   gospel. If research shows a better way, update the spec and log the
-   change in ARCHITECTURE.md §10 instead of following a stale doc.
-   Prior projects (Godotwind on Godot, ECSwind) are anecdotes, not designs:
-   Godot's node tree, GDScript and renderer quirks don't transfer to Bevy,
-   so never copy their tiers or constants; calibrate from our own Bevy
-   measurements.
-8. **Reuse before building, in this order: Bevy, then crates, then our
-   own.** First use what Bevy itself provides (check its docs, examples and
-   source for the version we're on). Then maintained, license-compatible
-   crates and tools (GPL-3.0-compatible: MIT, Apache-2.0, BSD, zlib, GPL-3.0,
-   LGPL; MPL-2.0 only for unmodified dependencies, owner decision 2026-10-11;
-   never GPL-2.0-only or AGPL; `deny.toml`). Write our
-   own only when neither fits (wrong license, abandoned, stuck on an old
-   Bevy with no fork path, or below our performance or quality bar), and
-   say in the spec why each earlier step didn't.
-   **Don't reinvent the wheel: this covers whole projects, not just
-   crates.** Before starting a system, look for open-source games, engine
-   ports and Bevy projects that already built it (e.g. Mudcrab, a Skyrim
-   engine on Bevy, with Luau scripting). If one is building
-   what we need and isn't on our critical path, wait for it and adopt or
-   port it instead of racing it.
-9. **Finish before starting.** Drive started tasks to verified and
-   committed before opening new systems (`../bevyrrowind/CLAUDE.md` rule 10).
+7. **Research first, and challenge our docs** (`../CONTRIBUTING.md` "How we decide what to build" 1).
+8. **Reuse before building: Bevy, then crates, then our own**, whole projects included
+   (`../CONTRIBUTING.md` 2). Crates here must be GPL-3.0-compatible: MIT, Apache-2.0, BSD, zlib,
+   GPL-3.0, LGPL; MPL-2.0 only for unmodified dependencies (owner 2026-10-11); never GPL-2.0-only or
+   AGPL (`deny.toml`).
+9. **Finish before starting** (`../CONTRIBUTING.md` 6).
 
 ## Commands
 

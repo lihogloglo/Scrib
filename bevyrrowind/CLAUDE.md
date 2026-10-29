@@ -46,8 +46,7 @@ working tree**. Protocol:
    two sessions fighting over the CPU (a Bevy rebuild can take minutes).
    Before any `cargo build/test/clippy/run`, check for a running build
    (`tasklist | grep -iE "cargo|rustc"` in bash). Count builds from **any**
-   project, not only ours: the owner builds other projects on the same
-   machine (e.g. Ovid, whose cargo lives in `%TEMP%\ovid-build-tools`).
+   project, not only ours: other projects may build on the same machine.
    If another build is running, wait for it, using a background `until` loop rather than
    sleeping. **Run every cargo command through `bash tools/cargo_turn.sh <cargo args>`**
    (from the repo root: `bash bevyrrowind/tools/cargo_turn.sh ...`; from superfargoth:
@@ -118,32 +117,11 @@ working tree**. Protocol:
 7. **Compile time is a constraint** (ARCHITECTURE.md §8b, now build-perf.md): logic in
    Bevy-free crates, thin Bevy plugin crates, wide shallow crate graph,
    minimal Bevy features per crate.
-8. **Research first, and challenge our docs.** Before designing or building
-   a system, research how the industry does it today: papers, GDC/SIGGRAPH
-   talks, engine docs, OpenMW and the modding community, and the current
-   crate ecosystem (versions, Bevy compatibility, maintenance). Specs and
-   ARCHITECTURE.md are not gospel. If research shows a better way, update
-   the spec and log the change in ARCHITECTURE.md §10.
-   Prior projects (Godotwind on Godot, ECSwind) are anecdotes, not designs:
-   Godot's node tree, GDScript and renderer quirks don't transfer to Bevy,
-   so never copy their tiers or constants; calibrate from our own Bevy
-   measurements.
-9. **Reuse before building, in this order: Bevy, then crates, then our
-   own.** First use what Bevy itself provides (check its docs, examples and
-   source for the version we're on). Then maintained crates and tools (GPL
-   is fine in this repo; superfargoth takes GPL-3.0-compatible crates: MIT, Apache-2.0, BSD, zlib, GPL-3.0, LGPL). Write our
-   own only when neither fits, and say in the spec why each earlier step
-   didn't.
-   **Don't reinvent the wheel: this covers whole projects, not just
-   crates.** Before starting a system, look for open-source games, engine
-   ports and Bevy projects that already built it (e.g. Mudcrab, a Skyrim
-   engine on Bevy with Luau scripting; OpenMW for Morrowind behaviour).
-   If one is building what we need and isn't on our critical path, wait
-   for it and adopt or port it (license permitting) instead of racing it.
-10. **Finish before starting.** Drive started tasks (`[~]`) to verified and
-   committed before opening new systems; ask the owner before starting a
-   new lane. Parked (owner 2026-10-18): further Lua/Luau work after M5 L3
-   (see ROADMAP "## M5").
+8. **Research first, and challenge our docs** (`../CONTRIBUTING.md` "How we decide what to build" 1).
+9. **Reuse before building: Bevy, then crates, then our own**, whole projects included
+   (`../CONTRIBUTING.md` 2). GPL crates are fine in this part; superfargoth takes GPL-3.0-compatible ones.
+10. **Finish before starting** (`../CONTRIBUTING.md` 6). Parked (owner 2026-10-18): further Lua/Luau
+   work after M5 L3 (see ROADMAP "## M5").
 
 ## Commands
 
@@ -163,7 +141,7 @@ Clippy runs at `pedantic`; keep it warning-free.
 Dev builds (`remote` feature, part of `dev`) serve the Bevy Remote Protocol
 on 127.0.0.1 in interactive `view`/`scene` runs, for the `bevy_brp` MCP
 server (`bevy_brp_mcp`, registered for this workspace; owner 2026-10-18).
-Port `BEVYRROWIND_BRP_PORT`, default 15712 (Ovid uses 15702), shown in the
+Port `BEVYRROWIND_BRP_PORT`, default 15712, shown in the
 window title. Code: `bevyrrowind/crates/mw_devtools_bevy/src/remote.rs`.
 
 - **Attach only.** Build (`cargo build -p bevyrrowind --features dev`),
