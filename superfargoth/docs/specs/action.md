@@ -400,15 +400,15 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
 
 ## As built (B2 high mantle, B2b contacts, 2026-10-27)
 
-- **High mantle** (4b3ffe4): rule `traverse.mantle.high`, obstacle band 0.85-1.25 x character height (1.53-2.25 m), inset
+- **High mantle** (958fd3f): rule `traverse.mantle.high`, obstacle band 0.85-1.25 x character height (1.53-2.25 m), inset
   1.2 m, rank 190 (below the waist rule); Jump+forward or `Up`, never Sneak; the 2.5 m box and 3.5 m wall still refuse into a
   plain jump. Slot UAL2_RM `ClimbUp_2m` (rise 2.38 m, forward 2.0 m on the base rig; the warp only compresses), in the player's
   `TRAVERSAL_SLOTS`. `measure_mantle_high` prints the clip timeline. Check AL-10.
-- **B2b part 1, contacts** (e648a60): `ClipMeta::contacts` (kind, side, limb, joint, start/end, clip-space and root-local
+- **B2b part 1, contacts** (56ae770): `ClipMeta::contacts` (kind, side, limb, joint, start/end, clip-space and root-local
   position), `contacts_of` / `contact_span`; effector speed under 0.35 limb lengths/s (release at 2x), spans >= 0.1 s, hands
   only when the shoulder moves >= 0.1 limb lengths against them; at cook and on retarget targets (`CLIP_FORMAT` 4). The real
   mantle clips reported no hand contacts (the hands keep moving in clip space).
-- **B2b-2a** (46e38aa): a hand also plants as a pivot (under 2.0 limb lengths/s and 0.5 x the girdle's speed past it); retarget
+- **B2b-2a** (fa7a8d0): a hand also plants as a pivot (under 2.0 limb lengths/s and 0.5 x the girdle's speed past it); retarget
   copies the source's contacts. `ClimbUp_2m`: both hands (R 0.33-0.67 s, L 0.47-0.90 s); `ClimbUp_1m`: left hand 0.17-0.33 s.
 - Owner 2026-10-27 (ledges): the high mantle works; the hands aim at the box centre, not the lip (B2b-2 hand IK fixes it); hard
   to trigger: the body slides along the face without facing it (B2-T: input-direction gating, contact probe, jump buffer,

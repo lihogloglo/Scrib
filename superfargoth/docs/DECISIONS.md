@@ -1419,7 +1419,7 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   the material. Lamp shadow caches capture through their own views and recapture on a schedule, never per event.
 - 2026-10-21 (render-audit, owner): shadows reset. Stock Bevy shadow path first (A), then upstream PRs #26149/#26161
   carried as a vendored `bevy_pbr` patch (B); no more injection into Bevy's private render-world state. The lamp cube
-  cache (`sf_shadow_cache_bevy`, 947efc5) is deleted in A: #26161 replaces it. Torch-bearers cast shadows by budget.
+  cache (`sf_shadow_cache_bevy`, 97334a6) is deleted in A: #26161 replaces it. Torch-bearers cast shadows by budget.
 - 2026-10-21 (doorwalls): the game camera is HDR in every worldspace (an interior start was LDR until the sky's
   atmosphere required HDR, doubling main-pass pipeline variants), and the door fade also holds, within its gate cap,
   while the arrival camera's visible meshes wait for main-pass pipelines (bevyrrowind `pipeline_watch.rs`).

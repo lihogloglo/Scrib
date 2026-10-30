@@ -39,4 +39,4 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   locked Shift tap + A/D = a side dodge (~2 m around it, no pause at its end); W/S + tap = the forward roll squared to the stick.
 - Known gaps: locomotion still plays the forward cycles (strafe clips C1c-2b); no back roll / backstep clip; no target switching (C4).
 - Owner 2026-10-27 (copy d): lock, release, recentre and locked facing confirmed ("main logic solid"); asked for the marker and faster
-  side rolls (both built after, e914521, 3f0e82b). Status: lock + facing confirmed; marker and side rolls awaiting owner.
+  side rolls (both built after, 2709b71, ddc252d). Status: lock + facing confirmed; marker and side rolls awaiting owner.

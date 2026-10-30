@@ -32,8 +32,8 @@ slices", "Systemic gaps") and [OpenMW research](../research/openmw-physics-2026-
 
 ## Slices (one deliverable + its test each; one physics lane, serial unless marked)
 
-**Status 2026-10-26 (night):** 1-10 done and pushed (88386c8, 44a4d8e, 22d7076, 4543805, 3710655, 54dd9c1,
-0497245, c0e9046, b100b23, 6769771); owner check PH-11. Leftovers: drag slow-down only on the free camera
+**Status 2026-10-26 (night):** 1-10 done and pushed (30f0d22, b4a12e4, 9ac6bd6, f8adc50, d81117c, be68d1b,
+441128f, 750565e, a3e830d, dfb0699); owner check PH-11. Leftovers: drag slow-down only on the free camera
 (`carry_feedback`); arrival spot over a hole loops with a warning; fade gate_max 1.5 s may show the frozen body
 briefly; overlap deeper than step_up (0.45 m) not recovered; doorless link ends ignore `PlayerMode.paused`;
 Balmora insert ms after slice 7 unmeasured (needs `--bench`). 11 waits for the owner.

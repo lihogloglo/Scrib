@@ -306,7 +306,7 @@ roll cancels open where its travel ends (no settle tail, owner). Fallbacks: `lig
 
 ### C1c: lock-on
 
-**As built (C1c, 2026-10-27).** Four commits (32e4f5b, f8f01bb, 3f0e82b, e914521); check CB-2.
+**As built (C1c, 2026-10-27).** Four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71); check CB-2.
 - **Part 1, lock** (`sf_combat::update_lock` over `sf_camera::lockon`; shell `sf_combat_bevy::SfLockOnPlugin`, `LockOwner`,
   `Lockable { aim_height: 1.3 }`): a press acquires within 15 m and a 35 deg cone around the view yaw with line of sight (thin
   sphere cast through the ground probe: statics and terrain), else recentres the camera (`PlayerCamera::recentre`); a press

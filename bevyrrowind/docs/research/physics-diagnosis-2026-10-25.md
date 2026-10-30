@@ -2,7 +2,7 @@
 
 Four owner symptoms from the 2026-10-25 play test, traced through our code. This note only diagnoses.
 The coordinator merges it with the OpenMW research lane into `bevyrrowind/docs/specs/physics-fix-plan.md`.
-Nothing here was run live. Code was read at `d499fa7`, and the rapier source at `rapier3d-0.36.1` in the cargo registry.
+Nothing here was run live. Code was read at `cf0a455`, and the rapier source at `rapier3d-0.36.1` in the cargo registry.
 
 **Backend, settled:** **rapier3d 0.36.1** (root `Cargo.toml:98`, `sf_physics/Cargo.toml:20`). No crate depends on
 avian. `hard-problems.md` H4 ("avian3d has no spherical joint motor") and the root `Cargo.toml:93` comment are stale.

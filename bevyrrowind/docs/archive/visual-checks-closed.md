@@ -1394,7 +1394,7 @@ smoke and ghosts must still look translucent (if one became a hard-edged cutout,
   depth-aware resolve/composite (uncommitted) removed the inner fringe but drew a stippled halo in the sky outside
   silhouettes, and the sky seems to wobble as the camera moves (owner: `Desktop/outline.jpg`). Research under way:
   `superfargoth/docs/research/clouds-upsampling.md`. (The Temporal shadow filter with TAA/DLSS stays: right pairing.)
-- Fixed (superfargoth c31e397): trace marches to the furthest depth of a 6x6 window and stores the cut depth;
+- Fixed (superfargoth 8d8cfb4): trace marches to the furthest depth of a 6x6 window and stores the cut depth;
   resolve and composite match taps by population (open sky vs cut at the same depth); jittered history matrix.
 - Status: **confirmed by owner 2026-10-19** (round 15: fringe, halo and sky wobble gone).
 
