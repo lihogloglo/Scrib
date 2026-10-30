@@ -7,22 +7,22 @@
 
 ## 1. Mandatory Workspace Laws & Invariants
 
-Any agent executing tasks from this plan **must** follow these repository invariants ([ARCHITECTURE.md](file:///D:/Gamedev/Bevyrrowind/superfargoth/docs/ARCHITECTURE.md), [build-perf.md](file:///D:/Gamedev/Bevyrrowind/superfargoth/docs/build-perf.md), [world-coordinates.md](file:///D:/Gamedev/Bevyrrowind/superfargoth/docs/specs/world-coordinates.md)):
+Any agent executing tasks from this plan **must** follow these repository invariants ([ARCHITECTURE.md](../superfargoth/docs/ARCHITECTURE.md), [build-perf.md](../superfargoth/docs/build-perf.md), [world-coordinates.md](../superfargoth/docs/specs/world-coordinates.md)):
 
 1. **Engine Baseline**: Bevy `0.20.0`, `wgpu` `30.0.1`, Rust `1.90` (Edition 2024).
 2. **Strict Crate Layering**:
    - **`superfargoth/crates/sf_*` (Bevy-Free Framework Cores)**: Pure Rust data structures, codecs, math, and offline bake steps. **NEVER** add `bevy_*` dependencies or Morrowind-specific concepts/names (`nif`, `esm`, `tes3`, `mw_*`) here.
    - **`superfargoth/crates/sf_*_bevy` (Framework Bevy Glue)**: Thin Bevy plugins, render passes, `.wesl` shaders, and asset loaders. Depend **only** on minimal `bevy_*` sub-crates (`default-features = false`) + `workspace-hack`—never on the umbrella `bevy` crate.
    - **`bevyrrowind/crates/mw_*` & `mw_*_bevy` (Game Adapters)**: Morrowind VFS/BSA/NIF/ESM translation (`mw_*` Bevy-free, `mw_*_bevy` Bevy plugins).
-   - **`bevyrrowind/apps/bevyrrowind` (Thin Binary)**: CLI parsing and plugin wiring only ([main.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/apps/bevyrrowind/src/main.rs)). Never put rendering or asset logic in `main.rs`.
+   - **`bevyrrowind/apps/bevyrrowind` (Thin Binary)**: CLI parsing and plugin wiring only ([main.rs](../bevyrrowind/apps/bevyrrowind/src/main.rs)). Never put rendering or asset logic in `main.rs`.
 3. **Dependency Unification (`cargo hakari`)**: Whenever you add or change dependencies/features in any `Cargo.toml`, run `cargo hakari generate` so `superfargoth/crates/workspace-hack` stays synchronized.
-4. **Lints & Safety**: `unsafe_code = "forbid"` is enforced workspace-wide ([Cargo.toml](file:///D:/Gamedev/Bevyrrowind/Cargo.toml#L271-L288)), along with pedantic `clippy` lints.
+4. **Lints & Safety**: `unsafe_code = "forbid"` is enforced workspace-wide ([Cargo.toml](../Cargo.toml#L271-L288)), along with pedantic `clippy` lints.
 5. **GPL-3.0-or-later & Proprietary SDK Isolation**: Never link NVIDIA NGX or proprietary vendor code into the workspace. DLSS uses the clean-room facade in `superfargoth/vendor/dlss_wgpu` and loads `sf_dlss.dll` dynamically from `superfargoth/plugins/sf_dlss` at runtime, falling back cleanly to TAA if absent.
 6. **Floating-Origin Coordinates (`big_space`)**:
    - World positions are `sf_coords::WorldPos { cell: IVec3, local: Vec3 }` (`256.0 m` grid cells).
    - `GlobalTransform` is **floating-origin-relative**—never persist it or compare it across frames as world-absolute.
    - Whenever the floating-origin cell shifts, temporal buffers (`SolariLighting.reset = true`, `TemporalHistory { reset: true }`) **must** reset on that frame.
-7. **Vendored Engine Patches**: `bevy_core_pipeline`, `bevy_pbr`, `bevy_render`, `big_space`, and `dlss_wgpu` are already vendored under `superfargoth/vendor/` and wired via `[patch.crates-io]` in [Cargo.toml](file:///D:/Gamedev/Bevyrrowind/Cargo.toml#L254-L270). If `bevy_solari` requires a shader/validation fix, vendor `bevy_solari` `0.20.0` into `superfargoth/vendor/bevy_solari` using the exact same pattern.
+7. **Vendored Engine Patches**: `bevy_core_pipeline`, `bevy_pbr`, `bevy_render`, `big_space`, and `dlss_wgpu` are already vendored under `superfargoth/vendor/` and wired via `[patch.crates-io]` in [Cargo.toml](../Cargo.toml#L254-L270). If `bevy_solari` requires a shader/validation fix, vendor `bevy_solari` `0.20.0` into `superfargoth/vendor/bevy_solari` using the exact same pattern.
 
 ---
 
@@ -63,10 +63,10 @@ flowchart TD
 
 | Subsystem | Already Implemented Today | Critical Gaps to Solve |
 | :--- | :--- | :--- |
-| **Model PBR** | Diffuse + cutout/blend alpha + glow/emissive in [mw_assets/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/lib.rs#L376-L423). Alternate extension lookup (`["ktx2", "dds", "png"]`). | `sf_model::Material` lacks normal/ORM/height slots. `is_srgb = true` hardcoded for all model textures. Tangents omitted on raster meshes. Zero PBR mod sidecar discovery (`_n`, `_nh`, `_orm`, `_pbr`). |
-| **Terrain PBR** | [sf_terrain/src/bake.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_terrain/src/bake.rs#L204-L211) & `terrain.wesl` **already** support `albedo_height` + `normal_ao_roughness` texture arrays and Mishkinis height blending! | [mw_world/src/terrain.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_world/src/terrain.rs#L238-L246) hardcodes `normal: None` and `arm: None`, falling back to flat normals and `0.9` roughness. |
-| **Solari Ray Tracing** | Working end-to-end in single-cell interior viewer ([view.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_viewers_bevy/src/view.rs#L170)) via [sf_sky_bevy/src/path.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/path.rs), emissive `PointLightProxy` spheres ([proxy.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/proxy.rs)), and DLSS-RR ([upscale.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/upscale.rs)). | **Streamed exteriors are completely untraced**: `main.rs` diverts `--rt` to single-cell; `sf_world_bevy` doesn't load `ray_tracing_lod`; `sf_lod_bevy` lacks `NoRayTracing`; CDLOD terrain has no RT BLAS proxy; `SpotLight`s unproxied; lantern cages self-occlude; atmosphere double-attenuation bug. |
-| **Raster GI & Reflections** | `Hdr` camera, `AtmosphereEnvironmentMapLight` (8-frame throttled in [env_refresh.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/env_refresh.rs)), `ScreenSpaceAmbientOcclusion` (XeGTAO), `ContactShadows`, 3D froxel fog. | **Zero diffuse bounce GI** in interiors (flat 300-nit ambient) and unoccluded sky cubemap leaks under exterior overhangs. No `IrradianceVolume` / `LightProbe` baker or runtime. No `ScreenSpaceReflections` (SSR) on shiny PBR surfaces or water. |
+| **Model PBR** | Diffuse + cutout/blend alpha + glow/emissive in [mw_assets/src/lib.rs](../bevyrrowind/crates/mw_assets/src/lib.rs#L376-L423). Alternate extension lookup (`["ktx2", "dds", "png"]`). | `sf_model::Material` lacks normal/ORM/height slots. `is_srgb = true` hardcoded for all model textures. Tangents omitted on raster meshes. Zero PBR mod sidecar discovery (`_n`, `_nh`, `_orm`, `_pbr`). |
+| **Terrain PBR** | [sf_terrain/src/bake.rs](../superfargoth/crates/sf_terrain/src/bake.rs#L204-L211) & `terrain.wesl` **already** support `albedo_height` + `normal_ao_roughness` texture arrays and Mishkinis height blending! | [mw_world/src/terrain.rs](../bevyrrowind/crates/mw_world/src/terrain.rs#L238-L246) hardcodes `normal: None` and `arm: None`, falling back to flat normals and `0.9` roughness. |
+| **Solari Ray Tracing** | Working end-to-end in single-cell interior viewer ([view.rs](../bevyrrowind/crates/mw_viewers_bevy/src/view.rs#L170)) via [sf_sky_bevy/src/path.rs](../superfargoth/crates/sf_sky_bevy/src/path.rs), emissive `PointLightProxy` spheres ([proxy.rs](../superfargoth/crates/sf_sky_bevy/src/proxy.rs)), and DLSS-RR ([upscale.rs](../superfargoth/crates/sf_sky_bevy/src/upscale.rs)). | **Streamed exteriors are completely untraced**: `main.rs` diverts `--rt` to single-cell; `sf_world_bevy` doesn't load `ray_tracing_lod`; `sf_lod_bevy` lacks `NoRayTracing`; CDLOD terrain has no RT BLAS proxy; `SpotLight`s unproxied; lantern cages self-occlude; atmosphere double-attenuation bug. |
+| **Raster GI & Reflections** | `Hdr` camera, `AtmosphereEnvironmentMapLight` (8-frame throttled in [env_refresh.rs](../superfargoth/crates/sf_sky_bevy/src/env_refresh.rs)), `ScreenSpaceAmbientOcclusion` (XeGTAO), `ContactShadows`, 3D froxel fog. | **Zero diffuse bounce GI** in interiors (flat 300-nit ambient) and unoccluded sky cubemap leaks under exterior overhangs. No `IrradianceVolume` / `LightProbe` baker or runtime. No `ScreenSpaceReflections` (SSR) on shiny PBR surfaces or water. |
 
 ---
 
@@ -86,7 +86,7 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 **Goal**: Promote PBR material channels to first-class cooked model fields and ensure every mesh with normal/parallax maps has MikkTSpace tangents.
 
-1. **Update `sf_model::Material` ([superfargoth/crates/sf_model/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_model/src/lib.rs#L192-L204))**:
+1. **Update `sf_model::Material` ([superfargoth/crates/sf_model/src/lib.rs](../superfargoth/crates/sf_model/src/lib.rs#L192-L204))**:
    Add fields (and bump the `.sfmesh` binary format schema/version in `sf_model`'s codec + `MeshCookStep` version so stale bake caches invalidate cleanly):
    ```rust
    pub struct Material {
@@ -113,14 +113,14 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
        pub extras: BTreeMap<String, String>,
    }
    ```
-2. **Update glTF Importer ([superfargoth/crates/sf_model/src/gltf_import.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_model/src/gltf_import.rs#L203-L228))**:
+2. **Update glTF Importer ([superfargoth/crates/sf_model/src/gltf_import.rs](../superfargoth/crates/sf_model/src/gltf_import.rs#L203-L228))**:
    Populate `metallic`, `perceptual_roughness`, `normal_texture`, `metallic_roughness_texture`, and `occlusion_texture` directly instead of writing stringified floats to `extras`.
 3. **Generate `Mesh::ATTRIBUTE_TANGENT` on Raster Meshes**:
-   - In [sf_model_bevy/src/loader.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_model_bevy/src/loader.rs#L228-L310):Currently `mesh.generate_tangents()` is only called in `submesh_to_ray_tracing_mesh` (line 304). Call `let _ = mesh.generate_tangents();` on standard raster submeshes as well (at minimum LOD0 and LOD1, or bake tangents offline in `sf_model` to save load-time CPU).
-   - In [mw_assets/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/lib.rs#L283-L298) (`bevy_mesh`): Call `let _ = mesh.generate_tangents();` when `UV_0` and `NORMAL` attributes are present so runtime NIFs also render normal and parallax maps properly.
+   - In [sf_model_bevy/src/loader.rs](../superfargoth/crates/sf_model_bevy/src/loader.rs#L228-L310):Currently `mesh.generate_tangents()` is only called in `submesh_to_ray_tracing_mesh` (line 304). Call `let _ = mesh.generate_tangents();` on standard raster submeshes as well (at minimum LOD0 and LOD1, or bake tangents offline in `sf_model` to save load-time CPU).
+   - In [mw_assets/src/lib.rs](../bevyrrowind/crates/mw_assets/src/lib.rs#L283-L298) (`bevy_mesh`): Call `let _ = mesh.generate_tangents();` when `UV_0` and `NORMAL` attributes are present so runtime NIFs also render normal and parallax maps properly.
 
 > [!WARNING]
-> **Silent Failure Trap**: In [pbr_material.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/vendor/bevy_pbr/src/pbr_material.rs#L164-L168), Bevy **multiplies** `StandardMaterial.metallic` and `perceptual_roughness` against `metallic_roughness_texture`! If `metallic` is left at `0.0` when `metallic_roughness_texture` is `Some(...)`, **all metalness will be multiplied by zero and vanish!** Whenever a metallic-roughness texture is bound, set scalar `metallic: 1.0` and `perceptual_roughness: 1.0` (unless overridden by a `.mat.ron` factor).
+> **Silent Failure Trap**: In [pbr_material.rs](../superfargoth/vendor/bevy_pbr/src/pbr_material.rs#L164-L168), Bevy **multiplies** `StandardMaterial.metallic` and `perceptual_roughness` against `metallic_roughness_texture`! If `metallic` is left at `0.0` when `metallic_roughness_texture` is `Some(...)`, **all metalness will be multiplied by zero and vanish!** Whenever a metallic-roughness texture is bound, set scalar `metallic: 1.0` and `perceptual_roughness: 1.0` (unless overridden by a `.mat.ron` factor).
 
 ---
 
@@ -128,7 +128,7 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 **Goal**: Support drop-in Morrowind / OpenMW / MGE XE PBR texture mods and custom `.mat.ron` material sidecars across both cooked and runtime models.
 
-1. **Fix `is_srgb` Color Space Bug in [mw_assets/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/lib.rs#L436-L450)**:
+1. **Fix `is_srgb` Color Space Bug in [mw_assets/src/lib.rs](../bevyrrowind/crates/mw_assets/src/lib.rs#L436-L450)**:
    - Currently `image_settings_clamped` hardcodes `settings.is_srgb = true`.
    - Parameterize it: `pub fn image_settings(clamp: [bool; 2], is_srgb: bool) -> impl Fn(&mut ImageLoaderSettings)`.
    - **Rule**:
@@ -150,7 +150,7 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
    | `foo_h.{ktx2,dds,png}` | Grayscale Height / Displacement | Bind linear `depth_map` + `parallax_depth_scale: 0.03`, `parallax_mapping_method: ParallaxMappingMethod::Relief { max_steps: 16 }` on LOD0 ONLY! |
    | `foo_spec` / `foo_s.{ktx2,dds,png}` | Legacy MGE XE Specular/Gloss | Convert at `mw_bake` into `ORM` (`R=255, G = 255 - gloss, B = 0`). |
 
-3. **Wire `Surface::to_material` ([mw_assets/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/lib.rs#L376-L423)) and `cooked::surface` ([mw_assets/src/cooked.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/cooked.rs#L235-L314))**:
+3. **Wire `Surface::to_material` ([mw_assets/src/lib.rs](../bevyrrowind/crates/mw_assets/src/lib.rs#L376-L423)) and `cooked::surface` ([mw_assets/src/cooked.rs](../bevyrrowind/crates/mw_assets/src/cooked.rs#L235-L314))**:
    - Map all resolved PBR slots onto `StandardMaterial`:
      - `normal_map_texture`, `flip_normal_map_y`
      - `metallic_roughness_texture`, `metallic`, `perceptual_roughness`
@@ -164,13 +164,13 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 **Goal**: Unlock the PBR terrain array pipeline that already exists in `sf_terrain`!
 
-1. **Inspect Existing Support**: [sf_terrain/src/bake.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_terrain/src/bake.rs#L204-L211) (`TerrainLayer`) and [sf_terrain_bevy/shaders/terrain.wesl](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_terrain_bevy/shaders/terrain.wesl) **already** build and sample:
+1. **Inspect Existing Support**: [sf_terrain/src/bake.rs](../superfargoth/crates/sf_terrain/src/bake.rs#L204-L211) (`TerrainLayer`) and [sf_terrain_bevy/src/shaders/terrain.wesl](../superfargoth/crates/sf_terrain_bevy/src/shaders/terrain.wesl) **already** build and sample:
    - `albedo_height` (`Rgba8UnormSrgb`: RGB albedo + **Alpha height** for Mishkinis height-blended transitions between mud/cobblestone/ash/grass!)
    - `normal_ao_roughness` (`Rgba8Unorm`: RG tangent normal XY, B ambient occlusion, A perceptual roughness)
-2. **Wire `mw_world::terrain` ([bevyrrowind/crates/mw_world/src/terrain.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_world/src/terrain.rs#L230-L246))**:
+2. **Wire `mw_world::terrain` ([bevyrrowind/crates/mw_world/src/terrain.rs](../bevyrrowind/crates/mw_world/src/terrain.rs#L230-L246))**:
    - Currently `TerrainLayerDef` sets `normal: None, arm: None`.
    - Use the exact same companion-texture resolver from Phase 1B on each `LTEX` landscape texture path!
-   - In [mw_bake/src/textures.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_bake/src/textures.rs) / terrain bake adapter:
+   - In [mw_bake/src/textures.rs](../bevyrrowind/crates/mw_bake/src/textures.rs) / terrain bake adapter:
      - If `_nh` or `_h` exists for a terrain `LTEX`, pack its height channel into the **Alpha** channel of `albedo_height` (and if missing, synthesize luminance/high-pass height so rocks protrude through ash/sand instead of soft linear alpha-blending!).
      - Flip DirectX `Y-` normal green channel (`G = 255 - G`) when feeding `sf_terrain::bake` so terrain normal maps match sun light direction.
      - Populate `arm` from `_orm` / `_pbr` / `_mr` so wet swamp mud has low roughness (`~0.25`) while dry ashlands have high roughness (`~0.92`).
@@ -191,7 +191,7 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 > [!NOTE]
 > **How `bevy_solari` Works in Bevy 0.20**:
-> - Requires inline ray queries (`EXPERIMENTAL_RAY_QUERY`) + bindless descriptor arrays (`RayTracingSupport` in [sf_sky_bevy/src/path.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/path.rs)).
+> - Requires inline ray queries (`EXPERIMENTAL_RAY_QUERY`) + bindless descriptor arrays (`RayTracingSupport` in [sf_sky_bevy/src/path.rs](../superfargoth/crates/sf_sky_bevy/src/path.rs)).
 > - Renders primary visibility into a **Deferred G-Buffer** (`DefaultOpaqueRendererMethod::deferred()`, `Msaa::Off`), then runs ray-query compute passes over TLAS/BLAS (`RaytracingMesh3d`) evaluating **only `StandardMaterial`**, `DirectionalLight`, emissive meshes, and environment maps.
 > - **Crucial constraints**:
 >   1. Meshes in BLAS **must** be `PrimitiveTopology::TriangleList`, indexed (`U32`/`U16`), uncompressed, and contain `POSITION`, `NORMAL`, `UV_0`, and **`TANGENT`** (otherwise `bevy_solari` silently skips them!).
@@ -202,15 +202,15 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 **Goal**: Make `--rt` (and runtime Quality = Ultra RT toggle) work in the streamed exterior world (`mw_exterior_bevy`), not just the single-cell interior viewer.
 
-1. **Decouple `--rt` from Single-Cell Viewer Redirect ([bevyrrowind/apps/bevyrrowind/src/main.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/apps/bevyrrowind/src/main.rs#L484))**:
+1. **Decouple `--rt` from Single-Cell Viewer Redirect ([bevyrrowind/apps/bevyrrowind/src/main.rs](../bevyrrowind/apps/bevyrrowind/src/main.rs#L484))**:
    - In `wants_single_cell(&self)`, remove `|| self.rt` so `bevyrrowind view "Balmora" --rt` runs the full streamed world (`mw_exterior_bevy::exterior::run`).
 2. **Enable `ray_tracing_lod` in Exterior Static Streaming (`sf_world_bevy` & `mw_exterior_bevy`)**:
-   - Check how [mw_viewers_bevy/src/view.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_viewers_bevy/src/view.rs#L170) passes `ray_tracing_lod: Some(0)` to `mw_assets::cooked::load` ([cooked.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/cooked.rs#L203-L213)).
+   - Check how [mw_viewers_bevy/src/view.rs](../bevyrrowind/crates/mw_viewers_bevy/src/view.rs#L170) passes `ray_tracing_lod: Some(0)` to `mw_assets::cooked::load` ([cooked.rs](../bevyrrowind/crates/mw_assets/src/cooked.rs#L203-L213)).
    - Wire `ray_tracing_lod: Some(0)` into `mw_exterior_bevy`'s `StaticSpawner` / cooked template loader whenever `RayTracingSupport` is available and RT is enabled (or selectable at runtime).
    - Ensure LOD0 carries `RayTracingMesh(rt_mesh_handle)` and LOD1+ carry `NoRayTracing` (already handled by `cooked.rs:205-212` when `ray_tracing_lod` is `Some(0)`!).
 3. **Bound TLAS Scope & Exclude Far-Field HLOD (`sf_lod_bevy` & `sf_sky_bevy/src/path.rs`)**:
-   - In [sf_lod_bevy](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_lod_bevy/src/lib.rs): Attach `sf_sky_bevy::NoRayTracing` (or a decoupled marker / filter) to **all** L1/L2/L3 HLOD `ProxyMaterial`, `ImpostorMaterial`, and `LightSpriteMaterial` entities so distant merged proxies never enter the TLAS or double-occlude Near-ring geometry.
-   - In [sf_sky_bevy/src/path.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/path.rs#L374-L415) (`mirror_meshes`):
+   - In [sf_lod_bevy](../superfargoth/crates/sf_lod_bevy/src/lib.rs): Attach `sf_sky_bevy::NoRayTracing` (or a decoupled marker / filter) to **all** L1/L2/L3 HLOD `ProxyMaterial`, `ImpostorMaterial`, and `LightSpriteMaterial` entities so distant merged proxies never enter the TLAS or double-occlude Near-ring geometry.
+   - In [sf_sky_bevy/src/path.rs](../superfargoth/crates/sf_sky_bevy/src/path.rs#L374-L415) (`mirror_meshes`):
      - Notice a subtle bug: if `mirror_meshes` only mirrors entities with `InheritedVisibility == true`, then when a Near-ring building switches from LOD0 to LOD1 at ~80m, LOD0 becomes hidden (`InheritedVisibility == false`) and LOD1 has `NoRayTracing`—meaning the building **vanishes from ray-traced shadows and GI bounce beyond 80m!**
      - **Fix**: For placed static models inside the active Near/Mid RT radius (e.g., `<= 300 m`), spawn a dedicated child or keep `RaytracingMesh3d` attached to a resident RT-only sub-entity (no `Mesh3d`, just `Transform` + `GlobalTransform` + `RaytracingMesh3d` + `MeshMaterial3d<StandardMaterial>`) while the cell is resident in Near/Mid ring, independent of LOD `VisibilityRange` dithering!
 4. **Verify Floating-Origin Rebase Reset**:
@@ -222,13 +222,13 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 **Goal**: Put exterior terrain into Solari's TLAS with **zero** raster overhead so terrain casts ray-traced mountain/hill shadows and bounces warm ground GI onto buildings.
 
-1. **Why**: `TerrainMaterial` displaces vertices on the GPU via CDLOD height clipmaps ([sf_terrain_bevy/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_terrain_bevy/src/lib.rs#L6-L15)). Solari BLAS builders only read CPU/buffer vertex positions on `StandardMaterial` meshes.
+1. **Why**: `TerrainMaterial` displaces vertices on the GPU via CDLOD height clipmaps ([sf_terrain_bevy/src/lib.rs](../superfargoth/crates/sf_terrain_bevy/src/lib.rs#L6-L15)). Solari BLAS builders only read CPU/buffer vertex positions on `StandardMaterial` meshes.
 2. **Implementation (`superfargoth/crates/sf_terrain_bevy/src/rt_proxy.rs`, gated behind `solari` feature on `sf_terrain_bevy`)**:
    - Watch resident tiles in `TerrainWorld` / `TerrainHeightsMap` within a configurable radius around `TerrainCamera` (e.g., 2–3 tile rings around camera).
    - On `AsyncComputeTaskPool`, generate one indexed `TriangleList` `Mesh` per resident tile (e.g., `65×65` or `129×129` grid at 2m–4m spacing, with skirt/stitched borders so rays don't leak between tiles):
      - Attributes: `ATTRIBUTE_POSITION`, `ATTRIBUTE_NORMAL` (central differences from heightmap), `ATTRIBUTE_UV_0` (`[0..1]` across tile), `ATTRIBUTE_TANGENT` (`[1.0, 0.0, 0.0, 1.0]`), `Indices::U32`, `RenderAssetUsages::RENDER_WORLD`.
    - Create a per-tile `StandardMaterial` whose `base_color_texture` is extracted from `BakedTerrain`'s baked macro-albedo for that tile (`perceptual_roughness: 0.9`, `metallic: 0.0`, `reflectance: 0.3`).
-   - Spawn an entity positioned relative to `TerrainOrigin` carrying **`RaytracingMesh3d(mesh)` + `MeshMaterial3d<StandardMaterial>` and NO `Mesh3d`** (exact same raster-invisible pattern as [sf_sky_bevy/src/proxy.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/proxy.rs)).
+   - Spawn an entity positioned relative to `TerrainOrigin` carrying **`RaytracingMesh3d(mesh)` + `MeshMaterial3d<StandardMaterial>` and NO `Mesh3d`** (exact same raster-invisible pattern as [sf_sky_bevy/src/proxy.rs](../superfargoth/crates/sf_sky_bevy/src/proxy.rs)).
    - Result: Primary camera pixels still render full-resolution CDLOD height-blended PBR terrain via `TerrainMaterial` in the G-buffer/opaque pass, while secondary shadow & GI rays hit the terrain proxy!
    - **Important Check**: Verify `TerrainMaterial` writes to the **Deferred G-Buffer** (`terrain_prepass.wesl` must support `DEFERRED_PREPASS` output when `DefaultOpaqueRendererMethod::deferred()` is active!). Inspect `sf_terrain_bevy/shaders/terrain_prepass.wesl` and `terrain.wesl`: if `TerrainMaterial` currently runs forward-only, either add deferred G-buffer output in `terrain_prepass.wesl` (so Solari shades primary terrain pixels with full ray-traced GI + shadows!) or ensure forward fallback still receives shadows. **Writing G-buffer from `terrain_prepass.wesl` is the cleanest next-gen path** because Solari will then ray-trace direct sun shadows, lamp proxies, and multi-bounce GI directly onto the splatted PBR terrain!
 
@@ -238,13 +238,13 @@ Execute these three tracks **in order**. Track 1 (PBR) is prerequisite because b
 
 1. **Fix Lantern / Streetlamp Fixture Self-Occlusion (`mw_assets::lights` & `mw_bake`)**:
    - Many Morrowind lights (`light_de_streetlight_01`, `light_com_lantern_01`) place `AttachLight` *inside* an opaque/glass NIF mesh. In Solari, the `PointLightProxy` sphere sits inside that mesh, trapping all rays!
-   - **Fix**: On models that contain an `AttachLight` node (or carried light models marked `self_lit` in [mw_assets/src/lib.rs](file:///D:/Gamedev/Bevyrrowind/bevyrrowind/crates/mw_assets/src/lib.rs#L73-L86)), tag enclosing glass/bulb submeshes (or submeshes within `r < 0.25 m` of `AttachLight`, matching `SHADOW_NEAR_Z = 0.25 m` in `lights.rs:112`) with `NoRayTracing`.
-2. **Add `SpotLightProxy` ([superfargoth/crates/sf_sky_bevy/src/proxy.rs](file:///D:/Gamedev/Bevyrrowind/superfargoth/crates/sf_sky_bevy/src/proxy.rs))**:
+   - **Fix**: On models that contain an `AttachLight` node (or carried light models marked `self_lit` in [mw_assets/src/lib.rs](../bevyrrowind/crates/mw_assets/src/lib.rs#L73-L86)), tag enclosing glass/bulb submeshes (or submeshes within `r < 0.25 m` of `AttachLight`, matching `SHADOW_NEAR_Z = 0.25 m` in `lights.rs:112`) with `NoRayTracing`.
+2. **Add `SpotLightProxy` ([superfargoth/crates/sf_sky_bevy/src/proxy.rs](../superfargoth/crates/sf_sky_bevy/src/proxy.rs))**:
    - Mirror `SpotLight`s into Solari by spawning two raster-invisible `RaytracingMesh3d` child meshes: an emissive disk facing `-Z` recessed inside a tiny matte-black (`base_color = BLACK, roughness = 1.0`) open cone/baffle whose opening angle matches `SpotLight.outer_angle`.
 3. **Alpha-Cutout Handling (`DL-4`)**:
    - Until `bevy_solari` supports any-hit alpha-mask evaluation in BLAS ray queries, automatically attach `NoRayTracing` in `mw_assets` to `AlphaMode::Blend` and small decorative `AlphaMode::Mask` decals/rugs (so rug fringes in Census & Excise Office don't cast solid black rectangular RT shadows), while keeping solid tree trunks traced.
 4. **Fix Known Solari Engine Bugs (Vendor `bevy_solari` `0.20.0` into `superfargoth/vendor/bevy_solari` if needed)**:
-   - **Atmosphere Double-Attenuation ([sky-lighting.md](file:///D:/Gamedev/Bevyrrowind/superfargoth/docs/specs/sky-lighting.md))**: `SkyLight::ground_light` pre-attenuates `DirectionalLight.illuminance` by atmospheric transmittance, which darkens the `Atmosphere` sky LUT when shared with Solari. Separate sky-LUT sun extraterrestrial illuminance from Solari/ground attenuated illuminance (or un-attenuate inside the atmosphere pass).
+   - **Atmosphere Double-Attenuation ([sky-lighting.md](../superfargoth/docs/specs/sky-lighting.md))**: `SkyLight::ground_light` pre-attenuates `DirectionalLight.illuminance` by atmospheric transmittance, which darkens the `Atmosphere` sky LUT when shared with Solari. Separate sky-LUT sun extraterrestrial illuminance from Solari/ground attenuated illuminance (or un-attenuate inside the atmosphere pass).
    - **Denoiser-Off Validation Panic (`DL-5`)**: Fix the `sky_motion` bindgroup/texture validation panic when running `--rt --off denoiser` in interiors.
    - **Verify `FLIP_NORMAL_MAP_Y` in Solari Hit Shader**: Ensure `bevy_solari`'s bindless `StandardMaterial` hit evaluator honors `STANDARD_MATERIAL_FLAGS_FLIP_NORMAL_MAP_Y` (if not, add the 2-line Y-flip in vendored `bevy_solari` so runtime DirectX `_n.dds` maps match raster).
 

@@ -18,7 +18,7 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
 - Kind: game location. Run: `.\bevyrrowind scene lt-night-floor --hour 22`, Balmora canal by the lantern arch, then
   turn the camera / walk along the staircase.
 - Seen by owner 2026-10-21 (bw-owner10, SK-1 time-lapse): lamp light is cut along screen-aligned block edges on the
-  staircases and changes with the view ("like seeing the camera's cone"). Evidence: `Desktop/jagged.jpg`
+  staircases and changes with the view ("like seeing the camera's cone"). Evidence: owner shot `Desktop/jagged.jpg`
   and `jagged.mp4`. Static, so an agent can repro by screenshot.
 - Suspects: clustered light assignment (Bevy cluster z-slices / limits, far-plane or range cull), shadowed-lamp budget
   (High = 8) chosen by view, light frustum culling vs range sphere, far light sprites.
