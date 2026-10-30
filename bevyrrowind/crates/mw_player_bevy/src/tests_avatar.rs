@@ -270,3 +270,28 @@ fn a_clip_chain_plays_each_slot_from_its_own_start() {
     animator.update(1.0 / 60.0, AnimTier::A0);
     assert!(feed.traversal().is_none());
 }
+
+/// Regression (AL-11, owner 2026-10-30): the wall brace never ran in game because its gate
+/// required `ActionOutput::slot` to be `None`, and the base locomotion rule always carries its
+/// `loco.move` slot. Walking on the real player rules keeps the brace live; a Clip move or a
+/// warp turns it off.
+#[test]
+fn the_wall_brace_runs_in_plain_locomotion_and_not_under_a_clip_move() {
+    use sf_action::ClipOutput;
+    let (mut app, player) = app(60);
+    let stick = action(&mut app, PlayerAction::Stick);
+    mock(&mut app, stick, Vec2::Y);
+    for _ in 0..60 {
+        app.update();
+    }
+    let body = app.world().get::<ActionBody>(player).unwrap().clone();
+    let mut character = app.world().get::<ActionCharacter>(player).unwrap().clone();
+    assert!(body.loco.grounded.is_some(), "walking on the flat start");
+    assert!(character.output.slot.is_some(), "the locomotion rule has a slot (the old gate's mistake)");
+    assert!(grip::brace_active(&body, &character), "plain locomotion: the brace may run");
+    character.output.clip = Some(ClipOutput { delta: Vec3::ZERO, yaw: 0.0, progress: 0.1 });
+    assert!(!grip::brace_active(&body, &character), "a Clip move owns the arms");
+    character.output.clip = None;
+    character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress: 0.1, settle: false });
+    assert!(!grip::brace_active(&body, &character), "a warp (mantle) owns the arms");
+}

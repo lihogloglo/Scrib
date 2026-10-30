@@ -256,7 +256,7 @@ fn coyote_jump_counts_airborne_ticks() {
 }
 
 #[test]
-fn hard_landing_commits_and_a_latched_jump_fires_at_its_end() {
+fn hard_landing_never_stops_the_stick() {
     let mut sim = Sim::base(Body::at(6.0));
     sim.state.body.grounded = false;
     let mut t = 0;
@@ -266,15 +266,10 @@ fn hard_landing_commits_and_a_latched_jump_fires_at_its_end() {
     }
     let land = sim.tick.0;
     let walk = Command { stick: Vec2::new(0.0, 1.0), ..Command::default() };
-    assert_eq!(sim.run(walk).intent.desired_velocity, Vec3::ZERO, "no steering in a hard landing");
-    sim.press(ActionClass::Jump);
-    let end = land + 30; // 0.5 s
-    while sim.tick.0 + 1 < end {
-        assert!(sim.idle().launch.is_none(), "committed: nothing cancels it");
+    while sim.tick.0 < land + 30 {
+        // 0.5 s, the whole clip.
+        assert_ne!(sim.run(walk).intent.desired_velocity, Vec3::ZERO, "no damage, no lock: the stick steers");
     }
-    let out = sim.idle().clone();
-    assert_eq!(out.tick.0, end);
-    assert!(out.launch.is_some() && started(&out, "air.jump"), "the latched jump fires on the end tick");
 }
 
 // ---- Two-stage buffer and priorities ---------------------------------------------------

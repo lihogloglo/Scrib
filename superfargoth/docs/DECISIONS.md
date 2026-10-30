@@ -1544,3 +1544,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   `OutfitAssets::bind_bounds` (`DynamicSkinnedMeshBounds` added only while `PhysicsPose` is active); `AnimLod::idle_skip_a3`
   skips graph ticks for `Dormant` `A3` actors (`mw_walkers_bevy` wakes exterior AI within 110 m / sleeps at 122 m); vendored
   `extract_visibility_ranges` updates incrementally (`O(changed + removed)`) and `AtmosphereStaticLutCache` caches static LUTs.
+- 2026-10-30 (owner): movement locks (committed, no steering) belong to damage only. Until fall damage exists, hard
+  landings don't lock (`sf_action` `land.hard`); the damaging landing band brings the lock back.
+- 2026-10-30 (owner): delirium (active ragdoll, ROADMAP 3.2b) replaces the clip-then-limp ragdoll for deaths and
+  knockdowns from now on. It is GPL-3.0-only, which our GPL-3.0-or-later allows; builds that link it are GPL-3.0-only.
+- 2026-10-30 (owner): interactive windows open borderless fullscreen on the primary monitor by default; `--resolution`
+  gives a centred window of that size (`mw_devtools_bevy` `perf.rs` `window`). Benchmarks keep their own window rules.

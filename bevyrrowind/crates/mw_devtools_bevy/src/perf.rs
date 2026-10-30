@@ -17,7 +17,7 @@ use bevy_mesh::Mesh;
 use bevy_pbr::StandardMaterial;
 use bevy_render::diagnostic::{MeshAllocatorDiagnosticPlugin, RenderDiagnosticsPlugin};
 use bevy_render::renderer::RenderAdapterInfo;
-use bevy_window::{MonitorSelection, PresentMode, Window, WindowMode, WindowResolution};
+use bevy_window::{MonitorSelection, PresentMode, Window, WindowMode, WindowPosition, WindowResolution};
 use bevy_winit::{UpdateMode, WinitSettings};
 use bevy_world_serialization::WorldAsset;
 use sf_diag_bevy::sf_diag::Scenario;
@@ -137,12 +137,21 @@ impl Perf {
 
     /// The primary window: the requested size at scale factor 1 (physical
     /// pixels, whatever the desktop scaling), vsync off for benchmarks.
+    /// Interactive runs without `--resolution` open borderless fullscreen on
+    /// the primary monitor (owner 2026-10-30); with it, a window of that size
+    /// centred on the primary monitor.
     pub fn window(&self, title: String, default_size: Option<(u32, u32)>) -> Window {
         let mut window = Window { title, ..Window::default() };
         if let Some((w, h)) = self.resolution.or(default_size) {
             window.resolution = WindowResolution::new(w, h).with_scale_factor_override(1.0);
         }
-        if self.bench.is_some() {
+        if self.bench.is_none() {
+            if self.resolution.is_some() {
+                window.position = WindowPosition::Centered(MonitorSelection::Primary);
+            } else {
+                window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
+            }
+        } else {
             window.present_mode = bench_present_mode();
             if std::env::var(ENV_WINDOW).is_ok_and(|v| v.eq_ignore_ascii_case("borderless")) {
                 window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);

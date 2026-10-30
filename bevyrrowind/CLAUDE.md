@@ -144,6 +144,8 @@ server (`bevy_brp_mcp`, registered for this workspace; owner 2026-10-18).
 Port `BEVYRROWIND_BRP_PORT`, default 15712, shown in the
 window title. Code: `bevyrrowind/crates/mw_devtools_bevy/src/remote.rs`.
 
+- **Windows:** interactive runs open borderless fullscreen on the primary monitor (owner 2026-10-30). Agent runs pass
+  `--resolution 1280x720` (a centred window) so they don't cover the owner's screen; owner check scripts pass nothing.
 - **Attach only.** Build (`cargo build -p bevyrrowind --features dev`),
   then start it with `powershell -File tools/run_dev.ps1 view "<cell>" > target/run_dev.pid`
   (or `scene <name>`; it prints the pid; from bash redirect to a file, since a

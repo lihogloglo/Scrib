@@ -33,8 +33,8 @@
         rank: 10,
         slots: ["air.land.hard"],
         entry: (states: [Landed], vspeed: Some((-1000.0, -9.0))),
-        windows: Committed,
-        steer: false,
+        // No lock (owner 2026-10-30): a landing only commits when it deals damage, and there is no
+        // fall damage yet. The damaging band comes back as `windows: Committed, steer: false`.
         exits: [(on: End, to: Loco)],
     ),
     (

@@ -21,7 +21,11 @@
 //!
 //! Slice B2b: hands on the lip ([`LedgeGrip`], in [`WarpState::grip`]): per-hand grip targets on the
 //! ledge and their IK weights over the warp, from the slot clip's baked hand contacts.
+//!
+//! Slice B2c: wall brace ([`WallBrace`]): a free hand plants on a wall within reach while moving
+//! along or into it, its target and weight fed to the same hand IK by the host (presentation only).
 
+mod brace;
 mod command;
 mod grip;
 mod ids;
@@ -35,8 +39,14 @@ mod tests;
 #[cfg(test)]
 mod tests_lock;
 #[cfg(test)]
+mod tests_brace;
+#[cfg(test)]
 mod tests_warp;
 
+pub use brace::{
+    BRACE_BAND, BRACE_BEND, BRACE_CONFIRM, BRACE_FALL, BRACE_FAN, BRACE_FIRM_SPEED, BRACE_HALFLIFE, BRACE_LIGHT, BRACE_LOOKAHEAD, BRACE_MAX_NORMAL_Y, BRACE_MIN_SPEED,
+    BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_TRAIL, BraceBody, HandBrace, WallBrace,
+};
 pub use command::{
     ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS, TapHold,
     ViewDir,

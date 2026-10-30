@@ -66,7 +66,7 @@ of clips (enter, loop, exit).
 |---|---|---|---|
 | Locomotion | **idle, walk, run, sprint, turn in place, starts/stops** | Sim | unrestricted |
 | Sneak | **sneak idle/move** | Sim | unrestricted |
-| Air | **jump (by height), fall, land (normal, roll, hard)**, coyote jump | Sim | land: hard landing commits |
+| Air | **jump (by height), fall, land (normal, roll, hard)**, coyote jump | Sim | land: a hard landing commits only when it deals damage (owner 2026-10-30; no fall damage yet, so no lock) |
 | Traversal contact | **step up, vault (low/thin), mantle (waist, high), ledge catch (from jump or fall), climb up, drop to hang**, ladder enter/exit (top, bottom), later wall run | Warp | committed until the last contact, then a cancellable tail |
 | Docked | **hang, shimmy, ladder climb up/down** | Docked | unrestricted for Up/Down/Move along the edge |
 | Combat | light chain, heavy (charged), guard (held), deflect, dodge/step/roll, backstep, jump attack, drop attack (after M10's first milestone), hit reactions by tier | Clip | category defaults below |
@@ -335,7 +335,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 | **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); slice 2 (animated player body) built 2026-10-26, PL-2 awaiting owner; `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
 | **B1** progress + chain warp | done 2026-10-26 (see "As built (B1)"; `sf_action` call site left for B2): `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
 | **B2** mantle and vault | B2a (waist mantle, player) done 2026-10-26 on the capsule player (see "As built (B2a)"); the clip on the body comes with the animated player body (A2 slice 2). High mantle and B2b parts 1 and 2a (clip contacts) built 2026-10-27 (see "As built (B2 high mantle, B2b contacts)"); in progress: B2-T approach tolerance, then B2b-2 hand IK. Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
-| **B2c** wall brace (owner 2026-10-27) | Procedural `WallBrace` op after B2b's hand IK: probe ahead/beside (animation-layers.md "wall beside"); a free hand plants on a wall within arm's reach, arm slightly bent, weight by approach speed and distance (firm when running in, light when walking past, trailing hand along side walls); busy hands skipped (weapon, torch, carried item: off-hand only with a one-hand weapon). Refs: R2 "wall-braced arm", R4 "arms out of walls" | course `ledges`/`anim-lab` walls: run into the 3 m wall, palm ≤ 2 cm off the surface, no arm through the wall; walk past: light trail; sword drawn: off-hand only |
+| **B2c** wall brace (owner 2026-10-27) | built 2026-10-30, AL-11 awaiting owner (see "As built (B2c)": host-fed through B2b's two `HandIk` ops, no new op). Design: procedural `WallBrace` after B2b's hand IK: probe ahead/beside (animation-layers.md "wall beside"); a free hand plants on a wall within arm's reach, arm slightly bent, weight by approach speed and distance (firm when running in, light when walking past, trailing hand along side walls); busy hands skipped (weapon, torch, carried item: off-hand only with a one-hand weapon). Refs: R2 "wall-braced arm", R4 "arms out of walls" | course `ledges`/`anim-lab` walls: run into the 3 m wall, palm ≤ 2 cm off the surface, no arm through the wall; walk past: light trail; sword drawn: off-hand only |
 | **B3** ledge catch and hang | Docked mover mode; ledge catch from jump and fall, hang, shimmy, climb up, drop to hang (`Down`), let go; hand IK latched on the lip | course `ledges`: 2.0/2.5 m boxes and the 3.5 m wall: catch, shimmy to the end, climb up; hands ≤ 1 cm off the lip; jolt test (R2 adopt 3) |
 | **B4** edge index + ladders | `sf_interaction` edges baked from collision per cell; ladders as edges with rung IK, enter/exit top and bottom | new level `ladders` (2 ladders, one to a roof); rungs ≤ 1 cm; edge census over Balmora rooftops (count, bake time ≤ 5 % of the cold bake) |
 | **B5** free-run | FreeRun profile on Sprint hold, momentum mover mode, automatic passovers, time-to-contact gating, ledge catch across gaps, noise events, assisted/manual setting | course `ledges`: 1/2/3/4 m gaps and the beam, scripted roof run; Manual setting disables automatic moves |
@@ -413,6 +413,24 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
 - Owner 2026-10-27 (ledges): the high mantle works; the hands aim at the box centre, not the lip (B2b-2 hand IK fixes it); hard
   to trigger: the body slides along the face without facing it (B2-T: input-direction gating, contact probe, jump buffer,
   yaw auto-align during the warp).
+
+## As built (B2c wall brace, 2026-10-30)
+
+- **One hand IK per arm, two sources.** No second op pair: the brace feeds the same `HandIk` targets and weights as the ledge grip
+  (one solve per arm, as ALS / Control Rig arbitrate one two-bone IK by alpha); per hand the grip wins while its weight is above 0.
+  Graph unchanged (no bake). Bevy-free `sf_action::WallBrace` (`brace.rs`): per shoulder a 4-ray fan (ahead to the hand's side)
+  finds the nearest near-vertical face; wrist `BRACE_PALM_GAP` 3 cm off it, arm at 0.9 length toward down/out/forward (trailing back
+  with the speed past the wall), straightened up to 0.98 until the elbow, bent any way, clears the face by 2 cm; a confirm ray snaps
+  it to the surface (miss: no brace). Weight = proximity (fan reaches past the bent arm by 0.1 m + speed into the wall x 0.25 s, so
+  the hand rises before impact) x level (0.5 walking past -> 1 at 2.5 m/s into it, intent or motion); rise 6/s, fall 2/s.
+- Host (`mw_player_bevy::grip::feed`): physics probe from the last model pose's shoulders and arm lengths; active grounded with no
+  action slot or warp; right hand busy while `Stance::Drawn` (torch, carried items when they exist). Positions only: the hand keeps
+  its animated rotation (a palm frame from the surface normal, AC1 `place_hand`, needs per-rig palm axes: follow-up).
+  Tests `sf_action` `tests_brace` (sanity; `measure_approach`, `measure_levels` print). Check AL-11.
+- Fix 2026-10-30 (AL-11 rejected: no hands in game): the host gate required `ActionOutput::slot == None`, never true (the base
+  `loco` / `air` rules carry slots, `loco.move`), so the brace never ran. Gate now `grip::brace_active`: grounded, not traversing,
+  no Clip or Warp output (as the avatar plays them). Live: weight 1 into `wall-3.0`, wrist 3 cm off the face. Regression test
+  `mw_player_bevy` `the_wall_brace_runs_in_plain_locomotion_and_not_under_a_clip_move`.
 
 ## As built (A2 slice 2, 2026-10-26)
 Animated player body: the dressed `player` record under the body, fed from the drawn (interpolated, spring-corrected)
