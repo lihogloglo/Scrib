@@ -84,7 +84,6 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 SH-11 | awaiting owner | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | awaiting owner | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
-LT-4 | awaiting owner | [lights](visual-checks/lights.md) | Lamp light cluster lookup under DLSS (`bevy#26236`)
 LM-2 | awaiting owner | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
 FF-2 | awaiting owner | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
 DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash

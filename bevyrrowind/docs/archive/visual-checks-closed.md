@@ -999,6 +999,21 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
 - Status: confirmed by owner 2026-10-21 (pass bw-owner10, release build): "all good".
 - Source: physics-p2.
 
+### LT-4: Lamp light cut along block edges, view-dependent (owner report; ROADMAP 1.12 calls it "LT-2") (confirmed by owner 2026-10-30)
+- Kind: game location. Run: `.\bevyrrowind scene lt-night-floor --hour 22`, Balmora canal by the lantern arch, then
+  turn the camera / walk along the staircase.
+- Seen by owner 2026-10-21 (bw-owner10, SK-1 time-lapse): lamp light is cut along screen-aligned block edges on the
+  staircases and changes with the view ("like seeing the camera's cone").
+- Suspects: clustered light assignment (Bevy cluster z-slices / limits, far-plane or range cull), shadowed-lamp budget
+  (High = 8) chosen by view, light frustum culling vs range sphere, far light sprites.
+- Owner A/B 2026-10-21 (release, same spot): blocks appear ONLY with F4 = DLSS quality; F4 = taa (native) is clean.
+  Trigger is DLSS upscaling: lead is the cluster grid sized for one resolution and indexed at the other.
+- Cause (lightclusters 2026-10-21, confirmed by source + release A/B shots `shots/lightclusters/`): Bevy 0.20 bug.
+  `clustered_forward.wesl` `view_fragment_cluster_index` multiplies a render-res `frag_coord` by `cluster_factors`
+  sized for the output viewport, so under `MainPassResolutionOverride` (DLSS) pixels read the grid's top-left part.
+- Fix (render-opt 2026-10-28): applied upstream `bevy#26236` (`#26235`, `#26237`) in vendored `bevy_pbr` / `bevy_core_pipeline` so `clustered_forward.wesl`, `transmission.wesl`, and OIT normalize by `view.main_pass_viewport.zw` under DLSS.
+- Status: confirmed by owner 2026-10-30.
+
 ## Night sky and sun disk (superfargoth `sky-lighting.md` "Night sky and drawn bodies"; `.sessions/nightsky.md`)
 
 ### NS-1: Sun disk size and glare (`scene ns-noon-sun`, `scene ns-sunset-sun`)

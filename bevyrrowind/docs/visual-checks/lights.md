@@ -14,22 +14,6 @@ Shots in `shots/lighting/` (`before_night.png` / `night_old.png`: the old night;
   without the floor (luma 50.8 vs 50.4): the floor never darkens it.
 - Status: partial, owner 2026-10-19 (round 9, scene lt-cave): lighting OK (rock readable, far tunnel dark not black); beam/post shadows only when very close, and very grainy (SH-13).
 
-### LT-4: Lamp light cut along block edges, view-dependent (owner report; ROADMAP 1.12 calls it "LT-2")
-- Kind: game location. Run: `.\bevyrrowind scene lt-night-floor --hour 22`, Balmora canal by the lantern arch, then
-  turn the camera / walk along the staircase.
-- Seen by owner 2026-10-21 (bw-owner10, SK-1 time-lapse): lamp light is cut along screen-aligned block edges on the
-  staircases and changes with the view ("like seeing the camera's cone"). Evidence: owner shot `Desktop/jagged.jpg`
-  and `jagged.mp4`. Static, so an agent can repro by screenshot.
-- Suspects: clustered light assignment (Bevy cluster z-slices / limits, far-plane or range cull), shadowed-lamp budget
-  (High = 8) chosen by view, light frustum culling vs range sphere, far light sprites.
-- Owner A/B 2026-10-21 (release, same spot): blocks appear ONLY with F4 = DLSS quality; F4 = taa (native) is clean.
-  Trigger is DLSS upscaling: lead is the cluster grid sized for one resolution and indexed at the other.
-- Cause (lightclusters 2026-10-21, confirmed by source + release A/B shots `shots/lightclusters/`): Bevy 0.20 bug.
-  `clustered_forward.wesl` `view_fragment_cluster_index` multiplies a render-res `frag_coord` by `cluster_factors`
-  sized for the output viewport, so under `MainPassResolutionOverride` (DLSS) pixels read the grid's top-left part.
-- Fix (render-opt 2026-10-28): applied upstream `bevy#26236` (`#26235`, `#26237`) in vendored `bevy_pbr` / `bevy_core_pipeline` so `clustered_forward.wesl`, `transmission.wesl`, and OIT normalize by `view.main_pass_viewport.zw` under DLSS.
-- Status: awaiting owner (2026-10-28).
-
 ### LT-3: Point-light shadows, torch-bearers (`scene lt-torch-shadows`; stage: `character "imperial guard" --night`)
 - Kind: game location + game models.
 - Look for: railings, crates and pillars near lamps throw shadows on the street and walls; a torch-bearer within
