@@ -82,50 +82,51 @@ One line per open ID: `ID | status | file | title`. Entries live in [`visual-che
 
 ### Awaiting owner (37)
 
-SH-11 | awaiting owner | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
-SH-20 | awaiting owner | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
-LM-2 | awaiting owner | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
-FF-2 | awaiting owner | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
+SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
+SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
+LM-2 | partial (2026-10-30: leaves OK, water still too bright at night) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
+FF-2 | rejected (2026-10-30: all green to the horizon, L2/L3 never shown) | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
 DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash
-RO-B | awaiting owner | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
+RO-B | partial (2026-10-30: draws in front now; odd blend, weak over dark things, like Ghostfence) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
-CB-2 | awaiting owner (2026-10-27: lock, release, recentre, locked facing confirmed "main logic solid"; marker + side rolls awaiting) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
-PH-2 | awaiting owner | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
-PH-11 | awaiting owner | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
-WE-5 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
-AL-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Animation lab overview
+CB-2 | confirmed (2026-10-30) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
+PH-2 | retired (2026-10-30: clip+limp ragdoll deprecated, delirium from now on) | [physics](visual-checks/physics.md) | a dead guard ragdolls on the Balmora stairs
+PH-11 | partial (2026-10-30: still a walkable hole in the office floor, PH-12) | [physics](visual-checks/physics.md) | Physics fixes: no falls on load, still clutter, steady carry
+WE-5 | confirmed with follow-up (2026-10-30: shelter too generous, cap to a few metres; clouds maybe high) | [weather-sky](visual-checks/weather-sky.md) | Ash/blight storm ignores terrain and objects, wrong ...
+AL-1 | confirmed (2026-10-30) | [anim-lab](visual-checks/anim-lab.md) | Animation lab overview
 AL-2 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Walk loop, turns
 AL-3 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Ramps and stairs
-AL-4 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Traversal heights
+AL-4 | retired (2026-10-30: superseded by AL-10/AL-11) | [anim-lab](visual-checks/anim-lab.md) | Traversal heights
 AL-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Props push
-AL-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
+AL-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Falls and ragdoll
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
 AL-8 | confirmed with follow-up (2026-10-27: camera solved; hands on the lip + clipping: B2b next) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
-AL-10 | confirmed with follow-up (2026-10-27: works; hands aim at the box centre B2b-2, hard to trigger B2-T) | [anim-lab](visual-checks/anim-lab.md) | High mantle, player (ClimbUp_2m on the 1.6/2.0 m boxes)
+AL-10 | confirmed (2026-10-30: triggers and works; lip hand IK needs tuning, ROADMAP 3.1) | [anim-lab](visual-checks/anim-lab.md) | High mantle, player (ClimbUp_2m on the 1.6/2.0 m boxes)
+AL-11 | partial (2026-10-30: brace shows; slides sideways on a straight hit; trail pose should be hand ahead, thumb down) | [anim-lab](visual-checks/anim-lab.md) | Wall brace, player (palms on the 3 m wall, side-wall trail, off hand only with the sword)
 AL-9 | confirmed | [anim-lab](visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
-AN-1 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
+AN-1 | confirmed (2026-10-30) | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
 AN-3 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Footsteps on the feet
 AN-2 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Walkers stop within a step
-AN-4 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Knockdowns always come back
-AN-5 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-up starts from the lying pose
-AN-6 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-up ends on the capsule
+AN-4 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Knockdowns always come back
+AN-5 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Get-up starts from the lying pose
+AN-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Get-up ends on the capsule
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
-AN-10, AN-13, AN-14 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Get-ups
+AN-10, AN-13, AN-14 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Get-ups
 DE-1 | confirmed with follow-up (2026-10-27: floor slide fixed, push in F11 only; a crouched landing sinks ~1.5 s, later) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
-AU-3 | awaiting owner | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
-AU-4 | awaiting owner | [audio](visual-checks/audio.md) | Footsteps by boots
-AU-5 | awaiting owner | [audio](visual-checks/audio.md) | Swinging-door sounds
-PL-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Third-person walk and the use prompt
+AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
+AU-4 | confirmed (2026-10-30) | [audio](visual-checks/audio.md) | Footsteps by boots
+AU-5 | rejected (2026-10-30: no swing, no sound, prompt only) | [audio](visual-checks/audio.md) | Swinging-door sounds
+PL-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Third-person walk and the use prompt
 PL-2 | confirmed (2026-10-27: view/capsule split fixed: self-push + clip offset) | [player-ui](visual-checks/player-ui.md) | Animated player body (dressed `player` record, humanoid graph)
 PL-3 | confirmed | [player-ui](visual-checks/player-ui.md) | Jump: take-off held in the air, landing on touchdown (graph B2)
 PL-4 | confirmed (2026-10-27: "about right"; jump fixed with gravity 18) | [player-ui](visual-checks/player-ui.md) | Movement feel: starts, stops, reversals (player feel tuning)
 IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
-PM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
-SV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
-HD-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
-MM-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
+PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu button) | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
+SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
+HD-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
+MM-1 | rejected (2026-10-30: wants title art/video, not the live world) | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
 
 ### Partial (9)
 
@@ -135,10 +136,10 @@ DR-2 | partial | [streaming](visual-checks/streaming.md) | Back out
 LT-2 | partial | [lights](visual-checks/lights.md) | Dark interior keeps its lights
 PH-7 | partial | [physics](visual-checks/physics.md) | Item body shapes
 PH-9 | partial | [physics](visual-checks/physics.md) | knockdown and get-up
-WA-1 | partial (distant moiré awaiting owner; shore/whitecaps Phase 4) | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
+WA-1 | partial (2026-10-30: moiré fixed; no rain or wake ripples; shore/whitecaps Phase 4) | [terrain-water](visual-checks/terrain-water.md) | Open sea, W2 FFT ocean
 IV-1 | partial | [player-ui](visual-checks/player-ui.md) | Take items and Fargoth's ring; inventory layout, hover, drop, paper doll missing
-IV-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Container window: the ring barrel outside the Census office (ring), move both ways, Take all closes
-CO-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Console: exterior COC, paste, Down/Enter on suggestions (2026-10-26)
+IV-2 | confirmed with follow-up (2026-10-30: icons only on hover, E should close) | [player-ui](visual-checks/player-ui.md) | Container window: the ring barrel outside the Census office (ring), move both ways, Take all closes
+CO-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Console: exterior COC, paste, Down/Enter on suggestions (2026-10-26)
 
 ### Confirmed with follow-up (5)
 
@@ -154,6 +155,19 @@ SH-13 | known bug | [shadows](visual-checks/shadows.md) | Point-light (lamp) sha
 SH-14 | known bug | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
 GF-1 | known bug | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
+RO-11 | known bug | [rendering](visual-checks/rendering.md) | Black ground bands that move with the camera (2026-10-30)
+RO-12 | known bug | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
+PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
+PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
+CB-3 | known bug | [combat](visual-checks/combat.md) | F never draws a sword (2026-10-30)
+PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)
+RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
+WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
+WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
+FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenellated edges on distant land in fog (2026-10-30)
+PH-14 | known bug | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
+AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
+FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)
 
 ### Rejected (2)
 

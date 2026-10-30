@@ -40,3 +40,10 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
 - Known gaps: locomotion still plays the forward cycles (strafe clips C1c-2b); no back roll / backstep clip; no target switching (C4).
 - Owner 2026-10-27 (copy d): lock, release, recentre and locked facing confirmed ("main logic solid"); asked for the marker and faster
   side rolls (both built after, 2709b71, ddc252d). Status: lock + facing confirmed; marker and side rolls awaiting owner.
+- Owner 2026-10-30 (dev3 copy): marker, side rolls and the rest work great. Status: confirmed.
+
+### CB-3: F never draws a sword (owner report)
+- Kind: synthetic. `scene level-arena` or any anim-lab level, player (F11).
+- Seen 2026-10-30: F (ready weapon, `combat.rs` `ready_weapon`) never shows a drawn sword, and never did. Unknown whether
+  `Stance` toggles without a visible weapon or the action never fires.
+- Status: known bug: not diagnosed (owner pass 2026-10-30).

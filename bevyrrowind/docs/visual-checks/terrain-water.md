@@ -17,6 +17,8 @@ no sparkle noise; far water hazed like the land (aerial perspective, morning fro
 steps (clipmap rings) and no gap at the horizon; a sunset path on the water; at night moon glints, sea not black.
 Known: reflections are the environment map only (SSPR/probe at W4), no shore wave damping yet (W3), the water may read
 too milky turquoise (W1 placeholder optics, tuned at W3), whitecaps at storm winds untuned.
+- Owner 2026-10-30 (`scene wa-seyda-noon`): distant moiré gone (fixed). Still missing: rain ripples on the water and
+  ripples from moving bodies (Phase 4 water polish / PR2 splashes).
 
 ### WA-2: Shore and region optics, W3 (`scene wa-seyda-noon`, `wa-bittercoast`, `wa-vivec-waterfront`, `wa-sunset-sea`, `wa-night-moons`)
 

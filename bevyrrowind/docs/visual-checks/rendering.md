@@ -14,6 +14,8 @@ Screenshots: `D:\Gamedev\Bevyrrowind\shots\farfield\` (`balmora_a*`,
 - A/B: F5 on/off.
 - Status: awaiting owner (render-opt 2026-10-28: `ImpostorSet` now holds per-level `[Handle<ImpostorMaterial>; 3]` sharing GPU texture arrays plus an emissive debug boost so F5 tints L1 green, L2 blue, and L3 purple cleanly through aerial haze; check `.\bevyrrowind scene summit-vivec --far-tint`).
 - Source: farfield-lod.
+- Owner 2026-10-30 (Shift+F6; F5 is quicksave now): every distant asset is green up to the horizon; no blue or purple
+  seen, so L2/L3 still look never selected (hard-problems.md second tier). Status: rejected.
 
 ## Ghostfence (superfargoth `weather/distant-shadows.md`, bug B)
 
@@ -100,3 +102,35 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   Open: H1 particles sort by emitter origin (no bounds, `NoFrustumCulling`), so smoke metres up sorts as the flame
   (RO-10); H2 particles always lit (`particles.wesl` ignores unlit): dark smoke on dark sky; H3 TAA, no smoke MVs.
 - Status: awaiting owner (render-opt 2026-10-28: added lit smoke shading via `p.misc.z` in `particles.wesl` so dark smoke catches ambient/froxel/point light against dark skies, replaced emitter-origin `NoFrustumCulling` sort with dynamic conservative plume `Aabb` in `mw_assets/src/particles.rs`, and swept `RO-6` DLSS `main_pass_viewport` UVs across clouds/water/precip/sky_motion).
+- Owner 2026-10-30 (`scene hi-balmora-night`, dev copy): torch smoke now draws over everything, but its blending looks
+  wrong, like the Ghostfence (GF-1): it seems not to show over darker things. Hard to describe; looks like a blend-mode
+  issue (additive vs alpha?). Status: partial.
+
+### RO-11: Black bands on the ground that move with the camera (owner report)
+- Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen, New game, High defaults), walking outside.
+- Look for: a pattern of dark bands on the terrain that slides as the camera turns or moves.
+- Suspects (not tested): SH-14 contact-shadow bands (`--off contactshadows`), FG-1 fog history (`--off foghistory`), GTAO
+  under TAA/DLSS (console `ssao`). First step: those three A/Bs at the same spot.
+- Status: known bug: cause not diagnosed (owner pass 2026-10-30).
+- Owner 2026-10-30: the same shadow-band look also shows in the anim-lab test levels (flat synthetic boxes, no terrain),
+  so it isn't terrain-specific: a good place to A/B it.
+- Owner 2026-10-30, `scene wk-balmora` (release copy, `--resolution 2560x1440`): bands still there but weaker. Clue: the
+  release start (no subcommand) may run different settings (DLSS/preset) than `scene` runs; diff them first.
+- Owner 2026-10-30: the bands look like a regression from the very recent shadow work (2026-10-28: d89eaa0 world-unit sun
+  PCSS, 39f6508 shadow/LUT changes). First step: A/B or bisect those two commits.
+
+### RO-12: Bright outline around characters (owner report)
+- Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen), on NPCs and the player.
+- Look for: a thin halo, brighter than the surroundings, along character silhouettes.
+- Suspects (not tested): TAA/DLSS disocclusion on skinned meshes (motion vectors), GTAO or contact-shadow edge, fog
+  froxel edge. First step: F4 (temporal mode) and `--off` A/Bs at the same spot.
+- Status: known bug: cause not diagnosed (owner pass 2026-10-30).
+- Owner 2026-10-30, `scene wk-balmora`: no outline around characters there; seen only from the release start (no
+  subcommand). Clue: compare its settings (DLSS mode, preset, resolution) with `scene` runs.
+
+### RO-13: F7 wireframe drawn away from the model (owner report)
+- Kind: synthetic. Any anim-lab level, dev build, F7 (wireframe over skinned meshes; `mw_devtools_bevy/src/live_ab.rs`).
+- Seen 2026-10-30: the wireframe seems to exist but shows at a different place than the character it belongs to.
+- Suspect (not tested): the wireframe copy isn't placed in the same big_space grid cell / transform as the skinned mesh.
+- Status: known bug: not diagnosed (owner pass 2026-10-30).
+- Owner 2026-10-30 (Balmora, release copy): in the game F7 shows the wireframe on the terrain only, none on characters.

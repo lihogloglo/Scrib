@@ -14,13 +14,24 @@ synthetic and app tests cover selection, timing and routing (`mw_audio` voice te
 - Stand among NPCs a few minutes: now and then an idle line (about one per NPC every ~3 minutes on average).
 - Music dips (~8 dB) under speech and comes back over ~1 s. Never two lines at once from one NPC.
 - Known gaps: no line-of-sight test (voices reach through walls), quest/local filters see stage 0 and no locals.
-- Status: awaiting owner.
+- Owner 2026-10-30 (Census office): most NPCs neither greet nor turn toward the player; only some say a Hello line.
+  Wanted: NPCs face the player when greeting. Status: rejected (greetings mostly missing).
+- Owner 2026-10-30, later (`scene door-balmora-guild`): NPCs do say their Hello lines, but only when you are very close
+  (the trigger range feels too short; the first run missed it for that reason). They don't stop or turn toward the
+  player (wanted). Status: partial (range too short, no stop/turn).
 
 ### AU-4: Footsteps by boots (`cargo dev scene door-balmora-guild`)
 - Walkers in heavy boots (guards) step heavy, light/medium armour boots light/medium, shoes and bare feet bare.
-- Status: awaiting owner.
+- Owner 2026-10-30 (`scene door-balmora-guild`): footsteps by boots work. Status: confirmed.
 
 ### AU-5: Swinging-door sounds (`cargo dev view "Seyda Neen, Census and Excise Office"`, any inner door)
 - Activate a non-load door: its open sound at the door; again: its close sound. The door itself does not move
   yet (the swing is a doors.rs follow-up), so the open/close order is the only state.
-- Status: awaiting owner.
+- Owner 2026-10-30: inner doors show the use prompt but don't open (no swing) and play no sound. Status: rejected.
+
+### AU-6: Third-person listener sits in the character's head, not the camera (owner report)
+- Kind: game location. Any scene in third person with sounds around (`scene door-balmora-guild`).
+- Seen 2026-10-30: sounds pan and fade as if heard from the character's head; owner wants them heard from the camera.
+- Note: shipped third-person games often put the listener at the camera and take distance attenuation from the
+  character (a hybrid); research and pick in `audio` spec before changing.
+- Status: known bug (owner pass 2026-10-30).

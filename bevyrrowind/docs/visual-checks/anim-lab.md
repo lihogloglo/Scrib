@@ -12,6 +12,7 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 ### AL-1: Animation lab overview
 - `.\bevyrrowind scene level-anim-overview`. Look for: six areas apart (ledges + props near the origin, loop south, slopes/stairs west-north,
   drops north-east, idles south-west), nothing sunk or missing, every NPC dressed. Status: awaiting owner.
+- Owner 2026-10-30: works perfectly. Status: confirmed.
 
 ### AL-2: Walk loop, turns (SB-1, CH-1)
 - `scene level-anim-loop` (cameras `loop`, `loop-close`). Fargoth walks a 12 m square, Elone runs a 24 m square.
@@ -35,6 +36,7 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - `scene level-anim-ledges` (cameras `ledges`, `ledges-close`); F11 for the player, walk into each box and the 3 m wall.
 - Look for: the capsule stops at each ledge and the body does not clip into the box (no vault, mantle or climb exists yet: this is the
   baseline for them); heights readable against the 1 m grid. Status: awaiting owner.
+- 2026-10-30: retired (written before mantles existed; AL-10 and AL-11 cover traversal now). Status: retired.
 
 ### AL-8: Waist mantle, player (action.md B2a; body: A2 slice 2)
 - Needs a bake after 2026-10-26 with the UAL2 library (log: "player traversal: 1 of 1 slot clips baked").
@@ -56,7 +58,32 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   h1.20 box keeps the waist mantle; the red h2.50 box and the 3.5 m wall refuse into a plain jump; Ctrl + Space never mantles.
 - Owner 2026-10-27 (copy d): works, hands go above the head. Issues: the hands aim at the box centre, not the lip (B2b-2 hand IK, after
   the B2b-2a contacts); hard to trigger: the body slides along the face and doesn't face it (B2-T approach tolerance + yaw align, in
-  progress). Status: confirmed with follow-up (B2b-2, B2-T).
+  progress).
+- Owner 2026-10-30, after B2-T (99f6466) and B2b-2b/2c (130bf38, e5224f2): the mantle triggers and works; the hands reach the lip
+  but the hand IK needs tuning. Status: confirmed (hand IK tuning logged on ROADMAP 3.1).
+
+### AL-11: Wall brace, player (action.md B2c)
+- No bake needed (runtime feed only). `scene level-anim-ledges`, F11; the grey 3 m wall behind the boxes (14 m long, z -7).
+- Run (W) straight into the wall: both hands rise before the impact and plant on the face, arms slightly bent, palms on
+  the wall (not floating more than ~2 cm, no fingers or forearm through it); release W: the hands let go over ~0.5 s.
+- Walk along the wall about 0.5 m off it (turn parallel, W): only the wall-side hand trails lightly on the face, behind
+  the shoulder; walking away: it lets go. Standing still: no brace. Near the wall's end the hand drops past the edge.
+- F (sword drawn): only the left (off) hand braces. Mantles: the lip grip still wins (AL-10 unchanged).
+- Known: the hand keeps its animated rotation (no palm frame yet), so fingers may angle oddly. Status: awaiting owner.
+- Owner 2026-10-30 (release copy, 13:08 build): fails. Running into the wall, the character starts walking sideways along it,
+  doesn't stop, and the hands never rise. F never draws a sword (never did), so the drawn case is untested.
+- Fix 2026-10-30 (wall-brace-fix): the brace never ran (its gate waited for "no action slot", but plain locomotion always
+  has one); now gated on no Clip/Warp move. Live dev build: both weights reach 1 at the wall, wrists on the face. The sideways
+  walk is older and not the brace: pushing W at an angle into a wall, the mover keeps the along-wall part (collide-and-slide)
+  while the body faces the stick, so the graph plays a side step (bug logged here; the fix is a mover/facing slice). Run in straight (camera
+  square to the wall) to judge the hands. Needs a new exe copy, no bake. Status: awaiting owner.
+- Owner 2026-10-30 (dev3 copy, after the gate fix): the brace now shows, but (1) running straight at the wall, the body
+  starts moving sideways as soon as it hits: wanted a grazing-angle rule: below a threshold angle to the wall's
+  normal the mover stops instead of sliding (mover `sf_controller` `mover.rs`; B2-T noted the same); (2) the side-wall
+  trail pose is wrong: people feeling a wall reach the hand ahead of them, palm on the wall, thumb pointing down
+  (needs the palm frame from the wall normal, the known rotation gap). Status: partial.
+- Owner 2026-10-30: the wall brace needs a big fix; find where the sideways slide comes from first (diagnosis slice),
+  then fix the stop and the trail pose.
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
@@ -76,6 +103,7 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - Look for: the walker stepping off the 3 m edge (a fall animation or a snap? it must not freeze), the dummy knocked down every 10 s
   (`@impact` 25 N*s: ragdoll, then get-up), with `G` the capsules following the mesh, no pop into the ragdoll, no spin on the 15 deg slope.
   No 6 m fall exists for actors (no way to place one on the platform): throw or fly. Status: awaiting owner.
+- 2026-10-30: retired with PH-2 (owner: the clip+limp ragdoll is deprecated, delirium from now on). Status: retired.
 
 ### AL-7: Idles, reactions, other rigs (SN-2/3, CH-3, SB-3, PH-10)
 - `scene level-anim-idles` (cameras `idles`, `idles-close`). Left to right: Fargoth, a Khajiit (Ajira), an Argonian (Huleeya) fidgeting with
@@ -96,6 +124,7 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
 - `scene level-anim-overview` (camera `overview`, all walkers at A2 LOD there), then `level-anim-props`/`loop`.
 - Look for: on the props walker (beside the orange crates) and the loop walker, the standing foot doesn't drift with
   the body during its stance, far and near. Was: A2 updates got half the body motion. Status: awaiting owner.
+- Owner 2026-10-30 (overview): works perfectly. Status: confirmed.
 
 ### AN-3: Footsteps on the feet (slice R3-1)
 - `scene level-anim-loop` (camera `loop-close`), sound on; then `level-anim-props` for the walker's stops.
@@ -109,20 +138,23 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   (about 2 m, 1.5 s); no long glide, no slow-motion walk at the end, idle blends in as it settles. Was: braking
   from 2 m out plus a 1.5 s creep at 0.25 m/s (3 s). Status: awaiting owner.
 
-### AN-4 Knockdowns always come back (awaiting owner)
+### AN-4 Knockdowns always come back
 Scene `level-anim-overview` (or `level-anim-drop`), G on. Throw `V` balls at walkers, the knockdown dummy, the guar
 and the mudcrab, hard and soft. Look for: every knocked-down character gets up within ~6 s, then has its capsule
 (G) and walks/idles again; a creature without a ragdoll logs "knockdown cancelled" and keeps its capsule. Never a
 character frozen lying or standing without a capsule.
+- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
 
-### AN-5 Get-up starts from the lying pose (awaiting owner)
+### AN-5 Get-up starts from the lying pose
 Scene `level-anim-overview`, the `@impact` knockdown dummy (idles row, every 12 s). Look for: at the moment the
 ragdoll hands back, no snap: the limbs flow from where they lie into the stand-up over ~0.3 s, the pelvis doesn't
 jump, and the body doesn't rise or sink to meet the ground.
+- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
 
-### AN-6 Get-up ends on the capsule (awaiting owner)
+### AN-6 Get-up ends on the capsule
 Same scene, G on. Look for: when the get-up starts the capsule appears under the lying pelvis (not ~1 m away), the
 character stands up onto it, and nothing slides when the clip ends and idle takes over.
+- 2026-10-30: retired with PH-2 (delirium replaces knockdowns). Status: retired.
 
 ### AN-8 Creature capsules fit the creature (awaiting owner)
 Scene `level-anim-idles` (or `-overview`, camera `idles-close`), F7 + G on. Look for: the mudcrab and the guar (last two

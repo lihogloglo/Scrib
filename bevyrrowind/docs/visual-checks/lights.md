@@ -40,3 +40,5 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   `tx_eggmine_banner*`, `tx_rope_net_01`.
 - Fix (render-opt 2026-10-28): propagated NetImmerse `NiVertexColorProperty::LightingMode` (`Emissive` vs `EmissiveAmbientDiffuse`) and `NiTexturingProperty::ClampMode` through `mw_nif`, `sf_model`, `mw_bake`, and `mw_assets`, and added 16-bit `A1R5G5B5`/`A4R4G4B4`/`B5G6R5` DDS decoding in `mw_bake/src/textures.rs` for cutout promotion. Re-bake `mesh.cook` / `tex.meta` if using an older bake store; check `view Balmora --hour 22`.
 - Status: awaiting owner (2026-10-28).
+- Owner 2026-10-30 (`scene hi-balmora-night`): leaves look okay; the water is still brighter than the rest at night (not
+  a moon effect). Status: partial (water at night open).

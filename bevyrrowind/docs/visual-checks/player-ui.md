@@ -14,7 +14,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   the dot on an NPC's chest reads `[E] Talk  <npc>` (was `Take  Broom`); walls block items behind them.
   `cargo dev view "Seyda Neen, Census and Excise Office"` starts on the floor at the door's arrival marker, facing in
   (was: on the roof, grey void). E does nothing while the journal or dialogue is open.
-- Status: awaiting owner.
+- Owner 2026-10-30 (release start, New game): walk, camera and use prompt fine. Status: confirmed.
 
 ### PL-2: Animated player body (action.md A2 slice 2; `cargo dev view "Seyda Neen"`, 10:00)
 - Starts in player mode; Tab to third person. Walk (W, stick), run (Shift sprint), Ctrl sneak, Space jump, turn on the spot.
@@ -65,7 +65,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Owner 2026-10-25: partial. Inventory opens; layout looks off, hover works poorly, no paper-doll view, no
   drag-to-floor drop. Queued after the physics work (layout, hover, drop, then paper doll).
 
-### IV-2: Container window: the ring barrel outside the Census office (`cargo dev view "Seyda Neen, Census and Excise Office"`) (awaiting owner)
+### IV-2: Container window: the ring barrel outside the Census office (`cargo dev view "Seyda Neen, Census and Excise Office"`)
 - The ring barrel (`chargen barrel fatigue`) is outside the office, not in it (exterior Seyda Neen
   -2,-9, near the office). E on it opens the container window titled "Barrel": its stacks left (Fargoth's ring), yours right.
 - Click the ring (or A / drag it across): it moves to your pane; click it there: it goes back. X on a stack of more
@@ -73,6 +73,8 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Look for: both grids drawn with icons, the window centred, Esc / B / Close shut it, no walking while open; I then
   lists the ring. Owned containers in the office show the owned heading colour (flag only: no theft yet).
 - Known: no weight limit, no locks or traps, levelled entries skipped, organic containers refuse puts silently.
+- Owner 2026-10-30: ring flow, move both ways, Take all work. Wanted: item icons show only on hover (must always draw);
+  the key that opened the container (E) should also close it; inventory UI wonky overall. Status: confirmed with follow-up.
 
 ### SV-1: Quicksave / quickload, save, quit, load (`cargo dev view "Seyda Neen, Census and Excise Office"`) (confirmed with follow-up)
 - In player mode take a loose bottle (the ring barrel is outside the office, IV-2), step into the middle of the room, Tab to first
@@ -88,7 +90,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Owner 2026-10-25: save/load works. BUG: on load the player sometimes spawns too low and falls through the floor
   into the void. Also seen: an invisible hole in the Census Office floor. Both in the physics fix plan (2026-10-26).
 
-### SV-2: Save/load screens from the pause menu (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode) (awaiting owner)
+### SV-2: Save/load screens from the pause menu (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode)
 - Esc, Save: the save screen over the paused game, "New save" on top. Confirm it (select, confirm again): toast
   "Saved"; the list gets a row titled "Seyda Neen, Census and Excise Office", subtitle "Day N - 16 Last Seed 9 a.m. ·
   Played ... · Saved <date> UTC" (OpenMW's fields).
@@ -96,6 +98,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Back: the pause menu. Load: the same saves, newest first; pick one: fade, the menus close, you stand at the save.
 - Load screen, a save selected, Delete (or Context1), Yes: the row goes away.
 - Known: no typed names (generated, not stored: sf/meta has no name field), no thumbnails, UTC dates.
+- Owner 2026-10-30: save, overwrite and load work; thumbnails missing (known gap, now wanted). Status: confirmed with follow-up.
 
 ### IN-1: Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
 - F10 opens the keybinds screen (UI + gameplay rows). Rebind Jump (keyboard slot) to J, close with F10 or Esc; J jumps,
@@ -151,7 +154,8 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   fade to the exterior square's centre on the ground (no fall); `coc "seyda neen, census and excise office"` still
   goes inside. Type `re`: Down/Up move the `>` mark, Enter puts the candidate in the line (a second Enter runs it),
   Escape closes the popup first. Ctrl+V and Shift+Insert paste at the cursor (several lines join with `; `).
-- Status: awaiting owner.
+- Owner 2026-10-30: `off/on ssao` works, every coc (interior and exterior) works, Down/Enter suggestions and paste work.
+  Status: confirmed.
 
 ### PM-1: Escape menu and options (`cargo dev view "Seyda Neen"`, player mode)
 - Esc opens the pause menu (Resume, Save, Load, Options, Quit; Save/Load greyed out until the save screens are wired);
@@ -161,7 +165,8 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   menus, quit, restart: the volumes are kept (`profiles/<name>.toml`, `[settings.sf]`).
 - Quit asks Yes/No (No is focused); Yes exits. Not in free camera or while the console is open.
 - Known: frames are flat CSS (no 8-piece textures); screen titles and On/Off are English defaults.
-- Status: awaiting owner.
+- Owner 2026-10-30: Esc pauses everything; the mixer works but its UI is bad: volume should drag with the mouse
+  (sliders), mute should be one small icon per row. Wanted: a "Main menu" button in the pause menu. Status: confirmed with follow-up.
 
 ### HD-1: Minimal HUD: bars, compass, crosshair, use prompt (`cargo dev view "Seyda Neen, Census and Excise Office"`, player mode)
 - Bottom left: three thin framed bars, red health, blue magicka, green fatigue (full: the `player` record's 35/50/200),
@@ -171,7 +176,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   a creature shows its name only, no key.
 - Esc (pause), talk (dialogue), J (journal), inventory, the console: the HUD hides; it returns on close. F11 (free camera) hides it.
 - Known: bars are static (no damage or regeneration yet); the compass is a heading label, no local map.
-- Status: awaiting owner.
+- Owner 2026-10-30: HUD fine. Status: confirmed.
 
 ### MM-1: Release start: main menu over Seyda Neen, New game (`bevyrrowind` with no arguments, release build)
 - Build `cargo build --release -p bevyrrowind`, run `target/release/bevyrrowind` (no subcommand). The world streams in at
@@ -182,4 +187,18 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - New Game closes the menu: HUD appears, the player stands at the office door and can walk; Esc now opens the pause menu.
 - Dev runs (`cargo dev view ...`, `scene`) never show it. Known: no title image or background art yet.
 - 2026-10-26 (M3): with a save on disk, Continue (focused) and Load Game are live: Continue loads the newest save (any kind) and play resumes there; Load Game opens the save list, Esc returns to the main menu.
-- Status: awaiting owner.
+- Owner 2026-10-30: the buttons work, but a menu over the live world is not a main menu: Morrowind shows a title
+  image or video, not the game. Wanted: background art/video behind the menu; "Main menu" from the pause menu.
+  Status: rejected (menu over title art, not the world).
+
+### PL-6: Recovery delay after jumping down from a high box (owner report)
+- Kind: synthetic. `scene level-anim-ledges`, F11; stand on a high box, Space off it toward the ground, keep W held.
+- Seen 2026-10-30: after the impact the character waits before it runs again.
+- Cause (code read, not run): rule `land.hard` (`sf_action/src/base_rules.ron`): touchdown faster than 9 m/s down (about a
+  4 m drop, reached by jumping off a ~2-3 m box) plays `air.land.hard` Committed with `steer: false` until the clip ends.
+  Feel question for the owner: raise the threshold, shorten/cancel the clip on input, or roll out of it (Elden Ring only
+  locks on big falls).
+- Status: known bug: cause found, tuning queued (owner pass 2026-10-30).
+- Owner decision 2026-10-30: a movement lock belongs to damage only; no damage logic exists yet, so `land.hard` no
+  longer commits or stops steering (base_rules.ron; test `hard_landing_never_stops_the_stick`). Re-check in a build
+  after 2026-10-30 14:00. Status: awaiting owner.

@@ -93,3 +93,33 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   Check: `.\bevyrrowind scene wk-balmora --weather ashstorm` (A/B `--off precipocc`): street in the lee of houses
   and hills shows little/no ash, open ground and the `fg-redmtn-ashstorm` hillside (70 m up) still streak. Rain under
   roofs unchanged (`--weather rain`). Tall clouds fixed 2026-10-28 (render-opt: Morrowind storm cloud deck thickness capped to 1.6 km in `mw_weather/src/visual.rs`, plus dry-weather `PrecipOcclusion` skip), awaiting owner. Storm direction from Red Mountain: Phase 4.
+- Owner 2026-10-30 (`scene summit-vivec --weather ashstorm`): occlusion works. Too much shelter: on rugged ground you are
+  almost always counted as sheltered, so the storm rarely blows at you. Wanted: shelter only within a few metres of a
+  vertical object (cap the lee distance; ROADMAP 1.12 "cap ash shelter distance"). Thunderstorm clouds may still be
+  too high (owner unsure). Status: confirmed with follow-up.
+
+### WE-6: Rain turns grainy while the camera moves (owner report)
+- Kind: game location. Rain in some areas of the island (seen 2026-10-30 from `scene balmora`, earlier passes too).
+- Look for: rain streaks clean while still; as soon as the camera moves, heavy grain where the rain is.
+- Suspect (not tested): translucents have no motion vectors (ROADMAP 1.3, RO-7), so TAA/DLSS reprojects rain wrongly.
+- Status: known bug: not diagnosed (owner pass 2026-10-30).
+
+### WE-7: Rain curtain stops in front of distant water (owner report)
+- Kind: game location. Rain with open water in view (seen 2026-10-30).
+- Look for: the distant rain curtain doesn't draw over the water body, so it ends at the water's edge.
+- Suspect (not tested): pass order/depth between the water snapshot and precip (hard-problems H3, `render-order.md`).
+- Status: known bug: not diagnosed (owner pass 2026-10-30).
+
+### FG-7: Blocky crenellated edges on distant land in fog (owner report)
+- Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
+- Look for: stair-stepped blocky shapes along land silhouettes, only where fog is rendered; present when still, worse
+  when moving.
+- Suspect (not tested): froxel fog sampled at low resolution without a depth-aware upsample at silhouettes.
+- Status: known bug: not diagnosed (owner pass 2026-10-30).
+
+### FG-8: Weather fog vanishes at night (owner report)
+- Kind: game location. Foggy weathers (fog, overcast, ash), compare 20:00 and 01:00 (`--hour`).
+- Seen 2026-10-30: in some weathers the fog seems to disappear at night.
+- Suspect (not tested): fog in-scatter scales with sun/moon light, so at night it goes dark and reads as no fog;
+  the extinction (distance hiding) should stay.
+- Status: known bug: not diagnosed (owner pass 2026-10-30).

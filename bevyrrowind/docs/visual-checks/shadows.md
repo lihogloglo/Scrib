@@ -31,6 +31,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Seen by owner 2026-10-19 (round 1): brief flashes in the distance whenever the camera moves; they look like shadows.
 - Fix (render-opt 2026-10-28): ordered `far_map::update_far_map` before `update_terrain` and moved `fog_shadow_heights`, `far_shadow_input`, and `FarFieldSystems::FarShadow` to `PostUpdate` after `TerrainSystems::Update` so shifted terrain origins never render 1 stale frame; also replaced Bevy cascade-NDC PCSS with world-unit directional PCSS (OpenMW Clockwork adaptation).
 - Status: awaiting owner (2026-10-28).
+- Owner 2026-10-30 (scene balmora, flying): the distant shadow-like flashes are gone. Status: confirmed.
 
 ### SH-13: Point-light (lamp) shadows (owner report)
 - Kind: game location. Run: `.\bevyrrowind scene lamps-handoff` (Balmora, 22:00).
@@ -98,3 +99,11 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   cache (`POINT_SHADOW_CACHE` off since B3, so `--off shadowcache` is a no-op) nor the anim budget.
 - Fix (render-opt 2026-10-28): `ShadowMoverRefresh` in vendored `bevy_pbr/src/render/light.rs` redraws close-up animated character shadow faces (within 16 m of active camera, up to 4 mover faces/frame) on the same frame outside the LRU budget; A/B `--off movershadows`.
 - Status: awaiting owner (2026-10-28).
+- Owner 2026-10-30 (Census office, release build): indoors the player and NPCs cast no shadow from lanterns or torches
+  at all (none moving with them, none at the feet). Exterior check (scene lamps-handoff) still pending. Status: awaiting owner.
+- Owner 2026-10-30 (scene wk-balmora, day): sun shadows follow the NPCs and the player smoothly. Lamp part (scene
+  lamps-handoff) still pending; interiors showed no lamp shadows on characters (note above). Status: awaiting owner.
+- Owner 2026-10-30 (`scene lamps-handoff`, dev copy): every lamp shadow now animates smoothly (fixed), but which lamps cast
+  looks random; one lamp shadowed an NPC and not the player; no held torch ever cast a shadow. Leads: the shadowed-lamp
+  budget picks (High count still an owner pick, ROADMAP 1.4), player body excluded as a lamp caster?, torch-bearers
+  (decision 3 says they cast within the budget; LT-3). Status: partial (smooth yes, consistency no).

@@ -36,6 +36,10 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
   and at rest (no sinking, floating or spinning; limbs follow their capsules); `I` on the walker, then on a Balmora
   guard on the stairs as above. Expect a slight width change at death on races whose build ≠ height (uniform scale
   while ragdolled, restored at get-up). Status: **awaiting owner**.
+- Owner 2026-10-30: no explosion and the death clip plays, but this clip-then-limp ragdoll path is deprecated: deaths
+  and knockdowns use the delirium system from now on, so this check is retired. Dragging is too hard and works badly
+  (later). Bug seen: `I` in third person kills the player (the crosshair ray hits the player) and also opens the
+  inventory (key clash): logged as PH-14. Status: retired (superseded by delirium).
 
 ### PH-7: Item body shapes (`body.cook`)
 - Kind: game location. Run: `.\bevyrrowind scene ph-tradehouse-items` (Arrille's Tradehouse with `--physics-debug`;
@@ -135,3 +139,26 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
   in third person it stays in front of the body. (d) The spot where you fell through the Census Office floor: solid now?
   If you still fall: note the F1 overlay coordinates. Also a thrown item still knocks clutter over.
 - Status: awaiting owner.
+
+### PH-12: Walkable hole in the Census Office floor (owner report, again)
+- Kind: game location. `view "Seyda Neen, Census and Excise Office"` (or New game, walk in).
+- Seen 2026-10-25 and again 2026-10-30 after fix-plan slices 1-10: the player can still walk into a hole in the floor.
+  Fix plan S3-a (2026-10-26) found no hole in the baked collision, so the runtime side (streaming/arrival) is the lead.
+- Next time: note the F1 overlay coordinates at the hole; then `collision_report` + G wireframes on that spot.
+- Status: known bug (owner pass 2026-10-30).
+- Owner 2026-10-30: the hole is at F1 coordinates 11, 6, -13 (Census office). Owner: don't patch that spot; it points to a
+  general fault in the physics logic or the collision bake, so diagnose the class of bug first.
+
+### PH-13: Characters drop onto the ground when a cell loads (owner report)
+- Kind: game location. Any door between interior and exterior, or a load.
+- Seen 2026-10-30: on entering a cell the player starts slightly above the floor and falls a little; all the NPCs do
+  the same when the cell loads. Related: props jump on entering a room (ROADMAP 3.3, 2026-10-25).
+- Look for (once fixed): everyone stands on the floor from the first visible frame after the fade.
+- Status: known bug (owner pass 2026-10-30).
+
+### PH-14: Dev kill key `I` kills the player in third person and opens the inventory (owner report)
+- Kind: game location, dev build. Third person, crosshair on an NPC, `I`.
+- Seen 2026-10-30: the player dies (the crosshair ray starts behind the player and hits its own body first) and the
+  inventory opens too (`I` is also the inventory key).
+- Fix direction: exclude the player's body from the dev pick ray; move the dev kill to a key no game action uses.
+- Status: known bug (owner pass 2026-10-30).
