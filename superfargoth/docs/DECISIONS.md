@@ -1550,3 +1550,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   knockdowns from now on. It is GPL-3.0-only, which our GPL-3.0-or-later allows; builds that link it are GPL-3.0-only.
 - 2026-10-30 (owner): interactive windows open borderless fullscreen on the primary monitor by default; `--resolution`
   gives a centred window of that size (`mw_devtools_bevy` `perf.rs` `window`). Benchmarks keep their own window rules.
+- 2026-11-01 (saves cross-review): loads apply at the fade's cut (`FadeCutHooks`), never before the blackout. Overlay
+  blobs older than the running `BlobVersions` are refused, not re-stamped: a `declare()` bump must ship a blob migration.
+  Saved shapes that embed runtime types get a version bump + frozen legacy type on change (`sf.character.v2`).

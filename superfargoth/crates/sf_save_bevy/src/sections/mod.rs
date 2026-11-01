@@ -48,7 +48,9 @@ pub const RPG: &str = "rpg";
 pub const RPG_VERSION: u32 = 1;
 /// Family of `sf/character/<player key>`.
 pub const CHARACTER: &str = "character";
-pub const CHARACTER_VERSION: u32 = 1;
+/// v2: `sf_action::ActionState` gained `forced` and `lock`, and its `ModeState` gained `moveset`
+/// (combat C1a and lock-on); v1 is frozen in [`character::legacy::v1`].
+pub const CHARACTER_VERSION: u32 = 2;
 /// Family of `<mod id>/script`.
 pub const SCRIPT: &str = "script";
 pub const SCRIPT_VERSION: u32 = 1;
@@ -165,16 +167,14 @@ pub fn characters(
         CHARACTER_VERSION,
         move |w: &World| Ok(get(w).into_iter().map(|c| (character_key(c.player), c)).collect()),
         move |w: &mut World, all: Vec<(SectionKey, CharacterSave)>| {
-            let mut out = Vec::with_capacity(all.len());
-            for (key, c) in all {
-                if player_of(&key) != Some(c.player) {
-                    return Err(format!("section {key} holds player {:032x}", c.player.0));
-                }
-                out.push(c);
-            }
-            set(w, out);
+            // Infallible: the key check refused a mismatch before anything was reset (C3).
+            set(w, all.into_iter().map(|(_, c)| c).collect());
             Ok(())
         },
     )
+    .check_keyed(|_: &World, key: &SectionKey, c: &CharacterSave| {
+        if player_of(key) == Some(c.player) { Ok(()) } else { Err(format!("section {key} holds player {:032x}", c.player.0)) }
+    })
+    .typed_step(1, character::legacy::v1::CharacterSave::migrate)
     .order(order::CHARACTERS)
 }

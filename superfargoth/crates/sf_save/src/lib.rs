@@ -8,7 +8,7 @@
 //!
 //! - [`Registry`]: section families, their current and oldest versions and the stepwise
 //!   migrations (`v → v + 1`) that load runs; newer versions are refused by name.
-//! - [`write_atomic`]: temp file, `fsync`, read-back, optional `.bak`, rename, directory sync,
+//! - [`write_atomic`]: temp file, `fsync`, verified read-back, optional `.bak` copy, rename, directory sync,
 //!   over a [`SaveFs`] trait so tests can fail each step.
 //! - [`SlotDir`]: per-world folders, `<sequence>-<reason>.sfsave` names, rotation of automatic
 //!   saves.

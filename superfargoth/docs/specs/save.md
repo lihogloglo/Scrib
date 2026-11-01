@@ -325,8 +325,11 @@ Full log and measurements: [archive](archive/save-history.md#as-built-s1-s2).
 - **Container**: the preamble's hash also covers the TOC; section offsets count from the TOC's end
   (`read_meta` reads the head only); sections tile contiguously in key order (`sf/meta` first, raw); LZ4
   only from 128 B and when smaller, a declared ratio past 255:1 refused before allocating; decoding is
-  strict (trailing bytes refused), so an unbumped shape change fails by name. Read-back runs on the temp
-  file before the rename.
+  strict (trailing bytes refused), so an unbumped shape change fails by name. Read-back opens the temp
+  file as a `SaveFile` and checks every section hash before the rename (cross-review C9). The `.bak` is a
+  copy, so the save's name is never empty; the rename retries Windows sharing violations; listing restores
+  an orphaned `.bak` (C4). `Latest` skips saves that fail verification; a corrupt explicit path returns
+  `LoadError::Corrupt` naming the newest earlier verified save or the `.bak` (C5).
 - **Registry** keys specs by owner (or any) and **family** (name before the first `/`: `character`,
   `script`); gaps in steps are refused. **Rotation**: `Auto` + `GuestLeft` keep 3, `Quick` 2, `Exit` 1,
   `Manual` never (overwrite via `SaveTarget::Path` keeps `.bak`); nothing rotates unless the directory
@@ -334,7 +337,7 @@ Full log and measurements: [archive](archive/save-history.md#as-built-s1-s2).
 - **Plugin**: one exclusive system in `Last` (a tick boundary) polls jobs, applies a finished load, then
   starts one load or save. Providers are `SaveSection`s (`value`, `family`, `raw_family` for the script
   runtime's postcard bytes); `get` clones on the main thread, encode/decode run in the job. Load: all
-  `check`s before any apply (the overlay refuses blobs newer than `BlobVersions`), `on_load_reset` hooks,
+  `check`s before any apply (the overlay refuses blobs of another version than `BlobVersions`, C7), `on_load_reset` hooks,
   apply in `sections::order`; a missing section applies `Default`. A load cancels queued saves; at most one
   autosave waits behind a closed gate; `SaveConfig::background = false` runs inline.
 - **Section types and versions live in `sf_save_bevy::sections`**, not the owner crates (owners stay
@@ -346,7 +349,7 @@ Full log and measurements: [archive](archive/save-history.md#as-built-s1-s2).
   `<mod>/script`: an unrun saved context stays dormant; a running context the save lacks keeps its state.
 - Not built: `PlayerKey` stays in `sf_rpg`; `sf/thumbnail`, `sf/party` (S4).
 - **Drift guard**: `serde-reflection` shape goldens `tests/shapes/<owner>.<family>.v<version>.json`;
-  golden save `tests/golden/s2.sfsave` loads and re-saves to the same raw bytes; bless `SF_SAVE_BLESS=1`.
+  golden saves `tests/golden/s2.sfsave` (character v1, loads through migration) and `character-v2.sfsave` (re-saves to the same raw bytes); bless `SF_SAVE_BLESS=1`.
   Fuzz is in-test and deterministic (every truncation, every bit flip, 20k mutations), not `cargo fuzz`.
 - **Budgets** (`cargo test -p sf_save_bevy --release budgets -- --nocapture`, synthetic 100-hour world):
   met (2.55 MiB, encode + write ~30 ms, load ~35 ms) except the main-thread snapshot, 3.5-5.6 ms warm and
@@ -366,6 +369,24 @@ Full log and measurements: [archive](archive/save-history.md#as-built-s1-s2).
 - **Game:** menus and modals close in an `on_load_reset` hook; `CharacterBody` (`ActionState` +
   `Locomotion`) is saved and put back on arrival (`ActionBody::restore`). Test: `sf_world_bevy`
   `reload_resident_respawns_cells_from_the_loaded_overlay`.
+- **Apply at the cut (2026-11-01, review C1):** with a `LoadTransition` the decoded load waits (saves too);
+  the game's `begin` writes `sf_world_bevy::StartBlackout` (queued behind a running fade, never dropped), and at
+  full black a `FadeCutHooks` hook calls `apply_pending_load` (checks, resets, apply); the `StartTravel { reload }`
+  it writes runs in that same frame. Tests: `a_load_applies_only_at_the_transitions_cut`,
+  `a_blackout_queued_behind_a_door_fade_runs_its_hooks_and_travel_at_the_cut`.
+- **Two-phase apply (C3):** the character player-key check is a `check_keyed` (before any reset), so built-in
+  applies are infallible. A fallible `family` `set` that still fails returns `LoadError::Apply`
+  (`partly_loaded()`: the game returns to the main menu) and closes the gate with `LOAD_FAILED` until a load succeeds.
+- **Identity (C2, framework half):** before decoding, a save whose `sf/meta` content id differs from `SaveIdentity`'s
+  (both non-empty) is refused (`LoadError::Content`); a load-order difference only logs (missing mods warn). The diff
+  dialog stays S3.
+- **Overlay blob versions (C7):** blobs older than `BlobVersions` are refused like newer ones: one table can't label
+  a mix of unmigrated and rewritten blobs, so a `declare()` bump must ship with its migration (overlay v2).
+- **Pending autosave (C8):** an Auto save `can_save` refuses reports `Refused` once, then is re-asked every
+  `AUTOSAVE_RETRY` (1 s play time) until a save succeeds or a load is requested.
+- **`sf/character` v2:** `ActionState` gained `forced`/`lock` and `ModeState` `moveset` (combat C1a) without a bump,
+  so S2 saves failed to decode; v1 is frozen in `sections::character::legacy::v1` with a typed step (new fields
+  `None`), guarded by `legacy_shapes_match_their_goldens`.
 
 ## As built (save/load screen, 2026-10-26)
 

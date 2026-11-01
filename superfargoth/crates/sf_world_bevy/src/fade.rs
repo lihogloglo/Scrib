@@ -16,9 +16,19 @@
 //! controllers). Removal path: M8's portal crossing replaces it without
 //! changing the data model.
 //!
+//! A [`StartBlackout`] fades out with no travel of its own (a save load,
+//! whose destination is known only once the loaded state applies): at full
+//! black the [`FadeCutHooks`] run in one exclusive step, and a
+//! [`StartTravel`] they write is executed in the same frame (the cut), so no
+//! gameplay frame runs between the hooks and the move / resident reload.
+//! Requests that arrive while a fade runs are queued, never dropped (the
+//! latest travel wins; a blackout discards travels requested before its cut).
+//!
 //! The fade itself is a full-window UI node: UI draws after tonemapping,
 //! post-processing and upscaling, so it is truly black (a 3D quad before the
 //! camera was fogged and composited over by later passes: DR-4).
+
+use std::sync::Arc;
 
 use bevy_asset::{AssetServer, Assets, Handle};
 use bevy_camera::Camera;
@@ -51,6 +61,25 @@ pub struct StartTravel {
     pub reload: bool,
 }
 
+/// Asks for a fade to black with no travel of its own: at full black the
+/// fade runs the [`FadeCutHooks`] (a save load applies there), then executes
+/// a [`StartTravel`] they wrote in the same frame, else fades back in.
+#[derive(Message, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StartBlackout;
+
+type CutHook = Arc<dyn Fn(&mut World) + Send + Sync>;
+
+/// Exclusive steps run at a [`StartBlackout`]'s cut (full black), in
+/// registration order, right before the fade reads the travel they request.
+#[derive(Resource, Default, Clone)]
+pub struct FadeCutHooks(Vec<CutHook>);
+
+impl FadeCutHooks {
+    pub fn add(&mut self, f: impl Fn(&mut World) + Send + Sync + 'static) {
+        self.0.push(Arc::new(f));
+    }
+}
+
 /// Written the frame the fade moves the traveler (at full black, before
 /// the hold): anything caching the traveler's pose, such as a camera
 /// controller's yaw and pitch, resyncs from it.
@@ -66,7 +95,11 @@ pub struct TravelArrived {
 pub enum FadePhase {
     #[default]
     Idle,
-    Out { t: f32, travel: StartTravel },
+    /// Fading out; `travel` is `None` for a [`StartBlackout`].
+    Out { t: f32, travel: Option<StartTravel> },
+    /// A blackout at full black: the [`FadeCutHooks`] run this frame, then
+    /// the fade executes the travel they requested or fades back in.
+    Cut,
     /// At full black, waiting for the arrival (`frames`: since the move;
     /// `ready`: frames and seconds since the cells and textures were ready).
     Hold { waited: f32, frames: u32, traveler: Entity, to: Location, ready: Option<(u32, f32)> },
@@ -108,6 +141,9 @@ pub struct FadeTransition {
     /// A gate asked to stay black this frame (cleared by the fade).
     gated: bool,
     elapsed: f32,
+    /// Requests that arrived while a fade ran (started once it is idle).
+    queued_travel: Option<StartTravel>,
+    queued_blackout: bool,
 }
 
 impl Default for FadeTransition {
@@ -126,6 +162,8 @@ impl Default for FadeTransition {
             last_gate: None,
             gated: false,
             elapsed: 0.0,
+            queued_travel: None,
+            queued_blackout: false,
         }
     }
 }
@@ -158,7 +196,7 @@ impl FadeTransition {
         match &self.phase {
             FadePhase::Idle => 0.0,
             FadePhase::Out { t, .. } => (t / f).min(1.0),
-            FadePhase::Hold { .. } => 1.0,
+            FadePhase::Hold { .. } | FadePhase::Cut => 1.0,
             FadePhase::In { t } => 1.0 - (t / f).min(1.0),
         }
     }
@@ -199,17 +237,57 @@ impl NearTextures<'_, '_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // a system's parameters
+/// Runs the [`FadeCutHooks`] at a blackout's cut, right before [`run_fade`]
+/// (same frame) reads the travel they request.
+pub(crate) fn run_cut_hooks(world: &mut World) {
+    if !matches!(world.get_resource::<FadeTransition>().map(FadeTransition::phase), Some(FadePhase::Cut)) {
+        return;
+    }
+    let hooks = world.get_resource::<FadeCutHooks>().map(|h| h.0.clone()).unwrap_or_default();
+    for hook in hooks {
+        hook(world);
+    }
+}
+
+/// What the cut (full black) changes for a travel.
+#[derive(SystemParam)]
+pub(crate) struct Cut<'w, 's> {
+    commands: Commands<'w, 's>,
+    arrived: MessageWriter<'w, TravelArrived>,
+    streaming: ResMut<'w, Streaming>,
+    active: ResMut<'w, ActiveWorldspace>,
+    registry: ResMut<'w, WorldspaceRegistry>,
+    cameras: Query<'w, 's, (), With<Camera>>,
+}
+
+impl Cut<'_, '_> {
+    /// Moves the traveler into the target worldspace, burst-loads (and
+    /// reloads the resident cells for a load), then holds.
+    fn travel(&mut self, travel: StartTravel) -> FadePhase {
+        let entry = self.registry.ensure(&mut self.commands, &travel.to.worldspace);
+        let (cell, mut transform) = to_grid(travel.to.pos);
+        transform.rotation = travel.rotation;
+        self.commands.entity(travel.traveler).insert((ChildOf(entry.root), cell, transform));
+        if self.cameras.contains(travel.traveler) {
+            self.commands.entity(travel.traveler).insert(RenderLayers::from_layers(&[0, entry.layer]));
+        }
+        self.active.0 = Some(travel.to.worldspace.clone());
+        self.streaming.begin_burst();
+        if travel.reload {
+            self.streaming.reload_resident();
+        }
+        let (traveler, to) = (travel.traveler, travel.to.clone());
+        self.arrived.write(TravelArrived { traveler: travel.traveler, to: travel.to, rotation: travel.rotation });
+        FadePhase::Hold { waited: 0.0, frames: 0, traveler, to, ready: None }
+    }
+}
+
 pub(crate) fn run_fade(
-    mut commands: Commands,
     mut requests: MessageReader<StartTravel>,
-    mut arrived: MessageWriter<TravelArrived>,
+    mut blackouts: MessageReader<StartBlackout>,
     time: Res<Time<Real>>,
     mut fade: ResMut<FadeTransition>,
-    mut streaming: ResMut<Streaming>,
-    mut active: ResMut<ActiveWorldspace>,
-    mut registry: ResMut<WorldspaceRegistry>,
-    cameras: Query<(), With<Camera>>,
+    mut cut: Cut,
     near: NearTextures,
 ) {
     let dt = time.delta_secs();
@@ -217,44 +295,51 @@ pub(crate) fn run_fade(
         fade.gated = false;
     }
     let latest = requests.read().last().cloned();
-    if let (FadePhase::Idle, Some(travel)) = (&fade.phase, latest) {
-        fade.camera = cameras.contains(travel.traveler).then_some(travel.traveler);
-        fade.elapsed = 0.0;
-        fade.phase = FadePhase::Out { t: 0.0, travel };
+    if blackouts.read().count() > 0 {
+        fade.queued_blackout = true;
+    }
+    if matches!(fade.phase, FadePhase::Cut) {
+        // The hooks ran just before (`run_cut_hooks`): their travel moves the traveler now.
+        if fade.queued_travel.take().is_some() {
+            log::info!("sf_world_bevy: fade: a travel requested before the blackout's cut is dropped");
+        }
+        fade.phase = match latest {
+            Some(travel) => cut.travel(travel),
+            None => FadePhase::In { t: 0.0 },
+        };
         return;
     }
+    if let Some(travel) = latest {
+        fade.queued_travel = Some(travel);
+    }
     if !fade.is_active() {
+        if std::mem::take(&mut fade.queued_blackout) {
+            fade.camera = None;
+            fade.elapsed = 0.0;
+            fade.phase = FadePhase::Out { t: 0.0, travel: None };
+        } else if let Some(travel) = fade.queued_travel.take() {
+            fade.camera = cut.cameras.contains(travel.traveler).then_some(travel.traveler);
+            fade.elapsed = 0.0;
+            fade.phase = FadePhase::Out { t: 0.0, travel: Some(travel) };
+        }
         return;
     }
     fade.elapsed += dt;
     let fade_secs = fade.fade_secs;
     let next = match std::mem::take(&mut fade.phase) {
-        FadePhase::Out { t, travel } if t + dt >= fade_secs => {
-            let entry = registry.ensure(&mut commands, &travel.to.worldspace);
-            let (cell, mut transform) = to_grid(travel.to.pos);
-            transform.rotation = travel.rotation;
-            commands.entity(travel.traveler).insert((ChildOf(entry.root), cell, transform));
-            if cameras.contains(travel.traveler) {
-                commands.entity(travel.traveler).insert(RenderLayers::from_layers(&[0, entry.layer]));
-            }
-            active.0 = Some(travel.to.worldspace.clone());
-            streaming.begin_burst();
-            if travel.reload {
-                streaming.reload_resident();
-            }
-            let (traveler, to) = (travel.traveler, travel.to.clone());
-            arrived.write(TravelArrived { traveler: travel.traveler, to: travel.to, rotation: travel.rotation });
-            FadePhase::Hold { waited: 0.0, frames: 0, traveler, to, ready: None }
-        }
+        FadePhase::Out { t, travel } if t + dt >= fade_secs => match travel {
+            Some(travel) => cut.travel(travel),
+            None => FadePhase::Cut,
+        },
         FadePhase::Out { t, travel } => FadePhase::Out { t: t + dt, travel },
         FadePhase::Hold { waited, frames, traveler, to, ready: prior } => {
             let ws = &to.worldspace;
             let settled = frames >= MIN_HOLD_FRAMES;
-            let cells = streaming.has_directory(ws) && streaming.scheduler().arrival_ready(ws, to.pos, fade.ready_margin_m);
+            let cells = cut.streaming.has_directory(ws) && cut.streaming.scheduler().arrival_ready(ws, to.pos, fade.ready_margin_m);
             // Burst mode can end before the traveler's anchor reached the
             // destination (it ends when nothing near is pending): restart it.
-            if settled && !cells && !streaming.in_burst() {
-                streaming.begin_burst();
+            if settled && !cells && !cut.streaming.in_burst() {
+                cut.streaming.begin_burst();
             }
             // Once ready the arrival stays ready (no unloading at black): count from the first time.
             let ready = prior.or_else(|| (settled && cells && near.ready(traveler, fade.ready_radius_m)).then_some((0, 0.0)));
@@ -282,6 +367,7 @@ pub(crate) fn run_fade(
         }
         FadePhase::In { t } => FadePhase::In { t: t + dt },
         FadePhase::Idle => FadePhase::Idle,
+        FadePhase::Cut => FadePhase::Cut,
     };
     fade.phase = next;
 }

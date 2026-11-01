@@ -4,7 +4,7 @@
 //! (inspect and edit profiles) stays in the binary (`apps/bevyrrowind/src/mods.rs`).
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
 use mw_install::MorrowindInstall;
@@ -46,6 +46,53 @@ static SCRIPT_PLANS: OnceLock<Vec<sf_mods::ScriptPlan>> = OnceLock::new();
 /// Script contexts of the profile the last [`load`] resolved (empty before one).
 pub fn script_plans() -> Vec<sf_mods::ScriptPlan> {
     SCRIPT_PLANS.get().cloned().unwrap_or_default()
+}
+
+/// The content pack every profile loads (`sf/meta` `content_id`): the Morrowind adapter's name.
+pub const CONTENT_ID: &str = mw_mods::ADAPTER;
+
+/// One mod of a resolved load order: id, version and the blake3 of its manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModIdentity {
+    pub id: String,
+    pub version: String,
+    pub manifest_hash: [u8; 32],
+}
+
+/// The identity of the content the last [`load_content`] resolved: what a save records in
+/// `sf/meta` (save.md "What is saved"; mods.md "Profile fingerprint").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProfileIdentity {
+    pub profile: String,
+    /// Loaded mods in load order.
+    pub load_order: Vec<ModIdentity>,
+    /// The profile fingerprint (`LoadedProfile::fingerprint`).
+    pub fingerprint: [u8; 32],
+}
+
+impl ProfileIdentity {
+    /// The identity of a resolved profile and its fingerprint.
+    pub fn of(loaded: &LoadedProfile, fingerprint: [u8; 32]) -> Self {
+        let load_order = loaded
+            .mods
+            .iter()
+            .map(|m| ModIdentity {
+                id: m.manifest.id.as_str().to_owned(),
+                version: m.manifest.version.to_string(),
+                // The manifest as the fingerprint hashes it (`sf_mods` `LoadedProfile::fingerprint`).
+                manifest_hash: sf_bake::Digest::of(format!("{:?}", m.manifest).as_bytes()).0,
+            })
+            .collect();
+        Self { profile: loaded.profile.name.clone(), load_order, fingerprint }
+    }
+}
+
+/// The last resolved identity (replaced by every [`load_content`]).
+static IDENTITY: Mutex<Option<ProfileIdentity>> = Mutex::new(None);
+
+/// The identity of the content the last [`load_content`] resolved (`None` before one).
+pub fn profile_identity() -> Option<ProfileIdentity> {
+    IDENTITY.lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
 pub fn select(selection: Selection) {
@@ -134,6 +181,7 @@ pub fn load_content(install: &MorrowindInstall, verbose: bool) -> Result<(Vfs, L
     let fingerprint_start = Instant::now();
     let fingerprint = mods.fingerprint(&loaded);
     let fingerprint_time = fingerprint_start.elapsed();
+    *IDENTITY.lock().unwrap_or_else(PoisonError::into_inner) = Some(ProfileIdentity::of(&loaded, fingerprint));
     let (files, warnings) = mods.adapter.take_content();
     if verbose {
         println!(

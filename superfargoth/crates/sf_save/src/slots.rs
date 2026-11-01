@@ -8,7 +8,8 @@
 //!
 //! A folder per world groups a playthrough. Every save is a new file named by its sequence
 //! number; automatic saves rotate once a newer one is verified and durable. Overwriting a chosen
-//! save keeps the old file as `.bak` until the next verified write.
+//! save keeps the old file as `.bak` until the next verified write; a `.bak` left without its
+//! save is restored by [`SlotDir::list`].
 
 use std::path::{Path, PathBuf};
 
@@ -154,15 +155,20 @@ impl SlotDir {
         self.dir.join(Self::file_name(sequence, reason))
     }
 
-    /// The folder's saves by sequence, oldest first, each with its meta-only read. Temp and
-    /// backup files are not listed.
+    /// The folder's saves by sequence, oldest first, each with its meta-only read. Temp files
+    /// are not listed, nor backups whose save exists. An orphaned `<save>.bak` (a crash or a
+    /// deleted save left only the backup) is restored to its save's name, or listed under the
+    /// `.bak` name if the rename fails.
     pub fn list(&self, fs: &dyn SaveFs) -> Vec<SlotEntry> {
         let mut out: Vec<SlotEntry> = fs
             .list(&self.dir)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|path| {
-                let (sequence, reason) = parse_file_name(&path)?;
+                let (path, (sequence, reason)) = match parse_file_name(&path) {
+                    Some(parsed) => (path, parsed),
+                    None => Self::orphaned_backup(fs, path)?,
+                };
                 let meta = fs
                     .open(&path)
                     .map_err(|e| e.to_string())
@@ -172,6 +178,25 @@ impl SlotDir {
             .collect();
         out.sort_by(|a, b| (a.sequence, &a.path).cmp(&(b.sequence, &b.path)));
         out
+    }
+
+    /// `<save>.bak` with no `<save>` beside it: renamed back to `<save>` (the path to list),
+    /// else the `.bak` path itself. `None` for anything else.
+    fn orphaned_backup(fs: &dyn SaveFs, bak: PathBuf) -> Option<(PathBuf, (u64, SaveReason))> {
+        if bak.extension()? != "bak" {
+            return None;
+        }
+        let main = bak.with_extension("");
+        let parsed = parse_file_name(&main)?;
+        if fs.exists(&main) {
+            return None;
+        }
+        if fs.rename(&bak, &main).is_ok() {
+            let _ = fs.sync_dir(main.parent().unwrap_or(Path::new(".")));
+            Some((main, parsed))
+        } else {
+            Some((bak, parsed))
+        }
     }
 
     /// The newest readable save, of `reason` if given.

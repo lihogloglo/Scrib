@@ -34,7 +34,7 @@ pub use big_space;
 pub use coords::{GRID_SWITCH, WorldPosOf, from_grid, to_grid, transform_to_grid, world_grid};
 #[cfg(feature = "debug")]
 pub use debug::{StreamingDebug, level_color};
-pub use fade::{FadePhase, FadeTransition, StartTravel, TravelArrived};
+pub use fade::{FadeCutHooks, FadePhase, FadeTransition, StartBlackout, StartTravel, TravelArrived};
 pub use far::{CellProxies, FarProxies, ProxySpawnCx};
 pub use origin::{PHASE_PERIODS, WorldOrigin, WorldOriginBuffer, WorldOriginUniform};
 pub use precombine::{CellPrecombine, PrecombineBucket, PrecombinePath, Precombines, bucket_ranges};
@@ -93,17 +93,19 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<PlacementSpawners>()
             .init_resource::<ModelMaterials>()
             .init_resource::<FadeTransition>()
+            .init_resource::<FadeCutHooks>()
             .init_asset::<CellPrecombine>()
             .insert_resource(Streaming::new(self.config.clone()))
             .add_message::<CellLoaded>()
             .add_message::<CellUnloaded>()
             .add_message::<WorldspaceActivated>()
             .add_message::<StartTravel>()
+            .add_message::<StartBlackout>()
             .add_message::<TravelArrived>()
             .add_plugins(origin::WorldOriginPlugin)
             .configure_sets(Update, (StreamingSystems::Drive, StreamingSystems::Transition).chain())
             .add_systems(Update, stream::drive_streaming.in_set(StreamingSystems::Drive))
-            .add_systems(Update, (fade::run_fade, fade::fade_overlay).chain().in_set(StreamingSystems::Transition))
+            .add_systems(Update, (fade::run_cut_hooks, fade::run_fade, fade::fade_overlay).chain().in_set(StreamingSystems::Transition))
             .add_systems(PostStartup, worldspace::assign_origins.before(BigSpaceSystems::RecenterLargeTransforms))
             .add_systems(PostUpdate, worldspace::assign_origins.before(BigSpaceSystems::RecenterLargeTransforms))
             // After scene spawning (runtime-imported models), before visibility.

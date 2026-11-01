@@ -34,6 +34,7 @@ sf_sky_bevy.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_screens.workspace = true
+sf_weather_bevy.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 workspace-hack.workspace = true
@@ -42,6 +43,7 @@ workspace-hack.workspace = true
 # The moved test: save, fresh state, load on the installed game's records.
 mw_install.workspace = true
 mw_records.workspace = true
+mw_weather.workspace = true
 mw_vfs.workspace = true
 sf_rpg_ui.workspace = true
 sf_vfs.workspace = true

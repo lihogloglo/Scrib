@@ -18,8 +18,8 @@ use sf_save::{Family, SectionFlags, SectionKey, SectionSpec, decode, encode};
 pub(crate) type Encoder = Box<dyn FnOnce() -> Vec<u8> + Send>;
 /// A decoded section value, typed by its provider.
 pub(crate) type Decoded = Box<dyn Any + Send + Sync>;
-/// A pre-apply check of one decoded value against the running app.
-pub(crate) type Check = Arc<dyn Fn(&World, &(dyn Any + Send + Sync)) -> Result<(), String> + Send + Sync>;
+/// A pre-apply check of one decoded value (with its key) against the running app.
+pub(crate) type Check = Arc<dyn Fn(&World, &SectionKey, &(dyn Any + Send + Sync)) -> Result<(), String> + Send + Sync>;
 
 /// The type-erased half of a provider.
 pub(crate) trait SectionIo: Send + Sync + 'static {
@@ -57,6 +57,13 @@ impl SaveSection {
     /// A family of sections (`sf/character/<player key>`, `<mod id>/script`): `get` returns every
     /// instance with its key (each must belong to `family`); `set` receives every instance the
     /// save holds, possibly none.
+    ///
+    /// `set` runs after the reset hooks and the providers ordered before it, so an `Err` leaves
+    /// the world partly loaded: the load reports [`LoadError::Apply`](crate::LoadError::Apply)
+    /// (`partly_loaded()`), closes the [`SaveGate`](crate::SaveGate) with
+    /// [`LOAD_FAILED`](crate::LOAD_FAILED), and the game should return to its main menu. Put
+    /// every refusal in [`Self::check`] / [`Self::check_keyed`] (they run before anything
+    /// changes) and keep `set` infallible.
     pub fn family<T, G, S>(family: Family, version: u32, get: G, set: S) -> Self
     where
         T: Serialize + DeserializeOwned + Send + Sync + 'static,
@@ -91,9 +98,15 @@ impl SaveSection {
     /// A check of each decoded `T` against the running app, run for every section before any is
     /// applied: a failure refuses the load with nothing changed.
     #[must_use]
-    pub fn check<T: 'static>(mut self, f: impl Fn(&World, &T) -> Result<(), String> + Send + Sync + 'static) -> Self {
-        self.check = Some(Arc::new(move |world, value| match value.downcast_ref::<T>() {
-            Some(v) => f(world, v),
+    pub fn check<T: 'static>(self, f: impl Fn(&World, &T) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        self.check_keyed(move |world, _key, value: &T| f(world, value))
+    }
+
+    /// [`Self::check`] that also sees the section's key (a family instance's).
+    #[must_use]
+    pub fn check_keyed<T: 'static>(mut self, f: impl Fn(&World, &SectionKey, &T) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        self.check = Some(Arc::new(move |world, key, value| match value.downcast_ref::<T>() {
+            Some(v) => f(world, key, v),
             None => Err("decoded value of the wrong type".into()),
         }));
         self

@@ -5,8 +5,10 @@
 //!   a version bump fails here: bump the version, freeze the old type in a `legacy` module, add a
 //!   typed step, then bless the new golden. Semantic changes with the same shape (units, meanings)
 //!   need a bump too; reviewers check.
-//! - **Golden save**: `tests/golden/s2.sfsave`, the canonical played yard written by S2. It must
-//!   keep loading into the same state and re-save to the same raw section bytes.
+//! - **Golden saves**: `tests/golden/s2.sfsave`, the canonical played yard written by S2
+//!   (`sf/character` v1), must keep loading (through migration) into the same state;
+//!   `tests/golden/character-v2.sfsave`, the same yard at the current versions, must also
+//!   re-save to the same raw section bytes. Released goldens are never re-blessed.
 //!
 //! Bless (write missing or changed goldens) with `SF_SAVE_BLESS=1`.
 
@@ -107,32 +109,71 @@ fn saved_shapes_match_their_goldens() {
     }
 }
 
+/// Frozen older types keep their old shapes: their leaves are still live types, so a change to
+/// one (`ActionClock`, `Timers`, `Locomotion`) would silently break the migration's input.
 #[test]
-fn the_s2_golden_save_still_loads_and_resaves_identically() {
-    let path = data_dir("golden").join("s2.sfsave");
-    let dir = tempfile::tempdir().unwrap();
+fn legacy_shapes_match_their_goldens() {
+    check_golden(
+        &format!("sf.{}.v1", sections::CHARACTER),
+        &shape::<sections::character::legacy::v1::CharacterSave>(
+            None,
+            &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>],
+        ),
+    );
+}
+
+/// The golden save `name`, written from the played yard when blessing and missing.
+fn golden_save(name: &str, dir: &Path) -> PathBuf {
+    let path = data_dir("golden").join(name);
     if !path.exists() {
         assert!(blessing(), "no golden save {}: bless it with SF_SAVE_BLESS=1", path.display());
-        let (mut a, y) = new_game(dir.path());
+        let (mut a, y) = new_game(dir);
         play(&mut a, &y);
         let r = crate::tests::save(&mut a, SaveRequest::to_path(&path));
         assert!(r.durable);
     }
-    // The state the golden was written from.
-    let (mut played, y) = new_game(dir.path());
-    play(&mut played, &y);
+    path
+}
 
-    let mut b = app(dir.path(), false);
+fn raw_sections(path: &Path) -> Vec<(String, u32, Vec<u8>)> {
+    let f = SaveFile::open(std::fs::read(path).unwrap()).unwrap();
+    f.entries().iter().skip(1).map(|e| (e.key.to_string(), e.version, f.raw(&e.key).unwrap())).collect()
+}
+
+/// Loads `golden` into a fresh app: it must give the played yard's state and migrate exactly
+/// `migrated`. Returns the raw sections of a re-save.
+fn load_golden(golden: &Path, dir: &Path, migrated: &[(sf_save::SectionKey, u32, u32)]) -> Vec<(String, u32, Vec<u8>)> {
+    // The state the golden was written from.
+    let (mut played, y) = new_game(dir);
+    play(&mut played, &y);
+    let mut b = app(dir, false);
     wire(&mut b);
-    let report = load(&mut b, LoadRequest::path(&path)).unwrap();
-    assert!(report.migrated.is_empty() && report.dormant.is_empty(), "{report:?}");
+    let report = load(&mut b, LoadRequest::path(golden)).unwrap();
+    assert_eq!(report.migrated, migrated);
+    assert!(report.dormant.is_empty(), "{report:?}");
     assert_eq!(state(&b), state(&played));
     let again = crate::tests::save(&mut b, SaveRequest::slot(SaveReason::Manual));
-    let golden = SaveFile::open(std::fs::read(&path).unwrap()).unwrap();
-    let resaved = SaveFile::open(std::fs::read(&again.path).unwrap()).unwrap();
-    let raw = |f: &SaveFile| -> Vec<(String, u32, Vec<u8>)> {
-        f.entries().iter().skip(1).map(|e| (e.key.to_string(), e.version, f.raw(&e.key).unwrap())).collect()
-    };
-    assert_eq!(raw(&golden), raw(&resaved));
+    raw_sections(&again.path)
+}
+
+/// The S2 golden (`sf/character` v1) loads through the v1 → v2 step into the same state, and
+/// re-saves to exactly the current golden's sections.
+#[test]
+fn the_s2_golden_save_still_loads_through_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let s2 = data_dir("golden").join("s2.sfsave");
+    assert!(s2.exists(), "the S2 golden is released: never re-bless it");
+    let current = golden_save("character-v2.sfsave", dir.path());
+    let resaved = load_golden(&s2, dir.path(), &[(sections::character_key(crate::tests::HERO), 1, sections::CHARACTER_VERSION)]);
+    assert_eq!(resaved, raw_sections(&current));
+}
+
+/// The current golden (`tests/golden/character-v2.sfsave`, the yard re-written when
+/// `sf/character` went to v2) loads without migration and re-saves byte for byte.
+#[test]
+fn the_current_golden_save_loads_and_resaves_identically() {
+    let dir = tempfile::tempdir().unwrap();
+    let current = golden_save("character-v2.sfsave", dir.path());
+    assert_eq!(load_golden(&current, dir.path(), &[]), raw_sections(&current));
     let _ = yard();
 }

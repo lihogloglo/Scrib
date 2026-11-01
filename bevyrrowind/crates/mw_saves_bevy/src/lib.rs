@@ -6,10 +6,13 @@
 //!     `PlacementId` (and physics' moved items, its blobs).
 //!   - `sf/rpg`: quests, journal, known topics (`RpgState::world`).
 //!   - `sf/clock`: the sky clock (day and hour, time scale) and the sim tick.
+//!   - `sf/weather`: the world weather's seed and overrides (`sf_weather_bevy::WorldWeather`;
+//!     DECISIONS we1: scripted `ChangeWeather` / `ModRegion` changes are timestamped overrides
+//!     in it). The wind's live sources are not saved (`wind: None`): they are presentation.
 //!   - `sf/character/<host key>`: the host character: worldspace + feet position, facing, the
+//!     gameplay body (`ActionState`, `Locomotion`; restored through `RestoreBody`), the
 //!     inventory (`RpgState::pc`), and an `mw` extension blob ([`PlayerExt`]: first / third
-//!     person). The gameplay body (`ActionState`, `Locomotion`) is not saved yet (`body: None`):
-//!     load drops the player standing at the saved spot.
+//!     person).
 //!   - `mw/rpg` ([`MwRpgSave`]): the rest of `RpgState`: NPC dialogue state (disposition changes,
 //!     greetings), container inventories, script locals and globals. Actor keys that are not
 //!     placement ids (entity bits of spawned characters: `dialogue.rs` `actor_key`) are left out.
@@ -20,22 +23,27 @@
 //!   [`mw_controls_bevy::Control::QuickSave`]): F5 / F9, the modern PC convention (Skyrim,
 //!   Fallout 4, Oblivion, The Witcher 3; Morrowind had F5 quicksave and F9 quickload too). No
 //!   gamepad default (consoles have none; the save menu is part 2).
-//! - **Quickload** restores in the running game: a full replace of every section (save.md
-//!   "Loading"), then the player goes to the saved spot through the door-travel fade
-//!   (`StartTravel`, the same path as a door, so another worldspace works). Resident placements the
-//!   loaded overlay removes are taken out now (`inventory::take_placement`). With no save made or
-//!   loaded in this run (a fresh start), quickload takes the newest quicksave of any world, so
-//!   "save, quit, start, F9" resumes.
+//! - **Identity** (`sf/meta`): content id, profile, load order and profile fingerprint from the
+//!   profile the boot resolved ([`GameProfile`], from `mw_boot_bevy::mods::profile_identity`),
+//!   copied into `SaveIdentity` whenever it changes. Load does not compare them yet (save.md
+//!   "Mod-list changes", S3).
+//! - **Quickload** restores in the running game behind a blackout (`load_behind_fade`): at the
+//!   fade's cut every section is replaced (save.md "Loading"), and the character section's
+//!   `StartTravel { reload: true }` moves the player to the saved spot (the door-travel path, so
+//!   another worldspace works) and respawns every resident cell from the loaded overlay in the same
+//!   frame: items taken after the save come back, moved ones go back, removed ones stay out.
+//!   With no save made or loaded in this run (a fresh start), quickload takes the newest
+//!   quicksave of any world, so "save, quit, start, F9" resumes.
 //! - **Save/load screen** (part 2): [`menu`], from the pause menu and the main menu.
 //! - **Continue** (the main menu): [`newest_save`] of any reason, quickload's search.
 //! - **Notices**: "Quicksaved" / "Saved" / "Loaded" toasts (`sf_ui_bevy::Toasts`, when the UI runs), else log.
-//! - Not yet (leftovers): items taken after the save reappear only when their cell reloads (no
-//!   streaming refresh of resident cells), the body's motion state, a save during dialogue,
-//!   the host's profile `PlayerKey` (a constant for now), localized notices.
+//! - Not yet (leftovers): the load-side identity check and mod diff (S3), `sf/records` (no
+//!   runtime records in the game yet), a save during dialogue, the host's profile `PlayerKey`
+//!   (a constant for now), localized notices.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::PoisonError;
+use std::sync::{Arc, PoisonError};
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -50,15 +58,17 @@ use sf_camera_bevy::PlayerCamera;
 use sf_coords::WorldPos;
 use sf_records::RecordId;
 use sf_rpg::{ActorKey, CharacterRpg, PlayerKey};
-use sf_save_bevy::sf_save::{SaveMode, SaveReason, SectionKey, SlotDir, list_worlds};
+use mw_boot_bevy::mods::ProfileIdentity;
+use sf_save_bevy::sf_save::{ModRef, SaveMode, SaveReason, SectionKey, SlotDir, list_worlds};
 use sf_save_bevy::{
-    LoadDone, LoadRequest, SaveAppExt, SaveConfig, SaveDone, SaveGate, SaveRequest, SaveSection, SaveSession, SaveStorage,
-    SfSavePlugin, sections,
+    LoadDone, LoadRequest, LoadTransition, SaveAppExt, SaveConfig, SaveDone, SaveGate, SaveIdentity, SaveRequest, SaveSection, SaveSession,
+    SaveStorage, SfSavePlugin, sections,
 };
 use sf_sky_bevy::SkyTime;
+use sf_weather_bevy::WorldWeather;
 use sf_world::{Location, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
-use sf_world_bevy::{ActiveWorldspace, FadeTransition, StartTravel, WorldOverlay, from_grid};
+use sf_world_bevy::{ActiveWorldspace, FadeCutHooks, FadeTransition, StartBlackout, StartTravel, WorldOverlay, from_grid};
 
 use mw_controls_bevy::{QuickLoadAction, QuickSaveAction};
 use mw_game_core::doors::{ARRIVAL_EYE_M, DoorUser};
@@ -120,8 +130,35 @@ impl MwRpgSave {
     }
 }
 
-/// Registers the game's sections (after `SfSavePlugin`; the app and the headless test).
+/// The content the game runs (`mw_boot_bevy::mods::ProfileIdentity`): `sf/meta`'s identity.
+/// The app inserts it from the boot's resolved profile; a change rewrites [`SaveIdentity`].
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GameProfile(pub ProfileIdentity);
+
+/// Copies the profile into the save identity (content id, profile, load order, fingerprint);
+/// the party and versions stay as they are.
+fn fill_identity(identity: &mut SaveIdentity, profile: &ProfileIdentity) {
+    mw_boot_bevy::mods::CONTENT_ID.clone_into(&mut identity.content_id);
+    env!("CARGO_PKG_VERSION").clone_into(&mut identity.build_id);
+    identity.profile.clone_from(&profile.profile);
+    identity.load_order =
+        profile.load_order.iter().map(|m| ModRef { id: m.id.clone(), version: m.version.clone(), manifest_hash: m.manifest_hash }).collect();
+    identity.profile_fingerprint = profile.fingerprint;
+}
+
+#[allow(clippy::needless_pass_by_value)] // system parameters
+fn sync_identity(profile: Option<Res<GameProfile>>, mut identity: ResMut<SaveIdentity>) {
+    if let Some(profile) = profile
+        && profile.is_changed()
+    {
+        fill_identity(&mut identity, &profile.0);
+    }
+}
+
+/// Registers the game's sections (after `SfSavePlugin`; the app and the headless test) and the
+/// identity sync from [`GameProfile`].
 pub fn register(app: &mut App) {
+    app.add_systems(First, sync_identity);
     app.on_load_reset(close_menus);
     app.add_save_section(sections::overlay(
         snapshot_overlay,
@@ -140,6 +177,14 @@ pub fn register(app: &mut App) {
         |w, v| {
             if let Some(mut t) = w.get_resource_mut::<SkyTime>() {
                 t.0 = v;
+            }
+        },
+    ))
+    .add_save_section(sections::weather(
+        |w| w.get_resource::<WorldWeather>().map(|ww| sections::WeatherSave { weather: ww.0.clone(), wind: None }),
+        |w, v| {
+            if let Some(mut ww) = w.get_resource_mut::<WorldWeather>() {
+                ww.0 = v.weather;
             }
         },
     ))
@@ -253,7 +298,8 @@ fn restore_characters(world: &mut World, all: Vec<sections::CharacterSave>) {
     {
         restore.0 = Some((body.action, body.locomotion));
     }
-    // `reload`: the resident cells respawn from the loaded overlay at the cut (save.md "Loading").
+    // Runs at the blackout's cut (`load_behind_fade`): the fade executes this travel in the same
+    // frame, and `reload` respawns the resident cells from the loaded overlay (save.md "Loading").
     world.write_message(StartTravel { traveler: cam, to, rotation: Quat::from_rotation_y(host.facing), reload: true });
 }
 
@@ -262,9 +308,30 @@ pub fn add(app: &mut App) {
     let root = save_root();
     info!("saves: {}", root.display());
     app.add_plugins(SfSavePlugin { config: SaveConfig { root, ..Default::default() } });
+    if let Some(profile) = mw_boot_bevy::mods::profile_identity() {
+        app.insert_resource(GameProfile(profile));
+    } else {
+        warn!("saves: no resolved mod profile; saves carry no content identity");
+    }
     register(app);
+    load_behind_fade(app);
     app.add_systems(Update, (gate_fade, keys, notices).chain());
     menu::add(app);
+}
+
+/// A decoded load applies at a fade's cut (save.md "Loading" step 4): the save runner starts a
+/// blackout (queued behind a door fade if one runs), whose cut hook applies the load; the
+/// character section's `StartTravel { reload }` then moves the player and reloads the resident
+/// cells in that same frame.
+fn load_behind_fade(app: &mut App) {
+    app.insert_resource(LoadTransition {
+        begin: Some(Arc::new(|world: &mut World| {
+            world.write_message(StartBlackout);
+        })),
+    });
+    app.world_mut().get_resource_or_init::<FadeCutHooks>().add(|world| {
+        sf_save_bevy::apply_pending_load(world);
+    });
 }
 
 /// `<user data>` (the mods user folder), else `./userdata`.
@@ -373,7 +440,6 @@ fn notice(toasts: Option<&mut sf_ui_bevy::Toasts>, text: &str) {
 #[cfg(test)]
 mod tests {
     //! Save, fresh state, load on real data (skips without a Morrowind install).
-    use std::sync::Arc;
 
     use bevy_ecs::message::Messages;
     use mw_install::MorrowindInstall;
@@ -393,6 +459,77 @@ mod tests {
         register(&mut app);
         app.insert_resource(rpg).insert_resource(WorldOverlay::default()).insert_resource(SkyTime::default());
         app
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("bw-saves-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    /// The registration alone (no install): sections over whatever resources the test inserts.
+    fn bare_app(root: PathBuf) -> App {
+        let mut app = App::new();
+        app.add_plugins(SfSavePlugin { config: SaveConfig { root, background: false, ..Default::default() } });
+        register(&mut app);
+        app
+    }
+
+    fn save(app: &mut App) {
+        app.world_mut().write_message(SaveRequest::quick());
+        app.update();
+        let saved: Vec<_> = app.world_mut().resource_mut::<Messages<SaveDone>>().drain().collect();
+        saved[0].0.as_ref().expect("saved");
+    }
+
+    fn load(app: &mut App) {
+        app.world_mut().write_message(LoadRequest::latest(Some(SaveReason::Quick)));
+        app.update();
+        let loaded: Vec<_> = app.world_mut().resource_mut::<Messages<LoadDone>>().drain().collect();
+        loaded[0].0.as_ref().expect("loaded");
+    }
+
+    #[test]
+    fn a_save_carries_the_game_profile_identity() {
+        let root = temp_root("identity");
+        let mut app = bare_app(root.clone());
+        let profile = ProfileIdentity {
+            profile: "default".to_owned(),
+            load_order: vec![
+                mw_boot_bevy::mods::ModIdentity { id: "mw".to_owned(), version: "0.1.0".to_owned(), manifest_hash: [1; 32] },
+                mw_boot_bevy::mods::ModIdentity { id: "morrowind-data".to_owned(), version: "1.6.1820".to_owned(), manifest_hash: [2; 32] },
+            ],
+            fingerprint: [7; 32],
+        };
+        app.insert_resource(GameProfile(profile));
+        save(&mut app);
+
+        let storage = app.world().resource::<SaveStorage>().0.clone();
+        let (_, dir) = list_worlds(&*storage, &root, SaveMode::Single).into_iter().next().expect("one world");
+        let entry = dir.latest(&*storage, None).expect("a save");
+        let meta = entry.meta.as_ref().expect("readable meta");
+        assert_eq!(meta.content_id, mw_boot_bevy::mods::CONTENT_ID);
+        assert_eq!(meta.profile, "default");
+        assert_eq!(meta.load_order.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["mw", "morrowind-data"]);
+        assert_eq!(meta.load_order[1].manifest_hash, [2; 32]);
+        assert_eq!(meta.profile_fingerprint, [7; 32]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scripted_weather_and_the_seed_round_trip() {
+        let root = temp_root("weather");
+        let mut app = bare_app(root.clone());
+        let mut state = sf_weather_bevy::sf_weather::WeatherState::new(0xBEEF);
+        assert!(mw_weather::script::change_weather(&mut state, "Bitter Coast Region", 4, 30.5));
+        assert!(!state.overrides.is_empty());
+        app.insert_resource(WorldWeather(state.clone()));
+        save(&mut app);
+
+        app.insert_resource(WorldWeather::default());
+        load(&mut app);
+        assert_eq!(app.world().resource::<WorldWeather>().0, state, "seed and the ChangeWeather override are back");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

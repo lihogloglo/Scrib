@@ -57,3 +57,91 @@ pub fn player_of(key: &SectionKey) -> Option<PlayerKey> {
     let hex = key.instance()?;
     (hex.len() == 32).then(|| u128::from_str_radix(hex, 16).ok().map(PlayerKey)).flatten()
 }
+
+/// Frozen older shapes of `sf/character` and their typed steps (save.md "Versioning and
+/// migration"). The types keep their original names so their serde shapes match the old goldens
+/// (`tests/shapes/sf.character.v<n>.json`, checked in `tests_formats.rs`).
+pub mod legacy {
+    /// `sf.character.v1` (S2, until combat C1a): `ActionState` without `forced` and `lock`,
+    /// `ModeState` without `moveset`. The unchanged leaves (`ActionClock`, `Timers`,
+    /// `Locomotion`, ...) are still the live types; the v1 shape golden catches a change to them.
+    pub mod v1 {
+        use std::collections::BTreeMap;
+
+        use serde::{Deserialize, Serialize};
+        use sf_action::{ActionClock, BodyMemory, InputBuffer, Mode, RuleKey, Tick, Timers};
+        use sf_controller::Locomotion;
+        use sf_rpg::{CharacterRpg, PlayerKey};
+        use sf_world::Location;
+
+        use super::super::VersionedBlob;
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct ModeState {
+            pub mode: Mode,
+            pub combat: bool,
+        }
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct ActionState {
+            pub mov: RuleKey,
+            pub started: Tick,
+            pub clock: ActionClock,
+            pub mode: ModeState,
+            pub buffer: InputBuffer,
+            pub timers: Timers,
+            pub body: BodyMemory,
+        }
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct CharacterBody {
+            pub action: ActionState,
+            pub locomotion: Locomotion,
+        }
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct CharacterSave {
+            pub player: PlayerKey,
+            pub name: String,
+            pub location: Location,
+            pub facing: f32,
+            pub body: Option<CharacterBody>,
+            pub rpg: CharacterRpg,
+            pub ext: BTreeMap<String, VersionedBlob>,
+        }
+
+        impl CharacterSave {
+            /// v1 → v2: no moveset (the shell sets it from equipment on the next tick), no forced
+            /// reaction, no lock-on target.
+            pub fn migrate(self) -> super::super::CharacterSave {
+                let body = self.body.map(|b| {
+                    let a = b.action;
+                    super::super::CharacterBody {
+                        action: sf_action::ActionState {
+                            mov: a.mov,
+                            started: a.started,
+                            clock: a.clock,
+                            mode: sf_action::ModeState { mode: a.mode.mode, combat: a.mode.combat, moveset: None },
+                            buffer: a.buffer,
+                            timers: a.timers,
+                            body: a.body,
+                            warp: None,
+                            forced: None,
+                            lock: None,
+                        },
+                        locomotion: b.locomotion,
+                    }
+                });
+                super::super::CharacterSave {
+                    player: self.player,
+                    name: self.name,
+                    location: self.location,
+                    facing: self.facing,
+                    body,
+                    rpg: self.rpg,
+                    ext: self.ext,
+                }
+            }
+        }
+    }
+}

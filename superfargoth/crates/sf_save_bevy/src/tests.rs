@@ -409,6 +409,82 @@ fn load_is_a_full_replace() {
     assert_eq!(w.resource::<Rpg>().0, WorldRpg::default());
 }
 
+/// A stand-in fade: `begin` starts it, it reaches black after a few frames and applies the
+/// pending load there (the cut), as `sf_world_bevy`'s blackout does.
+#[derive(Resource, Default)]
+struct FakeFade {
+    out_frames: Option<u32>,
+    cut_frame: Option<u32>,
+}
+
+#[derive(Resource, Default)]
+struct Seen {
+    frame: u32,
+    /// Observations so far.
+    x: Vec<Option<f64>>,
+}
+
+fn observe(mut seen: ResMut<Seen>, globals: Res<Globals>) {
+    seen.frame += 1;
+    let x = globals.0.get("x").copied();
+    seen.x.push(x);
+}
+
+fn fake_fade(world: &mut World) {
+    let frame = world.resource::<Seen>().frame;
+    let mut fade = world.resource_mut::<FakeFade>();
+    match fade.out_frames {
+        Some(0) => {
+            fade.out_frames = None;
+            fade.cut_frame = Some(frame);
+            assert!(load_pending(world));
+            assert!(apply_pending_load(world));
+        }
+        Some(n) => fade.out_frames = Some(n - 1),
+        None => {}
+    }
+}
+
+/// save.md "Loading" step 4: with a transition, the decoded load waits for its cut. Every
+/// `Update` before the cut sees the old state, the cut frame's later systems and every frame
+/// after see the loaded one; saves wait until the load has applied.
+#[test]
+fn a_load_applies_only_at_the_transitions_cut() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, _) = new_game(dir.path());
+    a.world_mut().resource_mut::<Globals>().0.insert("x".into(), 1.0);
+    let saved = save(&mut a, SaveRequest::slot(SaveReason::Manual));
+    a.world_mut().resource_mut::<Globals>().0.insert("x".into(), 2.0);
+
+    a.init_resource::<FakeFade>().init_resource::<Seen>().add_systems(Update, (observe, fake_fade, observe).chain());
+    a.insert_resource(LoadTransition {
+        begin: Some(Arc::new(|w: &mut World| w.resource_mut::<FakeFade>().out_frames = Some(3))),
+    });
+    a.world_mut().write_message(LoadRequest::path(&saved.path));
+    a.update();
+    assert!(drain::<LoadDone>(&mut a).is_empty(), "decoded, waiting for the cut");
+    assert!(load_pending(a.world()));
+    a.world_mut().write_message(SaveRequest::slot(SaveReason::Manual));
+    let mut done = Vec::new();
+    let mut save_done = Vec::new();
+    for _ in 0..8 {
+        a.update();
+        done.extend(drain::<LoadDone>(&mut a));
+        save_done.extend(drain::<SaveDone>(&mut a));
+        if a.world().resource::<FakeFade>().cut_frame.is_none() {
+            assert!(save_done.is_empty(), "a save waits while a load waits for its cut");
+        }
+    }
+    assert_eq!(done.len(), 1, "{done:?}");
+    done[0].0.as_ref().expect("loaded");
+    assert_eq!(save_done.len(), 1, "the save ran after the load");
+    let seen = a.world().resource::<Seen>();
+    // `frame` counts observations, so the cut frame is the index of the first one after the cut.
+    let cut = usize::try_from(a.world().resource::<FakeFade>().cut_frame.expect("the fade reached its cut")).unwrap();
+    assert!(seen.x[..cut].iter().all(|x| *x == Some(2.0)), "old state until the cut: {:?}", seen.x);
+    assert!(seen.x[cut..].iter().all(|x| *x == Some(1.0)), "loaded state from the cut on: {:?}", seen.x);
+}
+
 #[test]
 fn quicksave_quickload_and_rotation() {
     let dir = tempfile::tempdir().unwrap();
@@ -511,6 +587,44 @@ fn corrupt_saves_are_refused_and_change_nothing() {
     assert!(matches!(load(&mut b, LoadRequest::path(&bad)), Err(LoadError::Container(ContainerError::Length { .. }))));
     assert!(matches!(load(&mut b, LoadRequest::path(dir.path().join("missing.sfsave"))), Err(LoadError::Read(_))));
     assert_eq!(state(&b), before);
+}
+
+/// Flips a byte inside the `sf/rpg` section of the file at `path`.
+fn corrupt_rpg(path: &Path) {
+    let mut bytes = std::fs::read(path).unwrap();
+    let f = SaveFile::open(bytes.clone()).unwrap();
+    let rpg = f.entry(&sections::key(sections::RPG)).unwrap();
+    let at = usize::try_from(f.preamble().area_start() + rpg.offset).unwrap();
+    bytes[at] ^= 0x40;
+    std::fs::write(path, &bytes).unwrap();
+}
+
+#[test]
+fn latest_falls_back_past_a_corrupt_newest_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, y) = new_game(dir.path());
+    play(&mut a, &y);
+    let good = save(&mut a, SaveRequest::quick());
+    let newest = save(&mut a, SaveRequest::quick());
+    assert_ne!(newest.path, good.path);
+    corrupt_rpg(&newest.path);
+    // Latest (the current world's folder) skips the corrupt newest save and loads the earlier verified one.
+    assert_eq!(load(&mut a, LoadRequest::latest(None)).unwrap().path, good.path);
+    // An explicit load of the corrupt save names the earlier one for the UI to offer.
+    let err = load(&mut a, LoadRequest::path(&newest.path)).unwrap_err();
+    assert_eq!(
+        err,
+        LoadError::Corrupt {
+            error: Box::new(LoadError::Container(ContainerError::SectionHash { key: sections::key(sections::RPG) })),
+            fallback: good.path.clone(),
+        }
+    );
+    // With every candidate corrupt, Latest reports the newest one's error.
+    corrupt_rpg(&good.path);
+    assert_eq!(
+        load(&mut a, LoadRequest::latest(None)).unwrap_err(),
+        LoadError::Container(ContainerError::SectionHash { key: sections::key(sections::RPG) })
+    );
 }
 
 /// Re-writes a save with extra sections (as another build or a removed mod would have).
@@ -739,4 +853,152 @@ fn record_overlay_reapplies_and_reports_what_it_skips() {
     assert_eq!(skipped.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["gone", "x"]);
     assert_eq!(db.get::<Item>(&id), Some(&Item { name: "Tonic".into(), magnitude: 3.0 }));
     assert_eq!(db.get::<Item>(&RecordId::new("bread")).unwrap().magnitude, 2.0);
+}
+
+/// Save review C3: a character section whose key names another player is refused by the check
+/// phase, before any reset, so the running world is untouched.
+#[test]
+fn a_forged_character_key_is_refused_before_anything_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, y) = new_game(dir.path());
+    let base = save(&mut a, SaveRequest::quick());
+    let other = sections::character_key(PlayerKey(7));
+    let forged = with_extra(&base.path, &[(other.clone(), sections::CHARACTER_VERSION, SectionFlags::NONE, encode(&new_character(&y)))]);
+    let (mut b, _) = new_game(dir.path());
+    b.world_mut().resource_mut::<Globals>().0.insert("untouched".into(), 1.0);
+    let before = state(&b);
+    let err = load(&mut b, LoadRequest::path(&forged)).unwrap_err();
+    assert!(matches!(&err, LoadError::Check { key, message } if *key == other && message.contains("c0ffee")), "{err}");
+    assert!(!err.partly_loaded());
+    assert_eq!(state(&b), before);
+    assert!(!b.world().resource::<SaveGate>().is_blocked());
+}
+
+#[derive(Resource, Default)]
+struct FailApply(bool);
+
+/// Save review C3: a provider whose fallible `set` fails mid-apply leaves a partly loaded world;
+/// the gate closes so no save (autosave included) persists it, until a load succeeds.
+#[test]
+fn a_failed_apply_blocks_saving_until_a_good_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, _) = new_game(dir.path());
+    let family = sf_save::Family { owner: Some("test".into()), family: "fails".into() };
+    a.init_resource::<FailApply>().add_save_section(
+        SaveSection::family(
+            family,
+            1,
+            |_: &World| Ok(vec![(SectionKey::new("test", "fails/a").unwrap(), 1_u32)]),
+            |w: &mut World, _: Vec<(SectionKey, u32)>| if w.resource::<FailApply>().0 { Err("boom".into()) } else { Ok(()) },
+        )
+        .order(order::ADAPTER),
+    );
+    let good = save(&mut a, SaveRequest::quick());
+    a.world_mut().resource_mut::<FailApply>().0 = true;
+    let err = load(&mut a, LoadRequest::path(&good.path)).unwrap_err();
+    assert_eq!(err, LoadError::Apply { section: "test/fails".into(), message: "boom".into() });
+    assert!(err.partly_loaded());
+    assert_eq!(a.world().resource::<SaveGate>().blockers().collect::<Vec<_>>(), [LOAD_FAILED]);
+    let folder = good.path.parent().unwrap().to_owned();
+    let files = || std::fs::read_dir(&folder).unwrap().count();
+    let count = files();
+    a.world_mut().write_message(SaveRequest::slot(SaveReason::Auto));
+    a.world_mut().write_message(SaveRequest::quick());
+    for _ in 0..3 {
+        a.update();
+        assert!(drain::<SaveDone>(&mut a).is_empty(), "no save while the world is partly loaded");
+    }
+    assert_eq!(files(), count);
+    a.world_mut().resource_mut::<FailApply>().0 = false;
+    load(&mut a, LoadRequest::path(&good.path)).unwrap();
+    assert!(!a.world().resource::<SaveGate>().is_blocked());
+    drain::<SaveDone>(&mut a); // the held saves, cancelled by the load
+    assert!(save(&mut a, SaveRequest::quick()).durable);
+}
+
+/// Save review C7: a save whose overlay blobs are older than a `declare()`d version is refused
+/// (no migration exists), rather than loaded and re-saved under the new version number.
+#[test]
+fn older_overlay_blobs_are_refused_not_restamped() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, y) = new_game(dir.path());
+    play(&mut a, &y);
+    let old = save(&mut a, SaveRequest::quick());
+    let (mut b, _) = new_game(dir.path());
+    b.world_mut().resource_mut::<BlobVersions>().declare("actor", 2);
+    let before = state(&b);
+    let err = load(&mut b, LoadRequest::path(&old.path)).unwrap_err();
+    assert!(
+        matches!(&err, LoadError::Check { key, message } if *key == sections::key(sections::OVERLAY) && message.contains("\"actor\" are version 1, older")),
+        "{err}"
+    );
+    assert_eq!(state(&b), before);
+    // Nothing of the old save reached b's next save: its overlay and table are b's own.
+    let overlay_of = |path: &Path| -> sections::OverlaySave {
+        let f = SaveFile::open(std::fs::read(path).unwrap()).unwrap();
+        sf_save::decode(&f.raw(&sections::key(sections::OVERLAY)).unwrap()).unwrap()
+    };
+    let again = save(&mut b, SaveRequest::quick());
+    let resaved = overlay_of(&again.path);
+    assert_eq!(resaved.overlay, PlacementOverlay::default());
+    assert_eq!(resaved.blob_versions, [("actor".to_owned(), 2)].into());
+    // The old file still says version 1 (absent: the default).
+    assert_eq!(overlay_of(&old.path).blob_versions.get("actor"), None);
+}
+
+/// Save review C8: an autosave `can_save` refuses is reported once, then re-asked every
+/// `AUTOSAVE_RETRY` of play time and written as soon as it is allowed, not a full interval later.
+#[test]
+fn a_refused_autosave_stays_pending_until_it_can_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, _) = new_game(dir.path());
+    a.insert_resource(Time::<Virtual>::default());
+    a.world_mut().resource_mut::<Autosave>().interval = Some(Duration::from_secs(10));
+    a.world_mut().resource_mut::<SaveGate>().can_save =
+        Some(Arc::new(|w: &World, _| if w.resource::<Globals>().0.contains_key("enemies") { Err("enemies nearby".into()) } else { Ok(()) }));
+    a.world_mut().resource_mut::<Globals>().0.insert("enemies".into(), 1.0);
+    let step = |a: &mut App| {
+        a.world_mut().resource_mut::<Time<Virtual>>().advance_by(AUTOSAVE_RETRY);
+        a.update();
+        drain::<SaveDone>(a)
+    };
+    let mut done = Vec::new();
+    for _ in 0..15 {
+        done.extend(step(&mut a));
+    }
+    assert_eq!(done, [SaveDone(Err(SaveError::Refused("enemies nearby".into())))], "reported once, retried silently");
+    a.world_mut().resource_mut::<Globals>().0.remove("enemies");
+    let done = step(&mut a);
+    assert_eq!(done.len(), 1, "{done:?}");
+    assert_eq!(done[0].0.as_ref().unwrap().reason, SaveReason::Auto);
+    assert_eq!(a.world().resource::<SaveSession>().play_time, Duration::from_secs(16));
+    for _ in 0..5 {
+        assert!(step(&mut a).is_empty(), "no retry after the autosave was written");
+    }
+}
+
+/// Save review C2 (framework half): a save of another content pack is refused before anything
+/// changes; an empty content id (unknown) and a different load order still load.
+#[test]
+fn a_save_of_other_content_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, _) = new_game(dir.path());
+    let mod_ref = |id: &str| ModRef { id: id.into(), version: "1".into(), manifest_hash: [0; 32] };
+    *a.world_mut().resource_mut::<SaveIdentity>() =
+        SaveIdentity { content_id: "pack-a".into(), load_order: vec![mod_ref("base"), mod_ref("lanterns")], ..SaveIdentity::default() };
+    let saved = save(&mut a, SaveRequest::quick());
+
+    let (mut b, _) = new_game(dir.path());
+    b.world_mut().resource_mut::<SaveIdentity>().content_id = "pack-b".into();
+    b.world_mut().resource_mut::<Globals>().0.insert("untouched".into(), 1.0);
+    let before = state(&b);
+    let err = load(&mut b, LoadRequest::path(&saved.path)).unwrap_err();
+    assert_eq!(err, LoadError::Content { saved: "pack-a".into(), running: "pack-b".into() });
+    assert_eq!(state(&b), before);
+
+    *b.world_mut().resource_mut::<SaveIdentity>() =
+        SaveIdentity { content_id: "pack-a".into(), load_order: vec![mod_ref("base")], ..SaveIdentity::default() };
+    assert!(load(&mut b, LoadRequest::path(&saved.path)).is_ok(), "a load order difference only logs");
+    b.world_mut().resource_mut::<SaveIdentity>().content_id.clear();
+    assert!(load(&mut b, LoadRequest::path(&saved.path)).is_ok(), "an unknown running content id doesn't refuse");
 }

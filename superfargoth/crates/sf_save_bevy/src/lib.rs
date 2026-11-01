@@ -6,13 +6,15 @@
 //!   framework's sections are built by [`sections`] over the game's resources; a game adds its
 //!   own (`mw/globals`) the same way.
 //! - **Save**: [`SaveRequest`] → gate ([`SaveGate`]: transient blockers wait, the adapter's
-//!   `can_save` refuses) → snapshot of every provider at the frame's end (a tick boundary: after
+//!   `can_save` refuses; a refused autosave stays pending, re-asked every [`AUTOSAVE_RETRY`]) → snapshot of every provider at the frame's end (a tick boundary: after
 //!   every `FixedUpdate` of the frame) → encode, write atomically, verify and rotate on the IO
 //!   task pool → [`SaveDone`] with sizes per owner and timings.
 //! - **Load**: [`LoadRequest`] → read, verify, migrate and decode off-thread → on the main
 //!   thread: checks, reset hooks ([`SaveAppExt::on_load_reset`]), then every provider in apply
-//!   order (a full replace, never a merge) → [`LoadDone`]. The game fades and runs its streaming
-//!   burst on `LoadDone`.
+//!   order (a full replace, never a merge) → [`LoadDone`]. With a [`LoadTransition`] the decoded
+//!   load waits: the transition starts (a fade out) and calls [`apply_pending_load`] at its cut
+//!   (full black), so no gameplay frame runs on the new state over the old world. Without one it
+//!   applies at once (tools, tests).
 //! - Sections no provider knows (a missing mod's) are kept in [`DormantSections`] and written
 //!   back byte for byte (save.md "Dormancy"; the mod diff and `clean` are S3).
 //! - [`Autosave`] fires on play time; quicksave/quickload are `SaveRequest::quick()` and
@@ -169,6 +171,17 @@ impl SaveGate {
     pub fn blockers(&self) -> impl Iterator<Item = &str> {
         self.blockers.iter().map(String::as_str)
     }
+}
+
+type TransitionHook = Arc<dyn Fn(&mut World) + Send + Sync>;
+
+/// The transition a load applies behind (save.md "Loading" step 4: behind a fade; the game
+/// wires its fade here).
+#[derive(Resource, Default, Clone)]
+pub struct LoadTransition {
+    /// Called on the main thread once a load is read, verified and decoded: it starts the
+    /// transition, which must call [`apply_pending_load`] at its cut. `None`: apply at once.
+    pub begin: Option<TransitionHook>,
 }
 
 /// Autosave on play time (save.md open question 4: every 10 minutes by default).
@@ -392,9 +405,34 @@ pub enum LoadError {
     Decode { key: SectionKey, message: String },
     #[error("section {key} refused: {message}")]
     Check { key: SectionKey, message: String },
-    #[error("applying {section}: {message} (the world may be partly loaded)")]
+    /// A provider's `set` failed after the world was reset: the world is partly loaded, so the
+    /// [`SaveGate`] stays closed ([`LOAD_FAILED`]) and the game should return to its main menu
+    /// ([`LoadError::partly_loaded`]).
+    #[error("applying {section}: {message} (the world is partly loaded; saving is blocked)")]
     Apply { section: String, message: String },
+    /// The save belongs to another content pack (`sf/meta` content id).
+    #[error("the save is for content {saved:?}, this game runs {running:?}")]
+    Content { saved: String, running: String },
+    /// The chosen save is corrupt; `fallback` is the newest earlier save of the same world (or
+    /// the chosen save's `.bak`) that verifies, for the UI to offer.
+    #[error("{error} (an earlier save verifies: {})", fallback.display())]
+    Corrupt { error: Box<LoadError>, fallback: PathBuf },
 }
+
+impl LoadError {
+    /// The load failed after the world was reset: nothing consistent is running. Saving stays
+    /// blocked ([`LOAD_FAILED`]) until a load succeeds or the game unblocks it after starting
+    /// over; the game should return to its main menu (`OpenMW`'s `loadGame` failure path).
+    /// Every other error refused the load with nothing changed.
+    pub fn partly_loaded(&self) -> bool {
+        matches!(self, Self::Apply { .. })
+    }
+}
+
+/// The [`SaveGate`] blocker a partly applied load leaves ([`LoadError::partly_loaded`]): no save
+/// may persist the mixed state. A successful load removes it; a game that starts a new world
+/// instead calls `unblock(LOAD_FAILED)`.
+pub const LOAD_FAILED: &str = "load failed";
 
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct LoadDone(pub Result<LoadReport, LoadError>);
@@ -429,6 +467,7 @@ impl Plugin for SfSavePlugin {
             .init_resource::<Autosave>()
             .init_resource::<DormantSections>()
             .init_resource::<sections::BlobVersions>()
+            .init_resource::<LoadTransition>()
             .init_resource::<Runner>()
             .add_systems(First, tick_play_time)
             .add_systems(FixedLast, count_tick)
@@ -585,6 +624,29 @@ struct LoadJob {
     registry: Registry,
     /// The providers' families and decoders, by index into `SaveSections::sections`.
     providers: Vec<(sf_save::Family, Arc<dyn SectionIo>)>,
+    /// The running content and profile, compared with the save's `sf/meta`.
+    identity: SaveIdentity,
+}
+
+/// The cheap pre-apply identity check (save.md "Loading" step 2; the full mod diff and its dialog
+/// are S3): a save of another content pack is refused, a different load order is logged. Empty
+/// values (a game or save that doesn't fill the identity) compare as unknown.
+fn check_identity(meta: &SaveMeta, running: &SaveIdentity) -> Result<(), LoadError> {
+    if !meta.content_id.is_empty() && !running.content_id.is_empty() && meta.content_id != running.content_id {
+        return Err(LoadError::Content { saved: meta.content_id.clone(), running: running.content_id.clone() });
+    }
+    if !meta.load_order.is_empty() && !running.load_order.is_empty() && meta.load_order != running.load_order {
+        let ids = |l: &[ModRef]| l.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
+        let (saved, now) = (ids(&meta.load_order), ids(&running.load_order));
+        let missing: Vec<_> = saved.iter().filter(|id| !now.contains(id)).collect();
+        let added: Vec<_> = now.iter().filter(|id| !saved.contains(id)).collect();
+        if missing.is_empty() {
+            log::info!("sf_save_bevy: the save's load order differs (added {added:?}; order or versions changed)");
+        } else {
+            log::warn!("sf_save_bevy: the save used mods that are not loaded now: {missing:?} (added {added:?}); their data stays dormant");
+        }
+    }
+    Ok(())
 }
 
 fn bad_key(e: &ContainerError) -> Option<&SectionKey> {
@@ -594,19 +656,72 @@ fn bad_key(e: &ContainerError) -> Option<&SectionKey> {
     }
 }
 
+/// The file is unreadable or fails its integrity checks (as opposed to a version or decode
+/// refusal that an older save would likely hit too).
+fn is_corrupt(e: &LoadError) -> bool {
+    matches!(e, LoadError::Read(_) | LoadError::Container(_))
+}
+
 impl LoadJob {
     fn run(self) -> Result<Loaded, LoadError> {
         let t0 = Instant::now();
-        let path = match &self.source {
-            LoadSource::Path(p) => p.clone(),
-            LoadSource::Latest(reason) => self.slot.latest(&*self.fs, *reason).ok_or(LoadError::NotFound)?.path,
-        };
+        match &self.source {
+            LoadSource::Path(p) => self.load(p.clone(), t0).map_err(|error| match self.fallback_for(p, &error, t0) {
+                Some(fallback) => LoadError::Corrupt { error: Box::new(error), fallback },
+                None => error,
+            }),
+            LoadSource::Latest(reason) => self.load_latest(*reason, t0),
+        }
+    }
+
+    /// The newest save (of `reason`) that fully verifies; corrupt ones are skipped and logged
+    /// (save.md "Corruption safety" 4). With none, the newest one's error.
+    fn load_latest(&self, reason: Option<SaveReason>, t0: Instant) -> Result<Loaded, LoadError> {
+        let mut first_err = None;
+        let candidates = self.slot.list(&*self.fs).into_iter().rev().filter(|e| e.meta.is_ok() && reason.is_none_or(|r| r == e.reason));
+        for entry in candidates {
+            match self.load(entry.path.clone(), t0) {
+                Err(e) if is_corrupt(&e) => {
+                    log::warn!("sf_save_bevy: skipping corrupt save {}: {e}", entry.path.display());
+                    first_err.get_or_insert(e);
+                }
+                r => return r,
+            }
+        }
+        Err(first_err.unwrap_or(LoadError::NotFound))
+    }
+
+    /// For an explicit `path` that failed integrity: the newest earlier save of the same world
+    /// (same folder, and same world id when the bad file's meta reads) that fully verifies, else
+    /// its `.bak` if that verifies.
+    fn fallback_for(&self, path: &std::path::Path, error: &LoadError, t0: Instant) -> Option<PathBuf> {
+        if !is_corrupt(error) {
+            return None;
+        }
+        let world = self.fs.open(path).ok().and_then(|mut r| sf_save::read_meta(&mut r, &self.limits).ok()).map(|(_, m)| m.world_id);
+        let own_seq = sf_save::parse_file_name(path).map(|(seq, _)| seq);
+        let dir = path.parent().filter(|d| !d.as_os_str().is_empty())?;
+        let earlier = SlotDir::at(dir.to_owned()).list(&*self.fs).into_iter().rev().filter(|e| {
+            e.path != path
+                && own_seq.is_none_or(|s| e.sequence < s)
+                && e.meta.as_ref().is_ok_and(|m| world.is_none_or(|w| w == m.world_id))
+        });
+        let bak = sf_save::with_suffix(path, "bak");
+        earlier
+            .map(|e| e.path)
+            .chain(self.fs.exists(&bak).then_some(bak))
+            .find(|candidate| self.load(candidate.clone(), t0).is_ok())
+    }
+
+    /// Reads, verifies and decodes one file.
+    fn load(&self, path: PathBuf, t0: Instant) -> Result<Loaded, LoadError> {
         let bytes = self.fs.read(&path).map_err(|e| LoadError::Read(format!("{}: {e}", path.display())))?;
         let file = SaveFile::open_with(bytes, &self.limits)?;
         if file.kind() != FileKind::World {
             return Err(LoadError::NotAWorld(path.display().to_string()));
         }
         let meta = file.meta()?;
+        check_identity(&meta, &self.identity)?;
         let mut skipped = Vec::new();
         for err in file.verify() {
             match bad_key(&err).and_then(|k| file.entry(k)) {
@@ -651,13 +766,22 @@ struct Runner {
     load: Option<LoadRequest>,
     saving: Option<Saving>,
     loading: Option<Job<Result<Loaded, LoadError>>>,
+    /// Decoded, waiting for the [`LoadTransition`]'s cut.
+    ready: Option<Loaded>,
+    /// An autosave `can_save` refused, pending since this play time: re-asked every
+    /// [`AUTOSAVE_RETRY`] until a save succeeds or a load is requested (C8).
+    auto_retry: Option<Duration>,
 }
+
+/// How often a refused autosave asks `can_save` again (play time). Bethesda games and The
+/// Witcher 3 postpone a pending autosave until it is safe rather than skip it.
+pub const AUTOSAVE_RETRY: Duration = Duration::from_secs(1);
 
 type Requests = SystemState<(MessageReader<'static, 'static, SaveRequest>, MessageReader<'static, 'static, LoadRequest>)>;
 
 /// Polls jobs, applies a finished load, then starts the next load or save.
 fn drive(world: &mut World, requests: &mut Requests) {
-    let (saves, load) = match requests.get_mut(world) {
+    let (mut saves, load) = match requests.get_mut(world) {
         Ok((mut s, mut l)) => (s.read().cloned().collect::<Vec<_>>(), l.read().last().cloned()),
         Err(_) => (Vec::new(), None),
     };
@@ -668,6 +792,12 @@ fn drive(world: &mut World, requests: &mut Requests) {
             world.write_message(SaveDone(Err(SaveError::Cancelled("a load was requested"))));
         }
         runner.load = load;
+        runner.auto_retry = None;
+    }
+    let play_time = world.resource::<SaveSession>().play_time;
+    if runner.auto_retry.is_some_and(|since| play_time >= since + AUTOSAVE_RETRY) {
+        runner.auto_retry = Some(play_time);
+        saves.push(SaveRequest::slot(SaveReason::Auto));
     }
     for req in saves {
         // One pending autosave is enough (the gate may hold it longer than the interval).
@@ -677,7 +807,8 @@ fn drive(world: &mut World, requests: &mut Requests) {
     }
     finish_save(world, &mut runner);
     finish_load(world, &mut runner);
-    if runner.saving.is_none() && runner.loading.is_none() {
+    // A load waiting for its cut holds saves and further loads back.
+    if runner.saving.is_none() && runner.loading.is_none() && runner.ready.is_none() {
         if let Some(req) = runner.load.take() {
             runner.loading = Some(start_load(world, req));
             finish_load(world, &mut runner);
@@ -696,6 +827,15 @@ fn start_save(world: &mut World, runner: &mut Runner) {
     let Some(req) = runner.saves.pop_front() else { return };
     let can_save = world.resource::<SaveGate>().can_save.clone();
     if let Some(Err(why)) = can_save.map(|f| f(world, req.reason)) {
+        if req.reason == SaveReason::Auto {
+            // Pending, not dropped (C8): reported once, then re-asked every AUTOSAVE_RETRY.
+            let first = runner.auto_retry.is_none();
+            runner.auto_retry = Some(world.resource::<SaveSession>().play_time);
+            if !first {
+                log::debug!("sf_save_bevy: autosave still refused: {why}");
+                return;
+            }
+        }
         world.write_message(SaveDone(Err(SaveError::Refused(why))));
         return;
     }
@@ -816,8 +956,10 @@ fn finish_save(world: &mut World, runner: &mut Runner) {
             durable: o.durable,
         }
     });
-    if let Err(e) = &report {
-        log::error!("sf_save_bevy: {e}");
+    match &report {
+        // Any written save (quick, manual) also satisfies a pending autosave.
+        Ok(_) => runner.auto_retry = None,
+        Err(e) => log::error!("sf_save_bevy: {e}"),
     }
     world.write_message(SaveDone(report));
 }
@@ -832,6 +974,7 @@ fn start_load(world: &mut World, req: LoadRequest) -> Job<Result<Loaded, LoadErr
         limits: config.limits,
         registry: providers.registry.clone(),
         providers: providers.sections.iter().map(|s| (s.spec.family().clone(), s.io.clone())).collect(),
+        identity: world.resource::<SaveIdentity>().clone(),
     };
     Job::start(config.background, move || job.run())
 }
@@ -840,11 +983,39 @@ fn finish_load(world: &mut World, runner: &mut Runner) {
     let Some(job) = &mut runner.loading else { return };
     let Some(result) = job.poll() else { return };
     runner.loading = None;
-    let done = result.and_then(|loaded| apply(world, loaded));
+    let begin = world.get_resource::<LoadTransition>().and_then(|t| t.begin.clone());
+    match (result, begin) {
+        (Ok(loaded), Some(begin)) => {
+            runner.ready = Some(loaded);
+            begin(world);
+        }
+        (result, _) => {
+            let done = result.and_then(|loaded| apply(world, loaded));
+            report_load(world, done);
+        }
+    }
+}
+
+fn report_load(world: &mut World, done: Result<LoadReport, LoadError>) {
     if let Err(e) = &done {
         log::error!("sf_save_bevy: load failed: {e}");
     }
     world.write_message(LoadDone(done));
+}
+
+/// Applies the load waiting for its [`LoadTransition`]'s cut (checks, resets, every provider)
+/// and writes its [`LoadDone`]. Call it at full black, in the same exclusive step as anything
+/// that must see the new state first (the resident reload). `false` when no load waits.
+pub fn apply_pending_load(world: &mut World) -> bool {
+    let Some(loaded) = world.get_resource_mut::<Runner>().and_then(|mut r| r.ready.take()) else { return false };
+    let done = apply(world, loaded);
+    report_load(world, done);
+    true
+}
+
+/// A decoded load waits for its transition's cut.
+pub fn load_pending(world: &World) -> bool {
+    world.get_resource::<Runner>().is_some_and(|r| r.ready.is_some())
 }
 
 /// Checks, resets, then applies every provider in order (save.md "Loading" step 4).
@@ -856,7 +1027,15 @@ fn apply(world: &mut World, loaded: Loaded) -> Result<LoadReport, LoadError> {
     let providers = world.remove_resource::<SaveSections>().unwrap_or_default();
     let result = apply_with(world, &providers, values, dormant.clone());
     world.insert_resource(providers);
-    result?;
+    if let Err(e) = result {
+        if e.partly_loaded() {
+            // Two-phase load (C3): every refusal is a check, before anything changes; a provider
+            // that still failed mid-apply left a mixed world no save may persist.
+            world.resource_mut::<SaveGate>().block(LOAD_FAILED);
+        }
+        return Err(e);
+    }
+    world.resource_mut::<SaveGate>().unblock(LOAD_FAILED);
     let mut session = world.resource_mut::<SaveSession>();
     session.world_id = meta.world_id;
     session.last_save = Some(meta.save_id);
@@ -880,7 +1059,7 @@ fn apply_with(
 ) -> Result<(), LoadError> {
     for (index, key, value) in &values {
         if let Some(check) = &providers.sections[*index].check {
-            check(world, &**value).map_err(|message| LoadError::Check { key: key.clone(), message })?;
+            check(world, key, &**value).map_err(|message| LoadError::Check { key: key.clone(), message })?;
         }
     }
     for reset in &providers.resets {

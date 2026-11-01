@@ -371,6 +371,67 @@ fn reload_resident_respawns_cells_from_the_loaded_overlay() {
     assert_eq!(tagged(&mut app, crate_), vec![home], "the moved crate is at its saved pose");
 }
 
+/// What the blackout's cut hook saw, per call.
+#[derive(Resource, Default)]
+struct CutLog(Vec<f32>);
+
+/// Save load behind the fade (save.md "Loading" step 4): a blackout requested
+/// while a door fade runs is queued, not dropped; at its full-black cut the
+/// hooks run once, and the travel they write (with `reload`) is executed in
+/// that same frame, so no gameplay frame runs between them.
+#[test]
+fn a_blackout_queued_behind_a_door_fade_runs_its_hooks_and_travel_at_the_cut() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = streaming_app(dir.path());
+    {
+        let mut fade = app.world_mut().resource_mut::<FadeTransition>();
+        fade.fade_secs = 0.0;
+        fade.max_hold_secs = 0.05;
+    }
+    let root = WorldspaceRegistry::ensure_in(app.world_mut(), &ws()).root;
+    let (cell, transform) = to_grid(WorldPos::ORIGIN);
+    let traveler = app.world_mut().spawn((cell, transform, ChildOf(root))).id();
+    let loaded_at = Location::new(ws(), WorldPos::from_f64(DVec3::new(40.0, 1.0, -8.0)));
+    let to = loaded_at.clone();
+    app.init_resource::<CutLog>();
+    app.world_mut().resource_mut::<FadeCutHooks>().add(move |world: &mut World| {
+        let alpha = world.resource::<FadeTransition>().alpha();
+        world.resource_mut::<CutLog>().0.push(alpha);
+        world.write_message(StartTravel { traveler, to: to.clone(), rotation: Quat::IDENTITY, reload: true });
+    });
+
+    // A door fade starts; the blackout arrives while it runs.
+    let door = Location::new(ws(), WorldPos::from_f64(DVec3::new(-5.0, 1.0, 0.0)));
+    app.world_mut().write_message(StartTravel { traveler, to: door, rotation: Quat::IDENTITY, reload: false });
+    app.update();
+    assert!(app.world().resource::<FadeTransition>().is_active());
+    app.world_mut().write_message(StartBlackout);
+
+    let mut arrivals = Vec::new();
+    let mut cut_update = None;
+    for frame in 0..2000 {
+        app.update();
+        std::thread::sleep(Duration::from_millis(1));
+        let fresh: Vec<TravelArrived> = app.world_mut().resource_mut::<Messages<TravelArrived>>().drain().collect();
+        let hooks = app.world().resource::<CutLog>().0.len();
+        if hooks == 1 && cut_update.is_none() {
+            cut_update = Some(frame);
+            // The hook's travel ran in the cut's own update: the traveler arrived and the fade holds.
+            assert!(fresh.iter().any(|a| a.to == loaded_at), "the load's travel ran at the cut: {fresh:?}");
+            assert!(app.world().resource::<FadeTransition>().is_holding());
+        }
+        arrivals.extend(fresh);
+        if cut_update.is_some() && !app.world().resource::<FadeTransition>().is_active() {
+            break;
+        }
+    }
+    assert!(cut_update.is_some(), "the queued blackout reached its cut");
+    assert_eq!(app.world().resource::<CutLog>().0, vec![1.0], "hooks ran once, at full black");
+    assert_eq!(arrivals.first().map(|a| a.to.pos), Some(WorldPos::from_f64(DVec3::new(-5.0, 1.0, 0.0))), "the door travel ran first");
+    assert_eq!(arrivals.last().map(|a| a.to.clone()), Some(loaded_at));
+    assert!(!app.world().resource::<FadeTransition>().is_active(), "faded back in");
+}
+
 /// Meshes spawned later under a `SubtreeRange` root (a runtime-imported
 /// model's scene) get the placement's range, pushed out by their offset.
 #[test]

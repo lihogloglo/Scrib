@@ -263,11 +263,18 @@ fn malformed_tocs_are_named() {
 enum Fault {
     /// The data write fails after writing half the bytes (a crash mid-write).
     Write,
-    /// The read-back returns different bytes (bad sector, lying cache).
+    /// The read-back returns a broken preamble (bad sector, lying cache).
     Corrupt,
+    /// The read-back returns the last byte flipped: the last section's hash fails.
+    CorruptSection,
     ReadBack,
-    /// The nth rename fails (0: old → .bak, 1: tmp → target when a backup is kept).
+    /// The nth rename fails (0: tmp → target).
     Rename(usize),
+    /// The first n renames fail with a Windows sharing violation (error 32).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Sharing(usize),
+    /// Copying the old file to `.bak` fails.
+    Copy,
     SyncDir,
 }
 
@@ -276,6 +283,9 @@ struct MemFs {
     files: Mutex<BTreeMap<PathBuf, Vec<u8>>>,
     fault: Mutex<Option<Fault>>,
     renames: Mutex<usize>,
+    /// A path whose contents are recorded after every mutating call.
+    watched: Mutex<Option<PathBuf>>,
+    seen: Mutex<Vec<Option<Vec<u8>>>>,
 }
 
 impl MemFs {
@@ -292,6 +302,16 @@ impl MemFs {
     fn names(&self) -> Vec<String> {
         self.files.lock().unwrap().keys().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect()
     }
+    fn watch(&self, p: &Path) {
+        *self.watched.lock().unwrap() = Some(p.to_owned());
+        self.seen.lock().unwrap().clear();
+    }
+    fn record(&self) {
+        if let Some(p) = self.watched.lock().unwrap().clone() {
+            let now = self.get(&p);
+            self.seen.lock().unwrap().push(now);
+        }
+    }
 }
 
 fn injected() -> io::Error {
@@ -302,21 +322,22 @@ impl SaveFs for MemFs {
     fn write_synced(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         if self.fault() == Some(Fault::Write) {
             self.files.lock().unwrap().insert(path.to_owned(), bytes[..bytes.len() / 2].to_vec());
+            self.record();
             return Err(injected());
         }
         self.files.lock().unwrap().insert(path.to_owned(), bytes.to_vec());
+        self.record();
         Ok(())
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        let mut b = self.get(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
         match self.fault() {
-            Some(Fault::ReadBack) => Err(injected()),
-            Some(Fault::Corrupt) => {
-                let mut b = self.get(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-                b[0] ^= 1;
-                Ok(b)
-            }
-            _ => self.get(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound)),
+            Some(Fault::ReadBack) => return Err(injected()),
+            Some(Fault::Corrupt) => b[0] ^= 1,
+            Some(Fault::CorruptSection) => *b.last_mut().unwrap() ^= 1,
+            _ => {}
         }
+        Ok(b)
     }
     fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>> {
         Ok(Box::new(Cursor::new(self.get(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?)))
@@ -327,19 +348,33 @@ impl SaveFs for MemFs {
             *r += 1;
             *r - 1
         };
-        if self.fault() == Some(Fault::Rename(n)) {
+        match self.fault() {
+            Some(Fault::Rename(k)) if k == n => return Err(injected()),
+            Some(Fault::Sharing(k)) if n < k => return Err(io::Error::from_raw_os_error(32)),
+            _ => {}
+        }
+        {
+            let mut files = self.files.lock().unwrap();
+            let b = files.remove(from).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+            files.insert(to.to_owned(), b);
+        }
+        self.record();
+        Ok(())
+    }
+    fn copy(&self, from: &Path, to: &Path) -> io::Result<()> {
+        if self.fault() == Some(Fault::Copy) {
             return Err(injected());
         }
-        let mut files = self.files.lock().unwrap();
-        let b = files.remove(from).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-        files.insert(to.to_owned(), b);
-        Ok(())
+        let b = self.get(from).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        self.write_synced(to, &b)
     }
     fn sync_dir(&self, _dir: &Path) -> io::Result<()> {
         if self.fault() == Some(Fault::SyncDir) { Err(injected()) } else { Ok(()) }
     }
     fn remove(&self, path: &Path) -> io::Result<()> {
-        self.files.lock().unwrap().remove(path).map(|_| ()).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+        let r = self.files.lock().unwrap().remove(path).map(|_| ()).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound));
+        self.record();
+        r
     }
     fn exists(&self, path: &Path) -> bool {
         self.files.lock().unwrap().contains_key(path)
@@ -360,7 +395,7 @@ fn atomic_write_survives_a_failure_at_every_step() {
     let path = Path::new("/saves/w/000001-manual.sfsave");
     let old = sample(1);
     let new = sample(2);
-    for fault in [Fault::Write, Fault::Corrupt, Fault::ReadBack, Fault::Rename(0), Fault::Rename(1)] {
+    for fault in [Fault::Write, Fault::Corrupt, Fault::CorruptSection, Fault::ReadBack, Fault::Copy, Fault::Rename(0)] {
         let fs = MemFs::default();
         fs.write_synced(path, &old).unwrap();
         fs.fail(Some(fault));
@@ -398,11 +433,11 @@ fn atomic_write_keeps_one_backup() {
 fn std_fs_writes_atomically_on_disk() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a").join("save.sfsave");
-    write_atomic(&StdFs, &path, b"one", true).unwrap();
-    let w = write_atomic(&StdFs, &path, b"two", true).unwrap();
+    write_atomic(&StdFs, &path, &sample(1), true).unwrap();
+    let w = write_atomic(&StdFs, &path, &sample(2), true).unwrap();
     assert!(w.durable);
-    assert_eq!(std::fs::read(&path).unwrap(), b"two");
-    assert_eq!(std::fs::read(with_suffix(&path, "bak")).unwrap(), b"one");
+    assert_eq!(std::fs::read(&path).unwrap(), sample(2));
+    assert_eq!(std::fs::read(with_suffix(&path, "bak")).unwrap(), sample(1));
     assert!(!with_suffix(&path, "tmp").exists());
 }
 
@@ -467,6 +502,78 @@ fn slot_listing_reports_unreadable_files() {
     assert!(list[0].meta.is_err());
     assert_eq!(slots.latest(&fs, None).unwrap().sequence, 2);
     assert_eq!(slots.next_sequence(&fs), 3);
+}
+
+#[test]
+fn atomic_write_keeps_the_target_present_at_every_step() {
+    let fs = MemFs::default();
+    let path = Path::new("/s/000003-manual.sfsave");
+    let (old, new) = (sample(1), sample(2));
+    fs.write_synced(path, &old).unwrap();
+    fs.watch(path);
+    let w = write_atomic(&fs, path, &new, true).unwrap();
+    assert_eq!(w.backup, Some(with_suffix(path, "bak")));
+    let seen = fs.seen.lock().unwrap().clone();
+    // tmp written, old copied to .bak, tmp renamed over the target: three mutations.
+    assert_eq!(seen, [Some(old.clone()), Some(old.clone()), Some(new.clone())]);
+    assert_eq!(fs.get(&with_suffix(path, "bak")), Some(old));
+    assert_eq!(fs.names(), ["000003-manual.sfsave", "000003-manual.sfsave.bak"]);
+}
+
+#[test]
+fn atomic_write_rejects_a_temp_file_with_a_bad_section_hash() {
+    let fs = MemFs::default();
+    let path = Path::new("/s/x.sfsave");
+    fs.fail(Some(Fault::CorruptSection));
+    let err = write_atomic(&fs, path, &sample(1), true).unwrap_err();
+    match err {
+        WriteFileError::Verify(p, e) => {
+            assert_eq!(p, with_suffix(path, "tmp"));
+            assert_eq!(e, ContainerError::SectionHash { key: key("sf/thumbnail") });
+        }
+        other => panic!("expected a verify error, got {other}"),
+    }
+    assert!(fs.names().is_empty());
+    // Bytes that aren't a save file at all are refused too.
+    fs.fail(None);
+    assert!(matches!(write_atomic(&fs, path, b"not a save", true), Err(WriteFileError::Verify(_, ContainerError::TooShort { .. }))));
+}
+
+#[cfg(windows)]
+#[test]
+fn atomic_write_retries_a_sharing_violation() {
+    let fs = MemFs::default();
+    let path = Path::new("/s/x.sfsave");
+    fs.fail(Some(Fault::Sharing(2)));
+    write_atomic(&fs, path, &sample(1), true).unwrap();
+    assert_eq!(fs.get(path), Some(sample(1)));
+    fs.fail(Some(Fault::Sharing(10)));
+    assert!(matches!(write_atomic(&fs, path, &sample(2), true), Err(WriteFileError::Rename(..))));
+    fs.fail(None);
+    assert_eq!(fs.get(path), Some(sample(1)));
+    assert!(!fs.exists(&with_suffix(path, "tmp")));
+}
+
+#[test]
+fn slot_listing_restores_an_orphaned_backup() {
+    // The crash window of the old two-rename write: the save moved to .bak, the new file never landed.
+    let fs = MemFs::default();
+    let slots = SlotDir::at(PathBuf::from("/w"));
+    let save = slots.path_of(4, SaveReason::Manual);
+    fs.write_synced(&with_suffix(&save, "bak"), &sample(4)).unwrap();
+    fs.write_synced(&with_suffix(&slots.path_of(5, SaveReason::Manual), "tmp"), b"partial").unwrap();
+    let list = slots.list(&fs);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].path, save);
+    assert_eq!((list[0].sequence, list[0].reason), (4, SaveReason::Manual));
+    assert_eq!(list[0].meta.as_ref().unwrap().sequence, 4);
+    assert_eq!(fs.get(&save), Some(sample(4)));
+    assert!(!fs.exists(&with_suffix(&save, "bak")));
+    assert_eq!(slots.latest(&fs, None).unwrap().path, save);
+    // A backup beside its save stays a backup.
+    fs.write_synced(&with_suffix(&save, "bak"), &sample(3)).unwrap();
+    assert_eq!(slots.list(&fs).len(), 1);
+    assert_eq!(fs.get(&with_suffix(&save, "bak")), Some(sample(3)));
 }
 
 #[test]
