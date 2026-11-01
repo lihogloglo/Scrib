@@ -91,9 +91,12 @@ independent Opus review). Awaiting owner: SH-21, RO-11.
 
 ## Reset A1 as built (shadowA1, 2026-10-21)
 
-- **Contact shadows: sun and moon only**, as engines use them (one key light, short ray). Lamps and carried torches
-  get none (`PointShadowBudget::contact_shadows` false; game A/B `BEVYRROWIND_LAMP_CONTACT=1`): it was 0.80 ms GPU per
-  shadowed lamp at 1440p and drew SH-14's bands. Ray length 0.3 m (Bevy's default; was 0.5), Medium 8 / High 16 steps.
+- **Contact shadows: the sun, plus the budgeted lamps on High and Ultra** (2026-11-01; A1 had made them sun-only:
+  0.80 ms GPU per shadowed lamp at 1440p native and SH-14's bands at the then 0.5 m ray). The moon spawns without
+  the flag (Bevy's default). Lamps on Medium get none (`PointShadowBudget::contact_shadows`; game A/B
+  `BEVYRROWIND_LAMP_CONTACT=1|0`). Ray length 0.3 m (Bevy's default), Medium 8 / High 16 steps; dev console
+  `render.contactlength` / `render.contactthickness` retune it live. Engines apply contact shadows per light with
+  lamps as the main use (UE: screen-space-proportional ray length), so unshadowed lamps are the next candidate.
 - **Sun and moon leave interior views.** Bevy filters directional lights per *view* by `RenderLayers`, never per mesh;
   on `[0, exterior]` they stayed in every interior view (camera `[0, interior]`) through layer 0. They did not light
   interiors (illuminance 0 without a `SkyCamera`) but were shaded per pixel with the contact march (0.8 ms). The game

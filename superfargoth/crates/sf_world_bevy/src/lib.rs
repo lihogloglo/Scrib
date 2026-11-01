@@ -44,7 +44,7 @@ pub use spawn::{
     visibility_range,
 };
 pub use stream::{
-    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, StreamCell, StreamStats, Streaming, StreamingAnchor,
+    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, RayTracingVariants, StreamCell, StreamStats, Streaming, StreamingAnchor,
     StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
 };
 pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceRegistry, WorldspaceRoot};

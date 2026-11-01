@@ -44,6 +44,7 @@ sf_controller.workspace = true
 sf_controller_bevy.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy.workspace = true
+sf_gi_bevy.workspace = true
 sf_level.workspace = true
 sf_lod.workspace = true
 sf_lod_bevy.workspace = true

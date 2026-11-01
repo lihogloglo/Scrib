@@ -1914,8 +1914,6 @@ dependencies = [
 [[package]]
 name = "bevy_solari"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6884816ec199c45499cc33bb5a992a89662b87dffb797e54e627dbd2d9bba618"
 dependencies = [
  "bevy_anti_alias",
  "bevy_app",
@@ -5164,6 +5162,7 @@ dependencies = [
  "bevy_math",
  "bevy_mesh",
  "bevy_pbr",
+ "bevy_post_process",
  "bevy_remote",
  "bevy_render",
  "bevy_text",
@@ -5322,6 +5321,7 @@ dependencies = [
  "sf_controller_bevy",
  "sf_coords",
  "sf_diag_bevy",
+ "sf_gi_bevy",
  "sf_level",
  "sf_lod",
  "sf_lod_bevy",
@@ -7840,6 +7840,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_gi"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+]
+
+[[package]]
+name = "sf_gi_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_core_pipeline",
+ "bevy_diagnostic",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_light",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_solari",
+ "bevy_time",
+ "bevy_transform",
+ "log",
+ "sf_gi",
+ "sf_sky_bevy",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_ids"
 version = "0.1.0"
 dependencies = [
@@ -8242,6 +8276,7 @@ dependencies = [
  "bevy_transform",
  "dlss_wgpu",
  "log",
+ "sf_model_bevy",
  "sf_render_order_bevy",
  "sf_sky",
  "workspace-hack",

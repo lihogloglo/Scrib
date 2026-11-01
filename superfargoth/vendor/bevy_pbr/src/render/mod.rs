@@ -1,4 +1,5 @@
 mod fog;
+mod gi_probes; // superfargoth patch (own, GI)
 mod gpu_preprocess;
 mod light;
 pub(crate) mod mesh;
@@ -8,6 +9,7 @@ mod morph;
 pub(crate) mod skin;
 
 pub use fog::*;
+pub use gi_probes::*; // superfargoth patch (own, GI)
 pub use gpu_preprocess::*;
 pub use light::*;
 pub use mesh::*;

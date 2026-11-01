@@ -36,7 +36,7 @@ pub use index::{
 pub use overlay::PlacementOverlay;
 pub use placement::{Placement, PlacementClass, PlacementFlags, PlacementId};
 pub use reader::{IndexReader, LevelContent, MemoryIndex, PageCache};
-pub use records::{DoorLink, LinkEnd, Partition, RecordRef, RingOverrides, Worldspace};
+pub use records::{DoorLink, LinkEnd, Partition, RayTracedWorldspaces, RecordRef, RingOverrides, Worldspace};
 pub use rings::{Level, RingConfig, RingRadii};
 pub use scheduler::{
     Anchor, AnchorId, AnchorRole, Budgets, Cancelled, CellChange, Request, RequestId, RequestKind, Scheduler,

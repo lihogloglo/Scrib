@@ -1,5 +1,6 @@
 use bevy_asset::io::Reader;
 use bevy_asset::{Asset, AssetLoader, Handle, LoadContext, RenderAssetUsages};
+use bevy_ecs::component::Component;
 use bevy_mesh::{
     Indices, Mesh, MeshAttributeCompressionFlags, MeshCompressionArgs, PrimitiveTopology,
 };
@@ -42,6 +43,21 @@ pub struct CookedRayTracing {
     /// One per part of that level, in [`CookedLodMeshes::parts`] order.
     pub meshes: Vec<Handle<Mesh>>,
 }
+
+/// The mesh a ray tracer uses for this entity instead of its `Mesh3d`
+/// (one of [`CookedRayTracing::meshes`]).
+///
+/// Solari takes only uncompressed position/normal/uv0/tangent meshes with
+/// u32 indices and silently skips anything else, while the raster path
+/// wants compressed vertices and extra attributes (vertex colors). Loaders
+/// build this variant only when a ray tracer will use it.
+#[derive(Component, Clone, Debug)]
+pub struct RayTracingMesh(pub Handle<Mesh>);
+
+/// Keeps a mesh out of the ray-traced scene (e.g. grass, decals, effects,
+/// LOD levels other than the one the ray tracer uses).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct NoRayTracing;
 
 #[derive(Debug, Clone)]
 pub struct CookedLodMeshes {

@@ -282,6 +282,10 @@ impl SpecializedRenderPipeline for DeferredLightingLayout {
         if key.contains(MeshPipelineKey::CONTACT_SHADOWS) {
             shader_defs.push("CONTACT_SHADOWS".into());
         }
+        // superfargoth patch (own, GI)
+        if key.contains(MeshPipelineKey::GI_PROBES) {
+            shader_defs.push("GI_PROBES".into());
+        }
 
         if key.contains(MeshPipelineKey::HAS_PREVIOUS_SKIN) {
             shader_defs.push("HAS_PREVIOUS_SKIN".into());

@@ -80,14 +80,19 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (37)
+### Awaiting owner (40)
 
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
 SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in progress) | [shadows](visual-checks/shadows.md) | Lamp and torch shadows on the player and torch-bearers; shadowed-lamp pick by view visibility (2026-11-01)
+SH-22 | known bug | [shadows](visual-checks/shadows.md) | Exterior fps halves after leaving the Census office, not the GI (2026-11-02)
+GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) | [gi](visual-checks/gi.md) | Dynamic probe GI in the Census office (`--off gi` A/B)
+GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 LM-2 | partial (2026-10-30: leaves OK, water still too bright at night) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
 FF-2 | rejected (2026-10-30: all green to the horizon, L2/L3 never shown) | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
 DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash
+RO-14 | confirmed (2026-11-02: sun at dusk; lamps and candles runs not checked) | [rendering](visual-checks/rendering.md) | Bloom on the game camera: sun, lamps, candles glow, lit walls stay crisp (`--off bloom` A/B)
+RO-15 | confirmed (2026-11-02: 0.3 too faint, 1.0 liked, kept 0.5) | [rendering](visual-checks/rendering.md) | Light through leaves: backlit canopy glows, front-lit unchanged (`--off foliagetransmission` A/B)
 RO-B | partial (2026-10-30: draws in front now; odd blend, weak over dark things, like Ghostfence) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
 CB-2 | confirmed (2026-10-30) | [combat](visual-checks/combat.md) | Lock-on, locked facing and side rolls around the dummy (scene level-arena)
@@ -169,6 +174,7 @@ FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenella
 PH-14 | known bug | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
 FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)
+FG-9 | known bug | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog, follows the camera (2026-11-02)
 
 ### Rejected (2)
 
@@ -177,7 +183,7 @@ LT-3 | rejected | [lights](visual-checks/lights.md) | Point-light shadows, torch
 
 ### Inconclusive (3)
 
-SH-16 | inconclusive | [shadows](visual-checks/shadows.md) | Shadow reset A1
+SH-16 | awaiting owner (2026-11-01: contact-shadow flip shows nothing; isolating A/B in the entry) | [shadows](visual-checks/shadows.md) | Shadow reset A1
 SH-19 | inconclusive | [shadows](visual-checks/shadows.md) | Shadow reset B2
 FG-1 | inconclusive | [weather-sky](visual-checks/weather-sky.md) | Volumetric fog black bands on fast turns
 

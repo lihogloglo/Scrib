@@ -23,6 +23,11 @@ use sf_sky_bevy::{NoRayTracing, RayTracingMesh};
 
 use crate::{SharedVfs, Surface, image_settings_clamped, resolve_texture};
 
+/// The cooked LOD level the ray tracer sees (viewer and streamed interiors).
+/// Interiors are small enough for full detail; exteriors will want a
+/// reduced level.
+pub const RAY_TRACING_LOD: usize = 0;
+
 /// Starts loading the cooked product of `model` (a VFS model path) from
 /// the `baked://` source: Bevy vertex compression on, GPU-only meshes, and
 /// with `ray_tracing_lod`, ray-tracing variants built from that level.
@@ -94,6 +99,7 @@ struct SurfaceKey {
     alpha: (u8, u32),
     double_sided: bool,
     unlit: bool,
+    foliage: bool,
     tint: Option<usize>,
 }
 
@@ -135,20 +141,23 @@ fn surface<'a>(m: &'a sf_model::Material, vfs: &sf_vfs::Vfs) -> Surface<'a> {
         Some("t") => [false, true],
         _ => [false, false],
     };
+    let alpha_mode = match m.alpha {
+        SfAlpha::Opaque => AlphaMode::Opaque,
+        SfAlpha::Mask(_) if blended => AlphaMode::Blend,
+        SfAlpha::Mask(cutoff) => AlphaMode::Mask(cutoff),
+        SfAlpha::Blend if additive => AlphaMode::Add,
+        SfAlpha::Blend if candidate => AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF),
+        SfAlpha::Blend => AlphaMode::Blend,
+    };
     Surface {
         base_color: Color::linear_rgba(red, green, blue, alpha),
         base_texture: m.base_color_texture.as_deref(),
         base_clamp,
         glow_texture: m.extras.get(extras::GLOW_TEXTURE).map(String::as_str),
         emissive: LinearRgba::rgb(emissive_r, emissive_g, emissive_b),
-        alpha_mode: match m.alpha {
-            SfAlpha::Opaque => AlphaMode::Opaque,
-            SfAlpha::Mask(_) if blended => AlphaMode::Blend,
-            SfAlpha::Mask(cutoff) => AlphaMode::Mask(cutoff),
-            SfAlpha::Blend if additive => AlphaMode::Add,
-            SfAlpha::Blend if candidate => AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF),
-            SfAlpha::Blend => AlphaMode::Blend,
-        },
+        // The leaf rule, as the NIF path's (`Surface::foliage`).
+        foliage: matches!(cutout, Some("cutout" | "cutout_candidate")) && matches!(alpha_mode, AlphaMode::Mask(_)),
+        alpha_mode,
         double_sided: m.double_sided,
         unlit: m.unlit,
     }
@@ -262,6 +271,7 @@ fn surface_key(s: &Surface<'_>, base_resolved: Option<String>, glow_resolved: Op
         alpha,
         double_sided: s.double_sided,
         unlit: s.unlit,
+        foliage: s.foliage,
         tint,
     }
 }

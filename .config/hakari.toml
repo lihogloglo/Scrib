@@ -50,6 +50,7 @@ workspace-members = [
     "sf_coords",
     "sf_diag",
     "sf_ids",
+    "sf_gi",
     "sf_level",
     "sf_lod",
     "sf_model",
@@ -97,7 +98,7 @@ workspace-members = [
 # Bevy crates that don't use physics build their own nalgebra/glamx (one extra variant, no Bevy).
 third-party = [
     { name = "bevy_anti_alias" },
-    { name = "bevy_solari" },
+    { name = "bevy_solari", path = "superfargoth/vendor/bevy_solari" },
     { name = "mlua" },
     { name = "mlua-sys" },
     { name = "parry3d" },

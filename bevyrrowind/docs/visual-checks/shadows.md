@@ -69,7 +69,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 ### SH-16: Shadow reset A1 (lamp contact off, sun out of interiors, GTAO)
 - Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office"`; `.\bevyrrowind
   scene lamps-handoff` (Balmora 22:00, walk the street); `.\bevyrrowind view Balmora --camera "-280,+12,200,-295,+1,180"
-  --hour 15 --weather clear` (SH-14's spot), turn the camera. A/B `--off ssao`, env `BEVYRROWIND_LAMP_CONTACT=1`.
+  --hour 15 --weather clear` (SH-14's spot), turn the camera. A/B `--off ssao`, env `BEVYRROWIND_LAMP_CONTACT=0` (lamp contact shadows are on since 2026-11-01).
 - Look for: no thin view-dependent bands at object edges near lamps (SH-14), the sun's own contact shadow short
   (0.3 m); soft darkening in room corners, under tables/crates and where walls meet the floor, without dark halos
   around NPCs or a grainy crawl under TAA/DLSS; indoors nothing lit or shadowed from the sun's direction; at night
@@ -78,6 +78,24 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Status: inconclusive 2026-10-21 (bw-owner10): owner can't judge AO / contact shadows without live on/off toggles
   (and is unsure contact shadows work at all); needs the dev console (ROADMAP 1.13, queued).
 - 2026-11-01: console toggles exist: backquote, `flip ssao`, `flip contactshadows` (dev builds). Status: awaiting owner.
+- 2026-11-01 (owner, dev console): both flips recompile pipelines (expected: view key bits) but `flip
+  contactshadows` shows no difference at all and `flip ssao` only a faint darkening here and there. Code trace
+  (camera components, sun flag, pipeline key, shader march) finds every link present; Bevy's AO only scales ambient
+  and sky light, never direct sun or lamps, so sunlit scenes show little by design. Contact shadows, code audit
+  (2026-11-01): every link is upstream Bevy 0.20.0 verbatim (`contact_shadows.rs`, view bind group and offsets,
+  `light.rs` flag build, `mesh_view_types.wesl`, the directional block in `pbr_functions.wesl`, the hit maths in
+  `ssr/raymarch.wesl`); the RO-11 patch is the identity without DLSS; the march was measured at 0.8 ms per light
+  (shadows.md "Reset A1"), so it runs. No defect found; the likely answer is magnitude: Bevy's 0.3 m world-space ray
+  and 0.1 m thickness are tuned to its 1 m demo scene, and High's first cascade (1.4 cm texels, PCSS) already
+  resolves contact, so the march adds nothing a flip can show. Owner A/B that isolates them: `view Balmora --camera
+  "-291,+1.7,187,-297,+0.9,179" --hour 16 --off shadows` vs `--off shadows,contactshadows` (no sun shadow maps:
+  short dark bases under props and feet must appear in the first run). Console vars `render.contactlength` /
+  `render.contactthickness` built 2026-11-01. Owner, same evening: contact shadows are visible, but only outdoors
+  by day. That is the configuration, not a bug: only the sun has `contact_shadows_enabled` (the moon spawns with
+  Bevy's default, false, despite shadows.md "sun and moon"; the sun is out of interiors since A1; lamps and torches
+  get none unless `BEVYRROWIND_LAMP_CONTACT=1`). Owner 2026-11-01, Census office with `BEVYRROWIND_LAMP_CONTACT=1`:
+  lamp contact shadows work and the cost feels acceptable. Status: confirmed; decision pending on making them the
+  default (High/Ultra) and on a screen-space ray length (UE style) for unshadowed lamps.
 
 ### SH-19: Shadow reset B2 (lamp shadows on 2x2 hardware PCF)
 - Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera
@@ -128,3 +146,14 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   the vendored refresh rule every frame, zeroing the 2-face LRU budget for every other lamp, and faces of one lamp refresh
   on different frames (the cut at a cube-face seam). Fix slice SH-20b (per-light grouping, separate budgets) in progress.
   Status: partial.
+
+### SH-22: Exterior fps halves after leaving the Census office (owner report, perf)
+- Kind: game location, dev build, 1280x720, High. `run_dev.ps1 view "Seyda Neen, Census and Excise Office"`, walk out the front door.
+- Seen 2026-11-02: ~100 fps inside, ~50 outside (BRP frame time); same with `--off gi`, so not the GI. A Seyda Neen
+  exterior start read 65-80 fps near spawn (other spot). Owner suspects the 2026-11-01 shadow work (d06b120 +
+  uncommitted: visible-light budget, lamp contact shadows on by default, DLSS-space contact shadows).
+- Rough A/B 2026-11-02 (manual walk-out, 23:00, torch-bearers moving, BRP fps over ~2 s; indicative only):
+  default ~20 ms; `off contactshadows` ~20 ms; `--off movershadows` ~17.8 ms; `--point-shadows 0` ~11.9 ms.
+  => point-light (lamp/torch) shadows cost ~8 ms here. Next: a proper `perf suite` run (perf.md) from a fixed
+  camera outside the door at night, profiling build, `--point-shadows` default vs 0 and `--off movershadows`, GPU pass ms.
+- Status: known bug: point shadows suspected, not measured properly (owner pass 2026-11-02).

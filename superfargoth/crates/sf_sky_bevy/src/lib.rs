@@ -27,8 +27,8 @@ mod shadow_budget;
 pub mod sun_view;
 mod upscale;
 
-// Headless: the `solari` feature pulls in render-world plugins.
-#[cfg(all(test, not(feature = "solari")))]
+// Headless (no render app): under `solari` the ray-tracing plugins stay out (path.rs).
+#[cfg(test)]
 mod tests;
 
 use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
@@ -51,7 +51,7 @@ pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
-pub use path::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
+pub use path::{GiActive, GiEnabled, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin,

@@ -122,6 +122,7 @@ impl Plugin for MwAssetsPlugin {
                     lights::attach_lights,
                     lights::animate_lights,
                     cooked::spawn_cooked,
+                    leaf_shadow_receivers,
                 ),
             )
             .add_systems(PostUpdate, billboard::face_camera.before(TransformSystems::Propagate));
@@ -308,22 +309,25 @@ fn standard_material(m: &mw_nif::Material, vfs: &Vfs, load_context: &mut LoadCon
         m.diffuse
     };
     let [er, eg, eb] = m.emissive;
+    let alpha_mode = match m.alpha_mode {
+        NifAlpha::Opaque => AlphaMode::Opaque,
+        NifAlpha::Mask { .. } if m.cutout != mw_nif::Cutout::No && !cutout_foliage() => AlphaMode::Blend,
+        NifAlpha::Blend { additive: false } if m.cutout == mw_nif::Cutout::Candidate && texture_is_cutout(vfs, m.base_texture.as_deref()) => {
+            AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF)
+        }
+        NifAlpha::Mask { cutoff } => AlphaMode::Mask(cutoff),
+        NifAlpha::Blend { additive: true } => AlphaMode::Add,
+        NifAlpha::Blend { additive: false } => AlphaMode::Blend,
+    };
     let surface = Surface {
         base_color: Color::srgba(r, g, b, m.alpha),
         base_texture: m.base_texture.as_deref(),
         base_clamp: m.base_clamp,
         glow_texture: m.glow_texture.as_deref(),
         emissive: Color::srgb(er, eg, eb).to_linear(),
-        alpha_mode: match m.alpha_mode {
-            NifAlpha::Opaque => AlphaMode::Opaque,
-            NifAlpha::Mask { .. } if m.cutout != mw_nif::Cutout::No && !cutout_foliage() => AlphaMode::Blend,
-            NifAlpha::Blend { additive: false } if m.cutout == mw_nif::Cutout::Candidate && texture_is_cutout(vfs, m.base_texture.as_deref()) => {
-                AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF)
-            }
-            NifAlpha::Mask { cutoff } => AlphaMode::Mask(cutoff),
-            NifAlpha::Blend { additive: true } => AlphaMode::Add,
-            NifAlpha::Blend { additive: false } => AlphaMode::Blend,
-        },
+        // The leaf rule: an authored blend drawn as a cutout (`mw_nif::Cutout`).
+        foliage: m.cutout != mw_nif::Cutout::No && matches!(alpha_mode, AlphaMode::Mask(_)),
+        alpha_mode,
         double_sided: m.double_sided,
         unlit: vtx_emissive_unlit,
     };
@@ -383,7 +387,55 @@ pub(crate) struct Surface<'a> {
     pub alpha_mode: AlphaMode,
     pub double_sided: bool,
     pub unlit: bool,
+    /// A leaf surface: an authored blend drawn as a cutout (`mw_nif::Cutout` promoted or a
+    /// candidate whose texture has holes). Gets [`LEAF_DIFFUSE_TRANSMISSION`].
+    pub foliage: bool,
 }
+
+/// A/B switch (`--off foliagetransmission`): leaf surfaces ([`Surface::foliage`]) transmit
+/// light (on, the default) or are opaque cards as before.
+static FOLIAGE_TRANSMISSION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Sets the [`FOLIAGE_TRANSMISSION`] A/B; call before models load.
+pub fn set_foliage_transmission(on: bool) {
+    FOLIAGE_TRANSMISSION.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether leaf surfaces get diffuse transmission.
+pub fn foliage_transmission() -> bool {
+    FOLIAGE_TRANSMISSION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Leaf meshes (a material with diffuse transmission, [`Surface::foliage`]) take shadows on their
+/// transmission lobe too (Bevy `TransmittedShadowReceiver`): without it every leaf in a backlit
+/// canopy glows, the ones behind the trunk, a hill or other trees included. Covers every spawn
+/// path (streamed statics, NIF scenes, cooked models) by looking at new mesh entities' materials.
+fn leaf_shadow_receivers(
+    mut commands: Commands,
+    added: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Added<MeshMaterial3d<StandardMaterial>>>,
+    materials: Res<Assets<StandardMaterial>>,
+) {
+    for (entity, material) in &added {
+        if materials.get(&material.0).is_some_and(|m| m.diffuse_transmission > 0.0) {
+            commands.entity(entity).try_insert(bevy::light::TransmittedShadowReceiver);
+        }
+    }
+}
+
+/// Share of a leaf's diffuse light that goes through it (Bevy `StandardMaterial::diffuse_transmission`,
+/// screen-space-effects research 4.3; Frostbite/Crysis-style thin translucency as a second, flipped
+/// Lambert lobe, ALU only). Bevy splits the energy: the front lobe keeps `1 - t`, so 0.5 halves a
+/// front-lit leaf's *direct* term and gives a backlit one half of the sun, with ambient unchanged
+/// (front + back lobes sum to the old total under uniform sky). Bevy calls > 0.5 "more transmitted
+/// than reflected"; 0.5 is the owner's pick (RO-15, 2026-11-02: 0.3 read too faint, 1.0 tried and
+/// liked, "keep at 0.5 at least").
+pub const LEAF_DIFFUSE_TRANSMISSION: f32 = 0.5;
+
+/// Depth (meters) of the transmission lobe behind a leaf card (`StandardMaterial::thickness`): the
+/// lobe's shadow and point-light lookups happen this far behind the surface. A card stands for a
+/// cluster of leaves, so a few centimeters, not a leaf's 0.3 mm; small enough that a lamp right
+/// behind a hedge still lights it.
+pub const LEAF_THICKNESS: f32 = 0.05;
 
 impl Surface<'_> {
     /// `texture` resolves a VFS texture reference (with `(clamp_s, clamp_t)`) and starts loading it.
@@ -401,6 +453,10 @@ impl Surface<'_> {
             unlit: self.unlit,
             ..StandardMaterial::default()
         };
+        if self.foliage && !self.unlit && foliage_transmission() {
+            material.diffuse_transmission = LEAF_DIFFUSE_TRANSMISSION;
+            material.thickness = LEAF_THICKNESS;
+        }
 
         // Fixed-function NIF shading is `texture * (emissive + lighting)`: the
         // emissive color glows *through the base texture*. Bevy adds
@@ -447,4 +503,39 @@ pub(crate) fn image_settings_clamped(settings: &mut ImageLoaderSettings, clamp: 
         address_mode_v: mode(clamp[1]),
         ..ImageSamplerDescriptor::linear()
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn surface(foliage: bool, alpha_mode: AlphaMode, unlit: bool) -> Surface<'static> {
+        Surface {
+            base_color: Color::WHITE,
+            base_texture: None,
+            base_clamp: [false, false],
+            glow_texture: None,
+            emissive: LinearRgba::BLACK,
+            alpha_mode,
+            double_sided: true,
+            unlit,
+            foliage,
+        }
+    }
+
+    /// Leaf cutouts transmit light (the default A/B state); other surfaces, unlit leaves
+    /// included, keep Bevy's opaque default.
+    #[test]
+    fn only_lit_leaf_surfaces_get_diffuse_transmission() {
+        assert!(foliage_transmission(), "on by default");
+        let leaf = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), false).to_material(|_, _| None);
+        assert!((leaf.diffuse_transmission - LEAF_DIFFUSE_TRANSMISSION).abs() < f32::EPSILON);
+        assert!((leaf.thickness - LEAF_THICKNESS).abs() < f32::EPSILON);
+        assert!(leaf.diffuse_transmission > 0.0 && leaf.diffuse_transmission <= 1.0, "a share of the diffuse light");
+        assert!(leaf.specular_transmission.abs() < f32::EPSILON, "no refraction path");
+        let wall = surface(false, AlphaMode::Opaque, false).to_material(|_, _| None);
+        assert!(wall.diffuse_transmission.abs() < f32::EPSILON && wall.thickness.abs() < f32::EPSILON);
+        let unlit = surface(true, AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF), true).to_material(|_, _| None);
+        assert!(unlit.diffuse_transmission.abs() < f32::EPSILON);
+    }
 }

@@ -28,6 +28,10 @@ pub enum Part {
     ContactShadows,
     /// Screen-space ambient occlusion (Bevy GTAO, ROADMAP 1.5; Medium and up).
     Ssao,
+    /// Bloom on the game camera (Bevy `Bloom`, energy-conserving; Medium and up).
+    Bloom,
+    /// Dynamic probe GI (`sf_gi_bevy`, gi.md; High and Ultra raster, interiors in slice 1).
+    Gi,
     /// Cached point-light shadow maps (`sf_shadow_cache_bevy`; off = the patched Bevy path, perf.md "Shadow reset B1").
     ShadowCache,
     /// Time-sliced sky environment map (`sf_sky_bevy::EnvMapRefresh`): off, Bevy re-filters it every frame.
@@ -61,6 +65,9 @@ pub enum Part {
     /// Foliage cutouts (`mw_nif::Cutout`): off, authored blend +
     /// "alpha > 0" surfaces draw blended as before (the old look, an A/B).
     LeafMask,
+    /// Diffuse transmission on leaf cutouts (`mw_assets::LEAF_DIFFUSE_TRANSMISSION`): off, leaves are
+    /// opaque cards as before (an A/B).
+    FoliageTransmission,
     /// Camera motion vectors for sky and cloud pixels (`sf_render_order_bevy::SkyMotion`, RO-7); off,
     /// they carry none and DLSS/TAA smear the sky on camera turns (the old look, an A/B).
     SkyMotion,
@@ -81,7 +88,7 @@ pub enum Part {
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 42] = [
+    const ALL: [(&'static str, Part); 45] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -102,6 +109,8 @@ impl Part {
         ("softshadows", Part::SoftShadows),
         ("contactshadows", Part::ContactShadows),
         ("ssao", Part::Ssao),
+        ("bloom", Part::Bloom),
+        ("gi", Part::Gi),
         ("shadowcache", Part::ShadowCache),
         ("envslice", Part::EnvSlice),
 
@@ -120,6 +129,7 @@ impl Part {
         ("foghistory", Part::FogHistory),
         ("transfog", Part::TransFog),
         ("leafmask", Part::LeafMask),
+        ("foliagetransmission", Part::FoliageTransmission),
         ("skymotion", Part::SkyMotion),
         ("precombine", Part::Precombine),
         ("lampfilter", Part::LampFilter),

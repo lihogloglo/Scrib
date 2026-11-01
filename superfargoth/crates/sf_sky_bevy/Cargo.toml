@@ -42,6 +42,7 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 # `plugin_available` for the "DLSS unavailable" warning (already in the graph via bevy_anti_alias/dlss).
 dlss_wgpu = { version = "6.0.0", optional = true }
 log.workspace = true
+sf_model_bevy.workspace = true
 sf_render_order_bevy = { path = "../sf_render_order_bevy", version = "0.1.0" }
 sf_sky.workspace = true
 workspace-hack.workspace = true

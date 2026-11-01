@@ -26,6 +26,8 @@ import bevy_render::maths::{E, powsafe};
 @if(STANDARD_MATERIAL_SPECULAR_TRANSMISSION) import package::transmission;
 
 @if(IRRADIANCE_VOLUME) import package::light_probe::irradiance_volume;
+// superfargoth patch (own, GI)
+@if(GI_PROBES) import package::render::gi_probes;
 
 @if(MESHLET_MESH_MATERIAL_PASS) import package::meshlet::visibility_buffer_resolve::VertexOutput;
 @elif(PREPASS_PIPELINE) import package::prepass::io::VertexOutput;
@@ -705,6 +707,15 @@ fn apply_pbr_lighting(
     indirect_light += in.lightmap_light * diffuse_color;
     found_diffuse_indirect = true;
 }
+
+    // superfargoth patch (own, GI): DDGI probes replace the irradiance volume and the
+    // environment map's diffuse inside their box (the env map keeps the specular).
+    @if(GI_PROBES)
+    if (!found_diffuse_indirect && gi_probes::gi_probe_inside(in.world_position.xyz)) {
+        indirect_light += gi_probes::gi_probe_irradiance(in.world_position.xyz, in.N, in.V)
+            * diffuse_color * diffuse_occlusion;
+        found_diffuse_indirect = true;
+    }
 
     @if(IRRADIANCE_VOLUME)
     // Irradiance volume light (indirect)

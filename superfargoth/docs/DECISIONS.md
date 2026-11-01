@@ -1553,3 +1553,12 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-01 (saves cross-review): loads apply at the fade's cut (`FadeCutHooks`), never before the blackout. Overlay
   blobs older than the running `BlobVersions` are refused, not re-stamped: a `declare()` bump must ship a blob migration.
   Saved shapes that embed runtime types get a version bump + frozen legacy type on change (`sf.character.v2`).
+- 2026-11-01 (owner, contact-audit): **lamp contact shadows are on for High and Ultra** (`Quality::lamp_contact_shadows`;
+  A1 had made contact shadows sun-only). Owner confirmed look and cost in the Census office. **No automated visual
+  checks**, ever: agents never judge or detect rendering effects from screenshots or pixel diffs (CONTRIBUTING.md).
+- 2026-11-01 (owner): **GI starts now, dynamic, no bake**: ray-query probe volumes (DDGI-style, AC Shadows / idTech 8 pattern) on the
+  raster High path when the device has RT features; Low / no-RT keeps ambient + GTAO; Solari stays Ultra. Baked irradiance
+  volumes rejected (cannot follow a carried torch). Spec `superfargoth/docs/specs/gi.md`; research `gi-dynamic-2026-11-01.md`.
+- 2026-11-01 (gi-dispatch): `bevy_solari` 0.20.0 vendored with an own patch (`superfargoth/vendor/README.md`): the scene
+  bind group exists whenever the TLAS has instances, lights or not, so probe GI traces lightless interiors; Solari's
+  own lighting keeps skipping lightless scenes (`lit_bind_group`). Drop when upstream does the same.

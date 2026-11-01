@@ -170,6 +170,8 @@ sf_controller_bevy = { path = "superfargoth/crates/sf_controller_bevy", version 
 sf_coords = { path = "superfargoth/crates/sf_coords", version = "0.1.0" }
 sf_diag = { path = "superfargoth/crates/sf_diag", version = "0.1.0" }
 sf_diag_bevy = { path = "superfargoth/crates/sf_diag_bevy", version = "0.1.0" }
+sf_gi = { path = "superfargoth/crates/sf_gi", version = "0.1.0" }
+sf_gi_bevy = { path = "superfargoth/crates/sf_gi_bevy", version = "0.1.0" }
 sf_ids = { path = "superfargoth/crates/sf_ids", version = "0.1.0" }
 sf_level = { path = "superfargoth/crates/sf_level", version = "0.1.0" }
 sf_lod = { path = "superfargoth/crates/sf_lod", version = "0.1.0" }
@@ -261,6 +263,10 @@ big_space = { path = "superfargoth/vendor/big_space" }
 bevy_core_pipeline = { path = "superfargoth/vendor/bevy_core_pipeline" }
 bevy_pbr = { path = "superfargoth/vendor/bevy_pbr" }
 bevy_render = { path = "superfargoth/vendor/bevy_render" }
+# bevy_solari 0.20.0, own patch (superfargoth/vendor/README.md): the scene bind group exists whenever the TLAS
+# has instances, lights or not (probe GI traces lightless interiors; Solari's lighting still skips them), plus
+# read-only scene counts. Drop when upstream builds the bind group without lights.
+bevy_solari = { path = "superfargoth/vendor/bevy_solari" }
 # dlss_wgpu 6.0.0 facade with no NVIDIA code: NGX lives in the separately shipped plugin
 # (superfargoth/plugins/sf_dlss), loaded at runtime from <exe>/dlss/; superfargoth/vendor/README.md.
 # Keep while the game is GPL.

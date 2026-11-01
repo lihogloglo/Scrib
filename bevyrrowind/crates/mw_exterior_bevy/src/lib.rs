@@ -4,6 +4,7 @@
 //! (`view level:` parses its flags there).
 
 pub mod exterior;
+mod gi_volume;
 pub mod level;
 pub mod main_menu;
 pub mod pause_menu;

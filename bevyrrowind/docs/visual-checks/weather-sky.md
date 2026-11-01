@@ -123,3 +123,14 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Suspect (not tested): fog in-scatter scales with sun/moon light, so at night it goes dark and reads as no fog;
   the extinction (distance hiding) should stay.
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
+
+### FG-9: Vertical light pillar toward a low sun in fog (owner report)
+- Kind: game location. `view "Balmora" --hour 6.25 --weather foggy` (any fog, sun near the horizon), face the sun.
+- Seen 2026-11-02: instead of shafts from the sun, a vertical pillar of light in front of the camera, from below the
+  ground into the sky, that follows the camera. `flip terrain_far_shadows` / `clouds` / `sun_shadows`: no change.
+- Diagnosis (code read, not tested): the fog's sky fill is per view *azimuth* only. `fog_light.wesl:24-29` stores
+  sky radiance at 0.05 rad elevation per azimuth (includes the sun's bright aureole when it is low);
+  `froxel_inject.wesl:41,179` and `cloud_composite.wesl:110` add it to every froxel/pixel along that azimuth at any
+  pitch -> a vertical column. Standard fix: an isotropic/low-order sky irradiance (SH or ambient cube) for the
+  ambient term; the sun's forward lobe already comes from the key light.
+- Status: known bug: diagnosed, not fixed (owner pass 2026-11-02).

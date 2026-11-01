@@ -107,7 +107,7 @@ Paste the entry plus this:
   pipeline warm-up (J7). Pairs with the certified-screenshot slice (GPU readiness).
 - **Image quality under TAA/DLSS:** smear on alpha-tested leaves at low internal resolution, distant water moiré
   (WA-1), grazing-light shimmer (SH-12).
-- **Raster GI (Phase 4, parked):** IrradianceVolume / sky-visibility probes baked per cell. Design-heavy; only
+- **GI (opened 2026-11-01):** dynamic ray-query probe volumes, spec `superfargoth/docs/specs/gi.md`; the spike is a normal slice, the real probe sampling hunk (visibility-weighted, vendored bevy_pbr) and exterior cascades are strong-agent work. Was: baked probes, only
   when Phase 4 opens.
 
 ## Not for the strong agent (fixes already exist, waiting for a slot)

@@ -72,10 +72,6 @@ pub struct Baked {
     pub manifest: Manifest,
 }
 
-/// The cooked LOD level the ray tracer sees. Interiors are small enough
-/// for full detail; exteriors will want a reduced level.
-const RAY_TRACING_LOD: usize = 0;
-
 #[derive(Resource)]
 struct Scene {
     placements: Vec<Placement>,
@@ -167,7 +163,7 @@ pub fn run(vfs: Arc<Vfs>, options: ViewOptions) -> Result<(), Box<dyn std::error
         skinned,
         skeleton,
         bench,
-        ray_tracing_lod: ray_traced.then_some(RAY_TRACING_LOD),
+        ray_tracing_lod: ray_traced.then_some(mw_assets::cooked::RAY_TRACING_LOD),
         managed: render.managed(),
     })
     .insert_resource(Loading { started, ready_at: None, pending: 0 })

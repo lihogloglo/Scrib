@@ -31,11 +31,11 @@ use sf_coords::WorldPos;
 use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::{Counters, unit};
 use sf_model::LodScreen;
-use sf_model_bevy::{CookedModelAsset, baked_path};
+use sf_model_bevy::{CookedModelAsset, SfMeshLoaderSettings, baked_path};
 use sf_vfs::VfsPath;
 use sf_world::{
     Anchor, AnchorId, AnchorRole, CellDirectory, DoorLink, IndexPage, IndexReader, IndexedPlacement, Level,
-    LevelContent, Location, PageCache, Partition, PlacementId, PlacementOverlay, Request, RequestId, RequestKind, RingConfig,
+    LevelContent, Location, PageCache, Partition, PlacementId, PlacementOverlay, RayTracedWorldspaces, Request, RequestId, RequestKind, RingConfig,
     Scheduler, SchedulerConfig, Stage, StageStep, TickInput, Worldspace, WorldspaceId,
 };
 
@@ -108,6 +108,33 @@ impl Default for StreamingConfig {
             max_loading_meshes: 64,
             precombine: true,
         }
+    }
+}
+
+/// Ray-tracing mesh variants for streamed models (gi.md "Scene and
+/// lights"). The renderer that needs a ray-traced scene (a ray-traced path,
+/// probe GI) sets it at startup; models loaded for a worldspace
+/// [`RayTracedWorldspaces`] covers are loaded with
+/// `SfMeshLoaderSettings::ray_tracing_lod`, and their parts spawn with
+/// `RayTracingMesh` (the traced level) or `NoRayTracing` (the others).
+/// Those worldspaces also skip precombines: their per-model meshes are
+/// what the ray tracer gets.
+///
+/// A model is one asset per path, whatever its settings (Bevy ignores
+/// settings on a path already loading), so a model first loaded without
+/// variants for an untraced worldspace has none until all its users
+/// release it ([`StreamStats::ray_tracing_misses`]).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RayTracingVariants {
+    pub worldspaces: RayTracedWorldspaces,
+    /// The LOD level the variants are built from (0: the full mesh).
+    pub lod: usize,
+}
+
+impl RayTracingVariants {
+    /// The variants' level for models loaded into a worldspace of `partition`.
+    pub fn lod_for(self, partition: Partition) -> Option<usize> {
+        self.worldspaces.variant_lod(partition, self.lod)
     }
 }
 
@@ -198,6 +225,9 @@ pub struct StreamStats {
     /// Near loads whose precombine was dropped (a member moved, removed or
     /// missing): the cell spawned the old way.
     pub precombine_fallbacks: u64,
+    /// Model uses that wanted ray-tracing variants ([`RayTracingVariants`])
+    /// but found the model already loading or loaded without them.
+    pub ray_tracing_misses: u64,
     pub fetch_errors: u64,
     pub resident_cells: usize,
     pub models_loaded: usize,
@@ -260,6 +290,9 @@ struct ModelSlot {
     handle: Option<Handle<CookedModelAsset>>,
     users: u32,
     state: SlotState,
+    /// Build ray-tracing variants from this level ([`RayTracingVariants`]);
+    /// fixed once the load starts.
+    ray_tracing_lod: Option<usize>,
 }
 
 /// What the main-thread stages need to know about a worldspace (copied
@@ -674,7 +707,9 @@ impl Streaming {
                 if self.rt.config.precombine
                     && self.rt.far.is_installed()
                     && request.kind == RequestKind::Load
-                    && request.to == Level::Near =>
+                    && request.to == Level::Near
+                    // Ray-traced worldspaces trace the per-model meshes (RayTracingVariants).
+                    && world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(partition)).is_none() =>
             {
                 (p.path)(world, &request.worldspace, request.cell).map(|path| world.resource::<AssetServer>().load(path))
             }
@@ -824,13 +859,24 @@ impl Runtime {
     // -- assets --------------------------------------------------------------
 
     fn start_assets(&mut self, world: &World, request: &Request) {
+        let partition = self.info(&request.worldspace).partition;
+        let ray_tracing_lod =
+            world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(partition));
         let Some(work) = self.work.get_mut(&request.id) else { return };
         for model in &work.models {
             let slot = self.models.entry(model.clone()).or_insert_with(|| {
                 self.load_queue.push_back(model.clone());
-                ModelSlot { handle: None, users: 0, state: SlotState::Loading }
+                ModelSlot { handle: None, users: 0, state: SlotState::Loading, ray_tracing_lod }
             });
             slot.users += 1;
+            if ray_tracing_lod.is_some() && slot.ray_tracing_lod.is_none() {
+                if slot.handle.is_none() {
+                    slot.ray_tracing_lod = ray_tracing_lod; // still queued: load it with variants
+                } else {
+                    self.stats.ray_tracing_misses += 1;
+                    log::debug!("sf_world_bevy: {model} already loaded without ray-tracing variants");
+                }
+            }
         }
         work.acquired = true;
         if request.kind == RequestKind::Load
@@ -964,8 +1010,14 @@ impl Runtime {
             if slot.handle.is_some() {
                 continue;
             }
-            slot.handle =
-                Some(asset_server.load(baked_path(&self.config.mesh_step, model.as_str(), Some(&self.config.mesh_ext))));
+            let path = baked_path(&self.config.mesh_step, model.as_str(), Some(&self.config.mesh_ext));
+            slot.handle = Some(match slot.ray_tracing_lod {
+                None => asset_server.load(path),
+                lod @ Some(_) => asset_server
+                    .load_builder()
+                    .with_settings(move |s: &mut SfMeshLoaderSettings| s.ray_tracing_lod = lod)
+                    .load(path),
+            });
             in_flight += 1;
         }
     }
@@ -1391,5 +1443,5 @@ fn build_template(
             parts: lod.parts.iter().map(|(mesh, mat)| (asset.meshes[*mesh].clone(), material(*mat))).collect(),
         })
         .collect();
-    ModelTemplate { lods, aabb: model_aabb(&asset.bounds) }
+    ModelTemplate { lods, aabb: model_aabb(&asset.bounds), ray_tracing: asset.ray_tracing.clone() }
 }

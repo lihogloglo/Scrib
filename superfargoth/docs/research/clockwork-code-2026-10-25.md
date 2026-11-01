@@ -133,3 +133,12 @@ no TAA/DLSS/FSR/XeSS anywhere (grep of `files/`, `clockwork/`, settings docs fin
 - I did not build or run it. Reading was targeted: `gpuscene_cull.comp`, `layers*.glsl`, `surface.glsl`, `sunsoft.glsl`,
   shader headers of the light/fog/GI compute passes, settings docs, `objectpaging.cpp` and the scene/frame headers; the large
   `.cpp` files (framedriver, gpuscenevk*) were only skimmed for structure.
+
+## Addendum 2026-11-01: pipeline precompilation (owner question)
+- Clockwork precompiles: `frame/pipelinetable.{hpp,cpp}` (`PipelineTable`, `PipelineKey`, graphics pipeline libraries
+  `LibraryPart`, `compileWorkers` threads, `CompileBar` / `DiscoveryBar` progress at startup), a Vulkan
+  `VkPipelineCache` on disk (`components/vulkan/pipelinecache.hpp`), and `scene/materialprepare.cpp`: a material
+  catalog from VFS stamps (`materialStamps`) whose pipelines are compiled ahead ("Catalog skipped N pipelines without a
+  material request"). Bevy 0.20: specialise-on-first-use, async compile (`PipelineCache`, `synchronous_pipeline_compilation`),
+  no on-disk cache (wgpu `PIPELINE_CACHE` unused), no precompile API. Candidate row 17: warm-up pass over the content's
+  material/mesh key permutations during loading + wgpu pipeline cache to disk (vendored patch); see ROADMAP backlog.

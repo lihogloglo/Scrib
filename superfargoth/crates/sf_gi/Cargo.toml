@@ -1,0 +1,12 @@
+[package]
+name = "sf_gi"
+description = "Bevy-free core of superfargoth's dynamic probe GI: probe grids, ray directions, ambient cubes, update budget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+
+[lints]
+workspace = true

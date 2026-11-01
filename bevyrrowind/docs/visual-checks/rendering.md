@@ -145,3 +145,20 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Suspect (not tested): the wireframe copy isn't placed in the same big_space grid cell / transform as the skinned mesh.
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
 - Owner 2026-10-30 (Balmora, release copy): in the game F7 shows the wireframe on the terrain only, none on characters.
+
+### RO-14: Bloom on the game camera (2026-11-01)
+- Kind: game location, dev or release build, High preset. Runs: (1) `view "Balmora" --hour 18.5`, face the sun
+  (west); (2) `view "Balmora" --hour 23`, look at the street lamps and braziers; (3) `scene census`, the candles.
+- Look for: a soft glow around the sun disk, lamp and candle flames and fire only; lit walls and sunlit ground keep
+  crisp edges, no milky haze over the whole image; no pulsing when the camera stops (DLSS/TAA run before bloom).
+- A/B: `--off bloom` (or console `render.bloom 0`; retune live, e.g. `render.bloom 0.2`; default 0.1).
+- Status: confirmed (owner 2026-11-02, sun at dusk; night lamps and candles not checked). Source: visual-niceties.
+
+### RO-15: Light through leaves (foliage diffuse transmission, 2026-11-01)
+- Kind: game location. Runs: `view "Seyda Neen" --hour 7` looking east and `view "Balmora" --hour 18.5` looking
+  west, from under or behind trees so the sun sits behind the canopy; then turn around (sun at your back).
+- Look for: backlit leaves glow warm/green-gold, leaves shadowed by the trunk or other trees stay darker; front-lit
+  leaves look as before or a touch darker (half their direct light goes through); no bright rims or speckle on
+  cutout edges; far impostor trees are unchanged (not covered).
+- A/B: `--off foliagetransmission` (startup only; value `mw_assets::LEAF_DIFFUSE_TRANSMISSION` 0.5 (owner 2026-11-02, was 0.3), thickness 0.05 m).
+- Status: confirmed (owner 2026-11-02 at 0.5; 1.0 tried and liked). Source: visual-niceties.

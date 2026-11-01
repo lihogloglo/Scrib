@@ -313,3 +313,20 @@ fn shadow_importance_prefers_strong_near_lights() {
     // Priority 4 ranks like half the distance (inside range).
     assert!((shadow_importance(20.0, 8.0, 4.0) - shadow_importance(20.0, 4.0, 1.0)).abs() < 1e-3);
 }
+
+#[test]
+fn ray_tracing_follows_the_cameras_worldspace_layer() {
+    use bevy_camera::visibility::RenderLayers;
+    use crate::path::{camera_layers, traced_by};
+    // A camera in worldspace layer 2 (plus the shared layer 0).
+    let interior = RenderLayers::from_layers(&[0, 2]);
+    let view = camera_layers([Some(&interior)].into_iter());
+    assert!(traced_by(&view, Some(&RenderLayers::layer(2))));
+    assert!(!traced_by(&view, Some(&RenderLayers::layer(1))), "another worldspace stays out");
+    assert!(traced_by(&view, None), "unlayered meshes are layer 0");
+    // No camera: nothing is traced.
+    assert!(!traced_by(&camera_layers(std::iter::empty()), None));
+    // A camera without layers sees layer 0 only.
+    let default_view = camera_layers([None].into_iter());
+    assert!(traced_by(&default_view, None) && !traced_by(&default_view, Some(&RenderLayers::layer(2))));
+}

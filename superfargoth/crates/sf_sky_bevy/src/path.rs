@@ -17,10 +17,9 @@
 //!    `apply_lights` drop shadow maps and pre-attenuate the sun.
 
 use bevy_app::App;
-use bevy_asset::Handle;
 use bevy_camera::Camera3d;
+use bevy_camera::visibility::RenderLayers;
 use bevy_ecs::prelude::*;
-use bevy_mesh::Mesh;
 
 use crate::{ActiveRenderPath, RenderPathSetting};
 
@@ -29,10 +28,30 @@ use crate::{ActiveRenderPath, RenderPathSetting};
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RayTracingSupport(pub bool);
 
-/// Keeps a mesh out of the ray-traced scene (e.g. grass, decals, effects,
-/// LOD levels other than the one the ray tracer uses).
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct NoRayTracing;
+/// Another system needs the ray-traced scene (BLAS/TLAS) on the raster path:
+/// dynamic probe GI (`sf_gi_bevy` sets it while a GI volume exists). With it
+/// the visible meshes are mirrored into `RaytracingMesh3d` as on the
+/// ray-traced path (feature `solari`; without it nothing is mirrored).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GiActive(pub bool);
+
+/// The live switch of the dynamic probe GI (`sf_gi_bevy`; a console's `render.gi`). Present
+/// only while the GI can run (its plugin is added and the GPU has the ray-tracing features).
+/// False: volumes stay (and with them [`GiActive`]: the ray-traced scene is kept for a quick
+/// return) but are neither traced nor shown; true again re-traces them from scratch.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GiEnabled(pub bool);
+
+impl Default for GiEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// The per-entity ray-tracing markers live with the loader that builds the
+/// variants (`sf_model_bevy`), so spawners that don't depend on this crate
+/// (world streaming) can attach them.
+pub use sf_model_bevy::{NoRayTracing, RayTracingMesh};
 
 /// A 3D camera whose render path this plugin manages (G-buffer, MSAA,
 /// prepasses, Solari settings). [`crate::SkyCamera`] requires it; interior
@@ -41,14 +60,21 @@ pub struct NoRayTracing;
 #[require(Camera3d)]
 pub struct RenderPathCamera;
 
-/// The mesh the ray tracer uses for this entity instead of its `Mesh3d`.
-///
-/// Solari takes only uncompressed position/normal/uv0/tangent meshes with
-/// u32 indices and silently skips anything else, while the raster path
-/// wants compressed vertices and extra attributes (vertex colors). Loaders
-/// build this variant only when the ray-traced path is in use.
-#[derive(Component, Clone, Debug)]
-pub struct RayTracingMesh(pub Handle<Mesh>);
+/// The layers the render-path cameras see together (no `RenderLayers`
+/// means layer 0); none at all without a camera.
+#[cfg_attr(not(feature = "solari"), allow(dead_code))]
+pub(crate) fn camera_layers<'a>(cameras: impl Iterator<Item = Option<&'a RenderLayers>>) -> RenderLayers {
+    cameras.fold(RenderLayers::none(), |all, layers| {
+        all.union(layers.unwrap_or(&RenderLayers::default()))
+    })
+}
+
+/// Whether a mesh on `layers` (none: layer 0) belongs in the ray-traced
+/// scene of cameras seeing `view`: its worldspace is the one shown.
+#[cfg_attr(not(feature = "solari"), allow(dead_code))]
+pub(crate) fn traced_by(view: &RenderLayers, layers: Option<&RenderLayers>) -> bool {
+    view.intersects(layers.unwrap_or(&RenderLayers::default()))
+}
 
 /// The render path systems (camera setup, mesh mirroring); upscaling runs
 /// after them.
@@ -57,6 +83,7 @@ pub(crate) struct PathSystems;
 
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<RayTracingSupport>();
+    app.init_resource::<GiActive>();
     app.configure_sets(bevy_app::Update, PathSystems.in_set(crate::SkySystems::RenderPath));
     #[cfg(feature = "solari")]
     solari::build(app);
@@ -99,9 +126,9 @@ mod solari {
     use bevy_solari::prelude::{RaytracingMesh3d, SolariLighting};
     use bevy_solari::scene::RaytracingScenePlugin;
 
-    use bevy_camera::visibility::InheritedVisibility;
+    use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
 
-    use super::{NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
+    use super::{GiActive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
     use crate::{ActiveRenderPath, RenderPathSetting, SkyRenderOptions, SkySystems, UpscalingSetting};
     use sf_sky::RenderPath;
 
@@ -132,6 +159,11 @@ mod solari {
     pub(super) struct MirroredRayTracing;
 
     pub(super) fn build(app: &mut App) {
+        // Headless (no renderer, e.g. unit tests): nothing to ray trace, and
+        // Solari's plugins need the render app. The path resolves to raster.
+        if app.get_sub_app(RenderApp).is_none() {
+            return;
+        }
         if !app.is_plugin_added::<RaytracingScenePlugin>() {
             app.add_plugins(SolariPlugins);
         }
@@ -364,49 +396,77 @@ mod solari {
         }
     }
 
-    /// On the ray-traced path, registers visible meshes with the ray tracer
-    /// (their [`RayTracingMesh`] when they have one); on raster, unregisters
-    /// the ones it added. Solari ignores visibility, so hidden entities stay
+    /// On the ray-traced path, or on raster while [`GiActive`], registers
+    /// visible meshes with the ray tracer (their [`RayTracingMesh`] when they
+    /// have one); otherwise unregisters the ones it added. Solari ignores visibility, so hidden entities stay
     /// out and leave when they become hidden. Meshes Solari can't use
     /// (layout other than position/normal/uv0/tangent, u16 indices) are
     /// skipped by Solari itself: loaders provide a [`RayTracingMesh`].
-    #[allow(clippy::type_complexity)]
+    ///
+    /// Only meshes the render-path cameras' `RenderLayers` see are traced:
+    /// each loaded worldspace draws in its own layer, so the other
+    /// worldspaces (an exterior kept loaded behind an interior) stay out of
+    /// the BLAS/TLAS, and leave it when the camera changes worldspace.
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn mirror_meshes(
         mut commands: Commands,
         active: Res<ActiveRenderPath>,
         options: Res<SkyRenderOptions>,
+        gi: Res<GiActive>,
+        cameras: Query<Option<&RenderLayers>, With<RenderPathCamera>>,
+        mut seen: Local<Option<RenderLayers>>,
         unmirrored: Query<
-            (Entity, &Mesh3d, Option<&RayTracingMesh>, &InheritedVisibility),
+            (
+                Entity,
+                &Mesh3d,
+                Option<&RayTracingMesh>,
+                &InheritedVisibility,
+                Option<&RenderLayers>,
+            ),
             (
                 With<MeshMaterial3d<StandardMaterial>>,
                 Without<RaytracingMesh3d>,
                 Without<NoRayTracing>,
             ),
         >,
-        hidden: Query<
-            (Entity, &InheritedVisibility),
-            (With<MirroredRayTracing>, Changed<InheritedVisibility>),
+        changed: Query<
+            (Entity, &InheritedVisibility, Option<&RenderLayers>),
+            (
+                With<MirroredRayTracing>,
+                Or<(Changed<InheritedVisibility>, Changed<RenderLayers>)>,
+            ),
         >,
-        mirrored: Query<Entity, With<MirroredRayTracing>>,
+        mirrored: Query<(Entity, &InheritedVisibility, Option<&RenderLayers>), With<MirroredRayTracing>>,
     ) {
-        if active.0 == RenderPath::RayTraced && options.auto_ray_tracing_meshes {
-            for (entity, mesh, variant, visibility) in &unmirrored {
-                if visibility.get() {
+        let wanted = active.0 == RenderPath::RayTraced || gi.0;
+        if wanted && options.auto_ray_tracing_meshes {
+            let view = super::camera_layers(cameras.iter());
+            let view_changed = seen.as_ref() != Some(&view);
+            for (entity, mesh, variant, visibility, layers) in &unmirrored {
+                if visibility.get() && super::traced_by(&view, layers) {
                     let mesh = variant.map_or(&mesh.0, |v| &v.0).clone();
                     commands
                         .entity(entity)
                         .try_insert((RaytracingMesh3d(mesh), MirroredRayTracing));
                 }
             }
-            for (entity, visibility) in &hidden {
-                if !visibility.get() {
-                    commands
-                        .entity(entity)
-                        .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
-                }
+            let leaving = |(entity, visibility, layers): (Entity, &InheritedVisibility, Option<&RenderLayers>)| {
+                (!visibility.get() || !super::traced_by(&view, layers)).then_some(entity)
+            };
+            let gone: Vec<Entity> = if view_changed {
+                mirrored.iter().filter_map(leaving).collect()
+            } else {
+                changed.iter().filter_map(leaving).collect()
+            };
+            for entity in gone {
+                commands
+                    .entity(entity)
+                    .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
             }
-        } else if active.is_changed() || options.is_changed() {
-            for entity in &mirrored {
+            *seen = Some(view);
+        } else if active.is_changed() || options.is_changed() || gi.is_changed() {
+            *seen = None;
+            for (entity, _, _) in &mirrored {
                 commands
                     .entity(entity)
                     .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();

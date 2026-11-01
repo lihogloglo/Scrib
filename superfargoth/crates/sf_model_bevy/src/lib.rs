@@ -20,7 +20,7 @@ mod source;
 mod spawn;
 
 pub use loader::{
-    CookedLodMeshes, CookedModelAsset, CookedRayTracing, SfMeshLoadError, SfMeshLoader,
+    CookedLodMeshes, CookedModelAsset, CookedRayTracing, NoRayTracing, RayTracingMesh, SfMeshLoadError, SfMeshLoader,
     SfMeshLoaderSettings, compression_args, static_model_asset, submesh_to_mesh,
     submesh_to_ray_tracing_mesh,
 };

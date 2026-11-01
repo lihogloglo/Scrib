@@ -8,7 +8,16 @@
 //! - `render.contactshadows` (on/off variable): Bevy screen-space contact shadows
 //!   (`ContactShadows` on the camera), live, same grammar (`off contactshadows`). Starts as
 //!   the run started (`--off contactshadows` or the Low preset: off).
-//! - `on <name>` / `off <name>` / `flip <name>`: `ssao`, `contactshadows` and the switches the A/B keys flip
+//! - `render.contactlength` / `render.contactthickness` (meters): the contact-shadow ray
+//!   length and surface thickness, live (SH-16 diagnosis: `render.contactlength 3` makes any
+//!   working march obvious). Start as the camera's preset values.
+//! - `render.bloom` (float, 0 = off): Bevy `Bloom` intensity on the camera, live. Starts as
+//!   the camera's preset value (`--off bloom` or the Low preset: 0).
+//! - `render.gi` (on/off variable): the dynamic probe GI (`sf_sky_bevy::GiEnabled`), live:
+//!   off stops tracing and showing the volume (today's ambient draws), on re-traces it. Starts
+//!   on where the GI runs; a run without it (`--off gi`, Low/Medium, the ray-traced path, an
+//!   exterior start, no ray-tracing GPU) can't turn it on.
+//! - `on <name>` / `off <name>` / `flip <name>`: `ssao`, `contactshadows`, `gi` and the switches the A/B keys flip
 //!   ([`Switch`]: `sun_shadows`, `clouds`, ...). Any other `--off` part is decided at
 //!   startup: the console says so instead of doing nothing.
 //! - Any other line runs as `MWScript` (vanilla's console: `player->AddItem gold_001 100`),
@@ -19,6 +28,7 @@ use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy_ecs::system::SystemState;
 use bevy_light::DirectionalLight;
 use bevy_pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy_post_process::bloom::Bloom;
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_math::prelude::*;
@@ -40,6 +50,14 @@ use crate::live_ab::{LiveAb, Switch, Switches};
 const SSAO_VAR: &str = "render.ssao";
 /// Name of the contact-shadows variable.
 const CONTACT_VAR: &str = "render.contactshadows";
+/// Name of the contact-shadow ray length variable (meters).
+const CONTACT_LENGTH_VAR: &str = "render.contactlength";
+/// Name of the contact-shadow thickness variable (meters).
+const CONTACT_THICKNESS_VAR: &str = "render.contactthickness";
+/// Name of the bloom intensity variable (0 = off).
+const BLOOM_VAR: &str = "render.bloom";
+/// Name of the dynamic GI variable.
+const GI_VAR: &str = "render.gi";
 
 /// The console, its overlay on backquote, `render.ssao`, `render.contactshadows` and the
 /// `on`/`off`/`flip` commands.
@@ -256,11 +274,31 @@ fn register(app: &mut App) {
     let contact = app.add_console_var(VarSpec::bool(CONTACT_VAR, true).help(
         "Screen-space contact shadows (Bevy ContactShadows) on the camera; starts as the run did (--off contactshadows, Low preset: off)",
     ));
+    let length = app.add_console_var(
+        VarSpec::float(CONTACT_LENGTH_VAR, f64::from(ContactShadows::default().length))
+            .float_range(0.01, 20.0)
+            .help("Contact-shadow ray length in meters (starts as the camera's preset value; 3 makes any working march obvious)"),
+    );
+    let thickness = app.add_console_var(
+        VarSpec::float(CONTACT_THICKNESS_VAR, f64::from(ContactShadows::default().thickness))
+            .float_range(0.001, 10.0)
+            .help("Contact-shadow surface thickness in meters (starts as the camera's preset value)"),
+    );
+    let bloom = app.add_console_var(
+        VarSpec::float(BLOOM_VAR, f64::from(Bloom::NATURAL.intensity))
+            .float_range(0.0, 1.0)
+            .help("Bloom intensity on the camera, 0 = off (Bevy Bloom, energy-conserving; starts as the camera's preset value, --off bloom and Low: 0)"),
+    );
+    let gi = app.add_console_var(VarSpec::bool(GI_VAR, false).help(
+        "Dynamic probe GI (sf_gi_bevy), live; starts on where the GI runs (High/Ultra raster, interior start), off and fixed without it (--off gi)",
+    ));
     app.insert_resource(Ssao { var: ssao, level: None, applied: None })
-        .insert_resource(Contact { var: contact, settings: None, applied: None })
-        .add_systems(Update, (apply_ssao, apply_contact_shadows));
-    let vars = LiveVars { ssao, contact };
-    let live = format!("live: ssao, contactshadows, {}; other --off parts are startup only", Switch::names());
+        .insert_resource(Contact { var: contact, length, thickness, settings: None, applied: None, tuned: None })
+        .insert_resource(BloomVar { var: bloom, settings: None, applied: None })
+        .insert_resource(GiVar { var: gi, applied: None })
+        .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi));
+    let vars = LiveVars { ssao, contact, gi };
+    let live = format!("live: ssao, contactshadows, gi, {}; other --off parts are startup only", Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
         let verb = match on {
             Some(true) => "Turns on",
@@ -284,6 +322,7 @@ fn register(app: &mut App) {
 struct LiveVars {
     ssao: VarId,
     contact: VarId,
+    gi: VarId,
 }
 
 /// `render.ssao` and what the camera started with.
@@ -301,11 +340,32 @@ struct Ssao {
 #[derive(Resource)]
 struct Contact {
     var: VarId,
+    /// `render.contactlength` (meters).
+    length: VarId,
+    /// `render.contactthickness` (meters).
+    thickness: VarId,
     /// The camera's settings at startup, the preset's (`None`: it started without contact
-    /// shadows; turning them on then uses Bevy's default, the High preset's values).
+    /// shadows; turning them on then uses Bevy's default, the High preset's values), then
+    /// with the tuning variables applied.
     settings: Option<ContactShadows>,
     /// The variable's generation last applied (`None`: the camera hasn't been seen yet).
     applied: Option<u64>,
+    /// The tuning variables' generations last applied.
+    tuned: Option<(u64, u64)>,
+}
+
+impl Contact {
+    /// The settings to put on the camera: the preset's (or Bevy's default) with the tuning
+    /// variables' current values.
+    #[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
+    fn settings(&self, console: &DevConsole) -> ContactShadows {
+        let vars = console.vars();
+        ContactShadows {
+            length: vars.float(self.length) as f32,
+            thickness: vars.float(self.thickness) as f32,
+            ..self.settings.unwrap_or_default()
+        }
+    }
 }
 
 /// Seeds a camera-component variable from the camera the first time it is seen (`present`:
@@ -381,14 +441,30 @@ fn apply_contact_shadows(
         let Some((_, contact)) = cameras.iter().next() else { return };
         state.settings = contact.copied();
         state.applied = Some(seed_from_camera(&mut console, state.var, contact.is_some()));
+        // The tuning variables start as the camera's values (a value typed earlier wins).
+        let seed = state.settings.unwrap_or_default();
+        let vars = console.vars_mut();
+        let _ = vars.set_by(state.length, f64::from(seed.length).into(), SetBy::CommandLine);
+        let _ = vars.set_by(state.thickness, f64::from(seed.thickness).into(), SetBy::CommandLine);
+        state.tuned = Some((vars.var(state.length).generation(), vars.var(state.thickness).generation()));
         return;
     }
     let state = &mut *state;
-    let Some(on) = changed_since(&console, state.var, &mut state.applied) else { return };
+    let tuned = (console.vars().var(state.length).generation(), console.vars().var(state.thickness).generation());
+    let retune = state.tuned != Some(tuned);
+    state.tuned = Some(tuned);
+    let on = match changed_since(&console, state.var, &mut state.applied) {
+        Some(on) => on,
+        None if retune => console.vars().flag(state.var),
+        None => return,
+    };
     for (camera, contact) in &cameras {
         match (on, contact.is_some()) {
             (true, false) => {
-                commands.entity(camera).insert(state.settings.unwrap_or_default());
+                commands.entity(camera).insert(state.settings(&console));
+            }
+            (true, true) if retune => {
+                commands.entity(camera).insert(state.settings(&console));
             }
             (false, true) => {
                 commands.entity(camera).remove::<ContactShadows>();
@@ -405,6 +481,81 @@ fn apply_contact_shadows(
     }
 }
 
+/// `render.bloom` and what the camera started with.
+#[derive(Resource)]
+struct BloomVar {
+    var: VarId,
+    /// The camera's bloom at startup, the preset's (`None`: it started without bloom; turning
+    /// it on then uses `Bloom::NATURAL` with the variable's intensity).
+    settings: Option<Bloom>,
+    /// The variable's generation last applied (`None`: the camera hasn't been seen yet).
+    applied: Option<u64>,
+}
+
+/// Seeds `render.bloom` from the camera once it exists (its intensity, 0 without bloom; a
+/// value typed earlier wins), then puts the preset's bloom with the variable's intensity on
+/// the camera when it changes, or removes the component at 0.
+#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
+fn apply_bloom(mut commands: Commands, mut console: ResMut<DevConsole>, mut state: ResMut<BloomVar>, cameras: Query<(Entity, Option<&Bloom>), With<ExteriorCamera>>) {
+    if state.applied.is_none() {
+        let Some((_, bloom)) = cameras.iter().next() else { return };
+        state.settings = bloom.cloned();
+        let seed = bloom.map_or(0.0, |b| f64::from(b.intensity));
+        let vars = console.vars_mut();
+        let _ = vars.set_by(state.var, seed.into(), SetBy::CommandLine);
+        let generation = vars.var(state.var).generation();
+        // A value typed before the camera existed differs from the seed: apply it next frame.
+        state.applied = Some(if (vars.float(state.var) - seed).abs() < 1e-9 { generation } else { u64::MAX });
+        return;
+    }
+    let generation = console.vars().var(state.var).generation();
+    if state.applied == Some(generation) {
+        return;
+    }
+    state.applied = Some(generation);
+    let intensity = console.vars().float(state.var) as f32;
+    for (camera, _) in &cameras {
+        if intensity > 0.0 {
+            let base = state.settings.clone().unwrap_or(Bloom::NATURAL);
+            commands.entity(camera).insert(Bloom { intensity, ..base });
+        } else {
+            commands.entity(camera).remove::<Bloom>();
+        }
+    }
+}
+
+/// `render.gi` and whether the GI is in this run.
+#[derive(Resource)]
+struct GiVar {
+    var: VarId,
+    /// The variable's generation last applied (`None`: not seeded yet).
+    applied: Option<u64>,
+}
+
+/// Seeds `render.gi` from `sf_sky_bevy::GiEnabled` (absent: the GI isn't in this run, the
+/// variable stays off), then sets the resource when the variable changes: `sf_gi_bevy` drops
+/// the volumes' textures (nothing traced or shown) and re-traces them when it comes back.
+/// A value typed before the seed wins, as for the camera variables.
+#[allow(clippy::needless_pass_by_value)]
+fn apply_gi(mut console: ResMut<DevConsole>, mut state: ResMut<GiVar>, enabled: Option<ResMut<sf_sky_bevy::GiEnabled>>) {
+    let Some(mut enabled) = enabled else {
+        if state.applied.is_none() {
+            let _ = console.vars_mut().set_by(state.var, false.into(), SetBy::CommandLine);
+            state.applied = Some(console.vars().var(state.var).generation());
+        }
+        return;
+    };
+    if state.applied.is_none() {
+        state.applied = Some(seed_from_camera(&mut console, state.var, enabled.0));
+        return;
+    }
+    let Some(on) = changed_since(&console, state.var, &mut state.applied) else { return };
+    if enabled.0 != on {
+        enabled.0 = on;
+    }
+}
+
 /// `on`/`off`/`flip <name>`: what happened, or why nothing did.
 fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
     let var = match name {
@@ -412,6 +563,16 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
         "contactshadows" => Some(live.contact),
         _ => None,
     };
+    if name == "gi" {
+        if !world.contains_resource::<sf_sky_bevy::GiEnabled>() {
+            return Err(
+                "gi: not in this run (--off gi, Low/Medium preset, the ray-traced path, an exterior start or no ray-tracing GPU)".to_owned()
+            );
+        }
+        let v = on.unwrap_or(!vars.flag(live.gi));
+        vars.set_by(live.gi, v.into(), SetBy::Console)?;
+        return Ok(format!("gi {}", if v { "on" } else { "off" }));
+    }
     if let Some(var) = var {
         if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
             return Err(format!("{name}: no streaming camera in this run"));
@@ -430,7 +591,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     }
     match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
-        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, {}", Switch::names())),
+        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, {}", Switch::names())),
     }
 }
 
@@ -623,6 +784,84 @@ mod tests {
         run(&mut app, "flip contactshadows");
         assert!(app.world().get::<ContactShadows>(camera).is_none());
         assert!(log(&app).iter().any(|l| l == "contactshadows off"), "{:?}", log(&app));
+    }
+
+    #[test]
+    fn gi_flips_live_and_says_when_the_run_has_none() {
+        let mut none = app();
+        run(&mut none, "on gi");
+        assert!(log(&none).iter().any(|l| l.contains("gi: not in this run")), "{:?}", log(&none));
+        let var = none.world().resource::<GiVar>().var;
+        assert!(!none.world().resource::<DevConsole>().vars().flag(var), "no GI: seeded off");
+
+        let mut app = app();
+        app.insert_resource(sf_sky_bevy::GiEnabled(true));
+        app.update();
+        app.update();
+        let var = app.world().resource::<GiVar>().var;
+        assert!(app.world().resource::<DevConsole>().vars().flag(var), "seeded from GiEnabled");
+        run(&mut app, "off gi");
+        assert!(!app.world().resource::<sf_sky_bevy::GiEnabled>().0, "{:?}", log(&app));
+        run(&mut app, "flip gi");
+        assert!(app.world().resource::<sf_sky_bevy::GiEnabled>().0);
+        run(&mut app, "toggle render.gi");
+        assert!(!app.world().resource::<sf_sky_bevy::GiEnabled>().0);
+        assert!(log(&app).iter().any(|l| l == "gi on"), "{:?}", log(&app));
+    }
+
+    #[test]
+    fn contact_length_and_thickness_retune_the_camera_live_and_survive_a_flip() {
+        let mut app = app();
+        let medium = ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.3 };
+        let camera = app.world_mut().spawn((ExteriorCamera, medium)).id();
+        app.update();
+        app.update();
+        let state = app.world().resource::<Contact>();
+        let length = state.length;
+        let vars = app.world().resource::<DevConsole>().vars();
+        assert!((vars.float(length) - 0.3).abs() < 1e-6, "seeded from the camera, not Bevy's default");
+        run(&mut app, "render.contactlength 3");
+        run(&mut app, "render.contactthickness 1");
+        let tuned = app.world().get::<ContactShadows>(camera).expect("still on");
+        assert!((tuned.length - 3.0).abs() < 1e-6 && (tuned.thickness - 1.0).abs() < 1e-6, "length {} thickness {}", tuned.length, tuned.thickness);
+        assert_eq!(tuned.linear_steps, 8, "the preset's steps stay");
+        run(&mut app, "off contactshadows");
+        assert!(app.world().get::<ContactShadows>(camera).is_none());
+        run(&mut app, "on contactshadows");
+        let back = app.world().get::<ContactShadows>(camera).expect("back on");
+        assert!((back.length - 3.0).abs() < 1e-6, "the tuned length survives a flip: {}", back.length);
+    }
+
+    #[test]
+    fn bloom_intensity_seeds_from_the_camera_retunes_live_and_zero_turns_it_off() {
+        let mut app = app();
+        let preset = Bloom { intensity: 0.1, ..Bloom::NATURAL };
+        let camera = app.world_mut().spawn((ExteriorCamera, preset)).id();
+        app.update();
+        app.update();
+        let var = app.world().resource::<BloomVar>().var;
+        assert!((app.world().resource::<DevConsole>().vars().float(var) - 0.1).abs() < 1e-6, "seeded from the camera, not NATURAL's 0.15");
+        run(&mut app, "render.bloom 0.3");
+        let tuned = app.world().get::<Bloom>(camera).expect("still on");
+        assert!((tuned.intensity - 0.3).abs() < 1e-6, "intensity {}", tuned.intensity);
+        run(&mut app, "render.bloom 0");
+        assert!(app.world().get::<Bloom>(camera).is_none(), "{:?}", log(&app));
+        run(&mut app, "render.bloom 0.2");
+        let back = app.world().get::<Bloom>(camera).expect("back on");
+        assert!((back.intensity - 0.2).abs() < 1e-6, "intensity {}", back.intensity);
+    }
+
+    #[test]
+    fn camera_without_bloom_seeds_zero_and_turns_on_natural() {
+        let mut app = app();
+        let camera = app.world_mut().spawn(ExteriorCamera).id();
+        app.update();
+        app.update();
+        let var = app.world().resource::<BloomVar>().var;
+        assert!(app.world().resource::<DevConsole>().vars().float(var).abs() < 1e-9);
+        assert!(app.world().get::<Bloom>(camera).is_none());
+        run(&mut app, "render.bloom 0.1");
+        assert!(app.world().get::<Bloom>(camera).is_some(), "{:?}", log(&app));
     }
 
     #[test]

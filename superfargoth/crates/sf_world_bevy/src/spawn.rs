@@ -26,6 +26,7 @@ use bevy_pbr::{MeshMaterial3d, StandardMaterial};
 use bevy_render::render_resource::Face;
 use bevy_transform::components::Transform;
 use sf_model::{LodRange, LodScreen, lod_ranges};
+use sf_model_bevy::{CookedRayTracing, NoRayTracing, RayTracingMesh};
 use sf_world::{IndexedPlacement, Level, PlacementClass, PlacementFlags, WorldspaceId};
 
 /// A cooked model, ready to instance: every level's parts with their meshes
@@ -37,6 +38,9 @@ pub struct ModelTemplate {
     /// Model-space bounds of LOD0 (used as every part's `Aabb`, so Bevy
     /// never needs the mesh data on the CPU).
     pub aabb: Aabb,
+    /// Ray-tracing variants of one level, when the model was loaded with
+    /// them ([`crate::RayTracingVariants`]).
+    pub ray_tracing: Option<CookedRayTracing>,
 }
 
 #[derive(Debug)]
@@ -288,12 +292,19 @@ pub fn spawn_template(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTempl
 }
 
 /// [`spawn_template`] with the levels' ranges given (one per level).
+///
+/// With ray-tracing variants ([`ModelTemplate::ray_tracing`]), the traced
+/// level's parts carry their [`RayTracingMesh`] and the other levels
+/// [`NoRayTracing`]: the ray tracer ignores visibility ranges and sees
+/// exactly one level.
 pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &ModelTemplate, ranges: &[LodRange]) -> u32 {
-    let mut batch = Vec::new();
-    for (lod, range) in template.lods.iter().zip(ranges) {
+    let mut plain = Vec::new();
+    let mut traced = Vec::new();
+    let mut untraced = Vec::new();
+    for (level, (lod, range)) in template.lods.iter().zip(ranges).enumerate() {
         let Some(visibility) = visibility_range(range) else { continue };
-        for (mesh, material) in &lod.parts {
-            batch.push((
+        for (part, (mesh, material)) in lod.parts.iter().enumerate() {
+            let bundle = (
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
                 cx.local,
@@ -303,11 +314,20 @@ pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &Mod
                 // The model's bounds are exact already; skip Bevy's AABB scan.
                 NoAutoAabb,
                 ChildOf(cx.parent),
-            ));
+            );
+            match &template.ray_tracing {
+                None => plain.push(bundle),
+                Some(rt) => match (rt.level == level).then(|| rt.meshes.get(part)).flatten() {
+                    Some(variant) => traced.push((bundle, RayTracingMesh(variant.clone()))),
+                    None => untraced.push((bundle, NoRayTracing)),
+                },
+            }
         }
     }
-    let n = u32::try_from(batch.len()).unwrap_or(u32::MAX);
-    world.spawn_batch(batch);
+    let n = u32::try_from(plain.len() + traced.len() + untraced.len()).unwrap_or(u32::MAX);
+    world.spawn_batch(plain);
+    world.spawn_batch(traced);
+    world.spawn_batch(untraced);
     n
 }
 

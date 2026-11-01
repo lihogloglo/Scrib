@@ -112,6 +112,14 @@ const VISIBILITY_RANGE_UNIFORM_BUFFER_SIZE: u32 = 64u;
 @group(0) @binding(38) var dfg_lut_sampler: sampler;
 }
 
+// superfargoth patch (own, GI): DDGI probe atlases (render/gi_probes.wesl, render/gi_probes.rs).
+@if(GI_PROBES) {
+@group(0) @binding(39) var gi_probe_irradiance_atlas: texture_2d<f32>;
+@group(0) @binding(40) var gi_probe_visibility_atlas: texture_2d<f32>;
+@group(0) @binding(41) var gi_probe_sampler: sampler;
+@group(0) @binding(42) var<uniform> gi_probe_volume: types::GiProbeVolume;
+}
+
 @if(ENVIRONMENT_MAP && MULTIPLE_LIGHT_PROBES_IN_ARRAY) {
 @group(1) @binding(0) var diffuse_environment_maps: binding_array<texture_cube<f32>, 8u>;
 @group(1) @binding(1) var specular_environment_maps: binding_array<texture_cube<f32>, 8u>;

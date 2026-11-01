@@ -26,6 +26,7 @@ use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::light::{CascadeShadowConfig, ShadowFilteringMethod};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use sf_diag_bevy::{GateStatus, ReadyGate};
@@ -152,6 +153,8 @@ struct Start {
     shadow_filter: ShadowFilteringMethod,
     /// Lamp shadows on 2x2 hardware PCF (`bevy_pbr::PointSpotShadowsHardware2x2`; `--off lampfilter`).
     lamp_hw_filter: bool,
+    /// Bloom (`None`: off; Low preset, `--off bloom`).
+    bloom: Option<Bloom>,
 }
 
 #[derive(Resource)]
@@ -275,11 +278,30 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     render.insert(&mut app);
     let off_parts = &perf.off;
     let contact_shadows = !off_parts.has(Part::ContactShadows) && options.quality.contact_shadows().is_some();
-    // Shadow reset A1 (shadows.md "Reset A1 as built"): contact shadows are the sun's and
-    // moon's only; per lamp the march cost 0.8 ms GPU (perf.md "Light lab cost model") and
-    // drew the thin view-dependent bands of SH-14. A/B: BEVYRROWIND_LAMP_CONTACT=1.
-    let lamp_contact = contact_shadows && std::env::var("BEVYRROWIND_LAMP_CONTACT").as_deref() == Ok("1");
+    // Lamp contact shadows: the preset's (High and Ultra; owner 2026-11-01, SH-16), or
+    // `BEVYRROWIND_LAMP_CONTACT=1|0` to force them either way for an A/B.
+    let lamp_contact = contact_shadows
+        && match std::env::var("BEVYRROWIND_LAMP_CONTACT").as_deref() {
+            Ok("1") => true,
+            Ok("0") => false,
+            _ => options.quality.lamp_contact_shadows(),
+        };
     app.insert_resource(sf_sky_bevy::PointShadowBudget { contact_shadows: lamp_contact, ..render.point_shadow_budget(options.quality.point_shadows()) });
+    // Dynamic probe GI (gi.md, slice 1): High and Ultra on the raster path, interiors only for
+    // now, `--off gi` for the A/B. Before the sky, so it brings Solari's scene plugin alone
+    // (the sky adds the full `SolariPlugins` otherwise). Absent on GPUs without ray queries.
+    let gi = !off_parts.has(Part::Gi)
+        && matches!(options.quality, Quality::High | Quality::Ultra)
+        && render.path != sf_sky_bevy::sf_sky::RenderPath::RayTraced
+        && options.worldspace != ext;
+    if gi {
+        app.add_plugins(sf_gi_bevy::GiPlugin);
+        // One volume per interior, fitted to its bounds and rebuilt at door teleports.
+        crate::gi_volume::build(&mut app);
+    }
+    // Ray-tracing mesh variants for streamed interiors (gi.md "Scene and lights", slice 1b),
+    // once the GPU's support is known (plugin `finish`), before streaming's first load.
+    app.add_systems(Startup, ray_tracing_variants);
     app.add_plugins(SkyPlugin { settings, clock, render_path: render.path }).insert_resource(SkyRenderOptions {
         ray_tracing_denoiser: render.denoiser,
         cascades: sun_cascades(options.quality, render.sun_cascades),
@@ -417,6 +439,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             // lampcost A/B (perf.md "Per-lamp GPU cost"): BEVYRROWIND_SHADOW_FILTER=hardware|gaussian|temporal.
             shadow_filter: match std::env::var("BEVYRROWIND_SHADOW_FILTER").as_deref() { Ok("hardware") => ShadowFilteringMethod::Hardware2x2, Ok("gaussian") => ShadowFilteringMethod::Gaussian, Ok("temporal") => ShadowFilteringMethod::Temporal, _ => options.quality.shadow_filter(options.render.upscaling.is_temporal()) },
             lamp_hw_filter: !perf.off.has(Part::LampFilter),
+            bloom: if perf.off.has(Part::Bloom) { None } else { options.quality.bloom() },
         })
         .insert_resource(Started(Instant::now()))
         // Chained: both reserve the worldspace root through `Commands`; unordered,
@@ -469,6 +492,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .add_systems(Startup, |mut s: ResMut<Streaming>| s.begin_burst());
     }
     perf.add_plugins(&mut app)?;
+    // The GI's GPU timer (`gi: probe_update ...` log); benchmark runs already have it.
+    if gi && !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     app.run();
     Ok(())
 }
@@ -574,6 +601,7 @@ impl PlacementSpawner for TintSpawner {
                 })
                 .collect(),
             aabb: template.aabb,
+            ray_tracing: template.ray_tracing.clone(),
         };
         spawn_template(world, cx, &tinted)
     }
@@ -705,6 +733,11 @@ fn setup(
     // the native fallback of F4 restores the spawn MSAA (`sf_sky_bevy::upscale`).
     if let Some(quality_level) = start.ssao {
         camera.insert((ScreenSpaceAmbientOcclusion { quality_level, ..default() }, DepthPrepass, MotionVectorPrepass, Msaa::Off));
+    }
+    // Bloom (screen-space-effects research 4.11): Bevy's post-process bloom runs after DLSS/TAA
+    // (`Core3dSystems::PostProcess` vs `EarlyPostProcess`), at output resolution.
+    if let Some(bloom) = start.bloom.clone() {
+        camera.insert(bloom);
     }
     if !start.bench {
         // Up / down follow the Jump / Sneak bindings (`controls::free_camera_keys`); E is Use.
@@ -1058,6 +1091,23 @@ fn counters(
     }
 }
 
+/// Streamed interiors load with ray-tracing variants while something traces them: probe GI on
+/// a GPU that runs it, or the ray-traced path. Exteriors stay without (BLAS memory; GI
+/// cascades are a later slice).
+fn ray_tracing_variants(
+    mut commands: Commands,
+    gi: Option<Res<sf_gi_bevy::GiSupport>>,
+    path: Res<sf_sky_bevy::ActiveRenderPath>,
+) {
+    let traced = gi.is_some_and(|s| s.0) || path.0 == sf_sky_bevy::sf_sky::RenderPath::RayTraced;
+    if traced {
+        commands.insert_resource(sf_world_bevy::RayTracingVariants {
+            worldspaces: sf_world::RayTracedWorldspaces::Single,
+            lod: mw_assets::cooked::RAY_TRACING_LOD,
+        });
+    }
+}
+
 /// Distant lights glow from dusk to dawn: 0 with the sun 0.05 rad above the
 /// horizon, 1 once it is set.
 fn far_lights_night(sun: Query<&GlobalTransform, With<SunLight>>, mut night: ResMut<sf_lod_bevy::FarLightsNight>) {
@@ -1133,6 +1183,16 @@ const SOFT_SHADOW_SIZE: f32 = 10.0;
 
 /// Contact-shadow ray length, meters (Bevy's default; [`QualityRender::contact_shadows`]).
 const CONTACT_LENGTH: f32 = 0.3;
+
+/// Bloom scatter fraction ([`QualityRender::bloom`]), two thirds of `Bloom::NATURAL`'s 0.15.
+/// Energy-conserving with no threshold (Bevy's recommendation; a threshold is the "1990s look"
+/// and needs additive compositing): a uniformly lit wall blurs into itself and stays as it was,
+/// only contrast scatters, in proportion to radiance. Our HDR is exposed (`sf_sky_bevy` drives
+/// `Exposure`; NIF emissive is exposure-weighted, `mw_assets::set_emissive`), so a lit wall sits
+/// near 1, a flame against a dark night or room well above its surround, and the sun disk orders
+/// of magnitude above: those glow, walls get at most a faint edge. Conservative because the froxel
+/// fog's sun glow already halos the disk (research 4.11 risk). Console `render.bloom` retunes it.
+const BLOOM_INTENSITY: f32 = 0.1;
 
 /// The sun's shadow bias (weather.md "Shadow bias and contact shadows", shadows F2):
 /// Bevy's 1.8-texel normal offset lifts every lookup off the surface by 1.3 m in
@@ -1227,7 +1287,9 @@ pub(crate) trait QualityRender: Copy {
     fn params(self) -> (f32, f32, f32);
     fn point_shadows(self) -> (usize, usize);
     fn contact_shadows(self) -> Option<ContactShadows>;
+    fn lamp_contact_shadows(self) -> bool;
     fn ssao(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel>;
+    fn bloom(self) -> Option<Bloom>;
     fn sun_cascades(self) -> sf_sky_bevy::CascadeSplits;
     fn soft_shadow_size(self) -> Option<f32>;
     fn shadow_filter(self, temporal: bool) -> ShadowFilteringMethod;
@@ -1262,8 +1324,8 @@ impl QualityRender for Quality {
     /// Screen-space contact shadows (shadows F1, weather.md "Shadow bias and contact
     /// shadows"): Bevy's depth-prepass ray march toward the sun and the budgeted point
     /// lights, so small objects stay grounded at any cascade texel size. Off on Low
-    /// (it costs the depth + motion-vector prepass). Sun and moon only since shadow reset A1
-    /// (lamps: `BEVYRROWIND_LAMP_CONTACT=1`); length 0.3 m = Bevy's default (was 0.5: the
+    /// (it costs the depth + motion-vector prepass). The sun always casts them; lamps per
+    /// [`Self::lamp_contact_shadows`]; length 0.3 m = Bevy's default (was 0.5: the
     /// long view-dependent bands at object edges, SH-14).
     fn contact_shadows(self) -> Option<ContactShadows> {
         match self {
@@ -1271,6 +1333,14 @@ impl QualityRender for Quality {
             Self::Medium => Some(ContactShadows { linear_steps: 8, thickness: 0.1, length: CONTACT_LENGTH }),
             Self::High | Self::Ultra => Some(ContactShadows { linear_steps: 16, thickness: 0.1, length: CONTACT_LENGTH }),
         }
+    }
+
+    /// Contact shadows on the budgeted (shadow-mapped) lamps too: High and Ultra. Shadow
+    /// reset A1 (2026-10-21) had turned them off everywhere (0.8 ms GPU per shadowed lamp at
+    /// 1440p native, and the SH-14 bands of the then 0.5 m ray); the owner confirmed them
+    /// in the Census office at 0.3 m (2026-11-01, SH-16). Medium keeps the sun's only.
+    fn lamp_contact_shadows(self) -> bool {
+        matches!(self, Self::High | Self::Ultra)
     }
 
     /// Bevy GTAO quality (ROADMAP 1.5, shadows.md "Reset A1 as built"): off on Low (MSAA,
@@ -1282,6 +1352,15 @@ impl QualityRender for Quality {
             Self::Medium => Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
             Self::High => Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
             Self::Ultra => Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
+        }
+    }
+
+    /// Bloom (screen-space-effects research 4.11): Bevy's `Bloom::NATURAL` (COD-AW dual
+    /// filter, energy-conserving, no threshold) at [`BLOOM_INTENSITY`]; off on Low.
+    fn bloom(self) -> Option<Bloom> {
+        match self {
+            Self::Low => None,
+            Self::Medium | Self::High | Self::Ultra => Some(Bloom { intensity: BLOOM_INTENSITY, ..Bloom::NATURAL }),
         }
     }
 

@@ -100,6 +100,10 @@ mod solari {
     pub(super) struct ProxyMesh(Handle<Mesh>);
 
     pub(super) fn build(app: &mut App) {
+        // Headless (no renderer): no ray tracer, no mesh assets (path.rs).
+        if app.get_sub_app(bevy_render::RenderApp).is_none() {
+            return;
+        }
         app.add_systems(Startup, create_proxy_mesh).add_systems(
             Update,
             (attach_or_detach, update_proxies)

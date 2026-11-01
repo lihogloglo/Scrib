@@ -68,6 +68,34 @@ impl Partition {
     }
 }
 
+/// Which worldspaces get ray-tracing mesh variants (gi.md "Scene and
+/// lights"): the ray tracer needs its own uncompressed copy of each mesh,
+/// so a renderer that traces only small worldspaces (probe GI indoors)
+/// spares the streamed ones that memory and BLAS cost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RayTracedWorldspaces {
+    /// Nothing is ray traced.
+    #[default]
+    None,
+    /// Only worldspaces that load whole ([`Partition::Single`]).
+    Single,
+    /// Every worldspace.
+    All,
+}
+
+impl RayTracedWorldspaces {
+    /// The LOD level to build ray-tracing variants from for a model loaded
+    /// into a worldspace of `partition`, or `None` for no variants.
+    pub fn variant_lod(self, partition: Partition, lod: usize) -> Option<usize> {
+        let traced = match self {
+            Self::None => false,
+            Self::Single => partition == Partition::Single,
+            Self::All => true,
+        };
+        traced.then_some(lod)
+    }
+}
+
 /// A reference to another record: its kind name plus id.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RecordRef {

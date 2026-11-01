@@ -195,6 +195,7 @@ impl Plugin for PbrPlugin {
         load_shader_library!(app, "deferred/types.wesl");
         load_shader_library!(app, "deferred/functions.wesl");
         load_shader_library!(app, "render/shadow_sampling.wesl");
+        load_shader_library!(app, "render/gi_probes.wesl"); // superfargoth patch (own, GI)
         load_shader_library!(app, "render/pbr_functions.wesl");
         load_shader_library!(app, "render/rgb9e5.wesl");
         load_shader_library!(app, "render/pbr_ambient.wesl");

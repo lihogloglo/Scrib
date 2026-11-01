@@ -156,3 +156,14 @@ fn records_read_from_text() {
     assert!(text.contains("fffffffffffffffffffffffffffffff8"));
     assert_eq!(serde_json::from_str::<DoorLink>(&text).unwrap(), link);
 }
+
+#[test]
+fn ray_tracing_variants_only_where_traced() {
+    let (interior, exterior) = (Partition::Single, Partition::STREAMING);
+    assert_eq!(RayTracedWorldspaces::Single.variant_lod(interior, 0), Some(0));
+    assert_eq!(RayTracedWorldspaces::Single.variant_lod(exterior, 0), None);
+    assert_eq!(RayTracedWorldspaces::None.variant_lod(interior, 0), None);
+    assert_eq!(RayTracedWorldspaces::None.variant_lod(exterior, 0), None);
+    assert_eq!(RayTracedWorldspaces::All.variant_lod(exterior, 2), Some(2));
+    assert_eq!(RayTracedWorldspaces::default(), RayTracedWorldspaces::None);
+}

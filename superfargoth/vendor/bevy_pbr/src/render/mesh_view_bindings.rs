@@ -100,6 +100,7 @@ bitflags::bitflags! {
         const DISTANCE_FOG                     = 1 << 14;
         const AREA_LIGHT_LUTS                  = 1 << 15;
         const VIEW_TRANSMISSION_TEXTURE        = 1 << 16;
+        const GI_PROBES                        = 1 << 17; // superfargoth patch (own, GI)
     }
 }
 
@@ -182,6 +183,10 @@ impl From<MeshPipelineKey> for MeshPipelineViewLayoutKey {
         }
         if value.contains(MeshPipelineKey::VIEW_TRANSMISSION_TEXTURE) {
             result |= MeshPipelineViewLayoutKey::VIEW_TRANSMISSION_TEXTURE;
+        }
+        // superfargoth patch (own, GI)
+        if value.contains(MeshPipelineKey::GI_PROBES) {
+            result |= MeshPipelineViewLayoutKey::GI_PROBES;
         }
 
         result
@@ -373,6 +378,24 @@ fn layout_entries(
         entries = entries.extend_with_indices((
             // Contact shadows settings
             (16, uniform_buffer::<ContactShadowsUniform>(true)),
+        ));
+    }
+    // superfargoth patch (own, GI): DDGI probe atlases, sampler, volume constants.
+    if layout_key.contains(MeshPipelineViewLayoutKey::GI_PROBES) {
+        entries = entries.extend_with_indices((
+            (
+                super::GI_PROBE_IRRADIANCE_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: true }),
+            ),
+            (
+                super::GI_PROBE_VISIBILITY_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: true }),
+            ),
+            (super::GI_PROBE_SAMPLER_BINDING, sampler(SamplerBindingType::Filtering)),
+            (
+                super::GI_PROBE_UNIFORM_BINDING,
+                uniform_buffer::<super::GiProbeVolumeUniform>(false),
+            ),
         ));
     }
     if layout_key.contains(MeshPipelineViewLayoutKey::SCREEN_SPACE_AMBIENT_OCCLUSION) {
@@ -659,6 +682,7 @@ pub fn prepare_mesh_view_bind_groups(
         (
             Option<&RenderViewLightProbes<EnvironmentMapLight>>,
             Option<&RenderViewLightProbes<IrradianceVolume>>,
+            Option<&super::GiProbeVolumeView>, // superfargoth patch (own, GI)
         ),
         Has<ExtractedAtmosphere>,
         (
@@ -729,7 +753,7 @@ pub fn prepare_mesh_view_bind_groups(
             atmosphere_textures,
             atmosphere_buffer,
             tonemapping,
-            (render_view_environment_maps, render_view_irradiance_volumes),
+            (render_view_environment_maps, render_view_irradiance_volumes, gi_probes), // superfargoth patch (own, GI)
             has_atmosphere,
             (
                 view_uniform_offset,
@@ -811,6 +835,17 @@ pub fn prepare_mesh_view_bind_groups(
                 offsets.push(**view_contact_shadows_offset);
                 entries = entries
                     .extend_with_indices(((16, contact_shadows_buffer.0.binding().unwrap()),));
+            }
+
+            // superfargoth patch (own, GI)
+            if let Some(super::GiProbeVolumeView(gi)) = gi_probes {
+                layout_key |= MeshPipelineViewLayoutKey::GI_PROBES;
+                entries = entries.extend_with_indices((
+                    (super::GI_PROBE_IRRADIANCE_BINDING, &gi.irradiance),
+                    (super::GI_PROBE_VISIBILITY_BINDING, &gi.visibility),
+                    (super::GI_PROBE_SAMPLER_BINDING, &gi.sampler),
+                    (super::GI_PROBE_UNIFORM_BINDING, gi.uniform.as_entire_binding()),
+                ));
             }
 
             if let Some(view_oit_settings_offset) = view_oit_settings_offset {
