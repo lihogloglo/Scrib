@@ -346,14 +346,26 @@ fn sample_shadow_map_directional_pcss(
     let e_z = row_z / per_z;
     let n_dot_l = dot(surface_normal, e_z);
     var plane_slope_uv = vec2<f32>(0.0);
-    if (n_dot_l > 0.05) {
+    // superfargoth patch (own, RO-11): the slope (meters of depth per meter across the map) is
+    // `tan` of the light's incidence, `-N.e / N.L`. The old `max(n_dot_l, 0.25)` floor under-
+    // estimated it for any surface lit below N.L 0.25 (sun < ~14 deg on flat ground) and the old
+    // `n_dot_l > 0.05` gate dropped it to 0 at grazing: off-centre taps then compared against a
+    // plane tilted the wrong way and self-shadowed. Now exact down to N.L 0.125 (~7 deg), clamped
+    // to +-8 below that, and continuous (no gate) for every front-facing receiver.
+    if (n_dot_l > 0.0) {
         let slope_m = clamp(
-            -vec2<f32>(dot(surface_normal, e_u), dot(surface_normal, e_v)) / max(n_dot_l, 0.25),
-            vec2<f32>(-4.0),
-            vec2<f32>(4.0),
+            -vec2<f32>(dot(surface_normal, e_u), dot(surface_normal, e_v)) / max(n_dot_l, 0.125),
+            vec2<f32>(-8.0),
+            vec2<f32>(8.0),
         );
         plane_slope_uv = slope_m * vec2<f32>(per_z / len_u, per_z / len_v);
     }
+
+    // superfargoth patch (own, RO-11): constant margin for every off-centre filter tap (half a
+    // texel along the light, in NDC depth). The centre already carries the light's depth and
+    // normal biases (`depth` is biased); this covers what the plane cannot: the +-8 slope clamp
+    // and concave receivers. Standard slope-scaled + constant receiver-plane bias pair.
+    let tap_margin_dz = 0.5 * texel_size * per_z;
 
     // Angular penumbra spread in meters per meter of caster height (`light_size = 10` -> 0.025).
     let spread = light_size * 0.0025;
@@ -363,19 +375,23 @@ fn sample_shadow_map_directional_pcss(
     // already spans ~0.20–0.40 m (the penumbra of a 8–16 m wall), so an 8-tap raw depth
     // blocker search would clamp almost everywhere anyway. Use a 4-tap temporally rotated
     // PCF kernel matched to the cascade's world-meter filter width.
+    // superfargoth patch (own, RO-11): `texel_size` is constant per cascade, so this switch is
+    // a cascade boundary, already cross-faded by `fetch_directional_shadow`'s overlap blend.
+    // The taps now use the full receiver plane plus `tap_margin_dz` (was `0.5 * plane_slope_uv`,
+    // no margin: uphill taps self-shadowed open ground at low sun, a dark camera-anchored band
+    // past the split), so far and near paths agree on fully lit and fully shadowed receivers.
     if (texel_size >= 0.15) {
         let far_uv_scale = (1.30 * texel_size) / cascade_world_size;
         let far_rot = random_rotation_matrix(frag_coord_xy, temporal);
-        let far_plane = 0.5 * plane_slope_uv;
         let fo0 = (far_rot * utils::SPIRAL_OFFSET_0_) * far_uv_scale;
         let fo1 = (far_rot * utils::SPIRAL_OFFSET_2_) * far_uv_scale;
         let fo2 = (far_rot * utils::SPIRAL_OFFSET_5_) * far_uv_scale;
         let fo3 = (far_rot * utils::SPIRAL_OFFSET_7_) * far_uv_scale;
         var far_sum = 0.0;
-        far_sum += sample_shadow_map_hardware(light_local + fo0, clamp(depth + dot(far_plane, fo0), 0.0, 1.0), array_index);
-        far_sum += sample_shadow_map_hardware(light_local + fo1, clamp(depth + dot(far_plane, fo1), 0.0, 1.0), array_index);
-        far_sum += sample_shadow_map_hardware(light_local + fo2, clamp(depth + dot(far_plane, fo2), 0.0, 1.0), array_index);
-        far_sum += sample_shadow_map_hardware(light_local + fo3, clamp(depth + dot(far_plane, fo3), 0.0, 1.0), array_index);
+        far_sum += sample_directional_plane_tap(light_local, fo0, depth, plane_slope_uv, tap_margin_dz, array_index);
+        far_sum += sample_directional_plane_tap(light_local, fo1, depth, plane_slope_uv, tap_margin_dz, array_index);
+        far_sum += sample_directional_plane_tap(light_local, fo2, depth, plane_slope_uv, tap_margin_dz, array_index);
+        far_sum += sample_directional_plane_tap(light_local, fo3, depth, plane_slope_uv, tap_margin_dz, array_index);
         return far_sum * 0.25;
     }
 
@@ -431,7 +447,6 @@ fn sample_shadow_map_directional_pcss(
     let penumbra_m = clamp(avg_height_m * spread, 1.25 * texel_size, max_penumbra_m);
     let uv_offset_scale = penumbra_m / cascade_world_size;
     let rotation_matrix = random_rotation_matrix(frag_coord_xy, temporal);
-    let filtered_plane = 0.5 * plane_slope_uv;
 
     let sample_offset0 = (rotation_matrix * utils::SPIRAL_OFFSET_0_) * uv_offset_scale;
     let sample_offset1 = (rotation_matrix * utils::SPIRAL_OFFSET_1_) * uv_offset_scale;
@@ -442,16 +457,36 @@ fn sample_shadow_map_directional_pcss(
     let sample_offset6 = (rotation_matrix * utils::SPIRAL_OFFSET_6_) * uv_offset_scale;
     let sample_offset7 = (rotation_matrix * utils::SPIRAL_OFFSET_7_) * uv_offset_scale;
 
+    // superfargoth patch (own, RO-11): full receiver plane + `tap_margin_dz`, the same plane the
+    // blocker search uses (was `0.5 * plane_slope_uv`, no margin). Open ground that the 4-tap
+    // precheck sends here (a blocker found nearby) now filters to ~1.0 like the precheck's
+    // centre tap, instead of self-shadowed uphill taps: no dark halo / per-pixel seam between
+    // the early-out and the filtered pixels.
     var sum = 0.0;
-    sum += sample_shadow_map_hardware(light_local + sample_offset0, clamp(depth + dot(filtered_plane, sample_offset0), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset1, clamp(depth + dot(filtered_plane, sample_offset1), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset2, clamp(depth + dot(filtered_plane, sample_offset2), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset3, clamp(depth + dot(filtered_plane, sample_offset3), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset4, clamp(depth + dot(filtered_plane, sample_offset4), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset5, clamp(depth + dot(filtered_plane, sample_offset5), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset6, clamp(depth + dot(filtered_plane, sample_offset6), 0.0, 1.0), array_index);
-    sum += sample_shadow_map_hardware(light_local + sample_offset7, clamp(depth + dot(filtered_plane, sample_offset7), 0.0, 1.0), array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset0, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset1, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset2, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset3, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset4, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset5, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset6, depth, plane_slope_uv, tap_margin_dz, array_index);
+    sum += sample_directional_plane_tap(light_local, sample_offset7, depth, plane_slope_uv, tap_margin_dz, array_index);
     return sum / 8.0;
+}
+
+// superfargoth patch (own, RO-11): one hardware 2x2 PCF tap at `offset` (shadow-map UV),
+// compared against the receiver plane (`depth + slope . offset`) raised by `margin_dz` toward
+// the light (reverse-Z, `GreaterEqual` comparison: larger reference = more lit).
+fn sample_directional_plane_tap(
+    light_local: vec2<f32>,
+    offset: vec2<f32>,
+    depth: f32,
+    plane_slope_uv: vec2<f32>,
+    margin_dz: f32,
+    array_index: i32,
+) -> f32 {
+    let ref_z = clamp(depth + dot(plane_slope_uv, offset) + margin_dz, 0.0, 1.0);
+    return sample_shadow_map_hardware(light_local + offset, ref_z, array_index);
 }
 
 /// Samples the shadow map for a spot light when percentage-closer soft

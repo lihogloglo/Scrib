@@ -41,7 +41,9 @@
 //! Game-neutral: everything the adapter knows (records, cooked products,
 //! baked animation, materials, its facing convention) comes through
 //! [`CharacterContent`]. With feature `world`, [`CharacterSpawner`] spawns
-//! actor placements of `sf_world_bevy` streaming as characters.
+//! actor placements of `sf_world_bevy` streaming as characters, and every
+//! character follows its worldspace's render layer, parts and carried lights
+//! included (`world::follow_worldspace_layers`).
 
 mod cloth;
 mod held;
@@ -444,6 +446,11 @@ impl Plugin for SfCharacterPlugin {
                 (apply_settings, request_builds, finish_builds, held::sync_held, held::apply_readiness).chain().in_set(CharacterSystems),
             )
             .add_systems(PostUpdate, drive_character_morphs.after(AnimSystems::Apply));
+        #[cfg(feature = "world")]
+        app.add_systems(
+            PostUpdate,
+            world::follow_worldspace_layers.before(bevy_camera::visibility::VisibilitySystems::CheckVisibility),
+        );
     }
 }
 

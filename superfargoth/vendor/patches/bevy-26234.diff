@@ -1,0 +1,158 @@
+diff --git a/crates/bevy_pbr/src/deferred/deferred_lighting.wesl b/crates/bevy_pbr/src/deferred/deferred_lighting.wesl
+index ab1b3dc9c51a2..32c7fcbb405ee 100644
+--- a/crates/bevy_pbr/src/deferred/deferred_lighting.wesl
++++ b/crates/bevy_pbr/src/deferred/deferred_lighting.wesl
+@@ -63,7 +63,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+     if ((pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u) {
+ 
+ @if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
+-        let ssao_tex_pos = vec2<i32>(in.position.xy - view.viewport.xy);
++        let ssao_tex_pos = vec2<i32>(in.position.xy - view.main_pass_viewport.xy);
+         let ssao = textureLoad(screen_space_ambient_occlusion_texture, ssao_tex_pos, 0i).r;
+         let ssao_multibounce = ssao_multibounce(ssao, pbr_input.material.base_color.rgb);
+         pbr_input.diffuse_occlusion = min(pbr_input.diffuse_occlusion, ssao_multibounce);
+diff --git a/crates/bevy_pbr/src/render/pbr_fragment.wesl b/crates/bevy_pbr/src/render/pbr_fragment.wesl
+index c7c5460a81f18..b0470253f3117 100644
+--- a/crates/bevy_pbr/src/render/pbr_fragment.wesl
++++ b/crates/bevy_pbr/src/render/pbr_fragment.wesl
+@@ -535,7 +535,7 @@ pbr_input.material.uv_transform = uv_transform;
+             diffuse_occlusion *= textureSampleBias(texture, sampler_, coords, bias.mip_bias).r;
+         }
+ @if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
+-        let ssao_tex_pos = vec2<i32>(in.position.xy - view.viewport.xy);
++        let ssao_tex_pos = vec2<i32>(in.position.xy - view.main_pass_viewport.xy);
+         let ssao = textureLoad(screen_space_ambient_occlusion_texture, ssao_tex_pos, 0i).r;
+         let ssao_multibounce = ssao_multibounce(ssao, pbr_input.material.base_color.rgb);
+         diffuse_occlusion = min(diffuse_occlusion, ssao_multibounce);
+diff --git a/crates/bevy_pbr/src/ssao/mod.rs b/crates/bevy_pbr/src/ssao/mod.rs
+index a219f555cbe31..70dbacb5a3a35 100644
+--- a/crates/bevy_pbr/src/ssao/mod.rs
++++ b/crates/bevy_pbr/src/ssao/mod.rs
+@@ -1,6 +1,6 @@
+ use bevy_app::{App, Plugin};
+ use bevy_asset::{embedded_asset, load_embedded_asset, Handle};
+-use bevy_camera::{Camera, Camera3d};
++use bevy_camera::{Camera, Camera3d, MainPassResolutionOverride};
+ use bevy_core_pipeline::{
+     prepass::{DepthPrepass, NormalPrepass, ViewPrepassTextures},
+     schedule::{Core3d, Core3dSystems},
+@@ -184,6 +184,7 @@ impl ScreenSpaceAmbientOcclusionQualityLevel {
+ fn ssao(
+     view: ViewQuery<(
+         &ExtractedCamera,
++        Option<&MainPassResolutionOverride>,
+         &SsaoPipelineId,
+         &SsaoBindGroups,
+         &ViewUniformOffset,
+@@ -192,7 +193,8 @@ fn ssao(
+     pipeline_cache: Res<PipelineCache>,
+     mut ctx: RenderContext,
+ ) {
+-    let (camera, pipeline_id, bind_groups, view_uniform_offset) = view.into_inner();
++    let (camera, resolution_override, pipeline_id, bind_groups, view_uniform_offset) =
++        view.into_inner();
+ 
+     let (
+         Some(camera_size),
+@@ -200,7 +202,9 @@ fn ssao(
+         Some(spatial_denoise_pipeline),
+         Some(ssao_pipeline),
+     ) = (
+-        camera.physical_viewport_size,
++        resolution_override
++            .map(|size| **size)
++            .or(camera.physical_viewport_size),
+         pipeline_cache.get_compute_pipeline(pipelines.preprocess_depth_pipeline),
+         pipeline_cache.get_compute_pipeline(pipelines.spatial_denoise_pipeline),
+         pipeline_cache.get_compute_pipeline(pipeline_id.0),
+@@ -535,13 +539,20 @@ fn prepare_ssao_textures(
+     mut texture_cache: ResMut<TextureCache>,
+     render_device: Res<RenderDevice>,
+     pipelines: Res<SsaoPipelines>,
+-    views: Query<(Entity, &ExtractedCamera, &ScreenSpaceAmbientOcclusion)>,
++    views: Query<(
++        Entity,
++        &ExtractedCamera,
++        &ScreenSpaceAmbientOcclusion,
++        Option<&MainPassResolutionOverride>,
++    )>,
+ ) {
+-    for (entity, camera, ssao_settings) in &views {
++    for (entity, camera, ssao_settings, resolution_override) in &views {
+         let Some(physical_viewport_size) = camera.physical_viewport_size else {
+             continue;
+         };
+-        let size = physical_viewport_size.to_extents();
++        let size = resolution_override
++            .map_or(physical_viewport_size, |size| **size)
++            .to_extents();
+ 
+         let preprocessed_depth_texture = texture_cache.get(
+             &render_device,
+diff --git a/crates/bevy_pbr/src/ssao/preprocess_depth.wesl b/crates/bevy_pbr/src/ssao/preprocess_depth.wesl
+index 2c23900aafa95..b941b5b6b1897 100644
+--- a/crates/bevy_pbr/src/ssao/preprocess_depth.wesl
++++ b/crates/bevy_pbr/src/ssao/preprocess_depth.wesl
+@@ -59,7 +59,7 @@ fn preprocess_depth(@builtin(global_invocation_id) global_id: vec3<u32>, @builti
+     let pixel_coordinates2 = pixel_coordinates0 + vec2<i32>(0i, 1i);
+     let pixel_coordinates3 = pixel_coordinates0 + vec2<i32>(1i, 1i);
+     let input_depth_size = vec2<f32>(textureDimensions(input_depth));
+-    let depths_uv = (vec2<f32>(pixel_coordinates0) + view.viewport.xy) / input_depth_size;
++    let depths_uv = (vec2<f32>(pixel_coordinates0) + view.main_pass_viewport.xy) / input_depth_size;
+     let depths = textureGather(input_depth, point_clamp_sampler, depths_uv, vec2<i32>(1i, 1i));
+     textureStore(preprocessed_depth_mip0, pixel_coordinates0, vec4<f32>(depths.w, 0.0, 0.0, 0.0));
+     textureStore(preprocessed_depth_mip0, pixel_coordinates1, vec4<f32>(depths.z, 0.0, 0.0, 0.0));
+diff --git a/crates/bevy_pbr/src/ssao/spatial_denoise.wesl b/crates/bevy_pbr/src/ssao/spatial_denoise.wesl
+index 678045e1aaeed..fc739e4edc467 100644
+--- a/crates/bevy_pbr/src/ssao/spatial_denoise.wesl
++++ b/crates/bevy_pbr/src/ssao/spatial_denoise.wesl
+@@ -25,7 +25,7 @@ import bevy_render::view::View;
+ @workgroup_size(8, 8, 1)
+ fn spatial_denoise(@builtin(global_invocation_id) global_id: vec3<u32>) {
+     let pixel_coordinates = vec2<i32>(global_id.xy);
+-    let uv = vec2<f32>(pixel_coordinates) / view.viewport.zw;
++    let uv = vec2<f32>(pixel_coordinates) / view.main_pass_viewport.zw;
+ 
+     let edges0 = textureGather(0, depth_differences, point_clamp_sampler, uv);
+     let edges1 = textureGather(0, depth_differences, point_clamp_sampler, uv, vec2<i32>(2i, 0i));
+diff --git a/crates/bevy_pbr/src/ssao/ssao.wesl b/crates/bevy_pbr/src/ssao/ssao.wesl
+index 87ff7eae151b8..9bcf2a72bd7ef 100644
+--- a/crates/bevy_pbr/src/ssao/ssao.wesl
++++ b/crates/bevy_pbr/src/ssao/ssao.wesl
+@@ -49,7 +49,7 @@ fn load_noise(pixel_coordinates: vec2<i32>) -> vec2<f32> {
+ /// Calculate differences in depth between neighbor pixels (later used by the spatial denoiser pass to preserve object edges)
+ fn calculate_neighboring_depth_differences(pixel_coordinates: vec2<i32>) -> f32 {
+     // Sample the pixel's depth and 4 depths around it
+-    let uv = vec2<f32>(pixel_coordinates) / view.viewport.zw;
++    let uv = vec2<f32>(pixel_coordinates) / view.main_pass_viewport.zw;
+     let depths_upper_left = textureGather(0, preprocessed_depth, point_clamp_sampler, uv);
+     let depths_bottom_right = textureGather(0, preprocessed_depth, point_clamp_sampler, uv, vec2<i32>(1i, 1i));
+     let depth_center = depths_upper_left.y;
+@@ -138,14 +138,14 @@ fn ssao(@builtin(global_invocation_id) global_id: vec3<u32>) {
+     let samples_per_slice_side = f32(constants::SAMPLES_PER_SLICE_SIDE);
+ 
+     let pixel_coordinates = vec2<i32>(global_id.xy);
+-    let uv = (vec2<f32>(pixel_coordinates) + 0.5) / view.viewport.zw;
++    let uv = (vec2<f32>(pixel_coordinates) + 0.5) / view.main_pass_viewport.zw;
+ 
+     var pixel_depth = calculate_neighboring_depth_differences(pixel_coordinates);
+     pixel_depth += 0.00001; // Avoid depth precision issues
+ 
+     let pixel_position = reconstruct_view_space_position(pixel_depth, uv);
+     let normals_size = vec2<f32>(textureDimensions(normals));
+-    let uv_normals = (vec2<f32>(pixel_coordinates) + 0.5 + view.viewport.xy) / normals_size;
++    let uv_normals = (vec2<f32>(pixel_coordinates) + 0.5 + view.main_pass_viewport.xy) / normals_size;
+     let pixel_normal = load_normal_view_space(uv_normals);
+     let view_vec = normalize(-pixel_position);
+ 
+@@ -181,8 +181,8 @@ fn ssao(@builtin(global_invocation_id) global_id: vec3<u32>) {
+             s *= s; // https://github.com/GameTechDev/XeGTAO#sample-distribution
+             let sample = s * sample_mul;
+ 
+-            // * view.viewport.zw gets us from [0, 1] to [0, viewport_size], which is needed for this to get the correct mip levels
+-            let sample_mip_level = clamp(log2(length(sample * view.viewport.zw)) - 3.3, 0.0, 5.0); // https://github.com/GameTechDev/XeGTAO#memory-bandwidth-bottleneck
++            // * view.main_pass_viewport.zw gets us from [0, 1] to [0, viewport_size], which is needed for this to get the correct mip levels
++            let sample_mip_level = clamp(log2(length(sample * view.main_pass_viewport.zw)) - 3.3, 0.0, 5.0); // https://github.com/GameTechDev/XeGTAO#memory-bandwidth-bottleneck
+             let sample_position_1 = load_and_reconstruct_view_space_position(uv + sample, sample_mip_level);
+             let sample_position_2 = load_and_reconstruct_view_space_position(uv - sample, sample_mip_level);
+ 

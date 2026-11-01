@@ -21,6 +21,36 @@ write-ups (superseded or built) live in [archive/shadows-history.md](archive/sha
 
 Superseded by the shadow reset (2026-10-21); moved verbatim to [archive/shadows-history.md](archive/shadows-history.md#shadows-v2-one-design-2026-10-20).
 
+## Shadow fixes as built (shadow-fixes, 2026-11-01)
+
+From the audit [../research/shadows/2026-11-01-audit.md](../research/shadows/2026-11-01-audit.md) (three sub-agents,
+independent Opus review). Awaiting owner: SH-21, RO-11.
+
+- **Characters follow their worldspace's render layer** (`sf_character_bevy::world::follow_worldspace_layers`, feature
+  `world`): a `Character` root's `RenderLayers` become `layer(N)` of its nearest `WorldspaceRoot`, pushed to existing
+  meshes, lights, held slots; parts built later still copy at build time. Held-torch lights copy the slot's layers at
+  spawn (bevyrrowind `mw_actors_bevy::held`). Before: the player and every torch light sat on layer 0, lamps on `N`, so
+  lamps never saw the player as a caster and a torch's cube saw only layer-0 meshes.
+- **Budget ranks view-visible lights only** (`ViewVisibility`, "Light selection"): lights of resident neighbouring
+  worldspaces (own `BigSpace` frame) and lights outside every frustum no longer take slots they can't render. One
+  `warn!` when a light gains a slot with layers no caster shares.
+- **Shadow filter follows the jitter** (`sf_sky_bevy::upscale`): `Temporal` is parked to `Gaussian` on a camera without
+  `TemporalJitter` (native/`--dlss off`, F4) and restored with it; the host picks it once from the setting.
+- **Vendored shaders** (`vendor/README.md` RO-11 row): contact shadows and SSR march depth in `main_pass_viewport`
+  pixel space under DLSS (the march read full-size depth, false hits on open ground); the sun's far-cascade 4-tap path
+  and the PCSS filter use the full receiver-plane slope plus a half-texel margin (half slope self-shadowed flat ground at
+  low sun, 39f6508); bevy#26234 (GTAO at the main-pass resolution) and #26170 (occlusion-culling edge clamp) applied.
+- **Lamp faces refresh per light (SH-20b)**, after the owner's first check (torches cast, but flicker, shadows cut at a
+  cube-face seam, choppy walkers): the vendored rule decided per face with caps of 4 mover faces and 2 LRU faces per
+  frame across all lights, and a torch's 1 mm rigid-caster hash dirtied its six faces every frame, so cubes were split
+  across frames and static lamps starved. Now (`light.rs` "SH-20b"): one decision per light, all its dirty faces in the
+  same frame; a light that moved (transform changed and its rigid casters shifted) redraws whole, uncapped; mover
+  refresh 2 lights/frame, LRU 1 light/frame deducted by first captures only; `RUST_LOG=bevy_pbr::shadow_refresh=debug`
+  prints the per-second counts. Perf watch: each torch-bearer in view is ~6 faces/frame.
+- Dev console: `on|off|flip contactshadows` (`render.contactshadows`), like `ssao` (SH-16's missing toggle).
+- Not built: RO-12's bank-fog rim (cause plausible only), spot-light sconces, 1024² lamp maps, lamp housings as
+  `NotShadowCaster`, the ranking term (audit §5 items 4-7).
+
 ## Reset B2 as built (shadowB2, 2026-10-21)
 
 - **Own `bevy_pbr` patch** (`vendor/README.md`, `patches/superfargoth-shadow-early-out-lamp-filter.diff`, 44+/9-):
@@ -176,7 +206,11 @@ budget on top of it is ours (`PointShadowBudget`, since 2026-10-13).
 - *Screen coverage*: 1 inside the light's range, `(range/d)²` outside (the lit volume's share of the view).
   Continuous at `d = range`.
 - *Priority*: game-set multiplier (Bevyrrowind: a carried torch 4, i.e. "twice nearer").
-- Candidates: shown lights (`Visibility`, not `ViewVisibility`: out-of-view lights count) within `fade_end`.
+- Candidates: view-visible lights (`ViewVisibility`: shown, range sphere in a view frustum, `RenderLayers` shared
+  with that view; last frame's value, the budget runs before `CheckVisibility`) within `fade_end`. Only those can
+  light a visible pixel and survive extraction; lights of other resident worldspaces (another `BigSpace` frame, whose
+  distance means nothing) never compete. A holder that leaves every view fades out and frees its slot. A light that
+  first gets a slot while its layers meet no caster's logs one warning (empty cube map).
   Holders rank `1/hysteresis` (1.25×) better. A newcomer waits for a free slot; shadows crossfade by the existing
   light split (`fade_time` 0.3 s, distance band `fade_start..fade_end`).
 

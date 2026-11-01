@@ -14,7 +14,8 @@
 //
 // at your option.
 
-import package::render::mesh_view_bindings::depth_prepass_texture;
+// superfargoth patch (own, RO-11): also import `view` for `main_pass_viewport`.
+import package::render::mesh_view_bindings::{depth_prepass_texture, view};
 import package::render::view_transformations::{
     direction_world_to_clip,
     ndc_to_uv,
@@ -30,25 +31,40 @@ import package::render::view_transformations::{
 @group(2) @binding(3) var depth_nearest_sampler: sampler;
 }
 
+// superfargoth patch (own, RO-11): the march works in the main-pass viewport's space (UV from
+// `ndc_to_uv`, pixel maths on `main_pass_viewport.zw`). Under `MainPassResolutionOverride` (DLSS)
+// the prepass only fills the `main_pass_viewport` rect of the target-sized depth texture, so map
+// viewport UV to a texel position the way bevyengine/bevy#26235 does for transmission, and keep
+// every tap inside that rect. With no override and a full-target viewport this is the identity
+// (`xy = 0`, `zw = textureDimensions`) and the rect clamp equals the old clamp / ClampToEdge.
+fn depth_viewport_uv_to_texel(uv: vec2<f32>) -> vec2<f32> {
+    return view.main_pass_viewport.xy + uv * view.main_pass_viewport.zw;
+}
+
 /// Manual depth fetch helpers used on WebGPU where depth + filtering sampler is invalid.
 @if(!USE_DEPTH_SAMPLERS)
 fn depth_texel_clamped(texel: vec2<i32>) -> f32 {
-    let dims = textureDimensions(depth_prepass_texture);
-    let max_coord = vec2<i32>(i32(dims.x) - 1, i32(dims.y) - 1);
-    let clamped = clamp(texel, vec2<i32>(0), max_coord);
+    // superfargoth patch (own, RO-11): clamp to the rendered rect, not the whole texture.
+    let dims = vec2<i32>(textureDimensions(depth_prepass_texture));
+    let min_coord = vec2<i32>(view.main_pass_viewport.xy);
+    let rect_max = min_coord + vec2<i32>(view.main_pass_viewport.zw) - vec2<i32>(1);
+    let max_coord = max(min_coord, min(rect_max, dims - vec2<i32>(1)));
+    let clamped = clamp(texel, min_coord, max_coord);
     return textureLoad(depth_prepass_texture, clamped, 0);
 }
 
 @if(!USE_DEPTH_SAMPLERS)
-fn depth_sample_nearest_clamped(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
+fn depth_sample_nearest_clamped(uv: vec2<f32>) -> f32 {
     // Match nearest sampling by snapping to the closest texel center.
-    let coord = uv * tex_size - vec2(0.5);
+    // superfargoth patch (own, RO-11): viewport UV -> texel position (was `uv * tex_size`).
+    let coord = depth_viewport_uv_to_texel(uv) - vec2(0.5);
     return depth_texel_clamped(vec2<i32>(floor(coord + vec2(0.5))));
 }
 
 @if(!USE_DEPTH_SAMPLERS)
-fn depth_sample_bilinear_clamped(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
-    let coord = uv * tex_size - vec2(0.5);
+fn depth_sample_bilinear_clamped(uv: vec2<f32>) -> f32 {
+    // superfargoth patch (own, RO-11): viewport UV -> texel position (was `uv * tex_size`).
+    let coord = depth_viewport_uv_to_texel(uv) - vec2(0.5);
     let base = vec2<i32>(floor(coord));
     let frac = coord - floor(coord);
 
@@ -62,18 +78,30 @@ fn depth_sample_bilinear_clamped(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
     return mix(d0, d1, frac.y);
 }
 
-fn depth_sample_linear(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
-    @if(USE_DEPTH_SAMPLERS)
-    return textureSampleLevel(depth_prepass_texture, depth_linear_sampler, uv, 0u);
-    @else
-    return depth_sample_bilinear_clamped(uv, tex_size);
+// superfargoth patch (own, RO-11): viewport UV -> depth texture UV, clamped half a texel inside
+// the rendered rect so bilinear taps never read texels the main pass did not write.
+@if(USE_DEPTH_SAMPLERS)
+fn depth_sampler_uv(uv: vec2<f32>) -> vec2<f32> {
+    let dims = vec2<f32>(textureDimensions(depth_prepass_texture));
+    let lo = view.main_pass_viewport.xy + vec2(0.5);
+    let hi = max(lo, view.main_pass_viewport.xy + view.main_pass_viewport.zw - vec2(0.5));
+    return clamp(depth_viewport_uv_to_texel(uv), lo, hi) / dims;
 }
 
-fn depth_sample_nearest(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
+// superfargoth patch (own, RO-11): `uv` is main-pass viewport UV; the texture-size argument is
+// gone (the helpers read `main_pass_viewport` and `textureDimensions` themselves).
+fn depth_sample_linear(uv: vec2<f32>) -> f32 {
     @if(USE_DEPTH_SAMPLERS)
-    return textureSampleLevel(depth_prepass_texture, depth_nearest_sampler, uv, 0u);
+    return textureSampleLevel(depth_prepass_texture, depth_linear_sampler, depth_sampler_uv(uv), 0u);
     @else
-    return depth_sample_nearest_clamped(uv, tex_size);
+    return depth_sample_bilinear_clamped(uv);
+}
+
+fn depth_sample_nearest(uv: vec2<f32>) -> f32 {
+    @if(USE_DEPTH_SAMPLERS)
+    return textureSampleLevel(depth_prepass_texture, depth_nearest_sampler, depth_sampler_uv(uv), 0u);
+    @else
+    return depth_sample_nearest_clamped(uv);
 }
 
 // Main code
@@ -287,8 +315,9 @@ fn depth_raymarch_distance_fn_evaluate(
     // * The false occlusions due to duplo land are rejected because the ray stays above the smooth surface.
     // * The shrink-wrap surface is no longer continuous, so it's possible for rays to miss it.
 
-    let linear_depth = 1.0 / depth_sample_linear(interp_uv, (*distance_fn).depth_tex_size);
-    let unfiltered_depth = 1.0 / depth_sample_nearest(interp_uv, (*distance_fn).depth_tex_size);
+    // superfargoth patch (own, RO-11): the samplers map viewport UV into the rendered rect.
+    let linear_depth = 1.0 / depth_sample_linear(interp_uv);
+    let unfiltered_depth = 1.0 / depth_sample_nearest(interp_uv);
 
     var max_depth: f32;
     var min_depth: f32;
@@ -406,6 +435,9 @@ struct DepthRayMarch {
     depth_thickness_linear_z: f32,
 
     /// Size of the depth buffer we're marching in, in pixels.
+    // superfargoth patch (own, RO-11): callers pass `view.main_pass_viewport.zw` (the rendered
+    // rect, = internal DLSS size), not `textureDimensions`; all UVs here are viewport UVs, and
+    // `hit_uv` must be mapped through `main_pass_viewport` before sampling a target-sized texture.
     depth_tex_size: vec2<f32>,
 }
 

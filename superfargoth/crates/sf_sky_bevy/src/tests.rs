@@ -108,6 +108,8 @@ fn budget_app(budget: PointShadowBudget) -> (App, Vec<Entity>) {
                     GlobalTransform::from_xyz(0.0, 0.0, z),
                     // No visibility propagation in these tests.
                     bevy_camera::visibility::InheritedVisibility::VISIBLE,
+                    // Nor visibility checks: every light is in view unless a test hides it.
+                    bevy_camera::visibility::ViewVisibility::VISIBLE,
                 ))
                 .id()
         })
@@ -138,6 +140,28 @@ fn point_shadow_budget_shadows_the_nearest_within_range() {
     app.world_mut().resource_mut::<PointShadowBudget>().max = 0;
     app.update();
     assert!(lights.iter().all(|e| !shadowed(&app, *e).0));
+}
+
+/// A light no view can see (out of every frustum, or on render layers no
+/// camera draws: another worldspace) never takes a slot, however near; a
+/// holder that stops being visible fades out and frees its slot.
+#[test]
+fn point_shadow_budget_skips_lights_no_view_sees() {
+    use bevy_camera::visibility::ViewVisibility;
+    let budget = PointShadowBudget { max: 1, fade_time: 0.0, ..PointShadowBudget::default() };
+    let (mut app, lights) = budget_app(budget);
+    app.world_mut().entity_mut(lights[0]).insert(ViewVisibility::HIDDEN);
+    app.update();
+    app.update();
+    let on: Vec<bool> = lights.iter().map(|e| shadowed(&app, *e).0).collect();
+    assert_eq!(on, [false, true, false, false]);
+    // The holder leaves every view: its slot goes to the next visible light.
+    app.world_mut().entity_mut(lights[1]).insert(ViewVisibility::HIDDEN);
+    app.update();
+    app.update();
+    let on: Vec<bool> = lights.iter().map(|e| shadowed(&app, *e).0).collect();
+    assert_eq!(on, [false, false, true, false]);
+    assert!(!app.world().get::<ShadowSlot>(lights[1]).expect("slot").held);
 }
 
 #[test]

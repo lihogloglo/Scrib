@@ -1127,6 +1127,13 @@ pub struct ShadowCasterChanges {
     pub light_entities: MainEntityHashMap<u64>,
     /// [`ShadowMoverRefresh::per_frame`] this frame.
     pub per_frame_movers: bool,
+    // superfargoth patch (own, SH-20b)
+    /// Shadowed point/spot lights that moved this frame relative to the static
+    /// (rigid) geometry they see: their `GlobalTransform` changed and so did the
+    /// light-relative placement of their rigid casters. A floating-origin shift moves
+    /// lights and casters together, so it changes the first and not the second.
+    /// [`skip_unchanged_shadow_views`] redraws these lights whole, every frame.
+    pub moved_lights: MainEntityHashSet,
 }
 
 // superfargoth patch (own, SH-20)
@@ -1137,8 +1144,9 @@ pub struct ShadowCasterChanges {
 /// last drawn but moved or deformed (an animated character's pose) is redrawn the
 /// same frame, outside the refresh budget; only set changes (streaming, LOD swaps)
 /// wait their LRU turn. Off: skinned casters count only by their root position on a
-/// coarse grid and every change waits its turn (2 faces per frame), so animated
-/// characters' lamp shadows step (the B3 rule, kept as the A/B).
+/// coarse grid and every change waits its turn (one light per frame, SH-20b), so
+/// animated characters' lamp shadows step (the B3 rule, kept as the A/B). Lights
+/// that move themselves (carried torches) redraw whole every frame either way.
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct ShadowMoverRefresh {
     pub per_frame: bool,
@@ -1150,12 +1158,27 @@ impl Default for ShadowMoverRefresh {
     }
 }
 
-/// Maximum number of already-valid point/spot shadow map faces that may re-render
-/// in a single frame due to caster movement or LOD swaps. Additional dirty faces
-/// keep their existing shadow map for 1–2 frames and are refreshed in strict
-/// least-recently-updated (LRU) order, preventing multi-lamp burst hitches during
-/// streaming/LOD transitions.
-const MAX_SHADOW_FACE_REFRESHES_PER_FRAME: usize = 2;
+// superfargoth patch (own, SH-20b): refresh budgets count whole lights, never faces.
+// One light's cube is never split across frames (faces of one cube drawn on different
+// frames show a shadow cut at the face seam): when a light is refreshed, all its dirty
+// faces are drawn that frame, as cached-shadow engines refresh per light (HDRP
+// on-demand lights, UE cached shadow maps). A face view costs about 0.1-0.35 ms of
+// render thread, so one light is at most ~0.6-2 ms on the frame it is drawn.
+
+/// Most still lights refreshed per frame because their caster set changed (streaming,
+/// LOD swaps, distant walkers crossing their coarse grid) or because they overflowed the
+/// mover budget, oldest first (least-recently-updated). This frame's first captures
+/// (a light gaining a shadow slot, a texture or layer change) are deducted from it; lights
+/// that moved are not. Deferred lights keep their previous, complete cube.
+const MAX_LRU_LIGHT_REFRESHES_PER_FRAME: usize = 1;
+
+/// Most still lights per frame redrawn (all dirty faces) because the same casters moved
+/// or deformed: close-up animated characters ([`ShadowMoverRefresh::per_frame`], 16 m
+/// rule in [`extract_shadow_caster_changes`]). Picked oldest first so several lamps take
+/// turns; the overflow joins the LRU queue. A character under a lamp dirties 1-3 faces,
+/// so this is ~2-6 faces a frame. Lights that moved themselves (a carried torch) are not
+/// counted: they redraw whole every frame, uncapped, bounded by the shadowed-light count.
+const MAX_MOVER_LIGHT_REFRESHES_PER_FRAME: usize = 2;
 
 /// Records, for each point-light cubemap face and spot light, a light-relative
 /// state hash of the meshes it can see so that shadow map faces whose light and
@@ -1193,11 +1216,15 @@ pub fn extract_shadow_caster_changes(
     cameras: Extract<Query<(&Camera, &GlobalTransform), With<Camera3d>>>,
     refresh: Extract<Option<Res<ShadowMoverRefresh>>>,
     mut frame: Local<u32>,
+    // superfargoth patch (own, SH-20b): last frame's rigid-caster placement hash per light.
+    mut prev_rigid: Local<MainEntityHashMap<u64>>,
 ) {
     use core::hash::{BuildHasher, Hash, Hasher};
 
     changes.faces.clear();
     changes.light_entities.clear();
+    changes.moved_lights.clear();
+    let mut seen_lights = MainEntityHashSet::default();
     let per_frame = refresh.as_ref().is_none_or(|r| r.per_frame);
     changes.per_frame_movers = per_frame;
     *frame = frame.wrapping_add(1);
@@ -1222,6 +1249,8 @@ pub fn extract_shadow_caster_changes(
         let main_light = MainEntity::from(light);
         let light_pos = light_transform.translation();
         let mut light_entities_hasher = FixedHasher.build_hasher();
+        // superfargoth patch (own, SH-20b): rigid casters' light-relative placement over all faces.
+        let mut rigid_hasher = FixedHasher.build_hasher();
 
         let face_count = if point_visible.is_some() { 6u32 } else { 1u32 };
         for face_idx in 0..face_count {
@@ -1295,6 +1324,9 @@ pub fn extract_shadow_caster_changes(
                         // `big_space` floating-origin cell shifts.
                         let rel_pos = (rel * 1000.0).round().as_ivec3();
                         rel_pos.hash(&mut motion_hasher);
+                        // superfargoth patch (own, SH-20b)
+                        rigid_hasher.write_u64(entity_bits);
+                        rel_pos.hash(&mut rigid_hasher);
                         for v in affine.matrix3.to_cols_array() {
                             motion_hasher.write_i32((v * 10000.0).round() as i32);
                         }
@@ -1311,7 +1343,59 @@ pub fn extract_shadow_caster_changes(
         changes
             .light_entities
             .insert(main_light, light_entities_hasher.finish());
+
+        // superfargoth patch (own, SH-20b): the light moved (a carried torch, idle bob
+        // included) when its transform changed and its rigid casters' light-relative
+        // placement changed with it. Either alone is not a move: a floating-origin shift
+        // changes the transform only; a door swinging past a still lamp, the placement only.
+        let rigid = rigid_hasher.finish();
+        let transform_changed = joints.get(light).is_ok_and(|t| t.is_changed());
+        if transform_changed && prev_rigid.get(&main_light).is_some_and(|&prev| prev != rigid) {
+            changes.moved_lights.insert(main_light);
+        }
+        prev_rigid.insert(main_light, rigid);
+        seen_lights.insert(main_light);
     }
+    prev_rigid.retain(|light, _| seen_lights.contains(light));
+}
+
+// superfargoth patch (own, SH-20b): per-face state, grouped per light before deciding.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShadowFaceState {
+    /// The view and its casters are unchanged since the face was last drawn.
+    Clean,
+    /// First capture, a texture/layer/projection change, or nothing known: draw now.
+    Mandatory,
+    /// The same casters, moved or deformed.
+    Motion,
+    /// The caster set changed.
+    SetChange,
+}
+
+struct ShadowFace {
+    view_entity: Entity,
+    retained: RetainedViewEntity,
+    skipped: bool,
+    state: ShadowFaceState,
+    last_frame: u32,
+    /// `(view_key, members_key, motion_key)` recorded once drawn; `None` forgets the face.
+    keys: Option<(u64, u64, u64)>,
+    has_casters: bool,
+}
+
+/// Light counts (and faces drawn) accumulated for the once-a-second debug line of
+/// [`skip_unchanged_shadow_views`].
+#[derive(Default)]
+pub struct ShadowRefreshStats {
+    window_start: Option<bevy_platform::time::Instant>,
+    frames: u32,
+    moved: u32,
+    first: u32,
+    mover: u32,
+    lru: u32,
+    deferred: u32,
+    clean: u32,
+    faces_drawn: u32,
 }
 
 /// Marks the point and spot light shadow views whose shadow maps are still valid
@@ -1319,9 +1403,13 @@ pub fn extract_shadow_caster_changes(
 /// and projection as when last rendered, and the same shadow casters on that face,
 /// none of them changed relative to the light.
 ///
-/// When more than [`MAX_SHADOW_FACE_REFRESHES_PER_FRAME`] already-rendered faces
-/// have caster changes on the same frame (e.g. during a building LOD swap), refreshes
-/// are scheduled in least-recently-updated (LRU) order across frames to prevent hitches.
+/// superfargoth patch (own, SH-20b): decisions are per light, never per face. A light
+/// drawn this frame draws all its dirty faces. Lights that moved
+/// ([`ShadowCasterChanges::moved_lights`]) redraw whole every frame; first captures
+/// always draw; lights whose casters moved take [`MAX_MOVER_LIGHT_REFRESHES_PER_FRAME`];
+/// the rest are refreshed [`MAX_LRU_LIGHT_REFRESHES_PER_FRAME`] at a time in
+/// least-recently-updated (LRU) order across frames to prevent hitches.
+/// `RUST_LOG=bevy_pbr::shadow_refresh=debug` prints the counts once a second.
 pub fn skip_unchanged_shadow_views(
     mut commands: Commands,
     views: Query<
@@ -1340,8 +1428,10 @@ pub fn skip_unchanged_shadow_views(
     phases: Res<ViewBinnedRenderPhases<Shadow>>,
     mut rendered: Local<HashMap<RetainedViewEntity, (u64, u64, u64, u32)>>,
     mut frame_counter: Local<u32>,
+    mut stats: Local<ShadowRefreshStats>,
 ) {
     use core::hash::{BuildHasher, Hash, Hasher};
+    use ShadowFaceState::{Clean, Mandatory, Motion, SetChange};
 
     *frame_counter = frame_counter.wrapping_add(1);
     let current_frame = *frame_counter;
@@ -1355,11 +1445,9 @@ pub fn skip_unchanged_shadow_views(
         )
     });
     let mut live = HashSet::new();
-    let mut mandatory_renders = 0usize;
-    let mut mover_renders = 0usize;
-    const MAX_MOVER_FACE_REFRESHES_PER_FRAME: usize = 4;
-    let mut refresh_candidates: Vec<(u32, Entity, RetainedViewEntity, u64, (u64, u64), bool)> =
-        Vec::new();
+    // Faces grouped by light (render entity), in query order.
+    let mut light_slots: HashMap<Entity, usize> = HashMap::default();
+    let mut lights: Vec<(Option<MainEntity>, Vec<ShadowFace>)> = Vec::new();
 
     for (view_entity, view, shadow_view, light, skipped) in &views {
         let (light_entity, texture) = match *light {
@@ -1399,10 +1487,9 @@ pub fn skip_unchanged_shadow_views(
         let phase_entity_count = phases
             .get(&retained)
             .map_or(0, BinnedRenderPhase::entity_count);
-        let casters_key = main_entities
-            .get(light_entity)
-            .ok()
-            .and_then(|main| changes.faces.get(&(*main, retained.subview_index)))
+        let main_light = main_entities.get(light_entity).ok().copied();
+        let casters_key = main_light
+            .and_then(|main| changes.faces.get(&(main, retained.subview_index)))
             .map(|&(members, motion)| {
                 let mut h = FixedHasher.build_hasher();
                 h.write_u64(members);
@@ -1410,106 +1497,155 @@ pub fn skip_unchanged_shadow_views(
                 (h.finish(), motion)
             });
 
-        if texture.is_none() {
-            if skipped {
-                commands
-                    .entity(view_entity)
-                    .remove::<SkipRootViewRendering>();
+        let (state, keys, last_frame) = match (texture, casters_key) {
+            (Some(_), Some((members_key, motion_key))) => {
+                let keys = Some((view_key, members_key, motion_key));
+                match rendered.get(&retained).copied() {
+                    Some((prev_view, prev_members, prev_motion, last))
+                        if prev_view == view_key
+                            && prev_members == members_key
+                            && prev_motion == motion_key =>
+                    {
+                        (Clean, keys, last)
+                    }
+                    Some((prev_view, prev_members, _, last))
+                        if prev_view == view_key && prev_members == members_key =>
+                    {
+                        (Motion, keys, last)
+                    }
+                    Some((prev_view, _, _, last)) if prev_view == view_key => {
+                        (SetChange, keys, last)
+                    }
+                    _ => (Mandatory, keys, 0),
+                }
             }
-            mandatory_renders += 1;
-            rendered.remove(&retained);
-            continue;
-        }
-
-        let Some((members_key, motion_key)) = casters_key else {
-            if skipped {
-                commands
-                    .entity(view_entity)
-                    .remove::<SkipRootViewRendering>();
-            }
-            mandatory_renders += 1;
-            rendered.remove(&retained);
-            continue;
+            // No texture this frame or no caster state for the light: draw, remember nothing.
+            _ => (Mandatory, None, 0),
         };
 
-        match rendered.get(&retained).copied() {
-            Some((prev_view_key, prev_members, prev_motion, _))
-                if prev_view_key == view_key
-                    && prev_members == members_key
-                    && prev_motion == motion_key =>
-            {
-                // Neither the view/layer nor the casters changed: skip rendering.
-                if !skipped {
-                    commands.entity(view_entity).insert(SkipRootViewRendering);
-                }
+        let slot = *light_slots.entry(light_entity).or_insert_with(|| {
+            lights.push((main_light, Vec::new()));
+            lights.len() - 1
+        });
+        lights[slot].1.push(ShadowFace {
+            view_entity,
+            retained,
+            skipped,
+            state,
+            last_frame,
+            keys,
+            has_casters: phase_entity_count > 0,
+        });
+    }
+
+    // Decide per light. `draw`: the light's dirty faces render this frame; `whole`: it
+    // moved, so its clean faces with casters render too (their coarse-grid casters
+    // shifted relative to it by less than their grid step).
+    let mut draw = vec![false; lights.len()];
+    let mut whole = vec![false; lights.len()];
+    let mut first_captures = 0usize;
+    let mut mover_candidates: Vec<(u32, usize)> = Vec::new();
+    let mut lru_candidates: Vec<(u32, usize)> = Vec::new();
+    for (idx, (main_light, faces)) in lights.iter().enumerate() {
+        let oldest_dirty = faces
+            .iter()
+            .filter(|f| f.state != Clean)
+            .map(|f| f.last_frame)
+            .min();
+        let moved = main_light.is_some_and(|m| changes.moved_lights.contains(&m));
+        if faces.iter().any(|f| f.state == Mandatory) {
+            first_captures += 1;
+            draw[idx] = true;
+            stats.first += 1;
+        } else if moved {
+            draw[idx] = true;
+            whole[idx] = true;
+            stats.moved += 1;
+        } else if let Some(oldest) = oldest_dirty {
+            if changes.per_frame_movers && faces.iter().any(|f| f.state == Motion) {
+                mover_candidates.push((oldest, idx));
+            } else {
+                lru_candidates.push((oldest, idx));
             }
-            // superfargoth patch (own, SH-20): the same casters moved or deformed (an
-            // animated character): drawn this frame (up to 4 faces/frame so multiple
-            // lamps never spike a frame), outside the set-change budget.
-            Some((prev_view_key, prev_members, _, _))
-                if changes.per_frame_movers
-                    && mover_renders < MAX_MOVER_FACE_REFRESHES_PER_FRAME
-                    && prev_view_key == view_key
-                    && prev_members == members_key =>
-            {
-                if skipped {
-                    commands
-                        .entity(view_entity)
-                        .remove::<SkipRootViewRendering>();
-                }
-                mover_renders += 1;
-                rendered.insert(retained, (view_key, members_key, motion_key, current_frame));
-            }
-            Some((prev_view_key, _, _, last_frame)) if prev_view_key == view_key => {
-                // The shadow map already has a valid capture for this light & layer,
-                // but its casters changed (mover or LOD swap). Queue for LRU refresh.
-                refresh_candidates.push((
-                    last_frame,
-                    view_entity,
-                    retained,
-                    view_key,
-                    (members_key, motion_key),
-                    skipped,
-                ));
-            }
-            _ => {
-                // First capture for this view or its texture/layer changed: must render now.
-                if skipped {
-                    commands
-                        .entity(view_entity)
-                        .remove::<SkipRootViewRendering>();
-                }
-                mandatory_renders += 1;
-                rendered.insert(retained, (view_key, members_key, motion_key, current_frame));
-            }
+        } else {
+            stats.clean += 1;
+        }
+    }
+    // Movers oldest first, so several lamps with walkers under them take turns.
+    mover_candidates.sort_unstable();
+    for (n, (oldest, idx)) in mover_candidates.into_iter().enumerate() {
+        if n < MAX_MOVER_LIGHT_REFRESHES_PER_FRAME {
+            draw[idx] = true;
+            stats.mover += 1;
+        } else {
+            lru_candidates.push((oldest, idx));
+        }
+    }
+    // LRU: oldest dirty face first; only first captures are deducted from the budget.
+    let refresh_budget = MAX_LRU_LIGHT_REFRESHES_PER_FRAME.saturating_sub(first_captures);
+    lru_candidates.sort_unstable();
+    for (n, (_, idx)) in lru_candidates.into_iter().enumerate() {
+        if n < refresh_budget {
+            draw[idx] = true;
+            stats.lru += 1;
+        } else {
+            stats.deferred += 1;
         }
     }
 
-    // Sort dirty caster-refresh candidates by oldest `last_frame` first (LRU).
-    // Deduct any mandatory new-light captures this frame so new-slot captures and
-    // mover refreshes never stack in the same frame.
-    let refresh_budget = MAX_SHADOW_FACE_REFRESHES_PER_FRAME.saturating_sub(mandatory_renders);
-    refresh_candidates.sort_unstable_by_key(|&(last_frame, _, _, _, _, _)| last_frame);
-    for (idx, (_, view_entity, retained, view_key, (members_key, motion_key), skipped)) in
-        refresh_candidates.into_iter().enumerate()
-    {
-        if idx < refresh_budget {
-            if skipped {
-                commands
-                    .entity(view_entity)
-                    .remove::<SkipRootViewRendering>();
-            }
-            rendered.insert(retained, (view_key, members_key, motion_key, current_frame));
-        } else {
-            // Defer to a subsequent frame; keep `rendered` at the old casters_key so
-            // this face remains dirty and at the front of the LRU queue next frame.
-            if !skipped {
-                commands.entity(view_entity).insert(SkipRootViewRendering);
+    for (idx, (_, faces)) in lights.iter().enumerate() {
+        for face in faces {
+            let render =
+                draw[idx] && (face.state != Clean || (whole[idx] && face.has_casters));
+            if render {
+                if face.skipped {
+                    commands
+                        .entity(face.view_entity)
+                        .remove::<SkipRootViewRendering>();
+                }
+                match face.keys {
+                    Some((view_key, members_key, motion_key)) => {
+                        rendered.insert(
+                            face.retained,
+                            (view_key, members_key, motion_key, current_frame),
+                        );
+                    }
+                    None => {
+                        rendered.remove(&face.retained);
+                    }
+                }
+                stats.faces_drawn += 1;
+            } else if !face.skipped {
+                // Clean, or deferred: a deferred face keeps its old key in `rendered`,
+                // so it stays dirty and ages towards the front of the LRU queue.
+                commands.entity(face.view_entity).insert(SkipRootViewRendering);
             }
         }
     }
 
     rendered.retain(|retained, _| live.contains(retained));
+
+    stats.frames += 1;
+    let now = bevy_platform::time::Instant::now();
+    let start = *stats.window_start.get_or_insert(now);
+    if now.duration_since(start).as_secs_f32() >= 1.0 {
+        tracing::debug!(
+            target: "bevy_pbr::shadow_refresh",
+            "point/spot shadow refresh, light-frames over {} frames: moved (whole) {}, first {}, mover {}, lru {}, deferred {}, clean {}; faces drawn {}",
+            stats.frames,
+            stats.moved,
+            stats.first,
+            stats.mover,
+            stats.lru,
+            stats.deferred,
+            stats.clean,
+            stats.faces_drawn,
+        );
+        *stats = ShadowRefreshStats {
+            window_start: Some(now),
+            ..Default::default()
+        };
+    }
 }
 
 pub fn prepare_lights(

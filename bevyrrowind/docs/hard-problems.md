@@ -67,6 +67,10 @@ Paste the entry plus this:
   `2026-10-21-audit.md`, visual checks SH-11..SH-20 in `docs/visual-checks.md`. Lead: Clockwork's world-unit sun
   PCSS (`lib/light/sunsoft.glsl`: penumbra from sun disc x caster height, the same width in every cascade), its
   lamp cube filter (SH-13) and distant-shadow redraw triggers (SH-11): `clockwork-code-2026-10-25.md` items 1, 6, 7.
+  Audit 2026-11-01 (`research/shadows/2026-11-01-audit.md`): player and torch lights on layer 0 vs lamps on the worldspace
+  layer (no lamp shadows on the player, torches shadow only the player); budget slots wasted on non-view-visible lights;
+  RO-11 leads: contact shadows at output resolution under DLSS, 39f6508 far-cascade PCF path, SSAO (bevy#26234
+  unvendored); slices 0-7 listed there (independently reviewed).
 - **Done when:** owner confirms SH-11, SH-13, SH-20 and the "only close" complaint in Balmora day/night and the
   census office, with frame time no worse than today (perf.md "Shadow reset B2").
 

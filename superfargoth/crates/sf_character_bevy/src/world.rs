@@ -1,12 +1,14 @@
-//! Actor placements of `sf_world_bevy` streaming as characters.
+//! Actor placements of `sf_world_bevy` streaming as characters, and the
+//! worldspace render layer of every character ([`follow_worldspace_layers`]).
 
-use bevy_camera::visibility::Visibility;
+use bevy_camera::visibility::{RenderLayers, Visibility, VisibilityClass};
 use bevy_ecs::prelude::*;
+use bevy_mesh::Mesh3d;
 use sf_character::CharacterState;
 use sf_world::{IndexedPlacement, Level, PlacementFlags, PlacementId};
-use sf_world_bevy::{PlacementSpawner, SpawnCx};
+use sf_world_bevy::{PlacementSpawner, SpawnCx, WorldspaceRoot};
 
-use crate::{Character, Characters};
+use crate::{Character, Characters, HeldLightSlot};
 
 /// On a character spawned from a placement: the placement it stands for, the stable id that
 /// activation, scripts and saves address it by (the entity is per session).
@@ -49,5 +51,56 @@ impl PlacementSpawner for CharacterSpawner {
     /// skeleton or a creature's body, not a static to instance).
     fn needs_model(&self, _: &IndexedPlacement) -> bool {
         false
+    }
+}
+
+/// What a character's render layer reaches: meshes, lights (anything Bevy's
+/// visibility checks: `VisibilityClass`), held-light slots, and whatever
+/// already carries layers.
+type Layered = Or<(With<Mesh3d>, With<VisibilityClass>, With<HeldLightSlot>, With<RenderLayers>)>;
+
+/// Keeps every [`Character`] on the render layer of its worldspace: the
+/// root's `RenderLayers` become `layer(N)` of its nearest
+/// [`WorldspaceRoot`] ancestor, and a change is pushed to every existing
+/// descendant that renders or lights ([`Layered`]). Parts built later copy
+/// the root's layers at build time (`finish_builds`, `held::sync_held`).
+///
+/// Why: Bevy pairs a light with shadow casters and views by `RenderLayers`
+/// (a mesh without the component is layer 0), and a worldspace's lamps sit
+/// on its layer only (a `[0, N]` light would light resident neighbouring
+/// worldspaces), so a character left on layer 0 never shadows under them,
+/// and a torch it carries lights nothing of its worldspace.
+///
+/// Runs every frame (`PostUpdate`, before `CheckVisibility`): an ancestor
+/// walk per character, stopping at the first worldspace root (two or three
+/// hops), so it catches every way a character changes worldspace: its own
+/// reparenting, an ancestor's (a player avatar under a body that follows
+/// the camera through a door after `TravelArrived`), and its first spawn.
+/// After `Update`, so parts built this frame with the old layers exist and
+/// get the new ones. Characters outside any worldspace keep their layers.
+///
+/// Bevy's `HierarchyPropagatePlugin<RenderLayers>` would do the push, but it
+/// observes every `ChildOf` insert in the world (all streamed content) and
+/// puts two components on every rig joint; the layer changes only on travel.
+pub(crate) fn follow_worldspace_layers(
+    mut commands: Commands,
+    characters: Query<(Entity, Option<&RenderLayers>), With<Character>>,
+    parents: Query<&ChildOf>,
+    roots: Query<&WorldspaceRoot>,
+    children: Query<&Children>,
+    layered: Query<(), Layered>,
+) {
+    for (character, current) in &characters {
+        let Some(layer) = parents.iter_ancestors(character).find_map(|a| roots.get(a).ok().map(|r| r.layer)) else { continue };
+        let layers = RenderLayers::from_layers(&[layer]);
+        if current == Some(&layers) {
+            continue;
+        }
+        for part in children.iter_descendants(character) {
+            if layered.contains(part) {
+                commands.entity(part).try_insert(layers.clone());
+            }
+        }
+        commands.entity(character).try_insert(layers);
     }
 }

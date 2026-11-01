@@ -100,7 +100,9 @@ fn sample_specular_brdf(wo: vec3<f32>, roughness: f32, F0: vec3<f32>, urand: vec
 ///
 /// [1]: https://lettier.github.io/3d-game-shaders-for-beginners/screen-space-reflection.html
 fn evaluate_ssr(R_world: vec3<f32>, P_world: vec3<f32>, jitter: f32) -> vec4<f32> {
-    let depth_size = vec2<f32>(textureDimensions(depth_prepass_texture));
+    // superfargoth patch (own, RO-11): march in the main pass's pixel space (the internal DLSS
+    // size under `MainPassResolutionOverride`), not the target-sized depth texture's.
+    let depth_size = view.main_pass_viewport.zw;
 
     var raymarch = depth_ray_march_new_from_depth(depth_size);
     depth_ray_march_from_cs(&raymarch, position_world_to_ndc(P_world));
@@ -114,8 +116,12 @@ fn evaluate_ssr(R_world: vec3<f32>, P_world: vec3<f32>, jitter: f32) -> vec4<f32
 
     let raymarch_result = depth_ray_march_march(&raymarch);
     if (raymarch_result.hit) {
+        // superfargoth patch (own, RO-11): `hit_uv` is main-pass viewport UV; map it into the
+        // target-sized color texture like bevyengine/bevy#26235 (identity with no override).
+        let color_size = vec2<f32>(textureDimensions(color_texture));
+        let hit_tex_uv = (view.main_pass_viewport.xy + raymarch_result.hit_uv * view.main_pass_viewport.zw) / color_size;
         return vec4(
-            textureSampleLevel(color_texture, color_sampler, raymarch_result.hit_uv, 0.0).rgb,
+            textureSampleLevel(color_texture, color_sampler, hit_tex_uv, 0.0).rgb,
             0.0
         );
     }

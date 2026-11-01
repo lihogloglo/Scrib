@@ -20,6 +20,7 @@ use std::sync::Arc;
 use bevy_app::prelude::*;
 use bevy_asset::prelude::*;
 use bevy_camera::prelude::*;
+use bevy_camera::visibility::RenderLayers;
 use bevy_ecs::prelude::*;
 use bevy_math::prelude::*;
 use bevy_pbr::prelude::*;
@@ -242,17 +243,23 @@ fn light_held_slots(
     rules: Res<HeldRules>,
     calibration: Option<Res<LightCalibration>>,
     tuning: Res<HeldLightTuning>,
-    slots: Query<(Entity, &HeldLightSlot), Added<HeldLightSlot>>,
+    slots: Query<(Entity, &HeldLightSlot, Option<&RenderLayers>), Added<HeldLightSlot>>,
     parents: Query<&ChildOf>,
     carriers: Query<(), With<HeldProps>>,
 ) {
     let calibration = calibration.map(|c| *c).unwrap_or_default();
-    for (entity, slot) in &slots {
+    for (entity, slot, layers) in &slots {
         let Some(info) = torch_info(rules.0.actors().db(), slot) else { continue };
         let mut light = calibration.point_light(&info);
         light.intensity *= tuning.intensity_scale(&calibration, info.radius);
         light.radius = tuning.source_radius_m;
         let mut e = commands.spawn((light, HeldTorch, BudgetedShadow { priority: TORCH_SHADOW_PRIORITY }, Transform::IDENTITY, Visibility::Inherited, ChildOf(entity)));
+        // The slot's worldspace layer from the first frame (Bevy pairs a light only with the
+        // casters and views sharing its `RenderLayers`); `sf_character_bevy`'s layer propagation
+        // keeps it in step when the carrier changes worldspace.
+        if let Some(layers) = layers {
+            e.insert(layers.clone());
+        }
         if let Some(carrier) = parents.iter_ancestors(entity).find(|a| carriers.contains(*a)) {
             e.insert(HeldTorchOf(carrier));
         }

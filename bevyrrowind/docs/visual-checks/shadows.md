@@ -42,7 +42,8 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
 - Owner 2026-10-19 (round 9, lt-cave): grain varies, some lamp shadows are clean and others very grainy (per-light: budget fade dither vs. the fully shadowed light?).
 - Owner 2026-10-20: shadows overall "only showing when super close from the object". Note: since 2026-10-19 the
   app no longer adds the parked cube-cache plugin, so the one shadowed lamp redraws its 6 faces every frame.
-- Status: known bug: Phase 1 shadow pass (1.4).
+- Status: known bug: Phase 1 shadow pass (1.4). Audit 2026-11-01: now 8 maps at 512², fade 35-45 m; reach = the lamp's range
+  (4 × radius); grain = 512² + 1-tap lamp filter (`--off lampfilter`); "random" picks = ranking by camera distance (audit §2).
 
 ### SH-14: Contact-shadow bands at object edges (owner report)
 - Kind: game location. Run: `.\bevyrrowind view Balmora --camera "-280,+12,200,-295,+1,180" --hour 15 --weather clear`,
@@ -76,6 +77,7 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   occlusion under roofs as before.
 - Status: inconclusive 2026-10-21 (bw-owner10): owner can't judge AO / contact shadows without live on/off toggles
   (and is unsure contact shadows work at all); needs the dev console (ROADMAP 1.13, queued).
+- 2026-11-01: console toggles exist: backquote, `flip ssao`, `flip contactshadows` (dev builds). Status: awaiting owner.
 
 ### SH-19: Shadow reset B2 (lamp shadows on 2x2 hardware PCF)
 - Kind: game location. Run (release): `.\bevyrrowind view "Seyda Neen, Census and Excise Office" --camera
@@ -107,3 +109,22 @@ and added a terrain far shadow past them. Screenshots: `shots\shadows\`
   looks random; one lamp shadowed an NPC and not the player; no held torch ever cast a shadow. Leads: the shadowed-lamp
   budget picks (High count still an owner pick, ROADMAP 1.4), player body excluded as a lamp caster?, torch-bearers
   (decision 3 says they cast within the budget; LT-3). Status: partial (smooth yes, consistency no).
+- Audit 2026-11-01 (`superfargoth/docs/research/shadows/2026-11-01-audit.md` §1, confirmed in code): the player's meshes and
+  held-torch lights have no `RenderLayers` (layer 0) while lamps and NPCs sit on the worldspace layer, so lamps never see the
+  player as a caster and torch lights see only layer-0 meshes (the player). Review (Opus) added: the budget ranks lights
+  by `Visibility` only, so other-worldspace or behind-camera lights take slots and never render (audit §1). Slices 1-2 there.
+
+### SH-21: Lamp and torch shadows on characters; shadowed-lamp pick (shadow-fixes 2026-11-01)
+- Kind: game location. Owner copy `%TEMP%\bw-owner-2026-11-01`: `02-census-office.cmd` (walk under a lantern),
+  `03-lamps-handoff.cmd` (Balmora 22:00, torch-bearers), `01-new-game.cmd` (Seyda Neen night: lamps by the door).
+- Look for: the player's own shadow under lanterns and lamps indoors and out (was never cast); a torch-bearer's torch
+  shadows the bearer, the street and passers-by (was nothing); the shadowed lamps are the ones lighting what you see,
+  stable while turning (were "random": slots went to lights of the next cell and behind the camera); no new popping.
+- A/B: `--point-shadows 1` / `12`; the log line `point shadow on ...: its render layers ... meet no shadow caster's`
+  must not appear (one `warn!` per bad light).
+- Status: awaiting owner (built 2026-11-01, tests pass; spec `shadows.md` "Shadow fixes as built").
+- Owner 2026-11-01 (first build): shadows do move with every held torch (win); but a lot of flickering, some shadows cut in
+  half, character shadows choppy again (SH-20 regressed). Cause (code): a moving torch's six faces take the mandatory arm of
+  the vendored refresh rule every frame, zeroing the 2-face LRU budget for every other lamp, and faces of one lamp refresh
+  on different frames (the cut at a cube-face seam). Fix slice SH-20b (per-light grouping, separate budgets) in progress.
+  Status: partial.

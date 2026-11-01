@@ -118,6 +118,15 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   release start (no subcommand) may run different settings (DLSS/preset) than `scene` runs; diff them first.
 - Owner 2026-10-30: the bands look like a regression from the very recent shadow work (2026-10-28: d89eaa0 world-unit sun
   PCSS, 39f6508 shadow/LUT changes). First step: A/B or bisect those two commits.
+- Audit 2026-11-01 (`superfargoth/docs/research/shadows/2026-11-01-audit.md` §3): release start = `view` defaults, no settings
+  diff. Leads: GTAO at output resolution under DLSS (bevy#26234, not vendored), contact shadows marching full-size depth under
+  DLSS (`pbr_functions.wesl:308`), aerial LUT samples 10 → 6 (39f6508). A/B: `--dlss taa`, `--off contactshadows`, `ssao`.
+- Built 2026-11-01 (shadow-fixes; spec `shadows.md` "Shadow fixes as built"): contact-shadow march in main-pass pixel space
+  under DLSS, full receiver slope + half-texel margin on the sun's far 4-tap and PCSS paths, bevy#26234 GTAO at the
+  main-pass resolution. Owner copy `%TEMP%\bw-owner-2026-11-01`: `01-new-game.cmd` (fixed), then if bands remain
+  `11-…-no-contactshadows`, `12-…-no-softshadows`, `13-…-taa`, `14-…-no-ssao` (same start, one part off each).
+- Owner 2026-11-01 (`01-new-game`, `11-…-no-contactshadows`): no ground bands in either. Status: **confirmed** (which of the
+  three fixes did it is not isolated; all three stay).
 
 ### RO-12: Bright outline around characters (owner report)
 - Kind: game location. Seen 2026-10-30 from the release start (Seyda Neen), on NPCs and the player.
@@ -127,6 +136,8 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Status: known bug: cause not diagnosed (owner pass 2026-10-30).
 - Owner 2026-10-30, `scene wk-balmora`: no outline around characters there; seen only from the release start (no
   subcommand). Clue: compare its settings (DLSS mode, preset, resolution) with `scene` runs.
+- Audit 2026-11-01: no settings diff (content: Seyda Neen haze). Lead: half-res cloud/bank composite gives thin foreground
+  objects the background's bank fog (`cloud_composite.wesl:44-87`, `d.y` not depth-clipped); secondary GTAO edge under DLSS.
 
 ### RO-13: F7 wireframe drawn away from the model (owner report)
 - Kind: synthetic. Any anim-lab level, dev build, F7 (wireframe over skinned meshes; `mw_devtools_bevy/src/live_ab.rs`).

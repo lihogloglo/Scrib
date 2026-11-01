@@ -18,6 +18,7 @@ use bevy_anti_alias::taa::TemporalAntiAliasing;
 use bevy_app::{App, Update};
 use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy_ecs::prelude::*;
+use bevy_light::ShadowFilteringMethod;
 use bevy_render::camera::{MipBias, TemporalJitter};
 use bevy_render::view::Msaa;
 
@@ -57,7 +58,33 @@ pub(crate) fn build(app: &mut App) {
         .init_resource::<ActiveUpscaling>()
         .init_resource::<UpscalingSupport>()
         .init_resource::<TemporalHistory>()
-        .add_systems(Update, apply.in_set(SkySystems::RenderPath).after(crate::path::PathSystems));
+        .add_systems(Update, (apply, shadow_filter_follows_jitter).chain().in_set(SkySystems::RenderPath).after(crate::path::PathSystems));
+}
+
+/// A camera whose `ShadowFilteringMethod::Temporal` was parked while it had no
+/// `TemporalJitter` (`shadow_filter_follows_jitter`).
+#[derive(Component)]
+struct TemporalShadowsParked;
+
+/// Temporal shadow filtering is a per-frame dithered kernel that only a temporal
+/// resolve (TAA or DLSS, i.e. `TemporalJitter`) averages out; without one it is
+/// fixed-pattern grain (shadow audit 2026-11-01). Hosts pick the filter once at
+/// startup from the upscaling *setting*; this keeps it in step with what actually
+/// runs: a camera that loses its jitter (`--dlss off`, F4 to native) falls back to
+/// Gaussian and gets Temporal back with the jitter.
+/// The cameras `shadow_filter_follows_jitter` keeps in step.
+type FilteredCameras<'w, 's> = Query<'w, 's, (Entity, &'static mut ShadowFilteringMethod, Has<TemporalJitter>, Has<TemporalShadowsParked>), With<RenderPathCamera>>;
+
+fn shadow_filter_follows_jitter(mut commands: Commands, mut cameras: FilteredCameras) {
+    for (entity, mut filter, jitter, parked) in &mut cameras {
+        if !jitter && *filter == ShadowFilteringMethod::Temporal {
+            *filter = ShadowFilteringMethod::Gaussian;
+            commands.entity(entity).insert(TemporalShadowsParked);
+        } else if jitter && parked {
+            *filter = ShadowFilteringMethod::Temporal;
+            commands.entity(entity).remove::<TemporalShadowsParked>();
+        }
+    }
 }
 
 pub(crate) fn finish(app: &mut App) {

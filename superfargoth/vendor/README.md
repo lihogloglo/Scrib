@@ -14,8 +14,11 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 | `bevy_core_pipeline`, `bevy_pbr` | same | bevyengine/bevy [#26235](https://github.com/bevyengine/bevy/pull/26235), [#26236](https://github.com/bevyengine/bevy/pull/26236), [#26237](https://github.com/bevyengine/bevy/pull/26237) (LT-4 DLSS cluster lookup, transmission UV, and OIT indexing with `MainPassResolutionOverride`) | upstream Bevy release |
 | `bevy_render`, `bevy_pbr` | same | bevyengine/bevy [#26321](https://github.com/bevyengine/bevy/pull/26321) (`ExtendedMaterial` bindless fallback when extension does not support bindless) | upstream Bevy release |
 | `bevy_render`, `bevy_pbr` | same | bevyengine/bevy [#26095](https://github.com/bevyengine/bevy/pull/26095) (clear out stale bin unpacking & uniform allocation jobs and bind groups) | upstream Bevy release |
-| `bevy_pbr` (own) | same | `superfargoth patch (own, SH-20)`: `ShadowMoverRefresh` (redraw close-up mover/animated shadow faces per frame within 16 m of camera, capped at 4 faces/frame, `--off movershadows` A/B) | upstream gets dynamic caster refresh |
-| `bevy_pbr` (own) | same | `superfargoth patch (own, H2)`: World-Unit Directional PCSS (`shadow_sampling.wesl`, `shadows.wesl`: world-meter penumbra scale, analytic receiver slope, 4-tap sunlit early-out, and far-cascade rotated PCF fast path) | upstream gets cascade-invariant world-unit PCSS |
+| `bevy_pbr` | same | bevyengine/bevy [#26234](https://github.com/bevyengine/bevy/pull/26234) (`patches/bevy-26234.diff`: SSAO textures, dispatch and UVs at `main_pass_viewport`, i.e. the DLSS internal resolution; RO-11 lead) | upstream Bevy release |
+| `bevy_core_pipeline`, `bevy_pbr` | same | bevyengine/bevy [#26170](https://github.com/bevyengine/bevy/pull/26170) (`patches/bevy-26170.diff`: occlusion culling clamps depth-pyramid texel loads at the right/bottom edges) | upstream Bevy release |
+| `bevy_pbr` (own) | same | `superfargoth patch (own, SH-20)`: `ShadowMoverRefresh` (redraw close-up mover/animated shadow faces per frame within 16 m of camera, `--off movershadows` A/B; SH-20b: per-light refresh, moved lights redraw whole) | upstream gets dynamic caster refresh |
+| `bevy_pbr` (own) | same | `superfargoth patch (own, H2)`: World-Unit Directional PCSS (`shadow_sampling.wesl`, `shadows.wesl`: world-meter penumbra scale, analytic receiver slope, 4-tap sunlit early-out, and far-cascade rotated PCF fast path; filter taps fixed by RO-11 below) | upstream gets cascade-invariant world-unit PCSS |
+| `bevy_pbr` (own) | same | `superfargoth patch (own, RO-11)`: DLSS-correct contact shadows/SSR (`ssr/raymarch.wesl`, `ssr.wesl`, `render/pbr_functions.wesl`: depth march in `main_pass_viewport` pixel space, viewport UV mapped into the target-sized depth/color textures and clamped to the rendered rect) and sun PCF receiver-plane fix (`render/shadow_sampling.wesl`: full slope + half-texel margin on every filter tap, slope exact to N·L 0.125). No diff file; grep the marker | upstream contact shadows/SSR honour `MainPassResolutionOverride` (raymarch half); with H2 (shadow half) |
 | `bevy_pbr` (own) | same | `superfargoth patch (own)`: `AtmosphereStaticLutCache` (`atmosphere/{mod.rs,resources.rs,node.rs}`: caches static `transmittance_lut` and `multiscattering_lut` per GPU texture pair when planet/medium are unchanged) | upstream caches static atmosphere LUTs |
 | `bevy_render` (own) | same | `superfargoth patch (own)`: incremental `extract_visibility_ranges` (`view/visibility/range.rs`: `O(changed + removed)` instead of clearing and re-hashing all ~28k `VisibilityRange` entities on `ExtractSchedule`) | upstream makes `extract_visibility_ranges` incremental |
 
@@ -41,6 +44,11 @@ comment; `grep -rn "superfargoth patch" vendor/<crate>` lists them.
 - **#26321** (`ExtendedMaterial` bindless fallback): combines `AsBindGroup::bindless_supported` across base
   and extension materials. If either material does not support bindless, the combined material forces non-bindless
   layout entries and bind group construction.
+- **#26234** (SSAO at the main-pass resolution, merged upstream 2026-10-26): with `MainPassResolutionOverride` the GTAO
+  textures, compute dispatch, depth/normal UVs and the AO lookup in `pbr_fragment.wesl` / `deferred_lighting.wesl` use
+  `main_pass_viewport`; 0.20 ran them at the output size (view-space reconstruction mis-scaled, AO sampled off its pixel).
+- **#26170** (occlusion culling at the right/bottom screen edges): `occlusion_culling.wesl` and the meshlet/MSAA
+  `downsample_depth.wesl` loads clamp texel coordinates instead of reading out of bounds (never-culled edge objects).
 - **#26095** (GPU preprocessing unpacking job clear): clears `SceneUnpackingBuffers` unpacking jobs and
   `BinUnpackingBindGroups` / `UniformAllocationBindGroups` every frame so that stale metadata from prior frames
   or dead views does not cause dangling compute dispatches.
@@ -66,6 +74,12 @@ Diffed against the PR-patched sources in `patches/superfargoth-shadow-early-out-
   active `Camera3d`) redraw their shadow faces the same frame (capped at 4 unbudgeted mover faces/frame), while
   distant street walkers and set changes (streaming, LOD swaps) remain on the coarse grid + LRU budget. Main-world
   resource `ShadowMoverRefresh { per_frame }` (default true; false = B3 rule, toggled via `--off movershadows`).
+- SH-20b (2026-11-01, carried torches): refresh decisions are per light, never per face: a light drawn this frame
+  draws all its dirty faces (no shadow cut at a cube seam). `ShadowCasterChanges::moved_lights` = transform changed
+  and rigid casters' light-relative placement changed (a floating-origin shift changes only the first): such a
+  light redraws whole every frame, uncapped, outside every budget. Still lights: `MAX_MOVER_LIGHT_REFRESHES_PER_FRAME`
+  = 2 (casters moved, oldest first, overflow joins LRU) and `MAX_LRU_LIGHT_REFRESHES_PER_FRAME` = 1 (set changes,
+  minus first captures only). `RUST_LOG=bevy_pbr::shadow_refresh=debug` logs the per-second light counts.
 
 ### H2 World-Unit Directional PCSS (`render/shadow_sampling.wesl`, `shadows.wesl`)
 - Stock Bevy directional PCSS computes blocker depth and penumbra filter radius in orthographic cascade NDC,
@@ -77,6 +91,17 @@ Diffed against the PR-patched sources in `patches/superfargoth-shadow-early-out-
   analytic receiver-plane depth slope to avoid derivatives across non-uniform cascade branches, applies an angular
   penumbra spread in world meters across all cascade splits, and adds a 4-tap sunlit precheck + far-cascade
   (`texel_size >= 0.15 m`) 4-tap rotated PCF fast path.
+
+### RO-11 DLSS contact shadows/SSR & sun PCF receiver plane (`ssr/raymarch.wesl`, `ssr.wesl`, `pbr_functions.wesl`, `shadow_sampling.wesl`)
+- Owner symptom RO-11 (dark bands on the ground that slide with the camera under DLSS); audit
+  `docs/research/shadows/2026-11-01-audit.md` §3. Two defects:
+- Depth ray march (contact shadows, SSR) used `textureDimensions(depth)` while the prepass fills only the
+  `main_pass_viewport` rect: steps now use `main_pass_viewport.zw`, samples map viewport UV to texels like #26235
+  and clamp to the rendered rect, SSR maps `hit_uv` the same way. Identity with no override and a full viewport.
+- H2 filter taps (far fast path and PCSS filter) used half the receiver slope, no margin: now full slope (exact to
+  N·L 0.125, ±8 clamp, no 0.05 gate) + half-texel margin. The 0.15 m switch is per cascade, so the overlap blend hides it.
+- `patches/superfargoth-shadow-early-out-lamp-filter.diff` predates the RO-11 hunk in `pbr_functions.wesl` (stale
+  for that file; B2 hunks unchanged).
 
 ### Atmosphere static LUT cache (`atmosphere/{mod.rs,resources.rs,node.rs}`) & incremental `VisibilityRange` extraction (`view/visibility/range.rs`)
 - `AtmosphereStaticLutCache` tracks computed `(ExtractedAtmosphere, GpuImage)` pairs and skips dispatching

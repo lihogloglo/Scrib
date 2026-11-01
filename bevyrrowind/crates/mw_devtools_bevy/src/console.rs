@@ -5,7 +5,10 @@
 //! - `render.ssao` (on/off variable): Bevy GTAO on the streaming camera, live. Starts as
 //!   the run started (`--off ssao` or the Low preset: off). `toggle render.ssao`,
 //!   `render.ssao off`, or `off ssao`.
-//! - `on <name>` / `off <name>` / `flip <name>`: `ssao` and the switches the A/B keys flip
+//! - `render.contactshadows` (on/off variable): Bevy screen-space contact shadows
+//!   (`ContactShadows` on the camera), live, same grammar (`off contactshadows`). Starts as
+//!   the run started (`--off contactshadows` or the Low preset: off).
+//! - `on <name>` / `off <name>` / `flip <name>`: `ssao`, `contactshadows` and the switches the A/B keys flip
 //!   ([`Switch`]: `sun_shadows`, `clouds`, ...). Any other `--off` part is decided at
 //!   startup: the console says so instead of doing nothing.
 //! - Any other line runs as `MWScript` (vanilla's console: `player->AddItem gold_001 100`),
@@ -14,7 +17,8 @@
 
 use bevy_core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy_ecs::system::SystemState;
-use bevy_pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy_light::DirectionalLight;
+use bevy_pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_math::prelude::*;
@@ -24,6 +28,7 @@ use bevy_input::prelude::*;
 use bevy_render::prelude::*;
 use bevy_enhanced_input::EnhancedInputSystems;
 use sf_character_bevy::CharacterPlacement;
+use sf_sky_bevy::SunLight;
 use sf_console_bevy::overlay::{ConsoleInputSystems, ConsoleKeys, ConsoleOverlayPlugin, ConsoleSelection};
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param, VarId, VarSpec, Vars};
 use sf_console_bevy::{ConsoleAppExt, ConsolePlugin, DevConsole, SetBy};
@@ -33,8 +38,11 @@ use crate::live_ab::{LiveAb, Switch, Switches};
 
 /// Name of the SSAO variable.
 const SSAO_VAR: &str = "render.ssao";
+/// Name of the contact-shadows variable.
+const CONTACT_VAR: &str = "render.contactshadows";
 
-/// The console, its overlay on backquote, `render.ssao` and the `on`/`off`/`flip` commands.
+/// The console, its overlay on backquote, `render.ssao`, `render.contactshadows` and the
+/// `on`/`off`/`flip` commands.
 pub struct ConsoleWiring;
 
 impl Plugin for ConsoleWiring {
@@ -239,13 +247,20 @@ fn mwscript_names() -> Vec<String> {
     names
 }
 
-/// `render.ssao`, its system and the `on`/`off`/`flip` commands (needs [`ConsolePlugin`] and [`LiveAb`]).
+/// `render.ssao`, `render.contactshadows`, their systems and the `on`/`off`/`flip` commands
+/// (needs [`ConsolePlugin`] and [`LiveAb`]).
 fn register(app: &mut App) {
     let ssao = app.add_console_var(
         VarSpec::bool(SSAO_VAR, true).help("Screen-space ambient occlusion (Bevy GTAO) on the camera; starts as the run did (--off ssao, Low preset: off)"),
     );
-    app.insert_resource(Ssao { var: ssao, level: None, applied: None }).add_systems(Update, apply_ssao);
-    let live = format!("live: ssao, {}; other --off parts are startup only", Switch::names());
+    let contact = app.add_console_var(VarSpec::bool(CONTACT_VAR, true).help(
+        "Screen-space contact shadows (Bevy ContactShadows) on the camera; starts as the run did (--off contactshadows, Low preset: off)",
+    ));
+    app.insert_resource(Ssao { var: ssao, level: None, applied: None })
+        .insert_resource(Contact { var: contact, settings: None, applied: None })
+        .add_systems(Update, (apply_ssao, apply_contact_shadows));
+    let vars = LiveVars { ssao, contact };
+    let live = format!("live: ssao, contactshadows, {}; other --off parts are startup only", Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
         let verb = match on {
             Some(true) => "Turns on",
@@ -256,12 +271,19 @@ fn register(app: &mut App) {
             CommandSpec::new(name).help(&format!("{verb} a switch ({live})")).param(Param::new("switch", ArgKind::Str)),
             move |inv| {
                 let part = inv.args.str("switch").unwrap_or_default().to_ascii_lowercase();
-                let text = set_switch(inv.ctx, inv.vars, ssao, &part, on)?;
+                let text = set_switch(inv.ctx, inv.vars, vars, &part, on)?;
                 inv.log.info(&text);
                 Ok(())
             },
         );
     }
+}
+
+/// The console variables `on`/`off`/`flip` set directly (camera components, not A/B switches).
+#[derive(Clone, Copy)]
+struct LiveVars {
+    ssao: VarId,
+    contact: VarId,
 }
 
 /// `render.ssao` and what the camera started with.
@@ -275,6 +297,36 @@ struct Ssao {
     applied: Option<u64>,
 }
 
+/// `render.contactshadows` and what the camera started with.
+#[derive(Resource)]
+struct Contact {
+    var: VarId,
+    /// The camera's settings at startup, the preset's (`None`: it started without contact
+    /// shadows; turning them on then uses Bevy's default, the High preset's values).
+    settings: Option<ContactShadows>,
+    /// The variable's generation last applied (`None`: the camera hasn't been seen yet).
+    applied: Option<u64>,
+}
+
+/// Seeds a camera-component variable from the camera the first time it is seen (`present`:
+/// the camera started with the component) and returns the generation to record as applied.
+/// Command-line priority: a value typed before the camera existed wins, and then applies on
+/// the next frame (`u64::MAX` is never a real generation).
+fn seed_from_camera(console: &mut DevConsole, var: VarId, present: bool) -> u64 {
+    let _ = console.vars_mut().set_by(var, present.into(), SetBy::CommandLine);
+    if console.vars().flag(var) == present { console.vars().var(var).generation() } else { u64::MAX }
+}
+
+/// The variable's value if it changed since `applied`, which then records the new generation.
+fn changed_since(console: &DevConsole, var: VarId, applied: &mut Option<u64>) -> Option<bool> {
+    let generation = console.vars().var(var).generation();
+    if *applied == Some(generation) {
+        return None;
+    }
+    *applied = Some(generation);
+    Some(console.vars().flag(var))
+}
+
 /// Seeds `render.ssao` from the camera once it exists, then inserts or removes Bevy's
 /// SSAO component when the variable changes. On: the depth + motion-vector prepass and
 /// MSAA off, as at startup (`exterior.rs`). Off: only the SSAO component goes; the
@@ -286,24 +338,14 @@ fn apply_ssao(
     mut state: ResMut<Ssao>,
     cameras: Query<(Entity, Option<&ScreenSpaceAmbientOcclusion>), With<ExteriorCamera>>,
 ) {
-    let Some(applied) = state.applied else {
+    if state.applied.is_none() {
         let Some((_, ssao)) = cameras.iter().next() else { return };
         state.level = ssao.map(|s| s.quality_level);
-        let var = state.var;
-        // Command-line priority: a value typed before the camera existed wins.
-        let _ = console.vars_mut().set_by(var, ssao.is_some().into(), SetBy::CommandLine);
-        // A different value (typed before) applies on the next frame: `u64::MAX` is never a
-        // real generation.
-        let matches = console.vars().flag(var) == ssao.is_some();
-        state.applied = Some(if matches { console.vars().var(var).generation() } else { u64::MAX });
-        return;
-    };
-    let generation = console.vars().var(state.var).generation();
-    if generation == applied {
+        state.applied = Some(seed_from_camera(&mut console, state.var, ssao.is_some()));
         return;
     }
-    state.applied = Some(generation);
-    let on = console.vars().flag(state.var);
+    let state = &mut *state;
+    let Some(on) = changed_since(&console, state.var, &mut state.applied) else { return };
     for (camera, ssao) in &cameras {
         match (on, ssao.is_some()) {
             (true, false) => {
@@ -320,15 +362,63 @@ fn apply_ssao(
     }
 }
 
-/// `on`/`off`/`flip <name>`: what happened, or why nothing did.
-fn set_switch(world: &mut World, vars: &mut Vars, ssao: VarId, name: &str, on: Option<bool>) -> Result<String, String> {
-    if name == "ssao" {
-        if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
-            return Err("ssao: no streaming camera in this run".to_owned());
+/// Seeds `render.contactshadows` from the camera once it exists, then inserts or removes
+/// Bevy's `ContactShadows` when the variable changes. The camera component gates the effect
+/// per view (Bevy's `MeshPipelineKey::CONTACT_SHADOWS`); a light casts them only with its own
+/// `contact_shadows_enabled`, which the sun gets only when the run started with them
+/// (`exterior.rs` `sun_shadow`), so on also sets it on the sun. Off removes only the camera
+/// component (the depth prepass it requires stays). The moon never casts them; lamps follow
+/// `PointShadowBudget::contact_shadows`, untouched here.
+#[allow(clippy::needless_pass_by_value)]
+fn apply_contact_shadows(
+    mut commands: Commands,
+    mut console: ResMut<DevConsole>,
+    mut state: ResMut<Contact>,
+    cameras: Query<(Entity, Option<&ContactShadows>), With<ExteriorCamera>>,
+    mut suns: Query<&mut DirectionalLight, With<SunLight>>,
+) {
+    if state.applied.is_none() {
+        let Some((_, contact)) = cameras.iter().next() else { return };
+        state.settings = contact.copied();
+        state.applied = Some(seed_from_camera(&mut console, state.var, contact.is_some()));
+        return;
+    }
+    let state = &mut *state;
+    let Some(on) = changed_since(&console, state.var, &mut state.applied) else { return };
+    for (camera, contact) in &cameras {
+        match (on, contact.is_some()) {
+            (true, false) => {
+                commands.entity(camera).insert(state.settings.unwrap_or_default());
+            }
+            (false, true) => {
+                commands.entity(camera).remove::<ContactShadows>();
+            }
+            _ => {}
         }
-        let v = on.unwrap_or(!vars.flag(ssao));
-        vars.set_by(ssao, v.into(), SetBy::Console)?;
-        return Ok(format!("ssao {}", if v { "on" } else { "off" }));
+    }
+    if on {
+        for mut sun in &mut suns {
+            if !sun.contact_shadows_enabled {
+                sun.contact_shadows_enabled = true;
+            }
+        }
+    }
+}
+
+/// `on`/`off`/`flip <name>`: what happened, or why nothing did.
+fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
+    let var = match name {
+        "ssao" => Some(live.ssao),
+        "contactshadows" => Some(live.contact),
+        _ => None,
+    };
+    if let Some(var) = var {
+        if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
+            return Err(format!("{name}: no streaming camera in this run"));
+        }
+        let v = on.unwrap_or(!vars.flag(var));
+        vars.set_by(var, v.into(), SetBy::Console)?;
+        return Ok(format!("{name} {}", if v { "on" } else { "off" }));
     }
     if let Some(switch) = Switch::from_name(name) {
         let mut state: SystemState<(ResMut<LiveAb>, Res<Time<Real>>, Switches)> = SystemState::new(world);
@@ -340,7 +430,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, ssao: VarId, name: &str, on: O
     }
     match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
-        Err(unknown) => Err(format!("{unknown}; live: ssao, {}", Switch::names())),
+        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, {}", Switch::names())),
     }
 }
 
@@ -512,5 +602,39 @@ mod tests {
         let log: Vec<String> = app.world().resource::<DevConsole>().log().lines().map(|l| l.text.clone()).collect();
         assert!(log.iter().any(|l| l.contains("froxels: startup only, relaunch with --off froxels")), "{log:?}");
         assert!(log.iter().any(|l| l == "wireframe off"), "{log:?}");
+    }
+
+    #[test]
+    fn contact_shadows_flip_live_restore_the_preset_and_light_the_sun() {
+        let mut app = app();
+        let medium = ContactShadows { linear_steps: 8, thickness: 0.1, length: 0.3 };
+        let camera = app.world_mut().spawn((ExteriorCamera, medium)).id();
+        // A run started with them off leaves the sun without them (`exterior.rs` `sun_shadow`).
+        let sun = app.world_mut().spawn((SunLight, DirectionalLight { contact_shadows_enabled: false, ..Default::default() })).id();
+        app.update();
+        app.update();
+        assert!(app.world().get::<ContactShadows>(camera).is_some());
+        run(&mut app, "off contactshadows");
+        assert!(app.world().get::<ContactShadows>(camera).is_none(), "{:?}", log(&app));
+        run(&mut app, "toggle render.contactshadows");
+        let back = app.world().get::<ContactShadows>(camera).expect("contact shadows back on");
+        assert_eq!(back.linear_steps, 8, "the preset's settings, not the default 16");
+        assert!(app.world().get::<DirectionalLight>(sun).unwrap().contact_shadows_enabled);
+        run(&mut app, "flip contactshadows");
+        assert!(app.world().get::<ContactShadows>(camera).is_none());
+        assert!(log(&app).iter().any(|l| l == "contactshadows off"), "{:?}", log(&app));
+    }
+
+    #[test]
+    fn camera_without_contact_shadows_seeds_off_and_turns_on_with_defaults() {
+        let mut app = app();
+        let camera = app.world_mut().spawn(ExteriorCamera).id();
+        app.update();
+        app.update();
+        let var = app.world().resource::<Contact>().var;
+        assert!(!app.world().resource::<DevConsole>().vars().flag(var));
+        run(&mut app, "on contactshadows");
+        let on = app.world().get::<ContactShadows>(camera).expect("contact shadows on");
+        assert_eq!(on.linear_steps, ContactShadows::default().linear_steps);
     }
 }

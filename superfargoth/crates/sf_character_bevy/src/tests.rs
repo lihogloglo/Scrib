@@ -479,3 +479,54 @@ fn anim_variety_is_seeded_by_the_stable_id_not_the_entity() {
     let off = AnimVarietySettings { enabled: false, ..on };
     assert_eq!(seed_variety(off, Some(&id), &at(0.0)), sf_anim_graph::Variety::default());
 }
+
+/// A character, its built body, its held prop and torch slot, and parts the
+/// game hangs on it (a mesh, a light) all take the render layer of the
+/// worldspace it is in, and follow when an ancestor moves it to another
+/// worldspace (a player avatar under a body that follows the camera through
+/// a door).
+#[cfg(feature = "world")]
+#[test]
+fn characters_and_their_parts_follow_their_worldspace_render_layer() {
+    use bevy::camera::visibility::RenderLayers;
+    use sf_world_bevy::WorldspaceRoot;
+    let mut app = app();
+    let worldspace = |w: &mut World, id: &str, layer: usize| {
+        w.spawn((WorldspaceRoot { id: sf_world::WorldspaceId::new(id), layer }, Transform::IDENTITY, Visibility::default())).id()
+    };
+    let three = worldspace(app.world_mut(), "outside", 3);
+    let five = worldspace(app.world_mut(), "inside", 5);
+    let carrier = app.world_mut().spawn((Transform::IDENTITY, Visibility::default(), ChildOf(three))).id();
+    let state = CharacterState { worn: None, held: Some(vec![held("torch", "hand_l", true)]) };
+    let a = app.world_mut().spawn((npc(state), Transform::IDENTITY, Visibility::default(), ChildOf(carrier))).id();
+    let mesh = app.world_mut().spawn((Mesh3d(Handle::default()), ChildOf(a))).id();
+    let light = app.world_mut().spawn((PointLight::default(), ChildOf(a))).id();
+    run_until(&mut app, |w| {
+        w.get::<CharacterBody>(a).is_some() && w.get::<HeldProps>(a).is_some_and(|h| h.props.iter().any(|p| p.light.is_some()))
+    });
+    app.update();
+    let parts = |w: &World| -> Vec<Entity> {
+        let props = &w.get::<HeldProps>(a).unwrap().props;
+        let prop_meshes = props.iter().flat_map(|p| w.get::<Children>(p.entity).map(|c| c.to_vec()).unwrap_or_default());
+        let mut parts: Vec<Entity> = vec![a, mesh, light];
+        parts.extend(w.get::<CharacterBody>(a).unwrap().meshes.iter().copied());
+        parts.extend(prop_meshes.filter(|e| w.get::<Mesh3d>(*e).is_some()));
+        parts.extend(props.iter().filter_map(|p| p.light));
+        parts
+    };
+    let layers_of = |app: &App| -> Vec<Option<RenderLayers>> {
+        let w = app.world();
+        parts(w).into_iter().map(|e| w.get::<RenderLayers>(e).cloned()).collect()
+    };
+    let n = parts(app.world()).len();
+    assert!(n >= 6, "root, mesh, light, body meshes, prop mesh, light slot: {n}");
+    assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(3)); n]);
+    // The carrier moves to the other worldspace: everything follows.
+    app.world_mut().entity_mut(carrier).insert(ChildOf(five));
+    app.update();
+    assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(5)); n]);
+    // The character itself reparented back: back to layer 3.
+    app.world_mut().entity_mut(a).insert(ChildOf(three));
+    app.update();
+    assert_eq!(layers_of(&app), vec![Some(RenderLayers::layer(3)); n]);
+}

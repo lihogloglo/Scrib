@@ -9,10 +9,14 @@
 //! `PointLightShadowMap`) but neither a budget nor a per-light shadow
 //! strength, so this module:
 //!
-//! - ranks the lights marked [`BudgetedShadow`] by [`importance`] at the
-//!   viewer (spec `docs/specs/shadows.md`, "Light selection"), with
-//!   forward-hemisphere weighting outside a light's range and hysteresis,
-//!   and lets at most [`PointShadowBudget::max`] hold a shadow map at once;
+//! - ranks the lights marked [`BudgetedShadow`] that can light a visible
+//!   pixel (Bevy's `ViewVisibility`: range sphere in a view frustum and
+//!   `RenderLayers` shared with that view, so lights of other resident
+//!   worldspaces never compete) by [`importance`] at the viewer (spec
+//!   `docs/specs/shadows.md`, "Light selection"), with forward-hemisphere
+//!   weighting outside a light's range and hysteresis, and lets at most
+//!   [`PointShadowBudget::max`] hold a shadow map at once; a holder that
+//!   stops being view-visible fades out and frees its slot;
 //! - fades a shadow in and out (distance band and over time) natively in the
 //!   PBR fragment shader via [`PointLightShadowFade`] (`mix(1.0, shadow, fade)`),
 //!   without mutating [`PointLight::intensity`] or spawning duplicate light
@@ -23,10 +27,11 @@
 //! lost its shadow, which Bevy's `prepare_lights` keeps alive.
 
 use bevy_app::{App, Plugin, PostUpdate};
-use bevy_camera::visibility::{InheritedVisibility, Visibility, VisibilitySystems};
+use bevy_camera::visibility::{RenderLayers, ViewVisibility, VisibilitySystems};
 use bevy_camera::{Camera, Camera3d, RenderTarget};
 use bevy_ecs::prelude::*;
-use bevy_light::{PointLight, PointLightShadowMap};
+use bevy_light::{NotShadowCaster, PointLight, PointLightShadowMap};
+use bevy_mesh::Mesh3d;
 use bevy_pbr::{
     ExtractedPointLight, PointAndSpotLightViewEntities, PointLightShadowFade, prepare_lights,
 };
@@ -137,7 +142,7 @@ fn add(app: &mut App) {
     app.init_resource::<PointShadowBudget>()
         .add_systems(
             PostUpdate,
-            (sync_map_size, budget_shadows)
+            (sync_map_size, budget_shadows, warn_casterless_shadows)
                 .chain()
                 .after(TransformSystems::Propagate)
                 .before(VisibilitySystems::VisibilityPropagate),
@@ -209,28 +214,35 @@ fn budget_shadows(
         Option<&mut PointLightShadowFade>,
         &BudgetedShadow,
         &GlobalTransform,
-        &Visibility,
-        Option<&InheritedVisibility>,
+        &ViewVisibility,
     )>,
 ) {
     let viewer_tf = viewer(&cameras);
     let eye = viewer_tf.map(|t| t.translation());
     let view_forward = viewer_tf.map(|t| t.forward().as_vec3());
 
-    // The best `max` candidates by importance: shown, inside the fade band;
-    // slot holders rank better by 1 / hysteresis. Lights whose lit volume does
-    // not reach the viewer (`d > light.range`) are weighted by hemisphere
-    // alignment so lamps ahead of the player take priority over distant lamps
-    // behind the camera.
+    // The best `max` candidates by importance: view-visible, inside the fade
+    // band; slot holders rank better by 1 / hysteresis. `ViewVisibility` is
+    // Bevy's "could light a visible pixel": the light is shown, its range
+    // sphere overlaps a view frustum (so a light behind the eye whose range
+    // contains it counts) and its `RenderLayers` meet that view's. A light
+    // of another resident worldspace (another `BigSpace` frame, where the
+    // distance below means nothing) or outside every frustum never takes a
+    // slot only to be dropped by extraction, and a holder that stops being
+    // visible drops out of the ranking, fades out and frees its slot. It is
+    // computed later in `PostUpdate` (`VisibilitySystems::CheckVisibility`),
+    // so this reads last frame's value: one frame late, hidden by the fades.
+    // Lights whose lit volume does not reach the viewer (`d > light.range`)
+    // are weighted by hemisphere alignment so lamps ahead of the player take
+    // priority over distant lamps behind the camera.
     let mut ranked: Vec<(f32, Entity)> = Vec::new();
     if let (Some(eye), Some(forward)) = (eye, view_forward)
         && budget.max > 0
     {
-        for (entity, light, slot, _, prio, at, vis, inherited) in &lights {
-            let shown = *vis != Visibility::Hidden && inherited.is_none_or(|v| v.get());
+        for (entity, light, slot, _, prio, at, visible) in &lights {
             let to_light = at.translation() - eye;
             let d = to_light.length();
-            if shown && d < budget.fade_end {
+            if visible.get() && d < budget.fade_end {
                 let held = slot.is_some_and(|s| s.held);
                 let view_weight = if d <= light.range || d <= 1e-3 {
                     1.0
@@ -269,7 +281,7 @@ fn budget_shadows(
     // First pass: advance existing held slots and release any that have finished
     // fading out, so newly ranked lights can claim freed slots in the same frame.
     let mut held = 0usize;
-    for (entity, _, slot, _, _, at, _, _) in &mut lights {
+    for (entity, _, slot, _, _, at, _) in &mut lights {
         let Some(mut slot) = slot else {
             continue;
         };
@@ -295,7 +307,7 @@ fn budget_shadows(
     // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
     let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
     let mut new_slots = 0usize;
-    for (entity, mut light, slot, shadow_fade, _, at, _, _) in &mut lights {
+    for (entity, mut light, slot, shadow_fade, _, at, _) in &mut lights {
         let target = target_of(entity, at);
         let Some(mut slot) = slot else {
             if target > 0.0 && held < budget.max && new_slots < max_new_slots {
@@ -340,6 +352,39 @@ fn budget_shadows(
             }
         } else {
             commands.entity(entity).try_insert(PointLightShadowFade(fade));
+        }
+    }
+}
+
+/// Warns once per light when a [`BudgetedShadow`] light gains its first
+/// shadow slot while its `RenderLayers` (layer 0 when absent) meet no
+/// shadow caster's: Bevy builds a point light's caster list from meshes
+/// sharing a layer with it, so such a shadow map stays empty (a light
+/// spawned without its worldspace's layer is the usual cause).
+///
+/// Runs only when a light first gets a [`ShadowSlot`] (`Added`, so once per
+/// light). The caster layers in use are cached and rescanned only when the
+/// cache misses, so a caster layer that appeared since the last scan never
+/// warns falsely; a stale cache can only miss a warning.
+#[allow(clippy::type_complexity)]
+fn warn_casterless_shadows(
+    gained: Query<(Entity, Option<&RenderLayers>), (With<BudgetedShadow>, Added<ShadowSlot>)>,
+    casters: Query<Option<&RenderLayers>, (With<Mesh3d>, Without<NotShadowCaster>)>,
+    mut in_use: Local<Option<RenderLayers>>,
+) {
+    let scan = || casters.iter().fold(RenderLayers::none(), |all, l| all.union(l.unwrap_or(&RenderLayers::default())));
+    for (entity, layers) in &gained {
+        let layers = layers.cloned().unwrap_or_default();
+        if in_use.as_ref().is_some_and(|c| c.intersects(&layers)) {
+            continue;
+        }
+        let fresh = scan();
+        let hit = fresh.intersects(&layers);
+        *in_use = Some(fresh);
+        if !hit {
+            log::warn!(
+                "point shadow on {entity}: its render layers {layers:?} meet no shadow caster's, so its shadow map stays empty (give the light its worldspace's layer)"
+            );
         }
     }
 }
