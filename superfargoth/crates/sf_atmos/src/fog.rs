@@ -252,6 +252,45 @@ impl FogDrift {
     }
 }
 
+/// Directions the fog's sky fill averages (`fog_light.wesl` `SKY_FILL_SAMPLES`, keep in step).
+pub const SKY_FILL_SAMPLES: u32 = 64;
+
+/// The golden angle, radians: successive spiral points' azimuth step.
+const GOLDEN_ANGLE: f32 = 2.399_963_2;
+
+/// The `i`-th of `n` sky-fill directions (y up, the sky-view LUT's frame): a
+/// Fibonacci spiral over the upper hemisphere with `cos θ` uniform in (0, 1),
+/// so every direction stands for the same solid angle, turned about y by
+/// `azimuth` (radians, from +x toward +z).
+#[allow(clippy::cast_precision_loss)]
+pub fn sky_fill_direction(i: u32, n: u32, azimuth: f32) -> Vec3 {
+    let mu = 1.0 - (i as f32 + 0.5) / n as f32;
+    let phi = i as f32 * GOLDEN_ANGLE + azimuth;
+    let s = (1.0 - mu * mu).max(0.0).sqrt();
+    Vec3::new(s * phi.cos(), mu, s * phi.sin())
+}
+
+/// The fog's sky fill (CPU twin of `fog_light.wesl`): the sky dome's mean
+/// radiance, the isotropic sky ambient that every froxel and far-fog pixel
+/// in-scatters whatever its view direction (the SH L0 band of the sky light,
+/// as UE's volumetric fog and Frostbite's (Hillaire 2015) light their fog
+/// with). One value per frame, so a bright aureole around a low sun
+/// brightens the fill a little everywhere instead of lighting a column of fog
+/// toward the sun's azimuth (FG-9); the sun's own forward lobe comes from the
+/// key light's phase function.
+///
+/// The spiral turns with the key light (`key`, y up), so a sky symmetric about
+/// the sun's vertical plane gives the same fill toward any sun azimuth, and
+/// its error (~3 % against the true dome mean for a sharp g 0.8 aureole, test
+/// `sky_fill_spread`) changes smoothly as the sun rises instead of jumping as
+/// the aureole crosses sample points.
+#[allow(clippy::cast_precision_loss)]
+pub fn sky_fill(key: Vec3, radiance: impl Fn(Vec3) -> Vec3) -> Vec3 {
+    let azimuth = key.z.atan2(key.x);
+    let sum: Vec3 = (0..SKY_FILL_SAMPLES).map(|i| radiance(sky_fill_direction(i, SKY_FILL_SAMPLES, azimuth))).sum();
+    sum / SKY_FILL_SAMPLES as f32
+}
+
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::float_cmp)]
 mod tests {
@@ -335,5 +374,84 @@ mod tests {
         let expect = (a.bank.x + 512.0 / banks.tile).rem_euclid(1.0);
         assert!((b.bank.x - expect).abs() < 1e-5);
         assert!((b.bank.y - a.bank.y).abs() < 1e-6);
+    }
+
+    /// The spiral covers the upper hemisphere evenly: unit directions, all
+    /// above the horizon, mean height 1/2 (uniform in solid angle).
+    #[test]
+    fn sky_fill_directions_are_uniform() {
+        let n = SKY_FILL_SAMPLES;
+        let dirs: Vec<Vec3> = (0..n).map(|i| sky_fill_direction(i, n, 0.7)).collect();
+        assert!(dirs.iter().all(|d| (d.length() - 1.0).abs() < 1e-5 && d.y > 0.0));
+        let mean_y = dirs.iter().map(|d| d.y).sum::<f32>() / n as f32;
+        assert!((mean_y - 0.5).abs() < 1e-5, "{mean_y}");
+        let mean_xz = dirs.iter().map(|d| Vec2::new(d.x, d.z)).sum::<Vec2>() / n as f32;
+        assert!(mean_xz.length() < 0.02, "{mean_xz}");
+        let c = sky_fill(Vec3::Y, |_| Vec3::new(1.0, 2.0, 3.0));
+        assert!((c - Vec3::new(1.0, 2.0, 3.0)).abs().max_element() < 1e-5, "{c}");
+    }
+
+    /// A low sun's sky: 1 + an HG g 0.8 aureole peaking at 20x the sky.
+    fn aureole_sky(sun: Vec3) -> impl Fn(Vec3) -> Vec3 {
+        let hg = |c: f32| (1.0 - 0.64) / (1.64 - 1.6 * c).powf(1.5);
+        let peak = hg(1.0);
+        move |d: Vec3| Vec3::splat(1.0 + 20.0 * hg(d.dot(sun)) / peak)
+    }
+
+    /// The dome's true mean radiance, by a fine midpoint integral in (cos θ, φ).
+    fn dome_mean(radiance: impl Fn(Vec3) -> Vec3) -> f32 {
+        let (nm, np) = (200, 400);
+        let mut t = 0.0;
+        for a in 0..nm {
+            let mu = (a as f32 + 0.5) / nm as f32;
+            let s = (1.0 - mu * mu).sqrt();
+            for b in 0..np {
+                let phi = (b as f32 + 0.5) / np as f32 * std::f32::consts::TAU;
+                t += radiance(Vec3::new(s * phi.cos(), mu, s * phi.sin())).x;
+            }
+        }
+        t / (nm * np) as f32
+    }
+
+    fn sun_at(azimuth: f32, elevation: f32) -> Vec3 {
+        Vec3::new(azimuth.cos() * elevation.cos(), elevation.sin(), azimuth.sin() * elevation.cos())
+    }
+
+    /// FG-9: with a low sun's aureole the fill is the dome's mean (one value,
+    /// whatever the view direction), the same toward any sun azimuth, and far
+    /// below what the old per-azimuth fill read toward the sun.
+    #[test]
+    fn sky_fill_has_no_sun_spike() {
+        let truth = dome_mean(aureole_sky(sun_at(0.0, 0.05)));
+        let fills: Vec<f32> = (0..64)
+            .map(|k| {
+                let sun = sun_at(k as f32 / 64.0 * std::f32::consts::TAU, 0.05);
+                sky_fill(sun, aureole_sky(sun)).x
+            })
+            .collect();
+        let (lo, hi) = fills.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &f| (lo.min(f), hi.max(f)));
+        assert!(hi - lo < 1e-4 * truth, "fill {lo}..{hi} across sun azimuths");
+        assert!((lo - truth).abs() < 0.05 * truth, "fill {lo}, dome mean {truth}");
+        // The old fill toward the sun: (sky 0.05 rad over the horizon + zenith) / 2.
+        let sky = aureole_sky(sun_at(0.0, 0.05));
+        let old_toward_sun = f32::midpoint(sky(Vec3::new(1.0, 0.05, 0.0).normalize()).x, sky(Vec3::Y).x);
+        assert!(hi < 0.25 * old_toward_sun, "fill {hi}, old {old_toward_sun}");
+    }
+
+    /// The fill's error against the dome mean as a low sun rises (sun-aligned spiral).
+    #[test]
+    #[ignore = "measurement: sky fill quadrature error over sun elevation"]
+    fn sky_fill_spread() {
+        let (mut worst, mut step, mut prev) = (0.0f32, 0.0f32, 0.0f32);
+        for k in 0..=100 {
+            let sun = sun_at(0.3, k as f32 * 0.005);
+            let t = dome_mean(aureole_sky(sun));
+            let e = (sky_fill(sun, aureole_sky(sun)).x - t) / t;
+            if k > 0 {
+                step = step.max((e - prev).abs());
+            }
+            (prev, worst) = (e, worst.max(e.abs()));
+        }
+        println!("sun 0-0.5 rad: worst error {:.1} %, worst change per 0.005 rad {:.2} %", worst * 100.0, step * 100.0);
     }
 }

@@ -17,6 +17,10 @@
 //!   off stops tracing and showing the volume (today's ambient draws), on re-traces it. Starts
 //!   on where the GI runs; a run without it (`--off gi`, Low/Medium, the ray-traced path, an
 //!   exterior start, no ray-tracing GPU) can't turn it on.
+//! - `render.gi_intensity` / `render.gi_ambient` (floats): the GI's artistic gain, live on every
+//!   `GiVolume` (`intensity`: multiplier on the probe irradiance, as UE's "Indirect Lighting
+//!   Intensity"; `ambient_scale`: the flat ambient kept inside the volume). They show the live
+//!   volume's values; a typed value also applies to the volumes later re-fits spawn.
 //! - `on <name>` / `off <name>` / `flip <name>`: `ssao`, `contactshadows`, `gi` and the switches the A/B keys flip
 //!   ([`Switch`]: `sun_shadows`, `clouds`, ...). Any other `--off` part is decided at
 //!   startup: the console says so instead of doing nothing.
@@ -58,6 +62,12 @@ const CONTACT_THICKNESS_VAR: &str = "render.contactthickness";
 const BLOOM_VAR: &str = "render.bloom";
 /// Name of the dynamic GI variable.
 const GI_VAR: &str = "render.gi";
+/// Name of the GI irradiance gain variable (`GiVolume::intensity`).
+const GI_INTENSITY_VAR: &str = "render.gi_intensity";
+/// Name of the GI inside-volume ambient scale variable (`GiVolume::ambient_scale`).
+const GI_AMBIENT_VAR: &str = "render.gi_ambient";
+/// Why a run has no GI (`sf_sky_bevy::GiEnabled` absent).
+const GI_NOT_IN_RUN: &str = "not in this run (--off gi, Low/Medium preset, the ray-traced path, an exterior start or no ray-tracing GPU)";
 
 /// The console, its overlay on backquote, `render.ssao`, `render.contactshadows` and the
 /// `on`/`off`/`flip` commands.
@@ -292,11 +302,23 @@ fn register(app: &mut App) {
     let gi = app.add_console_var(VarSpec::bool(GI_VAR, false).help(
         "Dynamic probe GI (sf_gi_bevy), live; starts on where the GI runs (High/Ultra raster, interior start), off and fixed without it (--off gi)",
     ));
+    let gain = sf_gi_bevy::GiVolume::default();
+    let gi_intensity = app.add_console_var(
+        VarSpec::float(GI_INTENSITY_VAR, f64::from(gain.intensity))
+            .float_range(0.0, 16.0)
+            .help("GI gain: multiplier on the probe irradiance (1 = the traced bounce as is; try 1-4), live on every GI volume; starts as the live volume's"),
+    );
+    let gi_ambient = app.add_console_var(
+        VarSpec::float(GI_AMBIENT_VAR, f64::from(gain.ambient_scale))
+            .float_range(0.0, 4.0)
+            .help("Flat ambient kept inside the GI volume (0 = the probes replace it, 1 = full ambient on top), live on every GI volume; starts as the live volume's"),
+    );
     app.insert_resource(Ssao { var: ssao, level: None, applied: None })
         .insert_resource(Contact { var: contact, length, thickness, settings: None, applied: None, tuned: None })
         .insert_resource(BloomVar { var: bloom, settings: None, applied: None })
         .insert_resource(GiVar { var: gi, applied: None })
-        .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi));
+        .insert_resource(GiGain { intensity: gi_intensity, ambient: gi_ambient, reported: None })
+        .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi, apply_gi_gain));
     let vars = LiveVars { ssao, contact, gi };
     let live = format!("live: ssao, contactshadows, gi, {}; other --off parts are startup only", Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
@@ -556,6 +578,65 @@ fn apply_gi(mut console: ResMut<DevConsole>, mut state: ResMut<GiVar>, enabled: 
     }
 }
 
+/// `render.gi_intensity` and `render.gi_ambient`.
+#[derive(Resource)]
+struct GiGain {
+    intensity: VarId,
+    ambient: VarId,
+    /// Both variables' generations when last checked in a run without GI (`None`: not yet).
+    reported: Option<(u64, u64)>,
+}
+
+/// Keeps the GI gain variables and the `GiVolume`s in step. A variable not typed in the
+/// console follows the volumes the game spawns (seeded from each new one, as the camera
+/// variables are); one typed in the console ([`SetBy::Console`]) wins on every volume, the
+/// ones a re-fit or door travel spawns later included. `sf_gi_bevy` rewrites the volume's
+/// uniform when the values change (no re-trace). A run without the GI says so when one is typed.
+#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the component is f32")]
+fn apply_gi_gain(
+    mut console: ResMut<DevConsole>,
+    mut state: ResMut<GiGain>,
+    enabled: Option<Res<sf_sky_bevy::GiEnabled>>,
+    mut volumes: Query<&mut sf_gi_bevy::GiVolume>,
+) {
+    let (intensity, ambient) = (state.intensity, state.ambient);
+    if enabled.is_none() {
+        let vars = console.vars();
+        let generations = (vars.var(intensity).generation(), vars.var(ambient).generation());
+        if state.reported.is_some_and(|seen| seen != generations) {
+            console.log_mut().warn(&format!("gi gain: {GI_NOT_IN_RUN}"));
+        }
+        state.reported = Some(generations);
+        return;
+    }
+    // Read through `Mut` (for `is_added`) without writing: no change is flagged.
+    for volume in &mut volumes {
+        if !volume.is_added() {
+            continue;
+        }
+        let vars = console.vars_mut();
+        // Outranked (and ignored) once a value was typed in the console.
+        let _ = vars.set_by(intensity, f64::from(volume.intensity).into(), SetBy::CommandLine);
+        let _ = vars.set_by(ambient, f64::from(volume.ambient_scale).into(), SetBy::CommandLine);
+    }
+    let vars = console.vars();
+    let typed = |var: VarId| (vars.var(var).set_by() == SetBy::Console).then(|| vars.float(var) as f32);
+    let (intensity, ambient) = (typed(intensity), typed(ambient));
+    if intensity.is_none() && ambient.is_none() {
+        return;
+    }
+    for mut volume in &mut volumes {
+        // Compared before writing: an unchanged volume keeps its change ticks.
+        if let Some(v) = intensity.filter(|v| v.to_bits() != volume.intensity.to_bits()) {
+            volume.intensity = v;
+        }
+        if let Some(v) = ambient.filter(|v| v.to_bits() != volume.ambient_scale.to_bits()) {
+            volume.ambient_scale = v;
+        }
+    }
+}
+
 /// `on`/`off`/`flip <name>`: what happened, or why nothing did.
 fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
     let var = match name {
@@ -565,9 +646,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     };
     if name == "gi" {
         if !world.contains_resource::<sf_sky_bevy::GiEnabled>() {
-            return Err(
-                "gi: not in this run (--off gi, Low/Medium preset, the ray-traced path, an exterior start or no ray-tracing GPU)".to_owned()
-            );
+            return Err(format!("gi: {GI_NOT_IN_RUN}"));
         }
         let v = on.unwrap_or(!vars.flag(live.gi));
         vars.set_by(live.gi, v.into(), SetBy::Console)?;
@@ -807,6 +886,38 @@ mod tests {
         run(&mut app, "toggle render.gi");
         assert!(!app.world().resource::<sf_sky_bevy::GiEnabled>().0);
         assert!(log(&app).iter().any(|l| l == "gi on"), "{:?}", log(&app));
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact copies, no arithmetic
+    fn gi_gain_tunes_every_volume_live_survives_a_refit_and_says_when_the_run_has_none() {
+        use sf_gi_bevy::GiVolume;
+        let mut none = app();
+        none.update();
+        run(&mut none, "render.gi_intensity 2");
+        assert!(log(&none).iter().any(|l| l.contains("gi gain: not in this run")), "{:?}", log(&none));
+
+        let mut app = app();
+        app.insert_resource(sf_sky_bevy::GiEnabled(true));
+        let first = app.world_mut().spawn(GiVolume { intensity: 1.25, ..GiVolume::default() }).id();
+        app.update();
+        app.update();
+        let gain = app.world().resource::<GiGain>();
+        let (intensity, ambient) = (gain.intensity, gain.ambient);
+        let vars = app.world().resource::<DevConsole>().vars();
+        assert_eq!(vars.float(intensity), 1.25, "seeded from the live volume");
+        assert_eq!(vars.float(ambient), 0.0);
+        run(&mut app, "render.gi_intensity 2");
+        run(&mut app, "render.gi_ambient 0.1");
+        let tuned = app.world().get::<GiVolume>(first).expect("volume");
+        assert_eq!((tuned.intensity, tuned.ambient_scale), (2.0, 0.1), "{:?}", log(&app));
+        // A re-fit (door travel): the game spawns a new volume with its own values.
+        app.world_mut().despawn(first);
+        let second = app.world_mut().spawn(GiVolume::default()).id();
+        app.update();
+        let refit = app.world().get::<GiVolume>(second).expect("volume");
+        assert_eq!((refit.intensity, refit.ambient_scale), (2.0, 0.1), "typed values win on the new volume");
+        assert_eq!(app.world().resource::<DevConsole>().vars().float(intensity), 2.0);
     }
 
     #[test]

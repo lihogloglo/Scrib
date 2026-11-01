@@ -60,8 +60,16 @@ maintained crate targets 0.20, so the fog is ours, in the cloud node as planned.
      out to `far` (6 km) or the depth buffer, store the bank **modulation** = the noise's share of the layer's
      optical depth, weighted by what the eye still sees (G channel of the distance target, now `Rg32Float`).
      `clouds_resolve` reprojects and clamps it with the clouds.
-  2. `clouds_fog_light` (new, 66×1 `Rgba32Float`, once per frame): sky fill per view azimuth (sky-view LUT toward
-     the horizon + zenith) and the key light (sun or moon, as seen at the camera) for the composite.
+  2. `clouds_fog_light` (3×1 `Rgba32Float`, once per frame): the sky fill and the key light (sun or moon, as seen
+     at the camera, and its direction) for the composite and the froxels. **Sky fill (FG-9 fix, 2026-11-02):** the
+     sky dome's mean radiance, an isotropic sky ambient (the sky light's SH L0, as UE's volumetric fog and Frostbite
+     (Hillaire 2015) light their fog): 64 sky-view LUT taps on a Fibonacci spiral over the upper hemisphere (uniform
+     in solid angle), turned with the key light's azimuth so the aureole's share is the same toward any sun azimuth
+     and changes smoothly as the sun rises (≤ 3 % from the true dome mean for a sharp g 0.8 aureole; CPU twin and
+     tests `sf_atmos::fog::sky_fill`). It was the sky at 0.05 rad elevation per *view azimuth* (+ zenith, halved):
+     a low sun's aureole lit a vertical column of fog toward the sun at every pitch. The sun's own forward lobe is
+     the key light's HG term. Not modelled: the ground's bounce (lower hemisphere; `ambient` scales the fill) and a
+     direction-dependent far-fog tint (UE's inscattering cubemap), a follow-up if the fog/horizon colour match is missed.
   3. `clouds_composite`, full resolution: both layers' closed-form optical depth to **this pixel's own depth**
      (sky pixels: `sky_distance`, 20 km), the bank layer × the bilaterally upsampled modulation, lit by the key
      light (HG g 0.6 over an isotropic floor) and the sky fill × albedo; composed as `T·(clouds) + L` in front of
@@ -101,8 +109,8 @@ Revisit `FogVolume` only for small local volumes in interiors (M9 environment vo
      its own weather-map binding; the cloud trace calls the same function). Light = the key light seen at the
      camera (`clouds_fog_light`) × HG phase × **CSM** (Bevy's cascades and comparison sampler, one hard tap: a
      froxel is far coarser than a texel) × **terrain shadow-height map** (`FogShadowHeights`, the same rule as
-     `sf_lod_bevy`'s far shadow: penumbra, distance bias, border fade) × **cloud shadow map**, + sky fill ×
-     ambient, + **point lights**: the 32 nearest visible `PointLight`s whose range reaches the froxels (CPU pick
+     `sf_lod_bevy`'s far shadow: penumbra, distance bias, border fade) × **cloud shadow map**, + the isotropic sky
+     fill × ambient (the composite's far fog uses the same texel: no seam at `far`), + **point lights**: the 32 nearest visible `PointLight`s whose range reaches the froxels (CPU pick
      per frame, unshadowed: Bevy's cube maps aren't sampled; a named limit), with Bevy's range falloff. Temporal:
      the point is reprojected into last frame's volume (origin shifts applied), history weight 0.9 inside the
      screen and the range, ping-pong `Rgba16Float` volumes.

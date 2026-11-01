@@ -252,6 +252,7 @@ struct GiProbeVolume {
     origin_spacing: vec4<f32>,
     // xyz: probes per axis, w: interior texels per irradiance tile side.
     dims: vec4<u32>,
-    // x: self-shadow bias (m), y: intensity, z: interior texels per visibility tile side.
+    // x: self-shadow bias (m), y: intensity, z: interior texels per visibility tile side,
+    // w: ambient light scale inside the volume.
     bias_intensity: vec4<f32>,
 }

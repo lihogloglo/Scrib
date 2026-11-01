@@ -413,9 +413,9 @@ impl FromWorld for CloudPipelines {
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
 /// Froxel volumes (weather.md: RGBA16F scattering/extinction, and the integrated light/transmittance).
 const FROXEL: TextureFormat = TextureFormat::Rgba16Float;
-/// The fog light texture (`fog_light.wesl`): 64 sky-fill azimuths, the key
+/// The fog light texture (`fog_light.wesl`): the sky fill, the key
 /// light's colour and direction. 32-bit: the sun's illuminance overflows f16.
-const FOG_AZIMUTHS: u32 = 64;
+const FOG_LIGHT_TEXELS: u32 = 3;
 const FOG_LIGHT: TextureFormat = TextureFormat::Rgba32Float;
 /// Bank-march samples per traced pixel (weather.md: the far fog, 16 steps).
 const FOG_STEPS: u32 = 16;
@@ -865,7 +865,7 @@ fn prepare_views(
                 &pipelines.linear_sampler,
             )),
         );
-        let fog_texture = cached(&mut textures, &device, "clouds_fog_light", UVec2::new(FOG_AZIMUTHS + 2, 1), FOG_LIGHT);
+        let fog_texture = cached(&mut textures, &device, "clouds_fog_light", UVec2::new(FOG_LIGHT_TEXELS, 1), FOG_LIGHT);
         // The froxels (F3): run when fog draws and the sun's shadow maps are bound.
         let cloud_shadow = images.get(&frame.images.shadow);
         let settings = frame.froxels.filter(|_| frame.fog.is_some() && shadow_maps.is_some() && shadow_samplers.is_some() && cloud_shadow.is_some());

@@ -5192,6 +5192,7 @@ dependencies = [
  "sf_controller",
  "sf_coords",
  "sf_diag_bevy",
+ "sf_gi_bevy",
  "sf_lod_bevy",
  "sf_physics_bevy",
  "sf_records",

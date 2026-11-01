@@ -22,6 +22,13 @@ pub(crate) fn build(app: &mut App) {
         .add_systems(Update, place_gi_volume.after(StreamingSystems::Drive).before(StreamingSystems::Transition));
 }
 
+/// The cell's flat ambient (AMBI) kept inside an interior's volume: none, the probes' bounce
+/// replaces it (`GiVolume::ambient_scale`). The cell ambient was Morrowind's stand-in for
+/// indirect light; on top of the traced bounce it counts that light twice and hides the GI
+/// (`.sessions/gi-weak.md` cause 1a). No floor yet: a floor would also mask the dark probe
+/// patches that relocation (gi.md "Not built") is meant to fix; the owner tunes it at GI-3.
+const INTERIOR_AMBIENT_SCALE: f32 = 0.0;
+
 /// The worldspace the current decision is for, and its volume.
 #[derive(Resource, Default)]
 struct GiPlacement {
@@ -97,7 +104,7 @@ fn place_gi_volume(
         fit.dims.x, fit.dims.y, fit.dims.z, fit.spacing, extent.x, extent.y, extent.z
     );
     let volume = commands
-        .spawn((Name::new("gi volume"), GiVolume { settings, ..GiVolume::default() }, cell, transform, ChildOf(root)))
+        .spawn((Name::new("gi volume"), GiVolume { settings, ambient_scale: INTERIOR_AMBIENT_SCALE, ..GiVolume::default() }, cell, transform, ChildOf(root)))
         .id();
     state.volume = Some(volume);
 }

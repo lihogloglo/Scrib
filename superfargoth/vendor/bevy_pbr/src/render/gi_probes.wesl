@@ -36,6 +36,11 @@ fn gi_probe_inside(world_position: vec3<f32>) -> bool {
     return all(local >= vec3(0.0)) && all(local <= vec3<f32>(gi_probe_volume.dims.xyz));
 }
 
+// Multiplier on the flat ambient light inside the volume (0: the probes replace it).
+fn gi_probe_ambient_scale() -> f32 {
+    return gi_probe_volume.bias_intensity.w;
+}
+
 // Diffuse irradiance / pi at a surface point (unit normal N, unit direction to the eye V), in the
 // units of Bevy's environment map diffuse (multiply by the diffuse colour): the eight
 // surrounding probes, weighted trilinear x smooth back-face x Chebyshev visibility, with the

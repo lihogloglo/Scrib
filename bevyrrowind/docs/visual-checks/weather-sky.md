@@ -128,9 +128,18 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Kind: game location. `view "Balmora" --hour 6.25 --weather foggy` (any fog, sun near the horizon), face the sun.
 - Seen 2026-11-02: instead of shafts from the sun, a vertical pillar of light in front of the camera, from below the
   ground into the sky, that follows the camera. `flip terrain_far_shadows` / `clouds` / `sun_shadows`: no change.
-- Diagnosis (code read, not tested): the fog's sky fill is per view *azimuth* only. `fog_light.wesl:24-29` stores
-  sky radiance at 0.05 rad elevation per azimuth (includes the sun's bright aureole when it is low);
-  `froxel_inject.wesl:41,179` and `cloud_composite.wesl:110` add it to every froxel/pixel along that azimuth at any
-  pitch -> a vertical column. Standard fix: an isotropic/low-order sky irradiance (SH or ambient cube) for the
-  ambient term; the sun's forward lobe already comes from the key light.
-- Status: known bug: diagnosed, not fixed (owner pass 2026-11-02).
+- Cause: the fog's sky fill was per view *azimuth* (sky at 0.05 rad elevation + zenith), added at every pitch: a low
+  sun's aureole lit a vertical column. Fixed 2026-11-02 (fg9-fog): one isotropic fill, the sky dome's mean radiance
+  (SH L0, as UE/Frostbite volumetric fog), for froxels and far fog alike (fog.md "clouds_fog_light").
+- Run: `powershell -File tools/run_dev.ps1 view "Balmora" --hour 6.25 --weather foggy`, face the sun, pitch up/down.
+- Look for: no pillar; the glow toward the sun is a round forward lobe (key light HG) that stays centred on the sun,
+  not a column; fog brightness even all around (no seam at ~384 m, the froxel range); also noon and 19:00.
+- Status: confirmed (owner 2026-11-02: no pillar). God rays still not visible: FG-10.
+
+### FG-10: No visible god rays at sunrise in fog (owner report)
+- Kind: game location. `view "Balmora" --hour 6.25 --weather foggy` (also `--weather clear`), face the low sun with
+  buildings or the ridge between you and it.
+- Seen 2026-11-02 (after the FG-9 fix): no shafts at all, though froxel fog with CSM, terrain and cloud shadow terms
+  is built (`froxel_inject.wesl:156-165`, fog.md "Froxel fog as built"). Suspects (not tested): froxel slices too
+  coarse at 160x90x64 / 384 m, in-scatter too weak against the fog's ambient, shadow term not reaching the froxels.
+- Status: known bug: not diagnosed (owner pass 2026-11-02).

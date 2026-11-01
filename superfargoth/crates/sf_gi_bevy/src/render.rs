@@ -42,7 +42,7 @@ use bevy_render::render_resource::{
     ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, FilterMode, PipelineCache, SamplerDescriptor, ShaderStages,
     StorageTextureAccess, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
 };
-use bevy_render::renderer::{RenderContext, RenderDevice};
+use bevy_render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy_render::sync_world::RenderEntity;
 use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy_shader::Shader;
@@ -144,6 +144,7 @@ struct VolumeExtract {
     settings: GiSettings,
     bounce: bool,
     intensity: f32,
+    ambient_scale: f32,
 }
 
 /// The first GI volume this frame (one per worldspace in this slice) and its lights.
@@ -193,6 +194,7 @@ fn extract(
         settings: v.settings,
         bounce: v.bounce,
         intensity: v.intensity,
+        ambient_scale: v.ambient_scale,
     });
     // The views sample the volume once it was traced whole, with the atlases made for it.
     let bindings = pipeline.as_ref().and_then(|gi| gi.atlases.as_ref()).filter(|atlases| {
@@ -284,6 +286,8 @@ struct Atlases {
     visibility_storage: bevy_render::render_resource::TextureView,
     /// What the views bind (sampled views, sampler, volume uniform).
     bindings: GiProbeBindings,
+    /// The volume uniform's bytes last written to `bindings.uniform` ([`uniform_update`]).
+    uniform_bytes: Vec<u8>,
 }
 
 #[derive(Resource)]
@@ -333,6 +337,38 @@ fn init_pipeline(
     commands.insert_resource(GiPipeline { layout, pipeline, frame: 0, atlases: None, directions: None, status: String::new(), covered: 0, pending: None });
 }
 
+/// The constants `gi_probes.wesl` samples `volume` with (`GiProbeVolumeUniform` documents the
+/// lanes; `bias_intensity.w` is the ambient scale `apply_pbr_lighting` applies inside the box).
+fn volume_uniform(volume: &VolumeExtract) -> GiProbeVolumeUniform {
+    let grid = volume.settings.grid();
+    GiProbeVolumeUniform {
+        origin_spacing: (volume.centre - grid.extent() * 0.5).extend(grid.spacing),
+        dims: UVec4::new(grid.dims.x, grid.dims.y, grid.dims.z, sf_gi::IRRADIANCE_TEXELS),
+        #[allow(clippy::cast_precision_loss)] // 14
+        bias_intensity: Vec4::new(
+            sf_gi::self_shadow_bias(grid.spacing),
+            volume.intensity,
+            sf_gi::VISIBILITY_TEXELS as f32,
+            volume.ambient_scale,
+        ),
+    }
+}
+
+/// `volume_uniform`, encoded as the shader reads it (48 bytes).
+fn uniform_bytes(volume: &VolumeExtract) -> Vec<u8> {
+    let mut bytes = encase::UniformBuffer::new(Vec::<u8>::new());
+    bytes.write(&volume_uniform(volume)).expect("GiProbeVolumeUniform encodes");
+    bytes.into_inner()
+}
+
+/// The bytes to re-upload when the volume's uniform differs from what the buffer holds
+/// (`uploaded`): a live `intensity` or `ambient_scale` change (a console's tuning). Only the
+/// uniform: the atlases and the probe history stay, so the change shows the next frame.
+fn uniform_update(uploaded: &[u8], volume: &VolumeExtract) -> Option<Vec<u8>> {
+    let bytes = uniform_bytes(volume);
+    (bytes != uploaded).then_some(bytes)
+}
+
 /// New atlases (zeroed: no history, the first update takes its value as is) for `volume`.
 fn make_atlases(device: &RenderDevice, volume: &VolumeExtract) -> Atlases {
     let grid = volume.settings.grid();
@@ -358,18 +394,12 @@ fn make_atlases(device: &RenderDevice, volume: &VolumeExtract) -> Atlases {
         device.create_buffer(&BufferDescriptor { label: Some(label), size: bytes, usage: BufferUsages::STORAGE, mapped_at_creation: false })
     };
     let texels = |inner: u32| u64::from(inner * inner);
-    let uniform = GiProbeVolumeUniform {
-        origin_spacing: (volume.centre - grid.extent() * 0.5).extend(grid.spacing),
-        dims: UVec4::new(grid.dims.x, grid.dims.y, grid.dims.z, sf_gi::IRRADIANCE_TEXELS),
-        #[allow(clippy::cast_precision_loss)] // 14
-        bias_intensity: Vec4::new(sf_gi::self_shadow_bias(grid.spacing), volume.intensity, sf_gi::VISIBILITY_TEXELS as f32, 0.0),
-    };
-    let mut bytes = encase::UniformBuffer::new(Vec::<u8>::new());
-    bytes.write(&uniform).expect("GiProbeVolumeUniform encodes");
+    let uniform_bytes = uniform_bytes(volume);
+    // COPY_DST: `prepare` rewrites it in place when the volume's gain changes.
     let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("gi_probe_volume"),
-        contents: bytes.as_ref(),
-        usage: BufferUsages::UNIFORM,
+        contents: &uniform_bytes,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
     let sampler = device.create_sampler(&SamplerDescriptor {
         label: Some("gi_probe_sampler"),
@@ -388,6 +418,7 @@ fn make_atlases(device: &RenderDevice, volume: &VolumeExtract) -> Atlases {
         irradiance_storage: view(&irradiance_texture),
         visibility_storage: view(&visibility_texture),
         bindings: GiProbeBindings { irradiance: view(&irradiance_texture), visibility: view(&visibility_texture), sampler, uniform },
+        uniform_bytes,
     }
 }
 
@@ -401,6 +432,7 @@ fn prepare(
     pipeline: Option<ResMut<GiPipeline>>,
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
     traced: Res<GiTraced>,
 ) {
     let Some(mut gi) = pipeline else { return };
@@ -423,6 +455,13 @@ fn prepare(
         gi.atlases = Some(make_atlases(&device, &volume));
         gi.covered = 0;
         traced.0.store(false, Ordering::Relaxed);
+    } else if let Some(atlases) = gi.atlases.as_mut() {
+        // Same volume, new gain (`intensity`, `ambient_scale`): rewrite its 48-byte uniform in
+        // place (the views' bindings share the buffer); the atlases and their history stay.
+        if let Some(bytes) = uniform_update(&atlases.uniform_bytes, &volume) {
+            queue.write_buffer(&atlases.bindings.uniform, 0, &bytes);
+            atlases.uniform_bytes = bytes;
+        }
     }
     if gi.directions.as_ref().is_none_or(|d| d.0 != rays) {
         let dirs: Vec<f32> = sf_gi::fibonacci_sphere(rays).iter().flat_map(|d| [d.x, d.y, d.z, 0.0]).collect();
@@ -535,5 +574,60 @@ fn probe_update(
     gi.covered = gi.covered.saturating_add(workgroups);
     if gi.covered >= total {
         traced.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::float_cmp)] // exact lanes copied through, no arithmetic
+mod tests {
+    use super::*;
+
+    fn volume(ambient_scale: f32) -> VolumeExtract {
+        VolumeExtract {
+            entity: Entity::PLACEHOLDER,
+            centre: Vec3::new(1.0, 2.0, 3.0),
+            settings: GiSettings::default(),
+            bounce: true,
+            intensity: 1.5,
+            ambient_scale,
+        }
+    }
+
+    /// The volume's ambient scale reaches lane `bias_intensity.w` and, once encoded, the bytes
+    /// the shader reads it from (`GiProbeVolume`: two vec4 then `bias_intensity`, so w is at 44).
+    #[test]
+    fn ambient_scale_reaches_the_uniform() {
+        for scale in [0.0, 0.25, 1.0] {
+            let uniform = volume_uniform(&volume(scale));
+            assert_eq!(uniform.bias_intensity.w, scale);
+            assert_eq!(uniform.bias_intensity.y, 1.5);
+            let mut bytes = encase::UniformBuffer::new(Vec::<u8>::new());
+            bytes.write(&uniform).expect("GiProbeVolumeUniform encodes");
+            let bytes = bytes.into_inner();
+            assert_eq!(bytes.len(), 48);
+            assert_eq!(f32::from_le_bytes(bytes[44..48].try_into().unwrap()), scale);
+        }
+    }
+
+    /// A changed gain on the same volume asks for a re-upload with the new lanes (intensity at
+    /// byte 36, ambient scale at 44); an unchanged one asks for nothing.
+    #[test]
+    fn changed_gain_reaches_the_uniform_through_the_update() {
+        let before = volume(0.0);
+        let uploaded = uniform_bytes(&before);
+        assert_eq!(uniform_update(&uploaded, &before), None);
+        let tuned = VolumeExtract { intensity: 3.0, ambient_scale: 0.1, ..before };
+        let bytes = uniform_update(&uploaded, &tuned).expect("a changed gain re-uploads");
+        assert_eq!(bytes.len(), 48);
+        assert_eq!(f32::from_le_bytes(bytes[36..40].try_into().unwrap()), 3.0);
+        assert_eq!(f32::from_le_bytes(bytes[44..48].try_into().unwrap()), 0.1);
+        assert_eq!(bytes[..32], uploaded[..32], "origin, spacing and dims unchanged");
+        assert_eq!(uniform_update(&bytes, &tuned), None);
+    }
+
+    /// The default volume replaces the ambient inside its box.
+    #[test]
+    fn default_volume_replaces_the_ambient() {
+        assert_eq!(GiVolume::default().ambient_scale, 0.0);
     }
 }

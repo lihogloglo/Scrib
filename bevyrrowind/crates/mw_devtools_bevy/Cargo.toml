@@ -65,6 +65,8 @@ sf_console_bevy = { workspace = true, features = ["overlay"] }
 sf_controller.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy = { workspace = true, features = ["assets"] }
+# console.rs `render.gi_intensity` / `render.gi_ambient`: they write `GiVolume`.
+sf_gi_bevy.workspace = true
 sf_lod_bevy.workspace = true
 sf_physics_bevy = { workspace = true, features = ["debug"] }
 sf_records.workspace = true

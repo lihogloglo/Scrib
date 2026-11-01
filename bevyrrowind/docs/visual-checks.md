@@ -80,7 +80,7 @@ shows a bug that's already understood; confirm the bug or skip).
 
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
-### Awaiting owner (40)
+### Awaiting owner (42)
 
 SH-11 | confirmed (2026-10-30) | [shadows](visual-checks/shadows.md) | Distant flashes while moving (PostUpdate far-shadow ordering + world-unit PCSS)
 SH-20 | partial (2026-10-30: smooth now; which lamps cast looks random, player and torches cast none; fixes built 2026-11-01: SH-21) | [shadows](visual-checks/shadows.md) | Character lamp shadows update per frame within 16 m (`--off movershadows` A/B)
@@ -88,6 +88,7 @@ SH-21 | partial (2026-11-01: torches cast; flicker, cut faces, choppy: SH-20b in
 SH-22 | known bug | [shadows](visual-checks/shadows.md) | Exterior fps halves after leaving the Census office, not the GI (2026-11-02)
 GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) | [gi](visual-checks/gi.md) | Dynamic probe GI in the Census office (`--off gi` A/B)
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
+GI-3 | awaiting owner | [gi](visual-checks/gi.md) | GI replaces the flat cell ambient inside its volume: darker unlit corners, warmer near lamps, no box edge in the office (`flip gi` A/B)
 LM-2 | partial (2026-10-30: leaves OK, water still too bright at night) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
 FF-2 | rejected (2026-10-30: all green to the horizon, L2/L3 never shown) | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
 DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash
@@ -133,6 +134,8 @@ PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu
 SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
 HD-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
 MM-1 | rejected (2026-10-30: wants title art/video, not the live world) | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
+FG-9 | confirmed (2026-11-02: no pillar; god rays still not visible, FG-10) | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog: isotropic sky fill (fix built 2026-11-02)
+FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 
 ### Partial (9)
 
@@ -155,7 +158,7 @@ RO-A | confirmed with follow-up | [rendering](visual-checks/rendering.md) | Tran
 DJ-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Talk to Fargoth, Sellus greeting; resizable window wished
 SV-1 | confirmed with follow-up | [player-ui](visual-checks/player-ui.md) | Quicksave / quickload; load sometimes spawns below the floor
 
-### Known bug (4)
+### Known bug (3)
 
 SH-13 | known bug | [shadows](visual-checks/shadows.md) | Point-light (lamp) shadows
 SH-14 | known bug | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
@@ -174,7 +177,6 @@ FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenella
 PH-14 | known bug | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
 FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)
-FG-9 | known bug | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog, follows the camera (2026-11-02)
 
 ### Rejected (2)
 

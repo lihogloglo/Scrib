@@ -14,7 +14,7 @@ import super::froxel_common::{Froxels, slice_distance, slice_coord, froxel_ray};
 
 @group(0) @binding(0) var<uniform> fx: Froxels;
 @group(0) @binding(1) var<uniform> lights: Lights;
-// `fog_light.wesl`: sky fill per azimuth (0-63), key light seen (64), its direction (65).
+// `fog_light.wesl`: sky fill (texel 0), key light seen (1), its direction (2).
 @group(0) @binding(2) var fog_light: texture_2d<f32>;
 @group(0) @binding(3) var weather_texture: texture_2d<f32>;
 @group(0) @binding(4) var noise_sampler: sampler;
@@ -26,8 +26,6 @@ import super::froxel_common::{Froxels, slice_distance, slice_coord, froxel_ray};
 @group(0) @binding(10) var history: texture_3d<f32>;
 @group(0) @binding(11) var volume: texture_storage_3d<rgba16float, write>;
 
-const AZIMUTHS: i32 = 64;
-const PI: f32 = 3.14159265;
 // sf_lod_bevy's far_shadow_map.wesl (keep in step): penumbra per meter of
 // occluder distance and its floor, bias and its growth per meter of view
 // distance, where the border fade starts.
@@ -36,15 +34,6 @@ const FAR_PENUMBRA_MIN: f32 = 2.0;
 const FAR_BIAS: f32 = 6.0;
 const FAR_BIAS_PER_M: f32 = 0.0015;
 const FAR_FADE_START: f32 = 0.85;
-
-// Sky fill toward the horizon under `rd` (the composite's lookup).
-fn sky_fill(rd: vec3<f32>) -> vec3<f32> {
-    let a = (atan2(rd.z, rd.x) / (2.0 * PI) + 1.0) * f32(AZIMUTHS) - 0.5;
-    let a0 = floor(a);
-    let i0 = (i32(a0) % AZIMUTHS + AZIMUTHS) % AZIMUTHS;
-    let i1 = (i0 + 1) % AZIMUTHS;
-    return mix(textureLoad(fog_light, vec2(i0, 0), 0).rgb, textureLoad(fog_light, vec2(i1, 0), 0).rgb, a - a0);
-}
 
 // The key light's CSM visibility at `p` (Bevy's cascades, hard compare: the
 // froxel is far coarser than a texel). `fwd`: distance along the view axis.
@@ -153,8 +142,9 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var scatter = vec3(0.0);
     if sigma > 1e-7 {
-        let key_seen = textureLoad(fog_light, vec2(AZIMUTHS, 0), 0).rgb;
-        let key_dir = textureLoad(fog_light, vec2(AZIMUTHS + 1, 0), 0).xyz;
+        let sky_fill = textureLoad(fog_light, vec2(0, 0), 0).rgb;
+        let key_seen = textureLoad(fog_light, vec2(1, 0), 0).rgb;
+        let key_dir = textureLoad(fog_light, vec2(2, 0), 0).xyz;
         var key = vec3(0.0);
         if max(key_seen.r, max(key_seen.g, key_seen.b)) > 0.0 {
             var vis = csm_visibility(p, key_dir, dot(p - fx.camera, fx.forward));
@@ -176,7 +166,7 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
                 local += l.color.rgb * (fade * fade / max(d2, 0.25)) * fog_phase(f.phase_g, dot(rd, to * inverseSqrt(max(d2, 1e-6))));
             }
         }
-        scatter = f.albedo * sigma * (key + sky_fill(rd) * f.ambient + local) * fx.exposure;
+        scatter = f.albedo * sigma * (key + sky_fill * f.ambient + local) * fx.exposure;
     }
     var value = vec4(scatter, sigma);
 

@@ -709,12 +709,16 @@ fn apply_pbr_lighting(
 }
 
     // superfargoth patch (own, GI): DDGI probes replace the irradiance volume and the
-    // environment map's diffuse inside their box (the env map keeps the specular).
+    // environment map's diffuse inside their box (the env map keeps the specular). They also
+    // scale the flat ambient light there (the volume's ambient scale, 0: replaced), as DDGI and
+    // Lumen integrations drop the flat ambient where probes cover the scene.
+    var ambient_scale = 1.0;
     @if(GI_PROBES)
     if (!found_diffuse_indirect && gi_probes::gi_probe_inside(in.world_position.xyz)) {
         indirect_light += gi_probes::gi_probe_irradiance(in.world_position.xyz, in.N, in.V)
             * diffuse_color * diffuse_occlusion;
         found_diffuse_indirect = true;
+        ambient_scale = gi_probes::gi_probe_ambient_scale();
     }
 
     @if(IRRADIANCE_VOLUME)
@@ -770,7 +774,8 @@ fn apply_pbr_lighting(
     @else   // LIGHTMAP
     let enable_ambient = true;
     if (enable_ambient) {
-        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion);
+        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion)
+            * ambient_scale;
     }
 
     // we'll use the specular component of the transmitted environment

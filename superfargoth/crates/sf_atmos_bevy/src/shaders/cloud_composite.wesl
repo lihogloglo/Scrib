@@ -13,7 +13,7 @@
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_pbr::atmosphere::bindings::view;
 import bevy_pbr::atmosphere::functions::{uv_to_ndc, ndc_to_camera_dist, uv_to_ray_direction};
-import super::cloud_common::{Clouds, PI};
+import super::cloud_common::Clouds;
 import super::fog::{fog_depths, fog_phase};
 import super::froxel_common::{Froxels, froxel_fog};
 
@@ -25,14 +25,13 @@ import super::froxel_common::{Froxels, froxel_fog};
 @group(1) @binding(0) var<uniform> clouds: Clouds;
 @group(1) @binding(1) var cloud_color: texture_2d<f32>;
 @group(1) @binding(2) var cloud_dist: texture_2d<f32>;
-// `fog_light.wesl`: sky fill per azimuth (0-63), key light seen (64), its direction (65).
+// `fog_light.wesl`: sky fill (texel 0), key light seen (1), its direction (2).
 @group(1) @binding(3) var fog_light: texture_2d<f32>;
 // The froxels (F3): their uniform and integrated volume; past `froxels.far` (or
 // with froxels off) the analytic layers carry on from where they end.
 @group(1) @binding(4) var<uniform> froxels: Froxels;
 @group(1) @binding(5) var froxel_volume: texture_3d<f32>;
 @group(1) @binding(6) var froxel_sampler: sampler;
-const AZIMUTHS: i32 = 64;
 
 @fragment
 fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -102,17 +101,11 @@ fn composite(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let tau = fog_depths(fog, r - clouds.inner_radius + mu * start, mu, d - start);
         let t = exp(-(tau.x + tau.y * bank / bank_w));
         if t < 0.9999 {
-            let key_seen = textureLoad(fog_light, vec2(AZIMUTHS, 0), 0).rgb;
-            let key_dir = textureLoad(fog_light, vec2(AZIMUTHS + 1, 0), 0).xyz;
+            let key_seen = textureLoad(fog_light, vec2(1, 0), 0).rgb;
+            let key_dir = textureLoad(fog_light, vec2(2, 0), 0).xyz;
             let sun = key_seen * fog_phase(fog.phase_g, dot(rd, key_dir));
-            // Sky fill toward the horizon under this view direction (with the
-            // zenith), so the fog's colour meets the horizon's.
-            let a = (atan2(rd.z, rd.x) / (2.0 * PI) + 1.0) * f32(AZIMUTHS) - 0.5;
-            let a0 = floor(a);
-            let i0 = (i32(a0) % AZIMUTHS + AZIMUTHS) % AZIMUTHS;
-            let i1 = (i0 + 1) % AZIMUTHS;
-            let sky = mix(textureLoad(fog_light, vec2(i0, 0), 0).rgb, textureLoad(fog_light, vec2(i1, 0), 0).rgb, a - a0);
-            let ambient = sky * fog.ambient;
+            // The isotropic sky fill (the froxels' too: no seam at their range).
+            let ambient = textureLoad(fog_light, vec2(0, 0), 0).rgb * fog.ambient;
             far_light = fog.albedo * (sun + ambient) * (1.0 - t) * view.exposure;
         }
         // Behind = clouds over the scene: dimmed by both, lit by the froxels and

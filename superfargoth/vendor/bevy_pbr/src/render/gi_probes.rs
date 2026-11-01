@@ -5,7 +5,8 @@
 //! volume's octahedral irradiance and visibility atlases, a linear clamp sampler and a
 //! [`GiProbeVolumeUniform`]. `gi_probes.wesl` samples them in `apply_pbr_lighting` (eight probes,
 //! trilinear x back-face x Chebyshev visibility, Majercik et al. 2019) in place of the
-//! environment map's diffuse inside the volume. The probe system (superfargoth `sf_gi_bevy`)
+//! environment map's diffuse inside the volume, and scale the flat ambient light there by the
+//! uniform's ambient scale. The probe system (superfargoth `sf_gi_bevy`)
 //! owns the textures and inserts the component on its cameras' render-world view entities; it
 //! is the only coupling. The bindings travel with the component, so a view's layout key and its
 //! bind group can never disagree.
@@ -30,7 +31,8 @@ pub struct GiProbeVolumeUniform {
     /// xyz: probes per axis; w: interior texels per irradiance tile side (6).
     pub dims: UVec4,
     /// x: self-shadow bias length (m), y: intensity multiplier, z: interior texels per
-    /// visibility tile side (14), w: unused.
+    /// visibility tile side (14), w: multiplier on the flat ambient light inside the volume
+    /// (0: the probes replace it; `apply_pbr_lighting`).
     pub bias_intensity: Vec4,
 }
 

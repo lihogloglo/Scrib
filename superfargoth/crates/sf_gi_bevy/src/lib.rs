@@ -70,11 +70,17 @@ pub struct GiVolume {
     pub intensity: f32,
     /// Second bounce: hits read last frame's probes.
     pub bounce: bool,
+    /// Multiplier on the flat ambient light (`AmbientLight`) for surfaces inside the volume:
+    /// 0 (default) lets the probes replace it, as DDGI and Lumen integrations drop the flat term
+    /// where probes cover the scene; 1 adds the probes on top of it. Outside the volume (and on
+    /// lightmapped meshes) the ambient is untouched. Live, like `intensity`: a change rewrites
+    /// the volume's uniform only (no re-trace, history kept).
+    pub ambient_scale: f32,
 }
 
 impl Default for GiVolume {
     fn default() -> Self {
-        Self { settings: GiSettings::default(), intensity: 1.0, bounce: true }
+        Self { settings: GiSettings::default(), intensity: 1.0, bounce: true, ambient_scale: 0.0 }
     }
 }
 
