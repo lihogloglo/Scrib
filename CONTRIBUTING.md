@@ -81,10 +81,14 @@ and `superfargoth/docs/DECISIONS.md`.
 - Logic and data (saves, quests, scripts, parsers): exact assertions. Look and feel (physics, animation,
   rendering, UI look): sanity only (no NaN or explosion, nothing through the floor, comes to rest, no
   crash); tuned numbers are printed by `#[ignore = "measurement: ..."]` tests, never pass/fail limits.
-- Rendering work isn't done until it ran and was seen. A few screenshots for sanity (at most ~3 iterations
-  per issue), then register a test scene in `bevyrrowind/docs/visual-checks/<system>.md` plus its index
-  line in `visual-checks.md` (status "awaiting owner"), saying concretely what to look for and when. The
-  owner signs off visuals in batches.
+- **No automated visual checks (owner 2026-11-01, repeated).** Agents never judge rendering from
+  screenshots, pixel diffs, or on/off image comparisons: they miss animated noise, a subtle effect that
+  isn't doing its job, and everything else the owner sees at once. Only log-line checks that need no
+  picture (shader compile errors, counts, timings) are automated. Rendering work ends with the build
+  ready, a test scene registered in `bevyrrowind/docs/visual-checks/<system>.md` plus its index line in
+  `visual-checks.md` (status "awaiting owner", with camera, time, flags and concretely what to look for),
+  and a question to the owner, who signs off visuals in batches. `--screenshot` runs exist for the
+  owner's own checks and baselines, not for agents to assess the look.
 - Changed animation slots or sources? Re-run `bevyrrowind bake` before checking in the live game: headless
   tests bake their own cache, the game reads the last bake.
 - Before a PR: `cargo test --workspace`, clippy (pedantic, `-D warnings`), `cargo deny check` and the

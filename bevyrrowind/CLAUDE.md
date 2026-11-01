@@ -99,13 +99,13 @@ working tree**. Protocol:
    `sf_mods`. No privileged content paths.
 4. **Industry standard, never kludge.** Name the canonical technique first.
    Temporary scaffolds are named, isolated, and come with a removal path.
-5. **Verify visually, but the owner's eyes are the judge.** Rendering work
-   isn't done until it ran and was seen. Take screenshots for sanity
-   (`cargo dev view "<cell>" --screenshot <png>`, then look at the PNG),
-   but at most ~3 screenshot iterations per issue: no long screenshot-debug
-   loops. Then add a test scene that isolates the behavior (named camera,
-   time, flags, "what to look for") to the right `docs/visual-checks/<system>.md` plus its index line in `docs/visual-checks.md` (status
-   "awaiting owner") and move on; the owner confirms in batched passes.
+5. **The owner's eyes are the only judge of visuals (owner 2026-11-01).** No automated visual
+   checks, ever: no `--screenshot` runs, pixel diffs or on/off image comparisons to decide whether
+   a rendering feature works or looks right (agents miss animated noise, an effect that is on but
+   not doing its job, and more). Rendering work ends with a build ready and a test scene that
+   isolates the behavior (named camera, time, flags, "what to look for") in the right
+   `docs/visual-checks/<system>.md` plus its index line in `docs/visual-checks.md` (status
+   "awaiting owner"); then ask the owner to look. The owner confirms in batched passes.
    Test scenes come in two kinds: real game locations (`view` scenes) and
    isolated synthetic scenes (framework examples), as in Godotwind.
    **Tests for look and feel (owner 2026-10-25):** physics, animation, rendering and UI-look
@@ -146,8 +146,9 @@ window title. Code: `bevyrrowind/crates/mw_devtools_bevy/src/remote.rs`.
 
 - **Windows:** interactive runs open borderless fullscreen on the primary monitor (owner 2026-10-30). Agent runs pass
   `--resolution 1280x720` (a centred window) so they don't cover the owner's screen; owner check scripts pass nothing.
-- **Attach only.** Build (`cargo build -p bevyrrowind --features dev`),
-  then start it with `powershell -File tools/run_dev.ps1 view "<cell>" > target/run_dev.pid`
+- **Agents never launch the game (owner 2026-11-01).** No `run_dev.ps1`, no `bevyrrowind.exe`, not for log lines, not for BRP: build, then write the exact run command and the log lines or BRP checks to look for in your handoff; the owner launches and tells you the port. The attach-only notes below apply to a window the owner started.
+- **Attach only.** Build (`cargo build -p bevyrrowind --features dev`); the owner
+  starts it with `powershell -File tools/run_dev.ps1 view "<cell>" > target/run_dev.pid`
   (or `scene <name>`; it prints the pid; from bash redirect to a file, since a
   `$(...)` pipe stays open while the game runs), not `cargo dev`: a `cargo run` stays alive while
   the game is open and stalls every other session's build check. Then
