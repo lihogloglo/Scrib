@@ -27,4 +27,4 @@
   box edge visible inside the office; nothing black or flickering. If corners go too dark, say so: the game's
   `INTERIOR_AMBIENT_SCALE` (0) can take a small floor. Known limit: dark probe patches (no relocation yet).
 - Tune live: `render.gi_intensity 2` (try 1-4), `render.gi_ambient 0.1`; report the value you like.
-- Status: awaiting owner.
+- Status: confirmed (owner 2026-11-02: looks good; defaults kept, `render.gi_intensity` 1, `render.gi_ambient` 0).
