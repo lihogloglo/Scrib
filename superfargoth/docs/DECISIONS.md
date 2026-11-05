@@ -1606,3 +1606,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (surface W3): shader changes are compile-checked headless by linking the real modules with `wesl` (vendored
   Bevy + ours, Bevy's shader-cache options) per preset's defs and validating with naga; no GPU, no picture. Wet look is
   Lagarde's porosity model plus a film past saturation that scales the normal map's surface gradient by (1 − film).
+- 2026-11-05 (surface W2b): extra depth views that belong to no light hang off a `sun_view::DepthViewAnchor` (a synced
+  entity carrying Bevy's public shadow-visibility tables) and use Bevy's own shadow pass, day and night. Foliage is a
+  game marker (`ShelterFoliage`) drawn into its own canopy map, 40% of rain through; rain washes ash 6x faster than snow.

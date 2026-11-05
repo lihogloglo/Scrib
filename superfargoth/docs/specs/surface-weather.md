@@ -1,6 +1,6 @@
 # Surface weather: wetness, puddles, snow and ash cover, trails
 
-Status: W1-W3 built (2026-11-05: `sf_surface` state, `sf_surface_bevy` GPU resources, debug tints, wetness on every lit material through `bevy_pbr` patch "SW"; [as built](surface-weather-as-built.md)); W4-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
+Status: W1-W3 + W2b built (2026-11-05: `sf_surface` state + rain wash, `sf_surface_bevy` GPU resources, light-independent shelter + canopy maps, debug tints, wetness on every lit material through `bevy_pbr` patch "SW"; [as built](surface-weather-as-built.md)); W4-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
 Crates: `sf_surface` (new, Bevy-free), `sf_surface_bevy` (new, thin plugin); touches `sf_terrain_bevy`
 (hook, displacement, prepass), `sf_lod_bevy` (proxies call the hook), vendored `bevy_pbr` (own patch "SW"),
 `sf_weather` (`SurfaceRates`), `sf_save` (section). Adapter: `../../../bevyrrowind/docs/specs/weather-adapter.md`
@@ -71,7 +71,7 @@ on Solstheim.
 | Wet surfaces | Lagarde, "Water drop 2a/2b, 3a/3b" (2012-13): porosity, albedo darkening, roughness to water, film flattens normal | Remember Me (Dontnod, Lagarde), UE wet material functions, Watch Dogs **(verify)** | Lagarde model, porosity from material (heuristic) or record | match |
 | Puddles | height/porosity-driven water level, flat normal, F0 0.02, rain ripple normals (Lagarde 2a ripple atlas or procedural rings) | Remember Me, Watch Dogs, Unity Production Ready Weather sample, Clockwork | layer height + terrain basin signal; procedural rings (Clockwork shape); sky/probe reflection | match (SSR later) |
 | Puddle reflection | env/probe → planar for big pools → SSR | UE (SSR + reflection captures), RDR2 **(verify)** | env map + GI probes; SSR parked (no depth prepass on the exterior camera) | gap, owner-accepted |
-| Exposure / shelter | top-down precipitation occlusion depth map | Tatarchuk "Rain" (ATI ToyShop, 2006), Remember Me (top-down rain depth map, fxguide 2013), S.T.A.L.K.E.R. Clear Sky wet mask (forum recollection), Clockwork `surfaceRoof` | vertical depth map 1024² over 128 m, tent-filtered gather | match |
+| Exposure / shelter | top-down precipitation occlusion depth map | Tatarchuk "Rain" (ATI ToyShop, 2006), Remember Me (top-down rain depth map, fxguide 2013), S.T.A.L.K.E.R. Clear Sky wet mask (forum recollection), Clockwork `surfaceRoof` | vertical depth map 1024² over 128 m, tent-filtered gather; leaves in a second (canopy) map, partial shelter (Clockwork `roofLeaves`) | match 
 | Snow/ash cover | world-aligned blend: `N·up` × exposure × amount, height-blend, noise patches | UE world-aligned blend, Uncharted 4/RDR2 snow **(verify)**, Clockwork `surfaceCovers` | same, per-pixel N, surface-gradient normals | match |
 | Cover state | per-region or per-cell scalars over game time | Clockwork (per region, not saved), RDR2 (persistent snow, **verify**) | climates (wet) + 32 m cells (snow, ash), saved | match+ |
 | Trails | camera-centred toroidal height render target, stamped by feet/bodies, refilled; displacement + relief mapping, lip normals | Batman: Arkham Origins (Barre-Brisebois, GDC 2014), Rise of the Tomb Raider (GPU Pro 7, **verify**), God of War 2018, RDR2 | ring 1024² over 64 m, vertex displacement of finest CDLOD + POM; no tessellation (wgpu has none) | match (console path) |
@@ -90,7 +90,8 @@ puddle }>, cells: per worldspace HashMap<IVec2, CellSurface { snow, ash }> }`, `
 `advance` (pure fixed steps from hour 0, catch-up capped at 72 h; rates from `WeatherState::blend` per climate at
 the step's mid time, cells weighted by `ClimateRaster::site_at` at their centre, as the WE4 map) and `sample` (CPU
 query). Snow has an altitude factor around a per-climate snow line (hook, off for Morrowind); only non-zero cells are
-stored (Vvardenfell at 32 m is ~30k cells).
+stored (Vvardenfell at 32 m is ~30k cells). Rain washes cover off (W2b): `snow_wash` 1/3 and `ash_wash` 2
+per unit of wetting rate (a storm: snow 4x its dry melt, ash gone in 15 game min).
 
 - **Character wetness** (W8): `CharacterWetness { wet, dried_at }` per actor, presentation, exposure from an
   upward physics ray (under roof or not), drying `dry_h`; immersion from the water query later.
@@ -111,15 +112,17 @@ stored (Vvardenfell at 32 m is ~30k cells).
 |---|---|---|---|
 | `SurfaceUniform` | uniform | cell window origin, 1/cell, shelter `clip_from_world`, rain intensity at camera, time, ripple params, layer tiling/contrast, flags (layers on) | per frame |
 | Cell texture | RGBA8 unorm 128² (4 km, 32 m texels), toroidal | R wet, G puddle (camera site's climate blend per cell), B snow, A ash | strips on recenter; all on a step |
-| Shelter map | Depth32 1024² over 128 m (0.125 m/texel), vertical | highest caster depth, top-down | redraw on 16 m recenter / 8 m vertical / streamed casters (every 30 frames max) / origin shift; only while a layer or debug view is on; kept as is while no directional light casts shadows (night) |
+| Shelter map | Depth32 1024² over 128 m (0.125 m/texel), vertical | highest caster depth, top-down | redraw on 16 m recenter / 8 m vertical / streamed or newly foliage-marked casters (every 30 frames max) / origin shift; only while a layer or debug view is on; day and night (own anchor, W2b) |
+| Canopy map (W2b) | same as the shelter map | highest leaf caster (`ShelterFoliage`) | with the shelter map, same view |
 | Noise atlas | RGBA8 256², repeat | R/G tiling value noise (patches, edges), B/A wall streak pattern | static, generated at startup |
 | Layer array | RGBA8 2D array 512², 4 layers, repeat, mips | snow albedo+height, snow normal xy+rough+ao, ash ×2 | on record change |
 | Trail ring (W6) | RG16F 1024² over 64 m (6.25 cm/texel), toroidal, ×2 (current, previous) | R depression (m, ≤ 0), G lip (m, ≥ 0) | stamps + decay every frame |
 
-The shelter map is a **second, vertical** subview of the WE-5 mechanism (`sf_sky_bevy::sun_view`, as
-`sf_precip_bevy/src/occlusion.rs` does): the precipitation map follows the wind slant and turns with it, which
-would move wet patches; cover needs a stable top-down view. Outside the 64 m radius, exposure fades to
-"open sky" for up-facing surfaces (far roofs are exposed; far interiors are not visible).
+The shelter and canopy maps are two vertical views of Bevy's own shadow pass (`sf_sky_bevy::sun_view`, like the
+WE-5 precipitation map, which follows the wind slant and would move wet patches), owned by a light-independent
+`DepthViewAnchor` (W2b: drawn at night too). Leaves the game marks `ShelterFoliage` draw into the canopy map only;
+under a full canopy `SHELTER_LEAF_PASS` 0.4 of the rain gets through (why and how: [as built](surface-weather-as-built.md)
+W2b). Outside the 64 m radius, exposure fades to "open sky" (far roofs exposed; far interiors not visible).
 
 ## Shader integration
 
@@ -149,7 +152,7 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 - **`StandardMaterial` (NIF statics, characters, held items, fades):** own patch "SW" in
   `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the
   view sets `MeshPipelineViewLayoutKey::SURFACE_WEATHER` (1<<18) and `MeshPipelineKey::SURFACE_WEATHER` (1<<27,
-  shader def `SURFACE_WEATHER`), adds mesh-view bindings 43-48 after the GI ones (uniform, cells, shelter as
+  shader def `SURFACE_WEATHER`), adds mesh-view bindings 43-49 after the GI ones (uniform, cells, shelter and canopy as
   unfilterable float, noise, a filtering and a non-filtering sampler; W5 adds the layer array and its sampler,
   W6 the trail ring), and `render/pbr.wesl` `fragment()` calls `sf_surface_bevy::view` between `pbr_input_from_standard_material` and
   `apply_pbr_lighting`, forward main pass only (not the prepass). Skipped for alpha-blend materials
@@ -163,11 +166,7 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
   (puddles are sub-pixel at that range).
 - **Excluded:** water (`sf_water_bevy`), particles, precipitation, sky.
 
-**Why a patch, not `WorldMaterial = ExtendedMaterial<…>`** (the earlier design): the data is per view, not
-per material; one patch reaches every `StandardMaterial` user (~30 spawn sites, characters included) with no
-type churn in `MaterialMapper`, `CookedMaterials`, fades or skinning; it repeats the GI patch. Binding count
-(W3): group 0 holds at most 18 textures and 12 samplers with every feature on; Bevy requests the adapter's
-limits, far above that on desktop (WebGPU's default 16 would not fit; not a target).
+**Why a patch, not `WorldMaterial = ExtendedMaterial<…>`**, and the binding count: [as built](surface-weather-as-built.md) W3.
 
 **Prepass and SSAO.** Prepass normals stay unmodified (GTAO sees the base normal): acceptable, the surface
 normal changes are small-scale; revisit if the owner sees AO mismatch on deep snow.
@@ -249,7 +248,7 @@ Counters: `surface/advance_cpu_ms`, `surface/active_cells`, `surface/shelter_red
 
 Logic, exact assertions (`sf_surface`, headless `sf_surface_bevy`): `advance` hits closed forms under
 constant rates (wet reaches 1 at 1/r h, dries in `dry_h`); one 24 h `advance` equals 144 steps bit-for-bit;
-puddles stay 0 below `puddle_from_wet`; snow decays 3x and ash 4x slower; cell rates equal the
+puddles stay 0 below `puddle_from_wet`; snow decays 3x and ash 4x slower; rain washes ash faster than snow, both faster than dry decay (closed forms); cell rates equal the
 `ClimateRaster::site_at` blend at cell centres; no-snow climates allocate no cells, empty cells drop; equal
 inputs give equal states; save → load → advance equals advance → save → load within one quantum; unknown
 climates drop on load; cell window recenter writes exactly the entering strips; shelter matrix and redraw
@@ -264,6 +263,7 @@ weather override, flags and what to look for.
 |---|---|---|---|
 | **W1** ✅ | `sf_surface` state, `advance`, `sample`, save field, console (as built) | exact logic list above | none (logic) |
 | **W2** ✅ | `sf_surface_bevy` cell window, shelter subview, noise atlas, uniform, debug tints (as built) | window, shelter, plugin smoke | SW-2 (awaiting owner) |
+| **W2b** ✅ | Rain wash; shelter views on an own anchor (night); canopy map for `ShelterFoliage` (as built) | wash closed forms; anchor + canopy requests; shader compile | SW-2 at night, under trees |
 | **W3** ✅ | Wetness layer: vendored `bevy_pbr` patch "SW", `sf_surface::layer` (exposure port, Lagarde wet, film normal flatten, wall streaks), terrain + proxy calls, `--off wet/surface`, NOTICES entry | shader-def compile log check per preset; porosity heuristic unit test (WGSL mirrored in Rust) | SW-3: Seyda Neen after rain, wet vs dry A/B, under-roof dry, walls streaked |
 | **W4** | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural ripples (Clockwork rings) in rain, F0/roughness, sky/probe reflection | level/edge math unit tests (Rust twin); compile check | SW-4: Balmora streets in rain and after; ripples stop when rain stops |
 | **W5** | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
@@ -283,8 +283,8 @@ Order: W1 → W2 → W3 → W4/W5 (either) → WM → W6 → W7 → W8. W6 waits
    the slanted shelter.)
 3. Per-object porosity override: material extras key in the cook (needs a per-material channel; `MeshTag`
    bits on statics) or heuristic only? (default: heuristic until a mod needs it.)
-4. Canopy: trees shelter fully in a depth map; Clockwork holds back 40% under leaves (`LEAF_HOLD`). Port
-   the leaf term, or add a foliage channel to the shelter view?
+4. Leaf pass: the owner said "~40% passes through (Clockwork's value)", but Clockwork's `LEAF_HOLD` 0.4 lets
+   60% through. Built with the owner's 40% (`SHELTER_LEAF_PASS`); confirm at SW-2. (Canopy map: resolved W2b.)
 5. Trail radius 40 m and 6.25 cm texels: confirm after WM; displaced shadows beyond cascade 0?
-6. Known gap (W2): with no shadow-casting sun (night) the shelter map is not redrawn; owner 2026-11-05: an own
-   top-down pass (W2b, with the partial foliage shelter of question 4).
+6. Leaf marks follow the game's leaf-material rule (diffuse transmission): with `--off foliagetransmission` leaves
+   shelter fully. A per-material foliage flag in the cook would decouple them (with question 3). (Night: resolved W2b.)

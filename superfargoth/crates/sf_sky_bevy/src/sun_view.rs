@@ -1,5 +1,20 @@
-//! Extra depth views of a shadow-casting directional light, drawn by Bevy's
-//! own shadow pass. `sf_precip_bevy`'s rain occlusion map uses it.
+//! Extra depth views drawn by Bevy's own shadow pass (casters with their alpha
+//! mask, GPU preprocessing, its pipelines): orthographic, depth-clamped views
+//! of a shadow-casting directional light (`sf_precip_bevy`'s rain occlusion
+//! map), or of a [`DepthViewAnchor`], which needs no light at all
+//! (`sf_surface_bevy`'s top-down shelter and canopy maps, drawn at night too).
+//!
+//! Bevy 0.20 has no depth-only view API; its shadow pass is the stock
+//! facility that draws mesh casters into a depth target, and it reads a view's
+//! casters from the `RenderShadowMapVisibleEntities` table of the render
+//! entity its `LightEntity` names (only that: `queue_shadows`,
+//! `specialize_shadows`; `LightEntity::Directional` picks the orthographic,
+//! unclipped-depth pipeline key). A light owns such a table; an anchor is a
+//! main-world entity synced to the render world whose render entity gets the
+//! same two public tables and nothing else, so Bevy's visibility collection
+//! (`collect_visible_cpu_culled_entities`, `collect_gpu_culled_meshes`) and the
+//! shadow queue treat it like a light with no cascades of its own. No private
+//! state or ordering is touched.
 //!
 //! A host system fills a [`SunViewSource`] resource in the main world on a
 //! redraw frame; [`add_sun_view`] mirrors it into the render world, adds the
@@ -16,7 +31,8 @@
 //! key. Bevy extracts that table only for a visible light with shadow maps on,
 //! and the main-world request (made in `PreUpdate`) can be stale by render
 //! time: the sky turns the sun's shadows off in `Update` (interiors, night).
-//! [`view_allowed`] is checked at spawn, so such a request is dropped.
+//! [`view_allowed`] is checked at spawn, so such a request is dropped. An
+//! anchor's tables exist from its first extraction on, whatever the sky does.
 
 use core::any::TypeId;
 
@@ -33,7 +49,7 @@ use bevy_pbr::{prepare_lights, ExtractedDirectionalLight, LightEntity, Shadow, S
 use bevy_render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_phase::ViewBinnedRenderPhases;
-use bevy_render::sync_world::MainEntity;
+use bevy_render::sync_world::{MainEntity, RenderEntity, SyncToRenderWorld};
 use bevy_render::texture::{DepthStencilViewAttachment, DepthStencilViews, GpuImage};
 use bevy_render::view::{
     collect_visible_cpu_culled_entities, ExtractedView, NoIndirectDrawing, RenderExtractedShadowMapVisibleEntities,
@@ -44,10 +60,20 @@ use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy_shape::{HalfSpace, ViewFrustum};
 use bevy_transform::components::GlobalTransform;
 
+/// Owns depth views that belong to no light (module docs). Spawn it with
+/// [`depth_view_anchor`]; requests name it as their `light`.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct DepthViewAnchor;
+
+/// A [`DepthViewAnchor`] bundle (synced to the render world).
+pub fn depth_view_anchor() -> (DepthViewAnchor, SyncToRenderWorld) {
+    (DepthViewAnchor, SyncToRenderWorld::default())
+}
+
 /// One redraw of an extra sun view (main-world entities).
 #[derive(Clone, Debug)]
 pub struct SunViewRequest {
-    /// The directional light the view belongs to.
+    /// The directional light the view belongs to, or a [`DepthViewAnchor`].
     pub light: Entity,
     /// The camera whose shadow pass draws it.
     pub camera: Entity,
@@ -81,6 +107,9 @@ pub trait SunViewSource: Resource + Clone + Default {
 pub fn add_sun_view<S: SunViewSource>(app: &mut App) {
     app.init_resource::<S>();
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+    if !render_app.world().contains_resource::<AnchorsExtracted>() {
+        render_app.init_resource::<AnchorsExtracted>().add_systems(ExtractSchedule, extract_anchors);
+    }
     render_app.init_resource::<S>().add_systems(ExtractSchedule, extract::<S>).add_systems(
         Render,
         (
@@ -100,19 +129,48 @@ fn extract<S: SunViewSource>(mut commands: Commands, source: Extract<Res<S>>) {
     commands.insert_resource(source.clone());
 }
 
+/// The anchor extraction is installed once, whatever the number of sources.
+#[derive(Resource, Default)]
+struct AnchorsExtracted;
+
+/// Gives each anchor's render entity the marker and the two (empty) visibility
+/// tables a light would have; the sources fill their subviews.
+fn extract_anchors(mut commands: Commands, anchors: Extract<Query<&RenderEntity, With<DepthViewAnchor>>>) {
+    for render in &anchors {
+        if let Ok(mut e) = commands.get_entity(**render) {
+            e.insert_if_new((
+                DepthViewAnchor,
+                RenderShadowMapVisibleEntities::default(),
+                RenderExtractedShadowMapVisibleEntities::default(),
+            ));
+        }
+    }
+}
+
+/// Whether a render entity may own the request's view: an anchor always, a
+/// directional light while its shadow maps are on.
+fn owner_enabled(light: Option<&ExtractedDirectionalLight>, anchor: bool) -> bool {
+    anchor || light.is_some_and(|l| l.shadow_maps_enabled)
+}
+
 /// The request's visible list, fresh each redraw (every caster "added", so
 /// Bevy specialises and bins them all for the new view). Lights without the
 /// tables (shadows off, invisible) get nothing, and no view is spawned.
+#[allow(clippy::type_complexity)]
 fn inject_casters<S: SunViewSource>(
     source: Res<S>,
     ticks: SystemChangeTick,
-    mut lights: Query<
-        (&MainEntity, &ExtractedDirectionalLight, &mut RenderShadowMapVisibleEntities, &mut RenderExtractedShadowMapVisibleEntities),
-    >,
+    mut lights: Query<(
+        &MainEntity,
+        Option<&ExtractedDirectionalLight>,
+        Has<DepthViewAnchor>,
+        &mut RenderShadowMapVisibleEntities,
+        &mut RenderExtractedShadowMapVisibleEntities,
+    )>,
 ) {
     let Some(req) = source.request() else { return };
-    let Some((_, _, mut visible, mut extracted)) =
-        lights.iter_mut().find(|(main, light, _, _)| main.id() == req.light && light.shadow_maps_enabled)
+    let Some((_, _, _, mut visible, mut extracted)) =
+        lights.iter_mut().find(|(main, light, anchor, _, _)| main.id() == req.light && owner_enabled(*light, *anchor))
     else {
         return;
     };
@@ -129,13 +187,17 @@ fn spawn_view<S: SunViewSource>(
     mut commands: Commands,
     source: Res<S>,
     images: Res<RenderAssets<GpuImage>>,
-    lights: Query<(
-        Entity,
-        &MainEntity,
-        &ExtractedDirectionalLight,
-        Option<&RenderShadowMapVisibleEntities>,
-        Option<&RenderLayers>,
-    )>,
+    lights: Query<
+        (
+            Entity,
+            &MainEntity,
+            Option<&ExtractedDirectionalLight>,
+            Has<DepthViewAnchor>,
+            Option<&RenderShadowMapVisibleEntities>,
+            Option<&RenderLayers>,
+        ),
+        Or<(With<ExtractedDirectionalLight>, With<DepthViewAnchor>)>,
+    >,
     mut views: Query<(&MainEntity, &mut ViewLightEntities, Has<NoIndirectDrawing>)>,
     mut phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
     support: Res<GpuPreprocessingSupport>,
@@ -147,9 +209,9 @@ fn spawn_view<S: SunViewSource>(
     let Some(req) = source.request() else { return };
     let Some(gpu) = images.get(req.image) else { return };
     let key = req.retained();
-    let Some((light, _, _, _, layers)) = lights
+    let Some((light, _, _, _, _, layers)) = lights
         .iter()
-        .find(|(_, main, extracted, visible, _)| main.id() == req.light && view_allowed(extracted.shadow_maps_enabled, *visible, &key))
+        .find(|(_, main, extracted, anchor, visible, _)| main.id() == req.light && view_allowed(owner_enabled(*extracted, *anchor), *visible, &key))
     else {
         return;
     };
@@ -192,6 +254,12 @@ mod tests {
 
     fn key(subview: u32) -> RetainedViewEntity {
         RetainedViewEntity::new(MainEntity::from(Entity::from_raw_u32(7).unwrap()), None, subview)
+    }
+
+    #[test]
+    fn an_anchor_owns_views_without_a_light() {
+        assert!(owner_enabled(None, true));
+        assert!(!owner_enabled(None, false));
     }
 
     #[test]

@@ -403,7 +403,7 @@ fn layout_entries(
             ),
         ));
     }
-    // superfargoth patch (own, SW): surface weather uniform, cells, shelter, noise, samplers.
+    // superfargoth patch (own, SW): surface weather uniform, cells, shelter, noise, samplers, canopy.
     if layout_key.contains(MeshPipelineViewLayoutKey::SURFACE_WEATHER) {
         entries = entries.extend_with_indices((
             (
@@ -429,6 +429,10 @@ fn layout_entries(
             (
                 super::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING,
                 sampler(SamplerBindingType::NonFiltering),
+            ),
+            (
+                super::SURFACE_WEATHER_CANOPY_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ));
     }
@@ -893,6 +897,7 @@ pub fn prepare_mesh_view_bind_groups(
                     (super::SURFACE_WEATHER_NOISE_BINDING, &sw.noise),
                     (super::SURFACE_WEATHER_SAMPLER_BINDING, &sw.sampler),
                     (super::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING, &sw.shelter_sampler),
+                    (super::SURFACE_WEATHER_CANOPY_BINDING, &sw.canopy),
                 ));
             }
 

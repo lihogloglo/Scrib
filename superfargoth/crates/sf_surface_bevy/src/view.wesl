@@ -1,5 +1,5 @@
 // Surface weather on the view (`sf_surface_bevy::view`; surface-weather.md "Shader
-// integration"): the mesh-view bindings 43-48 that the vendored bevy_pbr patch "SW" adds to
+// integration"): the mesh-view bindings 43-49 that the vendored bevy_pbr patch "SW" adds to
 // views with a `bevy_pbr::SurfaceWeatherView` (render/surface_weather.rs; numbers checked by a
 // test), and the entry points every lit material calls under `@if(SURFACE_WEATHER)`:
 // `apply_surface_weather_standard` from bevy_pbr's `render/pbr.wesl`, `apply_surface_weather`
@@ -23,10 +23,11 @@ import sf_surface_bevy::layer::{
 @group(0) @binding(46) var surface_noise: texture_2d<f32>;
 @group(0) @binding(47) var surface_sampler: sampler;
 @group(0) @binding(48) var surface_shelter_sampler: sampler;
+@group(0) @binding(49) var surface_canopy: texture_2d<f32>;
 
 /// The layer on the view's resources.
 fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {
-    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise);
+    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_canopy);
 }
 
 /// A layer input for `pbr` of class `surface_class`: porosity from the material (Lagarde's

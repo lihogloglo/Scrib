@@ -23,7 +23,7 @@ import package::render::{
 import package::render::pbr_functions::visibility_range_dither;
 
 // superfargoth patch (own, SW): surface weather (render/surface_weather.rs; the module is
-// sf_surface_bevy's, which declares the view bindings 43-48).
+// sf_surface_bevy's, which declares the view bindings 43-49).
 @if(SURFACE_WEATHER)
 import sf_surface_bevy::view::apply_surface_weather_standard;
 

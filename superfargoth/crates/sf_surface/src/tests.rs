@@ -165,6 +165,48 @@ fn snow_decays_three_and_ash_four_times_slower_than_wetness() {
 }
 
 #[test]
+fn rain_washes_ash_faster_than_snow_and_both_faster_than_dry_decay() {
+    let t = tuning();
+    let g = CellGrid::new(ws(), &raster());
+    let cell = IVec2::new(1, 1);
+    let covered = || {
+        let mut s = started(2);
+        s.set_cell(&ws(), cell, Channel::Snow, 1.0);
+        s.set_cell(&ws(), cell, Channel::Ash, 1.0);
+        s
+    };
+    // A storm over the cell's climate (wetting 2/h), dry next door.
+    let storm = Const(vec![rain(2.0, 0.0), SurfaceRates::default()]);
+    let dry = Const(vec![SurfaceRates::default(); 2]);
+    let loss = |rates: &Const| {
+        let mut s = covered();
+        advance(&mut s, STEP, rates, &[&g], &t);
+        let c = s.cell(&ws(), cell);
+        (1.0 - c.snow, 1.0 - c.ash)
+    };
+    let (wet_snow, wet_ash) = loss(&storm);
+    let (dry_snow, dry_ash) = loss(&dry);
+    assert!(wet_ash > wet_snow && wet_snow > dry_snow && dry_snow > dry_ash, "{wet_ash} {wet_snow} {dry_snow} {dry_ash}");
+    // Closed forms: ash goes at ash_wash × 2 per hour (15 game minutes), snow at snow_wash × 2
+    // (1.5 h), with no drying while it rains.
+    assert!((wet_ash - t.ash_wash * 2.0 * STEP as f32).abs() < 1e-6, "{wet_ash}");
+    assert!((wet_snow - t.snow_wash * 2.0 * STEP as f32).abs() < 1e-6, "{wet_snow}");
+    let mut s = covered();
+    advance(&mut s, 2.0 * STEP, &storm, &[&g], &t);
+    assert_eq!(s.cell(&ws(), cell).ash, 0.0, "ash gone within 20 game minutes");
+    assert!(s.cell(&ws(), cell).snow > 0.5);
+    advance(&mut s, 1.5, &storm, &[&g], &t);
+    assert_eq!(s.active_cells(), 0, "snow gone at 1.5 h; the empty cell drops");
+    // On the step grid: one long advance equals its steps bit for bit.
+    let (mut a, mut b) = (covered(), covered());
+    advance(&mut a, 1.0, &storm, &[&g], &t);
+    for k in 1..=6 {
+        advance(&mut b, f64::from(k) * STEP, &storm, &[&g], &t);
+    }
+    assert_eq!(a, b);
+}
+
+#[test]
 fn cell_rates_equal_the_raster_blend_at_cell_centres() {
     let r = raster();
     let g = CellGrid::new(ws(), &r);

@@ -63,6 +63,9 @@ SOFTWARE.
 - Ported into: `superfargoth/crates/sf_surface_bevy/src/layer.wesl` (shelter exposure: 6-texel tent over nine gathers,
   cover ramp, slope rise; wall streaks, wall and down-facing wetness, wet saturation; constants re-calibrated in meters)
   and its CPU twin `superfargoth/crates/sf_surface/src/layer.rs` (surface-weather.md W3).
+- Also W2b (technique, no code): partial leaf shelter (`roofLeaves`, `LEAF_HOLD`) re-done as a separate canopy depth
+  map in `layer.wesl`; rain washing ash (`sWashRate`) and quickening snow melt (`apps/openmw/mwrender/clockwork/scene/
+  surfaceweather.cpp`) as linear wash rates in `superfargoth/crates/sf_surface/src/lib.rs` (`SurfaceTuning`).
 
 ## openmw-rtx (albedo de-lighting)
 

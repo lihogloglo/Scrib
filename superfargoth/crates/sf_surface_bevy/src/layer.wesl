@@ -3,11 +3,12 @@
 // lighting. Binding-agnostic: the caller passes the uniform and textures (`view.wesl` passes the
 // mesh-view bindings of the vendored bevy_pbr patch "SW").
 //
-// As built W3: shelter exposure (vertical depth map, Clockwork's 6-texel tent over nine gathers
-// with a soft cover ramp), the cell window lookup, the debug views, and wetness: Lagarde's wet
-// surface model (porosity-weighted albedo darkening and gloss), a thin water film past
-// saturation (water roughness and F0) that flattens the normal-map detail toward the
-// geometric normal in Mikkelsen's surface-gradient framework, and world-plane wall streaks.
+// As built W3 (+ W2b canopy): shelter exposure (vertical depth maps, solid and leaves,
+// Clockwork's 6-texel tent over nine gathers with a soft cover ramp), the cell window lookup,
+// the debug views, and wetness: Lagarde's wet surface model (porosity-weighted albedo
+// darkening and gloss), a thin water film past saturation (water roughness and F0) that flattens
+// the normal-map detail toward the geometric normal in Mikkelsen's surface-gradient framework,
+// and world-plane wall streaks.
 // Puddles (W4) and cover (W5) add to the same gradient before the one resolve.
 //
 // Ported shapes (constants re-calibrated in meters): `surfaceExposure` (tent weights, cover
@@ -36,6 +37,8 @@ struct SurfaceUniform {
     misc: vec4<u32>,
     /// Reserved for W4: x seconds, y rain at the camera.
     time: vec4<f32>,
+    /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through.
+    canopy: vec4<f32>,
 }
 
 const FLAG_WET: u32 = 1u;
@@ -143,7 +146,10 @@ fn surface_cell_load(cells: texture_2d<f32>, u: SurfaceUniform, p: vec3<f32>) ->
 /// slanting rain) around the point looked up `SHELTER_NORMAL_OFFSET_M` out along the normal;
 /// a caster shelters by how far it sits above the point (ramp NEAR..FULL, raised by the
 /// slope's own rise over two texels). Open sky outside the map (far roofs are exposed).
-fn surface_exposure(shelter: texture_2d<f32>, shelter_sampler: sampler, u: SurfaceUniform, p: vec3<f32>, n_geo: vec3<f32>) -> f32 {
+/// Leaves (the canopy map, same texels and tent) cover a fraction of the tent and hold back
+/// `1 - canopy.y` of the rain where they cover it all (Clockwork `roofLeaves` / `LEAF_HOLD`:
+/// partial shelter under trees; ours reads leaf cover from its own map, not a checkerboard).
+fn surface_exposure(shelter: texture_2d<f32>, canopy: texture_2d<f32>, shelter_sampler: sampler, u: SurfaceUniform, p: vec3<f32>, n_geo: vec3<f32>) -> f32 {
     if u.shelter.x == 0.0 {
         return 1.0;
     }
@@ -161,7 +167,9 @@ fn surface_exposure(shelter: texture_2d<f32>, shelter_sampler: sampler, u: Surfa
     let near = vec4(SHELTER_NEAR_M + rise);
     let full = vec4(SHELTER_FULL_M + rise);
     let blend = fract(uv * size - 0.5);
+    let leaves_on = u.canopy.x > 0.0;
     var open = 0.0;
+    var leaves = 0.0;
     var weight = 0.0;
     for (var row = 0; row < 3; row++) {
         for (var column = 0; column < 3; column++) {
@@ -177,9 +185,14 @@ fn surface_exposure(shelter: texture_2d<f32>, shelter_sampler: sampler, u: Surfa
             let w = vec4(lw.x * hw.y, hw.x * hw.y, hw.x * lw.y, lw.x * lw.y);
             open += dot(gap, w);
             weight += dot(w, vec4(1.0));
+            if leaves_on {
+                let leaf_over = (textureGather(0, canopy, shelter_sampler, uv + shift) - vec4(c.z)) * u.shelter.y;
+                leaves += dot(smoothstep(near, full, leaf_over), w);
+            }
         }
     }
-    return mix(open / weight, 1.0, smoothstep(SHELTER_FADE_START, 1.0, edge));
+    let leaf_hold = (1.0 - u.canopy.y) * (leaves / weight);
+    return mix(open / weight * (1.0 - leaf_hold), 1.0, smoothstep(SHELTER_FADE_START, 1.0, edge));
 }
 
 /// Surface gradient of a perturbed normal `nn` against the geometric normal `n`
@@ -243,6 +256,7 @@ fn apply_surface_layer(
     shelter: texture_2d<f32>,
     shelter_sampler: sampler,
     noise: texture_2d<f32>,
+    canopy: texture_2d<f32>,
 ) {
     let flags = u.misc.x;
     let debug = u.misc.y;
@@ -256,7 +270,7 @@ fn apply_surface_layer(
         let shade = 0.45 + 0.55 * sqrt(saturate(luma * 2.0));
         var tint = vec3(0.5);
         if debug == DEBUG_EXPOSURE {
-            let e = surface_exposure(shelter, shelter_sampler, u, s.world_pos, (*pbr).world_normal);
+            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, (*pbr).world_normal);
             // Sheltered blue, open sky warm yellow; detail kept through the albedo's luminance.
             tint = mix(vec3(0.05, 0.2, 1.0), vec3(1.0, 0.8, 0.15), e);
         } else if debug == DEBUG_CELLS {
@@ -293,7 +307,7 @@ fn apply_surface_layer(
         let n = textureSampleLevel(noise, samp, s.world_pos.xz / PATCH_TILE_M, 0.0).r;
         wet = smoothstep(n * 0.6, n * 0.6 + 0.4, wet);
         if s.surface_class != CLASS_FAR && wet > 0.0 {
-            wet *= surface_exposure(shelter, shelter_sampler, u, s.world_pos, n_geo);
+            wet *= surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, n_geo);
         }
     }
     if wet <= 0.0 {

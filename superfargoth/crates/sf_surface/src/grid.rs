@@ -142,8 +142,18 @@ impl CellGrid {
     }
 }
 
-/// A cell's blended rates: snow (× altitude factor), ash, and the drying rate.
-pub(crate) fn blend(site: &[SiteEntry], r: &[SurfaceRates], t: &SurfaceTuning) -> (f32, f32, f32) {
+/// A cell's blended rates per game hour: snowfall (× altitude factor), ash fall, rain (the
+/// wetting rate, which washes cover off) and drying.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct CellRates {
+    pub snow: f32,
+    pub ash: f32,
+    pub rain: f32,
+    pub drying: f32,
+}
+
+/// A cell's blended rates over its site.
+pub(crate) fn blend(site: &[SiteEntry], r: &[SurfaceRates], t: &SurfaceTuning) -> CellRates {
     let mut b = SurfaceRates::default();
     let mut snow = 0.0;
     for e in site {
@@ -153,7 +163,7 @@ pub(crate) fn blend(site: &[SiteEntry], r: &[SurfaceRates], t: &SurfaceTuning) -
         b.wet += rc.wet * e.weight;
         b.drying += rc.drying * e.weight;
     }
-    (snow, b.ash, t.drying(&b))
+    CellRates { snow, ash: b.ash, rain: b.wet, drying: t.drying(&b) }
 }
 
 /// GLSL `smoothstep`.

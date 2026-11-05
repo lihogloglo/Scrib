@@ -1,5 +1,5 @@
 //! Render world: the uniform buffer, the samplers, and the view component of the vendored
-//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-48). Each frame
+//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-49). Each frame
 //! the cameras marked [`SurfaceWeatherCamera`] get the component on their render-world view
 //! (once the textures are on the GPU); views that lost the mark lose it, and with it the
 //! `SURFACE_WEATHER` shader def (interiors pay nothing). Same shape as `sf_gi_bevy`'s
@@ -54,7 +54,7 @@ impl ViewState {
                 min_filter: FilterMode::Linear,
                 ..SamplerDescriptor::default()
             }),
-            // The shelter gather: unfiltered depth, clamped at the map's edge.
+            // The shelter and canopy gathers: unfiltered depth, clamped at the maps' edge.
             shelter_sampler: device.create_sampler(&SamplerDescriptor {
                 label: Some("surface_weather_shelter_sampler"),
                 address_mode_u: AddressMode::ClampToEdge,
@@ -100,6 +100,7 @@ pub(crate) fn extract_view(
             noise: view_of(&images, &gpu.noise)?,
             sampler: state.sampler.clone(),
             shelter_sampler: state.shelter_sampler.clone(),
+            canopy: view_of(&images, &gpu.canopy)?,
         })
     });
     let now: Vec<Entity> = match bindings {

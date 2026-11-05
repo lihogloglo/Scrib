@@ -1,9 +1,10 @@
 //! superfargoth patch (own, SW): surface weather bindings in the mesh view bind group.
 //!
 //! A view with a [`SurfaceWeatherView`] component gets [`MeshPipelineViewLayoutKey::SURFACE_WEATHER`]
-//! (and the `SURFACE_WEATHER` shader def, main pass only): bindings 43-48 of the mesh view bind
+//! (and the `SURFACE_WEATHER` shader def, main pass only): bindings 43-49 of the mesh view bind
 //! group hold the surface weather uniform, the cell window, the shelter depth map, the noise
-//! atlas, a filtering sampler and a non-filtering one (the shelter gather). The surface weather
+//! atlas, a filtering sampler, a non-filtering one (the shelter gather) and the canopy depth
+//! map (leaf casters only; they shelter partially). The surface weather
 //! system (superfargoth `sf_surface_bevy`) owns the resources, inserts the component on its
 //! cameras' render-world view entities, and provides the WESL module `sf_surface_bevy::view`
 //! that declares these bindings and that `render/pbr.wesl` calls between
@@ -26,10 +27,12 @@ pub const SURFACE_WEATHER_SHELTER_BINDING: u32 = 45;
 pub const SURFACE_WEATHER_NOISE_BINDING: u32 = 46;
 pub const SURFACE_WEATHER_SAMPLER_BINDING: u32 = 47;
 pub const SURFACE_WEATHER_SHELTER_SAMPLER_BINDING: u32 = 48;
+pub const SURFACE_WEATHER_CANOPY_BINDING: u32 = 49;
 
 /// What a view reads: a uniform buffer (layout owned by the provider), a filterable 2D cell
 /// texture, an unfilterable-float 2D shelter depth texture (`Depth32Float` is fine), a filterable
-/// 2D noise texture, a filtering sampler (cells, noise) and a non-filtering one (shelter).
+/// 2D noise texture, a filtering sampler (cells, noise), a non-filtering one (shelter, canopy) and
+/// an unfilterable-float 2D canopy depth texture.
 #[derive(Clone)]
 pub struct SurfaceWeatherBindings {
     pub uniform: Buffer,
@@ -38,6 +41,7 @@ pub struct SurfaceWeatherBindings {
     pub noise: TextureView,
     pub sampler: Sampler,
     pub shelter_sampler: Sampler,
+    pub canopy: TextureView,
 }
 
 /// On a render-world view entity: the view's lit materials apply surface weather.

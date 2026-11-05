@@ -359,6 +359,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // WE3 part 2b: rain, snow, ash and blight fall from the frame (`sf_precip_bevy`).
         // Surface weather W2-W3: cell window, shelter map, wetness on every lit material
         // (`surface set wet 1`, `surface debug exposure|cells|porosity`; `--off surface|wet|shelter`).
+        // W2b: the shelter maps redraw at night; leaves shelter partially (canopy map).
         app.add_plugins((
             WeatherPlugin { book: weather.book, state: weather.state },
             sf_weather_bevy::sf_precip_bevy::PrecipPlugin,
@@ -373,6 +374,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             })
             .configure_sets(PostUpdate, sf_surface_bevy::SurfaceSystems.after(TerrainSystems::Update))
             .add_systems(PostUpdate, surface_glue.after(sync_origin).before(sf_surface_bevy::SurfaceSystems))
+            .add_systems(PostUpdate, shelter_foliage.before(sf_surface_bevy::SurfaceSystems))
             .add_observer(no_surface_shelter_terrain);
         // AU-1: weather loops and region one-shots into the audio plugin (`crate::audio`).
         app.add_plugins(sf_audio_bevy::weather::WeatherAudioPlugin);
@@ -1321,6 +1323,29 @@ fn surface_glue(
 /// Terrain patches stay out of the shelter map: a heightfield shelters nothing from straight above.
 fn no_surface_shelter_terrain(add: On<Add<sf_terrain_bevy::TerrainPatch>>, mut commands: Commands) {
     commands.entity(add.entity).try_insert(sf_surface_bevy::NoSurfaceShelter);
+}
+
+/// Whether `m` is a leaf material: the game's leaf rule (`mw_assets` `Surface::foliage`, cutout
+/// leaf cards in flora and tree NIFs) gives exactly those diffuse transmission, and leaves are
+/// alpha-masked (particles also transmit but blend). With `--off foliagetransmission` leaves
+/// lose the mark and shelter fully.
+fn is_leaf_material(m: &StandardMaterial) -> bool {
+    m.diffuse_transmission > 0.0 && matches!(m.alpha_mode, AlphaMode::Mask(_))
+}
+
+/// Leaf meshes shelter partially (surface weather W2b): they draw into the canopy map, not the
+/// shelter map. Every spawn path (streamed statics, NIF scenes, cooked models), by looking at new
+/// mesh entities' materials (as `mw_assets`' leaf shadow receivers do).
+fn shelter_foliage(
+    mut commands: Commands,
+    added: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Added<MeshMaterial3d<StandardMaterial>>>,
+    materials: Res<Assets<StandardMaterial>>,
+) {
+    for (entity, material) in &added {
+        if materials.get(&material.0).is_some_and(is_leaf_material) {
+            commands.entity(entity).try_insert(sf_surface_bevy::ShelterFoliage);
+        }
+    }
 }
 
 /// The wind field's floating origin (the terrain's, set by [`sync_origin`]).

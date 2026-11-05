@@ -5,14 +5,16 @@
 //! - **Cell window** ([`cells`]): `Rgba8Unorm` 128², one texel per 32 m cell around the camera
 //!   (R wet, G puddle, B snow, A ash), toroidal; strips on recenter, all of it when
 //!   [`WorldSurface::generation`] moves.
-//! - **Shelter map** ([`shelter`]): `Depth32Float` 1024² over 128 m, vertical, a subview of
-//!   Bevy's shadow pass (`sf_sky_bevy::sun_view`).
+//! - **Shelter and canopy maps** ([`shelter`]): `Depth32Float` 1024² over 128 m, vertical, two
+//!   extra views of Bevy's shadow pass (`sf_sky_bevy::sun_view`) owned by an anchor of their
+//!   own (drawn at night too); solid casters in one, [`ShelterFoliage`] leaves (partial
+//!   shelter) in the other.
 //! - **Noise atlas**: `Rgba8Unorm` 256², repeat, generated at startup.
 //! - **[`SurfaceUniform`]**: its `vec4` slots, written to a render-world uniform buffer when they
 //!   change ([`render`]).
 //! - **[`SurfaceWeatherCamera`]**: the exterior camera that gets surface weather (the game marks
 //!   it). Its render-world view gets `bevy_pbr::SurfaceWeatherView`: the vendored `bevy_pbr`
-//!   patch "SW" binds these resources at mesh-view bindings 43-48 and sets the
+//!   patch "SW" binds these resources at mesh-view bindings 43-49 and sets the
 //!   `SURFACE_WEATHER` shader def, so every `StandardMaterial` (statics, characters, held items,
 //!   fades), the terrain and the far proxies run the layer in the forward main pass.
 //! - **WESL**: `sf_surface_bevy::layer` (`apply_surface_layer`, binding-agnostic) and
@@ -46,7 +48,7 @@ use sf_surface::view::{NOISE_SIZE, WINDOW_CELLS, noise_atlas};
 use sf_weather_bevy::SurfaceDebug;
 
 pub use cells::{CellWrite, CellWrites};
-pub use shelter::{NoSurfaceShelter, SHELTER_SUBVIEW};
+pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
 pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
 
 /// Marks the camera that gets surface weather (one exterior camera; the game inserts and
@@ -97,6 +99,8 @@ impl SurfaceSettings {
 pub struct SurfaceGpu {
     pub cells: Handle<Image>,
     pub shelter: Handle<Image>,
+    /// Leaf casters only (partial shelter).
+    pub canopy: Handle<Image>,
     pub noise: Handle<Image>,
 }
 
@@ -105,6 +109,8 @@ pub struct SurfaceGpu {
 pub struct SurfaceStats {
     pub shelter_redraws: u64,
     pub shelter_casters: usize,
+    /// Leaf casters in the last canopy redraw.
+    pub canopy_casters: usize,
     /// Cell texels written (strips and full rewrites).
     pub cell_texels: u64,
     pub full_uploads: u64,
@@ -144,6 +150,7 @@ impl Plugin for SurfaceWeatherPlugin {
                     .in_set(SurfaceSystems),
             );
         sf_sky_bevy::sun_view::add_sun_view::<shelter::ShelterFrame>(app);
+        sf_sky_bevy::sun_view::add_sun_view::<shelter::CanopyFrame>(app);
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
@@ -205,8 +212,10 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(SurfaceGpu {
         cells: images.add(cells_image()),
         shelter: shelter::shelter_handle(&mut images),
+        canopy: shelter::shelter_handle(&mut images),
         noise: images.add(noise_image()),
     });
+    shelter::spawn_anchor(&mut commands);
 }
 
 fn debug_view(debug: Res<SurfaceDebug>, mut uniform: ResMut<SurfaceUniform>) {

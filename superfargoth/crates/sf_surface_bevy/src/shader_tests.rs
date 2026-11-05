@@ -197,6 +197,7 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             binding("surface_noise"),
             binding("surface_sampler"),
             binding("surface_shelter_sampler"),
+            binding("surface_canopy"),
         ],
         [
             bevy_pbr::SURFACE_WEATHER_UNIFORM_BINDING,
@@ -205,6 +206,7 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             bevy_pbr::SURFACE_WEATHER_NOISE_BINDING,
             bevy_pbr::SURFACE_WEATHER_SAMPLER_BINDING,
             bevy_pbr::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING,
+            bevy_pbr::SURFACE_WEATHER_CANOPY_BINDING,
         ]
     );
 }

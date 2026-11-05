@@ -223,6 +223,11 @@ pub const SHELTER_RECENTER_M: f32 = 16.0;
 pub const SHELTER_RECENTER_Y_M: f32 = 8.0;
 /// Fewest frames between redraws forced by casters streaming in.
 pub const SHELTER_REFRESH_FRAMES: u32 = 30;
+/// Share of the rain a full leaf canopy lets through (owner 2026-11-05: "~40% passes
+/// through"; roofs let none). Casters the game marks as foliage draw into the canopy map, and
+/// the layer scales exposure by `1 − (1 − pass)·leaf cover` (Clockwork `LEAF_HOLD`, its
+/// `roofLeaves`, holds back at most 0.4; ours holds back 0.6, the owner's number).
+pub const SHELTER_LEAF_PASS: f32 = 0.4;
 
 /// The shelter centre for a camera at `p` (render space): snapped to whole texels so a
 /// redraw never shifts the texel grid against the world (no shimmer between redraws).

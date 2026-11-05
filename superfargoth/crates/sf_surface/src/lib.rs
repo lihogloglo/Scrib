@@ -19,7 +19,9 @@
 //!
 //! Rates are forward Euler on piecewise-constant rates (Clockwork's per-region accumulators,
 //! `apps/openmw/mwrender/clockwork/scene/surfaceweather.cpp`, re-expressed per game hour; no
-//! code ported).
+//! code ported). Rain washes snow and ash off at a rate proportional to its wetting rate
+//! ([`SurfaceTuning::snow_wash`], [`SurfaceTuning::ash_wash`]: Clockwork's rain-quickened melt
+//! and `sWashRate`, linear here).
 
 mod grid;
 pub mod layer;
@@ -61,6 +63,14 @@ pub struct SurfaceTuning {
     pub ash_clear_mult: f32,
     /// Puddles rise only while the climate's wetness is at least this.
     pub puddle_from_wet: f32,
+    /// Rain washes snow off: snow cleared per unit of wetting rate (`SurfaceRates::wet`, the
+    /// rain's intensity), while drying stops. 1/3: a storm wetting at 2/h melts 2/3 per hour,
+    /// four times the dry melt (Clockwork's `(1 + 3·rain)` melt factor).
+    pub snow_wash: f32,
+    /// Rain washes ash off, much faster than snow: ash cleared per unit of wetting rate. 2: a
+    /// storm (wetting 2/h) clears full ash in 15 game minutes (Clockwork's `sWashRate`: e-fold
+    /// in 4 minutes), 32 times the dry clearing.
+    pub ash_wash: f32,
 }
 
 impl Default for SurfaceTuning {
@@ -73,6 +83,8 @@ impl Default for SurfaceTuning {
             snow_melt_mult: 1.0 / 3.0,
             ash_clear_mult: 0.25,
             puddle_from_wet: 0.9,
+            snow_wash: 1.0 / 3.0,
+            ash_wash: 2.0,
         }
     }
 }
@@ -307,9 +319,10 @@ fn step_climates(climates: &mut [ClimateSurface], rates: &[SurfaceRates], dt: f3
     }
 }
 
-/// A cover channel: rises at `rate` while it falls, else decays at `mult · d`.
-fn cover(v: f32, rate: f32, mult: f32, d: f32, dt: f32) -> f32 {
-    unit(if rate > 0.0 { v + rate * dt } else { v - mult * d * dt })
+/// A cover channel: rises at `rate` while it falls, else decays at `mult · d`; rain washes it
+/// off at `wash` either way (a mixed site: sleet on falling snow, rain through an ash fall).
+fn cover(v: f32, rate: f32, mult: f32, d: f32, wash: f32, dt: f32) -> f32 {
+    unit(if rate > 0.0 { v + (rate - wash) * dt } else { v - (mult * d + wash) * dt })
 }
 
 /// Clamped to [0, 1]; below half a save quantum is 0 (so drained channels and cells drop
@@ -339,27 +352,28 @@ fn step_cells(cells: &mut HashMap<Worldspace, HashMap<IVec2, CellSurface>>, grid
                 continue;
             }
             let cell = grid.cell(ix);
-            let (snow, ash, d) = grid::blend(site, r, t);
+            let b = grid::blend(site, r, t);
             let s = map.entry(cell).or_default();
-            s.snow = cover(s.snow, snow, t.snow_melt_mult, d, dt);
-            s.ash = cover(s.ash, ash, t.ash_clear_mult, d, dt);
+            s.snow = cover(s.snow, b.snow, t.snow_melt_mult, b.drying, t.snow_wash * b.rain, dt);
+            s.ash = cover(s.ash, b.ash, t.ash_clear_mult, b.drying, t.ash_wash * b.rain, dt);
         }
     }
-    // The rest decay.
+    // The rest decay (and rain washes them).
     let bare = 1.0 / t.dry_h.max(1e-3);
     for (cell, s) in &mut map {
-        let d = match grid.index(*cell) {
+        let (d, rain) = match grid.index(*cell) {
             Some(ix) => {
                 let site = grid.site(ix);
                 if site.iter().any(|e| falling(e.climate)) {
                     continue;
                 }
-                grid::blend(site, r, t).2
+                let b = grid::blend(site, r, t);
+                (b.drying, b.rain)
             }
-            None => bare,
+            None => (bare, 0.0),
         };
-        s.snow = cover(s.snow, 0.0, t.snow_melt_mult, d, dt);
-        s.ash = cover(s.ash, 0.0, t.ash_clear_mult, d, dt);
+        s.snow = cover(s.snow, 0.0, t.snow_melt_mult, d, t.snow_wash * rain, dt);
+        s.ash = cover(s.ash, 0.0, t.ash_clear_mult, d, t.ash_wash * rain, dt);
     }
     map.retain(|_, s| !s.is_zero());
     if !map.is_empty() {

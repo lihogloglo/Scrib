@@ -144,15 +144,16 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   coarse at 160x90x64 / 384 m, in-scatter too weak against the fog's ambient, shadow term not reaching the froxels.
 - Status: known bug: not diagnosed (owner pass 2026-11-02).
 
-### SW-2: Surface weather shelter and cells debug tint (surface-weather.md W2)
-- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather clear`;
-  console (`` ` ``): `surface debug exposure`, later `surface debug cells`, `surface set wet 0.6`, `surface debug off`.
-- Look for (exposure, terrain only in W2): open ground warm yellow; ground under roofs, eaves, the bridge arches and
-  tree canopies blue with soft 3×3 edges; slopes not self-shadowed blue; the tint follows you across Balmora with no
-  pop when it redraws (every 16 m) and turns open-sky yellow toward ~64 m out.
-- Look for (cells): grey 32 m squares with dark borders that stay put as you walk; after `surface set wet 0.6` they
-  turn blue; purple only past ~2 km. `surface debug off`: terrain looks exactly as before.
-- Status: awaiting owner (built 2026-11-05).
+### SW-2: Surface weather shelter, night and trees (surface-weather.md W2, W2b)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 23 --weather clear` (night: no
+  sun shadows); console (`` ` ``): `surface debug exposure`, `surface set wet 1`, later `surface debug cells`, `surface debug off`.
+- Look for (exposure, night): open ground warm yellow; under roofs, eaves and the bridge arches deep blue (full shelter);
+  under tree canopies and bushes only partly blue (about 60% held back, leafy gaps lighter); slopes not self-shadowed;
+  walk 20 m: the tint redraws (no stale map from the last daylight), no pop, fades to yellow ~64 m out.
+- With `surface debug off` + wet 1: ground under trees visibly wet but less than open ground; under roofs dry.
+- Cells: grey 32 m squares, dark borders, fixed as you walk; blue after wet; purple only past ~2 km.
+- A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
+- Status: awaiting owner (W2 built 2026-11-05; W2b night + trees 2026-11-05).
 
 ### SW-3: Wetness after rain (surface-weather.md W3)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:

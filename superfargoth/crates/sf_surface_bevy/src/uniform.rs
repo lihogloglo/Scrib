@@ -6,14 +6,15 @@ use bevy_ecs::prelude::*;
 use bevy_math::{IVec4, Mat4, Vec4};
 use sf_surface::view::DebugView;
 
-/// Slots: the shelter matrix (4 columns), window, cells, shelter, misc, time.
+/// Slots: the shelter matrix (4 columns), window, cells, shelter, misc, time, canopy.
 pub const U_SHELTER_CLIP: usize = 0;
 pub const U_WINDOW: usize = 4;
 pub const U_CELLS: usize = 5;
 pub const U_SHELTER: usize = 6;
 pub const U_MISC: usize = 7;
 pub const U_TIME: usize = 8;
-pub const U_SLOTS: usize = 9;
+pub const U_CANOPY: usize = 9;
+pub const U_SLOTS: usize = 10;
 
 /// Layer flags (`misc.x`): which channels are non-zero anywhere in the cell window.
 pub const FLAG_WET: u32 = 1;
@@ -39,6 +40,8 @@ pub struct SurfaceUniform {
     pub debug: DebugView,
     /// Reserved for W3-W4 (x seconds, y rain at the camera).
     pub time: Vec4,
+    /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through.
+    pub canopy: Vec4,
 }
 
 impl Default for SurfaceUniform {
@@ -51,6 +54,7 @@ impl Default for SurfaceUniform {
             flags: 0,
             debug: DebugView::Off,
             time: Vec4::ZERO,
+            canopy: Vec4::ZERO,
         }
     }
 }
@@ -78,6 +82,7 @@ impl SurfaceUniform {
         s[U_SHELTER] = f(self.shelter);
         s[U_MISC] = [self.flags, self.debug as u32, 0, 0];
         s[U_TIME] = f(self.time);
+        s[U_CANOPY] = f(self.canopy);
         s
     }
 }

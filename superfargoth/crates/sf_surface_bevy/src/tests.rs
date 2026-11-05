@@ -7,7 +7,7 @@ use bevy_asset::{Assets, Handle};
 use bevy_camera::Camera;
 use bevy_camera::visibility::InheritedVisibility;
 use bevy_image::Image;
-use bevy_light::{DirectionalLight, NotShadowCaster};
+use bevy_light::NotShadowCaster;
 use bevy_math::{DVec2, IVec2, IVec3, Vec3, Vec4};
 use bevy_mesh::Mesh3d;
 use bevy_mesh::skinning::SkinnedMesh;
@@ -23,7 +23,7 @@ use sf_weather_bevy::sf_weather::{
 use sf_weather_bevy::{SurfaceDebug, WeatherPlugin, WeatherRecords, WorldSurface, WorldWeatherMap};
 use sf_wind_bevy::WindField;
 
-use crate::shelter::ShelterFrame;
+use crate::shelter::{CanopyFrame, ShelterAnchor, ShelterFrame};
 use crate::uniform::*;
 use crate::*;
 
@@ -60,6 +60,7 @@ fn uniform_matches_the_wgsl_struct() {
             ("shelter", "vec4<f32>"),
             ("misc", "vec4<u32>"),
             ("time", "vec4<f32>"),
+            ("canopy", "vec4<f32>"),
         ]
     );
     assert_eq!(
@@ -70,9 +71,10 @@ fn uniform_matches_the_wgsl_struct() {
             U_SHELTER,
             U_MISC,
             U_TIME,
+            U_CANOPY,
             U_SLOTS
         ],
-        [0, 4, 5, 6, 7, 8, 9]
+        [0, 4, 5, 6, 7, 8, 9, 10]
     );
     let konst = |name: &str| -> u32 {
         let line = wgsl
@@ -201,16 +203,17 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
             GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0)),
         ))
         .id();
-    app.world_mut().spawn(DirectionalLight {
-        shadow_maps_enabled: true,
-        illuminance: 1000.0,
-        ..DirectionalLight::default()
-    });
+    // No directional light at all (night, or the sky turned the sun's shadows off): the maps
+    // belong to the plugin's own anchor and are drawn anyway.
     let visible = InheritedVisibility::VISIBLE;
     let at = |x: f32, y: f32| GlobalTransform::from_translation(Vec3::new(x, y, 20.0));
     let roof = app
         .world_mut()
         .spawn((Mesh3d(Handle::default()), at(-238.0, 9.0), visible))
+        .id();
+    let tree = app
+        .world_mut()
+        .spawn((Mesh3d(Handle::default()), at(-236.0, 12.0), visible, ShelterFoliage))
         .id();
     app.world_mut()
         .spawn((Mesh3d(Handle::default()), at(500.0, 9.0), visible));
@@ -275,6 +278,24 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     assert_eq!((req.subview, req.size), (SHELTER_SUBVIEW, 1024));
     let gpu = app.world().resource::<SurfaceGpu>().clone();
     assert_eq!(req.image, gpu.shelter.id());
+    let anchor = app.world().resource::<ShelterAnchor>().0;
+    assert_eq!(req.light, anchor, "owned by the anchor, not a light");
+    let leaves = app
+        .world()
+        .resource::<CanopyFrame>()
+        .0
+        .clone()
+        .expect("canopy redraw on the same frame");
+    assert_eq!(
+        leaves.casters.iter().map(|c| c.1.id()).collect::<Vec<_>>(),
+        vec![tree],
+        "leaves go to the canopy map only"
+    );
+    assert_eq!(
+        (leaves.light, leaves.subview, leaves.image, leaves.clip_from_world),
+        (anchor, CANOPY_SUBVIEW, gpu.canopy.id(), req.clip_from_world)
+    );
+    assert_eq!(u.canopy, Vec4::new(1.0, sf_surface::view::SHELTER_LEAF_PASS, 0.0, 0.0));
     // The roof sits over the camera's ground in the map, higher.
     let ground = u
         .shelter_clip_from_world

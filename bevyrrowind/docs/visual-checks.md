@@ -181,7 +181,7 @@ RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
 SW-3 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Wetness after rain, Seyda Neen: `surface set wet 1`, darker/glossier ground and walls, streaks, dry under roofs; A/B `--off wet`
-SW-2 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Surface weather debug tint: roofs, arches, trees sheltered (`surface debug exposure`), 32 m cells (`surface debug cells`), Balmora
+SW-2 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
 FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenellated edges on distant land in fog (2026-10-30)
 PH-14 | confirmed (2026-11-05) | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
