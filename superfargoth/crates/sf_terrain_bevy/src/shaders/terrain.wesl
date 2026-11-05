@@ -46,14 +46,24 @@ struct TerrainVertexOutput {
     @location(1) grid: vec2<f32>,
     @location(2) lod: f32,
     @location(3) @interpolate(flat) instance_index: u32,
+    /// Raised cover without prints (W6b; 0 without surface weather): its slope tilts the normal.
+    @location(4) raise: f32,
 }
 
 @vertex
 fn vertex(v: Vertex) -> TerrainVertexOutput {
     let t = common::terrain_vertex(v.position.xz, v.instance_index, true);
     var out: TerrainVertexOutput;
-    out.world_position = vec4<f32>(t.position, 1.0);
-    out.position = position_world_to_clip(t.position);
+    var p = t.position;
+    out.raise = 0.0;
+    // Raised cover (W6b): the same displacement as the prepass (`common::terrain_raise`).
+@if(SURFACE_WEATHER) {
+    let r = common::terrain_raise(t);
+    p.y += r.x;
+    out.raise = r.y;
+}
+    out.world_position = vec4<f32>(p, 1.0);
+    out.position = position_world_to_clip(p);
     out.grid = t.grid;
     out.lod = t.lod;
     out.instance_index = v.instance_index;
@@ -86,6 +96,22 @@ fn terrain_ground(xz: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(vec2<f32>(px - nx, pz - nz) / (2.0 * r), basin);
 }
 
+/// Surface weather W6b: the ground normal `n` tilted by the slope of the raised cover (`raise`,
+/// interpolated per vertex, without prints: their slope joins per pixel in the layer, W6a), from
+/// its screen derivatives against those of world XZ. Per-vertex central differences would cost
+/// four more exposure lookups (18 gathers each) per vertex in both passes.
+fn raised_normal(n: vec3<f32>, xz: vec2<f32>, raise: f32) -> vec3<f32> {
+    let ax = dpdx(xz);
+    let ay = dpdy(xz);
+    let r = vec2<f32>(dpdx(raise), dpdy(raise));
+    let det = ax.x * ay.y - ax.y * ay.x;
+    if abs(det) < 1e-12 || all(r == vec2<f32>(0.0)) {
+        return n;
+    }
+    let g = vec2<f32>(ay.y * r.x - ax.y * r.y, ax.x * r.y - ay.x * r.x) / det;
+    return normalize(n / max(n.y, 0.05) - vec3<f32>(g.x, 0.0, g.y));
+}
+
 /// Distance to the nearest triangle edge in pixels (quads split along the
 /// canonical (i, j)-(i+1, j+1) diagonal).
 fn edge_pixels(grid: vec2<f32>) -> f32 {
@@ -107,7 +133,9 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     let edges = edge_pixels(in.grid);
     let debug = debug_flags();
 
-    let n_geo = terrain_normal(xz, in.lod);
+    var n_geo = terrain_normal(xz, in.lod);
+@if(SURFACE_WEATHER)
+    n_geo = raised_normal(n_geo, xz, in.raise);
     let dist = distance(view.world_position, in.world_position.xyz);
     let s = terrain_surface(xz, wpos, dpx, dpy, n_geo, dist);
     var albedo = s.albedo;

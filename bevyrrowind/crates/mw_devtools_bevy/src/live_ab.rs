@@ -198,11 +198,15 @@ pub enum Switch {
     /// N3: the moons light the world at `sf_sky::Moonlight::full_lux` (phase-scaled, the
     /// weather's `Sun Night Color`); off: their disks' own dim illuminance (the old weak moon).
     Moonlight,
+    /// W5b: snow and ash cover (`SurfaceSettings::cover`; off: no cover look, no raised snow).
+    Cover,
+    /// W6: trails (`SurfaceSettings::trails`; off: no prints, the raised snow stays whole).
+    Trails,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -222,6 +226,8 @@ impl Switch {
         Self::CloudHistory,
         Self::NightSkyGlow,
         Self::Moonlight,
+        Self::Cover,
+        Self::Trails,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -245,6 +251,8 @@ impl Switch {
             Self::CloudHistory => "cloud_history",
             Self::NightSkyGlow => "night_sky_glow",
             Self::Moonlight => "moonlight",
+            Self::Cover => "cover",
+            Self::Trails => "trails",
         }
     }
 
@@ -277,6 +285,8 @@ impl Switch {
             Self::CloudHistory => "cloud temporal accumulation",
             Self::NightSkyGlow => "night sky glow",
             Self::Moonlight => "artistic moonlight",
+            Self::Cover => "snow and ash cover",
+            Self::Trails => "trails in the cover",
         }
     }
 
@@ -297,6 +307,8 @@ impl Switch {
             Self::TerrainIndirect => terrain.map(|t| !t.no_indirect),
             Self::TerrainTint => terrain.map(|t| !t.raw_layers),
             Self::Surface => s.surface.as_ref().map(|w| w.layer),
+            Self::Cover => s.surface.as_ref().map(|w| w.cover),
+            Self::Trails => s.surface.as_ref().map(|w| w.trails),
             Self::Fog => s.fog.as_ref().map(|f| f.enabled),
             Self::FogNightLight => s.fog.as_ref().map(|f| f.view_ambient > 0.0),
             Self::WeatherAmbient => s.sky_options.as_ref().map(|o| o.weather_ambient_tint),
@@ -314,7 +326,7 @@ impl Switch {
                 Self::Clouds | Self::CloudHistory => "not in this run (interior or --off clouds)",
                 Self::FarTint => "no far field here",
                 Self::Rings => "no streaming here",
-                Self::Surface => "not in this run (interior)",
+                Self::Surface | Self::Cover | Self::Trails => "not in this run (interior)",
                 Self::Fog | Self::FogNightLight => "not in this run (interior or --off sky)",
                 Self::WeatherAmbient | Self::NightSkyGlow | Self::Moonlight => "not in this run (--off sky)",
                 Self::AmbientSpecular => "not in this run (no PBR renderer)",
@@ -346,9 +358,13 @@ impl Switch {
                     r.enabled = v;
                 }
             }
-            Self::Surface => {
+            Self::Surface | Self::Cover | Self::Trails => {
                 if let Some(w) = s.surface.as_mut() {
-                    w.layer = v;
+                    match self {
+                        Self::Cover => w.cover = v,
+                        Self::Trails => w.trails = v,
+                        _ => w.layer = v,
+                    }
                 }
             }
             Self::Fog => {

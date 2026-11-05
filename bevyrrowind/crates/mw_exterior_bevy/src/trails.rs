@@ -21,8 +21,8 @@ use bevy::prelude::*;
 use mw_world::ids;
 use sf_anim_bevy::Animator;
 use sf_surface_bevy::sf_surface::trail::FOOT_HALF_M;
-use sf_surface_bevy::{SurfaceOrigin, SurfaceSettings, TrailStamp};
-use sf_terrain_bevy::TerrainHeightsMap;
+use sf_surface_bevy::{SurfaceOrigin, SurfaceSettings, SurfaceUniform, TrailStamp};
+use sf_terrain_bevy::{TerrainHeightsMap, TerrainSettings};
 
 /// Contact curve value above which a foot is planted.
 const PLANTED: f32 = 0.5;
@@ -42,11 +42,13 @@ pub(crate) fn foot_stamps(
     animators: Query<(Entity, &Animator, &GlobalTransform)>,
     heights: Option<Res<TerrainHeightsMap>>,
     settings: Res<SurfaceSettings>,
+    kickup: Res<sf_surface_bevy::KickupSettings>,
     origin: Res<SurfaceOrigin>,
     mut out: MessageWriter<TrailStamp>,
     mut plants: Local<HashMap<(Entity, usize), TrailStamp>>,
 ) {
-    if !settings.trails || !settings.cover || !settings.layer {
+    // The same foot-downs feed the prints (W6) and the kick-up puffs (W7).
+    if !(settings.trails || kickup.on) || !settings.cover || !settings.layer {
         plants.clear();
         return;
     }
@@ -90,4 +92,14 @@ pub(crate) fn foot_stamps(
         }
     }
     *plants = held;
+}
+
+/// W6b: the terrain's near CDLOD bounds grow by the deepest cover look's depth (snow drawn raised
+/// over the ground, `TerrainSettings::raise_m`), so culling stays conservative.
+pub fn terrain_raise(uniform: Res<SurfaceUniform>, terrain: Option<ResMut<TerrainSettings>>) {
+    let Some(mut terrain) = terrain else { return };
+    let raise = uniform.cover.iter().filter(|c| c.x > 0.0).map(|c| c.y).fold(0.0, f32::max);
+    if terrain.raise_m.to_bits() != raise.to_bits() {
+        terrain.raise_m = raise;
+    }
 }

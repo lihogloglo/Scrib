@@ -1,4 +1,4 @@
-# Surface weather: as built, archive (W1-W2)
+# Surface weather: as built, archive (W1-W2, W2b, W5a)
 
 Older slice notes moved out of [surface-weather-as-built.md](surface-weather-as-built.md) (budget, 2026-11-06,
 W6a). Code is the source of truth.
@@ -74,4 +74,72 @@ pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &WorldspaceId, p
 - **Tests:** `sf_surface` `view_tests` (recenter strips exact, wrap split, texels vs `sample`, shelter matrix,
   triggers, noise tiling); `sf_surface_bevy` (uniform ↔ WGSL struct and constants, naga parse + validate of
   `layer.wesl` with its import stubbed, headless plugin smoke: window corner, strips, casters, hook, no NaN).
+
+
+## W5a (2026-11-06): cover looks, records and the layer-array binding (no shader cover yet)
+
+- **Records** (`sf_surface::cover`): kind `surface.layer` = `SurfaceLayer { channel: snow|ash, albedo_height, normal?,
+  arm?, tiling_m (4), max_depth_m? (channel default 0.15/0.03), roughness (0.8), sparkle (0), contrast (1) }` (VFS path
+  strings, serde defaults in brackets; `normal` is optional: flat). `ActiveLayers { default, worldspaces }`: the
+  adapter's per-worldspace, per-channel pick; `resolve` gives none for a missing record or one of the other channel.
+- **GPU** (`sf_surface_bevy::cover`): the host inserts `CoverLayers([Option<CoverSource>; 2])` (record + decoded RGBA8;
+  this crate reads no files); on change `pack` builds `Rgba8Unorm` 512² × 4 slices (2c albedo, sRGB bytes: decode after
+  sampling; 2c+1 normal XY, roughness, AO) with `sf_terrain::bake::mip_chain` (now public, the terrain layers' filter),
+  else a 1×1 one-slice neutral placeholder. Patch "SW" bindings 50 (`texture_2d_array`, filterable) and 51 (repeat,
+  trilinear, aniso 16). Uniform slots 10-11 `snow_layer`/`ash_layer`: 1/tiling (0 = no look), depth, sparkle, contrast.
+- **Morrowind adapter** (`mw_weather::cover`, records in the synthesized weather source): `mw_surface/snow` from `LTEX`
+  `Tx_BM_snow_01.dds` (Bloodmoon), `mw_surface/ash` from `AL_ash_01` (`Tx_ashlands_08`), preference lists then the
+  lowest plain keyword texture; tiling one land texel (7.3 m), snow roughness 0.65 sparkle 1, ash roughness 0.9.
+  Picked for every worldspace. `WeatherSetup.cover` resolves them; `mw_exterior_bevy::surface_cover` decodes the
+  original `.dds`/`.tga` (not the de-lit KTX2: no BC7 decoder), prints `surface cover <channel>: <path> (ok|missing)`.
+- **Gap (logged):** Morrowind land textures have no height or normal map and no bake step derives one (the terrain
+  arrays use the same flat defaults): cover height is the albedo alpha (opaque = flat) and the normal is flat. W5b may
+  use the albedo luminance as height, as objects do for puddles; a derived normal is open.
+- **Not yet:** the array is filled once at startup for the exterior (no worldspace switch repack); nothing samples it.
+- **Tests:** record file parsing, defaults, patches, bad channel, pick (`sf_surface` `cover_tests`); pack layout, the
+  placeholder, uniform slots, plugin repack (`sf_surface_bevy` `cover_array_packs_layers_and_placeholder`); binding
+  numbers vs the patch, the view module unstripped (every binding declared and valid); adapter choice exact
+  (`mw_weather` `cover_layers_pick_land_textures`) and on the real install (`real_cover_layers_name_install_textures`).
+
+
+## W2b (2026-11-05): rain wash, light-independent shelter views, partial leaf shelter
+
+Owner answers 2026-11-05 (DECISIONS): rain washes snow away faster and ash much faster; the shelter map draws at night;
+foliage shelters partially (~40% through), roofs fully.
+- **Rain wash** (`sf_surface`): `SurfaceTuning::snow_wash` 1/3 and `ash_wash` 2, cover cleared per hour per unit of the
+  cell's blended wetting rate (`SurfaceRates::wet`, the rain's intensity: Morrowind rain 2 × raindrops/thunderstorm
+  raindrops). `cover()` subtracts `wash` whether or not the channel falls (sleet on snow, rain through an ash fall); drying
+  stays 0 while rain falls. A storm (wet 2/h): snow 2/3 per hour (4× the dry 1/6, Clockwork `surfaceweather.cpp`:
+  melt `(1 + 3·rain)/(sSnowLife·dry)`), ash 4 per hour, gone in 15 game minutes (Clockwork `sWashRate` 0.25/min
+  exponential: 95% in 12 min), 32× the dry 1/8. Linear like the rest of our model; no save change (tuning isn't saved).
+  `grid::blend` returns `CellRates { snow, ash, rain, drying }`.
+- **Own views** (`sf_sky_bevy::sun_view`): `DepthViewAnchor` + `depth_view_anchor()` (synced to the render world).
+  `extract_anchors` (installed once) gives the anchor's render entity the marker and empty
+  `RenderShadowMapVisibleEntities` / `RenderExtractedShadowMapVisibleEntities`; `inject_casters` and `spawn_view` accept an
+  anchor or a shadow-enabled directional light (`owner_enabled`). Why it is stock: Bevy 0.20 has no depth-only view API;
+  its shadow pass is the facility that draws mesh casters (alpha mask, GPU preprocessing) into a depth target, and
+  `queue_shadows` / `specialize_shadows` read a view's casters only from `get_shadow_map_visible_entities` on the entity
+  its `LightEntity` names (`Directional` picks the orthographic, unclipped-depth key); `prepare_lights` never sees our
+  views (spawned after it). Visibility collection already treats any entity with the tables as a shadow owner. Rejected:
+  a second `Camera3d` rendering to a texture (full main pass and its own sun cascades on every redraw, depth not readable
+  without a copy node); a dummy `DirectionalLight` (cascades redrawn every frame, a light in every pixel's loop).
+- **Canopy** (`sf_surface_bevy`): `ShelterFoliage` marker; `update_shelter` splits casters into the shelter map
+  (`SHELTER_SUBVIEW` 0xFC) and the canopy map (`CANOPY_SUBVIEW` 0xFD, `SurfaceGpu::canopy`, same view, same frame:
+  `ShelterFrame` + `CanopyFrame` sources); `Added<ShelterFoliage>` counts as streamed casters. Uniform slot 9
+  `canopy` (x valid, y `SHELTER_LEAF_PASS` 0.4). Patch "SW" binding 49 `surface_canopy` (unfilterable float; the shelter
+  sampler). `surface_exposure` gathers the canopy map at the same nine tent positions (only while `canopy.x > 0`, a
+  uniform branch) and returns `open · (1 − (1 − pass) · leaf cover)`. Why two maps, not Clockwork's single map with leaves
+  on even texels (`depthclipped.frag` `roofMap`, `surface.glsl` `roofSolidLanes`/`roofLeaves`): it needs a foliage flag
+  in the depth shader (Bevy's prepass shader has none; a patch), halves roof resolution on a checkerboard, and needs a
+  B-spline lattice to read cover back; a split caster list is CPU-side and game-agnostic.
+- **Game** (`mw_exterior_bevy` `shelter_foliage`): a mesh whose `StandardMaterial` has diffuse transmission and an
+  alpha mask (the leaf rule of `mw_assets` `Surface::foliage`: cutout leaf cards, Clockwork's "flora" alpha parts) gets
+  `ShelterFoliage`. Limit: `--off foliagetransmission` drops the mark (leaves then shelter fully).
+- **Cost:** CPU per redraw one caster pass as before (split into two lists; 16 m / 8 m / ≤ 1 per 30 frames, so not
+  measured separately); GPU: a second depth view on redraw frames with only leaf casters; in the layer, nine more
+  gathers per lit pixel while wet (exposure runs only when the wet flag is on).
+- **Tests:** `sf_surface` `rain_washes_ash_faster_than_snow_and_both_faster_than_dry_decay` (ordering, closed forms,
+  ash gone in 2 steps, snow at 1.5 h, step-grid bit equality); `sf_sky_bevy` `an_anchor_owns_views_without_a_light`;
+  `sf_surface_bevy` headless plugin with no light at all: requests owned by the anchor, leaves only in the canopy
+  request, same matrix, uniform `canopy`; binding 49 vs the patch; shader compiles per preset.
 

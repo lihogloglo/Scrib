@@ -100,8 +100,15 @@ pub(crate) fn update_trails(
     mut stats: ResMut<SurfaceStats>,
     mut clock: Local<TrailClock>,
 ) {
+    // Last frame's placement, for the displaced terrain's motion vectors (W6b): the render world
+    // binds last frame's ring beside it (`TrailGpu::previous`).
+    let (prev, prev_cells) = (uniform.trail, uniform.trail_cells);
+    if uniform.trail_prev != prev || uniform.trail_prev_cells != prev_cells {
+        uniform.trail_prev = prev;
+        uniform.trail_prev_cells = prev_cells;
+    }
     let depth = ring_depth(&uniform);
-    let camera = cameras.iter().next().map(GlobalTransform::translation);
+    let camera =cameras.iter().next().map(GlobalTransform::translation);
     let on = settings.layer && settings.cover && settings.trails && depth > 0.0;
     let Some(camera) = camera.filter(|_| on) else {
         stamps.clear();
@@ -172,6 +179,8 @@ pub(crate) struct TrailGpu {
     storage: [TextureView; 2],
     /// The ring bound this frame (written by this frame's pass, if any).
     pub current: usize,
+    /// The ring bound last frame (W6b motion vectors: equal to `current` when no pass ran).
+    pub previous: usize,
     /// The window the current ring holds (`None`: clear it all on the next pass).
     held: Option<IVec2>,
     layout: BindGroupLayoutDescriptor,
@@ -183,6 +192,11 @@ pub(crate) struct TrailGpu {
 impl TrailGpu {
     pub fn current_view(&self) -> &TextureView {
         &self.sampled[self.current]
+    }
+
+    /// Last frame's ring (mesh-view binding 53).
+    pub fn previous_view(&self) -> &TextureView {
+        &self.sampled[self.previous]
     }
 }
 
@@ -225,7 +239,7 @@ impl FromWorld for TrailGpu {
             zero_initialize_workgroup_memory: false,
             ..ComputePipelineDescriptor::default()
         });
-        Self { sampled: [a, b], storage: [a_storage, b_storage], current: 0, held: None, layout, pipeline, pending: None, ready: None }
+        Self { sampled: [a, b], storage: [a_storage, b_storage], current: 0, previous: 0, held: None, layout, pipeline, pending: None, ready: None }
     }
 }
 
@@ -246,6 +260,7 @@ pub(crate) fn build(app: &mut bevy_app::App) {
 /// current one).
 pub(crate) fn extract(frame: Extract<Res<TrailFrame>>, gpu: Option<ResMut<TrailGpu>>, cache: Res<PipelineCache>) {
     let Some(mut gpu) = gpu else { return };
+    gpu.previous = gpu.current;
     if gpu.pending.take().is_some() || gpu.ready.take().is_some() {
         // Last frame's pass never ran: its ring holds nothing valid.
         gpu.held = None;

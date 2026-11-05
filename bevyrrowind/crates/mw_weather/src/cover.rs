@@ -37,6 +37,12 @@ const MIXED: &[&str] = &["road", "rock", "grass", "dirt", "ice", "mud", "stone"]
 /// Morrowind repeats a land texture once per land texel (512 units ≈ 7.3 m); the cover tiles alike.
 const TILING_M: f32 = 512.0 * UNIT_METERS;
 
+/// Full snow cover stands knee deep (owner goal, surface-weather W6b: raised geometry near the
+/// camera, feet sink into it, prints carve to the ground). Ash stays a thin crust.
+pub const SNOW_DEPTH_M: f32 = 0.45;
+/// Full ash cover depth.
+pub const ASH_DEPTH_M: f32 = 0.03;
+
 /// The cover layer records from the loaded `LTEX`s (none for a channel without a texture).
 pub fn cover_layers(db: &RecordDb) -> Vec<(RecordId, SurfaceLayer)> {
     let mut out = Vec::new();
@@ -45,12 +51,14 @@ pub fn cover_layers(db: &RecordDb) -> Vec<(RecordId, SurfaceLayer)> {
         layer.tiling_m = TILING_M;
         layer.roughness = 0.65;
         layer.sparkle = 1.0;
+        layer.max_depth_m = Some(SNOW_DEPTH_M);
         out.push((RecordId::new(SNOW_LAYER), layer));
     }
     if let Some(ltex) = pick_ltex(db, ASH_LTEX, "ash") {
         let mut layer = SurfaceLayer::new(CoverChannel::Ash, texture_path(&ltex.file_name));
         layer.tiling_m = TILING_M;
         layer.roughness = 0.9;
+        layer.max_depth_m = Some(ASH_DEPTH_M);
         out.push((RecordId::new(ASH_LAYER), layer));
     }
     out

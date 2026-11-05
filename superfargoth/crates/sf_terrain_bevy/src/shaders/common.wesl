@@ -7,6 +7,10 @@
 // `params.rs`), written once per frame without touching the material.
 
 import bevy_pbr::render::mesh_functions;
+// Raised cover (surface weather W6b): the view's surface weather bindings (vendored bevy_pbr patch
+// "SW"), in the main pass and, for the same views, the prepass.
+@if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
+import sf_surface_bevy::view::surface_raise_at;
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage, read> params: array<vec4<u32>>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var height_clipmap: texture_2d_array<f32>;
@@ -310,6 +314,9 @@ struct TerrainVertex {
     grid: vec2<f32>,
     /// LOD plus morph progress (fractional = morphing toward LOD + 1).
     lod: f32,
+    /// Weight of near-only displacement (detail, raised cover): 1 at LOD -2, fading out across
+    /// LOD -1's morph zone, 0 from LOD 0.
+    near_w: f32,
 }
 
 /// Strugar's CDLOD vertex: morph odd grid vertices toward their even
@@ -335,6 +342,8 @@ fn terrain_vertex(grid: vec2<f32>, instance_index: u32, detail: bool) -> Terrain
     let gm = grid - odd * k;
     let p = node + gm * spacing;
 
+    var out: TerrainVertex;
+    out.near_w = 0.0;
     var h: f32;
     if lod < 0 {
         h = height_bicubic(p);
@@ -344,6 +353,7 @@ fn terrain_vertex(grid: vec2<f32>, instance_index: u32, detail: bool) -> Terrain
         if lod <= MIN_LOD {
             w = 1.0;
         }
+        out.near_w = w;
         if detail && w > 0.0 {
             h += w * detail_displacement(p, spacing);
         }
@@ -358,11 +368,23 @@ fn terrain_vertex(grid: vec2<f32>, instance_index: u32, detail: bool) -> Terrain
         }
     }
 
-    var out: TerrainVertex;
     out.position = vec3<f32>(p.x, h - origin_y(), p.y);
     out.grid = grid;
     out.lod = f32(lod) + k;
     return out;
+}
+
+/// Raised cover over a terrain vertex (surface weather W6b, `sf_surface_bevy::view::surface_raise_at`):
+/// x now, y now without prints (the fragment's normal tilt), z last frame (motion vectors), in
+/// meters, weighted by `near_w` (the two finest levels only, faded out across LOD -1's morph
+/// zone). The main pass and the prepass both displace by this one function, so their depths
+/// match; the node bounds grow by `TerrainSettings::raise_m`.
+@if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
+fn terrain_raise(t: TerrainVertex) -> vec3<f32> {
+    if t.near_w <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return surface_raise_at(t.position, terrain_normal(t.position.xz, t.lod)) * t.near_w;
 }
 
 /// Normal at height level `l`: the baked central differences, filtered.

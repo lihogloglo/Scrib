@@ -174,3 +174,52 @@ fn pass_keeps_moves_and_stamps() {
     assert_eq!(s[2], [u32::try_from(MAX_STAMPS).unwrap(), 0, 1024, 0]);
     assert_eq!(f32::from_bits(s[0][3]), D);
 }
+
+/// W6b: the raised cover is the full depth on open snow, carves exactly to the ground in a full
+/// print, stands higher on a lip, scales with partial cover, and ash in a snow-deep ring prints
+/// only its own depth.
+#[test]
+fn raise_composes_cover_and_prints() {
+    let knee = 0.45;
+    assert_eq!(cover_raise(1.0, knee, [0.0, 0.0], knee), knee);
+    assert_eq!(cover_raise(1.0, knee, [-knee, 0.0], knee), 0.0);
+    let lip = cover_raise(1.0, knee, [0.0, LIP_HEIGHT * knee], knee);
+    assert!((lip - knee * (1.0 + LIP_HEIGHT)).abs() < 1e-6);
+    assert!((cover_raise(0.5, knee, [-0.1, 0.0], knee) - 0.5 * (knee - 0.1)).abs() < 1e-6);
+    // Ash (3 cm) under a 0.45 m print: cut to the ground, never below it.
+    assert_eq!(cover_raise(1.0, 0.03, [-knee, 0.0], knee), 0.0);
+    assert_eq!(cover_raise(0.0, knee, [0.0, 0.1], knee), 0.0);
+    // No ring: the cover's depth.
+    assert_eq!(cover_raise(1.0, knee, [-0.2, 0.3], 0.0), knee);
+}
+
+/// Rounds to the nearest half float (normal range): what the `Rgba16Float` ring stores.
+#[allow(clippy::cast_possible_truncation)]
+fn half(x: f32) -> f32 {
+    if x == 0.0 {
+        return 0.0;
+    }
+    let ulp = 2f32.powi(x.abs().log2().floor() as i32 - 10);
+    (x / ulp).round() * ulp
+}
+
+/// W6b knee-deep snow: a 2 mm refill quantum still moves a 0.45 m print (half-float step there
+/// is 0.24 mm), and a print refills to level in whole quanta.
+#[test]
+fn refill_quantum_survives_half_float_at_knee_depth() {
+    let knee = 0.45;
+    let mut v = [half(-knee), 0.0];
+    let mut steps = 0;
+    while v[0] < 0.0 && steps < 1000 {
+        let next = [half(decay(v, REFILL_QUANTUM_M)[0]), 0.0];
+        assert!(next[0] > v[0], "a quantum must move the print at {}", v[0]);
+        if next[0] < 0.0 {
+            assert!((next[0] - v[0] - REFILL_QUANTUM_M).abs() < 3e-4);
+        }
+        v = next;
+        steps += 1;
+    }
+    assert_eq!(v[0], 0.0);
+    // 225 quanta, a few more where the half-float steps round down.
+    assert!((225..=240).contains(&steps), "{steps}");
+}

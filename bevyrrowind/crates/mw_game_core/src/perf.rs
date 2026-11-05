@@ -104,10 +104,12 @@ pub enum Part {
     Cover,
     /// Trails in snow and ash (surface-weather.md W6): off, feet leave no prints (an A/B).
     Trails,
+    /// Kick-up in snow and ash (surface-weather.md W7): off, feet throw no puffs (an A/B).
+    Kickup,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 52] = [
+    const ALL: [(&'static str, Part); 53] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -161,6 +163,7 @@ impl Part {
         ("shelter", Part::Shelter),
         ("cover", Part::Cover),
         ("trails", Part::Trails),
+        ("kickup", Part::Kickup),
     ];
 
     fn name(self) -> &'static str {

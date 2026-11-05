@@ -403,51 +403,9 @@ fn layout_entries(
             ),
         ));
     }
-    // superfargoth patch (own, SW): surface weather uniform, cells, shelter, noise, samplers, canopy,
-    // cover layer array + sampler, trail ring (W6a).
+    // superfargoth patch (own, SW): surface weather bindings 43-53 (render/surface_weather.rs).
     if layout_key.contains(MeshPipelineViewLayoutKey::SURFACE_WEATHER) {
-        entries = entries.extend_with_indices((
-            (
-                super::SURFACE_WEATHER_UNIFORM_BINDING,
-                uniform_buffer_sized(false, None),
-            ),
-            (
-                super::SURFACE_WEATHER_CELLS_BINDING,
-                texture_2d(TextureSampleType::Float { filterable: true }),
-            ),
-            (
-                super::SURFACE_WEATHER_SHELTER_BINDING,
-                texture_2d(TextureSampleType::Float { filterable: false }),
-            ),
-            (
-                super::SURFACE_WEATHER_NOISE_BINDING,
-                texture_2d(TextureSampleType::Float { filterable: true }),
-            ),
-            (
-                super::SURFACE_WEATHER_SAMPLER_BINDING,
-                sampler(SamplerBindingType::Filtering),
-            ),
-            (
-                super::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING,
-                sampler(SamplerBindingType::NonFiltering),
-            ),
-            (
-                super::SURFACE_WEATHER_CANOPY_BINDING,
-                texture_2d(TextureSampleType::Float { filterable: false }),
-            ),
-            (
-                super::SURFACE_WEATHER_COVER_BINDING,
-                texture_2d_array(TextureSampleType::Float { filterable: true }),
-            ),
-            (
-                super::SURFACE_WEATHER_COVER_SAMPLER_BINDING,
-                sampler(SamplerBindingType::Filtering),
-            ),
-            (
-                super::SURFACE_WEATHER_TRAIL_BINDING,
-                texture_2d(TextureSampleType::Float { filterable: true }),
-            ),
-        ));
+        entries = super::surface_weather_layout_entries(entries);
     }
     if layout_key.contains(MeshPipelineViewLayoutKey::SCREEN_SPACE_AMBIENT_OCCLUSION) {
         entries = entries.extend_with_indices((
@@ -903,18 +861,7 @@ pub fn prepare_mesh_view_bind_groups(
             // superfargoth patch (own, SW)
             if let Some(super::SurfaceWeatherView(sw)) = surface_weather {
                 layout_key |= MeshPipelineViewLayoutKey::SURFACE_WEATHER;
-                entries = entries.extend_with_indices((
-                    (super::SURFACE_WEATHER_UNIFORM_BINDING, sw.uniform.as_entire_binding()),
-                    (super::SURFACE_WEATHER_CELLS_BINDING, &sw.cells),
-                    (super::SURFACE_WEATHER_SHELTER_BINDING, &sw.shelter),
-                    (super::SURFACE_WEATHER_NOISE_BINDING, &sw.noise),
-                    (super::SURFACE_WEATHER_SAMPLER_BINDING, &sw.sampler),
-                    (super::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING, &sw.shelter_sampler),
-                    (super::SURFACE_WEATHER_CANOPY_BINDING, &sw.canopy),
-                    (super::SURFACE_WEATHER_COVER_BINDING, &sw.cover),
-                    (super::SURFACE_WEATHER_COVER_SAMPLER_BINDING, &sw.cover_sampler),
-                    (super::SURFACE_WEATHER_TRAIL_BINDING, &sw.trail),
-                ));
+                entries = super::surface_weather_bind_entries(entries, sw);
             }
 
             if let Some(view_oit_settings_offset) = view_oit_settings_offset {

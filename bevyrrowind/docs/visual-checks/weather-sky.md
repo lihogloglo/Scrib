@@ -195,15 +195,27 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-05 (rain, noon): failed, all yellow even under Vivec's arches (W2b anchor views drew layer 0 only; statics
   sit on the worldspace layer, so `queue_shadows` dropped every caster). Status: confirmed (owner 2026-11-06, after the render-layer fix).
 
-### SW-6: Footprints in snow (surface-weather.md W6a; shading only, no displacement yet)
+### SW-7: Kick-up puffs in snow and ash (surface-weather.md W7)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`, console
+  `surface set snow 1`; walk, then run, then sprint over open snow (third person), look at the feet. Ash: `view "Ghostgate"
+  --hour 12 --weather ashstorm`, `surface set ash 1`. Night: same at `--hour 23`. A/B: restart with `--off kickup`.
+- Look for: each foot-down throws a small white-blue puff of powder (short arc, ~0.5 s, bigger when running); ash puffs are
+  grey-brown, lighter, and drift downwind; NPCs walking nearby throw smaller puffs; nothing on bare ground (known: an overhang over snowy ground still puffs).
+- Light: puffs match the snow around them (sunlit vs in a rock's shadow), no glowing puffs at night (moon + floor light), fade
+  into fog. Soft where they meet the ground (no hard line). Puddle splashes not built. Too much / too little? Say so.
+- Status: awaiting owner (built 2026-11-06).
+
+### SW-6: Knee-deep snow and footprints (surface-weather.md W6a prints + W6b raised geometry)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
   console `surface set snow 1`; walk (third person) over open snowy ground, look back. `surface debug trails`: prints blue,
-  lips red, ring edge purple (64 m around the camera); `surface debug off`.
-- Look for: a trail of separate oriented prints behind the player and walking NPCs, the ground showing at their bottom,
-  a slightly raised, lit rim around each; nothing on bridges, roofs or rocks; prints fade out past ~30 m.
-- While it snows the prints refill (Morrowind snow: ~40 s real time at 30× timescale); with `--weather clear` they stay.
-- No shimmer or crawling on the prints under DLSS; no blocky stair-steps at the walls (6.25 cm ring texels).
-- A/B: `--off trails` (no prints, cover uncut). Status: awaiting owner (built 2026-11-06).
+  lips red, ring edge purple; `surface debug off`. Live A/B: `off trails` / `on trails`, `off cover` / `on cover`.
+- Look for: the snow stands ~knee deep (0.45 m) over the ground within ~20 m, easing down to the ground by ~24 m (no
+  visible step); feet, boots and NPC legs sink into it (the body stays on the ground, never lifted onto the snow); each
+  print is a real hole cut to the ground with a lit lip; snow thins to nothing under roofs and on steep slopes.
+- DLSS/TAA on: no smear, ghosting or trailing smudge behind the feet as prints appear; no shimmer at print walls.
+- While it snows the prints refill (~1 min real time at 30× for 0.45 m); `--weather clear`: they stay.
+- Watch for: rock/house bases buried 0.45 m (expected), terrain poking through floors at doorways, z-fighting at the
+  ~20-24 m fade. Ash (`view "Ghostgate"`, `surface set ash 1`): only a 3 cm crust. Status: awaiting owner (built 2026-11-06).
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,

@@ -19,7 +19,9 @@ pub const U_COVER: usize = 10;
 pub const U_COVER_UV: usize = 12;
 pub const U_TRAIL: usize = 13;
 pub const U_TRAIL_CELLS: usize = 14;
-pub const U_SLOTS: usize = 15;
+pub const U_TRAIL_PREV: usize = 15;
+pub const U_TRAIL_PREV_CELLS: usize = 16;
+pub const U_SLOTS: usize = 17;
 
 /// Layer flags (`misc.x`): which channels are non-zero anywhere in the cell window.
 pub const FLAG_WET: u32 = 1;
@@ -59,6 +61,9 @@ pub struct SurfaceUniform {
     pub trail: Vec4,
     /// xy: the first texel's address (world texel mod the ring edge); z: the ring edge (texels).
     pub trail_cells: IVec4,
+    /// Last frame's `trail` and `trail_cells` (W6b: the displaced terrain's motion vectors).
+    pub trail_prev: Vec4,
+    pub trail_prev_cells: IVec4,
 }
 
 impl Default for SurfaceUniform {
@@ -76,6 +81,8 @@ impl Default for SurfaceUniform {
             cover_uv: Vec4::ZERO,
             trail: Vec4::ZERO,
             trail_cells: IVec4::ZERO,
+            trail_prev: Vec4::ZERO,
+            trail_prev_cells: IVec4::ZERO,
         }
     }
 }
@@ -109,6 +116,8 @@ impl SurfaceUniform {
         s[U_COVER_UV] = f(self.cover_uv);
         s[U_TRAIL] = f(self.trail);
         s[U_TRAIL_CELLS] = self.trail_cells.to_array().map(|v| v as u32);
+        s[U_TRAIL_PREV] = f(self.trail_prev);
+        s[U_TRAIL_PREV_CELLS] = self.trail_prev_cells.to_array().map(|v| v as u32);
         s
     }
 }

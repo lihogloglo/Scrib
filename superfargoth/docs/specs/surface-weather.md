@@ -96,7 +96,7 @@ for rain rings), pure fixed-step `advance` from the weather blend per climate (c
 ### Records
 
 - `SurfaceLayer` (kind `surface.layer`): `{ channel: snow|ash, albedo_height: VfsPath, normal: Option<VfsPath>,
-  arm: Option<VfsPath>, tiling_m, max_depth_m (visual depth for W6, default snow 0.15, ash 0.03),
+  arm: Option<VfsPath>, tiling_m, max_depth_m (visual depth for W6, default snow 0.15, ash 0.03; Morrowind snow 0.45 knee deep),
   roughness, sparkle, contrast }`. One active layer per channel per worldspace (adapter picks).
 - `TerrainLayer.surface` → surface type (terrain.md): gains `porosity: f32`, `puddles: bool`,
   `cover_adherence: f32`, `trail: none|snow|ash|mud|sand` (deformable material, its depth scale).
@@ -149,7 +149,7 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 **Hook sites.**
 - **`StandardMaterial` (NIF statics, characters, held items, fades):** own patch "SW" in
   `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the view
-  adds mesh-view bindings 43-51 (uniform, cells, shelter, noise, two samplers, canopy, W5a layer array + sampler; W6
+  adds mesh-view bindings 43-53 (uniform, cells, shelter, noise, two samplers, canopy, W5a layer array + sampler; W6
   the trail ring) and the `SURFACE_WEATHER` def, and `render/pbr.wesl` calls `sf_surface_bevy::view` before
   lighting, forward main pass only (detail: [as built](surface-weather-as-built.md) W3). Skipped for alpha-blend and
   `unlit`; class DYNAMIC under `SKINNED` (`instance_wet` from `MeshTag` bits 0-7, W8). Drop condition: "upstream
@@ -263,8 +263,8 @@ weather override, flags and what to look for.
 | **W4** ✅ | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural rain rings, F0/roughness, sky/probe reflection, `--off puddles` (as built) | level/edge/ring math twins; compile check | SW-4: Balmora streets in rain and after; rings stop when rain stops |
 | **W5** ✅ (W5a records + array, W5b shader; as built) | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
 | **WM** | Measurement: counters + `perf suite` run lines in perf.md for wet/ash/snow bookmarks (`--weather` overrides); owner runs it (agents never launch) | `#[ignore = "measurement: ..."]` CPU timings | owner runs the suite; table updated |
-| **W6** 🔶 (W6a ring, stamps, refill, shading; as built) | Trails: ring, stamps from foot events/bodies, decay/refill, CDLOD displacement (finest 2 levels), prepass motion vectors with the previous ring, cascade-0 shadows, POM | ring/stamp/decay CPU twins; prepass and main use one displacement fn (compile check) | SW-6: walk through Solstheim snow and Ashlands ash, DLSS on: prints, lips, no smear |
-| **W7** | Kick-up: footstep splashes in puddles, snow/ash puffs from the stamp stream, sprite-sheet bursts (PR2's splash pipeline; `bevy_hanabi` once the crate batch lands) | burst count/lifetime logic | SW-7: running in puddles and snow |
+| **W6** 🔶 (W6a ring, stamps, refill, shading; W6b raised knee-deep snow, one displacement fn in main + prepass, motion vectors from the previous ring; as built. Open: cascade-0 shadows, POM, lying bodies) | Trails: ring, stamps from foot events/bodies, decay/refill, CDLOD displacement (finest 2 levels), prepass motion vectors with the previous ring, cascade-0 shadows, POM | ring/stamp/decay CPU twins; prepass and main use one displacement fn (compile check) | SW-6: walk through Solstheim snow and Ashlands ash, DLSS on: prints, lips, no smear |
+| **W7** 🔶 (snow and ash puffs; as built. Puddle splashes not yet) | Kick-up: footstep splashes in puddles, snow/ash puffs from the stamp stream, a GPU burst pool (one draw, closed-form sprites; `bevy_hanabi` once the crate batch lands) | burst ring, pace, arc CPU twins; shader compile | SW-7: running in snow and ash |
 | **W8** | Character wetness: `CharacterWetness`, roof ray, `MeshTag` channel on skinned meshes | drying/exposure logic | SW-8: walk from rain into a doorway, clothes dry over minutes |
 
 Order: W1 → W2 → W3 → W4/W5 (either) → WM → W6 → W7 → W8. W6 waits for WM headroom.

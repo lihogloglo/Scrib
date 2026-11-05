@@ -221,3 +221,22 @@ impl TrailPass {
         out
     }
 }
+
+/// The trail's height (m) in a cover of depth `d` (`layer.wesl` `surface_trail_height`): the
+/// print down to the ground (`-d` at most) plus the lip scaled to this cover (`ring` the ring
+/// depth, > 0).
+pub fn trail_height(v: [f32; 2], d: f32, ring: f32) -> f32 {
+    v[0].clamp(-d, 0.0) + v[1] * d / ring
+}
+
+/// Raised cover (W6b; `layer.wesl` `surface_cover_raise`): how high a cover of depth `d` stands
+/// over the ground at `amount` (cell × slope × exposure) over the ring value `v` (`ring` the ring
+/// depth, 0 = no trail): its share of the depth, prints cut to the ground, lips on top. The
+/// terrain's visual height is ground + this (summed over the channels).
+pub fn cover_raise(amount: f32, d: f32, v: [f32; 2], ring: f32) -> f32 {
+    if amount <= 0.0 || d <= 0.0 {
+        return 0.0;
+    }
+    let h = if ring > 0.0 { trail_height(v, d, ring) } else { 0.0 };
+    amount * (d + h).max(0.0)
+}

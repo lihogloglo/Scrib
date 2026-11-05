@@ -25,6 +25,7 @@
 
 pub mod cover;
 mod grid;
+pub mod kickup;
 pub mod layer;
 mod save;
 pub mod trail;
@@ -431,3 +432,5 @@ mod view_tests;
 mod cover_tests;
 #[cfg(test)]
 mod trail_tests;
+#[cfg(test)]
+mod kickup_tests;

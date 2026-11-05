@@ -27,7 +27,7 @@ use crate::shelter::{CanopyFrame, ShelterAnchor, ShelterFrame};
 use crate::uniform::*;
 use crate::*;
 
-fn id(s: &str) -> Worldspace {
+pub(crate) fn id(s: &str) -> Worldspace {
     Worldspace::new(s)
 }
 
@@ -66,6 +66,8 @@ fn uniform_matches_the_wgsl_struct() {
             ("cover_uv", "vec4<f32>"),
             ("trail", "vec4<f32>"),
             ("trail_cells", "vec4<i32>"),
+            ("trail_prev", "vec4<f32>"),
+            ("trail_prev_cells", "vec4<i32>"),
         ]
     );
     assert_eq!(
@@ -81,9 +83,11 @@ fn uniform_matches_the_wgsl_struct() {
             U_COVER_UV,
             U_TRAIL,
             U_TRAIL_CELLS,
+            U_TRAIL_PREV,
+            U_TRAIL_PREV_CELLS,
             U_SLOTS
         ],
-        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15]
+        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17]
     );
     let konst = |name: &str| -> u32 {
         let line = wgsl
@@ -135,7 +139,7 @@ fn book() -> WeatherBook {
 
 /// A headless app (no render app): weather, the surface state over a 256 m raster, the plugin,
 /// and a floating origin one 256 m grid cell east.
-fn app() -> App {
+pub(crate) fn app() -> App {
     let mut app = App::new();
     app.insert_resource(Assets::<Image>::default())
         .insert_resource(SkyTime(SkyClock::default()))

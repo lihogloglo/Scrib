@@ -61,6 +61,9 @@ struct SurfaceUniform {
     trail: vec4<f32>,
     /// xy: the first texel's address in the ring (torus); z: the ring edge (texels).
     trail_cells: vec4<i32>,
+    /// Last frame's `trail` and `trail_cells` (W6b: the displaced terrain's motion vectors).
+    trail_prev: vec4<f32>,
+    trail_prev_cells: vec4<i32>,
 }
 
 const FLAG_WET: u32 = 1u;
@@ -559,15 +562,72 @@ fn surface_in_trail(u: SurfaceUniform, xz: vec2<f32>) -> bool {
 /// The ring at `xz` (R, G in m; bilinear over the torus), faded to 0 over TRAIL_EDGE_FADE_M
 /// before the ring's edge.
 fn surface_trail_at(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, xz: vec2<f32>) -> vec2<f32> {
-    let n = f32(u.trail_cells.z);
-    let t = surface_trail_texel(u, xz);
-    let edge_m = min(min(t.x, n - t.x), min(t.y, n - t.y)) / u.trail.z;
+    return surface_ring_at(trail, samp, u.trail, u.trail_cells, xz);
+}
+
+/// A ring placed by `place` (`trail` slot layout) and `cells` (`trail_cells`) at `xz`: this
+/// frame's (`surface_trail_at`) or last frame's (W6b motion vectors). 0 when the ring is off.
+fn surface_ring_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> vec2<f32> {
+    let n = f32(cells.z);
+    if place.w <= 0.0 || place.z <= 0.0 || n <= 0.0 {
+        return vec2(0.0);
+    }
+    let t = (xz - place.xy) * place.z;
+    let edge_m = min(min(t.x, n - t.x), min(t.y, n - t.y)) / place.z;
     let fade = saturate((edge_m - 0.5) / TRAIL_EDGE_FADE_M);
     if fade <= 0.0 {
         return vec2(0.0);
     }
-    let uv = (t + vec2<f32>(u.trail_cells.xy)) / n;
+    let uv = (t + vec2<f32>(cells.xy)) / n;
     return textureSampleLevel(trail, samp, uv, 0.0).xy * fade;
+}
+
+/// Raised cover (W6b; twin `sf_surface::layer::cover_raise`): how high a cover of depth `d`
+/// stands over the ground at `amount` (cell × slope × exposure) with the ring value `v` (R
+/// depression, G lip, m; `ring` the ring depth, 0 = no trail): its share of the depth, prints
+/// cut down to the ground (a full print: 0), lips on top.
+fn surface_cover_raise(amount: f32, d: f32, v: vec2<f32>, ring: f32) -> f32 {
+    if amount <= 0.0 || d <= 0.0 {
+        return 0.0;
+    }
+    var h = 0.0;
+    if ring > 0.0 {
+        h = surface_trail_height(v, d, ring);
+    }
+    return amount * max(d + h, 0.0);
+}
+
+/// The cover amounts over a ground point `p` (render space, ground normal `n`) for the raise
+/// (W6b): x snow, y ash, each its cell × slope × exposure (0 where the channel is off or has
+/// no look). The fragment's amount uses the shading normal; this the ground's.
+fn surface_raise_amounts(
+    u: SurfaceUniform,
+    cells: texture_2d<f32>,
+    samp: sampler,
+    shelter: texture_2d<f32>,
+    canopy: texture_2d<f32>,
+    shelter_sampler: sampler,
+    p: vec3<f32>,
+    n: vec3<f32>,
+) -> vec2<f32> {
+    let flags = u.misc.x;
+    let snow_on = (flags & FLAG_SNOW) != 0u && u.snow_layer.x > 0.0 && u.snow_layer.y > 0.0;
+    let ash_on = (flags & FLAG_ASH) != 0u && u.ash_layer.x > 0.0 && u.ash_layer.y > 0.0;
+    if !snow_on && !ash_on {
+        return vec2(0.0);
+    }
+    let cell = surface_cells_at(cells, samp, u, p);
+    let slope = surface_cover_slope(n.y);
+    let a = vec2(select(0.0, cell.b, snow_on), select(0.0, cell.a, ash_on)) * slope;
+    if a.x <= 0.0 && a.y <= 0.0 {
+        return vec2(0.0);
+    }
+    return a * surface_exposure(shelter, canopy, shelter_sampler, u, p, n);
+}
+
+/// The raise (m) of both covers at `amounts` over a ring value `v` (ring depth `ring`).
+fn surface_raise_of(u: SurfaceUniform, amounts: vec2<f32>, v: vec2<f32>, ring: f32) -> f32 {
+    return surface_cover_raise(amounts.x, u.snow_layer.y, v, ring) + surface_cover_raise(amounts.y, u.ash_layer.y, v, ring);
 }
 
 /// The ring around `p` for the cover (no trail: ring 0). Four more taps only where the pixel

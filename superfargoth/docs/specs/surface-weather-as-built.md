@@ -1,7 +1,7 @@
 # Surface weather: as built
 
 Detail moved out of [surface-weather.md](surface-weather.md) (spec budget). The spec keeps the design; this file
-keeps the as-built shapes and slice notes; W1-W2 moved to [the archive](surface-weather-as-built-archive.md).
+keeps the as-built shapes and slice notes; W1-W2, W2b and W5a moved to [the archive](surface-weather-as-built-archive.md).
 Code is the source of truth.
 
 ## W3 (2026-11-05): wetness on every lit material, `bevy_pbr` patch "SW"
@@ -49,47 +49,6 @@ Code is the source of truth.
   with no type churn in `MaterialMapper`, `CookedMaterials`, fades or skinning; it repeats the GI patch. Binding count:
   group 0 holds at most 19 textures and 12 samplers with every feature on (W2b's canopy included); Bevy requests the
   adapter's limits, far above that on desktop (WebGPU's default 16 would not fit; not a target).
-
-## W2b (2026-11-05): rain wash, light-independent shelter views, partial leaf shelter
-
-Owner answers 2026-11-05 (DECISIONS): rain washes snow away faster and ash much faster; the shelter map draws at night;
-foliage shelters partially (~40% through), roofs fully.
-- **Rain wash** (`sf_surface`): `SurfaceTuning::snow_wash` 1/3 and `ash_wash` 2, cover cleared per hour per unit of the
-  cell's blended wetting rate (`SurfaceRates::wet`, the rain's intensity: Morrowind rain 2 × raindrops/thunderstorm
-  raindrops). `cover()` subtracts `wash` whether or not the channel falls (sleet on snow, rain through an ash fall); drying
-  stays 0 while rain falls. A storm (wet 2/h): snow 2/3 per hour (4× the dry 1/6, Clockwork `surfaceweather.cpp`:
-  melt `(1 + 3·rain)/(sSnowLife·dry)`), ash 4 per hour, gone in 15 game minutes (Clockwork `sWashRate` 0.25/min
-  exponential: 95% in 12 min), 32× the dry 1/8. Linear like the rest of our model; no save change (tuning isn't saved).
-  `grid::blend` returns `CellRates { snow, ash, rain, drying }`.
-- **Own views** (`sf_sky_bevy::sun_view`): `DepthViewAnchor` + `depth_view_anchor()` (synced to the render world).
-  `extract_anchors` (installed once) gives the anchor's render entity the marker and empty
-  `RenderShadowMapVisibleEntities` / `RenderExtractedShadowMapVisibleEntities`; `inject_casters` and `spawn_view` accept an
-  anchor or a shadow-enabled directional light (`owner_enabled`). Why it is stock: Bevy 0.20 has no depth-only view API;
-  its shadow pass is the facility that draws mesh casters (alpha mask, GPU preprocessing) into a depth target, and
-  `queue_shadows` / `specialize_shadows` read a view's casters only from `get_shadow_map_visible_entities` on the entity
-  its `LightEntity` names (`Directional` picks the orthographic, unclipped-depth key); `prepare_lights` never sees our
-  views (spawned after it). Visibility collection already treats any entity with the tables as a shadow owner. Rejected:
-  a second `Camera3d` rendering to a texture (full main pass and its own sun cascades on every redraw, depth not readable
-  without a copy node); a dummy `DirectionalLight` (cascades redrawn every frame, a light in every pixel's loop).
-- **Canopy** (`sf_surface_bevy`): `ShelterFoliage` marker; `update_shelter` splits casters into the shelter map
-  (`SHELTER_SUBVIEW` 0xFC) and the canopy map (`CANOPY_SUBVIEW` 0xFD, `SurfaceGpu::canopy`, same view, same frame:
-  `ShelterFrame` + `CanopyFrame` sources); `Added<ShelterFoliage>` counts as streamed casters. Uniform slot 9
-  `canopy` (x valid, y `SHELTER_LEAF_PASS` 0.4). Patch "SW" binding 49 `surface_canopy` (unfilterable float; the shelter
-  sampler). `surface_exposure` gathers the canopy map at the same nine tent positions (only while `canopy.x > 0`, a
-  uniform branch) and returns `open · (1 − (1 − pass) · leaf cover)`. Why two maps, not Clockwork's single map with leaves
-  on even texels (`depthclipped.frag` `roofMap`, `surface.glsl` `roofSolidLanes`/`roofLeaves`): it needs a foliage flag
-  in the depth shader (Bevy's prepass shader has none; a patch), halves roof resolution on a checkerboard, and needs a
-  B-spline lattice to read cover back; a split caster list is CPU-side and game-agnostic.
-- **Game** (`mw_exterior_bevy` `shelter_foliage`): a mesh whose `StandardMaterial` has diffuse transmission and an
-  alpha mask (the leaf rule of `mw_assets` `Surface::foliage`: cutout leaf cards, Clockwork's "flora" alpha parts) gets
-  `ShelterFoliage`. Limit: `--off foliagetransmission` drops the mark (leaves then shelter fully).
-- **Cost:** CPU per redraw one caster pass as before (split into two lists; 16 m / 8 m / ≤ 1 per 30 frames, so not
-  measured separately); GPU: a second depth view on redraw frames with only leaf casters; in the layer, nine more
-  gathers per lit pixel while wet (exposure runs only when the wet flag is on).
-- **Tests:** `sf_surface` `rain_washes_ash_faster_than_snow_and_both_faster_than_dry_decay` (ordering, closed forms,
-  ash gone in 2 steps, snow at 1.5 h, step-grid bit equality); `sf_sky_bevy` `an_anchor_owns_views_without_a_light`;
-  `sf_surface_bevy` headless plugin with no light at all: requests owned by the anchor, leaves only in the canopy
-  request, same matrix, uniform `canopy`; binding 49 vs the patch; shader compiles per preset.
 
 ## W4 (2026-11-05): puddles and rain rings
 
@@ -144,31 +103,6 @@ foliage shelters partially (~40% through), roofs fully.
   `sf_surface_bevy` `split_casters` keeps only casters whose layers meet the camera's (`SurfaceStats.shelter_casters` honest).
 - Open (logged, not fixed): `SurfaceSystems` isn't ordered after `VisibilitySystems::VisibilityPropagate`/`CalculateBounds`
   (a caster streamed this frame can miss its redraw); a one-frame view loses casters whose pipeline isn't ready that frame.
-
-## W5a (2026-11-06): cover looks, records and the layer-array binding (no shader cover yet)
-
-- **Records** (`sf_surface::cover`): kind `surface.layer` = `SurfaceLayer { channel: snow|ash, albedo_height, normal?,
-  arm?, tiling_m (4), max_depth_m? (channel default 0.15/0.03), roughness (0.8), sparkle (0), contrast (1) }` (VFS path
-  strings, serde defaults in brackets; `normal` is optional: flat). `ActiveLayers { default, worldspaces }`: the
-  adapter's per-worldspace, per-channel pick; `resolve` gives none for a missing record or one of the other channel.
-- **GPU** (`sf_surface_bevy::cover`): the host inserts `CoverLayers([Option<CoverSource>; 2])` (record + decoded RGBA8;
-  this crate reads no files); on change `pack` builds `Rgba8Unorm` 512² × 4 slices (2c albedo, sRGB bytes: decode after
-  sampling; 2c+1 normal XY, roughness, AO) with `sf_terrain::bake::mip_chain` (now public, the terrain layers' filter),
-  else a 1×1 one-slice neutral placeholder. Patch "SW" bindings 50 (`texture_2d_array`, filterable) and 51 (repeat,
-  trilinear, aniso 16). Uniform slots 10-11 `snow_layer`/`ash_layer`: 1/tiling (0 = no look), depth, sparkle, contrast.
-- **Morrowind adapter** (`mw_weather::cover`, records in the synthesized weather source): `mw_surface/snow` from `LTEX`
-  `Tx_BM_snow_01.dds` (Bloodmoon), `mw_surface/ash` from `AL_ash_01` (`Tx_ashlands_08`), preference lists then the
-  lowest plain keyword texture; tiling one land texel (7.3 m), snow roughness 0.65 sparkle 1, ash roughness 0.9.
-  Picked for every worldspace. `WeatherSetup.cover` resolves them; `mw_exterior_bevy::surface_cover` decodes the
-  original `.dds`/`.tga` (not the de-lit KTX2: no BC7 decoder), prints `surface cover <channel>: <path> (ok|missing)`.
-- **Gap (logged):** Morrowind land textures have no height or normal map and no bake step derives one (the terrain
-  arrays use the same flat defaults): cover height is the albedo alpha (opaque = flat) and the normal is flat. W5b may
-  use the albedo luminance as height, as objects do for puddles; a derived normal is open.
-- **Not yet:** the array is filled once at startup for the exterior (no worldspace switch repack); nothing samples it.
-- **Tests:** record file parsing, defaults, patches, bad channel, pick (`sf_surface` `cover_tests`); pack layout, the
-  placeholder, uniform slots, plugin repack (`sf_surface_bevy` `cover_array_packs_layers_and_placeholder`); binding
-  numbers vs the patch, the view module unstripped (every binding declared and valid); adapter choice exact
-  (`mw_weather` `cover_layers_pick_land_textures`) and on the real install (`real_cover_layers_name_install_textures`).
 
 ## W5b (2026-11-06): the cover drawn (`layer.wesl`, CPU twin `sf_surface::layer`)
 
@@ -246,3 +180,63 @@ foliage shelters partially (~40% through), roofs fully.
   `refill_is_released_in_quanta`, `pass_keeps_moves_and_stamps` (full 1024² CPU pass); plugin
   `trails_take_stamps_and_place_the_ring`; shaders: `trail_pass_compiles_and_matches_the_cpu_twin` (naga, uniform size),
   binding 52 vs the patch, uniform layout, compile per preset ± `SURFACE_WEATHER`.
+
+## W6b (2026-11-06): the cover raised as geometry, motion vectors, knee-deep snow
+
+- **Height:** visual terrain = ground + Σ channels `amount · max(d + trail_height(R, G, d, ring), 0)` (`layer.wesl`
+  `surface_cover_raise`, twin `sf_surface::trail::cover_raise`): amount = cell × slope ramp (ground normal) × exposure
+  (the full shelter + canopy tent at the ground point), d the look's depth; a full print reaches the ground, lips stand
+  on top, ash in a snow-deep ring cuts only its own depth. Morrowind's records: snow 0.45 m (knee deep), ash 0.03 m
+  (`mw_weather::cover::{SNOW,ASH}_DEPTH_M`, record `max_depth_m`; framework default stays 0.15 / 0.03). The 2 mm refill
+  quantum still moves a 0.45 m print in half float (0.24 mm step; test).
+- **One function, both passes:** `sf_surface_bevy::view::surface_raise_at(p, n)` (x now, y now without prints, z last
+  frame) under `common::terrain_raise(t)` (`sf_terrain_bevy` `common.wesl`), weighted by `TerrainVertex::near_w` (the
+  detail displacement's weight: 1 at LOD -2, fading across LOD -1's morph zone, 0 from LOD 0, so ≤ 24 m with the
+  default 48 m LOD-0 range). The main pass (`SURFACE_WEATHER`) and the prepass (`SURFACE_WEATHER_PREPASS`) both add
+  `x` to the vertex Y; positions are `@invariant`, so depth matches exactly (compile test compares the linked bodies).
+- **Prepass bindings (patch "SW", W6b):** Bevy's prepass view bind group is one global group (view, globals, previous
+  view, visibility ranges); material bindings were the alternative but the ring ping-pongs and its uniform lives in
+  the SW buffer. So views with `SurfaceWeatherView` get `MeshPipelineKey::SURFACE_WEATHER` in their prepass key, two
+  extra prepass view layouts (+ bindings 43-53) and a per-view `SurfaceWeatherPrepassBindGroups`; every SW binding is
+  now vertex-visible. Shadow views never carry the component: shadows stay undisplaced (see Open).
+- **Motion vectors:** the prepass outputs `previous_world_position` = ground + `z`: last frame's ring (binding 53,
+  `TrailGpu::previous` = the ring bound last frame, the same one when no pass ran) at last frame's placement (uniform
+  slots 15 `trail_prev`, 16 `trail_prev_cells`, copied each frame in `update_trails`), with
+  `previous_view_uniforms.unjittered_clip_from_world`. Cells and exposure are taken as now (they change over game
+  minutes). The ground's own morph is still treated as static (as before W6b).
+- **Normals:** the fragment tilts the clipmap normal by the slope of `y` (the cover without prints, interpolated) from
+  screen derivatives against world XZ (`terrain.wesl` `raised_normal`); the prints' slope stays per pixel in the
+  layer (W6a gradient, 6.25 cm, finer than the 12.5 cm vertices). Per-vertex central differences were rejected: four
+  more exposure tents (18 gathers each) per vertex in both passes. Prepass normals (SSAO) stay the ground's.
+- **Bounds:** `TerrainSettings::raise_m` (game sets it from the deepest cover look, `mw_exterior_bevy::trails::
+  terrain_raise`); `node_margins` grows LOD < 0 node AABBs upward by it, keyed so a change rebuilds them.
+- **Characters:** the collider, foot probes and stamps use physics/height-map ground; the raise is GPU only, so feet
+  sink into the snow and prints carve to where they stand (RDR2). Nothing lifts the player.
+- **Live A/B:** `on|off cover`, `on|off trails` (`mw_devtools_bevy::live_ab`).
+- **Open (logged):** cascade-0 shadows undisplaced (prints don't self-shadow; the raised surface sits above its
+  shadow caster, so it is lit as the ground would be); POM skipped (vertex grid 12.5 cm + per-pixel print gradient);
+  statics and rocks don't get raised snow (it buries their bases); the raise ends at ~24 m (near_w), the cover look
+  continues flat beyond; terrain under shallow water near shores rises too.
+
+## W7 (2026-11-06): kick-up puffs in snow and ash
+
+- **Burst pool** (canonical GPU-instanced bursts, no particle crate: `bevy_hanabi` is not on Bevy 0.20): `sf_surface::kickup`
+  (Bevy-free twin) + `sf_surface_bevy::kickup` / `kickup.wesl`. A fixed ring of 64 bursts × 12 sprites, one draw of a fixed
+  quad mesh (`DrawBand::Overlay { order: -3 }`, under the precipitation boxes); the CPU writes only the bursts (render position,
+  age, facing, strength, kind, seed) into a 3.2 KB uniform; hidden while none lives.
+- **Source:** the same `TrailStamp` foot-downs as W6 (own `MessageReader`; `mw_exterior_bevy::trails` now stamps while trails
+  *or* kick-up is on). A stamp within 30 m throws when its cell's snow or ash (`sf_surface::sample`) is ≥ 0.15 and that look
+  is drawn (`SurfaceUniform::cover[c].x > 0`). Strength = cover ramp × pace (`StepClock`: distance to the last print a step
+  away over the time between; stand 0.35, sprint 1) × foot size.
+- **Sprites (closed form):** radial spray biased along the facing, then the exact linear-drag solution toward the wind under
+  gravity (`p0 + v∞t + (v0 - v∞)(1 - e^{-kt})/k`), clamped above the foot, fade in/out, grow over life. Snow 0.45-0.75 s,
+  apex ~0.15-0.3 m, white-blue; ash ~1.2 s, light, follows 0.8 of the ground wind (½ the weather's 10 m wind), grey-brown.
+- **Light** (not precip's fixed brightness, WE-9 cause 3): per pixel at the sprite centre (the mesh view's light bindings are
+  fragment-only): directional lights (sun, moon) over a Lambert-sphere phase with one hardware PCF shadow tap, + the flat
+  ambient (night floor) + the view's diffuse environment map (up and toward the camera) × exposure; soft against the depth
+  prepass (12 cm); fogged by `TranslucentFog`. Point lights not summed (puffs by a lamp only get the floor; logged).
+- **Cost (estimate, not measured):** CPU ~10-20 µs (message read, 64-slot pack, uniform re-upload while live). GPU: 3 k
+  vertices, ~0.1-0.3 M px of a ~6-fetch fragment while running in snow, ≈ 0.01-0.03 ms at 1440p + DLSS Q (budget 0.05).
+- **A/B:** `--off kickup` (`Part::Kickup` → `KickupSettings::on`). No live flip: `live_ab.rs` was being changed by W6b.
+- **Not built / logged:** puddle splashes (the puddle level is a per-pixel function of the terrain's basins; needs a CPU
+  twin at a point), point lights, shelter (a stamp under an overhang on a snowy cell still throws; the shelter map is GPU-only).

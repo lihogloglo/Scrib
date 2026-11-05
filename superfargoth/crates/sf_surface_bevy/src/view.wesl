@@ -1,9 +1,10 @@
 // Surface weather on the view (`sf_surface_bevy::view`; surface-weather.md "Shader
-// integration"): the mesh-view bindings 43-52 that the vendored bevy_pbr patch "SW" adds to
+// integration"): the mesh-view bindings 43-53 that the vendored bevy_pbr patch "SW" adds to
 // views with a `bevy_pbr::SurfaceWeatherView` (render/surface_weather.rs; numbers checked by a
 // test), and the entry points every lit material calls under `@if(SURFACE_WEATHER)`:
 // `apply_surface_weather_standard` from bevy_pbr's `render/pbr.wesl`, `apply_surface_weather`
-// from terrain and far proxies. The def is set in the forward main pass only.
+// from terrain and far proxies. The def is set in the forward main pass only; prepass pipelines of
+// the same views get `SURFACE_WEATHER_PREPASS` and the same bindings (W6b: `surface_raise_at`).
 
 import bevy_pbr::render::pbr_types::{
     PbrInput,
@@ -15,7 +16,7 @@ import bevy_pbr::render::pbr_types::{
 };
 import sf_surface_bevy::layer::{
     SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, apply_surface_layer,
-    surface_porosity, surface_height_of,
+    surface_porosity, surface_height_of, surface_raise_amounts, surface_raise_of, surface_ring_at,
 };
 
 @group(0) @binding(43) var<uniform> surface_uniform: SurfaceUniform;
@@ -31,6 +32,27 @@ import sf_surface_bevy::layer::{
 @group(0) @binding(51) var surface_cover_sampler: sampler;
 // The trail ring (W6a; `trail.rs`: R depression, G lip, m; a torus sampled with `surface_sampler`).
 @group(0) @binding(52) var surface_trail: texture_2d<f32>;
+// Last frame's ring (W6b: motion vectors of the raised cover; the same ring when no pass ran).
+@group(0) @binding(53) var surface_trail_previous: texture_2d<f32>;
+
+/// The raised cover over the ground point `p` (render space, ground normal `n`; W6b): x this
+/// frame's raise (m), y the same without the trail (the cover's own slope, for normals), z last
+/// frame's (last frame's ring and placement; the cells and shelter as now). Both terrain passes
+/// (main and prepass, `SURFACE_WEATHER` / `SURFACE_WEATHER_PREPASS`) call this one function.
+fn surface_raise_at(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let u = surface_uniform;
+    let a = surface_raise_amounts(u, surface_cells, surface_sampler, surface_shelter, surface_canopy, surface_shelter_sampler, p, n);
+    if a.x <= 0.0 && a.y <= 0.0 {
+        return vec3(0.0);
+    }
+    let now = surface_ring_at(surface_trail, surface_sampler, u.trail, u.trail_cells, p.xz);
+    let then = surface_ring_at(surface_trail_previous, surface_sampler, u.trail_prev, u.trail_prev_cells, p.xz);
+    return vec3(
+        surface_raise_of(u, a, now, u.trail.w),
+        surface_raise_of(u, a, vec2(0.0), 0.0),
+        surface_raise_of(u, a, then, u.trail_prev.w),
+    );
+}
 
 /// The layer on the view's resources.
 fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {

@@ -33,6 +33,7 @@
 
 mod cells;
 pub mod cover;
+pub mod kickup;
 mod render;
 mod shelter;
 pub mod trail;
@@ -59,6 +60,7 @@ use sf_weather_bevy::{CurrentWeather, SurfaceDebug, WorldSurface};
 
 pub use cells::{CellWrite, CellWrites};
 pub use cover::{CoverLayers, CoverSource};
+pub use kickup::{KickupSettings, KickupStats};
 pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
 pub use sf_surface;
 pub use trail::{TrailFrame, TrailStamp};
@@ -193,6 +195,7 @@ impl Plugin for SurfaceWeatherPlugin {
                     .chain()
                     .in_set(SurfaceSystems),
             );
+        kickup::build(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::ShelterFrame>(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::CanopyFrame>(app);
         if app.get_sub_app(RenderApp).is_none() {

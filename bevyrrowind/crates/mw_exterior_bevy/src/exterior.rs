@@ -380,12 +380,15 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 // W6a: prints in the cover from planted feet (`--off trails`, `surface debug trails`).
                 trails: !off_parts.has(Part::Trails),
             })
+            // W7: puffs kicked up by feet in snow and ash (`--off kickup`).
+            .insert_resource(sf_surface_bevy::KickupSettings { on: !off_parts.has(Part::Kickup) })
             // W5a: the snow and ash looks (`mw_weather::cover`) for the layer array.
             .insert_resource(surface_cover(&vfs, &weather.cover))
             .configure_sets(PostUpdate, sf_surface_bevy::SurfaceSystems.after(TerrainSystems::Update))
             .add_systems(PostUpdate, surface_glue.after(sync_origin).before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, shelter_foliage.before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, crate::trails::foot_stamps.after(sf_anim_bevy::AnimSystems::Apply).before(sf_surface_bevy::SurfaceSystems))
+            .add_systems(PostUpdate, crate::trails::terrain_raise.after(sf_surface_bevy::SurfaceSystems))
             .add_observer(no_surface_shelter_terrain);
         // AU-1: weather loops and region one-shots into the audio plugin (`crate::audio`).
         app.add_plugins(sf_audio_bevy::weather::WeatherAudioPlugin);

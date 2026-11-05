@@ -40,7 +40,7 @@ impl Files {
         let vendor = crates.join("../vendor");
         match package {
             "bevy_pbr" | "bevy_render" | "bevy_core_pipeline" => Some(vendor.join(package).join("src")),
-            "sf_surface_bevy" | "sf_terrain_bevy" | "sf_lod_bevy" => Some(crates.join(package).join("src")),
+            "sf_surface_bevy" | "sf_terrain_bevy" | "sf_lod_bevy" | "sf_render_order_bevy" => Some(crates.join(package).join("src")),
             _ => None,
         }
     }
@@ -82,7 +82,7 @@ impl wesl::Resolver for Files {
 }
 
 /// Links `module` with `defs` on and validates the result; the error names the defs.
-fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
+pub(crate) fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
     compile_with(module, defs, true)
 }
 
@@ -118,7 +118,7 @@ fn compile_with(module: &str, defs: &[&str], strip: bool) -> Result<String, Stri
 
 /// The forward main pass defs per preset (`bevyrrowind` Low / High / Ultra shapes: Low has no
 /// SSAO, contact shadows or prepasses; High adds them, atmosphere and fog; Ultra the GI probes).
-const LOW: &[&str] = &[
+pub(crate) const LOW: &[&str] = &[
     "VERTEX_POSITIONS",
     "VERTEX_NORMALS",
     "VERTEX_UVS",
@@ -126,7 +126,7 @@ const LOW: &[&str] = &[
     "VERTEX_TANGENTS",
     "VERTEX_OUTPUT_INSTANCE_INDEX",
 ];
-const HIGH: &[&str] = &[
+pub(crate) const HIGH: &[&str] = &[
     "VERTEX_POSITIONS",
     "VERTEX_NORMALS",
     "VERTEX_UVS",
@@ -148,7 +148,7 @@ const HIGH: &[&str] = &[
     "MAY_DISCARD",
 ];
 
-fn with(base: &[&'static str], extra: &[&'static str]) -> Vec<&'static str> {
+pub(crate) fn with(base: &[&'static str], extra: &[&'static str]) -> Vec<&'static str> {
     base.iter().chain(extra).copied().collect()
 }
 
@@ -207,7 +207,7 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
 fn view_module_declares_every_binding() {
     for defs in [with(HIGH, &[]), with(HIGH, &["SURFACE_WEATHER"])] {
         let wgsl = compile_with("sf_surface_bevy::view", &defs, false).unwrap_or_else(|e| panic!("{e}"));
-        for decl in ["var surface_cover: texture_2d_array<f32>", "var surface_cover_sampler: sampler", "var surface_trail: texture_2d<f32>"] {
+        for decl in ["var surface_cover: texture_2d_array<f32>", "var surface_cover_sampler: sampler", "var surface_trail: texture_2d<f32>", "var surface_trail_previous: texture_2d<f32>"] {
             assert!(wgsl.contains(decl), "{decl} missing:\n{wgsl}");
         }
     }
@@ -236,6 +236,7 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             binding("surface_cover"),
             binding("surface_cover_sampler"),
             binding("surface_trail"),
+            binding("surface_trail_previous"),
         ],
         [
             bevy_pbr::SURFACE_WEATHER_UNIFORM_BINDING,
@@ -248,6 +249,7 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             bevy_pbr::SURFACE_WEATHER_COVER_BINDING,
             bevy_pbr::SURFACE_WEATHER_COVER_SAMPLER_BINDING,
             bevy_pbr::SURFACE_WEATHER_TRAIL_BINDING,
+            bevy_pbr::SURFACE_WEATHER_TRAIL_PREVIOUS_BINDING,
         ]
     );
 }
@@ -286,4 +288,32 @@ fn trail_pass_compiles_and_matches_the_cpu_twin() {
     // The layer's lip height is the twin's (the debug view scales by it).
     let layer = include_str!("layer.wesl");
     assert!(layer.contains(&format!("const TRAIL_LIP_HEIGHT: f32 = {:?};", sf_surface::trail::LIP_HEIGHT)));
+}
+
+/// W6b: the terrain's main pass and prepass displace by one function (`common::terrain_raise`
+/// over `view::surface_raise_at`), linked exactly when their surface weather def is on, so depth
+/// and motion vectors match the drawn surface; shadow views (no def) stay undisplaced.
+#[test]
+fn terrain_passes_share_one_displacement() {
+    fn body(wgsl: &str) -> Option<&str> {
+        // The linker may mangle the name: the first `fn` line naming it.
+        let start = wgsl.match_indices("fn ").map(|(i, _)| i).find(|&i| wgsl[i..].lines().next().is_some_and(|l| l.contains("terrain_raise(")))?;
+        let end = start + wgsl[start..].find("\n}\n")?;
+        Some(&wgsl[start..end])
+    }
+    let prepass: &[&'static str] = &["DEPTH_PREPASS", "MOTION_VECTOR_PREPASS", "NORMAL_PREPASS", "PREPASS_FRAGMENT"];
+    let main = compile("sf_terrain_bevy::shaders::terrain", &with(HIGH, &["SURFACE_WEATHER"])).unwrap_or_else(|e| panic!("{e}"));
+    let pre = compile("sf_terrain_bevy::shaders::terrain_prepass", &with(prepass, &["SURFACE_WEATHER_PREPASS"]))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let (a, b) = (body(&main).expect("main pass displaces"), body(&pre).expect("prepass displaces"));
+    assert_eq!(a, b, "one displacement function");
+    assert!(pre.contains("previous_world_position"), "motion vectors from last frame's surface");
+    for (module, defs) in [
+        ("sf_terrain_bevy::shaders::terrain", with(HIGH, &[])),
+        ("sf_terrain_bevy::shaders::terrain_prepass", with(prepass, &[])),
+        ("sf_terrain_bevy::shaders::terrain_prepass", vec!["DEPTH_PREPASS", "UNCLIPPED_DEPTH_ORTHO_EMULATION"]),
+    ] {
+        let wgsl = compile(module, &defs).unwrap_or_else(|e| panic!("{e}"));
+        assert!(body(&wgsl).is_none(), "{module} {defs:?}: displaced without surface weather");
+    }
 }

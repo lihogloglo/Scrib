@@ -766,6 +766,8 @@ fn cover_layers_pick_land_textures() {
     let (snow, ash): (SurfaceLayer, SurfaceLayer) = (layers[0].1.clone(), layers[1].1.clone());
     assert_eq!((snow.channel, ash.channel), (CoverChannel::Snow, CoverChannel::Ash));
     assert_eq!((snow.tiling_m, snow.sparkle, ash.sparkle, snow.normal.clone(), snow.arm.clone()), (512.0 * 0.9144 / 64.0, 1.0, 0.0, None, None));
+    // Knee-deep snow, a thin ash crust (W6b).
+    assert_eq!((snow.depth_m(), ash.depth_m()), (0.45, 0.03));
     // No preferred id: the lowest plain keyword texture; mixed ones are skipped.
     let modded = ltex_db(&[
         ("zz_ash", "My_Ash_B.dds"),

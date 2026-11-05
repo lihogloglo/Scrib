@@ -1,5 +1,5 @@
 //! Render world: the uniform buffer, the samplers, and the view component of the vendored
-//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-52). Each frame
+//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-53). Each frame
 //! the cameras marked [`SurfaceWeatherCamera`] get the component on their render-world view
 //! (once the textures are on the GPU); views that lost the mark lose it, and with it the
 //! `SURFACE_WEATHER` shader def (interiors pay nothing). Same shape as `sf_gi_bevy`'s
@@ -118,6 +118,7 @@ pub(crate) fn extract_view(
             cover: view_of(&images, &gpu.cover)?,
             cover_sampler: state.cover_sampler.clone(),
             trail: trail.current_view().clone(),
+            trail_previous: trail.previous_view().clone(),
         })
     });
     let now: Vec<Entity> = match bindings {

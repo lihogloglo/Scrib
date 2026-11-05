@@ -22,8 +22,12 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_platform = { workspace = true, features = ["std"] }
 # Mesh3d, SkinnedMesh (characters don't shelter).
 bevy_mesh.workspace = true
+# AlphaMode: the kick-up material (W7).
+bevy_material.workspace = true
 # SurfaceWeatherView / SurfaceWeatherBindings: the mesh-view bindings (vendored bevy_pbr patch "SW").
 bevy_pbr.workspace = true
+# TypePath: the kick-up material (W7).
+bevy_reflect = { workspace = true, features = ["std"] }
 # ShaderBuffer, RenderApp, partial texture writes.
 bevy_render.workspace = true
 bevy_shader.workspace = true
@@ -34,6 +38,8 @@ bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_diag_bevy.workspace = true
 # WorldPos (the floating origin the shelter map follows).
 sf_coords.workspace = true
+# TranslucentFog, DrawBand: the kick-up puffs fog themselves and draw in the overlay band (W7).
+sf_render_order_bevy.workspace = true
 # The shelter subview (`sun_view`, as WE-5's precipitation occlusion map).
 sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 sf_surface.workspace = true

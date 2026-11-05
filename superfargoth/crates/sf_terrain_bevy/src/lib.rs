@@ -91,6 +91,10 @@ pub struct TerrainSettings {
     /// (F0 = 0.16 x r², so 0.5 is F0 0.04), applied before surface weather mixes wet areas
     /// toward water. Default [`DEFAULT_REFLECTANCE`]; games may override it, live too.
     pub reflectance: f32,
+    /// How high another system raises the near terrain above its ground, meters (W6b: snow cover
+    /// drawn as geometry by `sf_surface_bevy` through the patch "SW" bindings). The two finest
+    /// CDLOD levels' bounds grow upward by it so culling stays conservative. Default 0.
+    pub raise_m: f32,
 }
 
 impl Default for TerrainSettings {
@@ -105,6 +109,7 @@ impl Default for TerrainSettings {
             blend_depth: 0.2,
             layer_array_size: None,
             reflectance: DEFAULT_REFLECTANCE,
+            raise_m: 0.0,
         }
     }
 }
@@ -725,6 +730,14 @@ fn node_bounds(state: &TerrainState, lod: i8, x: i64, z: i64) -> (f32, f32) {
 /// origin shift.
 const SHIFT_SETTLE_FRAMES: u8 = 2;
 
+/// Height margins (below, above) a CDLOD node's bounds grow by, meters: on the two finest levels
+/// (LOD < 0) the layer detail displacement either way plus the raise ([`TerrainSettings::raise_m`],
+/// W6b) upward; 5 cm of rounding slack everywhere. The vertex shader displaces only there.
+fn node_margins(lod: i8, detail_m: f32, raise_m: f32) -> (f32, f32) {
+    const SLACK_M: f32 = 0.05;
+    if lod < 0 { (detail_m + SLACK_M, detail_m + raise_m.max(0.0) + SLACK_M) } else { (SLACK_M, SLACK_M) }
+}
+
 /// The `P_DETAIL` slot: splat range, height-blend depth, ground reflectance (clamped to
 /// Bevy's 0..1), max terrain height.
 fn detail_params(settings: &TerrainSettings, max_height: f32) -> [f32; 4] {
@@ -871,7 +884,9 @@ fn update_terrain(
         for node in &selected {
             live.insert(node.key);
             let key = node.key;
-            let b = (node.min_height, node.max_height);
+            let (margin_below, margin_above) = node_margins(key.lod, displacement, settings.raise_m);
+            // The raise is in the key so a changed raise rebuilds the bounds.
+            let b = (node.min_height - margin_below, node.max_height + margin_above);
             let existing = state.nodes.get(&key).copied();
             if !origin_moved && existing.is_some_and(|(_, old)| old == b) {
                 continue;
@@ -881,10 +896,8 @@ fn update_terrain(
             #[allow(clippy::cast_possible_truncation)]
             let translation = Vec3::new(((g.x - origin_g.x) * 0.5) as f32, 0.0, ((g.y - origin_g.y) * 0.5) as f32);
             let transform = Transform::from_translation(translation).with_scale(Vec3::new(spacing, 1.0, spacing));
-            let margin = if key.lod < 0 { displacement + 0.05 } else { 0.05 };
-            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-            let (lo, hi) =
-                ((f64::from(node.min_height) - oy) as f32 - margin, (f64::from(node.max_height) - oy) as f32 + margin);
+            #[allow(clippy::cast_possible_truncation)]
+            let (lo, hi) = ((f64::from(b.0) - oy) as f32, (f64::from(b.1) - oy) as f32);
             #[allow(clippy::cast_precision_loss)]
             let quads = key.quads() as f32;
             let aabb = Aabb::from_min_max(Vec3::new(0.0, lo, 0.0), Vec3::new(quads, hi.max(lo + 0.01), quads));
@@ -1006,6 +1019,16 @@ fn update_terrain(
 mod tests {
     use super::*;
     use bevy_mesh::VertexAttributeValues;
+
+    /// W6b: the raised cover grows only the two finest levels' bounds, upward only.
+    #[test]
+    fn node_bounds_grow_by_the_raise_on_the_finest_levels() {
+        let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
+        assert!(near(node_margins(-2, 0.1, 0.45), (0.15, 0.6)));
+        assert!(near(node_margins(-1, 0.0, 0.45), (0.05, 0.5)));
+        assert!(near(node_margins(0, 0.1, 0.45), (0.05, 0.05)));
+        assert!(near(node_margins(-1, 0.0, -1.0), (0.05, 0.05)));
+    }
 
     /// The WGSL slot constants must match `params.rs`.
     #[test]

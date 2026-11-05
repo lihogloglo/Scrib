@@ -25,6 +25,9 @@ struct PrepassOutput {
     @location(1) lod: f32,
     @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
     @location(2) unclipped_depth: f32,
+    // Where this surface point was last frame (W6b: the raised cover moves under prints).
+    @if(MOTION_VECTOR_PREPASS)
+    @location(3) previous_world_position: vec4<f32>,
 }
 
 @vertex
@@ -34,8 +37,19 @@ fn vertex(v: Vertex) -> PrepassOutput {
     detail = false;
     let t = common::terrain_vertex(v.position.xz, v.instance_index, detail);
     var out: PrepassOutput;
-    out.world_position = vec4<f32>(t.position, 1.0);
-    out.position = position_world_to_clip(t.position);
+    var p = t.position;
+    var previous = t.position;
+    // Raised cover (surface weather W6b): the main pass's displacement (`common::terrain_raise`),
+    // and last frame's (last frame's ring) for the motion vectors. Shadow views never get it.
+@if(SURFACE_WEATHER_PREPASS) {
+    let r = common::terrain_raise(t);
+    p.y += r.x;
+    previous.y += r.z;
+}
+    out.world_position = vec4<f32>(p, 1.0);
+    out.position = position_world_to_clip(p);
+@if(MOTION_VECTOR_PREPASS)
+    out.previous_world_position = vec4<f32>(previous, 1.0);
     out.lod = t.lod;
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
     out.unclipped_depth = out.position.z;
@@ -61,9 +75,10 @@ fn fragment(in: PrepassOutput) -> PrepassFragmentOutput {
 @if(NORMAL_PREPASS)
     out.normal = vec4<f32>(common::terrain_normal(in.world_position.xz, in.lod) * 0.5 + vec3<f32>(0.5), 1.0);
 @if(MOTION_VECTOR_PREPASS) {
-    // Static geometry: only the camera moves.
+    // The ground is static (only the camera moves); the raised cover over it moves where prints
+    // are stamped or refill (W6b): its last-frame height came from last frame's ring.
     let clip = view.unjittered_clip_from_world * in.world_position;
-    let previous = previous_view_uniforms.unjittered_clip_from_world * in.world_position;
+    let previous = previous_view_uniforms.unjittered_clip_from_world * in.previous_world_position;
     out.motion_vector = (clip.xy / clip.w - previous.xy / previous.w) * vec2<f32>(0.5, -0.5);
 }
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)

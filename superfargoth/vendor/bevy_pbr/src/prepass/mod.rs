@@ -10,6 +10,8 @@ use crate::{
     PrepassOpaqueDrawFunction, PrepassVertexShader, RenderLightmaps, RenderMaterialInstances,
     RenderMeshInstanceFlags, RenderMeshInstances, SetMaterialBindGroup, SetMeshBindGroup,
     ShadowView,
+    surface_weather_bind_entries, surface_weather_layout_entries, SurfaceWeatherPrepassBindGroups,
+    SurfaceWeatherView, // superfargoth patch (own, SW)
 };
 use bevy_app::{App, Plugin, PreUpdate};
 use bevy_asset::{embedded_asset, load_embedded_asset, AssetServer, Handle};
@@ -252,6 +254,9 @@ pub fn update_mesh_previous_global_transforms(
 pub struct PrepassPipeline {
     pub view_layout_motion_vectors: BindGroupLayoutDescriptor,
     pub view_layout_no_motion_vectors: BindGroupLayoutDescriptor,
+    /// superfargoth patch (own, SW): the two layouts plus surface weather bindings 43-53.
+    pub view_layout_motion_vectors_sw: BindGroupLayoutDescriptor,
+    pub view_layout_no_motion_vectors_sw: BindGroupLayoutDescriptor,
     pub mesh_layouts: MeshLayouts,
     pub empty_layout: BindGroupLayoutDescriptor,
     pub default_prepass_shader: Handle<Shader>,
@@ -334,9 +339,23 @@ pub fn init_prepass_pipeline(
     let depth_clip_control_supported = render_device
         .features()
         .contains(WgpuFeatures::DEPTH_CLIP_CONTROL);
+    // superfargoth patch (own, SW): the same layouts plus the surface weather bindings (W6b).
+    let surface_weather_entries =
+        surface_weather_layout_entries(DynamicBindGroupLayoutEntries::new(ShaderStages::VERTEX_FRAGMENT));
+    let with_surface_weather = |label: &'static str, base: &BindGroupLayoutDescriptor| {
+        let mut entries = base.entries.clone();
+        entries.extend_from_slice(&surface_weather_entries);
+        BindGroupLayoutDescriptor::new(label, &entries)
+    };
+    let view_layout_motion_vectors_sw =
+        with_surface_weather("prepass_view_layout_motion_vectors_sw", &view_layout_motion_vectors);
+    let view_layout_no_motion_vectors_sw =
+        with_surface_weather("prepass_view_layout_no_motion_vectors_sw", &view_layout_no_motion_vectors);
     commands.insert_resource(PrepassPipeline {
         view_layout_motion_vectors,
         view_layout_no_motion_vectors,
+        view_layout_motion_vectors_sw,
+        view_layout_no_motion_vectors_sw,
         mesh_layouts: mesh_pipeline.mesh_layouts.clone(),
         default_prepass_shader: load_embedded_asset!(asset_server.as_ref(), "prepass.wesl"),
         skins_use_uniform_buffers: skin::skins_use_uniform_buffers(&render_device.limits()),
@@ -405,11 +424,17 @@ impl PrepassPipeline {
         material_properties: &MaterialProperties,
     ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         let mut shader_defs = shader_defs;
+        // superfargoth patch (own, SW): surface weather views get bindings 43-53 and a def.
+        let surface_weather = mesh_key.contains(MeshPipelineKey::SURFACE_WEATHER);
+        if surface_weather {
+            shader_defs.push("SURFACE_WEATHER_PREPASS".into());
+        }
         let mut bind_group_layouts = vec![
-            if mesh_key.contains(MeshPipelineKey::MOTION_VECTOR_PREPASS) {
-                self.view_layout_motion_vectors.clone()
-            } else {
-                self.view_layout_no_motion_vectors.clone()
+            match (mesh_key.contains(MeshPipelineKey::MOTION_VECTOR_PREPASS), surface_weather) {
+                (true, false) => self.view_layout_motion_vectors.clone(),
+                (false, false) => self.view_layout_no_motion_vectors.clone(),
+                (true, true) => self.view_layout_motion_vectors_sw.clone(),
+                (false, true) => self.view_layout_no_motion_vectors_sw.clone(),
             },
             self.empty_layout.clone(),
         ];
@@ -862,7 +887,53 @@ pub fn prepare_prepass_view_bind_group(
     previous_view_uniforms: Res<PreviousViewUniforms>,
     visibility_ranges: Res<RenderVisibilityRanges>,
     mut prepass_view_bind_group: ResMut<PrepassViewBindGroup>,
+    // superfargoth patch (own, SW)
+    mut commands: Commands,
+    surface_weather_views: Query<
+        (Entity, Option<&SurfaceWeatherView>, Has<SurfaceWeatherPrepassBindGroups>),
+        Or<(With<SurfaceWeatherView>, With<SurfaceWeatherPrepassBindGroups>)>,
+    >,
 ) {
+    // superfargoth patch (own, SW): per-view prepass bind groups with bindings 43-53.
+    for (entity, surface_weather, had) in &surface_weather_views {
+        let made = match (surface_weather, view_uniforms.uniforms.binding(), globals_buffer.buffer.binding(), visibility_ranges.buffer().buffer()) {
+            (Some(SurfaceWeatherView(sw)), Some(view_binding), Some(globals_binding), Some(ranges)) => {
+                let no_motion_vectors = render_device.create_bind_group(
+                    "prepass_view_no_motion_vectors_sw_bind_group",
+                    &pipeline_cache.get_bind_group_layout(&prepass_pipeline.view_layout_no_motion_vectors_sw),
+                    &surface_weather_bind_entries(
+                        DynamicBindGroupEntries::new_with_indices((
+                            (0, view_binding.clone()),
+                            (1, globals_binding.clone()),
+                            (14, ranges.as_entire_binding()),
+                        )),
+                        sw,
+                    ),
+                );
+                let motion_vectors = previous_view_uniforms.uniforms.binding().map(|previous| {
+                    render_device.create_bind_group(
+                        "prepass_view_motion_vectors_sw_bind_group",
+                        &pipeline_cache.get_bind_group_layout(&prepass_pipeline.view_layout_motion_vectors_sw),
+                        &surface_weather_bind_entries(
+                            DynamicBindGroupEntries::new_with_indices((
+                                (0, view_binding),
+                                (1, globals_binding),
+                                (2, previous),
+                                (14, ranges.as_entire_binding()),
+                            )),
+                            sw,
+                        ),
+                    )
+                });
+                commands.entity(entity).insert(SurfaceWeatherPrepassBindGroups { motion_vectors, no_motion_vectors });
+                true
+            }
+            _ => false,
+        };
+        if had && !made {
+            commands.entity(entity).remove::<SurfaceWeatherPrepassBindGroups>();
+        }
+    }
     if let (Some(view_binding), Some(globals_binding), Some(visibility_ranges_buffer)) = (
         view_uniforms.uniforms.binding(),
         globals_buffer.buffer.binding(),
@@ -922,9 +993,10 @@ pub fn check_prepass_views_need_specialization(
         Option<&DepthPrepass>,
         Option<&NormalPrepass>,
         Option<&MotionVectorPrepass>,
+        Has<SurfaceWeatherView>, // superfargoth patch (own, SW)
     )>,
 ) {
-    for (view, msaa, depth_prepass, normal_prepass, motion_vector_prepass) in views.iter_mut() {
+    for (view, msaa, depth_prepass, normal_prepass, motion_vector_prepass, surface_weather) in views.iter_mut() {
         let mut view_key = MeshPipelineKey::from_msaa_samples(msaa.samples());
         if depth_prepass.is_some() {
             view_key |= MeshPipelineKey::DEPTH_PREPASS;
@@ -934,6 +1006,10 @@ pub fn check_prepass_views_need_specialization(
         }
         if motion_vector_prepass.is_some() {
             view_key |= MeshPipelineKey::MOTION_VECTOR_PREPASS;
+        }
+        // superfargoth patch (own, SW): prepass pipelines take the surface weather layout.
+        if surface_weather {
+            view_key |= MeshPipelineKey::SURFACE_WEATHER;
         }
 
         if let Some(current_key) = view_key_cache.get_mut(&view.retained_view_entity) {
@@ -1520,16 +1596,18 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetPrepassViewBindGroup<
         Read<ViewUniformOffset>,
         Has<MotionVectorPrepass>,
         Option<Read<PreviousViewUniformOffset>>,
+        Option<Read<SurfaceWeatherPrepassBindGroups>>, // superfargoth patch (own, SW)
     );
     type ItemQuery = ();
 
     #[inline]
     fn render<'w>(
         _item: &P,
-        (view_uniform_offset, has_motion_vector_prepass, previous_view_uniform_offset): (
+        (view_uniform_offset, has_motion_vector_prepass, previous_view_uniform_offset, surface_weather): (
             &'_ ViewUniformOffset,
             bool,
             Option<&'_ PreviousViewUniformOffset>,
+            Option<&'w SurfaceWeatherPrepassBindGroups>,
         ),
         _entity: Option<()>,
         prepass_view_bind_group: SystemParamItem<'w, '_, Self::Param>,
@@ -1539,9 +1617,14 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetPrepassViewBindGroup<
 
         match previous_view_uniform_offset {
             Some(previous_view_uniform_offset) if has_motion_vector_prepass => {
+                // superfargoth patch (own, SW): the view's surface weather variant when it has one.
+                let group = match surface_weather {
+                    Some(sw) => sw.motion_vectors.as_ref(),
+                    None => prepass_view_bind_group.motion_vectors.as_ref(),
+                };
                 pass.set_bind_group(
                     I,
-                    prepass_view_bind_group.motion_vectors.as_ref().unwrap(),
+                    group.unwrap(),
                     &[
                         view_uniform_offset.offset,
                         previous_view_uniform_offset.offset,
@@ -1549,11 +1632,11 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetPrepassViewBindGroup<
                 );
             }
             _ => {
-                pass.set_bind_group(
-                    I,
-                    prepass_view_bind_group.no_motion_vectors.as_ref().unwrap(),
-                    &[view_uniform_offset.offset],
-                );
+                let group = match surface_weather {
+                    Some(sw) => Some(&sw.no_motion_vectors),
+                    None => prepass_view_bind_group.no_motion_vectors.as_ref(),
+                };
+                pass.set_bind_group(I, group.unwrap(), &[view_uniform_offset.offset]);
             }
         }
         RenderCommandResult::Success
