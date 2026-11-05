@@ -1,5 +1,6 @@
 //! Shared stable ids (net.md "Players", net-ready rules 6 and 7): plain serde data, never a
-//! Bevy `Entity`. `sf_action` and `sf_rpg` both name players with [`PlayerId`] from here.
+//! Bevy `Entity`. `sf_action` and `sf_rpg` both name players with [`PlayerId`] from here;
+//! [`PlayerKey`] and [`ActorKey`] live here so `sf_rpg` and `sf_stats` share them (stats.md S0).
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,16 @@ impl From<PlayerId> for u8 {
         id.0
     }
 }
+
+/// A player's persistent profile key (random, created once); saves find a returning
+/// player's character by it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PlayerKey(pub u128);
+
+/// A stable actor id: the world's placement id or spawn id (this crate does not depend on
+/// `sf_world`). Never a Bevy `Entity`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ActorKey(pub u128);
 
 #[cfg(test)]
 mod tests {

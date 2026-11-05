@@ -8334,6 +8334,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_stats"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+ "sf_ids",
+ "sf_records",
+ "smallvec",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sf_surface"
 version = "0.1.0"
 dependencies = [

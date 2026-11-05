@@ -1,0 +1,90 @@
+{
+  "CounterSave": {
+    "STRUCT": [
+      {
+        "key": "STR"
+      },
+      {
+        "value": "F32"
+      }
+    ]
+  },
+  "Membership": {
+    "STRUCT": [
+      {
+        "rank": {
+          "OPTION": "I32"
+        }
+      },
+      {
+        "reputation": "I32"
+      },
+      {
+        "expelled": "BOOL"
+      }
+    ]
+  },
+  "PoolSave": {
+    "STRUCT": [
+      {
+        "key": "STR"
+      },
+      {
+        "base": "F32"
+      },
+      {
+        "current": "F32"
+      }
+    ]
+  },
+  "SheetSave": {
+    "STRUCT": [
+      {
+        "values": {
+          "SEQ": {
+            "TYPENAME": "ValueSave"
+          }
+        }
+      },
+      {
+        "pools": {
+          "SEQ": {
+            "TYPENAME": "PoolSave"
+          }
+        }
+      },
+      {
+        "counters": {
+          "SEQ": {
+            "TYPENAME": "CounterSave"
+          }
+        }
+      },
+      {
+        "groups": {
+          "SEQ": {
+            "TUPLE": [
+              "STR",
+              {
+                "TYPENAME": "Membership"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "ValueSave": {
+    "STRUCT": [
+      {
+        "key": "STR"
+      },
+      {
+        "base": "F32"
+      },
+      {
+        "damage": "F32"
+      }
+    ]
+  }
+}

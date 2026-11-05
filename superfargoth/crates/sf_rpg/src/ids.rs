@@ -2,18 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The player's session id and the player cap live in `sf_ids`, shared with `sf_action`.
-pub use sf_ids::{MAX_PLAYERS, PlayerId};
-
-/// A player's persistent profile key (random, created once); saves find a returning
-/// player's character by it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct PlayerKey(pub u128);
-
-/// A stable actor id: the world's placement id or spawn id (`sf_rpg` does not depend on
-/// `sf_world`). Never a Bevy `Entity`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ActorKey(pub u128);
+/// The player's session id, the player cap and the persistent player and actor keys live in
+/// `sf_ids`, shared with `sf_action` and `sf_stats` (stats.md slice S0).
+pub use sf_ids::{ActorKey, MAX_PLAYERS, PlayerId, PlayerKey};
 
 /// Whose inventory a command targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

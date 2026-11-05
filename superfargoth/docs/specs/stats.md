@@ -1,6 +1,6 @@
 # Character stats: data-defined values, pools, modifiers, progression seams (`sf_stats`)
 
-Status (2026-11-05): spec, owner approved the lane 2026-11-05; nothing built. Game side:
+Status (2026-11-05): S0 + S1 built (`sf_stats`; as-built detail: `stats-as-built.md`); S2 next. Game side:
 `../../../bevyrrowind/docs/specs/stats-adapter.md` (Morrowind's 8 attributes, 27 skills, GMSTs, OpenMW formulas).
 Unblocks ROADMAP 2.7 (every OpenMW content mechanic needs stats: `../../../bevyrrowind/docs/research/openmw-mechanics-2026-11-05.md`
 "Finding zero"). The spell/effect runtime is the **next** spec: this one defines only the seam it writes through
@@ -14,13 +14,11 @@ reputation, bounty, faction memberships, progression counters. Game-agnostic: th
 2026-11-05). Consumers read one API: combat vitals, HUD bars, dialogue filters, MWScript stat functions, the effect
 runtime, later character creation and the stats screen.
 
-Non-goals (first cuts): the effect engine (durations, delivery, resistances: next spec), conditional/tagged modifiers
-("+10 vs undead"), perks and ability trees, character creation UI, level-up UI, stats screen (UI slices after S9),
-AI settings (Fight/Flee/Alarm/Hello belong to `sf_ai`).
+Non-goals (first cuts): the effect engine (next spec), conditional/tagged modifiers, perks, chargen/level-up UI, stats
+screen (UI slices after S9), AI settings (`sf_ai`).
 
-Today: `sf_combat::Vitals` pools are seeded from the `player` record (`mw_player_bevy/src/combat.rs` `PlayerCombat`),
-the HUD's `PlayerVitals` (`hud.rs`) is a static scaffold, dialogue reads `PlayerStatsPlaceholder`
-(`mw_rpg_bevy/src/dialogue.rs:86`), every MWScript stat function is a `stub` (`mw_script/src/functions.txt`).
+Today: `sf_combat::Vitals` seeded from the `player` record (`mw_player_bevy/src/combat.rs`), HUD `PlayerVitals` a
+scaffold, dialogue reads `PlayerStatsPlaceholder` (`mw_rpg_bevy/src/dialogue.rs`), MWScript stat functions are stubs.
 
 ## Canonical technique
 
@@ -74,7 +72,7 @@ an adapter may synthesise them from its format (Morrowind: SKIL records). `group
 | `StatKind` | State | Modified value | Examples |
 |---|---|---|---|
 | `Value { min, cap: Option<f32> }` | base, damage | `clamp((eff_base - damage + temp) * (1 + Σmul), min, cap)` | attributes, skills, magnitude stats (resist fire) |
-| `Pool { depleted_below, rebase }` | base (max), current | max = `eff_base + temp`; current kept separately | health, magicka, fatigue/stamina |
+| `Pool { depleted_below, rebase }` | base (max), current | max = `max(0, (eff_base + temp) * (1 + Σmul))`; current separate | health, magicka, fatigue/stamina |
 | `Counter { min, max }` | one number, no modifiers | itself | level, bounty, reputation, skill progress, level-up tallies |
 | `Derived` | none (cached, never saved) | `DerivedModel::derived` | carry capacity, encumbrance, fatigue term |
 
@@ -98,13 +96,14 @@ pub struct Sheet {
     derived: Vec<f32>,          // cache, recomputed when dirty
     mods: SmallVec<[Modifier; 8]>,
     groups: BTreeMap<RecordId, Membership>,
-    dirty: Dirty,               // bitset of stats whose inputs changed
+    dirty: bool,                // whole sheet: models declare no dependencies (as built)
+    building: bool,             // new or loading: no Rebase until settle()
     changed_since_init: bool,   // saves only touched NPC sheets
 }
 pub struct ValueStat { base: f32, damage: f32 }            // modified values cached alongside
 pub struct PoolStat { base: f32, current: f32 }
 pub struct Modifier { stat: StatIdx, layer: Layer /* Permanent | Temporary */, op: ModOp /* Add | Mul */, value: f32, source: SourceId }
-pub struct Membership { rank: i32, reputation: i32, expelled: bool }
+pub struct Membership { rank: Option<i32>, reputation: i32, expelled: bool }   // None: not a member
 pub struct SourceId { kind: SourceKind /* Effect, Equipment, Ability, Script, Rules, Debug */, id: u64 }
 ```
 
@@ -143,9 +142,9 @@ pub fn tick(table: &StatTable, rules: &Rules, sheet: &mut Sheet, ctx: &TickCtx, 
   with the same `cause`). After the ops it recomputes dirty modified values, derived pool maxima
   (`DerivedModel::pool_base`, with the pool's `Rebase`), clamps currents (unless `above_max` put them over), refreshes
   derived caches, and appends events.
-- `ApplyCtx { tick, owner: StatOwner, cause: Cause, inputs: &Inputs }`; `Inputs` are external numbers the content's
-  models need (carried weight, is-player, in combat), supplied by the caller. No clock, no RNG inside `sf_stats` (net
-  rule 4); a model that needs randomness gets a seed in `Inputs` (hash of owner, tick).
+- `ApplyCtx { owner: StatOwner, cause: Cause /* carries the tick */, inputs: &Inputs }`; `Inputs` are external
+  numbers the content's models need (carried weight, is-player, in combat), supplied by the caller. No clock, no RNG
+  inside `sf_stats` (net rule 4); a model that needs randomness gets a seed in `Inputs` (hash of owner, tick).
 - **Pure**: same (sheet, ops, ctx) gives the same sheet bytes. Tested with postcard round-trips.
 
 ### Events (`StatEvent`, data: net rule 8)
@@ -292,8 +291,8 @@ One deliverable plus its test per slice; S1-S3 are Bevy-free and need no game ru
 
 | Slice | Deliverable | Test |
 |---|---|---|
-| **S0** ids | `ActorKey`, `PlayerKey` move to `sf_ids` (re-exported by `sf_rpg`) | workspace builds; save goldens unchanged |
-| **S1** core | `sf_stats`: table, sheet, modifiers, ops, `apply`/`tick`, events, model traits, `TestModel` | "Tests" list above |
+| **S0** ids [x] 2026-11-05 | `ActorKey`, `PlayerKey` move to `sf_ids` (re-exported by `sf_rpg`) | workspace builds; save goldens unchanged |
+| **S1** core [x] 2026-11-05 | `sf_stats`: table, sheet, modifiers, ops, `apply`/`tick`, events, model traits, `TestModel` | "Tests" list above (23 + measurement 0.040 ms) |
 | **S2** Morrowind table + init | `mw_stats`: defs from attributes + SKIL, roles, GMST snapshot, record / autocalc / chargen init | formula tests against OpenMW (adapter "Tests"); real-install sanity on every NPC and creature |
 | **S3** Morrowind models | `mw_stats`: `MwDerived`, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs |
 | **S4** Bevy plugin | `sf_stats_bevy` + game glue: `Stats` on the player, NPCs and creatures at spawn; fixed-tick sets; events | headless app: spawn, apply, regen, events in order |

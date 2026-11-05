@@ -1,0 +1,23 @@
+[package]
+name = "sf_stats"
+description = "Bevy-free character stats for superfargoth: data-defined values, pools and counters, source-tracked modifiers, the pure apply/tick step and the rules-model seams (stats.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+serde.workspace = true
+sf_ids.workspace = true
+sf_records.workspace = true
+smallvec = { workspace = true, features = ["serde"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+serde-reflection.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
