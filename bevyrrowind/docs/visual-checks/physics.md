@@ -173,6 +173,14 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 - Log: `knockdown: <e> taken over by the physics layer`, `delirium: took over ... with catchFall`, `handed back (Fallen)`;
   beasts/creatures `ragdoll: knocked down`. A/B: `--no-default-features` build = old ragdoll for everyone.
 - Status: awaiting owner (delirium-knockdown, 2026-11-05).
+- Fix 2026-11-05 (delirium-hits; owner: "push them in the direction, as the click did"): hits are pushes with the balancer
+  on, no forced fall: a `V` ball (up to 36 N·s head-on) staggers the NPC 0.3-0.5 m along the ball's path with a catch
+  step, then it blends back to its idle; a second ball on a staggering or lying NPC pushes it again. Only 100+ N·s
+  falls for sure (after 0.3 s of push). Log: `hit: <e> taken by the physics layer`, `took over ... with bodyBalance`,
+  `recovered, blending out`. Same feel as the F11 click (Ctrl 20 / plain 45 N·s). Status: awaiting owner.
+- Owner 2026-11-05: confirmed (hits push along their direction). Follow-ups: fall threshold should scale with the
+  character's strength (stats); bodies sink into bent knees on takeover and rise at hand-back; balls pass through arms
+  outside the capsule (hurt shapes, C4). Status: confirmed with follow-ups.
 
 ### PH-16: A killed human NPC falls and stays dead under Delirium (owner 2026-10-30: replaces clip + limp ragdoll)
 - Kind: level, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then
@@ -183,3 +191,7 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 - Log: `death: <e> (...) taken over by the physics layer`, `delirium: took over ... with catchFall (dead)` (or `killed
   while taken over`), then `delirium: <e> lies dead, pose frozen (N s after the kill)`; beasts `ragdoll: killed`.
 - Status: awaiting owner (delirium-death, 2026-11-05).
+- Fix 2026-11-05 (delirium-hits): a death from a hit (combat later; the routing is in place) is pushed along the blow
+  and staggers on weak legs for 0.6 s before it falls and goes limp (falls ~1.1 s after the blow). Console `kill` (no
+  blow) still drops on the spot. Check: `kill` stays a collapse; a `V` ball on a falling corpse pushes it, a frozen
+  corpse ignores it. Status: awaiting owner.

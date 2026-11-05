@@ -15,7 +15,7 @@ use glam::{Affine3A, Vec2};
 use mw_delirium::delirium::prelude::*;
 use mw_delirium::sim::DT;
 use mw_delirium::takeover::pick;
-use mw_delirium::{Body, HandBack, Options, Rules, Takeover, authoring_from_model, bones_to_parts, character_from_skeleton};
+use mw_delirium::{Body, HandBack, Options, Outcome, Rules, Takeover, authoring_from_model, bones_to_parts, character_from_skeleton};
 use mw_bake::VfsInputs;
 use mw_bake::anim::{ActorAnimSet, ActorSets};
 use mw_bake::sources::AnimSources;
@@ -659,4 +659,138 @@ fn lying_slide() {
     }
     let n = waits.iter().filter(|w| w.is_finite()).count() as f32;
     println!("mean wait down {:.2} s", waits.iter().filter(|w| w.is_finite()).sum::<f32>() / n);
+}
+
+/// One hit's run (owner 2026-11-05: "push them in the direction"): `impulse` N s along `dir` on `part` (at its centre)
+/// from the rest pose, `Takeover::hit` with `outcome`, run `secs` (a dead body until it settles).
+struct HitRun {
+    /// Pelvis travel along `dir` at 0.5 s and 1 s, and the most within the run, m.
+    travel: [f32; 3],
+    /// Peak centre-of-mass speed, m/s.
+    peak: f32,
+    /// Seconds to the fall (`None`: stood).
+    fell: Option<f32>,
+    hand_back: Option<HandBack>,
+    settled: bool,
+    /// Every part finite and above the floor (less a part's radius slack) throughout.
+    sane: bool,
+    /// Centre-of-mass speed at the end, m/s.
+    end_speed: f32,
+}
+
+fn hit_run(f: &Fixture, rules: Rules, part: usize, dir: Vec3, impulse: f32, outcome: Outcome, secs: f32) -> HitRun {
+    let (parts, prev) = rest_parts(f, Vec3::ZERO);
+    let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, rules);
+    let start = t.frames()[0].translation;
+    let at = t.frames()[part].translation;
+    t.hit(part, at, dir * impulse, outcome);
+    let mut r = HitRun { travel: [0.0, 0.0, f32::MIN], peak: 0.0, fell: None, hand_back: None, settled: false, sane: true, end_speed: 0.0 };
+    for k in 1..=(secs / DT) as u32 {
+        r.hand_back = t.step(DT);
+        let frames = t.frames();
+        r.sane &= frames.iter().all(|p| p.translation.is_finite() && p.rotation.is_finite() && p.translation.z > t.floor - 0.3);
+        let along = (frames[0].translation - start).dot(dir);
+        r.travel[2] = r.travel[2].max(along);
+        r.peak = r.peak.max(t.com().1.length());
+        if k == (0.5 / DT) as u32 {
+            r.travel[0] = along;
+        }
+        if k == (1.0 / DT) as u32 {
+            r.travel[1] = along;
+        }
+        if r.fell.is_none() && t.fell() {
+            r.fell = Some(t.time);
+        }
+        r.settled = t.settled();
+        if r.hand_back.is_some() || r.settled {
+            break;
+        }
+    }
+    r.end_speed = t.com().1.length();
+    r
+}
+
+/// Hits push the body along their direction (owner 2026-11-05, PH-15/16): a hit from +X moves the pelvis along +X
+/// within 1 s with the balancer reacting, then hands back (no blow-up); a stronger one carries it further; a game-
+/// decided knockdown falls after the push; a killing hit carries the body, then it falls, is never handed back and
+/// settles. Sanity only (direction, NaN, floor, rest); the numbers in `hit_reactions_vs_impulse`.
+#[test]
+fn hits_push_along_their_direction() {
+    let Some(f) = fixture() else { return };
+    let rules = Rules::default();
+    let (light, heavy) = (hit_run(f, rules, 10, Vec3::X, 20.0, Outcome::React, 25.0), hit_run(f, rules, 10, Vec3::X, 80.0, Outcome::React, 25.0));
+    for (name, r) in [("20 N s", &light), ("80 N s", &heavy)] {
+        assert!(r.sane, "{name}: NaN or a part through the floor");
+        assert!(r.travel[1] > 0.0, "{name}: the pelvis moved along the hit ({:+.2} m at 1 s)", r.travel[1]);
+        assert!(r.hand_back.is_some_and(|h| h != HandBack::Exploded), "{name}: handed back ({:?})", r.hand_back);
+    }
+    assert!(heavy.travel[2] > light.travel[2], "a stronger hit carries further ({:.2} vs {:.2} m)", heavy.travel[2], light.travel[2]);
+    let knocked = hit_run(f, rules, 10, Vec3::X, 36.0, Outcome::KnockDown, 25.0);
+    assert!(knocked.sane && knocked.travel[1] > 0.0, "knockdown: along the hit ({:+.2} m at 1 s)", knocked.travel[1]);
+    assert!(knocked.fell.is_some() && knocked.hand_back == Some(HandBack::Fallen), "knockdown: down, then the get-up ({:?})", knocked.hand_back);
+    let killed = hit_run(f, rules, 10, Vec3::X, 36.0, Outcome::Kill, 30.0);
+    assert!(killed.sane && killed.travel[1] > 0.0, "killing hit: along the hit ({:+.2} m at 1 s)", killed.travel[1]);
+    assert!(killed.hand_back.is_none() && killed.fell.is_some() && killed.settled, "killing hit: fell and settled, never handed back");
+}
+
+/// A body Delirium holds takes a second hit as a further push (PH-15: a ball on a staggering NPC).
+#[test]
+fn a_held_body_takes_a_second_hit() {
+    let Some(f) = fixture() else { return };
+    let (parts, prev) = rest_parts(f, Vec3::ZERO);
+    let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+    let at = t.frames()[10].translation;
+    t.hit(10, at, Vec3::X * 25.0, Outcome::React);
+    for _ in 0..(0.4 / DT) as u32 {
+        assert!(t.step(DT).is_none(), "still under way");
+    }
+    let (before, _) = t.com();
+    let at = t.frames()[10].translation;
+    t.hit(10, at, Vec3::X * 60.0, Outcome::React);
+    assert!(t.weight >= 1.0 && !t.blending(), "the physics has the body");
+    t.step(DT);
+    assert!(t.com().1.x > 0.3, "the second push moves it along +X ({:.2} m/s)", t.com().1.x);
+    let out = run(&mut t, 25.0);
+    assert!(out.is_some_and(|o| o.0 != HandBack::Exploded), "{out:?}");
+    assert!(t.com().0.x > before.x, "carried further along +X");
+}
+
+#[test]
+#[ignore = "measurement: pelvis travel along the hit, fall and settle vs impulse and outcome; the dying window's knobs"]
+fn hit_reactions_vs_impulse() {
+    let Some(f) = fixture() else { return };
+    let (parts, _) = rest_parts(f, Vec3::ZERO);
+    println!("body mass {:.1} kg", Takeover::start(&f.body, &parts, None, None, 0.0, 0.3, Rules::default()).agent.doll.mass());
+    let rules = Rules::default();
+    let show = |what: &str, r: &HitRun| {
+        println!(
+            "{what}: travel 0.5 s {:+.2} m, 1 s {:+.2} m, most {:+.2} m, peak COM {:.2} m/s, fell {}, {:?}{}",
+            r.travel[0],
+            r.travel[1],
+            r.travel[2],
+            r.peak,
+            r.fell.map_or("no".into(), |s| format!("at {s:.2} s")),
+            r.hand_back,
+            if r.settled { ", settled" } else { "" }
+        );
+    };
+    for (outcome, secs) in [(Outcome::React, 6.0), (Outcome::KnockDown, 25.0), (Outcome::Kill, 30.0)] {
+        for (name, part, dir) in [("chest", 10, Vec3::X), ("chest", 10, Vec3::NEG_Y), ("chest", 10, Vec3::Y), ("pelvis", 0, Vec3::X), ("head", 12, Vec3::NEG_Y)] {
+            for impulse in [5.0, 10.0, 15.0, 25.0, 36.0, 45.0, 80.0, 120.0, 160.0] {
+                show(&format!("{outcome:?} {name} {dir} {impulse:>4.0} N s"), &hit_run(f, rules, part, dir, impulse, outcome, secs));
+            }
+        }
+    }
+    for (secs, stiffness) in [(0.0, 9.0), (0.3, 4.0), (0.6, 9.0), (0.6, 6.0), (0.6, 4.0), (0.6, 2.0), (1.0, 4.0)] {
+        let rules = Rules { dying: (secs, stiffness), ..Rules::default() };
+        for impulse in [0.0, 20.0, 36.0, 80.0] {
+            show(&format!("dying ({secs} s, stiffness {stiffness}) chest +X {impulse} N s"), &hit_run(f, rules, 10, Vec3::X, impulse, Outcome::Kill, 30.0));
+        }
+    }
+    for after in [0.0, 0.15, 0.3, 0.5] {
+        let rules = Rules { knock_down_after: after, ..Rules::default() };
+        for impulse in [0.0, 20.0, 36.0, 80.0] {
+            show(&format!("knockdown after {after} s, chest +X {impulse} N s"), &hit_run(f, rules, 10, Vec3::X, impulse, Outcome::KnockDown, 25.0));
+        }
+    }
 }

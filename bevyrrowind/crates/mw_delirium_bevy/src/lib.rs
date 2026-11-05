@@ -5,11 +5,16 @@
 //!   spawns at the actor's size (`Build::scaled` from its scale) on a floor at the ground and starts `bodyBalance`
 //!   (`catchFall` when already falling). The root goes `Held` (so `Dormant`: no step, no motion or ground
 //!   feed, the processing range leaves it alone) until the hand-back.
-//! - **Knockdowns** (owner 2026-10-30): the walkers' hard capsule impacts on human walkers come here instead of the
-//!   powered ragdoll ([`knockdown_reaction`], wired by the host into `mw_walkers_bevy`'s `RagdollTakeover` hook);
-//!   the impact is the takeover's hit.
+//! - **Hits** (owner 2026-10-30, 2026-11-05: "believable reactions depending on the object (mass, direction)"): the
+//!   walkers' capsule impacts on human walkers come here ([`hit_reaction`], wired by the host into `mw_walkers_bevy`'s
+//!   `RagdollTakeover` hook, kind `Hit`) from [`HitRules::takeover`] up instead of the kinematic hit-react op or the
+//!   powered ragdoll: the impact's momentum pushes the struck part with the balancer on (`Takeover::hit`, the
+//!   Euphoria / RDR2 hit reaction: stagger, catch steps, a fall when the balance fails); past
+//!   [`HitRules::certain_fall`] the push is followed by a knockdown. A body it already holds takes every hit as a
+//!   further push. Game-decided knockdowns ([`knockdown_reaction`], kind `Knockdown`) push first too, then go down.
 //! - **Deaths** (same hook, kind `Death`; [`death_reaction`]): taken over at once (or a live takeover turns
-//!   terminal), `Takeover::kill` (`catchFall`, then near-limp `bodyRelax`), never handed back: the root stays `Held`
+//!   terminal), `Takeover::kill_by_hit` with a killing blow (its push and a weakened balancer for the dying window,
+//!   then the fall) or `Takeover::kill` without (`catchFall` at once), then near-limp `bodyRelax`, never handed back: the root stays `Held`
 //!   with [`DeliriumCorpse`]; once at rest the takeover is dropped and the body keeps its last `PhysicsPose` (frozen,
 //!   no more steps). A death it can't take after the claim (no rig) falls back to the limp ragdoll.
 //! - **Step**: `FixedUpdate`, one Delirium step per fixed tick.
@@ -64,7 +69,7 @@ use bevy_ui::{BackgroundColor, BorderRadius, Node, PositionType, UiRect, percent
 use mw_delirium::delirium::prelude::Transform as Part;
 use mw_delirium::delirium::ragdoll::Build;
 use mw_delirium::takeover::pick;
-use mw_delirium::{Body, HandBack, Options, Rules, Takeover, authoring_from_model, bones_to_parts, character_from_skeleton, pose_to_bones};
+use mw_delirium::{Body, HandBack, Options, Outcome, Rules, Takeover, authoring_from_model, bones_to_parts, character_from_skeleton, pose_to_bones};
 use mw_game_core::player::PlayerMode;
 use sf_anim::Trs;
 use sf_anim_bevy::{Animator, PhysicsPose};
@@ -124,16 +129,67 @@ impl Plugin for DeliriumPlugin {
 }
 
 /// Take this character over (on its root, the `CharacterBody` entity), optionally with a hit; on one already taken
-/// over, the hit pushes its body. `knock_down`: the game decided it goes down (a knockdown): the balancer gives up
-/// and `catchFall` takes it to the floor (`Takeover::knock_down`), then the usual lie, get-up and hand-back
-/// (at the takeover only: on a live one just the hit applies). `kill`: a death (terminal, `Takeover::kill`), at the
-/// takeover or on a live one: it falls, goes limp, is never handed back, and once at rest its pose freezes; the root
-/// stays `Held` and gets [`DeliriumCorpse`].
+/// over, the hit pushes its body. `knock_down`: it goes down (game-decided, or past [`HitRules::certain_fall`]): after
+/// the hit's push the balancer gives up (`Takeover::knock_down`: `Rules::knock_down_after` later, so it falls along
+/// the hit), then the usual lie, get-up and hand-back; on a live one too (a no-op when already falling or down).
+/// `kill`: a death (terminal; with a hit `Takeover::kill_by_hit`, its dying window; without, `Takeover::kill`), at
+/// the takeover or on a live one: it falls, goes limp, is never handed back, and once at rest its pose freezes; the
+/// root stays `Held` and gets [`DeliriumCorpse`]. `live_only`: only for a character Delirium already holds (a hit on
+/// a `Held` root: whoever holds it, a further push only when it is Delirium), dropped otherwise.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct DeliriumReaction {
     pub hit: Option<DeliriumHit>,
     pub knock_down: bool,
     pub kill: bool,
+    pub live_only: bool,
+}
+
+/// Which physics hits Delirium takes and how hard (combat-adapter.md "Ragdoll routing"; measured by
+/// `mw_delirium/tests/takeover_real_install.rs` `hit_reactions_vs_impulse`, 80 kg body).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitRules {
+    /// A hit on a free walker is a takeover from this momentum up, N s (after [`Self::gain`]); lighter ones stay the
+    /// walkers' kinematic hit-react op (the hook declines). 10 N s (0.125 m/s on 80 kg) is where the push first
+    /// reads past the takeover's own settle sway (0.03-0.07 m at 5 N s; 0.09-0.15 m at 10 N s from the front/back).
+    pub takeover: f32,
+    /// From this momentum up, N s, the push is followed by a knockdown: Delirium's balancer recovers from far more
+    /// than a person would (it stays up to 120 N s, 1.5 m/s, with 1.7-2.2 m of catch steps; falls on its own from
+    /// about 160). 100 N s (1.25 m/s) is past a standing person's step recovery and above the dev click's Shift
+    /// (80 N s, staggers).
+    pub certain_fall: f32,
+    /// The impact's momentum times this is the push: the hit's share that goes into the body. Our props have no
+    /// restitution (they stop on a capsule), so the body takes their whole incoming momentum: 1. A bouncing source
+    /// would give `1 + e` (its own data, when sources carry it). A `V` ball (3 kg at 12 m/s, 36 N s head-on)
+    /// staggers the body 0.3-0.5 m along the hit within 1 s, between the dev click's Ctrl (20) and plain (45).
+    pub gain: f32,
+}
+
+impl Default for HitRules {
+    fn default() -> Self {
+        Self { takeover: 10.0, certain_fall: 100.0, gain: 1.0 }
+    }
+}
+
+/// The takeover request for a physics hit (combat-adapter.md "Ragdoll routing"; the walkers' `RagdollTakeover` hook,
+/// kind `Hit`; the entry point combat's hits take too, with a weapon's mass times its speed): on a human skeleton
+/// ([`HUMAN_SKELETONS`]) on a mover-driven character, the impact (`impulse`: N s, world, its momentum along its
+/// direction) times [`HitRules::gain`] pushes the part nearest `point` with the balancer on, from
+/// [`HitRules::takeover`] up, a knockdown after the push from [`HitRules::certain_fall`] up. `held` (something holds
+/// the root already): every hit is a push, only when Delirium is the holder (`live_only`). `None`: the walkers' own
+/// reaction (kinematic hit-react, powered ragdoll).
+#[must_use]
+pub fn hit_reaction(rules: &HitRules, skeleton: &str, mover: bool, held: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
+    if !mover || !HUMAN_SKELETONS.contains(&skeleton) {
+        return None;
+    }
+    let impulse = impulse * rules.gain;
+    let n = impulse.length();
+    (held || n >= rules.takeover).then_some(DeliriumReaction {
+        hit: Some(DeliriumHit { point, impulse, part: None }),
+        knock_down: n >= rules.certain_fall,
+        kill: false,
+        live_only: held,
+    })
 }
 
 /// A character Delirium killed (on the root): the takeover runs until the body is at rest, then its last pose stays as
@@ -153,23 +209,25 @@ pub struct DeliriumHit {
     pub part: Option<usize>,
 }
 
-/// The takeover request for a knockdown (combat-adapter.md "Ragdoll routing"; the host wires it into the walkers'
-/// `RagdollTakeover` hook): a human skeleton ([`HUMAN_SKELETONS`]) on a mover-driven character is taken over with
-/// the impact as its hit (`impulse`: N s, world; the part nearest `point`) and goes down (`knock_down`). `None`: beast
-/// races, creatures and action characters (no mover) keep the powered-ragdoll knockdown. The takeover then owns the
-/// character (`Held`, the get-up, the root's move) until [`DeliriumHandedBack`].
+/// The takeover request for a game-decided knockdown (combat-adapter.md "Ragdoll routing"; the walkers' takeover
+/// hook, kind `Knockdown`): a human skeleton ([`HUMAN_SKELETONS`]) on a mover-driven character is taken over with
+/// the blow as its hit (`impulse`: N s, world; the part nearest `point`; pushed first, so it falls along it) and goes
+/// down (`knock_down`). `None`: beast races, creatures and action characters (no mover) keep the powered-ragdoll
+/// knockdown. The takeover then owns the character (`Held`, the get-up, the root's move) until [`DeliriumHandedBack`].
 #[must_use]
 pub fn knockdown_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
-    (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit: Some(DeliriumHit { point, impulse, part: None }), knock_down: true, kill: false })
+    let hit = DeliriumHit { point, impulse, part: None };
+    (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit: Some(hit), knock_down: true, kill: false, live_only: false })
 }
 
 /// The takeover request for a death (combat-adapter.md "Ragdoll routing"; the walkers' takeover hook, kind `Death`):
 /// as [`knockdown_reaction`], but terminal (`kill`), with the killing blow as its hit when it has one (`impulse` not
-/// zero). A character Delirium already holds turns terminal. `None`: the death clip and the limp ragdoll.
+/// zero: pushed, then the dying window, `Takeover::kill_by_hit`; none: the collapse). A character Delirium already
+/// holds turns terminal. `None`: the death clip and the limp ragdoll.
 #[must_use]
 pub fn death_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
     let hit = (impulse.length_squared() > 1e-6).then_some(DeliriumHit { point, impulse, part: None });
-    (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit, knock_down: false, kill: true })
+    (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit, knock_down: false, kill: true, live_only: false })
 }
 
 /// A character went back to its animation (on the root).
@@ -346,6 +404,11 @@ fn start(
     }
     let mut ready = Vec::new();
     for (root, cb, request, mover, corpse) in &requests {
+        if request.live_only && !live.contains_key(&root) {
+            // A hit on a character something else holds (a frozen corpse, the limp ragdoll): not ours to push.
+            commands.entity(root).try_remove::<DeliriumReaction>();
+            continue;
+        }
         if !mover {
             // An action character (module docs): its body would end beside its capsule.
             info!("delirium: refused {root} ({}): no mover on it (an action character)", cb.skeleton);
@@ -360,8 +423,16 @@ fn start(
                 let part = hit.part.unwrap_or_else(|| nearest_part(&l.frames[1], at));
                 l.pushes.push((part, at, l.sim.sim_dir(hit.impulse)));
             }
+            if request.knock_down && !request.kill && !l.takeover.is_dead() {
+                l.takeover.knock_down();
+            }
             if request.kill && !l.takeover.is_dead() {
-                l.takeover.kill();
+                // The push lands at the next step, inside the dying window.
+                if request.hit.is_some() {
+                    l.takeover.kill_by_hit();
+                } else {
+                    l.takeover.kill();
+                }
                 // A hand-back stepped this very frame doesn't happen: dead, it stays.
                 if l.hand_back != Some(HandBack::Exploded) {
                     l.hand_back = None;
@@ -440,17 +511,26 @@ fn start(
         let get_ups = get_up_clips(animator);
         let tilts: Vec<Vec3> = get_ups.iter().map(|&(_, c)| mw_delirium::clip_tilt(&rig.body.table, skeleton, &first_pose(animator, c).to_vec())).collect();
         takeover.set_get_ups(&tilts);
+        // The hit's push, then the outcome (a knockdown or a death after the push: it falls along the hit).
+        let outcome = match (prev.kill, prev.knock_down) {
+            (true, _) => Outcome::Kill,
+            (false, true) => Outcome::KnockDown,
+            (false, false) => Outcome::React,
+        };
         let hit = prev.hit.map(|h| {
             let at = sim.sim_point(h.point);
             let part = h.part.unwrap_or_else(|| nearest_part(&parts, at));
-            takeover.push(part, at, sim.sim_dir(h.impulse));
+            takeover.hit(part, at, sim.sim_dir(h.impulse), outcome);
             (part, h.impulse.length())
         });
-        if prev.knock_down {
-            takeover.knock_down();
+        if hit.is_none() {
+            match outcome {
+                Outcome::Kill => takeover.kill(),
+                Outcome::KnockDown => takeover.knock_down(),
+                Outcome::React => {}
+            }
         }
         if prev.kill {
-            takeover.kill();
             commands.entity(root).try_insert(DeliriumCorpse);
         }
         let model = mw_delirium::pose::model_pose(skeleton, &pose);
@@ -854,7 +934,7 @@ fn click(
     }
     let Some((_, root, part, point)) = best else { return };
     info!("delirium: click on {root}, {} ({strength:.0} N s)", mw_delirium::body::NAMES[part]);
-    commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part) }), knock_down: false, kill: false });
+    commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part) }), ..DeliriumReaction::default() });
 }
 
 #[cfg(test)]
@@ -867,10 +947,33 @@ mod tests {
     use bevy_math::Vec3;
     use sf_coords::WorldPos;
 
-    use super::{ClickDot, HUMAN_SKELETONS, click_allowed, death_reaction, knockdown_reaction, show_click_dot, spawn_click_dot};
+    use super::{ClickDot, HUMAN_SKELETONS, HitRules, click_allowed, death_reaction, hit_reaction, knockdown_reaction, show_click_dot, spawn_click_dot};
 
     fn mode(on: bool) -> PlayerMode {
         PlayerMode { on, paused: false, body: None, last_ground: None }
+    }
+
+    /// Owner 2026-11-05 (PH-15/16): a physics hit on a human walker is a push with the balancer on (no forced fall)
+    /// from the takeover threshold, a knockdown after the push past the certain fall; lighter hits stay the walkers'
+    /// kinematic hit-react; a held body takes every hit, as a push on Delirium's own takeovers only.
+    #[test]
+    fn physics_hits_become_pushes() {
+        let rules = HitRules { takeover: 10.0, certain_fall: 100.0, gain: 1.5 };
+        let point = WorldPos::ORIGIN.offset(Vec3::Y);
+        for skeleton in HUMAN_SKELETONS {
+            let ball = hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 36.0).expect("a ball is a takeover");
+            assert!(!ball.knock_down && !ball.kill && !ball.live_only, "a push, the balancer on");
+            assert_eq!(ball.hit.map(|h| (h.point, h.impulse, h.part)), Some((point, Vec3::X * 54.0, None)), "momentum times the gain");
+            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 6.0).is_none(), "9 N s: the kinematic hit-react");
+            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 7.0).is_some(), "10.5 N s: a takeover");
+            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 70.0).is_some_and(|r| r.knock_down), "105 N s: down after the push");
+            let held = hit_reaction(&rules, skeleton, true, true, point, Vec3::X * 2.0).expect("a held body takes every hit");
+            assert!(held.live_only && !held.knock_down, "a further push, only on Delirium's own takeover");
+            assert!(hit_reaction(&rules, skeleton, false, false, point, Vec3::X * 36.0).is_none(), "an action character (no mover)");
+        }
+        for other in ["meshes/base_animkna.nif", "meshes/r/guar.nif"] {
+            assert!(hit_reaction(&rules, other, true, false, point, Vec3::X * 36.0).is_none(), "{other}: the walkers' own reaction");
+        }
     }
 
     /// Owner 2026-10-30/11-05: Delirium replaces the powered ragdoll for human knockdowns; beasts, creatures and

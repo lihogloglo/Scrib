@@ -94,6 +94,8 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   the face, fingers forward and a little up, thumb down; run straight in: both palms flat on the face, fingers up, elbows a
   little bent. Look for wrist skin twisting (no forearm twist bones) and fingers through the face. Needs a new exe copy and
   the bake (done 2026-11-05). Status: awaiting owner.
+- Owner 2026-11-05: wall stop good, "works and it's satisfying". Nitpick: head-on hands closer together, just in front of the
+  bust (not out to the sides), and at chest height (a bit higher than now). Status: confirmed with follow-up (hand spacing/height).
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.

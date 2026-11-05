@@ -1,7 +1,7 @@
-//! Knockdown and death routing (combat-adapter.md "Ragdoll routing"): a hard impact or a death goes to the
+//! Hit, knockdown and death routing (combat-adapter.md "Ragdoll routing"): an impact or a death goes to the
 //! [`RagdollTakeover`] hook when it claims the character, else to the powered-ragdoll knockdown or the death clip and
 //! limp ragdoll; without the hook (the app built without `delirium`) every one is the ragdoll's. The hook here mirrors
-//! the Delirium claim (human skeleton on a mover: `mw_delirium_bevy::knockdown_reaction` / `death_reaction`, tested
+//! the Delirium claim (human skeleton on a mover: `mw_delirium_bevy::hit_reaction` / `death_reaction`, tested
 //! there) without the GPL-3.0-only crate.
 
 use std::sync::Arc;
@@ -51,20 +51,25 @@ fn asset() -> Arc<AnimAsset> {
 struct Claimed {
     impulse: Vec3,
     kind: TakeoverKind,
+    held: bool,
 }
 
+/// Mirrors `mw_delirium_bevy::hit_reaction`'s routing: hits from 10 N·s up (any on a held body), knockdowns and deaths
+/// of human walkers.
 fn delirium_like() -> RagdollTakeover {
     RagdollTakeover(Arc::new(|t: &PhysicsTakeover, commands: &mut Commands| {
-        let claim = t.mover && t.skeleton == HUMAN;
+        let strong = t.kind != TakeoverKind::Hit || t.held || t.impulse.length() >= 10.0;
+        let claim = t.mover && t.skeleton == HUMAN && strong;
         if claim {
-            commands.entity(t.root).insert(Claimed { impulse: t.impulse, kind: t.kind });
+            commands.entity(t.root).insert(Claimed { impulse: t.impulse, kind: t.kind, held: t.held });
         }
         claim
     }))
 }
 
-/// A walker (root: `CharacterBody` + mover; body: animator) hit once with `impulse` along +X; returns (root, body).
-fn hit(hook: Option<RagdollTakeover>, skeleton: &str, impulse: f32) -> (App, Entity, Entity) {
+/// A walker (root: `CharacterBody` + mover + `extra`; body: animator) hit once with `impulse` along +X; returns
+/// (root, body).
+fn hit(hook: Option<RagdollTakeover>, skeleton: &str, impulse: f32, extra: impl Bundle) -> (App, Entity, Entity) {
     let mut app = App::new();
     app.add_message::<ImpactOnCharacter>().insert_resource(RagdollSource(Arc::new(|_| None))).add_systems(Update, knockdown);
     if let Some(hook) = hook {
@@ -74,7 +79,7 @@ fn hit(hook: Option<RagdollTakeover>, skeleton: &str, impulse: f32) -> (App, Ent
     let key = OutfitCacheKey { skeleton: skeleton.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default() };
     let character = CharacterBody { body, skeleton: skeleton.to_owned(), key, outfit: Arc::default(), meshes: Vec::new(), cloth_joints: Vec::new() };
     let mover = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
-    let root = app.world_mut().spawn((character, mover, Transform::IDENTITY)).id();
+    let root = app.world_mut().spawn((character, mover, Transform::IDENTITY, extra)).id();
     app.world_mut().write_message(ImpactOnCharacter { entity: root, impulse, point: WorldPos::ORIGIN.offset(Vec3::Y), direction: Vec3::X });
     app.update();
     (app, root, body)
@@ -85,34 +90,51 @@ fn powered_knockdown(app: &App, root: Entity, body: Entity) -> bool {
     ragdoll && app.world().get::<KnockedDown>(root).is_some() && app.world().get::<Held>(root).is_some()
 }
 
+/// Owner 2026-11-05 (PH-15): a hit on a human walker goes to the takeover as a hit (a push, the balance reacting),
+/// not a forced knockdown.
 #[test]
-fn human_knockdown_goes_to_the_takeover() {
-    let (app, root, body) = hit(Some(delirium_like()), HUMAN, KNOCKDOWN_IMPULSE + 5.0);
-    let claimed = app.world().get::<Claimed>(root).expect("the hook took the knockdown");
-    assert_eq!((claimed.impulse, claimed.kind), (Vec3::X * (KNOCKDOWN_IMPULSE + 5.0), TakeoverKind::Knockdown));
-    assert!(app.world().get::<Ragdoll>(body).is_none(), "a taken-over knockdown spawns no powered ragdoll");
+fn human_hit_goes_to_the_takeover() {
+    let (app, root, body) = hit(Some(delirium_like()), HUMAN, KNOCKDOWN_IMPULSE + 5.0, ());
+    let claimed = app.world().get::<Claimed>(root).expect("the hook took the hit");
+    assert_eq!((claimed.impulse, claimed.kind, claimed.held), (Vec3::X * (KNOCKDOWN_IMPULSE + 5.0), TakeoverKind::Hit, false));
+    assert!(app.world().get::<Ragdoll>(body).is_none(), "a taken hit spawns no powered ragdoll");
     assert!(app.world().get::<KnockedDown>(root).is_none(), "the takeover owns the bookkeeping (its hand-back)");
 }
 
 #[test]
 fn creature_knockdown_keeps_the_powered_ragdoll() {
-    let (app, root, body) = hit(Some(delirium_like()), CREATURE, KNOCKDOWN_IMPULSE + 5.0);
+    let (app, root, body) = hit(Some(delirium_like()), CREATURE, KNOCKDOWN_IMPULSE + 5.0, ());
     assert!(app.world().get::<Claimed>(root).is_none());
     assert!(powered_knockdown(&app, root, body), "declined: Ragdoll {{ Knockdown }}, KnockedDown, Held");
 }
 
 #[test]
 fn without_the_hook_humans_get_the_powered_ragdoll() {
-    let (app, root, body) = hit(None, HUMAN, KNOCKDOWN_IMPULSE + 5.0);
+    let (app, root, body) = hit(None, HUMAN, KNOCKDOWN_IMPULSE + 5.0, ());
     assert!(powered_knockdown(&app, root, body));
 }
 
 #[test]
-fn light_hits_never_reach_the_hook() {
-    let (app, root, body) = hit(Some(delirium_like()), HUMAN, KNOCKDOWN_IMPULSE * 0.5);
-    assert!(app.world().get::<Claimed>(root).is_none(), "below the knockdown threshold: a HitReact kick only");
+fn declined_light_hits_stay_kinematic() {
+    let (app, root, body) = hit(Some(delirium_like()), HUMAN, 5.0, ());
+    assert!(app.world().get::<Claimed>(root).is_none(), "under the layer's threshold: a HitReact kick only");
     assert!(app.world().get::<Ragdoll>(body).is_none());
     assert!(app.world().get::<Held>(root).is_none());
+}
+
+/// PH-15: a body the takeover already holds (staggering or down) takes a further hit through the hook, however light;
+/// a powered-ragdoll knockdown is never asked (its ragdoll takes the impact), and held bodies get no kinematic kick.
+#[test]
+fn a_held_body_takes_further_hits_through_the_hook() {
+    let (app, root, body) = hit(Some(delirium_like()), HUMAN, 3.0, Held);
+    let claimed = app.world().get::<Claimed>(root).expect("the hook got the hit on the held body");
+    assert_eq!((claimed.impulse, claimed.kind, claimed.held), (Vec3::X * 3.0, TakeoverKind::Hit, true));
+    assert!(app.world().get::<Ragdoll>(body).is_none());
+    let (app, root, body) = hit(Some(delirium_like()), HUMAN, KNOCKDOWN_IMPULSE + 5.0, KnockedDown { body_local: Transform::IDENTITY });
+    assert!(app.world().get::<Claimed>(root).is_none(), "a powered knockdown is the ragdoll's");
+    assert!(app.world().get::<Ragdoll>(body).is_none(), "no second ragdoll");
+    let (app, root, body) = hit(None, HUMAN, KNOCKDOWN_IMPULSE + 5.0, Held);
+    assert!(app.world().get::<Ragdoll>(body).is_none() && app.world().get::<KnockedDown>(root).is_none(), "held: nothing else reacts");
 }
 
 /// Kills every living character (the console's `kill` without the camera pick).

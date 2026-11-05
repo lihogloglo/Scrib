@@ -90,8 +90,8 @@ GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) |
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 GI-3 | confirmed (2026-11-02: looks good; defaults kept, gain 1, ambient 0) | [gi](visual-checks/gi.md) | GI replaces the flat cell ambient inside its volume: darker unlit corners, warmer near lamps, no box edge in the office (`flip gi` A/B)
 GI-lampbody | awaiting owner | [gi](visual-checks/gi.md) | Lamp bodies don't light twice at GI hits (less hot bounce right around lamps, room fill kept) and interior ambient floor 0.1 (corners not pitch black) (`flip gi` A/B)
-PH-15 | awaiting owner | [physics](visual-checks/physics.md) | Knockdowns of human NPCs are Delirium falls + get-ups (V ball, `@impact`); beasts and creatures keep the old ragdoll
-PH-16 | awaiting owner | [physics](visual-checks/physics.md) | A killed human NPC falls and stays dead under Delirium (console `kill`); beasts and creatures keep the clip + limp ragdoll
+PH-15 | confirmed (2026-11-05: hits push along their direction; follow-ups: strength-scaled fall threshold, knee sink on takeover, hurt shapes) | [physics](visual-checks/physics.md) | Knockdowns of human NPCs are Delirium falls + get-ups (V ball, `@impact`); beasts and creatures keep the old ragdoll
+PH-16 | confirmed for console kill (2026-11-05); hit deaths unseen until C6 | [physics](visual-checks/physics.md) | A killed human NPC falls and stays dead under Delirium (console `kill`); beasts and creatures keep the clip + limp ragdoll
 LT-reach | rejected 2026-11-05 (default back to 4 x) | [lights](visual-checks/lights.md) | Lamp reach follows shadow state: no light through walls, no ring or pop at pool edges, GI visible next to lamps (`flip gi` A/B; old reach `--range-unshadowed 4`)
 LM-2 | partial (2026-10-30: leaves OK, water still too bright at night) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
 FF-2 | rejected (2026-10-30: all green to the horizon, L2/L3 never shown) | [rendering](visual-checks/rendering.md) | Far-field L1/L2/L3 F5 debug tint on proxies and impostors
@@ -114,7 +114,7 @@ AL-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/a
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
 AL-8 | confirmed with follow-up (2026-10-27: camera solved; hands on the lip + clipping: B2b next) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
 AL-10 | confirmed (2026-10-30: triggers and works; lip hand IK needs tuning, ROADMAP 3.1) | [anim-lab](visual-checks/anim-lab.md) | High mantle, player (ClimbUp_2m on the 1.6/2.0 m boxes)
-AL-11 | awaiting owner (2026-11-05: head-on wall stop, brace-stop; palm frame + hand ahead on side walls, brace-palm) | [anim-lab](visual-checks/anim-lab.md) | Wall brace, player (palms on the 3 m wall, side-wall trail, off hand only with the sword)
+AL-11 | confirmed with follow-up (2026-11-05: wall stop good; head-on hands closer together, chest height) | [anim-lab](visual-checks/anim-lab.md) | Wall brace, player (palms on the 3 m wall, side-wall trail, off hand only with the sword)
 AL-9 | confirmed | [anim-lab](visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | confirmed (2026-10-30) | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
@@ -173,13 +173,13 @@ RO-11 | confirmed (owner 2026-11-01: gone) | [rendering](visual-checks/rendering
 RO-12 | known bug | [rendering](visual-checks/rendering.md) | Bright outline around characters (2026-10-30)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)
-CB-3 | awaiting owner | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
+CB-3 | confirmed (2026-11-05; follow-up: new sword attack clips) | [combat](visual-checks/combat.md) | F draws a visible sword; sheathed clicks do nothing; draw / sheathe clips, sword at the attach key (2026-11-05)
 PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) | [player-ui](visual-checks/player-ui.md) | Recovery delay after jumping down from a high box (2026-10-30)
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
 FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenellated edges on distant land in fog (2026-10-30)
-PH-14 | fixed, awaiting owner (2026-11-05: `I` removed, console `kill` targets walkers only) | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
+PH-14 | confirmed (2026-11-05) | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
 FG-8 | known bug | [weather-sky](visual-checks/weather-sky.md) | Weather fog vanishes at night (2026-10-30)
 

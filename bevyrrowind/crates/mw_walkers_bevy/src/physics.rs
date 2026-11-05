@@ -236,7 +236,7 @@ fn kill(v: Victim, point: sf_coords::WorldPos, impulse: Vec3, takeover: Option<&
     if !v.down
         && let Some(take) = takeover
     {
-        let request = PhysicsTakeover { root: v.root, skeleton: &v.body.skeleton, mover: v.mover, point, impulse, kind: TakeoverKind::Death };
+        let request = PhysicsTakeover { root: v.root, skeleton: &v.body.skeleton, mover: v.mover, held: v.held, point, impulse, kind: TakeoverKind::Death };
         if (take.0)(&request, commands) {
             commands.entity(v.root).try_insert(Dead);
             info!("death: {} ({}) taken over by the physics layer", v.root, v.body.skeleton);
@@ -256,9 +256,11 @@ fn kill(v: Victim, point: sf_coords::WorldPos, impulse: Vec3, takeover: Option<&
     true
 }
 
-/// Impact momentum on a character's capsule (N·s) that knocks it down: the
-/// P8b debug driver's threshold (a `V` ball at full throw). Removal: the
-/// adapter's knockdown rule (fatigue and agility) in `mw_physics`.
+/// Impact momentum on a character's capsule (N·s) that knocks it down when no
+/// physics layer takes the hit (the powered ragdoll: creatures, beasts, the
+/// app without Delirium): the P8b debug driver's threshold (a `V` ball at
+/// full throw). Removal: the adapter's knockdown rule (fatigue and agility)
+/// in `mw_physics`.
 pub const KNOCKDOWN_IMPULSE: f32 = 15.0;
 
 /// Smallest impulse (N·s) a character reacts to with the graph's `HitReact`
@@ -287,14 +289,21 @@ pub struct KnockedDown {
 /// What a [`PhysicsTakeover`] asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TakeoverKind {
-    /// A hard impact on a living, unheld character's capsule: down, then up again.
+    /// An impact on a living character's capsule (the walkers send every one from [`HIT_REACT_IMPULSE`] up): the
+    /// layer may take it as a physical reaction (the body pushed along the hit, its balance reacting; a fall only when
+    /// the balance fails), deciding the threshold itself. On a [`Held`] character (`held`): a further push, for a
+    /// layer that holds it itself. Declined: the kinematic `HitReact` kick, or past [`KNOCKDOWN_IMPULSE`] the
+    /// powered-ragdoll knockdown.
+    Hit,
+    /// A game-decided knockdown on a living, unheld character (combat's knockdown blow; the walkers' own impacts send
+    /// [`Self::Hit`]): down along the blow, then up again.
     Knockdown,
     /// A death (terminal: never handed back). The character may already be the layer's (a
     /// takeover under way): the layer then turns it terminal.
     Death,
 }
 
-/// A knockdown or a death another physics layer may take over (combat-adapter.md "Ragdoll
+/// A hit, a knockdown or a death another physics layer may take over (combat-adapter.md "Ragdoll
 /// routing", the walkers' minimal `PhysicsTakeover`).
 #[derive(Clone, Copy, Debug)]
 pub struct PhysicsTakeover<'a> {
@@ -304,33 +313,36 @@ pub struct PhysicsTakeover<'a> {
     pub skeleton: &'a str,
     /// The root carries a [`Mover`] (a walker; an action character doesn't).
     pub mover: bool,
+    /// Something already holds the root ([`Held`]: a layer's takeover, or dead).
+    pub held: bool,
     /// Where the impact landed.
     pub point: sf_coords::WorldPos,
     /// N·s, world: the impact's direction times its momentum (a death with no blow: zero).
     pub impulse: Vec3,
-    /// A knockdown or a death.
+    /// A hit, a knockdown or a death.
     pub kind: TakeoverKind,
 }
 
-/// Adapter hook: the game's active-ragdoll layer claims a knockdown or a death (inserts its own request on the root
-/// with the commands and returns true, then owns the character: until its hand-back for a knockdown (`Held`, the
-/// get-up, the root's move), for good for a death (the root keeps `Held` and gets [`Dead`])) or declines it (false:
-/// the powered-ragdoll knockdown, or the death clip and limp ragdoll). Without the resource every knockdown and death
-/// is the ragdoll's. The host fills it (`mw_exterior_bevy`: Delirium for human walkers, feature `delirium`).
+/// Adapter hook: the game's active-ragdoll layer claims a hit, a knockdown or a death (inserts its own request on the
+/// root with the commands and returns true, then owns the character: until its hand-back for a hit or a knockdown
+/// (`Held`, the get-up, the root's move), for good for a death (the root keeps `Held` and gets [`Dead`])) or declines
+/// it (false: the kinematic hit-react, the powered-ragdoll knockdown, or the death clip and limp ragdoll). Without the
+/// resource every knockdown and death is the ragdoll's. The host fills it (`mw_exterior_bevy`: Delirium for human
+/// walkers, feature `delirium`).
 #[derive(Resource, Clone)]
 pub struct RagdollTakeover(pub Arc<TakeRagdoll>);
 
-/// The [`RagdollTakeover`] claim: true when it took the knockdown or death.
+/// The [`RagdollTakeover`] claim: true when it took the hit, knockdown or death.
 pub type TakeRagdoll = dyn Fn(&PhysicsTakeover, &mut Commands) -> bool + Send + Sync;
 
-/// Hard impacts on a living character's capsule knock it down (PH-9): the
-/// [`RagdollTakeover`] hook first, else the powered ragdoll; lighter ones
-/// kick the graph's `HitReact` springs (P9, PH-10). Not while something else
-/// owns the body ([`Held`]: dead, down, a Delirium takeover).
-#[allow(clippy::needless_pass_by_value)]
+/// Impacts on a living character's capsule (PH-9, PH-15): the [`RagdollTakeover`] hook first (kind
+/// [`TakeoverKind::Hit`]: a push with the balance reacting), else hard ones knock it down (the powered ragdoll)
+/// and lighter ones kick the graph's `HitReact` springs (P9, PH-10). On a [`Held`] body only the hook (a layer
+/// pushing its own takeover; a powered-ragdoll knockdown is never asked: its ragdoll takes the impact itself).
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn knockdown(
     mut impacts: MessageReader<ImpactOnCharacter>,
-    characters: Query<(&CharacterBody, Has<Mover>), Without<Held>>,
+    characters: Query<(&CharacterBody, Has<Mover>, Has<Held>, Has<KnockedDown>)>,
     mut bodies: Query<(&mut Animator, &Transform, &GlobalTransform)>,
     pos_of: WorldPosOf,
     source: Res<RagdollSource>,
@@ -342,17 +354,21 @@ fn knockdown(
         if hit.impulse < HIT_REACT_IMPULSE || seen.contains(&hit.entity) {
             continue;
         }
-        let Ok((body, mover)) = characters.get(hit.entity) else { continue };
-        if hit.impulse >= KNOCKDOWN_IMPULSE
-            && let Some(take) = takeover.as_deref()
-        {
+        let Ok((body, mover, held, knocked)) = characters.get(hit.entity) else { continue };
+        if knocked {
+            continue;
+        }
+        if let Some(take) = takeover.as_deref() {
             let impulse = hit.direction * hit.impulse;
-            let request = PhysicsTakeover { root: hit.entity, skeleton: &body.skeleton, mover, point: hit.point, impulse, kind: TakeoverKind::Knockdown };
+            let request = PhysicsTakeover { root: hit.entity, skeleton: &body.skeleton, mover, held, point: hit.point, impulse, kind: TakeoverKind::Hit };
             if (take.0)(&request, &mut commands) {
                 seen.push(hit.entity);
-                info!("knockdown: {} taken over by the physics layer ({:.0} N·s)", hit.entity, hit.impulse);
+                info!("hit: {} taken by the physics layer ({:.1} N·s{})", hit.entity, hit.impulse, if held { ", held" } else { "" });
                 continue;
             }
+        }
+        if held {
+            continue;
         }
         let Ok((mut animator, local, global)) = bodies.get_mut(body.body) else { continue };
         seen.push(hit.entity);

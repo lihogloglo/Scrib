@@ -234,12 +234,16 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     }
     // ROADMAP 3.2/3.2b: Delirium takeovers of human NPCs (GPL-3.0-only code; on by default in the app). The free
     // camera's left-click push is a dev tool (`delirium_push`, part of the app's `dev`).
-    // Knockdowns and deaths of human walkers go to Delirium instead of the powered or limp ragdoll (owner 2026-10-30;
-    // combat-adapter.md "Ragdoll routing"); beasts, creatures and the ragdoll without the feature.
+    // Hits, knockdowns and deaths of human walkers go to Delirium instead of the hit-react op, the powered or the limp
+    // ragdoll (owner 2026-10-30, 2026-11-05: hits push with the balancer on; combat-adapter.md "Ragdoll routing");
+    // beasts, creatures and the ragdoll without the feature.
     #[cfg(feature = "delirium")]
     app.add_plugins(mw_delirium_bevy::DeliriumPlugin { click: cfg!(feature = "delirium_push") && !bench }).insert_resource(
         mw_walkers_bevy::physics::RagdollTakeover(Arc::new(|t: &mw_walkers_bevy::physics::PhysicsTakeover, commands: &mut Commands| {
             let reaction = match t.kind {
+                mw_walkers_bevy::physics::TakeoverKind::Hit => {
+                    mw_delirium_bevy::hit_reaction(&mw_delirium_bevy::HitRules::default(), t.skeleton, t.mover, t.held, t.point, t.impulse)
+                }
                 mw_walkers_bevy::physics::TakeoverKind::Knockdown => mw_delirium_bevy::knockdown_reaction(t.skeleton, t.mover, t.point, t.impulse),
                 mw_walkers_bevy::physics::TakeoverKind::Death => mw_delirium_bevy::death_reaction(t.skeleton, t.mover, t.point, t.impulse),
             };

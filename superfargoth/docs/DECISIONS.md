@@ -1570,3 +1570,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (owner "old ragdoll still in the game"): the app's `delirium` feature is **on by default** (release too), so default
   game binaries are GPL-3.0-only; the free-camera click push stays dev-only (`delirium_push`, in `dev`). Fine with DLSS because
   the player fetches NVIDIA's runtime (setup screen); only a package bundling a vendor runtime must use `--no-default-features`.
+- 2026-11-05 (owner): skill progression from use (alchemy by brewing, etc.) goes behind a `SkillUseModel` seam, starting with
+  OpenMW's values (`research/openmw-mechanics-2026-11-05.md`). Next RPG step: the stats + spell/effect runtime spec. Water at
+  any altitude (3.6/3.7) waits for a later brainstorm.

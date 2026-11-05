@@ -57,4 +57,4 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
   or running while drawing keeps the legs going (upper body only); the sword shows as the hand reaches it (not at the
   press, not after the clip); LMB during the draw does nothing, LMB after it swings; F again: hand goes back, sword
   vanishes mid-clip, LMB refused from the press. Log line: `combat: draw .. s (attach at ..)`. No sheath model (original).
-- Status: fixed, awaiting owner.
+- Status: confirmed 2026-11-05 (owner: "the sheathe thing works well"). Follow-up: the sword attack clips (Quaternius UAL Sword_Light_*) are poor; generate new ones (3.8 clip factory).

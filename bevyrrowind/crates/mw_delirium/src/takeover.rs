@@ -19,6 +19,13 @@
 //! Death ([`Takeover::kill`], terminal): `catchFall` to the floor, then near-limp `bodyRelax`; no get-up, no hand-back;
 //! once at rest it is [`Takeover::settled`] and the host freezes the corpse's pose (no stepping forever).
 //!
+//! Hits ([`Takeover::hit`], the entry point for physics and combat hits; owner 2026-11-05: "believable reactions
+//! depending on the object (mass, direction) hitting them"): the hit's momentum on the struck part with the balancer
+//! on, the Euphoria / RDR2 hit reaction: the stagger, the catch steps or the fall emerge from the push. A knockdown
+//! ([`Outcome::KnockDown`], game-decided) keeps the balancer [`Rules::knock_down_after`] before `catchFall`, so the
+//! body falls along the hit, not in place; a killing hit ([`Outcome::Kill`]) keeps a weakened balancer for the dying
+//! window ([`Rules::dying`], Euphoria's `shot` + `shotRelax`) before the death's fall and relax.
+//!
 //! Bevy-free. The host turns the animated pose into part frames ([`crate::bones_to_parts`], sim space: Z up, metres,
 //! the actor's own authoring frame at the takeover), steps [`Takeover::step`] at a fixed rate and copies the parts back
 //! ([`crate::pose_to_bones`]) every frame. [`pick`] finds the part under a ray (the dev click tool).
@@ -91,6 +98,14 @@ pub struct Rules {
     /// The get-up pick ([`Takeover::set_get_ups`]): the first clip (the baseline: Morrowind's own `Knockout@tail`)
     /// wins when its tilt is within this of the nearest clip's, rad (DE-1: Morrowind's look is the default).
     pub baseline_margin: f32,
+    /// A knockdown ([`Takeover::knock_down`]) keeps the balancer this long before it gives up (`catchFall`), s: the
+    /// hit's push carries the body and the feet react along it first, so it falls along the hit (owner 2026-11-05:
+    /// the instant `catchFall` collapsed it in place). 0: at once.
+    pub knock_down_after: f32,
+    /// A killing hit ([`Outcome::Kill`]): the balancer stays on this long, s, at this `bodyStiffness` (Delirium's
+    /// default 9; lower: the legs give), so the hit carries the body for a step or two (Euphoria's dying window,
+    /// `shot` + `shotRelax`); then `catchFall` and the dead relax as [`Takeover::kill`].
+    pub dying: (f32, f32),
 }
 
 impl Default for Rules {
@@ -119,6 +134,8 @@ impl Default for Rules {
             roll_secs: 3.0,
             roll_stall: (2f32.to_radians(), 0.4),
             baseline_margin: 20f32.to_radians(),
+            knock_down_after: 0.3,
+            dying: (0.6, 4.0),
         }
     }
 }
@@ -134,6 +151,17 @@ pub enum HandBack {
     Fallen,
     /// The simulation blew up (non-finite or runaway): back to the graph at once.
     Exploded,
+}
+
+/// What a hit ([`Takeover::hit`]) does past its push.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The push alone: the balancer reacts (sway, catch steps; a fall when it fails).
+    React,
+    /// The game decided it goes down ([`Takeover::knock_down`]): the push, then the balancer gives up.
+    KnockDown,
+    /// A killing hit: the push and the dying window ([`Rules::dying`]), then the death's fall.
+    Kill,
 }
 
 /// One character under Delirium.
@@ -175,6 +203,8 @@ pub struct Takeover {
     pub dead: Option<f32>,
     /// A dead body at rest ([`Rules::corpse_secs`]): no more steps, the host freezes its pose.
     settled: bool,
+    /// Seconds left before the balancer gives up (`catchFall`): a knockdown's or a dying window.
+    give_up: Option<f32>,
 }
 
 /// The torso parts the roll-over turns (Buttocks, Spine0-3); the limbs follow through the joints.
@@ -306,6 +336,7 @@ impl Takeover {
             relaxed: false,
             dead: None,
             settled: false,
+            give_up: None,
         };
         t.last_com = t.com().0;
         t.send(behaviour, &[("start", Value::Bool(true))]);
@@ -335,39 +366,93 @@ impl Takeover {
         self.blending = false;
     }
 
-    /// A knockdown (the game decided the character goes down, whatever the push): the balancer gives up and
-    /// `catchFall` protects the body on its way to the floor (Euphoria's knockdown: no `bodyBalance`, the hands catch
-    /// the fall), then the usual down path (relax, roll-over, get-up). A no-op when it is already falling or down.
+    /// A hit (the entry point for physics and combat hits: a thrown object, later a weapon's mass times its speed):
+    /// `impulse` (N s, sim space) on part `part` at `at` with the balancer on ([`Self::push`]), then the `outcome`.
+    pub fn hit(&mut self, part: usize, at: Vec3, impulse: Vec3, outcome: Outcome) {
+        self.push(part, at, impulse);
+        match outcome {
+            Outcome::React => {}
+            Outcome::KnockDown => self.knock_down(),
+            Outcome::Kill => self.kill_by_hit(),
+        }
+    }
+
+    /// A knockdown (the game decided the character goes down, whatever the push): the balancer runs on for
+    /// [`Rules::knock_down_after`] (a push just before carries the body along the hit), then gives up and `catchFall`
+    /// protects the body on its way to the floor (Euphoria's knockdown: the hands catch the fall), then the usual down
+    /// path (relax, roll-over, get-up). A no-op when it is already falling, down or about to give up.
     pub fn knock_down(&mut self) {
-        if self.behaviour == "catchFall" || self.down.is_some() {
+        if self.behaviour == "catchFall" || self.down.is_some() || self.give_up.is_some() {
             return;
         }
+        self.blending = false;
+        if self.rules.knock_down_after > 0.0 {
+            self.give_up = Some(self.rules.knock_down_after);
+        } else {
+            self.catch_fall();
+        }
+    }
+
+    /// The balancer gives up: `catchFall`.
+    fn catch_fall(&mut self) {
+        self.give_up = None;
         self.send("stopAllBehaviours", &[]);
         self.behaviour = "catchFall";
         self.send("catchFall", &[("start", Value::Bool(true))]);
-        self.blending = false;
     }
 
-    /// Death (terminal; a no-op when already dead): the balancer gives up and `catchFall` takes the body down as in
-    /// [`Self::knock_down`] (Euphoria's death: no balance, the fall, then `bodyRelax`); once down it relaxes near limp
-    /// ([`Rules::dead_relax`]), never picks a get-up and is never handed back: [`Self::step`] returns only
-    /// [`HandBack::Exploded`], and once at rest [`Self::settled`] (the host stops stepping and freezes the pose). A kill
-    /// on a body already down (a knockdown) relaxes it at once and cancels its roll-over.
-    pub fn kill(&mut self) {
+    /// Marks it dead (the bookkeeping of [`Self::kill`] and [`Self::kill_by_hit`]); false when it already was.
+    fn die(&mut self) -> bool {
         if self.dead.is_some() {
-            return;
+            return false;
         }
         self.dead = Some(0.0);
         self.blending = false;
         self.resting = 0.0;
         (self.rolling, self.chosen) = (None, None);
+        true
+    }
+
+    /// Death (terminal), a collapse (no hit: the console's `kill`): the balancer gives up and `catchFall` takes the
+    /// body down at once (Euphoria's death: no balance, the fall, then `bodyRelax`); once down it relaxes near limp
+    /// ([`Rules::dead_relax`]), never picks a get-up and is never handed back: [`Self::step`] returns only
+    /// [`HandBack::Exploded`], and once at rest [`Self::settled`] (the host stops stepping and freezes the pose). A kill
+    /// on a body already down (a knockdown) relaxes it at once and cancels its roll-over; on one already dead in its
+    /// dying window, it ends the window.
+    pub fn kill(&mut self) {
+        if !self.die() {
+            if self.give_up.is_some() && self.down.is_none() {
+                self.catch_fall();
+            }
+            return;
+        }
         if self.down.is_some() {
             self.relax();
         } else if self.behaviour != "catchFall" {
-            self.send("stopAllBehaviours", &[]);
-            self.behaviour = "catchFall";
-            self.send("catchFall", &[("start", Value::Bool(true))]);
+            self.catch_fall();
         }
+    }
+
+    /// Death by a hit (after its push: [`Self::hit`] with [`Outcome::Kill`]): as [`Self::kill`], but a body still
+    /// balancing first gets the dying window ([`Rules::dying`]: the balancer on, weakened), so the hit carries it
+    /// before the fall. A no-op when already dead.
+    pub fn kill_by_hit(&mut self) {
+        let (secs, stiffness) = self.rules.dying;
+        if self.down.is_some() || self.behaviour == "catchFall" || secs <= 0.0 {
+            self.kill();
+            return;
+        }
+        if !self.die() {
+            return;
+        }
+        // On a running balancer this only retunes it (Delirium keeps its stepping state).
+        self.send("bodyBalance", &[("start", Value::Bool(true)), ("bodyStiffness", Value::Float(stiffness))]);
+        self.give_up = Some(secs);
+    }
+
+    /// Whether the balancer is about to give up (a knockdown's or a dying window under way).
+    pub fn giving_up(&self) -> bool {
+        self.give_up.is_some()
     }
 
     /// Whether it was killed ([`Self::kill`]).
@@ -528,6 +613,15 @@ impl Takeover {
         if self.down.is_none() && (self.agent.fallen || frames[0].translation.z - self.floor < self.rules.fallen_ratio * self.stand) {
             self.down = Some(0.0);
         }
+        // A knockdown's or a dying window: the balancer gives up once it runs out (down already: the down path).
+        if let Some(left) = &mut self.give_up {
+            *left -= dt;
+            if self.down.is_some() {
+                self.give_up = None;
+            } else if *left <= 0.0 {
+                self.catch_fall();
+            }
+        }
         if let Some(dead) = &mut self.dead {
             *dead += dt;
             let dead = *dead;
@@ -545,7 +639,7 @@ impl Takeover {
             return None;
         }
         // Blend-out once recovered; a new catch step or a fall cancels it (a push too, `push`).
-        if self.down.is_none() && self.time >= self.rules.min_secs && (still || self.calm >= self.rules.recover_secs) {
+        if self.down.is_none() && self.give_up.is_none() && self.time >= self.rules.min_secs && (still || self.calm >= self.rules.recover_secs) {
             self.blending = true;
         } else if stepping == Some(true) || self.down.is_some() {
             self.blending = false;

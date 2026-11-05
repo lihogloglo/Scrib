@@ -62,7 +62,7 @@ Every combat slot ends with a Morrowind clip fallback (`ClipFallback::Clip`) unl
 `fCombatAngleXY`); sheets leave i-frames, armor and poise empty; the Classic mode profile turns lock-on and hit-stop off.
 A new game picks the rule set (ARCHITECTURE §1b).
 
-## Ragdoll routing (Knockdown, Death)
+## Ragdoll routing (Hit, Knockdown, Death)
 
 Design: the framework's `PhysicsTakeover { impulse, point }` goes to the Delirium takeover when the skeleton is human,
 else the walkers' powered-ragdoll knockdown (`mw_walkers_bevy/src/physics.rs`, get-up from `Knockout@tail`'s first
@@ -70,23 +70,39 @@ frame). Death: the same hook (kind `Death`): Delirium's terminal mode for humans
 limp ragdoll (`DEATH_HANDOFF`). Hand-back ends the forced move in `sf_action`. Cosmetic `HitReact` springs
 stay on every landing (Additive tier).
 
-As built (2026-11-05, knockdowns of walkers; `sf_action`'s `PhysicsTakeover` for action characters is not built): the
-walkers' `knockdown()` asks the adapter hook `RagdollTakeover` (resource, `mw_walkers_bevy::physics`) first with a
-`PhysicsTakeover { root, skeleton, mover, point, impulse, kind: Knockdown }` for every impact >= `KNOCKDOWN_IMPULSE`; a claim inserts its
-own request and owns the character (`Held`, get-up, the root's move) until its hand-back, so no `Ragdoll`/`KnockedDown`.
-No hook (a `--no-default-features` app) or a decline: the powered ragdoll. The host (`mw_exterior_bevy`, feature
-`delirium`) fills it with `mw_delirium_bevy::knockdown_reaction`: human skeleton on a mover -> `DeliriumReaction { hit,
-knock_down: true }` (the takeover starts `catchFall` instead of `bodyBalance`, `Takeover::knock_down`, so a knockdown
-always goes down); beasts, creatures and action characters decline. Walkers resume their AI when the hand-back removes
-`Held`/`Dormant`. Tests: `mw_walkers_bevy` `physics::tests`, `mw_delirium_bevy` `knockdowns_of_human_walkers_become_takeovers`,
-`mw_delirium` `knockdown_impulses_hand_back` (real install). Visual check PH-15.
+As built (2026-11-05, hits on walkers; `sf_action`'s `PhysicsTakeover` for action characters is not built). Owner
+verdict on the first cut (every impact >= 15 N·s forced `catchFall`: "limp instantly"): hits must push along their
+direction. Canonical technique: Euphoria / RDR2 hit reactions (the impulse on the struck part, the balancer recovers
+with steps, the fall is the balance failing; a scripted fall only when the game decides). The walkers' `knockdown()`
+asks the adapter hook `RagdollTakeover` (resource, `mw_walkers_bevy::physics`) first for every impact >=
+`HIT_REACT_IMPULSE` (1 N·s) with `PhysicsTakeover { root, skeleton, mover, held, point, impulse, kind: Hit }`, `Held`
+bodies included (not `KnockedDown`: the powered ragdoll takes its impacts); a claim inserts its own request and owns the
+character (`Held`, get-up, the root's move) until its hand-back. A decline (or no hook, a `--no-default-features` app):
+`HitReact` under `KNOCKDOWN_IMPULSE`, the powered ragdoll above; a held body gets nothing. The host (`mw_exterior_bevy`,
+feature `delirium`) maps `Hit` to `mw_delirium_bevy::hit_reaction` with `HitRules` (human skeleton on a mover only):
+push = impact x `gain` (1: our props have no restitution, the body takes their incoming momentum; a bouncing source
+would bring `1 + e`); a takeover from `takeover` = 10 N·s (where the push first reads past the takeover's own settle
+sway); a knockdown after the push from `certain_fall` = 100 N·s (Delirium's balancer stays up to 120 N·s on its own,
+1.5 m/s on 80 kg, beyond a person's step recovery); `held` -> `live_only` (a further push on Delirium's own takeover,
+dropped otherwise: frozen corpses, limp ragdolls). The takeover (`mw_delirium::Takeover::hit(part, at, impulse,
+Outcome)`, the entry point combat's hits use later with weapon mass x speed) pushes the part nearest the point with
+`bodyBalance` on; `Outcome::KnockDown` (also kind `Knockdown`, game-decided: `knockdown_reaction`) keeps the balancer
+`Rules::knock_down_after` = 0.3 s then `catchFall` (0.5 s left a still body standing). Measured (`mw_delirium`
+`hit_reactions_vs_impulse`, chest, pelvis travel along the hit at 1 s): 36 N·s (a `V` ball head-on) 0.31-0.45 m, 45 N·s
+0.44-0.62, 80 N·s 0.59-0.98, never down under 120; knockdowns fall at 0.5-0.85 s, 36 N·s 0.28-0.91 m along. Walkers
+resume their AI when the hand-back removes `Held`/`Dormant`. Tests: `mw_walkers_bevy` `physics::tests`,
+`mw_delirium_bevy` `physics_hits_become_pushes`, `mw_delirium` `hits_push_along_their_direction`,
+`a_held_body_takes_a_second_hit`, `knockdown_impulses_hand_back` (real install). Visual check PH-15.
 
 As built (2026-11-05, deaths of walkers): `physics::kill()` asks the same hook with `kind: Death` (the blow as
 `point`/`impulse`, zero for none) unless the character is a powered-ragdoll knockdown (`KnockedDown`: it dies in its
 ragdoll); a claim inserts `Dead` (requires `Held`) and no `Ragdoll`. A character a layer already holds (`Held` without
 `KnockedDown`) is killable: the hook turns it terminal; a decline leaves it alive. The host maps `Death` to
-`mw_delirium_bevy::death_reaction` (`DeliriumReaction { kill: true }`): `Takeover::kill` stops the balancer, `catchFall`,
-then near-limp `bodyRelax` once down (`Rules::dead_relax`), no get-up, never a hand-back; at rest
+`mw_delirium_bevy::death_reaction` (`DeliriumReaction { kill: true }`): with a blow, `Takeover::kill_by_hit` pushes and
+keeps a weakened balancer for the dying window (`Rules::dying` = 0.6 s at `bodyStiffness` 4, Euphoria's `shot` +
+`shotRelax`; falls at ~1.1 s, 36 N·s carries the pelvis 0.37 m along the hit in 1 s); without (console `kill`)
+`Takeover::kill` collapses at once; either way `catchFall`, then near-limp `bodyRelax` once down (`Rules::dead_relax`),
+no get-up, never a hand-back; at rest
 (`Rules::corpse_secs`) it is `settled`, the host drops the takeover and the body keeps its last `PhysicsPose` (frozen),
 root `Held` + `DeliriumCorpse` (later requests refused). A kill on a live takeover turns it terminal (a down body relaxes
 at once). A claimed death Delirium then can't take (no rig) falls back to `Ragdoll { Death }`. The dev `I` key is gone:
