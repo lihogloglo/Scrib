@@ -165,8 +165,10 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - At puddle 0.5 the puddles shrink from their edges. No shimmer on distant puddles; no rings on characters or far proxies.
 - A/B: same run with `--off puddles`: the W3 wet look only, no standing water. Low preset: no puddles.
 - Re-check (fix 2026-11-05): no puddles on slopes (street ramps, hill roads, stair ramps, slope feet); level ground and
-  flat paving/floors still hold water. Near-level terrain (a few degrees) may now stay dry: say if too little.
-- Status: awaiting owner (owner 2026-11-05: nice, but on slopes; fix 2026-11-05: slope gate).
+  flat paving/floors still hold water. Confirmed 2026-11-05 ("puddles are good now").
+- Retune 2026-11-06 (owner: faster, a bit more lenient): slope ramp none from 6°, full from 3° (was 4°/2°); puddles start
+  at wet 0.7 (was 0.9) and fill at 1.25/h × rain (was 0.5): full ~70 game min (~2.5 real min) from dry ground, was ~2.5 h. Look for: puddles
+  within one shower, gentle street slopes hold some, ramps still dry. Status: awaiting owner.
 
 ### SW-3: Wetness after rain (surface-weather.md W3)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:

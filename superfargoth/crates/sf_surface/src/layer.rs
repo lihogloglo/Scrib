@@ -38,14 +38,14 @@ pub const WATER_REFLECTANCE: f32 = 0.354;
 
 /// Puddles: the puddle state's reach into the pool score at 1, the pool span the height map
 /// covers, the shoreline (height units), the level-face ramp (`N.y` of the true surface: none
-/// from cos 4°, full from cos 2°; water runs off anything steeper), terrain concavity at full
+/// from cos 6°, full from cos 3°, owner 2026-11-06: a bit more lenient; water runs off anything steeper), terrain concavity at full
 /// (m) and its weight in the pool score, the water's perceptual roughness (Bevy clamps it to
 /// 0.089), the pool noise tile (m; divides the 256 m origin grid).
 pub const PUDDLE_REACH: f32 = 0.3;
 pub const PUDDLE_DEPTH: f32 = 0.1;
 pub const PUDDLE_EDGE: f32 = 0.1;
-pub const PUDDLE_FLAT_LOW: f32 = 0.997_564;
-pub const PUDDLE_FLAT_HIGH: f32 = 0.999_391;
+pub const PUDDLE_FLAT_LOW: f32 = 0.994_522;
+pub const PUDDLE_FLAT_HIGH: f32 = 0.998_630;
 pub const BASIN_FULL_M: f32 = 0.1;
 pub const BASIN_POOL: f32 = 0.35;
 pub const PUDDLE_ROUGHNESS: f32 = 0.06;
@@ -369,7 +369,7 @@ mod tests {
         // Owner SW-4 (2026-11-05): water lies on level ground only. A full puddle state, the
         // highest pool score and the lowest height: everything but the slope says "water".
         let r = 2.0_f32;
-        for deg in [5.0_f32, 10.0, 20.0] {
+        for deg in [7.0_f32, 10.0, 20.0] {
             let rise = deg.to_radians().tan();
             // Terrain: a plane rising along X, Z and the diagonal, sampled 2 m out as the shader
             // does; a hollow (+0.1 m all round) on the slope is still a slope.
@@ -394,9 +394,9 @@ mod tests {
         assert_eq!(puddle(1.0, pool(0.5, 0.0), 0.2, 1.0), 0.0);
         // A bump is no basin.
         assert_eq!(ground([-0.1; 4], 0.0, r).1, 0.0);
-        // Up to 1.5 degrees counts as level; the ramp ends at 4 (cos 4°, rounded).
-        assert_eq!(puddle_flat(up_of_gradient([1.5_f32.to_radians().tan(), 0.0])), 1.0);
-        assert_eq!(puddle_flat(4.1_f32.to_radians().cos()), 0.0);
+        // Up to 2.5 degrees counts as level; the ramp ends at 6 (cos 6°, rounded).
+        assert_eq!(puddle_flat(up_of_gradient([2.5_f32.to_radians().tan(), 0.0])), 1.0);
+        assert_eq!(puddle_flat(6.1_f32.to_radians().cos()), 0.0);
     }
 
     #[test]

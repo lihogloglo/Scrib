@@ -10,7 +10,7 @@ pub struct SurfaceRates { wet, puddle, snow, ash, drying: f32 }   // exists in s
 pub struct SurfaceTuning {  // record-backed; start values from Clockwork, re-calibrated by the owner's look
     step_h: f64, dry_h: f32,  // 1/6 h (10 game min) fixed step; 2.0 h full wet -> dry (Clockwork 120 min)
     puddle_dry_mult: f32, snow_melt_mult: f32, ash_clear_mult: f32, // 0.5, 1/3 (snow 3x slower), 1/4 (dust 4x)
-    puddle_from_wet: f32,     // 0.9: puddles rise only on saturated ground
+    puddle_from_wet: f32,     // 0.7 (owner 2026-11-06, was 0.9): puddles rise only on soaked ground
 }
 pub struct ClimateSurface { wet: f32, puddle: f32 }               // per ClimateIx
 pub struct CellSurface { snow: f32, ash: f32 }                    // per 32 m cell, sparse
@@ -171,7 +171,7 @@ foliage shelters partially (~40% through), roofs fully.
   takes the site from a pool score (Clockwork's noise, plus terrain concavity) and keeps Lagarde's level/height
   shoreline and water surface; rings are procedural (no texture, binding or mip problem) with Lagarde's layering.
 - **Layer** (`layer.wesl`, twin `sf_surface::layer`): runs when the wet or puddle flag is on. Puddle state `p` = cell G
-  where the true surface is level (`smoothstep(cos 4°, cos 2°, level_up)`, fix below), times exposure (none under roofs; under leaves
+  where the true surface is level (`smoothstep(cos 6°, cos 3°, level_up)`, owner 2026-11-06; was 4°/2°), times exposure (none under roofs; under leaves
   smaller puddles and fewer rings). Pool = noise atlas G at a 64 m tile + `0.35·saturate(basin / 0.1 m)`. Water depth
   `(pool − 1 + 0.3·p)/0.1 − height`, puddle = `smoothstep(0, 0.1, depth)`: lows (terrain layer height, object albedo
   luminance × 2) fill first and the shoreline follows them. Then wet = max(wet, puddle) for Lagarde's darkening;
@@ -201,7 +201,7 @@ foliage shelters partially (~40% through), roofs fully.
 - **Fix 2026-11-05 (owner SW-4: puddles on slopes)**: the gate was Clockwork's `smoothstep(0.94, 0.99, N.y)`, which
   is still ~0.97 at 10° and ~0.5 at 15° (zero only past ~20°), and it read the shading normal (smoothed mesh vertex
   normals; the filtered 8-bit clipmap normal on terrain). Now `SurfaceInput.level_up`, the true surface's up, gated
-  none from 4°, full from 2°: meshes the triangle face normal from `dpdx/dpdy` of the position
+  none from 6°, full from 3° (2026-11-06): meshes the triangle face normal from `dpdx/dpdy` of the position
   (`surface_face_up`); terrain the steeper of the clipmap normal and the height field's central differences over 4 m
   (`terrain_ground`, R32F heights, same 5 fetches as the basin). Test `no_puddles_on_slopes` (5/10/20° planes and
   faces dry, a level hollow full). Morrowind's 8-unit height steps over 128 units are ~3.6°: such near-level

@@ -96,13 +96,13 @@ const STREAK_TILE_U_M: f32 = 22.0;
 const STREAK_TILE_V_M: f32 = 18.0;
 
 /// Puddles (W4; `sf_surface::layer` documents each): water level reach, pool span of the
-/// height map, shoreline, level-face ramp (none from cos 4 deg, full from cos 2 deg), terrain
+/// height map, shoreline, level-face ramp (none from cos 6 deg, full from cos 3 deg), terrain
 /// concavity, water roughness, pool noise tile, object height from albedo.
 const PUDDLE_REACH: f32 = 0.3;
 const PUDDLE_DEPTH: f32 = 0.1;
 const PUDDLE_EDGE: f32 = 0.1;
-const PUDDLE_FLAT_LOW: f32 = 0.997564;
-const PUDDLE_FLAT_HIGH: f32 = 0.999391;
+const PUDDLE_FLAT_LOW: f32 = 0.994522;
+const PUDDLE_FLAT_HIGH: f32 = 0.998630;
 const BASIN_FULL_M: f32 = 0.1;
 const BASIN_POOL: f32 = 0.35;
 const PUDDLE_ROUGHNESS: f32 = 0.06;

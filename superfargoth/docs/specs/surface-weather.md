@@ -86,7 +86,7 @@ gate skinned meshes alike). Rafael's OpenMW shader pack: visual reference only (
 
 Built in W1 ([as built](surface-weather-as-built.md) W1, W2b): `SurfaceState { t_h, climates: Vec<ClimateSurface {
 wet, puddle }>, cells: per worldspace HashMap<IVec2, CellSurface { snow, ash }> }`, record-backed `SurfaceTuning`
-(step 10 game min, dry 2 h, decay multipliers, `puddle_from_wet` 0.9, rain wash of snow and ash, `storm_wet_rate`
+(step 10 game min, dry 2 h, decay multipliers, `puddle_from_wet` 0.7, rain wash of snow and ash, `storm_wet_rate`
 for rain rings), pure fixed-step `advance` from the weather blend per climate (cells weighted by
 `ClimateRaster::site_at`), CPU `sample`. Only non-zero cells are stored (Vvardenfell at 32 m is ~30k cells).
 

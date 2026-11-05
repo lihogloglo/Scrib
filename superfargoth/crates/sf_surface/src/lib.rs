@@ -85,7 +85,7 @@ impl Default for SurfaceTuning {
             puddle_dry_mult: 0.5,
             snow_melt_mult: 1.0 / 3.0,
             ash_clear_mult: 0.25,
-            puddle_from_wet: 0.9,
+            puddle_from_wet: 0.7,
             snow_wash: 1.0 / 3.0,
             ash_wash: 2.0,
             storm_wet_rate: 2.0,

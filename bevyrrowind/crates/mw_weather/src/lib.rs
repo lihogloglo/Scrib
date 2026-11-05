@@ -389,7 +389,8 @@ fn preset(ty: WeatherType, w: &mut WeatherIni<'_>, timescale: f32) -> WeatherPre
         p.surface = match kind {
             Precip::Rain => SurfaceRates {
                 wet: 2.0 * intensity,
-                puddle: 0.5 * intensity,
+                // Owner 2026-11-06: Morrowind rain is short, puddles must show within it.
+                puddle: 1.25 * intensity,
                 ..SurfaceRates::default()
             },
             Precip::Snow => SurfaceRates {
