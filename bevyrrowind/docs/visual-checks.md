@@ -183,9 +183,9 @@ PL-6 | awaiting owner (2026-10-30: hard-landing lock removed until fall damage) 
 RO-13 | known bug | [rendering](visual-checks/rendering.md) | F7 wireframe drawn away from the model (2026-10-30)
 WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grainy while the camera moves (2026-10-30)
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
-SW-4 | retune 2026-11-06 (faster fill, 6° slope), awaiting owner (confirmed 2026-11-05) | [weather-sky](visual-checks/weather-sky.md) | Puddles, Balmora in rain: `surface set puddle 1`, flat sky-mirror water in hollows and grout, rings while raining that stop with the rain, none under roofs; A/B `--off puddles`
+SW-4 | confirmed (2026-11-06 retune: faster fill, 6° slope) | [weather-sky](visual-checks/weather-sky.md) | Puddles, Balmora in rain: `surface set puddle 1`, flat sky-mirror water in hollows and grout, rings while raining that stop with the rain, none under roofs; A/B `--off puddles`
 SW-3 | confirmed (owner 2026-11-05: works great, dries in a satisfying pattern; ground look a bit weird, see terrain roughness bug) | [weather-sky](visual-checks/weather-sky.md) | Wetness after rain, Seyda Neen: `surface set wet 1`, darker/glossier ground and walls, streaks, dry under roofs; A/B `--off wet`
-SW-2 | fix built 2026-11-06 (render layers), awaiting owner (failed 2026-11-05: all yellow under Vivec arches) | [weather-sky](visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
+SW-2 | confirmed (2026-11-06, after the render-layer fix) | [weather-sky](visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
 FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenellated edges on distant land in fog (2026-10-30)
 PH-14 | confirmed (2026-11-05) | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)
@@ -226,4 +226,4 @@ PH-4 | deferred | [physics](visual-checks/physics.md) | Carry, drag and throw
 NS-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Stars fade in at dusk
 NS-3 | deferred | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
 NS-4 | deferred | [weather-sky](visual-checks/weather-sky.md) | No red streaks at night
-WE-8 | awaiting owner (2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Rain leans with the wind, capped (Rain ~9-15°, thunderstorm ≤ ~25°), direction turns slowly, trees agree; `view "Balmora" --hour 12 --weather rain`, A/B `flip rain_slant_cap`
+WE-8 | confirmed (2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Rain leans with the wind, capped (Rain ~9-15°, thunderstorm ≤ ~25°), direction turns slowly, trees agree; `view "Balmora" --hour 12 --weather rain`, A/B `flip rain_slant_cap`

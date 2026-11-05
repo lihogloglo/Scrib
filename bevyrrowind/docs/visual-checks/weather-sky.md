@@ -117,7 +117,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   the lean direction turns slowly (over a minute or two, no swinging); trees bend the same way the rain leans;
   the rain-under-roofs shelter follows the lean. Ash storms still blow near flat (uncapped).
 - A/B: console (backquote) `flip rain_slant_cap`: off = the old raw lean (21-44°, turns with every wind change).
-- Status: awaiting owner (2026-11-06).
+- Status: confirmed (owner 2026-11-06: "rain slant works").
 
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
 - Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
@@ -163,7 +163,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Cells: grey 32 m squares, dark borders, fixed as you walk; blue after wet; purple only past ~2 km.
 - A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
 - Owner 2026-11-05 (rain, noon): failed, all yellow even under Vivec's arches (W2b anchor views drew layer 0 only; statics
-  sit on the worldspace layer, so `queue_shadows` dropped every caster). Status 2026-11-06: fix built (render layers), awaiting owner; recheck Vivec too.
+  sit on the worldspace layer, so `queue_shadows` dropped every caster). Status: confirmed (owner 2026-11-06, after the render-layer fix).
 
 ### SW-4: Puddles in rain and after (surface-weather.md W4)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:
@@ -177,7 +177,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   flat paving/floors still hold water. Confirmed 2026-11-05 ("puddles are good now").
 - Retune 2026-11-06 (owner: faster, a bit more lenient): slope ramp none from 6°, full from 3° (was 4°/2°); puddles start
   at wet 0.7 (was 0.9) and fill at 1.25/h × rain (was 0.5): full ~70 game min (~2.5 real min) from dry ground, was ~2.5 h. Look for: puddles
-  within one shower, gentle street slopes hold some, ramps still dry. Status: awaiting owner.
+  within one shower, gentle street slopes hold some, ramps still dry. Status: confirmed (owner 2026-11-06).
 
 ### SW-3: Wetness after rain (surface-weather.md W3)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:
