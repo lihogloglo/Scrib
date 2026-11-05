@@ -71,6 +71,8 @@ sf_lod_bevy.workspace = true
 sf_physics_bevy = { workspace = true, features = ["debug"] }
 sf_records.workspace = true
 sf_sky_bevy.workspace = true
+# live_ab.rs `surface` switch: it writes `SurfaceSettings`.
+sf_surface_bevy.workspace = true
 sf_terrain_bevy.workspace = true
 sf_weather_bevy.workspace = true
 sf_world.workspace = true

@@ -515,6 +515,17 @@
             flags: ["--clouds", "clear"],
             checks: ["HI-4"],
         ),
+        // ---- terrain veil diagnosis (RO-16, .sessions/terrain-veil.md) ----
+        (
+            name: "ro16-terrain-veil",
+            cell: "Balmora",
+            camera: "-283,+5,198,-293,+0.5,185",
+            hour: 12.0,
+            description: "Balmora street at eye height, terrain ground next to statics: the faint 'resin' veil on the terrain; append --hour 23 for night",
+            look_for: "type in the console (backquote) one at a time, then back on: flip terrain_env_specular, flip terrain_specular, flip ambient, flip terrain_indirect, render.bloom 0, flip fog, flip surface, flip terrain_tint; which one lifts the veil?",
+            flags: ["--clouds", "clear"],
+            checks: ["RO-16"],
+        ),
         // ---- lighting: night exposure floor, point-light shadows (sky-lighting.md; .sessions/lighting.md) ----
         (
             name: "lt-night-floor",

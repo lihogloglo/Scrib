@@ -59,6 +59,15 @@ pub use params::{HEIGHT_LEVELS, LAYER_LEVELS, MACRO_LEVELS};
 pub use render::{ClipmapWrites, TextureWrite};
 pub use sf_terrain;
 
+/// Default ground reflectance (Bevy scale, F0 = 0.16 x r²): 0.3, F0 0.0144, as the usual
+/// default for legacy assets without PBR maps. Lower than a measured dielectric's 0.5 (F0 0.04)
+/// because the ground has no normal or cavity maps for small-scale occlusion (UE lowers
+/// Specular for that); Bevy's F0-based specular occlusion `saturate(16.5 x F0)` (0.24 here,
+/// 0.66 at 0.5) then also damps the ambient and env-map lobes' grazing B term. Rough ground
+/// (0.85-0.9) at N.V 0.1-0.2 under a flat ambient: the albedo-independent specular film drops
+/// from ~25% of the pixel at 0.5 to ~7% at albedo 0.15 (12% at 0.08); RO-16 measurement test.
+pub const DEFAULT_REFLECTANCE: f32 = 0.3;
+
 /// Tunables. Defaults follow terrain.md and the streaming budgets.
 #[derive(Resource, Clone, Debug)]
 pub struct TerrainSettings {
@@ -78,6 +87,10 @@ pub struct TerrainSettings {
     pub blend_depth: f32,
     /// Layer arrays to load (`None`: the largest baked).
     pub layer_array_size: Option<u32>,
+    /// The ground's dielectric reflectance, Bevy's `StandardMaterial::reflectance` scale
+    /// (F0 = 0.16 x r², so 0.5 is F0 0.04), applied before surface weather mixes wet areas
+    /// toward water. Default [`DEFAULT_REFLECTANCE`]; games may override it, live too.
+    pub reflectance: f32,
 }
 
 impl Default for TerrainSettings {
@@ -91,6 +104,7 @@ impl Default for TerrainSettings {
             splat_range: 1000.0,
             blend_depth: 0.2,
             layer_array_size: None,
+            reflectance: DEFAULT_REFLECTANCE,
         }
     }
 }
@@ -111,6 +125,15 @@ pub struct TerrainDebug {
     /// Turn off the terrain shadow past the shadow cascades (A/B; see
     /// `shaders/far_shadow.wesl`).
     pub no_far_shadows: bool,
+    /// RO-16 veil diagnosis (scaffold: remove these three with the veil fix): no specular on the
+    /// terrain (reflectance 0).
+    pub no_specular: bool,
+    /// RO-16: no indirect light on the terrain (env map, flat ambient, GI).
+    pub no_indirect: bool,
+    /// RO-16: the raw splat layer albedo (no macro tint or variation).
+    pub raw_layers: bool,
+    /// RO-16: no env-map specular on the terrain alone (diffuse and the other lobes stay).
+    pub no_env_specular: bool,
 }
 
 /// The view that drives selection, morphing and residency. One per app.
@@ -702,6 +725,12 @@ fn node_bounds(state: &TerrainState, lod: i8, x: i64, z: i64) -> (f32, f32) {
 /// origin shift.
 const SHIFT_SETTLE_FRAMES: u8 = 2;
 
+/// The `P_DETAIL` slot: splat range, height-blend depth, ground reflectance (clamped to
+/// Bevy's 0..1), max terrain height.
+fn detail_params(settings: &TerrainSettings, max_height: f32) -> [f32; 4] {
+    [settings.splat_range, settings.blend_depth, settings.reflectance.clamp(0.0, 1.0), max_height]
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn update_terrain(
     mut commands: Commands,
@@ -913,7 +942,11 @@ fn update_terrain(
         ];
         let debug_bits =
             (u32::from(debug.lod_colors) * params::DEBUG_LOD) | (u32::from(debug.wireframe) * params::DEBUG_WIREFRAME)
-                | (u32::from(debug.no_far_shadows) * params::DEBUG_NO_FAR_SHADOWS);
+                | (u32::from(debug.no_far_shadows) * params::DEBUG_NO_FAR_SHADOWS)
+                | (u32::from(debug.no_specular) * params::DEBUG_NO_SPECULAR)
+                | (u32::from(debug.no_indirect) * params::DEBUG_NO_INDIRECT)
+                | (u32::from(debug.raw_layers) * params::DEBUG_RAW_LAYERS)
+                | (u32::from(debug.no_env_specular) * params::DEBUG_NO_ENV_SPECULAR);
         p.0[params::P_MISC] = [
             (o_abs.x.rem_euclid(1024.0) as f32).to_bits(),
             (o_abs.z.rem_euclid(1024.0) as f32).to_bits(),
@@ -944,7 +977,7 @@ fn update_terrain(
     for l in 0..LAYER_LEVELS {
         p.set_i(params::P_LAYER + l, level_slot(state.layer_windows[l], u32::try_from(l).expect("small") + 1));
     }
-    p.set_f(params::P_DETAIL, [settings.splat_range, settings.blend_depth, 0.0, state.max_height]);
+    p.set_f(params::P_DETAIL, detail_params(&settings, state.max_height));
     for (n, l) in state.table.layers.iter().take(params::MAX_LAYERS).enumerate() {
         p.0[params::P_LAYERS + 2 * n] = [l.tiling_m.to_bits(), l.displacement_m.to_bits(), u32::from(l.triplanar), 0];
         p.set_f(params::P_LAYERS + 2 * n + 1, [l.mean_albedo[0], l.mean_albedo[1], l.mean_albedo[2], l.mean_height]);
@@ -998,6 +1031,17 @@ mod tests {
         assert_eq!(slot("LAYER_LEVELS"), LAYER_LEVELS);
         assert_eq!(params::P_MORPH + params::MORPH_LODS, params::P_HEIGHT);
         assert_eq!(params::P_MACRO + MACRO_LEVELS, params::P_DETAIL);
+        for (name, bit) in [
+            ("DEBUG_LOD", params::DEBUG_LOD),
+            ("DEBUG_WIREFRAME", params::DEBUG_WIREFRAME),
+            ("DEBUG_NO_FAR_SHADOWS", params::DEBUG_NO_FAR_SHADOWS),
+            ("DEBUG_NO_SPECULAR", params::DEBUG_NO_SPECULAR),
+            ("DEBUG_NO_INDIRECT", params::DEBUG_NO_INDIRECT),
+            ("DEBUG_RAW_LAYERS", params::DEBUG_RAW_LAYERS),
+            ("DEBUG_NO_ENV_SPECULAR", params::DEBUG_NO_ENV_SPECULAR),
+        ] {
+            assert_eq!(slot(name), usize::try_from(bit).unwrap(), "{name}");
+        }
     }
 
     /// Patches split quads along the canonical diagonal, counter-clockwise from +Y.
@@ -1014,5 +1058,100 @@ mod tests {
         }
         // First quad: (0,0)-(1,1) is the shared edge.
         assert_eq!(&idx[..6], &[0, 34, 1, 0, 33, 34]);
+    }
+    /// The ground reflectance reaches the shader's `P_DETAIL.z` (clamped to Bevy's 0..1), and the
+    /// terrain fragment sets it before surface weather mixes wet areas toward water, with the
+    /// RO-16 `DEBUG_NO_SPECULAR` override after both.
+    #[test]
+    #[allow(clippy::float_cmp)] // exact copies, no arithmetic
+    fn ground_reflectance_reaches_the_detail_slot_before_surface_weather() {
+        let mut settings = TerrainSettings::default();
+        assert_eq!(detail_params(&settings, 100.0)[2], DEFAULT_REFLECTANCE);
+        settings.reflectance = 0.2;
+        assert_eq!(detail_params(&settings, 100.0), [settings.splat_range, settings.blend_depth, 0.2, 100.0]);
+        settings.reflectance = 3.0;
+        assert_eq!(detail_params(&settings, 100.0)[2], 1.0);
+        settings.reflectance = -1.0;
+        assert_eq!(detail_params(&settings, 100.0)[2], 0.0);
+
+        let common = include_str!("shaders/common.wesl");
+        assert!(common.contains("fn base_reflectance() -> f32 {\n    return pf(P_DETAIL).z;"));
+        let terrain = include_str!("shaders/terrain.wesl");
+        let at = |s: &str| terrain.find(s).unwrap_or_else(|| panic!("{s}"));
+        let set = at("pbr.material.reflectance = vec3<f32>(base_reflectance());");
+        let weather = at("apply_surface_weather(&pbr, si);");
+        let off = at("if (debug & DEBUG_NO_SPECULAR) != 0u {");
+        assert!(set < weather && weather < off, "order: reflectance {set}, weather {weather}, no-specular {off}");
+    }
+
+    /// Split-sum DFG terms (A, B) for GGX with height-correlated Smith (Bevy's DFG LUT and
+    /// direct lighting), importance-sampled over the Hammersley set.
+    #[allow(clippy::many_single_char_names)] // the paper's symbols
+    fn dfg(perceptual_roughness: f32, n_dot_v: f32) -> (f64, f64) {
+        const N: u32 = 4096;
+        let a = f64::from(perceptual_roughness.max(0.089)).powi(2);
+        let a2 = a * a;
+        let nv = f64::from(n_dot_v);
+        let v = [(1.0 - nv * nv).sqrt(), 0.0, nv];
+        let (mut sum_a, mut sum_b) = (0.0, 0.0);
+        for i in 0..N {
+            let u = f64::from(i) / f64::from(N);
+            let w = f64::from(i.reverse_bits()) / 4_294_967_296.0;
+            let phi = std::f64::consts::TAU * u;
+            let ct = ((1.0 - w) / (1.0 + (a2 - 1.0) * w)).sqrt();
+            let st = (1.0 - ct * ct).sqrt();
+            let h = [st * phi.cos(), st * phi.sin(), ct];
+            let vh = v[0] * h[0] + v[2] * h[2];
+            let nl = 2.0 * vh * h[2] - v[2];
+            if nl <= 0.0 || vh <= 0.0 {
+                continue;
+            }
+            let gv = nl * (nv * nv * (1.0 - a2) + a2).sqrt();
+            let gl = nv * (nl * nl * (1.0 - a2) + a2).sqrt();
+            let g = 0.5 / (gv + gl) * 4.0 * nl * vh / h[2];
+            let fc = (1.0 - vh).powi(5);
+            sum_a += (1.0 - fc) * g;
+            sum_b += fc * g;
+        }
+        (sum_a / f64::from(N), sum_b / f64::from(N))
+    }
+
+    /// RO-16: how much of a night pixel under Bevy's flat ambient (`pbr_ambient.wesl`) is the
+    /// albedo-independent specular film, per ground reflectance. Pixel = diffuse
+    /// (albedo x A(1, N.V) + B(1, N.V)) + specular ((F0 x A + B) x saturate(16.5 x F0)), F0 =
+    /// 0.16 x r²; the env map is black at night. Printed, never a limit (owner judges).
+    #[test]
+    #[ignore = "measurement: RO-16 flat-ambient specular film share per terrain reflectance"]
+    fn measure_night_flat_ambient_specular_share() {
+        let nvs = [0.1_f32, 0.15, 0.2, 0.5];
+        for p in [0.85_f32, 0.9, 1.0] {
+            let row: Vec<String> = nvs
+                .iter()
+                .map(|&nv| {
+                    let (a, b) = dfg(p, nv);
+                    format!("N.V {nv}: A {a:.3} B {b:.4}")
+                })
+                .collect();
+            println!("roughness {p}: {}", row.join(" | "));
+        }
+        println!("spec share of the pixel, % (albedo 0.15 / 0.08), roughness 0.85 then 0.9, N.V 0.1 0.15 0.2 0.5");
+        for r in [0.5_f64, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.0] {
+            let f0 = 0.16 * r * r;
+            let so = (16.5 * f0).clamp(0.0, 1.0);
+            let mut cells = Vec::new();
+            for p in [0.85_f32, 0.9] {
+                for &nv in &nvs {
+                    let (a, b) = dfg(p, nv);
+                    let (a1, b1) = dfg(1.0, nv);
+                    let spec = (f0 * a + b) * so;
+                    let share = |albedo: f64| 100.0 * spec / (spec + albedo * a1 + b1);
+                    cells.push(format!("{:4.1}/{:4.1}", share(0.15), share(0.08)));
+                }
+            }
+            println!("r {r:.2} F0 {f0:.4} occl {so:.3} spec {:.4}@.15: {}", {
+                let (a, b) = dfg(0.85, 0.15);
+                (f0 * a + b) * so
+            }, cells.join(" "));
+        }
     }
 }

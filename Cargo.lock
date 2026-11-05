@@ -5229,6 +5229,7 @@ dependencies = [
  "sf_physics_bevy",
  "sf_records",
  "sf_sky_bevy",
+ "sf_surface_bevy",
  "sf_terrain_bevy",
  "sf_weather_bevy",
  "sf_world",

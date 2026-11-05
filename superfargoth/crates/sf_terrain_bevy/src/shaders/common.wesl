@@ -31,7 +31,7 @@ const P_MORPH: u32 = 4u;        // 12 LODs from MIN_LOD: x morph start, y 1/(end
 const P_HEIGHT: u32 = 16u;      // 10 levels: xy texel of the origin's sample, zw window min relative to it
 const P_LAYER: u32 = 26u;       // 3 levels
 const P_MACRO: u32 = 29u;       // 10 levels
-const P_DETAIL: u32 = 39u;      // x: splat range (m), y: height-blend depth, z: max detail LOD weight, w: max terrain height (world m)
+const P_DETAIL: u32 = 39u;      // x: splat range (m), y: height-blend depth, z: ground reflectance (Bevy scale), w: max terrain height (world m)
 const P_LAYERS: u32 = 40u;      // 2 slots per layer: (tiling, displacement, triplanar, -), (mean rgb, mean height)
 const P_FAR: u32 = 552u;       // far shadow map: (min x, min z, 1 / extent, base height), render space
 
@@ -43,6 +43,11 @@ const SIZE: i32 = 512;
 const DEBUG_LOD: u32 = 1u;
 const DEBUG_WIREFRAME: u32 = 2u;
 const DEBUG_NO_FAR_SHADOWS: u32 = 4u;
+// RO-16 veil diagnosis (scaffold: remove with the veil fix; params.rs documents each).
+const DEBUG_NO_SPECULAR: u32 = 8u;
+const DEBUG_NO_INDIRECT: u32 = 16u;
+const DEBUG_RAW_LAYERS: u32 = 32u;
+const DEBUG_NO_ENV_SPECULAR: u32 = 64u;
 
 fn pf(i: u32) -> vec4<f32> {
     return bitcast<vec4<f32>>(params[i]);
@@ -66,6 +71,11 @@ fn fill_height() -> f32 {
 
 fn debug_flags() -> u32 {
     return params[P_MISC].w;
+}
+
+/// The ground's dielectric reflectance (`TerrainSettings::reflectance`, Bevy scale).
+fn base_reflectance() -> f32 {
+    return pf(P_DETAIL).z;
 }
 
 /// World XZ (meters, continuous across origin moves for periods dividing 1024 m).

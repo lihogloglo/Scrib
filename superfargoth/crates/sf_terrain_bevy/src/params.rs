@@ -29,6 +29,17 @@ pub const MORPH_LODS: usize = 12;
 pub const DEBUG_LOD: u32 = 1;
 pub const DEBUG_WIREFRAME: u32 = 2;
 pub const DEBUG_NO_FAR_SHADOWS: u32 = 4;
+/// RO-16 veil diagnosis (scaffold: remove with the veil fix): no specular on the terrain
+/// (reflectance 0, so sun, lamp, env-map and flat-ambient specular all drop).
+pub const DEBUG_NO_SPECULAR: u32 = 8;
+/// RO-16: no indirect light on the terrain (diffuse and specular occlusion 0, so the env map,
+/// the flat ambient and the GI probes drop; sun, moon and lamps stay).
+pub const DEBUG_NO_INDIRECT: u32 = 16;
+/// RO-16: the raw splat layer albedo (no land-colour tint from the macro map, no macro variation).
+pub const DEBUG_RAW_LAYERS: u32 = 32;
+/// RO-16: no env-map specular on the terrain alone (specular occlusion 0; diffuse, sun, lamp and
+/// flat-ambient specular stay).
+pub const DEBUG_NO_ENV_SPECULAR: u32 = 64;
 
 /// Builder over the slot array.
 pub struct Params(pub Vec<[u32; 4]>);

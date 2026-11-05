@@ -162,6 +162,7 @@ fn main() {
         freeze: false,
         no_culling: args.no_cull,
         no_far_shadows: false,
+        ..TerrainDebug::default()
     })
     .insert_resource(WorldSize(size))
     .add_systems(Startup, setup)

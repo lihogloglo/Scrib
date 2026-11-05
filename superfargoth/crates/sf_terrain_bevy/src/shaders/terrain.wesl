@@ -3,7 +3,7 @@
 // clustered lights, fog and atmosphere match every other object.
 
 import super::common;
-import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, world_xz, origin_y, debug_flags, terrain_normal, height_at};
+import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, DEBUG_NO_SPECULAR, DEBUG_NO_INDIRECT, DEBUG_NO_ENV_SPECULAR, world_xz, origin_y, debug_flags, base_reflectance, terrain_normal, height_at};
 import super::surface::terrain_surface;
 import super::far_shadow::far_shadow_term;
 // Surface weather (surface-weather.md "Shader integration"): the shared layer on the view's
@@ -120,6 +120,9 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     pbr.material.base_color = vec4<f32>(albedo, 1.0);
     pbr.material.perceptual_roughness = clamp(s.roughness, 0.045, 1.0);
     pbr.material.metallic = 0.0;
+    // The ground's reflectance (TerrainSettings::reflectance), before surface weather mixes
+    // wet film and puddles toward water's, so rain sheen builds on it.
+    pbr.material.reflectance = vec3<f32>(base_reflectance());
     pbr.material.flags = STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
     pbr.frag_coord = in.position;
     pbr.world_position = in.world_position;
@@ -162,6 +165,21 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
 }
     pbr.diffuse_occlusion = diffuse_occlusion;
     pbr.specular_occlusion = specular_occlusion(n_dot_v, visibility, pbr.material.perceptual_roughness);
+    // RO-16 veil diagnosis (scaffold: remove with the veil fix): the terrain without specular
+    // (every lobe: sun, lamps, env map, flat ambient) or without indirect light (env map, flat
+    // ambient, GI), live from the console (`flip terrain_specular`, `flip terrain_indirect`).
+    if (debug & DEBUG_NO_SPECULAR) != 0u {
+        pbr.material.reflectance = vec3<f32>(0.0);
+    }
+    // Env-map specular alone (Bevy multiplies only that lobe by `specular_occlusion`; the flat
+    // ambient's specular rides on `diffuse_occlusion`): `flip terrain_env_specular`.
+    if (debug & DEBUG_NO_ENV_SPECULAR) != 0u {
+        pbr.specular_occlusion = 0.0;
+    }
+    if (debug & DEBUG_NO_INDIRECT) != 0u {
+        pbr.diffuse_occlusion = vec3<f32>(0.0);
+        pbr.specular_occlusion = 0.0;
+    }
     // Terrain shadows past the cascades (Bevy multiplies its CSM term by the
     // factor) and the dithered cascade end (the lighting position).
     let far = far_shadow_term(in.world_position, pbr.N, in.position.xy);

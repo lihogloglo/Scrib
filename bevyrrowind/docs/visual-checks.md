@@ -98,6 +98,8 @@ FF-2 | rejected (2026-10-30: all green to the horizon, L2/L3 never shown) | [ren
 DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt --off denoiser` runs without `sky_motion` validation crash
 RO-14 | confirmed (2026-11-02: sun at dusk; lamps and candles runs not checked) | [rendering](visual-checks/rendering.md) | Bloom on the game camera: sun, lamps, candles glow, lit walls stay crisp (`--off bloom` A/B)
 RO-15 | confirmed (2026-11-02: 0.3 too faint, 1.0 liked, kept 0.5) | [rendering](visual-checks/rendering.md) | Light through leaves: backlit canopy glows, front-lit unchanged (`--off foliagetransmission` A/B)
+RO-16 | night diagnosed 2026-11-05: flat blue ambient (specular lobe); noon not checked | [rendering](visual-checks/rendering.md) | Terrain "veil" at grazing angles, blue-grey at night: name the console switch that lifts it (`scene ro16-terrain-veil`)
+RO-17 | known bug | [rendering](visual-checks/rendering.md) | Tree leaves reflect as one flat panel in the light colour, leaf texture lost (2026-11-05)
 TX-delight | awaiting owner | [rendering](visual-checks/rendering.md) | De-lit albedo textures: no double-dark corners, no colour shift or BC7 blocks, cutouts keep coverage (`--off delight` A/B)
 RO-B | partial (2026-10-30: draws in front now; odd blend, weak over dark things, like Ghostfence) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
@@ -140,7 +142,7 @@ IN-1 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap control
 PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu button) | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
 SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
 HD-1 | confirmed (2026-10-30) | [player-ui](visual-checks/player-ui.md) | Minimal HUD: bars, compass, crosshair, use prompt
-HD-2 | awaiting owner | [player-ui](visual-checks/player-ui.md) | Bars follow damage and regen (stats S5: bars from the player's sheet)
+HD-2 | confirmed (2026-11-05: bars ok; dummy health log to re-confirm) | [player-ui](visual-checks/player-ui.md) | Bars follow damage and regen (stats S5: bars from the player's sheet)
 MM-1 | rejected (2026-10-30: wants title art/video, not the live world) | [player-ui](visual-checks/player-ui.md) | Release start: main menu over Seyda Neen, New game
 FG-9 | confirmed (2026-11-02: no pillar; god rays still not visible, FG-10) | [weather-sky](visual-checks/weather-sky.md) | Vertical light pillar toward a low sun in fog: isotropic sky fill (fix built 2026-11-02)
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
@@ -183,7 +185,7 @@ WE-6 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain turns grai
 WE-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Rain curtain stops in front of distant water (2026-10-30)
 SW-4 | confirmed (owner 2026-11-05 after the slope fix: "puddles are good now") | [weather-sky](visual-checks/weather-sky.md) | Puddles, Balmora in rain: `surface set puddle 1`, flat sky-mirror water in hollows and grout, rings while raining that stop with the rain, none under roofs; A/B `--off puddles`
 SW-3 | confirmed (owner 2026-11-05: works great, dries in a satisfying pattern; ground look a bit weird, see terrain roughness bug) | [weather-sky](visual-checks/weather-sky.md) | Wetness after rain, Seyda Neen: `surface set wet 1`, darker/glossier ground and walls, streaks, dry under roofs; A/B `--off wet`
-SW-2 | awaiting owner | [weather-sky](visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
+SW-2 | failed 2026-11-05 (all yellow under Vivec arches) | [weather-sky](visual-checks/weather-sky.md) | Surface weather shelter at night (own top-down pass): roofs full, trees partial (`surface debug exposure`), 32 m cells, Balmora 23:00
 FG-7 | known bug | [weather-sky](visual-checks/weather-sky.md) | Blocky crenellated edges on distant land in fog (2026-10-30)
 PH-14 | confirmed (2026-11-05) | [physics](visual-checks/physics.md) | Dev kill key I kills the player in third person and opens the inventory (2026-10-30)
 AU-6 | known bug | [audio](visual-checks/audio.md) | Third-person listener in the character head, not the camera (2026-10-30)

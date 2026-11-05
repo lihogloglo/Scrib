@@ -21,6 +21,9 @@
 //!   `GiVolume` (`intensity`: multiplier on the probe irradiance, as UE's "Indirect Lighting
 //!   Intensity"; `ambient_scale`: the flat ambient kept inside the volume). They show the live
 //!   volume's values; a typed value also applies to the volumes later re-fits spawn.
+//! - `terrain.reflectance` (float, 0..1, Bevy scale: F0 = 0.16 x r²): the ground's reflectance
+//!   (`sf_terrain_bevy::TerrainSettings::reflectance`), live (RO-16 veil fix 1). Starts as the
+//!   terrain's value; wet ground still mixes toward water's from it.
 //! - `on <name>` / `off <name>` / `flip <name>`: `ssao`, `contactshadows`, `gi` and the switches the A/B keys flip
 //!   ([`Switch`]: `sun_shadows`, `clouds`, ...). Any other `--off` part is decided at
 //!   startup: the console says so instead of doing nothing.
@@ -66,6 +69,8 @@ const GI_VAR: &str = "render.gi";
 const GI_INTENSITY_VAR: &str = "render.gi_intensity";
 /// Name of the GI inside-volume ambient scale variable (`GiVolume::ambient_scale`).
 const GI_AMBIENT_VAR: &str = "render.gi_ambient";
+/// Name of the terrain reflectance variable (`TerrainSettings::reflectance`).
+const TERRAIN_REFLECTANCE_VAR: &str = "terrain.reflectance";
 /// Why a run has no GI (`sf_sky_bevy::GiEnabled` absent).
 const GI_NOT_IN_RUN: &str = "not in this run (--off gi, Low/Medium preset, the ray-traced path, an exterior start or no ray-tracing GPU)";
 
@@ -313,14 +318,20 @@ fn register(app: &mut App) {
             .float_range(0.0, 4.0)
             .help("Flat ambient kept inside the GI volume (0 = the probes replace it, 1 = full ambient on top), live on every GI volume; starts as the live volume's"),
     );
+    let reflectance = app.add_console_var(
+        VarSpec::float(TERRAIN_REFLECTANCE_VAR, f64::from(sf_terrain_bevy::DEFAULT_REFLECTANCE))
+            .float_range(0.0, 1.0)
+            .help("Terrain reflectance, Bevy scale (F0 = 0.16 x r^2; 0.5 = F0 0.04, 0 = no specular), live; wet ground still mixes toward water; starts as the terrain's (RO-16: try 0.2-0.4)"),
+    );
     app.insert_resource(Ssao { var: ssao, level: None, applied: None })
+        .insert_resource(TerrainReflectance { var: reflectance, seeded: false, reported: None })
         .insert_resource(Contact { var: contact, length, thickness, settings: None, applied: None, tuned: None })
         .insert_resource(BloomVar { var: bloom, settings: None, applied: None })
         .insert_resource(GiVar { var: gi, applied: None })
         .insert_resource(GiGain { intensity: gi_intensity, ambient: gi_ambient, reported: None })
-        .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi, apply_gi_gain));
+        .add_systems(Update, (apply_ssao, apply_contact_shadows, apply_bloom, apply_gi, apply_gi_gain, apply_terrain_reflectance));
     let vars = LiveVars { ssao, contact, gi };
-    let live = format!("live: ssao, contactshadows, gi, {}; other --off parts are startup only", Switch::names());
+    let live = format!("live: ssao, contactshadows, gi, ambient, {}; other --off parts are startup only", Switch::names());
     for (name, on) in [("on", Some(true)), ("off", Some(false)), ("flip", None)] {
         let verb = match on {
             Some(true) => "Turns on",
@@ -637,6 +648,65 @@ fn apply_gi_gain(
     }
 }
 
+/// `terrain.reflectance` and whether it was seeded from the terrain.
+#[derive(Resource)]
+struct TerrainReflectance {
+    var: VarId,
+    /// Seeded from `TerrainSettings` (the first frame it exists).
+    seeded: bool,
+    /// The variable's generation when last checked in a run without terrain (`None`: not yet).
+    reported: Option<u64>,
+}
+
+/// Seeds `terrain.reflectance` from `sf_terrain_bevy::TerrainSettings` once it exists (a value
+/// typed earlier wins), then writes a typed value into the settings, which the terrain uploads
+/// to its shader every frame (RO-16 veil fix 1). Without terrain, a typed value says so.
+#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::cast_possible_truncation, reason = "console floats are f64; the setting is f32")]
+fn apply_terrain_reflectance(mut console: ResMut<DevConsole>, mut state: ResMut<TerrainReflectance>, settings: Option<ResMut<sf_terrain_bevy::TerrainSettings>>) {
+    let Some(mut settings) = settings else {
+        let generation = console.vars().var(state.var).generation();
+        if state.reported.is_some_and(|seen| seen != generation) {
+            console.log_mut().warn("terrain reflectance: no terrain here");
+        }
+        state.reported = Some(generation);
+        return;
+    };
+    if !state.seeded {
+        state.seeded = true;
+        // Outranked (and ignored) once a value was typed in the console.
+        let _ = console.vars_mut().set_by(state.var, f64::from(settings.reflectance).into(), SetBy::CommandLine);
+    }
+    let vars = console.vars();
+    if vars.var(state.var).set_by() != SetBy::Console {
+        return;
+    }
+    let value = vars.float(state.var) as f32;
+    // Compared before writing: unchanged settings keep their change ticks.
+    if value.to_bits() != settings.reflectance.to_bits() {
+        settings.reflectance = value;
+    }
+}
+
+/// `on`/`off`/`flip ambient`, RO-16 veil diagnosis (scaffold: remove with the veil fix,
+/// `docs/visual-checks/rendering.md` RO-16): the sky's flat ambient floor on the streaming camera
+/// (`SkyCamera::ambient`: 4 nits at night, 0 once the sun is above -4°), for every object. Off
+/// keeps the camera's `AmbientLight` at 0 rather than removing it (without it the interior's
+/// global ambient would apply); on hands it back to the sky, which rewrites it the next frame.
+fn set_sky_ambient(world: &mut World, on: Option<bool>) -> Result<String, String> {
+    let mut cameras = world.query_filtered::<(&mut sf_sky_bevy::SkyCamera, Option<&mut bevy_light::AmbientLight>), With<ExteriorCamera>>();
+    let mut text = None;
+    for (mut sky, ambient) in cameras.iter_mut(world) {
+        let v = on.unwrap_or(!sky.ambient);
+        sky.ambient = v;
+        if !v && let Some(mut ambient) = ambient {
+            ambient.brightness = 0.0;
+        }
+        text = Some(format!("sky ambient {}", if v { "on" } else { "off" }));
+    }
+    text.ok_or_else(|| "ambient: no sky camera in this run (interior or --off sky)".to_owned())
+}
+
 /// `on`/`off`/`flip <name>`: what happened, or why nothing did.
 fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
     let var = match name {
@@ -651,6 +721,9 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
         let v = on.unwrap_or(!vars.flag(live.gi));
         vars.set_by(live.gi, v.into(), SetBy::Console)?;
         return Ok(format!("gi {}", if v { "on" } else { "off" }));
+    }
+    if name == "ambient" {
+        return set_sky_ambient(world, on);
     }
     if let Some(var) = var {
         if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
@@ -670,7 +743,7 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     }
     match mw_game_core::perf::Off::from_flags(&[name.to_owned()]) {
         Ok(_) => Err(format!("{name}: startup only, relaunch with --off {name}")),
-        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, {}", Switch::names())),
+        Err(unknown) => Err(format!("{unknown}; live: ssao, contactshadows, gi, ambient, {}", Switch::names())),
     }
 }
 
@@ -986,5 +1059,63 @@ mod tests {
         run(&mut app, "on contactshadows");
         let on = app.world().get::<ContactShadows>(camera).expect("contact shadows on");
         assert_eq!(on.linear_steps, ContactShadows::default().linear_steps);
+    }
+
+    /// RO-16 veil diagnosis switches (scaffold: remove with the veil fix).
+    #[test]
+    fn veil_switches_flip_terrain_bits_surface_fog_and_the_sky_ambient_live() {
+        use sf_terrain_bevy::TerrainDebug;
+        let mut app = app();
+        run(&mut app, "off terrain_specular");
+        run(&mut app, "off ambient");
+        let lines = log(&app);
+        assert!(lines.iter().any(|l| l == "terrain specular: no terrain here"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("ambient: no sky camera")), "{lines:?}");
+
+        app.init_resource::<TerrainDebug>().init_resource::<sf_surface_bevy::SurfaceSettings>().insert_resource(
+            sf_atmos_bevy::Fog { settings: sf_atmos_bevy::sf_atmos::FogSettings::default(), enabled: true, froxels: None },
+        );
+        for line in ["off terrain_specular", "off terrain_env_specular", "flip terrain_indirect", "off terrain_tint", "off surface", "flip fog"] {
+            run(&mut app, line);
+        }
+        let d = *app.world().resource::<TerrainDebug>();
+        assert!(d.no_specular && d.no_env_specular && d.no_indirect && d.raw_layers && !d.lod_colors && !d.no_far_shadows, "{d:?}");
+        assert!(!app.world().resource::<sf_surface_bevy::SurfaceSettings>().layer);
+        assert!(!app.world().resource::<sf_atmos_bevy::Fog>().enabled);
+        run(&mut app, "on terrain_specular");
+        assert!(!app.world().resource::<TerrainDebug>().no_specular);
+
+        let camera = app
+            .world_mut()
+            .spawn((ExteriorCamera, sf_sky_bevy::SkyCamera::default(), bevy_light::AmbientLight { brightness: 4.0, ..Default::default() }))
+            .id();
+        run(&mut app, "off ambient");
+        assert_eq!(app.world().get::<bevy_light::AmbientLight>(camera).map(|a| a.brightness), Some(0.0));
+        assert!(!app.world().get::<sf_sky_bevy::SkyCamera>(camera).expect("sky camera").ambient);
+        run(&mut app, "flip ambient");
+        assert!(app.world().get::<sf_sky_bevy::SkyCamera>(camera).expect("sky camera").ambient);
+        assert!(log(&app).iter().any(|l| l == "sky ambient on"), "{:?}", log(&app));
+    }
+    /// RO-16 veil fix 1: `terrain.reflectance` seeds from the terrain, retunes it live, and says
+    /// so in a run without terrain.
+    #[test]
+    fn terrain_reflectance_seeds_from_the_terrain_and_retunes_it_live() {
+        use sf_terrain_bevy::TerrainSettings;
+        let mut none = app();
+        none.update();
+        run(&mut none, "terrain.reflectance 0.2");
+        assert!(log(&none).iter().any(|l| l.contains("terrain reflectance: no terrain here")), "{:?}", log(&none));
+
+        let mut app = app();
+        app.insert_resource(TerrainSettings { reflectance: 0.35, ..TerrainSettings::default() });
+        app.update();
+        let var = app.world().resource::<TerrainReflectance>().var;
+        let seeded = app.world().resource::<DevConsole>().vars().float(var);
+        assert!((seeded - 0.35).abs() < 1e-6, "seeded from the terrain, not the default: {seeded}");
+        run(&mut app, "terrain.reflectance 0.2");
+        let tuned = app.world().resource::<TerrainSettings>().reflectance;
+        assert!((tuned - 0.2).abs() < 1e-6, "{tuned} {:?}", log(&app));
+        run(&mut app, "terrain.reflectance 0");
+        assert!(app.world().resource::<TerrainSettings>().reflectance.abs() < 1e-9);
     }
 }

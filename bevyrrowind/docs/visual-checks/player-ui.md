@@ -185,7 +185,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Shift tap (roll) or F then LMB (attacks): the green fatigue bar drops at each roll or swing, then refills smoothly a
   moment after; it never drops on its own while standing still, and refills no faster than before S5.
 - Hit the dummy: the log reads `training dummy: hit ... health h/100` falling per hit; at 0 it refills to 100.
-- Known: nothing hurts the player yet (the health bar's drop needs an attacker: C2 sparring dummy). Status: awaiting owner.
+- Known: nothing hurts the player yet (the health bar's drop needs an attacker: C2 sparring dummy). Owner 2026-11-05: magicka at max, fatigue drops and refills, health bar still (as expected); dummy health "seems to go down", to re-confirm. Status: confirmed except the dummy log line.
 
 ### MM-1: Release start: main menu over Seyda Neen, New game (`bevyrrowind` with no arguments, release build)
 - Build `cargo build --release -p bevyrrowind`, run `target/release/bevyrrowind` (no subcommand). The world streams in at

@@ -147,6 +147,10 @@ pub struct Switches<'w> {
     weather_overrides: Option<ResMut<'w, sf_weather_bevy::WeatherOverrides>>,
     /// Characters: smooth or vanilla bodies (B, `actors.rs`).
     bodies: Option<Res<'w, sf_character_bevy::CharacterSettings>>,
+    /// Surface weather's A/B switches (`surface`: the whole layer, live).
+    surface: Option<ResMut<'w, sf_surface_bevy::SurfaceSettings>>,
+    /// The fog (`fog`: height fog, banks and froxels, live).
+    fog: Option<ResMut<'w, sf_atmos_bevy::Fog>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -159,11 +163,24 @@ pub enum Switch {
     TerrainLodColors,
     Wireframe,
     Rings,
+    /// RO-16 veil diagnosis (scaffold: remove the three `Terrain*` ones with the veil fix,
+    /// `docs/visual-checks/rendering.md` RO-16): the terrain's specular lobes.
+    TerrainSpecular,
+    /// RO-16: the terrain's env-map specular alone (diffuse and the other lobes stay).
+    TerrainEnvSpecular,
+    /// RO-16: the terrain's indirect light (env map, flat ambient, GI).
+    TerrainIndirect,
+    /// RO-16: the terrain's land-colour tint and macro variation (off: raw splat layers).
+    TerrainTint,
+    /// Surface weather (`sf_surface_bevy`): the whole layer, as `--off surface` but live.
+    Surface,
+    /// The fog (`sf_atmos_bevy`): height fog, banks and froxels, as `--off fog` but live.
+    Fog,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 13] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -171,6 +188,12 @@ impl Switch {
         Self::TerrainLodColors,
         Self::Wireframe,
         Self::Rings,
+        Self::TerrainSpecular,
+        Self::TerrainEnvSpecular,
+        Self::TerrainIndirect,
+        Self::TerrainTint,
+        Self::Surface,
+        Self::Fog,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -182,6 +205,12 @@ impl Switch {
             Self::TerrainLodColors => "terrain_lod_colors",
             Self::Wireframe => "wireframe",
             Self::Rings => "rings",
+            Self::TerrainSpecular => "terrain_specular",
+            Self::TerrainEnvSpecular => "terrain_env_specular",
+            Self::TerrainIndirect => "terrain_indirect",
+            Self::TerrainTint => "terrain_tint",
+            Self::Surface => "surface",
+            Self::Fog => "fog",
         }
     }
 
@@ -202,6 +231,12 @@ impl Switch {
             Self::TerrainLodColors => "terrain LOD colors",
             Self::Wireframe => "wireframe",
             Self::Rings => "streaming rings",
+            Self::TerrainSpecular => "terrain specular",
+            Self::TerrainEnvSpecular => "terrain env-map specular",
+            Self::TerrainIndirect => "terrain indirect light",
+            Self::TerrainTint => "terrain land tint",
+            Self::Surface => "surface weather",
+            Self::Fog => "fog",
         }
     }
 
@@ -217,6 +252,12 @@ impl Switch {
             Self::TerrainLodColors => terrain.map(|t| t.lod_colors),
             Self::Wireframe => Some(state.mesh_wire),
             Self::Rings => s.rings.as_ref().map(|r| r.enabled),
+            Self::TerrainSpecular => terrain.map(|t| !t.no_specular),
+            Self::TerrainEnvSpecular => terrain.map(|t| !t.no_env_specular),
+            Self::TerrainIndirect => terrain.map(|t| !t.no_indirect),
+            Self::TerrainTint => terrain.map(|t| !t.raw_layers),
+            Self::Surface => s.surface.as_ref().map(|w| w.layer),
+            Self::Fog => s.fog.as_ref().map(|f| f.enabled),
         }
     }
 
@@ -227,6 +268,8 @@ impl Switch {
                 Self::Clouds => "not in this run (interior or --off clouds)",
                 Self::FarTint => "no far field here",
                 Self::Rings => "no streaming here",
+                Self::Surface => "not in this run (interior)",
+                Self::Fog => "not in this run (interior or --off sky)",
                 _ => "no terrain here",
             };
             return format!("{}: {why}", self.label());
@@ -255,10 +298,29 @@ impl Switch {
                     r.enabled = v;
                 }
             }
-            Self::TerrainFarShadows | Self::TerrainLodColors => {
+            Self::Surface => {
+                if let Some(w) = s.surface.as_mut() {
+                    w.layer = v;
+                }
+            }
+            Self::Fog => {
+                if let Some(f) = s.fog.as_mut() {
+                    f.enabled = v;
+                }
+            }
+            Self::TerrainFarShadows
+            | Self::TerrainLodColors
+            | Self::TerrainSpecular
+            | Self::TerrainEnvSpecular
+            | Self::TerrainIndirect
+            | Self::TerrainTint => {
                 if let Some(t) = s.terrain.as_mut() {
                     match self {
                         Self::TerrainFarShadows => t.no_far_shadows = !v,
+                        Self::TerrainSpecular => t.no_specular = !v,
+                        Self::TerrainEnvSpecular => t.no_env_specular = !v,
+                        Self::TerrainIndirect => t.no_indirect = !v,
+                        Self::TerrainTint => t.raw_layers = !v,
                         _ => t.lod_colors = v,
                     }
                 }
@@ -516,7 +578,8 @@ fn overlay(
              Shift+F6 far tint {}  F6 terrain LOD colors {}  F7 wireframe (terrain, skinned meshes) {}  F8 rings {}\n\
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
-             Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}",
+             Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
+             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  ambient, render.bloom",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),
@@ -524,6 +587,12 @@ fn overlay(
             opt(Switch::Wireframe),
             opt(Switch::Rings),
             opt(Switch::Clouds),
+            opt(Switch::TerrainSpecular),
+            opt(Switch::TerrainEnvSpecular),
+            opt(Switch::TerrainIndirect),
+            opt(Switch::TerrainTint),
+            opt(Switch::Surface),
+            opt(Switch::Fog),
         );
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {
             let _ = write!(out, "\nlook for: {look}");

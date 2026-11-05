@@ -6,7 +6,7 @@
 // derivatives): safe in non-uniform control flow.
 
 import super::common::{
-    P_DETAIL, P_VALID, P_MACRO,
+    P_DETAIL, P_VALID, P_MACRO, DEBUG_RAW_LAYERS, debug_flags,
     pf, pi, params, level_coord, in_window,
     splat_at, layer_tiling, layer_triplanar, layer_mean,
     macro_clipmap, macro_sampler, albedo_height_array, nar_array, layer_sampler,
@@ -155,6 +155,7 @@ fn terrain_surface(
     let wxz = wpos.xz;
     let macro_c = macro_albedo(xz);
     let variation = macro_variation(wxz);
+    let raw = (debug_flags() & DEBUG_RAW_LAYERS) != 0u;
 
     var albedo = select(vec3<f32>(0.3), macro_c.rgb, macro_c.a > 0.0);
     var roughness = 0.85;
@@ -199,7 +200,8 @@ fn terrain_surface(
             // The macro map carries the tint (bake: mean albedo x tint), so
             // tint = macro / weighted mean; near and far then agree.
             var tint = vec3<f32>(1.0);
-            if macro_c.a > 0.0 {
+            // RO-16 scaffold (remove with the veil fix): `terrain_tint off` keeps the raw layers.
+            if macro_c.a > 0.0 && !raw {
                 tint = clamp(macro_c.rgb / max(mean, vec3<f32>(0.01)), vec3<f32>(0.0), vec3<f32>(4.0));
             }
             albedo = mix(albedo, a * tint, near);
@@ -209,7 +211,9 @@ fn terrain_surface(
             height = mix(height, h, near);
         }
     }
-    albedo *= variation;
+    if !raw {
+        albedo *= variation;
+    }
 
     var out: TerrainSurface;
     out.albedo = albedo;

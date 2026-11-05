@@ -163,6 +163,14 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - A/B: `--off foliagetransmission` (startup only; value `mw_assets::LEAF_DIFFUSE_TRANSMISSION` 0.5 (owner 2026-11-02, was 0.3), thickness 0.05 m).
 - Status: confirmed (owner 2026-11-02 at 0.5; 1.0 tried and liked). Source: visual-niceties.
 
+### RO-16: Terrain "veil", as if seen through resin (owner report 2026-11-05; was ROADMAP 1.12 "RO-13")
+- Kind: game location, dev build. Run: `powershell -File tools/run_dev.ps1 scene ro16-terrain-veil` (Balmora street, 12:00, clear), then again with `--hour 23`. Seen: strongest at grazing angles, ground takes the sky/env colour, night = smooth blue-grey "clay" sheet, silhouettes lighter, rocks/trees less hit.
+- Console (backquote), one at a time, each followed by the same line again to restore: `flip terrain_env_specular` (env-map specular only), `flip terrain_specular` (every specular lobe), `flip ambient` (the sky's flat 4-nit blue night ambient, all objects), `flip terrain_indirect` (env map + ambient + GI on the terrain), `render.bloom 0` (back: `render.bloom 0.1`), `flip fog`, `flip surface`, `flip terrain_tint` (raw layers). F1 shows their state.
+- If it's the culprit: env_specular fixes noon grazing/shade; terrain_specular also fixes night; ambient (night only) makes the ground darker and its own colour again, no blue; indirect = env or ambient (ask which of the two above); bloom/fog lift the whole image, not only the terrain; surface/tint should change nothing on dry ground.
+- Agent prediction (math in `.sessions/terrain-veil.md`): night = flat ambient (Bevy halves its diffuse, keeps its specular, colour fixed blue, not the night sky); noon = env specular F0 0.04 at N·V 0.1-0.2.
+- Owner 2026-11-05, night: `ambient` lifts it (ground dark, no blue); `terrain_specular` removes the blue reflection and keeps the ground visible; `terrain_env_specular` no visible change; the rest irrelevant. Cause at night: the flat blue ambient (its specular lobe most). Noon not checked yet. Status: night diagnosed, fix pending. Toggles are RO-16 scaffolds (`TerrainDebug` bits 8/16/32/64, `Switch::Terrain*`, console `ambient`): remove with the fix.
+- Fix 1 (terrain reflectance 0.3, was 0.5; console `terrain.reflectance`): look for the blue night film mostly gone, sheen in sun and rain kept; try 0.2-0.4 live. Status: awaiting owner.
+
 ### TX-delight: De-lit albedo textures (bake layer, 2026-11-05)
 - Kind: game location. Needs a current `bevyrrowind bake` (start log: `delight: layer mounted, N textures`).
   Runs: `view "Seyda Neen, Census and Excise Office"` and `view "Balmora" --hour 14` facing a lit house wall;
@@ -171,3 +179,8 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   no blocky BC7 artifacts on gradients; cutout foliage (hedges, tree cards) not thinner at distance (coverage mips).
 - Strength 0.5 (owner 2026-11-05) is baked in: a new strength needs a re-bake.
 - Status: awaiting owner. Source: rtx-borrow D-2b.
+
+### RO-17: Tree leaves reflect as one flat panel (owner report 2026-11-05)
+- Kind: game location. Seen in `scene ro16-terrain-veil` (Balmora, 23:00 clear): a whole leaf card reflects as one panel in the light's colour, the leaf texture lost, no micro detail.
+- Suspects (not diagnosed): flat cards with no normal map catch one uniform specular (statics reflectance 0.3, roughness 0.85, `mw_assets/src/lib.rs:453`); the flat-ambient specular lobe (same as RO-16 night); foliage transmission (RO-15) lighting the card evenly (A/B `--off foliagetransmission`).
+- Status: known bug, logged; diagnose after the RO-16 fix.
