@@ -66,6 +66,10 @@ SOFTWARE.
 - Also W2b (technique, no code): partial leaf shelter (`roofLeaves`, `LEAF_HOLD`) re-done as a separate canopy depth
   map in `layer.wesl`; rain washing ash (`sWashRate`) and quickening snow melt (`apps/openmw/mwrender/clockwork/scene/
   surfaceweather.cpp`) as linear wash rates in `superfargoth/crates/sf_surface/src/lib.rs` (`SurfaceTuning`).
+- Also W4: the rain ring profile of `files/shaders/lib/water/rain_ripples.glsl` (`blip`, `blipDerivative`, `circle`,
+  trailing rings; GPL-3.0 OpenMW code as Clockwork carries it, same commit) and the shape of `surfaceWater`'s puddle
+  height branch, rewritten in WGSL in `layer.wesl` (`surface_ring`, `surface_drops`, `surface_puddle`) with the CPU
+  twin in `layer.rs` (`ring`, `blip`, `puddle`); hash, grids and constants are ours, in meters.
 
 ## openmw-rtx (albedo de-lighting)
 

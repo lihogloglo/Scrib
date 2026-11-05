@@ -217,7 +217,8 @@ pub fn defs() -> Vec<StatDef> {
     d.push(def("bounty", counter(0.0, f32::MAX), "character", false, "sBounty"));
     d.push(def("level.progress", counter(0.0, f32::MAX), "progress", false, ""));
     for s in SKILLS {
-        d.push(def(&format!("progress.{s}"), counter(0.0, f32::MAX), "progress", false, ""));
+        // No lower clamp: OpenMW's skill-progression handlers may push progress negative.
+        d.push(def(&format!("progress.{s}"), counter(f32::MIN, f32::MAX), "progress", false, ""));
     }
     for a in ATTRIBUTES {
         d.push(def(&format!("levelup.attr.{a}"), counter(0.0, f32::MAX), "progress", false, ""));

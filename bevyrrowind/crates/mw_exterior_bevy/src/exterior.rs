@@ -288,6 +288,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     }
     // ROADMAP 2.4: the dialogue window on mw_rpg (`dialogue.rs`).
     mw_rpg_bevy::dialogue::add(&mut app, options.actors.clone(), options.open_ui.clone());
+    // Character stats (stats.md S4): the player's sheet, NPC and creature sheets at spawn.
+    mw_rpg_bevy::stats::add(&mut app, options.actors.clone());
 
     // Cooked materials map exactly like the NIF path's.
     let mapper_vfs = vfs.clone();
@@ -369,6 +371,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
             .insert_resource(sf_surface_bevy::SurfaceSettings {
                 layer: !off_parts.has(Part::Surface),
                 wet: !off_parts.has(Part::Wet),
+                // Low: no puddles (surface-weather.md "Budget").
+                puddles: !off_parts.has(Part::Puddles) && !matches!(options.quality, Quality::Low),
                 // Low: no shelter map (surface-weather.md "Budget").
                 shelter: !off_parts.has(Part::Shelter) && !matches!(options.quality, Quality::Low),
             })
@@ -678,7 +682,8 @@ fn setup_spawners(
         .set(PlacementClass::Light, Arc::new(LightSpawner(nif.clone())))
         .set_uncooked(Some(nif));
     if characters.is_some() {
-        spawners.set(PlacementClass::Actor, Arc::new(sf_character_bevy::CharacterSpawner));
+        // Characters plus the stats write-back on unload (`mw_rpg_bevy::stats`).
+        spawners.set(PlacementClass::Actor, Arc::new(mw_rpg_bevy::stats::ActorStatsSpawner));
     } else {
         spawners.clear(PlacementClass::Actor);
     }

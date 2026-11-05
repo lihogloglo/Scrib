@@ -102,12 +102,12 @@ stable ids (`PlacementId`, spawn ids, `RecordId`, `PlayerKey`, mod ids) and posi
 | `<adapter>/<name>` | adapter | adapter state (Bevyrrowind: MWScript globals and locals, its NPC rule state) |
 | `<mod id>/script` | `sf_script` | that mod's `ContextSnapshot` (storage, entity-script states, timers, RNG) |
 
-**Overlay blobs.** Per-placement state blobs (`physics` v1, actor health, AI progress, container
-contents) are already keyed by owning system. The overlay codec gains a **blob version table**
+**Overlay blobs.** Per-placement state blobs (`physics` v1, `stats` v1: a touched actor's sheet, stats.md; AI
+progress, container contents) are already keyed by owning system. The overlay codec gains a **blob version table**
 (system → schema version) so each system migrates its own blobs (overlay format v2, `sf_world`).
 
 **`CharacterSave`**: player key, display name, `Location` + facing, the gameplay body (`ActionState` +
-`Locomotion`, action.md: "saved"), `CharacterRpg` (loadout), stats sheet (M7), appearance (character.md
+`Locomotion`, action.md: "saved"), `CharacterRpg` (loadout), stats sheet (v3, stats.md "Saves"), appearance (character.md
 assembly choices as record ids), and **extension blobs** keyed by owner (adapter or mod per-character
 data, each with its own version). A character's state is one section so a guest file can carry the exact
 same bytes.

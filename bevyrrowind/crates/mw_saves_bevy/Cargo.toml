@@ -46,6 +46,9 @@ mw_records.workspace = true
 mw_weather.workspace = true
 mw_vfs.workspace = true
 sf_rpg_ui.workspace = true
+# The stats round trip: an NPC character and its sheet.
+sf_character_bevy = { workspace = true, features = ["world"] }
+sf_stats_bevy.workspace = true
 sf_vfs.workspace = true
 
 [lints]

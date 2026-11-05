@@ -125,6 +125,13 @@ fn legacy_shapes_match_their_goldens() {
             &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>],
         ),
     );
+    check_golden(
+        &format!("sf.{}.v2", sections::CHARACTER),
+        &shape::<sections::character::legacy::v2::CharacterSave>(
+            None,
+            &[&traced::<sf_rpg::AttrValue>, &traced::<sf_controller::MoverMode>, &traced::<sf_action::Mode>],
+        ),
+    );
 }
 
 /// The golden save `name`, written from the played yard when blessing and missing.
@@ -161,11 +168,26 @@ fn load_golden(golden: &Path, dir: &Path, migrated: &[(sf_save::SectionKey, u32,
     raw_sections(&again.path)
 }
 
-/// The golden save at the current versions (the yard re-written when `sf/weather` went to v2).
-const CURRENT: &str = "weather-v2.sfsave";
+/// The golden save at the current versions (the yard re-written when `sf/character` went to v3).
+const CURRENT: &str = "character-v3.sfsave";
 
 fn weather_step() -> (sf_save::SectionKey, u32, u32) {
     (sections::key(sections::WEATHER), 1, sections::WEATHER_VERSION)
+}
+
+fn character_step(from: u32) -> (sf_save::SectionKey, u32, u32) {
+    (sections::character_key(crate::tests::HERO), from, sections::CHARACTER_VERSION)
+}
+
+/// The `sf/weather` v2 golden (`sf/character` v2: a save from before the stats sheet) loads
+/// through the character step and re-saves to exactly the current golden's sections.
+#[test]
+fn the_weather_v2_golden_save_loads_through_the_character_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = data_dir("golden").join("weather-v2.sfsave");
+    assert!(old.exists(), "the weather-v2 golden is released: never re-bless it");
+    let current = golden_save(CURRENT, dir.path());
+    assert_eq!(load_golden(&old, dir.path(), &[character_step(2)]), raw_sections(&current));
 }
 
 /// The S2 golden (`sf/character` v1, `sf/weather` v1) loads through both v1 → v2 steps into the
@@ -176,7 +198,7 @@ fn the_s2_golden_save_still_loads_through_migration() {
     let s2 = data_dir("golden").join("s2.sfsave");
     assert!(s2.exists(), "the S2 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
-    let resaved = load_golden(&s2, dir.path(), &[(sections::character_key(crate::tests::HERO), 1, sections::CHARACTER_VERSION), weather_step()]);
+    let resaved = load_golden(&s2, dir.path(), &[character_step(1), weather_step()]);
     assert_eq!(resaved, raw_sections(&current));
 }
 
@@ -188,7 +210,7 @@ fn the_character_v2_golden_save_loads_through_the_weather_step() {
     let old = data_dir("golden").join("character-v2.sfsave");
     assert!(old.exists(), "the character-v2 golden is released: never re-bless it");
     let current = golden_save(CURRENT, dir.path());
-    assert_eq!(load_golden(&old, dir.path(), &[weather_step()]), raw_sections(&current));
+    assert_eq!(load_golden(&old, dir.path(), &[character_step(2), weather_step()]), raw_sections(&current));
 }
 
 /// The current golden ([`CURRENT`]) loads without migration and re-saves byte for byte.

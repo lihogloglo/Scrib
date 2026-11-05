@@ -419,3 +419,20 @@ fn faction_rank_requirements() {
     run(&t, &rules, &mut s, &[StatOp::SetRank { group: fg.clone(), rank: 9 }], &player_inputs());
     assert_eq!(ranks.rank_requirement(&t.idx, &s.view(&t.table), &fg), 0);
 }
+
+#[test]
+fn skill_progress_has_no_lower_clamp() {
+    // OpenMW's handlers may push progress negative (a mod's `skillUsed` handler); level
+    // progress keeps its 0 floor.
+    let t = table();
+    let rules = openmw_rules(&t, &MwGmst::vanilla());
+    let mut s = player(&t, &rules);
+    let p = t.idx.skill_progress[SkillId::LongBlade as usize];
+    let (rejected, _) = run(&t, &rules, &mut s, &[StatOp::CounterSet { stat: p, value: -0.25 }], &player_inputs());
+    assert_eq!(rejected, 0);
+    assert_eq!(base(&t, &s, p), -0.25);
+    run(&t, &rules, &mut s, &[StatOp::CounterAdd { stat: p, delta: -0.5 }], &player_inputs());
+    assert_eq!(base(&t, &s, p), -0.75);
+    run(&t, &rules, &mut s, &[StatOp::CounterSet { stat: t.idx.level_progress, value: -1.0 }], &player_inputs());
+    assert_eq!(base(&t, &s, t.idx.level_progress), 0.0);
+}

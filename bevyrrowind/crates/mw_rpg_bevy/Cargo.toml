@@ -22,7 +22,11 @@ mw_records.workspace = true
 mw_rpg.workspace = true
 mw_script.workspace = true
 mw_scripts_bevy.workspace = true
+# Character stats (`stats`): Morrowind's table, init and OpenMW rules.
+mw_stats.workspace = true
 mw_world.workspace = true
+# Overlay `stats` blobs (`stats`).
+postcard.workspace = true
 serde.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_physics_bevy.workspace = true
@@ -30,6 +34,7 @@ sf_records.workspace = true
 sf_rpg.workspace = true
 sf_rpg_ui.workspace = true
 sf_script_bevy.workspace = true
+sf_stats_bevy.workspace = true
 sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_inventory.workspace = true
@@ -43,7 +48,6 @@ workspace-hack.workspace = true
 # The moved tests: the RPG state round trip and the installed game's records.
 mw_install.workspace = true
 mw_vfs.workspace = true
-postcard.workspace = true
 sf_vfs.workspace = true
 
 [lints]

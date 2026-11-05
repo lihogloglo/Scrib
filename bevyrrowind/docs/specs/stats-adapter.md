@@ -1,8 +1,9 @@
 # Stats adapter: Morrowind's attributes, skills, pools, factions on `sf_stats`
 
-Status (2026-11-05): S3 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen init, `MwDerived` maxima + regen +
-rest, `OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `FactionRanks`; as built:
-`../../../superfargoth/docs/specs/stats-as-built.md` "S2", "S3"); S4 Bevy glue next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
+Status (2026-11-05): S4 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen/dev-start init, `MwDerived`,
+`OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `FactionRanks`; `mw_rpg_bevy::stats`: sheets on the player, NPCs and
+creatures, saved with the character and the overlay; as built: `../../../superfargoth/docs/specs/stats-as-built.md`
+"S2"-"S4"); S5 combat vitals + HUD next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Content mechanics port 1:1; growth and recovery formulas are the first implementations of the rules seams
 (owner 2026-11-05: `SkillUseModel` starts with OpenMW's values).
@@ -11,8 +12,9 @@ approximate). Content mechanics port 1:1; growth and recovery formulas are the f
 
 - **`mw_stats`** (new, Bevy-free; deps `sf_stats`, `sf_records`, `mw_records`/`tes3`; hakari `final-excludes`): table,
   `MwGmst` (typed GMST snapshot), init, `MwDerived`, `OpenMwSkillUse`, `OpenMwLeveling`, rank requirements.
-- Glue (no new Bevy crate): `mw_rpg_bevy` (NPC/creature sheets, dialogue `MwView`), `mw_scripts_bevy` (MWScript),
-  `mw_player_bevy` (player sheet, combat vitals, HUD).
+- Glue (no new Bevy crate): `mw_rpg_bevy` (`stats`: table and rules setup, the player's sheet on its
+  `PlayerCharacter` entity, NPC/creature sheets at spawn, save hooks; dialogue `MwView`), `mw_scripts_bevy` (MWScript),
+  `mw_player_bevy` (combat vitals, HUD: S5).
 
 ## Stat table
 
@@ -56,7 +58,8 @@ Roles: `Health` = health, `Mana` = magicka, `Stamina` = fatigue, `Level`, `Carry
   + race bonus; class: +10 favoured attributes, +10 minor, +25 major, +5 same specialization; race and birthsign powers
   (spells: effect spec); `updateHealth` = floor(0.5 x (Str + End)) (`npcstats.cpp` ~251); all currents = max.
 - **Player, dev start** (chargen skipped, scaffold `SkipChargen`): the `player` record's NPDT values as today's HUD,
-  else `buildPlayer` with the record's race and class.
+  plus its class's counters (no chargen bonuses), else `buildPlayer` with the record's race, sex and class
+  (`player_start_ops`).
 
 ## Formulas (`MwDerived`, `OpenMwSkillUse`, `OpenMwLeveling`)
 

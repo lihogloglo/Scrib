@@ -168,3 +168,55 @@ Ported from OpenMW `ca5e2576` (NOTICES "OpenMW (character stats)"; files in each
   0.1 x 52, refusals); cap 100 with one pick; fatigue regen 3.5/s at End 50 (combatant and dead skipped); rest formulas
   (18144 / 18000 per hour); sleep vs wait restoration; determinism (an op stream twice: equal sheets and events, no
   clock or RNG); faction rank edge cases. Real install: every chargen class sets 5 majors + 5 minors.
+
+## S4 Bevy plugin + game glue (2026-11-05): `superfargoth/crates/sf_stats_bevy`, `mw_rpg_bevy/src/stats.rs`
+
+Before S4 (moved from the spec): `sf_combat::Vitals` seeded from the `player` record (`mw_player_bevy/src/combat.rs`),
+HUD `PlayerVitals` a scaffold, dialogue reads `PlayerStatsPlaceholder` (`mw_rpg_bevy/src/dialogue.rs`), MWScript stat
+functions stubs. S5 and S6 remove these; S4 adds sheets beside them.
+
+- **`sf_stats_bevy`** (thin; deps `bevy_app`, `bevy_ecs`, `bevy_log`, `bevy_time`, `sf_stats`, workspace-hack):
+  `Stats { owner, sheet, inputs }` (+ `Stats::apply`, the synchronous host path), `StatTableRes(Arc<StatTable>)`,
+  `StatRules(Arc<Rules>)`, `StatTick` (advanced in `FixedFirst`; the `Cause::tick`), `StatCommand { owner, cause,
+  source, ops }` (a `Message`, applied next fixed tick in write order, one atomic `apply` per command; an unknown owner
+  is dropped with a warning), `StatMessage(StatEvent)` out, `PendingStatEvents` (synchronous steps append theirs),
+  `StatIndex` (owner → entity, kept by `Insert`/`Discard` observers). Sets `Apply → Combat → Tick → Events` chained in
+  `FixedUpdate`; `Combat` is empty (S5). Event order: commands' events in command order, then the tick's sorted by
+  owner (stable), so query order never shows. `sf_stats` gained `StatEvent::owner()`. No record kind `stat` yet: the
+  adapter builds the table.
+- **Game glue** (`mw_rpg_bevy::stats`, added by `mw_exterior_bevy` after dialogue): `MwStats { table, gmst, db }`;
+  the player's sheet on its own entity `PlayerCharacter { key: HOST_KEY }` (`mw_game_core::player`; `HOST_KEY` moved
+  there from `mw_saves_bevy`, re-exported), because the body despawns with the free camera (F11). Built from the
+  `player` record by `mw_stats::player_start_ops` (stored NPDT: values kept + class counters only; autocalc:
+  `buildPlayer` with the record's race, sex and class). NPCs/creatures: `attach_actor_stats` (FixedUpdate, before
+  `Apply`) on `Added<Character>` of an NPC or creature record, not `PlayerAvatar`; owner `ActorKey` = placement id
+  (`dialogue::key`, entity bits without a placement: the dummy). `Inputs`: `is_player`; `carried` 0 (TODO: loadout
+  weight, containers have none yet); `combatant` is S5's.
+- **Saves**: `sf.character` v3 (`stats: Option<SheetSave>`), frozen `legacy::v2` + step (v1 → v2 → v3 chain), shape
+  golden `sf.character.v3.json`, new current golden `character-v3.sfsave`; `weather-v2.sfsave` is now a released golden
+  (test: loads through the character step). NPCs: overlay blob `stats` (postcard `SheetSave`), `BlobVersions` 1 (old
+  saves have none: version 1 by default, they load), written by `ActorStatsSpawner::deactivate` (wraps
+  `CharacterSpawner`; skipped on a reload's discard) and `persist_actor_stats` (the save's overlay copy), only when
+  `changed_since_init`. Load: `load_sheet` = `Sheet::from_save`, `ops_for_missing` of the init ops applied (cause
+  `Load`), no sources yet, `Settle::Loaded`. A v2 save (no sheet) rebuilds the player's from the record.
+- **`mw_stats`**: `progress.<skill>` counters have no lower clamp (min `f32::MIN`, OpenMW handlers may push progress
+  negative; coordinator); `level.progress` keeps 0.
+- **Tests**: `sf_stats_bevy` 3 (spawn + apply + regen + events in order, cause ticks, Depleted; combatant stamina regen
+  skipped + unknown owner dropped; index follows replace/despawn + synchronous apply publishes) + measurement
+  (`cargo test -p sf_stats_bevy --release -- --ignored --nocapture`: 500 sheets, 4 + 110 stats, 125 regenerating, a
+  whole `FixedUpdate`: median 0.035 ms, p95 0.063 ms on the dev machine); `sf_save_bevy` goldens (s2, character-v2,
+  weather-v2 load through steps; current re-saves byte for byte; legacy v2 shape); `mw_saves_bevy`
+  `player_and_npc_sheets_round_trip` (real install, skips without: player sheet in `CharacterSave`, touched Fargoth in
+  the overlay and back on respawn, untouched guard writes nothing, `stats: None` rebuilds); `mw_stats` 2 (no progress
+  clamp, player start).
+
+Spec text moved here to keep `stats.md` under budget:
+
+- Tests (was the spec's "Tests"): layers, sources (add then remove = byte-identical), pool flags against OpenMW's
+  `setCurrent`, seams through `TestModel`, groups, determinism (postcard bytes, `SheetSave` shape golden), a tick-cost
+  measurement.
+- Open questions, answered 2026-11-05 with their defaults: (1) first implementations = OpenMW's formulas for all three
+  models, modern variants (retroactive health, no attribute multipliers, Skyrim-like level-from-skill-XP) later behind
+  the same traits; (2) one stamina/fatigue pool (Morrowind fatigue, combat sees it x0.5), not two; (3) magnitude stats
+  for resistances and similar, decided per effect in the effect spec; (4) Morrowind's non-retroactive health in the
+  modern profile too for now (part of 1).

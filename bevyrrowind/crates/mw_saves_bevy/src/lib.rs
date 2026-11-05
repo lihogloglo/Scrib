@@ -59,7 +59,7 @@ use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
 use sf_coords::WorldPos;
 use sf_records::RecordId;
-use sf_rpg::{ActorKey, CharacterRpg, PlayerKey};
+use sf_rpg::{ActorKey, CharacterRpg};
 use mw_boot_bevy::mods::ProfileIdentity;
 use sf_save_bevy::sf_save::{ModRef, SaveMode, SaveReason, SectionKey, SlotDir, list_worlds};
 use sf_save_bevy::{
@@ -88,8 +88,8 @@ pub const RPG: &str = "rpg";
 pub const RPG_VERSION: u32 = 1;
 /// Version of the host character's `mw` extension blob ([`PlayerExt`]).
 pub const PLAYER_EXT_VERSION: u32 = 1;
-/// The host's character key. TODO(saves): the profile's random `PlayerKey` (save.md "Co-op").
-pub const HOST_KEY: PlayerKey = PlayerKey(1);
+/// The host's character key (`mw_game_core::player::HOST_KEY`).
+pub use mw_game_core::player::HOST_KEY;
 /// The save gate's blocker while a door fade runs (save.md "Saving" 1: never during a crossing).
 const FADE_BLOCKER: &str = "door fade";
 
@@ -162,6 +162,8 @@ fn sync_identity(profile: Option<Res<GameProfile>>, mut identity: ResMut<SaveIde
 pub fn register(app: &mut App) {
     app.add_systems(First, sync_identity);
     app.on_load_reset(close_menus);
+    // NPC and creature sheets ride the overlay (`mw_rpg_bevy::stats`).
+    app.world_mut().resource_mut::<sections::BlobVersions>().declare(mw_rpg_bevy::stats::STATS_BLOB, mw_rpg_bevy::stats::STATS_BLOB_VERSION);
     app.add_save_section(sections::overlay(
         snapshot_overlay,
         set_overlay,
@@ -216,6 +218,7 @@ pub fn register(app: &mut App) {
 fn snapshot_overlay(world: &World) -> Option<sf_world::PlacementOverlay> {
     let mut copy = world.get_resource::<WorldOverlay>()?.0.read().unwrap_or_else(PoisonError::into_inner).clone();
     sf_physics_bevy::stream::persist_moved_items(world, &mut copy);
+    mw_rpg_bevy::stats::persist_actor_stats(world, &mut copy);
     Some(copy)
 }
 
@@ -294,17 +297,19 @@ fn host_character(world: &World) -> Vec<sections::CharacterSave> {
         facing,
         body: player_body(world),
         rpg: rpg.state.pc.clone(),
+        stats: mw_rpg_bevy::stats::player_sheet_save(world, HOST_KEY),
         ext,
     }]
 }
 
-/// The host's inventory back, and the player to the saved spot through the door fade.
+/// The host's inventory and stats sheet back, and the player to the saved spot through the door fade.
 fn restore_characters(world: &mut World, all: Vec<sections::CharacterSave>) {
     let Some(host) = all.into_iter().find(|c| c.player == HOST_KEY) else { return };
     if let Some(mut rpg) = world.get_resource_mut::<Rpg>() {
         rpg.state.pc = host.rpg;
     }
-    let ext = host.ext.get(OWNER).filter(|b| b.version == PLAYER_EXT_VERSION).and_then(|b| sf_save_bevy::sf_save::decode::<PlayerExt>(&b.bytes).ok());
+    mw_rpg_bevy::stats::restore_player_sheet(world, HOST_KEY, host.stats.as_ref());
+    let ext =host.ext.get(OWNER).filter(|b| b.version == PLAYER_EXT_VERSION).and_then(|b| sf_save_bevy::sf_save::decode::<PlayerExt>(&b.bytes).ok());
     if host.location.worldspace.as_str().is_empty() {
         return;
     }
@@ -603,5 +608,91 @@ mod tests {
         assert!(app.world().resource::<WorldOverlay>().0.read().unwrap().is_removed(TAKEN));
         assert!((app.world().resource::<SkyTime>().0.days - 3.75).abs() < 1e-9);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Stats through the game's save path (stats.md "Saves"): the player's sheet in its
+    /// `CharacterSave`, a touched NPC's in the overlay (`stats` blob) and back on its next spawn;
+    /// an untouched NPC writes nothing; a character section without a sheet (a v2 save) rebuilds
+    /// the player's from the record.
+    #[test]
+    fn player_and_npc_sheets_round_trip() {
+        use bevy_ecs::system::RunSystemOnce;
+        use sf_character_bevy::{Character, CharacterPlacement};
+        use sf_stats_bevy::sf_stats::{Cause, CauseKind, StatOp, StatOwner};
+        use sf_stats_bevy::{StatRules, StatTableRes, Stats};
+
+        let Ok((install, _)) = MorrowindInstall::detect(None) else {
+            eprintln!("no Morrowind install detected; skipping");
+            return;
+        };
+        let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+        let db = Arc::new(mw_records::load(&vfs, &install.game_files()).unwrap().db);
+        let root = temp_root("stats");
+        let mut app = app(root.clone(), Rpg::new(db.clone()).unwrap());
+        mw_rpg_bevy::stats::add(&mut app, Some(db.clone()));
+        let (fargoth, guard) = (PlacementId(0xF00 << 64 | 0x2A), PlacementId(0xF00 << 64 | 0x2B));
+        let npc = |id: &str, p: PlacementId| (Character::record("NPC_", RecordId::new(id)), CharacterPlacement(p));
+        let spawn_npcs = |app: &mut App| {
+            let a = app.world_mut().spawn(npc("fargoth", fargoth)).id();
+            let b = app.world_mut().spawn(npc("imperial guard", guard)).id();
+            app.world_mut().run_system_once(mw_rpg_bevy::stats::attach_actor_stats).unwrap();
+            (a, b)
+        };
+        let (f, _) = spawn_npcs(&mut app);
+
+        // Touch the player and Fargoth.
+        let table = app.world().resource::<StatTableRes>().0.clone();
+        let rules = app.world().resource::<StatRules>().0.clone();
+        let t = app.world().resource::<mw_rpg_bevy::stats::MwStats>().table.clone();
+        let cause = Cause { kind: CauseKind::Debug, source: None, tick: 1 };
+        let touch = [
+            StatOp::SetBase { stat: t.idx.attributes[0], value: 77.0 },
+            StatOp::PoolAdjust { pool: t.idx.health, delta: -5.0, below_zero: false, above_max: false },
+            StatOp::UseSkill { skill: t.idx.skills[5], use_kind: 0, scale: 1.0 },
+        ];
+        let player = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&mw_game_core::player::PlayerCharacter, &Stats)>();
+            q.single(app.world()).unwrap().1.sheet.to_save(&table)
+        };
+        let fresh_player = player(&mut app);
+        {
+            let mut q = app.world_mut().query::<&mut Stats>();
+            for mut s in q.iter_mut(app.world_mut()) {
+                if matches!(s.owner, StatOwner::Player(_)) || s.owner == StatOwner::Actor(ActorKey(fargoth.0)) {
+                    assert_eq!(s.apply(&table, &rules, &touch, cause, &mut Vec::new()), 0);
+                }
+            }
+        }
+        let (player_before, fargoth_before) = (player(&mut app), app.world().get::<Stats>(f).unwrap().sheet.to_save(&table));
+        assert_ne!(player_before, fresh_player);
+        save(&mut app);
+
+        // Fresh state: new player sheet, no NPCs, empty overlay; then load and respawn.
+        restore_player_sheet_fresh(&mut app);
+        assert_eq!(player(&mut app), fresh_player);
+        let mut q = app.world_mut().query_filtered::<Entity, With<CharacterPlacement>>();
+        for e in q.iter(app.world()).collect::<Vec<_>>() {
+            app.world_mut().despawn(e);
+        }
+        app.insert_resource(WorldOverlay::default());
+        load(&mut app);
+        assert_eq!(player(&mut app), player_before, "the player's sheet round-trips");
+        let overlay = app.world().resource::<WorldOverlay>().0.read().unwrap().clone();
+        assert!(overlay.state(fargoth, mw_rpg_bevy::stats::STATS_BLOB).is_some());
+        assert!(overlay.state(guard, mw_rpg_bevy::stats::STATS_BLOB).is_none(), "an untouched NPC saves nothing");
+        let (f, g) = spawn_npcs(&mut app);
+        assert_eq!(app.world().get::<Stats>(f).unwrap().sheet.to_save(&table), fargoth_before, "Fargoth's sheet comes back on spawn");
+        assert!(!app.world().get::<Stats>(g).unwrap().sheet.changed_since_init());
+
+        // A character section from before stats (v2 → v3: `stats: None`) rebuilds the sheet.
+        let mut old = host_character(app.world());
+        old[0].stats = None;
+        restore_characters(app.world_mut(), old);
+        assert_eq!(player(&mut app), fresh_player);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn restore_player_sheet_fresh(app: &mut App) {
+        mw_rpg_bevy::stats::restore_player_sheet(app.world_mut(), HOST_KEY, None);
     }
 }

@@ -103,6 +103,7 @@ pub(crate) fn new_character(y: &Yard) -> CharacterSave {
         facing: start.yaw.to_radians(),
         body: Some(CharacterBody { action: ActionState::new(RuleKey::of("locomotion")), locomotion: Locomotion::new(pos, start.yaw.to_radians()) }),
         rpg,
+        stats: None,
         ext: BTreeMap::new(),
     }
 }

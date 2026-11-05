@@ -1615,3 +1615,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (stats S3): rules models see only the sheet (no owner; `Inputs` only in some methods), so per-character
   content state a model needs lives on the sheet as hidden counters: Morrowind's class = `class.<skill>` (misc/minor/
   major 0/1/2) + `class.specialization`, set at init, saved and replicated with the sheet. No trait change.
+- 2026-11-05 (surface W4): puddles are Lagarde's water level against a height (terrain layer height, object albedo
+  luminance, not the noise atlas) over a pool score (noise + terrain basin); rain rings are procedural (OpenMW/Clockwork
+  ring profile, no ripple texture or binding) on 4 grids turned on per quarter of rain (Lagarde's layers). Low: off.
+- 2026-11-05 (stats S4): a player's stats sheet lives on its own `PlayerCharacter` entity (whole run), not the body
+  (despawned by the free camera); NPC sheets ride overlay `stats` blobs only when touched. `sf.character` v3 carries the
+  sheet (S8's save half done in S4). Skill progress counters are unclamped below (OpenMW handlers may go negative).

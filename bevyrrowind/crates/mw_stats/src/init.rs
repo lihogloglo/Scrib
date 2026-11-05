@@ -344,6 +344,28 @@ pub fn chargen_ops(t: &MwTable, g: &MwGmst, player: &Npc, choice: Chargen<'_>) -
     out
 }
 
+/// The player's init ops when chargen is skipped (stats-adapter.md "Player, dev start"): a
+/// stored `player` record keeps its NPDT values and gets its class's counters only (skill
+/// progression needs them; no chargen bonuses on top of finished values); an autocalc one is
+/// built as `buildPlayer` with the record's race, sex and class.
+#[must_use]
+pub fn player_start_ops(t: &MwTable, g: &MwGmst, db: &RecordDb, player: &Npc) -> Vec<StatOp> {
+    let class = db.get::<Class>(&RecordId::new(&player.class));
+    if !is_autocalc(player) {
+        let mut ops = chargen_ops(t, g, player, Chargen::default());
+        if let Some(class) = class {
+            ops.extend(class_ops(t, &ClassInfo::of(class)));
+        }
+        return ops;
+    }
+    let choice = Chargen {
+        race: db.get::<Race>(&RecordId::new(&player.race)),
+        female: player.npc_flags.contains(NpcFlags::FEMALE),
+        class,
+    };
+    chargen_ops(t, g, player, choice)
+}
+
 /// A new sheet from init ops: builds, applies them (events dropped) and settles with full pools.
 /// Returns the sheet and how many ops were rejected (0 for ops from this module).
 #[must_use]

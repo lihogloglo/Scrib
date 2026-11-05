@@ -5392,6 +5392,7 @@ dependencies = [
  "serde",
  "sf_atmos",
  "sf_coords",
+ "sf_ids",
  "workspace-hack",
 ]
 
@@ -5576,6 +5577,7 @@ dependencies = [
  "mw_rpg",
  "mw_script",
  "mw_scripts_bevy",
+ "mw_stats",
  "mw_vfs",
  "mw_world",
  "postcard",
@@ -5586,6 +5588,7 @@ dependencies = [
  "sf_rpg",
  "sf_rpg_ui",
  "sf_script_bevy",
+ "sf_stats_bevy",
  "sf_ui",
  "sf_ui_bevy",
  "sf_ui_inventory",
@@ -5622,6 +5625,7 @@ dependencies = [
  "sf_action_bevy",
  "sf_camera",
  "sf_camera_bevy",
+ "sf_character_bevy",
  "sf_coords",
  "sf_physics_bevy",
  "sf_records",
@@ -5629,6 +5633,7 @@ dependencies = [
  "sf_rpg_ui",
  "sf_save_bevy",
  "sf_sky_bevy",
+ "sf_stats_bevy",
  "sf_ui",
  "sf_ui_bevy",
  "sf_ui_screens",
@@ -8249,6 +8254,7 @@ dependencies = [
  "sf_save",
  "sf_script_bevy",
  "sf_sky",
+ "sf_stats",
  "sf_surface",
  "sf_weather",
  "sf_wind",
@@ -8363,6 +8369,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_stats_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_log",
+ "bevy_time",
+ "sf_stats",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_surface"
 version = "0.1.0"
 dependencies = [
@@ -8389,6 +8407,7 @@ dependencies = [
  "bevy_platform",
  "bevy_render",
  "bevy_shader",
+ "bevy_time",
  "bevy_transform",
  "naga",
  "sf_coords",

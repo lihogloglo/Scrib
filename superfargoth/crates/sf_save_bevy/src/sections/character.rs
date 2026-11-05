@@ -11,12 +11,13 @@ use sf_action::ActionState;
 use sf_controller::Locomotion;
 use sf_rpg::{CharacterRpg, PlayerKey};
 use sf_save::SectionKey;
+use sf_stats::SheetSave;
 use sf_world::Location;
 
 use super::{CHARACTER, OWNER};
 
-/// Owner-versioned bytes: per-character data of the adapter or a mod (stats until M7,
-/// appearance choices, a mod's per-character state). Each owner migrates its own blob.
+/// Owner-versioned bytes: per-character data of the adapter or a mod (appearance choices, a
+/// mod's per-character state). Each owner migrates its own blob.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionedBlob {
     pub version: u32,
@@ -43,6 +44,9 @@ pub struct CharacterSave {
     pub body: Option<CharacterBody>,
     /// Inventory and equipment.
     pub rpg: CharacterRpg,
+    /// The stats sheet (stats.md "Saves": values, pools, counters, groups by `StatKey`; no
+    /// modifiers, their sources re-add them). `None`: built by the content on first spawn.
+    pub stats: Option<SheetSave>,
     /// Extension blobs by owner (`mw`, a mod id).
     pub ext: BTreeMap<String, VersionedBlob>,
 }
@@ -113,7 +117,7 @@ pub mod legacy {
         impl CharacterSave {
             /// v1 → v2: no moveset (the shell sets it from equipment on the next tick), no forced
             /// reaction, no lock-on target.
-            pub fn migrate(self) -> super::super::CharacterSave {
+            pub fn migrate(self) -> super::v2::CharacterSave {
                 let body = self.body.map(|b| {
                     let a = b.action;
                     super::super::CharacterBody {
@@ -132,13 +136,53 @@ pub mod legacy {
                         locomotion: b.locomotion,
                     }
                 });
-                super::super::CharacterSave {
+                super::v2::CharacterSave {
                     player: self.player,
                     name: self.name,
                     location: self.location,
                     facing: self.facing,
                     body,
                     rpg: self.rpg,
+                    ext: self.ext,
+                }
+            }
+        }
+    }
+
+    /// `sf.character.v2` (combat C1a until stats S4): no stats sheet. The leaves are the live
+    /// types; the v2 shape golden catches a change to them.
+    pub mod v2 {
+        use std::collections::BTreeMap;
+
+        use serde::{Deserialize, Serialize};
+        use sf_rpg::{CharacterRpg, PlayerKey};
+        use sf_world::Location;
+
+        use super::super::{CharacterBody, VersionedBlob};
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct CharacterSave {
+            pub player: PlayerKey,
+            pub name: String,
+            pub location: Location,
+            pub facing: f32,
+            pub body: Option<CharacterBody>,
+            pub rpg: CharacterRpg,
+            pub ext: BTreeMap<String, VersionedBlob>,
+        }
+
+        impl CharacterSave {
+            /// v2 → v3: no sheet; the content builds it on first spawn (the new-game path,
+            /// stats.md "Saves").
+            pub fn migrate(self) -> super::super::CharacterSave {
+                super::super::CharacterSave {
+                    player: self.player,
+                    name: self.name,
+                    location: self.location,
+                    facing: self.facing,
+                    body: self.body,
+                    rpg: self.rpg,
+                    stats: None,
                     ext: self.ext,
                 }
             }

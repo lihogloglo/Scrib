@@ -50,9 +50,10 @@ pub const RPG: &str = "rpg";
 pub const RPG_VERSION: u32 = 1;
 /// Family of `sf/character/<player key>`.
 pub const CHARACTER: &str = "character";
-/// v2: `sf_action::ActionState` gained `forced` and `lock`, and its `ModeState` gained `moveset`
+/// v3: `stats` (the stats sheet, stats.md S4); v2 is frozen in [`character::legacy::v2`]: v2
+/// `sf_action::ActionState` gained `forced` and `lock`, and its `ModeState` gained `moveset`
 /// (combat C1a and lock-on); v1 is frozen in [`character::legacy::v1`].
-pub const CHARACTER_VERSION: u32 = 2;
+pub const CHARACTER_VERSION: u32 = 3;
 /// Family of `<mod id>/script`.
 pub const SCRIPT: &str = "script";
 pub const SCRIPT_VERSION: u32 = 1;
@@ -206,5 +207,6 @@ pub fn characters(
         if player_of(key) == Some(c.player) { Ok(()) } else { Err(format!("section {key} holds player {:032x}", c.player.0)) }
     })
     .typed_step(1, character::legacy::v1::CharacterSave::migrate)
+    .typed_step(2, character::legacy::v2::CharacterSave::migrate)
     .order(order::CHARACTERS)
 }

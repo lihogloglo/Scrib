@@ -18,6 +18,8 @@ mw_weather.workspace = true
 serde.workspace = true
 sf_atmos.workspace = true
 sf_coords.workspace = true
+# `PlayerKey` of the host character (`player::HOST_KEY`).
+sf_ids.workspace = true
 workspace-hack.workspace = true
 
 [lints]

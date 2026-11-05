@@ -117,6 +117,23 @@ pub enum StatEvent {
     Expelled { owner: StatOwner, group: RecordId, cause: Cause },
 }
 
+impl StatEvent {
+    /// Whose sheet the event is about.
+    #[must_use]
+    pub fn owner(&self) -> StatOwner {
+        match self {
+            Self::Changed { owner, .. }
+            | Self::Depleted { owner, .. }
+            | Self::SkillUsed { owner, .. }
+            | Self::SkillRaised { owner, .. }
+            | Self::LevelReady { owner, .. }
+            | Self::LevelChanged { owner, .. }
+            | Self::RankChanged { owner, .. }
+            | Self::Expelled { owner, .. } => *owner,
+        }
+    }
+}
+
 /// Nested model ops deeper than this are rejected (a model loop can't hang the step).
 const MAX_DEPTH: u8 = 4;
 

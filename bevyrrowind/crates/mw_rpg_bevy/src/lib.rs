@@ -4,3 +4,4 @@
 pub mod dialogue;
 pub mod inventory;
 pub mod inventory_ui;
+pub mod stats;

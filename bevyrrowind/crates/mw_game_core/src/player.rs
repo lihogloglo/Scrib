@@ -5,6 +5,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::SystemSet;
 use sf_coords::WorldPos;
+use sf_ids::PlayerKey;
 
 /// Where `Focus` is updated: E's activation (`scripts.rs`) runs after it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -29,9 +30,20 @@ pub struct PlayerMode {
     pub last_ground: Option<WorldPos>,
 }
 
+/// The host's character key. TODO(saves): the profile's random `PlayerKey` (save.md "Co-op").
+pub const HOST_KEY: PlayerKey = PlayerKey(1);
+
 /// The player character's body.
 #[derive(Component, Debug)]
 pub struct PlayerBody;
+
+/// The player's character as distinct from its body: an entity that lives for the whole run
+/// (the body comes and goes with the free camera) and carries the character's `Stats`
+/// (`mw_rpg_bevy::stats`). One per player (`key`).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerCharacter {
+    pub key: PlayerKey,
+}
 
 /// The player's dressed, animated character (a child of [`PlayerBody`]; action.md A2 slice 2).
 /// NPC systems that pick up every new `Character` (walker movers, dialogue actors) skip it: the

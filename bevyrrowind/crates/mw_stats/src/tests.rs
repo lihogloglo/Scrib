@@ -416,6 +416,29 @@ fn chargen_builds_the_player() {
     }
 }
 
+/// Dev start: a stored `player` keeps its NPDT values and gains only the class counters; an
+/// autocalc one is built from its race and class as chargen would.
+#[test]
+fn player_start_keeps_a_stored_record_and_builds_an_autocalc_one() {
+    let (t, g, db) = (table(), MwGmst::vanilla(), db());
+    let mut player = stored_npc();
+    player.faction.clear();
+    player.class = "Warrior".into();
+    let s = sheet(&t, &player_start_ops(&t, &g, &db, &player), true);
+    assert_eq!(attrs(&t, &s), [60.0, 40.0, 30.0, 50.0, 50.0, 60.0, 30.0, 40.0]);
+    assert_eq!(skill(&t, &s, SkillId::LongBlade), 70.0);
+    let v = s.view(&t.table);
+    assert_eq!(v.base(t.idx.class_skills[SkillId::LongBlade as usize]), class_skill::MAJOR);
+    assert_eq!(v.base(t.idx.class_specialization), 1.0);
+
+    let auto = autocalc_npc(1);
+    let built = sheet(&t, &player_start_ops(&t, &g, &db, &auto), true);
+    let race = Chargen { race: db.get::<Race>(&RecordId::new("Redguard")), female: false, class: db.get::<Class>(&RecordId::new("Warrior")) };
+    let expected = sheet(&t, &chargen_ops(&t, &g, &auto, race), true);
+    assert_eq!(built, expected);
+    assert_ne!(attrs(&t, &built), [0.0; 8]);
+}
+
 /// No race or class chosen: the player record's NPDT values stay (dev start).
 #[test]
 fn chargen_without_choices_keeps_the_record() {

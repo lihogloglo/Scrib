@@ -1,6 +1,6 @@
 # Character stats: data-defined values, pools, modifiers, progression seams (`sf_stats`)
 
-Status (2026-11-05): S0-S2 built (`sf_stats`, `mw_stats` table + init; as-built detail: `stats-as-built.md`); S3 next. Game side:
+Status (2026-11-05): S0-S4 built (`sf_stats`, `mw_stats`, `sf_stats_bevy` + game glue and saves; as-built detail: `stats-as-built.md`); S5 next. Game side:
 `../../../bevyrrowind/docs/specs/stats-adapter.md` (Morrowind's 8 attributes, 27 skills, GMSTs, OpenMW formulas).
 Unblocks ROADMAP 2.7 (every OpenMW content mechanic needs stats: `../../../bevyrrowind/docs/research/openmw-mechanics-2026-11-05.md`
 "Finding zero"). The spell/effect runtime is the **next** spec: this one defines only the seam it writes through
@@ -16,9 +16,6 @@ runtime, later character creation and the stats screen.
 
 Non-goals (first cuts): the effect engine (next spec), conditional/tagged modifiers, perks, chargen/level-up UI, stats
 screen (UI slices after S9), AI settings (`sf_ai`).
-
-Today: `sf_combat::Vitals` seeded from the `player` record (`mw_player_bevy/src/combat.rs`), HUD `PlayerVitals` a
-scaffold, dialogue reads `PlayerStatsPlaceholder` (`mw_rpg_bevy/src/dialogue.rs`), MWScript stat functions are stubs.
 
 ## Canonical technique
 
@@ -50,8 +47,9 @@ step), **rules models** (traits the content implements: derivation, regeneration
 
 - **`sf_stats`** (Bevy-free; deps `sf_ids`, serde, smallvec, thiserror; in hakari `final-excludes`): `StatTable`,
   `Sheet`, `Modifier`, `StatOp`, `apply`, `StatEvent`, the model traits, a `TestModel` for tests. No Morrowind names.
-- **`sf_stats_bevy`** (thin): `Stats` component, `StatTableRes`, `StatRules` resource (boxed models), `StatSystems` sets
-  in `FixedUpdate`, `StatCommand` queue, `StatEvent` messages, record kind registration. Plugin `SfStatsPlugin`.
+- **`sf_stats_bevy`** (thin): `Stats` component (owner, sheet, inputs), `StatTableRes`, `StatRules`, `StatSystems` sets
+  in `FixedUpdate`, `StatCommand` messages in, `StatMessage` (a `StatEvent`) out, `StatIndex` (owner to entity). Plugin
+  `SfStatsPlugin`. Stat definitions come from the adapter (record kind `stat` for mods: later).
 - Game side: `mw_stats` (Bevy-free: table from records, GMST snapshot, init, the OpenMW models) and glue in
   `mw_rpg_bevy` / `mw_player_bevy` (stats-adapter.md "Crates").
 - `sf_combat` does **not** depend on `sf_stats` (combat.md "The rules seam": the framework's combat never reads stats);
@@ -237,7 +235,9 @@ What the effect runtime gets from stats, and nothing more:
 `StatSystems` in `FixedUpdate`: **Apply** (drain the `StatCommand` queue: requests validated by the host, effect ticks,
 mechanics), before `CombatSystems::Stats` (vitals refresh); **Combat** (vitals differences back), after the combat step;
 **Tick** (`tick`: regen for pools below max, recompute dirty sheets, `Depleted` checks); **Events** (publish `StatEvent`
-messages). Only dirty sheets recompute; regen visits pools below max only. Presentation (HUD, UI) reads in `Update`.
+messages: the commands' events in command order, then the tick's by owner, never query order). Only dirty sheets
+recompute; regen visits pools below max only. Presentation (HUD, UI) reads in `Update`. The shell chains its four sets;
+the game orders them around its combat sets (S5).
 Budget: 500 resident actors under 0.05 ms per tick on the target laptop (printed by an `#[ignore = "measurement"]` test).
 
 ## Saves
@@ -249,9 +249,10 @@ Budget: 500 resident actors under 0.05 ms per tick on the target laptop (printed
 - **Load order**: sheets load with clamping suspended; providers re-add their modifiers; then one recompute clamps (a
   fortified current above the unfortified max survives the load).
 - **Player**: `CharacterSave` gains `stats: Option<SheetSave>`: `sf.character` **v3**; step v2 → v3 sets `None` and
-  the adapter's init hook builds the sheet on first spawn (the new-game path). Frozen `legacy::v2`, shape golden v3.
+  the adapter's init hook builds the sheet (the new-game path). Frozen `legacy::v2`, shape golden v3 (built in S4).
 - **NPCs and creatures**: overlay blob `stats` v1 per placement or spawn, only when `changed_since_init` (an
-  untouched NPC re-initialises from its record, as OpenMW stores only changed refs).
+  untouched NPC re-initialises from its record, as OpenMW stores only changed refs), written on unload and into the
+  save's overlay copy (save.md "One path for unload and save"; built in S4).
 - **Key drift**: an unknown key on load (its mod was removed) is dropped and reported (save.md "Mod-list changes"); a
   missing key takes its definition's default through the init hook.
 
@@ -276,9 +277,7 @@ other clients get the `public` stats only (health ratio and level by default) th
 
 ## Tests
 
-Logic and data: exact assertions (CONTRIBUTING "Tests"): layers, sources (add then remove = byte-identical), pool
-flags against OpenMW's `setCurrent`, seams through `TestModel`, groups, determinism (postcard bytes, `SheetSave` shape
-golden), a tick-cost measurement. The full list: `stats-as-built.md` "Tests".
+Logic and data: exact assertions (CONTRIBUTING "Tests"); the list per slice in `stats-as-built.md` ("Tests", S2-S4).
 
 ## Build plan
 
@@ -290,11 +289,11 @@ One deliverable plus its test per slice; S1-S3 are Bevy-free and need no game ru
 | **S1** core [x] 2026-11-05 | `sf_stats`: table, sheet, modifiers, ops, `apply`/`tick`, events, model traits, `TestModel` | "Tests" list above (23 + measurement 0.040 ms) |
 | **S2** Morrowind table + init [x] 2026-11-05 | `mw_stats`: defs from attributes + SKIL, roles, GMST snapshot, record / autocalc / chargen init; `MwDerived` maxima and derived stats (init needs them) | formula tests against OpenMW (14); real install (NPCs, creatures, chargen) |
 | **S3** Morrowind models [x] 2026-11-05 | `mw_stats`: `MwDerived` regen + rest, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs (13) |
-| **S4** Bevy plugin | `sf_stats_bevy` + game glue: `Stats` on the player, NPCs and creatures at spawn; fixed-tick sets; events | headless app: spawn, apply, regen, events in order |
+| **S4** Bevy plugin [x] 2026-11-05 | `sf_stats_bevy` + game glue: `Stats` on the player, NPCs and creatures at spawn; fixed-tick sets; events; the save half of S8 (v3, blob) | headless app (3 + measurement 0.035 ms); game save round trip; old goldens load |
 | **S5** combat + HUD | vitals refresh/difference wiring; `PlayerVitals` and `PlayerCombat` health/fatigue removed; HUD bars from roles | a hit on the dummy lowers its sheet's health; roll cost lowers the player's fatigue; HUD view-model reads the sheet. Visual check HD-x "bars follow damage and regen" (awaiting owner) |
 | **S6** dialogue | `MwView::function` and `player_rank` from the sheet; `PlayerStatsPlaceholder` removed | existing filter tests plus PC stat and rank filters |
 | **S7** MWScript | stats, faction and crime families `live` (functions.txt) with OpenMW semantics | interp tests per op (adapter "MWScript") |
-| **S8** saves | `sf.character` v3 + legacy v2 + step; overlay blob `stats` v1; source re-registration order | golden v2 save loads into v3; modified values equal after a round trip with a fortify active |
+| **S8** saves | (v3 and the blob: S4) source re-registration order once sources exist | modified values equal after a round trip with a fortify active |
 | **S9** skill-use sources | combat hits, armor hits, blocks, athletics, acrobatics call `UseSkill` (adapter "Use sources") | counts of `SkillUsed` per scripted fight |
 
 Later, other specs: the effect runtime (next), level-up and chargen UI, stats screen, `DispositionModel` real inputs
@@ -302,14 +301,5 @@ Later, other specs: the effect runtime (next), level-up and chargen UI, stats sc
 
 ## Open questions (owner)
 
-Answered 2026-11-05: defaults below accepted (owner: "generic in code, Morrowind easy to port"); DECISIONS.md.
-
-1. **First implementations = OpenMW's formulas for all three models**, not only skill use (owner 2026-11-05)? Default
-   yes: cheapest to verify, the modern variants (retroactive health, no attribute multipliers, Skyrim-like
-   level-from-skill-XP) come later behind the same traits.
-2. **Stamina vs fatigue**: one pool (Morrowind fatigue, combat sees it scaled x0.5 as today) or two pools (a modern
-   stamina pool for combat and Morrowind fatigue for the classic fatigue term)? Default: one pool, as built today.
-3. **Magnitude stats** for resistances and similar effect values (Creation style), or a separate effect-magnitude map
-   (OpenMW style)? Default: magnitude stats; decided in the effect spec.
-4. **Health growth**: Morrowind's non-retroactive health (Endurance early matters) in the modern profile too? Default
-   yes for now (part of question 1).
+All answered 2026-11-05 (defaults: OpenMW formulas first for the three models, one fatigue/stamina pool, magnitude
+stats, non-retroactive health for now; owner: "generic in code, Morrowind easy to port"): DECISIONS.md.

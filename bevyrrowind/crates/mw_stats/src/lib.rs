@@ -24,7 +24,7 @@ pub use faction::{FactionRanks, RANKS, RankRequirement};
 pub use gmst::MwGmst;
 pub use init::{
     Chargen, ClassInfo, InitError, autocalc_attributes, autocalc_health, autocalc_skills, chargen_ops, class_ops,
-    creature_ops, is_autocalc, new_sheet, npc_ops, ops_for_missing, race_attributes, race_skill_bonus,
+    creature_ops, is_autocalc, new_sheet, npc_ops, ops_for_missing, player_start_ops, race_attributes, race_skill_bonus,
     round_half_even,
 };
 pub use progression::{
