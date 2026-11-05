@@ -1,9 +1,9 @@
 # Stats adapter: Morrowind's attributes, skills, pools, factions on `sf_stats`
 
-Status (2026-11-05): S4 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen/dev-start init, `MwDerived`,
+Status (2026-11-05): S5 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen/dev-start init, `MwDerived`,
 `OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `FactionRanks`; `mw_rpg_bevy::stats`: sheets on the player, NPCs and
 creatures, saved with the character and the overlay; as built: `../../../superfargoth/docs/specs/stats-as-built.md`
-"S2"-"S4"); S5 combat vitals + HUD next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
+"S2"-"S5"; S5: `mw_player_bevy::vitals`, HUD bars from roles); S6 dialogue next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Content mechanics port 1:1; growth and recovery formulas are the first implementations of the rules seams
 (owner 2026-11-05: `SkillUseModel` starts with OpenMW's values).
@@ -14,7 +14,7 @@ approximate). Content mechanics port 1:1; growth and recovery formulas are the f
   `MwGmst` (typed GMST snapshot), init, `MwDerived`, `OpenMwSkillUse`, `OpenMwLeveling`, rank requirements.
 - Glue (no new Bevy crate): `mw_rpg_bevy` (`stats`: table and rules setup, the player's sheet on its
   `PlayerCharacter` entity, NPC/creature sheets at spawn, save hooks; dialogue `MwView`), `mw_scripts_bevy` (MWScript),
-  `mw_player_bevy` (combat vitals, HUD: S5).
+  `mw_player_bevy` (`vitals`: combat vitals; HUD bars, S5).
 
 ## Stat table
 
@@ -125,10 +125,11 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
 
 ## Consumers
 
-- **Combat** (`mw_player_bevy/src/combat.rs`, `mw_combat::fighter`): `Combatant` health = `health`, stamina = `fatigue`
-  x `STAMINA_PER_FATIGUE` (0.5, combat-adapter.md "Health, stamina, fatigue"); differences back x 2. `PlayerCombat`'s
-  record health and fatigue go. Death: `Depleted(health)` (< 1) drives the existing death hook.
-- **HUD**: bars from roles; `PlayerVitals` (`hud.rs`) removed, magicka finally live.
+- **Combat** (built S5: `mw_player_bevy/src/vitals.rs`): `Combatant` health = `health`, stamina = `fatigue` x
+  `STAMINA_PER_FATIGUE` (0.5, combat-adapter.md "Health, stamina, fatigue"), refreshed each tick; differences back x 2,
+  cause `Combat`. Death: `Depleted(health)` (< 1) writes `CombatantDied` (combat's own covers a hit to 0); fatigue ≤ 0
+  knockdown not wired yet. The training dummy's sheet health is set to 100.
+- **HUD** (built S5): bars from roles on the local player's sheet; `PlayerVitals` removed, magicka live.
 - **Dialogue**: `MwView::function` for `PcLevel`, `PcHealth`/`PcMagicka`/`PcFatigue`(`Percent`), the 8 attribute and 27
   skill `Pc*` functions, `PcReputation`, `PcCrimeLevel` (= bounty), `PcExpelled`, speaker `Level`/`Reputation`/
   `HealthPercent`, `RankRequirement`, `FactionRankDifference`; `player_rank` from groups. `PlayerStatsPlaceholder` goes.

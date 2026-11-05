@@ -6,8 +6,8 @@
 //!   input target of play). The root is shown only in player mode with a body, and hidden while
 //!   a Menu or Modal screen (pause, options, dialogue, journal, inventory, keybinds, save/load) or
 //!   the console is open (ui.md layers: Hud < Menu < Modal).
-//! - **Bars**: health, magicka, fatigue from [`PlayerVitals`] (health and the fatigue bar follow the
-//!   player's combat health and stamina, `sf_combat_bevy::Combatant`), in Morrowind's order and place
+//! - **Bars**: health, magicka, fatigue: `current/max` of the local player's sheet (roles `Health`,
+//!   `Mana`, `Stamina` on the [`PlayerCharacter`]'s `Stats`, stats.md S5), in Morrowind's order and place
 //!   (bottom left, stacked; `OpenMW` `files/data/mygui/openmw_hud.layout` keeps the vanilla
 //!   layout). Colours are the Morrowind.ini `[FontColor]` `color_health/magic/fatigue` tokens,
 //!   in the theme sheet. Labels are localized (`hud-bar-<id>`), hidden by the Morrowind theme as
@@ -24,101 +24,54 @@
 //!   following rebinds and the device; a target with no verb (a creature, a fixed light) shows
 //!   its name only, no glyph, as Morrowind's tooltip.
 
-use std::sync::Arc;
-
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec3;
 use bevy_camera::visibility::Visibility;
 use bevy_transform::prelude::*;
+use mw_game_core::player::{HOST_KEY, PlayerCharacter};
 use sf_camera_bevy::PlayerCamera;
 use sf_console_bevy::ConsoleOpen;
-use sf_records::{RecordDb, RecordId};
+use sf_stats_bevy::sf_stats::{Role, StatTable};
+use sf_stats_bevy::{StatTableRes, Stats};
 use sf_ui::Layer;
 use sf_ui_bevy::{ScreenStackRes, UiLocalizer, UiScreenRoot};
 use sf_ui_screens::{HudBar, HudScreen, HudView, ScreenSystems, UsePrompt};
 
-use sf_combat_bevy::{Combatant, LockMarkerShown};
+use sf_combat_bevy::LockMarkerShown;
 
-use crate::{Focus, PlayerBody, PlayerMode};
+use crate::{Focus, PlayerMode};
 
 /// The HUD's screen id (its `ui.screen` record is `mw_exterior_bevy::pause_menu`'s).
 pub const HUD_SCREEN: &str = "hud";
 /// The player's NPC record (Morrowind.esm).
 pub(crate) const PLAYER_RECORD: &str = "player";
-/// Bar ids (`.sf-hud-bar.<id>` in the theme sheet, `hud-bar-<id>` in the Fluent file), in
-/// Morrowind's order, top to bottom.
-pub const BAR_IDS: [&str; 3] = ["health", "magicka", "fatigue"];
+/// Bar ids (`.sf-hud-bar.<id>` in the theme sheet, `hud-bar-<id>` in the Fluent file) and the
+/// stat role each shows, in Morrowind's order, top to bottom.
+pub const BARS: [(&str, Role); 3] = [("health", Role::Health), ("magicka", Role::Mana), ("fatigue", Role::Stamina)];
+/// The bar ids of [`BARS`].
+pub const BAR_IDS: [&str; 3] = [BARS[0].0, BARS[1].0, BARS[2].0];
 
-/// One dynamic stat.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Vital {
-    pub current: f32,
-    pub max: f32,
-}
-
-impl Vital {
-    fn full(max: f32) -> Self {
-        Self { current: max, max }
-    }
-}
-
-/// Where [`PlayerVitals`] came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VitalsSource {
-    /// The `player` NPC record's NPDT health, magicka and fatigue.
-    Record,
-    /// No record (or an auto-calculated one): [`PlayerVitals::PLACEHOLDER`].
-    Placeholder,
-}
-
-/// Scaffold `PlayerVitals`: the player's health, magicka and fatigue, static, for the HUD bars.
-/// Seeded full from the `player` record; not saved, nothing changes them. TODO(combat 3.5 / rpg
-/// stats): the stat system owns these (damage, regeneration, and `OpenMW`'s derivation from
-/// attributes at character generation), and this resource goes.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct PlayerVitals {
-    pub health: Vital,
-    pub magicka: Vital,
-    pub fatigue: Vital,
-    pub source: VitalsSource,
-}
-
-impl PlayerVitals {
-    /// Maxima when no record has them (health, magicka, fatigue).
-    pub const PLACEHOLDER: [f32; 3] = [100.0, 100.0, 100.0];
-
-    /// From the `player` NPC record (Morrowind.esm's: 35 / 50 / 200), else the placeholder.
-    pub fn from_record(db: Option<&RecordDb>) -> Self {
-        let stats = db
-            .and_then(|db| db.get::<tes3::esp::Npc>(&RecordId::new(PLAYER_RECORD)))
-            .and_then(|npc| npc.data.stats.as_ref())
-            .filter(|s| s.health > 0);
-        match stats {
-            Some(s) => Self::new([s.health, s.magicka, s.fatigue].map(f32::from), VitalsSource::Record),
-            None => Self::new(Self::PLACEHOLDER, VitalsSource::Placeholder),
-        }
-    }
-
-    fn new([health, magicka, fatigue]: [f32; 3], source: VitalsSource) -> Self {
-        Self { health: Vital::full(health), magicka: Vital::full(magicka), fatigue: Vital::full(fatigue), source }
-    }
-
-    /// The bars' values, in [`BAR_IDS`] order.
-    pub fn bars(&self) -> [Vital; 3] {
-        [self.health, self.magicka, self.fatigue]
-    }
+/// The bars' (id, current, max) from the local player's sheet (stats.md "Consumers": roles
+/// `Health`, `Mana`, `Stamina`); the current in whole numbers, as Morrowind shows it (and the HUD
+/// resyncs only when one changes). A role the table lacks has no bar.
+#[must_use]
+pub fn bar_values(table: &StatTable, stats: &Stats) -> Vec<(&'static str, f32, f32)> {
+    let sheet = stats.view(table);
+    BARS.iter()
+        .filter_map(|&(id, role)| {
+            let idx = table.role(role)?;
+            let max = sheet.max(idx).max(0.0);
+            Some((id, sheet.current(idx).round().clamp(0.0, max), max))
+        })
+        .collect()
 }
 
 /// The HUD root, its view-model and the systems that drive them. Called from [`crate::add`];
 /// the screens themselves come from `SfScreensPlugin` (`dialogue::add`).
-pub fn add(app: &mut App, db: Option<&Arc<RecordDb>>) {
-    let vitals = PlayerVitals::from_record(db.map(Arc::as_ref));
-    bevy_log::info!("hud: vitals {:?} ({:?})", vitals.bars().map(|v| v.max), vitals.source);
-    app.insert_resource(vitals)
-        .init_resource::<HudView>()
+pub fn add(app: &mut App) {
+    app.init_resource::<HudView>()
         .add_systems(Startup, spawn_root)
-        .add_systems(Update, sync_vitals.before(drive_hud))
         .add_systems(Update, (drive_hud.after(crate::FocusUpdate), show_hud).before(ScreenSystems::Sync));
 }
 
@@ -140,39 +93,24 @@ fn localized(localizer: Option<&UiLocalizer>, key: &str, fallback: &str) -> Stri
     }
 }
 
-/// The player's combat vitals into [`PlayerVitals`]: health, and stamina on the fatigue bar
-/// (combat.md "C1b"), whole numbers (the HUD resyncs only on a change). Magicka stays static.
-pub(crate) fn sync_vitals(bodies: Query<&Combatant, With<PlayerBody>>, mut vitals: ResMut<PlayerVitals>) {
-    let Some(c) = bodies.iter().next() else { return };
-    let v = &c.fighter.vitals;
-    let whole = |cur: f32, max: f32| Vital { current: cur.round().clamp(0.0, max), max };
-    let mut want = *vitals;
-    want.health = whole(v.health.cur, v.health.max);
-    want.fatigue = whole(v.stamina.cur, v.stamina.max);
-    vitals.set_if_neq(want);
-}
-
-/// Player state → [`HudView`] (written only on a change, so the HUD resyncs only then).
+/// Player state → [`HudView`] (written only on a change, so the HUD resyncs only then). The bars
+/// read the local player's sheet ([`bar_values`]); without one there are none.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn drive_hud(
     mode: Res<PlayerMode>,
     focus: Res<Focus>,
-    vitals: Res<PlayerVitals>,
+    (table, players): (Option<Res<StatTableRes>>, Query<(&PlayerCharacter, &Stats)>),
     localizer: Option<Res<UiLocalizer>>,
     lock_shown: Option<Res<LockMarkerShown>>,
     cams: Query<&GlobalTransform, With<PlayerCamera>>,
     mut view: ResMut<HudView>,
 ) {
     let localizer = localizer.as_deref();
-    let bars = BAR_IDS
-        .iter()
-        .zip(vitals.bars())
-        .map(|(id, v)| HudBar {
-            id: (*id).to_owned(),
-            label: localized(localizer, &format!("hud-bar-{id}"), id),
-            current: v.current,
-            max: v.max,
-        })
+    let sheet = players.iter().find(|(p, _)| p.key == HOST_KEY).map(|(_, s)| s);
+    let values = table.as_ref().zip(sheet).map(|(t, s)| bar_values(&t.0, s)).unwrap_or_default();
+    let bars = values
+        .into_iter()
+        .map(|(id, current, max)| HudBar { id: id.to_owned(), label: localized(localizer, &format!("hud-bar-{id}"), id), current, max })
         .collect();
     // Whole degrees: the label shows no more, and the HUD resyncs only when it changes.
     let heading = cams.iter().next().and_then(|t| heading_degrees(*t.forward())).map(|d| d.round().rem_euclid(360.0));
@@ -224,6 +162,7 @@ mod tests {
     use sf_ui_bevy::{SfUiPlugin, UiRegistryRes, UiTextPlugin};
     use sf_ui_screens::SfScreensPlugin;
     use sf_ui_screens::hud::HudParts;
+    use sf_records::RecordDb;
 
     use super::*;
     use crate::FocusTarget;
@@ -272,7 +211,11 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         .insert_resource(PlayerMode { on: true, paused: false, body: None, last_ground: None })
         .init_resource::<Focus>();
         mw_controls_bevy::add(&mut app);
-        add(&mut app, None);
+        add(&mut app);
+        // The local player's character sheet (Morrowind.esm's `player`: 35 / 50 / 200).
+        crate::vitals::testing::add_stats(&mut app);
+        let stats = crate::vitals::testing::sheet(&app, sf_stats_bevy::sf_stats::StatOwner::Player(HOST_KEY), [35.0, 50.0, 200.0]);
+        app.world_mut().spawn((PlayerCharacter { key: HOST_KEY }, stats));
         app.add_plugins(sf_combat_bevy::LockMarkerPlugin).add_systems(Update, crate::combat::tag_crosshair);
         let target = UVec2::new(1600, 1000);
         app.world_mut().spawn((
@@ -439,10 +382,30 @@ value = { layer = "Menu", implementation = { Template = "pause" } }
         assert_eq!(heading_degrees(Vec3::Y), None, "straight up has no heading");
     }
 
+    /// The bars are the local player's sheet: `current/max` by role, the current in whole
+    /// numbers, following a change (stats.md S5); another player's sheet is not shown.
     #[test]
-    fn vitals_fall_back_to_the_placeholder_without_a_record() {
-        let v = PlayerVitals::from_record(Some(&RecordDb::new()));
-        assert_eq!(v.source, VitalsSource::Placeholder);
-        assert_eq!(v.bars().map(|b| b.max), PlayerVitals::PLACEHOLDER);
+    fn the_bars_read_the_local_players_sheet() {
+        use crate::vitals::testing::{FATIGUE, HEALTH, MAGICKA, sheet};
+        use sf_stats_bevy::sf_stats::{Cause, CauseKind, PlayerKey, StatOp, StatOwner};
+        let mut app = app();
+        let bars = |app: &App| app.world().resource::<HudView>().bars.iter().map(|b| (b.id.clone(), b.current, b.max)).collect::<Vec<_>>();
+        let want = |h: f32, m: f32, f: f32| vec![("health".into(), h, 35.0), ("magicka".into(), m, 50.0), ("fatigue".into(), f, 200.0)];
+        assert_eq!(bars(&app), want(35.0, 50.0, 200.0));
+        let other = sheet(&app, StatOwner::Player(PlayerKey(7)), [1.0, 1.0, 1.0]);
+        app.world_mut().spawn((PlayerCharacter { key: PlayerKey(7) }, other));
+        let table = app.world().resource::<StatTableRes>().0.clone();
+        let rules = app.world().resource::<sf_stats_bevy::StatRules>().0.clone();
+        let mut q = app.world_mut().query::<(&PlayerCharacter, &mut Stats)>();
+        let (_, mut stats) = q.iter_mut(app.world_mut()).find(|(p, _)| p.key == HOST_KEY).expect("the local sheet");
+        let ops = [
+            StatOp::PoolAdjust { pool: HEALTH, delta: -10.4, below_zero: false, above_max: false },
+            StatOp::PoolAdjust { pool: MAGICKA, delta: -50.0, below_zero: false, above_max: false },
+            StatOp::PoolAdjust { pool: FATIGUE, delta: -24.0, below_zero: false, above_max: false },
+        ];
+        let cause = Cause { kind: CauseKind::Debug, source: None, tick: 0 };
+        assert_eq!(stats.apply(&table, &rules, &ops, cause, &mut Vec::new()), 0);
+        frames(&mut app, 2);
+        assert_eq!(bars(&app), want(25.0, 0.0, 176.0), "24.6 shows as 25");
     }
 }

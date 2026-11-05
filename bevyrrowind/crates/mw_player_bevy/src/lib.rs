@@ -47,6 +47,7 @@ pub mod dummy;
 pub mod feel;
 pub mod grip;
 pub mod hud;
+pub mod vitals;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -164,7 +165,6 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         app.add_plugins(EnhancedInputPlugin);
     }
     let reach_m = activate_reach_m(db.as_deref());
-    let app_db = db.clone();
     let sheet = combat::load_sheet(&clips);
     mw_controls_bevy::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
@@ -186,7 +186,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
         .add_systems(PostUpdate, (avatar::link, avatar::feed, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe))
         .add_systems(PostUpdate, avatar::first_person);
-    hud::add(app, app_db.as_ref());
+    hud::add(app);
     combat::add(app, sheet, &clips);
     dummy::add(app);
 }
@@ -1005,3 +1005,5 @@ mod tests_avatar;
 mod tests_feel;
 #[cfg(test)]
 mod tests_combat;
+#[cfg(test)]
+mod tests_vitals;

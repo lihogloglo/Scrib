@@ -1,19 +1,17 @@
 //! Combat glue (combat.md "C1b"): the player body is armed with the sword sheet, F draws and
-//! sheathes the weapon (a sheathed attack press does nothing), and the HUD shows the stamina; C1c: the
-//! lock key locks the dummy.
+//! sheathes the weapon (a sheathed attack press does nothing), and without stats it keeps its
+//! own vitals; C1c: the lock key locks the dummy.
 
 use sf_action_bevy::PlayerAction;
 use sf_combat_bevy::Combatant;
 
 use super::*;
 use crate::combat::{ReadyWeaponAction, Stance};
-use crate::hud::PlayerVitals;
 use crate::tests::{Statics, action, app_setup, hold_key, mock};
 
 fn armed() -> (App, Entity) {
     let sheet = sf_combat::load(mw_combat::SWORD_1H, &|_| Some(0.5)).expect("sheet compiles");
     let (mut app, player) = app_setup(60, &mw_controls_bevy::keymap(), |app| {
-        app.insert_resource(PlayerVitals::from_record(None)).add_systems(Update, hud::sync_vitals);
         combat::add(app, Some(sheet), &PlayerClips::default());
     });
     app.world_mut().entity_mut(player).insert(PlayerBody);
@@ -27,7 +25,7 @@ fn stance(app: &App, player: Entity) -> (Stance, bool) {
 }
 
 #[test]
-fn the_player_is_armed_sheathed_and_the_hud_shows_its_stamina() {
+fn the_player_is_armed_sheathed_with_unsheeted_vitals_without_stats() {
     let (mut app, player) = armed();
     for _ in 0..3 {
         app.update();
@@ -35,10 +33,11 @@ fn the_player_is_armed_sheathed_and_the_hud_shows_its_stamina() {
     assert_eq!(stance(&app, player), (Stance::Sheathed, true));
     let key = app.world().resource::<combat::PlayerCombat>().sheet.as_ref().unwrap().key;
     assert_eq!(app.world().get::<ActionCharacter>(player).unwrap().state.mode.moveset, Some(key));
-    let vitals = app.world().resource::<PlayerVitals>();
-    let stamina = mw_combat::stamina_from_fatigue(PlayerVitals::PLACEHOLDER[2]);
-    assert!((vitals.fatigue.max - stamina).abs() < 1e-3 && vitals.fatigue.current <= vitals.fatigue.max, "{vitals:?}");
-    assert!(vitals.health.current > 0.0 && vitals.health.current <= vitals.health.max);
+    let vitals = app.world().get::<Combatant>(player).unwrap().fighter.vitals;
+    let stamina = mw_combat::stamina_from_fatigue(combat::UNSHEETED_VITALS[1]);
+    assert!((vitals.stamina.max - stamina).abs() < 1e-3 && vitals.stamina.cur <= vitals.stamina.max, "{vitals:?}");
+    assert!(vitals.health.cur > 0.0 && vitals.health.cur <= vitals.health.max);
+    assert!(!app.world().entity(player).contains::<vitals::CombatSheet>(), "no stats, no sheet link");
 }
 
 /// CB-3 (owner 2026-11-02: attack only with the weapon drawn): sheathed, light and heavy presses
@@ -269,7 +268,6 @@ fn the_draw_and_sheathe_clips_move_the_weapon_at_their_keys_and_gate_the_attacks
     };
     let sheet = sf_combat::load(mw_combat::SWORD_1H, &|_| Some(0.5)).expect("sheet compiles");
     let (mut app, player) = app_setup(60, &mw_controls_bevy::keymap(), |app| {
-        app.insert_resource(PlayerVitals::from_record(None)).add_systems(Update, hud::sync_vitals);
         combat::add(app, Some(sheet.clone()), &clips);
     });
     app.world_mut().entity_mut(player).insert(PlayerBody);

@@ -44,11 +44,12 @@ Every combat slot ends with a Morrowind clip fallback (`ClipFallback::Clip`) unl
 
 ## Health, stamina, fatigue
 
-- **Health**: NPC and creature records (NPDT health); the player's from the `player` record. `PlayerVitals` in
-  `mw_player_bevy/src/hud.rs` is a scaffold whose TODO points here: C1b replaces its health and fatigue with the player
-  `Combatant`'s vitals (magicka stays until the stat system owns it).
-- **Stamina (modern)** = record fatigue x 0.5 (data, `mw_combat` constants; Morrowind.esm's player: 200 → 100). The HUD's
-  fatigue bar shows stamina; the name stays "Fatigue" in the Morrowind theme. Stat bands from attributes later (C5).
+- **Health**: the character's stat sheet (stats.md S5, `mw_player_bevy/src/vitals.rs`): `Combatant` health = sheet
+  `health` 1:1 each tick, combat's change goes back as `PoolAdjust` (cause `Combat`); NPCs and creatures from their records
+  (NPDT health), the player from the `player` record (chargen skipped), the training dummy set to 100.
+- **Stamina (modern)** = sheet fatigue x 0.5 (`mw_combat::STAMINA_PER_FATIGUE`; Morrowind.esm's player: 200 → 100),
+  differences back x 2. The HUD's fatigue bar shows the sheet's fatigue (x 2 the stamina); "Fatigue" in the Morrowind
+  theme. Stat bands from attributes later (C5).
 - **Classic**: fatigue is the Morrowind pool, never gates a start; the fatigue term scales hit chance, block and damage
   inside `mw_rules`.
 

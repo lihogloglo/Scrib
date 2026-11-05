@@ -7,8 +7,8 @@
 //!   `CombatData`. A slot without a baked clip is dropped by the sheet (attacks or rolls refuse);
 //!   with no sheet at all the player simply has no combat.
 //! - **Combatant.** Every player body gets a [`Combatant`] ([`mw_combat::fighter`]: health and
-//!   stamina from the HUD's record vitals, the mover's capsule) and its moveset in
-//!   `ActionState::mode.moveset`, kept set (rolls work sheathed).
+//!   stamina from the character sheet each tick, [`crate::vitals`]; the mover's capsule) and its
+//!   moveset in `ActionState::mode.moveset`, kept set (rolls work sheathed).
 //! - **Stance.** [`Stance`]: the ready-weapon key (F) draws and sheathes; while sheathed the
 //!   attacks are withheld (`Combatant::withheld`): an attack press does nothing (owner
 //!   2026-11-02: first the fighting stance, then the fight; Elden Ring has no sheathed state, but
@@ -57,8 +57,11 @@ use sf_combat_bevy::{
 use sf_physics_bevy::Physics;
 
 use crate::avatar::PlayerFeed;
-use crate::hud::PlayerVitals;
 use crate::{PLAYER_CHARACTER, PlayerBody, PlayerClips};
+
+/// A new body's health and fatigue until its sheet links ([`crate::vitals`]: the next tick's
+/// refresh overwrites them); an app without stats (tests) keeps them.
+pub const UNSHEETED_VITALS: [f32; 2] = [100.0, 100.0];
 
 /// The classes a sheathed weapon withholds.
 const ATTACKS: ClassSet = ClassSet::of(&[ActionClass::Light, ActionClass::Heavy]);
@@ -85,13 +88,11 @@ impl CombatRules for ModernRules {
     }
 }
 
-/// The player's compiled sheet (`None`: it didn't compile, the player has no combat), and the
-/// record's health and fatigue a new body starts with.
+/// The player's compiled sheet (`None`: it didn't compile, the player has no combat). Health and
+/// fatigue are the character sheet's ([`crate::vitals`], stats.md S5).
 #[derive(Resource, Clone, Debug, Default)]
 pub struct PlayerCombat {
     pub sheet: Option<CompiledSheet>,
-    pub health: f32,
-    pub fatigue: f32,
 }
 
 /// Whether the weapon is drawn (the player body; module docs).
@@ -221,9 +222,8 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
         data.movesets.insert(sheet.clone());
         info!("combat: sheet {} with {} slots, {} moves", sheet.id, sheet.slots.len(), sheet.moves.moves.len());
     }
-    // The HUD's record vitals, before it starts showing the combat ones.
-    let record = app.world().get_resource::<PlayerVitals>().map_or(PlayerVitals::PLACEHOLDER, |v| [v.health.max, v.magicka.max, v.fatigue.max]);
-    app.insert_resource(PlayerCombat { sheet, health: record[0], fatigue: record[2] })
+    crate::vitals::add(app);
+    app.insert_resource(PlayerCombat { sheet })
         .insert_resource(StanceClips::from_clips(clips))
         .add_systems(Update, ((arm, ready_weapon, show_stance).chain().after(crate::apply_mode).before(CharacterSystems), tag_crosshair))
         .add_systems(FixedUpdate, advance_stance.before(CombatSystems::Gate))
@@ -271,7 +271,8 @@ fn arm(
             continue;
         }
         let p = crate::feel::mover_params();
-        let fighter = mw_combat::fighter(PLAYER_CHARACTER, sheet, combat.health, combat.fatigue, (p.radius, p.height), true);
+        let [health, fatigue] = UNSHEETED_VITALS;
+        let fighter = mw_combat::fighter(PLAYER_CHARACTER, sheet, health, fatigue, (p.radius, p.height), true);
         let mut combatant = Combatant::new(fighter);
         combatant.withheld = ATTACKS;
         commands.entity(entity).insert((combatant, Stance::Sheathed, StancePlay::default(), LockOwner::default()));

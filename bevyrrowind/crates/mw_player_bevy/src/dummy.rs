@@ -6,7 +6,8 @@
 //!   player gets, played by the avatar slot player ([`crate::avatar`]).
 //! - **Ground.** It spawns [`AwaitingGround`] (frozen) and is released onto the floor below once
 //!   the collision around its feet is in; no floor found keeps it waiting (never through it).
-//! - **Combat.** A hostile [`Combatant`] on the player's sheet, health [`DUMMY_HEALTH`]; at 0 it
+//! - **Combat.** A hostile [`Combatant`] on the player's sheet; its vitals are its dressed
+//!   character's stat sheet ([`crate::vitals`]), health set to [`DUMMY_HEALTH`]; down, it
 //!   refills (the hit already played the largest reaction). `Lockable`: the lock-on's target.
 //! - **Look.** A dressed `NPC_` record ([`DUMMY_RECORD`]) tagged [`DummyAvatar`] (not
 //!   `PlayerAvatar`: first person would hide it).
@@ -26,10 +27,12 @@ use sf_controller::{GroundProbe, Locomotion};
 use sf_coords::WorldPos;
 use sf_physics_bevy::Physics;
 use sf_records::RecordId;
+use sf_stats_bevy::sf_stats::{CauseKind, Role, StatOp};
 use sf_world_bevy::{ActiveWorldspace, from_grid, to_grid};
 
 use crate::avatar::PlayerFeed;
 use crate::combat::PlayerCombat;
+use crate::vitals::{CombatSheet, SheetOps, VitalsSystems};
 use crate::{ARRIVAL_GROUND_MARGIN_M, GROUND_OFFSET_M, feel, ground_below};
 
 /// The dummy's dressed record: a plain human NPC (Morrowind.esm).
@@ -60,7 +63,10 @@ pub(crate) fn add(app: &mut App) {
 pub(crate) fn systems<P: GroundProbe + Resource>(app: &mut App) {
     app.init_resource::<ActiveWorldspace>()
         .add_systems(Update, (arm, release::<P>).chain().after(crate::apply_mode))
-        .add_systems(FixedUpdate, refill.in_set(CombatSystems::Apply));
+        .add_systems(FixedUpdate, dummy_sheet.after(VitalsSystems::Link).before(CombatSystems::Stats))
+        // After the sheet death hook (a sheet death is a `CombatantDied` too) and the vitals
+        // differences (the refill must not be undone by this tick's damage going back).
+        .add_systems(FixedUpdate, refill.in_set(CombatSystems::Apply).after(VitalsSystems::Deaths));
 }
 
 /// Spawns dummy `index` (0-based) with its feet at `feet`, facing `yaw` (radians, 0 faces +Z), on
@@ -139,23 +145,41 @@ fn release<P: GroundProbe + Resource>(
     }
 }
 
-/// Logs each hit on a dummy (the live check reads them); a dummy at 0 health refills.
+/// A dummy's new sheet (its dressed `NPC_` record's) gets [`DUMMY_HEALTH`], full, so the target
+/// takes as many hits as before stats (the record's own health is a few hits).
+fn dummy_sheet(dummies: Query<&CombatSheet, (With<TrainingDummy>, Added<CombatSheet>)>, mut sheets: SheetOps) {
+    for link in &dummies {
+        sheets.apply(link.owner, CauseKind::Rules, |s| {
+            let Some(health) = s.role(Role::Health) else { return Vec::new() };
+            vec![StatOp::SetBase { stat: health, value: DUMMY_HEALTH }, StatOp::PoolSetCurrent { pool: health, value: DUMMY_HEALTH }]
+        });
+    }
+}
+
+/// Logs each hit on a dummy (the live check reads them); a dummy down refills: its sheet's
+/// health (cause `Rules`) when it has one, and its combat health.
 fn refill(
     mut hits: MessageReader<HitLanded>,
     mut deaths: MessageReader<CombatantDied>,
-    mut dummies: Query<&mut Combatant, With<TrainingDummy>>,
+    mut dummies: Query<(&mut Combatant, Option<&CombatSheet>), With<TrainingDummy>>,
+    mut sheets: SheetOps,
 ) {
     for hit in hits.read() {
-        if let Ok(combatant) = dummies.get(hit.defender) {
+        if let Ok((combatant, _)) = dummies.get(hit.defender) {
             let health = combatant.fighter.vitals.health;
             info!("training dummy: hit {} {:?} from the {:?}, health {:.0}/{:.0}", hit.hit, hit.tier, hit.side, health.cur, health.max);
         }
     }
     for died in deaths.read() {
-        if let Ok(mut combatant) = dummies.get_mut(died.who) {
-            let max = combatant.fighter.vitals.health.max;
-            combatant.fighter.vitals.health = Pool::full(max);
-            info!("training dummy: down, refilled to {max}");
+        let Ok((mut combatant, link)) = dummies.get_mut(died.who) else { continue };
+        let max = combatant.fighter.vitals.health.max;
+        combatant.fighter.vitals.health = Pool::full(max);
+        if let Some(link) = link {
+            sheets.apply(link.owner, CauseKind::Rules, |s| {
+                let Some(health) = s.role(Role::Health) else { return Vec::new() };
+                vec![StatOp::PoolSetCurrent { pool: health, value: s.max(health) }]
+            });
         }
+        info!("training dummy: down, refilled to {max}");
     }
 }

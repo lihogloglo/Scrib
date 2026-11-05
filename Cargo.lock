@@ -5519,6 +5519,7 @@ dependencies = [
  "sf_records",
  "sf_script",
  "sf_script_bevy",
+ "sf_stats_bevy",
  "sf_ui",
  "sf_ui_bevy",
  "sf_ui_screens",

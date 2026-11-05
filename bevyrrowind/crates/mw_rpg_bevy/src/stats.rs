@@ -16,7 +16,8 @@
 //!   leaves R0, never on a reload's discard; [`persist_actor_stats`] writes the same into the
 //!   save's overlay copy. An untouched NPC re-initialises from its record.
 //! - **Inputs**: `is_player`; `carried` is 0 until inventories have weight (TODO(stats S5+):
-//!   the loadout's weight; containers carry none yet). `combatant` is S5's (combat vitals).
+//!   the loadout's weight; containers carry none yet). `combatant` is kept by the combat vitals glue
+//!   (`mw_player_bevy::vitals`, S5): set while a `Combatant` links the sheet.
 
 use std::sync::{Arc, PoisonError};
 

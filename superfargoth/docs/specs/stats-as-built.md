@@ -220,3 +220,33 @@ Spec text moved here to keep `stats.md` under budget:
   the same traits; (2) one stamina/fatigue pool (Morrowind fatigue, combat sees it x0.5), not two; (3) magnitude stats
   for resistances and similar, decided per effect in the effect spec; (4) Morrowind's non-retroactive health in the
   modern profile too for now (part of 1).
+
+## S5 combat vitals + HUD (2026-11-05): `mw_player_bevy/src/vitals.rs`, `hud.rs`, `dummy.rs`
+
+- **Link**: `CombatSheet { owner }` on each `Combatant` once its sheet exists (`VitalsSystems::Link`, after
+  `StatSystems::Apply`, before `CombatSystems::Stats`): the player body's is the `PlayerCharacter` (`HOST_KEY`) sheet,
+  another combatant's the first child with `Stats` (the dummy's dressed `NPC_` character). The linked sheet's
+  `Inputs::combatant` is set; cleared once no combatant links it (F11 despawns the body: the stats model's fatigue regen
+  takes over). A combatant with no sheet (no stats loaded, tests) keeps its own vitals; a new body starts from
+  `combat::UNSHEETED_VITALS` (100/100) until the next tick's refresh.
+- **Refresh** (`CombatSystems::Stats`): health 1:1 (a current below `depleted_below` is written as 0, dead to combat
+  too; above max clamped), stamina = fatigue x 0.5 (negative fatigue shows 0). What was written is kept.
+- **Differences back** (`StatSystems::Combat`, after `CombatSystems::Step`): `now - written` per pool, so write-time
+  clamps never come back; `PoolAdjust` (no flags) health, fatigue = stamina delta / 0.5, cause `Combat` at the
+  `StatTick`, synchronous (`SheetOps` system param: `Stats::apply` + `PendingStatEvents`).
+- **Death**: `VitalsSystems::Deaths` (after `StatSystems::Events`): `Depleted(health)` of a linked sheet writes
+  `CombatantDied`, except when cause `Combat` left combat's health at 0 (combat's step already wrote it). Knockdown at
+  fatigue ≤ 0 is not wired (no consumer yet).
+- **Dummy**: its sheet's health is set to `DUMMY_HEALTH` 100 (`SetBase` + `PoolSetCurrent`, cause `Rules`) when it links,
+  so it takes as many hits as before (Fargoth's record health is a few hits); refill (after the death hook) sets the
+  sheet's health to max and the combatant's.
+- **HUD**: `drive_hud` reads `bar_values(table, stats)` of the `PlayerCharacter` with `HOST_KEY`: roles `Health`, `Mana`,
+  `Stamina` (`BARS`), `current` rounded, `max` as is; no sheet, no bars. `PlayerVitals`, `VitalsSource`, `sync_vitals`
+  and `PlayerCombat::{health, fatigue}` removed; the fatigue bar is the sheet's fatigue (200), no longer stamina (100).
+- **Ordering** (game): `StatSystems::Apply` before `CombatSystems::Stats`, `StatSystems::Combat` after
+  `CombatSystems::Step` (configured by `vitals::add`, called from `combat::add`).
+- **Tests** (`mw_player_bevy`): `tests_vitals` 4 (link and pools 35/100; a real roll start: fatigue 200 → 176 exactly;
+  combat regen +1.5 fatigue per tick exactly with the stats model's 10/s skipped, then the stats regen without a body;
+  a 13 damage hit applied in the combat step lowers the dummy sheet 100 → 87 exactly and combat reads 87 back, a hit
+  leaving 0.5 fires `Depleted` and the refill), `hud::the_bars_read_the_local_players_sheet` (35/50/200, then 25/0/176,
+  another player's sheet ignored); the old combat tests unchanged except the armed test (no stats: unsheeted vitals).
