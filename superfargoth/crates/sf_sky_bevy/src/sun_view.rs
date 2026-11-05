@@ -21,7 +21,8 @@
 //! request's casters as one more subview of the light's visible-entity tables
 //! (before Bevy collects them), and spawns the view (a [`ShadowView`] whose
 //! depth attachment is the host's image) after `prepare_lights`, appended to
-//! the camera's [`ViewLightEntities`]. Between redraws no view exists.
+//! the camera's [`ViewLightEntities`], drawing the light's render layers (an
+//! anchor's view: the camera's). Between redraws no view exists.
 //!
 //! Invariant (`bevy_pbr`'s shadow queue panics with "Failed to get directional
 //! light visible entities" otherwise): a view tagged
@@ -181,6 +182,14 @@ fn inject_casters<S: SunViewSource>(
     extracted.subviews.insert(key, list);
 }
 
+/// The render layers a view draws (Bevy's shadow queue skips casters outside
+/// them). A light's views take the light's layers; an anchor has none of its
+/// own, so its views take the camera's (on its render entity, `extract_cameras`):
+/// what the camera sees casts. Neither: layer 0 only.
+fn view_layers(anchor: bool, light: Option<&RenderLayers>, camera: Option<&RenderLayers>) -> RenderLayers {
+    if anchor { camera } else { light }.cloned().unwrap_or_default()
+}
+
 /// Spawns this redraw's view (despawning the last one) if [`view_allowed`].
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn spawn_view<S: SunViewSource>(
@@ -198,7 +207,7 @@ fn spawn_view<S: SunViewSource>(
         ),
         Or<(With<ExtractedDirectionalLight>, With<DepthViewAnchor>)>,
     >,
-    mut views: Query<(&MainEntity, &mut ViewLightEntities, Has<NoIndirectDrawing>)>,
+    mut views: Query<(&MainEntity, &mut ViewLightEntities, Has<NoIndirectDrawing>, Option<&RenderLayers>)>,
     mut phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
     support: Res<GpuPreprocessingSupport>,
     mut spawned: Local<Option<Entity>>,
@@ -209,13 +218,16 @@ fn spawn_view<S: SunViewSource>(
     let Some(req) = source.request() else { return };
     let Some(gpu) = images.get(req.image) else { return };
     let key = req.retained();
-    let Some((light, _, _, _, _, layers)) = lights
+    let Some((light, _, _, anchor, _, layers)) = lights
         .iter()
         .find(|(_, main, extracted, anchor, visible, _)| main.id() == req.light && view_allowed(owner_enabled(*extracted, *anchor), *visible, &key))
     else {
         return;
     };
-    let Some((_, mut view_lights, no_indirect)) = views.iter_mut().find(|(m, _, _)| m.id() == req.camera) else { return };
+    let Some((_, mut view_lights, no_indirect, camera_layers)) = views.iter_mut().find(|(m, ..)| m.id() == req.camera) else {
+        return;
+    };
+    let layers = view_layers(anchor, layers, camera_layers);
     let mode = support.min(if no_indirect { GpuPreprocessingMode::PreprocessingOnly } else { GpuPreprocessingMode::Culling });
     let world_from_view = req.view_from_world.inverse();
     let mut frustum = ViewFrustum::from_clip_from_world(&req.clip_from_world);
@@ -238,7 +250,7 @@ fn spawn_view<S: SunViewSource>(
         },
         Frustum(frustum),
         LightEntity::Directional { light_entity: light, cascade_index: 0 },
-        layers.cloned().unwrap_or_default(),
+        layers,
     ));
     if mode != GpuPreprocessingMode::Culling {
         entity.insert(NoIndirectDrawing);
@@ -260,6 +272,17 @@ mod tests {
     fn an_anchor_owns_views_without_a_light() {
         assert!(owner_enabled(None, true));
         assert!(!owner_enabled(None, false));
+    }
+
+    #[test]
+    fn an_anchor_view_draws_the_camera_layers() {
+        let ws = RenderLayers::from_layers(&[0, 2]);
+        // SW-2: an anchor's view on layer 0 alone drew none of the worldspace's casters.
+        assert_eq!(view_layers(true, None, Some(&ws)), ws);
+        assert_eq!(view_layers(false, Some(&ws), None), ws);
+        assert_eq!(view_layers(false, Some(&ws), Some(&RenderLayers::layer(3))), ws);
+        assert_eq!(view_layers(true, None, None), RenderLayers::default());
+        assert_eq!(view_layers(false, None, Some(&ws)), RenderLayers::default());
     }
 
     #[test]

@@ -28,7 +28,7 @@
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::InheritedVisibility;
+use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageSampler};
 use bevy_light::NotShadowCaster;
@@ -125,6 +125,7 @@ type Caster<'a> = (
     Option<&'a Aabb>,
     &'a InheritedVisibility,
     Option<&'a RenderEntity>,
+    Option<&'a RenderLayers>,
     Has<ShelterFoliage>,
 );
 
@@ -135,17 +136,25 @@ type CasterItem<'a> = (
     Option<&'a Aabb>,
     &'a InheritedVisibility,
     Option<&'a RenderEntity>,
+    Option<&'a RenderLayers>,
     bool,
 );
 
 /// The redraw's casters as `(render, main)` pairs, solid and foliage, sorted.
 type Split = (Vec<(Entity, MainEntity)>, Vec<(Entity, MainEntity)>);
 
-fn split_casters<'a>(casters: impl Iterator<Item = CasterItem<'a>>, view_from_world: Mat4) -> Split {
+/// Only what `camera_layers` sees casts, like the view (`sun_view` gives an anchor's view the
+/// camera's layers): other worldspaces' casters drop here, not in Bevy's shadow queue.
+fn split_casters<'a>(
+    casters: impl Iterator<Item = CasterItem<'a>>,
+    view_from_world: Mat4,
+    camera_layers: &RenderLayers,
+) -> Split {
+    let layer_zero = RenderLayers::default();
     let range = SHELTER_UP_M + SHELTER_DOWN_M;
     let (mut solid, mut leaves) = (Vec::new(), Vec::new());
-    for (e, tf, aabb, visible, render, foliage) in casters {
-        if !visible.get() {
+    for (e, tf, aabb, visible, render, layers, foliage) in casters {
+        if !visible.get() || !layers.unwrap_or(&layer_zero).intersects(camera_layers) {
             continue;
         }
         let (c, radius) = aabb.map_or((tf.translation(), 0.0), |b| {
@@ -188,7 +197,7 @@ pub(crate) fn update_shelter(
     origin: Res<SurfaceOrigin>,
     settings: Res<SurfaceSettings>,
     cameras: Query<(&Camera, &GlobalTransform), With<SurfaceWeatherCamera>>,
-    camera_entities: Query<(Entity, &Camera), With<SurfaceWeatherCamera>>,
+    camera_entities: Query<(Entity, &Camera, Option<&RenderLayers>), With<SurfaceWeatherCamera>>,
     casters: Query<Caster, CasterFilter>,
     added: Query<
         (),
@@ -220,10 +229,10 @@ pub(crate) fn update_shelter(
     }
     let camera = camera_entities
         .iter()
-        .filter(|(_, c)| c.is_active)
-        .min_by_key(|(_, c)| c.order)
-        .map(|(e, _)| e);
-    let Some(camera) = camera else {
+        .filter(|(_, c, _)| c.is_active)
+        .min_by_key(|(_, c, _)| c.order)
+        .map(|(e, _, layers)| (e, layers.cloned().unwrap_or_default()));
+    let Some((camera, camera_layers)) = camera else {
         return;
     };
     if shelter.trigger.frame(cam, !added.is_empty()).is_none() {
@@ -231,7 +240,7 @@ pub(crate) fn update_shelter(
     }
     let center = shelter.trigger.center().expect("set by a redraw");
     let (view_from_world, clip_from_world) = shelter_view(center);
-    let (solid, leaves) = split_casters(casters.iter(), view_from_world);
+    let (solid, leaves) = split_casters(casters.iter(), view_from_world, &camera_layers);
     stats.shelter_redraws += 1;
     stats.shelter_casters = solid.len();
     stats.canopy_casters = leaves.len();

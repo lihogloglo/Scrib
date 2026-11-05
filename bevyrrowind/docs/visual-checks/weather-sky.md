@@ -153,10 +153,8 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - With `surface debug off` + wet 1: ground under trees visibly wet but less than open ground; under roofs dry.
 - Cells: grey 32 m squares, dark borders, fixed as you walk; blue after wet; purple only past ~2 km.
 - A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
-- Owner 2026-11-05 (rain, noon): FAILS: `surface debug exposure` all yellow, even under Vivec's tunnel-like arches; sheltered ground still shiny. Status: failed, diagnosed.
-- Diagnosis (2026-11-05, shelter-diag): render layers. W2b's `DepthViewAnchor` views get the anchor's layers, none, so
-  layer 0 (`sun_view.rs` `spawn_view`, `layers.cloned().unwrap_or_default()`); statics sit on the worldspace layer (1+), so
-  `queue_shadows` drops every caster and the maps stay empty (W2 rode the sun, which has `[0, ws]`). Fix: anchor views take the camera's layers.
+- Owner 2026-11-05 (rain, noon): failed, all yellow even under Vivec's arches (W2b anchor views drew layer 0 only; statics
+  sit on the worldspace layer, so `queue_shadows` dropped every caster). Status 2026-11-06: fix built (render layers), awaiting owner; recheck Vivec too.
 
 ### SW-4: Puddles in rain and after (surface-weather.md W4)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:

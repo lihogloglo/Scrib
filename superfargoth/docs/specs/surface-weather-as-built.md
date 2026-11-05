@@ -206,3 +206,12 @@ foliage shelters partially (~40% through), roofs fully.
   (`terrain_ground`, R32F heights, same 5 fetches as the basin). Test `no_puddles_on_slopes` (5/10/20° planes and
   faces dry, a level hollow full). Morrowind's 8-unit height steps over 128 units are ~3.6°: such near-level
   terrain now gets little or no water (owner to judge).
+
+## W2b fix (2026-11-06): shelter views draw the camera's render layers (SW-2)
+
+- `sf_sky_bevy::sun_view` `spawn_view`: an anchor's view takes the owning camera's render-world `RenderLayers` (Bevy's
+  `extract_cameras` copies them), a light's view the light's (`view_layers`, test `an_anchor_view_draws_the_camera_layers`);
+  before, an anchor view got layer 0 and `queue_shadows` dropped every caster on a worldspace layer (maps empty, exposure 1).
+  `sf_surface_bevy` `split_casters` keeps only casters whose layers meet the camera's (`SurfaceStats.shelter_casters` honest).
+- Open (logged, not fixed): `SurfaceSystems` isn't ordered after `VisibilitySystems::VisibilityPropagate`/`CalculateBounds`
+  (a caster streamed this frame can miss its redraw); a one-frame view loses casters whose pipeline isn't ready that frame.
