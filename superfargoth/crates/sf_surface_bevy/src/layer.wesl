@@ -9,14 +9,19 @@
 // darkening and gloss), a thin water film past saturation (water roughness and F0) that flattens
 // the normal-map detail toward the geometric normal in Mikkelsen's surface-gradient framework,
 // and world-plane wall streaks.
-// Puddles (W4) and cover (W5) add to the same gradient before the one resolve.
+// Puddles (W4): Lagarde's accumulated water (a level against the height map, soft shoreline,
+// a flat water surface with F0 0.02 and mirror gloss) with procedural rain rings; their gradient
+// joins the same sum. Cover (W5) adds to it too, before the one resolve.
 //
 // Ported shapes (constants re-calibrated in meters): `surfaceExposure` (tent weights, cover
 // ramp ROOF_NEAR/ROOF_FULL, slope rise) and `surfaceWater` (wall streaks, WALL_WET, faces turned
 // down stay dry, WET_SATURATION) from Clockwork, files/shaders/lib/light/surface.glsl,
 // gitlab.com/OursCodeur/openmw branch clockwork-alpha, commit
 // c5e5a9a6362c35512823884753d2d5284af204fa (GPL-3.0; THIRD_PARTY_NOTICES.md).
-// Wet model: S. Lagarde, "Water drop 3b - Physically based wet surfaces" (2013).
+// Rain rings: the ring profile (`blip`, `circle`, trailing rings) of
+// files/shaders/lib/water/rain_ripples.glsl as Clockwork uses it on puddles (same commit).
+// Wet model: S. Lagarde, "Water drop 3b - Physically based wet surfaces" (2013); puddles and
+// ripple layers by rain intensity: "Water drop 2b - Dynamic rain and its effects" (2013).
 // Normals: M. Mikkelsen, "Surface Gradient-Based Bump Mapping Framework" (JCGT 2020).
 // The CPU twin of the wet math is `sf_surface::layer` (tests compare the constants).
 
@@ -35,7 +40,8 @@ struct SurfaceUniform {
     shelter: vec4<f32>,
     /// x: layer flags (FLAG_*); y: debug view (DEBUG_*).
     misc: vec4<u32>,
-    /// Reserved for W4: x seconds, y rain at the camera.
+    /// x: animation seconds (wrapped at RIPPLE_TIME_WRAP_S; still while dry), y: rain at the
+    /// camera (0..1; the puddles' rings, W4).
     time: vec4<f32>,
     /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through.
     canopy: vec4<f32>,
@@ -88,19 +94,52 @@ const PATCH_TILE_M: f32 = 32.0;
 const STREAK_TILE_U_M: f32 = 22.0;
 const STREAK_TILE_V_M: f32 = 18.0;
 
+/// Puddles (W4; `sf_surface::layer` documents each): water level reach, pool span of the
+/// height map, shoreline, level-face ramp, terrain concavity, water roughness, pool noise tile,
+/// object height from albedo.
+const PUDDLE_REACH: f32 = 0.3;
+const PUDDLE_DEPTH: f32 = 0.1;
+const PUDDLE_EDGE: f32 = 0.1;
+const PUDDLE_FLAT_LOW: f32 = 0.94;
+const PUDDLE_FLAT_HIGH: f32 = 0.99;
+const BASIN_FULL_M: f32 = 0.1;
+const BASIN_POOL: f32 = 0.35;
+const PUDDLE_ROUGHNESS: f32 = 0.06;
+const POOL_TILE_M: f32 = 64.0;
+const HEIGHT_FROM_LUMA: f32 = 2.0;
+/// Rain rings: drop cell, ring radius (cell share), ring breadth (cycle share), cycles a
+/// second, tilt, footprint fade (m per pixel), clock wrap, and the four grids' cell scales.
+const RIPPLE_CELL_M: f32 = 1.6;
+const RIPPLE_RADIUS: f32 = 0.2;
+const RIPPLE_RING: f32 = 0.16666667;
+const RIPPLE_RATE: f32 = 1.2;
+const RIPPLE_TILT: f32 = 0.5;
+const RIPPLE_FADE_NEAR_M: f32 = 0.02;
+const RIPPLE_FADE_FAR_M: f32 = 0.06;
+const RIPPLE_TIME_WRAP_S: f32 = 1000.0;
+const RIPPLE_SCALE_0: f32 = 1.0;
+const RIPPLE_SCALE_1: f32 = 1.25;
+const RIPPLE_SCALE_2: f32 = 0.8;
+const RIPPLE_SCALE_3: f32 = 0.625;
+
 const LUMA: vec3<f32> = vec3(0.2126, 0.7152, 0.0722);
 
 struct SurfaceInput {
     /// Render space (the uniform's window and shelter follow the floating origin).
     world_pos: vec3<f32>,
-    /// 0..1 height signal: terrain layer height; objects: the noise atlas (W4-W5).
+    /// 0..1 height signal (low fills first): terrain the blended layer height; objects their
+    /// albedo luminance (`surface_height_of`: dark grout and cracks).
     height: f32,
-    /// Terrain only: concavity from the height clipmap (puddle sites, W4), else 0.
+    /// Terrain only: concavity from the height clipmap in meters (`h_avg(±2 m) - h`, >= 0;
+    /// puddle sites, W4), else 0.
     basin: f32,
     porosity: f32,
     surface_class: u32,
     /// DYNAMIC: per-character wetness (W8), else 0.
     instance_wet: f32,
+    /// Meters per pixel at the point (screen derivatives; rain rings fade out below a pixel),
+    /// 0 when unknown.
+    footprint: f32,
 }
 
 /// Lagarde's porosity from the material: metals and smooth surfaces don't drink.
@@ -246,6 +285,111 @@ fn surface_wet_material(pbr: ptr<function, PbrInput>, wet: f32, porosity: f32) -
     return film;
 }
 
+/// How level a face is for standing water (by the geometric normal's Y).
+fn surface_puddle_flat(up: f32) -> f32 {
+    return smoothstep(PUDDLE_FLAT_LOW, PUDDLE_FLAT_HIGH, up);
+}
+
+/// The pool site score: pool noise, raised by terrain concavity (`basin` meters).
+fn surface_pool_of(noise: f32, basin: f32) -> f32 {
+    return saturate(noise + BASIN_POOL * saturate(basin / BASIN_FULL_M));
+}
+
+/// An object's height signal from its albedo: dark grout and cracks fill first (Clockwork).
+fn surface_height_of(albedo: vec3<f32>) -> f32 {
+    return saturate(HEIGHT_FROM_LUMA * dot(albedo, LUMA));
+}
+
+/// Standing water (0..1) from the puddle state `p` (sheltered), the pool score and the height:
+/// Lagarde's water level against the height map (Clockwork's `surfaceWater` height branch),
+/// soft over `PUDDLE_EDGE` of depth.
+fn surface_puddle(p: f32, pool: f32, height: f32) -> f32 {
+    return smoothstep(0.0, PUDDLE_EDGE, (pool - 1.0 + PUDDLE_REACH * p) / PUDDLE_DEPTH - height);
+}
+
+/// Under standing water the surface is water: mirror gloss, F0 0.02, a dielectric top (Lagarde).
+fn surface_puddle_material(pbr: ptr<function, PbrInput>, puddle: f32) {
+    (*pbr).material.perceptual_roughness = mix((*pbr).material.perceptual_roughness, PUDDLE_ROUGHNESS, puddle);
+    (*pbr).material.reflectance = mix((*pbr).material.reflectance, vec3(WATER_REFLECTANCE), puddle);
+    (*pbr).material.metallic = mix((*pbr).material.metallic, 0.0, puddle);
+}
+
+/// Rings fade as a pixel covers more than a ring's breadth (no shimmer under DLSS or TAA).
+fn surface_ripple_fade(footprint: f32) -> f32 {
+    return 1.0 - smoothstep(RIPPLE_FADE_NEAR_M, RIPPLE_FADE_FAR_M, footprint);
+}
+
+/// Two hash values in 0..1 for an integer cell and a seed.
+fn surface_hash(c: vec2<i32>, seed: u32) -> vec2<f32> {
+    var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ (seed * 0x9e3779b9u);
+    h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
+    h = (h ^ (h >> 12u)) * 0x297a2d39u;
+    h = h ^ (h >> 15u);
+    return vec2(f32(h & 0xffffu), f32(h >> 16u)) / 65535.0;
+}
+
+/// `rain_ripples.glsl` `blip` and `blipDerivative`.
+fn surface_blip(x: f32) -> f32 {
+    let y = max(0.0, 1.0 - x * x);
+    return y * y * y;
+}
+
+fn surface_blip_derivative(x: f32) -> f32 {
+    let y = clamp(x, -1.0, 1.0);
+    let n = y * y - 1.0;
+    return -6.0 * y * n * n;
+}
+
+/// One drop's ring slope (`rain_ripples.glsl` `circle`): `to` the point minus the drop (cell
+/// units), `phase` the drop's cycle; zero outside the ring's band. Twin: `sf_surface::layer::ring`.
+fn surface_ring(to: vec2<f32>, phase: f32) -> vec2<f32> {
+    let d = length(to);
+    let follower = (phase - d / RIPPLE_RADIUS) / RIPPLE_RING - 1.0;
+    if follower < -1.0 || follower > 1.0 {
+        return vec2(0.0);
+    }
+    let energy = 1.0 - phase;
+    let range = surface_blip(min(follower, 0.0));
+    let v = vec3(to * (-surface_blip_derivative(follower) * 5.0 * energy * energy), 0.5);
+    return v.xy * (energy * range / length(v));
+}
+
+/// One drop grid at `q` (cell units): each cell drops once a cycle at a random spot (its own
+/// start phase), with two trailing rings (`rain`: a - b/2 + c/4).
+fn surface_drops(q: vec2<f32>, seed: u32, time: f32) -> vec2<f32> {
+    let cell = vec2<i32>(floor(q));
+    let f = q - floor(q);
+    let start = surface_hash(cell, seed ^ 0x51ed27u).x;
+    var slope = vec2(0.0);
+    var weight = 1.0;
+    for (var k = 0; k < 3; k++) {
+        let t = time * RIPPLE_RATE + start - f32(k) * RIPPLE_RING;
+        let cycle = floor(t);
+        let spot = surface_hash(cell, seed ^ (u32(i32(cycle)) * 0x632be5abu));
+        let drop = vec2(0.5) + (0.5 - RIPPLE_RADIUS) * (2.0 * spot - 1.0);
+        slope += weight * surface_ring(f - drop, t - cycle);
+        weight *= -0.5;
+    }
+    return slope;
+}
+
+/// Rain rings at render XZ `xz` (m): up to four drop grids, grid k on over rain k/4..(k+1)/4
+/// (Lagarde's ripple layers: drizzle rings sparsely, a storm densely). Returns the water's
+/// slope along X and Z.
+fn surface_ripples(xz: vec2<f32>, time: f32, rain: f32) -> vec2<f32> {
+    var scales = array<f32, 4>(RIPPLE_SCALE_0, RIPPLE_SCALE_1, RIPPLE_SCALE_2, RIPPLE_SCALE_3);
+    var slope = vec2(0.0);
+    for (var k = 0u; k < 4u; k++) {
+        let w = saturate((rain - f32(k) * 0.25) * 4.0);
+        if w <= 0.0 {
+            break;
+        }
+        let q = xz / (RIPPLE_CELL_M * scales[k]) + vec2(0.37, 0.71) * f32(k);
+        slope += w * surface_drops(q, k + 1u, time);
+    }
+    return slope;
+}
+
 /// The layer: modifies `pbr` in place.
 fn apply_surface_layer(
     pbr: ptr<function, PbrInput>,
@@ -290,36 +434,67 @@ fn apply_surface_layer(
         (*pbr).material.base_color = vec4(tint * shade, (*pbr).material.base_color.a);
         return;
     }
-    if (flags & FLAG_WET) == 0u {
+    let want_wet = (flags & FLAG_WET) != 0u;
+    // Standing water on statics and terrain only (characters move; far proxies are sub-pixel).
+    let want_puddle = (flags & FLAG_PUDDLE) != 0u
+        && (s.surface_class == CLASS_STATIC || s.surface_class == CLASS_TERRAIN);
+    if !want_wet && !want_puddle {
         return;
     }
     let n_geo = (*pbr).world_normal;
     var wet = 0.0;
+    var puddle = 0.0;
+    var rain = 0.0;
     if s.surface_class == CLASS_DYNAMIC {
         wet = s.instance_wet;
     } else {
-        wet = surface_cells_at(cells, samp, u, s.world_pos).r;
-        if wet <= 0.0 {
-            return;
+        let cell = surface_cells_at(cells, samp, u, s.world_pos);
+        if want_wet && cell.r > 0.0 {
+            wet = cell.r * surface_facing_wet(noise, samp, s.world_pos, n_geo);
+            // Drying leaves patches: low noise dries last.
+            let n = textureSampleLevel(noise, samp, s.world_pos.xz / PATCH_TILE_M, 0.0).r;
+            wet = smoothstep(n * 0.6, n * 0.6 + 0.4, wet);
         }
-        wet *= surface_facing_wet(noise, samp, s.world_pos, n_geo);
-        // Drying leaves patches: low noise dries last.
-        let n = textureSampleLevel(noise, samp, s.world_pos.xz / PATCH_TILE_M, 0.0).r;
-        wet = smoothstep(n * 0.6, n * 0.6 + 0.4, wet);
-        if s.surface_class != CLASS_FAR && wet > 0.0 {
-            wet *= surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, n_geo);
+        // Puddle state where the face is level (the geometric normal: water lies on the land).
+        let flat = surface_puddle_flat(n_geo.y);
+        var p = 0.0;
+        if want_puddle && flat > 0.0 {
+            p = cell.g;
+        }
+        if s.surface_class != CLASS_FAR && (wet > 0.0 || p > 0.0) {
+            // Shelter: none under roofs, less (smaller puddles, fewer rings) under leaves.
+            let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, n_geo);
+            wet *= e;
+            p *= e;
+            rain = u.time.y * e;
+        }
+        if p > 0.0 {
+            let n = textureSampleLevel(noise, samp, s.world_pos.xz / POOL_TILE_M + vec2(0.31, 0.57), 0.0).g;
+            puddle = flat * surface_puddle(p, surface_pool_of(n, s.basin), s.height);
         }
     }
-    if wet <= 0.0 {
+    if wet <= 0.0 && puddle <= 0.0 {
         return;
     }
-    // Normals compose as surface gradients; W4-W5 add theirs before the one resolve.
+    // Normals compose as surface gradients; W5 adds its own before the one resolve.
     var gradient = surface_gradient_of(n_geo, (*pbr).N);
-    let film = surface_wet_material(pbr, wet, s.porosity);
+    // Standing water soaks what it covers (Lagarde: wet = saturate(wet + accumulated water)).
+    let film = surface_wet_material(pbr, max(wet, puddle), s.porosity);
     if s.surface_class == CLASS_FAR {
         return;
     }
-    // The film fills the micro-detail: the normal map's gradient fades toward the macro normal.
-    gradient *= 1.0 - film;
+    // The film fills the micro-detail and standing water lies level: the normal map's gradient
+    // fades toward the macro (geometric) normal.
+    gradient *= (1.0 - film) * (1.0 - puddle);
+    if puddle > 0.0 {
+        surface_puddle_material(pbr, puddle);
+        // Rain rings on the water, while it rains on it, until they shrink below a pixel.
+        let rings = puddle * surface_ripple_fade(s.footprint);
+        if rain > 0.0 && rings > 0.0 {
+            let slope = surface_ripples(s.world_pos.xz, u.time.x, rain) * (RIPPLE_TILT * rings);
+            let g = -vec3(slope.x, 0.0, slope.y);
+            gradient += g - n_geo * dot(n_geo, g);
+        }
+    }
     (*pbr).N = surface_resolve(n_geo, gradient);
 }

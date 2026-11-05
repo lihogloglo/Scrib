@@ -155,6 +155,16 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
 - Status: awaiting owner (W2 built 2026-11-05; W2b night + trees 2026-11-05).
 
+### SW-4: Puddles in rain and after (surface-weather.md W4)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:
+  `surface set wet 1`, `surface set puddle 1` (full), `surface set puddle 0.5` (drying), `surface clear`. C: next weather.
+- Look for: puddles in street hollows and on flat paving/floors, edges following dark grout and low spots (soft);
+  flat, mirror-like water reflecting the sky; none on slopes or walls, none under roofs/arches, smaller under trees.
+- Rain rings while it rains (denser in heavier rain); still water at once when the rain stops (C to a clear weather).
+- At puddle 0.5 the puddles shrink from their edges. No shimmer on distant puddles; no rings on characters or far proxies.
+- A/B: same run with `--off puddles`: the W3 wet look only, no standing water. Low preset: no puddles.
+- Status: awaiting owner (built 2026-11-05).
+
 ### SW-3: Wetness after rain (surface-weather.md W3)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:
   `surface set wet 1` (soaked), `surface set wet 0.5` (drying), `surface clear` (dry). A/B: same run with `--off wet`.

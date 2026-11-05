@@ -3,7 +3,8 @@
 //! (`bevy_shader` `shader_cache.rs`), and validated by naga. Covered: the `StandardMaterial`
 //! fragment of the vendored `bevy_pbr` (patch "SW" calling `sf_surface_bevy::view`), the
 //! terrain main pass and the far proxies and impostors, with and without `SURFACE_WEATHER`.
-//! Plus the binding numbers against the patch and the wet constants against the CPU twin.
+//! Plus the binding numbers against the patch and the wet and puddle constants against the CPU
+//! twin.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -168,6 +169,14 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
                     // The layer is linked in exactly when the def is on.
                     Ok(wgsl) if wgsl.contains("apply_surface_layer") != sw => {
                         failures.push(format!("[{preset}] {module} {d:?}: layer linked = {}", !sw));
+                    }
+                    // Puddles and rings (W4) come with the layer; the terrain feeds its basin.
+                    Ok(wgsl)
+                        if sw
+                            && (!wgsl.contains("surface_ripples")
+                                || (module.contains("terrain") && !wgsl.contains("terrain_basin"))) =>
+                    {
+                        failures.push(format!("[{preset}] {module} {d:?}: puddles not linked"));
                     }
                     Ok(_) => {}
                     Err(e) => failures.push(format!("[{preset}] {e}")),

@@ -38,7 +38,8 @@ pub struct SurfaceUniform {
     /// `FLAG_*`.
     pub flags: u32,
     pub debug: DebugView,
-    /// Reserved for W3-W4 (x seconds, y rain at the camera).
+    /// x: animation seconds (wrapped at `sf_surface::layer::RIPPLE_TIME_WRAP_S`, still while no
+    /// rings show), y: rain at the camera (0..1; puddle rings, W4).
     pub time: Vec4,
     /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through.
     pub canopy: Vec4,

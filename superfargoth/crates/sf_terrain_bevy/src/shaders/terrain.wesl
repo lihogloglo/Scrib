@@ -3,7 +3,7 @@
 // clustered lights, fog and atmosphere match every other object.
 
 import super::common;
-import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, world_xz, origin_y, debug_flags, terrain_normal};
+import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, world_xz, origin_y, debug_flags, terrain_normal, height_at};
 import super::surface::terrain_surface;
 import super::far_shadow::far_shadow_term;
 // Surface weather (surface-weather.md "Shader integration"): the shared layer on the view's
@@ -11,7 +11,7 @@ import super::far_shadow::far_shadow_term;
 @if(SURFACE_WEATHER)
 import sf_surface_bevy::layer::{SurfaceInput, CLASS_TERRAIN, surface_porosity};
 @if(SURFACE_WEATHER)
-import sf_surface_bevy::view::apply_surface_weather;
+import sf_surface_bevy::view::{apply_surface_weather, surface_puddles_on};
 import bevy_pbr::render::{
     pbr_types::{PbrInput, pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, calculate_view},
@@ -68,6 +68,17 @@ fn lod_color(lod: f32) -> vec3<f32> {
     return mix(palette[i], palette[i + 1], fract(lod));
 }
 
+/// Concavity of the ground at render XZ `xz` for surface weather's puddles
+/// (surface-weather.md W4): the mean height 2 m out along X and Z minus the
+/// height here, meters, >= 0 (a hollow; ridges and slopes give 0). From the
+/// height clipmap, not the detail displacement.
+fn terrain_basin(xz: vec2<f32>) -> f32 {
+    let r = 2.0;
+    let around = height_at(xz + vec2<f32>(r, 0.0), 0u) + height_at(xz - vec2<f32>(r, 0.0), 0u)
+        + height_at(xz + vec2<f32>(0.0, r), 0u) + height_at(xz - vec2<f32>(0.0, r), 0u);
+    return max(0.25 * around - height_at(xz, 0u), 0.0);
+}
+
 /// Distance to the nearest triangle edge in pixels (quads split along the
 /// canonical (i, j)-(i+1, j+1) diagonal).
 fn edge_pixels(grid: vec2<f32>) -> f32 {
@@ -113,11 +124,16 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
 @if(SURFACE_WEATHER) {
     var si: SurfaceInput;
     si.world_pos = in.world_position.xyz;
-    si.height = 0.5;
+    si.height = s.height;
+    // Puddle sites: the ground's concavity (W4), only while puddles are on, on level ground.
     si.basin = 0.0;
+    if surface_puddles_on() && n_geo.y > 0.9 {
+        si.basin = terrain_basin(xz);
+    }
     si.porosity = surface_porosity(0.0, pbr.material.perceptual_roughness);
     si.surface_class = CLASS_TERRAIN;
     si.instance_wet = 0.0;
+    si.footprint = max(length(dpx), length(dpy));
     apply_surface_weather(&pbr, si);
 }
     // Ambient occlusion as StandardMaterial applies it: the layer AO, SSAO

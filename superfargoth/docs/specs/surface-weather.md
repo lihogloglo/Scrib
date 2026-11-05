@@ -1,6 +1,6 @@
 # Surface weather: wetness, puddles, snow and ash cover, trails
 
-Status: W1-W3 + W2b built (2026-11-05: `sf_surface` state + rain wash, `sf_surface_bevy` GPU resources, light-independent shelter + canopy maps, debug tints, wetness on every lit material through `bevy_pbr` patch "SW"; [as built](surface-weather-as-built.md)); W4-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
+Status: W1-W4 + W2b built (2026-11-05: `sf_surface` state + rain wash, `sf_surface_bevy` GPU resources, light-independent shelter + canopy maps, debug tints, wetness on every lit material through `bevy_pbr` patch "SW", puddles with rain rings; [as built](surface-weather-as-built.md)); W5-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
 Crates: `sf_surface` (new, Bevy-free), `sf_surface_bevy` (new, thin plugin); touches `sf_terrain_bevy`
 (hook, displacement, prepass), `sf_lod_bevy` (proxies call the hook), vendored `bevy_pbr` (own patch "SW"),
 `sf_weather` (`SurfaceRates`), `sf_save` (section). Adapter: `../../../bevyrrowind/docs/specs/weather-adapter.md`
@@ -69,7 +69,7 @@ on Solstheim.
 | Feature | Canonical technique | Shipped / published references | Ours | Verdict |
 |---|---|---|---|---|
 | Wet surfaces | Lagarde, "Water drop 2a/2b, 3a/3b" (2012-13): porosity, albedo darkening, roughness to water, film flattens normal | Remember Me (Dontnod, Lagarde), UE wet material functions, Watch Dogs **(verify)** | Lagarde model, porosity from material (heuristic) or record | match |
-| Puddles | height/porosity-driven water level, flat normal, F0 0.02, rain ripple normals (Lagarde 2a ripple atlas or procedural rings) | Remember Me, Watch Dogs, Unity Production Ready Weather sample, Clockwork | layer height + terrain basin signal; procedural rings (Clockwork shape); sky/probe reflection | match (SSR later) |
+| Puddles | height/porosity-driven water level, flat normal, F0 0.02, rain ripple normals (Lagarde 2a ripple atlas or procedural rings) | Remember Me, Watch Dogs, Unity Production Ready Weather sample, Clockwork | Lagarde water level against a height (terrain layer height, object albedo luminance) over a pool score (noise + terrain basin), soft shoreline; procedural rings (OpenMW/Clockwork ring profile, no texture, no mip problem) on 4 drop grids turned on per quarter of rain (Lagarde's ripple layers); sky/probe reflection | match (SSR later) |
 | Puddle reflection | env/probe → planar for big pools → SSR | UE (SSR + reflection captures), RDR2 **(verify)** | env map + GI probes; SSR parked (no depth prepass on the exterior camera) | gap, owner-accepted |
 | Exposure / shelter | top-down precipitation occlusion depth map | Tatarchuk "Rain" (ATI ToyShop, 2006), Remember Me (top-down rain depth map, fxguide 2013), S.T.A.L.K.E.R. Clear Sky wet mask (forum recollection), Clockwork `surfaceRoof` | vertical depth map 1024² over 128 m, tent-filtered gather; leaves in a second (canopy) map, partial shelter (Clockwork `roofLeaves`) | match 
 | Snow/ash cover | world-aligned blend: `N·up` × exposure × amount, height-blend, noise patches | UE world-aligned blend, Uncharted 4/RDR2 snow **(verify)**, Clockwork `surfaceCovers` | same, per-pixel N, surface-gradient normals | match |
@@ -84,14 +84,11 @@ gate skinned meshes alike). Rafael's OpenMW shader pack: visual reference only (
 
 ### CPU state (`sf_surface`, Bevy-free)
 
-Built in W1 ([as built](surface-weather-as-built.md)): `SurfaceState { t_h, climates: Vec<ClimateSurface { wet,
-puddle }>, cells: per worldspace HashMap<IVec2, CellSurface { snow, ash }> }`, `SurfaceTuning` (record-backed:
-`step_h` 10 game min, `dry_h` 2 h, puddle/snow/ash decay multipliers 0.5, 1/3, 1/4, `puddle_from_wet` 0.9),
-`advance` (pure fixed steps from hour 0, catch-up capped at 72 h; rates from `WeatherState::blend` per climate at
-the step's mid time, cells weighted by `ClimateRaster::site_at` at their centre, as the WE4 map) and `sample` (CPU
-query). Snow has an altitude factor around a per-climate snow line (hook, off for Morrowind); only non-zero cells are
-stored (Vvardenfell at 32 m is ~30k cells). Rain washes cover off (W2b): `snow_wash` 1/3 and `ash_wash` 2
-per unit of wetting rate (a storm: snow 4x its dry melt, ash gone in 15 game min).
+Built in W1 ([as built](surface-weather-as-built.md) W1, W2b): `SurfaceState { t_h, climates: Vec<ClimateSurface {
+wet, puddle }>, cells: per worldspace HashMap<IVec2, CellSurface { snow, ash }> }`, record-backed `SurfaceTuning`
+(step 10 game min, dry 2 h, decay multipliers, `puddle_from_wet` 0.9, rain wash of snow and ash, `storm_wet_rate`
+for rain rings), pure fixed-step `advance` from the weather blend per climate (cells weighted by
+`ClimateRaster::site_at`), CPU `sample`. Only non-zero cells are stored (Vvardenfell at 32 m is ~30k cells).
 
 - **Character wetness** (W8): `CharacterWetness { wet, dried_at }` per actor, presentation, exposure from an
   upward physics ray (under roof or not), drying `dry_h`; immersion from the water query later.
@@ -133,11 +130,12 @@ One WESL module, **`sf_surface_bevy::layer`** (binding-agnostic: callers pass th
 ```wgsl
 struct SurfaceInput {
     world_pos: vec3<f32>,   // render space (uniform window corner and shelter matrix follow the origin)
-    height: f32,            // 0..1 height signal: terrain layer height; objects: noise atlas
-    basin: f32,             // terrain only: concavity from the height clipmap (puddle sites), else 0
+    height: f32,            // 0..1 height signal, lows fill first: terrain layer height; objects albedo luminance
+    basin: f32,             // terrain only: concavity from the height clipmap, meters (puddle sites), else 0
     porosity: f32,
     surface_class: u32,     // (`class` is reserved in WGSL) STATIC, TERRAIN, DYNAMIC (skinned: wetness only), FAR (wetness only)
     instance_wet: f32,      // DYNAMIC: per-character wetness (W8), else 0
+    footprint: f32,         // meters per pixel (screen derivatives; rain rings fade below a pixel), 0 unknown
 }
 fn apply_surface_layer(pbr: ptr<function, PbrInput>, s: SurfaceInput)
 ```
@@ -150,18 +148,15 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 
 **Hook sites.**
 - **`StandardMaterial` (NIF statics, characters, held items, fades):** own patch "SW" in
-  `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the
-  view sets `MeshPipelineViewLayoutKey::SURFACE_WEATHER` (1<<18) and `MeshPipelineKey::SURFACE_WEATHER` (1<<27,
-  shader def `SURFACE_WEATHER`), adds mesh-view bindings 43-49 after the GI ones (uniform, cells, shelter and canopy as
-  unfilterable float, noise, a filtering and a non-filtering sampler; W5 adds the layer array and its sampler,
-  W6 the trail ring), and `render/pbr.wesl` `fragment()` calls `sf_surface_bevy::view` between `pbr_input_from_standard_material` and
-  `apply_pbr_lighting`, forward main pass only (not the prepass). Skipped for alpha-blend materials
-  (glass, fog translucents) and `unlit`. Class DYNAMIC under `SKINNED`; `instance_wet` from `MeshTag` bits
-  0-7 on skinned meshes (W8; 0 = dry). Every hunk carries `superfargoth patch (own, SW)`; README row with
-  the drop condition "upstream Bevy gets a view-level material hook / global shader bindings".
+  `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the view
+  adds mesh-view bindings 43-49 (uniform, cells, shelter, noise, two samplers, canopy; W5 adds the layer array, W6
+  the trail ring) and the `SURFACE_WEATHER` def, and `render/pbr.wesl` calls `sf_surface_bevy::view` before
+  lighting, forward main pass only (detail: [as built](surface-weather-as-built.md) W3). Skipped for alpha-blend and
+  `unlit`; class DYNAMIC under `SKINNED` (`instance_wet` from `MeshTag` bits 0-7, W8). Drop condition: "upstream
+  Bevy gets a view-level material hook / global shader bindings".
 - **Terrain:** `terrain.wesl` calls the hook on the same view bindings (before AO and specular occlusion so
-  the new roughness feeds specular occlusion). W4: `TerrainSurface` (`surface.wesl`) gains `height` (the blended layer height already used for height
-  blending) and the hook gets `basin` from the height clipmap (`h_avg(±2 m) − h`, clamped to 0.1 m).
+  the new roughness feeds specular occlusion), with `TerrainSurface.height` (the blended layer height) and, while
+  puddles are on, `basin` from the height clipmap (`h_avg(±2 m) − h`, ≥ 0; the layer saturates it at 0.1 m).
 - **Proxies/impostors (`sf_lod_bevy` `proxy.wesl`, `impostor.wesl`):** class FAR, wetness darkening only
   (puddles are sub-pixel at that range).
 - **Excluded:** water (`sf_water_bevy`), particles, precipitation, sky.
@@ -265,7 +260,7 @@ weather override, flags and what to look for.
 | **W2** ✅ | `sf_surface_bevy` cell window, shelter subview, noise atlas, uniform, debug tints (as built) | window, shelter, plugin smoke | SW-2 (awaiting owner) |
 | **W2b** ✅ | Rain wash; shelter views on an own anchor (night); canopy map for `ShelterFoliage` (as built) | wash closed forms; anchor + canopy requests; shader compile | SW-2 at night, under trees |
 | **W3** ✅ | Wetness layer: vendored `bevy_pbr` patch "SW", `sf_surface::layer` (exposure port, Lagarde wet, film normal flatten, wall streaks), terrain + proxy calls, `--off wet/surface`, NOTICES entry | shader-def compile log check per preset; porosity heuristic unit test (WGSL mirrored in Rust) | SW-3: Seyda Neen after rain, wet vs dry A/B, under-roof dry, walls streaked |
-| **W4** | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural ripples (Clockwork rings) in rain, F0/roughness, sky/probe reflection | level/edge math unit tests (Rust twin); compile check | SW-4: Balmora streets in rain and after; ripples stop when rain stops |
+| **W4** ✅ | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural rain rings, F0/roughness, sky/probe reflection, `--off puddles` (as built) | level/edge/ring math twins; compile check | SW-4: Balmora streets in rain and after; rings stop when rain stops |
 | **W5** | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
 | **WM** | Measurement: counters + `perf suite` run lines in perf.md for wet/ash/snow bookmarks (`--weather` overrides); owner runs it (agents never launch) | `#[ignore = "measurement: ..."]` CPU timings | owner runs the suite; table updated |
 | **W6** | Trails: ring, stamps from foot events/bodies, decay/refill, CDLOD displacement (finest 2 levels), prepass motion vectors with the previous ring, cascade-0 shadows, POM | ring/stamp/decay CPU twins; prepass and main use one displacement fn (compile check) | SW-6: walk through Solstheim snow and Ashlands ash, DLSS on: prints, lips, no smear |

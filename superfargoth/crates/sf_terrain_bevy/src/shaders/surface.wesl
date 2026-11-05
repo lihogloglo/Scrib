@@ -135,6 +135,9 @@ struct TerrainSurface {
     ao: f32,
     /// World-space shading normal.
     n: vec3<f32>,
+    /// The blended layer height (0..1; 0.5 past the splat range): surface weather fills puddles
+    /// from its lows (surface-weather.md W4).
+    height: f32,
 }
 
 /// The terrain's surface at render XZ `xz` (world position `wpos`, its
@@ -157,6 +160,7 @@ fn terrain_surface(
     var roughness = 0.85;
     var ao = 1.0;
     var n = n_geo;
+    var height = 0.5;
 
     let detail = pf(P_DETAIL);
     let near = 1.0 - smoothstep(0.7 * detail.x, detail.x, dist);
@@ -182,12 +186,14 @@ fn terrain_surface(
             var a = vec3<f32>(0.0);
             var surface = vec2<f32>(0.0);
             var nb = vec3<f32>(0.0);
+            var h = 0.0;
             for (var k = 0; k < 4; k += 1) {
                 if bw[k] > 0.0 {
                     let l = sample_layer(s.ids[k], wpos, dpx, dpy, n_geo, steep);
                     a += bw[k] * l.albedo_height.rgb;
                     surface += bw[k] * l.surface;
                     nb += bw[k] * l.normal;
+                    h += bw[k] * l.albedo_height.a;
                 }
             }
             // The macro map carries the tint (bake: mean albedo x tint), so
@@ -200,6 +206,7 @@ fn terrain_surface(
             roughness = mix(roughness, surface.y, near);
             ao = mix(1.0, surface.x, near);
             n = normalize(mix(n_geo, normalize(nb), near));
+            height = mix(height, h, near);
         }
     }
     albedo *= variation;
@@ -209,5 +216,6 @@ fn terrain_surface(
     out.roughness = roughness;
     out.ao = ao;
     out.n = n;
+    out.height = height;
     return out;
 }

@@ -71,6 +71,9 @@ pub struct SurfaceTuning {
     /// storm (wetting 2/h) clears full ash in 15 game minutes (Clockwork's `sWashRate`: e-fold
     /// in 4 minutes), 32 times the dry clearing.
     pub ash_wash: f32,
+    /// The wetting rate (`SurfaceRates::wet`, per hour) of the heaviest rain: rain intensity 1 for
+    /// the puddles' rain rings (W4). 2: a storm.
+    pub storm_wet_rate: f32,
 }
 
 impl Default for SurfaceTuning {
@@ -85,6 +88,7 @@ impl Default for SurfaceTuning {
             puddle_from_wet: 0.9,
             snow_wash: 1.0 / 3.0,
             ash_wash: 2.0,
+            storm_wet_rate: 2.0,
         }
     }
 }

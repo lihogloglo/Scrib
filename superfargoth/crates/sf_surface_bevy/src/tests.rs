@@ -356,7 +356,7 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     app.update();
     assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 1.0));
     let set = |app: &mut App, layer, wet, shelter| {
-        app.world_mut().insert_resource(SurfaceSettings { layer, wet, shelter });
+        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter });
         app.update();
         let u = uniform(app);
         (u.flags, u.shelter.x)
@@ -373,4 +373,61 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     app.update();
     assert_eq!(uniform(&app).window.w, 0.0);
     assert_eq!(uniform(&app).flags, 0);
+}
+
+/// `--off puddles` clears the puddle flag only; rain at the camera is the wetting rate over the
+/// storm's; the ring clock runs only while rings can show and stops them when the rain stops.
+#[test]
+fn puddle_switch_and_ring_clock() {
+    let off = SurfaceSettings {
+        puddles: false,
+        ..SurfaceSettings::default()
+    };
+    assert_eq!(off.flag_mask(), FLAG_WET | FLAG_SNOW | FLAG_ASH);
+    assert_eq!(SurfaceSettings::default().flag_mask() & FLAG_PUDDLE, FLAG_PUDDLE);
+    assert_eq!(rain_of(2.0, 2.0), 1.0);
+    assert_eq!(rain_of(1.0, 2.0), 0.5);
+    assert_eq!(rain_of(5.0, 2.0), 1.0);
+    assert_eq!(rain_of(0.0, 2.0), 0.0);
+    assert_eq!(rain_of(1.0, 0.0), 0.0);
+
+    let mut app = App::new();
+    let mut weather = CurrentWeather {
+        valid: true,
+        ..Default::default()
+    };
+    weather.frame.surface.wet = 1.0;
+    app.insert_resource(SurfaceUniform {
+        flags: FLAG_PUDDLE,
+        ..SurfaceUniform::default()
+    })
+    .insert_resource(weather)
+    .init_resource::<WorldSurface>()
+    .init_resource::<Time>()
+    .add_systems(bevy_app::Update, ripple_clock);
+    app.world_mut()
+        .resource_mut::<Time>()
+        .advance_by(std::time::Duration::from_mins(25));
+    app.update();
+    assert_eq!(uniform(&app).time, Vec4::new(500.0, 0.5, 0.0, 0.0));
+    // Rain stops: rain 0 (no rings), the clock holds.
+    app.world_mut()
+        .resource_mut::<CurrentWeather>()
+        .frame
+        .surface
+        .wet = 0.0;
+    app.world_mut()
+        .resource_mut::<Time>()
+        .advance_by(std::time::Duration::from_secs(10));
+    app.update();
+    assert_eq!(uniform(&app).time, Vec4::new(500.0, 0.0, 0.0, 0.0));
+    // Raining with no puddles in the window: no rings either.
+    app.world_mut()
+        .resource_mut::<CurrentWeather>()
+        .frame
+        .surface
+        .wet = 2.0;
+    app.world_mut().resource_mut::<SurfaceUniform>().flags = FLAG_WET;
+    app.update();
+    assert_eq!(uniform(&app).time.y, 0.0);
 }

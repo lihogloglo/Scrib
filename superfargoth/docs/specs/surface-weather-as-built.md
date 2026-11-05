@@ -161,3 +161,39 @@ foliage shelters partially (~40% through), roofs fully.
   ash gone in 2 steps, snow at 1.5 h, step-grid bit equality); `sf_sky_bevy` `an_anchor_owns_views_without_a_light`;
   `sf_surface_bevy` headless plugin with no light at all: requests owned by the anchor, leaves only in the canopy
   request, same matrix, uniform `canopy`; binding 49 vs the patch; shader compiles per preset.
+
+## W4 (2026-11-05): puddles and rain rings
+
+- **Technique** (research: Lagarde "Water drop 2b - Dynamic rain and its effects", 2013; Clockwork `surfaceWater`,
+  `rain_ripples.glsl`): Remember Me paints puddle sites in vertex colour and fills cracks from the height map against a
+  rising flood level, then lerps gloss to 1, F0 to 0.02 and the normal to flat; ripples are a 256² ripple texture in
+  4 layers enabled per quarter of rain intensity (mips were "unsatisfying"). Open worlds have no painted sites, so ours
+  takes the site from a pool score (Clockwork's noise, plus terrain concavity) and keeps Lagarde's level/height
+  shoreline and water surface; rings are procedural (no texture, binding or mip problem) with Lagarde's layering.
+- **Layer** (`layer.wesl`, twin `sf_surface::layer`): runs when the wet or puddle flag is on. Puddle state `p` = cell G
+  where the geometric normal is level (`smoothstep(0.94, 0.99, N.y)`), times exposure (none under roofs; under leaves
+  smaller puddles and fewer rings). Pool = noise atlas G at a 64 m tile + `0.35·saturate(basin / 0.1 m)`. Water depth
+  `(pool − 1 + 0.3·p)/0.1 − height`, puddle = `smoothstep(0, 0.1, depth)`: lows (terrain layer height, object albedo
+  luminance × 2) fill first and the shoreline follows them. Then wet = max(wet, puddle) for Lagarde's darkening;
+  roughness → 0.06 (Bevy clamps 0.089), reflectance → 0.354 (F0 0.02), metallic → 0; the normal-map gradient × (1 −
+  film)(1 − puddle) (flat water on the geometric normal), plus the rings' surface gradient × puddle × footprint fade
+  (rings gone by 6 cm per pixel). One resolve. Sky/probe reflection is Bevy's env map at that roughness (no SSR).
+- **Rings**: up to 4 drop grids (1.6 m cells × 1, 1.25, 0.8, 0.625: all divide the 256 m origin grid), grid k on over
+  rain k/4..(k+1)/4; per cell one drop a cycle (1.2 cycles/s, own start phase, random spot by an integer hash of cell
+  and cycle) with two trailing rings (a − b/2 + c/4); ring profile `blip`/`circle` ported; tilt 0.5.
+- **Uniform slot 8** `time`: x animation seconds (`Time`, wrapped at 1000 s = 1200 whole cycles), y rain at the camera
+  = `CurrentWeather.frame.surface.wet / SurfaceTuning::storm_wet_rate` (2), only while the puddle flag is on;
+  `ripple_clock` holds x while no rings can show (no uniform write on dry frames). Rain 0 stops rings at once.
+- **Inputs**: `SurfaceInput.footprint` (new: m per pixel from `dpdx/dpdy` of the world position, taken at the top of
+  `apply_surface_weather_standard` in uniform control flow; terrain from its own derivatives; far proxies 0).
+  `height` from albedo for StandardMaterial (`surface_height_of`), `TerrainSurface.height` (blended layer heights) for
+  terrain; terrain `basin` = mean `height_at` 2 m out along ±X, ±Z minus the centre, ≥ 0, computed only while
+  `surface_puddles_on()` and `N.y > 0.9`.
+- **Switches**: `SurfaceSettings.puddles` (`--off puddles`, off on Low) masks `FLAG_PUDDLE`. No new bindings or patch
+  hunks (SW unchanged); no shader def per layer yet (runtime flag only).
+- **Tests**: `sf_surface` `puddles_fill_from_the_lows_and_dry_back`, `standing_water_is_a_mirror_with_water_f0`,
+  `rings_follow_rain_and_stay_in_their_band` (incl. origin-grid divisibility, whole cycles at the wrap);
+  `sf_surface_bevy` `puddle_switch_and_ring_clock` (mask, rain, clock holds), constants twin (31 consts), preset
+  compiles now also require `surface_ripples` (and `terrain_basin` for terrain) with the def on.
+- **Known**: W3's streak tiles (22/18 m) don't divide the 256 m origin grid (streaks jump on an origin shift; logged).
+  Ring hash cycle jumps once per 1000 s wrap (one drop moves mid-cycle).

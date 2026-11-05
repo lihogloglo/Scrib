@@ -13,6 +13,16 @@
 //! - Facing: ground keeps all of it, walls `WALL_WET` along streaks, faces turned down none
 //!   (Clockwork `surfaceWater`, files/shaders/lib/light/surface.glsl, gitlab.com/OursCodeur/openmw
 //!   branch clockwork-alpha, commit c5e5a9a6362c35512823884753d2d5284af204fa, GPL-3.0).
+//! - Puddles (W4): Lagarde's accumulated water ("Water drop 2b - Dynamic rain and its effects",
+//!   2013): a water level against a height map with a soft shoreline, and the surface under it
+//!   turns to water (mirror gloss, F0 0.02, flat normal). The level comes from the puddle state
+//!   and a pool site score (noise, plus terrain concavity), in the form of Clockwork's
+//!   `surfaceWater` height branch (`1 + (pool - 1 + reach) / PUDDLE_DEPTH` against the height);
+//!   only level faces hold water.
+//! - Rain rings (W4): the ring profile of `files/shaders/lib/water/rain_ripples.glsl` (`blip`,
+//!   `blipDerivative`, `circle`: a ring running out from a drop, trailing rings, energy fading
+//!   over the cycle) as Clockwork uses it on puddles (same commit), on drop grids that turn on
+//!   quarter by quarter of rain intensity (Lagarde's ripple layers).
 
 pub const POROSITY_ROUGH_LOW: f32 = 0.3;
 pub const POROSITY_ROUGH_SPAN: f32 = 0.5;
@@ -25,8 +35,40 @@ pub const FILM_ROUGHNESS: f32 = 0.25;
 /// Bevy `reflectance` for F0 0.02 (F0 = 0.16·r²).
 pub const WATER_REFLECTANCE: f32 = 0.354;
 
+/// Puddles: the puddle state's reach into the pool score at 1, the pool span the height map
+/// covers, the shoreline (height units), the level-face ramp (`N.y`), terrain concavity at full
+/// (m) and its weight in the pool score, the water's perceptual roughness (Bevy clamps it to
+/// 0.089), the pool noise tile (m; divides the 256 m origin grid).
+pub const PUDDLE_REACH: f32 = 0.3;
+pub const PUDDLE_DEPTH: f32 = 0.1;
+pub const PUDDLE_EDGE: f32 = 0.1;
+pub const PUDDLE_FLAT_LOW: f32 = 0.94;
+pub const PUDDLE_FLAT_HIGH: f32 = 0.99;
+pub const BASIN_FULL_M: f32 = 0.1;
+pub const BASIN_POOL: f32 = 0.35;
+pub const PUDDLE_ROUGHNESS: f32 = 0.06;
+pub const POOL_TILE_M: f32 = 64.0;
+/// Object height from albedo luminance: dark grout and cracks fill first (Clockwork).
+pub const HEIGHT_FROM_LUMA: f32 = 2.0;
+/// Rain rings: drop cell (m, divides 256), ring radius (cell share), ring breadth (cycle share),
+/// cycles a second, the water's tilt per unit of ring slope, the pixel footprint (m) where rings
+/// start to fade and are gone (no shimmer under DLSS), the animation clock's wrap (s; the rate
+/// times it is whole, so the wrap doesn't pop).
+pub const RIPPLE_CELL_M: f32 = 1.6;
+pub const RIPPLE_RADIUS: f32 = 0.2;
+pub const RIPPLE_RING: f32 = 0.166_666_67;
+pub const RIPPLE_RATE: f32 = 1.2;
+pub const RIPPLE_TILT: f32 = 0.5;
+pub const RIPPLE_FADE_NEAR_M: f32 = 0.02;
+pub const RIPPLE_FADE_FAR_M: f32 = 0.06;
+pub const RIPPLE_TIME_WRAP_S: f32 = 1000.0;
+/// Drop grids; grid `k` turns on over rain `k/4 .. (k+1)/4`.
+pub const RIPPLE_GRIDS: usize = 4;
+/// Cell scale of each drop grid: each grid's cell (`RIPPLE_CELL_M` x scale) divides 256 m.
+pub const RIPPLE_SCALES: [f32; RIPPLE_GRIDS] = [1.0, 1.25, 0.8, 0.625];
+
 /// The named shader constants, as `layer.wesl` declares them (`const NAME: f32 = v;`).
-pub const SHADER_CONSTANTS: [(&str, f32); 9] = [
+pub const SHADER_CONSTANTS: [(&str, f32); 31] = [
     ("POROSITY_ROUGH_LOW", POROSITY_ROUGH_LOW),
     ("POROSITY_ROUGH_SPAN", POROSITY_ROUGH_SPAN),
     ("WET_DARK_POROUS", WET_DARK_POROUS),
@@ -36,6 +78,28 @@ pub const SHADER_CONSTANTS: [(&str, f32); 9] = [
     ("FILM_POROUS_HOLD", FILM_POROUS_HOLD),
     ("FILM_ROUGHNESS", FILM_ROUGHNESS),
     ("WATER_REFLECTANCE", WATER_REFLECTANCE),
+    ("PUDDLE_REACH", PUDDLE_REACH),
+    ("PUDDLE_DEPTH", PUDDLE_DEPTH),
+    ("PUDDLE_EDGE", PUDDLE_EDGE),
+    ("PUDDLE_FLAT_LOW", PUDDLE_FLAT_LOW),
+    ("PUDDLE_FLAT_HIGH", PUDDLE_FLAT_HIGH),
+    ("BASIN_FULL_M", BASIN_FULL_M),
+    ("BASIN_POOL", BASIN_POOL),
+    ("PUDDLE_ROUGHNESS", PUDDLE_ROUGHNESS),
+    ("POOL_TILE_M", POOL_TILE_M),
+    ("HEIGHT_FROM_LUMA", HEIGHT_FROM_LUMA),
+    ("RIPPLE_CELL_M", RIPPLE_CELL_M),
+    ("RIPPLE_RADIUS", RIPPLE_RADIUS),
+    ("RIPPLE_RING", RIPPLE_RING),
+    ("RIPPLE_RATE", RIPPLE_RATE),
+    ("RIPPLE_TILT", RIPPLE_TILT),
+    ("RIPPLE_FADE_NEAR_M", RIPPLE_FADE_NEAR_M),
+    ("RIPPLE_FADE_FAR_M", RIPPLE_FADE_FAR_M),
+    ("RIPPLE_TIME_WRAP_S", RIPPLE_TIME_WRAP_S),
+    ("RIPPLE_SCALE_0", RIPPLE_SCALES[0]),
+    ("RIPPLE_SCALE_1", RIPPLE_SCALES[1]),
+    ("RIPPLE_SCALE_2", RIPPLE_SCALES[2]),
+    ("RIPPLE_SCALE_3", RIPPLE_SCALES[3]),
 ];
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -105,6 +169,86 @@ pub fn wet_material(
     }
 }
 
+/// How level a face is for standing water (`surface_puddle_flat`), `up` the geometric normal's Y.
+pub fn puddle_flat(up: f32) -> f32 {
+    smoothstep(PUDDLE_FLAT_LOW, PUDDLE_FLAT_HIGH, up)
+}
+
+/// The pool site score (`surface_pool_of`): `noise` the pool noise (0..1), `basin` the terrain's
+/// concavity in meters (0 off terrain).
+pub fn pool(noise: f32, basin: f32) -> f32 {
+    (noise + BASIN_POOL * (basin / BASIN_FULL_M).clamp(0.0, 1.0)).clamp(0.0, 1.0)
+}
+
+/// An object's height signal from its albedo luminance (`surface_height_of`).
+pub fn height_of(luma: f32) -> f32 {
+    (HEIGHT_FROM_LUMA * luma).clamp(0.0, 1.0)
+}
+
+/// Water depth over the height map, in height units (`surface_puddle`): the water level
+/// `(pool - 1 + reach) / PUDDLE_DEPTH` minus the height; `p` the puddle state (0..1, sheltered).
+pub fn puddle_depth(p: f32, pool: f32, height: f32) -> f32 {
+    (pool - 1.0 + PUDDLE_REACH * p) / PUDDLE_DEPTH - height
+}
+
+/// Standing water (0..1) on a face: level x the soft shoreline over the depth.
+pub fn puddle(p: f32, pool: f32, height: f32, up: f32) -> f32 {
+    puddle_flat(up) * smoothstep(0.0, PUDDLE_EDGE, puddle_depth(p, pool, height))
+}
+
+/// The surface under standing water (`surface_puddle_material`): water's roughness and F0 on a
+/// dielectric top. Returns (perceptual roughness, reflectance, metallic).
+pub fn puddle_material(perceptual_roughness: f32, reflectance: f32, metallic: f32, puddle: f32) -> (f32, f32, f32) {
+    (
+        mix(perceptual_roughness, PUDDLE_ROUGHNESS, puddle),
+        mix(reflectance, WATER_REFLECTANCE, puddle),
+        mix(metallic, 0.0, puddle),
+    )
+}
+
+/// Drop grid weights for rain (0..1) at the point: grid `k` fades in over `k/4 .. (k+1)/4`
+/// (Lagarde's ripple layers), so drizzle rings sparsely and a storm densely.
+pub fn ripple_weights(rain: f32) -> [f32; RIPPLE_GRIDS] {
+    #[allow(clippy::cast_precision_loss)]
+    let n = RIPPLE_GRIDS as f32;
+    #[allow(clippy::cast_precision_loss)]
+    std::array::from_fn(|k| ((rain - k as f32 / n) * n).clamp(0.0, 1.0))
+}
+
+/// Rings fade as a pixel covers more than a ring's breadth (`footprint` m per pixel).
+pub fn ripple_fade(footprint: f32) -> f32 {
+    1.0 - smoothstep(RIPPLE_FADE_NEAR_M, RIPPLE_FADE_FAR_M, footprint)
+}
+
+/// The ring's height bump (`rain_ripples.glsl` `blip`).
+pub fn blip(x: f32) -> f32 {
+    let x = (1.0 - x * x).max(0.0);
+    x * x * x
+}
+
+/// Its derivative (`blipDerivative`).
+pub fn blip_derivative(x: f32) -> f32 {
+    let x = x.clamp(-1.0, 1.0);
+    let n = x * x - 1.0;
+    -6.0 * x * n * n
+}
+
+/// One drop's ring slope (`surface_ring`): `to` the point minus the drop (cell units), `phase`
+/// the drop's cycle (0..1). Zero outside the ring's band `R (phase - 2 RING) .. R phase`.
+pub fn ring(to: [f32; 2], phase: f32) -> [f32; 2] {
+    let d = (to[0] * to[0] + to[1] * to[1]).sqrt();
+    let follower = (phase - d / RIPPLE_RADIUS) / RIPPLE_RING - 1.0;
+    if !(-1.0..=1.0).contains(&follower) {
+        return [0.0, 0.0];
+    }
+    let energy = 1.0 - phase;
+    let range = blip(follower.min(0.0));
+    let k = -blip_derivative(follower) * 5.0 * energy * energy;
+    let v = [to[0] * k, to[1] * k, 0.5];
+    let s = energy * range / (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    [v[0] * s, v[1] * s]
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp)]
@@ -170,5 +314,98 @@ mod tests {
         assert!((facing_wet(0.0, 0.0) - WALL_WET * 0.3).abs() < 1e-6);
         assert_eq!(facing_wet(-0.5, 1.0), 0.0);
         assert_eq!(facing_wet(-0.3, 1.0), 0.0);
+    }
+
+    #[test]
+    fn puddles_fill_from_the_lows_and_dry_back() {
+        // No puddle state, no water, whatever the site.
+        assert_eq!(puddle(0.0, 1.0, 0.0, 1.0), 0.0);
+        // Full state: the reach submerges pools past 1 - reach (+ depth over the height map).
+        let line = 1.0 - PUDDLE_REACH;
+        assert_eq!(puddle(1.0, line, 0.0, 1.0), 0.0);
+        assert!(puddle_depth(1.0, line + 0.05, 0.5).abs() < 1e-5);
+        assert_eq!(puddle(1.0, line + 0.07, 0.5, 1.0), 1.0);
+        // Shoreline: half way through the edge, smoothstep's half.
+        let half = line + PUDDLE_DEPTH * (0.5 + 0.5 * PUDDLE_EDGE);
+        assert!((puddle(1.0, half, 0.5, 1.0) - 0.5).abs() < 1e-3);
+        // Lows (cracks, dark grout) fill first; a smaller state reaches fewer sites.
+        assert!(puddle(1.0, line + 0.04, 0.2, 1.0) > puddle(1.0, line + 0.04, 0.6, 1.0));
+        assert!(puddle(0.5, line + 0.07, 0.5, 1.0) < puddle(1.0, line + 0.07, 0.5, 1.0));
+        // Only level faces: none on a 30 degree slope or a wall.
+        assert_eq!(puddle(1.0, 1.0, 0.0, 0.85), 0.0);
+        assert_eq!(puddle(1.0, 1.0, 0.0, 0.0), 0.0);
+        assert_eq!(puddle_flat(PUDDLE_FLAT_HIGH), 1.0);
+        // Terrain concavity raises the pool score, capped at BASIN_FULL_M; bumps (negative) don't.
+        assert_eq!(pool(0.5, 0.0), 0.5);
+        assert!((pool(0.5, BASIN_FULL_M) - (0.5 + BASIN_POOL)).abs() < 1e-6);
+        assert_eq!(pool(0.5, 1.0), pool(0.5, BASIN_FULL_M));
+        assert_eq!(pool(0.5, -1.0), 0.5);
+        assert_eq!(pool(0.9, 1.0), 1.0);
+        assert_eq!(height_of(0.25), 0.5);
+        assert_eq!(height_of(0.9), 1.0);
+    }
+
+    #[test]
+    fn standing_water_is_a_mirror_with_water_f0() {
+        assert_eq!(puddle_material(0.9, 0.5, 1.0, 0.0), (0.9, 0.5, 1.0));
+        let (rough, reflectance, metallic) = puddle_material(0.9, 0.5, 1.0, 1.0);
+        assert!((rough - PUDDLE_ROUGHNESS).abs() < 1e-6);
+        assert!((reflectance - WATER_REFLECTANCE).abs() < 1e-6);
+        assert_eq!(metallic, 0.0);
+        // F0 = 0.16 r^2 = 0.02.
+        assert!((0.16 * WATER_REFLECTANCE * WATER_REFLECTANCE - 0.02).abs() < 1e-3);
+    }
+
+    #[test]
+    fn rings_follow_rain_and_stay_in_their_band() {
+        assert_eq!(ripple_weights(0.0), [0.0; RIPPLE_GRIDS]);
+        assert_eq!(ripple_weights(1.0), [1.0; RIPPLE_GRIDS]);
+        assert_eq!(ripple_weights(0.125), [0.5, 0.0, 0.0, 0.0]);
+        assert_eq!(ripple_weights(0.5), [1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(ripple_fade(0.0), 1.0);
+        assert_eq!(ripple_fade(RIPPLE_FADE_FAR_M), 0.0);
+        // Every grid's cell and the pool tile divide the 256 m origin grid (no jump on an origin
+        // shift), and the clock wraps on whole cycles.
+        for s in RIPPLE_SCALES {
+            let n = 256.0 / (RIPPLE_CELL_M * s);
+            assert!((n - n.round()).abs() < 1e-3, "{s}");
+        }
+        assert_eq!((256.0 / POOL_TILE_M).fract(), 0.0);
+        let turns = RIPPLE_RATE * RIPPLE_TIME_WRAP_S;
+        assert!((turns - turns.round()).abs() < 1e-3);
+        // Ring profile: zero at the drop before the ring passes and outside the band.
+        assert_eq!(ring([0.0, 0.0], 0.0), [0.0, 0.0]);
+        assert_eq!(ring([0.15, 0.0], 0.1), [0.0, 0.0]);
+        assert_eq!(blip(0.0), 1.0);
+        assert_eq!(blip(1.0), 0.0);
+        assert_eq!(blip_derivative(0.0), 0.0);
+        // The ring runs out with the phase: nothing behind its trailing edge
+        // d = R (phase - 2 RING), a slope just past it.
+        let r = |d: f32, phase: f32| ring([d, 0.0], phase)[0];
+        let trailing = |phase: f32| RIPPLE_RADIUS * (phase - 2.0 * RIPPLE_RING);
+        assert_eq!(r(trailing(0.5) - 0.002, 0.5), 0.0);
+        assert!(r(trailing(0.5) + 0.01, 0.5).abs() > 0.0);
+        // Symmetric about the drop, finite, at most a unit vector's share.
+        for i in 0..=40 {
+            #[allow(clippy::cast_precision_loss)]
+            let d = i as f32 * 0.005;
+            for phase in [0.4, 0.7, 0.95] {
+                let a = ring([d, 0.0], phase);
+                let b = ring([-d, 0.0], phase);
+                assert!(a[0].is_finite() && a[0].abs() <= 1.0 && a[1] == 0.0);
+                assert!((a[0] + b[0]).abs() < 1e-6);
+            }
+        }
+        // Old drops ring weaker (energy fades over the cycle).
+        let peak = |phase: f32| {
+            (0..=200)
+                .map(|i| {
+                    #[allow(clippy::cast_precision_loss)]
+                    let d = i as f32 * 0.001;
+                    r(d, phase).abs()
+                })
+                .fold(0.0, f32::max)
+        };
+        assert!(peak(0.9) < peak(0.5));
     }
 }

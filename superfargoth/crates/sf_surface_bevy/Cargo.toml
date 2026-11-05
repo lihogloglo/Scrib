@@ -1,6 +1,6 @@
 [package]
 name = "sf_surface_bevy"
-description = "Surface weather on the GPU (surface-weather.md W2-W3): the cell window texture, the vertical shelter depth map, the noise atlas, SurfaceUniform, the mesh-view bindings of the vendored bevy_pbr patch SW and the `sf_surface_bevy::layer` WESL module (wetness)"
+description = "Surface weather on the GPU (surface-weather.md W2-W4): the cell window texture, the vertical shelter depth map, the noise atlas, SurfaceUniform, the mesh-view bindings of the vendored bevy_pbr patch SW and the `sf_surface_bevy::layer` WESL module (wetness, puddles)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -25,6 +25,8 @@ bevy_pbr.workspace = true
 # ShaderBuffer, RenderApp, partial texture writes.
 bevy_render.workspace = true
 bevy_shader.workspace = true
+# Time: the rain rings' animation clock (W4).
+bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 # Counters (`surface/...`) when the app runs `SfDiagPlugin`.
 sf_diag_bevy.workspace = true

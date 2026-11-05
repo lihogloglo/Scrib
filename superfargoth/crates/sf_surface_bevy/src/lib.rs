@@ -22,8 +22,9 @@
 //! - **[`SurfaceOrigin`]**, **[`SurfaceSettings`]**, [`NoSurfaceShelter`]: the game's glue (the
 //!   floating origin, the A/B switches and preset, terrain patches out of the shelter map).
 //!
-//! W3 shows wetness (Lagarde's model, film normal flattening, wall streaks); W2's debug views
-//! stay (`surface debug exposure|cells|porosity`).
+//! W3 shows wetness (Lagarde's model, film normal flattening, wall streaks), W4 puddles (water
+//! level against the height map, flat water, rain rings while it rains); W2's debug views stay
+//! (`surface debug exposure|cells|porosity`).
 
 mod cells;
 mod render;
@@ -45,7 +46,9 @@ use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
 use sf_coords::WorldPos;
 use sf_surface::view::{NOISE_SIZE, WINDOW_CELLS, noise_atlas};
-use sf_weather_bevy::SurfaceDebug;
+use bevy_time::Time;
+use sf_surface::layer::RIPPLE_TIME_WRAP_S;
+use sf_weather_bevy::{CurrentWeather, SurfaceDebug, WorldSurface};
 
 pub use cells::{CellWrite, CellWrites};
 pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
@@ -64,11 +67,14 @@ pub struct SurfaceOrigin(pub WorldPos);
 /// A/B switches and the preset (surface-weather.md "A/B switches", "Budget"). Off parts keep
 /// the hook compiled in and clear its flags (one uniform branch per pixel).
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools, reason = "independent A/B switches, one per --off part")]
 pub struct SurfaceSettings {
     /// `--off surface`: the whole layer.
     pub layer: bool,
     /// `--off wet`: wetness.
     pub wet: bool,
+    /// `--off puddles` (and the Low preset): standing water and its rain rings (W4).
+    pub puddles: bool,
     /// The shelter map (off on Low and with `--off shelter`): exposure 1 everywhere.
     pub shelter: bool,
 }
@@ -78,6 +84,7 @@ impl Default for SurfaceSettings {
         Self {
             layer: true,
             wet: true,
+            puddles: true,
             shelter: true,
         }
     }
@@ -89,8 +96,14 @@ impl SurfaceSettings {
         if !self.layer {
             return 0;
         }
-        let all = FLAG_WET | FLAG_PUDDLE | FLAG_SNOW | FLAG_ASH;
-        if self.wet { all } else { all & !FLAG_WET }
+        let mut mask = FLAG_WET | FLAG_PUDDLE | FLAG_SNOW | FLAG_ASH;
+        if !self.wet {
+            mask &= !FLAG_WET;
+        }
+        if !self.puddles {
+            mask &= !FLAG_PUDDLE;
+        }
+        mask
     }
 }
 
@@ -144,6 +157,7 @@ impl Plugin for SurfaceWeatherPlugin {
                     cells::update_cells,
                     debug_view,
                     shelter::update_shelter,
+                    ripple_clock,
                     count_uniform,
                 )
                     .chain()
@@ -221,6 +235,43 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 fn debug_view(debug: Res<SurfaceDebug>, mut uniform: ResMut<SurfaceUniform>) {
     if uniform.debug != debug.0 {
         uniform.debug = debug.0;
+    }
+}
+
+/// The puddles' rain rings: the rain at the camera (the weather frame's wetting rate over the
+/// storm's, `SurfaceTuning::storm_wet_rate`) and the animation seconds (`Time`, not the game
+/// clock, wrapped on whole ring cycles). Both stay put while no rings can show (no puddles in the
+/// window or no rain), so a dry frame writes no uniform; rain 0 stops the rings at once.
+fn ripple_clock(
+    weather: Option<Res<CurrentWeather>>,
+    surface: Option<Res<WorldSurface>>,
+    time: Option<Res<Time>>,
+    mut uniform: ResMut<SurfaceUniform>,
+) {
+    let rain = match (&weather, &surface) {
+        (Some(w), Some(s)) if w.valid && uniform.flags & FLAG_PUDDLE != 0 => {
+            rain_of(w.frame.surface.wet, s.tuning.storm_wet_rate)
+        }
+        _ => 0.0,
+    };
+    if uniform.time.y.to_bits() != rain.to_bits() {
+        uniform.time.y = rain;
+    }
+    if rain > 0.0
+        && let Some(time) = time
+    {
+        #[allow(clippy::cast_possible_truncation)]
+        let seconds = time.elapsed_secs_f64().rem_euclid(f64::from(RIPPLE_TIME_WRAP_S)) as f32;
+        uniform.time.x = seconds;
+    }
+}
+
+/// Rain intensity (0..1) from a wetting rate and the storm's.
+pub(crate) fn rain_of(wet_rate: f32, storm_wet_rate: f32) -> f32 {
+    if storm_wet_rate > 0.0 {
+        (wet_rate / storm_wet_rate).clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 

@@ -93,13 +93,16 @@ pub enum Part {
     Surface,
     /// Wetness alone (surface-weather.md W3): off, the ground and walls stay dry after rain (an A/B).
     Wet,
+    /// Puddles alone (surface-weather.md W4): off, no standing water or rain rings (an A/B; the
+    /// Low preset runs without them).
+    Puddles,
     /// The surface shelter map: off, roofs and trees don't keep the ground dry (a diagnostic; the Low
     /// preset runs without it).
     Shelter,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 49] = [
+    const ALL: [(&'static str, Part); 50] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -149,6 +152,7 @@ impl Part {
         ("delight", Part::Delight),
         ("surface", Part::Surface),
         ("wet", Part::Wet),
+        ("puddles", Part::Puddles),
         ("shelter", Part::Shelter),
     ];
 

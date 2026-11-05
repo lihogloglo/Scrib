@@ -14,7 +14,8 @@ import bevy_pbr::render::pbr_types::{
     STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ALPHA_TO_COVERAGE,
 };
 import sf_surface_bevy::layer::{
-    SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, apply_surface_layer, surface_porosity,
+    SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, apply_surface_layer,
+    surface_porosity, surface_height_of,
 };
 
 @group(0) @binding(43) var<uniform> surface_uniform: SurfaceUniform;
@@ -31,22 +32,28 @@ fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {
 }
 
 /// A layer input for `pbr` of class `surface_class`: porosity from the material (Lagarde's
-/// heuristic until a material carries its own, open question 3), no height or basin (W4).
+/// heuristic until a material carries its own, open question 3), height from the albedo (dark
+/// grout fills first), no basin (terrain only), no footprint (no rain rings; callers that know
+/// their screen derivatives set it).
 fn surface_input_of(pbr: PbrInput, surface_class: u32) -> SurfaceInput {
     var s: SurfaceInput;
     s.world_pos = pbr.world_position.xyz;
-    s.height = 0.5;
+    s.height = surface_height_of(pbr.material.base_color.rgb);
     s.basin = 0.0;
     s.porosity = surface_porosity(pbr.material.metallic, pbr.material.perceptual_roughness);
     s.surface_class = surface_class;
     s.instance_wet = 0.0;
+    s.footprint = 0.0;
     return s;
 }
 
 /// StandardMaterial (bevy_pbr `render/pbr.wesl`, patch "SW"): statics, held items and fades as
 /// STATIC, skinned meshes as DYNAMIC (dry until W8 feeds `instance_wet`). Unlit and
-/// alpha-blended materials (glass, fog translucents) are left alone.
+/// alpha-blended materials (glass, fog translucents) are left alone. Called in the fragment's
+/// uniform control flow: the footprint's derivatives come first, before any branch.
 fn apply_surface_weather_standard(pbr: ptr<function, PbrInput>) {
+    let p = (*pbr).world_position.xyz;
+    let footprint = max(length(dpdx(p)), length(dpdy(p)));
     let flags = (*pbr).material.flags;
     if (flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) != 0u {
         return;
@@ -60,5 +67,12 @@ fn apply_surface_weather_standard(pbr: ptr<function, PbrInput>) {
     var surface_class = CLASS_STATIC;
 @if(SKINNED)
     surface_class = CLASS_DYNAMIC;
-    apply_surface_weather(pbr, surface_input_of(*pbr, surface_class));
+    var s = surface_input_of(*pbr, surface_class);
+    s.footprint = footprint;
+    apply_surface_weather(pbr, s);
+}
+
+/// Whether puddles are on in the cell window (terrain computes its basin only then).
+fn surface_puddles_on() -> bool {
+    return (surface_uniform.misc.x & FLAG_PUDDLE) != 0u;
 }
