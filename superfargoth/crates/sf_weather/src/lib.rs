@@ -26,6 +26,7 @@ mod book;
 mod frame;
 mod hash;
 mod map;
+mod precip_wind;
 mod records;
 mod state;
 
@@ -38,6 +39,7 @@ pub use frame::{
     BORDER_BAND_M, CueFrame, LIGHTNING_CAP_PER_HOUR, LightningStrike, MAX_VISIBILITY_M, OneShotFrame, PrecipFrame, SPEED_OF_SOUND, StormFrame,
     WORLD_STRIKE_CELL_M, WORLD_STRIKE_RADIUS_M, WeatherFrame, WeatherInput, border_blend, border_weight, evaluate, evaluate_into, world_strikes,
 };
+pub use precip_wind::{CALM_MPS, DIRECTION_TAU_S, DROP_HEIGHT_M, PrecipWindFilter, SPEED_TAU_S, TURN_MIN_MPS, UNCAPPED_DEG, calm_onset, drop_drift, tilt_deg};
 pub use map::{ClimateRaster, ClimateRow, MAP_EPSILON, MAP_LAYERS, MAP_SIZE, MAP_WGSL, MapGpuGeometry, MapTexel, MapUpdate, Site, WeatherMap, resolve_rects, row};
 pub use records::{
     CLIMATE_KIND, Climate, CloudTerms, Cue, FogTerms, Lightning, OneShotSet, PRECIP_KIND, PRESET_KIND, PrecipKind, PrecipLook,

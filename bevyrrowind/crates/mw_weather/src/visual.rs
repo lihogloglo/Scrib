@@ -51,6 +51,25 @@ pub const BANK_FALLOFF: f32 = 12.0;
 /// "Wind Speed": linear, 1-15 m/s); the speed wanders ±25 % around it.
 pub const WIND_SPEED_RANGE: [f32; 2] = [1.0, 15.0];
 
+/// Cap on the rain's lean from vertical in rain and the dry weathers (a
+/// transition blends their caps), degrees (soft: `sf_weather::drop_drift`;
+/// owner 2026-11-05: "the rain is very slanted, never vertical"). Morrowind
+/// itself leans rain only a few degrees (`OpenMW` `sky.cpp`, `atan(wind / 50)`).
+pub const RAIN_TILT_MAX_DEG: f32 = 20.0;
+/// The same in a thunderstorm: storm rain leans further.
+pub const STORM_TILT_MAX_DEG: f32 = 35.0;
+/// Snow, ash, blight and blizzards blow free (the physical lean).
+pub const BLOWING_TILT_MAX_DEG: f32 = sf_weather::UNCAPPED_DEG;
+
+/// The precipitation tilt cap of `ty`, degrees.
+pub fn precip_tilt_max_deg(ty: WeatherType) -> f32 {
+    match ty {
+        WeatherType::Thunderstorm => STORM_TILT_MAX_DEG,
+        WeatherType::Ashstorm | WeatherType::Blight | WeatherType::Snow | WeatherType::Blizzard => BLOWING_TILT_MAX_DEG,
+        WeatherType::Clear | WeatherType::Cloudy | WeatherType::Foggy | WeatherType::Overcast | WeatherType::Rain => RAIN_TILT_MAX_DEG,
+    }
+}
+
 /// Red Mountain's summit (the highest `LAND` vertex, cell (3, 9), 271 m, in
 /// `Morrowind.esm`), Morrowind units. The real-install test re-finds it.
 pub const RED_MOUNTAIN_SUMMIT: [f32; 3] = [29_568.0, 73_728.0, 18_952.0];
@@ -167,16 +186,32 @@ pub fn ground_fog(hour: f32) -> f32 {
 /// hour, keys that their neighbours' interpolation reproduces dropped.
 #[allow(clippy::many_single_char_names)]
 pub fn hour_curve(f: impl Fn(f32) -> f32) -> KeyCurve {
+    hour_curve_at(f, &[])
+}
+
+/// [`hour_curve`] with extra sample hours (in `[0, 24]`), e.g. the corners of
+/// a piecewise function that miss the quarter-hour grid.
+pub fn hour_curve_at(f: impl Fn(f32) -> f32, extra: &[f32]) -> KeyCurve {
     #[allow(clippy::cast_precision_loss)]
-    let keys: Vec<(f32, f32)> = (0..=96)
-        .map(|i| (i as f32 * 0.25, f(i as f32 * 0.25)))
-        .collect();
+    let mut hours: Vec<f32> = (0..=96).map(|i| i as f32 * 0.25).collect();
+    hours.extend(extra.iter().filter(|h| (0.0..=24.0).contains(*h)));
+    hours.sort_by(f32::total_cmp);
+    hours.dedup();
+    let keys: Vec<(f32, f32)> = hours.into_iter().map(|h| (h, f(h))).collect();
+    // A key is dropped only if the line from the last kept key to the next
+    // one reproduces it and every key dropped since (the error of a run of
+    // drops can't add up past the tolerance).
     let mut out = vec![keys[0]];
-    for pair in keys[1..].windows(2) {
-        let (a, b, c) = (out[out.len() - 1], pair[0], pair[1]);
-        let t = (b.0 - a.0) / (c.0 - a.0);
-        if (a.1 + (c.1 - a.1) * t - b.1).abs() > 1e-4 {
-            out.push(b);
+    let mut start = 0;
+    for i in 1..keys.len() - 1 {
+        let (a, c) = (keys[start], keys[i + 1]);
+        let off = keys[start + 1..=i].iter().any(|b| {
+            let t = (b.0 - a.0) / (c.0 - a.0);
+            (a.1 + (c.1 - a.1) * t - b.1).abs() > 1e-4
+        });
+        if off {
+            out.push(keys[i]);
+            start = i;
         }
     }
     out.push(keys[keys.len() - 1]);
@@ -203,6 +238,7 @@ pub(crate) fn apply(ty: WeatherType, p: &mut WeatherPreset, w: &mut WeatherIni<'
         dust_tint: look.dust_tint,
         haze_by_hour: hour_curve(morning_haze),
         sun_glare: w.f32(&section, "Glare View").map_or(1.0, |g| g.clamp(0.0, 1.0)),
+        ambient_tint_by_hour: crate::ambient::tint_curves(ty, w),
         ..SkyTerms::default()
     };
 
@@ -231,6 +267,7 @@ pub(crate) fn apply(ty: WeatherType, p: &mut WeatherPreset, w: &mut WeatherIni<'
         } else {
             0.0
         },
+        precip_tilt_max_deg: precip_tilt_max_deg(ty),
         ..WindTerms::default()
     };
 

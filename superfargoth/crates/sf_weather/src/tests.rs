@@ -533,6 +533,39 @@ fn sun_glare_follows_the_sky_channel_without_pops() {
 }
 
 #[test]
+fn ambient_tint_follows_the_hour_and_the_sky_channel() {
+    use sf_sky::KeyCurve;
+    let rgb = |c: [f32; 3]| c.map(KeyCurve::constant);
+    let mut p = presets();
+    // Clear: red until 12 h, green from 14 h (by hour); rain: blue; the rest none.
+    p[0].1.sky.ambient_tint_by_hour = [
+        KeyCurve::new(vec![(12.0, 1.0), (14.0, 0.0)]),
+        KeyCurve::new(vec![(12.0, 0.0), (14.0, 1.0)]),
+        KeyCurve::constant(0.0),
+    ];
+    p[2].1.sky.ambient_tint_by_hour = rgb([0.0, 0.0, 1.0]);
+    let b = WeatherBook::new(p, climates(), precip());
+    let (s, c) = forced(&b, "sunny", "rain", 6.0);
+    let climates = [(c, 1.0)];
+    let tint = |t: f64| evaluate(&b, &s, &input(&climates, t)).sky.ambient_tint;
+    assert_eq!(tint(5.0), Some(glam::Vec3::X), "clear before the change");
+    assert_eq!(tint(13.0), Some(glam::Vec3::Z), "rain after it");
+    // Mid-transition: the sky channel's weights, which sum to 1.
+    let mid = tint(10.6).unwrap();
+    assert!(mid.x > 0.0 && mid.z > 0.0 && mid.y == 0.0, "{mid}");
+    assert!((mid.x + mid.z - 1.0).abs() < 1e-5, "{mid}");
+    // By hour: the clear climate at 13 h (half way red -> green) and 20 h.
+    let s = WeatherState::new(5);
+    let sunny = [(b.climate(&id("sunny")).unwrap(), 1.0)];
+    let at = |h: f32| evaluate(&b, &s, &WeatherInput { hour_of_day: h, ..input(&sunny, 37.0) }).sky.ambient_tint;
+    assert_eq!(at(13.0), Some(glam::Vec3::new(0.5, 0.5, 0.0)));
+    assert_eq!(at(20.0), Some(glam::Vec3::Y));
+    // No preset with a tint: none (the renderer's default).
+    let snowy = [(b.climate(&id("snowy")).unwrap(), 1.0)];
+    assert_eq!(evaluate(&b, &s, &input(&snowy, 37.0)).sky.ambient_tint, None);
+}
+
+#[test]
 fn world_strikes_are_deterministic_and_placed_in_stormy_cells() {
     let b = book();
     let s = WeatherState::new(9);

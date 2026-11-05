@@ -154,6 +154,9 @@ pub struct WeatherFrame {
     pub storms: Vec<StormFrame>,
     /// Meteorological visibility at the camera (Koschmieder), meters.
     pub visibility_m: f32,
+    /// Cap on the precipitation's lean from vertical, degrees (the presets'
+    /// `wind.precip_tilt_max_deg`, blended like the wind). Presentation only.
+    pub precip_tilt_max_deg: f32,
 }
 
 impl Default for WeatherFrame {
@@ -171,6 +174,7 @@ impl Default for WeatherFrame {
             tags: Vec::new(),
             storms: Vec::new(),
             visibility_m: MAX_VISIBILITY_M,
+            precip_tilt_max_deg: crate::UNCAPPED_DEG,
         }
     }
 }
@@ -242,6 +246,9 @@ struct Acc {
     dust_tint: glam::Vec3,
     dimming: f32,
     glare: f32,
+    /// Ambient tint of the presets that have one, and their sky weight.
+    ambient_tint: glam::Vec3,
+    w_ambient: f32,
     w_clouds: f32,
     w_sky: f32,
     w_fog: f32,
@@ -249,6 +256,7 @@ struct Acc {
     gustiness: f32,
     w_wind: f32,
     gust_length: (f32, f32),
+    precip_tilt: f32,
 }
 
 macro_rules! add_scaled {
@@ -289,6 +297,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
         frame.surface = d.surface;
         frame.lightning_per_hour = 0.0;
         frame.visibility_m = d.visibility_m;
+        frame.precip_tilt_max_deg = d.precip_tilt_max_deg;
         return;
     }
 
@@ -314,6 +323,10 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
             acc.dust_tint += rec.sky.dust_tint * w[SKY];
             acc.dimming += rec.sky.overcast_dimming * w[SKY];
             acc.glare += rec.sky.sun_glare * w[SKY];
+            if let Some(tint) = rec.sky.ambient_tint(input.hour_of_day) {
+                acc.ambient_tint += tint * w[SKY];
+                acc.w_ambient += w[SKY];
+            }
             acc.w_sky += w[SKY];
             let f = &rec.fog;
             let hf = by_hour(&f.height_by_hour, input.hour_of_day);
@@ -325,6 +338,7 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
             acc.wind += preset_wind(state, climate.key, bp, input.hours) * w[WIND];
             acc.gustiness += rec.wind.gustiness * w[WIND];
             acc.w_wind += w[WIND];
+            acc.precip_tilt += rec.wind.precip_tilt_max_deg * w[WIND];
             if w[WIND] > acc.gust_length.0 {
                 acc.gust_length = (w[WIND], rec.wind.gust_length);
             }
@@ -386,9 +400,11 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
         dust: acc.dust * ns,
         dust_tint: acc.dust_tint * ns,
         sun_glare: if acc.w_sky > 0.0 { acc.glare * ns } else { 1.0 },
+        ambient_tint: (acc.w_ambient > 0.0).then(|| acc.ambient_tint / acc.w_ambient),
         wind,
     };
     frame.surface = surface;
+    frame.precip_tilt_max_deg = if acc.w_wind > 0.0 { acc.precip_tilt * nw } else { crate::UNCAPPED_DEG };
     frame.lightning_per_hour = lightning_rate;
 
     let mut extinction = frame.fog.extinction_at(input.altitude, 0.0);

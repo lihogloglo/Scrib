@@ -151,6 +151,8 @@ pub struct Switches<'w> {
     surface: Option<ResMut<'w, sf_surface_bevy::SurfaceSettings>>,
     /// The fog (`fog`: height fog, banks and froxels, live).
     fog: Option<ResMut<'w, sf_atmos_bevy::Fog>>,
+    /// The sky's render options (`weather_ambient`: the weather's ambient tint, RO-16 fix 2).
+    sky_options: Option<ResMut<'w, sf_sky_bevy::SkyRenderOptions>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -176,11 +178,14 @@ pub enum Switch {
     Surface,
     /// The fog (`sf_atmos_bevy`): height fog, banks and froxels, as `--off fog` but live.
     Fog,
+    /// RO-16 fix 2: the sky's ambient floor takes the weather's tint (`Morrowind.ini` ambient
+    /// colours by time of day); off: the old fixed blue (`SkyRenderOptions::ambient_color`).
+    WeatherAmbient,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -194,6 +199,7 @@ impl Switch {
         Self::TerrainTint,
         Self::Surface,
         Self::Fog,
+        Self::WeatherAmbient,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -211,6 +217,7 @@ impl Switch {
             Self::TerrainTint => "terrain_tint",
             Self::Surface => "surface",
             Self::Fog => "fog",
+            Self::WeatherAmbient => "weather_ambient",
         }
     }
 
@@ -237,6 +244,7 @@ impl Switch {
             Self::TerrainTint => "terrain land tint",
             Self::Surface => "surface weather",
             Self::Fog => "fog",
+            Self::WeatherAmbient => "weather ambient tint",
         }
     }
 
@@ -258,6 +266,7 @@ impl Switch {
             Self::TerrainTint => terrain.map(|t| !t.raw_layers),
             Self::Surface => s.surface.as_ref().map(|w| w.layer),
             Self::Fog => s.fog.as_ref().map(|f| f.enabled),
+            Self::WeatherAmbient => s.sky_options.as_ref().map(|o| o.weather_ambient_tint),
         }
     }
 
@@ -270,6 +279,7 @@ impl Switch {
                 Self::Rings => "no streaming here",
                 Self::Surface => "not in this run (interior)",
                 Self::Fog => "not in this run (interior or --off sky)",
+                Self::WeatherAmbient => "not in this run (--off sky)",
                 _ => "no terrain here",
             };
             return format!("{}: {why}", self.label());
@@ -306,6 +316,11 @@ impl Switch {
             Self::Fog => {
                 if let Some(f) = s.fog.as_mut() {
                     f.enabled = v;
+                }
+            }
+            Self::WeatherAmbient => {
+                if let Some(o) = s.sky_options.as_mut() {
+                    o.weather_ambient_tint = v;
                 }
             }
             Self::TerrainFarShadows
@@ -579,7 +594,7 @@ fn overlay(
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
              Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
-             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  ambient, render.bloom",
+             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  weather_ambient {}  ambient, render.bloom",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),
@@ -593,6 +608,7 @@ fn overlay(
             opt(Switch::TerrainTint),
             opt(Switch::Surface),
             opt(Switch::Fog),
+            opt(Switch::WeatherAmbient),
         );
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {
             let _ = write!(out, "\nlook for: {look}");

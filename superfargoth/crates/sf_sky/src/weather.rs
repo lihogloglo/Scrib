@@ -33,6 +33,11 @@ pub struct Weather {
     /// Multiplier on `SunDiskLook::glare`, `[0, 1]`: 1 a clear sky, 0 no
     /// halo (overcast, rain, fog).
     pub sun_glare: f32,
+    /// Linear RGB tint of the ambient floor ([`crate::SkySettings::ambient`]),
+    /// its luminance relative to the renderer's default tint: luminance 1
+    /// keeps the floor's brightness and changes only its colour. `None`: the
+    /// renderer's default tint (no weather feeds one).
+    pub ambient_tint: Option<Vec3>,
     pub wind: Wind,
 }
 
@@ -45,6 +50,7 @@ impl Default for Weather {
             dust: 0.0,
             dust_tint: Vec3::ONE,
             sun_glare: 1.0,
+            ambient_tint: None,
             wind: Wind::default(),
         }
     }
@@ -64,6 +70,11 @@ impl Weather {
             dust: mix(self.dust, to.dust),
             dust_tint: self.dust_tint.lerp(to.dust_tint, t),
             sun_glare: mix(self.sun_glare, to.sun_glare),
+            // A side without a tint has no say: the other side's tint holds.
+            ambient_tint: match (self.ambient_tint, to.ambient_tint) {
+                (Some(a), Some(b)) => Some(a.lerp(b, t)),
+                (a, b) => b.or(a),
+            },
             wind: self.wind.lerp(&to.wind, t),
         }
     }

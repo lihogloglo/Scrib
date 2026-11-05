@@ -155,6 +155,22 @@ pub struct SkyTerms {
     pub sun_glare: f32,
     /// Multiplier on `haze` over the hour of day (empty: 1), e.g. morning haze.
     pub haze_by_hour: KeyCurve,
+    /// Tint of the sky's ambient floor over the hour of day
+    /// (`sf_sky::Weather::ambient_tint`): linear R, G and B curves, luminance
+    /// relative to the renderer's default tint (1 = same brightness). Any
+    /// curve empty: this preset has no say (the renderer's default tint).
+    pub ambient_tint_by_hour: [KeyCurve; 3],
+}
+
+impl SkyTerms {
+    /// The ambient tint at `hour`, `None` when a channel's curve is empty.
+    pub fn ambient_tint(&self, hour: f32) -> Option<Vec3> {
+        let [r, g, b] = &self.ambient_tint_by_hour;
+        if r.keys().is_empty() || g.keys().is_empty() || b.keys().is_empty() {
+            return None;
+        }
+        Some(Vec3::new(r.sample(hour), g.sample(hour), b.sample(hour)))
+    }
 }
 
 impl Default for SkyTerms {
@@ -167,6 +183,7 @@ impl Default for SkyTerms {
             overcast_dimming: w.overcast_dimming,
             sun_glare: w.sun_glare,
             haze_by_hour: KeyCurve::default(),
+            ambient_tint_by_hour: Default::default(),
         }
     }
 }
@@ -258,6 +275,10 @@ pub struct WindTerms {
     /// How much of the climate's storm source applies, 0..1 (e.g. a storm
     /// blowing away from a volcano).
     pub storm: f32,
+    /// Cap on the precipitation's lean from vertical, degrees (soft:
+    /// [`crate::drop_drift`]); [`crate::UNCAPPED_DEG`] = the physical lean.
+    /// Presentation only.
+    pub precip_tilt_max_deg: f32,
 }
 
 impl WindTerms {
@@ -275,6 +296,7 @@ impl Default for WindTerms {
             direction_deg: 15.0,
             direction_jitter_deg: 60.0,
             storm: 0.0,
+            precip_tilt_max_deg: crate::UNCAPPED_DEG,
         }
     }
 }

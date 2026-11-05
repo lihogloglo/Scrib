@@ -179,6 +179,8 @@ pub struct SkyState {
     pub ev100: f32,
     /// Ambient floor, nits.
     pub ambient: f32,
+    /// Tint of the ambient floor from the weather ([`Weather::ambient_tint`]).
+    pub ambient_tint: Option<Vec3>,
     /// The drawn moons and the stars' visibility.
     pub night: NightSky,
 }
@@ -222,6 +224,7 @@ impl SkySettings {
             moon,
             ev100: self.exposure_range.clamp(self.exposure.sample(sun_deg)),
             ambient: self.ambient.sample(sun_deg),
+            ambient_tint: weather.ambient_tint,
             night,
         }
     }

@@ -110,6 +110,15 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Suspect (not tested): pass order/depth between the water snapshot and precip (hard-problems H3, `render-order.md`).
 - Status: known bug: not diagnosed (owner pass 2026-10-30).
 
+### WE-8: Rain leans with the wind, capped, turning slowly (rain-slant, weather/wind.md "Precipitation tilt as built")
+- Kind: game location. Run: `.\bevyrrowind view "Balmora" --hour 12 --weather rain`, then `--weather thunderstorm`
+  (free camera, look across a street at the rain against a wall and the sky; wait a minute or two).
+- Look for: rain near vertical in light wind (about 9-15° in Rain, up to ~25° in a thunderstorm, never steeper);
+  the lean direction turns slowly (over a minute or two, no swinging); trees bend the same way the rain leans;
+  the rain-under-roofs shelter follows the lean. Ash storms still blow near flat (uncapped).
+- A/B: console (backquote) `flip rain_slant_cap`: off = the old raw lean (21-44°, turns with every wind change).
+- Status: awaiting owner (2026-11-06).
+
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
 - Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
 - Look for: stair-stepped blocky shapes along land silhouettes, only where fog is rendered; present when still, worse

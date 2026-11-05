@@ -103,3 +103,14 @@ SOFTWARE.
 - Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived,progression,faction}.rs` (the game; f32 arithmetic in OpenMW's order,
   differences listed in the module docs) and, for the two stat semantics only, `superfargoth/crates/sf_stats/src/ops.rs`
   (`set_current`, capped `StatOp::Damage`).
+
+## OpenMW (weather ambient by time of day)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:
+  `apps/openmw/mwworld/weather.cpp` (`TimeOfDayInterpolator::getValue`, `lerp`, the `TimeOfDaySettings` set up in
+  `WeatherManager::WeatherManager`, the ambient blend in `calculateTransitionResult`) and
+  `apps/openmw/mwworld/weather.hpp` (`TimeOfDaySettings::addSetting`).
+- Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
+  identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_weather/src/ambient.rs` (the game; differences in the module docs: linear decode and
+  luminance normalisation after OpenMW's gamma-space interpolation).

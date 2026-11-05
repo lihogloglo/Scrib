@@ -364,6 +364,21 @@ fn sky_state_over_a_day() {
 }
 
 #[test]
+fn ambient_tint_blends_and_flows_into_the_sky_state() {
+    let a = Weather { ambient_tint: Some(Vec3::new(1.0, 0.0, 0.0)), ..Weather::default() };
+    let b = Weather { ambient_tint: Some(Vec3::new(0.0, 0.0, 1.0)), ..Weather::default() };
+    assert_eq!(a.lerp(&b, 0.25).ambient_tint, Some(Vec3::new(0.75, 0.0, 0.25)));
+    // A side without a tint has no say.
+    assert_eq!(a.lerp(&Weather::default(), 0.9).ambient_tint, a.ambient_tint);
+    assert_eq!(Weather::default().lerp(&b, 0.1).ambient_tint, b.ambient_tint);
+    assert_eq!(Weather::default().lerp(&Weather::default(), 0.5).ambient_tint, None);
+    let settings = SkySettings::default();
+    let clock = SkyClock::at(100.0, 0.0, &settings.calendar);
+    assert_eq!(settings.evaluate(&clock, &b).ambient_tint, b.ambient_tint);
+    assert_eq!(settings.evaluate(&clock, &Weather::default()).ambient_tint, None);
+}
+
+#[test]
 fn overcast_dims_direct_light() {
     let settings = SkySettings::default();
     let clock = SkyClock::at(100.0, 12.0, &settings.calendar);

@@ -275,7 +275,8 @@ Order: W1 → W2 → W3 → W4/W5 (either) → WM → W6 → W7 → W8. W6 waits
    or the same ash? (default: same.)
 2. Wind-slanted exposure during storms (lee of walls stays clean): blend in the precipitation map with a
    slow temporal filter, or accept vertical only? (default: vertical; WE-5 follow-up already asks to cap
-   the slanted shelter.)
+   the slanted shelter. Rain-slant 2026-11-06 capped and smoothed the drop lean itself, `weather/wind.md`; the lee-distance
+   cap is still open.)
 3. Per-object porosity override: material extras key in the cook (needs a per-material channel; `MeshTag`
    bits on statics) or heuristic only? (default: heuristic until a mod needs it.)
 4. Leaf pass: the owner said "~40% passes through (Clockwork's value)", but Clockwork's `LEAF_HOLD` 0.4 lets

@@ -431,6 +431,14 @@ fn wind_storm_and_flash_from_the_ini() {
             ty.name()
         );
     }
+    // Precipitation tilt caps (rain-slant): rain 20°, thunderstorm 35°, blowing kinds free.
+    let cap = |ty| preset_of(&w, ty).wind.precip_tilt_max_deg;
+    assert_eq!(cap(WeatherType::Rain), 20.0);
+    assert_eq!(cap(WeatherType::Clear), 20.0);
+    assert_eq!(cap(WeatherType::Thunderstorm), 35.0);
+    for ty in [WeatherType::Ashstorm, WeatherType::Blight, WeatherType::Snow, WeatherType::Blizzard] {
+        assert_eq!(cap(ty), sf_weather::UNCAPPED_DEG, "{}", ty.name());
+    }
     let thunder = preset_of(&w, WeatherType::Thunderstorm)
         .lightning
         .as_ref()
@@ -681,4 +689,36 @@ fn glare_view_maps_to_the_sky_sun_glare() {
 fn sound_paths_become_vfs_paths() {
     assert_eq!(sound_file_path("Fx\\amb\\rain.wav"), "Sound/Fx/amb/rain.wav");
     assert_eq!(sound_file_path("\\Fx\\storm.mp3"), "Sound/Fx/storm.mp3");
+}
+
+#[test]
+fn night_ambient_tint_blends_between_weathers() {
+    use sf_weather::sf_sky::luminance;
+    let w = MwWeather::build(&content_db(None), None);
+    let book = WeatherBook::new(w.presets.clone(), w.climates.clone(), w.precip_kinds.clone());
+    let isles = "Ascadian Isles Region";
+    let climates = [(book.climate(&climate_id(isles)).unwrap(), 1.0)];
+    let tint = |state: &WeatherState, hours: f64| {
+        let input = WeatherInput { hours, prev_hours: hours, hour_of_day: 23.0, altitude: 0.0, climates: &climates };
+        sf_weather::evaluate(&book, state, &input).sky.ambient_tint.expect("presets carry a tint")
+    };
+    let night = |ty: WeatherType| {
+        let s = &preset_of(&w, ty).sky;
+        s.ambient_tint(23.0).unwrap()
+    };
+    // Clear forced from hour 0, Overcast from hour 100 over 2 h.
+    let mut state = WeatherState::new(3);
+    state.force(&climate_id(isles), &WeatherType::Clear.preset_id(), 0.0, Some(0.1), Some(200.0));
+    state.force(&climate_id(isles), &WeatherType::Overcast.preset_id(), 100.0, Some(2.0), Some(50.0));
+    let (clear, overcast) = (night(WeatherType::Clear), night(WeatherType::Overcast));
+    assert!((tint(&state, 50.0) - clear).abs().max_element() < 1e-6);
+    assert!((tint(&state, 103.0) - overcast).abs().max_element() < 1e-6);
+    let mid = tint(&state, 100.5);
+    // On the segment between the two, still at luminance 1.
+    let along = (mid - clear).dot(overcast - clear) / (overcast - clear).length_squared();
+    assert!(along > 0.0 && along < 1.0, "{along}");
+    assert!((clear + (overcast - clear) * along - mid).abs().max_element() < 1e-5, "{mid}");
+    assert!((luminance(mid) - 1.0).abs() < 1e-4);
+    // The vanilla Clear night is bluer than the Overcast one.
+    assert!(clear.z / clear.x > overcast.z / overcast.x);
 }

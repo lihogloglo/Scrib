@@ -92,6 +92,55 @@ const VANILLA: &[(&str, &str, &str)] = &[
     ("Weather Blight", "Glare View", "0"),
     ("Weather Snow", "Glare View", "0"),
     ("Weather Blizzard", "Glare View", "0"),
+    // Time of day and the ambient tint (RO-16 fix 2, `ambient.rs`).
+    ("Weather", "Sunrise Time", "6"),
+    ("Weather", "Sunset Time", "18"),
+    ("Weather", "Sunrise Duration", "2"),
+    ("Weather", "Sunset Duration", "2"),
+    ("Weather", "Ambient Pre-Sunrise Time", ".5"),
+    ("Weather", "Ambient Post-Sunrise Time", "2"),
+    ("Weather", "Ambient Pre-Sunset Time", "1"),
+    ("Weather", "Ambient Post-Sunset Time", "1.25"),
+    ("Weather Clear", "Ambient Sunrise Color", "047,066,096"),
+    ("Weather Clear", "Ambient Day Color", "137,140,160"),
+    ("Weather Clear", "Ambient Sunset Color", "068,075,096"),
+    ("Weather Clear", "Ambient Night Color", "032,035,042"),
+    ("Weather Cloudy", "Ambient Sunrise Color", "066,074,087"),
+    ("Weather Cloudy", "Ambient Day Color", "137,145,160"),
+    ("Weather Cloudy", "Ambient Sunset Color", "071,080,092"),
+    ("Weather Cloudy", "Ambient Night Color", "032,039,054"),
+    ("Weather Foggy", "Ambient Sunrise Color", "048,043,037"),
+    ("Weather Foggy", "Ambient Day Color", "092,109,120"),
+    ("Weather Foggy", "Ambient Sunset Color", "029,053,076"),
+    ("Weather Foggy", "Ambient Night Color", "028,033,039"),
+    ("Weather Overcast", "Ambient Sunrise Color", "084,088,092"),
+    ("Weather Overcast", "Ambient Day Color", "093,096,105"),
+    ("Weather Overcast", "Ambient Sunset Color", "083,077,075"),
+    ("Weather Overcast", "Ambient Night Color", "057,060,066"),
+    ("Weather Rain", "Ambient Sunrise Color", "097,090,088"),
+    ("Weather Rain", "Ambient Day Color", "105,110,113"),
+    ("Weather Rain", "Ambient Sunset Color", "088,097,097"),
+    ("Weather Rain", "Ambient Night Color", "050,055,067"),
+    ("Weather Thunderstorm", "Ambient Sunrise Color", "054,054,054"),
+    ("Weather Thunderstorm", "Ambient Day Color", "090,090,090"),
+    ("Weather Thunderstorm", "Ambient Sunset Color", "054,054,054"),
+    ("Weather Thunderstorm", "Ambient Night Color", "049,051,054"),
+    ("Weather Ashstorm", "Ambient Sunrise Color", "054,042,037"),
+    ("Weather Ashstorm", "Ambient Day Color", "075,049,041"),
+    ("Weather Ashstorm", "Ambient Sunset Color", "048,039,035"),
+    ("Weather Ashstorm", "Ambient Night Color", "036,042,049"),
+    ("Weather Blight", "Ambient Sunrise Color", "061,040,040"),
+    ("Weather Blight", "Ambient Day Color", "079,054,054"),
+    ("Weather Blight", "Ambient Sunset Color", "061,040,040"),
+    ("Weather Blight", "Ambient Night Color", "056,058,062"),
+    ("Weather Snow", "Ambient Sunrise Color", "092,084,084"),
+    ("Weather Snow", "Ambient Day Color", "093,096,105"),
+    ("Weather Snow", "Ambient Sunset Color", "070,079,087"),
+    ("Weather Snow", "Ambient Night Color", "049,058,068"),
+    ("Weather Blizzard", "Ambient Sunrise Color", "084,088,092"),
+    ("Weather Blizzard", "Ambient Day Color", "093,096,105"),
+    ("Weather Blizzard", "Ambient Sunset Color", "083,077,075"),
+    ("Weather Blizzard", "Ambient Night Color", "053,062,070"),
 ];
 
 fn vanilla(section: &str, key: &str) -> Option<&'static str> {
@@ -152,4 +201,23 @@ impl<'a> WeatherIni<'a> {
         self.fold(&value.map_or(u32::MAX, f32::to_bits).to_le_bytes());
         value
     }
+
+    /// A colour `"r,g,b"` (bytes, as Morrowind writes them: `047,066,096`);
+    /// an unparsable ini value falls back to vanilla.
+    pub(crate) fn color(&mut self, section: &str, key: &str) -> Option<[u8; 3]> {
+        let value = self
+            .ini
+            .and_then(|i| i.get(section, key))
+            .and_then(parse_color)
+            .or_else(|| vanilla(section, key).and_then(parse_color));
+        self.fold(&value.map_or([0, 0, 0, 1], |[r, g, b]| [r, g, b, 0]));
+        value
+    }
+}
+
+/// `"r,g,b"` with three byte values (spaces allowed), else `None`.
+pub(crate) fn parse_color(v: &str) -> Option<[u8; 3]> {
+    let mut parts = v.split(',').map(|p| p.trim().parse::<u8>().ok());
+    let rgb = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some(rgb)
 }

@@ -60,7 +60,7 @@ mod tests;
 pub use surface::{SurfaceDebug, WorldSurface, dump as surface_dump, set as surface_set};
 pub use fx::{
     CUE_STEP, LIGHTNING_GLOW, LIGHTNING_GLOW_HEIGHT, LIGHTNING_NEAR_M, near_factor, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
-    lightning_direction, precip_brightness, precip_slot,
+    lightning_direction, precip_brightness, precip_slot, PrecipWind, capped_slot,
 };
 pub use sf_precip_bevy;
 
@@ -190,6 +190,7 @@ impl Plugin for WeatherPlugin {
             .init_resource::<WeatherOverrides>()
             .init_resource::<WeatherStats>()
             .init_resource::<LightningFlash>()
+            .init_resource::<PrecipWind>()
             .init_resource::<WorldSurface>()
             .init_resource::<SurfaceDebug>()
             .add_message::<WeatherSound>()
@@ -330,8 +331,8 @@ fn apply_sky(
         .clouds
         .map_or(f.cloud_cover, |c| c.mean_cover());
     let w = &sky.0;
-    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming, w.sun_glare)
-        != (haze, dust, f.dust_tint, cover, f.overcast_dimming, f.sun_glare)
+    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming, w.sun_glare, w.ambient_tint)
+        != (haze, dust, f.dust_tint, cover, f.overcast_dimming, f.sun_glare, f.ambient_tint)
     {
         let w = &mut sky.0;
         w.haze = haze;
@@ -340,6 +341,7 @@ fn apply_sky(
         w.cloud_cover = cover;
         w.overcast_dimming = f.overcast_dimming;
         w.sun_glare = f.sun_glare;
+        w.ambient_tint = f.ambient_tint;
     }
 }
 

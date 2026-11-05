@@ -88,6 +88,7 @@ pub struct ActiveRenderPath(pub RenderPath);
 
 /// Engine-side options that aren't sky data.
 #[derive(Resource, Clone)]
+#[expect(clippy::struct_excessive_bools, reason = "independent engine toggles, not a state machine")]
 pub struct SkyRenderOptions {
     /// Render-space Y of the atmosphere's ground (sea level). The world
     /// glue updates it when the floating origin changes cell vertically.
@@ -97,8 +98,13 @@ pub struct SkyRenderOptions {
     pub cascades: CascadeShadowConfig,
     /// Bias and contact shadows of the sun (raster path).
     pub sun_shadow: SunShadow,
-    /// Tint of the ambient floor ([`SkySettings::ambient`]).
+    /// Tint of the ambient floor ([`SkySettings::ambient`]) when the weather
+    /// gives none, and the reference luminance of the weather's tint
+    /// (`sf_sky::Weather::ambient_tint`, luminance 1 = this one's brightness).
     pub ambient_color: Color,
+    /// Use the weather's ambient tint when it has one (default); off keeps
+    /// [`Self::ambient_color`] (an A/B switch).
+    pub weather_ambient_tint: bool,
     /// Resolution of the medium's density and phase LUTs.
     pub medium_resolution: u32,
     /// Shortest time between two rebuilds of the medium's LUTs, seconds of
@@ -139,6 +145,7 @@ impl Default for SkyRenderOptions {
             .build(),
             sun_shadow: SunShadow::default(),
             ambient_color: Color::linear_rgb(0.55, 0.65, 1.0),
+            weather_ambient_tint: true,
             medium_resolution: 256,
             medium_min_interval: 0.25,
             auto_light_proxies: true,
@@ -636,21 +643,37 @@ fn apply_cameras(
         }
         if sky_camera.ambient {
             let brightness = sky.0.ambient;
+            let color = ambient_color(&sky.0, &options);
             match ambient {
                 Some(mut ambient) => {
-                    if ambient.brightness != brightness {
+                    if ambient.brightness != brightness || ambient.color != color {
                         ambient.brightness = brightness;
-                        ambient.color = options.ambient_color;
+                        ambient.color = color;
                     }
                 }
                 None => {
                     commands.entity(entity).insert(AmbientLight {
-                        color: options.ambient_color,
+                        color,
                         brightness,
                         affects_lightmapped_meshes: true,
                     });
                 }
             }
         }
+    }
+}
+
+/// The ambient floor's colour: the weather's tint scaled to the luminance of
+/// [`SkyRenderOptions::ambient_color`] (so a tint of luminance 1 changes only
+/// the hue), or that colour when the weather has no tint or the option is off.
+pub fn ambient_color(sky: &SkyState, options: &SkyRenderOptions) -> Color {
+    match sky.ambient_tint {
+        Some(tint) if options.weather_ambient_tint && tint.is_finite() => {
+            let reference = options.ambient_color.to_linear();
+            let scale = sf_sky::luminance(Vec3::new(reference.red, reference.green, reference.blue));
+            let c = tint.max(Vec3::ZERO) * scale;
+            Color::linear_rgb(c.x, c.y, c.z)
+        }
+        _ => options.ambient_color,
     }
 }

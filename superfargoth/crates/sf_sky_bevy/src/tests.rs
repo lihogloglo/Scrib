@@ -77,6 +77,35 @@ fn drives_sun_and_camera_from_the_clock() {
 }
 
 #[test]
+#[expect(clippy::float_cmp, reason = "the brightness is copied, not computed")]
+fn weather_ambient_tint_reaches_the_camera_at_the_same_luminance() {
+    let mut app = app(0.5);
+    let camera = app.world_mut().spawn(SkyCamera::default()).id();
+    app.update();
+    app.update();
+    let light = |app: &App| app.world().get::<AmbientLight>(camera).expect("ambient light").clone();
+    let default = SkyRenderOptions::default().ambient_color;
+    let before = light(&app);
+    assert_eq!(before.color, default, "no weather tint: the fixed colour");
+    assert!(before.brightness > 0.0, "night floor");
+
+    // A grey tint of luminance 1: the default colour's luminance, no hue.
+    app.world_mut().resource_mut::<WeatherState>().0.ambient_tint = Some(Vec3::ONE);
+    app.update();
+    let after = light(&app);
+    let d = default.to_linear();
+    let lum = sf_sky::luminance(Vec3::new(d.red, d.green, d.blue));
+    let c = after.color.to_linear();
+    assert!((Vec3::new(c.red, c.green, c.blue) - Vec3::splat(lum)).abs().max_element() < 1e-6, "{c:?}");
+    assert_eq!(after.brightness, before.brightness, "brightness untouched");
+
+    // The A/B switch: the fixed colour again.
+    app.world_mut().resource_mut::<SkyRenderOptions>().weather_ambient_tint = false;
+    app.update();
+    assert_eq!(light(&app).color, default);
+}
+
+#[test]
 fn moon_takes_over_shadows_at_night() {
     // Day 162 is a full moon; at 0:30 the sun is well below the horizon.
     let mut app = app(0.5);

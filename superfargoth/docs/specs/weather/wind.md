@@ -22,7 +22,7 @@ the GPU headless and compares; see "Wind as built" below):
 | Trees (cooked L0) | hierarchical sway from baked vertex data (below) |
 | Impostors | per-instance trunk bend: the quad's top vertices shear by the field at the instance + a per-model stiffness from the atlas header |
 | Cloth (M4) | CPU `velocity_at` per cloth body (aerodynamic force) |
-| Precipitation | streak velocity = fall + wind. Snow/ash also flutter |
+| Precipitation | streak velocity = fall + the frame's mean wind, low-passed and capped ("Precipitation tilt as built"). Snow/ash also flutter |
 | Clouds, fog banks | scroll/advection (cloud-altitude speed for clouds) |
 | Water (M6 water spec) | wind speed/direction for FFT wave spectra |
 | Audio | wind loudness/gust cues |
@@ -167,3 +167,29 @@ velocity; clouds take the field's direction at their own altitude speed (Morrowi
 **Open.** No consumer samples the GPU field in game yet (grass, trees, precipitation: their lanes). Cloud
 and fog drift take the mean wind only (no gusts at that scale, by design).
 
+
+### Precipitation tilt as built (rain-slant, 2026-11-05)
+
+Owner (2026-11-05): "the rain is very slanted, never vertical, and moves around". Cause: drops took
+0.8 × the frame's 10 m wind against an 8.2 m/s fall, so Morrowind's Rain (`Wind Speed` .3 → 3.9-6.5 m/s)
+leaned 21-32° and a thunderstorm 36-44°; the direction is the preset's value-noise wander (± 60° on a
+3 game-hour lattice, up to ~30° per real minute at 30×) and swings up to 120° inside a 33-66 s weather
+transition (each preset wanders on its own phase). Trees and rain already share that mean wind
+(`WindField.state.wind` = `frame.wind()`); trees add gusts, swirl and the storm sources.
+
+Canonical technique: physical lean `atan(u / v_t)` (u = wind at drop height, v_t ≈ 8-9 m/s rain,
+0.5-2 m/s snow; AMS Glossary "terminal fall velocity"), but games keep rain near vertical (OpenMW
+`sky.cpp` `updateRainParameters` d0c0fc0: `atan(wind / 50)`, a few degrees) and drive effects from one
+slowly turning global wind (Ghost of Tsushima, PlayStation Blog 2020). Built (`sf_weather::precip_wind`,
+`sf_weather_bevy::fx` `PrecipWind`, `capped_slot`):
+- Wind at drop height: the field's log profile at `DROP_HEIGHT_M` 3 m (0.74 at z0 0.1).
+- Drift = `k · tanh(d / k)`, `d = u² / (u + CALM_MPS 1.5)` (light air stays vertical), `k = v_t · tan(cap)`;
+  cap = preset data `WindTerms::precip_tilt_max_deg`, blended into `WeatherFrame::precip_tilt_max_deg`
+  by the wind weights (Morrowind: rain and dry 20°, thunderstorm 35°, snow/ash/blight/blizzard 90° = free).
+  Result: clear-weather wind ~5°, Rain 9-15°, Thunderstorm 16-25°, ash ~80°.
+- Direction low-passed exponentially in angle (`DIRECTION_TAU_S` 30 s), speed over `SPEED_TAU_S` 8 s,
+  exact for any step (`1 − e^(−dt/τ)`). Each slot's `wind_follow` is rescaled, so the occlusion map
+  (`travel`) leans with the drops. Wetness/shelter stay vertical. Presentation only.
+- A/B: console `flip rain_slant_cap` (off = the old raw lean). Visual check WE-8.
+- Open: rain ignores the storm sources (WE-5 "storm from Red Mountain", Phase 4); trees follow the
+  unsmoothed mean (lag ≤ τ on a turn).

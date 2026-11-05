@@ -16,8 +16,9 @@
 //! cues, lightning rate, flash fade and thunder sounds, the blight tag; clouds,
 //! sky haze and dust, fog and wind ([`visual`]), the Red Mountain storm source;
 //! region sounds as one-shot ambience; the `MWScript` weather functions
-//! ([`script`]).
+//! ([`script`]); the sky's ambient tint by time of day ([`ambient`], RO-16).
 
+pub mod ambient;
 mod ini;
 pub mod script;
 pub mod visual;

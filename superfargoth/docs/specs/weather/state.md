@@ -82,7 +82,8 @@ directly instead of mirror structs, and `visibility_m` uses `FogSettings::extinc
 with these differences: the record id is the database key (no `id` field); references are `RecordId`
 (no typed `RecordRef<T>` exists yet); `CloudTerms` is `CloudWeather` as data with a cloud-altitude
 `speed` (the direction is the ground wind's); `FogTerms` holds the height fog and bank layer terms plus
-`height_by_hour` / `banks_by_hour` multiplier curves, `SkyTerms` a `haze_by_hour` curve (empty curve = 1);
+`height_by_hour` / `banks_by_hour` multiplier curves, `SkyTerms` a `haze_by_hour` curve (empty curve = 1) and `ambient_tint_by_hour` RGB curves (the ambient floor's
+hue, `../sky-lighting-as-built.md`);
 `WindTerms { speed: [min, max], gustiness, gust_length, direction_deg, direction_jitter_deg, storm }`;
 `PrecipKind` has an `extinction` (1/m at intensity 1) for visibility; `Climate` has `cues` (region
 ambient loops) and `one_shots` (`OneShotSet`, random one-shot ambience: sounds with a chance per draw, rest silence,

@@ -4,7 +4,11 @@
 //! - [`apply_precip`]: `frame.precip` (up to [`sf_precip_bevy::SLOTS`]
 //!   kinds, each kept in its slot while it falls so a crossfade never
 //!   swaps boxes) and the ground wind into [`Precip`]; brightness from the
-//!   sun's elevation, the overcast dimming and the lightning flash.
+//!   sun's elevation, the overcast dimming and the lightning flash. The
+//!   wind is [`PrecipWind`]'s: the frame's, low-passed, at drop height
+//!   (the wind field's profile), and each slot's follow share is rescaled
+//!   so its lean is [`sf_weather::drop_drift`]'s, capped by
+//!   `frame.precip_tilt_max_deg` (the occlusion map reads the same velocity).
 //! - [`apply_lightning`]: each strike restarts [`LightningFlash`]; the
 //!   flash ([`LightningStrike::flash_at`], pure) drives a shadowless
 //!   directional light from the strike's azimuth and the clouds' ambient
@@ -16,14 +20,15 @@
 use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
 use bevy_light::DirectionalLight;
-use bevy_math::{DVec2, Dir3, Vec3, Vec4};
+use bevy_math::{DVec2, Dir3, Vec2, Vec3, Vec4};
 use bevy_platform::time::Instant;
 use bevy_time::{Real, Time};
 use bevy_transform::components::Transform;
 use sf_diag_bevy::DiagCounters;
 use sf_precip_bevy::{Precip, PrecipShape, PrecipSlot, SLOTS};
 use sf_records::RecordId;
-use sf_weather::{LightningStrike, PrecipIx, PrecipKind, PrecipLook};
+use sf_weather::{LightningStrike, PrecipIx, PrecipKind, PrecipLook, PrecipWindFilter};
+use sf_wind_bevy::WindField;
 
 use crate::{CurrentWeather, WeatherRecords};
 
@@ -105,6 +110,31 @@ pub fn precip_slot(kind: &PrecipKind, intensity: f32) -> PrecipSlot {
     }
 }
 
+/// The wind the precipitation leans in (presentation only; `sf_weather::PrecipWindFilter`).
+#[derive(Resource, Clone, Debug)]
+pub struct PrecipWind {
+    /// `false`: the old lean (the frame's wind as is, no cap, no smoothing), for A/B
+    /// (console `flip rain_slant_cap`). The filter keeps running, so a flip never jumps.
+    pub slant_cap: bool,
+    pub filter: PrecipWindFilter,
+}
+
+impl Default for PrecipWind {
+    fn default() -> Self {
+        Self { slant_cap: true, filter: PrecipWindFilter::default() }
+    }
+}
+
+/// `slot` leaning in `wind` (m/s, at drop height): its follow share rescaled so its drift is
+/// [`sf_weather::drop_drift`] of the followed wind, capped at `max_tilt_deg`.
+pub fn capped_slot(mut slot: PrecipSlot, wind: Vec2, max_tilt_deg: f32) -> PrecipSlot {
+    let u = wind.length();
+    if u > 1e-4 {
+        slot.wind_follow = sf_weather::drop_drift(u * slot.wind_follow, slot.fall_speed, max_tilt_deg) / u;
+    }
+    slot
+}
+
 /// Light on the drops: night floor to day by the sun's elevation (radians),
 /// dimmed by overcast, plus the lightning flash.
 pub fn precip_brightness(sun_elevation: f32, overcast_dimming: f32, flash: f32) -> f32 {
@@ -133,13 +163,16 @@ pub fn assign_slots(assigned: &mut [Option<PrecipIx>; SLOTS], falling: &[(Precip
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn apply_precip(
     current: Res<CurrentWeather>,
     records: Res<WeatherRecords>,
     flash: Res<LightningFlash>,
     sky: Option<Res<sf_sky_bevy::CurrentSky>>,
     precip: Option<ResMut<Precip>>,
+    time: Option<Res<Time>>,
+    mut lean: ResMut<PrecipWind>,
+    field: Option<Res<WindField>>,
     mut assigned: Local<[Option<PrecipIx>; SLOTS]>,
 ) {
     let Some(mut precip) = precip else { return };
@@ -147,6 +180,8 @@ pub fn apply_precip(
         return;
     }
     let frame = &current.frame;
+    let target = frame.wind().velocity;
+    let smoothed = lean.filter.update(target, time.map_or(0.0, |t| t.delta_secs()));
     let falling: Vec<(PrecipIx, f32)> = frame.precip.iter().map(|p| (p.kind, p.intensity)).collect();
     assign_slots(&mut assigned, &falling);
     let mut slots = [None; SLOTS];
@@ -158,7 +193,17 @@ pub fn apply_precip(
     }
     let elevation = sky.map_or(1.0, |s| s.0.sun.elevation);
     let brightness = precip_brightness(elevation, frame.sky.overcast_dimming, flash.level);
-    let wind = frame.wind().velocity;
+    let wind = if lean.slant_cap {
+        // The weather's wind is at the 10 m reference height: the drops see the profile's share.
+        let profile = field.map_or(1.0, |f| f.frame().profile(sf_weather::DROP_HEIGHT_M));
+        let wind = smoothed * profile;
+        for slot in slots.iter_mut().flatten() {
+            *slot = capped_slot(*slot, wind, frame.precip_tilt_max_deg);
+        }
+        wind
+    } else {
+        target
+    };
     if precip.slots != slots || precip.wind != wind || (precip.brightness - brightness).abs() > 1e-3 {
         precip.slots = slots;
         precip.wind = wind;

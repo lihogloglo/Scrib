@@ -459,3 +459,36 @@ fn surface_steps_on_game_time_and_the_console_drives_it() {
     s.restore(Some(&save), &book);
     assert!((s.state.climate(land).wet - 0.75).abs() <= sf_surface::QUANTUM);
 }
+
+#[test]
+fn capped_slot_follows_the_drift_formula() {
+    let rain = sf_precip_bevy::PrecipSlot { fall_speed: 8.0, wind_follow: 0.8, ..sf_precip_bevy::PrecipSlot::default() };
+    let wind = bevy_math::Vec2::new(3.0, 4.0);
+    let s = capped_slot(rain, wind, 20.0);
+    let want = sf_weather::drop_drift(5.0 * 0.8, 8.0, 20.0);
+    assert!((s.wind_follow * 5.0 - want).abs() < 1e-5, "{} vs {want}", s.wind_follow * 5.0);
+    assert!(sf_weather::tilt_deg(s.wind_follow * 5.0, 8.0) < 20.0);
+    // Calm: nothing to rescale.
+    assert_eq!(capped_slot(rain, bevy_math::Vec2::ZERO, 20.0), rain);
+}
+
+#[test]
+fn precip_leans_in_the_smoothed_capped_wind_and_flips_back() {
+    let mut app = storm_app();
+    app.update();
+    let target = app.world().resource::<CurrentWeather>().frame.wind().velocity;
+    let cap = app.world().resource::<CurrentWeather>().frame.precip_tilt_max_deg;
+    assert_eq!(cap, sf_weather::UNCAPPED_DEG, "default presets don't cap");
+    let p = app.world().resource::<sf_precip_bevy::Precip>().clone();
+    // First frame snaps to the frame's wind (no wind field here: profile 1).
+    assert!(p.wind.distance(target) < 1e-4, "{:?} vs {target:?}", p.wind);
+    let slot = p.slots[0].expect("rain falls");
+    let want = sf_weather::drop_drift(target.length() * 0.8, slot.fall_speed, cap);
+    assert!((slot.wind_follow * p.wind.length() - want).abs() < 1e-4);
+    // A/B off: the frame's wind and the kind's own share.
+    app.world_mut().resource_mut::<PrecipWind>().slant_cap = false;
+    app.update();
+    let p = app.world().resource::<sf_precip_bevy::Precip>().clone();
+    assert_eq!(p.wind, app.world().resource::<CurrentWeather>().frame.wind().velocity);
+    assert!((p.slots[0].expect("rain falls").wind_follow - 0.8).abs() < 1e-6);
+}

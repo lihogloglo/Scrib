@@ -226,3 +226,4 @@ PH-4 | deferred | [physics](visual-checks/physics.md) | Carry, drag and throw
 NS-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Stars fade in at dusk
 NS-3 | deferred | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
 NS-4 | deferred | [weather-sky](visual-checks/weather-sky.md) | No red streaks at night
+WE-8 | awaiting owner (2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Rain leans with the wind, capped (Rain ~9-15°, thunderstorm ≤ ~25°), direction turns slowly, trees agree; `view "Balmora" --hour 12 --weather rain`, A/B `flip rain_slant_cap`

@@ -219,7 +219,8 @@ Moved to [history](archive/sky-lighting-history.md#environment-map-refresh-light
 - `SkySettings::evaluate(&SkyClock, &Weather) -> SkyState`: per light the
   direction, elevation, top-of-atmosphere illuminance, ground
   transmittance and shadow flag; plus EV100 and the ambient floor.
-- `Weather { cloud_cover, overcast_dimming, haze, wind }` (M6 hook): cover
+- `Weather { cloud_cover, overcast_dimming, haze, ambient_tint, wind }` (M6 hook; ambient tint:
+  `sky-lighting-as-built.md` "Ambient tint from the weather"): cover
   dims direct light; haze scales aerosol density (the GPU medium is rebuilt
   when it moves by ≥ 0.02). `Wind::velocity_at(pos, t)` is the one wind
   API for grass, cloth, particles and clouds; M6 swaps its analytic gusts

@@ -1621,3 +1621,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (stats S4): a player's stats sheet lives on its own `PlayerCharacter` entity (whole run), not the body
   (despawned by the free camera); NPC sheets ride overlay `stats` blobs only when touched. `sf.character` v3 carries the
   sheet (S8's save half done in S4). Skill progress counters are unclamped below (OpenMW handlers may go negative).
+- 2026-11-06 (rain-slant): precipitation leans in the weather's mean wind at drop height, low-passed (direction τ 30 s)
+  and soft-capped by preset data `WindTerms::precip_tilt_max_deg` (Morrowind: rain 20°, thunderstorm 35°, snow/ash free);
+  presentation only, the frame's wind stays gameplay's. Wetness/shelter stay vertical; the occlusion map follows the lean.
+- 2026-11-06 (night-ambient, RO-16 fix 2): the sky's flat ambient floor takes its hue from the weather
+  (`sf_sky::Weather::ambient_tint`, luminance relative to `SkyRenderOptions::ambient_color`), not its brightness: the
+  game's calibrated nits stay (owner: lit nights); Morrowind feeds OpenMW's time-of-day ambient colours as chroma only.

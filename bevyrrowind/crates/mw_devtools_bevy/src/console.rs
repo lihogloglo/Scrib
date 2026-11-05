@@ -707,6 +707,16 @@ fn set_sky_ambient(world: &mut World, on: Option<bool>) -> Result<String, String
     text.ok_or_else(|| "ambient: no sky camera in this run (interior or --off sky)".to_owned())
 }
 
+/// `rain_slant_cap` (WE-8): the precipitation's capped, smoothed lean vs the frame's raw wind.
+fn set_rain_slant_cap(world: &mut World, on: Option<bool>) -> Result<String, String> {
+    let mut lean = world
+        .get_resource_mut::<sf_weather_bevy::PrecipWind>()
+        .ok_or_else(|| "rain_slant_cap: no weather in this run (interior)".to_owned())?;
+    let v = on.unwrap_or(!lean.slant_cap);
+    lean.slant_cap = v;
+    Ok(format!("rain slant cap {}", if v { "on" } else { "off (raw wind)" }))
+}
+
 /// `on`/`off`/`flip <name>`: what happened, or why nothing did.
 fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on: Option<bool>) -> Result<String, String> {
     let var = match name {
@@ -724,6 +734,9 @@ fn set_switch(world: &mut World, vars: &mut Vars, live: LiveVars, name: &str, on
     }
     if name == "ambient" {
         return set_sky_ambient(world, on);
+    }
+    if name == "rain_slant_cap" {
+        return set_rain_slant_cap(world, on);
     }
     if let Some(var) = var {
         if world.query_filtered::<(), With<ExteriorCamera>>().iter(world).next().is_none() {
@@ -1095,6 +1108,20 @@ mod tests {
         run(&mut app, "flip ambient");
         assert!(app.world().get::<sf_sky_bevy::SkyCamera>(camera).expect("sky camera").ambient);
         assert!(log(&app).iter().any(|l| l == "sky ambient on"), "{:?}", log(&app));
+    }
+
+    /// RO-16 fix 2: `flip weather_ambient` swaps the weather's ambient tint for the old fixed blue.
+    #[test]
+    fn weather_ambient_switch_flips_the_sky_option() {
+        let mut app = app();
+        run(&mut app, "flip weather_ambient");
+        assert!(log(&app).iter().any(|l| l == "weather ambient tint: not in this run (--off sky)"), "{:?}", log(&app));
+        app.init_resource::<sf_sky_bevy::SkyRenderOptions>();
+        run(&mut app, "flip weather_ambient");
+        assert!(!app.world().resource::<sf_sky_bevy::SkyRenderOptions>().weather_ambient_tint);
+        run(&mut app, "on weather_ambient");
+        assert!(app.world().resource::<sf_sky_bevy::SkyRenderOptions>().weather_ambient_tint);
+        assert!(log(&app).iter().any(|l| l == "weather ambient tint on"), "{:?}", log(&app));
     }
     /// RO-16 veil fix 1: `terrain.reflectance` seeds from the terrain, retunes it live, and says
     /// so in a run without terrain.
