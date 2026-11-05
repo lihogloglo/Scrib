@@ -52,3 +52,15 @@ SOFTWARE.
   `files/shaders/lib/light/sunsoft.glsl` (author: Thomas Portal).
 - Licence: GPL-3.0-or-later (the full text is identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt).
 - Ported into: `superfargoth/vendor/bevy_pbr/src/render/shadow_sampling.wesl` (`sample_shadow_map_directional_pcss`, H2 world-unit sun PCSS with analytic receiver slope and world-meter penumbra scale across cascades), combined with the rotated blocker search kernel from `bevyengine/bevy#22272`.
+
+## openmw-rtx (albedo de-lighting)
+
+- Source: https://github.com/xorza/openmw-rtx, commit `f2f8b2d5b2cb142d1b454b3bb1815f4552980562`:
+  `components/rtx/image/shadingmap.hpp` / `.cpp`, `components/rtx/shaders/shadingmap.h`,
+  `components/rtxvulkan/shaders/texture/shadingsum.comp` / `shadingmap.comp`, `components/rtxvulkan/shaders/lib/ground.glsl`
+  (`delitTexel`), constants from `components/rtx/shaders/look.h`, `scene.h`, `colour.h`; tests from
+  `apps/components_tests/rtx/image/shadingmap.cpp`.
+- Licence: GPL-3.0 ("GPLv3, as upstream" OpenMW; the full text is the repository's `LICENSE`, identical to the GNU GPL v3
+  at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the openmw-rtx and OpenMW contributors (maintainer: xorza).
+- Ported into: `superfargoth/crates/sf_texture/src/delight.rs` (the shading grid estimate and its apply step) and its
+  tests, with the changes listed in that file's header.

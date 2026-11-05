@@ -42,3 +42,12 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Status: awaiting owner (2026-10-28).
 - Owner 2026-10-30 (`scene hi-balmora-night`): leaves look okay; the water is still brighter than the rest at night (not
   a moon effect). Status: partial (water at night open).
+
+### LT-reach: Lamp reach follows shadow state (L-A, 2026-11-05; spec lights.md "Reach follows shadow state")
+- Kind: game location, High preset (8 lamp shadows). Run (dev exe): `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"`,
+  camera in the upstairs room, 14:00; A/B `flip gi` in the console. Old reach: add `--range-unshadowed 4`.
+- Look for: no lamp light on the far side of walls; pool edges on floors fade without a ring and don't pop when a
+  lamp gains or loses its shadow (walk around); the GI bounce now visible next to lamps with `flip gi`. Pools within
+  ~0.75 r are ~12 % dimmer at their edge (Bevy's window); say if rooms read too dark.
+- Second: Balmora square at 22:00, walk up to a house: nearby unshadowed lamps don't paint the facade across the street.
+- Status: owner 2026-11-05: 1.5 x rejected (towns less lit at night, interiors very dark); default back to 4 x. Mechanism kept.

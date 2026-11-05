@@ -48,6 +48,8 @@ sf_records.workspace = true
 # Luau `Compiler` for translated scripts (re-exported mlua).
 sf_script.workspace = true
 sf_terrain = { workspace = true, features = ["bake"] }
+# `texture.delight`: de-lighting, mips and BC7 KTX2 (bake.md "De-lighting").
+sf_texture.workspace = true
 sf_vfs.workspace = true
 sf_world = { workspace = true, features = ["bake"] }
 tes3 = { workspace = true, features = ["esp"] }

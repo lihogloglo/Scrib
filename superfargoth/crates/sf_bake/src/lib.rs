@@ -182,6 +182,26 @@ impl RunCx<'_> {
         Ok(fp)
     }
 
+    /// A file's fingerprint ([`Digest::MISSING`] if absent), recorded as a
+    /// dependency without reading the file: for index products that name
+    /// the exact source version their entries came from.
+    pub fn file_fingerprint(&mut self, path: &str) -> Result<Digest, BakeError> {
+        let input = Input::File(path.to_owned());
+        let fp = self.baker.fingerprint(&input, self.chain)?;
+        self.note(input, fp);
+        Ok(fp)
+    }
+
+    /// Another product's digest (its store object), baking it first if
+    /// needed, without reading its bytes: for index products over many
+    /// large products.
+    pub fn product_digest(&mut self, step: &str, subject: &str) -> Result<Digest, BakeError> {
+        let input = Input::Product(ProductKey::new(step, subject));
+        let digest = self.baker.fingerprint(&input, self.chain)?;
+        self.note(input, digest);
+        Ok(digest)
+    }
+
     /// Another product's bytes, baking it first if needed.
     pub fn product(&mut self, step: &str, subject: &str) -> Result<Vec<u8>, BakeError> {
         let input = Input::Product(ProductKey::new(step, subject));

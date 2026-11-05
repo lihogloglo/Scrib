@@ -208,13 +208,48 @@ impl Vfs {
     /// new `foo.nif` still wins over an older `foo.glb`. On equal priority
     /// the alternate wins, earlier alternates first.
     pub fn resolve_preferring(&self, path: &VfsPath, alternates: &[&str]) -> Option<(VfsPath, SourceIndex)> {
+        self.resolve_preferring_below(path, alternates, SourceIndex(u16::MAX))
+    }
+
+    /// [`Vfs::resolve_preferring`] as if only the sources below `limit`
+    /// were mounted: what a layer mounted at `limit` and above replaces
+    /// (a derived layer that names its sources, e.g. baked textures).
+    pub fn resolve_preferring_below(
+        &self,
+        path: &VfsPath,
+        alternates: &[&str],
+        limit: SourceIndex,
+    ) -> Option<(VfsPath, SourceIndex)> {
+        let below = |p: &VfsPath| self.providers(p).iter().rev().find(|s| **s < limit).copied();
         // Rank by (source priority, tie-break); the original ranks lowest on ties.
-        let original = self.resolve(path).map(|s| ((s, 0), path.clone()));
+        let original = below(path).map(|s| ((s, 0), path.clone()));
         let alts = alternates.iter().enumerate().filter_map(|(i, ext)| {
             let candidate = path.with_extension(ext);
-            self.resolve(&candidate).map(|s| ((s, alternates.len() - i), candidate))
+            below(&candidate).map(|s| ((s, alternates.len() - i), candidate))
         });
         original.into_iter().chain(alts).max_by_key(|(rank, _)| *rank).map(|((s, _), p)| (p, s))
+    }
+
+    /// Number of mounted sources; the next mounted one gets this index.
+    pub fn source_count(&self) -> usize {
+        self.sources.len()
+    }
+
+    /// This VFS with `source` mounted above every other source (sources are
+    /// shared, the index is extended, positions of the others don't move).
+    #[must_use]
+    pub fn with_top_layer(&self, source: Arc<dyn VfsSource>) -> Vfs {
+        let si = SourceIndex(u16::try_from(self.sources.len()).expect("too many VFS sources"));
+        let mut index = self.index.clone();
+        source.visit_files(&mut |path| {
+            let providers = index.entry(path).or_default();
+            if providers.last() != Some(&si) {
+                providers.push(si);
+            }
+        });
+        let mut sources = self.sources.clone();
+        sources.push(source);
+        Vfs { sources, index }
     }
 
     /// Immediate children of a directory (`""` for the root), sorted, with

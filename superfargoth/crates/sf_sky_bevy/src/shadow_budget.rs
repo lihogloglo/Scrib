@@ -20,7 +20,12 @@
 //! - fades a shadow in and out (distance band and over time) natively in the
 //!   PBR fragment shader via [`PointLightShadowFade`] (`mix(1.0, shadow, fade)`),
 //!   without mutating [`PointLight::intensity`] or spawning duplicate light
-//!   entities.
+//!   entities;
+//! - for lights with a [`ShadowReach`], blends [`PointLight::range`] from a
+//!   short unshadowed reach to a long shadowed one with that same fade, so an
+//!   unshadowed light doesn't light far through walls and a light gaining or
+//!   losing its map never pops (spec `docs/specs/lights.md`, "Reach follows
+//!   shadow state").
 //!
 //! Also works around a Bevy 0.20 leak (shadows.md "Stale cube-face views"):
 //! `drop_stale_light_views` despawns the six face views of a light that
@@ -115,6 +120,37 @@ pub struct BudgetedShadow {
 impl Default for BudgetedShadow {
     fn default() -> Self {
         Self { priority: 1.0 }
+    }
+}
+
+/// A [`BudgetedShadow`] light's range by shadow state: the budget writes
+/// [`PointLight::range`] as [`Self::range`] of the light's shadow fade
+/// (0 without a slot), so it reaches [`Self::shadowed`] only while its shadow
+/// map can stop it at walls. Ranking uses [`Self::shadowed`], the reach a
+/// slot would give, so a light's own state never feeds its importance.
+/// Bevy's range window `(1 - (d/R)^4)^2` is exactly 0 at the range, so a
+/// shorter range cuts the pool smoothly, without a ring.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct ShadowReach {
+    /// Range with no shadow map, meters.
+    pub unshadowed: f32,
+    /// Range with a full-strength shadow, meters.
+    pub shadowed: f32,
+}
+
+impl ShadowReach {
+    /// The range at shadow strength `fade` (0..=1): linear from
+    /// [`Self::unshadowed`] to [`Self::shadowed`].
+    #[must_use]
+    pub fn range(&self, fade: f32) -> f32 {
+        self.unshadowed + (self.shadowed - self.unshadowed) * fade.clamp(0.0, 1.0)
+    }
+}
+
+/// Writes `range` into the light only when it moved (keeps change detection quiet).
+fn set_range(light: &mut Mut<PointLight>, range: f32) {
+    if (light.range - range).abs() > 1e-4 {
+        light.range = range;
     }
 }
 
@@ -213,6 +249,7 @@ fn budget_shadows(
         Option<&mut ShadowSlot>,
         Option<&mut PointLightShadowFade>,
         &BudgetedShadow,
+        Option<&ShadowReach>,
         &GlobalTransform,
         &ViewVisibility,
     )>,
@@ -239,18 +276,20 @@ fn budget_shadows(
     if let (Some(eye), Some(forward)) = (eye, view_forward)
         && budget.max > 0
     {
-        for (entity, light, slot, _, prio, at, visible) in &lights {
+        for (entity, light, slot, _, prio, reach, at, visible) in &lights {
             let to_light = at.translation() - eye;
             let d = to_light.length();
             if visible.get() && d < budget.fade_end {
                 let held = slot.is_some_and(|s| s.held);
-                let view_weight = if d <= light.range || d <= 1e-3 {
+                // The reach a slot would give, not the current blend.
+                let range = reach.map_or(light.range, |r| r.shadowed);
+                let view_weight = if d <= range || d <= 1e-3 {
                     1.0
                 } else {
                     let cos_theta = (to_light / d).dot(forward);
                     0.625 + 0.375 * cos_theta
                 };
-                let score = importance(light.range, d, prio.priority) * view_weight;
+                let score = importance(range, d, prio.priority) * view_weight;
                 ranked.push((
                     if held {
                         score / budget.hysteresis.max(1e-3)
@@ -281,7 +320,7 @@ fn budget_shadows(
     // First pass: advance existing held slots and release any that have finished
     // fading out, so newly ranked lights can claim freed slots in the same frame.
     let mut held = 0usize;
-    for (entity, _, slot, _, _, at, _) in &mut lights {
+    for (entity, _, slot, _, _, _, at, _) in &mut lights {
         let Some(mut slot) = slot else {
             continue;
         };
@@ -307,13 +346,14 @@ fn budget_shadows(
     // frame so multiple lamps never capture 12+ cubemap faces on the same frame.
     let max_new_slots = if budget.fade_time > 0.0 { 1 } else { budget.max };
     let mut new_slots = 0usize;
-    for (entity, mut light, slot, shadow_fade, _, at, _) in &mut lights {
+    for (entity, mut light, slot, shadow_fade, _, reach, at, _) in &mut lights {
         let target = target_of(entity, at);
         let Some(mut slot) = slot else {
+            let mut fade = 0.0;
             if target > 0.0 && held < budget.max && new_slots < max_new_slots {
                 held += 1;
                 new_slots += 1;
-                let fade = step.min(target);
+                fade = step.min(target);
                 let shadows = fade > 0.0;
                 if light.shadow_maps_enabled != shadows {
                     light.shadow_maps_enabled = shadows;
@@ -327,6 +367,9 @@ fn budget_shadows(
                     PointLightShadowFade(fade),
                 ));
             }
+            if let Some(reach) = reach {
+                set_range(&mut light, reach.range(fade));
+            }
             continue;
         };
 
@@ -339,6 +382,9 @@ fn budget_shadows(
 
         let fade = slot.fade;
         let shadows = slot.held && fade > 0.0;
+        if let Some(reach) = reach {
+            set_range(&mut light, reach.range(if slot.held { fade } else { 0.0 }));
+        }
         if light.shadow_maps_enabled != shadows {
             light.shadow_maps_enabled = shadows;
         }

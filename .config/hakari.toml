@@ -64,6 +64,7 @@ workspace-members = [
     "sf_script",
     "sf_sky",
     "sf_terrain",
+    "sf_texture",
     "sf_ui",
     "sf_ui_inventory",
     "sf_water",

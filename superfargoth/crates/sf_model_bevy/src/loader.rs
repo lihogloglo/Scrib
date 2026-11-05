@@ -59,6 +59,14 @@ pub struct RayTracingMesh(pub Handle<Mesh>);
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct NoRayTracing;
 
+/// Probe GI takes no emission from this mesh at ray hits (still its albedo):
+/// its glow is already a light in the scene, e.g. a lamp's flame next to the
+/// lamp's point light, which would otherwise light the probes twice. The
+/// raster look and the ray-traced (Solari) path, whose only light an
+/// emissive surface may be, are unchanged.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct GiSkipEmissive;
+
 #[derive(Debug, Clone)]
 pub struct CookedLodMeshes {
     /// Worst deviation from LOD0 in model-space meters (for LOD distances).

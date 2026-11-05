@@ -51,11 +51,11 @@ pub use sf_sky;
 use sf_sky::{MediumScales, RenderPath, SkyClock, SkyLight, SkySettings, SkyState, Weather};
 
 pub use cascades::{cascade_texel_sizes, CascadeSplits};
-pub use path::{GiActive, GiEnabled, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
+pub use path::{GiActive, GiEnabled, GiSkipEmissive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
 pub use proxy::{LightProxy, NoLightProxy, PointLightProxy};
 pub use shadow_budget::{
     importance as shadow_importance, BudgetedShadow, PointShadowBudget, PointShadowPlugin,
-    ShadowSlot,
+    ShadowReach, ShadowSlot,
 };
 pub use upscale::{ActiveUpscaling, TemporalHistory, UpscalingSetting, UpscalingSupport};
 pub use env_refresh::EnvMapRefresh;

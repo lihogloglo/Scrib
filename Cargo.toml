@@ -92,7 +92,14 @@ gltf = { version = "1.4", default-features = false, features = ["utils", "names"
 glam = "0.33"
 # Dialogue topic hyperlinks (sf_rpg, rpg.md "Topic links"); already in the lock through regex.
 aho-corasick = "1.1"
+# BC7 decoder for sf_texture's encode round-trip tests (dev-dependency only). Pure Rust, MIT.
+block_compression = { version = "0.11", default-features = false, features = ["bc7"] }
 indexmap = "2"
+# BC7 encoder at bake (sf_texture, bake.md "De-lighting"): Intel ISPC Texture Compressor kernels, shipped
+# prebuilt in the crate (no ISPC at build). MIT/Apache-2.0. 4.5x the pure-Rust port's speed, same quality.
+intel_tex_2 = "0.5"
+# KTX2 header/DFD serialisation (sf_texture writes BC7 KTX2 at bake). The version Bevy 0.20 reads KTX2 with.
+ktx2 = "0.5"
 log = "0.4"
 lz4_flex = "0.14"
 # Same version Bevy 0.20 uses for meshlets (one copy in the tree). Builds meshoptimizer (C++) with cc.
@@ -196,6 +203,7 @@ sf_sky = { path = "superfargoth/crates/sf_sky", version = "0.1.0" }
 sf_sky_bevy = { path = "superfargoth/crates/sf_sky_bevy", version = "0.1.0" }
 sf_terrain = { path = "superfargoth/crates/sf_terrain", version = "0.1.0" }
 sf_terrain_bevy = { path = "superfargoth/crates/sf_terrain_bevy", version = "0.1.0" }
+sf_texture = { path = "superfargoth/crates/sf_texture", version = "0.1.0" }
 sf_ui = { path = "superfargoth/crates/sf_ui", version = "0.1.0" }
 sf_ui_bevy = { path = "superfargoth/crates/sf_ui_bevy", version = "0.1.0" }
 sf_ui_css = { path = "superfargoth/crates/sf_ui_css", version = "0.1.0" }

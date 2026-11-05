@@ -28,3 +28,12 @@
   `INTERIOR_AMBIENT_SCALE` (0) can take a small floor. Known limit: dark probe patches (no relocation yet).
 - Tune live: `render.gi_intensity 2` (try 1-4), `render.gi_ambient 0.1`; report the value you like.
 - Status: confirmed (owner 2026-11-02: looks good; defaults kept, `render.gi_intensity` 1, `render.gi_ambient` 0).
+
+### GI-lampbody: lamp bodies don't light twice at GI hits, ambient floor 0.1, Census office
+- Kind: game location, High preset, raster. Run (dev exe): `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen, Census and Excise Office"`;
+  stand with the chandelier (or a lantern) in view and A/B with `flip gi` in the console. Log: no `naga`/`wgsl`/validation error.
+- Look for, GI on: the warm bounce on the ceiling and walls right around a lamp is less hot than before (the flame mesh
+  no longer adds to its own point light in the probes), while the room fill elsewhere stays; the lamps themselves still
+  glow exactly as with GI off. Unlit corners are dim but not pitch black (interior ambient floor 0.1).
+- Tune live: `render.gi_ambient 0` / `0.1` / `0.2` compares the floor; report the value you like.
+- Status: awaiting owner.

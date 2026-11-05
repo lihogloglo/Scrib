@@ -96,6 +96,25 @@ fn modern_formats_take_the_slot_when_not_outranked() {
 }
 
 #[test]
+fn top_layer_and_resolution_below_it() {
+    let base = Vfs::builder()
+        .mount(MemSource::new("base").with("t/a.dds", "a").with("t/b.dds", "b"))
+        .mount(MemSource::new("mod").with("t/b.dds", "b2"))
+        .build();
+    let vfs = base.with_top_layer(Arc::new(MemSource::new("baked").with("t/a.ktx2", "k").with("t/b.ktx2", "k")));
+    assert_eq!(vfs.source_count(), 3);
+    let alts = ["ktx2", "dds"];
+    // The top layer takes both slots.
+    assert_eq!(vfs.resolve_preferring(&p("t/a.tga"), &alts), Some((p("t/a.ktx2"), SourceIndex(2))));
+    // Below it, the base and the mod are as before.
+    assert_eq!(vfs.resolve_preferring_below(&p("t/a.tga"), &alts, SourceIndex(2)), Some((p("t/a.dds"), SourceIndex(0))));
+    assert_eq!(vfs.resolve_preferring_below(&p("t/b.tga"), &alts, SourceIndex(2)), Some((p("t/b.dds"), SourceIndex(1))));
+    assert_eq!(vfs.read(&p("t/b.dds")).unwrap(), b"b2");
+    // The original VFS is unchanged.
+    assert_eq!(base.resolve_preferring(&p("t/a.tga"), &alts), Some((p("t/a.dds"), SourceIndex(0))));
+}
+
+#[test]
 fn alternate_wins_ties_within_one_source() {
     let vfs = Vfs::builder()
         .mount(MemSource::new("s").with("a.nif", "").with("a.gltf", "").with("a.glb", ""))

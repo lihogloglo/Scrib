@@ -51,7 +51,7 @@ impl Default for GiEnabled {
 /// The per-entity ray-tracing markers live with the loader that builds the
 /// variants (`sf_model_bevy`), so spawners that don't depend on this crate
 /// (world streaming) can attach them.
-pub use sf_model_bevy::{NoRayTracing, RayTracingMesh};
+pub use sf_model_bevy::{GiSkipEmissive, NoRayTracing, RayTracingMesh};
 
 /// A 3D camera whose render path this plugin manages (G-buffer, MSAA,
 /// prepasses, Solari settings). [`crate::SkyCamera`] requires it; interior
@@ -106,8 +106,11 @@ pub(crate) fn finish(app: &mut App) {
 #[cfg(feature = "solari")]
 mod solari {
     use bevy_app::{App, Update};
-    use bevy_asset::{AssetMut, Assets};
+    use std::collections::HashMap;
+
+    use bevy_asset::{AssetId, AssetMut, Assets, Handle};
     use bevy_camera::{Camera3d, CameraMainTextureUsages};
+    use bevy_color::LinearRgba;
     use bevy_core_pipeline::prepass::{
         DeferredPrepass, DeferredPrepassDoubleBuffer, DepthPrepass, DepthPrepassDoubleBuffer,
         MotionVectorPrepass,
@@ -125,10 +128,11 @@ mod solari {
     use bevy_solari::SolariPlugins;
     use bevy_solari::prelude::{RaytracingMesh3d, SolariLighting};
     use bevy_solari::scene::RaytracingScenePlugin;
+    use bevy_transform::components::Transform;
 
     use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
 
-    use super::{GiActive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
+    use super::{GiActive, GiSkipEmissive, NoRayTracing, RayTracingMesh, RayTracingSupport, RenderPathCamera};
     use crate::{ActiveRenderPath, RenderPathSetting, SkyRenderOptions, SkySystems, UpscalingSetting};
     use sf_sky::RenderPath;
 
@@ -157,6 +161,79 @@ mod solari {
     /// Marks a `RaytracingMesh3d` this module added (and will remove).
     #[derive(Component, Clone, Copy, Debug)]
     pub(super) struct MirroredRayTracing;
+
+    /// On a mirrored [`GiSkipEmissive`] mesh (raster path, probe GI): the
+    /// child entity that carries its ray-traced instance instead, with an
+    /// emission-free copy of its material. The child has no `Mesh3d`, so it
+    /// is never rasterized and the mesh keeps its own look on screen.
+    #[derive(Component, Clone, Copy, Debug)]
+    pub(super) struct GiEmissiveProxy(Entity);
+
+    /// `material` without emission: what probe GI sees of a [`GiSkipEmissive`] mesh.
+    pub(super) fn without_emission(material: &StandardMaterial) -> StandardMaterial {
+        StandardMaterial {
+            emissive: LinearRgba::BLACK,
+            emissive_texture: None,
+            ..material.clone()
+        }
+    }
+
+    /// Registers `entity` with the ray tracer. A [`GiSkipEmissive`] mesh on
+    /// the raster path gets its instance on a child proxy with
+    /// [`without_emission`] of its material (one copy per source material,
+    /// kept in `stripped`); false when that material is not loaded yet (retry
+    /// next frame). On the ray-traced path every mesh keeps its own material:
+    /// there an emissive surface may be the only light (Solari has no point
+    /// lights).
+    pub(super) fn mirror_one(
+        commands: &mut Commands,
+        materials: &mut Assets<StandardMaterial>,
+        stripped: &mut HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>,
+        entity: Entity,
+        mesh: Handle<bevy_mesh::Mesh>,
+        material: &MeshMaterial3d<StandardMaterial>,
+        skip_emissive: bool,
+    ) -> bool {
+        if !skip_emissive {
+            commands
+                .entity(entity)
+                .try_insert((RaytracingMesh3d(mesh), MirroredRayTracing));
+            return true;
+        }
+        let copy = if let Some(copy) = stripped.get(&material.id()) {
+            copy.clone()
+        } else {
+            let Some(source) = materials.get(&material.0) else {
+                return false;
+            };
+            let copy = materials.add(without_emission(source));
+            stripped.insert(material.id(), copy.clone());
+            copy
+        };
+        let proxy = commands
+            .spawn((
+                RaytracingMesh3d(mesh),
+                MeshMaterial3d(copy),
+                Transform::IDENTITY,
+                ChildOf(entity),
+            ))
+            .id();
+        commands
+            .entity(entity)
+            .try_insert((MirroredRayTracing, GiEmissiveProxy(proxy)));
+        true
+    }
+
+    /// Undoes [`mirror_one`].
+    pub(super) fn unmirror(commands: &mut Commands, entity: Entity, proxy: Option<&GiEmissiveProxy>) {
+        if let Some(proxy) = proxy {
+            commands.entity(proxy.0).try_despawn();
+            commands.entity(entity).try_remove::<GiEmissiveProxy>();
+        }
+        commands
+            .entity(entity)
+            .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
+    }
 
     pub(super) fn build(app: &mut App) {
         // Headless (no renderer, e.g. unit tests): nothing to ray trace, and
@@ -407,6 +484,10 @@ mod solari {
     /// each loaded worldspace draws in its own layer, so the other
     /// worldspaces (an exterior kept loaded behind an interior) stay out of
     /// the BLAS/TLAS, and leave it when the camera changes worldspace.
+    ///
+    /// A [`GiSkipEmissive`] mesh on the raster path is traced through a child
+    /// proxy without emission ([`mirror_one`]); a path switch or a newly added
+    /// flag re-mirrors it, so Solari always sees the mesh's own material.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn mirror_meshes(
         mut commands: Commands,
@@ -415,62 +496,174 @@ mod solari {
         gi: Res<GiActive>,
         cameras: Query<Option<&RenderLayers>, With<RenderPathCamera>>,
         mut seen: Local<Option<RenderLayers>>,
+        mut materials: ResMut<Assets<StandardMaterial>>,
+        mut stripped: Local<HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>>,
         unmirrored: Query<
             (
                 Entity,
                 &Mesh3d,
                 Option<&RayTracingMesh>,
+                &MeshMaterial3d<StandardMaterial>,
+                Has<GiSkipEmissive>,
                 &InheritedVisibility,
                 Option<&RenderLayers>,
             ),
             (
-                With<MeshMaterial3d<StandardMaterial>>,
                 Without<RaytracingMesh3d>,
+                Without<MirroredRayTracing>,
                 Without<NoRayTracing>,
             ),
         >,
         changed: Query<
-            (Entity, &InheritedVisibility, Option<&RenderLayers>),
+            (Entity, &InheritedVisibility, Option<&RenderLayers>, Option<&GiEmissiveProxy>),
             (
                 With<MirroredRayTracing>,
                 Or<(Changed<InheritedVisibility>, Changed<RenderLayers>)>,
             ),
         >,
-        mirrored: Query<(Entity, &InheritedVisibility, Option<&RenderLayers>), With<MirroredRayTracing>>,
+        flagged: Query<(Entity, Option<&GiEmissiveProxy>, Ref<GiSkipEmissive>), With<MirroredRayTracing>>,
+        mirrored: Query<
+            (Entity, &InheritedVisibility, Option<&RenderLayers>, Option<&GiEmissiveProxy>),
+            With<MirroredRayTracing>,
+        >,
     ) {
         let wanted = active.0 == RenderPath::RayTraced || gi.0;
         if wanted && options.auto_ray_tracing_meshes {
             let view = super::camera_layers(cameras.iter());
             let view_changed = seen.as_ref() != Some(&view);
-            for (entity, mesh, variant, visibility, layers) in &unmirrored {
+            let raster = active.0 != RenderPath::RayTraced;
+            for (entity, mesh, variant, material, skip, visibility, layers) in &unmirrored {
                 if visibility.get() && super::traced_by(&view, layers) {
                     let mesh = variant.map_or(&mesh.0, |v| &v.0).clone();
-                    commands
-                        .entity(entity)
-                        .try_insert((RaytracingMesh3d(mesh), MirroredRayTracing));
+                    mirror_one(
+                        &mut commands,
+                        &mut materials,
+                        &mut stripped,
+                        entity,
+                        mesh,
+                        material,
+                        skip && raster,
+                    );
                 }
             }
-            let leaving = |(entity, visibility, layers): (Entity, &InheritedVisibility, Option<&RenderLayers>)| {
-                (!visibility.get() || !super::traced_by(&view, layers)).then_some(entity)
+            let leaving = |(entity, visibility, layers, proxy): (
+                Entity,
+                &InheritedVisibility,
+                Option<&RenderLayers>,
+                Option<&GiEmissiveProxy>,
+            )| {
+                (!visibility.get() || !super::traced_by(&view, layers)).then_some((entity, proxy.copied()))
             };
-            let gone: Vec<Entity> = if view_changed {
+            let mut gone: Vec<(Entity, Option<GiEmissiveProxy>)> = if view_changed {
                 mirrored.iter().filter_map(leaving).collect()
             } else {
                 changed.iter().filter_map(leaving).collect()
             };
-            for entity in gone {
-                commands
-                    .entity(entity)
-                    .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
+            // Re-mirror flagged meshes whose rule changed: the path switched
+            // (proxy on raster, own material on Solari) or the flag is new.
+            gone.extend(
+                flagged
+                    .iter()
+                    .filter(|(_, _, flag)| active.is_changed() || flag.is_added())
+                    .map(|(entity, proxy, _)| (entity, proxy.copied())),
+            );
+            for (entity, proxy) in gone {
+                unmirror(&mut commands, entity, proxy.as_ref());
             }
             *seen = Some(view);
         } else if active.is_changed() || options.is_changed() || gi.is_changed() {
             *seen = None;
-            for (entity, _, _) in &mirrored {
-                commands
-                    .entity(entity)
-                    .try_remove::<(RaytracingMesh3d, MirroredRayTracing)>();
+            for (entity, _, _, proxy) in &mirrored {
+                unmirror(&mut commands, entity, proxy);
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use bevy_ecs::system::RunSystemOnce;
+
+        fn glowing() -> StandardMaterial {
+            StandardMaterial {
+                emissive: LinearRgba::rgb(5.0, 2.0, 0.5),
+                ..Default::default()
+            }
+        }
+
+        /// Runs [`mirror_one`] on `entities` (with their `skip` rule) in one
+        /// pass, as `mirror_meshes` does, sharing one copy cache.
+        fn mirror(world: &mut World, entities: Vec<(Entity, bool)>) {
+            world
+                .run_system_once(
+                    move |mut commands: Commands,
+                          mut materials: ResMut<Assets<StandardMaterial>>,
+                          mut stripped: Local<HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>>,
+                          query: Query<&MeshMaterial3d<StandardMaterial>>| {
+                        for &(entity, skip) in &entities {
+                            let material = query.get(entity).unwrap();
+                            assert!(mirror_one(
+                                &mut commands,
+                                &mut materials,
+                                &mut stripped,
+                                entity,
+                                Handle::default(),
+                                material,
+                                skip,
+                            ));
+                        }
+                    },
+                )
+                .unwrap();
+        }
+
+        /// A flagged mesh is traced through a child proxy whose material has
+        /// no emission (and is otherwise the same); the mesh keeps its own
+        /// material and is not itself an instance. An unflagged mesh is its
+        /// own instance with its own, unchanged material. Flagged meshes that
+        /// share a material share one copy, and unmirroring removes the proxy.
+        #[test]
+        fn skip_emissive_traces_an_emission_free_copy() {
+            let mut world = World::new();
+            world.init_resource::<Assets<StandardMaterial>>();
+            let source = world.resource_mut::<Assets<StandardMaterial>>().add(glowing());
+            let flame = world.spawn(MeshMaterial3d(source.clone())).id();
+            let glass = world.spawn(MeshMaterial3d(source.clone())).id();
+            let plain = world.spawn(MeshMaterial3d(source.clone())).id();
+            mirror(&mut world, vec![(flame, true), (glass, true), (plain, false)]);
+
+            let materials = world.resource::<Assets<StandardMaterial>>();
+            assert_eq!(materials.get(&source).unwrap().emissive, glowing().emissive);
+            let proxy_of = |entity: Entity| world.get::<GiEmissiveProxy>(entity).unwrap().0;
+            let (flame_proxy, glass_proxy) = (proxy_of(flame), proxy_of(glass));
+            for (mesh, proxy) in [(flame, flame_proxy), (glass, glass_proxy)] {
+                assert!(world.get::<RaytracingMesh3d>(mesh).is_none());
+                assert!(world.get::<MirroredRayTracing>(mesh).is_some());
+                assert_eq!(world.get::<MeshMaterial3d<StandardMaterial>>(mesh).unwrap().id(), source.id());
+                assert!(world.get::<RaytracingMesh3d>(proxy).is_some());
+                assert!(world.get::<Mesh3d>(proxy).is_none());
+                assert_eq!(world.get::<ChildOf>(proxy).unwrap().parent(), mesh);
+            }
+            let copy = world.get::<MeshMaterial3d<StandardMaterial>>(flame_proxy).unwrap().id();
+            assert_ne!(copy, source.id());
+            assert_eq!(world.get::<MeshMaterial3d<StandardMaterial>>(glass_proxy).unwrap().id(), copy);
+            let copied = materials.get(copy).unwrap();
+            assert_eq!(copied.emissive, LinearRgba::BLACK);
+            assert!(copied.emissive_texture.is_none());
+            assert_eq!(copied.base_color, glowing().base_color);
+
+            assert!(world.get::<RaytracingMesh3d>(plain).is_some());
+            assert!(world.get::<GiEmissiveProxy>(plain).is_none());
+            assert_eq!(world.get::<MeshMaterial3d<StandardMaterial>>(plain).unwrap().id(), source.id());
+
+            world
+                .run_system_once(move |mut commands: Commands| {
+                    unmirror(&mut commands, flame, Some(&GiEmissiveProxy(flame_proxy)));
+                })
+                .unwrap();
+            assert!(world.get_entity(flame_proxy).is_err());
+            assert!(world.get::<GiEmissiveProxy>(flame).is_none());
+            assert!(world.get::<MirroredRayTracing>(flame).is_none());
         }
     }
 }

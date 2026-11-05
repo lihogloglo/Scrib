@@ -38,6 +38,8 @@ use sf_gi::GiSettings;
 mod render;
 
 pub use sf_gi;
+/// Per-mesh flag: GI hits on it take no emission (`sf_sky_bevy` traces it with an emission-free material copy).
+pub use sf_sky_bevy::GiSkipEmissive;
 
 /// Whether this GPU can run the GI (Solari's required ray-query and binding-array features).
 /// Set at plugin `finish`; false: the system is absent.

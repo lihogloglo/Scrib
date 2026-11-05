@@ -149,6 +149,7 @@ RTX 4060 Laptop unless marked measured.
 | 32 | Virtualized geometry (Nanite, meshlets) | UE5 Nanite (Karis 2021) | **n/a**: Bevy meshlets rejected (far-field.md) | | | P2 revisit | far-field.md |
 | 33 | Frame pacing / present mode in measurements | Every platform team gates on present-to-present with a fixed present mode | **partial** (spikes3 measuring Mailbox/Fifo, window ≤ panel) | Removes false gate failures | in progress | P0 (running) | diag.md |
 | 34 | Per-category importance (never cull actors, doors, quest items) | Bethesda per-category fades; GTA `priorityLevel`; UE significance manager | **missing** | Correctness for size culling | S (part of J1) | P0 | streaming.md |
+| 35 | **Albedo de-lighting of pre-lit legacy textures** (divide out the low-frequency painted light) | RTX Remix community tools (PBRify, PBRFusion, Painkiller RTX); Unity De-Lighting Tool; openmw-rtx `ShadingMap` (32x32 luminance grid, floor 0.5 / ceiling 2.0); photogrammetry de-lighters | **missing**: vanilla albedo (linear 0.12-0.2) is lit again by shadows, SSAO and probe GI | Stronger probe/RT bounce, no double-dark corners; unmeasured | S-M: bake step + adapter hook (research: `superfargoth/docs/research/delighting-2026-11-05.md`) | **P2** | owner decision; `sf_bake`, `mw_bake` |
 
 ## The size-based draw distance (J1, J2)
 

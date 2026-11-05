@@ -1562,3 +1562,8 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-01 (gi-dispatch): `bevy_solari` 0.20.0 vendored with an own patch (`superfargoth/vendor/README.md`): the scene
   bind group exists whenever the TLAS has instances, lights or not, so probe GI traces lightless interiors; Solari's
   own lighting keeps skipping lightless scenes (`lit_bind_group`). Drop when upstream does the same.
+- 2026-11-05 (owner): **fast and beautiful over fidelity; modern techniques over vanilla behaviour** for lighting. From the openmw-rtx
+  research: lamp reach follows shadow state, lamp bodies don't light twice at GI hits, GI ambient floor 0.1, albedo de-lighting baked
+  (BC7 KTX2, on by default); vanilla flicker band and negative lights skipped. New crates are fine (added with hakari).
+- 2026-11-05 (owner pass): short unshadowed lamp reach (1.5 x radius) **rejected**: lit towns at night and interiors matter more than
+  light leaking through walls; default back to 4 x, `ShadowReach` kept. Through-wall leaks wait for more/cheaper lamp shadows (H2).

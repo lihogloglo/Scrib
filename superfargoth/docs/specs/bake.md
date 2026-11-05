@@ -151,6 +151,48 @@ pub trait ModelImporter: Send + Sync {
 
 Moved to [bake-mesh-cook.md](bake-mesh-cook.md).
 
+## De-lighting (designed 2026-11-05)
+
+Albedo textures painted for renderers without bounce light carry baked shading that GI lights a second time.
+The bake divides it out (owner decision 2026-11-05: on by default, strength 0.5; research
+`docs/research/delighting-2026-11-05.md`). Algorithm: port of openmw-rtx `ShadingMap` (commit `f2f8b2d`),
+in `sf_texture::delight` (Bevy-free, no deps). Per texel, linear Rec. 709 luminance weighted by alpha, summed
+into a 32x32 grid by the texel's cell (empty cells take the mean of sampled ones; none sampled = neutral);
+3 passes of 3x3 box blur, wrapping on a repeating axis and clamping on a clamped one; normalised to mean 1,
+clamped to [0.5, 2.0]. Apply: `linear / mix(1, bilinear factor, strength)`, then the colour scaled so its
+brightest channel is at most 1 (hue kept), re-encoded sRGB, alpha untouched. Differences from upstream: input is
+decoded RGBA8 (per-texel cells, like their device pass); the grid is f32, never stored; the lookup clamps on a
+clamped axis (theirs always wraps). Limits (Retinex): slow true-albedo gradients are flattened, few-texel
+occlusion and rims stay. Cost: 512x512 grid 0.6 ms + apply 5.4 ms (release, one core).
+
+Product (D-2b built, `mw_bake::delight`): `texture.roles` per model (NIF material slots: albedo, glow,
+detail/dark, emissive = base glowing through emissive colour/vertex colours/unlit, effect = particles, additive
+and `meshes/e/`, translucent = blend that isn't a cutout candidate; clamp flags; alpha-test cutoff). The adapter
+groups uses by winning file (the runtime's `resolve_preferring` rule) and skips, counted per reason: any non-albedo
+use, a `_n`/`_nh`/`_spec` companion, sky/UI names, a winner already KTX2, more than one variant of the stem
+(`a.tga` + `a.dds`), missing; at decode time sides < 64 px, non-4-aligned, undecodable (a constant skip marker
+object). `texture.delight` per winner: strength, wrap, cutoff in the params, `ALGORITHM_VERSION` as the step version,
+BC7 basic with coverage-preserving cutout mips. `texture.delight.index` plans every source and product and reads
+digests only (new `RunCx::file_fingerprint` / `product_digest`): `(source, its fingerprint, ktx2 object)`.
+Cache layer: a VFS source mounted *above* every mod (`Vfs::with_top_layer`) that serves `<stem>.ktx2` only while the
+source is still the sole variant with the baked fingerprint; a mod's newer file changes that, so it wins and the stale
+entry is never served (re-bake picks it up). Not covered: terrain layers, far impostors (bake from the originals),
+hot-reloaded textures until restart. `--off delight` skips the mount. Vanilla + Tribunal + Bloodmoon (2026-11-05):
+3521 de-lit, skipped small 356, effect 121, translucent 49, emissive 30, sky/ui 13, glow 9, detail 7, missing 3;
+cold 34 s wall (395 s CPU summed over threads), warm 0.5 s.
+
+Encode (D-2a built, `sf_texture::ktx2_out`): mips are an area-weighted box filter (odd axes blend partial texels)
+in linear light, colour alpha-weighted so cutout holes don't bleed, kept in f32 between levels. Cutouts keep their
+alpha-test coverage (D-2c, `preserve_coverage` / `bc7_ktx2_cutout`, cutoff from the content): each mip's alpha is
+scaled (bisection) so the fraction passing the cutoff matches level 0 (Castaño 2010, as NVTT, Unity, UE). BC7 via `intel_tex_2` (Intel ISPC Texture Compressor kernels,
+prebuilt in the crate, MIT/Apache), "basic" profile by default, its alpha variant only for a level with alpha < 255.
+Rejected: `block_compression` (pure-Rust port of the same kernels, MIT, same PSNR, 4.5x slower on CPU; its decoder
+is our test oracle); `basis-universal` (UASTC/ETC1S transcoding, heavier, not needed for desktop BC7). KTX2: own
+layout, header and DFD serialised by the `ktx2` crate (Bevy's reader); vkFormat 146/145, no supercompression, level
+0 must be 4-aligned for wgpu (`is_block_aligned`). 512x512 mips + BC7, release, one core: fast 128 ms, basic 318 ms
+(alpha: 221 / 442 ms); ~5000 textures of ~256 px on 8 cores is about a minute. Bevy's loader takes sRGB from its
+load settings, not the vkFormat.
+
 ## Execution
 
 - **Planner.** `bake`/`product` first plan every unfinished product

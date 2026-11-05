@@ -23,6 +23,7 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
         level.cameras.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
     );
     let (vfs, content) = mw_boot_bevy::load(install, false)?;
+    let vfs = flags.delight(install, vfs)?;
     println!("content loaded in {:.2} s", started.elapsed().as_secs_f32());
     let ws = worldspace(&level.name);
     let start = crate::StreamStart::Interior { worldspace: ws.clone(), eye: camera.eye.as_dvec3(), target: camera.target.as_dvec3() };

@@ -92,3 +92,16 @@ None found for light budgeting, light LOD or light culling on Bevy 0.20 (web sea
    judges by eye, since it moves where pools end.
 3. **Flicker** stays per frame: re-extraction of animated lights didn't show in the trace.
 4. Shadowed lights: budget and cost in shadows.md.
+
+**Reach follows shadow state (2026-11-05, ROADMAP "Light rules" L-A).** A lamp without a shadow map lit ~4x its
+radius straight through walls (only 8 of ~26 Census-office lamps hold a map) and swamped the probe GI. Now a
+`BudgetedShadow` light with `sf_sky_bevy::ShadowReach { unshadowed, shadowed }` gets
+`PointLight::range = lerp(unshadowed, shadowed, fade)`, written by the budget each frame with the same fade it
+gives `PointLightShadowFade` (time fade `fade_time` and distance band), so nothing pops; ranking scores the
+`shadowed` reach, so a light's own state never feeds its importance. Lights without `ShadowReach` keep their
+range. Game numbers (`mw_assets::LightCalibration`): `unshadowed_range_scale` **4 since the owner pass 2026-11-05** (1.5 darkened
+towns at night and interiors; the leak through walls is a shadow-count problem, not a reach one; OpenMW GL 1.75, Clockwork 1.0),
+`range_scale` 4 (openmw-rtx ~2r+128u, ray-shadowed); CLI `--range-unshadowed` (4 = the old reach). Bevy's window
+`(1-(d/R)^4)^2` is 0 at R, so no ring, but it is not flat inside: at 1.5 r the pool loses 2.5 % at 0.5 r, 12 % at
+0.75 r, 35 % at r versus 4 r (Clockwork's "same inside ¾ r" holds for its falloff, not Bevy's). Limit: Bevy's
+light `ViewVisibility` uses the current range, so a lamp whose short reach misses every frustum never ranks.

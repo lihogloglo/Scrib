@@ -85,10 +85,13 @@ pub enum Part {
     /// `bevy_pbr::ShadowMoverRefresh`, SH-20); off, the B3 rule: skinned casters by root on a coarse
     /// grid, at most 2 dirty faces per frame (animated shadows step; an A/B).
     MoverShadows,
+    /// De-lit albedo textures (the bake's `texture.delight` VFS layer, bake.md "De-lighting"): off, the layer
+    /// isn't mounted and models load the original textures (an A/B; restart to switch).
+    Delight,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 45] = [
+    const ALL: [(&'static str, Part); 46] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -135,6 +138,7 @@ impl Part {
         ("lampfilter", Part::LampFilter),
         ("movershadows", Part::MoverShadows),
         ("precipocc", Part::PrecipOcc),
+        ("delight", Part::Delight),
     ];
 
     fn name(self) -> &'static str {

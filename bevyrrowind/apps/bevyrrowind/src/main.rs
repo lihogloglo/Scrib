@@ -438,6 +438,12 @@ impl ViewFlags {
         self.hour.unwrap_or(10.0)
     }
 
+    /// `vfs` with the de-lit texture layer on top unless `--off delight` (`mw_boot_bevy::delight`).
+    fn delight(&self, install: &MorrowindInstall, vfs: Vfs) -> Result<Vfs> {
+        let enabled = !Off::from_flags(&self.perf.off)?.has(Part::Delight);
+        Ok(mw_boot_bevy::delight::mount(install, vfs, self.cache.clone(), enabled))
+    }
+
     fn options(
         self,
         install: &MorrowindInstall,
@@ -794,7 +800,7 @@ fn run(cli: Cli) -> Result {
             find(&content.db, &kind, pattern.as_deref(), limit)
         }
         Command::View { cell, model: true, flags } => {
-            let vfs = mount(&install, false)?;
+            let vfs = flags.delight(&install, mount(&install, false)?)?;
             let path = mw_world::model_path(&cell).ok_or("empty model path")?;
             let placement = mw_world::Placement {
                 base_id: path.clone(),
@@ -813,6 +819,7 @@ fn run(cli: Cli) -> Result {
         }
         Command::Character { ids, screenshot, settle, camera, cache, bodies, cloth, walk, drawn, night } => {
             let (vfs, content) = load(&install, false)?;
+            let vfs = delight_from_env(&install, vfs, cache.clone())?;
             let store = sf_bake::Store::open(cache_root(cache)?)?;
             let manifest = store.load_manifest(&mw_bake::profile_name(&install))?;
             let camera = camera.as_deref().map(parse_camera).transpose()?;
@@ -841,6 +848,7 @@ fn clip_preview(install: &MorrowindInstall, args: ClipPreviewArgs) -> Result {
         jobs.extend(text.lines().filter_map(|l| ClipJob::parse_line(l, &defaults)));
     }
     let (vfs, content) = load(install, false)?;
+    let vfs = delight_from_env(install, vfs, cache.clone())?;
     let store = sf_bake::Store::open(cache_root(cache)?)?;
     let manifest = store.load_manifest(&mw_bake::profile_name(install))?;
     let options = ClipPreviewOptions { jobs, npc, camera, out, fps, size, ffmpeg, keep_frames, furniture, at, prop, prop_offset, browse };
@@ -875,11 +883,19 @@ struct DefaultFlags {
     flags: ViewFlags,
 }
 
+/// `vfs` with the de-lit texture layer unless `BEVYRROWIND_OFF` names `delight` (commands
+/// without `--off`).
+fn delight_from_env(install: &MorrowindInstall, vfs: Vfs, cache: Option<PathBuf>) -> Result<Vfs> {
+    let enabled = !Off::from_flags(&[])?.has(Part::Delight);
+    Ok(mw_boot_bevy::delight::mount(install, vfs, cache, enabled))
+}
+
 /// No subcommand: the game. The streamed exterior in player mode at the new-game start, the
 /// arrival marker of [`START_CELL`]'s door into the exterior (feet on it, facing its heading),
 /// under the main menu (`mw_exterior_bevy::main_menu`) until New game.
 fn play(install: &MorrowindInstall) -> Result {
     let (vfs, content) = load(install, false)?;
+    let vfs = delight_from_env(install, vfs, None)?;
     let office = mw_world::find_cell(&content.db, START_CELL)
         .filter(|c| c.is_interior())
         .map(mw_world::ids::worldspace_of)
@@ -920,6 +936,7 @@ fn view_cell(install: &MorrowindInstall, cell: &str, flags: ViewFlags) -> Result
         return level::view(install, name, flags);
     }
     let (vfs, content) = load(install, false)?;
+    let vfs = flags.delight(install, vfs)?;
     // Exterior cells (by grid "x,y" or by name) stream the whole exterior.
     let interior = mw_world::find_cell(&content.db, cell).filter(|c| c.is_interior());
     if interior.is_none()
@@ -1138,9 +1155,13 @@ struct Lighting {
     /// Light power, lumens per square meter of light radius.
     #[arg(long)]
     lumens: Option<f32>,
-    /// Light range cutoff as a multiple of its radius.
+    /// Light range cutoff as a multiple of its radius, for lamps holding a shadow map.
     #[arg(long)]
     range: Option<f32>,
+    /// Light range cutoff as a multiple of its radius without a shadow map
+    /// (A/B the reach-by-shadow-state rule: `--range-unshadowed 4` is the old reach).
+    #[arg(long = "range-unshadowed")]
+    range_unshadowed: Option<f32>,
     /// Ambient luminance (nits) for a white cell ambient.
     #[arg(long)]
     ambient: Option<f32>,
@@ -1182,6 +1203,7 @@ impl Lighting {
         let mut calibration = mw_assets::LightCalibration::default();
         calibration.lumens_per_radius_sq = self.lumens.unwrap_or(calibration.lumens_per_radius_sq);
         calibration.range_scale = self.range.unwrap_or(calibration.range_scale);
+        calibration.unshadowed_range_scale = self.range_unshadowed.unwrap_or(calibration.unshadowed_range_scale);
         calibration.ambient_nits = self.ambient.unwrap_or(calibration.ambient_nits);
         calibration.exposure_floor_ev100 = self.exposure_floor.unwrap_or(calibration.exposure_floor_ev100);
         calibration.night_ambient_nits = self.night_ambient.unwrap_or(calibration.night_ambient_nits);

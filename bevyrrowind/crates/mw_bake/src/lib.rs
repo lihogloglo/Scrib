@@ -9,6 +9,8 @@
 //!   (manifest + local folder), retargeted onto the actors by [`anim`].
 //! - [`collision`]: the `collision.cook` rules (static collision for
 //!   `StaticProbe`), registered by [`model_baker`].
+//! - [`delight`]: albedo de-lighting (`texture.roles`, `texture.delight` and
+//!   its index) and the runtime VFS layer serving the de-lit KTX2s.
 //! - [`referenced_models`] and [`bake_models`]: what `bevyrrowind bake`
 //!   runs, and [`BakeSummary`], what it prints.
 //!
@@ -18,6 +20,7 @@ pub mod anim;
 pub mod body;
 pub mod census;
 pub mod collision;
+pub mod delight;
 mod importer;
 mod inputs;
 mod summary;

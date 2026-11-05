@@ -178,6 +178,13 @@ the dev console's `render.gi_intensity` / `render.gi_ambient` write every `GiVol
   emissive, normal, metallic-roughness textures. Our NIF meshes use `StandardMaterial` (`mw_assets`); terrain and
   other custom materials need a proxy albedo (spike check 2). Alpha-tested foliage: opaque at hits in the spike;
   later, `RAY_FLAG` any-hit alpha test or AC's per-mesh baked opacity.
+- **Lamp bodies (L-B, as built 2026-11-05):** a mesh with `GiSkipEmissive` (`sf_model_bevy`, re-exported by
+  `sf_sky_bevy`/`sf_gi_bevy`) gives probe hits its albedo but no emission, since its glow is already a light in the
+  list (openmw-rtx `LampBody`). On the raster path `mirror_meshes` puts its `RaytracingMesh3d` on a child proxy (no
+  `Mesh3d`, never rasterized) whose material is an emission-free copy (one per source material): no shader or Solari
+  patch, raster look unchanged. On the Solari path the mesh keeps its own material (emissive may be its only light);
+  a path switch or a new flag re-mirrors. The game flags emissive meshes under a model with a placed light
+  (`mw_assets` `mark_lamp_bodies`). Interior `ambient_scale` floor 0.1 (`gi_volume.rs`).
 
 ### Per-preset budget (replaced by spike numbers)
 | | Probes resident | Updated / frame | Rays / probe | Atlas VRAM |

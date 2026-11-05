@@ -184,6 +184,61 @@ fn a_fading_shadow_splits_the_light_without_changing_its_power() {
     assert!(!shadowed(&app, lights[1]).0);
 }
 
+/// A light with a [`ShadowReach`] has its short range without a slot, its
+/// long range at full shadow, and the shadow fade's blend in between, both
+/// ways (spec lights.md "Reach follows shadow state"). A light without one
+/// keeps the range it was given.
+#[test]
+fn reach_follows_the_shadow_fade() {
+    let reach = ShadowReach { unshadowed: 3.0, shadowed: 8.0 };
+    assert!((reach.range(0.0) - 3.0).abs() < 1e-6 && (reach.range(1.0) - 8.0).abs() < 1e-6);
+    assert!((reach.range(0.25) - 4.25).abs() < 1e-6 && (reach.range(2.0) - 8.0).abs() < 1e-6);
+
+    let budget = PointShadowBudget { max: 1, fade_time: 1.0, ..PointShadowBudget::default() };
+    let (mut app, lights) = budget_app(budget);
+    for e in &lights[..3] {
+        app.world_mut().entity_mut(*e).insert(reach);
+    }
+    let range = |app: &App, e: Entity| app.world().get::<bevy_light::PointLight>(e).expect("light").range;
+    let fade = |app: &App, e: Entity| app.world().get::<ShadowSlot>(e).expect("slot").fade;
+    let untouched = bevy_light::PointLight::default().range;
+
+    // Fading in: the holder's range is the blend at its shadow fade.
+    for _ in 0..3 {
+        app.update();
+    }
+    let f = fade(&app, lights[0]);
+    assert!(f > 0.0 && f < 1.0, "{f}");
+    let r = range(&app, lights[0]);
+    assert!((r - reach.range(f)).abs() < 1e-4 && r > 3.0 && r < 8.0, "{r} at fade {f}");
+    // No slot: the short reach; no `ShadowReach`: unchanged.
+    assert!((range(&app, lights[1]) - 3.0).abs() < 1e-4);
+    assert!((range(&app, lights[2]) - 3.0).abs() < 1e-4);
+    assert!((range(&app, lights[3]) - untouched).abs() < 1e-6);
+
+    // Full shadow: the long reach.
+    for _ in 0..15 {
+        app.update();
+    }
+    assert!((fade(&app, lights[0]) - 1.0).abs() < 1e-6);
+    assert!((range(&app, lights[0]) - 8.0).abs() < 1e-4);
+
+    // Losing the slot (budget 0): back down with the fade-out, then short.
+    app.world_mut().resource_mut::<PointShadowBudget>().max = 0;
+    for _ in 0..3 {
+        app.update();
+    }
+    let f = fade(&app, lights[0]);
+    assert!(f > 0.0 && f < 1.0, "{f}");
+    assert!((range(&app, lights[0]) - reach.range(f)).abs() < 1e-4);
+    for _ in 0..15 {
+        app.update();
+    }
+    assert!(!app.world().get::<ShadowSlot>(lights[0]).expect("slot").held);
+    assert!((range(&app, lights[0]) - 3.0).abs() < 1e-4);
+    assert!((range(&app, lights[3]) - untouched).abs() < 1e-6);
+}
+
 #[test]
 fn medium_rebuilds_on_weather_steps_rate_limited() {
     let mut app = app(12.0);

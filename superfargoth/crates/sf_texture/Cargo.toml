@@ -1,0 +1,16 @@
+[package]
+name = "sf_texture"
+description = "Bevy-free texture processing for superfargoth bake steps: albedo de-lighting, mips, BC7 KTX2 (bake.md \"De-lighting\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+intel_tex_2.workspace = true
+ktx2.workspace = true
+
+[dev-dependencies]
+block_compression.workspace = true
+
+[lints]
+workspace = true

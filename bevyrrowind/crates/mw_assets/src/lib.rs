@@ -38,10 +38,9 @@ pub use cooked::{CookedLodSettings, CookedMaterials, CookedModelRoot, CookedSpaw
 pub use lights::{AttachLight, LightCalibration};
 pub use particles::{ActorEmitter, LiveEmitter, LiveNode, LiveSystem, NifNode, ParticleEmitter, ParticleExt, ParticleMaterial, ParticleRange};
 
-/// Extensions that may replace a texture reference, in preference order.
-/// `dds` first is the original engine's behavior; `ktx2`/`png` let modern
-/// texture mods take the slot.
-pub const TEXTURE_ALTERNATES: &[&str] = &["ktx2", "dds", "png"];
+/// Extensions that may replace a texture reference, in preference order
+/// (defined beside the bake, which resolves textures the same way).
+pub use mw_bake::textures::TEXTURE_ALTERNATES;
 
 /// Camera exposure the content is calibrated for (EV100). Interiors are
 /// lit like a dim room; see [`LightCalibration`] for the light side.
@@ -120,6 +119,7 @@ impl Plugin for MwAssetsPlugin {
                     (animation::assign_phases, animation::animate_nodes).chain(),
                     (particles::sync_materials, particles::start_particles, particles::simulate_particles, particles::upload_particles).chain(),
                     lights::attach_lights,
+                    lights::mark_lamp_bodies,
                     lights::animate_lights,
                     cooked::spawn_cooked,
                     leaf_shadow_receivers,
@@ -365,7 +365,11 @@ pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
     }
     let cutout = VfsPath::new(texture)
         .ok()
-        .and_then(|p| vfs.resolve_preferring(&p, TEXTURE_ALTERNATES))
+        .and_then(|p| match mw_bake::delight::layer_index(vfs) {
+            // De-lit KTX2s keep their source's alpha: classify the source (no BC7 decode here).
+            Some(layer) => vfs.resolve_preferring_below(&p, TEXTURE_ALTERNATES, layer),
+            None => vfs.resolve_preferring(&p, TEXTURE_ALTERNATES),
+        })
         .and_then(|(resolved, _)| Some((vfs.read(&resolved).ok()?, resolved)))
         .and_then(|(bytes, resolved)| mw_bake::textures::decode_rgba(resolved.as_str(), &bytes).ok())
         .is_some_and(|image| mw_bake::textures::alpha_is_cutout(&image));

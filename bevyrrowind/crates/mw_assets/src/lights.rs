@@ -4,7 +4,7 @@
 use bevy::light::GlobalAmbientLight;
 use bevy::prelude::*;
 use mw_world::{LightAnimation, LightInfo};
-use sf_sky_bevy::BudgetedShadow;
+use sf_sky_bevy::{BudgetedShadow, GiSkipEmissive, ShadowReach};
 
 /// Marks a model's `AttachLight` node.
 #[derive(Component, Clone, Copy, Debug, Default, Reflect)]
@@ -37,8 +37,15 @@ pub struct AnimatedLight {
 pub struct LightCalibration {
     /// Luminous power per square meter of radius (lumens / m²).
     pub lumens_per_radius_sq: f32,
-    /// Range cutoff as a multiple of the record's radius.
+    /// Range cutoff as a multiple of the record's radius, for a light holding
+    /// a shadow map (its shadow stops it at walls).
     pub range_scale: f32,
+    /// Range cutoff as a multiple of the record's radius without a shadow
+    /// map (lights.md "Reach follows shadow state", 2026-11-05): short, so an
+    /// unshadowed lamp doesn't light the next room through the wall. `OpenMW`'s
+    /// GL path uses 1.75, Clockwork 1.0; the budget blends between the two
+    /// reaches with the shadow fade ([`sf_sky_bevy::ShadowReach`]).
+    pub unshadowed_range_scale: f32,
     /// Ambient luminance for a white cell ambient color (nits).
     pub ambient_nits: f32,
     /// The darkest exposure any view may take (EV100): the night floor
@@ -61,7 +68,7 @@ pub struct LightCalibration {
 
 impl Default for LightCalibration {
     fn default() -> Self {
-        Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, ambient_nits: 300.0, exposure_floor_ev100: 3.5, night_ambient_nits: 4.0 }
+        Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, unshadowed_range_scale: 4.0, ambient_nits: 300.0, exposure_floor_ev100: 3.5, night_ambient_nits: 4.0 }
     }
 }
 
@@ -91,12 +98,20 @@ impl LightCalibration {
         radius * (self.lumens_per_radius_sq / (4.0 * std::f32::consts::PI * std::f32::consts::PI * crate::emissive_nits())).sqrt()
     }
 
+    /// A light's reach by shadow state: [`Self::unshadowed_range_scale`] and
+    /// [`Self::range_scale`] times its radius. Spawn it with the light (and a
+    /// `BudgetedShadow`): the shadow budget then writes the range.
+    pub fn reach(&self, radius: f32) -> ShadowReach {
+        ShadowReach { unshadowed: radius * self.unshadowed_range_scale, shadowed: radius * self.range_scale }
+    }
+
+    /// The light for a record, at its unshadowed reach (no shadow map yet).
     pub fn point_light(&self, info: &LightInfo) -> PointLight {
         let [r, g, b] = info.color;
         PointLight {
             color: Color::srgb(r, g, b),
             intensity: self.lumens_per_radius_sq * info.radius * info.radius,
-            range: info.radius * self.range_scale,
+            range: self.reach(info.radius).unshadowed,
             radius: 0.05,
             // Shadows only through the `PointShadowBudget` (`BudgetedShadow`).
             shadow_maps_enabled: false,
@@ -122,7 +137,7 @@ pub fn spawn_light(
     seed: u32,
 ) -> Entity {
     let light = calibration.point_light(info);
-    let mut entity = commands.spawn((light, BudgetedShadow::default(), Visibility::Inherited));
+    let mut entity = commands.spawn((light, BudgetedShadow::default(), calibration.reach(info.radius), Visibility::Inherited));
     if info.animation != LightAnimation::Steady {
         entity.insert(AnimatedLight { intensity: light.intensity, animation: info.animation, seed });
     }
@@ -152,6 +167,45 @@ pub(crate) fn attach_lights(
     }
 }
 
+/// A lamp body's glow is its light's: marks the emissive meshes of a model
+/// that carries a placed light ([`CarriedLight`]) with [`GiSkipEmissive`], so
+/// probe GI doesn't light the room with both the flame mesh and the light
+/// (openmw-rtx `SceneUtil::LampBody`; research `mw-lighting-rules-2026-11-05.md`
+/// §2.3). Checks meshes as they spawn under a carrier, and a carrier's
+/// meshes when it gains its light. On screen the lamp still glows.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub(crate) fn mark_lamp_bodies(
+    mut commands: Commands,
+    materials: Res<Assets<StandardMaterial>>,
+    new_meshes: Query<Entity, (Added<MeshMaterial3d<StandardMaterial>>, With<Mesh3d>)>,
+    new_carriers: Query<Entity, Added<CarriedLight>>,
+    meshes: Query<&MeshMaterial3d<StandardMaterial>, (With<Mesh3d>, Without<GiSkipEmissive>)>,
+    parents: Query<&ChildOf>,
+    children: Query<&Children>,
+    carriers: Query<(), With<CarriedLight>>,
+) {
+    let mut mark = |entity: Entity| {
+        let glows = meshes
+            .get(entity)
+            .ok()
+            .and_then(|m| materials.get(&m.0))
+            .is_some_and(|m| m.emissive.red.max(m.emissive.green).max(m.emissive.blue) > 0.0);
+        if glows {
+            commands.entity(entity).try_insert(GiSkipEmissive);
+        }
+    };
+    for mesh in &new_meshes {
+        if parents.iter_ancestors(mesh).any(|a| carriers.contains(a)) {
+            mark(mesh);
+        }
+    }
+    for root in &new_carriers {
+        for node in children.iter_descendants(root) {
+            mark(node);
+        }
+    }
+}
+
 pub(crate) fn animate_lights(
     time: Res<Time>,
     mut lights: Query<(&AnimatedLight, &mut PointLight, Option<&InheritedVisibility>)>,
@@ -165,5 +219,78 @@ pub(crate) fn animate_lights(
         if (light.intensity - next).abs() > animated.intensity * 0.015 {
             light.intensity = next;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reach by shadow state (lights.md "Reach follows shadow state"): default 4 x both ways
+    /// (owner 2026-11-05: the short reach darkened towns and interiors); a 1.5 x calibration still splits.
+    #[test]
+    fn reach_by_shadow_state() {
+        assert!((LightCalibration::default().unshadowed_range_scale - 4.0).abs() < 1e-6);
+        let calibration = LightCalibration { unshadowed_range_scale: 1.5, ..LightCalibration::default() };
+
+        assert!((calibration.range_scale - 4.0).abs() < 1e-6);
+        // A 128-unit lamp (1.8288 m): 2.74 m without a shadow, 7.32 m with one.
+        let radius = 128.0 * 0.014_287_5;
+        let reach = calibration.reach(radius);
+        assert!((reach.unshadowed - radius * 1.5).abs() < 1e-5, "{reach:?}");
+        assert!((reach.shadowed - radius * 4.0).abs() < 1e-5, "{reach:?}");
+        let info = LightInfo { color: [1.0, 0.8, 0.6], radius, animation: LightAnimation::Steady, fire: false };
+        let light = calibration.point_light(&info);
+        assert!((light.range - reach.unshadowed).abs() < 1e-6);
+        assert!(!light.shadow_maps_enabled);
+    }
+
+    /// Lamp bodies (research §2.3): the emissive meshes of a model carrying
+    /// a light are marked, its other meshes and other models' glowing meshes
+    /// are not; meshes spawning under a carrier later are marked too.
+    #[test]
+    fn marks_emissive_meshes_of_light_carriers_only() {
+        let mut world = World::new();
+        world.init_resource::<Assets<StandardMaterial>>();
+        let (glow, matte) = {
+            let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+            (
+                materials.add(StandardMaterial { emissive: LinearRgba::rgb(4.0, 1.0, 0.1), ..default() }),
+                materials.add(StandardMaterial::default()),
+            )
+        };
+        let mesh = |world: &mut World, material: &Handle<StandardMaterial>, parent: Entity| {
+            world.spawn((Mesh3d(Handle::default()), MeshMaterial3d(material.clone()), ChildOf(parent))).id()
+        };
+        let light = world.spawn(PointLight::default()).id();
+        let lamp = world.spawn(CarriedLight(light)).id();
+        let node = world.spawn(ChildOf(lamp)).id();
+        let flame = mesh(&mut world, &glow, node);
+        let holder = mesh(&mut world, &matte, lamp);
+        let sign = world.spawn_empty().id();
+        let painted_glow = mesh(&mut world, &glow, sign);
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(mark_lamp_bodies);
+        schedule.run(&mut world);
+        assert!(world.get::<GiSkipEmissive>(flame).is_some());
+        assert!(world.get::<GiSkipEmissive>(holder).is_none());
+        assert!(world.get::<GiSkipEmissive>(painted_glow).is_none());
+
+        // A mesh arriving after the carrier got its light (async model spawn).
+        let late = mesh(&mut world, &glow, node);
+        let late_matte = mesh(&mut world, &matte, node);
+        schedule.run(&mut world);
+        assert!(world.get::<GiSkipEmissive>(late).is_some());
+        assert!(world.get::<GiSkipEmissive>(late_matte).is_none());
+
+        // A carrier gaining its light after its meshes spawned.
+        let torch = world.spawn_empty().id();
+        let torch_flame = mesh(&mut world, &glow, torch);
+        schedule.run(&mut world);
+        assert!(world.get::<GiSkipEmissive>(torch_flame).is_none());
+        world.entity_mut(torch).insert(CarriedLight(light));
+        schedule.run(&mut world);
+        assert!(world.get::<GiSkipEmissive>(torch_flame).is_some());
     }
 }

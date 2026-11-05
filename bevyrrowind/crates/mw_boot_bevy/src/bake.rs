@@ -69,6 +69,8 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let items = mw_bake::body::check_items(&mut baker, &db);
     // Legacy scripts (scripting-adapter.md, M5 W2): MWScript -> Luau modules + bytecode, coverage report.
     let scripts = mw_bake::script::bake_scripts(&mut baker, &store, &db);
+    // Albedo de-lighting (bake.md "De-lighting"): roles per model, de-lit BC7 KTX2 per texture, the layer's index.
+    let delight = mw_bake::delight::bake_delight(&mut baker, &vfs, &paths, mw_bake::delight::DEFAULT_STRENGTH);
     let manifest = baker.manifest();
     let save = Instant::now();
     inputs.save()?;
@@ -119,6 +121,10 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     print_animation(&anim);
     print!("{bodies}{items}");
     print!("{scripts}");
+    print!("{delight}");
+    for (key, error) in delight.failures.iter().take(10) {
+        eprintln!("  failed: {key}: {error}");
+    }
     let fingerprint_hex = fingerprint.hex();
     println!("profile fingerprint {} ({})", &fingerprint_hex[..12], if profile_changed { "changed since the last bake" } else { "unchanged" });
     println!(
@@ -145,6 +151,10 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     }
     if !items.failed.is_empty() {
         errors.push(format!("{} items.check pages failed", items.failed.len()));
+    }
+    let delight_failed = delight.failures.iter().filter(|(k, _)| k.step != mw_bake::delight::ROLES_STEP).count();
+    if delight_failed > 0 {
+        errors.push(format!("{delight_failed} de-lit texture products failed"));
     }
     if scripts.errors() > 0 {
         errors.push(format!("{} legacy script products failed to translate or compile", scripts.errors()));

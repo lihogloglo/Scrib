@@ -162,3 +162,12 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   cutout edges; far impostor trees are unchanged (not covered).
 - A/B: `--off foliagetransmission` (startup only; value `mw_assets::LEAF_DIFFUSE_TRANSMISSION` 0.5 (owner 2026-11-02, was 0.3), thickness 0.05 m).
 - Status: confirmed (owner 2026-11-02 at 0.5; 1.0 tried and liked). Source: visual-niceties.
+
+### TX-delight: De-lit albedo textures (bake layer, 2026-11-05)
+- Kind: game location. Needs a current `bevyrrowind bake` (start log: `delight: layer mounted, N textures`).
+  Runs: `view "Seyda Neen, Census and Excise Office"` and `view "Balmora" --hour 14` facing a lit house wall;
+  A/B by restarting each with `--off delight` (log `delight: off`).
+- Look for: corners and edges no longer double-dark under real light; walls not flat or cartoony; no colour shift;
+  no blocky BC7 artifacts on gradients; cutout foliage (hedges, tree cards) not thinner at distance (coverage mips).
+- Strength 0.5 (owner 2026-11-05) is baked in: a new strength needs a re-bake.
+- Status: awaiting owner. Source: rtx-borrow D-2b.

@@ -9,6 +9,12 @@
 
 use ddsfile::{D3DFormat, Dds, DxgiFormat};
 
+/// Extensions that may replace a texture reference, in preference order
+/// (`sf_vfs::Vfs::resolve_preferring`). `dds` first is the original engine's
+/// behavior; `ktx2`/`png` let modern texture mods (and the de-lit bake layer,
+/// [`crate::delight`]) take the slot.
+pub const TEXTURE_ALTERNATES: &[&str] = &["ktx2", "dds", "png"];
+
 /// A decoded image, RGBA8, rows top to bottom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rgba8 {

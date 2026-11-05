@@ -1,9 +1,10 @@
 //! The game's boot layer (`bevyrrowind/docs/specs/app-split.md` slice 2): the mod profile every
-//! command loads through ([`mods`]), the `bake` command ([`bake`]), dev hot reload
-//! ([`hot_reload`]), the Morrowind UI theme ([`ui_theme`]), and the app's [`mount`] / [`load`]
-//! entry points. The `bevyrrowind mods ...` CLI stays in the binary.
+//! command loads through ([`mods`]), the `bake` command ([`bake`]), the de-lit texture layer
+//! ([`delight`]), dev hot reload ([`hot_reload`]), the Morrowind UI theme ([`ui_theme`]), and the
+//! app's [`mount`] / [`load`] entry points. The `bevyrrowind mods ...` CLI stays in the binary.
 
 pub mod bake;
+pub mod delight;
 pub mod hot_reload;
 pub mod mods;
 pub mod ui_theme;
