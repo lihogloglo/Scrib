@@ -15,6 +15,9 @@ sf_records.workspace = true
 sf_rpg.workspace = true
 mw_records.workspace = true
 mw_script.workspace = true
+# Character sheets for the PC filter functions (`stats`).
+mw_stats.workspace = true
+sf_stats.workspace = true
 
 [dev-dependencies]
 mw_install.workspace = true

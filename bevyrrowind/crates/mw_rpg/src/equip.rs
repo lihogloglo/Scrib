@@ -5,11 +5,11 @@ use std::collections::HashMap;
 
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{
-    EquipChange, EquipPlacement, EquipRules, InventoryError, ItemStack, Loadout, SlotId, SlotTable,
+    Attrs, EquipChange, EquipPlacement, EquipRules, InventoryError, ItemStack, Loadout, SlotId, SlotTable,
     StackId,
 };
 use tes3::esp::{
-    Armor, ArmorType, Clothing, ClothingType, Light, LightFlags, Lockpick, Probe, Weapon,
+    Armor, ArmorType, Clothing, ClothingType, Light, LightFlags, Lockpick, Npc, Probe, Weapon,
     WeaponType,
 };
 
@@ -238,6 +238,44 @@ impl EquipRules for MwEquipRules {
     }
 }
 
+/// The `PcClothingModifier` dialogue function: the summed record value of what the worn slots
+/// hold, helmet through belt (not the hands or ammunition), one piece per slot. `OpenMW`
+/// `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`, `apps/openmw/mwdialogue/filter.cpp`
+/// (`getSelectStructInteger`, slots 0-15) with `apps/openmw/mwclass/armor.cpp` and
+/// `clothing.cpp` `getValue` (the record's value, condition ignored).
+pub fn clothing_value(records: &RecordDb, loadout: &Loadout) -> u64 {
+    loadout
+        .equipped()
+        .filter(|(slot, _)| slot.0 <= MwSlot::Belt as u8)
+        .filter_map(|(_, stack)| loadout.inventory().get(stack))
+        .map(|s| {
+            records
+                .get::<Armor>(&s.item)
+                .map(|a| u64::from(a.data.value))
+                .or_else(|| records.get::<Clothing>(&s.item).map(|c| u64::from(c.data.value)))
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+/// [`clothing_value`] of an NPC record's armor and clothing equipped as listed (the first item
+/// for a slot keeps it; `OpenMW`'s `autoEquip` picks by value and rating, not modelled).
+pub fn record_clothing_value(records: &RecordDb, npc: &Npc) -> u64 {
+    let rules = MwEquipRules::from_records(records);
+    let mut worn = Loadout::new();
+    for (_, item) in npc.inventory.iter().filter(|(n, _)| *n > 0) {
+        let item = RecordId::new(item.as_str());
+        let Some(kind @ (MwEquipKind::Armor(_) | MwEquipKind::Clothing(_))) = rules.kind(&item) else { continue };
+        if kind.slots().0.iter().all(|s| worn.slot(s.id()).is_some()) {
+            continue;
+        }
+        if let Ok(stack) = worn.add(item, 1, Attrs::new()) {
+            let _ = rules.equip(&mut worn, stack);
+        }
+    }
+    clothing_value(records, &worn)
+}
+
 struct Fixed {
     slot: SlotId,
     whole_stack: bool,
@@ -254,8 +292,6 @@ impl EquipRules for Fixed {
 
 #[cfg(test)]
 mod tests {
-    use sf_rpg::Attrs;
-
     use super::*;
 
     fn id(s: &str) -> RecordId {

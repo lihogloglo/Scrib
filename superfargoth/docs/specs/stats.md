@@ -1,6 +1,6 @@
 # Character stats: data-defined values, pools, modifiers, progression seams (`sf_stats`)
 
-Status (2026-11-05): S0-S5 built (`sf_stats`, `mw_stats`, `sf_stats_bevy` + game glue, saves, combat vitals and HUD; as-built detail: `stats-as-built.md`); S6 next. Game side:
+Status (2026-11-06): S0-S6 built (`sf_stats`, `mw_stats`, `sf_stats_bevy` + game glue, saves, combat vitals and HUD, dialogue filters; as-built detail: `stats-as-built.md`); S7 next. Game side:
 `../../../bevyrrowind/docs/specs/stats-adapter.md` (Morrowind's 8 attributes, 27 skills, GMSTs, OpenMW formulas).
 Unblocks ROADMAP 2.7 (every OpenMW content mechanic needs stats: `../../../bevyrrowind/docs/research/openmw-mechanics-2026-11-05.md`
 "Finding zero"). The spell/effect runtime is the **next** spec: this one defines only the seam it writes through
@@ -291,7 +291,7 @@ One deliverable plus its test per slice; S1-S3 are Bevy-free and need no game ru
 | **S3** Morrowind models [x] 2026-11-05 | `mw_stats`: `MwDerived` regen + rest, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs (13) |
 | **S4** Bevy plugin [x] 2026-11-05 | `sf_stats_bevy` + game glue: `Stats` on the player, NPCs and creatures at spawn; fixed-tick sets; events; the save half of S8 (v3, blob) | headless app (3 + measurement 0.035 ms); game save round trip; old goldens load |
 | **S5** combat + HUD [x] 2026-11-05 | vitals refresh/difference wiring; `PlayerVitals` and `PlayerCombat` health/fatigue removed; HUD bars from roles | a hit on the dummy lowers its sheet's health; roll cost lowers the player's fatigue; HUD view-model reads the sheet. Visual check HD-2 "bars follow damage and regen" (awaiting owner) |
-| **S6** dialogue | `MwView::function` and `player_rank` from the sheet; `PlayerStatsPlaceholder` removed | existing filter tests plus PC stat and rank filters |
+| **S6** dialogue [x] 2026-11-06 | `MwView::function` and `player_rank` from the sheet; `PlayerStatsPlaceholder` removed | existing filter tests plus PC stat and rank filters (5); real-data dialogue tests on the new-game sheet |
 | **S7** MWScript | stats, faction and crime families `live` (functions.txt) with OpenMW semantics | interp tests per op (adapter "MWScript") |
 | **S8** saves | (v3 and the blob: S4) source re-registration order once sources exist | modified values equal after a round trip with a fortify active |
 | **S9** skill-use sources | combat hits, armor hits, blocks, athletics, acrobatics call `UseSkill` (adapter "Use sources") | counts of `SkillUsed` per scripted fight |

@@ -10,11 +10,14 @@
 //!   own (drawn at night too); solid casters in one, [`ShelterFoliage`] leaves (partial
 //!   shelter) in the other.
 //! - **Noise atlas**: `Rgba8Unorm` 256², repeat, generated at startup.
+//! - **Cover layer array** ([`cover`], W5a): the snow and ash looks the host decoded
+//!   ([`CoverLayers`], from `sf_surface::cover::SurfaceLayer` records), `Rgba8Unorm` 512² × 4
+//!   slices with mips; a 1×1 neutral placeholder while none is set.
 //! - **[`SurfaceUniform`]**: its `vec4` slots, written to a render-world uniform buffer when they
 //!   change ([`render`]).
 //! - **[`SurfaceWeatherCamera`]**: the exterior camera that gets surface weather (the game marks
 //!   it). Its render-world view gets `bevy_pbr::SurfaceWeatherView`: the vendored `bevy_pbr`
-//!   patch "SW" binds these resources at mesh-view bindings 43-49 and sets the
+//!   patch "SW" binds these resources at mesh-view bindings 43-51 and sets the
 //!   `SURFACE_WEATHER` shader def, so every `StandardMaterial` (statics, characters, held items,
 //!   fades), the terrain and the far proxies run the layer in the forward main pass.
 //! - **WESL**: `sf_surface_bevy::layer` (`apply_surface_layer`, binding-agnostic) and
@@ -27,6 +30,7 @@
 //! (`surface debug exposure|cells|porosity`).
 
 mod cells;
+pub mod cover;
 mod render;
 mod shelter;
 mod uniform;
@@ -51,6 +55,7 @@ use sf_surface::layer::RIPPLE_TIME_WRAP_S;
 use sf_weather_bevy::{CurrentWeather, SurfaceDebug, WorldSurface};
 
 pub use cells::{CellWrite, CellWrites};
+pub use cover::{CoverLayers, CoverSource};
 pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
 pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
 
@@ -115,6 +120,9 @@ pub struct SurfaceGpu {
     /// Leaf casters only (partial shelter).
     pub canopy: Handle<Image>,
     pub noise: Handle<Image>,
+    /// The cover layer array ([`cover`]): a neutral placeholder until the host inserts
+    /// [`CoverLayers`].
+    pub cover: Handle<Image>,
 }
 
 /// Counters for status tools and tests.
@@ -129,6 +137,8 @@ pub struct SurfaceStats {
     pub full_uploads: u64,
     /// Times the uniform's slots changed (each is one buffer write in the render world).
     pub uniform_uploads: u64,
+    /// Slices in the cover layer array (0 before the first pack, 1 = the placeholder).
+    pub cover_slices: u32,
 }
 
 /// System sets, in `PostUpdate` after transforms (order the game's origin and camera glue
@@ -155,6 +165,7 @@ impl Plugin for SurfaceWeatherPlugin {
                 PostUpdate,
                 (
                     cells::update_cells,
+                    cover::update_cover,
                     debug_view,
                     shelter::update_shelter,
                     ripple_clock,
@@ -228,6 +239,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         shelter: shelter::shelter_handle(&mut images),
         canopy: shelter::shelter_handle(&mut images),
         noise: images.add(noise_image()),
+        cover: images.add(cover::cover_image(&cover::pack(&[None, None]))),
     });
     shelter::spawn_anchor(&mut commands);
 }

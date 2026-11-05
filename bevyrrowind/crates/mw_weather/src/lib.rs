@@ -5,7 +5,9 @@
 //!   `mw_weather/<type>`;
 //! - `REGN` regions → [`Climate`]s `mw_region/<region id>` (weights = the
 //!   region's weather chances, in `REGN` index order);
-//! - precipitation → [`PrecipKind`]s `mw_precip/{rain,snow,ash,blight}`.
+//! - precipitation → [`PrecipKind`]s `mw_precip/{rain,snow,ash,blight}`;
+//! - land textures → the snow and ash cover looks `mw_surface/{snow,ash}`
+//!   (`sf_surface::cover::SurfaceLayer`, [`cover`]).
 //!
 //! [`MwWeather::define_into`] puts them in a synthetic record source
 //! ([`SOURCE_NAME`]), so record mods patch them field by field like any
@@ -19,6 +21,7 @@
 //! ([`script`]); the sky's ambient tint by time of day ([`ambient`], RO-16).
 
 pub mod ambient;
+pub mod cover;
 mod ini;
 pub mod script;
 pub mod visual;
@@ -32,6 +35,9 @@ use sf_weather::{
 use tes3::esp::{GlobalValue, GlobalVariable, Region, WeatherChances};
 
 use crate::ini::WeatherIni;
+
+/// The surface weather core, for hosts that read the cover layer records ([`cover`]).
+pub use sf_surface;
 
 /// Name of the synthetic record source the generated records live in.
 pub const SOURCE_NAME: &str = "Morrowind.ini weather";
@@ -176,6 +182,8 @@ pub struct MwWeather {
     pub climates: Vec<(RecordId, Climate)>,
     /// One per [`Precip`].
     pub precip_kinds: Vec<(RecordId, PrecipKind)>,
+    /// The snow and ash cover looks ([`cover::cover_layers`]; `surface.layer` records).
+    pub cover: Vec<(RecordId, sf_surface::cover::SurfaceLayer)>,
     /// The `timescale` global used for the real-time conversions.
     pub timescale: f32,
     /// Hash of every ini value read (vanilla where absent) and the time
@@ -225,6 +233,7 @@ impl MwWeather {
             presets,
             climates,
             precip_kinds,
+            cover: cover::cover_layers(db),
             timescale,
             fingerprint: w.fingerprint(),
         }
@@ -257,13 +266,18 @@ impl MwWeather {
         for (id, climate) in &self.climates {
             db.define(source, id.clone(), climate.clone())?;
         }
+        for (id, layer) in &self.cover {
+            db.define(source, id.clone(), layer.clone())?;
+        }
         Ok(())
     }
 }
 
-/// Registers the `weather.*` record kinds (`sf_weather::register_kinds`).
+/// Registers the `weather.*` record kinds (`sf_weather::register_kinds`) and `surface.layer`
+/// (`sf_surface::cover::register_kinds`).
 pub fn register_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
-    sf_weather::register_kinds(db)
+    sf_weather::register_kinds(db)?;
+    sf_surface::cover::register_kinds(db)
 }
 
 /// The weather type a preset record id names (`mw_weather/<type>`).

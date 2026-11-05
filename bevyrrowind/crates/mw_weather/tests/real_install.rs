@@ -147,3 +147,29 @@ fn real_regions_forecast_their_regn_chances() {
         }
     }
 }
+
+/// W5a: the cover looks of the real data, and their textures are in the VFS (`.dds` over `.tga`).
+#[test]
+fn real_cover_layers_name_install_textures() {
+    let Ok((install, _)) = MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
+    let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+    let layers = mw_weather::cover::cover_layers(&content.db);
+    let bloodmoon = install.game_files().iter().any(|f| f.eq_ignore_ascii_case("Bloodmoon.esm"));
+    let mut expected = Vec::new();
+    if bloodmoon {
+        expected.push((mw_weather::cover::SNOW_LAYER, "textures/tx_bm_snow_01.dds"));
+    }
+    expected.push((mw_weather::cover::ASH_LAYER, "textures/tx_ashlands_08.tga"));
+    let got: Vec<(&str, &str)> = layers.iter().map(|(id, l)| (id.as_str(), l.albedo_height.as_str())).collect();
+    assert_eq!(got, expected);
+    for (_, layer) in &layers {
+        let path = sf_vfs::VfsPath::new(&layer.albedo_height).unwrap();
+        let resolved = vfs.resolve_preferring(&path, &["dds"]);
+        eprintln!("{} -> {:?}", layer.albedo_height, resolved.as_ref().map(|(p, _)| p.as_str().to_owned()));
+        assert!(resolved.is_some(), "{} not in the VFS", layer.albedo_height);
+    }
+}

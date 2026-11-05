@@ -786,8 +786,10 @@ type NamedFile = (String, Vec<u8>);
 /// `terrain.layers`: the texture arrays at one size (a quality tier).
 pub struct LayersStep(pub Arc<TerrainBake>);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MapKind {
+/// How [`mip_chain`] filters a map: sRGB albedo (averaged in linear light), a tangent-space
+/// normal (renormalized), or plain linear data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapKind {
     Albedo,
     Normal,
     Linear,
@@ -859,8 +861,8 @@ impl Step for LayersStep {
 
 /// Resizes `img` to `size`² (bilinear, wrapping: layer textures tile) and
 /// appends its full mip chain (2×2 box; albedo averaged in linear space,
-/// normals renormalized).
-fn mip_chain(img: &LayerImage, size: u32, kind: MapKind) -> Vec<u8> {
+/// normals renormalized). `sf_surface_bevy` packs its cover layer array with it.
+pub fn mip_chain(img: &LayerImage, size: u32, kind: MapKind) -> Vec<u8> {
     let (w, h) = (img.width.max(1) as usize, img.height.max(1) as usize);
     let n = size as usize;
     let texel = |x: usize, y: usize| -> [f32; 4] {

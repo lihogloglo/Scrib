@@ -138,6 +138,9 @@ pub struct WeatherSetup {
     pub start: Option<mw_weather::WeatherType>,
     /// `SOUN` id -> VFS sound file for `sf_audio_bevy` (filled by `load_sounds`).
     pub sounds: sf_audio::SoundBank,
+    /// The exterior's snow and ash cover looks (surface weather W5a: `mw_weather::cover`'s
+    /// pick, resolved; the host decodes their textures for `sf_surface_bevy::CoverLayers`).
+    pub cover: [Option<mw_weather::sf_surface::cover::SurfaceLayer>; 2],
 }
 
 impl WeatherSetup {
@@ -163,7 +166,8 @@ impl WeatherSetup {
         }
         let start_climate = cells.get(&grid_at(eye)).copied().or(fallback);
         let start = force.or_else(|| start_climate.and_then(|c| state.current(&book, c, hours)).and_then(|p| weather_type_of(book.preset_id(p))));
-        Self { book: std::sync::Arc::new(book), state, cells, fallback, start, sounds: sf_audio::SoundBank::default() }
+        let cover = mw_weather::cover::active_layers().resolve(db, &mw_world::ids::exterior().0).map(Option::<&mw_weather::sf_surface::cover::SurfaceLayer>::cloned);
+        Self { book: std::sync::Arc::new(book), state, cells, fallback, start, sounds: sf_audio::SoundBank::default(), cover }
     }
 
     /// The exterior's region raster for the world weather map (WE4c): the

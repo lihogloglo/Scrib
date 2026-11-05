@@ -11,6 +11,8 @@ mw_install.workspace = true
 sf_records.workspace = true
 sf_coords.workspace = true
 sf_weather.workspace = true
+# `surface.layer` records: the snow and ash cover looks (surface-weather.md W5a).
+sf_surface.workspace = true
 sf_audio.workspace = true
 glam.workspace = true
 tes3 = { workspace = true, features = ["esp"] }

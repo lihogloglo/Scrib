@@ -254,8 +254,14 @@ fn register_mwscript(app: &mut App) {
     console.set_fallback("mwscript", |u| {
         let selected = u.ctx.get_resource::<ConsoleSelection>().and_then(|s| s.0);
         let key = selected.map(|e| mw_rpg_bevy::dialogue::key(e, u.ctx.get::<CharacterPlacement>(e)));
-        let mut rpg = u.ctx.get_resource_mut::<mw_rpg_bevy::dialogue::Rpg>().ok_or("no game records in this run")?;
-        for line in rpg.run_console(u.text, key)? {
+        if !u.ctx.contains_resource::<mw_rpg_bevy::dialogue::Rpg>() {
+            return Err("no game records in this run".into());
+        }
+        // The runner reads the live sheets (PC filter functions in macros) beside the `Rpg`.
+        let lines = u.ctx.resource_scope(|world, mut rpg: Mut<mw_rpg_bevy::dialogue::Rpg>| {
+            rpg.run_console(u.text, key, &mw_rpg_bevy::dialogue::WorldSheets(world))
+        })?;
+        for line in lines {
             u.log.info(&line);
         }
         Ok(())

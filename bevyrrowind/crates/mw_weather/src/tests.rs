@@ -722,3 +722,65 @@ fn night_ambient_tint_blends_between_weathers() {
     // The vanilla Clear night is bluer than the Overcast one.
     assert!(clear.z / clear.x > overcast.z / overcast.x);
 }
+
+/// W5a: the cover looks come from the preferred `LTEX`s (Bloodmoon snow, Ashlands ash), else the
+/// first plain keyword texture; mixed ones (snowy rock, ash road) never; none without a match.
+/// The records flow through `define_into` and the pick resolves them.
+#[test]
+fn cover_layers_pick_land_textures() {
+    use crate::cover::{ASH_LAYER, SNOW_LAYER, active_layers, cover_layers};
+    use sf_surface::cover::{CoverChannel, SurfaceLayer};
+    use tes3::esp::LandscapeTexture;
+
+    let ltex_db = |ltex: &[(&str, &str)]| {
+        let mut db = content_db(None);
+        db.register::<LandscapeTexture>("LTEX").unwrap();
+        let esm = db.add_source("Land.esm", &[]);
+        for (i, (id, file)) in ltex.iter().enumerate() {
+            let l = LandscapeTexture { id: (*id).into(), index: u32::try_from(i).unwrap(), file_name: (*file).into(), ..LandscapeTexture::default() };
+            db.define(esm, RecordId::new(id), l).unwrap();
+        }
+        db
+    };
+    let albedo = |db: &RecordDb| -> Vec<(String, String)> {
+        cover_layers(db).into_iter().map(|(id, l)| (id.as_str().to_owned(), l.albedo_height)).collect()
+    };
+    let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+    // Preferred ids win over earlier keyword matches; paths follow the texture rule.
+    let full = ltex_db(&[
+        ("AL_road_01", "Tx_ashlands_road_01.tga"),
+        ("AL_ash_02", "Tx_ashlands_07.tga"),
+        ("AL_ash_01", "Tx_ashlands_08.tga"),
+        ("Tx_BM_rock_snow_01.dds", "Tx_BM_rock_snow_01.dds"),
+        ("Tx_BM_snow_02.dds", "Tx_BM_snow_02.dds"),
+        ("Tx_BM_snow_01.dds", "Tx_BM_snow_01.dds"),
+    ]);
+    assert_eq!(
+        albedo(&full),
+        [pair(SNOW_LAYER, "textures/tx_bm_snow_01.dds"), pair(ASH_LAYER, "textures/tx_ashlands_08.tga")]
+    );
+    let layers = cover_layers(&full);
+    let (snow, ash): (SurfaceLayer, SurfaceLayer) = (layers[0].1.clone(), layers[1].1.clone());
+    assert_eq!((snow.channel, ash.channel), (CoverChannel::Snow, CoverChannel::Ash));
+    assert_eq!((snow.tiling_m, snow.sparkle, ash.sparkle, snow.normal.clone(), snow.arm.clone()), (512.0 * 0.9144 / 64.0, 1.0, 0.0, None, None));
+    // No preferred id: the lowest plain keyword texture; mixed ones are skipped.
+    let modded = ltex_db(&[
+        ("zz_ash", "My_Ash_B.dds"),
+        ("aa_road", "my_ash_road.dds"),
+        ("mm_ash", "My_Ash_A.dds"),
+        ("snowrock", "my_snow_rock.dds"),
+    ]);
+    assert_eq!(albedo(&modded), [pair(ASH_LAYER, "textures/my_ash_a.dds")]);
+    assert!(cover_layers(&ltex_db(&[("grass", "Tx_grass_01.tga")])).is_empty());
+
+    // Through the synthetic source; the pick resolves both, a missing record to none.
+    let mut db = full;
+    MwWeather::build(&db, None).define_into(&mut db, &[]).unwrap();
+    let ws = RecordId::new("any worldspace");
+    let [s, a] = active_layers().resolve(&db, &ws);
+    assert_eq!((s, a), (Some(&snow), Some(&ash)));
+    let mut db = modded;
+    MwWeather::build(&db, None).define_into(&mut db, &[]).unwrap();
+    let [s, a] = active_layers().resolve(&db, &ws);
+    assert_eq!((s.is_none(), a.map(|l| l.albedo_height.as_str())), (true, Some("textures/my_ash_a.dds")));
+}

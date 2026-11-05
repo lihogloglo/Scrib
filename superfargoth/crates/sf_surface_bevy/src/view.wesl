@@ -1,5 +1,5 @@
 // Surface weather on the view (`sf_surface_bevy::view`; surface-weather.md "Shader
-// integration"): the mesh-view bindings 43-49 that the vendored bevy_pbr patch "SW" adds to
+// integration"): the mesh-view bindings 43-51 that the vendored bevy_pbr patch "SW" adds to
 // views with a `bevy_pbr::SurfaceWeatherView` (render/surface_weather.rs; numbers checked by a
 // test), and the entry points every lit material calls under `@if(SURFACE_WEATHER)`:
 // `apply_surface_weather_standard` from bevy_pbr's `render/pbr.wesl`, `apply_surface_weather`
@@ -25,6 +25,10 @@ import sf_surface_bevy::layer::{
 @group(0) @binding(47) var surface_sampler: sampler;
 @group(0) @binding(48) var surface_shelter_sampler: sampler;
 @group(0) @binding(49) var surface_canopy: texture_2d<f32>;
+// The cover layer array (W5a; `cover.rs`: slices 2c albedo (sRGB bytes) + height, 2c + 1 normal
+// XY + roughness + AO, c = 0 snow, 1 ash) and its trilinear, anisotropic, repeating sampler.
+@group(0) @binding(50) var surface_cover: texture_2d_array<f32>;
+@group(0) @binding(51) var surface_cover_sampler: sampler;
 
 /// The layer on the view's resources.
 fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {

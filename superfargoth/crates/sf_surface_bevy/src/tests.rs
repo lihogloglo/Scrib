@@ -61,6 +61,8 @@ fn uniform_matches_the_wgsl_struct() {
             ("misc", "vec4<u32>"),
             ("time", "vec4<f32>"),
             ("canopy", "vec4<f32>"),
+            ("snow_layer", "vec4<f32>"),
+            ("ash_layer", "vec4<f32>"),
         ]
     );
     assert_eq!(
@@ -72,9 +74,10 @@ fn uniform_matches_the_wgsl_struct() {
             U_MISC,
             U_TIME,
             U_CANOPY,
+            U_COVER,
             U_SLOTS
         ],
-        [0, 4, 5, 6, 7, 8, 9, 10]
+        [0, 4, 5, 6, 7, 8, 9, 10, 12]
     );
     let konst = |name: &str| -> u32 {
         let line = wgsl
@@ -430,4 +433,55 @@ fn puddle_switch_and_ring_clock() {
     app.world_mut().resource_mut::<SurfaceUniform>().flags = FLAG_WET;
     app.update();
     assert_eq!(uniform(&app).time.y, 0.0);
+}
+
+/// The cover layer array (W5a): the neutral placeholder without layers, 4 slices of 512² with
+/// full mips once a layer is set (the unset channel neutral, its uniform slot zero), and the
+/// plugin repacking it when the host's layers change.
+#[test]
+fn cover_array_packs_layers_and_placeholder() {
+    use crate::cover::{
+        COVER_SIZE, CoverChannel, LayerImage, NEUTRAL_ALBEDO, NEUTRAL_NRAO, SurfaceLayer, cover_slots, pack,
+    };
+    let empty = pack(&[None, None]);
+    assert_eq!((empty.size, empty.mips, empty.slices, empty.data.as_slice()), (1, 1, 1, &NEUTRAL_ALBEDO[..]));
+    assert_eq!(cover_slots(&[None, None]), [Vec4::ZERO; 2]);
+
+    // Ash only: a flat sRGB grey 2×2 albedo with height 200, no normal or arm map.
+    let mut layer = SurfaceLayer::new(CoverChannel::Ash, "ash.dds");
+    layer.tiling_m = 8.0;
+    layer.roughness = 0.6;
+    layer.contrast = 3.0;
+    let source = CoverSource {
+        layer,
+        albedo_height: LayerImage { width: 2, height: 2, rgba: [90, 90, 90, 200].repeat(4) },
+        normal: None,
+        arm: None,
+    };
+    let layers = [None, Some(source)];
+    let array = pack(&layers);
+    let per_slice: usize = (0..10).map(|m| (512usize >> m).pow(2) * 4).sum();
+    assert_eq!((array.size, array.mips, array.slices, array.data.len()), (COVER_SIZE, 10, 4, per_slice * 4));
+    let texel = |slice: usize| &array.data[slice * per_slice..slice * per_slice + 4];
+    // Snow (unset): neutral slices. Ash: its albedo (sRGB kept through the linear filter, height
+    // in alpha) and a flat normal with the record's roughness (0.6 · 255 = 153) and AO 1.
+    assert_eq!((texel(0), texel(1)), (&NEUTRAL_ALBEDO[..], &NEUTRAL_NRAO[..]));
+    assert_eq!((texel(2), texel(3)), (&[90, 90, 90, 200][..], &[128, 128, 153, 255][..]));
+    // The last mip of the last slice ends the buffer.
+    assert_eq!(&array.data[array.data.len() - 4..], &[128, 128, 153, 255]);
+    assert_eq!(cover_slots(&layers), [Vec4::ZERO, Vec4::new(0.125, 0.03, 0.0, 3.0)]);
+
+    // The plugin: the placeholder at startup, repacked on insert.
+    let mut app = app();
+    app.update();
+    let slices = |app: &App| {
+        let gpu = app.world().resource::<SurfaceGpu>();
+        app.world().resource::<Assets<Image>>().get(&gpu.cover).unwrap().texture_descriptor.size.depth_or_array_layers
+    };
+    assert_eq!(slices(&app), 1);
+    app.insert_resource(CoverLayers(layers));
+    app.update();
+    assert_eq!((slices(&app), stats(&app).cover_slices), (4, 4));
+    assert_eq!(uniform(&app).cover[1], Vec4::new(0.125, 0.03, 0.0, 3.0));
+    assert_eq!(uniform(&app).slots()[U_COVER + 1], [0.125f32, 0.03, 0.0, 3.0].map(f32::to_bits));
 }

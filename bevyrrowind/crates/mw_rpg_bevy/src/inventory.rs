@@ -389,6 +389,7 @@ mod tests {
     //! finish the quest.
     use super::*;
     use mw_install::MorrowindInstall;
+    use mw_rpg::NoSheets;
     use sf_rpg_ui::DialogueRequest;
 
     const FARGOTH: ActorKey = ActorKey(1);
@@ -583,12 +584,12 @@ mod tests {
         assert!(take_all(&mut rpg.state, &db, PlayerId::HOST, store, &barrel).is_empty(), "the barrel stays empty");
 
         assert!(rpg.add_actor(FARGOTH, &RecordId::new("fargoth"), "Seyda Neen"));
-        let (mut talk, mut view) = rpg.open(FARGOTH).unwrap();
+        let (mut talk, mut view) = rpg.open(FARGOTH, &NoSheets).unwrap();
         let topic = RecordId::new("ring");
         let quest = RecordId::new("ms_fargothring");
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(topic));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(topic), &NoSheets);
         let yes = view.choices()[1].value;
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes), &NoSheets);
         assert_eq!(rpg.state.world.quests.stage(&quest), 100);
         assert_eq!(rpg.state.pc.loadout.count(&ring), 0, "the ring went to Fargoth");
     }

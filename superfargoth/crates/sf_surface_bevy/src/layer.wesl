@@ -46,6 +46,10 @@ struct SurfaceUniform {
     time: vec4<f32>,
     /// x: 1 when the canopy map is valid; y: share of the rain a full leaf canopy lets through.
     canopy: vec4<f32>,
+    /// Cover looks (W5a; the layer array at binding 50, slices 2c albedo+height, 2c+1 normal XY,
+    /// roughness, AO): x 1 / tiling (1/m, 0 = no layer), y depth (m), z sparkle, w contrast.
+    snow_layer: vec4<f32>,
+    ash_layer: vec4<f32>,
 }
 
 const FLAG_WET: u32 = 1u;

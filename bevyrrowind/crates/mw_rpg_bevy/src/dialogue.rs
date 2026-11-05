@@ -24,8 +24,8 @@ use bevy_input::prelude::*;
 use bevy_log::prelude::*;
 use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use mw_rpg::{
-    ActorFacts, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwView, MwWorld, NpcStates,
-    ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, rank_name,
+    ActorFacts, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot, MwView, MwWorld, NoSheets, NpcStates,
+    ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
 };
 use serde::{Deserialize, Serialize};
 use sf_character_bevy::{Character, CharacterPlacement};
@@ -47,6 +47,14 @@ use sf_ui_screens::{
 };
 use tes3::esp::{FilterComparison, FilterFunction, FilterType, FilterValue, GlobalValue, GlobalVariable, Npc, Script};
 use sf_world_bevy::StreamCell;
+use bevy_ecs::system::SystemParam;
+use mw_game_core::player::HOST_KEY;
+use mw_stats::MwTable;
+use sf_rpg::PlayerKey;
+use sf_stats_bevy::sf_stats::{Sheet, StatOwner};
+use sf_stats_bevy::{StatIndex, Stats};
+
+use crate::stats::MwStats;
 
 /// Fargoth's ring (scaffold [`DevGiveRing`]).
 const RING: &str = "ring_keley";
@@ -75,24 +83,6 @@ pub struct ContentDisposition;
 impl DispositionModel for ContentDisposition {
     fn disposition(&self, _speaker: &ActorFacts, base: i32, modifier: i32) -> i32 {
         (base + modifier).clamp(0, 100)
-    }
-}
-
-/// Scaffold `PlayerStatsPlaceholder`: the player's values for the filter functions that read PC
-/// stats (`OpenMW` `apps/openmw/mwdialogue/filter.cpp`, `Filter::getSelectStructInteger`), as a
-/// fresh level-1 character in starting clothes. Removal path: M7 stats (`sf_rpg` stats) replace
-/// the table; every other function stays the rules' neutral 0 (logged by `MwDialogueRules`).
-#[derive(Clone, Debug)]
-pub struct PlayerStatsPlaceholder(pub HashMap<FilterFunction, f32>);
-
-impl Default for PlayerStatsPlaceholder {
-    fn default() -> Self {
-        Self(HashMap::from([
-            // Common shirt, pants and shoes are worth a few drakes.
-            (FilterFunction::PcClothingModifier, 10.0),
-            (FilterFunction::PcHealthPercent, 100.0),
-            (FilterFunction::PcLevel, 1.0),
-        ]))
     }
 }
 
@@ -126,7 +116,12 @@ struct Content {
     exterior_names: HashMap<(i32, i32), String>,
     actors: HashMap<ActorKey, Actor>,
     player: ActorFacts,
-    stats: PlayerStatsPlaceholder,
+    /// Scaffold `StartingClothesFallback`: `PcClothingModifier` while the player's loadout
+    /// wears nothing, the value of the `player` record's armor and clothing. The body wears
+    /// them (`mw_actors` dresses the avatar from the record) but the RPG loadout starts empty,
+    /// so without this every NPC greets a naked player. Removal path: the new game puts the
+    /// record's starting inventory, equipped, in `RpgState::pc`.
+    starting_clothes: u64,
     /// Script locals the skipped chargen left on NPCs, by base id (scaffold `SkipChargen`):
     /// the initial value [`Rpg::add_actor`] gives a local the actor has no value for yet.
     chargen_locals: HashMap<RecordId, Vec<(RecordId, f32)>>,
@@ -149,10 +144,28 @@ pub struct Rpg {
     events: Vec<ResultEffect>,
 }
 
-/// [`MwView`] + [`MwWorld`] for one speaker.
+impl Content {
+    /// The actor a result-script target names (`"arrille"->ModDisposition`): the first actor
+    /// met with that base record.
+    fn by_base(&self, base: &RecordId) -> Option<ActorKey> {
+        self.actors.iter().find(|(_, a)| a.facts.id == *base).map(|(k, _)| *k)
+    }
+
+    fn target(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
+        match target {
+            Target::Speaker => Some(ctx.speaker),
+            Target::Actor(base) => self.by_base(base),
+            Target::Player => None,
+        }
+    }
+}
+
+/// [`MwView`] + [`MwWorld`] for one speaker. `sheets`: the character sheets the PC and
+/// speaker filter functions read ([`DialogueSheets`] in the app).
 struct View<'a> {
     c: &'a Content,
     s: &'a RpgState,
+    sheets: &'a dyn MwSheets,
 }
 
 impl View<'_> {
@@ -172,18 +185,8 @@ impl View<'_> {
         Some((ty, self.s.locals.get(&(actor, name.clone())).copied().unwrap_or(0.0)))
     }
 
-    /// The actor a result-script target names (`"arrille"->ModDisposition`): the first actor
-    /// met with that base record.
-    fn by_base(&self, base: &RecordId) -> Option<ActorKey> {
-        self.c.actors.iter().find(|(_, a)| a.facts.id == *base).map(|(k, _)| *k)
-    }
-
     fn target(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
-        match target {
-            Target::Speaker => Some(ctx.speaker),
-            Target::Actor(base) => self.by_base(base),
-            Target::Player => None,
-        }
+        self.c.target(ctx, target)
     }
 }
 
@@ -196,9 +199,9 @@ impl MwView for View<'_> {
         Some(&self.c.player)
     }
 
-    /// No factions joined before M7.
-    fn player_rank(&self, _player: PlayerId, _faction: &RecordId) -> Option<i32> {
-        None
+    /// From the player's sheet (factions joined through `MWScript`, stats S7).
+    fn player_rank(&self, player: PlayerId, faction: &RecordId) -> Option<i32> {
+        mw_rpg::player_rank(self.sheets, player, faction)
     }
 
     fn global(&self, id: &RecordId) -> Option<GlobalNumber> {
@@ -232,8 +235,17 @@ impl MwView for View<'_> {
         rank_name(&self.c.records, faction, rank)
     }
 
-    fn function(&self, _ctx: &ConversationCtx, function: FilterFunction) -> Option<f32> {
-        self.c.stats.0.get(&function).copied()
+    /// The sheets' functions (`mw_rpg::sheet_function`) and `PcClothingModifier` from what the
+    /// player wears. TODO(co-op): `RpgState::pc` is the host's loadout; a guest's needs its own.
+    #[allow(clippy::cast_precision_loss)] // item values are far below 2^24
+    fn function(&self, ctx: &ConversationCtx, function: FilterFunction) -> Option<f32> {
+        if function == FilterFunction::PcClothingModifier {
+            let loadout = &self.s.pc.loadout;
+            let wears = loadout.equipped().any(|(slot, _)| slot.0 <= MwSlot::Belt as u8);
+            let value = if wears { clothing_value(&self.c.records, loadout) } else { self.c.starting_clothes };
+            return (ctx.player == PlayerId::HOST).then_some(value as f32);
+        }
+        mw_rpg::sheet_function(self.sheets, &self.c.records, ctx, self.speaker(ctx)?, function)
     }
 }
 
@@ -315,6 +327,8 @@ impl Rpg {
             .filter(|(_, c)| !c.is_interior() && !c.name.is_empty())
             .map(|(_, c)| (c.data.grid, c.name.clone()))
             .collect();
+        let starting_clothes = records.get::<Npc>(&id("player")).map_or(0, |p| record_clothing_value(&records, p));
+        info!("dialogue: PcClothingModifier is {starting_clothes} (the player record's clothes) while nothing is worn (scaffold StartingClothesFallback)");
         // Scaffold `PlayerFactsPlaceholder` (no character generation yet): a nameless,
         // raceless player, so race/sex filters stay neutral. Removal path: chargen (M7).
         let player = ActorFacts {
@@ -332,7 +346,7 @@ impl Rpg {
                 exterior_names,
                 actors: HashMap::new(),
                 player,
-                stats: PlayerStatsPlaceholder::default(),
+                starting_clothes,
                 chargen_locals: HashMap::new(),
                 disposition: Box::new(ContentDisposition),
             },
@@ -386,10 +400,12 @@ impl Rpg {
             return Vec::new();
         }
         let ctx = ConversationCtx { player: PlayerId::HOST, speaker: SPEAKER, speaker_base: id(HANDOFF_SPEAKER), choice: None };
+        // Before the world runs: no sheets yet (the hand-off results read none).
+        let sheets = &NoSheets;
         let mut topics = Vec::new();
         let mut locals = Vec::new();
         {
-            let v = View { c: &self.content, s: &self.state };
+            let v = View { c: &self.content, s: &self.state, sheets };
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let mut runner = self.results.runner(state);
             for (topic, response, script) in &handoff {
@@ -474,7 +490,7 @@ impl Rpg {
     /// runner: `selected` (the console's selection, a registered actor) is the implicit target,
     /// else the player. A line that doesn't compile, or calls a function the interpreter doesn't
     /// run yet, fails whole before any effect applies. Returns notes and what it did.
-    pub fn run_console(&mut self, text: &str, selected: Option<ActorKey>) -> Result<Vec<String>, String> {
+    pub fn run_console(&mut self, text: &str, selected: Option<ActorKey>, sheets: &dyn MwSheets) -> Result<Vec<String>, String> {
         use mw_script::Severity;
         /// The implicit target without a selection (never a registered actor).
         const NO_SELECTION: ActorKey = ActorKey(u128::MAX - 1);
@@ -498,7 +514,7 @@ impl Rpg {
         let mut results = MwResults::new();
         let response = id("console");
         let effects = {
-            let v = View { c: &self.content, s: &self.state };
+            let v = View { c: &self.content, s: &self.state, sheets };
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let call = ResultCall { ctx: &ctx, topic: &response, response: &response, script: text };
             results.runner(state).run(call).map_err(|e| e.to_string())?
@@ -527,36 +543,36 @@ impl Rpg {
                 e => format!("{e:?}"),
             });
             // Journal/topic events reach the journal on its next change check.
-            let _ = self.apply(None, &ctx, effect);
+            let _ = self.apply(None, &ctx, effect, sheets);
         }
         Ok(out)
     }
 
     /// Opens a conversation with a registered actor: the greeting, fed to a new view.
-    pub fn open(&mut self, speaker: ActorKey) -> Option<(Talk, DialogueView)> {
+    pub fn open(&mut self, speaker: ActorKey, sheets: &dyn MwSheets) -> Option<(Talk, DialogueView)> {
         let actor = self.content.actors.get(&speaker)?;
         let name = actor.facts.name.clone();
         let ctx = ConversationCtx { player: PlayerId::HOST, speaker, speaker_base: actor.facts.id.clone(), choice: None };
         let (session, out) = {
-            let view = View { c: &self.content, s: &self.state };
+            let view = View { c: &self.content, s: &self.state, sheets };
             let rules = MwDialogueRules::new(&self.content.dialogue, &view);
             DialogueSession::open(&self.content.dialogue.db, &rules, ctx)
         };
         let mut talk = Talk { session, speaker };
         let mut view = DialogueView::new(name);
-        self.after(&mut talk, &mut view, &out);
+        self.after(&mut talk, &mut view, &out, sheets);
         Some((talk, view))
     }
 
     /// Applies a request from the dialogue window and feeds the view.
-    pub fn request(&mut self, talk: &mut Talk, view: &mut DialogueView, request: &DialogueRequest) {
+    pub fn request(&mut self, talk: &mut Talk, view: &mut DialogueView, request: &DialogueRequest, sheets: &dyn MwSheets) {
         let out = {
-            let v = View { c: &self.content, s: &self.state };
+            let v = View { c: &self.content, s: &self.state, sheets };
             let rules = MwDialogueRules::new(&self.content.dialogue, &v);
             request.apply(&mut talk.session, &self.content.dialogue.db, &rules)
         };
         match out {
-            Ok(out) => self.after(talk, view, &out),
+            Ok(out) => self.after(talk, view, &out, sheets),
             Err(e) => warn!("dialogue: {request:?} refused: {e}"),
         }
     }
@@ -565,14 +581,14 @@ impl Rpg {
     /// learn the linked topics the speaker answers, record heard topic lines for the journal's
     /// topic index (`Journal::addTopic`), run results in the game's runner and apply their
     /// effects in call order; then refresh the view.
-    fn after(&mut self, talk: &mut Talk, view: &mut DialogueView, out: &[DialogueOutput]) {
+    fn after(&mut self, talk: &mut Talk, view: &mut DialogueView, out: &[DialogueOutput], sheets: &dyn MwSheets) {
         let ctx = talk.session.ctx().clone();
         let dlg = &self.content.dialogue;
         view.apply_outputs(&dlg.db, out);
         let mut commands = Vec::new();
         let mut effects = Vec::new();
         {
-            let v = View { c: &self.content, s: &self.state };
+            let v = View { c: &self.content, s: &self.state, sheets };
             let rules = MwDialogueRules::new(dlg, &v);
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let mut runner = self.results.runner(state);
@@ -607,10 +623,10 @@ impl Rpg {
             events.extend(self.state.world.apply(cmd).unwrap_or_default());
         }
         for effect in effects {
-            events.extend(self.apply(Some(&mut *talk), &ctx, effect));
+            events.extend(self.apply(Some(&mut *talk), &ctx, effect, sheets));
         }
         view.apply_events(&events);
-        let v = View { c: &self.content, s: &self.state };
+        let v = View { c: &self.content, s: &self.state, sheets };
         let rules = MwDialogueRules::new(&self.content.dialogue, &v);
         view.refresh_from(&talk.session, &self.content.dialogue.db, &rules, &self.state.world.topics);
     }
@@ -619,7 +635,7 @@ impl Rpg {
         if *target == Target::Player {
             return Some((Holder::Player(PlayerId::HOST), &mut self.state.pc));
         }
-        let key = View { c: &self.content, s: &self.state }.target(ctx, target)?;
+        let key = self.content.target(ctx, target)?;
         Some((Holder::Actor(key), self.state.inventories.entry(key).or_default()))
     }
 
@@ -627,14 +643,14 @@ impl Rpg {
     /// dialogueextensions.cpp`, `containerextensions.cpp`, `statsextensions.cpp` at
     /// openmw-0.48.0; the `mw_rpg` runner decodes the calls, this applies them to the world).
     /// `talk`: the conversation (`None`: a console line, where `Choice` and `Goodbye` do nothing).
-    fn apply(&mut self, talk: Option<&mut Talk>, ctx: &ConversationCtx, effect: ResultEffect) -> Vec<RpgEvent> {
+    fn apply(&mut self, talk: Option<&mut Talk>, ctx: &ConversationCtx, effect: ResultEffect, sheets: &dyn MwSheets) -> Vec<RpgEvent> {
         let mut events = Vec::new();
-        let target_key = |rpg: &Self, t: &Target| View { c: &rpg.content, s: &rpg.state }.target(ctx, t);
+        let target_key = |rpg: &Self, t: &Target| rpg.content.target(ctx, t);
         match effect {
             // `Journal`: adds the stage's entry (text with macros expanded now) and sets the index.
             ResultEffect::Journal { quest, index } => {
                 let cmd = {
-                    let v = View { c: &self.content, s: &self.state };
+                    let v = View { c: &self.content, s: &self.state, sheets };
                     let rules = MwDialogueRules::new(&self.content.dialogue, &v);
                     self.content.dialogue.journal_command(&self.state.world, &quest, index, GameTime::default(), |t| {
                         rules.expand(ctx, t)
@@ -798,6 +814,68 @@ pub fn key(e: Entity, placement: Option<&CharacterPlacement>) -> ActorKey {
     placement.map_or(ActorKey(u128::from(e.to_bits())), |p| ActorKey(p.0.0))
 }
 
+/// A player id's character key. TODO(co-op): the session roster maps a joined player's id to
+/// its profile key; until then only the host has a character.
+fn player_key(player: PlayerId) -> Option<PlayerKey> {
+    (player == PlayerId::HOST).then_some(HOST_KEY)
+}
+
+/// The live character sheets dialogue reads ([`MwSheets`] over `sf_stats_bevy`): a player's
+/// by its key, an actor's by its placement key ([`key`]), through `StatIndex`. Without stats
+/// (no records) every sheet function is neutral.
+#[derive(SystemParam)]
+pub struct DialogueSheets<'w, 's> {
+    stats: Option<Res<'w, MwStats>>,
+    index: Option<Res<'w, StatIndex>>,
+    sheets: Query<'w, 's, &'static Stats>,
+}
+
+impl DialogueSheets<'_, '_> {
+    fn sheet(&self, owner: StatOwner) -> Option<&Sheet> {
+        let e = self.index.as_ref()?.get(owner)?;
+        self.sheets.get(e).ok().map(|s| &s.sheet)
+    }
+}
+
+impl MwSheets for DialogueSheets<'_, '_> {
+    fn table(&self) -> Option<&MwTable> {
+        self.stats.as_deref().map(|s| &*s.table)
+    }
+
+    fn player(&self, player: PlayerId) -> Option<&Sheet> {
+        self.sheet(StatOwner::Player(player_key(player)?))
+    }
+
+    fn actor(&self, actor: ActorKey) -> Option<&Sheet> {
+        self.sheet(StatOwner::Actor(actor))
+    }
+}
+
+/// [`DialogueSheets`] over a `&World` (the console runs with the world; take [`Rpg`] out with
+/// `World::resource_scope` first).
+pub struct WorldSheets<'w>(pub &'w World);
+
+impl WorldSheets<'_> {
+    fn sheet(&self, owner: StatOwner) -> Option<&Sheet> {
+        let e = self.0.get_resource::<StatIndex>()?.get(owner)?;
+        self.0.get::<Stats>(e).map(|s| &s.sheet)
+    }
+}
+
+impl MwSheets for WorldSheets<'_> {
+    fn table(&self) -> Option<&MwTable> {
+        self.0.get_resource::<MwStats>().map(|s| &*s.table)
+    }
+
+    fn player(&self, player: PlayerId) -> Option<&Sheet> {
+        self.sheet(StatOwner::Player(player_key(player)?))
+    }
+
+    fn actor(&self, actor: ActorKey) -> Option<&Sheet> {
+        self.sheet(StatOwner::Actor(actor))
+    }
+}
+
 /// The speaker's cell name for the `Cell` filter: the interior's name, or the exterior cell's
 /// name at the streaming cell's grid (empty in the wilderness).
 fn cell_name(rpg: &Rpg, e: Entity, parents: &Query<&ChildOf>, cells: &Query<&StreamCell>) -> String {
@@ -863,7 +941,7 @@ fn dev_give_ring(keys: Res<ButtonInput<KeyCode>>, mut rpg: ResMut<Rpg>) {
 /// record. `OpenMW` does the same in `MWClass::Npc::activate` (apps/openmw/mwclass/npc.cpp,
 /// 0.49.0: `ActionTalk` for a living, non-hostile NPC); death, combat, sneak-pickpocket and
 /// hostility are not modelled yet, so every registered NPC talks.
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // Bevy system params
 fn talk_on_activate(
     mut commands: Commands,
     mut outcomes: MessageReader<ActivationOutcome>,
@@ -872,6 +950,7 @@ fn talk_on_activate(
     mut stack: ResMut<ScreenStackRes>,
     registry: Res<UiRegistryRes>,
     active: Option<Res<ActiveTalk>>,
+    sheets: DialogueSheets,
 ) {
     let Some(placements) = placements else {
         outcomes.clear();
@@ -888,15 +967,15 @@ fn talk_on_activate(
         return;
     }
     if rpg.knows_actor(speaker) {
-        open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, speaker);
+        open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, speaker, &sheets);
     } else {
         warn!("dialogue: activated NPC {:032x} was never registered (no character spawned?)", speaker.0);
     }
 }
 
 /// Opens the dialogue window on `speaker`.
-fn open_dialogue(commands: &mut Commands, rpg: &mut Rpg, stack: &mut ScreenStackRes, registry: &UiRegistryRes, speaker: ActorKey) {
-    let Some((talk, view)) = rpg.open(speaker) else { return };
+fn open_dialogue(commands: &mut Commands, rpg: &mut Rpg, stack: &mut ScreenStackRes, registry: &UiRegistryRes, speaker: ActorKey, sheets: &dyn MwSheets) {
+    let Some((talk, view)) = rpg.open(speaker, sheets) else { return };
     info!("dialogue: talking to {}", rpg.actor_name(talk.speaker).unwrap_or("?"));
     let screen = commands.spawn((UiScreenRoot("dialogue".into()), DialogueScreen::new(view))).id();
     commands.insert_resource(ActiveTalk { talk, screen });
@@ -949,6 +1028,7 @@ fn open_at_start(
     seen: Res<JournalSeenStore>,
     config: Option<Res<MessageBoxConfig>>,
     mut rpg: ResMut<Rpg>,
+    sheets: DialogueSheets,
 ) {
     let Some(screen) = open.0.take() else { return };
     match screen.as_str() {
@@ -969,7 +1049,7 @@ fn open_at_start(
                 open.0 = Some("dialogue".to_owned());
                 return;
             };
-            open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, speaker);
+            open_dialogue(&mut commands, &mut rpg, &mut stack, &registry, speaker, &sheets);
         }
         other => warn!("--open-ui: unknown screen `{other}` (journal, dialogue, message)"),
     }
@@ -989,6 +1069,7 @@ fn host_dialogue(
     mut rpg: ResMut<Rpg>,
     active: Option<ResMut<ActiveTalk>>,
     mut screens: Query<&mut DialogueScreen>,
+    sheets: DialogueSheets,
     mut stack: ResMut<ScreenStackRes>,
 ) {
     let Some(mut active) = active else {
@@ -999,7 +1080,7 @@ fn host_dialogue(
     let Ok(mut window) = screens.get_mut(screen) else { return };
     for event in requests.read() {
         if event.screen == screen {
-            rpg.request(&mut active.talk, &mut window.view, &event.request);
+            rpg.request(&mut active.talk, &mut window.view, &event.request, &sheets);
         }
     }
     if window.view.is_closed() {
@@ -1092,6 +1173,7 @@ mod tests {
     //! The Fargoth's ring flow through the game host and the dialogue view-model (real data;
     //! skips when no Morrowind install is detected), as `mw_rpg/tests/fargoth.rs` checks it.
     use super::*;
+    use crate::stats::NewGameSheets;
     use mw_install::MorrowindInstall;
     use sf_rpg_ui::DialogueMode;
 
@@ -1139,11 +1221,13 @@ mod tests {
         };
         let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
         let content = mw_records::load(&vfs, &install.game_files()).unwrap();
-        let mut rpg = Rpg::new(Arc::new(content.db)).unwrap();
+        let db = Arc::new(content.db);
+        let sheets = NewGameSheets::from_db(db.clone()).unwrap();
+        let mut rpg = Rpg::new(db).unwrap();
         assert_eq!(rpg.exterior_name((-2, -9)), Some("Seyda Neen"));
         assert!(rpg.add_actor(FARGOTH, &id("fargoth"), "Seyda Neen"));
         assert!(rpg.add_actor(ARRILLE, &id("arrille"), "Seyda Neen"));
-        let (mut talk, mut view) = rpg.open(FARGOTH).unwrap();
+        let (mut talk, mut view) = rpg.open(FARGOTH, &sheets).unwrap();
         assert_eq!(view.speaker(), "Fargoth");
         eprintln!("greeting: {}", last_text(&view));
         let ring = id("ring");
@@ -1151,20 +1235,20 @@ mod tests {
         assert!(view.topics().iter().any(|(k, _)| *k == ring), "ring in the topic list");
 
         let quest = id("ms_fargothring");
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring.clone()));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring.clone()), &sheets);
         assert_eq!(rpg.state.world.quests.stage(&quest), 10);
         assert_eq!(view.choices().len(), 2, "{:?}", view.choices());
         assert_eq!(view.mode(), DialogueMode::Choosing);
 
         // "Yes, here" without the ring.
         let yes = view.choices()[1].value;
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes), &sheets);
         assert_eq!(rpg.state.npcs.modifier(FARGOTH), -5);
 
         rpg.state.pc.loadout.add(id(RING), 1, Attrs::new()).unwrap();
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring.clone()));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring.clone()), &sheets);
         let yes = view.choices()[1].value;
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes), &sheets);
         assert_eq!(rpg.state.world.quests.stage(&quest), 100);
         assert_eq!(rpg.state.pc.loadout.count(&id(RING)), 0);
         assert_eq!(rpg.state.inventories[&FARGOTH].loadout.count(&id(RING)), 1);
@@ -1178,9 +1262,9 @@ mod tests {
         assert!(rpg.state.world.topics.knows(&ring));
         journal_after_the_ring(&rpg, &quest, &ring);
 
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(ring), &sheets);
         eprintln!("afterwards: {}", last_text(&view));
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Goodbye);
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Goodbye, &sheets);
         assert!(view.is_closed());
         let bytes = postcard::to_stdvec(&rpg.state).unwrap();
         let back: RpgState = postcard::from_bytes(&bytes).unwrap();
@@ -1199,11 +1283,12 @@ mod tests {
         let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
         let content = mw_records::load(&vfs, &install.game_files()).unwrap();
         let db = Arc::new(content.db);
+        let sheets = NewGameSheets::from_db(db.clone()).unwrap();
         let cell = "Seyda Neen, Census and Excise Office";
         let topics_of = |rpg: &mut Rpg, base: &str| -> Vec<RecordId> {
             let key = ActorKey(7);
             assert!(rpg.add_actor(key, &id(base), cell));
-            let (_, view) = rpg.open(key).unwrap();
+            let (_, view) = rpg.open(key, &sheets).unwrap();
             let topics: Vec<RecordId> = view.topics().iter().map(|(k, _)| k.clone()).collect();
             eprintln!("{base}: {:?} {topics:?}", last_text(&view));
             topics
@@ -1244,11 +1329,12 @@ mod tests {
         let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
         let content = mw_records::load(&vfs, &install.game_files()).unwrap();
         let db = Arc::new(content.db);
+        let sheets = NewGameSheets::from_db(db.clone()).unwrap();
         let cell = "Seyda Neen, Census and Excise Office";
         let (sellus, state) = (ActorKey(7), id("state"));
         let greeting = |rpg: &mut Rpg| {
             assert!(rpg.add_actor(sellus, &id("chargen captain"), cell));
-            let (_, view) = rpg.open(sellus).unwrap();
+            let (_, view) = rpg.open(sellus, &sheets).unwrap();
             last_text(&view)
         };
         let papers = "Where are your papers?";

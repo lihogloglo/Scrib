@@ -83,6 +83,12 @@ impl wesl::Resolver for Files {
 
 /// Links `module` with `defs` on and validates the result; the error names the defs.
 fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
+    compile_with(module, defs, true)
+}
+
+/// [`compile`], optionally without dead-code stripping (every declaration of the root module
+/// is kept and validated, bindings no entry point reads yet included).
+fn compile_with(module: &str, defs: &[&str], strip: bool) -> Result<String, String> {
     let mut parts = module.split("::");
     let path = ModulePath {
         origin: PathOrigin::Package(parts.next().unwrap().to_string()),
@@ -92,6 +98,7 @@ fn compile(module: &str, defs: &[&str]) -> Result<String, String> {
         imports: true,
         condcomp: true,
         visibility: false,
+        strip,
         ..Default::default()
     };
     for d in defs {
@@ -189,6 +196,19 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// The view module on its own, nothing stripped: every binding (the W5a cover array and its
+/// sampler too, which no entry point reads before W5b) is declared with a type naga accepts, and
+/// the module links with and without the def set of a lit pass.
+#[test]
+fn view_module_declares_every_binding() {
+    for defs in [with(HIGH, &[]), with(HIGH, &["SURFACE_WEATHER"])] {
+        let wgsl = compile_with("sf_surface_bevy::view", &defs, false).unwrap_or_else(|e| panic!("{e}"));
+        for decl in ["var surface_cover: texture_2d_array<f32>", "var surface_cover_sampler: sampler"] {
+            assert!(wgsl.contains(decl), "{decl} missing:\n{wgsl}");
+        }
+    }
+}
+
 /// `view.wesl`'s bindings are the ones the `bevy_pbr` patch puts in the mesh view layout.
 #[test]
 fn view_bindings_match_the_bevy_pbr_patch() {
@@ -209,6 +229,8 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             binding("surface_sampler"),
             binding("surface_shelter_sampler"),
             binding("surface_canopy"),
+            binding("surface_cover"),
+            binding("surface_cover_sampler"),
         ],
         [
             bevy_pbr::SURFACE_WEATHER_UNIFORM_BINDING,
@@ -218,6 +240,8 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             bevy_pbr::SURFACE_WEATHER_SAMPLER_BINDING,
             bevy_pbr::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING,
             bevy_pbr::SURFACE_WEATHER_CANOPY_BINDING,
+            bevy_pbr::SURFACE_WEATHER_COVER_BINDING,
+            bevy_pbr::SURFACE_WEATHER_COVER_SAMPLER_BINDING,
         ]
     );
 }

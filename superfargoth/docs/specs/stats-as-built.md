@@ -250,3 +250,26 @@ Spec text moved here to keep `stats.md` under budget:
   a 13 damage hit applied in the combat step lowers the dummy sheet 100 → 87 exactly and combat reads 87 back, a hit
   leaving 0.5 fires `Depleted` and the refill), `hud::the_bars_read_the_local_players_sheet` (35/50/200, then 25/0/176,
   another player's sheet ignored); the old combat tests unchanged except the armed test (no stats: unsheeted vitals).
+
+## S6 dialogue filters (2026-11-06): `mw_rpg/src/stats.rs`, `mw_rpg_bevy/src/dialogue.rs`
+
+- **Seam** (`mw_rpg`, Bevy-free): `MwSheets { table, player(PlayerId), actor(ActorKey) }`; `sheet_function` and
+  `player_rank` port `OpenMW` `ca5e2576` `mwdialogue/filter.cpp` (cited in the module docs): `Pc<Attribute>` (8),
+  `Pc<Skill>` (27) = modified, truncated; `PcHealth/Magicka/Fatigue` = current; `PcHealthPercent`, speaker
+  `HealthPercent` = int(ratio x 100); `PcLevel`, `PcReputation`, `PcCrimeLevel` (bounty), `WerewolfKills`; speaker
+  `Level`, `Reputation` (0 for a creature); `SameFaction`, `PcExpelled`, `RankRequirement` (`FactionRanks`),
+  `FactionRankDifference` (speaker's sheet rank, else its record's), faction ones 0 without a speaker faction; player
+  rank = sheet membership. No sheet = `None` (neutral, logged), never a default character. Still neutral: `PcCorprus`,
+  `PcVampire`, `PcCommonDisease`, `PcBlightDisease` (effect runtime), `PcSex`/`SameSex`/`SameRace` (player facts
+  scaffold), AI settings, `Weather`, `ReactionLow/High`, `Detected`, `Alarmed`, `Attacked`, `TalkedToPc`,
+  `CreatureTarget`, `FriendHit`, `ShouldAttack`, `Werewolf`, `PcGold`.
+- **Host**: `View.sheets: &dyn MwSheets`, passed to `Rpg::open`, `request`, `run_console` (and the result-effect path,
+  for journal macros). `DialogueSheets` (system param: `MwStats` + `StatIndex` + `Query<&Stats>`) and `WorldSheets(&World)`
+  (the console, via `resource_scope`); `PlayerId::HOST` → `HOST_KEY` (TODO co-op roster). `NewGameSheets` (the
+  new-game player sheet over records, no app) for headless tests. `PlayerStatsPlaceholder` removed.
+- **`PcClothingModifier`** (`mw_rpg::clothing_value`, slots helmet to belt, record value): the host's loadout; while it
+  wears nothing, scaffold `StartingClothesFallback` = the `player` record's clothes (`record_clothing_value`; the body is
+  dressed from the record, the RPG loadout starts empty). Removal: the new game equips the record's inventory.
+- **Tests**: `mw_rpg/src/tests_stats.rs` 5 (attribute, skill, health percent, faction rank and `SameFaction` /
+  `FactionRankDifference` on both sides of each threshold; an unknown co-op player and a run without stats are
+  neutral); the real-data dialogue tests (`mw_rpg_bevy` dialogue) run on `NewGameSheets`.

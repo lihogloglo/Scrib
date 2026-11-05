@@ -1,6 +1,6 @@
 [package]
 name = "sf_surface_bevy"
-description = "Surface weather on the GPU (surface-weather.md W2-W4): the cell window texture, the vertical shelter depth map, the noise atlas, SurfaceUniform, the mesh-view bindings of the vendored bevy_pbr patch SW and the `sf_surface_bevy::layer` WESL module (wetness, puddles)"
+description = "Surface weather on the GPU (surface-weather.md W2-W4): the cell window texture, the vertical shelter depth map, the noise atlas, SurfaceUniform, the cover layer array, the mesh-view bindings of the vendored bevy_pbr patch SW and the `sf_surface_bevy::layer` WESL module (wetness, puddles)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -35,6 +35,8 @@ sf_coords.workspace = true
 # The shelter subview (`sun_view`, as WE-5's precipitation occlusion map).
 sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 sf_surface.workspace = true
+# `mip_chain` (the terrain layer arrays' filter) packs the cover layer array (W5a).
+sf_terrain = { workspace = true, features = ["bake"] }
 # WorldSurface (the state), WorldWeatherMap (raster), WeatherSite, SurfaceDebug.
 sf_weather_bevy.workspace = true
 workspace-hack.workspace = true

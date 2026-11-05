@@ -376,6 +376,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 // Low: no shelter map (surface-weather.md "Budget").
                 shelter: !off_parts.has(Part::Shelter) && !matches!(options.quality, Quality::Low),
             })
+            // W5a: the snow and ash looks (`mw_weather::cover`) for the layer array.
+            .insert_resource(surface_cover(&vfs, &weather.cover))
             .configure_sets(PostUpdate, sf_surface_bevy::SurfaceSystems.after(TerrainSystems::Update))
             .add_systems(PostUpdate, surface_glue.after(sync_origin).before(sf_surface_bevy::SurfaceSystems))
             .add_systems(PostUpdate, shelter_foliage.before(sf_surface_bevy::SurfaceSystems))
@@ -1326,6 +1328,36 @@ fn surface_glue(
 }
 
 /// Terrain patches stay out of the shelter map: a heightfield shelters nothing from straight above.
+/// Surface weather W5a: decodes the cover looks' textures for `sf_surface_bevy`'s layer array
+/// (the original `.dds`/`.tga`, as the terrain layers read them: the de-lit KTX2s would need a
+/// BC7 decoder). A look whose albedo can't be read is dropped (no cover look on its channel).
+fn surface_cover(vfs: &Vfs, layers: &[Option<sf_surface_bevy::cover::SurfaceLayer>; 2]) -> sf_surface_bevy::CoverLayers {
+    use sf_surface_bevy::cover::{CoverSource, LayerImage};
+    let decode = |path: &str| -> Option<LayerImage> {
+        let p = sf_vfs::VfsPath::new(path).ok()?;
+        let (resolved, _) = vfs.resolve_preferring(&p, &["dds"])?;
+        let bytes = vfs.read(&resolved).ok()?;
+        match mw_bake::textures::decode_rgba(resolved.as_str(), &bytes) {
+            Ok(img) => Some(LayerImage { width: img.width, height: img.height, rgba: img.rgba }),
+            Err(e) => {
+                warn!("surface cover: {}: {e}", resolved.as_str());
+                None
+            }
+        }
+    };
+    sf_surface_bevy::CoverLayers(layers.each_ref().map(|layer| {
+        let layer = layer.as_ref()?;
+        let albedo_height = decode(&layer.albedo_height);
+        println!("surface cover {}: {} ({})", layer.channel.name(), layer.albedo_height, if albedo_height.is_some() { "ok" } else { "missing" });
+        Some(CoverSource {
+            albedo_height: albedo_height?,
+            normal: layer.normal.as_deref().and_then(decode),
+            arm: layer.arm.as_deref().and_then(decode),
+            layer: layer.clone(),
+        })
+    }))
+}
+
 fn no_surface_shelter_terrain(add: On<Add<sf_terrain_bevy::TerrainPatch>>, mut commands: Commands) {
     commands.entity(add.entity).try_insert(sf_surface_bevy::NoSurfaceShelter);
 }

@@ -215,3 +215,28 @@ foliage shelters partially (~40% through), roofs fully.
   `sf_surface_bevy` `split_casters` keeps only casters whose layers meet the camera's (`SurfaceStats.shelter_casters` honest).
 - Open (logged, not fixed): `SurfaceSystems` isn't ordered after `VisibilitySystems::VisibilityPropagate`/`CalculateBounds`
   (a caster streamed this frame can miss its redraw); a one-frame view loses casters whose pipeline isn't ready that frame.
+
+## W5a (2026-11-06): cover looks, records and the layer-array binding (no shader cover yet)
+
+- **Records** (`sf_surface::cover`): kind `surface.layer` = `SurfaceLayer { channel: snow|ash, albedo_height, normal?,
+  arm?, tiling_m (4), max_depth_m? (channel default 0.15/0.03), roughness (0.8), sparkle (0), contrast (1) }` (VFS path
+  strings, serde defaults in brackets; `normal` is optional: flat). `ActiveLayers { default, worldspaces }`: the
+  adapter's per-worldspace, per-channel pick; `resolve` gives none for a missing record or one of the other channel.
+- **GPU** (`sf_surface_bevy::cover`): the host inserts `CoverLayers([Option<CoverSource>; 2])` (record + decoded RGBA8;
+  this crate reads no files); on change `pack` builds `Rgba8Unorm` 512² × 4 slices (2c albedo, sRGB bytes: decode after
+  sampling; 2c+1 normal XY, roughness, AO) with `sf_terrain::bake::mip_chain` (now public, the terrain layers' filter),
+  else a 1×1 one-slice neutral placeholder. Patch "SW" bindings 50 (`texture_2d_array`, filterable) and 51 (repeat,
+  trilinear, aniso 16). Uniform slots 10-11 `snow_layer`/`ash_layer`: 1/tiling (0 = no look), depth, sparkle, contrast.
+- **Morrowind adapter** (`mw_weather::cover`, records in the synthesized weather source): `mw_surface/snow` from `LTEX`
+  `Tx_BM_snow_01.dds` (Bloodmoon), `mw_surface/ash` from `AL_ash_01` (`Tx_ashlands_08`), preference lists then the
+  lowest plain keyword texture; tiling one land texel (7.3 m), snow roughness 0.65 sparkle 1, ash roughness 0.9.
+  Picked for every worldspace. `WeatherSetup.cover` resolves them; `mw_exterior_bevy::surface_cover` decodes the
+  original `.dds`/`.tga` (not the de-lit KTX2: no BC7 decoder), prints `surface cover <channel>: <path> (ok|missing)`.
+- **Gap (logged):** Morrowind land textures have no height or normal map and no bake step derives one (the terrain
+  arrays use the same flat defaults): cover height is the albedo alpha (opaque = flat) and the normal is flat. W5b may
+  use the albedo luminance as height, as objects do for puddles; a derived normal is open.
+- **Not yet:** the array is filled once at startup for the exterior (no worldspace switch repack); nothing samples it.
+- **Tests:** record file parsing, defaults, patches, bad channel, pick (`sf_surface` `cover_tests`); pack layout, the
+  placeholder, uniform slots, plugin repack (`sf_surface_bevy` `cover_array_packs_layers_and_placeholder`); binding
+  numbers vs the patch, the view module unstripped (every binding declared and valid); adapter choice exact
+  (`mw_weather` `cover_layers_pick_land_textures`) and on the real install (`real_cover_layers_name_install_textures`).

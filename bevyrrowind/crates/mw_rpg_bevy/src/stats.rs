@@ -70,6 +70,39 @@ impl MwStats {
     }
 }
 
+/// The new-game player's sheet (chargen skipped) with its table, as the host player's
+/// [`mw_rpg::MwSheets`] (no actor sheets): dialogue runs over records without an app (tests,
+/// tools). `None`: the records have no stat table.
+pub struct NewGameSheets {
+    table: Arc<MwTable>,
+    player: Sheet,
+}
+
+impl NewGameSheets {
+    pub fn from_db(db: Arc<RecordDb>) -> Option<Self> {
+        let table = Arc::new(MwTable::from_db(&db).ok()?);
+        let (gmst, _) = MwGmst::from_db(&db);
+        let rules = mw_stats::openmw_rules(&table, &gmst);
+        let stats = MwStats { table, gmst, db };
+        let player = new_sheet(&stats, &rules, StatOwner::Player(HOST_KEY), &player_inputs(), &stats.player_ops());
+        Some(Self { table: stats.table, player })
+    }
+}
+
+impl mw_rpg::MwSheets for NewGameSheets {
+    fn table(&self) -> Option<&MwTable> {
+        Some(&self.table)
+    }
+
+    fn player(&self, player: sf_rpg::PlayerId) -> Option<&Sheet> {
+        (player == sf_rpg::PlayerId::HOST).then_some(&self.player)
+    }
+
+    fn actor(&self, _actor: ActorKey) -> Option<&Sheet> {
+        None
+    }
+}
+
 /// The player's inputs (`carried`: see the module docs).
 fn player_inputs() -> Inputs {
     Inputs { is_player: true, ..Inputs::default() }

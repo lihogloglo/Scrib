@@ -3,7 +3,7 @@
 Status (2026-11-05): S5 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen/dev-start init, `MwDerived`,
 `OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `FactionRanks`; `mw_rpg_bevy::stats`: sheets on the player, NPCs and
 creatures, saved with the character and the overlay; as built: `../../../superfargoth/docs/specs/stats-as-built.md`
-"S2"-"S5"; S5: `mw_player_bevy::vitals`, HUD bars from roles); S6 dialogue next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
+"S2"-"S6"; S5: `mw_player_bevy::vitals`, HUD bars from roles; S6: `mw_rpg::stats`, dialogue filters from the sheets); S7 MWScript next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Content mechanics port 1:1; growth and recovery formulas are the first implementations of the rules seams
 (owner 2026-11-05: `SkillUseModel` starts with OpenMW's values).
@@ -130,9 +130,9 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
   cause `Combat`. Death: `Depleted(health)` (< 1) writes `CombatantDied` (combat's own covers a hit to 0); fatigue ≤ 0
   knockdown not wired yet. The training dummy's sheet health is set to 100.
 - **HUD** (built S5): bars from roles on the local player's sheet; `PlayerVitals` removed, magicka live.
-- **Dialogue**: `MwView::function` for `PcLevel`, `PcHealth`/`PcMagicka`/`PcFatigue`(`Percent`), the 8 attribute and 27
+- **Dialogue** (built S6: `mw_rpg::stats`, host `DialogueSheets`; the neutral list: stats-as-built.md "S6"): `MwView::function` for `PcLevel`, `PcHealth`/`PcMagicka`/`PcFatigue`(`Percent`), the 8 attribute and 27
   skill `Pc*` functions, `PcReputation`, `PcCrimeLevel` (= bounty), `PcExpelled`, speaker `Level`/`Reputation`/
-  `HealthPercent`, `RankRequirement`, `FactionRankDifference`; `player_rank` from groups. `PlayerStatsPlaceholder` goes.
+  `HealthPercent`, `RankRequirement`, `FactionRankDifference`; `player_rank` from groups; `PcClothingModifier` from the loadout (scaffold `StartingClothesFallback`). `PlayerStatsPlaceholder` gone.
 - **MWScript** (`mwscript/statsextensions.cpp` 81-490, 610-1100): `Get<Attr>`/`Get<Skill>` = modified; `Set<..>` = base;
   `Mod<..>` = base + delta; `Get<Dyn>` = current (magicka ≥ 0); `Set<Dyn>` = base, current = max (both flags);
   `Mod<Dyn>` = base + delta (≥ 0 except fatigue) and current + delta (both flags); `ModCurrent<Dyn>` = current + delta,

@@ -97,10 +97,12 @@ SOFTWARE.
   `files/data-mw/scripts/omw/playerskillhandlers.lua` (skill progression and level-up options),
   `files/data/scripts/omw/skillhandlers.lua` (`skillUsed` gain), `apps/openmw/mwmechanics/npcstats.cpp` (`levelUp`,
   `getLevelupAttributeMultiplier`, `hasSkillsForRank`), `apps/openmw/mwgui/levelupdialog.cpp` (picks, cap 100),
-  `apps/openmw/mwdialogue/filter.cpp` (faction rank skill/reputation requirements, `RankRequirement`).
+  `apps/openmw/mwdialogue/filter.cpp` (faction rank skill/reputation requirements, `RankRequirement`); stats S6: `filter.cpp`
+  (`getSelectStructInteger`, `testSelectStructNumeric`, `getSelectStructBoolean`, `testPlayer`: the PC and speaker stat
+  functions), `apps/openmw/mwclass/armor.cpp` and `clothing.cpp` (`getValue`, for `PcClothingModifier`).
 - Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
   identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived,progression,faction}.rs` (the game; f32 arithmetic in OpenMW's order,
+- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived,progression,faction}.rs`, `mw_rpg/src/{stats,equip}.rs` (S6) (the game; f32 arithmetic in OpenMW's order,
   differences listed in the module docs) and, for the two stat semantics only, `superfargoth/crates/sf_stats/src/ops.rs`
   (`set_current`, capped `StatOp::Damage`).
 

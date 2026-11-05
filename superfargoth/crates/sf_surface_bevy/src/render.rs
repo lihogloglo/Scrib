@@ -1,5 +1,5 @@
 //! Render world: the uniform buffer, the samplers, and the view component of the vendored
-//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-49). Each frame
+//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-51). Each frame
 //! the cameras marked [`SurfaceWeatherCamera`] get the component on their render-world view
 //! (once the textures are on the GPU); views that lost the mark lose it, and with it the
 //! `SURFACE_WEATHER` shader def (interiors pay nothing). Same shape as `sf_gi_bevy`'s
@@ -11,7 +11,8 @@ use bevy_image::Image;
 use bevy_pbr::{SurfaceWeatherBindings, SurfaceWeatherView};
 use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_resource::{
-    AddressMode, Buffer, BufferDescriptor, BufferUsages, FilterMode, Sampler, SamplerDescriptor,
+    AddressMode, Buffer, BufferDescriptor, BufferUsages, FilterMode, MipmapFilterMode, Sampler,
+    SamplerDescriptor,
 };
 use bevy_render::renderer::{RenderDevice, RenderQueue};
 use bevy_render::sync_world::RenderEntity;
@@ -32,6 +33,8 @@ pub(crate) struct ViewState {
     uniform: Buffer,
     sampler: Sampler,
     shelter_sampler: Sampler,
+    /// The cover layer array: trilinear, anisotropic, repeating (world-aligned tiling).
+    cover_sampler: Sampler,
     written: Option<[[u32; 4]; U_SLOTS]>,
     marked: Vec<Entity>,
 }
@@ -61,6 +64,16 @@ impl ViewState {
                 address_mode_v: AddressMode::ClampToEdge,
                 mag_filter: FilterMode::Nearest,
                 min_filter: FilterMode::Nearest,
+                ..SamplerDescriptor::default()
+            }),
+            cover_sampler: device.create_sampler(&SamplerDescriptor {
+                label: Some("surface_weather_cover_sampler"),
+                address_mode_u: AddressMode::Repeat,
+                address_mode_v: AddressMode::Repeat,
+                mag_filter: FilterMode::Linear,
+                min_filter: FilterMode::Linear,
+                mipmap_filter: MipmapFilterMode::Linear,
+                anisotropy_clamp: 16,
                 ..SamplerDescriptor::default()
             }),
             written: None,
@@ -101,6 +114,8 @@ pub(crate) fn extract_view(
             sampler: state.sampler.clone(),
             shelter_sampler: state.shelter_sampler.clone(),
             canopy: view_of(&images, &gpu.canopy)?,
+            cover: view_of(&images, &gpu.cover)?,
+            cover_sampler: state.cover_sampler.clone(),
         })
     });
     let now: Vec<Entity> = match bindings {

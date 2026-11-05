@@ -23,6 +23,7 @@
 //! ([`SurfaceTuning::snow_wash`], [`SurfaceTuning::ash_wash`]: Clockwork's rain-quickened melt
 //! and `sWashRate`, linear here).
 
+pub mod cover;
 mod grid;
 pub mod layer;
 mod save;
@@ -425,3 +426,5 @@ pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &Worldspace, p: 
 mod tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod cover_tests;

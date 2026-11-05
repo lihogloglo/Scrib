@@ -471,6 +471,7 @@ mod tests {
 
     use bevy_ecs::message::Messages;
     use mw_install::MorrowindInstall;
+    use mw_rpg::NoSheets;
     use sf_rpg::PlayerId;
     use sf_rpg_ui::DialogueRequest;
     use sf_world::PlacementId;
@@ -577,10 +578,10 @@ mod tests {
         let mut rpg = Rpg::new(db.clone()).unwrap();
         assert!(!mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty());
         assert!(rpg.add_actor(FARGOTH, &RecordId::new("fargoth"), "Seyda Neen"));
-        let (mut talk, mut view) = rpg.open(FARGOTH).unwrap();
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(RecordId::new("ring")));
+        let (mut talk, mut view) = rpg.open(FARGOTH, &NoSheets).unwrap();
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(RecordId::new("ring")), &NoSheets);
         let yes = view.choices()[1].value;
-        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes));
+        rpg.request(&mut talk, &mut view, &DialogueRequest::Choose(yes), &NoSheets);
         assert_eq!(rpg.state.world.quests.stage(&quest), 100);
         let before = rpg.state.clone();
         let mut app = app(root.clone(), rpg);

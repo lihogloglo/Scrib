@@ -95,7 +95,7 @@ for rain rings), pure fixed-step `advance` from the weather blend per climate (c
 
 ### Records
 
-- `SurfaceLayer` (`sf_records` kind): `{ channel: snow|ash, albedo_height: VfsPath, normal: VfsPath,
+- `SurfaceLayer` (kind `surface.layer`): `{ channel: snow|ash, albedo_height: VfsPath, normal: Option<VfsPath>,
   arm: Option<VfsPath>, tiling_m, max_depth_m (visual depth for W6, default snow 0.15, ash 0.03),
   roughness, sparkle, contrast }`. One active layer per channel per worldspace (adapter picks).
 - `TerrainLayer.surface` → surface type (terrain.md): gains `porosity: f32`, `puddles: bool`,
@@ -149,7 +149,7 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 **Hook sites.**
 - **`StandardMaterial` (NIF statics, characters, held items, fades):** own patch "SW" in
   `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the view
-  adds mesh-view bindings 43-49 (uniform, cells, shelter, noise, two samplers, canopy; W5 adds the layer array, W6
+  adds mesh-view bindings 43-51 (uniform, cells, shelter, noise, two samplers, canopy, W5a layer array + sampler; W6
   the trail ring) and the `SURFACE_WEATHER` def, and `render/pbr.wesl` calls `sf_surface_bevy::view` before
   lighting, forward main pass only (detail: [as built](surface-weather-as-built.md) W3). Skipped for alpha-blend and
   `unlit`; class DYNAMIC under `SKINNED` (`instance_wet` from `MeshTag` bits 0-7, W8). Drop condition: "upstream
@@ -261,7 +261,7 @@ weather override, flags and what to look for.
 | **W2b** ✅ | Rain wash; shelter views on an own anchor (night); canopy map for `ShelterFoliage` (as built) | wash closed forms; anchor + canopy requests; shader compile | SW-2 at night, under trees |
 | **W3** ✅ | Wetness layer: vendored `bevy_pbr` patch "SW", `sf_surface::layer` (exposure port, Lagarde wet, film normal flatten, wall streaks), terrain + proxy calls, `--off wet/surface`, NOTICES entry | shader-def compile log check per preset; porosity heuristic unit test (WGSL mirrored in Rust) | SW-3: Seyda Neen after rain, wet vs dry A/B, under-roof dry, walls streaked |
 | **W4** ✅ | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural rain rings, F0/roughness, sky/probe reflection, `--off puddles` (as built) | level/edge/ring math twins; compile check | SW-4: Balmora streets in rain and after; rings stop when rain stops |
-| **W5** | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
+| **W5** (W5a ✅ records + array) | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
 | **WM** | Measurement: counters + `perf suite` run lines in perf.md for wet/ash/snow bookmarks (`--weather` overrides); owner runs it (agents never launch) | `#[ignore = "measurement: ..."]` CPU timings | owner runs the suite; table updated |
 | **W6** | Trails: ring, stamps from foot events/bodies, decay/refill, CDLOD displacement (finest 2 levels), prepass motion vectors with the previous ring, cascade-0 shadows, POM | ring/stamp/decay CPU twins; prepass and main use one displacement fn (compile check) | SW-6: walk through Solstheim snow and Ashlands ash, DLSS on: prints, lips, no smear |
 | **W7** | Kick-up: footstep splashes in puddles, snow/ash puffs from the stamp stream, sprite-sheet bursts (PR2's splash pipeline; `bevy_hanabi` once the crate batch lands) | burst count/lifetime logic | SW-7: running in puddles and snow |
