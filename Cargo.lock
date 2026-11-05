@@ -8356,6 +8356,7 @@ dependencies = [
  "bevy_light",
  "bevy_math",
  "bevy_mesh",
+ "bevy_pbr",
  "bevy_platform",
  "bevy_render",
  "bevy_shader",
@@ -8365,9 +8366,9 @@ dependencies = [
  "sf_diag_bevy",
  "sf_sky_bevy",
  "sf_surface",
- "sf_terrain_bevy",
  "sf_weather_bevy",
  "sf_wind_bevy",
+ "wesl",
  "workspace-hack",
 ]
 

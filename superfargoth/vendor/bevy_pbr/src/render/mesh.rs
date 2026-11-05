@@ -397,6 +397,7 @@ pub fn check_views_need_specialization(
             Has<ContactShadows>,
             Has<PointSpotShadowsHardware2x2>, // superfargoth patch (own: lamp shadow filter)
             Has<GiProbeVolumeView>,           // superfargoth patch (own, GI)
+            Has<SurfaceWeatherView>,          // superfargoth patch (own, SW)
         ),
     )>,
     mut seen_views: Local<HashSet<RetainedViewEntity>>,
@@ -416,7 +417,7 @@ pub fn check_views_need_specialization(
         projection,
         distance_fog,
         (has_environment_maps, has_irradiance_volumes),
-        (has_oit, has_atmosphere, has_ssr, has_contact_shadows, has_point_spot_hw2x2, has_gi_probes), // superfargoth patch (own: lamp shadow filter; own, GI)
+        (has_oit, has_atmosphere, has_ssr, has_contact_shadows, has_point_spot_hw2x2, has_gi_probes, has_surface_weather), // superfargoth patch (own: lamp shadow filter; own, GI; own, SW)
     ) in views.iter_mut()
     {
         seen_views.insert(view.retained_view_entity);
@@ -476,6 +477,11 @@ pub fn check_views_need_specialization(
         // superfargoth patch (own, GI)
         if has_gi_probes {
             view_key |= MeshPipelineKey::GI_PROBES;
+        }
+
+        // superfargoth patch (own, SW)
+        if has_surface_weather {
+            view_key |= MeshPipelineKey::SURFACE_WEATHER;
         }
 
         if view.invert_culling {
@@ -3150,7 +3156,8 @@ bitflags::bitflags! {
         const CONTACT_SHADOWS                   = 1 << 24;
         const POINT_SPOT_SHADOWS_HARDWARE_2X2   = 1 << 25; // superfargoth patch (own: lamp shadow filter)
         const GI_PROBES                         = 1 << 26; // superfargoth patch (own, GI)
-        const LAST_FLAG                         = Self::GI_PROBES.bits(); // superfargoth patch (own, GI)
+        const SURFACE_WEATHER                   = 1 << 27; // superfargoth patch (own, SW)
+        const LAST_FLAG                         = Self::SURFACE_WEATHER.bits(); // superfargoth patch (own, GI; own, SW)
 
         const ALL_PREPASS_BITS                  = Self::DEPTH_PREPASS.bits()
                                                 | Self::NORMAL_PREPASS.bits()
@@ -3542,6 +3549,11 @@ impl SpecializedMeshPipeline for MeshPipeline {
         // superfargoth patch (own, GI)
         if key.contains(MeshPipelineKey::GI_PROBES) {
             shader_defs.push("GI_PROBES".into());
+        }
+
+        // superfargoth patch (own, SW): main pass only (the prepass pipeline never sees it).
+        if key.contains(MeshPipelineKey::SURFACE_WEATHER) {
+            shader_defs.push("SURFACE_WEATHER".into());
         }
 
         if key.contains(MeshPipelineKey::OIT_ENABLED) {

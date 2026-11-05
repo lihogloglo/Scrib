@@ -22,6 +22,7 @@
 //! code ported).
 
 mod grid;
+pub mod layer;
 mod save;
 pub mod view;
 

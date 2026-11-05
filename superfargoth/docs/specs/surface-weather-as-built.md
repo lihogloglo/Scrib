@@ -74,3 +74,44 @@ pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &WorldspaceId, p
 - **Tests:** `sf_surface` `view_tests` (recenter strips exact, wrap split, texels vs `sample`, shelter matrix,
   triggers, noise tiling); `sf_surface_bevy` (uniform ↔ WGSL struct and constants, naga parse + validate of
   `layer.wesl` with its import stubbed, headless plugin smoke: window corner, strips, casters, hook, no NaN).
+
+## W3 (2026-11-05): wetness on every lit material, `bevy_pbr` patch "SW"
+
+- **Patch "SW"** (vendored `bevy_pbr`, `superfargoth patch (own, SW)`; README row): `render/surface_weather.rs`
+  (`SurfaceWeatherView(SurfaceWeatherBindings { uniform, cells, shelter, noise, sampler, shelter_sampler })`, binding
+  consts 43-48), the view key/def in `render/mesh.rs`, layout + bind group entries in `render/mesh_view_bindings.rs`
+  (the uniform is `uniform_buffer_sized(false, None)`: bevy_pbr knows nothing of its layout), and in `render/pbr.wesl`
+  an `@if(SURFACE_WEATHER)` import of `sf_surface_bevy::view::apply_surface_weather_standard`, called after
+  `apply_decals`, before lighting. The provider declares the WGSL bindings (`view.wesl`; a test checks the numbers
+  against the consts). The def is pushed by `MeshPipeline::specialize` only, so prepass and shadow pipelines never see
+  it; the deferred lighting pipeline just carries the bindings in its layout.
+- **Render world** (`render.rs`): one uniform buffer (`U_SLOTS` × 16 B, written when the slots change), a repeat-linear
+  sampler (cells, noise), a clamp-nearest one (shelter gather); each frame the render entities of cameras marked
+  `SurfaceWeatherCamera` get the component once the three GPU images exist, and lose it when unmarked (interiors: no def,
+  zero cost). The W2 `ShaderBuffer` uniform is gone.
+- **Scaffold removed:** `TerrainMaterial` bindings 113-118, `TerrainMaterialKey`, `hook_terrain`, the `@if` bindings in
+  `terrain.wesl`, `tag_terrain`, and `sf_surface_bevy`'s dependency on `sf_terrain_bevy`. The game glue
+  (`mw_exterior_bevy` `surface_glue`, `no_surface_shelter_terrain`) copies `TerrainOrigin` into `SurfaceOrigin`, mirrors
+  `TerrainCamera` as `SurfaceWeatherCamera` and tags `TerrainPatch` with `NoSurfaceShelter`.
+- **Layer** (`layer.wesl`, CPU twin `sf_surface::layer`):
+  - Exposure: Clockwork `surfaceExposure` shape: nine `textureGather`s cover a 6×6-texel tent (0.75 m), cover ramps from
+    0.12 m to 0.35 m above the point (ROOF_NEAR/FULL re-calibrated) plus the slope's rise over two texels; lookup
+    0.35 m out along the normal (W2). Replaces W2's 3×3 hard compare with 5 cm bias. Leaf hold and the `radius > 3` far
+    path not ported (W2b).
+  - Wet amount: cell R × facing (ground 1, walls `WALL_WET` 0.6 × (0.3 + 0.7 streak), world-plane streaks from noise B/A
+    over 22 m × 18 m tiles, faces turned down dry) × drying patches (noise R, 32 m tiles: `smoothstep(0.6n, 0.6n + 0.4,
+    wet)`) × exposure (not FAR). DYNAMIC (skinned) uses `instance_wet` only: dry until W8.
+  - Material (Lagarde 2013): porosity `(1 − metallic)·saturate((rough − 0.3)/0.5)`; albedo × lerp(1, 0.2, porosity·wet)
+    with saturation +0.3·wet·porosity; gloss `lerp(1, gloss, lerp(1, factor, 0.5·wet))`; film past saturation
+    `wet·smoothstep(0.35, 1, wet)·(1 − 0.6·porosity)` takes roughness to ≤ 0.25 and dielectric reflectance to 0.354
+    (F0 0.02).
+  - Normals: the normal map's surface gradient against the geometric normal (Mikkelsen 2020) × (1 − film), one resolve
+    (W4-W5 add their gradients before it). FAR (proxies, impostors): albedo and gloss only.
+  - Debug view `porosity` added (`surface debug porosity`).
+- **Switches:** `SurfaceSettings { layer, wet, shelter }` mask the flags (`--off surface`, `--off wet`) or skip the
+  shelter map (`--off shelter`, and the Low preset); the hook stays compiled in.
+- **Tests:** `sf_surface` layer twins (porosity heuristic, Lagarde identities, monotonic wetting, facing);
+  `sf_surface_bevy` `shader_tests`: `wesl` links the real modules (vendored `bevy_pbr`/`bevy_render`/`bevy_core_pipeline`
+  sources, our crates' WESL; Bevy's `canonical_path` rule) for the StandardMaterial fragment (static, skinned), terrain,
+  proxy and impostor at Low/High/Ultra defs, with and without `SURFACE_WEATHER`, and naga validates each (30 compiles,
+  ~2 s); binding numbers vs the patch; WGSL wet constants vs the twin; headless plugin (A/B switches, interior).

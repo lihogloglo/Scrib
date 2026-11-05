@@ -365,16 +365,24 @@ pub enum DebugView {
     Exposure = 1,
     /// The cell texture: wet, puddle, snow, ash per 32 m cell, with cell borders.
     Cells = 2,
+    /// Lagarde porosity per pixel: sealed black (metal, polish) to white (drinks); far red.
+    Porosity = 3,
 }
 
 impl DebugView {
-    pub const ALL: [DebugView; 3] = [DebugView::Off, DebugView::Exposure, DebugView::Cells];
+    pub const ALL: [DebugView; 4] = [
+        DebugView::Off,
+        DebugView::Exposure,
+        DebugView::Cells,
+        DebugView::Porosity,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             DebugView::Off => "off",
             DebugView::Exposure => "exposure",
             DebugView::Cells => "cells",
+            DebugView::Porosity => "porosity",
         }
     }
 

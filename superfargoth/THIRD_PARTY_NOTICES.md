@@ -55,6 +55,15 @@ SOFTWARE.
 - Licence: GPL-3.0-or-later (the full text is identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt).
 - Ported into: `superfargoth/vendor/bevy_pbr/src/render/shadow_sampling.wesl` (`sample_shadow_map_directional_pcss`, H2 world-unit sun PCSS with analytic receiver slope and world-meter penumbra scale across cascades), combined with the rotated blocker search kernel from `bevyengine/bevy#22272`.
 
+## OpenMW Clockwork (surface weather)
+
+- Source: https://gitlab.com/OursCodeur/openmw branch `clockwork-alpha`, commit `c5e5a9a6362c35512823884753d2d5284af204fa`:
+  `files/shaders/lib/light/surface.glsl` (`surfaceExposure`, `surfaceWater`).
+- Licence: GPL-3.0-or-later (the full text is identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt).
+- Ported into: `superfargoth/crates/sf_surface_bevy/src/layer.wesl` (shelter exposure: 6-texel tent over nine gathers,
+  cover ramp, slope rise; wall streaks, wall and down-facing wetness, wet saturation; constants re-calibrated in meters)
+  and its CPU twin `superfargoth/crates/sf_surface/src/layer.rs` (surface-weather.md W3).
+
 ## openmw-rtx (albedo de-lighting)
 
 - Source: https://github.com/xorza/openmw-rtx, commit `f2f8b2d5b2cb142d1b454b3bb1815f4552980562`:

@@ -1597,3 +1597,12 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (surface W2): shared WESL layers take their uniform and textures as function arguments (as
   `translucent_fog`), so one module serves material and mesh-view bindings; WGSL modules are checked in unit tests with
   `naga` (workspace dev-dep, imports stubbed), no GPU and no picture. `class` is a reserved WGSL word.
+- 2026-11-05 (owner, surface weather): rain washes snow away faster and ash much faster (W1 rule "snow/ash decay only
+  while nothing falls" changes); the shelter map gets its own top-down pass independent of the sun (works at night);
+  foliage shelters partially (~40% through, Clockwork), roofs fully. Queued as slice W2b after W3.
+- 2026-11-05 (owner, surface W3): approved the own vendored `bevy_pbr` patch "SW" (mesh-view bindings 43-48 keyed on a
+  render-world `SurfaceWeatherView`, `render/pbr.wesl` calls `sf_surface_bevy::view` before lighting; drop when Bevy gets a
+  view-level material hook). The framework's surface camera and origin are its own (`SurfaceWeatherCamera`, `SurfaceOrigin`).
+- 2026-11-05 (surface W3): shader changes are compile-checked headless by linking the real modules with `wesl` (vendored
+  Bevy + ours, Bevy's shader-cache options) per preset's defs and validating with naga; no GPU, no picture. Wet look is
+  Lagarde's porosity model plus a film past saturation that scales the normal map's surface gradient by (1 − film).

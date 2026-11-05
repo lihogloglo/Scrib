@@ -1,5 +1,6 @@
 mod fog;
 mod gi_probes; // superfargoth patch (own, GI)
+mod surface_weather; // superfargoth patch (own, SW)
 mod gpu_preprocess;
 mod light;
 pub(crate) mod mesh;
@@ -10,6 +11,7 @@ pub(crate) mod skin;
 
 pub use fog::*;
 pub use gi_probes::*; // superfargoth patch (own, GI)
+pub use surface_weather::*; // superfargoth patch (own, SW)
 pub use gpu_preprocess::*;
 pub use light::*;
 pub use mesh::*;

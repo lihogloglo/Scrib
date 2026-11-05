@@ -15,8 +15,9 @@
 //! frames cost nothing. Only while a layer is on or a debug view shows. The view rides a
 //! shadow-casting directional light: with none (the sky turns the sun's shadows off at night
 //! and indoors) the last map stays until the light returns. Skinned meshes (characters) and
-//! [`NoSurfaceShelter`] entities (terrain patches: a heightfield shelters nothing from straight
-//! above) are not casters.
+//! [`NoSurfaceShelter`] entities (the game tags terrain patches: a heightfield shelters nothing
+//! from straight above) are not casters. `SurfaceSettings::shelter` off (Low preset, `--off
+//! shelter`): no map, exposure 1 everywhere.
 
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
@@ -37,10 +38,10 @@ use sf_surface::view::{
     DebugView, SHELTER_DOWN_M, SHELTER_HALF_M, SHELTER_SIZE, SHELTER_TEXEL_M, SHELTER_UP_M,
     ShelterTrigger, shelter_view,
 };
-use sf_terrain_bevy::{TerrainOrigin, TerrainPatch};
-
 use crate::cells::camera_position;
-use crate::{SurfaceGpu, SurfaceStats, SurfaceUniform, SurfaceWeatherView};
+use crate::{
+    SurfaceGpu, SurfaceOrigin, SurfaceSettings, SurfaceStats, SurfaceUniform, SurfaceWeatherCamera,
+};
 
 /// Subview index among the light's subviews (cascades 0..4, precipitation 0xFB).
 pub const SHELTER_SUBVIEW: u32 = 0xFC;
@@ -77,16 +78,6 @@ pub(crate) fn shelter_image() -> Image {
     image
 }
 
-/// Terrain patches never shelter (W2: `sf_terrain_bevy` doesn't know this crate).
-pub(crate) fn tag_terrain(
-    mut commands: Commands,
-    patches: Query<Entity, (Added<TerrainPatch>, Without<NoSurfaceShelter>)>,
-) {
-    for e in &patches {
-        commands.entity(e).insert(NoSurfaceShelter);
-    }
-}
-
 /// The shelter's trigger state across frames.
 #[derive(Default)]
 pub(crate) struct ShelterState {
@@ -107,10 +98,11 @@ pub(crate) fn update_shelter(
     mut uniform: ResMut<SurfaceUniform>,
     mut stats: ResMut<SurfaceStats>,
     gpu: Res<SurfaceGpu>,
-    origin: Res<TerrainOrigin>,
+    origin: Res<SurfaceOrigin>,
+    settings: Res<SurfaceSettings>,
     lights: Query<(Entity, &DirectionalLight)>,
-    cameras: Query<(&Camera, &GlobalTransform), With<SurfaceWeatherView>>,
-    camera_entities: Query<(Entity, &Camera), With<SurfaceWeatherView>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<SurfaceWeatherCamera>>,
+    camera_entities: Query<(Entity, &Camera), With<SurfaceWeatherCamera>>,
     casters: Query<
         (
             Entity,
@@ -134,7 +126,7 @@ pub(crate) fn update_shelter(
     counters: Option<Res<DiagCounters>>,
 ) {
     frame.0 = None;
-    let active = uniform.flags != 0 || uniform.debug != DebugView::Off;
+    let active = settings.shelter && (uniform.flags != 0 || uniform.debug != DebugView::Off);
     let (true, Some(cam)) = (active, camera_position(&cameras)) else {
         uniform.shelter = Vec4::ZERO;
         shelter.trigger.reset();

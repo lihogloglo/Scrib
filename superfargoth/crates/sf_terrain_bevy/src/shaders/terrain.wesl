@@ -6,10 +6,12 @@ import super::common;
 import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, world_xz, origin_y, debug_flags, terrain_normal};
 import super::surface::terrain_surface;
 import super::far_shadow::far_shadow_term;
-// Surface weather (surface-weather.md "Shader integration"): the shared layer, fed from the
-// material's bindings 113-118 (W2 scaffold; W3 moves them to mesh-view bindings).
+// Surface weather (surface-weather.md "Shader integration"): the shared layer on the view's
+// bindings (vendored bevy_pbr patch "SW"; the def comes with the view, main pass only).
 @if(SURFACE_WEATHER)
-import sf_surface_bevy::layer::{SurfaceUniform, SurfaceInput, CLASS_TERRAIN, apply_surface_layer};
+import sf_surface_bevy::layer::{SurfaceInput, CLASS_TERRAIN, surface_porosity};
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::view::apply_surface_weather;
 import bevy_pbr::render::{
     pbr_types::{PbrInput, pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, calculate_view},
@@ -22,19 +24,6 @@ import bevy_pbr::render::{
 import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION)
 import bevy_pbr::ssao::utils::ssao_multibounce;
-
-@if(SURFACE_WEATHER)
-@group(constants::MATERIAL_BIND_GROUP) @binding(113) var<storage, read> surface_uniform: SurfaceUniform;
-@if(SURFACE_WEATHER)
-@group(constants::MATERIAL_BIND_GROUP) @binding(114) var surface_cells: texture_2d<f32>;
-@if(SURFACE_WEATHER)
-@group(constants::MATERIAL_BIND_GROUP) @binding(115) var surface_cell_sampler: sampler;
-@if(SURFACE_WEATHER)
-@group(constants::MATERIAL_BIND_GROUP) @binding(116) var surface_shelter: texture_2d<f32>;
-@if(SURFACE_WEATHER)
-@group(constants::MATERIAL_BIND_GROUP) @binding(117) var surface_noise: texture_2d<f32>;
-@if(SURFACE_WEATHER)
-@group(constants::MATERIAL_BIND_GROUP) @binding(118) var surface_noise_sampler: sampler;
 
 /// Specular occlusion from an ambient visibility term, as StandardMaterial
 /// does it (bevy_pbr pbr_fragment.wesl): Lagarde and de Rousiers 2014,
@@ -126,10 +115,10 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     si.world_pos = in.world_position.xyz;
     si.height = 0.5;
     si.basin = 0.0;
-    si.porosity = 1.0;
+    si.porosity = surface_porosity(0.0, pbr.material.perceptual_roughness);
     si.surface_class = CLASS_TERRAIN;
     si.instance_wet = 0.0;
-    apply_surface_layer(&pbr, si, surface_uniform, surface_cells, surface_cell_sampler, surface_shelter, surface_noise, surface_noise_sampler);
+    apply_surface_weather(&pbr, si);
 }
     // Ambient occlusion as StandardMaterial applies it: the layer AO, SSAO
     // (multibounce) when the view has it, and specular occlusion from the
@@ -140,7 +129,7 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     var diffuse_occlusion = vec3<f32>(s.ao);
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
     let ssao = textureLoad(screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy - view.main_pass_viewport.xy), 0i).r;
-    diffuse_occlusion = min(diffuse_occlusion, ssao_multibounce(ssao, albedo));
+    diffuse_occlusion = min(diffuse_occlusion, ssao_multibounce(ssao, pbr.material.base_color.rgb));
     visibility = min(visibility, ssao);
 }
     pbr.diffuse_occlusion = diffuse_occlusion;

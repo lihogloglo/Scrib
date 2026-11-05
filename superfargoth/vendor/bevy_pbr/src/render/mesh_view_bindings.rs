@@ -101,6 +101,7 @@ bitflags::bitflags! {
         const AREA_LIGHT_LUTS                  = 1 << 15;
         const VIEW_TRANSMISSION_TEXTURE        = 1 << 16;
         const GI_PROBES                        = 1 << 17; // superfargoth patch (own, GI)
+        const SURFACE_WEATHER                  = 1 << 18; // superfargoth patch (own, SW)
     }
 }
 
@@ -187,6 +188,10 @@ impl From<MeshPipelineKey> for MeshPipelineViewLayoutKey {
         // superfargoth patch (own, GI)
         if value.contains(MeshPipelineKey::GI_PROBES) {
             result |= MeshPipelineViewLayoutKey::GI_PROBES;
+        }
+        // superfargoth patch (own, SW)
+        if value.contains(MeshPipelineKey::SURFACE_WEATHER) {
+            result |= MeshPipelineViewLayoutKey::SURFACE_WEATHER;
         }
 
         result
@@ -395,6 +400,35 @@ fn layout_entries(
             (
                 super::GI_PROBE_UNIFORM_BINDING,
                 uniform_buffer::<super::GiProbeVolumeUniform>(false),
+            ),
+        ));
+    }
+    // superfargoth patch (own, SW): surface weather uniform, cells, shelter, noise, samplers.
+    if layout_key.contains(MeshPipelineViewLayoutKey::SURFACE_WEATHER) {
+        entries = entries.extend_with_indices((
+            (
+                super::SURFACE_WEATHER_UNIFORM_BINDING,
+                uniform_buffer_sized(false, None),
+            ),
+            (
+                super::SURFACE_WEATHER_CELLS_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: true }),
+            ),
+            (
+                super::SURFACE_WEATHER_SHELTER_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: false }),
+            ),
+            (
+                super::SURFACE_WEATHER_NOISE_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: true }),
+            ),
+            (
+                super::SURFACE_WEATHER_SAMPLER_BINDING,
+                sampler(SamplerBindingType::Filtering),
+            ),
+            (
+                super::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING,
+                sampler(SamplerBindingType::NonFiltering),
             ),
         ));
     }
@@ -683,6 +717,7 @@ pub fn prepare_mesh_view_bind_groups(
             Option<&RenderViewLightProbes<EnvironmentMapLight>>,
             Option<&RenderViewLightProbes<IrradianceVolume>>,
             Option<&super::GiProbeVolumeView>, // superfargoth patch (own, GI)
+            Option<&super::SurfaceWeatherView>, // superfargoth patch (own, SW)
         ),
         Has<ExtractedAtmosphere>,
         (
@@ -753,7 +788,7 @@ pub fn prepare_mesh_view_bind_groups(
             atmosphere_textures,
             atmosphere_buffer,
             tonemapping,
-            (render_view_environment_maps, render_view_irradiance_volumes, gi_probes), // superfargoth patch (own, GI)
+            (render_view_environment_maps, render_view_irradiance_volumes, gi_probes, surface_weather), // superfargoth patch (own, GI; own, SW)
             has_atmosphere,
             (
                 view_uniform_offset,
@@ -845,6 +880,19 @@ pub fn prepare_mesh_view_bind_groups(
                     (super::GI_PROBE_VISIBILITY_BINDING, &gi.visibility),
                     (super::GI_PROBE_SAMPLER_BINDING, &gi.sampler),
                     (super::GI_PROBE_UNIFORM_BINDING, gi.uniform.as_entire_binding()),
+                ));
+            }
+
+            // superfargoth patch (own, SW)
+            if let Some(super::SurfaceWeatherView(sw)) = surface_weather {
+                layout_key |= MeshPipelineViewLayoutKey::SURFACE_WEATHER;
+                entries = entries.extend_with_indices((
+                    (super::SURFACE_WEATHER_UNIFORM_BINDING, sw.uniform.as_entire_binding()),
+                    (super::SURFACE_WEATHER_CELLS_BINDING, &sw.cells),
+                    (super::SURFACE_WEATHER_SHELTER_BINDING, &sw.shelter),
+                    (super::SURFACE_WEATHER_NOISE_BINDING, &sw.noise),
+                    (super::SURFACE_WEATHER_SAMPLER_BINDING, &sw.sampler),
+                    (super::SURFACE_WEATHER_SHELTER_SAMPLER_BINDING, &sw.shelter_sampler),
                 ));
             }
 

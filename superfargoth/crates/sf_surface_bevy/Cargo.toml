@@ -1,6 +1,6 @@
 [package]
 name = "sf_surface_bevy"
-description = "Surface weather on the GPU (surface-weather.md W2): the cell window texture, the vertical shelter depth map, the noise atlas, SurfaceUniform and the `sf_surface_bevy::layer` WESL module"
+description = "Surface weather on the GPU (surface-weather.md W2-W3): the cell window texture, the vertical shelter depth map, the noise atlas, SurfaceUniform, the mesh-view bindings of the vendored bevy_pbr patch SW and the `sf_surface_bevy::layer` WESL module (wetness)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,6 +20,8 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_platform = { workspace = true, features = ["std"] }
 # Mesh3d, SkinnedMesh (characters don't shelter).
 bevy_mesh.workspace = true
+# SurfaceWeatherView / SurfaceWeatherBindings: the mesh-view bindings (vendored bevy_pbr patch "SW").
+bevy_pbr.workspace = true
 # ShaderBuffer, RenderApp, partial texture writes.
 bevy_render.workspace = true
 bevy_shader.workspace = true
@@ -31,9 +33,6 @@ sf_coords.workspace = true
 # The shelter subview (`sun_view`, as WE-5's precipitation occlusion map).
 sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 sf_surface.workspace = true
-# W2 scaffold: the terrain hook (material bindings), TerrainCamera, TerrainOrigin. W3 moves the
-# bindings to the mesh view (bevy_pbr patch "SW") and drops the material hook.
-sf_terrain_bevy.workspace = true
 # WorldSurface (the state), WorldWeatherMap (raster), WeatherSite, SurfaceDebug.
 sf_weather_bevy.workspace = true
 workspace-hack.workspace = true
@@ -43,5 +42,7 @@ workspace = true
 
 [dev-dependencies]
 sf_wind_bevy.workspace = true
-# Compiles layer.wesl (stubbed imports) in a test: no GPU, no picture.
+# Shader compile checks (no GPU, no picture): wesl links the real modules (vendored bevy_pbr with
+# patch SW, terrain, far proxies, ours) per def set, as Bevy's shader cache does; naga validates.
 naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }

@@ -14,6 +14,11 @@ import bevy_pbr::render::{
 };
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::{mesh_functions, pbr_functions::visibility_range_dither};
+// Surface weather (surface-weather.md): class FAR, wetness darkening and gloss only.
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::view::{apply_surface_weather, surface_input_of};
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::layer::CLASS_FAR;
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
@@ -72,6 +77,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
     pbr.V = calculate_view(in.world_position, pbr.is_orthographic);
     pbr.flags = mesh[in.layer_instance.y].flags;
+@if(SURFACE_WEATHER)
+    apply_surface_weather(&pbr, surface_input_of(pbr, CLASS_FAR));
     // Terrain shadow past the cascades, dithered cascade end.
     let far = far_map_shadow(in.world_position, n, in.position.xy, far_map, far_sampler, params.far);
     pbr.directional_shadow_factor = far.factor;

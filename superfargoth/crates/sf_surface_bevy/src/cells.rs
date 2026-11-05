@@ -21,10 +21,11 @@ use bevy_transform::components::GlobalTransform;
 use sf_diag_bevy::DiagCounters;
 use sf_surface::view::{CellSites, CellWindow, WINDOW_CELLS, fill_texels};
 use sf_surface::{CELL_M, cell_of};
-use sf_terrain_bevy::TerrainOrigin;
 use sf_weather_bevy::{WeatherSite, WorldSurface};
 
-use crate::{SurfaceGpu, SurfaceStats, SurfaceUniform, SurfaceWeatherView};
+use crate::{
+    SurfaceGpu, SurfaceOrigin, SurfaceSettings, SurfaceStats, SurfaceUniform, SurfaceWeatherCamera,
+};
 
 /// One rectangle of the cell texture.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +51,7 @@ pub(crate) struct WindowState {
 
 /// The active surface-weather camera: its render-space position.
 pub(crate) fn camera_position(
-    cameras: &Query<(&Camera, &GlobalTransform), With<SurfaceWeatherView>>,
+    cameras: &Query<(&Camera, &GlobalTransform), With<SurfaceWeatherCamera>>,
 ) -> Option<bevy_math::Vec3> {
     cameras
         .iter()
@@ -64,8 +65,9 @@ pub(crate) fn camera_position(
 pub(crate) fn update_cells(
     surface: Option<Res<WorldSurface>>,
     site: Option<Res<WeatherSite>>,
-    origin: Res<TerrainOrigin>,
-    cameras: Query<(&Camera, &GlobalTransform), With<SurfaceWeatherView>>,
+    origin: Res<SurfaceOrigin>,
+    settings: Res<SurfaceSettings>,
+    cameras: Query<(&Camera, &GlobalTransform), With<SurfaceWeatherCamera>>,
     mut window_state: Local<WindowState>,
     mut writes: ResMut<CellWrites>,
     mut uniform: ResMut<SurfaceUniform>,
@@ -117,7 +119,7 @@ pub(crate) fn update_cells(
     uniform.window = Vec4::new(corner.x, corner.y, inv_cell, 1.0);
     let t = min.rem_euclid(bevy_math::IVec2::splat(WINDOW_CELLS));
     uniform.cells = IVec4::new(t.x, t.y, WINDOW_CELLS, 0);
-    uniform.flags = SurfaceUniform::flags_of(window_state.max);
+    uniform.flags = SurfaceUniform::flags_of(window_state.max) & settings.flag_mask();
     if texels > 0 {
         stats.cell_texels += texels;
         stats.full_uploads += u64::from(full);

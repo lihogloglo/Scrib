@@ -109,6 +109,8 @@ meshopt = "0.6.2"
 mlua = { version = "0.12.2", default-features = false, features = ["luau"] }
 # WGSL validation in tests (sf_surface_bevy layer.wesl): the naga wgpu already builds.
 naga = { version = "30", default-features = false }
+# WESL linker (Bevy's shader cache uses it); dev-only: headless shader compile checks.
+wesl = { version = "0.6", default-features = false }
 # Collision queries (sf_controller's static query world): the library under avian and rapier.
 # Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
 parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }

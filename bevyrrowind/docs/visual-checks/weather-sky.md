@@ -153,3 +153,14 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Look for (cells): grey 32 m squares with dark borders that stay put as you walk; after `surface set wet 0.6` they
   turn blue; purple only past ~2 km. `surface debug off`: terrain looks exactly as before.
 - Status: awaiting owner (built 2026-11-05).
+
+### SW-3: Wetness after rain (surface-weather.md W3)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Seyda Neen" --hour 10 --weather clear`; console:
+  `surface set wet 1` (soaked), `surface set wet 0.5` (drying), `surface clear` (dry). A/B: same run with `--off wet`.
+- Look for: ground, roads, plaster and wood darker and a little richer in colour, glossier (sun and sky highlights);
+  smooth stone and metal get a sharp water sheen; normal-map detail softens under the film (no faceting, no noise).
+- Under roofs, eaves, the dock's deck and tree canopies stays dry (soft edge ~0.75 m); `surface debug exposure` now
+  tints statics too. Walls: vertical streaks, less wet than the ground; undersides dry.
+- At 0.5: patchy drying (metre-scale patches), no tiling visible. Characters stay dry (W8). Far proxies darken a bit.
+- `surface debug porosity`: metal and polish black, stone, earth, plaster white. `--off wet`: exactly the dry look.
+- Status: awaiting owner (built 2026-11-05).

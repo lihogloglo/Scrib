@@ -1,6 +1,6 @@
 # Surface weather: wetness, puddles, snow and ash cover, trails
 
-Status: W1-W2 built (2026-11-05: `sf_surface` state, `sf_surface_bevy` GPU resources + terrain debug tint; [as built](surface-weather-as-built.md)); W3-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
+Status: W1-W3 built (2026-11-05: `sf_surface` state, `sf_surface_bevy` GPU resources, debug tints, wetness on every lit material through `bevy_pbr` patch "SW"; [as built](surface-weather-as-built.md)); W4-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
 Crates: `sf_surface` (new, Bevy-free), `sf_surface_bevy` (new, thin plugin); touches `sf_terrain_bevy`
 (hook, displacement, prepass), `sf_lod_bevy` (proxies call the hook), vendored `bevy_pbr` (own patch "SW"),
 `sf_weather` (`SurfaceRates`), `sf_save` (section). Adapter: `../../../bevyrrowind/docs/specs/weather-adapter.md`
@@ -123,8 +123,9 @@ would move wet patches; cover needs a stable top-down view. Outside the 64 m rad
 
 ## Shader integration
 
-One WESL module, **`sf_surface_bevy::layer`** (`sf_surface_bevy/src/layer.wesl`; binding-agnostic: callers pass the uniform and textures; registered with
-`load_shader_library!`), replaces the no-op `sf_terrain_bevy/src/shaders/surface_state.wesl`:
+One WESL module, **`sf_surface_bevy::layer`** (binding-agnostic: callers pass the uniform and textures), plus
+`sf_surface_bevy::view` (the mesh-view bindings and the entry points materials call; CPU twin of the wet math:
+`sf_surface::layer`):
 
 ```wgsl
 struct SurfaceInput {
@@ -147,17 +148,16 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 **Hook sites.**
 - **`StandardMaterial` (NIF statics, characters, held items, fades):** own patch "SW" in
   `superfargoth/vendor/bevy_pbr`, the GI patch's shape: a `SurfaceWeatherView` render-world component on the
-  view sets `MeshPipelineViewLayoutKey::SURFACE_WEATHER` (next free bit) and `MeshPipelineKey::SURFACE_WEATHER`
-  (shader def `SURFACE_WEATHER`), adds mesh-view bindings after the GI ones (uniform, cell texture, shelter
-  depth, noise atlas, layer array, two samplers; trail ring added in W6), and in `render/pbr.wesl`
-  `fragment()` calls `apply_surface_layer` between `pbr_input_from_standard_material` and
+  view sets `MeshPipelineViewLayoutKey::SURFACE_WEATHER` (1<<18) and `MeshPipelineKey::SURFACE_WEATHER` (1<<27,
+  shader def `SURFACE_WEATHER`), adds mesh-view bindings 43-48 after the GI ones (uniform, cells, shelter as
+  unfilterable float, noise, a filtering and a non-filtering sampler; W5 adds the layer array and its sampler,
+  W6 the trail ring), and `render/pbr.wesl` `fragment()` calls `sf_surface_bevy::view` between `pbr_input_from_standard_material` and
   `apply_pbr_lighting`, forward main pass only (not the prepass). Skipped for alpha-blend materials
   (glass, fog translucents) and `unlit`. Class DYNAMIC under `SKINNED`; `instance_wet` from `MeshTag` bits
   0-7 on skinned meshes (W8; 0 = dry). Every hunk carries `superfargoth patch (own, SW)`; README row with
   the drop condition "upstream Bevy gets a view-level material hook / global shader bindings".
-- **Terrain:** (W2 scaffold until "SW": material bindings 113-118, def `SURFACE_WEATHER`) `terrain.wesl` calls the hook (before AO and
-  specular occlusion so the new roughness feeds specular occlusion). It switches to `apply_surface_layer`;
-  `TerrainSurface` (`surface.wesl`) gains `height` (the blended layer height already used for height
+- **Terrain:** `terrain.wesl` calls the hook on the same view bindings (before AO and specular occlusion so
+  the new roughness feeds specular occlusion). W4: `TerrainSurface` (`surface.wesl`) gains `height` (the blended layer height already used for height
   blending) and the hook gets `basin` from the height clipmap (`h_avg(±2 m) − h`, clamped to 0.1 m).
 - **Proxies/impostors (`sf_lod_bevy` `proxy.wesl`, `impostor.wesl`):** class FAR, wetness darkening only
   (puddles are sub-pixel at that range).
@@ -165,8 +165,9 @@ Order inside: (1) early-out when `flags == 0` or the cell is all zero; (2) expos
 
 **Why a patch, not `WorldMaterial = ExtendedMaterial<…>`** (the earlier design): the data is per view, not
 per material; one patch reaches every `StandardMaterial` user (~30 spawn sites, characters included) with no
-type churn in `MaterialMapper`, `CookedMaterials`, fades or skinning; it repeats the GI patch. Risk: mesh-view
-binding count; W3 checks limits first and, if tight, packs the noise atlas into the layer array.
+type churn in `MaterialMapper`, `CookedMaterials`, fades or skinning; it repeats the GI patch. Binding count
+(W3): group 0 holds at most 18 textures and 12 samplers with every feature on; Bevy requests the adapter's
+limits, far above that on desktop (WebGPU's default 16 would not fit; not a target).
 
 **Prepass and SSAO.** Prepass normals stay unmodified (GTAO sees the base normal): acceptable, the surface
 normal changes are small-scale; revisit if the owner sees AO mismatch on deep snow.
@@ -261,9 +262,9 @@ weather override, flags and what to look for.
 
 | Slice | Deliverable | Test | Owner check |
 |---|---|---|---|
-| **W1** ✅ | `sf_surface` crate: state, `advance`, `sample`, `SurfaceSave` codec + `sf/weather` section field; `sf_weather_bevy` drives it on game time; console `surface set/dump/clear` | exact logic list above (rates, sub-steps, determinism, save round-trip) | none (logic); `surface dump` line in the handoff |
-| **W2** ✅ | `sf_surface_bevy`: cell texture window, vertical shelter subview, noise atlas, `SurfaceUniform`, `SurfaceWeatherView`; debug tint `exposure` / `cells` through the terrain hook only | window/recenter tests, shelter matrix and redraw triggers, headless plugin smoke (no NaN, resources exist) | SW-2: debug tint shows roofs, trees and arches as sheltered in Balmora (awaiting owner) |
-| **W3** | Wetness layer: vendored `bevy_pbr` patch "SW", `sf_surface::layer` (exposure port, Lagarde wet, film normal flatten, wall streaks), terrain + proxy calls, `--off wet/surface`, NOTICES entry | shader-def compile log check per preset; porosity heuristic unit test (WGSL mirrored in Rust) | SW-3: Seyda Neen after rain, wet vs dry A/B, under-roof dry, walls streaked |
+| **W1** ✅ | `sf_surface` state, `advance`, `sample`, save field, console (as built) | exact logic list above | none (logic) |
+| **W2** ✅ | `sf_surface_bevy` cell window, shelter subview, noise atlas, uniform, debug tints (as built) | window, shelter, plugin smoke | SW-2 (awaiting owner) |
+| **W3** ✅ | Wetness layer: vendored `bevy_pbr` patch "SW", `sf_surface::layer` (exposure port, Lagarde wet, film normal flatten, wall streaks), terrain + proxy calls, `--off wet/surface`, NOTICES entry | shader-def compile log check per preset; porosity heuristic unit test (WGSL mirrored in Rust) | SW-3: Seyda Neen after rain, wet vs dry A/B, under-roof dry, walls streaked |
 | **W4** | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural ripples (Clockwork rings) in rain, F0/roughness, sky/probe reflection | level/edge math unit tests (Rust twin); compile check | SW-4: Balmora streets in rain and after; ripples stop when rain stops |
 | **W5** | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
 | **WM** | Measurement: counters + `perf suite` run lines in perf.md for wet/ash/snow bookmarks (`--weather` overrides); owner runs it (agents never launch) | `#[ignore = "measurement: ..."]` CPU timings | owner runs the suite; table updated |
@@ -285,4 +286,5 @@ Order: W1 → W2 → W3 → W4/W5 (either) → WM → W6 → W7 → W8. W6 waits
 4. Canopy: trees shelter fully in a depth map; Clockwork holds back 40% under leaves (`LEAF_HOLD`). Port
    the leaf term, or add a foliage channel to the shelter view?
 5. Trail radius 40 m and 6.25 cm texels: confirm after WM; displaced shadows beyond cascade 0?
-6. Mesh-view binding count headroom under the vendored `bevy_pbr` (W3 measures first).
+6. Known gap (W2): with no shadow-casting sun (night) the shelter map is not redrawn; owner 2026-11-05: an own
+   top-down pass (W2b, with the partial foliage shelter of question 4).

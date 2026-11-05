@@ -357,13 +357,23 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // distant regions show their own clouds; the camera's site comes from it.
         let raster = weather.raster();
         // WE3 part 2b: rain, snow, ash and blight fall from the frame (`sf_precip_bevy`).
-        // Surface weather W2: cell window, shelter map, terrain hook (`surface debug exposure|cells`).
+        // Surface weather W2-W3: cell window, shelter map, wetness on every lit material
+        // (`surface set wet 1`, `surface debug exposure|cells|porosity`; `--off surface|wet|shelter`).
         app.add_plugins((
             WeatherPlugin { book: weather.book, state: weather.state },
             sf_weather_bevy::sf_precip_bevy::PrecipPlugin,
             sf_surface_bevy::SurfaceWeatherPlugin,
         ))
-            .insert_resource(overrides);
+            .insert_resource(overrides)
+            .insert_resource(sf_surface_bevy::SurfaceSettings {
+                layer: !off_parts.has(Part::Surface),
+                wet: !off_parts.has(Part::Wet),
+                // Low: no shelter map (surface-weather.md "Budget").
+                shelter: !off_parts.has(Part::Shelter) && !matches!(options.quality, Quality::Low),
+            })
+            .configure_sets(PostUpdate, sf_surface_bevy::SurfaceSystems.after(TerrainSystems::Update))
+            .add_systems(PostUpdate, surface_glue.after(sync_origin).before(sf_surface_bevy::SurfaceSystems))
+            .add_observer(no_surface_shelter_terrain);
         // AU-1: weather loops and region one-shots into the audio plugin (`crate::audio`).
         app.add_plugins(sf_audio_bevy::weather::WeatherAudioPlugin);
         mw_audio_bevy::merge_bank(&mut app, &weather.sounds);
@@ -1285,6 +1295,32 @@ fn weather_site(
     if (site.altitude - altitude).abs() > 1.0 {
         site.altitude = altitude;
     }
+}
+
+/// Surface weather's glue: its floating origin (the terrain's, set by [`sync_origin`]) and its
+/// camera, the exterior camera (the one with `TerrainCamera`, which doors move and take away).
+#[allow(clippy::type_complexity)]
+fn surface_glue(
+    mut commands: Commands,
+    origin: Res<TerrainOrigin>,
+    mut surface: ResMut<sf_surface_bevy::SurfaceOrigin>,
+    add: Query<Entity, (With<TerrainCamera>, Without<sf_surface_bevy::SurfaceWeatherCamera>)>,
+    remove: Query<Entity, (With<sf_surface_bevy::SurfaceWeatherCamera>, Without<TerrainCamera>)>,
+) {
+    if surface.0 != origin.0 {
+        surface.0 = origin.0;
+    }
+    for e in &add {
+        commands.entity(e).insert(sf_surface_bevy::SurfaceWeatherCamera);
+    }
+    for e in &remove {
+        commands.entity(e).remove::<sf_surface_bevy::SurfaceWeatherCamera>();
+    }
+}
+
+/// Terrain patches stay out of the shelter map: a heightfield shelters nothing from straight above.
+fn no_surface_shelter_terrain(add: On<Add<sf_terrain_bevy::TerrainPatch>>, mut commands: Commands) {
+    commands.entity(add.entity).try_insert(sf_surface_bevy::NoSurfaceShelter);
 }
 
 /// The wind field's floating origin (the terrain's, set by [`sync_origin`]).

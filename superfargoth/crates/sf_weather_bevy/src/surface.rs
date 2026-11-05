@@ -58,7 +58,7 @@ impl WorldSurface {
     }
 }
 
-/// `surface debug <off|exposure|cells>`: the debug view `sf_surface_bevy` shows.
+/// `surface debug <off|exposure|cells|porosity>`: the debug view `sf_surface_bevy` shows.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SurfaceDebug(pub DebugView);
 
@@ -110,7 +110,7 @@ pub(crate) fn register_console(app: &mut App) {
             .help(
                 "Surface weather (host): `surface dump`, `surface clear`, `surface set <wet|puddle|snow|ash> <0..1> [here|<climate>]` \
                  (here: the camera's climates; snow/ash set every cell those climates weigh); \
-                 `surface debug <off|exposure|cells>` (terrain tint: shelter exposure, 32 m cells)",
+                 `surface debug <off|exposure|cells|porosity>` (tint: shelter exposure, 32 m cells, porosity)",
             )
             .param(Param::new("action", ArgKind::choice(&["set", "dump", "clear", "debug"])))
             .param(Param::new("channel", ArgKind::choice(&["wet", "puddle", "snow", "ash", "off", "exposure", "cells"])).optional())
@@ -126,7 +126,7 @@ pub(crate) fn register_console(app: &mut App) {
                     inv.log.info("surface: cleared (dry and bare)");
                 }
                 "debug" => {
-                    let view = inv.args.str("channel").and_then(DebugView::parse).ok_or("surface debug needs a view: off, exposure or cells")?;
+                    let view = inv.args.str("channel").and_then(DebugView::parse).ok_or("surface debug needs a view: off, exposure, cells or porosity")?;
                     world.insert_resource(SurfaceDebug(view));
                     inv.log.info(&format!("surface: debug view {}", view.name()));
                 }

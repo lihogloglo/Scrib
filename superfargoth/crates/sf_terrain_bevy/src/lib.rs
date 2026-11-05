@@ -53,7 +53,7 @@ use sf_terrain::{
 use sf_world::WorldspaceId;
 
 pub use far_map::{FAR_MAP_SIZE, FAR_MAP_TEXEL, FarShadowMap};
-pub use material::{TerrainMaterial, TerrainMaterialKey};
+pub use material::TerrainMaterial;
 use params::Params;
 pub use params::{HEIGHT_LEVELS, LAYER_LEVELS, MACRO_LEVELS};
 pub use render::{ClipmapWrites, TextureWrite};
@@ -423,12 +423,6 @@ fn setup_terrain(
         albedo_height: images.add(albedo),
         normal_ao_roughness: images.add(nar),
         far_map: far_map.map(|m| m.image.clone()).unwrap_or_default(),
-        // Placeholders until `sf_surface_bevy` hooks the material (surface-weather.md W2).
-        surface_uniform: buffers.add(ShaderBuffer::new(vec![[0u32; 4]], RenderAssetUsages::default())),
-        surface_cells: Handle::default(),
-        surface_shelter: Handle::default(),
-        surface_noise: Handle::default(),
-        surface: false,
     });
     // What the bake used where there is no source, for tiles that don't exist.
     let fill = table.fill_height;

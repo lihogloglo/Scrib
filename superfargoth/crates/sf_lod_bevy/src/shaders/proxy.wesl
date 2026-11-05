@@ -10,6 +10,11 @@ import bevy_pbr::render::{
 };
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
+// Surface weather (surface-weather.md): class FAR, wetness darkening and gloss only.
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::view::{apply_surface_weather, surface_input_of};
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::layer::CLASS_FAR;
 
 // (min x, min z, 1 / extent, base height) of the far shadow map.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> far_params: vec4<f32>;
@@ -23,6 +28,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var pbr = pbr_input_from_standard_material(in, is_front);
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
+@if(SURFACE_WEATHER)
+    apply_surface_weather(&pbr, surface_input_of(pbr, CLASS_FAR));
     let far = far_map_shadow(in.world_position, pbr.N, in.position.xy, far_map, far_sampler, far_params);
     pbr.directional_shadow_factor = far.factor;
     pbr.world_position = far.position;

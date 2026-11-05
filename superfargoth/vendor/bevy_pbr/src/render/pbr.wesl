@@ -22,6 +22,11 @@ import package::render::{
 @if(VISIBILITY_RANGE_DITHER)
 import package::render::pbr_functions::visibility_range_dither;
 
+// superfargoth patch (own, SW): surface weather (render/surface_weather.rs; the module is
+// sf_surface_bevy's, which declares the view bindings 43-48).
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::view::apply_surface_weather_standard;
+
 @if(MESHLET_MESH_MATERIAL_PASS)
 import package::meshlet::visibility_buffer_resolve::resolve_vertex_output;
 
@@ -71,6 +76,11 @@ fn fragment(
 
     // clustered decals
     apply_decals(&pbr_input);
+
+    // superfargoth patch (own, SW): wetness and cover before lighting (forward main pass only;
+    // the function skips unlit and alpha-blended materials).
+@if(SURFACE_WEATHER)
+    apply_surface_weather_standard(&pbr_input);
 
     // write the gbuffer, lighting pass id, and optionally normal and motion_vector textures
 @if(PREPASS_PIPELINE)

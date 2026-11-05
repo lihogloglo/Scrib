@@ -1,5 +1,6 @@
-//! Surface weather on the GPU (surface-weather.md "GPU resources", "Shader integration"; slice
-//! W2). Thin: the window, shelter and noise logic is Bevy-free (`sf_surface::view`).
+//! Surface weather on the GPU (surface-weather.md "GPU resources", "Shader integration"; slices
+//! W2-W3). Thin: the window, shelter and noise logic is Bevy-free (`sf_surface::view`), the wet
+//! math has a CPU twin (`sf_surface::layer`).
 //!
 //! - **Cell window** ([`cells`]): `Rgba8Unorm` 128², one texel per 32 m cell around the camera
 //!   (R wet, G puddle, B snow, A ash), toroidal; strips on recenter, all of it when
@@ -7,52 +8,93 @@
 //! - **Shelter map** ([`shelter`]): `Depth32Float` 1024² over 128 m, vertical, a subview of
 //!   Bevy's shadow pass (`sf_sky_bevy::sun_view`).
 //! - **Noise atlas**: `Rgba8Unorm` 256², repeat, generated at startup.
-//! - **[`SurfaceUniform`]**: uploaded as `vec4` slots when it changes.
-//! - **[`SurfaceWeatherView`]**: the exterior camera that gets surface weather (W2 follows
-//!   `TerrainCamera`); extracted to the render world for W3's mesh-view bindings.
-//! - **WESL** `sf_surface_bevy::layer`: `apply_surface_layer` and its helpers; binding-agnostic
-//!   (the caller passes the uniform and textures).
-//! - **Terrain hook** (W2 scaffold, removed by W3's `bevy_pbr` patch "SW"): the terrain
-//!   material's bindings 113-118 get these resources and its `SURFACE_WEATHER` def turns on.
+//! - **[`SurfaceUniform`]**: its `vec4` slots, written to a render-world uniform buffer when they
+//!   change ([`render`]).
+//! - **[`SurfaceWeatherCamera`]**: the exterior camera that gets surface weather (the game marks
+//!   it). Its render-world view gets `bevy_pbr::SurfaceWeatherView`: the vendored `bevy_pbr`
+//!   patch "SW" binds these resources at mesh-view bindings 43-48 and sets the
+//!   `SURFACE_WEATHER` shader def, so every `StandardMaterial` (statics, characters, held items,
+//!   fades), the terrain and the far proxies run the layer in the forward main pass.
+//! - **WESL**: `sf_surface_bevy::layer` (`apply_surface_layer`, binding-agnostic) and
+//!   `sf_surface_bevy::view` (the bindings and the entry points materials call).
+//! - **[`SurfaceOrigin`]**, **[`SurfaceSettings`]**, [`NoSurfaceShelter`]: the game's glue (the
+//!   floating origin, the A/B switches and preset, terrain patches out of the shelter map).
 //!
-//! W2 shows the layer only through the debug views (`surface debug exposure|cells`).
+//! W3 shows wetness (Lagarde's model, film normal flattening, wall streaks); W2's debug views
+//! stay (`surface debug exposure|cells|porosity`).
 
 mod cells;
+mod render;
 mod shelter;
 mod uniform;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod shader_tests;
 
 use bevy_app::{App, Plugin, PostUpdate, Startup};
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
-use bevy_camera::Camera;
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy_render::storage::ShaderBuffer;
-use bevy_render::sync_world::RenderEntity;
-use bevy_render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
+use bevy_render::{ExtractSchedule, RenderApp};
 use bevy_shader::load_shader_library;
 use bevy_transform::TransformSystems;
+use sf_coords::WorldPos;
 use sf_surface::view::{NOISE_SIZE, WINDOW_CELLS, noise_atlas};
-use sf_terrain_bevy::{TerrainCamera, TerrainMaterial, TerrainOrigin, TerrainSystems};
 use sf_weather_bevy::SurfaceDebug;
 
 pub use cells::{CellWrite, CellWrites};
 pub use shelter::{NoSurfaceShelter, SHELTER_SUBVIEW};
 pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
 
-/// Marks the camera that gets surface weather (one exterior camera). W2: follows
-/// `TerrainCamera` (the exterior camera; doors move it).
+/// Marks the camera that gets surface weather (one exterior camera; the game inserts and
+/// removes it as the camera changes worldspace).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SurfaceWeatherView;
+pub struct SurfaceWeatherCamera;
 
-/// The GPU resources the layer reads.
+/// The floating origin render space is relative to (the game copies its world origin here,
+/// as for `sf_wind_bevy::WindOrigin`). The window and the shelter map work in render space.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SurfaceOrigin(pub WorldPos);
+
+/// A/B switches and the preset (surface-weather.md "A/B switches", "Budget"). Off parts keep
+/// the hook compiled in and clear its flags (one uniform branch per pixel).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SurfaceSettings {
+    /// `--off surface`: the whole layer.
+    pub layer: bool,
+    /// `--off wet`: wetness.
+    pub wet: bool,
+    /// The shelter map (off on Low and with `--off shelter`): exposure 1 everywhere.
+    pub shelter: bool,
+}
+
+impl Default for SurfaceSettings {
+    fn default() -> Self {
+        Self {
+            layer: true,
+            wet: true,
+            shelter: true,
+        }
+    }
+}
+
+impl SurfaceSettings {
+    /// The layer flags these settings let through.
+    pub fn flag_mask(self) -> u32 {
+        if !self.layer {
+            return 0;
+        }
+        let all = FLAG_WET | FLAG_PUDDLE | FLAG_SNOW | FLAG_ASH;
+        if self.wet { all } else { all & !FLAG_WET }
+    }
+}
+
+/// The GPU resources the layer reads (the uniform buffer is render-world, [`render`]).
 #[derive(Resource, Clone, Debug)]
 pub struct SurfaceGpu {
-    /// [`SurfaceUniform`] as `U_SLOTS` `vec4<u32>`.
-    pub uniform: Handle<ShaderBuffer>,
     pub cells: Handle<Image>,
     pub shelter: Handle<Image>,
     pub noise: Handle<Image>,
@@ -66,10 +108,12 @@ pub struct SurfaceStats {
     /// Cell texels written (strips and full rewrites).
     pub cell_texels: u64,
     pub full_uploads: u64,
+    /// Times the uniform's slots changed (each is one buffer write in the render world).
     pub uniform_uploads: u64,
 }
 
-/// System sets, in `PostUpdate` after transforms and the terrain.
+/// System sets, in `PostUpdate` after transforms (order the game's origin and camera glue
+/// before it).
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SurfaceSystems;
 
@@ -80,23 +124,21 @@ impl Plugin for SurfaceWeatherPlugin {
         app.init_resource::<SurfaceUniform>()
             .init_resource::<SurfaceStats>()
             .init_resource::<CellWrites>()
-            .init_resource::<TerrainOrigin>()
+            .init_resource::<SurfaceOrigin>()
+            .init_resource::<SurfaceSettings>()
             .init_resource::<SurfaceDebug>()
             .configure_sets(
                 PostUpdate,
-                SurfaceSystems
-                    .after(TransformSystems::Propagate)
-                    .after(TerrainSystems::Update),
+                SurfaceSystems.after(TransformSystems::Propagate),
             )
             .add_systems(Startup, setup)
             .add_systems(
                 PostUpdate,
                 (
-                    (follow_terrain_camera, shelter::tag_terrain),
                     cells::update_cells,
                     debug_view,
                     shelter::update_shelter,
-                    (write_uniform, hook_terrain),
+                    count_uniform,
                 )
                     .chain()
                     .in_set(SurfaceSystems),
@@ -106,14 +148,12 @@ impl Plugin for SurfaceWeatherPlugin {
             return;
         }
         load_shader_library!(app, "layer.wesl");
+        load_shader_library!(app, "view.wesl");
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<cells::PendingCellWrites>()
-            .add_systems(ExtractSchedule, (cells::extract_writes, extract_view))
-            .add_systems(
-                Render,
-                cells::write_cells.in_set(RenderSystems::PrepareResources),
-            );
+            .add_systems(ExtractSchedule, (cells::extract_writes, render::extract_view));
+        render::build(render_app);
     }
 }
 
@@ -161,109 +201,29 @@ fn repeat_linear() -> ImageSampler {
     })
 }
 
-fn setup(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut buffers: ResMut<Assets<ShaderBuffer>>,
-    uniform: Res<SurfaceUniform>,
-) {
+fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(SurfaceGpu {
-        uniform: buffers.add(ShaderBuffer::new(
-            uniform.slots().to_vec(),
-            RenderAssetUsages::default(),
-        )),
         cells: images.add(cells_image()),
         shelter: shelter::shelter_handle(&mut images),
         noise: images.add(noise_image()),
     });
 }
 
-/// W2: the surface view follows the terrain camera.
-#[allow(clippy::type_complexity)]
-fn follow_terrain_camera(
-    mut commands: Commands,
-    add: Query<
-        Entity,
-        (
-            With<Camera>,
-            With<TerrainCamera>,
-            Without<SurfaceWeatherView>,
-        ),
-    >,
-    remove: Query<Entity, (With<SurfaceWeatherView>, Without<TerrainCamera>)>,
-) {
-    for e in &add {
-        commands.entity(e).insert(SurfaceWeatherView);
-    }
-    for e in &remove {
-        commands.entity(e).remove::<SurfaceWeatherView>();
-    }
-}
-
-/// Mirrors [`SurfaceWeatherView`] onto the cameras' render entities (W3's mesh-view key reads
-/// it there), and takes it off when the main world did.
-fn extract_view(
-    mut commands: Commands,
-    main: Extract<Query<&RenderEntity, With<SurfaceWeatherView>>>,
-    marked: Query<Entity, With<SurfaceWeatherView>>,
-) {
-    let now: Vec<Entity> = main.iter().map(|r| **r).collect();
-    for e in &marked {
-        if !now.contains(&e) {
-            commands.entity(e).remove::<SurfaceWeatherView>();
-        }
-    }
-    for e in now {
-        if let Ok(mut c) = commands.get_entity(e) {
-            c.insert(SurfaceWeatherView);
-        }
-    }
-}
 fn debug_view(debug: Res<SurfaceDebug>, mut uniform: ResMut<SurfaceUniform>) {
     if uniform.debug != debug.0 {
         uniform.debug = debug.0;
     }
 }
 
-/// Uploads the uniform when it changed.
-fn write_uniform(
-    gpu: Option<Res<SurfaceGpu>>,
+/// Counts uniform changes (the render world writes the buffer on the same change).
+fn count_uniform(
     uniform: Res<SurfaceUniform>,
-    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut stats: ResMut<SurfaceStats>,
     mut last: Local<Option<[[u32; 4]; U_SLOTS]>>,
 ) {
-    let Some(gpu) = gpu else { return };
     let slots = uniform.slots();
-    if *last == Some(slots) {
-        return;
-    }
-    if let Some(mut buffer) = buffers.get_mut(&gpu.uniform)
-        && let Some(dst) = buffer.cast_slice_mut::<[u32; 4]>()
-        && dst.len() == U_SLOTS
-    {
-        dst.copy_from_slice(&slots);
+    if *last != Some(slots) {
         *last = Some(slots);
         stats.uniform_uploads += 1;
-    }
-}
-
-/// W2 scaffold: hands the resources to every terrain material not hooked yet (W3 replaces this
-/// with mesh-view bindings).
-fn hook_terrain(gpu: Option<Res<SurfaceGpu>>, mut materials: ResMut<Assets<TerrainMaterial>>) {
-    let Some(gpu) = gpu else { return };
-    let ids: Vec<_> = materials
-        .iter()
-        .filter(|(_, m)| !m.surface)
-        .map(|(id, _)| id)
-        .collect();
-    for id in ids {
-        if let Some(mut m) = materials.get_mut(id) {
-            m.surface_uniform = gpu.uniform.clone();
-            m.surface_cells = gpu.cells.clone();
-            m.surface_shelter = gpu.shelter.clone();
-            m.surface_noise = gpu.noise.clone();
-            m.surface = true;
-        }
     }
 }

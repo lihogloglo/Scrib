@@ -88,10 +88,18 @@ pub enum Part {
     /// De-lit albedo textures (the bake's `texture.delight` VFS layer, bake.md "De-lighting"): off, the layer
     /// isn't mounted and models load the original textures (an A/B; restart to switch).
     Delight,
+    /// Surface weather on lit materials (`sf_surface_bevy`, vendored `bevy_pbr` patch "SW"): off, the
+    /// hook stays compiled in with its flags cleared (an A/B: wet vs dry).
+    Surface,
+    /// Wetness alone (surface-weather.md W3): off, the ground and walls stay dry after rain (an A/B).
+    Wet,
+    /// The surface shelter map: off, roofs and trees don't keep the ground dry (a diagnostic; the Low
+    /// preset runs without it).
+    Shelter,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 46] = [
+    const ALL: [(&'static str, Part); 49] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -139,6 +147,9 @@ impl Part {
         ("movershadows", Part::MoverShadows),
         ("precipocc", Part::PrecipOcc),
         ("delight", Part::Delight),
+        ("surface", Part::Surface),
+        ("wet", Part::Wet),
+        ("shelter", Part::Shelter),
     ];
 
     fn name(self) -> &'static str {

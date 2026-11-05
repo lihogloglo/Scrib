@@ -11,14 +11,12 @@ use bevy_light::{DirectionalLight, NotShadowCaster};
 use bevy_math::{DVec2, IVec2, IVec3, Vec3, Vec4};
 use bevy_mesh::Mesh3d;
 use bevy_mesh::skinning::SkinnedMesh;
-use bevy_render::storage::ShaderBuffer;
 use bevy_transform::components::GlobalTransform;
 use sf_coords::WorldPos;
 use sf_sky_bevy::sf_sky::SkyClock;
 use sf_sky_bevy::{SkyConfig, SkyTime};
 use sf_surface::view::DebugView;
 use sf_surface::{Channel, Worldspace};
-use sf_terrain_bevy::{TerrainCamera, TerrainMaterial, TerrainOrigin};
 use sf_weather_bevy::sf_weather::{
     Climate, ClimateRaster, WeatherBook, WeatherPreset, WeatherState,
 };
@@ -125,12 +123,10 @@ fn book() -> WeatherBook {
 }
 
 /// A headless app (no render app): weather, the surface state over a 256 m raster, the plugin,
-/// a terrain material to hook, and a floating origin one 256 m grid cell east.
+/// and a floating origin one 256 m grid cell east.
 fn app() -> App {
     let mut app = App::new();
     app.insert_resource(Assets::<Image>::default())
-        .insert_resource(Assets::<ShaderBuffer>::default())
-        .insert_resource(Assets::<TerrainMaterial>::default())
         .insert_resource(SkyTime(SkyClock::default()))
         .init_resource::<SkyConfig>()
         .init_resource::<sf_sky_bevy::WeatherState>()
@@ -143,7 +139,7 @@ fn app() -> App {
             state: WeatherState::new(7),
         })
         .add_plugins(SurfaceWeatherPlugin)
-        .insert_resource(TerrainOrigin(WorldPos::new(
+        .insert_resource(SurfaceOrigin(WorldPos::new(
             IVec3::new(1, 0, 0),
             Vec3::ZERO,
         )));
@@ -155,24 +151,6 @@ fn app() -> App {
         .unwrap();
     let raster = ClimateRaster::new(DVec2::ZERO, 128.0, 2, 2, &[Some(land); 4], 256.0).unwrap();
     app.insert_resource(WorldWeatherMap::new(raster).with_worldspace(id("ws")));
-    app.world_mut()
-        .resource_mut::<Assets<TerrainMaterial>>()
-        .add(TerrainMaterial {
-            params: Handle::default(),
-            heights: Handle::default(),
-            layer_ids: Handle::default(),
-            layer_weights: Handle::default(),
-            macro_albedo: Handle::default(),
-            albedo_height: Handle::default(),
-            normal_ao_roughness: Handle::default(),
-            normals: Handle::default(),
-            far_map: Handle::default(),
-            surface_uniform: Handle::default(),
-            surface_cells: Handle::default(),
-            surface_shelter: Handle::default(),
-            surface_noise: Handle::default(),
-            surface: false,
-        });
     app
 }
 
@@ -219,7 +197,7 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
         .world_mut()
         .spawn((
             Camera::default(),
-            TerrainCamera,
+            SurfaceWeatherCamera,
             GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0)),
         ))
         .id();
@@ -255,10 +233,6 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
         SkinnedMesh::default(),
     ));
     app.update();
-    assert!(
-        app.world().entity(camera).contains::<SurfaceWeatherView>(),
-        "follows the terrain camera"
-    );
     // World camera (16, 20) -> cell (0, 0); window from (-64, -64); its corner in render space
     // is world (-2048, -2048) minus the origin (256, 0).
     let u = uniform(&app);
@@ -309,26 +283,8 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
         .shelter_clip_from_world
         .project_point3(Vec3::new(-238.0, 9.0, 20.0));
     assert!(ground.truncate().distance(top.truncate()) < 1e-6 && top.z > ground.z);
-    // The uploaded buffer holds the uniform, no NaN.
-    let slots = app
-        .world()
-        .resource::<Assets<ShaderBuffer>>()
-        .get(&gpu.uniform)
-        .unwrap()
-        .cast_slice::<[u32; 4]>()
-        .unwrap()
-        .to_vec();
-    assert_eq!(slots, u.slots().to_vec());
-    assert!(slots.iter().flatten().all(|b| !f32::from_bits(*b).is_nan()));
-    // The terrain material is hooked to the same resources.
-    let mats = app.world().resource::<Assets<TerrainMaterial>>();
-    let (_, m) = mats.iter().next().unwrap();
-    assert!(
-        m.surface
-            && m.surface_cells == gpu.cells
-            && m.surface_shelter == gpu.shelter
-            && m.surface_uniform == gpu.uniform
-    );
+    // The uniform's slots (what the render world writes), no NaN.
+    assert!(u.slots().iter().flatten().all(|b| !f32::from_bits(*b).is_nan()));
 
     // Steady: no writes, no redraw.
     app.world_mut().resource_mut::<CellWrites>().0.clear();
@@ -373,29 +329,27 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     app.update();
     assert_eq!(uniform(&app).shelter.x, 0.0, "off: no map");
 
-    // Interior: the camera loses TerrainCamera; the window goes.
-    app.world_mut().entity_mut(camera).remove::<TerrainCamera>();
+    // A/B switches: wet again; `--off shelter` (Low) keeps the flag but draws no map,
+    // `--off wet` and `--off surface` clear the flags (the hook stays compiled in).
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Wet, 0.5, "land").unwrap();
     app.update();
-    app.update();
-    assert!(!app.world().entity(camera).contains::<SurfaceWeatherView>());
-    assert_eq!(uniform(&app).window.w, 0.0);
-}
+    assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 1.0));
+    let set = |app: &mut App, layer, wet, shelter| {
+        app.world_mut().insert_resource(SurfaceSettings { layer, wet, shelter });
+        app.update();
+        let u = uniform(app);
+        (u.flags, u.shelter.x)
+    };
+    assert_eq!(set(&mut app, true, true, false), (FLAG_WET, 0.0));
+    assert_eq!(set(&mut app, true, false, true), (0, 0.0));
+    assert_eq!(set(&mut app, false, true, true), (0, 0.0));
+    assert_eq!(set(&mut app, true, true, true), (FLAG_WET, 1.0));
 
-/// `layer.wesl` compiles: its one import stubbed, parsed and validated by naga (no GPU).
-#[test]
-fn layer_wgsl_parses_and_validates() {
-    let src = include_str!("layer.wesl").replace(
-        "import bevy_pbr::render::pbr_types::PbrInput;",
-        "struct MaterialStub { base_color: vec4<f32>, perceptual_roughness: f32 }\n\
-         struct PbrInput { material: MaterialStub, world_normal: vec3<f32>, N: vec3<f32> }",
-    );
-    assert!(!src.contains("import "), "every import stubbed");
-    let module =
-        naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
-    naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::default(),
-    )
-    .validate(&module)
-    .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+    // Interior: the camera loses its mark; the window goes.
+    app.world_mut()
+        .entity_mut(camera)
+        .remove::<SurfaceWeatherCamera>();
+    app.update();
+    assert_eq!(uniform(&app).window.w, 0.0);
+    assert_eq!(uniform(&app).flags, 0);
 }
