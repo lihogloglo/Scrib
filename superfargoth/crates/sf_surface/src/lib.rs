@@ -27,6 +27,7 @@ pub mod cover;
 mod grid;
 pub mod layer;
 mod save;
+pub mod trail;
 pub mod view;
 
 use std::collections::HashMap;
@@ -428,3 +429,5 @@ mod tests;
 mod view_tests;
 #[cfg(test)]
 mod cover_tests;
+#[cfg(test)]
+mod trail_tests;

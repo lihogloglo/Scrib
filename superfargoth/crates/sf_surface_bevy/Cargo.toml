@@ -11,6 +11,8 @@ bevy_app = { workspace = true, features = ["std"] }
 bevy_asset.workspace = true
 # Aabb, InheritedVisibility, Camera3d (shelter casters, the view).
 bevy_camera.workspace = true
+# Core3d: the trail ring pass runs before the prepass (W6a).
+bevy_core_pipeline.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_image.workspace = true
 # DirectionalLight, NotShadowCaster (the shelter view rides the shadow pass).

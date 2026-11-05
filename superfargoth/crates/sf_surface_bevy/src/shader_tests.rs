@@ -207,7 +207,7 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
 fn view_module_declares_every_binding() {
     for defs in [with(HIGH, &[]), with(HIGH, &["SURFACE_WEATHER"])] {
         let wgsl = compile_with("sf_surface_bevy::view", &defs, false).unwrap_or_else(|e| panic!("{e}"));
-        for decl in ["var surface_cover: texture_2d_array<f32>", "var surface_cover_sampler: sampler"] {
+        for decl in ["var surface_cover: texture_2d_array<f32>", "var surface_cover_sampler: sampler", "var surface_trail: texture_2d<f32>"] {
             assert!(wgsl.contains(decl), "{decl} missing:\n{wgsl}");
         }
     }
@@ -235,6 +235,7 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             binding("surface_canopy"),
             binding("surface_cover"),
             binding("surface_cover_sampler"),
+            binding("surface_trail"),
         ],
         [
             bevy_pbr::SURFACE_WEATHER_UNIFORM_BINDING,
@@ -246,6 +247,7 @@ fn view_bindings_match_the_bevy_pbr_patch() {
             bevy_pbr::SURFACE_WEATHER_CANOPY_BINDING,
             bevy_pbr::SURFACE_WEATHER_COVER_BINDING,
             bevy_pbr::SURFACE_WEATHER_COVER_SAMPLER_BINDING,
+            bevy_pbr::SURFACE_WEATHER_TRAIL_BINDING,
         ]
     );
 }
@@ -266,4 +268,22 @@ fn wet_constants_match_the_cpu_twin() {
         wgsl.contains("return (1.0 - metallic) * saturate((perceptual_roughness - POROSITY_ROUGH_LOW) / POROSITY_ROUGH_SPAN);"),
         "the porosity formula is sf_surface::layer::porosity's"
     );
+}
+
+/// The trail ring pass (W6a) parses and validates as naga reads it, and its uniform is the
+/// size `sf_surface::trail::TrailPass::slots` packs (the stamp array's length is `MAX_STAMPS`).
+#[test]
+fn trail_pass_compiles_and_matches_the_cpu_twin() {
+    let src = include_str!("trail.wgsl");
+    let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let params = module.types.iter().find(|(_, t)| t.name.as_deref() == Some("TrailParams")).expect("TrailParams");
+    let naga::TypeInner::Struct { span, .. } = params.1.inner else { panic!("TrailParams is a struct") };
+    assert_eq!(span as usize, sf_surface::trail::PARAM_SLOTS * 16);
+    assert!(src.contains(&format!("stamps: array<Stamp, {}>", sf_surface::trail::MAX_STAMPS)));
+    // The layer's lip height is the twin's (the debug view scales by it).
+    let layer = include_str!("layer.wesl");
+    assert!(layer.contains(&format!("const TRAIL_LIP_HEIGHT: f32 = {:?};", sf_surface::trail::LIP_HEIGHT)));
 }

@@ -1,5 +1,5 @@
 //! Render world: the uniform buffer, the samplers, and the view component of the vendored
-//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-51). Each frame
+//! `bevy_pbr` patch "SW" (`bevy_pbr::SurfaceWeatherView`, mesh-view bindings 43-52). Each frame
 //! the cameras marked [`SurfaceWeatherCamera`] get the component on their render-world view
 //! (once the textures are on the GPU); views that lost the mark lose it, and with it the
 //! `SURFACE_WEATHER` shader def (interiors pay nothing). Same shape as `sf_gi_bevy`'s
@@ -19,7 +19,7 @@ use bevy_render::sync_world::RenderEntity;
 use bevy_render::texture::GpuImage;
 use bevy_render::{Extract, Render, RenderSystems};
 
-use crate::{SurfaceGpu, SurfaceUniform, SurfaceWeatherCamera, U_SLOTS, cells};
+use crate::{SurfaceGpu, SurfaceUniform, SurfaceWeatherCamera, U_SLOTS, cells, trail::TrailGpu};
 
 pub(crate) fn build(render_app: &mut SubApp) {
     render_app.add_systems(
@@ -94,6 +94,7 @@ pub(crate) fn extract_view(
     gpu: Extract<Option<Res<SurfaceGpu>>>,
     uniform: Extract<Res<SurfaceUniform>>,
     images: Res<RenderAssets<GpuImage>>,
+    trail: Option<Res<TrailGpu>>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut state: Local<Option<ViewState>>,
@@ -105,7 +106,7 @@ pub(crate) fn extract_view(
         queue.write_buffer(&state.uniform, 0, &bytes);
         state.written = Some(slots);
     }
-    let bindings = gpu.as_deref().and_then(|gpu| {
+    let bindings = gpu.as_deref().zip(trail.as_deref()).and_then(|(gpu, trail)| {
         Some(SurfaceWeatherBindings {
             uniform: state.uniform.clone(),
             cells: view_of(&images, &gpu.cells)?,
@@ -116,6 +117,7 @@ pub(crate) fn extract_view(
             canopy: view_of(&images, &gpu.canopy)?,
             cover: view_of(&images, &gpu.cover)?,
             cover_sampler: state.cover_sampler.clone(),
+            trail: trail.current_view().clone(),
         })
     });
     let now: Vec<Entity> = match bindings {

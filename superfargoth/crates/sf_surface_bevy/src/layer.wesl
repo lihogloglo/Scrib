@@ -56,6 +56,11 @@ struct SurfaceUniform {
     /// The cover's world-aligned UV at the render origin (W5b; `fract(origin.xz / tiling)`,
     /// computed in f64): xy snow, zw ash. UV = render XZ / tiling + this.
     cover_uv: vec4<f32>,
+    /// The trail ring (W6a; `trail.rs`, twin `sf_surface::trail`): xy render X, Z of its first
+    /// texel's min corner, z 1 / texel (1/m), w its depth (m; 0 = trails off).
+    trail: vec4<f32>,
+    /// xy: the first texel's address in the ring (torus); z: the ring edge (texels).
+    trail_cells: vec4<i32>,
 }
 
 const FLAG_WET: u32 = 1u;
@@ -67,6 +72,7 @@ const DEBUG_OFF: u32 = 0u;
 const DEBUG_EXPOSURE: u32 = 1u;
 const DEBUG_CELLS: u32 = 2u;
 const DEBUG_POROSITY: u32 = 3u;
+const DEBUG_TRAILS: u32 = 4u;
 
 const CLASS_STATIC: u32 = 0u;
 const CLASS_TERRAIN: u32 = 1u;
@@ -155,6 +161,10 @@ const SPARKLE_FADE_FAR_M: f32 = 0.02;
 /// + AO at 2c + 1.
 const COVER_SNOW: u32 = 0u;
 const COVER_ASH: u32 = 1u;
+/// Trails (W6a): the ring fades out over this many meters before its edge (texels there clear
+/// when the camera moves on); the prints' gradient fades as a pixel grows from 1 to 4 texels.
+const TRAIL_EDGE_FADE_M: f32 = 2.0;
+const TRAIL_LIP_HEIGHT: f32 = 0.25;
 
 const LUMA: vec3<f32> = vec3(0.2126, 0.7152, 0.0722);
 
@@ -523,10 +533,72 @@ fn surface_sparkle(xz: vec2<f32>, sparkle: f32, footprint: f32) -> vec3<f32> {
     return vec3(tilt.x, fade, tilt.y);
 }
 
+/// The trail ring around a pixel (W6a): the ring (R depression, G lip; m) at the pixel and one
+/// texel to each side (+X, -X, +Z, -Z), the texel (m) and the ring depth (m; 0 = no trail here).
+struct SurfaceTrail {
+    c: vec2<f32>,
+    px: vec2<f32>,
+    nx: vec2<f32>,
+    pz: vec2<f32>,
+    nz: vec2<f32>,
+    texel: f32,
+    ring: f32,
+}
+
+/// Texels from the ring's first corner at render XZ `xz` (0..edge inside the ring).
+fn surface_trail_texel(u: SurfaceUniform, xz: vec2<f32>) -> vec2<f32> {
+    return (xz - u.trail.xy) * u.trail.z;
+}
+
+fn surface_in_trail(u: SurfaceUniform, xz: vec2<f32>) -> bool {
+    let t = surface_trail_texel(u, xz);
+    let n = f32(u.trail_cells.z);
+    return all(t >= vec2(0.0)) && all(t <= vec2(n));
+}
+
+/// The ring at `xz` (R, G in m; bilinear over the torus), faded to 0 over TRAIL_EDGE_FADE_M
+/// before the ring's edge.
+fn surface_trail_at(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, xz: vec2<f32>) -> vec2<f32> {
+    let n = f32(u.trail_cells.z);
+    let t = surface_trail_texel(u, xz);
+    let edge_m = min(min(t.x, n - t.x), min(t.y, n - t.y)) / u.trail.z;
+    let fade = saturate((edge_m - 0.5) / TRAIL_EDGE_FADE_M);
+    if fade <= 0.0 {
+        return vec2(0.0);
+    }
+    let uv = (t + vec2<f32>(u.trail_cells.xy)) / n;
+    return textureSampleLevel(trail, samp, uv, 0.0).xy * fade;
+}
+
+/// The ring around `p` for the cover (no trail: ring 0). Four more taps only where the pixel
+/// itself is in a print or on a lip.
+fn surface_trail_of(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, p: vec3<f32>) -> SurfaceTrail {
+    var t: SurfaceTrail;
+    t.texel = 1.0 / max(u.trail.z, 1e-6);
+    t.c = surface_trail_at(trail, samp, u, p.xz);
+    if t.c.x == 0.0 && t.c.y == 0.0 {
+        return t;
+    }
+    t.ring = u.trail.w;
+    t.px = surface_trail_at(trail, samp, u, p.xz + vec2(t.texel, 0.0));
+    t.nx = surface_trail_at(trail, samp, u, p.xz - vec2(t.texel, 0.0));
+    t.pz = surface_trail_at(trail, samp, u, p.xz + vec2(0.0, t.texel));
+    t.nz = surface_trail_at(trail, samp, u, p.xz - vec2(0.0, t.texel));
+    return t;
+}
+
+/// The trail's height (m) in a cover of depth `d`: the print down to the ground (`-d` at most:
+/// stamps carve the ring depth, the deepest look) plus the lip scaled to this cover.
+fn surface_trail_height(v: vec2<f32>, d: f32, ring: f32) -> f32 {
+    return clamp(v.x, -d, 0.0) + v.y * d / ring;
+}
+
 /// Lays channel `c` over the material where its height blend covers (`amount` the cell's ×
 /// slope × exposure, `drift` the drift noise): its albedo, roughness (snow glints), F0 (ice for
 /// snow, a plain dielectric for ash), AO, and its normal replacing the surface's in the gradient
-/// sum. Returns the blend (0..1).
+/// sum. Trails (W6a, `t`): prints cut the cover down to the ground (the amount drops by the
+/// print's share of the depth) and their surface gradient (central differences of the trail
+/// height) joins the sum where the cover lay. Returns the blend (0..1).
 fn surface_apply_cover(
     pbr: ptr<function, PbrInput>,
     gradient: ptr<function, vec3<f32>>,
@@ -539,10 +611,24 @@ fn surface_apply_cover(
     n_geo: vec3<f32>,
     cover: texture_2d_array<f32>,
     cover_sampler: sampler,
+    t: SurfaceTrail,
 ) -> f32 {
     let look = surface_cover_sample(cover, cover_sampler, layer, uv0, c, s);
-    let b = surface_cover_blend(amount, surface_cover_height(s.height, look.height, drift), layer.w);
+    let h = surface_cover_height(s.height, look.height, drift);
+    var cut_amount = amount;
+    var trail_g = vec3(0.0);
+    if t.ring > 0.0 && layer.y > 0.0 {
+        let d = layer.y;
+        cut_amount = saturate(amount + surface_trail_height(t.c, d, t.ring) / d);
+        let sx = (surface_trail_height(t.px, d, t.ring) - surface_trail_height(t.nx, d, t.ring)) / (2.0 * t.texel);
+        let sz = (surface_trail_height(t.pz, d, t.ring) - surface_trail_height(t.nz, d, t.ring)) / (2.0 * t.texel);
+        let fade = 1.0 - smoothstep(t.texel, 4.0 * t.texel, s.footprint);
+        let tg = -vec3(sx, 0.0, sz) * (fade * surface_cover_blend(amount, h, layer.w));
+        trail_g = tg - n_geo * dot(n_geo, tg);
+    }
+    let b = surface_cover_blend(cut_amount, h, layer.w);
     if b <= 0.0 {
+        *gradient += trail_g;
         return 0.0;
     }
     var rough = look.roughness;
@@ -558,7 +644,7 @@ fn surface_apply_cover(
     (*pbr).material.metallic = mix((*pbr).material.metallic, 0.0, b);
     (*pbr).material.reflectance = mix((*pbr).material.reflectance, vec3(f0), b);
     (*pbr).diffuse_occlusion *= mix(1.0, look.ao, b);
-    *gradient = mix(*gradient, g - n_geo * dot(n_geo, g), b);
+    *gradient = mix(*gradient, g - n_geo * dot(n_geo, g), b) + trail_g;
     return b;
 }
 
@@ -575,6 +661,7 @@ fn apply_surface_layer(
     canopy: texture_2d<f32>,
     cover: texture_2d_array<f32>,
     cover_sampler: sampler,
+    trail: texture_2d<f32>,
 ) {
     let flags = u.misc.x;
     let debug = u.misc.y;
@@ -604,6 +691,17 @@ fn apply_surface_layer(
         } else if debug == DEBUG_POROSITY {
             // Porosity black (sealed: metal, polish) to white (drinks); far proxies red-tinted.
             tint = vec3(s.porosity) * select(vec3(1.0), vec3(1.0, 0.5, 0.5), s.surface_class == CLASS_FAR);
+        } else if debug == DEBUG_TRAILS {
+            // Prints blue (full depth brightest), lips red, on grey; outside the ring purple;
+            // trails off (no cover look, `--off trails`) dark grey.
+            tint = vec3(0.25);
+            if u.trail.w > 0.0 {
+                let v = surface_trail_at(trail, samp, u, s.world_pos.xz);
+                tint = vec3(0.15) + vec3(saturate(v.y / (TRAIL_LIP_HEIGHT * u.trail.w)), 0.0, saturate(-v.x / u.trail.w)) * 0.85;
+                if !surface_in_trail(u, s.world_pos.xz) {
+                    tint = vec3(0.5, 0.0, 0.5);
+                }
+            }
         }
         (*pbr).material.base_color = vec4(tint * shade, (*pbr).material.base_color.a);
         return;
@@ -674,12 +772,18 @@ fn apply_surface_layer(
     var porosity = s.porosity;
     if snow > 0.0 || ash > 0.0 {
         let drift = textureSampleLevel(noise, samp, s.world_pos.xz / COVER_DRIFT_TILE_M + vec2(0.17, 0.83), 0.0).g;
+        // Trails (W6a) on terrain only (W6b displaces terrain only; the ring is 2D, so the host
+        // stamps only feet that stand on terrain).
+        var t: SurfaceTrail;
+        if s.surface_class == CLASS_TERRAIN && u.trail.w > 0.0 {
+            t = surface_trail_of(trail, samp, u, s.world_pos);
+        }
         if snow > 0.0 {
-            let b = surface_apply_cover(pbr, &gradient, s, u.snow_layer, u.cover_uv.xy, COVER_SNOW, snow, drift, n_geo, cover, cover_sampler);
+            let b = surface_apply_cover(pbr, &gradient, s, u.snow_layer, u.cover_uv.xy, COVER_SNOW, snow, drift, n_geo, cover, cover_sampler, t);
             porosity = mix(porosity, 1.0, b);
         }
         if ash > 0.0 {
-            let b = surface_apply_cover(pbr, &gradient, s, u.ash_layer, u.cover_uv.zw, COVER_ASH, ash, drift, n_geo, cover, cover_sampler);
+            let b = surface_apply_cover(pbr, &gradient, s, u.ash_layer, u.cover_uv.zw, COVER_ASH, ash, drift, n_geo, cover, cover_sampler, t);
             porosity = mix(porosity, 1.0, b);
         }
     }

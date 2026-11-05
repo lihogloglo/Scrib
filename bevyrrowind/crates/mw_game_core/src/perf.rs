@@ -102,10 +102,12 @@ pub enum Part {
     /// Snow and ash cover (surface-weather.md W5): off, the ground keeps its own look under any
     /// snow or ash amount (an A/B).
     Cover,
+    /// Trails in snow and ash (surface-weather.md W6): off, feet leave no prints (an A/B).
+    Trails,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 51] = [
+    const ALL: [(&'static str, Part); 52] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -158,6 +160,7 @@ impl Part {
         ("puddles", Part::Puddles),
         ("shelter", Part::Shelter),
         ("cover", Part::Cover),
+        ("trails", Part::Trails),
     ];
 
     fn name(self) -> &'static str {

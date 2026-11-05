@@ -28,12 +28,14 @@
 //! W3 shows wetness (Lagarde's model, film normal flattening, wall streaks), W4 puddles (water
 //! level against the height map, flat water, rain rings while it rains), W5b snow and ash cover
 //! (slope × shelter × cell, height blend, the look's normals, snow glints); W2's debug views stay
-//! (`surface debug exposure|cells|porosity`).
+//! (`surface debug exposure|cells|porosity|trails`). W6a: footprints cut the cover ([`trail`]: the
+//! trail ring at mesh-view binding 52, stamps from the host's [`TrailStamp`] messages).
 
 mod cells;
 pub mod cover;
 mod render;
 mod shelter;
+pub mod trail;
 mod uniform;
 
 #[cfg(test)]
@@ -58,6 +60,8 @@ use sf_weather_bevy::{CurrentWeather, SurfaceDebug, WorldSurface};
 pub use cells::{CellWrite, CellWrites};
 pub use cover::{CoverLayers, CoverSource};
 pub use shelter::{CANOPY_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
+pub use sf_surface;
+pub use trail::{TrailFrame, TrailStamp};
 pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
 
 /// Marks the camera that gets surface weather (one exterior camera; the game inserts and
@@ -85,6 +89,8 @@ pub struct SurfaceSettings {
     pub shelter: bool,
     /// `--off cover`: snow and ash cover (W5).
     pub cover: bool,
+    /// `--off trails`: prints in snow and ash (W6; no stamps, no ring pass, the cover uncut).
+    pub trails: bool,
 }
 
 impl Default for SurfaceSettings {
@@ -95,6 +101,7 @@ impl Default for SurfaceSettings {
             puddles: true,
             shelter: true,
             cover: true,
+            trails: true,
         }
     }
 }
@@ -146,6 +153,8 @@ pub struct SurfaceStats {
     pub uniform_uploads: u64,
     /// Slices in the cover layer array (0 before the first pack, 1 = the placeholder).
     pub cover_slices: u32,
+    /// Trail stamps taken (W6a; within range, capped per frame).
+    pub trail_stamps: u64,
 }
 
 /// System sets, in `PostUpdate` after transforms (order the game's origin and camera glue
@@ -163,6 +172,8 @@ impl Plugin for SurfaceWeatherPlugin {
             .init_resource::<SurfaceOrigin>()
             .init_resource::<SurfaceSettings>()
             .init_resource::<SurfaceDebug>()
+            .init_resource::<TrailFrame>()
+            .add_message::<TrailStamp>()
             .configure_sets(
                 PostUpdate,
                 SurfaceSystems.after(TransformSystems::Propagate),
@@ -173,6 +184,7 @@ impl Plugin for SurfaceWeatherPlugin {
                 (
                     cells::update_cells,
                     cover::update_cover,
+                    trail::update_trails,
                     debug_view,
                     shelter::update_shelter,
                     ripple_clock,
@@ -191,8 +203,9 @@ impl Plugin for SurfaceWeatherPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<cells::PendingCellWrites>()
-            .add_systems(ExtractSchedule, (cells::extract_writes, render::extract_view));
+            .add_systems(ExtractSchedule, (cells::extract_writes, (trail::extract, render::extract_view).chain()));
         render::build(render_app);
+        trail::build(app);
     }
 }
 

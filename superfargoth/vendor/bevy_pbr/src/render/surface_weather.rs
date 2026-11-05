@@ -1,11 +1,11 @@
 //! superfargoth patch (own, SW): surface weather bindings in the mesh view bind group.
 //!
 //! A view with a [`SurfaceWeatherView`] component gets [`MeshPipelineViewLayoutKey::SURFACE_WEATHER`]
-//! (and the `SURFACE_WEATHER` shader def, main pass only): bindings 43-51 of the mesh view bind
+//! (and the `SURFACE_WEATHER` shader def, main pass only): bindings 43-52 of the mesh view bind
 //! group hold the surface weather uniform, the cell window, the shelter depth map, the noise
 //! atlas, a filtering sampler, a non-filtering one (the shelter gather) and the canopy depth
 //! map (leaf casters only; they shelter partially), then the cover layer array (snow and ash
-//! looks) and its sampler. The surface weather
+//! looks) and its sampler, and the trail ring (prints in the cover, W6a). The surface weather
 //! system (superfargoth `sf_surface_bevy`) owns the resources, inserts the component on its
 //! cameras' render-world view entities, and provides the WESL module `sf_surface_bevy::view`
 //! that declares these bindings and that `render/pbr.wesl` calls between
@@ -31,12 +31,14 @@ pub const SURFACE_WEATHER_SHELTER_SAMPLER_BINDING: u32 = 48;
 pub const SURFACE_WEATHER_CANOPY_BINDING: u32 = 49;
 pub const SURFACE_WEATHER_COVER_BINDING: u32 = 50;
 pub const SURFACE_WEATHER_COVER_SAMPLER_BINDING: u32 = 51;
+/// The trail ring (W6a): a filterable 2D texture, sampled with the filtering sampler (47).
+pub const SURFACE_WEATHER_TRAIL_BINDING: u32 = 52;
 
 /// What a view reads: a uniform buffer (layout owned by the provider), a filterable 2D cell
 /// texture, an unfilterable-float 2D shelter depth texture (`Depth32Float` is fine), a filterable
 /// 2D noise texture, a filtering sampler (cells, noise), a non-filtering one (shelter, canopy),
 /// an unfilterable-float 2D canopy depth texture, a filterable 2D array (the cover layers) and
-/// its filtering sampler.
+/// its filtering sampler, and a filterable 2D trail ring.
 #[derive(Clone)]
 pub struct SurfaceWeatherBindings {
     pub uniform: Buffer,
@@ -48,6 +50,7 @@ pub struct SurfaceWeatherBindings {
     pub canopy: TextureView,
     pub cover: TextureView,
     pub cover_sampler: Sampler,
+    pub trail: TextureView,
 }
 
 /// On a render-world view entity: the view's lit materials apply surface weather.

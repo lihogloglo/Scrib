@@ -1,79 +1,8 @@
 # Surface weather: as built
 
 Detail moved out of [surface-weather.md](surface-weather.md) (spec budget). The spec keeps the design; this file
-keeps the as-built shapes and slice notes. Code is the source of truth.
-
-## W1 (2026-11-05): CPU state (`sf_surface`)
-
-```rust
-pub struct SurfaceRates { wet, puddle, snow, ash, drying: f32 }   // exists in sf_weather (per game hour)
-pub struct SurfaceTuning {  // record-backed; start values from Clockwork, re-calibrated by the owner's look
-    step_h: f64, dry_h: f32,  // 1/6 h (10 game min) fixed step; 2.0 h full wet -> dry (Clockwork 120 min)
-    puddle_dry_mult: f32, snow_melt_mult: f32, ash_clear_mult: f32, // 0.5, 1/3 (snow 3x slower), 1/4 (dust 4x)
-    puddle_from_wet: f32,     // 0.7 (owner 2026-11-06, was 0.9): puddles rise only on soaked ground
-}
-pub struct ClimateSurface { wet: f32, puddle: f32 }               // per ClimateIx
-pub struct CellSurface { snow: f32, ash: f32 }                    // per 32 m cell, sparse
-pub struct SurfaceState {
-    t_h: f64,                                         // game hours of the last step
-    climates: Vec<ClimateSurface>,                    // indexed by ClimateIx
-    cells: HashMap<(WorldspaceId, IVec2), CellSurface>, // only non-zero cells
-}
-pub fn advance(state: &mut SurfaceState, to_h: f64, rates: &dyn RateSource, tuning: &SurfaceTuning);
-pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &WorldspaceId, p: DVec2) -> SurfaceSample; // CPU query
-```
-
-- **Step** (pure, fixed `step_h` on a grid from hour 0, sub-stepped for rest/wait; catch-up capped at 72 h, a new
-  state warms up over the same 72 h; values under half a save quantum snap to 0): per climate,
-  `wet += (rates.wet − d)·Δ` with `d = rates.drying` (blended presets; `1/dry_h` where no preset sets it,
-  0 while `rates.wet > 0`), clamped to [0, 1]; `puddle` rises at `rates.puddle` only while
-  `wet ≥ puddle_from_wet`, dries at `puddle_dry_mult·d`. Per cell, `snow`/`ash` coverage add
-  `rates.snow/ash × altitude factor` and decay at `snow_melt_mult·d` / `ash_clear_mult·d` while nothing falls. Cell rates come from `ClimateRaster::site_at(cell centre)` weights × `ClimateRow`s, the same
-  border blend the WE4 weather map uses (map.rs), so cover agrees with the far weather.
-- **RateSource** is `WeatherState::blend` per climate at the step's mid time: weather is a pure function of
-  (seed, overrides, clock), so any peer computes the same rates.
-- **Altitude factor** (snow only): `smoothstep(snow_line − 50 m, snow_line + 50 m, cell height)`, `snow_line`
-  per climate (default −∞: snow everywhere it snows); as built a `CellGrid::set_altitude` hook (snow line, cell height), no
-  record field until a game needs one (Morrowind: off).
-- **Cell membership:** a cell becomes active when its rate is positive; it is dropped when both channels
-  reach 0. Vvardenfell at 32 m is ~30k cells; only the snowy/ashy part is ever stored.
-- Rates = the presets' `surface` × PRECIP blend weight (`WeatherRates`); cells over the map's raster
-  (`WorldWeatherMap::with_worldspace`). `sf_weather_bevy` steps it on game time; console `surface set/dump/clear`.
-
-## W2 (2026-11-05): GPU resources (`sf_surface_bevy`) and the terrain hook
-
-- **Bevy-free logic** in `sf_surface::view`: `CellWindow` (toroidal 128² window, `recenter` returns the entering
-  column/row strips, disjoint; a jump ≥ the window rewrites all; `texel_rects` splits at the wrap), `cell_texel` /
-  `fill_texels` (R wet, G puddle from each cell's `CellGrid` site, else the camera site; B snow, A ash; per-channel
-  maxima → layer flags), `shelter_center` (snapped to 0.125 m), `shelter_view` (orthographic, −Y, −Z up, reverse Z,
-  200 m above to 150 m below the centre), `ShelterTrigger` (16 m / 8 m / streamed every 30 frames), `noise_atlas`
-  (256² RGBA8 tileable value noise R/G, streaks B/A), `DebugView`.
-- **Plugin** `SurfaceWeatherPlugin` (`PostUpdate`, after transforms and the terrain): `SurfaceGpu` (uniform
-  `ShaderBuffer` of 9 `vec4<u32>` slots, cells `Rgba8Unorm` 128² linear/repeat, shelter `Depth32Float` 1024²,
-  noise), `SurfaceUniform` (CPU mirror, uploaded only when it changes), `SurfaceStats`, `CellWrites` (strips written
-  through `RenderQueue::write_texture`, as the terrain clipmaps). The window's render-space corner comes from
-  `TerrainOrigin` (f64), so the shader works in render space and needs no absolute world position.
-- **Change cue:** `WorldSurface::generation()` (`sf_weather_bevy`), bumped by a step, a new grid, `surface
-  set/clear` and `restore`; code writing `state` directly calls `touch()`. A change rewrites the window (worst case
-  0.73 ms CPU for 128² cells with every cell covered, release, `measure_full_window_fill`); a recenter writes one
-  128-texel strip.
-- **Shelter:** subview `0xFC` of `sf_sky_bevy::sun_view` (precipitation is `0xFB`); casters are visible shadow
-  casters without `SkinnedMesh` or `NoSurfaceShelter` (terrain patches get it: a heightfield shelters nothing from
-  straight above). Drawn only while a layer flag is set or a debug view shows; redrawn on an origin shift. No
-  shadow-casting directional light (night, interiors): no redraw, the last map stays.
-- **View:** `SurfaceWeatherView` follows `TerrainCamera` (W2) and is mirrored onto the render entity for W3.
-- **Terrain hook (scaffold, removed by W3):** `TerrainMaterial` bindings 113-118 (uniform storage, cells + sampler,
-  shelter as unfilterable float, noise + sampler) and `TerrainMaterialKey { surface }` → shader def
-  `SURFACE_WEATHER`; `sf_surface_bevy` hooks every terrain material. `terrain.wesl` calls `apply_surface_layer`
-  under `@if(SURFACE_WEATHER)`; the old no-op `surface_state.wesl` is gone.
-- **WESL** `sf_surface_bevy::layer` (`src/layer.wesl`): binding-agnostic (uniform and textures passed as
-  arguments, like `translucent_fog`), `surface_exposure` (3×3 tent of loads, lookup 0.35 m out along the normal,
-  bias 5 cm + 1.5 texels × slope, fade to open sky over the outer 1/8), `surface_cells_at` (bilinear, repeat),
-  `surface_cell_load`. W2 changes the look only through `surface debug exposure|cells`. `SurfaceInput.class` is
-  `surface_class` (`class` is a reserved WGSL word; caught by the naga test).
-- **Tests:** `sf_surface` `view_tests` (recenter strips exact, wrap split, texels vs `sample`, shelter matrix,
-  triggers, noise tiling); `sf_surface_bevy` (uniform ↔ WGSL struct and constants, naga parse + validate of
-  `layer.wesl` with its import stubbed, headless plugin smoke: window corner, strips, casters, hook, no NaN).
+keeps the as-built shapes and slice notes; W1-W2 moved to [the archive](surface-weather-as-built-archive.md).
+Code is the source of truth.
 
 ## W3 (2026-11-05): wetness on every lit material, `bevy_pbr` patch "SW"
 
@@ -274,3 +203,46 @@ foliage shelters partially (~40% through), roofs fully.
 - **Tests:** twins `cover_endpoints_and_order`, `cover_amount_by_slope_and_shelter`, `cover_height_mixes_surface_cover_and_drift`,
   `sparkle_fades_with_distance`; constants vs WGSL (45); uniform layout; derived height/normal, cover UV, `--off cover` mask
   (`cover_derives_height_normal_and_uv`); compile per preset ± `SURFACE_WEATHER` now also requires `surface_apply_cover`.
+
+## W6a (2026-11-06): trail ring, stamps, refill, prints in the shading (no displacement yet)
+
+- **Ring** (`sf_surface_bevy::trail`, CPU twin `sf_surface::trail`): 1024² `Rgba16Float` (R depression m ≤ 0, G lip m ≥ 0;
+  B, A spare: rg16float is not a core storage format) at 6.25 cm over 64 m, toroidal, window = camera's world texel −512
+  (whole texels; `window_min`), address = world texel mod 1024. Two textures, ping-pong: the pass reads last frame's,
+  writes the other (W6b's previous ring). Mesh-view binding **52** (patch "SW"), sampled bilinear with the repeating
+  filtering sampler (47); uniform slots 13 `trail` (render XZ of the first texel's corner, 1/texel, depth) and 14
+  `trail_cells` (first texel's address, edge). Depth = the deepest cover look (`snow_layer.y`, 0.15 m today).
+- **Pass** (`trail.wgsl`, Core3d before the prepass, once per frame): per texel keep if it held the same world texel
+  (else 0: entering rows clear), refill, stamps (Min R / Max G), lip cap (`G ≤ 0.25·D·(1 + R/D)`: no lip in a print).
+  Runs only on frames with stamps, a refill quantum or a moved window (~16 MB traffic, est. 0.06 ms). One compute pass
+  instead of instanced Min/Max-blended quads: re-centre, refill and stamps all read the old ring anyway.
+- **Stamps:** `TrailStamp { at: WorldPos, forward, half_m, depth }` messages; ≤ 40 m from the camera, nearest 64 per
+  frame. Profile: flat bottom, soft wall (inner 30 %), quadratic lip 0.25·D high, 0.6 radius wide (ROTTR's rim). Game
+  source (`mw_exterior_bevy::trails::foot_stamps`, after `AnimSystems::Apply`): every posed `Animator` with legs (player
+  avatar too: it is not a `Mover`; `Mover.loco.grounded` read None outside the controller step), foot = the animator
+  entity's transform × the effector's model position; planted while the leg's contact curve > 0.5 (else effector < 12 cm);
+  one stamp per foot-down at the plant pose (stamping every planted frame smeared skids in the debug run), 0.16 × 0.09 m
+  half-size × body scale, 5 cm toe-ward, facing the body; only within 0.4 m of the terrain height (no print under bridges).
+- **Refill:** `6 × (snow rate × snow depth + ash rate × ash depth)` m per game hour from `CurrentWeather` (frame rates,
+  `hours` deltas), released in 2 mm quanta (a half-float step at 0.45 m is 0.24 mm, so small steps would round away).
+  Morrowind snow (0.5/h) refills a 0.15 m print in 20 game minutes. No fall: prints stay. Mud: none yet (no mud channel).
+- **Shading** (`surface_apply_cover`, terrain only): the print cuts the amount (`saturate(amount + h/d)`, h =
+  `clamp(R, −d, 0) + G·d/D` per channel depth d: full print = bare ground), and the central-difference gradient of h
+  (4 extra taps, only where the pixel's own sample is non-zero) joins the sum, weighted by the uncut blend, fading as a
+  pixel grows from 1 to 4 texels; the ring fades out over its last 2 m. `surface debug trails`: prints blue, lips red.
+- **Switches:** `SurfaceSettings::trails` (`--off trails`, `Part::Trails`; no live flip: live_ab.rs busy with N1/N2).
+- **Debug run (agent, Skaal Village, snow):** `surface debug trails` shows alternating left/right prints with lips behind  the player; in the normal look they are faint (Solstheim's terrain texture is itself snow, so a cut shows snow, and the  overcast light is flat): the gradient carries them until W6b's displacement. Console Enter can't be sent over BRP.
+- **Open (logged):** lying bodies don't stamp yet (ragdoll/knockdown capsules live in `mw_delirium_bevy`; a later slice);
+  statics never show prints; prints on a rock over terrain within 0.4 m still print the terrain; the pass runs per
+  frame while walking (could go dirty-rect with a copy if WM finds it costly).
+- **W6b needs:** displacement = `ground + cover·d + h` with the same `surface_trail_height` (move it to a shared
+  `trail.wesl` the terrain prepass imports); the previous ring is `TrailGpu.sampled[current ^ 1]` (bind as 53 with the
+  previous `trail` slots: keep last frame's uniform values for the motion vectors); bind both before the prepass
+  (the pass already runs before it); knee-deep depth 0.45 m = `CoverChannel::default_depth_m` or the record's
+  `max_depth_m` (refill quantum and half-float precision checked for 0.45 m).
+- **Tests:** twins `window_is_centred_on_whole_texels`, `world_of_covers_the_window_once`,
+  `recenter_clears_exactly_the_entering_rows`, `stamp_carves_to_the_ground_with_a_lip_around_it`, `profile_*`,
+  `stamps_combine_min_on_depth_max_on_lip`, `lip_never_stands_in_a_print`, `decay_refills_prints_and_flattens_lips`,
+  `refill_is_released_in_quanta`, `pass_keeps_moves_and_stamps` (full 1024² CPU pass); plugin
+  `trails_take_stamps_and_place_the_ring`; shaders: `trail_pass_compiles_and_matches_the_cpu_twin` (naga, uniform size),
+  binding 52 vs the patch, uniform layout, compile per preset ± `SURFACE_WEATHER`.

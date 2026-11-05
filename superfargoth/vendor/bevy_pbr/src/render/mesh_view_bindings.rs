@@ -404,7 +404,7 @@ fn layout_entries(
         ));
     }
     // superfargoth patch (own, SW): surface weather uniform, cells, shelter, noise, samplers, canopy,
-    // cover layer array + sampler.
+    // cover layer array + sampler, trail ring (W6a).
     if layout_key.contains(MeshPipelineViewLayoutKey::SURFACE_WEATHER) {
         entries = entries.extend_with_indices((
             (
@@ -442,6 +442,10 @@ fn layout_entries(
             (
                 super::SURFACE_WEATHER_COVER_SAMPLER_BINDING,
                 sampler(SamplerBindingType::Filtering),
+            ),
+            (
+                super::SURFACE_WEATHER_TRAIL_BINDING,
+                texture_2d(TextureSampleType::Float { filterable: true }),
             ),
         ));
     }
@@ -909,6 +913,7 @@ pub fn prepare_mesh_view_bind_groups(
                     (super::SURFACE_WEATHER_CANOPY_BINDING, &sw.canopy),
                     (super::SURFACE_WEATHER_COVER_BINDING, &sw.cover),
                     (super::SURFACE_WEATHER_COVER_SAMPLER_BINDING, &sw.cover_sampler),
+                    (super::SURFACE_WEATHER_TRAIL_BINDING, &sw.trail),
                 ));
             }
 

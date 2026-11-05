@@ -84,7 +84,7 @@ gate skinned meshes alike). Rafael's OpenMW shader pack: visual reference only (
 
 ### CPU state (`sf_surface`, Bevy-free)
 
-Built in W1 ([as built](surface-weather-as-built.md) W1, W2b): `SurfaceState { t_h, climates: Vec<ClimateSurface {
+Built in W1 ([as built](surface-weather-as-built-archive.md) W1, [W2b](surface-weather-as-built.md)): `SurfaceState { t_h, climates: Vec<ClimateSurface {
 wet, puddle }>, cells: per worldspace HashMap<IVec2, CellSurface { snow, ash }> }`, record-backed `SurfaceTuning`
 (step 10 game min, dry 2 h, decay multipliers, `puddle_from_wet` 0.7, rain wash of snow and ash, `storm_wet_rate`
 for rain rings), pure fixed-step `advance` from the weather blend per climate (cells weighted by
@@ -263,7 +263,7 @@ weather override, flags and what to look for.
 | **W4** ✅ | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural rain rings, F0/roughness, sky/probe reflection, `--off puddles` (as built) | level/edge/ring math twins; compile check | SW-4: Balmora streets in rain and after; rings stop when rain stops |
 | **W5** ✅ (W5a records + array, W5b shader; as built) | Snow/ash cover: layer array from `SurfaceLayer`, per-pixel `N·up` × shelter × cell, height blend, surface-gradient detail normals; ash on statics | height-blend and coverage math twins; record parsing | SW-5: Ghostgate after an ash storm, Solstheim snow; no cover under roofs or on characters |
 | **WM** | Measurement: counters + `perf suite` run lines in perf.md for wet/ash/snow bookmarks (`--weather` overrides); owner runs it (agents never launch) | `#[ignore = "measurement: ..."]` CPU timings | owner runs the suite; table updated |
-| **W6** | Trails: ring, stamps from foot events/bodies, decay/refill, CDLOD displacement (finest 2 levels), prepass motion vectors with the previous ring, cascade-0 shadows, POM | ring/stamp/decay CPU twins; prepass and main use one displacement fn (compile check) | SW-6: walk through Solstheim snow and Ashlands ash, DLSS on: prints, lips, no smear |
+| **W6** 🔶 (W6a ring, stamps, refill, shading; as built) | Trails: ring, stamps from foot events/bodies, decay/refill, CDLOD displacement (finest 2 levels), prepass motion vectors with the previous ring, cascade-0 shadows, POM | ring/stamp/decay CPU twins; prepass and main use one displacement fn (compile check) | SW-6: walk through Solstheim snow and Ashlands ash, DLSS on: prints, lips, no smear |
 | **W7** | Kick-up: footstep splashes in puddles, snow/ash puffs from the stamp stream, sprite-sheet bursts (PR2's splash pipeline; `bevy_hanabi` once the crate batch lands) | burst count/lifetime logic | SW-7: running in puddles and snow |
 | **W8** | Character wetness: `CharacterWetness`, roof ray, `MeshTag` channel on skinned meshes | drying/exposure logic | SW-8: walk from rain into a doorway, clothes dry over minutes |
 

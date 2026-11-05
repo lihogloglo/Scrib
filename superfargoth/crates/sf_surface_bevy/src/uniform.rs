@@ -7,7 +7,7 @@ use bevy_math::{IVec4, Mat4, Vec4};
 use sf_surface::view::DebugView;
 
 /// Slots: the shelter matrix (4 columns), window, cells, shelter, misc, time, canopy, cover (snow,
-/// ash), cover UV at the origin.
+/// ash), cover UV at the origin, the trail ring's placement (W6a).
 pub const U_SHELTER_CLIP: usize = 0;
 pub const U_WINDOW: usize = 4;
 pub const U_CELLS: usize = 5;
@@ -17,7 +17,9 @@ pub const U_TIME: usize = 8;
 pub const U_CANOPY: usize = 9;
 pub const U_COVER: usize = 10;
 pub const U_COVER_UV: usize = 12;
-pub const U_SLOTS: usize = 13;
+pub const U_TRAIL: usize = 13;
+pub const U_TRAIL_CELLS: usize = 14;
+pub const U_SLOTS: usize = 15;
 
 /// Layer flags (`misc.x`): which channels are non-zero anywhere in the cell window.
 pub const FLAG_WET: u32 = 1;
@@ -52,6 +54,11 @@ pub struct SurfaceUniform {
     /// The cover's world-aligned UV at the render origin (W5b; `crate::cover::cover_uv`): xy snow,
     /// zw ash.
     pub cover_uv: Vec4,
+    /// The trail ring (W6a; `crate::trail`): xy render X, Z of its first texel's min corner, z 1 /
+    /// texel (1/m), w its depth (m; 0 = trails off: the shading ignores the ring).
+    pub trail: Vec4,
+    /// xy: the first texel's address (world texel mod the ring edge); z: the ring edge (texels).
+    pub trail_cells: IVec4,
 }
 
 impl Default for SurfaceUniform {
@@ -67,6 +74,8 @@ impl Default for SurfaceUniform {
             canopy: Vec4::ZERO,
             cover: [Vec4::ZERO; 2],
             cover_uv: Vec4::ZERO,
+            trail: Vec4::ZERO,
+            trail_cells: IVec4::ZERO,
         }
     }
 }
@@ -98,6 +107,8 @@ impl SurfaceUniform {
         s[U_COVER] = f(self.cover[0]);
         s[U_COVER + 1] = f(self.cover[1]);
         s[U_COVER_UV] = f(self.cover_uv);
+        s[U_TRAIL] = f(self.trail);
+        s[U_TRAIL_CELLS] = self.trail_cells.to_array().map(|v| v as u32);
         s
     }
 }

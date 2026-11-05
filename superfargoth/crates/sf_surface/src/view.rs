@@ -372,14 +372,17 @@ pub enum DebugView {
     Cells = 2,
     /// Lagarde porosity per pixel: sealed black (metal, polish) to white (drinks); far red.
     Porosity = 3,
+    /// The trail ring (W6a): prints blue (deeper brighter), lips red, outside the ring purple.
+    Trails = 4,
 }
 
 impl DebugView {
-    pub const ALL: [DebugView; 4] = [
+    pub const ALL: [DebugView; 5] = [
         DebugView::Off,
         DebugView::Exposure,
         DebugView::Cells,
         DebugView::Porosity,
+        DebugView::Trails,
     ];
 
     pub fn name(self) -> &'static str {
@@ -388,6 +391,7 @@ impl DebugView {
             DebugView::Exposure => "exposure",
             DebugView::Cells => "cells",
             DebugView::Porosity => "porosity",
+            DebugView::Trails => "trails",
         }
     }
 

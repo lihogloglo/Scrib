@@ -1,5 +1,5 @@
 // Surface weather on the view (`sf_surface_bevy::view`; surface-weather.md "Shader
-// integration"): the mesh-view bindings 43-51 that the vendored bevy_pbr patch "SW" adds to
+// integration"): the mesh-view bindings 43-52 that the vendored bevy_pbr patch "SW" adds to
 // views with a `bevy_pbr::SurfaceWeatherView` (render/surface_weather.rs; numbers checked by a
 // test), and the entry points every lit material calls under `@if(SURFACE_WEATHER)`:
 // `apply_surface_weather_standard` from bevy_pbr's `render/pbr.wesl`, `apply_surface_weather`
@@ -29,10 +29,12 @@ import sf_surface_bevy::layer::{
 // XY + roughness + AO, c = 0 snow, 1 ash) and its trilinear, anisotropic, repeating sampler.
 @group(0) @binding(50) var surface_cover: texture_2d_array<f32>;
 @group(0) @binding(51) var surface_cover_sampler: sampler;
+// The trail ring (W6a; `trail.rs`: R depression, G lip, m; a torus sampled with `surface_sampler`).
+@group(0) @binding(52) var surface_trail: texture_2d<f32>;
 
 /// The layer on the view's resources.
 fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {
-    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_canopy, surface_cover, surface_cover_sampler);
+    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_canopy, surface_cover, surface_cover_sampler, surface_trail);
 }
 
 /// A layer input for `pbr` of class `surface_class`: porosity from the material (Lagarde's

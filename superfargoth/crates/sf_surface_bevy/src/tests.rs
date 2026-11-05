@@ -64,6 +64,8 @@ fn uniform_matches_the_wgsl_struct() {
             ("snow_layer", "vec4<f32>"),
             ("ash_layer", "vec4<f32>"),
             ("cover_uv", "vec4<f32>"),
+            ("trail", "vec4<f32>"),
+            ("trail_cells", "vec4<i32>"),
         ]
     );
     assert_eq!(
@@ -77,9 +79,11 @@ fn uniform_matches_the_wgsl_struct() {
             U_CANOPY,
             U_COVER,
             U_COVER_UV,
+            U_TRAIL,
+            U_TRAIL_CELLS,
             U_SLOTS
         ],
-        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13]
+        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15]
     );
     let konst = |name: &str| -> u32 {
         let line = wgsl
@@ -361,7 +365,7 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     app.update();
     assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 1.0));
     let set = |app: &mut App, layer, wet, shelter| {
-        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter, cover: true });
+        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter, cover: true, trails: true });
         app.update();
         let u = uniform(app);
         (u.flags, u.shelter.x)
@@ -531,4 +535,49 @@ fn cover_derives_height_normal_and_uv() {
 
     let off = SurfaceSettings { cover: false, ..SurfaceSettings::default() };
     assert_eq!(off.flag_mask(), FLAG_WET | FLAG_PUDDLE);
+}
+
+/// Trails (W6a): stamps in range reach the frame (out of range dropped, read once), the ring is
+/// placed around the camera in whole texels, and no cover look or `--off trails` turns it off.
+#[test]
+fn trails_take_stamps_and_place_the_ring() {
+    use bevy_math::Vec2;
+    use sf_surface::trail::{FOOT_HALF_M, RING_SIZE, window_min};
+    let frame = |app: &App| app.world().resource::<TrailFrame>().clone();
+    let mut app = app();
+    app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(10.0, 0.0, -3.0))));
+    app.update();
+    // No cover look: nothing to cut.
+    assert!(!frame(&app).on);
+    assert_eq!(uniform(&app).trail, Vec4::ZERO);
+    app.world_mut().resource_mut::<SurfaceUniform>().cover[0] = Vec4::new(0.25, 0.15, 1.0, 1.0);
+    let origin = app.world().resource::<SurfaceOrigin>().0;
+    let at = |x: f32, z: f32| origin.offset(Vec3::new(x, 0.0, z));
+    let stamp = |p| TrailStamp { at: p, forward: Vec2::new(0.0, 2.0), half_m: FOOT_HALF_M, depth: 1.0 };
+    app.world_mut().write_message(stamp(at(12.0, -3.0)));
+    app.world_mut().write_message(stamp(at(60.0, -3.0)));
+    app.update();
+    let f = frame(&app);
+    assert!(f.on);
+    assert_eq!(f.stamps.len(), 1, "the stamp 50 m away is out of range");
+    assert_eq!((f.stamps[0].center, f.stamps[0].axis, f.depth_m), (Vec2::new(12.0, -3.0), Vec2::Y, 0.15));
+    let world = origin.offset(Vec3::new(10.0, 0.0, -3.0)).to_f64();
+    let min = window_min(DVec2::new(world.x, world.z));
+    assert_eq!(f.new_min, min);
+    let u = uniform(&app);
+    assert_eq!((u.trail.w, u.trail.z, u.trail_cells.z), (0.15, 16.0, RING_SIZE));
+    assert_eq!(IVec2::new(u.trail_cells.x, u.trail_cells.y), min.rem_euclid(IVec2::splat(RING_SIZE)));
+    // The camera sits half a ring (32 m) past the corner, within a texel.
+    let past = 10.0 - u.trail.x - 32.0;
+    assert!((0.0..0.0625).contains(&past), "{past}");
+    assert_eq!(stats(&app).trail_stamps, 1);
+    // Messages are read once.
+    app.update();
+    assert!(frame(&app).stamps.is_empty());
+    // `--off trails`: off, the shading ignores the ring.
+    app.world_mut().resource_mut::<SurfaceSettings>().trails = false;
+    app.world_mut().write_message(stamp(at(12.0, -3.0)));
+    app.update();
+    assert!(!frame(&app).on);
+    assert_eq!(uniform(&app).trail, Vec4::ZERO);
 }
