@@ -93,7 +93,7 @@ stable ids (`PlacementId`, spawn ids, `RecordId`, `PlayerKey`, mod ids) and posi
 | `sf/meta` | `sf_save` | above |
 | `sf/thumbnail` | `sf_save_bevy` | small screenshot (PNG via Bevy's `image`); `Optional` |
 | `sf/clock` | `sf_sky` | `SkyClock` days and time scale, sim tick |
-| `sf/weather` | `sf_weather`, `sf_wind` | `WeatherState { seed, overrides }`, `WindState`; later `sf_surface`'s coarse grid |
+| `sf/weather` | `sf_weather`, `sf_wind`, `sf_surface` | `WeatherState { seed, overrides }`, `WindState`, `SurfaceSave` (v2, surface weather W1; v1 migrates with none) |
 | `sf/records` | `sf_records` | the **runtime record overlay**: records created in play (spells, potions, enchantments: Bethesda's "created objects") under a `save:` id namespace, and runtime patches to existing records as (kind, id, field path, `Value`), the same ops mods use |
 | `sf/overlay` | `sf_world` | `PlacementOverlay`: removed, moved and spawned placements, per-system state blobs, spawn counter |
 | `sf/rpg` | `sf_rpg` | `WorldRpg`: quests, journal, known topics |

@@ -308,6 +308,8 @@ Later, other specs: the effect runtime (next), level-up and chargen UI, stats sc
 
 ## Open questions (owner)
 
+Answered 2026-11-05: defaults below accepted (owner: "generic in code, Morrowind easy to port"); DECISIONS.md.
+
 1. **First implementations = OpenMW's formulas for all three models**, not only skill use (owner 2026-11-05)? Default
    yes: cheapest to verify, the modern variants (retroactive health, no attribute multipliers, Skyrim-like
    level-from-skill-XP) come later behind the same traits.

@@ -1585,3 +1585,12 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (character-shapes S3): held bodies get kinematic body proxies on a new `Layer::BODY_PROXY` (touches only
   `MOVING`); `ImpactOnCharacter.shape`; a held body's impacts are per contact start (no per-frame dedup). Delirium's
   parts are the shape set until S1 cooks one from `RagdollDef`.
+- 2026-11-05 (owner answers): stats spec open questions take their defaults (OpenMW formulas first behind the model
+  traits, one fatigue/stamina pool, magnitude stats); owner rule: generic in code, Morrowind easy to port. Animation:
+  no budget for paid mocap packs; generated (Kimodo) clips may ship; Morrowind's own clips stay a first-class source.
+- 2026-11-05 (owner answers, 2): clip sources are Morrowind's own, Quaternius, Ubisoft La Forge (LaFAN1, optional)
+  and Kimodo-generated clips; no Bones SEED. The player gets limb hurt volumes when NPCs attack (C6). The 30° head-on
+  wall stop stays for NPCs; pathfinding (later) adds unstuck rules.
+- 2026-11-05 (surface W1): surface state is `sf/weather` v2 (`surface: Option<SurfaceSave>`); a state without one (new
+  game, v1 save, co-op join before the host sends it) warms up over the 72 h catch-up from the weather, so peers agree
+  without messages. Steps sit on a fixed grid from game hour 0; the snow line is a hook, not a record field, until needed.

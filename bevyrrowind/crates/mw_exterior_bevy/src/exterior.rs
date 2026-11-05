@@ -363,7 +363,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         app.add_plugins(sf_audio_bevy::weather::WeatherAudioPlugin);
         mw_audio_bevy::merge_bank(&mut app, &weather.sounds);
         if let Some(raster) = raster {
-            app.insert_resource(sf_weather_bevy::WorldWeatherMap::new(raster))
+            // Surface weather W1: snow and ash cover per 32 m cell of the exterior.
+            app.insert_resource(sf_weather_bevy::WorldWeatherMap::new(raster).with_worldspace(ids::exterior().0))
                 .add_systems(Update, weather_site.before(WeatherSystems::Evaluate));
         }
     }

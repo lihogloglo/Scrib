@@ -18,6 +18,9 @@ sf_atmos_bevy = { path = "../sf_atmos_bevy", version = "0.1.0" }
 # SkyTime (the game clock), SkyConfig (calendar), WeatherState (the sky medium).
 sf_sky_bevy = { path = "../sf_sky_bevy", version = "0.1.0" }
 sf_weather.workspace = true
+# Surface weather state (W1): stepped on game time with the weather; console `surface`.
+sf_surface.workspace = true
+sf_console_bevy.workspace = true
 sf_wind_bevy = { path = "../sf_wind_bevy", version = "0.1.0" }
 smallvec.workspace = true
 # Part 2b: the precipitation it drives, the lightning light, real time for

@@ -79,6 +79,11 @@ impl ClimateRaster {
         &self.climates
     }
 
+    /// World X, Z of the raster's minimum and maximum corners, meters.
+    pub fn bounds(&self) -> (DVec2, DVec2) {
+        (self.origin, self.origin + DVec2::new(f64::from(self.width), f64::from(self.height)) * self.cell_m)
+    }
+
     pub fn band_m(&self) -> f32 {
         self.band_m
     }

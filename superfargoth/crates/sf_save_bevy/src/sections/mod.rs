@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use sf_rpg::WorldRpg;
 use sf_save::{Family, SectionKey};
 use sf_sky::SkyClock;
+use sf_surface::SurfaceSave;
 use sf_weather::WeatherState;
 use sf_wind::WindState;
 use sf_world::PlacementOverlay;
@@ -39,7 +40,8 @@ pub const OWNER: &str = "sf";
 pub const CLOCK: &str = "clock";
 pub const CLOCK_VERSION: u32 = 1;
 pub const WEATHER: &str = "weather";
-pub const WEATHER_VERSION: u32 = 1;
+/// v2: `surface` (surface weather W1); v1 is frozen in [`weather_legacy::v1`].
+pub const WEATHER_VERSION: u32 = 2;
 pub const RECORDS: &str = "records";
 pub const RECORDS_VERSION: u32 = 1;
 pub const OVERLAY: &str = "overlay";
@@ -83,11 +85,37 @@ pub struct ClockSave {
     pub sim_tick: u64,
 }
 
-/// `sf/weather`: the weather's seed and explicit overrides, and the wind with its live sources.
+/// `sf/weather`: the weather's seed and explicit overrides, the wind with its live sources, and
+/// the surface state (wetness, puddles, snow and ash cover; surface-weather.md "Persistence").
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WeatherSave {
     pub weather: WeatherState,
     pub wind: Option<WindState>,
+    /// `None`: no surface state (a v1 save; the surface warms up from the weather).
+    pub surface: Option<SurfaceSave>,
+}
+
+/// Frozen older `sf/weather` shapes (save.md "Versioning and migration").
+pub mod weather_legacy {
+    /// `sf.weather.v1` (WE1 until surface weather W1): no `surface`.
+    pub mod v1 {
+        use serde::{Deserialize, Serialize};
+        use sf_weather::WeatherState;
+        use sf_wind::WindState;
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct WeatherSave {
+            pub weather: WeatherState,
+            pub wind: Option<WindState>,
+        }
+
+        impl WeatherSave {
+            /// v1 → v2: no surface state (it warms up from the weather on the first step).
+            pub fn migrate(self) -> super::super::WeatherSave {
+                super::super::WeatherSave { weather: self.weather, wind: self.wind, surface: None }
+            }
+        }
+    }
 }
 
 /// `sf/clock` over the game's clock resource (`sf_sky_bevy::SkyTime`); the sim tick comes from
@@ -116,7 +144,9 @@ pub fn weather(
     get: impl Fn(&World) -> Option<WeatherSave> + Send + Sync + 'static,
     set: impl Fn(&mut World, WeatherSave) + Send + Sync + 'static,
 ) -> SaveSection {
-    SaveSection::value(key(WEATHER), WEATHER_VERSION, get, set).order(order::WEATHER)
+    SaveSection::value(key(WEATHER), WEATHER_VERSION, get, set)
+        .typed_step(1, weather_legacy::v1::WeatherSave::migrate)
+        .order(order::WEATHER)
 }
 
 /// `sf/records`: the runtime record overlay. `set` should also re-apply it to the record

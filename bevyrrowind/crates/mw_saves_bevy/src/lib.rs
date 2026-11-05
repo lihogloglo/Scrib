@@ -8,7 +8,9 @@
 //!   - `sf/clock`: the sky clock (day and hour, time scale) and the sim tick.
 //!   - `sf/weather`: the world weather's seed and overrides (`sf_weather_bevy::WorldWeather`;
 //!     DECISIONS we1: scripted `ChangeWeather` / `ModRegion` changes are timestamped overrides
-//!     in it). The wind's live sources are not saved (`wind: None`): they are presentation.
+//!     in it), and the surface state (`sf_weather_bevy::WorldSurface`: wetness, puddles, snow and
+//!     ash cover; v1 saves without it warm up from the weather). The wind's live sources are not
+//!     saved (`wind: None`): they are presentation.
 //!   - `sf/character/<host key>`: the host character: worldspace + feet position, facing, the
 //!     gameplay body (`ActionState`, `Locomotion`; restored through `RestoreBody`), the
 //!     inventory (`RpgState::pc`), and an `mw` extension blob ([`PlayerExt`]: first / third
@@ -65,7 +67,7 @@ use sf_save_bevy::{
     SaveStorage, SfSavePlugin, sections,
 };
 use sf_sky_bevy::SkyTime;
-use sf_weather_bevy::WorldWeather;
+use sf_weather_bevy::{WeatherRecords, WorldSurface, WorldWeather};
 use sf_world::{Location, WorldspaceId};
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_world_bevy::{ActiveWorldspace, FadeCutHooks, FadeTransition, StartBlackout, StartTravel, WorldOverlay, from_grid};
@@ -181,11 +183,18 @@ pub fn register(app: &mut App) {
         },
     ))
     .add_save_section(sections::weather(
-        |w| w.get_resource::<WorldWeather>().map(|ww| sections::WeatherSave { weather: ww.0.clone(), wind: None }),
+        |w| {
+            w.get_resource::<WorldWeather>().map(|ww| sections::WeatherSave {
+                weather: ww.0.clone(),
+                wind: None,
+                surface: surface_save(w),
+            })
+        },
         |w, v| {
             if let Some(mut ww) = w.get_resource_mut::<WorldWeather>() {
                 ww.0 = v.weather;
             }
+            restore_surface(w, v.surface.as_ref());
         },
     ))
     .add_save_section(sections::characters(host_character, restore_characters))
@@ -255,6 +264,20 @@ fn player_pose(world: &World) -> Option<(Location, f32, ViewChoice)> {
 fn wrap(a: f32) -> f32 {
     let tau = std::f32::consts::TAU;
     (a + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI
+}
+
+/// The surface state for `sf/weather` (`None` without the weather plugin).
+fn surface_save(world: &World) -> Option<sf_weather_bevy::sf_surface::SurfaceSave> {
+    let book = &world.get_resource::<WeatherRecords>()?.0;
+    Some(world.get_resource::<WorldSurface>()?.save(book))
+}
+
+/// Restores the surface state of `sf/weather` (`None`: a v1 save; it warms up from the weather).
+fn restore_surface(world: &mut World, save: Option<&sf_weather_bevy::sf_surface::SurfaceSave>) {
+    let Some(book) = world.get_resource::<WeatherRecords>().map(|r| r.0.clone()) else { return };
+    if let Some(mut s) = world.get_resource_mut::<WorldSurface>() {
+        s.restore(save, &book);
+    }
 }
 
 /// The host character (one until co-op): saved whenever the RPG host runs, pose or not.

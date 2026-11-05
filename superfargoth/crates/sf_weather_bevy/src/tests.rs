@@ -397,3 +397,56 @@ fn only_near_strikes_light_the_land() {
     assert!(near_factor(6000.0) > 0.0 && near_factor(6000.0) < 1.0);
     assert!(near_factor(12_000.0).abs() < 1e-6);
 }
+
+/// Runs a console line on the app's world; returns the lines it logged.
+fn console(app: &mut App, line: &str) -> Result<Vec<String>, String> {
+    let world = app.world_mut();
+    world.resource_scope(|world, mut c: Mut<sf_console_bevy::DevConsole>| {
+        let before = c.log().lines().last().map_or(0, |l| l.seq);
+        let r = c.exec(world, line).map_err(|e| e.to_string());
+        let out = c.log().lines().filter(|l| l.seq > before).map(|l| l.text.clone()).collect();
+        r.map(|()| out)
+    })
+}
+
+#[test]
+fn surface_steps_on_game_time_and_the_console_drives_it() {
+    let mut app = app();
+    let land = app.world().resource::<WeatherRecords>().0.climate(&id("land")).unwrap();
+    let raster = ClimateRaster::new(DVec2::ZERO, 128.0, 2, 2, &[Some(land); 4], 256.0).unwrap();
+    app.insert_resource(WorldWeatherMap::new(raster).with_worldspace(id("ws")));
+    set_hours(&mut app, 100.0);
+    app.update();
+    {
+        let s = app.world().resource::<WorldSurface>();
+        assert!((s.state.t_h - 100.0).abs() < 1e-9, "stepped to the clock: {}", s.state.t_h);
+        assert_eq!(s.grid().map(sf_surface::CellGrid::len), Some(64));
+    }
+    console(&mut app, "surface set wet 0.5 land").unwrap();
+    assert_eq!(app.world().resource::<WorldSurface>().state.climate(land).wet, 0.5);
+    // Clear weather, no drying rate: 1 / dry_h (0.5 per hour) dries it in one hour.
+    set_hours(&mut app, 101.0);
+    app.update();
+    assert!(app.world().resource::<WorldSurface>().state.climate(land).wet < 1e-5);
+    // Cover on every cell the climate weighs; it decays (ash 4x slower) when nothing falls.
+    console(&mut app, "surface set ash 1 land").unwrap();
+    assert_eq!(app.world().resource::<WorldSurface>().state.active_cells(), 64);
+    site(&mut app);
+    console(&mut app, "surface set puddle 0.25").unwrap();
+    let dump = console(&mut app, "surface dump").unwrap();
+    assert!(dump[0].starts_with("surface t 101.00 h") && dump[0].contains("64 active cells"), "{dump:?}");
+    assert!(dump.iter().any(|l| l.contains("land wet 0.000 puddle 0.250")), "{dump:?}");
+    assert!(dump.iter().any(|l| l.starts_with("cells ws: 64 active (0 snow, 64 ash)")), "{dump:?}");
+    console(&mut app, "surface clear").unwrap();
+    assert_eq!(app.world().resource::<WorldSurface>().state.active_cells(), 0);
+    assert!(console(&mut app, "surface set wet 0.5 nowhere").is_err());
+    // A save round trip through the book.
+    let book = app.world().resource::<WeatherRecords>().0.clone();
+    let mut s = app.world_mut().resource_mut::<WorldSurface>();
+    s.state.set_climate(land, sf_surface::Channel::Wet, 0.75);
+    let save = s.save(&book);
+    s.restore(None, &book);
+    assert!(!s.state.started(), "a v1 save starts over");
+    s.restore(Some(&save), &book);
+    assert!((s.state.climate(land).wet - 0.75).abs() <= sf_surface::QUANTUM);
+}

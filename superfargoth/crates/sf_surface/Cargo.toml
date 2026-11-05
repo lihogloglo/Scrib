@@ -1,0 +1,19 @@
+[package]
+name = "sf_surface"
+description = "Bevy-free surface weather state for superfargoth: wetness and puddles per climate, snow and ash cover per 32 m cell, stepped on game time, sampled and saved (surface-weather.md \"Data model\")"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+sf_records.workspace = true
+sf_weather.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+
+[lints]
+workspace = true

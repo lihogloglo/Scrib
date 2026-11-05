@@ -6,9 +6,10 @@
 //!   typed step, then bless the new golden. Semantic changes with the same shape (units, meanings)
 //!   need a bump too; reviewers check.
 //! - **Golden saves**: `tests/golden/s2.sfsave`, the canonical played yard written by S2
-//!   (`sf/character` v1), must keep loading (through migration) into the same state;
-//!   `tests/golden/character-v2.sfsave`, the same yard at the current versions, must also
-//!   re-save to the same raw section bytes. Released goldens are never re-blessed.
+//!   (`sf/character` v1, `sf/weather` v1), and `tests/golden/character-v2.sfsave` (`sf/weather`
+//!   v1), must keep loading (through migration) into the same state; [`CURRENT`], the same yard
+//!   at the current versions, must also re-save to the same raw section bytes. Released goldens
+//!   are never re-blessed.
 //!
 //! Bless (write missing or changed goldens) with `SF_SAVE_BLESS=1`.
 
@@ -114,6 +115,10 @@ fn saved_shapes_match_their_goldens() {
 #[test]
 fn legacy_shapes_match_their_goldens() {
     check_golden(
+        &format!("sf.{}.v1", sections::WEATHER),
+        &shape::<sections::weather_legacy::v1::WeatherSave>(None, &[&traced::<sf_weather::Override>, &traced::<sf_wind::WindSourceKind>]),
+    );
+    check_golden(
         &format!("sf.{}.v1", sections::CHARACTER),
         &shape::<sections::character::legacy::v1::CharacterSave>(
             None,
@@ -156,24 +161,41 @@ fn load_golden(golden: &Path, dir: &Path, migrated: &[(sf_save::SectionKey, u32,
     raw_sections(&again.path)
 }
 
-/// The S2 golden (`sf/character` v1) loads through the v1 → v2 step into the same state, and
-/// re-saves to exactly the current golden's sections.
+/// The golden save at the current versions (the yard re-written when `sf/weather` went to v2).
+const CURRENT: &str = "weather-v2.sfsave";
+
+fn weather_step() -> (sf_save::SectionKey, u32, u32) {
+    (sections::key(sections::WEATHER), 1, sections::WEATHER_VERSION)
+}
+
+/// The S2 golden (`sf/character` v1, `sf/weather` v1) loads through both v1 → v2 steps into the
+/// same state, and re-saves to exactly the current golden's sections.
 #[test]
 fn the_s2_golden_save_still_loads_through_migration() {
     let dir = tempfile::tempdir().unwrap();
     let s2 = data_dir("golden").join("s2.sfsave");
     assert!(s2.exists(), "the S2 golden is released: never re-bless it");
-    let current = golden_save("character-v2.sfsave", dir.path());
-    let resaved = load_golden(&s2, dir.path(), &[(sections::character_key(crate::tests::HERO), 1, sections::CHARACTER_VERSION)]);
+    let current = golden_save(CURRENT, dir.path());
+    let resaved = load_golden(&s2, dir.path(), &[(sections::character_key(crate::tests::HERO), 1, sections::CHARACTER_VERSION), weather_step()]);
     assert_eq!(resaved, raw_sections(&current));
 }
 
-/// The current golden (`tests/golden/character-v2.sfsave`, the yard re-written when
-/// `sf/character` went to v2) loads without migration and re-saves byte for byte.
+/// The `sf/character` v2 golden (`sf/weather` v1: a save from before surface weather) loads
+/// through the weather step and re-saves to exactly the current golden's sections.
+#[test]
+fn the_character_v2_golden_save_loads_through_the_weather_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = data_dir("golden").join("character-v2.sfsave");
+    assert!(old.exists(), "the character-v2 golden is released: never re-bless it");
+    let current = golden_save(CURRENT, dir.path());
+    assert_eq!(load_golden(&old, dir.path(), &[weather_step()]), raw_sections(&current));
+}
+
+/// The current golden ([`CURRENT`]) loads without migration and re-saves byte for byte.
 #[test]
 fn the_current_golden_save_loads_and_resaves_identically() {
     let dir = tempfile::tempdir().unwrap();
-    let current = golden_save("character-v2.sfsave", dir.path());
+    let current = golden_save(CURRENT, dir.path());
     assert_eq!(load_golden(&current, dir.path(), &[]), raw_sections(&current));
     let _ = yard();
 }

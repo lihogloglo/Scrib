@@ -201,6 +201,7 @@ sf_script_bevy = { path = "superfargoth/crates/sf_script_bevy", version = "0.1.0
 sf_shadow_cache_bevy = { path = "superfargoth/crates/sf_shadow_cache_bevy", version = "0.1.0" }
 sf_sky = { path = "superfargoth/crates/sf_sky", version = "0.1.0" }
 sf_sky_bevy = { path = "superfargoth/crates/sf_sky_bevy", version = "0.1.0" }
+sf_surface = { path = "superfargoth/crates/sf_surface", version = "0.1.0" }
 sf_terrain = { path = "superfargoth/crates/sf_terrain", version = "0.1.0" }
 sf_terrain_bevy = { path = "superfargoth/crates/sf_terrain_bevy", version = "0.1.0" }
 sf_texture = { path = "superfargoth/crates/sf_texture", version = "0.1.0" }

@@ -1,6 +1,6 @@
 # Surface weather: wetness, puddles, snow and ash cover, trails
 
-Status: spec (2026-11-05), not built. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
+Status: W1 built (2026-11-05: `sf_surface`, driven by `sf_weather_bevy`); W2-W8 spec. Slices W1-W7 (+ WM measurement, W8 character wetness) below.
 Crates: `sf_surface` (new, Bevy-free), `sf_surface_bevy` (new, thin plugin); touches `sf_terrain_bevy`
 (hook, displacement, prepass), `sf_lod_bevy` (proxies call the hook), vendored `bevy_pbr` (own patch "SW"),
 `sf_weather` (`SurfaceRates`), `sf_save` (section). Adapter: `../../../bevyrrowind/docs/specs/weather-adapter.md`
@@ -102,7 +102,8 @@ pub fn advance(state: &mut SurfaceState, to_h: f64, rates: &dyn RateSource, tuni
 pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &WorldspaceId, p: DVec2) -> SurfaceSample; // CPU query
 ```
 
-- **Step** (pure, fixed `step_h`, sub-stepped for rest/wait; catch-up capped at 72 h): per climate,
+- **Step** (pure, fixed `step_h` on a grid from hour 0, sub-stepped for rest/wait; catch-up capped at 72 h, a new
+  state warms up over the same 72 h; values under half a save quantum snap to 0): per climate,
   `wet += (rates.wet − d)·Δ` with `d = rates.drying` (blended presets; `1/dry_h` where no preset sets it,
   0 while `rates.wet > 0`), clamped to [0, 1]; `puddle` rises at `rates.puddle` only while
   `wet ≥ puddle_from_wet`, dries at `puddle_dry_mult·d`. Per cell, `snow`/`ash` coverage add
@@ -111,7 +112,8 @@ pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &WorldspaceId, p
 - **RateSource** is `WeatherState::blend` per climate at the step's mid time: weather is a pure function of
   (seed, overrides, clock), so any peer computes the same rates.
 - **Altitude factor** (snow only): `smoothstep(snow_line − 50 m, snow_line + 50 m, cell height)`, `snow_line`
-  from the climate record (default −∞: snow everywhere it snows).
+  per climate (default −∞: snow everywhere it snows); as built a `CellGrid::set_altitude` hook (snow line, cell height), no
+  record field until a game needs one (Morrowind: off).
 - **Cell membership:** a cell becomes active when its rate is positive; it is dropped when both channels
   reach 0. Vvardenfell at 32 m is ~30k cells; only the snowy/ashy part is ever stored.
 - **Character wetness** (W8): `CharacterWetness { wet, dried_at }` per actor, presentation, exposure from an
@@ -226,9 +228,9 @@ moves geometry: wetness, puddles, ripples and cover (W3-W5) change shading only 
 
 ## Persistence and co-op
 
-- **Save:** section `sf/weather` (save.md catalog: "later `sf_surface`'s coarse grid") gains
-  `surface: SurfaceSave { version, t_h, climates: Vec<(RecordId, u16 wet, u16 puddle)>,
-  cells: Vec<(WorldspaceId, i32, i32, u16 snow, u16 ash)> }`, quantized to 1/65535, only non-zero entries.
+- **Save:** section `sf/weather` (v2; v1 migrates with `surface: None`, which warms up from the weather) gains
+  `surface: Option<SurfaceSave { t_h, climates: Vec<(RecordId, u16 wet, u16 puddle)>,
+  cells: Vec<(WorldspaceId, Vec<(i32, i32, u16 snow, u16 ash)>)> }>`, quantized to 1/65535, only non-zero entries.
   Unknown climates (mod removed) drop silently. Trails, shelter and kick-up are not saved.
 - **Load:** the state restores, then `advance` catches up to the clock; the cell texture is rebuilt.
 - **Co-op (net.md):** host owns `SurfaceState`. Clients get the `SurfaceSave` bytes on join, then step it
@@ -283,7 +285,7 @@ weather override, flags and what to look for.
 
 | Slice | Deliverable | Test | Owner check |
 |---|---|---|---|
-| **W1** | `sf_surface` crate: state, `advance`, `sample`, `SurfaceSave` codec + `sf/weather` section field; `sf_weather_bevy` drives it on game time; console `surface set/dump/clear` | exact logic list above (rates, sub-steps, determinism, save round-trip) | none (logic); `surface dump` line in the handoff |
+| **W1** ✅ | `sf_surface` crate: state, `advance`, `sample`, `SurfaceSave` codec + `sf/weather` section field; `sf_weather_bevy` drives it on game time; console `surface set/dump/clear` | exact logic list above (rates, sub-steps, determinism, save round-trip) | none (logic); `surface dump` line in the handoff. As built 2026-11-05: rates = presets' `surface` × PRECIP blend weight (`WeatherRates`); cells over the map's raster (`WorldWeatherMap::with_worldspace`) |
 | **W2** | `sf_surface_bevy`: cell texture window, vertical shelter subview, noise atlas, `SurfaceUniform`, `SurfaceWeatherView`; debug tint `exposure` / `cells` through the terrain hook only | window/recenter tests, shelter matrix and redraw triggers, headless plugin smoke (no NaN, resources exist) | SW-2: debug tint shows roofs, trees and arches as sheltered in Balmora |
 | **W3** | Wetness layer: vendored `bevy_pbr` patch "SW", `sf_surface::layer` (exposure port, Lagarde wet, film normal flatten, wall streaks), terrain + proxy calls, `--off wet/surface`, NOTICES entry | shader-def compile log check per preset; porosity heuristic unit test (WGSL mirrored in Rust) | SW-3: Seyda Neen after rain, wet vs dry A/B, under-roof dry, walls streaked |
 | **W4** | Puddles: terrain height + basin fill, object flat-up fill, edge blend, procedural ripples (Clockwork rings) in rain, F0/roughness, sky/probe reflection | level/edge math unit tests (Rust twin); compile check | SW-4: Balmora streets in rain and after; ripples stop when rain stops |

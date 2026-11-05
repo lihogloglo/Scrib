@@ -252,7 +252,7 @@ S3 first: it fixes the owner's PH-15 complaint and proves the bridge; S0 lands w
    Owner: if it ever matters (something heavy resting on a living held body), the way out is to make the character
    unconscious (hand over to the Rapier ragdoll).
    not simulated).
-3. Player (recommendation, owner to confirm): hurt volumes when NPCs fight (C6); physics proxies and Delirium on the player stay a later call.
+3. Player: hurt volumes when NPCs fight (C6), confirmed by the owner 2026-11-05; physics proxies and Delirium on the player stay a later call.
 4. Radius and caps: set from S0's measurements.
 
 ## As built

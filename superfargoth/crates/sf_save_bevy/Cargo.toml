@@ -41,6 +41,7 @@ sf_coords.workspace = true
 sf_records.workspace = true
 sf_rpg.workspace = true
 sf_sky.workspace = true
+sf_surface.workspace = true
 sf_weather.workspace = true
 sf_wind.workspace = true
 sf_world.workspace = true

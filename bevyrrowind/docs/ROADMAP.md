@@ -130,7 +130,7 @@ in the world; only the release start path (or a session working on the menu) sho
 
 ## Phase 4: eye candy and the wider world (after phase 2)
 
-- [~] Weather polish (surface weather spec 2026-11-05: `superfargoth/docs/specs/surface-weather.md`, W1-W7 next; owner unparked wetness, puddles, snow/ash, trails): storm from Red Mountain (WE-5), tall clouds, ash, splashes (PR2), wetness/snow (SU1, SU2), tree wind (WD2, WD3). Owner 2026-10-21/22: cheap rain puddles + wet objects, persisted in saves, SSR reflections first (`research/borrow-audit-2026-10.md`).
+- [~] Weather polish (surface weather spec 2026-11-05: `superfargoth/docs/specs/surface-weather.md`; W1 state built 2026-11-05 (`sf_surface`), W2-W7 next; owner unparked wetness, puddles, snow/ash, trails): storm from Red Mountain (WE-5), tall clouds, ash, splashes (PR2), wetness/snow (SU1, SU2), tree wind (WD2, WD3). Owner 2026-10-21/22: cheap rain puddles + wet objects, persisted in saves, SSR reflections first (`research/borrow-audit-2026-10.md`).
 - [p] Water polish (WA-1 notes, WISHLIST §12): shore swash + gradual wavelets, textured foam, whitecaps,
   weather-driven wave height (verify), crest SSS; W4 reflections, caustics, W7 rivers (W5 underwater, W6 buoyancy are 3.6/3.7).
 - [p] RT as the Ultra tier (decision 2): exterior RT content, Solari sunset patch, `--rt` in the streamed view, characters in the RT scene, DL-4 contact bands, DL-2 open (needs a `solari,dlss` build).

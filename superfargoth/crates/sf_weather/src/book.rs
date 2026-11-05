@@ -125,6 +125,11 @@ impl WeatherBook {
         out
     }
 
+    /// Number of climates ([`ClimateIx`] runs `0..climate_count`).
+    pub fn climate_count(&self) -> usize {
+        self.climates.len()
+    }
+
     pub fn preset(&self, id: &RecordId) -> Option<PresetIx> {
         self.preset_index.get(id).copied()
     }

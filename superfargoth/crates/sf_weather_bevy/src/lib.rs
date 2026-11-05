@@ -30,6 +30,10 @@
 //! Part 2b (`fx`): precipitation into `sf_precip_bevy::Precip` (when the
 //! host draws it), the lightning flash (a directional light, cloud glow)
 //! and [`WeatherSound`] messages (loops; thunder delayed by distance / 343).
+//!
+//! Surface weather (`surface`, surface-weather.md W1): [`WorldSurface`] (wetness and puddles per
+//! climate, snow and ash per 32 m cell of the map's worldspace) steps on the game clock after
+//! `evaluate`, from the same seed, overrides and clock; console `surface set/dump/clear`.
 
 use std::sync::Arc;
 
@@ -45,12 +49,15 @@ use sf_wind_bevy::WindField;
 use sf_wind_bevy::sf_wind::WindSourceId;
 use smallvec::SmallVec;
 
+pub use sf_surface;
 pub use sf_weather;
 
 mod fx;
+mod surface;
 #[cfg(test)]
 mod tests;
 
+pub use surface::{WorldSurface, dump as surface_dump, set as surface_set};
 pub use fx::{
     CUE_STEP, LIGHTNING_GLOW, LIGHTNING_GLOW_HEIGHT, LIGHTNING_NEAR_M, near_factor, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
     lightning_direction, precip_brightness, precip_slot,
@@ -127,13 +134,23 @@ pub struct WorldWeatherMap {
     pub map: WeatherMap,
     /// The camera's world X, Z (`None`: not placed yet; the map waits).
     pub camera: Option<DVec2>,
+    /// The worldspace the raster covers (its record id): with it, surface weather keeps snow
+    /// and ash cover per 32 m cell there ([`WorldSurface`]).
+    pub worldspace: Option<sf_records::RecordId>,
 }
 
 impl WorldWeatherMap {
     pub fn new(raster: ClimateRaster) -> Self {
         let mut map = WeatherMap::new(raster, MAP_SIZE, MAP_TEXEL_M);
         map.set_cpu_texels(false);
-        Self { map, camera: None }
+        Self { map, camera: None, worldspace: None }
+    }
+
+    /// Names the worldspace the raster covers (surface cover cells).
+    #[must_use]
+    pub fn with_worldspace(mut self, worldspace: sf_records::RecordId) -> Self {
+        self.worldspace = Some(worldspace);
+        self
     }
 
     /// The climates at world X, Z `p` with their weights: the camera's site
@@ -173,6 +190,7 @@ impl Plugin for WeatherPlugin {
             .init_resource::<WeatherOverrides>()
             .init_resource::<WeatherStats>()
             .init_resource::<LightningFlash>()
+            .init_resource::<WorldSurface>()
             .add_message::<WeatherSound>()
             .configure_sets(
                 Update,
@@ -181,7 +199,7 @@ impl Plugin for WeatherPlugin {
                     .after(SkySystems::Clock)
                     .before(SkySystems::Apply),
             )
-            .add_systems(Update, (evaluate, update_map).chain().in_set(WeatherSystems::Evaluate))
+            .add_systems(Update, (evaluate, update_map, surface::advance).chain().in_set(WeatherSystems::Evaluate))
             .add_systems(
                 Update,
                 (
@@ -195,6 +213,7 @@ impl Plugin for WeatherPlugin {
                     .in_set(WeatherSystems::Apply)
                     .before(sf_precip_bevy::PrecipSystems),
             );
+        surface::register_console(app);
     }
 }
 
