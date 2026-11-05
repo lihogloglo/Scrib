@@ -188,7 +188,8 @@ pub trait LevelingModel: Send + Sync {
 }
 ```
 
-- `SheetRead` is the read-only view (modified values, pools, counters, groups) with the table.
+- `SheetRead` is the read-only view (modified values, pools, counters, groups) with the table. Models see no owner:
+  per-character content state they need (Morrowind's class) is hidden counters on the sheet (S3).
 - **`UseSkill` flow**: `apply` calls `use_skill`, emits `SkillUsed` with the gain, applies the returned ops; a
   `RaiseSkill` among them calls `raise` and emits `SkillRaised`. The model owns its counters; the core owns order and events.
 - **Which formulas are rules (swappable) and which are content**: see the adapter's table. Rule of thumb from §1b:
@@ -287,8 +288,8 @@ One deliverable plus its test per slice; S1-S3 are Bevy-free and need no game ru
 |---|---|---|
 | **S0** ids [x] 2026-11-05 | `ActorKey`, `PlayerKey` move to `sf_ids` (re-exported by `sf_rpg`) | workspace builds; save goldens unchanged |
 | **S1** core [x] 2026-11-05 | `sf_stats`: table, sheet, modifiers, ops, `apply`/`tick`, events, model traits, `TestModel` | "Tests" list above (23 + measurement 0.040 ms) |
-| **S2** Morrowind table + init [x] 2026-11-05 | `mw_stats`: defs from attributes + SKIL, roles, GMST snapshot, record / autocalc / chargen init; `MwDerived` maxima and derived stats (init needs them) | formula tests against OpenMW (14); real install: 3041 NPCs, 396 creatures, 420 chargen sheets sane |
-| **S3** Morrowind models | `mw_stats`: `MwDerived` regen + rest, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs |
+| **S2** Morrowind table + init [x] 2026-11-05 | `mw_stats`: defs from attributes + SKIL, roles, GMST snapshot, record / autocalc / chargen init; `MwDerived` maxima and derived stats (init needs them) | formula tests against OpenMW (14); real install (NPCs, creatures, chargen) |
+| **S3** Morrowind models [x] 2026-11-05 | `mw_stats`: `MwDerived` regen + rest, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs (13) |
 | **S4** Bevy plugin | `sf_stats_bevy` + game glue: `Stats` on the player, NPCs and creatures at spawn; fixed-tick sets; events | headless app: spawn, apply, regen, events in order |
 | **S5** combat + HUD | vitals refresh/difference wiring; `PlayerVitals` and `PlayerCombat` health/fatigue removed; HUD bars from roles | a hit on the dummy lowers its sheet's health; roll cost lowers the player's fatigue; HUD view-model reads the sheet. Visual check HD-x "bars follow damage and regen" (awaiting owner) |
 | **S6** dialogue | `MwView::function` and `player_rank` from the sheet; `PlayerStatsPlaceholder` removed | existing filter tests plus PC stat and rank filters |

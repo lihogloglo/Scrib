@@ -122,6 +122,10 @@ fn every_npc_and_creature_initialises() {
                 assert_eq!(rejected, 0);
                 check(&t, &s, &format!("{} {}", race.id, class.id), &mut chargen);
                 assert!(s.view(&t.table).max(t.idx.health) >= 1.0);
+                // Skill progression reads the class from the sheet: 5 majors (2), 5 minors (1).
+                let kinds: f32 = t.idx.class_skills.iter().map(|&k| s.view(&t.table).base(k)).sum();
+                assert!((kinds - 15.0).abs() < 0.5, "{}: {kinds}", class.id);
+                assert!(s.view(&t.table).base(t.idx.class_specialization) >= 1.0);
             }
         }
     }

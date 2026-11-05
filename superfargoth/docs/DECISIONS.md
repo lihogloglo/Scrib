@@ -1612,3 +1612,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (stats S2): a record's stored magicka/fatigue (non-autocalc NPCs, creatures) = OpenMW formula + a hidden
   offset counter set at init, so the max follows attribute changes by delta (OpenMW snaps to the formula on the first
   change). `sf_stats` capped `Damage` now caps the amount (OpenMW `damageAttribute`), never lowering existing damage.
+- 2026-11-05 (stats S3): rules models see only the sheet (no owner; `Inputs` only in some methods), so per-character
+  content state a model needs lives on the sheet as hidden counters: Morrowind's class = `class.<skill>` (misc/minor/
+  major 0/1/2) + `class.specialization`, set at init, saved and replicated with the sheet. No trait change.

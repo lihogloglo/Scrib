@@ -87,9 +87,15 @@ SOFTWARE.
   `getCapacity`), `apps/openmw/mwmechanics/mechanicsmanagerimp.cpp` (`buildPlayer`), `apps/openmw/mwmechanics/
   npcstats.cpp` (`updateHealth`), `apps/openmw/mwmechanics/creaturestats.cpp` (`recalculateMagicka`, fatigue in
   `setAttribute`, `getFatigueTerm`), `apps/openmw/mwmechanics/stat.cpp` (`DynamicStat::setCurrent`) and
-  `apps/openmw/mwmechanics/spelleffects.cpp` (`damageAttribute`/`damageSkill` cap).
+  `apps/openmw/mwmechanics/spelleffects.cpp` (`damageAttribute`/`damageSkill` cap); stats S3:
+  `apps/openmw/mwmechanics/actors.cpp` (`calculateRestoration`, `getRestorationPerHourOfSleep`,
+  `restoreDynamicStats`), `apps/openmw/mwworld/class.cpp` (`getNormalizedEncumbrance`),
+  `files/data-mw/scripts/omw/playerskillhandlers.lua` (skill progression and level-up options),
+  `files/data/scripts/omw/skillhandlers.lua` (`skillUsed` gain), `apps/openmw/mwmechanics/npcstats.cpp` (`levelUp`,
+  `getLevelupAttributeMultiplier`, `hasSkillsForRank`), `apps/openmw/mwgui/levelupdialog.cpp` (picks, cap 100),
+  `apps/openmw/mwdialogue/filter.cpp` (faction rank skill/reputation requirements, `RankRequirement`).
 - Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
   identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived}.rs` (the game; f32 arithmetic in OpenMW's order,
+- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived,progression,faction}.rs` (the game; f32 arithmetic in OpenMW's order,
   differences listed in the module docs) and, for the two stat semantics only, `superfargoth/crates/sf_stats/src/ops.rs`
   (`set_current`, capped `StatOp::Damage`).

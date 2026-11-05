@@ -1,6 +1,6 @@
 [package]
 name = "mw_stats"
-description = "Morrowind's character stats on sf_stats: the stat table from attributes and SKIL records, the GMST snapshot, NPC/creature/chargen init (OpenMW autocalc) and the MwDerived maxima"
+description = "Morrowind's character stats on sf_stats: the stat table from attributes and SKIL records, the GMST snapshot, NPC/creature/chargen init (OpenMW autocalc), the OpenMW rule set (MwDerived, skill use, levelling) and faction rank requirements"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

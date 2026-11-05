@@ -95,6 +95,14 @@ pub mod attr {
     pub const WILLPOWER: usize = 2;
     pub const AGILITY: usize = 3;
     pub const ENDURANCE: usize = 5;
+    pub const LUCK: usize = 7;
+}
+
+/// A skill's place in the character's class, the value of its `class.<skill>` counter.
+pub mod class_skill {
+    pub const MISC: f32 = 0.0;
+    pub const MINOR: f32 = 1.0;
+    pub const MAJOR: f32 = 2.0;
 }
 
 /// One skill's SKIL data.
@@ -149,6 +157,11 @@ pub struct MwIdx {
     pub fatigue_offset: StatIdx,
     /// 1 for a creature sheet (creature capacity is Str x 5, `creature.cpp` `getCapacity`).
     pub creature: StatIdx,
+    /// The class's use of each skill ([`class_skill`]: misc 0, minor 1, major 2), read by skill
+    /// progression. The class is character data, so it lives (and saves) with the sheet.
+    pub class_skills: [StatIdx; 27],
+    /// The class's specialization + 1 (0 = none: creatures, no class).
+    pub class_specialization: StatIdx,
     pub capacity: StatIdx,
     pub encumbrance: StatIdx,
     pub fatigue_term: StatIdx,
@@ -176,7 +189,7 @@ const VALUE: StatKind = StatKind::Value { min: 0.0, cap: None };
 /// The definitions, in index order: attributes, skills, magnitudes, pools, counters, derived.
 #[must_use]
 pub fn defs() -> Vec<StatDef> {
-    let mut d = Vec::with_capacity(96);
+    let mut d = Vec::with_capacity(128);
     for (key, label) in ATTRIBUTES.iter().zip(ATTRIBUTE_LABELS) {
         d.push(def(key, VALUE, "attribute", false, label));
     }
@@ -216,6 +229,10 @@ pub fn defs() -> Vec<StatDef> {
     d.push(def("magicka.offset", counter(f32::MIN, f32::MAX), "internal", false, ""));
     d.push(def("fatigue.offset", counter(f32::MIN, f32::MAX), "internal", false, ""));
     d.push(def("actor.creature", counter(0.0, 1.0), "internal", false, ""));
+    for s in SKILLS {
+        d.push(def(&format!("class.{s}"), counter(0.0, 2.0), "class", false, ""));
+    }
+    d.push(def("class.specialization", counter(0.0, 3.0), "class", false, ""));
     d.push(def("capacity", StatKind::Derived, "derived", false, "sEncumbrance"));
     d.push(def("encumbrance", StatKind::Derived, "derived", false, "sEncumbrance"));
     d.push(def("fatigue.term", StatKind::Derived, "derived", false, ""));
@@ -285,6 +302,8 @@ impl MwTable {
             magicka_offset: at("magicka.offset"),
             fatigue_offset: at("fatigue.offset"),
             creature: at("actor.creature"),
+            class_skills: SKILLS.map(|s| at(&format!("class.{s}"))),
+            class_specialization: at("class.specialization"),
             capacity: at("capacity"),
             encumbrance: at("encumbrance"),
             fatigue_term: at("fatigue.term"),

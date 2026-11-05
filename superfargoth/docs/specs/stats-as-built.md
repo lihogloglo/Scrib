@@ -122,3 +122,49 @@ Bevy-free (hakari `final-excludes`); deps `sf_stats`, `sf_records`, `tes3`, smal
   real_install -- --ignored --nocapture`, 0.6 s): 3041 NPCs (1939 autocalc, levels 0-99, 0 init errors, 25 values over
   100, 84 placed with 0 health), 396 creatures (82 values over 100, 21 at 0 health), chargen 10 races x 21 classes x 2
   sexes; all finite, values in 0..=255, pools full; prints the GMST snapshot and SKIL table.
+
+## S3 Morrowind models (2026-11-05): `bevyrrowind/crates/mw_stats`
+
+New modules `progression` (`OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `skill_progress_requirement`,
+`levelup_attribute_multiplier`) and `faction` (`FactionRanks`, `RankRequirement`); `MwDerived` gained `regen` and `rest`
+(+ pure `fatigue_regen_per_second`, `sleep_restoration_per_hour`, `normalized_encumbrance`, `rest_fatigue_per_hour`).
+Ported from OpenMW `ca5e2576` (NOTICES "OpenMW (character stats)"; files in each module's docs). No new dependency.
+
+- **Class on the sheet** (coordinator question 2): neither offered option fits the trait signatures. `Inputs` reaches
+  `use_skill` but not `raise`, `ready`, `offer` or `level_up`; no model method gets the owner, so a model-owned table
+  keyed by owner can't be read. The class is character data, so it lives on the sheet: 27 hidden counters
+  `class.<skill>` (misc 0, minor 1, major 2) and `class.specialization` (specialization + 1, 0 = none), set by
+  `class_ops` from `npc_ops` (autocalc, and stored NPCs whose class exists), `chargen_ops` (when a class is chosen).
+  Saved and replicated with the sheet, deterministic, no framework change; an old save missing them gets them from
+  `ops_for_missing`. Table: 88 → 116 stats. Nothing class-named in `superfargoth/`.
+- **Regen** (`calculateRestoration`): fatigue only, `dt` x (`fFatigueReturnBase` + `fFatigueReturnMult` x End modified)
+  while current < max; nothing for a `Combatant` (`Inputs::combatant`) or the dead (health < 1, `isDead`).
+- **Rest** (`restoreDynamicStats`): one call for `hours` (OpenMW loops 1 h at a time; every term is constant over the
+  rest, so the result is equal); sleep adds 0.1 x End to health and `fRestMagicMult` x Int to magicka per hour; rest and
+  wait add 3600 x (base + mult x (1 - min(1, carried / capacity))) x `fEndFatigueMult` x End fatigue per hour while below
+  the max (`getNormalizedEncumbrance`: 0 carried = 0, 0 capacity = 1 + 1e-6). Applies to combatants too (a time skip).
+  Waiting for the effect runtime: Stunted Magicka, Feather/Burden, werewolf (encumbrance 0, no skill gain).
+- **Skill use** (`skillUsed` + `skillUsedHandler`): gain = SKIL use value x scale (use kinds 0..=3, else gain 0 and no
+  ops); refused (gain 0) at base 100 gaining or 0 losing; progress in `f64` stored `f32` (Lua doubles writing a C++
+  float); `RaiseSkill { Usage }` at progress ≥ 1. `SkillUsed` reports 0 for a refused use.
+- **Raise** (`skillLevelUpHandler`): base ± 1 by `ModBase`; tallies (level progress, governing attribute, specialization)
+  skipped when their GMST is 0 (misc level progress); usage resets progress, training/book keep it. `Penalty` = OpenMW's
+  jail source (-1, no tallies; Security and Sneak +1 with tallies, as the Lua does). `Script`/`Debug` = training.
+- **Level-up**: ready at `level.progress` ≥ `iLevelUpTotal`; offer = attributes with base < 100, picks min(3, that),
+  gain min(mult, 100 - base); refusals `NotReady`, `PickCount`, `BadPick` (duplicate, not pickable). Ops: `SetBase`
+  min(100, base + mult), progress - total (≥ 0), non-zero attribute tallies cleared (**specialization tallies stay**:
+  `levelUp` clears only `mSkillIncreases`), `PoolModMax` health + End (after the picks) x `fLevelUpHealthEndMult`
+  (+ `PoolSetCurrent` 1 if that leaves it below 1), level + 1. Missing `iLevelUpNNMult` GMSTs take vanilla values
+  (`MwGmst::from_db`), where OpenMW uses 1.
+- **Faction ranks** (content, rule-set independent): `FactionRanks::of(&Faction)`; `has_skills_for_rank` (sorted faction
+  skill bases truncated to int: best ≥ primary, next two ≥ favoured; fewer skills check fewer, none passes; rank > 9
+  false), `meets_skill_requirements` (+ both favoured attributes' base; an unset attribute slot requires nothing),
+  `meets_reputation` (membership reputation, 0 without), `rank_requirement` (the dialogue function: +1 skills, +2
+  reputation for the next rank; 0 at rank ≥ 9; non-member checks rank 0).
+- **Tests** (13 new, 27 in `mw_stats`): class counters; requirements (major/minor/misc x specialization); 19 uses of
+  Long Blade (major, combat, base 30, requirement 18.6) to raise, with level progress, Strength and combat tallies;
+  refusal at 100; raise sources (training keeps progress, book, misc, jail); multipliers 0..=10 and out of range;
+  level-up after 10 major raises (Str 5 / End 2 / Agi 3 / Luck 0 tallies → +3/+2/+2/+1, picks Str End Luck, health +
+  0.1 x 52, refusals); cap 100 with one pick; fatigue regen 3.5/s at End 50 (combatant and dead skipped); rest formulas
+  (18144 / 18000 per hour); sleep vs wait restoration; determinism (an op stream twice: equal sheets and events, no
+  clock or RNG); faction rank edge cases. Real install: every chargen class sets 5 majors + 5 minors.

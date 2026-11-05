@@ -21,7 +21,7 @@ use tes3::esp::{AttributeId, Class, Creature, Npc, NpcFlags, Race, SkillId, Spec
 
 use crate::derived::{fatigue_max, magicka_max};
 use crate::gmst::MwGmst;
-use crate::table::{MwTable, SkillInfo, attr};
+use crate::table::{MwTable, SkillInfo, attr, class_skill};
 
 /// Why an NPC can't be initialised (`OpenMW` refuses the reference: `Store::find` throws).
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -38,11 +38,11 @@ pub fn round_half_even(f: f32) -> f32 {
     f.round_ties_even()
 }
 
-fn skill_index(s: SkillId) -> Option<usize> {
+pub(crate) fn skill_index(s: SkillId) -> Option<usize> {
     usize::try_from(s as i32).ok().filter(|&i| i < 27)
 }
 
-fn attribute_index(a: AttributeId) -> Option<usize> {
+pub(crate) fn attribute_index(a: AttributeId) -> Option<usize> {
     usize::try_from(a as i32).ok().filter(|&i| i < 8)
 }
 
@@ -181,6 +181,27 @@ fn counter(stat: sf_stats::StatIdx, value: f32) -> StatOp {
     StatOp::CounterSet { stat, value }
 }
 
+/// The class counters (`class.<skill>`: misc 0, minor 1, major 2; `class.specialization`:
+/// specialization + 1) that skill progression reads. Every skill is set, so a class change
+/// (chargen redo, a script) replaces the old class entirely.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn class_ops(t: &MwTable, class: &ClassInfo) -> Vec<StatOp> {
+    let mut out = Vec::with_capacity(28);
+    for (s, &stat) in t.idx.class_skills.iter().enumerate() {
+        let kind = if class.majors.contains(&s) {
+            class_skill::MAJOR
+        } else if class.minors.contains(&s) {
+            class_skill::MINOR
+        } else {
+            class_skill::MISC
+        };
+        out.push(counter(stat, kind));
+    }
+    out.push(counter(t.idx.class_specialization, class.specialization.map_or(0.0, |s| (s + 1) as f32)));
+    out
+}
+
 fn push_values(t: &MwTable, out: &mut Vec<StatOp>, attributes: &[f32; 8], skills: &[f32; 27]) {
     out.extend(t.idx.attributes.iter().zip(attributes).map(|(&i, &v)| set(i, v)));
     out.extend(t.idx.skills.iter().zip(skills).map(|(&i, &v)| set(i, v)));
@@ -230,6 +251,10 @@ pub fn npc_ops(t: &MwTable, g: &MwGmst, db: &RecordDb, npc: &Npc) -> Result<Vec<
         push_values(t, &mut out, &attributes, &stats.skills.map(f32::from));
         let hmf = [stats.health, stats.magicka, stats.fatigue].map(f32::from);
         push_record_pools(t, g, &mut out, &attributes, hmf);
+        // A stored NPC doesn't need its class (OpenMW reads the record); skill progression does.
+        if let Some(class) = db.get::<Class>(&RecordId::new(&npc.class)) {
+            out.extend(class_ops(t, &ClassInfo::of(class)));
+        }
     } else {
         let race = db
             .get::<Race>(&RecordId::new(&npc.race))
@@ -245,6 +270,7 @@ pub fn npc_ops(t: &MwTable, g: &MwGmst, db: &RecordDb, npc: &Npc) -> Result<Vec<
         push_values(t, &mut out, &attributes, &skills);
         // Magicka and fatigue follow the formula (offsets stay 0).
         out.push(set(t.idx.health, autocalc_health(&class, &attributes, level)));
+        out.extend(class_ops(t, &class));
     }
     Ok(out)
 }
@@ -297,6 +323,7 @@ pub fn chargen_ops(t: &MwTable, g: &MwGmst, player: &Npc, choice: Chargen<'_>) -
     }
     if let Some(class) = choice.class {
         let c = ClassInfo::of(class);
+        out.extend(class_ops(t, &c));
         for &f in &c.favoured {
             attributes[f] += 10.0;
         }

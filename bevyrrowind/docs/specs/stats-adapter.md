@@ -1,7 +1,8 @@
 # Stats adapter: Morrowind's attributes, skills, pools, factions on `sf_stats`
 
-Status (2026-11-05): S2 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen init, `MwDerived` maxima; as built:
-`../../../superfargoth/docs/specs/stats-as-built.md` "S2"); S3 models next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
+Status (2026-11-05): S3 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen init, `MwDerived` maxima + regen +
+rest, `OpenMwSkillUse`, `OpenMwLeveling`, `openmw_rules`, `FactionRanks`; as built:
+`../../../superfargoth/docs/specs/stats-as-built.md` "S2", "S3"); S4 Bevy glue next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Content mechanics port 1:1; growth and recovery formulas are the first implementations of the rules seams
 (owner 2026-11-05: `SkillUseModel` starts with OpenMW's values).
@@ -20,7 +21,7 @@ approximate). Content mechanics port 1:1; growth and recovery formulas are the f
 | Attributes (8, ESM indices 0-7) | `strength intelligence willpower agility speed endurance personality luck` | `Value { min 0, cap none }` |
 | Skills (27, SKIL records: governing attribute, specialization, `use_value[4]`) | `block armorer mediumarmor heavyarmor bluntweapon longblade axe spear athletics enchant destruction alteration illusion conjuration mysticism restoration alchemy unarmored security sneak acrobatics lightarmor shortblade marksman mercantile speechcraft handtohand` | `Value` |
 | Pools | `health` (`depleted_below` 1, `KeepCurrent`, stored base), `magicka` (`KeepRatio`, derived), `fatigue` (`KeepRatio`, derived); a record's stored magicka/fatigue = formula + hidden `<pool>.offset` counter (follows attributes by delta; OpenMW snaps to the formula on the first attribute change) | `Pool` |
-| Counters | `level`, `reputation` (0-255), `bounty` (≥ 0), `level.progress`, `progress.<skill>` (27), `levelup.attr.<attribute>` (8), `levelup.spec.<combat/magic/stealth>`, `werewolf.kills` | `Counter`, all but level/reputation/bounty hidden |
+| Counters | `level`, `reputation` (0-255), `bounty` (≥ 0), `level.progress`, `progress.<skill>` (27), `levelup.attr.<attribute>` (8), `levelup.spec.<combat/magic/stealth>`, `werewolf.kills`, `class.<skill>` (27), `class.specialization` | `Counter`, all but level/reputation/bounty hidden |
 | Derived | `capacity`, `encumbrance` (carried weight from `Inputs`), `fatigue.term` | `Derived` |
 | Magnitude (if the effect spec adopts them) | `fortifymaximummagicka`, resistances, ... | `Value`, base 0 |
 
@@ -75,6 +76,10 @@ Roles: `Health` = health, `Mana` = magicka, `Stamina` = fatigue, `Level`, `Carry
   `getSkillProgressRequirement` 187-212): gain = SKIL `use_value[use_kind]` x scale; progress += gain / ((base + 1) x
   type x spec), type = `fMajorSkillBonus` / `fMinorSkillBonus` / `fMiscSkillBonus`, spec = `fSpecialSkillBonus` when the
   skill's specialization is the class's, else 1; raise at progress ≥ 1. No gain at base 100 or as a werewolf.
+  **Class** (S3): read from the sheet's hidden `class.<skill>` (misc 0 / minor 1 / major 2) and `class.specialization`
+  (+ 1, 0 = none) counters, set at init (`class_ops`). The traits pass neither the owner nor `Inputs` to `raise` and
+  the levelling methods, so neither `Inputs` nor a model table keyed by owner could carry it; the class is character
+  data and saves with the sheet.
 - **Skill raise** (same file 40-110): base +1 (cap 100); `level.progress` += `iLevelUpMajorMult` / `iLevelUpMinorMult`
   (misc 0); `levelup.attr.<governing>` += `iLevelUpMajorMultAttribute` / `iLevelUpMinorMultAttribute` /
   `iLevelupMiscMultAttriubte` (sic); `levelup.spec.<spec>` += `iLevelupSpecialization`; usage resets progress to 0
@@ -82,8 +87,8 @@ Roles: `Health` = health, `Mana` = magicka, `Stamina` = fatigue, `Level`, `Carry
 - **Level up** (`mwgui/levelupdialog.cpp` 240-262, `npcstats.cpp` `levelUp` 224-249, `getLevelupAttributeMultiplier`
   258-272): ready at `level.progress` ≥ `iLevelUpTotal`; 3 distinct attribute picks, each + `iLevelUpNNMult` with NN =
   clamp(tally, 0, 10) (1 when the tally is 0 or the GMST is missing), cap 100; then progress -= `iLevelUpTotal` (≥ 0),
-  health base and current += End x `fLevelUpHealthEndMult` (current ≥ 1), level + 1, attribute tallies cleared (verify
-  whether specialization tallies clear too).
+  health base and current += End x `fLevelUpHealthEndMult` (current ≥ 1), level + 1, attribute tallies cleared
+  (specialization tallies stay: verified S3). Picks = min(3, attributes below 100) (`levelupdialog.cpp` `open`).
 
 GMST values (verified against the install by the S2 real-install test, `MwGmst::vanilla()`): fFatigueBase 1.25, fFatigueMult 0.5,
 fPCbaseMagickaMult 1, fNPCbaseMagickaMult 2, fLevelUpHealthEndMult 0.1, iLevelUpTotal 10, fMajorSkillBonus 0.75,
@@ -104,8 +109,9 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
 
 - Membership per FACT id: rank (0-9, -1 = not a member), faction reputation, expelled (`npcstats.cpp` 82-146).
   Promotion check `hasSkillsForRank` (341-380): the faction's skills sorted, best ≥ rank's primary skill value, the next
-  two ≥ its favoured skill value; attribute requirements (FACT rank data) checked by the `RankRequirement` filter
-  (`mwdialogue/filter.cpp`, verify).
+  two ≥ its favoured skill value; the two favoured attributes' base ≥ the rank's values and faction reputation ≥ the
+  rank's are added by `mwdialogue/filter.cpp` (`hasFactionRankSkillRequirements`, `...ReputationRequirements`,
+  `RankRequirement` = +1 skills/attributes, +2 reputation, for the next rank; 0 at rank 9). Built S3: `FactionRanks`.
 - `reputation` clamps to 0..=255 (`npcstats.cpp` ~322-333). `bounty` ≥ 0; writers (crime spec) use `iCrimeTresspass`,
   `iCrimePickPocket`, `iCrimeAttack`, `iCrimeKilling`, `fCrimeStealing` x value, `iWereWolfBounty`
   (`mechanicsmanagerimp.cpp` 1227-1262, 1468, 1973).

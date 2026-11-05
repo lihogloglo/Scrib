@@ -47,7 +47,7 @@ pub(crate) const VANILLA_SKILLS: [(usize, usize); 27] = [
     (4, 2), // handtohand
 ];
 
-fn table() -> MwTable {
+pub(crate) fn table() -> MwTable {
     MwTable::with_skills(VANILLA_SKILLS.map(|(governing, specialization)| SkillInfo {
         governing,
         specialization,
@@ -68,7 +68,7 @@ const OWNER: StatOwner = StatOwner::Actor(ActorKey(1));
 
 /// Redguard-like male: Str 50 Int 30 Wil 30 Agi 40 Spd 40 End 50 Per 30 Luck 40; Long Blade +15,
 /// five combat skills +5.
-fn redguard() -> Race {
+pub(crate) fn redguard() -> Race {
     use SkillId as S;
     Race {
         id: "Redguard".into(),
@@ -105,7 +105,7 @@ fn redguard() -> Race {
 
 /// Warrior-like: favoured Str, End; combat; majors Long Blade, Block, Medium, Heavy, Athletics;
 /// minors Spear, Armorer, Axe, Blunt, Hand-to-hand.
-fn warrior() -> Class {
+pub(crate) fn warrior() -> Class {
     use SkillId as S;
     Class {
         id: "Warrior".into(),
@@ -129,7 +129,7 @@ fn warrior() -> Class {
     }
 }
 
-fn db() -> RecordDb {
+pub(crate) fn db() -> RecordDb {
     let mut db = RecordDb::new();
     db.register::<Race>("RACE").unwrap();
     db.register::<Class>("CLAS").unwrap();
@@ -168,7 +168,7 @@ fn skill(t: &MwTable, s: &sf_stats::Sheet, id: SkillId) -> f32 {
 #[test]
 fn table_has_the_format_stats_and_roles() {
     let t = table();
-    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 3);
+    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3);
     for (i, a) in ATTRIBUTES.iter().enumerate() {
         assert_eq!(t.table.find(a), Some(t.idx.attributes[i]));
         assert_eq!(usize::from(t.idx.attributes[i].0), i);
