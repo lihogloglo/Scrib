@@ -78,3 +78,18 @@ SOFTWARE.
   at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the openmw-rtx and OpenMW contributors (maintainer: xorza).
 - Ported into: `superfargoth/crates/sf_texture/src/delight.rs` (the shading grid estimate and its apply step) and its
   tests, with the changes listed in that file's header.
+
+## OpenMW (character stats)
+
+- Source: https://github.com/OpenMW/openmw, commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`:
+  `apps/openmw/mwclass/npc.cpp` (`autoCalculateAttributes`, `autoCalculateSkills`, `round_ieee_754`,
+  `Npc::ensureCustomData`, `getCapacity`), `apps/openmw/mwclass/creature.cpp` (`ensureCustomData`, `getSkill`,
+  `getCapacity`), `apps/openmw/mwmechanics/mechanicsmanagerimp.cpp` (`buildPlayer`), `apps/openmw/mwmechanics/
+  npcstats.cpp` (`updateHealth`), `apps/openmw/mwmechanics/creaturestats.cpp` (`recalculateMagicka`, fatigue in
+  `setAttribute`, `getFatigueTerm`), `apps/openmw/mwmechanics/stat.cpp` (`DynamicStat::setCurrent`) and
+  `apps/openmw/mwmechanics/spelleffects.cpp` (`damageAttribute`/`damageSkill` cap).
+- Licence: GPL-3.0 (OpenMW: "GNU General Public License version 3"; the full text is the repository's `LICENSE`,
+  identical to the GNU GPL v3 at https://www.gnu.org/licenses/gpl-3.0.txt). Holder: the OpenMW contributors.
+- Ported into: `bevyrrowind/crates/mw_stats/src/{init,derived}.rs` (the game; f32 arithmetic in OpenMW's order,
+  differences listed in the module docs) and, for the two stat semantics only, `superfargoth/crates/sf_stats/src/ops.rs`
+  (`set_current`, capped `StatOp::Damage`).

@@ -1,6 +1,7 @@
 # Stats adapter: Morrowind's attributes, skills, pools, factions on `sf_stats`
 
-Status (2026-11-05): spec, nothing built. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
+Status (2026-11-05): S2 built (`mw_stats`: table, `MwGmst`, NPC/creature/chargen init, `MwDerived` maxima; as built:
+`../../../superfargoth/docs/specs/stats-as-built.md` "S2"); S3 models next. Framework: `../../../superfargoth/docs/specs/stats.md` (build plan S0-S9).
 Ported from OpenMW `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (paths under `apps/openmw/` unless noted; line numbers
 approximate). Content mechanics port 1:1; growth and recovery formulas are the first implementations of the rules seams
 (owner 2026-11-05: `SkillUseModel` starts with OpenMW's values).
@@ -18,7 +19,7 @@ approximate). Content mechanics port 1:1; growth and recovery formulas are the f
 |---|---|---|
 | Attributes (8, ESM indices 0-7) | `strength intelligence willpower agility speed endurance personality luck` | `Value { min 0, cap none }` |
 | Skills (27, SKIL records: governing attribute, specialization, `use_value[4]`) | `block armorer mediumarmor heavyarmor bluntweapon longblade axe spear athletics enchant destruction alteration illusion conjuration mysticism restoration alchemy unarmored security sneak acrobatics lightarmor shortblade marksman mercantile speechcraft handtohand` | `Value` |
-| Pools | `health` (`depleted_below` 1, `KeepCurrent`, stored base), `magicka` (`KeepRatio`, derived), `fatigue` (`KeepRatio`, derived) | `Pool` |
+| Pools | `health` (`depleted_below` 1, `KeepCurrent`, stored base), `magicka` (`KeepRatio`, derived), `fatigue` (`KeepRatio`, derived); a record's stored magicka/fatigue = formula + hidden `<pool>.offset` counter (follows attributes by delta; OpenMW snaps to the formula on the first attribute change) | `Pool` |
 | Counters | `level`, `reputation` (0-255), `bounty` (≥ 0), `level.progress`, `progress.<skill>` (27), `levelup.attr.<attribute>` (8), `levelup.spec.<combat/magic/stealth>`, `werewolf.kills` | `Counter`, all but level/reputation/bounty hidden |
 | Derived | `capacity`, `encumbrance` (carried weight from `Inputs`), `fatigue.term` | `Derived` |
 | Magnitude (if the effect spec adopts them) | `fortifymaximummagicka`, resistances, ... | `Value`, base 0 |
@@ -39,15 +40,17 @@ Roles: `Health` = health, `Mana` = magicka, `Stamina` = fatigue, `Level`, `Carry
 ## Initialisation
 
 - **NPC, not autocalc**: level, attributes, skills, health, magicka, fatigue from NPDT; base disposition and reputation
-  (`mwclass/npc.cpp` 305-330).
+  (`mwclass/npc.cpp` 305-330). Any NPC with a faction: reputation = `iAutoRepFacMod` x (rank + 1) + `iAutoRepLevMod`
+  x (level - 1) (`npc.cpp` 349-363), membership at the NPDT rank.
 - **NPC autocalc** (`npc.cpp` `autoCalculateAttributes` 114-174, `autoCalculateSkills` 190-245): dynamics start at 10;
   attributes = race base (by sex) + 10 per class favoured attribute + round((level - 1) x Σ over its governed skills
   of 1.0 major / 0.5 minor / 0.2 misc), max 100; health = floor(0.5 x (Str + End)) + m x (level - 1), m = 3 + 2
   combat / + 1 stealth specialization + 1 if Endurance is favoured; skills = 5 + race bonus + 25 major / 10 minor + 5
-  same specialization + round((level - 1) x (1.0 major-or-minor else 0.1, + 0.5 same specialization)), max 100.
-  Magicka and fatigue then come from `MwDerived` (verify the NPC magicka path: `recalculateMagicka` on spawn).
+  same specialization + round((level - 1) x (1.0 major-or-minor else 0.1, + 0.5 same specialization)), max 100;
+  round = half to even (`round_ieee_754`). Magicka and fatigue come from `MwDerived` (verified: `setAttribute`
+  recomputes fatigue, `recalculateMagicka` runs at the end of `ensureCustomData`).
 - **Creature**: CREA attributes, health, magicka, fatigue, level; its three skill values (combat, magic, stealth) fill
-  every skill of that specialization (`mwclass/creature.cpp` `getSkill`, verify).
+  every skill of that specialization (`mwclass/creature.cpp` `getSkill`, verified).
 - **Player, chargen** (`mwmechanics/mechanicsmanagerimp.cpp` `buildPlayer` 111-221): attributes = race base; skills = 5
   + race bonus; class: +10 favoured attributes, +10 minor, +25 major, +5 same specialization; race and birthsign powers
   (spells: effect spec); `updateHealth` = floor(0.5 x (Str + End)) (`npcstats.cpp` ~251); all currents = max.
@@ -82,10 +85,11 @@ Roles: `Health` = health, `Mana` = magicka, `Stamina` = fatigue, `Level`, `Carry
   health base and current += End x `fLevelUpHealthEndMult` (current ≥ 1), level + 1, attribute tallies cleared (verify
   whether specialization tallies clear too).
 
-GMST defaults expected in Morrowind.esm (the S2 test prints the install's): fFatigueBase 1.25, fFatigueMult 0.5,
+GMST values (verified against the install by the S2 real-install test, `MwGmst::vanilla()`): fFatigueBase 1.25, fFatigueMult 0.5,
 fPCbaseMagickaMult 1, fNPCbaseMagickaMult 2, fLevelUpHealthEndMult 0.1, iLevelUpTotal 10, fMajorSkillBonus 0.75,
 fMinorSkillBonus 1, fMiscSkillBonus 1.25, fSpecialSkillBonus 0.8, fEncumbranceStrMult 5, fFatigueReturnBase 2.5,
-fFatigueReturnMult 0.02, fEndFatigueMult 0.04, fRestMagicMult 0.15, iLevelUp01-04Mult 2, 05-07 3, 08-09 4, 10 5 (verify).
+fFatigueReturnMult 0.02, fEndFatigueMult 0.04, fRestMagicMult 0.15, iLevelUp01-04Mult 2, 05-07 3, 08-09 4, 10 5; iLevelUpMajorMult, iLevelUpMinorMult, the three
+*MultAttribute and iLevelupSpecialization 1; iAutoRepFacMod 2, iAutoRepLevMod 0.
 
 ## Effect mapping (input to the effect spec)
 

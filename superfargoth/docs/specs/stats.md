@@ -1,6 +1,6 @@
 # Character stats: data-defined values, pools, modifiers, progression seams (`sf_stats`)
 
-Status (2026-11-05): S0 + S1 built (`sf_stats`; as-built detail: `stats-as-built.md`); S2 next. Game side:
+Status (2026-11-05): S0-S2 built (`sf_stats`, `mw_stats` table + init; as-built detail: `stats-as-built.md`); S3 next. Game side:
 `../../../bevyrrowind/docs/specs/stats-adapter.md` (Morrowind's 8 attributes, 27 skills, GMSTs, OpenMW formulas).
 Unblocks ROADMAP 2.7 (every OpenMW content mechanic needs stats: `../../../bevyrrowind/docs/research/openmw-mechanics-2026-11-05.md`
 "Finding zero"). The spell/effect runtime is the **next** spec: this one defines only the seam it writes through
@@ -275,15 +275,9 @@ other clients get the `public` stats only (health ratio and level by default) th
 
 ## Tests
 
-Logic and data: exact assertions (CONTRIBUTING "Tests").
-- Layers: the modified formula; Restore stops at 0 damage; damage capped at modified when asked; Mul sums.
-- Sources: add then remove = byte-identical sheet; unknown remove = no-op; two sources on one stat remove independently.
-- Pools: `PoolAdjust` matches OpenMW's `DynamicStat::setCurrent` on its 8 flag cases (`stat.cpp`); `KeepRatio`;
-  `Depleted` once per crossing.
-- Seams (`TestModel`): `UseSkill` emits `SkillUsed`, then `SkillRaised` at the threshold; `LevelUp` with a wrong pick
-  count is refused. Groups: join, rank, expel, clear, reputation.
-- Determinism: one op stream twice = identical postcard bytes; serde shape golden for `SheetSave`.
-- Measurement (`#[ignore = "measurement: ..."]`): 500 sheets, 10% dirty, tick cost.
+Logic and data: exact assertions (CONTRIBUTING "Tests"): layers, sources (add then remove = byte-identical), pool
+flags against OpenMW's `setCurrent`, seams through `TestModel`, groups, determinism (postcard bytes, `SheetSave` shape
+golden), a tick-cost measurement. The full list: `stats-as-built.md` "Tests".
 
 ## Build plan
 
@@ -293,8 +287,8 @@ One deliverable plus its test per slice; S1-S3 are Bevy-free and need no game ru
 |---|---|---|
 | **S0** ids [x] 2026-11-05 | `ActorKey`, `PlayerKey` move to `sf_ids` (re-exported by `sf_rpg`) | workspace builds; save goldens unchanged |
 | **S1** core [x] 2026-11-05 | `sf_stats`: table, sheet, modifiers, ops, `apply`/`tick`, events, model traits, `TestModel` | "Tests" list above (23 + measurement 0.040 ms) |
-| **S2** Morrowind table + init | `mw_stats`: defs from attributes + SKIL, roles, GMST snapshot, record / autocalc / chargen init | formula tests against OpenMW (adapter "Tests"); real-install sanity on every NPC and creature |
-| **S3** Morrowind models | `mw_stats`: `MwDerived`, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs |
+| **S2** Morrowind table + init [x] 2026-11-05 | `mw_stats`: defs from attributes + SKIL, roles, GMST snapshot, record / autocalc / chargen init; `MwDerived` maxima and derived stats (init needs them) | formula tests against OpenMW (14); real install: 3041 NPCs, 396 creatures, 420 chargen sheets sane |
+| **S3** Morrowind models | `mw_stats`: `MwDerived` regen + rest, `OpenMwSkillUse`, `OpenMwLeveling`, faction rank requirements | exact formula tests with vanilla GMSTs |
 | **S4** Bevy plugin | `sf_stats_bevy` + game glue: `Stats` on the player, NPCs and creatures at spawn; fixed-tick sets; events | headless app: spawn, apply, regen, events in order |
 | **S5** combat + HUD | vitals refresh/difference wiring; `PlayerVitals` and `PlayerCombat` health/fatigue removed; HUD bars from roles | a hit on the dummy lowers its sheet's health; roll cost lowers the player's fatigue; HUD view-model reads the sheet. Visual check HD-x "bars follow damage and regen" (awaiting owner) |
 | **S6** dialogue | `MwView::function` and `player_rank` from the sheet; `PlayerStatsPlaceholder` removed | existing filter tests plus PC stat and rank filters |

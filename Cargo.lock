@@ -5679,6 +5679,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_stats"
+version = "0.1.0"
+dependencies = [
+ "mw_install",
+ "mw_records",
+ "mw_vfs",
+ "sf_records",
+ "sf_stats",
+ "sf_vfs",
+ "smallvec",
+ "tes3",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "mw_vfs"
 version = "0.1.0"
 dependencies = [

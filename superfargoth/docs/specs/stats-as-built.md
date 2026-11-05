@@ -35,12 +35,17 @@ Decisions taken while building (the spec text is the design; these are the detai
   without rebase); sources re-add modifiers; `settle(.., Settle::Loaded)` recomputes and keeps saved currents (a
   fortified current over the unfortified max survives), `Settle::NewCharacter` fills pools and clears
   `changed_since_init`.
-- **Damage cap**: `cap_at_modified` stops damage at `eff_base + temp` (before `Mul`, ≥ 0), so the modified value
-  bottoms at 0; a damage already above the threshold is lowered to it (OpenMW `AttributeValue::damage` as recalled:
-  S2/S3 verify against the OpenMW source with a commit).
-- **Pool currents**: `set_current` follows OpenMW's `DynamicStat::setCurrent` flags (8 branches,
-  tested; written from the documented behaviour, S3 verifies against the OpenMW source). `PoolAdjust` =
+- **Damage cap** (fixed in S2 against OpenMW `ca5e2576` `spelleffects.cpp` `damageAttribute`/`damageSkill`:
+  `magnitude = min(getModified(), magnitude); damage(magnitude)`; `AttributeValue::damage` itself never caps):
+  `cap_at_modified` caps the *amount* at the value left before `Mul` (`eff_base - damage + temp`, ≥ 0). Damage already
+  past it (an uncapped drain) is kept; S1 lowered it to the threshold, which let a later partial Restore show value
+  OpenMW doesn't. Test `capped_damage_keeps_damage_already_past_the_value`.
+- **Pool currents**: `set_current` = OpenMW `DynamicStat::setCurrent` (`stat.cpp` at `ca5e2576`), checked branch by
+  branch in S2: identical, no change (`getModified` = max(0, base + modifier) = our pool max). `PoolAdjust` =
   `set_current(current + delta, ..)` against the max after earlier ops of the same call.
+- **Derived refresh** (S2): derived stats are also refreshed after pool currents move without a recompute (end of
+  `apply`, after regen in `tick`, after `settle` fills pools): a derived stat may read a current (Morrowind's fatigue
+  term); S1 left it stale until the next recompute. Measurement after: 0.043 ms per tick (was 0.040).
 - **Rejected ops**: an op on the wrong stat kind, an unknown index, a refused level-up or model recursion deeper than 4
   changes nothing; `apply` returns the count. A skill raise the model refuses (a cap) is not rejected: no event.
 - **Groups**: `Membership.rank` is `Option<i32>`; reputation and the expelled flag exist without membership (scripts
@@ -63,3 +68,57 @@ Decisions taken while building (the spec text is the design; these are the detai
   Wiring into `sf.character` v3 and the overlay blob is S8.
 - **Measurement** (release, owner laptop, other builds idle-ish): 500 sheets × 77 stats, 10 % applying one op per tick,
   all 500 regenerating: **0.040 ms per tick** (budget 0.05 ms). Snapshots are inline `SmallVec`s (no heap per step).
+
+## Tests (`sf_stats`, moved from the spec)
+
+Logic and data, exact: layers (the modified formula; Restore stops at 0 damage; capped damage; Mul sums); sources (add
+then remove = byte-identical sheet; unknown remove = no-op; two sources on one stat remove independently); pools
+(`PoolAdjust` on OpenMW's 8 `setCurrent` flag cases; `KeepRatio`; `Depleted` once per crossing); seams through
+`TestModel` (`UseSkill` emits `SkillUsed`, then `SkillRaised` at the threshold; a wrong pick count refuses `LevelUp`);
+groups (join, rank, expel, clear, reputation); determinism (one op stream twice = identical postcard bytes; `SheetSave`
+shape golden); measurement (`#[ignore = "measurement: ..."]`): 500 sheets, 10 % dirty, tick cost. 24 tests after S2.
+
+## S2 Morrowind table + init (2026-11-05): `bevyrrowind/crates/mw_stats`
+
+Bevy-free (hakari `final-excludes`); deps `sf_stats`, `sf_records`, `tes3`, smallvec, thiserror. Ported from OpenMW
+`ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f` (`THIRD_PARTY_NOTICES.md` "OpenMW (character stats)"). Modules: `table`
+(`MwTable { table, idx: MwIdx, skills: [SkillInfo; 27] }`, `defs()`, `roles()`), `gmst` (`MwGmst`: 23 named GMSTs +
+`iLevelUp01-10Mult`, `vanilla()`, `from_db` → (snapshot, missing names), `entries()`), `init` (`npc_ops`,
+`creature_ops`, `chargen_ops` + `Chargen`, `new_sheet`, `ops_for_missing`, the pure autocalc functions), `derived`
+(`MwDerived` + pure formulas). Details the adapter spec left open:
+
+- **Table** (88 stats, index order): 8 attributes, 27 skills (`OpenMW` RefId keys, labels = their GMST name ids such as
+  `sSkillLongblade`), magnitude `fortifymaximummagicka`, pools `health` (stored, `KeepCurrent`, depleted below 1),
+  `magicka`/`fatigue` (derived, `KeepRatio`, depleted below 0), counters `level`, `reputation` 0-255, `bounty`,
+  `level.progress`, `progress.<skill>`, `levelup.attr.<attr>`, `levelup.spec.<spec>`, `werewolf.kills`, internal
+  `magicka.offset`, `fatigue.offset`, `actor.creature` (0/1), derived `capacity`, `encumbrance`, `fatigue.term`.
+  `MwTable::from_db` requires all 27 SKIL records (governing attribute and specialization in range).
+- **Record magicka and fatigue as offsets.** OpenMW keeps a non-autocalc NPC's or creature's stored magicka and fatigue
+  until an attribute changes, then snaps them to the formula (`creaturestats.cpp` `setAttribute`, `recalculateMagicka`).
+  Here `MwDerived::pool_base` = formula + `<pool>.offset`, the offset set at init to record - formula(record attributes):
+  the record value at spawn, then the max follows attribute changes by their delta instead of snapping. Real install:
+  140 of 1102 stored NPCs and 385/394 of 396 creatures have a non-zero offset (magicka/fatigue).
+- **Creature capacity** is Str x 5 (`creature.cpp`), NPCs Str x `fEncumbranceStrMult`: the `actor.creature` counter tells
+  `MwDerived`. Encumbrance = `Inputs::carried` (Feather/Burden, werewolf 0: effect runtime).
+- **Autocalc**: the flag or a 12-byte NPDT (no stored stats) both autocalc (OpenMW would read zeros for the latter and
+  spawn the NPC dead). Arithmetic in `f32` in OpenMW's order, `round_ties_even` for `round_ieee_754`, skills iterate in
+  ESM index order (OpenMW iterates its skill store; sums of 0.2/0.5/1.0 can differ in the last bit only).
+- **Reputation**: a faction member's is `iAutoRepFacMod` x (rank + 1) + `iAutoRepLevMod` x (level - 1) for every NPC
+  (`ensureCustomData`, autocalc or not), else NPDT; membership = `SetRank { faction, NPDT rank }`.
+- **Chargen** = `buildPlayer`: the `player` record's level, reputation and NPDT values; race (if chosen) replaces
+  attributes (by sex) and sets skills to 5 + bonus; class (if chosen) adds +10 favoured, +10 minor, +25 major, +5
+  specialization (no 100 cap, as OpenMW); health floor((Str + End) / 2) from base attributes; offsets 0.
+- **Not in init**: spells, abilities, powers (race, birthsign, NPC lists, autocalc spells): the effect runtime adds their
+  modifiers as sources (the chargen test adds Fortify Maximum Magicka 15 / 5 by hand: 125 / 75). Base disposition and AI
+  settings are not stats.
+- **`MwDerived`** in S2 covers `pool_base` (magicka, fatigue) and `derived`; `regen`/`rest` push nothing until S3.
+- **GMSTs**: every `vanilla()` value equals the installed Morrowind + Tribunal + Bloodmoon value (0 missing);
+  `iLevelUpMajorMult`, `iLevelUpMinorMult`, the three `*MultAttribute`, `iLevelupSpecialization` are all 1,
+  `iAutoRepFacMod` 2, `iAutoRepLevMod` 0.
+- **Tests**: 14 exact (autocalc level-10 warrior attributes, health, skills incl. half-to-even ties 82.5 → 82 and
+  63.5 → 64; level 0; missing race/class refused; stored NPC + rank + reputation; record pools follow attributes by
+  delta with ratio kept and the fatigue term; creature; chargen Altmer-/Breton-like 125/75; dev start; formulas;
+  12-byte NPDT; `ops_for_missing`). Real install (`#[ignore = "real install"]`, `cargo test -p mw_stats --release --test
+  real_install -- --ignored --nocapture`, 0.6 s): 3041 NPCs (1939 autocalc, levels 0-99, 0 init errors, 25 values over
+  100, 84 placed with 0 health), 396 creatures (82 values over 100, 21 at 0 health), chargen 10 races x 21 classes x 2
+  sexes; all finite, values in 0..=255, pools full; prints the GMST snapshot and SKIL table.

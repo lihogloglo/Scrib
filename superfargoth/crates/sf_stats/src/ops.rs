@@ -16,8 +16,9 @@ pub enum StatOp {
     /// A value's or pool's base, or a counter's value.
     SetBase { stat: StatIdx, value: f32 },
     ModBase { stat: StatIdx, delta: f32 },
-    /// Raises a value's damage; `cap_at_modified` stops it at base + modifiers (`OpenMW`
-    /// `AttributeValue::damage`), so the modified value bottoms out at 0.
+    /// Raises a value's damage; `cap_at_modified` caps the amount at the value left before `Mul`
+    /// modifiers (`OpenMW` `spelleffects.cpp` `damageAttribute`/`damageSkill`), so the modified
+    /// value bottoms out at 0 and damage already past it (an uncapped drain) is kept.
     Damage { stat: StatIdx, amount: f32, cap_at_modified: bool },
     /// Lowers a value's damage, never below 0.
     Restore { stat: StatIdx, amount: f32 },
@@ -138,6 +139,7 @@ pub fn apply(
         run.op(sheet, op, 0);
     }
     sheet.recompute(table, rules, ctx.inputs);
+    sheet.refresh_derived(table, rules, ctx.inputs);
     let rejected = run.rejected;
     before.diff(table, sheet, ctx.owner, ctx.cause, out);
     if !ready_before && rules.leveling.ready(&sheet.view(table)) {
@@ -166,6 +168,7 @@ pub fn tick(table: &StatTable, rules: &Rules, sheet: &mut Sheet, ctx: &TickCtx<'
         for op in ops.iter().filter(|op| matches!(op, StatOp::PoolAdjust { .. } | StatOp::PoolSetCurrent { .. })) {
             run.op(sheet, op, 1);
         }
+        sheet.refresh_derived(table, rules, ctx.inputs);
     }
     before.diff(table, sheet, ctx.owner, cause, out);
 }
@@ -261,13 +264,13 @@ impl Run<'_, '_> {
                 let Some(Slot::Value(s)) = slot(*stat) else { return self.reject() };
                 let sums = sheet.sums(*stat);
                 let v = &mut sheet.values[usize::from(s)];
-                v.damage += amount.max(0.0);
+                let mut amount = amount.max(0.0);
                 if *cap_at_modified {
-                    let threshold = (v.base + sums.permanent + sums.temp).max(0.0);
-                    if v.damage > threshold {
-                        v.damage = threshold;
-                    }
+                    // `OpenMW` `damageAttribute`/`damageSkill`: the amount is capped at the value
+                    // left (base - damage + modifiers, ≥ 0); damage already past it is kept.
+                    amount = amount.min((v.base + sums.permanent - v.damage + sums.temp).max(0.0));
                 }
+                v.damage += amount;
                 sheet.dirty = true;
                 sheet.changed_since_init = true;
             }
@@ -418,7 +421,8 @@ fn set_counter(table: &StatTable, sheet: &mut Sheet, stat: StatIdx, slot: u16, v
 }
 
 /// `OpenMW` `DynamicStat<T>::setCurrent(value, allowDecreaseBelowZero, allowIncreaseAboveModified)`
-/// (`apps/openmw/mwmechanics/stat.cpp`): an increase stops at the max unless allowed (and never
+/// (`apps/openmw/mwmechanics/stat.cpp` at `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`, checked
+/// branch by branch in stats S2): an increase stops at the max unless allowed (and never
 /// lowers a current already above it); a decrease stops at 0 unless allowed (and never raises a
 /// current already below it).
 pub fn set_current(current: f32, max: f32, value: f32, below_zero: bool, above_max: bool) -> f32 {

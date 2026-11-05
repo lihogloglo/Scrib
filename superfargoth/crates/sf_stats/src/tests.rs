@@ -195,6 +195,24 @@ fn damage_capped_at_modified_when_asked() {
     assert_eq!((s.view(&t).damage(BLADE), s.view(&t).modified(BLADE)), (100.0, 0.0));
 }
 
+/// `OpenMW` `damageAttribute`: `magnitude = min(modified, magnitude)`, so damage past the value
+/// (an uncapped drain of 60 on 50) is kept, not lowered; a later restore of 5 leaves it at 0.
+#[test]
+fn capped_damage_keeps_damage_already_past_the_value() {
+    let (t, r, mut s) = setup();
+    ops(&t, &r, &mut s, &[
+        StatOp::Damage { stat: STR, amount: 60.0, cap_at_modified: false },
+        StatOp::Damage { stat: STR, amount: 5.0, cap_at_modified: true },
+    ]);
+    assert_eq!((s.view(&t).damage(STR), s.view(&t).modified(STR)), (60.0, 0.0));
+    ops(&t, &r, &mut s, &[StatOp::Restore { stat: STR, amount: 5.0 }]);
+    assert_eq!((s.view(&t).damage(STR), s.view(&t).modified(STR)), (55.0, 0.0));
+    ops(&t, &r, &mut s, &[StatOp::Damage { stat: STR, amount: 30.0, cap_at_modified: false }]);
+    ops(&t, &r, &mut s, &[StatOp::Restore { stat: STR, amount: 80.0 }]);
+    ops(&t, &r, &mut s, &[StatOp::Damage { stat: STR, amount: 20.0, cap_at_modified: true }]);
+    assert_eq!((s.view(&t).damage(STR), s.view(&t).modified(STR)), (25.0, 25.0));
+}
+
 #[test]
 fn add_then_remove_source_is_byte_identical() {
     let (t, r, mut s) = setup();

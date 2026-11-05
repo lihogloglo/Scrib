@@ -148,6 +148,7 @@ impl Sheet {
             for p in &mut self.pools {
                 p.current = p.max;
             }
+            self.refresh_derived(table, rules, inputs);
             self.changed_since_init = false;
         }
     }
@@ -209,6 +210,13 @@ impl Sheet {
             }
             p.max = max;
         }
+        self.refresh_derived(table, rules, inputs);
+    }
+
+    /// Recomputes only the derived stats (a game has a handful). Also runs after pool currents
+    /// move without a recompute (pool ops, regen, settle): a derived stat may read them (a
+    /// stamina term such as Morrowind's fatigue term).
+    pub(crate) fn refresh_derived(&mut self, table: &StatTable, rules: &crate::Rules, inputs: &crate::Inputs) {
         for (slot, &idx) in table.of_kind(3).iter().enumerate() {
             self.derived[slot] = rules.derived.derived(&self.view(table), idx, inputs);
         }
