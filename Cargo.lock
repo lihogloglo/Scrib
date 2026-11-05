@@ -5368,6 +5368,7 @@ dependencies = [
  "sf_save_bevy",
  "sf_shadow_cache_bevy",
  "sf_sky_bevy",
+ "sf_surface_bevy",
  "sf_terrain_bevy",
  "sf_ui",
  "sf_ui_bevy",
@@ -8344,6 +8345,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_surface_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_light",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_platform",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_transform",
+ "naga",
+ "sf_coords",
+ "sf_diag_bevy",
+ "sf_sky_bevy",
+ "sf_surface",
+ "sf_terrain_bevy",
+ "sf_weather_bevy",
+ "sf_wind_bevy",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_terrain"
 version = "0.1.0"
 dependencies = [
@@ -10622,6 +10650,7 @@ dependencies = [
  "log",
  "memchr",
  "miniz_oxide 0.8.9",
+ "naga",
  "naga-types",
  "nix",
  "nonmax",

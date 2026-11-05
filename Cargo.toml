@@ -107,6 +107,8 @@ meshopt = "0.6.2"
 # Luau runtime (scripting.md R1/R2). Only sf_script depends on it; `send` is an sf_script feature (on by
 # default) so the L1 spike can A/B it against `NonSend` storage.
 mlua = { version = "0.12.2", default-features = false, features = ["luau"] }
+# WGSL validation in tests (sf_surface_bevy layer.wesl): the naga wgpu already builds.
+naga = { version = "30", default-features = false }
 # Collision queries (sf_controller's static query world): the library under avian and rapier.
 # Bevy-free; its math types are glam 0.33 (through glamx), the same glam as ours.
 parry3d = { version = "0.31.1", default-features = false, features = ["required-features", "std", "alloc"] }
@@ -202,6 +204,7 @@ sf_shadow_cache_bevy = { path = "superfargoth/crates/sf_shadow_cache_bevy", vers
 sf_sky = { path = "superfargoth/crates/sf_sky", version = "0.1.0" }
 sf_sky_bevy = { path = "superfargoth/crates/sf_sky_bevy", version = "0.1.0" }
 sf_surface = { path = "superfargoth/crates/sf_surface", version = "0.1.0" }
+sf_surface_bevy = { path = "superfargoth/crates/sf_surface_bevy", version = "0.1.0" }
 sf_terrain = { path = "superfargoth/crates/sf_terrain", version = "0.1.0" }
 sf_terrain_bevy = { path = "superfargoth/crates/sf_terrain_bevy", version = "0.1.0" }
 sf_texture = { path = "superfargoth/crates/sf_texture", version = "0.1.0" }

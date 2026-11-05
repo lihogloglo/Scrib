@@ -143,3 +143,13 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   is built (`froxel_inject.wesl:156-165`, fog.md "Froxel fog as built"). Suspects (not tested): froxel slices too
   coarse at 160x90x64 / 384 m, in-scatter too weak against the fog's ambient, shadow term not reaching the froxels.
 - Status: known bug: not diagnosed (owner pass 2026-11-02).
+
+### SW-2: Surface weather shelter and cells debug tint (surface-weather.md W2)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather clear`;
+  console (`` ` ``): `surface debug exposure`, later `surface debug cells`, `surface set wet 0.6`, `surface debug off`.
+- Look for (exposure, terrain only in W2): open ground warm yellow; ground under roofs, eaves, the bridge arches and
+  tree canopies blue with soft 3×3 edges; slopes not self-shadowed blue; the tint follows you across Balmora with no
+  pop when it redraws (every 16 m) and turns open-sky yellow toward ~64 m out.
+- Look for (cells): grey 32 m squares with dark borders that stay put as you walk; after `surface set wet 0.6` they
+  turn blue; purple only past ~2 km. `surface debug off`: terrain looks exactly as before.
+- Status: awaiting owner (built 2026-11-05).

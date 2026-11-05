@@ -13,6 +13,7 @@ use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 use sf_diag_bevy::DiagCounters;
 use sf_records::RecordId;
 use sf_sky_bevy::{SkyConfig, SkyTime};
+use sf_surface::view::DebugView;
 use sf_surface::{CELL_M, CellGrid, Channel, RateSource, SurfaceSave, SurfaceState, SurfaceTuning, WeatherRates, cell_of};
 use sf_weather::{ClimateIx, WeatherBook};
 
@@ -25,11 +26,23 @@ pub struct WorldSurface {
     pub state: SurfaceState,
     pub tuning: SurfaceTuning,
     grid: Option<CellGrid>,
+    generation: u64,
 }
 
 impl WorldSurface {
     pub fn grid(&self) -> Option<&CellGrid> {
         self.grid.as_ref()
+    }
+
+    /// Bumps on every change the GPU copy must follow (a step, a new grid, the console, a
+    /// restore): `sf_surface_bevy` rewrites its cell window when it moves. Code that writes
+    /// `state` directly calls [`Self::touch`].
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn touch(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// The saved form (climates by id).
@@ -41,8 +54,13 @@ impl WorldSurface {
     /// the next step warms up from the weather over the catch-up window.
     pub fn restore(&mut self, save: Option<&SurfaceSave>, book: &WeatherBook) {
         self.state = save.map_or_else(SurfaceState::default, |s| SurfaceState::from_save(s, book));
+        self.touch();
     }
 }
+
+/// `surface debug <off|exposure|cells>`: the debug view `sf_surface_bevy` shows.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SurfaceDebug(pub DebugView);
 
 /// Game hours since the clock's epoch.
 fn game_hours(time: &SkyTime, config: &SkyConfig) -> f64 {
@@ -61,17 +79,21 @@ pub(crate) fn advance(
     mut surface: ResMut<WorldSurface>,
     counters: Option<Res<DiagCounters>>,
 ) {
-    let WorldSurface { state, tuning, grid } = &mut *surface;
+    let WorldSurface { state, tuning, grid, generation } = &mut *surface;
     if let Some(m) = map.as_deref()
         && let Some(ws) = &m.worldspace
         && grid.as_ref().is_none_or(|g| g.worldspace() != ws)
     {
         *grid = Some(CellGrid::new(ws.clone(), m.map.raster()));
+        *generation = generation.wrapping_add(1);
     }
     let t0 = Instant::now();
     let rates = WeatherRates { book: &records.0, state: &world.0 };
     let grids: Vec<&CellGrid> = grid.iter().collect();
     let steps = sf_surface::advance(state, game_hours(&time, &config), &rates, &grids, tuning);
+    if steps > 0 {
+        *generation = generation.wrapping_add(1);
+    }
     if steps > 0
         && let Some(c) = counters
     {
@@ -87,18 +109,26 @@ pub(crate) fn register_console(app: &mut App) {
         CommandSpec::new("surface")
             .help(
                 "Surface weather (host): `surface dump`, `surface clear`, `surface set <wet|puddle|snow|ash> <0..1> [here|<climate>]` \
-                 (here: the camera's climates; snow/ash set every cell those climates weigh)",
+                 (here: the camera's climates; snow/ash set every cell those climates weigh); \
+                 `surface debug <off|exposure|cells>` (terrain tint: shelter exposure, 32 m cells)",
             )
-            .param(Param::new("action", ArgKind::choice(&["set", "dump", "clear"])))
-            .param(Param::new("channel", ArgKind::choice(&["wet", "puddle", "snow", "ash"])).optional())
+            .param(Param::new("action", ArgKind::choice(&["set", "dump", "clear", "debug"])))
+            .param(Param::new("channel", ArgKind::choice(&["wet", "puddle", "snow", "ash", "off", "exposure", "cells"])).optional())
             .param(Param::new("value", ArgKind::Float { min: 0.0, max: 1.0 }).optional())
             .param(Param::rest("target").optional()),
         |inv| {
             let world = &mut *inv.ctx;
             match inv.args.str("action").unwrap_or("dump") {
                 "clear" => {
-                    world.resource_mut::<WorldSurface>().state.clear();
+                    let mut s = world.resource_mut::<WorldSurface>();
+                    s.state.clear();
+                    s.touch();
                     inv.log.info("surface: cleared (dry and bare)");
+                }
+                "debug" => {
+                    let view = inv.args.str("channel").and_then(DebugView::parse).ok_or("surface debug needs a view: off, exposure or cells")?;
+                    world.insert_resource(SurfaceDebug(view));
+                    inv.log.info(&format!("surface: debug view {}", view.name()));
                 }
                 "set" => {
                     let channel = inv.args.str("channel").and_then(Channel::parse).ok_or("surface set needs a channel: wet, puddle, snow or ash")?;
@@ -133,6 +163,7 @@ pub fn set(world: &mut World, channel: Channel, value: f32, target: &str) -> Res
         vec![book.climate(&RecordId::new(target)).ok_or_else(|| format!("surface: unknown climate {target:?}"))?]
     };
     let mut surface = world.resource_mut::<WorldSurface>();
+    surface.touch();
     let WorldSurface { state, grid, .. } = &mut *surface;
     if channel.per_climate() {
         for &c in &climates {

@@ -440,6 +440,15 @@ fn surface_steps_on_game_time_and_the_console_drives_it() {
     console(&mut app, "surface clear").unwrap();
     assert_eq!(app.world().resource::<WorldSurface>().state.active_cells(), 0);
     assert!(console(&mut app, "surface set wet 0.5 nowhere").is_err());
+    // Every change the GPU copy follows bumps the generation; the debug view is a resource.
+    let g = app.world().resource::<WorldSurface>().generation();
+    console(&mut app, "surface set wet 0.25 land").unwrap();
+    assert_eq!(app.world().resource::<WorldSurface>().generation(), g + 1);
+    console(&mut app, "surface debug exposure").unwrap();
+    assert_eq!(app.world().resource::<SurfaceDebug>().0, sf_surface::view::DebugView::Exposure);
+    assert!(console(&mut app, "surface debug wet").is_err());
+    console(&mut app, "surface clear").unwrap();
+    assert_eq!(app.world().resource::<WorldSurface>().generation(), g + 2);
     // A save round trip through the book.
     let book = app.world().resource::<WeatherRecords>().0.clone();
     let mut s = app.world_mut().resource_mut::<WorldSurface>();

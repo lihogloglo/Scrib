@@ -23,6 +23,7 @@
 
 mod grid;
 mod save;
+pub mod view;
 
 use std::collections::HashMap;
 
@@ -403,3 +404,5 @@ pub fn sample(state: &SurfaceState, raster: &ClimateRaster, ws: &Worldspace, p: 
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod view_tests;

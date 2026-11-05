@@ -57,7 +57,7 @@ mod surface;
 #[cfg(test)]
 mod tests;
 
-pub use surface::{WorldSurface, dump as surface_dump, set as surface_set};
+pub use surface::{SurfaceDebug, WorldSurface, dump as surface_dump, set as surface_set};
 pub use fx::{
     CUE_STEP, LIGHTNING_GLOW, LIGHTNING_GLOW_HEIGHT, LIGHTNING_NEAR_M, near_factor, LIGHTNING_CLOUD_GAIN, LIGHTNING_ELEVATION, LIGHTNING_LUX, LightningFlash, LightningLight, WeatherSound, assign_slots,
     lightning_direction, precip_brightness, precip_slot,
@@ -191,6 +191,7 @@ impl Plugin for WeatherPlugin {
             .init_resource::<WeatherStats>()
             .init_resource::<LightningFlash>()
             .init_resource::<WorldSurface>()
+            .init_resource::<SurfaceDebug>()
             .add_message::<WeatherSound>()
             .configure_sets(
                 Update,

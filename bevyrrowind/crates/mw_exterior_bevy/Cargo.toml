@@ -63,6 +63,7 @@ sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_screens.workspace = true
 sf_vfs.workspace = true
+sf_surface_bevy.workspace = true
 sf_weather_bevy.workspace = true
 sf_wind_bevy.workspace = true
 sf_world = { workspace = true, features = ["bake"] }

@@ -5,8 +5,11 @@
 import super::common;
 import super::common::{DEBUG_LOD, DEBUG_WIREFRAME, world_xz, origin_y, debug_flags, terrain_normal};
 import super::surface::terrain_surface;
-import super::surface_state::apply_surface_state;
 import super::far_shadow::far_shadow_term;
+// Surface weather (surface-weather.md "Shader integration"): the shared layer, fed from the
+// material's bindings 113-118 (W2 scaffold; W3 moves them to mesh-view bindings).
+@if(SURFACE_WEATHER)
+import sf_surface_bevy::layer::{SurfaceUniform, SurfaceInput, CLASS_TERRAIN, apply_surface_layer};
 import bevy_pbr::render::{
     pbr_types::{PbrInput, pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, calculate_view},
@@ -19,6 +22,19 @@ import bevy_pbr::render::{
 import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION)
 import bevy_pbr::ssao::utils::ssao_multibounce;
+
+@if(SURFACE_WEATHER)
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var<storage, read> surface_uniform: SurfaceUniform;
+@if(SURFACE_WEATHER)
+@group(constants::MATERIAL_BIND_GROUP) @binding(114) var surface_cells: texture_2d<f32>;
+@if(SURFACE_WEATHER)
+@group(constants::MATERIAL_BIND_GROUP) @binding(115) var surface_cell_sampler: sampler;
+@if(SURFACE_WEATHER)
+@group(constants::MATERIAL_BIND_GROUP) @binding(116) var surface_shelter: texture_2d<f32>;
+@if(SURFACE_WEATHER)
+@group(constants::MATERIAL_BIND_GROUP) @binding(117) var surface_noise: texture_2d<f32>;
+@if(SURFACE_WEATHER)
+@group(constants::MATERIAL_BIND_GROUP) @binding(118) var surface_noise_sampler: sampler;
 
 /// Specular occlusion from an ambient visibility term, as StandardMaterial
 /// does it (bevy_pbr pbr_fragment.wesl): Lagarde and de Rousiers 2014,
@@ -105,11 +121,20 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
     pbr.V = calculate_view(in.world_position, pbr.is_orthographic);
     pbr.flags = mesh[in.instance_index].flags;
-    apply_surface_state(&pbr, wxz);
+@if(SURFACE_WEATHER) {
+    var si: SurfaceInput;
+    si.world_pos = in.world_position.xyz;
+    si.height = 0.5;
+    si.basin = 0.0;
+    si.porosity = 1.0;
+    si.surface_class = CLASS_TERRAIN;
+    si.instance_wet = 0.0;
+    apply_surface_layer(&pbr, si, surface_uniform, surface_cells, surface_cell_sampler, surface_shelter, surface_noise, surface_noise_sampler);
+}
     // Ambient occlusion as StandardMaterial applies it: the layer AO, SSAO
     // (multibounce) when the view has it, and specular occlusion from the
     // combined visibility so the env map's grazing Fresnel is occluded too.
-    // After the surface state, so wetness roughness feeds the specular term.
+    // After the surface layer, so wetness roughness feeds the specular term.
     let n_dot_v = max(dot(pbr.N, pbr.V), 1e-4);
     var visibility = s.ao;
     var diffuse_occlusion = vec3<f32>(s.ao);

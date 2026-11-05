@@ -357,7 +357,12 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // distant regions show their own clouds; the camera's site comes from it.
         let raster = weather.raster();
         // WE3 part 2b: rain, snow, ash and blight fall from the frame (`sf_precip_bevy`).
-        app.add_plugins((WeatherPlugin { book: weather.book, state: weather.state }, sf_weather_bevy::sf_precip_bevy::PrecipPlugin))
+        // Surface weather W2: cell window, shelter map, terrain hook (`surface debug exposure|cells`).
+        app.add_plugins((
+            WeatherPlugin { book: weather.book, state: weather.state },
+            sf_weather_bevy::sf_precip_bevy::PrecipPlugin,
+            sf_surface_bevy::SurfaceWeatherPlugin,
+        ))
             .insert_resource(overrides);
         // AU-1: weather loops and region one-shots into the audio plugin (`crate::audio`).
         app.add_plugins(sf_audio_bevy::weather::WeatherAudioPlugin);

@@ -1594,3 +1594,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (surface W1): surface state is `sf/weather` v2 (`surface: Option<SurfaceSave>`); a state without one (new
   game, v1 save, co-op join before the host sends it) warms up over the 72 h catch-up from the weather, so peers agree
   without messages. Steps sit on a fixed grid from game hour 0; the snow line is a hook, not a record field, until needed.
+- 2026-11-05 (surface W2): shared WESL layers take their uniform and textures as function arguments (as
+  `translucent_fog`), so one module serves material and mesh-view bindings; WGSL modules are checked in unit tests with
+  `naga` (workspace dev-dep, imports stubbed), no GPU and no picture. `class` is a reserved WGSL word.
