@@ -63,6 +63,7 @@ fn uniform_matches_the_wgsl_struct() {
             ("canopy", "vec4<f32>"),
             ("snow_layer", "vec4<f32>"),
             ("ash_layer", "vec4<f32>"),
+            ("cover_uv", "vec4<f32>"),
         ]
     );
     assert_eq!(
@@ -75,9 +76,10 @@ fn uniform_matches_the_wgsl_struct() {
             U_TIME,
             U_CANOPY,
             U_COVER,
+            U_COVER_UV,
             U_SLOTS
         ],
-        [0, 4, 5, 6, 7, 8, 9, 10, 12]
+        [0, 4, 5, 6, 7, 8, 9, 10, 12, 13]
     );
     let konst = |name: &str| -> u32 {
         let line = wgsl
@@ -359,7 +361,7 @@ fn headless_plugin_keeps_window_shelter_and_uniform_sane() {
     app.update();
     assert_eq!((uniform(&app).flags, uniform(&app).shelter.x), (FLAG_WET, 1.0));
     let set = |app: &mut App, layer, wet, shelter| {
-        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter });
+        app.world_mut().insert_resource(SurfaceSettings { layer, wet, puddles: true, shelter, cover: true });
         app.update();
         let u = uniform(app);
         (u.flags, u.shelter.x)
@@ -484,4 +486,49 @@ fn cover_array_packs_layers_and_placeholder() {
     assert_eq!((slices(&app), stats(&app).cover_slices), (4, 4));
     assert_eq!(uniform(&app).cover[1], Vec4::new(0.125, 0.03, 0.0, 3.0));
     assert_eq!(uniform(&app).slots()[U_COVER + 1], [0.125f32, 0.03, 0.0, 3.0].map(f32::to_bits));
+}
+
+/// W5b: a plain albedo gets a height from its luminance and a normal from that height (the
+/// bitmap-to-material fallback); a real height in alpha is kept; the cover UV wraps the origin in
+/// f64; `--off cover` clears the snow and ash flags only.
+#[test]
+fn cover_derives_height_normal_and_uv() {
+    use crate::cover::{LayerImage, cover_uv, normal_from_height, with_height};
+    // A 4×1 ramp, dark to bright, all opaque: heights spread 0..255 in luminance order.
+    let ramp = LayerImage { width: 4, height: 1, rgba: [20, 80, 160, 250].iter().flat_map(|&v| [v, v, v, 255]).collect() };
+    let h: Vec<u8> = with_height(&ramp).rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
+    assert_eq!((h[0], h[3]), (0, 255));
+    assert!(h.windows(2).all(|w| w[0] < w[1]), "{h:?}");
+    // RGB untouched; a height already in alpha is kept.
+    assert_eq!(with_height(&ramp).rgba.as_chunks::<4>().0[1][..3], [80, 80, 80]);
+    let real = LayerImage { width: 1, height: 1, rgba: vec![10, 10, 10, 77] };
+    assert_eq!(with_height(&real), real);
+    // Normals: flat height, flat normal; height rising toward +X tilts the normal to -X; toward
+    // the image's top (row 0 high), to -Y (the normal leans away from the rise).
+    let flat = LayerImage { width: 2, height: 2, rgba: [50, 50, 50, 128].repeat(4) };
+    assert!(normal_from_height(&flat).rgba.as_chunks::<4>().0.iter().all(|p| *p == [128, 128, 255, 255]));
+    let mut px = [0u8, 0, 0, 0].repeat(9);
+    for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        #[allow(clippy::cast_possible_truncation)]
+        let x = (i % 3) as u8;
+        p[3] = 60 * x;
+    }
+    let n = normal_from_height(&LayerImage { width: 3, height: 3, rgba: px.clone() });
+    let centre = n.rgba.as_chunks::<4>().0[4];
+    assert!(centre[0] < 128 && centre[1] == 128, "{centre:?}");
+    for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        #[allow(clippy::cast_possible_truncation)]
+        let y = (i / 3) as u8;
+        p[3] = 60 * (2 - y);
+    }
+    let centre = normal_from_height(&LayerImage { width: 3, height: 3, rgba: px }).rgba.as_chunks::<4>().0[4];
+    assert!(centre[0] == 128 && centre[1] < 128, "{centre:?}");
+
+    // UV at the origin: X, Z over the tiling, wrapped, exact far from the world origin.
+    let slots = [Vec4::new(0.25, 0.15, 1.0, 1.0), Vec4::ZERO];
+    let uv = cover_uv(bevy_math::DVec3::new(1_000_001.0, 7.0, -2.5), &slots);
+    assert_eq!(uv, Vec4::new(0.25, 0.375, 0.0, 0.0));
+
+    let off = SurfaceSettings { cover: false, ..SurfaceSettings::default() };
+    assert_eq!(off.flag_mask(), FLAG_WET | FLAG_PUDDLE);
 }

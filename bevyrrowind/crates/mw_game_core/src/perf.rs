@@ -99,10 +99,13 @@ pub enum Part {
     /// The surface shelter map: off, roofs and trees don't keep the ground dry (a diagnostic; the Low
     /// preset runs without it).
     Shelter,
+    /// Snow and ash cover (surface-weather.md W5): off, the ground keeps its own look under any
+    /// snow or ash amount (an A/B).
+    Cover,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 50] = [
+    const ALL: [(&'static str, Part); 51] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -154,6 +157,7 @@ impl Part {
         ("wet", Part::Wet),
         ("puddles", Part::Puddles),
         ("shelter", Part::Shelter),
+        ("cover", Part::Cover),
     ];
 
     fn name(self) -> &'static str {

@@ -24,6 +24,12 @@
 //!   `blipDerivative`, `circle`: a ring running out from a drop, trailing rings, energy fading
 //!   over the cycle) as Clockwork uses it on puddles (same commit), on drop grids that turn on
 //!   quarter by quarter of rain intensity (Lagarde's ripple layers).
+//! - Cover (W5, snow and ash): the cell's amount × a slope ramp on the shading normal × the
+//!   shelter exposure, then a height blend (the "height lerp" of layered terrain and snow
+//!   materials, e.g. UE's `HeightLerp`; Frostbite and Decima layer snow the same way): the cover's
+//!   level rises with the amount over a compared height (the surface's own, lows first, mixed with
+//!   the cover texture's and a drift noise) with a soft edge the layer's contrast sharpens.
+//!   Snow sparkle: sparse glint facets (tilted, glossy cells) that fade below a pixel.
 
 pub const POROSITY_ROUGH_LOW: f32 = 0.3;
 pub const POROSITY_ROUGH_SPAN: f32 = 0.5;
@@ -69,8 +75,30 @@ pub const RIPPLE_GRIDS: usize = 4;
 /// Cell scale of each drop grid: each grid's cell (`RIPPLE_CELL_M` x scale) divides 256 m.
 pub const RIPPLE_SCALES: [f32; RIPPLE_GRIDS] = [1.0, 1.25, 0.8, 0.625];
 
+/// Cover (W5): the slope ramp on the shading normal's `N.y` (nothing sticks from ~63°, full from
+/// ~37°), the height blend's soft edge (height units, at contrast 1), the cover texture's share of
+/// the compared height (the rest is the surface's own: lows fill first), the drift noise's swing
+/// and tile (m; divides the 256 m origin grid), the cover normal's strength.
+pub const COVER_UP_LOW: f32 = 0.45;
+pub const COVER_UP_HIGH: f32 = 0.8;
+pub const COVER_EDGE: f32 = 0.08;
+pub const COVER_HEIGHT_MIX: f32 = 0.5;
+pub const COVER_DRIFT: f32 = 0.5;
+pub const COVER_DRIFT_TILE_M: f32 = 64.0;
+pub const COVER_NORMAL: f32 = 1.0;
+/// Ash's Bevy `reflectance` (F0 0.04, a plain dielectric); snow takes ice's, `WATER_REFLECTANCE`.
+pub const ASH_REFLECTANCE: f32 = 0.5;
+/// Snow sparkle: glint facet cell (m; divides 256), share of cells that glint at sparkle 1, their
+/// tilt (surface gradient), roughness, and the pixel footprint (m) where they fade and are gone.
+pub const SPARKLE_CELL_M: f32 = 0.02;
+pub const SPARKLE_DENSITY: f32 = 0.03;
+pub const SPARKLE_TILT: f32 = 0.35;
+pub const SPARKLE_ROUGHNESS: f32 = 0.1;
+pub const SPARKLE_FADE_NEAR_M: f32 = 0.006;
+pub const SPARKLE_FADE_FAR_M: f32 = 0.02;
+
 /// The named shader constants, as `layer.wesl` declares them (`const NAME: f32 = v;`).
-pub const SHADER_CONSTANTS: [(&str, f32); 31] = [
+pub const SHADER_CONSTANTS: [(&str, f32); 45] = [
     ("POROSITY_ROUGH_LOW", POROSITY_ROUGH_LOW),
     ("POROSITY_ROUGH_SPAN", POROSITY_ROUGH_SPAN),
     ("WET_DARK_POROUS", WET_DARK_POROUS),
@@ -102,6 +130,20 @@ pub const SHADER_CONSTANTS: [(&str, f32); 31] = [
     ("RIPPLE_SCALE_1", RIPPLE_SCALES[1]),
     ("RIPPLE_SCALE_2", RIPPLE_SCALES[2]),
     ("RIPPLE_SCALE_3", RIPPLE_SCALES[3]),
+    ("COVER_UP_LOW", COVER_UP_LOW),
+    ("COVER_UP_HIGH", COVER_UP_HIGH),
+    ("COVER_EDGE", COVER_EDGE),
+    ("COVER_HEIGHT_MIX", COVER_HEIGHT_MIX),
+    ("COVER_DRIFT", COVER_DRIFT),
+    ("COVER_DRIFT_TILE_M", COVER_DRIFT_TILE_M),
+    ("COVER_NORMAL", COVER_NORMAL),
+    ("ASH_REFLECTANCE", ASH_REFLECTANCE),
+    ("SPARKLE_CELL_M", SPARKLE_CELL_M),
+    ("SPARKLE_DENSITY", SPARKLE_DENSITY),
+    ("SPARKLE_TILT", SPARKLE_TILT),
+    ("SPARKLE_ROUGHNESS", SPARKLE_ROUGHNESS),
+    ("SPARKLE_FADE_NEAR_M", SPARKLE_FADE_NEAR_M),
+    ("SPARKLE_FADE_FAR_M", SPARKLE_FADE_FAR_M),
 ];
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -266,6 +308,44 @@ pub fn ring(to: [f32; 2], phase: f32) -> [f32; 2] {
     let v = [to[0] * k, to[1] * k, 0.5];
     let s = energy * range / (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     [v[0] * s, v[1] * s]
+}
+
+/// How much cover a face can hold by its slope (`surface_cover_slope`), `up` the shading
+/// normal's Y (the base normal map included: snow lies on the tops of bumps).
+pub fn cover_slope(up: f32) -> f32 {
+    smoothstep(COVER_UP_LOW, COVER_UP_HIGH, up)
+}
+
+/// The cover amount at a point (`surface_cover_amount`): the cell's channel (0..1) × the slope
+/// ramp × the shelter exposure (none under roofs).
+pub fn cover_amount(cell: f32, up: f32, exposure: f32) -> f32 {
+    cell * cover_slope(up) * exposure
+}
+
+/// The height the cover is compared against (`surface_cover_height`), 0..1, low fills first: the
+/// surface's own height (`base`: terrain layer height, object albedo luminance) mixed with the
+/// cover texture's (`cover`; a thick spot shows first), swung by the drift noise (`drift` 0..1)
+/// so a thin layer lies in patches.
+pub fn cover_height(base: f32, cover: f32, drift: f32) -> f32 {
+    (mix(base, 1.0 - cover, COVER_HEIGHT_MIX) + (drift - 0.5) * COVER_DRIFT).clamp(0.0, 1.0)
+}
+
+/// The height blend (`surface_cover_blend`; the industry's height lerp): the cover's level rises
+/// with `amount` over the compared height `h` (0..1) and covers what lies under it, with a soft
+/// edge of `COVER_EDGE / contrast`. Exactly 0 at amount 0 and 1 at amount 1 for any height.
+pub fn cover_blend(amount: f32, h: f32, contrast: f32) -> f32 {
+    let e = COVER_EDGE / contrast.max(0.01);
+    let level = amount * (1.0 + 2.0 * e) - e;
+    smoothstep(-e, e, level - h)
+}
+
+/// Sparkle fades as a pixel covers more than a glint cell (`footprint` m per pixel; 0 unknown:
+/// none, as for rain rings).
+pub fn sparkle_fade(footprint: f32) -> f32 {
+    if footprint <= 0.0 {
+        return 0.0;
+    }
+    1.0 - smoothstep(SPARKLE_FADE_NEAR_M, SPARKLE_FADE_FAR_M, footprint)
 }
 
 #[cfg(test)]
@@ -461,5 +541,69 @@ mod tests {
                 .fold(0.0, f32::max)
         };
         assert!(peak(0.9) < peak(0.5));
+    }
+
+    #[test]
+    fn cover_endpoints_and_order() {
+        // No amount, no cover; full amount, full cover, for any height and contrast.
+        for h in [0.0, 0.3, 0.7, 1.0] {
+            for c in [0.5, 1.0, 4.0] {
+                assert_eq!(cover_blend(0.0, h, c), 0.0, "h {h} c {c}");
+                assert_eq!(cover_blend(1.0, h, c), 1.0, "h {h} c {c}");
+            }
+        }
+        // Monotonic in the amount; lows fill first.
+        let mut last = 0.0;
+        for i in 0..=100 {
+            #[allow(clippy::cast_precision_loss)]
+            let a = i as f32 / 100.0;
+            let b = cover_blend(a, 0.5, 1.0);
+            assert!(b >= last && b.is_finite());
+            last = b;
+            assert!(cover_blend(a, 0.2, 1.0) >= cover_blend(a, 0.8, 1.0));
+        }
+        // Half the amount covers the low half and leaves the high half bare.
+        assert_eq!(cover_blend(0.5, 0.2, 1.0), 1.0);
+        assert_eq!(cover_blend(0.5, 0.8, 1.0), 0.0);
+        // Contrast sharpens: just under the level, more cover at higher contrast.
+        assert!(cover_blend(0.5, 0.48, 4.0) > cover_blend(0.5, 0.48, 1.0));
+    }
+
+    #[test]
+    fn cover_amount_by_slope_and_shelter() {
+        assert_eq!(cover_amount(1.0, 1.0, 1.0), 1.0);
+        assert_eq!(cover_amount(1.0, COVER_UP_HIGH, 1.0), 1.0);
+        // Walls, overhangs and anything under a roof stay bare.
+        assert_eq!(cover_amount(1.0, 0.0, 1.0), 0.0);
+        assert_eq!(cover_amount(1.0, COVER_UP_LOW, 1.0), 0.0);
+        assert_eq!(cover_amount(1.0, -1.0, 1.0), 0.0);
+        assert_eq!(cover_amount(1.0, 1.0, 0.0), 0.0);
+        assert_eq!(cover_amount(0.0, 1.0, 1.0), 0.0);
+        assert!((cover_amount(0.5, 1.0, 0.5) - 0.25).abs() < 1e-6);
+        let mid = cover_slope(f32::midpoint(COVER_UP_LOW, COVER_UP_HIGH));
+        assert!((mid - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cover_height_mixes_surface_cover_and_drift() {
+        // Neutral drift: the mix of the surface's height and the cover's thickness.
+        assert!(cover_height(0.0, 1.0, 0.5).abs() < 1e-6);
+        assert!((cover_height(1.0, 0.0, 0.5) - 1.0).abs() < 1e-6);
+        assert!((cover_height(0.6, 0.6, 0.5) - 0.5).abs() < 1e-6);
+        // Low surface and thick cover come first; the drift swings both ways, clamped.
+        assert!(cover_height(0.2, 0.5, 0.5) < cover_height(0.8, 0.5, 0.5));
+        assert!(cover_height(0.5, 0.8, 0.5) < cover_height(0.5, 0.2, 0.5));
+        assert!(cover_height(0.5, 0.5, 0.0) < cover_height(0.5, 0.5, 1.0));
+        for d in [0.0, 1.0] {
+            assert!((0.0..=1.0).contains(&cover_height(1.0, 0.0, d)));
+        }
+    }
+
+    #[test]
+    fn sparkle_fades_with_distance() {
+        assert_eq!(sparkle_fade(0.0), 0.0);
+        assert_eq!(sparkle_fade(0.001), 1.0);
+        assert_eq!(sparkle_fade(SPARKLE_FADE_FAR_M), 0.0);
+        assert!(sparkle_fade(0.01) > 0.0 && sparkle_fade(0.01) < 1.0);
     }
 }

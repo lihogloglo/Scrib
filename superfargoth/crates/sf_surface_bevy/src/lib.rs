@@ -26,7 +26,8 @@
 //!   floating origin, the A/B switches and preset, terrain patches out of the shelter map).
 //!
 //! W3 shows wetness (Lagarde's model, film normal flattening, wall streaks), W4 puddles (water
-//! level against the height map, flat water, rain rings while it rains); W2's debug views stay
+//! level against the height map, flat water, rain rings while it rains), W5b snow and ash cover
+//! (slope × shelter × cell, height blend, the look's normals, snow glints); W2's debug views stay
 //! (`surface debug exposure|cells|porosity`).
 
 mod cells;
@@ -82,6 +83,8 @@ pub struct SurfaceSettings {
     pub puddles: bool,
     /// The shelter map (off on Low and with `--off shelter`): exposure 1 everywhere.
     pub shelter: bool,
+    /// `--off cover`: snow and ash cover (W5).
+    pub cover: bool,
 }
 
 impl Default for SurfaceSettings {
@@ -91,6 +94,7 @@ impl Default for SurfaceSettings {
             wet: true,
             puddles: true,
             shelter: true,
+            cover: true,
         }
     }
 }
@@ -107,6 +111,9 @@ impl SurfaceSettings {
         }
         if !self.puddles {
             mask &= !FLAG_PUDDLE;
+        }
+        if !self.cover {
+            mask &= !(FLAG_SNOW | FLAG_ASH);
         }
         mask
     }

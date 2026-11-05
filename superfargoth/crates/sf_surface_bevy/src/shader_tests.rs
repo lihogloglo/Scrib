@@ -187,6 +187,10 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
                     {
                         failures.push(format!("[{preset}] {module} {d:?}: puddles not linked"));
                     }
+                    // Cover (W5b) samples the layer array with the caller's derivatives.
+                    Ok(wgsl) if sw && !wgsl.contains("surface_apply_cover") => {
+                        failures.push(format!("[{preset}] {module} {d:?}: cover not linked"));
+                    }
                     Ok(_) => {}
                     Err(e) => failures.push(format!("[{preset}] {e}")),
                 }
@@ -197,7 +201,7 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
 }
 
 /// The view module on its own, nothing stripped: every binding (the W5a cover array and its
-/// sampler too, which no entry point reads before W5b) is declared with a type naga accepts, and
+/// sampler too, read by the cover since W5b) is declared with a type naga accepts, and
 /// the module links with and without the def set of a lit pass.
 #[test]
 fn view_module_declares_every_binding() {

@@ -32,7 +32,7 @@ import sf_surface_bevy::layer::{
 
 /// The layer on the view's resources.
 fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {
-    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_canopy);
+    apply_surface_layer(pbr, s, surface_uniform, surface_cells, surface_sampler, surface_shelter, surface_shelter_sampler, surface_noise, surface_canopy, surface_cover, surface_cover_sampler);
 }
 
 /// A layer input for `pbr` of class `surface_class`: porosity from the material (Lagarde's
@@ -49,6 +49,8 @@ fn surface_input_of(pbr: PbrInput, surface_class: u32) -> SurfaceInput {
     s.surface_class = surface_class;
     s.instance_wet = 0.0;
     s.footprint = 0.0;
+    s.dpdx = vec3(0.0);
+    s.dpdy = vec3(0.0);
     return s;
 }
 
@@ -76,6 +78,8 @@ fn apply_surface_weather_standard(pbr: ptr<function, PbrInput>) {
     surface_class = CLASS_DYNAMIC;
     var s = surface_input_of(*pbr, surface_class);
     s.footprint = footprint;
+    s.dpdx = dx;
+    s.dpdy = dy;
     s.level_up = surface_face_up(dx, dy, (*pbr).world_normal);
     apply_surface_weather(pbr, s);
 }

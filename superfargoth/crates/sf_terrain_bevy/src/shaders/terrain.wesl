@@ -149,6 +149,8 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     si.surface_class = CLASS_TERRAIN;
     si.instance_wet = 0.0;
     si.footprint = max(length(dpx), length(dpy));
+    si.dpdx = dpx;
+    si.dpdy = dpy;
     apply_surface_weather(&pbr, si);
 }
     // Ambient occlusion as StandardMaterial applies it: the layer AO, SSAO

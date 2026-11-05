@@ -12,7 +12,10 @@
 // Puddles (W4): Lagarde's accumulated water (a level against the height map, soft shoreline,
 // a flat water surface with F0 0.02 and mirror gloss) on level faces only (`level_up`: the true
 // surface, not a smoothed vertex normal) with procedural rain rings; their gradient joins the
-// same sum. Cover (W5) adds to it too, before the one resolve.
+// same sum. Cover (W5b, snow and ash): the cell's amount × a slope ramp × exposure, a height
+// blend (height lerp: the cover's level rises over the surface's own height mixed with the cover
+// texture's and a drift noise), the look's albedo, roughness, F0 and AO, its normal's gradient
+// replacing the surface's in the sum, and snow glints; on statics and terrain only.
 //
 // Ported shapes (constants re-calibrated in meters): `surfaceExposure` (tent weights, cover
 // ramp ROOF_NEAR/ROOF_FULL, slope rise) and `surfaceWater` (wall streaks, WALL_WET, faces turned
@@ -50,6 +53,9 @@ struct SurfaceUniform {
     /// roughness, AO): x 1 / tiling (1/m, 0 = no layer), y depth (m), z sparkle, w contrast.
     snow_layer: vec4<f32>,
     ash_layer: vec4<f32>,
+    /// The cover's world-aligned UV at the render origin (W5b; `fract(origin.xz / tiling)`,
+    /// computed in f64): xy snow, zw ash. UV = render XZ / tiling + this.
+    cover_uv: vec4<f32>,
 }
 
 const FLAG_WET: u32 = 1u;
@@ -126,6 +132,29 @@ const RIPPLE_SCALE_0: f32 = 1.0;
 const RIPPLE_SCALE_1: f32 = 1.25;
 const RIPPLE_SCALE_2: f32 = 0.8;
 const RIPPLE_SCALE_3: f32 = 0.625;
+/// Cover (W5; `sf_surface::layer` documents each): slope ramp on the shading normal's Y, the
+/// height blend's soft edge, the cover texture's share of the compared height, drift swing and
+/// tile (m), cover normal strength, ash F0 (snow takes ice's, WATER_REFLECTANCE).
+const COVER_UP_LOW: f32 = 0.45;
+const COVER_UP_HIGH: f32 = 0.8;
+const COVER_EDGE: f32 = 0.08;
+const COVER_HEIGHT_MIX: f32 = 0.5;
+const COVER_DRIFT: f32 = 0.5;
+const COVER_DRIFT_TILE_M: f32 = 64.0;
+const COVER_NORMAL: f32 = 1.0;
+const ASH_REFLECTANCE: f32 = 0.5;
+/// Snow sparkle: glint cell (m), glinting share at sparkle 1, facet tilt, facet roughness, and
+/// the pixel footprint (m) where glints fade and are gone.
+const SPARKLE_CELL_M: f32 = 0.02;
+const SPARKLE_DENSITY: f32 = 0.03;
+const SPARKLE_TILT: f32 = 0.35;
+const SPARKLE_ROUGHNESS: f32 = 0.1;
+const SPARKLE_FADE_NEAR_M: f32 = 0.006;
+const SPARKLE_FADE_FAR_M: f32 = 0.02;
+/// Cover layer array slices (cover.rs): channel c's albedo + height at 2c, normal XY + roughness
+/// + AO at 2c + 1.
+const COVER_SNOW: u32 = 0u;
+const COVER_ASH: u32 = 1u;
 
 const LUMA: vec3<f32> = vec3(0.2126, 0.7152, 0.0722);
 
@@ -149,6 +178,10 @@ struct SurfaceInput {
     /// Meters per pixel at the point (screen derivatives; rain rings fade out below a pixel),
     /// 0 when unknown.
     footprint: f32,
+    /// Screen derivatives of `world_pos` (taken in uniform control flow by the caller) for the
+    /// cover's texture gradients (W5); zero when unknown (cover samples the top mip).
+    dpdx: vec3<f32>,
+    dpdy: vec3<f32>,
 }
 
 /// Lagarde's porosity from the material: metals and smooth surfaces don't drink.
@@ -404,6 +437,131 @@ fn surface_ripples(xz: vec2<f32>, time: f32, rain: f32) -> vec2<f32> {
     return slope;
 }
 
+/// Cover (W5) twins: `sf_surface::layer::{cover_slope, cover_amount, cover_height, cover_blend,
+/// sparkle_fade}`.
+fn surface_cover_slope(up: f32) -> f32 {
+    return smoothstep(COVER_UP_LOW, COVER_UP_HIGH, up);
+}
+
+fn surface_cover_amount(cell: f32, up: f32, exposure: f32) -> f32 {
+    return cell * surface_cover_slope(up) * exposure;
+}
+
+fn surface_cover_height(base: f32, cover: f32, drift: f32) -> f32 {
+    return saturate(mix(base, 1.0 - cover, COVER_HEIGHT_MIX) + (drift - 0.5) * COVER_DRIFT);
+}
+
+fn surface_cover_blend(amount: f32, h: f32, contrast: f32) -> f32 {
+    let e = COVER_EDGE / max(contrast, 0.01);
+    let level = amount * (1.0 + 2.0 * e) - e;
+    return smoothstep(-e, e, level - h);
+}
+
+fn surface_sparkle_fade(footprint: f32) -> f32 {
+    if footprint <= 0.0 {
+        return 0.0;
+    }
+    return 1.0 - smoothstep(SPARKLE_FADE_NEAR_M, SPARKLE_FADE_FAR_M, footprint);
+}
+
+/// sRGB bytes (the array's albedo slices) to linear.
+fn surface_srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, c <= vec3(0.04045));
+}
+
+/// One cover look at a point: linear albedo, its height (0..1, thick = high), the normal map's
+/// volume height gradient (world, the top-down projection), roughness and AO.
+struct SurfaceCover {
+    albedo: vec3<f32>,
+    height: f32,
+    gradient: vec3<f32>,
+    roughness: f32,
+    ao: f32,
+}
+
+/// Samples channel `c`'s look top-down (world-aligned: UV = render XZ / tiling + the origin's
+/// fraction `uv0`) with the caller's derivatives: trilinear and anisotropic, in any control flow.
+fn surface_cover_sample(
+    cover: texture_2d_array<f32>,
+    cover_sampler: sampler,
+    layer: vec4<f32>,
+    uv0: vec2<f32>,
+    c: u32,
+    s: SurfaceInput,
+) -> SurfaceCover {
+    let uv = s.world_pos.xz * layer.x + uv0;
+    let gx = s.dpdx.xz * layer.x;
+    let gy = s.dpdy.xz * layer.x;
+    let a = textureSampleGrad(cover, cover_sampler, uv, i32(2u * c), gx, gy);
+    let n = textureSampleGrad(cover, cover_sampler, uv, i32(2u * c + 1u), gx, gy);
+    var out: SurfaceCover;
+    out.albedo = surface_srgb_to_linear(a.rgb);
+    out.height = a.a;
+    // Tangent space (+X along +U = world +X, +Y toward the image's top = world -Z): the height
+    // gradient is -t / nz per axis (Mikkelsen 2020, volume gradient of a planar projection).
+    let t = n.xy * 2.0 - 1.0;
+    let nz = max(sqrt(saturate(1.0 - dot(t, t))), 0.1);
+    out.gradient = vec3(-t.x / nz, 0.0, t.y / nz) * COVER_NORMAL;
+    out.roughness = n.z;
+    out.ao = n.w;
+    return out;
+}
+
+/// A snow glint facet at `xz` (W5 sparkle): x, z the facet's height gradient, y its weight (0 when
+/// this cell doesn't glint or glints are below a pixel). Cells are world-fixed, so a glint holds
+/// still and flashes only as the view or the sun moves.
+fn surface_sparkle(xz: vec2<f32>, sparkle: f32, footprint: f32) -> vec3<f32> {
+    let fade = surface_sparkle_fade(footprint);
+    if sparkle <= 0.0 || fade <= 0.0 {
+        return vec3(0.0);
+    }
+    let cell = vec2<i32>(floor(xz / SPARKLE_CELL_M));
+    if surface_hash(cell, 11u).x >= sparkle * SPARKLE_DENSITY {
+        return vec3(0.0);
+    }
+    let tilt = (surface_hash(cell, 12u) * 2.0 - 1.0) * SPARKLE_TILT;
+    return vec3(tilt.x, fade, tilt.y);
+}
+
+/// Lays channel `c` over the material where its height blend covers (`amount` the cell's ×
+/// slope × exposure, `drift` the drift noise): its albedo, roughness (snow glints), F0 (ice for
+/// snow, a plain dielectric for ash), AO, and its normal replacing the surface's in the gradient
+/// sum. Returns the blend (0..1).
+fn surface_apply_cover(
+    pbr: ptr<function, PbrInput>,
+    gradient: ptr<function, vec3<f32>>,
+    s: SurfaceInput,
+    layer: vec4<f32>,
+    uv0: vec2<f32>,
+    c: u32,
+    amount: f32,
+    drift: f32,
+    n_geo: vec3<f32>,
+    cover: texture_2d_array<f32>,
+    cover_sampler: sampler,
+) -> f32 {
+    let look = surface_cover_sample(cover, cover_sampler, layer, uv0, c, s);
+    let b = surface_cover_blend(amount, surface_cover_height(s.height, look.height, drift), layer.w);
+    if b <= 0.0 {
+        return 0.0;
+    }
+    var rough = look.roughness;
+    var g = look.gradient;
+    let glint = surface_sparkle(s.world_pos.xz, layer.z, s.footprint);
+    if glint.y > 0.0 {
+        rough = mix(rough, SPARKLE_ROUGHNESS, glint.y);
+        g += vec3(glint.x, 0.0, glint.z) * glint.y;
+    }
+    let f0 = select(ASH_REFLECTANCE, WATER_REFLECTANCE, c == COVER_SNOW);
+    (*pbr).material.base_color = vec4(mix((*pbr).material.base_color.rgb, look.albedo, b), (*pbr).material.base_color.a);
+    (*pbr).material.perceptual_roughness = mix((*pbr).material.perceptual_roughness, rough, b);
+    (*pbr).material.metallic = mix((*pbr).material.metallic, 0.0, b);
+    (*pbr).material.reflectance = mix((*pbr).material.reflectance, vec3(f0), b);
+    (*pbr).diffuse_occlusion *= mix(1.0, look.ao, b);
+    *gradient = mix(*gradient, g - n_geo * dot(n_geo, g), b);
+    return b;
+}
+
 /// The layer: modifies `pbr` in place.
 fn apply_surface_layer(
     pbr: ptr<function, PbrInput>,
@@ -415,6 +573,8 @@ fn apply_surface_layer(
     shelter_sampler: sampler,
     noise: texture_2d<f32>,
     canopy: texture_2d<f32>,
+    cover: texture_2d_array<f32>,
+    cover_sampler: sampler,
 ) {
     let flags = u.misc.x;
     let debug = u.misc.y;
@@ -452,13 +612,20 @@ fn apply_surface_layer(
     // Standing water on statics and terrain only (characters move; far proxies are sub-pixel).
     let want_puddle = (flags & FLAG_PUDDLE) != 0u
         && (s.surface_class == CLASS_STATIC || s.surface_class == CLASS_TERRAIN);
-    if !want_wet && !want_puddle {
+    // Cover (W5) on statics and terrain with a look: never on characters (DYNAMIC) or far
+    // proxies (FAR: wetness only).
+    let solid = s.surface_class == CLASS_STATIC || s.surface_class == CLASS_TERRAIN;
+    let want_snow = solid && (flags & FLAG_SNOW) != 0u && u.snow_layer.x > 0.0;
+    let want_ash = solid && (flags & FLAG_ASH) != 0u && u.ash_layer.x > 0.0;
+    if !want_wet && !want_puddle && !want_snow && !want_ash {
         return;
     }
     let n_geo = (*pbr).world_normal;
     var wet = 0.0;
     var puddle = 0.0;
     var rain = 0.0;
+    var snow = 0.0;
+    var ash = 0.0;
     if s.surface_class == CLASS_DYNAMIC {
         wet = s.instance_wet;
     } else {
@@ -475,25 +642,53 @@ fn apply_surface_layer(
         if want_puddle && flat > 0.0 {
             p = cell.g;
         }
-        if s.surface_class != CLASS_FAR && (wet > 0.0 || p > 0.0) {
+        // Cover lies on faces that look up (the shading normal: the tops of bumps first).
+        let up = (*pbr).N.y;
+        if want_snow {
+            snow = surface_cover_amount(cell.b, up, 1.0);
+        }
+        if want_ash {
+            ash = surface_cover_amount(cell.a, up, 1.0);
+        }
+        if s.surface_class != CLASS_FAR && (wet > 0.0 || p > 0.0 || snow > 0.0 || ash > 0.0) {
             // Shelter: none under roofs, less (smaller puddles, fewer rings) under leaves.
             let e = surface_exposure(shelter, canopy, shelter_sampler, u, s.world_pos, n_geo);
             wet *= e;
             p *= e;
             rain = u.time.y * e;
+            snow *= e;
+            ash *= e;
         }
         if p > 0.0 {
             let n = textureSampleLevel(noise, samp, s.world_pos.xz / POOL_TILE_M + vec2(0.31, 0.57), 0.0).g;
             puddle = flat * surface_puddle(p, surface_pool_of(n, s.basin), s.height);
         }
     }
-    if wet <= 0.0 && puddle <= 0.0 {
+    if wet <= 0.0 && puddle <= 0.0 && snow <= 0.0 && ash <= 0.0 {
         return;
     }
-    // Normals compose as surface gradients; W5 adds its own before the one resolve.
+    // Normals compose as surface gradients, resolved once at the end.
     var gradient = surface_gradient_of(n_geo, (*pbr).N);
+    // Cover first (spec order: cover, wetness, puddles): snow, then ash over it. Covered ground
+    // drinks like snow or ash does.
+    var porosity = s.porosity;
+    if snow > 0.0 || ash > 0.0 {
+        let drift = textureSampleLevel(noise, samp, s.world_pos.xz / COVER_DRIFT_TILE_M + vec2(0.17, 0.83), 0.0).g;
+        if snow > 0.0 {
+            let b = surface_apply_cover(pbr, &gradient, s, u.snow_layer, u.cover_uv.xy, COVER_SNOW, snow, drift, n_geo, cover, cover_sampler);
+            porosity = mix(porosity, 1.0, b);
+        }
+        if ash > 0.0 {
+            let b = surface_apply_cover(pbr, &gradient, s, u.ash_layer, u.cover_uv.zw, COVER_ASH, ash, drift, n_geo, cover, cover_sampler);
+            porosity = mix(porosity, 1.0, b);
+        }
+    }
+    if wet <= 0.0 && puddle <= 0.0 {
+        (*pbr).N = surface_resolve(n_geo, gradient);
+        return;
+    }
     // Standing water soaks what it covers (Lagarde: wet = saturate(wet + accumulated water)).
-    let film = surface_wet_material(pbr, max(wet, puddle), s.porosity);
+    let film = surface_wet_material(pbr, max(wet, puddle), porosity);
     if s.surface_class == CLASS_FAR {
         return;
     }

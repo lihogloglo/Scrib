@@ -375,6 +375,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
                 puddles: !off_parts.has(Part::Puddles) && !matches!(options.quality, Quality::Low),
                 // Low: no shelter map (surface-weather.md "Budget").
                 shelter: !off_parts.has(Part::Shelter) && !matches!(options.quality, Quality::Low),
+                // W5b: snow and ash cover (`--off cover`, `surface set snow|ash 1`).
+                cover: !off_parts.has(Part::Cover),
             })
             // W5a: the snow and ash looks (`mw_weather::cover`) for the layer array.
             .insert_resource(surface_cover(&vfs, &weather.cover))

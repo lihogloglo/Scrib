@@ -240,3 +240,37 @@ foliage shelters partially (~40% through), roofs fully.
   placeholder, uniform slots, plugin repack (`sf_surface_bevy` `cover_array_packs_layers_and_placeholder`); binding
   numbers vs the patch, the view module unstripped (every binding declared and valid); adapter choice exact
   (`mw_weather` `cover_layers_pick_land_textures`) and on the real install (`real_cover_layers_name_install_textures`).
+
+## W5b (2026-11-06): the cover drawn (`layer.wesl`, CPU twin `sf_surface::layer`)
+
+- **Where:** `apply_surface_layer` step 3, before wetness and puddles, on class STATIC and TERRAIN only (characters are
+  DYNAMIC under `SKINNED`, proxies/impostors FAR: never covered), gated per channel on `FLAG_SNOW`/`FLAG_ASH` and the look's
+  `1/tiling > 0`. Snow first, ash over it (open question 1 default).
+- **Amount:** cell B (snow) / A (ash) × `smoothstep(0.45, 0.8, N.y)` on the shading normal (base normal map included: tops of
+  bumps first) × the shelter exposure (one exposure gather shared with wet/puddles).
+- **Height blend** (the height lerp of layered snow/terrain materials): compared height
+  `saturate(mix(SurfaceInput.height, 1 − look height, 0.5) + (drift − 0.5)·0.5)`, drift = noise G over 64 m; the cover's
+  level `amount·(1 + 2e) − e` against it, `smoothstep(−e, e, ·)` with `e = 0.08 / contrast` (exact 0 at amount 0, 1 at 1).
+- **Material:** look albedo (sRGB decoded), roughness, AO (× `diffuse_occlusion`), metallic 0, F0 ice (snow, 0.354) or 0.04
+  (ash); covered porosity → 1 (rain then soaks it). Normal: the look's tangent normal (top-down: +X = world X, +Y = world −Z)
+  as a volume gradient, projected (Mikkelsen 2020), replacing the surface's gradient by the blend in the one sum.
+- **Sparkle** (`sparkle` > 0, snow): 2 cm world cells, `sparkle × 3 %` glint (hash), tilt ±0.35 and roughness 0.1, fading
+  from 6 mm to 2 cm pixel footprint (gone past ~20 m at 1440p).
+- **Sampling:** `textureSampleGrad` with the caller's `dpdx/dpdy` (new `SurfaceInput` fields: StandardMaterial and terrain
+  pass theirs, `surface_input_of` zero), so trilinear + aniso in any control flow. UV = render XZ / tiling + `cover_uv`
+  (new uniform slot 12, `fract(origin.xz / tiling)` in f64 per channel; `cover::cover_uv`): world-aligned and exact.
+- **Plain looks** (`cover::with_height`, `normal_from_height`, pack time): all-opaque alpha → height = linear luminance
+  auto-levelled between its 2nd/98th percentiles; no normal map → central-difference normal of that height (strength 3).
+  Records with a real height/normal keep theirs.
+- **Switches:** `SurfaceSettings::cover` (`--off cover`, `Part::Cover`) masks the snow/ash flags; `surface set snow|ash v`
+  forces cells. No live `flip cover` (live_ab.rs was busy with two other sessions); `flip surface` remains.
+- **Checked:** cell state reaches the texture (each `advance` step bumps `WorldSurface.generation` → full window rewrite).
+- **Open (logged):** no worldspace-change repack (the Morrowind adapter picks one look for every worldspace, so nothing to
+  repack today; needs the host to re-resolve `ActiveLayers` on `WorldWeatherMap.worldspace` change); cover ends at the
+  cell window edge (~2 km, the window's hard zero, as wetness); FAR proxies stay uncovered (pop at the proxy distance in deep
+  snow); prepass normals unmodified (spec "Prepass and SSAO"); Morrowind terrain layers have flat alpha, so the terrain's
+  height is 1 near and 0.5 past the splat range: partial cover shifts with distance (fix: `with_height`'s luminance
+  fallback in the terrain bake, which also gives puddles real terrain lows; needs a re-bake and an SW-4 re-check).
+- **Tests:** twins `cover_endpoints_and_order`, `cover_amount_by_slope_and_shelter`, `cover_height_mixes_surface_cover_and_drift`,
+  `sparkle_fades_with_distance`; constants vs WGSL (45); uniform layout; derived height/normal, cover UV, `--off cover` mask
+  (`cover_derives_height_normal_and_uv`); compile per preset ± `SURFACE_WEATHER` now also requires `surface_apply_cover`.
