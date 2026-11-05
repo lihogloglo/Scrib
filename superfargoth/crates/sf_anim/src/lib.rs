@@ -73,7 +73,7 @@ pub use skeleton::{
     JointMask, LodRules, NO_PARENT, SKELETON_FORMAT, Skeleton, SkeletonError, SkeletonId, SkeletonRules, SourceJoint, guess_tag, tag,
 };
 pub use socket::{SocketTrack, sample_socket_track};
-pub use warp::{RootChain, RootPath, RootPose, WarpPlan, WarpProfile, WarpRefused};
+pub use warp::{RootChain, RootPath, RootPose, WarpPlan, WarpProfile, WarpRefused, WarpWaypoint};
 pub use source::{AnimSource, BoundSource, Curve, CurveValue, Interpolation, SourceClip, SourceCurve, SourceTrack};
 
 /// A cooked file that can't be read.

@@ -263,3 +263,63 @@ fn measure_generated_feet() {
         }
     }
 }
+
+/// Every `.bvh` under `MOTIONGEN_CHECK_DIR` (e.g. a `motiongen run --out`
+/// folder) cooks onto the three skeletons: finite poses, plus per clip the
+/// length, root end, lowest ankle and highest hand on `base_anim` (MG-C0).
+#[test]
+#[ignore = "measurement: cook a motiongen output folder (MOTIONGEN_CHECK_DIR) onto the humanoid skeletons"]
+fn measure_generated_dir() {
+    let Ok(dir) = std::env::var("MOTIONGEN_CHECK_DIR") else {
+        eprintln!("MOTIONGEN_CHECK_DIR unset; skipping");
+        return;
+    };
+    let Some((_, vfs)) = install() else { return };
+    let mut files = Vec::new();
+    let mut stack = vec![PathBuf::from(dir)];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "bvh") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let mut failed = 0;
+    for (i, (skeleton, target)) in targets(&vfs).into_iter().enumerate() {
+        println!("{skeleton}: {} clips", files.len());
+        for path in &files {
+            let name = path.file_stem().unwrap().to_string_lossy();
+            let clip = match cook_library_clip(SOURCE, path, None, &rules(), &target) {
+                Ok(c) => c,
+                Err(e) => {
+                    println!("  {name}: COOK ERROR {e}");
+                    failed += 1;
+                    continue;
+                }
+            };
+            let (mut ankle, mut hand) = (f32::MAX, f32::MIN);
+            for t in times(&clip, 120) {
+                let model = world_at(&target.skeleton, &clip, t);
+                assert!(model.iter().all(Affine3A::is_finite), "{name} on {skeleton}: non-finite pose at {t}");
+                ankle = ankle.min(joint_pos(&target, &model, B::LeftFoot).y.min(joint_pos(&target, &model, B::RightFoot).y));
+                hand = hand.max(joint_pos(&target, &model, B::RightHand).y.max(joint_pos(&target, &model, B::LeftHand).y));
+            }
+            if i == 0 {
+                let (end, yaw) = clip.root_at(clip.duration);
+                println!(
+                    "  {name:44} {:.2} s, root end ({:+.2}, {:+.2}, {:+.2}) yaw {:+.0}°, lowest ankle {ankle:+.3} m, highest hand {hand:.2} m",
+                    clip.duration,
+                    end.x,
+                    end.y,
+                    end.z,
+                    yaw.to_degrees(),
+                );
+            }
+        }
+    }
+    assert_eq!(failed, 0, "{failed} clip(s) failed to cook");
+}

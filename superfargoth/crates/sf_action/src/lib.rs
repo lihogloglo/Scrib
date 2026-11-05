@@ -17,7 +17,7 @@
 //! Slice B2a: the Warp owner ([`Owner::Warp`]): a rule with a ledge probe ([`ProbeNeed`]) plans an
 //! [`sf_anim::WarpPlan`] over its slot chain's root path ([`SlotSource::root`]) at start, keeps it
 //! in [`ActionState::warp`] and writes the root pose and chain progress each tick
-//! ([`ActionOutput::warp`]); [`TRAVERSAL_RULES`] holds `traverse.mantle.waist` and `traverse.mantle.high`.
+//! ([`ActionOutput::warp`]); [`TRAVERSAL_RULES`] holds `traverse.mantle.waist`, `traverse.mantle.high` and `traverse.vault`.
 //!
 //! Slice B2b: hands on the lip ([`LedgeGrip`], in [`WarpState::grip`]): per-hand grip targets on the
 //! ledge and their IK weights over the warp, from the slot clip's baked hand contacts.
@@ -45,13 +45,13 @@ mod tests_warp;
 
 pub use brace::{
     BRACE_BAND, BRACE_BEND, BRACE_CONFIRM, BRACE_FALL, BRACE_FAN, BRACE_FIRM_SPEED, BRACE_HALFLIFE, BRACE_LIGHT, BRACE_LOOKAHEAD, BRACE_MAX_NORMAL_Y, BRACE_MIN_SPEED,
-    BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_FINGERS_UP, BRACE_LEAD, BraceBody, HandBrace, PalmFrame, WallBrace,
+    BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_FINGERS_UP, BRACE_LEAD, BRACE_HEAD_ON, BRACE_SPREAD, BRACE_CHEST, BRACE_TUCK, BraceBody, HandBrace, PalmFrame, WallBrace,
 };
 pub use command::{
     ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS, TapHold,
     ViewDir,
 };
-pub use grip::{GRIP_INSET, GRIP_LATERAL, GRIP_MAX_GAP, GRIP_RAMP, GRIP_RISE, HandHold, LEFT, LedgeGrip, RIGHT, hold_weight};
+pub use grip::{GRIP_INSET, GRIP_LATERAL, GRIP_MAX_GAP, GRIP_RAMP, GRIP_RISE, HandHold, LEFT, LedgeGrip, RIGHT, hold_target, hold_weight};
 pub use ids::{CharacterId, ClockTime, MovesetKey, PlayerId, RuleKey, SlotKey, TICK_HZ, TagId, TargetId, Tick, fnv1a32};
 pub use rule::{
     Category, CompiledRule, Entry, Exit, ExitOn, ExitTo, Launch, LoadError, Mode, MoveKind, MoveRule, ObstacleClass, Origin, Owner, Phase,

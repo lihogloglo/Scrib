@@ -306,6 +306,9 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_bench)
     p = sub.add_parser("selftest", help="parse recipes and plan (no GPU)")
     p.set_defaults(fn=cmd_selftest)
+    from .clipstats import add_parser as add_stats
+
+    add_stats(sub)
     p = sub.add_parser("joints", help="write the SOMA-77 joint list file")
     p.add_argument("--path", default=str(HERE / "soma77_joints.txt"))
     p.set_defaults(fn=cmd_joints)

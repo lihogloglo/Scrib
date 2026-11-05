@@ -37,6 +37,11 @@ pub struct ContextParams {
     pub vault_max: f32,
     /// Deepest obstacle vaulted (deeper ones are mantled onto).
     pub vault_depth: f32,
+    /// Clear run-out a vault needs past the lip (over the top and beyond the far face); less is
+    /// mantled onto instead.
+    pub vault_room: f32,
+    /// How far past the lip the run-out is scanned (a vault planner lands within it).
+    pub vault_runout: f32,
     /// Highest obstacle mantled onto.
     pub mantle_max: f32,
     /// Highest ledge climbed or hung from; above it the obstacle is
@@ -63,6 +68,8 @@ impl ContextParams {
             min_normal_y: m.min_normal_y(),
             vault_max: 0.7 * h,
             vault_depth: 0.33 * h,
+            vault_room: 0.9 * h,
+            vault_runout: 1.6 * h,
             mantle_max: 1.5 * h,
             climb_max: 2.5 * h,
             crouch_height: 0.6 * h,
@@ -119,7 +126,8 @@ pub struct ContextRequest<'a> {
 pub enum Affordance {
     /// Low enough for the mover to step onto.
     Step,
-    /// Thin and low enough to vault or hurdle (`landing` says which: a far
+    /// Thin and low enough to vault or hurdle, with `vault_room` of run-out
+    /// past the lip (`landing` says which: a far
     /// floor near the feet is a hurdle, a lower one a vault).
     Vault,
     /// Climbed onto with the hands, room to at least crouch on top.
@@ -155,6 +163,9 @@ pub struct ContextHit {
     pub clearance: f32,
     /// The floor beyond an obstacle or below a drop, if within the scan.
     pub landing: Option<WorldPos>,
+    /// Obstacles whose far side drops (vault candidates): the clear run-out past the lip along
+    /// the direction, over the top and beyond the far face, capped at `vault_runout`; 0 otherwise.
+    pub room: f32,
 }
 
 impl ContextHit {
@@ -192,6 +203,8 @@ const COLUMN: usize = 3;
 const DROP_SAMPLES: usize = 4;
 /// How far rays start inside or past a face, meters.
 const NUDGE: f32 = 0.05;
+/// How far over an obstacle's top the vault run-out ray passes, meters.
+const RUNOUT_LIFT: f32 = 0.1;
 
 #[derive(Clone, Copy, Debug, Default)]
 enum Phase {
@@ -331,7 +344,7 @@ fn push(r: &ContextRequest<'_>, phase: &Phase, q: &mut Vec<ProbeQuery>) {
                 q.push(ProbeQuery::down(at(base + into * o), p.climb_max + NUDGE + p.step_down + p.height));
             }
         }
-        (Phase::Column { at: c, normal, top, off, .. }, ContextQuery::ObstacleAhead { .. }) => {
+        (Phase::Column { at: c, normal, top, off, heights }, ContextQuery::ObstacleAhead { .. }) => {
             let into = -normal;
             let lip = Vec3::new(c.x, top, c.z);
             // Room on top, where the character would stand.
@@ -345,11 +358,19 @@ fn push(r: &ContextRequest<'_>, phase: &Phase, q: &mut Vec<ProbeQuery>) {
                 let reach = if slant < -0.05 { flat.dot(normal) / slant } else { flat.length() };
                 q.push(ProbeQuery::ray(at(Vec3::Y * mid), d, reach.max(flat.length()) + NUDGE));
             }
-            // The far face, back from the first sample off the top.
             if let Some(k) = off {
+                // The far face, back from the first sample off the top.
                 let o = column_offsets(p)[k];
                 let back = lip + into * o + Vec3::Y * (-0.03);
                 q.push(ProbeQuery::ray(at(back), normal, o));
+                // The run-out past the lip (a vault's flight and landing): just over the top,
+                // and low over the far floor (knee-high clutter behind).
+                q.push(ProbeQuery::ray(at(lip + Vec3::Y * RUNOUT_LIFT), into, p.vault_runout));
+                if let Some(hk) = heights[k]
+                    && p.vault_runout > o
+                {
+                    q.push(ProbeQuery::ray(at(Vec3::new(c.x, hk + p.step_up + NUDGE, c.z) + into * o), into, p.vault_runout - o));
+                }
             }
         }
         (Phase::Overhang { hit }, _) => {
@@ -416,6 +437,7 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
                     depth: f32::INFINITY,
                     clearance: 0.0,
                     landing: None,
+                    room: 0.0,
                 });
                 return Phase::Done;
             }
@@ -441,7 +463,14 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
                 (None, _) => f32::INFINITY,
             };
             let landing = off.and_then(|k| heights[k].map(|hk| lip.offset(-normal * offsets[k] + Vec3::Y * (hk - top))));
-            let mut hit = ContextHit { kind: Affordance::Blocked, point: lip, normal, height: top, depth, clearance, landing };
+            // The run-out: the over-the-top ray, then the low one past the far sample (if cast).
+            let room = off.map_or(0.0, |k| {
+                let i = 2 + usize::from(mid.is_some());
+                let over = h[i].map_or(p.vault_runout, |r| r.distance);
+                let low = (heights[k].is_some() && p.vault_runout > offsets[k]).then(|| h[i + 1]).flatten();
+                over.min(low.map_or(p.vault_runout, |r| offsets[k] + r.distance))
+            });
+            let mut hit = ContextHit { kind: Affordance::Blocked, point: lip, normal, height: top, depth, clearance, landing, room };
             if mid.is_some_and(|m| m.is_none()) {
                 // Nothing under the face: an overhang to duck under (or climb).
                 hit.kind = Affordance::LowCeiling;
@@ -451,7 +480,7 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
             let lands_lower = landing.is_some_and(|l| top - rel(f, l).y >= p.step_up) || off.is_some() && landing.is_none();
             hit.kind = if top <= p.step_up {
                 Affordance::Step
-            } else if top <= p.vault_max && depth <= p.vault_depth && lands_lower {
+            } else if top <= p.vault_max && depth <= p.vault_depth && lands_lower && room >= p.vault_room {
                 Affordance::Vault
             } else if top <= p.mantle_max && clearance >= p.crouch_height {
                 Affordance::Mantle
@@ -501,6 +530,7 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
                 depth: (reach - face_dist).max(0.0),
                 clearance: h[1].map_or(p.height + NUDGE, |u| u.distance + 0.02),
                 landing: Some(f.offset(at)),
+                room: 0.0,
             });
             Phase::Done
         }
@@ -550,6 +580,7 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
                 depth: Vec3::new(edge.x, 0.0, edge.z).length(),
                 clearance: f32::INFINITY,
                 landing: landing.map(|l| l.point),
+                room: 0.0,
             });
             Phase::Done
         }
@@ -563,6 +594,7 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
                     depth: w.distance,
                     clearance: f32::INFINITY,
                     landing: None,
+                    room: 0.0,
                 });
             }
             Phase::Done
@@ -578,6 +610,7 @@ fn take(r: &ContextRequest<'_>, phase: Phase, h: &[Option<GroundHit>], out: &mut
                     depth: 0.0,
                     clearance: height,
                     landing: None,
+                    room: 0.0,
                 });
             }
             Phase::Done

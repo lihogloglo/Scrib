@@ -334,7 +334,7 @@ ROADMAP P11's first part, and A1-A2 are its prerequisites, so P11 can start with
 | **A1** backbone | done 2026-10-21: see "As built (A1)" | `cargo test -p sf_action` |
 | **A2** fixed tick in Bevy | slice 1 done 2026-10-22 (see "As built (A2 slice 1)"); slice 2 (animated player body) built 2026-10-26, PL-2 awaiting owner; `sf_action_bevy`: per-local-player command sampling (`PlayerId`), movers on the fixed tick with transform interpolation (required, R12 rule 1; locomotion.md change), render-body correction spring | `level-flat-slopes` walk/jump at FPS caps 30/60/144 with no jitter; `wk-balmora` mover stage time within 10 % of before; owner visual check added |
 | **B1** progress + chain warp | done 2026-10-26 (see "As built (B1)"; `sf_action` call site left for B2): `sf_anim_graph`: `Progress` root mode, chain warping with `Linear`/`Late` profiles and refusal, warp fn callable from `sf_action` | graph tests: 2-clip chain ends ≤ 2 cm / 2° from target; refusal above ratio; playhead equals action progress each tick |
-| **B2** mantle and vault | B2a (waist mantle, player) done 2026-10-26 on the capsule player (see "As built (B2a)"); the clip on the body comes with the animated player body (A2 slice 2). High mantle and B2b parts 1 and 2a (clip contacts) built 2026-10-27 (see "As built (B2 high mantle, B2b contacts)"); in progress: B2-T approach tolerance, then B2b-2 hand IK. Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
+| **B2** mantle and vault | B2a (waist mantle, player) done 2026-10-26 on the capsule player (see "As built (B2a)"); the clip on the body comes with the animated player body (A2 slice 2). High mantle and B2b parts 1 and 2a (clip contacts) built 2026-10-27 (see "As built (B2 high mantle, B2b contacts)"); in progress: B2-T approach tolerance, then B2b-2 hand IK. Vault (thin, two-leg warp, one hand held) built 2026-11-05 (see "As built (B2 vault)"). Warp-owned step up, vault (thin), mantle (waist, high) from `Jump`+forward and `Up`; validators `EndPoseFree`, `PathOverTop`, `HandsOnLip`; `tail` cancel; minimal `clip.annotate` (hand/foot contacts, contact-bounded warp window, end pose) | course `ledges`: boxes 0.5-1.6 m mantle with feet ≤ 2 cm on top; thin 0.9/1.2 m walls vault, deep block mantles; Sneak never triggers; jump band ends both pass; refusal log on the 3.5 m wall |
 | **B2c** wall brace (owner 2026-10-27) | built 2026-10-30, AL-11 awaiting owner (see "As built (B2c)": host-fed through B2b's two `HandIk` ops, no new op). Design: procedural `WallBrace` after B2b's hand IK: probe ahead/beside (animation-layers.md "wall beside"); a free hand plants on a wall within arm's reach, arm slightly bent, weight by approach speed and distance (firm when running in, light when walking past, trailing hand along side walls); busy hands skipped (weapon, torch, carried item: off-hand only with a one-hand weapon). Refs: R2 "wall-braced arm", R4 "arms out of walls" | course `ledges`/`anim-lab` walls: run into the 3 m wall, palm ≤ 2 cm off the surface, no arm through the wall; walk past: light trail; sword drawn: off-hand only |
 | **B3** ledge catch and hang | Docked mover mode; ledge catch from jump and fall, hang, shimmy, climb up, drop to hang (`Down`), let go; hand IK latched on the lip | course `ledges`: 2.0/2.5 m boxes and the 3.5 m wall: catch, shimmy to the end, climb up; hands ≤ 1 cm off the lip; jolt test (R2 adopt 3) |
 | **B4** edge index + ladders | `sf_interaction` edges baked from collision per cell; ladders as edges with rung IK, enter/exit top and bottom | new level `ladders` (2 ladders, one to a roof); rungs ≤ 1 cm; edge census over Balmora rooftops (count, bake time ≤ 5 % of the cold bake) |
@@ -441,6 +441,42 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
   the walk (`BRACE_LEAD` 1.6 at 1.5 m/s past, was `BRACE_TRAIL` back). Tests `tests_brace` (palm, degenerate frames),
   `sf_character` `palm_axes_come_from_the_rest_pose_fingers`, `mw_graphs` real install `palm_axes_on_every_humanoid_skeleton`,
   `hand_ik_lays_the_palm_on_a_wall`. No forearm twist bones in Bip01: the wrist takes all the roll (check for skin wrap).
+- Chest brace 2026-11-05 (AL-11 nitpick: hands just in front of the bust, chest height): on a wall ahead (`BRACE_HEAD_ON`, facing
+  share into the face 0.4 -> 0.9, smoothstep blend with the side trail) the wrist aims at the chest point: the shoulders' midpoint
+  plus `BRACE_SPREAD` 0.55 of the way to its shoulder, at `BRACE_CHEST` 0.92 of the shoulders' height, on the wrist plane; arm
+  length = that point's own distance kept within `BRACE_TUCK` 0.55 .. 0.98 (closer: slides down the face), then the same
+  elbow-clearance straightening; reaching arms aim at it too. Body-derived (any rig). Estimate rig (1.8 m): spacing 0.21 m (was
+  0.53-0.88), height 1.36 m at every wall distance (was 1.16-1.38); Bip01 0.17 m. Side trail unchanged (blend 0). Tests
+  `head_on_palms_go_in_front_of_the_chest`, `head_on_palms_face_the_wall_fingers_up`, `measure_head_on_placement`.
+
+## As built (B2 vault, 2026-11-05)
+
+- Rule `traverse.vault` (traversal_rules.ron, rank 210): Jump/Up + forward at a `Vault`-class obstacle 0.45-0.7 h
+  (0.81-1.26 m at 1.8 m), `Warp(target: Vault, refuse_ratio: 0.9)`, no `stand` (run momentum carries out). Slot
+  `traverse.vault` = UAL2 `SafetyVault` (0.73 s, root on the floor 3.45 m on, hips arc to ~1.9 m; right hand planted
+  0.13-0.30 s at 1.29 m: authored top ~1.26 m, the band's top). Below 0.81 m the first leg's drop (whole body,
+  takeoff foot included) passes ~0.45 m, so lower vault-class obstacles jump; a low-hurdle clip would cover them.
+- Two-leg warp (`sf_anim::WarpPlan::with_waypoint`, `WarpWaypoint`; UE5 Motion Warping windows, GASP front ledge then
+  back floor): the first hand contact lands on its `hold_target` on the lip by the plant, the root moves as baked while
+  the hand is down, then the clip's own landing (carried by leg 1) is pulled in to the run-out (a radius short of what
+  the probe hit) onto the far floor. Each leg's ratio against its own stretch. `LedgeGrip::plan(.., mirror: false)`:
+  only the planting hand is held. Refused (`Probe`) without a far floor, `NoContact` without a hand contact.
+- Probe (`sf_controller` context): two run-out rays past the lip (0.1 m over the top; step-up height over the far
+  floor), `ContextHit::room` capped at `vault_runout` 1.6 h; `Vault` also needs `room >= vault_room` 0.9 h, else the
+  box classes `Mantle` (a wall right behind falls back to the waist mantle). `Obstacle` carries `landing` and `room`.
+- Known limits: the feet reference dips by (authored top - top) mid-vault (camera bob, ≤ ~0.45 m); a far floor much
+  lower than the near one descends linearly in leg 2 (ratio-limited). Tests: sf_action_bevy `tests_mantle` (vault,
+  deep box mantles, wall behind mantles), sf_controller `a_vault_needs_room_behind`, mw_bake
+  `vault_plants_one_hand_on_the_lip_and_lands_past_the_box` (real clip). Owner check AL-12.
+- Trigger fix (2026-11-05, AL-12 rejected: "only if I'm looking at it"): the stick is world-resolved (sf_camera_bevy
+  `stick_to_world`), the probe classed the boxes `Vault`; the plan refused `MaxCorrection`. (1) At an angle the stick's hit
+  sat `d·tan(angle)` sideways of the body: `sense_obstacle` re-probes square-on along the face's normal and keeps that hit
+  when it is the same face (GASP takes the ledge point closest to the actor). (2) Within ~0.3 m of the face leg 1 had to run
+  backwards or its whole-correction ratio passed 0.9: `Vault::plan` stops the root at the takeoff (the hand IK reaches the
+  lip, ≤ `VAULT_REACH_SLACK` 0.3 m) and `Vault::ratio` counts leg 1's slowdown along the normal as free down to a
+  standstill. Window now contact to ~1.2 m (0.85 and 1.0 m, 0-30°). A dev log line per Jump/Up press at an obstacle
+  (`traversal press:` class, height, depth, room, refusals). Limit: a contact press stalls ~0.13 s before the plant; a
+  motion-matched clip start time (GASP) would skip the run-up instead. Test `running_at_the_lab_vault_boxes_vaults_from_any_heading`.
 
 ## As built (A2 slice 2, 2026-10-26)
 Animated player body: the dressed `player` record under the body, fed from the drawn (interpolated, spring-corrected)

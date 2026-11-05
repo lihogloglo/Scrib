@@ -947,9 +947,9 @@
             level: "anim-lab",
             camera: "ledges",
             hour: 12.0,
-            description: "Animation lab, traversal: ledges 0.5 / 1.0 / 1.5 / 2.0 m and a 3 m wall (F11: player; cameras ledges, ledges-close)",
-            look_for: "walking into each ledge (W+Space mantles the 1 m box, AL-8; no vault or climb yet): the capsule stops, the character does not clip into the box; heights read against the 1 m grid",
-            checks: ["AL-4", "AL-8"],
+            description: "Animation lab, traversal: ledges 0.5 / 1.0 / 1.5 / 2.0 m, a 3 m wall, vault boxes 1.0 / 0.85 / 0.6 m x 0.4 m (F11: player; cameras ledges, ledges-close, vaults)",
+            look_for: "walking into each ledge (W+Space mantles the 1 m box, AL-8): the capsule stops, the character does not clip into the box; heights read against the 1 m grid. Run + Space at the 1.0 / 0.85 m vault boxes vaults over with a hand on the top (AL-12); the 0.6 m box jumps",
+            checks: ["AL-4", "AL-8", "AL-12"],
         ),
         (
             name: "level-anim-props",

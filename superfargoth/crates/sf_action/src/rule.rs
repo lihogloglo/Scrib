@@ -141,6 +141,10 @@ pub enum WarpTarget {
     /// On top of the sensed obstacle, `inset` m past the lip (less if the top is shallower),
     /// facing into its face.
     LedgeTop { inset: f32 },
+    /// Over a thin obstacle onto its far floor (the probe's landing), in two legs: the slot's first
+    /// hand contact onto the top at the lip (where [`crate::LedgeGrip`] holds it), then the clip's own
+    /// landing past it, pulled in to the probed run-out and down or up to the far floor.
+    Vault,
 }
 
 /// Obstacle classes the shell's context probe reports (`sf_controller::Affordance`).
@@ -430,7 +434,11 @@ impl RuleSetBuilder {
             if r.entry.focus.is_some() && !r.entry.classes.contains(&ActionClass::Interact) {
                 errors.push(err(origin, r, "focus needs the Interact class".into()));
             }
-            if let Owner::Warp { refuse_ratio, target: WarpTarget::LedgeTop { inset }, stand, .. } = r.owner {
+            if let Owner::Warp { refuse_ratio, target, stand, .. } = r.owner {
+                let inset = match target {
+                    WarpTarget::LedgeTop { inset } => inset,
+                    WarpTarget::Vault => 0.0,
+                };
                 let stand_ok = stand.is_none_or(|s| s.is_finite() && s > 0.0);
                 if !(refuse_ratio.is_finite() && refuse_ratio >= 0.0 && inset.is_finite() && stand_ok) {
                     errors.push(err(origin, r, "warp refuse_ratio, inset and stand must be finite, ratio ≥ 0, stand > 0".into()));

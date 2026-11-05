@@ -96,6 +96,25 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   the bake (done 2026-11-05). Status: awaiting owner.
 - Owner 2026-11-05: wall stop good, "works and it's satisfying". Nitpick: head-on hands closer together, just in front of the
   bust (not out to the sides), and at chest height (a bit higher than now). Status: confirmed with follow-up (hand spacing/height).
+- Fix 2026-11-05 (brace-chest): head-on wrists in front of the chest, 0.55 of the shoulders' spacing apart (Bip01 ~0.17 m;
+  were out past the shoulders, 0.5-0.9 m) at 0.92 of shoulder height (~12 cm under it; were 10-30 cm lower, dropping as the
+  body got closer), the same at any distance; side-wall trail and wall stop unchanged. Check: `scene level-anim-ledges`, F11,
+  run W straight into the grey 3 m wall: hands close together just in front of the chest, palms flat, fingers up, elbows bent
+  (more when close), hands not touching each other. Needs a new exe copy, no bake. Status: awaiting owner.
+
+### AL-12: Vault over thin obstacles, player (action.md B2 vault)
+- Re-baked 2026-11-05 (slot `traverse.vault` = UAL2 `SafetyVault`). `scene level-anim-ledges`, camera `vaults` (or F11);
+  boxes 0.4 m deep east of the ledges: yellow 1.0 m, green 0.85 m, white 0.6 m. Then `cargo dev view "Seyda Neen"`: crates,
+  barrels, the dock railing.
+- Run (W) + Space ~1 m from the 1.0 / 0.85 m boxes: a one-hand side vault, the right palm on the near edge of the top (not
+  floating, not through it), legs clear of the box, lands on the far side and keeps running. The 0.6 m box (under the band,
+  0.81-1.26 m) is a plain jump; deep boxes (the ledges) still mantle; a box with a wall right behind mantles instead.
+- Watch for: the takeoff foot dipping into the floor and a camera bob on the 0.85 m box (the body is lowered up to ~0.45 m
+  to the obstacle), a stretched or floating landing when the run-out is short. Status: awaiting owner.
+- 2026-11-05 trigger fix: the probe saw both boxes; the warp refused (`MaxCorrection`) at an angle (hand target sideways of
+  the body) and within ~0.3 m of the face. Now the lip is re-probed square-on and a close takeoff brakes into the plant.
+  Run at the boxes at an angle and right up to them, then Space: vaults (log `traversal press: ... refused []`); look for
+  a brief stall before the hand plants on close presses. Status: awaiting owner.
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
@@ -186,6 +205,14 @@ without the roll curves). Strafes not gated (lead: walk right 7/15 cm, likely sw
 Scene `level-anim-idles`, camera `idles-close`. AN-13: throw a ball (`V`) at the guar: it falls, gets up once and stands
 idle (it used to loop its knockout clip forever). AN-10: knock dummies down until one lands face down: it rolls onto its back
 while rising, with no fast spin about the vertical. AN-14: knock someone down, press `I` on them while down: they stay dead.
+
+### AN-21 Slope trunk lean, retuned (reopened 2026-11-05, awaiting owner; first pass archived in visual-checks-closed.md)
+Owner 2026-11-05: uphill not enough forward lean, downhill "maybe sliiiightly too much". Retuned (`mw_graphs` build.rs `Lean`):
+up 0.4 -> 0.8, down 0.12 -> 0.075, cap 12 -> 26°, spread over Spine1/Spine2/neck (0.45/0.4/0.15; was chest 0.7 + neck 0.3).
+Measured walk lean vs flat at 10/20/30°: up +2.8/+5.7/+8.4 -> +5.2/+10.7/+16.5°, down -0.8/-1.7/-2.6 -> -0.5/-1.0/-1.5°
+(run about 3/4 of that). Re-baked 2026-11-05. `scene level-anim-stairs`, camera `slopes` (runner on 10°, walkers on 20/30°).
+Look for: going up the 20/30° ramps the back clearly bends forward (bent spine, head following, not a craned neck); going
+down a barely-there lean back; eases in over ~0.3 s, no jolt; flat walking unchanged. Numbers: `slope_walk slope_lean_table`.
 
 ### DE-1 Delirium takeover on a Morrowind NPC (ROADMAP 3.2b slices 2a-2b; confirmed 2026-10-27)
 `cargo build -p bevyrrowind --features dev`, `powershell -File tools/run_dev.ps1 scene level-anim-idles` (camera `idles`).

@@ -1,0 +1,538 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Gen2 (2026-11-05): the number-game round after the owner's MG-C0 verdict ("prompts describe the movement too much and
+# ambiguously; try simpler prompts; generate a lot, pick the best"). Output: "animation packs/generated/gen2/" (BYO,
+# never committed). Format: bevyrrowind/docs/specs/motion-generation.md, "Recipes (MG1)".
+# Rules: one short plain action per prompt in Kimodo's own style ("A person ..."), one weapon style word per prompt, no
+# step-by-step body description, no ambiguous verbs ("climb up"); 2-3 phrasings per traversal move. Constraints: none
+# (no hand keys: they hurt), except an end pelvis height on mantles so the model ends standing on the ledge top
+# (ledge 1 m -> pelvis 2.0, ledge 2 m -> 3.0). Ids group the browser pages: atk.<context>.<weapon>.<n>, trav.*, dodge.*.
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.sword.1"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person slashes quickly with a one-handed sword."
+
+[[activity]]
+id = "atk.light.sword.2"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person does a quick katana-style slash."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.sword.1"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person does a powerful overhead strike with a sword."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.claymore.1"
+point = "ground"
+props = ["claymore"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person swings a big claymore with both hands."
+
+[[activity]]
+id = "atk.light.claymore.2"
+point = "ground"
+props = ["claymore"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person slashes diagonally with a two-handed greatsword."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.claymore.1"
+point = "ground"
+props = ["claymore"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person does an overhead strike with a heavy two-handed sword."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.foil.1"
+point = "ground"
+props = ["foil"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person lunges with a fencing foil."
+
+[[activity]]
+id = "atk.light.foil.2"
+point = "ground"
+props = ["foil"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person does a quick thrust in french foil fencing style."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.foil.1"
+point = "ground"
+props = ["foil"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person does a deep fencing lunge with a rapier."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.axe.1"
+point = "ground"
+props = ["axe"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person chops with a one-handed axe."
+
+[[activity]]
+id = "atk.light.axe.2"
+point = "ground"
+props = ["axe"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person swings an axe sideways."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.axe.1"
+point = "ground"
+props = ["axe"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person does a hard overhead chop with an axe."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.battleaxe.1"
+point = "ground"
+props = ["battleaxe"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person swings a heavy battle axe with both hands."
+
+[[activity]]
+id = "atk.light.battleaxe.2"
+point = "ground"
+props = ["battleaxe"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person swings a great axe like a berserker."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.battleaxe.1"
+point = "ground"
+props = ["battleaxe"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person chops down hard with a big two-handed axe."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.mace.1"
+point = "ground"
+props = ["mace"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person swings a mace."
+
+[[activity]]
+id = "atk.light.mace.2"
+point = "ground"
+props = ["mace"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person bashes sideways with a mace."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.mace.1"
+point = "ground"
+props = ["mace"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person smashes down with a heavy war hammer."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.spear.1"
+point = "ground"
+props = ["spear"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person thrusts a spear forward."
+
+[[activity]]
+id = "atk.light.spear.2"
+point = "ground"
+props = ["spear"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person stabs quickly with a spear held in both hands."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.spear.1"
+point = "ground"
+props = ["spear"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person does a powerful lunging thrust with a spear."
+
+# --- atk.light -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.light.dagger.1"
+point = "ground"
+props = ["dagger"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person stabs quickly with a dagger."
+
+[[activity]]
+id = "atk.light.dagger.2"
+point = "ground"
+props = ["dagger"]
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person slashes with a dagger."
+
+# --- atk.heavy -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.heavy.dagger.1"
+point = "ground"
+props = ["dagger"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person stabs down hard with a dagger held in a reverse grip."
+
+# --- atk.jump --------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.jump.sword.1"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person jumps forward and slashes down with a sword."
+
+[[activity]]
+id = "atk.jump.claymore.1"
+point = "ground"
+props = ["claymore"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person leaps and smashes down with a big two-handed sword."
+
+[[activity]]
+id = "atk.jump.spear.1"
+point = "ground"
+props = ["spear"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person jumps and stabs down with a spear."
+
+[[activity]]
+id = "atk.jump.dagger.1"
+point = "ground"
+props = ["dagger"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person jumps forward and stabs down with a dagger."
+
+# --- atk.run ---------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.run.sword.1"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person runs forward and slashes with a sword."
+
+[[activity]]
+id = "atk.run.claymore.1"
+point = "ground"
+props = ["claymore"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person runs forward and swings a big claymore."
+
+[[activity]]
+id = "atk.run.spear.1"
+point = "ground"
+props = ["spear"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person charges forward and thrusts a spear."
+
+[[activity]]
+id = "atk.run.dagger.1"
+point = "ground"
+props = ["dagger"]
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person runs forward and stabs with a dagger."
+
+# --- atk.roll --------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "atk.roll.sword.1"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 7
+duration = 3.0
+prompt = "A person rolls forward and slashes with a sword."
+
+[[activity]]
+id = "atk.roll.claymore.1"
+point = "ground"
+props = ["claymore"]
+phases = ["act"]
+variants = 7
+duration = 3.0
+prompt = "A person rolls forward and swings a big claymore."
+
+[[activity]]
+id = "atk.roll.spear.1"
+point = "ground"
+props = ["spear"]
+phases = ["act"]
+variants = 7
+duration = 3.0
+prompt = "A person rolls forward and thrusts a spear."
+
+[[activity]]
+id = "atk.roll.dagger.1"
+point = "ground"
+props = ["dagger"]
+phases = ["act"]
+variants = 7
+duration = 3.0
+prompt = "A person rolls forward and stabs with a dagger."
+
+# --- trav.mantle -----------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "trav.mantle.1m.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person pulls themselves up onto a waist-high ledge."
+constraints.act = { pelvis_height = { height = 2.0, at = "end" } }
+
+[[activity]]
+id = "trav.mantle.1m.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person puts both hands on a waist-high ledge and hops up onto it."
+constraints.act = { pelvis_height = { height = 2.0, at = "end" } }
+
+[[activity]]
+id = "trav.mantle.1m.3"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person jumps up onto a high box."
+constraints.act = { pelvis_height = { height = 2.0, at = "end" } }
+
+[[activity]]
+id = "trav.mantle.2m.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 3.5
+prompt = "A person pulls themselves up onto a high ledge."
+constraints.act = { pelvis_height = { height = 3.0, at = "end" } }
+
+[[activity]]
+id = "trav.mantle.2m.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 3.5
+prompt = "A person grabs the top of a high wall and pulls themselves up."
+constraints.act = { pelvis_height = { height = 3.0, at = "end" } }
+
+[[activity]]
+id = "trav.mantle.2m.3"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 3.5
+prompt = "A person jumps, grabs a high ledge and pulls themselves up onto it."
+constraints.act = { pelvis_height = { height = 3.0, at = "end" } }
+
+# --- trav.vault ------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "trav.vault.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person vaults over a low wall."
+
+[[activity]]
+id = "trav.vault.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person runs and vaults over a fence."
+
+[[activity]]
+id = "trav.vault.3"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.5
+prompt = "A person does a parkour vault over a low wall."
+
+# --- trav.jump -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "trav.jump.stand.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.0
+prompt = "A person jumps forward."
+
+[[activity]]
+id = "trav.jump.stand.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.0
+prompt = "A person does a standing long jump."
+
+[[activity]]
+id = "trav.jump.run.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 3.0
+prompt = "A person runs and jumps over a gap."
+
+[[activity]]
+id = "trav.jump.run.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 3.0
+prompt = "A person does a running long jump."
+
+# --- dodge.roll ------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "dodge.roll.fwd.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.0
+prompt = "A person does a forward roll."
+
+[[activity]]
+id = "dodge.roll.fwd.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.0
+prompt = "A person dodges with a quick forward roll."
+
+[[activity]]
+id = "dodge.roll.side.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.0
+prompt = "A person dodges by rolling to the right."
+
+[[activity]]
+id = "dodge.roll.side.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 2.0
+prompt = "A person does a sideways combat roll."
+
+# --- dodge.backstep --------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "dodge.backstep.1"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person quickly steps back to dodge."
+
+[[activity]]
+id = "dodge.backstep.2"
+point = "ground"
+phases = ["act"]
+variants = 7
+duration = 1.5
+prompt = "A person hops backward to dodge an attack."

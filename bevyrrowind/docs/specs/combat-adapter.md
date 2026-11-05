@@ -110,6 +110,31 @@ console `kill` (`physics::kill_in_view`, walkers only). Gaps: corpse drag (Delir
 save/streaming persistence of the corpse pose. Tests: `physics::tests` (death routing), `mw_delirium_bevy`
 `deaths_of_human_walkers_become_terminal_takeovers`, `mw_delirium` `killed_takeover_falls_and_settles`. Visual check PH-16.
 
+## Character shapes (Morrowind)
+
+Design 2026-11-05 (nothing built; framework spec `superfargoth/docs/specs/character-shapes.md`, slices S0-S7). Why
+balls pass through a Delirium-held body (PH-15): `Held` brings `Dormant`, `sf_physics_bevy` `capsules()` drops the
+mover capsule of a `Dormant` mover, and Delirium's parts live in delirium-physics, so no `PhysicsEvent::Hit` is ever
+made for it and the `live_only` routing above never runs. The same hole covers frozen corpses (and corpse drag).
+
+- **Source**: Morrowind has no per-bone collision for actors (the root `Bounding Box` node sizes the actor box, OpenMW's
+  actor shape; we keep it for the mover capsule and the shape set's `bound`). The shape set is the framework's
+  `ragdoll.cook` from the rig profile of `base_anim.nif` / `base_anim_female.nif` and each creature skeleton, radii fit at
+  bake to the race's default skinned body parts (armour and clothing ignored: the set is per rig, not per outfit; a
+  per-race scale comes from the actor's height/weight as for ragdolls).
+- **Delirium as proxy holder** (S3): `mw_delirium_bevy` registers its takeovers as `ProxyHolder::Layer`; proxies follow
+  the shown pose after its copy-back (not Delirium's own 21 part boxes), so balls hit what the player sees. An impact's
+  shape → joint → Delirium part: the part whose `table.parts[k].joint` is the joint or its nearest ancestor; the push is
+  `Takeover::hit(part, at, impulse x HitRules::gain, React)` directly, every contact start of at least 1 N·s, no
+  per-frame dedup (rapid balls each push). Proxies leave with the hand-back (the mover capsule returns with `Dormant`
+  removed).
+- **Animated walkers** (S4): the walkers' `knockdown()` passes the shape's joint in `PhysicsTakeover { joint }`;
+  `hit_reaction` uses it as `DeliriumHit::part` (mapped as above) instead of `nearest_part`; `HitReact` gets `joint`.
+- **Corpses** (S6, owner question 1 in the framework spec): `DeliriumCorpse` either becomes a sleeping limp
+  `sf_ragdoll` at rest (drag and wake as before 3.2b) or keeps static proxies over the frozen pose.
+- **Classic rules** (C5): OpenMW's melee hit is a reach and angle test with no per-bone shapes; the classic resolver
+  keeps that (bound capsule only); hurt shapes serve the modern rules.
+
 ## C1b: game items
 
 - **Sheet** `mw_combat/data/movesets/sword_1h.ron` with combat.md's C1b table.

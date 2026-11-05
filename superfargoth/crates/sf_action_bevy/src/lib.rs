@@ -321,11 +321,23 @@ fn step_actions<G: GroundProbe + Resource>(
             lock_target: lock.and_then(|l| l.0),
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
+        log_traversal_press(&rules.rules, &c.command, obstacle.as_ref(), &c.output);
     }
 }
 
+/// Normals within this cosine (~10°) are the same face for the square-on re-probe.
+const SAME_FACE_COS: f32 = 0.985;
+
 /// The context probe's obstacle ahead along the stick (else the facing), as the chooser reads it.
 /// The chooser gates the stick's angle to the face it finds (`sf_action` traversal input cone).
+///
+/// A face found at an angle is probed again square-on (along its inward normal from the feet),
+/// and that hit is used when it finds the same face: the lip directly ahead of the body, where a
+/// move squared up to the face plants its hands (GASP's traversal check takes the ledge point
+/// closest to the character the same way). The stick's hit point lies sideways of that line by
+/// the distance times the angle's tangent, a correction the vault's short first leg (hand onto the
+/// lip, ~0.6 m of baked travel) cannot absorb (AL-12, owner 2026-11-05: "only if I'm looking at
+/// it"). Off the face's end (the square-on ray misses it), the stick's hit stands.
 fn sense_obstacle(probes: &mut ContextProbes, ground: &dyn GroundProbe, body: &ActionBody, stick: Vec2) -> Option<Obstacle> {
     let dir = if stick.length_squared() > 1e-4 {
         Vec3::new(stick.x, 0.0, stick.y).normalize()
@@ -334,9 +346,41 @@ fn sense_obstacle(probes: &mut ContextProbes, ground: &dyn GroundProbe, body: &A
     };
     let params = ContextParams::from_mover(&body.params);
     let query = ContextQuery::ObstacleAhead { range: OBSTACLE_RANGE_M };
+    let feet = body.loco.position;
     let mut out = [None];
-    probes.run(&[ContextRequest { feet: body.loco.position, dir, params: &params, query }], ground, &mut out);
-    out[0].and_then(|hit| obstacle(body.loco.position, &hit))
+    probes.run(&[ContextRequest { feet, dir, params: &params, query }], ground, &mut out);
+    let hit = out[0]?;
+    let into = Vec3::new(-hit.normal.x, 0.0, -hit.normal.z).normalize_or_zero();
+    if into != Vec3::ZERO && into.dot(dir) < SAME_FACE_COS {
+        probes.run(&[ContextRequest { feet, dir: into, params: &params, query }], ground, &mut out);
+        if let Some(square) = out[0].filter(|s| s.kind == hit.kind && s.normal.dot(hit.normal) >= SAME_FACE_COS) {
+            return obstacle(feet, &square);
+        }
+    }
+    obstacle(feet, &hit)
+}
+
+/// One line per Jump or Up press at a sensed obstacle (dev log): what the probe saw and why each
+/// traversal rule refused, if one did.
+fn log_traversal_press(rules: &RuleSet, cmd: &Command, obstacle: Option<&Obstacle>, output: &ActionOutput) {
+    let Some(o) = obstacle else { return };
+    if ![ActionClass::Jump, ActionClass::Up].into_iter().any(|a| cmd.pressed(a)) {
+        return;
+    }
+    let refused = output
+        .refusals
+        .iter()
+        .map(|r| format!("{}: {:?}", rules.get(r.rule).map_or("?", |c| c.rule.id.as_str()), r.reason))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ahead = Vec3::new(o.lip.x, 0.0, o.lip.z).dot(-o.normal);
+    bevy_log::info!(
+        "traversal press: {:?} h {:.2} m, depth {:.2}, room {:.2}, face {ahead:.2} m ahead; refused [{refused}]",
+        o.class,
+        o.height,
+        o.depth,
+        o.room
+    );
 }
 
 /// A context hit as an [`Obstacle`] (positions from `feet`); `None` for kinds no traversal class
@@ -349,7 +393,16 @@ fn obstacle(feet: WorldPos, hit: &ContextHit) -> Option<Obstacle> {
         Affordance::Climb => ObstacleClass::Climb,
         _ => return None,
     };
-    Some(Obstacle { class, lip: feet.delta_f32(hit.point), normal: hit.normal, height: hit.height, depth: hit.depth, clearance: hit.clearance })
+    Some(Obstacle {
+        class,
+        lip: feet.delta_f32(hit.point),
+        normal: hit.normal,
+        height: hit.height,
+        depth: hit.depth,
+        clearance: hit.clearance,
+        landing: hit.landing.map(|l| feet.delta_f32(l)),
+        room: hit.room,
+    })
 }
 
 /// Puts a Warp move's body where the move says, outside the mover: no gravity, steering or

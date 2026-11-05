@@ -83,6 +83,9 @@ Constraint vocabulary (mapped to Kimodo constraints by the planner): `pelvis_hei
 `root = fixed | path:<points>` (2D root path), `hand_l/hand_r = { height = "band.top", forward = 0.35 }`
 (end-effector keyframes), `start_pose = "<clip id>:end"` (full-body keyframe, for chains), heights in meters or
 `band.*` references. Planner scales SOMA-space targets by `soma_height / race_height` per band.
+MG-C0 (2026-11-05): `pelvis_height` and `hand_*` also take a list of `{ ..., at = [s] }` tables (one value per keyframe
+group), `root = "path:x,z@t;..."` times its points (seconds), and hands may combine with a path (the hand key's root XZ
+is the path there). `python -m motiongen stats <bvh|dir>` prints skate/flight/root/hand/jerk numbers for any BVH.
 
 ### Generation workers (MG1, MG8)
 
@@ -147,6 +150,7 @@ Constraint vocabulary (mapped to Kimodo constraints by the planner): `pelvis_hei
 | MG8 | MotionBricks link worker | MG1 | todo |
 | MG9 | verdicts → sources.ron candidates + review.html | MG5 | later |
 | MG10a | interactive browse: `clip-preview --browse <dir>` (keys, loop, orbit, prov overlay) | MG5 | done |
+| MG-C0 | combat/athletic feasibility run (`recipes/combat-feasibility.toml`, `stats`), 2026-11-05 | MG1 | done; results in research/combat-anim-generation-2026-11-05.md |
 
 Order: MG1, MG3, MG5 in parallel (Python / bake / app), then MG4, MG2, MG6, MG7, MG8.
 

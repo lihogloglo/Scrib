@@ -16,7 +16,11 @@
 //!   its length (slightly bent): on the face, offset from the shoulder's foot point toward a
 //!   preferred direction (down, out to the hand's side, a little forward; reaching ahead along
 //!   the wall with the speed past it, [`BRACE_LEAD`]: people feeling a wall reach ahead of
-//!   them). Close to the face the arm straightens
+//!   them). On a wall ahead ([`BRACE_HEAD_ON`]) the palms go in front of the chest instead,
+//!   people's instinctive brace (owner 2026-11-05): close together ([`BRACE_SPREAD`] of the
+//!   shoulders' spacing) at chest height ([`BRACE_CHEST`] of the shoulders' height), the elbows
+//!   bending as needed down to [`BRACE_TUCK`] (closer still, the hands slide down the face).
+//!   Close to the face the arm straightens
 //!   (up to [`BRACE_STRAIGHT`]) until its elbow, bent any way, clears the face by
 //!   [`BRACE_ELBOW_ROOM`] ("arms out of walls"); no such length: no brace. A wall farther than the bent arm gets
 //!   the arm reaching straight at it, faded by the band. A ray into the face at the palm point
@@ -74,6 +78,17 @@ pub const BRACE_LEAD: (f32, f32) = (1.5, 1.6);
 /// Fingers on the face: their up share against the facing's part along the face (1 on a wall
 /// at the side), so fingers point up on a wall ahead and forward, about 20° up, at the side.
 pub const BRACE_FINGERS_UP: f32 = 0.4;
+/// Facing's share into the face (`-n.z`) where a hand turns from the side trail to the head-on
+/// brace in front of the chest: none below the first, fully above the second (about 66° / 26°
+/// from head-on).
+pub const BRACE_HEAD_ON: (f32, f32) = (0.4, 0.9);
+/// Head-on wrists' spacing, fraction of the shoulders' (hands just in front of the chest).
+pub const BRACE_SPREAD: f32 = 0.68;
+/// Head-on wrist height, fraction of the shoulders' height above the feet (chest height).
+pub const BRACE_CHEST: f32 = 0.92;
+/// Shortest shoulder-to-wrist distance of a head-on hand, fraction of the arm's length (elbows
+/// bent well, forearms toward the face).
+pub const BRACE_TUCK: f32 = 0.55;
 /// The confirm ray starts this far out of the face and reaches this far past it, m.
 pub const BRACE_CONFIRM: (f32, f32) = (0.2, 0.08);
 /// Faces whose normal has a larger vertical part are not walls.
@@ -285,30 +300,7 @@ fn solve(frame: &CharacterFrame, probe: &(impl GroundProbe + ?Sized), body: &Bra
         // Proximity: 1 within the bent arm, fading over the band past it.
         let near = smooth((bent + band - reach) / band);
         let level = BRACE_LIGHT + (1.0 - BRACE_LIGHT) * smooth(v_in / BRACE_FIRM_SPEED);
-        // Preferred direction on the face, reaching ahead with the speed past it.
-        let past = body.velocity - n * body.velocity.dot(n);
-        let past = Vec3::new(past.x, 0.0, past.z);
-        let lead = (past.length() / BRACE_LEAD.0).min(1.0) * BRACE_LEAD.1;
-        let mut prefer = PREFER * Vec3::new(side, 1.0, 1.0) + past.normalize_or_zero() * lead;
-        prefer -= n * prefer.dot(n);
-        let u = prefer.normalize_or(Vec3::NEG_Y);
-        let foot = shoulder - n * reach.max(0.0);
-        let on_wall = reach <= bent;
-        let wrist = if on_wall {
-            // The bent arm, straightened as far as needed for the elbow to clear the face.
-            let Some(w) = (0..=4).find_map(|k| {
-                #[allow(clippy::cast_precision_loss)]
-                let len = bent + (BRACE_STRAIGHT * body.arms[i] - bent).max(0.0) * k as f32 / 4.0;
-                let w = foot + u * (len * len - reach * reach).max(0.0).sqrt();
-                (elbow_room(shoulder, w, body.arms[i], n, d) >= BRACE_ELBOW_ROOM).then_some(w)
-            }) else {
-                continue;
-            };
-            w
-        } else {
-            shoulder - n * bent
-        };
-        let palm = if on_wall { wrist } else { foot } - n * BRACE_PALM_GAP;
+        let Some((wrist, palm, on_wall)) = place(body, i, side, n, d) else { continue };
         planned[i] = Some(Planned { wrist, normal: n, goal: near * level, palm, on_wall });
     }
 
@@ -340,6 +332,52 @@ fn solve(frame: &CharacterFrame, probe: &(impl GroundProbe + ?Sized), body: &Bra
         out[i] = Some(Solved { wrist, normal: hn, goal: plan.goal });
     }
     out
+}
+
+/// Hand `i`'s wrist and palm point on a face with normal `n` (toward the character) `dist` from
+/// its shoulder, and whether the face is within the bent arm (else the arm reaches at it);
+/// `None` when no arm length keeps the elbow off the face.
+fn place(body: &BraceBody, i: usize, side: f32, n: Vec3, dist: f32) -> Option<(Vec3, Vec3, bool)> {
+    let (shoulder, arm) = (body.shoulders[i], body.arms[i]);
+    let bent = BRACE_BEND * arm;
+    let reach = dist - BRACE_PALM_GAP; // shoulder to the wrist's plane
+    // Side trail: preferred direction on the face, reaching ahead with the speed past it.
+    let past = body.velocity - n * body.velocity.dot(n);
+    let past = Vec3::new(past.x, 0.0, past.z);
+    let lead = (past.length() / BRACE_LEAD.0).min(1.0) * BRACE_LEAD.1;
+    let mut prefer = PREFER * Vec3::new(side, 1.0, 1.0) + past.normalize_or_zero() * lead;
+    prefer -= n * prefer.dot(n);
+    let trail = prefer.normalize_or(Vec3::NEG_Y);
+    let foot = shoulder - n * reach.max(0.0);
+    // Head-on: the chest point (the shoulders' midpoint, this hand BRACE_SPREAD of the way out
+    // to its shoulder, at chest height) on the wrist's plane; the side trail: the foot.
+    let head = smooth((-n.z - BRACE_HEAD_ON.0) / (BRACE_HEAD_ON.1 - BRACE_HEAD_ON.0));
+    let mid = (body.shoulders[LEFT] + body.shoulders[RIGHT]) / 2.0;
+    let mut chest = mid + (shoulder - mid) * BRACE_SPREAD;
+    chest.y = BRACE_CHEST * mid.y;
+    let chest = chest - n * (chest - foot).dot(n);
+    let base = if chest.is_finite() { foot.lerp(chest, head) } else { foot };
+    if reach > bent {
+        // Reaching straight at the wall's point (the base), the arm bent.
+        return Some((shoulder + (base - shoulder).normalize_or(-n) * bent, base - n * BRACE_PALM_GAP, false));
+    }
+    // From the base along the face (the trail's direction; down head-on) at the arm's length:
+    // the bent arm on the trail, the base's own distance (kept within tuck..straight) head-on;
+    // straightened as far as needed for the elbow to clear the face.
+    let dir = trail.lerp(Vec3::NEG_Y, head).normalize_or(Vec3::NEG_Y);
+    let (tuck, straight) = (BRACE_TUCK * arm, BRACE_STRAIGHT * arm);
+    let start = bent + (base.distance(shoulder).clamp(tuck, straight.max(tuck)) - bent) * head;
+    let off = base - foot;
+    let along = off.dot(dir);
+    let wrist = (0..=4).find_map(|k| {
+        #[allow(clippy::cast_precision_loss)]
+        let len = start + (straight - start).max(0.0) * k as f32 / 4.0;
+        // The farther point along `dir` at `len` from the shoulder.
+        let step = -along + (along * along - off.length_squared() - reach * reach + len * len).max(0.0).sqrt();
+        let wrist = base + dir * step;
+        (elbow_room(shoulder, wrist, arm, n, dist) >= BRACE_ELBOW_ROOM).then_some(wrist)
+    })?;
+    Some((wrist, wrist - n * BRACE_PALM_GAP, true))
 }
 
 /// The fingers' preferred direction on a face with normal `n` (toward the character): up, plus

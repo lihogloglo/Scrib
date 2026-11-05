@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sf_controller::{Gait, LocomotionIntent};
 
 use crate::command::{ActionClass, ClassSet, Command};
-use crate::grip::LedgeGrip;
+use crate::grip::{LEFT, LedgeGrip, RIGHT, hold_target};
 use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
 
 use crate::ids::{CharacterId, ClockTime, MovesetKey, RuleKey, SlotKey, TagId, TargetId, Tick, TICK_HZ};
@@ -73,6 +73,10 @@ pub struct Obstacle {
     pub depth: f32,
     /// Room above the top, m.
     pub clearance: f32,
+    /// The floor past a vault's far face, from the feet (`sf_controller::ContextHit::landing`).
+    pub landing: Option<Vec3>,
+    /// A vault's clear run-out past the lip along the face's inward normal, m (0: not measured).
+    pub room: f32,
 }
 
 /// Shared, read-only inputs of a step.
@@ -119,6 +123,8 @@ pub enum Refused {
     Probe,
     /// A Warp rule's slots have no root path.
     NoRootPath,
+    /// A `Vault` warp's slot clip has no hand contact to plant on the top.
+    NoContact,
     /// The warp correction is over the rule's `refuse_ratio`.
     MaxCorrection,
     /// The start gate refused the class ([`Sense::refused`]: no stamina).
@@ -602,10 +608,10 @@ impl RootPath for StandAt<'_> {
 }
 
 /// A Warp rule's plan (validators `EndPoseFree` via the probe's room check, `MaxCorrection`):
-/// start at the feet facing into the face, target on top `inset` past the lip (kept a radius
-/// inside a shallower top). Other owners plan nothing.
+/// start at the feet facing into the face; `LedgeTop`: target on top `inset` past the lip (kept a
+/// radius inside a shallower top); `Vault`: [`Vault::plan`]. Other owners plan nothing.
 fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense) -> Result<Option<WarpState>, Refused> {
-    let Owner::Warp { target: WarpTarget::LedgeTop { inset }, profile, refuse_ratio, .. } = r.rule.owner else {
+    let Owner::Warp { target, profile, refuse_ratio, .. } = r.rule.owner else {
         return Ok(None);
     };
     let o = sense.obstacle.ok_or(Refused::Probe)?;
@@ -614,18 +620,100 @@ fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense) -> Result<Optio
         return Err(Refused::Probe);
     }
     let yaw = into.x.atan2(into.z);
-    let room = if o.depth.is_finite() { (o.depth - ctx.params.radius).max(0.0) } else { inset };
     let lip = Vec3::new(o.lip.x, o.height, o.lip.z);
-    let top = lip + into * inset.min(room);
-    let plan = with_root_path(r, ctx.slots, |path| {
-        WarpPlan::try_new(path, RootPose::new(Vec3::ZERO, yaw), RootPose::new(top, yaw), profile, refuse_ratio)
-    })
-    .ok_or(Refused::NoRootPath)?
-    .map_err(|_| Refused::MaxCorrection)?;
+    let start = RootPose::new(Vec3::ZERO, yaw);
+    let (plan, mirror) = match target {
+        WarpTarget::LedgeTop { inset } => {
+            let room = if o.depth.is_finite() { (o.depth - ctx.params.radius).max(0.0) } else { inset };
+            let top = lip + into * inset.min(room);
+            let plan = with_root_path(r, ctx.slots, |path| WarpPlan::try_new(path, start, RootPose::new(top, yaw), profile, refuse_ratio))
+                .ok_or(Refused::NoRootPath)?
+                .map_err(|_| Refused::MaxCorrection)?;
+            (plan, true)
+        }
+        WarpTarget::Vault => {
+            let vault = Vault { o: &o, lip, into, start, radius: ctx.params.radius };
+            let (plan, ratio) = with_root_path(r, ctx.slots, |path| vault.plan(path, profile)).ok_or(Refused::NoRootPath)??;
+            if ratio > refuse_ratio {
+                return Err(Refused::MaxCorrection);
+            }
+            (plan, false)
+        }
+    };
     // Hands on the lip (B2b), from the slot clip's baked hand contacts.
-    let grip = with_root_path(r, ctx.slots, |path| LedgeGrip::plan(path, &plan, lip, into)).flatten();
+    let grip = with_root_path(r, ctx.slots, |path| LedgeGrip::plan(path, &plan, lip, into, mirror)).flatten();
     Ok(Some(WarpState { plan, grip }))
 }
+
+/// A vault's measured obstacle, for [`Vault::plan`].
+struct Vault<'a> {
+    o: &'a Obstacle,
+    /// The lip on top, from the feet.
+    lip: Vec3,
+    /// The face's flat inward direction, unit.
+    into: Vec3,
+    /// The feet, facing `into`.
+    start: RootPose,
+    radius: f32,
+}
+
+impl Vault<'_> {
+    /// Two legs, as GASP's vault warps onto its front ledge then its back floor: the clip's first
+    /// hand contact lands on its hold on the lip ([`hold_target`], where the hand IK holds it) by
+    /// the plant; the root moves as baked while the hand is down; then the clip's own landing
+    /// (carried by the first leg) is pulled in to the probed run-out, a radius short of what it
+    /// hit, and onto the far floor. Refused without a far floor or a hand contact.
+    ///
+    /// Close to the face (the hold nearer than the clip's hand reaches at the plant) the first leg
+    /// stops the root at the takeoff instead of running it backwards, and the hand IK reaches the
+    /// rest (at most [`VAULT_REACH_SLACK`]). Returns the plan and its [`Vault::ratio`].
+    fn plan(&self, path: &dyn RootPath, profile: sf_anim::WarpProfile) -> Result<(WarpPlan, f32), Refused> {
+        let (o, into) = (self.o, self.into);
+        let landing = o.landing.ok_or(Refused::Probe)?;
+        let c = path
+            .contacts()
+            .iter()
+            .filter(|c| c.kind == sf_anim::ContactKind::Hand)
+            .min_by(|a, b| a.start.total_cmp(&b.start))
+            .ok_or(Refused::NoContact)?;
+        let side = if c.side == sf_anim::Side::Left { LEFT } else { RIGHT };
+        let at_plant = self.start.then(path.root_at(c.start));
+        let baked_hand = at_plant.position + glam::Quat::from_rotation_y(at_plant.yaw) * c.local;
+        let mut shift = hold_target(self.lip, into, side, c.local.x) - baked_hand;
+        let behind = -(at_plant.position - self.start.position + shift).dot(into);
+        if behind > VAULT_REACH_SLACK {
+            return Err(Refused::MaxCorrection);
+        }
+        shift += into * behind.max(0.0);
+        let end = self.start.then(path.root_at(path.duration())).position + shift;
+        let past = (end - self.lip).dot(into);
+        let reach = past.min(o.room - self.radius).max(o.depth + self.radius);
+        let end = end + into * (reach - past);
+        let target = RootPose::new(Vec3::new(end.x, landing.y, end.z), self.start.yaw);
+        let plan = WarpPlan::with_waypoint(path, self.start, (c.start, c.end), at_plant.position + shift, target, profile);
+        let ratio = self.ratio(&plan, at_plant.position - self.start.position);
+        Ok((plan, ratio))
+    }
+
+    /// The worse leg's correction share (the rule's `refuse_ratio` bounds it), as
+    /// [`WarpPlan::ratio`] but with the first leg's slowdown along the face's normal free down
+    /// to a standstill (`run_up`: the baked root travel to the plant, world): a takeoff from close
+    /// in shortens the run-up, which reads as braking into the plant, while the vertical and
+    /// sideways parts and any stretch still count. The second leg is [`WarpPlan::ratio`]'s.
+    fn ratio(&self, plan: &WarpPlan, run_up: Vec3) -> f32 {
+        let share = |c: f32, d: f32| if d > 1e-4 { c / d } else if c <= 1e-3 { 0.0 } else { f32::INFINITY };
+        let Some(w) = plan.waypoint else { return plan.ratio() };
+        let along = w.correction.dot(self.into);
+        let slow = along.clamp(-run_up.dot(self.into).max(0.0), 0.0);
+        let first = share((w.correction - self.into * slow).length(), run_up.length());
+        let second = share((plan.correction - w.correction).length(), (plan.baked_end.position - w.baked.1).length());
+        first.max(second)
+    }
+}
+
+/// How far short of the clip's own reach a vault's planted hand may hold the lip, m, when the
+/// takeoff is closer to the face than the clip plants from (the hand IK bends the arm that much).
+const VAULT_REACH_SLACK: f32 = 0.3;
 
 /// 10. Output: move, slot chain, playhead, and the "press to use" prompt.
 fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, facts: &Facts, out: &mut ActionOutput) {

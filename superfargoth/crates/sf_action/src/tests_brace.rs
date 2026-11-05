@@ -5,7 +5,7 @@ use glam::Vec3;
 use sf_controller::{CharacterFrame, GroundHit, GroundProbe, ProbeQuery, SurfaceId};
 use sf_coords::WorldPos;
 
-use crate::{BRACE_PALM_GAP, BraceBody, HandBrace, LEFT, PalmFrame, RIGHT, WallBrace};
+use crate::{BRACE_CHEST, BRACE_PALM_GAP, BRACE_STRAIGHT, BRACE_TUCK, BraceBody, HandBrace, LEFT, PalmFrame, RIGHT, WallBrace};
 
 const HEIGHT: f32 = 1.8;
 const DT: f32 = 1.0 / 60.0;
@@ -101,6 +101,68 @@ fn running_into_a_wall_plants_both_palms_on_the_face() {
         // Each hand on its own side.
         assert_eq!(t.x > 0.0, i == LEFT, "hand {i}: x {}", t.x);
         assert!((h.normal - Vec3::NEG_Z).length() < 1e-3);
+    }
+}
+
+/// Wall faces ahead within the bent arm (shoulder 0.27-0.47 m off the wrist plane).
+const HEAD_ON_WALLS: [f32; 4] = [0.3, 0.38, 0.45, 0.5];
+
+#[test]
+fn head_on_palms_go_in_front_of_the_chest() {
+    let b = body(Vec3::Z * 4.5, Vec3::ZERO);
+    let width = b.shoulders[LEFT].distance(b.shoulders[RIGHT]);
+    let chest = BRACE_CHEST * b.shoulders[LEFT].y;
+    for wall in HEAD_ON_WALLS {
+        let brace = run(&wall_ahead(wall), &b, 60);
+        assert_sane(&brace);
+        let [Some(l), Some(r)] = brace.hands.map(|h| h.target) else { panic!("wall {wall}: both hands braced") };
+        // In front of the chest: closer together than the shoulders, not crossed, not touching.
+        let spacing = l.x - r.x;
+        assert!(spacing < width && spacing > 0.3 * width, "wall {wall}: spacing {spacing} vs shoulders {width}");
+        assert!(l.x > 0.0 && r.x < 0.0, "wall {wall}: crossed, {l} {r}");
+        for (i, t) in [(LEFT, l), (RIGHT, r)] {
+            let h = brace.hands[i];
+            // At chest height (the closest wall may slide the hands a little down the face).
+            assert!((t.y - chest).abs() < 0.08, "wall {wall} hand {i}: height {} vs chest {chest}", t.y);
+            assert!(t.y < b.shoulders[i].y, "wall {wall} hand {i}: above the shoulder");
+            // On the face, palm into it, elbow bent (within reach, not past the tuck).
+            assert!((wall - BRACE_PALM_GAP - t.z).abs() <= 0.02, "wall {wall} hand {i}: wrist z {}", t.z);
+            assert!((h.normal - Vec3::NEG_Z).length() < 1e-3);
+            let len = t.distance(b.shoulders[i]) / b.arms[i];
+            assert!((BRACE_TUCK - 1e-3..=BRACE_STRAIGHT + 1e-3).contains(&len), "wall {wall} hand {i}: arm at {len}");
+        }
+    }
+}
+
+#[test]
+fn head_on_palms_face_the_wall_fingers_up() {
+    let frame = PalmFrame::new(Vec3::X, Vec3::NEG_Z).expect("frame");
+    for wall in HEAD_ON_WALLS {
+        let brace = run(&wall_ahead(wall), &with_palms(body(Vec3::Z * 4.5, Vec3::ZERO)), 60);
+        for (i, h) in brace.hands.iter().enumerate() {
+            let (palm, fingers) = palm_dirs(h, &frame);
+            assert!(palm.dot(Vec3::Z) > 0.99, "wall {wall} hand {i}: palm {palm}");
+            assert!(fingers.dot(Vec3::Y) > 0.99, "wall {wall} hand {i}: fingers {fingers}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "measurement: head-on wrist spacing and height, before (2026-10-30 rule) and now"]
+fn measure_head_on_placement() {
+    let b = body(Vec3::Z * 4.5, Vec3::ZERO);
+    let (sh, arm) = (b.shoulders[LEFT], b.arms[LEFT]);
+    println!("shoulders {:.3} m apart, {:.3} m up; arm {arm:.3} m", 2.0 * sh.x, sh.y);
+    println!("wall_m  before: spacing_m height_m  now: spacing_m height_m  arm_L");
+    for wall in HEAD_ON_WALLS {
+        // Before: the bent arm from the shoulder's foot point, down and out (PREFER on the face).
+        let reach = wall - BRACE_PALM_GAP - sh.z;
+        let off = ((0.9 * arm).powi(2) - reach * reach).max(0.0).sqrt();
+        let down_out = Vec3::new(0.8, -1.0, 0.0).normalize();
+        let old = sh + down_out * off;
+        let brace = run(&wall_ahead(wall), &b, 60);
+        let [Some(l), Some(r)] = brace.hands.map(|h| h.target) else { panic!("braced") };
+        println!("{wall:6.2}  {:16.3} {:8.3}  {:13.3} {:8.3}  {:.3}", 2.0 * old.x, old.y, l.x - r.x, l.y, l.distance(sh) / arm);
     }
 }
 
@@ -213,9 +275,10 @@ fn no_wall_still_or_inactive_means_no_brace() {
 
 #[test]
 fn a_wall_that_ends_drops_the_hand_past_it() {
-    // Running into a wall whose end is at x = -0.25: the right shoulder (x -0.19) faces it, its
-    // palm (out to -X) lands past the end.
-    let probe = Boxes(vec![(Vec3::new(-0.25, 0.0, 0.45), Vec3::new(3.0, 3.5, 1.0))]);
+    // Running into a wall with a gap from x = -0.15 to 0.05: the right shoulder (x -0.19) faces
+    // the wall's right part, its palm (in front of the chest, x -0.10) lands in the gap; the left
+    // palm (x 0.10) on the left part.
+    let probe = Boxes(vec![(Vec3::new(-3.0, 0.0, 0.45), Vec3::new(-0.15, 3.5, 1.0)), (Vec3::new(0.05, 0.0, 0.45), Vec3::new(3.0, 3.5, 1.0))]);
     let brace = run(&probe, &body(Vec3::Z * 4.5, Vec3::ZERO), 60);
     assert_sane(&brace);
     assert!(brace.hands[LEFT].weight > 0.95);

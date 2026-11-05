@@ -1,0 +1,168 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# MG-C0 feasibility run (bevyrrowind/docs/research/combat-anim-generation-2026-11-05.md, "Slice plan"): can Kimodo make
+# sword swings, rolls, jumps, mantles and vaults? Output: "animation packs/generated/mg-c0/" (BYO, never committed).
+# Format: bevyrrowind/docs/specs/motion-generation.md, "Recipes (MG1)". Canonical space: meters, Y up, the actor starts
+# at XZ (0, 0) facing +Z, left hand on +X (so the right hand is side > 0 -> -X). Hand targets are global (the root is
+# keyed at the hand frames: the origin, or the root path there). SOMA actor: pelvis 1.00 m standing, ankle 0.07 m.
+# Prompts are plain body motion ("A person..."), one or two behaviours (Kimodo best practices); "videogame combat" is
+# in its training data, so the swings name the sword. The *.free ids are the same swings without constraints (control).
+
+# --- One-handed sword, right hand: light chain pieces ------------------------------------------------------------
+
+[[activity]]
+id = "sword.light.diag_rl"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person holding a sword in their right hand raises it above their right shoulder and slashes diagonally down across their body to the left, then returns to a fighting stance."
+constraints.act = { hand_r = [{ height = 1.75, side = 0.45, forward = 0.15, at = [0.45] }, { height = 0.85, side = -0.35, forward = 0.45, at = [0.85] }] }
+
+[[activity]]
+id = "sword.light.diag_lr"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person holding a sword in their right hand, with the arm across the body at the left hip, slashes up and outward to the right in a backhand swing, then returns to a fighting stance."
+constraints.act = { hand_r = [{ height = 1.0, side = -0.3, forward = 0.3, at = [0.4] }, { height = 1.45, side = 0.6, forward = 0.35, at = [0.8] }] }
+
+[[activity]]
+id = "sword.light.horizontal"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person holding a sword in their right hand swings it horizontally from right to left at chest height, turning their torso, then returns to a fighting stance."
+constraints.act = { hand_r = [{ height = 1.35, side = 0.6, forward = 0.0, at = [0.45] }, { height = 1.3, side = -0.5, forward = 0.45, at = [0.8] }] }
+
+[[activity]]
+id = "sword.light.overhead"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.5
+prompt = "A person holding a sword in their right hand steps forward, raises it high above their head and brings it straight down hard in front of them, then recovers to a fighting stance."
+constraints.act = { root = "path:0,0@0;0,0@0.4;0,0.45@1.1;0,0.45@2.4", hand_r = [{ height = 2.05, side = 0.15, forward = 0.1, at = [0.6] }, { height = 0.8, side = 0.05, forward = 1.1, at = [1.0] }] }
+
+# Controls: the same prompts, text only.
+
+[[activity]]
+id = "sword.free.diag_rl"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person holding a sword in their right hand raises it above their right shoulder and slashes diagonally down across their body to the left, then returns to a fighting stance."
+
+[[activity]]
+id = "sword.free.diag_lr"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person holding a sword in their right hand, with the arm across the body at the left hip, slashes up and outward to the right in a backhand swing, then returns to a fighting stance."
+
+[[activity]]
+id = "sword.free.horizontal"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person holding a sword in their right hand swings it horizontally from right to left at chest height, turning their torso, then returns to a fighting stance."
+
+[[activity]]
+id = "sword.free.overhead"
+point = "ground"
+props = ["sword"]
+phases = ["act"]
+variants = 4
+duration = 2.5
+prompt = "A person holding a sword in their right hand steps forward, raises it high above their head and brings it straight down hard in front of them, then recovers to a fighting stance."
+
+# --- Rolls -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "roll.forward"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person takes a quick step, dives into a forward roll over their shoulder on the ground and comes back up to standing."
+constraints.act = { root = "path:0,0@0;0,1.0@0.5;0,2.4@1.2;0,3.0@2.0", pelvis_height = [{ height = 1.0, at = [0.0] }, { height = 0.45, at = [0.85] }, { height = 0.95, at = [2.0] }] }
+
+[[activity]]
+id = "roll.side"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person in a fighting stance quickly rolls sideways to their right on the ground and gets back up into a fighting stance."
+constraints.act = { root = "path:0,0@0;-0.6,0@0.4;-1.6,0@1.0;-2.0,0@1.8", pelvis_height = [{ height = 1.0, at = [0.0] }, { height = 0.45, at = [0.7] }, { height = 0.95, at = [2.0] }] }
+
+# --- Jumps -------------------------------------------------------------------------------------------------------
+
+[[activity]]
+id = "jump.standing"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 2.0
+prompt = "A person bends their knees and jumps forward with both feet, lands softly and stands up straight."
+constraints.act = { root = "path:0,0@0;0,0@0.5;0,1.0@1.2;0,1.0@2.0", pelvis_height = [{ height = 1.0, at = [0.0] }, { height = 1.45, at = [0.85] }, { height = 1.0, at = [2.0] }] }
+
+[[activity]]
+id = "jump.running"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 3.0
+prompt = "A person runs forward and leaps far over a gap, lands and keeps running."
+constraints.act = { root = "path:0,0@0;0,3.0@0.9;0,6.0@1.6;0,10.0@3.0", pelvis_height = [{ height = 1.4, at = [1.25] }] }
+
+# --- Mantles (ledge front face at +Z, hands on the top 0.1 m past the edge) --------------------------------------
+
+[[activity]]
+id = "mantle.ledge_1m"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 3.5
+prompt = "A person walks up to a waist-high wall, places both hands on top of it, pushes up and climbs onto it, then stands up on top."
+constraints.act = { root = "path:0,0@0;0,0.3@0.8;0,0.35@1.4;0,1.0@2.4;0,1.2@3.5", hand_l = { height = 1.03, side = 0.25, forward = 0.8, at = [1.0, 1.4] }, hand_r = { height = 1.03, side = 0.25, forward = 0.8, at = [1.0, 1.4] }, pelvis_height = [{ height = 1.0, at = [0.0] }, { height = 2.0, at = [3.4] }] }
+
+[[activity]]
+id = "mantle.ledge_2m"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 4.0
+prompt = "A person jumps up to grab the top of a high wall with both hands, pulls themselves up, climbs over the edge and stands up on top."
+constraints.act = { root = "path:0,0@0;0,0.15@0.5;0,0.2@1.4;0,0.9@3.2;0,1.0@4.0", hand_l = { height = 2.03, side = 0.25, forward = 0.55, at = [0.9, 1.4] }, hand_r = { height = 2.03, side = 0.25, forward = 0.55, at = [0.9, 1.4] }, pelvis_height = [{ height = 1.0, at = [0.0] }, { height = 1.35, at = [1.4] }, { height = 3.0, at = [3.9] }] }
+
+# --- Vaults (1 m obstacle, top at y = 1.0) -----------------------------------------------------------------------
+
+[[activity]]
+id = "vault.run_one_hand"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 2.5
+prompt = "A person runs forward, puts their left hand on top of a waist-high wall and vaults over it, landing on the other side and continuing to run."
+constraints.act = { root = "path:0,0@0;0,2.4@0.8;0,3.0@1.05;0,4.0@1.4;0,7.0@2.5", hand_l = { height = 1.03, side = 0.15, forward = 3.0, at = [0.95] }, pelvis_height = [{ height = 1.3, at = [1.05] }] }
+
+[[activity]]
+id = "vault.walk_two_hand"
+point = "ground"
+phases = ["act"]
+variants = 4
+duration = 3.0
+prompt = "A person walks up to a waist-high wall, puts both hands on top of it and swings their legs over it, landing on the other side."
+constraints.act = { root = "path:0,0@0;0,0.5@1.0;0,1.0@1.6;0,1.8@2.4;0,2.2@3.0", hand_l = { height = 1.03, side = 0.2, forward = 1.0, at = [1.3, 1.6] }, hand_r = { height = 1.03, side = 0.2, forward = 1.0, at = [1.3, 1.6] }, pelvis_height = [{ height = 1.0, at = [0.0] }, { height = 1.3, at = [1.6] }] }

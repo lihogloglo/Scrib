@@ -224,6 +224,7 @@
     "traverse.mantle.high": (source: "quaternius_ual2:ClimbUp_2m", optional: true, fallback: Some(Drop)),
     "traverse.mantle.waist": (source: "quaternius_ual2:ClimbUp_1m", optional: true, fallback: Some(Clip("traverse.mantle.waist.alt1"))),
     "traverse.mantle.waist.alt1": (source: "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2", optional: true, fallback: Some(Drop)),
+    "traverse.vault": (source: "quaternius_ual2:SafetyVault", optional: true, fallback: Some(Drop)),
   },
   masks: {
     "left_arm": (default: 0.0, rules: [(joint: Rig("leftShoulder"), weight: 1.0, subtree: true)]),
@@ -380,7 +381,7 @@
     SpeedMatch(min: 0.5, max: 2.2, rate_share: 0.5, max_lod: 2),
     StrideWarp(pelvis: Rig("hips"), legs: [], min: 0.6, max: 1.2, grade: (up: 0.45, down: 0.25), pelvis_halflife: 0.08, hold: 1.0, max_drop: 0.1, max_lod: 1),
     FootPlacement(pelvis: Rig("hips"), legs: [], max_foot_angle: 0.5235988, release: 0.1, pelvis_halflife: 0.08, body: Lower, roll: 0.0, guards: (max_step: 0.5, max_drop: 0.4, max_rise: 0.5, unplant: 0.3, max_speed: 8.0, blend_halflife: 0.1, foot_halflife: 0.04), gate: Some("on_ground"), max_lod: 1),
-    Lean(joints: [(Rig("chest"), 0.7), (Rig("neck"), 0.3)], gain: 0.0, max_angle: 0.2617994, grade: (up: 0.4, down: 0.12, max: 0.21), halflife: 0.3, max_lod: 1),
+    Lean(joints: [(Rig("chest"), 0.45), (Rig("upperChest"), 0.4), (Rig("neck"), 0.15)], gain: 0.0, max_angle: 0.2617994, grade: (up: 0.8, down: 0.075, max: 0.45), halflife: 0.3, max_lod: 1),
     HandIk(upper: Rig("leftUpperArm"), lower: Rig("leftLowerArm"), hand: Rig("leftHand"), target: "hand_l", weight: "hand_ik_l", max_lod: 0),
     HandIk(upper: Rig("rightUpperArm"), lower: Rig("rightLowerArm"), hand: Rig("rightHand"), target: "hand_r", weight: "hand_ik_r", max_lod: 0),
     HitReact(joints: [], depth: 3, falloff: 0.5, gain: 0.35, max_angle: 0.5235988, halflife: 0.12, max_lod: 2),
@@ -453,5 +454,6 @@
     "traverse.climb.up",
     "traverse.mantle.high",
     "traverse.mantle.waist",
+    "traverse.vault",
   ],
 )

@@ -90,7 +90,7 @@ GI-1 | partial (2026-11-02: runs clean, but `flip gi` barely changes the room) |
 GI-2 | partial (2026-11-02: no artifacts seen; effect too weak to judge leaks) | [gi](visual-checks/gi.md) | DDGI visibility-weighted probe sampling: no leaks through the office floor/walls, bounce in corners (`--off gi` A/B)
 GI-3 | confirmed (2026-11-02: looks good; defaults kept, gain 1, ambient 0) | [gi](visual-checks/gi.md) | GI replaces the flat cell ambient inside its volume: darker unlit corners, warmer near lamps, no box edge in the office (`flip gi` A/B)
 GI-lampbody | awaiting owner | [gi](visual-checks/gi.md) | Lamp bodies don't light twice at GI hits (less hot bounce right around lamps, room fill kept) and interior ambient floor 0.1 (corners not pitch black) (`flip gi` A/B)
-PH-15 | confirmed (2026-11-05: hits push along their direction; follow-ups: strength-scaled fall threshold, knee sink on takeover, hurt shapes) | [physics](visual-checks/physics.md) | Knockdowns of human NPCs are Delirium falls + get-ups (V ball, `@impact`); beasts and creatures keep the old ragdoll
+PH-15 | partial (2026-11-05: knee sink fixed; balls pass through a body Delirium holds, so no repeated pushes) | [physics](visual-checks/physics.md) | Knockdowns of human NPCs are Delirium falls + get-ups (V ball, `@impact`); beasts and creatures keep the old ragdoll
 PH-16 | confirmed for console kill (2026-11-05); hit deaths unseen until C6 | [physics](visual-checks/physics.md) | A killed human NPC falls and stays dead under Delirium (console `kill`); beasts and creatures keep the clip + limp ragdoll
 LT-reach | rejected 2026-11-05 (default back to 4 x) | [lights](visual-checks/lights.md) | Lamp reach follows shadow state: no light through walls, no ring or pop at pool edges, GI visible next to lamps (`flip gi` A/B; old reach `--range-unshadowed 4`)
 LM-2 | partial (2026-10-30: leaves OK, water still too bright at night) | [lights](visual-checks/lights.md) | NetImmerse vertex lighting mode, clamp modes, and 16-bit DDS cutouts
@@ -114,7 +114,8 @@ AL-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/a
 AL-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Idles, reactions, other rigs
 AL-8 | confirmed with follow-up (2026-10-27: camera solved; hands on the lip + clipping: B2b next) | [anim-lab](visual-checks/anim-lab.md) | Waist mantle, player (climb clip on the body)
 AL-10 | confirmed (2026-10-30: triggers and works; lip hand IK needs tuning, ROADMAP 3.1) | [anim-lab](visual-checks/anim-lab.md) | High mantle, player (ClimbUp_2m on the 1.6/2.0 m boxes)
-AL-11 | confirmed with follow-up (2026-11-05: wall stop good; head-on hands closer together, chest height) | [anim-lab](visual-checks/anim-lab.md) | Wall brace, player (palms on the 3 m wall, side-wall trail, off hand only with the sword)
+AL-11 | confirmed (2026-11-05: chest brace good, spacing widened a little 0.55 → 0.68) | [anim-lab](visual-checks/anim-lab.md) | Wall brace, player (palms on the 3 m wall, side-wall trail, off hand only with the sword)
+AL-12 | confirmed (2026-11-05: vault works; a small hiccup before the vault, not smooth or fast yet: tuning) | [anim-lab](visual-checks/anim-lab.md) | Vault over thin obstacles, player (SafetyVault, one hand on the top; anim-lab vault boxes, Seyda Neen crates and railing)
 AL-9 | confirmed | [anim-lab](visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 AN-7 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Capsule steady under a walker
 AN-1 | confirmed (2026-10-30) | [anim-lab](visual-checks/anim-lab.md) | Planted feet stay put on distant walkers
@@ -126,6 +127,7 @@ AN-6 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/a
 AN-8 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Creature capsules fit the creature
 AN-9 | awaiting owner | [anim-lab](visual-checks/anim-lab.md) | Planted foot holds through the heel roll
 AN-10, AN-13, AN-14 | retired (2026-10-30: superseded by delirium) | [anim-lab](visual-checks/anim-lab.md) | Get-ups
+AN-21 | confirmed (2026-11-05: slope lean works) | [anim-lab](visual-checks/anim-lab.md) | Slope trunk lean
 DE-1 | confirmed with follow-up (2026-10-27: floor slide fixed, push in F11 only; a crouched landing sinks ~1.5 s, later) | [anim-lab](visual-checks/anim-lab.md) | Delirium takeover: click-to-push, catch steps, blend-out to the idle, fall + roll-over + get-up
 AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-4 | confirmed (2026-10-30) | [audio](visual-checks/audio.md) | Footsteps by boots

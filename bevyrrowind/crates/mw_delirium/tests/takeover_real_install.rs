@@ -794,3 +794,85 @@ fn hit_reactions_vs_impulse() {
         }
     }
 }
+
+/// Morrowind's own `group` (`meshes/xbase_anim.kf`) at `at` of its length, as local bone transforms (no root motion
+/// taken out).
+fn group_pose(f: &Fixture, group: &str, at: f32) -> Vec<sf_anim::Trs> {
+    let (install, _) = MorrowindInstall::detect(None).unwrap();
+    let vfs: Vfs = mw_vfs::mount_install(&install, Vfs::builder()).unwrap().vfs;
+    let anim = mw_anim::Animation::from_kf(&vfs.read(&VfsPath::new("meshes/xbase_anim.kf").unwrap()).unwrap()).unwrap();
+    let g = anim.groups().into_iter().find(|g| g.name.eq_ignore_ascii_case(group)).unwrap_or_else(|| panic!("{group}"));
+    let rules = sf_anim::ClipRules { root_motion: sf_anim::RootMotionRules { extract: false, ..Default::default() }, ..Default::default() };
+    let clip = sf_anim::cook_clip(&f.skeleton, &anim.source_clip(&g), &rules, &sf_anim::CookSettings::default()).unwrap();
+    let mut local = sf_anim::LocalPose::rest(&f.skeleton);
+    clip.sample(clip.duration * at, &mut local, None);
+    local.to_vec()
+}
+
+/// The knee bends (left, right), deg: the angle between each thigh's and its shin's capsule axis (part y).
+fn knees(parts: &[Transform]) -> [f32; 2] {
+    [(1, 2), (4, 5)].map(|(t, s)| (parts[t].rotation * Vec3::Y).angle_between(parts[s].rotation * Vec3::Y).to_degrees())
+}
+
+/// A standing takeover with no hit at `parts` (still: no motion before it), the floor under the lowest part, over
+/// `secs`: (pelvis drop at the end, most, cm; knee bend change at the end, most, deg, both legs' mean; the leg extension).
+fn stance_drift(f: &Fixture, parts: &[Transform], scale: Option<(f32, f32)>, rules: Rules, secs: f32) -> [f32; 5] {
+    let mut t = Takeover::start(&f.body, parts, None, scale, f32::INFINITY, 0.3, rules);
+    let (h0, k0) = (parts[0].translation.z - t.floor, knees(parts));
+    let bend = |p: &[Transform]| knees(p).iter().zip(k0).map(|(k, k0)| k - k0).sum::<f32>() * 0.5;
+    let mut most = [0.0f32; 2];
+    for _ in 0..(secs / DT) as u32 {
+        t.step(DT);
+        let p = t.frames();
+        most[0] = most[0].max(h0 - (p[0].translation.z - t.floor));
+        most[1] = most[1].max(bend(&p));
+    }
+    let p = t.frames();
+    [(h0 - (p[0].translation.z - t.floor)) * 100.0, most[0] * 100.0, bend(&p), most[1], t.agent.legs.0]
+}
+
+/// Scales Morrowind's races use (0.9 Bosmer .. 1.1 Altmer), with the mass factor `Build::scaled` takes.
+const SCALES: [f32; 4] = [0.9, 0.95, 1.0, 1.06];
+
+/// Owner 2026-11-05 (knee sink): a takeover with no hit stands in the pose the clip showed, and hands back.
+#[test]
+fn standing_takeover_with_no_hit_stays_up_and_hands_back() {
+    let Some(f) = fixture() else { return };
+    let idle = group_pose(f, "Idle", 0.5);
+    for s in SCALES {
+        let parts = bones_to_parts(&f.body.table, &f.skeleton, &idle, &(Affine3A::from_scale(Vec3::splat(s)) * authoring_from_model()));
+        let mut t = Takeover::start(&f.body, &parts, None, Some((s, s.powi(3))), f32::INFINITY, 0.3, Rules::default());
+        assert_eq!(t.behaviour, "bodyBalance");
+        let out = run(&mut t, 20.0);
+        let frames = t.frames();
+        assert!(frames.iter().all(|p| p.translation.is_finite() && p.rotation.is_finite()), "x{s}");
+        assert!(frames[0].translation.z - t.floor > 0.5 * t.stand, "x{s}: pelvis {:.2} m, stood {:.2}", frames[0].translation.z - t.floor, t.stand);
+        assert_eq!(out.map(|o| o.0), Some(HandBack::Balanced), "x{s}");
+    }
+}
+
+#[test]
+#[ignore = "measurement: pelvis drop (cm) and knee bend change (deg) over the first second of a standing takeover"]
+fn takeover_knee_sink() {
+    let Some(f) = fixture() else { return };
+    let poses = [
+        ("rest pose", f.skeleton.rest().to_vec()),
+        ("Idle 0.5", group_pose(f, "Idle", 0.5)),
+        ("Idle2 0.5", group_pose(f, "Idle2", 0.5)),
+        ("WalkForward 0.25", group_pose(f, "WalkForward", 0.25)),
+    ];
+    let before = Rules { stance: None, ..Rules::default() };
+    for (what, pose) in &poses {
+        for s in SCALES {
+            let parts = bones_to_parts(&f.body.table, &f.skeleton, pose, &(Affine3A::from_scale(Vec3::splat(s)) * authoring_from_model()));
+            let k = knees(&parts);
+            for (name, rules) in [("before", before), ("after", Rules::default())] {
+                let [drop, most, bend, bend_most, legs] = stance_drift(f, &parts, Some((s, s.powi(3))), rules, 1.0);
+                println!(
+                    "{what} x{s:.2} {name} (legs {legs:.3}): knees {:.1}/{:.1} deg at the takeover; after 1 s pelvis drop {drop:+.1} cm (most {most:+.1}), knee bend {bend:+.1} deg (most {bend_most:+.1})",
+                    k[0], k[1]
+                );
+            }
+        }
+    }
+}

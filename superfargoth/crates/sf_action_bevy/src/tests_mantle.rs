@@ -14,7 +14,7 @@ use sf_action::{
     ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, Command, Origin, RuleKey, RuleSetBuilder, SlotInfo, SlotTable,
     TRAVERSAL_RULES,
 };
-use sf_anim::{RootPath, RootPose};
+use sf_anim::{Contact, ContactKind, RootPath, RootPose, Side};
 use sf_controller::{
     CollisionBuilder, CollisionMesh, GroundHit, GroundProbe, Locomotion, MoverParams, Nearest, ProbeQuery, StaticShape, StaticWorld, SurfaceId,
     TerrainProbe,
@@ -44,24 +44,31 @@ fn course(height: f32) -> Course {
 
 /// One box from `min` to `max` on the plane.
 fn course_box(min: Vec3, max: Vec3) -> Course {
-    let h = (max - min) / 2.0;
-    let c = |x: f32, y: f32, z: f32| [x * h.x, y * h.y, z * h.z];
-    let corners = [
-        c(-1.0, -1.0, -1.0),
-        c(1.0, -1.0, -1.0),
-        c(1.0, 1.0, -1.0),
-        c(-1.0, 1.0, -1.0),
-        c(-1.0, -1.0, 1.0),
-        c(1.0, -1.0, 1.0),
-        c(1.0, 1.0, 1.0),
-        c(-1.0, 1.0, 1.0),
-    ];
-    let idx = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5];
-    let mut b = CollisionBuilder::new(1e-3);
-    b.add(&corners, &idx, Affine3A::IDENTITY, SurfaceId(3));
-    let mesh: CollisionMesh = b.finish();
+    course_boxes(&[(min, max)])
+}
+
+/// Boxes (`min`, `max`) on the plane.
+fn course_boxes(boxes: &[(Vec3, Vec3)]) -> Course {
     let mut statics = StaticWorld::new(WorldPos::ORIGIN);
-    statics.insert(&Arc::new(StaticShape::new(&mesh).expect("box shape")), WorldTransform::from_pos(WorldPos::ORIGIN.offset((min + max) * 0.5)));
+    for &(min, max) in boxes {
+        let h = (max - min) / 2.0;
+        let c = |x: f32, y: f32, z: f32| [x * h.x, y * h.y, z * h.z];
+        let corners = [
+            c(-1.0, -1.0, -1.0),
+            c(1.0, -1.0, -1.0),
+            c(1.0, 1.0, -1.0),
+            c(-1.0, 1.0, -1.0),
+            c(-1.0, -1.0, 1.0),
+            c(1.0, -1.0, 1.0),
+            c(1.0, 1.0, 1.0),
+            c(-1.0, 1.0, 1.0),
+        ];
+        let idx = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5];
+        let mut b = CollisionBuilder::new(1e-3);
+        b.add(&corners, &idx, Affine3A::IDENTITY, SurfaceId(3));
+        let mesh: CollisionMesh = b.finish();
+        statics.insert(&Arc::new(StaticShape::new(&mesh).expect("box shape")), WorldTransform::from_pos(WorldPos::ORIGIN.offset((min + max) * 0.5)));
+    }
     statics.rebuild();
     Course { terrain: TerrainProbe(Plane), statics }
 }
@@ -92,6 +99,41 @@ impl RootPath for HighClimb {
     }
 }
 
+/// The vault clip's stand-in: the retargeted UAL2 `SafetyVault` (0.733 s, the root on the floor
+/// 3.45 m on; the right hand planted 0.133-0.300 s, 1.29 m up and 0.5 m ahead of the root).
+struct SafetyVault([Contact; 1]);
+
+impl SafetyVault {
+    const LENGTH: f32 = 0.733;
+
+    fn new() -> Self {
+        let local = Vec3::new(-0.178, 1.29, 0.504);
+        let plant = Vec3::new(0.0, 0.0, 3.45 * 0.133 / Self::LENGTH) + local;
+        Self([Contact {
+            kind: ContactKind::Hand,
+            side: Side::Right,
+            limb: "arm".into(),
+            joint: "hand".into(),
+            start: 0.133,
+            end: 0.3,
+            position: plant,
+            local,
+        }])
+    }
+}
+
+impl RootPath for SafetyVault {
+    fn duration(&self) -> f32 {
+        Self::LENGTH
+    }
+    fn root_at(&self, t: f32) -> RootPose {
+        RootPose::new(Vec3::new(0.0, 0.0, 3.45) * (t / Self::LENGTH).clamp(0.0, 1.0), 0.0)
+    }
+    fn contacts(&self) -> &[Contact] {
+        &self.0
+    }
+}
+
 fn rules() -> ActionRules {
     let slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
@@ -102,7 +144,9 @@ fn rules() -> ActionRules {
         .with("traverse.mantle.waist", SlotInfo::once(Climb.duration()))
         .with_root("traverse.mantle.waist", Arc::new(Climb))
         .with("traverse.mantle.high", SlotInfo::once(HighClimb.duration()))
-        .with_root("traverse.mantle.high", Arc::new(HighClimb));
+        .with_root("traverse.mantle.high", Arc::new(HighClimb))
+        .with("traverse.vault", SlotInfo::once(SafetyVault::LENGTH))
+        .with_root("traverse.vault", Arc::new(SafetyVault::new()));
     let mut b = RuleSetBuilder::new();
     b.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES);
     ActionRules { rules: b.build().expect("base + traversal rules"), slots: Box::new(slots) }
@@ -134,10 +178,17 @@ fn run(height: f32, ticks: usize) -> (Vec3, Vec<RuleKey>) {
 }
 
 fn run_with(height: f32, ticks: usize, sneak_from: Option<u32>) -> (Vec3, Vec<RuleKey>) {
+    let (feet, seen, lowest) = run_on(course(height), ticks, sneak_from);
+    assert!(lowest > -0.05, "never through the floor: {lowest}");
+    (feet, seen)
+}
+
+/// [`run_with`] on any course: also the lowest the feet went (finite every tick).
+fn run_on(course: Course, ticks: usize, sneak_from: Option<u32>) -> (Vec3, Vec<RuleKey>, f32) {
     let mut app = App::new();
     app.add_plugins((TimePlugin, SfActionPlugin::<Course>::default()))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
-        .insert_resource(course(height))
+        .insert_resource(course)
         .insert_resource(rules())
         .insert_resource(SneakFrom(sneak_from))
         .add_systems(FixedUpdate, forward_and_jump.in_set(ActionSystems::Command));
@@ -146,6 +197,7 @@ fn run_with(height: f32, ticks: usize, sneak_from: Option<u32>) -> (Vec3, Vec<Ru
     let body = ActionBody::new(Locomotion::new(start, 0.0), MoverParams::default(), WorldPos::ORIGIN);
     let e = app.world_mut().spawn((character, body, Transform::default())).id();
     let mut rules_seen = Vec::new();
+    let mut lowest = f32::INFINITY;
     for _ in 0..ticks {
         app.update();
         let c = app.world().get::<ActionCharacter>(e).unwrap();
@@ -153,10 +205,11 @@ fn run_with(height: f32, ticks: usize, sneak_from: Option<u32>) -> (Vec3, Vec<Ru
             rules_seen.push(c.state.mov);
         }
         let p = WorldPos::ORIGIN.delta_f32(app.world().get::<ActionBody>(e).unwrap().loco.position);
-        assert!(p.is_finite() && p.y > -0.05, "never through the floor: {p}");
+        assert!(p.is_finite(), "finite feet: {p}");
+        lowest = lowest.min(p.y);
     }
     let body = app.world().get::<ActionBody>(e).unwrap();
-    (WorldPos::ORIGIN.delta_f32(body.loco.position), rules_seen)
+    (WorldPos::ORIGIN.delta_f32(body.loco.position), rules_seen, lowest)
 }
 
 #[test]
@@ -280,6 +333,8 @@ enum When {
     Early,
     Contact,
     Slide,
+    /// When the capsule is this many decimeters from the face.
+    Gap(u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -298,6 +353,8 @@ struct Approach {
 #[derive(Debug, Default)]
 struct Outcome {
     mantle: Option<(RuleKey, f32)>,
+    /// The vault ran.
+    vault: bool,
     refusals: Vec<sf_action::Refusal>,
     pressed: bool,
     /// The press tick's raw context hit along the stick (kind, height, depth) and the obstacle the
@@ -312,7 +369,10 @@ const FACE_Z: f32 = 2.0;
 #[derive(Resource)]
 struct Drive {
     a: Approach,
+    /// The stick, world (the turned frame's when `turned`).
     dir: Vec2,
+    /// The course and run turned a quarter turn: +Z runs along +X.
+    turned: bool,
     contact: Option<u32>,
     press: Option<u32>,
     out: Outcome,
@@ -321,7 +381,7 @@ struct Drive {
 fn drive(tick: Res<ActionTick>, course: Res<Course>, mut d: ResMut<Drive>, mut q: Query<(&mut ActionCharacter, &ActionBody)>) {
     let t = tick.0.0;
     for (mut c, body) in &mut q {
-        let p = WorldPos::ORIGIN.delta_f32(body.loco.position);
+        let p = unturn(WorldPos::ORIGIN.delta_f32(body.loco.position), d.turned);
         let gap = FACE_Z - c.params.radius - p.z;
         if d.contact.is_none() && gap <= 0.03 {
             d.contact = Some(t);
@@ -330,6 +390,7 @@ fn drive(tick: Res<ActionTick>, course: Res<Course>, mut d: ResMut<Drive>, mut q
             When::Early => gap <= 0.5 * d.a.angle.to_radians().cos(),
             When::Contact => d.contact.is_some(),
             When::Slide => d.contact.is_some_and(|c0| t >= c0 + 18),
+            When::Gap(dm) => gap <= f32::from(dm) / 10.0,
         };
         if due && d.press.is_none() {
             d.press = Some(t);
@@ -366,6 +427,7 @@ fn watch(tick: Res<ActionTick>, mut d: ResMut<Drive>, q: Query<(&ActionCharacter
             d.out.pressed = true;
             d.out.refusals.clone_from(&c.output.refusals);
         }
+        d.out.vault |= c.state.mov == RuleKey::of(VAULT);
         if mantles.contains(&c.state.mov) {
             d.out.mantle = Some((c.state.mov, sf_controller::wrap_angle(body.loco.motion.yaw).to_degrees()));
         }
@@ -375,16 +437,33 @@ fn watch(tick: Res<ActionTick>, mut d: ResMut<Drive>, q: Query<(&ActionCharacter
 /// Runs one approach at a 16 m wide box `height` m tall: the stick held at `angle` toward the
 /// face from 6 m back, aimed to touch it at x = 0.
 fn approach(a: Approach) -> Outcome {
-    let dir = Vec2::new(a.angle.to_radians().sin(), a.angle.to_radians().cos());
+    approach_at(a, course_box(Vec3::new(-8.0, 0.0, FACE_Z), Vec3::new(8.0, a.height, FACE_Z + 4.0)), false)
+}
+
+/// `v` a quarter turn about +Y when `on`: +Z to +X (a course and run along +X instead of +Z).
+fn turn(v: Vec3, on: bool) -> Vec3 {
+    if on { Vec3::new(v.z, v.y, -v.x) } else { v }
+}
+
+/// [`turn`] undone.
+fn unturn(v: Vec3, on: bool) -> Vec3 {
+    if on { Vec3::new(-v.z, v.y, v.x) } else { v }
+}
+
+/// [`approach`] at any course whose near face is at [`FACE_Z`] (`course` already turned when
+/// `turned`: the whole run then goes along +X, the stick in that world frame).
+fn approach_at(a: Approach, course: Course, turned: bool) -> Outcome {
+    let flat = turn(Vec3::new(a.angle.to_radians().sin(), 0.0, a.angle.to_radians().cos()), turned);
+    let dir = Vec2::new(flat.x, flat.z);
     let radius = CharacterParams::default().radius;
     let touch = Vec3::new(0.0, 0.0, FACE_Z - radius);
-    let start = touch - Vec3::new(dir.x, 0.0, dir.y) * 6.0;
+    let start = turn(touch, turned) - flat * 6.0;
     let mut app = App::new();
     app.add_plugins((TimePlugin, SfActionPlugin::<Course>::default()))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
-        .insert_resource(course_box(Vec3::new(-8.0, 0.0, FACE_Z), Vec3::new(8.0, a.height, FACE_Z + 4.0)))
+        .insert_resource(course)
         .insert_resource(rules())
-        .insert_resource(Drive { a, dir, contact: None, press: None, out: Outcome::default() })
+        .insert_resource(Drive { a, dir, turned, contact: None, press: None, out: Outcome::default() })
         .add_systems(FixedUpdate, drive.in_set(ActionSystems::Command))
         .add_systems(FixedUpdate, watch.after(ActionSystems::Move));
     let character = ActionCharacter::new(CharacterId(1), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
@@ -403,6 +482,7 @@ fn approach(a: Approach) -> Outcome {
 fn describe(a: &Approach, o: &Outcome) -> String {
     let what = match o.mantle {
         _ if !o.pressed => "NO PRESS (never reached the face)".to_string(),
+        _ if o.vault => "VAULT".to_string(),
         Some((k, yaw)) if k == RuleKey::of("traverse.mantle.waist") => format!("WAIST  yaw {yaw:+5.1}"),
         Some((_, yaw)) => format!("HIGH   yaw {yaw:+5.1}"),
         None => "refuse".to_string(),
@@ -610,4 +690,122 @@ fn pushing_forward_walks_on_after_a_mantle() {
 #[allow(clippy::cast_precision_loss, reason = "a few hundred ticks")]
 fn secs(ticks: usize) -> f32 {
     ticks as f32 / 60.0
+}
+
+// --- Vault (action.md "As built (vault)") -------------------------------------------------------
+
+const VAULT: &str = "traverse.vault";
+
+/// A box `height` m tall and `depth` m deep whose face is 1 m ahead of the start, 6 m wide; with
+/// `wall`, a 3 m wall that far past its far face.
+fn vault_course(height: f32, depth: f32, wall: Option<f32>) -> Course {
+    let mut boxes = vec![(Vec3::new(-3.0, 0.0, 2.0), Vec3::new(3.0, height, 2.0 + depth))];
+    if let Some(gap) = wall {
+        let z = 2.0 + depth + gap;
+        boxes.push((Vec3::new(-3.0, 0.0, z), Vec3::new(3.0, 3.0, z + 0.4)));
+    }
+    course_boxes(&boxes)
+}
+
+#[test]
+fn a_shallow_box_is_vaulted_and_the_body_lands_past_it() {
+    let (feet, seen, lowest) = run_on(vault_course(1.0, 0.4, None), 150, None);
+    println!("1 m x 0.4 m box: feet {feet}, lowest {lowest}, moves {seen:?}");
+    assert!(seen.contains(&RuleKey::of(VAULT)), "the vault fired: {seen:?}");
+    assert!(!seen.iter().any(|m| [RuleKey::of("traverse.mantle.waist"), RuleKey::of("traverse.mantle.high")].contains(m)), "{seen:?}");
+    let radius = MoverParams::default().radius;
+    assert!(feet.z - radius > 2.4, "lands past the far face, the capsule clear of the box: {feet}");
+    assert!(feet.y.abs() < 0.05, "on the far floor: {feet}");
+    // The feet reference follows the clip's floor-level root lowered to the obstacle (by the
+    // authored top minus this one, under the band's ~0.45 m) for the flight, never further.
+    assert!(lowest > -0.5, "{lowest}");
+    assert_eq!(seen.last(), Some(&RuleKey::of("loco")), "hands back to running");
+}
+
+#[test]
+fn a_deep_box_is_still_mantled() {
+    let (feet, seen, lowest) = run_on(vault_course(1.0, 1.5, None), 150, None);
+    println!("1 m x 1.5 m box: feet {feet}, moves {seen:?}");
+    assert!(seen.contains(&RuleKey::of("traverse.mantle.waist")) && !seen.contains(&RuleKey::of(VAULT)), "{seen:?}");
+    // It walks on across the top and steps down past it (the stick stays forward): never into the floor.
+    assert!(lowest > -0.05, "{lowest}");
+}
+
+#[test]
+fn a_shallow_box_with_a_wall_behind_is_mantled_not_vaulted() {
+    let (feet, seen, _) = run_on(vault_course(1.0, 0.4, Some(0.6)), 150, None);
+    println!("1 m x 0.4 m box, wall 0.6 m behind: feet {feet}, moves {seen:?}");
+    assert!(!seen.contains(&RuleKey::of(VAULT)), "no vault into the wall: {seen:?}");
+    assert!(seen.contains(&RuleKey::of("traverse.mantle.waist")), "falls back to the mantle: {seen:?}");
+    assert!(feet.z < 3.0 + 0.4, "never inside or past the wall: {feet}");
+}
+
+#[test]
+#[ignore = "measurement: vault landings and the feet's dip over the band"]
+fn measure_vaults() {
+    for (height, depth, wall) in [(0.85, 0.4, None), (1.0, 0.4, None), (1.2, 0.5, None), (1.0, 0.4, Some(1.4)), (0.6, 0.4, None)] {
+        let (feet, seen, lowest) = run_on(vault_course(height, depth, wall), 150, None);
+        let vaulted = seen.contains(&RuleKey::of(VAULT));
+        println!("{height} m x {depth} m, wall {wall:?}: vaulted {vaulted}, end {feet}, lowest feet {lowest:.3}, moves {seen:?}");
+    }
+}
+
+/// The anim-lab vault boxes (`levels/anim-lab.ron`, AL-12): 1.6 m wide, 0.4 m deep, near face at
+/// [`FACE_Z`], open floor behind; a quarter turn round (face toward -X) when `turned`.
+fn lab_box(height: f32, turned: bool) -> Course {
+    let (a, b) = (turn(Vec3::new(-0.8, 0.0, FACE_Z), turned), turn(Vec3::new(0.8, height, FACE_Z + 0.4), turned));
+    course_box(a.min(b), a.max(b))
+}
+
+/// One run at a lab box, Jump pressed `when`.
+fn lab_run(height: f32, angle: f32, gait: Gait, when: When, turned: bool) -> (Approach, Outcome) {
+    let a = Approach { height, angle, gait, when, class: ActionClass::Jump, sneak: false };
+    (a, approach_at(a, lab_box(height, turned), turned))
+}
+
+#[test]
+#[ignore = "measurement: vault approach sweep at the lab boxes (angle x gait x press distance)"]
+fn vault_approach_sweep() {
+    for height in [1.0, 0.85, 0.6] {
+        for angle in [0.0, 30.0, 50.0] {
+            for gait in [Gait::Run, Gait::Sprint] {
+                for when in [When::Contact, When::Gap(3), When::Gap(6), When::Gap(9), When::Gap(12), When::Gap(15)] {
+                    let (a, o) = lab_run(height, angle, gait, when, false);
+                    println!("{}", describe(&a, &o));
+                }
+            }
+        }
+    }
+}
+
+/// AL-12 (owner 2026-11-05: the lab's thin boxes "don't trigger any vaulting", the 1 m one "only
+/// if I'm looking at it"): running at the 1.0 and 0.85 m boxes vaults from the touching tick out
+/// to a metre off, straight on and 30° off the face, whichever world axis the run takes. Before
+/// the fix the stick's hit point sat sideways of the body at an angle and a close takeoff asked
+/// the first leg to run backwards: both refused `MaxCorrection`.
+#[test]
+fn running_at_the_lab_vault_boxes_vaults_from_any_heading() {
+    for height in [1.0, 0.85] {
+        for angle in [0.0, 30.0] {
+            for turned in [false, true] {
+                for when in [When::Contact, When::Gap(3), When::Gap(6), When::Gap(9)] {
+                    let (a, o) = lab_run(height, angle, Gait::Run, when, turned);
+                    let line = describe(&a, &o);
+                    println!("{line} turned {turned}");
+                    assert!(o.pressed && o.vault, "vaults: {line} turned {turned}");
+                    assert!(o.mantle.is_none(), "{line}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_lab_box_under_the_vault_band_stays_a_jump() {
+    for when in [When::Contact, When::Gap(6)] {
+        let (a, o) = lab_run(0.6, 0.0, Gait::Run, when, false);
+        let line = describe(&a, &o);
+        println!("{line}");
+        assert!(o.pressed && !o.vault && o.mantle.is_none(), "a plain jump: {line}");
+    }
 }

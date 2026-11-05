@@ -405,3 +405,13 @@ all fall, hand back `Fallen` at 1.3-2.1 s (no get-up clips in that test), no blo
 **As built (2026-11-05, deaths).** Human walkers' deaths are terminal takeovers (`Takeover::kill`: `catchFall`, then
 `bodyRelax` 90/2 once down, no get-up, no hand-back; `settled` after 1 s at rest, 20 s max, then the host freezes the
 pose and stops stepping). Measured (`death_settle_times`, rest pose, 0-60 N s): falls in 0.5-0.7 s, settles 1.9-5.3 s.
+
+**As built (2026-11-05, knee sink).** Owner: bodies sank into bent knees at the takeover and rose at the hand-back.
+Cause: Delirium's balancer stands the pelvis at `leg_length` x the zero pose's pelvis height, with `Agent::legs.0` =
+0.99 x the build's leg scale (`grown`), but a `Build::scaled` zero pose is already scaled (`nmrs::zero_places`), so the
+scale counts twice. Measured (`takeover_knee_sink`, Idle, no hit, first 1 s): x0.9 9.1 cm / +45 deg knee, x0.95 5.2 cm
+/ +32 deg, x1.0 1.0 cm / +10 deg, x1.06 0.2 cm (legs locked straight). Fix in our code (no Delirium patch: `legs` is a
+public field): `Rules::stance` sets `legs.0` before `bodyBalance` from the takeover pose (Euphoria-style posture
+matching: the straighter leg's pelvis-to-foot reach over the zero pose's), clamped 0.9..0.995: 0.4-0.8 cm / +5-10 deg
+at every scale. Not `Agent::set_zero` (slice 1: the idle's arms-down zero keeps it fidgeting). 0.999 sinks 0.2 cm but
+recovers slower from 80 N s (max 2.8 s vs 2.4; 2.05 before).

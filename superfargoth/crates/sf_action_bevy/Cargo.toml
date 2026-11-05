@@ -12,6 +12,8 @@ license.workspace = true
 bevy_app = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_enhanced_input.workspace = true
+# The traversal press dev log.
+bevy_log.workspace = true
 bevy_math = { workspace = true, features = ["std"] }
 bevy_time = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }

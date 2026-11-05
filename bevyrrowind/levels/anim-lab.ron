@@ -2,7 +2,7 @@
 // owner's animation checks, six areas far enough apart that a camera sees one at a time.
 // Meters, y up, x east, z south; `at` = footprint center at the bottom; ramps and stairs climb
 // toward local -z (north). Yaw 0 faces north (-z), -90 east, 180 south.
-//   start/ledges  origin          player start, ledges 0.5/1.0/1.5/2.0 m, a 3 m wall
+//   start/ledges  origin          player start, ledges 0.5/1.0/1.5/2.0 m, a 3 m wall; x 7.5..12.5 vault boxes
 //   props         x 14..25, z 2..18   crates, boxes, a table; an NPC brushes the crate row
 //   loop          (0, 45)         a walker (12 m square) and a runner (24 m square)
 //   slopes/stairs x -55..-25, z -33..-12   10/20/30 deg ramps + two staircases, a 2 m plateau, NPCs
@@ -27,6 +27,7 @@
         (name: "stairs-close", eye: (-23.0, 2.0, -17.0), target: (-30.0, 1.0, -25.0)),
         (name: "ledges", eye: (0.0, 2.5, 13.0), target: (0.0, 1.2, -2.0)),
         (name: "ledges-close", eye: (-7.0, 2.0, 3.0), target: (0.0, 1.0, 0.0)),
+        (name: "vaults", eye: (10.0, 2.5, 9.0), target: (10.0, 0.8, 0.0)),
         (name: "props", eye: (20.0, 3.5, 24.0), target: (20.0, 0.6, 9.0)),
         (name: "props-close", eye: (17.5, 2.2, 13.0), target: (14.8, 0.6, 8.0)),
         (name: "drop", eye: (38.0, 10.0, -16.0), target: (38.0, 2.0, -45.0)),
@@ -74,6 +75,11 @@
         (name: "h1.50", shape: Box(size: (2.0, 1.5, 1.5)), at: (1.5, 0.0, 0.0), material: Orange),
         (name: "h2.00", shape: Box(size: (2.0, 2.0, 1.5)), at: (4.5, 0.0, 0.0), material: Red),
         (name: "wall-3.0", shape: Box(size: (14.0, 3.0, 0.4)), at: (0.0, 0.0, -7.0), material: Grey),
+        // ---- vaults (AL-12): thin boxes 0.4 m deep east of the ledges, open floor behind ----
+        // 1.0 m and 0.85 m vault (band 0.81-1.26 m); 0.6 m is under the band: a plain jump.
+        (name: "v1.00", shape: Box(size: (1.6, 1.0, 0.4)), at: (7.5, 0.0, 0.0), material: Yellow),
+        (name: "v0.85", shape: Box(size: (1.6, 0.85, 0.4)), at: (10.0, 0.0, 0.0), material: Green),
+        (name: "v0.60", shape: Box(size: (1.6, 0.6, 0.4)), at: (12.5, 0.0, 0.0), material: White),
 
         // ---- loop (0, 45): corner markers ----
         (name: "loop-w-nw", shape: Cylinder(radius: 0.05, height: 0.3), at: (-6.0, 0.0, 39.0), material: White, collide: false),

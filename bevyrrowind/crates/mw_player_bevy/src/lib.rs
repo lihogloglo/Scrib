@@ -130,7 +130,7 @@ const INTERIOR_VOID_MARGIN_M: f32 = 2.0;
 const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 
 /// The traversal slots the player's rules use (`sf_action::TRAVERSAL_RULES`).
-pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist", "traverse.mantle.high"];
+pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist", "traverse.mantle.high", "traverse.vault"];
 
 /// Every slot the player plays a baked clip in: [`TRAVERSAL_SLOTS`], the combat sheet's
 /// ([`mw_combat::sheet_slots`]) and its draw and sheathe clips ([`mw_combat::SWORD_1H_DRAW`],

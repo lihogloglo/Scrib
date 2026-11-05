@@ -67,22 +67,19 @@ pub struct LedgeGrip {
 impl LedgeGrip {
     /// The grip of `path` (the warped slot clip) under `plan`, on the lip at `lip` (on the top,
     /// from the anchor) of a face whose flat inward direction is `into` (unit). `None` when the
-    /// path has no hand contact.
+    /// path has no hand contact. `mirror`: a hand without a contact of its own takes the other's,
+    /// across (a two-handed mantle the clip plants one-handed); off, it stays animated (a vault).
     #[must_use]
-    pub fn plan(path: &(impl RootPath + ?Sized), plan: &WarpPlan, lip: Vec3, into: Vec3) -> Option<Self> {
+    pub fn plan(path: &(impl RootPath + ?Sized), plan: &WarpPlan, lip: Vec3, into: Vec3, mirror: bool) -> Option<Self> {
         let first = |side| path.contacts().iter().find(|c| c.kind == ContactKind::Hand && c.side == side);
         let (left, right) = (first(Side::Left), first(Side::Right));
         if left.is_none() && right.is_none() {
             return None;
         }
-        // Clip +X is the character's left; the edge runs along it, facing into the face.
-        let edge = Quat::from_rotation_y(into.x.atan2(into.z)) * Vec3::X;
         let mut grip = Self::default();
         for (i, own, other) in [(LEFT, left, right), (RIGHT, right, left)] {
-            let Some((c, mirrored)) = own.map(|c| (c, false)).or_else(|| other.map(|c| (c, true))) else { continue };
-            let sign = if i == LEFT { 1.0 } else { -1.0 };
-            let lateral = sign * c.local.x.abs().clamp(GRIP_LATERAL.0, GRIP_LATERAL.1);
-            let target = lip + edge * lateral + into * GRIP_INSET + Vec3::Y * GRIP_RISE;
+            let Some((c, mirrored)) = own.map(|c| (c, false)).or_else(|| other.filter(|_| mirror).map(|c| (c, true))) else { continue };
+            let target = hold_target(lip, into, i, c.local.x);
             // Where the clip plants the hand, carried by the warped root (mirrored: the other's, across).
             let local = if mirrored { c.local * Vec3::new(-1.0, 1.0, 1.0) } else { c.local };
             let root = plan.root_at(path, c.start);
@@ -102,6 +99,18 @@ impl LedgeGrip {
     pub fn at(&self, t: f32) -> [Option<(Vec3, f32)>; 2] {
         self.hands.map(|h| h.map(|h| (h.target, h.weight(t))))
     }
+}
+
+/// Where hand `side` ([`LEFT`] or [`RIGHT`]) holds the lip at `lip` of a face whose flat inward
+/// direction is `into`: along the edge at the clip hand's lateral offset `local_x` (its size,
+/// clamped to [`GRIP_LATERAL`], on the hand's own side), [`GRIP_INSET`] in, [`GRIP_RISE`] up.
+#[must_use]
+pub fn hold_target(lip: Vec3, into: Vec3, side: usize, local_x: f32) -> Vec3 {
+    // Clip +X is the character's left; the edge runs along it, facing into the face.
+    let edge = Quat::from_rotation_y(into.x.atan2(into.z)) * Vec3::X;
+    let sign = if side == LEFT { 1.0 } else { -1.0 };
+    let lateral = sign * local_x.abs().clamp(GRIP_LATERAL.0, GRIP_LATERAL.1);
+    lip + edge * lateral + into * GRIP_INSET + Vec3::Y * GRIP_RISE
 }
 
 /// A hold's IK weight at clip time `t`: smoothstep in over [`GRIP_RAMP`] before `start`, 1 from

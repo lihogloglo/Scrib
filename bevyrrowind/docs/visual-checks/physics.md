@@ -181,6 +181,10 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 - Owner 2026-11-05: confirmed (hits push along their direction). Follow-ups: fall threshold should scale with the
   character's strength (stats); bodies sink into bent knees on takeover and rise at hand-back; balls pass through arms
   outside the capsule (hurt shapes, C4). Status: confirmed with follow-ups.
+- Fix 2026-11-05 (knee-sink): the balancer now stands at the takeover pose's leg extension. Delirium counted the actor's
+  scale twice (x0.9 stood 9 cm low, 45 deg more knee; x0.95 5 cm; x1.0 1 cm), now 0.4-0.8 cm and 5-10 deg at every scale.
+  Check: `scene level-anim-idles`, F11, small `V` balls (or a Ctrl click) at Fargoth, Llathyno and a Breton/Dunmer woman:
+  no knee sink as Delirium takes over, no rise as it blends back to the idle. Status: awaiting owner.
 
 ### PH-16: A killed human NPC falls and stays dead under Delirium (owner 2026-10-30: replaces clip + limp ragdoll)
 - Kind: level, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then

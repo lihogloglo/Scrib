@@ -135,9 +135,9 @@ class PelvisHeightConstraint:
 
     name = "mg-pelvis-height"
 
-    def __init__(self, frames: list[int], y: float, device):
+    def __init__(self, frames: list[int], y: list[float], device):
         self.frame_indices = torch.tensor(frames)
-        self.y = torch.full((len(frames),), float(y), device=device)
+        self.y = torch.tensor([float(v) for v in y], dtype=torch.float32, device=device)
 
     def update_constraints(self, data_dict, index_dict):
         data_dict["root_y_pos"].append(self.y)
@@ -145,16 +145,16 @@ class PelvisHeightConstraint:
 
 
 class HandPositionConstraint:
-    """Wrist position keyframes (no rotation), relative to a smooth root pinned at those frames."""
+    """Wrist position keyframes (no rotation, global), with the smooth root XZ keyed at those frames."""
 
-    def __init__(self, skeleton, side: str, frames: list[int], pos: list[float], device):
+    def __init__(self, skeleton, side: str, frames: list[int], pos: list[list[float]], root_xz: list[list[float]], device):
         joint = "LeftHand" if side == "l" else "RightHand"
         self.name = f"mg-hand-{side}"
         self.frame_indices = torch.tensor(frames)
         j = skeleton.bone_index[joint]
         self.pairs = torch.stack([self.frame_indices, torch.full_like(self.frame_indices, j)], dim=1)
-        self.pos = torch.tensor([pos] * len(frames), dtype=torch.float32, device=device)
-        self.root2d = torch.zeros((len(frames), 2), device=device)
+        self.pos = torch.tensor(pos, dtype=torch.float32, device=device)
+        self.root2d = torch.tensor(root_xz, dtype=torch.float32, device=device)
 
     def update_constraints(self, data_dict, index_dict):
         data_dict["global_joints_positions"].append(self.pos)
@@ -182,7 +182,7 @@ def build_constraints(resolved: dict, skeleton, device) -> list:
     for side in ("l", "r"):
         h = resolved.get(f"hand_{side}")
         if h:
-            out.append(HandPositionConstraint(skeleton, side, h["frames"], h["pos"], device))
+            out.append(HandPositionConstraint(skeleton, side, h["frames"], h["pos"], h["root_xz"], device))
     return out
 
 
@@ -206,7 +206,7 @@ def clip_metrics(posed_joints: torch.Tensor, skel77, fps: float, resolved: dict)
         if "pelvis_height" in resolved:
             p = resolved["pelvis_height"]
             y = pj[b, p["frames"], root, 1]
-            m["pelvis_height_err_m"] = round(float((y - p["y"]).abs().mean()), 4)
+            m["pelvis_height_err_m"] = round(float((y - torch.tensor(p["y"], device=pj.device)).abs().mean()), 4)
         if "root" in resolved and resolved["root"]["type"] != "path":
             xz = pj[b, :, root][:, [0, 2]]
             m["root_drift_max_m"] = round(float(xz.norm(dim=-1).max()), 4)

@@ -113,6 +113,19 @@
       vertical: true,
       fallback: Drop,
     ),
+    // Vault over a thin obstacle (action.md B2 "As built (vault)"): UAL2's
+    // one-hand safety vault, warped from the near face onto the far floor by
+    // the action clock. No fallback clip: without it the move refuses (the
+    // obstacle then jumps, or mantles if it is also in a mantle band).
+    "traverse.vault": (
+      graph: "humanoid",
+      candidates: [
+        (source: "quaternius_ual2", clip: "SafetyVault"),
+      ],
+      root: Progress,
+      vertical: true,
+      fallback: Drop,
+    ),
     // Climb up from a hang (B3; unused until then): a top-out that rises
     // ~2.5 m straight up with no forward travel.
     "traverse.climb.up": (

@@ -937,10 +937,10 @@ fn walkers_shorten_their_steps_uphill_and_lean_into_the_slope() {
             if (g - sign * tan).abs() > 0.25 * tan + 0.02 {
                 failures.push(format!("{name} {deg}°: grade {g} vs {}", sign * tan));
             }
-            // Owner 2026-10-22: "stronger", then "more pronounced" uphill (up 0.4, cap 12°): forward up (at least 6° at 30°), back down (at least 2°).
-            let least = if deg >= 30.0 { if sign > 0.0 { 6.0 } else { 2.0 } } else { 0.0 };
-            if lean.abs() > 13f32.to_radians() || lean * sign < f32::to_radians(least) {
-                failures.push(format!("{name} {deg}°: lean {:.2}° (forward up, back down, within 13°)", lean.to_degrees()));
+            // Sanity (AN-21): forward up, back down at 30° (owner 2026-11-05 tune: about +16/-1.5°, `slope_lean_table`), within the op's 26° cap.
+            let least = if deg >= 30.0 { if sign > 0.0 { 6.0 } else { 0.5 } } else { 0.0 };
+            if lean.abs() > 26f32.to_radians() || lean * sign < f32::to_radians(least) {
+                failures.push(format!("{name} {deg}°: lean {:.2}° (forward up, back down, within 26°)", lean.to_degrees()));
             }
             if j > flat_jolt + 0.5f32.to_radians() {
                 failures.push(format!("{name} {deg}°: trunk jolt {:.2}° vs flat {:.2}°", j.to_degrees(), flat_jolt.to_degrees()));
@@ -957,6 +957,73 @@ fn walkers_shorten_their_steps_uphill_and_lean_into_the_slope() {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Slope lean table (AN-21, owner 2026-11-05: "not enough forward when going up", down
+/// "maybe sliiiightly too much"): the trunk pitch (`Bip01 Spine1` to `Bip01 Head`, forward
+/// positive, degrees) on the lab ramps at 0/10/20/30° up and down, walk (2.1 m/s) and run
+/// (4.5 m/s), relative to the gait's own flat pitch and absolute (from vertical). Rows:
+/// "before" (the 2026-10-22 values: chest 0.7 + neck 0.3, up 0.4 / down 0.12 / max 0.21),
+/// "shipped" (the builder's) and candidates. Sanity only: finite, within the op's cap.
+#[test]
+#[ignore = "measurement: slope lean table"]
+fn slope_lean_table() {
+    use sf_anim_graph::Op;
+    use sf_anim_graph::asset::GradeLean;
+    type Override = Option<(Vec<(u16, f32)>, GradeLean)>;
+    let Some(probe) = humanoid_sim() else { return };
+    let bone = |n: &str| u16::try_from(probe.skeleton.find(n).unwrap()).unwrap();
+    let (spine1, neck) = (bone("Bip01 Spine1"), bone("Bip01 Neck"));
+    let old_joints = vec![(spine1, 0.7), (neck, 0.3)];
+    // Candidates (owner retune): `(vec![(spine1, 0.45), (bone("Bip01 Spine2"), 0.4), (neck, 0.15)], g(up, down, max))`.
+    let g = |up, down, max| GradeLean { up, down, max };
+    let variants: Vec<(&str, Override)> = vec![
+        ("before", Some((old_joints, g(0.4, 0.12, 0.21)))),
+        ("shipped", None),
+    ];
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32;
+    for (label, data) in variants {
+        let mut cap = 0.0f32;
+        let make = || {
+            let mut sim = humanoid_sim().unwrap();
+            for o in &mut sim.graph.ops {
+                if let (Op::Lean { joints, grade, .. }, Some((j, gl))) = (&mut o.op, &data) {
+                    joints.clone_from(j);
+                    *grade = *gl;
+                }
+            }
+            sim
+        };
+        for o in &make().graph.ops {
+            if let Op::Lean { grade, .. } = &o.op {
+                cap = grade.max;
+                eprintln!("--- {label}: up {} down {} max {} ({:.1}°)", grade.up, grade.down, grade.max, grade.max.to_degrees());
+            }
+        }
+        for (gait, speed, running) in [("walk", SPEED, false), ("run", 4.5f32, true)] {
+            let run = |world: &World, start: Vec3, dir: Vec3, window: (f32, f32)| {
+                let mut sim = make();
+                sim.set(p::RUNNING, if running { 1.0 } else { 0.0 });
+                let r = walk_at(&mut sim, world, (start, dir * speed, None), 1.0 + 14.0 / speed, window, false);
+                assert!(!r.trunk.is_empty() && r.trunk.iter().all(|t| t.is_finite()), "{label} {gait}: trunk samples");
+                mean(&r.trunk)
+            };
+            let flat = run(&World::new(), Vec3::new(-6.0, 0.0, 0.0), Vec3::X, (-99.0, 999.0));
+            let mut line = format!("{gait:4} flat {:+5.1}° |", flat.to_degrees());
+            for deg in [10.0f32, 20.0, 30.0] {
+                let (w, top) = World::ramp(deg, 12.0);
+                let up = run(&w, Vec3::new(-3.0, 0.0, 0.0), Vec3::X, (1.0, top.x - 1.0));
+                let down = run(&w, Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X, (1.0, top.x - 1.0));
+                for (name, v) in [("up", up), ("dn", down)] {
+                    let rel = v - flat;
+                    // Sanity: the op's cap plus the gait's own sway.
+                    assert!(rel.abs() < cap + 3f32.to_radians(), "{label} {gait} {name} {deg}°: {:.1}° over the cap", rel.to_degrees());
+                    write!(line, " {name}{deg:2.0} {:+5.1} ({:+5.1})", rel.to_degrees(), v.to_degrees()).unwrap();
+                }
+            }
+            eprintln!("{line}");
+        }
+    }
 }
 
 /// Pose audit S3 / feed audit F4: the gait bands. The player moves at 1.6 (walk),

@@ -29,6 +29,7 @@ use sf_vfs::Vfs;
 
 const WAIST: &str = "traverse.mantle.waist";
 const HIGH: &str = "traverse.mantle.high";
+const VAULT: &str = "traverse.vault";
 /// Box depth behind the face, m.
 const DEPTH: f32 = 1.5;
 const DT: f32 = 1.0 / 60.0;
@@ -118,11 +119,18 @@ fn ledge(dist: f32, height: f32) -> Obstacle {
         height,
         depth: DEPTH,
         clearance: 3.0,
+        landing: None,
+        room: 0.0,
     }
 }
 
 /// The warp `sf_action` plans for a jump forward at the ledge with the baked clip of `slot`.
 fn plan(clip: &Arc<Clip>, slot: &str, dist: f32, height: f32) -> Option<WarpState> {
+    plan_with(clip, slot, ledge(dist, height))
+}
+
+/// The warp `sf_action` plans for a jump forward at `obstacle` with the baked clip of `slot`.
+fn plan_with(clip: &Arc<Clip>, slot: &str, obstacle: Obstacle) -> Option<WarpState> {
     let mut b = RuleSetBuilder::new();
     b.add_ron(&Origin::Framework, BASE_RULES)
         .add_ron(&Origin::Framework, TRAVERSAL_RULES);
@@ -153,7 +161,7 @@ fn plan(clip: &Arc<Clip>, slot: &str, dist: f32, height: f32) -> Option<WarpStat
     };
     let sense = Sense {
         grounded: true,
-        obstacle: Some(ledge(dist, height)),
+        obstacle: Some(obstacle),
         ..Sense::default()
     };
     sf_action::step(&ctx, &mut state, &cmd, &sense, &mut out);
@@ -399,4 +407,37 @@ fn end_aligned_gap(clip: &Clip, w: &WarpState, h: &sf_action::HandHold, i: usize
     let rel = rot(-end.yaw) * (at.position + rot(at.yaw) * local - end.position);
     let world = w.plan.target.position + rot(w.plan.target.yaw) * rel;
     world.distance(h.target)
+}
+
+/// The vault with the real `SafetyVault` (shipped rule, as the game plans it): at 0.8-1.4 m from
+/// 0.4 m deep boxes across the band, one hand (the clip's right) held on the near lip, the other
+/// animated; the landing past the box, the capsule clear of it, on the floor.
+#[test]
+fn vault_plants_one_hand_on_the_lip_and_lands_past_the_box() {
+    let Some(b) = bake() else { return };
+    let clip = b.clips[usize::from(b.graph.slot_clip(VAULT).expect("vault slot"))].clone();
+    let radius = CharacterParams::default().radius;
+    for height in [0.85, 1.0, 1.2] {
+        for dist in [0.8, 1.1, 1.4] {
+            let o = Obstacle {
+                class: ObstacleClass::Vault,
+                lip: Vec3::new(0.0, height, dist),
+                normal: Vec3::NEG_Z,
+                height,
+                depth: 0.4,
+                clearance: 3.0,
+                landing: Some(Vec3::new(0.0, 0.0, dist + 0.9)),
+                room: 2.9,
+            };
+            let w = plan_with(&clip, VAULT, o).unwrap_or_else(|| panic!("{height} m at {dist} m: no vault planned"));
+            let grip = w.grip.expect("the clip's hand contact");
+            assert!(grip.hands[LEFT].is_none() && grip.skipped[LEFT].is_none(), "one hand: {grip:?}");
+            let h = grip.hands[RIGHT].unwrap_or_else(|| panic!("{height} m at {dist} m: right hand not held: {grip:?}"));
+            let near = h.target.z - dist;
+            assert!(h.target.is_finite() && (0.0..0.08).contains(&near) && (h.target.y - height).abs() < 0.1, "{h:?}");
+            let end = w.plan.target.position;
+            println!("{height} m at {dist} m: hand gap {:.3}, end {end}, ratio {:.2}", h.gap, w.plan.ratio());
+            assert!(end.is_finite() && end.z - radius > dist + 0.4 && end.y.abs() < 1e-3, "{height} m at {dist} m: lands at {end}");
+        }
+    }
 }

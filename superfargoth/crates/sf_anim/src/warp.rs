@@ -227,6 +227,21 @@ pub struct WarpRefused {
     pub refuse_ratio: f32,
 }
 
+/// The first of two consecutive warp windows (UE5 Motion Warping's named windows, GASP's vault:
+/// onto the hand plant, then onto the landing). The root takes `correction` over the plan's window
+/// start to `hold.0`, keeps it through `hold` (a planted hand: the root moves as baked), and takes
+/// the rest of the plan's correction from `hold.1` to the window's end.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WarpWaypoint {
+    /// Path seconds, inside the plan's window.
+    pub hold: (f32, f32),
+    /// The path's baked root positions at `hold.0` and `hold.1`, start frame (each leg's own
+    /// displacement, for [`WarpPlan::ratio`]).
+    pub baked: (Vec3, Vec3),
+    /// The first leg's correction, world (start's parent) space.
+    pub correction: Vec3,
+}
+
 /// A chain warp fixed at the move's start. Plain data (serde): gameplay can keep it in its saved,
 /// replicated state; the clips stay with the caller and are passed back in each call.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -243,6 +258,32 @@ pub struct WarpPlan {
     pub correction: Vec3,
     /// Radians, wrapped to `(-π, π]`.
     pub yaw_correction: f32,
+    /// A first leg onto an intermediate root ([`WarpPlan::with_waypoint`]); `None`: one window.
+    #[serde(default)]
+    pub waypoint: Option<WarpWaypoint>,
+}
+
+/// `t`'s fraction of `(a, b)`: 0 before, 1 after (an empty span steps at `b`).
+fn fraction(t: f32, (a, b): (f32, f32)) -> f32 {
+    if b - a > 1e-6 {
+        (t - a) / (b - a)
+    } else if t >= b {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// Correction `c` against a displacement of length `d` (0 when no correction is needed, infinite
+/// for a correction on a still path).
+fn share(c: f32, d: f32) -> f32 {
+    if d > 1e-4 {
+        c / d
+    } else if c <= 1e-3 {
+        0.0
+    } else {
+        f32::INFINITY
+    }
 }
 
 impl WarpPlan {
@@ -261,7 +302,29 @@ impl WarpPlan {
             baked_end,
             correction: target.position - end.position,
             yaw_correction: wrap_angle(target.yaw - end.yaw),
+            waypoint: None,
         }
+    }
+
+    /// [`WarpPlan::new`] in two legs: the root reaches `mid` (position, same space) at `hold.0`,
+    /// moves as baked through `hold` (path seconds, clamped into the window), then reaches
+    /// `target`. A vault: the hand plant on the top, then the landing.
+    pub fn with_waypoint(
+        path: &(impl RootPath + ?Sized),
+        start: RootPose,
+        hold: (f32, f32),
+        mid: Vec3,
+        target: RootPose,
+        profile: WarpProfile,
+    ) -> Self {
+        let mut plan = Self::new(path, start, target, profile);
+        let (a, b) = plan.window;
+        let h0 = hold.0.clamp(a, b);
+        let hold = (h0, hold.1.clamp(h0, b));
+        let baked = (path.root_at(hold.0).position, path.root_at(hold.1).position);
+        let correction = mid - start.then(path.root_at(hold.0)).position;
+        plan.waypoint = Some(WarpWaypoint { hold, baked, correction });
+        plan
     }
 
     /// [`WarpPlan::new`], refused above `refuse_ratio` ([`WarpPlan::ratio`]).
@@ -281,15 +344,13 @@ impl WarpPlan {
     }
 
     /// Correction length over the chain's own root displacement (start to end, 3D). A chain that
-    /// doesn't move has ratio 0 when no correction is needed (under 1 mm), else infinity.
+    /// doesn't move has ratio 0 when no correction is needed (under 1 mm), else infinity. With a
+    /// waypoint, the larger of its two legs' (each against its own stretch of the path).
     pub fn ratio(&self) -> f32 {
-        let (c, d) = (self.correction.length(), self.baked_end.position.length());
-        if d > 1e-4 {
-            c / d
-        } else if c <= 1e-3 {
-            0.0
-        } else {
-            f32::INFINITY
+        match self.waypoint {
+            None => share(self.correction.length(), self.baked_end.position.length()),
+            Some(w) => share(w.correction.length(), w.baked.0.length())
+                .max(share((self.correction - w.correction).length(), (self.baked_end.position - w.baked.1).length())),
         }
     }
 
@@ -305,23 +366,24 @@ impl WarpPlan {
 
     /// Share of the correction applied at path time `t`: 0 before the window, 1 after it.
     pub fn weight(&self, t: f32) -> f32 {
-        let (a, b) = self.window;
-        let u = if b - a > 1e-6 {
-            (t - a) / (b - a)
-        } else if t >= b {
-            1.0
-        } else {
-            0.0
-        };
-        self.profile.weight(u)
+        self.profile.weight(fraction(t, self.window))
     }
 
     /// The gameplay root at path time `t` (the action clock's progress, seconds): `start ⊕
-    /// baked(t) + correction × profile(t)`, yaw alike. `path` must be the one planned.
+    /// baked(t) + correction × profile(t)`, yaw alike (a waypoint splits the position's correction
+    /// in its two legs; yaw keeps the one window). `path` must be the one planned.
     pub fn root_at(&self, path: &(impl RootPath + ?Sized), t: f32) -> RootPose {
         let k = self.weight(t);
         let baked = self.start.then(path.root_at(t));
-        RootPose::new(baked.position + self.correction * k, baked.yaw + self.yaw_correction * k)
+        let correction = match self.waypoint {
+            None => self.correction * k,
+            Some(w) => {
+                let first = self.profile.weight(fraction(t, (self.window.0, w.hold.0)));
+                let second = self.profile.weight(fraction(t, (w.hold.1, self.window.1)));
+                w.correction * first + (self.correction - w.correction) * second
+            }
+        };
+        RootPose::new(baked.position + correction, baked.yaw + self.yaw_correction * k)
     }
 }
 
@@ -405,5 +467,25 @@ mod tests {
         let still = Line { d: 1.0, to: Vec3::ZERO, turn: 0.0, window: None };
         assert!(WarpPlan::try_new(&still, start, start, WarpProfile::Linear, 0.1).is_ok());
         assert!(WarpPlan::try_new(&still, start, RootPose::new(Vec3::X * 0.05, 0.0), WarpProfile::Linear, 0.1).is_err());
+    }
+
+    /// Two legs: the waypoint at the hold's start, the baked motion through the hold (the leg's
+    /// correction kept), the target at the end; the ratio takes the worse leg.
+    #[test]
+    fn waypoint_reaches_mid_holds_then_lands() {
+        let path = Line { d: 1.0, to: Vec3::new(0.0, 0.0, 3.0), turn: 0.0, window: None };
+        let start = RootPose::new(Vec3::new(1.0, 0.0, 0.0), 0.0);
+        let (mid, target) = (Vec3::new(1.0, -0.3, 0.4), RootPose::new(Vec3::new(1.0, 0.2, 2.0), 0.0));
+        let plan = WarpPlan::with_waypoint(&path, start, (0.2, 0.4), mid, target, WarpProfile::Linear);
+        assert!((plan.root_at(&path, 0.2).position - mid).length() < 1e-5);
+        let c1 = plan.waypoint.unwrap().correction;
+        let held = plan.root_at(&path, 0.4).position;
+        assert!((held - (Vec3::new(1.0, 0.0, 1.2) + c1)).length() < 1e-5, "{held}");
+        assert!((plan.root_at(&path, 1.0).position - target.position).length() < 1e-5);
+        assert_eq!(plan.root_at(&path, 0.0).position, start.position);
+        // Each leg against its own stretch: 0.6 m to the hold, 1.8 m after it.
+        let leg1 = c1.length() / 0.6;
+        let leg2 = (plan.correction - c1).length() / 1.8;
+        assert!((plan.ratio() - leg1.max(leg2)).abs() < 1e-5);
     }
 }

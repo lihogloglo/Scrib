@@ -56,4 +56,34 @@
         steer: false,
         redo_ticks: 12,
     ),
+    (
+        // Vault over a thin obstacle (the probe's `Vault` class: at most 0.33 h deep, the far
+        // floor lower than the top, `vault_room` of clear run-out past the lip; less room mantles).
+        // The UAL2 `SafetyVault` (0.73 s; root on the floor, 3.45 m on at run speed, the hips arc
+        // to ~1.9 m) plants its right hand at 0.13-0.30 s, 1.29 m up (wrist): an obstacle ~1.26 m
+        // high, the top of the band. Warped in two legs (`WarpTarget::Vault`): the hand onto the
+        // lip by the plant (each leg's ratio <= `refuse_ratio`, the first leg's slowdown free down
+        // to a standstill, never backwards: the hand IK reaches a closer lip; from touching the
+        // face to ~1.2 m off), then the landing pulled
+        // in to the run-out and onto the far floor. The band's low end keeps the first leg's drop
+        // (the whole body, takeoff foot included) under ~0.45 m: 0.45-0.7 h (~0.81-1.26 m for a
+        // 1.8 m capsule); lower vault-class obstacles jump. Momentum carries out (no `stand`).
+        id: "traverse.vault",
+        kind: Traversal,
+        category: Traversal,
+        rank: 210,
+        slots: ["traverse.vault"],
+        owner: Warp(target: Vault, profile: Linear, refuse_ratio: 0.9, steer: false, stand: None),
+        entry: (
+            classes: [Jump, Up],
+            need_forward: true,
+            modes: [Normal, FreeRun],
+            states: [Grounded, Coyote],
+            speed: Some((0.0, 12.0)),
+            probe: Some(Obstacle(classes: [Vault], height: (0.45, 0.7))),
+        ),
+        exits: [(on: End, to: Loco)],
+        steer: false,
+        redo_ticks: 12,
+    ),
 ]

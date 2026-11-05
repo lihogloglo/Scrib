@@ -99,9 +99,9 @@ class HandSpec:
 
 @dataclass
 class PhaseConstraints:
-    pelvis_height: HeightSpec | None = None
-    root: str | None = None  # "fixed" | "fixed_xz" | "path:x,z;x,z"
-    hands: dict[str, HandSpec] = field(default_factory=dict)  # "l" / "r"
+    pelvis_height: list[HeightSpec] | None = None  # one or more keyframe groups, each with its own height
+    root: str | None = None  # "fixed" | "fixed_xz" | "path:x,z;x,z" | "path:x,z@t;x,z@t" (t in seconds)
+    hands: dict[str, list[HandSpec]] = field(default_factory=dict)  # "l" / "r" -> keyframe groups
     keys: float = DEFAULT_KEY_SPACING_S
 
     def is_empty(self) -> bool:
@@ -165,13 +165,22 @@ def _parse_phase_constraints(src: str, where: str, t: Any) -> PhaseConstraints:
     if "pelvis_height" in t:
         v = t["pelvis_height"]
         w = f"{where}.pelvis_height"
-        if isinstance(v, dict):
+        if isinstance(v, list):  # several keyframe groups: [{ height, at }, ...]
+            if not v or not all(isinstance(x, dict) for x in v):
+                raise _err(src, w, "a list must hold { height = ..., at = ... } tables")
+            pc.pelvis_height = []
+            for i, x in enumerate(v):
+                _check_keys(src, f"{w}[{i}]", x, HEIGHT_TABLE_KEYS)
+                if "height" not in x or "at" not in x:
+                    raise _err(src, f"{w}[{i}]", "each table in a list needs 'height' and 'at'")
+                pc.pelvis_height.append(HeightSpec(_height_value(src, w, x["height"]), _at_value(src, w, x["at"])))
+        elif isinstance(v, dict):
             _check_keys(src, w, v, HEIGHT_TABLE_KEYS)
             if "height" not in v:
                 raise _err(src, w, "missing 'height'")
-            pc.pelvis_height = HeightSpec(_height_value(src, w, v["height"]), _at_value(src, w, v.get("at", "all")))
+            pc.pelvis_height = [HeightSpec(_height_value(src, w, v["height"]), _at_value(src, w, v.get("at", "all")))]
         else:
-            pc.pelvis_height = HeightSpec(_height_value(src, w, v), "all")
+            pc.pelvis_height = [HeightSpec(_height_value(src, w, v), "all")]
     if "root" in t:
         r = t["root"]
         if r in ("fixed", "fixed_xz"):
@@ -185,35 +194,51 @@ def _parse_phase_constraints(src: str, where: str, t: Any) -> PhaseConstraints:
         key = f"hand_{side}"
         if key not in t:
             continue
-        h = t[key]
+        hs = t[key]
         w = f"{where}.{key}"
-        if not isinstance(h, dict):
-            raise _err(src, w, "must be a table { height = ..., forward = 0.35, side = 0.2, at = 'all' }")
-        _check_keys(src, w, h, HAND_KEYS)
-        if "height" not in h:
-            raise _err(src, w, "missing 'height'")
-        pc.hands[side] = HandSpec(
-            _height_value(src, w, h["height"]),
-            float(h.get("forward", 0.35)),
-            float(h.get("side", 0.2)),
-            _at_value(src, w, h.get("at", "all")),
-        )
+        many = isinstance(hs, list)
+        if not many:
+            hs = [hs]
+        if not hs or not all(isinstance(h, dict) for h in hs):
+            raise _err(src, w, "must be a table { height = ..., forward = 0.35, side = 0.2, at = 'all' } or a list of them")
+        pc.hands[side] = []
+        for i, h in enumerate(hs):
+            wi = f"{w}[{i}]" if many else w
+            _check_keys(src, wi, h, HAND_KEYS)
+            if "height" not in h:
+                raise _err(src, wi, "missing 'height'")
+            if many and "at" not in h:
+                raise _err(src, wi, "each table in a list needs 'at'")
+            pc.hands[side].append(HandSpec(
+                _height_value(src, wi, h["height"]),
+                float(h.get("forward", 0.35)),
+                float(h.get("side", 0.2)),
+                _at_value(src, wi, h.get("at", "all")),
+            ))
     return pc
 
 
-def _parse_path(src: str, where: str, r: str) -> list[tuple[float, float]]:
+def _parse_path(src: str, where: str, r: str) -> list[tuple[float, float, float | None]]:
+    """`path:x,z;x,z` (points spread evenly over the clip) or `path:x,z@t;x,z@t` (t = seconds, increasing)."""
     pts = []
     for chunk in r[len("path:"):].split(";"):
         chunk = chunk.strip()
         if not chunk:
             continue
+        xz, _, ts = chunk.partition("@")
         try:
-            x, z = (float(c) for c in chunk.split(","))
+            x, z = (float(c) for c in xz.split(","))
+            t = float(ts) if ts else None
         except ValueError as e:
-            raise _err(src, where, f"bad path point {chunk!r} (expected 'x,z')") from e
-        pts.append((x, z))
+            raise _err(src, where, f"bad path point {chunk!r} (expected 'x,z' or 'x,z@seconds')") from e
+        pts.append((x, z, t))
     if not pts:
         raise _err(src, where, "path has no points")
+    timed = [p[2] is not None for p in pts]
+    if any(timed) and not all(timed):
+        raise _err(src, where, "either every path point has '@seconds' or none does")
+    if all(timed) and any(b[2] <= a[2] for a, b in zip(pts, pts[1:])):
+        raise _err(src, where, "path times must increase")
     return pts
 
 
@@ -387,32 +412,72 @@ def _frames(at: Any, num_frames: int, spacing_s: float) -> list[int]:
     return frames[:MAX_KEYFRAMES]
 
 
+def _keyed(groups: list, num_frames: int, spacing_s: float, where: str, value) -> tuple[list[int], list]:
+    """Merge keyframe groups into one sorted (frames, values) pair; a frame keyed twice is an error."""
+    keyed: dict[int, Any] = {}
+    for g in groups:
+        v = value(g)
+        for f in _frames(g.at, num_frames, spacing_s):
+            if f in keyed:
+                raise RecipeError(f"{where}: frame {f} is keyed by two groups")
+            keyed[f] = v
+    frames = sorted(keyed)
+    if len(frames) > MAX_KEYFRAMES:
+        raise RecipeError(f"{where}: {len(frames)} keyframes, Kimodo handles < 20 per constraint type")
+    return frames, [keyed[f] for f in frames]
+
+
+def _path_at(frames: list[int], points: list[list[float]], f: int) -> list[float]:
+    """Root XZ on a keyed path at frame `f` (linear between keys, clamped at the ends)."""
+    if f <= frames[0]:
+        return list(points[0])
+    for (f0, p0), (f1, p1) in zip(zip(frames, points), zip(frames[1:], points[1:])):
+        if f <= f1:
+            a = (f - f0) / max(1, f1 - f0)
+            return [round(p0[0] + (p1[0] - p0[0]) * a, 4), round(p0[1] + (p1[1] - p0[1]) * a, 4)]
+    return list(points[-1])
+
+
 def resolve_constraints(pc: PhaseConstraints, band: Band, bands: Bands, scale: float, num_frames: int, where: str) -> dict:
-    """Turn a recipe's phase constraints into numbers + frame indices (Kimodo canonical space)."""
+    """Turn a recipe's phase constraints into numbers + frame indices (Kimodo canonical space).
+
+    Values are per keyed frame: `pelvis_height.y[i]` and `hand_*.pos[i]` / `hand_*.root_xz[i]` belong to `frames[i]`.
+    Hand keys also key the root XZ (Kimodo's hand target is global): the origin, or the root path at that frame.
+    """
     out: dict[str, Any] = {}
-    if pc.hands and pc.root and pc.root.startswith("path:"):
-        raise RecipeError(f"{where}: hand constraints pin the root XZ at the origin; they cannot combine with a root path")
+    last = num_frames - 1
     if pc.pelvis_height is not None:
-        out["pelvis_height"] = {
-            "y": _resolve_height(pc.pelvis_height.value, band, bands, scale, f"{where}.pelvis_height"),
-            "frames": _frames(pc.pelvis_height.at, num_frames, pc.keys),
-        }
+        frames, ys = _keyed(pc.pelvis_height, num_frames, pc.keys, f"{where}.pelvis_height",
+                            lambda g: _resolve_height(g.value, band, bands, scale, f"{where}.pelvis_height"))
+        out["pelvis_height"] = {"y": ys, "frames": frames}
     if pc.root is not None:
         frames = _frames("all", num_frames, pc.keys)
         if pc.root in ("fixed", "fixed_xz"):
             out["root"] = {"type": pc.root, "frames": frames, "points": [[0.0, 0.0]] * len(frames)}
         else:
             pts = _parse_path(where, "root", pc.root)
-            if pts[0] != (0.0, 0.0):
-                pts.insert(0, (0.0, 0.0))  # Kimodo canonical: the root starts at the origin
+            timed = pts[0][2] is not None
+            if pts[0][:2] != (0.0, 0.0) or (timed and pts[0][2] > 0):
+                pts.insert(0, (0.0, 0.0, 0.0 if timed else None))  # Kimodo canonical: the root starts at the origin
             n = min(len(pts), MAX_KEYFRAMES)
             pts = pts[:n]
-            frames = [round(i * (num_frames - 1) / max(1, n - 1)) for i in range(n)]
-            out["root"] = {"type": "path", "frames": frames, "points": [list(p) for p in pts]}
-    for side, h in sorted(pc.hands.items()):
-        y = _resolve_height(h.height, band, bands, scale, f"{where}.hand_{side}")
-        x = h.side if side == "l" else -h.side  # canonical frame: facing +Z, left hand on +X
-        out[f"hand_{side}"] = {"pos": [round(x, 4), y, round(h.forward, 4)], "frames": _frames(h.at, num_frames, pc.keys)}
+            if timed:
+                frames = [min(last, max(0, round(p[2] * KIMODO_FPS))) for p in pts]
+                if len(set(frames)) != len(frames):
+                    raise RecipeError(f"{where}.root: two path points fall on the same frame")
+            else:
+                frames = [round(i * last / max(1, n - 1)) for i in range(n)]
+            out["root"] = {"type": "path", "frames": frames, "points": [[p[0], p[1]] for p in pts]}
+    for side, groups in sorted(pc.hands.items()):
+        def pos(h, side=side):
+            y = _resolve_height(h.height, band, bands, scale, f"{where}.hand_{side}")
+            x = h.side if side == "l" else -h.side  # canonical frame: facing +Z, left hand on +X
+            return [round(x, 4), y, round(h.forward, 4)]
+
+        frames, poss = _keyed(groups, num_frames, pc.keys, f"{where}.hand_{side}", pos)
+        r = out.get("root")
+        root_xz = [_path_at(r["frames"], r["points"], f) if r and r["type"] == "path" else [0.0, 0.0] for f in frames]
+        out[f"hand_{side}"] = {"pos": poss, "frames": frames, "root_xz": root_xz}
     return out
 
 

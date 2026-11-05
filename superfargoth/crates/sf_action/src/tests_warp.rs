@@ -67,7 +67,7 @@ fn slots(root: bool) -> SlotTable {
 
 /// A box ledge whose face is `dist` m ahead (+Z) of the feet, `height` m tall, 1.5 m deep.
 fn ledge(dist: f32, height: f32, class: ObstacleClass) -> Obstacle {
-    Obstacle { class, lip: Vec3::new(0.0, height, dist), normal: Vec3::NEG_Z, height, depth: 1.5, clearance: 3.0 }
+    Obstacle { class, lip: Vec3::new(0.0, height, dist), normal: Vec3::NEG_Z, height, depth: 1.5, clearance: 3.0, landing: None, room: 0.0 }
 }
 
 struct Run {
@@ -390,7 +390,7 @@ fn hands_far_from_the_lip_are_skipped_and_clips_without_contacts_have_no_grip() 
     // The clip plants the hands ~0.8 m above this lip: IK would drag them down the face.
     let path = waist_gripped();
     let plan = sf_anim::WarpPlan::new(&path, RootPose::IDENTITY, RootPose::new(Vec3::new(0.0, 0.45, 1.3), 0.0), sf_anim::WarpProfile::Late);
-    let grip = LedgeGrip::plan(&path, &plan, Vec3::new(0.0, 0.45, 0.3), Vec3::Z).expect("hand contacts");
+    let grip = LedgeGrip::plan(&path, &plan, Vec3::new(0.0, 0.45, 0.3), Vec3::Z, true).expect("hand contacts");
     assert_eq!(grip.hands, [None, None]);
     for s in grip.skipped {
         assert!(s.expect("skipped, kept for the log").gap > GRIP_MAX_GAP);

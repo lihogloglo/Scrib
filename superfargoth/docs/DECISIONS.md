@@ -1573,3 +1573,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (owner): skill progression from use (alchemy by brewing, etc.) goes behind a `SkillUseModel` seam, starting with
   OpenMW's values (`research/openmw-mechanics-2026-11-05.md`). Next RPG step: the stats + spell/effect runtime spec. Water at
   any altitude (3.6/3.7) waits for a later brainstorm.
+- 2026-11-05 (owner, combat clips): long attack chains are not a priority; two light attacks are enough (Sekiro-like). What
+  matters is variety by context (heavy, jumping, running/rolling attacks, ...) and by weapon class. Sword chain source:
+  mocap pack (Kimodo MG-C0 swings too slow/low); Kimodo kept for rolls and the 1 m mantle as bases.
+- 2026-11-05 (owner, character shapes): a body whose nervous system doesn't respond (dead, unconscious, paralysed) is a
+  classic Rapier ragdoll (`sf_ragdoll`/`sf_physics_bevy`), and so is a dragged body; Delirium is for every responsive
+  body. Corpses go Delirium dying window → Rapier ragdoll. Activation radius/caps settled after S0 measures them.

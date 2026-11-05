@@ -7501,6 +7501,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_enhanced_input",
  "bevy_input",
+ "bevy_log",
  "bevy_math",
  "bevy_time",
  "bevy_transform",

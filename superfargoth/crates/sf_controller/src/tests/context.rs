@@ -60,6 +60,33 @@ fn obstacles_classify_by_height_and_depth() {
     }
 }
 
+/// A vault needs its run-out: open floor behind reads the whole scan; a wall or knee-high clutter
+/// behind shortens it, and short of `vault_room` the box is mantled onto instead.
+#[test]
+fn a_vault_needs_room_behind() {
+    let p = ContextParams::default();
+    let run = |behind: Option<(f32, f32)>| {
+        let mut w = World::new();
+        obstacle(&mut w, 1.0, 0.4, 1.0);
+        if let Some((gap, height)) = behind {
+            w.add_box(Vec3::new(-2.0, 0.0, 1.4 + gap), Vec3::new(2.0, height, 1.8 + gap));
+        }
+        w.statics.rebuild();
+        obstacle_ahead(&w).unwrap()
+    };
+    let open = run(None);
+    assert_eq!(open.kind, Affordance::Vault, "{open:?}");
+    assert!((open.room - p.vault_runout).abs() < 1e-3, "{open:?}");
+    // A wall 0.8 m past the far face: 1.2 m from the lip, under `vault_room`.
+    let wall = run(Some((0.8, 3.0)));
+    assert_eq!(wall.kind, Affordance::Mantle, "{wall:?}");
+    assert!((wall.room - 1.2).abs() < 0.02, "{wall:?}");
+    // Knee-high clutter 1.5 m past the far face: under the top ray, caught by the low one.
+    let low = run(Some((1.5, 0.6)));
+    assert_eq!(low.kind, Affordance::Vault, "{low:?}");
+    assert!((low.room - 1.9).abs() < 0.02, "{low:?}");
+}
+
 #[test]
 fn no_room_on_top_blocks_a_mantle_and_a_ramp_is_not_an_obstacle() {
     let mut w = World::new();

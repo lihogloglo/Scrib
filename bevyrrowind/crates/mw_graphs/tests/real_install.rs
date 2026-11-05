@@ -91,10 +91,16 @@ fn hand_ik_lays_the_palm_on_a_wall() {
     s.run(0.5, DT);
     let hand = s.skeleton.find("Bip01 L Hand").unwrap();
     let shoulder = s.out.model.translation(s.skeleton.find("Bip01 L UpperArm").unwrap());
+    let right = s.out.model.translation(s.skeleton.find("Bip01 R UpperArm").unwrap());
+    // The head-on brace in front of the chest (sf_action `BRACE_SPREAD` 0.68 of the shoulders'
+    // spacing, `BRACE_CHEST` 0.92 of their height), the wall 0.4 m ahead of the shoulder.
+    let mid = (shoulder + right) / 2.0;
+    let chest = (mid + (shoulder - mid) * 0.68) * Vec3::new(1.0, 0.0, 1.0) + Vec3::new(0.0, 0.92 * mid.y, 0.4);
+    eprintln!("shoulders {:.3} m apart, {:.3} m up; chest target {chest:.3}", shoulder.distance(right), mid.y);
     // (wrist target, palm direction, fingers direction), character space.
     let cases = [
         (shoulder + Vec3::new(0.25, -0.15, 0.3), Vec3::X, Vec3::new(0.0, 0.4, 1.0)),
-        (shoulder + Vec3::new(0.1, -0.15, 0.4), Vec3::Z, Vec3::Y),
+        (chest, Vec3::Z, Vec3::Y),
         (shoulder + Vec3::new(3.0, 0.0, 3.0), Vec3::X, Vec3::Z),
     ];
     for (k, (target, into, fingers)) in cases.into_iter().enumerate() {

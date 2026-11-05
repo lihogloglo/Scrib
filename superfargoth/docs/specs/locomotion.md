@@ -202,9 +202,11 @@ with these specifics:
 - `ContextProbes::run(&[ContextRequest { feet, dir, params, query }], probe, out)`: each request
   is a phase machine; all requests' casts go in one `GroundProbe::probe` call per stage, at most
   four stages. Results are `Option<ContextHit { kind, point, normal, height, depth, clearance,
-  landing }>`; `point` is the lip (obstacles, ledges), the edge walked off (drops) or the contact.
+  landing, room }>`; `point` is the lip (obstacles, ledges), the edge walked off (drops) or the contact.
 - `ContextParams::from_mover` scales thresholds with the capsule (GASP mannequin ratios): vault
-  ≤ 0.7 h and ≤ 0.33 h deep with a lower far floor, mantle ≤ 1.5 h with ≥ 0.6 h room on top,
+  ≤ 0.7 h and ≤ 0.33 h deep with a lower far floor and ≥ 0.9 h clear run-out past the lip (`room`,
+  two rays over the top and the far floor, scanned to 1.6 h; action.md "As built (B2 vault)"),
+  mantle ≤ 1.5 h with ≥ 0.6 h room on top,
   climb ≤ 2.5 h (the column's start), crouch 0.6 h, hang 1.15 h below the lip, one radius off the face.
 - `ObstacleAhead`: capsule sweep from a quarter step up to the head (lower is a curb), then three
   down-casts from the climb limit at 5 cm, 15 cm (flat top, not a ramp: a rising top behind a

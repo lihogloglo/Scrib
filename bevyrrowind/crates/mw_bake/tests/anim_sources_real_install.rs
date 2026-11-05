@@ -32,13 +32,16 @@ const REFERENCE: &str = "quaternius_ual2:ClimbUp_1m";
 /// The high mantle: UAL2's 2 m climb-up.
 const HIGH_SLOT: &str = "traverse.mantle.high";
 const HIGH: &str = "quaternius_ual2:ClimbUp_2m";
+/// The vault: UAL2's one-hand safety vault.
+const VAULT_SLOT: &str = "traverse.vault";
+const VAULT: &str = "quaternius_ual2:SafetyVault";
 /// The shipped LAFAN1 candidate (second, after UAL2; private only): a run-in
 /// step-up onto a 1.05 m box. Its tests resolve it explicitly.
 const LAFAN1: &str = "lafan1:bvh/obstacles4_subject3.bvh:obstacles4_subject3@199.4-201.2";
-/// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 3 traversal slots (`traverse.climb.up` = UAL1
-/// `ClimbLedge`, for B3; the two mantles), the 21 combat slots (7 of them the heavy chain) and the 2 Quaternius get-ups
-/// (`getup.supine`, `getup.prone`).
-const SLOTS: usize = 26;
+/// Every slot in the shipped manifest with a non-LAFAN1 candidate: the 4 traversal slots (`traverse.climb.up` = UAL1
+/// `ClimbLedge`, for B3; the two mantles; the vault), the 21 combat slots (7 of them the heavy chain) and the 2
+/// Quaternius get-ups (`getup.supine`, `getup.prone`).
+const SLOTS: usize = 27;
 /// `base_anim`, `base_anim_female`, `base_animkna`.
 const TARGETS: usize = 3;
 
@@ -160,6 +163,7 @@ fn mantle_clip_retargets_onto_the_humanoid_skeletons() {
     println!("slots: {:?}; {} library clips", report.slots, report.library_clips);
     assert!(report.slots.contains(&format!("{SLOT}: {REFERENCE}")), "{:?}", report.slots);
     assert!(report.slots.contains(&format!("{HIGH_SLOT}: {HIGH}")), "{:?}", report.slots);
+    assert!(report.slots.contains(&format!("{VAULT_SLOT}: {VAULT}")), "{:?}", report.slots);
     assert_eq!(report.library_clips, SLOTS * TARGETS);
 
     for set in &HUMANOID_SETS[..TARGETS] {
@@ -229,6 +233,14 @@ fn measure_mantle_high() {
     measure_mantle(&s);
 }
 
+/// The vault's `SafetyVault`: its arc and hand plant set the rule's height band (`traverse.vault`).
+#[test]
+#[ignore = "measurement: vault clip numbers, source vs retargeted, contact timing"]
+fn measure_vault() {
+    let Some(s) = setup_with(VAULT, false) else { return };
+    measure_mantle(&s);
+}
+
 /// Root rise, forward travel and a hand/foot timeline of `s.reference`, source and retargeted.
 fn measure_mantle(s: &Setup) {
     let dir = tempfile::tempdir().unwrap();
@@ -278,16 +290,17 @@ fn measure_mantle(s: &Setup) {
         println!("  frame 0 ankle heights {:.3} / {:.3} m", feet[0], feet[1]);
         // Timeline in the clip's start frame (root at t added; yaw ignored):
         // where the hands and feet are, to read contact timing by eye.
-        println!("  t s | root y z | hand L y z | hand R y z | ankle L y | ankle R y");
-        for i in 0..=12u8 {
-            let t = clip.duration * f32::from(i) / 12.0;
+        println!("  t s | root y z | hand L y z | hand R y z | ankle L y z | ankle R y z | hips y z | knees min y");
+        for i in 0..=24u8 {
+            let t = clip.duration * f32::from(i) / 24.0;
             let model = model_at(&target, &clip, t);
             let root = clip.root_at(t).0;
             let at = |b: B| pos(&target, &model, &map, b) + root;
-            let (hl, hr, fl, fr) = (at(B::LeftHand), at(B::RightHand), at(B::LeftFoot), at(B::RightFoot));
+            let (hl, hr, fl, fr, hips) = (at(B::LeftHand), at(B::RightHand), at(B::LeftFoot), at(B::RightFoot), at(B::Hips));
+            let knees = at(B::LeftLowerLeg).y.min(at(B::RightLowerLeg).y);
             println!(
-                "  {t:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} | {:.2}",
-                root.y, root.z, hl.y, hl.z, hr.y, hr.z, fl.y, fr.y
+                "  {t:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2} {:.2} | {:.2}",
+                root.y, root.z, hl.y, hl.z, hr.y, hr.z, fl.y, fl.z, fr.y, fr.z, hips.y, hips.z, knees
             );
         }
     }

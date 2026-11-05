@@ -348,7 +348,8 @@ mod tests {
                 "react.small.right",
                 "traverse.climb.up",
                 "traverse.mantle.high",
-                "traverse.mantle.waist"
+                "traverse.mantle.waist",
+                "traverse.vault"
             ]
         );
         // Combat slots fall back to Morrowind's groups (rolls drop).

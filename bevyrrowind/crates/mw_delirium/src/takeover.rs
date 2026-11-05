@@ -106,6 +106,13 @@ pub struct Rules {
     /// default 9; lower: the legs give), so the hit carries the body for a step or two (Euphoria's dying window,
     /// `shot` + `shotRelax`); then `catchFall` and the dead relax as [`Takeover::kill`].
     pub dying: (f32, f32),
+    /// The balancer's standing height from the takeover pose (Euphoria's posture matching; owner 2026-11-05: bodies
+    /// sank into bent knees at the takeover and rose at the hand-back): its leg extension (the straighter leg's
+    /// pelvis-to-foot reach, a share of the zero pose's straight leg) clamped to this range. `None`: Delirium's default,
+    /// 0.99 times the leg scale, which on a scaled build (its zero pose already scaled) counts the scale twice: x0.9
+    /// stood 9 cm low, x0.95 5 cm. The top: 0.995 (0.4 cm, 5 deg knee under a straight-legged idle); 0.999 is straighter
+    /// (0.2 cm, 1 deg) but locked knees recover slower from big pushes (80 N s: 2.8 s max vs 2.4, 2.05 at 0.99).
+    pub stance: Option<(f32, f32)>,
 }
 
 impl Default for Rules {
@@ -136,6 +143,7 @@ impl Default for Rules {
             baseline_margin: 20f32.to_radians(),
             knock_down_after: 0.3,
             dying: (0.6, 4.0),
+            stance: Some((0.9, 0.995)),
         }
     }
 }
@@ -281,6 +289,22 @@ fn lowest(p: &PartDef, f: &Transform) -> f32 {
     }
 }
 
+/// The pelvis to each foot (parts 0 to 3 and 6), m.
+fn reach(parts: &[Transform]) -> [f32; 2] {
+    [3, 6].map(|k| parts[0].translation.distance(parts[k].translation))
+}
+
+/// The balancer's leg extension (`Agent::legs.0`, Delirium's `leg_length`: the standing pelvis height as a share of
+/// the zero pose's, straight legs) matching `parts`, within `range`: the straighter leg's pelvis-to-foot reach over the
+/// zero pose's (a stride's spread legs stay long; Delirium lowers the pelvis for the feet's spread itself). The zero
+/// pose is the build's: the asset's times the leg scale on a scaled build (the thigh's size, as Delirium's
+/// `zero_places` scales it).
+fn stance_legs(body: &Body, build: &Build, parts: &[Transform], range: (f32, f32)) -> f32 {
+    let (now, zero) = (reach(parts), reach(&body.zero));
+    let leg = |i: usize| now[i] / (zero[i] * build.parts[1].size).max(0.1);
+    leg(0).max(leg(1)).clamp(range.0, range.1)
+}
+
 impl Takeover {
     /// Takes the character over at `parts` (sim space), moving from `previous` (`dt` earlier) when known.
     /// `scale`: Delirium's per-actor size (`Build::scaled`: segment lengths times `height`, mass factor `weight`),
@@ -310,7 +334,10 @@ impl Takeover {
                 }
             }
         }
-        let agent = Agent::new(&build, doll, Quat::IDENTITY, seed);
+        let mut agent = Agent::new(&build, doll, Quat::IDENTITY, seed);
+        if let Some(range) = rules.stance {
+            agent.legs.0 = stance_legs(body, &build, parts, range);
+        }
         let behaviour = if sinking > rules.falling_speed { "catchFall" } else { "bodyBalance" };
         let mut t = Takeover {
             build,
