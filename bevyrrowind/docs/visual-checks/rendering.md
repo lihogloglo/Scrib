@@ -183,4 +183,4 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 ### RO-17: Tree leaves reflect as one flat panel (owner report 2026-11-05)
 - Kind: game location. Seen in `scene ro16-terrain-veil` (Balmora, 23:00 clear): a whole leaf card reflects as one panel in the light's colour, the leaf texture lost, no micro detail.
 - Suspects (not diagnosed): flat cards with no normal map catch one uniform specular (statics reflectance 0.3, roughness 0.85, `mw_assets/src/lib.rs:453`); the flat-ambient specular lobe (same as RO-16 night); foliage transmission (RO-15) lighting the card evenly (A/B `--off foliagetransmission`).
-- Status: known bug, logged; diagnose after the RO-16 fix.
+- Status: parked (owner 2026-11-06: later).

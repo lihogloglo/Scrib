@@ -99,7 +99,7 @@ DL-5 | awaiting owner | [rendering](visual-checks/rendering.md) | Interior `--rt
 RO-14 | confirmed (2026-11-02: sun at dusk; lamps and candles runs not checked) | [rendering](visual-checks/rendering.md) | Bloom on the game camera: sun, lamps, candles glow, lit walls stay crisp (`--off bloom` A/B)
 RO-15 | confirmed (2026-11-02: 0.3 too faint, 1.0 liked, kept 0.5) | [rendering](visual-checks/rendering.md) | Light through leaves: backlit canopy glows, front-lit unchanged (`--off foliagetransmission` A/B)
 RO-16 | night diagnosed 2026-11-05: flat blue ambient (specular lobe); noon not checked | [rendering](visual-checks/rendering.md) | Terrain "veil" at grazing angles, blue-grey at night: name the console switch that lifts it (`scene ro16-terrain-veil`)
-RO-17 | known bug | [rendering](visual-checks/rendering.md) | Tree leaves reflect as one flat panel in the light colour, leaf texture lost (2026-11-05)
+RO-17 | parked (owner 2026-11-06) | [rendering](visual-checks/rendering.md) | Tree leaves reflect as one flat panel in the light colour, leaf texture lost (2026-11-05)
 TX-delight | awaiting owner | [rendering](visual-checks/rendering.md) | De-lit albedo textures: no double-dark corners, no colour shift or BC7 blocks, cutouts keep coverage (`--off delight` A/B)
 RO-B | partial (2026-10-30: draws in front now; odd blend, weak over dark things, like Ghostfence) | [rendering](visual-checks/rendering.md) | Lit smoke shading + dynamic plume Aabb sort over sky and objects
 CB-1 | confirmed (2026-10-27: sprint hold, chain step, mouse capture, dummy collision fixed; evening: 4-hit chain and M1 cursor confirmed) | [combat](visual-checks/combat.md) | Light chain and roll on the training dummy (scene level-arena)
@@ -227,3 +227,4 @@ NS-2 | deferred | [weather-sky](visual-checks/weather-sky.md) | Stars fade in at
 NS-3 | deferred | [weather-sky](visual-checks/weather-sky.md) | Masser and Secunda
 NS-4 | deferred | [weather-sky](visual-checks/weather-sky.md) | No red streaks at night
 WE-8 | confirmed (2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Rain leans with the wind, capped (Rain ~9-15°, thunderstorm ≤ ~25°), direction turns slowly, trees agree; `view "Balmora" --hour 12 --weather rain`, A/B `flip rain_slant_cap`
+WE-9 | known bug, diagnosed (2026-11-06) | [weather-sky](visual-checks/weather-sky.md) | Forced fog and rain seem to go away at night: hour keys wrap to the same day (live force undone), fog unlit by the night ambient floor, rain drops unlit at night

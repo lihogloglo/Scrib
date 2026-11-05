@@ -119,6 +119,19 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - A/B: console (backquote) `flip rain_slant_cap`: off = the old raw lean (21-44°, turns with every wind change).
 - Status: confirmed (owner 2026-11-06: "rain slant works").
 
+### WE-9: Forced fog and rain seem to go away at night (owner 2026-11-06, long-standing)
+- Seen: forced Foggy is dense by day but "see super far" after ~21:00; a forced Thunderstorm stops at "23.50" and comes back at ~7:00.
+- Cause 1 (rain stopping, all forces made with C/BRP): the `]`/`[` hour keys (`live_ab.rs` ~487) and BRP `set hour` (`remote.rs` ~191)
+  call `SkyClock::set_hour`, which keeps the day: 23.5 + 0.5 is 0:00 of the *same* day, 24 game hours back, before the live force
+  started (`force_live` starts at `now`), so the forecast takes over (rain, sound, wetting) until the clock passes the C press again.
+  `--weather` at launch is not affected (forced from 1e4 h before). Test: `mw_weather/tests/night_weather.rs` (prints it).
+- Cause 2 (fog): the fog's in-scatter is lit by the moon and the sky-view LUT only (`fog_light.wesl`), not by the night ambient floor
+  that lights surfaces (`LightCalibration::night_ambient_nits`, sun -4° to -12°, ~20:00-21:15) under the opened night exposure: the
+  fog turns into a black absorber with no veil, so lamps, far-light sprites and floor-lit ground read far. Fog densities rise at night.
+- Cause 3 (rain look): `fx::precip_brightness` drops to 0.04 x (1 - 0.5 overcast) below sun -5.7°, not x exposure nor the night
+  ambient: drops become faint dark streaks by night (the rain is still falling and wetting).
+- Status: known bug, diagnosed (2026-11-06; fix not built).
+
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
 - Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
 - Look for: stair-stepped blocky shapes along land silhouettes, only where fog is rendered; present when still, worse

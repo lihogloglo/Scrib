@@ -523,7 +523,7 @@
             hour: 12.0,
             description: "Balmora street at eye height, terrain ground next to statics: the faint 'resin' veil on the terrain; append --hour 23 for night",
             look_for: "type in the console (backquote) one at a time, then back on: flip terrain_env_specular, flip terrain_specular, flip ambient, flip terrain_indirect, render.bloom 0, flip fog, flip surface, flip terrain_tint; which one lifts the veil?",
-            flags: ["--clouds", "clear"],
+            flags: [],
             checks: ["RO-16"],
         ),
         // ---- lighting: night exposure floor, point-light shadows (sky-lighting.md; .sessions/lighting.md) ----
