@@ -90,11 +90,11 @@ GPU (per frame, exterior camera):
 | `sf_wind` | no | `WindSettings`, `WindState`, `WindSource` (directional, radial, vortex), CPU `velocity_at(WorldPos, t)`, the WGSL module as a string, `wind.paint` bake step (feature `bake`) | `sf_coords`, `glam` |
 | `sf_weather` | no | `WeatherPreset`, `Climate` records, state machine, forecast, blending, `WeatherFrame`, lightning schedule, cue list | `sf_records`, `sf_wind`, `sf_sky` (for `Weather`, `KeyCurve`) |
 | `sf_atmos` | no | Cloud/fog parameter structs + GPU layouts, tiling noise generators, `atmos.noise` bake step, CPU cloud density and shadow-height evaluation (tests, gameplay queries such as "is it under cloud") | `glam`, `sf_bake` (feature `bake`) |
-| `sf_surface` | no | Accumulation model (rates, drying, permeability), coarse persistent world grid (save data), character wetness model | `sf_coords` |
+| `sf_surface` | no | Accumulation model (rates, drying, permeability), coarse persistent world grid (save data), character wetness model | `sf_coords`, `sf_weather` (climate raster, rates) |
 | `sf_wind_bevy` | thin | Uploads wind uniform + source buffer, `WindPhase`, WESL `sf_wind::sample` | `sf_wind`, `sf_world_bevy` (origin) |
 | `sf_weather_bevy` | thin | `WeatherPlugin`: clock → evaluate → feeds sky, wind, atmos, precip, surface; lightning light; cue messages; Luau/script hook later | `sf_weather`, `sf_sky_bevy` |
 | `sf_atmos_bevy` | heavy shaders, thin Rust | Cloud pass, cloud shadow map, far fog, froxel fog, shadow-height map, `sf_far_shadow` WESL, `DirectionalLightTexture` wiring | `sf_atmos`, `sf_wind_bevy`, `sf_terrain_bevy` (clipmap binding) |
-| `sf_surface_bevy` | thin | Surface-state clipmap, occlusion camera, the shared `surface_state.wesl` (moves here from `sf_terrain_bevy`), `WorldMaterial` (= `ExtendedMaterial<StandardMaterial, SurfaceExt>`) | `sf_surface`, `sf_wind_bevy` |
+| `sf_surface_bevy` | thin | Cell texture, vertical shelter map, the shared `sf_surface::layer` WESL (replaces `surface_state.wesl`), trail ring; `StandardMaterial` hook via own `bevy_pbr` patch "SW" ([surface-weather.md](surface-weather.md)) | `sf_surface`, `sf_sky_bevy` |
 | `sf_precip_bevy` | thin | Streak/flake/ash volumes, splashes, ripple normal atlas | `sf_surface_bevy` (occlusion), `sf_wind_bevy` |
 
 Wide and shallow. `sf_wind` is tiny and stable, so the many wind consumers don't depend on the
@@ -114,7 +114,7 @@ needs `bevy_pbr` (+ `pbr_light_textures`), `bevy_core_pipeline`, `bevy_render`. 
 | Cloud shadow map + weather map | 0.03 | 0.03 | 0.05 | 0.05 |
 | Froxel fog (+ apply) | analytic height fog only: 0.1 | 128×72×48: 0.4 / 0.3 | 160×90×64: 0.7 / 0.5 | 160×90×128: 1.1 / 0.8 |
 | Precipitation (3 layers, splashes, occlusion camera amortized) | 0.2 | 0.3 | 0.4 / 0.3 | 0.5 |
-| Surface state (update + hook ALU in world materials) | wetness only: 0.1 | 0.2 | 0.3 / 0.2 | 0.35 |
+| Surface state: see [surface-weather.md](surface-weather.md) "Budget" (worst weather; dry = early-out) | 0.08 | 0.22 | 0.63 | 0.81 |
 | Wind (vertex ALU in foliage/grass) | 0.05 | 0.1 | 0.15 / 0.1 | 0.2 |
 | **Total weather + atmosphere** | **≈ 1.2** | **≈ 2.1** | **≈ 3.3 / 2.5** | **≈ 5.0 / 3.8** |
 

@@ -28,6 +28,11 @@ bitflags! {
         /// Powered ragdoll bodies (a crumpling death, a knockdown before it
         /// goes limp): contacts as `RAGDOLL`, outside the carry pick layers.
         const POWERED = 1 << 9;
+        /// A character's per-bone kinematic proxies (character-shapes.md "Physics
+        /// integration"): touched only by what moves ([`Layer::MOVING`]), never by
+        /// the world, characters, sensors or each other, so the mover's sweeps and
+        /// pushes never see them.
+        const BODY_PROXY = 1 << 10;
     }
 }
 
@@ -43,7 +48,8 @@ impl Layer {
     ///
     /// Fixed geometry touches everything that moves (characters run on the
     /// kinematic mover's own sweeps, not on contacts with the world).
-    /// Characters touch moving bodies so falling and thrown things hit them;
+    /// Characters touch moving bodies so falling and thrown things hit them
+    /// (body proxies too, and nothing else);
     /// the mover's capped pushes (task P5) decide what they do to debris.
     /// A held item's contact with its own holder is excluded per pair
     /// (task P6), not by layer.
@@ -53,8 +59,9 @@ impl Layer {
         for layer in self.iter() {
             out |= match layer {
                 Self::STATIC | Self::TERRAIN | Self::CHARACTER => Self::MOVING | Self::SENSOR,
-                Self::SENSOR => Self::all().difference(Self::SENSOR),
-                _ => Self::WORLD | Self::MOVING | Self::CHARACTER | Self::SENSOR,
+                Self::SENSOR => Self::all().difference(Self::SENSOR).difference(Self::BODY_PROXY),
+                Self::BODY_PROXY => Self::MOVING,
+                _ => Self::WORLD | Self::MOVING | Self::CHARACTER | Self::SENSOR | Self::BODY_PROXY,
             };
         }
         out

@@ -242,13 +242,13 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         mw_walkers_bevy::physics::RagdollTakeover(Arc::new(|t: &mw_walkers_bevy::physics::PhysicsTakeover, commands: &mut Commands| {
             let reaction = match t.kind {
                 mw_walkers_bevy::physics::TakeoverKind::Hit => {
-                    mw_delirium_bevy::hit_reaction(&mw_delirium_bevy::HitRules::default(), t.skeleton, t.mover, t.held, t.point, t.impulse)
+                    mw_delirium_bevy::hit_reaction(&mw_delirium_bevy::HitRules::default(), t.skeleton, t.mover, t.held, t.point, t.impulse, t.joint)
                 }
                 mw_walkers_bevy::physics::TakeoverKind::Knockdown => mw_delirium_bevy::knockdown_reaction(t.skeleton, t.mover, t.point, t.impulse),
                 mw_walkers_bevy::physics::TakeoverKind::Death => mw_delirium_bevy::death_reaction(t.skeleton, t.mover, t.point, t.impulse),
             };
             let Some(reaction) = reaction else { return false };
-            commands.entity(t.root).try_insert(reaction);
+            mw_delirium_bevy::request(commands, t.root, reaction);
             true
         })),
     );

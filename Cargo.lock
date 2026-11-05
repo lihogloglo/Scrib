@@ -5136,6 +5136,9 @@ dependencies = [
  "sf_anim",
  "sf_bake",
  "sf_character",
+ "sf_coords",
+ "sf_physics",
+ "sf_ragdoll",
  "sf_vfs",
  "tempfile",
 ]

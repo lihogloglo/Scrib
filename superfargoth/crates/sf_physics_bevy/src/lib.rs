@@ -17,6 +17,8 @@
 //!   under a per-frame time budget.
 //! - Counters (`physics/...`) when the app runs `SfDiagPlugin`; collider
 //!   wireframes with the `debug` feature ([`PhysicsDebug`]).
+//! - Body proxies ([`proxies`], feature `controller`): per-bone kinematic
+//!   capsules a physics layer poses on a character it holds (character-shapes S3).
 
 use std::time::Instant;
 
@@ -42,19 +44,25 @@ pub mod character;
 mod debug;
 #[cfg(feature = "ragdoll")]
 pub mod ragdoll;
+#[cfg(feature = "controller")]
+pub mod proxies;
+#[cfg(all(test, feature = "controller"))]
+mod proxies_tests;
 pub mod stream;
 #[cfg(test)]
 mod tests;
 
 #[cfg(feature = "controller")]
 pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter};
+#[cfg(feature = "controller")]
+pub use proxies::{BodyProxies, ProxyHolder, ProxyStats, ShapeSystems};
 #[cfg(feature = "debug")]
 pub use debug::PhysicsDebug;
 pub use carry::{CarryFeedback, CarryInput, CarryOutcome, HeldPoses, Holder, TickView};
 pub use sf_physics;
 #[cfg(feature = "ragdoll")]
 pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, RagdollGotUp,RagdollLoader, RagdollMode, RagdollSource, RagdollStats, Ragdolls, clip_root_body, FrameQuery, move_frame, world_frame};
-#[cfg(feature = "ragdoll")]
+#[cfg(any(feature = "ragdoll", feature = "controller"))]
 pub use sf_ragdoll;
 pub use stream::{
     BodyLoader, CollisionReady, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
@@ -265,6 +273,8 @@ impl Plugin for PhysicsPlugin {
         debug::add(app);
         #[cfg(feature = "controller")]
         character::add(app);
+        #[cfg(feature = "controller")]
+        proxies::add(app);
         #[cfg(feature = "ragdoll")]
         ragdoll::add(app);
     }

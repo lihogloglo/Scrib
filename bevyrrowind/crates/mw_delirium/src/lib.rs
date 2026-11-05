@@ -7,6 +7,8 @@
 //! - [`sim`]: a headless harness (floor world, one agent, pushes), used by the tests.
 //! - [`takeover`]: an animated character taken over from its pose, and when to hand it back (slice 2a);
 //!   [`takeover::pick`] finds the part under a ray.
+//! - [`proxies`]: the parts as the framework's shape set, for the body proxies balls and props hit while Delirium
+//!   holds a body (character-shapes S3).
 //!
 //! Spaces. *Model*: the skeleton's model space (`sf_anim`: Y up, facing +Z, metres). *Authoring*: Z up, facing +Y,
 //! metres (Morrowind's own NIF axes), where the character is built ([`authoring_point`]). *Sim*: Delirium's world (Z
@@ -18,6 +20,7 @@
 
 pub mod body;
 pub mod pose;
+pub mod proxies;
 pub mod sim;
 pub mod takeover;
 

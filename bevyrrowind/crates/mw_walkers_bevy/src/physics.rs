@@ -76,7 +76,7 @@ use sf_anim_bevy::{Animator, Hit};
 use sf_character_bevy::CharacterBody;
 use sf_controller_bevy::{Dormant, Held};
 use sf_controller_bevy::Mover;
-use sf_physics_bevy::{ImpactOnCharacter, Ragdoll, RagdollFailed, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats, clip_root_body};
+use sf_physics_bevy::{BodyProxies, ImpactOnCharacter, Ragdoll, RagdollFailed, RagdollGotUp, RagdollMode, RagdollSource, RagdollStats, clip_root_body};
 use sf_ragdoll::{RAGDOLL_COOK, RagdollDef, RagdollPolicy};
 use sf_records::RecordDb;
 use sf_world::{Placement, PlacementClass, WorldspaceId};
@@ -236,7 +236,7 @@ fn kill(v: Victim, point: sf_coords::WorldPos, impulse: Vec3, takeover: Option<&
     if !v.down
         && let Some(take) = takeover
     {
-        let request = PhysicsTakeover { root: v.root, skeleton: &v.body.skeleton, mover: v.mover, held: v.held, point, impulse, kind: TakeoverKind::Death };
+        let request = PhysicsTakeover { root: v.root, skeleton: &v.body.skeleton, mover: v.mover, held: v.held, point, impulse, joint: None, kind: TakeoverKind::Death };
         if (take.0)(&request, commands) {
             commands.entity(v.root).try_insert(Dead);
             info!("death: {} ({}) taken over by the physics layer", v.root, v.body.skeleton);
@@ -319,6 +319,9 @@ pub struct PhysicsTakeover<'a> {
     pub point: sf_coords::WorldPos,
     /// N·s, world: the impact's direction times its momentum (a death with no blow: zero).
     pub impulse: Vec3,
+    /// The struck skeleton joint, when the impact landed on one of the root's body proxies
+    /// (`sf_physics_bevy::BodyProxies`, character-shapes.md S3); `None`: its capsule, or no blow.
+    pub joint: Option<u16>,
     /// A hit, a knockdown or a death.
     pub kind: TakeoverKind,
 }
@@ -339,10 +342,12 @@ pub type TakeRagdoll = dyn Fn(&PhysicsTakeover, &mut Commands) -> bool + Send + 
 /// [`TakeoverKind::Hit`]: a push with the balance reacting), else hard ones knock it down (the powered ragdoll)
 /// and lighter ones kick the graph's `HitReact` springs (P9, PH-10). On a [`Held`] body only the hook (a layer
 /// pushing its own takeover; a powered-ragdoll knockdown is never asked: its ragdoll takes the impact itself).
+/// One impact per character per frame, except on a held body: there every impact (one per contact start on its body
+/// proxies, character-shapes.md S3) is a further push, with the struck proxy's joint.
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn knockdown(
     mut impacts: MessageReader<ImpactOnCharacter>,
-    characters: Query<(&CharacterBody, Has<Mover>, Has<Held>, Has<KnockedDown>)>,
+    characters: Query<(&CharacterBody, Has<Mover>, Has<Held>, Has<KnockedDown>, Option<&BodyProxies>)>,
     mut bodies: Query<(&mut Animator, &Transform, &GlobalTransform)>,
     pos_of: WorldPosOf,
     source: Res<RagdollSource>,
@@ -354,15 +359,18 @@ fn knockdown(
         if hit.impulse < HIT_REACT_IMPULSE || seen.contains(&hit.entity) {
             continue;
         }
-        let Ok((body, mover, held, knocked)) = characters.get(hit.entity) else { continue };
+        let Ok((body, mover, held, knocked, proxies)) = characters.get(hit.entity) else { continue };
         if knocked {
             continue;
         }
         if let Some(take) = takeover.as_deref() {
             let impulse = hit.direction * hit.impulse;
-            let request = PhysicsTakeover { root: hit.entity, skeleton: &body.skeleton, mover, held, point: hit.point, impulse, kind: TakeoverKind::Hit };
+            let joint = hit.shape.zip(proxies).and_then(|(s, p)| p.joint(s));
+            let request = PhysicsTakeover { root: hit.entity, skeleton: &body.skeleton, mover, held, point: hit.point, impulse, joint, kind: TakeoverKind::Hit };
             if (take.0)(&request, &mut commands) {
-                seen.push(hit.entity);
+                if !held {
+                    seen.push(hit.entity);
+                }
                 info!("hit: {} taken by the physics layer ({:.1} N·s{})", hit.entity, hit.impulse, if held { ", held" } else { "" });
                 continue;
             }

@@ -139,6 +139,9 @@ fn layers_are_symmetric() {
     }
     assert!(!Layer::STATIC.collides_with().contains(Layer::TERRAIN));
     assert!(Layer::DEBRIS.collides_with().contains(Layer::CHARACTER));
+    // Body proxies: only what moves (character-shapes.md requirement 4).
+    assert_eq!(Layer::BODY_PROXY.collides_with(), Layer::MOVING);
+    assert!(!Layer::SENSOR.collides_with().contains(Layer::BODY_PROXY));
 }
 
 /// The rebase gate: a 30-body stack, a powered ragdoll hung from its pelvis

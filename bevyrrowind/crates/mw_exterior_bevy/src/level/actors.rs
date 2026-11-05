@@ -273,7 +273,7 @@ fn drive(
                 let dir = param("dir", 0.0).to_radians();
                 let direction = Vec3::new(-dir.sin(), 0.0, -dir.cos());
                 let point = mover.loco.position.offset(Vec3::Y * 1.2);
-                impacts.write(ImpactOnCharacter { entity, impulse: param("impulse", 25.0), point, direction });
+                impacts.write(ImpactOnCharacter { entity, impulse: param("impulse", 25.0), point, direction, shape: None });
                 continue;
             }
             if let Some(mut animator) = mover.animator.and_then(|a| animators.get_mut(a).ok()) {

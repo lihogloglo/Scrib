@@ -1,5 +1,7 @@
 # Weather adapter (Morrowind → sf_weather, sf_wind, sf_atmos, sf_surface)
 
+Surface weather (wetness, puddles, ash/snow cover, trails): section "Surface weather" below.
+
 Status: draft (2026-10-11), spec only
 Crates: `mw_weather` (new, Bevy-free adapter: records → presets/climates, hooks), app wiring in
 `apps/bevyrrowind`; near-term fixes touch `mw_assets`, `mw_bake` and the app (weather/distant-shadows.md
@@ -195,6 +197,30 @@ exist (M8). Underwater cells and the "has water" interiors keep their water fog 
   materials still draw `StandardMaterial` (unfogged): switching blended ones to `FroxelFogMaterial` is a follow-up.
 - **Wind and trees**: `wind_profile` marks `meshes/f/flora_*` (the same rule as `mw_bake::far::is_flora`)
   as foliage. Kelp and bushes get leaf-level flutter only. Emperor parasols are stiff (trunk bend only).
+
+### Surface weather (`sf_surface`, framework spec `surface-weather.md`)
+
+- **Climates = regions.** Wetness and puddles are kept per climate (`mw_region/<id>`); snow and ash per 32 m
+  cell, rates blended across region borders by the existing `ClimateRaster` (one raster square per exterior
+  cell, 8192 units ≈ 117 m). Interiors and interior-like cells: off.
+- **Rates per weather** (`SurfaceRates`, per game hour, start values; owner tunes in SW-3/SW-5): Rain wet 1.0,
+  puddle 0.5; Thunderstorm wet 2.0, puddle 1.0; Snow snow 0.25; Blizzard snow 0.6; Ash ash 0.3; Blight ash 0.3;
+  Clear/Cloudy/Foggy/Overcast 0 with `drying` 0.5 (Foggy 0.25). At timescale 30, 2 game hours of drying are
+  4 real minutes.
+- **Layers** (`SurfaceLayer`): ash = grey-brown dust (Clockwork's linear (0.214, 0.197, 0.185) as the first
+  calibration), albedo/normal resolved at load from the Ashlands region's dominant ground `LTEX` (read from
+  data, no hard-coded names; **verify** which); blight uses the same ash layer (framework open question 1).
+  Snow = the Solstheim (Bloodmoon) snow ground `LTEX` when present, else our generated snow texture.
+  `snow_line` off (Morrowind has no altitude snow).
+- **Terrain surface types**: `LTEX` → `TerrainLayer.surface` gains porosity (sand/dirt 0.8, grass 0.6,
+  rock/cobble 0.3, ash ground 0.7), `puddles` (no on sand and ash), `trail` (`snow` on Solstheim snow,
+  `ash` on Ashlands ash, `mud` on Bitter Coast mud, else none). Table in `mw_weather`, by texture class.
+- **Ripples:** the ini's `Rain Ripples`, `Rain Ripple Radius/Scale/Speed` and `Snow Ripples` feed the
+  procedural ripple params (not an atlas).
+- **Footsteps:** wet variant when `sf_surface::sample` wet > 0.5 or puddle > 0.2; snow/ash variants by cover.
+- **Scenes** (visual checks `SW-n`, `bevyrrowind/docs/visual-checks/weather-sky.md`): Seyda Neen after rain
+  (W3/W4), Balmora streets in rain (W4), Ghostgate after an ash storm (W5), Skaal village snow (W5, W6),
+  Ashlands walk (W6).
 
 ## Interfaces
 

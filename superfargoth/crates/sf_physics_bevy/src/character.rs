@@ -50,6 +50,9 @@ pub struct ImpactOnCharacter {
     pub point: WorldPos,
     /// The impulse's direction on the character (unit, world; zero if unknown).
     pub direction: Vec3,
+    /// The struck shape of the character's [`crate::BodyProxies`] (character-shapes.md "Impacts"); `None`: its
+    /// mover capsule.
+    pub shape: Option<u16>,
 }
 
 /// Counters for the log and benches.
@@ -266,7 +269,7 @@ fn impacts(
             continue;
         }
         if let Some(&entity) = by_body.get(&target) {
-            out.write(ImpactOnCharacter { entity, impulse, point, direction });
+            out.write(ImpactOnCharacter { entity, impulse, point, direction, shape: None });
             stats.impacts += 1;
         }
     }

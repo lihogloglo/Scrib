@@ -185,6 +185,10 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
   scale twice (x0.9 stood 9 cm low, 45 deg more knee; x0.95 5 cm; x1.0 1 cm), now 0.4-0.8 cm and 5-10 deg at every scale.
   Check: `scene level-anim-idles`, F11, small `V` balls (or a Ctrl click) at Fargoth, Llathyno and a Breton/Dunmer woman:
   no knee sink as Delirium takes over, no rise as it blends back to the idle. Status: awaiting owner.
+- Fix 2026-11-05 (shapes-s3, character-shapes S3): a held body has kinematic proxies (Delirium's 21 parts) that balls hit.
+  Check: `scene level-anim-idles`, F11, rapid `V` balls at a staggering, then a lying NPC: each ball bounces off the limb
+  it hits and pushes the body again (no ball through it); after the hand-back balls hit the capsule as before. Log:
+  `hit: <e> taken by the physics layer (... N·s, held)` once per ball. Status: awaiting owner.
 
 ### PH-16: A killed human NPC falls and stays dead under Delirium (owner 2026-10-30: replaces clip + limp ragdoll)
 - Kind: level, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then

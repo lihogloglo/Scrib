@@ -15,6 +15,8 @@ mw_anim.workspace = true
 serde_json.workspace = true
 sf_anim.workspace = true
 sf_character.workspace = true
+# `ShapeSet`: the parts as body proxies (character-shapes S3).
+sf_ragdoll.workspace = true
 
 [dev-dependencies]
 mw_bake.workspace = true
@@ -25,6 +27,9 @@ mw_install.workspace = true
 mw_nif.workspace = true
 mw_vfs.workspace = true
 sf_vfs.workspace = true
+# The proxies test: balls in a physics world against the held body.
+sf_coords.workspace = true
+sf_physics.workspace = true
 
 [lints]
 workspace = true

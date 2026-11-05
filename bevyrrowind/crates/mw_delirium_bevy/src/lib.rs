@@ -68,6 +68,7 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_ui::{BackgroundColor, BorderRadius, Node, PositionType, UiRect, percent, px};
 use mw_delirium::delirium::prelude::Transform as Part;
 use mw_delirium::delirium::ragdoll::Build;
+use mw_delirium::proxies::{PartShapes, part_shapes, shape_frames};
 use mw_delirium::takeover::pick;
 use mw_delirium::{Body, HandBack, Options, Outcome, Rules, Takeover, authoring_from_model, bones_to_parts, character_from_skeleton, pose_to_bones};
 use mw_game_core::player::PlayerMode;
@@ -78,7 +79,8 @@ use sf_controller::ProbeQuery;
 use sf_controller_bevy::{ControllerSystems, Dormant, GroundProbe, Held, Mover};
 use sf_coords::{WorldPos, WorldTransform};
 use sf_physics_bevy::sf_ragdoll::{get_up_root, yaw_of};
-use sf_physics_bevy::{FrameQuery, Physics, Ragdoll, RagdollMode, move_frame, world_frame};
+use sf_physics_bevy::sf_ragdoll::ShapeSet;
+use sf_physics_bevy::{BodyProxies, FrameQuery, Physics, ProxyHolder, Ragdoll, RagdollMode, ShapeSystems, move_frame, world_frame};
 use sf_world_bevy::{WorldPosOf, WorldspaceRoot};
 
 /// The skeletons Delirium's humanoid asset fits (male and female Morrowind humans).
@@ -119,9 +121,10 @@ impl Plugin for DeliriumPlugin {
         app.init_resource::<Takeovers>()
             .init_resource::<DeliriumStats>()
             .add_message::<DeliriumHandedBack>()
+            .add_message::<DeliriumPush>()
             .add_systems(FixedUpdate, step)
             // After the controller step: a root move (hand-back) is never a frame behind.
-            .add_systems(Update, (start, read_back.after(ControllerSystems::Step)).chain());
+            .add_systems(Update, (start, read_back.after(ControllerSystems::Step).before(ShapeSystems::Activate)).chain());
         if self.click {
             app.add_systems(Startup, spawn_click_dot).add_systems(Update, (click.before(start), show_click_dot));
         }
@@ -178,14 +181,14 @@ impl Default for HitRules {
 /// the root already): every hit is a push, only when Delirium is the holder (`live_only`). `None`: the walkers' own
 /// reaction (kinematic hit-react, powered ragdoll).
 #[must_use]
-pub fn hit_reaction(rules: &HitRules, skeleton: &str, mover: bool, held: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
+pub fn hit_reaction(rules: &HitRules, skeleton: &str, mover: bool, held: bool, point: WorldPos, impulse: Vec3, joint: Option<u16>) -> Option<DeliriumReaction> {
     if !mover || !HUMAN_SKELETONS.contains(&skeleton) {
         return None;
     }
     let impulse = impulse * rules.gain;
     let n = impulse.length();
     (held || n >= rules.takeover).then_some(DeliriumReaction {
-        hit: Some(DeliriumHit { point, impulse, part: None }),
+        hit: Some(DeliriumHit { point, impulse, part: None, joint }),
         knock_down: n >= rules.certain_fall,
         kill: false,
         live_only: held,
@@ -205,8 +208,43 @@ pub struct DeliriumHit {
     pub point: WorldPos,
     /// N s, world.
     pub impulse: Vec3,
-    /// Delirium part (`mw_delirium::body::NAMES`); `None`: the part nearest `point`.
+    /// Delirium part (`mw_delirium::body::NAMES`); `None`: the part on `joint`, else the part nearest `point`.
     pub part: Option<usize>,
+    /// The struck skeleton joint (a hit on one of the body's proxies: the part that owns it).
+    pub joint: Option<u16>,
+}
+
+/// A further push on a body Delirium holds (a [`DeliriumReaction`] with `live_only`, sent by [`request`]): every one
+/// counts, several in one frame included (one per contact start on the body's proxies, PH-15); dropped when Delirium
+/// doesn't hold the root.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct DeliriumPush {
+    pub root: Entity,
+    pub hit: DeliriumHit,
+}
+
+/// Files a reaction on a character's root (the host's takeover hook): a hit on a body Delirium holds is a
+/// [`DeliriumPush`] message (so two hits in a frame don't overwrite each other), with the knockdown, if any, as the
+/// component; everything else the [`DeliriumReaction`] component.
+pub fn request(commands: &mut Commands, root: Entity, reaction: DeliriumReaction) {
+    if reaction.live_only
+        && !reaction.kill
+        && let Some(hit) = reaction.hit
+    {
+        commands.write_message(DeliriumPush { root, hit });
+        if reaction.knock_down {
+            commands.entity(root).try_insert(DeliriumReaction { hit: None, ..reaction });
+        }
+        return;
+    }
+    commands.entity(root).try_insert(reaction);
+}
+
+/// The part a hit lands on: its own, the part on its joint, else the part nearest `at` (sim).
+fn hit_part(table: &mw_delirium::PartTable, hit: &DeliriumHit, parts: &[Part], at: Vec3) -> usize {
+    hit.part
+        .or_else(|| hit.joint.and_then(|j| table.parts.iter().position(|p| p.joint == usize::from(j))))
+        .unwrap_or_else(|| nearest_part(parts, at))
 }
 
 /// The takeover request for a game-decided knockdown (combat-adapter.md "Ragdoll routing"; the walkers' takeover
@@ -216,7 +254,7 @@ pub struct DeliriumHit {
 /// knockdown. The takeover then owns the character (`Held`, the get-up, the root's move) until [`DeliriumHandedBack`].
 #[must_use]
 pub fn knockdown_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
-    let hit = DeliriumHit { point, impulse, part: None };
+    let hit = DeliriumHit { point, impulse, part: None, joint: None };
     (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit: Some(hit), knock_down: true, kill: false, live_only: false })
 }
 
@@ -226,7 +264,7 @@ pub fn knockdown_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse:
 /// holds turns terminal. `None`: the death clip and the limp ragdoll.
 #[must_use]
 pub fn death_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
-    let hit = (impulse.length_squared() > 1e-6).then_some(DeliriumHit { point, impulse, part: None });
+    let hit = (impulse.length_squared() > 1e-6).then_some(DeliriumHit { point, impulse, part: None, joint: None });
     (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit, knock_down: false, kill: true, live_only: false })
 }
 
@@ -324,6 +362,8 @@ struct Live {
     last_pose: Option<Vec<Trs>>,
     /// The graph's get-ups, in the takeover's `set_get_ups` order: (`get_up` value, clip slot).
     get_ups: Vec<(f32, usize)>,
+    /// The parts as a shape set and each part's turn to its capsule (`mw_delirium::proxies`): the body proxies.
+    shapes: (Arc<ShapeSet>, Vec<Quat>),
 }
 
 #[derive(Resource, Default)]
@@ -394,10 +434,19 @@ fn start(
     mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     roots: Query<&WorldspaceRoot>,
     ground: Option<Res<Physics>>,
+    mut pushes: MessageReader<DeliriumPush>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
     let Takeovers { pending, live, .. } = &mut *takeovers;
+    // Further pushes on held bodies (PH-15): each one counts; a root Delirium doesn't hold drops them.
+    for p in pushes.read() {
+        if let Some(l) = live.get_mut(&p.root) {
+            let at = l.sim.sim_point(p.hit.point);
+            let part = hit_part(&l.rig.body.table, &p.hit, &l.frames[1], at);
+            l.pushes.push((part, at, l.sim.sim_dir(p.hit.impulse)));
+        }
+    }
     pending.retain(|e, _| requests.contains(*e));
     for p in pending.values_mut() {
         p.secs += dt;
@@ -420,7 +469,7 @@ fn start(
         if let Some(l) = live.get_mut(&root) {
             if let Some(hit) = request.hit {
                 let at = l.sim.sim_point(hit.point);
-                let part = hit.part.unwrap_or_else(|| nearest_part(&l.frames[1], at));
+                let part = hit_part(&l.rig.body.table, &hit, &l.frames[1], at);
                 l.pushes.push((part, at, l.sim.sim_dir(hit.impulse)));
             }
             if request.knock_down && !request.kill && !l.takeover.is_dead() {
@@ -519,7 +568,7 @@ fn start(
         };
         let hit = prev.hit.map(|h| {
             let at = sim.sim_point(h.point);
-            let part = h.part.unwrap_or_else(|| nearest_part(&parts, at));
+            let part = hit_part(&rig.body.table, &h, &parts, at);
             takeover.hit(part, at, sim.sim_dir(h.impulse), outcome);
             (part, h.impulse.length())
         });
@@ -544,6 +593,9 @@ fn start(
         );
         commands.entity(root).try_insert(Held);
         stats.started += 1;
+        // The parts as body proxies (character-shapes S3): balls and props keep hitting the held body.
+        let PartShapes { set, turns } = part_shapes(&rig.body.table, &takeover.build, skeleton);
+        let shapes = (Arc::new(set), turns);
         takeovers.live.insert(
             root,
             Live {
@@ -564,6 +616,7 @@ fn start(
                 flagged: false,
                 last_pose: None,
                 get_ups,
+                shapes,
             },
         );
     }
@@ -663,6 +716,30 @@ fn get_up_frame(l: &Live, animator: &Animator, pose: &[Trs], frame: &WorldTransf
     Some(WorldTransform { pos: to.pos.offset(Vec3::Y * to.pos.delta_f32(floor).y), ..to })
 }
 
+/// The held body's proxies (character-shapes S3, PH-15): the shown parts (`parts`, interpolated at `alpha` between the
+/// last two steps, so a step behind the virtual clock) as each part's capsule frame in the world, with the parts'
+/// velocities over the last step; written in place once the component is there.
+fn write_proxies(root: Entity, l: &Live, parts: &[Part], fixed: &Time<Fixed>, alpha: f32, proxies: &mut Query<&mut BodyProxies>, commands: &mut Commands) {
+    let rotation = Quat::from_mat3a(&l.sim.world_from_sim.matrix3);
+    let step = fixed.timestep().as_secs_f32().max(1e-4);
+    let poses = shape_frames(parts, &l.shapes.1)
+        .into_iter()
+        .map(|(c, r)| WorldTransform { pos: l.sim.world_point(c), rotation: (rotation * r).normalize(), scale: Vec3::ONE })
+        .collect();
+    let velocities = l.frames[0].iter().zip(&l.frames[1]).map(|(a, b)| l.sim.world_from_sim.transform_vector3((b.translation - a.translation) / step)).collect();
+    let at = fixed.elapsed_secs_f64() - f64::from(step) * f64::from(1.0 - alpha);
+    match proxies.get_mut(root) {
+        Ok(mut p) if Arc::ptr_eq(&p.set, &l.shapes.0) => {
+            p.poses = poses;
+            p.velocities = velocities;
+            p.at = at;
+        }
+        _ => {
+            commands.entity(root).try_insert(BodyProxies { set: l.shapes.0.clone(), poses, velocities, at, holder: ProxyHolder::Layer });
+        }
+    }
+}
+
 /// Copy-back every frame (the parts as a physics pose at weight 1, the frame on the pelvis) and the hand-backs.
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::too_many_lines)]
 fn read_back(
@@ -674,6 +751,7 @@ fn read_back(
     mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     mut movers: Query<&mut Mover>,
     roots: Query<&WorldspaceRoot>,
+    mut proxies: Query<&mut BodyProxies>,
     mut handed: MessageWriter<DeliriumHandedBack>,
     mut commands: Commands,
 ) {
@@ -730,6 +808,9 @@ fn read_back(
             }
             l.shown_weight = weight;
             l.last_pose = Some(pose);
+            if finite && !exploded {
+                write_proxies(root, l, &parts, &fixed, alpha, &mut proxies, &mut commands);
+            }
             if exploded || (dead && l.takeover.settled()) {
                 if exploded {
                     warn!("delirium: dead {root} blew up: frozen at its last good pose");
@@ -791,6 +872,8 @@ fn read_back(
     // the root stays `Held` (and `DeliriumCorpse`).
     for (root, secs) in corpses {
         live.remove(&root);
+        // Corpses are S6 (the Rapier ragdoll handover): no proxies on a frozen pose.
+        commands.entity(root).try_remove::<BodyProxies>();
         stats.corpses += 1;
         info!("delirium: {root} lies dead, pose frozen ({secs:.1} s after the kill)");
     }
@@ -817,7 +900,8 @@ fn read_back(
             }
         }
         commands.entity(body).try_remove::<PhysicsPose>();
-        commands.entity(root).try_remove::<(Held, Dormant)>();
+        // The capsule comes back with the mover (no `Dormant`); the proxies go.
+        commands.entity(root).try_remove::<(Held, Dormant, BodyProxies)>();
         stats.handed_back += 1;
         handed.write(DeliriumHandedBack { root, how });
         info!("delirium: {root} handed back ({how:?}) after {secs:.1} s");
@@ -934,7 +1018,7 @@ fn click(
     }
     let Some((_, root, part, point)) = best else { return };
     info!("delirium: click on {root}, {} ({strength:.0} N s)", mw_delirium::body::NAMES[part]);
-    commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part) }), ..DeliriumReaction::default() });
+    commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part), joint: None }), ..DeliriumReaction::default() });
 }
 
 #[cfg(test)]
@@ -961,19 +1045,55 @@ mod tests {
         let rules = HitRules { takeover: 10.0, certain_fall: 100.0, gain: 1.5 };
         let point = WorldPos::ORIGIN.offset(Vec3::Y);
         for skeleton in HUMAN_SKELETONS {
-            let ball = hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 36.0).expect("a ball is a takeover");
+            let ball = hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 36.0, None).expect("a ball is a takeover");
             assert!(!ball.knock_down && !ball.kill && !ball.live_only, "a push, the balancer on");
             assert_eq!(ball.hit.map(|h| (h.point, h.impulse, h.part)), Some((point, Vec3::X * 54.0, None)), "momentum times the gain");
-            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 6.0).is_none(), "9 N s: the kinematic hit-react");
-            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 7.0).is_some(), "10.5 N s: a takeover");
-            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 70.0).is_some_and(|r| r.knock_down), "105 N s: down after the push");
-            let held = hit_reaction(&rules, skeleton, true, true, point, Vec3::X * 2.0).expect("a held body takes every hit");
+            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 6.0, None).is_none(), "9 N s: the kinematic hit-react");
+            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 7.0, None).is_some(), "10.5 N s: a takeover");
+            assert!(hit_reaction(&rules, skeleton, true, false, point, Vec3::X * 70.0, None).is_some_and(|r| r.knock_down), "105 N s: down after the push");
+            let held = hit_reaction(&rules, skeleton, true, true, point, Vec3::X * 2.0, Some(7)).expect("a held body takes every hit");
             assert!(held.live_only && !held.knock_down, "a further push, only on Delirium's own takeover");
-            assert!(hit_reaction(&rules, skeleton, false, false, point, Vec3::X * 36.0).is_none(), "an action character (no mover)");
+            assert_eq!(held.hit.and_then(|h| h.joint), Some(7), "the struck proxy's joint");
+            assert!(hit_reaction(&rules, skeleton, false, false, point, Vec3::X * 36.0, None).is_none(), "an action character (no mover)");
         }
         for other in ["meshes/base_animkna.nif", "meshes/r/guar.nif"] {
-            assert!(hit_reaction(&rules, other, true, false, point, Vec3::X * 36.0).is_none(), "{other}: the walkers' own reaction");
+            assert!(hit_reaction(&rules, other, true, false, point, Vec3::X * 36.0, None).is_none(), "{other}: the walkers' own reaction");
         }
+    }
+
+    /// PH-15 (character-shapes S3): hits on a held body are messages, so several in one frame all push (a component
+    /// would keep only the last); a joint picks the part that owns it.
+    #[test]
+    fn held_hits_are_pushes_that_add_up() {
+        use super::{DeliriumPush, DeliriumReaction, Part, hit_part, request};
+        use mw_delirium::{PartBone, PartTable};
+
+        #[derive(Resource)]
+        struct Root(Entity);
+        let mut app = App::new();
+        app.add_message::<DeliriumPush>();
+        let root = app.world_mut().spawn_empty().id();
+        app.insert_resource(Root(root));
+        let rules = HitRules::default();
+        let point = WorldPos::ORIGIN.offset(Vec3::Y);
+        app.add_systems(Update, move |mut commands: Commands, root: Res<Root>| {
+            for (n, joint) in [(30.0, Some(3)), (20.0, Some(9)), (150.0, None)] {
+                let r = hit_reaction(&rules, HUMAN_SKELETONS[0], true, true, point, Vec3::X * n, joint).unwrap();
+                request(&mut commands, root.0, r);
+            }
+        });
+        app.update();
+        let pushes: Vec<_> = app.world().resource::<Messages<DeliriumPush>>().iter_current_update_messages().map(|p| (p.root, p.hit.joint)).collect();
+        assert_eq!(pushes, vec![(root, Some(3)), (root, Some(9)), (root, None)], "every hit is a push");
+        let r = app.world().get::<DeliriumReaction>(root).expect("past the certain fall: the knockdown");
+        assert!(r.knock_down && r.live_only && r.hit.is_none(), "the knockdown alone, its push already sent");
+
+        let bone = |joint| PartBone { joint, write: true, offset: Part::from_translation(Vec3::ZERO) };
+        let table = PartTable { parts: vec![bone(0), bone(3), bone(9)] };
+        let parts = [Part::from_translation(Vec3::ZERO), Part::from_translation(Vec3::Y), Part::from_translation(Vec3::X)];
+        let hit = |joint| super::DeliriumHit { point, impulse: Vec3::X, part: None, joint };
+        assert_eq!(hit_part(&table, &hit(Some(9)), &parts, Vec3::ZERO), 2, "the part on the struck joint");
+        assert_eq!(hit_part(&table, &hit(None), &parts, Vec3::Y), 1, "else the nearest part");
     }
 
     /// Owner 2026-10-30/11-05: Delirium replaces the powered ragdoll for human knockdowns; beasts, creatures and

@@ -29,7 +29,7 @@ sf_character_bevy.workspace = true
 sf_controller.workspace = true
 sf_controller_bevy.workspace = true
 sf_coords.workspace = true
-sf_physics_bevy = { workspace = true, features = ["ragdoll"] }
+sf_physics_bevy = { workspace = true, features = ["ragdoll", "controller"] }
 sf_ragdoll.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true

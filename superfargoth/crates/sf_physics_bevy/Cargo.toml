@@ -9,8 +9,8 @@ license.workspace = true
 default = []
 # Collider wireframes (`PhysicsDebug`). Needs the app to add Bevy's gizmo plugin.
 debug = ["dep:bevy_gizmos", "dep:bevy_color"]
-# Character capsules, pushes and impacts for `sf_controller_bevy` movers (P5).
-controller = ["dep:sf_controller_bevy"]
+# Character capsules, pushes and impacts for `sf_controller_bevy` movers (P5); body proxies (character-shapes S3).
+controller = ["dep:sf_controller_bevy", "dep:sf_ragdoll"]
 # Limp ragdolls on characters: `sf_ragdoll` instances, the death handoff, `PhysicsPose` to `sf_anim_bevy` (P7).
 ragdoll = ["dep:sf_ragdoll", "dep:sf_anim", "dep:sf_anim_bevy"]
 

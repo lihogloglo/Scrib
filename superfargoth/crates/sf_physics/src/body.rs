@@ -175,7 +175,8 @@ pub struct PhysicsParams {
     /// Layers that report [`PhysicsEvent::ContactForce`], and the threshold in newtons.
     pub contact_force_layers: Layer,
     pub contact_force_threshold: f32,
-    /// Layers that report [`PhysicsEvent::Hit`] (first contact with a dynamic body).
+    /// Layers that report [`PhysicsEvent::Hit`] (first contact with a dynamic
+    /// body): character capsules and body proxies.
     pub hit_layers: Layer,
     /// Awake dynamic bodies on these layers report [`PhysicsEvent::Contact`]
     /// when the normal velocity change or the slide speed (m/s) reaches
@@ -207,7 +208,7 @@ impl Default for PhysicsParams {
             thin_skin: 0.004,
             contact_force_layers: Layer::DEBRIS | Layer::PROP | Layer::RAGDOLL | Layer::CHARACTER | Layer::PROJECTILE,
             contact_force_threshold: 200.0,
-            hit_layers: Layer::CHARACTER,
+            hit_layers: Layer::CHARACTER.union(Layer::BODY_PROXY),
             contact_report_layers: Layer::MOVING,
             contact_report_speed: 0.3,
             kill_height: None,

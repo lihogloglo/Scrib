@@ -1,6 +1,6 @@
 # Character shapes: one per-bone shape set per rig (hurt volumes, physics proxies, held and dead bodies)
 
-Status (2026-11-05): design, nothing built. Owner asked for it after PH-15 ("balls go straight through them" while a
+Status (2026-11-05): S3 built (held proxies, "As built"); the rest is design. Owner asked for it after PH-15 ("balls go straight through them" while a
 Delirium hit plays) and combat C4 (per-bone hurt capsules). Game side: `../../../bevyrrowind/docs/specs/combat-adapter.md`
 "Character shapes (Morrowind)". Builds on [physics.md](physics.md) ("Controller", "Ragdolls and the animation blend",
 `sf_ragdoll`), [combat.md](combat.md) ("Hit and hurt volumes", "Reactions, ragdoll and Delirium"), [net.md](net.md)
@@ -254,3 +254,34 @@ S3 first: it fixes the owner's PH-15 complaint and proves the bridge; S0 lands w
    not simulated).
 3. Player (recommendation, owner to confirm): hurt volumes when NPCs fight (C6); physics proxies and Delirium on the player stay a later call.
 4. Radius and caps: set from S0's measurements.
+
+## As built
+
+**S3 held proxies (2026-11-05, PH-15).** Framework: `Layer::BODY_PROXY` (`collides_with` = `MOVING`; sensors don't see
+it; on `hit_layers` by default). `sf_ragdoll::ShapeSet` / `BoneShape` as in "Data model" (no `JointShapes` yet) with
+`ShapeSet::new` computing the rest-pose bound. `sf_physics_bevy::proxies` (feature `controller`): `BodyProxies { set,
+poses, velocities, at, holder }` on the root (`at`: the virtual time the poses are at, added to the spec's fields so the
+sync extrapolates from the right clock); `ShapeSystems::Activate` (`Update`: proxy hits → `ImpactOnCharacter`, then
+batched inserts/removals) and `ShapeSystems::Sync` (`FixedUpdate` before the step: `set_kinematic_target` = pose +
+velocity × lead, lead clamped to `MAX_LEAD` 0.1 s); after each step the strongest hit per (ball, character) of that
+step. `ImpactOnCharacter.shape: Option<u16>`; walkers' `PhysicsTakeover.joint` (from `BodyProxies::joint`), and a held
+body's impacts are no longer deduplicated per frame. Game: `mw_delirium::proxies` makes a per-takeover set from
+Delirium's 21 parts (capsules as is; boxes as the capsule along their longest side, as the click pick) with `local` =
+the part frame in its bone's frame (so S2's posing of the drawn skeleton gives the same shapes); `mw_delirium_bevy`
+writes `BodyProxies` (`ProxyHolder::Layer`) in `read_back` from the interpolated parts (the copy-back's source), removes
+them at the hand-back and when a corpse freezes (corpses: S6). Hits on a held body travel as `DeliriumPush` messages
+(`request`, so two in a frame both push) and pick the part on the struck joint (`DeliriumHit.joint`).
+
+Stubs and how they go: the set is Delirium's parts, per takeover (S1's cooked per-rig set from `RagdollDef` with skin fit
+and regions replaces it; region is 0); poses are the parts themselves, not `pose_shapes` (S2; equal while Delirium
+holds the body, 0.7 cm worst measured); no tiers, caps, capsule mute or every-4th-tick sync (S4); during the blend-out
+the proxies stay on the parts while the shown pose blends to the graph (a hit there brings the physics back anyway).
+
+Tests: `sf_physics_bevy` `proxies_tests` (balls → one impact per contact start with its shape, the strongest per step;
+proxies follow written poses within 3 cm; no contact with floor, capsule or each other, invisible to the ground cast;
+gone with the component); `sf_ragdoll` `shape_set_bound_covers_the_rest_pose`; walkers
+`proxy_hits_on_a_held_body_each_reach_the_hook_with_their_joint`; `mw_delirium_bevy` `held_hits_are_pushes_that_add_up`;
+`mw_delirium/tests/proxies_real_install.rs` (real skeleton: a ball at the held body hits the chest proxy, 36 N·s; one
+ball +0.36 m, two balls +0.78 m along the throw at 1.6 s; proxies vs the drawn skeleton 0.7 cm). Measurement
+(`proxy_sync_cost`, optimized dev profile): sync 1.8 µs/tick for 1 set of 21, 4.9 µs for 4, 14.5 µs for 16 (0.04-0.09
+µs per proxy); the step 7 µs with 1 set, 21 µs with 16 (no pairs). S0's bench scene is still to come.

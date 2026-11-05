@@ -80,7 +80,7 @@ fn hit(hook: Option<RagdollTakeover>, skeleton: &str, impulse: f32, extra: impl 
     let character = CharacterBody { body, skeleton: skeleton.to_owned(), key, outfit: Arc::default(), meshes: Vec::new(), cloth_joints: Vec::new() };
     let mover = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
     let root = app.world_mut().spawn((character, mover, Transform::IDENTITY, extra)).id();
-    app.world_mut().write_message(ImpactOnCharacter { entity: root, impulse, point: WorldPos::ORIGIN.offset(Vec3::Y), direction: Vec3::X });
+    app.world_mut().write_message(ImpactOnCharacter { entity: root, impulse, point: WorldPos::ORIGIN.offset(Vec3::Y), direction: Vec3::X, shape: None });
     app.update();
     (app, root, body)
 }
@@ -135,6 +135,39 @@ fn a_held_body_takes_further_hits_through_the_hook() {
     assert!(app.world().get::<Ragdoll>(body).is_none(), "no second ragdoll");
     let (app, root, body) = hit(None, HUMAN, KNOCKDOWN_IMPULSE + 5.0, Held);
     assert!(app.world().get::<Ragdoll>(body).is_none() && app.world().get::<KnockedDown>(root).is_none(), "held: nothing else reacts");
+}
+
+/// PH-15 (character-shapes.md S3): impacts on a held body's proxies each reach the hook, several in one frame
+/// included (no per-frame dedup for held bodies), with the struck proxy's joint; a capsule impact has none.
+#[test]
+fn proxy_hits_on_a_held_body_each_reach_the_hook_with_their_joint() {
+    use sf_physics_bevy::{BodyProxies, ProxyHolder};
+    use sf_ragdoll::{BoneShape, Capsule, ShapeSet};
+
+    #[derive(Resource, Default)]
+    struct Got(Vec<(Option<u16>, f32)>);
+    let mut app = App::new();
+    app.add_message::<ImpactOnCharacter>().insert_resource(RagdollSource(Arc::new(|_| None))).init_resource::<Got>().add_systems(Update, knockdown);
+    app.insert_resource(RagdollTakeover(Arc::new(|t: &PhysicsTakeover, commands: &mut Commands| {
+        let (joint, n) = (t.joint, t.impulse.length());
+        commands.queue(move |w: &mut World| w.resource_mut::<Got>().0.push((joint, n)));
+        true
+    })));
+    let body = app.world_mut().spawn((Transform::IDENTITY, GlobalTransform::IDENTITY, Animator::new(asset()))).id();
+    let key = OutfitCacheKey { skeleton: HUMAN.to_owned(), outfit: OutfitKey(0), lod: 0, shape: 0, bodies: SmoothBodies::default() };
+    let character = CharacterBody { body, skeleton: HUMAN.to_owned(), key, outfit: Arc::default(), meshes: Vec::new(), cloth_joints: Vec::new() };
+    let mover = Mover::new(WorldPos::ORIGIN, 0.0, MoverParams::default(), WorldPos::ORIGIN);
+    let shape = |joint| BoneShape { joint, capsule: Capsule { radius: 0.1, half: 0.2 }, local: (Vec3::ZERO, bevy_math::Quat::IDENTITY), region: 0, hurt_scale: 1.0 };
+    let set = Arc::new(ShapeSet { skeleton: sf_anim::SkeletonId(0), shapes: vec![shape(3), shape(17)], bound: (0.5, 0.5) });
+    let poses = vec![sf_coords::WorldTransform::from_pos(WorldPos::ORIGIN); 2];
+    let proxies = BodyProxies { set, poses, velocities: vec![Vec3::ZERO; 2], at: 0.0, holder: ProxyHolder::Layer };
+    let root = app.world_mut().spawn((character, mover, Transform::IDENTITY, Held, proxies)).id();
+    let point = WorldPos::ORIGIN.offset(Vec3::Y);
+    for (impulse, shape) in [(30.0, Some(1)), (20.0, Some(0)), (15.0, None)] {
+        app.world_mut().write_message(ImpactOnCharacter { entity: root, impulse, point, direction: Vec3::X, shape });
+    }
+    app.update();
+    assert_eq!(app.world().resource::<Got>().0, vec![(Some(17), 30.0), (Some(3), 20.0), (None, 15.0)]);
 }
 
 /// Kills every living character (the console's `kill` without the camera pick).

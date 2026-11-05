@@ -1579,3 +1579,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-05 (owner, character shapes): a body whose nervous system doesn't respond (dead, unconscious, paralysed) is a
   classic Rapier ragdoll (`sf_ragdoll`/`sf_physics_bevy`), and so is a dragged body; Delirium is for every responsive
   body. Corpses go Delirium dying window → Rapier ragdoll. Activation radius/caps settled after S0 measures them.
+- 2026-11-05 (owner, surface weather): build, don't adopt (no Bevy crate exists); port Clockwork's GPL surface code with
+  citation. Recommendations accepted: snow/ash saved on a 32 m grid, wetness per region; sky/probe puddle reflections
+  first, SSR later; trails for nearby actors; ash like snow (up-facing + shelter).
+- 2026-11-05 (character-shapes S3): held bodies get kinematic body proxies on a new `Layer::BODY_PROXY` (touches only
+  `MOVING`); `ImpactOnCharacter.shape`; a held body's impacts are per contact start (no per-frame dedup). Delirium's
+  parts are the shape set until S1 cooks one from `RagdollDef`.

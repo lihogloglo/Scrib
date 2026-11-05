@@ -344,3 +344,27 @@ fn spine_segments_allow_only_a_little_bend_and_twist() {
     // Over the whole spine: well under the old 90-120 degrees.
     assert!(swing_sum <= 60f32.to_radians() && twist_sum <= 60f32.to_radians(), "{swing_sum} {twist_sum}");
 }
+
+/// Shape sets (character-shapes.md S3): the rest-pose bound covers every shape; the joint map is exact.
+#[test]
+fn shape_set_bound_covers_the_rest_pose() {
+    let (s, d) = human();
+    let shapes: Vec<_> = d
+        .bodies
+        .iter()
+        .map(|b| crate::BoneShape { joint: b.joint, capsule: b.shape, local: b.local, region: b.region, hurt_scale: 1.0 })
+        .collect();
+    let set = crate::ShapeSet::new(&s, shapes);
+    assert_eq!(set.len(), d.bodies.len());
+    assert_eq!(set.skeleton, s.id());
+    assert_eq!(set.joint(1), Some(d.bodies[1].joint));
+    assert_eq!(set.joint(u16::MAX), None);
+    let (r, half) = set.bound;
+    assert!(r.is_finite() && half.is_finite() && r > 0.05, "bound {:?}", set.bound);
+    let rest = s.rest_model();
+    for b in &d.bodies {
+        let c = rest[usize::from(b.joint)].transform_point3(b.local.0);
+        assert!(Vec3::new(c.x, 0.0, c.z).length() + b.shape.radius <= r + 1e-4, "outside the bound radius");
+        assert!(c.y <= 2.0 * (r + half) + 1e-4, "above the bound");
+    }
+}

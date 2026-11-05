@@ -21,12 +21,16 @@
 //!   stagger, falling, down, getting up, dead) with strength and
 //!   physics-weight timelines from a RON [`ReactionSet`].
 //!
+//! - [`ShapeSet`] (character-shapes.md): per-bone capsules for hurt volumes and
+//!   kinematic body proxies (S3: the type and its bound; S1 cooks it).
+//!
 //! Frames: the skeleton's model space (Y up, +Z forward, +X left).
 
 mod cook;
 mod instance;
 mod powered;
 mod react;
+mod shapes;
 #[cfg(feature = "bake")]
 pub mod steps;
 
@@ -37,6 +41,7 @@ use sf_anim::{LimbKind, RigProfile, SkeletonId};
 
 pub use cook::{BodyOverride, CORE_REGION, CookParams, JointRanges, RagdollError, RagdollPolicy, Swing, cook};
 pub use instance::{RagdollInstance, RagdollSettings, SpawnPose};
+pub use shapes::{BoneShape, ShapeSet};
 pub use react::{Curve, DEFAULT_RON as DEFAULT_REACTIONS_RON, ReactionClass, ReactionController, ReactionEvent, ReactionOutput, ReactionRequest, ReactionSet, ReactionState, Region, RegionCurves, Sensed, Timeline};
 pub use powered::{Balance, Dip, Drive, DriveParams, DriveTarget, HitImpulse, StrengthProfile, balance, get_up_root, region_gain, yaw_of};
 
