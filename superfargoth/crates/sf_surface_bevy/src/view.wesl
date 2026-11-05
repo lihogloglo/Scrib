@@ -33,13 +33,14 @@ fn apply_surface_weather(pbr: ptr<function, PbrInput>, s: SurfaceInput) {
 
 /// A layer input for `pbr` of class `surface_class`: porosity from the material (Lagarde's
 /// heuristic until a material carries its own, open question 3), height from the albedo (dark
-/// grout fills first), no basin (terrain only), no footprint (no rain rings; callers that know
-/// their screen derivatives set it).
+/// grout fills first), no basin (terrain only), the level gate on the shading normal and no
+/// footprint (no rain rings; callers that know their screen derivatives set both).
 fn surface_input_of(pbr: PbrInput, surface_class: u32) -> SurfaceInput {
     var s: SurfaceInput;
     s.world_pos = pbr.world_position.xyz;
     s.height = surface_height_of(pbr.material.base_color.rgb);
     s.basin = 0.0;
+    s.level_up = pbr.world_normal.y;
     s.porosity = surface_porosity(pbr.material.metallic, pbr.material.perceptual_roughness);
     s.surface_class = surface_class;
     s.instance_wet = 0.0;
@@ -50,10 +51,12 @@ fn surface_input_of(pbr: PbrInput, surface_class: u32) -> SurfaceInput {
 /// StandardMaterial (bevy_pbr `render/pbr.wesl`, patch "SW"): statics, held items and fades as
 /// STATIC, skinned meshes as DYNAMIC (dry until W8 feeds `instance_wet`). Unlit and
 /// alpha-blended materials (glass, fog translucents) are left alone. Called in the fragment's
-/// uniform control flow: the footprint's derivatives come first, before any branch.
+/// uniform control flow: the derivatives come first, before any branch.
 fn apply_surface_weather_standard(pbr: ptr<function, PbrInput>) {
     let p = (*pbr).world_position.xyz;
-    let footprint = max(length(dpdx(p)), length(dpdy(p)));
+    let dx = dpdx(p);
+    let dy = dpdy(p);
+    let footprint = max(length(dx), length(dy));
     let flags = (*pbr).material.flags;
     if (flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) != 0u {
         return;
@@ -69,10 +72,25 @@ fn apply_surface_weather_standard(pbr: ptr<function, PbrInput>) {
     surface_class = CLASS_DYNAMIC;
     var s = surface_input_of(*pbr, surface_class);
     s.footprint = footprint;
+    s.level_up = surface_face_up(dx, dy, (*pbr).world_normal);
     apply_surface_weather(pbr, s);
 }
 
 /// Whether puddles are on in the cell window (terrain computes its basin only then).
 fn surface_puddles_on() -> bool {
     return (surface_uniform.misc.x & FLAG_PUDDLE) != 0u;
+}
+
+/// The puddle gate's up (`SurfaceInput.level_up`) of a mesh: Y of the triangle's face normal from
+/// the world position's screen derivatives `dx`/`dy` (exact per triangle: helper lanes extrapolate
+/// the same plane), turned to the side of the shading normal `n`. Smoothed vertex normals read a
+/// ramp or the edge of a step as level; the face does not. Degenerate derivatives (sub-pixel
+/// triangles seen edge-on) keep `n`.
+fn surface_face_up(dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>) -> f32 {
+    let f = cross(dy, dx);
+    let len = length(f);
+    if len <= 1e-12 {
+        return n.y;
+    }
+    return select(-f.y, f.y, dot(f, n) >= 0.0) / len;
 }

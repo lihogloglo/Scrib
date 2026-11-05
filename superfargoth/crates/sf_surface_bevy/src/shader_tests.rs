@@ -170,11 +170,13 @@ fn shaders_compile_per_preset_with_and_without_surface_weather() {
                     Ok(wgsl) if wgsl.contains("apply_surface_layer") != sw => {
                         failures.push(format!("[{preset}] {module} {d:?}: layer linked = {}", !sw));
                     }
-                    // Puddles and rings (W4) come with the layer; the terrain feeds its basin.
+                    // Puddles and rings (W4) come with the layer; their level gate is the true
+                    // surface: the terrain's height field, a mesh's face normal.
                     Ok(wgsl)
                         if sw
                             && (!wgsl.contains("surface_ripples")
-                                || (module.contains("terrain") && !wgsl.contains("terrain_basin"))) =>
+                                || (module.contains("terrain") && !wgsl.contains("terrain_ground"))
+                                || (module.contains("pbr") && !wgsl.contains("surface_face_up"))) =>
                     {
                         failures.push(format!("[{preset}] {module} {d:?}: puddles not linked"));
                     }

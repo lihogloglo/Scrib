@@ -10,8 +10,9 @@
 // the normal-map detail toward the geometric normal in Mikkelsen's surface-gradient framework,
 // and world-plane wall streaks.
 // Puddles (W4): Lagarde's accumulated water (a level against the height map, soft shoreline,
-// a flat water surface with F0 0.02 and mirror gloss) with procedural rain rings; their gradient
-// joins the same sum. Cover (W5) adds to it too, before the one resolve.
+// a flat water surface with F0 0.02 and mirror gloss) on level faces only (`level_up`: the true
+// surface, not a smoothed vertex normal) with procedural rain rings; their gradient joins the
+// same sum. Cover (W5) adds to it too, before the one resolve.
 //
 // Ported shapes (constants re-calibrated in meters): `surfaceExposure` (tent weights, cover
 // ramp ROOF_NEAR/ROOF_FULL, slope rise) and `surfaceWater` (wall streaks, WALL_WET, faces turned
@@ -95,13 +96,13 @@ const STREAK_TILE_U_M: f32 = 22.0;
 const STREAK_TILE_V_M: f32 = 18.0;
 
 /// Puddles (W4; `sf_surface::layer` documents each): water level reach, pool span of the
-/// height map, shoreline, level-face ramp, terrain concavity, water roughness, pool noise tile,
-/// object height from albedo.
+/// height map, shoreline, level-face ramp (none from cos 4 deg, full from cos 2 deg), terrain
+/// concavity, water roughness, pool noise tile, object height from albedo.
 const PUDDLE_REACH: f32 = 0.3;
 const PUDDLE_DEPTH: f32 = 0.1;
 const PUDDLE_EDGE: f32 = 0.1;
-const PUDDLE_FLAT_LOW: f32 = 0.94;
-const PUDDLE_FLAT_HIGH: f32 = 0.99;
+const PUDDLE_FLAT_LOW: f32 = 0.997564;
+const PUDDLE_FLAT_HIGH: f32 = 0.999391;
 const BASIN_FULL_M: f32 = 0.1;
 const BASIN_POOL: f32 = 0.35;
 const PUDDLE_ROUGHNESS: f32 = 0.06;
@@ -133,6 +134,10 @@ struct SurfaceInput {
     /// Terrain only: concavity from the height clipmap in meters (`h_avg(±2 m) - h`, >= 0;
     /// puddle sites, W4), else 0.
     basin: f32,
+    /// Y of the true surface normal for the puddle gate (level faces only, W4): a mesh's
+    /// triangle face normal (position derivatives), the terrain's height field; never a
+    /// smoothed vertex normal, which reads a ramp as level.
+    level_up: f32,
     porosity: f32,
     surface_class: u32,
     /// DYNAMIC: per-character wetness (W8), else 0.
@@ -285,9 +290,14 @@ fn surface_wet_material(pbr: ptr<function, PbrInput>, wet: f32, porosity: f32) -
     return film;
 }
 
-/// How level a face is for standing water (by the geometric normal's Y).
+/// How level a face is for standing water, `up` the true surface normal's Y (`level_up`).
 fn surface_puddle_flat(up: f32) -> f32 {
     return smoothstep(PUDDLE_FLAT_LOW, PUDDLE_FLAT_HIGH, up);
+}
+
+/// The normal's Y of a height field with gradient `g` (rise per meter along X and Z).
+fn surface_up_of_gradient(g: vec2<f32>) -> f32 {
+    return inverseSqrt(1.0 + dot(g, g));
 }
 
 /// The pool site score: pool noise, raised by terrain concavity (`basin` meters).
@@ -455,8 +465,8 @@ fn apply_surface_layer(
             let n = textureSampleLevel(noise, samp, s.world_pos.xz / PATCH_TILE_M, 0.0).r;
             wet = smoothstep(n * 0.6, n * 0.6 + 0.4, wet);
         }
-        // Puddle state where the face is level (the geometric normal: water lies on the land).
-        let flat = surface_puddle_flat(n_geo.y);
+        // Puddle state where the surface is level (its true normal: water runs off a slope).
+        let flat = surface_puddle_flat(s.level_up);
         var p = 0.0;
         if want_puddle && flat > 0.0 {
             p = cell.g;

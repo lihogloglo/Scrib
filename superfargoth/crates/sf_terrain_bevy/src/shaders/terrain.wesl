@@ -9,7 +9,9 @@ import super::far_shadow::far_shadow_term;
 // Surface weather (surface-weather.md "Shader integration"): the shared layer on the view's
 // bindings (vendored bevy_pbr patch "SW"; the def comes with the view, main pass only).
 @if(SURFACE_WEATHER)
-import sf_surface_bevy::layer::{SurfaceInput, CLASS_TERRAIN, surface_porosity};
+import sf_surface_bevy::layer::{
+    SurfaceInput, CLASS_TERRAIN, surface_porosity, surface_puddle_flat, surface_up_of_gradient,
+};
 @if(SURFACE_WEATHER)
 import sf_surface_bevy::view::{apply_surface_weather, surface_puddles_on};
 import bevy_pbr::render::{
@@ -68,15 +70,20 @@ fn lod_color(lod: f32) -> vec3<f32> {
     return mix(palette[i], palette[i + 1], fract(lod));
 }
 
-/// Concavity of the ground at render XZ `xz` for surface weather's puddles
-/// (surface-weather.md W4): the mean height 2 m out along X and Z minus the
-/// height here, meters, >= 0 (a hollow; ridges and slopes give 0). From the
-/// height clipmap, not the detail displacement.
-fn terrain_basin(xz: vec2<f32>) -> f32 {
+/// The ground at render XZ `xz` for surface weather's puddles (surface-weather.md
+/// W4; CPU twin `sf_surface::layer::ground`), from the height clipmap (R32F, the
+/// finest resident level; not the detail displacement), heights 2 m out along
+/// ±X and ±Z: xy the slope (central differences over 4 m, rise per meter; the
+/// puddle gate), z the concavity (their mean minus the height here, meters,
+/// >= 0: a hollow; ridges and even slopes give 0).
+fn terrain_ground(xz: vec2<f32>) -> vec3<f32> {
     let r = 2.0;
-    let around = height_at(xz + vec2<f32>(r, 0.0), 0u) + height_at(xz - vec2<f32>(r, 0.0), 0u)
-        + height_at(xz + vec2<f32>(0.0, r), 0u) + height_at(xz - vec2<f32>(0.0, r), 0u);
-    return max(0.25 * around - height_at(xz, 0u), 0.0);
+    let px = height_at(xz + vec2<f32>(r, 0.0), 0u);
+    let nx = height_at(xz - vec2<f32>(r, 0.0), 0u);
+    let pz = height_at(xz + vec2<f32>(0.0, r), 0u);
+    let nz = height_at(xz - vec2<f32>(0.0, r), 0u);
+    let basin = max(0.25 * (px + nx + pz + nz) - height_at(xz, 0u), 0.0);
+    return vec3<f32>(vec2<f32>(px - nx, pz - nz) / (2.0 * r), basin);
 }
 
 /// Distance to the nearest triangle edge in pixels (quads split along the
@@ -125,10 +132,15 @@ fn fragment(in: TerrainVertexOutput) -> @location(0) vec4<f32> {
     var si: SurfaceInput;
     si.world_pos = in.world_position.xyz;
     si.height = s.height;
-    // Puddle sites: the ground's concavity (W4), only while puddles are on, on level ground.
+    // Puddles (W4) only on level ground: the steeper of the clipmap normal here and the
+    // height field over 4 m (the filtered 8-bit normal of a coarse LOD reads gentle slopes as
+    // level). The concavity raises the pool score in hollows. Only while puddles are on.
+    si.level_up = n_geo.y;
     si.basin = 0.0;
-    if surface_puddles_on() && n_geo.y > 0.9 {
-        si.basin = terrain_basin(xz);
+    if surface_puddles_on() && surface_puddle_flat(n_geo.y) > 0.0 {
+        let ground = terrain_ground(xz);
+        si.level_up = min(n_geo.y, surface_up_of_gradient(ground.xy));
+        si.basin = ground.z;
     }
     si.porosity = surface_porosity(0.0, pbr.material.perceptual_roughness);
     si.surface_class = CLASS_TERRAIN;

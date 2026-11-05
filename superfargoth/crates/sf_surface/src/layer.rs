@@ -18,7 +18,8 @@
 //!   turns to water (mirror gloss, F0 0.02, flat normal). The level comes from the puddle state
 //!   and a pool site score (noise, plus terrain concavity), in the form of Clockwork's
 //!   `surfaceWater` height branch (`1 + (pool - 1 + reach) / PUDDLE_DEPTH` against the height);
-//!   only level faces hold water.
+//!   only level faces hold water (≤ 2° full, none from 4°, on the true surface: a mesh's face
+//!   normal, the terrain's height field; Clockwork's 0.94..0.99 ramp let ~15° slopes flood).
 //! - Rain rings (W4): the ring profile of `files/shaders/lib/water/rain_ripples.glsl` (`blip`,
 //!   `blipDerivative`, `circle`: a ring running out from a drop, trailing rings, energy fading
 //!   over the cycle) as Clockwork uses it on puddles (same commit), on drop grids that turn on
@@ -36,14 +37,15 @@ pub const FILM_ROUGHNESS: f32 = 0.25;
 pub const WATER_REFLECTANCE: f32 = 0.354;
 
 /// Puddles: the puddle state's reach into the pool score at 1, the pool span the height map
-/// covers, the shoreline (height units), the level-face ramp (`N.y`), terrain concavity at full
+/// covers, the shoreline (height units), the level-face ramp (`N.y` of the true surface: none
+/// from cos 4°, full from cos 2°; water runs off anything steeper), terrain concavity at full
 /// (m) and its weight in the pool score, the water's perceptual roughness (Bevy clamps it to
 /// 0.089), the pool noise tile (m; divides the 256 m origin grid).
 pub const PUDDLE_REACH: f32 = 0.3;
 pub const PUDDLE_DEPTH: f32 = 0.1;
 pub const PUDDLE_EDGE: f32 = 0.1;
-pub const PUDDLE_FLAT_LOW: f32 = 0.94;
-pub const PUDDLE_FLAT_HIGH: f32 = 0.99;
+pub const PUDDLE_FLAT_LOW: f32 = 0.997_564;
+pub const PUDDLE_FLAT_HIGH: f32 = 0.999_391;
 pub const BASIN_FULL_M: f32 = 0.1;
 pub const BASIN_POOL: f32 = 0.35;
 pub const PUDDLE_ROUGHNESS: f32 = 0.06;
@@ -169,9 +171,26 @@ pub fn wet_material(
     }
 }
 
-/// How level a face is for standing water (`surface_puddle_flat`), `up` the geometric normal's Y.
+/// How level a face is for standing water (`surface_puddle_flat`), `up` the true surface
+/// normal's Y (`SurfaceInput.level_up`: a mesh's triangle face normal, the terrain's height
+/// field), never a smoothed vertex normal.
 pub fn puddle_flat(up: f32) -> f32 {
     smoothstep(PUDDLE_FLAT_LOW, PUDDLE_FLAT_HIGH, up)
+}
+
+/// The normal's Y of a height field with gradient `g` (rise per meter along X and Z;
+/// `surface_up_of_gradient`): `1 / sqrt(1 + |g|²)`.
+pub fn up_of_gradient(g: [f32; 2]) -> f32 {
+    1.0 / (1.0 + g[0] * g[0] + g[1] * g[1]).sqrt()
+}
+
+/// Puddle inputs of a height field from heights `r` meters out along +X, −X, +Z, −Z and at the
+/// centre (`terrain_ground` in `sf_terrain_bevy`): the central-difference gradient over `2r`
+/// and the concavity (mean around minus centre, ≥ 0, meters). Returns (gradient, basin).
+pub fn ground(around: [f32; 4], centre: f32, r: f32) -> ([f32; 2], f32) {
+    let [px, nx, pz, nz] = around;
+    let g = [(px - nx) / (2.0 * r), (pz - nz) / (2.0 * r)];
+    (g, (0.25 * (px + nx + pz + nz) - centre).max(0.0))
 }
 
 /// The pool site score (`surface_pool_of`): `noise` the pool noise (0..1), `basin` the terrain's
@@ -331,7 +350,7 @@ mod tests {
         // Lows (cracks, dark grout) fill first; a smaller state reaches fewer sites.
         assert!(puddle(1.0, line + 0.04, 0.2, 1.0) > puddle(1.0, line + 0.04, 0.6, 1.0));
         assert!(puddle(0.5, line + 0.07, 0.5, 1.0) < puddle(1.0, line + 0.07, 0.5, 1.0));
-        // Only level faces: none on a 30 degree slope or a wall.
+        // Only level faces: none on a 30 degree slope or a wall (more in `no_puddles_on_slopes`).
         assert_eq!(puddle(1.0, 1.0, 0.0, 0.85), 0.0);
         assert_eq!(puddle(1.0, 1.0, 0.0, 0.0), 0.0);
         assert_eq!(puddle_flat(PUDDLE_FLAT_HIGH), 1.0);
@@ -343,6 +362,41 @@ mod tests {
         assert_eq!(pool(0.9, 1.0), 1.0);
         assert_eq!(height_of(0.25), 0.5);
         assert_eq!(height_of(0.9), 1.0);
+    }
+
+    #[test]
+    fn no_puddles_on_slopes() {
+        // Owner SW-4 (2026-11-05): water lies on level ground only. A full puddle state, the
+        // highest pool score and the lowest height: everything but the slope says "water".
+        let r = 2.0_f32;
+        for deg in [5.0_f32, 10.0, 20.0] {
+            let rise = deg.to_radians().tan();
+            // Terrain: a plane rising along X, Z and the diagonal, sampled 2 m out as the shader
+            // does; a hollow (+0.1 m all round) on the slope is still a slope.
+            for dir in [[1.0_f32, 0.0], [0.0, 1.0], [std::f32::consts::FRAC_1_SQRT_2; 2]] {
+                for hollow in [0.0, 0.1] {
+                    let h = |x: f32, z: f32| rise * (dir[0] * x + dir[1] * z) + hollow;
+                    let (g, basin) = ground([h(r, 0.0), h(-r, 0.0), h(0.0, r), h(0.0, -r)], 0.0, r);
+                    let up = up_of_gradient(g);
+                    assert!((up - deg.to_radians().cos()).abs() < 1e-5, "{deg}: up {up}");
+                    assert_eq!(puddle(1.0, pool(1.0, basin), 0.0, up), 0.0, "terrain at {deg} degrees");
+                }
+            }
+            // Objects: the triangle's face normal.
+            assert_eq!(puddle(1.0, 1.0, 0.0, deg.to_radians().cos()), 0.0, "face at {deg} degrees");
+        }
+        // Level ground with a hollow: the basin lifts the pool score into a full puddle where
+        // the same ground without one stays dry.
+        let (g, basin) = ground([0.1; 4], 0.0, r);
+        assert!(g == [0.0, 0.0] && (basin - 0.1).abs() < 1e-6);
+        assert_eq!(up_of_gradient(g), 1.0);
+        assert_eq!(puddle(1.0, pool(0.5, basin), 0.2, up_of_gradient(g)), 1.0);
+        assert_eq!(puddle(1.0, pool(0.5, 0.0), 0.2, 1.0), 0.0);
+        // A bump is no basin.
+        assert_eq!(ground([-0.1; 4], 0.0, r).1, 0.0);
+        // Up to 1.5 degrees counts as level; the ramp ends at 4 (cos 4°, rounded).
+        assert_eq!(puddle_flat(up_of_gradient([1.5_f32.to_radians().tan(), 0.0])), 1.0);
+        assert_eq!(puddle_flat(4.1_f32.to_radians().cos()), 0.0);
     }
 
     #[test]
