@@ -1,6 +1,6 @@
 # Character shapes: one per-bone shape set per rig (hurt volumes, physics proxies, held and dead bodies)
 
-Status (2026-11-05): S3 built (held proxies, "As built"); the rest is design. Owner asked for it after PH-15 ("balls go straight through them" while a
+Status (2026-11-05): S3 built (held proxies) and S0 (bench scene, counters; "As built"); the rest is design. Owner asked for it after PH-15 ("balls go straight through them" while a
 Delirium hit plays) and combat C4 (per-bone hurt capsules). Game side: `../../../bevyrrowind/docs/specs/combat-adapter.md`
 "Character shapes (Morrowind)". Builds on [physics.md](physics.md) ("Controller", "Ragdolls and the animation blend",
 `sf_ragdoll`), [combat.md](combat.md) ("Hit and hurt volumes", "Reactions, ragdoll and Delirium"), [net.md](net.md)
@@ -207,7 +207,8 @@ enters). Hurt narrowphase: ~15 segment-capsule tests per broad hit, negligible (
 - **Bench scene** `level-shapes-bench` (synthetic, `levels/shapes-bench.ron`): 20 walkers in combat range of the player
   (fighting or idling), 150 walkers in a crowd beyond 30 m, a ball launcher throwing a 3 kg ball every 0.25 s at the
   near group, 4 bodies held (Delirium on the game side), 8 corpses. Runs with `--bench` (perf.md "Suite runner"), one
-  row per preset.
+  row per preset. S0 built its held part (scene `level-shapes-bench`, "As built"); walkers, crowd, launcher, corpses
+  and the `--bench` JSON file come with S4/S6.
 - **Log-line counters** (once per second, `shapes:` prefix, and in the bench JSON): `sets` by tier (0/1/2/2h/3), `proxies`
   (bodies in the solver), `pairs` (proxy contact pairs this step), `impacts`, `sync_us`, `activate_us`, `hurt_tests`,
   `evicted`. No-picture checks only (CONTRIBUTING "Tests and visual checks").
@@ -222,7 +223,7 @@ through the floor, comes to rest), tuned numbers as `#[ignore = "measurement: ..
 
 | Slice | Deliverable | Test |
 |---|---|---|
-| **S0** measurement | bench scene `shapes-bench`, `shapes:` counters, headless proxy bench | bench runs headless, counters finite; measurement prints µs/proxy |
+| **S0** measurement (built) | bench scene `level-shapes-bench`, `shapes:` counters, headless proxy bench | bench runs headless, counters finite; measurement prints µs/proxy |
 | **S1** shape set | `ShapeSet` from `RagdollDef` + skin fit in `ragdoll.cook`, `JointShapes`, overrides | humanoid ~15 shapes, guar set, all finite; exact joint→shape map; measurement: skin coverage % |
 | **S2** posing | `pose_shapes` (model pose and baked tracks) | exact transforms vs hand-computed bones |
 | **S3** held proxies (PH-15) | `Layer::BODY_PROXY`, `BodyProxies` sync, `ImpactOnCharacter.shape`, holder routing; Delirium registers as holder (game side) | ball at a held body → impact → second push (pelvis moves further along the second hit); proxies within a few cm of the shown pose; gone after hand-back |
@@ -282,6 +283,16 @@ proxies follow written poses within 3 cm; no contact with floor, capsule or each
 gone with the component); `sf_ragdoll` `shape_set_bound_covers_the_rest_pose`; walkers
 `proxy_hits_on_a_held_body_each_reach_the_hook_with_their_joint`; `mw_delirium_bevy` `held_hits_are_pushes_that_add_up`;
 `mw_delirium/tests/proxies_real_install.rs` (real skeleton: a ball at the held body hits the chest proxy, 36 N·s; one
-ball +0.36 m, two balls +0.78 m along the throw at 1.6 s; proxies vs the drawn skeleton 0.7 cm). Measurement
-(`proxy_sync_cost`, optimized dev profile): sync 1.8 µs/tick for 1 set of 21, 4.9 µs for 4, 14.5 µs for 16 (0.04-0.09
-µs per proxy); the step 7 µs with 1 set, 21 µs with 16 (no pairs). S0's bench scene is still to come.
+ball +0.36 m, two balls +0.78 m along the throw at 1.6 s; proxies vs the drawn skeleton 0.7 cm). Measured in S0 below.
+
+**S0 measurement (2026-11-05).** `ProxyStats` gains `activations` / `removals` (sets in / out this frame; `sync_us` 0
+with no sets); `ShapeWindow` sums them per second into `ShapeCounters` (peak sets and proxies, mean / worst sync per
+tick and per proxy, worst activation, impacts), `shapes/...` diag counters (bench JSON); the game logs the `shapes:`
+line (`mw_walkers_bevy` physics) each second a set is live. Scene `level-shapes-bench` (`levels/shapes-bench.ron`):
+16 human NPCs, 4 x 4 at 3.5 m, `@impact` 1 s after each stands again (45 N·s staggers, 120 N·s knockdowns), so
+Delirium holds most of them; owner run `powershell -File bevyrrowind/tools/run_dev.ps1 scene level-shapes-bench`.
+Headless `proxy_bench` (21-proxy sets swaying 10 cm at 1 Hz, optionally a 3 kg ball per set every 0.5 s; dev profile,
+2 runs): sync 0.045-0.10 µs/proxy (1.8-2.2 µs/tick for 1 set, 16 for 16, 61-69 for 64); the whole step 14-17 µs
+with 1 set, 105-108 with 16 (183-191 with balls), 404-422 with 64 (742-948 with balls); activation 0.8-2.4 µs per
+proxy (16 sets at once 0.39-0.48 ms in one frame). So the step, not the sync, is the cost (~0.3 µs per moving proxy,
+~0.5 with contacts); 16 held sets fit High's 0.3 ms, 64 do not.

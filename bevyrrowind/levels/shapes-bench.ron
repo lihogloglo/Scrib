@@ -1,0 +1,48 @@
+// Synthetic bench level (docs/specs/test-levels.md; character-shapes.md S0 "Budget and measurement"): 16 human NPCs
+// on a 4 x 4 grid 3.5 m apart, each hit by an `@impact` (level/actors.rs) 1 s after it last stood, so Delirium holds
+// most of them most of the time and each held body carries its 21 body proxies. Columns 1 and 3 stagger (45 N·s: a push,
+// catch steps, the hand-back), columns 2 and 4 go down (120 N·s, past `HitRules::certain_fall`: the fall, the lie, the
+// get-up). Hit directions turn by row. Watch the `shapes:` log line (once a second) and `delirium:` lines.
+// Meters, y up, x east, z south; yaw 0 faces -z. Open with `bevyrrowind scene level-shapes-bench`.
+(
+    name: "shapes-bench",
+    description: "16 human NPCs on a 4 x 4 grid, knocked about by periodic impacts so Delirium holds them (body proxies bench)",
+    hour: Some(12.0),
+    weather: Some("clear"),
+    cameras: [
+        (name: "overview", eye: (0.0, 9.0, 16.0), target: (0.0, 0.8, 0.0)),
+        (name: "close", eye: (-4.0, 2.2, 8.0), target: (-3.5, 1.0, 1.75)),
+    ],
+    spawns: [
+        (name: "start", at: (0.0, 0.0, 12.0)),
+        (name: "a1", at: (-5.25, 0.0, -5.25)), (name: "a2", at: (-1.75, 0.0, -5.25)), (name: "a3", at: (1.75, 0.0, -5.25)), (name: "a4", at: (5.25, 0.0, -5.25)),
+        (name: "b1", at: (-5.25, 0.0, -1.75)), (name: "b2", at: (-1.75, 0.0, -1.75)), (name: "b3", at: (1.75, 0.0, -1.75)), (name: "b4", at: (5.25, 0.0, -1.75)),
+        (name: "c1", at: (-5.25, 0.0, 1.75)), (name: "c2", at: (-1.75, 0.0, 1.75)), (name: "c3", at: (1.75, 0.0, 1.75)), (name: "c4", at: (5.25, 0.0, 1.75)),
+        (name: "d1", at: (-5.25, 0.0, 5.25)), (name: "d2", at: (-1.75, 0.0, 5.25)), (name: "d3", at: (1.75, 0.0, 5.25)), (name: "d4", at: (5.25, 0.0, 5.25)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (60.0, 60.0))),
+    ],
+    actors: [
+        // row a: hits from the south (dir 0)
+        (id: "fargoth", spawn: "a1", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 0.0)]))),
+        (id: "elone", spawn: "a2", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 0.0)]))),
+        (id: "llathyno hlaalu", spawn: "a3", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 0.0)]))),
+        (id: "fargoth", spawn: "a4", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 0.0)]))),
+        // row b: from the east (dir 90)
+        (id: "elone", spawn: "b1", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 90.0)]))),
+        (id: "llathyno hlaalu", spawn: "b2", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 90.0)]))),
+        (id: "fargoth", spawn: "b3", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 90.0)]))),
+        (id: "elone", spawn: "b4", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 90.0)]))),
+        // row c: from the north (dir 180)
+        (id: "llathyno hlaalu", spawn: "c1", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 180.0)]))),
+        (id: "fargoth", spawn: "c2", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 180.0)]))),
+        (id: "elone", spawn: "c3", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 180.0)]))),
+        (id: "llathyno hlaalu", spawn: "c4", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 180.0)]))),
+        // row d: from the west (dir 270)
+        (id: "fargoth", spawn: "d1", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 270.0)]))),
+        (id: "elone", spawn: "d2", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 270.0)]))),
+        (id: "llathyno hlaalu", spawn: "d3", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 45.0), ("dir", 270.0)]))),
+        (id: "fargoth", spawn: "d4", action: Some((trigger: "@impact", every: 1.0, params: [("impulse", 120.0), ("dir", 270.0)]))),
+    ],
+)

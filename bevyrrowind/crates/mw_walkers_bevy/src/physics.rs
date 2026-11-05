@@ -22,7 +22,8 @@
 //!   characters push debris and props with capped impulses.
 //! - `--off physics` leaves physics out; the walkers then probe their own
 //!   `StaticWorld` (walkers.rs).
-//! - Every 10 s the log gets the peaks: step and insert time per frame.
+//! - Every 10 s the log gets the peaks: step and insert time per frame. Every second with body proxies
+//!   live, the `shapes:` line (character-shapes S0).
 //! - Deaths ([`kill`]; the console's `kill` on the character in view,
 //!   [`kill_in_view`], PH-2/PH-16): the host's [`RagdollTakeover`] hook first
 //!   (Delirium for human walkers in the app: they fall and stay dead), else
@@ -124,6 +125,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
                 throw_ball,
                 (knockdown, got_up, ragdoll_log).chain(),
                 peaks.after(sf_physics_bevy::PhysicsSystems::WriteBack),
+                shapes_log.after(sf_physics_bevy::ShapeSystems::Activate),
                 (attach_holder, carry_keys).chain().before(sf_physics_bevy::PhysicsSystems::Carry),
                 carry_feedback.after(sf_physics_bevy::PhysicsSystems::Carry),
             ),
@@ -836,6 +838,18 @@ fn peaks(
         p.impacts
     );
     *p = Peaks::default();
+}
+
+/// The body proxies' `shapes:` line (character-shapes.md "Budget and measurement", S0): once per closed
+/// `ShapeWindow` (about a second) while a set is live or one went in or out.
+#[allow(clippy::needless_pass_by_value)]
+fn shapes_log(window: Option<Res<sf_physics_bevy::ShapeWindow>>) {
+    if let Some(window) = window
+        && window.fresh
+        && let Some(last) = window.last.filter(sf_physics_bevy::ShapeCounters::active)
+    {
+        info!("{last}");
+    }
 }
 
 // --- Dev hook: scripted actions (agents verify without a keyboard) -------------------------

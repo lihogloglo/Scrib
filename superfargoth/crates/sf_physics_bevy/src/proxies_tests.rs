@@ -1,7 +1,7 @@
 //! Body proxies (character-shapes.md S3), headless: balls hit the shapes of a held body (one impact per contact
 //! start, the strongest per ball and step), proxies follow the written poses, never touch the world, characters or
-//! each other and are invisible to the mover's ground casts, and leave with their component. Sanity asserts; the sync
-//! cost is a measurement (`cargo test -p sf_physics_bevy --features controller proxy_sync_cost -- --ignored --nocapture`).
+//! each other and are invisible to the mover's ground casts, and leave with their component; the `shapes:` counters close
+//! finite (S0). The S0 bench is a measurement (`cargo test -p sf_physics_bevy --features controller proxy_bench -- --ignored --nocapture`).
 
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 
@@ -192,41 +192,125 @@ fn proxies_leave_with_their_component() {
     assert!(!app.world().resource::<Physics>().world(&ws).unwrap().contains(ids[0]));
 }
 
-/// Sync cost: N held sets of 21 proxies (a Delirium body), each moving; µs per tick, per set and per proxy, and the
-/// step's own cost with and without them (no balls: the broadphase update only).
-#[test]
-#[ignore = "measurement: proxy sync cost"]
-fn proxy_sync_cost() {
-    for sets in [1usize, 4, 16] {
-        let (mut app, _) = app();
-        let shapes: Vec<(Vec3, f32, f32)> = (0..21).map(|k| (Vec3::new(0.0, k as f32 * 0.08, 0.0), 0.07, 0.12)).collect();
-        let roots: Vec<Entity> = (0..sets)
-            .map(|s| {
+/// The S0 bench (character-shapes.md "Budget and measurement"): `sets` held bodies of [`BENCH_SHAPES`] proxies (a
+/// Delirium body's 21 parts) on an 8-wide grid 1.5 m apart, every shape swaying 10 cm at 1 Hz (poses, velocities and
+/// `at` written each frame as a holder does), and with `balls` one 3 kg ball per set thrown at its chest from 0.6 m every 0.5 s
+/// (proxy contact pairs and impacts). Returns the app after `frames` measured frames.
+struct Bench {
+    app: App,
+    ws: WorldspaceId,
+    roots: Vec<Entity>,
+    origins: Vec<Vec3>,
+    balls: Vec<BodyId>,
+    rest: Vec<Vec<WorldTransform>>,
+    /// The first frame's activation (every set inserted at once), µs.
+    activate_us: f32,
+}
+
+/// Proxies per bench set (Delirium's parts).
+const BENCH_SHAPES: usize = 21;
+
+impl Bench {
+    fn new(sets: usize, balls: bool) -> Self {
+        let (mut app, ws) = app();
+        let shapes: Vec<(Vec3, f32, f32)> = (0..BENCH_SHAPES).map(|k| (Vec3::new(0.0, k as f32 * 0.08, 0.0), 0.07, 0.12)).collect();
+        let origins: Vec<Vec3> = (0..sets).map(|s| Vec3::new((s % 8) as f32 * 1.5, 0.0, (s / 8) as f32 * 1.5)).collect();
+        let mut rest = Vec::new();
+        let roots = origins
+            .iter()
+            .map(|o| {
                 let (set, mut poses) = set(&shapes);
                 for p in &mut poses {
-                    p.pos = p.pos.offset(Vec3::X * s as f32 * 1.5);
+                    p.pos = p.pos.offset(*o);
                 }
-                let velocities = vec![Vec3::X * 0.5; poses.len()];
+                rest.push(poses.clone());
+                let velocities = vec![Vec3::ZERO; poses.len()];
                 app.world_mut().spawn(BodyProxies { set, poses, velocities, at: 0.0, holder: ProxyHolder::Layer }).id()
             })
             .collect();
-        run(&mut app, 30);
-        let (mut sync, mut step, mut n) = (0.0_f32, 0.0_f32, 0);
-        for _ in 0..300 {
-            let at = app.world().resource::<Time<Virtual>>().elapsed_secs_f64();
-            for r in &roots {
-                app.world_mut().get_mut::<BodyProxies>(*r).unwrap().at = at;
+        app.update();
+        let activate_us = app.world().resource::<ProxyStats>().activate_us;
+        let balls = if balls { origins.iter().map(|o| ball(&mut app, &ws, *o + Vec3::new(-0.6, 0.8, 0.0), 0.1, Vec3::ZERO)).collect() } else { Vec::new() };
+        Self { app, ws, roots, origins, balls, rest, activate_us }
+    }
+
+    /// One frame: the holder's write, a throw every 30 frames, the update.
+    fn frame(&mut self, frame: usize) {
+        let t = self.app.world().resource::<Time<Virtual>>().elapsed_secs_f64();
+        let phase = std::f32::consts::TAU * t as f32;
+        let (sway, v) = (Vec3::X * 0.1 * phase.sin(), Vec3::X * 0.1 * std::f32::consts::TAU * phase.cos());
+        for (r, rest) in self.roots.iter().zip(&self.rest) {
+            let mut b = self.app.world_mut().get_mut::<BodyProxies>(*r).unwrap();
+            for (p, r0) in b.poses.iter_mut().zip(rest) {
+                *p = WorldTransform { pos: r0.pos.offset(sway), ..*r0 };
             }
-            app.update();
-            sync += app.world().resource::<ProxyStats>().sync_us;
-            step += app.world().resource::<crate::PhysicsStats>().step_ms * 1e3;
-            n += 1;
+            b.velocities.fill(v);
+            b.at = t;
         }
-        let (sync, step) = (sync / n as f32, step / n as f32);
-        println!(
-            "proxies: {sets} sets x 21: sync {sync:.1} us/tick ({:.2} us/set, {:.3} us/proxy), step {step:.1} us",
-            sync / sets as f32,
-            sync / (sets * 21) as f32
-        );
+        if frame.is_multiple_of(30) && !self.balls.is_empty() {
+            let mut physics = self.app.world_mut().resource_mut::<Physics>();
+            let w = physics.worlds.get_mut(&self.ws).unwrap();
+            for (id, o) in self.balls.iter().zip(&self.origins) {
+                w.set_pose(*id, WorldTransform::from_pos(base().offset(*o + Vec3::new(-0.6, 0.8, 0.0))));
+                w.set_velocity(*id, Vec3::X * 12.0, Vec3::ZERO);
+            }
+        }
+        self.app.update();
+    }
+}
+
+/// S0 sanity: the bench runs headless, the `shapes:` window closes with finite numbers, sets and proxies counted,
+/// activations and removals seen once each.
+#[test]
+fn shape_counters_are_finite() {
+    let mut bench = Bench::new(4, true);
+    assert_eq!(bench.app.world().resource::<ProxyStats>().activations, 4);
+    for frame in 0..90 {
+        bench.frame(frame);
+    }
+    let window = *bench.app.world().resource::<crate::ShapeWindow>();
+    let last = window.last.expect("a closed window after 1.5 s");
+    assert!(last.is_finite(), "{last:?}");
+    assert!(last.active());
+    assert_eq!((last.sets, last.proxies), (4, 4 * BENCH_SHAPES));
+    assert!(last.ticks > 0 && last.sync_us >= 0.0 && last.sync_max_us >= last.sync_us, "{last:?}");
+    assert!(last.to_string().starts_with("shapes: 4 sets, 84 proxies"), "{last}");
+    let root = bench.roots[0];
+    bench.app.world_mut().entity_mut(root).remove::<BodyProxies>();
+    bench.app.update();
+    let stats = *bench.app.world().resource::<ProxyStats>();
+    assert_eq!((stats.removals, stats.activations, stats.sets), (1, 0, 3));
+}
+
+/// The S0 measurement: sync µs per tick, per set and per proxy, the step with them, the first frame's activation,
+/// with and without balls (`cargo test -p sf_physics_bevy --features controller proxy_bench -- --ignored --nocapture`).
+#[test]
+#[ignore = "measurement: proxy bench (S0)"]
+fn proxy_bench() {
+    for balls in [false, true] {
+        for sets in [1usize, 16, 64] {
+            let mut bench = Bench::new(sets, balls);
+            for frame in 0..30 {
+                bench.frame(frame);
+            }
+            let (mut sync, mut step, mut impacts, n) = (0.0_f32, 0.0_f32, 0, 300);
+            for frame in 30..30 + n {
+                bench.frame(frame);
+                let s = bench.app.world().resource::<ProxyStats>();
+                sync += s.sync_us;
+                impacts += s.impacts;
+                step += bench.app.world().resource::<crate::PhysicsStats>().step_ms * 1e3;
+            }
+            let (sync, step) = (sync / n as f32, step / n as f32);
+            println!(
+                "shapes bench: {sets} sets x {BENCH_SHAPES}{}: sync {sync:.1} us/tick ({:.2} us/set, {:.3} us/proxy), step {step:.1} us, \
+                 activate {:.0} us ({:.2} us/proxy), {impacts} impacts in {n} frames",
+                if balls { " + balls" } else { "" },
+                sync / sets as f32,
+                sync / (sets * BENCH_SHAPES) as f32,
+                bench.activate_us,
+                bench.activate_us / (sets * BENCH_SHAPES) as f32
+            );
+        }
     }
 }

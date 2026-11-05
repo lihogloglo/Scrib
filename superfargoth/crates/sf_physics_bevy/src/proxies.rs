@@ -15,6 +15,8 @@
 //!   `sf_physics::impact_impulse` subtracts, so a limb swinging into a resting ball is no hit.
 //! - After each step: one impact per (incoming body, character) per step, the strongest (a ball touching forearm and
 //!   chest at once pushes once); every new contact start is a new impact, so rapid balls each count.
+//! - Counters (S0): [`ProxyStats`] per frame, [`ShapeWindow`] per second (the host's `shapes:` log line) and the
+//!   `shapes/...` diag counters (bench JSON).
 //!
 //! The capsule of a character with proxies is the host's business (S3: a held body is `Dormant`, so it has none);
 //! S4 adds the animated tier with the capsule's contact mute.
@@ -31,6 +33,9 @@ use sf_coords::WorldTransform;
 use sf_physics::{BodyDesc, BodyId, BodyKind, Layer, PhysicsEvent, ShapeRef};
 use sf_ragdoll::ShapeSet;
 use sf_world::WorldspaceId;
+
+use sf_diag_bevy::DiagCounters;
+use sf_diag_bevy::sf_diag::unit;
 
 use crate::character::{CharacterPhysics, ImpactOnCharacter};
 use crate::{Physics, PhysicsEvents, PhysicsSystems};
@@ -81,7 +86,7 @@ pub enum ShapeSystems {
     Sync,
 }
 
-/// Counters (character-shapes.md "Budget and measurement").
+/// Counters (character-shapes.md "Budget and measurement"); [`ShapeWindow`] sums them per second.
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct ProxyStats {
     pub sets: usize,
@@ -89,9 +94,114 @@ pub struct ProxyStats {
     pub proxies: usize,
     /// Impacts on proxies this frame.
     pub impacts: u32,
-    /// The last tick's sync and the last frame's activation, µs.
+    /// The last tick's sync (0 with no sets) and the last frame's activation, µs.
     pub sync_us: f32,
     pub activate_us: f32,
+    /// Sets whose bodies went into / out of the solver this frame (a takeover starting, a hand-back).
+    pub activations: u32,
+    pub removals: u32,
+}
+
+/// One window (about a second) of [`ProxyStats`]: the `shapes:` log line and the S0 bench numbers.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShapeCounters {
+    pub secs: f32,
+    pub frames: u32,
+    /// Peak sets and proxy bodies over the window.
+    pub sets: usize,
+    pub proxies: usize,
+    /// Fixed ticks that synced, their mean and worst sync, µs.
+    pub ticks: u32,
+    pub sync_us: f32,
+    pub sync_max_us: f32,
+    /// Mean sync per proxy body, µs (the mean tick over the peak proxies).
+    pub sync_per_proxy_us: f32,
+    /// Worst frame's activation, µs.
+    pub activate_us: f32,
+    pub activations: u32,
+    pub removals: u32,
+    pub impacts: u32,
+}
+
+impl ShapeCounters {
+    /// Anything to report: sets live, or bodies went in or out.
+    #[must_use]
+    pub fn active(&self) -> bool {
+        self.sets > 0 || self.activations > 0 || self.removals > 0
+    }
+
+    /// Every number finite (the S0 sanity test).
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        [self.secs, self.sync_us, self.sync_max_us, self.sync_per_proxy_us, self.activate_us].iter().all(|v| v.is_finite())
+    }
+}
+
+impl std::fmt::Display for ShapeCounters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "shapes: {} sets, {} proxies (peak) | sync {:.1} us/tick mean, {:.1} max, {} ticks, {:.3} us/proxy | activate {:.1} us worst, \
+             {} activations, {} removals | {} impacts over {:.1} s",
+            self.sets,
+            self.proxies,
+            self.sync_us,
+            self.sync_max_us,
+            self.ticks,
+            self.sync_per_proxy_us,
+            self.activate_us,
+            self.activations,
+            self.removals,
+            self.impacts,
+            self.secs
+        )
+    }
+}
+
+/// [`ProxyStats`] summed over windows of [`ShapeWindow::SECS`] (`Update`, after [`ShapeSystems::Activate`]); hosts log
+/// `last` as the `shapes:` line when `fresh` and [`ShapeCounters::active`]. The same numbers go to the diag counters
+/// (`shapes/...`, the bench JSON) every frame.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct ShapeWindow {
+    /// The window being summed (`sync_us` holds the sum until it closes).
+    acc: ShapeCounters,
+    /// The last closed window.
+    pub last: Option<ShapeCounters>,
+    /// `last` closed this frame.
+    pub fresh: bool,
+}
+
+impl ShapeWindow {
+    /// Window length, s.
+    pub const SECS: f32 = 1.0;
+
+    fn tick(&mut self, sync_us: f32) {
+        self.acc.ticks += 1;
+        self.acc.sync_us += sync_us;
+        self.acc.sync_max_us = self.acc.sync_max_us.max(sync_us);
+    }
+
+    fn frame(&mut self, dt: f32, s: &ProxyStats) {
+        let a = &mut self.acc;
+        a.secs += dt;
+        a.frames += 1;
+        a.sets = a.sets.max(s.sets);
+        a.proxies = a.proxies.max(s.proxies);
+        a.activate_us = a.activate_us.max(s.activate_us);
+        a.activations += s.activations;
+        a.removals += s.removals;
+        a.impacts += s.impacts;
+        self.fresh = a.secs >= Self::SECS;
+        if self.fresh {
+            let mut done = std::mem::take(a);
+            #[allow(clippy::cast_precision_loss)]
+            {
+                done.sync_us /= done.ticks.max(1) as f32;
+                done.sync_per_proxy_us = done.sync_us / done.proxies.max(1) as f32;
+            }
+            self.last = Some(done);
+        }
+    }
 }
 
 struct ProxySet {
@@ -122,11 +232,27 @@ impl Proxies {
 pub(crate) fn add(app: &mut App) {
     app.init_resource::<Proxies>()
         .init_resource::<ProxyStats>()
+        .init_resource::<ShapeWindow>()
         .configure_sets(FixedUpdate, ShapeSystems::Sync.before(PhysicsSystems::Step))
         .configure_sets(Update, ShapeSystems::Activate.after(PhysicsSystems::Stream))
         .add_systems(First, begin_frame)
         .add_systems(FixedUpdate, (sync.in_set(ShapeSystems::Sync), collect.after(PhysicsSystems::Step)))
-        .add_systems(Update, (impacts, activate).chain().in_set(ShapeSystems::Activate));
+        .add_systems(Update, ((impacts, activate).chain().in_set(ShapeSystems::Activate), publish.after(ShapeSystems::Activate)));
+}
+
+/// The frame's counters into the window and the diag counters (`shapes/...`).
+#[allow(clippy::needless_pass_by_value, clippy::cast_precision_loss)]
+fn publish(time: Res<Time>, stats: Res<ProxyStats>, mut window: ResMut<ShapeWindow>, counters: Option<Res<DiagCounters>>) {
+    let s = *stats;
+    window.frame(time.delta_secs(), &s);
+    let Some(c) = counters else { return };
+    c.set_named("shapes/sets", unit::COUNT, s.sets as f64);
+    c.set_named("shapes/proxies", unit::COUNT, s.proxies as f64);
+    c.set_named("shapes/sync/ms", unit::MS, f64::from(s.sync_us) * 1e-3);
+    c.add_named("shapes/activate/ms", unit::MS, f64::from(s.activate_us) * 1e-3);
+    c.add_named("shapes/activations", unit::COUNT, f64::from(s.activations));
+    c.add_named("shapes/removals", unit::COUNT, f64::from(s.removals));
+    c.add_named("shapes/impacts", unit::COUNT, f64::from(s.impacts));
 }
 
 fn begin_frame(mut proxies: ResMut<Proxies>) {
@@ -139,6 +265,7 @@ fn activate(mut physics: ResMut<Physics>, mut proxies: ResMut<Proxies>, mut stat
     let started = Instant::now();
     let active = physics.worlds.active().cloned();
     let Proxies { sets, by_body, .. } = &mut *proxies;
+    let before = sets.len();
     // Gone, replaced, or in another worldspace: out.
     sets.retain(|e, p| {
         let keep = Some(&p.worldspace) == active.as_ref() && roots.get(*e).is_ok_and(|(_, b)| Arc::ptr_eq(&b.set, &p.set));
@@ -154,6 +281,7 @@ fn activate(mut physics: ResMut<Physics>, mut proxies: ResMut<Proxies>, mut stat
         }
         keep
     });
+    let kept = sets.len();
     if let Some(ws) = active
         && let Some(w) = physics.worlds.get_mut(&ws)
     {
@@ -179,6 +307,11 @@ fn activate(mut physics: ResMut<Physics>, mut proxies: ResMut<Proxies>, mut stat
             sets.insert(e, ProxySet { worldspace: ws.clone(), set: b.set.clone(), ids });
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        stats.removals = (before - kept) as u32;
+        stats.activations = (sets.len() - kept) as u32;
+    }
     stats.sets = sets.len();
     stats.proxies = by_body.len();
     stats.activate_us = started.elapsed().as_secs_f32() * 1e6;
@@ -186,8 +319,16 @@ fn activate(mut physics: ResMut<Physics>, mut proxies: ResMut<Proxies>, mut stat
 
 /// `FixedUpdate`, before the step: every proxy targets its written pose extrapolated to the step's end.
 #[allow(clippy::needless_pass_by_value)]
-fn sync(time: Res<Time>, mut physics: ResMut<Physics>, proxies: Res<Proxies>, roots: Query<&BodyProxies>, mut stats: ResMut<ProxyStats>) {
+fn sync(
+    time: Res<Time>,
+    mut physics: ResMut<Physics>,
+    proxies: Res<Proxies>,
+    roots: Query<&BodyProxies>,
+    mut stats: ResMut<ProxyStats>,
+    mut window: ResMut<ShapeWindow>,
+) {
     if proxies.sets.is_empty() {
+        stats.sync_us = 0.0;
         return;
     }
     let started = Instant::now();
@@ -204,6 +345,7 @@ fn sync(time: Res<Time>, mut physics: ResMut<Physics>, proxies: Res<Proxies>, ro
         }
     }
     stats.sync_us = started.elapsed().as_secs_f32() * 1e6;
+    window.tick(stats.sync_us);
 }
 
 /// After each step: hits on proxies, the strongest per (incoming body, character) of the step.

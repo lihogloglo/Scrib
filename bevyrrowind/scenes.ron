@@ -914,6 +914,13 @@
             description: "Greybox light-cost lab: closed 20 x 20 x 5 m room (no sky), 16 pillar/box casters, two walkers, 8 parametric lamps through the game's lamp path (cameras: wide, close, top; --lab-lights N, --lab-ring D, --lab-radius R, --lab-orbit DEG_S)",
             look_for: "a lit closed room, no sunlight; lamps on a grid at 3.5 m; with --point-shadows N the nearest N lamps cast pillar and walker shadows",
         ),
+        (
+            name: "level-shapes-bench",
+            level: "shapes-bench",
+            hour: 12.0,
+            description: "Body-proxies bench (character-shapes S0): 16 human NPCs on a 4 x 4 grid, each hit 1 s after it stands again (45 N·s staggers, 120 N·s knockdowns) so Delirium holds most of them (cameras overview, close)",
+            look_for: "no picture check: the log's `shapes:` line once a second (sets near 16, proxies = 21 per set, sync us/tick, activations and removals as bodies are taken and handed back) and `delirium:` lines; V balls at a held body push it",
+        ),
         // ---- animation lab (levels/anim-lab.ron, visual-checks.md AL-*) ----
         (
             name: "level-anim-overview",

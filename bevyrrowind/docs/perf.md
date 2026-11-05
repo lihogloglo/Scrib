@@ -59,6 +59,20 @@ per cell at bake time (OpenMW active-grid paging, MGE XE: a cell in one or two d
 `docs/research/perf-morrowind-engines.md`) and cut shadow views; the big_space propagation patch and skinned
 bounds next (`superfargoth/docs/research/perf/README.md`).
 
+### Character shapes (body proxies, S0 baseline)
+
+2026-11-05 (headless `cargo test -p sf_physics_bevy --features controller proxy_bench -- --ignored --nocapture`, dev
+profile, 2 runs; sets of 21 swaying proxies, "+ balls" = a 3 kg ball per set every 0.5 s):
+
+| sets | sync µs/tick | step µs | step + balls µs | activation (all at once) |
+|---:|---:|---:|---:|---:|
+| 1 | 1.8-2.2 | 14-17 | 25-29 | 23-51 µs |
+| 16 | 16 | 105-108 | 183-191 | 0.39-0.48 ms |
+| 64 | 61-69 | 404-422 | 742-948 | 1.0-1.8 ms |
+
+High budget (≤ 0.3 ms, 16 sets) holds; the step dominates (~0.3 µs per moving proxy). In game: scene
+`level-shapes-bench`, the `shapes:` log line once a second. Later slices (S4+) log their row against this one.
+
 ### Dated measurement log (archived)
 
 The dated measurement blocks (2026-10-20/21) moved verbatim to [archive/perf-log-2026-10.md](archive/perf-log-2026-10.md), newest first. Each old section name still resolves below.
