@@ -45,7 +45,7 @@ mod tests_warp;
 
 pub use brace::{
     BRACE_BAND, BRACE_BEND, BRACE_CONFIRM, BRACE_FALL, BRACE_FAN, BRACE_FIRM_SPEED, BRACE_HALFLIFE, BRACE_LIGHT, BRACE_LOOKAHEAD, BRACE_MAX_NORMAL_Y, BRACE_MIN_SPEED,
-    BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_TRAIL, BraceBody, HandBrace, WallBrace,
+    BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_FINGERS_UP, BRACE_LEAD, BraceBody, HandBrace, PalmFrame, WallBrace,
 };
 pub use command::{
     ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS, TapHold,

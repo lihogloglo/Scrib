@@ -19,6 +19,7 @@ mod cloth_tests;
 mod humanoid;
 mod names;
 mod outfit;
+mod ready;
 mod records;
 mod rig;
 mod slots;
@@ -42,7 +43,8 @@ pub use records::{
     AnimGraphRef, BodyPart, CharacterRecipe, FirstPersonRecipe, Hand, HeldItem, HeldLight, Layer, Mount, PartKind, PartRef, Readiness, RigMapRef,
     RigProfileRef, RigRef, Socket, TintParams, Wearable, WearableRef, register_kinds,
 };
-pub use rig::{Chain, JointName, RetargetOptions, RigMap, RigMapError};
+pub use ready::{ReadyChange, ReadyClip};
+pub use rig::{Chain,JointName, RetargetOptions, RigMap, RigMapError};
 pub use slots::{SlotDef, SlotId, SlotRegistry, slot};
 #[cfg(feature = "smooth")]
 pub use smooth::{

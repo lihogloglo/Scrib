@@ -1,5 +1,5 @@
-//! Combat glue (combat.md "C1b"): the player body is armed with the sword sheet, F and an attack
-//! press draw the weapon (the press itself doesn't attack), and the HUD shows the stamina; C1c: the
+//! Combat glue (combat.md "C1b"): the player body is armed with the sword sheet, F draws and
+//! sheathes the weapon (a sheathed attack press does nothing), and the HUD shows the stamina; C1c: the
 //! lock key locks the dummy.
 
 use sf_action_bevy::PlayerAction;
@@ -8,7 +8,7 @@ use sf_combat_bevy::Combatant;
 use super::*;
 use crate::combat::{ReadyWeaponAction, Stance};
 use crate::hud::PlayerVitals;
-use crate::tests::{Statics, action, app_setup, mock};
+use crate::tests::{Statics, action, app_setup, hold_key, mock};
 
 fn armed() -> (App, Entity) {
     let sheet = sf_combat::load(mw_combat::SWORD_1H, &|_| Some(0.5)).expect("sheet compiles");
@@ -41,25 +41,70 @@ fn the_player_is_armed_sheathed_and_the_hud_shows_its_stamina() {
     assert!(vitals.health.current > 0.0 && vitals.health.current <= vitals.health.max);
 }
 
+/// CB-3 (owner 2026-11-02: attack only with the weapon drawn): sheathed, light and heavy presses
+/// start nothing and don't draw; the F key (the real binding) draws, the avatar's readiness
+/// follows (its held weapon mounts on the weapon bone), and F again sheathes.
 #[test]
-fn an_attack_press_while_sheathed_draws_and_f_sheathes() {
+fn sheathed_attack_presses_do_nothing_and_the_f_key_draws_and_sheathes() {
+    use sf_character::Readiness;
+    use sf_character_bevy::CharacterReadiness;
     let (mut app, player) = armed();
+    // The game's rules with the sheet's moves (the harness runs the base rules only).
+    let sheet = app.world().resource::<combat::PlayerCombat>().sheet.clone();
+    app.insert_resource(rules(&[], sheet.as_ref()));
+    let avatar = app.world_mut().spawn((mw_game_core::player::PlayerAvatar, ChildOf(player))).id();
+    // Landed and standing.
+    for _ in 0..30 {
+        app.update();
+    }
+    let shown = |app: &App| app.world().get::<CharacterReadiness>(avatar).map(|r| r.0);
+    assert_eq!(shown(&app), Some(Readiness::Sheathed));
+    let attacks: Vec<_> = app.world().resource::<combat::PlayerCombat>().sheet.as_ref().unwrap().moves.moves.keys().copied().collect();
+    assert!(!attacks.is_empty());
+    for class in [ActionClass::Light, ActionClass::Heavy] {
+        let attack = action(&mut app, PlayerAction::Button(class));
+        mock(&mut app, attack, true);
+        for _ in 0..6 {
+            app.update();
+            let mov = app.world().get::<ActionCharacter>(player).unwrap().state.mov;
+            assert!(!attacks.contains(&mov), "{class:?} started a sheet move sheathed");
+        }
+        app.world_mut().entity_mut(attack).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+        app.update();
+        assert_eq!(stance(&app, player), (Stance::Sheathed, true), "{class:?} drew the weapon");
+    }
+    let mut q = app.world_mut().query_filtered::<Entity, With<Action<ReadyWeaponAction>>>();
+    assert!(q.single(app.world()).is_ok(), "one ready-weapon action");
+    let tap_f = |app: &mut App| {
+        hold_key(app, KeyCode::KeyF, true);
+        for _ in 0..2 {
+            app.update();
+        }
+        hold_key(app, KeyCode::KeyF, false);
+        for _ in 0..2 {
+            app.update();
+        }
+    };
+    tap_f(&mut app);
+    assert_eq!(stance(&app, player), (Stance::Drawn, false));
+    assert_eq!(shown(&app), Some(Readiness::Drawn));
+    // Drawn, the same press attacks (the sheathed check above isn't vacuous).
     let attack = action(&mut app, PlayerAction::Button(ActionClass::Light));
     mock(&mut app, attack, true);
+    let light1 = app.world().resource::<combat::PlayerCombat>().sheet.as_ref().unwrap().rule_key("light1");
+    let mut seen = Vec::new();
     for _ in 0..6 {
         app.update();
+        seen.push(app.world().get::<ActionCharacter>(player).unwrap().state.mov);
     }
-    assert_eq!(stance(&app, player), (Stance::Drawn, false));
-    let light1 = app.world().resource::<combat::PlayerCombat>().sheet.as_ref().unwrap().rule_key("light1");
-    assert_ne!(app.world().get::<ActionCharacter>(player).unwrap().state.mov, light1, "the drawing press doesn't attack");
-    app.world_mut().entity_mut(attack).remove::<ActionMock>();
-    let mut q = app.world_mut().query_filtered::<Entity, With<Action<ReadyWeaponAction>>>();
-    let ready = q.single(app.world()).expect("one ready-weapon action");
-    mock(&mut app, ready, true);
-    for _ in 0..3 {
+    app.world_mut().entity_mut(attack).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+    assert!(seen.contains(&light1), "a drawn light press attacks: {seen:?}, light1 {light1:?}, sheet moves {attacks:?}");
+    for _ in 0..120 {
         app.update();
     }
+    tap_f(&mut app);
     assert_eq!(stance(&app, player), (Stance::Sheathed, true));
+    assert_eq!(shown(&app), Some(Readiness::Sheathed));
 }
 
 /// Scaffold `TrainingDummy` (sanity): spawned in the air it waits, then stands on the floor,
@@ -194,4 +239,119 @@ fn locked_on_a_sideways_stick_strafes_round_the_dummy_facing_it() {
     let moved = start.delta_f32(feet(&app, player));
     let r = Vec2::new(to.x, to.z).length();
     assert!(moved.x.abs() > 1.0 && (2.0..4.5).contains(&r), "strafed round it: moved {moved}, {r:.2} m away");
+}
+
+/// A cooked draw or sheathe clip of `length` seconds with the point event `event` at `key`.
+fn stance_clip(slot: &str, length: f32, event: &str, key: f32) -> SlotClip {
+    use sf_anim::{ClipRules, CookSettings, Event, cook_clip, fixtures};
+    let skeleton = fixtures::biped();
+    let mut src = fixtures::gait(&skeleton, slot, length, 0.0, 0.1, 0.6, &[("thigh_l", "foot_l", 0.0)]);
+    src.events = vec![Event::point(key, event)];
+    let clip = cook_clip(&skeleton, &src, &ClipRules::default(), &CookSettings::default()).expect("cooks");
+    SlotClip { slot: slot.into(), clip: Arc::new(clip) }
+}
+
+/// CB-3 draw and sheathe clips: F starts the draw clip and the avatar's readiness (the weapon
+/// prop's mount) flips to Drawn at the clip's attach key, not at the press; attacks stay refused
+/// until the draw has played out and are accepted after. F again sheathes: attacks are refused
+/// from its first tick and the prop leaves the hand at the detach key. Times from the baked keys.
+#[test]
+fn the_draw_and_sheathe_clips_move_the_weapon_at_their_keys_and_gate_the_attacks() {
+    use sf_character::Readiness;
+    use sf_character_bevy::CharacterReadiness;
+    let (draw_key, sheathe_key, length) = (0.25, 0.375, 0.5);
+    let clips = PlayerClips {
+        slots: vec![
+            stance_clip(mw_combat::SWORD_1H_DRAW, length, mw_anim::events::EQUIP_ATTACH, draw_key),
+            stance_clip(mw_combat::SWORD_1H_SHEATHE, length, mw_anim::events::UNEQUIP_DETACH, sheathe_key),
+        ],
+        skeleton: None,
+    };
+    let sheet = sf_combat::load(mw_combat::SWORD_1H, &|_| Some(0.5)).expect("sheet compiles");
+    let (mut app, player) = app_setup(60, &mw_controls_bevy::keymap(), |app| {
+        app.insert_resource(PlayerVitals::from_record(None)).add_systems(Update, hud::sync_vitals);
+        combat::add(app, Some(sheet.clone()), &clips);
+    });
+    app.world_mut().entity_mut(player).insert(PlayerBody);
+    app.insert_resource(rules(&[], Some(&sheet)));
+    let timing = *app.world().resource::<combat::StanceClips>();
+    assert!((timing.draw.key - draw_key).abs() < 1e-4 && (timing.sheathe.key - sheathe_key).abs() < 1e-4, "{timing:?}");
+    assert!(timing.draw.length > draw_key && timing.sheathe.length > sheathe_key, "{timing:?}");
+    let avatar = app.world_mut().spawn((mw_game_core::player::PlayerAvatar, ChildOf(player))).id();
+    for _ in 0..30 {
+        app.update();
+    }
+    let shown = |app: &App| app.world().get::<CharacterReadiness>(avatar).map(|r| r.0);
+    let light1 = sheet.rule_key("light1");
+    let mov = |app: &App| app.world().get::<ActionCharacter>(player).unwrap().state.mov;
+    assert_eq!(stance(&app, player), (Stance::Sheathed, true));
+
+    // Press F, then attack while the draw plays: (elapsed, shown readiness, withheld) per frame.
+    hold_key(&mut app, KeyCode::KeyF, true);
+    app.update();
+    app.update();
+    hold_key(&mut app, KeyCode::KeyF, false);
+    let attack = action(&mut app, PlayerAction::Button(ActionClass::Light));
+    let mut drawing = Vec::new();
+    for _ in 0..120 {
+        if drawing.len() == 2 {
+            mock(&mut app, attack, true);
+        }
+        app.update();
+        let (s, withheld) = stance(&app, player);
+        assert_ne!(mov(&app), light1, "attacked during the draw: {s:?}");
+        let Stance::Changing(c) = s else { break };
+        assert!(withheld && c.to == Readiness::Drawn);
+        drawing.push((c.elapsed, shown(&app)));
+    }
+    assert_eq!(stance(&app, player), (Stance::Drawn, false), "the draw ended");
+    assert!(drawing.len() > 4, "the draw played over several frames: {drawing:?}");
+    // The prop moved exactly when the elapsed time crossed the attach key.
+    for &(elapsed, readiness) in &drawing {
+        let want = if elapsed >= timing.draw.key { Readiness::Drawn } else { Readiness::Sheathed };
+        assert_eq!(readiness, Some(want), "at {elapsed:.3} s: {drawing:?}");
+    }
+    assert!(drawing.iter().any(|d| d.1 == Some(Readiness::Sheathed)) && drawing.iter().any(|d| d.1 == Some(Readiness::Drawn)), "{drawing:?}");
+    assert_eq!(shown(&app), Some(Readiness::Drawn));
+    // Drawn: a fresh press attacks.
+    app.world_mut().entity_mut(attack).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+    app.update();
+    mock(&mut app, attack, true);
+    let mut seen = Vec::new();
+    for _ in 0..6 {
+        app.update();
+        seen.push(mov(&app));
+    }
+    app.world_mut().entity_mut(attack).insert(ActionMock::new(TriggerState::None, false, MockSpan::Manual));
+    assert!(seen.contains(&light1), "a drawn light press attacks: {seen:?}");
+    for _ in 0..120 {
+        app.update();
+    }
+
+    // F again: the sheathe withholds the attacks from its first frame; the prop leaves at the key.
+    hold_key(&mut app, KeyCode::KeyF, true);
+    app.update();
+    app.update();
+    hold_key(&mut app, KeyCode::KeyF, false);
+    let mut sheathing = Vec::new();
+    for _ in 0..120 {
+        let (s, withheld) = stance(&app, player);
+        let Stance::Changing(c) = s else {
+            if sheathing.is_empty() {
+                app.update();
+                continue;
+            }
+            break;
+        };
+        assert!(withheld && c.to == Readiness::Sheathed, "attacks withheld while sheathing");
+        sheathing.push((c.elapsed, shown(&app)));
+        app.update();
+    }
+    assert_eq!(stance(&app, player), (Stance::Sheathed, true), "the sheathe ended");
+    assert!(sheathing.len() > 4, "{sheathing:?}");
+    for &(elapsed, readiness) in &sheathing {
+        let want = if elapsed >= timing.sheathe.key { Readiness::Sheathed } else { Readiness::Drawn };
+        assert_eq!(readiness, Some(want), "at {elapsed:.3} s: {sheathing:?}");
+    }
+    assert_eq!(shown(&app), Some(Readiness::Sheathed));
 }

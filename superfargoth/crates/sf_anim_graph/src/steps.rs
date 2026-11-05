@@ -161,7 +161,8 @@ impl Step for AnimGraphCompileStep {
         ANIMGRAPH_COMPILE
     }
     fn version(&self) -> u32 {
-        3
+        // 4: HandIk takes the target's rotation (B2c palm on the wall).
+        4
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (graph, skeleton) = Self::parse(subject)?;

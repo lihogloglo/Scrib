@@ -138,3 +138,5 @@ probes see it unchanged), the sky and lighting, and what spawns do.
 - `interior`: an enclosed level, no sky, sun or moon; the host shows it with this ambient (sRGB 0..=1).
 - `hour`, `weather` (2026-10-26): the level's start time and a weather the host pins (its own name, e.g.
   `"clear"`), unless the command line gives one. anim-lab: clear, 12:00.
+- `player_held` (2026-11-05, CB-3): items the player holds equipped in the level (host item ids; empty: its own
+  equipment); the host shows them on the player while drawn. Validation: no empty ids.

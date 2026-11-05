@@ -1045,6 +1045,14 @@ fn look_at_and_hand_ik_reach_targets() {
     // Beyond its LOD the look-at stops.
     inst.update(&b, 1.0 / 60.0, 1, &inputs, &mut out);
     assert!((out.model.rotation(head) * Vec3::Z).angle_between(want) > 0.3);
+    // A target with a rotation turns the hand to it (a palm laid on a wall).
+    let turn = Quat::from_rotation_y(1.2) * Quat::from_rotation_x(0.4);
+    let targets = [Some(IkTarget { position: grip, rotation: Some(turn) })];
+    let inputs = UpdateInputs { ik_targets: &targets, ..UpdateInputs::default() };
+    inst.update(&b, 1.0 / 60.0, 0, &inputs, &mut out);
+    let hand = rig.joint("hand_l");
+    assert!(out.model.rotation(hand).angle_between(turn) < 1e-3, "hand {:?}", out.model.rotation(hand));
+    assert!(out.model.translation(hand).distance(grip) < 1e-3);
 }
 
 #[test]

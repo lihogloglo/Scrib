@@ -5,6 +5,13 @@
 //!   spawns at the actor's size (`Build::scaled` from its scale) on a floor at the ground and starts `bodyBalance`
 //!   (`catchFall` when already falling). The root goes `Held` (so `Dormant`: no step, no motion or ground
 //!   feed, the processing range leaves it alone) until the hand-back.
+//! - **Knockdowns** (owner 2026-10-30): the walkers' hard capsule impacts on human walkers come here instead of the
+//!   powered ragdoll ([`knockdown_reaction`], wired by the host into `mw_walkers_bevy`'s `RagdollTakeover` hook);
+//!   the impact is the takeover's hit.
+//! - **Deaths** (same hook, kind `Death`; [`death_reaction`]): taken over at once (or a live takeover turns
+//!   terminal), `Takeover::kill` (`catchFall`, then near-limp `bodyRelax`), never handed back: the root stays `Held`
+//!   with [`DeliriumCorpse`]; once at rest the takeover is dropped and the body keeps its last `PhysicsPose` (frozen,
+//!   no more steps). A death it can't take after the claim (no rig) falls back to the limp ragdoll.
 //! - **Step**: `FixedUpdate`, one Delirium step per fixed tick.
 //! - **Copy-back**: every frame the parts (interpolated between the last two steps) go into the takeover pose
 //!   (`pose_to_bones`; bones without a part keep the takeover pose) and to the animator as a [`PhysicsPose`] at
@@ -66,7 +73,7 @@ use sf_controller::ProbeQuery;
 use sf_controller_bevy::{ControllerSystems, Dormant, GroundProbe, Held, Mover};
 use sf_coords::{WorldPos, WorldTransform};
 use sf_physics_bevy::sf_ragdoll::{get_up_root, yaw_of};
-use sf_physics_bevy::{FrameQuery, Physics, Ragdoll, move_frame, world_frame};
+use sf_physics_bevy::{FrameQuery, Physics, Ragdoll, RagdollMode, move_frame, world_frame};
 use sf_world_bevy::{WorldPosOf, WorldspaceRoot};
 
 /// The skeletons Delirium's humanoid asset fits (male and female Morrowind humans).
@@ -117,11 +124,23 @@ impl Plugin for DeliriumPlugin {
 }
 
 /// Take this character over (on its root, the `CharacterBody` entity), optionally with a hit; on one already taken
-/// over, the hit pushes its body.
+/// over, the hit pushes its body. `knock_down`: the game decided it goes down (a knockdown): the balancer gives up
+/// and `catchFall` takes it to the floor (`Takeover::knock_down`), then the usual lie, get-up and hand-back
+/// (at the takeover only: on a live one just the hit applies). `kill`: a death (terminal, `Takeover::kill`), at the
+/// takeover or on a live one: it falls, goes limp, is never handed back, and once at rest its pose freezes; the root
+/// stays `Held` and gets [`DeliriumCorpse`].
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct DeliriumReaction {
     pub hit: Option<DeliriumHit>,
+    pub knock_down: bool,
+    pub kill: bool,
 }
+
+/// A character Delirium killed (on the root): the takeover runs until the body is at rest, then its last pose stays as
+/// the body's `PhysicsPose` (frozen: no more steps) and the root stays `Held`. New requests on a frozen corpse are
+/// refused.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct DeliriumCorpse;
 
 /// An impulse on the body.
 #[derive(Clone, Copy, Debug)]
@@ -132,6 +151,25 @@ pub struct DeliriumHit {
     pub impulse: Vec3,
     /// Delirium part (`mw_delirium::body::NAMES`); `None`: the part nearest `point`.
     pub part: Option<usize>,
+}
+
+/// The takeover request for a knockdown (combat-adapter.md "Ragdoll routing"; the host wires it into the walkers'
+/// `RagdollTakeover` hook): a human skeleton ([`HUMAN_SKELETONS`]) on a mover-driven character is taken over with
+/// the impact as its hit (`impulse`: N s, world; the part nearest `point`) and goes down (`knock_down`). `None`: beast
+/// races, creatures and action characters (no mover) keep the powered-ragdoll knockdown. The takeover then owns the
+/// character (`Held`, the get-up, the root's move) until [`DeliriumHandedBack`].
+#[must_use]
+pub fn knockdown_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
+    (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit: Some(DeliriumHit { point, impulse, part: None }), knock_down: true, kill: false })
+}
+
+/// The takeover request for a death (combat-adapter.md "Ragdoll routing"; the walkers' takeover hook, kind `Death`):
+/// as [`knockdown_reaction`], but terminal (`kill`), with the killing blow as its hit when it has one (`impulse` not
+/// zero). A character Delirium already holds turns terminal. `None`: the death clip and the limp ragdoll.
+#[must_use]
+pub fn death_reaction(skeleton: &str, mover: bool, point: WorldPos, impulse: Vec3) -> Option<DeliriumReaction> {
+    let hit = (impulse.length_squared() > 1e-6).then_some(DeliriumHit { point, impulse, part: None });
+    (mover && HUMAN_SKELETONS.contains(&skeleton)).then_some(DeliriumReaction { hit, knock_down: false, kill: true })
 }
 
 /// A character went back to its animation (on the root).
@@ -147,6 +185,8 @@ pub struct DeliriumStats {
     pub started: usize,
     pub refused: usize,
     pub handed_back: usize,
+    /// Dead bodies frozen at rest ([`DeliriumCorpse`]).
+    pub corpses: usize,
     /// Last fixed tick's Delirium time over every live character, and the peak, µs.
     pub step_us: f32,
     pub peak_step_us: f32,
@@ -197,6 +237,8 @@ struct Pending {
     scale: f32,
     secs: f32,
     hit: Option<DeliriumHit>,
+    knock_down: bool,
+    kill: bool,
 }
 
 struct Live {
@@ -270,13 +312,26 @@ fn nearest_part(parts: &[Part], at: Vec3) -> usize {
     parts.iter().enumerate().min_by(|a, b| a.1.translation.distance_squared(at).total_cmp(&b.1.translation.distance_squared(at))).map_or(0, |p| p.0)
 }
 
+/// A death Delirium can't take (the host's hook claimed it, so nobody else will): the limp ragdoll at once, so the
+/// character never stands there dead.
+fn limp_death(skeleton: &str) -> Ragdoll {
+    warn!("delirium: a death it can't take ({skeleton}): the limp ragdoll");
+    Ragdoll { skeleton: skeleton.to_owned(), delay: 0.0, mode: RagdollMode::Death { crumple: true } }
+}
+
+fn refused_death(request: &DeliriumReaction, cb: &CharacterBody, commands: &mut Commands) {
+    if request.kill {
+        commands.entity(cb.body).try_insert(limp_death(&cb.skeleton));
+    }
+}
+
 /// Requests: sample the pose, then (next posed frame) take over; hits on live takeovers become pushes.
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::too_many_lines, clippy::type_complexity)]
 fn start(
     time: Res<Time>,
     mut takeovers: ResMut<Takeovers>,
     mut stats: ResMut<DeliriumStats>,
-    requests: Query<(Entity, &CharacterBody, &DeliriumReaction, Has<Mover>)>,
+    requests: Query<(Entity, &CharacterBody, &DeliriumReaction, Has<Mover>, Has<DeliriumCorpse>)>,
     animators: Query<(&Animator, Has<Ragdoll>)>,
     mut frames: ParamSet<(FrameQuery, Query<&mut Transform>)>,
     roots: Query<&WorldspaceRoot>,
@@ -290,12 +345,13 @@ fn start(
         p.secs += dt;
     }
     let mut ready = Vec::new();
-    for (root, cb, request, mover) in &requests {
+    for (root, cb, request, mover, corpse) in &requests {
         if !mover {
             // An action character (module docs): its body would end beside its capsule.
             info!("delirium: refused {root} ({}): no mover on it (an action character)", cb.skeleton);
             stats.refused += 1;
             commands.entity(root).try_remove::<DeliriumReaction>();
+            refused_death(request, cb, &mut commands);
             continue;
         }
         if let Some(l) = live.get_mut(&root) {
@@ -304,6 +360,22 @@ fn start(
                 let part = hit.part.unwrap_or_else(|| nearest_part(&l.frames[1], at));
                 l.pushes.push((part, at, l.sim.sim_dir(hit.impulse)));
             }
+            if request.kill && !l.takeover.is_dead() {
+                l.takeover.kill();
+                // A hand-back stepped this very frame doesn't happen: dead, it stays.
+                if l.hand_back != Some(HandBack::Exploded) {
+                    l.hand_back = None;
+                }
+                commands.entity(root).try_insert(DeliriumCorpse);
+                let how = if l.takeover.fell() { "down" } else { "standing" };
+                info!("delirium: {root} killed while taken over ({how}, {:.1} s after the takeover)", l.takeover.time);
+            }
+            commands.entity(root).try_remove::<DeliriumReaction>();
+            continue;
+        }
+        if corpse {
+            // Frozen: a new takeover would start from the corpse's pose with the balancer and could stand it up.
+            info!("delirium: refused {root}: a frozen corpse");
             commands.entity(root).try_remove::<DeliriumReaction>();
             continue;
         }
@@ -312,6 +384,9 @@ fn start(
             info!("delirium: refused {root} ({}{})", cb.skeleton, if ragdoll { ", already a ragdoll" } else { ": not a human skeleton" });
             stats.refused += 1;
             commands.entity(root).try_remove::<DeliriumReaction>();
+            if !ragdoll {
+                refused_death(request, cb, &mut commands);
+            }
             continue;
         }
         if !animator.posed() {
@@ -322,9 +397,10 @@ fn start(
         let pose: Vec<Trs> = (0..skeleton.len()).map(|j| animator.output.pose.get(j)).collect();
         match pending.remove(&root) {
             None => {
-                pending.insert(root, Pending { pose, frame, scale, secs: 0.0, hit: request.hit });
+                pending.insert(root, Pending { pose, frame, scale, secs: 0.0, hit: request.hit, knock_down: request.knock_down, kill: request.kill });
             }
-            Some(prev) => ready.push((root, cb.body, cb.skeleton.clone(), prev, pose, frame, scale)),
+            // A death asked between the two frames (it replaced a knockdown's request) still counts.
+            Some(prev) => ready.push((root, cb.body, cb.skeleton.clone(), Pending { kill: prev.kill || request.kill, ..prev }, pose, frame, scale)),
         }
     }
     for (root, body, subject, prev, pose, frame, scale) in ready {
@@ -333,6 +409,9 @@ fn start(
         let skeleton = &animator.asset.skeleton;
         let Some(rig) = takeovers.rig(&subject, skeleton) else {
             stats.refused += 1;
+            if prev.kill {
+                commands.entity(body).try_insert(limp_death(&subject));
+            }
             continue;
         };
         let sim = SimFrame::at(&frame);
@@ -367,11 +446,19 @@ fn start(
             takeover.push(part, at, sim.sim_dir(h.impulse));
             (part, h.impulse.length())
         });
+        if prev.knock_down {
+            takeover.knock_down();
+        }
+        if prev.kill {
+            takeover.kill();
+            commands.entity(root).try_insert(DeliriumCorpse);
+        }
         let model = mw_delirium::pose::model_pose(skeleton, &pose);
         let pelvis = Vec3::from(model[rig.body.table.parts[0].joint].translation);
         info!(
-            "delirium: took over {root} ({subject}, scale {scale:.2}) with {}, floor {:+.2} m (ground {ground_z:+.2}){}",
+            "delirium: took over {root} ({subject}, scale {scale:.2}) with {}{}, floor {:+.2} m (ground {ground_z:+.2}){}",
             takeover.behaviour,
+            if prev.kill { " (dead)" } else { "" },
             takeover.floor,
             hit.map_or(String::new(), |(p, i)| format!(", {i:.0} N s on {}", mw_delirium::body::NAMES[p]))
         );
@@ -409,7 +496,7 @@ fn step(fixed: Res<Time<Fixed>>, mut takeovers: ResMut<Takeovers>, mut stats: Re
     let dt = fixed.delta_secs();
     let t0 = Instant::now();
     for (root, l) in &mut takeovers.live {
-        if l.hand_back.is_some() {
+        if l.hand_back.is_some() || l.takeover.settled() {
             continue;
         }
         for (part, at, impulse) in l.pushes.drain(..) {
@@ -513,6 +600,7 @@ fn read_back(
     let alpha = fixed.overstep_fraction();
     let dt = time.delta_secs().max(1e-4);
     let mut done = Vec::new();
+    let mut corpses = Vec::new();
     let live = &mut takeovers.live;
     // Despawned characters drop their takeover.
     live.retain(|_, l| animators.contains(l.body));
@@ -539,13 +627,17 @@ fn read_back(
             l.hand_back = Some(HandBack::Exploded);
             l.last_pose.clone().unwrap_or_else(|| l.frozen.clone())
         };
-        if l.takeover.fell() && !l.flagged {
+        if l.takeover.fell() && !l.flagged && !l.takeover.is_dead() {
             l.flagged = true;
             animator.set_bool(KNOCKED_OUT, true);
             animator.set_float(GET_UP_PARAM, 0.0);
             info!("delirium: {root} fell ({:.1} s after the takeover)", l.takeover.time);
         }
-        let Some(how) = l.hand_back else {
+        // Dead, never handed back: a blow-up keeps the last good pose; at rest (or blown up) the pose freezes.
+        let dead = l.takeover.is_dead();
+        let exploded = dead && l.hand_back == Some(HandBack::Exploded);
+        if l.hand_back.is_none() || exploded {
+            let (pose, weight) = if exploded { (l.last_pose.clone().unwrap_or_else(|| l.frozen.clone()), 1.0) } else { (pose, weight) };
             match physics {
                 Some(mut p) => {
                     p.pose.clone_from(&pose);
@@ -558,8 +650,15 @@ fn read_back(
             }
             l.shown_weight = weight;
             l.last_pose = Some(pose);
+            if exploded || (dead && l.takeover.settled()) {
+                if exploded {
+                    warn!("delirium: dead {root} blew up: frozen at its last good pose");
+                }
+                corpses.push((root, l.takeover.dead.unwrap_or(0.0)));
+            }
             continue;
-        };
+        }
+        let Some(how) = l.hand_back else { continue };
         // Hand back: the graph inertializes out of the shown pose, read in the frame it goes on in.
         let previous = l.last_pose.take().unwrap_or_else(|| pose.clone());
         let get_up = if how == HandBack::Fallen { get_up_frame(l, &animator, &pose, &frame) } else { None };
@@ -607,6 +706,13 @@ fn read_back(
             animator.set_bool(KNOCKED_OUT, false);
         }
         done.push((root, l.body, l.body_local, how, l.takeover.time));
+    }
+    // Corpses at rest leave the takeovers (no more steps or copy-back): the body keeps its last `PhysicsPose` and frame,
+    // the root stays `Held` (and `DeliriumCorpse`).
+    for (root, secs) in corpses {
+        live.remove(&root);
+        stats.corpses += 1;
+        info!("delirium: {root} lies dead, pose frozen ({secs:.1} s after the kill)");
     }
     // The root takes the body's move (heading included, its mover too), and the body its own local transform back.
     // The move carries the floor's height under the takeover's render height: the mover goes to its new render
@@ -748,7 +854,7 @@ fn click(
     }
     let Some((_, root, part, point)) = best else { return };
     info!("delirium: click on {root}, {} ({strength:.0} N s)", mw_delirium::body::NAMES[part]);
-    commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part) }) });
+    commands.entity(root).try_insert(DeliriumReaction { hit: Some(DeliriumHit { point, impulse: dir * strength, part: Some(part) }), knock_down: false, kill: false });
 }
 
 #[cfg(test)]
@@ -758,10 +864,49 @@ mod tests {
     use bevy_ecs::prelude::*;
     use mw_game_core::player::PlayerMode;
 
-    use super::{ClickDot, click_allowed, show_click_dot, spawn_click_dot};
+    use bevy_math::Vec3;
+    use sf_coords::WorldPos;
+
+    use super::{ClickDot, HUMAN_SKELETONS, click_allowed, death_reaction, knockdown_reaction, show_click_dot, spawn_click_dot};
 
     fn mode(on: bool) -> PlayerMode {
         PlayerMode { on, paused: false, body: None, last_ground: None }
+    }
+
+    /// Owner 2026-10-30/11-05: Delirium replaces the powered ragdoll for human knockdowns; beasts, creatures and
+    /// action characters keep it.
+    #[test]
+    fn knockdowns_of_human_walkers_become_takeovers() {
+        let point = WorldPos::ORIGIN.offset(Vec3::Y);
+        let impulse = Vec3::new(20.0, 0.0, 0.0);
+        for skeleton in HUMAN_SKELETONS {
+            let reaction = knockdown_reaction(skeleton, true, point, impulse).expect("a human walker is taken over");
+            assert!(reaction.knock_down, "a knockdown goes down, whatever the push");
+            let hit = reaction.hit.expect("the impact is the takeover's hit");
+            assert_eq!((hit.point, hit.impulse, hit.part), (point, impulse, None));
+            assert!(knockdown_reaction(skeleton, false, point, impulse).is_none(), "an action character (no mover)");
+        }
+        for other in ["meshes/base_animkna.nif", "meshes/r/guar.nif"] {
+            assert!(knockdown_reaction(other, true, point, impulse).is_none(), "{other}: the powered ragdoll");
+        }
+    }
+
+    /// Owner 2026-10-30: Delirium replaces the limp ragdoll for human deaths (terminal, never a knockdown's get-up);
+    /// the killing blow is the hit when there is one; beasts, creatures and action characters keep the old death.
+    #[test]
+    fn deaths_of_human_walkers_become_terminal_takeovers() {
+        let point = WorldPos::ORIGIN.offset(Vec3::Y);
+        for skeleton in HUMAN_SKELETONS {
+            let blow = death_reaction(skeleton, true, point, Vec3::X * 20.0).expect("a human walker dies under Delirium");
+            assert!(blow.kill && !blow.knock_down);
+            assert_eq!(blow.hit.map(|h| (h.point, h.impulse)), Some((point, Vec3::X * 20.0)));
+            let plain = death_reaction(skeleton, true, point, Vec3::ZERO).expect("a death with no blow too");
+            assert!(plain.kill && plain.hit.is_none(), "no blow, no push");
+            assert!(death_reaction(skeleton, false, point, Vec3::ZERO).is_none(), "an action character (no mover)");
+        }
+        for other in ["meshes/base_animkna.nif", "meshes/r/guar.nif"] {
+            assert!(death_reaction(other, true, point, Vec3::ZERO).is_none(), "{other}: the limp ragdoll");
+        }
     }
 
     /// Owner 2026-10-27: the attack's left click also pushed the player's own body (and the dummy) with Delirium,

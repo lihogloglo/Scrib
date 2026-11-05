@@ -33,6 +33,7 @@ mw_combat.workspace = true
 mw_controls_bevy.workspace = true
 mw_doors_bevy.workspace = true
 mw_game_core.workspace = true
+mw_anim.workspace = true
 mw_graphs.workspace = true
 mw_walkers_bevy.workspace = true
 mw_world.workspace = true
@@ -43,6 +44,7 @@ sf_anim_bevy.workspace = true
 sf_anim_graph.workspace = true
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
+sf_character.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_combat.workspace = true
 sf_combat_bevy.workspace = true

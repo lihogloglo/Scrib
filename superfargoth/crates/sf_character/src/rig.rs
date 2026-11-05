@@ -3,7 +3,7 @@
 //! provides one, or [`crate::auto_map`] detects it and
 //! [`crate::auto_align`] fills the retarget pose.
 
-use glam::{Affine3A, Quat};
+use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use sf_anim::{
     Chain as ProfileChain, LegKind, LimbDesc, LimbKind, LimbSolver, NeckHead, ProfileParts, RetargetChain, RetargetRig, RigProfile, RigTemplate,
@@ -294,7 +294,7 @@ impl RigMap {
                 Some(NeckHead {
                     neck: ProfileChain { name: "neck".into(), joints: neck },
                     head: u16_of(head),
-                    forward: (rot.inverse() * glam::Vec3::Z).normalize_or(glam::Vec3::Z),
+                    forward: (rot.inverse() * Vec3::Z).normalize_or(Vec3::Z),
                     eyes: eyes.into_iter().map(u16_of).collect(),
                 })
             }
@@ -329,6 +329,35 @@ fn path(skeleton: &Skeleton, from: usize, to: usize) -> Vec<String> {
     }
     out.reverse();
     out.into_iter().map(|j| skeleton.name(j).to_owned()).collect()
+}
+
+impl RigMap {
+    /// A hand's palm axes in the hand joint's own frame, from the rest pose (unit, orthogonal):
+    /// the fingers' direction (the mean of the mapped non-thumb fingers' roots) and the palm's
+    /// normal, out of the palm. The across-the-palm axis runs from the little-finger side to the
+    /// index (the thumb's side); with one non-thumb finger mapped, toward the thumb's root. In
+    /// right-handed coordinates the left palm faces fingers × thumbward, the right the reverse,
+    /// whatever the rig's local axes. For a host that turns a hand flat onto a surface
+    /// (`sf_action` wall brace). `None` without a hand, a finger and a second point, or when they
+    /// line up.
+    pub fn palm_axes(&self, skeleton: &Skeleton, side: Side) -> Option<(Vec3, Vec3)> {
+        let joint = |b: HumanoidBone| self.joint(b).and_then(|n| skeleton.find(n));
+        let hand = joint(HumanoidBone::limb(side, Limb::Hand)?)?;
+        let model = skeleton.rest_model();
+        let to_hand = model[hand].inverse();
+        // A finger's root (its first mapped segment), in the hand's frame.
+        let root = |f: Finger| {
+            (0..3).find_map(|s| HumanoidBone::finger(side, f, s).and_then(joint)).map(|j| to_hand.transform_point3(model[j].translation.into()))
+        };
+        let fingers: Vec<Vec3> = Finger::ALL.into_iter().filter(|f| *f != Finger::Thumb).filter_map(root).collect();
+        let (&first, &last) = (fingers.first()?, fingers.last()?);
+        #[allow(clippy::cast_precision_loss)]
+        let along = (fingers.iter().sum::<Vec3>() / fingers.len() as f32).normalize_or_zero();
+        let across = if fingers.len() >= 2 { first - last } else { root(Finger::Thumb)? };
+        let across = across - along * across.dot(along);
+        let palm = (along.cross(across) * side.sign()).normalize_or_zero();
+        (along != Vec3::ZERO && palm != Vec3::ZERO && along.is_finite() && palm.is_finite()).then_some((along, palm))
+    }
 }
 
 /// Local transforms to model space.

@@ -132,12 +132,14 @@ const PLAYER_CHARACTER: CharacterId = CharacterId(1);
 /// The traversal slots the player's rules use (`sf_action::TRAVERSAL_RULES`).
 pub const TRAVERSAL_SLOTS: &[&str] = &["traverse.mantle.waist", "traverse.mantle.high"];
 
-/// Every slot the player's rules play a baked clip in: [`TRAVERSAL_SLOTS`] and the combat
-/// sheet's ([`mw_combat::sheet_slots`]). The host loads their clips from the baked humanoid graph.
+/// Every slot the player plays a baked clip in: [`TRAVERSAL_SLOTS`], the combat sheet's
+/// ([`mw_combat::sheet_slots`]) and its draw and sheathe clips ([`mw_combat::SWORD_1H_DRAW`],
+/// [`combat::Stance`]). The host loads their clips from the baked humanoid graph.
 #[must_use]
 pub fn player_slots() -> Vec<String> {
     let combat = mw_combat::sheet_slots(mw_combat::SWORD_1H).unwrap_or_default();
-    TRAVERSAL_SLOTS.iter().map(|s| (*s).to_owned()).chain(combat).collect()
+    let draw = [mw_combat::SWORD_1H_DRAW, mw_combat::SWORD_1H_SHEATHE];
+    TRAVERSAL_SLOTS.iter().chain(&draw).map(|s| (*s).to_owned()).chain(combat).collect()
 }
 
 /// A baked slot clip: its length and root track (action.md B2a; a cooked clip is a `RootPath`).

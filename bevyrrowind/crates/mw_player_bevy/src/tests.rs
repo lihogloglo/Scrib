@@ -258,7 +258,7 @@ fn keymap_with(gameplay: &str) -> sf_ui::Keymap {
     keymap
 }
 
-fn hold_key(app: &mut App, key: KeyCode, down: bool) {
+pub(crate) fn hold_key(app: &mut App, key: KeyCode, down: bool) {
     let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
     if down { keys.press(key) } else { keys.release(key) }
 }

@@ -90,6 +90,107 @@ fn pushed_takeover_ends_in_a_hand_back() {
     assert_ne!(h, HandBack::Exploded);
 }
 
+/// Knockdowns (owner 2026-10-30: Delirium replaces the powered ragdoll; `Takeover::knock_down`): the walkers'
+/// threshold (15 N s, a `V` ball at full throw) and the level scripts' default (25 N s at 1.2 m), from the side, the
+/// front and the back: each hands back, no blow-up, no NaN. Whether it fell is printed (a measurement, not a limit).
+#[test]
+fn knockdown_impulses_hand_back() {
+    let Some(f) = fixture() else { return };
+    for (impulse, dir) in [(15.0, Vec3::X), (25.0, Vec3::X), (25.0, Vec3::Y), (25.0, Vec3::NEG_Y)] {
+        let (parts, prev) = rest_parts(f, Vec3::ZERO);
+        let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+        let chest = t.frames()[10].translation;
+        t.push(10, chest, dir * impulse);
+        t.knock_down();
+        let out = run(&mut t, 25.0);
+        println!("knockdown {impulse} N s along {dir}: {out:?}, fell {}, behaviour {}", t.fell(), t.behaviour);
+        let (h, _) = out.expect("a hand-back within 25 s");
+        assert_ne!(h, HandBack::Exploded);
+        assert!(t.frames().iter().all(|p| p.translation.is_finite() && p.rotation.is_finite()), "NaN in the parts");
+    }
+}
+
+/// A death's run (`Takeover::kill`): steps until settled (at most `secs`); `Err` on any hand-back. Returns the seconds
+/// to the fall and to the settle after the kill.
+fn run_dead(t: &mut Takeover, secs: f32) -> Result<(Option<f32>, Option<f32>), HandBack> {
+    let (start, mut fell) = (t.time, None);
+    for _ in 0..(secs / DT) as u32 {
+        if let Some(h) = t.step(DT) {
+            return Err(h);
+        }
+        if fell.is_none() && t.fell() {
+            fell = Some(t.time - start);
+        }
+        if t.settled() {
+            return Ok((fell, Some(t.time - start)));
+        }
+    }
+    Ok((fell, None))
+}
+
+/// Death (owner 2026-10-30: Delirium replaces the limp ragdoll): killed standing (no push, and a 25 N s chest hit) and
+/// killed while down after a knockdown, the body falls, is never handed back, stays finite and above the floor, and
+/// settles (the host then freezes it). Sanity only; times in `death_settle_times`.
+#[test]
+fn killed_takeover_falls_and_settles() {
+    let Some(f) = fixture() else { return };
+    let mut cases: Vec<(&str, Takeover)> = Vec::new();
+    for (name, impulse) in [("standing", 0.0), ("hit", 25.0)] {
+        let (parts, prev) = rest_parts(f, Vec3::ZERO);
+        let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+        if impulse > 0.0 {
+            let chest = t.frames()[10].translation;
+            t.push(10, chest, Vec3::X * impulse);
+        }
+        t.kill();
+        cases.push((name, t));
+    }
+    let (parts, prev) = rest_parts(f, Vec3::ZERO);
+    let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+    let chest = t.frames()[10].translation;
+    t.push(10, chest, Vec3::Y * 25.0);
+    t.knock_down();
+    for _ in 0..(10.0 / DT) as u32 {
+        assert!(t.step(DT).is_none_or(|h| h != HandBack::Exploded), "knockdown blew up");
+        if t.fell() {
+            break;
+        }
+    }
+    assert!(t.fell(), "the knockdown went down");
+    t.kill();
+    cases.push(("down", t));
+    for (name, mut t) in cases {
+        assert_eq!(t.behaviour, "catchFall", "{name}: the balancer gave up");
+        let out = run_dead(&mut t, 30.0);
+        println!("death {name}: {out:?}, relaxed {}", t.relaxed);
+        let (_, settled) = out.unwrap_or_else(|h| panic!("{name}: a dead body is never handed back ({h:?})"));
+        assert!(t.fell(), "{name}: the body fell");
+        assert!(settled.is_some(), "{name}: settled");
+        assert!(t.frames().iter().all(|p| p.translation.is_finite() && p.rotation.is_finite()), "{name}: NaN in the parts");
+        assert!(t.frames().iter().all(|p| p.translation.z > t.floor - 0.3), "{name}: a part through the floor");
+        let before = t.frames();
+        assert!(t.step(DT).is_none() && t.frames() == before, "{name}: a settled body is not stepped");
+    }
+}
+
+#[test]
+#[ignore = "measurement: a death's fall and settle times, final pelvis height"]
+fn death_settle_times() {
+    let Some(f) = fixture() else { return };
+    for (impulse, dir) in [(0.0, Vec3::X), (25.0, Vec3::X), (25.0, Vec3::NEG_Y), (60.0, Vec3::Y)] {
+        let (parts, prev) = rest_parts(f, Vec3::ZERO);
+        let mut t = Takeover::start(&f.body, &parts, Some((&prev, DT)), None, 0.0, 0.3, Rules::default());
+        let chest = t.frames()[10].translation;
+        if impulse > 0.0 {
+            t.push(10, chest, dir * impulse);
+        }
+        t.kill();
+        let out = run_dead(&mut t, 30.0);
+        let pelvis = t.frames()[0].translation.z - t.floor;
+        println!("death {impulse} N s along {dir}: (fall s, settle s) {out:?}, pelvis {pelvis:.2} m over the floor");
+    }
+}
+
 #[test]
 fn falling_pose_starts_catch_fall() {
     let Some(f) = fixture() else { return };

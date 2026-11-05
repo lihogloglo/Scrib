@@ -85,7 +85,7 @@ pub enum Control {
     Use,
     ToggleView,
     Inventory,
-    /// Light attack (`ActionClass::Light`); while the weapon is sheathed it draws instead.
+    /// Light attack (`ActionClass::Light`); only with the weapon drawn (sheathed it does nothing).
     Attack,
     /// Heavy attack (`ActionClass::Heavy`, Elden Ring's R2).
     HeavyAttack,

@@ -12,6 +12,14 @@ use sf_combat::{CompiledSheet, Defense, Fighter, HurtShape, Offense, Pool, Sheet
 /// The one-handed sword sheet (combat.md "C1b" first sheet values).
 pub const SWORD_1H: &str = include_str!("../data/movesets/sword_1h.ron");
 
+/// The sword sheet's draw clip: `base_anim`'s `WeaponOneHand` equip section, a slot clip of the
+/// humanoid graph (its `upper` slot plays it over locomotion). Its `Equip Attach` text key
+/// (`mw_anim::events::EQUIP_ATTACH`) is where the weapon reaches the hand.
+pub const SWORD_1H_DRAW: &str = "WeaponOneHand@equip";
+/// The sword sheet's sheathe clip (`WeaponOneHand` unequip section); its `Unequip Detach` key
+/// (`mw_anim::events::UNEQUIP_DETACH`) is where the weapon leaves the hand.
+pub const SWORD_1H_SHEATHE: &str = "WeaponOneHand@unequip";
+
 /// Modern stamina = record fatigue x this (Morrowind.esm's player: 200 fatigue -> 100 stamina).
 pub const STAMINA_PER_FATIGUE: f32 = 0.5;
 

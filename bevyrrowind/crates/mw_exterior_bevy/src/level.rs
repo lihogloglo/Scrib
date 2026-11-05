@@ -144,7 +144,7 @@ pub fn add(app: &mut App, setup: LevelSetup) {
         // After Startup's commands: the viewer's `setup` creates the worldspace root.
         .add_systems(PreStartup, interior_environment)
         .add_systems(PostStartup, (spawn, spawn_lights).chain())
-        .add_systems(Update, orbit_lights)
+        .add_systems(Update, (orbit_lights, equip_player))
         .add_systems(Last, report_ready);
 }
 
@@ -261,6 +261,18 @@ fn spawn(
         level.actors.len(),
         started.elapsed().as_secs_f64() * 1e3
     );
+}
+
+/// The level's `player_held` items are the player's equipment (each new avatar; CB-3): its
+/// weapon shows while drawn (F).
+fn equip_player(mut commands: Commands, level: Res<ActiveLevel>, avatars: Query<Entity, Added<mw_game_core::player::PlayerAvatar>>) {
+    let held = &level.0.level.player_held;
+    if held.is_empty() {
+        return;
+    }
+    for avatar in &avatars {
+        commands.entity(avatar).insert(mw_actors_bevy::held::EquippedHeld(held.clone()));
+    }
 }
 
 /// A light of the level's [`sf_level::LightRig`] (its index in [`sf_level::LightRig::positions`]).

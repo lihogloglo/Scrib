@@ -16,6 +16,9 @@
 //! only past [`Rules::roll_tolerance`]. Once down and slowing it goes limp holding its pose
 //! ([`Rules::down_relax`], `bodyRelax`): no balancer fidgeting on the floor.
 //!
+//! Death ([`Takeover::kill`], terminal): `catchFall` to the floor, then near-limp `bodyRelax`; no get-up, no hand-back;
+//! once at rest it is [`Takeover::settled`] and the host freezes the corpse's pose (no stepping forever).
+//!
 //! Bevy-free. The host turns the animated pose into part frames ([`crate::bones_to_parts`], sim space: Z up, metres,
 //! the actor's own authoring frame at the takeover), steps [`Takeover::step`] at a fixed rate and copies the parts back
 //! ([`crate::pose_to_bones`]) every frame. [`pick`] finds the part under a ray (the dev click tool).
@@ -50,8 +53,14 @@ pub struct Rules {
     /// Down and slower than this (centre of mass, m/s): Delirium stops its behaviours and relaxes the body
     /// (`bodyRelax`, holding the pose), Euphoria's lying state: no balancer fidgeting on the floor (DE-1).
     /// `None`: the takeover's behaviour runs on.
-    pub down_relax: Option<f32>,    /// `bodyRelax` relaxation (0 stiff .. 100 limp) and damping (a multiplier of the muscle damping).
+    pub down_relax: Option<f32>,
+    /// `bodyRelax` relaxation (0 stiff .. 100 limp) and damping (a multiplier of the muscle damping).
     pub relax: (f32, f32),
+    /// The same for a dead body ([`Takeover::kill`]): near limp, relaxed as soon as it is down.
+    pub dead_relax: (f32, f32),
+    /// A dead body settles (the host freezes it, [`Takeover::settled`]) once at rest ([`Self::rest`]'s speed) this
+    /// long, s, at least [`Self::min_secs`] after the kill; or this long after the kill anyway, s.
+    pub corpse_secs: (f32, f32),
     /// Balancing this long without coming to rest: hand back anyway, s.
     pub max_secs: f32,
     /// Pelvis sinking faster than this at the takeover: start with `catchFall` instead of `bodyBalance`, m/s.
@@ -95,6 +104,8 @@ impl Default for Rules {
             rest: (0.1, 0.3),
             down_relax: Some(0.5),
             relax: (50.0, 3.0),
+            dead_relax: (90.0, 2.0),
+            corpse_secs: (1.0, 20.0),
             max_secs: 15.0,
             falling_speed: 1.0,
             max_velocity: (8.0, 15.0),
@@ -160,6 +171,10 @@ pub struct Takeover {
     picked_at: Vec<f32>,
     /// Whether the body relaxed on the floor ([`Rules::down_relax`]).
     pub relaxed: bool,
+    /// Seconds since the kill (`Some` once [`Takeover::kill`]ed: terminal, never handed back).
+    pub dead: Option<f32>,
+    /// A dead body at rest ([`Rules::corpse_secs`]): no more steps, the host freezes its pose.
+    settled: bool,
 }
 
 /// The torso parts the roll-over turns (Buttocks, Spine0-3); the limbs follow through the joints.
@@ -289,6 +304,8 @@ impl Takeover {
             chosen: None,
             picked_at: Vec::new(),
             relaxed: false,
+            dead: None,
+            settled: false,
         };
         t.last_com = t.com().0;
         t.send(behaviour, &[("start", Value::Bool(true))]);
@@ -318,11 +335,57 @@ impl Takeover {
         self.blending = false;
     }
 
+    /// A knockdown (the game decided the character goes down, whatever the push): the balancer gives up and
+    /// `catchFall` protects the body on its way to the floor (Euphoria's knockdown: no `bodyBalance`, the hands catch
+    /// the fall), then the usual down path (relax, roll-over, get-up). A no-op when it is already falling or down.
+    pub fn knock_down(&mut self) {
+        if self.behaviour == "catchFall" || self.down.is_some() {
+            return;
+        }
+        self.send("stopAllBehaviours", &[]);
+        self.behaviour = "catchFall";
+        self.send("catchFall", &[("start", Value::Bool(true))]);
+        self.blending = false;
+    }
+
+    /// Death (terminal; a no-op when already dead): the balancer gives up and `catchFall` takes the body down as in
+    /// [`Self::knock_down`] (Euphoria's death: no balance, the fall, then `bodyRelax`); once down it relaxes near limp
+    /// ([`Rules::dead_relax`]), never picks a get-up and is never handed back: [`Self::step`] returns only
+    /// [`HandBack::Exploded`], and once at rest [`Self::settled`] (the host stops stepping and freezes the pose). A kill
+    /// on a body already down (a knockdown) relaxes it at once and cancels its roll-over.
+    pub fn kill(&mut self) {
+        if self.dead.is_some() {
+            return;
+        }
+        self.dead = Some(0.0);
+        self.blending = false;
+        self.resting = 0.0;
+        (self.rolling, self.chosen) = (None, None);
+        if self.down.is_some() {
+            self.relax();
+        } else if self.behaviour != "catchFall" {
+            self.send("stopAllBehaviours", &[]);
+            self.behaviour = "catchFall";
+            self.send("catchFall", &[("start", Value::Bool(true))]);
+        }
+    }
+
+    /// Whether it was killed ([`Self::kill`]).
+    pub fn is_dead(&self) -> bool {
+        self.dead.is_some()
+    }
+
+    /// A dead body at rest ([`Rules::corpse_secs`]): stepping it changes nothing more (the host freezes it).
+    pub fn settled(&self) -> bool {
+        self.settled
+    }
+
     /// Lying on the floor: stops the behaviours (the balancer, `catchFall`) and relaxes the body holding its pose
-    /// ([`Rules::relax`]), as Euphoria's `bodyRelax` once down. The roll-over before the get-up pushes it.
+    /// ([`Rules::relax`]; dead, [`Rules::dead_relax`]), as Euphoria's `bodyRelax` once down. The roll-over before the
+    /// get-up pushes it.
     fn relax(&mut self) {
         self.relaxed = true;
-        let (relaxation, damping) = self.rules.relax;
+        let (relaxation, damping) = if self.dead.is_some() { self.rules.dead_relax } else { self.rules.relax };
         self.send("stopAllBehaviours", &[]);
         self.send(
             "bodyRelax",
@@ -441,8 +504,12 @@ impl Takeover {
         self.down.is_some()
     }
 
-    /// One step of `dt` seconds; `Some` when the character goes back to the animation.
+    /// One step of `dt` seconds; `Some` when the character goes back to the animation (dead: only
+    /// [`HandBack::Exploded`]; a settled body is not stepped).
     pub fn step(&mut self, dt: f32) -> Option<HandBack> {
+        if self.settled {
+            return None;
+        }
         self.agent.step(&self.build, &self.world, dt, &[], &[]);
         self.time += dt;
         let frames = self.frames();
@@ -460,6 +527,22 @@ impl Takeover {
         self.calm = if calm { self.calm + dt } else { 0.0 };
         if self.down.is_none() && (self.agent.fallen || frames[0].translation.z - self.floor < self.rules.fallen_ratio * self.stand) {
             self.down = Some(0.0);
+        }
+        if let Some(dead) = &mut self.dead {
+            *dead += dt;
+            let dead = *dead;
+            if let Some(down) = &mut self.down {
+                *down += dt;
+            }
+            let rate = if self.rules.blend_in > 0.0 { dt / self.rules.blend_in } else { 1.0 };
+            self.weight = (self.weight + rate).min(1.0);
+            // Down: limp at once (no speed wait, no roll-over, no get-up).
+            if self.down.is_some() && !self.relaxed {
+                self.relax();
+            }
+            let (rest, max) = self.rules.corpse_secs;
+            self.settled = (dead >= self.rules.min_secs && self.resting >= rest) || dead >= max;
+            return None;
         }
         // Blend-out once recovered; a new catch step or a fall cancels it (a push too, `push`).
         if self.down.is_none() && self.time >= self.rules.min_secs && (still || self.calm >= self.rules.recover_secs) {

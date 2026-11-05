@@ -395,6 +395,26 @@ fn auto_maps_biped_naming() {
     assert!(map.validate(&skeleton).is_empty());
 }
 
+/// Palm axes from the rest pose, whatever the joints' local axes: the T-pose's palms face down,
+/// fingers out along ±X; a hand without fingers has none.
+#[test]
+fn palm_axes_come_from_the_rest_pose_fingers() {
+    let skeleton = biped().build(false, false);
+    let (map, _) = auto_map(&skeleton);
+    let model = skeleton.rest_model();
+    for (side, out) in [(Side::Left, Vec3::X), (Side::Right, Vec3::NEG_X)] {
+        let (fingers, palm) = map.palm_axes(&skeleton, side).expect("a palm");
+        let hand = skeleton.find(map.joint(HumanoidBone::limb(side, Limb::Hand).unwrap()).unwrap()).unwrap();
+        let rot = model[hand].to_scale_rotation_translation().1;
+        assert!((rot * fingers).dot(out) > 0.95, "{side:?}: fingers {}", rot * fingers);
+        assert!((rot * palm).dot(Vec3::NEG_Y) > 0.99, "{side:?}: palm {}", rot * palm);
+        assert!(fingers.dot(palm).abs() < 1e-4);
+    }
+    let mut bare = map.clone();
+    bare.bones.retain(|(_, b)| b.finger_of().is_none());
+    assert_eq!(bare.palm_axes(&skeleton, Side::Left), None);
+}
+
 #[test]
 fn auto_maps_mixamo_naming() {
     let skeleton = mixamo().build(false, false);

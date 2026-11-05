@@ -1567,3 +1567,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   (BC7 KTX2, on by default); vanilla flicker band and negative lights skipped. New crates are fine (added with hakari).
 - 2026-11-05 (owner pass): short unshadowed lamp reach (1.5 x radius) **rejected**: lit towns at night and interiors matter more than
   light leaking through walls; default back to 4 x, `ShadowReach` kept. Through-wall leaks wait for more/cheaper lamp shadows (H2).
+- 2026-11-05 (owner "old ragdoll still in the game"): the app's `delirium` feature is **on by default** (release too), so default
+  game binaries are GPL-3.0-only; the free-camera click push stays dev-only (`delirium_push`, in `dev`). Fine with DLSS because
+  the player fetches NVIDIA's runtime (setup screen); only a package bundling a vendor runtime must use `--no-default-features`.

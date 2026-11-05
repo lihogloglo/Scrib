@@ -118,7 +118,8 @@ at scale 1; creatures keep their capsules' volume × 1000 kg/m³ (no skin extent
 ROADMAP M4 P7); models naming `ghost`, `spect`, `wraith` or `wisp` keep the death clip (`RagdollPolicy::DeathClip`).
 `mw_bake::ragdoll` (`MwRagdollRules`, `bake_ragdolls`) cooks every actor skeleton but first-person ones inside
 `bevyrrowind bake`'s actor phase (census line `ragdolls:`; `BEVYRROWIND_RAGDOLL_REPORT=1` lists every skeleton). The
-app's debug driver: `I` kills the character nearest the crosshair (graph `dead` flag, root `Dead`, so mover `Held`, `Ragdoll`
+app's debug driver: console `kill` (was `I`) kills the walker nearest the crosshair (human walkers: Delirium, combat-adapter.md
+"Ragdoll routing"; others: graph `dead` flag, root `Dead`, so mover `Held`, `Ragdoll`
 after a 0.4 s death clip); corpses drag by the grabbed limb through the P6 carry driver.
 
 ## Cloth

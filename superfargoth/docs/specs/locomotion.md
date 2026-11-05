@@ -135,6 +135,17 @@ sub-steps at 60 Hz (no closed form). A 0 half-life and an infinite rate snap (a 
 preset). `sf_action` asks for the gait's forward speed whatever the current facing (the body
 turns to face the stick). Player numbers: `mw_player_bevy::feel` (visual check PL-4).
 
+**Collide and slide, wall stop (as built 2026-11-05, owner AL-11).** Plain collide-and-slide (Fauerby
+2003; UE `SlideAlongSurface`, Unity `CharacterController`) keeps the tangential part of any push, so a
+run nearly straight at a wall drifted sideways at sin(angle) of the speed and the facing turned along
+it (orient-to-movement `deflect`): the graph played a side step. Fix: Godot's `wall_min_slide_angle`
+(`CharacterBody3D`, default 15°): `MoverParams::wall_stop_deg` (default 30°, from head-on; 0 always
+slides). A wall-sweep contact within it drops the remainder and the horizontal velocity and sets no
+`deflect`, so the body stands at the wall facing its goal; grazing contacts slide as before. Applies to
+every character (path walkers hit walls nearly head-on only on a broken path); slopes too steep to climb
+keep sliding. 30° rather than Godot's top-down 15° because a third-person stick push "straight" at a
+wall is often 15-25° off its normal. Test `head_on_walls_stop_and_grazing_walls_slide`.
+
 ## Verification
 
 - Unit tests: spring convergence and no overshoot; trajectory prediction
@@ -316,7 +327,7 @@ J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9m3.md`).
 
 | Technique | What shipped engines do | Us | Verdict |
 |---|---|---|---|
-| Capsule mover | UE Character Movement Component: floor finding, step-up, walkable slope, root motion from montages applied by the component; Unity `CharacterController` (slope limit, step offset); Creation Engine: Havok character proxy (unverified detail); OpenMW: its own movement solver over Bullet shapes (collision shape type: axis-aligned box by default, rotating box or cylinder) | `KinematicMover`: probe-based ground snap, step up/down, slope limit, slide | **match**; M4 swaps in a physics capsule as planned |
+| Capsule mover | UE Character Movement Component: floor finding, step-up, walkable slope, root motion from montages applied by the component; Unity `CharacterController` (slope limit, step offset); Creation Engine: Havok character proxy (unverified detail); OpenMW: its own movement solver over Bullet shapes (collision shape type: axis-aligned box by default, rotating box or cylinder) | `KinematicMover`: probe-based ground snap, step up/down, slope limit, slide with a head-on wall stop (Godot `wall_min_slide_angle`) | **match**; M4 swaps in a physics capsule as planned |
 | Animation-aware trajectory | Clavet (*For Honor*), UE GASP and Pose Search trajectories, Holden's spring-damper prediction | five predicted points from the same springs | **match** |
 | Root motion handoff | UE: the movement component consumes the montage's root motion next tick; Unity `OnAnimatorMove` | the mover consumes last frame's `Drive` delta | **match** (one frame latency, the norm) |
 | Turn toward movement | OpenMW "turn to movement direction" (lower body turns on side and diagonal moves, head follows the view) and "smooth movement"; UE orientation warping | `desired_facing` + `OrientationWarp` (animation.md) | **match** |

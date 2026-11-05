@@ -390,7 +390,8 @@ fn short_steep_bevels_onto_ledges_are_stepped_over() {
 /// path runs into ground too steep to climb, or a wall, at a shallow angle
 /// slides along it; with no facing in its intent it turns to face that
 /// motion, so its graph is fed a forward walk (not a slow strafe while
-/// facing the slope). Head-on it keeps facing its goal.
+/// facing the slope). Head-on it keeps facing its goal (a wall within the
+/// stop angle stops it: `head_on_walls_stop_and_grazing_walls_slide`).
 #[test]
 fn deflected_walkers_face_where_they_go() {
     let params = MoverParams::default();
@@ -399,10 +400,11 @@ fn deflected_walkers_face_where_they_go() {
     slope.add_ramp(1.0, 60f32.to_radians());
     let mut wall = World::new();
     wall.add_box(Vec3::new(1.0, 0.0, -3.0), Vec3::new(1.5, 2.5, 6.0));
-    for (name, world) in [("slope", &slope), ("wall", &wall)] {
-        // 75° from the contour (+Z): the surface leaves a quarter of the speed.
-        let mut loco = Locomotion::new(p(0.6, 0.0, -2.0), 75f32.to_radians());
-        walk(world, &mut loco, toward(asked(75.0)), &params, 120, |_| {});
+    for (name, world, deg) in [("slope", &slope, 75f32), ("wall", &wall, 45.0)] {
+        // 75° from the contour (+Z): the slope leaves a quarter of the speed;
+        // the wall at 45° (past its stop angle) about 70%.
+        let mut loco = Locomotion::new(p(0.6, 0.0, -2.0), deg.to_radians());
+        walk(world, &mut loco, toward(asked(deg)), &params, 120, |_| {});
         let local = loco.motion.local_velocity();
         assert!(xyz(loco.position).x < 1.05, "{name}: went through, at {}", xyz(loco.position));
         assert!(local.z > 0.4 && local.x.abs() < 0.1 * local.z, "{name}: local velocity {local} (yaw {})", loco.motion.yaw);
@@ -416,6 +418,60 @@ fn deflected_walkers_face_where_they_go() {
     let intent = LocomotionIntent { desired_facing: Some(FRAC_PI_2), ..toward(asked(75.0)) };
     walk(&slope, &mut loco, intent, &params, 120, |_| {});
     assert!((loco.motion.yaw - FRAC_PI_2).abs() < 0.01, "strafe yaw {}", loco.motion.yaw);
+}
+
+/// Wall stop (`MoverParams::wall_stop_deg`, Godot's `wall_min_slide_angle`;
+/// owner check AL-11): pushed within the stop angle of a wall's normal, the
+/// character stands against it facing its goal with no along-wall drift;
+/// a grazing push still slides. Both spring kinds (NPC springs, a player's
+/// rate-capped steering). A zero angle always slides.
+#[test]
+fn head_on_walls_stop_and_grazing_walls_slide() {
+    let mut wall = World::new();
+    wall.add_box(Vec3::new(1.0, 0.0, -10.0), Vec3::new(2.0, 3.0, 10.0));
+    let npc = MoverParams::default();
+    let springs = SpringParams { halflife_velocity: 0.1, halflife_brake: Some(0.05), turn: Some(TurnRates::uniform(9.0)), ..SpringParams::default() };
+    let player = MoverParams { springs, ..npc };
+    let contact = 1.0 - npc.radius - npc.skin;
+    // `deg` from the wall's normal (-X), toward +Z; 4 m/s.
+    let asked = |deg: f32| Vec3::new(deg.to_radians().cos(), 0.0, deg.to_radians().sin()) * 4.0;
+    let yaw = |deg: f32| FRAC_PI_2 - deg.to_radians();
+    for (name, params) in [("npc", &npc), ("player", &player)] {
+        for deg in [0.0, 10.0, 20.0, 28.0] {
+            // Standing at the wall.
+            let mut loco = Locomotion::new(p(contact, 0.0, 0.0), yaw(deg));
+            walk(&wall, &mut loco, toward(asked(deg)), params, 120, |_| {});
+            let at = xyz(loco.position);
+            assert!(at.z.abs() < 0.01 && at.x <= contact + npc.skin, "{name} {deg}°: drifted to {at}");
+            assert!(horizontal_speed(&loco) < 1e-3, "{name} {deg}°: velocity {}", loco.motion.velocity);
+            assert!(wrap_angle(loco.motion.yaw - yaw(deg)).abs() < 0.05, "{name} {deg}°: turned to {}", loco.motion.yaw);
+            assert_eq!(loco.deflect, Vec3::ZERO, "{name} {deg}°");
+            // Running in from 1.5 m: stops where it meets the wall.
+            let mut loco = Locomotion::new(p(contact - 1.5, 0.0, 0.0), yaw(deg));
+            let mut met = None;
+            walk(&wall, &mut loco, toward(asked(deg)), params, 120, |l| {
+                if met.is_none() && xyz(l.position).x > contact - 1e-3 {
+                    met = Some(xyz(l.position).z);
+                }
+            });
+            let met = met.unwrap_or_else(|| panic!("{name} {deg}°: never reached the wall"));
+            assert!((xyz(loco.position).z - met).abs() < 0.01, "{name} {deg}°: met at z {met}, ended at {}", xyz(loco.position));
+        }
+        for deg in [40.0, 60.0, 75.0] {
+            let mut loco = Locomotion::new(p(contact, 0.0, 0.0), yaw(deg));
+            walk(&wall, &mut loco, toward(asked(deg)), params, 120, |_| {});
+            let at = xyz(loco.position);
+            assert!(at.z > 1.0 && at.x < 1.0 - npc.radius + 5e-3, "{name} {deg}°: didn't slide, at {at}");
+        }
+    }
+    // Disabled: a 20° push slides.
+    let mut loco = Locomotion::new(p(contact, 0.0, 0.0), yaw(20.0));
+    walk(&wall, &mut loco, toward(asked(20.0)), &MoverParams { wall_stop_deg: 0.0, ..npc }, 120, |_| {});
+    assert!(xyz(loco.position).z > 1.0, "no stop angle: at {}", xyz(loco.position));
+}
+
+fn horizontal_speed(loco: &Locomotion) -> f32 {
+    Vec3::new(loco.motion.velocity.x, 0.0, loco.motion.velocity.z).length()
 }
 
 #[test]

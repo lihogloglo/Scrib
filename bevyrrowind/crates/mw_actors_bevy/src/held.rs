@@ -14,6 +14,10 @@
 //! - **Stance.** The graph's `stance` parameter follows the readiness and
 //!   the main-hand weapon (`mw_graphs::Stance::of_weapon`); its `torch`
 //!   parameter raises the torch arm while a light shows in the off hand.
+//! - **Equipped by hand.** A character with [`EquippedHeld`] (the player:
+//!   the original never auto-equips it) holds those items
+//!   (`mw_actors::held::equipped`) instead of the record's auto-equip and
+//!   the dark rule; the host draws them with `CharacterReadiness`.
 
 use std::sync::Arc;
 
@@ -76,6 +80,12 @@ pub const TORCH_SHADOW_PRIORITY: f32 = 1.0;
 /// Marks the point light on a held item (a child of its `HeldLightSlot`).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct HeldTorch;
+
+/// Items an `NPC_` character holds equipped by hand (record ids, in equip
+/// order): its held items follow them, not the auto-equip and dark rules
+/// (module docs). The player's equipment until an equip screen writes it.
+#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+pub struct EquippedHeld(pub Vec<String>);
 
 /// The character carrying a held light.
 #[derive(Component, Clone, Copy, Debug)]
@@ -216,19 +226,25 @@ fn carry_lights_when_dark(
     mut darkness: ResMut<HeldDarkness>,
     time: Option<Res<sf_sky_bevy::SkyTime>>,
     config: Option<Res<sf_sky_bevy::SkyConfig>>,
-    mut characters: Query<&mut Character>,
+    mut characters: Query<(&mut Character, Option<Ref<EquippedHeld>>)>,
 ) {
     let dark = darkness.forced.unwrap_or_else(|| clock_dark(time.as_deref(), config.as_deref()));
     let changed = darkness.applied != Some(dark);
     if changed {
         darkness.applied = Some(dark);
     }
-    for mut character in &mut characters {
-        if !changed && !character.is_added() {
+    for (mut character, equipped) in &mut characters {
+        if !changed && !character.is_added() && !equipped.as_ref().is_some_and(Ref::is_changed) {
             continue;
         }
         let Character::Record { kind, id, state } = &*character else { continue };
-        let held = held_override(&rules.0, kind, id, dark);
+        let held = match &equipped {
+            Some(e) => {
+                let items: Vec<&str> = e.0.iter().map(String::as_str).collect();
+                rules.0.actors().held_equipped(id, &items).inspect_err(|err| bevy_log::warn!("held items of {kind}:{id}: {err}")).ok()
+            }
+            None => held_override(&rules.0, kind, id, dark),
+        };
         if state.held != held
             && let Character::Record { state, .. } = &mut *character
         {

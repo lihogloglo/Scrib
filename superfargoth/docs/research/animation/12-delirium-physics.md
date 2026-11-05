@@ -362,7 +362,7 @@ Supersedes R9 above: Delirium entered the game as ROADMAP 3.2b, not as the FOLLO
   for 0.5 s; down = `agent.fallen` or pelvis < 50 %, then 1.5-4 s). `pick`: ray vs part capsules. Tests (real install):
   rest-pose takeover hands back Balanced at 1.0 s; 80 N s at scale 1.05 Balanced at 2.9 s; a falling pose starts
   catchFall, Fallen at 2.7 s; picks hit the aimed part; 0.42 ms/step.
-- `mw_delirium_bevy` (app feature `delirium`, in `dev`): request `DeliriumReaction` on the root; two posed frames, then
+- `mw_delirium_bevy` (app feature `delirium`, default since 2026-11-05; click push `delirium_push`, in `dev`): request `DeliriumReaction` on the root; two posed frames, then
   takeover, root `Dormant`; FixedUpdate step; copy-back as `PhysicsPose` weight 1 (the ragdoll path: ops skip, no root
   motion), parts interpolated by the fixed overstep; body frame on the floor under the pelvis (heading from the hips),
   uniform scale until hand-back. Floor (audit F5, 2026-10-26): one `Physics` ray down from the pelvis (no hit: the render
@@ -394,3 +394,14 @@ once ready and rolls only past `roll_tolerance` (20 deg); the host sets the grap
 (`get_up_blend_rotation`, 8 falls): blend sweep <= 20 deg (23 after a timed-out roll); push-to-standing MW 5.4 -> 4.1 s, LAFAN1 5.6 s
 (clips 3.0-4.9 s); without the roll the nearest LAFAN1 start leaves 6-59 deg, so the roll stays (0-1.3 s, one 3 s
 timeout). Leftovers: the roll sometimes times out on a relaxed body (3 s); LAFAN1 clips could play faster (rate 1.2).
+
+**As built (2026-11-05, knockdowns).** Human walkers' knockdowns (impacts >= 15 N s: `V` ball, thrown bodies, level
+`@impact`) are Delirium takeovers instead of the powered ragdoll (walkers' `RagdollTakeover` hook, combat-adapter.md
+"Ragdoll routing"); beasts and creatures keep the ragdoll. A knockdown starts
+`catchFall` without the balancer (`Takeover::knock_down`): with `bodyBalance` 15-25 N s at the chest only stagger it
+(push sweep: 0/24 fall even at 80 N s). Measured (`knockdown_impulses_hand_back`, rest pose, 15/25 N s, side/front/back):
+all fall, hand back `Fallen` at 1.3-2.1 s (no get-up clips in that test), no blow-up.
+
+**As built (2026-11-05, deaths).** Human walkers' deaths are terminal takeovers (`Takeover::kill`: `catchFall`, then
+`bodyRelax` 90/2 once down, no get-up, no hand-back; `settled` after 1 s at rest, 20 s max, then the host freezes the
+pose and stops stepping). Measured (`death_settle_times`, rest pose, 0-60 N s): falls in 0.5-0.7 s, settles 1.9-5.3 s.

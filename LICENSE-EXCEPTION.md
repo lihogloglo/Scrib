@@ -14,6 +14,11 @@ version ([LICENSE](LICENSE)), with the following additional permission granted b
 - The permission covers only code whose copyright holders granted it: the project's own code. Code
   ported from other GPL projects (listed in `superfargoth/THIRD_PARTY_NOTICES.md` and module docs) is under its own terms and does
   not carry this permission.
+- In particular the Delirium active ragdoll (`mw_delirium`: delirium-physics and code ported from skyrim-delirium,
+  GPL-3.0-only), which default game builds link (feature `delirium`; such binaries are GPL-3.0-only), is not covered.
+  We never bundle NVIDIA's DLSS runtime: the player fetches it (setup screen, `bevyrrowind/docs/specs/setup.md`),
+  so default builds are fine to distribute. Only a package that bundles a vendor runtime with the game must be built
+  without Delirium (`--no-default-features`).
 - That is why the game binary itself never contains such a library. NVIDIA DLSS ships as a separate,
   optional plugin package (`superfargoth/plugins/sf_dlss`), installed by the player; the game runs without it.
 - You may remove this additional permission from your copies or modifications (GPLv3 section 7).

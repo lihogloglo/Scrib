@@ -989,7 +989,7 @@ impl Compiler<'_> {
                         contact: None,
                     };
                     let leg = self.limb(&spec)?;
-                    (Op::LimbIk { limb: leg, target: self.ik_target(target)?, weight: self.value(weight)?, rotation: false }, *max_lod)
+                    (Op::LimbIk { limb: leg, target: self.ik_target(target)?, weight: self.value(weight)?, rotation: true }, *max_lod)
                 }
                 OpSpec::FullBodyIk { effectors, pin_support, pin, iterations, max_lod } => {
                     let profile = self.source.profile()?.ok_or("FullBodyIk needs the skeleton's rig profile")?;

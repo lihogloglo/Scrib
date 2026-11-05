@@ -233,6 +233,10 @@ Front, a missing tier to the next lower.
 - Clips play in the graph's full-body montage slot, `Progress` root mode, playhead = chain progress on the action clock
   (`set_slot_progress`), as the mantle does (action.md "As built (A2 slice 2)"); cancels blend in ~0.1 s (R6 adapt).
   Classic content may use an upper-body slot over locomotion.
+- **Draw / sheathe** (built 2026-11-05): an upper-body clip over locomotion with an attach key where the held props
+  change mount (UE attach notify, Skyrim `weaponDraw`). Gameplay times it on the fixed tick from the baked key
+  (`sf_character::ReadyChange`/`ReadyClip::from_clip`, the content names the event); the clip plays from that elapsed
+  time, so presentation never decides when the weapon is out. Attacks wait for the draw's end.
 - Slots `kind.family.variant`: `attack.<sheet>.<move>[_rec]`, `dodge.roll.{fwd,left,right}`, `react.<tier>.<side>`,
   `guard.<sheet>.{raise,idle,hit,break}`.
 - **Sources**: candidates in the content's animation-sources manifest, first present wins, then the fallback

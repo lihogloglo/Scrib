@@ -64,12 +64,35 @@ A new game picks the rule set (ARCHITECTURE §1b).
 
 ## Ragdoll routing (Knockdown, Death)
 
-The framework's `PhysicsTakeover { impulse, point }` goes, in `mw_walkers_bevy`, to: the Delirium takeover when that
-experiment is on and the skeleton is human (`mw_delirium_bevy::DeliriumReaction { hit: Some(DeliriumHit { point, impulse,
-part: None }) }`; `DeliriumHandedBack` reports the hand-back), else the walkers' powered-ragdoll knockdown
-(`mw_walkers_bevy/src/physics.rs`, get-up from `Knockout@tail`'s first frame). Death: the graph's `dead` state, then limp
-ragdoll (`DEATH_HANDOFF`), as the dev kill key does today. Hand-back ends the forced move in `sf_action`. Cosmetic `HitReact`
-springs stay on every landing (Additive tier).
+Design: the framework's `PhysicsTakeover { impulse, point }` goes to the Delirium takeover when the skeleton is human,
+else the walkers' powered-ragdoll knockdown (`mw_walkers_bevy/src/physics.rs`, get-up from `Knockout@tail`'s first
+frame). Death: the same hook (kind `Death`): Delirium's terminal mode for humans, else the graph's `dead` state, then
+limp ragdoll (`DEATH_HANDOFF`). Hand-back ends the forced move in `sf_action`. Cosmetic `HitReact` springs
+stay on every landing (Additive tier).
+
+As built (2026-11-05, knockdowns of walkers; `sf_action`'s `PhysicsTakeover` for action characters is not built): the
+walkers' `knockdown()` asks the adapter hook `RagdollTakeover` (resource, `mw_walkers_bevy::physics`) first with a
+`PhysicsTakeover { root, skeleton, mover, point, impulse, kind: Knockdown }` for every impact >= `KNOCKDOWN_IMPULSE`; a claim inserts its
+own request and owns the character (`Held`, get-up, the root's move) until its hand-back, so no `Ragdoll`/`KnockedDown`.
+No hook (a `--no-default-features` app) or a decline: the powered ragdoll. The host (`mw_exterior_bevy`, feature
+`delirium`) fills it with `mw_delirium_bevy::knockdown_reaction`: human skeleton on a mover -> `DeliriumReaction { hit,
+knock_down: true }` (the takeover starts `catchFall` instead of `bodyBalance`, `Takeover::knock_down`, so a knockdown
+always goes down); beasts, creatures and action characters decline. Walkers resume their AI when the hand-back removes
+`Held`/`Dormant`. Tests: `mw_walkers_bevy` `physics::tests`, `mw_delirium_bevy` `knockdowns_of_human_walkers_become_takeovers`,
+`mw_delirium` `knockdown_impulses_hand_back` (real install). Visual check PH-15.
+
+As built (2026-11-05, deaths of walkers): `physics::kill()` asks the same hook with `kind: Death` (the blow as
+`point`/`impulse`, zero for none) unless the character is a powered-ragdoll knockdown (`KnockedDown`: it dies in its
+ragdoll); a claim inserts `Dead` (requires `Held`) and no `Ragdoll`. A character a layer already holds (`Held` without
+`KnockedDown`) is killable: the hook turns it terminal; a decline leaves it alive. The host maps `Death` to
+`mw_delirium_bevy::death_reaction` (`DeliriumReaction { kill: true }`): `Takeover::kill` stops the balancer, `catchFall`,
+then near-limp `bodyRelax` once down (`Rules::dead_relax`), no get-up, never a hand-back; at rest
+(`Rules::corpse_secs`) it is `settled`, the host drops the takeover and the body keeps its last `PhysicsPose` (frozen),
+root `Held` + `DeliriumCorpse` (later requests refused). A kill on a live takeover turns it terminal (a down body relaxes
+at once). A claimed death Delirium then can't take (no rig) falls back to `Ragdoll { Death }`. The dev `I` key is gone:
+console `kill` (`physics::kill_in_view`, walkers only). Gaps: corpse drag (Delirium parts aren't Rapier bodies) and
+save/streaming persistence of the corpse pose. Tests: `physics::tests` (death routing), `mw_delirium_bevy`
+`deaths_of_human_walkers_become_terminal_takeovers`, `mw_delirium` `killed_takeover_falls_and_settles`. Visual check PH-16.
 
 ## C1b: game items
 
@@ -81,7 +104,19 @@ springs stay on every landing (Additive tier).
   fallback `Hit1`-`Hit4`); `react.medium.front` (UAL2 `Hit_Knockback_RM`, root x0.25, fallback `Hit5`); `react.large.front`
   (the same clip, root x0.6). No LaFAN1 candidate in C1. Candidate `events` (per-clip windows) are a new manifest field.
 - **Player**: `Combatant` on the player (health from the record, stamina as above, `min_tier: Small`, sheet by weapon);
-  the ready-weapon key (F, Morrowind's default) toggles the stance; a Light press while sheathed draws instead of attacking.
+  the ready-weapon key (F, Morrowind's default) toggles the stance; sheathed, attack presses do nothing (owner 2026-11-02:
+  first the stance, then the fight; the implicit draw is gone). As built (CB-3, 2026-11-05): the avatar's
+  `CharacterReadiness` follows `Stance`, so its held weapon mounts on `Weapon Bone` while drawn and hides while sheathed
+  (the original shows no sheaths) and `feed_stance` sets the graph's one-handed set. The player never auto-equips
+  (`mw_actors::held::equipped`: first wieldable weapon, first shield; `EquippedHeld` on the avatar); levels name its
+  items in `player_held` (`arena`, `anim-lab`: `iron longsword`). Real cells: no weapon until an equip screen writes
+  `EquippedHeld`. As built (draw clips, 2026-11-05): F plays `base_anim`'s `WeaponOneHand@equip` / `@unequip`
+  (`mw_combat::SWORD_1H_DRAW`/`_SHEATHE`, already graph slot clips) in the humanoid graph's masked `upper` slot over
+  locomotion, playhead = a fixed-tick `sf_character::ReadyChange` (gameplay clock, net-ready) timed from the baked clip's
+  `equip.attach` / `unequip.detach` events (Morrowind's `Equip Attach` / `Unequip Detach` keys; UE attach notify): the
+  readiness (prop mount) flips at the key; attacks stay withheld until the draw ends and from a sheathe's first tick;
+  F during a change is ignored; no baked clip = instant (pop). Not yet: other weapon groups (C3 maps records to
+  sheets), the grip IK still treats the right hand as free during a change (`grip.rs` checks `Stance::Drawn`).
 - **Bindings** (defaults, the player can rebind): `Sprint` becomes **Dodge/Sprint** (tap = roll on release, hold = sprint;
   Shift, pad East); `Attack` (Light): left mouse, pad right bumper; `Lock`: middle mouse, pad right stick click (ToggleView's
   pad binding moves to D-pad up); `Sneak`'s pad binding moves to left stick click; `ReadyWeapon`: F.

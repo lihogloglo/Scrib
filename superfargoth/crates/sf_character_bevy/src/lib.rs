@@ -265,7 +265,8 @@ pub struct CharacterBody {
 }
 
 /// One cached outfit's GPU assets.
-#[derive(Debug)]
+/// `Default`: an empty outfit (headless tests of systems that take a `CharacterBody`; shown at once).
+#[derive(Debug, Default)]
 pub struct OutfitAssets {
     /// Palette joint names, `SkinnedMesh::joints` order.
     pub joints: Vec<String>,

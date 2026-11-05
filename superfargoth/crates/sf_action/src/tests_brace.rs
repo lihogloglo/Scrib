@@ -5,7 +5,7 @@ use glam::Vec3;
 use sf_controller::{CharacterFrame, GroundHit, GroundProbe, ProbeQuery, SurfaceId};
 use sf_coords::WorldPos;
 
-use crate::{BRACE_PALM_GAP, BraceBody, HandBrace, LEFT, RIGHT, WallBrace};
+use crate::{BRACE_PALM_GAP, BraceBody, HandBrace, LEFT, PalmFrame, RIGHT, WallBrace};
 
 const HEIGHT: f32 = 1.8;
 const DT: f32 = 1.0 / 60.0;
@@ -113,9 +113,74 @@ fn walking_past_a_side_wall_is_a_light_trail_on_that_hand() {
     assert!(left.weight > 0.0 && left.weight < 0.9, "light, weight {}", left.weight);
     let t = left.target.expect("a target");
     assert!(t.x < 0.5 && (0.5 - BRACE_PALM_GAP - t.x).abs() <= 0.02, "wrist x {}", t.x);
-    // Trailing: behind the shoulder along the walk.
-    assert!(t.z < b.shoulders[LEFT].z, "trails, z {}", t.z);
+    // Feeling the wall: the hand reaches ahead of the shoulder along the walk (owner 2026-10-30).
+    assert!(t.z > b.shoulders[LEFT].z, "reaches ahead, z {}", t.z);
+    assert!(t.distance(b.shoulders[LEFT]) <= b.arms[LEFT] + 1e-4, "within reach");
     assert_eq!(brace.hands[RIGHT], HandBrace::default(), "no wall on the right");
+}
+
+/// Bip01-like hand axes: fingers along the hand's +X, the palm facing its −Z (both hands).
+fn with_palms(b: BraceBody) -> BraceBody {
+    let palm = PalmFrame::new(Vec3::X, Vec3::NEG_Z);
+    BraceBody { palms: [palm; 2], ..b }
+}
+
+/// The braced hand's palm normal and fingers (character space), from its rotation.
+fn palm_dirs(h: &HandBrace, frame: &PalmFrame) -> (Vec3, Vec3) {
+    let r = h.rotation.expect("a palm rotation");
+    assert!(r.is_finite() && r.is_normalized(), "rotation {r}");
+    (r * frame.palm, r * frame.fingers)
+}
+
+#[test]
+fn braced_palms_lie_flat_on_the_face() {
+    let frame = PalmFrame::new(Vec3::X, Vec3::NEG_Z).unwrap();
+    // Head-on: both palms into the wall (+Z), fingers up.
+    let b = with_palms(body(Vec3::Z * 4.5, Vec3::ZERO));
+    let brace = run(&wall_ahead(0.45), &b, 60);
+    assert_sane(&brace);
+    for i in [LEFT, RIGHT] {
+        let (palm, fingers) = palm_dirs(&brace.hands[i], &frame);
+        assert!(palm.dot(Vec3::Z) > 0.9, "hand {i}: palm {palm}");
+        assert!(fingers.y > 0.5, "hand {i}: fingers {fingers}");
+    }
+    // Side wall on the left (+X), walking along it: palm into it, fingers forward, a little up;
+    // the left thumb then points down (thumb = palm × fingers on a left hand).
+    let b = with_palms(body(Vec3::Z * 1.5, Vec3::Z * 1.5));
+    let brace = run(&wall_left(0.5), &b, 60);
+    assert_sane(&brace);
+    let h = brace.hands[LEFT];
+    let (palm, fingers) = palm_dirs(&h, &frame);
+    assert!(palm.dot(Vec3::X) > 0.9, "palm {palm}");
+    assert!(fingers.z > 0.8 && fingers.y > 0.0, "fingers {fingers}");
+    assert!(palm.cross(fingers).y < -0.3, "thumb down: {}", palm.cross(fingers));
+    // No frame for a hand: it keeps its animated rotation.
+    let b = BraceBody { palms: [None, PalmFrame::new(Vec3::X, Vec3::NEG_Z)], ..body(Vec3::Z * 4.5, Vec3::ZERO) };
+    let brace = run(&wall_ahead(0.45), &b, 60);
+    assert_eq!(brace.hands[LEFT].rotation, None);
+    assert!(brace.hands[RIGHT].rotation.is_some());
+}
+
+#[test]
+fn degenerate_palm_frames_and_out_of_reach_walls_stay_finite() {
+    for (f, p) in [(Vec3::ZERO, Vec3::Z), (Vec3::X, Vec3::ZERO), (Vec3::X, Vec3::X * 2.0), (Vec3::NAN, Vec3::Z), (Vec3::X, Vec3::INFINITY)] {
+        assert_eq!(PalmFrame::new(f, p), None, "{f} {p}");
+    }
+    let frame = PalmFrame::new(Vec3::X, Vec3::NEG_Z).unwrap();
+    assert_eq!(frame.rotation(Vec3::Z, Vec3::Z), None, "fingers along the palm normal");
+    assert_eq!(frame.rotation(Vec3::NAN, Vec3::Y), None);
+    // A rotation maps the axes exactly.
+    let r = frame.rotation(Vec3::Z, Vec3::Y).unwrap();
+    assert!((r * frame.palm - Vec3::Z).length() < 1e-5 && (r * frame.fingers - Vec3::Y).length() < 1e-5);
+    // Out of reach (wall 3 m off), and a wall run into with NaN velocities: no rotation, no NaN.
+    let brace = run(&wall_ahead(3.0), &with_palms(body(Vec3::Z * 1.5, Vec3::Z * 1.5)), 30);
+    assert_eq!(brace, WallBrace::default());
+    let bad = with_palms(BraceBody { velocity: Vec3::NAN, ..body(Vec3::Z * 4.5, Vec3::ZERO) });
+    let brace = run(&wall_ahead(0.45), &bad, 30);
+    assert_sane(&brace);
+    for h in brace.hands {
+        assert!(h.rotation.is_none_or(glam::Quat::is_finite), "rotation {:?}", h.rotation);
+    }
 }
 
 #[test]

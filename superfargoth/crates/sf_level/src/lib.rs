@@ -48,6 +48,11 @@ pub struct Level {
     /// Characters the host spawns and drives (see [`Actor`]).
     #[serde(default)]
     pub actors: Vec<Actor>,
+    /// Items the player holds equipped in this level (host item ids: a
+    /// weapon, a shield), shown when the host draws them. Empty: the
+    /// player's own equipment.
+    #[serde(default)]
+    pub player_held: Vec<String>,
     /// Parametric point lights (the light-cost lab, see [`LightRig`]).
     #[serde(default)]
     pub lights: Option<LightRig>,
@@ -363,6 +368,9 @@ impl Level {
                     out.push(format!("object {label}: mass {mass} must be > 0"));
                 }
             }
+        }
+        if self.player_held.iter().any(|item| item.trim().is_empty()) {
+            out.push("empty player_held item".to_owned());
         }
         for (i, a) in self.actors.iter().enumerate() {
             let label = format!("actor #{i} {:?}", a.id);

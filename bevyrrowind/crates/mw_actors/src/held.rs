@@ -216,6 +216,22 @@ pub fn auto_held<'a>(db: &'a RecordDb, items: &[&str], skills: &[f32; 27], ctx: 
     Loadout { weapon, ammo, carried_left }
 }
 
+/// The held items of an actor that equips by hand (the player: the
+/// original never auto-equips it), from its equipped `items` in order:
+/// the first weapon that can be wielded (not ammunition), and the first
+/// shield unless that weapon takes both hands. No light: a carried torch is
+/// an equip choice the player makes, not the dark rule.
+pub fn equipped<'a>(db: &'a RecordDb, items: &[&str]) -> Loadout<'a> {
+    let weapon = items.iter().filter_map(|id| db.get::<Weapon>(&RecordId::new(id))).find(|w| !is_ammo(w.data.weapon_type));
+    let two_hands = weapon.is_some_and(|w| two_handed(w.data.weapon_type));
+    let shield = items
+        .iter()
+        .filter_map(|id| db.get::<Armor>(&RecordId::new(id)))
+        .find(|a| a.data.armor_type == ArmorType::Shield)
+        .filter(|_| !two_hands);
+    Loadout { weapon, ammo: None, carried_left: shield.map(CarriedLeft::Shield) }
+}
+
 /// Day cycle hours from `Morrowind.ini` `[Weather]`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DayCycle {

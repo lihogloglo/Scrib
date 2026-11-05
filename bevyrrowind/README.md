@@ -55,3 +55,9 @@ for GPU vendor runtimes such as NVIDIA DLSS ([LICENSE-EXCEPTION.md](LICENSE-EXCE
 This repo may reuse GPL code (e.g. from OpenMW). The superfargoth framework is
 GPL-3.0-or-later too since 2026-10-25. DLSS is an optional plugin package the
 player installs separately; the game binary contains no NVIDIA code.
+
+Default builds (release included) link the Delirium active ragdoll (`delirium` feature: delirium-physics and code
+ported from skyrim-delirium, both GPL-3.0-only), so those binaries are **GPL-3.0-only**, which GPL-3.0-or-later
+allows. The GPU-vendor permission doesn't cover Delirium's code, which is fine because we never bundle NVIDIA's DLSS
+runtime: the player fetches it (setup screen). Only a package that bundles a vendor runtime with the game must leave
+Delirium out (`--no-default-features`).

@@ -46,4 +46,15 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
 - Kind: synthetic. `scene level-arena` or any anim-lab level, player (F11).
 - Seen 2026-10-30: F (ready weapon, `combat.rs` `ready_weapon`) never shows a drawn sword, and never did. Unknown whether
   `Stance` toggles without a visible weapon or the action never fires.
-- Status: known bug: not diagnosed (owner pass 2026-10-30).
+- Fixed 2026-11-05 (stance-visible): F did toggle `Stance`, but nothing showed it: the avatar never got
+  `CharacterReadiness`, and the `player` record holds no weapon. Now the avatar follows the stance, levels `arena` and
+  `anim-lab` equip `iron longsword` (`player_held`), and a sheathed click or right click does nothing (no implicit draw).
+- Run: `cargo dev scene level-arena` (F11: player). Look for: no sword in hand at start; LMB / RMB do nothing; F: the
+  sword appears in the right hand and the idle / run become the one-handed set; attacks swing it, the blade follows the
+  hand; F again: the sword vanishes. Real cells: the player has no weapon yet (no equip).
+- 2026-11-05 (draw-clips): F plays Morrowind's one-handed draw / sheathe (`WeaponOneHand` equip / unequip) on the
+  upper body; the sword appears in the hand at the clip's attach key and vanishes at its detach key. Look for: walking
+  or running while drawing keeps the legs going (upper body only); the sword shows as the hand reaches it (not at the
+  press, not after the clip); LMB during the draw does nothing, LMB after it swings; F again: hand goes back, sword
+  vanishes mid-clip, LMB refused from the press. Log line: `combat: draw .. s (attach at ..)`. No sheath model (original).
+- Status: fixed, awaiting owner.

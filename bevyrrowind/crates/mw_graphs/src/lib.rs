@@ -61,6 +61,16 @@ pub fn creature_template(flags: u32) -> Template {
     if flags & mw_anim::rig::crea_flags::BIPED != 0 { Template::Humanoid } else { Template::Creature }
 }
 
+/// Each hand's palm axes `[left, right]`, in the hand joint's frame (fingers, palm normal),
+/// from a humanoid skeleton's rest pose (`sf_character::RigMap::palm_axes` over
+/// [`mw_anim::rig::humanoid`]'s map: `Bip01 L Hand` with `Finger0..4`). The wall brace turns
+/// a palm flat on the face with them. `None` per hand on a skeleton that doesn't map.
+pub fn palm_axes(skeleton: &sf_anim::Skeleton) -> [Option<(glam::Vec3, glam::Vec3)>; 2] {
+    use sf_character::Side;
+    let Ok(rig) = mw_anim::rig::humanoid(skeleton) else { return [None, None] };
+    [Side::Left, Side::Right].map(|side| rig.map.palm_axes(skeleton, side))
+}
+
 /// How a template compiled for one skeleton.
 #[derive(Clone, Debug)]
 pub struct Validation {

@@ -8,9 +8,10 @@
 //! - **Wall brace** (action.md B2c): [`sf_action::WallBrace`] probes the physics world from the
 //!   drawn body's shoulders (last frame's model pose; estimated from the mover's height before
 //!   the first pose) and plants a free hand on a wall within reach. Free: not the weapon hand
-//!   while the weapon is drawn ([`Stance::Drawn`]: the one-handed sword is in the right hand);
+//!   while the weapon is out or changing (any [`Stance`] but `Sheathed`: the right hand holds or reaches for the sword);
 //!   torches and carried items join when they exist. Runs only grounded in plain locomotion (no
-//!   action move clip, no warp: [`brace_active`]).
+//!   action move clip, no warp: [`brace_active`]). The hand also turns its palm flat on the face
+//!   (the target's rotation, from the rig's palm axes: [`mw_graphs::palm_axes`]).
 //!
 //! Per hand the ledge grip wins while its weight is above 0; otherwise the brace. Targets go into
 //! the drawn body's character space (its feet and yaw, unscaled by the body's scale, as
@@ -26,10 +27,10 @@ use bevy_time::Fixed;
 use bevy_time::prelude::*;
 use bevy_transform::prelude::*;
 
-use sf_action::{BraceBody, LEFT, LedgeGrip, RIGHT, Tick, WallBrace};
+use sf_action::{BraceBody, LEFT, LedgeGrip, PalmFrame, RIGHT, Tick, WallBrace};
 use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim_bevy::Animator;
-use sf_anim_graph::Op;
+use sf_anim_graph::{IkTarget, Op};
 use sf_controller::CharacterFrame;
 use sf_controller_bevy::Mover;
 use sf_physics_bevy::Physics;
@@ -62,6 +63,7 @@ pub(crate) fn feed(
     mut animators: Query<(&mut Animator, Option<&Transform>)>,
     mut logged: Local<HashMap<Entity, Tick>>,
     mut braces: Local<HashMap<Entity, WallBrace>>,
+    mut palms: Local<HashMap<usize, [Option<PalmFrame>; 2]>>,
 ) {
     let alpha = fixed.overstep_fraction().clamp(0.0, 1.0);
     braces.retain(|e, _| players.contains(*e));
@@ -89,18 +91,23 @@ pub(crate) fn feed(
             let mut b = brace_body(a, body, scale);
             b.desired = drawn.dir_to_local(character.output.intent.desired_velocity * Vec3::new(1.0, 0.0, 1.0));
             b.velocity = drawn.dir_to_local(body.loco.motion.velocity * Vec3::new(1.0, 0.0, 1.0));
-            b.free = [true, stance != Some(&Stance::Drawn)];
+            b.free = [true, matches!(stance, None | Some(Stance::Sheathed))];
             b.active = brace_active(body, character);
+            // The rig's palm axes, once per skeleton.
+            b.palms = *palms.entry(std::sync::Arc::as_ptr(&a.asset.skeleton).addr()).or_insert_with(|| {
+                mw_graphs::palm_axes(&a.asset.skeleton).map(|h| h.and_then(|(fingers, palm)| PalmFrame::new(fingers, palm)))
+            });
             braces.entry(entity).or_default().update(&drawn, physics, &b, time.delta_secs())
         });
         for (i, slot, param) in [(LEFT, HAND_L, HAND_IK_L), (RIGHT, HAND_R, HAND_IK_R)] {
-            let hold = holds[i].filter(|(_, w)| *w > 0.0).map(|(world, w)| (drawn.to_local(world), w));
-            let on_wall = brace.and_then(|b| b[i].target.map(|t| (t, b[i].weight))).filter(|(_, w)| *w > 0.0);
+            let hold = holds[i].filter(|(_, w)| *w > 0.0).map(|(world, w)| ((drawn.to_local(world), None), w));
+            // A braced hand also turns its palm onto the face (model space = character space).
+            let on_wall = brace.and_then(|b| b[i].target.map(|t| ((t, b[i].rotation), b[i].weight))).filter(|(_, w)| *w > 0.0);
             let feed = hold.or(on_wall);
             if let Some(k) = a.asset.graph.ik_target(slot)
                 && let Some(target) = a.drive.ik_targets.get_mut(k)
             {
-                *target = feed.map(|(local, _)| (local * inv).into());
+                *target = feed.map(|((local, rotation), _)| IkTarget { position: local * inv, rotation });
             }
             a.set_float(param, feed.map_or(0.0, |(_, w)| w));
         }

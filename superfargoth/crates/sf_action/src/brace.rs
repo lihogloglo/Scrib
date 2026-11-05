@@ -14,13 +14,20 @@
 //!   running into a wall rises before the impact.
 //! - **Target.** The wrist sits [`BRACE_PALM_GAP`] off the face, the arm at [`BRACE_BEND`] of
 //!   its length (slightly bent): on the face, offset from the shoulder's foot point toward a
-//!   preferred direction (down, out to the hand's side, a little forward; trailing back along
-//!   the wall with the speed past it, [`BRACE_TRAIL`]). Close to the face the arm straightens
+//!   preferred direction (down, out to the hand's side, a little forward; reaching ahead along
+//!   the wall with the speed past it, [`BRACE_LEAD`]: people feeling a wall reach ahead of
+//!   them). Close to the face the arm straightens
 //!   (up to [`BRACE_STRAIGHT`]) until its elbow, bent any way, clears the face by
 //!   [`BRACE_ELBOW_ROOM`] ("arms out of walls"); no such length: no brace. A wall farther than the bent arm gets
 //!   the arm reaching straight at it, faded by the band. A ray into the face at the palm point
 //!   ([`BRACE_CONFIRM`]) snaps the wrist to the real surface; a miss (past the wall's end, a
 //!   doorway) drops the hand.
+//! - **Palm.** Given the hand's [`PalmFrame`] (the rig's palm axes, from the host), the hand
+//!   turns flat onto the face: palm normal into the wall, fingers up on a wall ahead and forward
+//!   (a little up, [`BRACE_FINGERS_UP`]) on a wall at the side, so a trailing hand's thumb
+//!   points down. It is the two-bone IK's end-effector rotation, blended by the same weight
+//!   (UE's `TwoBoneIK` effector rotation, Unity Animation Rigging's `TwoBoneIKConstraint`
+//!   target rotation). No frame: the hand keeps its animated rotation.
 //! - **Weight.** Goal = proximity × level: level [`BRACE_LIGHT`] walking past, rising to 1 with
 //!   the speed into the wall (the intent's or the motion's, whichever pushes harder) at
 //!   [`BRACE_FIRM_SPEED`]. 0 below [`BRACE_MIN_SPEED`], for a busy hand, or while the host
@@ -31,7 +38,7 @@
 //! Positions are character space (the [`CharacterFrame`] the host draws: feet, Y up, facing +Z,
 //! +X the character's left), meters.
 
-use glam::Vec3;
+use glam::{Mat3, Quat, Vec3};
 use sf_controller::{CharacterFrame, GroundHit, GroundProbe, ProbeQuery};
 
 use crate::grip::{LEFT, RIGHT};
@@ -61,8 +68,12 @@ pub const BRACE_RISE: f32 = 6.0;
 pub const BRACE_FALL: f32 = 2.0;
 /// Halflife of a braced target following the solved point, s.
 pub const BRACE_HALFLIFE: f32 = 0.05;
-/// Palm trailing back along the wall: m per m/s of speed past it, and the most, m.
-pub const BRACE_TRAIL: (f32, f32) = (0.08, 0.2);
+/// Palm reaching ahead along the wall with the speed past it: the speed for the full lead, m/s,
+/// and the lead's share of the preferred direction then (against its down share of 1).
+pub const BRACE_LEAD: (f32, f32) = (1.5, 1.6);
+/// Fingers on the face: their up share against the facing's part along the face (1 on a wall
+/// at the side), so fingers point up on a wall ahead and forward, about 20° up, at the side.
+pub const BRACE_FINGERS_UP: f32 = 0.4;
 /// The confirm ray starts this far out of the face and reaches this far past it, m.
 pub const BRACE_CONFIRM: (f32, f32) = (0.2, 0.08);
 /// Faces whose normal has a larger vertical part are not walls.
@@ -86,6 +97,41 @@ pub struct BraceBody {
     pub free: [bool; 2],
     /// The brace may run (grounded, plain locomotion: no action clip or warp).
     pub active: bool,
+    /// Per hand, its palm axes in the hand joint's frame; `None`: the hand keeps its rotation.
+    pub palms: [Option<PalmFrame>; 2],
+}
+
+/// A hand's palm axes in the hand joint's own frame (unit, orthogonal), from the rig's rest
+/// pose (e.g. `sf_character::RigMap::palm_axes`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PalmFrame {
+    /// Direction the fingers point.
+    pub fingers: Vec3,
+    /// Normal out of the palm.
+    pub palm: Vec3,
+}
+
+impl PalmFrame {
+    /// The frame from the two axes, the fingers made orthogonal to the palm; `None` when either
+    /// is zero or not finite, or they line up.
+    #[must_use]
+    pub fn new(fingers: Vec3, palm: Vec3) -> Option<Self> {
+        let palm = palm.normalize_or_zero();
+        let fingers = (fingers - palm * fingers.dot(palm)).normalize_or_zero();
+        (palm != Vec3::ZERO && fingers != Vec3::ZERO && palm.is_finite() && fingers.is_finite()).then_some(Self { fingers, palm })
+    }
+
+    /// The hand's rotation (in the space of the directions) that turns the palm to `palm` and
+    /// the fingers as close to `fingers` as that allows; `None` when they line up or aren't
+    /// finite.
+    #[must_use]
+    pub fn rotation(&self, palm: Vec3, fingers: Vec3) -> Option<Quat> {
+        let to = Self::new(fingers, palm)?;
+        let from = Mat3::from_cols(self.fingers, self.palm, self.fingers.cross(self.palm));
+        let to = Mat3::from_cols(to.fingers, to.palm, to.fingers.cross(to.palm));
+        let q = Quat::from_mat3(&(to * from.transpose())).normalize();
+        q.is_finite().then_some(q)
+    }
 }
 
 impl BraceBody {
@@ -101,6 +147,7 @@ impl BraceBody {
             velocity: Vec3::ZERO,
             free: [true; 2],
             active: true,
+            palms: [None; 2],
         }
     }
 }
@@ -112,6 +159,9 @@ pub struct HandBrace {
     pub target: Option<Vec3>,
     /// The face normal at the target, toward the character (character space).
     pub normal: Vec3,
+    /// The hand's rotation (character space) laying the palm on the face, when the body gave
+    /// the hand a [`PalmFrame`].
+    pub rotation: Option<Quat>,
     /// IK weight, 0-1.
     pub weight: f32,
 }
@@ -136,7 +186,7 @@ impl WallBrace {
     pub fn update(&mut self, frame: &CharacterFrame, probe: &(impl GroundProbe + ?Sized), body: &BraceBody, dt: f32) -> [HandBrace; 2] {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let solved = solve(frame, probe, body);
-        for (h, s) in self.hands.iter_mut().zip(solved) {
+        for ((h, s), palm) in self.hands.iter_mut().zip(solved).zip(body.palms) {
             let goal = s.map_or(0.0, |s| s.goal);
             h.weight = if goal > h.weight { (h.weight + BRACE_RISE * dt).min(goal) } else { (h.weight - BRACE_FALL * dt).max(goal) };
             match s {
@@ -159,6 +209,8 @@ impl WallBrace {
             }
             if h.weight <= 0.0 || !h.target.is_some_and(Vec3::is_finite) {
                 *h = HandBrace::default();
+            } else {
+                h.rotation = palm.and_then(|p| p.rotation(-h.normal, fingers_on(h.normal)));
             }
         }
         self.hands
@@ -233,11 +285,11 @@ fn solve(frame: &CharacterFrame, probe: &(impl GroundProbe + ?Sized), body: &Bra
         // Proximity: 1 within the bent arm, fading over the band past it.
         let near = smooth((bent + band - reach) / band);
         let level = BRACE_LIGHT + (1.0 - BRACE_LIGHT) * smooth(v_in / BRACE_FIRM_SPEED);
-        // Preferred direction on the face, trailing back with the speed past it.
+        // Preferred direction on the face, reaching ahead with the speed past it.
         let past = body.velocity - n * body.velocity.dot(n);
         let past = Vec3::new(past.x, 0.0, past.z);
-        let trail = (BRACE_TRAIL.0 * past.length()).min(BRACE_TRAIL.1);
-        let mut prefer = PREFER * Vec3::new(side, 1.0, 1.0) - past.normalize_or_zero() * (trail / BRACE_TRAIL.1);
+        let lead = (past.length() / BRACE_LEAD.0).min(1.0) * BRACE_LEAD.1;
+        let mut prefer = PREFER * Vec3::new(side, 1.0, 1.0) + past.normalize_or_zero() * lead;
         prefer -= n * prefer.dot(n);
         let u = prefer.normalize_or(Vec3::NEG_Y);
         let foot = shoulder - n * reach.max(0.0);
@@ -288,6 +340,13 @@ fn solve(frame: &CharacterFrame, probe: &(impl GroundProbe + ?Sized), body: &Bra
         out[i] = Some(Solved { wrist, normal: hn, goal: plan.goal });
     }
     out
+}
+
+/// The fingers' preferred direction on a face with normal `n` (toward the character): up, plus
+/// the facing's part along the face (forward on a wall at the side, none on a wall ahead).
+fn fingers_on(n: Vec3) -> Vec3 {
+    let along = Vec3::Z - n * n.z;
+    Vec3::new(along.x, 0.0, along.z) + Vec3::Y * BRACE_FINGERS_UP
 }
 
 /// A hit's point and normal in character space.

@@ -84,6 +84,16 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   (needs the palm frame from the wall normal, the known rotation gap). Status: partial.
 - Owner 2026-10-30: the wall brace needs a big fix; find where the sideways slide comes from first (diagnosis slice),
   then fix the stop and the trail pose.
+- Fix 2026-11-05 (brace-stop), point (1) only: collide-and-slide kept the along-wall part of any push and the facing turned
+  along it. Now a wall met within 30° of head-on stops the mover (`MoverParams::wall_stop_deg`, Godot's
+  `wall_min_slide_angle`); past 30° it still slides. Check: W straight or up to ~25° off at the wall: the body stops and
+  stays facing the push, no side step, hands brace; ~45° and shallower: it slides along as before. Trail pose (2) not
+  touched yet. Needs a new exe copy, no bake. Status: awaiting owner.
+- Fix 2026-11-05 (brace-palm), point (2): the hand IK now takes a palm rotation from the wall normal (rig palm axes from the
+  Bip01 fingers). Check: walk W along the wall ~0.5 m off it: the wall-side hand reaches ahead of the shoulder, palm flat on
+  the face, fingers forward and a little up, thumb down; run straight in: both palms flat on the face, fingers up, elbows a
+  little bent. Look for wrist skin twisting (no forearm twist bones) and fingers through the face. Needs a new exe copy and
+  the bake (done 2026-11-05). Status: awaiting owner.
 
 ### AL-9: Gait bands, pelvis and feet (pose audit S3, feed audit F4)
 - Humanoid op data 2026-10-26: `StrideWarp` max 1.6 -> 1.2, `SpeedMatch` rate_share 0.3 -> 0.5, foot IK gated on `on_ground`.
@@ -99,7 +109,7 @@ here), PH-2/9/10 (ragdoll, knockdown, hit reaction).
   300 kg block unmoved, crates not jittering. Status: awaiting owner.
 
 ### AL-6: Falls and ragdoll (PH-2, PH-9)
-- `scene level-anim-drop` (cameras `drop`, `drop-side`, `drop-close`); `G` shows collider wireframes, `I` kills the NPC under the crosshair, `V` throws.
+- `scene level-anim-drop` (cameras `drop`, `drop-side`, `drop-close`); `G` shows collider wireframes, console `kill` kills the NPC under the crosshair, `V` throws.
 - Look for: the walker stepping off the 3 m edge (a fall animation or a snap? it must not freeze), the dummy knocked down every 10 s
   (`@impact` 25 N*s: ragdoll, then get-up), with `G` the capsules following the mesh, no pop into the ragdoll, no spin on the 15 deg slope.
   No 6 m fall exists for actors (no way to place one on the platform): throw or fly. Status: awaiting owner.

@@ -46,6 +46,12 @@ pub struct MoverParams {
     pub max_slope_deg: f32,
     /// Gap kept from walls, meters.
     pub skin: f32,
+    /// Wall stop angle, degrees from head-on (locomotion.md "Collide and
+    /// slide"; Godot's `wall_min_slide_angle`): a wall met within this angle
+    /// of its normal stops the motion instead of sliding along it, so a
+    /// character pushed nearly straight at a wall stands against it rather
+    /// than drifting sideways. Grazing contacts still slide; 0 always slides.
+    pub wall_stop_deg: f32,
     pub gravity: f32,
     pub max_fall_speed: f32,
     /// Radius of the downward ground cast; 0 is a ray.
@@ -68,6 +74,7 @@ impl Default for MoverParams {
             step_down: 0.45,
             max_slope_deg: 46.0,
             skin: 0.01,
+            wall_stop_deg: 30.0,
             gravity: 9.81,
             max_fall_speed: 50.0,
             ground_radius: 0.0,
@@ -133,6 +140,12 @@ impl MoverParams {
     /// Cosine of the slope limit: the lowest walkable normal Y.
     pub fn min_normal_y(&self) -> f32 {
         self.max_slope_deg.to_radians().cos()
+    }
+
+    /// Whether moving along unit `dir` into a wall of horizontal unit normal
+    /// `n` is within [`Self::wall_stop_deg`] of head-on (a stop, no slide).
+    fn stops_at_wall(&self, dir: Vec3, n: Vec3) -> bool {
+        self.wall_stop_deg > 0.0 && -dir.dot(n) > self.wall_stop_deg.to_radians().cos()
     }
 
     /// The wall sweep: an upright capsule from `step_up` to `height`, so
@@ -431,8 +444,9 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     // along a slope's contour then walks along it instead of side-stepping
     // while facing into it (its legs would play a strafe at a fraction of
     // the speed). Nearly head-on (the rest under `DEFLECT_FACING` of the
-    // speed, below the graph's moving threshold) it keeps facing the goal.
-    // The surface stays in effect while the intent pushes into it (a step
+    // speed, below the graph's moving threshold) it keeps facing the goal;
+    // a wall within `MoverParams::wall_stop_deg` of head-on stops the
+    // motion and sets no deflect at all (`slide`). The surface stays in effect while the intent pushes into it (a step
     // that only grazes it doesn't reach the sweep, see `finish`).
     if horizontal(v_goal).dot(loco.deflect) >= 0.0 {
         loco.deflect = Vec3::ZERO;
@@ -511,10 +525,15 @@ fn horizontal(v: Vec3) -> Vec3 {
 /// Collide and slide (Fauerby, *Improved Collision Detection and
 /// Response*, 2003): move to the contact, keep the tangential remainder,
 /// at most four sweeps. Velocity into the wall is removed too, so the
-/// springs don't keep pushing.
+/// springs don't keep pushing. A contact within
+/// [`MoverParams::wall_stop_deg`] of head-on is a wall stop instead (Godot's
+/// `wall_min_slide_angle`): the remainder and the horizontal velocity are
+/// dropped and no deflect is set, so the body stands facing its goal rather
+/// than drifting sideways at a fraction of the speed.
 fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, probe: &dyn GroundProbe) {
     let params = it.params;
     let mut deflect = Vec3::ZERO;
+    let mut stopped = false;
     let motion = &mut it.loco.motion;
     let mut pos = p.start;
     let mut rem = p.d;
@@ -533,6 +552,13 @@ fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, prob
         if n == Vec3::ZERO {
             break;
         }
+        if params.stops_at_wall(dir, n) {
+            // The remainder is dropped: `pos` stays at the contact.
+            motion.velocity *= Vec3::Y;
+            motion.acceleration *= Vec3::Y;
+            stopped = true;
+            break;
+        }
         deflect = n;
         rem -= n * rem.dot(n).min(0.0);
         motion.velocity -= n * motion.velocity.dot(n).min(0.0);
@@ -546,7 +572,9 @@ fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, prob
         }
     }
     p.d = horizontal(p.start.delta_f32(pos));
-    if deflect != Vec3::ZERO {
+    if stopped {
+        it.loco.deflect = Vec3::ZERO;
+    } else if deflect != Vec3::ZERO {
         it.loco.deflect = deflect;
         p.deflected = true;
     }

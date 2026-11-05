@@ -10,8 +10,21 @@
 //!   stamina from the HUD's record vitals, the mover's capsule) and its moveset in
 //!   `ActionState::mode.moveset`, kept set (rolls work sheathed).
 //! - **Stance.** [`Stance`]: the ready-weapon key (F) draws and sheathes; while sheathed the
-//!   attacks are withheld (`Combatant::withheld`), and an attack press draws instead (the press
-//!   itself is refused that tick). Gameplay only: no weapon mesh is drawn yet.
+//!   attacks are withheld (`Combatant::withheld`): an attack press does nothing (owner
+//!   2026-11-02: first the fighting stance, then the fight; Elden Ring has no sheathed state, but
+//!   Morrowind and Skyrim attack only drawn). The avatar's `CharacterReadiness` follows it
+//!   ([`show_stance`]): its held weapon (`mw_actors_bevy::held::EquippedHeld`, e.g. a level's
+//!   `player_held`) mounts on `Weapon Bone` while drawn and hides while sheathed (the original
+//!   shows no sheaths), and the graph's `stance` follows (`mw_actors_bevy` `feed_stance`).
+//! - **Draw and sheathe clips.** F starts a [`Stance::Changing`] (`sf_character::ReadyChange`)
+//!   timed by the baked clip ([`StanceClips`]: `base_anim`'s `WeaponOneHand` equip / unequip
+//!   sections, [`mw_combat::SWORD_1H_DRAW`]): the readiness flips at its `Equip Attach` /
+//!   `Unequip Detach` key, not at the press. Gameplay time: [`advance_stance`] runs on the fixed
+//!   tick before the combat gate, so attacks stay withheld until a draw has played out and from
+//!   the first tick of a sheathe. The avatar plays the clip in the graph's `upper` (masked) slot
+//!   over locomotion ([`play_stance`], playhead = the change's elapsed time), so the legs keep
+//!   walking. F during a change is ignored. No clip baked: the change is instant (the weapon
+//!   pops, as before).
 //! - **Lock-on.** `sf_combat_bevy::SfLockOnPlugin` (line of sight through the physics probe): the
 //!   player body is a `LockOwner`, the lock key ([`spawn_lock`], `Control::LockOn`: Q, middle
 //!   mouse, R3) locks the best `Lockable` (the training dummies) and the third-person camera frames
@@ -25,8 +38,16 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use bevy_log::prelude::*;
+use bevy_time::prelude::*;
+use bevy_time::Fixed;
 use sf_action::{ActionClass, ClassSet};
-use sf_action_bevy::{ActionCharacter, ActionSystems};
+use mw_game_core::player::PlayerAvatar;
+use sf_action_bevy::ActionCharacter;
+use sf_anim::RootMotionMode;
+use sf_anim_bevy::Animator;
+use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
+use sf_character::{Readiness, ReadyChange, ReadyClip};
+use sf_character_bevy::{CharacterReadiness, CharacterSystems};
 use sf_combat::{
     CombatRules, CompiledSheet, Contact, Fighter, Outcome, PoolDelta, RegenState, SocketTracks, StandardRules, Swing, SwingPlan,
 };
@@ -35,6 +56,7 @@ use sf_combat_bevy::{
 };
 use sf_physics_bevy::Physics;
 
+use crate::avatar::PlayerFeed;
 use crate::hud::PlayerVitals;
 use crate::{PLAYER_CHARACTER, PlayerBody, PlayerClips};
 
@@ -73,12 +95,76 @@ pub struct PlayerCombat {
 }
 
 /// Whether the weapon is drawn (the player body; module docs).
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub enum Stance {
     #[default]
     Sheathed,
     Drawn,
+    /// Drawing (`to: Drawn`) or sheathing: the clip plays, attacks are withheld.
+    Changing(ReadyChange),
 }
+
+impl Stance {
+    /// The readiness the held weapon shows (its mount).
+    #[must_use]
+    pub fn shown(self) -> Readiness {
+        match self {
+            Self::Sheathed => Readiness::Sheathed,
+            Self::Drawn => Readiness::Drawn,
+            Self::Changing(c) => c.shown(),
+        }
+    }
+
+    /// The stance at rest for a readiness.
+    fn rest(readiness: Readiness) -> Self {
+        if readiness == Readiness::Drawn { Self::Drawn } else { Self::Sheathed }
+    }
+}
+
+/// The draw and sheathe clips' timing ([`mw_combat::SWORD_1H_DRAW`] and `_SHEATHE`, from the
+/// baked slot clips' text-key events); [`ReadyClip::INSTANT`] for a clip that isn't baked.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct StanceClips {
+    pub draw: ReadyClip,
+    pub sheathe: ReadyClip,
+}
+
+impl Default for StanceClips {
+    fn default() -> Self {
+        Self { draw: ReadyClip::INSTANT, sheathe: ReadyClip::INSTANT }
+    }
+}
+
+impl StanceClips {
+    /// From `clips`: each clip's length and its attach (draw) or detach (sheathe) key. A clip
+    /// without the key moves the weapon halfway through (logged).
+    #[must_use]
+    pub fn from_clips(clips: &PlayerClips) -> Self {
+        let timing = |slot: &str, event: &str| {
+            let Some(c) = clips.slots.iter().find(|c| c.slot == slot) else {
+                info!("combat: no {slot} clip baked; the weapon pops in and out");
+                return ReadyClip::INSTANT;
+            };
+            ReadyClip::from_clip(&c.clip, event).unwrap_or_else(|| {
+                warn!("combat: the {slot} clip has no {event} key; the weapon moves halfway through it");
+                ReadyClip::new(c.clip.duration * 0.5, c.clip.duration)
+            })
+        };
+        let out = Self {
+            draw: timing(mw_combat::SWORD_1H_DRAW, mw_anim::events::EQUIP_ATTACH),
+            sheathe: timing(mw_combat::SWORD_1H_SHEATHE, mw_anim::events::UNEQUIP_DETACH),
+        };
+        info!(
+            "combat: draw {:.2} s (attach at {:.2}), sheathe {:.2} s (detach at {:.2})",
+            out.draw.length, out.draw.key, out.sheathe.length, out.sheathe.key
+        );
+        out
+    }
+}
+
+/// The draw or sheathe clip the avatar plays (its `upper` slot and where it heads), on the body.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct StancePlay(Option<(SlotId, Readiness)>);
 
 /// Ready / sheathe the weapon (on the player's `PlayerControls` context).
 #[derive(InputAction)]
@@ -138,8 +224,10 @@ pub(crate) fn add(app: &mut App, sheet: Option<CompiledSheet>, clips: &PlayerCli
     // The HUD's record vitals, before it starts showing the combat ones.
     let record = app.world().get_resource::<PlayerVitals>().map_or(PlayerVitals::PLACEHOLDER, |v| [v.health.max, v.magicka.max, v.fatigue.max]);
     app.insert_resource(PlayerCombat { sheet, health: record[0], fatigue: record[2] })
-        .add_systems(Update, ((arm, ready_weapon).chain().after(crate::apply_mode), tag_crosshair))
-        .add_systems(FixedUpdate, draw_on_attack.after(ActionSystems::Step).before(CombatSystems::Stats));
+        .insert_resource(StanceClips::from_clips(clips))
+        .add_systems(Update, ((arm, ready_weapon, show_stance).chain().after(crate::apply_mode).before(CharacterSystems), tag_crosshair))
+        .add_systems(FixedUpdate, advance_stance.before(CombatSystems::Gate))
+        .add_systems(PostUpdate, play_stance.after(crate::avatar::feed).in_set(sf_anim_bevy::AnimSystems::Probe));
     #[cfg(feature = "debug")]
     app.add_systems(Update, toggle_gizmos);
 }
@@ -186,7 +274,7 @@ fn arm(
         let fighter = mw_combat::fighter(PLAYER_CHARACTER, sheet, combat.health, combat.fatigue, (p.radius, p.height), true);
         let mut combatant = Combatant::new(fighter);
         combatant.withheld = ATTACKS;
-        commands.entity(entity).insert((combatant, Stance::Sheathed, LockOwner::default()));
+        commands.entity(entity).insert((combatant, Stance::Sheathed, StancePlay::default(), LockOwner::default()));
     }
 }
 
@@ -197,31 +285,117 @@ pub(crate) fn spawn_lock(commands: &mut Commands, keymap: &sf_ui::Keymap, body: 
     mw_controls_bevy::bind(commands, keymap, mw_controls_bevy::Control::LockOn, lock, |_, _| {});
 }
 
-/// Withholds the attacks while sheathed.
+/// Withholds the attacks unless drawn (so while drawing and sheathing too).
 fn set_stance(stance: &mut Stance, combatant: &mut Combatant, to: Stance) {
     *stance = to;
     combatant.withheld = if to == Stance::Drawn { ClassSet::EMPTY } else { ATTACKS };
 }
 
-/// F toggles the stance.
+/// Starts a draw or sheathe of `clip` towards `to`; a clip of no length ends it at once.
+fn start_change(stance: &mut Stance, combatant: &mut Combatant, to: Readiness, clip: ReadyClip) {
+    let change = ReadyChange::start(to, clip);
+    set_stance(stance, combatant, if change.done() { Stance::rest(to) } else { Stance::Changing(change) });
+}
+
+/// F draws a sheathed weapon and sheathes a drawn one (ignored while either plays).
+#[allow(clippy::needless_pass_by_value)] // system parameters
 fn ready_weapon(
     presses: Query<&ActionEvents, With<Action<ReadyWeaponAction>>>,
+    clips: Res<StanceClips>,
     mut bodies: Query<(&mut Stance, &mut Combatant), With<PlayerBody>>,
 ) {
     if !presses.iter().any(|e| e.contains(ActionEvents::START)) {
         return;
     }
     for (mut stance, mut combatant) in &mut bodies {
-        let to = if *stance == Stance::Drawn { Stance::Sheathed } else { Stance::Drawn };
+        match *stance {
+            Stance::Sheathed => start_change(&mut stance, &mut combatant, Readiness::Drawn, clips.draw),
+            Stance::Drawn => start_change(&mut stance, &mut combatant, Readiness::Sheathed, clips.sheathe),
+            Stance::Changing(_) => {}
+        }
+    }
+}
+
+/// Fixed tick, before the combat gate: a draw or sheathe advances on the gameplay clock and
+/// ends in its stance (a finished draw lets attacks through on this very tick).
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub fn advance_stance(time: Res<Time>, mut bodies: Query<(&mut Stance, &mut Combatant), With<PlayerBody>>) {
+    let dt = time.delta_secs();
+    for (mut stance, mut combatant) in &mut bodies {
+        let Stance::Changing(mut change) = *stance else { continue };
+        let to = if change.advance(dt) { Stance::rest(change.to) } else { Stance::Changing(change) };
         set_stance(&mut stance, &mut combatant, to);
     }
 }
 
-/// An attack press while sheathed draws (after the step, which refused it: no attack this tick).
-fn draw_on_attack(mut bodies: Query<(&ActionCharacter, &mut Stance, &mut Combatant), With<PlayerBody>>) {
-    for (character, mut stance, mut combatant) in &mut bodies {
-        if *stance == Stance::Sheathed && character.command.pressed(ActionClass::Light) {
-            set_stance(&mut stance, &mut combatant, Stance::Drawn);
+/// The avatar's readiness follows its body's [`Stance`]: the held weapon mounts while drawn,
+/// and from a draw's attach key to a sheathe's detach key.
+fn show_stance(mut commands: Commands, avatars: Query<(Entity, &ChildOf, Option<&CharacterReadiness>), With<PlayerAvatar>>, bodies: Query<&Stance>) {
+    for (avatar, parent, shown) in &avatars {
+        let Ok(stance) = bodies.get(parent.parent()) else { continue };
+        let readiness = CharacterReadiness(stance.shown());
+        if shown != Some(&readiness) {
+            commands.entity(avatar).insert(readiness);
+        }
+    }
+}
+
+/// Inertialization into the draw or sheathe clip and back out, seconds.
+const STANCE_BLEND_IN: f32 = 0.12;
+const STANCE_BLEND_OUT: f32 = 0.2;
+
+/// Plays the draw or sheathe clip in the avatar's `upper` slot while the body's stance changes,
+/// progress-driven by the change's elapsed time (extrapolated by the fixed overstep, clamped to
+/// the clip), and stops it when the change ends.
+#[allow(clippy::needless_pass_by_value)] // system parameters
+pub fn play_stance(
+    fixed: Res<Time<Fixed>>,
+    mut bodies: Query<(&Stance, &PlayerFeed, &mut StancePlay)>,
+    mut animators: Query<&mut Animator>,
+) {
+    let ahead = fixed.overstep_fraction().clamp(0.0, 1.0) * fixed.timestep().as_secs_f32();
+    for (stance, feed, mut play) in &mut bodies {
+        let Some(mut a) = feed.animator.and_then(|e| animators.get_mut(e).ok()) else { continue };
+        let want = match *stance {
+            Stance::Changing(c) => Some((c.to, (c.elapsed + ahead).min(c.clip.length))),
+            _ => None,
+        };
+        let asset = a.asset.clone();
+        match (want, play.0) {
+            (Some((to, t)), Some((slot, playing))) if playing == to => a.instance.set_slot_progress(slot, t),
+            (Some((to, t)), current) => {
+                if let Some((slot, _)) = current {
+                    a.instance.stop_slot(&asset.binding(), slot, STANCE_BLEND_OUT);
+                }
+                let name = if to == Readiness::Drawn { mw_combat::SWORD_1H_DRAW } else { mw_combat::SWORD_1H_SHEATHE };
+                let graph = &asset.graph;
+                let (Some(slot), Some(clip)) = (graph.slot(mw_graphs::build::slots::UPPER), graph.slot_clip(name)) else {
+                    bevy_log::warn_once!("player avatar: the graph has no upper slot or no clip for {name}");
+                    play.0 = None;
+                    continue;
+                };
+                let req = SlotRequest {
+                    root_motion: RootMotionMode::Progress,
+                    blend_in: STANCE_BLEND_IN,
+                    blend_out: STANCE_BLEND_OUT,
+                    ..SlotRequest::new(MontageClip::Bound(clip))
+                };
+                play.0 = match a.instance.play_slot(&asset.binding(), slot, req) {
+                    Ok(_) => {
+                        a.instance.set_slot_progress(slot, t);
+                        Some((slot, to))
+                    }
+                    Err(e) => {
+                        warn!("player avatar: {name} did not start ({e})");
+                        None
+                    }
+                };
+            }
+            (None, Some((slot, _))) => {
+                a.instance.stop_slot(&asset.binding(), slot, STANCE_BLEND_OUT);
+                play.0 = None;
+            }
+            (None, None) => {}
         }
     }
 }

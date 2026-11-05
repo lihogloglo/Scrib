@@ -384,6 +384,14 @@ impl MwActors {
         }
     }
 
+    /// The held items of an `NPC_` that holds `items` equipped by hand
+    /// ([`held::equipped`]: the player), as `CharacterState::held` takes
+    /// them; the record gives the sex (the shield's part).
+    pub fn held_equipped(&self, id: &RecordId, items: &[&str]) -> Result<Vec<HeldItem>, CharacterError> {
+        let npc = self.db.get::<Npc>(id).ok_or_else(|| CharacterError::UnknownBase { kind: NPC_KIND.to_owned(), id: id.clone() })?;
+        Ok(self.held_items(&held::equipped(&self.db, items), npc.npc_flags.contains(NpcFlags::FEMALE)))
+    }
+
     /// A loadout as framework held items: models from the VFS (missing
     /// ones skipped), offsets from each model's root and `BoneOffset`.
     pub fn held_items(&self, loadout: &Loadout<'_>, female: bool) -> Vec<HeldItem> {

@@ -120,6 +120,28 @@ fn shield_and_torch_share_the_left_hand() {
     assert_eq!(left(&["big_axe", "torch"], night).as_deref(), Some("torch"));
 }
 
+/// CB-3: an actor equipping by hand (the player) holds its first wieldable weapon whatever its
+/// skills, the first shield unless the weapon takes both hands, and no torch.
+#[test]
+fn equipped_items_are_held_as_listed_without_auto_equip() {
+    let db = db();
+    let held = |items: &[&str]| {
+        let l = held::equipped(&db, items);
+        (l.weapon.map(|w| w.id.clone()), l.shield().map(|s| s.id.clone()), l.ammo.is_none() && l.light().is_none())
+    };
+    let s = |v: &str| Some(v.to_owned());
+    assert_eq!(held(&["arrow_a", "axe", "longsword", "buckler", "tower", "torch"]), (s("axe"), s("buckler"), true));
+    assert_eq!(held(&["big_axe", "tower"]), (s("big_axe"), None, true));
+    assert_eq!(held(&["tower"]), (None, s("tower"), true));
+    assert_eq!(held(&[]), (None, None, true));
+    let model = |mesh: &str| Some((VfsPath::new(&mw_world::model_path(mesh)?).ok()?, glam::Affine3A::IDENTITY));
+    let items = held::held_items(&held::equipped(&db, &["longsword"]), model, None);
+    let [sword] = items.as_slice() else { panic!("{items:?}") };
+    assert_eq!((sword.item.as_str(), sword.hand), ("longsword", Hand::Main));
+    assert_eq!(sword.mount(Readiness::Drawn).map(|m| m.socket.as_str()), Some(bone::WEAPON));
+    assert!(sword.mount(Readiness::Sheathed).is_none(), "hidden while sheathed");
+}
+
 #[test]
 fn held_items_mount_on_the_weapon_and_shield_bones() {
     let db = db();

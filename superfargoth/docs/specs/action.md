@@ -425,12 +425,22 @@ the root at the end of the tick, relative to the start-tick feet, and the chain 
   the hand rises before impact) x level (0.5 walking past -> 1 at 2.5 m/s into it, intent or motion); rise 6/s, fall 2/s.
 - Host (`mw_player_bevy::grip::feed`): physics probe from the last model pose's shoulders and arm lengths; active grounded with no
   action slot or warp; right hand busy while `Stance::Drawn` (torch, carried items when they exist). Positions only: the hand keeps
-  its animated rotation (a palm frame from the surface normal, AC1 `place_hand`, needs per-rig palm axes: follow-up).
+  its animated rotation (palm frame added 2026-11-05, below).
   Tests `sf_action` `tests_brace` (sanity; `measure_approach`, `measure_levels` print). Check AL-11.
 - Fix 2026-10-30 (AL-11 rejected: no hands in game): the host gate required `ActionOutput::slot == None`, never true (the base
   `loco` / `air` rules carry slots, `loco.move`), so the brace never ran. Gate now `grip::brace_active`: grounded, not traversing,
   no Clip or Warp output (as the avatar plays them). Live: weight 1 into `wall-3.0`, wrist 3 cm off the face. Regression test
   `mw_player_bevy` `the_wall_brace_runs_in_plain_locomotion_and_not_under_a_clip_move`.
+- Palm frame 2026-11-05 (AL-11 point 2, owner: "reach ahead, palm on the wall, thumb down"): two-bone IK with an end-effector
+  rotation target (UE `TwoBoneIK` effector rotation, Unity Animation Rigging target rotation). `HandIk` now compiles to a rotating
+  `LimbIk` (the target's rotation when given, else the animated one; `animgraph.compile` step v4, re-baked). Per-rig palm axes:
+  `sf_character::RigMap::palm_axes` (hand-local fingers = mean of the non-thumb finger roots, across = index minus little, palm =
+  ±fingers × across by side, rest pose; Bip01: fingers +X, palm -Z), host `mw_graphs::palm_axes` -> `BraceBody::palms`
+  (`PalmFrame`). `HandBrace::rotation`: palm into the face, fingers up plus the facing's part along the face (`BRACE_FINGERS_UP`
+  0.4: up on a wall ahead, forward ~20° up at the side, so the left thumb points down). Side walls: the hand now leads ahead along
+  the walk (`BRACE_LEAD` 1.6 at 1.5 m/s past, was `BRACE_TRAIL` back). Tests `tests_brace` (palm, degenerate frames),
+  `sf_character` `palm_axes_come_from_the_rest_pose_fingers`, `mw_graphs` real install `palm_axes_on_every_humanoid_skeleton`,
+  `hand_ik_lays_the_palm_on_a_wall`. No forearm twist bones in Bip01: the wrist takes all the roll (check for skin wrap).
 
 ## As built (A2 slice 2, 2026-10-26)
 Animated player body: the dressed `player` record under the body, fed from the drawn (interpolated, spring-corrected)

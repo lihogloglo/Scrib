@@ -780,7 +780,8 @@ pub enum OpSpec {
         #[serde(default = "lod0")]
         max_lod: u8,
     },
-    /// Two-bone IK of a hand to a target slot (compiles to a `LimbIk`).
+    /// Two-bone IK of a hand to a target slot (compiles to a `LimbIk`), plus the target's
+    /// rotation when the host gives one (a palm laid on a surface); else the hand keeps its own.
     HandIk {
         upper: JointRef,
         lower: JointRef,

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use mw_anim::Animation;
 use mw_anim::rig::{self, CreatureMover};
 use mw_graphs::build::{params as p, slots, states};
@@ -60,6 +60,60 @@ fn sim(set: &mut AnimSet, t: Template) -> Sim {
     let v = mw_graphs::validate(set, t).unwrap_or_else(|e| panic!("{}: {e}", set.name));
     let clips = set.binding_clips(&v.graph).unwrap();
     Sim::new(v.graph, set.skeleton.clone(), clips).unwrap()
+}
+
+/// The wall brace's palm axes on every humanoid skeleton (B2c): Bip01 hands run along their
+/// local +X with the fingers spread across local Y, so the palm faces local −Z on both hands.
+#[test]
+fn palm_axes_on_every_humanoid_skeleton() {
+    let Some((_, vfs)) = install() else { return };
+    for set in &HUMANOID_SETS {
+        let s = humanoid(&vfs, set);
+        for (i, axes) in mw_graphs::palm_axes(&s.skeleton).into_iter().enumerate() {
+            let (fingers, palm) = axes.unwrap_or_else(|| panic!("{} hand {i}: no palm axes", set.name));
+            eprintln!("{} hand {i}: fingers {fingers:.3}, palm {palm:.3}", set.name);
+            assert!(fingers.dot(Vec3::X) > 0.9, "{} hand {i}: fingers {fingers}", set.name);
+            assert!(palm.dot(Vec3::NEG_Z) > 0.95, "{} hand {i}: palm {palm}", set.name);
+        }
+    }
+}
+
+/// The humanoid graph's hand IK takes a palm rotation (B2c wall brace): standing, the left hand
+/// sent ahead of the shoulder with its palm turned into a wall at the side (+X) or ahead (+Z)
+/// ends there with the palm into the wall; a target out of reach stays finite. Sanity only.
+#[test]
+fn hand_ik_lays_the_palm_on_a_wall() {
+    use mw_graphs::build::{ik, params as p};
+    let Some((_, vfs)) = install() else { return };
+    let mut set = humanoid(&vfs, &HUMANOID_SETS[0]);
+    let [Some((f, palm)), _] = mw_graphs::palm_axes(&set.skeleton) else { panic!("no palm axes") };
+    let mut s = sim(&mut set, Template::Humanoid);
+    s.run(0.5, DT);
+    let hand = s.skeleton.find("Bip01 L Hand").unwrap();
+    let shoulder = s.out.model.translation(s.skeleton.find("Bip01 L UpperArm").unwrap());
+    // (wrist target, palm direction, fingers direction), character space.
+    let cases = [
+        (shoulder + Vec3::new(0.25, -0.15, 0.3), Vec3::X, Vec3::new(0.0, 0.4, 1.0)),
+        (shoulder + Vec3::new(0.1, -0.15, 0.4), Vec3::Z, Vec3::Y),
+        (shoulder + Vec3::new(3.0, 0.0, 3.0), Vec3::X, Vec3::Z),
+    ];
+    for (k, (target, into, fingers)) in cases.into_iter().enumerate() {
+        let fingers = (fingers - into * fingers.dot(into)).normalize();
+        let from = glam::Mat3::from_cols(f, palm, f.cross(palm));
+        let to = glam::Mat3::from_cols(fingers, into, fingers.cross(into));
+        let rotation = glam::Quat::from_mat3(&(to * from.transpose())).normalize();
+        s.set_ik(ik::HAND_L, Some(sf_anim_graph::IkTarget { position: target, rotation: Some(rotation) }));
+        s.set(p::HAND_IK_L, 1.0);
+        s.run(0.2, DT);
+        let (p_hand, r_hand) = (s.out.model.translation(hand), s.out.model.rotation(hand));
+        assert!(p_hand.is_finite() && r_hand.is_finite(), "case {k}: {p_hand} {r_hand}");
+        let facing = (r_hand * palm).dot(into);
+        eprintln!("case {k}: wrist {:.3} m off the target, palm . into {facing:.3}", p_hand.distance(target));
+        assert!(facing > 0.9, "case {k}: palm {} vs {into}", r_hand * palm);
+        if k < 2 {
+            assert!(p_hand.distance(target) < 0.02, "case {k}: wrist {p_hand} vs {target}");
+        }
+    }
 }
 
 #[test]
@@ -117,7 +171,7 @@ fn humanoid_simulation_drives_every_state() {
     s.set(p::MOVING, 1.0);
     s.set_vec2(p::MOVE, fwd);
     // At the walk cycle's authored speed (the feed gives the measured one).
-    s.velocity = glam::Vec3::new(0.0, 0.0, 2.2);
+    s.velocity = Vec3::new(0.0, 0.0, 2.2);
     let t0 = s.time;
     expect(&mut s, 3.0, states::WALK, "WalkForward");
     assert!(count(&s, "footstep", "left", t0) >= 2 && count(&s, "footstep", "right", t0) >= 2, "{:?}", s.fired("footstep", t0));
@@ -463,14 +517,14 @@ fn get_up_clip_ends_standing_over_its_origin() {
         clip.sample(t, &mut local, None);
         let mut model = sf_anim::ModelPose::new(skeleton.len());
         sf_anim::local_to_model(&skeleton, &local, &mut model, &glam::Affine3A::IDENTITY);
-        glam::Vec3::from(model.mats[root].translation)
+        Vec3::from(model.mats[root].translation)
     };
     let (start, end) = (at(0.0), at(clip.duration));
     let track = clip.root_motion.as_ref().and_then(|r| r.frames.last().copied());
     eprintln!("Knockout@tail {:.2} s: root at start {start:.2}, at end {end:.2}; root track end {track:?}", clip.duration);
     let ground = Vec2::new(end.x, end.z).length();
     assert!(ground < 0.1, "the get-up ends {ground:.2} m from its origin (root at {end:.2})");
-    assert!(track.is_none_or(|f| glam::Vec3::new(f[0], f[1], f[2]).length() < 1e-3 && f[3].abs() < 1e-3), "root track {track:?}");
+    assert!(track.is_none_or(|f| Vec3::new(f[0], f[1], f[2]).length() < 1e-3 && f[3].abs() < 1e-3), "root track {track:?}");
 }
 
 /// `Jump`'s loop is one key time (a hold point): the group splits into
@@ -561,7 +615,7 @@ fn jump_holds_in_the_air_and_lands_on_touchdown() {
     s.set(p::MOVING, 1.0);
     s.set(p::RUNNING, 1.0);
     s.set_vec2(p::MOVE, Vec2::new(0.0, 1.0));
-    s.velocity = glam::Vec3::new(0.0, 0.0, 4.0);
+    s.velocity = Vec3::new(0.0, 0.0, 4.0);
     settle(&mut s, 0.5);
     s.set(p::JUMPING, 1.0);
     s.set(p::ON_GROUND, 0.0);
@@ -577,7 +631,7 @@ fn jump_holds_in_the_air_and_lands_on_touchdown() {
     // pose, no take-off; touchdown lands as from a jump.
     s.set(p::MOVING, 0.0);
     s.set(p::RUNNING, 0.0);
-    s.velocity = glam::Vec3::ZERO;
+    s.velocity = Vec3::ZERO;
     settle(&mut s, 1.0);
     let before = lift(&s);
     s.set(p::ON_GROUND, 0.0);

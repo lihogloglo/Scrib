@@ -59,6 +59,7 @@ PH-3 is specified in `docs/specs/physics-adapter.md` and lands with task P10; PH
 
 ### PH-9 (P8): knockdown and get-up
 
+Since 2026-11-05 human walkers go to Delirium instead (PH-15); this check covers beasts and creatures.
 Status: **partial, owner 2026-10-19 (round 10): walkers fall and stand back up, but the fall animation is terrible (basically none). Phase 3.** Earlier: agent-run 2026-10-18 (p9fin): impacts ≥ 15 N·s (`KNOCKDOWN_IMPULSE`) knock a walker
 down; the get-up root comes from the `Knockout@tail` clip's first frame (`clip_root_body`; the `LYING_REST_GET_UP`
 scaffold only for skeletons without that clip, which logs a line).
@@ -160,5 +161,25 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
 - Kind: game location, dev build. Third person, crosshair on an NPC, `I`.
 - Seen 2026-10-30: the player dies (the crosshair ray starts behind the player and hits its own body first) and the
   inventory opens too (`I` is also the inventory key).
-- Fix direction: exclude the player's body from the dev pick ray; move the dev kill to a key no game action uses.
-- Status: known bug (owner pass 2026-10-30).
+- Fixed 2026-11-05 (delirium-death): the `I` key is gone; the console's `kill` replaces it and only targets walkers
+  (never the player or the training dummy). Status: fixed, awaiting owner (check with PH-16).
+
+### PH-15: Knockdowns of human NPCs are Delirium falls (owner 2026-10-30/11-05: the old ragdoll still played)
+- Kind: level + game location, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then
+  `powershell -File tools/run_dev.ps1 scene level-anim-idles` (Llathyno, idle-5: 25 N·s every 12 s; `level-anim-drop`: 10 s).
+- Also: F11 free camera, `V` balls (15 N·s at full throw) at a Dunmer/Breton walker, then at Ajira, Huleeya and the guar.
+- Look for: a human NPC hit goes down under Delirium (`catchFall`: hands out, no pop from the clip), lies still, rolls
+  if needed, gets up and goes back to its idle or path. Ajira/Huleeya/guar keep the old clip + powered-ragdoll knockdown.
+- Log: `knockdown: <e> taken over by the physics layer`, `delirium: took over ... with catchFall`, `handed back (Fallen)`;
+  beasts/creatures `ragdoll: knocked down`. A/B: `--no-default-features` build = old ragdoll for everyone.
+- Status: awaiting owner (delirium-knockdown, 2026-11-05).
+
+### PH-16: A killed human NPC falls and stays dead under Delirium (owner 2026-10-30: replaces clip + limp ragdoll)
+- Kind: level, default build (`delirium` on). `cargo build -p bevyrrowind --features dev`, then
+  `powershell -File tools/run_dev.ps1 scene level-anim-idles` (or `level-anim-drop`). Aim at an NPC, open the console
+  (`` ` ``) and type `kill` (crosshair NPC, else the nearest within 30 deg). Also `kill` one lying after a `V` ball.
+- Look for: a human (Fargoth, Llathyno) drops on the spot (`catchFall`, then limp), no death clip, never gets up, then
+  lies frozen. Ajira, Huleeya and the guar keep the death clip + limp ragdoll. A/B: `--no-default-features` = old death.
+- Log: `death: <e> (...) taken over by the physics layer`, `delirium: took over ... with catchFall (dead)` (or `killed
+  while taken over`), then `delirium: <e> lies dead, pose frozen (N s after the kill)`; beasts `ragdoll: killed`.
+- Status: awaiting owner (delirium-death, 2026-11-05).

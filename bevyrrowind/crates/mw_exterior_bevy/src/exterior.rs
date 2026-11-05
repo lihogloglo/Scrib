@@ -221,10 +221,33 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     }
     if !perf.off.has(Part::Physics) {
         mw_walkers_bevy::physics::add(&mut app, options.store.clone(), (*manifest).clone(), options.physics_debug, options.actors.clone());
+        // Deaths stay testable (owner 2026-11-02: replaces the `I` debug key, PH-14/PH-16).
+        sf_console_bevy::ConsoleAppExt::add_console_command(
+            &mut app,
+            sf_console_bevy::sf_console::CommandSpec::new("kill").help("Kills the NPC under the crosshair, else the nearest one in view (within 40 m)"),
+            |inv| {
+                let text = inv.ctx.run_system_cached(mw_walkers_bevy::physics::kill_in_view).map_err(|e| e.to_string())??;
+                inv.log.info(&text);
+                Ok(())
+            },
+        );
     }
-    // ROADMAP 3.2b: Delirium takeovers of human NPCs, left click pushes one (dev tool; GPL-3.0-only code).
+    // ROADMAP 3.2/3.2b: Delirium takeovers of human NPCs (GPL-3.0-only code; on by default in the app). The free
+    // camera's left-click push is a dev tool (`delirium_push`, part of the app's `dev`).
+    // Knockdowns and deaths of human walkers go to Delirium instead of the powered or limp ragdoll (owner 2026-10-30;
+    // combat-adapter.md "Ragdoll routing"); beasts, creatures and the ragdoll without the feature.
     #[cfg(feature = "delirium")]
-    app.add_plugins(mw_delirium_bevy::DeliriumPlugin { click: !bench });
+    app.add_plugins(mw_delirium_bevy::DeliriumPlugin { click: cfg!(feature = "delirium_push") && !bench }).insert_resource(
+        mw_walkers_bevy::physics::RagdollTakeover(Arc::new(|t: &mw_walkers_bevy::physics::PhysicsTakeover, commands: &mut Commands| {
+            let reaction = match t.kind {
+                mw_walkers_bevy::physics::TakeoverKind::Knockdown => mw_delirium_bevy::knockdown_reaction(t.skeleton, t.mover, t.point, t.impulse),
+                mw_walkers_bevy::physics::TakeoverKind::Death => mw_delirium_bevy::death_reaction(t.skeleton, t.mover, t.point, t.impulse),
+            };
+            let Some(reaction) = reaction else { return false };
+            commands.entity(t.root).try_insert(reaction);
+            true
+        })),
+    );
     // The quality preset scales LOD selection, size culling and the
     // far-field handoff with one bias (`--off sizecull`: no size culling).
     let screen = options.quality.screen(!perf.off.has(Part::SizeCull));

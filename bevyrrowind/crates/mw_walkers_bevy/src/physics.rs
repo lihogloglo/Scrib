@@ -23,14 +23,18 @@
 //! - `--off physics` leaves physics out; the walkers then probe their own
 //!   `StaticWorld` (walkers.rs).
 //! - Every 10 s the log gets the peaks: step and insert time per frame.
-//! - Ragdolls (P7, `sf_physics_bevy` feature `ragdoll`): `I` kills the
-//!   character nearest the crosshair ([`kill_key`], PH-2): its graph's `dead`
+//! - Deaths ([`kill`]; the console's `kill` on the character in view,
+//!   [`kill_in_view`], PH-2/PH-16): the host's [`RagdollTakeover`] hook first
+//!   (Delirium for human walkers in the app: they fall and stay dead), else
+//!   (P7, `sf_physics_bevy` feature `ragdoll`) the graph's `dead`
 //!   state plays the death clip and after [`DEATH_HANDOFF`] it goes limp
-//!   (the `ragdoll.cook` product of its skeleton). Corpses are `RAGDOLL`
+//!   (the `ragdoll.cook` product of its skeleton). Those corpses are `RAGDOLL`
 //!   bodies the carry driver drags by the grabbed limb.
 //! - Knockdowns (P8b) and hit reactions (P9): capsule impacts of at least
-//!   [`KNOCKDOWN_IMPULSE`] knock a walker down (powered ragdoll, get-up from
-//!   the `Knockout@tail` clip's first frame); lighter ones kick the graph's
+//!   [`KNOCKDOWN_IMPULSE`] knock a walker down: the host's
+//!   [`RagdollTakeover`] hook first (Delirium for human walkers in the app),
+//!   else the powered ragdoll (get-up from the `Knockout@tail` clip's first
+//!   frame); lighter ones kick the graph's
 //!   `HitReact` springs. An impact is the incoming body's momentum at first
 //!   contact (`sf_physics::impact_impulse`), never the solver's contact
 //!   force: walking into a ball lying on the street is no hit.
@@ -116,9 +120,9 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
             Update,
             (
                 toggle_debug,
-                auto.before(throw_ball).before(kill_key),
+                auto.before(throw_ball).before(knockdown),
                 throw_ball,
-                (kill_key, knockdown, got_up, ragdoll_log).chain(),
+                (knockdown, got_up, ragdoll_log).chain(),
                 peaks.after(sf_physics_bevy::PhysicsSystems::WriteBack),
                 (attach_holder, carry_keys).chain().before(sf_physics_bevy::PhysicsSystems::Carry),
                 carry_feedback.after(sf_physics_bevy::PhysicsSystems::Carry),
@@ -138,7 +142,7 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
 /// clip, then the powered crumple: `ReactionSet::death`, P8b).
 pub const DEATH_HANDOFF: f32 = 0.4;
 
-/// A character killed by [`kill_key`]: its mover stays [`Held`] (so [`Dormant`]).
+/// A dead character ([`kill`]): its mover stays [`Held`] (so [`Dormant`]).
 #[derive(Component)]
 #[require(Held)]
 pub struct Dead;
@@ -160,54 +164,96 @@ fn ragdoll_source(store: Store, manifest: Manifest) -> RagdollSource {
     }))
 }
 
-/// Who the `I` key can kill: alive and not held by another physics layer (Delirium); a
-/// knocked-down character can still be killed.
-type Killable = (Without<Dead>, Or<(Without<Held>, With<KnockedDown>)>);
+/// Who can die: the living. A character another physics layer holds (`Held` without
+/// [`KnockedDown`]: a Delirium takeover) dies through that layer's hook ([`kill`]).
+type Victims<'w, 's> = Query<'w, 's, (Entity, &'static CharacterBody, Has<Mover>, Has<Held>, Has<KnockedDown>), Without<Dead>>;
 
-/// `I`: kills the character nearest the crosshair (within 40 m and 1 m of
-/// the view ray): the graph's `dead` flag starts the death clip, the mover
-/// parks, and [`Ragdoll`] hands the body to physics after [`DEATH_HANDOFF`].
+/// Console `kill` (registered by the host; replaces the old `I` debug key, PH-14): kills the
+/// character under the crosshair (within 40 m and 1 m of the view ray), else the nearest one
+/// within 30° of the view ([`kill`]). Run with `World::run_system_cached`; the text is the
+/// console's reply.
 #[allow(clippy::needless_pass_by_value)]
-fn kill_key(
-    keys: Res<ButtonInput<KeyCode>>,
+pub fn kill_in_view(
     cameras: Query<(Entity, &Transform), With<FreeCamera>>,
     pos_of: WorldPosOf,
-    characters: Query<(Entity, &CharacterBody), Killable>,
+    victims: Victims,
+    takeover: Option<Res<RagdollTakeover>>,
     mut animators: Query<&mut Animator>,
     mut commands: Commands,
-) {
-    if !keys.just_pressed(KeyCode::KeyI) {
-        return;
-    }
-    let Some((cam, view)) = cameras.iter().next() else { return };
-    let Some(eye) = pos_of.get(cam) else { return };
+) -> Result<String, String> {
+    let (cam, view) = cameras.iter().next().ok_or("no camera")?;
+    let eye = pos_of.get(cam).ok_or("no camera position")?;
     let forward = view.rotation * Vec3::NEG_Z;
-    let mut best: Option<(f32, Entity, &CharacterBody)> = None;
-    for (e, body) in &characters {
+    // (under the crosshair, off-ray distance or range): the crosshair first, then the nearest.
+    let mut best: Option<((bool, f32), Entity)> = None;
+    // Walkers only (a mover): never the player (PH-14: the third-person ray passed through its own body first) nor
+    // the training dummy (action characters).
+    for (e, _, mover, ..) in &victims {
+        if !mover {
+            continue;
+        }
         let Some(feet) = pos_of.get(e) else { continue };
         let d = eye.delta_f32(feet.offset(Vec3::Y));
         let along = d.dot(forward);
         let off = (d - forward * along).length();
-        if (0.0..40.0).contains(&along) && off < 1.0 && best.is_none_or(|(b, ..)| off < b) {
-            best = Some((off, e, body));
+        if !(0.0..40.0).contains(&along) || off > along * 30f32.to_radians().tan() {
+            continue;
+        }
+        let key = if off < 1.0 { (false, off) } else { (true, d.length()) };
+        if best.is_none_or(|(b, _)| key < b) {
+            best = Some((key, e));
         }
     }
-    let Some((_, root, body)) = best else {
-        info!("ragdoll: nobody under the crosshair");
-        return;
-    };
-    kill(root, body, &mut animators, &mut commands);
+    let (_, root) = best.ok_or("nobody in view (within 40 m and 30° of the crosshair)")?;
+    let (_, body, mover, held, down) = victims.get(root).map_err(|e| e.to_string())?;
+    let point = pos_of.get(root).ok_or("no position")?.offset(Vec3::Y);
+    let victim = Victim { root, body, mover, held, down };
+    if kill(victim, point, Vec3::ZERO, takeover.as_deref(), &mut animators, &mut commands) {
+        Ok(format!("killed {root} ({})", body.skeleton))
+    } else {
+        Err(format!("{root} is held by a physics layer that declined the death"))
+    }
 }
 
-/// The graph's `dead` flag starts the death clip, the mover parks, and
-/// [`Ragdoll`] hands the body to physics after [`DEATH_HANDOFF`].
-fn kill(root: Entity, body: &CharacterBody, animators: &mut Query<&mut Animator>, commands: &mut Commands) {
-    if let Ok(mut animator) = animators.get_mut(body.body) {
+/// A living character a death reads: its root, body, and whether it has a [`Mover`], is
+/// [`Held`] and is [`KnockedDown`].
+#[derive(Clone, Copy)]
+struct Victim<'a> {
+    root: Entity,
+    body: &'a CharacterBody,
+    mover: bool,
+    held: bool,
+    down: bool,
+}
+
+/// A death (combat-adapter.md "Ragdoll routing"): the host's [`RagdollTakeover`] hook first
+/// (kind [`TakeoverKind::Death`]: Delirium for human walkers, terminal, including one it already
+/// holds), else the graph's `dead` flag starts the death clip, the mover parks, and [`Ragdoll`]
+/// hands the body to physics after [`DEATH_HANDOFF`]. A powered-ragdoll knockdown dies in its
+/// ragdoll. `point`/`impulse` (N·s, world): the killing blow, zero for none. Either way the root
+/// gets [`Dead`]; false: not killed (held by a layer that declined).
+fn kill(v: Victim, point: sf_coords::WorldPos, impulse: Vec3, takeover: Option<&RagdollTakeover>, animators: &mut Query<&mut Animator>, commands: &mut Commands) -> bool {
+    if !v.down
+        && let Some(take) = takeover
+    {
+        let request = PhysicsTakeover { root: v.root, skeleton: &v.body.skeleton, mover: v.mover, point, impulse, kind: TakeoverKind::Death };
+        if (take.0)(&request, commands) {
+            commands.entity(v.root).try_insert(Dead);
+            info!("death: {} ({}) taken over by the physics layer", v.root, v.body.skeleton);
+            return true;
+        }
+    }
+    if v.held && !v.down {
+        info!("death: {} is held by a physics layer that declined the death: not killed", v.root);
+        return false;
+    }
+    if let Ok(mut animator) = animators.get_mut(v.body.body) {
         animator.set_bool("dead", true);
     }
-    commands.entity(root).try_insert(Dead);
-    commands.entity(body.body).try_insert(Ragdoll { skeleton: body.skeleton.clone(), delay: DEATH_HANDOFF, mode: RagdollMode::Death { crumple: true } });
-    info!("ragdoll: killed {root} ({})", body.skeleton);
+    commands.entity(v.root).try_insert(Dead);
+    commands.entity(v.body.body).try_insert(Ragdoll { skeleton: v.body.skeleton.clone(), delay: DEATH_HANDOFF, mode: RagdollMode::Death { crumple: true } });
+    info!("ragdoll: killed {} ({})", v.root, v.body.skeleton);
+    true
 }
 
 /// Impact momentum on a character's capsule (N·s) that knocks it down: the
@@ -238,16 +284,57 @@ pub struct KnockedDown {
     body_local: Transform,
 }
 
-/// Hard impacts on a living character's capsule knock it down (PH-9);
-/// lighter ones kick the graph's `HitReact` springs (P9, PH-10). Not while
-/// something else owns the body ([`Held`]: dead, down, a Delirium takeover).
+/// What a [`PhysicsTakeover`] asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TakeoverKind {
+    /// A hard impact on a living, unheld character's capsule: down, then up again.
+    Knockdown,
+    /// A death (terminal: never handed back). The character may already be the layer's (a
+    /// takeover under way): the layer then turns it terminal.
+    Death,
+}
+
+/// A knockdown or a death another physics layer may take over (combat-adapter.md "Ragdoll
+/// routing", the walkers' minimal `PhysicsTakeover`).
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicsTakeover<'a> {
+    /// The character's root (the `CharacterBody` entity).
+    pub root: Entity,
+    /// Its skeleton subject (`CharacterBody::skeleton`).
+    pub skeleton: &'a str,
+    /// The root carries a [`Mover`] (a walker; an action character doesn't).
+    pub mover: bool,
+    /// Where the impact landed.
+    pub point: sf_coords::WorldPos,
+    /// N·s, world: the impact's direction times its momentum (a death with no blow: zero).
+    pub impulse: Vec3,
+    /// A knockdown or a death.
+    pub kind: TakeoverKind,
+}
+
+/// Adapter hook: the game's active-ragdoll layer claims a knockdown or a death (inserts its own request on the root
+/// with the commands and returns true, then owns the character: until its hand-back for a knockdown (`Held`, the
+/// get-up, the root's move), for good for a death (the root keeps `Held` and gets [`Dead`])) or declines it (false:
+/// the powered-ragdoll knockdown, or the death clip and limp ragdoll). Without the resource every knockdown and death
+/// is the ragdoll's. The host fills it (`mw_exterior_bevy`: Delirium for human walkers, feature `delirium`).
+#[derive(Resource, Clone)]
+pub struct RagdollTakeover(pub Arc<TakeRagdoll>);
+
+/// The [`RagdollTakeover`] claim: true when it took the knockdown or death.
+pub type TakeRagdoll = dyn Fn(&PhysicsTakeover, &mut Commands) -> bool + Send + Sync;
+
+/// Hard impacts on a living character's capsule knock it down (PH-9): the
+/// [`RagdollTakeover`] hook first, else the powered ragdoll; lighter ones
+/// kick the graph's `HitReact` springs (P9, PH-10). Not while something else
+/// owns the body ([`Held`]: dead, down, a Delirium takeover).
 #[allow(clippy::needless_pass_by_value)]
 fn knockdown(
     mut impacts: MessageReader<ImpactOnCharacter>,
-    characters: Query<&CharacterBody, Without<Held>>,
+    characters: Query<(&CharacterBody, Has<Mover>), Without<Held>>,
     mut bodies: Query<(&mut Animator, &Transform, &GlobalTransform)>,
     pos_of: WorldPosOf,
     source: Res<RagdollSource>,
+    takeover: Option<Res<RagdollTakeover>>,
     mut commands: Commands,
 ) {
     let mut seen = Vec::new();
@@ -255,7 +342,18 @@ fn knockdown(
         if hit.impulse < HIT_REACT_IMPULSE || seen.contains(&hit.entity) {
             continue;
         }
-        let Ok(body) = characters.get(hit.entity) else { continue };
+        let Ok((body, mover)) = characters.get(hit.entity) else { continue };
+        if hit.impulse >= KNOCKDOWN_IMPULSE
+            && let Some(take) = takeover.as_deref()
+        {
+            let impulse = hit.direction * hit.impulse;
+            let request = PhysicsTakeover { root: hit.entity, skeleton: &body.skeleton, mover, point: hit.point, impulse, kind: TakeoverKind::Knockdown };
+            if (take.0)(&request, &mut commands) {
+                seen.push(hit.entity);
+                info!("knockdown: {} taken over by the physics layer ({:.0} N·s)", hit.entity, hit.impulse);
+                continue;
+            }
+        }
         let Ok((mut animator, local, global)) = bodies.get_mut(body.body) else { continue };
         seen.push(hit.entity);
         if hit.impulse < KNOCKDOWN_IMPULSE {
@@ -722,7 +820,7 @@ fn peaks(
 const AUTO_FRAME_DELAY: f32 = 0.5;
 
 /// `BEVYRROWIND_AUTO="kill_nearest@3,ball_at_nearest@6,shot:shots/a.png@7,exit@12"`: actions at
-/// seconds after the start settled. `kill_nearest` is `I` on the living character nearest the
+/// seconds after the start settled. `kill_nearest` is [`kill`] on the living character nearest the
 /// camera; `ball_at_nearest[:speed]` throws the `V` ball (default 12 m/s, 3 kg) on a ballistic
 /// arc at the chest of the nearest living, standing one (`:2` stays under the knockdown
 /// impulse: a `HitReact`); both frame that character from 4 m (a throw at a new target waits
@@ -773,7 +871,7 @@ impl Auto {
 }
 
 /// Runs the due [`Auto`] actions and keeps the camera on the target.
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::type_complexity)]
 fn auto(
     time: Res<Time<Real>>,
     settled: Option<Res<mw_game_core::exterior::Settled>>,
@@ -781,7 +879,8 @@ fn auto(
     // Read-only: `WorldPosOf` reads every Transform; the framed pose is written back through `commands`.
     cameras: Query<(Entity, &Transform), With<FreeCamera>>,
     pos_of: WorldPosOf,
-    characters: Query<(Entity, &CharacterBody, Has<Dead>, Has<KnockedDown>)>,
+    characters: Query<(Entity, &CharacterBody, Has<Dead>, Has<KnockedDown>, Has<Mover>, Has<Held>)>,
+    takeover: Option<Res<RagdollTakeover>>,
     movers: Query<&Mover>,
     mut animators: Query<&mut Animator>,
     mut balls: ResMut<Balls>,
@@ -799,7 +898,7 @@ fn auto(
     let nearest = |alive_only: bool| {
         characters
             .iter()
-            .filter(|(_, _, dead, down)| !alive_only || (!dead && !down))
+            .filter(|(_, _, dead, down, ..)| !alive_only || (!dead && !down))
             .filter_map(|(e, b, ..)| Some((pos_of.get(e)?.delta_f32(eye).length(), e, b)))
             .filter(|(d, ..)| *d < 60.0)
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -809,8 +908,12 @@ fn auto(
         info!("BEVYRROWIND_AUTO @{at}: {action:?}");
         match action {
             AutoAction::KillNearest => {
-                if let Some((_, root, body)) = nearest(true) {
-                    kill(root, body, &mut animators, &mut commands);
+                if let Some((_, root, body)) = nearest(true)
+                    && let Ok((.., down, mover, held)) = characters.get(root)
+                    && let Some(feet) = pos_of.get(root)
+                {
+                    let victim = Victim { root, body, mover, held, down };
+                    kill(victim, feet.offset(Vec3::Y), Vec3::ZERO, takeover.as_deref(), &mut animators, &mut commands);
                     auto.focus = Some(root);
                 } else {
                     info!("BEVYRROWIND_AUTO: nobody within 60 m");
@@ -878,3 +981,7 @@ fn frame_offset(eye: sf_coords::WorldPos, feet: sf_coords::WorldPos) -> Vec3 {
     let flat = Vec3::new(back.x, 0.0, back.z).normalize_or(Vec3::Z);
     flat * 4.0 + Vec3::Y * 1.8
 }
+
+#[cfg(test)]
+#[path = "physics_tests.rs"]
+mod tests;
