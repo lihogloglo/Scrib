@@ -1080,6 +1080,26 @@ mod tests {
         assert_eq!(on.linear_steps, ContactShadows::default().linear_steps);
     }
 
+    /// WE-10 fix 1: `flip cloud_history` swaps the accumulating resolve for the legacy one.
+    #[test]
+    fn cloud_history_flips_the_cloud_resolve() {
+        use sf_atmos_bevy::sf_atmos::CloudTemporal;
+        let mut app = app();
+        run(&mut app, "flip cloud_history");
+        assert!(log(&app).iter().any(|l| l.contains("cloud temporal accumulation: not in this run")), "{:?}", log(&app));
+        app.insert_resource(sf_atmos_bevy::Clouds {
+            settings: sf_atmos_bevy::sf_atmos::CloudSettings::default(),
+            enabled: true,
+            shadows: false,
+            glows: [Vec4::ZERO; sf_atmos_bevy::GLOWS],
+            temporal: CloudTemporal::default(),
+        });
+        run(&mut app, "flip cloud_history");
+        assert_eq!(app.world().resource::<sf_atmos_bevy::Clouds>().temporal, CloudTemporal::LEGACY);
+        run(&mut app, "on cloud_history");
+        assert_eq!(app.world().resource::<sf_atmos_bevy::Clouds>().temporal, CloudTemporal::ACCUMULATE);
+    }
+
     /// RO-16 veil diagnosis switches (scaffold: remove with the veil fix).
     #[test]
     fn veil_switches_flip_terrain_bits_surface_fog_and_the_sky_ambient_live() {
@@ -1092,15 +1112,16 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("ambient: no sky camera")), "{lines:?}");
 
         app.init_resource::<TerrainDebug>().init_resource::<sf_surface_bevy::SurfaceSettings>().insert_resource(
-            sf_atmos_bevy::Fog { settings: sf_atmos_bevy::sf_atmos::FogSettings::default(), enabled: true, froxels: None },
+            sf_atmos_bevy::Fog { settings: sf_atmos_bevy::sf_atmos::FogSettings::default(), enabled: true, froxels: None, view_ambient: sf_atmos_bevy::sf_atmos::VIEW_AMBIENT_IN_FOG },
         );
-        for line in ["off terrain_specular", "off terrain_env_specular", "flip terrain_indirect", "off terrain_tint", "off surface", "flip fog"] {
+        for line in ["off terrain_specular", "off terrain_env_specular", "flip terrain_indirect", "off terrain_tint", "off surface", "flip fog", "flip fog_night_light"] {
             run(&mut app, line);
         }
         let d = *app.world().resource::<TerrainDebug>();
         assert!(d.no_specular && d.no_env_specular && d.no_indirect && d.raw_layers && !d.lod_colors && !d.no_far_shadows, "{d:?}");
         assert!(!app.world().resource::<sf_surface_bevy::SurfaceSettings>().layer);
         assert!(!app.world().resource::<sf_atmos_bevy::Fog>().enabled);
+        assert!(app.world().resource::<sf_atmos_bevy::Fog>().view_ambient <= 0.0, "flip fog_night_light: sky-only fill");
         run(&mut app, "on terrain_specular");
         assert!(!app.world().resource::<TerrainDebug>().no_specular);
 
@@ -1128,6 +1149,52 @@ mod tests {
         run(&mut app, "on weather_ambient");
         assert!(app.world().resource::<sf_sky_bevy::SkyRenderOptions>().weather_ambient_tint);
         assert!(log(&app).iter().any(|l| l == "weather ambient tint on"), "{:?}", log(&app));
+    }
+
+    /// N1: `flip ambient_specular` brings back Bevy's flat-ambient specular (the game runs
+    /// diffuse only), live on the vendored `bevy_pbr::AmbientLightSpecular`.
+    #[test]
+    fn ambient_specular_switch_flips_the_pbr_resource() {
+        let mut app = app();
+        run(&mut app, "flip ambient_specular");
+        assert!(log(&app).iter().any(|l| l == "flat ambient specular: not in this run (no PBR renderer)"), "{:?}", log(&app));
+        app.insert_resource(bevy_pbr::AmbientLightSpecular(false));
+        run(&mut app, "flip ambient_specular");
+        assert!(app.world().resource::<bevy_pbr::AmbientLightSpecular>().0);
+        assert!(log(&app).iter().any(|l| l == "flat ambient specular on"), "{:?}", log(&app));
+        run(&mut app, "off ambient_specular");
+        assert!(!app.world().resource::<bevy_pbr::AmbientLightSpecular>().0);
+    }
+
+    /// N2: `flip night_sky_glow` turns the night sky's own glow off (a black sky behind the stars).
+    #[test]
+    fn night_sky_glow_switch_flips_the_sky_option() {
+        let mut app = app();
+        run(&mut app, "flip night_sky_glow");
+        assert!(log(&app).iter().any(|l| l == "night sky glow: not in this run (--off sky)"), "{:?}", log(&app));
+        app.init_resource::<sf_sky_bevy::SkyRenderOptions>();
+        run(&mut app, "flip night_sky_glow");
+        assert!(!app.world().resource::<sf_sky_bevy::SkyRenderOptions>().night_sky_glow);
+        run(&mut app, "on night_sky_glow");
+        assert!(app.world().resource::<sf_sky_bevy::SkyRenderOptions>().night_sky_glow);
+        assert!(log(&app).iter().any(|l| l == "night sky glow on"), "{:?}", log(&app));
+    }
+
+    /// N3: `flip moonlight` turns the artistic moonlight off (the moons' own dim light) and back.
+    #[test]
+    fn moonlight_switch_flips_the_sky_settings() {
+        let mut app = app();
+        run(&mut app, "flip moonlight");
+        assert!(log(&app).iter().any(|l| l == "artistic moonlight: not in this run (--off sky)"), "{:?}", log(&app));
+        let mut settings = sf_sky_bevy::sf_sky::SkySettings::default();
+        settings.moonlight.artistic = true;
+        app.insert_resource(sf_sky_bevy::SkyConfig(settings));
+        let artistic = |app: &App| app.world().resource::<sf_sky_bevy::SkyConfig>().0.moonlight.artistic;
+        run(&mut app, "flip moonlight");
+        assert!(!artistic(&app));
+        run(&mut app, "on moonlight");
+        assert!(artistic(&app));
+        assert!(log(&app).iter().any(|l| l == "artistic moonlight on"), "{:?}", log(&app));
     }
     /// RO-16 veil fix 1: `terrain.reflectance` seeds from the terrain, retunes it live, and says
     /// so in a run without terrain.

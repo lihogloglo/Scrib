@@ -205,11 +205,13 @@ fn sky_app() -> App {
             enabled: true,
             shadows: false,
             glows: [bevy_math::Vec4::ZERO; sf_atmos_bevy::GLOWS],
+            temporal: sf_atmos_bevy::sf_atmos::CloudTemporal::default(),
         })
         .insert_resource(sf_atmos_bevy::Fog {
             settings: FogSettings::default(),
             enabled: true,
             froxels: None,
+            view_ambient: sf_atmos_bevy::sf_atmos::VIEW_AMBIENT_IN_FOG,
         });
     site(&mut app);
     app

@@ -92,6 +92,44 @@ impl Default for Moon {
     }
 }
 
+/// How strongly the moons light the world (sky-lighting.md "Moonlight", N3). Games
+/// light nights far brighter than the real full moon (≈ 0.25 lx) so they read,
+/// and set the moonlight apart from the drawn disks (UE's moon directional light
+/// and moon material are separate): [`Moon::illuminance`] stays the disk's
+/// photometric value, this sets the light.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Moonlight {
+    /// Illuminance above the atmosphere, lux, of the one moonlight when every
+    /// moon is full under a clear sky. Each moon keeps its share
+    /// ([`Moon::illuminance`] over their sum) and its phase (Lambert law);
+    /// cloud cover dims it like the sun ([`crate::Weather::direct_light_factor`]).
+    pub full_lux: f32,
+    /// Light the world with [`Self::full_lux`]. Off (the default): the moons
+    /// light it with their disks' own [`Moon::illuminance`], physically dim
+    /// (the pre-N3 moonlight; an A/B).
+    pub artistic: bool,
+}
+
+impl Default for Moonlight {
+    fn default() -> Self {
+        Self { full_lux: 1.0, artistic: false }
+    }
+}
+
+impl Moonlight {
+    /// Factor from the disks' illuminance to the light's: `full_lux` over the
+    /// moons' summed full illuminance when artistic, else 1.
+    pub fn gain(&self, moons: &[Moon]) -> f32 {
+        let sum: f32 = moons.iter().map(|m| m.illuminance.max(0.0)).sum();
+        if self.artistic && sum > 0.0 && self.full_lux.is_finite() {
+            self.full_lux.max(0.0) / sum
+        } else {
+            1.0
+        }
+    }
+}
+
 /// One moon at one instant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MoonState {
@@ -249,5 +287,67 @@ impl NightSky {
     /// The moons in this state.
     pub fn moons(&self) -> &[MoonState] {
         &self.moons[..(self.moon_count as usize).min(MAX_MOONS)]
+    }
+}
+
+/// Zenith luminance of the night sky's glow over the luminance of the night ambient floor
+/// ([`crate::SkySettings::ambient`] times its colour's luminance). Physically the moonless sky
+/// is ~0.2 mcd/m² and a full-moon sky a few mcd/m²; the floor is raised far above that for a
+/// readable night, and the glow is raised with it so sky and ground agree. 0.1 keeps the
+/// zenith a dark blue at the night exposure (the ground under the floor reads a little
+/// brighter, the horizon a little brighter still), not a twilight.
+pub const NIGHT_SKY_GLOW_RATIO: f32 = 0.1;
+
+/// Horizon over zenith radiance of the night glow. A thin emitting layer seen at a slant is
+/// brighter low down (van Rhijn: ~6x for airglow at 90 km); extinction and the observed sky
+/// bring it to 2-4x.
+pub const NIGHT_SKY_HORIZON_RATIO: f32 = 3.0;
+
+/// The night sky's own radiance (sky-lighting.md "Night sky glow"): airglow, integrated
+/// starlight and scattered moonlight as one term the renderer adds to every sky ray, under
+/// the clouds and in the sky's environment map. Its brightness follows the night ambient
+/// floor (same sun-elevation ramp), its hue the weather's night sky colour.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NightGlow {
+    /// Zenith luminance over the ambient floor's ([`NIGHT_SKY_GLOW_RATIO`]); 0 turns it off.
+    pub ratio: f32,
+    /// Horizon over zenith radiance ([`NIGHT_SKY_HORIZON_RATIO`], at least 1).
+    pub horizon: f32,
+}
+
+impl Default for NightGlow {
+    fn default() -> Self {
+        Self { ratio: NIGHT_SKY_GLOW_RATIO, horizon: NIGHT_SKY_HORIZON_RATIO }
+    }
+}
+
+impl NightGlow {
+    /// Zenith radiance (linear RGB, cd/m²) over a floor of luminance `floor_luminance`
+    /// (nits) with the hue of `tint` (any brightness; black or non-finite: grey).
+    #[must_use]
+    pub fn zenith(&self, floor_luminance: f32, tint: Vec3) -> Vec3 {
+        let l = crate::luminance(tint);
+        let chroma = if l > 0.0 && tint.is_finite() { tint.max(Vec3::ZERO) / l } else { Vec3::ONE };
+        chroma * (self.ratio.max(0.0) * floor_luminance.max(0.0))
+    }
+
+    /// Radiance over zenith radiance along a sky ray at zenith cosine `mu` (twin of the
+    /// renderer's `airglow`): `1 / sqrt(1 - k² (1 - mu²))`, `k² = 1 - 1/H²`, so 1 at the
+    /// zenith and `H` at the horizon.
+    #[must_use]
+    pub fn profile(&self, mu: f32) -> f32 {
+        let h = self.horizon.max(1.0);
+        let k2 = 1.0 - 1.0 / (h * h);
+        let m = mu.clamp(0.0, 1.0);
+        (1.0 - k2 * (1.0 - m * m)).max(1e-6).sqrt().recip()
+    }
+
+    /// Irradiance on an upward surface over π times the zenith radiance: the sky's share of
+    /// the ground's fill, `2H / (H + 1)` in closed form (the renderer's ground term).
+    #[must_use]
+    pub fn ground_factor(&self) -> f32 {
+        let h = self.horizon.max(1.0);
+        2.0 * h / (h + 1.0)
     }
 }

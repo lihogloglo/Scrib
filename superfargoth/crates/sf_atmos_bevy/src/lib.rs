@@ -23,7 +23,10 @@
 //!   pixel; the composite applies both exponential layers' closed-form
 //!   optical depth to each full-resolution pixel's own depth, lit by the key
 //!   light and the sky-view LUT, in front of the clouds. Runs with the
-//!   clouds off too ([`Clouds::enabled`]); costs nothing without fog.
+//!   clouds off too ([`Clouds::enabled`]); costs nothing without fog. The
+//!   fog's isotropic fill adds the camera's ambient light ([`view_ambient`],
+//!   [`Fog::view_ambient`]) to the sky's, so a host's night ambient floor
+//!   lights the fog as it lights the ground (WE-9).
 //! - GPU timers: each pass is a `RenderDiagnosticsPlugin` span
 //!   (`clouds_shadow`, `clouds_trace`, `clouds_resolve`, `clouds_composite`).
 //! - Floating origin: the app reports the absolute position of the
@@ -39,6 +42,10 @@ mod fog_translucents;
 mod render;
 mod transparent;
 mod weather_map;
+#[cfg(test)]
+mod shader_tests;
+#[cfg(test)]
+mod tests;
 
 pub use fog_translucents::FogTranslucentsPlugin;
 pub use transparent::{FroxelFogExt, FroxelFogMaterial, FroxelVolume};
@@ -50,17 +57,17 @@ use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{embedded_asset, Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
 use bevy_ecs::prelude::*;
-use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy_image::{CompressedImageFormats, Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor, ImageType};
 use bevy_camera::visibility::ViewVisibility;
-use bevy_light::{DirectionalLight, DirectionalLightTexture, PointLight};
+use bevy_light::{AmbientLight, DirectionalLight, DirectionalLightTexture, GlobalAmbientLight, PointLight};
 use bevy_math::{DVec3, Vec2, Vec3, Vec4};
-use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension};
 use bevy_shader::load_shader_library;
 use bevy_time::Time;
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_atmos::scroll::TileOffsets;
-use sf_atmos::{CloudScroll, CloudSettings, FogDrift, FogOffsets, FogSettings, FroxelSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
+use sf_atmos::{CloudScroll, CloudSettings, CloudTemporal, FogDrift, FogOffsets, FogSettings, FroxelSettings, NoiseVolumes, ShadowRows, ShadowSlicer, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 
 pub use sf_atmos;
 
@@ -93,6 +100,8 @@ pub struct Clouds {
     pub shadows: bool,
     /// In-cloud lightning glows (`WE4e`): render-space position, intensity (0: unused).
     pub glows: [Vec4; GLOWS],
+    /// How the resolve accumulates the cloud history (WE-10 fix 1; the `cloud_history` A/B).
+    pub temporal: CloudTemporal,
 }
 
 /// Height fog, ground-fog banks and the far fog (weather.md "Fog", F2), drawn
@@ -106,6 +115,10 @@ pub struct Fog {
     /// The froxel volume near the camera (F3: god rays, shadowed and point-lit
     /// fog); `None` is the Low preset (analytic layers only). High by default.
     pub froxels: Option<FroxelSettings>,
+    /// How much of the camera's ambient light ([`view_ambient`]) the fog
+    /// in-scatters on top of the sky fill: [`sf_atmos::VIEW_AMBIENT_IN_FOG`]
+    /// (1, the same light as the surfaces) by default, 0 the sky alone.
+    pub view_ambient: f32,
 }
 
 /// A height-field shadow for the froxels' sun light past the cascades (the
@@ -153,6 +166,8 @@ pub struct NoiseImages {
     pub shape: Handle<Image>,
     pub detail: Handle<Image>,
     pub weather: Handle<Image>,
+    /// Spatio-temporal blue noise for the march jitter ([`STBN_KTX2`]).
+    pub blue_noise: Handle<Image>,
 }
 
 #[derive(Resource, Default)]
@@ -175,8 +190,12 @@ pub(crate) struct CloudFrame {
     pub clouds: bool,
     pub glows: [Vec4; GLOWS],
     pub settings: CloudSettings,
+    pub temporal: CloudTemporal,
     /// The fog, when it draws.
     pub fog: Option<FogSettings>,
+    /// The camera's ambient radiance × [`Fog::view_ambient`] (linear RGB),
+    /// added to the fog's sky fill.
+    pub fog_ambient: Vec3,
     pub fog_offsets: FogOffsets,
     pub offsets: TileOffsets,
     /// Wind displacement this frame (world X, Z), meters.
@@ -243,8 +262,8 @@ impl Plugin for CloudsPlugin {
             // `TranslucentFog` and the `translucent_fog` shader module `transparent_fog.wesl` imports.
             app.add_plugins(sf_render_order_bevy::RenderOrderPlugin);
         }
-        app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true, glows: [Vec4::ZERO; GLOWS] })
-            .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()) })
+        app.insert_resource(Clouds { settings: self.settings, enabled: true, shadows: true, glows: [Vec4::ZERO; GLOWS], temporal: CloudTemporal::default() })
+            .insert_resource(Fog { settings: self.fog, enabled: true, froxels: Some(FroxelSettings::high()), view_ambient: sf_atmos::VIEW_AMBIENT_IN_FOG })
             .init_resource::<FogShadowHeights>()
             .init_resource::<FroxelVolume>()
             .add_plugins(bevy_pbr::MaterialPlugin::<FroxelFogMaterial>::default())
@@ -303,7 +322,26 @@ fn poll_noise(job: Res<NoiseJob>, mut images: ResMut<Assets<Image>>, mut cloud_i
             volumes.weather,
             TextureFormat::Rgba8Unorm,
         )),
+        blue_noise: images.add(blue_noise_image()),
     });
+}
+
+/// Spatio-temporal blue noise (NVIDIA STBN, 128² × 32 layers, Wolfe et al. 2022) for the cloud
+/// march jitter: the texture Bevy 0.20 ships in `bevy_pbr` behind its `bluenoise_texture`
+/// feature (MIT/Apache with Bevy), read from our vendored copy so that feature's other users
+/// (contact shadows, SSR) keep their noise. The shaders read `.x`.
+const STBN_KTX2: &[u8] = include_bytes!("../../../vendor/bevy_pbr/src/bluenoise/stbn.ktx2");
+
+/// [`STBN_KTX2`] as a 2D array image; a 1×1 one (the shaders then fall back to gradient noise)
+/// if this build can't decode KTX2.
+fn blue_noise_image() -> Image {
+    let decoded = Image::from_buffer(STBN_KTX2, ImageType::Extension("ktx2"), CompressedImageFormats::NONE, false, ImageSampler::Default, RenderAssetUsages::RENDER_WORLD);
+    let mut image = decoded.unwrap_or_else(|e| {
+        log::error!("cloud blue noise: {e}; the march jitter falls back to gradient noise");
+        noise_image(Extent3d { width: 1, height: 1, depth_or_array_layers: 2 }, TextureDimension::D2, vec![0; 8], TextureFormat::Rgba8Unorm)
+    });
+    image.texture_view_descriptor = Some(TextureViewDescriptor { dimension: Some(TextureViewDimension::D2Array), ..TextureViewDescriptor::default() });
+    image
 }
 
 type ShadowLightItem = (Entity, &'static mut GlobalTransform, Has<DirectionalLightTexture>);
@@ -326,7 +364,8 @@ fn drive(
     mut slicer: ResMut<Slicer>,
     mut drift: ResMut<Drift>,
     mut frame: ResMut<CloudFrame>,
-    cameras: Query<(&GlobalTransform, &Camera), With<CloudCamera>>,
+    cameras: Query<(&GlobalTransform, &Camera, Option<&AmbientLight>), With<CloudCamera>>,
+    global_ambient: Option<Res<GlobalAmbientLight>>,
     mut lights: Query<ShadowLightItem, ShadowLightFilter>,
     point_lights: FogLightQuery,
     heights: Res<FogShadowHeights>,
@@ -335,7 +374,9 @@ fn drive(
     let s = clouds.settings;
     let dt = time.delta_secs_f64();
     scroll.0.advance(s.weather.wind, s.look.evolve, dt, s.look.shape_tile);
-    let camera = cameras.iter().find(|(_, c)| c.is_active).map(|(t, _)| t.translation());
+    let active_camera = cameras.iter().find(|(_, c, _)| c.is_active);
+    let camera = active_camera.map(|(t, _, _)| t.translation());
+    let ambient = view_ambient(active_camera.and_then(|(_, _, a)| a), global_ambient.as_deref());
     let fog_on = fog.enabled && fog.settings.any();
     if fog_on {
         drift.0.advance(fog.settings.wind, dt);
@@ -390,9 +431,11 @@ fn drive(
         active,
         clouds: clouds.enabled,
         fog: fog_on.then_some(fog.settings),
+        fog_ambient: sf_atmos::fog_fill(Vec3::ZERO, ambient, fog.view_ambient),
         fog_offsets: drift.0.offsets([origin.0.x, origin.0.z], &fog.settings.banks),
         glows: clouds.glows,
         settings: s,
+        temporal: clouds.temporal,
         offsets: scroll.0.offsets([origin.0.x, origin.0.z], &s.look),
         #[allow(clippy::cast_possible_truncation)]
         wind_step: s.weather.wind * dt as f32,
@@ -405,6 +448,20 @@ fn drive(
         images: images.clone(),
         shadow,
     };
+}
+
+/// The flat ambient radiance that lights the camera's surfaces (linear RGB,
+/// `color × brightness`, as Bevy's PBR shades `AmbientLight`): the camera's
+/// own [`AmbientLight`] when it has one, else the [`GlobalAmbientLight`]
+/// (Bevy's rule). The fog adds it to its sky fill ([`Fog::view_ambient`]).
+pub fn view_ambient(camera: Option<&AmbientLight>, global: Option<&GlobalAmbientLight>) -> Vec3 {
+    let (color, brightness) = match (camera, global) {
+        (Some(a), _) => (a.color, a.brightness),
+        (None, Some(g)) => (g.color, g.brightness),
+        (None, None) => return Vec3::ZERO,
+    };
+    let c = color.to_linear();
+    Vec3::new(c.red, c.green, c.blue) * brightness
 }
 
 /// The point lights the froxels light (weather.md "Fog", F3: lanterns in fog):

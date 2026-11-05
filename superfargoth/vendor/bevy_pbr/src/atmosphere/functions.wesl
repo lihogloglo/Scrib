@@ -133,6 +133,22 @@ fn sample_sky_view_lut(r: f32, ray_dir_as: vec3<f32>) -> vec3<f32> {
     return textureSampleLevel(sky_view_lut, atmosphere_lut_sampler, uv, 0.0).rgb;
 }
 
+// superfargoth patch (own, N2: sky glow): the sky's own radiance along a ray from radius `r`
+// at zenith cosine `mu` (`AtmosphereSettings::airglow`). A van Rhijn profile 1/sqrt(1 - k²
+// sin²z) with k² = 1 - 1/H², so the zenith is `airglow` and the horizon H times it (H =
+// `airglow_horizon`). A ray that hits the ground sees the ground lit by that sky: albedo ×
+// irradiance / π = albedo × airglow × 2H / (H + 1) (the profile's closed-form cosine
+// integral). CPU twin: `sf_sky::night_glow` (tests there).
+fn airglow(r: f32, mu: f32) -> vec3<f32> {
+    let h = max(settings.airglow_horizon, 1.0);
+    if ray_intersects_ground(r, mu) {
+        return atmosphere.ground_albedo * settings.airglow * (2.0 * h / (h + 1.0));
+    }
+    let k2 = 1.0 - 1.0 / (h * h);
+    let m = clamp(mu, 0.0, 1.0);
+    return settings.airglow * inverseSqrt(max(1.0 - k2 * (1.0 - m * m), 1e-6));
+}
+
 fn ndc_to_camera_dist(ndc: vec3<f32>) -> f32 {
     let view_pos = view.view_from_clip * vec4(ndc, 1.0);
     let p_view = view_pos.xyz / view_pos.w;

@@ -208,6 +208,8 @@ impl Plugin for PbrPlugin {
 
         app.register_asset_reflect::<StandardMaterial>()
             .init_resource::<DefaultOpaqueRendererMethod>()
+            // superfargoth patch (own, N1: ambient specular toggle)
+            .init_resource::<AmbientLightSpecular>()
             .add_plugins((
                 MeshRenderPlugin {
                     use_gpu_instance_buffer_builder: self.use_gpu_instance_buffer_builder,
@@ -249,6 +251,8 @@ impl Plugin for PbrPlugin {
                 GpuClusteringPlugin,
                 // superfargoth patch (own: lamp shadow filter)
                 bevy_render::extract_component::ExtractComponentPlugin::<PointSpotShadowsHardware2x2>::default(),
+                // superfargoth patch (own, N1: ambient specular toggle)
+                ExtractResourcePlugin::<AmbientLightSpecular>::default(),
             ));
 
         #[cfg(feature = "bevy_gltf")]

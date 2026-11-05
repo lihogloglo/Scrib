@@ -331,8 +331,8 @@ fn apply_sky(
         .clouds
         .map_or(f.cloud_cover, |c| c.mean_cover());
     let w = &sky.0;
-    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming, w.sun_glare, w.ambient_tint)
-        != (haze, dust, f.dust_tint, cover, f.overcast_dimming, f.sun_glare, f.ambient_tint)
+    if (w.haze, w.dust, w.dust_tint, w.cloud_cover, w.overcast_dimming, w.sun_glare, w.ambient_tint, w.night_sky_tint, w.moonlight_tint)
+        != (haze, dust, f.dust_tint, cover, f.overcast_dimming, f.sun_glare, f.ambient_tint, f.night_sky_tint, f.moonlight_tint)
     {
         let w = &mut sky.0;
         w.haze = haze;
@@ -342,6 +342,8 @@ fn apply_sky(
         w.overcast_dimming = f.overcast_dimming;
         w.sun_glare = f.sun_glare;
         w.ambient_tint = f.ambient_tint;
+        w.night_sky_tint = f.night_sky_tint;
+        w.moonlight_tint = f.moonlight_tint;
     }
 }
 

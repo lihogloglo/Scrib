@@ -75,6 +75,10 @@ struct Clouds {
     shell_thickness: f32,
     cirrus_max: f32,
     far_weather: u32,
+    // The history (`sf_atmos::CloudTemporal`, WE-10 fix 1): fresh weight, variance-clip γ (0: min/max), STBN jitter.
+    history_weight: f32,
+    clip_gamma: f32,
+    blue_noise: u32,
     glows: array<vec4<f32>, 4>,
 };
 

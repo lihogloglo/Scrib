@@ -451,3 +451,15 @@ Proposed jobs (one deliverable each, ~100 tool calls):
 
 Sources for this section: the "Industry comparison" sections of the specs
 named above (each lists its own, verified and unverified).
+
+## Distant local weather: cloud and curtain edges (cloud-edge, 2026-11-06)
+
+Owner report WE-10 (a local storm seen from outside is a vertical wall with a noisy edge). Diagnosis, sources and
+the 3-slice fix plan: `bevyrrowind/docs/research/cloud-weather-edges-2026-11-06.md`.
+
+| # | Gap | Spec | Priority |
+|---|---|---|---|
+| C1 | Cloud history too short: fresh samples blend 50/50, min/max 3×3 clamp, IGN jitter; HZD integrates 16 frames, RDR2 4-frame reconstruction with blue noise; variance clipping (Salvi 2016) and spatio-temporal blue noise are standard | weather/clouds.md | **P1** (noise everywhere) |
+| C2 | Far media undersampled: 8 far-weather steps up to 1.9 km, each opaque in a storm, so the edge is a per-pixel coin toss | weather/distant-weather.md §6-7 | **P1** (with WE-10) |
+| C3 | Region masks shape the far look: 256 m band cuts a solid deck, shafts fill the whole region at in-storm extinction; HZD/Nubis map coverage is noise-modulated, HFW blends regional influence masks, RDR2 puts rain fog under cloud-map density | weather/distant-weather.md | **P1** (with WE-10) |
+| C4 | Shape noise in height-fraction space (stretches with deck thickness, shears in the border band); Nubis samples world-space noise and lets the profile erode it | weather/clouds.md | P2 |

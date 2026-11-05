@@ -7,7 +7,7 @@ use crate::atmosphere::{AtmosphereModel, visible_disk_fraction};
 use crate::celestial::{Celestial, Orbit};
 use crate::clock::{Calendar, SkyClock};
 use crate::curve::KeyCurve;
-use crate::night::{MAX_MOONS, Moon, MoonState, NightSky, StarField, SunDiskLook};
+use crate::night::{MAX_MOONS, Moon, MoonState, Moonlight, NightGlow, NightSky, StarField, SunDiskLook};
 use crate::weather::Weather;
 
 /// Everything that defines a world's sky. Data-driven: adapters fill it from
@@ -34,6 +34,8 @@ pub struct SkySettings {
     /// [`Self::moon_illuminance`] and [`Self::moon_angular_size`]. At most
     /// [`MAX_MOONS`] are evaluated; one moonlight carries their sum.
     pub moons: Vec<Moon>,
+    /// The moonlight's strength, apart from the drawn disks (N3).
+    pub moonlight: Moonlight,
     /// The star field.
     pub stars: StarField,
     /// How the sun disk is drawn (size, glare).
@@ -49,6 +51,8 @@ pub struct SkySettings {
     /// degrees. Physically based sky light comes from the atmosphere's
     /// environment map; this is a small artistic floor for night readability.
     pub ambient: KeyCurve,
+    /// The night sky's own glow, tied to [`Self::ambient`] (sky-lighting.md "Night sky glow").
+    pub night_glow: NightGlow,
     /// Below this sun elevation (degrees) the moon takes over shadows.
     pub sun_shadow_min_elevation_deg: f32,
     /// The moon casts shadows only above this elevation (degrees).
@@ -67,6 +71,7 @@ impl Default for SkySettings {
             moon_illuminance: 1.0,
             moon_angular_size: 0.009_04,
             moons: Vec::new(),
+            moonlight: Moonlight::default(),
             stars: StarField::default(),
             sun_disk: SunDiskLook::default(),
             exposure: KeyCurve::new(vec![
@@ -81,6 +86,7 @@ impl Default for SkySettings {
             ]),
             exposure_range: ExposureRange::default(),
             ambient: KeyCurve::new(vec![(-12.0, 0.03), (-4.0, 0.0)]),
+            night_glow: NightGlow::default(),
             sun_shadow_min_elevation_deg: -1.0,
             moon_shadow_min_elevation_deg: 3.0,
         }
@@ -120,7 +126,8 @@ impl ExposureRange {
 }
 
 /// One directional light (sun or moon) as the renderer should see it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SkyLight {
     /// Unit vector from the scene toward the body (engine frame).
     pub direction: Vec3,
@@ -134,6 +141,24 @@ pub struct SkyLight {
     pub transmittance: Vec3,
     /// This light should cast shadows (at most one of sun and moon does).
     pub casts_shadows: bool,
+    /// Linear RGB colour of the light itself, before the atmosphere
+    /// (luminance 1; the sun's is white, the moon's from the weather or the
+    /// moons). The colour for shaders that apply transmittance themselves;
+    /// [`Self::transmittance`] already includes it.
+    pub tint: Vec3,
+}
+
+impl Default for SkyLight {
+    fn default() -> Self {
+        Self {
+            direction: Vec3::NEG_Y,
+            elevation: 0.0,
+            illuminance: 0.0,
+            transmittance: Vec3::ZERO,
+            casts_shadows: false,
+            tint: Vec3::ONE,
+        }
+    }
 }
 
 impl SkyLight {
@@ -181,6 +206,8 @@ pub struct SkyState {
     pub ambient: f32,
     /// Tint of the ambient floor from the weather ([`Weather::ambient_tint`]).
     pub ambient_tint: Option<Vec3>,
+    /// Hue of the night sky's glow from the weather ([`Weather::night_sky_tint`]).
+    pub night_sky_tint: Option<Vec3>,
     /// The drawn moons and the stars' visibility.
     pub night: NightSky,
 }
@@ -205,10 +232,12 @@ impl SkySettings {
                 TRANSMITTANCE_SAMPLES,
             ) * visible_disk_fraction(pos.elevation, horizon, angular_size),
             casts_shadows: false,
+            tint: Vec3::ONE,
         };
         let mut sun = light(celestial.sun, self.sun_illuminance, self.sun_angular_size);
         let night = self.evaluate_night(clock, weather, celestial.sun.elevation_deg(), horizon);
-        let mut moon = moonlight(night.moons());
+        let gain = self.moonlight.gain(&self.moon_list());
+        let mut moon = moonlight(night.moons(), gain, weather.moonlight_tint);
         let sun_deg = celestial.sun.elevation_deg();
         if sun_deg > self.sun_shadow_min_elevation_deg {
             sun.casts_shadows = true;
@@ -225,6 +254,7 @@ impl SkySettings {
             ev100: self.exposure_range.clamp(self.exposure.sample(sun_deg)),
             ambient: self.ambient.sample(sun_deg),
             ambient_tint: weather.ambient_tint,
+            night_sky_tint: weather.night_sky_tint,
             night,
         }
     }
@@ -287,8 +317,10 @@ impl SkySettings {
 
 /// One moonlight for all moons: from the brightest moon at the ground, with
 /// the illuminance that makes its ground light the sum of all of theirs
-/// (one shadow-casting light rather than one per moon, as games do).
-fn moonlight(moons: &[MoonState]) -> SkyLight {
+/// (one shadow-casting light rather than one per moon, as games do), times
+/// `gain` ([`Moonlight::gain`]). Its colour is the weather's moonlight hue,
+/// else the brightest moon's tint.
+fn moonlight(moons: &[MoonState], gain: f32, weather_tint: Option<Vec3>) -> SkyLight {
     let Some(brightest) = moons
         .iter()
         .max_by(|a, b| a.ground_illuminance().total_cmp(&b.ground_illuminance()))
@@ -301,15 +333,19 @@ fn moonlight(moons: &[MoonState]) -> SkyLight {
     };
     let total: f32 = moons.iter().map(MoonState::ground_illuminance).sum();
     let own = luminance(brightest.transmittance);
-    let illuminance = if own > 1e-6 { total / own } else { brightest.illuminance };
-    // The disk tint colors the light too (normalized to luminance 1).
-    let tint = brightest.tint / luminance(brightest.tint).max(1e-6);
+    let illuminance = gain * if own > 1e-6 { total / own } else { brightest.illuminance };
+    // Normalized to luminance 1: the colour, not the brightness.
+    let hue = weather_tint
+        .filter(|t| t.is_finite() && t.min_element() >= 0.0 && luminance(*t) > 1e-6)
+        .unwrap_or(brightest.tint);
+    let tint = hue / luminance(hue).max(1e-6);
     SkyLight {
         direction: brightest.position.direction,
         elevation: brightest.position.elevation,
         illuminance,
         transmittance: brightest.transmittance * tint,
         casts_shadows: false,
+        tint,
     }
 }
 

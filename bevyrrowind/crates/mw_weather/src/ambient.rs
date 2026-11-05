@@ -1,6 +1,10 @@
 //! The tint of the sky's ambient floor from `Morrowind.ini` (RO-16 fix 2):
 //! each weather's `Ambient Sunrise/Day/Sunset/Night Color`, interpolated over
-//! the time of day, as `SkyTerms::ambient_tint_by_hour`.
+//! the time of day, as `SkyTerms::ambient_tint_by_hour`; and (N2) the night sky glow's hue
+//! from `Sky Sunrise/Day/Sunset/Night Color` with the `Sky` fades, as
+//! `SkyTerms::night_sky_tint_by_hour` ([`Setting`]); and (N3) the moonlight's hue from
+//! `Sun Sunrise/Day/Sunset/Night Color` with the `Sun` fades, as
+//! `SkyTerms::moonlight_tint_by_hour`.
 //!
 //! Port of `OpenMW` `apps/openmw/mwworld/weather.cpp` (github.com/OpenMW/openmw,
 //! commit `ca5e2576bfeb8fa64b53fdc8a31fefc360decc2f`):
@@ -162,8 +166,40 @@ pub fn tint_at(colors: &TimeOfDay, clear: &TimeOfDay, hour: f32, t: &DayTimes, f
     if ratio > 0.0 && ratio.is_finite() { tint * ratio.powf(brightness) } else { tint }
 }
 
-/// `[Weather]` day corners and the ambient fades (vanilla where absent).
-pub(crate) fn day_times(w: &mut WeatherIni<'_>) -> (DayTimes, Fades) {
+/// Which colour set a curve follows (`OpenMW` `TimeOfDaySettings::addSetting(prefix)`): its
+/// ini prefix and its vanilla fades (pre-sunrise, post-sunrise, pre-sunset, post-sunset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setting {
+    /// `Ambient ... Color` (RO-16 fix 2).
+    Ambient,
+    /// `Sky ... Color`: the night sky glow's hue (N2).
+    Sky,
+    /// `Sun ... Color`: the moonlight's hue (N3). `OpenMW` keeps its sun light on at night,
+    /// lit with `Sun Night Color` from above (`WeatherManager::update`: the orbit runs back
+    /// over the sky, `setSunColour(result.mSunColor, ...)`), which is Morrowind's moonlight.
+    Sun,
+}
+
+impl Setting {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Ambient => "Ambient",
+            Self::Sky => "Sky",
+            Self::Sun => "Sun",
+        }
+    }
+
+    fn vanilla_fades(self) -> [f32; 4] {
+        match self {
+            Self::Ambient => [0.5, 2.0, 1.0, 1.25],
+            Self::Sky => [0.5, 1.0, 1.5, 0.5],
+            Self::Sun => [0.0, 0.0, 1.0, 1.25],
+        }
+    }
+}
+
+/// `[Weather]` day corners and `setting`'s fades (vanilla where absent).
+pub(crate) fn day_times_for(w: &mut WeatherIni<'_>, setting: Setting) -> (DayTimes, Fades) {
     let mut get = |key: &str, vanilla: f32| w.f32("Weather", key).unwrap_or(vanilla);
     let times = DayTimes::new(
         get("Sunrise Time", 6.0),
@@ -171,19 +207,21 @@ pub(crate) fn day_times(w: &mut WeatherIni<'_>) -> (DayTimes, Fades) {
         get("Sunset Time", 18.0),
         get("Sunset Duration", 2.0),
     );
+    let (prefix, [pre_rise, post_rise, pre_set, post_set]) = (setting.prefix(), setting.vanilla_fades());
     let fades = Fades {
-        pre_sunrise: get("Ambient Pre-Sunrise Time", 0.5),
-        post_sunrise: get("Ambient Post-Sunrise Time", 2.0),
-        pre_sunset: get("Ambient Pre-Sunset Time", 1.0),
-        post_sunset: get("Ambient Post-Sunset Time", 1.25),
+        pre_sunrise: get(&format!("{prefix} Pre-Sunrise Time"), pre_rise),
+        post_sunrise: get(&format!("{prefix} Post-Sunrise Time"), post_rise),
+        pre_sunset: get(&format!("{prefix} Pre-Sunset Time"), pre_set),
+        post_sunset: get(&format!("{prefix} Post-Sunset Time"), post_set),
     };
     (times, fades)
 }
 
-/// `ty`'s four ambient colours (gamma space); `None` if one is missing.
-pub(crate) fn colors(ty: WeatherType, w: &mut WeatherIni<'_>) -> Option<TimeOfDay> {
+/// `ty`'s four `setting` colours (gamma space); `None` if one is missing.
+pub(crate) fn colors_for(ty: WeatherType, w: &mut WeatherIni<'_>, setting: Setting) -> Option<TimeOfDay> {
     let section = format!("Weather {}", ty.name());
-    let mut get = |when: &str| w.color(&section, &format!("Ambient {when} Color")).map(srgb8);
+    let p = setting.prefix();
+    let mut get = |when: &str| w.color(&section, &format!("{p} {when} Color")).map(srgb8);
     Some(TimeOfDay { sunrise: get("Sunrise")?, day: get("Day")?, sunset: get("Sunset")?, night: get("Night")? })
 }
 
@@ -194,8 +232,29 @@ pub(crate) fn tint_curves(ty: WeatherType, w: &mut WeatherIni<'_>) -> [KeyCurve;
 }
 
 pub(crate) fn tint_curves_with(ty: WeatherType, w: &mut WeatherIni<'_>, brightness: f32) -> [KeyCurve; 3] {
-    let (times, fades) = day_times(w);
-    let (Some(own), Some(clear)) = (colors(ty, w), colors(WeatherType::Clear, w)) else {
+    curves(ty, w, Setting::Ambient, brightness)
+}
+
+/// `ty`'s night sky hue over the hour of day (N2, `SkyTerms::night_sky_tint_by_hour`): its
+/// `Sky Sunrise/Day/Sunset/Night Color` through the same interpolator with the `Sky` fades
+/// (`OpenMW` `addSetting("Sky")`, same commit), decoded and normalised to luminance 1. Only
+/// the hue is used: the glow's brightness follows the ambient floor (`sf_sky::NightGlow`).
+pub(crate) fn sky_tint_curves(ty: WeatherType, w: &mut WeatherIni<'_>) -> [KeyCurve; 3] {
+    curves(ty, w, Setting::Sky, 0.0)
+}
+
+/// `ty`'s moonlight hue over the hour of day (N3, `SkyTerms::moonlight_tint_by_hour`): its
+/// `Sun Sunrise/Day/Sunset/Night Color` through the same interpolator with the `Sun` fades
+/// (`OpenMW` `addSetting("Sun")`, same commit), decoded and normalised to luminance 1. The
+/// night value is what `OpenMW` lights the night with; only the hue is used (the brightness
+/// is `sf_sky::Moonlight`'s, phase-scaled).
+pub(crate) fn sun_tint_curves(ty: WeatherType, w: &mut WeatherIni<'_>) -> [KeyCurve; 3] {
+    curves(ty, w, Setting::Sun, 0.0)
+}
+
+fn curves(ty: WeatherType, w: &mut WeatherIni<'_>, setting: Setting, brightness: f32) -> [KeyCurve; 3] {
+    let (times, fades) = day_times_for(w, setting);
+    let (Some(own), Some(clear)) = (colors_for(ty, w, setting), colors_for(WeatherType::Clear, w, setting)) else {
         return Default::default();
     };
     // The fades' corners and peaks, so the curves hit them exactly, and a
@@ -220,6 +279,16 @@ mod tests {
 
     use super::*;
     use crate::ini::parse_color;
+
+    /// `[Weather]` day corners and the ambient fades (vanilla where absent).
+    fn day_times(w: &mut WeatherIni<'_>) -> (DayTimes, Fades) {
+        day_times_for(w, Setting::Ambient)
+    }
+
+    /// `ty`'s four ambient colours (gamma space).
+    fn colors(ty: WeatherType, w: &mut WeatherIni<'_>) -> Option<TimeOfDay> {
+        colors_for(ty, w, Setting::Ambient)
+    }
 
     fn vanilla_times() -> (DayTimes, Fades) {
         day_times(&mut WeatherIni::new(None))
@@ -326,6 +395,93 @@ mod tests {
         for ty in WeatherType::ALL {
             let n = sample(&tint_curves(ty, &mut w), 0.0);
             println!("{ty:?}: ({:.3}, {:.3}, {:.3})", n.x, n.y, n.z);
+        }
+    }
+
+    /// N2: the `Sky ... Color` keys parse (ini first, vanilla fallback), the `Sky` fades are
+    /// their own, and the sky tint curves hit the four colours' hue at luminance 1.
+    #[test]
+    fn sky_colours_and_fades_parse_and_drive_the_night_sky_hue() {
+        let mut w = WeatherIni::new(None);
+        assert_eq!(w.color("Weather Clear", "Sky Night Color"), Some([9, 10, 11]));
+        assert_eq!(w.color("Weather Blight", "Sky Night Color"), Some([44, 14, 14]));
+        assert_eq!(w.color("Weather Overcast", "Sky Night Color"), Some([19, 22, 25]));
+        for ty in WeatherType::ALL {
+            assert!(colors_for(ty, &mut w, Setting::Sky).is_some(), "{ty:?}: vanilla sky colours");
+        }
+        let (t, f) = day_times_for(&mut w, Setting::Sky);
+        assert_eq!(t, vanilla_times().0, "same day corners");
+        assert_eq!(f, Fades { pre_sunrise: 0.5, post_sunrise: 1.0, pre_sunset: 1.5, post_sunset: 0.5 });
+        let ini = MorrowindIni::parse(
+            b"[Weather]\nSky Post-Sunset Time=2\n[Weather Clear]\nSky Night Color=010,020,060\n[Weather Rain]\nSky Night Color=bad\n",
+        );
+        let mut custom = WeatherIni::new(Some(&ini));
+        assert_eq!(custom.color("Weather Clear", "Sky Night Color"), Some([10, 20, 60]));
+        assert_eq!(custom.color("Weather Rain", "Sky Night Color"), Some([24, 25, 26]), "unparsable: vanilla");
+        assert_eq!(day_times_for(&mut custom, Setting::Sky).1.post_sunset, 2.0);
+        assert_eq!(day_times_for(&mut custom, Setting::Ambient).1.post_sunset, 1.25, "ambient fades untouched");
+        let night = sample(&sky_tint_curves(WeatherType::Clear, &mut custom), 0.0);
+        assert!((night - chroma(decode(srgb8([10, 20, 60])))).abs().max_element() < 1e-4, "{night}");
+
+        // Sky fades: sunrise 5.5 .. 9 (peak 7.25), sunset 16.5 .. 20.5 (peak 18.5).
+        let c = TimeOfDay { sunrise: Vec3::X, day: Vec3::Y, sunset: Vec3::Z, night: Vec3::ONE };
+        for (h, want) in [(5.5, c.night), (7.25, c.sunrise), (9.0, c.day), (16.5, c.day), (18.5, c.sunset), (20.5, c.night)] {
+            assert_eq!(c.value(h, &t, &f), want, "{h} h");
+        }
+        assert_eq!(c.value(19.5, &t, &f), (c.sunset + c.night) / 2.0);
+        for ty in [WeatherType::Clear, WeatherType::Overcast, WeatherType::Blight] {
+            let own = colors_for(ty, &mut w, Setting::Sky).unwrap();
+            let curves = sky_tint_curves(ty, &mut w);
+            for (h, want) in [(0.0, own.night), (7.25, own.sunrise), (12.0, own.day), (18.5, own.sunset), (21.0, own.night)] {
+                let got = sample(&curves, h);
+                assert!((got - chroma(decode(want))).abs().max_element() < 1e-4, "{ty:?} {h} h: {got}");
+                assert!((luminance(got) - 1.0).abs() < 1e-4, "{ty:?} {h} h: hue only");
+            }
+        }
+    }
+
+    /// N3: the `Sun ... Color` keys parse (ini first, vanilla fallback), the `Sun` fades are
+    /// their own, and the moonlight curves hit `Sun Night Color`'s hue at night.
+    #[test]
+    fn sun_colours_and_fades_parse_and_drive_the_moonlight_hue() {
+        let mut w = WeatherIni::new(None);
+        assert_eq!(w.color("Weather Clear", "Sun Night Color"), Some([59, 97, 176]));
+        assert_eq!(w.color("Weather Overcast", "Sun Night Color"), Some([32, 54, 100]));
+        assert_eq!(w.color("Weather Ashstorm", "Sun Day Color"), Some([228, 139, 114]));
+        for ty in WeatherType::ALL {
+            assert!(colors_for(ty, &mut w, Setting::Sun).is_some(), "{ty:?}: vanilla sun colours");
+        }
+        let (t, f) = day_times_for(&mut w, Setting::Sun);
+        assert_eq!(t, vanilla_times().0, "same day corners");
+        assert_eq!(f, Fades { pre_sunrise: 0.0, post_sunrise: 0.0, pre_sunset: 1.0, post_sunset: 1.25 });
+        let ini = MorrowindIni::parse(b"[Weather]
+Sun Post-Sunset Time=2
+[Weather Clear]
+Sun Night Color=100,050,020
+");
+        let mut custom = WeatherIni::new(Some(&ini));
+        assert_eq!(day_times_for(&mut custom, Setting::Sun).1.post_sunset, 2.0);
+        let night = sample(&sun_tint_curves(WeatherType::Clear, &mut custom), 0.0);
+        assert!((night - chroma(decode(srgb8([100, 50, 20])))).abs().max_element() < 1e-4, "{night}");
+        for ty in WeatherType::ALL {
+            let own = colors_for(ty, &mut w, Setting::Sun).unwrap();
+            let curves = sun_tint_curves(ty, &mut w);
+            for h in [0.0, 3.0, 22.0] {
+                let got = sample(&curves, h);
+                assert!((got - chroma(decode(own.night))).abs().max_element() < 1e-4, "{ty:?} {h} h: {got}");
+                assert!((luminance(got) - 1.0).abs() < 1e-4, "{ty:?} {h} h: hue only");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "measurement: the vanilla night sky hues next to the night ambient tints"]
+    fn print_night_sky_tints() {
+        let mut w = WeatherIni::new(None);
+        for ty in WeatherType::ALL {
+            let s = sample(&sky_tint_curves(ty, &mut w), 0.0);
+            let a = sample(&tint_curves(ty, &mut w), 0.0);
+            println!("{ty:?}: sky ({:.3}, {:.3}, {:.3}) B/R {:.2}; ambient B/R {:.2}", s.x, s.y, s.z, s.z / s.x, a.z / a.x);
         }
     }
 }

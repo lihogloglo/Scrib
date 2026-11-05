@@ -29,14 +29,16 @@ pub mod noise;
 pub mod scroll;
 pub mod settings;
 pub mod shadow;
+pub mod temporal;
 
 #[cfg(test)]
 mod tests;
 
 pub use density::{cirrus_at, combine_density, erode_density, evolve_field, height_gradient, weather_at, WeatherSample};
-pub use fog::{sky_fill, sky_fill_direction, FogBanks, FogDrift, FogLayer, FogOffsets, FogSettings, SKY_FILL_SAMPLES};
+pub use fog::{fog_fill, sky_fill, sky_fill_direction, FogBanks, FogDrift, FogLayer, FogOffsets, FogSettings, SKY_FILL_SAMPLES, VIEW_AMBIENT_IN_FOG};
 pub use froxel::{FroxelJitter, FroxelSettings, MAX_FOG_LIGHTS};
 pub use noise::{NoiseVolumes, DETAIL_SIZE, SHAPE_SIZE, WEATHER_SIZE};
 pub use scroll::CloudScroll;
 pub use settings::{CloudLook, CloudPreset, CloudQuality, CloudSettings, CloudWeather};
 pub use shadow::{ShadowRows, ShadowSlicer};
+pub use temporal::CloudTemporal;

@@ -148,3 +148,27 @@ Revisit `FogVolume` only for small local volumes in interiors (M9 environment vo
 - Solari path: without sun cascades the CSM term is 1, so near shafts come only from the terrain map and clouds. Open
   question 6 stands (a fog-only low-res CSM vs SHM + clouds only).
 
+
+### Night fill as built (WE-9 cause 2, night-fog, 2026-11-06): fog lit by the surfaces' ambient
+
+- **Bug**: the fog's isotropic fill was the sky dome's mean radiance only (`fog_light.wesl`), while surfaces also get
+  the host's flat ambient floor (`AmbientLight`; Bevyrrowind's night floor, 4 nits below sun -12°) under the opened
+  night exposure. At night the fog in-scattered almost nothing: a black absorber you saw far through.
+- **Technique** (industry): fog in-scatter lit by the same ambient/sky light as the surfaces. UE: volumetric fog lit by
+  the Sky Light, exponential height fog's non-directional term by the Sky Atmosphere
+  (`SkyAtmosphereAmbientContributionColorScale`); Frostbite (Hillaire 2015, "Towards Unified and Physically-Based
+  Volumetric Lighting") lights its media with the scene's ambient probes. OpenMW (`weather.cpp`, ca5e2576) blends to a
+  per-weather `Fog Night Color` (`TimeOfDayInterpolator`, unscaled at night): a dark veil, never see-through.
+- **Built**: `Fog::view_ambient` (default `sf_atmos::VIEW_AMBIENT_IN_FOG` = 1) × `view_ambient(camera AmbientLight,
+  else GlobalAmbientLight)` (Bevy's rule; `color × brightness`, the radiance Bevy's PBR shades) → `CloudFrame::fog_ambient`
+  → `Fog.view_ambient` in the uniform; `fog_light.wesl` texel 0 = sky fill + it (CPU twin `sf_atmos::fog_fill`), so
+  the froxels and the far composite share it; the cloud trace's far-weather fog adds it too. Scale 1 = an isotropic,
+  albedo-1 medium in uniform radiance `L` scatters `L` (a white Lambert surface reflects `L`); the water's analytic
+  fog (`mw_environment_bevy::water::fog_input`) already used the camera ambient the same way. 0 = the old sky-only fill.
+- Not built: the ini `Fog * Color` as a fog tint: it is a gamma-space blend colour, and the ambient floor already
+  carries the weather's `Ambient * Color` hue (RO-16 fix 2); a Classic-preset candidate. Physically, half the sphere
+  around the fog is ground (albedo ~0.3), so ~0.65 is the "correct" scale; 1 is kept for the lit look (owner rule).
+- Measured (`mw_weather` `print_night_fog_inscatter`, Foggy): thick-fog ambient radiance 0 / 2.0 / 2.6 nits at
+  12:00 / 21:00 / 23:30, exposed 0.15-0.19 (grey stone under the same floor 0.06-0.08). Tests: `sf_atmos_bevy`
+  `fog_ambient_is_the_surfaces_ambient` (exact), `fog_passes_compile_and_read_the_view_ambient` (wesl + naga).
+  A/B: console `flip fog_night_light`. Visual check WE-9.

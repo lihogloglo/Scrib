@@ -160,17 +160,38 @@ pub struct SkyTerms {
     /// relative to the renderer's default tint (1 = same brightness). Any
     /// curve empty: this preset has no say (the renderer's default tint).
     pub ambient_tint_by_hour: [KeyCurve; 3],
+    /// Hue of the night sky's glow over the hour of day (`sf_sky::Weather::night_sky_tint`):
+    /// linear R, G and B curves, only the hue counts. Any curve empty: no say (the floor's
+    /// colour).
+    pub night_sky_tint_by_hour: [KeyCurve; 3],
+    /// Hue of the moonlight over the hour of day (`sf_sky::Weather::moonlight_tint`, N3):
+    /// linear R, G and B curves, only the hue counts. Any curve empty: no say (the moons'
+    /// tint).
+    pub moonlight_tint_by_hour: [KeyCurve; 3],
 }
 
 impl SkyTerms {
     /// The ambient tint at `hour`, `None` when a channel's curve is empty.
     pub fn ambient_tint(&self, hour: f32) -> Option<Vec3> {
-        let [r, g, b] = &self.ambient_tint_by_hour;
-        if r.keys().is_empty() || g.keys().is_empty() || b.keys().is_empty() {
-            return None;
-        }
-        Some(Vec3::new(r.sample(hour), g.sample(hour), b.sample(hour)))
+        rgb_at(&self.ambient_tint_by_hour, hour)
     }
+
+    /// The night sky's hue at `hour`, `None` when a channel's curve is empty.
+    pub fn night_sky_tint(&self, hour: f32) -> Option<Vec3> {
+        rgb_at(&self.night_sky_tint_by_hour, hour)
+    }
+
+    /// The moonlight's hue at `hour`, `None` when a channel's curve is empty.
+    pub fn moonlight_tint(&self, hour: f32) -> Option<Vec3> {
+        rgb_at(&self.moonlight_tint_by_hour, hour)
+    }
+}
+
+fn rgb_at([r, g, b]: &[KeyCurve; 3], hour: f32) -> Option<Vec3> {
+    if r.keys().is_empty() || g.keys().is_empty() || b.keys().is_empty() {
+        return None;
+    }
+    Some(Vec3::new(r.sample(hour), g.sample(hour), b.sample(hour)))
 }
 
 impl Default for SkyTerms {
@@ -184,6 +205,8 @@ impl Default for SkyTerms {
             sun_glare: w.sun_glare,
             haze_by_hour: KeyCurve::default(),
             ambient_tint_by_hour: Default::default(),
+            night_sky_tint_by_hour: Default::default(),
+            moonlight_tint_by_hour: Default::default(),
         }
     }
 }

@@ -49,6 +49,10 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+# Shader compile checks (no GPU, no picture): wesl links the vendored bevy_pbr modules (patch N1:
+# the flat ambient lights diffuse only) as Bevy's shader cache does; naga validates (as sf_surface_bevy's).
+naga = { workspace = true, features = ["wgsl-in"] }
+wesl = { workspace = true, features = ["naga-ext"] }
 
 [[example]]
 name = "sky"

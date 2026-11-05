@@ -239,6 +239,8 @@ pub(crate) fn apply(ty: WeatherType, p: &mut WeatherPreset, w: &mut WeatherIni<'
         haze_by_hour: hour_curve(morning_haze),
         sun_glare: w.f32(&section, "Glare View").map_or(1.0, |g| g.clamp(0.0, 1.0)),
         ambient_tint_by_hour: crate::ambient::tint_curves(ty, w),
+        night_sky_tint_by_hour: crate::ambient::sky_tint_curves(ty, w),
+        moonlight_tint_by_hour: crate::ambient::sun_tint_curves(ty, w),
         ..SkyTerms::default()
     };
 

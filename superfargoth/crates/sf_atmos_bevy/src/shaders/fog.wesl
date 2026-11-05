@@ -28,6 +28,9 @@ struct Fog {
     sky_distance: f32,
     steps: u32,
     enabled: u32,
+    // The view's ambient radiance (the surfaces' flat ambient × `Fog::view_ambient`), added
+    // to the sky fill in `fog_light.wesl` and to the far weather's fog fill (WE-9).
+    view_ambient: vec3<f32>,
 };
 
 // Below a layer's base its density stops growing past e^2 × (`sf_atmos::fog::MAX_EXPONENT`).

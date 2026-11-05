@@ -2,7 +2,7 @@ import package::{
     atmosphere::{
         bindings::settings,
         functions::{
-            get_view_position, raymarch_atmosphere,
+            get_view_position, raymarch_atmosphere, airglow,
             max_atmosphere_distance, direction_atmosphere_to_world,
             sky_view_lut_uv_to_zenith_azimuth, zenith_azimuth_to_ray_dir,
         },
@@ -36,5 +36,6 @@ fn main(@builtin(global_invocation_id) idx: vec3<u32>) {
 
     let result = raymarch_atmosphere(world_pos, ray_dir_ws, t_max, settings.sky_view_lut_samples, uv, true);
 
-    textureStore(sky_view_lut_out, idx.xy, vec4(result.inscattering, 1.0));
+    // superfargoth patch (own, N2: sky glow): the sky's own glow joins the in-scattering.
+    textureStore(sky_view_lut_out, idx.xy, vec4(result.inscattering + airglow(r, mu), 1.0));
 }

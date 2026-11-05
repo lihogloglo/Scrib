@@ -27,6 +27,8 @@ import super::key_light::{key_light, planet_lit_at};
 @group(0) @binding(13) var depth_texture: texture_depth_multisampled_2d;
 @else
 @group(0) @binding(13) var depth_texture: texture_depth_2d;
+// Spatio-temporal blue noise, 2D array (`sf_atmos_bevy` `STBN_KTX2`; 1×1 when unavailable).
+@group(1) @binding(6) var blue_noise: texture_2d_array<f32>;
 
 struct TraceOutput {
     // Premultiplied cloud radiance (aerial perspective applied, exposed), and
@@ -217,7 +219,8 @@ fn far_weather(ro: vec3<f32>, rd: vec3<f32>, scene_t: f32, jitter: f32, light_co
         let fill = mix(fill0, vec3(dot(fill0, vec3(0.2126, 0.7152, 0.0722))), grey);
         var scattered = sigma_p * tint * (sun * shadow + fill * dim);
         if sigma_f > 0.0 {
-            scattered += sigma_f * f.albedo * (sun + fill0 * f.ambient);
+            // The view's ambient as in `fog_light.wesl` (the near fog's fill: no seam).
+            scattered += sigma_f * f.albedo * (sun + (fill0 + f.view_ambient) * f.ambient);
         }
         let step_t = exp(-sigma * ds);
         out.color += tr * (scattered - scattered * step_t) / sigma;
@@ -233,6 +236,25 @@ fn far_weather(ro: vec3<f32>, rd: vec3<f32>, scene_t: f32, jitter: f32, light_co
     return out;
 }
 
+// The march jitter (WE-10 fix 1): spatio-temporal blue noise (STBN, Wolfe et al. 2022) at the
+// traced pixel, one layer per visit of this half-resolution pixel (consecutive layers under the
+// checkerboard, where a pixel is traced one frame in four), shifted by the golden ratio each
+// cycle of layers (R1) so the sequence doesn't repeat. The four pixels of a checkerboard block
+// share a traced pixel and a visit, so each reads the tile at its own toroidal offset (else a
+// block would take one jitter four times over). Gradient noise when off or missing.
+fn march_jitter(block: vec2<u32>, half_px: vec2<f32>) -> f32 {
+    let size = textureDimensions(blue_noise);
+    if clouds.blue_noise == 0u || size.x < 2u {
+        return ign(half_px, clouds.frame);
+    }
+    let checker = clouds.checkerboard != 0u;
+    let visit = select(clouds.frame, clouds.frame / 4u, checker);
+    let slot = select(0u, clouds.frame % 4u, checker);
+    let layers = textureNumLayers(blue_noise);
+    let n = textureLoad(blue_noise, (block + slot * vec2(37u, 83u)) % size, visit % layers, 0).x;
+    return fract(n + 0.618034 * f32(visit / layers));
+}
+
 @fragment
 fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let block = vec2<u32>(in.position.xy);
@@ -241,6 +263,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
         half_px = vec2<f32>(block * 2u + sub_pixel(clouds.frame)) + 0.5;
     }
     let uv = half_px / clouds.half_size;
+    let jitter = march_jitter(block, half_px);
     // The march stops at the FURTHEST scene depth of the 6x6 full-resolution
     // pixels this texel can reach (its 2x2 footprint, the composite's bilinear
     // reach and the jitter), the low-res depth rule of UE's and Nubis' cloud
@@ -274,7 +297,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let fog = clouds.fog;
     if fog.enabled != 0u && fog.bank_density > 0.0 {
         let r0 = length(ro_c);
-        bank = bank_modulation(ro, rd, r0 - clouds.inner_radius, dot(ro_c / r0, rd), min(scene_t, fog.far), ign(half_px, clouds.frame));
+        bank = bank_modulation(ro, rd, r0 - clouds.inner_radius, dot(ro_c / r0, rd), min(scene_t, fog.far), jitter);
     }
 
     var out: TraceOutput;
@@ -318,7 +341,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     let g = 0.5 * max(pow(max(end, t_ref) / t_ref, 1.0 / f32(clouds.max_steps)) - 1.0, 0.0);
     let ds_max = max(span / f32(clouds.min_steps), 1.0);
     var ds = min(ds0 + g * start, ds_max);
-    var t = start + ds * ign(half_px, clouds.frame);
+    var t = start + ds * jitter;
     // The world weather map: per sample (High/Ultra) or 3 lookups per ray (Medium/Low).
     let ray = ray_a(ro, rd, start, end);
     let ray_heights = ray_b(ro, rd, start, end);
@@ -440,7 +463,7 @@ fn trace(in: FullscreenVertexOutput) -> TraceOutput {
     }
     // Distant shafts and far fog (WE4d): below the deck, so in front of it.
     if far_on {
-        let fw = far_weather(ro, rd, scene_t, fract(ign(half_px, clouds.frame) + 0.5), light_color, l, cos_t, mix(bounce, sky_up, 0.6));
+        let fw = far_weather(ro, rd, scene_t, fract(jitter + 0.5), light_color, l, cos_t, mix(bounce, sky_up, 0.6));
         if fw.weight > 1e-4 {
             let fw_dist = fw.dist_sum / fw.weight;
             let air = aerial(uv, r_cam, mu_v, rd, fw_dist);

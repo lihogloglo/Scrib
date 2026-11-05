@@ -271,8 +271,11 @@ fn fingerprint_follows_the_values_read() {
     let vanilla = MwWeather::build(&db, None).fingerprint;
     assert_eq!(vanilla, MwWeather::build(&db, None).fingerprint);
     let unrelated =
-        MorrowindIni::parse(b"[General]\nFoo=1\n[Weather Clear]\nSky Day Color=1,2,3\n");
+        MorrowindIni::parse(b"[General]\nFoo=1\n[Weather Clear]\nFog Day Color=1,2,3\n");
     assert_eq!(MwWeather::build(&db, Some(&unrelated)).fingerprint, vanilla);
+    // N2 reads the sky colours (the night sky glow's hue).
+    let sky = MorrowindIni::parse(b"[Weather Clear]\nSky Night Color=1,2,3\n");
+    assert_ne!(MwWeather::build(&db, Some(&sky)).fingerprint, vanilla);
     let edited = MorrowindIni::parse(b"[Weather]\nHours Between Weather Changes=21\n");
     assert_ne!(MwWeather::build(&db, Some(&edited)).fingerprint, vanilla);
     assert_ne!(

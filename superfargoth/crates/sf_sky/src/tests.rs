@@ -379,6 +379,56 @@ fn ambient_tint_blends_and_flows_into_the_sky_state() {
 }
 
 #[test]
+fn night_sky_tint_blends_and_flows_into_the_sky_state() {
+    let a = Weather { night_sky_tint: Some(Vec3::new(1.0, 0.0, 0.0)), ..Weather::default() };
+    let b = Weather { night_sky_tint: Some(Vec3::new(0.0, 0.0, 1.0)), ..Weather::default() };
+    assert_eq!(a.lerp(&b, 0.25).night_sky_tint, Some(Vec3::new(0.75, 0.0, 0.25)));
+    assert_eq!(a.lerp(&Weather::default(), 0.9).night_sky_tint, a.night_sky_tint);
+    assert_eq!(Weather::default().lerp(&b, 0.1).night_sky_tint, b.night_sky_tint);
+    let settings = SkySettings::default();
+    let clock = SkyClock::at(100.0, 0.0, &settings.calendar);
+    assert_eq!(settings.evaluate(&clock, &b).night_sky_tint, b.night_sky_tint);
+    assert_eq!(settings.evaluate(&clock, &Weather::default()).night_sky_tint, None);
+}
+
+/// The glow's zenith luminance is the named ratio of the floor's, whatever the tint's
+/// brightness; only the hue comes from the tint.
+#[test]
+#[expect(clippy::float_cmp, reason = "exact: 1, H and the closed form at the corners")]
+fn night_glow_ties_to_the_floor_and_rises_to_the_horizon() {
+    let glow = NightGlow::default();
+    assert_eq!(glow.ratio, NIGHT_SKY_GLOW_RATIO);
+    for tint in [Vec3::new(0.2, 0.3, 0.9), Vec3::new(9.0, 3.0, 3.0), Vec3::ONE] {
+        let z = glow.zenith(2.6, tint);
+        assert!((luminance(z) - NIGHT_SKY_GLOW_RATIO * 2.6).abs() < 1e-5, "{tint}: {z}");
+        let hue = |c: Vec3| c / c.max_element();
+        assert!((hue(z) - hue(tint)).abs().max_element() < 1e-5, "{tint}: hue kept");
+    }
+    // Black or broken tints fall back to grey; no floor, no glow.
+    assert_eq!(glow.zenith(2.0, Vec3::ZERO), Vec3::splat(NIGHT_SKY_GLOW_RATIO * 2.0));
+    assert_eq!(glow.zenith(2.0, Vec3::NAN), Vec3::splat(NIGHT_SKY_GLOW_RATIO * 2.0));
+    assert_eq!(glow.zenith(0.0, Vec3::ONE), Vec3::ZERO);
+    assert_eq!(NightGlow { ratio: 0.0, ..glow }.zenith(4.0, Vec3::ONE), Vec3::ZERO);
+    // 1 at the zenith, H at the horizon (and below it), rising monotonically in between.
+    assert_eq!(glow.profile(1.0), 1.0);
+    assert!((glow.profile(0.0) - NIGHT_SKY_HORIZON_RATIO).abs() < 1e-4);
+    assert!((glow.profile(-0.3) - NIGHT_SKY_HORIZON_RATIO).abs() < 1e-4);
+    let mut last = glow.profile(1.0);
+    for i in (0..100).rev() {
+        #[expect(clippy::cast_precision_loss, reason = "small loop index")]
+        let p = glow.profile(i as f32 / 100.0);
+        assert!(p >= last, "monotonic toward the horizon");
+        last = p;
+    }
+    // H = 1 is a uniform sky; the ground factor is the cosine integral of the profile.
+    assert_eq!(NightGlow { horizon: 1.0, ..glow }.profile(0.0), 1.0);
+    let n = 20_000;
+    #[expect(clippy::cast_precision_loss, reason = "quadrature index")]
+    let integral: f32 = (0..n).map(|i| (i as f32 + 0.5) / n as f32).map(|mu| glow.profile(mu) * mu).sum::<f32>() * 2.0 / n as f32;
+    assert!((integral - glow.ground_factor()).abs() < 1e-3, "{integral} vs {}", glow.ground_factor());
+}
+
+#[test]
 fn overcast_dims_direct_light() {
     let settings = SkySettings::default();
     let clock = SkyClock::at(100.0, 12.0, &settings.calendar);
@@ -589,4 +639,101 @@ fn default_sky_has_one_earth_moon_and_stars_fade_in_at_dusk() {
     assert!(close(midnight.night.stars, 1.0, 1e-6));
     // The drawn sun is bigger than the physical one.
     assert!(s.sun_disk.angular_size > s.sun_angular_size * 2.0);
+}
+
+// ---- moonlight (N3) ----
+
+/// One moon back at the same place every midnight (a one-day circuit), full on day 0, a
+/// 24-day phase cycle: only the phase changes from night to night.
+fn steady_moon(artistic: bool) -> SkySettings {
+    SkySettings {
+        moons: vec![Moon {
+            phase_period_days: 24.0,
+            phase_at_epoch: 0.5,
+            path: MoonPath::Circuit { circuit_days: 1.0, hour_angle_at_epoch_deg: 0.0, tilt_deg: 30.0, declination_deg: 0.0 },
+            illuminance: 0.5,
+            tint: [1.0, 0.9, 0.8],
+            ..Moon::default()
+        }],
+        moonlight: Moonlight { full_lux: 20.0, artistic },
+        ambient: KeyCurve::new(vec![(-12.0, 4.0), (-4.0, 0.0)]),
+        ..SkySettings::default()
+    }
+}
+
+fn midnight(s: &SkySettings, day: f64, weather: &Weather) -> SkyState {
+    s.evaluate(&SkyClock { days: day, time_scale: 0.0, paused: true }, weather)
+}
+
+#[test]
+fn moonlight_is_full_lux_at_full_moon_and_follows_the_phase() {
+    let s = steady_moon(true);
+    let clear = Weather::default();
+    let full = midnight(&s, 0.0, &clear);
+    assert!(close(full.moon.illuminance, 20.0, 1e-3), "{}", full.moon.illuminance);
+    // Phase 0.75 (half, waning): the Lambert law gives 1/π of full; new: nothing.
+    let half = midnight(&s, 6.0, &clear);
+    assert!(close(half.night.moons()[0].brightness, std::f32::consts::FRAC_1_PI, 1e-4));
+    assert!(close(half.moon.illuminance, 20.0 / std::f32::consts::PI, 1e-3), "{}", half.moon.illuminance);
+    let new = midnight(&s, 12.0, &clear);
+    assert!(new.moon.illuminance < 1e-4, "{}", new.moon.illuminance);
+    // The drawn disk keeps its own photometric value.
+    assert!(close(full.night.moons()[0].illuminance, 0.5, 1e-5));
+    assert!(close(full.night.moons()[0].full_illuminance, 0.5, 1e-5));
+    // The same moon, same place: the light points at it and casts the night's shadows.
+    assert!(full.moon.direction.dot(full.night.moons()[0].position.direction) > 0.999);
+    assert!(full.moon.casts_shadows && !full.sun.casts_shadows);
+}
+
+#[test]
+fn moonlight_off_is_the_disks_own_light() {
+    let off = midnight(&steady_moon(false), 0.0, &Weather::default());
+    assert!(close(off.moon.illuminance, 0.5, 1e-5), "{}", off.moon.illuminance);
+    assert!(close(Moonlight { full_lux: 20.0, artistic: false }.gain(&steady_moon(false).moons), 1.0, 0.0));
+    // Two moons share it by their full illuminance.
+    let moons = two_moons().moons;
+    assert!(close(Moonlight { full_lux: 20.0, artistic: true }.gain(&moons), 20.0, 1e-5));
+    assert!(close(Moonlight { full_lux: 20.0, artistic: true }.gain(&[]), 1.0, 0.0));
+}
+
+#[test]
+fn the_ambient_floor_stays_whatever_the_moon() {
+    let s = steady_moon(true);
+    let clear = Weather::default();
+    for day in [0.0, 6.0, 12.0] {
+        let sky = midnight(&s, day, &clear);
+        assert!(sky.ambient > 0.0, "day {day}: the floor holds at new moon");
+        assert!(close(sky.ambient, s.ambient.sample(sky.celestial.sun.elevation_deg()), 0.0));
+        let off = midnight(&steady_moon(false), day, &clear);
+        assert!(close(sky.ambient, off.ambient, 0.0), "the moonlight never changes the floor");
+    }
+}
+
+#[test]
+fn clouds_dim_the_moonlight_like_the_sun() {
+    let s = steady_moon(true);
+    let overcast = Weather { cloud_cover: 1.0, overcast_dimming: 0.8, ..Weather::default() };
+    let sky = midnight(&s, 0.0, &overcast);
+    assert!(close(sky.moon.illuminance, 20.0 * 0.2, 1e-3), "{}", sky.moon.illuminance);
+    let half = Weather { cloud_cover: 0.5, ..overcast };
+    assert!(close(midnight(&s, 0.0, &half).moon.illuminance, 20.0 * 0.6, 1e-3));
+}
+
+#[test]
+fn moonlight_colour_is_the_weathers_hue_else_the_moons() {
+    let s = steady_moon(true);
+    let own = midnight(&s, 0.0, &Weather::default()).moon;
+    let moon_tint = Vec3::new(1.0, 0.9, 0.8);
+    assert!((own.tint - moon_tint / luminance(moon_tint)).abs().max_element() < 1e-5, "{}", own.tint);
+    let hue = Vec3::new(0.05, 0.12, 0.43);
+    let w = Weather { moonlight_tint: Some(hue), ..Weather::default() };
+    let tinted = midnight(&s, 0.0, &w).moon;
+    assert!((tinted.tint - hue / luminance(hue)).abs().max_element() < 1e-5, "{}", tinted.tint);
+    assert!(close(luminance(tinted.tint), 1.0, 1e-5), "hue only: the brightness is the moonlight's");
+    assert!(close(tinted.illuminance, own.illuminance, 0.0));
+    // A broken hue is ignored.
+    let bad = Weather { moonlight_tint: Some(Vec3::new(f32::NAN, 0.0, 0.0)), ..Weather::default() };
+    assert!(midnight(&s, 0.0, &bad).moon.tint.is_finite());
+    // The sun stays white.
+    assert_eq!(midnight(&s, 0.0, &w).sun.tint, Vec3::ONE);
 }

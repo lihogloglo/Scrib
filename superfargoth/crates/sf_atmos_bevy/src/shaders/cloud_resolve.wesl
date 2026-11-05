@@ -1,7 +1,9 @@
 // Temporal resolve into the half-resolution cloud history (weather.md
 // "Clouds", Rendering 5): reproject last frame's history by the cloud's
-// distance (camera motion, wind, floating-origin shifts), clamp it to the
-// current traced neighborhood, and blend in this frame's fresh samples.
+// distance (camera motion, wind, floating-origin shifts), clip it to the
+// current traced neighborhood (variance clip in YCoCg, Salvi 2016) and fold in
+// this frame's fresh samples with a small weight (an exponential history of
+// ~16 samples, WE-10 fix 1; `sf_atmos::temporal` is the CPU twin).
 //
 // Taps match by population, never by cloud distance (research/
 // clouds-upsampling.md): an open texel (it saw sky, B = far) only takes open
@@ -35,6 +37,32 @@ fn same_population(b: f32, cut: f32) -> bool {
     return (open_tap && open_here) || (!open_tap && !open_here && abs(b - cut) <= 0.1 * cut + 5.0);
 }
 
+// The clip's colour space (`sf_atmos::temporal`): YCoCg with alpha as is under
+// the variance clip, plain RGB for the legacy min/max clamp.
+fn to_clip_space(c: vec4<f32>) -> vec4<f32> {
+    if clouds.clip_gamma <= 0.0 {
+        return c;
+    }
+    return vec4(dot(c.rgb, vec3(0.25, 0.5, 0.25)), dot(c.rgb, vec3(0.5, 0.0, -0.5)), dot(c.rgb, vec3(-0.25, 0.5, -0.25)), c.a);
+}
+
+fn from_clip_space(y: vec4<f32>) -> vec4<f32> {
+    if clouds.clip_gamma <= 0.0 {
+        return y;
+    }
+    return vec4(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z, y.w);
+}
+
+// `sf_atmos::temporal::clip_toward_center`: moves `h` toward the box centre
+// until it lies inside (Pedersen 2016), keeping its hue better than a clamp.
+fn clip_toward_center(h: vec4<f32>, lo: vec4<f32>, hi: vec4<f32>) -> vec4<f32> {
+    let c = 0.5 * (lo + hi);
+    let v = h - c;
+    let a = abs(v) / max(0.5 * (hi - lo), vec4(1e-6));
+    let reach = max(max(a.x, a.y), max(a.z, a.w));
+    return select(h, c + v / reach, reach > 1.0);
+}
+
 @fragment
 fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     let px = vec2<u32>(in.position.xy);
@@ -53,11 +81,17 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
     let cut = current_d.z;
 
     // Neighborhood of this frame's samples of the same population, for the
-    // history clamp (the center tap always qualifies).
+    // history clip (the center tap always qualifies): min/max and, for the
+    // variance clip, the moments in YCoCg (alpha as a fourth channel).
     var lo = vec4(1e9);
     var hi = vec4(-1e9);
+    var m1 = vec4(0.0);
+    var m2 = vec4(0.0);
+    var n = 0.0;
     var bank_lo = 1e9;
     var bank_hi = -1e9;
+    var bank_m1 = 0.0;
+    var bank_m2 = 0.0;
     for (var y = -1; y <= 1; y += 1) {
         for (var x = -1; x <= 1; x += 1) {
             let q = clamp(tp + vec2(x, y), vec2(0), trace_max);
@@ -65,12 +99,29 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
             if !same_population(d.z, cut) {
                 continue;
             }
-            let c = textureLoad(trace_color, q, 0);
+            let c = to_clip_space(textureLoad(trace_color, q, 0));
             lo = min(lo, c);
             hi = max(hi, c);
+            m1 += c;
+            m2 += c * c;
+            n += 1.0;
             bank_lo = min(bank_lo, d.y);
             bank_hi = max(bank_hi, d.y);
+            bank_m1 += d.y;
+            bank_m2 += d.y * d.y;
         }
+    }
+    // Variance clip (Salvi 2016): mean ± γσ inside the min/max box; γ = 0
+    // keeps the plain min/max clamp (the legacy resolve).
+    if clouds.clip_gamma > 0.0 {
+        let mean = m1 / n;
+        let sigma = sqrt(max(m2 / n - mean * mean, vec4(0.0)));
+        lo = max(lo, mean - clouds.clip_gamma * sigma);
+        hi = min(hi, mean + clouds.clip_gamma * sigma);
+        let bank_mean = bank_m1 / n;
+        let bank_sigma = sqrt(max(bank_m2 / n - bank_mean * bank_mean, 0.0));
+        bank_lo = max(bank_lo, bank_mean - clouds.clip_gamma * bank_sigma);
+        bank_hi = min(bank_hi, bank_mean + clouds.clip_gamma * bank_sigma);
     }
 
     // Where this pixel's cloud was last frame: same world point, minus this
@@ -106,13 +157,22 @@ fn resolve(in: FullscreenVertexOutput) -> ResolveOutput {
 
     var out: ResolveOutput;
     if valid {
-        let history = clamp(history_sum / history_w, lo, hi);
-        let history_bank = clamp(history_bank_sum / history_w, bank_lo, bank_hi);
-        if fresh {
-            out.color = mix(history, current, 0.5);
-            out.dist = vec4(current_dist, mix(history_bank, current_d.y, 0.5), cut, 0.0);
+        var history = to_clip_space(history_sum / history_w);
+        var history_bank = history_bank_sum / history_w;
+        if clouds.clip_gamma > 0.0 {
+            history = clip_toward_center(history, lo, hi);
         } else {
-            out.color = history;
+            history = clamp(history, lo, hi);
+        }
+        history_bank = clamp(history_bank, bank_lo, bank_hi);
+        let rgb_history = from_clip_space(history);
+        if fresh {
+            // Exponential history: the fresh sample weighs `history_weight`
+            // (`sf_atmos::temporal::accumulate`).
+            out.color = mix(rgb_history, current, clouds.history_weight);
+            out.dist = vec4(current_dist, mix(history_bank, current_d.y, clouds.history_weight), cut, 0.0);
+        } else {
+            out.color = rgb_history;
             out.dist = vec4(history_dist_sum / history_w, history_bank, cut, 0.0);
         }
     } else {

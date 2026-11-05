@@ -134,7 +134,7 @@ pub struct Switches<'w> {
     rings: Option<ResMut<'w, sf_world_bevy::StreamingDebug>>,
     upscaling: Option<ResMut<'w, UpscalingSetting>>,
     pub time: Option<ResMut<'w, SkyTime>>,
-    pub config: Option<Res<'w, SkyConfig>>,
+    pub config: Option<ResMut<'w, SkyConfig>>,
     clouds: Option<ResMut<'w, sf_atmos_bevy::Clouds>>,
     /// The live weather (C key, BRP `weather`): the world state, records, the grid's
     /// climates, the camera's site and the pins.
@@ -153,6 +153,8 @@ pub struct Switches<'w> {
     fog: Option<ResMut<'w, sf_atmos_bevy::Fog>>,
     /// The sky's render options (`weather_ambient`: the weather's ambient tint, RO-16 fix 2).
     sky_options: Option<ResMut<'w, sf_sky_bevy::SkyRenderOptions>>,
+    /// N1: the flat ambient's specular (vendored `bevy_pbr` patch; `ambient_specular`).
+    ambient_specular: Option<ResMut<'w, bevy_pbr::AmbientLightSpecular>>,
 }
 
 /// An on/off switch: its key toggles it, BRP sets it by name.
@@ -178,14 +180,29 @@ pub enum Switch {
     Surface,
     /// The fog (`sf_atmos_bevy`): height fog, banks and froxels, as `--off fog` but live.
     Fog,
+    /// WE-9: the fog in-scatters the surfaces' ambient light (the night floor) on top of the
+    /// sky fill (`sf_atmos::VIEW_AMBIENT_IN_FOG`); off: the sky-only fill (a black night fog).
+    FogNightLight,
     /// RO-16 fix 2: the sky's ambient floor takes the weather's tint (`Morrowind.ini` ambient
     /// colours by time of day); off: the old fixed blue (`SkyRenderOptions::ambient_color`).
     WeatherAmbient,
+    /// N1: the flat ambient (night floor, interior cell ambient) adds Bevy's specular term too;
+    /// off (the default): diffuse only, no sheen of nothing under a black sky.
+    AmbientSpecular,
+    /// WE-10 fix 1: the cloud history accumulates ~16 samples with a variance clip and blue-noise
+    /// jitter (`sf_atmos::CloudTemporal::ACCUMULATE`); off: the old 50/50 min/max resolve.
+    CloudHistory,
+    /// N2: the night sky glows (`sf_sky::NightGlow` in the atmosphere: sky, env map, fog, clouds),
+    /// its hue from the weather's `Sky Night Color`; off: a black night sky behind the stars.
+    NightSkyGlow,
+    /// N3: the moons light the world at `sf_sky::Moonlight::full_lux` (phase-scaled, the
+    /// weather's `Sun Night Color`); off: their disks' own dim illuminance (the old weak moon).
+    Moonlight,
 }
 
 /// Names for BRP ([`crate::remote`]) and the console's `on`/`off` ([`crate::console`]).
 impl Switch {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 19] = [
         Self::SunShadows,
         Self::TerrainFarShadows,
         Self::Clouds,
@@ -199,7 +216,12 @@ impl Switch {
         Self::TerrainTint,
         Self::Surface,
         Self::Fog,
+        Self::FogNightLight,
         Self::WeatherAmbient,
+        Self::AmbientSpecular,
+        Self::CloudHistory,
+        Self::NightSkyGlow,
+        Self::Moonlight,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -217,7 +239,12 @@ impl Switch {
             Self::TerrainTint => "terrain_tint",
             Self::Surface => "surface",
             Self::Fog => "fog",
+            Self::FogNightLight => "fog_night_light",
             Self::WeatherAmbient => "weather_ambient",
+            Self::AmbientSpecular => "ambient_specular",
+            Self::CloudHistory => "cloud_history",
+            Self::NightSkyGlow => "night_sky_glow",
+            Self::Moonlight => "moonlight",
         }
     }
 
@@ -244,7 +271,12 @@ impl Switch {
             Self::TerrainTint => "terrain land tint",
             Self::Surface => "surface weather",
             Self::Fog => "fog",
+            Self::FogNightLight => "fog lit by the ambient floor",
             Self::WeatherAmbient => "weather ambient tint",
+            Self::AmbientSpecular => "flat ambient specular",
+            Self::CloudHistory => "cloud temporal accumulation",
+            Self::NightSkyGlow => "night sky glow",
+            Self::Moonlight => "artistic moonlight",
         }
     }
 
@@ -266,7 +298,12 @@ impl Switch {
             Self::TerrainTint => terrain.map(|t| !t.raw_layers),
             Self::Surface => s.surface.as_ref().map(|w| w.layer),
             Self::Fog => s.fog.as_ref().map(|f| f.enabled),
+            Self::FogNightLight => s.fog.as_ref().map(|f| f.view_ambient > 0.0),
             Self::WeatherAmbient => s.sky_options.as_ref().map(|o| o.weather_ambient_tint),
+            Self::NightSkyGlow => s.sky_options.as_ref().map(|o| o.night_sky_glow),
+            Self::Moonlight => s.config.as_ref().map(|c| c.0.moonlight.artistic),
+            Self::AmbientSpecular => s.ambient_specular.as_ref().map(|a| a.0),
+            Self::CloudHistory => s.clouds.as_ref().map(|c| c.temporal != sf_atmos_bevy::sf_atmos::CloudTemporal::LEGACY),
         }
     }
 
@@ -274,12 +311,13 @@ impl Switch {
     pub fn set(self, state: &mut LiveAb, s: &mut Switches, on: Option<bool>) -> String {
         let Some(current) = self.get(state, s) else {
             let why = match self {
-                Self::Clouds => "not in this run (interior or --off clouds)",
+                Self::Clouds | Self::CloudHistory => "not in this run (interior or --off clouds)",
                 Self::FarTint => "no far field here",
                 Self::Rings => "no streaming here",
                 Self::Surface => "not in this run (interior)",
-                Self::Fog => "not in this run (interior or --off sky)",
-                Self::WeatherAmbient => "not in this run (--off sky)",
+                Self::Fog | Self::FogNightLight => "not in this run (interior or --off sky)",
+                Self::WeatherAmbient | Self::NightSkyGlow | Self::Moonlight => "not in this run (--off sky)",
+                Self::AmbientSpecular => "not in this run (no PBR renderer)",
                 _ => "no terrain here",
             };
             return format!("{}: {why}", self.label());
@@ -318,9 +356,34 @@ impl Switch {
                     f.enabled = v;
                 }
             }
+            Self::FogNightLight => {
+                if let Some(f) = s.fog.as_mut() {
+                    f.view_ambient = if v { sf_atmos_bevy::sf_atmos::VIEW_AMBIENT_IN_FOG } else { 0.0 };
+                }
+            }
             Self::WeatherAmbient => {
                 if let Some(o) = s.sky_options.as_mut() {
                     o.weather_ambient_tint = v;
+                }
+            }
+            Self::NightSkyGlow => {
+                if let Some(o) = s.sky_options.as_mut() {
+                    o.night_sky_glow = v;
+                }
+            }
+            Self::Moonlight => {
+                if let Some(c) = s.config.as_mut() {
+                    c.0.moonlight.artistic = v;
+                }
+            }
+            Self::AmbientSpecular => {
+                if let Some(a) = s.ambient_specular.as_mut() {
+                    a.0 = v;
+                }
+            }
+            Self::CloudHistory => {
+                if let Some(c) = s.clouds.as_mut() {
+                    c.temporal = if v { sf_atmos_bevy::sf_atmos::CloudTemporal::ACCUMULATE } else { sf_atmos_bevy::sf_atmos::CloudTemporal::LEGACY };
                 }
             }
             Self::TerrainFarShadows
@@ -594,7 +657,7 @@ fn overlay(
              G physics colliders (ragdoll capsules, joints) {colliders}  O combat gizmos (hurt capsules, blade)\n\
              F11 player / free camera (player: WASD, Space jump, E use, Shift tap roll / hold sprint, Ctrl sneak, F ready weapon, LMB attack, Tab 1st/3rd person, wheel zoom)\n\
              Shift+C clouds {}  C next weather  [ ] hour -/+0.5 (Shift 0.1)  P pause  T clock x1/x4/x20  Shift+F12 copy camera  F12 screenshot  F5/F9 quicksave/load  B bodies {bodies}  |  --off {flags_off}\n\
-             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  weather_ambient {}  ambient, render.bloom",
+             RO-16 veil (console `flip <name>`): terrain_specular {}  terrain_env_specular {}  terrain_indirect {}  terrain_tint {}  surface {}  fog {}  fog_night_light {}  weather_ambient {}  ambient, render.bloom",
             opt(Switch::SunShadows),
             opt(Switch::TerrainFarShadows),
             opt(Switch::FarTint),
@@ -608,6 +671,7 @@ fn overlay(
             opt(Switch::TerrainTint),
             opt(Switch::Surface),
             opt(Switch::Fog),
+            opt(Switch::FogNightLight),
             opt(Switch::WeatherAmbient),
         );
         if let Some(look) = scene.map(|s| s.look_for.as_str()).filter(|l| !l.is_empty()) {

@@ -6,7 +6,7 @@ import package::atmosphere::{
         sample_sky_view_lut, direction_world_to_atmosphere,
         uv_to_ray_direction, uv_to_ndc, sample_aerial_view_lut,
         sample_sun_radiance, ndc_to_camera_dist, raymarch_atmosphere, 
-        get_view_position, max_atmosphere_distance
+        get_view_position, max_atmosphere_distance, airglow
     },
 };
 
@@ -53,7 +53,8 @@ fn main(in: FullscreenVertexOutput) -> RenderSkyOutput {
         if should_raymarch {
             let t_max = max_atmosphere_distance(r, mu);
             let result = raymarch_atmosphere(world_pos, ray_dir_ws, t_max, max_samples, in.uv, true);
-            inscattering = result.inscattering;
+            // superfargoth patch (own, N2: sky glow): as the sky-view LUT carries it.
+            inscattering = result.inscattering + airglow(r, mu);
             transmittance = result.transmittance;
         }
         inscattering += sun_radiance * transmittance;

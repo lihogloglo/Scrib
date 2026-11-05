@@ -105,6 +105,49 @@ fn weather_ambient_tint_reaches_the_camera_at_the_same_luminance() {
     assert_eq!(light(&app).color, default);
 }
 
+/// N2: the atmosphere's glow is the named ratio of the floor's luminance, in the weather's
+/// night sky hue (else the floor's), zero by day and with the A/B switch off.
+#[test]
+fn night_sky_glow_reaches_the_atmosphere_tied_to_the_floor() {
+    let mut app = app(0.5);
+    let camera = app.world_mut().spawn(SkyCamera::default()).id();
+    app.update();
+    app.update();
+    let glow = |app: &App| {
+        let a = app.world().get::<AtmosphereSettings>(camera).expect("atmosphere");
+        (a.airglow, a.airglow_horizon)
+    };
+    let floor = |app: &App| {
+        let l = app.world().get::<AmbientLight>(camera).expect("ambient light");
+        let c = l.color.to_linear();
+        l.brightness * sf_sky::luminance(Vec3::new(c.red, c.green, c.blue))
+    };
+    let (z, horizon) = glow(&app);
+    assert!((horizon - sf_sky::NIGHT_SKY_HORIZON_RATIO).abs() < 1e-6);
+    assert!(floor(&app) > 0.0, "night floor");
+    assert!((sf_sky::luminance(z) - sf_sky::NIGHT_SKY_GLOW_RATIO * floor(&app)).abs() < 1e-6, "{z}");
+    let d = SkyRenderOptions::default().ambient_color.to_linear();
+    let hue = |c: Vec3| c / c.max_element();
+    assert!((hue(z) - hue(Vec3::new(d.red, d.green, d.blue))).abs().max_element() < 1e-5, "no weather hue: the floor's");
+
+    // The weather's hue, same luminance.
+    app.world_mut().resource_mut::<WeatherState>().0.night_sky_tint = Some(Vec3::new(0.9, 0.1, 0.1));
+    app.update();
+    let (red, _) = glow(&app);
+    assert!((hue(red) - hue(Vec3::new(0.9, 0.1, 0.1))).abs().max_element() < 1e-5, "{red}");
+    assert!((sf_sky::luminance(red) - sf_sky::luminance(z)).abs() < 1e-6);
+
+    app.world_mut().resource_mut::<SkyRenderOptions>().night_sky_glow = false;
+    app.update();
+    assert_eq!(glow(&app).0, Vec3::ZERO, "A/B off");
+
+    let mut noon = self::app(12.0);
+    let camera = noon.world_mut().spawn(SkyCamera::default()).id();
+    noon.update();
+    noon.update();
+    assert_eq!(noon.world().get::<AtmosphereSettings>(camera).expect("atmosphere").airglow, Vec3::ZERO, "no floor by day");
+}
+
 #[test]
 fn moon_takes_over_shadows_at_night() {
     // Day 162 is a full moon; at 0:30 the sun is well below the horizon.
@@ -413,4 +456,28 @@ fn ray_tracing_follows_the_cameras_worldspace_layer() {
     // A camera without layers sees layer 0 only.
     let default_view = camera_layers([None].into_iter());
     assert!(traced_by(&default_view, None) && !traced_by(&default_view, Some(&RenderLayers::layer(2))));
+}
+
+/// N3: the moon's `DirectionalLight` follows `SkySettings::moonlight` live, and keeps the
+/// moon's cheaper cascades.
+#[test]
+fn moon_light_follows_the_moonlight_setting() {
+    let mut app = app(0.5);
+    app.world_mut().resource_mut::<SkyTime>().0 = SkyClock::at(162.0, 0.5, &SkySettings::default().calendar);
+    app.world_mut().spawn(SkyCamera::default());
+    app.update();
+    let moon = |app: &mut App| {
+        let mut q = app.world_mut().query_filtered::<(&DirectionalLight, &CascadeShadowConfig), With<MoonLight>>();
+        let (light, cascades) = q.single(app.world()).expect("one moon");
+        (light.illuminance, light.color, cascades.bounds.len())
+    };
+    let (dim, _, cascades) = moon(&mut app);
+    assert!(dim > 0.0 && dim.is_finite());
+    assert_eq!(cascades, MOON_CASCADES.num_cascades);
+    app.world_mut().resource_mut::<SkyConfig>().0.moonlight = sf_sky::Moonlight { full_lux: 100.0, artistic: true };
+    app.update();
+    let (bright, color, _) = moon(&mut app);
+    // One Earth moon of 1 lx: the gain is 100.
+    assert!((bright / dim - 100.0).abs() < 0.5, "{dim} -> {bright}");
+    assert!(color.to_linear().red.is_finite());
 }

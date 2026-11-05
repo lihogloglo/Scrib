@@ -23,6 +23,10 @@ struct AtmosphereSettings {
     aerial_view_lut_max_distance: f32,
     sky_max_samples: u32,
     rendering_method: u32,
+    // superfargoth patch (own, N2: sky glow): zenith radiance (cd/m², linear) and
+    // horizon/zenith ratio of the sky's own glow (`functions::airglow`).
+    airglow: vec3<f32>,
+    airglow_horizon: f32,
 }
 
 /// "Atmosphere space" uses local up for the zenith so the horizon-detail

@@ -291,6 +291,24 @@ pub fn sky_fill(key: Vec3, radiance: impl Fn(Vec3) -> Vec3) -> Vec3 {
     sum / SKY_FILL_SAMPLES as f32
 }
 
+/// How much of the view's ambient light (the flat ambient that lights the
+/// surfaces, on top of the sky's own light) the fog in-scatters, 1 = all of it
+/// (weather.md "Fog", night fill). The fog is then lit by the same light as
+/// the ground it veils, as UE lights its height and volumetric fog with the
+/// sky light and Frostbite (Hillaire 2015) its media with the scene's ambient
+/// probes: without it a host's night ambient floor lights the ground and not
+/// the fog, which becomes a black absorber you see far through (WE-9).
+/// 0 is the sky-only fill (the A/B "off").
+pub const VIEW_AMBIENT_IN_FOG: f32 = 1.0;
+
+/// The fog's isotropic fill (CPU twin of `fog_light.wesl` texel 0): the sky
+/// fill plus the view's ambient radiance × `scale` ([`VIEW_AMBIENT_IN_FOG`]).
+/// Both are radiance in the same units (an isotropic medium in uniform
+/// radiance `L` in-scatters `L`, as a white Lambert surface reflects `L`).
+pub fn fog_fill(sky_fill: Vec3, view_ambient: Vec3, scale: f32) -> Vec3 {
+    sky_fill + view_ambient.max(Vec3::ZERO) * scale.max(0.0)
+}
+
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::float_cmp)]
 mod tests {

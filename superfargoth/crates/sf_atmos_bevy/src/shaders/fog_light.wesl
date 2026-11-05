@@ -11,6 +11,10 @@
 // (with the zenith): a low sun's aureole then lit a vertical column of fog
 // toward the sun at every pitch (FG-9). The sun's own forward lobe comes from
 // the key light's phase function. CPU twin and tests: `sf_atmos::fog::sky_fill`.
+// The fill also carries the view's flat ambient (`Fog.view_ambient`, the host's
+// ambient floor that lights the surfaces): without it a night floor lights the
+// ground but not the fog, a black absorber seen far through (WE-9).
+// `sf_atmos::fog::fog_fill` is the sum's twin.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_pbr::atmosphere::{bindings::view, functions::{sample_sky_view_lut, direction_world_to_atmosphere}};
@@ -47,5 +51,6 @@ fn fog_light(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let s = sqrt(max(1.0 - mu * mu, 0.0));
         sum += sample_sky_view_lut(r, vec3(s * cos(phi), mu, s * sin(phi)));
     }
-    return vec4(sum / f32(SKY_FILL_SAMPLES), 1.0);
+    // Plus the surfaces' flat ambient (`sf_atmos::fog_fill`): the same light on fog and ground.
+    return vec4(sum / f32(SKY_FILL_SAMPLES) + clouds.fog.view_ambient, 1.0);
 }

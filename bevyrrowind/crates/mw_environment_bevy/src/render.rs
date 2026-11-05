@@ -177,6 +177,10 @@ impl RenderSettings {
         app.insert_resource(UpscalingSetting(self.upscaling));
         app.insert_resource(self.point_shadow_budget(POINT_SHADOWS_DEFAULT));
         app.insert_resource(bevy_pbr::ShadowMoverRefresh { per_frame: self.mover_shadows });
+        // N1 (night sheen): the flat ambient (the exterior night floor, the interior cell
+        // ambient) lights diffuse only, as `OpenMW`'s; env maps and lamps keep their specular.
+        // Live A/B: `flip ambient_specular`.
+        app.insert_resource(bevy_pbr::AmbientLightSpecular(false));
         // Shadows F6 slice 2: static casters cached per light, movers drawn over the copy.
         if POINT_SHADOW_CACHE && self.shadow_cache {
             app.add_plugins(sf_shadow_cache_bevy::ShadowCachePlugin)
@@ -264,4 +268,19 @@ fn log_lighting_at_screenshot(
         cams.join("; "),
         budget.map_or(0, |b| b.max)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// N1: the game's render settings turn the flat ambient's specular off (the vendored
+    /// `bevy_pbr` view flag `AMBIENT_LIGHT_FLAGS_DIFFUSE_ONLY_BIT` follows this resource).
+    #[test]
+    fn render_settings_make_the_flat_ambient_diffuse_only() {
+        let mut app = App::new();
+        let settings = RenderSettings::new(false, Some(Upscaling::Off), true, true).expect("settings").with_shadow_cache(false);
+        settings.insert(&mut app);
+        assert_eq!(app.world().get_resource::<bevy_pbr::AmbientLightSpecular>().map(|a| a.0), Some(false));
+    }
 }

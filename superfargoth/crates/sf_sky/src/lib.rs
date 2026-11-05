@@ -35,7 +35,9 @@ pub use atmosphere::{AtmosphereModel, Falloff, MediumScales, MediumTerm, Phase, 
 pub use celestial::{Celestial, Orbit, SkyPosition};
 pub use clock::{Calendar, SkyClock};
 pub use curve::KeyCurve;
-pub use night::{MAX_MOONS, Moon, MoonPath, MoonState, NightSky, StarField, SunDiskLook, phase_light};
+pub use night::{
+    MAX_MOONS, Moon, MoonPath, MoonState, Moonlight, NIGHT_SKY_GLOW_RATIO, NIGHT_SKY_HORIZON_RATIO, NightGlow, NightSky, StarField, SunDiskLook, phase_light,
+};
 pub use sky::{ExposureRange, SkyLight, SkySettings, SkyState, luminance};
 pub use weather::{Weather, Wind};
 

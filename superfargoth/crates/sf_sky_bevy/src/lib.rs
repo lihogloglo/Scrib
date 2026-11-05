@@ -30,6 +30,8 @@ mod upscale;
 // Headless (no render app): under `solari` the ray-tracing plugins stay out (path.rs).
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod shader_tests;
 
 use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{Assets, Handle};
@@ -96,6 +98,10 @@ pub struct SkyRenderOptions {
     /// Shadow cascades of the sun and moon on the raster path.
     /// Built from a [`CascadeSplits`] (practical split) or Bevy's builder.
     pub cascades: CascadeShadowConfig,
+    /// Shadow cascades of the moon (N3): fewer and shorter than the sun's, since
+    /// night shadows matter near the camera and each cascade is one more shadow pass.
+    /// Read when the lights spawn.
+    pub moon_cascades: CascadeShadowConfig,
     /// Bias and contact shadows of the sun (raster path).
     pub sun_shadow: SunShadow,
     /// Tint of the ambient floor ([`SkySettings::ambient`]) when the weather
@@ -105,6 +111,10 @@ pub struct SkyRenderOptions {
     /// Use the weather's ambient tint when it has one (default); off keeps
     /// [`Self::ambient_color`] (an A/B switch).
     pub weather_ambient_tint: bool,
+    /// Add the night sky's own glow (`sf_sky::NightGlow`, its hue from
+    /// `sf_sky::Weather::night_sky_tint`) to the atmosphere: the sky, its environment map,
+    /// fog and clouds see it. Off: a black night sky behind the stars (an A/B switch).
+    pub night_sky_glow: bool,
     /// Resolution of the medium's density and phase LUTs.
     pub medium_resolution: u32,
     /// Shortest time between two rebuilds of the medium's LUTs, seconds of
@@ -130,6 +140,16 @@ pub struct SkyRenderOptions {
     pub ray_tracing_denoiser: bool,
 }
 
+/// The moon's default cascades: two, to 120 m (bounds ≈ 16 and 120 m).
+pub const MOON_CASCADES: CascadeSplits = CascadeSplits {
+    num_cascades: 2,
+    minimum_distance: 0.1,
+    split_near: 1.0,
+    maximum_distance: 120.0,
+    lambda: 0.9,
+    overlap_proportion: 0.2,
+};
+
 impl Default for SkyRenderOptions {
     fn default() -> Self {
         Self {
@@ -143,9 +163,11 @@ impl Default for SkyRenderOptions {
                 overlap_proportion: 0.2,
             }
             .build(),
+            moon_cascades: MOON_CASCADES.build(),
             sun_shadow: SunShadow::default(),
             ambient_color: Color::linear_rgb(0.55, 0.65, 1.0),
             weather_ambient_tint: true,
+            night_sky_glow: true,
             medium_resolution: 256,
             medium_min_interval: 0.25,
             auto_light_proxies: true,
@@ -393,6 +415,7 @@ fn spawn_sky(
     }
     if !has_sun {
         let cascades = options.cascades.clone();
+        let moon_cascades = options.moon_cascades.clone();
         commands.spawn((
             SunLight,
             DirectionalLight {
@@ -413,6 +436,8 @@ fn spawn_sky(
             DirectionalLight {
                 color: Color::linear_rgb(0.9, 0.93, 1.0),
                 shadow_maps_enabled: false,
+                shadow_depth_bias: options.sun_shadow.depth_bias,
+                shadow_normal_bias: options.sun_shadow.normal_bias,
                 ..DirectionalLight::default()
             },
             // Moons are drawn by the night pass (phases, textures); the
@@ -421,7 +446,7 @@ fn spawn_sky(
                 angular_size: settings.moon_angular_size,
                 intensity: 0.0,
             },
-            cascades,
+            moon_cascades,
             Transform::default(),
         ));
     }
@@ -592,10 +617,12 @@ fn write_light(
     if light.illuminance != illuminance {
         light.illuminance = illuminance;
     }
-    if shader_applies_transmittance {
-        // Keep the authored tint (the moon's is bluish).
-    } else {
-        light.color = Color::LinearRgba(LinearRgba::rgb(tint.x, tint.y, tint.z));
+    // The shader applies the atmosphere: the light's own colour (the moon's
+    // from the weather, N3). Otherwise the transmitted colour.
+    let color = if shader_applies_transmittance { sky.tint } else { tint };
+    let color = Color::LinearRgba(LinearRgba::rgb(color.x, color.y, color.z));
+    if light.color != color {
+        light.color = color;
     }
     if light.shadow_maps_enabled != shadows {
         light.shadow_maps_enabled = shadows;
@@ -623,19 +650,26 @@ fn apply_lights(
     }
 }
 
+/// A sky camera and what [`apply_cameras`] drives on it.
+type CameraItem = (&'static SkyCamera, Option<&'static mut Exposure>, Option<&'static mut AmbientLight>, Option<&'static mut AtmosphereSettings>, Entity);
+
 #[expect(clippy::float_cmp, reason = "exact: only skips redundant writes")]
 fn apply_cameras(
     sky: Res<CurrentSky>,
+    config: Res<SkyConfig>,
     options: Res<SkyRenderOptions>,
-    mut cameras: Query<(
-        &SkyCamera,
-        Option<&mut Exposure>,
-        Option<&mut AmbientLight>,
-        Entity,
-    )>,
+    mut cameras: Query<CameraItem>,
     mut commands: Commands,
 ) {
-    for (sky_camera, exposure, ambient, entity) in &mut cameras {
+    let glow = night_sky_radiance(&sky.0, &config.0, &options);
+    let horizon = config.0.night_glow.horizon;
+    for (sky_camera, exposure, ambient, atmosphere, entity) in &mut cameras {
+        if let Some(mut atmosphere) = atmosphere
+            && (atmosphere.airglow != glow || atmosphere.airglow_horizon != horizon)
+        {
+            atmosphere.airglow = glow;
+            atmosphere.airglow_horizon = horizon;
+        }
         if sky_camera.exposure
             && let Some(mut exposure) = exposure
         {
@@ -676,4 +710,20 @@ pub fn ambient_color(sky: &SkyState, options: &SkyRenderOptions) -> Color {
         }
         _ => options.ambient_color,
     }
+}
+
+/// The night sky glow's zenith radiance (linear RGB, cd/m²) for the atmosphere
+/// (`AtmosphereSettings::airglow`, vendored `bevy_pbr` patch N2): the named ratio
+/// ([`SkySettings::night_glow`]) of the ambient floor's luminance (its brightness times
+/// [`ambient_color`]'s luminance, so it shares the floor's sun-elevation ramp), in the
+/// weather's night sky hue, else the floor's own hue. Zero when the option is off.
+pub fn night_sky_radiance(sky: &SkyState, settings: &SkySettings, options: &SkyRenderOptions) -> Vec3 {
+    if !options.night_sky_glow {
+        return Vec3::ZERO;
+    }
+    let floor = ambient_color(sky, options).to_linear();
+    let floor = Vec3::new(floor.red, floor.green, floor.blue);
+    let tint = sky.night_sky_tint.filter(|t| t.is_finite()).unwrap_or(floor);
+    let glow = settings.night_glow.zenith(sky.ambient * sf_sky::luminance(floor), tint);
+    if glow.is_finite() { glow } else { Vec3::ZERO }
 }

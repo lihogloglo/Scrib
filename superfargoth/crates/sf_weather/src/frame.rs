@@ -249,6 +249,12 @@ struct Acc {
     /// Ambient tint of the presets that have one, and their sky weight.
     ambient_tint: glam::Vec3,
     w_ambient: f32,
+    /// Night sky hue of the presets that have one, and their sky weight.
+    night_sky_tint: glam::Vec3,
+    w_night_sky: f32,
+    /// Moonlight hue of the presets that have one, and their sky weight (N3).
+    moonlight_tint: glam::Vec3,
+    w_moonlight: f32,
     w_clouds: f32,
     w_sky: f32,
     w_fog: f32,
@@ -327,6 +333,14 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
                 acc.ambient_tint += tint * w[SKY];
                 acc.w_ambient += w[SKY];
             }
+            if let Some(tint) = rec.sky.night_sky_tint(input.hour_of_day) {
+                acc.night_sky_tint += tint * w[SKY];
+                acc.w_night_sky += w[SKY];
+            }
+            if let Some(tint) = rec.sky.moonlight_tint(input.hour_of_day) {
+                acc.moonlight_tint += tint * w[SKY];
+                acc.w_moonlight += w[SKY];
+            }
             acc.w_sky += w[SKY];
             let f = &rec.fog;
             let hf = by_hour(&f.height_by_hour, input.hour_of_day);
@@ -401,6 +415,8 @@ pub fn evaluate_into(book: &WeatherBook, state: &WeatherState, input: &WeatherIn
         dust_tint: acc.dust_tint * ns,
         sun_glare: if acc.w_sky > 0.0 { acc.glare * ns } else { 1.0 },
         ambient_tint: (acc.w_ambient > 0.0).then(|| acc.ambient_tint / acc.w_ambient),
+        night_sky_tint: (acc.w_night_sky > 0.0).then(|| acc.night_sky_tint / acc.w_night_sky),
+        moonlight_tint: (acc.w_moonlight > 0.0).then(|| acc.moonlight_tint / acc.w_moonlight),
         wind,
     };
     frame.surface = surface;

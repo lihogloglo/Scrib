@@ -218,6 +218,8 @@ bitflags::bitflags! {
     #[repr(transparent)]
     struct AmbientLightFlags: u32 {
         const AFFECTS_LIGHTMAPPED_MESHES        = 1 << 0;
+        // superfargoth patch (own, N1: ambient specular toggle)
+        const DIFFUSE_ONLY                      = 1 << 1;
         const NONE                              = 0;
         const UNINITIALIZED                     = 0xFFFF;
     }
@@ -313,6 +315,26 @@ pub fn extract_shadow_filtering_method(
     }
     *previous_len = values.len();
     commands.try_insert_batch(values);
+}
+
+// superfargoth patch (own, N1: ambient specular toggle)
+/// Whether the flat ambient light ([`GlobalAmbientLight`] or a camera's [`AmbientLight`]) adds a
+/// specular term. `true` (the default) is stock Bevy: `pbr_ambient.wesl` lights both the diffuse
+/// and the specular lobe (`F0 * A + B`) from the uniform colour. `false` lights the diffuse lobe
+/// only: a flat fill has no visible source, so its reflection is a uniform sheen of nothing (the
+/// classic diffuse-only ambient of fixed-function GL, `OpenMW` and Skyrim). Environment maps,
+/// light probes and punctual lights keep their specular. A view-uniform bit
+/// (`AMBIENT_LIGHT_FLAGS_DIFFUSE_ONLY_BIT`), so flipping it re-specializes no pipeline.
+#[derive(Resource, Clone, Copy, Debug, bevy_render::extract_resource::ExtractResource, bevy_reflect::Reflect)]
+#[reflect(Resource, Debug, Clone)]
+#[extract_app(RenderApp)]
+pub struct AmbientLightSpecular(pub bool);
+
+// superfargoth patch (own, N1: ambient specular toggle)
+impl Default for AmbientLightSpecular {
+    fn default() -> Self {
+        Self(true)
+    }
 }
 
 // This is needed because of the orphan rule not allowing implementing
@@ -1666,7 +1688,8 @@ pub fn prepare_lights(
         ),
         With<Camera3d>,
     >,
-    ambient_light: Res<GlobalAmbientLight>,
+    // superfargoth patch (own, N1: ambient specular toggle): `AmbientLightSpecular` paired in.
+    (ambient_light, ambient_specular): (Res<GlobalAmbientLight>, Option<Res<AmbientLightSpecular>>),
     point_light_shadow_map: Res<PointLightShadowMap>,
     directional_light_shadow_map: Res<DirectionalLightShadowMap>,
     mut shadow_render_phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
@@ -2510,6 +2533,10 @@ pub fn prepare_lights(
 
         if ambient_light.affects_lightmapped_meshes {
             ambient_light_flags |= AmbientLightFlags::AFFECTS_LIGHTMAPPED_MESHES;
+        }
+        // superfargoth patch (own, N1: ambient specular toggle)
+        if ambient_specular.as_ref().is_some_and(|s| !s.0) {
+            ambient_light_flags |= AmbientLightFlags::DIFFUSE_ONLY;
         }
 
         let mut gpu_lights = GpuLights {

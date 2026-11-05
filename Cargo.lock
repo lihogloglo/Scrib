@@ -7626,10 +7626,12 @@ dependencies = [
  "bevy_time",
  "bevy_transform",
  "log",
+ "naga",
  "sf_atmos",
  "sf_render_order_bevy",
  "sf_sky_bevy",
  "sf_weather",
+ "wesl",
  "workspace-hack",
 ]
 
@@ -8353,9 +8355,11 @@ dependencies = [
  "bevy_transform",
  "dlss_wgpu",
  "log",
+ "naga",
  "sf_model_bevy",
  "sf_render_order_bevy",
  "sf_sky",
+ "wesl",
  "workspace-hack",
 ]
 

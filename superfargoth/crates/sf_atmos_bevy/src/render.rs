@@ -146,6 +146,11 @@ struct CloudUniform {
     /// (WE4d): the map is sampled per sample (High/Ultra) and some climate
     /// precipitates or has other fog than another.
     far_weather: u32,
+    /// The history's accumulation (`sf_atmos::CloudTemporal`, WE-10 fix 1): fresh-sample
+    /// weight, variance-clip γ (0: min/max clamp), 1: blue-noise march jitter.
+    history_weight: f32,
+    clip_gamma: f32,
+    blue_noise: u32,
     glows: [Vec4; 4],
 }
 
@@ -175,10 +180,12 @@ struct FogUniform {
     steps: u32,
     /// 1: fog draws (0: every fog term is skipped).
     enabled: u32,
+    /// The view's ambient radiance the fog adds to its sky fill (`CloudFrame::fog_ambient`).
+    view_ambient: Vec3,
 }
 
 impl FogUniform {
-    fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, steps: u32) -> Self {
+    fn new(fog: Option<&sf_atmos::FogSettings>, offsets: &sf_atmos::FogOffsets, view_ambient: Vec3, steps: u32) -> Self {
         let Some(f) = fog else { return Self::default() };
         Self {
             albedo: f.albedo,
@@ -203,6 +210,7 @@ impl FogUniform {
             sky_distance: f.sky_distance,
             steps,
             enabled: 1,
+            view_ambient,
         }
     }
 }
@@ -331,6 +339,8 @@ impl FromWorld for CloudPipelines {
                         texture_2d(TextureSampleType::default()),
                         sampler(SamplerBindingType::Filtering),
                         // The world weather map (WE4b), layers A, B, C.
+                        texture_2d_array(TextureSampleType::default()),
+                        // Spatio-temporal blue noise for the march jitter (WE-10 fix 1).
                         texture_2d_array(TextureSampleType::default()),
                     ),
                 ),
@@ -637,7 +647,7 @@ fn froxel_uniform(frame: &CloudFrame, view: &ExtractedView, exposure: f32, setti
         // The sun the cloud and terrain shadow maps were made for (none: neither applies).
         shadow_light: frame.shadow.map_or(Vec3::ZERO, |b| b.light_dir),
         jitter_mode: u32::from(s.jitter == sf_atmos::FroxelJitter::PerFroxel),
-        fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, FOG_STEPS),
+        fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS),
         lights,
     }
 }
@@ -687,7 +697,7 @@ fn prepare_views(
     let (atmosphere_uniforms, settings_uniforms, transforms, view_uniforms, lights, media, medium_sampler, atmosphere_sampler) = atmos;
     let Some(pipelines) = pipelines else { return };
     let Some(noise) = frame.images.noise.as_ref().filter(|_| frame.active) else { return };
-    let (Some(shape), Some(detail), Some(weather)) = (images.get(&noise.shape), images.get(&noise.detail), images.get(&noise.weather)) else { return };
+    let (Some(shape), Some(detail), Some(weather), Some(blue_noise)) = (images.get(&noise.shape), images.get(&noise.detail), images.get(&noise.weather), images.get(&noise.blue_noise)) else { return };
     let (Some(a0), Some(a1), Some(a2), Some(a3), Some(a4)) = (
         atmosphere_uniforms.binding(),
         settings_uniforms.binding(),
@@ -792,7 +802,7 @@ fn prepare_views(
             cirrus_depth: s.look.cirrus_depth,
             rise: frame.offsets.rise,
             shadow_camera: shadow.map_or(Vec3::ZERO, |b| b.camera),
-            fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, FOG_STEPS),
+            fog: FogUniform::new(frame.fog.as_ref(), &frame.fog_offsets, frame.fog_ambient, FOG_STEPS),
             clouds_on: u32::from(frame.clouds),
             map_on,
             map_size,
@@ -803,6 +813,9 @@ fn prepare_views(
             shell_thickness: shell.1 - shell.0,
             cirrus_max: shell.2,
             far_weather,
+            history_weight: frame.temporal.fresh_weight.clamp(0.01, 1.0),
+            clip_gamma: frame.temporal.clip_gamma.max(0.0),
+            blue_noise: u32::from(frame.temporal.blue_noise),
             glows: frame.glows,
         };
         h.prev_clip_from_world = clip_from_world;
@@ -851,7 +864,7 @@ fn prepare_views(
         let density = device.create_bind_group(
             "clouds_density",
             &cache.get_bind_group_layout(&pipelines.density),
-            &BindGroupEntries::sequential((uniform_binding.clone(), &shape.texture_view, &detail.texture_view, &weather.texture_view, &pipelines.noise_sampler, &map.view)),
+            &BindGroupEntries::sequential((uniform_binding.clone(), &shape.texture_view, &detail.texture_view, &weather.texture_view, &pipelines.noise_sampler, &map.view, &blue_noise.texture_view)),
         );
         let resolve = device.create_bind_group(
             "clouds_resolve",

@@ -86,6 +86,8 @@ struct Lights {
 };
 
 const AMBIENT_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESHES_BIT: u32           = 1u << 0u;
+// superfargoth patch (own, N1: ambient specular toggle): `AmbientLightSpecular(false)`.
+const AMBIENT_LIGHT_FLAGS_DIFFUSE_ONLY_BIT: u32                         = 1u << 1u;
 
 struct Fog {
     base_color: vec4<f32>,

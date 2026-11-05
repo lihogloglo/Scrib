@@ -130,7 +130,24 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   fog turns into a black absorber with no veil, so lamps, far-light sprites and floor-lit ground read far. Fog densities rise at night.
 - Cause 3 (rain look): `fx::precip_brightness` drops to 0.04 x (1 - 0.5 overcast) below sun -5.7°, not x exposure nor the night
   ambient: drops become faint dark streaks by night (the rain is still falling and wetting).
-- Status: known bug, diagnosed (2026-11-06; fix not built).
+- Fix (fog, 2026-11-06): the fog's fill adds the camera's `AmbientLight` (the surfaces' night floor, Foggy-tinted) to the sky fill,
+  near (froxels, composite) and far (cloud trace). Run `view "Balmora" --hour 22 --weather foggy` (also `--hour 12`, `--hour 1`):
+  at 22:00 and 1:00 a soft grey-blue veil hides the distance like the noon fog (~50 m), lamps and far hills fade into it, no black
+  wall, no glow; `flip fog_night_light` (console) = the old sky-only fill (black, see-through night fog). Too bright? Say so.
+- Status: fog fix built, awaiting owner; causes 1 and 3 open.
+
+### WE-10: Local storm seen from outside: cloud curtain and noisy border (owner 2026-11-06)
+- Kind: game location. Run: `.\bevyrrowind scene we3-ridge`, then BRP `bevyrrowind/set {"weather": "ashstorm", "region": "Ashlands Region", "transition_hours": 0}` (look north) or `"rain"` / `"thunderstorm"` in `"Ascadian Isles Region"` (look east/south-east).
+- Seen: from outside, the storm is a wall from the deck down to the ground, cut by a straight vertical edge at the region border; the
+  deck and the curtain's edges shimmer with dither noise on a still camera.
+- Cause (research `bevyrrowind/docs/research/cloud-weather-edges-2026-11-06.md`): 256 m border band cuts a solid deck; far shafts fill the
+  whole region with the in-storm extinction (ash opaque ~300 m in); shape noise in height-fraction space stretches vertically;
+  8 far steps up to 1.9 km long and a 50/50 cloud history leave the jitter unconverged. Over the far sea the curtain stops (as WE-7).
+- Look for, after the fix: the storm deck thins out over kilometres, rain hangs under the rain cells, no vertical wall, no shimmer.
+- Fix 1 (history): ~16-sample cloud history, 1.5σ YCoCg variance clip, blue-noise jitter. Still camera on the ash (north) and
+  rain (east) borders: deck and curtain stop shimmering within ~1 s; fast turns and walking leave no smear behind silhouettes
+  or the deck edge; lightning still flashes at once. A/B: console `flip cloud_history` (off = the old 50/50 resolve).
+- Status: fix 1 built, awaiting owner; slices 2-3 (far rain shaped by clouds, deck edges) wait for the owner.
 
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
 - Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
@@ -177,6 +194,27 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - A/B: same run with `--off shelter`: everything open (yellow), soaked everywhere. Repeat at `--hour 12`: same result.
 - Owner 2026-11-05 (rain, noon): failed, all yellow even under Vivec's arches (W2b anchor views drew layer 0 only; statics
   sit on the worldspace layer, so `queue_shadows` dropped every caster). Status: confirmed (owner 2026-11-06, after the render-layer fix).
+
+### SW-6: Footprints in snow (surface-weather.md W6a; shading only, no displacement yet)
+- Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
+  console `surface set snow 1`; walk (third person) over open snowy ground, look back. `surface debug trails`: prints blue,
+  lips red, ring edge purple (64 m around the camera); `surface debug off`.
+- Look for: a trail of separate oriented prints behind the player and walking NPCs, the ground showing at their bottom,
+  a slightly raised, lit rim around each; nothing on bridges, roofs or rocks; prints fade out past ~30 m.
+- While it snows the prints refill (Morrowind snow: ~40 s real time at 30× timescale); with `--weather clear` they stay.
+- No shimmer or crawling on the prints under DLSS; no blocky stair-steps at the walls (6.25 cm ring texels).
+- A/B: `--off trails` (no prints, cover uncut). Status: awaiting owner (built 2026-11-06).
+
+### SW-5: Snow and ash cover (surface-weather.md W5)
+- Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,
+  console `surface set ash 1` (full), `surface set ash 0.4` (thin), `surface clear`. Snow: `view "Skaal Village" --hour 12
+  --weather snow`, `surface set snow 1` / `0.4`. P pauses the clock (cover melts or washes over game hours).
+- Look for: ground, roofs and flat tops of statics covered in the snow/ash look; steep slopes and walls bare (~37-63° fade);
+  at 0.4 patchy: hollows, dark grout and drift patches (~64 m) first, bumps poking through; soft edges, no tiling seams.
+- None under roofs, arches or the Ghostgate passage; none on characters (skinned) or far proxies; ends ~2 km out (cell window).
+- Snow: slight sparkle within a few metres (sparse glints that hold still as you stand, flash as you move; no crawling noise
+  under DLSS). Normal detail from the land texture catches low sun. A/B: `--off cover` (or `surface set snow 0`).
+- Status: awaiting owner (built 2026-11-06).
 
 ### SW-4: Puddles in rain and after (surface-weather.md W4)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:

@@ -178,7 +178,9 @@ What is *lit* stays physical; what is *drawn* is artistic where games are.
   by the phase). `SkySettings::moons` empty = one Earth moon from the orbit.
   Lighting: one moonlight (`SkyState::moon`) toward the brightest moon at the
   ground, with the illuminance that makes its ground light the sum of all
-  moons (Lambert phase law each): one shadow caster, as games do.
+  moons (Lambert phase law each): one shadow caster, as games do. Its strength
+  is set apart from the disks (`Moonlight`, N3: artistic full-moon lux, cloud-dimmed, hue from
+  the weather; cheaper moon cascades). As built: `sky-lighting-as-built.md`.
 - **Stars** (`StarField`): procedural, three cube-map hash layers (few
   bright, many faint, warm-to-blue tints, scintillation near the horizon).
   Each star is a Gaussian about a pixel wide whose integral is its
@@ -186,6 +188,7 @@ What is *lit* stays physical; what is *drawn* is artistic where games are.
   not depend on resolution. Hidden physically by the sky's own brightness
   and the atmosphere's extinction (per-elevation transmittance table), plus
   an artistic `visibility` curve over sun elevation (−4° → −14°).
+- **Night sky glow** (`NightGlow`, N2): the sky's own radiance (airglow, starlight, scattered moonlight), a named ratio of the night ambient floor in the weather's night sky hue, brighter toward the horizon (van Rhijn); added to the atmosphere's sky-view LUT (vendored patch) so the env map, clouds and fog see it. As built: `sky-lighting-as-built.md`.
 - **Render** (`sf_sky_bevy::night`): one fullscreen pass at the far plane,
   depth-tested (`GreaterEqual` in reverse Z) so only sky pixels run, additive
   onto Bevy's sky after `render_sky` and before the transparent pass; the

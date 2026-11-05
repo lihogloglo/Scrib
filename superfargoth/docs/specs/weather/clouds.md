@@ -224,3 +224,21 @@ now cirrus: anvils need a written map), a cheaper composite (0.19 ms, a constant
 cost), far fog in the cloud node (no budget left on fair: trim the trace first), Low/Medium
 presets measured.
 
+
+### Temporal accumulation as built (WE-10 fix 1, cloud-history session, 2026-11-06)
+
+The resolve kept a 50/50 history (`mix(history, current, 0.5)`, ≈ 58 % of one sample's noise left) under
+a 3×3 min/max clamp, with interleaved-gradient jitter; far-weather steps are often opaque, so a sample is a
+coin toss and the deck and curtain shimmered on a still camera. Now (`sf_atmos::CloudTemporal`, CPU twin
+`sf_atmos::temporal`, on the `Clouds` resource): fresh weight **0.06** (≈ 16 fresh samples, ≈ 64 frames under
+the checkerboard), **variance clip** in YCoCg (+ alpha) to mean ± **1.5σ** of the same-population 3×3,
+intersected with min/max and clipped toward the box centre (Salvi 2016; Pedersen 2016), and the march /
+bank / far-weather jitter from **spatio-temporal blue noise** (NVIDIA STBN 128² × 32, the texture Bevy 0.20
+ships in `bevy_pbr` behind `bluenoise_texture`, read from the vendored file so that feature's other users keep
+their noise): one layer per visit of a half-res pixel, a toroidal offset per checkerboard slot (else the four
+pixels of a block shared one jitter), a golden-ratio shift per 32-layer cycle. `CloudTemporal::LEGACY` is the
+old resolve (the `cloud_history` A/B). Tuning (`scene we3-ridge`, ashstorm forced in the Ashlands, 1280×720,
+mean |Δ| RGB between screenshots of a still view, 4 pairs, a debugging aid): legacy deck 3.7 / curtain edge 2.2;
+weight 0.15 + 1σ 2.8 / 2.2; 0.1 + 1.5σ 2.05 / 1.5; **shipped 0.06 + 1.5σ 1.55 / 1.54** (legacy in the same run 4.15 / 2.24); a frozen history 1.24 / 1.26
+(the floor: TAA jitter and reprojection). The frame-to-frame change scales with the weight, the clip width
+matters little. Cost (`--bench exterior_red_mountain` at 1707×960, the DLSS Quality input of 1440p, ashstorm forced, Bevy GPU spans): trace 0.146 / 0.146 ms, resolve 0.075 / 0.074 ms (new / legacy): ≈ +0.001 ms.

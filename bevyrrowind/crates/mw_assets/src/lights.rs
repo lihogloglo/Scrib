@@ -66,6 +66,16 @@ pub struct LightCalibration {
     pub night_ambient_nits: f32,
 }
 
+/// N3, the moonlight's strength: the moons, all full above the atmosphere, light a face
+/// square to them with this many times the night floor's diffuse light
+/// ([`LightCalibration::night_ambient_nits`]), so 31.4 lx. At the ground (the blue
+/// `Sun Night Color` loses ~45 % in the air, Clear dims a little) that is measured
+/// (`mw_weather` `print_moonlight`) ≈ 1.1-1.3x the floor's 2.6 nits on a lit face at full
+/// Masser, 0.6x at half, 0 at new (Lambert phase law; the floor stays), 0.1-0.25x overcast:
+/// clear modelling while the shadowed side still reads. Artistic (Skyrim, Witcher 3 and UE
+/// light nights with an exaggerated moon): the real full moon (≈ 0.25 lx) is 1/125 of it.
+pub const FULL_MOONLIGHT_FLOOR_RATIO: f32 = 2.5;
+
 impl Default for LightCalibration {
     fn default() -> Self {
         Self { lumens_per_radius_sq: 8_000.0, range_scale: 4.0, unshadowed_range_scale: 4.0, ambient_nits: 300.0, exposure_floor_ev100: 3.5, night_ambient_nits: 4.0 }
@@ -83,6 +93,13 @@ impl LightCalibration {
     pub fn apply_sky(&self, sky: &mut sf_sky_bevy::sf_sky::SkySettings) {
         sky.exposure_range = self.exposure_range();
         sky.ambient = sf_sky_bevy::sf_sky::KeyCurve::new(vec![(-12.0, self.night_ambient_nits), (-4.0, 0.0)]);
+        sky.moonlight = sf_sky_bevy::sf_sky::Moonlight { full_lux: self.full_moonlight_lux(), artistic: true };
+    }
+
+    /// The full moons' illuminance above the atmosphere, lux ([`FULL_MOONLIGHT_FLOOR_RATIO`]):
+    /// a Lambert face lit by `E` shows `albedo * E / π`, the floor `albedo * nits`.
+    pub fn full_moonlight_lux(&self) -> f32 {
+        FULL_MOONLIGHT_FLOOR_RATIO * std::f32::consts::PI * self.night_ambient_nits
     }
 
     /// The scene's ambient light for a cell's ambient color (sRGB).
@@ -225,6 +242,17 @@ pub(crate) fn animate_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// N3: the exterior sky gets the artistic moonlight at the calibrated ratio of the floor.
+    #[test]
+    fn apply_sky_sets_the_moonlight_from_the_floor() {
+        let calibration = LightCalibration::default();
+        let mut sky = sf_sky_bevy::sf_sky::SkySettings::default();
+        calibration.apply_sky(&mut sky);
+        assert!(sky.moonlight.artistic);
+        let want = FULL_MOONLIGHT_FLOOR_RATIO * std::f32::consts::PI * calibration.night_ambient_nits;
+        assert!((sky.moonlight.full_lux - want).abs() < 1e-5, "{}", sky.moonlight.full_lux);
+    }
 
     /// Reach by shadow state (lights.md "Reach follows shadow state"): default 4 x both ways
     /// (owner 2026-11-05: the short reach darkened towns and interiors); a 1.5 x calibration still splits.

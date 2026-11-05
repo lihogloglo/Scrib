@@ -342,6 +342,16 @@ pub struct AtmosphereSettings {
 
     /// The rendering method to use for the atmosphere.
     pub rendering_method: AtmosphereMode,
+
+    /// superfargoth patch (own, N2: sky glow): the sky's own radiance at the zenith, linear
+    /// RGB in cd/m² (airglow, integrated starlight and scattered moonlight as one artistic
+    /// term; a few mcd/m² physically, games raise it). Added to every sky ray of the sky-view
+    /// LUT and of the ray-marched sky, so the sky, its environment map and everything that
+    /// samples the LUT (fog, clouds) see it. Zero (default) is stock Bevy.
+    pub airglow: Vec3,
+    /// superfargoth patch (own, N2): horizon over zenith radiance of [`Self::airglow`]
+    /// (a van Rhijn profile: a thin emitting layer seen at a slant).
+    pub airglow_horizon: f32,
 }
 
 impl Default for AtmosphereSettings {
@@ -359,6 +369,9 @@ impl Default for AtmosphereSettings {
             aerial_view_lut_max_distance: 3.2e4,
             sky_max_samples: 16,
             rendering_method: AtmosphereMode::LookupTexture,
+            // superfargoth patch (own, N2: sky glow)
+            airglow: Vec3::ZERO,
+            airglow_horizon: 3.0,
         }
     }
 }
@@ -378,6 +391,9 @@ pub struct GpuAtmosphereSettings {
     pub aerial_view_lut_max_distance: f32,
     pub sky_max_samples: u32,
     pub rendering_method: u32,
+    // superfargoth patch (own, N2: sky glow)
+    pub airglow: Vec3,
+    pub airglow_horizon: f32,
 }
 
 impl Default for GpuAtmosphereSettings {
@@ -401,6 +417,9 @@ impl From<AtmosphereSettings> for GpuAtmosphereSettings {
             aerial_view_lut_max_distance: s.aerial_view_lut_max_distance,
             sky_max_samples: s.sky_max_samples,
             rendering_method: s.rendering_method as u32,
+            // superfargoth patch (own, N2: sky glow)
+            airglow: s.airglow,
+            airglow_horizon: s.airglow_horizon,
         }
     }
 }

@@ -38,6 +38,12 @@ pub struct Weather {
     /// keeps the floor's brightness and changes only its colour. `None`: the
     /// renderer's default tint (no weather feeds one).
     pub ambient_tint: Option<Vec3>,
+    /// Linear RGB hue of the night sky's glow ([`crate::NightGlow`]); only the hue is used
+    /// (the brightness follows the ambient floor). `None`: the floor's colour.
+    pub night_sky_tint: Option<Vec3>,
+    /// Linear RGB hue of the moonlight (N3); only the hue is used (the
+    /// brightness is [`crate::Moonlight`]'s). `None`: the brightest moon's tint.
+    pub moonlight_tint: Option<Vec3>,
     pub wind: Wind,
 }
 
@@ -51,6 +57,8 @@ impl Default for Weather {
             dust_tint: Vec3::ONE,
             sun_glare: 1.0,
             ambient_tint: None,
+            night_sky_tint: None,
+            moonlight_tint: None,
             wind: Wind::default(),
         }
     }
@@ -72,6 +80,14 @@ impl Weather {
             sun_glare: mix(self.sun_glare, to.sun_glare),
             // A side without a tint has no say: the other side's tint holds.
             ambient_tint: match (self.ambient_tint, to.ambient_tint) {
+                (Some(a), Some(b)) => Some(a.lerp(b, t)),
+                (a, b) => b.or(a),
+            },
+            night_sky_tint: match (self.night_sky_tint, to.night_sky_tint) {
+                (Some(a), Some(b)) => Some(a.lerp(b, t)),
+                (a, b) => b.or(a),
+            },
+            moonlight_tint: match (self.moonlight_tint, to.moonlight_tint) {
                 (Some(a), Some(b)) => Some(a.lerp(b, t)),
                 (a, b) => b.or(a),
             },
