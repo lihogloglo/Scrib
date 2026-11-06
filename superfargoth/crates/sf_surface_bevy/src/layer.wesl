@@ -109,10 +109,11 @@ const FILM_START: f32 = 0.35;
 const FILM_POROUS_HOLD: f32 = 0.6;
 const FILM_ROUGHNESS: f32 = 0.25;
 const WATER_REFLECTANCE: f32 = 0.354;
-/// Noise atlas tiling, meters: drying patches (R), wall streaks (B, A: narrow and tall).
+/// Noise atlas tiling, meters: drying patches (R), wall streaks (B, A: narrow and tall). Each
+/// divides `ORIGIN_GRID_M` (256/12, 256/14), so an origin shift keeps the pattern.
 const PATCH_TILE_M: f32 = 32.0;
-const STREAK_TILE_U_M: f32 = 22.0;
-const STREAK_TILE_V_M: f32 = 18.0;
+const STREAK_TILE_U_M: f32 = 21.333334;
+const STREAK_TILE_V_M: f32 = 18.285715;
 
 /// Puddles (W4; `sf_surface::layer` documents each): water level reach, pool span of the
 /// height map, shoreline, level-face ramp (none from cos 6 deg, full from cos 3 deg), terrain
@@ -155,6 +156,9 @@ const ASH_REFLECTANCE: f32 = 0.5;
 /// Snow sparkle: glint cell (m), glinting share at sparkle 1, facet tilt, facet roughness, and
 /// the pixel footprint (m) where glints fade and are gone.
 const SPARKLE_CELL_M: f32 = 0.02;
+/// The floating origin's grid (m): render space shifts by whole cells of it. Every noise tile
+/// and hash cell here divides it, and hash grids wrap to it (`surface_wrap_cell`).
+const ORIGIN_GRID_M: f32 = 256.0;
 const SPARKLE_DENSITY: f32 = 0.03;
 const SPARKLE_TILT: f32 = 0.35;
 const SPARKLE_ROUGHNESS: f32 = 0.1;
@@ -379,6 +383,18 @@ fn surface_ripple_fade(footprint: f32) -> f32 {
     return 1.0 - smoothstep(RIPPLE_FADE_NEAR_M, RIPPLE_FADE_FAR_M, footprint);
 }
 
+/// A hash grid's cell index wrapped to the origin grid (`ORIGIN_GRID_M` holds `n` cells): render
+/// space moves by whole origin cells on a floating-origin shift, so a grid hashed by its wrapped
+/// index is world-anchored and keeps its pattern across the shift (UE5's LWC wrap, `LWCWrap`).
+fn surface_wrap_cell(c: vec2<i32>, n: i32) -> vec2<i32> {
+    return ((c % n) + n) % n;
+}
+
+/// Cells of `cell_m` meters in the origin grid (`cell_m` divides it).
+fn surface_cells_per_origin(cell_m: f32) -> i32 {
+    return i32(round(ORIGIN_GRID_M / cell_m));
+}
+
 /// Two hash values in 0..1 for an integer cell and a seed.
 fn surface_hash(c: vec2<i32>, seed: u32) -> vec2<f32> {
     var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ (seed * 0x9e3779b9u);
@@ -416,8 +432,8 @@ fn surface_ring(to: vec2<f32>, phase: f32) -> vec2<f32> {
 
 /// One drop grid at `q` (cell units): each cell drops once a cycle at a random spot (its own
 /// start phase), with two trailing rings (`rain`: a - b/2 + c/4).
-fn surface_drops(q: vec2<f32>, seed: u32, time: f32) -> vec2<f32> {
-    let cell = vec2<i32>(floor(q));
+fn surface_drops(q: vec2<f32>, seed: u32, time: f32, period: i32) -> vec2<f32> {
+    let cell = surface_wrap_cell(vec2<i32>(floor(q)), period);
     let f = q - floor(q);
     let start = surface_hash(cell, seed ^ 0x51ed27u).x;
     var slope = vec2(0.0);
@@ -444,8 +460,9 @@ fn surface_ripples(xz: vec2<f32>, time: f32, rain: f32) -> vec2<f32> {
         if w <= 0.0 {
             break;
         }
-        let q = xz / (RIPPLE_CELL_M * scales[k]) + vec2(0.37, 0.71) * f32(k);
-        slope += w * surface_drops(q, k + 1u, time);
+        let cell_m = RIPPLE_CELL_M * scales[k];
+        let q = xz / cell_m + vec2(0.37, 0.71) * f32(k);
+        slope += w * surface_drops(q, k + 1u, time, surface_cells_per_origin(cell_m));
     }
     return slope;
 }
@@ -528,7 +545,7 @@ fn surface_sparkle(xz: vec2<f32>, sparkle: f32, footprint: f32) -> vec3<f32> {
     if sparkle <= 0.0 || fade <= 0.0 {
         return vec3(0.0);
     }
-    let cell = vec2<i32>(floor(xz / SPARKLE_CELL_M));
+    let cell = surface_wrap_cell(vec2<i32>(floor(xz / SPARKLE_CELL_M)), surface_cells_per_origin(SPARKLE_CELL_M));
     if surface_hash(cell, 11u).x >= sparkle * SPARKLE_DENSITY {
         return vec3(0.0);
     }

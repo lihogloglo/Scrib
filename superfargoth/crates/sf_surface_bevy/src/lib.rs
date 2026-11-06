@@ -46,6 +46,7 @@ mod shader_tests;
 
 use bevy_app::{App, Plugin, PostUpdate, Startup};
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
+use bevy_camera::visibility::{VisibilitySystems, check_visibility_ranges};
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -178,7 +179,12 @@ impl Plugin for SurfaceWeatherPlugin {
             .add_message::<TrailStamp>()
             .configure_sets(
                 PostUpdate,
-                SurfaceSystems.after(TransformSystems::Propagate),
+                // The shelter redraw reads this frame's `InheritedVisibility` and `Aabb` (a caster
+                // streamed in this frame is in the redraw its arrival triggers).
+                SurfaceSystems
+                    .after(TransformSystems::Propagate)
+                    .after(VisibilitySystems::VisibilityPropagate)
+                    .after(VisibilitySystems::CalculateBounds),
             )
             .add_systems(Startup, setup)
             .add_systems(
@@ -194,6 +200,13 @@ impl Plugin for SurfaceWeatherPlugin {
                 )
                     .chain()
                     .in_set(SurfaceSystems),
+            )
+            .add_systems(
+                PostUpdate,
+                shelter::mark_casters_visible
+                    .in_set(VisibilitySystems::CheckVisibility)
+                    .after(SurfaceSystems)
+                    .after(check_visibility_ranges),
             );
         kickup::build(app);
         sf_sky_bevy::sun_view::add_sun_view::<shelter::ShelterFrame>(app);

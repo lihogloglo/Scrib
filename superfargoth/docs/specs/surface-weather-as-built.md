@@ -84,7 +84,8 @@ Code is the source of truth.
   `sf_surface_bevy` `puddle_switch_and_ring_clock` (mask, rain, clock holds), constants twin (31 consts), preset
   compiles now also require `surface_ripples` (and `terrain_ground` for terrain, `surface_face_up` for pbr) with
   the def on.
-- **Known**: W3's streak tiles (22/18 m) don't divide the 256 m origin grid (streaks jump on an origin shift; logged).
+- **Origin shift (fix 2026-11-06)**: streak tiles are 256/12 and 256/14 m; hash grids (drops, glints) wrap their cell
+  index to `ORIGIN_GRID_M` (`surface_wrap_cell`, UE5's `LWCWrap` idea): nothing the layer samples changes on a shift.
   Ring hash cycle jumps once per 1000 s wrap (one drop moves mid-cycle).
 - **Fix 2026-11-05 (owner SW-4: puddles on slopes)**: the gate was Clockwork's `smoothstep(0.94, 0.99, N.y)`, which
   is still ~0.97 at 10° and ~0.5 at 15° (zero only past ~20°), and it read the shading normal (smoothed mesh vertex
@@ -101,8 +102,11 @@ Code is the source of truth.
   `extract_cameras` copies them), a light's view the light's (`view_layers`, test `an_anchor_view_draws_the_camera_layers`);
   before, an anchor view got layer 0 and `queue_shadows` dropped every caster on a worldspace layer (maps empty, exposure 1).
   `sf_surface_bevy` `split_casters` keeps only casters whose layers meet the camera's (`SurfaceStats.shelter_casters` honest).
-- Open (logged, not fixed): `SurfaceSystems` isn't ordered after `VisibilitySystems::VisibilityPropagate`/`CalculateBounds`
-  (a caster streamed this frame can miss its redraw); a one-frame view loses casters whose pipeline isn't ready that frame.
+- Fix 2026-11-06 (SW-5/SW-6 "resets"): Bevy extracts a mesh only while some view's `ViewVisibility` holds it, so a redraw
+  drew only casters in the camera's or the sun cascades' frusta and the cover flipped at each redraw. `mark_casters_visible`
+  (`CheckVisibility`, after `SurfaceSystems`) marks the redraw's casters (out of `VisibilityRange` excepted), as a light
+  does; `SurfaceSystems` runs after `VisibilityPropagate`/`CalculateBounds`. Open: a one-frame view loses casters whose
+  pipeline isn't ready that frame.
 
 ## W5b (2026-11-06): the cover drawn (`layer.wesl`, CPU twin `sf_surface::layer`)
 

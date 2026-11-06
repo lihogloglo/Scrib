@@ -225,6 +225,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   paving the whole ground rises over game hours, not just the snowy patches, so feet sink into cobblestone; deep snow
   should leave continuous trails, not separate prints (prints for shallow snow / ash). Ash (same day): same sudden resets
   (where the ash lies jumps after some movement); crust could be a little deeper (not much). Status: failed, not fixed.
+- Fix 2026-11-06 (resets only): shelter redraws lost casters outside the camera's and sun's frusta (cover and prints under
+  them flipped at each redraw); the redraw now marks its casters visible. Check: walk 100+ m near houses (Skaal) and in
+  Ghostgate, turn around, look for jumps. Status: resets awaiting owner; ring edge, paving, trails, ash depth still open.
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,
@@ -237,6 +240,10 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   under DLSS). Normal detail from the land texture catches low sun. A/B: `--off cover` (or `surface set snow 0`).
 - Owner 2026-11-06 (snow): roofs and ground covered, none under arches: good. Same sudden "resets" as SW-6 (whole look
   changes at once); ash: same resets (where the ash lies jumps). Status: coverage OK, resets open (see SW-6).
+- Fix 2026-11-06: shelter redraws (every 16 m, or as casters stream in) lost every roof/rock outside the camera's and sun's
+  frusta (Bevy drops meshes no view sees), so cover under them flipped at each redraw; the redraw now marks its casters
+  visible. Glints and wall streaks also keep their pattern across an origin shift. Check: walk 100+ m around houses and
+  turn around, look for jumps. Status: resets awaiting owner.
 
 ### SW-4: Puddles in rain and after (surface-weather.md W4)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:

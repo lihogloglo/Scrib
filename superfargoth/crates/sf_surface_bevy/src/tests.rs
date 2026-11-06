@@ -585,3 +585,72 @@ fn trails_take_stamps_and_place_the_ring() {
     assert!(!frame(&app).on);
     assert_eq!(uniform(&app).trail, Vec4::ZERO);
 }
+
+/// SW-5/SW-6 "resets": a shelter redraw draws its casters even when no camera or light frustum
+/// sees them (Bevy extracts only meshes some view sees): the redraw marks them visible, a far
+/// proxy out of the camera's `VisibilityRange` excepted, and only on redraw frames.
+#[test]
+fn shelter_redraw_makes_its_casters_visible() {
+    use bevy_camera::visibility::{ViewVisibility, VisibilityRange, VisibleEntityRanges};
+    let mut app = app();
+    app.init_resource::<VisibleEntityRanges>();
+    app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(-240.0, 5.0, 20.0))));
+    let at = |x: f32, y: f32| GlobalTransform::from_translation(Vec3::new(x, y, 20.0));
+    let caster = |app: &mut App, x: f32| {
+        app.world_mut()
+            .spawn((Mesh3d(Handle::default()), at(x, 9.0), InheritedVisibility::VISIBLE, ViewVisibility::HIDDEN))
+            .id()
+    };
+    // Behind the camera, outside every frustum: nothing marked it visible.
+    let roof = caster(&mut app, -238.0);
+    let proxy = caster(&mut app, -230.0);
+    app.world_mut().entity_mut(proxy).insert(VisibilityRange::abrupt(500.0, 2000.0));
+    let visible = |app: &App, e| app.world().get::<ViewVisibility>(e).unwrap().get();
+    app.update();
+    assert!(!visible(&app, roof), "dry: no shelter map, nothing marked");
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    let req = app.world().resource::<ShelterFrame>().0.clone().expect("shelter redraw");
+    let mut casters: Vec<_> = req.casters.iter().map(|c| c.1.id()).collect();
+    casters.sort_unstable();
+    let mut expected = vec![roof, proxy];
+    expected.sort_unstable();
+    assert_eq!(casters, expected);
+    assert!(visible(&app, roof), "the redraw's caster is extracted");
+    assert!(!visible(&app, proxy), "out of the camera's visibility range: its near LOD casts instead");
+    // A steady frame: no redraw, nothing marked (Bevy's own reset hides it again).
+    *app.world_mut().get_mut::<ViewVisibility>(roof).unwrap() = ViewVisibility::HIDDEN;
+    app.update();
+    assert!(app.world().resource::<ShelterFrame>().0.is_none());
+    assert!(!visible(&app, roof));
+}
+
+/// SW-5/SW-6 "resets": a floating-origin shift with the camera at the same world point moves
+/// nothing the layer samples in the world: the cell window's world corner and texel, the trail
+/// ring's world corner and texel, no full rewrite, and the origin grid the shader's hash grids
+/// wrap to is the host's (`sf_coords::GRID_CELL`).
+#[test]
+fn origin_shift_keeps_the_world_anchored_inputs() {
+    assert_eq!(sf_surface::layer::ORIGIN_GRID_M, sf_coords::GRID_CELL);
+    let mut app = app();
+    let cam = app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(10.0, 0.0, -3.0)))).id();
+    app.world_mut().resource_mut::<SurfaceUniform>().cover[0] = Vec4::new(0.25, 0.15, 1.0, 1.0);
+    app.update();
+    sf_weather_bevy::surface_set(app.world_mut(), Channel::Snow, 1.0, "land").unwrap();
+    app.update();
+    let world_of = |app: &App| {
+        let u = uniform(app);
+        let o = app.world().resource::<SurfaceOrigin>().0.to_f64();
+        let w = |x: f32, z: f32| DVec2::new(f64::from(x) + o.x, f64::from(z) + o.z);
+        (w(u.window.x, u.window.y), u.cells, w(u.trail.x, u.trail.y), u.trail_cells, app.world().resource::<TrailFrame>().new_min)
+    };
+    let before = world_of(&app);
+    let full = stats(&app).full_uploads;
+    assert!(uniform(&app).trail.w > 0.0, "the ring is on");
+    // Big_space recentres: render space moves one grid cell, the camera stays put in the world.
+    app.world_mut().resource_mut::<SurfaceOrigin>().0 = WorldPos::new(IVec3::new(2, 0, 0), Vec3::ZERO);
+    *app.world_mut().get_mut::<GlobalTransform>(cam).unwrap() = GlobalTransform::from_translation(Vec3::new(10.0 - 256.0, 0.0, -3.0));
+    app.update();
+    assert_eq!(world_of(&app), before);
+    assert_eq!(stats(&app).full_uploads, full, "a shift rewrites nothing");
+}

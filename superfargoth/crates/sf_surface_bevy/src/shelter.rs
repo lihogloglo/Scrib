@@ -24,11 +24,20 @@
 //! patches: a heightfield shelters nothing from straight above) are not casters.
 //! `SurfaceSettings::shelter` off (Low preset, `--off shelter`): no maps, exposure 1
 //! everywhere.
+//!
+//! A redraw's casters are made visible ([`mark_casters_visible`], in Bevy's `CheckVisibility`):
+//! Bevy extracts a mesh only while some view sees it (`ViewVisibility`), so a roof behind the
+//! camera and outside the sun's cascades used to drop out of the redraw, and the cover under it
+//! changed at the next redraw (SW-5/SW-6 "resets"). A view owning its casters' visibility is
+//! Bevy's own pattern (each light's frusta mark their casters the same way).
 
 use bevy_asset::{Assets, Handle, RenderAssetUsages};
 use bevy_camera::Camera;
 use bevy_camera::primitives::Aabb;
-use bevy_camera::visibility::{InheritedVisibility, RenderLayers};
+use bevy_camera::visibility::{
+    InheritedVisibility, RenderLayers, SetViewVisibility, ViewVisibility, VisibilityRange,
+    VisibleEntityRanges,
+};
 use bevy_ecs::prelude::*;
 use bevy_image::{Image, ImageSampler};
 use bevy_light::NotShadowCaster;
@@ -263,6 +272,34 @@ pub(crate) fn update_shelter(
     };
     frame.0 = Some(request(SHELTER_SUBVIEW, &gpu.shelter, solid));
     canopy.0 = Some(request(CANOPY_SUBVIEW, &gpu.canopy, leaves));
+}
+
+/// `VisibilitySystems::CheckVisibility`, after the redraw is chosen (`SurfaceSystems`): this
+/// frame's shelter and canopy casters are visible to a view (the maps), so Bevy extracts them
+/// even when no camera or light frustum holds them. A caster with a `VisibilityRange` counts only
+/// in range of the surface-weather camera (the LOD level the camera draws, never a far proxy).
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn mark_casters_visible(
+    shelter: Res<ShelterFrame>,
+    canopy: Res<CanopyFrame>,
+    ranges: Option<Res<VisibleEntityRanges>>,
+    mut casters: Query<(&mut ViewVisibility, Has<VisibilityRange>)>,
+) {
+    for req in shelter.0.iter().chain(canopy.0.iter()) {
+        for (_, main) in &req.casters {
+            let e = main.id();
+            let Ok((mut visibility, has_range)) = casters.get_mut(e) else {
+                continue;
+            };
+            let out_of_range = has_range
+                && ranges
+                    .as_deref()
+                    .is_some_and(|r| !r.entity_is_in_range_of_view(e, req.camera));
+            if !out_of_range {
+                visibility.set_visible();
+            }
+        }
+    }
 }
 
 /// Creates a map's image.

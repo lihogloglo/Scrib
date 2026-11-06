@@ -96,9 +96,13 @@ pub const SPARKLE_TILT: f32 = 0.35;
 pub const SPARKLE_ROUGHNESS: f32 = 0.1;
 pub const SPARKLE_FADE_NEAR_M: f32 = 0.006;
 pub const SPARKLE_FADE_FAR_M: f32 = 0.02;
+/// The floating origin's grid (m; the host's origin moves render space by whole cells of it).
+/// Every noise tile and hash cell of the layer divides it, and the hash grids (rain drops, snow
+/// glints) wrap their cell index to it, so an origin shift never changes the look.
+pub const ORIGIN_GRID_M: f32 = 256.0;
 
 /// The named shader constants, as `layer.wesl` declares them (`const NAME: f32 = v;`).
-pub const SHADER_CONSTANTS: [(&str, f32); 45] = [
+pub const SHADER_CONSTANTS: [(&str, f32); 46] = [
     ("POROSITY_ROUGH_LOW", POROSITY_ROUGH_LOW),
     ("POROSITY_ROUGH_SPAN", POROSITY_ROUGH_SPAN),
     ("WET_DARK_POROUS", WET_DARK_POROUS),
@@ -144,6 +148,7 @@ pub const SHADER_CONSTANTS: [(&str, f32); 45] = [
     ("SPARKLE_ROUGHNESS", SPARKLE_ROUGHNESS),
     ("SPARKLE_FADE_NEAR_M", SPARKLE_FADE_NEAR_M),
     ("SPARKLE_FADE_FAR_M", SPARKLE_FADE_FAR_M),
+    ("ORIGIN_GRID_M", ORIGIN_GRID_M),
 ];
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -498,13 +503,18 @@ mod tests {
         assert_eq!(ripple_weights(0.5), [1.0, 1.0, 0.0, 0.0]);
         assert_eq!(ripple_fade(0.0), 1.0);
         assert_eq!(ripple_fade(RIPPLE_FADE_FAR_M), 0.0);
-        // Every grid's cell and the pool tile divide the 256 m origin grid (no jump on an origin
-        // shift), and the clock wraps on whole cycles.
+        // Every hash cell and noise tile divides the origin grid (no jump on an origin shift),
+        // and the clock wraps on whole cycles.
+        let divides = |m: f32| {
+            let n = ORIGIN_GRID_M / m;
+            (n - n.round()).abs() < 1e-3
+        };
         for s in RIPPLE_SCALES {
-            let n = 256.0 / (RIPPLE_CELL_M * s);
-            assert!((n - n.round()).abs() < 1e-3, "{s}");
+            assert!(divides(RIPPLE_CELL_M * s), "{s}");
         }
-        assert_eq!((256.0 / POOL_TILE_M).fract(), 0.0);
+        for m in [POOL_TILE_M, COVER_DRIFT_TILE_M, SPARKLE_CELL_M] {
+            assert!(divides(m), "{m}");
+        }
         let turns = RIPPLE_RATE * RIPPLE_TIME_WRAP_S;
         assert!((turns - turns.round()).abs() < 1e-3);
         // Ring profile: zero at the drop before the ring passes and outside the band.
