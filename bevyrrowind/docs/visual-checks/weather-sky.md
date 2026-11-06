@@ -208,6 +208,7 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Owner 2026-11-06 (snow): OK for now but crude, to be reworked; at night the puffs turn into near pure-white circles.
   Ash (same day): a bit too big and bright; same near-white glow at night.
   Status: accepted for now; rework, size/brightness (ash) and night look pending.
+- Owner 2026-11-06 (after the SW-5/6 fixes): puffs still very bright at night (snow and ash); night look is the priority fix.
 
 ### SW-6: Knee-deep snow and footprints (surface-weather.md W6a prints + W6b raised geometry)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
