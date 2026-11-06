@@ -233,6 +233,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   edge or ridge near the player, the snow eases down to the ground at the far edge with no line in the lighting; `surface
   set snow 0.4` (P, let hours pass) on Skaal's paving: paving stays at ground level, only the snowy patches stand raised.
   Status: awaiting owner (trails vs prints, ash depth still open).
+- Owner 2026-11-06 (after both fixes): resets still there (canopy shelter pops in/out near trees, see SW-5). Still only
+  separate footprints: knee-deep characters should plough a continuous trail with their shins. Status: failed (resets,
+  trails); ring edge and paving not reported.
 - Logged, not checked: the rain occlusion map (`sf_precip_bevy/src/occlusion.rs`) likely drops casters outside every
   view the same way the shelter map did (fixed in 30319aa).
 
@@ -251,6 +254,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   frusta (Bevy drops meshes no view sees), so cover under them flipped at each redraw; the redraw now marks its casters
   visible. Glints and wall streaks also keep their pattern across an origin shift. Check: walk 100+ m around houses and
   turn around, look for jumps. Status: resets awaiting owner.
+- Owner 2026-11-06 (after both fixes): still jumps. Lead: shelter under trees (canopy) pops in and out with distance: walking
+  toward a tree in snow, the ground under its leaves suddenly turns bare and depressed; step back and it suddenly refills.
+  Status: resets failed (not fixed; see SW-6).
 
 ### SW-4: Puddles in rain and after (surface-weather.md W4)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:
