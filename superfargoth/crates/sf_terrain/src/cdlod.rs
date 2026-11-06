@@ -70,6 +70,12 @@ impl NodeKey {
     }
 }
 
+/// Where the raised cover's distance fade starts, as a fraction of LOD 0's range
+/// ([`CdlodSettings::raise_fade`]; `common.wesl` `RAISE_FADE_START`).
+pub const RAISE_FADE_START: f32 = 0.375;
+/// Where it reaches 0 (`RAISE_FADE_END`): inside LOD 0's range, so LOD 1 needs no raise.
+pub const RAISE_FADE_END: f32 = 0.9;
+
 /// LOD ranges and morph zones.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CdlodSettings {
@@ -99,6 +105,19 @@ impl CdlodSettings {
         let end = self.range(lod);
         let start = end - self.morph_fraction * (end - end * 0.5);
         (start, end)
+    }
+
+    /// Weight of the near-only raised cover (surface weather W6b; `common.wesl` `raise_fade`) at
+    /// `d` meters from the camera (the vertex's 3D distance, as the morph uses): 1 out to
+    /// [`RAISE_FADE_START`] × LOD 0's range, a smoothstep down to exactly 0 at
+    /// [`RAISE_FADE_END`] × that range and beyond. The raise is displaced on LOD ≤ 0 only; every
+    /// LOD 1 vertex lies past LOD 0's range, so the fade reaches 0 inside the displaced region and
+    /// no seam or step remains. Long against the 0.45 m depth (max slope ~2.7 % at 48 m): the
+    /// surface eases down far below the grazing angle of a standing camera, so no crest shows.
+    pub fn raise_fade(&self, d: f32) -> f32 {
+        let (a, b) = (RAISE_FADE_START * self.lod0_range, RAISE_FADE_END * self.lod0_range);
+        let t = ((d - a) / (b - a)).clamp(0.0, 1.0);
+        1.0 - t * t * (3.0 - 2.0 * t)
     }
 
     /// The view distance: the coarsest LOD's range.
@@ -264,5 +283,35 @@ mod tests {
         let (a, b) = s.morph_zone(0);
         assert_eq!(b, 48.0);
         assert!((a - (48.0 - 0.3 * 24.0)).abs() < 1e-4);
+    }
+
+    /// SW-6 ring edge (2026-11-06): the raised cover's fade is 1 near the camera, exactly 0 at
+    /// and beyond its end, which lies inside LOD 0's range (LOD 1 is never displaced, so no seam),
+    /// monotone and continuous, with a slope far below the old 3.6 m linear morph-zone ramp.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn raise_fade_reaches_zero_inside_the_displaced_levels() {
+        let s = CdlodSettings::default();
+        let end = RAISE_FADE_END * s.lod0_range;
+        assert!(end < s.range(0));
+        assert!(RAISE_FADE_START * s.lod0_range > s.range(MIN_LOD));
+        assert_eq!(s.raise_fade(0.0), 1.0);
+        assert_eq!(s.raise_fade(RAISE_FADE_START * s.lod0_range), 1.0);
+        assert_eq!(s.raise_fade(end), 0.0);
+        assert_eq!(s.raise_fade(s.range(0)), 0.0);
+        assert_eq!(s.raise_fade(1e4), 0.0);
+        let step = 0.01;
+        let mut last = 1.0;
+        let mut steepest: f32 = 0.0;
+        for i in 0..6000u16 {
+            let w = s.raise_fade(f32::from(i) * step);
+            assert!(w <= last, "monotone at {}", f32::from(i) * step);
+            steepest = steepest.max((last - w) / step);
+            last = w;
+        }
+        // Max slope of a 0.45 m cover: 1.5 × depth / length; the old ramp was 0.45 / 3.6 m.
+        let knee = 0.45;
+        assert!(steepest * knee < 0.03, "slope {}", steepest * knee);
+        assert!(steepest * knee < 0.25 * knee / 3.6);
     }
 }

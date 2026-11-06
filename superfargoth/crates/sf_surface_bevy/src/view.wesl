@@ -16,7 +16,8 @@ import bevy_pbr::render::pbr_types::{
 };
 import sf_surface_bevy::layer::{
     SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, apply_surface_layer,
-    surface_porosity, surface_height_of, surface_raise_amounts, surface_raise_of, surface_ring_at,
+    surface_porosity, surface_height_of, surface_raise_amounts, surface_raise_coverage, surface_raise_of,
+    surface_ring_at,
 };
 
 @group(0) @binding(43) var<uniform> surface_uniform: SurfaceUniform;
@@ -35,22 +36,29 @@ import sf_surface_bevy::layer::{
 // Last frame's ring (W6b: motion vectors of the raised cover; the same ring when no pass ran).
 @group(0) @binding(53) var surface_trail_previous: texture_2d<f32>;
 
-/// The raised cover over the ground point `p` (render space, ground normal `n`; W6b): x this
+/// The raised cover over the ground point `p` (render space, ground normal `n`, surface height
+/// `base` 0..1 as the shading's `SurfaceInput.height`, vertex spacing `texel_m`; W6b): x this
 /// frame's raise (m), y the same without the trail (the cover's own slope, for normals), z last
-/// frame's (last frame's ring and placement; the cells and shelter as now). Both terrain passes
-/// (main and prepass, `SURFACE_WEATHER` / `SURFACE_WEATHER_PREPASS`) call this one function.
-fn surface_raise_at(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+/// frame's (last frame's ring and placement; the cells and shelter as now). It stands only where
+/// the shading's coverage lies (`surface_raise_coverage`: drift patches, the surface's lows, the
+/// look's height). Both terrain passes (main and prepass, `SURFACE_WEATHER` /
+/// `SURFACE_WEATHER_PREPASS`) call this one function.
+fn surface_raise_at(p: vec3<f32>, n: vec3<f32>, base: f32, texel_m: f32) -> vec3<f32> {
     let u = surface_uniform;
     let a = surface_raise_amounts(u, surface_cells, surface_sampler, surface_shelter, surface_canopy, surface_shelter_sampler, p, n);
     if a.x <= 0.0 && a.y <= 0.0 {
         return vec3(0.0);
     }
+    let c = surface_raise_coverage(u, surface_noise, surface_sampler, surface_cover, surface_cover_sampler, a, p.xz, base, texel_m);
+    if c.x <= 0.0 && c.y <= 0.0 {
+        return vec3(0.0);
+    }
     let now = surface_ring_at(surface_trail, surface_sampler, u.trail, u.trail_cells, p.xz);
     let then = surface_ring_at(surface_trail_previous, surface_sampler, u.trail_prev, u.trail_prev_cells, p.xz);
     return vec3(
-        surface_raise_of(u, a, now, u.trail.w),
-        surface_raise_of(u, a, vec2(0.0), 0.0),
-        surface_raise_of(u, a, then, u.trail_prev.w),
+        surface_raise_of(u, a, c, now, u.trail.w),
+        surface_raise_of(u, a, c, vec2(0.0), 0.0),
+        surface_raise_of(u, a, c, then, u.trail_prev.w),
     );
 }
 

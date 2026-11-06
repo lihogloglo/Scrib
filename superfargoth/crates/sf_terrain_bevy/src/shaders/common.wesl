@@ -306,6 +306,54 @@ fn detail_displacement(xz: vec2<f32>, spacing: f32) -> f32 {
     return d;
 }
 
+/// The blended layer height (0..1; 0.5 past the splat range) at render XZ `xz`, `dist` meters
+/// from the camera, prefiltered to texels of `spacing`: the vertex-rate twin of
+/// `surface.wesl` `terrain_surface`'s `height` (the same Mishkinis height blend over top-down
+/// heights and the same splat-range fade), for the raised cover's coverage (W6b).
+fn layer_blend_height(xz: vec2<f32>, spacing: f32, dist: f32) -> f32 {
+    let detail = pf(P_DETAIL);
+    let near = 1.0 - smoothstep(0.7 * detail.x, detail.x, dist);
+    if near <= 0.0 {
+        return 0.5;
+    }
+    let s = splat_at(xz);
+    if !s.valid {
+        return 0.5;
+    }
+    let size = f32(textureDimensions(albedo_height_array).x);
+    let wxz = world_xz(xz);
+    var hl = vec4<f32>(0.0);
+    var hw = vec4<f32>(-1e9);
+    for (var k = 0; k < 4; k += 1) {
+        let w = s.weights[k];
+        if w > 0.0 {
+            let id = s.ids[k];
+            let tiling = layer_tiling(id);
+            let mip = max(log2(spacing * size / tiling), 0.0);
+            hl[k] = textureSampleLevel(albedo_height_array, layer_sampler, wxz / tiling, i32(id), mip).a;
+            hw[k] = hl[k] + w;
+        }
+    }
+    let top = max(max(hw.x, hw.y), max(hw.z, hw.w)) - detail.y;
+    let b = max(hw - vec4<f32>(top), vec4<f32>(0.0));
+    let bw = b / max(b.x + b.y + b.z + b.w, 1e-5);
+    return mix(0.5, dot(bw, hl), near);
+}
+
+/// Raised-cover fade (W6b; twin `sf_terrain::cdlod::CdlodSettings::raise_fade`): 1 out to
+/// `RAISE_FADE_START` × LOD 0's range, a smoothstep down to exactly 0 at `RAISE_FADE_END` × that
+/// range, by the vertex's 3D distance `d` from the camera. A function of the vertex position only,
+/// so neighbors across a LOD seam weigh shared vertices alike; it ends inside LOD 0, so LOD 1
+/// (always past LOD 0's range) needs none.
+const RAISE_FADE_START: f32 = 0.375;
+const RAISE_FADE_END: f32 = 0.9;
+
+fn raise_fade(d: f32) -> f32 {
+    let m = pf(P_MORPH + u32(-MIN_LOD));
+    let range0 = m.x + 1.0 / m.y;
+    return 1.0 - smoothstep(RAISE_FADE_START * range0, RAISE_FADE_END * range0, d);
+}
+
 /// A morphed CDLOD vertex.
 struct TerrainVertex {
     /// Render-space position.
@@ -314,9 +362,15 @@ struct TerrainVertex {
     grid: vec2<f32>,
     /// LOD plus morph progress (fractional = morphing toward LOD + 1).
     lod: f32,
-    /// Weight of near-only displacement (detail, raised cover): 1 at LOD -2, fading out across
-    /// LOD -1's morph zone, 0 from LOD 0.
+    /// Weight of the detail displacement: 1 at LOD -2, fading out across LOD -1's morph zone, 0
+    /// from LOD 0.
     near_w: f32,
+    /// Weight of the raised cover (W6b, `raise_fade`): smooth in world distance, 0 before LOD 0
+    /// ends (and on every coarser level).
+    raise_w: f32,
+    /// The vertex spacing as morphed (m; the LOD's, doubling across its morph zone): the raised
+    /// cover's texture prefilter, equal on both sides of a seam.
+    texel_m: f32,
 }
 
 /// Strugar's CDLOD vertex: morph odd grid vertices toward their even
@@ -371,20 +425,30 @@ fn terrain_vertex(grid: vec2<f32>, instance_index: u32, detail: bool) -> Terrain
     out.position = vec3<f32>(p.x, h - origin_y(), p.y);
     out.grid = grid;
     out.lod = f32(lod) + k;
+    out.raise_w = 0.0;
+    if lod <= 0 {
+        out.raise_w = raise_fade(distance(camera_position(), out.position));
+    }
+    out.texel_m = spacing * exp2(k);
     return out;
 }
 
 /// Raised cover over a terrain vertex (surface weather W6b, `sf_surface_bevy::view::surface_raise_at`):
-/// x now, y now without prints (the fragment's normal tilt), z last frame (motion vectors), in
-/// meters, weighted by `near_w` (the two finest levels only, faded out across LOD -1's morph
-/// zone). The main pass and the prepass both displace by this one function, so their depths
-/// match; the node bounds grow by `TerrainSettings::raise_m`.
+/// x now, y now without prints, z last frame (motion vectors), in meters, weighted by `raise_w`
+/// (LOD <= 0, faded smoothly in world distance to 0 inside LOD 0); w is y unweighted (the
+/// fragment tilts its normal by w's slope times the weight, so the fade's own ramp never shades).
+/// The coverage takes the layers' blended height at this vertex, as the shading takes it per
+/// pixel. The main pass and the prepass both displace by this one function, so their depths
+/// match; the node bounds grow by `TerrainSettings::raise_m`. Camera motion moves the fade with
+/// it; z keeps this frame's weight (a smooth fade moves < 2 mm a frame at a run).
 @if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
-fn terrain_raise(t: TerrainVertex) -> vec3<f32> {
-    if t.near_w <= 0.0 {
-        return vec3<f32>(0.0);
+fn terrain_raise(t: TerrainVertex) -> vec4<f32> {
+    if t.raise_w <= 0.0 {
+        return vec4<f32>(0.0);
     }
-    return surface_raise_at(t.position, terrain_normal(t.position.xz, t.lod)) * t.near_w;
+    let base = layer_blend_height(t.position.xz, t.texel_m, distance(camera_position(), t.position));
+    let r = surface_raise_at(t.position, terrain_normal(t.position.xz, t.lod), base, t.texel_m);
+    return vec4<f32>(r * t.raise_w, r.y);
 }
 
 /// Normal at height level `l`: the baked central differences, filtered.

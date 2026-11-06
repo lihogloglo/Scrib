@@ -46,8 +46,9 @@ struct TerrainVertexOutput {
     @location(1) grid: vec2<f32>,
     @location(2) lod: f32,
     @location(3) @interpolate(flat) instance_index: u32,
-    /// Raised cover without prints (W6b; 0 without surface weather): its slope tilts the normal.
-    @location(4) raise: f32,
+    /// Raised cover without prints, unweighted, and its distance weight (W6b; 0 without surface
+    /// weather): x's slope times y tilts the normal.
+    @location(4) raise: vec2<f32>,
 }
 
 @vertex
@@ -55,12 +56,12 @@ fn vertex(v: Vertex) -> TerrainVertexOutput {
     let t = common::terrain_vertex(v.position.xz, v.instance_index, true);
     var out: TerrainVertexOutput;
     var p = t.position;
-    out.raise = 0.0;
+    out.raise = vec2<f32>(0.0);
     // Raised cover (W6b): the same displacement as the prepass (`common::terrain_raise`).
 @if(SURFACE_WEATHER) {
     let r = common::terrain_raise(t);
     p.y += r.x;
-    out.raise = r.y;
+    out.raise = vec2<f32>(r.w, t.raise_w);
 }
     out.world_position = vec4<f32>(p, 1.0);
     out.position = position_world_to_clip(p);
@@ -96,14 +97,16 @@ fn terrain_ground(xz: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(vec2<f32>(px - nx, pz - nz) / (2.0 * r), basin);
 }
 
-/// Surface weather W6b: the ground normal `n` tilted by the slope of the raised cover (`raise`,
-/// interpolated per vertex, without prints: their slope joins per pixel in the layer, W6a), from
-/// its screen derivatives against those of world XZ. Per-vertex central differences would cost
-/// four more exposure lookups (18 gathers each) per vertex in both passes.
-fn raised_normal(n: vec3<f32>, xz: vec2<f32>, raise: f32) -> vec3<f32> {
+/// Surface weather W6b: the ground normal `n` tilted by the slope of the raised cover (`raise.x`,
+/// unweighted, interpolated per vertex, without prints: their slope joins per pixel in the layer,
+/// W6a), from its screen derivatives against those of world XZ, scaled by the distance weight
+/// `raise.y`: the tilt fades with the displacement, but the fade's own ramp never shades (as a
+/// normal map's strength fades with a displacement fade). Per-vertex central differences would
+/// cost four more exposure lookups (18 gathers each) per vertex in both passes.
+fn raised_normal(n: vec3<f32>, xz: vec2<f32>, raise: vec2<f32>) -> vec3<f32> {
     let ax = dpdx(xz);
     let ay = dpdy(xz);
-    let r = vec2<f32>(dpdx(raise), dpdy(raise));
+    let r = vec2<f32>(dpdx(raise.x), dpdy(raise.x)) * raise.y;
     let det = ax.x * ay.y - ax.y * ay.x;
     if abs(det) < 1e-12 || all(r == vec2<f32>(0.0)) {
         return n;

@@ -730,12 +730,15 @@ fn node_bounds(state: &TerrainState, lod: i8, x: i64, z: i64) -> (f32, f32) {
 /// origin shift.
 const SHIFT_SETTLE_FRAMES: u8 = 2;
 
-/// Height margins (below, above) a CDLOD node's bounds grow by, meters: on the two finest levels
-/// (LOD < 0) the layer detail displacement either way plus the raise ([`TerrainSettings::raise_m`],
-/// W6b) upward; 5 cm of rounding slack everywhere. The vertex shader displaces only there.
+/// Height margins (below, above) a CDLOD node's bounds grow by, meters: the layer detail
+/// displacement either way on the two finest levels (LOD < 0), the raise
+/// ([`TerrainSettings::raise_m`], W6b) upward on the levels it displaces (LOD <= 0: its distance
+/// fade ends inside LOD 0's range); 5 cm of rounding slack everywhere.
 fn node_margins(lod: i8, detail_m: f32, raise_m: f32) -> (f32, f32) {
     const SLACK_M: f32 = 0.05;
-    if lod < 0 { (detail_m + SLACK_M, detail_m + raise_m.max(0.0) + SLACK_M) } else { (SLACK_M, SLACK_M) }
+    let detail = if lod < 0 { detail_m } else { 0.0 };
+    let raise = if lod <= 0 { raise_m.max(0.0) } else { 0.0 };
+    (detail + SLACK_M, detail + raise + SLACK_M)
 }
 
 /// The `P_DETAIL` slot: splat range, height-blend depth, ground reflectance (clamped to
@@ -1020,14 +1023,25 @@ mod tests {
     use super::*;
     use bevy_mesh::VertexAttributeValues;
 
-    /// W6b: the raised cover grows only the two finest levels' bounds, upward only.
+    /// W6b: the raised cover grows the bounds of the levels it displaces (LOD <= 0), upward only;
+    /// the detail displacement only the two finest.
     #[test]
     fn node_bounds_grow_by_the_raise_on_the_finest_levels() {
         let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
         assert!(near(node_margins(-2, 0.1, 0.45), (0.15, 0.6)));
         assert!(near(node_margins(-1, 0.0, 0.45), (0.05, 0.5)));
-        assert!(near(node_margins(0, 0.1, 0.45), (0.05, 0.05)));
+        assert!(near(node_margins(0, 0.1, 0.45), (0.05, 0.5)));
+        assert!(near(node_margins(1, 0.1, 0.45), (0.05, 0.05)));
         assert!(near(node_margins(-1, 0.0, -1.0), (0.05, 0.05)));
+    }
+
+    /// W6b: the shader's raised-cover fade is its CPU twin's (`CdlodSettings::raise_fade`).
+    #[test]
+    fn raise_fade_constants_match_the_twin() {
+        let wgsl = include_str!("shaders/common.wesl");
+        for (name, v) in [("RAISE_FADE_START", cdlod::RAISE_FADE_START), ("RAISE_FADE_END", cdlod::RAISE_FADE_END)] {
+            assert!(wgsl.contains(&format!("const {name}: f32 = {v:?};")), "{name}");
+        }
     }
 
     /// The WGSL slot constants must match `params.rs`.

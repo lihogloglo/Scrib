@@ -228,6 +228,13 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Fix 2026-11-06 (resets only): shelter redraws lost casters outside the camera's and sun's frusta (cover and prints under
   them flipped at each redraw); the redraw now marks its casters visible. Check: walk 100+ m near houses (Skaal) and in
   Ghostgate, turn around, look for jumps. Status: resets awaiting owner; ring edge, paving, trails, ash depth still open.
+- Fix 2026-11-06 (ring/paving): the raise faded linearly over 20-24 m (a crest following the camera); it now eases out
+  smoothly from ~18 m to ground level at ~43 m, and stands only where the snow shows. Look for: `surface set snow 1`, no
+  edge or ridge near the player, the snow eases down to the ground at the far edge with no line in the lighting; `surface
+  set snow 0.4` (P, let hours pass) on Skaal's paving: paving stays at ground level, only the snowy patches stand raised.
+  Status: awaiting owner (trails vs prints, ash depth still open).
+- Logged, not checked: the rain occlusion map (`sf_precip_bevy/src/occlusion.rs`) likely drops casters outside every
+  view the same way the shelter map did (fixed in 30319aa).
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,

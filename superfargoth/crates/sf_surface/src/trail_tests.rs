@@ -181,16 +181,48 @@ fn pass_keeps_moves_and_stamps() {
 #[test]
 fn raise_composes_cover_and_prints() {
     let knee = 0.45;
-    assert_eq!(cover_raise(1.0, knee, [0.0, 0.0], knee), knee);
-    assert_eq!(cover_raise(1.0, knee, [-knee, 0.0], knee), 0.0);
-    let lip = cover_raise(1.0, knee, [0.0, LIP_HEIGHT * knee], knee);
+    assert_eq!(cover_raise(1.0, 1.0, knee, [0.0, 0.0], knee), knee);
+    assert_eq!(cover_raise(1.0, 1.0, knee, [-knee, 0.0], knee), 0.0);
+    let lip = cover_raise(1.0, 1.0, knee, [0.0, LIP_HEIGHT * knee], knee);
     assert!((lip - knee * (1.0 + LIP_HEIGHT)).abs() < 1e-6);
-    assert!((cover_raise(0.5, knee, [-0.1, 0.0], knee) - 0.5 * (knee - 0.1)).abs() < 1e-6);
+    assert!((cover_raise(0.5, 1.0, knee, [-0.1, 0.0], knee) - 0.5 * (knee - 0.1)).abs() < 1e-6);
     // Ash (3 cm) under a 0.45 m print: cut to the ground, never below it.
-    assert_eq!(cover_raise(1.0, 0.03, [-knee, 0.0], knee), 0.0);
-    assert_eq!(cover_raise(0.0, knee, [0.0, 0.1], knee), 0.0);
+    assert_eq!(cover_raise(1.0, 1.0, 0.03, [-knee, 0.0], knee), 0.0);
+    assert_eq!(cover_raise(0.0, 1.0, knee, [0.0, 0.1], knee), 0.0);
     // No ring: the cover's depth.
-    assert_eq!(cover_raise(1.0, knee, [-0.2, 0.3], 0.0), knee);
+    assert_eq!(cover_raise(1.0, 1.0, knee, [-0.2, 0.3], 0.0), knee);
+}
+
+/// SW-6 (2026-11-06, paving): the raise follows the shading's coverage, not the cell amount.
+/// Where the height blend leaves the ground bare (a cobble top at a thin cover, a drift gap) the
+/// ground is never lifted, with or without prints and lips; full cover stands the full depth.
+#[test]
+fn raise_is_zero_where_the_coverage_is() {
+    use crate::layer::cover_coverage;
+    let knee = 0.45;
+    // A thin cover (0.4): a high cobble top in a drift gap is bare, the grout in a drift is covered.
+    let bare = cover_coverage(0.4, 0.9, 0.2, 0.9, 1.0);
+    let covered = cover_coverage(0.4, 0.1, 0.8, 0.2, 1.0);
+    assert_eq!(bare, 0.0);
+    assert_eq!(covered, 1.0);
+    assert_eq!(cover_raise(0.4, bare, knee, [0.0, 0.0], 0.0), 0.0);
+    assert_eq!(cover_raise(0.4, bare, knee, [0.0, LIP_HEIGHT * knee], knee), 0.0);
+    assert!((cover_raise(0.4, covered, knee, [0.0, 0.0], 0.0) - 0.4 * knee).abs() < 1e-6);
+    // Full cover covers every height, so the whole ground stands the full depth.
+    for h in [0.0, 0.3, 0.7, 1.0] {
+        let c = cover_coverage(1.0, h, 1.0 - h, h, 1.0);
+        assert_eq!(c, 1.0);
+        assert_eq!(cover_raise(1.0, c, knee, [0.0, 0.0], 0.0), knee);
+    }
+    // No cover: no coverage, no raise.
+    assert_eq!(cover_coverage(0.0, 0.0, 1.0, 0.0, 1.0), 0.0);
+    // Monotone in the coverage.
+    let mut last = 0.0;
+    for i in 0..=20u8 {
+        let r = cover_raise(0.4, f32::from(i) / 20.0, knee, [0.0, 0.0], 0.0);
+        assert!(r >= last);
+        last = r;
+    }
 }
 
 /// Rounds to the nearest half float (normal range): what the `Rgba16Float` ring stores.

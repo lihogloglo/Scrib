@@ -313,9 +313,10 @@ pub(crate) fn update_kickup(
                 }
                 // W6b raises the cover above the physics ground the stamp sits on: throw the puff
                 // from the uncut cover surface (the print's lip), or the depth test hides it in the
-                // snow. Cell amounts only: the shader's slope and shelter terms aren't on the CPU.
-                let raise = sf_surface::trail::cover_raise(snow, uniform.cover[0].y, [0.0, 0.0], 0.0)
-                    + sf_surface::trail::cover_raise(ash, uniform.cover[1].y, [0.0, 0.0], 0.0);
+                // snow. Cell amounts only, full coverage (an upper bound): the shader's slope,
+                // shelter and coverage terms aren't on the CPU.
+                let raise = sf_surface::trail::cover_raise(snow, 1.0, uniform.cover[0].y, [0.0, 0.0], 0.0)
+                    + sf_surface::trail::cover_raise(ash, 1.0, uniform.cover[1].y, [0.0, 0.0], 0.0);
                 let at = at + bevy_math::DVec3::Y * f64::from(raise);
                 #[expect(clippy::cast_possible_truncation, reason = "a hash seed")]
                 let seed = unit(state.ring.spawned() as u32 ^ 0xB5E7);

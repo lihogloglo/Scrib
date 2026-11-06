@@ -344,6 +344,14 @@ pub fn cover_blend(amount: f32, h: f32, contrast: f32) -> f32 {
     smoothstep(-e, e, level - h)
 }
 
+/// The cover's coverage at a point (`surface_cover_coverage`): the height blend of `amount` over
+/// the compared height of the surface (`base`), the cover look (`cover`) and the drift noise
+/// (`drift`). One function for the shading's blend and the raised geometry (W6b), so the cover
+/// stands raised exactly where it shows: bare ground (coverage 0) is never lifted.
+pub fn cover_coverage(amount: f32, base: f32, cover: f32, drift: f32, contrast: f32) -> f32 {
+    cover_blend(amount, cover_height(base, cover, drift), contrast)
+}
+
 /// Sparkle fades as a pixel covers more than a glint cell (`footprint` m per pixel; 0 unknown:
 /// none, as for rain rings).
 pub fn sparkle_fade(footprint: f32) -> f32 {

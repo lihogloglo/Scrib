@@ -1,7 +1,7 @@
 # Surface weather: as built
 
 Detail moved out of [surface-weather.md](surface-weather.md) (spec budget). The spec keeps the design; this file
-keeps the as-built shapes and slice notes; W1-W2, W2b and W5a moved to [the archive](surface-weather-as-built-archive.md).
+keeps the as-built shapes and slice notes; W1-W2, W2b, W5a and W5b moved to [the archive](surface-weather-as-built-archive.md).
 Code is the source of truth.
 
 ## W3 (2026-11-05): wetness on every lit material, `bevy_pbr` patch "SW"
@@ -108,40 +108,6 @@ Code is the source of truth.
   does; `SurfaceSystems` runs after `VisibilityPropagate`/`CalculateBounds`. Open: a one-frame view loses casters whose
   pipeline isn't ready that frame.
 
-## W5b (2026-11-06): the cover drawn (`layer.wesl`, CPU twin `sf_surface::layer`)
-
-- **Where:** `apply_surface_layer` step 3, before wetness and puddles, on class STATIC and TERRAIN only (characters are
-  DYNAMIC under `SKINNED`, proxies/impostors FAR: never covered), gated per channel on `FLAG_SNOW`/`FLAG_ASH` and the look's
-  `1/tiling > 0`. Snow first, ash over it (open question 1 default).
-- **Amount:** cell B (snow) / A (ash) × `smoothstep(0.45, 0.8, N.y)` on the shading normal (base normal map included: tops of
-  bumps first) × the shelter exposure (one exposure gather shared with wet/puddles).
-- **Height blend** (the height lerp of layered snow/terrain materials): compared height
-  `saturate(mix(SurfaceInput.height, 1 − look height, 0.5) + (drift − 0.5)·0.5)`, drift = noise G over 64 m; the cover's
-  level `amount·(1 + 2e) − e` against it, `smoothstep(−e, e, ·)` with `e = 0.08 / contrast` (exact 0 at amount 0, 1 at 1).
-- **Material:** look albedo (sRGB decoded), roughness, AO (× `diffuse_occlusion`), metallic 0, F0 ice (snow, 0.354) or 0.04
-  (ash); covered porosity → 1 (rain then soaks it). Normal: the look's tangent normal (top-down: +X = world X, +Y = world −Z)
-  as a volume gradient, projected (Mikkelsen 2020), replacing the surface's gradient by the blend in the one sum.
-- **Sparkle** (`sparkle` > 0, snow): 2 cm world cells, `sparkle × 3 %` glint (hash), tilt ±0.35 and roughness 0.1, fading
-  from 6 mm to 2 cm pixel footprint (gone past ~20 m at 1440p).
-- **Sampling:** `textureSampleGrad` with the caller's `dpdx/dpdy` (new `SurfaceInput` fields: StandardMaterial and terrain
-  pass theirs, `surface_input_of` zero), so trilinear + aniso in any control flow. UV = render XZ / tiling + `cover_uv`
-  (new uniform slot 12, `fract(origin.xz / tiling)` in f64 per channel; `cover::cover_uv`): world-aligned and exact.
-- **Plain looks** (`cover::with_height`, `normal_from_height`, pack time): all-opaque alpha → height = linear luminance
-  auto-levelled between its 2nd/98th percentiles; no normal map → central-difference normal of that height (strength 3).
-  Records with a real height/normal keep theirs.
-- **Switches:** `SurfaceSettings::cover` (`--off cover`, `Part::Cover`) masks the snow/ash flags; `surface set snow|ash v`
-  forces cells. No live `flip cover` (live_ab.rs was busy with two other sessions); `flip surface` remains.
-- **Checked:** cell state reaches the texture (each `advance` step bumps `WorldSurface.generation` → full window rewrite).
-- **Open (logged):** no worldspace-change repack (the Morrowind adapter picks one look for every worldspace, so nothing to
-  repack today; needs the host to re-resolve `ActiveLayers` on `WorldWeatherMap.worldspace` change); cover ends at the
-  cell window edge (~2 km, the window's hard zero, as wetness); FAR proxies stay uncovered (pop at the proxy distance in deep
-  snow); prepass normals unmodified (spec "Prepass and SSAO"); Morrowind terrain layers have flat alpha, so the terrain's
-  height is 1 near and 0.5 past the splat range: partial cover shifts with distance (fix: `with_height`'s luminance
-  fallback in the terrain bake, which also gives puddles real terrain lows; needs a re-bake and an SW-4 re-check).
-- **Tests:** twins `cover_endpoints_and_order`, `cover_amount_by_slope_and_shelter`, `cover_height_mixes_surface_cover_and_drift`,
-  `sparkle_fades_with_distance`; constants vs WGSL (45); uniform layout; derived height/normal, cover UV, `--off cover` mask
-  (`cover_derives_height_normal_and_uv`); compile per preset ± `SURFACE_WEATHER` now also requires `surface_apply_cover`.
-
 ## W6a (2026-11-06): trail ring, stamps, refill, prints in the shading (no displacement yet)
 
 - **Ring** (`sf_surface_bevy::trail`, CPU twin `sf_surface::trail`): 1024² `Rgba16Float` (R depression m ≤ 0, G lip m ≥ 0;
@@ -187,16 +153,25 @@ Code is the source of truth.
 
 ## W6b (2026-11-06): the cover raised as geometry, motion vectors, knee-deep snow
 
-- **Height:** visual terrain = ground + Σ channels `amount · max(d + trail_height(R, G, d, ring), 0)` (`layer.wesl`
-  `surface_cover_raise`, twin `sf_surface::trail::cover_raise`): amount = cell × slope ramp (ground normal) × exposure
-  (the full shelter + canopy tent at the ground point), d the look's depth; a full print reaches the ground, lips stand
-  on top, ash in a snow-deep ring cuts only its own depth. Morrowind's records: snow 0.45 m (knee deep), ash 0.03 m
+- **Height:** visual terrain = ground + Σ channels `coverage · amount · max(d + trail_height(R, G, d, ring), 0)`
+  (`layer.wesl` `surface_cover_raise`, twin `sf_surface::trail::cover_raise`): amount = cell × slope ramp (ground normal)
+  × exposure (the full shelter + canopy tent at the ground point), coverage = the shading's height blend
+  (`surface_cover_coverage`, twin `layer::cover_coverage`: drift, the look's height, the surface's lows) at the vertex
+  (`surface_raise_coverage`: look and layer heights prefiltered to the vertex spacing, `common::layer_blend_height`), d
+  the look's depth; a full print reaches the ground, lips stand on top, ash in a snow-deep ring cuts only its own depth.
+  Fix 2026-11-06 (SW-6 paving): the raise was `amount · d`, so a thin cover (0.4) lifted the whole ground 0.18 m; now
+  bare ground (coverage 0) stays down. Morrowind's records: snow 0.45 m (knee deep), ash 0.03 m
   (`mw_weather::cover::{SNOW,ASH}_DEPTH_M`, record `max_depth_m`; framework default stays 0.15 / 0.03). The 2 mm refill
   quantum still moves a 0.45 m print in half float (0.24 mm step; test).
-- **One function, both passes:** `sf_surface_bevy::view::surface_raise_at(p, n)` (x now, y now without prints, z last
-  frame) under `common::terrain_raise(t)` (`sf_terrain_bevy` `common.wesl`), weighted by `TerrainVertex::near_w` (the
-  detail displacement's weight: 1 at LOD -2, fading across LOD -1's morph zone, 0 from LOD 0, so ≤ 24 m with the
-  default 48 m LOD-0 range). The main pass (`SURFACE_WEATHER`) and the prepass (`SURFACE_WEATHER_PREPASS`) both add
+- **One function, both passes:** `sf_surface_bevy::view::surface_raise_at(p, n, base, texel_m)` (x now, y now without
+  prints, z last frame) under `common::terrain_raise(t)` (`sf_terrain_bevy` `common.wesl`), on LOD ≤ 0, weighted by
+  `TerrainVertex::raise_w` = `raise_fade` (twin `CdlodSettings::raise_fade`): 1 to 0.375 × LOD 0's range (18 m), a
+  smoothstep to exactly 0 at 0.9 × (43.2 m), by the vertex's 3D distance (equal at shared seam vertices; LOD 1 always lies
+  past LOD 0's range). Fix 2026-11-06 (SW-6 ring edge): it was the detail weight `near_w`, a linear 0.45 m drop over LOD
+  -1's 3.6 m morph zone (20.4-24 m): 12.5 %, steeper than a standing camera's grazing angle there, so the near snow
+  showed a crest following the camera, and the fragment shaded the ramp; now ≤ 2.7 %, and the fragment tilts by the
+  unweighted cover slope times the weight (`raised_normal`), so the fade itself never shades. Node bounds grow on LOD ≤ 0.
+  The main pass (`SURFACE_WEATHER`) and the prepass (`SURFACE_WEATHER_PREPASS`) both add
   `x` to the vertex Y; positions are `@invariant`, so depth matches exactly (compile test compares the linked bodies).
 - **Prepass bindings (patch "SW", W6b):** Bevy's prepass view bind group is one global group (view, globals, previous
   view, visibility ranges); material bindings were the alternative but the ring ping-pongs and its uniform lives in

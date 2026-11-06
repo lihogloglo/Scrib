@@ -487,6 +487,27 @@ fn surface_cover_blend(amount: f32, h: f32, contrast: f32) -> f32 {
     return smoothstep(-e, e, level - h);
 }
 
+/// The cover's coverage (twin `sf_surface::layer::cover_coverage`): the height blend of `amount`
+/// over the surface's height `base`, the look's `look` and the drift noise `drift`. The shading's
+/// blend and the raised geometry (W6b, `surface_raise_coverage`) both take it, so the cover stands
+/// raised exactly where it shows and bare ground is never lifted.
+fn surface_cover_coverage(amount: f32, base: f32, look: f32, drift: f32, contrast: f32) -> f32 {
+    return surface_cover_blend(amount, surface_cover_height(base, look, drift), contrast);
+}
+
+/// The drift noise (0..1) at render XZ `xz`: a thin cover lies in patches (one tap, any stage).
+fn surface_cover_drift(noise: texture_2d<f32>, samp: sampler, xz: vec2<f32>) -> f32 {
+    return textureSampleLevel(noise, samp, xz / COVER_DRIFT_TILE_M + vec2(0.17, 0.83), 0.0).g;
+}
+
+/// The height of channel `c`'s look at render XZ `xz`, prefiltered to texels of `texel_m`
+/// meters (a vertex's spacing; any stage: explicit mip).
+fn surface_cover_look_height(cover: texture_2d_array<f32>, cover_sampler: sampler, layer: vec4<f32>, uv0: vec2<f32>, c: u32, xz: vec2<f32>, texel_m: f32) -> f32 {
+    let size = f32(textureDimensions(cover).x);
+    let mip = max(log2(texel_m * size * layer.x), 0.0);
+    return textureSampleLevel(cover, cover_sampler, xz * layer.x + uv0, i32(2u * c), mip).a;
+}
+
 fn surface_sparkle_fade(footprint: f32) -> f32 {
     if footprint <= 0.0 {
         return 0.0;
@@ -599,19 +620,20 @@ fn surface_ring_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cell
     return textureSampleLevel(trail, samp, uv, 0.0).xy * fade;
 }
 
-/// Raised cover (W6b; twin `sf_surface::layer::cover_raise`): how high a cover of depth `d`
-/// stands over the ground at `amount` (cell × slope × exposure) with the ring value `v` (R
-/// depression, G lip, m; `ring` the ring depth, 0 = no trail): its share of the depth, prints
-/// cut down to the ground (a full print: 0), lips on top.
-fn surface_cover_raise(amount: f32, d: f32, v: vec2<f32>, ring: f32) -> f32 {
-    if amount <= 0.0 || d <= 0.0 {
+/// Raised cover (W6b; twin `sf_surface::trail::cover_raise`): how high a cover of depth `d`
+/// stands over the ground at `amount` (cell × slope × exposure) and `coverage` (the shading's
+/// blend, `surface_cover_coverage`) with the ring value `v` (R depression, G lip, m; `ring` the
+/// ring depth, 0 = no trail): its share of the depth where it shows, prints cut down to the
+/// ground (a full print: 0), lips on top. 0 wherever the coverage is (bare paving stays down).
+fn surface_cover_raise(amount: f32, coverage: f32, d: f32, v: vec2<f32>, ring: f32) -> f32 {
+    if amount <= 0.0 || coverage <= 0.0 || d <= 0.0 {
         return 0.0;
     }
     var h = 0.0;
     if ring > 0.0 {
         h = surface_trail_height(v, d, ring);
     }
-    return amount * max(d + h, 0.0);
+    return coverage * amount * max(d + h, 0.0);
 }
 
 /// The cover amounts over a ground point `p` (render space, ground normal `n`) for the raise
@@ -642,9 +664,38 @@ fn surface_raise_amounts(
     return a * surface_exposure(shelter, canopy, shelter_sampler, u, p, n);
 }
 
-/// The raise (m) of both covers at `amounts` over a ring value `v` (ring depth `ring`).
-fn surface_raise_of(u: SurfaceUniform, amounts: vec2<f32>, v: vec2<f32>, ring: f32) -> f32 {
-    return surface_cover_raise(amounts.x, u.snow_layer.y, v, ring) + surface_cover_raise(amounts.y, u.ash_layer.y, v, ring);
+/// The coverage of both covers (x snow, y ash) over a ground point at render XZ `xz` with
+/// `amounts` (`surface_raise_amounts`) and the surface height `base` (0..1, the shading's
+/// `SurfaceInput.height`), the looks prefiltered to `texel_m` (the vertex spacing): the same
+/// `surface_cover_coverage` the shading takes, at the geometry's resolution.
+fn surface_raise_coverage(
+    u: SurfaceUniform,
+    noise: texture_2d<f32>,
+    samp: sampler,
+    cover: texture_2d_array<f32>,
+    cover_sampler: sampler,
+    amounts: vec2<f32>,
+    xz: vec2<f32>,
+    base: f32,
+    texel_m: f32,
+) -> vec2<f32> {
+    let drift = surface_cover_drift(noise, samp, xz);
+    var out = vec2(0.0);
+    if amounts.x > 0.0 {
+        let look = surface_cover_look_height(cover, cover_sampler, u.snow_layer, u.cover_uv.xy, COVER_SNOW, xz, texel_m);
+        out.x = surface_cover_coverage(amounts.x, base, look, drift, u.snow_layer.w);
+    }
+    if amounts.y > 0.0 {
+        let look = surface_cover_look_height(cover, cover_sampler, u.ash_layer, u.cover_uv.zw, COVER_ASH, xz, texel_m);
+        out.y = surface_cover_coverage(amounts.y, base, look, drift, u.ash_layer.w);
+    }
+    return out;
+}
+
+/// The raise (m) of both covers at `amounts` and `coverage` over a ring value `v` (ring depth
+/// `ring`).
+fn surface_raise_of(u: SurfaceUniform, amounts: vec2<f32>, coverage: vec2<f32>, v: vec2<f32>, ring: f32) -> f32 {
+    return surface_cover_raise(amounts.x, coverage.x, u.snow_layer.y, v, ring) + surface_cover_raise(amounts.y, coverage.y, u.ash_layer.y, v, ring);
 }
 
 /// The ring around `p` for the cover (no trail: ring 0). Four more taps only where the pixel
@@ -692,6 +743,8 @@ fn surface_apply_cover(
 ) -> f32 {
     let look = surface_cover_sample(cover, cover_sampler, layer, uv0, c, s);
     let h = surface_cover_height(s.height, look.height, drift);
+    // The uncut coverage: the raised geometry's (W6b) function at the pixel's resolution.
+    let coverage = surface_cover_coverage(amount, s.height, look.height, drift, layer.w);
     var cut_amount = amount;
     var trail_g = vec3(0.0);
     if t.ring > 0.0 && layer.y > 0.0 {
@@ -700,7 +753,7 @@ fn surface_apply_cover(
         let sx = (surface_trail_height(t.px, d, t.ring) - surface_trail_height(t.nx, d, t.ring)) / (2.0 * t.texel);
         let sz = (surface_trail_height(t.pz, d, t.ring) - surface_trail_height(t.nz, d, t.ring)) / (2.0 * t.texel);
         let fade = 1.0 - smoothstep(t.texel, 4.0 * t.texel, s.footprint);
-        let tg = -vec3(sx, 0.0, sz) * (fade * surface_cover_blend(amount, h, layer.w));
+        let tg = -vec3(sx, 0.0, sz) * (fade * coverage);
         trail_g = tg - n_geo * dot(n_geo, tg);
     }
     let b = surface_cover_blend(cut_amount, h, layer.w);
@@ -848,7 +901,7 @@ fn apply_surface_layer(
     // drinks like snow or ash does.
     var porosity = s.porosity;
     if snow > 0.0 || ash > 0.0 {
-        let drift = textureSampleLevel(noise, samp, s.world_pos.xz / COVER_DRIFT_TILE_M + vec2(0.17, 0.83), 0.0).g;
+        let drift = surface_cover_drift(noise, samp, s.world_pos.xz);
         // Trails (W6a) on terrain only (W6b displaces terrain only; the ring is 2D, so the host
         // stamps only feet that stand on terrain).
         var t: SurfaceTrail;
