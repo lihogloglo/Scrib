@@ -134,7 +134,8 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   near (froxels, composite) and far (cloud trace). Run `view "Balmora" --hour 22 --weather foggy` (also `--hour 12`, `--hour 1`):
   at 22:00 and 1:00 a soft grey-blue veil hides the distance like the noon fog (~50 m), lamps and far hills fade into it, no black
   wall, no glow; `flip fog_night_light` (console) = the old sky-only fill (black, see-through night fog). Too bright? Say so.
-- Status: fog fix built, awaiting owner; causes 1 and 3 open.
+- Owner 2026-11-06 (RO-16 pass): forced snowstorm still switches just before midnight and comes back in the morning (cause 1).
+- Status: fog fix confirmed (owner 2026-11-06, `--hour 22`: "better"); causes 1 and 3 open.
 
 ### WE-10: Local storm seen from outside: cloud curtain and noisy border (owner 2026-11-06)
 - Kind: game location. Run: `.\bevyrrowind scene we3-ridge`, then BRP `bevyrrowind/set {"weather": "ashstorm", "region": "Ashlands Region", "transition_hours": 0}` (look north) or `"rain"` / `"thunderstorm"` in `"Ascadian Isles Region"` (look east/south-east).
@@ -147,7 +148,8 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Fix 1 (history): ~16-sample cloud history, 1.5σ YCoCg variance clip, blue-noise jitter. Still camera on the ash (north) and
   rain (east) borders: deck and curtain stop shimmering within ~1 s; fast turns and walking leave no smear behind silhouettes
   or the deck edge; lightning still flashes at once. A/B: console `flip cloud_history` (off = the old 50/50 resolve).
-- Status: fix 1 built, awaiting owner; slices 2-3 (far rain shaped by clouds, deck edges) wait for the owner.
+- Owner 2026-11-06 (ash, north): shimmer still there with fix 1; the region storm's cloud/rain still not drawn over the water (WE-7).
+- Status: fix 1 failed; slices 2-3 (far rain shaped by clouds, deck edges) wait for the owner.
 
 ### FG-7: Blocky crenellated edges on distant land in fog (owner report)
 - Kind: game location. Distant landmasses with fog around or behind them (seen 2026-10-30, `scene balmora`).
@@ -203,7 +205,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   grey-brown, lighter, and drift downwind; NPCs walking nearby throw smaller puffs; nothing on bare ground (known: an overhang over snowy ground still puffs).
 - Light: puffs match the snow around them (sunlit vs in a rock's shadow), no glowing puffs at night (moon + floor light), fade
   into fog. Soft where they meet the ground (no hard line). Puddle splashes not built. Too much / too little? Say so.
-- Status: awaiting owner (built 2026-11-06).
+- Owner 2026-11-06 (snow): OK for now but crude, to be reworked; at night the puffs turn into near pure-white circles.
+  Ash (same day): a bit too big and bright; same near-white glow at night.
+  Status: accepted for now; rework, size/brightness (ash) and night look pending.
 
 ### SW-6: Knee-deep snow and footprints (surface-weather.md W6a prints + W6b raised geometry)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Skaal Village" --hour 12 --weather snow`,
@@ -215,7 +219,12 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - DLSS/TAA on: no smear, ghosting or trailing smudge behind the feet as prints appear; no shimmer at print walls.
 - While it snows the prints refill (~1 min real time at 30× for 0.45 m); `--weather clear`: they stay.
 - Watch for: rock/house bases buried 0.45 m (expected), terrain poking through floors at doorways, z-fighting at the
-  ~20-24 m fade. Ash (`view "Ghostgate"`, `surface set ash 1`): only a 3 cm crust. Status: awaiting owner (built 2026-11-06).
+  ~20-24 m fade. Ash (`view "Ghostgate"`, `surface set ash 1`): only a 3 cm crust.
+- Owner 2026-11-06 (snow): the raised ring's edge is visible, very close, following the player; frequent sudden "resets"
+  where the whole snow look (and the prints) changes at once after some movement (big_space recentre?); at `snow 0.4` on
+  paving the whole ground rises over game hours, not just the snowy patches, so feet sink into cobblestone; deep snow
+  should leave continuous trails, not separate prints (prints for shallow snow / ash). Ash (same day): same sudden resets
+  (where the ash lies jumps after some movement); crust could be a little deeper (not much). Status: failed, not fixed.
 
 ### SW-5: Snow and ash cover (surface-weather.md W5)
 - Kind: game location. Ash: `powershell -File bevyrrowind/tools/run_dev.ps1 view "Ghostgate" --hour 12 --weather ashstorm`,
@@ -226,7 +235,8 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - None under roofs, arches or the Ghostgate passage; none on characters (skinned) or far proxies; ends ~2 km out (cell window).
 - Snow: slight sparkle within a few metres (sparse glints that hold still as you stand, flash as you move; no crawling noise
   under DLSS). Normal detail from the land texture catches low sun. A/B: `--off cover` (or `surface set snow 0`).
-- Status: awaiting owner (built 2026-11-06).
+- Owner 2026-11-06 (snow): roofs and ground covered, none under arches: good. Same sudden "resets" as SW-6 (whole look
+  changes at once); ash: same resets (where the ash lies jumps). Status: coverage OK, resets open (see SW-6).
 
 ### SW-4: Puddles in rain and after (surface-weather.md W4)
 - Kind: game location. `powershell -File bevyrrowind/tools/run_dev.ps1 view "Balmora" --hour 12 --weather rain`; console:
