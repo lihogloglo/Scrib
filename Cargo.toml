@@ -160,6 +160,7 @@ winreg = "0.55"
 # Framework crates: `version` matches `workspace.package.version` (cargo-deny `wildcards`; crates.io needs it).
 sf_action = { path = "superfargoth/crates/sf_action", version = "0.1.0" }
 sf_action_bevy = { path = "superfargoth/crates/sf_action_bevy", version = "0.1.0" }
+sf_ai = { path = "superfargoth/crates/sf_ai", version = "0.1.0" }
 sf_anim = { path = "superfargoth/crates/sf_anim", version = "0.1.0", default-features = false }
 sf_anim_bevy = { path = "superfargoth/crates/sf_anim_bevy", version = "0.1.0" }
 sf_anim_graph = { path = "superfargoth/crates/sf_anim_graph", version = "0.1.0" }

@@ -37,6 +37,7 @@ third-party = [
 # here too (Bevy only behind its `bevy` feature).
 workspace-members = [
     "sf_action",
+    "sf_ai",
     "sf_anim",
     "sf_anim_graph",
     "sf_atmos",

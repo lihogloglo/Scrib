@@ -1,6 +1,6 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
-Status: **draft, docs only (2026-11-08)**, written on a machine that cannot compile. Nothing built. Scope label M7.
+Status: **AI1 built (2026-11-08)**: `sf_ai` with ids and the decision trace ("Debugging"); AI2 on not built. Label M7.
 Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
 Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
 (thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
@@ -9,7 +9,7 @@ Sources: `../research/npc-ai-2026-11-08.md` (approved), seamless research §4.2/
 [action.md](action.md), [net.md](net.md), [combat.md](combat.md) C6.
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-08).** Draft, nothing built. Layers: directives (packages, schedules, quest orders) →
+> **Agent summary (2026-11-08).** AI1 (trace) built; the rest is design. Layers: directives (packages, schedules, quest orders) →
 > utility drives → one shared data-driven HTN method library → executors writing `Command` + `LocomotionIntent`.
 > Host-only, fixed tick. Tiers 2/1/0 under a budget that is a host CPU setting (never the graphics preset); tier 0
 > simulates logically so outcomes are tier-invariant. Perception through doors, a persistent memory/relationship fact
@@ -266,6 +266,12 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 **rejected method with its failing precondition**, plan, operator and path state, budget), serde. Console `ai.trace`,
 `ai.select` (reference picking, ROADMAP 1.13), `ai.tiers`, `ai.stats`, `ai.facts`; JSON/BRP for agents; gizmos
 (paths, cones, tier colours, claims, plan text), feature `debug`. Later: Visual-Logger-style recording.
+
+**As built (AI1).** `sf_ai::{ids, trace}` (details in the module docs). Entries add a trigger, the served directive,
+raw vs. final drive score and `SubtaskFailed` (backtrack) rejections. `TraceStore::record(actor, tick, tier) ->
+Option<&mut TraceEntry>` is the off switch, so `decide` takes `Option<&mut TraceEntry>`; the ring recycles entries.
+Cap: watched (newest first), then admission order; later actors never evict earlier ones. `budget_us` is `None` with
+timings off (reproducible traces). `ai.trace` is registered in AI3; the core exposes `format_trace` and JSON dumps.
 
 ## Industry comparison
 

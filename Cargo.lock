@@ -7542,6 +7542,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_ai"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sf_ids",
+]
+
+[[package]]
 name = "sf_anim"
 version = "0.1.0"
 dependencies = [
