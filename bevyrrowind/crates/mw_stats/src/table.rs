@@ -85,6 +85,36 @@ const SKILL_LABELS: [&str; 27] = [
     "sSkillHandtohand",
 ];
 
+/// The magnitude stats of the resist, weakness and elemental-shield effects (effects-adapter.md
+/// "As built (A1)"): (key, label GMST), keyed by the MGEF effect's `RefId` name, in MGEF index
+/// order: Fire / Lightning / Frost Shield (4-6), the nine Weakness effects (28-36), the ten Resist
+/// effects (90-99). `mw_effects` checks this list against its MGEF table. Appended after every
+/// other def so the older indices (and saves, which are keyed) stay put.
+pub const MAGNITUDE_STATS: [(&str, &str); 22] = [
+    ("fireshield", "sEffectFireShield"),
+    ("lightningshield", "sEffectLightningShield"),
+    ("frostshield", "sEffectFrostShield"),
+    ("weaknesstofire", "sEffectWeaknesstoFire"),
+    ("weaknesstofrost", "sEffectWeaknesstoFrost"),
+    ("weaknesstoshock", "sEffectWeaknesstoShock"),
+    ("weaknesstomagicka", "sEffectWeaknesstoMagicka"),
+    ("weaknesstocommondisease", "sEffectWeaknesstoCommonDisease"),
+    ("weaknesstoblightdisease", "sEffectWeaknesstoBlightDisease"),
+    ("weaknesstocorprusdisease", "sEffectWeaknesstoCorprusDisease"),
+    ("weaknesstopoison", "sEffectWeaknesstoPoison"),
+    ("weaknesstonormalweapons", "sEffectWeaknesstoNormalWeapons"),
+    ("resistfire", "sEffectResistFire"),
+    ("resistfrost", "sEffectResistFrost"),
+    ("resistshock", "sEffectResistShock"),
+    ("resistmagicka", "sEffectResistMagicka"),
+    ("resistcommondisease", "sEffectResistCommonDisease"),
+    ("resistblightdisease", "sEffectResistBlightDisease"),
+    ("resistcorprusdisease", "sEffectResistCorprusDisease"),
+    ("resistpoison", "sEffectResistPoison"),
+    ("resistnormalweapons", "sEffectResistNormalWeapons"),
+    ("resistparalysis", "sEffectResistParalysis"),
+];
+
 /// Specialization keys in ESM order (`ESM::Class::Specialization`).
 pub const SPECIALIZATIONS: [&str; 3] = ["combat", "magic", "stealth"];
 
@@ -165,6 +195,8 @@ pub struct MwIdx {
     pub capacity: StatIdx,
     pub encumbrance: StatIdx,
     pub fatigue_term: StatIdx,
+    /// The [`MAGNITUDE_STATS`], in that order.
+    pub magnitudes: [StatIdx; 22],
 }
 
 /// The Morrowind stat table with its indices and the SKIL data.
@@ -186,10 +218,11 @@ const fn counter(min: f32, max: f32) -> StatKind {
 /// Attributes, skills and magnitudes: `min 0`, no cap (stats-adapter.md "Stat table").
 const VALUE: StatKind = StatKind::Value { min: 0.0, cap: None };
 
-/// The definitions, in index order: attributes, skills, magnitudes, pools, counters, derived.
+/// The definitions, in index order: attributes, skills, Fortify Maximum Magicka, pools, counters,
+/// derived, then the [`MAGNITUDE_STATS`] (appended last, 2026-11-08: earlier indices unchanged).
 #[must_use]
 pub fn defs() -> Vec<StatDef> {
-    let mut d = Vec::with_capacity(128);
+    let mut d = Vec::with_capacity(140);
     for (key, label) in ATTRIBUTES.iter().zip(ATTRIBUTE_LABELS) {
         d.push(def(key, VALUE, "attribute", false, label));
     }
@@ -237,6 +270,10 @@ pub fn defs() -> Vec<StatDef> {
     d.push(def("capacity", StatKind::Derived, "derived", false, "sEncumbrance"));
     d.push(def("encumbrance", StatKind::Derived, "derived", false, "sEncumbrance"));
     d.push(def("fatigue.term", StatKind::Derived, "derived", false, ""));
+    // New defs go after this point only: indices are positional in `MwIdx`.
+    for (key, label) in MAGNITUDE_STATS {
+        d.push(def(key, VALUE, "magnitude", false, label));
+    }
     d
 }
 
@@ -308,6 +345,7 @@ impl MwTable {
             capacity: at("capacity"),
             encumbrance: at("encumbrance"),
             fatigue_term: at("fatigue.term"),
+            magnitudes: MAGNITUDE_STATS.map(|(key, _)| at(key)),
         };
         Ok(Self { table, idx, skills })
     }

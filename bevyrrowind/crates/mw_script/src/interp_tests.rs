@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use crate::ast::{Call, Ident, Target, VarRef, VarType};
 use crate::functions::Function;
-use crate::interp::{Host, Interpreter, Locals, RunError, format_message, store};
+use crate::interp::{Host, Interpreter, Locals, MessageArg, RunError, store};
+use crate::statfn::StatCall;
 use crate::{Env, FunctionTable, MemberLookup, SourceKind, parse_and_resolve};
 
 /// Records every host call as a line of text; variables and counts live in maps.
@@ -16,6 +17,8 @@ struct Recorder {
     speaker: HashMap<String, (VarType, f64)>,
     stages: HashMap<String, i32>,
     items: HashMap<(String, String), i32>,
+    /// Answers stat functions (logged, value 7); off: they fall through to `unhandled`.
+    stats: bool,
 }
 
 fn who(target: &Target) -> String {
@@ -102,11 +105,24 @@ impl Host for Recorder {
         self.log
             .push(format!("mod_disposition {} {delta}", who(target)));
     }
-    fn message_box(&mut self, text: String, buttons: Vec<String>) {
-        self.log.push(format!("message_box {text:?} {buttons:?}"));
+    fn message_box(&mut self, format: &str, args: &[MessageArg]) {
+        self.log.push(format!("message_box {format:?} {args:?}"));
     }
     fn play_sound(&mut self, sound: &Ident) {
         self.log.push(format!("play_sound {}", sound.key));
+    }
+    fn stat(&mut self, target: &Target, call: &StatCall) -> Option<f64> {
+        if !self.stats {
+            return None;
+        }
+        let faction = call.faction.as_ref().map_or("-", |f| f.key.as_str());
+        self.log.push(format!(
+            "stat {} {:?} {} {faction}",
+            who(target),
+            call.function,
+            call.value
+        ));
+        Some(7.0)
     }
     fn unhandled(&mut self, function: &Function, _call: &Call) -> f64 {
         self.log.push(format!("unhandled {}", function.name));
@@ -312,31 +328,51 @@ fn dispositions() {
 }
 
 #[test]
-fn message_box_formats_and_buttons() {
+fn message_box_hands_values_and_buttons_to_the_host() {
     let host = result(
         "MessageBox \"You have %g gems, %.1f%% done (%d).\" state 12.345 7.9\nMessageBox \"Go?\" \"Yes\" \"No\"",
     );
     assert_eq!(
         host.log,
         [
-            r#"message_box "You have 0 gems, 12.3% done (7)." []"#,
-            r#"message_box "Go?" ["Yes", "No"]"#
+            r#"message_box "You have %g gems, %.1f%% done (%d)." [Num(0.0), Num(12.345), Num(7.9)]"#,
+            r#"message_box "Go?" [Str("Yes"), Str("No")]"#
         ]
     );
 }
 
 #[test]
-fn message_format_rules() {
-    assert_eq!(
-        format_message("%g %g %g", &[0.5, 1e7, 123_456.7]),
-        "0.5 1e+07 123457"
+fn message_box_keeps_bare_words_as_words() {
+    // OpenMW issue 8129: after the values, bare words (keywords and numbers included) are
+    // potential buttons kept as written; only quoted strings count as buttons (mw_ui decides).
+    let host = result(
+        "MessageBox \"Pick\" A B \"C\" D \"E\"\nMessageBox \"Nums\" 1 -2 .todd, \"A\"\n\
+         MessageBox \"Keys\" set state \"set2\"",
     );
     assert_eq!(
-        format_message("%f|%.0f|%G", &[1.5, 2.5, 0.0001]),
-        "1.500000|2|0.0001"
+        host.log,
+        [
+            r#"message_box "Pick" [Word("A"), Word("B"), Str("C"), Word("D"), Str("E")]"#,
+            r#"message_box "Nums" [Word("1"), Word("-2"), Word(".todd"), Str("A")]"#,
+            r#"message_box "Keys" [Word("set"), Word("state"), Str("set2")]"#
+        ]
     );
-    assert_eq!(format_message("%x %", &[]), "%x %");
-    assert_eq!(format_message("%g", &[]), "0", "missing values read 0");
+}
+
+#[test]
+fn message_box_text_placeholders_take_strings_and_words() {
+    // A `%s` takes a quoted string (not a button) or a bare word as text; number placeholders
+    // take expressions; `%%` and unknown conversions take nothing.
+    let host = result(
+        "MessageBox \"Go %s?\" \"north\"\nMessageBox \"Hi %s, %d%% %q %5.1f\" Fargoth 2 4.5 \"Ok\"",
+    );
+    assert_eq!(
+        host.log,
+        [
+            r#"message_box "Go %s?" [Str("north")]"#,
+            r#"message_box "Hi %s, %d%% %q %5.1f" [Word("Fargoth"), Num(2.0), Num(4.5), Str("Ok")]"#
+        ]
+    );
 }
 
 #[test]
@@ -362,6 +398,55 @@ fn undeclared_variables_read_zero_and_drop_writes() {
     let (host, l) = script("Begin t\nshort a\nset nothing to 5\nset a to nothing + 1\nEnd");
     assert!(host.log.is_empty(), "{:?}", host.log);
     assert_eq!(l.0, [1.0]);
+}
+
+#[test]
+fn stat_functions_reach_the_host_typed() {
+    let mut host = recorder();
+    host.stats = true;
+    run_as(
+        "set state to GetStrength\nplayer->ModLongBlade 5\nSetHealth ( state + 1 )\n\
+         ModPCFacRep 3 \"Fighters Guild\"\nPCRaiseRank\nset state to GetPCRank \"Mages Guild\"\n\
+         ModCurrentFatigue -2\nset state to GetMagickaGetRatio",
+        SourceKind::DialogueResult,
+        &mut host,
+    )
+    .unwrap();
+    assert_eq!(
+        host.log,
+        [
+            "stat self GetAttribute(0) 0 -",
+            "stat player ModSkill(5) 5 -",
+            "stat self SetDynamic(Health) 8 -",
+            "stat self ModPcFacRep 3 fighters guild",
+            "stat self PcRaiseRank 0 -",
+            "stat self GetPcRank 0 mages guild",
+            "stat self ModCurrentDynamic(Fatigue) -2 -",
+            "stat self GetDynamicRatio(Magicka) 0 -",
+        ]
+    );
+    assert!(
+        (host.speaker["state"].1 - 7.0).abs() < f64::EPSILON,
+        "a stat read returns the host's value"
+    );
+}
+
+#[test]
+fn every_stat_function_is_a_live_table_function() {
+    let t = FunctionTable::vanilla();
+    let all = crate::StatFn::all();
+    for (name, f) in &all {
+        let row = t.function(t.get(name).unwrap_or_else(|| panic!("{name}")));
+        assert_eq!(
+            (row.status, crate::StatFn::from_name(&row.name)),
+            (crate::Status::Live, Some(*f)),
+            "{name}: functions.txt status column"
+        );
+    }
+    let mut names: Vec<String> = all.iter().map(|(n, _)| n.to_lowercase()).collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), 140, "8 x 3 attribute + 27 x 3 skill + 3 x 5 dynamic + 20 others");
 }
 
 #[test]

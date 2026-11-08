@@ -1,6 +1,6 @@
 [package]
 name = "sf_ui_screens"
-description = "Stock game screens on sf_ui_bevy: dialogue, journal, inventory grid, keybinds and HUD, bound to the Bevy-free view-models (ui.md \"Screens\")"
+description = "Stock game screens on sf_ui_bevy: dialogue, journal, inventory grid, trade and service list, keybinds and HUD, bound to the Bevy-free view-models (ui.md \"Screens\")"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

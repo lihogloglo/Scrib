@@ -332,3 +332,41 @@ fn corpus_driven_repairs() {
     let p = parse("Begin a\nshort disable\nDisable\nEnd", s, t);
     assert!(matches!(p.script.body[0].kind, StmtKind::Call(_)));
 }
+
+#[test]
+fn message_box_args_split_by_placeholders() {
+    use crate::parser::message_placeholders;
+    assert_eq!(
+        message_placeholders("%s %d %i %-05.2f %e%E %+#g%G %a%A %S"),
+        [true, false, false, false, false, false, false, false, false, false, true]
+    );
+    assert!(message_placeholders("100%% %q %5 %. %").is_empty());
+    let t = FunctionTable::vanilla();
+    let s = SourceKind::Script;
+    let call = |text: &str| {
+        let p = parse(text, s, t);
+        let StmtKind::Call(c) = &p.script.body[0].kind else {
+            panic!("{text}")
+        };
+        (c.args.clone(), p.diagnostics.iter().map(|d| d.rule).collect::<Vec<_>>())
+    };
+    let (args, rules) = call("Begin a\nMessageBox \"%s %g\" Bob 2 Yes \"No\"\nEnd");
+    assert_eq!(
+        args,
+        [
+            Arg::Str("%s %g".into()),
+            Arg::Word("Bob".into()),
+            Arg::Expr(Expr::Int(2)),
+            Arg::Word("Yes".into()),
+            Arg::Str("No".into()),
+        ]
+    );
+    assert!(rules.is_empty(), "{rules:?}");
+    // Fewer values than placeholders: one `MissingArgument`, the rest read 0 (mw_ui counts them).
+    let (args, rules) = call("Begin a\nMessageBox \"%g %g\" 1\nEnd");
+    assert_eq!(
+        args,
+        [Arg::Str("%g %g".into()), Arg::Expr(Expr::Int(1)), Arg::Missing]
+    );
+    assert_eq!(rules, [Rule::MissingArgument]);
+}

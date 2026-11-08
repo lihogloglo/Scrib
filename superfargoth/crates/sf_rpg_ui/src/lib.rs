@@ -26,6 +26,15 @@
 //! - [`JournalSeen`]: per-player "new" markers.
 //! - [`JournalScreen`]: the state machine tying them together.
 //!
+//! NPC services (`docs/specs/services.md` "Screens"), over `sf_rpg::service`:
+//!
+//! - [`TradeView`]: the trade screen over a host-owned trade session: two `sf_ui_inventory`
+//!   [`InventoryView`](sf_ui_inventory::InventoryView) panes with a price column, the
+//!   [`DealBar`] (staged lines, totals, gold, balance, haggle stepper), count dialog, drag and
+//!   focus. Input yields `ServiceRequest`s; host `ServiceEvent`s update it.
+//! - [`ServiceListView`]: priced rows (training, travel...) with disabled rows and their
+//!   reasons, confirmation for lasting effects, `BuyEntry` requests.
+//!
 //! No rendering, no Bevy, no clock: the Bevy screens (`sf_ui_screens`) bind these values to
 //! nodes, map their `UiAction`s to navigation and time notices themselves.
 
@@ -36,18 +45,24 @@ mod rows;
 mod screen;
 mod search;
 mod seen;
+mod service_list;
+mod trade;
 
 #[cfg(test)]
 mod tests_dialogue;
 #[cfg(test)]
 mod tests_journal;
+#[cfg(test)]
+mod tests_service_list;
+#[cfg(test)]
+mod tests_trade;
 
 pub use book::{
     Block, BlockKey, BlockStyle, FixedWidthMeasure, LinePaginator, Page, PageMetrics, PageSlice,
     Paginator, TextMeasure,
 };
 pub use dialogue::{
-    DEFAULT_MAX_ENTRIES, DialogueFocus, DialogueMode, DialogueNav, DialogueRequest, DialogueView,
+    ActionId, ActionOption, DEFAULT_MAX_ENTRIES, DialogueAction, DialogueFocus, DialogueMode, DialogueNav, DialogueRequest, DialogueView,
     Entry, EntryId, EntryKind, LinkState, TextRun, TopicLink, TopicRow, ViewLine,
 };
 pub use labels::JournalLabels;
@@ -59,3 +74,11 @@ pub use screen::{
 };
 pub use search::{SearchQuery, highlights_in};
 pub use seen::JournalSeen;
+pub use service_list::{
+    ConfirmRule, ListNav, ListOutcome, ListToast, RowReason, SERVICE_ROW_FIELDS, ServiceListView, ServiceRow,
+    confirm_lasting,
+};
+pub use trade::{
+    BarLine, CountDialog, CountTarget, DealBar, DealProblem, DropTarget, Held, RowBlock, TradeFocus, TradeNav,
+    TradePane, TradeRow, TradeToast, TradeView,
+};

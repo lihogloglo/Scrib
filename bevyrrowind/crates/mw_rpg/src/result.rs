@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use sf_records::RecordId;
 use sf_rpg::{Choice, ConversationCtx};
+use sf_stats::StatOp;
 use thiserror::Error;
 
 /// Whose state an effect targets (`Player->`, `"arrille"->`, or implicit = the speaker).
@@ -73,6 +74,13 @@ pub enum ResultEffect {
     },
     /// `PlaySound`: a sound record id (2D, at the listener).
     PlaySound(RecordId),
+    /// A stat, faction or crime function's change to `target`'s sheet (`Target::Player`: the
+    /// context player), as `sf_stats` ops in order; the host sends them as one stats command
+    /// (stats.md S7, `script_stats.rs`).
+    Stats {
+        target: Target,
+        ops: Vec<StatOp>,
+    },
 }
 
 /// One result to run: the INFO's script text as the speaker, context player `ctx.player`.

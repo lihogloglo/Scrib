@@ -17,6 +17,14 @@
 //! - [`container`]: the container (loot) window: the container's and the player's views side
 //!   by side on the inventory's grid parts; move a stack (whole, or how many), take all.
 //!   Intents go out as [`ContainerEvent`]s.
+//! - [`trade`]: the trade (barter) screen over `sf_rpg_ui::TradeView`: provider and player
+//!   panes as lists with a price column, the deal bar between them (staged lines, totals,
+//!   purses, the balance with the haggle stepper, Accept, Cancel), count dialog, drag.
+//!   Requests go out as [`ServiceScreenEvent`]s.
+//! - [`service_list`]: the service list over `sf_rpg_ui::ServiceListView` (training,
+//!   travel, spells, repair): priced rows, disabled rows with their reason, "are you sure?"
+//!   for lasting purchases, a host-driven progress bar. Requests go out as
+//!   [`ServiceScreenEvent`]s too; strings and label keys come from [`ServiceLabels`].
 //! - [`keybinds`]: the keybinds screen over `sf_ui_bevy::UiKeymap`: capture flow, conflict
 //!   question, glyphs for the last-used pad.
 //! - [`saveload`]: the save/load screen over an app-filled [`SaveLoadModel`]: saves newest
@@ -35,7 +43,7 @@
 //! A game spawns a screen as a `UiScreenRoot` entity carrying the screen's component (for
 //! example `DialogueScreen::new(view)`) and pushes its id on the screen stack; the router
 //! gives it input while it is on top, so gameplay sees none of the inputs it binds. Screens
-//! whose view-model owns focus (dialogue, inventory, keybinds, save/load, pause, main menu, options) carry `UiOwnsFocus` and move
+//! whose view-model owns focus (dialogue, inventory, trade, service list, keybinds, save/load, pause, main menu, options) carry `UiOwnsFocus` and move
 //! it themselves; the journal uses Bevy's directional navigation.
 //!
 //! Nothing here names a game: content packs bring names, icons, themes and the host logic.
@@ -52,6 +60,8 @@ pub mod main_menu;
 pub mod options;
 pub mod pause_menu;
 pub mod saveload;
+pub mod service_list;
+pub mod trade;
 pub mod widgets;
 
 #[cfg(feature = "demo")]
@@ -59,6 +69,8 @@ pub mod demo;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_services;
 
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
@@ -91,6 +103,11 @@ pub use saveload::{
     SaveEntryView, SaveLoadChoice, SaveLoadEvent, SaveLoadFocus, SaveLoadMode, SaveLoadModel,
     SaveLoadRow, SaveLoadScreen,
 };
+pub use service_list::{ServiceListParts, ServiceListScreen, ServicePart};
+pub use trade::{
+    ServiceIntent, ServiceLabels, ServiceScreenEvent, TradeBarRoot, TradeButton, TradeLinePart,
+    TradePaneRoot, TradeParts, TradeRowPart, TradeScreen,
+};
 pub use widgets::{ScreenColors, StatBar};
 
 /// Ordering of the screens' systems in `Update`, after the router's dispatch.
@@ -116,6 +133,7 @@ impl Plugin for SfScreensPlugin {
         app.init_resource::<ScreenColors>()
             .init_resource::<ScreenLabels>()
             .init_resource::<InventoryGridStyle>()
+            .init_resource::<ServiceLabels>()
             .add_message::<DialogueRequestEvent>()
             .add_message::<InventoryEvent>()
             .add_message::<ContainerEvent>()
@@ -123,6 +141,7 @@ impl Plugin for SfScreensPlugin {
             .add_message::<PauseMenuEvent>()
             .add_message::<MainMenuEvent>()
             .add_message::<OptionsEvent>()
+            .add_message::<ServiceScreenEvent>()
             .add_observer(dialogue::on_dialogue_button)
             .add_observer(dialogue::on_link_click)
             .add_observer(dialogue::on_dialogue_hover)
@@ -145,6 +164,15 @@ impl Plugin for SfScreensPlugin {
             .add_observer(container::on_container_drag_end)
             .add_observer(container::on_container_drop)
             .add_observer(container::on_container_removed)
+            .add_observer(trade::on_trade_activate)
+            .add_observer(trade::on_trade_over)
+            .add_observer(trade::on_trade_drag_start)
+            .add_observer(trade::on_trade_drag)
+            .add_observer(trade::on_trade_drop)
+            .add_observer(trade::on_trade_drag_end)
+            .add_observer(trade::on_trade_removed)
+            .add_observer(service_list::on_service_part)
+            .add_observer(service_list::on_service_row_over)
             .configure_sets(
                 Update,
                 (
@@ -164,6 +192,8 @@ impl Plugin for SfScreensPlugin {
                     keybinds::spawn_keybinds,
                     inventory::spawn_inventory,
                     container::spawn_container,
+                    trade::spawn_trade,
+                    service_list::spawn_service_list,
                     saveload::spawn_saveload,
                     pause_menu::spawn_pause_menu,
                     main_menu::spawn_main_menu,
@@ -178,6 +208,8 @@ impl Plugin for SfScreensPlugin {
                     keybinds::keybinds_input,
                     inventory::inventory_input,
                     container::container_input,
+                    trade::trade_input,
+                    service_list::service_list_input,
                     saveload::saveload_input,
                     pause_menu::pause_menu_input,
                     main_menu::main_menu_input,
@@ -194,6 +226,8 @@ impl Plugin for SfScreensPlugin {
                     keybinds::sync_keybinds,
                     inventory::sync_inventory,
                     container::sync_container,
+                    trade::sync_trade,
+                    service_list::sync_service_list,
                     saveload::sync_saveload,
                     pause_menu::sync_pause_menu,
                     main_menu::sync_main_menu,

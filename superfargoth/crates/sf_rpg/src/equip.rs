@@ -7,7 +7,7 @@ use sf_records::RecordId;
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::item::{Attrs, Inventory, InventoryError, ItemStack, StackId};
+use crate::item::{AttrValue, Attrs, Inventory, InventoryError, ItemStack, StackId};
 
 /// Index into a [`SlotTable`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -125,6 +125,36 @@ impl Loadout {
     pub fn add(&mut self, item: RecordId, count: u32, attrs: Attrs) -> Result<StackId, InventoryError> {
         let locked = &self.locked;
         self.inventory.add_with(item, count, attrs, |id| !locked.contains(&id))
+    }
+
+    /// Checks [`Loadout::add`] without changing anything (a stack move checks its target
+    /// before taking from the source).
+    pub fn can_add(&self, item: &RecordId, count: u32, attrs: &Attrs) -> Result<(), InventoryError> {
+        if count == 0 {
+            return Err(InventoryError::ZeroCount);
+        }
+        let target = self.inventory.stacks().iter().find(|s| s.is_same_kind(item, attrs) && !self.locked.contains(&s.id));
+        if let Some(s) = target {
+            s.count.checked_add(count).ok_or(InventoryError::Overflow)?;
+        }
+        Ok(())
+    }
+
+    /// Sets or clears one attribute of a stack, then re-merges it with an identical stack
+    /// (clearing a repaired sword's condition joins it to the plain swords). Equipped stacks
+    /// keep their id and placement. Returns the stack that now holds the pieces.
+    pub fn set_attr(&mut self, stack: StackId, key: RecordId, value: Option<AttrValue>) -> Result<StackId, InventoryError> {
+        self.inventory.set_attr(stack, key, value)?;
+        if self.locked.contains(&stack) || self.is_equipped(stack) {
+            return Ok(stack);
+        }
+        let slots = &self.slots;
+        let locked = &self.locked;
+        // An overflowing merge leaves the stack on its own.
+        Ok(self
+            .inventory
+            .merge_back(stack, |id| !locked.contains(&id) && !slots.values().any(|s| *s == id))
+            .unwrap_or(stack))
     }
 
     /// Removes by item id: unequipped plain stacks first, then unequipped with attributes,

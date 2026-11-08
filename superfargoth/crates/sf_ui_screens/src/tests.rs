@@ -2122,3 +2122,122 @@ fn timing_screens() {
     let idle = time(&mut ui, 60);
     println!("dialogue: idle frame {idle:?}");
 }
+
+// ---------------------------------------------------------------- dialogue action buttons
+
+#[derive(Resource, Default)]
+struct DialogueRequests(Vec<sf_rpg_ui::DialogueRequest>);
+
+fn collect_dialogue(
+    mut events: MessageReader<DialogueRequestEvent>,
+    mut out: ResMut<DialogueRequests>,
+) {
+    out.0.extend(events.read().map(|e| e.request.clone()));
+}
+
+#[test]
+fn dialogue_action_buttons_and_submenu() {
+    use sf_rpg_ui::{ActionId, ActionOption, DialogueAction, DialogueRequest};
+
+    let mut ui = Ui::with(|app| {
+        app.init_resource::<DialogueRequests>()
+            .add_systems(Update, collect_dialogue.after(ScreenSystems::Input));
+    });
+    let root = open_dialogue(&mut ui);
+    let id = ActionId::new;
+    ui.world_mut()
+        .get_mut::<DialogueScreen>(root)
+        .unwrap()
+        .view
+        .set_actions(vec![
+            DialogueAction::new("barter", "Barter"),
+            DialogueAction::new("persuade", "Persuade").with_submenu(vec![
+                ActionOption::new("admire", "Admire"),
+                ActionOption::new("bribe", "Bribe").enabled(false),
+            ]),
+            DialogueAction::new("train", "Train").enabled(false),
+        ]);
+    ui.frames(2);
+
+    // One button each, in the host's order; disabled and submenu classes; no submenu yet.
+    let parts = dialogue(&ui, root).1;
+    let buttons: Vec<Entity> = parts.actions().map(|(_, e)| e).collect();
+    let (barter, persuade, train) = (
+        parts.action(&id("barter")).unwrap(),
+        parts.action(&id("persuade")).unwrap(),
+        parts.action(&id("train")).unwrap(),
+    );
+    assert_eq!(buttons, [barter, persuade, train]);
+    assert_eq!(ui.text_of(barter), "Barter");
+    assert!(ui.class_of(persuade).contains("submenu"));
+    assert!(ui.class_of(train).contains("disabled"));
+    assert!(
+        ui.world()
+            .get::<bevy_ui::InteractionDisabled>(train)
+            .is_some()
+    );
+    assert!(parts.submenu().is_none());
+
+    // Focus on a button mirrors into InputFocus.
+    ui.world_mut()
+        .get_mut::<DialogueScreen>(root)
+        .unwrap()
+        .view
+        .set_focus(DialogueFocus::Action(id("barter")));
+    ui.frames(1);
+    assert_eq!(ui.focus(), Some(barter));
+
+    // Pointer on "Persuade": its submenu opens, focus on the first enabled option.
+    ui.world_mut().trigger(Activate { entity: persuade });
+    ui.frames(2);
+    let parts = dialogue(&ui, root).1;
+    let backdrop = parts.submenu().expect("submenu drawn");
+    let admire = parts.submenu_option(&id("admire")).unwrap();
+    let bribe = parts.submenu_option(&id("bribe")).unwrap();
+    assert_eq!(ui.focus(), Some(admire));
+    assert!(ui.class_of(bribe).contains("disabled"));
+    assert_eq!(parts.action(&id("persuade")), Some(persuade), "buttons kept");
+
+    // Modal: a topic row behind it does nothing.
+    let before = parts.entries().count();
+    let row = parts.topics().next().unwrap().1;
+    ui.world_mut().trigger(Activate { entity: row });
+    ui.frames(2);
+    assert_eq!(dialogue(&ui, root).1.entries().count(), before);
+    assert_eq!(dialogue(&ui, root).1.submenu(), Some(backdrop));
+
+    // Back closes it: the panel goes, focus back on its button.
+    ui.tap(GamepadButton::East);
+    assert!(dialogue(&ui, root).1.submenu().is_none());
+    assert!(ui.world().get_entity(backdrop).is_err());
+    assert_eq!(ui.focus(), Some(persuade));
+
+    // Reopen and confirm the option with the gamepad: one request, the submenu closes.
+    ui.world_mut().trigger(Activate { entity: persuade });
+    ui.frames(2);
+    ui.tap(GamepadButton::South);
+    assert!(dialogue(&ui, root).1.submenu().is_none());
+    // A button without a submenu sends its request at once.
+    ui.world_mut().trigger(Activate { entity: barter });
+    ui.frames(2);
+    let requests = &ui.world().resource::<DialogueRequests>().0;
+    assert!(requests.contains(&DialogueRequest::Action {
+        action: id("persuade"),
+        option: Some(id("admire")),
+    }));
+    assert!(requests.contains(&DialogueRequest::Action {
+        action: id("barter"),
+        option: None,
+    }));
+
+    // New actions re-sync by key: kept buttons keep their entity.
+    ui.world_mut()
+        .get_mut::<DialogueScreen>(root)
+        .unwrap()
+        .view
+        .set_actions(vec![DialogueAction::new("barter", "Barter")]);
+    ui.frames(2);
+    let parts = dialogue(&ui, root).1;
+    assert_eq!(parts.actions().count(), 1);
+    assert_eq!(parts.action(&id("barter")), Some(barter));
+}

@@ -26,14 +26,16 @@ pub mod interp;
 pub mod lexer;
 mod parser;
 pub mod resolve;
+pub mod statfn;
 
 pub use ast::{Script, SourceKind};
 pub use diag::{Diagnostic, Diagnostics, Rule, Severity};
 pub use coverage::{CallSites, Coverage, OracleFlags, Origin, oracle_flags};
 pub use emit::{emit_dialogue, emit_script};
 pub use functions::{FnId, FunctionTable, Status};
-pub use interp::{Builtin, Host, Interpreter, Locals, RunError};
+pub use interp::{Builtin, Host, Interpreter, Locals, MessageArg, RunError};
 pub use resolve::{Env, MemberLookup, NoEnv};
+pub use statfn::{Dynamic, StatCall, StatFn};
 
 /// A parsed script and everything reported on the way.
 #[derive(Clone, Debug)]

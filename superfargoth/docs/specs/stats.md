@@ -1,6 +1,6 @@
 # Character stats: data-defined values, pools, modifiers, progression seams (`sf_stats`)
 
-Status (2026-11-06): S0-S6 built (`sf_stats`, `mw_stats`, `sf_stats_bevy` + game glue, saves, combat vitals and HUD, dialogue filters; as-built detail: `stats-as-built.md`); S7 next. Game side:
+Status (2026-11-08): S0-S6 built (`sf_stats`, `mw_stats`, `sf_stats_bevy` + game glue, saves, combat vitals and HUD, dialogue filters; as-built detail: `stats-as-built.md`); S7 written 2026-11-08 on a machine that cannot compile, UNTESTED (owner test pass 2026-11-10) (adapter "MWScript"; framework: `StatOp::Leave`, `Sheet::last_inputs`). Game side:
 `../../../bevyrrowind/docs/specs/stats-adapter.md` (Morrowind's 8 attributes, 27 skills, GMSTs, OpenMW formulas).
 Unblocks ROADMAP 2.7 (every OpenMW content mechanic needs stats: `../../../bevyrrowind/docs/research/openmw-mechanics-2026-11-05.md`
 "Finding zero"). The spell/effect runtime is the **next** spec: this one defines only the seam it writes through
@@ -190,7 +190,7 @@ pub trait LevelingModel: Send + Sync {
   per-character content state they need (Morrowind's class) is hidden counters on the sheet (S3).
 - **`UseSkill` flow**: `apply` calls `use_skill`, emits `SkillUsed` with the gain, applies the returned ops; a
   `RaiseSkill` among them calls `raise` and emits `SkillRaised`. The model owns its counters; the core owns order and events.
-- **Which formulas are rules (swappable) and which are content**: see the adapter's table. Rule of thumb from §1b:
+- **Which formulas are rules (swappable) and which are content**: see the adapter's table. Event-rate rules (skill gain, level-up offer, rest) are also Luau-overridable once [rule-hooks.md](rule-hooks.md) is built (`sf.stats.*`); per-tick ones stay data-only. Rule of thumb from §1b:
   numbers authored records depend on (record init, autocalc, chargen bonuses, faction requirements, effect semantics) are
   content, one implementation; how a character grows and recovers (derived maxima, regen, skill gain, level-up) is a
   feel system behind these three traits.

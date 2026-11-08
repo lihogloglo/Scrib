@@ -84,7 +84,7 @@ in-game observation; OpenMW used only as a black-box oracle.
    `OnKnockout`, `OnMurder`, `OnPCAdd`, `OnPCDrop`, `OnRepair`, `OnPCSoulGemUse` return 1 once
    after the event and then 0. **A script that contains `OnActivate` replaces the object's
    default activation**; it must call `Activate` to perform it.
-5. **Message boxes.** `MessageBox "fmt" args... "button"...`: `printf`-style substitution;
+5. **Message boxes.** `MessageBox "fmt" args... "button"...`: OpenMW `std::format` substitution (`ui-adapter.md` "As built (MessageBox formatting)"; lowering written 2026-11-08, UNTESTED);
    without buttons a timed notification, with buttons a modal; `GetButtonPressed` returns −1
    until chosen, then the index once.
 6. **`MenuMode`** is 1 while a menu is open; local scripts keep running in menus, so most begin

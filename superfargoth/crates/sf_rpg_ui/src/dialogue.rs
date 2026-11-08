@@ -9,11 +9,16 @@
 //!    `RpgEvent`s go to [`DialogueView::apply_events`] (journal notices).
 //! 3. [`DialogueView::refresh`] (or [`DialogueView::refresh_from`]) syncs mode, choices and
 //!    the topic list with the session and the known topics.
+//!
+//! Action buttons (services, content menus) are host data: [`DialogueView::set_actions`].
+//! Activating one yields [`DialogueRequest::Action`], which the host routes itself (it is not
+//! a session step).
 
 use std::collections::vec_deque;
 use std::collections::{BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
+use sf_rpg::service::{ServiceOffer, ServiceRequest};
 use sf_rpg::{
     Choice, DialogueDb, DialogueError, DialogueOutput, DialogueRules, DialogueSession, RecordId,
     RpgEvent, SessionState, TopicKind, Topics,
@@ -29,10 +34,18 @@ pub enum DialogueRequest {
     Ask(RecordId),
     Choose(i32),
     Goodbye,
+    /// An action button (`option: None`) or an option of its submenu. Not a session step:
+    /// the host routes it ([`DialogueRequest::service_open`] for services, its own handler
+    /// for content menus) and feeds any lines it produces back as usual.
+    Action {
+        action: ActionId,
+        option: Option<ActionId>,
+    },
 }
 
 impl DialogueRequest {
-    /// Applies the request to a session (host side).
+    /// Applies the request to a session (host side). [`DialogueRequest::Action`] is not a
+    /// session step: no outputs, the session is untouched.
     pub fn apply(
         &self,
         session: &mut DialogueSession,
@@ -46,6 +59,158 @@ impl DialogueRequest {
                 session.goodbye();
                 Ok(Vec::new())
             }
+            Self::Action { .. } => Ok(Vec::new()),
+        }
+    }
+
+    /// The service request a pressed service button stands for: an action without an option
+    /// whose id is the kind of one of `offers` (buttons made by [`DialogueAction::from_offer`]).
+    pub fn service_open(&self, offers: &[ServiceOffer]) -> Option<ServiceRequest> {
+        let Self::Action {
+            action,
+            option: None,
+        } = self
+        else {
+            return None;
+        };
+        let offer = offers.iter().find(|o| o.kind.0 == action.0)?;
+        Some(ServiceRequest::Open {
+            provider: offer.provider,
+            kind: offer.kind.clone(),
+        })
+    }
+}
+
+/// A host-chosen id for an action button or a submenu option (opaque to the view).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ActionId(pub RecordId);
+
+impl ActionId {
+    /// An id from its text (lowercased, as [`RecordId::new`]).
+    pub fn new(id: &str) -> Self {
+        Self(RecordId::new(id))
+    }
+}
+
+/// One option of an action's submenu (one level: options have no submenu).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionOption {
+    pub id: ActionId,
+    /// Display text, already localised by the host.
+    pub label: String,
+    /// Disabled options are shown greyed and take no focus.
+    pub enabled: bool,
+}
+
+impl ActionOption {
+    /// An enabled option.
+    pub fn new(id: &str, label: impl Into<String>) -> Self {
+        Self {
+            id: ActionId::new(id),
+            label: label.into(),
+            enabled: true,
+        }
+    }
+
+    /// Sets [`ActionOption::enabled`].
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+impl ViewModel for ActionOption {
+    const KIND: &'static str = "dialogue.action_option";
+
+    fn fields() -> &'static [&'static str] {
+        &["label", "enabled"]
+    }
+
+    fn field(&self, name: &str) -> Option<UiValue> {
+        match name {
+            "label" => Some(self.label.as_str().into()),
+            "enabled" => Some(self.enabled.into()),
+            _ => None,
+        }
+    }
+}
+
+/// An action button above the topic list, supplied by the host (services first, then content
+/// menus, in the order given). With a non-empty `submenu`, activating it opens the submenu
+/// instead of sending a request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DialogueAction {
+    pub id: ActionId,
+    /// Display text, already localised by the host.
+    pub label: String,
+    /// Disabled buttons are shown greyed and take no focus.
+    pub enabled: bool,
+    pub submenu: Vec<ActionOption>,
+}
+
+impl DialogueAction {
+    /// An enabled button without a submenu.
+    pub fn new(id: &str, label: impl Into<String>) -> Self {
+        Self {
+            id: ActionId::new(id),
+            label: label.into(),
+            enabled: true,
+            submenu: Vec::new(),
+        }
+    }
+
+    /// The button of a service offer: its id is the offer's kind, so
+    /// [`DialogueRequest::service_open`] maps the press back. `label` is the offer's
+    /// `LabelRef` resolved by the host.
+    pub fn from_offer(offer: &ServiceOffer, label: impl Into<String>) -> Self {
+        Self {
+            id: ActionId(offer.kind.0.clone()),
+            label: label.into(),
+            enabled: true,
+            submenu: Vec::new(),
+        }
+    }
+
+    /// Sets [`DialogueAction::enabled`].
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Sets the submenu options.
+    #[must_use]
+    pub fn with_submenu(mut self, options: Vec<ActionOption>) -> Self {
+        self.submenu = options;
+        self
+    }
+
+    /// Can take focus and be pressed (while talking): enabled, and a submenu, if any, has an
+    /// enabled option. Screens grey the button otherwise.
+    pub fn is_live(&self) -> bool {
+        self.enabled && (self.submenu.is_empty() || self.submenu.iter().any(|o| o.enabled))
+    }
+
+    fn option(&self, id: &ActionId) -> Option<&ActionOption> {
+        self.submenu.iter().find(|o| o.id == *id)
+    }
+}
+
+impl ViewModel for DialogueAction {
+    const KIND: &'static str = "dialogue.action";
+
+    fn fields() -> &'static [&'static str] {
+        &["label", "enabled", "has_submenu"]
+    }
+
+    /// `enabled` is [`DialogueAction::is_live`].
+    fn field(&self, name: &str) -> Option<UiValue> {
+        match name {
+            "label" => Some(self.label.as_str().into()),
+            "enabled" => Some(self.is_live().into()),
+            "has_submenu" => Some((!self.submenu.is_empty()).into()),
+            _ => None,
         }
     }
 }
@@ -189,6 +354,10 @@ pub enum DialogueFocus {
     /// An index into [`DialogueView::choices`].
     Choice(usize),
     Goodbye,
+    /// An action button ([`DialogueView::actions`]), above the topics in the list region.
+    Action(ActionId),
+    /// An option of the open submenu ([`DialogueView::submenu`]).
+    SubAction(ActionId),
 }
 
 /// Semantic navigation input. A screen maps its UI actions to these (stock mapping:
@@ -205,7 +374,8 @@ pub enum DialogueNav {
     NextRegion,
     /// Activates the focused item.
     Confirm,
-    /// Goodbye while talking or when goodbye is forced; nothing while choosing.
+    /// Closes an open submenu; else goodbye while talking or when goodbye is forced; nothing
+    /// while choosing.
     Back,
 }
 
@@ -224,6 +394,10 @@ pub struct DialogueView {
     /// Asked in this conversation (marks rows known before the host's `HearLine` lands).
     asked: BTreeSet<RecordId>,
     choices: Vec<Choice>,
+    /// Host-supplied buttons above the topic list.
+    actions: Vec<DialogueAction>,
+    /// The action whose submenu is open (modal: only its options are live).
+    submenu: Option<ActionId>,
     focus: Option<DialogueFocus>,
     /// The focus was placed by the view (a fallback), not by the player: it follows the best
     /// target until the player moves it (the greeting arrives before the topic list).
@@ -254,6 +428,8 @@ impl DialogueView {
             heard: BTreeSet::new(),
             asked: BTreeSet::new(),
             choices: Vec::new(),
+            actions: Vec::new(),
+            submenu: None,
             focus: None,
             focus_auto: true,
             list_focus: None,
@@ -329,6 +505,45 @@ impl DialogueView {
 
     pub fn choices(&self) -> &[Choice] {
         &self.choices
+    }
+
+    /// The action buttons, in display order (above the topic list).
+    pub fn actions(&self) -> &[DialogueAction] {
+        &self.actions
+    }
+
+    /// Replaces the action buttons (the host's offers and content menus; none by default).
+    /// They are live only while talking ([`DialogueView::links_active`]). An open submenu
+    /// whose action is gone or no longer live closes.
+    pub fn set_actions(&mut self, actions: Vec<DialogueAction>) {
+        if actions == self.actions {
+            return;
+        }
+        self.actions = actions;
+        self.version += 1;
+        self.settle_focus();
+    }
+
+    /// The action whose submenu is open. While open, only its enabled options take focus or
+    /// activate; `Back` (or [`DialogueView::close_submenu`]) closes it.
+    pub fn submenu(&self) -> Option<&DialogueAction> {
+        let open = self.submenu.as_ref()?;
+        self.action(open)
+    }
+
+    /// Closes the open submenu, focus back on its button; `false` when none was open.
+    pub fn close_submenu(&mut self) -> bool {
+        let Some(open) = self.submenu.take() else {
+            return false;
+        };
+        self.version += 1;
+        let parent = DialogueFocus::Action(open);
+        if self.focus_valid(&parent) {
+            self.move_focus(Some(parent), false);
+        } else {
+            self.settle_focus();
+        }
+        true
     }
 
     pub fn focus(&self) -> Option<&DialogueFocus> {
@@ -464,7 +679,13 @@ impl DialogueView {
                 let focus = self.focus.clone()?;
                 self.activate(focus)
             }
-            DialogueNav::Back => self.can_goodbye().then_some(DialogueRequest::Goodbye),
+            DialogueNav::Back => {
+                if self.close_submenu() {
+                    return None;
+                }
+                self.can_goodbye().then_some(DialogueRequest::Goodbye)
+            }
+            DialogueNav::PrevRegion | DialogueNav::NextRegion if self.submenu.is_some() => None,
             DialogueNav::Prev => {
                 self.step(false);
                 None
@@ -488,12 +709,37 @@ impl DialogueView {
     }
 
     /// Activates `target` (a click, or confirm on the focus): moves the focus there and
-    /// returns the request. `None` when the target isn't live in this mode.
+    /// returns the request. `None` when the target isn't live in this mode, and for an
+    /// action with a submenu, which opens it (focus on its first enabled option). An option
+    /// closes the submenu (focus back on its button) and returns
+    /// `Action { action, option: Some(..) }`.
     pub fn activate(&mut self, target: DialogueFocus) -> Option<DialogueRequest> {
         if !self.focus_valid(&target) {
             return None;
         }
         let request = match &target {
+            DialogueFocus::Action(action) => {
+                let action = action.clone();
+                self.move_focus(Some(target.clone()), false);
+                if self.action(&action).is_some_and(|a| !a.submenu.is_empty()) {
+                    self.open_submenu(action);
+                    return None;
+                }
+                return Some(DialogueRequest::Action {
+                    action,
+                    option: None,
+                });
+            }
+            DialogueFocus::SubAction(option) => {
+                let option = option.clone();
+                let action = self.submenu.take()?;
+                self.version += 1;
+                self.move_focus(Some(DialogueFocus::Action(action.clone())), false);
+                return Some(DialogueRequest::Action {
+                    action,
+                    option: Some(option),
+                });
+            }
             DialogueFocus::Topic(topic) => DialogueRequest::Ask(topic.clone()),
             DialogueFocus::Link { entry, run } => {
                 DialogueRequest::Ask(self.link_at(*entry, *run)?.topic.clone())
@@ -514,7 +760,7 @@ impl DialogueView {
                     label: label.unwrap_or_default(),
                 });
             }
-            DialogueRequest::Goodbye => {}
+            DialogueRequest::Goodbye | DialogueRequest::Action { .. } => {}
         }
         Some(request)
     }
@@ -641,21 +887,74 @@ impl DialogueView {
         items
     }
 
-    /// Topic rows in display order, then goodbye.
+    /// Live action buttons, then topic rows in display order, then goodbye.
     fn list_items(&mut self) -> Vec<DialogueFocus> {
-        let mut items: Vec<DialogueFocus> = self
-            .topics
-            .view()
-            .iter()
-            .cloned()
-            .map(DialogueFocus::Topic)
-            .collect();
+        let mut items: Vec<DialogueFocus> =
+            self.live_actions().into_iter().map(DialogueFocus::Action).collect();
+        items.extend(self.topics.view().iter().cloned().map(DialogueFocus::Topic));
         items.push(DialogueFocus::Goodbye);
         items
     }
 
+    fn action(&self, id: &ActionId) -> Option<&DialogueAction> {
+        self.actions.iter().find(|a| a.id == *id)
+    }
+
+    /// Ids of the live action buttons, in display order.
+    fn live_actions(&self) -> Vec<ActionId> {
+        self.actions
+            .iter()
+            .filter(|a| a.is_live())
+            .map(|a| a.id.clone())
+            .collect()
+    }
+
+    /// The enabled options of `action`'s submenu, as focus targets.
+    fn option_items(&self, action: &ActionId) -> Vec<DialogueFocus> {
+        self.action(action)
+            .into_iter()
+            .flat_map(|a| a.submenu.iter())
+            .filter(|o| o.enabled)
+            .map(|o| DialogueFocus::SubAction(o.id.clone()))
+            .collect()
+    }
+
+    /// Opens `action`'s submenu, focus on its first enabled option.
+    fn open_submenu(&mut self, action: ActionId) {
+        let first = self.option_items(&action).into_iter().next();
+        self.submenu = Some(action);
+        self.version += 1;
+        if first.is_some() {
+            self.move_focus(first, false);
+        }
+    }
+
+    /// Closes the submenu when it can't stay open: not talking, or its action is gone, has
+    /// no submenu any more, or isn't live.
+    fn check_submenu(&mut self) {
+        let Some(open) = &self.submenu else {
+            return;
+        };
+        let keep = self.mode == DialogueMode::Talking
+            && self
+                .action(open)
+                .is_some_and(|a| !a.submenu.is_empty() && a.is_live());
+        if !keep {
+            self.submenu = None;
+            self.version += 1;
+        }
+    }
+
     fn focus_valid(&mut self, focus: &DialogueFocus) -> bool {
+        if let Some(open) = &self.submenu {
+            return self.mode == DialogueMode::Talking
+                && matches!(focus, DialogueFocus::SubAction(option)
+                    if self.action(open).and_then(|a| a.option(option)).is_some_and(|o| o.enabled));
+        }
         match (self.mode, focus) {
+            (DialogueMode::Talking, DialogueFocus::Action(action)) => {
+                self.action(action).is_some_and(DialogueAction::is_live)
+            }
             (DialogueMode::Talking, DialogueFocus::Topic(topic)) => {
                 self.topics.view().contains(topic)
             }
@@ -670,6 +969,7 @@ impl DialogueView {
 
     /// Keeps the focus on something live after any change.
     fn settle_focus(&mut self) {
+        self.check_submenu();
         if !self.focus_auto
             && let Some(focus) = self.focus.clone()
             && self.focus_valid(&focus)
@@ -682,15 +982,20 @@ impl DialogueView {
             DialogueMode::Choosing => {
                 (!self.choices.is_empty()).then_some(DialogueFocus::Choice(0))
             }
-            DialogueMode::Talking => Some(self.list_fallback()),
+            DialogueMode::Talking => match self.submenu.clone() {
+                Some(open) => self.option_items(&open).into_iter().next(),
+                None => Some(self.list_fallback()),
+            },
         };
         self.move_focus(next, true);
     }
 
     /// Where focus lands in the topic list: the remembered row, else the row now at its
-    /// index (clamped), else the first row, else goodbye.
+    /// index (clamped), else the first row, else goodbye. A remembered action button that is
+    /// no longer live gives the live button now at its index (clamped), else the first row.
     fn list_fallback(&mut self) -> DialogueFocus {
         let remembered = self.list_focus.clone();
+        let live = self.live_actions();
         let order = self.topics.view();
         let at = |index: usize| {
             order
@@ -703,6 +1008,13 @@ impl DialogueView {
                 DialogueFocus::Topic(topic)
             }
             Some((DialogueFocus::Topic(_), index)) => at(index),
+            Some((DialogueFocus::Action(action), _)) if live.contains(&action) => {
+                DialogueFocus::Action(action)
+            }
+            Some((DialogueFocus::Action(_), index)) => live
+                .get(index)
+                .or(live.last())
+                .map_or_else(|| at(0), |a| DialogueFocus::Action(a.clone())),
             Some((focus, _)) => focus,
             None => at(0),
         }
@@ -724,6 +1036,14 @@ impl DialogueView {
                     .unwrap_or(0);
                 self.list_focus = Some((DialogueFocus::Topic(topic.clone()), index));
             }
+            Some(DialogueFocus::Action(action)) => {
+                let index = self
+                    .live_actions()
+                    .iter()
+                    .position(|a| a == action)
+                    .unwrap_or(0);
+                self.list_focus = Some((DialogueFocus::Action(action.clone()), index));
+            }
             Some(DialogueFocus::Goodbye) if self.mode == DialogueMode::Talking => {
                 self.list_focus = Some((DialogueFocus::Goodbye, self.topics.view().len()));
             }
@@ -735,14 +1055,18 @@ impl DialogueView {
     }
 
     fn step(&mut self, forward: bool) {
-        let items = match (self.mode, &self.focus) {
-            (DialogueMode::Talking, Some(DialogueFocus::Link { .. })) => self.link_items(),
-            (DialogueMode::Talking, _) => self.list_items(),
-            (DialogueMode::Choosing, _) => {
-                (0..self.choices.len()).map(DialogueFocus::Choice).collect()
+        let items = if let Some(open) = self.submenu.clone() {
+            self.option_items(&open)
+        } else {
+            match (self.mode, &self.focus) {
+                (DialogueMode::Talking, Some(DialogueFocus::Link { .. })) => self.link_items(),
+                (DialogueMode::Talking, _) => self.list_items(),
+                (DialogueMode::Choosing, _) => {
+                    (0..self.choices.len()).map(DialogueFocus::Choice).collect()
+                }
+                (DialogueMode::GoodbyeOnly, _) => vec![DialogueFocus::Goodbye],
+                (DialogueMode::Ended, _) => Vec::new(),
             }
-            (DialogueMode::GoodbyeOnly, _) => vec![DialogueFocus::Goodbye],
-            (DialogueMode::Ended, _) => Vec::new(),
         };
         if items.is_empty() {
             return;
