@@ -12,7 +12,8 @@ the spec stands until the owner decides. "Proposed doc changes" (§10) lists the
 > platform-grade (adapter split, everything-is-a-mod, Bevy-free cores, net-ready rules that the code actually
 > follows). The gaps are platform-level, not system-level: licence model, no CI or mechanical guardrails, the quality
 > presets live in the game, no second content pack proving the split, a deep `bevy_pbr` fork, and a multiplayer
-> design that nothing tests yet. Read §1 (philosophy), §8 (roadmap), §9 (owner decisions).
+> design that nothing tests yet. Read §1 (philosophy), §8 (roadmap), §9 (owner decisions). All §9 items are now
+> decided (1-3 by the owner, 4-10 delegated: `docs/platform-decisions-2026-11-08.md`).
 <!-- /agent-summary -->
 
 ## 0. Where we stand (facts)
@@ -409,12 +410,18 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 
 ### Now (next 4-6 weeks; mostly decisions and guardrails, fits around Phases 1-3)
 
-1. **Licence decision + quarantine rule** (§2.3). Time-sensitive: every GPL port narrows the options. Also DCO/CLA,
-   and a §7 permission or separate process for Steamworks before N8 is designed further.
+0. **Delirium out of the default build and the workspace** (decision 8): first, because its pinned rev can't be
+   fetched and a fresh clone (CI included) can't build the default game. Deaths and knockdowns back on `sf_ragdoll`.
+1. **Licence: decided** (GPL stays; quarantine dropped). Left: DCO in CONTRIBUTING plus a CI sign-off check
+   (decision 1b). Steam is decided as a separate helper process (decision 9), so nothing to do before N8.
 2. **CI with mechanical guardrails** (§6.4): GitHub Actions running the four existing gates, plus the boundary and
-   layer check, plus `disallowed-methods` for the net-ready rules. One slice, and every later slice benefits.
-3. **Loopback co-op test** (§4.2.1): pull N1 forward as a headless two-peer in-process test on lightyear 0.31. It
-   keeps net-readiness honest while gameplay is being written.
+   layer check (L0/L1 never depend on L3, decision 4), plus `disallowed-methods` for the net-ready rules. One slice,
+   and every later slice benefits.
+3. **Sample pack S0 + loopback co-op test** (§4.2.1, decision 5): `samples/greybox` with an `sf_*`-only headless app
+   in CI, then two peers in one process on lightyear 0.31 on top of it. It keeps the framework split and
+   net-readiness honest while gameplay is being written, and it seeds the dedicated build.
+3b. **Format registry** (`superfargoth/docs/formats.md`, decision 10): one page listing every on-disk and wire
+   format, its version and trigger; golden files for every save-section version.
 4. **`sf_scalability` + tier matrix** (§5): move presets into the framework as records + console variables. Add the
    floor tier (Steam Deck class) with its own benchmark gate. Add an FSR/TAA path beside DLSS.
 5. **Adopt this philosophy and fix doc drift** (§1, §10): principles and non-goals into ARCHITECTURE §1-§2, layers
@@ -422,19 +429,26 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 
 ### Next (after Phase 2 done, alongside Phase 3; ~2-4 months)
 
-6. **Bevy 0.21 upgrade lane** with the cadence policy, and upstream PRs for the view material hook and GI provider.
-7. **CC0 sample pack in CI** (§3.2): the native content path, Blender → glTF levels, JSON Schemas for records and
-   manifests.
+6. **Bevy 0.21 upgrade lane** (decision 6): start at the 0.21 RC, ship within 6 weeks of release; move the vendored
+   Bevy crates to a git fork branch on that rebase; one upstream slice for the view material hook (then GI provider).
+7. **Sample pack S1 after the vertical slice** (§3.2, decision 5): the rendered CC0 greybox valley, Blender → glTF
+   levels, JSON Schemas for records and manifests, the human guide written from it.
 8. **One state registry** for save + replication + prediction (§4.2.3), before more systems add sections.
-9. **Unpark scripting with the API-per-system rule**: `@sf/records`, `@sf/stats`, `@sf/combat` events.
+9. **Scripting stays parked; systems are script-ready** (decision 7): each spec gets a "Script surface" (events,
+   commands, formula structs as plain data). Unpark on the first of: S1's quest, Phase 2.7 formulas built, mod API
+   1.0 needed; then `@sf/records`, `@sf/rules`, events, from a JSON API dump.
+9b. **Clean-room active ragdoll spec** for `sf_ragdoll` (decision 8), research first, never reading Delirium code.
 10. **Specs for `sf_ai`, `sf_interaction`, persistence policies, sim LOD** (§7), research first (rule 1).
 11. **No-RT GI fallback** sharing the probe data model (§5.5).
 
 ### Later (after M6/M7)
 
-12. Co-op N2-N8 as planned, plus a headless dedicated-server build if the owner widens the MP scope.
-13. Publish stable `sf_*` crates with Bevy-tied majors, plus a human guide written from the sample pack.
-14. WASM mod tier (wasmtime component model) generated from the API registry.
+12. Co-op N2-N8 plus the headless dedicated-server build (owner answer 2: no ceiling). N8 Steam = the separate
+    `scrib-platform-steam` helper over `sf_platform_ipc` (decision 9); the first Steam release is SDK-free.
+13. Publish `sf_*` crates only once an outside project depends on them: `0.N` per Bevy minor with a compatibility
+    table, no promise before Bevy 1.0 (decision 10). Saves are promised from the first public build; records and the
+    Luau API from mod API 1.0.
+14. WASM mod tier (wasmtime component model) after Luau API 1.0, generated from the same API dump (decision 7).
 15. Editor: adopt Bevy's when it ships; until then, Blender + in-game tools.
 16. Viewer/demo builds on WebGPU; console ports only if the licence allows.
 
@@ -468,7 +482,22 @@ Authors need knobs to keep emergent behaviour from breaking quests.
   not a target. Mobile is a non-goal.
 - **Seamless interiors:** an option (per door / per pack setting), not mandatory.
 - **AI:** the `sf_ai` spec comes before the seamless NPC work; research first (`superfargoth/docs/research/npc-ai-2026-11-08.md`).
-- Still open: 4-10.
+- **4 Scope (delegated to agent):** an engine for systemic, persistent 3D open worlds with characters; the ARPG is
+  the first L3 kit; L0/L1 never depend on L3 (CI check). High confidence.
+- **5 Sample pack (delegated to agent):** S0 now, headless and minimal (`samples/greybox`, an `sf_*`-only app in CI,
+  host of the loopback co-op test); S1 rendered CC0 valley after the vertical slice. Medium-high.
+- **6 Bevy (delegated to agent):** adopt every minor, never skip; lane from the RC, ship ≤ 6 weeks (8 max); vendored
+  Bevy crates move to a git fork branch; ≥ 1 upstream slice per cycle (material hook, then GI provider). High/medium.
+- **7 Scripting (delegated to agent):** Luau stays parked (owner rule); specs get a "Script surface"; on unpark, a JSON
+  API dump generates `.d.luau`/docs/WIT; WASM after Luau 1.0; gameplay scripts host-only in MP. Medium-high.
+- **8 Delirium (delegated to agent):** out of the default build and the workspace now: the pinned rev can't be fetched
+  and upstream says it was rewritten from GTA IV's program code; `sf_ragdoll` default, clean-room active ragdoll later. High.
+- **9 Steam (delegated to agent):** SDK-free Steam release first; N8 via a separate permissive helper process over a
+  generic IPC; no LICENSE-EXCEPTION extension (void with third-party GPL in the binary). High (legal line medium).
+- **10 Stability (delegated to agent):** promises go to data, not Rust: saves from the first public build, records/
+  `mod.toml`/Luau API from mod API 1.0; `sf_*` crates `0.N`, unpromised before Bevy 1.0; a format registry. High.
+- **1b DCO/CLA (delegated to agent):** DCO with inbound = outbound, plus consent to future §7 permissions. High.
+- Full reasoning, evidence and ready-to-paste edits: `docs/platform-decisions-2026-11-08.md`.
 
 ## 10. Proposed doc changes
 
@@ -476,20 +505,23 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 |---|---|
 | `superfargoth/docs/ARCHITECTURE.md` §1 | Add the philosophy and non-goals (§1 here) above the Morrowind vision; keep "Morrowind if Bethesda made it in 2026" as the first pack's vision |
 | ARCHITECTURE §2 principle 2 | Stale: "the framework lives in its own Cargo workspace and repo". Now one workspace: "the boundary is enforced by CI (`cargo metadata` check)" |
-| ARCHITECTURE §3 | The claim "vendored Bevy patches ... no GPL-derived lines" is false since the Clockwork PCSS hunk. Fix it, and add the quarantine rule, the Steamworks gap and the licence decision once taken |
+| ARCHITECTURE §3 | The claim "vendored Bevy patches ... no GPL-derived lines" is false since the Clockwork PCSS hunk. Fix it (GPL-derived H2 hunk, fork branch) and record the licence decision (GPL stays, no quarantine) and the Steam helper-process rule (decisions 6, 9) |
 | ARCHITECTURE §4 | Refresh the lag tracker (lightyear 0.31 on 0.20) and add "bus factor / exit" |
 | ARCHITECTURE §5 | Drift: `sf_foliage`, `sf_interaction`, `sf_ai`, `sf_viewer`, `sf_devui`, `sf_ui_lua` don't exist, while `sf_surface`, `sf_gi`, `sf_combat`, `sf_stats`, `sf_action`, `sf_ids` aren't listed. Replace with the L0-L3 layering table (§3.1) generated or checked against `superfargoth/crates/` |
-| ARCHITECTURE §6.1 | "Possibly WASM later" → "WASM tier later, from the language-neutral API registry" |
+| ARCHITECTURE §6.1 | "Possibly WASM later" → "WASM tier after Luau API 1.0, from the same API dump"; host-only gameplay scripts in MP (decision 7) |
 | ARCHITECTURE new § | Scalability (§5.3) and the tier matrix (§5.1) |
 | `superfargoth/docs/DECISIONS.md` | Append one dated bullet per owner decision in §9 when taken; nothing before |
-| `bevyrrowind/docs/ROADMAP.md` | A short "Platform" lane: P1 licence, P2 CI + guardrails, P3 loopback co-op test (N1 forward), P4 `sf_scalability` + floor gate, P5 sample pack; "Still open" gains §9 items 2-3 |
-| `CONTRIBUTING.md` | Tie-breaker per tier (§2.1); "Net-ready" points to the lints once they exist; licence quarantine rule; frame target becomes the tier matrix |
-| `superfargoth/docs/specs/net.md` | Non-goals: reword "dedicated servers" per decision 2; player count not fixed at 4; one state registry; R0 not scaled by preset; Steamworks licence note under "Topology and transport" |
+| `bevyrrowind/docs/ROADMAP.md` | A short "Platform" lane: P0 Delirium out of default + workspace, P1 CI + DCO + layer check, P2 sample pack S0 + loopback co-op test, P3 `sf_scalability` + floor gate, P4 format registry; 3.2/3.2b Delirium lines (decisions 5, 8, 10) |
+| `CONTRIBUTING.md` | Tie-breaker per tier (§2.1); "Net-ready" points to the lints once they exist; ~~licence quarantine rule~~ (dropped); scope wording (decision 4); "Script-ready" rule (7); DCO + no game-derived code (1b, 8); frame target becomes the tier matrix |
+| `superfargoth/docs/specs/net.md` | Non-goals: reword "dedicated servers" per decision 2; player count not fixed at 4; one state registry; R0 not scaled by preset; Steam via the separate helper process under "Topology and transport" (decision 9) |
 | `superfargoth/docs/specs/streaming.md` | "Ring radii scale with the quality preset": exclude R0 (simulation) |
 | `superfargoth/docs/specs/gi.md` + `docs/next-gen-pbr-gi-rt-plan.md` | gi.md is canonical. Mark next-gen Tracks 2-3 superseded where they conflict (baked volumes vs dynamic probes, automated screenshot checks); add the no-RT fallback tier |
-| `superfargoth/docs/specs/scripting.md` | The API-per-system rule; language-neutral registry note |
+| `superfargoth/docs/specs/scripting.md` | ~~The API-per-system rule~~ (superseded by decision 7): deprecation window, JSON API dump as the registry's truth on unpark, the unpark trigger, host-only gameplay scripts in MP. Exact text in `platform-decisions-2026-11-08.md` |
 | `docs/SYSTEMS.md` | Rows for Scalability, Interaction, Persistence/sim LOD; the AI row points to the planned spec |
-| `superfargoth/vendor/README.md` | Mark which hunks are GPL-derived (not upstreamable as is) |
+| `superfargoth/vendor/README.md` | Mark the GPL-derived hunk (H2); the move to a git fork branch; the upgrade cadence (decision 6). Exact text in `platform-decisions-2026-11-08.md` |
+| **Decisions 4-10 (2026-11-08)** | Ready-to-paste old→new text for DECISIONS (8 bullets), ARCHITECTURE §1/§3/§4/§6.1, CONTRIBUTING (scope wording, net-ready, script-ready, licence + DCO), ROADMAP (3.2, 3.2b, decision 5 + P-lane, co-op line), scripting.md, net.md (Steam helper), `LICENSE-EXCEPTION.md` (Delirium paragraph) and the vendor README: end of `docs/platform-decisions-2026-11-08.md`. Not applied |
+| `LICENSE-EXCEPTION.md` | Delirium scope paragraph → third-party GPL code + "platform SDKs never enter the game process" (decisions 8, 9). No Steamworks extension |
+| new `superfargoth/docs/formats.md` | Format registry (decision 10): every on-disk/wire format, version, owner, spec, regenerable, guarantee trigger |
 
 ## Sources
 

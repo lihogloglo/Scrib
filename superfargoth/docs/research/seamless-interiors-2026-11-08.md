@@ -30,7 +30,10 @@ marked **(verify)** come from memory or a page not re-read.
   `doorwayPassable`) so the wall each door is set into doesn't stop you.
 - **Recommended plan:** 16 slices (section 6), framework first, M9 portal view resurrected from the 2026-10-12 spike
   as `sf_portal_bevy`, AI crossing on our pathgrid scaffold before `sf_ai` exists, off-screen AI parked on `sf_ai`.
-  Five existing decisions should change (section 5).
+  Five existing decisions should change (section 5). **Update 2026-11-08:** the `sf_ai`/`sf_nav` specs exist; M9 is
+  split into M9a (player) and M9b (world), SI3 and SI12a became shared prerequisites, SI13-SI15 are replaced by
+  nav.md NV11, ai.md AI12/AI10, and the section 7 questions are decided
+  (`ai-nav-decisions-2026-11-08.md` (i)-(l), s5-s7).
 
 ## 2. What Scrib already has
 
@@ -265,8 +268,7 @@ extents, hinges, environments and door rules.
   `heard`): alarms, crimes and combat pursue across portals with no per-package hacks.
 - **Off-screen simulation:** actors outside the simulated set run a coarse schedule on the `WorldGraph` (location
   updates with travel time, no physics, no animation), placed on the nearest valid nav node when their space becomes
-  simulated: the Bethesda low-process tier. This belongs to `sf_ai` (no spec yet); park it, but give `sf_ai` the
-  `WorldGraph` and `Location`-based schedule as its seam.
+  simulated: the Bethesda low-process tier. Now specified as `sf_ai` tier 0 (ai.md "Tiers and budget", AI10).
 - **Followers:** walk through like anyone; if blocked for N s and out of every viewer's sight, take the link
   (vanilla's follower teleport as the fallback, never the default).
 
@@ -287,7 +289,11 @@ extents, hinges, environments and door rules.
 - **Mods:** links, frames and portal readiness are bake products of the merged load order (fingerprint includes door
   model bounds, world-adapter "Next step"). A mod door that is thick, horizontal, one-way or mismatched > 2× stays
   fade-only automatically. Scripted doors keep working because opening a door *is* the activation event (see 4.11).
-- **Seamless stays a setting** (owner 2026-10-12), with fade as the classic path; both share the data.
+- **Seamless stays a setting** (owner 2026-10-12, 2026-11-08: per door / per pack), with fade as the classic path;
+  both share the data. Decided 2026-11-08: it is a **host world rule** `world.doors = seamless | classic` saved with
+  the world (pack default, per-door data overrides), never a graphics option, because open seamless doors pass sight,
+  witnesses and NPC crossings; clients may only degrade the portal *view* (`portal.view = full | reduced`) or fade
+  their own screen during a crossing.
 
 ### 4.11 Morrowind adapter (`mw_*`)
 
@@ -347,8 +353,8 @@ pub fn gate(prev: Vec3, now: Vec3, extent: Vec2) -> bool {  // centre crossed th
 6. Portals.md "history reset at the crossing" for the main view: replaced by motion vectors written through the
    opening; keep the reset for the portal camera when it changes link.
 7. Milestones: ARCHITECTURE says M9 = "portal rendering, crossing, environment blending". NPC crossing needs the
-   simulated set and nav links, and off-screen AI needs `sf_ai` (M10 era): split M9 into M9a (player, look, sound)
-   and M9b (actors, physics, AI), or accept that M9 lands without NPCs walking through.
+   simulated set and nav links, and off-screen AI needs `sf_ai` (M7, not M10): **decided 2026-11-08, split** into M9a
+   (player, look, sound) and M9b (actors, physics, AI); exact ARCHITECTURE text in `ai-nav-decisions-2026-11-08.md`.
 
 ## 6. Slice plan (one deliverable + test each)
 
@@ -367,14 +373,20 @@ pub fn gate(prev: Vec3, now: Vec3, extent: Vec2) -> bool {  // centre crossed th
 | **SI10** | Weather through portals: "one exterior viewer" anchoring for precip/shelter/cloud cameras; draft wind | anchor selection logic; draft zero when shut | WE-: rain seen through the door, none indoors, porch dry |
 | **SI11** | Audio: `ListenerExposure`, far-side voice routing, portal ambience emitter | exposure continuity; virtual position and path-length math | AU-: rain fades in as you approach the door, tavern heard from the street |
 | **SIM** | Measurement: portal view cost looking in and looking out (Census, Balmora street door, Vivec canton), per preset | `#[ignore = "measurement: ..."]`; owner runs the suite | owner |
-| **SI12** | Simulated set: portal driver anchor at the mapped pose; physics steps the set; body and projectile crossing | crate pushed through lands in the other world with mapped velocity, nothing NaN; set membership exact | PH-: throw an item through the door |
-| **SI13** | `WorldGraph` + `portal_query` (map, path_distance, line_of_sight) | exact routes on a synthetic 3-space graph; LOS through an opening | none |
-| **SI14** | AI door traversal on the `mw_ai` scaffold: approach points, traverse action, follower/pursuit through doors, perception via `portal_query` | headless: an NPC follows the player through the Census door; a guard pursues out | AI-: follower through Balmora doors |
-| **SI15** | `[p]` Off-screen coarse AI tier on `WorldGraph` (in the `sf_ai` spec) | schedule placement determinism | parked on `sf_ai` |
+| **SI12a** | Simulated set without portals: the union of every gameplay anchor's worldspace, physics steps each (shared with net N5 and ai.md AI9; until it lands the set is the active worldspace) | set membership exact for two anchors in two worldspaces; each world steps once per tick | none |
+| **SI12b** | Portal driver anchor at the mapped pose (far R0 joins the set: full AI, physics, scripts); body and projectile crossing | crate pushed through lands in the other world with mapped velocity, nothing NaN | PH-: throw an item through the door |
+| ~~SI13~~ | Replaced by nav.md **NV11** (`LinkId`, `WorldGraph`, `portal_query`) | | |
+| ~~SI14~~ | Replaced by ai.md **AI12** + ai-adapter **MA9** (traverse, follower/pursuit through doors, on `sf_ai`, not the scaffold) | | AI-: follower through Balmora doors |
+| ~~SI15~~ | Replaced by ai.md **AI10** (tier 0 on `WorldGraph`, promotion resolve) | | |
 | **SI16** | `[p]` Co-op: interest through portals, interpolation across crossings | interest set exact; straddling interpolation stays on the link | after net N5 |
 
-Order: SI0 → SI1 → SI2 → SI3 → SI4/SI5 → SI6 → SI7 → SIM → SI8 → SI9/SI10/SI11 → SI12 → SI13 → SI14. SI3 is the
-risky refactor; do it before any rendering so the rest is additive.
+**Milestones (decided 2026-11-08).** **M9a, seamless for the player:** SI0-SI2, SI4-SI11, SIM. **M9b, seamless for the
+world:** SI12b, NV11, AI12 + MA9, AI10, SI16; after M7's AI slices. **Shared prerequisites** (M7/net work, not M9):
+**SI3** before nav.md NV5 and ai.md AI6 (every nav query takes the actor's worldspace), **SI12a** before AI9 and net N5.
+AI12 needs only SI2 (the Bevy-free core) for its seamless branch.
+
+Order: SI0 → SI1 → SI2 → SI3 (shared, early) → SI4/SI5 → SI6 → SI7 → SIM → SI8 → SI9/SI10/SI11 (M9a); SI12a with the
+AI lane; SI12b → NV11 → AI12/MA9 (M9b). SI3 is the risky refactor; do it before any rendering so the rest is additive.
 
 ## 7. Risks and open questions for the owner
 
@@ -391,16 +403,23 @@ risky refactor; do it before any rendering so the rest is additive.
   ambiguous Balmora shop doors (252), floating arrival markers (only matter for fade links), scripted doors.
 - *Simulation cost* of live far sides: an open door in Vivec makes a canton's actors tick; cap by R0 and actor tiers.
 
-**Questions.**
-1. Make seamless the **default** for portal-ready links once SI6-SI8 pass (today: optional, fade default)?
-2. Doors: visible swing with auto-close (OpenMW fork) or doorways that stay open once used? Swing time ~1 s?
-3. How "live" is the far side: full AI + physics within R0 of the far door, or only visible actors idling until you
-   cross (cheaper, OpenMW's stand-ins)?
-4. Split M9 into M9a (player, rendering, look, audio) and M9b (actors, physics, AI), given no `sf_ai` spec yet? Write
-   the `sf_ai` spec (with the `WorldGraph` seam) before SI14?
-5. Portal views: one on Medium, two on High; chained spaces (exterior → canton → plaza) show the second door shut. OK?
-6. Fade-only links (216: trapdoors, one-way, > 2× mismatch): keep the fade, or animate trapdoors as a drop later?
-7. Followers: walk through, with the vanilla teleport only as an out-of-sight fallback?
+**Questions: decided 2026-11-08** (owner-delegated; reasoning, sources and revisit triggers in
+`ai-nav-decisions-2026-11-08.md`).
+1. **Default (i):** seamless vs classic is a host world rule saved with the world, never a graphics option (it changes
+   sight, witnesses and NPC crossings). Default classic until the M9a gate (SI6-SI8 built, SIM within the Floor budget
+   with the reduced portal view, owner visual sign-off), then seamless for new worlds; existing worlds keep theirs.
+2. **Doors (j):** load doors swing visibly, ~1 s (adapter data), and auto-close after ~5 s once the passage box is
+   empty and no player is within ~14 m, unless a pursuit or follow routes through; NPCs close a door they found shut;
+   a body in the doorway reopens the leaf. Auto-close bounds open portals, hence render cost and the simulated set.
+   In-cell doors keep vanilla behaviour.
+3. **Far side (k):** full. The far R0 joins the simulated set (physics, scripts, AI) and its actors take tiers from the
+   one global allocator, visibility through the opening counting as visibility; no stand-in mode. If the Deck can't
+   afford a canton behind a door, shrink the portal anchor radius (a fixed per-game constant).
+4. **Split M9 (l):** yes, M9a/M9b as in section 6; the `sf_ai` spec now exists and AI12 replaces SI14.
+5. **Views (s5):** Floor 1 reduced view, Medium 1, High 2; recursion depth 1; an open doorway seen through another
+   draws as a card in the far-far space's fog/ambient colour, not a shut leaf (which would misstate door state).
+6. **Fade-only links (s6):** keep the fade; a trapdoor drop animation is later polish.
+7. **Followers (s7):** yes: walk through, vanilla teleport only when blocked N s and unseen by every player.
 
 ## Sources
 

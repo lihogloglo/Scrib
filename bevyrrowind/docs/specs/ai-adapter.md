@@ -14,7 +14,11 @@ ported code cites file + commit in its module docs, gets a `superfargoth/THIRD_P
   (Hello/Fight/Flee/Alarm considerations), `awareness` (the `AwarenessModel`), `fast_forward`, `schedules` (loader,
   anchors, quest-safety validator), `nav` (agent classes, area table, pathgrid links, door approach points), and the
   Morrowind HTN method set as data (`bevyrrowind/data/ai/methods/*.ron`).
-- **`mw_rpg::crime`** (Bevy-free; crime is a content mechanic): offences, witnesses, bounty, guards, arrest.
+- **`mw_rpg::crime`** (Bevy-free; crime is a content mechanic): offences, witnesses, bounty, guards, arrest. Not a new
+  `mw_crime` crate (decided 2026-11-08, `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (h)): OpenMW keeps
+  crime beside disposition and persuasion (`mechanicsmanagerimp.cpp`), which `mw_rpg` already holds, with the bounty
+  functions. No `sf_ai` dependency: witnesses in, effects out (bounty, Fight, reporters, pursuers, crime fact); the Bevy
+  glue pushes *Pursue* and appends the fact. Split out only if it ever needs `sf_ai`/`sf_nav` types.
 - **`mw_bake`**: the `NavGeometrySource` over cooked collision (`collision.cook` products), LAND heights and water.
 - **Glue**: `mw_walkers_bevy` (owns NPC walkers; installs `sf_ai_bevy` for them), `mw_script` (AI functions),
   `mw_doors_bevy` (door activation rules for the `Traverse` operator).
@@ -36,12 +40,14 @@ ported code cites file + commit in its module docs, gets a `superfargoth/THIRD_P
 ## Navigation (`sf_nav` data)
 
 - **Agent classes** (`sf.nav.agent` records from `mw_ai::nav`): `humanoid` (radius and height from the human capsule
-  at race scale 1.0; small creatures use it too) and `large` (creature collision bounds above a size threshold).
-  A third `small` class only if NV4's bake time allows (nav.md open question 1). OpenMW bakes one mesh per agent
-  bounds (`components/detournavigator/navigator.hpp`).
+  at race scale 1.0; small creatures use it too) and `large` (creature collision bounds above a size threshold). **Two
+  classes, no `small`** (decisions (a)): no vanilla passage admits only small creatures, and a small class would cost
+  ~4× the humanoid bake. MA1 prints the creature-radius histogram per class (a revisit trigger). OpenMW bakes one mesh
+  per agent bounds (`components/detournavigator/navigator.hpp`).
 - **Areas** (`sf.nav.area`), from OpenMW's `areatype.hpp` (ground, water, door, pathgrid) plus ours: `ground` 1,
-  `water` (swimmers only; others high cost), `door` 2 (OpenMW's door cost), `door_closed` (runtime), `path` (pathgrid
-  corridors, slightly cheaper so NPCs keep to streets), `hazard` (lava: avoid filter).
+  `water` (swimmers only; others high cost), `door` 2 (OpenMW's door cost; door leaves excluded from the bake geometry,
+  the doorway footprint marked), `door_closed` (set at runtime on those polygons), `path` (pathgrid corridors, slightly
+  cheaper so NPCs keep to streets), `hazard` (lava: avoid filter). No vanilla record sets `carves_nav`.
 - **Pathgrid** (`mw_ai::pathgrid`, PGRD → `petgraph`, exists): edges become **off-mesh links** only where the navmesh
   has no connection between the endpoints (OpenMW `offmeshconnectionsmanager.hpp`); nodes stay as **wander hints** and
   **door approach points** (nearest node in front of each door, seamless research §4.11). Fallback when a worldspace
@@ -109,22 +115,37 @@ tier-0 actors when a player rests.
 
 - A data pack `bevyrrowind/data/ai/schedules/` of `sf.ai.schedule` records plus assignment records (by class,
   faction, cell group or NPC id), moddable like any records. Vanilla has none (its `game_hour` field is inert).
-- **Anchors** resolved by `mw_ai::schedules`: `home` (an owned bed or the NPC's own placement cell), `work` (the
-  placement cell for merchants and service NPCs), `tavern`, `temple`, `patrol(route)` (a pathgrid loop).
-- Starting patterns (tune by play): merchants and service NPCs at work in the day, home at night; guards in day and
-  night shifts with relief; publicans late; commoners in their cell by day, indoors at night.
+- **When**: MA8 ships after AI10 (tier 0), AI11 and AI12 (doors), not before: a schedule that sends a shopkeeper home
+  crosses worldspaces, and without tier 0 the actor would freeze dormant mid-route (decisions (e)). Until then
+  `ScheduleRules::None`.
+- **Anchors** resolved by `mw_ai::schedules`: `home` (an owned bed in another place, else none), `work` (the placement
+  cell for merchants and service NPCs), `tavern`, `temple`, `patrol(route)` (a pathgrid loop, later). A pattern
+  applies only where its anchors resolve; otherwise the NPC keeps its record packages (vanilla).
+- **First patterns** (data, tune by play): (1) shopkeepers and service NPCs at work 08-20, home at night if `home`
+  resolves, else in the shop cell; (2) publicans in the tavern 10-02; (3) commoners outdoors by day, indoors at night
+  where `home` resolves, homeless exterior commoners stay vanilla; (4) **guards stay on post 24 h**: vanilla has one
+  guard per post, so shifts would halve guard presence and change crime-witness balance (a ported mechanic); shifts
+  wait for a pack that authors relief guards. Until AI14 (beds), "home at night" is `StayNear` indoors.
+- **Merchants never refuse service** (decisions (f)): availability follows presence; a merchant found off-shift trades
+  as vanilla (an "after hours" greeting is optional content). No schedule-driven door locks (a later opt-in
+  `ai.shop_hours = off | lock_doors`). Travel-service NPCs (caravaners, boatmen, guild guides) are never scheduled.
 - **Seam**: game setting `ai.schedules = modern | classic` (host, saved with the world); `classic` installs
   `ScheduleRules::None`: NPCs keep their record packages (wander in place), exactly vanilla.
 - **Quest safety** (validator, report on a real install): excluded by default are NPCs with an attached script,
   NPCs addressed by position in any script (`PositionCell`, `Position`, `AITravel`, `GetDistance` on them, `MoveWorld`),
-  essential NPCs, and those whose dialogue filters on their own cell. Scripts and quests outrank schedules anyway.
+  essential NPCs, and those whose dialogue filters on their own cell. Scripts and quests outrank schedules anyway. The
+  same exclusion list bars actors from cross-worldspace vendettas (ai.md "Memory"). The report prints, per pattern,
+  NPCs resolved, excluded and left vanilla.
 
 ## Doors and followers
 
 Approach points from the nearest PGRD node in front of each door; `Traverse` opens doors through `OnActivate`
-routing (`mw_doors_bevy`: locked, trapped and scripted doors that never `Activate` stay shut). Fade-only links (and
-every link while seamless is off) are crossed only when no player sees either end. Followers walk through; vanilla's
-follower teleport is the fallback when blocked for N s and unseen (seamless research Q7).
+routing (`mw_doors_bevy`: locked, trapped and scripted doors that never `Activate` stay shut) and closes a door it
+found shut. Load (portal) doors swing ~1 s and auto-close when the passage is clear and no player is near; in-cell
+doors keep vanilla behaviour (stay as left). Seamless vs classic is the host world rule `world.doors` (pack default
+classic until seamless M9a passes; seamless research §7). Fade-only links (and every link while seamless is off) are
+crossed only when no player sees either end. Followers walk through; vanilla's follower teleport is the fallback when
+blocked for N s and unseen (decided, seamless research §7 Q7).
 
 ## Memory (Nemesis-style) for Morrowind
 
@@ -146,19 +167,19 @@ filters through a new function family; named enemies remembering and returning a
 
 | Slice | Deliverable | Test | After |
 |---|---|---|---|
-| **MA1** nav data | agent classes, area table, `NavGeometrySource`, pathgrid links and door approach points | real install: tile and link counts, bake time printed | NV4 |
+| **MA1** nav data | two agent classes, area table, `NavGeometrySource` (door leaves out, doorway areas), pathgrid links, door approach points | real install: tile and link counts, bake time per class, creature-radius histogram printed | NV4 |
 | **MA2** packages | AI_* records and MWScript functions → directives, OpenMW `StackPolicy`, `GetAIPackageDone` | exact stack orders vs OpenMW cases; script tests per function | AI4 |
 | **MA3** wander methods | Morrowind wander/idle method set on `sf_ai`; `PathWalkScaffold` removed | headless: wanderers stay within radius; idle chances exact | AI6 |
 | **MA4** settings | Hello/Fight/Flee stats + considerations | exact ratings vs OpenMW formulas | AI7 |
 | **MA5** awareness | `awarenessCheck` port as `AwarenessModel` | exact vs formula cases | AI8 |
-| **MA6** crime | `mw_rpg::crime` port, guards' *Pursue* | scripted theft: witnesses, bounty, guard pursues | MA5 |
+| **MA6** crime | `mw_rpg::crime` port (no `sf_ai` dep), guards' *Pursue* via glue | scripted theft: witnesses, bounty, guard pursues | MA5 |
 | **MA7** fast-forward | `fastForward` rules | exact placement for wanderers and travellers | AI10 |
-| **MA8** schedules | data pack, anchors, validator, `ai.schedules` setting | validator report on a real install; classic = vanilla stacks | AI11 |
+| **MA8** schedules | data pack (three patterns, guards unscheduled), anchors, validator, `ai.schedules` setting | validator report per pattern on a real install; classic = vanilla stacks; unresolved anchors keep vanilla | AI10, AI11, AI12 |
 | **MA9** doors | escort/follow/pursue through doors, follower fallback | headless: follower through the Census door, guard pursues out | AI12 |
 | **MA10** combat sheets | NPC and creature combat through C6 | scripted fight, no NaN | AI15 |
 
-## Open questions (owner)
+## Open questions
 
-1. Schedule starting patterns: the four above, or fewer (merchants and guards only) for the first playable?
-2. Should merchants refuse service outside work hours (modern), or stay available when found (vanilla-friendly)?
-3. Crime in `mw_rpg::crime` (no new crate) or a separate `mw_crime`?
+None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),
+(h)): three first patterns with guards unscheduled; merchants never refuse service; crime in `mw_rpg::crime`. Shop
+hours and pattern choice are taste calls the owner may overturn cheaply (data and one setting).

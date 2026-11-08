@@ -1,6 +1,7 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
 Status: **draft, docs only (2026-11-08)**, written on a machine that cannot compile. Nothing built. Scope label M7.
+Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
 Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
 (thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
 (`sf_nav`) and the planned `sf_interaction`. Game side: [ai-adapter](../../../bevyrrowind/docs/specs/ai-adapter.md).
@@ -13,7 +14,7 @@ Sources: `../research/npc-ai-2026-11-08.md` (approved), seamless research §4.2/
 > Host-only, fixed tick. Tiers 2/1/0 under a budget that is a host CPU setting (never the graphics preset); tier 0
 > simulates logically so outcomes are tier-invariant. Perception through doors, a persistent memory/relationship fact
 > store (Nemesis-style, owner yes), an out-of-process LLM advisor seam (later). Debugger in slice AI1.
-> Read next: "Data model", "Tiers and budget", "Build plan", "Proposed doc changes".
+> Read next: "Data model", "Tiers and budget", "Build plan"; shared-doc edits in the decisions note.
 <!-- /agent-summary -->
 
 ## Goal
@@ -28,9 +29,11 @@ Non-goals: an LLM in the core, GOAP, flow fields, classic executors and combat (
 `navmesh-rs` spike (nav.md). 4. Vanilla NPCs get schedules, behind a seam allowing "no schedules" ("Directives").
 5. Caps are a **host CPU-tier setting**, never graphics; tier 0 simulates logically; clients vary only presentation
 ("Tiers and budget"). 6. LLM later, out of process, seam now ("LLM advisor seam"). 7. Nemesis-style memory: yes, the
-patent is not a concern (owner decision) ("Memory"). 8. Combat modern first ("Combat AI"). 9. One label, M7 ("Proposed
-doc changes"). Also: GPL-3.0; no MP ceiling (server authority, headless builds, interest management, tier by the
-nearest player under a global budget); Steam Deck floor; seamless doors optional.
+patent is not a concern (owner decision) ("Memory"). 8. Combat modern first ("Combat AI"). 9. One label, M7 (M10 is
+combat; "Doc changes"). Also: GPL-3.0; no MP ceiling (server authority, headless builds, interest management, tier by the
+nearest player under a global budget); Steam Deck floor; seamless doors optional. Delegated (2026-11-08): fixed,
+provisional caps ("Tiers"); bounded cross-worldspace vendettas ("Memory"); far sides of open doors fully simulated
+("Tiers"); schedules after tier 0 ("Directives").
 
 ## Canonical technique
 
@@ -95,6 +98,9 @@ pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, tra
   adapter-resolved anchor ("home", "work", a slot tag); the host clock pushes and retires `Schedule` directives at
   window edges. Seam `ScheduleRules` (modern = records; classic = none). Quest safety (Radiant's lesson): scripts and
   quests outrank schedules; a validator lists actors that quests address by position, so packs can exclude them.
+- **Timing**: schedules move actors between worldspaces, so they need tier 0 and door traversal: `ScheduleRules::None`
+  is the default until AI10, AI11 and AI12 exist (decisions (e)); an anchor that doesn't resolve keeps the actor on
+  its record directives.
 - Directives are fully saved; the stack is the truth across tiers.
 
 ## Drives (utility arbitration)
@@ -152,6 +158,11 @@ A host-side **fact store**, the social layer every NPC queries and systems appen
 - **Nemesis-style** `MemoryRules` (content): encounters (defeated by, fled from, spared), rivalry escalating to a
   vendetta (a `Memory` directive: seek, ambush), survivor returns, promotions via `sf_stats` groups. The framework
   ships store, decay, queries and events. Saved in `sf/ai/memory`; dialogue filters and scripts read facts.
+- **Vendettas may cross worldspaces, bounded** (decisions (g); Nemesis ambushes, Skyrim's hired thugs): the host picks
+  an encounter point near the target player (a link end or route node out of every player's view) within `max_hops`
+  and `ttl`; the actor travels on tier 0 and is promoted out of view, then seeks/ambushes. Only actors the quest-safety
+  validator allows; a target `PlayerKey` offline pauses the directive (never retargets); expiry returns the actor via
+  its stack. Other memory goals stay local.
 
 ## Smart objects (`sf_interaction`, planned, own spec)
 
@@ -167,8 +178,12 @@ fragment (approach, enter, loop, exit) with animation hooks. Until then the adap
 | 0 logical | everyone else, every worldspace | events (window edge, directive done, fact) | `(route, progress, until)` on `WorldGraph` + coarse graph, travel time | none |
 
 - **Allocator** (the `AnimBudget` pattern): significance from distance to the **nearest player of all**, visibility to
-  any player, combat, dialogue and quest pins; hysteresis on both bands; one **global** cap across regions, so four
-  players in four towns share the budget.
+  any player (through an open seamless doorway too), combat, dialogue and quest pins; hysteresis on both bands; one
+  **global** cap across regions, so four players in four towns share the budget. Caps are **fixed counts** per CPU
+  tier (UE MassLOD style), never adapted to measured time, so traces and the tier-invariance test reproduce;
+  `ai.stats` warns when the tick budget is exceeded (decisions (d)).
+- **Behind an open door** (decisions (k)): the far R0 around the mapped anchor joins the simulated set; its actors
+  take tiers from the same allocator, physics steps, scripts run; no stand-in mode.
 - **Pins outrank caps**: combat, dialogue and scripted scenes stay tier 2; if pins exceed the cap it is exceeded and
   `ai.stats` logs it, never a fighter demoted.
 - **Tier invariance** (the multiplayer rule): a tier changes how often and how precisely an actor is stepped, never
@@ -188,13 +203,16 @@ fragment (approach, enter, loop, exit) with animation hooks. Until then the adap
 | CPU tier | Reference | Tier 2 / tier 1 caps | AI main-thread budget per tick |
 |---|---|---|---|
 | Floor | Steam Deck (4c Zen 2) | **48 / 160** (research §8) | ≤ 0.55 ms |
-| Medium | 6-core desktop, Steam Machine class | 80 / 260 (to calibrate) | ≤ 0.75 ms (to calibrate) |
-| High | Ryzen 7 7435HS laptop (reference) | 128 / 400 (to calibrate) | ≤ 1.0 ms (to calibrate) |
-| Ultra | 12+ cores | 192 / 600 (to calibrate) | ≤ 1.3 ms (to calibrate) |
-| Dedicated | headless server, no render thread | 256 / 1000 at 8 cores, then measured per core (to calibrate) | ≤ 2.0 ms (to calibrate) |
+| Medium | 6-core desktop, Steam Machine class | 80 / 260 (provisional) | ≤ 0.75 ms (provisional) |
+| High | Ryzen 7 7435HS laptop (reference) | 128 / 400 (provisional) | ≤ 1.0 ms (provisional) |
+| Ultra | 12+ cores | 192 / 600 (provisional) | ≤ 1.3 ms (provisional) |
+| Dedicated | headless server, no render thread | 256 / 1000 at 8 cores, then measured per core (provisional) | ≤ 2.0 ms (provisional) |
 
 Floor split per tick (research §8): steering 0.20, perception 0.15, decisions 0.10, tier 0 0.05, facts 0.05 ms; paths
-0.30 ms on a worker. Two ticks run per 30 fps frame; animation has its own `AnimBudget`.
+0.30 ms on a worker. Two ticks run per 30 fps frame; animation has its own `AnimBudget`. Provisional rows are set by
+**AIM**: tier-2 counts 32-256 in Balmora and a Vivec canton, 1 and 4 players, AI + mover/probes + animation ms
+recorded together (tier 2's real cost is usually animation and probes: 128 × A0 ≈ 3.2 ms); the cap is the largest
+count whose sum fits the tier's character budget. In single-player Morrowind the cap rarely binds.
 
 ## Scheduling (time slicing)
 
@@ -288,60 +306,29 @@ One deliverable plus its test per slice. Visual checks use prefix `AI-`.
 | **AI6** move executors | `MoveTo`, `Wait`, `Face` over `sf_nav` (then MA3 drops `PathWalkScaffold`) | headless goals reached, no stuck |
 | **AI7** drives | arbiter, considerations, curves, momentum | exact scores and switch ticks |
 | **AI8** perception | sight, hearing, stimuli, per-player awareness, batched LOS | exact on synthetic scenes |
-| **AI9** allocator | tiers 2/1, `sim.cpu_tier` caps, pins | exact assignment + hysteresis |
+| **AI9** allocator | tiers 2/1, fixed `sim.cpu_tier` caps, pins; per-actor tier-2 cost in `ai.stats` | exact assignment + hysteresis; cost line logged |
 | **AI10** tier 0 | logical state, promotion resolve, `fast_forward` | tier invariance; no in-view promotion |
 | **AI11** schedules | records, `ScheduleRules`, quest-safety validator | exact pushes at window edges |
-| **AI12** doors | `Traverse`, fade-only "unseen" rule (supersedes seamless SI14) | follower through both door modes |
-| **AI13** memory | fact store, relations, decay, `MemoryRules`, `sf/ai/memory` | exact decay, eviction, round trip |
+| **AI12** doors | `Traverse` (open, cross, close behind), fade-only "unseen" rule (supersedes seamless SI14; seamless branch on the `sf_portal` core, SI2) | follower through both door modes (seamless on the core double) |
+| **AI13** memory | fact store, relations, decay, `MemoryRules`, bounded vendetta encounters, `sf/ai/memory` | exact decay, eviction, round trip; vendetta pauses when its target is offline |
 | **AI14** smart objects | `UseSlot` + fragments (after the `sf_interaction` spec) | claim conflicts deterministic |
 | **AI15** combat | C6 operators, attack tokens, reactions | scripted duel, tokens respected |
 | **AI16** net | replicated AI state via `sf_net` (after N2) | loopback sees activity, barks |
 | **AI17** Luau | `@sf/ai` (when Lua is unparked) | push/done round trip |
 | **AI18** advisor seam | `Advisor`, protocol schema, null advisor, deadline | late answer ignored; saved |
-| **AIM** measurement | Floor and High sweeps for the budget table | owner runs |
+| **AIM** measurement | Floor and High cap sweeps ("Tiers and budget"), AI + mover + animation ms together | owner runs; provisional rows filled |
 
-Order: AI1 → AI2 → AI3 → AI4 → AI5 → AI6 (needs NV8) → AI7 → AI8 → AI9 → AI10 (needs NV12) → AI11 → AI12 (needs
-NV11) → AI13 → AI15 → AI14 → AI16-AI18 later. NV0 runs in parallel with AI1-AI3.
+Order: AI1 → AI2 → AI3 → AI4 → AI5 → AI6 (needs NV7a, NV8, seamless SI3) → AI7 → AI8 → AI9 → AI10 (needs NV12) →
+AI11 → AI12 (needs NV11, SI2) → AI13 → AI15 → AI14 → AI16-AI18 later. NV0 runs in parallel with AI1-AI3. The
+adapter's schedules pack (MA8) waits for AI10-AI12. AI10, AI12 and NV11 are seamless M9b (they replace SI13-SI15).
 
 ## Open questions
 
-1. Default tier-2 cap on the High reference: 128 (research) or measure first and leave it blank?
-2. Do schedule packs ship with the first Morrowind playable, or after AI10 proves tier 0?
-3. Vendetta directives: may they move a named NPC across worldspaces to find a player (KCD-like), or stay local?
+None open. Decided 2026-11-08 (`../research/ai-nav-decisions-2026-11-08.md`): (d) High 128 / 400 provisional fixed
+counts, set by AIM; (e) schedules after AI10-AI12 (patterns in the adapter); (g) vendettas cross worldspaces, bounded.
 
-## Proposed doc changes (for the owner; ready to paste)
+## Doc changes for shared files
 
-**DECISIONS.md** (append):
-- 2026-11-08 (ai-layers; ai.md, nav.md): NPC AI = directives → utility drives → one shared data-driven HTN method
-  library → executors writing `Command`/`LocomotionIntent`; crates `sf_nav` + `sf_ai` (+ planned `sf_interaction`).
-- 2026-11-08 (nav-bake; nav.md): navmesh baked per tile by `sf_bake`; runtime TileCache patches for doors and props are
-  not "baking during play". Backend: spike `navmesh-rs` first, recastnavigation FFI is the accepted fallback.
-- 2026-11-08 (ai-schedules; ai.md, ai-adapter.md): vanilla Morrowind NPCs get modern schedules as moddable data in
-  `mw_*`, behind `ScheduleRules` so a classic "no schedules" rule set stays possible.
-- 2026-11-08 (ai-tiers; ai.md "Tiers and budget"): AI caps are a host CPU-tier simulation setting, never the graphics
-  preset; tier 0 simulates logically so outcomes are tier-invariant; Floor defaults 48 full / 160 reduced.
-- 2026-11-08 (ai-llm; ai.md): LLM dialogue/goal choice later as an optional out-of-process plugin choosing among
-  validated options; seam reserved, never required.
-- 2026-11-08 (ai-memory; ai.md): Nemesis-style persistent NPC memory and relationships are in scope; the patent is not
-  a concern (owner decision).
-- 2026-11-08 (ai-combat): NPC combat AI modern first (C6); classic OpenMW combat is a later `CombatRules` seam.
-- 2026-11-08 (ai-label): NPC AI and navigation are scope label M7 everywhere; "M10" for AI/nav in older docs is stale.
-
-**ROADMAP.md** (Phase 3, new lines; replace the "Living world AI" `[p]` line's "no design yet" with "memory: ai.md"):
-- `[ ] 3.9 NPC navigation (M7; superfargoth/docs/specs/nav.md): NV0 navmesh-rs spike first (FFI fallback), then NV1-NV12; checks NV-.`
-- `[ ] 3.10 NPC AI (M7; specs/ai.md + bevyrrowind specs/ai-adapter.md): AI1 trace/debugger first, then AI2-AI18, MA1-MA10; checks AI-.`
-
-**SYSTEMS.md**: AI row → `ai` Architecture, Tiers and budget, Build plan | `ai-adapter` | `sf_ai(_bevy) mw_ai` |
-3.10 | AI- | npc-ai-2026-11-08. New row: Navigation → `nav` Data model, Routing, Streaming | `ai-adapter` Navigation |
-`sf_nav(_bevy) sf_nav_recast mw_ai mw_bake` | 3.9 | NV- | npc-ai-2026-11-08. New row: Interaction (smart objects) →
-"no spec yet" | - | `sf_interaction` (planned).
-
-**Drift fixes**: action.md "NPCs" ("NPCs path on the navmesh until then": no navmesh exists; pathgrids until NV8);
-action.md/combat.md/net.md keep M7, locomotion.md "Non-goals"/"NPC drivers" and the `mw_ai` (`lib.rs`, `scaffold.rs`)
-and `sf_controller::path` module docs say M10 → M7; ARCHITECTURE §4 `bevy_landmass` row "0.12.1 / 0.19, M10" → "0.13.0
-/ 0.20, rejected (nav.md Reuse)"; ARCHITECTURE §5 `sf_ai` "navmesh generation per streamed tile" → baked tiles in
-`sf_nav` + runtime patches, and add `sf_nav`; ARCHITECTURE §5 `sf_interaction` text → smart-object slots and claims;
-seamless research SI13-SI15 → NV11, AI12, AI10; streaming.md "Decided" (only the active worldspace simulates) → the
-simulated set; DECISIONS walkers/walkers2 notes "(M10)" are history (append-only; the ai-label bullet covers them);
-CONTRIBUTING "Net-ready: small co-op (2-4 players)" and net.md non-goals ("dedicated servers", "more than 4 players")
-→ no ceiling (owner 2026-11-08).
+The ready-to-paste DECISIONS bullets and the exact edits for net.md, CONTRIBUTING, streaming.md, action.md,
+ARCHITECTURE, ROADMAP (3.9, 3.10) and SYSTEMS.md are in `../research/ai-nav-decisions-2026-11-08.md` "Ready-to-paste
+edits for shared docs" (they supersede the list this section held).
