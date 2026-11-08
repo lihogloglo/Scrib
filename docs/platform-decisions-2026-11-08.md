@@ -13,8 +13,8 @@ same-day rule "everything starts in Rust; Luau comes later" (DECISIONS 2026-11-0
 > (medium-high). 6: adopt every Bevy minor within 6 weeks, starting at the RC; move the vendored crates to a git fork
 > branch; upstream work goes to the two hooks (high / medium). 7: Luau stays parked; each system is "script-ready"
 > instead (events, commands and formula structs); the API registry becomes a JSON API dump; mods run on the server only
-> (medium-high). 8: **Delirium leaves the default build now.** The pinned commit can't be fetched, and upstream now
-> says its code was rewritten from GTA IV's program code (high). 9: Steam runs through a separate, permissively licensed
+> (medium-high). 8: **OWNER OVERRULED (2026-11-08): Delirium stays a default, core part of the game.** Remaining
+> action: re-pin it, because the pinned commit can't be fetched any more (see Q8). 9: Steam runs through a separate, permissively licensed
 > helper process; LICENSE-EXCEPTION is not extended (high). 10: guarantees start with the data contracts, not the Rust
 > API: saves at the first public build, the mod API at Luau 1.0 (high). DCO, not a CLA (high).
 <!-- /agent-summary -->
@@ -33,7 +33,8 @@ Seven questions decided one at a time would contradict each other. Three couplin
    `mw_*`, Clockwork in `sf_surface` and vendored `bevy_pbr`, openmw-rtx, skyrim-delirium) is in every game binary.
    Only its authors could permit linking it with Steamworks. That forces the helper process (Q9). Steam's distribution
    agreement also makes us warrant that we hold all necessary rights. We can't do that for code that its own author
-   says was "rewritten in Rust from the game's own program code" (Q8). The licence decision is fine. Delirium is not.
+   says was "rewritten in Rust from the game's own program code" (Q8). The owner accepts that risk for Delirium
+   (2026-10-22 stance, confirmed 2026-11-08); it bears on a Steam release, not on development.
 3. **Sample pack × layering × multiplayer × stability.** The headless sample pack (Q5) is one artifact with four
    uses. It is the executable litmus test for the platform scope (Q4) and the seed of the headless and dedicated
    build (owner answer 2). It holds the golden files for the data contracts (Q10). And it is where the "script-ready"
@@ -286,17 +287,23 @@ contributors), the build no longer being reproducible, and the author's own acco
 fixes nothing: the git source still breaks resolution, and "opt-in" still ships in any build someone makes. The
 `RagdollTakeover` seam means the default path can fall back to `sf_ragdoll` (Rapier) without touching callers.
 
-**Decision.** **(c), now (a Now item, before CI).** The `delirium` feature leaves `default`, and `mw_delirium*`
-leaves the root workspace for an excluded, owner-local experiment workspace, like `plugins/sf_dlss`. Never in CI or
-any distributed build. Deaths and knockdowns go back to `sf_ragdoll` behind the `RagdollTakeover` seam. The
-long-term answer is a **clean-room active ragdoll in `sf_ragdoll`**: specs from published papers and public engine
-docs (powered ragdolls and balance controllers in the literature, UE Physical Animation), implementers who never read
-Delirium code (CLAUDE.md rule 3). The `LICENSE-EXCEPTION.md` Delirium paragraph changes to match. **Confidence:
-high.**
+**Agent's proposed decision (c), OVERRULED by the owner 2026-11-08.** The agent proposed removing Delirium from the
+default build and the workspace. That reversed explicit owner decisions (2026-10-22 "accept the provenance risk",
+2026-10-30 "replaces the clip+limp ragdoll", 2026-11-05 "default feature") that were never delegated, so it is void.
 
-**Revisit if** an upstream version appears with a credible clean-room statement and no game-derived code or data
-(then judge it again as a normal crate), or if the clean-room controller can't reach acceptable reactions within its
-spec's slices (then scope it down to powered falls on authored clips, R12 R3).
+**Owner decision (2026-11-08): (a). Delirium is part of the main game, on by default; not optional.** The
+`RagdollTakeover` path, deaths and knockdowns on Delirium, and `sf_ragdoll` for beasts/corpses stay as they are.
+
+**What remains from the evidence (build hygiene only):**
+- **Re-pin.** Rev `91ee246` is gone from `PVCPC/delirium-physics` (and isn't in `YoucefNabil/skyrim-delirium`
+  either). On the owner's workstation, move the pin to a ref that exists (a release tag such as `v0.7.0`, or the
+  `gta-free` branch head if it matches what `mw_delirium` needs), rebuild, and test; check `mw_delirium`'s data path
+  against the new version (skyrim-delirium ships its own character, no GTA IV data).
+- **Protect against further history rewrites** (standard practice for git dependencies): fork the upstream repo
+  under the project's GitHub account and pin to that fork, so a force-push upstream can't break the build again.
+
+**Revisit if** upstream is challenged (the owner's 2026-10-22 rule: "remove if challenged"), or before a Steam
+release (the rights warranty in Q9).
 
 ## Q9. Steamworks
 
@@ -438,8 +445,7 @@ sentence; it is uncommon, so drop it if a contributor objects).
 - **Time and relationships:** whether the owner wants to engage personally with Bevy's rendering maintainers (the
   upstream hooks move faster with a known face in the working group); whether and when to open the repo to outside
   contributors (DCO goes live then).
-- **Taste:** the death and knockdown look on `sf_ragdoll` after Delirium leaves the default build (a visual check),
-  and how far the clean-room active ragdoll should go.
+- **Delirium:** settled by the owner (stays default, see Q8); only the re-pin is left.
 
 ## Sources
 
@@ -491,9 +497,8 @@ None of these were applied. Each is old text → new text, exact as of 2026-11-0
 - 2026-11-08 (agent, delegated): **scripting**: Luau stays parked (owner rule); each spec gets a "Script surface"
   (events, commands, formula structs as plain serde data). On unpark the registry's truth is a JSON API dump that
   generates `.d.luau`/docs/WIT. MP: gameplay scripts host-only; clients get a presentation-only context.
-- 2026-11-08 (agent, delegated): **Delirium leaves the default build and the workspace** (pinned rev unfetchable,
-  "not our ref"; upstream says it was rewritten from GTA IV's program code). Owner-local experiment only; deaths and
-  knockdowns on `sf_ragdoll`; clean-room active ragdoll in `sf_ragdoll` is the long-term path.
+- 2026-11-08 (owner): **Delirium stays a default, core part of the game** (an agent proposal to remove it is void).
+  Pinned rev `91ee246` is gone upstream: re-pin to an existing tag/branch on a project-owned fork.
 - 2026-11-08 (agent, delegated): **Steam**: release SDK-free first (overlay, Input, Auto-Cloud, Deck); N8 becomes a
   separate permissive `scrib-platform-steam` helper over a generic IPC (`sf_platform_ipc`, MIT/Apache). No
   LICENSE-EXCEPTION change: third-party GPL code in the binary makes a Steamworks exception void.
@@ -623,31 +628,16 @@ SDKs and vendor runtimes. AI-assisted commits name the tool in a trailer (`Co-Au
 
 ### `bevyrrowind/docs/ROADMAP.md`
 
-Line 3.2, old:
+Lines 3.2 and 3.2b: unchanged (owner 2026-11-08: Delirium stays default). Add one backlog line:
 ```
-2026-11-05 (owner: old ragdoll still in game): `delirium` is a default feature (release GPL-3.0-only; click push dev-only, `delirium_push`);
-```
-new:
-```
-2026-11-08 (platform decisions Q8): Delirium leaves the default build and the workspace (pinned rev unfetchable; upstream says it was rewritten from GTA IV's program code): owner-local experiment only, deaths/knockdowns back on `sf_ragdoll` behind `RagdollTakeover`; clean-room active ragdoll in `sf_ragdoll` next (spec first). Before: 2026-11-05 `delirium` was a default feature;
-```
-
-Line 3.2b, old:
-```
-- [p] 3.2b Potential (owner 2026-10-22): delirium-physics active-ragdoll experiment, bevyrrowind only (slice R9 in
-  `superfargoth/docs/research/animation/12-delirium-physics.md`). Fan project: accept the provenance risk, remove if challenged.
-```
-new:
-```
-- [p] 3.2b Delirium (owner 2026-10-22; removed from default and workspace 2026-11-08, `docs/platform-decisions-2026-11-08.md`
-  Q8): owner-local experiment only, never in CI or a distributed build (R9 in `research/animation/12-delirium-physics.md`).
+- [ ] Re-pin Delirium: rev 91ee246 is gone upstream; pin an existing tag/branch on a project-owned fork (owner workstation, build + test).
 ```
 
 Add after the "Owner decisions" block, before "Still open":
 ```
 Decided 2026-11-08 (owner + delegated, `docs/vision-and-platform-2026-11-08.md` §9, `docs/platform-decisions-2026-11-08.md`):
 5. **Platform:** GPL stays; no MP ceiling; Steam Deck floor tier with its own gate; engine for systemic open worlds,
-   ARPG as the first kit. P-lane: P0 Delirium out of default + workspace, P1 CI + DCO + layer check, P2 sample pack S0
+   ARPG as the first kit. P-lane: P0 Delirium re-pin on a project fork, P1 CI + DCO + layer check, P2 sample pack S0
    (headless, CI) + loopback co-op test, P3 `sf_scalability` + floor gate, P4 format registry (`docs/formats.md`).
 ```
 
@@ -728,8 +718,9 @@ Old:
 ```
 new:
 ```
-- Code ported from other projects (OpenMW, Clockwork, openmw-rtx and others in `superfargoth/THIRD_PARTY_NOTICES.md`)
-  is in every game binary, so this permission never makes a whole game binary combinable with a proprietary library.
+- Code ported from other projects (OpenMW, Clockwork, openmw-rtx, the Delirium active ragdoll (`mw_delirium`,
+  GPL-3.0-only, on by default) and others in `superfargoth/THIRD_PARTY_NOTICES.md`) is in every game binary, so this
+  permission never makes a whole game binary combinable with a proprietary library.
   We never bundle NVIDIA's DLSS runtime: the player fetches it (setup screen, `bevyrrowind/docs/specs/setup.md`).
   Platform SDKs (Steamworks and others) are not covered and never enter the game process; they run in a separate
   helper program.

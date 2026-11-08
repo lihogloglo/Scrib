@@ -410,8 +410,8 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 
 ### Now (next 4-6 weeks; mostly decisions and guardrails, fits around Phases 1-3)
 
-0. **Delirium out of the default build and the workspace** (decision 8): first, because its pinned rev can't be
-   fetched and a fresh clone (CI included) can't build the default game. Deaths and knockdowns back on `sf_ragdoll`.
+0. **Re-pin Delirium** (decision 8; it stays default, owner 2026-11-08): its pinned rev can't be fetched, so a fresh
+   clone (CI included) can't build the default game. Pin an existing tag/branch on a project-owned fork; build + test.
 1. **Licence: decided** (GPL stays; quarantine dropped). Left: DCO in CONTRIBUTING plus a CI sign-off check
    (decision 1b). Steam is decided as a separate helper process (decision 9), so nothing to do before N8.
 2. **CI with mechanical guardrails** (§6.4): GitHub Actions running the four existing gates, plus the boundary and
@@ -437,7 +437,6 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 9. **Scripting stays parked; systems are script-ready** (decision 7): each spec gets a "Script surface" (events,
    commands, formula structs as plain data). Unpark on the first of: S1's quest, Phase 2.7 formulas built, mod API
    1.0 needed; then `@sf/records`, `@sf/rules`, events, from a JSON API dump.
-9b. **Clean-room active ragdoll spec** for `sf_ragdoll` (decision 8), research first, never reading Delirium code.
 10. **Specs for `sf_ai`, `sf_interaction`, persistence policies, sim LOD** (§7), research first (rule 1).
 11. **No-RT GI fallback** sharing the probe data model (§5.5).
 
@@ -490,8 +489,8 @@ Authors need knobs to keep emergent behaviour from breaking quests.
   Bevy crates move to a git fork branch; ≥ 1 upstream slice per cycle (material hook, then GI provider). High/medium.
 - **7 Scripting (delegated to agent):** Luau stays parked (owner rule); specs get a "Script surface"; on unpark, a JSON
   API dump generates `.d.luau`/docs/WIT; WASM after Luau 1.0; gameplay scripts host-only in MP. Medium-high.
-- **8 Delirium (delegated to agent):** out of the default build and the workspace now: the pinned rev can't be fetched
-  and upstream says it was rewritten from GTA IV's program code; `sf_ragdoll` default, clean-room active ragdoll later. High.
+- **8 Delirium (owner, 2026-11-08):** stays part of the main game, on by default, not optional. (An agent proposal to
+  remove it overstepped what was delegated and is void.) Left: re-pin, since rev `91ee246` is gone upstream.
 - **9 Steam (delegated to agent):** SDK-free Steam release first; N8 via a separate permissive helper process over a
   generic IPC; no LICENSE-EXCEPTION extension (void with third-party GPL in the binary). High (legal line medium).
 - **10 Stability (delegated to agent):** promises go to data, not Rust: saves from the first public build, records/
@@ -511,7 +510,7 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 | ARCHITECTURE §6.1 | "Possibly WASM later" → "WASM tier after Luau API 1.0, from the same API dump"; host-only gameplay scripts in MP (decision 7) |
 | ARCHITECTURE new § | Scalability (§5.3) and the tier matrix (§5.1) |
 | `superfargoth/docs/DECISIONS.md` | Append one dated bullet per owner decision in §9 when taken; nothing before |
-| `bevyrrowind/docs/ROADMAP.md` | A short "Platform" lane: P0 Delirium out of default + workspace, P1 CI + DCO + layer check, P2 sample pack S0 + loopback co-op test, P3 `sf_scalability` + floor gate, P4 format registry; 3.2/3.2b Delirium lines (decisions 5, 8, 10) |
+| `bevyrrowind/docs/ROADMAP.md` | A short "Platform" lane: P0 Delirium re-pin, P1 CI + DCO + layer check, P2 sample pack S0 + loopback co-op test, P3 `sf_scalability` + floor gate, P4 format registry (decisions 5, 8, 10) |
 | `CONTRIBUTING.md` | Tie-breaker per tier (§2.1); "Net-ready" points to the lints once they exist; ~~licence quarantine rule~~ (dropped); scope wording (decision 4); "Script-ready" rule (7); DCO + no game-derived code (1b, 8); frame target becomes the tier matrix |
 | `superfargoth/docs/specs/net.md` | Non-goals: reword "dedicated servers" per decision 2; player count not fixed at 4; one state registry; R0 not scaled by preset; Steam via the separate helper process under "Topology and transport" (decision 9) |
 | `superfargoth/docs/specs/streaming.md` | "Ring radii scale with the quality preset": exclude R0 (simulation) |
@@ -519,8 +518,8 @@ Authors need knobs to keep emergent behaviour from breaking quests.
 | `superfargoth/docs/specs/scripting.md` | ~~The API-per-system rule~~ (superseded by decision 7): deprecation window, JSON API dump as the registry's truth on unpark, the unpark trigger, host-only gameplay scripts in MP. Exact text in `platform-decisions-2026-11-08.md` |
 | `docs/SYSTEMS.md` | Rows for Scalability, Interaction, Persistence/sim LOD; the AI row points to the planned spec |
 | `superfargoth/vendor/README.md` | Mark the GPL-derived hunk (H2); the move to a git fork branch; the upgrade cadence (decision 6). Exact text in `platform-decisions-2026-11-08.md` |
-| **Decisions 4-10 (2026-11-08)** | Ready-to-paste old→new text for DECISIONS (8 bullets), ARCHITECTURE §1/§3/§4/§6.1, CONTRIBUTING (scope wording, net-ready, script-ready, licence + DCO), ROADMAP (3.2, 3.2b, decision 5 + P-lane, co-op line), scripting.md, net.md (Steam helper), `LICENSE-EXCEPTION.md` (Delirium paragraph) and the vendor README: end of `docs/platform-decisions-2026-11-08.md`. Not applied |
-| `LICENSE-EXCEPTION.md` | Delirium scope paragraph → third-party GPL code + "platform SDKs never enter the game process" (decisions 8, 9). No Steamworks extension |
+| **Decisions 4-10 (2026-11-08)** | Ready-to-paste old→new text for DECISIONS (8 bullets), ARCHITECTURE §1/§3/§4/§6.1, CONTRIBUTING (scope wording, net-ready, script-ready, licence + DCO), ROADMAP (Delirium re-pin line, decision 5 + P-lane, co-op line), scripting.md, net.md (Steam helper), `LICENSE-EXCEPTION.md` (Delirium paragraph) and the vendor README: end of `docs/platform-decisions-2026-11-08.md`. Not applied |
+| `LICENSE-EXCEPTION.md` | Scope paragraph → third-party GPL code (Delirium included, still default) + "platform SDKs never enter the game process" (decision 9). No Steamworks extension |
 | new `superfargoth/docs/formats.md` | Format registry (decision 10): every on-disk/wire format, version, owner, spec, regenerable, guarantee trigger |
 
 ## Sources
