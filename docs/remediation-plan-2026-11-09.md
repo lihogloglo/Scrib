@@ -555,13 +555,38 @@ gameplay crates as compiling and passing unit tests and clippy since 2026-11-09.
 list (`Commands::write_message`, `ActorKey: Copy`, the `tes3` enum casts, the hand-written postcard golden
 bytes at `sf_rpg/src/tests_service.rs:583`) was checked and cleared.
 
+### Read this before acting on any row below: three of eleven were false positives
+
+**Do not treat this list as verified.** It began as eleven defects from one read-only review. A second
+review of the same scope disputed three; all three were then checked **against OpenMW's actual source** in
+the local clone (`Dev/openmw`, commit `c0790fc`) and **all three turned out to be non-defects — the code
+was already correct.** They are struck through below with the citation that settled them, kept visible so
+nobody re-raises them.
+
+That is a false-positive rate of roughly one in four, and the failure mode was consistent and instructive:
+in each case the reviewer compared our code against *Morrowind's* documented behaviour or against an
+assumed rounding convention, rather than against the OpenMW source our module docs actually cite. E9 is the
+sharpest example — the reviewer saw two different rounding idioms in neighbouring functions, assumed one
+was a slip, and was wrong, because **OpenMW itself uses different rounding in those two branches**.
+
+Consequences for whoever picks up this lane:
+
+1. **Every remaining row needs source verification before it is treated as real.** The surviving rows are
+   *candidates*, with the confidence noted per row. E8 is the most certain (two independent reviews
+   converged on it); E6 and E7 are structural and checkable without OpenMW; the rest are unverified.
+2. **Do not quote a defect count.** "Eleven defects" was wrong within a day. Hand the owner the list with
+   per-item status, never a number.
+3. **The fix rule in §6 is now doubly important**, and it cuts both ways: derive expected values from the
+   cited source — and also check, before changing anything, whether the *code* already matches that source
+   and the reviewer did not.
+
 **Will be visible in the owner's test pass:**
 
 | # | Site | Defect |
 |---|---|---|
 | E1 | `mw_rpg/src/runner.rs:482` | Text defines never expanded on the MessageBox path; every scripted box renders literally `^PCName, ...`. `rules.expand` runs only on dialogue response text (`mw_rpg_bevy/src/dialogue.rs:791`). |
 | E2 | `mw_script/src/functions.txt:193` | `GetDisposition` still `stub=50` while Set/Mod are live; a script reading disposition sees a constant. `functions.rs:335` asserts the stub deliberately — a decision to settle, not a slip. |
-| E3 | `mw_stats/src/gmst.rs:82,86` | `fDispCrimeMod = 0.0` makes the bounty term inert; `fPerTempMult = 1.0` makes temp and perm persuasion changes identical and the `/fPerTempMult` divisions no-ops. **Both OPEN — do not cite a number.** The `real_install` GMST print cannot settle them (see §6a: no Morrowind install on this machine). Settle from OpenMW's source with file + line + commit, per the owner's standing instruction to port from OpenMW. |
+| ~~E3~~ | `mw_stats/src/gmst.rs:82,86` | **WITHDRAWN — NOT A DEFECT. The code is correct.** Verified in the local OpenMW clone (`Dev/openmw`, commit `c0790fc`): `apps/opencs/model/world/defaultgmsts.cpp:1678` is `0.0f, // fDispCrimeMod` and `:1782` is `1.0f, // fPerTempMult`. Our fallbacks match vanilla exactly. The range table at `:2031` constrains `fDispCrimeMod` to `(-inf, 0]`, so the "believed vanilla 0.25" that prompted this finding was never even a legal value. **The bounty term being inert is intended vanilla behaviour.** |
 | E4 | `mw_rpg/src/persuasion.rs:241` | A failed bribe is free; OpenMW debits unconditionally before the roll. Repeatable exploit. Also credits the speaker where OpenMW only debits. |
 | E5 | `mw_rpg/src/disposition.rs:148` | Non-member faction branch adopts the first faction's reaction even when positive and takes rank from a foreign faction; OpenMW keeps only negatives. Tests pin the wrong behaviour. |
 
@@ -572,8 +597,8 @@ bytes at `sf_rpg/src/tests_service.rs:583`) was checked and cleared.
 | E6 | `mw_rpg/src/services.rs:133` | Sell branch drops OpenMW's `min(buyTerm, sellTerm)`. Buy at 170, sell back at 205 on the tests' own fixture — a money printer. `tests_services.rs:69,116` assert the wrong number. **Highest severity in the lane**; latent only because trade is unwired. |
 | E7 | `sf_rpg/src/service/purse.rs:12` | The `sf/services` save section is declared but never registered, and `"sf/services"` is a full key where `key()` expects a bare name, yielding `sf/sf/services`. No `SaveSection` impl, no apply-order entry, so "version 1" has no migration hook. An incomplete SV1 deliverable, not deferred work. |
 | E8 | `sf_effects/src/step.rs:553` | `ResistQuery.target` hard-coded `None`, so `resist` returns `1.0` always: resistances and weaknesses have no effect in the real pipeline. E5-unbuilt rather than broken — but a green `tests_rules.rs` does not mean resistances work. `LandModel::protect` and the `ItemModel` seam likewise have no call site. |
-| E9 | `mw_rpg/src/persuasion.rs:321` | Taunt uses `floor(-c*mult)` where OpenMW truncates: one point too far on ~90% of taunts. `intimidate()` at :299 does it correctly. |
-| E10 | `mw_rpg/src/persuasion.rs:304` | Intimidate marginal-win branch gives temp +10 where Morrowind/OpenMW give 0; the comment blames "OpenMW, MCP" but the surrounding code matches OpenMW line-for-line. Settle the attribution. |
+| ~~E9~~ | `mw_rpg/src/persuasion.rs:321` | **WITHDRAWN — NOT A DEFECT, and the apparent inconsistency is fidelity.** OpenMW `mechanicsmanagerimp.cpp` (commit `c0790fc`) genuinely uses **different rounding in the two branches**: Taunt is `x = floor(-c * fPerDieRollMult)` (floor of a negative), Intimidate's success path is `x = -floor(c * fPerTempMult)` (negative of a floor). For `c*mult = 9.3` those give -10 and -9 respectively. Our `floor(-c*mult)` at :321 and `-((c*mult).floor())` at :299 mirror OpenMW branch for branch. The reviewer saw the asymmetry and assumed a slip; it is a faithful port. (Unchecked by us: OpenMW also clamps Taunt with `if (success && abs(x) < iPerMinChange) x = -iPerMinChange;` — worth confirming our port has it.) |
+| ~~E10~~ | `mw_rpg/src/persuasion.rs:304` | **WITHDRAWN — NOT A DEFECT. The "OpenMW, MCP" comment is exactly right.** OpenMW's own source carries the comment *"Deviating from Morrowind here: it doesn't increase disposition on marginal wins, which seems to be a bug (MCP fixes it too). Original logic: x = 0, y = -iPerMinChange"*, then sets `x = iPerMinChange; y = x; // This goes unused.` (`iPerMinChange` default 10, `defaultgmsts.cpp:1961`). Our `(min_change, min_change)` with a dead second value matches, dead value included. The reviewer cited Morrowind's original logic, which OpenMW deliberately rejects. |
 | E11 | `mw_effects/src/stats.rs:10` | `MAGNITUDE_STAT_EFFECTS` omits index 84 (Fortify Maximum Magicka) though `mgef.rs:345` gives it that archetype. The test compares the two lists against each other, so it cannot see the omission. |
 | E12 | `sf_effects/src/step.rs:330` | Temporary pool Fortify emits `AddModifier` **and** `PoolAdjust`, double-counting on `KeepRatio` pools. Magicka and fatigue are both `KeepRatio`, so Fortify Magicka 100 on a 50/100 pool gives 200/200 where OpenMW gives 150/200. *(Found by `coordinator-mechanics`' reviewers, not ours.)* |
 | E13 | `sf_effects/src/step.rs:320` | Drain is modelled as Damage+Restore on a shared counter rather than as a modifier, so it leaks whenever an unrelated Restore lands between inflict and expiry. *(Same source as E12.)* |
@@ -798,18 +823,27 @@ Consequence: install-gated tests **skip and report success**, and this happens o
   told "pass".
 - Scale: 45 files under `bevyrrowind/crates` contain the skip-and-return pattern.
 
-**Not yet pinned down — do not quote a single number until one careful pass settles it.** Two independent
-counts disagree because they count different things: `coordinator-mechanics` measured **106 non-ignored
-install-gated tests across 37 files**; this session's broader pattern (any `MorrowindInstall::detect` use,
-counting every non-ignored `#[test]` in a gated file, which overcounts because a file may hold both gated
-and ungated tests) gave **122 across 46 files**. The order of magnitude — **on the order of 100 tests** —
-is agreed and is what matters. Anyone citing an exact figure must first count only tests whose own body
-contains the gate.
+**Not pinned down — the honest answer is a range, and three counting passes failed to narrow it.** The
+difficulty is real, not sloppiness: the gate often lives in a **shared helper**, so tests that pass
+vacuously need not contain the gate string themselves. Verified examples of such helpers:
+`mw_bake/tests/anim_real_install.rs:30` (`fn content() -> Option<Content>`) and
+`mw_actors/tests/equipment_audit.rs:34` (`fn setup() -> Option<...>`).
 
-**Related correction for anyone citing the static-scene lane:** `coordinator-mechanics` reports that at
-least 20 of those non-ignored gated tests are in `mw_bake`, and so fall inside the "191 tests pass" figure
-quoted for the static-scene lane. Cite that as "191 passed, of which at least 20 asserted nothing without
-an install".
+| Counting method | Result | Bias |
+|---|---|---|
+| Tests whose own body contains the gate | 30 non-ignored across 19 files (9 in `mw_bake`) | **under** — misses every helper caller |
+| Every non-ignored test in a gated file | ~106 across 37 files (20 in `mw_bake`) | **over** — a gated file may also hold ungated tests |
+| Broader gate pattern, same file-level rule | 122 across 46 files | over, more so |
+
+**So: between 30 and ~106, true figure in between. Quote the range with its method, never a bare number**
+— including the `mw_bake` subtotal, which is 9 by the inline method and 20 by the file-level one. For
+anyone citing the static-scene lane's "191 tests pass", the honest form is "191 passed, of which 9-20
+asserted nothing without an install".
+
+**The one cheap way to settle it exactly, when a build is affordable** (not today):
+`mw_bake/src/inputs.rs:164` already fabricates a synthetic install. One run with a fabricated install,
+diffed against one run without, gives the exact set of tests whose result depends on install presence.
+Definitive, one build. *(Note: `inputs.rs:164` is a fixture builder, not a gate — do not count it as one.)*
 
 Put together with §6 (four tests that assert their own bug), the honest reading is:
 
