@@ -260,7 +260,7 @@ fn short_type_names() {
 /// synthetic phase data (no GPU headless); sanity only.
 #[test]
 fn render_view_counts_reach_the_report() {
-    use sf_diag::views::{PhaseCounts, ViewCounts, ViewFrame, ViewKind};
+    use sf_diag::views::{BindGroups, PhaseCounts, ViewCounts, ViewFrame, ViewKind};
 
     let dir = tempfile::tempdir().unwrap();
     let settings = DiagSettings {
@@ -275,7 +275,19 @@ fn render_view_counts_reach_the_report() {
             let view = |label: &str, kind, phase, items| ViewCounts {
                 label: label.to_owned(),
                 kind,
-                phases: vec![PhaseCounts { phase, items, bins: items / 2, batch_sets: 3, pipelines: 2 }],
+                phases: vec![PhaseCounts {
+                    phase,
+                    items,
+                    bins: items / 2,
+                    batch_sets: 3,
+                    pipelines: 2,
+                    // static-scene S3a2: one GPU-authored instance batch of
+                    // one range over 1000 reserved slots, inside the 3 batch
+                    // sets above.
+                    instance_batches: 1,
+                    instance_draws: 1,
+                    instance_slots: 1000,
+                }],
                 work_items: items,
                 pipelines: 2,
             };
@@ -286,7 +298,7 @@ fn render_view_counts_reach_the_report() {
                     view("lamp.face0", ViewKind::LampFace, "shadow", 20),
                 ],
                 distinct_pipelines: 3,
-                bind_groups: Some(9),
+                bind_groups: Some(BindGroups { created: 9, ranges: 2, materialize: 1 }),
             };
             frame.record(&counters);
             views.put(frame);
@@ -295,7 +307,7 @@ fn render_view_counts_reach_the_report() {
     run(&mut app, 200).expect("scenario should finish");
 
     let report = &app.world().resource::<DiagReport>().report;
-    for name in ["views/all/count", "views/main/items", "views/cascade/batch_sets", "views/lamp_face/work_items", "views/other/count", "phases/shadow/items", "preprocess/bind_groups"] {
+    for name in ["views/all/count", "views/main/items", "views/cascade/batch_sets", "views/lamp_face/work_items", "views/other/count", "phases/shadow/items", "preprocess/bind_groups", "views/all/instance_batches", "views/main/instance_slots", "phases/shadow/instance_draws", "preprocess/bind_groups_ranges", "preprocess/bind_groups_materialize"] {
         let median = report.counters.get(name).and_then(|c| c.per_frame).map(|s| s.median);
         assert!(median.is_some_and(|m| m >= 0.0), "{name}: {median:?}");
     }

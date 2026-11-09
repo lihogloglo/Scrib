@@ -342,13 +342,33 @@ bitflags! {
 }
 
 // superfargoth patch (own: preprocess bind group count)
-/// The number of bind groups [`prepare_preprocess_bind_groups`] created this
-/// frame (mesh preprocessing, indirect parameter building, bin unpacking and
-/// uniform allocation), for diagnostics. It rebuilds all of them every frame.
+/// The bind groups the GPU preprocessing stages created this frame, for
+/// diagnostics, by owner: [`prepare_preprocess_bind_groups`] (mesh
+/// preprocessing, indirect parameter building, bin unpacking and uniform
+/// allocation - it rebuilds all of them every frame) and, since patch GS,
+/// instance-batch range unpacking and materialization.
+///
+/// Each field is set by its own system; they are never summed here, so
+/// `sf_diag` can report the parts as well as the total and the slice S0
+/// baseline (where both GS fields are 0) stays comparable.
 #[derive(Resource, Clone, Copy, Default, Debug)]
 pub struct PreprocessBindGroupCount {
     /// Bind groups created by the last run of [`prepare_preprocess_bind_groups`].
     pub created: u32,
+    // superfargoth patch (own, GS: counters)
+    /// Bind groups created by the last run of
+    /// [`prepare_range_unpacking_bind_groups`]: one per view, phase and
+    /// indexed/non-indexed work-item buffer that has instance-batch ranges.
+    /// Rebuilt every frame like [`Self::created`]. Stays 0 without
+    /// `GpuInstanceBatchPlugin` (that system is then never registered).
+    pub ranges: u32,
+    // superfargoth patch (own, GS: counters)
+    /// Bind groups created by the last run of
+    /// `gpu_instance_batch::materialize::prepare_bind_groups`: one per live
+    /// GPU instance batch, but **cached** on the buffers it binds, so normally
+    /// 0 after a batch's first frame and non-zero again when its output buffer
+    /// is resized. Stays 0 without `GpuInstanceBatchPlugin`.
+    pub materialize: u32,
 }
 
 // superfargoth patch (own: preprocess bind group count)
@@ -881,7 +901,13 @@ pub fn prepare_range_unpacking_bind_groups(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut batched_instance_buffers: ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
+    // superfargoth patch (own, GS: counters)
+    mut bind_group_count: ResMut<PreprocessBindGroupCount>,
 ) {
+    // superfargoth patch (own, GS: counters): assigned, not accumulated, so
+    // the ordering against `prepare_preprocess_bind_groups` (which owns
+    // `created`) inside `RenderSystems::PrepareBindGroups` does not matter.
+    bind_group_count.ranges = 0;
     if preprocess_pipelines.range_unpacking.pipeline_id.is_none() {
         return;
     }
@@ -933,6 +959,8 @@ pub fn prepare_range_unpacking_bind_groups(
                         work_storage.as_entire_binding(),
                     )),
                 ));
+                // superfargoth patch (own, GS: counters)
+                bind_group_count.ranges = bind_group_count.ranges.saturating_add(1);
             }
         }
     }

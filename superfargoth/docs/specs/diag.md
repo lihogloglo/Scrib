@@ -267,6 +267,13 @@ binned phase, read from Bevy's public render-world state (`sf_diag::views` does 
   `views/all/pipelines_distinct`, `phases/<phase>/{items,bins,batch_sets,pipelines}` (`opaque3d`, `alpha_mask3d`,
   `shadow`, `opaque3d_prepass`, `alpha_mask3d_prepass`, `*_deferred`), `preprocess/bind_groups` (vendored patch
   `PreprocessBindGroupCount`); pipelines specialised this frame are `pipelines/created` (`PipelineChurnPlugin`);
+- **GPU-authored instance batches** (static-scene S3a2, vendored patch `own, GS: counters`): `batch_sets` now counts
+  them (`batch_set_count` read only `self.batch_sets`, and batches draw from `instance_batch_draws`), their bins join
+  the distinct-pipeline sets, and three gauges separate them out on both the `views/<kind>/` and `phases/<phase>/`
+  axes: `instance_batches` (one draw record per batch entity), `instance_draws` (indirect sub-draws inside those batch
+  sets: one per geometry range) and `instance_slots` (output-buffer instance slots reserved). `preprocess/bind_groups`
+  is now the total of `preprocess/bind_groups_{created,ranges,materialize}` - range unpacking and instance
+  materialization used to be uncounted. Zero on every one of them without statics, so the S0 baseline is unaffected;
 - the JSON report's `views` map: per label (`main`, `cascade<i>`, `lamp.face<f>`, `lamp.spot`, `camera<order>`), the
   measured frames it was drawn in, views per frame, and per metric (also `<phase>/<metric>`) the mean and max per frame.
   Lamps share their face's label. The counts lag the main frame by one, like `render/thread/ms`.
@@ -277,8 +284,10 @@ views of `sf_sky_bevy::sun_view` (precipitation occlusion, shelter, canopy) are 
 the real first sun cascade, and shadow-cache capture views appear as `lamp.face6`-`lamp.face11`;
 `views/<kind>/batch_sets` sums every phase, not one pass; a label's "mean" is a sum over that label's views, so
 divide by `views_per_frame` for a per-view figure; and there is no `--off views` switch, so the counters cannot be
-subtracted to compare with pre-S0 numbers. The full list, with how it affects the S0 baseline, is in
-`bevyrrowind/docs/perf.md` "Caveats on the S0 numbers".
+subtracted to compare with pre-S0 numbers. `work_items` and `instance_slots` are **reserved, not surviving**: an
+instance batch reserves one work item and one output slot per capacity slot and the GPU fills them in, so both read
+the dispatch width, never what the cull let through (that lives only in `early_instance_count` on the GPU). The full
+list, with how it affects the S0 baseline, is in `bevyrrowind/docs/perf.md` "Caveats on the S0 numbers".
 
 ## Verification
 

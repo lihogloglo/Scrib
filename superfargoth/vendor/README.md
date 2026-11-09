@@ -84,6 +84,16 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   (#26149) and `sf_shadow_cache_bevy`'s `LampShadowView`. #25978 registered it in `Core3d` only, so the two shadow
   schedules read `push_range`'s `push_multiple_uninit` reservations as uninitialised GPU memory. Offerable to
   #25978 as a review fix. Still a no-op without the plugin (the pipeline id stays `None`).
+- Tag `counters` (slice A, plan step 3), **Scrib-specific**, kept separable from the `own: phase counts` /
+  `own: preprocess bind group count` bodies of work: `BinnedRenderPhase::batch_set_count` adds
+  `instance_batch_draws.len()` (it read only `self.batch_sets`, while instance batches draw from
+  `instance_batch_draws` and register their batch sets straight on the indirect buffers, so the one number
+  static-scene.md's "batch sets per view" budget gates on reported **zero** extra draws for every static), plus
+  read-only `instance_batch_draw_count`, `instance_batch_indirect_draw_count` and `instance_batch_slot_count`
+  (reserved, pre-cull: the surviving count is GPU-only). `PreprocessBindGroupCount` gains `ranges` and `materialize`,
+  set by `prepare_range_unpacking_bind_groups` and `gpu_instance_batch::materialize::prepare_bind_groups` - both were
+  uncounted. Counters only, no behaviour change; read by `sf_diag_bevy::RenderViewsPlugin`, summed in Bevy-free
+  `sf_diag::views` (`PhaseCounts::{instance_batches, instance_draws, instance_slots}`, `BindGroups`).
 
 ## Upstream PR fixes
 

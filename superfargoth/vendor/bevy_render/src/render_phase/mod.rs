@@ -1541,11 +1541,61 @@ where
     /// `batch_and_prepare_binned_render_phase`: one (multi-)draw each when
     /// storage buffers are available. Zero before batching runs.
     pub fn batch_set_count(&self) -> usize {
-        match &self.batch_sets {
+        let entity_path_batch_sets = match &self.batch_sets {
             BinnedRenderPhaseBatchSets::DynamicUniforms(sets) => sets.len(),
             BinnedRenderPhaseBatchSets::Direct(batches) => batches.len(),
             BinnedRenderPhaseBatchSets::MultidrawIndirect(sets) => sets.len(),
-        }
+        };
+        // superfargoth patch (own, GS: counters)
+        // GPU-authored instance batches are drawn from `instance_batch_draws`
+        // and register their batch sets straight on the indirect parameters
+        // buffers, never in `self.batch_sets`, so without this the one number
+        // static-scene.md's "batch sets per view" budget gates on reports zero
+        // extra draws for every static (port audit A5 / BLOCKER 3).
+        entity_path_batch_sets + self.instance_batch_draws.len()
+    }
+
+    // superfargoth patch (own, GS: counters)
+    /// Of [`Self::batch_set_count`], the ones that are GPU-authored instance
+    /// batches: one draw record per batch entity. Zero before batching runs,
+    /// and zero in a view that draws no batches (including every view without
+    /// indirect drawing, which drops them).
+    pub fn instance_batch_draw_count(&self) -> usize {
+        self.instance_batch_draws.len()
+    }
+
+    // superfargoth patch (own, GS: counters)
+    /// The indirect sub-draws inside those batches' batch sets: one per
+    /// geometry range a batch draws. Equal to
+    /// [`Self::instance_batch_draw_count`] while a batch carries one range.
+    pub fn instance_batch_indirect_draw_count(&self) -> usize {
+        self.instance_batch_draws
+            .iter()
+            .map(|draw| match draw.batch.extra_index {
+                PhaseItemExtraIndex::IndirectParametersIndex { ref range, .. } => range.len(),
+                PhaseItemExtraIndex::None | PhaseItemExtraIndex::DynamicOffset(_) => 0,
+            })
+            .sum()
+    }
+
+    // superfargoth patch (own, GS: counters)
+    /// Instance slots those batches reserved in this view's output
+    /// (`MeshUniform`) buffer.
+    ///
+    /// **Reserved, pre-cull**: `batch_and_prepare_binned_render_phase`
+    /// allocates the batch's whole capacity, and how many instances survived
+    /// the GPU cull is only ever known to the GPU (`early_instance_count`).
+    /// Do not read this as a visible-instance count.
+    pub fn instance_batch_slot_count(&self) -> u32 {
+        self.instance_batch_draws
+            .iter()
+            .map(|draw| {
+                draw.batch
+                    .instance_range
+                    .end
+                    .saturating_sub(draw.batch.instance_range.start)
+            })
+            .fold(0u32, u32::saturating_add)
     }
 
     pub fn prepare_for_new_frame(&mut self) {
