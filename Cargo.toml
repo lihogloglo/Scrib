@@ -202,6 +202,7 @@ sf_rpg = { path = "superfargoth/crates/sf_rpg", version = "0.1.0" }
 sf_rpg_ui = { path = "superfargoth/crates/sf_rpg_ui", version = "0.1.0" }
 sf_save = { path = "superfargoth/crates/sf_save", version = "0.1.0" }
 sf_save_bevy = { path = "superfargoth/crates/sf_save_bevy", version = "0.1.0" }
+sf_scene = { path = "superfargoth/crates/sf_scene", version = "0.1.0" }
 sf_script = { path = "superfargoth/crates/sf_script", version = "0.1.0" }
 sf_script_bevy = { path = "superfargoth/crates/sf_script_bevy", version = "0.1.0" }
 sf_shadow_cache_bevy = { path = "superfargoth/crates/sf_shadow_cache_bevy", version = "0.1.0" }

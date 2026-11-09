@@ -5044,11 +5044,13 @@ dependencies = [
  "sf_bake",
  "sf_character",
  "sf_controller",
+ "sf_coords",
  "sf_lod",
  "sf_model",
  "sf_physics",
  "sf_ragdoll",
  "sf_records",
+ "sf_scene",
  "sf_script",
  "sf_terrain",
  "sf_texture",
@@ -7917,8 +7919,10 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_asset",
+ "bevy_core_pipeline",
  "bevy_diagnostic",
  "bevy_ecs",
+ "bevy_pbr",
  "bevy_platform",
  "bevy_render",
  "bevy_time",
@@ -8283,6 +8287,21 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "workspace-hack",
+]
+
+[[package]]
+name = "sf_scene"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "glam 0.33.12",
+ "sf_bake",
+ "sf_coords",
+ "sf_model",
+ "sf_terrain",
+ "sf_vfs",
+ "sf_world",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -8791,6 +8810,7 @@ dependencies = [
  "sf_diag_bevy",
  "sf_model",
  "sf_model_bevy",
+ "sf_scene",
  "sf_vfs",
  "sf_world",
  "tempfile",

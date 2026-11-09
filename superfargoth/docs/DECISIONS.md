@@ -1627,3 +1627,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-06 (night-ambient, RO-16 fix 2): the sky's flat ambient floor takes its hue from the weather
   (`sf_sky::Weather::ambient_tint`, luminance relative to `SkyRenderOptions::ambient_color`), not its brightness: the
   game's calibrated nits stay (owner: lit nights); Morrowind feeds OpenMW's time-of-day ambient colours as chroma only.
+- 2026-11-08 (static-scene): statics move to a retained GPU-driven scene (one instance table per space, GPU cull and
+  pixel-error LOD per view, Bevy's material pipeline via a vendored, upstreamable patch on bevy#25978); not a CPU cull,
+  a public-API bypass or our own renderer. Owner: future-proof over quick fixes. Spec `specs/static-scene.md`.
+- 2026-11-08 (delirium-repin): delirium-physics pinned to `f4ff84d` (0.7.0) after upstream rewrote history and dropped
+  `91ee246`; new 0.7.0 fields take delirium's serde defaults in `mw_delirium`. Delirium stays a default feature (owner).
+  A project-owned fork pin is the open follow-up.

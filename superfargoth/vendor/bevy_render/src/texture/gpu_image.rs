@@ -4,8 +4,57 @@ use crate::{
     renderer::{RenderDevice, RenderQueue},
 };
 use bevy_asset::{AssetId, RenderAssetUsages};
+use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{lifetimeless::SRes, SystemParamItem};
-use bevy_image::{Image, ImageSampler};
+use bevy_image::{Image, ImageSampler, ImageSamplerDescriptor};
+use std::sync::Mutex;
+
+// superfargoth patch (own: shared image samplers)
+/// Render-world resource: when present, images with equal [`ImageSamplerDescriptor`]s share one
+/// [`Sampler`] instead of each creating its own.
+///
+/// A bindless material slab counts every distinct sampler as a resource, so per-image samplers
+/// fill slabs (and split materials into more bind groups) twice as fast as the textures alone
+/// would; on backends with a small sampler heap they can also run out. Samplers are immutable, so
+/// sharing one is invisible. Absent (the default), Bevy creates one sampler per image as before.
+#[derive(Resource, Default)]
+pub struct SharedImageSamplers {
+    /// Distinct descriptors are few: a linear scan.
+    samplers: Mutex<Vec<(ImageSamplerDescriptor, Sampler)>>,
+}
+
+impl SharedImageSamplers {
+    /// The shared sampler for `descriptor`, created on first use.
+    pub fn get_or_create(
+        &self,
+        render_device: &RenderDevice,
+        descriptor: &ImageSamplerDescriptor,
+    ) -> Sampler {
+        let mut samplers = self
+            .samplers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, sampler)) = samplers.iter().find(|(d, _)| d == descriptor) {
+            return sampler.clone();
+        }
+        let sampler = render_device.create_sampler(&descriptor.as_wgpu());
+        samplers.push((descriptor.clone(), sampler.clone()));
+        sampler
+    }
+
+    /// Distinct samplers created so far.
+    pub fn len(&self) -> usize {
+        self.samplers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    /// True before the first sampler.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 use bevy_log::warn;
 use bevy_math::{AspectRatio, UVec2};
 use wgpu::{Extent3d, TexelCopyBufferLayout, TextureFormat, TextureUsages};
@@ -29,6 +78,8 @@ impl RenderAsset for GpuImage {
         SRes<RenderDevice>,
         SRes<RenderQueue>,
         SRes<DefaultImageSampler>,
+        // superfargoth patch (own: shared image samplers)
+        Option<SRes<SharedImageSamplers>>,
     );
 
     #[inline]
@@ -63,7 +114,9 @@ impl RenderAsset for GpuImage {
     fn prepare_asset(
         image: Self::SourceAsset,
         _: AssetId<Self::SourceAsset>,
-        (render_device, render_queue, default_sampler): &mut SystemParamItem<Self::Param>,
+        (render_device, render_queue, default_sampler, shared_samplers): &mut SystemParamItem<
+            Self::Param,
+        >,
         previous_asset: Option<&Self>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
         let had_data = image.data.is_some();
@@ -164,9 +217,11 @@ impl RenderAsset for GpuImage {
         };
         let sampler = match image.sampler {
             ImageSampler::Default => (***default_sampler).clone(),
-            ImageSampler::Descriptor(descriptor) => {
-                render_device.create_sampler(&descriptor.as_wgpu())
-            }
+            // superfargoth patch (own: shared image samplers)
+            ImageSampler::Descriptor(descriptor) => match shared_samplers {
+                Some(shared) => shared.get_or_create(render_device, &descriptor),
+                None => render_device.create_sampler(&descriptor.as_wgpu()),
+            },
         };
 
         Ok(GpuImage {

@@ -12,6 +12,8 @@
 //! - [`suite`]: driving runs from another process (quiet-machine wait,
 //!   `nvidia-smi` sampling, summaries across repeats); [`nsys`]: Nsight
 //!   Systems per-pass GPU tables; [`trace`]: Chrome trace summaries.
+//! - [`views`]: per-view render counters (items, bins, batch sets, work
+//!   items, pipelines) as gauges and a per-view report breakdown.
 //!
 //! The Bevy glue lives in `sf_diag_bevy`.
 
@@ -27,6 +29,7 @@ mod scenario;
 mod stats;
 pub mod suite;
 pub mod trace;
+pub mod views;
 
 #[cfg(test)]
 mod tests;

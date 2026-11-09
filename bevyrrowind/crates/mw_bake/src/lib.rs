@@ -11,6 +11,8 @@
 //!   `StaticProbe`), registered by [`model_baker`].
 //! - [`delight`]: albedo de-lighting (`texture.roles`, `texture.delight` and
 //!   its index) and the runtime VFS layer serving the de-lit KTX2s.
+//! - [`scene`]: the static scene's eligibility rules and material map
+//!   (`scene.cells`, `superfargoth/docs/specs/static-scene.md` S1b).
 //! - [`referenced_models`] and [`bake_models`]: what `bevyrrowind bake`
 //!   runs, and [`BakeSummary`], what it prints.
 //!
@@ -26,6 +28,7 @@ mod inputs;
 mod summary;
 pub mod far;
 pub mod script;
+pub mod scene;
 pub mod sources;
 pub mod ragdoll;
 pub mod textures;

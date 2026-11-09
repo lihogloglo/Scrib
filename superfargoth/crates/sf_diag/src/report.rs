@@ -159,6 +159,10 @@ pub struct Report {
     pub wall_start_unix_s: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wall_end_unix_s: Option<f64>,
+    /// Per-view render counters by view label (`main`, `cascade0`, ...),
+    /// measured frames only (`views.rs`, static-scene.md S0).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub views: BTreeMap<String, crate::views::ViewSummary>,
 }
 
 /// How many hitches a report lists (the slowest, in time order).
@@ -298,6 +302,7 @@ impl Report {
             passed,
             hitches: None,
             warmup: None,
+            views: BTreeMap::new(),
             wall_start_unix_s: None,
             wall_end_unix_s: None,
         }

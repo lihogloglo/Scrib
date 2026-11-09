@@ -606,25 +606,31 @@ fn apply_pbr_lighting(
         @else   // LIGHTMAP
         let enable_diffuse = true;
 
+        // superfargoth patch (own: sun shadow early-out): light first (N·L and the atmosphere
+        // transmittance are exactly 0 on back faces and with the sun below the horizon), then fetch the
+        // cascades and march the contact shadow only where the result isn't multiplied by zero. `lit` is
+        // taken after the cascade debug overlay, which is never 0, so that view still fetches everywhere.
+        var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
+
+        @if(DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES)
+        light_contrib = shadows::cascade_debug_visualization(light_contrib, i, view_z);
+
         var shadow: f32 = 1.0;
-        if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
+        let lit = any(light_contrib != vec3(0.0));
+        if (lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
                 && (view_bindings::lights.directional_lights[i].flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             shadow = shadows::fetch_directional_shadow(i, in.world_position, in.world_normal, view_z, in.frag_coord.xy);
             shadow *= in.directional_shadow_factor;
         }
 
         @if(CONTACT_SHADOWS && DEPTH_PREPASS)
-        if contact_shadow_enabled && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 &&
+        if contact_shadow_enabled && lit && (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && shadow > 0.0 && // superfargoth patch (own: sun shadow early-out): `lit`
                 (view_bindings::lights.directional_lights[i].flags &
                     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT) != 0u {
             let L = view_bindings::lights.directional_lights[i].direction_to_light;
             shadow *= calculate_contact_shadow(in.world_position.xyz, in.frag_coord.xy, L, contact_shadow_steps);
         }
 
-        var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
-
-        @if(DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES)
-        light_contrib = shadows::cascade_debug_visualization(light_contrib, i, view_z);
         direct_light += light_contrib * shadow;
 
 @if(STANDARD_MATERIAL_DIFFUSE_TRANSMISSION) {
@@ -637,14 +643,17 @@ fn apply_pbr_lighting(
         // R = vec3<f32>(0.0) // doesn't really matter
         // F_ab = vec2<f32>(0.1)
         // F0 = vec3<f32>(0.0)
+        // superfargoth patch (own: sun shadow early-out): the transmitted lobe shades with -N, so it
+        // gets its own gate (a leaf's sunlit side skips it, its shaded side fetches it).
+        let transmitted_light_contrib =
+            lighting::directional_light(i, &transmissive_lighting_input, enable_diffuse);
         var transmitted_shadow: f32 = 1.0;
-        if ((in.flags & (MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_TRANSMITTED_SHADOW_RECEIVER_BIT)) == (MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_TRANSMITTED_SHADOW_RECEIVER_BIT)
+        let transmitted_lit = any(transmitted_light_contrib != vec3(0.0));
+        if (transmitted_lit && (in.flags & (MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_TRANSMITTED_SHADOW_RECEIVER_BIT)) == (MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_TRANSMITTED_SHADOW_RECEIVER_BIT)
                 && (view_bindings::lights.directional_lights[i].flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             transmitted_shadow = shadows::fetch_directional_shadow(i, diffuse_transmissive_lobe_world_position, -in.world_normal, view_z, in.frag_coord.xy);
         }
 
-        let transmitted_light_contrib =
-            lighting::directional_light(i, &transmissive_lighting_input, enable_diffuse);
         transmitted_light += transmitted_light_contrib * transmitted_shadow;
 }
     }

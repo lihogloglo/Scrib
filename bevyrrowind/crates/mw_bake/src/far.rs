@@ -49,7 +49,7 @@ pub struct MwFarSource {
 
 /// The ids a script text can name, lowercase: quoted strings whole (ids with
 /// spaces, `"chargen boat"->Disable`) and every identifier-like word.
-fn script_tokens(text: &str, out: &mut BTreeSet<String>) {
+pub(crate) fn script_tokens(text: &str, out: &mut BTreeSet<String>) {
     for quoted in text.split('"').skip(1).step_by(2) {
         let t = quoted.trim();
         if !t.is_empty() {

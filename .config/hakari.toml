@@ -62,6 +62,7 @@ workspace-members = [
     "sf_rpg",
     "sf_rpg_ui",
     "sf_save",
+    "sf_scene",
     "sf_script",
     "sf_sky",
     "sf_stats",

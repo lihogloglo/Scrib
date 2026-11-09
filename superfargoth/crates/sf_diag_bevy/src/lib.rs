@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bevy_app::{App, AppExit, First, Plugin};
 use bevy_diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -25,6 +25,7 @@ use bevy_time::{Real, Time, TimeSystems};
 use bevy_transform::components::Transform;
 
 pub use sf_diag;
+use sf_diag::views::{ViewFrame, ViewTable};
 use sf_diag::{Counters, DiagError, Phase, Pose, Recorder, Report, Scenario, ScenarioRun};
 
 mod churn;
@@ -37,6 +38,11 @@ pub use churn::{ChurnPlugin, ENTITIES, ENTITIES_DELTA, short_type_name};
 
 mod phases;
 pub use phases::FramePhasePlugin;
+
+#[cfg(feature = "views")]
+mod views;
+#[cfg(feature = "views")]
+pub use views::RenderViewsPlugin;
 
 pub mod ready;
 pub use ready::{GateReceipt, GateStatus, GpuPending, ReadyGate};
@@ -123,6 +129,26 @@ impl Deref for DiagCounters {
     }
 }
 
+/// The renderer's latest per-view counts ([`sf_diag::views`]), filled by
+/// `RenderViewsPlugin` (feature `views`) in the render world and taken at each
+/// frame boundary: measured frames go into the report's per-view breakdown.
+#[derive(Resource, Clone, Default)]
+pub struct DiagViews(pub Arc<Mutex<Option<ViewFrame>>>);
+
+impl DiagViews {
+    /// Replaces the pending frame (the render world, once per frame).
+    pub fn put(&self, frame: ViewFrame) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(frame);
+        }
+    }
+
+    /// Takes the pending frame, if any.
+    pub fn take(&self) -> Option<ViewFrame> {
+        self.0.lock().ok().and_then(|mut slot| slot.take())
+    }
+}
+
 /// The running scenario and its recording.
 #[derive(Resource, Debug)]
 pub struct DiagScenario {
@@ -132,6 +158,8 @@ pub struct DiagScenario {
     warmup: Recorder,
     /// Wall clock (Unix seconds) when measurement began.
     wall_start: Option<f64>,
+    /// Per-view render counts of the measured frames.
+    views: ViewTable,
     /// Keeps the warm-up going while true (e.g. until streaming is idle).
     pub hold: bool,
 }
@@ -217,6 +245,9 @@ impl Plugin for SfDiagPlugin {
         if !app.world().contains_resource::<DiagCounters>() {
             app.insert_resource(DiagCounters::default());
         }
+        if !app.world().contains_resource::<DiagViews>() {
+            app.insert_resource(DiagViews::default());
+        }
         app.insert_resource(self.settings.clone())
             .insert_resource(FlyThroughPose(
                 self.scenario.as_ref().and_then(ScenarioRun::start_pose),
@@ -240,6 +271,7 @@ impl Plugin for SfDiagPlugin {
                 recorder: Recorder::new(),
                 warmup: Recorder::new(),
                 wall_start: None,
+                views: ViewTable::new(),
                 hold: false,
             });
         }
@@ -253,6 +285,7 @@ fn frame_boundary(
     settings: Res<DiagSettings>,
     store: Option<Res<DiagnosticsStore>>,
     scenario: Option<ResMut<DiagScenario>>,
+    views: Option<Res<DiagViews>>,
     mut pose: ResMut<FlyThroughPose>,
     mut seen: Local<HashMap<String, Instant>>,
     entities: Query<()>,
@@ -269,6 +302,7 @@ fn frame_boundary(
         recorder,
         warmup,
         wall_start,
+        views: view_table,
         hold,
     } = &mut *scenario;
     if run.phase() == Phase::Done {
@@ -301,8 +335,12 @@ fn frame_boundary(
 
     let was = run.phase();
     let step = run.advance(frame_ms, *hold);
+    let view_frame = views.as_ref().and_then(|v| v.take());
     if step.record {
         recorder.commit_frame(frame_ms, &counters);
+        if let Some(frame) = &view_frame {
+            view_table.add(frame);
+        }
     } else if was == Phase::Warmup {
         warmup.commit_frame(frame_ms, &counters);
     } else {
@@ -317,7 +355,7 @@ fn frame_boundary(
         sf_diag::pacing::derive_work(recorder);
         sf_diag::pacing::derive_work(warmup);
         let wall = (wall_start.unwrap_or_default(), sf_diag::suite::unix_now());
-        let finished = finish(run.scenario(), recorder, warmup, wall, &settings);
+        let finished = finish(run.scenario(), (recorder, warmup), view_table, wall, &settings);
         if finished.passed() {
             log::info!("{}", finished.report.summary());
         } else {
@@ -374,8 +412,8 @@ fn sample_diagnostics(
 /// Builds the report, compares it with the baseline, and writes the files.
 fn finish(
     scenario: &Scenario,
-    recorder: &Recorder,
-    warmup: &Recorder,
+    (recorder, warmup): (&Recorder, &Recorder),
+    views: &ViewTable,
     (wall_start, wall_end): (f64, f64),
     settings: &DiagSettings,
 ) -> DiagReport {
@@ -389,6 +427,7 @@ fn finish(
     report.add_hitches(recorder, Some(warmup), settings.hitch_ms);
     report.wall_start_unix_s = Some(wall_start);
     report.wall_end_unix_s = Some(wall_end);
+    report.views = views.summary();
     let mut errors = Vec::new();
 
     if let Some(path) = settings

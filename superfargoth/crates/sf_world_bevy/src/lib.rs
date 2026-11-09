@@ -24,6 +24,7 @@ pub mod coords;
 mod debug;
 mod fade;
 mod far;
+pub mod matclass;
 mod origin;
 mod precombine;
 mod spawn;
@@ -52,7 +53,11 @@ pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceRegistry, Worldspac
 use bevy_app::{App, Last, Plugin, PostStartup, PostUpdate, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
+use bevy_render::extract_resource::extract_resource;
 use bevy_render::render_asset::RenderAssetBytesPerFrame;
+use bevy_render::renderer::render_system;
+use bevy_render::texture::SharedImageSamplers;
+use bevy_render::{ExtractSchedule, Render, RenderApp, RenderSystems};
 use big_space::plugin::{BigSpaceCorePlugin, BigSpaceMinimalPlugins, BigSpaceSystems, BigSpaceTimingStatsPlugin};
 use big_space::stationary::BigSpaceStationaryPlugin;
 use big_space::timing::PropagationStats;
@@ -113,7 +118,11 @@ impl Plugin for WorldStreamingPlugin {
                 PostUpdate,
                 (apply_subtree_ranges, apply_subtree_layers).before(bevy_camera::visibility::VisibilitySystems::CalculateBounds),
             )
-            .add_systems(Last, report_propagation);
+            .add_systems(Last, report_propagation)
+            // Material-class gauges (static-scene.md S2), only while counters run.
+            .init_resource::<matclass::StaticMaterialTracker>()
+            .init_resource::<matclass::StaticMaterialIds>()
+            .add_systems(Last, matclass::track_static_materials.run_if(resource_exists::<DiagCounters>));
 
         #[cfg(feature = "debug")]
         app.init_resource::<StreamingDebug>();
@@ -129,6 +138,19 @@ impl Plugin for WorldStreamingPlugin {
         // re-extracts such instances.
         if let Some(mut limit) = app.world_mut().get_resource_mut::<RenderAssetBytesPerFrame>() {
             limit.max_bytes = None;
+        }
+        let counters = app.world().get_resource::<DiagCounters>().cloned();
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            // `--off matclass` keeps Bevy's one sampler per image.
+            if self.config.material_classes {
+                render_app.init_resource::<SharedImageSamplers>();
+            }
+            if let Some(counters) = counters {
+                render_app
+                    .insert_resource(counters)
+                    .add_systems(ExtractSchedule, extract_resource::<matclass::StaticMaterialIds, RenderApp, ()>)
+                    .add_systems(Render, matclass::count_static_bind_groups.in_set(RenderSystems::Render).after(render_system));
+            }
         }
         // The overlay needs gizmos; headless apps don't have them.
         #[cfg(feature = "debug")]

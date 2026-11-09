@@ -313,6 +313,8 @@ pub fn spawn_template_ranges(world: &mut World, cx: &SpawnCx<'_>, template: &Mod
                 template.aabb,
                 // The model's bounds are exact already; skip Bevy's AABB scan.
                 NoAutoAabb,
+                // What the material-class gauges count (static-scene.md S2).
+                crate::matclass::StaticPart,
                 ChildOf(cx.parent),
             );
             match &template.ray_tracing {

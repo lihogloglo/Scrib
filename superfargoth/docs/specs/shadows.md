@@ -63,6 +63,10 @@ independent Opus review). Awaiting owner: SH-21, RO-11.
 - **Cost** (perf.md "Shadow reset B2"): filter -0.09-0.10 ms main-pass GPU per shadowed lamp at 1440p (lab 16 lamps
   4.83 → 2.72, census opaque 2.94 → 2.08); early-out helps only where lamps light little (census -0.36). Frames are
   render-thread bound, so medians barely move. Look: SH-19 (owner).
+- **Sun early-out (2026-11-09, sun-shadow-early-out):** the directional loop now does the same: contribution first, then
+  the cascade fetch and contact march only if it is non-zero (back faces to the sun, sun below the horizon via the
+  atmosphere transmittance). The leaf transmission lobe has its own gate; the cascade debug overlay is never 0, so that
+  view is unchanged. Same diff, +59 lines. Naga-validated, not run; look and perf A/B: SH-23 (owner).
 
 ## Reset B1 as built (shadowB1, 2026-10-21)
 

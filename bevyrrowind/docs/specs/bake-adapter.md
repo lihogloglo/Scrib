@@ -110,6 +110,22 @@ on the same baker, so one manifest names every product.
    decodes BC1–BC3, `image` (in the tree) reads TGA/BMP/PNG. Uncompressed
    DDS formats (A8R8G8B8, X8R8G8B8, R8G8B8, ...) are swizzled by hand.
 
+## Scene cells (`mw_bake::scene`, static-scene.md S1b, S1c)
+
+`scene::bake_scene` runs after `bake_exterior` on the same baker: it builds `MwSceneSource`
+from the records, hands `sf_scene::bake::SceneBake` the level-0 terrain tiles this session
+resolved (land coverage) and bakes one `scene.cells` table per exterior cell. Rules (module
+docs): only `STAT` placements that are not markers; a base record with a script, a base id any
+script or dialogue result names (the precombine veto's token scan), or a placement that starts
+disabled stays an entity; models `mesh.cook` skipped stay entities. Materials: opaque and
+alpha-tested (cutouts included) are scene materials; blends, additive, `cutout_candidate` and
+surfaces without depth write/test stay entities; two-sided from the NIF; no wind yet. Tables are
+format v2 (S1c): cell-local chain indices, a material key per chain (content hash of the cooked
+NIF material, so two NIFs with the same texture and settings share it), the layer mask in the
+header, per-part spheres from each part's LOD0 vertices. The adapter itself is unchanged. Not yet
+called by `bevyrrowind bake` (`mw_boot_bevy::bake`, one line after `bake_far`); measurement:
+`cargo test --release -p mw_bake --test scene_cells_real_install -- --ignored --nocapture`.
+
 ## Runtime (`mw_assets::cooked`, `view`)
 
 - `view` uses a model cooked when the profile manifest has its

@@ -73,6 +73,41 @@ profile, 2 runs; sets of 21 swaying proxies, "+ balls" = a 3 kg ball per set eve
 High budget (≤ 0.3 ms, 16 sets) holds; the step dominates (~0.3 µs per moving proxy). In game: scene
 `level-shapes-bench`, the `shapes:` log line once a second. Later slices (S4+) log their row against this one.
 
+### Static scene baseline (S0)
+
+Per-view render counters (static-scene.md S0; superfargoth `diag.md` "Render views"): gauges `views/<kind>/...`
+(`main`, `cascade`, `lamp_face`, `other`, `all`), `phases/<phase>/...`, `preprocess/bind_groups` in each run's `.md`
+gauges table and `.csv`, a per-view breakdown under `views` in the `.json`, and five summary columns. Owner, `dlss`
+build (`cargo build --profile profiling -p bevyrrowind --features dlss`), then:
+
+```sh
+target/profiling/bevyrrowind.exe perf suite s0_baseline balmora seyda_neen red_mountain run balmora_walk flight \
+    --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --save benchmarks/runs/s0_baseline
+target/profiling/bevyrrowind.exe perf suite s0_baseline_noprecombine balmora seyda_neen red_mountain run balmora_walk flight \
+    --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --off precombine --save benchmarks/runs/s0_baseline_noprecombine
+```
+
+### Static material classes (S2)
+
+Static template materials fold into their material class and images share equal samplers (static-scene.md S2,
+`sf_world_bevy::matclass`; default on, `--off matclass` restores the old materials). Extra gauges in the same
+runs: `statics/materials`, `statics/material_classes`, `statics/material_keys` (distinct `StandardMaterialKey`s),
+`statics/material_pipelines`, `statics/materials_unclassed`, `statics/material_bind_groups`,
+`statics/materials_bound`, `statics/bindless` (1 = bindless slabs). The A/B, same build as S0 (compare
+`views/main/batch_sets`, `views/all/pipelines_distinct` and the `statics/*` gauges; ms per preset):
+
+```sh
+target/profiling/bevyrrowind.exe perf suite s2_matclass balmora seyda_neen red_mountain run balmora_walk flight \
+    --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --save benchmarks/runs/s2_matclass
+target/profiling/bevyrrowind.exe perf suite s2_matclass_off balmora seyda_neen red_mountain run balmora_walk flight \
+    --repeat 3 --resolution 2560x1440 --env BEVYRROWIND_DLSS=quality --off matclass --save benchmarks/runs/s2_matclass_off
+```
+
+Expected: `statics/material_keys` ≤ 4 (cull back / none, ± leaf transmission) in both runs (today's mapper already
+keys on the class), `statics/material_bind_groups` lower with the default (one sampler per image doubled slab use),
+`statics/bindless` 1 on Vulkan (0 means one bind group per material: the device misses binding arrays or the
+6 × 2048 sampler limit).
+
 ### Dated measurement log (archived)
 
 The dated measurement blocks (2026-10-20/21) moved verbatim to [archive/perf-log-2026-10.md](archive/perf-log-2026-10.md), newest first. Each old section name still resolves below.

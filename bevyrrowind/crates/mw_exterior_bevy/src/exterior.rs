@@ -265,6 +265,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     };
     let mut streaming = streaming_config(base, options.near_ring, options.far_ring);
     streaming.lod = screen;
+    // Static material classes (static-scene.md S2); `--off matclass` keeps the mapper's materials.
+    streaming.material_classes = !perf.off.has(Part::MatClass);
     // Buckets bypass the spawners: off with `--off precombine`, and where a
     // spawner must see every static (no near statics, the runtime NIF path,
     // the LOD tint view).

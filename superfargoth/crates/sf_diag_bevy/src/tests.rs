@@ -254,3 +254,58 @@ fn short_type_names() {
     );
     assert_eq!(short_type_name("Plain"), "Plain");
 }
+
+/// Static-scene S0: per-view counts reach the gauges, the JSON breakdown
+/// and the CSV. The renderer is stood in for by a main-world system with
+/// synthetic phase data (no GPU headless); sanity only.
+#[test]
+fn render_view_counts_reach_the_report() {
+    use sf_diag::views::{PhaseCounts, ViewCounts, ViewFrame, ViewKind};
+
+    let dir = tempfile::tempdir().unwrap();
+    let settings = DiagSettings {
+        output_dir: dir.path().to_path_buf(),
+        exit_on_finish: true,
+        ..DiagSettings::default()
+    };
+    let mut app = app(settings, Some(path_scenario(Vec::new())));
+    app.add_systems(
+        bevy_app::Update,
+        |counters: Res<DiagCounters>, views: Res<DiagViews>| {
+            let view = |label: &str, kind, phase, items| ViewCounts {
+                label: label.to_owned(),
+                kind,
+                phases: vec![PhaseCounts { phase, items, bins: items / 2, batch_sets: 3, pipelines: 2 }],
+                work_items: items,
+                pipelines: 2,
+            };
+            let frame = ViewFrame {
+                views: vec![
+                    view("main", ViewKind::Main, "opaque3d", 400),
+                    view("cascade0", ViewKind::Cascade, "shadow", 300),
+                    view("lamp.face0", ViewKind::LampFace, "shadow", 20),
+                ],
+                distinct_pipelines: 3,
+                bind_groups: Some(9),
+            };
+            frame.record(&counters);
+            views.put(frame);
+        },
+    );
+    run(&mut app, 200).expect("scenario should finish");
+
+    let report = &app.world().resource::<DiagReport>().report;
+    for name in ["views/all/count", "views/main/items", "views/cascade/batch_sets", "views/lamp_face/work_items", "views/other/count", "phases/shadow/items", "preprocess/bind_groups"] {
+        let median = report.counters.get(name).and_then(|c| c.per_frame).map(|s| s.median);
+        assert!(median.is_some_and(|m| m >= 0.0), "{name}: {median:?}");
+    }
+    for label in ["main", "cascade0", "lamp.face0"] {
+        let view = report.views.get(label).unwrap_or_else(|| panic!("no view {label}"));
+        assert!(view.frames > 0 && view.metrics.values().all(|m| m.mean >= 0.0 && m.max >= m.mean), "{label}: {view:?}");
+    }
+    let json = std::fs::read_to_string(dir.path().join("fly_test.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(parsed["views"]["main"]["metrics"]["opaque3d/items"]["mean"].is_number());
+    let csv = std::fs::read_to_string(dir.path().join("fly_test.csv")).unwrap();
+    assert!(csv.lines().next().unwrap().contains("views/main/items"));
+}

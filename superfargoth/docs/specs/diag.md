@@ -255,6 +255,22 @@ fn my_stage(counters: Res<DiagCounters>) { counters.add_duration_named("stream/s
 atomic add per call). `DiagScenario::hold` delays the end of warm-up.
 `DiagReport` holds the finished report.
 
+### Render views (static-scene S0)
+
+`sf_diag_bevy::RenderViewsPlugin` (feature `views`) counts, once per render frame after the graph, every view with a
+binned phase, read from Bevy's public render-world state (`sf_diag::views` does the sums, Bevy-free):
+
+- view kinds: `main` (lowest-order camera), `cascade` (`LightEntity::Directional`), `lamp_face` (point faces, spot
+  views), `other`; per view: phase items (`entity_count`), bins, batch sets built this frame, preprocess work items
+  (early pass, indexed + non-indexed), distinct pipelines among the batch-set keys;
+- gauges (`count`): `views/<kind>/{count,items,bins,batch_sets,work_items,pipelines}` with `<kind>` also `all`,
+  `views/all/pipelines_distinct`, `phases/<phase>/{items,bins,batch_sets,pipelines}` (`opaque3d`, `alpha_mask3d`,
+  `shadow`, `opaque3d_prepass`, `alpha_mask3d_prepass`, `*_deferred`), `preprocess/bind_groups` (vendored patch
+  `PreprocessBindGroupCount`); pipelines specialised this frame are `pipelines/created` (`PipelineChurnPlugin`);
+- the JSON report's `views` map: per label (`main`, `cascade<i>`, `lamp.face<f>`, `lamp.spot`, `camera<order>`), the
+  measured frames it was drawn in, views per frame, and per metric (also `<phase>/<metric>`) the mean and max per frame.
+  Lamps share their face's label. The counts lag the main frame by one, like `render/thread/ms`.
+
 ## Verification
 
 - `sf_diag` unit tests: percentiles against hand-computed values; gate

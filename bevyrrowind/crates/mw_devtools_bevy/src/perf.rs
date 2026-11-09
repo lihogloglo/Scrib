@@ -170,6 +170,7 @@ impl Perf {
                 SfDiagPlugin::new(settings).with_scenario(scenario)?,
                 ChurnPlugin,
                 sf_diag_bevy::FramePhasePlugin,
+                sf_diag_bevy::RenderViewsPlugin,
                 AssetChurnPlugin::<Mesh>::default(),
                 AssetChurnPlugin::<Image>::default(),
                 AssetChurnPlugin::<StandardMaterial>::default(),

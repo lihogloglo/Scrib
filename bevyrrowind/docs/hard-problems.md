@@ -50,6 +50,10 @@ Paste the entry plus this:
   Also Clockwork (`superfargoth/docs/research/clockwork-code-2026-10-25.md` items 2-3): a persistent GPU instance
   table culled per view by compute (cascades and cube faces too, Hi-Z one frame late, indirect + bindless; no
   published ms), and a reach-with-dissolve rule.
+  Also SPUD (`superfargoth/docs/research/spud-code-2026-11-08.md` items 1-3): the shipped, measured CPU version of
+  that table (per-cell POD reference arrays, CPU cull + px-error LOD, a counting sort into one multi-draw-indirect
+  per pipeline state, cascades on the same path; no GPU culling) and a 30-line terrain horizon cull. Statics never
+  become per-view entities, which needs an owner call against CONTRIBUTING rule 4.
 - **Done when:** every `benchmarks/exterior_*.json` median gate passes at the target setup, x3 runs.
 
 ## H2. Shadow quality (ROADMAP 1.4, 1.12) — open

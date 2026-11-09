@@ -323,6 +323,40 @@ bitflags! {
     }
 }
 
+// superfargoth patch (own: preprocess bind group count)
+/// The number of bind groups [`prepare_preprocess_bind_groups`] created this
+/// frame (mesh preprocessing, indirect parameter building, bin unpacking and
+/// uniform allocation), for diagnostics. It rebuilds all of them every frame.
+#[derive(Resource, Clone, Copy, Default, Debug)]
+pub struct PreprocessBindGroupCount {
+    /// Bind groups created by the last run of [`prepare_preprocess_bind_groups`].
+    pub created: u32,
+}
+
+// superfargoth patch (own: preprocess bind group count)
+fn bind_group_count<'a>(groups: impl IntoIterator<Item = &'a Option<BindGroup>>) -> u32 {
+    groups.into_iter().map(|g| u32::from(g.is_some())).sum()
+}
+
+// superfargoth patch (own: preprocess bind group count)
+impl PhasePreprocessBindGroups {
+    fn bind_group_count(&self) -> u32 {
+        match self {
+            Self::Direct(_) => 1,
+            Self::IndirectFrustumCulling {
+                indexed,
+                non_indexed,
+            } => bind_group_count([indexed, non_indexed]),
+            Self::IndirectOcclusionCulling {
+                early_indexed,
+                early_non_indexed,
+                late_indexed,
+                late_non_indexed,
+            } => bind_group_count([early_indexed, early_non_indexed, late_indexed, late_non_indexed]),
+        }
+    }
+}
+
 /// The compute shader bind group for the mesh preprocessing pass for each
 /// render phase.
 ///
@@ -513,6 +547,8 @@ impl Plugin for GpuMeshPreprocessPlugin {
         }
 
         render_app
+            // superfargoth patch (own: preprocess bind group count)
+            .init_resource::<PreprocessBindGroupCount>()
             .init_gpu_resource::<BinUnpackingBindGroups>()
             .init_gpu_resource::<UniformAllocationBindGroups>()
             .init_gpu_resource::<PreprocessPipelines>()
@@ -2233,8 +2269,14 @@ pub fn prepare_preprocess_bind_groups(
     previous_view_uniforms: Res<PreviousViewUniforms>,
     pipelines: Res<PreprocessPipelines>,
     mut bin_unpacking_bind_groups: ResMut<BinUnpackingBindGroups>,
-    mut uniform_allocation_bind_groups: ResMut<UniformAllocationBindGroups>,
+    // superfargoth patch (own: preprocess bind group count): paired with the counter in one tuple
+    // parameter, since a system takes at most 16 parameters.
+    (mut uniform_allocation_bind_groups, mut bind_group_count): (
+        ResMut<UniformAllocationBindGroups>,
+        ResMut<PreprocessBindGroupCount>,
+    ),
 ) {
+    bind_group_count.created = 0;
     // superfargoth patch (bevyengine/bevy#26095)
     // Clear out old bind groups, since they may refer to stale metadata.
     bin_unpacking_bind_groups.clear();
@@ -2345,6 +2387,8 @@ pub fn prepare_preprocess_bind_groups(
             // Write that bind group in.
             if let Some(bind_group) = bind_group {
                 any_indirect = any_indirect || was_indirect;
+                // superfargoth patch (own: preprocess bind group count)
+                bind_group_count.created += bind_group.bind_group_count();
                 bind_groups.insert(*phase_type_id, bind_group);
             }
         }
@@ -2358,7 +2402,8 @@ pub fn prepare_preprocess_bind_groups(
     // Now, if there were any indirect draw commands, create the bind groups for
     // the indirect parameters building shader.
     if any_indirect {
-        create_build_indirect_parameters_bind_groups(
+        // superfargoth patch (own: preprocess bind group count)
+        bind_group_count.created += create_build_indirect_parameters_bind_groups(
             &mut commands,
             &render_device,
             &pipeline_cache,
@@ -2392,6 +2437,16 @@ pub fn prepare_preprocess_bind_groups(
             &view.retained_view_entity,
         );
     }
+    // superfargoth patch (own: preprocess bind group count)
+    let unpacking: usize = bin_unpacking_bind_groups
+        .values()
+        .map(|g| g.indexed.len() + g.non_indexed.len())
+        .sum();
+    let allocation: usize = uniform_allocation_bind_groups
+        .values()
+        .map(|g| g.indexed.len() + g.non_indexed.len())
+        .sum();
+    bind_group_count.created += u32::try_from(unpacking + allocation).unwrap_or(u32::MAX);
 }
 
 /// A temporary structure that stores all the information needed to construct
@@ -3148,7 +3203,7 @@ fn create_build_indirect_parameters_bind_groups(
     current_input_buffer: &Buffer,
     indirect_parameters_buffers: &IndirectParametersBuffers,
     indirect_parameters_build_jobs: &IndirectParametersBuildJobs,
-) {
+) -> u32 {
     let mut build_indirect_parameters_bind_groups = BuildIndirectParametersBindGroups::new();
 
     for (phase_type_id, phase_indirect_parameters_buffer) in indirect_parameters_buffers.iter() {
@@ -3339,7 +3394,20 @@ fn create_build_indirect_parameters_bind_groups(
         );
     }
 
+    // superfargoth patch (own: preprocess bind group count)
+    let created = build_indirect_parameters_bind_groups
+        .values()
+        .map(|g| {
+            bind_group_count([
+                &g.reset_indexed_indirect_batch_sets,
+                &g.reset_non_indexed_indirect_batch_sets,
+                &g.build_indexed_indirect,
+                &g.build_non_indexed_indirect,
+            ])
+        })
+        .sum();
     commands.insert_resource(build_indirect_parameters_bind_groups);
+    created
 }
 
 /// Creates all bind groups needed to run the `unpack_bins` shader for all the
