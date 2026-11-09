@@ -940,6 +940,33 @@ where
     pub(crate) batch: BinnedRenderPhaseBatch,
 }
 
+// superfargoth patch (own, GS: ranges)
+/// Whether a batch set may be drawn with `multi_draw_indirect_count`, taking
+/// the number of commands from the batch set's GPU-written counter.
+///
+/// `Features::MULTI_DRAW_INDIRECT_COUNT` is necessary but not sufficient: DX12
+/// is excluded by the wgpu #7974 workaround even when it reports the feature.
+/// DX12 is a backend we ship on, so `false` is a normal path, not an edge case.
+/// A caller that gets `false` must draw with a plain `multi_draw_indirect` over
+/// *every* command in the batch set (dropping `batch_set_index` and keeping the
+/// indirect parameters range does exactly that), which is correct because
+/// `build_indirect_params.wesl` then keeps its 1:1 batch-to-slot mapping and
+/// zeroes the instance count of a command with no instances.
+pub fn multi_draw_indirect_count_supported(features: Features, backend: wgpu::Backend) -> bool {
+    features.contains(Features::MULTI_DRAW_INDIRECT_COUNT)
+        // TODO: https://github.com/gfx-rs/wgpu/issues/7974
+        && !matches!(backend, wgpu::Backend::Dx12)
+}
+
+// superfargoth patch (own, GS: ranges)
+/// [`multi_draw_indirect_count_supported`] for the render world's own adapter.
+fn multi_draw_indirect_count_supported_in(world: &World) -> bool {
+    multi_draw_indirect_count_supported(
+        world.resource::<RenderDevice>().features(),
+        world.resource::<RenderAdapterInfo>().backend,
+    )
+}
+
 /// Information about the unbatchable entities in a bin.
 pub struct UnbatchableBinnedEntities {
     /// The entities.
@@ -1242,13 +1269,36 @@ where
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
 
+        // superfargoth patch (own, GS: ranges): a batch's N geometry ranges are
+        // N indirect draw commands sharing one batch set, so this is where
+        // `multi_draw_indirect_count` is issued - and it must pass the same
+        // hardware test `render_batchable_meshes` applies to its batch sets.
+        // Where the count form is unavailable (DX12 included, a normal path for
+        // us), keep the range and drop the batch set index: the draw command
+        // then issues a plain `multi_draw_indirect` over all N commands, which
+        // `build_indirect_params.wesl` builds 1:1 with zeroed instance counts.
+        let multi_draw_indirect_count_supported = multi_draw_indirect_count_supported_in(world);
+
         for draw in &self.instance_batch_draws {
+            // superfargoth patch (own, GS: ranges)
+            let extra_index = match draw.batch.extra_index {
+                PhaseItemExtraIndex::IndirectParametersIndex { ref range, .. }
+                    if !multi_draw_indirect_count_supported =>
+                {
+                    PhaseItemExtraIndex::IndirectParametersIndex {
+                        range: range.clone(),
+                        batch_set_index: None,
+                    }
+                }
+                ref extra_index => extra_index.clone(),
+            };
+
             let binned_phase_item = BPI::new(
                 draw.batch_set_key.clone(),
                 draw.bin_key.clone(),
                 draw.batch.representative_entity,
                 draw.batch.instance_range.clone(),
-                draw.batch.extra_index.clone(),
+                extra_index,
             );
 
             let Some(draw_function) = draw_functions.get_mut(binned_phase_item.draw_function())
@@ -1272,13 +1322,10 @@ where
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
 
-        let render_device = world.resource::<RenderDevice>();
-        let render_adapter_info = world.resource::<RenderAdapterInfo>();
-        let multi_draw_indirect_count_supported = render_device
-            .features()
-            .contains(Features::MULTI_DRAW_INDIRECT_COUNT)
-            // TODO: https://github.com/gfx-rs/wgpu/issues/7974
-            && !matches!(render_adapter_info.backend, wgpu::Backend::Dx12);
+        // superfargoth patch (own, GS: ranges): the test moved into
+        // `multi_draw_indirect_count_supported`, shared with
+        // `render_instance_batches` so the two cannot diverge silently.
+        let multi_draw_indirect_count_supported = multi_draw_indirect_count_supported_in(world);
 
         match self.batch_sets {
             BinnedRenderPhaseBatchSets::DynamicUniforms(ref batch_sets) => {

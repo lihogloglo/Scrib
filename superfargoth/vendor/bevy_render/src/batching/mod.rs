@@ -229,6 +229,57 @@ pub struct InstanceBatchSpan {
     pub count: u32,
 }
 
+// superfargoth patch (own, GS: ranges)
+/// One indirect draw command of a GPU-authored instance batch: the slot it
+/// takes in the phase's indirect parameters buffers, the `MeshUniform` slots
+/// its instances land in, and the work item that fills them.
+///
+/// Produced by [`instance_batch_sub_draws`], which is the single place a
+/// batch's sub-draw layout is decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstanceBatchSubDraw {
+    /// Index of this command in the phase's `IndirectParametersBuffers`.
+    pub indirect_parameters_index: u32,
+    /// First `MeshUniform` slot this command's instances occupy.
+    pub base_output_index: u32,
+    /// First `MeshInputUniform` index, from the span.
+    pub base_input_index: u32,
+    /// Number of instance slots.
+    pub count: u32,
+}
+
+// superfargoth patch (own, GS: ranges)
+/// Lays a batch's spans out over `spans.len()` *contiguous* indirect parameters
+/// slots starting at `indirect_parameters_base`, and over the `MeshUniform`
+/// slots starting at `output_base`.
+///
+/// Sub-draw *i* takes slot `indirect_parameters_base + i` and the output slots
+/// the first *i* spans do not, so the commands are in span (slot) order and the
+/// batch still occupies exactly `output_base..output_base + sum(counts)` - the
+/// one contiguous allocation #25978 made for its single command.
+///
+/// All the sub-draws of one batch share one `IndirectBatchSet`, so a batch of
+/// N ranges is one `multi_draw_indirect_count` of N commands. A batch with no
+/// ranges has one span (`bevy_pbr`'s `batch_spans`) and so exactly one
+/// sub-draw, byte for byte what #25978 built.
+pub fn instance_batch_sub_draws(
+    indirect_parameters_base: u32,
+    output_base: u32,
+    spans: &[InstanceBatchSpan],
+) -> impl Iterator<Item = InstanceBatchSubDraw> + '_ {
+    let mut base_output_index = output_base;
+    spans.iter().enumerate().map(move |(index, span)| {
+        let sub_draw = InstanceBatchSubDraw {
+            indirect_parameters_index: indirect_parameters_base + index as u32,
+            base_output_index,
+            base_input_index: span.base_input_index,
+            count: span.count,
+        };
+        base_output_index += span.count;
+        sub_draw
+    })
+}
+
 /// Sorts a render phase that uses bins.
 pub fn sort_binned_render_phase<BPI>(mut phases: ResMut<ViewBinnedRenderPhases<BPI>>)
 where
