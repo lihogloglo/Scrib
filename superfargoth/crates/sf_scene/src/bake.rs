@@ -59,9 +59,10 @@ use crate::material::{MaterialClass, MaterialTraits};
 use crate::table::{Aabb, InstanceFlags, LodChain, Sphere, StaticCellTable, StaticInstance, TableError};
 use crate::PlacementId;
 
-pub const CELLS_STEP: &str = "scene.cells";
-/// File extension of `scene.cells` products in `baked://` asset paths.
-pub const EXTENSION: &str = "sfscene";
+pub use crate::product::{CELLS_STEP, CHAINS_STEP};
+/// File extension of `scene.cells` products in `baked://` asset paths
+/// ([`crate::product::CELLS_EXT`]).
+pub use crate::product::CELLS_EXT as EXTENSION;
 
 /// Per-placement switches that bar a placement from the static scene whatever its record says
 /// (module docs, "Candidates"): the precombine "Members" bars of `sf_lod::near::near_eligible`.
@@ -89,17 +90,27 @@ pub fn classify_placement(
     classify(facts, id)
 }
 
-/// Subject of a cell's table: `<ws>/<x>,<y>,<z>`.
+/// Subject of a cell's table: `<ws>/<x>,<y>,<z>` ([`crate::product::cell_subject`] with the
+/// bake's own worldspace type).
 pub fn cell_subject(ws: &WorldspaceId, cell: IVec3) -> String {
-    format!("{}/{},{},{}", ws.as_str(), cell.x, cell.y, cell.z)
+    crate::product::cell_subject(ws.as_str(), cell)
 }
 
 /// Inverse of [`cell_subject`].
 pub fn parse_cell_subject(subject: &str) -> Option<(WorldspaceId, IVec3)> {
-    let (ws, tail) = subject.rsplit_once('/')?;
-    let mut it = tail.split(',').map(str::parse::<i32>);
-    let cell = IVec3::new(it.next()?.ok()?, it.next()?.ok()?, it.next()?.ok()?);
-    it.next().is_none().then(|| (WorldspaceId::new(ws), cell))
+    let (ws, cell) = crate::product::parse_cell_subject(subject)?;
+    Some((WorldspaceId::new(ws), cell))
+}
+
+/// Subject of a chain's geometry: `<model>/<part>`, the model's [`MeshCookStep`] subject and the
+/// chain's material index in it ([`crate::product::chain_subject`]).
+pub fn chain_subject(model: &str, part: u32) -> String {
+    crate::product::chain_subject(model, part)
+}
+
+/// Inverse of [`chain_subject`].
+pub fn parse_chain_subject(subject: &str) -> Option<(&str, u32)> {
+    crate::product::parse_chain_subject(subject)
 }
 
 /// The opaque mesh key of a chain: blake3 of the `mesh.cook` product key and the material index,
