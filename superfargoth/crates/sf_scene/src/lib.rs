@@ -14,6 +14,9 @@
 //! - [`material`]: the material classes (§5) every scene material folds into.
 //! - [`chain`]: how one model part's cooked LOD levels become one chain mesh ([`chain_layout`]),
 //!   shared by the bake and the runtime.
+//! - [`chains`]: the per-space global chain table ([`ChainRegistry`], §2 "Chains are cell-local"):
+//!   mesh key → one dense slot, refcounted by resident cell, reuse deferred by the frames in
+//!   flight, and a disagreement between two cells about one mesh key is an error.
 //! - [`product`]: the bake products both halves name — step ids, file extensions and the subject
 //!   grammar of a cell's table and a chain's geometry. Always compiled: the runtime reads what
 //!   the bake wrote, and must not pull the baker to learn its names.
@@ -31,6 +34,7 @@ pub mod alloc;
 #[cfg(feature = "bake")]
 pub mod bake;
 pub mod chain;
+pub mod chains;
 pub mod cull;
 pub mod eligibility;
 pub mod material;
@@ -42,6 +46,7 @@ pub use alloc::{
     size_class,
 };
 pub use chain::{ChainLayout, LAYOUT_VERSION, LayoutError, LevelSource, Segment, chain_layout};
+pub use chains::{Acquired, ChainEntry, ChainError, ChainKey, ChainRegistry, ChainSlot, ChainSource, ChainStats};
 pub use cull::{
     CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneProjection, SceneView, Verdict,
     ViewKind, WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
