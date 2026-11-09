@@ -41,9 +41,14 @@ use bevy_math::{Vec3, Vec4};
 use bevy_mesh::{Mesh, Mesh3d};
 use bevy_platform::collections::{HashMap, HashSet};
 use bevy_render::{
-    batching::gpu_preprocessing::{BatchedInstanceBuffers, GpuPreprocessingSupport},
-    material_bind_groups::RenderMaterialBindings,
-    mesh::allocator::MeshAllocator,
+    // superfargoth patch (own, GS: ranges): `InstanceBatchSpan`,
+    // `MaterialBindingId` and `MeshSlabs` for the per-range resolution.
+    batching::{
+        gpu_preprocessing::{BatchedInstanceBuffers, GpuPreprocessingSupport},
+        InstanceBatchSpan,
+    },
+    material_bind_groups::{MaterialBindingId, RenderMaterialBindings},
+    mesh::allocator::{MeshAllocator, MeshSlabs},
     render_phase::{sort_phase_system, ViewSortedRenderPhases},
     render_resource::{Buffer, BufferDescriptor, BufferUsages, PipelineCache, ShaderType},
     renderer::{RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue},
@@ -67,6 +72,9 @@ use crate::{
 };
 use bevy_render::{render_resource::SpecializedComputePipelines, GpuResourceAppExt};
 use materialize::GpuInstanceMaterialization;
+// superfargoth patch (own, GS: ranges): the GPU range record is part of the
+// batch's public contract (a producer sees it in `gpu_batch_tests`).
+pub use materialize::GpuBatchGeometryRange;
 
 /// One instance slot published by a GPU producer. Zeroed slots are inactive.
 #[derive(Clone, Copy, Default, Pod, Zeroable, ShaderType)]
@@ -118,6 +126,166 @@ pub enum GpuInstanceBatchSystems {
 pub struct GpuBatchedMesh3d {
     pub mesh: bevy_asset::Handle<Mesh>,
     pub max_capacity: u32,
+    // superfargoth patch (own, GS: ranges)
+    /// Geometry ranges, sorted by [`GpuBatchedMeshRange::first_slot`] and
+    /// partitioning `0..max_capacity` without gaps or overlap.
+    ///
+    /// **Empty = exactly upstream #25978 behaviour**: the whole batch draws
+    /// `mesh`'s own index range, no range table is bound and `materialize`
+    /// takes the same branch it took before this patch.
+    ///
+    /// Each range must resolve into the batch's own `MeshAllocator` vertex
+    /// slab, index slab and material bind group; a range that does not is
+    /// rejected per frame in `prepare_gpu_batched_mesh_draws` and the batch
+    /// then draws nothing that frame (see [`validate_ranges`] for the
+    /// slot-layout half, which is checked once per change on extraction).
+    pub ranges: Vec<GpuBatchedMeshRange>,
+}
+
+// superfargoth patch (own, GS: ranges)
+/// One geometry range of a [`GpuBatchedMesh3d`]: a contiguous span of instance
+/// slots that all draw the same index range of the same mesh allocation with
+/// the same material slot.
+///
+/// Every range must resolve into the same `MeshAllocator` vertex slab, index
+/// slab and material bind group as the batch's own `mesh`: one indirect draw
+/// binds exactly one of each.
+#[derive(Clone, Debug)]
+pub struct GpuBatchedMeshRange {
+    /// The mesh whose allocation this range indexes into.
+    pub mesh: bevy_asset::Handle<Mesh>,
+    /// First index relative to `mesh`'s own index allocation; first vertex for
+    /// a non-indexed mesh.
+    pub first_index: u32,
+    /// Index count (vertex count when non-indexed); 0 = the mesh's own count.
+    pub index_count: u32,
+    /// First instance slot of this range in the batch's output buffer.
+    pub first_slot: u32,
+    /// Number of instance slots in this range.
+    pub slot_count: u32,
+    /// Material to bind, or `None` for the batch's own `MeshMaterial3d<M>`.
+    /// Must share the batch's bind group index. Untyped because
+    /// `RenderMaterialBindings::get` is keyed by `UntypedAssetId`.
+    pub material: Option<bevy_asset::UntypedAssetId>,
+}
+
+// superfargoth patch (own, GS: ranges)
+/// Why a [`GpuBatchedMesh3d`]'s [`ranges`](GpuBatchedMesh3d::ranges) do not
+/// describe a slot partition. Checked by [`validate_ranges`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeError {
+    /// A range covers no instance slot. Spans are halves of a partition, so an
+    /// empty one would make two ranges start at the same slot and break the
+    /// "last range whose `first_slot <= slot`" search.
+    EmptySpan { range: usize },
+    /// `first_slot` is not where the previous range ended: ranges must be
+    /// sorted by `first_slot` and tile `0..max_capacity` with no gap and no
+    /// overlap.
+    NotContiguous {
+        range: usize,
+        expected_first_slot: u32,
+        first_slot: u32,
+    },
+    /// `first_slot + slot_count` overflows `u32`.
+    SlotOverflow { range: usize },
+    /// The ranges together cover `end` slots, not the batch's `max_capacity`.
+    CapacityMismatch { end: u32, max_capacity: u32 },
+}
+
+// superfargoth patch (own, GS: ranges)
+/// Checks that `ranges` is a slot partition of `0..max_capacity`: sorted by
+/// `first_slot`, every span non-empty, each span starting exactly where the
+/// previous one ended, and the last ending at `max_capacity`.
+///
+/// Empty `ranges` is always valid: it is the upstream "one mesh, one index
+/// range" batch.
+///
+/// This is the contract [`range_of`] and its WGSL twin rely on; it does not
+/// look at the index ranges, the slabs or the materials, which need a
+/// `MeshAllocator` and are re-checked every frame in
+/// `prepare_gpu_batched_mesh_draws`.
+pub fn validate_ranges(ranges: &[GpuBatchedMeshRange], max_capacity: u32) -> Result<(), RangeError> {
+    if ranges.is_empty() {
+        return Ok(());
+    }
+    let mut expected_first_slot = 0u32;
+    for (index, range) in ranges.iter().enumerate() {
+        if range.slot_count == 0 {
+            return Err(RangeError::EmptySpan { range: index });
+        }
+        if range.first_slot != expected_first_slot {
+            return Err(RangeError::NotContiguous {
+                range: index,
+                expected_first_slot,
+                first_slot: range.first_slot,
+            });
+        }
+        expected_first_slot = range
+            .first_slot
+            .checked_add(range.slot_count)
+            .ok_or(RangeError::SlotOverflow { range: index })?;
+    }
+    if expected_first_slot != max_capacity {
+        return Err(RangeError::CapacityMismatch {
+            end: expected_first_slot,
+            max_capacity,
+        });
+    }
+    Ok(())
+}
+
+// superfargoth patch (own, GS: ranges)
+/// The index in a [`validate_ranges`]-valid range table of the range that owns
+/// instance `slot`: the last range whose `first_slot <= slot`.
+///
+/// `first_slots` are the table's `first_slot`s in order. Mirrored line for line
+/// by `range_of` in `materialize.wesl`, which is the copy that runs; this one
+/// is the oracle the tests check, so keep the two in lockstep.
+///
+/// Returns 0 for an empty table: callers check the range count first (the WGSL
+/// takes the whole range branch only when `metadata.range_count > 0`).
+pub fn range_of(first_slots: &[u32], slot: u32) -> usize {
+    let mut low = 0usize;
+    let mut high = first_slots.len();
+    while low + 1 < high {
+        let mid = low + (high - low) / 2;
+        if first_slots[mid] <= slot {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    low
+}
+
+// superfargoth patch (own, GS: ranges)
+/// The [`InstanceBatchSpan`]s of a batch whose `max_capacity` output slots
+/// start at `base_input_index` and are tiled by `slot_spans`, the
+/// `(first_slot, slot_count)` pairs of a [`validate_ranges`]-valid range table.
+///
+/// **Empty `slot_spans` yields exactly one span over the whole batch**, so a
+/// batch without geometry ranges reserves and draws precisely what upstream
+/// #25978 reserved and drew. Otherwise there is one span per range, in slot
+/// order, and the counts still sum to `max_capacity`.
+pub fn batch_spans(
+    base_input_index: u32,
+    max_capacity: u32,
+    slot_spans: impl IntoIterator<Item = (u32, u32)>,
+) -> Vec<InstanceBatchSpan> {
+    let mut spans: Vec<InstanceBatchSpan> = slot_spans
+        .into_iter()
+        .map(|(first_slot, count)| InstanceBatchSpan {
+            base_input_index: base_input_index + first_slot,
+            count,
+        })
+        .collect();
+    if spans.is_empty() {
+        spans.push(InstanceBatchSpan {
+            base_input_index,
+            count: max_capacity,
+        });
+    }
+    spans
 }
 
 #[derive(Clone)]
@@ -127,6 +295,25 @@ pub(crate) struct ExtractedGpuBatchedMesh {
     pub local_bounds: Option<Aabb>,
     pub flags: u32,
     pub world_center: Vec3,
+    // superfargoth patch (own, GS: ranges)
+    /// The batch's geometry ranges, slot-validated on extraction. Empty is
+    /// upstream behaviour, whether the batch had no ranges or its ranges were
+    /// rejected.
+    pub ranges: Vec<ExtractedRange>,
+}
+
+// superfargoth patch (own, GS: ranges)
+/// A [`GpuBatchedMeshRange`] as the render world sees it.
+#[derive(Clone)]
+pub(crate) struct ExtractedRange {
+    pub mesh: AssetId<Mesh>,
+    pub first_index: u32,
+    pub index_count: u32,
+    pub first_slot: u32,
+    pub slot_count: u32,
+    pub material: Option<bevy_asset::UntypedAssetId>,
+    /// Model-space bounds of `mesh`, for this range's culling record.
+    pub local_bounds: Option<Aabb>,
 }
 
 #[derive(Resource, Default)]
@@ -342,11 +529,45 @@ pub(crate) fn extract_gpu_batched_meshes(
         if batch.max_capacity == 0 {
             continue;
         }
+        // superfargoth patch (own, GS: ranges): the slot layout is checked
+        // here, once per change of the component (extraction only runs for
+        // live entities and the whole map is rebuilt each frame, so "once per
+        // change" is as cheap as the validation is). A bad layout clears the
+        // ranges, which is exactly upstream behaviour rather than a dropped
+        // batch: the batch keeps drawing its own mesh.
+        let mut ranges = Vec::new();
+        match validate_ranges(&batch.ranges, batch.max_capacity) {
+            Ok(()) => {
+                for range in &batch.ranges {
+                    let local_bounds = *mesh_bounds
+                        .entry(range.mesh.id())
+                        .or_insert_with(|| meshes.get(&range.mesh).and_then(Mesh::get_aabb));
+                    ranges.push(ExtractedRange {
+                        mesh: range.mesh.id(),
+                        first_index: range.first_index,
+                        index_count: range.index_count,
+                        first_slot: range.first_slot,
+                        slot_count: range.slot_count,
+                        material: range.material,
+                        local_bounds,
+                    });
+                }
+            }
+            Err(error) => {
+                warn_once!(
+                    "GpuBatchedMesh3d {entity:?} has geometry ranges that do not partition its \
+                     {} instance slots ({error:?}); drawing its own mesh instead",
+                    batch.max_capacity
+                );
+            }
+        }
         extracted.0.insert(
             entity.into(),
             ExtractedGpuBatchedMesh {
                 mesh_asset_id: batch.mesh.id(),
                 max_capacity: batch.max_capacity,
+                // superfargoth patch (own, GS: ranges)
+                ranges,
                 local_bounds: *mesh_bounds
                     .entry(batch.mesh.id())
                     .or_insert_with(|| meshes.get(&batch.mesh).and_then(Mesh::get_aabb)),
@@ -433,6 +654,8 @@ fn prepare_gpu_batched_mesh_draws(
             asset_id: draw.mesh_asset_id,
             input_range: 0..0,
             world_center: draw.world_center,
+            // superfargoth patch (own, GS: ranges)
+            spans: Vec::new(),
         });
         if !writers_ready {
             continue;
@@ -450,6 +673,16 @@ fn prepare_gpu_batched_mesh_draws(
         };
         template.flags = draw.flags;
         template.timestamp = frame.0;
+        // superfargoth patch (own, GS: ranges): resolve every range against
+        // this frame's slabs and material bindings. Slabs move
+        // (`meshes_displaced_by_slab_growth`), so this is a per-frame check,
+        // not a once-per-change one; a rejected batch leaves `input_range` and
+        // `spans` empty, the port's existing "do not draw this frame" signal,
+        // and its materialization job inactive.
+        let Some(gpu_ranges) = resolve_gpu_ranges(entity, draw, &allocator, &bindings, *binding)
+        else {
+            continue;
+        };
         let base = scratch_end;
         scratch_end = scratch_end
             .checked_add(draw.max_capacity)
@@ -459,13 +692,142 @@ fn prepare_gpu_batched_mesh_draws(
             MeshCullingData::new(draw.local_bounds.as_ref()),
             base,
             draw.max_capacity,
+            // superfargoth patch (own, GS: ranges)
+            &gpu_ranges,
         );
         batch.input_range = base..scratch_end;
+        // superfargoth patch (own, GS: ranges): one span per range, in slot
+        // order, tiling `input_range`; one span for the whole batch when it
+        // has no ranges (upstream #25978).
+        batch.spans = batch_spans(
+            base,
+            draw.max_capacity,
+            draw.ranges
+                .iter()
+                .map(|range| (range.first_slot, range.slot_count)),
+        );
     }
     if !materialization.jobs.is_empty() {
         input.reserve_gpu(scratch_end, &device);
         culling.reserve_amortized(scratch_end as usize, &device);
     }
+}
+
+// superfargoth patch (own, GS: ranges)
+/// Resolves a batch's geometry ranges into this frame's GPU range records, or
+/// `None` (warning once) if any range cannot be drawn by the batch's single
+/// indirect draw.
+///
+/// Returns an empty vector for a batch without ranges: it draws its own mesh,
+/// exactly as upstream #25978 drew it.
+fn resolve_gpu_ranges(
+    entity: MainEntity,
+    draw: &ExtractedGpuBatchedMesh,
+    allocator: &MeshAllocator,
+    bindings: &RenderMaterialBindings,
+    batch_binding: MaterialBindingId,
+) -> Option<Vec<GpuBatchGeometryRange>> {
+    if draw.ranges.is_empty() {
+        return Some(Vec::new());
+    }
+    let batch_slabs = allocator.mesh_slabs(&draw.mesh_asset_id);
+    let mut records = Vec::with_capacity(draw.ranges.len());
+    for (index, range) in draw.ranges.iter().enumerate() {
+        match resolve_gpu_range(range, allocator, bindings, batch_binding, batch_slabs.as_ref()) {
+            Ok(record) => records.push(record),
+            Err(why) => {
+                warn_once!(
+                    "GpuBatchedMesh3d {entity:?} geometry range {index} {why}; the batch draws \
+                     nothing this frame"
+                );
+                return None;
+            }
+        }
+    }
+    Some(records)
+}
+
+// superfargoth patch (own, GS: ranges)
+/// One range's geometry, in the batch's own slabs and material bind group: the
+/// draw binds exactly one vertex buffer, one index buffer and one material
+/// bind group for all of its sub-draws.
+fn resolve_gpu_range(
+    range: &ExtractedRange,
+    allocator: &MeshAllocator,
+    bindings: &RenderMaterialBindings,
+    batch_binding: MaterialBindingId,
+    batch_slabs: Option<&MeshSlabs>,
+) -> Result<GpuBatchGeometryRange, &'static str> {
+    let geometry = crate::render::mesh::MeshInputGeometry::new(allocator, range.mesh)
+        .ok_or("has no allocated mesh data yet")?;
+    // `index_count` 0 means "the rest of the mesh"; `index_count` is the
+    // vertex count for a non-indexed mesh.
+    let index_count = if range.index_count == 0 {
+        geometry
+            .index_count
+            .checked_sub(range.first_index)
+            .ok_or("starts past the end of its mesh")?
+    } else {
+        range.index_count
+    };
+    if range
+        .first_index
+        .checked_add(index_count)
+        .is_none_or(|end| end > geometry.index_count)
+    {
+        return Err("draws past the end of its mesh");
+    }
+    let slabs = allocator.mesh_slabs(&range.mesh);
+    let (Some(slabs), Some(batch_slabs)) = (slabs.as_ref(), batch_slabs) else {
+        return Err("has no allocated slabs yet");
+    };
+    if slabs.vertex_slab_id != batch_slabs.vertex_slab_id
+        || slabs.index_slab_id != batch_slabs.index_slab_id
+    {
+        return Err("is not in its batch's vertex and index slabs");
+    }
+    // A non-indexed range offsets the first vertex instead: that is what the
+    // draw reads (`build_indirect_params.wesl`).
+    let (first_vertex_index, first_index_index) = if slabs.index_slab_id.is_some() {
+        (
+            geometry.first_vertex_index,
+            geometry
+                .first_index_index
+                .checked_add(range.first_index)
+                .ok_or("overflows its index slab")?,
+        )
+    } else {
+        (
+            geometry
+                .first_vertex_index
+                .checked_add(range.first_index)
+                .ok_or("overflows its vertex slab")?,
+            0,
+        )
+    };
+    let binding = match range.material {
+        Some(material) => *bindings.get(&material).ok_or("has an unprepared material")?,
+        None => batch_binding,
+    };
+    if binding.group != batch_binding.group {
+        return Err("is not in its batch's material bind group");
+    }
+    let bounds = MeshCullingData::new(range.local_bounds.as_ref());
+    Ok(GpuBatchGeometryRange {
+        first_slot: range.first_slot,
+        first_vertex_index,
+        first_index_index,
+        index_count,
+        metadata_index: geometry.metadata_index,
+        material_and_lightmap_bind_group_slot:
+            crate::render::mesh::material_and_lightmap_bind_group_slot(binding, u16::MAX),
+        flags: 0,
+        pad0: 0,
+        aabb_center: bounds.aabb_center,
+        pad1: 0.0,
+        aabb_half_extents: bounds.aabb_half_extents,
+        pad2: 0.0,
+    })
 }
 
 fn refresh_gpu_batched_mesh_sort_centers(

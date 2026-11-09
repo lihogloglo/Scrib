@@ -112,6 +112,19 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   itself. Our own inherited shadow views (`sf_sky_bevy::sun_view`, `sf_shadow_cache_bevy::render`) only take
   `NoIndirectDrawing` from the camera or from the adapter clamp, so they never individually lose indirect drawing.
   (a) and (c) are offerable to #25978 as review suggestions.
+- Tag `ranges` (slice B1, plan step 2a-2d), the data path only: `GpuBatchedMesh3d::ranges:
+  Vec<GpuBatchedMeshRange>` (mesh + index sub-range + slot span + optional material per range) with pure
+  `validate_ranges` / `range_of` / `batch_spans` next to it; `ExtractedRange` validated once per change on
+  extraction (`warn_once` + clear ⇒ upstream behaviour, never a dropped batch); per-frame resolution in
+  `prepare_gpu_batched_mesh_draws` into `GpuBatchGeometryRange` (64 B, mirrored by `GeometryRange` in
+  `materialize.wesl`) against this frame's slabs and material bindings, rejecting a range that leaves the
+  batch's vertex slab, index slab or material bind group (`warn_once`, batch draws nothing that frame);
+  a 5th binding on the materialize bind group (per-job `RawBufferVec`, its `BufferId` in `bound_buffers`)
+  and a binary search in `materialize.wesl` writing per-instance geometry and culling bounds;
+  `RenderMeshInstanceBatch::spans` + `GetFullBatchData::get_instance_batch -> Option<&[InstanceBatchSpan]>`
+  in place of #25978's single `Range<u32>`. **`ranges` empty is exactly #25978**: no range table is read
+  (`range_count == 0`), and the batch reserves one span over its whole capacity. Drawing still gives every
+  slot the first range's geometry; one sub-draw per span is plan step 2e (a separate slice).
 
 ## Upstream PR fixes
 

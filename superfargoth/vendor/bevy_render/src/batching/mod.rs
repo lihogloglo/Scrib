@@ -195,19 +195,38 @@ pub trait GetFullBatchData: GetBatchData {
     );
     // superfargoth patch (bevyengine/bevy#25978)
 
-    /// Returns the input range for a GPU-authored instance batch, or `None`
+    /// Returns the geometry spans of a GPU-authored instance batch, or `None`
     /// for entities handled by ordinary batching or a custom draw command.
-    /// An empty range identifies a GPU batch whose inputs are unavailable;
+    /// An empty slice identifies a GPU batch whose inputs are unavailable;
     /// it must not draw or allocate work items this frame.
     ///
     /// Sorted phases treat each batch as one item, and GPU compaction does not
     /// preserve instance order.
-    fn get_instance_batch(
-        _param: &SystemParamItem<Self::Param>,
+    // superfargoth patch (own, GS: ranges): one span per geometry range,
+    // replacing the single input range of #25978 (an empty slice is the old
+    // empty range).
+    fn get_instance_batch<'a>(
+        _param: &'a SystemParamItem<Self::Param>,
         _query_item: MainEntity,
-    ) -> Option<core::ops::Range<u32>> {
+    ) -> Option<&'a [InstanceBatchSpan]> {
         None
     }
+}
+
+// superfargoth patch (own, GS: ranges)
+/// One indirect sub-draw of a GPU-authored instance batch: a contiguous span
+/// of mesh-input indices, all drawing one geometry range. All spans of one
+/// batch share one batch set, so the batch is still a single
+/// `multi_draw_indirect_count`.
+///
+/// Spans are in slot order and their counts sum to the batch's capacity: the
+/// `MeshUniform` space a batch takes is unchanged by the split.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstanceBatchSpan {
+    /// First index in the `MeshInputUniform` buffer.
+    pub base_input_index: u32,
+    /// Number of instance slots.
+    pub count: u32,
 }
 
 /// Sorts a render phase that uses bins.
