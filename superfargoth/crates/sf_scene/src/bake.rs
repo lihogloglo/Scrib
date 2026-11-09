@@ -60,6 +60,8 @@ use crate::table::{Aabb, InstanceFlags, LodChain, Sphere, StaticCellTable, Stati
 use crate::PlacementId;
 
 pub const CELLS_STEP: &str = "scene.cells";
+/// File extension of `scene.cells` products in `baked://` asset paths.
+pub const EXTENSION: &str = "sfscene";
 
 /// Per-placement switches that bar a placement from the static scene whatever its record says
 /// (module docs, "Candidates"): the precombine "Members" bars of `sf_lod::near::near_eligible`.
@@ -607,10 +609,11 @@ impl Step for CellsStep {
             .map_err(|e| step_err(subject, e))?;
         table.write().map_err(|e| step_err(subject, e))
     }
-    /// Never: a table is dense binary already, and the runtime **mmap-reads** it and uploads
-    /// [`crate::StaticCellTableView::instance_bytes`] straight to the GPU (static-scene.md §2).
-    /// An LZ4'd product would have to be decompressed into a heap buffer first, which is the
-    /// opposite of what the format is for.
+    /// Never: a table is dense binary already, and the runtime is to read it in place and upload
+    /// [`crate::StaticCellTableView::instance_bytes`] straight to the GPU (static-scene.md §2,
+    /// "mmap-read"). An LZ4'd product can only be decompressed into a heap buffer, which is the
+    /// opposite of what the format is for, so it must not be stored compressed even while
+    /// `sf_bake::Store` still hands out owned bytes.
     fn compress(&self) -> bool {
         false
     }

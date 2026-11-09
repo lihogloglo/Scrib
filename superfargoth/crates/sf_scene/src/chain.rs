@@ -137,6 +137,19 @@ mod tests {
     }
 
     #[test]
+    fn a_level_whose_submeshes_draw_nothing_repeats_the_finer_one() {
+        // A submesh the cooker kept with zero indices draws nothing: the level has no geometry
+        // for this part, exactly as if the submesh were absent. Taking it would have emitted a
+        // zero-length range (the part vanishes at that distance) and counted its vertices.
+        let layout =
+            chain_layout(&[level(0.0, &[(8, 12)]), level(0.1, &[(5, 0)]), level(0.3, &[(4, 6), (7, 0)])]).unwrap();
+        assert_eq!(layout.levels, [lod(0, 12, 0.0), lod(0, 12, 0.0), lod(12, 6, 0.3)]);
+        // Only the two drawing submeshes are in the buffers; the empty ones add no vertices.
+        assert_eq!(layout.segments.iter().map(|s| s.level).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!((layout.vertex_count, layout.index_count), (12, 18));
+    }
+
+    #[test]
     fn several_submeshes_of_one_material_share_a_level() {
         let layout = chain_layout(&[level(0.0, &[(3, 3), (6, 12)]), level(0.5, &[(3, 3)])]).unwrap();
         assert_eq!(layout.levels, [lod(0, 15, 0.0), lod(15, 3, 0.5)]);

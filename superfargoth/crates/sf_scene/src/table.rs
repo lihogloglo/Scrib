@@ -50,9 +50,9 @@
 //!
 //! A table is a **cached file**, so the reader also rejects values that would quietly break a
 //! cull rather than fail: an empty layer mask (a whole worldspace baked invisible), a non-finite
-//! or inverted AABB, a NaN land minimum (negative infinity is the intended "no land"), a
-//! non-finite transform (its [`StaticInstance::max_scale`] would be 0 and always pick the
-//! coarsest level) or bounding sphere, and any flag bit nothing implements yet
+//! or inverted AABB, a NaN or positive-infinity land minimum (negative infinity is the intended
+//! "no land"), a non-finite transform (its [`StaticInstance::max_scale`] would be 0 and always
+//! pick the coarsest level) or bounding sphere, and any flag bit nothing implements yet
 //! ([`InstanceFlags::NOT_BAKED`]).
 
 use glam::{Affine3A, IVec3, Mat3A, Vec3, Vec3A};
@@ -226,7 +226,7 @@ pub enum TableError {
     NoLayers,
     #[error("the table's AABB is not a finite box")]
     Aabb,
-    #[error("the table's land minimum is NaN (negative infinity means no land)")]
+    #[error("the table's land minimum is NaN or positive infinity (negative infinity means no land)")]
     LandMin,
     #[error("instance {0} has a non-finite transform")]
     Transform(PlacementId),
@@ -369,14 +369,15 @@ impl<'a> StaticCellTableView<'a> {
     fn validate(&self, chains_at: usize) -> Result<(), TableError> {
         // Header values the cull would otherwise take at face value: a zero mask hides a whole
         // worldspace, a NaN or inverted box culls every cell (or none), a NaN land minimum
-        // makes every horizon comparison false (negative infinity is the "no land" value).
+        // makes every horizon comparison false and a positive infinity makes them all true
+        // (negative infinity is the one intended infinity: "no land", which hides nothing).
         if self.layers == 0 {
             return Err(TableError::NoLayers);
         }
         if !(self.aabb.min.is_finite() && self.aabb.max.is_finite() && self.aabb.min.cmple(self.aabb.max).all()) {
             return Err(TableError::Aabb);
         }
-        if self.land_min.is_nan() {
+        if !(self.land_min.is_finite() || self.land_min == f32::NEG_INFINITY) {
             return Err(TableError::LandMin);
         }
         let mut prev: Option<u64> = None;

@@ -17,7 +17,29 @@ fn view(eye: Vec3, forward: Vec3) -> SceneView {
         eye,
         frustum: frustum(eye, forward),
         layers: 1,
-        pixels_per_radian: pixels_per_radian(1440.0, FOV),
+        projection: SceneProjection::Perspective { pixels_per_radian: pixels_per_radian(1440.0, FOV) },
+        lod_px: 1.0,
+        size_cull_px: 1.0,
+        horizon: false,
+    }
+}
+
+/// The view's pixels per radian (every [`view`] is perspective).
+fn ppr_of(v: &SceneView) -> f32 {
+    match v.projection {
+        SceneProjection::Perspective { pixels_per_radian } => pixels_per_radian,
+        SceneProjection::Orthographic { .. } => unreachable!("the test views are perspective"),
+    }
+}
+
+/// A sun-cascade-like orthographic view: a `half_extent` metre box of `map_px` texels, looking
+/// down −Z from `center`.
+fn ortho_view(center: Vec3, map_px: f32, half_extent: f32) -> SceneView {
+    SceneView {
+        eye: center,
+        frustum: Frustum::orthographic(center, Vec3::NEG_Z, Vec3::Y, half_extent, half_extent, -half_extent, half_extent),
+        layers: 1,
+        projection: SceneProjection::Orthographic { texels_per_metre: texels_per_metre(map_px, 2.0 * half_extent) },
         lod_px: 1.0,
         size_cull_px: 1.0,
         horizon: false,
@@ -125,7 +147,7 @@ fn sub_pixel_cull_at_the_threshold() {
     let v = view(Vec3::ZERO, Vec3::NEG_Z);
     let r = 0.1;
     // Projected radius ppr · r / √(d² − r²) equals 1 px at d = r √(ppr² + 1).
-    let d_px = r * (v.pixels_per_radian.powi(2) + 1.0).sqrt();
+    let d_px = r * (ppr_of(&v).powi(2) + 1.0).sqrt();
     let at = |d: f32| cull_instance(&v, &inst(1, Vec3::new(0.0, 0.0, -d), r), Vec3::ZERO, [0.0]);
     assert_eq!(at(d_px * 0.99), Verdict::Draw { level: 0 });
     assert_eq!(at(d_px * 1.01), Verdict::Culled(CullReason::SubPixel));
@@ -351,4 +373,105 @@ fn cull_cell_applies_the_horizon_only_when_asked() {
     out.clear();
     let stats = cull_cell(&v, 0, &table, offset, Some(&g), &promotions, &mut out);
     assert_eq!((stats.horizon, out.len()), (5, 0));
+}
+
+#[test]
+fn texels_per_metre_is_the_maps_surface_density() {
+    // A 2048-texel cascade over 128 m: 16 texels per metre, wherever in the cascade.
+    assert!((texels_per_metre(2048.0, 128.0) - 16.0).abs() < 1e-6);
+    assert!((texels_per_metre(1024.0, 512.0) - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn ortho_pick_has_no_distance_term() {
+    let errors = [0.0, 0.05, 0.2];
+    let tpm = texels_per_metre(2048.0, 128.0); // 16 texels/m: a level passes while e ≤ 1/16 m.
+    assert_eq!(pick_level_ortho(errors, tpm, 1.0), Some(1));
+    // Coarser allowance, coarser level; a tighter one falls back to level 0.
+    assert_eq!(pick_level_ortho(errors, tpm, 4.0), Some(2));
+    assert_eq!(pick_level_ortho(errors, tpm, 0.1), Some(0));
+    // A denser map picks finer, a sparser one coarser, at the same lod_px.
+    assert_eq!(pick_level_ortho(errors, texels_per_metre(8192.0, 128.0), 1.0), Some(0));
+    assert_eq!(pick_level_ortho(errors, texels_per_metre(256.0, 128.0), 1.0), Some(2));
+    // Exactly at the threshold the level is taken (`≤`), just past it is not.
+    assert_eq!(pick_level_ortho([0.0, 1.0 / 16.0], tpm, 1.0), Some(1));
+    assert_eq!(pick_level_ortho([0.0, 1.0 / 16.0 + 1e-4], tpm, 1.0), Some(0));
+    // As `pick_level`: no levels, no pick; one level is always level 0.
+    assert_eq!(pick_level_ortho([0.0f32; 0], tpm, 1.0), None);
+    assert_eq!(pick_level_ortho([5.0], tpm, 1.0), Some(0));
+    // `SceneProjection` dispatches to the two forms.
+    let p = SceneProjection::Perspective { pixels_per_radian: pixels_per_radian(1440.0, FOV) };
+    let o = SceneProjection::Orthographic { texels_per_metre: tpm };
+    assert_eq!(p.pick_level(errors, 20.0, 1.0), pick_level(errors, 20.0, pixels_per_radian(1440.0, FOV), 1.0));
+    assert_eq!(o.pick_level(errors, 20.0, 1.0), Some(1));
+    assert_eq!(o.pick_level(errors, 1e6, 1.0), Some(1), "distance must not matter");
+}
+
+#[test]
+fn orthographic_frustum_is_the_cascade_box() {
+    // Looking down −Z from the origin: the cube [−64, 64]³ (near −64, far 64 along forward).
+    let f = Frustum::orthographic(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y, 64.0, 64.0, -64.0, 64.0);
+    assert!(!f.sphere_outside(Vec3::new(0.0, 0.0, -10.0), 1.0));
+    assert!(!f.sphere_outside(Vec3::new(0.0, 0.0, 60.0), 1.0), "behind the centre, still in the box");
+    assert!(!f.sphere_outside(Vec3::new(0.0, 0.0, -64.5), 1.0), "straddles the far face");
+    assert!(f.sphere_outside(Vec3::new(0.0, 0.0, -70.0), 1.0), "past the far face");
+    assert!(f.sphere_outside(Vec3::new(0.0, 0.0, 70.0), 1.0), "past the near face");
+    // Unlike a perspective frustum the sides do not widen with distance.
+    for z in [-10.0, -60.0] {
+        assert!(!f.sphere_outside(Vec3::new(63.0, 0.0, z), 1.0), "inside the right face at {z}");
+        assert!(f.sphere_outside(Vec3::new(70.0, 0.0, z), 1.0), "past the right face at {z}");
+        assert!(f.sphere_outside(Vec3::new(0.0, -70.0, z), 1.0), "under the bottom face at {z}");
+        assert!(!f.sphere_outside(Vec3::new(0.0, 64.5, z), 1.0), "straddles the top face at {z}");
+    }
+    // A box test agrees, and an infinite far face never culls.
+    assert!(!f.aabb_outside(&Aabb { min: Vec3::splat(-1.0), max: Vec3::splat(1.0) }));
+    assert!(f.aabb_outside(&Aabb { min: Vec3::new(65.0, 0.0, 0.0), max: Vec3::new(80.0, 1.0, 1.0) }));
+    let inf = Frustum::orthographic(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y, 64.0, 64.0, -64.0, f32::INFINITY);
+    assert!(!inf.sphere_outside(Vec3::new(0.0, 0.0, -1e7), 1.0));
+}
+
+#[test]
+fn ortho_cull_picks_one_level_per_chain_whatever_the_distance() {
+    // A sun cascade: §4 step 5's orthographic form has no distance term, so the same chain at
+    // the near and far end of the cascade takes the same level. With the perspective form
+    // (what a cascade used before `SceneProjection`) it would pick main-view levels.
+    let v = ortho_view(Vec3::ZERO, 2048.0, 64.0); // 16 texels/m, lod_px 1 → a level needs e ≤ 1/16.
+    let errors = [0.0, 0.05, 0.2];
+    let at = |z: f32| cull_instance(&v, &inst(1, Vec3::new(0.0, 0.0, z), 1.0), Vec3::ZERO, errors);
+    assert_eq!(at(-2.0), Verdict::Draw { level: 1 });
+    assert_eq!(at(-60.0), Verdict::Draw { level: 1 });
+    assert_eq!(at(60.0), Verdict::Draw { level: 1 }, "behind the cascade centre");
+    // A sparser cascade takes a coarser level, again everywhere in it.
+    let far = ortho_view(Vec3::ZERO, 256.0, 64.0);
+    let at_far = |z: f32| cull_instance(&far, &inst(1, Vec3::new(0.0, 0.0, z), 1.0), Vec3::ZERO, errors);
+    assert_eq!(at_far(-2.0), Verdict::Draw { level: 2 });
+    assert_eq!(at_far(-60.0), Verdict::Draw { level: 2 });
+    // Model-space errors still scale with the instance, in this form too.
+    let scaled = StaticInstance {
+        transform: [[2.0, 0.0, 0.0, 0.0], [0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 2.0, -20.0]],
+        sphere: Sphere { center: Vec3::new(0.0, 0.0, -20.0), radius: 2.0 },
+        ..inst(1, Vec3::ZERO, 1.0)
+    };
+    assert_eq!(cull_instance(&v, &scaled, Vec3::ZERO, errors), Verdict::Draw { level: 0 }, "0.05 × 2 > 1/16 m");
+    // Outside the box it is a frustum cull, not a LOD pick.
+    assert_eq!(at(-70.0), Verdict::Culled(CullReason::Frustum));
+    assert_eq!(cull_instance(&v, &inst(1, Vec3::new(70.0, 0.0, -10.0), 1.0), Vec3::ZERO, errors), Verdict::Culled(CullReason::Frustum));
+}
+
+#[test]
+fn ortho_sub_pixel_cull_is_in_map_texels() {
+    // 16 texels/m, size_cull_px 1: a caster under 1/16 m radius covers under a texel and goes.
+    let v = ortho_view(Vec3::ZERO, 2048.0, 64.0);
+    let at = |r: f32, z: f32| cull_instance(&v, &inst(1, Vec3::new(0.0, 0.0, z), r), Vec3::ZERO, [0.0]);
+    assert_eq!(at(0.1, -10.0), Verdict::Draw { level: 0 });
+    assert_eq!(at(0.05, -10.0), Verdict::Culled(CullReason::SubPixel));
+    // No distance term here either: the same radius decides at both ends of the cascade.
+    assert_eq!(at(0.05, -60.0), Verdict::Culled(CullReason::SubPixel));
+    assert_eq!(at(0.1, -60.0), Verdict::Draw { level: 0 });
+    // A sparser cascade drops more: the same caster is sub-texel there.
+    let far = ortho_view(Vec3::ZERO, 256.0, 64.0);
+    assert_eq!(cull_instance(&far, &inst(1, Vec3::new(0.0, 0.0, -10.0), 0.1), Vec3::ZERO, [0.0]), Verdict::Culled(CullReason::SubPixel));
+    // 0 turns it off for a view that wants every caster.
+    let every = SceneView { size_cull_px: 0.0, ..v };
+    assert_eq!(cull_instance(&every, &inst(1, Vec3::new(0.0, 0.0, -10.0), 1e-4), Vec3::ZERO, [0.0]), Verdict::Draw { level: 0 });
 }
