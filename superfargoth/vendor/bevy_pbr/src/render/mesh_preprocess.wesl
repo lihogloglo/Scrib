@@ -187,12 +187,34 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let world_from_local_affine_transpose = current_input[input_index].world_from_local;
     let world_from_local = maths::affine3_to_square(world_from_local_affine_transpose);
 
-@if(FRUSTUM_CULLING) {
-    // superfargoth patch (bevyengine/bevy#25978)
+    // superfargoth patch (own, GS: guards)
+    // A GPU producer marks an unused instance slot inactive; drop it before
+    // anything else. #25978 wrote this gate *inside* the `@if(FRUSTUM_CULLING)`
+    // block below, which reads as though the two tests were one. They are
+    // independent, so give the gate its own `@if`.
+    //
+    // This is defence in depth, not a bug fix: it still only compiles where
+    // `FRUSTUM_CULLING` is defined, because `mesh_culling_data` is bound only
+    // under that def (see the bindings above). The gate is unreachable rather
+    // than bypassed in a view without it: `FRUSTUM_CULLING` is off exactly for
+    // `direct_preprocess`, i.e. for a `NoIndirectDrawing` view
+    // (`gpu_preprocess.rs`, `PreprocessPipelineKey::empty()` and the pipeline
+    // choice in `early_gpu_preprocess`), and such a view gets no instance-batch
+    // work items and no draw record at all - `batch_and_prepare_binned_render_phase`
+    // and its sorted twin `continue` on `no_indirect_drawing`
+    // (`bevy_render/src/batching/gpu_preprocessing.rs`), and `push_range`
+    // returns `None` on a `Direct` work-item buffer. So statics are **absent**
+    // in a non-indirect view (the `GpuPreprocessingMode::Culling` hardware
+    // floor documented on `GpuBatchedMesh3d`), never drawn un-culled.
+    //
+    // The gate becomes genuinely def-independent only when `is_active` moves
+    // into `MeshInput.flags` (gs-patch-plan.md §4 item 5).
+    @if(FRUSTUM_CULLING)
     if (mesh_culling_data[input_index].is_active == 0u) {
         return;
     }
 
+@if(FRUSTUM_CULLING) {
     // Frustum cull if necessary.
     if ((current_input[input_index].flags & MESH_FLAGS_NO_FRUSTUM_CULLING_BIT) == 0u) {
         let aabb_center = mesh_culling_data[input_index].aabb_center;

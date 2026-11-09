@@ -13,6 +13,9 @@
 //!   batch joins the `Mesh3d` visibility class and the lights' shadow lists: the port's one
 //!   deviation from upstream (no `Mesh3dVisibility` class, so no vendored `bevy_mesh`,
 //!   `bevy_camera`, `bevy_light`).
+//! - A binned phase bins an instance batch and the patch GS counters read it (static-scene.md
+//!   S3a2). Only the zero side is checkable here: `instance_batch_draws` is filled by
+//!   `batch_and_prepare_binned_render_phase`, which needs a `RenderDevice`.
 
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -232,4 +235,67 @@ fn batch_draws_as_a_mesh3d_class_and_casts_sun_shadows_headless() {
     }
     assert!(app.world().get::<ViewVisibility>(caster).expect("view visibility").get());
     assert!(cascade_lists(&app, unlit, view).iter().all(Vec::is_empty), "shadow maps off: no casters");
+}
+
+/// static-scene.md S3a2 (`gs-patch-plan.md` step 3, test T7): a GPU-authored instance batch is
+/// binned in `instance_batches` and counted as a bin and an entity, the three patch GS draw
+/// counters exist and read 0 before batching, `batch_set_count` is then exactly the entity
+/// path's count (so the slice S0 baseline is unmoved), and `prepare_for_new_frame` resets the
+/// draw side while keeping the retained bins.
+///
+/// The non-zero half of T7 needs a GPU: `instance_batch_draws` is only ever filled by
+/// `batch_and_prepare_binned_render_phase`, which allocates in a `RenderDevice` buffer. Logged
+/// for the owner in `bevyrrowind/docs/test-pass-handoffs/gs-slice-a.md`.
+#[test]
+fn instance_batch_bins_and_patch_gs_counters() {
+    use bevy::core_pipeline::core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey};
+    use bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode;
+    use bevy::render::mesh::allocator::MeshSlabs;
+    use bevy::render::render_phase::{
+        BinnedRenderPhaseType, DrawFunctionId, InputUniformIndex, ViewBinnedRenderPhases,
+    };
+    use bevy::render::render_resource::CachedRenderPipelineId;
+    use bevy::render::sync_world::MainEntity;
+    use bevy::render::view::RetainedViewEntity;
+
+    let mut app = app();
+    let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().reserve_handle();
+    let batch_entity = MainEntity::from(app.world_mut().spawn_empty().id());
+    let view_owner = MainEntity::from(app.world_mut().spawn_empty().id());
+    let view = RetainedViewEntity::new(view_owner, None, 0);
+
+    let mut phases: ViewBinnedRenderPhases<Opaque3d> = ViewBinnedRenderPhases::default();
+    phases.prepare_for_new_frame(view, GpuPreprocessingMode::Culling);
+    let phase = phases.get_mut(&view).expect("the phase was just created");
+    phase.add(
+        Opaque3dBatchSetKey {
+            pipeline: CachedRenderPipelineId::new(7),
+            draw_function: DrawFunctionId(0),
+            material_bind_group_index: Some(0),
+            slabs: MeshSlabs::default(),
+            lightmap_slab: None,
+        },
+        Opaque3dBinKey { asset_id: mesh.id().untyped() },
+        (Entity::PLACEHOLDER, batch_entity),
+        InputUniformIndex(0),
+        BinnedRenderPhaseType::InstanceBatch,
+    );
+
+    // The bin is public, which is what `sf_diag_bevy` chains into the pipeline sets so a
+    // pipeline used only by statics is still counted.
+    assert_eq!(phase.instance_batches.len(), 1, "one bin per (batch set key, bin key)");
+    assert_eq!(phase.bin_count(), 1);
+    assert_eq!(phase.entity_count(), 1, "one entity per batch");
+    assert!(!phase.is_empty(), "the bin exists, so phase-empty early-outs do not fire");
+    // Nothing is batched without a GPU, so every draw-side counter is 0 and `batch_set_count`
+    // keeps reporting only `self.batch_sets`.
+    assert_eq!(phase.batch_set_count(), 0);
+    assert_eq!(phase.instance_batch_draw_count(), 0);
+    assert_eq!(phase.instance_batch_indirect_draw_count(), 0);
+    assert_eq!(phase.instance_batch_slot_count(), 0);
+
+    phase.prepare_for_new_frame();
+    assert_eq!(phase.batch_set_count(), 0);
+    assert_eq!(phase.instance_batch_draw_count(), 0, "cleared with the batch sets");
+    assert_eq!(phase.bin_count(), 1, "bins are retained across frames");
 }

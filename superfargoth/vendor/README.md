@@ -94,6 +94,24 @@ solving the same problem by some other means. Nothing in `docs/specs/static-scen
   set by `prepare_range_unpacking_bind_groups` and `gpu_instance_batch::materialize::prepare_bind_groups` - both were
   uncounted. Counters only, no behaviour change; read by `sf_diag_bevy::RenderViewsPlugin`, summed in Bevy-free
   `sf_diag::views` (`PhaseCounts::{instance_batches, instance_draws, instance_slots}`, `BindGroups`).
+- Tag `guards` (slice A, plan step 4), three of them, **no behaviour change in any view**:
+  (a) `mesh_preprocess.wesl`'s `is_active` gate gets its own `@if(FRUSTUM_CULLING)` statement instead of sitting
+  inside the frustum-cull block, so the two independent tests stop reading as one. **Defence in depth, not a bug
+  fix:** `mesh_culling_data` is bound only under that def, so the gate is unreachable - not bypassed - in a view
+  without it, and such a view (`direct_preprocess` ⇔ `NoIndirectDrawing`) gets no instance-batch work items and no
+  draw record at all. The real hardware floor below is what statics hit there; the gate becomes def-independent only
+  when `is_active` moves into `MeshInput.flags`.
+  (b) `GpuInstanceBatchPlugin` `.chain()`s `prepare_gpu_batched_mesh_reservations` before
+  `prepare_gpu_batched_mesh_draws` (#25978 left them unordered in a tuple; harmless today, and step 2's per-range
+  validation will read the reservation).
+  (c) **Hardware floor, documented** on `GpuBatchedMesh3d` and here: GPU instance batches require
+  `GpuPreprocessingMode::Culling`. An adapter limited to `PreprocessingOnly`, and a camera or inherited view with
+  `NoIndirectDrawing`, draw **none** - `batch_and_prepare_binned_render_phase` and its sorted twin `continue` on
+  `no_indirect_drawing` and `push_range` returns `None` on a `Direct` work-item buffer, so the statics are absent
+  there, never drawn un-culled. A producer needing something on such an adapter falls back to `Mesh3d` entities
+  itself. Our own inherited shadow views (`sf_sky_bevy::sun_view`, `sf_shadow_cache_bevy::render`) only take
+  `NoIndirectDrawing` from the camera or from the adapter clamp, so they never individually lose indirect drawing.
+  (a) and (c) are offerable to #25978 as review suggestions.
 
 ## Upstream PR fixes
 
