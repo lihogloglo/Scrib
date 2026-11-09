@@ -202,13 +202,15 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Status: parked (owner 2026-11-06: later).
 
 ### SC-foliage: Cutout candidates drawn from the static table (static-scene S1b, 2026-11-09)
-- Why: the bake now classes an authored blend marked `nif.blend = "cutout_candidate"` as alpha-tested, as the
-  cooked-model loader does (`mw_bake::scene::runtime_alpha`), so foliage, fences and grates enter the GPU table.
-  The bake reads no textures, so unlike the loader it cannot check that a candidate's alpha has holes: a candidate
-  whose texture is genuinely translucent now draws alpha-tested from the table instead of blended.
-- Kind: game location, A/B. Needs the S3b `--scene` path. Runs: `view "Seyda Neen" --hour 14` and
-  `view "Balmora" --hour 14`, each default and restarted with `--off scene`.
-- Look for: no missing vegetation, hedges, fences, grates or tree cards with `--scene` on (the defect this fixes);
-  then for the reverse, any candidate surface that gained hard cutout edges where it used to fade softly
-  (glass, gauze, cobwebs, smoke cards) — report it and the bake will need a texture alpha class instead.
-- Status: deferred (needs the `--scene` A/B, S3b). Source: static-scene scene-fixes, defect 1.
+- Why: an authored blend marked `nif.blend = "cutout_candidate"` draws alpha-tested at load when its texture's
+  alpha has holes, and blended when it does not. The bake now reaches the same verdict from the texture bake's
+  per-texture alpha class (`texture.alpha_class` → `mw_bake::scene::runtime_alpha`), so foliage, fences and
+  grates enter the GPU table while glass and gauze stay sorted entities. A misclassified texture would show up
+  as one surface drawn with the wrong edges.
+- Kind: game location, A/B. Needs the S3b `--scene` path and a current `bevyrrowind bake` (start log:
+  `alpha classes: N cutout candidates`). Runs: `view "Seyda Neen" --hour 14` and `view "Balmora" --hour 14`,
+  each default and restarted with `--off scene`.
+- Look for: no missing vegetation, hedges, fences, grates or tree cards with `--scene` on; and no candidate
+  surface with hard cutout edges where it used to fade softly (glass, gauze, cobwebs, smoke cards) — name the
+  surface, which names the misclassified texture (`textures::alpha_is_cutout` thresholds).
+- Status: deferred (needs the `--scene` A/B, S3b). Source: static-scene scene-fixes, defects 1 + 5.

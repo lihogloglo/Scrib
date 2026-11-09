@@ -11,6 +11,11 @@
 //!   textures whose source or settings changed.
 //! - `texture.delight.index` (one): `(source, source fingerprint, ktx2 object)` per de-lit texture,
 //!   read from digests only (no product bytes), plus the step-time skip counts.
+//! - `texture.alpha_class` (per texture file a cutout-candidate material uses) and
+//!   `texture.alpha_class.index` (one, reference → [`AlphaClass`]): is this texture's alpha a
+//!   cutout or translucency ([`alpha_is_cutout`])? Not a de-lighting fact — the static-scene bake
+//!   reads it to classify candidate materials the way the loader does (`mw_bake::scene`) — but
+//!   baked here, where every referenced model's texture uses are already resolved.
 //!
 //! Runtime ([`DelightLayer`]): a VFS source mounted above every other layer that serves
 //! `<stem>.ktx2` for an index entry only while its source is still the winning file with the
@@ -433,6 +438,160 @@ impl Step for IndexStep {
     }
 }
 
+/// What a texture's alpha channel is, as [`alpha_is_cutout`] reads it: the fact that decides
+/// whether a cutout candidate (`mw_nif::Cutout::Candidate`: an authored blend with no alpha test)
+/// draws alpha-tested or blended.
+///
+/// Classified once per texture file in the bake ([`AlphaClassStep`]) instead of per load, because
+/// the static-scene bake needs the same answer the cooked-model loader reaches
+/// (`mw_bake::scene::runtime_alpha`, `mw_assets::texture_is_cutout`) and cannot decode textures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AlphaClass {
+    /// Holes plus solid texels: a cutout (leaf cards, fences, grates). Draws alpha-tested.
+    Cutout,
+    /// Broad partial alpha, or no alpha at all: translucency (glass, webs, potions), or opaque.
+    /// Draws as authored.
+    Soft,
+    /// The file is there but did not decode ([`decode_rgba`]): no answer, so not a cutout.
+    Undecodable,
+}
+
+impl AlphaClass {
+    /// The classifier's answer for `bytes` (the texture file's contents).
+    pub fn of(path: &str, bytes: &[u8]) -> Self {
+        match decode_rgba(path, bytes) {
+            Ok(image) if alpha_is_cutout(&image) => Self::Cutout,
+            Ok(_) => Self::Soft,
+            Err(_) => Self::Undecodable,
+        }
+    }
+}
+
+/// `texture.alpha_class`: one texture file's [`AlphaClass`].
+pub const ALPHA_CLASS_STEP: &str = "texture.alpha_class";
+/// `texture.alpha_class.index`: every cutout candidate's reference and its class.
+pub const ALPHA_INDEX_STEP: &str = "texture.alpha_class.index";
+/// The index's only subject.
+pub const ALPHA_INDEX_SUBJECT: &str = "all";
+/// Bump when [`alpha_is_cutout`] can answer differently: it is this step's version, so every
+/// class product (and the index, and through the scene source's fingerprint every `scene.cells`
+/// table) re-bakes.
+pub const ALPHA_CLASSIFIER_VERSION: u32 = 1;
+
+/// `texture.alpha_class`: decode one texture file's top mip and classify its alpha.
+///
+/// Subject: the **winning file** (as `texture.delight`), so two references that resolve to the
+/// same file are classified once. Keyed on that file and the classifier version, nothing else:
+/// the class is a property of the file alone, and the step is independent of de-lighting (it is
+/// baked here only because this is where texture uses are resolved, and it covers candidates
+/// de-lighting skips, [`plan_jobs`]).
+pub struct AlphaClassStep;
+
+impl Step for AlphaClassStep {
+    fn id(&self) -> &'static str {
+        ALPHA_CLASS_STEP
+    }
+
+    fn version(&self) -> u32 {
+        ALPHA_CLASSIFIER_VERSION
+    }
+
+    fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
+        cx.file(subject);
+        Ok(())
+    }
+
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        let bytes = cx.read_file(subject)?;
+        postcard::to_stdvec(&AlphaClass::of(subject, &bytes))
+            .map_err(|e| BakeError::step(&ProductKey::new(ALPHA_CLASS_STEP, subject), e))
+    }
+
+    fn compress(&self) -> bool {
+        false
+    }
+}
+
+/// `texture.alpha_class.index`: every cutout candidate's **reference** (as a material names it)
+/// and the class of the file it resolves to. One product, so a later bake stage reads one thing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlphaClassIndex {
+    pub classes: BTreeMap<String, AlphaClass>,
+}
+
+/// `texture.alpha_class.index`: plans every candidate's class product, then collects them.
+pub struct AlphaIndexStep {
+    /// Reference → winning file ([`alpha_class_jobs`]).
+    pub textures: Arc<BTreeMap<String, String>>,
+}
+
+impl Step for AlphaIndexStep {
+    fn id(&self) -> &'static str {
+        ALPHA_INDEX_STEP
+    }
+
+    fn version(&self) -> u32 {
+        1
+    }
+
+    fn plan(&self, _subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
+        // The classes themselves are products (so a changed texture re-bakes this), and the
+        // reference → winner map is a parameter: the references appear only in the output, so a
+        // reference that moves to another file would otherwise not change this key.
+        let mut map = Vec::new();
+        for (reference, winner) in &*self.textures {
+            cx.product(ALPHA_CLASS_STEP, winner.as_str());
+            map.extend_from_slice(reference.as_bytes());
+            map.push(0);
+            map.extend_from_slice(winner.as_bytes());
+            map.push(0);
+        }
+        cx.param("textures", Digest::of(&map).0.to_vec());
+        Ok(())
+    }
+
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        let key = || ProductKey::new(ALPHA_INDEX_STEP, subject);
+        let mut index = AlphaClassIndex::default();
+        for (reference, winner) in &*self.textures {
+            // Both sides of the lookup come from `mw_nif::texture_path` (lowercased, `/`), so the
+            // scene bake's material texture and this key are the same string by construction.
+            debug_assert_eq!(*reference, mw_nif::texture_path(reference), "a reference is already normalised");
+            let bytes = cx.product(ALPHA_CLASS_STEP, winner.as_str())?;
+            let class: AlphaClass = postcard::from_bytes(&bytes).map_err(|e| BakeError::step(&key(), e))?;
+            index.classes.insert(reference.clone(), class);
+        }
+        postcard::to_stdvec(&index).map_err(|e| BakeError::step(&key(), e))
+    }
+
+    fn compress(&self) -> bool {
+        false
+    }
+}
+
+/// Reference → winning file for every texture a cutout-candidate material uses
+/// ([`TextureUse::candidate`]): the only textures whose alpha class anything reads, so the only
+/// ones classified. A reference that resolves to no file is left out, and the rule's answer for a
+/// missing class is "not a cutout" (`mw_bake::scene::runtime_alpha`).
+pub fn alpha_class_jobs<'a>(
+    uses: impl IntoIterator<Item = &'a TextureUse>,
+    resolve: impl Fn(&str) -> Option<String>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for use_ in uses.into_iter().filter(|u| u.candidate) {
+        if let Some(winner) = resolve(&use_.texture) {
+            out.insert(use_.texture.clone(), winner);
+        }
+    }
+    out
+}
+
+/// The baked [`AlphaClassIndex`], or `None` when the texture bake has not run in this store.
+pub fn load_alpha_classes(store: &Store, manifest: &Manifest) -> Option<AlphaClassIndex> {
+    let digest = manifest.get(ALPHA_INDEX_STEP, ALPHA_INDEX_SUBJECT)?;
+    postcard::from_bytes(&store.get(&digest).ok()?).ok()
+}
+
 /// What [`bake_delight`] did.
 #[derive(Debug, Default)]
 pub struct DelightReport {
@@ -442,6 +601,10 @@ pub struct DelightReport {
     pub skipped: BTreeMap<Skip, u32>,
     /// `texture.delight` products built this session (the rest were cache hits).
     pub built: u32,
+    /// Cutout-candidate textures with an [`AlphaClass`] in the index.
+    pub alpha_classes: usize,
+    /// `texture.alpha_class` products built this session.
+    pub alpha_built: u32,
     /// Products that failed (roles of models that don't parse, unreadable textures).
     pub failures: Vec<(ProductKey, String)>,
     pub elapsed: Duration,
@@ -452,12 +615,15 @@ impl fmt::Display for DelightReport {
         let reasons: Vec<String> = self.skipped.iter().map(|(s, n)| format!("{s} {n}")).collect();
         writeln!(
             f,
-            "delight: {} textures, skipped by reason {{{}}}, {} built, {} failed, {:.1} s",
+            "delight: {} textures, skipped by reason {{{}}}, {} built, {} failed, {:.1} s\n\
+             alpha classes: {} cutout candidates, {} built",
             self.textures,
             reasons.join(", "),
             self.built,
             self.failures.len(),
-            self.elapsed.as_secs_f64()
+            self.elapsed.as_secs_f64(),
+            self.alpha_classes,
+            self.alpha_built
         )
     }
 }
@@ -497,6 +663,17 @@ pub fn bake_delight(baker: &mut Baker, vfs: &Vfs, models: &[String], strength: f
         vfs.resolve_preferring(&path, TEXTURE_ALTERNATES).map(|(p, _)| p.as_str().to_owned())
     };
     let exists = |p: &str| VfsPath::new(p).is_ok_and(|p| vfs.contains(&p));
+    // Cutout candidates' alpha classes (`AlphaClassStep`), the fact `scene.cells` reads. Not a
+    // de-lighting product: baked here because this is where every model's texture uses are
+    // resolved, and it must cover candidates de-lighting skips.
+    let textures = Arc::new(alpha_class_jobs(&uses, resolve));
+    baker.register(AlphaClassStep).register(AlphaIndexStep { textures: textures.clone() });
+    let classes = baker.bake(&[ProductKey::new(ALPHA_INDEX_STEP, ALPHA_INDEX_SUBJECT)]);
+    for (key, error) in classes.failures() {
+        report.failures.push((key.clone(), error.to_string()));
+    }
+    report.alpha_classes = textures.len();
+    report.alpha_built = classes.steps.get(ALPHA_CLASS_STEP).map_or(0, |s| s.built);
     let (jobs, skipped) = plan_jobs(uses, resolve, exists);
     report.skipped = skipped;
     let jobs = Arc::new(jobs);

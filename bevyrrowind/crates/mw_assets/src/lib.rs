@@ -354,8 +354,10 @@ pub fn cutout_foliage() -> bool {
 
 /// Whether a [`mw_nif::Cutout::Candidate`] surface draws as a cutout: its
 /// texture's alpha has holes, not translucency ([`mw_bake::textures::alpha_is_cutout`]).
-/// Decodes the top mip once per texture (cached). Scaffold: belongs in a bake
-/// step (`texture.alpha_class`, with coverage-preserving mips) once textures cook.
+/// Decodes the top mip once per texture (cached). Scaffold: the bake step it
+/// belongs in now exists (`texture.alpha_class`, baked for every cutout candidate
+/// by `mw_bake::delight::bake_delight` and read by the static-scene bake). Removal
+/// path: read that index here instead of decoding, so no load-time decode is left.
 pub(crate) fn texture_is_cutout(vfs: &Vfs, texture: Option<&str>) -> bool {
     static CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
         std::sync::LazyLock::new(Default::default);
