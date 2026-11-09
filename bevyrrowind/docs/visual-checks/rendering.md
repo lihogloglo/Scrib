@@ -200,3 +200,15 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Kind: game location. Seen in `scene ro16-terrain-veil` (Balmora, 23:00 clear): a whole leaf card reflects as one panel in the light's colour, the leaf texture lost, no micro detail.
 - Suspects (not diagnosed): flat cards with no normal map catch one uniform specular (statics reflectance 0.3, roughness 0.85, `mw_assets/src/lib.rs:453`); the flat-ambient specular lobe (same as RO-16 night); foliage transmission (RO-15) lighting the card evenly (A/B `--off foliagetransmission`).
 - Status: parked (owner 2026-11-06: later).
+
+### SC-foliage: Cutout candidates drawn from the static table (static-scene S1b, 2026-11-09)
+- Why: the bake now classes an authored blend marked `nif.blend = "cutout_candidate"` as alpha-tested, as the
+  cooked-model loader does (`mw_bake::scene::runtime_alpha`), so foliage, fences and grates enter the GPU table.
+  The bake reads no textures, so unlike the loader it cannot check that a candidate's alpha has holes: a candidate
+  whose texture is genuinely translucent now draws alpha-tested from the table instead of blended.
+- Kind: game location, A/B. Needs the S3b `--scene` path. Runs: `view "Seyda Neen" --hour 14` and
+  `view "Balmora" --hour 14`, each default and restarted with `--off scene`.
+- Look for: no missing vegetation, hedges, fences, grates or tree cards with `--scene` on (the defect this fixes);
+  then for the reverse, any candidate surface that gained hard cutout edges where it used to fade softly
+  (glass, gauze, cobwebs, smoke cards) — report it and the bake will need a texture alpha class instead.
+- Status: deferred (needs the `--scene` A/B, S3b). Source: static-scene scene-fixes, defect 1.

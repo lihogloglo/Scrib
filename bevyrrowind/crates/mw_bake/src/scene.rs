@@ -16,11 +16,13 @@
 //! - **Models.** As the cooker reports them: `mesh.cook` skips models with any controller,
 //!   billboard, particle system or switch node (`importer.rs` "Dynamic parts"), so they are not
 //!   cooked and stay entities.
-//! - **Materials** ([`scene_material`]). Opaque and alpha-tested (including cutouts promoted
-//!   from authored blends) are scene materials; blends, additive blends and blends whose
-//!   texture decides at load (`nif.blend = "cutout_candidate"`) stay entities, as do surfaces
-//!   that skip the depth write or test. Two-sided from the NIF stencil/double-sided flag. No
-//!   wind: Morrowind has no wind data yet.
+//! - **Materials** ([`scene_material`]). Opaque and alpha-tested are scene materials, where
+//!   "alpha-tested" is what the **runtime** draws, not what the importer wrote: an authored
+//!   blend the importer marked a cutout candidate (`nif.blend = "cutout_candidate"`, the
+//!   Morrowind foliage/fence/grate idiom) is promoted to an alpha test when the cooked model
+//!   loads, so the bake promotes it too ([`runtime_alpha`]). True blends and additive blends
+//!   stay entities, as do surfaces that skip the depth write or test. Two-sided from the NIF
+//!   stencil/double-sided flag. No wind: Morrowind has no wind data yet.
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
@@ -37,8 +39,9 @@ use tes3::esp::{Activator, Container, DialogueInfo, Door, Light, Script};
 use crate::extras;
 use crate::far::script_tokens;
 
-/// Bumped when the rules above change (part of every `scene.cells` key).
-const RULES_VERSION: u32 = 1;
+/// Bumped when the rules above change (part of every `scene.cells` key). 2: cutout candidates
+/// are alpha-tested here as the runtime promotes them ([`runtime_alpha`]).
+const RULES_VERSION: u32 = 2;
 
 /// [`SceneSource`] for Morrowind content.
 pub struct MwSceneSource {
@@ -91,11 +94,44 @@ impl MwSceneSource {
     }
 }
 
+/// The alpha mode the **runtime** will draw this cooked material with, which is not always
+/// `m.alpha`: the cooked-model loader promotes an authored blend that the importer marked a
+/// cutout candidate to an alpha test at [`mw_nif::CUTOUT_CUTOFF`]. That promotion is how
+/// Morrowind's alpha-blended foliage, fences and grates actually render, and the bake has to
+/// agree with it — a part baked `Blended` is kept out of the table
+/// (`sf_scene::eligibility::MaterialKind::in_scene`) while the runtime draws it masked.
+///
+/// **Source of truth: `bevyrrowind/crates/mw_assets/src/cooked.rs:134-150`** (`surface`), whose
+/// `alpha_mode` match this reproduces. Reproduced and not shared, because `mw_assets` depends on
+/// `mw_bake` (`mw_bake::textures`, `mw_bake::delight`), so the dependency cannot go the other
+/// way; the test `cooker_promotion_rule_is_unchanged` reads that file and fails if the two ever
+/// diverge.
+///
+/// Two inputs of the cooker's rule the bake does not have, and what it assumes:
+/// - `mw_assets::texture_is_cutout`: at load a candidate is promoted only when its texture's
+///   alpha has holes rather than translucency. No texture is an input of `scene.cells` and
+///   nothing here decodes one, so every candidate is promoted. The residual error is bounded
+///   and in the useful direction: a candidate whose texture turns out translucent draws
+///   alpha-tested from the table instead of blended as an entity (`visual-checks.md` SC-foliage),
+///   where leaving candidates `Blended` keeps every real cutout in the world out of the table.
+/// - `mw_assets::cutout_foliage` (`--off leafmask`): a runtime A/B, so it cannot be in a cache
+///   key; the bake assumes its default (on), exactly as the `"cutout"` case already did.
+fn runtime_alpha(m: &Material) -> AlphaMode {
+    match m.alpha {
+        // `cooked.rs:149`: `SfAlpha::Blend if candidate => AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF)`.
+        AlphaMode::Blend if m.extras.get(extras::BLEND).map(String::as_str) == Some("cutout_candidate") => {
+            AlphaMode::Mask(mw_nif::CUTOUT_CUTOFF)
+        }
+        alpha => alpha,
+    }
+}
+
 /// How a cooked NIF material enters the scene (module docs, "Materials").
 pub fn scene_material(m: &Material) -> SceneMaterial {
     let extra = |key: &str| m.extras.get(key).map(String::as_str);
     let no_depth = extra(extras::DEPTH_WRITE) == Some("false") || extra(extras::DEPTH_TEST) == Some("false");
-    let kind = match m.alpha {
+    // The alpha mode the runtime will use, promotions included, not the one the importer wrote.
+    let kind = match runtime_alpha(m) {
         AlphaMode::Blend if extra(extras::BLEND) == Some("additive") => MaterialKind::Additive,
         AlphaMode::Blend => MaterialKind::Blended,
         _ if no_depth => MaterialKind::Blended,
