@@ -17,12 +17,13 @@
 //!   S3a2). Only the zero side is checkable here: `instance_batch_draws` is filled by
 //!   `batch_and_prepare_binned_render_phase`, which needs a `RenderDevice`.
 //! - Patch GS geometry ranges (`gs-patch-plan.md` step 2, tests T2-T5): the Rust and WGSL
-//!   layouts of `GpuBatchGeometryRange` agree down to the two `vec3` offsets, the `MeshInput`
-//!   fields `materialize` overwrites per instance still exist under those names, `validate_ranges`
-//!   accepts exactly the slot partitions, and `range_of` returns the containing range for every
-//!   slot of a partition. The WGSL `range_of` is a hand-kept mirror of the Rust one: only its
-//!   compilation is machine-checked here (no GPU, so nothing executes it), the equivalence is
-//!   reviewed by eye.
+//!   layouts of `GpuBatchGeometryRange` agree field for field, the `MeshInput` fields
+//!   `materialize` overwrites per instance still exist under those names, `validate_ranges`
+//!   accepts exactly the slot partitions, `range_of` returns the containing range for every
+//!   slot of a partition, and `batch_spans` turns an empty range table into the single
+//!   whole-batch span upstream #25978 reserved. The WGSL `range_of` is a hand-kept mirror of
+//!   the Rust one: only its compilation is machine-checked here (no GPU, so nothing executes
+//!   it), the equivalence is reviewed by eye.
 
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -335,7 +336,7 @@ fn range_of_is_a_correct_partition_search() {
     // Randomised partitions of 0..capacity into 1..=16 ranges, exhaustive over their slots.
     let mut state = 0x2545_F491_4F6C_DD1Du64;
     let mut roll = move |n: u32| {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
         ((state >> 33) % u64::from(n)) as u32
     };
     for _ in 0..200 {
@@ -447,9 +448,9 @@ fn a_ranged_batch_is_an_ordinary_batch_headless() {
     let mut app = app();
     let view = app.world_mut().spawn_empty().id();
     let lit = sun(&mut app, view, 2, true);
-    let ranges = vec![mesh_range(0, 4), mesh_range(4, 6), mesh_range(10, 54)];
-    assert_eq!(validate_ranges(&ranges, 64), Ok(()));
-    let ranged = batch_with(&mut app, ranges);
+    let partition = vec![mesh_range(0, 4), mesh_range(4, 6), mesh_range(10, 54)];
+    assert_eq!(validate_ranges(&partition, 64), Ok(()));
+    let ranged = batch_with(&mut app, partition);
     let plain = batch(&mut app);
     for _ in 0..3 {
         app.update();
