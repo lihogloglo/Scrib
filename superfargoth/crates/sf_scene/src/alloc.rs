@@ -5,6 +5,13 @@
 //! ([`SlotAllocator::release`] then [`SlotAllocator::advance`]). First fit over a coalesced free
 //! list; when nothing fits the table grows at its end (the high-water mark is the buffer size the
 //! Bevy side must provide). No compaction: [`SlotStats`] reports fragmentation instead.
+//!
+//! [`SlotAllocator::with_capacity`] is the same allocator over a **fixed** ceiling, for a batch's
+//! output slots, where there is nothing to grow into: a request that would pass the capacity is
+//! [`AllocError::Exhausted`] and the caller leaves those instances to the entity path. First fit
+//! is what the scene buffer, the batch output slots and the chain table all use, by the
+//! coordinator's 2026-11-10 decision — [`ClassAllocator`]'s docs carry the measurement that
+//! decided it.
 
 use std::collections::BTreeMap;
 
@@ -29,8 +36,9 @@ pub enum AllocError {
     Overflow,
     #[error("slot range {0:?} is not allocated")]
     NotAllocated(SlotRange),
-    /// A fixed-capacity allocator ([`ClassAllocator`]) is full. Not an error of the caller's:
-    /// the cell publishes without those instances and they spawn as entities instead.
+    /// A fixed-capacity allocator ([`SlotAllocator::with_capacity`] or [`ClassAllocator`]) is
+    /// full. Not an error of the caller's: the cell publishes without those instances and they
+    /// spawn as entities instead.
     #[error("no room for {want} more slots in a batch of {capacity}")]
     Exhausted { want: u32, capacity: u32 },
 }
@@ -55,6 +63,9 @@ pub struct SlotStats {
 #[derive(Clone, Debug)]
 pub struct SlotAllocator {
     frames_in_flight: u64,
+    /// The ceiling the table may not pass: `None` for a table that grows (the per-space scene
+    /// buffer and the chain table), `Some` for a batch's fixed output slots.
+    capacity: Option<u32>,
     high_water: u32,
     /// Sorted by start, coalesced, below `high_water`.
     free: Vec<SlotRange>,
@@ -69,6 +80,7 @@ impl SlotAllocator {
     pub fn new(frames_in_flight: u32) -> Self {
         Self {
             frames_in_flight: u64::from(frames_in_flight),
+            capacity: None,
             high_water: 0,
             free: Vec::new(),
             live: BTreeMap::new(),
@@ -76,7 +88,27 @@ impl SlotAllocator {
         }
     }
 
-    /// A contiguous range of `len` slots (first fit, else at the end of the table).
+    /// The same allocator over a **fixed** `capacity`: a batch's output slots, whose buffer and
+    /// materialize bind group are sized from it and are never rebuilt at stream-in (§4.4). An
+    /// `alloc` that would pass `capacity` is [`AllocError::Exhausted`], not a growth.
+    ///
+    /// First fit rather than [`ClassAllocator`] by the coordinator's decision of 2026-11-10: A4
+    /// measured 3.33× the peak live slots for segregated size classes against **1.17×** for first
+    /// fit on the same walk ([`ClassAllocator`]'s docs). First fit has no a-priori ceiling in
+    /// exchange, so `Exhausted` must stay a counted, tested path.
+    #[must_use]
+    pub fn with_capacity(capacity: u32, frames_in_flight: u32) -> Self {
+        Self { capacity: Some(capacity), ..Self::new(frames_in_flight) }
+    }
+
+    /// The fixed ceiling, if this allocator has one.
+    #[must_use]
+    pub fn capacity(&self) -> Option<u32> {
+        self.capacity
+    }
+
+    /// A contiguous range of `len` slots (first fit, else at the end of the table); with a fixed
+    /// [`Self::capacity`], [`AllocError::Exhausted`] rather than a growth past it.
     pub fn alloc(&mut self, len: u32) -> Result<SlotRange, AllocError> {
         if len == 0 {
             return Err(AllocError::ZeroLength);
@@ -97,6 +129,11 @@ impl SlotAllocator {
                 _ => self.high_water,
             };
             let end = start.checked_add(len).ok_or(AllocError::Overflow)?;
+            // A fixed-capacity table has nothing to grow into. Checked before anything is
+            // mutated: an `Exhausted` allocator is exactly as it was.
+            if let Some(capacity) = self.capacity.filter(|&capacity| end > capacity) {
+                return Err(AllocError::Exhausted { want: len, capacity });
+            }
             if start != self.high_water {
                 self.free.pop();
             }
@@ -420,6 +457,35 @@ impl ClassAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fixed_capacity_table_is_exhausted_not_grown() {
+        let mut a = SlotAllocator::with_capacity(10, 2);
+        assert_eq!(a.capacity(), Some(10));
+        assert_eq!(a.alloc(6), Ok(SlotRange { start: 0, len: 6 }));
+        // Past the ceiling: an error, and the allocator is exactly as it was.
+        let before = a.stats();
+        assert_eq!(a.alloc(5), Err(AllocError::Exhausted { want: 5, capacity: 10 }));
+        assert_eq!(a.stats(), before);
+        // What fits still fits, and the capacity is reachable to its last slot.
+        assert_eq!(a.alloc(4), Ok(SlotRange { start: 6, len: 4 }));
+        assert_eq!(a.stats().high_water, 10);
+        assert_eq!(a.alloc(1), Err(AllocError::Exhausted { want: 1, capacity: 10 }));
+        // A released range comes back after the frames in flight, and first fit takes it.
+        a.release(SlotRange { start: 0, len: 6 }, 7).unwrap();
+        a.advance(9);
+        assert_eq!(a.alloc(6), Ok(SlotRange { start: 0, len: 6 }));
+        // A hole touching the high-water mark is extended, not skipped — and still capped.
+        let mut b = SlotAllocator::with_capacity(10, 0);
+        assert_eq!(b.alloc(8), Ok(SlotRange { start: 0, len: 8 }));
+        b.release(SlotRange { start: 0, len: 8 }, 0).unwrap();
+        b.advance(0);
+        assert_eq!(b.alloc(10), Ok(SlotRange { start: 0, len: 10 }));
+        // The unbounded allocator is untouched by all this.
+        let mut c = SlotAllocator::new(0);
+        assert_eq!(c.capacity(), None);
+        assert_eq!(c.alloc(1_000_000), Ok(SlotRange { start: 0, len: 1_000_000 }));
+    }
 
     fn overlaps(a: SlotRange, b: SlotRange) -> bool {
         a.start < b.end() && b.start < a.end()

@@ -495,3 +495,140 @@ fn tables_are_stored_uncompressed() {
     assert_eq!(step.version(), 3, "format v3: the chain source and the model section");
     assert_eq!(EXTENSION, "sfscene");
 }
+
+#[test]
+fn chain_subject_round_trips() {
+    let s = chain_subject("meshes/x/flora_tree_01.nif", 3);
+    assert_eq!(s, "meshes/x/flora_tree_01.nif/3");
+    // The split is at the LAST '/', so a model path with slashes round-trips.
+    assert_eq!(parse_chain_subject(&s), Some(("meshes/x/flora_tree_01.nif", 3)));
+    assert_eq!(parse_chain_subject("m/0"), Some(("m", 0)));
+    assert_eq!(parse_chain_subject("m/-1"), None);
+    assert_eq!(parse_chain_subject("m/"), None);
+    assert_eq!(parse_chain_subject("nope"), None);
+    assert_eq!(CHAINS_STEP, "scene.chains");
+    assert_eq!(crate::product::CHAINS_EXT, "sfmesh");
+}
+
+/// One triangle of `material`, offset along X, with real meshopt-encoded buffers.
+fn tri(material: u32, x: f32) -> CookedSubmesh {
+    let v = |p: [f32; 3]| Vertex { position: p, ..Vertex::default() };
+    let vertices = [v([x, 0.0, 0.0]), v([x + 1.0, 0.0, 0.0]), v([x, 1.0, 0.0])];
+    CookedSubmesh::encode(material, &vertices, &[0, 1, 2]).unwrap()
+}
+
+#[test]
+fn chain_product_levels_match_the_table() {
+    // A real cook, so the submeshes carry real meshopt buffers.
+    let m = floor_and_sign();
+    let parts = part_spheres(&m).unwrap();
+    let at = WorldPos::new(IVec3::ZERO, Vec3::ZERO);
+    let placements = vec![placement(10, "frame", PlacementClass::Static, at, 1.0)];
+    let models = [CellModel::Static { path: "meshes/a.mdl", model: &m, parts: &parts }];
+    let table = build_cell_table(&Rules, &SceneSettings::default(), IVec3::ZERO, 0.0, &placements, &models).unwrap();
+    for chain in &table.chains {
+        let product = build_chain_mesh(&m, chain.part).unwrap();
+        // One material (the chain's), and one LOD level per level of the table's chain.
+        assert_eq!(product.materials, vec![m.materials[chain.part as usize].clone()]);
+        assert_eq!(product.lods.len(), chain.levels.len());
+        for (level, (lod, range)) in product.lods.iter().zip(&chain.levels).enumerate() {
+            // One submesh, of the product's own single material, as long as the table's range.
+            assert_eq!(lod.submeshes.len(), 1, "level {level}");
+            assert_eq!(lod.submeshes[0].material, 0, "level {level}");
+            assert_eq!(lod.submeshes[0].index_count, range.index_count, "level {level}");
+            assert_eq!(lod.error.to_bits(), range.error.to_bits(), "level {level}");
+            // And it decodes: every index addresses the level's own vertices.
+            let (vertices, indices) = lod.submeshes[0].decode().unwrap();
+            assert_eq!(indices.len(), range.index_count as usize);
+            assert!(indices.iter().all(|&i| (i as usize) < vertices.len()));
+        }
+    }
+    // A part the model does not have is an error, not a panic.
+    assert!(matches!(build_chain_mesh(&m, 7), Err(ChainMeshError::NoPart(7))));
+    // The step's identity and its key inputs.
+    let step = ChainsStep;
+    assert_eq!((step.id(), step.version()), (CHAINS_STEP, 1));
+    step.plan("meshes/a.mdl/0", &mut PlanCx::default()).unwrap();
+    assert!(step.plan("meshes/a.mdl", &mut PlanCx::default()).is_err(), "a subject with no part");
+}
+
+#[test]
+fn a_chain_level_concatenates_rebases_and_repeats() {
+    // Material 0 has two submeshes at level 0 and one at level 1; material 1 only at level 0.
+    let m = model(
+        vec![material(AlphaMode::Opaque, false), material(AlphaMode::Mask(0.5), true)],
+        vec![(0.0, vec![tri(0, 0.0), tri(1, 5.0), tri(0, 10.0)]), (0.25, vec![tri(0, 0.0)])],
+    );
+    // Part 0: the level's submeshes are concatenated in submesh order and rebased *within the
+    // level* (the level is its own mesh allocation, so the base starts at 0 again).
+    let product = build_chain_mesh(&m, 0).unwrap();
+    assert_eq!(product.lods.len(), 2);
+    let (vertices, indices) = product.lods[0].submeshes[0].decode().unwrap();
+    assert_eq!(vertices.len(), 6);
+    assert_eq!(indices, [0, 1, 2, 3, 4, 5]);
+    let third = Vec3::from_array(vertices[3].position);
+    assert!(third.abs_diff_eq(Vec3::new(10.0, 0.0, 0.0), 1e-6), "the second submesh follows the first: {third:?}");
+    assert_eq!(product.lods[0].error.to_bits(), 0.0f32.to_bits());
+    let (vertices, indices) = product.lods[1].submeshes[0].decode().unwrap();
+    assert_eq!((vertices.len(), indices.len()), (3, 3));
+    assert_eq!(product.lods[1].error.to_bits(), 0.25f32.to_bits());
+    // Part 1 has no geometry at level 1, so that level repeats the next finer one — byte for
+    // byte, and with its error, exactly as the table's level range for it does.
+    let product = build_chain_mesh(&m, 1).unwrap();
+    let levels = chain_layout(&[
+        LevelSource { error: 0.0, submeshes: vec![(3, 3)] },
+        LevelSource { error: 0.25, submeshes: Vec::new() },
+    ])
+    .unwrap()
+    .levels;
+    assert_eq!(levels[1], levels[0], "the layout rule repeats the finer level");
+    assert_eq!(product.lods.len(), 2);
+    assert_eq!(product.lods[1].submeshes, product.lods[0].submeshes);
+    assert_eq!(product.lods[1].error.to_bits(), levels[1].error.to_bits());
+    // The product is an `.sfmesh` and reads back as one.
+    let bytes = Cooked::Static(product.clone()).to_bytes();
+    assert_eq!(Cooked::from_bytes(&bytes).unwrap(), Cooked::Static(product));
+}
+
+#[test]
+fn chain_keys_deduplicates_across_cells() {
+    // Two cells sharing one model: `chain_keys` reads the baked tables' model sections, so the
+    // shared chains are named once. Nothing of the adapter or of any game enters the subject.
+    let a = model(
+        vec![material(AlphaMode::Opaque, false), material(AlphaMode::Mask(0.5), true)],
+        vec![(0.0, vec![sub(0, 100, 300), sub(1, 20, 30)])],
+    );
+    let b = model(vec![material(AlphaMode::Opaque, false)], vec![(0.0, vec![sub(0, 8, 12)])]);
+    let a_parts = [Some(sphere(Vec3::ZERO, 1.0)); 2];
+    let b_parts = [Some(sphere(Vec3::ZERO, 1.0))];
+    let at = WorldPos::new(IVec3::ZERO, Vec3::ZERO);
+    let subjects = |models: &[CellModel<'_>]| {
+        let placements: Vec<Placement> = (0..models.len())
+            .map(|k| placement(10 + k as u128, "base", PlacementClass::Static, at, 1.0))
+            .collect();
+        let table =
+            build_cell_table(&Rules, &SceneSettings::default(), IVec3::ZERO, 0.0, &placements, models).unwrap();
+        let bytes = table.write().unwrap();
+        let view = StaticCellTableView::parse(&bytes).unwrap();
+        chain_subjects(&view)
+    };
+    let first = subjects(&[CellModel::Static { path: "meshes/a.mdl", model: &a, parts: &a_parts }]);
+    let second = subjects(&[
+        CellModel::Static { path: "meshes/a.mdl", model: &a, parts: &a_parts },
+        CellModel::Static { path: "meshes/b.mdl", model: &b, parts: &b_parts },
+    ]);
+    // Chain order is mesh-key order, so sort to compare the sets.
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    assert_eq!(sorted(first.clone()), ["meshes/a.mdl/0", "meshes/a.mdl/1"]);
+    assert_eq!(sorted(second.clone()), ["meshes/a.mdl/0", "meshes/a.mdl/1", "meshes/b.mdl/0"]);
+    // What `chain_keys` does with them: one key per distinct subject over every cell.
+    let keys: BTreeSet<String> = first.into_iter().chain(second).collect();
+    assert_eq!(keys.len(), 3, "the two cells' shared chains are baked once");
+    for subject in &keys {
+        let (model, part) = parse_chain_subject(subject).unwrap();
+        assert_eq!(chain_subject(model, part), *subject);
+    }
+}
