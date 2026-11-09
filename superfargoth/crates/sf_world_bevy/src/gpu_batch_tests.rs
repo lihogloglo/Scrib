@@ -16,6 +16,13 @@
 //! - A binned phase bins an instance batch and the patch GS counters read it (static-scene.md
 //!   S3a2). Only the zero side is checkable here: `instance_batch_draws` is filled by
 //!   `batch_and_prepare_binned_render_phase`, which needs a `RenderDevice`.
+//! - Patch GS geometry ranges (`gs-patch-plan.md` step 2, tests T2-T5): the Rust and WGSL
+//!   layouts of `GpuBatchGeometryRange` agree down to the two `vec3` offsets, the `MeshInput`
+//!   fields `materialize` overwrites per instance still exist under those names, `validate_ranges`
+//!   accepts exactly the slot partitions, and `range_of` returns the containing range for every
+//!   slot of a partition. The WGSL `range_of` is a hand-kept mirror of the Rust one: only its
+//!   compilation is machine-checked here (no GPU, so nothing executes it), the equivalence is
+//!   reviewed by eye.
 
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -30,7 +37,10 @@ use bevy::camera::visibility::{
 use bevy::ecs::entity::{Entity, EntityHashMap};
 use bevy::light::{DirectionalLight, NotShadowCaster};
 use bevy::mesh::{Mesh, Mesh3d};
-use bevy::pbr::gpu_instance_batch::{GpuBatchedMesh3d, GpuInstanceBatchPlugin, GpuMeshInstance};
+use bevy::pbr::gpu_instance_batch::{
+    range_of, validate_ranges, GpuBatchGeometryRange, GpuBatchedMesh3d, GpuBatchedMeshRange,
+    GpuInstanceBatchPlugin, GpuMeshInstance, RangeError,
+};
 use bevy::pbr::MeshCullingData;
 use bevy::render::render_resource::ShaderType;
 use bevy::shader::Shader;
@@ -154,13 +164,38 @@ fn port_shaders_link_and_validate() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// Size of the WGSL struct `name` as naga lays it out (storage/uniform buffer rules). Imported
-/// structs keep their name as a suffix of the module-mangled one.
+/// The WGSL struct `name`. Imported structs keep their name as a suffix of the module-mangled
+/// one.
+fn wgsl_struct(module: &naga::Module, name: &str) -> naga::Handle<naga::Type> {
+    let (handle, _) = module.types.iter().find(|(_, t)| t.name.as_deref().is_some_and(|n| n == name || n.ends_with(&format!("_{name}")) || n.ends_with(name))).unwrap_or_else(|| panic!("no struct {name}"));
+    handle
+}
+
+/// Size of the WGSL struct `name` as naga lays it out (storage/uniform buffer rules).
 fn wgsl_size(module: &naga::Module, name: &str) -> u32 {
     let mut layouter = naga::proc::Layouter::default();
     layouter.update(module.to_ctx()).expect("layout");
-    let (handle, _) = module.types.iter().find(|(_, t)| t.name.as_deref().is_some_and(|n| n == name || n.ends_with(&format!("_{name}")) || n.ends_with(name))).unwrap_or_else(|| panic!("no struct {name}"));
-    layouter[handle].size
+    layouter[wgsl_struct(module, name)].size
+}
+
+/// The members of the WGSL struct `name`, in order, as `(field, byte offset)`.
+fn wgsl_members(module: &naga::Module, name: &str) -> Vec<(String, u32)> {
+    match &module.types[wgsl_struct(module, name)].inner {
+        naga::TypeInner::Struct { members, .. } => members
+            .iter()
+            .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
+            .collect(),
+        other => panic!("{name} is not a struct: {other:?}"),
+    }
+}
+
+/// The byte offset of `field` in the WGSL struct `name`.
+fn wgsl_offset(module: &naga::Module, name: &str, field: &str) -> u32 {
+    wgsl_members(module, name)
+        .into_iter()
+        .find(|(member, _)| member == field)
+        .unwrap_or_else(|| panic!("no field {name}.{field}"))
+        .1
 }
 
 #[test]
@@ -174,6 +209,130 @@ fn instance_and_culling_layouts_agree() {
     // Ordinary meshes stay drawn; zeroed slots are inactive (the PR's contract).
     assert_eq!(MeshCullingData::default().is_active, 1);
     assert_eq!(GpuMeshInstance::default().is_active, 0);
+}
+
+/// `gs-patch-plan.md` step 2d, test T2: the per-batch geometry range record is one layout in
+/// both languages. 64 bytes, 16-aligned, with the two `vec3<f32>`s at 32 and 48 - chosen so
+/// WGSL's align-16 rule for `vec3` inserts no implicit padding that `#[repr(C)]` would not.
+/// A field reordered on either side moves an offset and fails here instead of drawing garbage.
+#[test]
+fn geometry_range_layout_agrees() {
+    let module = compile("bevy_pbr::gpu_instance_batch::materialize", &[]).expect("materialize links");
+    assert_eq!(u64::from(wgsl_size(&module, "GeometryRange")), GpuBatchGeometryRange::min_size().get());
+    assert_eq!(size_of::<GpuBatchGeometryRange>() as u64, GpuBatchGeometryRange::min_size().get(), "GpuBatchGeometryRange is Pod-uploadable");
+    assert_eq!(size_of::<GpuBatchGeometryRange>(), 64);
+    for (field, offset) in [("first_slot", 0), ("index_count", 12), ("flags", 24), ("aabb_center", 32), ("pad1", 44), ("aabb_half_extents", 48), ("pad2", 60)] {
+        assert_eq!(wgsl_offset(&module, "GeometryRange", field), offset, "WGSL GeometryRange.{field}");
+    }
+    assert_eq!(std::mem::offset_of!(GpuBatchGeometryRange, aabb_center), 32);
+    assert_eq!(std::mem::offset_of!(GpuBatchGeometryRange, aabb_half_extents), 48);
+    // The whole record is zeroable: a batch without ranges binds one zeroed record it never
+    // reads (`range_count == 0`), because a storage binding cannot be empty.
+    assert_eq!(GpuBatchGeometryRange::default().index_count, 0);
+}
+
+/// `gs-patch-plan.md` test T3: `materialize` overwrites these `MeshInput` fields per instance
+/// by name. An upstream rename must fail a test rather than a frame.
+#[test]
+fn materialize_overwrites_named_mesh_input_fields() {
+    let module = compile("bevy_pbr::gpu_instance_batch::materialize", &[]).expect("materialize links");
+    let members: Vec<String> = wgsl_members(&module, "MeshInput").into_iter().map(|(name, _)| name).collect();
+    for field in ["world_from_local", "flags", "tag", "first_vertex_index", "first_index_index", "index_count", "metadata_index", "material_and_lightmap_bind_group_slot"] {
+        assert!(members.iter().any(|m| m == field), "MeshInput.{field} is gone; materialize writes it ({members:?})");
+    }
+    let culling: Vec<String> = wgsl_members(&module, "MeshCullingData").into_iter().map(|(name, _)| name).collect();
+    for field in ["aabb_center", "aabb_half_extents", "is_active"] {
+        assert!(culling.iter().any(|m| m == field), "MeshCullingData.{field} is gone ({culling:?})");
+    }
+}
+
+/// A range covering `first_slot..first_slot + slot_count` of a batch, drawing its whole mesh.
+fn mesh_range(first_slot: u32, slot_count: u32) -> GpuBatchedMeshRange {
+    GpuBatchedMeshRange {
+        mesh: Assets::<Mesh>::default().reserve_handle(),
+        first_index: 0,
+        index_count: 0,
+        first_slot,
+        slot_count,
+        material: None,
+    }
+}
+
+/// `gs-patch-plan.md` test T5: the slot layout `range_of` (and its WGSL mirror) rests on is
+/// exactly "sorted, non-empty, contiguous, filling the capacity". Empty is upstream behaviour
+/// and always valid.
+///
+/// The headless half of T5 - a bad batch extracting with its ranges cleared - is not reachable
+/// here: `extract_gpu_batched_meshes` is a render-world `ExtractSchedule` system over the
+/// `pub(crate)` `ExtractedGpuBatchedMeshes`, and this app has no render app. The warn-and-clear
+/// path is a two-line branch over this function.
+#[test]
+fn validate_ranges_accepts_exactly_the_partitions() {
+    assert_eq!(validate_ranges(&[], 64), Ok(()), "no ranges is upstream #25978, not an error");
+    assert_eq!(validate_ranges(&[], 0), Ok(()));
+    assert_eq!(validate_ranges(&[mesh_range(0, 64)], 64), Ok(()));
+    assert_eq!(validate_ranges(&[mesh_range(0, 4), mesh_range(4, 6), mesh_range(10, 54)], 64), Ok(()));
+
+    assert_eq!(validate_ranges(&[mesh_range(0, 0)], 64), Err(RangeError::EmptySpan { range: 0 }), "an empty span would make two ranges start at one slot");
+    assert_eq!(validate_ranges(&[mesh_range(1, 63)], 64), Err(RangeError::NotContiguous { range: 0, expected_first_slot: 0, first_slot: 1 }), "the first range must start at slot 0");
+    assert_eq!(validate_ranges(&[mesh_range(0, 4), mesh_range(8, 56)], 64), Err(RangeError::NotContiguous { range: 1, expected_first_slot: 4, first_slot: 8 }), "a gap");
+    assert_eq!(validate_ranges(&[mesh_range(0, 8), mesh_range(4, 60)], 64), Err(RangeError::NotContiguous { range: 1, expected_first_slot: 8, first_slot: 4 }), "an overlap");
+    assert_eq!(validate_ranges(&[mesh_range(4, 60), mesh_range(0, 4)], 64), Err(RangeError::NotContiguous { range: 0, expected_first_slot: 0, first_slot: 4 }), "unsorted");
+    assert_eq!(validate_ranges(&[mesh_range(0, 32)], 64), Err(RangeError::CapacityMismatch { end: 32, max_capacity: 64 }), "the ranges must fill the batch");
+    assert_eq!(validate_ranges(&[mesh_range(0, 128)], 64), Err(RangeError::CapacityMismatch { end: 128, max_capacity: 64 }), "and must not run past it");
+    assert_eq!(validate_ranges(&[mesh_range(0, u32::MAX), mesh_range(u32::MAX, 2)], 64), Err(RangeError::SlotOverflow { range: 1 }));
+}
+
+/// `gs-patch-plan.md` test T4: for every slot of a partition, `range_of` returns the one range
+/// containing it. The oracle is the partition itself, so this is exact, not a smoke test.
+///
+/// `range_of` is the Rust twin of `materialize.wesl`'s; nothing here executes the WGSL (no GPU),
+/// so the two staying in lockstep is a review duty, and the test exists to make a change to the
+/// Rust one visible.
+#[test]
+fn range_of_is_a_correct_partition_search() {
+    // Boundaries, by hand.
+    assert_eq!(range_of(&[], 7), 0, "an empty table has no range; the caller checks the count");
+    assert_eq!(range_of(&[0], 0), 0);
+    assert_eq!(range_of(&[0], 4095), 0);
+    for (slot, expected) in [(0, 0), (3, 0), (4, 1), (9, 1), (10, 2), (63, 2)] {
+        assert_eq!(range_of(&[0, 4, 10], slot), expected, "slot {slot}");
+    }
+
+    // Randomised partitions of 0..capacity into 1..=16 ranges, exhaustive over their slots.
+    let mut state = 0x2545_F491_4F6C_DD1Du64;
+    let mut roll = move |n: u32| {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((state >> 33) % u64::from(n)) as u32
+    };
+    for _ in 0..200 {
+        let capacity = 1 + roll(256);
+        let wanted = 1 + roll(16);
+        let mut cuts: Vec<u32> = (1..wanted).map(|_| 1 + roll(capacity)).collect();
+        cuts.push(0);
+        cuts.sort_unstable();
+        cuts.dedup();
+        let first_slots: Vec<u32> = cuts.into_iter().filter(|c| *c < capacity).collect();
+        let ranges: Vec<GpuBatchedMeshRange> = first_slots
+            .iter()
+            .enumerate()
+            .map(|(i, &first_slot)| {
+                let end = first_slots.get(i + 1).copied().unwrap_or(capacity);
+                mesh_range(first_slot, end - first_slot)
+            })
+            .collect();
+        assert_eq!(validate_ranges(&ranges, capacity), Ok(()), "the generator makes partitions: {first_slots:?} of {capacity}");
+        for slot in 0..capacity {
+            let found = range_of(&first_slots, slot);
+            assert!(first_slots[found] <= slot, "range {found} of {first_slots:?} starts after slot {slot}");
+            if let Some(next) = first_slots.get(found + 1) {
+                assert!(slot < *next, "range {found} of {first_slots:?} ends before slot {slot}");
+            }
+            // The same answer stated the other way round: exactly one range contains the slot.
+            let containing = ranges.iter().filter(|r| r.first_slot <= slot && slot < r.first_slot + r.slot_count).count();
+            assert_eq!(containing, 1, "slot {slot} of {first_slots:?}");
+        }
+    }
 }
 
 /// `MinimalPlugins` + assets + the plugin; no render app (no GPU), so only the main-world half runs.
@@ -202,8 +361,13 @@ fn sun(app: &mut App, view: Entity, cascades: usize, shadows: bool) -> Entity {
 }
 
 fn batch(app: &mut App) -> Entity {
+    batch_with(app, Vec::new())
+}
+
+/// A batch of 64 slots carrying `ranges` (empty = upstream #25978).
+fn batch_with(app: &mut App, ranges: Vec<GpuBatchedMeshRange>) -> Entity {
     let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().reserve_handle();
-    app.world_mut().spawn((GpuBatchedMesh3d { mesh, max_capacity: 64 }, InheritedVisibility::VISIBLE)).id()
+    app.world_mut().spawn((GpuBatchedMesh3d { mesh, max_capacity: 64, ranges }, InheritedVisibility::VISIBLE)).id()
 }
 
 fn cascade_lists(app: &App, light: Entity, view: Entity) -> Vec<Vec<Entity>> {
@@ -235,6 +399,34 @@ fn batch_draws_as_a_mesh3d_class_and_casts_sun_shadows_headless() {
     }
     assert!(app.world().get::<ViewVisibility>(caster).expect("view visibility").get());
     assert!(cascade_lists(&app, unlit, view).iter().all(Vec::is_empty), "shadow maps off: no casters");
+}
+
+/// A batch carrying geometry ranges is still an ordinary batch to the main world: the plugin
+/// updates, the batch joins the lights' shadow lists, and the ranges it carries are the ones it
+/// keeps. `ranges` empty is upstream #25978 and stays valid.
+///
+/// What the ranges then *draw* needs a GPU: the slabs, the material bindings and the range
+/// upload all live in the render world (`prepare_gpu_batched_mesh_draws`,
+/// `gpu_instance_batch::materialize`), which this app does not have. Logged in
+/// `bevyrrowind/docs/test-pass-handoffs/gs-slice-b1.md`.
+#[test]
+fn a_ranged_batch_is_an_ordinary_batch_headless() {
+    let mut app = app();
+    let view = app.world_mut().spawn_empty().id();
+    let lit = sun(&mut app, view, 2, true);
+    let ranges = vec![mesh_range(0, 4), mesh_range(4, 6), mesh_range(10, 54)];
+    assert_eq!(validate_ranges(&ranges, 64), Ok(()));
+    let ranged = batch_with(&mut app, ranges);
+    let plain = batch(&mut app);
+    for _ in 0..3 {
+        app.update();
+    }
+
+    for list in cascade_lists(&app, lit, view) {
+        assert_eq!(list, vec![ranged, plain].into_iter().min_by_key(|e| e.index()).map_or_else(Vec::new, |_| { let mut both = vec![ranged, plain]; both.sort(); both }), "both batches cast, ranges or not");
+    }
+    assert_eq!(app.world().get::<GpuBatchedMesh3d>(ranged).expect("the batch").ranges.len(), 3);
+    assert!(app.world().get::<GpuBatchedMesh3d>(plain).expect("the batch").ranges.is_empty(), "no ranges = upstream behaviour");
 }
 
 /// static-scene.md S3a2 (`gs-patch-plan.md` step 3, test T7): a GPU-authored instance batch is
