@@ -1,6 +1,6 @@
 [package]
 name = "sf_ai"
-description = "Bevy-free NPC AI core for superfargoth (ai.md): load-time ids and the per-actor decision trace (slice AI1); HTN, drives, directives and tiers follow in later slices"
+description = "Bevy-free NPC AI core for superfargoth (ai.md): ids, the per-actor decision trace (AI1), typed world state and the record-built HTN library and planner (AI2); drives, directives and tiers follow in later slices"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,8 @@ license.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sf_ids.workspace = true
+sf_records.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

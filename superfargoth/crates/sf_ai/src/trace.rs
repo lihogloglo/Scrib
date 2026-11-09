@@ -85,6 +85,32 @@ pub enum RejectReason {
     Precondition(u16),
     /// Its preconditions held but this subtask found no applicable method (backtracked).
     SubtaskFailed(TaskId),
+    /// A replan reached it with every earlier choice equal to the running plan's, and it ranks
+    /// below the running plan's method here: no plan from here on can beat the running one, so
+    /// the search stopped (Fluid HTN's MTR early-out; the entry's `outcome` is `kept_not_better`).
+    NotBetter,
+    /// A search limit stopped it: decomposition depth or the method-try budget (`htn`
+    /// `SEARCH_DEPTH`, `SEARCH_TRIES`), usually a recursive method without a way out.
+    Limit,
+}
+
+/// What this step's planning did (AI2; `None` when the step didn't plan). With a running plan,
+/// a replan wins only with a higher-priority method traversal record (ai.md "Behaviours").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanOutcome {
+    /// A fresh decomposition from the root (no running plan).
+    Planned,
+    /// A partial plan's rest, decomposed after its pause marker.
+    Continued,
+    /// A replan found a higher-priority MTR and replaced the running plan.
+    Replaced,
+    /// A replan's MTR was equal or lower: the running plan stays (the AI1 open item).
+    KeptNotBetter,
+    /// A replan found no plan at all: the running plan stays (its monitoring decides).
+    KeptNoPlan,
+    /// No plan, and none running.
+    NoPlan,
 }
 
 /// A method decomposition tried and skipped, in the order tried.
@@ -173,6 +199,12 @@ pub struct TraceEntry {
     pub path: PathState,
     /// Wall time this actor's step took, in µs; `None` when the store's timings are off.
     pub budget_us: Option<u32>,
+    /// The method traversal record of the plan in force: each choice's rank among its task's
+    /// methods (0 = highest priority), parallel to `methods` (AI2).
+    pub mtr: Vec<u16>,
+    /// What planning did this step (AI2). `methods`, `plan` and `mtr` describe the plan in force
+    /// after the step (for `kept_*`, the running plan); `rejected` is this step's search.
+    pub outcome: Option<PlanOutcome>,
 }
 
 impl TraceEntry {
@@ -197,6 +229,8 @@ impl TraceEntry {
         self.operator = None;
         self.path = PathState::None;
         self.budget_us = None;
+        self.mtr.clear();
+        self.outcome = None;
     }
 }
 
@@ -523,13 +557,36 @@ impl TraceStore {
     }
 }
 
+/// How [`format_trace_with`] prints ids. The defaults print indices (`t1`, `m7`, `o4`);
+/// `htn::Library` prints record names.
+pub trait TraceNames {
+    fn task(&self, out: &mut String, id: TaskId) {
+        let _ = write!(out, "{id}");
+    }
+    fn method(&self, out: &mut String, id: MethodId) {
+        let _ = write!(out, "{id}");
+    }
+    fn operator(&self, out: &mut String, id: OperatorId) {
+        let _ = write!(out, "{id}");
+    }
+}
+
+/// Ids as indices.
+struct Indices;
+impl TraceNames for Indices {}
+
 /// The last `n` entries of `trace`, oldest first, one line each, for the console (`ai.trace`):
 ///
-/// `#<tick> t<tier> <trigger> drive <d> via <task:method>... rej <first rejection> [(+k)] op <o> <status> path <state> [<µs>us]`
+/// `#<tick> t<tier> <trigger> drive <d> via <task:method>... rej <first rejection> [(+k)] [plan <outcome>] op <o> <status> path <state> [<µs>us]`
 ///
-/// `-` marks an empty field. Ids print as their indices (`d3`, `t1:m7`); AI2's registries can map
-/// them to names later.
+/// `-` marks an empty field; `plan <outcome>` only appears when the step planned. Ids print as
+/// their indices (`d3`, `t1:m7`); [`format_trace_with`] takes a name resolver.
 pub fn format_trace(trace: &Trace, n: usize) -> String {
+    format_trace_with(trace, n, &Indices)
+}
+
+/// [`format_trace`] with tasks, methods and operators printed through `names`.
+pub fn format_trace_with(trace: &Trace, n: usize, names: &dyn TraceNames) -> String {
     let mut out = String::new();
     let skip = trace.len().saturating_sub(n);
     for e in trace.iter().skip(skip) {
@@ -548,24 +605,44 @@ pub fn format_trace(trace: &Trace, n: usize) -> String {
             if i > 0 {
                 out.push('>');
             }
-            let _ = write!(out, "{}:{}", m.task, m.method);
+            names.task(&mut out, m.task);
+            out.push(':');
+            names.method(&mut out, m.method);
         }
         match e.rejected.first() {
             Some(r) => {
-                let _ = write!(out, " rej {}:{} ", r.task, r.method);
+                out.push_str(" rej ");
+                names.task(&mut out, r.task);
+                out.push(':');
+                names.method(&mut out, r.method);
+                out.push(' ');
                 match r.reason {
                     RejectReason::Precondition(i) => {
                         let _ = write!(out, "pre{i}");
                     }
                     RejectReason::SubtaskFailed(t) => {
-                        let _ = write!(out, "sub {t}");
+                        out.push_str("sub ");
+                        names.task(&mut out, t);
                     }
+                    RejectReason::NotBetter => out.push_str("not_better"),
+                    RejectReason::Limit => out.push_str("limit"),
                 }
                 if e.rejected.len() > 1 {
                     let _ = write!(out, " (+{})", e.rejected.len() - 1);
                 }
             }
             None => out.push_str(" rej -"),
+        }
+        if let Some(outcome) = e.outcome {
+            out.push_str(" plan ");
+            out.push_str(match outcome {
+                PlanOutcome::Planned => "planned",
+                PlanOutcome::Continued => "continued",
+                PlanOutcome::Replaced => "replaced",
+                PlanOutcome::KeptNotBetter => "kept_not_better",
+                PlanOutcome::KeptNoPlan => "kept_no_plan",
+                PlanOutcome::NoPlan => "no_plan",
+            });
         }
         match e.operator {
             Some(op) => {
@@ -574,7 +651,9 @@ pub fn format_trace(trace: &Trace, n: usize) -> String {
                     OperatorStatus::Succeeded => "succeeded",
                     OperatorStatus::Failed => "failed",
                 };
-                let _ = write!(out, " op {} {status}", op.operator);
+                out.push_str(" op ");
+                names.operator(&mut out, op.operator);
+                let _ = write!(out, " {status}");
             }
             None => out.push_str(" op -"),
         }

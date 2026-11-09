@@ -7548,6 +7548,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sf_ids",
+ "sf_records",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

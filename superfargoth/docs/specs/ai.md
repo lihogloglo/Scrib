@@ -1,6 +1,6 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
-Status: **AI1 built (2026-11-08)**: `sf_ai` with ids and the decision trace ("Debugging"); AI2 on not built. Label M7.
+Status: **AI1-AI2 built (2026-11-08/09)**: `sf_ai` ids, decision trace ("Debugging"), HTN core ("Behaviours"); AI3 on not built. Label M7.
 Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
 Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
 (thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
@@ -79,8 +79,8 @@ pub trait StackPolicy: Send + Sync {       // adapter: OpenMW's insertion, cance
     fn on_done(&self, stack: &mut Vec<Directive>, id: DirectiveId);
 }
 pub struct WorldState { bits: BitSet, ints: SmallVec<[i32; 16]>, refs: SmallVec<[Option<Target>; 8]> } // keys from a load-time registry
-pub struct Method { pub task: TaskId, pub priority: u16, pub pre: Vec<Predicate>, pub subtasks: Vec<TaskRef>, pub effects: Vec<Effect> }
-pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, trace: &mut Trace) -> Decision; // pure
+pub struct Method { pub task: TaskId, pub priority: u16, pub pre: Vec<Predicate>, pub subtasks: Vec<TaskRef> } // effects: primitives
+pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, trace: Option<&mut TraceEntry>) -> Decision; // pure
 ```
 
 - **Records** (mod-patchable): `sf.ai.method`, `sf.ai.consideration` (input, curve, weight), `sf.ai.drive`,
@@ -118,6 +118,10 @@ Flee and Alarm rules are adapter considerations.
 - **Monitoring**: the running operator checks its preconditions every step; a dirty key re-validates the plan; drives
   re-arbitrate at the tier's rate; a replan wins only with a higher-priority method traversal record (MTR).
 - **Smart objects** add method fragments through their slots, so ambient life doesn't grow the library.
+
+**As built (AI2).** `sf_ai::{state, htn}`: records `sf.ai.task`/`sf.ai.method`, `StateKeys` + `WorldState`, `Library`,
+`decompose`/`resume`/`replan`. Effects on primitive tasks; method-local backtracking (Fluid); a replan wins only on a
+better MTR prefix (trace `outcome` `kept_not_better`, `mtr`). Why: [ai-as-built.md](ai-as-built.md).
 
 ## Executors (operators)
 
@@ -267,11 +271,8 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 `ai.select` (reference picking, ROADMAP 1.13), `ai.tiers`, `ai.stats`, `ai.facts`; JSON/BRP for agents; gizmos
 (paths, cones, tier colours, claims, plan text), feature `debug`. Later: Visual-Logger-style recording.
 
-**As built (AI1).** `sf_ai::{ids, trace}` (details in the module docs). Entries add a trigger, the served directive,
-raw vs. final drive score and `SubtaskFailed` (backtrack) rejections. `TraceStore::record(actor, tick, tier) ->
-Option<&mut TraceEntry>` is the off switch, so `decide` takes `Option<&mut TraceEntry>`; the ring recycles entries.
-Cap: watched (newest first), then admission order; later actors never evict earlier ones. `budget_us` is `None` with
-timings off (reproducible traces). `ai.trace` is registered in AI3; the core exposes `format_trace` and JSON dumps.
+**As built (AI1).** `sf_ai::{ids, trace}`; detail in [ai-as-built.md](ai-as-built.md). `decide` takes
+`Option<&mut TraceEntry>` (the store's off switch). `ai.trace` is registered in AI3 (`format_trace`, JSON dumps).
 
 ## Industry comparison
 

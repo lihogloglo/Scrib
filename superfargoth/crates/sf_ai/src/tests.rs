@@ -59,6 +59,8 @@ fn golden_trace() -> Trace {
         operator: Some(OperatorState { operator: OperatorId(4), status: OperatorStatus::Running }),
         path: PathState::Following,
         budget_us: Some(85),
+        mtr: Vec::new(),
+        outcome: None,
     });
     trace.push(TraceEntry {
         tick: 126,
@@ -73,6 +75,8 @@ fn golden_trace() -> Trace {
         operator: Some(OperatorState { operator: OperatorId(1), status: OperatorStatus::Failed }),
         path: PathState::Failed(PathFailure::NoPath),
         budget_us: None,
+        mtr: Vec::new(),
+        outcome: None,
     });
     trace
 }
@@ -203,7 +207,9 @@ const GOLDEN_JSON: &str = r#"[
       "status": "running"
     },
     "path": "following",
-    "budget_us": 85
+    "budget_us": 85,
+    "mtr": [],
+    "outcome": null
   },
   {
     "tick": 126,
@@ -244,7 +250,9 @@ const GOLDEN_JSON: &str = r#"[
     "path": {
       "failed": "no_path"
     },
-    "budget_us": null
+    "budget_us": null,
+    "mtr": [],
+    "outcome": null
   }
 ]"#;
 
@@ -280,7 +288,9 @@ fn store_json_lists_actors_in_key_order() {
           },
           "operator": null,
           "path": "none",
-          "budget_us": null
+          "budget_us": null,
+          "mtr": [],
+          "outcome": null
         }
       ]
     },
@@ -303,7 +313,9 @@ fn store_json_lists_actors_in_key_order() {
           },
           "operator": null,
           "path": "none",
-          "budget_us": null
+          "budget_us": null,
+          "mtr": [],
+          "outcome": null
         }
       ]
     }
