@@ -128,6 +128,24 @@ fn material_keys_follow_contents_not_names() {
     }
 }
 
+/// `SceneSettings { layers: 0 }` asks for an instance table no view can ever draw. It is
+/// rejected where the settings enter the bake, so the error names them, and the writer keeps its
+/// own check for a table that arrives from disk instead of from these settings.
+#[test]
+fn layerless_settings_fail_where_they_enter() {
+    let settings = SceneSettings { layers: 0, ..SceneSettings::default() };
+    assert_eq!(settings.validate(), Err(SettingsError::NoLayers));
+    assert_eq!(SceneSettings::default().validate(), Ok(()));
+    let err = build_cell_table(&Rules, &settings, IVec3::ZERO, 0.0, &[], &[]).unwrap_err();
+    assert_eq!(err, BuildError::Settings(SettingsError::NoLayers));
+    assert!(err.to_string().contains("SceneSettings.layers"), "{err}");
+    // Defence in depth: a table of valid settings whose mask is cleared afterwards (or read back
+    // from disk) is still rejected by the writer.
+    let table = build_cell_table(&Rules, &SceneSettings::default(), IVec3::ZERO, 0.0, &[], &[]).unwrap();
+    assert_eq!(table.layers, 1);
+    assert_eq!(StaticCellTable { layers: 0, ..table }.write().unwrap_err(), TableError::NoLayers);
+}
+
 #[test]
 fn default_material_reading() {
     let m = default_material(&material(AlphaMode::Mask(0.5), true));

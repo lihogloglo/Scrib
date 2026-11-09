@@ -246,7 +246,27 @@ impl Default for SceneSettings {
     }
 }
 
+/// An invalid [`SceneSettings`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SettingsError {
+    #[error("SceneSettings.layers = 0: every table of this bake would be invisible to every view (a view draws a table only when `table.layers & view.layers != 0`); set the space's layer bit")]
+    NoLayers,
+}
+
 impl SceneSettings {
+    /// The settings' own invariant: an all-zero layer mask is a table no view can ever draw.
+    ///
+    /// Checked where the settings **enter** the bake ([`build_cell_table`] and the step's
+    /// `plan`), so the error names the caller that chose the value instead of surfacing later
+    /// as a [`TableError`] from the writer. [`StaticCellTable::write`] and the reader keep
+    /// their own check: a table also arrives from disk, where no [`SceneSettings`] was involved.
+    pub fn validate(&self) -> Result<(), SettingsError> {
+        if self.layers == 0 {
+            return Err(SettingsError::NoLayers);
+        }
+        Ok(())
+    }
+
     pub fn key_bytes(&self) -> Vec<u8> {
         let mut out = self.layers.to_le_bytes().to_vec();
         out.push(u8::from(self.casts_shadow));
@@ -291,10 +311,15 @@ pub enum BuildError {
     TooManyPlacements,
     #[error("table: {0}")]
     Table(#[from] TableError),
+    #[error("settings: {0}")]
+    Settings(#[from] SettingsError),
 }
 
 /// The step's pure core: one cell's table from its placements (index = [`PlacementId`]) and
 /// their loaded models (same length).
+///
+/// `settings` are checked first ([`SceneSettings::validate`]): settings no table could ever be
+/// drawn with fail here, naming them, not later in [`StaticCellTable::write`].
 pub fn build_cell_table(
     source: &dyn SceneSource,
     settings: &SceneSettings,
@@ -304,6 +329,7 @@ pub fn build_cell_table(
     models: &[CellModel<'_>],
 ) -> Result<StaticCellTable, BuildError> {
     assert_eq!(placements.len(), models.len(), "one model slot per placement");
+    settings.validate()?;
     let facts: Vec<ModelFacts> = models.iter().map(|m| m.facts(source)).collect();
     let eligibility = source.eligibility(CellFacts { placements, models: &facts });
     let origin = WorldPos::new(origin_cell, Vec3::ZERO);
@@ -553,6 +579,9 @@ impl Step for CellsStep {
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (ws, cell) = parse_cell_subject(subject).ok_or_else(|| step_err(subject, "malformed subject"))?;
+        // The settings came from whoever built this `SceneBake`: reject theirs here, before a
+        // cell is planned, rather than per cell from the table writer.
+        self.0.settings.validate().map_err(|e| step_err(subject, e))?;
         cx.product(PAGE_STEP, page_subject(&ws, Partition::page_of(cell)));
         cx.param("source", self.0.source.fingerprint().to_vec()).param("settings", self.0.settings.key_bytes());
         cx.param("land", self.0.coverage(&ws)?.digest.to_vec());
