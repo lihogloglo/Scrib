@@ -258,6 +258,36 @@ pub fn range_of(first_slots: &[u32], slot: u32) -> usize {
     low
 }
 
+// superfargoth patch (own, GS: ranges)
+/// The [`InstanceBatchSpan`]s of a batch whose `max_capacity` output slots
+/// start at `base_input_index` and are tiled by `slot_spans`, the
+/// `(first_slot, slot_count)` pairs of a [`validate_ranges`]-valid range table.
+///
+/// **Empty `slot_spans` yields exactly one span over the whole batch**, so a
+/// batch without geometry ranges reserves and draws precisely what upstream
+/// #25978 reserved and drew. Otherwise there is one span per range, in slot
+/// order, and the counts still sum to `max_capacity`.
+pub fn batch_spans(
+    base_input_index: u32,
+    max_capacity: u32,
+    slot_spans: impl IntoIterator<Item = (u32, u32)>,
+) -> Vec<InstanceBatchSpan> {
+    let mut spans: Vec<InstanceBatchSpan> = slot_spans
+        .into_iter()
+        .map(|(first_slot, count)| InstanceBatchSpan {
+            base_input_index: base_input_index + first_slot,
+            count,
+        })
+        .collect();
+    if spans.is_empty() {
+        spans.push(InstanceBatchSpan {
+            base_input_index,
+            count: max_capacity,
+        });
+    }
+    spans
+}
+
 #[derive(Clone)]
 pub(crate) struct ExtractedGpuBatchedMesh {
     pub mesh_asset_id: AssetId<Mesh>,
@@ -669,20 +699,13 @@ fn prepare_gpu_batched_mesh_draws(
         // superfargoth patch (own, GS: ranges): one span per range, in slot
         // order, tiling `input_range`; one span for the whole batch when it
         // has no ranges (upstream #25978).
-        batch.spans = if draw.ranges.is_empty() {
-            vec![InstanceBatchSpan {
-                base_input_index: base,
-                count: draw.max_capacity,
-            }]
-        } else {
+        batch.spans = batch_spans(
+            base,
+            draw.max_capacity,
             draw.ranges
                 .iter()
-                .map(|range| InstanceBatchSpan {
-                    base_input_index: base + range.first_slot,
-                    count: range.slot_count,
-                })
-                .collect()
-        };
+                .map(|range| (range.first_slot, range.slot_count)),
+        );
     }
     if !materialization.jobs.is_empty() {
         input.reserve_gpu(scratch_end, &device);

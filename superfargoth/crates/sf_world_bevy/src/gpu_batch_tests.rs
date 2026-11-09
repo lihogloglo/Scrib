@@ -38,10 +38,11 @@ use bevy::ecs::entity::{Entity, EntityHashMap};
 use bevy::light::{DirectionalLight, NotShadowCaster};
 use bevy::mesh::{Mesh, Mesh3d};
 use bevy::pbr::gpu_instance_batch::{
-    range_of, validate_ranges, GpuBatchGeometryRange, GpuBatchedMesh3d, GpuBatchedMeshRange,
-    GpuInstanceBatchPlugin, GpuMeshInstance, RangeError,
+    batch_spans, range_of, validate_ranges, GpuBatchGeometryRange, GpuBatchedMesh3d,
+    GpuBatchedMeshRange, GpuInstanceBatchPlugin, GpuMeshInstance, RangeError,
 };
 use bevy::pbr::MeshCullingData;
+use bevy::render::batching::InstanceBatchSpan;
 use bevy::render::render_resource::ShaderType;
 use bevy::shader::Shader;
 use bevy::MinimalPlugins;
@@ -164,10 +165,15 @@ fn port_shaders_link_and_validate() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// The WGSL struct `name`. Imported structs keep their name as a suffix of the module-mangled
-/// one.
+/// The WGSL struct `name`. The compiled module's own structs keep their name; imported ones keep
+/// it as a suffix of the module-mangled one, so an exact match wins over a suffix match (else
+/// `Metadata` could find `IndirectParametersMetadata`).
 fn wgsl_struct(module: &naga::Module, name: &str) -> naga::Handle<naga::Type> {
-    let (handle, _) = module.types.iter().find(|(_, t)| t.name.as_deref().is_some_and(|n| n == name || n.ends_with(&format!("_{name}")) || n.ends_with(name))).unwrap_or_else(|| panic!("no struct {name}"));
+    let exact = module.types.iter().find(|(_, t)| t.name.as_deref() == Some(name));
+    let (handle, _) = exact
+        .or_else(|| module.types.iter().find(|(_, t)| t.name.as_deref().is_some_and(|n| n.ends_with(&format!("_{name}")))))
+        .or_else(|| module.types.iter().find(|(_, t)| t.name.as_deref().is_some_and(|n| n.ends_with(name))))
+        .unwrap_or_else(|| panic!("no struct {name}"));
     handle
 }
 
@@ -221,14 +227,41 @@ fn geometry_range_layout_agrees() {
     assert_eq!(u64::from(wgsl_size(&module, "GeometryRange")), GpuBatchGeometryRange::min_size().get());
     assert_eq!(size_of::<GpuBatchGeometryRange>() as u64, GpuBatchGeometryRange::min_size().get(), "GpuBatchGeometryRange is Pod-uploadable");
     assert_eq!(size_of::<GpuBatchGeometryRange>(), 64);
-    for (field, offset) in [("first_slot", 0), ("index_count", 12), ("flags", 24), ("aabb_center", 32), ("pad1", 44), ("aabb_half_extents", 48), ("pad2", 60)] {
-        assert_eq!(wgsl_offset(&module, "GeometryRange", field), offset, "WGSL GeometryRange.{field}");
+    // Every field, on both sides: `#[repr(C)]` offsets and naga's WGSL offsets must agree, or a
+    // reorder on either side silently reads a neighbour.
+    macro_rules! field_offsets {
+        ($($field:ident = $offset:expr),* $(,)?) => {{
+            $(
+                assert_eq!(wgsl_offset(&module, "GeometryRange", stringify!($field)), $offset, "WGSL GeometryRange.{}", stringify!($field));
+                assert_eq!(std::mem::offset_of!(GpuBatchGeometryRange, $field), $offset as usize, "Rust GpuBatchGeometryRange.{}", stringify!($field));
+            )*
+        }};
     }
-    assert_eq!(std::mem::offset_of!(GpuBatchGeometryRange, aabb_center), 32);
-    assert_eq!(std::mem::offset_of!(GpuBatchGeometryRange, aabb_half_extents), 48);
+    field_offsets!(
+        first_slot = 0,
+        first_vertex_index = 4,
+        first_index_index = 8,
+        index_count = 12,
+        metadata_index = 16,
+        material_and_lightmap_bind_group_slot = 20,
+        flags = 24,
+        pad0 = 28,
+        aabb_center = 32,
+        pad1 = 44,
+        aabb_half_extents = 48,
+        pad2 = 60,
+    );
     // The whole record is zeroable: a batch without ranges binds one zeroed record it never
     // reads (`range_count == 0`), because a storage binding cannot be empty.
     assert_eq!(GpuBatchGeometryRange::default().index_count, 0);
+
+    // `MaterializationMetadata` spent one of its two `pad` words on `range_count`, so the
+    // uniform's size and every earlier offset are unchanged. The Rust struct is private, so
+    // only the WGSL side is assertable: `range_count` sits where the first pad word was.
+    let metadata = wgsl_members(&module, "Metadata");
+    let offset = |field: &str| metadata.iter().find(|(m, _)| m == field).unwrap_or_else(|| panic!("no Metadata.{field}")).1;
+    assert_eq!(offset("range_count"), offset("capacity") + 4, "range_count replaced the first pad word");
+    assert_eq!(offset("pad"), offset("range_count") + 4);
 }
 
 /// `gs-patch-plan.md` test T3: `materialize` overwrites these `MeshInput` fields per instance
@@ -422,11 +455,43 @@ fn a_ranged_batch_is_an_ordinary_batch_headless() {
         app.update();
     }
 
+    let mut both = vec![ranged, plain];
+    both.sort_unstable();
     for list in cascade_lists(&app, lit, view) {
-        assert_eq!(list, vec![ranged, plain].into_iter().min_by_key(|e| e.index()).map_or_else(Vec::new, |_| { let mut both = vec![ranged, plain]; both.sort(); both }), "both batches cast, ranges or not");
+        let mut cast = list;
+        cast.sort_unstable();
+        assert_eq!(cast, both, "both batches cast, ranges or not");
     }
     assert_eq!(app.world().get::<GpuBatchedMesh3d>(ranged).expect("the batch").ranges.len(), 3);
     assert!(app.world().get::<GpuBatchedMesh3d>(plain).expect("the batch").ranges.is_empty(), "no ranges = upstream behaviour");
+}
+
+/// `gs-patch-plan.md` step 2b: the batching callers see one span per geometry range, and
+/// **nothing at all changes for a batch without ranges** - it gets exactly one span over its
+/// whole capacity, which is the single input range upstream #25978 reserved. The spans always
+/// tile `base..base + max_capacity`, so the work items, the indirect parameters slot and the
+/// `MeshUniform` space a batch takes are the same with ranges and without.
+#[test]
+fn batch_spans_are_one_whole_batch_without_ranges() {
+    let no_ranges: [(u32, u32); 0] = [];
+    let whole = batch_spans(100, 64, no_ranges);
+    assert_eq!(whole, vec![InstanceBatchSpan { base_input_index: 100, count: 64 }], "no ranges = the single input range of #25978");
+
+    let split = batch_spans(100, 64, [(0, 4), (4, 6), (10, 54)]);
+    assert_eq!(
+        split,
+        vec![
+            InstanceBatchSpan { base_input_index: 100, count: 4 },
+            InstanceBatchSpan { base_input_index: 104, count: 6 },
+            InstanceBatchSpan { base_input_index: 110, count: 54 },
+        ],
+        "one span per range, in slot order, offset by the batch's base"
+    );
+    // What the sorted and binned callers compute from the spans, either way.
+    for spans in [whole, split] {
+        assert_eq!(spans.iter().map(|span| span.count).sum::<u32>(), 64, "the spans tile the capacity");
+        assert_eq!(spans[0].base_input_index, 100, "the work-item range still starts at the base");
+    }
 }
 
 /// static-scene.md S3a2 (`gs-patch-plan.md` step 3, test T7): a GPU-authored instance batch is
