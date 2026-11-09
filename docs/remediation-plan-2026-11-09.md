@@ -561,7 +561,7 @@ bytes at `sf_rpg/src/tests_service.rs:583`) was checked and cleared.
 |---|---|---|
 | E1 | `mw_rpg/src/runner.rs:482` | Text defines never expanded on the MessageBox path; every scripted box renders literally `^PCName, ...`. `rules.expand` runs only on dialogue response text (`mw_rpg_bevy/src/dialogue.rs:791`). |
 | E2 | `mw_script/src/functions.txt:193` | `GetDisposition` still `stub=50` while Set/Mod are live; a script reading disposition sees a constant. `functions.rs:335` asserts the stub deliberately — a decision to settle, not a slip. |
-| E3 | `mw_stats/src/gmst.rs:82,86` | `fDispCrimeMod = 0.0` makes the bounty term inert; `fPerTempMult = 1.0` makes temp and perm persuasion changes identical. Settle both with the `real_install` GMST print test **first**. |
+| E3 | `mw_stats/src/gmst.rs:82,86` | `fDispCrimeMod = 0.0` makes the bounty term inert; `fPerTempMult = 1.0` makes temp and perm persuasion changes identical and the `/fPerTempMult` divisions no-ops. **Both OPEN — do not cite a number.** The `real_install` GMST print cannot settle them (see §6a: no Morrowind install on this machine). Settle from OpenMW's source with file + line + commit, per the owner's standing instruction to port from OpenMW. |
 | E4 | `mw_rpg/src/persuasion.rs:241` | A failed bribe is free; OpenMW debits unconditionally before the roll. Repeatable exploit. Also credits the speaker where OpenMW only debits. |
 | E5 | `mw_rpg/src/disposition.rs:148` | Non-member faction branch adopts the first faction's reaction even when positive and takes rank from a foreign faction; OpenMW keeps only negatives. Tests pin the wrong behaviour. |
 
@@ -724,8 +724,8 @@ They are ordered by "cheap now, expensive later", not by size.
 - **Why it belongs in this plan:** it is the same seam as the E-lane's absolute-tick cooldown problem
   (`sf_effects/src/book.rs:176`), which breaks if the tick counter restarts on load. Fixing the clock first
   makes the cooldown rebase trivial; fixing them separately means doing the conversion work twice.
-- **Ownership:** unassigned, and it crosses `coordinator-mechanics`' lane (`sf_rpg`, `sf_effects`) and the
-  sky/world lane (`sf_sky`). **Needs the owner to assign it before anyone starts.**
+- **Ownership:** assigned by the owner on 2026-11-09 to `coordinator-mechanics` (`repo-f2`). It crosses that
+  lane (`sf_rpg`, `sf_effects`) and the sky/world lane (`sf_sky`), so coordinate on `sf_sky::SkyClock`.
 - **Do:** research and spec first per ROADMAP 1.17 — one host-authoritative integer clock in a low-level
   Bevy-free crate, saved once, replicated by `sf_net` later, with the other two derived from it. Brief at
   `docs/briefs/ai-next.md`.
@@ -768,8 +768,36 @@ They are ordered by "cheap now, expensive later", not by size.
    green before more is built on top of it.
 5. **F2 ordering.** `sf_scalability` is a precondition for the Steam Deck floor tier you accepted, but it is
    also a refactor across five preset enums. Before or after the Morrowind vertical slice?
-6. **F8 ownership.** The one-clock fix (ROADMAP 1.17) spans two sessions' lanes and nobody owns it. Assign
-   it, or it stays an "obvious fix" that no agent can start.
+6. **Install-gated tests (§6a).** Can CI hold a licensed Morrowind install? If it cannot, the install-gated
+   suite never runs anywhere, and every OpenMW-port claim stays unverified by any test. Only you can make
+   this call, and it decides how much D1 is actually worth.
+
+## 6a. The strongest finding in this document: "green tests" currently prove very little
+
+**There is no Morrowind install on this machine.** Verified 2026-11-09 by `coordinator-mechanics` and
+confirmed directly by the owner: `BEVYRROWIND_MORROWIND` is unset, no install in any standard Steam/GOG/
+Bethesda location, no `Morrowind.esm` anywhere under the user folder. The game cannot be launched here; the
+machine can compile, slowly, and that is all.
+
+Consequence: **47 files in `bevyrrowind/crates` carry install-gated tests that skip and pass without an
+install.** `cargo test -p mw_stats --test real_install -- --ignored --nocapture` prints "no Morrowind
+install detected; skipping" and passes in 0.01 s. On this machine those tests are green and assert nothing.
+
+Put together with §6 (four tests that assert their own bug), the honest reading is:
+
+> A green `cargo test --workspace` on this machine is **not** evidence for any Morrowind-behaviour claim.
+> It shows the code compiles and is self-consistent. It does not show the ports match Morrowind.
+
+This is the single strongest argument in this document for **D1 (CI)**, and it changes what CI is for: CI
+with a licensed Morrowind install is the only way the install-gated suite ever actually runs. Until then,
+every "ported from OpenMW, tests pass" claim in the repo rests on tests written from the implementation.
+
+**Do:** (a) make install-gated tests **report as skipped in a way a human sees**, or fail loudly, rather
+than passing silently — a passing test that asserted nothing is worse than no test; (b) in D1, decide
+whether CI can hold a licensed install (the owner's own copy cannot be redistributed — see the clean-room
+and "Morrowind's data is never redistributed" rules), and if it cannot, say so plainly in the CI docs so
+nobody mistakes a green CI for verified Morrowind behaviour; (c) treat every OpenMW port's expected values
+as source-derived (§6), since that is the only verification available without an install.
 
 ## 6. One process finding, not a code finding
 
