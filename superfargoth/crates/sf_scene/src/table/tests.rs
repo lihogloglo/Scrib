@@ -7,6 +7,8 @@ fn chain(mesh: u64, class: MaterialClass, errors: &[f32]) -> LodChain {
         mesh,
         material: mesh.rotate_left(17) ^ 0xA5A5,
         material_class: class,
+        model: 0,
+        part: 0,
         levels: errors
             .iter()
             .zip(0u32..)
@@ -27,9 +29,11 @@ fn instance(placement: u32, chain: u32, center: Vec3, radius: f32) -> StaticInst
     }
 }
 
-/// Chain 0 (mesh key 0x10, three levels) and chain 1 (mesh key 0x20, one level).
+/// Chain 0 (mesh key 0x10, three levels, model 0 part 0) and chain 1 (mesh key 0x20...0020, one
+/// level, model 1 part 2). Two models, sorted: `meshes/a.mdl` and `meshes/b.mdl`.
 fn sample() -> StaticCellTable {
     StaticCellTable {
+        models: vec!["meshes/a.mdl".into(), "meshes/b.mdl".into()],
         origin_cell: IVec3::new(-3, 0, 7),
         aabb: Aabb { min: Vec3::new(-128.0, -5.0, -128.0), max: Vec3::new(128.0, 40.0, 128.0) },
         land_min: -2.5,
@@ -41,22 +45,36 @@ fn sample() -> StaticCellTable {
         ],
         chains: vec![
             chain(0x10, MaterialClass::OpaqueWind, &[0.0, 0.02, 0.1]),
-            chain(0xFFFF_FFFF_0000_0020, MaterialClass::MaskedWindTwoSided, &[0.0]),
+            LodChain { model: 1, part: 2, ..chain(0xFFFF_FFFF_0000_0020, MaterialClass::MaskedWindTwoSided, &[0.0]) },
         ],
     }
 }
 
+/// The sample's model section: two offsets then the two names end to end.
+fn model_section() -> Vec<u8> {
+    let mut out = 0u32.to_le_bytes().to_vec();
+    out.extend_from_slice(&12u32.to_le_bytes());
+    out.extend_from_slice(b"meshes/a.mdlmeshes/b.mdl");
+    out
+}
+
 #[test]
-fn v2_round_trip_is_exact() {
+fn v3_round_trip_is_exact() {
     let table = sample();
     let bytes = table.write().unwrap();
-    assert_eq!(bytes.len(), 80 + 3 * 80 + 2 * 32 + 4 * 12);
+    let models = model_section();
+    assert_eq!(bytes.len(), 80 + 3 * 80 + 2 * 32 + 4 * 12 + models.len());
     assert_eq!(&bytes[..8], b"SFSCENE\0");
-    assert_eq!(FORMAT_VERSION, 2);
-    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
-    // Layers live in the header (offset 64), once per table.
+    assert_eq!(FORMAT_VERSION, 3);
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 3);
+    // Layers live in the header (offset 64), once per table; then the model section's counts
+    // and the chain layout version. v3 has no reserved header byte left.
     assert_eq!(u32::from_le_bytes(bytes[64..68].try_into().unwrap()), 0x8000_0001);
-    assert_eq!(&bytes[68..80], &[0; 12]);
+    assert_eq!(u32::from_le_bytes(bytes[68..72].try_into().unwrap()), 2, "model count");
+    assert_eq!(u32::from_le_bytes(bytes[72..76].try_into().unwrap()), 24, "model bytes");
+    assert_eq!(u32::from_le_bytes(bytes[76..80].try_into().unwrap()), LAYOUT_VERSION);
+    // The model section is last: offsets (ascending from 0) then the names end to end.
+    assert_eq!(&bytes[bytes.len() - models.len()..], &models[..]);
     let view = StaticCellTableView::parse(&bytes).unwrap();
     assert_eq!(view.to_table(), table);
     assert_eq!(view.len(), 3);
@@ -81,19 +99,30 @@ fn v2_round_trip_is_exact() {
     assert_eq!(&second[68..72], &1u32.to_le_bytes());
     assert_eq!(&second[72..76], &0u32.to_le_bytes());
     assert_eq!(&second[76..80], &(InstanceFlags::CASTS_SHADOW | InstanceFlags::WIND).bits().to_le_bytes());
-    // Chain records: class at 8, mesh key at 16, material key at 24.
+    // Chain records: class at 8, model index at 10, part at 12, mesh key at 16, material key 24.
     let chain1 = &bytes[80 + 240 + 32..80 + 240 + 64];
     assert_eq!(&chain1[8..10], &(MaterialClass::MaskedWindTwoSided as u16).to_le_bytes());
+    assert_eq!(&chain1[10..12], &1u16.to_le_bytes());
+    assert_eq!(&chain1[12..16], &2u32.to_le_bytes());
     assert_eq!(&chain1[16..24], &0xFFFF_FFFF_0000_0020u64.to_le_bytes());
     assert_eq!(&chain1[24..32], &table.chains[1].material.to_le_bytes());
+    // A chain names its geometry: `<model>/<part>` is its `scene.chains` subject.
+    assert_eq!(view.model_count(), 2);
+    assert_eq!(view.models().collect::<Vec<_>>(), ["meshes/a.mdl", "meshes/b.mdl"]);
+    assert_eq!(view.model(0), Some("meshes/a.mdl"));
+    assert_eq!(view.model(2), None);
+    assert_eq!(view.chain_source(0), Some(("meshes/a.mdl", 0)));
+    assert_eq!(view.chain_source(1), Some(("meshes/b.mdl", 2)));
+    assert_eq!(view.chain_source(2), None);
+    assert_eq!(crate::product::chain_subject("meshes/b.mdl", 2), "meshes/b.mdl/2");
     // Writing the read table again gives the same bytes.
     assert_eq!(view.to_table().write().unwrap(), bytes);
 }
 
 #[test]
-fn v1_and_other_versions_are_rejected() {
+fn v1_v2_and_other_versions_are_rejected() {
     let bytes = sample().write().unwrap();
-    for v in [0u32, 1, 3, u32::MAX] {
+    for v in [0u32, 1, 2, 4, u32::MAX] {
         let mut b = bytes.clone();
         b[8..12].copy_from_slice(&v.to_le_bytes());
         assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::Version(v));
@@ -103,6 +132,81 @@ fn v1_and_other_versions_are_rejected() {
     v1.extend_from_slice(&1u32.to_le_bytes());
     v1.resize(64, 0);
     assert_eq!(StaticCellTableView::parse(&v1).unwrap_err(), TableError::Version(1));
+    // A real v2 file: the same 80 B header and records, no model section, header words 68..80
+    // reserved (zero). Nothing ever baked one, and nothing reads one.
+    let mut v2 = bytes[..bytes.len() - model_section().len()].to_vec();
+    v2[8..12].copy_from_slice(&2u32.to_le_bytes());
+    v2[68..80].fill(0);
+    assert_eq!(StaticCellTableView::parse(&v2).unwrap_err(), TableError::Version(2));
+}
+
+#[test]
+fn a_table_from_another_chain_layout_rule_is_rejected() {
+    // The level ranges below were built by `chain_layout`, and so is the geometry the runtime
+    // loads for the chain: ranges from one rule must never address geometry from another.
+    let bytes = sample().write().unwrap();
+    for layout in [0u32, LAYOUT_VERSION + 1, u32::MAX] {
+        let mut b = bytes.clone();
+        b[76..80].copy_from_slice(&layout.to_le_bytes());
+        assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::Layout(layout));
+    }
+}
+
+#[test]
+fn the_model_section_is_canonical() {
+    let bytes = sample().write().unwrap();
+    let models_at = bytes.len() - model_section().len();
+    let names_at = models_at + 8;
+    // Offsets ascend strictly from 0 and stay inside the names, so no name is empty.
+    for (at, value) in [(models_at, 1u32), (models_at + 4, 0), (models_at + 4, 12 + 12), (models_at + 4, u32::MAX)] {
+        let mut b = bytes.clone();
+        b[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::ModelOffsets, "{at} = {value}");
+    }
+    // The names are UTF-8...
+    let mut b = bytes.clone();
+    b[names_at] = 0xFF;
+    assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::ModelUtf8(0));
+    // ... sorted and unique (so one table has exactly one encoding).
+    let mut t = sample();
+    t.models = vec!["meshes/b.mdl".into(), "meshes/a.mdl".into()];
+    assert_eq!(t.write().unwrap_err(), TableError::ModelOrder(1));
+    let mut t = sample();
+    t.models = vec!["meshes/a.mdl".into(), "meshes/a.mdl".into()];
+    t.chains[1].model = 1;
+    assert_eq!(t.write().unwrap_err(), TableError::ModelOrder(1));
+    // A model index past the section, and a model no chain names.
+    let mut t = sample();
+    t.chains[1].model = 2;
+    assert_eq!(t.write().unwrap_err(), TableError::MissingModel { chain: 1, model: 2 });
+    let mut t = sample();
+    t.chains[1].model = 0;
+    t.chains[1].part = 1;
+    assert_eq!(t.write().unwrap_err(), TableError::UnusedModel(1));
+    // Model count and model bytes agree with each other: no names, no bytes.
+    let mut b = bytes.clone();
+    b[68..72].copy_from_slice(&0u32.to_le_bytes());
+    assert!(matches!(StaticCellTableView::parse(&b), Err(TableError::Size { .. })));
+    let empty = StaticCellTable { chains: vec![], instances: vec![], models: vec![], ..sample() };
+    let bytes = empty.write().unwrap();
+    assert_eq!(bytes.len(), 80);
+    assert_eq!(StaticCellTableView::parse(&bytes).unwrap().model_count(), 0);
+}
+
+#[test]
+fn two_chains_cannot_name_one_geometry() {
+    // Equal (model, part) is equal geometry: one `scene.chains` product in two chain slots,
+    // drawn twice. The mesh keys cannot both be right, so the table is stale, not merely odd.
+    let mut t = sample();
+    t.chains[1].model = 0;
+    t.chains[1].part = 0;
+    assert_eq!(t.write().unwrap_err(), TableError::DuplicateChainSource { first: 0, second: 1 });
+    // The same model with another part is two chains, which is the normal case.
+    let mut t = sample();
+    t.chains[1].model = 0;
+    t.chains[1].part = 7;
+    t.models = vec!["meshes/a.mdl".into()];
+    t.write().unwrap();
 }
 
 #[test]
@@ -154,19 +258,15 @@ fn material_class_and_key_live_in_the_chain() {
     let classes: Vec<_> = view.chains().map(|c| (c.material_class, c.material)).collect();
     let t = sample();
     assert_eq!(classes, [(MaterialClass::OpaqueWind, t.chains[0].material), (MaterialClass::MaskedWindTwoSided, t.chains[1].material)]);
-    // An unknown class is rejected; so are non-zero reserved chain bytes.
+    // An unknown class is rejected. The bytes v2 kept reserved next to it now carry the chain's
+    // source, so a wrong value there is a wrong model or part, not a reserved-byte error.
     let chain0 = 80 + 3 * 80;
     let mut b = bytes.clone();
     b[chain0 + 8..chain0 + 10].copy_from_slice(&8u16.to_le_bytes());
     assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::MaterialClass { chain: 0, class: 8 });
-    for at in [10, 12, 15] {
-        let mut b = bytes.clone();
-        b[chain0 + at] = 1;
-        assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::Reserved(chain0 + at));
-    }
     let mut b = bytes.clone();
-    b[70] = 1;
-    assert_eq!(StaticCellTableView::parse(&b).unwrap_err(), TableError::Reserved(70));
+    b[chain0 + 12..chain0 + 16].copy_from_slice(&9u32.to_le_bytes());
+    assert_eq!(StaticCellTableView::parse(&b).unwrap().chain_source(0), Some(("meshes/a.mdl", 9)));
 }
 
 #[test]
@@ -239,6 +339,7 @@ fn empty_table_round_trips() {
         layers: 1,
         instances: vec![],
         chains: vec![],
+        models: vec![],
     };
     let bytes = table.write().unwrap();
     assert_eq!(bytes.len(), 80);
@@ -280,7 +381,8 @@ fn rejects_inconsistent_tables() {
     t.chains[1].levels.clear();
     assert_eq!(write(t), TableError::ChainLevels(1));
     let mut t = sample();
-    t.chains[1] = chain(t.chains[1].mesh, MaterialClass::Opaque, &[0.0; MAX_LOD_LEVELS + 1]);
+    t.chains[1] =
+        LodChain { model: 1, part: 2, ..chain(t.chains[1].mesh, MaterialClass::Opaque, &[0.0; MAX_LOD_LEVELS + 1]) };
     assert_eq!(write(t), TableError::ChainLevels(1));
     let mut t = sample();
     t.chains[0].levels[1].error = f32::NAN;

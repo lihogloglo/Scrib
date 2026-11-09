@@ -3,8 +3,9 @@
 //! Spec: `superfargoth/docs/specs/static-scene.md` ("Crates": `sf_scene`).
 //!
 //! - [`table`]: the baked per-cell instance table ([`StaticCellTable`], §2), a versioned
-//!   little-endian binary format (v2) with a borrowing reader ([`StaticCellTableView`]) whose instance
-//!   section is the GPU layout (cell-local chain indices remapped at stream-in).
+//!   little-endian binary format (v3) with a borrowing reader ([`StaticCellTableView`]) whose instance
+//!   section is the GPU layout (cell-local chain indices remapped at stream-in), and whose chains
+//!   name the models their geometry was cooked from.
 //! - [`eligibility`]: which placements live in the scene (§1), asked through an adapter trait
 //!   ([`SceneEligibility`]), and the one-way per-cell [`Promotions`].
 //! - [`alloc`]: the per-space GPU table's slot allocator (§3): one contiguous range per cell,
@@ -36,7 +37,7 @@ pub mod product;
 pub mod table;
 
 pub use alloc::{AllocError, SlotAllocator, SlotRange, SlotStats};
-pub use chain::{ChainLayout, LayoutError, LevelSource, Segment, chain_layout};
+pub use chain::{ChainLayout, LAYOUT_VERSION, LayoutError, LevelSource, Segment, chain_layout};
 pub use cull::{
     CullReason, CullStats, Frustum, HorizonGrid, HorizonParams, ScenePreset, SceneProjection, SceneView, Verdict,
     ViewKind, WorkItem, cull_cell, cull_instance, pick_level, pick_level_ortho, pixels_per_radian, texels_per_metre,
@@ -48,8 +49,8 @@ pub use product::{
     parse_chain_subject,
 };
 pub use table::{
-    Aabb, FORMAT_VERSION, InstanceFlags, LodChain, LodLevel, MAGIC, MAX_LOD_LEVELS, Sphere, StaticCellTable,
-    StaticCellTableView, StaticInstance, TableError,
+    Aabb, FORMAT_VERSION, InstanceFlags, LodChain, LodLevel, MAGIC, MAX_LOD_LEVELS, MAX_MODELS, Sphere,
+    StaticCellTable, StaticCellTableView, StaticInstance, TableError,
 };
 
 /// A placement's id, **cell-local**: with its table's cell it names one placement of the space

@@ -20,18 +20,42 @@
 //! finds one, [`StaticCellTableView::write_remapped`] copies the instances with the global slots),
 //! so no instance carries a hash and no two cells can disagree on an id.
 //!
-//! # Binary layout, format version 2
+//! **A chain says where its geometry comes from** (format version 3). The mesh key is a hash and
+//! so not invertible: a v2 table could not tell the runtime which model a chain was cooked from,
+//! and therefore could not name the chain's geometry product. A v3 chain record carries a
+//! **model index** into the table's new model section (the `mesh.cook` subjects this cell's
+//! chains come from, sorted and unique) and the chain's **part**, its material index inside that
+//! model ([`StaticCellTableView::chain_source`]). The pair is the chain's geometry subject
+//! (`<model>/<part>`, [`crate::product::chain_subject`]) and the input of its mesh key, so the
+//! runtime loads a chain's mesh without inverting anything, and two chains of one table can never
+//! name the same geometry.
+//!
+//! The header also carries the **chain layout version** ([`crate::chain::LAYOUT_VERSION`]): the
+//! level ranges below were produced by [`crate::chain_layout`], and the chain geometry products
+//! the runtime loads are built by the same function. A table written under another layout rule
+//! would pair stale index ranges with fresh geometry, so the reader rejects it
+//! ([`TableError::Layout`]) rather than drawing from them.
+//!
+//! # Binary layout, format version 3
 //!
 //! All little-endian, no compression, no padding beyond what is listed; sections follow the
-//! header in this order and the file is exactly their total size. Reserved bytes are zero (the
-//! reader rejects anything else).
+//! header in this order and the file is exactly their total size. **v3 has no reserved bytes**:
+//! every field of the header and of a chain record means something (v2's three header words and
+//! six chain bytes are what v3's model section, layout version and chain source went into).
 //!
 //! | Section | Size | Content (byte offset) |
 //! |---|---|---|
-//! | header | 80 B | magic `SFSCENE\0` (0), version `u32` (8), instance count `u32` (12), chain count `u32` (16), level count `u32` (20), origin cell `i32 × 3` (24), land minimum `f32` (36), AABB min `f32 × 3` (40), AABB max `f32 × 3` (52), layer mask `u32` (64), reserved `u32 × 3` (68) |
+//! | header | 80 B | magic `SFSCENE\0` (0), version `u32` (8), instance count `u32` (12), chain count `u32` (16), level count `u32` (20), origin cell `i32 × 3` (24), land minimum `f32` (36), AABB min `f32 × 3` (40), AABB max `f32 × 3` (52), layer mask `u32` (64), model count `u32` (68), model bytes `u32` (72), chain layout version `u32` (76) |
 //! | instances | 80 B each | transform rows `f32 × 12` (0), sphere centre + radius `f32 × 4` (48), placement `u32` (64), chain index `u32` (68), material override `u32` (72), flags `u32` (76) |
-//! | chains | 32 B each | first level `u32` (0), level count `u32` (4), material class `u16` (8), reserved `u16` (10), reserved `u32` (12), mesh key `u64` (16), material key `u64` (24) |
+//! | chains | 32 B each | first level `u32` (0), level count `u32` (4), material class `u16` (8), model index `u16` (10), part `u32` (12), mesh key `u64` (16), material key `u64` (24) |
 //! | levels | 12 B each | first index `u32`, index count `u32`, error `f32` (metres, model space) |
+//! | model offsets | 4 B each | `model count` byte offsets into the model names, ascending, the first 0 |
+//! | model names | `model bytes` | the models' `mesh.cook` subjects, UTF-8, no separators, in order |
+//!
+//! A model name runs from its offset to the next offset (the last to `model bytes`), so the
+//! offsets are **strictly** ascending and below `model bytes`: a name is never empty. The names
+//! are sorted and unique, so the section is canonical — one table, one encoding — and every one
+//! of them is named by some chain.
 //!
 //! The header is a multiple of 16 bytes, so the instance section of a 16-aligned buffer is
 //! 16-aligned. The instance record is the GPU layout (a WGSL struct of `array<vec4<f32>, 3>`,
@@ -42,7 +66,9 @@
 //! The **material override** is 0 in every baked table: the instance draws its chain's material.
 //! Other values are reserved for a per-placement material table (retextures, tint) that a later
 //! format version adds, and for the runtime's own writes on the GPU copy; the reader rejects them.
-//! Version 1 (chain ids folded from the mesh key, class and layers per instance) is not read.
+//! Version 1 (chain ids folded from the mesh key, class and layers per instance) and version 2
+//! (no model section: a chain's geometry could not be found from the table) are not read. No
+//! table of either was ever baked — `bake_scene` is not called yet — so neither needs migrating.
 //!
 //! Like `sf_model`'s `.sfmesh` (`cooked.rs`, magic and a `u32` version), a reader takes only the
 //! versions it knows and rejects the rest with [`TableError::Version`]; a layout change bumps
@@ -55,21 +81,28 @@
 //! pick the coarsest level) or bounding sphere, and any flag bit nothing implements yet
 //! ([`InstanceFlags::NOT_BAKED`]).
 
+use std::collections::BTreeSet;
+
 use glam::{Affine3A, IVec3, Mat3A, Vec3, Vec3A};
 
 use crate::PlacementId;
+use crate::chain::LAYOUT_VERSION;
 use crate::material::MaterialClass;
 
 pub const MAGIC: [u8; 8] = *b"SFSCENE\0";
 /// The only format version read and written.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 /// Most levels one chain may have (a level index fits a `u8` work item field).
 pub const MAX_LOD_LEVELS: usize = 16;
+/// Most models one table may name (a chain's model index is a `u16`).
+pub const MAX_MODELS: usize = u16::MAX as usize + 1;
 
 const HEADER: usize = 80;
 const INSTANCE: usize = 80;
 const CHAIN: usize = 32;
 const LEVEL: usize = 12;
+/// Size of one model-name offset.
+const MODEL_OFFSET: usize = 4;
 /// Offset of the chain index in an instance record (rewritten by [`StaticCellTableView::write_remapped`]).
 const INSTANCE_CHAIN: usize = 68;
 
@@ -191,6 +224,13 @@ pub struct LodChain {
     pub material: u64,
     /// The batch set the chain draws in (§5); a pure function of its material.
     pub material_class: MaterialClass,
+    /// Index of the chain's model in its table's models ([`StaticCellTable::models`]): the
+    /// `mesh.cook` subject its geometry was cooked from.
+    pub model: u16,
+    /// The chain's material index inside that model (`CookedModel::materials`) — a chain is one
+    /// (model, material part). With [`Self::model`] it is the chain's geometry subject
+    /// (`<model>/<part>`, [`crate::product::chain_subject`]) and the input of [`Self::mesh`].
+    pub part: u32,
     /// 1..=[`MAX_LOD_LEVELS`] levels.
     pub levels: Vec<LodLevel>,
 }
@@ -210,6 +250,9 @@ pub struct StaticCellTable {
     pub instances: Vec<StaticInstance>,
     /// Sorted by mesh key, unique, each used by an instance; instances index this list.
     pub chains: Vec<LodChain>,
+    /// The `mesh.cook` subjects this cell's chains were cooked from: sorted, unique, each named
+    /// by some chain, at most [`MAX_MODELS`] of them. Chains index this list ([`LodChain::model`]).
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, thiserror::Error)]
@@ -220,8 +263,8 @@ pub enum TableError {
     Version(u32),
     #[error("static cell table is {got} bytes, its header says {expected}")]
     Size { expected: u64, got: usize },
-    #[error("non-zero reserved bytes at offset {0}")]
-    Reserved(usize),
+    #[error("static cell table chain layout version {0}, expected {LAYOUT_VERSION}: its level ranges were built by another layout rule than the chain geometry the runtime would load")]
+    Layout(u32),
     #[error("the table draws in no layer (mask 0): nothing of this cell would ever be visible")]
     NoLayers,
     #[error("the table's AABB is not a finite box")]
@@ -246,22 +289,46 @@ pub enum TableError {
     LevelError(u32),
     #[error("chain {chain} has unknown material class {class}")]
     MaterialClass { chain: u32, class: u16 },
+    #[error("the model section's offsets are not strictly ascending from 0, or run past the model names")]
+    ModelOffsets,
+    #[error("model {0} is not UTF-8")]
+    ModelUtf8(u32),
+    #[error("models not sorted by unique name at {0}")]
+    ModelOrder(u32),
+    #[error("chain {chain} names model {model}, not in the table")]
+    MissingModel { chain: u32, model: u16 },
+    #[error("model {0} is named by no chain")]
+    UnusedModel(u32),
+    #[error("chains {first} and {second} are the same (model, part): one chain's geometry, two slots")]
+    DuplicateChainSource { first: u32, second: u32 },
+    #[error("chain {0}'s mesh key does not match its (model, part)")]
+    MeshKey(u32),
     #[error("instance {0} has unknown, runtime-only or not-yet-implemented flag bits")]
     Flags(PlacementId),
     #[error("instance {0} has a material override (none is defined in format version {FORMAT_VERSION})")]
     MaterialOverride(PlacementId),
-    #[error("table too large for 32-bit counts")]
+    #[error("table too large for its 32-bit counts, or more than {MAX_MODELS} models")]
     TooLarge,
 }
 
 impl StaticCellTable {
     /// The binary form (module docs). Validated by the reader before it is returned, so a table
-    /// that writes is a table that reads.
+    /// that writes is a table that reads. The bake additionally checks the chains' mesh keys
+    /// against their sources, which only it can ([`Self::verify_chain_sources`]).
     pub fn write(&self) -> Result<Vec<u8>, TableError> {
         let count = |n: usize| u32::try_from(n).map_err(|_| TableError::TooLarge);
         let level_total: usize = self.chains.iter().map(|c| c.levels.len()).sum();
+        let model_bytes: usize = self.models.iter().map(String::len).sum();
+        if self.models.len() > MAX_MODELS {
+            return Err(TableError::TooLarge);
+        }
         let mut out = Vec::with_capacity(
-            HEADER + INSTANCE * self.instances.len() + CHAIN * self.chains.len() + LEVEL * level_total,
+            HEADER
+                + INSTANCE * self.instances.len()
+                + CHAIN * self.chains.len()
+                + LEVEL * level_total
+                + MODEL_OFFSET * self.models.len()
+                + model_bytes,
         );
         out.extend_from_slice(&MAGIC);
         put_u32(&mut out, FORMAT_VERSION);
@@ -275,7 +342,9 @@ impl StaticCellTable {
         put_vec3(&mut out, self.aabb.min);
         put_vec3(&mut out, self.aabb.max);
         put_u32(&mut out, self.layers);
-        out.extend_from_slice(&[0; 12]);
+        put_u32(&mut out, count(self.models.len())?);
+        put_u32(&mut out, count(model_bytes)?);
+        put_u32(&mut out, LAYOUT_VERSION);
         for i in &self.instances {
             for row in i.transform {
                 for v in row {
@@ -294,7 +363,8 @@ impl StaticCellTable {
             put_u32(&mut out, count(first)?);
             put_u32(&mut out, count(c.levels.len())?);
             out.extend_from_slice(&(c.material_class as u16).to_le_bytes());
-            out.extend_from_slice(&[0; 6]);
+            out.extend_from_slice(&c.model.to_le_bytes());
+            put_u32(&mut out, c.part);
             out.extend_from_slice(&c.mesh.to_le_bytes());
             out.extend_from_slice(&c.material.to_le_bytes());
             first += c.levels.len();
@@ -304,8 +374,39 @@ impl StaticCellTable {
             put_u32(&mut out, l.index_count);
             put_f32(&mut out, l.error);
         }
+        let mut at = 0usize;
+        for m in &self.models {
+            put_u32(&mut out, count(at)?);
+            at += m.len();
+        }
+        for m in &self.models {
+            out.extend_from_slice(m.as_bytes());
+        }
+        // Read back: a table that writes is a table that reads.
         StaticCellTableView::parse(&out)?;
         Ok(out)
+    }
+
+    /// Checks what the reader cannot: that every chain's [`LodChain::mesh`] really is the mesh
+    /// key of its (model, part) ([`TableError::MeshKey`]).
+    ///
+    /// The key is a hash, so only a side that can compute one can check it — that is the bake,
+    /// which calls this on every table it writes. The runtime takes the file's word, as it does
+    /// for any content-keyed cache; what it needs from the pair is the chain's geometry subject
+    /// ([`StaticCellTableView::chain_source`]), and a wrong key there would be a stale product,
+    /// caught as a disagreement at stream-in.
+    #[cfg(feature = "bake")]
+    pub fn verify_chain_sources(&self) -> Result<(), TableError> {
+        for (index, c) in (0u32..).zip(&self.chains) {
+            let model = self
+                .models
+                .get(usize::from(c.model))
+                .ok_or(TableError::MissingModel { chain: index, model: c.model })?;
+            if crate::bake::mesh_key(model, c.part) != c.mesh {
+                return Err(TableError::MeshKey(index));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -316,6 +417,10 @@ pub struct StaticCellTableView<'a> {
     instances: &'a [u8],
     chains: &'a [u8],
     levels: &'a [u8],
+    /// `model count` × `u32`, ascending byte offsets into [`Self::models_blob`].
+    model_offsets: &'a [u8],
+    /// The model names end to end, UTF-8.
+    models_blob: &'a [u8],
     origin_cell: IVec3,
     land_min: f32,
     aabb: Aabb,
@@ -336,37 +441,50 @@ impl<'a> StaticCellTableView<'a> {
         if bytes.len() < HEADER {
             return Err(TableError::Size { expected: HEADER as u64, got: bytes.len() });
         }
-        let [n_inst, n_chain, n_level] = [12, 16, 20].map(|o| u64::from(u32_at(bytes, o)));
-        let expected =
-            HEADER as u64 + INSTANCE as u64 * n_inst + CHAIN as u64 * n_chain + LEVEL as u64 * n_level;
+        let [n_inst, n_chain, n_level, n_model, model_bytes] =
+            [12, 16, 20, 68, 72].map(|o| u64::from(u32_at(bytes, o)));
+        let expected = HEADER as u64
+            + INSTANCE as u64 * n_inst
+            + CHAIN as u64 * n_chain
+            + LEVEL as u64 * n_level
+            + MODEL_OFFSET as u64 * n_model
+            + model_bytes;
         if expected != bytes.len() as u64 {
             return Err(TableError::Size { expected, got: bytes.len() });
         }
-        if let Some(k) = bytes[68..HEADER].iter().position(|&b| b != 0) {
-            return Err(TableError::Reserved(68 + k));
+        // The level ranges below were built by `chain_layout`, and so is the chain geometry the
+        // runtime loads: a table from another layout rule must not pair its ranges with it.
+        let layout = u32_at(bytes, 76);
+        if layout != LAYOUT_VERSION {
+            return Err(TableError::Layout(layout));
         }
         // The sections now fit in the slice, so these products fit in usize.
         #[allow(clippy::cast_possible_truncation)]
         let inst_end = HEADER + INSTANCE * n_inst as usize;
         #[allow(clippy::cast_possible_truncation)]
         let chain_end = inst_end + CHAIN * n_chain as usize;
+        #[allow(clippy::cast_possible_truncation)]
+        let level_end = chain_end + LEVEL * n_level as usize;
+        #[allow(clippy::cast_possible_truncation)]
+        let offsets_end = level_end + MODEL_OFFSET * n_model as usize;
         #[allow(clippy::cast_possible_wrap)] // two's complement round trip of the written i32
         let origin_cell = IVec3::new(u32_at(bytes, 24) as i32, u32_at(bytes, 28) as i32, u32_at(bytes, 32) as i32);
         let view = Self {
             instances: &bytes[HEADER..inst_end],
             chains: &bytes[inst_end..chain_end],
-            levels: &bytes[chain_end..],
+            levels: &bytes[chain_end..level_end],
+            model_offsets: &bytes[level_end..offsets_end],
+            models_blob: &bytes[offsets_end..],
             origin_cell,
             land_min: f32_at(bytes, 36),
             aabb: Aabb { min: vec3_at(bytes, 40), max: vec3_at(bytes, 52) },
             layers: u32_at(bytes, 64),
         };
-        view.validate(inst_end)?;
+        view.validate()?;
         Ok(view)
     }
 
-    /// `chains_at`: the chain section's offset in the file (for [`TableError::Reserved`]).
-    fn validate(&self, chains_at: usize) -> Result<(), TableError> {
+    fn validate(&self) -> Result<(), TableError> {
         // Header values the cull would otherwise take at face value: a zero mask hides a whole
         // worldspace, a NaN or inverted box culls every cell (or none), a NaN land minimum
         // makes every horizon comparison false and a positive infinity makes them all true
@@ -380,15 +498,28 @@ impl<'a> StaticCellTableView<'a> {
         if !(self.land_min.is_finite() || self.land_min == f32::NEG_INFINITY) {
             return Err(TableError::LandMin);
         }
+        // The model section first: the chain loop below reads it.
+        self.validate_models()?;
+        let mut models_used = vec![false; self.model_count()];
+        let mut sources: BTreeSet<(u16, u32)> = BTreeSet::new();
         let mut prev: Option<u64> = None;
         for (index, c) in (0u32..).zip(self.chain_records()) {
             if prev.is_some_and(|p| p >= c.mesh) {
                 return Err(TableError::ChainOrder(c.mesh));
             }
             prev = Some(c.mesh);
-            let at = index as usize * CHAIN;
-            if let Some(k) = self.chains[at + 10..at + 16].iter().position(|&b| b != 0) {
-                return Err(TableError::Reserved(chains_at + at + 10 + k));
+            match models_used.get_mut(usize::from(c.model)) {
+                Some(u) => *u = true,
+                None => return Err(TableError::MissingModel { chain: index, model: c.model }),
+            }
+            // Two chains of one (model, part) would be one geometry product loaded into two
+            // chain slots, drawing the same thing twice: the mesh keys cannot both be right.
+            if !sources.insert((c.model, c.part)) {
+                let first = (0u32..)
+                    .zip(self.chain_records())
+                    .find(|(_, o)| (o.model, o.part) == (c.model, c.part))
+                    .map_or(index, |(k, _)| k);
+                return Err(TableError::DuplicateChainSource { first, second: index });
             }
             let end = u64::from(c.first_level) + u64::from(c.level_count);
             if c.level_count == 0 || c.level_count as usize > MAX_LOD_LEVELS || end > self.level_count() as u64 {
@@ -400,6 +531,9 @@ impl<'a> StaticCellTableView<'a> {
             if MaterialClass::from_u16(c.class).is_none() {
                 return Err(TableError::MaterialClass { chain: index, class: c.class });
             }
+        }
+        if let Some(unused) = models_used.iter().position(|&u| !u) {
+            return Err(TableError::UnusedModel(u32::try_from(unused).unwrap_or(u32::MAX)));
         }
         let mut used = vec![false; self.chain_count()];
         let mut prev: Option<u32> = None;
@@ -430,6 +564,45 @@ impl<'a> StaticCellTableView<'a> {
         }
         if let Some(unused) = used.iter().position(|&u| !u) {
             return Err(TableError::UnusedChain(u32::try_from(unused).unwrap_or(u32::MAX)));
+        }
+        Ok(())
+    }
+
+    /// The model section's own invariants (module docs): strictly ascending offsets from 0,
+    /// inside the names, every name UTF-8, the names sorted and unique.
+    fn validate_models(&self) -> Result<(), TableError> {
+        let count = self.model_count();
+        // A chain names its model with a `u16`, so more models than that is unreadable.
+        if count > MAX_MODELS {
+            return Err(TableError::TooLarge);
+        }
+        if count == 0 {
+            return if self.models_blob.is_empty() { Ok(()) } else { Err(TableError::ModelOffsets) };
+        }
+        let mut end = 0usize;
+        let mut previous = "";
+        for k in 0..count {
+            let start = u32_at(self.model_offsets, k * MODEL_OFFSET) as usize;
+            // Each offset is where the previous name ended (so the first is 0, they ascend, and
+            // no name is empty), and the last name ends at the end of the section.
+            if start != end {
+                return Err(TableError::ModelOffsets);
+            }
+            end = if k + 1 == count {
+                self.models_blob.len()
+            } else {
+                u32_at(self.model_offsets, (k + 1) * MODEL_OFFSET) as usize
+            };
+            if end <= start || end > self.models_blob.len() {
+                return Err(TableError::ModelOffsets);
+            }
+            let index = u32::try_from(k).unwrap_or(u32::MAX);
+            let name = std::str::from_utf8(&self.models_blob[start..end]).map_err(|_| TableError::ModelUtf8(index))?;
+            // Sorted and unique: the section is canonical, so one table has one encoding.
+            if k > 0 && previous >= name {
+                return Err(TableError::ModelOrder(index));
+            }
+            previous = name;
         }
         Ok(())
     }
@@ -539,6 +712,43 @@ impl<'a> StaticCellTableView<'a> {
         Some(self.chain_levels(c))
     }
 
+    pub fn model_count(&self) -> usize {
+        self.model_offsets.len() / MODEL_OFFSET
+    }
+
+    /// Model `index`'s `mesh.cook` subject; `None` past the model section. Bounds-checked
+    /// against unvalidated bytes, so [`Self::validate_models`] may use it.
+    pub fn model(&self, index: u16) -> Option<&'a str> {
+        let k = usize::from(index);
+        if k >= self.model_count() {
+            return None;
+        }
+        let start = u32_at(self.model_offsets, k * MODEL_OFFSET) as usize;
+        let end = if k + 1 == self.model_count() {
+            self.models_blob.len()
+        } else {
+            u32_at(self.model_offsets, (k + 1) * MODEL_OFFSET) as usize
+        };
+        std::str::from_utf8(self.models_blob.get(start..end)?).ok()
+    }
+
+    /// Every model's subject, in index order (sorted, unique).
+    pub fn models(&self) -> impl ExactSizeIterator<Item = &'a str> + use<'a> {
+        let view = *self;
+        (0..self.model_count()).map(move |k| {
+            // Validated: every index below the count decodes.
+            view.model(u16::try_from(k).unwrap_or(u16::MAX)).unwrap_or_default()
+        })
+    }
+
+    /// Where chain `index`'s geometry comes from: its model's `mesh.cook` subject and its part
+    /// (its material index in that model). `<model>/<part>` is the chain's geometry subject
+    /// ([`crate::product::chain_subject`]); `None` past the chain section.
+    pub fn chain_source(&self, index: u32) -> Option<(&'a str, u32)> {
+        let c = self.chain_record(index)?;
+        Some((self.model(c.model)?, c.part))
+    }
+
     /// The material class of chain `index`.
     pub fn material_class(&self, index: u32) -> Option<MaterialClass> {
         self.chain_record(index).and_then(|c| MaterialClass::from_u16(c.class))
@@ -563,6 +773,7 @@ impl<'a> StaticCellTableView<'a> {
             layers: self.layers,
             instances: self.instances().collect(),
             chains: self.chains().collect(),
+            models: self.models().map(str::to_owned).collect(),
         }
     }
 
@@ -580,6 +791,8 @@ impl<'a> StaticCellTableView<'a> {
             material: c.material,
             // Validated by `parse`.
             material_class: MaterialClass::from_u16(c.class).unwrap_or(MaterialClass::Opaque),
+            model: c.model,
+            part: c.part,
             levels: self.chain_levels(c).collect(),
         }
     }
@@ -612,6 +825,8 @@ struct ChainRecord {
     first_level: u32,
     level_count: u32,
     class: u16,
+    model: u16,
+    part: u32,
     mesh: u64,
     material: u64,
 }
@@ -621,6 +836,8 @@ fn decode_chain_record(b: &[u8]) -> ChainRecord {
         first_level: u32_at(b, 0),
         level_count: u32_at(b, 4),
         class: u16_at(b, 8),
+        model: u16_at(b, 10),
+        part: u32_at(b, 12),
         mesh: u64_at(b, 16),
         material: u64_at(b, 24),
     }

@@ -335,10 +335,13 @@ fn cell_table() -> StaticCellTable {
             inst(5, local(-200.0), 0.001),                                // sub-pixel
             inst(6, Vec3::new(-127.0, 1.0, 236.0), 1.0),                  // left of the frustum
         ],
+        models: vec!["meshes/a.mdl".into()],
         chains: vec![LodChain {
             mesh: 9,
             material: 0x77,
             material_class: MaterialClass::Masked,
+            model: 0,
+            part: 0,
             levels: vec![
                 LodLevel { first_index: 0, index_count: 600, error: 0.0 },
                 LodLevel { first_index: 600, index_count: 300, error: 0.01 },

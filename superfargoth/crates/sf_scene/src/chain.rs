@@ -16,6 +16,15 @@
 
 use crate::table::{LodLevel, MAX_LOD_LEVELS};
 
+/// Version of the layout rule above. It decides both a chain's baked geometry and the
+/// [`LodLevel`] ranges a table stores for it, so it is part of every `scene.cells` and
+/// `scene.chains` key and is written into the table header
+/// ([`crate::table::TableError::Layout`]): pairing ranges from one rule with geometry from
+/// another would draw from the wrong indices.
+///
+/// Bump whenever [`chain_layout`] can lay the same input out differently.
+pub const LAYOUT_VERSION: u32 = 1;
+
 /// One source LOD level of a chain: its error and the (vertex count, index count) of each of
 /// its submeshes of the chain's material, in submesh order (usually zero or one).
 #[derive(Clone, Debug, Default, PartialEq)]
